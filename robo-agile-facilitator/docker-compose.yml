@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5.15.0
+    container_name: aesf-neo4j
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/aesf_password_2024
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: aesf-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  coturn:
+    image: coturn/coturn:4.6.2-alpine
+    container_name: aesf-coturn
+    network_mode: host
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  redis_data:
+
+
