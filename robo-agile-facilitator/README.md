@@ -89,8 +89,7 @@ npm run dev
 
 ```
 robo-agile-facilitator/
-├── backend/
-│   ├── app/
+├── api/
 │   │   ├── config.py
 │   │   ├── main.py
 │   │   └── features/
@@ -107,7 +106,6 @@ robo-agile-facilitator/
 │   │           ├── canvas_handlers.py
 │   │           ├── presence_store.py
 │   │           └── video_signaling.py
-│   └── requirements.txt
 ├── frontend/
 │   ├── src/
 │   │   ├── App.vue
@@ -125,6 +123,7 @@ robo-agile-facilitator/
 │   │       └── aiFacilitator/         # AI 퍼실리테이터 UI
 │   │           └── ui/
 │   └── package.json
+└── requirements.txt
 ├── docker-compose.yml
 ├── turnserver.conf
 └── .env
