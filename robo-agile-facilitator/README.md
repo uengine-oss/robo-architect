@@ -79,36 +79,45 @@ npm run dev
 
 ## 📁 프로젝트 구조
 
+> 기능(비즈니스 capability) 기준으로 먼저 묶고, 각 기능 내부에서 API/UI/상태 등을 구성합니다.
+
 ```
-aesf/
+robo-agile-facilitator/
 ├── backend/
 │   ├── app/
-│   │   ├── api/           # REST 엔드포인트
-│   │   │   ├── sessions.py
-│   │   │   └── realtime.py
-│   │   ├── ai/            # AI 퍼실리테이터
-│   │   │   └── facilitator.py
-│   │   ├── db/            # 데이터베이스
-│   │   │   ├── neo4j.py
-│   │   │   └── redis.py
-│   │   ├── models/        # Pydantic 모델
-│   │   │   └── session.py
-│   │   ├── websocket/     # 실시간 핸들러
-│   │   │   ├── canvas.py
-│   │   │   └── signaling.py
 │   │   ├── config.py
-│   │   └── main.py
+│   │   ├── main.py
+│   │   └── features/
+│   │       ├── ai_facilitator/        # OpenAI Realtime 기반 AI 퍼실리테이션
+│   │       │   ├── facilitator.py
+│   │       │   └── realtime_api.py
+│   │       ├── event_storming/        # 세션/캔버스 도메인(스티커/연결/내보내기)
+│   │       │   ├── http_api.py
+│   │       │   ├── export_api.py
+│   │       │   ├── graph_store.py
+│   │       │   └── models.py
+│   │       └── workshop_realtime/     # 실시간 워크샵(소켓/프레즌스/비디오 시그널링)
+│   │           ├── server.py
+│   │           ├── canvas_handlers.py
+│   │           ├── presence_store.py
+│   │           └── video_signaling.py
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── ai/
-│   │   │   ├── canvas/
-│   │   │   ├── session/
-│   │   │   └── video/
-│   │   ├── stores/
-│   │   ├── views/
-│   │   └── router/
+│   │   ├── App.vue
+│   │   ├── main.ts
+│   │   ├── router/
+│   │   ├── style.css
+│   │   └── features/
+│   │       ├── eventStorming/         # 이벤트 스토밍 워크샵 UX (페이지/캔버스/세션 UI/상태)
+│   │       │   ├── pages/
+│   │       │   ├── state/
+│   │       │   └── ui/
+│   │       ├── workshopRealtime/      # WebRTC 화상회의(패널/상태)
+│   │       │   ├── state/
+│   │       │   └── ui/
+│   │       └── aiFacilitator/         # AI 퍼실리테이터 UI
+│   │           └── ui/
 │   └── package.json
 ├── docker-compose.yml
 ├── turnserver.conf

@@ -6,12 +6,12 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: () => import('../views/HomeView.vue')
+      component: () => import('../features/eventStorming/pages/HomePage.vue')
     },
     {
       path: '/session/:id',
       name: 'session',
-      component: () => import('../views/SessionView.vue'),
+      component: () => import('../features/eventStorming/pages/SessionPage.vue'),
       props: true
     }
   ]

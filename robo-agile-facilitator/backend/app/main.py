@@ -8,12 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import socketio
 
 from .config import get_settings
-from .db.neo4j import db
-from .db.redis import redis_db
-from .api.sessions import router as sessions_router
-from .api.realtime import router as realtime_router
-from .api.export import router as export_router
-from .websocket.canvas import sio
+from .features.event_storming.graph_store import graph
+from .features.workshop_realtime.presence_store import presence
+from .features.event_storming.http_api import router as sessions_router
+from .features.ai_facilitator.realtime_api import router as realtime_router
+from .features.event_storming.export_api import router as export_router
+from .features.workshop_realtime.server import sio
 
 
 @asynccontextmanager
@@ -23,13 +23,13 @@ async def lifespan(app: FastAPI):
     print("🚀 Starting AESF Backend...")
     
     try:
-        await db.connect()
+        await graph.connect()
         print("✅ Neo4j connected")
     except Exception as e:
         print(f"⚠️ Neo4j connection failed: {e}")
     
     try:
-        await redis_db.connect()
+        await presence.connect()
         print("✅ Redis connected")
     except Exception as e:
         print(f"⚠️ Redis connection failed: {e}")
@@ -40,8 +40,8 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     print("👋 Shutting down AESF Backend...")
-    await db.disconnect()
-    await redis_db.disconnect()
+    await graph.disconnect()
+    await presence.disconnect()
 
 
 # Create FastAPI app
@@ -89,14 +89,14 @@ async def health():
     
     try:
         # Check Neo4j
-        session = await db.get_session("health-check")
+        _ = await graph.get_session("health-check")
         health_status["neo4j"] = "healthy"
     except Exception:
         health_status["neo4j"] = "unhealthy"
     
     try:
         # Check Redis
-        await redis_db._client.ping()
+        await presence._client.ping()
         health_status["redis"] = "healthy"
     except Exception:
         health_status["redis"] = "unhealthy"
