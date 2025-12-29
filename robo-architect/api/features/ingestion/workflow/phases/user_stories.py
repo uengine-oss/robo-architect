@@ -22,7 +22,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
         "INFO",
         "User stories extracted",
         category="ingestion.workflow.user_stories",
-        params={"session_id": ctx.session.id, "count": len(user_stories)},
+        params={"session_id": ctx.session.id, "user_stories": user_stories},
     )
 
     for i, us in enumerate(user_stories):

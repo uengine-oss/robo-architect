@@ -29,12 +29,13 @@ async def modify_nodes(request: ModifyRequest, http_request: Request):
                 **http_context(http_request),
                 "inputs": {
                     "model": OPENAI_MODEL,
-                    "selected_nodes_count": len(request.selectedNodes),
-                    "conversation_history_count": len(request.conversationHistory or []),
                     "prompt": request.prompt,
-                    "prompt_len": len(request.prompt),
-                    "selectedNodes": summarize_for_log(request.selectedNodes),
-                    "conversationHistory": summarize_for_log(request.conversationHistory),
+                    "selectedNodes": summarize_for_log(
+                        request.selectedNodes, max_list=5000, max_dict_items=5000
+                    ),
+                    "conversationHistory": summarize_for_log(
+                        request.conversationHistory, max_list=5000, max_dict_items=5000
+                    ),
                 },
             },
         )

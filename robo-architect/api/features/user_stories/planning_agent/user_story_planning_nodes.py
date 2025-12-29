@@ -59,9 +59,7 @@ Respond in JSON:
                     "target_bc_id": state.target_bc_id,
                     "auto_generate": state.auto_generate,
                 },
-                "prompt_len": len(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_len": len(system_msg),
                 "system_msg": system_msg,
             }
         )
@@ -89,7 +87,6 @@ Respond in JSON:
                 params={
                     "llm": {"provider": provider, "model": model},
                     "llm_ms": llm_ms,
-                    "response_len": len(resp_text),
                     "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
                     "parsed": {
                         "intent_preview": (result.get("intent") or "")[:200],
@@ -114,8 +111,7 @@ Respond in JSON:
                     "llm": {"provider": provider, "model": model},
                     "llm_ms": llm_ms,
                     "error": {"type": type(e).__name__, "message": str(e)},
-                    "response_len": len(resp_text),
-                    "response_preview": resp_text[:1500],
+                    "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
                 }
             )
         return {
@@ -307,10 +303,10 @@ Respond in JSON:
                 "llm": {"provider": provider, "model": model},
                 "scope": state.scope.value if hasattr(state.scope, "value") else str(state.scope),
                 "matched_bc": {"id": state.matched_bc_id, "name": state.matched_bc_name},
-                "related_objects_count": len(state.related_objects or []),
-                "prompt_len": len(prompt),
+                "related_objects": summarize_for_log(
+                    state.related_objects or [], max_list=5000, max_dict_items=5000
+                ),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_len": len(system_msg),
                 "system_msg": system_msg,
             }
         )
@@ -358,10 +354,8 @@ Respond in JSON:
                 params={
                     "llm": {"provider": provider, "model": model},
                     "llm_ms": llm_ms,
-                    "response_len": len(resp_text),
                     "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
                     "summary_preview": (result.get("summary") or "")[:300],
-                    "objects_count": len(proposed_objects),
                     "objects": summarize_for_log([o.dict() for o in proposed_objects]),
                 }
             )
@@ -378,8 +372,7 @@ Respond in JSON:
                     "llm": {"provider": provider, "model": model},
                     "llm_ms": llm_ms,
                     "error": {"type": type(e).__name__, "message": str(e)},
-                    "response_len": len(resp_text),
-                    "response_preview": resp_text[:1500],
+                    "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
                 }
             )
         return {"proposed_objects": [], "plan_summary": f"Error generating objects: {str(e)}", "error": str(e)}

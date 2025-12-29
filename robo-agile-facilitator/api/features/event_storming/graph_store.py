@@ -377,7 +377,14 @@ class EventStormingGraphStore:
                 "DEBUG",
                 "graph.sticker.list.ok",
                 category="event_storming.graph_store",
-                params={**self._ctx(), "session_id": session_id, "count": len(stickers), "duration_ms": t.ms()},
+                params={
+                    **self._ctx(),
+                    "session_id": session_id,
+                    "stickers": summarize_for_log(
+                        [{"id": s.id, "type": s.type.value} for s in stickers]
+                    ),
+                    "duration_ms": t.ms(),
+                },
             )
             return stickers
 
@@ -543,7 +550,14 @@ class EventStormingGraphStore:
                 "DEBUG",
                 "graph.connection.list.ok",
                 category="event_storming.graph_store",
-                params={**self._ctx(), "session_id": session_id, "count": len(connections), "duration_ms": t.ms()},
+                params={
+                    **self._ctx(),
+                    "session_id": session_id,
+                    "connections": summarize_for_log(
+                        [{"id": c.id, "source_id": c.source_id, "target_id": c.target_id} for c in connections]
+                    ),
+                    "duration_ms": t.ms(),
+                },
             )
             return connections
 

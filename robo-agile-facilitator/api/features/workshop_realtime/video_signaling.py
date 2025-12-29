@@ -75,8 +75,8 @@ async def video_join(sid, data):
             "session_id": session_id,
             "sid": sid,
             "participant_name": participant_name,
-            "existing_peers_count": len(existing_peers),
-            "peers_count": len(video_peers[session_id]),
+            "existing_peers": sorted(existing_peers),
+            "peers": sorted(video_peers[session_id]),
             "duration_ms": t.ms(),
         },
     )
@@ -100,7 +100,13 @@ async def video_leave(sid, data):
             "INFO",
             "video.leave.ok",
             category="workshop_realtime.video",
-            params={"request_id": get_request_id(), "session_id": session_id, "sid": sid, "peers_count": len(video_peers[session_id]), "duration_ms": t.ms()},
+            params={
+                "request_id": get_request_id(),
+                "session_id": session_id,
+                "sid": sid,
+                "peers": sorted(video_peers[session_id]),
+                "duration_ms": t.ms(),
+            },
         )
         set_request_id(None)
         return
@@ -135,7 +141,6 @@ async def video_offer(sid, data):
             "request_id": get_request_id(),
             "from_id": sid,
             "target_id": target_id,
-            "sdp_len": len(sdp),
             "sdp": sdp,
         },
     )
@@ -172,7 +177,6 @@ async def video_answer(sid, data):
             "request_id": get_request_id(),
             "from_id": sid,
             "target_id": target_id,
-            "sdp_len": len(sdp),
             "sdp": sdp,
         },
     )
@@ -209,7 +213,6 @@ async def video_ice_candidate(sid, data):
             "request_id": get_request_id(),
             "from_id": sid,
             "target_id": target_id,
-            "candidate_len": len(candidate),
             "candidate": candidate,
         },
     )

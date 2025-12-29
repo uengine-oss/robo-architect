@@ -84,9 +84,8 @@ def identify_policies_node(state: EventStormingState) -> Dict[str, Any]:
             category="agent.nodes.identify_policies.llm.start",
             params={
                 "llm": {"provider": provider, "model": model},
-                "bounded_contexts_count": len(state.approved_bcs or []),
-                "events_count": len(all_events),
-                "prompt_len": len(prompt),
+                "bounded_contexts": summarize_for_log(state.approved_bcs or []),
+                "events": summarize_for_log(all_events),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_prompt": SYSTEM_PROMPT,
             }
@@ -106,7 +105,6 @@ def identify_policies_node(state: EventStormingState) -> Dict[str, Any]:
                 "llm": {"provider": provider, "model": model},
                 "llm_ms": llm_ms,
                 "result": {
-                    "policies_count": len(policies),
                     "policies": summarize_for_log(
                         [{"name": getattr(p, "name", None), "target_bc": getattr(p, "target_bc", None)} for p in policies]
                     ),

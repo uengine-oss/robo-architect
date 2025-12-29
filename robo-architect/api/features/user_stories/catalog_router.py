@@ -46,7 +46,7 @@ async def get_all_user_stories(request: Request) -> list[dict[str, Any]]:
             "INFO",
             "User stories list returned.",
             category="api.user_stories.list.done",
-            params={**http_context(request), "count": len(items)},
+            params={**http_context(request), "items": items},
         )
         return items
 
@@ -82,7 +82,7 @@ async def get_unassigned_user_stories(request: Request) -> list[dict[str, Any]]:
             "INFO",
             "Unassigned user stories returned.",
             category="api.user_stories.unassigned.done",
-            params={**http_context(request), "count": len(items)},
+            params={**http_context(request), "items": items},
         )
         return items
 

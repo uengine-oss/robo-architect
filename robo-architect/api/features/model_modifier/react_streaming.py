@@ -102,15 +102,15 @@ For "connect" actions, include:
                 params={
                     "model": OPENAI_MODEL,
                     "temperature": 0.7,
-                    "selected_nodes_count": len(selected_nodes),
-                    "conversation_history_count": len(conversation_history),
                     "prompt": prompt,
-                    "prompt_len": len(prompt),
-                    "system_prompt_len": len(REACT_SYSTEM_PROMPT),
+                    "system_prompt": REACT_SYSTEM_PROMPT,
                     "constructed_user_message": current_message,
-                    "constructed_user_message_len": len(current_message),
-                    "selected_nodes": summarize_for_log(selected_nodes),
-                    "conversation_history_tail": summarize_for_log(conversation_history[-5:]),
+                    "selected_nodes": summarize_for_log(
+                        selected_nodes, max_list=5000, max_dict_items=5000
+                    ),
+                    "conversation_history": summarize_for_log(
+                        conversation_history, max_list=5000, max_dict_items=5000
+                    ),
                 },
             )
 
@@ -200,7 +200,6 @@ For "connect" actions, include:
                     },
                     "applied_changes": summarize_for_log(applied_changes),
                     "raw_output": (raw_output if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(raw_output)),
-                    "raw_output_len": len(raw_output),
                 },
             )
 

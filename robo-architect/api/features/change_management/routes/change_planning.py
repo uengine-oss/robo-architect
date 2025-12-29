@@ -55,8 +55,8 @@ async def generate_change_plan(payload: ChangePlanRequest, request: Request) -> 
             params={
                 "userStoryId": payload.userStoryId,
                 "scope": result.get("scope"),
-                "changes": len(result.get("changes") or []),
-                "relatedObjects": len(result.get("relatedObjects") or []),
+                "changes": result.get("changes") or [],
+                "relatedObjects": result.get("relatedObjects") or [],
             },
         )
 
@@ -72,8 +72,8 @@ async def generate_change_plan(payload: ChangePlanRequest, request: Request) -> 
                     "enabled": propagation.get("enabled"),
                     "rounds": propagation.get("rounds"),
                     "stopReason": propagation.get("stopReason"),
-                    "confirmed_count": len(propagation.get("confirmed") or []),
-                    "review_count": len(propagation.get("review") or []),
+                    "confirmed": propagation.get("confirmed") or [],
+                    "review": propagation.get("review") or [],
                 },
             )
         except Exception:

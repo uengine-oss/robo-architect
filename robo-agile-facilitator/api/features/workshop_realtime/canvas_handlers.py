@@ -165,9 +165,9 @@ async def join_session(sid, data):
             "session_id": session_id,
             "participant_name": participant_name,
             "is_reconnection": is_reconnection,
-            "stickers_count": len(stickers),
-            "connections_count": len(connections),
-            "participants_count": len(participants),
+            "stickers": summarize_for_log(stickers, max_list=5000, max_dict_items=5000),
+            "connections": summarize_for_log(connections, max_list=5000, max_dict_items=5000),
+            "participants": summarize_for_log(participants, max_list=5000, max_dict_items=5000),
         },
     )
 

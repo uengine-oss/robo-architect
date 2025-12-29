@@ -38,7 +38,7 @@ def analyze_scope_node(state: ChangePlanningState) -> Dict[str, Any]:
         category="agent.change_graph.scope.start",
         params={
             "user_story_id": state.user_story_id,
-            "connected_objects_count": len(state.connected_objects or []),
+            "connected_objects": summarize_for_log(state.connected_objects or []),
             "original_user_story": summarize_for_log(state.original_user_story),
             "edited_user_story": summarize_for_log(state.edited_user_story),
         }
@@ -102,9 +102,7 @@ Respond in this exact JSON format:
             params={
                 "user_story_id": state.user_story_id,
                 "llm": {"provider": provider, "model": model},
-                "prompt_len": len(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_len": len(system_msg),
                 "system_msg": system_msg,
             }
         )
@@ -123,7 +121,6 @@ Respond in this exact JSON format:
                 "user_story_id": state.user_story_id,
                 "llm": {"provider": provider, "model": model},
                 "llm_ms": llm_ms,
-                "response_len": len(resp_text),
                 "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
             }
         )

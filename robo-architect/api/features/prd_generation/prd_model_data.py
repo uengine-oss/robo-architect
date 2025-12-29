@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 
 from api.platform.neo4j import get_session
-from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -59,10 +58,9 @@ def fetch_bc_data(bc_id: str) -> dict | None:
                 params={
                     "bc_id": bc_id,
                     "duration_ms": int((time.perf_counter() - t0) * 1000),
-                    "summary": {
-                        "aggregates": len(bc_data.get("aggregates") or []),
-                        "policies": len(bc_data.get("policies") or []),
-                    },
+                    # For reproducibility, log the resolved data (SmartLogger will offload to detail files
+                    # when the payload is large).
+                    "bc_data": bc_data,
                 },
             )
             return bc_data
@@ -116,7 +114,8 @@ def get_bcs_from_nodes(node_ids: list[str]) -> list[dict]:
         "PRD: resolved BC IDs from selected node IDs.",
         category="api.prd.neo4j.resolve_bcs",
         params={
-            "inputs": {"node_ids": summarize_for_log(node_ids)},
+            # For reproducibility, log full inputs; SmartLogger will offload large payloads to detail files.
+            "inputs": {"node_ids": node_ids},
             "resolved_bc_ids": bc_ids,
             "duration_ms": int((time.perf_counter() - t0) * 1000),
         },

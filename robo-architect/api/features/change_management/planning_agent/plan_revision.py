@@ -80,9 +80,7 @@ Provide the revised plan in the same JSON format:
                 "user_story_id": state.user_story_id,
                 "revision_count": state.revision_count,
                 "llm": {"provider": provider, "model": model},
-                "prompt_len": len(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_len": len(system_msg),
                 "system_msg": system_msg,
             }
         )
@@ -102,7 +100,6 @@ Provide the revised plan in the same JSON format:
                 "revision_count": state.revision_count,
                 "llm": {"provider": provider, "model": model},
                 "llm_ms": llm_ms,
-                "response_len": len(resp_text),
                 "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
             }
         )

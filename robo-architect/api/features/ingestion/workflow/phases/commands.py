@@ -59,7 +59,6 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                             "llm": {"provider": provider, "model": model},
                             "bc": {"id": bc.id, "name": bc.name},
                             "aggregate": {"id": agg.id, "name": agg.name},
-                            "prompt_len": len(prompt),
                             "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                             "system_prompt": SYSTEM_PROMPT,
                         }
@@ -86,9 +85,10 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                             "aggregate": {"id": agg.id, "name": agg.name},
                             "llm_ms": llm_ms,
                             "result": {
-                                "commands_count": len(commands),
                                 "command_ids": summarize_for_log([getattr(c, "id", None) for c in commands]),
-                                "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump),
+                                "response": resp_dump
+                                if AI_AUDIT_LOG_FULL_OUTPUT
+                                else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
                             },
                         }
                     )
@@ -107,7 +107,13 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     "INFO",
                     "Commands extracted",
                     category="ingestion.workflow.commands",
-                    params={"session_id": ctx.session.id, "agg_id": agg.id, "count": len(commands)},
+                    params={
+                        "session_id": ctx.session.id,
+                        "agg_id": agg.id,
+                        "commands": summarize_for_log(
+                            commands, max_list=5000, max_dict_items=5000
+                        ),
+                    },
                 )
 
             for cmd in commands:

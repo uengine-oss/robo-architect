@@ -42,8 +42,8 @@ async def export_json(session_id: str):
         category="event_storming.export",
         params={
             "session_id": session_id,
-            "stickers_count": len(stickers),
-            "connections_count": len(connections),
+            "stickers": summarize_for_log(stickers, max_list=5000, max_dict_items=5000),
+            "connections": summarize_for_log(connections, max_list=5000, max_dict_items=5000),
             "duration_ms": t.ms(),
         },
     )
@@ -140,9 +140,8 @@ async def export_mermaid(session_id: str):
         category="event_storming.export",
         params={
             "session_id": session_id,
-            "stickers_count": len(stickers),
-            "connections_count": len(connections),
-            "mermaid_len": len(mermaid),
+            "stickers": summarize_for_log(stickers),
+            "connections": summarize_for_log(connections),
             "mermaid": mermaid,
             "duration_ms": t.ms(),
         },
@@ -219,16 +218,15 @@ async def export_summary(session_id: str):
         category="event_storming.export",
         params={
             "session_id": session_id,
-            "stickers_count": len(stickers),
-            "connections_count": len(connections),
+            "stickers": summarize_for_log(stickers),
+            "connections": summarize_for_log(connections),
             "by_type": {
-                "events": len(events),
-                "commands": len(commands),
-                "policies": len(policies),
-                "read_models": len(read_models),
-                "external_systems": len(external_systems),
+                "events": summarize_for_log(events),
+                "commands": summarize_for_log(commands),
+                "policies": summarize_for_log(policies),
+                "read_models": summarize_for_log(read_models),
+                "external_systems": summarize_for_log(external_systems),
             },
-            "context_len": len(context),
             "context": context,
         },
     )
@@ -337,7 +335,6 @@ async def export_summary(session_id: str):
             params={
                 "session_id": session_id,
                 "ai_duration_ms": ai_t.ms(),
-                "summary_len": len(summary_text or ""),
                 "summary_text": summary_text,
             },
         )

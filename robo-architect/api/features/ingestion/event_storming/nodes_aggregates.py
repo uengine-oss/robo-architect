@@ -71,7 +71,6 @@ def extract_aggregates_node(state: EventStormingState) -> Dict[str, Any]:
             params={
                 "llm": {"provider": provider, "model": model},
                 "bc": {"id": current_bc.id, "name": current_bc.name},
-                "prompt_len": len(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_prompt": SYSTEM_PROMPT,
             }
@@ -92,7 +91,6 @@ def extract_aggregates_node(state: EventStormingState) -> Dict[str, Any]:
                 "bc": {"id": current_bc.id, "name": current_bc.name},
                 "llm_ms": llm_ms,
                 "result": {
-                    "aggregates_count": len(aggs),
                     "aggregates": summarize_for_log(
                         [{"id": getattr(a, "id", None), "name": getattr(a, "name", None)} for a in aggs]
                     ),

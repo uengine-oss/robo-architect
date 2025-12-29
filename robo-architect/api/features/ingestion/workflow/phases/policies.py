@@ -55,9 +55,12 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                 params={
                     "session_id": ctx.session.id,
                     "llm": {"provider": provider, "model": model},
-                    "bounded_contexts_count": len(ctx.bounded_contexts),
-                    "events_count": len(all_events_list),
-                    "prompt_len": len(prompt),
+                    "bounded_contexts": summarize_for_log(
+                        ctx.bounded_contexts, max_list=5000, max_dict_items=5000
+                    ),
+                    "events": summarize_for_log(
+                        all_events_list, max_list=5000, max_dict_items=5000
+                    ),
                     "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                     "system_prompt": SYSTEM_PROMPT,
                 }
@@ -82,9 +85,10 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     "llm": {"provider": provider, "model": model},
                     "llm_ms": llm_ms,
                     "result": {
-                        "policies_count": len(policies),
                         "policy_ids": summarize_for_log([getattr(p, "id", None) for p in policies]),
-                        "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump),
+                        "response": resp_dump
+                        if AI_AUDIT_LOG_FULL_OUTPUT
+                        else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
                     },
                 }
             )

@@ -52,8 +52,10 @@ def summarize_for_log(
     *,
     max_depth: int = 5,
     max_str: int = 800,
-    max_list: int = 80,
-    max_dict_items: int = 200,
+    # NOTE: We default to large limits for reproducibility.
+    # SmartLogger will offload large params into `logs/details/*.json` automatically.
+    max_list: int = 5000,
+    max_dict_items: int = 5000,
 ) -> Any:
     """
     Convert values into JSON-serializable structures for logging.

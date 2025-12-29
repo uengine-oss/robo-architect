@@ -65,7 +65,6 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                             "llm": {"provider": provider, "model": model},
                             "bc": {"id": bc.id, "name": bc.name},
                             "aggregate": {"id": agg.id, "name": agg.name},
-                            "prompt_len": len(prompt),
                             "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                             "system_prompt": SYSTEM_PROMPT,
                         }
@@ -92,9 +91,10 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                             "aggregate": {"id": agg.id, "name": agg.name},
                             "llm_ms": llm_ms,
                             "result": {
-                                "events_count": len(events),
                                 "event_ids": summarize_for_log([getattr(e, "id", None) for e in events]),
-                                "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump),
+                                "response": resp_dump
+                                if AI_AUDIT_LOG_FULL_OUTPUT
+                                else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
                             },
                         }
                     )
@@ -113,7 +113,11 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                     "INFO",
                     "Events extracted",
                     category="ingestion.workflow.events",
-                    params={"session_id": ctx.session.id, "agg_id": agg.id, "count": len(events)},
+                    params={
+                        "session_id": ctx.session.id,
+                        "agg_id": agg.id,
+                        "events": summarize_for_log(events, max_list=5000, max_dict_items=5000),
+                    },
                 )
 
             for i, evt in enumerate(events):

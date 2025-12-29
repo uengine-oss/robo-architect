@@ -80,7 +80,7 @@ async def vector_search(payload: VectorSearchRequest, request: Request) -> List[
             "keywords": keywords[:10],
             "limit": payload.limit,
             "nodeTypes": payload.nodeTypes,
-            "excludeIds_count": len(payload.excludeIds or []),
+            "excludeIds": payload.excludeIds or [],
         },
     )
 

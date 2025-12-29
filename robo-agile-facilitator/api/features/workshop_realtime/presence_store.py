@@ -76,7 +76,12 @@ class WorkshopPresenceStore:
             "DEBUG",
             "presence.participants.set",
             category="workshop_realtime.presence_store",
-            params={**self._ctx(), "session_id": session_id, "count": len(participants), "duration_ms": t.ms()},
+            params={
+                **self._ctx(),
+                "session_id": session_id,
+                "participants": summarize_for_log(participants, max_list=5000, max_dict_items=5000),
+                "duration_ms": t.ms(),
+            },
         )
 
     async def get_session_participants(self, session_id: str) -> list[dict]:
@@ -89,7 +94,12 @@ class WorkshopPresenceStore:
             "DEBUG",
             "presence.participants.get",
             category="workshop_realtime.presence_store",
-            params={**self._ctx(), "session_id": session_id, "count": len(out), "duration_ms": t.ms()},
+            params={
+                **self._ctx(),
+                "session_id": session_id,
+                "participants": summarize_for_log(out, max_list=5000, max_dict_items=5000),
+                "duration_ms": t.ms(),
+            },
         )
         return out
 
@@ -121,7 +131,7 @@ class WorkshopPresenceStore:
                 "session_id": session_id,
                 "participant": summarize_for_log(participant),
                 "is_reconnection": existing is not None,
-                "participants_count": len(participants),
+                "participants": summarize_for_log(participants, max_list=5000, max_dict_items=5000),
                 "duration_ms": t.ms(),
             },
         )
@@ -150,7 +160,13 @@ class WorkshopPresenceStore:
             "INFO",
             "presence.participant.remove",
             category="workshop_realtime.presence_store",
-            params={**self._ctx(), "session_id": session_id, "participant_id": participant_id, "participants_count": len(participants), "duration_ms": t.ms()},
+            params={
+                **self._ctx(),
+                "session_id": session_id,
+                "participant_id": participant_id,
+                "participants": summarize_for_log(participants, max_list=5000, max_dict_items=5000),
+                "duration_ms": t.ms(),
+            },
         )
 
     async def mark_participant_offline(self, session_id: str, participant_id: str):

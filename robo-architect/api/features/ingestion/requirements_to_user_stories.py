@@ -69,12 +69,10 @@ User Story는 명확하고 테스트 가능해야 합니다."""
             params={
                 "llm": {"provider": provider, "model": model},
                 "inputs": {
-                    "requirements_len": len(text),
-                    "requirements_truncated_len": min(len(text), 8000),
+                    "requirements": text,
+                    "requirements_used": text[:8000],
                 },
-                "system_len": len(system_prompt),
                 "system_prompt": system_prompt,
-                "prompt_len": len(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
             }
         )
@@ -97,8 +95,8 @@ User Story는 명확하고 테스트 가능해야 합니다."""
                 "llm": {"provider": provider, "model": model},
                 "llm_ms": llm_ms,
                 "result": {
-                    "user_stories_count": len(stories),
                     "user_story_ids": summarize_for_log([getattr(s, "id", None) for s in stories]),
+                    "user_stories": summarize_for_log(stories),
                     "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump),
                 },
             }

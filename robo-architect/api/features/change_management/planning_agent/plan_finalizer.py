@@ -42,15 +42,27 @@ def generate_plan_node(state: ChangePlanningState) -> Dict[str, Any]:
         params={
             "user_story_id": state.user_story_id,
             "scope": state.change_scope.value if state.change_scope else None,
-            "connected_objects_count": len(state.connected_objects or []),
+            "connected_objects": summarize_for_log(state.connected_objects or []),
             "propagation": {
                 "enabled": state.propagation_enabled,
-                "confirmed": len(state.propagation_confirmed or []),
-                "review": len(state.propagation_review or []),
+                "confirmed": summarize_for_log(state.propagation_confirmed or []),
+                "review": summarize_for_log(state.propagation_review or []),
                 "rounds": state.propagation_rounds,
                 "stop_reason": state.propagation_stop_reason,
             },
-            "related_objects_count": len(state.related_objects or []),
+            "related_objects": summarize_for_log(
+                [
+                    {
+                        "id": getattr(o, "id", None),
+                        "name": getattr(o, "name", None),
+                        "type": getattr(o, "type", None),
+                        "bcId": getattr(o, "bcId", None),
+                        "bcName": getattr(o, "bcName", None),
+                        "similarity": getattr(o, "similarity", None),
+                    }
+                    for o in (state.related_objects or [])
+                ]
+            ),
         }
     )
 
@@ -181,9 +193,7 @@ When connecting BCs, always use the Event-Policy-Command pattern:
                 "user_story_id": state.user_story_id,
                 "scope": state.change_scope.value if state.change_scope else None,
                 "llm": {"provider": provider, "model": model},
-                "prompt_len": len(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_len": len(system_msg),
                 "system_msg": system_msg,
             }
         )
@@ -203,7 +213,6 @@ When connecting BCs, always use the Event-Policy-Command pattern:
                 "scope": state.change_scope.value if state.change_scope else None,
                 "llm": {"provider": provider, "model": model},
                 "llm_ms": llm_ms,
-                "response_len": len(resp_text),
                 "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
             }
         )
@@ -249,7 +258,7 @@ When connecting BCs, always use the Event-Policy-Command pattern:
                 "user_story_id": state.user_story_id,
                 "scope": state.change_scope.value if state.change_scope else None,
                 "summary_preview": (result.get("summary") or "")[:400],
-                "changes_count": len(proposed_changes),
+                "proposed_changes": summarize_for_log(proposed_changes),
                 "action_counts": dict(action_counts),
                 "connect_types": dict(connect_types),
                 "create_types": dict(create_types),

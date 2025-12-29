@@ -103,7 +103,12 @@ async def upload_document(
             category="ingestion.api.upload.inputs",
             params={**http_context(request), "inputs": {"text": summarize_for_log(text)}},
         )
-        SmartLogger.log("INFO", "Upload received (text)", category="ingestion.api.upload", params={"chars": len(content)})
+        SmartLogger.log(
+            "INFO",
+            "Upload received (text)",
+            category="ingestion.api.upload",
+            params={"text": content},
+        )
     else:
         SmartLogger.log(
             "WARNING",
@@ -118,7 +123,7 @@ async def upload_document(
             "WARNING",
             "Ingestion upload rejected: extracted content is empty after parsing.",
             category="ingestion.api.upload.empty",
-            params={**http_context(request), "content_len": len(content)},
+            params={**http_context(request), "content": content},
         )
         raise HTTPException(status_code=400, detail="Document content is empty")
 
@@ -128,7 +133,7 @@ async def upload_document(
         category="ingestion.api.upload.content",
         params={
             **http_context(request),
-            "content": {"len": len(content), "preview": summarize_for_log(content)},
+            "content": content,
         },
     )
 
@@ -138,7 +143,7 @@ async def upload_document(
         "INFO",
         "Ingestion session created",
         category="ingestion.api.upload",
-        params={"session_id": session.id, "content_length": len(content)},
+        params={"session_id": session.id},
     )
 
     return {"session_id": session.id, "content_length": len(content), "preview": content[:500] + "..." if len(content) > 500 else content}

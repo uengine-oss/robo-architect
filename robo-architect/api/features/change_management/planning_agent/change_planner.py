@@ -301,10 +301,8 @@ def generate_change_plan(
                 "llm": {"provider": provider, "model": model},
                 "user_story_id": user_story_id,
                 "revision_mode": bool(feedback and previous_plan),
-                "impacted_nodes_count": len(impacted_nodes or []),
-                "prompt_len": len(prompt),
+                "impacted_nodes": summarize_for_log(impacted_nodes or []),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_len": len(CHANGE_PLANNER_SYSTEM_PROMPT),
                 "system_prompt": CHANGE_PLANNER_SYSTEM_PROMPT,
             }
         )
@@ -328,7 +326,6 @@ def generate_change_plan(
                 "llm": {"provider": provider, "model": model},
                 "user_story_id": user_story_id,
                 "llm_ms": llm_ms,
-                "changes_count": len(getattr(response, "changes", []) or []),
                 "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump),
             }
         )

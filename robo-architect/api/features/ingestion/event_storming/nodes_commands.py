@@ -64,7 +64,6 @@ def extract_commands_node(state: EventStormingState) -> Dict[str, Any]:
                         "llm": {"provider": provider, "model": model},
                         "bc": {"id": bc.id, "name": bc.name},
                         "aggregate": {"id": agg.id, "name": agg.name},
-                        "prompt_len": len(prompt),
                         "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                         "system_prompt": SYSTEM_PROMPT,
                     }
@@ -86,7 +85,6 @@ def extract_commands_node(state: EventStormingState) -> Dict[str, Any]:
                         "aggregate": {"id": agg.id, "name": agg.name},
                         "llm_ms": llm_ms,
                         "result": {
-                            "commands_count": len(cmds),
                             "commands": summarize_for_log(
                                 [{"id": getattr(c, "id", None), "name": getattr(c, "name", None)} for c in cmds]
                             ),

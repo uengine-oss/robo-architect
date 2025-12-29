@@ -46,7 +46,7 @@ async def get_all_contexts(request: Request) -> list[dict[str, Any]]:
             "INFO",
             "Contexts list returned.",
             category="api.contexts.list.done",
-            params={**http_context(request), "count": len(items)},
+            params={**http_context(request), "items": items},
         )
         return items
 

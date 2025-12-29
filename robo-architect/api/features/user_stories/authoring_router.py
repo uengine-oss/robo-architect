@@ -84,11 +84,8 @@ async def add_user_story(request: AddUserStoryRequest, http_request: Request) ->
                 "duration_ms": int((time.perf_counter() - t0) * 1000),
                 "summary": {
                     "scope": result.get("scope"),
-                    "keywords_count": len(result.get("keywords") or []),
-                    "relatedObjects_count": len(result.get("relatedObjects") or []),
-                    "changes_count": len(result.get("changes") or []),
                 },
-                "result": summarize_for_log(result),
+                "result": summarize_for_log(result, max_list=5000, max_dict_items=5000),
             },
         )
         return result
@@ -121,9 +118,8 @@ async def apply_user_story(request: ApplyUserStoryRequest, http_request: Request
             **http_context(http_request),
             "inputs": {
                 "targetBcId": request.targetBcId,
-                "userStory": summarize_for_log(request.userStory),
-                "changePlan": summarize_for_log(request.changePlan),
-                "changePlan_count": len(request.changePlan or []),
+                "userStory": summarize_for_log(request.userStory, max_list=5000, max_dict_items=5000),
+                "changePlan": summarize_for_log(request.changePlan, max_list=5000, max_dict_items=5000),
             },
         },
     )
@@ -445,7 +441,10 @@ async def apply_user_story(request: ApplyUserStoryRequest, http_request: Request
             **http_context(http_request),
             "duration_ms": total_ms,
             "userStoryId": user_story_id,
-            "summary": {"success": len(errors) == 0, "appliedChanges": len(applied_changes), "errors": len(errors), "slowest_changes_top10": slowest},
+            "success": len(errors) == 0,
+            "applied_changes": summarize_for_log(applied_changes, max_list=5000, max_dict_items=5000),
+            "errors": errors,
+            "slowest_changes_top10": slowest,
         },
     )
 
@@ -468,7 +467,11 @@ async def get_unassigned_user_stories(http_request: Request) -> List[dict[str, A
             "INFO",
             "User story unassigned list returned.",
             category="api.user_story.unassigned.done",
-            params={**http_context(http_request), "duration_ms": int((time.perf_counter() - t0) * 1000), "count": len(items)},
+            params={
+                **http_context(http_request),
+                "duration_ms": int((time.perf_counter() - t0) * 1000),
+                "items": items,
+            },
         )
         return items
 

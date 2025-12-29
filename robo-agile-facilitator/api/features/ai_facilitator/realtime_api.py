@@ -44,7 +44,6 @@ async def get_ephemeral_key(request: Request):
             "request_id": get_request_id(),
             "session_id": session_id,
             "body": summarize_for_log(body),
-            "instructions_len": len(instructions or ""),
             "instructions": instructions,
         },
     )
@@ -77,7 +76,7 @@ async def get_ephemeral_key(request: Request):
                     "session_id": session_id,
                     "model": request_payload.get("model"),
                     "voice": request_payload.get("voice"),
-                    "tools_count": len(request_payload.get("tools") or []),
+                    "tools": summarize_for_log(request_payload.get("tools") or []),
                     "turn_detection": summarize_for_log(request_payload.get("turn_detection"))
                 },
             )
@@ -138,7 +137,11 @@ async def get_ephemeral_key(request: Request):
                 "ERROR",
                 "realtime.openai.timeout",
                 category="ai_facilitator.realtime_api",
-                params={"request_id": get_request_id(), "session_id": session_id, "duration_ms": t.ms()},
+                params={
+                    "request_id": get_request_id(),
+                    "session_id": session_id,
+                    "duration_ms": t.ms()
+                },
             )
             raise HTTPException(status_code=504, detail="OpenAI API timeout")
         except httpx.RequestError as e:
@@ -146,7 +149,12 @@ async def get_ephemeral_key(request: Request):
                 "ERROR",
                 "realtime.openai.request_error",
                 category="ai_facilitator.realtime_api",
-                params={"request_id": get_request_id(), "session_id": session_id, "error": repr(e), "duration_ms": t.ms()},
+                params={
+                    "request_id": get_request_id(),
+                    "session_id": session_id,
+                    "error": repr(e),
+                    "duration_ms": t.ms()
+                },
             )
             raise HTTPException(status_code=502, detail=f"Connection error: {str(e)}")
         finally:
@@ -154,7 +162,11 @@ async def get_ephemeral_key(request: Request):
                 "INFO",
                 "realtime.ephemeral_key.end",
                 category="ai_facilitator.realtime_api",
-                params={"request_id": get_request_id(), "session_id": session_id, "duration_ms": t.ms()},
+                params={
+                    "request_id": get_request_id(),
+                    "session_id": session_id,
+                    "duration_ms": t.ms(),
+                },
             )
 
 
@@ -181,7 +193,6 @@ async def update_session_config(session_id: str, request: Request):
                 "request_id": get_request_id(),
                 "session_id": session_id,
                 "phase": phase,
-                "instructions_len": len(instructions or ""),
                 "instructions": instructions,
                 "duration_ms": t.ms(),
                 "body": summarize_for_log(body),

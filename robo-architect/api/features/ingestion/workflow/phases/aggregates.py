@@ -53,7 +53,6 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     "session_id": ctx.session.id,
                     "llm": {"provider": provider, "model": model},
                     "bc": {"id": bc.id, "name": bc.name},
-                    "prompt_len": len(prompt),
                     "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                     "system_prompt": SYSTEM_PROMPT,
                 }
@@ -79,9 +78,8 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     "bc": {"id": bc.id, "name": bc.name},
                     "llm_ms": llm_ms,
                     "result": {
-                        "aggregates_count": len(aggs),
                         "aggregate_ids": summarize_for_log([getattr(a, "id", None) for a in aggs]),
-                        "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump),
+                        "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
                     },
                 }
             )
@@ -93,7 +91,12 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             "INFO",
             "Aggregates extracted",
             category="ingestion.workflow.aggregates",
-            params={"session_id": ctx.session.id, "bc_id": bc.id, "bc_name": bc.name, "count": len(aggregates)},
+            params={
+                "session_id": ctx.session.id,
+                "bc_id": bc.id,
+                "bc_name": bc.name,
+                "aggregates": summarize_for_log(aggregates, max_list=5000, max_dict_items=5000),
+            },
         )
 
         for agg in aggregates:

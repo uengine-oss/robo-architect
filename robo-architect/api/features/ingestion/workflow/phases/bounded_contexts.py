@@ -42,8 +42,7 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
             params={
                 "session_id": ctx.session.id,
                 "llm": {"provider": provider, "model": model},
-                "user_stories_count": len(ctx.user_stories),
-                "prompt_len": len(prompt),
+                "user_stories": summarize_for_log(ctx.user_stories, max_list=5000, max_dict_items=5000),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_prompt": SYSTEM_PROMPT,
             }
@@ -68,9 +67,8 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                 "llm": {"provider": provider, "model": model},
                 "llm_ms": llm_ms,
                 "result": {
-                    "bounded_contexts_count": len(bcs),
                     "bounded_context_ids": summarize_for_log([getattr(bc, "id", None) for bc in bcs]),
-                    "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump),
+                    "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
                 },
             }
         )
@@ -82,7 +80,10 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
         "INFO",
         "Bounded contexts identified",
         category="ingestion.workflow.bc",
-        params={"session_id": ctx.session.id, "count": len(bc_candidates), "ids": [bc.id for bc in bc_candidates][:10]},
+        params={
+            "session_id": ctx.session.id,
+            "bounded_contexts": summarize_for_log(bc_candidates, max_list=5000, max_dict_items=5000),
+        },
     )
 
     for bc_idx, bc in enumerate(bc_candidates):

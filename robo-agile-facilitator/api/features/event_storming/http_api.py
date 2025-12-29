@@ -191,7 +191,11 @@ async def get_stickers(session_id: str):
         "DEBUG",
         "event_storming.sticker.list.ok",
         category="event_storming.http",
-        params={"session_id": session_id, "count": len(stickers), "duration_ms": t.ms()},
+        params={
+            "session_id": session_id,
+            "stickers": summarize_for_log([{"id": s.id, "type": s.type.value} for s in stickers]),
+            "duration_ms": t.ms(),
+        },
     )
     return stickers
 
@@ -291,7 +295,13 @@ async def get_connections(session_id: str):
         "DEBUG",
         "event_storming.connection.list.ok",
         category="event_storming.http",
-        params={"session_id": session_id, "count": len(connections), "duration_ms": t.ms()},
+        params={
+            "session_id": session_id,
+            "connections": summarize_for_log(
+                [{"id": c.id, "source_id": c.source_id, "target_id": c.target_id} for c in connections]
+            ),
+            "duration_ms": t.ms(),
+        },
     )
     return connections
 

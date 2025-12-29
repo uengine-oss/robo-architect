@@ -9,7 +9,7 @@ from typing import Optional
 
 from ..event_storming.graph_store import graph
 from ..event_storming.models import SessionPhase
-from ...platform.observability.request_logging import RequestTimer, get_request_id
+from ...platform.observability.request_logging import RequestTimer, get_request_id, summarize_for_log
 from ...platform.observability.smart_logger import SmartLogger
 
 
@@ -152,7 +152,6 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             params={
                 "request_id": get_request_id(),
                 "session_id": None,
-                "instructions_len": len(out),
                 "instructions": out,
                 "duration_ms": t.ms(),
             },
@@ -170,7 +169,6 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             params={
                 "request_id": get_request_id(),
                 "session_id": session_id,
-                "instructions_len": len(out),
                 "instructions": out,
                 "duration_ms": t.ms(),
             },
@@ -211,8 +209,7 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             "request_id": get_request_id(),
             "session_id": session_id,
             "phase": session.phase.value,
-            "stickers_len": len(stickers),
-            "instructions_len": len(instructions),
+            "stickers": summarize_for_log(stickers, max_list=5000, max_dict_items=5000),
             "instructions": instructions,
             "duration_ms": t.ms(),
         },
@@ -275,7 +272,12 @@ def validate_event_text(text: str) -> dict:
             "INFO",
             "ai_facilitator.event_validation.invalid",
             category="ai_facilitator.facilitator",
-            params={"request_id": get_request_id(), "issue": out["issue"], "text": text, "suggestion": suggested},
+            params={
+                "request_id": get_request_id(),
+                "issue": out["issue"],
+                "text": text,
+                "suggestion": suggested
+            },
         )
         return out
 
@@ -290,7 +292,12 @@ def validate_event_text(text: str) -> dict:
             "INFO",
             "ai_facilitator.event_validation.invalid",
             category="ai_facilitator.facilitator",
-            params={"request_id": get_request_id(), "issue": out["issue"], "text": text, "suggestion": out["suggestion"]},
+            params={
+                "request_id": get_request_id(),
+                "issue": out["issue"],
+                "text": text,
+                "suggestion": out["suggestion"]
+            },
         )
         return out
 

@@ -81,7 +81,6 @@ def propagate_impacts_node(state: ChangePlanningState) -> Dict[str, Any]:
             "user_story_id": state.user_story_id,
             "scope": state.change_scope.value if state.change_scope else None,
             "change_description": state.change_description,
-            "seed_count": len(seed_ids),
             "seed_ids": summarize_for_log(seed_ids),
             "limits": limits,
             "relationship_whitelist": rel_types,
@@ -198,7 +197,7 @@ def propagate_impacts_node(state: ChangePlanningState) -> Dict[str, Any]:
                         "user_story_id": state.user_story_id,
                         "round": round_idx,
                         "relationship_whitelist": rel_types,
-                        "union_node_count": len(union_node_ids),
+                        "union_node_ids": sorted(list(union_node_ids)),
                         "per_center_subgraph_sizes": per_center_subgraph_sizes,
                         "remaining_confirmed_budget": remaining_confirmed_budget,
                         "round_budget": round_budget,
@@ -219,9 +218,9 @@ def propagate_impacts_node(state: ChangePlanningState) -> Dict[str, Any]:
                     params={
                         "round": round_idx,
                         "frontier": frontier,
-                        "seen_ids": len(seen_ids),
-                        "confirmed": len(confirmed),
-                        "review": len(review),
+                        "seen_ids": sorted(list(seen_ids)),
+                        "confirmed": summarize_for_log(confirmed),
+                        "review": summarize_for_log(review),
                         "round_budget": round_budget,
                     }
                 )
@@ -239,10 +238,8 @@ def propagate_impacts_node(state: ChangePlanningState) -> Dict[str, Any]:
                             "round": round_idx,
                             "llm": {"provider": provider, "model": model},
                             "round_budget": round_budget,
-                            "union_node_count": len(union_node_ids),
-                            "prompt_len": len(prompt),
+                            "union_node_ids": sorted(list(union_node_ids)),
                             "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                            "system_len": len(system_msg),
                             "system_msg": system_msg,
                         }
                     )
@@ -262,7 +259,6 @@ def propagate_impacts_node(state: ChangePlanningState) -> Dict[str, Any]:
                             "round": round_idx,
                             "llm": {"provider": provider, "model": model},
                             "llm_ms": llm_ms,
-                            "response_len": len(resp_text),
                             "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
                         }
                     )
@@ -433,11 +429,11 @@ def propagate_impacts_node(state: ChangePlanningState) -> Dict[str, Any]:
             "user_story_id": state.user_story_id,
             "rounds_done": rounds_done,
             "stop_reason": stop_reason,
-            "seed_count": len(seed_ids),
-            "confirmed_count": len(confirmed),
-            "review_count": len(review),
+            "seed_ids": summarize_for_log(seed_ids),
+            "confirmed": summarize_for_log(confirmed),
+            "review": summarize_for_log(review),
             "connected_objects_before": connected_before,
-            "connected_objects_after": len(expanded_connected),
+            "connected_objects_after": expanded_connected,
         },
     )
 

@@ -50,10 +50,8 @@ def identify_bc_node(state: EventStormingState) -> Dict[str, Any]:
             category="agent.nodes.identify_bc.llm.start",
             params={
                 "llm": {"provider": provider, "model": model},
-                "user_stories_count": len(state.user_stories or []),
-                "prompt_len": len(prompt),
+                "user_stories": summarize_for_log(state.user_stories or []),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_len": len(SYSTEM_PROMPT),
                 "system_prompt": SYSTEM_PROMPT,
             }
         )
@@ -72,7 +70,6 @@ def identify_bc_node(state: EventStormingState) -> Dict[str, Any]:
                 "llm": {"provider": provider, "model": model},
                 "llm_ms": llm_ms,
                 "result": {
-                    "bounded_contexts_count": len(bcs),
                     "bounded_contexts": summarize_for_log(
                         [{"id": getattr(bc, "id", None), "name": getattr(bc, "name", None)} for bc in bcs]
                     ),
