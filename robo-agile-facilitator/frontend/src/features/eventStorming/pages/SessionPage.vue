@@ -81,7 +81,8 @@ async function joinSession() {
   isJoining.value = true
   try {
     // Initialize local media
-    await videoStore.initLocalMedia()
+    // Default: webcam OFF on first join. User can enable it manually from the Video panel.
+    await videoStore.initLocalMedia(false, true)
 
     // Save participant name for reconnection
     localStorage.setItem(`session_${sessionId}_name`, participantName.value.trim())

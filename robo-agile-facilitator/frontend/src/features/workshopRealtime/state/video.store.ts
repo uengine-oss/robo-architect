@@ -29,7 +29,8 @@ export const useVideoStore = defineStore('video', () => {
   const screenStream = ref<MediaStream | null>(null)
   const peers = ref<Map<string, Peer>>(new Map())
   const audioMuted = ref(false)
-  const videoMuted = ref(false)
+  // Default: webcam is OFF until the user explicitly enables it.
+  const videoMuted = ref(true)
   const isScreenSharing = ref(false)
   const sessionId = ref<string>('')
   const participantName = ref<string>('')
@@ -45,6 +46,37 @@ export const useVideoStore = defineStore('video', () => {
   const peerList = computed(() => Array.from(peers.value.values()))
   const hasLocalStream = computed(() => localStream.value !== null)
 
+  function emitMuteStatus() {
+    socket.value?.emit('video_mute', {
+      session_id: sessionId.value,
+      audio_muted: audioMuted.value,
+      video_muted: videoMuted.value
+    })
+  }
+
+  function getVideoSender(pc: RTCPeerConnection): RTCRtpSender | undefined {
+    // 1) Sender already has a video track (common when camera/screen is active)
+    const senderWithTrack = pc.getSenders().find(s => s.track?.kind === 'video')
+    if (senderWithTrack) return senderWithTrack
+
+    // 2) Sender exists but track is null (common when camera is OFF but video m-line is negotiated)
+    const transceiver = pc.getTransceivers().find(t => t.receiver?.track?.kind === 'video')
+    return transceiver?.sender
+  }
+
+  async function replaceVideoTrackForAll(track: MediaStreamTrack | null) {
+    peers.value.forEach(peer => {
+      if (!peer.connection) return
+      const sender = getVideoSender(peer.connection)
+      if (!sender) return
+      try {
+        void sender.replaceTrack(track)
+      } catch (e) {
+        console.error('Failed to replace video track:', e)
+      }
+    })
+  }
+
   // Initialize local media
   async function initLocalMedia(video = true, audio = true) {
     try {
@@ -55,6 +87,12 @@ export const useVideoStore = defineStore('video', () => {
           noiseSuppression: true
         } : false
       })
+
+      const audioTrack = localStream.value.getAudioTracks()[0]
+      const videoTrack = localStream.value.getVideoTracks()[0]
+      audioMuted.value = !audioTrack || !audioTrack.enabled
+      videoMuted.value = !videoTrack || !videoTrack.enabled
+
       return localStream.value
     } catch (error) {
       console.error('Failed to get local media:', error)
@@ -74,12 +112,7 @@ export const useVideoStore = defineStore('video', () => {
       // Replace video track in all peer connections
       const videoTrack = screenStream.value.getVideoTracks()[0]
       if (!videoTrack) return screenStream.value
-      peers.value.forEach(peer => {
-        if (peer.connection) {
-          const sender = peer.connection.getSenders().find(s => s.track?.kind === 'video')
-          if (sender) sender.replaceTrack(videoTrack)
-        }
-      })
+      await replaceVideoTrackForAll(videoTrack)
 
       // Handle screen share end
       videoTrack.onended = () => { void stopScreenShare() }
@@ -104,12 +137,7 @@ export const useVideoStore = defineStore('video', () => {
     // Restore camera track
     if (localStream.value) {
       const videoTrack = localStream.value.getVideoTracks()[0]
-      peers.value.forEach(peer => {
-        if (peer.connection) {
-          const sender = peer.connection.getSenders().find(s => s.track?.kind === 'video')
-          if (sender && videoTrack) sender.replaceTrack(videoTrack)
-        }
-      })
+      await replaceVideoTrackForAll(videoTrack ?? null)
     }
 
     socket.value?.emit('screen_share_stop', { session_id: sessionId.value })
@@ -123,29 +151,79 @@ export const useVideoStore = defineStore('video', () => {
         audioTrack.enabled = !audioTrack.enabled
         audioMuted.value = !audioTrack.enabled
 
-        socket.value?.emit('video_mute', {
-          session_id: sessionId.value,
-          audio_muted: audioMuted.value,
-          video_muted: videoMuted.value
-        })
+        emitMuteStatus()
       }
     }
   }
 
   // Toggle video
-  function toggleVideo() {
-    if (localStream.value) {
-      const videoTrack = localStream.value.getVideoTracks()[0]
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled
-        videoMuted.value = !videoTrack.enabled
+  async function toggleVideo() {
+    // Ensure we have at least an audio stream (session join should have done this, but be defensive)
+    if (!localStream.value) {
+      await initLocalMedia(false, true)
+    }
+    if (!localStream.value) return
 
-        socket.value?.emit('video_mute', {
-          session_id: sessionId.value,
-          audio_muted: audioMuted.value,
-          video_muted: videoMuted.value
-        })
+    const existingVideoTrack = localStream.value.getVideoTracks()[0]
+
+    // Turn camera OFF
+    if (existingVideoTrack) {
+      try {
+        existingVideoTrack.stop()
+      } catch {
+        // ignore
       }
+      localStream.value.removeTrack(existingVideoTrack)
+      videoMuted.value = true
+
+      // If screen sharing is active, keep sending the screen. Otherwise stop sending any video.
+      if (!isScreenSharing.value) {
+        await replaceVideoTrackForAll(null)
+      }
+
+      emitMuteStatus()
+      return
+    }
+
+    // Turn camera ON (request permission only when user explicitly enables it)
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 1280, height: 720 },
+        audio: false
+      })
+      const newVideoTrack = camStream.getVideoTracks()[0]
+      if (!newVideoTrack) return
+
+      localStream.value.addTrack(newVideoTrack)
+      videoMuted.value = false
+
+      // If screen sharing is active, do not override the outgoing screen track.
+      // The camera will be used once screen sharing stops.
+      if (!isScreenSharing.value) {
+        await replaceVideoTrackForAll(newVideoTrack)
+      }
+
+      newVideoTrack.onended = () => {
+        // Browser/device stopped the camera track
+        try {
+          if (localStream.value?.getVideoTracks().some(t => t.id === newVideoTrack.id)) {
+            localStream.value.removeTrack(newVideoTrack)
+          }
+        } catch {
+          // ignore
+        }
+        videoMuted.value = true
+        if (!isScreenSharing.value) {
+          void replaceVideoTrackForAll(null)
+        }
+        emitMuteStatus()
+      }
+
+      emitMuteStatus()
+    } catch (error) {
+      console.error('Failed to enable camera:', error)
+      videoMuted.value = true
+      emitMuteStatus()
     }
   }
 
@@ -170,7 +248,8 @@ export const useVideoStore = defineStore('video', () => {
         id: data.peer_id,
         name: data.name,
         audioMuted: false,
-        videoMuted: false
+        // Default is webcam OFF until we receive their explicit mute status update
+        videoMuted: true
       })
     })
 
@@ -207,17 +286,35 @@ export const useVideoStore = defineStore('video', () => {
       session_id: sid,
       participant_name: name
     })
+
+    // Broadcast initial mute state (webcam is OFF by default)
+    emitMuteStatus()
   }
 
   // Create peer connection
   async function createPeerConnection(peerId: string, createOffer: boolean) {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
 
-    // Add local tracks
+    // Add local audio tracks (always via addTrack)
     if (localStream.value) {
-      localStream.value.getTracks().forEach(track => {
+      localStream.value.getAudioTracks().forEach(track => {
         pc.addTrack(track, localStream.value!)
       })
+    }
+
+    // Ensure the offer includes a video m-line even when the webcam is OFF.
+    // This allows later camera enable/disable via replaceTrack() without renegotiation.
+    let videoTransceiver: RTCRtpTransceiver | null = null
+    if (createOffer) {
+      videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' })
+
+      // If we already have a camera track (e.g., user enabled it early), attach it now.
+      const existingVideoTrack = localStream.value?.getVideoTracks()[0] ?? null
+      try {
+        void videoTransceiver.sender.replaceTrack(existingVideoTrack)
+      } catch (e) {
+        console.error('Failed to attach initial video track to transceiver:', e)
+      }
     }
 
     // Handle incoming tracks
@@ -268,6 +365,19 @@ export const useVideoStore = defineStore('video', () => {
   async function handleOffer(fromId: string, sdp: RTCSessionDescriptionInit) {
     const pc = await createPeerConnection(fromId, false)
     await pc.setRemoteDescription(new RTCSessionDescription(sdp))
+
+    // Make sure we answer with sendrecv for video (even if our camera is currently OFF)
+    // so we can later start sending by replaceTrack() without renegotiation.
+    const videoTransceiver = pc.getTransceivers().find(t => t.receiver?.track?.kind === 'video')
+    if (videoTransceiver) {
+      try {
+        videoTransceiver.direction = 'sendrecv'
+        const localVideoTrack = localStream.value?.getVideoTracks()[0] ?? null
+        void videoTransceiver.sender.replaceTrack(localVideoTrack)
+      } catch (e) {
+        console.error('Failed to configure video transceiver for answer:', e)
+      }
+    }
 
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
