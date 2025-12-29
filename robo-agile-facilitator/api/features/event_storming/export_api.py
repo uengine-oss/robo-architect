@@ -255,8 +255,81 @@ async def export_summary(session_id: str):
 
     try:
         ai_t = RequestTimer()
+        # Log the *actual* prompts sent to the LLM.
+        # - preview: quick debugging in main log
+        # - detail: full payload in detail log file (when SmartLogger file_output is enabled)
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.summary.ai.request.preview",
+            category="event_storming.export",
+            params={
+                "session_id": session_id,
+                "model": settings.openai_model,
+                "temperature": 0.3,
+                "messages_preview": summarize_for_log(
+                    [
+                        {"role": "system", "content": messages[0].content},
+                        {"role": "human", "content": messages[1].content},
+                    ],
+                    max_str=1200,
+                    max_list=10,
+                    max_depth=6,
+                ),
+            },
+            max_inline_chars=4000,
+        )
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.summary.ai.request.detail",
+            category="event_storming.export",
+            params={
+                "session_id": session_id,
+                "model": settings.openai_model,
+                "temperature": 0.3,
+                "messages": [
+                    {"role": "system", "content": messages[0].content},
+                    {"role": "human", "content": messages[1].content},
+                ],
+            },
+        )
         response = await llm.ainvoke(messages)
         summary_text = response.content
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.summary.ai.response.preview",
+            category="event_storming.export",
+            params={
+                "session_id": session_id,
+                "ai_duration_ms": ai_t.ms(),
+                "response_preview": summarize_for_log(summary_text or "", max_str=2000),
+                "response_meta": summarize_for_log(
+                    {
+                        "type": type(response).__name__,
+                        "response_metadata": getattr(response, "response_metadata", None),
+                        "usage_metadata": getattr(response, "usage_metadata", None),
+                        "additional_kwargs": getattr(response, "additional_kwargs", None),
+                    },
+                    max_str=800,
+                ),
+            },
+            max_inline_chars=4000,
+        )
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.summary.ai.response.detail",
+            category="event_storming.export",
+            params={
+                "session_id": session_id,
+                "ai_duration_ms": ai_t.ms(),
+                "response_text": summary_text,
+                "response_meta": {
+                    "type": type(response).__name__,
+                    "response_metadata": getattr(response, "response_metadata", None),
+                    "usage_metadata": getattr(response, "usage_metadata", None),
+                    "additional_kwargs": getattr(response, "additional_kwargs", None),
+                },
+            },
+        )
         SmartLogger.log(
             "INFO",
             "event_storming.export.summary.ai.ok",
@@ -278,8 +351,14 @@ async def export_summary(session_id: str):
                 "session_id": session_id,
                 "error": repr(e),
                 "duration_ms": t.ms(),
-                "messages_summary": summarize_for_log(
-                    [{"role": "system", "len": len(messages[0].content)}, {"role": "human", "len": len(messages[1].content)}]
+                "messages_preview": summarize_for_log(
+                    [
+                        {"role": "system", "content": messages[0].content},
+                        {"role": "human", "content": messages[1].content},
+                    ],
+                    max_str=800,
+                    max_list=10,
+                    max_depth=6,
                 ),
             },
         )
