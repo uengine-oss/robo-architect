@@ -327,6 +327,7 @@ export const useNavigatorStore = defineStore('navigator', () => {
       
       markAsNew(policyData.id)
     }
+  }
 
   // Dynamically add a ReadModel to a BC's tree (used during ingestion / streaming)
   function addReadModel(readModelData) {
@@ -464,7 +465,6 @@ export const useNavigatorStore = defineStore('navigator', () => {
         return
       }
     }
-  }
   }
   
   // Generic add item to tree (legacy, for backwards compatibility)
