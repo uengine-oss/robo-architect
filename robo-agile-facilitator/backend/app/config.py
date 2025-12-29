@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "aesf_password_2024"
+    # Neo4j database name (Neo4j 4.x+ multi-database support)
+    neo4j_database: str = "neo4j"
     
     # Redis
     redis_url: str = "redis://localhost:6379"

@@ -47,6 +47,12 @@ WebRTC 기반 실시간 화상회의 + AI 퍼실리테이션 이벤트 스토밍
 cat .env
 ```
 
+`.env`가 없거나 새로 구성해야 한다면 `env.example`를 참고해서 생성하세요.
+
+추가로 Neo4j 멀티-데이터베이스를 사용하는 경우, 아래 설정을 `.env`에 지정할 수 있습니다.
+
+- **`NEO4J_DATABASE`**: 사용할 Neo4j database 이름 (기본값: `neo4j`)
+
 ### 2. Docker 서비스 시작
 
 ```bash

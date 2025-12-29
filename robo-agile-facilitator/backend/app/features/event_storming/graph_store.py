@@ -28,10 +28,13 @@ class EventStormingGraphStore:
 
     def __init__(self):
         self._driver: Optional[AsyncDriver] = None
+        self._database: Optional[str] = None
 
     async def connect(self):
         """Establish connection to Neo4j."""
         settings = get_settings()
+        # Empty string should behave like "use Neo4j server default database".
+        self._database = settings.neo4j_database.strip() or None
         self._driver = AsyncGraphDatabase.driver(
             settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
         )
@@ -44,10 +47,12 @@ class EventStormingGraphStore:
         """Close Neo4j connection."""
         if self._driver:
             await self._driver.close()
+        self._driver = None
+        self._database = None
 
     async def _init_schema(self):
         """Initialize database schema with constraints and indexes."""
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             # Create constraints
             await session.run(
                 """
@@ -78,7 +83,7 @@ class EventStormingGraphStore:
             duration_minutes=data.duration_minutes,
         )
 
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             await session.run(
                 """
                 CREATE (s:Session {
@@ -106,7 +111,7 @@ class EventStormingGraphStore:
 
     async def get_session(self, session_id: str) -> Optional[Session]:
         """Get session by ID."""
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 """
                 MATCH (s:Session {id: $id})
@@ -138,7 +143,7 @@ class EventStormingGraphStore:
         # Handle both SessionPhase enum and string
         phase_value = phase.value if hasattr(phase, "value") else str(phase)
 
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 """
                 MATCH (s:Session {id: $id})
@@ -152,7 +157,7 @@ class EventStormingGraphStore:
 
     async def start_session(self, session_id: str) -> bool:
         """Mark session as started."""
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 """
                 MATCH (s:Session {id: $id})
@@ -166,7 +171,7 @@ class EventStormingGraphStore:
 
     async def end_session(self, session_id: str) -> bool:
         """Mark session as ended."""
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 """
                 MATCH (s:Session {id: $id})
@@ -183,7 +188,7 @@ class EventStormingGraphStore:
         """Create a new sticker in session."""
         sticker = Sticker(type=data.type, text=data.text, position=data.position, author=data.author)
 
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             await session.run(
                 """
                 MATCH (s:Session {id: $session_id})
@@ -216,7 +221,7 @@ class EventStormingGraphStore:
 
     async def get_stickers(self, session_id: str) -> list[Sticker]:
         """Get all stickers in a session."""
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 """
                 MATCH (s:Session {id: $session_id})-[:HAS_STICKER]->(st:Sticker)
@@ -263,7 +268,7 @@ class EventStormingGraphStore:
             RETURN st
         """
 
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(query, params)
             record = await result.single()
 
@@ -283,7 +288,7 @@ class EventStormingGraphStore:
 
     async def delete_sticker(self, sticker_id: str) -> bool:
         """Delete a sticker and its connections."""
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 """
                 MATCH (st:Sticker {id: $id})
@@ -300,7 +305,7 @@ class EventStormingGraphStore:
         """Create a connection between stickers."""
         connection = Connection(source_id=data.source_id, target_id=data.target_id, label=data.label)
 
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             await session.run(
                 """
                 MATCH (source:Sticker {id: $source_id})
@@ -324,7 +329,7 @@ class EventStormingGraphStore:
 
     async def get_connections(self, session_id: str) -> list[Connection]:
         """Get all connections in a session."""
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 """
                 MATCH (s:Session {id: $session_id})-[:HAS_STICKER]->(source:Sticker)
@@ -351,7 +356,7 @@ class EventStormingGraphStore:
 
     async def delete_connection(self, connection_id: str) -> bool:
         """Delete a connection."""
-        async with self._driver.session() as session:
+        async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 """
                 MATCH ()-[r:TRIGGERS {id: $id}]->()
