@@ -10,7 +10,7 @@ readme = "README.md"
 # NOTE:
 # - `uv sync` on Python 3.13 may fail to build some native deps (e.g. pydantic-core) from source.
 # - We cap Python to <3.13 for now to keep local dev reliable; use Python 3.12.x.
-requires-python = ">=3.9,<3.13"
+requires-python = "==3.12.*"
 license = { text = "MIT" }
 dependencies = [
   # FastAPI & Server
