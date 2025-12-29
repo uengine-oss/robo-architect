@@ -318,13 +318,6 @@ async def move_sticker(sid, data):
     sticker_id = data.get("sticker_id")
     position = data.get("position", {})
 
-    SmartLogger.log(
-        "DEBUG",
-        "sio.move_sticker.start",
-        category="workshop_realtime.socket",
-        params={"session_id": session_id, "sticker_id": sticker_id, "position": summarize_for_log(position), "sid": sid},
-    )
-
     # Update Redis for real-time sync
     await presence.set_sticker_position(sticker_id, position.get("x", 0), position.get("y", 0))
 
@@ -336,12 +329,6 @@ async def move_sticker(sid, data):
         skip_sid=sid,
     )
 
-    SmartLogger.log(
-        "DEBUG",
-        "sio.move_sticker.ok",
-        category="workshop_realtime.socket",
-        params={"session_id": session_id, "sticker_id": sticker_id, "duration_ms": t.ms(), "sid": sid},
-    )
     set_request_id(None)
 
 
@@ -545,30 +532,11 @@ async def cursor_move(sid, data):
     t = RequestTimer()
     session_id = data.get("session_id")
 
-    SmartLogger.log(
-        "DEBUG",
-        "sio.cursor_move.start",
-        category="workshop_realtime.socket",
-        params={
-            "session_id": session_id,
-            "x": data.get("x"),
-            "y": data.get("y"),
-            "name": data.get("name"),
-            "sid": sid,
-        },
-    )
-
     await sio.emit(
         "cursor_update",
         {"sid": sid, "x": data.get("x"), "y": data.get("y"), "name": data.get("name")},
         room=session_id,
         skip_sid=sid,
-    )
-    SmartLogger.log(
-        "DEBUG",
-        "sio.cursor_move.ok",
-        category="workshop_realtime.socket",
-        params={"session_id": session_id, "duration_ms": t.ms(), "sid": sid},
     )
     set_request_id(None)
 
