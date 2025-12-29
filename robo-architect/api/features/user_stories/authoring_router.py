@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from api.platform.neo4j import get_session
-from api.platform.observability.request_logging import http_context, summarize_for_log, sha256_text
+from api.platform.observability.request_logging import http_context, summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter(prefix="/api/user-story", tags=["user-story"])
@@ -62,8 +62,7 @@ async def add_user_story(request: AddUserStoryRequest, http_request: Request) ->
                 "action": request.action,
                 "benefit": request.benefit,
                 "targetBcId": request.targetBcId,
-                "autoGenerate": request.autoGenerate,
-                "story_sha256": sha256_text(f"{request.role}|{request.action}|{request.benefit or ''}"),
+                "autoGenerate": request.autoGenerate
             },
         },
     )

@@ -9,7 +9,7 @@ from typing import Optional
 
 from ..event_storming.graph_store import graph
 from ..event_storming.models import SessionPhase
-from ...platform.observability.request_logging import RequestTimer, get_request_id, sha256_text
+from ...platform.observability.request_logging import RequestTimer, get_request_id
 from ...platform.observability.smart_logger import SmartLogger
 
 
@@ -152,8 +152,7 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             params={
                 "request_id": get_request_id(),
                 "session_id": None,
-                "len": len(out),
-                "sha256": sha256_text(out),
+                "instructions_len": len(out),
                 "instructions": out,
                 "duration_ms": t.ms(),
             },
@@ -171,8 +170,7 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             params={
                 "request_id": get_request_id(),
                 "session_id": session_id,
-                "len": len(out),
-                "sha256": sha256_text(out),
+                "instructions_len": len(out),
                 "instructions": out,
                 "duration_ms": t.ms(),
             },
@@ -213,9 +211,8 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             "request_id": get_request_id(),
             "session_id": session_id,
             "phase": session.phase.value,
-            "stickers_count": len(stickers),
-            "len": len(instructions),
-            "sha256": sha256_text(instructions),
+            "stickers_len": len(stickers),
+            "instructions_len": len(instructions),
             "instructions": instructions,
             "duration_ms": t.ms(),
         },

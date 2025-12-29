@@ -13,7 +13,7 @@ from typing import Any, Dict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from api.platform.observability.request_logging import sha256_text, summarize_for_log
+from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.env import (
     AI_AUDIT_LOG_ENABLED,
@@ -182,10 +182,8 @@ When connecting BCs, always use the Event-Policy-Command pattern:
                 "scope": state.change_scope.value if state.change_scope else None,
                 "llm": {"provider": provider, "model": model},
                 "prompt_len": len(prompt),
-                "prompt_sha256": sha256_text(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_len": len(system_msg),
-                "system_sha256": sha256_text(system_msg),
                 "system_msg": system_msg,
             }
         )
@@ -206,7 +204,6 @@ When connecting BCs, always use the Event-Policy-Command pattern:
                 "llm": {"provider": provider, "model": model},
                 "llm_ms": llm_ms,
                 "response_len": len(resp_text),
-                "response_sha256": sha256_text(resp_text),
                 "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
             }
         )

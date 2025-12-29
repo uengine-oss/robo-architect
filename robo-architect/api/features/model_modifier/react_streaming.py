@@ -7,7 +7,7 @@ from typing import Any, AsyncGenerator, Dict, List
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from api.platform.observability.request_logging import sha256_text, summarize_for_log
+from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 from .chat_runtime_settings import AI_AUDIT_LOG_ENABLED, AI_AUDIT_LOG_FULL_OUTPUT, OPENAI_API_KEY, OPENAI_MODEL
@@ -105,12 +105,9 @@ For "connect" actions, include:
                     "selected_nodes_count": len(selected_nodes),
                     "conversation_history_count": len(conversation_history),
                     "prompt": prompt,
-                    "prompt_sha256": sha256_text(prompt),
                     "prompt_len": len(prompt),
-                    "system_prompt_sha256": sha256_text(REACT_SYSTEM_PROMPT),
                     "system_prompt_len": len(REACT_SYSTEM_PROMPT),
                     "constructed_user_message": current_message,
-                    "constructed_user_message_sha256": sha256_text(current_message),
                     "constructed_user_message_len": len(current_message),
                     "selected_nodes": summarize_for_log(selected_nodes),
                     "conversation_history_tail": summarize_for_log(conversation_history[-5:]),
@@ -203,7 +200,6 @@ For "connect" actions, include:
                     },
                     "applied_changes": summarize_for_log(applied_changes),
                     "raw_output": (raw_output if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(raw_output)),
-                    "raw_output_sha256": sha256_text(raw_output),
                     "raw_output_len": len(raw_output),
                 },
             )

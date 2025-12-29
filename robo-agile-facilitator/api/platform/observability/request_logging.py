@@ -39,10 +39,6 @@ def get_request_id() -> str | None:
     return _request_id_var.get()
 
 
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
-
-
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

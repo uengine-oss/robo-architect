@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
 
 from ...config import get_settings
-from ...platform.observability.request_logging import RequestTimer, sha256_text, summarize_for_log
+from ...platform.observability.request_logging import RequestTimer, summarize_for_log
 from ...platform.observability.smart_logger import SmartLogger
 from .graph_store import graph
 
@@ -143,7 +143,6 @@ async def export_mermaid(session_id: str):
             "stickers_count": len(stickers),
             "connections_count": len(connections),
             "mermaid_len": len(mermaid),
-            "mermaid_sha256": sha256_text(mermaid),
             "mermaid": mermaid,
             "duration_ms": t.ms(),
         },
@@ -230,7 +229,6 @@ async def export_summary(session_id: str):
                 "external_systems": len(external_systems),
             },
             "context_len": len(context),
-            "context_sha256": sha256_text(context),
             "context": context,
         },
     )
@@ -340,7 +338,6 @@ async def export_summary(session_id: str):
                 "session_id": session_id,
                 "ai_duration_ms": ai_t.ms(),
                 "summary_len": len(summary_text or ""),
-                "summary_sha256": sha256_text(summary_text or ""),
                 "summary_text": summary_text,
             },
         )

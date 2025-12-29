@@ -18,7 +18,7 @@ from api.platform.env import (
 from api.features.ingestion.ingestion_contracts import GeneratedUserStory, UserStoryList
 from api.features.ingestion.ingestion_llm_runtime import get_llm
 from api.platform.env import get_llm_provider_model
-from api.platform.observability.request_logging import sha256_text, summarize_for_log
+from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -70,14 +70,11 @@ User Story는 명확하고 테스트 가능해야 합니다."""
                 "llm": {"provider": provider, "model": model},
                 "inputs": {
                     "requirements_len": len(text),
-                    "requirements_sha256": sha256_text(text),
                     "requirements_truncated_len": min(len(text), 8000),
                 },
                 "system_len": len(system_prompt),
-                "system_sha256": sha256_text(system_prompt),
                 "system_prompt": system_prompt,
                 "prompt_len": len(prompt),
-                "prompt_sha256": sha256_text(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
             }
         )

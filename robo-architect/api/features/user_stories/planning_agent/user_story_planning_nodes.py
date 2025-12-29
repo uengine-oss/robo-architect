@@ -6,7 +6,7 @@ from typing import Any, Dict
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from api.platform.env import get_llm_provider_model
-from api.platform.observability.request_logging import sha256_text, summarize_for_log
+from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.env import (
     AI_AUDIT_LOG_ENABLED,
@@ -60,10 +60,8 @@ Respond in JSON:
                     "auto_generate": state.auto_generate,
                 },
                 "prompt_len": len(prompt),
-                "prompt_sha256": sha256_text(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_len": len(system_msg),
-                "system_sha256": sha256_text(system_msg),
                 "system_msg": system_msg,
             }
         )
@@ -92,7 +90,6 @@ Respond in JSON:
                     "llm": {"provider": provider, "model": model},
                     "llm_ms": llm_ms,
                     "response_len": len(resp_text),
-                    "response_sha256": sha256_text(resp_text),
                     "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
                     "parsed": {
                         "intent_preview": (result.get("intent") or "")[:200],
@@ -118,7 +115,6 @@ Respond in JSON:
                     "llm_ms": llm_ms,
                     "error": {"type": type(e).__name__, "message": str(e)},
                     "response_len": len(resp_text),
-                    "response_sha256": sha256_text(resp_text),
                     "response_preview": resp_text[:1500],
                 }
             )
@@ -313,10 +309,8 @@ Respond in JSON:
                 "matched_bc": {"id": state.matched_bc_id, "name": state.matched_bc_name},
                 "related_objects_count": len(state.related_objects or []),
                 "prompt_len": len(prompt),
-                "prompt_sha256": sha256_text(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_len": len(system_msg),
-                "system_sha256": sha256_text(system_msg),
                 "system_msg": system_msg,
             }
         )
@@ -365,7 +359,6 @@ Respond in JSON:
                     "llm": {"provider": provider, "model": model},
                     "llm_ms": llm_ms,
                     "response_len": len(resp_text),
-                    "response_sha256": sha256_text(resp_text),
                     "response": resp_text if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_text),
                     "summary_preview": (result.get("summary") or "")[:300],
                     "objects_count": len(proposed_objects),
@@ -386,7 +379,6 @@ Respond in JSON:
                     "llm_ms": llm_ms,
                     "error": {"type": type(e).__name__, "message": str(e)},
                     "response_len": len(resp_text),
-                    "response_sha256": sha256_text(resp_text),
                     "response_preview": resp_text[:1500],
                 }
             )

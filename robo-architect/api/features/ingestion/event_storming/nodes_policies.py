@@ -15,7 +15,7 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_PROMPT,
     get_llm_provider_model,
 )
-from api.platform.observability.request_logging import sha256_text, summarize_for_log
+from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 from .node_runtime import dump_model, get_llm
@@ -87,9 +87,7 @@ def identify_policies_node(state: EventStormingState) -> Dict[str, Any]:
                 "bounded_contexts_count": len(state.approved_bcs or []),
                 "events_count": len(all_events),
                 "prompt_len": len(prompt),
-                "prompt_sha256": sha256_text(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_sha256": sha256_text(SYSTEM_PROMPT),
                 "system_prompt": SYSTEM_PROMPT,
             }
         )

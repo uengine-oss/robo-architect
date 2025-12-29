@@ -15,7 +15,7 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_PROMPT,
     get_llm_provider_model,
 )
-from api.platform.observability.request_logging import sha256_text, summarize_for_log
+from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 from .node_runtime import dump_model, get_llm
@@ -72,9 +72,7 @@ def extract_aggregates_node(state: EventStormingState) -> Dict[str, Any]:
                 "llm": {"provider": provider, "model": model},
                 "bc": {"id": current_bc.id, "name": current_bc.name},
                 "prompt_len": len(prompt),
-                "prompt_sha256": sha256_text(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                "system_sha256": sha256_text(SYSTEM_PROMPT),
                 "system_prompt": SYSTEM_PROMPT,
             }
         )

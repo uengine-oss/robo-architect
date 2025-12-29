@@ -11,8 +11,7 @@ from ...platform.observability.request_logging import (
     RequestTimer,
     get_request_id,
     new_request_id,
-    set_request_id,
-    sha256_text,
+    set_request_id
 )
 from ...platform.observability.smart_logger import SmartLogger
 
@@ -137,7 +136,6 @@ async def video_offer(sid, data):
             "from_id": sid,
             "target_id": target_id,
             "sdp_len": len(sdp),
-            "sdp_sha256": sha256_text(sdp),
             "sdp": sdp,
         },
     )
@@ -175,7 +173,6 @@ async def video_answer(sid, data):
             "from_id": sid,
             "target_id": target_id,
             "sdp_len": len(sdp),
-            "sdp_sha256": sha256_text(sdp),
             "sdp": sdp,
         },
     )
@@ -213,7 +210,6 @@ async def video_ice_candidate(sid, data):
             "from_id": sid,
             "target_id": target_id,
             "candidate_len": len(candidate),
-            "candidate_sha256": sha256_text(candidate),
             "candidate": candidate,
         },
     )

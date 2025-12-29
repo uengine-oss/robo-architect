@@ -7,7 +7,7 @@ from starlette.requests import Request
 from api.features.model_modifier.chat_contracts import ModifyRequest
 from api.features.model_modifier.chat_runtime_settings import AI_AUDIT_LOG_ENABLED, OPENAI_MODEL
 from api.features.model_modifier.react_streaming import stream_react_response
-from api.platform.observability.request_logging import http_context, sha256_text, summarize_for_log
+from api.platform.observability.request_logging import http_context, summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter()
@@ -32,7 +32,6 @@ async def modify_nodes(request: ModifyRequest, http_request: Request):
                     "selected_nodes_count": len(request.selectedNodes),
                     "conversation_history_count": len(request.conversationHistory or []),
                     "prompt": request.prompt,
-                    "prompt_sha256": sha256_text(request.prompt),
                     "prompt_len": len(request.prompt),
                     "selectedNodes": summarize_for_log(request.selectedNodes),
                     "conversationHistory": summarize_for_log(request.conversationHistory),

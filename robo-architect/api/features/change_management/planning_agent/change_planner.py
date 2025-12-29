@@ -27,7 +27,7 @@ from api.platform.env import (
     get_llm_provider_model,
 )
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.observability.request_logging import summarize_for_log, sha256_text
+from api.platform.observability.request_logging import summarize_for_log
 
 
 # =============================================================================
@@ -303,10 +303,8 @@ def generate_change_plan(
                 "revision_mode": bool(feedback and previous_plan),
                 "impacted_nodes_count": len(impacted_nodes or []),
                 "prompt_len": len(prompt),
-                "prompt_sha256": sha256_text(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_len": len(CHANGE_PLANNER_SYSTEM_PROMPT),
-                "system_sha256": sha256_text(CHANGE_PLANNER_SYSTEM_PROMPT),
                 "system_prompt": CHANGE_PLANNER_SYSTEM_PROMPT,
             }
         )

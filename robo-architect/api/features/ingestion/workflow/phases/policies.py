@@ -15,7 +15,7 @@ from api.features.ingestion.event_storming.nodes import PolicyList
 from api.features.ingestion.event_storming.prompts import IDENTIFY_POLICIES_PROMPT, SYSTEM_PROMPT
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.platform.env import get_llm_provider_model
-from api.platform.observability.request_logging import sha256_text, summarize_for_log
+from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -58,9 +58,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     "bounded_contexts_count": len(ctx.bounded_contexts),
                     "events_count": len(all_events_list),
                     "prompt_len": len(prompt),
-                    "prompt_sha256": sha256_text(prompt),
                     "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                    "system_sha256": sha256_text(SYSTEM_PROMPT),
                     "system_prompt": SYSTEM_PROMPT,
                 }
             )

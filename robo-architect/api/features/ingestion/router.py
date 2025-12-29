@@ -36,7 +36,6 @@ from api.features.ingestion.requirements_document_text import extract_text_from_
 from api.platform.observability.request_logging import (
     http_context,
     sha256_bytes,
-    sha256_text,
     summarize_for_log,
 )
 from api.platform.observability.smart_logger import SmartLogger
@@ -102,7 +101,7 @@ async def upload_document(
             "INFO",
             "Ingestion upload received (text): starting ingestion session from raw text.",
             category="ingestion.api.upload.inputs",
-            params={**http_context(request), "inputs": {"text": summarize_for_log(text), "text_sha256": sha256_text(text)}},
+            params={**http_context(request), "inputs": {"text": summarize_for_log(text)}},
         )
         SmartLogger.log("INFO", "Upload received (text)", category="ingestion.api.upload", params={"chars": len(content)})
     else:
@@ -129,7 +128,7 @@ async def upload_document(
         category="ingestion.api.upload.content",
         params={
             **http_context(request),
-            "content": {"len": len(content), "sha256": sha256_text(content), "preview": summarize_for_log(content)},
+            "content": {"len": len(content), "preview": summarize_for_log(content)},
         },
     )
 

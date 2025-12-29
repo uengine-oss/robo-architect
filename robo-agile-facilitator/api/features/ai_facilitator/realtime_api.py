@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from ...config import get_settings
-from ...platform.observability.request_logging import RequestTimer, get_request_id, sha256_text, summarize_for_log
+from ...platform.observability.request_logging import RequestTimer, get_request_id, summarize_for_log
 from ...platform.observability.smart_logger import SmartLogger
 from .facilitator import get_session_instructions
 
@@ -45,8 +45,6 @@ async def get_ephemeral_key(request: Request):
             "session_id": session_id,
             "body": summarize_for_log(body),
             "instructions_len": len(instructions or ""),
-            "instructions_sha256": sha256_text(instructions or ""),
-            # Keep raw instructions for reproduction (SmartLogger can offload to detail logs).
             "instructions": instructions,
         },
     )
@@ -80,8 +78,7 @@ async def get_ephemeral_key(request: Request):
                     "model": request_payload.get("model"),
                     "voice": request_payload.get("voice"),
                     "tools_count": len(request_payload.get("tools") or []),
-                    "turn_detection": summarize_for_log(request_payload.get("turn_detection")),
-                    "instructions_sha256": sha256_text(instructions or ""),
+                    "turn_detection": summarize_for_log(request_payload.get("turn_detection"))
                 },
             )
             response = await client.post(
@@ -185,8 +182,7 @@ async def update_session_config(session_id: str, request: Request):
                 "session_id": session_id,
                 "phase": phase,
                 "instructions_len": len(instructions or ""),
-                "instructions_sha256": sha256_text(instructions or ""),
-                    "instructions": instructions,
+                "instructions": instructions,
                 "duration_ms": t.ms(),
                 "body": summarize_for_log(body),
             },
