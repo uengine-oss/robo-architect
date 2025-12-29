@@ -149,7 +149,14 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             "DEBUG",
             "ai_facilitator.instructions.default",
             category="ai_facilitator.facilitator",
-            params={"request_id": get_request_id(), "session_id": None, "len": len(out), "sha256": sha256_text(out), "duration_ms": t.ms()},
+            params={
+                "request_id": get_request_id(),
+                "session_id": None,
+                "len": len(out),
+                "sha256": sha256_text(out),
+                "instructions": out,
+                "duration_ms": t.ms(),
+            },
         )
         return out
 
@@ -161,7 +168,14 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             "INFO",
             "ai_facilitator.instructions.session_not_found",
             category="ai_facilitator.facilitator",
-            params={"request_id": get_request_id(), "session_id": session_id, "len": len(out), "sha256": sha256_text(out), "duration_ms": t.ms()},
+            params={
+                "request_id": get_request_id(),
+                "session_id": session_id,
+                "len": len(out),
+                "sha256": sha256_text(out),
+                "instructions": out,
+                "duration_ms": t.ms(),
+            },
         )
         return out
 
@@ -202,6 +216,7 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
             "stickers_count": len(stickers),
             "len": len(instructions),
             "sha256": sha256_text(instructions),
+            "instructions": instructions,
             "duration_ms": t.ms(),
         },
     )

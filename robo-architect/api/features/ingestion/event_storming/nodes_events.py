@@ -70,6 +70,7 @@ def extract_events_node(state: EventStormingState) -> Dict[str, Any]:
                     "prompt_sha256": sha256_text(prompt),
                     "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                     "system_sha256": sha256_text(SYSTEM_PROMPT),
+                    "system_prompt": SYSTEM_PROMPT,
                 }
             )
 

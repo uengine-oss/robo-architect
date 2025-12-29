@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import contextvars
+import datetime as _dt
 import hashlib
 import json
 import time
 import uuid
+from enum import Enum
 from typing import Any, Mapping, Sequence
 
 try:
@@ -12,6 +14,11 @@ try:
     from starlette.requests import Request
 except Exception:  # pragma: no cover
     Request = Any  # type: ignore
+
+try:  # optional
+    from pydantic import BaseModel
+except Exception:  # pragma: no cover
+    BaseModel = None  # type: ignore
 
 
 _request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -53,70 +60,102 @@ def summarize_for_log(
     max_dict_items: int = 200,
 ) -> Any:
     """
-    Summarize potentially-large payloads for logging while keeping reproduction context:
-    - Long strings: keep len, sha256, preview
-    - Large lists/dicts: truncate with counts
+    Convert values into JSON-serializable structures for logging.
+
+    NOTE:
+    - We intentionally preserve full strings by default (no truncation/sha-only summaries),
+      because SmartLogger can offload large params to `logs/details/*.json`.
+    - We still keep a max_depth guard to avoid infinite recursion / cycles.
     """
-    if max_depth <= 0:
-        return {"__truncated__": True, "__type__": type(value).__name__}
 
-    if value is None:
-        return None
+    # Track object identity to avoid infinite recursion on cyclic structures.
+    seen: set[int] = set()
 
-    if isinstance(value, (int, float, bool)):
-        return value
+    def _to_jsonable(v: Any, depth: int) -> Any:
+        if depth <= 0:
+            return {"__truncated__": True, "__type__": type(v).__name__}
 
-    if isinstance(value, str):
-        if len(value) <= max_str:
-            return value
-        return {
-            "__type__": "str",
-            "__len__": len(value),
-            "__sha256__": sha256_text(value),
-            "__preview__": value[: max_str // 2],
-            "__suffix__": value[- max_str // 4 :],
-        }
+        if v is None:
+            return None
 
-    if isinstance(value, (bytes, bytearray)):
-        return {"__type__": type(value).__name__, "__len__": len(value)}
+        if isinstance(v, (int, float, bool)):
+            return v
 
-    if isinstance(value, Mapping):
-        items = list(value.items())
-        out: dict[str, Any] = {}
-        for k, v in items[:max_dict_items]:
-            out[str(k)] = summarize_for_log(
-                v,
-                max_depth=max_depth - 1,
-                max_str=max_str,
-                max_list=max_list,
-                max_dict_items=max_dict_items,
-            )
-        if len(items) > max_dict_items:
-            out["__truncated_items__"] = len(items) - max_dict_items
-        return out
+        # Preserve full strings (no truncation).
+        if isinstance(v, str):
+            return v
 
-    if _is_sequence(value):
-        seq = list(value)
-        out_list = [
-            summarize_for_log(
-                x,
-                max_depth=max_depth - 1,
-                max_str=max_str,
-                max_list=max_list,
-                max_dict_items=max_dict_items,
-            )
-            for x in seq[:max_list]
-        ]
-        if len(seq) > max_list:
-            out_list.append({"__truncated_items__": len(seq) - max_list})
-        return out_list
+        # Avoid logging raw bytes; keep metadata only.
+        if isinstance(v, (bytes, bytearray)):
+            try:
+                h = sha256_bytes(bytes(v))
+            except Exception:
+                h = None
+            return {"__type__": type(v).__name__, "__len__": len(v), "__sha256__": h}
 
-    # Last resort: try JSON serialization, else repr
-    try:
-        json.dumps(value)
-        return value
-    except Exception:
-        return {"__type__": type(value).__name__, "__repr__": repr(value)[:max_str]}
+        # Datetime/date/time objects
+        if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+            try:
+                return v.isoformat()
+            except Exception:
+                return str(v)
+
+        # Enums
+        if isinstance(v, Enum):
+            return v.value
+
+        # Pydantic models
+        if BaseModel is not None and isinstance(v, BaseModel):  # type: ignore[arg-type]
+            try:
+                return _to_jsonable(v.model_dump(mode="json"), depth - 1)
+            except Exception:
+                try:
+                    return _to_jsonable(v.model_dump(), depth - 1)
+                except Exception:
+                    return {"__type__": type(v).__name__, "__repr__": repr(v)}
+
+        # Prevent cycles
+        vid = id(v)
+        if vid in seen:
+            return {"__cycle__": True, "__type__": type(v).__name__}
+        seen.add(vid)
+
+        # Mappings
+        if isinstance(v, Mapping):
+            items = list(v.items())
+            out: dict[str, Any] = {}
+            # Keep legacy limits as a safety valve, but preserve strings within.
+            for k, vv in items[:max_dict_items]:
+                out[str(k)] = _to_jsonable(vv, depth - 1)
+            if len(items) > max_dict_items:
+                out["__truncated_items__"] = len(items) - max_dict_items
+            return out
+
+        # Sequences (lists/tuples/etc)
+        if _is_sequence(v):
+            seq = list(v)
+            out_list = [_to_jsonable(x, depth - 1) for x in seq[:max_list]]
+            if len(seq) > max_list:
+                out_list.append({"__truncated_items__": len(seq) - max_list})
+            return out_list
+
+        # Sets
+        if isinstance(v, set):
+            out_list = [_to_jsonable(x, depth - 1) for x in list(v)[:max_list]]
+            if len(v) > max_list:
+                out_list.append({"__truncated_items__": len(v) - max_list})
+            return out_list
+
+        # Last resort: try JSON serialization, else repr
+        try:
+            json.dumps(v)
+            return v
+        except Exception:
+            return {"__type__": type(v).__name__, "__repr__": repr(v)}
+
+    # Keep signature args for backwards compatibility even though strings are not truncated now.
+    _ = max_str
+    return _to_jsonable(value, max_depth)
 
 
 def http_context(request: Request) -> dict[str, Any]:

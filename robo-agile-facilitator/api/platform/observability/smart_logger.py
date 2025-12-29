@@ -175,7 +175,8 @@ class SmartLogger:
         try:
             if self.file_output:
                 with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
+                    # Keep raw text whenever possible; fall back to `str()` for non-JSON types.
+                    json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
             return filename
         except Exception as e:
             return f"Error saving detail: {str(e)}"
@@ -249,7 +250,8 @@ class SmartLogger:
         if self.file_output:
             with self._lock:
                 with open(target_log_path, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                    # Avoid losing logs due to non-JSON-serializable params.
+                    f.write(json.dumps(log_entry, ensure_ascii=False, default=str) + "\n")
         
         if self.console_output:
             category_str = f"[{category}]" if category else ""

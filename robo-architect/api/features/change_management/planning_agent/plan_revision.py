@@ -85,6 +85,7 @@ Provide the revised plan in the same JSON format:
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_len": len(system_msg),
                 "system_sha256": sha256_text(system_msg),
+                "system_msg": system_msg,
             }
         )
 

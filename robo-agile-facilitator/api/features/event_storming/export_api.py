@@ -144,6 +144,7 @@ async def export_mermaid(session_id: str):
             "connections_count": len(connections),
             "mermaid_len": len(mermaid),
             "mermaid_sha256": sha256_text(mermaid),
+            "mermaid": mermaid,
             "duration_ms": t.ms(),
         },
     )
@@ -230,6 +231,7 @@ async def export_summary(session_id: str):
             },
             "context_len": len(context),
             "context_sha256": sha256_text(context),
+            "context": context,
         },
     )
 
@@ -339,6 +341,7 @@ async def export_summary(session_id: str):
                 "ai_duration_ms": ai_t.ms(),
                 "summary_len": len(summary_text or ""),
                 "summary_sha256": sha256_text(summary_text or ""),
+                "summary_text": summary_text,
             },
         )
     except Exception as e:

@@ -210,6 +210,23 @@ async def add_sticker(sid, data):
 
         sticker = await graph.create_sticker(session_id, sticker_data)
 
+        SmartLogger.log(
+            "INFO",
+            "sio.add_sticker.created",
+            category="workshop_realtime.socket",
+            params={
+                "request_id": get_request_id(),
+                "session_id": session_id,
+                "sid": sid,
+                "sticker_id": sticker.id,
+                "type": sticker_data.type.value,
+                "author": sticker_data.author,
+                # Keep raw text for reproduction. Large payloads will be offloaded to detail logs.
+                "text": sticker_data.text,
+                "position": summarize_for_log(sticker_data.position.model_dump()),
+            },
+        )
+
         # Broadcast to room
         response = {"sticker": sticker.model_dump(mode="json"), "author_sid": sid}
 
@@ -251,12 +268,53 @@ async def add_sticker(sid, data):
                     "message": '정책은 "X가 발생하면 Y를 한다" 형식으로 작성하면 더 명확합니다.',
                 }
 
+        ai_feedback = response.get("ai_feedback")
+        SmartLogger.log(
+            "INFO",
+            "sio.add_sticker.feedback_decided",
+            category="workshop_realtime.socket",
+            params={
+                "request_id": get_request_id(),
+                "session_id": session_id,
+                "sid": sid,
+                "sticker_id": sticker.id,
+                "type": sticker_type,
+                "has_ai_feedback": bool(ai_feedback),
+                # Keep full feedback payload (raw) for reproduction.
+                "ai_feedback": summarize_for_log(ai_feedback),
+            },
+        )
+
+        SmartLogger.log(
+            "DEBUG",
+            "sio.add_sticker.emit.sticker_added",
+            category="workshop_realtime.socket",
+            params={
+                "request_id": get_request_id(),
+                "session_id": session_id,
+                "sid": sid,
+                "sticker_id": sticker.id,
+                "payload_keys": sorted(list(response.keys())),
+            },
+        )
         await sio.emit("sticker_added", response, room=session_id)
 
     except Exception as e:
         # Ensure we have a timer even if StickerCreate fails early.
         if "t" not in locals():
             t = _start_event("add_sticker", sid, data)
+        SmartLogger.log(
+            "ERROR",
+            "sio.add_sticker.error",
+            category="workshop_realtime.socket",
+            params={
+                "request_id": get_request_id(),
+                "session_id": session_id,
+                "sid": sid,
+                "data": summarize_for_log(data or {}),
+                "error": repr(e),
+            },
+        )
         await sio.emit("error", {"message": str(e)}, to=sid)
         _end_event("add_sticker", sid, t, ok=False, extra={"session_id": session_id}, error=e)
         return

@@ -46,6 +46,8 @@ async def get_ephemeral_key(request: Request):
             "body": summarize_for_log(body),
             "instructions_len": len(instructions or ""),
             "instructions_sha256": sha256_text(instructions or ""),
+            # Keep raw instructions for reproduction (SmartLogger can offload to detail logs).
+            "instructions": instructions,
         },
     )
 
@@ -184,6 +186,7 @@ async def update_session_config(session_id: str, request: Request):
                 "phase": phase,
                 "instructions_len": len(instructions or ""),
                 "instructions_sha256": sha256_text(instructions or ""),
+                    "instructions": instructions,
                 "duration_ms": t.ms(),
                 "body": summarize_for_log(body),
             },

@@ -307,6 +307,7 @@ def generate_change_plan(
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                 "system_len": len(CHANGE_PLANNER_SYSTEM_PROMPT),
                 "system_sha256": sha256_text(CHANGE_PLANNER_SYSTEM_PROMPT),
+                "system_prompt": CHANGE_PLANNER_SYSTEM_PROMPT,
             }
         )
 

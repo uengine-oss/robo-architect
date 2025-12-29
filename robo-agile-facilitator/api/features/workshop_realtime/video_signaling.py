@@ -132,7 +132,14 @@ async def video_offer(sid, data):
         "DEBUG",
         "video.offer.forward.start",
         category="workshop_realtime.video",
-        params={"request_id": get_request_id(), "from_id": sid, "target_id": target_id, "sdp_len": len(sdp), "sdp_sha256": sha256_text(sdp)},
+        params={
+            "request_id": get_request_id(),
+            "from_id": sid,
+            "target_id": target_id,
+            "sdp_len": len(sdp),
+            "sdp_sha256": sha256_text(sdp),
+            "sdp": sdp,
+        },
     )
 
     await sio.emit("video_offer", {"from_id": sid, "sdp": data.get("sdp")}, to=target_id)
@@ -163,7 +170,14 @@ async def video_answer(sid, data):
         "DEBUG",
         "video.answer.forward.start",
         category="workshop_realtime.video",
-        params={"request_id": get_request_id(), "from_id": sid, "target_id": target_id, "sdp_len": len(sdp), "sdp_sha256": sha256_text(sdp)},
+        params={
+            "request_id": get_request_id(),
+            "from_id": sid,
+            "target_id": target_id,
+            "sdp_len": len(sdp),
+            "sdp_sha256": sha256_text(sdp),
+            "sdp": sdp,
+        },
     )
 
     await sio.emit("video_answer", {"from_id": sid, "sdp": data.get("sdp")}, to=target_id)
@@ -200,6 +214,7 @@ async def video_ice_candidate(sid, data):
             "target_id": target_id,
             "candidate_len": len(candidate),
             "candidate_sha256": sha256_text(candidate),
+            "candidate": candidate,
         },
     )
 

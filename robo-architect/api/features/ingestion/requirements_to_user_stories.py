@@ -75,6 +75,7 @@ User Story는 명확하고 테스트 가능해야 합니다."""
                 },
                 "system_len": len(system_prompt),
                 "system_sha256": sha256_text(system_prompt),
+                "system_prompt": system_prompt,
                 "prompt_len": len(prompt),
                 "prompt_sha256": sha256_text(prompt),
                 "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
