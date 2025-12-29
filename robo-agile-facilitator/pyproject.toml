@@ -32,8 +32,10 @@ dependencies = [
   "openai",
 
   # Utilities
-  "pydantic",
-  "pydantic-settings",
+  # NOTE: Python 3.12 changed `typing.ForwardRef._evaluate` signature; older pydantic(v1 shim)
+  # can crash at import-time for langsmith/langchain on 3.12. Pin to a newer pydantic.
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.6.0",
   "python-dotenv",
   "httpx",
 
