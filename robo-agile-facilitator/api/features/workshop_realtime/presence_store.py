@@ -213,12 +213,6 @@ class WorkshopPresenceStore:
         key = f"sticker:{sticker_id}:position"
         await self._client.hset(key, mapping={"x": str(x), "y": str(y)})
         await self._client.expire(key, 3600)  # 1 hour
-        SmartLogger.log(
-            "DEBUG",
-            "presence.sticker_position.set",
-            category="workshop_realtime.presence_store",
-            params={**self._ctx(), "sticker_id": sticker_id, "x": x, "y": y, "duration_ms": t.ms()},
-        )
 
     async def get_sticker_position(self, sticker_id: str) -> Optional[dict]:
         """Get current sticker position."""
@@ -227,19 +221,7 @@ class WorkshopPresenceStore:
         data = await self._client.hgetall(key)
         if data:
             out = {"x": float(data["x"]), "y": float(data["y"])}
-            SmartLogger.log(
-                "DEBUG",
-                "presence.sticker_position.get",
-                category="workshop_realtime.presence_store",
-                params={**self._ctx(), "sticker_id": sticker_id, "found": True, "duration_ms": t.ms()},
-            )
             return out
-        SmartLogger.log(
-            "DEBUG",
-            "presence.sticker_position.get",
-            category="workshop_realtime.presence_store",
-            params={**self._ctx(), "sticker_id": sticker_id, "found": False, "duration_ms": t.ms()},
-        )
         return None
 
     # Pub/Sub for real-time events
