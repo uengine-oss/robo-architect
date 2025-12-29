@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     neo4j_database: str = "neo4j"
     
     # Redis
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str = "redis://localhost:16379"
     
     # TURN Server
     turn_server: str = "turn:localhost:3478"
