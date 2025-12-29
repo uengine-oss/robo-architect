@@ -4,9 +4,11 @@ import json
 import os
 import threading
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 class SmartLogger:
+    SMART_LOGGER_BLACKLIST_MESSAGES = [
+    ]
     LEVEL_PRIORITY = {
         "DEBUG": 0,
         "INFO": 1,
@@ -31,24 +33,17 @@ class SmartLogger:
     def __init__(self, 
                  main_log_path=None, 
                  detail_log_dir=None,
-                 blacklisted_log_path=None,
-                 blacklisted_detail_log_dir=None,
                  min_level=None,
                  include_all_min_level=None,
                  console_output=None,
                  file_output=None,
-                 remove_log_on_create=None): 
+                 remove_log_on_create=None,
+                 blacklist_messages=None): 
         self.main_log_path = self._get_env_variable(
             main_log_path, "MAIN_LOG_PATH", "logs/app_flow.jsonl"
         )
         self.detail_log_dir = self._get_env_variable(
             detail_log_dir, "DETAIL_LOG_DIR", "logs/details"
-        )
-        self.blacklisted_log_path = self._get_env_variable(
-            blacklisted_log_path, "BLACKLISTED_LOG_PATH", "logs/app_flow_blacklisted.jsonl"
-        )
-        self.blacklisted_detail_log_dir = self._get_env_variable(
-            blacklisted_detail_log_dir, "BLACKLISTED_DETAIL_LOG_DIR", "logs/details_blacklisted"
         )
         self.min_level = self._get_env_variable(
             min_level, "MIN_LEVEL", "ERROR"
@@ -69,12 +64,11 @@ class SmartLogger:
         self._lock = threading.Lock()
         self._last_timestamp = None
         self._timestamp_counter = 0
-        self.blacklist_categories = self._load_blacklist_categories()
+        self.blacklist_messages = self._load_blacklist_messages(blacklist_messages)
 
         if self.file_output:
             dir_paths = [
-                os.path.dirname(self.main_log_path), self.detail_log_dir, 
-                os.path.dirname(self.blacklisted_log_path), self.blacklisted_detail_log_dir
+                os.path.dirname(self.main_log_path), self.detail_log_dir
             ]
             for dir_path in dir_paths:
                 if self.remove_log_on_create and os.path.exists(dir_path):
@@ -87,25 +81,69 @@ class SmartLogger:
             return direct_value
         return os.environ.get(f"SMART_LOGGER_{env_key}", default)
 
-    def _load_blacklist_categories(self):
+    def _load_blacklist_messages(self, direct_value: Optional[Any] = None):
         """
-        환경변수에서 블랙리스트 카테고리 목록을 로드
-        SMART_LOGGER_BLACKLIST_CATEGORIES 환경변수에서 ","로 구분된 카테고리 목록을 파싱
-        """
-        blacklist_env = os.environ.get("SMART_LOGGER_BLACKLIST_CATEGORIES", "")
-        if not blacklist_env:
-            return set()
-        
-        categories = [cat.strip() for cat in blacklist_env.split(",") if cat.strip()]
-        return set(categories)
+        로그 message 문자열에 특정 substring 이 포함되면 로깅을 건너뛰기 위한 블랙리스트 목록 로드.
 
-    def _is_blacklisted(self, category):
+        - direct_value 가 주어지면 그 값을 우선 사용합니다. (list/tuple/set/iterable 또는 str(JSON))
+        - 환경변수로도 전달 가능합니다:
+          - SMART_LOGGER_BLACKLIST_MESSAGES='["a", "b"]'
+
+        NOTE: 배열의 문자열 중 하나라도 message 에 포함되어 있으면 해당 로그는 기록되지 않습니다.
         """
-        주어진 카테고리가 블랙리스트에 포함되어 있는지 확인
+        raw = direct_value
+        if raw is None:
+            raw = os.environ.get("SMART_LOGGER_BLACKLIST_MESSAGES")
+            if raw is None:
+                return self.SMART_LOGGER_BLACKLIST_MESSAGES
+
+        # raw 가 이미 iterable(문자열 제외)인 경우
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            raw_str = raw.strip()
+            if not raw_str:
+                return []
+            # 우선 JSON 배열 파싱 시도: '["a","b"]'
+            try:
+                parsed = json.loads(raw_str)
+                if isinstance(parsed, list):
+                    items = parsed
+                else:
+                    items = []
+            except Exception:
+                # 혹시 모를 fallback: "a,b" 같은 값도 지원
+                items = [s.strip() for s in raw_str.split(",")]
+        else:
+            try:
+                items = list(raw)  # type: ignore[arg-type]
+            except Exception:
+                items = []
+
+        # 문자열만 추출 + 공백 제거 + 빈 값 제거
+        result = []
+        for item in items:
+            if item is None:
+                continue
+            s = str(item).strip()
+            if not s:
+                continue
+            result.append(s)
+        return result
+
+    def _is_message_blacklisted(self, message: Any) -> bool:
         """
-        if category is None:
+        message 문자열에 blacklist_messages 의 substring 중 하나라도 포함되면 True.
+        """
+        if not self.blacklist_messages:
             return False
-        return category in self.blacklist_categories
+        msg = "" if message is None else str(message)
+        if not msg:
+            return False
+        for needle in self.blacklist_messages:
+            if needle in msg:
+                return True
+        return False
 
     def _generate_unique_trace_id(self):
         """
@@ -124,14 +162,12 @@ class SmartLogger:
         
         return trace_id
 
-    def _save_detail_payload(self, trace_id, payload, is_blacklisted=False):
+    def _save_detail_payload(self, trace_id, payload):
         """
         큰 데이터(파라미터)를 별도 JSON 파일로 저장
-        블랙리스트 카테고리인 경우 별도 디렉토리에 저장
         """
         filename = f"{trace_id}.json"
-        target_dir = self.blacklisted_detail_log_dir if is_blacklisted else self.detail_log_dir
-        filepath = os.path.join(target_dir, filename)
+        filepath = os.path.join(self.detail_log_dir, filename)
         
         try:
             if self.file_output:
@@ -166,16 +202,19 @@ class SmartLogger:
             params (dict): 상세 파라미터
             max_inline_chars (int): 메인 로그에 포함할 최대 글자 수. 이보다 길면 분리 저장.
         """
+        # message 에 특정 substring 이 포함되면 로깅 자체를 하지 않음
+        if self._is_message_blacklisted(message):
+            return
+
         if not self._should_log(level):
             return
 
         timestamp = datetime.now().isoformat()
-        is_blacklisted = self._is_blacklisted(category)
 
         log_entry = {
             "timestamp": timestamp,
             "level": level,
-            "message": message
+            "message": "" if message is None else str(message)
         }
 
         if category:
@@ -188,7 +227,7 @@ class SmartLogger:
             
             else:
                 trace_id = self._generate_unique_trace_id()
-                detail_filename = self._save_detail_payload(trace_id, params, is_blacklisted)
+                detail_filename = self._save_detail_payload(trace_id, params)
                 
                 if detail_filename.startswith("Error"):
                     log_entry["detail_save_error"] = detail_filename
@@ -203,7 +242,7 @@ class SmartLogger:
                 else:
                     log_entry["params_summary"] = {"type": type(params).__name__}
 
-        target_log_path = self.blacklisted_log_path if is_blacklisted else self.main_log_path
+        target_log_path = self.main_log_path
         if self.file_output:
             with self._lock:
                 with open(target_log_path, 'a', encoding='utf-8') as f:
