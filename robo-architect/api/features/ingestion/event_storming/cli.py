@@ -204,7 +204,10 @@ def status():
 
     if not stats:
         console.print("[yellow]No nodes in the database.[/yellow]")
-        console.print("[dim]Run 'python scripts/load_all.py' to load sample data.[/dim]")
+        console.print("[dim]Load sample data with cypher-shell (optional):[/dim]")
+        console.print("[dim]  cypher-shell -f docs/cypher/schema/01_constraints.cypher[/dim]")
+        console.print("[dim]  cypher-shell -f docs/cypher/schema/02_indexes.cypher[/dim]")
+        console.print("[dim]  cypher-shell -f docs/cypher/sample_data.cypher[/dim]")
         return
 
     # Display node counts
