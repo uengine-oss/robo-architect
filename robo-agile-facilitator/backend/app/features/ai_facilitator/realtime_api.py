@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from ...config import get_settings
+from ...platform.observability.request_logging import RequestTimer, get_request_id, sha256_text, summarize_for_log
+from ...platform.observability.smart_logger import SmartLogger
 from .facilitator import get_session_instructions
 
 router = APIRouter(prefix="/api/realtime", tags=["realtime"])
@@ -26,6 +28,7 @@ async def get_ephemeral_key(request: Request):
     2. Backend creates a session with OpenAI, gets ephemeral token
     3. Client uses token to establish WebRTC connection with OpenAI
     """
+    t = RequestTimer()
     settings = get_settings()
 
     body = await request.json() if request.headers.get("content-type") == "application/json" else {}
@@ -33,42 +36,95 @@ async def get_ephemeral_key(request: Request):
 
     # Get session-specific instructions for the AI facilitator
     instructions = await get_session_instructions(session_id) if session_id else get_default_instructions()
+    SmartLogger.log(
+        "INFO",
+        "realtime.ephemeral_key.start",
+        category="ai_facilitator.realtime_api",
+        params={
+            "request_id": get_request_id(),
+            "session_id": session_id,
+            "body": summarize_for_log(body),
+            "instructions_len": len(instructions or ""),
+            "instructions_sha256": sha256_text(instructions or ""),
+        },
+    )
 
     # Create session with OpenAI to get ephemeral token
     async with httpx.AsyncClient() as client:
         try:
+            openai_t = RequestTimer()
+            request_payload = {
+                "model": "gpt-4o-realtime-preview-2024-12-17",
+                "voice": "alloy",
+                "instructions": instructions,
+                "input_audio_format": "pcm16",
+                "output_audio_format": "pcm16",
+                "input_audio_transcription": {"model": "whisper-1"},
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 500,
+                },
+                "tools": get_facilitator_tools(),
+            }
+            SmartLogger.log(
+                "INFO",
+                "realtime.openai.sessions.create.start",
+                category="ai_facilitator.realtime_api",
+                params={
+                    "request_id": get_request_id(),
+                    "session_id": session_id,
+                    "model": request_payload.get("model"),
+                    "voice": request_payload.get("voice"),
+                    "tools_count": len(request_payload.get("tools") or []),
+                    "turn_detection": summarize_for_log(request_payload.get("turn_detection")),
+                    "instructions_sha256": sha256_text(instructions or ""),
+                },
+            )
             response = await client.post(
                 "https://api.openai.com/v1/realtime/sessions",
                 headers={
                     "Authorization": f"Bearer {settings.openai_api_key}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": "gpt-4o-realtime-preview-2024-12-17",
-                    "voice": "alloy",
-                    "instructions": instructions,
-                    "input_audio_format": "pcm16",
-                    "output_audio_format": "pcm16",
-                    "input_audio_transcription": {"model": "whisper-1"},
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.5,
-                        "prefix_padding_ms": 300,
-                        "silence_duration_ms": 500,
-                    },
-                    "tools": get_facilitator_tools(),
-                },
+                json=request_payload,
                 timeout=30.0,
             )
 
             if response.status_code != 200:
                 error_text = response.text
-                print(f"OpenAI API error: {response.status_code} - {error_text}")
+                SmartLogger.log(
+                    "ERROR",
+                    "realtime.openai.sessions.create.error",
+                    category="ai_facilitator.realtime_api",
+                    params={
+                        "request_id": get_request_id(),
+                        "session_id": session_id,
+                        "status_code": response.status_code,
+                        "error_text": summarize_for_log(error_text),
+                        "duration_ms": openai_t.ms(),
+                    },
+                )
                 raise HTTPException(
                     status_code=response.status_code, detail=f"Failed to create session: {error_text}"
                 )
 
             result = response.json()
+            # DO NOT log client_secret value (sensitive). Log only presence/expiry.
+            SmartLogger.log(
+                "INFO",
+                "realtime.openai.sessions.create.ok",
+                category="ai_facilitator.realtime_api",
+                params={
+                    "request_id": get_request_id(),
+                    "session_id": session_id,
+                    "openai_session_id": result.get("id"),
+                    "has_client_secret": bool((result.get("client_secret") or {}).get("value")),
+                    "expires_at": (result.get("client_secret") or {}).get("expires_at"),
+                    "duration_ms": openai_t.ms(),
+                },
+            )
 
             return JSONResponse(
                 content={
@@ -79,9 +135,28 @@ async def get_ephemeral_key(request: Request):
             )
 
         except httpx.TimeoutException:
+            SmartLogger.log(
+                "ERROR",
+                "realtime.openai.timeout",
+                category="ai_facilitator.realtime_api",
+                params={"request_id": get_request_id(), "session_id": session_id, "duration_ms": t.ms()},
+            )
             raise HTTPException(status_code=504, detail="OpenAI API timeout")
         except httpx.RequestError as e:
+            SmartLogger.log(
+                "ERROR",
+                "realtime.openai.request_error",
+                category="ai_facilitator.realtime_api",
+                params={"request_id": get_request_id(), "session_id": session_id, "error": repr(e), "duration_ms": t.ms()},
+            )
             raise HTTPException(status_code=502, detail=f"Connection error: {str(e)}")
+        finally:
+            SmartLogger.log(
+                "INFO",
+                "realtime.ephemeral_key.end",
+                category="ai_facilitator.realtime_api",
+                params={"request_id": get_request_id(), "session_id": session_id, "duration_ms": t.ms()},
+            )
 
 
 @router.post("/session/{session_id}/update")
@@ -93,13 +168,34 @@ async def update_session_config(session_id: str, request: Request):
     Note: Actual updates should be done via the WebRTC data channel
     using session.update events. This endpoint is for reference.
     """
+    t = RequestTimer()
     body = await request.json()
     phase = body.get("phase")
 
     if phase:
         instructions = await get_session_instructions(session_id)
+        SmartLogger.log(
+            "INFO",
+            "realtime.session.update.ok",
+            category="ai_facilitator.realtime_api",
+            params={
+                "request_id": get_request_id(),
+                "session_id": session_id,
+                "phase": phase,
+                "instructions_len": len(instructions or ""),
+                "instructions_sha256": sha256_text(instructions or ""),
+                "duration_ms": t.ms(),
+                "body": summarize_for_log(body),
+            },
+        )
         return JSONResponse(content={"instructions": instructions, "phase": phase})
 
+    SmartLogger.log(
+        "INFO",
+        "realtime.session.update.noop",
+        category="ai_facilitator.realtime_api",
+        params={"request_id": get_request_id(), "session_id": session_id, "duration_ms": t.ms(), "body": summarize_for_log(body)},
+    )
     return JSONResponse(content={"status": "ok"})
 
 

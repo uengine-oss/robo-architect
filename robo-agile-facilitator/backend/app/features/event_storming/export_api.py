@@ -6,6 +6,8 @@ from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
 
 from ...config import get_settings
+from ...platform.observability.request_logging import RequestTimer, sha256_text, summarize_for_log
+from ...platform.observability.smart_logger import SmartLogger
 from .graph_store import graph
 
 router = APIRouter(prefix="/api/sessions", tags=["export"])
@@ -14,13 +16,37 @@ router = APIRouter(prefix="/api/sessions", tags=["export"])
 @router.get("/{session_id}/export/json")
 async def export_json(session_id: str):
     """Export session data as JSON."""
+    t = RequestTimer()
+    SmartLogger.log(
+        "INFO",
+        "event_storming.export.json.start",
+        category="event_storming.export",
+        params={"session_id": session_id},
+    )
     session = await graph.get_session(session_id)
     if not session:
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.json.not_found",
+            category="event_storming.export",
+            params={"session_id": session_id, "duration_ms": t.ms()},
+        )
         raise HTTPException(status_code=404, detail="Session not found")
 
     stickers = await graph.get_stickers(session_id)
     connections = await graph.get_connections(session_id)
 
+    SmartLogger.log(
+        "INFO",
+        "event_storming.export.json.ok",
+        category="event_storming.export",
+        params={
+            "session_id": session_id,
+            "stickers_count": len(stickers),
+            "connections_count": len(connections),
+            "duration_ms": t.ms(),
+        },
+    )
     return JSONResponse(
         content={
             "session": {
@@ -53,8 +79,21 @@ async def export_json(session_id: str):
 @router.get("/{session_id}/export/mermaid")
 async def export_mermaid(session_id: str):
     """Export session as Mermaid diagram."""
+    t = RequestTimer()
+    SmartLogger.log(
+        "INFO",
+        "event_storming.export.mermaid.start",
+        category="event_storming.export",
+        params={"session_id": session_id},
+    )
     session = await graph.get_session(session_id)
     if not session:
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.mermaid.not_found",
+            category="event_storming.export",
+            params={"session_id": session_id, "duration_ms": t.ms()},
+        )
         raise HTTPException(status_code=404, detail="Session not found")
 
     stickers = await graph.get_stickers(session_id)
@@ -94,20 +133,53 @@ async def export_mermaid(session_id: str):
 
     lines.append(style_classes)
 
-    return JSONResponse(content={"mermaid": "\n".join(lines), "session_title": session.title})
+    mermaid = "\n".join(lines)
+    SmartLogger.log(
+        "INFO",
+        "event_storming.export.mermaid.ok",
+        category="event_storming.export",
+        params={
+            "session_id": session_id,
+            "stickers_count": len(stickers),
+            "connections_count": len(connections),
+            "mermaid_len": len(mermaid),
+            "mermaid_sha256": sha256_text(mermaid),
+            "duration_ms": t.ms(),
+        },
+    )
+    return JSONResponse(content={"mermaid": mermaid, "session_title": session.title})
 
 
 @router.get("/{session_id}/export/summary")
 async def export_summary(session_id: str):
     """Generate AI summary of the session."""
+    t = RequestTimer()
+    SmartLogger.log(
+        "INFO",
+        "event_storming.export.summary.start",
+        category="event_storming.export",
+        params={"session_id": session_id},
+    )
     session = await graph.get_session(session_id)
     if not session:
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.summary.not_found",
+            category="event_storming.export",
+            params={"session_id": session_id, "duration_ms": t.ms()},
+        )
         raise HTTPException(status_code=404, detail="Session not found")
 
     stickers = await graph.get_stickers(session_id)
     connections = await graph.get_connections(session_id)
 
     if not stickers:
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.summary.no_stickers",
+            category="event_storming.export",
+            params={"session_id": session_id, "duration_ms": t.ms()},
+        )
         return JSONResponse(content={"summary": "세션에 스티커가 없습니다.", "events": [], "commands": [], "policies": []})
 
     # Group stickers by type
@@ -141,6 +213,26 @@ async def export_summary(session_id: str):
 {chr(10).join(f"- {c.source_id} -> {c.target_id}" for c in connections)}
 """
 
+    SmartLogger.log(
+        "INFO",
+        "event_storming.export.summary.context.built",
+        category="event_storming.export",
+        params={
+            "session_id": session_id,
+            "stickers_count": len(stickers),
+            "connections_count": len(connections),
+            "by_type": {
+                "events": len(events),
+                "commands": len(commands),
+                "policies": len(policies),
+                "read_models": len(read_models),
+                "external_systems": len(external_systems),
+            },
+            "context_len": len(context),
+            "context_sha256": sha256_text(context),
+        },
+    )
+
     # Generate summary with AI
     settings = get_settings()
     llm = ChatOpenAI(model="gpt-4", temperature=0.3, api_key=settings.openai_api_key)
@@ -162,11 +254,42 @@ async def export_summary(session_id: str):
     ]
 
     try:
+        ai_t = RequestTimer()
         response = await llm.ainvoke(messages)
         summary_text = response.content
+        SmartLogger.log(
+            "INFO",
+            "event_storming.export.summary.ai.ok",
+            category="event_storming.export",
+            params={
+                "session_id": session_id,
+                "ai_duration_ms": ai_t.ms(),
+                "summary_len": len(summary_text or ""),
+                "summary_sha256": sha256_text(summary_text or ""),
+            },
+        )
     except Exception as e:
         summary_text = f"AI 요약 생성 중 오류가 발생했습니다: {str(e)}"
+        SmartLogger.log(
+            "ERROR",
+            "event_storming.export.summary.ai.error",
+            category="event_storming.export",
+            params={
+                "session_id": session_id,
+                "error": repr(e),
+                "duration_ms": t.ms(),
+                "messages_summary": summarize_for_log(
+                    [{"role": "system", "len": len(messages[0].content)}, {"role": "human", "len": len(messages[1].content)}]
+                ),
+            },
+        )
 
+    SmartLogger.log(
+        "INFO",
+        "event_storming.export.summary.ok",
+        category="event_storming.export",
+        params={"session_id": session_id, "duration_ms": t.ms()},
+    )
     return JSONResponse(
         content={
             "summary": summary_text,
@@ -189,14 +312,39 @@ async def export_summary(session_id: str):
 @router.post("/{session_id}/end")
 async def end_session(session_id: str):
     """Mark session as ended."""
+    t = RequestTimer()
+    SmartLogger.log(
+        "INFO",
+        "event_storming.session.end.start",
+        category="event_storming.export",
+        params={"session_id": session_id},
+    )
     session = await graph.get_session(session_id)
     if not session:
+        SmartLogger.log(
+            "INFO",
+            "event_storming.session.end.not_found",
+            category="event_storming.export",
+            params={"session_id": session_id, "duration_ms": t.ms()},
+        )
         raise HTTPException(status_code=404, detail="Session not found")
 
     success = await graph.end_session(session_id)
     if not success:
+        SmartLogger.log(
+            "ERROR",
+            "event_storming.session.end.failed",
+            category="event_storming.export",
+            params={"session_id": session_id, "duration_ms": t.ms()},
+        )
         raise HTTPException(status_code=500, detail="Failed to end session")
 
+    SmartLogger.log(
+        "INFO",
+        "event_storming.session.end.ok",
+        category="event_storming.export",
+        params={"session_id": session_id, "duration_ms": t.ms()},
+    )
     return {"status": "ended", "session_id": session_id}
 
 

@@ -9,6 +9,8 @@ from typing import Optional
 
 from ..event_storming.graph_store import graph
 from ..event_storming.models import SessionPhase
+from ...platform.observability.request_logging import RequestTimer, get_request_id, sha256_text
+from ...platform.observability.smart_logger import SmartLogger
 
 
 # Base system prompt for the AI facilitator
@@ -138,15 +140,30 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
     Returns:
         Full instruction string for the AI
     """
+    t = RequestTimer()
     instructions = BASE_INSTRUCTIONS
 
     if not session_id:
-        return instructions + PHASE_INSTRUCTIONS[SessionPhase.ORIENTATION]
+        out = instructions + PHASE_INSTRUCTIONS[SessionPhase.ORIENTATION]
+        SmartLogger.log(
+            "DEBUG",
+            "ai_facilitator.instructions.default",
+            category="ai_facilitator.facilitator",
+            params={"request_id": get_request_id(), "session_id": None, "len": len(out), "sha256": sha256_text(out), "duration_ms": t.ms()},
+        )
+        return out
 
     # Load session context
     session = await graph.get_session(session_id)
     if not session:
-        return instructions + PHASE_INSTRUCTIONS[SessionPhase.ORIENTATION]
+        out = instructions + PHASE_INSTRUCTIONS[SessionPhase.ORIENTATION]
+        SmartLogger.log(
+            "INFO",
+            "ai_facilitator.instructions.session_not_found",
+            category="ai_facilitator.facilitator",
+            params={"request_id": get_request_id(), "session_id": session_id, "len": len(out), "sha256": sha256_text(out), "duration_ms": t.ms()},
+        )
+        return out
 
     # Add phase-specific instructions
     phase_instruction = PHASE_INSTRUCTIONS.get(
@@ -174,6 +191,20 @@ async def get_session_instructions(session_id: Optional[str] = None) -> str:
         for s in recent:
             instructions += f"- [{s.type.value}] {s.text} (by {s.author})\n"
 
+    SmartLogger.log(
+        "DEBUG",
+        "ai_facilitator.instructions.built",
+        category="ai_facilitator.facilitator",
+        params={
+            "request_id": get_request_id(),
+            "session_id": session_id,
+            "phase": session.phase.value,
+            "stickers_count": len(stickers),
+            "len": len(instructions),
+            "sha256": sha256_text(instructions),
+            "duration_ms": t.ms(),
+        },
+    )
     return instructions
 
 
@@ -222,20 +253,34 @@ def validate_event_text(text: str) -> dict:
                 suggested = text.replace(cmd, evt)
                 break
 
-        return {
+        out = {
             "valid": False,
             "issue": "command_not_event",
             "suggestion": suggested,
             "message": f"This looks like a command. For an event, try: '{suggested}'",
         }
+        SmartLogger.log(
+            "INFO",
+            "ai_facilitator.event_validation.invalid",
+            category="ai_facilitator.facilitator",
+            params={"request_id": get_request_id(), "issue": out["issue"], "text": text, "suggestion": suggested},
+        )
+        return out
 
     if not is_past_tense and len(text) > 3:
-        return {
+        out = {
             "valid": False,
             "issue": "not_past_tense",
             "suggestion": text + " (완료)" if any(ord(c) > 127 for c in text) else text + "ed",
             "message": "Events should be in past tense - something that HAS happened",
         }
+        SmartLogger.log(
+            "INFO",
+            "ai_facilitator.event_validation.invalid",
+            category="ai_facilitator.facilitator",
+            params={"request_id": get_request_id(), "issue": out["issue"], "text": text, "suggestion": out["suggestion"]},
+        )
+        return out
 
     return {"valid": True}
 
