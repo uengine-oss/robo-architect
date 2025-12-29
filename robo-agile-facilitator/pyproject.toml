@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robo-agile-facilitator"
+version = "0.1.0"
+description = "AESF - AI Event Storming Facilitator (FastAPI + Socket.IO + WebRTC signaling + OpenAI Realtime)"
+readme = "README.md"
+# NOTE:
+# - `uv sync` on Python 3.13 may fail to build some native deps (e.g. pydantic-core) from source.
+# - We cap Python to <3.13 for now to keep local dev reliable; use Python 3.12.x.
+requires-python = ">=3.9,<3.13"
+license = { text = "MIT" }
+dependencies = [
+  # FastAPI & Server
+  "fastapi",
+  "uvicorn[standard]",
+  "python-multipart",
+
+  # WebSocket
+  "python-socketio",
+  "aiohttp",
+
+  # Database
+  "neo4j",
+  "redis",
+
+  # AI & LangChain
+  "langchain",
+  "langchain-openai",
+  "openai",
+
+  # Utilities
+  "pydantic",
+  "pydantic-settings",
+  "python-dotenv",
+  "httpx",
+
+  # Audio processing
+  "numpy",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["api*"]

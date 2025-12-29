@@ -61,12 +61,20 @@ docker-compose up -d
 
 ### 3. Backend 실행
 
+> **Python 버전 권장: 3.12.x (현재 프로젝트는 `<3.13`만 지원하도록 설정됨)**
+
+#### (권장) uv 사용
+
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:socket_app --reload --host 0.0.0.0 --port 8000
+# 프로젝트 루트(= robo-agile-facilitator)에서
+# Python 3.12가 없으면 설치(선택)
+uv python install 3.12
+
+# 의존성 설치 + .venv 생성/동기화
+uv sync
+
+# 실행 (FastAPI + Socket.IO ASGI 래퍼)
+uv run uvicorn api.main:socket_app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### 4. Frontend 실행
