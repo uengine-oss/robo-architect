@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     
     # OpenAI
     openai_api_key: str
+    openai_model: str = "gpt-4.1-2025-04-14"
+    openai_realtime_model: str = "gpt-4o-realtime-preview-2024-12-17"
     
     # Neo4j
     neo4j_uri: str = "bolt://localhost:7687"

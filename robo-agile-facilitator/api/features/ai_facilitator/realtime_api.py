@@ -54,7 +54,7 @@ async def get_ephemeral_key(request: Request):
         try:
             openai_t = RequestTimer()
             request_payload = {
-                "model": "gpt-4o-realtime-preview-2024-12-17",
+                "model": settings.openai_realtime_model,
                 "voice": "alloy",
                 "instructions": instructions,
                 "input_audio_format": "pcm16",

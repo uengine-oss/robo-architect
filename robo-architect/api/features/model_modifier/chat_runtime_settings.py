@@ -9,6 +9,6 @@ from api.platform.env import (
 
 
 OPENAI_API_KEY = env_str("OPENAI_API_KEY")
-OPENAI_MODEL = env_first(["OPENAI_MODEL", "CHAT_MODEL", "LLM_MODEL"], default="gpt-4o")
+OPENAI_MODEL = env_first(["OPENAI_MODEL", "CHAT_MODEL", "LLM_MODEL"], default="gpt-4.1-2025-04-14")
 
 

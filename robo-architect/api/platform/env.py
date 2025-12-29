@@ -49,14 +49,14 @@ def get_llm_provider(default: str = "openai") -> str:
     return env_str("LLM_PROVIDER", default) or default
 
 
-def get_llm_model(default: str = "gpt-4o") -> str:
+def get_llm_model(default: str = "gpt-4.1-2025-04-14") -> str:
     """Get configured LLM model name."""
     return env_str("LLM_MODEL", default) or default
 
 
 def get_llm_provider_model(
     provider_default: str = "openai",
-    model_default: str = "gpt-4o",
+    model_default: str = "gpt-4.1-2025-04-14",
 ) -> tuple[str, str]:
     """Get configured LLM (provider, model) tuple."""
     return get_llm_provider(provider_default), get_llm_model(model_default)

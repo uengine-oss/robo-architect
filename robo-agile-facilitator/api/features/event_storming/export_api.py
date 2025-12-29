@@ -235,7 +235,7 @@ async def export_summary(session_id: str):
 
     # Generate summary with AI
     settings = get_settings()
-    llm = ChatOpenAI(model="gpt-4", temperature=0.3, api_key=settings.openai_api_key)
+    llm = ChatOpenAI(model=settings.openai_model, temperature=0.3, api_key=settings.openai_api_key)
 
     messages = [
         SystemMessage(
