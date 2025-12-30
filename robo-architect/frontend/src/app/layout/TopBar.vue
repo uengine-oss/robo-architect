@@ -18,8 +18,8 @@ function handleIngestionComplete() {
 <template>
   <header class="top-bar">
     <div class="top-bar__logo">
-      <div class="top-bar__logo-icon"></div>
-      <span>Event Storming Navigator</span>
+      <div class="top-bar__logo-icon">RA</div>
+      <span>Robo Architect</span>
     </div>
     
     <div class="top-bar__divider"></div>
