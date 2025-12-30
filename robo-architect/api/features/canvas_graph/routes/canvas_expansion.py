@@ -24,6 +24,63 @@ def _dedupe_relationships(relationships: list[dict[str, Any]]) -> list[dict[str,
     return unique_rels
 
 
+def _to_jsonable(value: Any, _seen: set[int] | None = None) -> Any:
+    """
+    Convert values returned from Neo4j (including neo4j.time.* temporals) into JSON-safe
+    primitives. This is intentionally local and only used by the expand-with-bc endpoint
+    to keep scope minimal.
+    """
+
+    # Fast path: JSON primitives
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if _seen is None:
+        _seen = set()
+
+    # Avoid potential recursion loops
+    obj_id = id(value)
+    if obj_id in _seen:
+        return str(value)
+    _seen.add(obj_id)
+
+    # Containers
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v, _seen) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_jsonable(v, _seen) for v in value]
+
+    # Python datetime-like
+    try:
+        import datetime as _dt  # local import to avoid widening module imports unnecessarily
+
+        if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
+            return value.isoformat()
+    except Exception:
+        # If datetime isn't usable for any reason, continue with other strategies.
+        pass
+
+    # Neo4j temporal types (neo4j.time.DateTime, Date, Time, Duration, etc.)
+    iso_format = getattr(value, "iso_format", None)
+    if callable(iso_format):
+        try:
+            return iso_format()
+        except Exception:
+            pass
+
+    to_native = getattr(value, "to_native", None)
+    if callable(to_native):
+        try:
+            native = to_native()
+            iso = getattr(native, "isoformat", None)
+            return iso() if callable(iso) else str(native)
+        except Exception:
+            pass
+
+    # Fallback: stringify unknown values rather than failing serialization.
+    return str(value)
+
+
 @router.get("/expand/{node_id}")
 async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
     """
@@ -525,9 +582,10 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
                     nodes.append(cmd)
                     relationships.append({"source": node_id, "target": cmd["id"], "type": "INVOKES"})
 
-        return {
+        payload = {
             "nodes": nodes,
             "relationships": _dedupe_relationships(relationships),
             "bcContext": {"id": bc["id"], "name": bc["name"], "description": bc.get("description")} if bc else None,
         }
+        return _to_jsonable(payload)
 

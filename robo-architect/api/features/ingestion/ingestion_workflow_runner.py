@@ -19,6 +19,7 @@ from api.features.ingestion.workflow.phases.commands import extract_commands_pha
 from api.features.ingestion.workflow.phases.events import extract_events_phase
 from api.features.ingestion.workflow.phases.parsing import parsing_phase
 from api.features.ingestion.workflow.phases.policies import identify_policies_phase
+from api.features.ingestion.workflow.phases.readmodels import extract_readmodels_phase
 from api.features.ingestion.workflow.phases.ui_wireframes import generate_ui_wireframes_phase
 from api.features.ingestion.workflow.phases.user_stories import extract_user_stories_phase
 from api.platform.observability.smart_logger import SmartLogger
@@ -97,7 +98,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 await wait_if_paused(session)
             yield event
 
-        async for event in generate_ui_wireframes_phase(ctx):
+        async for event in extract_events_phase(ctx):
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -108,7 +109,18 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 await wait_if_paused(session)
             yield event
 
-        async for event in extract_events_phase(ctx):
+        async for event in extract_readmodels_phase(ctx):
+            if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
+                yield ProgressEvent(
+                    phase=IngestionPhase.PAUSED,
+                    message="⏸️ 일시 정지됨 (채팅으로 일부를 수정한 후 재개하세요)",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"isPaused": True},
+                )
+                await wait_if_paused(session)
+            yield event
+
+        async for event in generate_ui_wireframes_phase(ctx):
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -140,6 +152,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     "bounded_contexts": len(ctx.bounded_contexts),
                     "aggregates": sum(len(aggs) for aggs in ctx.aggregates_by_bc.values()),
                     "commands": sum(len(cmds) for cmds in ctx.commands_by_agg.values()),
+                    "readmodels": sum(len(rms) for rms in (getattr(ctx, "readmodels_by_bc", {}) or {}).values()),
                     "uis": len(getattr(ctx, "uis", []) or []),
                     "events": sum(len(evts) for evts in ctx.events_by_agg.values()),
                     "policies": len(ctx.policies),
@@ -156,6 +169,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 "bounded_contexts": len(ctx.bounded_contexts),
                 "aggregates": sum(len(aggs) for aggs in ctx.aggregates_by_bc.values()),
                 "commands": sum(len(cmds) for cmds in ctx.commands_by_agg.values()),
+                "readmodels": sum(len(rms) for rms in (getattr(ctx, "readmodels_by_bc", {}) or {}).values()),
                 "events": sum(len(evts) for evts in ctx.events_by_agg.values()),
                 "policies": len(ctx.policies),
             },

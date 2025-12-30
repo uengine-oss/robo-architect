@@ -222,6 +222,32 @@ This creates traceability: UserStory -> Command -> Event
 Output should be a list of EventCandidate objects."""
 
 # =============================================================================
+# ReadModel Extraction
+# =============================================================================
+
+EXTRACT_READMODELS_PROMPT = """Identify ReadModels (query/projection models) for the given Bounded Context.
+
+Bounded Context: {bc_name} (ID: {bc_id})
+Description: {bc_description}
+
+User Stories for this Bounded Context:
+{user_stories}
+
+Available Events in this Bounded Context (for projection updates):
+{events}
+
+CRITICAL RULES:
+1. ReadModels are for QUERY intent only (read/search/list/detail/status). Do NOT create ReadModels for commands that change state.
+2. Naming: PascalCase using **Noun + Purpose**. Examples: OrderSummary, OrderStatus, ProductCatalog, InventorySnapshot.
+3. Keep it minimal: prefer 0~3 ReadModels per Bounded Context for the first iteration.
+4. Each ReadModel MUST list which user stories it supports via user_story_ids (traceability).
+5. provisioningType is fixed to CQRS (you do NOT need to output provisioningType).
+
+If there are no query-type user stories, return an empty list.
+
+Output should be a list of ReadModelCandidate objects."""
+
+# =============================================================================
 # Policy Identification
 # =============================================================================
 

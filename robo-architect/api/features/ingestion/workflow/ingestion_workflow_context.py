@@ -29,5 +29,6 @@ class IngestionWorkflowContext:
 
     # Optional artifacts
     uis: List[Any] = field(default_factory=list)
+    readmodels_by_bc: Dict[str, Any] = field(default_factory=dict)
 
 

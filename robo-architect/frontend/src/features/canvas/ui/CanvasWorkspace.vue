@@ -45,6 +45,10 @@ const nodesWithSelection = computed(() => {
   }))
 })
 
+// Vue Flow sometimes relies on reference changes to refresh edges rendering.
+// Wrap edges in a computed that returns a new array to ensure updates are picked up.
+const edgesForFlow = computed(() => [...canvasStore.edges])
+
 // Node types mapping
 const nodeTypes = {
   command: CommandNode,
@@ -261,7 +265,7 @@ onUnmounted(() => {
         <VueFlow
           v-else
           :nodes="nodesWithSelection"
-          :edges="canvasStore.edges"
+          :edges="edgesForFlow"
           :node-types="nodeTypes"
           :default-viewport="{ zoom: 0.8, x: 50, y: 50 }"
           :min-zoom="0.2"

@@ -1,46 +1,44 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import TreeNode from './TreeNode.vue'
 
 const navigatorStore = useNavigatorStore()
 const terminologyStore = useTerminologyStore()
-const isLoading = ref(true)
+const localLoading = ref(true)
+const isLoading = computed(() => localLoading.value || navigatorStore.loading)
 
 onMounted(async () => {
   await loadData()
 })
 
 async function loadData() {
-  isLoading.value = true
-  
-  // Fetch both user stories and contexts
-  await Promise.all([
-    navigatorStore.fetchUserStories(),
-    navigatorStore.fetchContexts()
-  ])
-  
-  // Auto-fetch trees for all contexts
-  for (const ctx of navigatorStore.contexts) {
-    await navigatorStore.fetchContextTree(ctx.id)
+  localLoading.value = true
+  try {
+    // Fetch both user stories and contexts
+    await Promise.all([
+      navigatorStore.fetchUserStories(),
+      navigatorStore.fetchContexts()
+    ])
+    
+    // Auto-fetch trees for all contexts
+    for (const ctx of navigatorStore.contexts) {
+      await navigatorStore.fetchContextTree(ctx.id)
+    }
+  } finally {
+    localLoading.value = false
   }
-  
-  isLoading.value = false
 }
 
 async function handleRefresh() {
-  isLoading.value = true
-  await navigatorStore.refreshAll()
-  isLoading.value = false
-}
-
-// Watch for external refresh triggers
-watch(() => navigatorStore.loading, (newVal) => {
-  if (newVal) {
-    isLoading.value = true
+  localLoading.value = true
+  try {
+    await navigatorStore.refreshAll()
+  } finally {
+    localLoading.value = false
   }
-})
+}
 </script>
 
 <template>

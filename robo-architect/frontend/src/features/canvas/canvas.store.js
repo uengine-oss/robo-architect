@@ -601,6 +601,8 @@ export const useCanvasStore = defineStore('canvas', () => {
     }
     
     edges.value.push(edge)
+    // Ensure consumers relying on reference changes (e.g. Vue Flow) observe updates.
+    edges.value = [...edges.value]
     return edge
   }
   

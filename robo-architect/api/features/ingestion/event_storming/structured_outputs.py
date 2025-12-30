@@ -10,7 +10,14 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
-from .state import AggregateCandidate, BoundedContextCandidate, CommandCandidate, EventCandidate, PolicyCandidate
+from .state import (
+    AggregateCandidate,
+    BoundedContextCandidate,
+    CommandCandidate,
+    EventCandidate,
+    PolicyCandidate,
+    ReadModelCandidate,
+)
 
 
 class BoundedContextList(BaseModel):
@@ -41,5 +48,11 @@ class PolicyList(BaseModel):
     """List of Policy candidates."""
 
     policies: List[PolicyCandidate] = Field(description="List of identified policies")
+
+
+class ReadModelList(BaseModel):
+    """List of ReadModel candidates."""
+
+    readmodels: List[ReadModelCandidate] = Field(description="List of identified read models")
 
 

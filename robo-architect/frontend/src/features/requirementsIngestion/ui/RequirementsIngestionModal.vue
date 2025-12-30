@@ -42,6 +42,7 @@ const dragOffset = ref({ x: 0, y: 0 })
 // Cache state
 const isCacheEnabled = ref(false)
 const isTogglingCache = ref(false)
+const cacheFeedback = ref(null) // { kind: 'success' | 'error' | 'info', message: string }
 
 // Data clearing state
 const showClearConfirm = ref(false)
@@ -346,9 +347,23 @@ async function checkCacheStatus() {
     if (response.ok) {
       const data = await response.json()
       isCacheEnabled.value = !!data.enabled
+      // Do not show noisy UI on open; clear stale feedback if backend responds.
+      if (cacheFeedback.value?.kind === 'error') {
+        cacheFeedback.value = null
+      }
+    } else {
+      // Backend reachable but endpoint failed; keep UX responsive.
+      cacheFeedback.value = {
+        kind: 'info',
+        message: '캐시 상태를 확인할 수 없습니다.'
+      }
     }
   } catch (e) {
-    // ignore (optional feature if backend missing)
+    // Optional feature if backend missing; avoid "no-op" UX.
+    cacheFeedback.value = {
+      kind: 'info',
+      message: '캐시 기능을 사용할 수 없습니다. (서버 연결 실패)'
+    }
     console.error('Failed to check cache status:', e)
   }
 }
@@ -356,14 +371,35 @@ async function checkCacheStatus() {
 async function toggleCache() {
   if (isTogglingCache.value) return
   isTogglingCache.value = true
+  cacheFeedback.value = { kind: 'info', message: '캐시 설정 적용 중...' }
   try {
     const endpoint = isCacheEnabled.value ? 'disable' : 'enable'
     const response = await fetch(`/api/ingest/cache/${endpoint}`, { method: 'POST' })
-    if (response.ok) {
-      const data = await response.json()
+    const data = await response.json().catch(() => ({}))
+
+    // Always reflect server state when provided (even on logical failure)
+    if (typeof data.enabled !== 'undefined') {
       isCacheEnabled.value = !!data.enabled
     }
+
+    // Handle transport errors
+    if (!response.ok) {
+      const msg = data.detail || data.message || `캐시 ${endpoint} 요청에 실패했습니다.`
+      cacheFeedback.value = { kind: 'error', message: msg }
+      return
+    }
+
+    // Handle logical success/failure
+    const success = typeof data.success === 'boolean' ? data.success : true
+    const msg =
+      data.message ||
+      (success
+        ? (isCacheEnabled.value ? '캐시가 활성화되었습니다.' : '캐시가 비활성화되었습니다.')
+        : '캐시 설정을 변경할 수 없습니다.')
+
+    cacheFeedback.value = { kind: success ? 'success' : 'error', message: msg }
   } catch (e) {
+    cacheFeedback.value = { kind: 'error', message: '캐시 설정 변경 중 오류가 발생했습니다.' }
     console.error('Failed to toggle cache:', e)
   } finally {
     isTogglingCache.value = false
@@ -711,7 +747,16 @@ function useSample() {
                       <span class="cache-toggle__knob"></span>
                     </button>
                   </label>
+                  <span v-if="isTogglingCache" class="cache-toggle__pending">적용 중...</span>
                 </div>
+              </div>
+
+              <div
+                v-if="cacheFeedback?.message"
+                class="cache-feedback"
+                :class="`cache-feedback--${cacheFeedback.kind}`"
+              >
+                {{ cacheFeedback.message }}
               </div>
               
               <!-- File Upload Area -->
@@ -1202,6 +1247,38 @@ function useSample() {
 
 .cache-toggle__switch.is-enabled .cache-toggle__knob {
   transform: translateX(20px);
+}
+
+.cache-toggle__pending {
+  font-size: 0.75rem;
+  color: var(--color-text-light);
+  margin-left: var(--spacing-sm);
+}
+
+.cache-feedback {
+  margin-top: var(--spacing-sm);
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  border: 1px solid transparent;
+}
+
+.cache-feedback--success {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.25);
+  color: #10b981;
+}
+
+.cache-feedback--error {
+  background: rgba(255, 100, 100, 0.1);
+  border-color: rgba(255, 100, 100, 0.3);
+  color: #ff6464;
+}
+
+.cache-feedback--info {
+  background: rgba(34, 139, 230, 0.08);
+  border-color: rgba(34, 139, 230, 0.2);
+  color: var(--color-text);
 }
 
 /* Dropzone */

@@ -7,6 +7,7 @@ This mirrors robo-architect's ability to speed up repeated extractions by enabli
 from __future__ import annotations
 
 from pathlib import Path
+from api.platform.observability.smart_logger import SmartLogger
 
 _cache_enabled = False
 
@@ -22,6 +23,7 @@ def enable_langchain_cache() -> bool:
         from langchain_core.globals import set_llm_cache
     except Exception:
         # Optional dependency; fail gracefully
+        SmartLogger.log("ERROR", "Failed to enable LangChain cache", category="ingestion")
         return False
 
     try:

@@ -96,6 +96,23 @@ class EventCandidate(BaseModel):
     )
 
 
+class ReadModelCandidate(BaseModel):
+    """A candidate ReadModel (query/projection) within a Bounded Context."""
+
+    # NOTE: For ingestion workflow, we generate a deterministic id from (BC + name).
+    # Keep this optional so the LLM output stays simple and stable.
+    id: Optional[str] = Field(default=None, description="Optional ID (if provided).")
+    name: str = Field(
+        ...,
+        description="ReadModel name in PascalCase using Noun+Purpose (e.g., OrderSummary, OrderStatus).",
+    )
+    description: str = Field(..., description="What this ReadModel provides for queries.")
+    user_story_ids: List[str] = Field(
+        default_factory=list,
+        description="User Story IDs (within the BC) that this ReadModel supports (query intent).",
+    )
+
+
 class PolicyCandidate(BaseModel):
     """A candidate Policy for cross-BC communication."""
 

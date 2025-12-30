@@ -25,6 +25,7 @@ from .neo4j_ops.bounded_contexts import BoundedContextOps
 from .neo4j_ops.commands import CommandOps
 from .neo4j_ops.events import EventOps
 from .neo4j_ops.policies import PolicyOps
+from .neo4j_ops.readmodels import ReadModelOps
 from .neo4j_ops.ui_wireframes import UIWireframeOps
 from .neo4j_ops.user_stories import UserStoryOps
 
@@ -46,6 +47,7 @@ class Neo4jClient(
     CommandOps,
     EventOps,
     PolicyOps,
+    ReadModelOps,
     UIWireframeOps,
     GraphAnalysisOps,
 ):
