@@ -7,7 +7,9 @@ def extract_section(text: str, section_name: str) -> Optional[str]:
     import re
 
     patterns = [
-        rf"(?:💭|⚡|👁️)?\s*{section_name}:\s*(.+?)(?=(?:💭|⚡|👁️)?\s*(?:THOUGHT|ACTION|OBSERVATION|SUMMARY)|```|\n\n|$)",
+        # Supports emoji-prefixed sections (💭/⚡/👁️/✅) and multi-line content.
+        # Stop at the next section header, a JSON fence, or end of text.
+        rf"(?:💭|⚡|👁️|✅)?\s*{section_name}:\s*(.+?)(?=(?:💭|⚡|👁️|✅)?\s*(?:THOUGHT|ACTION|OBSERVATION|SUMMARY)|```|$)",
         rf"{section_name}:\s*(.+?)(?=\n|$)",
     ]
     for pattern in patterns:

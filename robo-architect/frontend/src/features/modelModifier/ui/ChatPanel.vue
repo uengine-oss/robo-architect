@@ -212,12 +212,6 @@ function formatTime(timestamp) {
             <div class="chat-processing__dot"></div>
             <div class="chat-processing__dot"></div>
           </div>
-          <div v-if="chatStore.currentThought" class="chat-processing__thought">
-            💭 {{ chatStore.currentThought }}
-          </div>
-          <div v-if="chatStore.currentAction" class="chat-processing__action">
-            ⚡ {{ chatStore.currentAction }}
-          </div>
         </div>
       </div>
     </div>

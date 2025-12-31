@@ -190,8 +190,6 @@ For "connect" actions, include:
                     pass
                 buffer = buffer[: buffer.find("```json")] + buffer[end + 3 :]
 
-            yield format_sse_event("content", {"content": chunk.content})
-
         total_ms = int((time.perf_counter() - t0) * 1000)
         if AI_AUDIT_LOG_ENABLED:
             SmartLogger.log(
@@ -213,9 +211,16 @@ For "connect" actions, include:
                 },
             )
 
+        summary_section = extract_section(raw_output, "SUMMARY")
+        final_summary = (
+            summary_section
+            if summary_section
+            else f"완료: {len(applied_changes)}개의 변경사항이 적용되었습니다."
+        )
+
         yield format_sse_event(
             "complete",
-            {"summary": f"완료: {len(applied_changes)}개의 변경사항이 적용되었습니다.", "appliedChanges": applied_changes},
+            {"summary": final_summary, "appliedChanges": applied_changes},
         )
 
     except Exception as e:
