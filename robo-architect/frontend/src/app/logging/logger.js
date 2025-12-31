@@ -111,7 +111,7 @@ export function createLogger({ scope }) {
       ...context
     }
 
-    const line = `[LDVC][${level.toUpperCase()}][${scope}] ${message}${kvString({ event, ...context })}`
+    const line = `[${level.toUpperCase()}][${scope}] ${message}${kvString({ event, ...context })}`
     toConsoleFn(level)(line, payload)
   }
 
