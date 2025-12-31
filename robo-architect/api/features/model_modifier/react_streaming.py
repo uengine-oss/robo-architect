@@ -94,6 +94,13 @@ For "connect" actions, include:
         json_blocks_applied = 0
         json_decode_errors = 0
 
+        # De-dup streaming events: only emit when section content actually changes.
+        # Without this, the backend may re-emit THOUGHT/ACTION/OBSERVATION on every token,
+        # and the frontend will keep appending trace lines.
+        last_sent_thought: str | None = None
+        last_sent_action: str | None = None
+        last_sent_observation: str | None = None
+
         if AI_AUDIT_LOG_ENABLED:
             SmartLogger.log(
                 "INFO",
@@ -135,17 +142,20 @@ For "connect" actions, include:
 
             if "THOUGHT:" in buffer:
                 thought = extract_section(buffer, "THOUGHT")
-                if thought:
+                if thought and thought != last_sent_thought:
+                    last_sent_thought = thought
                     yield format_sse_event("thought", {"content": thought})
 
             if "ACTION:" in buffer:
                 action_txt = extract_section(buffer, "ACTION")
-                if action_txt:
+                if action_txt and action_txt != last_sent_action:
+                    last_sent_action = action_txt
                     yield format_sse_event("action", {"content": action_txt})
 
             if "OBSERVATION:" in buffer:
                 obs = extract_section(buffer, "OBSERVATION")
-                if obs:
+                if obs and obs != last_sent_observation:
+                    last_sent_observation = obs
                     yield format_sse_event("observation", {"content": obs})
 
             while "```json" in buffer and "```" in buffer[buffer.find("```json") + 7 :]:
