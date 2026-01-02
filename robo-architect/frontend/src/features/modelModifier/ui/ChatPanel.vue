@@ -95,6 +95,23 @@ function formatTime(timestamp) {
     minute: '2-digit'
   })
 }
+
+function getDraftFields(draft) {
+  if (!draft) return []
+  if (draft.action === 'rename') return ['name']
+  if (draft.action === 'connect') return ['relationship']
+  if (draft.action === 'delete') return ['delete']
+  if (draft.action === 'create') return ['create']
+  const updates = draft.updates && typeof draft.updates === 'object' ? draft.updates : {}
+  return Object.keys(updates)
+}
+
+function formatValue(value) {
+  if (value === null || value === undefined) return '(empty)'
+  const s = typeof value === 'string' ? value : JSON.stringify(value)
+  if (s.length > 240) return `${s.slice(0, 240)}… (${s.length} chars)`
+  return s
+}
 </script>
 
 <template>
@@ -195,6 +212,86 @@ function formatTime(timestamp) {
                   {{ change.action }}
                 </span>
                 <span class="chat-change-item__target">{{ change.targetName }}</span>
+              </div>
+            </div>
+
+            <div v-if="message.drafts && message.drafts.length > 0" class="chat-drafts">
+              <div class="chat-drafts__header">
+                <span>변경 제안 (승인 필요)</span>
+                <div class="chat-drafts__bulk">
+                  <button
+                    class="chat-drafts__btn"
+                    :disabled="chatStore.isConfirming || message.isApplied"
+                    @click="chatStore.setAllDraftApprovals(message.id, true)"
+                  >
+                    전체 승인
+                  </button>
+                  <button
+                    class="chat-drafts__btn"
+                    :disabled="chatStore.isConfirming || message.isApplied"
+                    @click="chatStore.setAllDraftApprovals(message.id, false)"
+                  >
+                    전체 거부
+                  </button>
+                </div>
+              </div>
+
+              <div v-for="draft in message.drafts" :key="draft.changeId" class="chat-draft-item">
+                <label class="chat-draft-item__check">
+                  <input
+                    type="checkbox"
+                    :checked="draft.approved"
+                    :disabled="chatStore.isConfirming || message.isApplied"
+                    @change="chatStore.toggleDraftApproval(message.id, draft.changeId, $event.target.checked)"
+                  />
+                </label>
+                <div class="chat-draft-item__body">
+                  <div class="chat-draft-item__top">
+                    <span :class="['chat-change-item__action', `chat-change-item__action--${draft.action}`]">
+                      {{ draft.action }}
+                    </span>
+                    <span class="chat-draft-item__target">
+                      {{ draft.targetName || draft.targetId }}
+                      <span class="chat-draft-item__meta">({{ draft.targetType || 'Unknown' }} · {{ draft.targetId }})</span>
+                    </span>
+                  </div>
+
+                  <div class="chat-draft-item__fields">
+                    <span class="chat-draft-item__label">필드:</span>
+                    <span class="chat-draft-item__value">{{ getDraftFields(draft).join(', ') }}</span>
+                  </div>
+
+                  <div v-if="draft.rationale" class="chat-draft-item__rationale">
+                    <span class="chat-draft-item__label">사유:</span>
+                    <span class="chat-draft-item__value">{{ draft.rationale }}</span>
+                  </div>
+
+                  <div v-if="draft.before || draft.after" class="chat-draft-item__diff">
+                    <div v-for="field in getDraftFields(draft)" :key="field" class="chat-draft-item__diff-row">
+                      <div class="chat-draft-item__diff-field">{{ field }}</div>
+                      <div class="chat-draft-item__diff-values">
+                        <div class="chat-draft-item__diff-col">
+                          <div class="chat-draft-item__diff-title">before</div>
+                          <pre class="chat-draft-item__diff-pre">{{ formatValue(draft.before?.[field]) }}</pre>
+                        </div>
+                        <div class="chat-draft-item__diff-col">
+                          <div class="chat-draft-item__diff-title">after</div>
+                          <pre class="chat-draft-item__diff-pre">{{ formatValue(draft.after?.[field]) }}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chat-drafts__footer">
+                <button
+                  class="chat-drafts__apply"
+                  :disabled="chatStore.isConfirming || message.isApplied"
+                  @click="chatStore.confirmDrafts(message.id)"
+                >
+                  선택 항목 적용
+                </button>
               </div>
             </div>
 
@@ -483,6 +580,155 @@ function formatTime(timestamp) {
 .chat-change-item__action--rename { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
 .chat-change-item__action--delete { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
 .chat-change-item__action--connect { background: rgba(167, 139, 250, 0.2); color: #a78bfa; }
+
+.chat-drafts {
+  margin: var(--spacing-sm) 0;
+  padding: var(--spacing-sm);
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-sm);
+}
+
+.chat-drafts__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.chat-drafts__bulk {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-drafts__btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.chat-drafts__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-draft-item {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 8px;
+}
+
+.chat-draft-item__check {
+  padding-top: 2px;
+}
+
+.chat-draft-item__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-draft-item__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.chat-draft-item__target {
+  font-size: 0.8rem;
+  color: var(--color-text);
+  min-width: 0;
+}
+
+.chat-draft-item__meta {
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+  margin-left: 6px;
+}
+
+.chat-draft-item__fields,
+.chat-draft-item__rationale {
+  font-size: 0.75rem;
+  color: var(--color-text-light);
+  margin-bottom: 4px;
+}
+
+.chat-draft-item__label {
+  font-weight: 600;
+  color: var(--color-text-light);
+  margin-right: 6px;
+}
+
+.chat-draft-item__diff {
+  margin-top: 8px;
+}
+
+.chat-draft-item__diff-row {
+  margin-top: 8px;
+}
+
+.chat-draft-item__diff-field {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.chat-draft-item__diff-values {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.chat-draft-item__diff-title {
+  font-size: 0.65rem;
+  color: var(--color-text-light);
+  margin-bottom: 4px;
+}
+
+.chat-draft-item__diff-pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.7rem;
+  color: var(--color-text);
+  max-height: 140px;
+  overflow: auto;
+}
+
+.chat-drafts__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.chat-drafts__apply {
+  background: var(--color-accent);
+  border: none;
+  color: white;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.chat-drafts__apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .chat-processing {
   padding: var(--spacing-md);

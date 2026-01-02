@@ -32,6 +32,9 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
   // Applied changes history
   const appliedChanges = ref([])
 
+  // Confirm/apply state
+  const isConfirming = ref(false)
+
   // Computed
   const hasMessages = computed(() => messages.value.length > 0)
   const lastMessage = computed(() => messages.value[messages.value.length - 1])
@@ -128,7 +131,8 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
       id: generateId(),
       type: 'assistant',
       content: '',
-      changes: [],
+      changes: [], // legacy (applied immediately)
+      drafts: [], // proposed changes requiring confirm
       reactSteps: [],
       timestamp: new Date().toISOString()
     }
@@ -206,9 +210,25 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
         upsertReactStep(assistantMessage.reactSteps, { type: 'observation', content: event.content })
         break
 
+      // Legacy: immediate-apply stream
       case 'change':
         assistantMessage.changes.push(event.change)
         appliedChanges.value.push(event.change)
+        break
+
+      // New: draft-only stream (requires confirm)
+      case 'draft_change':
+        if (!Array.isArray(assistantMessage.drafts)) assistantMessage.drafts = []
+        assistantMessage.drafts.push({
+          ...(event.draft || {}),
+          approved: true
+        })
+        break
+
+      case 'draft_complete':
+        assistantMessage.content = event.summary || assistantMessage.content
+        assistantMessage.isComplete = true
+        // NOTE: no canvas sync here — drafts must be confirmed first.
         break
 
       case 'content':
@@ -216,6 +236,7 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
         streamingContent.value = assistantMessage.content
         break
 
+      // Legacy: immediate-apply completion
       case 'complete':
         assistantMessage.content = event.summary || assistantMessage.content
         assistantMessage.isComplete = true
@@ -232,6 +253,92 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     }
 
     updateLastAssistantMessage(assistantMessage)
+  }
+
+  function setAllDraftApprovals(messageId, approved) {
+    const idx = messages.value.findIndex(m => m.id === messageId)
+    if (idx === -1) return
+    const msg = messages.value[idx]
+    if (!Array.isArray(msg.drafts)) return
+
+    msg.drafts = msg.drafts.map(d => ({ ...d, approved: !!approved }))
+    messages.value[idx] = { ...msg }
+    messages.value = [...messages.value]
+  }
+
+  function toggleDraftApproval(messageId, changeId, approved) {
+    const idx = messages.value.findIndex(m => m.id === messageId)
+    if (idx === -1) return
+    const msg = messages.value[idx]
+    if (!Array.isArray(msg.drafts)) return
+
+    msg.drafts = msg.drafts.map(d => (d.changeId === changeId ? { ...d, approved: !!approved } : d))
+    messages.value[idx] = { ...msg }
+    messages.value = [...messages.value]
+  }
+
+  async function confirmDrafts(messageId) {
+    const idx = messages.value.findIndex(m => m.id === messageId)
+    if (idx === -1) return
+    const msg = messages.value[idx]
+    const drafts = Array.isArray(msg.drafts) ? msg.drafts : []
+    const approved = drafts.filter(d => d.approved)
+
+    if (approved.length === 0) {
+      messages.value.push({
+        id: generateId(),
+        type: 'system',
+        content: '승인된 변경이 없습니다. (적용되지 않았습니다)',
+        timestamp: new Date().toISOString()
+      })
+      return
+    }
+
+    isConfirming.value = true
+    try {
+      const payload = {
+        drafts: drafts.map(d => {
+          const { approved, ...rest } = d
+          return rest
+        }),
+        approvedChangeIds: approved.map(d => d.changeId)
+      }
+
+      const response = await fetch('/api/chat/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+
+      const data = await safeJson(response)
+      if (!response.ok) {
+        throw new Error(data?.detail || `API error: ${response.status}`)
+      }
+      if (!data?.success) {
+        const reason = Array.isArray(data?.errors) && data.errors.length ? data.errors.join('\n') : '알 수 없는 오류'
+        throw new Error(reason)
+      }
+
+      const applied = data?.appliedChanges || []
+      if (applied.length) {
+        canvasStore.syncAfterChanges(applied)
+        applied.forEach(c => appliedChanges.value.push(c))
+      }
+
+      // mark message as applied + lock approvals
+      const lockedDrafts = drafts.map(d => ({ ...d, approved: !!d.approved, isApplied: true }))
+      messages.value[idx] = { ...msg, drafts: lockedDrafts, isApplied: true }
+      messages.value = [...messages.value]
+
+      messages.value.push({
+        id: generateId(),
+        type: 'system',
+        content: `적용 완료: ${applied.length}개의 변경사항이 반영되었습니다.`,
+        timestamp: new Date().toISOString()
+      })
+    } finally {
+      isConfirming.value = false
+    }
   }
 
   function updateLastAssistantMessage(message) {
@@ -284,6 +391,7 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
   return {
     messages,
     isProcessing,
+    isConfirming,
     currentThought,
     currentAction,
     streamingContent,
@@ -297,7 +405,11 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     sendMessage,
     clearMessages,
     retryLast,
-    cancelProcessing
+    cancelProcessing,
+
+    setAllDraftApprovals,
+    toggleDraftApproval,
+    confirmDrafts
   }
 })
 

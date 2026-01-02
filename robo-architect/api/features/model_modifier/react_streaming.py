@@ -11,10 +11,72 @@ from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 from .chat_runtime_settings import AI_AUDIT_LOG_ENABLED, AI_AUDIT_LOG_FULL_OUTPUT, OPENAI_API_KEY, OPENAI_MODEL
-from .model_change_application import apply_change
 from .react_prompt import REACT_SYSTEM_PROMPT
 from .react_sections import extract_section
 from .sse_events import format_sse_event
+from api.platform.neo4j import get_session
+
+
+def _gen_change_id() -> str:
+    # Short, stable-enough for a single stream. Not cryptographic.
+    return f"chg-{int(time.time() * 1000)}-{int(time.perf_counter() * 1000000) % 1000000}"
+
+
+def _sanitize_updates(change: dict[str, Any]) -> dict[str, Any]:
+    """
+    Normalize legacy fields into `updates` for update/create actions.
+    This keeps the system tolerant while we transition prompt formats.
+    """
+    updates = change.get("updates")
+    if isinstance(updates, dict):
+        return updates
+
+    updates = {}
+    for k in ["description", "template", "attachedToId", "attachedToType", "attachedToName"]:
+        if k in change:
+            updates[k] = change.get(k)
+    return updates
+
+
+def _selected_node_map(selected_nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for n in selected_nodes or []:
+        node_id = n.get("id")
+        if node_id:
+            out[str(node_id)] = n
+    return out
+
+
+def _fetch_node_snapshot(target_id: str) -> dict[str, Any] | None:
+    """
+    Fetch a minimal snapshot for confirm UI: current fields + labels.
+    NOTE: sync neo4j call; acceptable at change-block granularity.
+    """
+    query = """
+    MATCH (n {id: $id})
+    RETURN labels(n) as labels,
+           n.id as id,
+           n.name as name,
+           n.description as description,
+           n.template as template,
+           n.attachedToId as attachedToId,
+           n.attachedToType as attachedToType,
+           n.attachedToName as attachedToName
+    """
+    with get_session() as session:
+        rec = session.run(query, id=target_id).single()
+        if not rec:
+            return None
+        return {
+            "labels": rec.get("labels") or [],
+            "id": rec.get("id"),
+            "name": rec.get("name"),
+            "description": rec.get("description"),
+            "template": rec.get("template"),
+            "attachedToId": rec.get("attachedToId"),
+            "attachedToType": rec.get("attachedToType"),
+            "attachedToName": rec.get("attachedToName"),
+        }
 
 
 async def stream_react_response(
@@ -74,10 +136,30 @@ Format your response like this:
 👁️ OBSERVATION: ...
 ✅ SUMMARY: ...
 
-For each change, also output a JSON block in this format:
+For each proposed change, also output a JSON block (DRAFT ONLY) in this format:
 ```json
-{{"action": "rename|update|create|delete|connect", "targetId": "...", "targetName": "...", "targetType": "...", "description": "...", "bcId": "BC-xxx"}}
+{{
+  "changeId": "chg-...", 
+  "action": "rename|update|create|delete|connect",
+  "targetId": "...",
+  "targetType": "Command|Event|Policy|Aggregate|ReadModel|UI|BoundedContext",
+  "targetName": "...",
+  "bcId": "BC-xxx",
+  "rationale": "why this change is necessary",
+  "updates": {{
+    "description": "...",
+    "template": "<div>...</div>",
+    "attachedToId": "...",
+    "attachedToType": "Command|ReadModel",
+    "attachedToName": "..."
+  }}
+}}
 ```
+
+Rules:
+- For "update": put ALL property changes inside `updates` (field patch). Do not invent extra fields.
+- For UI wireframes: `updates.template` MUST be an HTML string (no markdown fences).
+- For "rename": set `targetName` to the NEW name (and you may omit `updates`).
 
 For "connect" actions, include:
 - "sourceId"
@@ -85,13 +167,14 @@ For "connect" actions, include:
 """
         messages.append(HumanMessage(content=current_message))
 
-        applied_changes: list[dict[str, Any]] = []
+        selected_map = _selected_node_map(selected_nodes)
+
+        draft_changes: list[dict[str, Any]] = []
         buffer = ""
         raw_output = ""
         chunk_count = 0
         total_chars = 0
         json_blocks_seen = 0
-        json_blocks_applied = 0
         json_decode_errors = 0
 
         # De-dup streaming events: only emit when section content actually changes.
@@ -167,21 +250,49 @@ For "connect" actions, include:
                 try:
                     json_blocks_seen += 1
                     change = json.loads(json_str)
-                    t_apply0 = time.perf_counter()
-                    applied = await apply_change(change)
-                    apply_ms = int((time.perf_counter() - t_apply0) * 1000)
-                    if applied:
-                        applied_changes.append(change)
-                        json_blocks_applied += 1
-                        yield format_sse_event("change", {"change": change})
+
+                    # Normalize / enrich draft payload
+                    if not change.get("changeId"):
+                        change["changeId"] = _gen_change_id()
+
+                    action = change.get("action")
+                    if action in ("update", "create"):
+                        change["updates"] = _sanitize_updates(change)
+
+                    # Best-effort before/after for confirm UI
+                    before: dict[str, Any] = {}
+                    after: dict[str, Any] = {}
+                    target_id = change.get("targetId")
+                    if target_id:
+                        # Prefer selected-nodes context for speed/consistency
+                        src = selected_map.get(str(target_id))
+                        if src:
+                            for k in ["name", "description", "template", "attachedToId", "attachedToType", "attachedToName"]:
+                                if k in src:
+                                    before[k] = src.get(k)
+                        else:
+                            snap = _fetch_node_snapshot(str(target_id))
+                            if snap:
+                                for k in ["name", "description", "template", "attachedToId", "attachedToType", "attachedToName"]:
+                                    before[k] = snap.get(k)
+
+                    # Compute after from updates / rename targetName
+                    if change.get("action") == "rename" and change.get("targetName") is not None:
+                        after["name"] = change.get("targetName")
+                    updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+                    for k, v in updates.items():
+                        after[k] = v
+                    change["before"] = before
+                    change["after"] = after
+
+                    draft_changes.append(change)
+                    yield format_sse_event("draft_change", {"draft": change})
                     if AI_AUDIT_LOG_ENABLED:
                         SmartLogger.log(
                             "INFO",
-                            "Chat modify: change block processed.",
-                            category="api.chat.change.block",
+                            "Chat modify: draft change block captured (not applied).",
+                            category="api.chat.draft.block",
                             params={
-                                "applied": applied,
-                                "apply_ms": apply_ms,
                                 "change": summarize_for_log(change),
                             },
                         )
@@ -203,10 +314,9 @@ For "connect" actions, include:
                     "stream": {"chunks": chunk_count, "chars": total_chars},
                     "json_blocks": {
                         "seen": json_blocks_seen,
-                        "applied": json_blocks_applied,
                         "json_decode_errors": json_decode_errors,
                     },
-                    "applied_changes": summarize_for_log(applied_changes),
+                    "draft_changes": summarize_for_log(draft_changes),
                     "raw_output": (raw_output if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(raw_output)),
                 },
             )
@@ -215,12 +325,12 @@ For "connect" actions, include:
         final_summary = (
             summary_section
             if summary_section
-            else f"완료: {len(applied_changes)}개의 변경사항이 적용되었습니다."
+            else f"제안 완료: {len(draft_changes)}개의 변경사항을 준비했습니다. 승인 후 적용됩니다."
         )
 
         yield format_sse_event(
-            "complete",
-            {"summary": final_summary, "appliedChanges": applied_changes},
+            "draft_complete",
+            {"summary": final_summary, "draftChanges": draft_changes},
         )
 
     except Exception as e:
