@@ -4,7 +4,10 @@ import asyncio
 from typing import AsyncGenerator
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
-from api.features.ingestion.requirements_to_user_stories import extract_user_stories_from_text
+from api.features.ingestion.requirements_to_user_stories import (
+    ensure_nonempty_ui_description,
+    extract_user_stories_from_text,
+)
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -26,6 +29,12 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     )
 
     for i, us in enumerate(user_stories):
+        ui_desc = ensure_nonempty_ui_description(
+            getattr(us, "role", None),
+            getattr(us, "action", None),
+            getattr(us, "benefit", None),
+            getattr(us, "ui_description", None),
+        )
         try:
             ctx.client.create_user_story(
                 id=us.id,
@@ -34,7 +43,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                 benefit=us.benefit,
                 priority=us.priority,
                 status="draft",
-                ui_description=getattr(us, "ui_description", "") or "",
+                ui_description=ui_desc,
             )
 
             yield ProgressEvent(
@@ -51,7 +60,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                         "action": us.action,
                         "benefit": us.benefit,
                         "priority": us.priority,
-                        "ui_description": getattr(us, "ui_description", "") or "",
+                        "ui_description": ui_desc,
                     },
                 },
             )

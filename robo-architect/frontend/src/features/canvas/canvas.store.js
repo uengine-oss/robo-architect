@@ -700,6 +700,11 @@ export const useCanvasStore = defineStore('canvas', () => {
               name: nextName,
               label: nextName || existing.data?.label,
               description: change.description || existing.data?.description,
+              // Inspector MVP fields (safe no-op for non-matching node types)
+              actor: change.actor ?? existing.data?.actor,
+              version: change.version ?? existing.data?.version,
+              rootEntity: change.rootEntity ?? existing.data?.rootEntity,
+              provisioningType: change.provisioningType ?? existing.data?.provisioningType,
               // UI specific fields (safe no-op for non-UI nodes)
               template: change.template ?? existing.data?.template,
               attachedToId: change.attachedToId ?? existing.data?.attachedToId,

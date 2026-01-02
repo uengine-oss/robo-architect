@@ -1,7 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
-import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 
 const props = defineProps({
@@ -9,33 +8,12 @@ const props = defineProps({
   data: Object
 })
 
-const canvasStore = useCanvasStore()
 const terminologyStore = useTerminologyStore()
-const isExpanding = ref(false)
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Event')} >>`)
-
-// Double-click to expand triggered policies
-async function handleDoubleClick() {
-  if (isExpanding.value) return
-  
-  isExpanding.value = true
-  try {
-    const newNodes = await canvasStore.expandEventTriggers(props.id)
-    if (newNodes.length > 0) {
-      console.log(`Expanded ${newNodes.length} nodes from event triggers`)
-    }
-  } finally {
-    isExpanding.value = false
-  }
-}
 </script>
 
 <template>
-  <div 
-    class="es-node es-node--event"
-    :class="{ 'is-expanding': isExpanding }"
-    @dblclick="handleDoubleClick"
-  >
+  <div class="es-node es-node--event" title="더블클릭: Inspector 열기 · Shift+더블클릭: Triggered Policy 확장">
     <div class="es-node__header">
       {{ headerText }}
     </div>
@@ -43,9 +21,6 @@ async function handleDoubleClick() {
       <div class="es-node__name">{{ data.name }}</div>
       <div v-if="data.version" class="es-node__version">
         v{{ data.version }}
-      </div>
-      <div v-if="isExpanding" class="es-node__loading">
-        Expanding...
       </div>
     </div>
     
@@ -66,11 +41,6 @@ async function handleDoubleClick() {
 .es-node--event:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(253, 126, 20, 0.4);
-}
-
-.es-node--event.is-expanding {
-  opacity: 0.7;
-  pointer-events: none;
 }
 
 .es-node__header {
@@ -99,14 +69,6 @@ async function handleDoubleClick() {
   font-size: 0.65rem;
   color: rgba(255, 255, 255, 0.7);
   text-align: center;
-}
-
-.es-node__loading {
-  margin-top: 6px;
-  font-size: 0.6rem;
-  color: rgba(255, 255, 255, 0.8);
-  text-align: center;
-  animation: pulse 1s infinite;
 }
 
 @keyframes pulse {

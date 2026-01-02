@@ -5,16 +5,15 @@ import time
 from typing import Any, AsyncGenerator, Dict, List
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
-from api.platform.observability.request_logging import summarize_for_log
+from api.platform.llm import get_llm as get_platform_llm
+from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 
-from .chat_runtime_settings import AI_AUDIT_LOG_ENABLED, AI_AUDIT_LOG_FULL_OUTPUT, OPENAI_API_KEY, OPENAI_MODEL
+from .chat_runtime_settings import AI_AUDIT_LOG_ENABLED, OPENAI_API_KEY, OPENAI_MODEL
 from .react_prompt import REACT_SYSTEM_PROMPT
 from .react_sections import extract_section
 from .sse_events import format_sse_event
-from api.platform.neo4j import get_session
 
 
 def _gen_change_id() -> str:
@@ -95,9 +94,9 @@ async def stream_react_response(
         t0 = time.perf_counter()
         first_token_ms: int | None = None
 
-        llm = ChatOpenAI(
+        llm = get_platform_llm(
+            provider="openai",
             model=OPENAI_MODEL,
-            temperature=0.7,
             streaming=True,
             api_key=OPENAI_API_KEY,
         )
@@ -139,7 +138,7 @@ Format your response like this:
 For each proposed change, also output a JSON block (DRAFT ONLY) in this format:
 ```json
 {{
-  "changeId": "chg-...", 
+  "changeId": "chg-...",
   "action": "rename|update|create|delete|connect",
   "targetId": "...",
   "targetType": "Command|Event|Policy|Aggregate|ReadModel|UI|BoundedContext",
@@ -148,7 +147,7 @@ For each proposed change, also output a JSON block (DRAFT ONLY) in this format:
   "rationale": "why this change is necessary",
   "updates": {{
     "description": "...",
-    "template": "<div>...</div>",
+    "template": "<div class=\\"wf-root wf-theme-ant\\" data-wf-root=\\"1\\">...</div>",
     "attachedToId": "...",
     "attachedToType": "Command|ReadModel",
     "attachedToName": "..."
@@ -158,7 +157,12 @@ For each proposed change, also output a JSON block (DRAFT ONLY) in this format:
 
 Rules:
 - For "update": put ALL property changes inside `updates` (field patch). Do not invent extra fields.
-- For UI wireframes: `updates.template` MUST be an HTML string (no markdown fences).
+- For UI wireframes: `updates.template` MUST be a body-only HTML fragment (no markdown fences).
+  - MUST NOT include: <!doctype>, <html>, <head>, <body>
+  - MUST NOT include: <script>, inline event handlers (on*), javascript: URLs
+  - MUST start with: <div class="wf-root wf-theme-ant|wf-theme-material" data-wf-root="1"> ... </div>
+  - <style> is allowed ONLY if every selector is scoped under `.wf-root`, and it MUST NOT use @import or url(...)
+  - Make it modern UI (Ant/Material): app bar, cards, table toolbar + pagination, form grid, tabs/segments, chips/badges, empty/loading/error placeholders
 - For "rename": set `targetName` to the NEW name (and you may omit `updates`).
 
 For "connect" actions, include:
@@ -191,17 +195,13 @@ For "connect" actions, include:
                 category="api.chat.llm.start",
                 params={
                     "model": OPENAI_MODEL,
-                    "temperature": 0.7,
                     "prompt": prompt,
                     "system_prompt": REACT_SYSTEM_PROMPT,
                     "constructed_user_message": current_message,
-                    "selected_nodes": summarize_for_log(
-                        selected_nodes, max_list=5000, max_dict_items=5000
-                    ),
-                    "conversation_history": summarize_for_log(
-                        conversation_history, max_list=5000, max_dict_items=5000
-                    ),
-                },
+                    # Reproducibility: keep raw payloads (SmartLogger can offload to detail files).
+                    "selected_nodes": selected_nodes,
+                    "conversation_history": conversation_history,
+                }
             )
 
         async for chunk in llm.astream(messages):
@@ -220,7 +220,7 @@ For "connect" actions, include:
                         "INFO",
                         "Chat modify: first token received from LLM.",
                         category="api.chat.llm.first_token",
-                        params={"first_token_ms": first_token_ms, "model": OPENAI_MODEL},
+                        params={"first_token_ms": first_token_ms, "model": OPENAI_MODEL}
                     )
 
             if "THOUGHT:" in buffer:
@@ -293,8 +293,8 @@ For "connect" actions, include:
                             "Chat modify: draft change block captured (not applied).",
                             category="api.chat.draft.block",
                             params={
-                                "change": summarize_for_log(change),
-                            },
+                                "change": change,
+                            }
                         )
                 except json.JSONDecodeError:
                     json_decode_errors += 1
@@ -316,9 +316,10 @@ For "connect" actions, include:
                         "seen": json_blocks_seen,
                         "json_decode_errors": json_decode_errors,
                     },
-                    "draft_changes": summarize_for_log(draft_changes),
-                    "raw_output": (raw_output if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(raw_output)),
-                },
+                    # Reproducibility: keep raw data.
+                    "draft_changes": draft_changes,
+                    "raw_output": raw_output,
+                }
             )
 
         summary_section = extract_section(raw_output, "SUMMARY")
@@ -339,7 +340,7 @@ For "connect" actions, include:
                 "ERROR",
                 "Chat modify failed: exception during streaming.",
                 category="api.chat.llm.error",
-                params={"error": {"type": type(e).__name__, "message": str(e)}},
+                params={"error": {"type": type(e).__name__, "message": str(e)}}
             )
         yield format_sse_event("error", {"message": str(e)})
 

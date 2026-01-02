@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import html as _html
-import re
 import time
 from typing import AsyncGenerator
 
@@ -12,175 +10,11 @@ from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressE
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.smart_logger import SmartLogger
+from api.platform.ui_wireframe_template import normalize_ui_template
 
 
-_UI_WIREFRAME_SYSTEM_PROMPT = """You generate a wireframe-level HTML template for a single screen.\n\nOutput rules (STRICT):\n- Output ONLY raw HTML. Do NOT use markdown or code fences.\n- Do NOT include <script> tags.\n- Do NOT include inline event handlers like onclick=, onload=, etc.\n- Do NOT use javascript: URLs.\n- Keep it wireframe-level: structural layout + placeholder inputs/buttons/tables.\n\nContent requirements:\n- Include a clear screen title.\n- Include sections for search/filter/list/detail when implied.\n- Use simple semantic tags: <div>, <header>, <section>, <h1>-<h3>, <p>, <label>, <input>, <button>, <table>, <thead>, <tbody>, <tr>, <th>, <td>.\n"""
+_UI_WIREFRAME_SYSTEM_PROMPT = """You generate a modern UI wireframe HTML fragment for a single screen (Ant Design-like or Material-like).\n\nOutput rules (STRICT):\n- Output ONLY raw HTML fragment. Do NOT use markdown or code fences.\n- Do NOT output <!doctype>, <html>, <head>, <body>.\n- Do NOT include <script> tags.\n- Do NOT include inline event handlers like onclick=, onload=, etc.\n- Do NOT use javascript: URLs.\n- You MAY include a <style> block, but:\n  - Every selector MUST be scoped under `.wf-root`\n  - MUST NOT use @import or url(...)\n\nRoot container (MUST):\n- The fragment MUST start with a root container like:\n  <div class=\"wf-root wf-theme-ant\" data-wf-root=\"1\"> ... </div>\n  or\n  <div class=\"wf-root wf-theme-material\" data-wf-root=\"1\"> ... </div>\n\nModern UI quality requirements:\n- Use an App Bar / Toolbar at the top (title + primary actions).\n- Use Card-based sections.\n- For table/list screens: include a table toolbar (search/filter/actions), column headers, row actions, and pagination area.\n- For form screens: use a 2-column grid layout, labels + help/validation placeholders, primary/secondary button group.\n- Optionally include tabs/segments, chips/badges, and empty/loading/error state placeholders.\n- No JS behavior; structure only. Prefer accessible attributes (aria-*, role).\n\nPrefer these classes to match the preview styling:\n- wf-appbar, wf-title, wf-subtitle, wf-card, wf-card__header, wf-card__title, wf-card__body,\n  wf-actions, wf-btn, wf-btn--primary, wf-input, wf-label, wf-grid, wf-col-6, wf-col-12,\n  wf-table, wf-table__toolbar, wf-pagination, wf-chip, wf-badge, wf-state, wf-state--error, wf-empty\n"""
 
-
-def _strip_markdown_fences(text: str) -> str:
-    """
-    Best-effort removal of markdown code fences the LLM might accidentally emit.
-    """
-    s = (text or "").strip()
-    if not s:
-        return ""
-    # Remove leading ```lang and trailing ```
-    s = re.sub(r"^\s*```[a-zA-Z0-9_-]*\s*", "", s)
-    s = re.sub(r"\s*```\s*$", "", s)
-    return s.strip()
-
-
-def _sanitize_html_template(html: str) -> str:
-    """
-    Minimal HTML safety pass (baseline policy):
-    - Remove <script> blocks
-    - Remove inline event handlers (on*)
-    - Strip javascript: URLs
-
-    NOTE: Not a full sanitizer; scoped to the explicit constraints for wireframe preview.
-    """
-    if not isinstance(html, str):
-        return ""
-
-    # Remove script blocks
-    html = re.sub(r"<\s*script\b[^>]*>.*?<\s*/\s*script\s*>", "", html, flags=re.IGNORECASE | re.DOTALL)
-
-    # Remove inline event handlers like onclick="..." or onload='...'
-    html = re.sub(r"\s+on[a-zA-Z]+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", "", html, flags=re.IGNORECASE)
-
-    # Remove javascript: in href/src (best-effort)
-    html = re.sub(r"javascript\s*:", "", html, flags=re.IGNORECASE)
-    return html
-
-
-def _keyword_blocks(ui_text: str) -> str:
-    """
-    Deterministic wireframe blocks based on keywords (Korean-focused; lightweight).
-    """
-    t = (ui_text or "")
-    blocks: list[str] = []
-
-    if any(k in t for k in ["검색", "search"]):
-        blocks.append(
-            """
-            <section class="wf-section wf-section--search">
-              <h3>검색</h3>
-              <div>
-                <label>검색어</label>
-                <input type="text" placeholder="검색어를 입력하세요" />
-                <button type="button">검색</button>
-              </div>
-            </section>
-            """
-        )
-
-    if any(k in t for k in ["필터", "filter"]):
-        blocks.append(
-            """
-            <section class="wf-section wf-section--filter">
-              <h3>필터</h3>
-              <div>
-                <label>상태</label>
-                <input type="text" placeholder="예: 진행중 / 완료" />
-                <button type="button">적용</button>
-                <button type="button">초기화</button>
-              </div>
-            </section>
-            """
-        )
-
-    if any(k in t for k in ["목록", "리스트", "list"]):
-        blocks.append(
-            """
-            <section class="wf-section wf-section--list">
-              <h3>목록</h3>
-              <table border="1" cellpadding="6" cellspacing="0">
-                <thead>
-                  <tr><th>컬럼 A</th><th>컬럼 B</th><th>상태</th><th>액션</th></tr>
-                </thead>
-                <tbody>
-                  <tr><td>...</td><td>...</td><td>...</td><td><button type="button">보기</button></td></tr>
-                  <tr><td>...</td><td>...</td><td>...</td><td><button type="button">보기</button></td></tr>
-                </tbody>
-              </table>
-            </section>
-            """
-        )
-
-    if any(k in t for k in ["상세", "detail"]):
-        blocks.append(
-            """
-            <section class="wf-section wf-section--detail">
-              <h3>상세</h3>
-              <div>
-                <div><strong>필드 1</strong>: <span>...</span></div>
-                <div><strong>필드 2</strong>: <span>...</span></div>
-                <div><strong>필드 3</strong>: <span>...</span></div>
-              </div>
-            </section>
-            """
-        )
-
-    return "\n".join(blocks).strip()
-
-
-def _fallback_wireframe_html(*, ui_name: str, attached_to_label: str, ui_description: str, keyword_blocks: str) -> str:
-    safe_name = _html.escape(ui_name or "UI")
-    safe_attached = _html.escape(attached_to_label or "")
-    safe_desc = _html.escape(ui_description or "")
-    extra = keyword_blocks or ""
-    return f"""
-<div class="wireframe">
-  <header class="wf-header">
-    <h2>{safe_name}</h2>
-    <p>{safe_attached}</p>
-  </header>
-  <section class="wf-section wf-section--intent">
-    <h3>의도</h3>
-    <pre>{safe_desc}</pre>
-  </section>
-  {extra}
-  <section class="wf-section wf-section--actions">
-    <h3>액션</h3>
-    <div>
-      <button type="button">Primary</button>
-      <button type="button">Secondary</button>
-    </div>
-  </section>
-</div>
-""".strip()
-
-
-def _safe_wireframe_wrapper(
-    *,
-    ui_name: str,
-    attached_to_label: str,
-    ui_description: str,
-    llm_body_html: str,
-    keyword_blocks: str,
-) -> str:
-    safe_name = _html.escape(ui_name or "UI")
-    safe_attached = _html.escape(attached_to_label or "")
-    safe_desc = _html.escape(ui_description or "")
-    body = (llm_body_html or "").strip()
-    extra = keyword_blocks or ""
-    return f"""
-<div class="wireframe">
-  <header class="wf-header">
-    <h2>{safe_name}</h2>
-    <p>{safe_attached}</p>
-  </header>
-  <section class="wf-section wf-section--intent">
-    <h3>의도</h3>
-    <pre>{safe_desc}</pre>
-  </section>
-  {extra}
-  <section class="wf-section wf-section--generated">
-    <h3>와이어프레임</h3>
-    {body}
-  </section>
-</div>
-""".strip()
 
 
 def _fetch_command_events_best_effort(ctx: IngestionWorkflowContext, command_id: str) -> list[str]:
@@ -298,14 +132,46 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                     events = _fetch_command_events_best_effort(ctx, cmd.id)
                     events_text = "\n".join([f"- {e}" for e in events]) if events else "No events found"
 
-                    attached_to_label = f"Attached to Command: {cmd.name} ({cmd.id})"
-                    keyword_blocks = _keyword_blocks(f"{ui_name}\n{chosen_ui_desc}")
-
+                    theme_hint = f"{ui_name}\n{chosen_ui_desc}"
                     fallback_used = False
                     llm_ms = 0
                     if existing_template is not None:
-                        final_template = str(existing_template)
-                        fallback_used = False
+                        final_template, norm_report = normalize_ui_template(
+                            str(existing_template),
+                            ui_name=ui_name,
+                            theme_hint=theme_hint,
+                        )
+                        fallback_used = bool(getattr(norm_report, "fallback_used", False))
+                        SmartLogger.log(
+                            "INFO",
+                            "UI wireframe template reused and normalized",
+                            category="ingestion.ui_wireframe.normalize",
+                            params={
+                                "session_id": ctx.session.id,
+                                "ui_id": ui_id,
+                                "ui_name": ui_name,
+                                "attached_to_id": cmd.id,
+                                "attached_to_type": "Command",
+                                "source": "existing_template",
+                                "llm_ms": 0,
+                                "fallback_used": fallback_used,
+                                "template_len": len(final_template),
+                                "normalize": norm_report.as_dict(),
+                                # Reproducibility
+                                "inputs": {
+                                    "bc": {"id": bc.id, "name": bc.name},
+                                    "command": {"id": cmd.id, "name": cmd.name},
+                                    "user_story_id": chosen_us_id,
+                                    "user_story_text": user_story_text,
+                                    "ui_description": chosen_ui_desc,
+                                    "events": events,
+                                    "events_text": events_text,
+                                    "theme_hint": theme_hint,
+                                },
+                                "template_before": str(existing_template),
+                                "template_after": final_template,
+                            }
+                        )
                     else:
                         prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc.name} ({bc.id})\nAttached To: Command {cmd.name} ({cmd.id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}\n"""
 
@@ -321,42 +187,30 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                                 "attached_to_id": cmd.id,
                                 "attached_to_type": "Command",
                                 "llm": {"provider": provider, "model": model},
-                            },
+                                # Reproducibility
+                                "inputs": {
+                                    "bc": {"id": bc.id, "name": bc.name},
+                                    "command": {"id": cmd.id, "name": cmd.name},
+                                    "user_story_id": chosen_us_id,
+                                    "user_story_text": user_story_text,
+                                    "ui_description": chosen_ui_desc,
+                                    "events": events,
+                                    "events_text": events_text,
+                                    "prompt": prompt,
+                                    "theme_hint": theme_hint,
+                                },
+                            }
                         )
                         t0 = time.perf_counter()
                         raw_html = _llm_invoke_to_html(ctx, prompt)
                         llm_ms = int((time.perf_counter() - t0) * 1000)
 
-                        raw_html = _strip_markdown_fences(raw_html)
-                        raw_html = _sanitize_html_template(raw_html)
-
-                        if not isinstance(raw_html, str) or not raw_html.strip():
-                            fallback_used = True
-                            final_template = _fallback_wireframe_html(
-                                ui_name=ui_name,
-                                attached_to_label=attached_to_label,
-                                ui_description=chosen_ui_desc,
-                                keyword_blocks=keyword_blocks,
-                            )
-                        else:
-                            final_template = _safe_wireframe_wrapper(
-                                ui_name=ui_name,
-                                attached_to_label=attached_to_label,
-                                ui_description=chosen_ui_desc,
-                                llm_body_html=raw_html,
-                                keyword_blocks=keyword_blocks,
-                            )
-
-                        # Final safety pass + size guard
-                        final_template = _sanitize_html_template(final_template)
-                        if len(final_template) > 50000:
-                            fallback_used = True
-                            final_template = _fallback_wireframe_html(
-                                ui_name=ui_name,
-                                attached_to_label=attached_to_label,
-                                ui_description=chosen_ui_desc,
-                                keyword_blocks=keyword_blocks,
-                            )
+                        final_template, norm_report = normalize_ui_template(
+                            str(raw_html),
+                            ui_name=ui_name,
+                            theme_hint=theme_hint,
+                        )
+                        fallback_used = bool(getattr(norm_report, "fallback_used", False))
 
                         SmartLogger.log(
                             "INFO",
@@ -371,6 +225,10 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                                 "llm_ms": llm_ms,
                                 "fallback_used": fallback_used,
                                 "template_len": len(final_template),
+                                "normalize": norm_report.as_dict(),
+                                # Reproducibility
+                                "raw_llm_output": str(raw_html),
+                                "normalized_template": final_template,
                             },
                         )
 
@@ -454,13 +312,44 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                     benefit = getattr(us_obj, "benefit", "") or ""
                     user_story_text = f"[{chosen_us_id}] As a {role}, I want to {action}, so that {benefit}".strip()
 
-                attached_to_label = f"Attached to ReadModel: {rm.get('name', rm_id)} ({rm_id})"
-                keyword_blocks = _keyword_blocks(f"{ui_name}\n{chosen_ui_desc}")
-
+                theme_hint = f"{ui_name}\n{chosen_ui_desc}"
                 fallback_used = False
                 llm_ms = 0
                 if existing_template is not None:
-                    final_template = str(existing_template)
+                    final_template, norm_report = normalize_ui_template(
+                        str(existing_template),
+                        ui_name=ui_name,
+                        theme_hint=theme_hint,
+                    )
+                    fallback_used = bool(getattr(norm_report, "fallback_used", False))
+                    SmartLogger.log(
+                        "INFO",
+                        "UI wireframe template reused and normalized",
+                        category="ingestion.ui_wireframe.normalize",
+                        params={
+                            "session_id": ctx.session.id,
+                            "ui_id": ui_id,
+                            "ui_name": ui_name,
+                            "attached_to_id": rm_id,
+                            "attached_to_type": "ReadModel",
+                            "source": "existing_template",
+                            "llm_ms": 0,
+                            "fallback_used": fallback_used,
+                            "template_len": len(final_template),
+                            "normalize": norm_report.as_dict(),
+                            # Reproducibility
+                            "inputs": {
+                                "bc": {"id": bc.id, "name": bc.name},
+                                "readmodel": {"id": rm_id, "name": rm.get("name", rm_id)},
+                                "user_story_id": chosen_us_id,
+                                "user_story_text": user_story_text,
+                                "ui_description": chosen_ui_desc,
+                                "theme_hint": theme_hint,
+                            },
+                            "template_before": str(existing_template),
+                            "template_after": final_template,
+                        },
+                    )
                 else:
                     prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc.name} ({bc.id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n"""
 
@@ -476,41 +365,28 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                             "attached_to_id": rm_id,
                             "attached_to_type": "ReadModel",
                             "llm": {"provider": provider, "model": model},
+                            # Reproducibility
+                            "inputs": {
+                                "bc": {"id": bc.id, "name": bc.name},
+                                "readmodel": {"id": rm_id, "name": rm.get("name", rm_id)},
+                                "user_story_id": chosen_us_id,
+                                "user_story_text": user_story_text,
+                                "ui_description": chosen_ui_desc,
+                                "prompt": prompt,
+                                "theme_hint": theme_hint,
+                            },
                         },
                     )
                     t0 = time.perf_counter()
                     raw_html = _llm_invoke_to_html(ctx, prompt)
                     llm_ms = int((time.perf_counter() - t0) * 1000)
 
-                    raw_html = _strip_markdown_fences(raw_html)
-                    raw_html = _sanitize_html_template(raw_html)
-
-                    if not isinstance(raw_html, str) or not raw_html.strip():
-                        fallback_used = True
-                        final_template = _fallback_wireframe_html(
-                            ui_name=ui_name,
-                            attached_to_label=attached_to_label,
-                            ui_description=chosen_ui_desc,
-                            keyword_blocks=keyword_blocks,
-                        )
-                    else:
-                        final_template = _safe_wireframe_wrapper(
-                            ui_name=ui_name,
-                            attached_to_label=attached_to_label,
-                            ui_description=chosen_ui_desc,
-                            llm_body_html=raw_html,
-                            keyword_blocks=keyword_blocks,
-                        )
-
-                    final_template = _sanitize_html_template(final_template)
-                    if len(final_template) > 50000:
-                        fallback_used = True
-                        final_template = _fallback_wireframe_html(
-                            ui_name=ui_name,
-                            attached_to_label=attached_to_label,
-                            ui_description=chosen_ui_desc,
-                            keyword_blocks=keyword_blocks,
-                        )
+                    final_template, norm_report = normalize_ui_template(
+                        str(raw_html),
+                        ui_name=ui_name,
+                        theme_hint=theme_hint,
+                    )
+                    fallback_used = bool(getattr(norm_report, "fallback_used", False))
 
                     SmartLogger.log(
                         "INFO",
@@ -525,6 +401,10 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                             "llm_ms": llm_ms,
                             "fallback_used": fallback_used,
                             "template_len": len(final_template),
+                            "normalize": norm_report.as_dict(),
+                            # Reproducibility
+                            "raw_llm_output": str(raw_html),
+                            "normalized_template": final_template,
                         },
                     )
 

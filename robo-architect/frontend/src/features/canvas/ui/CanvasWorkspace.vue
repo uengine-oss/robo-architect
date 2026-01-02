@@ -1,10 +1,11 @@
 <script setup>
-import { ref, computed, provide, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { createLogger, newOpId } from '@/app/logging/logger'
 
 // Custom Nodes
 import CommandNode from './nodes/CommandNode.vue'
@@ -18,23 +19,26 @@ import UINode from './nodes/UINode.vue'
 // Chat Panel
 import ChatPanel from '@/features/modelModifier/ui/ChatPanel.vue'
 
-// CQRS Config Modal
-import ReadModelCQRSConfigModal from './ReadModelCQRSConfigModal.vue'
+// Inspector Panel (right-side)
+// NOTE: implemented in a follow-up TODO; keep lightweight placeholder for now
+import InspectorPanel from './InspectorPanel.vue'
 
 const canvasStore = useCanvasStore()
 const isDragOver = ref(false)
-const isChatPanelOpen = ref(true)
+const log = createLogger({ scope: 'CanvasWorkspace' })
+
+// Right-side panel mode
+// - none: no side panel
+// - chat: Model Modifier chat
+// - inspector: node inspector (property editor)
+const panelMode = ref('chat')
+
 const chatPanelWidth = ref(360)
 const isResizingChat = ref(false)
 
-// UI Preview state
-const isUIPreviewOpen = ref(false)
-const previewingUI = ref(null)
-
-// CQRS Config Modal state
-const isCqrsModalOpen = ref(false)
-const cqrsModalReadModelId = ref(null)
-const cqrsModalReadModelData = ref(null)
+// Inspector state
+const inspectingNodeId = ref(null)
+const inspectingInitialTab = ref('properties')
 
 const { fitView, zoomIn, zoomOut } = useVueFlow()
 
@@ -74,55 +78,87 @@ function getNodeColor(node) {
   return colors[node.type] || '#909296'
 }
 
-// Handle UI preview request from UI node double-click
-function handleUIPreview(uiData) {
-  previewingUI.value = uiData
-  isUIPreviewOpen.value = true
-  isChatPanelOpen.value = false
-}
-
-function closeUIPreview() {
-  isUIPreviewOpen.value = false
-  previewingUI.value = null
-}
-
-function switchToChat() {
-  isUIPreviewOpen.value = false
-  isChatPanelOpen.value = true
-  if (previewingUI.value?.id) {
-    canvasStore.selectNode(previewingUI.value.id)
+function switchToChatFromInspector(nodeId) {
+  panelMode.value = 'chat'
+  if (nodeId) {
+    canvasStore.selectNode(nodeId)
   }
 }
 
-function onNodeDoubleClick(event) {
+function openInspectorForNode(nodeId) {
+  const opId = newOpId('openInspector')
+  log.info('inspector_open', 'Opening Inspector for node.', { opId, nodeId, tab: 'properties' })
+  console.info('[RAW][CanvasWorkspace][inspector_open]', { opId, nodeId, tab: 'properties' })
+  inspectingNodeId.value = nodeId
+  inspectingInitialTab.value = 'properties'
+  panelMode.value = 'inspector'
+}
+
+function openInspectorForNodeTab(nodeId, tab) {
+  const opId = newOpId('openInspectorTab')
+  log.info('inspector_open', 'Opening Inspector for node with tab.', { opId, nodeId, tab })
+  console.info('[RAW][CanvasWorkspace][inspector_open]', { opId, nodeId, tab })
+  inspectingNodeId.value = nodeId
+  // CQRS tab has been removed; keep this robust for any legacy callers.
+  inspectingInitialTab.value = tab === 'preview' ? 'preview' : 'properties'
+  panelMode.value = 'inspector'
+}
+
+function closeSidePanel() {
+  panelMode.value = 'none'
+}
+
+async function onNodeDoubleClick(event) {
+  const opId = newOpId('dblclick')
   const node = event.node
+  const nativeEvent = event.event
+  log.info('node_double_click', 'Node double-click received.', {
+    opId,
+    node: { id: node?.id, type: node?.type, data: node?.data },
+    input: {
+      shiftKey: !!nativeEvent?.shiftKey,
+      ctrlKey: !!nativeEvent?.ctrlKey,
+      metaKey: !!nativeEvent?.metaKey,
+      altKey: !!nativeEvent?.altKey,
+      button: nativeEvent?.button,
+      detail: nativeEvent?.detail
+    },
+    panelMode: panelMode.value
+  })
+  // Raw event + node data (best-effort; MouseEvent is not JSON-serializable)
+  console.info('[RAW][CanvasWorkspace][node_double_click]', { opId, node, nativeEvent })
+
   if (node.type === 'ui') {
-    handleUIPreview({
-      id: node.id,
-      name: node.data?.name,
-      template: node.data?.template,
-      attachedToId: node.data?.attachedToId,
-      attachedToName: node.data?.attachedToName,
-      attachedToType: node.data?.attachedToType,
-      userStoryId: node.data?.userStoryId
-    })
+    canvasStore.selectNode(node.id)
+    openInspectorForNodeTab(node.id, 'preview')
+    return
   }
+
+  // Event node: Shift+double click expands triggered policies; otherwise open Inspector
+  if (node.type === 'event' && nativeEvent?.shiftKey) {
+    log.info('event_expand_triggers_start', 'Expanding Event triggers (Shift+double click).', {
+      opId,
+      eventId: node.id,
+      nodeData: node.data
+    })
+    console.info('[RAW][CanvasWorkspace][event_expand_triggers_start]', { opId, eventId: node.id, nodeData: node.data })
+    try {
+      const newNodes = await canvasStore.expandEventTriggers(node.id)
+      log.info('event_expand_triggers_done', 'Expanded Event triggers.', { opId, eventId: node.id, newNodes })
+      console.info('[RAW][CanvasWorkspace][event_expand_triggers_done]', { opId, eventId: node.id, newNodes })
+    } catch (e) {
+      log.error('event_expand_triggers_error', 'Failed to expand Event triggers.', { opId, eventId: node.id, error: String(e) })
+      console.error('[RAW][CanvasWorkspace][event_expand_triggers_error]', { opId, eventId: node.id, error: e })
+    }
+    return
+  }
+
+  // Default: open Inspector
+  canvasStore.selectNode(node.id)
+  openInspectorForNode(node.id)
 }
 
-function openCqrsConfigModal(readModelId, readModelData) {
-  cqrsModalReadModelId.value = readModelId
-  cqrsModalReadModelData.value = readModelData
-  isCqrsModalOpen.value = true
-}
-
-function closeCqrsConfigModal() {
-  isCqrsModalOpen.value = false
-  cqrsModalReadModelId.value = null
-  cqrsModalReadModelData.value = null
-}
-
-// Provide the CQRS modal handler to child nodes
-provide('openCqrsConfigModal', openCqrsConfigModal)
+// CQRS editor has been removed from the UI; keep Inspector as the single entry point.
 
 // Handle drop from navigator
 async function handleDrop(event) {
@@ -203,10 +239,7 @@ function onPaneClick() {
 }
 
 function toggleChatPanel() {
-  isChatPanelOpen.value = !isChatPanelOpen.value
-  if (isChatPanelOpen.value) {
-    isUIPreviewOpen.value = false
-  }
+  panelMode.value = panelMode.value === 'chat' ? 'none' : 'chat'
 }
 
 function startResizeChat(e) {
@@ -368,84 +401,32 @@ onUnmounted(() => {
 
     <!-- Resizer (between canvas and right-side panel) -->
     <div
-      v-if="isChatPanelOpen || isUIPreviewOpen"
+      v-if="panelMode !== 'none'"
       class="chat-panel-resizer"
       @mousedown="startResizeChat"
       title="드래그하여 패널 너비 조절"
     ></div>
 
-    <div v-if="isChatPanelOpen" class="chat-panel-wrapper" :style="{ width: chatPanelWidth + 'px' }">
-      <ChatPanel />
-    </div>
+    <!-- Right-side Panel Wrapper -->
+    <div v-if="panelMode !== 'none'" class="side-panel-wrapper" :style="{ width: chatPanelWidth + 'px' }">
+      <div v-if="panelMode === 'chat'" class="chat-panel-wrapper">
+        <ChatPanel />
+      </div>
 
-    <!-- UI Preview Panel -->
-    <div v-if="isUIPreviewOpen && previewingUI" class="ui-preview-wrapper" :style="{ width: chatPanelWidth + 'px' }">
-      <div class="ui-preview-panel">
-        <div class="ui-preview-panel__header">
-          <div class="ui-preview-panel__title">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="18" rx="2" />
-              <line x1="2" y1="7" x2="22" y2="7" />
-            </svg>
-            <span>UI Preview</span>
-          </div>
-          <div class="ui-preview-panel__actions">
-            <button class="ui-preview-panel__btn" @click="switchToChat" title="Edit with AI">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-            </button>
-            <button class="ui-preview-panel__btn" @click="closeUIPreview" title="Close">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="ui-preview-panel__info">
-          <div class="ui-preview-panel__name">{{ previewingUI.name }}</div>
-          <div v-if="previewingUI.attachedToName" class="ui-preview-panel__attached">
-            <span class="label">Attached to:</span>
-            <span class="value">{{ previewingUI.attachedToName }}</span>
-          </div>
-        </div>
-
-        <div class="ui-preview-panel__content">
-          <div v-if="previewingUI.template" class="ui-preview-frame">
-            <div class="ui-preview-frame__browser-bar">
-              <div class="browser-dots">
-                <span></span><span></span><span></span>
-              </div>
-              <div class="browser-url">preview://{{ previewingUI.name }}</div>
-            </div>
-            <div class="ui-preview-frame__body" v-html="previewingUI.template"></div>
-          </div>
-          <div v-else class="ui-preview-empty">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
-              <rect x="2" y="3" width="20" height="18" rx="2" />
-              <line x1="2" y1="7" x2="22" y2="7" />
-              <rect x="4" y="9" width="7" height="3" rx="0.5" stroke-dasharray="2 1" />
-              <rect x="4" y="14" width="16" height="2" rx="0.5" stroke-dasharray="2 1" />
-            </svg>
-            <p>No wireframe template yet</p>
-            <button class="ui-preview-empty__btn" @click="switchToChat">Generate with AI</button>
-          </div>
-        </div>
+      <!-- UI Preview Panel -->
+      <!-- Inspector Panel (placeholder) -->
+      <div v-else-if="panelMode === 'inspector'" class="inspector-wrapper">
+        <InspectorPanel
+          :node-id="inspectingNodeId"
+          :initial-tab="inspectingInitialTab"
+          @close="closeSidePanel"
+          @updated="() => {}"
+          @request-chat="switchToChatFromInspector"
+        />
       </div>
     </div>
   </div>
 
-  <!-- CQRS Config Modal -->
-  <ReadModelCQRSConfigModal
-    :visible="isCqrsModalOpen"
-    :read-model-id="cqrsModalReadModelId"
-    :read-model-data="cqrsModalReadModelData"
-    @close="closeCqrsConfigModal"
-    @updated="() => {}"
-  />
 </template>
 
 <style>
@@ -590,15 +571,13 @@ onUnmounted(() => {
 
 /* Chat Panel Wrapper */
 .chat-panel-wrapper {
-  flex-shrink: 0;
-  width: 360px;
   height: 100%;
   overflow: hidden;
   animation: slideIn 0.2s ease;
 }
 
 /* UI Preview Panel Wrapper */
-.ui-preview-wrapper {
+.side-panel-wrapper {
   flex-shrink: 0;
   width: 360px;
   height: 100%;
@@ -606,214 +585,8 @@ onUnmounted(() => {
   animation: slideIn 0.2s ease;
 }
 
-.ui-preview-panel {
-  display: flex;
-  flex-direction: column;
+.inspector-wrapper {
   height: 100%;
-  background: var(--color-bg-secondary);
-  border-left: 1px solid var(--color-border);
-}
-
-.ui-preview-panel__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
-}
-
-.ui-preview-panel__title {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--color-text-bright);
-}
-
-.ui-preview-panel__actions {
-  display: flex;
-  gap: 4px;
-}
-
-.ui-preview-panel__btn {
-  background: none;
-  border: none;
-  color: var(--color-text-light);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  transition: all 0.15s ease;
-}
-
-.ui-preview-panel__btn:hover {
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-.ui-preview-panel__info {
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg);
-}
-
-.ui-preview-panel__name {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--color-text-bright);
-  margin-bottom: 4px;
-}
-
-.ui-preview-panel__attached {
-  font-size: 0.75rem;
-  color: var(--color-text-light);
-}
-
-.ui-preview-panel__attached .label {
-  opacity: 0.7;
-}
-
-.ui-preview-panel__attached .value {
-  color: var(--color-accent);
-  margin-left: 4px;
-}
-
-.ui-preview-panel__content {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-md);
-}
-
-/* Preview Frame (looks like browser) */
-.ui-preview-frame {
-  background: #ffffff;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-}
-
-.ui-preview-frame__browser-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: 8px 12px;
-  background: #e9ecef;
-  border-bottom: 1px solid #dee2e6;
-}
-
-.browser-dots {
-  display: flex;
-  gap: 6px;
-}
-
-.browser-dots span {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #adb5bd;
-}
-
-.browser-dots span:first-child { background: #ff6b6b; }
-.browser-dots span:nth-child(2) { background: #ffd43b; }
-.browser-dots span:last-child { background: #69db7c; }
-
-.browser-url {
-  flex: 1;
-  font-size: 0.7rem;
-  color: #495057;
-  background: #f8f9fa;
-  padding: 4px 10px;
-  border-radius: 4px;
-}
-
-.ui-preview-frame__body {
-  padding: 16px;
-  min-height: 200px;
-  color: #212529;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}
-
-/* Wireframe styles for dynamically rendered content */
-.ui-preview-frame__body :deep(input),
-.ui-preview-frame__body :deep(select),
-.ui-preview-frame__body :deep(textarea) {
-  display: block;
-  width: 100%;
-  padding: 8px 12px;
-  margin-bottom: 12px;
-  border: 2px dashed #adb5bd;
-  border-radius: 4px;
-  background: #f8f9fa;
-  font-size: 0.85rem;
-}
-
-.ui-preview-frame__body :deep(button) {
-  padding: 8px 16px;
-  border: 2px dashed #228be6;
-  border-radius: 4px;
-  background: #e7f5ff;
-  color: #1971c2;
-  font-size: 0.85rem;
-  cursor: pointer;
-  margin: 4px;
-}
-
-.ui-preview-frame__body :deep(label) {
-  display: block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #495057;
-  margin-bottom: 4px;
-}
-
-.ui-preview-frame__body :deep(h1),
-.ui-preview-frame__body :deep(h2),
-.ui-preview-frame__body :deep(h3) {
-  color: #212529;
-  margin-bottom: 12px;
-}
-
-.ui-preview-frame__body :deep(.form-group) {
-  margin-bottom: 16px;
-}
-
-.ui-preview-frame__body :deep(.btn-group) {
-  display: flex;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.ui-preview-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  min-height: 200px;
-  text-align: center;
-  color: var(--color-text-light);
-}
-
-.ui-preview-empty p {
-  margin: var(--spacing-md) 0;
-  font-size: 0.875rem;
-}
-
-.ui-preview-empty__btn {
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-accent);
-  color: white;
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: 0.8rem;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.ui-preview-empty__btn:hover {
-  background: #1c7ed6;
-  transform: translateY(-1px);
 }
 
 @keyframes slideIn {

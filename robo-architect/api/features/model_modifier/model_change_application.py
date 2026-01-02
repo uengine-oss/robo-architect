@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Dict
 
 from api.platform.neo4j import get_session
+from api.platform.observability.smart_logger import SmartLogger
+from api.platform.ui_wireframe_template import normalize_ui_template
 
 
 async def apply_change(change: Dict[str, Any]) -> bool:
@@ -33,6 +34,27 @@ async def apply_change(change: Dict[str, Any]) -> bool:
                 attached_to_id = change.get("attachedToId")
                 attached_to_type = change.get("attachedToType")
                 attached_to_name = change.get("attachedToName")
+
+                if template is not None:
+                    ui_name = str(change.get("targetName") or "UI").strip() or "UI"
+                    raw_template = str(template)
+                    normalized, report = normalize_ui_template(raw_template, ui_name=ui_name, theme_hint=ui_name)
+                    SmartLogger.log(
+                        "INFO",
+                        "UI template normalized (legacy apply_change)",
+                        category="api.model_change.ui_template.normalize",
+                        params={
+                            "action": "update",
+                            "targetId": target_id,
+                            "ui_name": ui_name,
+                            "len_before": len(raw_template),
+                            "len_after": len(normalized),
+                            "normalize": report.as_dict(),
+                            "template_before": raw_template,
+                            "template_after": normalized,
+                        },
+                    )
+                    template = normalized
 
                 if template is not None or attached_to_id is not None or attached_to_type is not None or attached_to_name is not None:
                     session.run(
@@ -304,39 +326,16 @@ _LABELS_BY_TYPE: dict[str, str] = {
 
 
 _ALLOWED_UPDATE_FIELDS_BY_LABEL: dict[str, set[str]] = {
-    # Default nodes: description only
-    "Command": {"description"},
-    "Event": {"description"},
+    # Default nodes: description + a small set of safe, whitelisted fields (Inspector MVP)
+    "Command": {"description", "actor"},
+    "Event": {"description", "version"},
     "Policy": {"description"},
-    "Aggregate": {"description"},
-    "ReadModel": {"description"},
+    "Aggregate": {"description", "rootEntity"},
+    "ReadModel": {"description", "provisioningType"},
     "BoundedContext": {"description"},
     # UI: wireframe + attachment metadata
     "UI": {"description", "template", "attachedToId", "attachedToType", "attachedToName"},
 }
-
-
-def _sanitize_html_template(html: str) -> str:
-    """
-    Minimal HTML safety pass:
-    - Remove <script> blocks
-    - Remove inline event handlers (on*)
-    - Strip javascript: URLs
-
-    This is not a full HTML sanitizer, but it enforces a baseline policy.
-    """
-    if not isinstance(html, str):
-        return ""
-
-    # Remove script blocks
-    html = re.sub(r"<\s*script\b[^>]*>.*?<\s*/\s*script\s*>", "", html, flags=re.IGNORECASE | re.DOTALL)
-
-    # Remove inline event handlers like onclick="..." or onload='...'
-    html = re.sub(r"\s+on[a-zA-Z]+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", "", html, flags=re.IGNORECASE)
-
-    # Remove javascript: in href/src (best-effort)
-    html = re.sub(r"javascript\s*:", "", html, flags=re.IGNORECASE)
-    return html
 
 
 def _get_node_info_tx(tx: Any, node_id: str) -> dict[str, Any] | None:
@@ -410,6 +409,31 @@ def _validate_update_tx(tx: Any, change: dict[str, Any]) -> list[str]:
     if not updates:
         return ["update requires non-empty updates"]
 
+    # E2: deterministic normalization for UI templates (before field validation)
+    # This prevents rejections on length/doc-root/style-scope violations by auto-correcting them.
+    if label == "UI" and isinstance(updates.get("template"), str):
+        ui_name = str(info.get("name") or info.get("id") or "UI")
+        raw = str(updates.get("template") or "")
+        normalized, report = normalize_ui_template(raw, ui_name=ui_name, theme_hint=ui_name)
+        if normalized != raw or report.fallback_used:
+            SmartLogger.log(
+                "INFO",
+                "UI template normalized (validation)",
+                category="api.model_change.ui_template.normalize",
+                params={
+                    "phase": "validate_update",
+                    "targetId": node_id,
+                    "ui_name": ui_name,
+                    "len_before": len(raw),
+                    "len_after": len(normalized),
+                    "normalize": report.as_dict(),
+                    "template_before": raw,
+                    "template_after": normalized,
+                },
+            )
+        updates["template"] = normalized
+        change["updates"] = updates
+
     allowed = _ALLOWED_UPDATE_FIELDS_BY_LABEL.get(label, {"description"})
     for field, value in updates.items():
         if field not in allowed:
@@ -427,6 +451,30 @@ def _validate_update_tx(tx: Any, change: dict[str, Any]) -> list[str]:
                 errors.append("template must be a string")
             elif len(value) > MAX_TEMPLATE_LEN:
                 errors.append(f"template too long (>{MAX_TEMPLATE_LEN})")
+
+        if field in ("actor", "rootEntity") and value is not None:
+            if not isinstance(value, str):
+                errors.append(f"{field} must be a string")
+            elif len(value) > MAX_NAME_LEN:
+                errors.append(f"{field} too long (>{MAX_NAME_LEN})")
+
+        if field == "version" and value is not None:
+            if isinstance(value, (int, float)):
+                # ok
+                pass
+            elif isinstance(value, str):
+                if len(value) > 50:
+                    errors.append("version too long (>50)")
+            else:
+                errors.append("version must be a string or number")
+
+        if field == "provisioningType" and value is not None:
+            if not isinstance(value, str):
+                errors.append("provisioningType must be a string")
+            else:
+                allowed_types = {"CQRS", "API", "GraphQL", "SharedDB"}
+                if value not in allowed_types:
+                    errors.append(f"provisioningType must be one of {sorted(allowed_types)}")
 
         if field in ("attachedToId", "attachedToType", "attachedToName") and value is not None:
             if not isinstance(value, str):
@@ -446,14 +494,44 @@ def _apply_update_tx(tx: Any, change: dict[str, Any]) -> None:
     node_id = str(change.get("targetId"))
     updates: dict[str, Any] = change.get("updates") or {}
 
-    # Sanitize template if present
+    # Normalize UI template if present (E2, deterministic)
     if "template" in updates and updates.get("template") is not None:
-        updates["template"] = _sanitize_html_template(str(updates.get("template")))
+        info = _get_node_info_tx(tx, node_id) or {}
+        ui_name = str(info.get("name") or info.get("id") or "UI")
+        raw = str(updates.get("template") or "")
+        normalized, report = normalize_ui_template(raw, ui_name=ui_name, theme_hint=ui_name)
+        if normalized != raw or report.fallback_used:
+            SmartLogger.log(
+                "INFO",
+                "UI template normalized (apply_update)",
+                category="api.model_change.ui_template.normalize",
+                params={
+                    "phase": "apply_update",
+                    "targetId": node_id,
+                    "ui_name": ui_name,
+                    "len_before": len(raw),
+                    "len_after": len(normalized),
+                    "normalize": report.as_dict(),
+                    "template_before": raw,
+                    "template_after": normalized,
+                },
+            )
+        updates["template"] = normalized
 
     # Build SET clauses for whitelisted property names
     set_clauses: list[str] = ["n.updatedAt = datetime()"]
     params: dict[str, Any] = {"id": node_id}
-    for k in ["description", "template", "attachedToId", "attachedToType", "attachedToName"]:
+    for k in [
+        "description",
+        "actor",
+        "version",
+        "rootEntity",
+        "provisioningType",
+        "template",
+        "attachedToId",
+        "attachedToType",
+        "attachedToName",
+    ]:
         if k in updates:
             set_clauses.append(f"n.{k} = ${k}")
             params[k] = updates.get(k)
@@ -602,10 +680,26 @@ def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
             description=description,
         )
     elif target_type == "UI":
-        template = updates.get("template", change.get("template", "")) or ""
-        template = _sanitize_html_template(str(template))
+        raw_template = updates.get("template", change.get("template", "")) or ""
+        template, report = normalize_ui_template(str(raw_template), ui_name=target_name, theme_hint=target_name)
         if len(template) > MAX_TEMPLATE_LEN:
             raise ValueError(f"template too long (>{MAX_TEMPLATE_LEN})")
+        if template != str(raw_template) or report.fallback_used:
+            SmartLogger.log(
+                "INFO",
+                "UI template normalized (apply_create)",
+                category="api.model_change.ui_template.normalize",
+                params={
+                    "phase": "apply_create",
+                    "targetId": target_id,
+                    "ui_name": target_name,
+                    "len_before": len(str(raw_template)),
+                    "len_after": len(template),
+                    "normalize": report.as_dict(),
+                    "template_before": str(raw_template),
+                    "template_after": template,
+                },
+            )
 
         attached_to_id = updates.get("attachedToId", change.get("attachedToId"))
         attached_to_type = updates.get("attachedToType", change.get("attachedToType", "Command"))
@@ -677,6 +771,13 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
 
     errors: list[str] = []
 
+    SmartLogger.log(
+        "INFO",
+        "Change-apply started: validating and applying changes atomically.",
+        category="api.model_change.atomic.start",
+        params={"approvedChanges": approved_changes},
+    )
+
     with get_session() as session:
         tx = session.begin_transaction()
         try:
@@ -721,6 +822,12 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                     break
 
             if errors:
+                SmartLogger.log(
+                    "WARNING",
+                    "Change-apply validation failed: no changes applied (rollback).",
+                    category="api.model_change.atomic.validation_failed",
+                    params={"errors": errors, "approvedChanges": approved_changes},
+                )
                 tx.rollback()
                 return [], errors
 
@@ -745,6 +852,12 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                 tx.rollback()
             except Exception:
                 pass
+            SmartLogger.log(
+                "ERROR",
+                "Change-apply crashed: transaction rolled back.",
+                category="api.model_change.atomic.exception",
+                params={"error": str(e), "approvedChanges": approved_changes},
+            )
             return [], [str(e)]
 
     # Flatten updates for frontend sync compatibility
@@ -755,5 +868,12 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
         for k, v in (updates or {}).items():
             c[k] = v
         applied.append(c)
+
+    SmartLogger.log(
+        "INFO",
+        "Change-apply completed successfully.",
+        category="api.model_change.atomic.done",
+        params={"appliedChanges": applied},
+    )
     return applied, []
 

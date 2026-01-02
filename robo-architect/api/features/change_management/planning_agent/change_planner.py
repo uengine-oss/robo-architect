@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Optional, List
+from typing import List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -26,9 +26,9 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_PROMPT,
     get_llm_provider_model,
 )
-from api.platform.observability.smart_logger import SmartLogger
+from api.platform.llm import get_llm as _platform_get_llm
 from api.platform.observability.request_logging import summarize_for_log
-
+from api.platform.observability.smart_logger import SmartLogger
 
 # =============================================================================
 # LLM Audit Logging (prompt/output + performance)
@@ -43,14 +43,14 @@ from api.platform.observability.request_logging import summarize_for_log
 class ChangeItem(BaseModel):
     """A single change in the plan."""
     action: str = Field(..., description="Type of change: rename, update, create, or delete")
-    targetType: str = Field(..., description="Type of target: Aggregate, Command, or Event")
-    targetId: str = Field(..., description="ID of the target node")
-    targetName: str = Field(..., description="Current name of the target")
+    targetType: str = Field(..., description="Type of target: Aggregate, Command, or Event")  # noqa: N815
+    targetId: str = Field(..., description="ID of the target node")  # noqa: N815
+    targetName: str = Field(..., description="Current name of the target")  # noqa: N815
     from_value: Optional[str] = Field(None, description="Original value (for rename)")
     to_value: Optional[str] = Field(None, description="New value (for rename)")
     description: str = Field(..., description="Description of the change")
     reason: str = Field(..., description="Why this change is needed")
-    
+
     class Config:
         populate_by_name = True
 
@@ -159,27 +159,20 @@ Return a JSON object with the revised "changes" array."""
 
 def get_llm():
     """Get the configured LLM instance."""
-    provider, model = get_llm_provider_model()
-
-    if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(model=model, temperature=0)
-    else:
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model, temperature=0)
+    return _platform_get_llm()
 
 
 def format_impacted_nodes(nodes: List[dict]) -> str:
     """Format impacted nodes for the prompt."""
     if not nodes:
         return "No connected objects found."
-    
+
     lines = []
     for node in nodes:
         node_type = node.get("type", "Unknown")
         node_id = node.get("id", "?")
         node_name = node.get("name", "?")
-        
+
         if node_type == "Aggregate":
             lines.append(f"- 📦 Aggregate [{node_id}]: {node_name}")
             if node.get("rootEntity"):
@@ -190,29 +183,29 @@ def format_impacted_nodes(nodes: List[dict]) -> str:
                 lines.append(f"  Actor: {node.get('actor')}")
         elif node_type == "Event":
             lines.append(f"- 📣 Event [{node_id}]: {node_name}")
-    
+
     return "\n".join(lines)
 
 
 def format_change_summary(original: dict, edited: dict) -> str:
     """Format a summary of what changed."""
     changes = []
-    
+
     orig_role = original.get("role", "")
     edit_role = edited.get("role", "")
     if orig_role != edit_role:
         changes.append(f"- Role changed from '{orig_role}' to '{edit_role}'")
-    
+
     orig_action = original.get("action", "")
     edit_action = edited.get("action", "")
     if orig_action != edit_action:
         changes.append(f"- Action changed from '{orig_action}' to '{edit_action}'")
-    
+
     orig_benefit = original.get("benefit", "")
     edit_benefit = edited.get("benefit", "")
     if orig_benefit != edit_benefit:
         changes.append(f"- Benefit changed from '{orig_benefit}' to '{edit_benefit}'")
-    
+
     return "\n".join(changes) if changes else "No textual changes detected."
 
 
@@ -231,7 +224,7 @@ def generate_change_plan(
 ) -> List[dict]:
     """
     Generate a change plan for User Story modifications.
-    
+
     Args:
         user_story_id: ID of the user story being edited
         original_user_story: Original user story data
@@ -239,27 +232,27 @@ def generate_change_plan(
         impacted_nodes: List of connected objects that may need changes
         feedback: Optional human feedback for plan revision
         previous_plan: Previous plan to revise (used with feedback)
-    
+
     Returns:
         List of changes to apply
     """
     llm = get_llm()
-    
+
     # Default original values if not provided
     if original_user_story is None:
         original_user_story = {}
-    
+
     original_role = original_user_story.get("role", "user")
     original_action = original_user_story.get("action", "")
     original_benefit = original_user_story.get("benefit", "")
-    
+
     edited_role = edited_user_story.get("role", "user")
     edited_action = edited_user_story.get("action", "")
     edited_benefit = edited_user_story.get("benefit", "")
-    
+
     impacted_nodes_text = format_impacted_nodes(impacted_nodes)
     change_summary = format_change_summary(original_user_story, edited_user_story)
-    
+
     if feedback and previous_plan:
         # Revision mode - incorporate feedback
         prompt = REVISION_PROMPT.format(
@@ -287,10 +280,10 @@ def generate_change_plan(
             change_summary=change_summary,
             impacted_nodes_text=impacted_nodes_text
         )
-    
+
     # Use structured output
     structured_llm = llm.with_structured_output(ChangePlan)
-    
+
     provider, model = get_llm_provider_model()
     if AI_AUDIT_LOG_ENABLED:
         SmartLogger.log(
@@ -329,7 +322,7 @@ def generate_change_plan(
                 "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump),
             }
         )
-    
+
     # Convert to dict format for API response
     changes = []
     for change in response.changes:
@@ -341,14 +334,14 @@ def generate_change_plan(
             "description": change.description,
             "reason": change.reason
         }
-        
+
         if change.from_value:
             change_dict["from"] = change.from_value
         if change.to_value:
             change_dict["to"] = change.to_value
-        
+
         changes.append(change_dict)
-    
+
     return changes
 
 

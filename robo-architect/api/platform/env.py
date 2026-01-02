@@ -3,12 +3,19 @@ Shared environment variable helpers and commonly-used flags.
 
 Goal: centralize env parsing rules (truthy handling, stripping, fallbacks) so
 feature modules can import consistent behavior instead of duplicating logic.
+
+LLM configuration (used via `api.platform.llm`):
+- LLM_PROVIDER: openai | anthropic | google (aliases: gemini, google-genai, google_genai)
+- LLM_MODEL: required for anthropic/google; optional for openai (defaults to gpt-4.1-2025-04-14)
+- API keys: OPENAI_API_KEY | ANTHROPIC_API_KEY | GOOGLE_API_KEY
 """
 
 from __future__ import annotations
 
+import ast
+import json
 import os
-from typing import Iterable
+from typing import Any, Iterable
 
 _TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 
@@ -38,6 +45,41 @@ def env_flag(key: str, default: bool = False) -> bool:
     if not val:
         return default
     return val in _TRUE_VALUES
+
+
+def env_json(key: str, default: Any = None) -> Any:
+    """
+    Read an environment variable and parse it as JSON.
+
+    Notes:
+    - Primarily expects valid JSON (e.g. {"temperature": 0.3}).
+    - Falls back to Python literals via ast.literal_eval for convenience
+      (e.g. {'temperature': 0.3}) if JSON parsing fails.
+    """
+    raw = env_str(key, default=None, strip=True)
+    if raw is None:
+        return default
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            return ast.literal_eval(raw)
+        except Exception as e:  # noqa: BLE001 - we re-raise as ValueError with context
+            raise ValueError(
+                f"Environment variable '{key}' must be valid JSON (or a Python literal). "
+                f"Got: {raw!r}"
+            ) from e
+
+
+def env_dict(key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Read an environment variable and parse it into a dictionary."""
+    val = env_json(key, default=None)
+    if val is None:
+        return dict(default or {})
+    if not isinstance(val, dict):
+        raise ValueError(f"Environment variable '{key}' must be a JSON object/dict. Got: {type(val).__name__}")
+    return val
 
 
 # =============================================================================
@@ -88,5 +130,9 @@ def get_neo4j_database() -> str | None:
 AI_AUDIT_LOG_ENABLED = env_flag("AI_AUDIT_LOG_ENABLED", True)
 AI_AUDIT_LOG_FULL_PROMPT = env_flag("AI_AUDIT_LOG_FULL_PROMPT", False)
 AI_AUDIT_LOG_FULL_OUTPUT = env_flag("AI_AUDIT_LOG_FULL_OUTPUT", False)
+
+# Ingestion workflow: optional phase toggles
+# - If True, skip Neo4j UI node creation + LLM wireframe generation phase.
+IS_SKIP_UI_PHASE = env_flag("IS_SKIP_UI_PHASE", False)
 
 

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from api.platform.env import get_llm_provider_model
+from api.platform.llm import get_llm as _platform_get_llm
+
 
 def dump_model(obj: Any) -> Any:
     """Safely dump a pydantic model (v1/v2) for logging."""
@@ -28,15 +29,6 @@ def dump_model(obj: Any) -> Any:
 
 def get_llm():
     """Get the configured LLM instance."""
-    provider, model = get_llm_provider_model()
-
-    if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-
-        return ChatAnthropic(model=model, temperature=0)
-    else:
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(model=model, temperature=0)
+    return _platform_get_llm()
 
 

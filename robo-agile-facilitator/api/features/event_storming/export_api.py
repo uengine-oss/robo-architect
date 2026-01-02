@@ -273,8 +273,7 @@ async def export_summary(session_id: str):
                     max_list=10,
                     max_depth=6,
                 ),
-            },
-            max_inline_chars=4000,
+            }
         )
         SmartLogger.log(
             "INFO",
@@ -309,8 +308,7 @@ async def export_summary(session_id: str):
                     },
                     max_str=800,
                 ),
-            },
-            max_inline_chars=4000,
+            }
         )
         SmartLogger.log(
             "INFO",

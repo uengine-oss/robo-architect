@@ -31,24 +31,24 @@
 
 ### 1) 환경변수 설정
 
-이 저장소는 루트의 `env.example`를 기준으로 `.env`를 구성합니다.
+이 프로젝트는 `.env.example`를 기준으로 `.env`를 구성합니다.
 
 #### Windows (PowerShell)
 
 ```powershell
-Copy-Item .\env.example .\.env
+Copy-Item .\.env.example .\.env
 ```
 
 #### macOS/Linux
 
 ```bash
-cp env.example .env
+cp .env.example .env
 ```
 
 `.env`에서 최소한 아래를 설정하세요.
 
 - **Neo4j**: `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` (필요 시 `NEO4J_DATABASE`)
-- **LLM**: `LLM_PROVIDER`, `LLM_MODEL`, 그리고 해당 키(`OPENAI_API_KEY` 또는 `ANTHROPIC_API_KEY`)
+- **LLM**: `LLM_PROVIDER`, `LLM_MODEL`, 그리고 해당 키(`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY`)
 
 ### 2) Neo4j 스키마 적용 (최초 1회)
 
@@ -223,7 +223,7 @@ uv run python -m api.features.ingestion.event_storming.cli impact OrderCancelled
 ├── logs/                         # 실행 로그(JSONL 등)
 ├── pyproject.toml                # Python 의존성/툴 설정(uv 권장)
 ├── requirements.txt              # pip 대안 설치용
-└── env.example                   # .env 템플릿
+└── .env.example                  # .env 템플릿
 ```
 
 ---

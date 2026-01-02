@@ -14,7 +14,7 @@ def safe_float(v: Any, default: float = 0.0) -> float:
 def relationship_whitelist() -> List[str]:
     """
     Relationship whitelist used for 2-hop propagation context.
-    Defaults align with p_local/poc/1_poc_propagation.md.
+    Defaults align with docs/poc/1_poc_propagation.md.
     """
     raw = os.getenv(
         "CHANGE_PROPAGATION_REL_WHITELIST",

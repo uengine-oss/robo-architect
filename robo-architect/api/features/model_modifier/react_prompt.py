@@ -28,6 +28,15 @@ IMPORTANT:
 - For "connect" actions, specify:
   - "sourceId"
   - "connectionType": "TRIGGERS" (Event→Policy), "INVOKES" (Policy→Command), or "EMITS" (Command→Event)
+
+UI wireframe template standard (STRICT):
+- For UI node updates/creates, `updates.template` MUST be an HTML fragment (no markdown fences).
+- Must NOT include: <!doctype>, <html>, <head>, <body>, <script>, inline event handlers (on*), or javascript: URLs.
+- Must start with a root container:
+  - <div class="wf-root wf-theme-ant" data-wf-root="1"> ... </div>
+  - or <div class="wf-root wf-theme-material" data-wf-root="1"> ... </div>
+- <style> is allowed ONLY when all selectors are scoped under `.wf-root`, and it MUST NOT use @import or url(...).
+- Make it modern UI (Ant/Material): app bar, cards, table toolbar + pagination, form grid, tabs/segments, chips/badges, empty/loading/error placeholders.
 """
 
 

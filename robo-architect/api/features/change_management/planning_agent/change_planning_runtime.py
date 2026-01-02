@@ -8,26 +8,19 @@ Kept local to the change planning feature implementation.
 from __future__ import annotations
 
 from api.platform.env import (
-    get_llm_provider_model,
     get_neo4j_database as get_env_neo4j_database,
+)
+from api.platform.env import (
     get_neo4j_password,
     get_neo4j_uri,
     get_neo4j_user,
 )
+from api.platform.llm import get_llm as _platform_get_llm
 
 
 def get_llm():
     """Get the configured LLM instance."""
-    provider, model = get_llm_provider_model()
-
-    if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-
-        return ChatAnthropic(model=model, temperature=0)
-    else:
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(model=model, temperature=0)
+    return _platform_get_llm()
 
 
 def get_embeddings():
