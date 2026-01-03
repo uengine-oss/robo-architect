@@ -54,7 +54,7 @@ async function handleRefresh() {
             title="Refresh"
             :disabled="isLoading"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="23 4 23 10 17 10"></polyline>
               <polyline points="1 20 1 14 7 14"></polyline>
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -65,7 +65,7 @@ async function handleRefresh() {
             @click="navigatorStore.expandAll()"
             title="Expand All"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </button>
@@ -74,7 +74,7 @@ async function handleRefresh() {
             @click="navigatorStore.collapseAll()"
             title="Collapse All"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="18 15 12 9 6 15"></polyline>
             </svg>
           </button>
@@ -166,8 +166,8 @@ async function handleRefresh() {
 
 <style scoped>
 .tree-action-btn {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -195,19 +195,19 @@ async function handleRefresh() {
 
 /* Section Groups */
 .section-group {
-  margin-bottom: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
 }
 
 .section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  margin-bottom: var(--spacing-xs);
+  padding: 2px var(--spacing-xs);
+  margin-bottom: 2px;
 }
 
 .section-title {
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -215,10 +215,10 @@ async function handleRefresh() {
 }
 
 .section-count {
-  font-size: 0.65rem;
-  padding: 2px 6px;
+  font-size: 0.55rem;
+  padding: 1px 4px;
   background: var(--color-bg-tertiary);
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--color-text-light);
 }
 
@@ -285,25 +285,25 @@ async function handleRefresh() {
 }
 
 .panel-legend {
-  padding: var(--spacing-md);
+  padding: var(--spacing-sm);
   border-top: 1px solid var(--color-border);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--spacing-md);
+  gap: var(--spacing-sm);
 }
 
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
+  gap: 4px;
+  font-size: 0.65rem;
   color: var(--color-text-light);
 }
 
 .legend-color {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }
 
 .legend-color--userstory { background: #20c997; }

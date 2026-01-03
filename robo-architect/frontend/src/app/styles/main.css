@@ -159,12 +159,12 @@ body {
 }
 
 .panel-header {
-  padding: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
   border-bottom: 1px solid var(--color-border);
 }
 
 .panel-title {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -174,7 +174,7 @@ body {
 .panel-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-sm);
+  padding: var(--spacing-xs);
 }
 
 /* ============================================
@@ -188,8 +188,8 @@ body {
 .tree-node__header {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-sm);
+  gap: 4px;
+  padding: 2px var(--spacing-xs);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s ease;
@@ -204,8 +204,8 @@ body {
 }
 
 .tree-node__toggle {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -222,13 +222,13 @@ body {
 }
 
 .tree-node__icon {
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-sm);
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.65rem;
+  font-size: 0.55rem;
   font-weight: 600;
   color: white;
   flex-shrink: 0;
@@ -236,13 +236,13 @@ body {
 
 .tree-node__icon--userstory {
   background: #20c997;
-  font-size: 0.55rem;
+  font-size: 0.45rem;
 }
 
 .tree-node__icon--bc,
 .tree-node__icon--boundedcontext {
   background: var(--color-bc);
-  border: 2px solid var(--color-text-light);
+  border: 1.5px solid var(--color-text-light);
   color: var(--color-text-light);
 }
 
@@ -265,28 +265,28 @@ body {
 
 .tree-node__icon--readmodel {
   background: var(--color-readmodel);
-  font-size: 0.5rem;
+  font-size: 0.4rem;
 }
 
 .tree-node__icon--ui {
   background: var(--color-ui-light);
   color: #343a40;
   border: 1px solid #ced4da;
-  font-size: 0.5rem;
+  font-size: 0.4rem;
 }
 
 .tree-node__icon--cqrsoperation {
   background: linear-gradient(135deg, #fcc419 0%, #fd7e14 100%);
-  font-size: 0.55rem;
+  font-size: 0.45rem;
 }
 
 .tree-node__icon--property {
   background: #868e96;
-  font-size: 0.5rem;
+  font-size: 0.4rem;
 }
 
 .tree-node__label {
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -295,13 +295,13 @@ body {
 }
 
 .tree-node__children {
-  padding-left: var(--spacing-lg);
+  padding-left: var(--spacing-md);
 }
 
 .tree-node__badge {
-  font-size: 0.7rem;
-  padding: 2px 6px;
-  border-radius: 10px;
+  font-size: 0.6rem;
+  padding: 1px 4px;
+  border-radius: 8px;
   background: var(--color-bg-tertiary);
   color: var(--color-text-light);
 }

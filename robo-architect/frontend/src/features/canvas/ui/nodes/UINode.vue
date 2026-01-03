@@ -21,23 +21,6 @@ const hasTemplate = computed(() => !!props.data?.template)
       {{ headerText }}
     </div>
     <div class="es-node__body">
-      <!-- Wireframe Icon -->
-      <div class="es-node__icon">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <!-- Browser window frame -->
-          <rect x="2" y="3" width="20" height="18" rx="2" />
-          <line x1="2" y1="7" x2="22" y2="7" />
-          <circle cx="5" cy="5" r="0.8" fill="currentColor" />
-          <circle cx="7.5" cy="5" r="0.8" fill="currentColor" />
-          <circle cx="10" cy="5" r="0.8" fill="currentColor" />
-          <!-- Wireframe content -->
-          <rect x="4" y="9" width="7" height="3" rx="0.5" stroke-dasharray="1.5 1" />
-          <rect x="4" y="14" width="16" height="2" rx="0.5" stroke-dasharray="1.5 1" />
-          <rect x="4" y="18" width="10" height="2" rx="0.5" stroke-dasharray="1.5 1" />
-          <rect x="13" y="9" width="7" height="5" rx="0.5" stroke-dasharray="1.5 1" />
-        </svg>
-      </div>
-
       <div class="es-node__name">{{ data?.name }}</div>
 
       <!-- Attached To Indicator -->
@@ -92,19 +75,11 @@ const hasTemplate = computed(() => !!props.data?.template)
 }
 
 .es-node__body {
-  padding: 8px 10px 10px;
+  padding: 6px 10px 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-}
-
-.es-node__icon {
-  color: var(--color-ui);
-}
-
-.es-node--ui.has-template .es-node__icon {
-  color: var(--color-readmodel);
+  gap: 4px;
 }
 
 .es-node__name {

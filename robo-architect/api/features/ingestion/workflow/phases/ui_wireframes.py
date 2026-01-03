@@ -114,7 +114,7 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
 
                 # Deterministic + collision-free (explicit target type)
                 ui_id = f"UI-CMD-{cmd.id}"
-                ui_name = f"{cmd.name} UI"
+                ui_name = cmd.name
 
                 try:
                     # Avoid extra generation if template already exists (idempotency / 1x per node)
@@ -297,7 +297,7 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                 continue
 
             ui_id = f"UI-RM-{rm_id}"
-            ui_name = f"{rm.get('name', rm_id)} UI"
+            ui_name = rm.get('name', rm_id)
 
             try:
                 # Avoid extra generation if template already exists (idempotency / 1x per node)

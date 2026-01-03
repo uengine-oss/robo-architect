@@ -12,6 +12,9 @@ export const useCanvasStore = defineStore('canvas', () => {
   // Track BC containers and their children
   const bcContainers = ref({}) // { bcId: { nodeIds: [], bounds: {} } }
   
+  // Track collapsed BCs
+  const collapsedBCs = ref(new Set())
+  
   // Node type configurations
   const nodeTypeConfig = {
     Command: { 
@@ -139,24 +142,37 @@ export const useCanvasStore = defineStore('canvas', () => {
     const bcNode = nodes.value.find(n => n.id === bcId)
     if (!bcNode) return { x: 100, y: 100 }
     
-    const padding = 60
+    // Consistent padding values (matching updateBCSize)
     const headerHeight = 50
+    const topPadding = 30
+    const leftPadding = 40
+    const gapX = 5  // Tight spacing between stickers
     const nodeWidth = nodeTypeConfig[nodeType]?.width || 140
     const nodeHeight = nodeTypeConfig[nodeType]?.height || 80
+    const baseY = headerHeight + topPadding  // Starting Y position for all stickers
     
-    // Layout: Aggregates on left, Commands/Events flow to the right
+    // Sticker widths for tight layout
+    const commandWidth = nodeTypeConfig.Command?.width || 140
+    const aggregateWidth = nodeTypeConfig.Aggregate?.width || 160
+    
+    // Calculate X positions: stickers almost adjacent
+    const commandX = leftPadding
+    const aggregateX = commandX + commandWidth + gapX
+    const eventX = aggregateX + aggregateWidth + gapX
+    
+    // Layout: Command(left) → Aggregate(center) → Event(right)
     const typeOffsets = {
-      Aggregate: { x: 30, baseY: headerHeight + 20 },
-      Command: { x: 200, baseY: headerHeight + 20 },
-      Event: { x: 380, baseY: headerHeight + 20 },
-      Policy: { x: 290, baseY: headerHeight + 150 },
+      Command: { x: commandX, baseY: baseY },
+      Aggregate: { x: aggregateX, baseY: baseY },
+      Event: { x: eventX, baseY: baseY },
+      Policy: { x: commandX, baseY: baseY + 100 },
       // Place ReadModel roughly below the main flow
-      ReadModel: { x: 180, baseY: headerHeight + 230 },
+      ReadModel: { x: aggregateX, baseY: baseY + 100 },
       // UI stickers default to left side (more accurate placement happens in addNodesWithLayout)
-      UI: { x: 30, baseY: headerHeight + 20 }
+      UI: { x: leftPadding, baseY: baseY }
     }
     
-    const offset = typeOffsets[nodeType] || { x: 30, baseY: headerHeight + 20 }
+    const offset = typeOffsets[nodeType] || { x: leftPadding, baseY: baseY }
     
     // Count existing nodes of same type in this BC
     const sameTypeInBC = nodes.value.filter(n => 
@@ -166,12 +182,13 @@ export const useCanvasStore = defineStore('canvas', () => {
     
     return {
       x: offset.x,
-      y: offset.baseY + (sameTypeInBC * (nodeHeight + 20))
+      y: offset.baseY + (sameTypeInBC * (nodeHeight + 5))  // Tight spacing between stickers
     }
   }
   
   // Update BC container size based on children
-  function updateBCSize(bcId) {
+  // If shiftIfNeeded is true, shifts all children right when minX < padding
+  function updateBCSize(bcId, shiftIfNeeded = false) {
     const bcNode = nodes.value.find(n => n.id === bcId)
     if (!bcNode) return
     
@@ -181,26 +198,64 @@ export const useCanvasStore = defineStore('canvas', () => {
       return
     }
     
-    // Calculate bounds
+    // Generous padding values for clear visual separation from BC border
+    const headerHeight = 50      // BC header height
+    const topPadding = 30        // Padding below header
+    const bottomPadding = 50     // Bottom margin from BC border
+    const leftPadding = 40       // Left margin from BC border  
+    const rightPadding = 50      // Right margin from BC border
+    
+    // Calculate bounds of all children
     let minX = Infinity
+    let minY = Infinity
     let maxX = 0
     let maxY = 0
     
     children.forEach(child => {
       const config = nodeTypeConfig[child.data?.type] || { width: 140, height: 80 }
       const left = child.position.x
+      const top = child.position.y
       const right = child.position.x + config.width
       const bottom = child.position.y + config.height
       
       minX = Math.min(minX, left)
+      minY = Math.min(minY, top)
       maxX = Math.max(maxX, right)
       maxY = Math.max(maxY, bottom)
     })
     
-    // Add padding
-    const padding = 40
-    const newWidth = Math.max(550, maxX + padding)
-    const newHeight = Math.max(350, maxY + padding)
+    // If children extend past left boundary, shift all children right
+    if (shiftIfNeeded && minX < leftPadding) {
+      const shiftAmount = leftPadding - minX
+      children.forEach(child => {
+        child.position = {
+          ...child.position,
+          x: child.position.x + shiftAmount
+        }
+      })
+      // Recalculate maxX after shift
+      maxX += shiftAmount
+      minX = leftPadding
+    }
+    
+    // If children extend past top boundary (below header), shift all children down
+    const minAllowedY = headerHeight + topPadding
+    if (shiftIfNeeded && minY < minAllowedY) {
+      const shiftAmount = minAllowedY - minY
+      children.forEach(child => {
+        child.position = {
+          ...child.position,
+          y: child.position.y + shiftAmount
+        }
+      })
+      // Recalculate maxY after shift
+      maxY += shiftAmount
+      minY = minAllowedY
+    }
+    
+    // Calculate new BC dimensions with generous margins
+    const newWidth = Math.max(550, maxX + rightPadding)
+    const newHeight = Math.max(350, maxY + bottomPadding)
     
     bcNode.style = {
       width: `${newWidth}px`,
@@ -379,22 +434,32 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
         
+        // Consistent padding values (matching updateBCSize and calculatePositionInBC)
         const headerHeight = 50
-        const padding = 30
+        const topPadding = 30
+        const leftPadding = 40
         const nodeWidth = 140
         const nodeHeight = 90
-        const gapX = 20
-        const gapY = 20
+        const gapX = 5   // Tight spacing between stickers (almost adjacent)
+        const gapY = 5   // Tight spacing between stickers (almost adjacent)
         
-        // Calculate center position for Aggregate
-        const aggregateX = padding + 180  // Center column
-        const commandX = padding          // Left of Aggregate
-        const eventX = padding + 360      // Right of Aggregate
-        const policyX = padding - 10      // Left of Command (will adjust based on invokeCommandId)
-        const readModelX = padding + 180  // Base X for read models row (we'll spread horizontally)
-        const uiX = padding - 120         // Default UI x (will be adjusted if attached)
+        // Sticker widths for tight layout calculation
+        const commandWidth = nodeTypeConfig.Command?.width || 140
+        const aggregateWidth = nodeTypeConfig.Aggregate?.width || 160
+        const eventWidth = nodeTypeConfig.Event?.width || 140
+        const uiWidth_layout = nodeTypeConfig.UI?.width || 130
+        const policyWidth = nodeTypeConfig.Policy?.width || 130
+        const readModelWidth = nodeTypeConfig.ReadModel?.width || 170
         
-        let currentY = headerHeight + 20
+        // Calculate positions: stickers almost adjacent (width + gapX)
+        const commandX = leftPadding                                    // Command starts at left padding
+        const aggregateX = commandX + commandWidth + gapX               // Aggregate right after Command
+        const eventX = aggregateX + aggregateWidth + gapX               // Event right after Aggregate
+        const policyX = commandX - policyWidth - gapX                   // Policy left of Command
+        const readModelX = aggregateX                                   // ReadModel below Aggregate
+        const uiX = commandX - uiWidth_layout - gapX                    // UI left of Command
+        
+        let currentY = headerHeight + topPadding
         
         // Find which command each policy invokes
         const policyCommandMap = {}
@@ -514,8 +579,15 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
 
-        // Layout UI stickers (positioned to the left of their attached Command/ReadModel when possible)
+        // Layout UI stickers (positioned to the left of their attached Command/ReadModel)
+        // UI stickers need special handling - they go to the left of commands,
+        // so we may need to shift all existing nodes right and expand BC width
+        const uiNodes = []
+        const uiWidth = nodeTypeConfig.UI?.width || 130
+        const uiGap = 5  // Tight spacing between stickers (almost adjacent)
         let uiFallbackY = currentY
+        let minUiX = Infinity
+        
         typeGroups.UI.forEach((ui, idx) => {
           if (!isOnCanvas(ui.id)) {
             let xPos = uiX
@@ -524,30 +596,66 @@ export const useCanvasStore = defineStore('canvas', () => {
             if (ui.attachedToId) {
               if (commandPositions[ui.attachedToId]) {
                 yPos = commandPositions[ui.attachedToId].y
-                xPos = commandPositions[ui.attachedToId].x - 150
+                xPos = commandPositions[ui.attachedToId].x - uiWidth - 5  // Tight gap between UI and Command
               } else if (readModelPositions[ui.attachedToId]) {
                 yPos = readModelPositions[ui.attachedToId].y
-                xPos = readModelPositions[ui.attachedToId].x - 150
+                xPos = readModelPositions[ui.attachedToId].x - uiWidth - 5  // Tight gap between UI and ReadModel
               }
             } else {
               uiFallbackY += nodeHeight + gapY
             }
-
-            const node = {
-              id: ui.id,
-              type: 'ui',
-              position: { x: Math.max(padding, xPos), y: yPos },
-              data: { ...ui, label: ui.name },
-              parentNode: bcId,
-              extent: 'parent'
-            }
-            nodes.value.push(node)
-            newNodes.push(node)
+            
+            minUiX = Math.min(minUiX, xPos)
+            uiNodes.push({ ui, xPos, yPos })
           }
         })
         
-        // Update BC size
-        updateBCSize(bcId)
+        // If UI stickers would be placed past the left boundary,
+        // shift all existing nodes in this BC to the right
+        // Note: leftPadding is already defined above (40) for consistent margins
+        if (uiNodes.length > 0 && minUiX < leftPadding) {
+          const shiftAmount = leftPadding - minUiX
+          
+          // Shift all already-added nodes in this BC
+          nodes.value.forEach(node => {
+            if (node.parentNode === bcId && node.type !== 'boundedcontext') {
+              node.position = {
+                ...node.position,
+                x: node.position.x + shiftAmount
+              }
+            }
+          })
+          
+          // Update position maps for accurate UI placement
+          Object.keys(commandPositions).forEach(cmdId => {
+            commandPositions[cmdId].x += shiftAmount
+          })
+          Object.keys(readModelPositions).forEach(rmId => {
+            readModelPositions[rmId].x += shiftAmount
+          })
+          
+          // Update UI positions after shift
+          uiNodes.forEach(uiData => {
+            uiData.xPos += shiftAmount
+          })
+        }
+        
+        // Now add UI nodes with corrected positions
+        uiNodes.forEach(({ ui, xPos, yPos }) => {
+          const node = {
+            id: ui.id,
+            type: 'ui',
+            position: { x: Math.max(leftPadding, xPos), y: yPos },
+            data: { ...ui, label: ui.name },
+            parentNode: bcId,
+            extent: 'parent'
+          }
+          nodes.value.push(node)
+          newNodes.push(node)
+        })
+        
+        // Update BC size (with shift already applied, just recalculate bounds)
+        updateBCSize(bcId, true)
         
         bcIndex++
       }
@@ -652,6 +760,110 @@ export const useCanvasStore = defineStore('canvas', () => {
     edges.value = []
     bcContainers.value = {}
     selectedNodeIds.value = new Set()
+    collapsedBCs.value = new Set()
+  }
+  
+  // Check if BC is collapsed
+  function isBCCollapsed(bcId) {
+    return collapsedBCs.value.has(bcId)
+  }
+  
+  // Toggle BC collapse state
+  function toggleBCCollapse(bcId) {
+    if (collapsedBCs.value.has(bcId)) {
+      collapsedBCs.value.delete(bcId)
+    } else {
+      collapsedBCs.value.add(bcId)
+    }
+    collapsedBCs.value = new Set(collapsedBCs.value)
+    
+    // Update visibility of child nodes
+    updateChildNodesVisibility(bcId)
+  }
+  
+  // Update visibility of child nodes when BC is collapsed/expanded
+  function updateChildNodesVisibility(bcId) {
+    const isCollapsed = collapsedBCs.value.has(bcId)
+    const bcNode = nodes.value.find(n => n.id === bcId)
+    
+    if (!bcNode) return
+    
+    // Get child nodes
+    const childNodes = nodes.value.filter(n => n.parentNode === bcId)
+    
+    // Update hidden property for child nodes
+    childNodes.forEach(child => {
+      child.hidden = isCollapsed
+    })
+    
+    // Also hide/show edges connected to child nodes
+    const childIds = new Set(childNodes.map(n => n.id))
+    edges.value.forEach(edge => {
+      if (childIds.has(edge.source) || childIds.has(edge.target)) {
+        edge.hidden = isCollapsed
+      }
+    })
+    
+    // Update BC size when collapsed
+    if (isCollapsed) {
+      // Store original size
+      if (!bcNode.data.originalStyle) {
+        bcNode.data.originalStyle = { ...bcNode.style }
+      }
+      // Collapse to header only
+      bcNode.style = {
+        ...bcNode.style,
+        height: '48px'
+      }
+    } else {
+      // Restore original size
+      if (bcNode.data.originalStyle) {
+        bcNode.style = { ...bcNode.data.originalStyle }
+      } else {
+        updateBCSize(bcId)
+      }
+    }
+    
+    // Trigger reactivity
+    nodes.value = [...nodes.value]
+    edges.value = [...edges.value]
+  }
+  
+  // Remove BC and all its children
+  function removeBC(bcId) {
+    // Get all child nodes
+    const childNodeIds = nodes.value
+      .filter(n => n.parentNode === bcId)
+      .map(n => n.id)
+    
+    // Remove child nodes
+    childNodeIds.forEach(id => {
+      selectedNodeIds.value.delete(id)
+    })
+    
+    // Remove from collapsed set
+    collapsedBCs.value.delete(bcId)
+    collapsedBCs.value = new Set(collapsedBCs.value)
+    
+    // Remove BC container tracking
+    delete bcContainers.value[bcId]
+    
+    // Remove all related edges
+    edges.value = edges.value.filter(e => 
+      !childNodeIds.includes(e.source) && 
+      !childNodeIds.includes(e.target) &&
+      e.source !== bcId && 
+      e.target !== bcId
+    )
+    
+    // Remove all nodes (children + BC)
+    nodes.value = nodes.value.filter(n => 
+      n.id !== bcId && n.parentNode !== bcId
+    )
+    
+    // Remove BC from selection
+    selectedNodeIds.value.delete(bcId)
+    selectedNodeIds.value = new Set(selectedNodeIds.value)
   }
 
   // Add a new node to an existing BC on canvas (used by chat create action)
@@ -661,10 +873,88 @@ export const useCanvasStore = defineStore('canvas', () => {
     const bcNode = nodes.value.find(n => n.id === bcId && n.type === 'boundedcontext')
     if (!bcNode) return null
 
-    const position = calculatePositionInBC(bcId, nodeData.type, 0)
+    const nodeType = nodeData.type
+    // Consistent padding value (matching updateBCSize and calculatePositionInBC)
+    const leftPadding = 40
+    const uiWidth = nodeTypeConfig.UI?.width || 130
+    const uiGap = 5  // Tight spacing between stickers (almost adjacent)
+    
+    let position
+    
+    // Special handling for UI stickers - place to the left of attached command
+    if (nodeType === 'UI') {
+      // Find the command positions in this BC
+      const commandsInBC = nodes.value.filter(n => 
+        n.parentNode === bcId && n.data?.type === 'Command'
+      )
+      const readModelsInBC = nodes.value.filter(n => 
+        n.parentNode === bcId && n.data?.type === 'ReadModel'
+      )
+      
+      let xPos = leftPadding
+      let yPos = 70 // Default Y (below header)
+      
+      // If UI is attached to a command, position to the left of that command
+      if (nodeData.attachedToId) {
+        const attachedCommand = commandsInBC.find(c => c.id === nodeData.attachedToId)
+        const attachedReadModel = readModelsInBC.find(r => r.id === nodeData.attachedToId)
+        
+        if (attachedCommand) {
+          xPos = attachedCommand.position.x - uiWidth - uiGap
+          yPos = attachedCommand.position.y
+        } else if (attachedReadModel) {
+          xPos = attachedReadModel.position.x - uiWidth - uiGap
+          yPos = attachedReadModel.position.y
+        }
+      } else if (commandsInBC.length > 0) {
+        // Default: position to the left of the first command
+        const firstCmd = commandsInBC.reduce((min, cmd) => 
+          cmd.position.y < min.position.y ? cmd : min
+        , commandsInBC[0])
+        xPos = firstCmd.position.x - uiWidth - uiGap
+        yPos = firstCmd.position.y
+      }
+      
+      // If UI would be placed past left boundary, shift all existing nodes right
+      if (xPos < leftPadding) {
+        const shiftAmount = leftPadding - xPos
+        
+        // Shift all children in this BC to the right
+        nodes.value.forEach(node => {
+          if (node.parentNode === bcId) {
+            node.position = {
+              ...node.position,
+              x: node.position.x + shiftAmount
+            }
+          }
+        })
+        
+        // Update xPos after shift
+        xPos = leftPadding
+        // No need to update yPos - it stays the same
+      }
+      
+      // Check for existing UI stickers at same Y to avoid overlap
+      const existingUIsAtY = nodes.value.filter(n => 
+        n.parentNode === bcId && 
+        n.data?.type === 'UI' &&
+        Math.abs(n.position.y - yPos) < 50
+      )
+      if (existingUIsAtY.length > 0) {
+        // Stack UI stickers vertically with tight spacing
+        const nodeHeight = nodeTypeConfig.UI?.height || 110
+        yPos = existingUIsAtY[existingUIsAtY.length - 1].position.y + nodeHeight + 5
+      }
+      
+      position = { x: xPos, y: yPos }
+    } else {
+      // For other node types, use default positioning
+      position = calculatePositionInBC(bcId, nodeType, 0)
+    }
+    
     const node = {
       id: nodeData.id,
-      type: nodeData.type.toLowerCase(),
+      type: nodeType.toLowerCase(),
       position,
       data: {
         ...nodeData,
@@ -676,7 +966,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     }
 
     nodes.value.push(node)
-    updateBCSize(bcId)
+    updateBCSize(bcId, true)
     return node
   }
 
@@ -960,17 +1250,26 @@ export const useCanvasStore = defineStore('canvas', () => {
         newNodes.push(bcNode)
         
         // Layout children inside BC
+        // Consistent padding values (matching updateBCSize and calculatePositionInBC)
         // Layout: Policy(왼쪽) → Command(왼쪽) → Aggregate(중앙) → Event(오른쪽)
         const headerHeight = 50
-        const padding = 30
+        const topPadding = 30
+        const leftPadding = 40
         const nodeHeight = 90
-        const gapY = 20
-        let currentY = headerHeight + 20
+        const gapX = 5   // Tight spacing between stickers (almost adjacent)
+        const gapY = 5   // Tight spacing between stickers (almost adjacent)
+        let currentY = headerHeight + topPadding
         
-        const aggregateX = padding + 180
-        const commandX = padding + 20
-        const eventX = padding + 360
-        const policyX = padding - 100
+        // Sticker widths for tight layout
+        const commandWidth = nodeTypeConfig.Command?.width || 140
+        const aggregateWidth = nodeTypeConfig.Aggregate?.width || 160
+        const policyWidth = nodeTypeConfig.Policy?.width || 130
+        
+        // Calculate X positions: stickers almost adjacent
+        const commandX = leftPadding
+        const aggregateX = commandX + commandWidth + gapX
+        const eventX = aggregateX + aggregateWidth + gapX
+        const policyX = commandX - policyWidth - gapX
         
         // Group by type
         const typeGroups = { Aggregate: [], Command: [], Event: [], Policy: [] }
@@ -1050,7 +1349,7 @@ export const useCanvasStore = defineStore('canvas', () => {
           const node = {
             id: pol.id,
             type: 'policy',
-            position: { x: Math.max(padding, xPos), y: yPos },
+            position: { x: Math.max(leftPadding, xPos), y: yPos },
             data: { ...pol, label: pol.name },
             parentNode: bcId,
             extent: 'parent'
@@ -1059,7 +1358,7 @@ export const useCanvasStore = defineStore('canvas', () => {
           newNodes.push(node)
         })
         
-        updateBCSize(bcId)
+        updateBCSize(bcId, true)
         bcOffsetY += bcHeight + 50
       }
       
@@ -1087,8 +1386,11 @@ export const useCanvasStore = defineStore('canvas', () => {
     nodeIds,
     nodeTypeConfig,
     bcContainers,
+    collapsedBCs,
     isOnCanvas,
     isSelected,
+    isBCCollapsed,
+    toggleBCCollapse,
     toggleNodeSelection,
     selectNode,
     addToSelection,
@@ -1099,6 +1401,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     addNodesWithLayout,
     addEdge,
     removeNode,
+    removeBC,
     clearCanvas,
     updateNodePosition,
     updateBCSize,

@@ -218,7 +218,7 @@ async function addToCanvas() {
     <div 
       class="tree-node__header"
       :class="{ 'is-dragging': isDragging, 'is-on-canvas': isOnCanvas, 'is-newly-added': isNewlyAdded }"
-      :style="{ paddingLeft: `${depth * 12}px` }"
+      :style="{ paddingLeft: `${depth * 10}px` }"
       :draggable="true"
       @click="toggleExpand"
       @dblclick="handleDoubleClick"
@@ -230,7 +230,7 @@ async function addToCanvas() {
         class="tree-node__toggle"
         :class="{ 'is-expanded': isExpanded, 'is-hidden': !hasChildren }"
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <polyline points="9 18 15 12 9 6"></polyline>
         </svg>
       </span>
@@ -270,7 +270,7 @@ async function addToCanvas() {
         title="Edit User Story (Double-click)"
         @click.stop="handleDoubleClick"
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
           <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
         </svg>
@@ -278,7 +278,7 @@ async function addToCanvas() {
       
       <!-- On canvas indicator -->
       <span v-if="isOnCanvas" class="tree-node__on-canvas">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
       </span>
@@ -365,21 +365,21 @@ async function addToCanvas() {
 }
 
 .tree-node__trigger {
-  font-size: 0.65rem;
+  font-size: 0.55rem;
   color: var(--color-text-light);
   opacity: 0.7;
   font-style: italic;
-  margin-left: 4px;
+  margin-left: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 120px;
+  max-width: 100px;
 }
 
 /* Edit button for user stories */
 .tree-node__edit-btn {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;

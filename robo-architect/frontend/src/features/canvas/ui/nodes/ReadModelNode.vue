@@ -42,9 +42,6 @@ function toggleProperties(e) {
     </div>
     <div class="es-node__body">
       <div class="es-node__name">{{ data?.name }}</div>
-      <div v-if="data?.description" class="es-node__description">
-        {{ data.description.slice(0, 50) }}{{ data.description.length > 50 ? '...' : '' }}
-      </div>
 
       <!-- Properties Toggle -->
       <div v-if="hasProperties" class="es-node__props-toggle" @click="toggleProperties">
@@ -127,18 +124,10 @@ function toggleProperties(e) {
 }
 
 .es-node__name {
-  font-size: 0.95rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: #1b5e20;
   text-align: center;
-}
-
-.es-node__description {
-  margin-top: 4px;
-  font-size: 0.65rem;
-  color: rgba(0, 0, 0, 0.6);
-  text-align: center;
-  line-height: 1.3;
 }
 
 .es-node__props-toggle {
