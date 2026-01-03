@@ -365,18 +365,19 @@ function requestChat() {
           <span v-if="saving">저장 중...</span>
           <span v-else>저장</span>
         </button>
-        <button class="inspector-panel__btn" @click="emit('close')" title="Close">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
       </div>
     </div>
 
     <div class="inspector-panel__body">
       <div v-if="!node" class="inspector-panel__empty">
-        편집할 노드를 선택하세요.
+        <div class="inspector-panel__empty-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </div>
+        <div class="inspector-panel__empty-text">선택된 객체가 없습니다.</div>
+        <div class="inspector-panel__empty-hint">캔버스에서 객체를 선택하세요</div>
       </div>
       <div v-else class="inspector-panel__content">
         <div class="inspector-tabs">
@@ -573,8 +574,29 @@ function requestChat() {
 }
 
 .inspector-panel__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
   color: var(--color-text-light);
-  font-size: 0.85rem;
+}
+
+.inspector-panel__empty-icon {
+  margin-bottom: var(--spacing-md);
+}
+
+.inspector-panel__empty-text {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin-bottom: var(--spacing-sm);
+}
+
+.inspector-panel__empty-hint {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  max-width: 200px;
 }
 
 .inspector-tabs {

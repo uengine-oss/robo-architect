@@ -33,6 +33,23 @@ const log = createLogger({ scope: 'CanvasWorkspace' })
 // - inspector: node inspector (property editor)
 const panelMode = ref('chat')
 
+// Sidebar icon click handlers (toggle behavior)
+function toggleChatPanel() {
+  panelMode.value = panelMode.value === 'chat' ? 'none' : 'chat'
+}
+
+function toggleInspectorPanel() {
+  if (panelMode.value === 'inspector') {
+    panelMode.value = 'none'
+  } else {
+    // Use currently selected node if any, otherwise show empty inspector
+    const selectedNode = canvasStore.selectedNodes[0] || null
+    inspectingNodeId.value = selectedNode?.id || null
+    inspectingInitialTab.value = 'properties'
+    panelMode.value = 'inspector'
+  }
+}
+
 const chatPanelWidth = ref(360)
 const isResizingChat = ref(false)
 
@@ -102,10 +119,6 @@ function openInspectorForNodeTab(nodeId, tab) {
   // CQRS tab has been removed; keep this robust for any legacy callers.
   inspectingInitialTab.value = tab === 'preview' ? 'preview' : 'properties'
   panelMode.value = 'inspector'
-}
-
-function closeSidePanel() {
-  panelMode.value = 'none'
 }
 
 async function onNodeDoubleClick(event) {
@@ -236,10 +249,6 @@ function onNodeClick(event) {
 
 function onPaneClick() {
   canvasStore.clearSelection()
-}
-
-function toggleChatPanel() {
-  panelMode.value = panelMode.value === 'chat' ? 'none' : 'chat'
 }
 
 function startResizeChat(e) {
@@ -383,19 +392,6 @@ onUnmounted(() => {
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
           </svg>
         </button>
-
-        <div class="canvas-toolbar__divider"></div>
-
-        <button 
-          class="canvas-toolbar__btn"
-          :class="{ 'is-active': isChatPanelOpen }"
-          @click="toggleChatPanel"
-          title="Toggle Model Modifier"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-          </svg>
-        </button>
       </div>
     </div>
 
@@ -419,11 +415,35 @@ onUnmounted(() => {
         <InspectorPanel
           :node-id="inspectingNodeId"
           :initial-tab="inspectingInitialTab"
-          @close="closeSidePanel"
           @updated="() => {}"
           @request-chat="switchToChatFromInspector"
         />
       </div>
+    </div>
+
+    <!-- Right Sidebar Icons (always visible) -->
+    <div class="right-sidebar">
+      <button 
+        class="right-sidebar__icon"
+        :class="{ 'is-active': panelMode === 'chat' }"
+        @click="toggleChatPanel"
+        title="Model Modifier"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+      </button>
+      <button 
+        class="right-sidebar__icon"
+        :class="{ 'is-active': panelMode === 'inspector' }"
+        @click="toggleInspectorPanel"
+        title="Inspector"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
     </div>
   </div>
 
@@ -598,5 +618,43 @@ onUnmounted(() => {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+/* Right Sidebar Icons */
+.right-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--color-bg-secondary);
+  border-left: 1px solid var(--color-border);
+}
+
+.right-sidebar__icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.right-sidebar__icon:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.right-sidebar__icon.is-active {
+  background: var(--color-accent);
+  color: white;
+}
+
+.right-sidebar__icon.is-active:hover {
+  background: #1c7ed6;
 }
 </style>

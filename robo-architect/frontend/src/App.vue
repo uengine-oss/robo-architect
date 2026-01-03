@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
@@ -10,6 +10,32 @@ import { createLogger, newOpId } from '@/app/logging/logger'
 
 const navigatorStore = useNavigatorStore()
 const userStoryEditor = useUserStoryEditorStore()
+
+// Navigator panel resize state
+const navigatorWidth = ref(320)
+const isResizingNavigator = ref(false)
+
+function startResizeNavigator(e) {
+  isResizingNavigator.value = true
+  e.preventDefault()
+  document.addEventListener('mousemove', onResizeNavigator)
+  document.addEventListener('mouseup', stopResizeNavigator)
+}
+
+function onResizeNavigator(e) {
+  if (!isResizingNavigator.value) return
+  const next = Math.round(e.clientX)
+  navigatorWidth.value = Math.max(200, Math.min(500, next))
+  try {
+    localStorage.setItem('navigator_panel_width', String(navigatorWidth.value))
+  } catch {}
+}
+
+function stopResizeNavigator() {
+  isResizingNavigator.value = false
+  document.removeEventListener('mousemove', onResizeNavigator)
+  document.removeEventListener('mouseup', stopResizeNavigator)
+}
 
 const log = createLogger({ scope: 'App' })
 const appInstanceId = newOpId('app')
@@ -90,6 +116,12 @@ function handleUserStoryModalClose() {
 }
 
 onMounted(() => {
+  // Load saved navigator width
+  try {
+    const v = Number(localStorage.getItem('navigator_panel_width'))
+    if (Number.isFinite(v) && v >= 200) navigatorWidth.value = v
+  } catch {}
+
   log.info('app_mounted', 'App mounted; core layout components are ready.', {
     appInstanceId,
     envMode: (() => {
@@ -101,6 +133,10 @@ onMounted(() => {
       navigator: getNavigatorSnapshot()
     }
   })
+})
+
+onUnmounted(() => {
+  stopResizeNavigator()
 })
 
 watch(
@@ -130,7 +166,15 @@ watch(
   <div class="app-container">
     <TopBar />
     <div class="main-content">
-      <NavigatorPanel />
+      <NavigatorPanel :style="{ width: navigatorWidth + 'px' }" />
+      
+      <!-- Navigator Resizer -->
+      <div 
+        class="navigator-resizer"
+        @mousedown="startResizeNavigator"
+        title="드래그하여 패널 너비 조절"
+      ></div>
+      
       <CanvasWorkspace />
     </div>
     
@@ -143,4 +187,18 @@ watch(
     />
   </div>
 </template>
+
+<style scoped>
+.navigator-resizer {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.navigator-resizer:hover {
+  background: rgba(34, 139, 230, 0.12);
+}
+</style>
 
