@@ -91,6 +91,25 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
     created_by_command: set[str] = set()
     created_by_readmodel: set[str] = set()
 
+    # Build set of command names that are invoked by policies (no UI needed)
+    # Policy-invoked commands are triggered by backend events, not user interaction
+    policy_invoked_commands: set[str] = set()
+    for pol in ctx.policies or []:
+        invoke_cmd = getattr(pol, "invoke_command", None)
+        if invoke_cmd:
+            policy_invoked_commands.add(invoke_cmd)
+
+    if policy_invoked_commands:
+        SmartLogger.log(
+            "INFO",
+            "Policy-invoked commands identified (will skip UI generation)",
+            category="ingestion.ui_wireframe.policy_filter",
+            params={
+                "session_id": ctx.session.id,
+                "policy_invoked_commands": list(policy_invoked_commands),
+            },
+        )
+
     for bc in ctx.bounded_contexts or []:
         # -------------------------------------------------------------
         # Command UI
@@ -98,6 +117,20 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
         for agg in ctx.aggregates_by_bc.get(bc.id, []) or []:
             for cmd in ctx.commands_by_agg.get(agg.id, []) or []:
                 if cmd.id in created_by_command:
+                    continue
+
+                # Skip commands invoked by policies (they don't need UI - triggered by backend events)
+                if cmd.name in policy_invoked_commands:
+                    SmartLogger.log(
+                        "INFO",
+                        "UI generation skipped for policy-invoked command",
+                        category="ingestion.ui_wireframe.skip",
+                        params={
+                            "session_id": ctx.session.id,
+                            "command_id": cmd.id,
+                            "command_name": cmd.name,
+                        },
+                    )
                     continue
 
                 story_ids = getattr(cmd, "user_story_ids", []) or []

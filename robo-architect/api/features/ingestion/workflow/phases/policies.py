@@ -161,7 +161,16 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     phase=IngestionPhase.IDENTIFYING_POLICIES,
                     message=f"Policy 생성: {pol.name}",
                     progress=95,
-                    data={"type": "Policy", "object": {"id": pol.id, "name": pol.name, "type": "Policy", "parentId": target_bc_id}},
+                    data={
+                        "type": "Policy",
+                        "object": {
+                            "id": pol.id,
+                            "name": pol.name,
+                            "type": "Policy",
+                            "parentId": target_bc_id,
+                            "invokeCommandId": invoke_command_id,  # For frontend layout: place Policy left of this Command
+                        },
+                    },
                 )
             except Exception as e:
                 SmartLogger.log(

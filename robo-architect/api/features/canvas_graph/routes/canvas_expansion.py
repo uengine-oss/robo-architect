@@ -178,6 +178,9 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                 if record["pol"] and record["pol"]["id"] not in seen_ids:
                     pol = dict(record["pol"])
                     pol["type"] = "Policy"
+                    # Include invokeCommandId for frontend layout (place Policy left of Command)
+                    if record["invokeCommandId"]:
+                        pol["invokeCommandId"] = record["invokeCommandId"]
                     nodes.append(pol)
                     seen_ids.add(pol["id"])
 
@@ -237,6 +240,9 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                 if record["pol"] and record["pol"]["id"] not in seen_ids:
                     pol = dict(record["pol"])
                     pol["type"] = "Policy"
+                    # Include invokeCommandId for frontend layout (place Policy left of Command)
+                    if record["cmd"]:
+                        pol["invokeCommandId"] = record["cmd"]["id"]
                     nodes.append(pol)
                     seen_ids.add(pol["id"])
                     relationships.append({"source": node_id, "target": pol["id"], "type": "TRIGGERS"})
@@ -427,6 +433,9 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
                     pol = dict(record["pol"])
                     pol["type"] = "Policy"
                     pol["bcId"] = node_id
+                    # Include invokeCommandId for frontend layout (place Policy left of Command)
+                    if record["invokeCommandId"]:
+                        pol["invokeCommandId"] = record["invokeCommandId"]
                     nodes.append(pol)
                     seen_ids.add(pol["id"])
 
@@ -554,6 +563,9 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
                     pol = dict(record["pol"])
                     pol["type"] = "Policy"
                     pol["bcId"] = pol_bc_id
+                    # Include invokeCommandId for frontend layout (place Policy left of Command)
+                    if record["cmd"]:
+                        pol["invokeCommandId"] = record["cmd"]["id"]
                     nodes.append(pol)
                     seen_ids.add(pol["id"])
                     relationships.append({"source": node_id, "target": pol["id"], "type": "TRIGGERS"})
