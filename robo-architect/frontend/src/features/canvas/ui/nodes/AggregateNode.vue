@@ -10,10 +10,19 @@ const props = defineProps({
 
 const terminologyStore = useTerminologyStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Aggregate')} >>`)
+
+// Dynamic height based on the number of Commands this Aggregate spans
+const nodeStyle = computed(() => {
+  const dynamicHeight = props.data?.dynamicHeight
+  if (dynamicHeight && dynamicHeight > 80) {
+    return { height: `${dynamicHeight}px` }
+  }
+  return {}
+})
 </script>
 
 <template>
-  <div class="es-node es-node--aggregate">
+  <div class="es-node es-node--aggregate" :style="nodeStyle">
     <div class="es-node__header">
       {{ headerText }}
     </div>

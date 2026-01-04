@@ -25,10 +25,21 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
     """
     yield ProgressEvent(phase=IngestionPhase.IDENTIFYING_POLICIES, message="Policy 식별 중...", progress=90)
 
+    # Build user stories text for LLM context
+    user_stories_text = "\n".join(
+        [f"[{us.id}] As a {us.role}, I want to {us.action}" for us in ctx.user_stories]
+    )
+
+    # Build events list with BC info and user_story_ids for cross-BC policy identification
     all_events_list: list[str] = []
-    for events in ctx.events_by_agg.values():
-        for evt in events:
-            all_events_list.append(f"- {evt.name}")
+    for bc in ctx.bounded_contexts:
+        for agg in ctx.aggregates_by_bc.get(bc.id, []):
+            for evt in ctx.events_by_agg.get(agg.id, []):
+                us_ids = getattr(evt, "user_story_ids", []) or []
+                us_ids_str = ", ".join(us_ids) if us_ids else "none"
+                all_events_list.append(
+                    f"- {evt.name} (from {bc.name}, user_stories: [{us_ids_str}]): {evt.description}"
+                )
     events_text = "\n".join(all_events_list)
 
     commands_by_bc: dict[str, str] = {}
@@ -42,7 +53,12 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
     commands_text = "\n".join([f"{bc_name}:\n{cmds}" for bc_name, cmds in commands_by_bc.items()])
     bc_text = "\n".join([f"- {bc.name}: {bc.description}" for bc in ctx.bounded_contexts])
 
-    prompt = IDENTIFY_POLICIES_PROMPT.format(events=events_text, commands_by_bc=commands_text, bounded_contexts=bc_text)
+    prompt = IDENTIFY_POLICIES_PROMPT.format(
+        user_stories=user_stories_text,
+        events=events_text,
+        commands_by_bc=commands_text,
+        bounded_contexts=bc_text,
+    )
     structured_llm = ctx.llm.with_structured_output(PolicyList)
 
     try:
@@ -133,6 +149,13 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     invoke_command_id=invoke_command_id,
                     description=pol.description,
                 )
+
+                # Traceability: UserStory -> Policy (inherited from trigger event)
+                for us_id in getattr(pol, "user_story_ids", []) or []:
+                    try:
+                        ctx.client.link_user_story_to_policy(us_id, pol.id)
+                    except Exception:
+                        pass
 
                 yield ProgressEvent(
                     phase=IngestionPhase.IDENTIFYING_POLICIES,

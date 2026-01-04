@@ -119,9 +119,16 @@ class PolicyCandidate(BaseModel):
     id: str = Field(..., description="Unique ID like POL-REFUND-ON-CANCEL")
     name: str = Field(..., description="Policy name like 'RefundOnOrderCancelled'")
     trigger_event: str = Field(..., description="Event that triggers this policy")
+    trigger_event_bc: str = Field(
+        default="", description="BC where the trigger event originates (must be different from target_bc)"
+    )
     target_bc: str = Field(..., description="BC where this policy lives")
     invoke_command: str = Field(..., description="Command this policy invokes")
     description: str = Field(..., description="When [event] then [command] description")
+    user_story_ids: List[str] = Field(
+        default_factory=list,
+        description="User Story IDs that this policy supports (inherited from triggering event)",
+    )
 
 
 class UserStoryBreakdown(BaseModel):

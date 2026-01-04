@@ -27,26 +27,20 @@ const canvasStore = useCanvasStore()
 const isDragOver = ref(false)
 const log = createLogger({ scope: 'CanvasWorkspace' })
 
-// Right-side panel mode
-// - none: no side panel
-// - chat: Model Modifier chat
-// - inspector: node inspector (property editor)
-const panelMode = ref('chat')
-
-// Sidebar icon click handlers (toggle behavior)
-function toggleChatPanel() {
-  panelMode.value = panelMode.value === 'chat' ? 'none' : 'chat'
+// Sidebar icon click handlers (toggle behavior) - using store methods
+function handleToggleChatPanel() {
+  canvasStore.toggleChatPanel()
 }
 
-function toggleInspectorPanel() {
-  if (panelMode.value === 'inspector') {
-    panelMode.value = 'none'
+function handleToggleInspectorPanel() {
+  if (canvasStore.rightPanelMode === 'inspector') {
+    canvasStore.closeRightPanel()
   } else {
     // Use currently selected node if any, otherwise show empty inspector
     const selectedNode = canvasStore.selectedNodes[0] || null
     inspectingNodeId.value = selectedNode?.id || null
     inspectingInitialTab.value = 'properties'
-    panelMode.value = 'inspector'
+    canvasStore.setRightPanelMode('inspector')
   }
 }
 
@@ -96,7 +90,7 @@ function getNodeColor(node) {
 }
 
 function switchToChatFromInspector(nodeId) {
-  panelMode.value = 'chat'
+  canvasStore.setRightPanelMode('chat')
   if (nodeId) {
     canvasStore.selectNode(nodeId)
   }
@@ -108,7 +102,7 @@ function openInspectorForNode(nodeId) {
   console.info('[RAW][CanvasWorkspace][inspector_open]', { opId, nodeId, tab: 'properties' })
   inspectingNodeId.value = nodeId
   inspectingInitialTab.value = 'properties'
-  panelMode.value = 'inspector'
+  canvasStore.setRightPanelMode('inspector')
 }
 
 function openInspectorForNodeTab(nodeId, tab) {
@@ -118,7 +112,7 @@ function openInspectorForNodeTab(nodeId, tab) {
   inspectingNodeId.value = nodeId
   // CQRS tab has been removed; keep this robust for any legacy callers.
   inspectingInitialTab.value = tab === 'preview' ? 'preview' : 'properties'
-  panelMode.value = 'inspector'
+  canvasStore.setRightPanelMode('inspector')
 }
 
 async function onNodeDoubleClick(event) {
@@ -136,7 +130,7 @@ async function onNodeDoubleClick(event) {
       button: nativeEvent?.button,
       detail: nativeEvent?.detail
     },
-    panelMode: panelMode.value
+    panelMode: canvasStore.rightPanelMode
   })
   // Raw event + node data (best-effort; MouseEvent is not JSON-serializable)
   console.info('[RAW][CanvasWorkspace][node_double_click]', { opId, node, nativeEvent })
@@ -249,6 +243,8 @@ function onNodeClick(event) {
 
 function onPaneClick() {
   canvasStore.clearSelection()
+  // Close right panel (Model Modifier / Inspector) when clicking on canvas background
+  canvasStore.closeRightPanel()
 }
 
 function startResizeChat(e) {
@@ -397,21 +393,21 @@ onUnmounted(() => {
 
     <!-- Resizer (between canvas and right-side panel) -->
     <div
-      v-if="panelMode !== 'none'"
+      v-if="canvasStore.rightPanelMode !== 'none'"
       class="chat-panel-resizer"
       @mousedown="startResizeChat"
       title="드래그하여 패널 너비 조절"
     ></div>
 
     <!-- Right-side Panel Wrapper -->
-    <div v-if="panelMode !== 'none'" class="side-panel-wrapper" :style="{ width: chatPanelWidth + 'px' }">
-      <div v-if="panelMode === 'chat'" class="chat-panel-wrapper">
+    <div v-if="canvasStore.rightPanelMode !== 'none'" class="side-panel-wrapper" :style="{ width: chatPanelWidth + 'px' }">
+      <div v-if="canvasStore.rightPanelMode === 'chat'" class="chat-panel-wrapper">
         <ChatPanel />
       </div>
 
       <!-- UI Preview Panel -->
       <!-- Inspector Panel (placeholder) -->
-      <div v-else-if="panelMode === 'inspector'" class="inspector-wrapper">
+      <div v-else-if="canvasStore.rightPanelMode === 'inspector'" class="inspector-wrapper">
         <InspectorPanel
           :node-id="inspectingNodeId"
           :initial-tab="inspectingInitialTab"
@@ -425,8 +421,8 @@ onUnmounted(() => {
     <div class="right-sidebar">
       <button 
         class="right-sidebar__icon"
-        :class="{ 'is-active': panelMode === 'chat' }"
-        @click="toggleChatPanel"
+        :class="{ 'is-active': canvasStore.rightPanelMode === 'chat' }"
+        @click="handleToggleChatPanel"
         title="Model Modifier"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -435,8 +431,8 @@ onUnmounted(() => {
       </button>
       <button 
         class="right-sidebar__icon"
-        :class="{ 'is-active': panelMode === 'inspector' }"
-        @click="toggleInspectorPanel"
+        :class="{ 'is-active': canvasStore.rightPanelMode === 'inspector' }"
+        @click="handleToggleInspectorPanel"
         title="Inspector"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

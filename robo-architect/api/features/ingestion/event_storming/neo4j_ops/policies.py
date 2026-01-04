@@ -42,4 +42,25 @@ class PolicyOps:
             )
             return dict(result.single()["policy"])
 
+    def link_user_story_to_policy(
+        self, user_story_id: str, policy_id: str, confidence: float = 0.9
+    ) -> bool:
+        """Link a user story to a policy via IMPLEMENTS relationship."""
+        query = """
+        MATCH (us:UserStory {id: $user_story_id})
+        MATCH (pol:Policy {id: $policy_id})
+        MERGE (us)-[r:IMPLEMENTS]->(pol)
+        SET r.confidence = $confidence,
+            r.createdAt = datetime()
+        RETURN us.id, pol.id
+        """
+        with self.session() as session:
+            result = session.run(
+                query,
+                user_story_id=user_story_id,
+                policy_id=policy_id,
+                confidence=confidence,
+            )
+            return result.single() is not None
+
 

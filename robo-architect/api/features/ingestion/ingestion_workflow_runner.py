@@ -121,6 +121,18 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 await wait_if_paused(session)
             yield event
 
+        # Policy phase MUST run before UI phase so we can exclude policy-invoked commands from UI generation
+        async for event in identify_policies_phase(ctx):
+            if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
+                yield ProgressEvent(
+                    phase=IngestionPhase.PAUSED,
+                    message="⏸️ 일시 정지됨 (채팅으로 일부를 수정한 후 재개하세요)",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"isPaused": True},
+                )
+                await wait_if_paused(session)
+            yield event
+
         if IS_SKIP_UI_PHASE:
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
@@ -134,7 +146,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield ProgressEvent(
                 phase=IngestionPhase.GENERATING_UI,
                 message="UI 단계 생략됨 (IS_SKIP_UI_PHASE=true)",
-                progress=87,
+                progress=92,
                 data={"skipped": True},
             )
         else:
@@ -148,17 +160,6 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     )
                     await wait_if_paused(session)
                 yield event
-
-        async for event in identify_policies_phase(ctx):
-            if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
-                yield ProgressEvent(
-                    phase=IngestionPhase.PAUSED,
-                    message="⏸️ 일시 정지됨 (채팅으로 일부를 수정한 후 재개하세요)",
-                    progress=getattr(session, "progress", 0) or 0,
-                    data={"isPaused": True},
-                )
-                await wait_if_paused(session)
-            yield event
 
         yield ProgressEvent(
             phase=IngestionPhase.COMPLETE,

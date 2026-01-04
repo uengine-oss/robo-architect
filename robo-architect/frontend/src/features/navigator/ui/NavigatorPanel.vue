@@ -2,10 +2,17 @@
 import { computed, onMounted, ref } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { useCanvasStore } from '@/features/canvas/canvas.store'
 import TreeNode from './TreeNode.vue'
 
 const navigatorStore = useNavigatorStore()
 const terminologyStore = useTerminologyStore()
+const canvasStore = useCanvasStore()
+
+// Close right panel when clicking on navigator area
+function handleNavigatorClick() {
+  canvasStore.closeRightPanel()
+}
 const localLoading = ref(true)
 const isLoading = computed(() => localLoading.value || navigatorStore.loading)
 
@@ -42,7 +49,7 @@ async function handleRefresh() {
 </script>
 
 <template>
-  <aside class="left-panel">
+  <aside class="left-panel" @click="handleNavigatorClick">
     <div class="panel-header">
       <div style="display: flex; align-items: center; justify-content: space-between;">
         <span class="panel-title">{{ terminologyStore.getTerm('BoundedContext') }}s</span>

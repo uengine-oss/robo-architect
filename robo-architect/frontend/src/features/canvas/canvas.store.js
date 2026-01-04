@@ -5,6 +5,29 @@ export const useCanvasStore = defineStore('canvas', () => {
   // Nodes on the canvas
   const nodes = ref([])
   const edges = ref([])
+  
+  // Right panel mode: 'none' | 'chat' | 'inspector'
+  const rightPanelMode = ref('chat')
+  
+  // Close right panel (Model Modifier / Inspector)
+  function closeRightPanel() {
+    rightPanelMode.value = 'none'
+  }
+  
+  // Set right panel mode
+  function setRightPanelMode(mode) {
+    rightPanelMode.value = mode
+  }
+  
+  // Toggle chat panel
+  function toggleChatPanel() {
+    rightPanelMode.value = rightPanelMode.value === 'chat' ? 'none' : 'chat'
+  }
+  
+  // Toggle inspector panel
+  function toggleInspectorPanel() {
+    rightPanelMode.value = rightPanelMode.value === 'inspector' ? 'none' : 'inspector'
+  }
 
   // Selected nodes (for chat-based modification)
   const selectedNodeIds = ref(new Set())
@@ -160,12 +183,16 @@ export const useCanvasStore = defineStore('canvas', () => {
     const aggregateX = commandX + commandWidth + gapX
     const eventX = aggregateX + aggregateWidth + gapX
     
-    // Layout: Command(left) → Aggregate(center) → Event(right)
+    // Layout: External Event → Policy → Command → Aggregate → Event
+    // Policy is placed LEFT of Command (triggered by external domain events, invokes internal command)
+    const policyWidth = nodeTypeConfig.Policy?.width || 130
+    const policyX = commandX - policyWidth - gapX  // Policy left of Command
+    
     const typeOffsets = {
       Command: { x: commandX, baseY: baseY },
       Aggregate: { x: aggregateX, baseY: baseY },
       Event: { x: eventX, baseY: baseY },
-      Policy: { x: commandX, baseY: baseY + 100 },
+      Policy: { x: policyX, baseY: baseY },  // Policy left of Command (same row)
       // Place ReadModel roughly below the main flow
       ReadModel: { x: aggregateX, baseY: baseY + 100 },
       // UI stickers default to left side (more accurate placement happens in addNodesWithLayout)
@@ -469,11 +496,57 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
         
+        // Group Commands by their parent Aggregate
+        const commandsByAggregate = {}
+        typeGroups.Command.forEach(cmd => {
+          const aggId = cmd.parentId
+          if (aggId) {
+            if (!commandsByAggregate[aggId]) commandsByAggregate[aggId] = []
+            commandsByAggregate[aggId].push(cmd)
+          }
+        })
+        
         // Layout Commands (left column) - track positions for policy/UI placement
+        // Commands are now laid out grouped by their parent Aggregate
         const commandPositions = {}
-        typeGroups.Command.forEach((cmd, idx) => {
+        let commandIdx = 0
+        const aggregatePositions = {} // Track Y range for each aggregate
+        
+        typeGroups.Aggregate.forEach(agg => {
+          const aggCommands = commandsByAggregate[agg.id] || []
+          const startIdx = commandIdx
+          
+          aggCommands.forEach((cmd) => {
+            if (!isOnCanvas(cmd.id)) {
+              const yPos = currentY + commandIdx * (nodeHeight + gapY)
+              commandPositions[cmd.id] = { x: commandX, y: yPos }
+              const node = {
+                id: cmd.id,
+                type: 'command',
+                position: { x: commandX, y: yPos },
+                data: { ...cmd, label: cmd.name },
+                parentNode: bcId,
+                extent: 'parent'
+              }
+              nodes.value.push(node)
+              newNodes.push(node)
+            }
+            commandIdx++
+          })
+          
+          // Track the Y range for this aggregate
+          if (aggCommands.length > 0) {
+            const startY = currentY + startIdx * (nodeHeight + gapY)
+            const endY = currentY + (commandIdx - 1) * (nodeHeight + gapY) + nodeHeight
+            aggregatePositions[agg.id] = { startY, endY, commandCount: aggCommands.length }
+          }
+        })
+        
+        // Also layout any orphan commands (without parentId)
+        const orphanCommands = typeGroups.Command.filter(cmd => !cmd.parentId)
+        orphanCommands.forEach(cmd => {
           if (!isOnCanvas(cmd.id)) {
-            const yPos = currentY + idx * (nodeHeight + gapY)
+            const yPos = currentY + commandIdx * (nodeHeight + gapY)
             commandPositions[cmd.id] = { x: commandX, y: yPos }
             const node = {
               id: cmd.id,
@@ -485,19 +558,35 @@ export const useCanvasStore = defineStore('canvas', () => {
             }
             nodes.value.push(node)
             newNodes.push(node)
+            commandIdx++
           }
         })
         
-        // Layout Aggregates (center column)
-        const aggStartY = currentY + (typeGroups.Command.length > 0 ? 
-          Math.floor((typeGroups.Command.length - 1) / 2) * (nodeHeight + gapY) : 0)
+        // Layout Aggregates (center column) - height spans all its Commands
+        const defaultAggHeight = nodeTypeConfig.Aggregate?.height || 80
         typeGroups.Aggregate.forEach((agg, idx) => {
           if (!isOnCanvas(agg.id)) {
+            const aggPos = aggregatePositions[agg.id]
+            let aggY = currentY
+            let aggHeight = defaultAggHeight
+            
+            if (aggPos && aggPos.commandCount > 0) {
+              // Position aggregate at the same Y as its first command
+              aggY = aggPos.startY
+              // Calculate height to span all commands (from first to last command bottom)
+              aggHeight = aggPos.endY - aggPos.startY
+              // Ensure minimum height
+              aggHeight = Math.max(aggHeight, defaultAggHeight)
+            } else {
+              // No commands for this aggregate - use default positioning
+              aggY = currentY + idx * (nodeHeight + gapY)
+            }
+            
             const node = {
               id: agg.id,
               type: 'aggregate',
-              position: { x: aggregateX, y: aggStartY + idx * (nodeHeight + gapY) },
-              data: { ...agg, label: agg.name },
+              position: { x: aggregateX, y: aggY },
+              data: { ...agg, label: agg.name, dynamicHeight: aggHeight },
               parentNode: bcId,
               extent: 'parent'
             }
@@ -1279,10 +1368,53 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
         
-        // Layout Commands (left) and track positions
+        // Group Commands by their parent Aggregate
+        const commandsByAggregate = {}
+        typeGroups.Command.forEach(cmd => {
+          const aggId = cmd.parentId
+          if (aggId) {
+            if (!commandsByAggregate[aggId]) commandsByAggregate[aggId] = []
+            commandsByAggregate[aggId].push(cmd)
+          }
+        })
+        
+        // Layout Commands (left) grouped by parent Aggregate and track positions
         const commandPositions = {}
-        typeGroups.Command.forEach((cmd, idx) => {
-          const yPos = currentY + idx * (nodeHeight + gapY)
+        let commandIdx = 0
+        const aggregatePositions = {} // Track Y range for each aggregate
+        
+        typeGroups.Aggregate.forEach(agg => {
+          const aggCommands = commandsByAggregate[agg.id] || []
+          const startIdx = commandIdx
+          
+          aggCommands.forEach((cmd) => {
+            const yPos = currentY + commandIdx * (nodeHeight + gapY)
+            commandPositions[cmd.id] = { x: commandX, y: yPos }
+            const node = {
+              id: cmd.id,
+              type: 'command',
+              position: { x: commandX, y: yPos },
+              data: { ...cmd, label: cmd.name },
+              parentNode: bcId,
+              extent: 'parent'
+            }
+            nodes.value.push(node)
+            newNodes.push(node)
+            commandIdx++
+          })
+          
+          // Track the Y range for this aggregate
+          if (aggCommands.length > 0) {
+            const startY = currentY + startIdx * (nodeHeight + gapY)
+            const endY = currentY + (commandIdx - 1) * (nodeHeight + gapY) + nodeHeight
+            aggregatePositions[agg.id] = { startY, endY, commandCount: aggCommands.length }
+          }
+        })
+        
+        // Also layout any orphan commands (without parentId)
+        const orphanCommands = typeGroups.Command.filter(cmd => !cmd.parentId)
+        orphanCommands.forEach(cmd => {
+          const yPos = currentY + commandIdx * (nodeHeight + gapY)
           commandPositions[cmd.id] = { x: commandX, y: yPos }
           const node = {
             id: cmd.id,
@@ -1294,17 +1426,33 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
           nodes.value.push(node)
           newNodes.push(node)
+          commandIdx++
         })
         
-        // Layout Aggregates (center)
-        const aggStartY = currentY + (typeGroups.Command.length > 0 ? 
-          Math.floor((typeGroups.Command.length - 1) / 2) * (nodeHeight + gapY) : 0)
+        // Layout Aggregates (center) - height spans all its Commands
+        const defaultAggHeight = nodeTypeConfig.Aggregate?.height || 80
         typeGroups.Aggregate.forEach((agg, idx) => {
+          const aggPos = aggregatePositions[agg.id]
+          let aggY = currentY
+          let aggHeight = defaultAggHeight
+          
+          if (aggPos && aggPos.commandCount > 0) {
+            // Position aggregate at the same Y as its first command
+            aggY = aggPos.startY
+            // Calculate height to span all commands (from first to last command bottom)
+            aggHeight = aggPos.endY - aggPos.startY
+            // Ensure minimum height
+            aggHeight = Math.max(aggHeight, defaultAggHeight)
+          } else {
+            // No commands for this aggregate - use default positioning
+            aggY = currentY + idx * (nodeHeight + gapY)
+          }
+          
           const node = {
             id: agg.id,
             type: 'aggregate',
-            position: { x: aggregateX, y: aggStartY + idx * (nodeHeight + gapY) },
-            data: { ...agg, label: agg.name },
+            position: { x: aggregateX, y: aggY },
+            data: { ...agg, label: agg.name, dynamicHeight: aggHeight },
             parentNode: bcId,
             extent: 'parent'
           }
@@ -1387,6 +1535,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     nodeTypeConfig,
     bcContainers,
     collapsedBCs,
+    rightPanelMode,
     isOnCanvas,
     isSelected,
     isBCCollapsed,
@@ -1410,6 +1559,10 @@ export const useCanvasStore = defineStore('canvas', () => {
     findAvoidingPosition,
     expandEventTriggers,
     addNodeToBC,
-    syncAfterChanges
+    syncAfterChanges,
+    closeRightPanel,
+    setRightPanelMode,
+    toggleChatPanel,
+    toggleInspectorPanel
   }
 })

@@ -253,7 +253,10 @@ Output should be a list of ReadModelCandidate objects."""
 
 IDENTIFY_POLICIES_PROMPT = """Identify Policies for cross-Bounded Context communication.
 
-Available Events in the system:
+User Stories in the system:
+{user_stories}
+
+Available Events (with source BC and related user stories):
 {events}
 
 Available Commands in each BC:
@@ -263,23 +266,29 @@ Bounded Contexts:
 {bounded_contexts}
 
 Guidelines for identifying Policies:
-1. Policies react to Events from OTHER Bounded Contexts
+1. Policies react to Events from OTHER Bounded Contexts (cross-BC only)
 2. A Policy triggers a Command in its OWN Bounded Context
-3. Pattern: "When [Event] then [Command]"
+3. Pattern: "When [Event from BC-A] then [Command in BC-B]"
 4. Policies enable loose coupling between BCs
+5. IMPORTANT: The trigger_event_bc MUST be different from target_bc (cross-BC communication)
+6. IMPORTANT: Inherit user_story_ids from the triggering event for traceability
 
 For each Policy, provide:
-- A unique ID (POL-ACTION-ON-TRIGGER, e.g., POL-REFUND-ON-CANCEL)
-- A descriptive name
-- The triggering event (from another BC)
-- The target BC where this policy lives
-- The command it invokes (in the same BC as the policy)
-- A description in "When X then Y" format
+- id: POL-ACTION-ON-TRIGGER format (e.g., POL-REFUND-ON-CANCEL)
+- name: Descriptive policy name (e.g., RefundOnOrderCancelled)
+- trigger_event: Event name that triggers this policy
+- trigger_event_bc: BC where the trigger event originates (MUST be different from target_bc)
+- target_bc: BC where this policy lives
+- invoke_command: Command this policy invokes (in target_bc)
+- description: "When X then Y" format
+- user_story_ids: User Story IDs related to this policy (inherited from trigger event)
 
 Common patterns:
-- When OrderPlaced → ProcessPayment (Payment BC)
-- When OrderCancelled → ProcessRefund (Payment BC)
-- When OrderCancelled → RestoreStock (Inventory BC)
+- When OrderPlaced (Order BC) → ProcessPayment (Payment BC), user_story_ids from OrderPlaced
+- When OrderCancelled (Order BC) → ProcessRefund (Payment BC), user_story_ids from OrderCancelled
+- When OrderCancelled (Order BC) → RestoreStock (Inventory BC), user_story_ids from OrderCancelled
+
+This creates traceability: UserStory → Command → Event → Policy → Command
 
 Output should be a list of PolicyCandidate objects."""
 
