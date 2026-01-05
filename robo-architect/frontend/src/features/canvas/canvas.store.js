@@ -656,15 +656,15 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
 
-        // Layout ReadModels (bottom row, spanning horizontally)
+        // Layout ReadModels (bottom section, stacked vertically for proper UI alignment)
         const readModelPositions = {}
         const baseRowsHeight = Math.max(typeGroups.Command.length, typeGroups.Event.length, typeGroups.Aggregate.length, 1)
         const readModelY = currentY + baseRowsHeight * (nodeHeight + gapY) + 40
 
         typeGroups.ReadModel.forEach((rm, idx) => {
           if (!isOnCanvas(rm.id)) {
-            const xPos = readModelX + idx * (nodeWidth + gapX)
-            const yPos = readModelY
+            const xPos = readModelX
+            const yPos = readModelY + idx * (nodeHeight + gapY)
             readModelPositions[rm.id] = { x: xPos, y: yPos }
             const node = {
               id: rm.id,
