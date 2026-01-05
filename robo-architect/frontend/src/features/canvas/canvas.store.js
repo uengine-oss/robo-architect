@@ -496,6 +496,17 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
         
+        // Fallback: derive parentId from HAS_COMMAND relationships if not already set
+        // This ensures Command-Aggregate mapping works even if backend didn't include parentId
+        relationships.forEach(rel => {
+          if (rel.type === 'HAS_COMMAND') {
+            const cmd = children.find(c => c.id === rel.target && c.type === 'Command')
+            if (cmd && !cmd.parentId) {
+              cmd.parentId = rel.source  // Aggregate ID
+            }
+          }
+        })
+        
         // Group Commands by their parent Aggregate
         const commandsByAggregate = {}
         typeGroups.Command.forEach(cmd => {
@@ -1367,6 +1378,19 @@ export const useCanvasStore = defineStore('canvas', () => {
             typeGroups[child.type].push(child)
           }
         })
+        
+        // Fallback: derive parentId from HAS_COMMAND relationships if not already set
+        // This ensures Command-Aggregate mapping works even if backend didn't include parentId
+        if (data.relationships) {
+          data.relationships.forEach(rel => {
+            if (rel.type === 'HAS_COMMAND') {
+              const cmd = children.find(c => c.id === rel.target && c.type === 'Command')
+              if (cmd && !cmd.parentId) {
+                cmd.parentId = rel.source  // Aggregate ID
+              }
+            }
+          })
+        }
         
         // Group Commands by their parent Aggregate
         const commandsByAggregate = {}

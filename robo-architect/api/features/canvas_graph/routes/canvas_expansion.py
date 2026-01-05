@@ -154,6 +154,9 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                 if record["cmd"] and record["cmd"]["id"] not in seen_ids:
                     cmd = dict(record["cmd"])
                     cmd["type"] = "Command"
+                    # Include parentId (Aggregate ID) for frontend layout (Aggregate height spans its Commands)
+                    if record["agg"]:
+                        cmd["parentId"] = record["agg"]["id"]
                     nodes.append(cmd)
                     seen_ids.add(cmd["id"])
                     if record["rel2"]["target"]:
@@ -202,6 +205,8 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                 if record["cmd"] and record["cmd"]["id"] not in seen_ids:
                     cmd = dict(record["cmd"])
                     cmd["type"] = "Command"
+                    # Include parentId (Aggregate ID) for frontend layout (Aggregate height spans its Commands)
+                    cmd["parentId"] = node_id
                     nodes.append(cmd)
                     seen_ids.add(cmd["id"])
                     relationships.append({"source": node_id, "target": cmd["id"], "type": "HAS_COMMAND"})
@@ -406,6 +411,9 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
                     cmd = dict(record["cmd"])
                     cmd["type"] = "Command"
                     cmd["bcId"] = node_id
+                    # Include parentId (Aggregate ID) for frontend layout (Aggregate height spans its Commands)
+                    if record["agg"]:
+                        cmd["parentId"] = record["agg"]["id"]
                     nodes.append(cmd)
                     seen_ids.add(cmd["id"])
                     if record["agg"]:
