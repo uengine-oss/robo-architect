@@ -1,6 +1,7 @@
 <script setup>
 import { ref, defineProps, defineEmits } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
@@ -21,6 +22,7 @@ function selectTab(tab) {
 }
 
 const canvasStore = useCanvasStore()
+const bigPictureStore = useBigPictureStore()
 const terminologyStore = useTerminologyStore()
 const showIngestionModal = ref(false)
 const showPRDModal = ref(false)
@@ -64,13 +66,12 @@ function handleIngestionComplete() {
       </div>
       
       <!-- Big picture Panel Status -->
-      <div v-else-if="activeTab === 'Big picture'" class="top-bar__status top-bar__status--placeholder">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-          <line x1="3" y1="9" x2="21" y2="9"/>
-          <line x1="9" y1="21" x2="9" y2="9"/>
-        </svg>
-        <span>Big picture 뷰 준비 중</span>
+      <div v-else-if="activeTab === 'Big picture'" class="top-bar__status">
+        <span><strong>{{ bigPictureStore.filteredSwimlanes.length }}</strong> BC</span>
+        <span class="top-bar__status-dot">•</span>
+        <span><strong>{{ bigPictureStore.totalEvents }}</strong> Events</span>
+        <span class="top-bar__status-dot">•</span>
+        <span><strong>{{ bigPictureStore.crossBcConnections.length }}</strong> Cross-BC</span>
       </div>
       
       <!-- Aggregate Panel Status -->
