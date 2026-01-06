@@ -1,20 +1,41 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, nextTick } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
-import { useCanvasStore } from '@/features/canvas/canvas.store'
 import TreeNode from './TreeNode.vue'
 
 const navigatorStore = useNavigatorStore()
 const terminologyStore = useTerminologyStore()
-const canvasStore = useCanvasStore()
-
-// Close right panel when clicking on navigator area
-function handleNavigatorClick() {
-  canvasStore.closeRightPanel()
-}
 const localLoading = ref(true)
 const isLoading = computed(() => localLoading.value || navigatorStore.loading)
+
+// Service name editing
+const serviceName = ref('My Service Name')
+const isEditingName = ref(false)
+const nameInput = ref(null)
+
+function startEditName() {
+  isEditingName.value = true
+  nextTick(() => {
+    nameInput.value?.focus()
+    nameInput.value?.select()
+  })
+}
+
+function finishEditName() {
+  isEditingName.value = false
+  if (!serviceName.value.trim()) {
+    serviceName.value = 'My Service Name'
+  }
+}
+
+function handleNameKeydown(event) {
+  if (event.key === 'Enter') {
+    finishEditName()
+  } else if (event.key === 'Escape') {
+    isEditingName.value = false
+  }
+}
 
 onMounted(async () => {
   await loadData()
@@ -49,43 +70,30 @@ async function handleRefresh() {
 </script>
 
 <template>
-  <aside class="left-panel" @click="handleNavigatorClick">
+  <aside class="left-panel">
     <div class="panel-header">
-      <div style="display: flex; align-items: center; justify-content: space-between;">
-        <span class="panel-title">{{ terminologyStore.getTerm('BoundedContext') }}s</span>
-        <div style="display: flex; gap: 4px;">
-          <button 
-            class="tree-action-btn"
-            :class="{ 'is-spinning': isLoading }"
-            @click="handleRefresh"
-            title="Refresh"
-            :disabled="isLoading"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"></polyline>
-              <polyline points="1 20 1 14 7 14"></polyline>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-            </svg>
-          </button>
-          <button 
-            class="tree-action-btn"
-            @click="navigatorStore.expandAll()"
-            title="Expand All"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-          <button 
-            class="tree-action-btn"
-            @click="navigatorStore.collapseAll()"
-            title="Collapse All"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="18 15 12 9 6 15"></polyline>
-            </svg>
-          </button>
-        </div>
+      <div class="service-name-container">
+        <input 
+          v-if="isEditingName"
+          ref="nameInput"
+          v-model="serviceName"
+          class="service-name-input"
+          @blur="finishEditName"
+          @keydown="handleNameKeydown"
+          placeholder="Service Name"
+        />
+        <span 
+          v-else 
+          class="service-name-display"
+          @click="startEditName"
+          title="Click to edit service name"
+        >
+          {{ serviceName }}
+          <svg class="edit-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </span>
       </div>
     </div>
     
@@ -121,9 +129,44 @@ async function handleRefresh() {
         
         <!-- Bounded Contexts -->
         <div v-if="navigatorStore.contexts.length > 0" class="section-group">
-          <div class="section-header">
-            <span class="section-title">{{ terminologyStore.getTerm('BoundedContext') }}s</span>
-            <span class="section-count">{{ navigatorStore.contexts.length }}</span>
+          <div class="section-header section-header--with-actions">
+            <div class="section-header__left">
+              <span class="section-title">{{ terminologyStore.getTerm('BoundedContext') }}s</span>
+              <span class="section-count">{{ navigatorStore.contexts.length }}</span>
+            </div>
+            <div class="section-header__actions">
+              <button 
+                class="tree-action-btn"
+                :class="{ 'is-spinning': isLoading }"
+                @click="handleRefresh"
+                title="Refresh"
+                :disabled="isLoading"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <polyline points="1 20 1 14 7 14"></polyline>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+              </button>
+              <button 
+                class="tree-action-btn"
+                @click="navigatorStore.expandAll()"
+                title="Expand All"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+              <button 
+                class="tree-action-btn"
+                @click="navigatorStore.collapseAll()"
+                title="Collapse All"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="18 15 12 9 6 15"></polyline>
+                </svg>
+              </button>
+            </div>
           </div>
           <TransitionGroup name="tree-item">
             <TreeNode
@@ -172,6 +215,57 @@ async function handleRefresh() {
 </template>
 
 <style scoped>
+/* Service Name Editing */
+.service-name-container {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.service-name-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s, color 0.15s;
+  width: 100%;
+}
+
+.service-name-display:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.service-name-display .edit-icon {
+  color: var(--color-text-light);
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+.service-name-input {
+  flex: 1;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  outline: none;
+  width: 100%;
+}
+
+.service-name-input::placeholder {
+  color: var(--color-text-light);
+  font-weight: 400;
+}
+
+/* Tree Action Buttons */
 .tree-action-btn {
   width: 20px;
   height: 20px;
@@ -211,6 +305,22 @@ async function handleRefresh() {
   justify-content: space-between;
   padding: 2px var(--spacing-xs);
   margin-bottom: 2px;
+}
+
+.section-header--with-actions {
+  padding: 4px var(--spacing-xs);
+}
+
+.section-header__left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .section-title {
