@@ -7,9 +7,12 @@ const store = useBigPictureStore()
 // DOM refs
 const tableContainer = ref(null)
 const tableWrapper = ref(null)
+const svgContainer = ref(null)
 
 // Local UI state
 const showFilterDropdown = ref(false)
+const showLegend = ref(true)
+const viewMode = ref('timeline') // 'timeline' or 'flow'
 
 // Pan state (for table panning)
 const isPanning = ref(false)
@@ -21,78 +24,127 @@ const draggingSwimlaneIndex = ref(null)
 const swimlaneDragOverIndex = ref(null)
 
 // Event drag state
-const draggingEvent = ref(null) // { id, bcId, originalIndex }
-const eventDragOverInfo = ref(null) // { bcId, index }
+const draggingEvent = ref(null)
+const eventDragOverInfo = ref(null)
 
-// Layout constants
-const SWIMLANE_HEADER_WIDTH = 180
-const EVENT_CARD_WIDTH = 130
-const EVENT_CARD_HEIGHT = 65
-const EVENT_VERTICAL_GAP = 8          // Gap between vertical events in same swimlane
-const EVENT_HORIZONTAL_GAP = 10       // Reduced by 50% (was 20 effectively ~75 per sequence step, now ~37)
-const SEQUENCE_STEP_WIDTH = 75        // Horizontal step per sequence (reduced by 50%)
-const SWIMLANE_PADDING = 10
-const SWIMLANE_GAP = 8
+// Layout constants - optimized for better visualization
+const SWIMLANE_HEADER_WIDTH = 200
+const TIMELINE_HEADER_HEIGHT = 40
+const EVENT_CARD_WIDTH = 140
+const EVENT_CARD_HEIGHT = 76
+const EVENT_VERTICAL_GAP = 10
+const EVENT_HORIZONTAL_GAP = 16
+const SEQUENCE_STEP_WIDTH = 165
+const SWIMLANE_PADDING = 14
+const SWIMLANE_MIN_HEIGHT = 110  // Minimum height for swimlane with single event
+const SWIMLANE_GAP = 6
 
-// Computed: max events in any swimlane (for swimlane height calculation)
-const maxEventsPerLane = computed(() => {
-  let max = 1
+// Colors for different element types
+const elementColors = {
+  event: { bg: '#fd7e14', dark: '#e8590c', light: '#ff922b' },
+  command: { bg: '#5c7cfa', dark: '#4263eb', light: '#748ffc' },
+  policy: { bg: '#b197fc', dark: '#9775fa', light: '#d0bfff' },
+  aggregate: { bg: '#fcc419', dark: '#f59f00', light: '#ffd43b' },
+  actor: { bg: '#20c997', dark: '#12b886', light: '#38d9a9' }
+}
+
+// BC color palette for swimlanes - enhanced palette
+const bcColors = [
+  { bg: 'rgba(92, 124, 250, 0.08)', border: 'rgba(92, 124, 250, 0.35)', accent: '#5c7cfa', headerBg: 'rgba(92, 124, 250, 0.15)' },
+  { bg: 'rgba(253, 126, 20, 0.08)', border: 'rgba(253, 126, 20, 0.35)', accent: '#fd7e14', headerBg: 'rgba(253, 126, 20, 0.15)' },
+  { bg: 'rgba(177, 151, 252, 0.08)', border: 'rgba(177, 151, 252, 0.35)', accent: '#b197fc', headerBg: 'rgba(177, 151, 252, 0.15)' },
+  { bg: 'rgba(64, 192, 87, 0.08)', border: 'rgba(64, 192, 87, 0.35)', accent: '#40c057', headerBg: 'rgba(64, 192, 87, 0.15)' },
+  { bg: 'rgba(252, 196, 25, 0.08)', border: 'rgba(252, 196, 25, 0.35)', accent: '#fcc419', headerBg: 'rgba(252, 196, 25, 0.15)' },
+  { bg: 'rgba(32, 201, 151, 0.08)', border: 'rgba(32, 201, 151, 0.35)', accent: '#20c997', headerBg: 'rgba(32, 201, 151, 0.15)' },
+  { bg: 'rgba(230, 73, 128, 0.08)', border: 'rgba(230, 73, 128, 0.35)', accent: '#e64980', headerBg: 'rgba(230, 73, 128, 0.15)' },
+  { bg: 'rgba(34, 139, 230, 0.08)', border: 'rgba(34, 139, 230, 0.35)', accent: '#228be6', headerBg: 'rgba(34, 139, 230, 0.15)' },
+]
+
+function getBcColor(index) {
+  return bcColors[index % bcColors.length]
+}
+
+// Computed: calculate swimlane heights based on max events at same sequence position
+const swimlaneHeights = computed(() => {
+  const heights = {}
   store.filteredSwimlanes.forEach(lane => {
-    if (lane.events.length > max) max = lane.events.length
+    // Group events by sequence (X position) - only stack vertically when at same sequence
+    const sequenceGroups = {}
+    lane.events.forEach(evt => {
+      const seq = evt.sequence || 1
+      if (!sequenceGroups[seq]) sequenceGroups[seq] = []
+      sequenceGroups[seq].push(evt)
+    })
+    
+    // Calculate height based on max events at any single sequence position
+    const maxEventsAtSequence = Math.max(1, ...Object.values(sequenceGroups).map(g => g.length))
+    heights[lane.bcId] = Math.max(
+      SWIMLANE_MIN_HEIGHT,
+      maxEventsAtSequence * (EVENT_CARD_HEIGHT + EVENT_VERTICAL_GAP) + SWIMLANE_PADDING * 2
+    )
   })
-  return max
+  return heights
 })
 
-// Computed: dynamic swimlane height based on max events (vertical stacking)
-const swimlaneHeight = computed(() => {
-  return maxEventsPerLane.value * (EVENT_CARD_HEIGHT + EVENT_VERTICAL_GAP) + SWIMLANE_PADDING * 2
-})
-
-// Computed: timeline width based on max global sequence (50% reduced spacing)
+// Computed: timeline width based on max global sequence
 const timelineWidth = computed(() => {
   const maxSeq = store.maxSequence || 1
-  return SWIMLANE_HEADER_WIDTH + maxSeq * SEQUENCE_STEP_WIDTH + 100
+  return SWIMLANE_HEADER_WIDTH + (maxSeq + 1) * SEQUENCE_STEP_WIDTH + 100
 })
 
 // Computed: total height of swimlanes
 const totalHeight = computed(() => {
-  return store.filteredSwimlanes.length * (swimlaneHeight.value + SWIMLANE_GAP) + 40
+  return store.filteredSwimlanes.reduce((sum, lane) => {
+    return sum + (swimlaneHeights.value[lane.bcId] || SWIMLANE_MIN_HEIGHT) + SWIMLANE_GAP
+  }, TIMELINE_HEADER_HEIGHT + 60)
 })
 
-// Computed: event positions map (recalculates when swimlanes change)
-// Events stack vertically within swimlane, X position based on sequence (50% reduced)
+// Computed: event positions map - stack vertically only when at same sequence
 const eventPositions = computed(() => {
   const positions = {}
-  
-  let currentY = 20
+  let currentY = TIMELINE_HEADER_HEIGHT + 20
   
   store.filteredSwimlanes.forEach((lane, laneIndex) => {
     const laneStartY = currentY
+    const laneHeight = swimlaneHeights.value[lane.bcId] || SWIMLANE_MIN_HEIGHT
     
-    lane.events.forEach((evt, evtIndex) => {
-      // X position based on global sequence (50% reduced spacing)
-      const x = SWIMLANE_HEADER_WIDTH + (evt.sequence - 1) * SEQUENCE_STEP_WIDTH + EVENT_HORIZONTAL_GAP
-      
-      // Y position: stack vertically within the swimlane
-      const y = laneStartY + SWIMLANE_PADDING + evtIndex * (EVENT_CARD_HEIGHT + EVENT_VERTICAL_GAP)
-      
-      positions[evt.id] = {
-        x,
-        y,
-        laneIndex,
-        eventIndex: evtIndex,
-        sequence: evt.sequence,
-        bcId: lane.bcId
-      }
+    // Group events by sequence (X position) - stack vertically only at same sequence
+    const sequenceGroups = {}
+    lane.events.forEach(evt => {
+      const seq = evt.sequence || 1
+      if (!sequenceGroups[seq]) sequenceGroups[seq] = []
+      sequenceGroups[seq].push(evt)
     })
     
-    currentY += swimlaneHeight.value + SWIMLANE_GAP
+    // Position events - stack vertically only when multiple events at same sequence
+    Object.entries(sequenceGroups).forEach(([seq, events]) => {
+      events.forEach((evt, evtIndex) => {
+        // X position based on sequence
+        const x = SWIMLANE_HEADER_WIDTH + (evt.sequence) * SEQUENCE_STEP_WIDTH + EVENT_HORIZONTAL_GAP
+        
+        // Y position: center vertically if single event, stack if multiple at same sequence
+        const y = laneStartY + SWIMLANE_PADDING + evtIndex * (EVENT_CARD_HEIGHT + EVENT_VERTICAL_GAP)
+        
+        positions[evt.id] = {
+          x,
+          y,
+          laneIndex,
+          eventIndex: evtIndex,
+          sequence: evt.sequence,
+          bcId: lane.bcId,
+          actor: evt.actor || 'System',
+          sequenceIndex: evtIndex
+        }
+      })
+    })
+    
+    currentY += laneHeight + SWIMLANE_GAP
   })
   
   return positions
 })
 
-// Computed: SVG paths for cross-BC connections (auto-recalculates)
+// Computed: SVG paths for connections with bezier curves
 const connectionPaths = computed(() => {
   const paths = []
   
@@ -102,27 +154,43 @@ const connectionPaths = computed(() => {
     
     if (!sourcePos || !targetPos) return
     
+    // Calculate start and end points
     const startX = sourcePos.x + EVENT_CARD_WIDTH
     const startY = sourcePos.y + EVENT_CARD_HEIGHT / 2
     const endX = targetPos.x
     const endY = targetPos.y + EVENT_CARD_HEIGHT / 2
     
-    // Create curved path
-    const controlOffset = Math.abs(endY - startY) * 0.4 + 40
+    // Determine connection type for styling
+    const isCrossBC = conn.type === 'cross-bc'
+    const isSameBC = conn.type === 'same-bc'
     
+    // Create bezier curve path
     let path
-    if (Math.abs(startY - endY) < 10) {
-      // Same lane - simple curved line
+    const dx = endX - startX
+    const dy = endY - startY
+    
+    if (Math.abs(dy) < 30) {
+      // Nearly horizontal - simple curve
+      const controlOffset = Math.min(50, Math.abs(dx) / 3)
+      path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${endX - controlOffset} ${endY}, ${endX} ${endY}`
+    } else if (isCrossBC) {
+      // Cross-BC - elegant S-curve going through middle
       const midX = (startX + endX) / 2
-      path = `M ${startX} ${startY} Q ${midX} ${startY - 25} ${endX} ${endY}`
+      const controlOffset = Math.abs(dx) * 0.4
+      path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${midX} ${startY}, ${midX} ${(startY + endY) / 2} S ${endX - controlOffset} ${endY}, ${endX} ${endY}`
     } else {
-      // Cross-lane - S-curve
+      // Same BC - gentle curve
+      const controlOffset = Math.min(80, Math.max(40, Math.abs(dy) * 0.5))
       path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${endX - controlOffset} ${endY}, ${endX} ${endY}`
     }
     
     const isHighlighted = store.highlightedConnections.some(
       h => h.sourceEventId === conn.sourceEventId && h.targetEventId === conn.targetEventId
     )
+    
+    // Calculate label position (middle of curve)
+    const labelX = (startX + endX) / 2 + 10
+    const labelY = (startY + endY) / 2 - 8
     
     paths.push({
       id: `${conn.sourceEventId}-${conn.targetEventId}`,
@@ -131,29 +199,34 @@ const connectionPaths = computed(() => {
       targetEventId: conn.targetEventId,
       policyName: conn.policyName,
       isHighlighted,
+      isCrossBC,
+      isSameBC,
       startX,
       startY,
       endX,
-      endY
+      endY,
+      labelX,
+      labelY
     })
   })
   
   return paths
 })
 
-// BC color palette for swimlanes
-const bcColors = [
-  { bg: 'rgba(92, 124, 250, 0.06)', border: 'rgba(92, 124, 250, 0.25)', accent: '#5c7cfa' },
-  { bg: 'rgba(253, 126, 20, 0.06)', border: 'rgba(253, 126, 20, 0.25)', accent: '#fd7e14' },
-  { bg: 'rgba(177, 151, 252, 0.06)', border: 'rgba(177, 151, 252, 0.25)', accent: '#b197fc' },
-  { bg: 'rgba(64, 192, 87, 0.06)', border: 'rgba(64, 192, 87, 0.25)', accent: '#40c057' },
-  { bg: 'rgba(252, 196, 25, 0.06)', border: 'rgba(252, 196, 25, 0.25)', accent: '#fcc419' },
-  { bg: 'rgba(32, 201, 151, 0.06)', border: 'rgba(32, 201, 151, 0.25)', accent: '#20c997' },
-]
-
-function getBcColor(index) {
-  return bcColors[index % bcColors.length]
-}
+// Computed: sequence markers for timeline header
+const sequenceMarkers = computed(() => {
+  const markers = []
+  const maxSeq = store.maxSequence || 1
+  
+  for (let i = 1; i <= maxSeq; i++) {
+    markers.push({
+      sequence: i,
+      x: SWIMLANE_HEADER_WIDTH + i * SEQUENCE_STEP_WIDTH + SEQUENCE_STEP_WIDTH / 2
+    })
+  }
+  
+  return markers
+})
 
 // ==========================================
 // Event Selection Handlers
@@ -196,11 +269,11 @@ function handlePaneClick() {
 // ==========================================
 
 function handlePanStart(e) {
-  // Don't pan if clicking on interactive elements
   if (e.target.closest('.bp-event-card') || 
       e.target.closest('.bp-drag-handle') || 
       e.target.closest('.bp-toolbar') ||
-      e.target.closest('.bp-filter-dropdown')) {
+      e.target.closest('.bp-filter-dropdown') ||
+      e.target.closest('.bp-legend')) {
     return
   }
   
@@ -246,7 +319,6 @@ function handleSwimlaneeDragOver(e, index) {
 }
 
 function handleSwimlaneeDragLeave(e) {
-  // Only clear if leaving the swimlane entirely
   if (!e.currentTarget.contains(e.relatedTarget)) {
     swimlaneDragOverIndex.value = null
   }
@@ -277,105 +349,26 @@ function handleSwimlaneeDragEnd() {
 }
 
 // ==========================================
-// Event Drag Handlers
-// ==========================================
-
-function handleEventDragStart(e, evt, bcId, index) {
-  e.stopPropagation()
-  draggingEvent.value = { id: evt.id, bcId, originalIndex: index }
-  store.startDraggingEvent(evt.id)
-  e.dataTransfer.effectAllowed = 'move'
-  e.dataTransfer.setData('text/plain', evt.id)
-  
-  // Add dragging class via timeout for visual feedback
-  setTimeout(() => {
-    const el = e.target
-    if (el) el.classList.add('is-dragging')
-  }, 0)
-}
-
-function handleEventDragOver(e, bcId, index) {
-  e.preventDefault()
-  e.stopPropagation()
-  
-  // Only allow dropping in the same swimlane
-  if (draggingEvent.value && draggingEvent.value.bcId === bcId) {
-    eventDragOverInfo.value = { bcId, index }
-    store.setDragOverEventIndex(index)
-  }
-}
-
-function handleEventDragLeave(e) {
-  e.stopPropagation()
-}
-
-function handleEventDrop(e, bcId, toIndex) {
-  e.preventDefault()
-  e.stopPropagation()
-  
-  if (!draggingEvent.value) return
-  
-  const { bcId: fromBcId, originalIndex: fromIndex } = draggingEvent.value
-  
-  // Only allow reorder within same swimlane
-  if (fromBcId === bcId && fromIndex !== toIndex) {
-    store.reorderEventInSwimlane(bcId, fromIndex, toIndex)
-  }
-  
-  draggingEvent.value = null
-  eventDragOverInfo.value = null
-  store.stopDraggingEvent()
-}
-
-function handleEventDragEnd(e) {
-  if (e.target) e.target.classList.remove('is-dragging')
-  draggingEvent.value = null
-  eventDragOverInfo.value = null
-  store.stopDraggingEvent()
-}
-
-// Handle dropping on swimlane row (for dropping at end)
-function handleSwimlaneRowDrop(e, bcId) {
-  e.preventDefault()
-  
-  if (!draggingEvent.value || draggingEvent.value.bcId !== bcId) return
-  
-  const lane = store.getSwimlaneByBcId(bcId)
-  if (!lane) return
-  
-  const toIndex = lane.events.length - 1
-  const fromIndex = draggingEvent.value.originalIndex
-  
-  if (fromIndex !== toIndex) {
-    store.reorderEventInSwimlane(bcId, fromIndex, toIndex)
-  }
-  
-  draggingEvent.value = null
-  eventDragOverInfo.value = null
-  store.stopDraggingEvent()
-}
-
-// ==========================================
 // Zoom and Filter
 // ==========================================
 
 function handleWheel(e) {
-  // Shift+Wheel for horizontal scroll, otherwise zoom
-  if (e.shiftKey) {
-    // Allow default horizontal scroll behavior
-    return
-  }
-  
-  e.preventDefault()
-  if (e.deltaY < 0) {
-    store.zoomIn()
-  } else {
-    store.zoomOut()
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault()
+    if (e.deltaY < 0) {
+      store.zoomIn()
+    } else {
+      store.zoomOut()
+    }
   }
 }
 
 function toggleFilterDropdown() {
   showFilterDropdown.value = !showFilterDropdown.value
+}
+
+function toggleLegend() {
+  showLegend.value = !showLegend.value
 }
 
 // ==========================================
@@ -403,24 +396,40 @@ function hasTriggeredPolicies(evt) {
 }
 
 function getEventTooltip(evt) {
-  let tooltip = `${evt.name}\n\nCommand: ${evt.commandName || 'N/A'}\nAggregate: ${evt.aggregateName || 'N/A'}`
+  let tooltip = `${evt.name}`
+  
+  if (evt.actor) tooltip += `\n\nActor: ${evt.actor}`
+  if (evt.commandName) tooltip += `\nCommand: ${evt.commandName}`
+  if (evt.aggregateName) tooltip += `\nAggregate: ${evt.aggregateName}`
   
   if (hasTriggeredPolicies(evt)) {
-    tooltip += '\n\nTriggers:'
+    tooltip += '\n\n🔗 Triggers:'
     evt.triggeredPolicies.forEach(p => {
       tooltip += `\n  → ${p.policyName}`
+      if (p.targetEventName) tooltip += ` → ${p.targetEventName}`
     })
   }
   
   return tooltip
 }
 
-function isEventDropTarget(bcId, index) {
-  return eventDragOverInfo.value?.bcId === bcId && eventDragOverInfo.value?.index === index
-}
-
 function isSwimlaneDropTarget(index) {
   return swimlaneDragOverIndex.value === index && draggingSwimlaneIndex.value !== index
+}
+
+function getActorsDisplay(actors) {
+  if (!actors || actors.length === 0) return 'System'
+  if (actors.length <= 2) return actors.join(', ')
+  return `${actors[0]}, ${actors[1]} +${actors.length - 2}`
+}
+
+function getSwimlaneY(laneIndex) {
+  let y = TIMELINE_HEADER_HEIGHT + 20
+  for (let i = 0; i < laneIndex; i++) {
+    const lane = store.filteredSwimlanes[i]
+    y += (swimlaneHeights.value[lane.bcId] || SWIMLANE_MIN_HEIGHT) + SWIMLANE_GAP
+  }
+  return y
 }
 </script>
 
@@ -433,7 +442,7 @@ function isSwimlaneDropTarget(index) {
     <!-- Loading State -->
     <div v-if="store.loading" class="bp-loading">
       <div class="bp-loading__spinner"></div>
-      <span>타임라인 로딩 중...</span>
+      <span>타임라인 데이터 로딩 중...</span>
     </div>
 
     <!-- Error State -->
@@ -450,15 +459,24 @@ function isSwimlaneDropTarget(index) {
 
     <!-- Empty State -->
     <div v-else-if="store.swimlanes.length === 0" class="bp-empty">
-      <div class="bp-empty__icon">
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-          <line x1="3" y1="9" x2="21" y2="9"/>
-          <line x1="9" y1="21" x2="9" y2="9"/>
-        </svg>
+      <div class="bp-empty__visual">
+        <div class="bp-empty__icon">
+          <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+        </div>
+        <div class="bp-empty__flow">
+          <div class="bp-empty__node bp-empty__node--event">Event</div>
+          <div class="bp-empty__arrow">→</div>
+          <div class="bp-empty__node bp-empty__node--policy">Policy</div>
+          <div class="bp-empty__arrow">→</div>
+          <div class="bp-empty__node bp-empty__node--command">Command</div>
+        </div>
       </div>
-      <h2>Big Picture</h2>
-      <p>이벤트 스토밍 데이터가 없습니다.<br/>요구사항 문서를 업로드하여 분석을 시작하세요.</p>
+      <h2>Value Chain</h2>
+      <p>이벤트 스토밍 데이터가 없습니다.<br/>요구사항 문서를 업로드하여 도메인 분석을 시작하세요.</p>
     </div>
 
     <!-- Main Timeline View -->
@@ -467,12 +485,12 @@ function isSwimlaneDropTarget(index) {
       <div class="bp-toolbar">
         <div class="bp-toolbar__left">
           <div class="bp-toolbar__title">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
               <line x1="3" y1="9" x2="21" y2="9"/>
               <line x1="9" y1="21" x2="9" y2="9"/>
             </svg>
-            <span>Big Picture Timeline</span>
+            <span>Value Chain</span>
           </div>
           
           <!-- Filter Dropdown -->
@@ -485,7 +503,7 @@ function isSwimlaneDropTarget(index) {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
               </svg>
-              <span>Filter{{ store.selectedBcIds.length > 0 ? ` (${store.selectedBcIds.length})` : '' }}</span>
+              <span>BC Filter{{ store.selectedBcIds.length > 0 ? ` (${store.selectedBcIds.length})` : '' }}</span>
             </button>
             
             <div v-if="showFilterDropdown" class="bp-filter-dropdown" @click.stop>
@@ -497,7 +515,7 @@ function isSwimlaneDropTarget(index) {
               </div>
               <div class="bp-filter-dropdown__list">
                 <label 
-                  v-for="bc in store.allBCs" 
+                  v-for="(bc, idx) in store.allBCs" 
                   :key="bc.id"
                   class="bp-filter-item"
                 >
@@ -506,6 +524,10 @@ function isSwimlaneDropTarget(index) {
                     :checked="store.selectedBcIds.includes(bc.id)"
                     @change="store.toggleBCFilter(bc.id)"
                   />
+                  <span 
+                    class="bp-filter-item__color" 
+                    :style="{ background: getBcColor(idx).accent }"
+                  ></span>
                   <span>{{ bc.name }}</span>
                 </label>
               </div>
@@ -513,25 +535,24 @@ function isSwimlaneDropTarget(index) {
           </div>
         </div>
 
-        <!-- Stats moved to TopBar -->
-
         <div class="bp-toolbar__right">
+          <!-- Zoom Controls -->
           <div class="bp-zoom-controls">
-            <button @click="store.zoomOut()" title="Zoom Out">
+            <button @click="store.zoomOut()" title="Zoom Out (Ctrl+Scroll)">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8"/>
                 <line x1="8" y1="11" x2="14" y2="11"/>
               </svg>
             </button>
             <span class="bp-zoom-level">{{ Math.round(store.zoomLevel * 100) }}%</span>
-            <button @click="store.zoomIn()" title="Zoom In">
+            <button @click="store.zoomIn()" title="Zoom In (Ctrl+Scroll)">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8"/>
                 <line x1="11" y1="8" x2="11" y2="14"/>
                 <line x1="8" y1="11" x2="14" y2="11"/>
               </svg>
             </button>
-            <button @click="store.resetZoom()" title="Reset">
+            <button @click="store.resetZoom()" title="Reset Zoom">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
                 <path d="M3 3v5h5"/>
@@ -539,25 +560,26 @@ function isSwimlaneDropTarget(index) {
             </button>
           </div>
           
-          <div class="bp-hint">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
+          <button class="bp-legend-toggle" @click="toggleLegend" :class="{ active: showLegend }">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <circle cx="8.5" cy="15.5" r="1.5"/>
+              <line x1="12" y1="8.5" x2="18" y2="8.5"/>
+              <line x1="12" y1="15.5" x2="18" y2="15.5"/>
             </svg>
-            <span>드래그: BC/이벤트 재정렬</span>
-          </div>
+          </button>
         </div>
       </div>
 
-      <!-- Unified Table Container -->
+      <!-- Timeline Container -->
       <div 
         ref="tableWrapper"
         class="bp-table-wrapper"
         :class="{ 'is-panning': isPanning }"
         @mousedown="handlePanStart"
       >
-        <!-- Zoomable Table Container -->
+        <!-- Zoomable Container -->
         <div 
           ref="tableContainer"
           class="bp-table-container"
@@ -568,15 +590,42 @@ function isSwimlaneDropTarget(index) {
             minHeight: totalHeight + 'px'
           }"
         >
+          <!-- Timeline Header (Sequence Numbers) -->
+          <div class="bp-timeline-header" :style="{ width: timelineWidth + 'px' }">
+            <div class="bp-timeline-header__label" :style="{ width: SWIMLANE_HEADER_WIDTH + 'px' }">
+              <span>Bounded Context</span>
+            </div>
+            <div class="bp-timeline-header__markers">
+              <div 
+                v-for="marker in sequenceMarkers"
+                :key="marker.sequence"
+                class="bp-sequence-marker"
+                :style="{ left: marker.x - SWIMLANE_HEADER_WIDTH + 'px' }"
+              >
+                <span class="bp-sequence-marker__number">{{ marker.sequence }}</span>
+                <span class="bp-sequence-marker__label">Step</span>
+              </div>
+            </div>
+          </div>
+
           <!-- SVG Layer for Connections -->
           <svg 
+            ref="svgContainer"
             class="bp-connections-layer"
             :width="timelineWidth"
             :height="totalHeight"
           >
             <defs>
+              <!-- Gradient for cross-BC connections -->
+              <linearGradient id="crossBcGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:#fd7e14;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#b197fc;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#fd7e14;stop-opacity:1" />
+              </linearGradient>
+              
+              <!-- Arrow markers -->
               <marker
-                id="arrowhead"
+                id="arrowhead-policy"
                 markerWidth="10"
                 markerHeight="7"
                 refX="9"
@@ -586,55 +635,99 @@ function isSwimlaneDropTarget(index) {
                 <polygon points="0 0, 10 3.5, 0 7" fill="#b197fc"/>
               </marker>
               <marker
-                id="arrowhead-highlight"
+                id="arrowhead-policy-highlight"
+                markerWidth="12"
+                markerHeight="8"
+                refX="11"
+                refY="4"
+                orient="auto"
+              >
+                <polygon points="0 0, 12 4, 0 8" fill="#fcc419"/>
+              </marker>
+              <marker
+                id="arrowhead-cross-bc"
                 markerWidth="10"
                 markerHeight="7"
                 refX="9"
                 refY="3.5"
                 orient="auto"
               >
-                <polygon points="0 0, 10 3.5, 0 7" fill="#fcc419"/>
+                <polygon points="0 0, 10 3.5, 0 7" fill="#e64980"/>
               </marker>
             </defs>
             
-            <!-- Connection Paths -->
-            <g v-for="conn in connectionPaths" :key="conn.id">
-              <path
-                :d="conn.path"
-                :class="[
-                  'bp-connection-path',
-                  { 'is-highlighted': conn.isHighlighted }
-                ]"
-                :marker-end="conn.isHighlighted ? 'url(#arrowhead-highlight)' : 'url(#arrowhead)'"
-                @mouseenter="handleConnectionHover(conn)"
-                @mouseleave="handleConnectionLeave"
+            <!-- Grid lines for sequences -->
+            <g class="bp-grid-lines">
+              <line 
+                v-for="marker in sequenceMarkers"
+                :key="'grid-' + marker.sequence"
+                :x1="marker.x"
+                :y1="TIMELINE_HEADER_HEIGHT"
+                :x2="marker.x"
+                :y2="totalHeight"
+                class="bp-grid-line"
               />
-              <!-- Policy label on connection -->
-              <text
-                v-if="conn.policyName"
-                :x="(conn.startX + conn.endX) / 2"
-                :y="(conn.startY + conn.endY) / 2 - 6"
-                class="bp-connection-label"
-                :class="{ 'is-highlighted': conn.isHighlighted }"
-              >
-                {{ conn.policyName }}
-              </text>
+            </g>
+            
+            <!-- Connection Paths -->
+            <g class="bp-connections">
+              <g v-for="conn in connectionPaths" :key="conn.id" class="bp-connection-group">
+                <!-- Shadow/glow for highlighted connections -->
+                <path
+                  v-if="conn.isHighlighted"
+                  :d="conn.path"
+                  class="bp-connection-glow"
+                />
+                <!-- Main path -->
+                <path
+                  :d="conn.path"
+                  :class="[
+                    'bp-connection-path',
+                    { 
+                      'is-highlighted': conn.isHighlighted,
+                      'is-cross-bc': conn.isCrossBC,
+                      'is-same-bc': conn.isSameBC
+                    }
+                  ]"
+                  :marker-end="conn.isHighlighted ? 'url(#arrowhead-policy-highlight)' : (conn.isCrossBC ? 'url(#arrowhead-cross-bc)' : 'url(#arrowhead-policy)')"
+                  @mouseenter="handleConnectionHover(conn)"
+                  @mouseleave="handleConnectionLeave"
+                />
+                <!-- Policy label on connection -->
+                <g v-if="conn.policyName" class="bp-connection-label-group">
+                  <rect
+                    :x="conn.labelX - 4"
+                    :y="conn.labelY - 10"
+                    :width="conn.policyName.length * 5.5 + 16"
+                    height="16"
+                    rx="8"
+                    :class="['bp-connection-label-bg', { 'is-highlighted': conn.isHighlighted }]"
+                  />
+                  <text
+                    :x="conn.labelX + 4"
+                    :y="conn.labelY"
+                    :class="['bp-connection-label', { 'is-highlighted': conn.isHighlighted }]"
+                  >
+                    <tspan class="bp-connection-label__icon">⚡</tspan>
+                    <tspan>{{ conn.policyName }}</tspan>
+                  </text>
+                </g>
+              </g>
             </g>
           </svg>
 
-          <!-- Unified Table -->
-          <div class="bp-table">
-            <!-- Swimlane Rows -->
+          <!-- Swimlanes -->
+          <div class="bp-swimlanes">
             <div 
               v-for="(lane, laneIndex) in store.filteredSwimlanes"
               :key="lane.bcId"
-              class="bp-swimlane-row"
+              class="bp-swimlane"
               :class="{
                 'is-dragging': draggingSwimlaneIndex === laneIndex,
                 'is-drop-target': isSwimlaneDropTarget(laneIndex)
               }"
               :style="{
-                height: swimlaneHeight + 'px',
+                height: swimlaneHeights[lane.bcId] + 'px',
                 background: getBcColor(laneIndex).bg,
                 borderColor: getBcColor(laneIndex).border
               }"
@@ -642,11 +735,12 @@ function isSwimlaneDropTarget(index) {
               @dragleave="handleSwimlaneeDragLeave"
               @drop="handleSwimlaneeDrop($event, laneIndex)"
             >
-              <!-- Swimlane Header Cell (with drag handle) -->
+              <!-- Swimlane Header -->
               <div 
-                class="bp-swimlane-header"
+                class="bp-swimlane__header"
                 :style="{ 
                   width: SWIMLANE_HEADER_WIDTH + 'px',
+                  background: getBcColor(laneIndex).headerBg,
                   borderLeftColor: getBcColor(laneIndex).accent
                 }"
               >
@@ -657,38 +751,52 @@ function isSwimlaneDropTarget(index) {
                   @dragend="handleSwimlaneeDragEnd"
                   title="드래그하여 순서 변경"
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="3" y1="6" x2="21" y2="6"/>
-                    <line x1="3" y1="12" x2="21" y2="12"/>
-                    <line x1="3" y1="18" x2="21" y2="18"/>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="9" cy="5" r="1"/>
+                    <circle cx="9" cy="12" r="1"/>
+                    <circle cx="9" cy="19" r="1"/>
+                    <circle cx="15" cy="5" r="1"/>
+                    <circle cx="15" cy="12" r="1"/>
+                    <circle cx="15" cy="19" r="1"/>
                   </svg>
                 </div>
-                <div class="bp-swimlane-header__content">
-                  <div class="bp-swimlane-header__name">{{ lane.bcName }}</div>
-                  <div class="bp-swimlane-header__actors">
+                
+                <div class="bp-swimlane__info">
+                  <div class="bp-swimlane__name">
                     <span 
-                      v-for="actor in lane.actors" 
-                      :key="actor"
-                      class="bp-actor-tag"
-                    >
-                      {{ actor }}
+                      class="bp-swimlane__color-dot"
+                      :style="{ background: getBcColor(laneIndex).accent }"
+                    ></span>
+                    {{ lane.bcName }}
+                  </div>
+                  
+                  <div class="bp-swimlane__actors">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                      <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    <span>{{ getActorsDisplay(lane.actors) }}</span>
+                  </div>
+                  
+                  <div class="bp-swimlane__meta">
+                    <span class="bp-swimlane__event-count">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                      </svg>
+                      {{ lane.events.length }} events
                     </span>
                   </div>
-                  <div class="bp-swimlane-header__count">{{ lane.events.length }} events</div>
                 </div>
               </div>
 
-              <!-- Events Cell - events stacked vertically, X position by sequence -->
+              <!-- Events Area -->
               <div 
-                class="bp-swimlane-events"
+                class="bp-swimlane__events"
                 :style="{
-                  minWidth: (timelineWidth - SWIMLANE_HEADER_WIDTH) + 'px',
-                  height: swimlaneHeight + 'px'
+                  minWidth: (timelineWidth - SWIMLANE_HEADER_WIDTH) + 'px'
                 }"
-                @dragover.prevent="handleEventDragOver($event, lane.bcId, lane.events.length)"
-                @drop="handleSwimlaneRowDrop($event, lane.bcId)"
               >
-                <!-- Event Cards - stacked vertically, positioned by sequence on X axis -->
+                <!-- Event Cards -->
                 <div
                   v-for="(evt, evtIndex) in lane.events"
                   :key="evt.id"
@@ -696,40 +804,50 @@ function isSwimlaneDropTarget(index) {
                   :class="{
                     'is-selected': store.selectedEventId === evt.id,
                     'is-hovered': store.hoveredEventId === evt.id,
-                    'is-dragging': draggingEvent?.id === evt.id,
-                    'is-drop-target': isEventDropTarget(lane.bcId, evtIndex),
                     'has-outgoing': store.hasOutgoingConnections(evt.id),
                     'has-incoming': store.hasIncomingConnections(evt.id)
                   }"
                   :style="{
                     position: 'absolute',
-                    left: ((evt.sequence - 1) * SEQUENCE_STEP_WIDTH + EVENT_HORIZONTAL_GAP) + 'px',
-                    top: (SWIMLANE_PADDING + evtIndex * (EVENT_CARD_HEIGHT + EVENT_VERTICAL_GAP)) + 'px',
-                    width: EVENT_CARD_WIDTH + 'px',
-                    height: EVENT_CARD_HEIGHT + 'px'
+                    left: (eventPositions[evt.id]?.x - SWIMLANE_HEADER_WIDTH || 0) + 'px',
+                    top: (eventPositions[evt.id]?.y - getSwimlaneY(laneIndex) || 0) + 'px',
+                    width: EVENT_CARD_WIDTH + 'px'
                   }"
                   :title="getEventTooltip(evt)"
-                  draggable="true"
                   @click="handleEventClick($event, evt, lane.bcId)"
                   @mouseenter="handleEventHover(evt)"
                   @mouseleave="handleEventLeave"
-                  @dragstart="handleEventDragStart($event, evt, lane.bcId, evtIndex)"
-                  @dragover="handleEventDragOver($event, lane.bcId, evtIndex)"
-                  @dragleave="handleEventDragLeave"
-                  @drop="handleEventDrop($event, lane.bcId, evtIndex)"
-                  @dragend="handleEventDragEnd"
                 >
                   <div class="bp-event-card__header">
-                    <span>Event</span>
+                    <span class="bp-event-card__type">Event</span>
                     <span class="bp-event-card__seq">#{{ evt.sequence }}</span>
                   </div>
-                  <div class="bp-event-card__name">{{ evt.name }}</div>
-                  <div v-if="hasTriggeredPolicies(evt)" class="bp-event-card__badge">
-                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="22 4 12 14.01 9 11.01"/>
-                    </svg>
-                    {{ evt.triggeredPolicies.length }}
+                  
+                  <div class="bp-event-card__body">
+                    <div class="bp-event-card__name">{{ evt.name }}</div>
+                    
+                    <div v-if="evt.actor" class="bp-event-card__actor">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                        <circle cx="12" cy="7" r="4"/>
+                      </svg>
+                      <span>{{ evt.actor }}</span>
+                    </div>
                   </div>
+                  
+                  <!-- Triggered policies badge -->
+                  <div v-if="hasTriggeredPolicies(evt)" class="bp-event-card__triggers">
+                    <span class="bp-event-card__trigger-badge">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                      </svg>
+                      {{ evt.triggeredPolicies.length }}
+                    </span>
+                  </div>
+                  
+                  <!-- Connection indicators -->
+                  <div v-if="store.hasOutgoingConnections(evt.id)" class="bp-event-card__connector bp-event-card__connector--out"></div>
+                  <div v-if="store.hasIncomingConnections(evt.id)" class="bp-event-card__connector bp-event-card__connector--in"></div>
                 </div>
               </div>
             </div>
@@ -737,20 +855,43 @@ function isSwimlaneDropTarget(index) {
         </div>
       </div>
 
-      <!-- Legend -->
-      <div class="bp-legend">
-        <div class="bp-legend__title">Legend</div>
-        <div class="bp-legend__items">
-          <div class="bp-legend__item">
-            <div class="bp-legend__color bp-legend__color--event"></div>
-            <span>Domain Event</span>
+      <!-- Legend Panel -->
+      <transition name="slide-fade">
+        <div v-if="showLegend" class="bp-legend">
+          <div class="bp-legend__header">
+            <span class="bp-legend__title">범례</span>
+            <button class="bp-legend__close" @click="showLegend = false">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
           </div>
-          <div class="bp-legend__item">
-            <div class="bp-legend__line"></div>
-            <span>Policy Trigger</span>
+          
+          <div class="bp-legend__section">
+            <div class="bp-legend__section-title">Elements</div>
+            <div class="bp-legend__items">
+              <div class="bp-legend__item">
+                <div class="bp-legend__sample bp-legend__sample--event"></div>
+                <span>Domain Event</span>
+              </div>
+              <div class="bp-legend__item">
+                <div class="bp-legend__sample bp-legend__sample--actor"></div>
+                <span>Actor/Persona</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bp-legend__hint">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span>Ctrl+Scroll로 확대/축소, 드래그로 이동</span>
           </div>
         </div>
-      </div>
+      </transition>
     </template>
   </div>
 </template>
@@ -760,27 +901,29 @@ function isSwimlaneDropTarget(index) {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, #1e1e2e 0%, #1a1b26 100%);
+  background: linear-gradient(145deg, #13141a 0%, #1a1b26 50%, #1e1f2e 100%);
   position: relative;
   overflow: hidden;
   user-select: none;
 }
 
-/* Loading State */
+/* ==========================================
+   Loading State
+   ========================================== */
 .bp-loading {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 20px;
   color: var(--color-text-light);
 }
 
 .bp-loading__spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--color-border);
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -790,90 +933,128 @@ function isSwimlaneDropTarget(index) {
   to { transform: rotate(360deg); }
 }
 
-/* Error State */
+/* ==========================================
+   Error State
+   ========================================== */
 .bp-error {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 16px;
   color: var(--color-text-light);
   text-align: center;
   padding: 40px;
 }
 
-.bp-error svg { color: #fa5252; opacity: 0.8; }
-.bp-error h3 { color: var(--color-text-bright); font-size: 1.1rem; margin: 0; }
-.bp-error p { font-size: 0.85rem; opacity: 0.7; margin: 0; }
+.bp-error svg { color: #fa5252; opacity: 0.9; }
+.bp-error h3 { color: var(--color-text-bright); font-size: 1.2rem; margin: 0; font-weight: 600; }
+.bp-error p { font-size: 0.9rem; opacity: 0.7; margin: 0; }
 
 .bp-error__retry {
-  margin-top: 8px;
-  padding: 8px 20px;
-  background: var(--color-accent);
+  margin-top: 12px;
+  padding: 10px 24px;
+  background: linear-gradient(135deg, var(--color-accent) 0%, #1c7ed6 100%);
   color: white;
   border: none;
-  border-radius: 6px;
-  font-size: 0.85rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s ease;
 }
 
-.bp-error__retry:hover { background: #1c7ed6; }
+.bp-error__retry:hover { 
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(34, 139, 230, 0.4);
+}
 
-/* Empty State */
+/* ==========================================
+   Empty State
+   ========================================== */
 .bp-empty {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 24px;
   color: var(--color-text-light);
   text-align: center;
   padding: 40px;
 }
 
-.bp-empty__icon { opacity: 0.3; animation: float 3s ease-in-out infinite; }
+.bp-empty__visual {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+.bp-empty__icon { 
+  opacity: 0.25; 
+  animation: float 4s ease-in-out infinite;
+}
+
+.bp-empty__flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.6;
+}
+
+.bp-empty__node {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.bp-empty__node--event { background: rgba(253, 126, 20, 0.3); color: #fd7e14; }
+.bp-empty__node--policy { background: rgba(177, 151, 252, 0.3); color: #b197fc; }
+.bp-empty__node--command { background: rgba(92, 124, 250, 0.3); color: #5c7cfa; }
+
+.bp-empty__arrow {
+  color: var(--color-text-light);
+  opacity: 0.5;
+}
 
 @keyframes float {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+  50% { transform: translateY(-12px); }
 }
 
-.bp-empty h2 { color: var(--color-text-bright); font-size: 1.4rem; margin: 0; }
-.bp-empty p { font-size: 0.9rem; line-height: 1.6; max-width: 320px; margin: 0; }
+.bp-empty h2 { color: var(--color-text-bright); font-size: 1.6rem; margin: 0; font-weight: 600; }
+.bp-empty p { font-size: 1rem; line-height: 1.7; max-width: 400px; margin: 0; opacity: 0.7; }
 
-/* Toolbar */
+/* ==========================================
+   Toolbar
+   ========================================== */
 .bp-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
-  background: var(--color-bg-secondary);
-  border-bottom: 1px solid var(--color-border);
-  gap: 16px;
-  z-index: 10;
+  padding: 12px 20px;
+  background: rgba(30, 31, 42, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  gap: 20px;
+  z-index: 20;
   flex-shrink: 0;
 }
 
 .bp-toolbar__left, .bp-toolbar__right {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.bp-toolbar__center {
-  flex: 1;
-  display: flex;
-  justify-content: center;
+  gap: 16px;
 }
 
 .bp-toolbar__title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.85rem;
+  gap: 10px;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--color-text-bright);
 }
@@ -886,18 +1067,22 @@ function isSwimlaneDropTarget(index) {
 .bp-filter-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
   color: var(--color-text);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
 }
 
-.bp-filter-btn:hover { border-color: var(--color-accent); }
+.bp-filter-btn:hover { 
+  border-color: rgba(34, 139, 230, 0.5);
+  background: rgba(34, 139, 230, 0.1);
+}
 
 .bp-filter-btn.has-filter {
   background: rgba(34, 139, 230, 0.15);
@@ -907,25 +1092,25 @@ function isSwimlaneDropTarget(index) {
 
 .bp-filter-dropdown {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 8px);
   left: 0;
-  margin-top: 4px;
-  min-width: 200px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  min-width: 240px;
+  background: rgba(30, 31, 42, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   z-index: 100;
   overflow: hidden;
+  backdrop-filter: blur(12px);
 }
 
 .bp-filter-dropdown__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--color-border);
-  font-size: 0.75rem;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--color-text-light);
 }
@@ -934,94 +1119,106 @@ function isSwimlaneDropTarget(index) {
   background: none;
   border: none;
   color: var(--color-accent);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   cursor: pointer;
+  opacity: 0.8;
 }
+
+.bp-filter-dropdown__header button:hover { opacity: 1; }
 
 .bp-filter-dropdown__list {
   padding: 8px;
-  max-height: 240px;
+  max-height: 280px;
   overflow-y: auto;
 }
 
 .bp-filter-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 4px;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   color: var(--color-text);
-  transition: background 0.15s;
+  transition: background 0.15s ease;
 }
 
-.bp-filter-item:hover { background: var(--color-bg-tertiary); }
-.bp-filter-item input { accent-color: var(--color-accent); }
+.bp-filter-item:hover { background: rgba(255, 255, 255, 0.06); }
 
-/* Stats */
-.bp-stats {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.75rem;
-  color: var(--color-text-light);
-  background: var(--color-bg-tertiary);
-  padding: 6px 14px;
-  border-radius: 20px;
+.bp-filter-item input { 
+  accent-color: var(--color-accent);
+  width: 16px;
+  height: 16px;
 }
 
-.bp-stats strong { color: var(--color-text); font-weight: 600; }
-.bp-stats__dot { opacity: 0.4; }
+.bp-filter-item__color {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
 
 /* Zoom Controls */
 .bp-zoom-controls {
   display: flex;
   align-items: center;
   gap: 4px;
-  background: var(--color-bg-tertiary);
+  background: rgba(255, 255, 255, 0.04);
   padding: 4px;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .bp-zoom-controls button {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--color-text);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
 }
 
 .bp-zoom-controls button:hover {
-  background: var(--color-bg-secondary);
+  background: rgba(255, 255, 255, 0.1);
   color: var(--color-text-bright);
 }
 
 .bp-zoom-level {
-  min-width: 45px;
+  min-width: 50px;
   text-align: center;
-  font-size: 0.7rem;
-  font-weight: 500;
+  font-size: 0.75rem;
+  font-weight: 600;
   color: var(--color-text-light);
 }
 
-/* Hint */
-.bp-hint {
+.bp-legend-toggle {
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.7rem;
-  color: var(--color-text-light);
-  opacity: 0.7;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-/* Table Wrapper */
+.bp-legend-toggle:hover { background: rgba(255, 255, 255, 0.1); }
+.bp-legend-toggle.active { 
+  background: rgba(34, 139, 230, 0.15);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* ==========================================
+   Table Wrapper
+   ========================================== */
 .bp-table-wrapper {
   flex: 1;
   overflow: auto;
@@ -1033,58 +1230,186 @@ function isSwimlaneDropTarget(index) {
   cursor: grabbing;
 }
 
-/* Table Container (zoomable) */
 .bp-table-container {
   position: relative;
-  padding: 20px;
+  padding: 0 20px 40px 20px;
 }
 
-/* Unified Table */
-.bp-table {
+/* ==========================================
+   Timeline Header
+   ========================================== */
+.bp-timeline-header {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  height: 40px;
+  background: rgba(26, 27, 38, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.bp-timeline-header__label {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-light);
+  background: rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+}
+
+.bp-timeline-header__markers {
+  position: relative;
+  flex: 1;
+}
+
+.bp-sequence-marker {
+  position: absolute;
+  top: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  transform: translateX(-50%);
 }
 
-/* Swimlane Row */
-.bp-swimlane-row {
-  display: flex;
-  align-items: stretch;
-  border: 1px solid;
-  border-radius: 8px;
+.bp-sequence-marker__number {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.bp-sequence-marker__label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-light);
+  opacity: 0.6;
+}
+
+/* ==========================================
+   SVG Connections Layer
+   ========================================== */
+.bp-connections-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.bp-grid-line {
+  stroke: rgba(255, 255, 255, 0.04);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.bp-connection-glow {
+  fill: none;
+  stroke: #fcc419;
+  stroke-width: 8;
+  opacity: 0.3;
+  filter: blur(4px);
+}
+
+.bp-connection-path {
+  fill: none;
+  stroke: #b197fc;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  opacity: 0.6;
+  pointer-events: stroke;
+  cursor: pointer;
   transition: all 0.2s ease;
-  position: relative;
 }
 
-.bp-swimlane-row.is-dragging {
+.bp-connection-path.is-cross-bc {
+  stroke: #e64980;
+  stroke-width: 2.5;
+  opacity: 0.7;
+}
+
+.bp-connection-path.is-same-bc {
+  stroke: #b197fc;
   opacity: 0.5;
 }
 
-.bp-swimlane-row.is-drop-target {
+.bp-connection-path:hover,
+.bp-connection-path.is-highlighted {
+  stroke: #fcc419;
+  stroke-width: 3;
+  opacity: 1;
+  stroke-dasharray: none;
+}
+
+.bp-connection-label-bg {
+  fill: rgba(26, 27, 38, 0.9);
+  stroke: rgba(177, 151, 252, 0.3);
+  stroke-width: 1;
+}
+
+.bp-connection-label-bg.is-highlighted {
+  fill: rgba(252, 196, 25, 0.15);
+  stroke: #fcc419;
+}
+
+.bp-connection-label {
+  font-size: 9px;
+  fill: var(--color-text-light);
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.bp-connection-label.is-highlighted {
+  fill: #fcc419;
+  font-weight: 600;
+  opacity: 1;
+}
+
+.bp-connection-label__icon {
+  font-size: 8px;
+}
+
+/* ==========================================
+   Swimlanes
+   ========================================== */
+.bp-swimlanes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 20px;
+}
+
+.bp-swimlane {
+  display: flex;
+  border: 1px solid;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.bp-swimlane.is-dragging {
+  opacity: 0.5;
+}
+
+.bp-swimlane.is-drop-target {
   border-color: var(--color-accent) !important;
-  box-shadow: 0 0 0 2px rgba(34, 139, 230, 0.3);
+  box-shadow: 0 0 0 3px rgba(34, 139, 230, 0.2);
 }
 
-.bp-swimlane-row.is-drop-target::before {
-  content: '';
-  position: absolute;
-  top: -4px;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--color-accent);
-  border-radius: 2px;
-}
-
-/* Swimlane Header */
-.bp-swimlane-header {
+.bp-swimlane__header {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 12px;
+  gap: 12px;
+  padding: 16px;
   border-left: 4px solid;
-  border-right: 1px solid var(--color-border);
-  background: rgba(0, 0, 0, 0.15);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
 }
 
@@ -1092,282 +1417,309 @@ function isSwimlaneDropTarget(index) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
   color: var(--color-text-light);
   cursor: grab;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
   flex-shrink: 0;
+  opacity: 0.5;
 }
 
 .bp-drag-handle:hover {
   background: rgba(255, 255, 255, 0.1);
   color: var(--color-text);
+  opacity: 1;
 }
 
-.bp-drag-handle:active {
-  cursor: grabbing;
-}
-
-.bp-swimlane-header__content {
+.bp-swimlane__info {
   flex: 1;
   min-width: 0;
 }
 
-.bp-swimlane-header__name {
-  font-size: 0.8rem;
+.bp-swimlane__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--color-text-bright);
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-bottom: 8px;
 }
 
-.bp-swimlane-header__actors {
+.bp-swimlane__color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.bp-swimlane__actors {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-bottom: 4px;
-}
-
-.bp-actor-tag {
-  display: inline-flex;
-  padding: 1px 6px;
-  background: rgba(32, 201, 151, 0.15);
-  border: 1px solid rgba(32, 201, 151, 0.3);
-  border-radius: 8px;
-  font-size: 0.6rem;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
   color: #20c997;
+  margin-bottom: 6px;
 }
 
-.bp-swimlane-header__count {
-  font-size: 0.65rem;
+.bp-swimlane__actors svg { opacity: 0.8; }
+
+.bp-swimlane__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bp-swimlane__event-count {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
   color: var(--color-text-light);
+  opacity: 0.7;
 }
 
-/* Swimlane Events */
-.bp-swimlane-events {
+.bp-swimlane__events {
   flex: 1;
   position: relative;
   min-height: 100%;
 }
 
-/* Event Cards */
+/* ==========================================
+   Event Cards
+   ========================================== */
 .bp-event-card {
-  flex-shrink: 0;
-  background: var(--color-event);
-  border-radius: 6px;
-  cursor: grab;
-  transition: all 0.15s ease;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  background: linear-gradient(135deg, var(--color-event) 0%, var(--color-event-dark) 100%);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(253, 126, 20, 0.2);
   overflow: hidden;
-  position: relative;
 }
 
 .bp-event-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(253, 126, 20, 0.3);
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 8px 24px rgba(253, 126, 20, 0.35);
+  z-index: 5;
 }
 
 .bp-event-card.is-selected {
-  outline: 2px solid var(--color-accent);
+  outline: 3px solid var(--color-accent);
   outline-offset: 2px;
-  box-shadow: 0 4px 16px rgba(34, 139, 230, 0.4);
+  box-shadow: 0 8px 24px rgba(34, 139, 230, 0.4);
+  z-index: 6;
 }
 
-.bp-event-card.is-dragging {
-  opacity: 0.5;
-  cursor: grabbing;
-}
-
-.bp-event-card.is-drop-target {
-  outline: 2px dashed var(--color-accent);
-  outline-offset: 2px;
-}
-
-.bp-event-card.is-drop-target::before {
-  content: '';
-  position: absolute;
-  left: -8px;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--color-accent);
-  border-radius: 2px;
-}
-
-.bp-event-card.has-outgoing::after {
-  content: '';
-  position: absolute;
-  right: -5px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 10px;
-  height: 10px;
-  background: #b197fc;
-  border-radius: 50%;
-  border: 2px solid #1e1e2e;
-}
-
-.bp-event-card.has-incoming::before {
-  content: '';
-  position: absolute;
-  left: -5px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 10px;
-  height: 10px;
-  background: #b197fc;
-  border-radius: 50%;
-  border: 2px solid #1e1e2e;
-  z-index: 1;
+.bp-event-card.is-hovered {
+  box-shadow: 0 8px 24px rgba(253, 126, 20, 0.4);
+  z-index: 5;
 }
 
 .bp-event-card__header {
-  padding: 3px 8px;
-  background: var(--color-event-dark);
-  font-size: 0.55rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: rgba(255, 255, 255, 0.85);
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.2);
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.bp-event-card__seq {
-  font-size: 0.5rem;
+.bp-event-card__type {
+  font-size: 0.6rem;
   font-weight: 600;
-  opacity: 0.7;
-  text-transform: none;
-  letter-spacing: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.bp-event-card__seq {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.bp-event-card__body {
+  padding: 10px 12px;
 }
 
 .bp-event-card__name {
-  padding: 6px 8px;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: white;
-  line-height: 1.25;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  margin-bottom: 6px;
 }
 
-.bp-event-card__badge {
-  position: absolute;
-  bottom: 4px;
-  right: 4px;
+.bp-event-card__actor {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 1px 5px;
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 8px;
-  font-size: 0.55rem;
+  gap: 5px;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.bp-event-card__triggers {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+.bp-event-card__trigger-badge {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  background: rgba(177, 151, 252, 0.9);
+  border-radius: 10px;
+  font-size: 0.6rem;
+  font-weight: 600;
   color: white;
 }
 
-/* Connections Layer */
-.bp-connections-layer {
+/* Connection indicators */
+.bp-event-card__connector {
   position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: none;
-  z-index: 5;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(26, 27, 38, 0.9);
 }
 
-.bp-connection-path {
-  fill: none;
-  stroke: #b197fc;
-  stroke-width: 2;
-  stroke-dasharray: 5 3;
-  opacity: 0.5;
-  pointer-events: stroke;
-  cursor: pointer;
-  transition: all 0.2s;
+.bp-event-card__connector--out {
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #b197fc;
 }
 
-.bp-connection-path:hover,
-.bp-connection-path.is-highlighted {
-  stroke: #fcc419;
-  stroke-width: 2.5;
-  opacity: 1;
-  stroke-dasharray: none;
+.bp-event-card__connector--in {
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #e64980;
 }
 
-.bp-connection-label {
-  font-size: 9px;
-  fill: var(--color-text-light);
-  text-anchor: middle;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.bp-connection-label.is-highlighted {
-  opacity: 1;
-  fill: #fcc419;
-  font-weight: 600;
-}
-
-/* Legend */
+/* ==========================================
+   Legend Panel
+   ========================================== */
 .bp-legend {
   position: absolute;
-  bottom: 16px;
-  right: 16px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 10px 14px;
-  z-index: 10;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(26, 27, 38, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 0;
+  min-width: 240px;
+  z-index: 20;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+
+.bp-legend__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .bp-legend__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-light);
+}
+
+.bp-legend__close {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--color-text-light);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.bp-legend__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text);
+}
+
+.bp-legend__section {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.bp-legend__section:last-of-type {
+  border-bottom: none;
+}
+
+.bp-legend__section-title {
   font-size: 0.65rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-text-light);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  opacity: 0.7;
 }
 
 .bp-legend__items {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .bp-legend__item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.7rem;
+  gap: 10px;
+  font-size: 0.75rem;
   color: var(--color-text);
 }
 
-.bp-legend__color {
-  width: 14px;
+.bp-legend__sample {
+  width: 20px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
-.bp-legend__color--event { background: var(--color-event); }
+.bp-legend__sample--event { background: var(--color-event); }
+.bp-legend__sample--actor { background: #20c997; }
 
-.bp-legend__line {
-  width: 18px;
-  height: 2px;
-  background: repeating-linear-gradient(
-    90deg,
-    #b197fc,
-    #b197fc 3px,
-    transparent 3px,
-    transparent 6px
-  );
+.bp-legend__hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+  background: rgba(0, 0, 0, 0.2);
+  opacity: 0.8;
+}
+
+/* Transitions */
+.slide-fade-enter-active,
+.slide-fade-leave-active {
+  transition: all 0.3s ease;
+}
+
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
 }
 </style>

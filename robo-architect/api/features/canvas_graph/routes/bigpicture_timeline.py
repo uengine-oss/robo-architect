@@ -1,17 +1,15 @@
 """
-Big Picture Timeline API
+Big Picture Timeline API - 이벤트 스토밍 빅피처 단계 시각화
 
-Provides timeline data for the Event Storming Big Picture view.
-Returns swimlanes organized by Bounded Context with events in chronological order,
-and cross-BC connections via Policies.
-
-Events are ordered using topological sorting to ensure that events triggered by
-other events (via Policy chains) appear later in the timeline.
+업무 흐름 분석:
+- BC(바운디드 컨텍스트)별 스윔레인
+- Actor별 이벤트 그룹핑
+- 시계열 기반 이벤트 배치
+- Cross-BC Event → Policy → Command → Event 체인 시각화
 """
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
 from typing import Any
 
 from fastapi import APIRouter
@@ -24,391 +22,262 @@ from api.platform.observability.smart_logger import SmartLogger
 router = APIRouter()
 
 
-def topological_sort_events(
-    all_events: list[dict], 
-    event_chains: list[dict]
-) -> dict[str, int]:
-    """
-    Topologically sort events based on their trigger chains.
-    
-    Returns a mapping of event_id -> global sequence number, where events
-    that are triggered by other events have higher sequence numbers.
-    
-    Uses Kahn's algorithm for topological sorting.
-    
-    Args:
-        all_events: List of event dicts with 'id' and 'bcId' keys
-        event_chains: List of dicts with 'sourceEventId' and 'targetEventId' keys
-        
-    Returns:
-        Dict mapping event_id to its global sequence number (1-indexed)
-    """
-    # Build directed graph: source -> [targets that must come after]
-    graph: dict[str, list[str]] = defaultdict(list)
-    in_degree: dict[str, int] = defaultdict(int)
-    
-    # Initialize all events with in-degree 0
-    all_event_ids = {e['id'] for e in all_events}
-    event_bc_map = {e['id']: e['bcId'] for e in all_events}
-    
-    for eid in all_event_ids:
-        in_degree[eid] = 0
-    
-    # Add edges from event chains (source must come before target)
-    for chain in event_chains:
-        source_id = chain.get('sourceEventId')
-        target_id = chain.get('targetEventId')
-        
-        # Only add edge if both events exist and are different
-        if source_id and target_id and source_id in all_event_ids and target_id in all_event_ids:
-            if source_id != target_id:  # Avoid self-loops
-                graph[source_id].append(target_id)
-                in_degree[target_id] += 1
-    
-    # Kahn's algorithm with stable ordering
-    # Start with events that have no dependencies (in_degree = 0)
-    # Sort by BC name for deterministic ordering within same dependency level
-    queue = deque(sorted(
-        [eid for eid in all_event_ids if in_degree[eid] == 0],
-        key=lambda x: (event_bc_map.get(x, ''), x)
-    ))
-    
-    sorted_result: list[str] = []
-    
-    while queue:
-        current = queue.popleft()
-        sorted_result.append(current)
-        
-        # Process neighbors and add newly ready events
-        newly_ready = []
-        for neighbor in graph[current]:
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                newly_ready.append(neighbor)
-        
-        # Sort newly ready events for deterministic ordering
-        newly_ready.sort(key=lambda x: (event_bc_map.get(x, ''), x))
-        queue.extend(newly_ready)
-    
-    # Handle any remaining events (cycles) - add them at the end
-    remaining = [eid for eid in all_event_ids if eid not in sorted_result]
-    remaining.sort(key=lambda x: (event_bc_map.get(x, ''), x))
-    sorted_result.extend(remaining)
-    
-    # Create sequence mapping (1-indexed)
-    sequence_map = {eid: idx + 1 for idx, eid in enumerate(sorted_result)}
-    
-    return sequence_map
-
-
-@router.get("/bigpicture/timeline")
+@router.get("/bigpicture-timeline")
 async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
     """
-    GET /api/graph/bigpicture/timeline - Big Picture 타임라인 데이터
+    GET /api/graph/bigpicture-timeline
     
-    Returns swimlanes organized by Bounded Context, with events ordered by sequence,
-    and cross-BC connections via Policy triggers.
-    
-    Response structure:
-    {
-        "swimlanes": [
-            {
-                "bcId": "BC-xxx",
-                "bcName": "Context Name",
-                "actors": ["Actor1", "Actor2"],
-                "events": [
-                    {
-                        "id": "EVT-xxx",
-                        "name": "EventName",
-                        "sequence": 1,
-                        "commandId": "CMD-xxx",
-                        "commandName": "CommandName",
-                        "aggregateId": "AGG-xxx",
-                        "aggregateName": "AggregateName",
-                        "triggeredPolicies": [...]
-                    }
-                ]
-            }
-        ],
-        "crossBcConnections": [
-            {
-                "sourceEventId": "EVT-xxx",
-                "targetEventId": "EVT-yyy",
-                "policyId": "POL-xxx",
-                "policyName": "PolicyName"
-            }
-        ]
-    }
+    빅피처 타임라인 데이터 반환:
+    - swimlanes: BC별 스윔레인 (Actor 포함)
+    - connections: Cross-BC 이벤트 연결
+    - allBCs: 필터용 BC 목록
     """
+    
     SmartLogger.log(
         "INFO",
-        "Big Picture timeline requested: building swimlane data with cross-BC connections.",
-        category="api.graph.bigpicture.timeline.request",
+        "BigPicture timeline requested: building BC swimlanes with events and cross-BC connections.",
+        category="api.graph.bigpicture.request",
         params=http_context(request),
     )
 
-    # Query 1: Get all BCs with their events and related data
+    # 1. 모든 BC와 관련 데이터 조회
     swimlanes_query = """
     MATCH (bc:BoundedContext)
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_COMMAND]->(cmd:Command)-[:EMITS]->(evt:Event)
     OPTIONAL MATCH (us:UserStory)-[:IMPLEMENTS]->(bc)
-    WITH bc, agg, cmd, evt, collect(DISTINCT us.role) as actors
-    WITH bc, actors,
+    
+    WITH bc, 
          collect(DISTINCT {
-             eventId: evt.id,
-             eventName: evt.name,
+             id: evt.id,
+             name: evt.name,
              commandId: cmd.id,
              commandName: cmd.name,
              aggregateId: agg.id,
-             aggregateName: agg.name
-         }) as eventData
-    RETURN bc.id as bcId,
-           bc.name as bcName,
-           bc.description as bcDescription,
-           [a IN actors WHERE a IS NOT NULL] as actors,
-           [e IN eventData WHERE e.eventId IS NOT NULL] as events
+             aggregateName: agg.name,
+             actor: cmd.actor,
+             version: evt.version
+         }) as eventsRaw,
+         collect(DISTINCT cmd.actor) as actorsRaw,
+         collect(DISTINCT us.role) as userRoles
+    
+    // Filter out null events
+    WITH bc, 
+         [e IN eventsRaw WHERE e.id IS NOT NULL] as events,
+         [a IN actorsRaw WHERE a IS NOT NULL] as actors,
+         [r IN userRoles WHERE r IS NOT NULL] as roles
+    
+    // Combine actors from commands and user story roles
+    WITH bc, events, 
+         [x IN (actors + roles) WHERE x IS NOT NULL | x] as allActors
+    
+    RETURN {
+        bcId: bc.id,
+        bcName: bc.name,
+        bcDescription: bc.description,
+        actors: allActors,
+        events: events
+    } as swimlane
     ORDER BY bc.name
     """
 
-    # Query 2: Get cross-BC connections (Event -> TRIGGERS -> Policy -> INVOKES -> Command -> EMITS -> Event)
-    cross_bc_query = """
-    MATCH (sourceEvt:Event)-[:TRIGGERS]->(pol:Policy)-[:INVOKES]->(targetCmd:Command)-[:EMITS]->(targetEvt:Event)
-    OPTIONAL MATCH (sourceBc:BoundedContext)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(:Command)-[:EMITS]->(sourceEvt)
-    OPTIONAL MATCH (targetBc:BoundedContext)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(targetCmd)
-    WHERE sourceBc.id <> targetBc.id OR sourceBc IS NULL OR targetBc IS NULL
-    RETURN DISTINCT
-           sourceEvt.id as sourceEventId,
-           sourceEvt.name as sourceEventName,
-           targetEvt.id as targetEventId,
-           targetEvt.name as targetEventName,
-           pol.id as policyId,
-           pol.name as policyName,
-           sourceBc.id as sourceBcId,
-           targetBc.id as targetBcId
+    # 2. Cross-BC 연결 조회 (Event → TRIGGERS → Policy → INVOKES → Command → EMITS → Event)
+    connections_query = """
+    // Find Event → TRIGGERS → Policy connections (cross-BC)
+    MATCH (sourceEvt:Event)<-[:EMITS]-(sourceCmd:Command)<-[:HAS_COMMAND]-(sourceAgg:Aggregate)<-[:HAS_AGGREGATE]-(sourceBc:BoundedContext)
+    MATCH (sourceEvt)-[:TRIGGERS]->(pol:Policy)<-[:HAS_POLICY]-(targetBc:BoundedContext)
+    WHERE sourceBc <> targetBc
+    
+    // Get the Command invoked by Policy and its resulting Event
+    OPTIONAL MATCH (pol)-[:INVOKES]->(targetCmd:Command)-[:EMITS]->(targetEvt:Event)
+    
+    RETURN {
+        sourceEventId: sourceEvt.id,
+        sourceEventName: sourceEvt.name,
+        sourceBcId: sourceBc.id,
+        sourceBcName: sourceBc.name,
+        
+        policyId: pol.id,
+        policyName: pol.name,
+        
+        targetCommandId: targetCmd.id,
+        targetCommandName: targetCmd.name,
+        targetEventId: targetEvt.id,
+        targetEventName: targetEvt.name,
+        targetBcId: targetBc.id,
+        targetBcName: targetBc.name
+    } as connection
     """
 
-    # Query 3: Get all policies with their trigger and invoke relationships
-    policies_query = """
-    MATCH (evt:Event)-[:TRIGGERS]->(pol:Policy)
-    OPTIONAL MATCH (pol)-[:INVOKES]->(cmd:Command)
-    OPTIONAL MATCH (cmd)-[:EMITS]->(targetEvt:Event)
-    OPTIONAL MATCH (bc:BoundedContext)-[:HAS_POLICY]->(pol)
-    RETURN evt.id as triggerEventId,
-           pol.id as policyId,
-           pol.name as policyName,
-           cmd.id as invokeCommandId,
-           cmd.name as invokeCommandName,
-           targetEvt.id as targetEventId,
-           targetEvt.name as targetEventName,
-           bc.id as policyBcId
-    """
-
-    # Query 4: Get ALL event chains for topological sorting (includes same-BC chains)
-    event_chains_query = """
-    MATCH (sourceEvt:Event)-[:TRIGGERS]->(pol:Policy)-[:INVOKES]->(targetCmd:Command)-[:EMITS]->(targetEvt:Event)
-    RETURN DISTINCT
-           sourceEvt.id as sourceEventId,
-           targetEvt.id as targetEventId
+    # 3. Same-BC Policy 연결 조회 (Event → TRIGGERS → Policy within same BC)
+    same_bc_connections_query = """
+    MATCH (sourceEvt:Event)<-[:EMITS]-(sourceCmd:Command)<-[:HAS_COMMAND]-(sourceAgg:Aggregate)<-[:HAS_AGGREGATE]-(bc:BoundedContext)
+    MATCH (sourceEvt)-[:TRIGGERS]->(pol:Policy)<-[:HAS_POLICY]-(bc)
+    
+    // Get the Command invoked by Policy and its resulting Event
+    OPTIONAL MATCH (pol)-[:INVOKES]->(targetCmd:Command)-[:EMITS]->(targetEvt:Event)
+    WHERE targetEvt <> sourceEvt
+    
+    RETURN {
+        sourceEventId: sourceEvt.id,
+        sourceEventName: sourceEvt.name,
+        bcId: bc.id,
+        bcName: bc.name,
+        
+        policyId: pol.id,
+        policyName: pol.name,
+        
+        targetCommandId: targetCmd.id,
+        targetCommandName: targetCmd.name,
+        targetEventId: targetEvt.id,
+        targetEventName: targetEvt.name,
+        isSameBC: true
+    } as connection
     """
 
     with get_session() as session:
-        # Execute swimlanes query
+        # Get swimlanes
         swimlanes_result = session.run(swimlanes_query)
-        swimlanes_raw = [dict(record) for record in swimlanes_result]
+        swimlanes_raw = [dict(record["swimlane"]) for record in swimlanes_result]
 
-        # Execute policies query to build triggered policies map
-        policies_result = session.run(policies_query)
-        policies_map: dict[str, list[dict]] = {}  # eventId -> list of triggered policies
-        
-        for record in policies_result:
-            trigger_event_id = record["triggerEventId"]
-            if trigger_event_id:
-                if trigger_event_id not in policies_map:
-                    policies_map[trigger_event_id] = []
-                policies_map[trigger_event_id].append({
-                    "policyId": record["policyId"],
-                    "policyName": record["policyName"],
-                    "invokeCommandId": record["invokeCommandId"],
-                    "invokeCommandName": record["invokeCommandName"],
-                    "targetEventId": record["targetEventId"],
-                    "targetEventName": record["targetEventName"],
-                    "policyBcId": record["policyBcId"],
-                })
-
-        # Execute cross-BC query
-        cross_bc_result = session.run(cross_bc_query)
-        cross_bc_connections = []
-        
-        for record in cross_bc_result:
-            if record["sourceEventId"] and record["targetEventId"]:
-                cross_bc_connections.append({
-                    "sourceEventId": record["sourceEventId"],
-                    "sourceEventName": record["sourceEventName"],
-                    "targetEventId": record["targetEventId"],
-                    "targetEventName": record["targetEventName"],
-                    "policyId": record["policyId"],
-                    "policyName": record["policyName"],
-                    "sourceBcId": record["sourceBcId"],
-                    "targetBcId": record["targetBcId"],
-                })
-
-        # Execute event chains query for topological sorting
-        event_chains_result = session.run(event_chains_query)
-        event_chains = []
-        
-        for record in event_chains_result:
-            if record["sourceEventId"] and record["targetEventId"]:
-                event_chains.append({
-                    "sourceEventId": record["sourceEventId"],
-                    "targetEventId": record["targetEventId"],
-                })
-
-        # Collect all events with their BC info for topological sorting
-        all_events_flat = []
-        for bc_data in swimlanes_raw:
-            for evt in bc_data["events"]:
-                all_events_flat.append({
-                    "id": evt["eventId"],
-                    "bcId": bc_data["bcId"],
-                    "bcName": bc_data["bcName"],
-                })
-
-        # Calculate global sequence using topological sort
-        # This ensures events triggered by other events have higher sequence numbers
-        sequence_map = topological_sort_events(all_events_flat, event_chains)
-
-        SmartLogger.log(
-            "DEBUG",
-            "Topological sort completed for events",
-            category="api.graph.bigpicture.timeline.topological_sort",
-            params={
-                "total_events": len(all_events_flat),
-                "event_chains": len(event_chains),
-            },
-        )
-
-        # Build swimlanes with topologically sorted sequence numbers
+        # Process swimlanes: assign sequence numbers to events
         swimlanes = []
-        
-        for bc_data in swimlanes_raw:
-            events_with_sequence = []
+        all_bcs = []
+        global_event_map = {}  # id -> swimlane info
+
+        for idx, lane in enumerate(swimlanes_raw):
+            bc_id = lane["bcId"]
+            bc_name = lane["bcName"]
             
-            for evt in bc_data["events"]:
-                event_id = evt["eventId"]
-                # Use topological sequence, fallback to 0 if not found
-                global_sequence = sequence_map.get(event_id, 0)
-                triggered_policies = policies_map.get(event_id, [])
-                
-                events_with_sequence.append({
-                    "id": event_id,
-                    "name": evt["eventName"],
-                    "sequence": global_sequence,
-                    "commandId": evt["commandId"],
-                    "commandName": evt["commandName"],
-                    "aggregateId": evt["aggregateId"],
-                    "aggregateName": evt["aggregateName"],
-                    "triggeredPolicies": triggered_policies,
-                })
+            all_bcs.append({
+                "id": bc_id,
+                "name": bc_name
+            })
             
-            # Sort events by their global sequence within the swimlane
-            events_with_sequence.sort(key=lambda e: e["sequence"])
+            # Group events by actor and assign sequence
+            events = lane.get("events", [])
+            actors = list(set(lane.get("actors", [])))
             
-            # Filter out empty actors
-            actors = [a for a in bc_data["actors"] if a]
-            if not actors:
-                actors = ["System"]  # Default actor if none specified
+            # Sort events by command name (as proxy for temporal order)
+            # In real implementation, this could use timestamp or explicit order
+            events_sorted = sorted(events, key=lambda e: (e.get("aggregateName") or "", e.get("commandName") or "", e.get("name") or ""))
+            
+            processed_events = []
+            for seq, evt in enumerate(events_sorted, start=1):
+                event_data = {
+                    "id": evt["id"],
+                    "name": evt["name"],
+                    "sequence": seq,
+                    "commandId": evt.get("commandId"),
+                    "commandName": evt.get("commandName"),
+                    "aggregateId": evt.get("aggregateId"),
+                    "aggregateName": evt.get("aggregateName"),
+                    "actor": evt.get("actor"),
+                    "triggeredPolicies": []  # Will be populated later
+                }
+                processed_events.append(event_data)
+                global_event_map[evt["id"]] = {
+                    "bcId": bc_id,
+                    "sequence": seq
+                }
             
             swimlanes.append({
-                "bcId": bc_data["bcId"],
-                "bcName": bc_data["bcName"],
-                "bcDescription": bc_data["bcDescription"],
-                "actors": actors,
-                "events": events_with_sequence,
+                "bcId": bc_id,
+                "bcName": bc_name,
+                "bcDescription": lane.get("bcDescription"),
+                "actors": actors if actors else ["System"],
+                "events": processed_events
             })
 
-        # Calculate total events count for logging
-        total_events = sum(len(s["events"]) for s in swimlanes)
+        # Get cross-BC connections
+        connections_result = session.run(connections_query)
+        connections = []
+        
+        for record in connections_result:
+            conn = dict(record["connection"])
+            if conn.get("sourceEventId") and conn.get("targetEventId"):
+                connections.append({
+                    "sourceEventId": conn["sourceEventId"],
+                    "targetEventId": conn["targetEventId"],
+                    "policyId": conn.get("policyId"),
+                    "policyName": conn.get("policyName"),
+                    "type": "cross-bc",
+                    "sourceBcId": conn.get("sourceBcId"),
+                    "targetBcId": conn.get("targetBcId")
+                })
+                
+                # Add triggered policy info to source event
+                for lane in swimlanes:
+                    for evt in lane["events"]:
+                        if evt["id"] == conn["sourceEventId"]:
+                            evt["triggeredPolicies"].append({
+                                "policyId": conn.get("policyId"),
+                                "policyName": conn.get("policyName"),
+                                "targetBcName": conn.get("targetBcName"),
+                                "targetEventId": conn.get("targetEventId"),
+                                "targetEventName": conn.get("targetEventName")
+                            })
+            elif conn.get("sourceEventId") and conn.get("policyId"):
+                # Event triggers policy but no downstream event yet
+                for lane in swimlanes:
+                    for evt in lane["events"]:
+                        if evt["id"] == conn["sourceEventId"]:
+                            evt["triggeredPolicies"].append({
+                                "policyId": conn.get("policyId"),
+                                "policyName": conn.get("policyName"),
+                                "targetBcName": conn.get("targetBcName"),
+                                "targetEventId": None,
+                                "targetEventName": None
+                            })
 
+        # Get same-BC connections
+        same_bc_result = session.run(same_bc_connections_query)
+        
+        for record in same_bc_result:
+            conn = dict(record["connection"])
+            if conn.get("sourceEventId") and conn.get("targetEventId"):
+                connections.append({
+                    "sourceEventId": conn["sourceEventId"],
+                    "targetEventId": conn["targetEventId"],
+                    "policyId": conn.get("policyId"),
+                    "policyName": conn.get("policyName"),
+                    "type": "same-bc",
+                    "bcId": conn.get("bcId")
+                })
+                
+                # Add triggered policy info
+                for lane in swimlanes:
+                    if lane["bcId"] == conn.get("bcId"):
+                        for evt in lane["events"]:
+                            if evt["id"] == conn["sourceEventId"]:
+                                existing = [p for p in evt["triggeredPolicies"] if p["policyId"] == conn.get("policyId")]
+                                if not existing:
+                                    evt["triggeredPolicies"].append({
+                                        "policyId": conn.get("policyId"),
+                                        "policyName": conn.get("policyName"),
+                                        "targetBcName": conn.get("bcName"),
+                                        "targetEventId": conn.get("targetEventId"),
+                                        "targetEventName": conn.get("targetEventName")
+                                    })
+
+        payload = {
+            "swimlanes": swimlanes,
+            "connections": connections,
+            "allBCs": all_bcs
+        }
+        
         SmartLogger.log(
             "INFO",
-            "Big Picture timeline returned.",
-            category="api.graph.bigpicture.timeline.done",
+            "BigPicture timeline returned.",
+            category="api.graph.bigpicture.done",
             params={
                 **http_context(request),
                 "summary": {
                     "swimlanes": len(swimlanes),
-                    "totalEvents": total_events,
-                    "crossBcConnections": len(cross_bc_connections),
-                },
-            },
+                    "connections": len(connections),
+                    "totalEvents": sum(len(lane["events"]) for lane in swimlanes)
+                }
+            }
         )
-
-        return {
-            "swimlanes": swimlanes,
-            "crossBcConnections": cross_bc_connections,
-        }
-
-
-@router.get("/bigpicture/summary")
-async def get_bigpicture_summary(request: Request) -> dict[str, Any]:
-    """
-    GET /api/graph/bigpicture/summary - Big Picture 요약 통계
-    
-    Returns summary statistics for the big picture view.
-    """
-    SmartLogger.log(
-        "INFO",
-        "Big Picture summary requested.",
-        category="api.graph.bigpicture.summary.request",
-        params=http_context(request),
-    )
-
-    query = """
-    MATCH (bc:BoundedContext)
-    OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
-    OPTIONAL MATCH (agg)-[:HAS_COMMAND]->(cmd:Command)
-    OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
-    OPTIONAL MATCH (bc)-[:HAS_POLICY]->(pol:Policy)
-    WITH bc,
-         count(DISTINCT agg) as aggregateCount,
-         count(DISTINCT cmd) as commandCount,
-         count(DISTINCT evt) as eventCount,
-         count(DISTINCT pol) as policyCount
-    RETURN bc.id as bcId,
-           bc.name as bcName,
-           aggregateCount,
-           commandCount,
-           eventCount,
-           policyCount
-    ORDER BY bc.name
-    """
-
-    with get_session() as session:
-        result = session.run(query)
-        bc_stats = [dict(record) for record in result]
-
-        total_bcs = len(bc_stats)
-        total_events = sum(s["eventCount"] for s in bc_stats)
-        total_policies = sum(s["policyCount"] for s in bc_stats)
-
-        SmartLogger.log(
-            "INFO",
-            "Big Picture summary returned.",
-            category="api.graph.bigpicture.summary.done",
-            params={
-                **http_context(request),
-                "summary": {
-                    "totalBCs": total_bcs,
-                    "totalEvents": total_events,
-                    "totalPolicies": total_policies,
-                },
-            },
-        )
-
-        return {
-            "totalBCs": total_bcs,
-            "totalEvents": total_events,
-            "totalPolicies": total_policies,
-            "bcStats": bc_stats,
-        }
+        
+        return payload
 

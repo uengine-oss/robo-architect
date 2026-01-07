@@ -2,110 +2,52 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
 export const useBigPictureStore = defineStore('bigpicture', () => {
-  // Timeline data
-  const swimlanes = ref([])
-  const crossBcConnections = ref([])
-  
-  // Swimlane order (array of bcIds) - used for drag reorder
-  const swimlaneOrder = ref([])
-  
-  // Loading state
+  // Loading and error state
   const loading = ref(false)
   const error = ref(null)
+  
+  // Swimlanes data (each swimlane represents a Bounded Context)
+  const swimlanes = ref([])
+  
+  // All BCs for filter dropdown
+  const allBCs = ref([])
+  
+  // Selected BC IDs for filtering
+  const selectedBcIds = ref([])
+  
+  // Connections between events across BCs
+  const connections = ref([])
+  
+  // Zoom level
+  const zoomLevel = ref(1)
   
   // Selection state
   const selectedEventId = ref(null)
   const hoveredEventId = ref(null)
   const hoveredConnectionId = ref(null)
   
-  // Drag state
+  // Drag state for swimlanes
   const draggingSwimlaneId = ref(null)
-  const draggingEventId = ref(null)
   const dragOverSwimlaneId = ref(null)
+  
+  // Drag state for events
+  const draggingEventId = ref(null)
   const dragOverEventIndex = ref(null)
   
-  // Filter state
-  const selectedBcIds = ref([]) // Empty = show all
-  const selectedActors = ref([]) // Empty = show all
+  // View mode
+  const viewMode = ref('timeline') // 'timeline' or 'flow'
   
-  // Zoom/pan state
-  const zoomLevel = ref(1)
-  const panOffset = ref({ x: 0, y: 0 })
-  
-  // Summary statistics
-  const summary = ref({
-    totalBCs: 0,
-    totalEvents: 0,
-    totalPolicies: 0,
-    bcStats: []
-  })
-  
-  // Computed: ordered swimlanes based on swimlaneOrder
-  const orderedSwimlanes = computed(() => {
-    if (swimlaneOrder.value.length === 0) {
+  // Computed: filtered swimlanes based on selected BCs
+  const filteredSwimlanes = computed(() => {
+    if (selectedBcIds.value.length === 0) {
       return swimlanes.value
     }
-    
-    // Sort swimlanes by their position in swimlaneOrder
-    const orderMap = new Map(swimlaneOrder.value.map((id, idx) => [id, idx]))
-    return [...swimlanes.value].sort((a, b) => {
-      const orderA = orderMap.get(a.bcId) ?? 999
-      const orderB = orderMap.get(b.bcId) ?? 999
-      return orderA - orderB
-    })
+    return swimlanes.value.filter(lane => selectedBcIds.value.includes(lane.bcId))
   })
   
-  // Computed: filtered and ordered swimlanes based on selection
-  const filteredSwimlanes = computed(() => {
-    let result = orderedSwimlanes.value
-    
-    if (selectedBcIds.value.length === 0 && selectedActors.value.length === 0) {
-      return result
-    }
-    
-    return result.filter(lane => {
-      // Filter by BC
-      if (selectedBcIds.value.length > 0 && !selectedBcIds.value.includes(lane.bcId)) {
-        return false
-      }
-      
-      // Filter by actors
-      if (selectedActors.value.length > 0) {
-        const hasMatchingActor = lane.actors.some(actor => 
-          selectedActors.value.includes(actor)
-        )
-        if (!hasMatchingActor) return false
-      }
-      
-      return true
-    })
-  })
-  
-  // Computed: all unique actors across swimlanes
-  const allActors = computed(() => {
-    const actors = new Set()
-    swimlanes.value.forEach(lane => {
-      lane.actors.forEach(actor => actors.add(actor))
-    })
-    return Array.from(actors).sort()
-  })
-  
-  // Computed: all BCs for filter dropdown
-  const allBCs = computed(() => {
-    return swimlanes.value.map(lane => ({
-      id: lane.bcId,
-      name: lane.bcName
-    }))
-  })
-  
-  // Computed: total events count
-  const totalEvents = computed(() => {
-    return swimlanes.value.reduce((sum, lane) => sum + lane.events.length, 0)
-  })
-  
-  // Computed: max sequence number (for timeline width calculation)
+  // Computed: max sequence number across all events
   const maxSequence = computed(() => {
-    let max = 0
+    let max = 1
     swimlanes.value.forEach(lane => {
       lane.events.forEach(evt => {
         if (evt.sequence > max) max = evt.sequence
@@ -114,192 +56,156 @@ export const useBigPictureStore = defineStore('bigpicture', () => {
     return max
   })
   
-  // Computed: filtered cross-BC connections
+  // Computed: filtered connections (only show connections between visible swimlanes)
   const filteredConnections = computed(() => {
-    if (selectedBcIds.value.length === 0) {
-      return crossBcConnections.value
-    }
-    
-    return crossBcConnections.value.filter(conn => {
-      // Show connection only if both source and target BCs are visible
-      return selectedBcIds.value.includes(conn.sourceBcId) && 
-             selectedBcIds.value.includes(conn.targetBcId)
+    const visibleBcIds = new Set(filteredSwimlanes.value.map(lane => lane.bcId))
+    return connections.value.filter(conn => {
+      const sourceEvent = findEventById(conn.sourceEventId)
+      const targetEvent = findEventById(conn.targetEventId)
+      if (!sourceEvent || !targetEvent) return false
+      return visibleBcIds.has(sourceEvent.bcId) && visibleBcIds.has(targetEvent.bcId)
     })
   })
   
-  // Computed: connections related to selected/hovered event
+  // Computed: cross-BC connections (connections between different BCs)
+  const crossBcConnections = computed(() => {
+    return connections.value.filter(conn => conn.type === 'cross-bc')
+  })
+  
+  // Computed: same-BC connections
+  const sameBcConnections = computed(() => {
+    return connections.value.filter(conn => conn.type === 'same-bc')
+  })
+  
+  // Computed: total events count
+  const totalEvents = computed(() => {
+    return swimlanes.value.reduce((sum, lane) => sum + lane.events.length, 0)
+  })
+  
+  // Computed: events grouped by actor across all BCs
+  const eventsByActor = computed(() => {
+    const actorMap = {}
+    swimlanes.value.forEach(lane => {
+      lane.events.forEach(evt => {
+        const actor = evt.actor || 'System'
+        if (!actorMap[actor]) {
+          actorMap[actor] = []
+        }
+        actorMap[actor].push({
+          ...evt,
+          bcId: lane.bcId,
+          bcName: lane.bcName
+        })
+      })
+    })
+    return actorMap
+  })
+  
+  // Computed: all unique actors
+  const allActors = computed(() => {
+    const actors = new Set()
+    swimlanes.value.forEach(lane => {
+      (lane.actors || []).forEach(actor => actors.add(actor))
+      lane.events.forEach(evt => {
+        if (evt.actor) actors.add(evt.actor)
+      })
+    })
+    return Array.from(actors).sort()
+  })
+  
+  // Computed: highlighted connections (when hovering over an event)
   const highlightedConnections = computed(() => {
-    const targetId = selectedEventId.value || hoveredEventId.value
-    if (!targetId) return []
-    
-    return crossBcConnections.value.filter(conn => 
-      conn.sourceEventId === targetId || conn.targetEventId === targetId
+    if (!hoveredEventId.value) return []
+    return connections.value.filter(conn => 
+      conn.sourceEventId === hoveredEventId.value || 
+      conn.targetEventId === hoveredEventId.value
     )
   })
   
-  // Fetch timeline data from API
-  async function fetchTimeline() {
-    loading.value = true
-    error.value = null
-    
-    try {
-      const response = await fetch('/api/graph/bigpicture/timeline')
-      if (!response.ok) {
-        throw new Error(`Failed to fetch timeline: ${response.status}`)
+  // Computed: event chain from a source event (Event → Policy → Command → Event)
+  const getEventChain = computed(() => {
+    return (eventId) => {
+      const chain = []
+      const visited = new Set()
+      
+      function traverse(id) {
+        if (visited.has(id)) return
+        visited.add(id)
+        
+        const outgoing = connections.value.filter(c => c.sourceEventId === id)
+        outgoing.forEach(conn => {
+          chain.push(conn)
+          if (conn.targetEventId) {
+            traverse(conn.targetEventId)
+          }
+        })
       }
       
-      const data = await response.json()
-      swimlanes.value = data.swimlanes || []
-      crossBcConnections.value = data.crossBcConnections || []
-      
-      // Initialize swimlane order
-      swimlaneOrder.value = swimlanes.value.map(lane => lane.bcId)
-      
-      console.log(`[BigPicture] Loaded ${swimlanes.value.length} swimlanes, ${totalEvents.value} events, ${crossBcConnections.value.length} cross-BC connections`)
-    } catch (e) {
-      error.value = e.message
-      console.error('[BigPicture] Failed to fetch timeline:', e)
-    } finally {
-      loading.value = false
+      traverse(eventId)
+      return chain
     }
-  }
+  })
   
-  // Fetch summary statistics
-  async function fetchSummary() {
-    try {
-      const response = await fetch('/api/graph/bigpicture/summary')
-      if (!response.ok) {
-        throw new Error(`Failed to fetch summary: ${response.status}`)
+  // Helper function to find event by ID
+  function findEventById(eventId) {
+    for (const lane of swimlanes.value) {
+      const event = lane.events.find(evt => evt.id === eventId)
+      if (event) {
+        return { ...event, bcId: lane.bcId, bcName: lane.bcName }
       }
-      
-      summary.value = await response.json()
-    } catch (e) {
-      console.error('[BigPicture] Failed to fetch summary:', e)
     }
+    return null
   }
   
-  // ==========================================
-  // Swimlane Reorder Actions
-  // ==========================================
-  
-  function startDraggingSwimlane(bcId) {
-    draggingSwimlaneId.value = bcId
+  // Get swimlane by BC ID
+  function getSwimlaneByBcId(bcId) {
+    return swimlanes.value.find(lane => lane.bcId === bcId)
   }
   
-  function stopDraggingSwimlane() {
-    draggingSwimlaneId.value = null
-    dragOverSwimlaneId.value = null
+  // Check if event has outgoing connections
+  function hasOutgoingConnections(eventId) {
+    return connections.value.some(conn => conn.sourceEventId === eventId)
   }
   
-  function setDragOverSwimlane(bcId) {
-    dragOverSwimlaneId.value = bcId
+  // Check if event has incoming connections
+  function hasIncomingConnections(eventId) {
+    return connections.value.some(conn => conn.targetEventId === eventId)
   }
   
-  function reorderSwimlane(fromBcId, toBcId) {
-    if (fromBcId === toBcId) return
+  // Get connected events for an event
+  function getConnectedEvents(eventId) {
+    const connected = {
+      outgoing: [],
+      incoming: []
+    }
     
-    const fromIndex = swimlaneOrder.value.indexOf(fromBcId)
-    const toIndex = swimlaneOrder.value.indexOf(toBcId)
-    
-    if (fromIndex === -1 || toIndex === -1) return
-    
-    // Remove from old position and insert at new position
-    const newOrder = [...swimlaneOrder.value]
-    newOrder.splice(fromIndex, 1)
-    newOrder.splice(toIndex, 0, fromBcId)
-    
-    swimlaneOrder.value = newOrder
-    console.log('[BigPicture] Reordered swimlanes:', newOrder)
-  }
-  
-  function moveSwimlaneToIndex(bcId, newIndex) {
-    const currentIndex = swimlaneOrder.value.indexOf(bcId)
-    if (currentIndex === -1 || currentIndex === newIndex) return
-    
-    const newOrder = [...swimlaneOrder.value]
-    newOrder.splice(currentIndex, 1)
-    newOrder.splice(newIndex, 0, bcId)
-    
-    swimlaneOrder.value = newOrder
-  }
-  
-  // ==========================================
-  // Event Reorder Actions
-  // ==========================================
-  
-  function startDraggingEvent(eventId) {
-    draggingEventId.value = eventId
-  }
-  
-  function stopDraggingEvent() {
-    draggingEventId.value = null
-    dragOverEventIndex.value = null
-  }
-  
-  function setDragOverEventIndex(index) {
-    dragOverEventIndex.value = index
-  }
-  
-  function reorderEventInSwimlane(bcId, fromIndex, toIndex) {
-    if (fromIndex === toIndex) return
-    
-    const lane = swimlanes.value.find(l => l.bcId === bcId)
-    if (!lane) return
-    
-    // Reorder events array
-    const events = [...lane.events]
-    const [moved] = events.splice(fromIndex, 1)
-    events.splice(toIndex, 0, moved)
-    
-    // Update sequence numbers
-    events.forEach((evt, idx) => {
-      evt.sequence = idx + 1
+    connections.value.forEach(conn => {
+      if (conn.sourceEventId === eventId && conn.targetEventId) {
+        const targetEvt = findEventById(conn.targetEventId)
+        if (targetEvt) {
+          connected.outgoing.push({
+            event: targetEvt,
+            policyName: conn.policyName,
+            type: conn.type
+          })
+        }
+      }
+      if (conn.targetEventId === eventId && conn.sourceEventId) {
+        const sourceEvt = findEventById(conn.sourceEventId)
+        if (sourceEvt) {
+          connected.incoming.push({
+            event: sourceEvt,
+            policyName: conn.policyName,
+            type: conn.type
+          })
+        }
+      }
     })
     
-    lane.events = events
-    
-    // Trigger reactivity
-    swimlanes.value = [...swimlanes.value]
-    
-    console.log(`[BigPicture] Reordered events in ${bcId}:`, events.map(e => e.name))
+    return connected
   }
   
-  function moveEventToPosition(eventId, bcId, newSequence) {
-    const lane = swimlanes.value.find(l => l.bcId === bcId)
-    if (!lane) return
-    
-    const eventIndex = lane.events.findIndex(e => e.id === eventId)
-    if (eventIndex === -1) return
-    
-    const targetIndex = Math.max(0, Math.min(newSequence - 1, lane.events.length - 1))
-    
-    if (eventIndex !== targetIndex) {
-      reorderEventInSwimlane(bcId, eventIndex, targetIndex)
-    }
-  }
-  
-  // Move event by drag delta (for smooth dragging)
-  function updateEventSequenceByDrag(eventId, bcId, deltaX, eventWidth) {
-    const lane = swimlanes.value.find(l => l.bcId === bcId)
-    if (!lane) return
-    
-    const eventIndex = lane.events.findIndex(e => e.id === eventId)
-    if (eventIndex === -1) return
-    
-    // Calculate how many positions to move based on deltaX
-    const positions = Math.round(deltaX / eventWidth)
-    if (positions === 0) return
-    
-    const newIndex = Math.max(0, Math.min(eventIndex + positions, lane.events.length - 1))
-    if (newIndex !== eventIndex) {
-      reorderEventInSwimlane(bcId, eventIndex, newIndex)
-    }
-  }
-  
-  // ==========================================
   // Selection actions
-  // ==========================================
-  
   function selectEvent(eventId) {
     selectedEventId.value = eventId
   }
@@ -324,186 +230,224 @@ export const useBigPictureStore = defineStore('bigpicture', () => {
     hoveredConnectionId.value = null
   }
   
-  // Filter actions
-  function setSelectedBCs(bcIds) {
-    selectedBcIds.value = bcIds || []
-  }
-  
-  function toggleBCFilter(bcId) {
-    const idx = selectedBcIds.value.indexOf(bcId)
-    if (idx >= 0) {
-      selectedBcIds.value.splice(idx, 1)
-    } else {
-      selectedBcIds.value.push(bcId)
-    }
-    selectedBcIds.value = [...selectedBcIds.value]
-  }
-  
-  function setSelectedActors(actors) {
-    selectedActors.value = actors || []
-  }
-  
-  function toggleActorFilter(actor) {
-    const idx = selectedActors.value.indexOf(actor)
-    if (idx >= 0) {
-      selectedActors.value.splice(idx, 1)
-    } else {
-      selectedActors.value.push(actor)
-    }
-    selectedActors.value = [...selectedActors.value]
-  }
-  
-  function clearFilters() {
-    selectedBcIds.value = []
-    selectedActors.value = []
-  }
-  
   // Zoom actions
-  function setZoom(level) {
-    zoomLevel.value = Math.max(0.25, Math.min(2, level))
-  }
-  
   function zoomIn() {
-    setZoom(zoomLevel.value + 0.1)
+    zoomLevel.value = Math.min(zoomLevel.value + 0.1, 2.5)
   }
   
   function zoomOut() {
-    setZoom(zoomLevel.value - 0.1)
+    zoomLevel.value = Math.max(zoomLevel.value - 0.1, 0.3)
   }
   
   function resetZoom() {
     zoomLevel.value = 1
-    panOffset.value = { x: 0, y: 0 }
   }
   
-  function setPan(offset) {
-    panOffset.value = offset
+  function setZoom(level) {
+    zoomLevel.value = Math.max(0.3, Math.min(2.5, level))
   }
   
-  // Get event by ID
-  function getEventById(eventId) {
-    for (const lane of swimlanes.value) {
-      const event = lane.events.find(e => e.id === eventId)
-      if (event) return { event, bcId: lane.bcId, bcName: lane.bcName }
+  // Filter actions
+  function toggleBCFilter(bcId) {
+    const index = selectedBcIds.value.indexOf(bcId)
+    if (index === -1) {
+      selectedBcIds.value.push(bcId)
+    } else {
+      selectedBcIds.value.splice(index, 1)
     }
-    return null
   }
   
-  // Get swimlane by BC ID
-  function getSwimlaneByBcId(bcId) {
-    return swimlanes.value.find(lane => lane.bcId === bcId)
+  function clearFilters() {
+    selectedBcIds.value = []
   }
   
-  // Get swimlane index in display order
-  function getSwimlaneDisplayIndex(bcId) {
-    return filteredSwimlanes.value.findIndex(lane => lane.bcId === bcId)
+  function setFilters(bcIds) {
+    selectedBcIds.value = [...bcIds]
   }
   
-  // Get event index within its swimlane
-  function getEventIndexInSwimlane(eventId) {
-    for (const lane of swimlanes.value) {
-      const index = lane.events.findIndex(e => e.id === eventId)
-      if (index !== -1) {
-        return { bcId: lane.bcId, index }
+  // Swimlane drag actions
+  function startDraggingSwimlane(bcId) {
+    draggingSwimlaneId.value = bcId
+  }
+  
+  function setDragOverSwimlane(bcId) {
+    dragOverSwimlaneId.value = bcId
+  }
+  
+  function stopDraggingSwimlane() {
+    draggingSwimlaneId.value = null
+    dragOverSwimlaneId.value = null
+  }
+  
+  function reorderSwimlane(fromBcId, toBcId) {
+    const fromIndex = swimlanes.value.findIndex(lane => lane.bcId === fromBcId)
+    const toIndex = swimlanes.value.findIndex(lane => lane.bcId === toBcId)
+    
+    if (fromIndex === -1 || toIndex === -1) return
+    
+    const [removed] = swimlanes.value.splice(fromIndex, 1)
+    swimlanes.value.splice(toIndex, 0, removed)
+  }
+  
+  // Event drag actions
+  function startDraggingEvent(eventId) {
+    draggingEventId.value = eventId
+  }
+  
+  function setDragOverEventIndex(index) {
+    dragOverEventIndex.value = index
+  }
+  
+  function stopDraggingEvent() {
+    draggingEventId.value = null
+    dragOverEventIndex.value = null
+  }
+  
+  function reorderEventInSwimlane(bcId, fromIndex, toIndex) {
+    const lane = swimlanes.value.find(l => l.bcId === bcId)
+    if (!lane) return
+    
+    if (fromIndex < 0 || fromIndex >= lane.events.length) return
+    if (toIndex < 0 || toIndex >= lane.events.length) return
+    
+    const [removed] = lane.events.splice(fromIndex, 1)
+    lane.events.splice(toIndex, 0, removed)
+    
+    // Update sequence numbers after reorder
+    lane.events.forEach((evt, idx) => {
+      evt.sequence = idx + 1
+    })
+  }
+  
+  // View mode
+  function setViewMode(mode) {
+    viewMode.value = mode
+  }
+  
+  // Fetch timeline data from API
+  async function fetchTimeline() {
+    loading.value = true
+    error.value = null
+    
+    try {
+      const response = await fetch('/api/graph/bigpicture-timeline')
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch timeline: ${response.statusText}`)
       }
+      
+      const data = await response.json()
+      
+      // Update store with fetched data
+      swimlanes.value = data.swimlanes || []
+      connections.value = data.connections || []
+      allBCs.value = data.allBCs || swimlanes.value.map(lane => ({
+        id: lane.bcId,
+        name: lane.bcName
+      }))
+      
+      // Sort events within each swimlane by sequence
+      swimlanes.value.forEach(lane => {
+        lane.events.sort((a, b) => a.sequence - b.sequence)
+      })
+      
+    } catch (err) {
+      console.error('Error fetching big picture timeline:', err)
+      error.value = err.message || 'Failed to load timeline data'
+    } finally {
+      loading.value = false
     }
-    return null
   }
   
-  // Check if an event triggers cross-BC policies
-  function hasOutgoingConnections(eventId) {
-    return crossBcConnections.value.some(conn => conn.sourceEventId === eventId)
+  // Get statistics
+  function getStatistics() {
+    return {
+      totalBCs: swimlanes.value.length,
+      filteredBCs: filteredSwimlanes.value.length,
+      totalEvents: totalEvents.value,
+      crossBcConnections: crossBcConnections.value.length,
+      sameBcConnections: sameBcConnections.value.length,
+      totalConnections: connections.value.length,
+      actors: allActors.value.length,
+      maxSequence: maxSequence.value
+    }
   }
   
-  // Check if an event is triggered by cross-BC policies
-  function hasIncomingConnections(eventId) {
-    return crossBcConnections.value.some(conn => conn.targetEventId === eventId)
-  }
-  
-  // Clear all data
-  function clearData() {
+  // Reset store
+  function reset() {
     swimlanes.value = []
-    crossBcConnections.value = []
-    swimlaneOrder.value = []
+    connections.value = []
+    allBCs.value = []
+    selectedBcIds.value = []
+    zoomLevel.value = 1
     selectedEventId.value = null
     hoveredEventId.value = null
-    draggingSwimlaneId.value = null
-    draggingEventId.value = null
+    hoveredConnectionId.value = null
+    loading.value = false
     error.value = null
-    clearFilters()
-    resetZoom()
+    viewMode.value = 'timeline'
   }
   
   return {
     // State
-    swimlanes,
-    crossBcConnections,
-    swimlaneOrder,
     loading,
     error,
+    swimlanes,
+    allBCs,
+    selectedBcIds,
+    connections,
+    zoomLevel,
     selectedEventId,
     hoveredEventId,
     hoveredConnectionId,
     draggingSwimlaneId,
-    draggingEventId,
     dragOverSwimlaneId,
+    draggingEventId,
     dragOverEventIndex,
-    selectedBcIds,
-    selectedActors,
-    zoomLevel,
-    panOffset,
-    summary,
+    viewMode,
     
     // Computed
-    orderedSwimlanes,
     filteredSwimlanes,
-    filteredConnections,
-    highlightedConnections,
-    allActors,
-    allBCs,
-    totalEvents,
     maxSequence,
+    filteredConnections,
+    crossBcConnections,
+    sameBcConnections,
+    totalEvents,
+    eventsByActor,
+    allActors,
+    highlightedConnections,
+    getEventChain,
     
-    // Swimlane Reorder Actions
-    startDraggingSwimlane,
-    stopDraggingSwimlane,
-    setDragOverSwimlane,
-    reorderSwimlane,
-    moveSwimlaneToIndex,
-    
-    // Event Reorder Actions
-    startDraggingEvent,
-    stopDraggingEvent,
-    setDragOverEventIndex,
-    reorderEventInSwimlane,
-    moveEventToPosition,
-    updateEventSequenceByDrag,
-    
-    // Other Actions
-    fetchTimeline,
-    fetchSummary,
+    // Methods
+    findEventById,
+    getSwimlaneByBcId,
+    hasOutgoingConnections,
+    hasIncomingConnections,
+    getConnectedEvents,
     selectEvent,
     clearSelection,
     setHoveredEvent,
     clearHover,
     setHoveredConnection,
     clearConnectionHover,
-    setSelectedBCs,
-    toggleBCFilter,
-    setSelectedActors,
-    toggleActorFilter,
-    clearFilters,
-    setZoom,
     zoomIn,
     zoomOut,
     resetZoom,
-    setPan,
-    getEventById,
-    getSwimlaneByBcId,
-    getSwimlaneDisplayIndex,
-    getEventIndexInSwimlane,
-    hasOutgoingConnections,
-    hasIncomingConnections,
-    clearData
+    setZoom,
+    toggleBCFilter,
+    clearFilters,
+    setFilters,
+    startDraggingSwimlane,
+    setDragOverSwimlane,
+    stopDraggingSwimlane,
+    reorderSwimlane,
+    startDraggingEvent,
+    setDragOverEventIndex,
+    stopDraggingEvent,
+    reorderEventInSwimlane,
+    setViewMode,
+    fetchTimeline,
+    getStatistics,
+    reset
   }
 })
