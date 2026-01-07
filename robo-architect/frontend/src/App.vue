@@ -1,8 +1,10 @@
 <script setup>
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch, computed, shallowRef, markRaw } from 'vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
+import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
+import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
 import UserStoryEditModal from '@/features/userStories/ui/UserStoryEditModal.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.store'
@@ -10,6 +12,18 @@ import { createLogger, newOpId } from '@/app/logging/logger'
 
 const navigatorStore = useNavigatorStore()
 const userStoryEditor = useUserStoryEditorStore()
+
+// Tab state management
+const activeTab = ref('Design')
+
+// Map tab names to components
+const tabComponents = {
+  'Big picture': markRaw(BigPicturePanel),
+  'Design': markRaw(CanvasWorkspace),
+  'Aggregate': markRaw(AggregatePanel)
+}
+
+const currentComponent = computed(() => tabComponents[activeTab.value])
 
 // Navigator panel resize state
 const navigatorWidth = ref(320)
@@ -164,7 +178,10 @@ watch(
 
 <template>
   <div class="app-container">
-    <TopBar />
+    <TopBar 
+      :active-tab="activeTab"
+      @update:active-tab="activeTab = $event"
+    />
     <div class="main-content">
       <NavigatorPanel :style="{ width: navigatorWidth + 'px' }" />
       
@@ -175,7 +192,12 @@ watch(
         title="드래그하여 패널 너비 조절"
       ></div>
       
-      <CanvasWorkspace />
+      <!-- Tab Panel Container -->
+      <div class="tab-panel-container">
+        <KeepAlive>
+          <component :is="currentComponent" :key="activeTab" />
+        </KeepAlive>
+      </div>
     </div>
     
     <!-- User Story Edit Modal -->
@@ -199,6 +221,14 @@ watch(
 
 .navigator-resizer:hover {
   background: rgba(34, 139, 230, 0.12);
+}
+
+.tab-panel-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
 }
 </style>
 

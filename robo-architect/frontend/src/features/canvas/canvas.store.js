@@ -566,7 +566,7 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
         
-        // Build parent maps from relationships (preferred) or fallback fields
+        // Build parent maps from relationships (preferred) and keep a fallback for missing fields
         const commandToAggregate = {}
         const eventToCommand = {}
         relationships.forEach(rel => {
@@ -574,6 +574,12 @@ export const useCanvasStore = defineStore('canvas', () => {
           if (rel.type === 'EMITS' && rel.source && rel.target) eventToCommand[rel.target] = rel.source
         })
 
+        // Fallback: derive Command.parentId from HAS_COMMAND if backend didn't include it
+        typeGroups.Command.forEach(cmd => {
+          if (!cmd.parentId && commandToAggregate[cmd.id]) {
+            cmd.parentId = commandToAggregate[cmd.id] // Aggregate ID
+          }
+        })
         // Group Commands by their parent Aggregate
         const commandsByAggregate = {}
         typeGroups.Command.forEach(cmd => {
@@ -734,14 +740,14 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
 
-        // Layout ReadModels (bottom row, spanning horizontally)
+        // Layout ReadModels (bottom section, stacked vertically for proper UI alignment)
         const readModelPositions = {}
         const readModelY = maxBottom + 40
 
         typeGroups.ReadModel.forEach((rm, idx) => {
           if (!isOnCanvas(rm.id)) {
-            const xPos = readModelX + idx * (nodeWidth + gapX)
-            const yPos = readModelY
+            const xPos = readModelX
+            const yPos = readModelY + idx * (nodeHeight + gapY)
             readModelPositions[rm.id] = { x: xPos, y: yPos }
             const h = computeDynamicHeight('ReadModel', rm)
             const node = {
@@ -1524,6 +1530,19 @@ export const useCanvasStore = defineStore('canvas', () => {
           if (rel.type === 'HAS_COMMAND' && rel.source && rel.target) commandToAggregate[rel.target] = rel.source
           if (rel.type === 'EMITS' && rel.source && rel.target) eventToCommand[rel.target] = rel.source
         })
+        
+        // Fallback: derive parentId from HAS_COMMAND relationships if not already set
+        // This ensures Command-Aggregate mapping works even if backend didn't include parentId
+        if (data.relationships) {
+          data.relationships.forEach(rel => {
+            if (rel.type === 'HAS_COMMAND') {
+              const cmd = children.find(c => c.id === rel.target && c.type === 'Command')
+              if (cmd && !cmd.parentId) {
+                cmd.parentId = rel.source  // Aggregate ID
+              }
+            }
+          })
+        }
         
         // Group Commands by their parent Aggregate
         const commandsByAggregate = {}
