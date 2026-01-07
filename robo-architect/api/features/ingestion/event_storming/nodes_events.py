@@ -18,6 +18,8 @@ from api.platform.env import (
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
+from api.platform.keys import slugify
+
 from .node_runtime import dump_model, get_llm
 from .prompts import EXTRACT_EVENTS_PROMPT, SYSTEM_PROMPT
 from .state import EventStormingState, WorkflowPhase
@@ -44,7 +46,7 @@ def extract_events_node(state: EventStormingState) -> Dict[str, Any]:
                     bc = next((b for b in state.approved_bcs if b.id == bc_id), None)
                     if bc:
                         bc_name = bc.name
-                        bc_short = bc.id.replace("BC-", "")
+                        bc_short = slugify(bc.name).upper()
                     break
 
         prompt = EXTRACT_EVENTS_PROMPT.format(
@@ -94,7 +96,22 @@ def extract_events_node(state: EventStormingState) -> Dict[str, Any]:
                     },
                 }
             )
-        event_candidates[agg_id] = response.events
+        evts = response.events or []
+        # Fill missing ids/keys deterministically (in-memory only).
+        # Best-effort: derive command key from aggregate+command names if needed.
+        cmd_key_prefix = f"{slugify(bc_name)}.{slugify(agg_name)}"
+        for e in evts:
+            if not getattr(e, "key", None):
+                try:
+                    e.key = f"{cmd_key_prefix}.{slugify(e.name)}@1.0.0"
+                except Exception:
+                    pass
+            if not getattr(e, "id", None):
+                try:
+                    e.id = getattr(e, "key", None) or f"{cmd_key_prefix}.{slugify(e.name)}@1.0.0"
+                except Exception:
+                    pass
+        event_candidates[agg_id] = evts
 
     return {
         "event_candidates": event_candidates,

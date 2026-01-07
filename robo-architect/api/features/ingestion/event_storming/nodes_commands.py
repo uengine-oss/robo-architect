@@ -18,6 +18,8 @@ from api.platform.env import (
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
+from api.platform.keys import slugify
+
 from .node_runtime import dump_model, get_llm
 from .prompts import EXTRACT_COMMANDS_PROMPT, SYSTEM_PROMPT
 from .state import EventStormingState, WorkflowPhase
@@ -34,7 +36,8 @@ def extract_commands_node(state: EventStormingState) -> Dict[str, Any]:
         if not bc:
             continue
 
-        bc_id_short = bc.id.replace("BC-", "")
+        # Legacy prompt helper (no longer derived from prefixed ids)
+        bc_id_short = slugify(bc.name).upper()
 
         for agg in aggregates:
             # Get user stories that this aggregate implements
@@ -92,7 +95,21 @@ def extract_commands_node(state: EventStormingState) -> Dict[str, Any]:
                         },
                     }
                 )
-            command_candidates[agg.id] = response.commands
+            cmds = response.commands or []
+            # Fill missing ids/keys deterministically (in-memory only).
+            agg_key_value = getattr(agg, "key", None) or f"{slugify(bc.name)}.{slugify(agg.name)}"
+            for c in cmds:
+                if not getattr(c, "key", None):
+                    try:
+                        c.key = f"{agg_key_value}.{slugify(c.name)}"
+                    except Exception:
+                        pass
+                if not getattr(c, "id", None):
+                    try:
+                        c.id = getattr(c, "key", None) or f"{agg_key_value}.{slugify(c.name)}"
+                    except Exception:
+                        pass
+            command_candidates[agg.id] = cmds
 
     return {
         "command_candidates": command_candidates,

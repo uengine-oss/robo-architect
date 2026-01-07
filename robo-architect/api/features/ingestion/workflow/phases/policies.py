@@ -141,19 +141,23 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
 
         if trigger_event_id and invoke_command_id and target_bc_id:
             try:
-                ctx.client.create_policy(
-                    id=pol.id,
+                created_pol = ctx.client.create_policy(
                     name=pol.name,
                     bc_id=target_bc_id,
                     trigger_event_id=trigger_event_id,
                     invoke_command_id=invoke_command_id,
                     description=pol.description,
                 )
+                # Overwrite LLM-proposed id with UUID from DB (canonical)
+                try:
+                    pol.id = created_pol.get("id")
+                except Exception:
+                    pass
 
                 # Traceability: UserStory -> Policy (inherited from trigger event)
                 for us_id in getattr(pol, "user_story_ids", []) or []:
                     try:
-                        ctx.client.link_user_story_to_policy(us_id, pol.id)
+                        ctx.client.link_user_story_to_policy(us_id, created_pol.get("id"))
                     except Exception:
                         pass
 
@@ -164,7 +168,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     data={
                         "type": "Policy",
                         "object": {
-                            "id": pol.id,
+                            "id": created_pol.get("id"),
                             "name": pol.name,
                             "type": "Policy",
                             "parentId": target_bc_id,
@@ -177,7 +181,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     "WARNING",
                     "Policy create skipped",
                     category="ingestion.neo4j.policy",
-                    params={"session_id": ctx.session.id, "policy_id": pol.id, "error": str(e)},
+                    params={"session_id": ctx.session.id, "policy_name": pol.name, "error": str(e)},
                 )
 
 

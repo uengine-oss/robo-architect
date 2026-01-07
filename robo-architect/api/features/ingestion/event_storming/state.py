@@ -49,7 +49,10 @@ class WorkflowPhase(str, Enum):
 class BoundedContextCandidate(BaseModel):
     """A candidate Bounded Context identified from User Stories."""
 
-    id: str = Field(..., description="Unique ID like BC-ORDER")
+    # NOTE: UUID + natural key are generated/normalized on the server side.
+    # LLM may omit both; ingestion will compute key from name and persist with UUID id.
+    id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
+    key: Optional[str] = Field(default=None, description="Optional natural key (slug).")
     name: str = Field(..., description="Short name like 'Order'")
     description: str = Field(..., description="What this BC is responsible for")
     rationale: str = Field(..., description="Why this should be a separate BC")
@@ -61,7 +64,8 @@ class BoundedContextCandidate(BaseModel):
 class AggregateCandidate(BaseModel):
     """A candidate Aggregate within a Bounded Context."""
 
-    id: str = Field(..., description="Unique ID like AGG-ORDER-CART")
+    id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
+    key: Optional[str] = Field(default=None, description="Optional natural key (derived from BC + name).")
     name: str = Field(..., description="Aggregate name like 'Cart'")
     root_entity: str = Field(..., description="Root entity name")
     invariants: List[str] = Field(
@@ -76,7 +80,8 @@ class AggregateCandidate(BaseModel):
 class CommandCandidate(BaseModel):
     """A candidate Command within an Aggregate."""
 
-    id: str = Field(..., description="Unique ID like CMD-ORDER-PLACE")
+    id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
+    key: Optional[str] = Field(default=None, description="Optional natural key (derived from Aggregate + name).")
     name: str = Field(..., description="Command name in PascalCase like 'PlaceOrder'")
     actor: str = Field(default="user", description="Who triggers this command")
     description: str = Field(..., description="What this command does")
@@ -88,7 +93,8 @@ class CommandCandidate(BaseModel):
 class EventCandidate(BaseModel):
     """A candidate Event emitted by a Command."""
 
-    id: str = Field(..., description="Unique ID like EVT-ORDER-PLACED")
+    id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
+    key: Optional[str] = Field(default=None, description="Optional natural key (derived from Command + name + version).")
     name: str = Field(..., description="Event name in past tense like 'OrderPlaced'")
     description: str = Field(..., description="What happened")
     user_story_ids: List[str] = Field(
@@ -116,7 +122,8 @@ class ReadModelCandidate(BaseModel):
 class PolicyCandidate(BaseModel):
     """A candidate Policy for cross-BC communication."""
 
-    id: str = Field(..., description="Unique ID like POL-REFUND-ON-CANCEL")
+    id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
+    key: Optional[str] = Field(default=None, description="Optional natural key (derived from target BC + name).")
     name: str = Field(..., description="Policy name like 'RefundOnOrderCancelled'")
     trigger_event: str = Field(..., description="Event that triggers this policy")
     trigger_event_bc: str = Field(

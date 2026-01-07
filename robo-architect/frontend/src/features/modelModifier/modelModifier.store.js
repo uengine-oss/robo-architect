@@ -193,6 +193,25 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
 
   function handleStreamEvent(event, assistantMessage) {
     switch (event.type) {
+      case 'impact_summary':
+        assistantMessage.impactSummary = {
+          seedIds: Array.isArray(event.seedIds) ? event.seedIds : [],
+          confirmedCount:
+            typeof event.confirmedCount === 'number'
+              ? event.confirmedCount
+              : Array.isArray(event.propagationConfirmed)
+                ? event.propagationConfirmed.length
+                : 0,
+          propagationConfirmed: Array.isArray(event.propagationConfirmed) ? event.propagationConfirmed : [],
+          userStoryIds: Array.isArray(event.userStoryIds) ? event.userStoryIds : [],
+          propagationRounds: typeof event.propagationRounds === 'number' ? event.propagationRounds : 0,
+          propagationStopReason: typeof event.propagationStopReason === 'string' ? event.propagationStopReason : '',
+          k: typeof event.k === 'number' ? event.k : null,
+          whitelist: Array.isArray(event.whitelist) ? event.whitelist : [],
+          propagationDebug: event.propagationDebug || null
+        }
+        break
+
       case 'thought':
         currentThought.value = event.content
         upsertReactStep(reactTrace.value, { type: 'thought', content: event.content })

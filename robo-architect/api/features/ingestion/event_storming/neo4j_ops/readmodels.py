@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from api.platform.keys import readmodel_key
+
 
 class ReadModelOps:
     # =========================================================================
@@ -11,9 +13,9 @@ class ReadModelOps:
     def create_readmodel(
         self,
         *,
-        id: str,
         name: str,
         bc_id: str,
+        key: str | None = None,
         description: str | None = None,
         provisioning_type: str = "CQRS",
     ) -> dict[str, Any]:
@@ -22,23 +24,31 @@ class ReadModelOps:
 
         NOTE:
         - provisioningType is used by the UI to decide CQRS config behavior.
-        - We keep this idempotent (MERGE on id).
-        """
-        query = """
-        MATCH (bc:BoundedContext {id: $bc_id})
-        MERGE (rm:ReadModel {id: $id})
-        SET rm.name = $name,
-            rm.description = $description,
-            rm.provisioningType = $provisioning_type,
-            rm.createdAt = coalesce(rm.createdAt, datetime()),
-            rm.updatedAt = datetime()
-        MERGE (bc)-[:HAS_READMODEL]->(rm)
-        RETURN rm {.id, .name, .description, .provisioningType} as readmodel
+        - We keep this idempotent (MERGE on key).
         """
         with self.session() as session:
+            bc_rec = session.run("MATCH (bc:BoundedContext {id: $id}) RETURN bc.key as key", id=bc_id).single()
+            bc_key_value = (bc_rec or {}).get("key") or ""
+            if not bc_key_value:
+                raise ValueError(f"BoundedContext not found or missing key: {bc_id}")
+            key = key or readmodel_key(bc_key_value, name)
+
+            query = """
+            MATCH (bc:BoundedContext {id: $bc_id})
+            MERGE (rm:ReadModel {key: $key})
+            ON CREATE SET rm.id = randomUUID(),
+                          rm.createdAt = datetime()
+            SET rm.key = $key,
+                rm.name = $name,
+                rm.description = $description,
+                rm.provisioningType = $provisioning_type,
+                rm.updatedAt = datetime()
+            MERGE (bc)-[:HAS_READMODEL]->(rm)
+            RETURN rm {.id, .key, .name, .description, .provisioningType} as readmodel
+            """
             result = session.run(
                 query,
-                id=id,
+                key=key,
                 name=name,
                 bc_id=bc_id,
                 description=description,

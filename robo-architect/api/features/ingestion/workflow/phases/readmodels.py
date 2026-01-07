@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from typing import Any, AsyncGenerator
 
@@ -20,30 +19,6 @@ from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
-
-def _pascal_to_upper_kebab(name: str) -> str:
-    """
-    Convert PascalCase/camelCase into UPPER-KEBAB.
-    Example: OrderSummary -> ORDER-SUMMARY
-    """
-    name = (name or "").strip()
-    if not name:
-        return ""
-    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1-\2", name)
-    s2 = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", s1)
-    s3 = re.sub(r"[^A-Za-z0-9-]+", "-", s2).strip("-")
-    return s3.upper()
-
-
-def _readmodel_id_for(bc_id_short: str, readmodel_name: str) -> str:
-    bc_short = (bc_id_short or "").replace("BC-", "").strip().upper()
-    slug = _pascal_to_upper_kebab(readmodel_name)
-    if bc_short and slug.startswith(bc_short + "-"):
-        slug = slug[len(bc_short) + 1 :]
-    slug = slug or _pascal_to_upper_kebab(readmodel_name) or "READMODEL"
-    return f"RM-{bc_short}-{slug}" if bc_short else f"RM-{slug}"
-
-
 async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[ProgressEvent, None]:
     """
     Phase: extract ReadModels per BC and persist them.
@@ -61,8 +36,6 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
     progress_per_bc = 6 // max(len(ctx.bounded_contexts), 1)
 
     for bc_idx, bc in enumerate(ctx.bounded_contexts or []):
-        bc_id_short = bc.id.replace("BC-", "")
-
         # User stories in this BC (include ui_description to support UI phase later)
         bc_user_stories = []
         for us in ctx.user_stories or []:
@@ -166,13 +139,11 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             if not name:
                 continue
 
-            rm_id = getattr(rm, "id", None) or _readmodel_id_for(bc_id_short, name)
             description = getattr(rm, "description", None)
             user_story_ids = list(getattr(rm, "user_story_ids", []) or [])
 
             try:
                 created = ctx.client.create_readmodel(
-                    id=rm_id,
                     name=name,
                     bc_id=bc.id,
                     description=description,
@@ -183,7 +154,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     "WARNING",
                     "ReadModel create skipped",
                     category="ingestion.neo4j.readmodel",
-                    params={"session_id": ctx.session.id, "readmodel_id": rm_id, "bc_id": bc.id, "error": str(e)},
+                    params={"session_id": ctx.session.id, "readmodel_name": name, "bc_id": bc.id, "error": str(e)},
                 )
                 continue
 
@@ -204,7 +175,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                 data={
                     "type": "ReadModel",
                     "object": {
-                        "id": created.get("id", rm_id),
+                        "id": created.get("id"),
                         "name": created.get("name", name),
                         "type": "ReadModel",
                         "parentId": bc.id,

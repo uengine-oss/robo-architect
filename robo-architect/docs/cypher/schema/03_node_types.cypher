@@ -68,7 +68,8 @@ CREATE (us:UserStory {
 //   - DEPENDS_ON ↔ BoundedContext
 //
 // 필수 속성:
-//   - id: String (고유 식별자)
+//   - id: String (UUID, 고유 식별자)
+//   - key: String (자연키, 멱등성 MERGE 기준)
 //   - name: String (컨텍스트 이름)
 //
 // 선택 속성:
@@ -76,12 +77,11 @@ CREATE (us:UserStory {
 //   - owner: String (담당 팀)
 // ############################################################
 
-CREATE (bc:BoundedContext {
-    id: "BC-ORDER",
-    name: "Order",
-    description: "주문 생성, 수정, 취소 및 주문 상태 관리",
-    owner: "Order Team"
-});
+MERGE (bc:BoundedContext { key: "order" })
+ON CREATE SET bc.id = randomUUID()
+SET bc.name = "Order",
+    bc.description = "주문 생성, 수정, 취소 및 주문 상태 관리",
+    bc.owner = "Order Team";
 
 
 // ############################################################
@@ -92,7 +92,8 @@ CREATE (bc:BoundedContext {
 //   - HAS_COMMAND → Command
 //
 // 필수 속성:
-//   - id: String
+//   - id: String (UUID)
+//   - key: String (자연키)
 //   - name: String
 //
 // 선택 속성:
@@ -100,15 +101,16 @@ CREATE (bc:BoundedContext {
 //   - invariants: List<String>
 // ############################################################
 
-CREATE (agg:Aggregate {
-    id: "AGG-ORDER",
-    name: "Order",
-    rootEntity: "Order",
-    invariants: [
+MATCH (bc:BoundedContext { key: "order" })
+MERGE (agg:Aggregate { key: "order.order" })
+ON CREATE SET agg.id = randomUUID()
+SET agg.name = "Order",
+    agg.rootEntity = "Order",
+    agg.invariants = [
         "주문 총액은 0보다 커야 함",
         "배송 시작 후에는 취소 불가"
     ]
-});
+MERGE (bc)-[:HAS_AGGREGATE]->(agg);
 
 
 // ############################################################
@@ -119,7 +121,8 @@ CREATE (agg:Aggregate {
 //   - EMITS → Event
 //
 // 필수 속성:
-//   - id: String
+//   - id: String (UUID)
+//   - key: String (자연키)
 //   - name: String (동사형)
 //
 // 선택 속성:
@@ -127,12 +130,13 @@ CREATE (agg:Aggregate {
 //   - inputSchema: String (JSON)
 // ############################################################
 
-CREATE (cmd:Command {
-    id: "CMD-CANCEL-ORDER",
-    name: "CancelOrder",
-    actor: "customer",
-    inputSchema: '{"orderId": "string", "reason": "string"}'
-});
+MATCH (agg:Aggregate { key: "order.order" })
+MERGE (cmd:Command { key: "order.order.cancel-order" })
+ON CREATE SET cmd.id = randomUUID()
+SET cmd.name = "CancelOrder",
+    cmd.actor = "customer",
+    cmd.inputSchema = '{"orderId": "string", "reason": "string"}'
+MERGE (agg)-[:HAS_COMMAND]->(cmd);
 
 
 // ############################################################
@@ -143,7 +147,8 @@ CREATE (cmd:Command {
 //   - TRIGGERS → Policy (다른 BC의 Policy)
 //
 // 필수 속성:
-//   - id: String
+//   - id: String (UUID)
+//   - key: String (자연키; 보통 version 포함)
 //   - name: String (과거형)
 //   - version: String
 //
@@ -152,13 +157,14 @@ CREATE (cmd:Command {
 //   - isBreaking: Boolean
 // ############################################################
 
-CREATE (evt:Event {
-    id: "EVT-ORDER-CANCELLED",
-    name: "OrderCancelled",
-    version: "1.0.0",
-    schema: '{"orderId": "string", "cancelledAt": "datetime", "reason": "string"}',
-    isBreaking: false
-});
+MATCH (cmd:Command { key: "order.order.cancel-order" })
+MERGE (evt:Event { key: "order.order.cancel-order.order-cancelled@1.0.0" })
+ON CREATE SET evt.id = randomUUID()
+SET evt.name = "OrderCancelled",
+    evt.version = "1.0.0",
+    evt.schema = '{"orderId": "string", "cancelledAt": "datetime", "reason": "string"}',
+    evt.isBreaking = false
+MERGE (cmd)-[:EMITS]->(evt);
 
 
 // ############################################################
@@ -170,7 +176,8 @@ CREATE (evt:Event {
 //   - INVOKES → Command (자신의 BC에 있는)
 //
 // 필수 속성:
-//   - id: String
+//   - id: String (UUID)
+//   - key: String (자연키)
 //   - name: String
 //
 // 선택 속성:
@@ -178,12 +185,13 @@ CREATE (evt:Event {
 //   - description: String
 // ############################################################
 
-CREATE (pol:Policy {
-    id: "POL-REFUND-ON-CANCEL",
-    name: "RefundOnOrderCancellation",
-    condition: "OrderCancelled received",
-    description: "주문 취소 이벤트 수신 시 환불 처리"
-});
+MATCH (bcPayment:BoundedContext { key: "payment" })
+MERGE (pol:Policy { key: "payment.refund-on-order-cancellation" })
+ON CREATE SET pol.id = randomUUID()
+SET pol.name = "RefundOnOrderCancellation",
+    pol.condition = "OrderCancelled received",
+    pol.description = "주문 취소 이벤트 수신 시 환불 처리"
+MERGE (bcPayment)-[:HAS_POLICY]->(pol);
 
 
 // ############################################################
@@ -194,22 +202,32 @@ CREATE (pol:Policy {
 //   - HAS_PROPERTY → Property
 //
 // 필수 속성:
-//   - id: String
+//   - id: String (UUID)
 //   - name: String
+//   - type: String (Java 타입 문자열)
+//   - description: String
+//   - isKey: Boolean
+//   - isForeignKey: Boolean
+//   - isRequired: Boolean
+//   - parentType: String ("Aggregate"|"Command"|"Event"|"ReadModel")
+//   - parentId: String (부모 노드 UUID)
 //
 // 선택 속성:
 //   - type: String (e.g., string, int, datetime, ...)
 //   - description: String
 //   - isRequired: Boolean
+//   - fkTargetHint: String? (2차 REFERENCES 생성을 위한 FK 대상 힌트; 예: "Aggregate:order.order:id")
 // ############################################################
 
-CREATE (prop:Property {
-    id: "PROP-ORDER-ID",
-    name: "orderId",
-    type: "string",
-    description: "주문 고유 식별자",
-    isRequired: true
-});
+MATCH (cmd:Command { key: "order.order.cancel-order" })
+MERGE (prop:Property { parentType: "Command", parentId: cmd.id, name: "orderId" })
+ON CREATE SET prop.id = randomUUID()
+SET prop.type = "UUID",
+    prop.description = "주문 고유 식별자",
+    prop.isKey = true,
+    prop.isForeignKey = false,
+    prop.isRequired = true
+MERGE (cmd)-[:HAS_PROPERTY]->(prop);
 
 
 // ############################################################
@@ -222,7 +240,8 @@ CREATE (prop:Property {
 //   - HAS_PROPERTY: UI → Property (선택)
 //
 // 필수 속성:
-//   - id: String
+//   - id: String (UUID)
+//   - key: String (자연키)
 //   - name: String
 //
 // 선택 속성:
@@ -234,13 +253,16 @@ CREATE (prop:Property {
 //   - userStoryId: String (근거가 된 UserStory id)
 // ############################################################
 
-CREATE (ui:UI {
-    id: "UI-CMD-CANCEL-ORDER",
-    name: "CancelOrder UI",
-    description: "주문 취소 화면: 주문번호 입력 후 취소 사유를 선택하고 '취소' 버튼 클릭",
-    template: "",
-    attachedToId: "CMD-CANCEL-ORDER",
-    attachedToType: "Command",
-    attachedToName: "CancelOrder",
-    userStoryId: "US-001"
-});
+MATCH (bc:BoundedContext { key: "order" })
+MATCH (cmd:Command { key: "order.order.cancel-order" })
+MERGE (ui:UI { key: "ui.command." + cmd.id })
+ON CREATE SET ui.id = randomUUID()
+SET ui.name = "CancelOrder UI",
+    ui.description = "주문 취소 화면: 주문번호 입력 후 취소 사유를 선택하고 '취소' 버튼 클릭",
+    ui.template = "",
+    ui.attachedToId = cmd.id,
+    ui.attachedToType = "Command",
+    ui.attachedToName = cmd.name,
+    ui.userStoryId = "US-001"
+MERGE (bc)-[:HAS_UI]->(ui)
+MERGE (ui)-[:ATTACHED_TO]->(cmd);

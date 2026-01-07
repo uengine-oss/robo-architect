@@ -29,7 +29,8 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
     all_events: dict[str, Any] = {}
 
     for bc in ctx.bounded_contexts:
-        bc_id_short = bc.id.replace("BC-", "")
+        # Legacy field used only for prompt text; keep stable without prefix-based ids.
+        bc_id_short = (getattr(bc, "name", "") or "").strip()
         bc_aggregates = ctx.aggregates_by_bc.get(bc.id, [])
 
         for agg in bc_aggregates:
@@ -125,19 +126,37 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                 if not cmd_id:
                     continue
 
-                ctx.client.create_event(id=evt.id, name=evt.name, command_id=cmd_id)
+                created_evt = ctx.client.create_event(name=evt.name, command_id=cmd_id)
+                # Overwrite LLM-proposed id with UUID from DB (canonical)
+                try:
+                    evt.id = created_evt.get("id")
+                except Exception:
+                    pass
+                # Preserve natural key (needed by downstream property generation prompts)
+                try:
+                    evt.key = created_evt.get("key")
+                except Exception:
+                    pass
 
                 # Traceability: UserStory -> Event
                 for us_id in getattr(evt, "user_story_ids", []) or []:
                     try:
-                        ctx.client.link_user_story_to_event(us_id, evt.id)
+                        ctx.client.link_user_story_to_event(us_id, created_evt.get("id"))
                     except Exception:
                         pass
                 yield ProgressEvent(
                     phase=IngestionPhase.EXTRACTING_EVENTS,
                     message=f"Event 생성: {evt.name}",
                     progress=80,
-                    data={"type": "Event", "object": {"id": evt.id, "name": evt.name, "type": "Event", "parentId": cmd_id}},
+                    data={
+                        "type": "Event",
+                        "object": {
+                            "id": created_evt.get("id"),
+                            "name": evt.name,
+                            "type": "Event",
+                            "parentId": cmd_id,
+                        },
+                    },
                 )
                 await asyncio.sleep(0.1)
 

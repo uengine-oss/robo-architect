@@ -76,6 +76,72 @@ export const useCanvasStore = defineStore('canvas', () => {
       height: 300
     }
   }
+
+  // Property rendering (Option C): node height expands with field count.
+  const PROP_ROW_HEIGHT = 16
+  const PROP_SECTION_PADDING = 14
+
+  function getPropertiesCount(data) {
+    const props = data?.properties
+    return Array.isArray(props) ? props.length : 0
+  }
+
+  function computeDynamicHeight(nodeType, data) {
+    const base = nodeTypeConfig?.[nodeType]?.height || 80
+    const count = getPropertiesCount(data)
+    if (!count) return base
+    return base + PROP_SECTION_PADDING + count * PROP_ROW_HEIGHT
+  }
+
+  function getNodeHeight(node) {
+    if (!node) return 80
+    if (node.type === 'boundedcontext') {
+      return parseInt(node.style?.height || '300')
+    }
+    const t = node.data?.type
+    const h = Number(node.data?.dynamicHeight)
+    if (Number.isFinite(h) && h > 0) return h
+    return computeDynamicHeight(t, node.data)
+  }
+
+  function sortProperties(props) {
+    const list = Array.isArray(props) ? [...props] : []
+    list.sort((a, b) => {
+      const aKey = Number(!!a?.isKey)
+      const bKey = Number(!!b?.isKey)
+      if (aKey !== bKey) return bKey - aKey
+
+      const aFk = Number(!!a?.isForeignKey)
+      const bFk = Number(!!b?.isForeignKey)
+      if (aFk !== bFk) return bFk - aFk
+
+      const an = String(a?.name || '')
+      const bn = String(b?.name || '')
+      return an.localeCompare(bn)
+    })
+    return list
+  }
+
+  function updateEmbeddedProperties(parentId, updater) {
+    if (!parentId || !isOnCanvas(parentId)) return
+    const idx = nodes.value.findIndex(n => n.id === parentId)
+    if (idx === -1) return
+
+    const existing = nodes.value[idx]
+    const existingProps = Array.isArray(existing.data?.properties) ? [...existing.data.properties] : []
+    const nextProps = sortProperties(updater(existingProps))
+
+    const nextData = {
+      ...existing.data,
+      properties: nextProps
+    }
+    nextData.dynamicHeight = computeDynamicHeight(existing.data?.type, nextData)
+
+    nodes.value[idx] = { ...existing, data: nextData }
+    nodes.value = [...nodes.value]
+
+    if (existing.parentNode) updateBCSize(existing.parentNode, true)
+  }
   
   // Get all node IDs currently on canvas
   const nodeIds = computed(() => nodes.value.map(n => n.id))
@@ -140,7 +206,7 @@ export const useCanvasStore = defineStore('canvas', () => {
         position: { x: 50 + offsetX, y: 50 },
         data: {
           id: bcId,
-          name: bcName || bcId.replace('BC-', ''),
+          name: bcName || bcId,
           description: bcDescription,
           type: 'BoundedContext',
           label: bcName
@@ -201,16 +267,18 @@ export const useCanvasStore = defineStore('canvas', () => {
     
     const offset = typeOffsets[nodeType] || { x: leftPadding, baseY: baseY }
     
-    // Count existing nodes of same type in this BC
-    const sameTypeInBC = nodes.value.filter(n => 
-      n.parentNode === bcId && 
+    // Stack below the last node of the same type (dynamic height-aware)
+    const sameType = nodes.value.filter(n =>
+      n.parentNode === bcId &&
       n.data?.type === nodeType
-    ).length
-    
-    return {
-      x: offset.x,
-      y: offset.baseY + (sameTypeInBC * (nodeHeight + 5))  // Tight spacing between stickers
+    )
+
+    if (!sameType.length) {
+      return { x: offset.x, y: offset.baseY }
     }
+
+    const maxBottom = Math.max(...sameType.map(n => n.position.y + getNodeHeight(n)))
+    return { x: offset.x, y: maxBottom + 5 }
   }
   
   // Update BC container size based on children
@@ -243,7 +311,7 @@ export const useCanvasStore = defineStore('canvas', () => {
       const left = child.position.x
       const top = child.position.y
       const right = child.position.x + config.width
-      const bottom = child.position.y + config.height
+      const bottom = child.position.y + getNodeHeight(child)
       
       minX = Math.min(minX, left)
       minY = Math.min(minY, top)
@@ -328,7 +396,8 @@ export const useCanvasStore = defineStore('canvas', () => {
       position,
       data: {
         ...nodeData,
-        label: nodeData.name
+        label: nodeData.name,
+        dynamicHeight: computeDynamicHeight(nodeType, nodeData)
       },
       ...(parentBcId && { parentNode: parentBcId, extent: 'parent' })
     }
@@ -401,7 +470,7 @@ export const useCanvasStore = defineStore('canvas', () => {
         } else if (parentBcId) {
           // BC not in map yet, create it
           bcMap[parentBcId] = {
-            bc: { id: parentBcId, name: parentBcId.replace('BC-', ''), type: 'BoundedContext' },
+            bc: { id: parentBcId, name: parentBcId, type: 'BoundedContext' },
             children: [nodeData]
           }
           nodeData.bcId = parentBcId
@@ -427,7 +496,8 @@ export const useCanvasStore = defineStore('canvas', () => {
             position: calculateStandalonePosition(nodeData.type, newNodes.length),
             data: {
               ...nodeData,
-              label: nodeData.name
+              label: nodeData.name,
+              dynamicHeight: computeDynamicHeight(nodeData.type, nodeData)
             }
           }
           nodes.value.push(node)
@@ -496,79 +566,87 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
         })
         
+        // Build parent maps from relationships (preferred) or fallback fields
+        const commandToAggregate = {}
+        const eventToCommand = {}
+        relationships.forEach(rel => {
+          if (rel.type === 'HAS_COMMAND' && rel.source && rel.target) commandToAggregate[rel.target] = rel.source
+          if (rel.type === 'EMITS' && rel.source && rel.target) eventToCommand[rel.target] = rel.source
+        })
+
         // Group Commands by their parent Aggregate
         const commandsByAggregate = {}
         typeGroups.Command.forEach(cmd => {
-          const aggId = cmd.parentId
+          const aggId = commandToAggregate[cmd.id] || cmd.parentId
           if (aggId) {
             if (!commandsByAggregate[aggId]) commandsByAggregate[aggId] = []
             commandsByAggregate[aggId].push(cmd)
           }
         })
-        
-        // Layout Commands (left column) - track positions for policy/UI placement
-        // Commands are now laid out grouped by their parent Aggregate
+
+        // Layout Commands (left column) - dynamic height-aware stacking
         const commandPositions = {}
-        let commandIdx = 0
-        const aggregatePositions = {} // Track Y range for each aggregate
-        
+        const aggregatePositions = {} // Track Y range for each aggregate (for Aggregate sizing)
+        let yCursor = currentY
+        let maxBottom = currentY
+
         typeGroups.Aggregate.forEach(agg => {
           const aggCommands = commandsByAggregate[agg.id] || []
-          const startIdx = commandIdx
-          
-          aggCommands.forEach((cmd) => {
+          const startY = yCursor
+
+          aggCommands.forEach(cmd => {
             if (!isOnCanvas(cmd.id)) {
-              const yPos = currentY + commandIdx * (nodeHeight + gapY)
-              commandPositions[cmd.id] = { x: commandX, y: yPos }
+              const h = computeDynamicHeight('Command', cmd)
+              commandPositions[cmd.id] = { x: commandX, y: yCursor, height: h }
               const node = {
                 id: cmd.id,
                 type: 'command',
-                position: { x: commandX, y: yPos },
-                data: { ...cmd, label: cmd.name },
+                position: { x: commandX, y: yCursor },
+                data: { ...cmd, label: cmd.name, dynamicHeight: h },
                 parentNode: bcId,
                 extent: 'parent'
               }
               nodes.value.push(node)
               newNodes.push(node)
+              maxBottom = Math.max(maxBottom, yCursor + h)
+              yCursor += h + gapY
             }
-            commandIdx++
           })
-          
-          // Track the Y range for this aggregate
+
           if (aggCommands.length > 0) {
-            const startY = currentY + startIdx * (nodeHeight + gapY)
-            const endY = currentY + (commandIdx - 1) * (nodeHeight + gapY) + nodeHeight
+            const endY = yCursor - gapY
             aggregatePositions[agg.id] = { startY, endY, commandCount: aggCommands.length }
           }
         })
-        
-        // Also layout any orphan commands (without parentId)
-        const orphanCommands = typeGroups.Command.filter(cmd => !cmd.parentId)
+
+        // Also layout any orphan commands (no parent aggregate mapping)
+        const orphanCommands = typeGroups.Command.filter(cmd => !(commandToAggregate[cmd.id] || cmd.parentId))
         orphanCommands.forEach(cmd => {
           if (!isOnCanvas(cmd.id)) {
-            const yPos = currentY + commandIdx * (nodeHeight + gapY)
-            commandPositions[cmd.id] = { x: commandX, y: yPos }
+            const h = computeDynamicHeight('Command', cmd)
+            commandPositions[cmd.id] = { x: commandX, y: yCursor, height: h }
             const node = {
               id: cmd.id,
               type: 'command',
-              position: { x: commandX, y: yPos },
-              data: { ...cmd, label: cmd.name },
+              position: { x: commandX, y: yCursor },
+              data: { ...cmd, label: cmd.name, dynamicHeight: h },
               parentNode: bcId,
               extent: 'parent'
             }
             nodes.value.push(node)
             newNodes.push(node)
-            commandIdx++
+            maxBottom = Math.max(maxBottom, yCursor + h)
+            yCursor += h + gapY
           }
         })
         
-        // Layout Aggregates (center column) - height spans all its Commands
-        const defaultAggHeight = nodeTypeConfig.Aggregate?.height || 80
+        // Layout Aggregates (center column) - height spans all its Commands (and grows with fields)
         typeGroups.Aggregate.forEach((agg, idx) => {
           if (!isOnCanvas(agg.id)) {
             const aggPos = aggregatePositions[agg.id]
             let aggY = currentY
-            let aggHeight = defaultAggHeight
+            const baseAggHeight = computeDynamicHeight('Aggregate', agg)
+            let aggHeight = baseAggHeight
             
             if (aggPos && aggPos.commandCount > 0) {
               // Position aggregate at the same Y as its first command
@@ -576,10 +654,10 @@ export const useCanvasStore = defineStore('canvas', () => {
               // Calculate height to span all commands (from first to last command bottom)
               aggHeight = aggPos.endY - aggPos.startY
               // Ensure minimum height
-              aggHeight = Math.max(aggHeight, defaultAggHeight)
+              aggHeight = Math.max(aggHeight, baseAggHeight)
             } else {
               // No commands for this aggregate - use default positioning
-              aggY = currentY + idx * (nodeHeight + gapY)
+              aggY = currentY + idx * (baseAggHeight + gapY)
             }
             
             const node = {
@@ -592,22 +670,35 @@ export const useCanvasStore = defineStore('canvas', () => {
             }
             nodes.value.push(node)
             newNodes.push(node)
+            maxBottom = Math.max(maxBottom, aggY + aggHeight)
           }
         })
         
-        // Layout Events (right column) - align with commands
-        typeGroups.Event.forEach((evt, idx) => {
+        // Layout Events (right column) - prefer aligning with their emitting Command
+        let eventCursor = currentY
+        typeGroups.Event.forEach((evt) => {
           if (!isOnCanvas(evt.id)) {
+            const h = computeDynamicHeight('Event', evt)
+            const emitCmdId = eventToCommand[evt.id]
+            const yPos = (emitCmdId && commandPositions[emitCmdId])
+              ? commandPositions[emitCmdId].y
+              : eventCursor
+
             const node = {
               id: evt.id,
               type: 'event',
-              position: { x: eventX, y: currentY + idx * (nodeHeight + gapY) },
-              data: { ...evt, label: evt.name },
+              position: { x: eventX, y: yPos },
+              data: { ...evt, label: evt.name, dynamicHeight: h },
               parentNode: bcId,
               extent: 'parent'
             }
             nodes.value.push(node)
             newNodes.push(node)
+            maxBottom = Math.max(maxBottom, yPos + h)
+
+            if (!(emitCmdId && commandPositions[emitCmdId])) {
+              eventCursor += h + gapY
+            }
           }
         })
         
@@ -618,53 +709,52 @@ export const useCanvasStore = defineStore('canvas', () => {
             // Find the command this policy invokes
             const invokedCmdId = pol.invokeCommandId
             let yPos = currentY + policyOffsetY
+            const h = computeDynamicHeight('Policy', pol)
             
             if (invokedCmdId && commandPositions[invokedCmdId]) {
               // Place policy at same Y as the command it invokes
               yPos = commandPositions[invokedCmdId].y
             } else {
               // Default: stack below existing content
-              const maxY = Math.max(
-                typeGroups.Command.length,
-                typeGroups.Event.length
-              ) * (nodeHeight + gapY) + currentY
-              yPos = maxY + policyOffsetY
-              policyOffsetY += nodeHeight + gapY
+              yPos = (maxBottom + 20) + policyOffsetY
+              policyOffsetY += h + gapY
             }
             
             const node = {
               id: pol.id,
               type: 'policy',
               position: { x: policyX, y: yPos },
-              data: { ...pol, label: pol.name },
+              data: { ...pol, label: pol.name, dynamicHeight: h },
               parentNode: bcId,
               extent: 'parent'
             }
             nodes.value.push(node)
             newNodes.push(node)
+            maxBottom = Math.max(maxBottom, yPos + h)
           }
         })
 
         // Layout ReadModels (bottom row, spanning horizontally)
         const readModelPositions = {}
-        const baseRowsHeight = Math.max(typeGroups.Command.length, typeGroups.Event.length, typeGroups.Aggregate.length, 1)
-        const readModelY = currentY + baseRowsHeight * (nodeHeight + gapY) + 40
+        const readModelY = maxBottom + 40
 
         typeGroups.ReadModel.forEach((rm, idx) => {
           if (!isOnCanvas(rm.id)) {
             const xPos = readModelX + idx * (nodeWidth + gapX)
             const yPos = readModelY
             readModelPositions[rm.id] = { x: xPos, y: yPos }
+            const h = computeDynamicHeight('ReadModel', rm)
             const node = {
               id: rm.id,
               type: 'readmodel',
               position: { x: xPos, y: yPos },
-              data: { ...rm, label: rm.name },
+              data: { ...rm, label: rm.name, dynamicHeight: h },
               parentNode: bcId,
               extent: 'parent'
             }
             nodes.value.push(node)
             newNodes.push(node)
+            maxBottom = Math.max(maxBottom, yPos + h)
           }
         })
 
@@ -681,6 +771,7 @@ export const useCanvasStore = defineStore('canvas', () => {
           if (!isOnCanvas(ui.id)) {
             let xPos = uiX
             let yPos = uiFallbackY
+            const uiH = computeDynamicHeight('UI', ui)
 
             if (ui.attachedToId) {
               if (commandPositions[ui.attachedToId]) {
@@ -691,7 +782,7 @@ export const useCanvasStore = defineStore('canvas', () => {
                 xPos = readModelPositions[ui.attachedToId].x - uiWidth - 5  // Tight gap between UI and ReadModel
               }
             } else {
-              uiFallbackY += nodeHeight + gapY
+              uiFallbackY += uiH + gapY
             }
             
             minUiX = Math.min(minUiX, xPos)
@@ -731,16 +822,18 @@ export const useCanvasStore = defineStore('canvas', () => {
         
         // Now add UI nodes with corrected positions
         uiNodes.forEach(({ ui, xPos, yPos }) => {
+          const uiH = computeDynamicHeight('UI', ui)
           const node = {
             id: ui.id,
             type: 'ui',
             position: { x: Math.max(leftPadding, xPos), y: yPos },
-            data: { ...ui, label: ui.name },
+            data: { ...ui, label: ui.name, dynamicHeight: uiH },
             parentNode: bcId,
             extent: 'parent'
           }
           nodes.value.push(node)
           newNodes.push(node)
+          maxBottom = Math.max(maxBottom, yPos + uiH)
         })
         
         // Update BC size (with shift already applied, just recalculate bounds)
@@ -1048,7 +1141,8 @@ export const useCanvasStore = defineStore('canvas', () => {
       data: {
         ...nodeData,
         label: nodeData.name,
-        bcId
+        bcId,
+        dynamicHeight: computeDynamicHeight(nodeType, nodeData)
       },
       parentNode: bcId,
       extent: 'parent'
@@ -1066,6 +1160,48 @@ export const useCanvasStore = defineStore('canvas', () => {
       const targetId = change.targetId
 
       if (!action || !targetId) continue
+
+      // Property nodes are embedded into their parent and are not rendered as separate nodes/edges.
+      if (change.targetType === 'Property') {
+        const parentId = change.parentId
+
+        if (action === 'create') {
+          updateEmbeddedProperties(parentId, props => {
+            const next = props.filter(p => p?.id !== targetId)
+            next.push({
+              id: targetId,
+              name: change.name || change.targetName,
+              type: change.type,
+              description: change.description ?? '',
+              isKey: !!change.isKey,
+              isForeignKey: !!change.isForeignKey,
+              isRequired: !!change.isRequired,
+              parentType: change.parentType,
+              parentId: parentId
+            })
+            return next
+          })
+        } else if (action === 'update' || action === 'rename') {
+          updateEmbeddedProperties(parentId, props => {
+            const next = [...props]
+            const i = next.findIndex(p => p?.id === targetId)
+            if (i === -1) return next
+            next[i] = {
+              ...next[i],
+              name: change.name || change.targetName || next[i]?.name,
+              type: change.type ?? next[i]?.type,
+              description: change.description ?? next[i]?.description ?? '',
+              isKey: change.isKey ?? next[i]?.isKey,
+              isForeignKey: change.isForeignKey ?? next[i]?.isForeignKey,
+              isRequired: change.isRequired ?? next[i]?.isRequired
+            }
+            return next
+          })
+        } else if (action === 'delete') {
+          updateEmbeddedProperties(parentId, props => props.filter(p => p?.id !== targetId))
+        }
+        continue
+      }
 
       if (action === 'rename' || action === 'update') {
         const idx = nodes.value.findIndex(n => n.id === targetId)
@@ -1117,7 +1253,19 @@ export const useCanvasStore = defineStore('canvas', () => {
       } else if (action === 'connect') {
         const sourceId = change.sourceId
         const connectionType = change.connectionType || 'TRIGGERS'
-        if (sourceId && isOnCanvas(sourceId) && isOnCanvas(targetId)) {
+        if (connectionType === 'REFERENCES') {
+          // FK reference is only represented in Property metadata (not as an edge on canvas)
+          const sourceParentId = change.sourceParentId
+          if (sourceId && sourceParentId) {
+            updateEmbeddedProperties(sourceParentId, props => {
+              const next = [...props]
+              const i = next.findIndex(p => p?.id === sourceId)
+              if (i === -1) return next
+              next[i] = { ...next[i], isForeignKey: true }
+              return next
+            })
+          }
+        } else if (sourceId && isOnCanvas(sourceId) && isOnCanvas(targetId)) {
           addEdge(sourceId, targetId, connectionType)
         }
       }
@@ -1198,8 +1346,9 @@ export const useCanvasStore = defineStore('canvas', () => {
       const config = nodeTypeConfig[n.data?.type] || { width: 150, height: 100 }
       const nodeWidth = n.type === 'boundedcontext' ? 
         parseInt(n.style?.width || '400') : config.width
-      const nodeHeight = n.type === 'boundedcontext' ? 
-        parseInt(n.style?.height || '300') : config.height
+      const nodeHeight = n.type === 'boundedcontext'
+        ? parseInt(n.style?.height || '300')
+        : getNodeHeight(n)
       
       return {
         x: n.position.x,
@@ -1367,11 +1516,19 @@ export const useCanvasStore = defineStore('canvas', () => {
             typeGroups[child.type].push(child)
           }
         })
+
+        // Parent maps from relationships (preferred) or fallback fields
+        const commandToAggregate = {}
+        const eventToCommand = {}
+        ;(data.relationships || []).forEach(rel => {
+          if (rel.type === 'HAS_COMMAND' && rel.source && rel.target) commandToAggregate[rel.target] = rel.source
+          if (rel.type === 'EMITS' && rel.source && rel.target) eventToCommand[rel.target] = rel.source
+        })
         
         // Group Commands by their parent Aggregate
         const commandsByAggregate = {}
         typeGroups.Command.forEach(cmd => {
-          const aggId = cmd.parentId
+          const aggId = commandToAggregate[cmd.id] || cmd.parentId
           if (aggId) {
             if (!commandsByAggregate[aggId]) commandsByAggregate[aggId] = []
             commandsByAggregate[aggId].push(cmd)
@@ -1380,61 +1537,65 @@ export const useCanvasStore = defineStore('canvas', () => {
         
         // Layout Commands (left) grouped by parent Aggregate and track positions
         const commandPositions = {}
-        let commandIdx = 0
         const aggregatePositions = {} // Track Y range for each aggregate
+        let yCursor = currentY
+        let maxBottom = currentY
         
         typeGroups.Aggregate.forEach(agg => {
           const aggCommands = commandsByAggregate[agg.id] || []
-          const startIdx = commandIdx
+          const startY = yCursor
           
           aggCommands.forEach((cmd) => {
-            const yPos = currentY + commandIdx * (nodeHeight + gapY)
-            commandPositions[cmd.id] = { x: commandX, y: yPos }
+            const h = computeDynamicHeight('Command', cmd)
+            const yPos = yCursor
+            commandPositions[cmd.id] = { x: commandX, y: yPos, height: h }
             const node = {
               id: cmd.id,
               type: 'command',
               position: { x: commandX, y: yPos },
-              data: { ...cmd, label: cmd.name },
+              data: { ...cmd, label: cmd.name, dynamicHeight: h },
               parentNode: bcId,
               extent: 'parent'
             }
             nodes.value.push(node)
             newNodes.push(node)
-            commandIdx++
+            maxBottom = Math.max(maxBottom, yPos + h)
+            yCursor += h + gapY
           })
           
           // Track the Y range for this aggregate
           if (aggCommands.length > 0) {
-            const startY = currentY + startIdx * (nodeHeight + gapY)
-            const endY = currentY + (commandIdx - 1) * (nodeHeight + gapY) + nodeHeight
+            const endY = yCursor - gapY
             aggregatePositions[agg.id] = { startY, endY, commandCount: aggCommands.length }
           }
         })
         
         // Also layout any orphan commands (without parentId)
-        const orphanCommands = typeGroups.Command.filter(cmd => !cmd.parentId)
+        const orphanCommands = typeGroups.Command.filter(cmd => !(commandToAggregate[cmd.id] || cmd.parentId))
         orphanCommands.forEach(cmd => {
-          const yPos = currentY + commandIdx * (nodeHeight + gapY)
-          commandPositions[cmd.id] = { x: commandX, y: yPos }
+          const h = computeDynamicHeight('Command', cmd)
+          const yPos = yCursor
+          commandPositions[cmd.id] = { x: commandX, y: yPos, height: h }
           const node = {
             id: cmd.id,
             type: 'command',
             position: { x: commandX, y: yPos },
-            data: { ...cmd, label: cmd.name },
+            data: { ...cmd, label: cmd.name, dynamicHeight: h },
             parentNode: bcId,
             extent: 'parent'
           }
           nodes.value.push(node)
           newNodes.push(node)
-          commandIdx++
+          maxBottom = Math.max(maxBottom, yPos + h)
+          yCursor += h + gapY
         })
         
         // Layout Aggregates (center) - height spans all its Commands
-        const defaultAggHeight = nodeTypeConfig.Aggregate?.height || 80
         typeGroups.Aggregate.forEach((agg, idx) => {
           const aggPos = aggregatePositions[agg.id]
           let aggY = currentY
-          let aggHeight = defaultAggHeight
+          const baseAggHeight = computeDynamicHeight('Aggregate', agg)
+          let aggHeight = baseAggHeight
           
           if (aggPos && aggPos.commandCount > 0) {
             // Position aggregate at the same Y as its first command
@@ -1442,10 +1603,10 @@ export const useCanvasStore = defineStore('canvas', () => {
             // Calculate height to span all commands (from first to last command bottom)
             aggHeight = aggPos.endY - aggPos.startY
             // Ensure minimum height
-            aggHeight = Math.max(aggHeight, defaultAggHeight)
+            aggHeight = Math.max(aggHeight, baseAggHeight)
           } else {
             // No commands for this aggregate - use default positioning
-            aggY = currentY + idx * (nodeHeight + gapY)
+            aggY = currentY + idx * (baseAggHeight + gapY)
           }
           
           const node = {
@@ -1458,20 +1619,31 @@ export const useCanvasStore = defineStore('canvas', () => {
           }
           nodes.value.push(node)
           newNodes.push(node)
+          maxBottom = Math.max(maxBottom, aggY + aggHeight)
         })
         
         // Layout Events (right)
-        typeGroups.Event.forEach((evt, idx) => {
+        let eventCursor = currentY
+        typeGroups.Event.forEach((evt) => {
+          const h = computeDynamicHeight('Event', evt)
+          const emitCmdId = eventToCommand[evt.id]
+          const yPos = (emitCmdId && commandPositions[emitCmdId])
+            ? commandPositions[emitCmdId].y
+            : eventCursor
           const node = {
             id: evt.id,
             type: 'event',
-            position: { x: eventX, y: currentY + idx * (nodeHeight + gapY) },
-            data: { ...evt, label: evt.name },
+            position: { x: eventX, y: yPos },
+            data: { ...evt, label: evt.name, dynamicHeight: h },
             parentNode: bcId,
             extent: 'parent'
           }
           nodes.value.push(node)
           newNodes.push(node)
+          maxBottom = Math.max(maxBottom, yPos + h)
+          if (!(emitCmdId && commandPositions[emitCmdId])) {
+            eventCursor += h + gapY
+          }
         })
         
         // Layout Policies (left of their invoking command)
@@ -1480,30 +1652,27 @@ export const useCanvasStore = defineStore('canvas', () => {
           const invokedCmdId = pol.invokeCommandId
           let yPos = currentY + policyOffsetY
           let xPos = policyX
+          const h = computeDynamicHeight('Policy', pol)
           
           if (invokedCmdId && commandPositions[invokedCmdId]) {
             yPos = commandPositions[invokedCmdId].y
             xPos = commandPositions[invokedCmdId].x - 150
           } else {
-            const maxY = Math.max(
-              typeGroups.Command.length,
-              typeGroups.Event.length,
-              1
-            ) * (nodeHeight + gapY) + currentY
-            yPos = maxY + policyOffsetY
-            policyOffsetY += nodeHeight + gapY
+            yPos = (maxBottom + 20) + policyOffsetY
+            policyOffsetY += h + gapY
           }
           
           const node = {
             id: pol.id,
             type: 'policy',
             position: { x: Math.max(leftPadding, xPos), y: yPos },
-            data: { ...pol, label: pol.name },
+            data: { ...pol, label: pol.name, dynamicHeight: h },
             parentNode: bcId,
             extent: 'parent'
           }
           nodes.value.push(node)
           newNodes.push(node)
+          maxBottom = Math.max(maxBottom, yPos + h)
         })
         
         updateBCSize(bcId, true)

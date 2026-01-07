@@ -18,53 +18,64 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
     saved_items = []
 
     try:
+        bc_id_map: dict[str, str] = {}
+        agg_id_map: dict[str, str] = {}
+
         # 1. Create Bounded Contexts
         for bc in state.approved_bcs:
-            client.create_bounded_context(
-                id=bc.id,
-                name=bc.name,
-                description=bc.description,
-            )
+            old_id = str(bc.id)
+            created_bc = client.create_bounded_context(name=bc.name, description=bc.description)
+            bc_id_map[old_id] = str(created_bc.get("id"))
+            try:
+                bc.id = created_bc.get("id")
+            except Exception:
+                pass
             saved_items.append(f"BC: {bc.name}")
 
             # Link user stories to BC
             for us_id in bc.user_story_ids:
-                client.link_user_story_to_bc(us_id, bc.id)
+                client.link_user_story_to_bc(us_id, bc_id_map[old_id])
 
         # 2. Create Aggregates and link to User Stories
         for bc_id, aggregates in state.approved_aggregates.items():
+            bc_uuid = bc_id_map.get(str(bc_id)) or str(bc_id)
             for agg in aggregates:
-                client.create_aggregate(
-                    id=agg.id,
+                old_agg_id = str(agg.id)
+                created_agg = client.create_aggregate(
                     name=agg.name,
-                    bc_id=bc_id,
+                    bc_id=bc_uuid,
                     root_entity=agg.root_entity,
                     invariants=agg.invariants,
                 )
+                agg_id_map[old_agg_id] = str(created_agg.get("id"))
+                try:
+                    agg.id = created_agg.get("id")
+                except Exception:
+                    pass
                 saved_items.append(f"  Aggregate: {agg.name}")
 
                 # Link user stories to aggregate (IMPLEMENTS)
                 for us_id in agg.user_story_ids:
                     try:
-                        client.link_user_story_to_aggregate(us_id, agg.id)
+                        client.link_user_story_to_aggregate(us_id, agg_id_map[old_agg_id])
                     except Exception:
                         pass  # User story might not exist
 
         # 3. Create Commands and link to User Stories
         for agg_id, commands in state.command_candidates.items():
+            agg_uuid = agg_id_map.get(str(agg_id)) or str(agg_id)
             for cmd in commands:
-                client.create_command(
-                    id=cmd.id,
-                    name=cmd.name,
-                    aggregate_id=agg_id,
-                    actor=cmd.actor,
-                )
+                created_cmd = client.create_command(name=cmd.name, aggregate_id=agg_uuid, actor=cmd.actor)
+                try:
+                    cmd.id = created_cmd.get("id")
+                except Exception:
+                    pass
                 saved_items.append(f"    Command: {cmd.name}")
 
                 # Link user stories to command (IMPLEMENTS)
                 for us_id in cmd.user_story_ids:
                     try:
-                        client.link_user_story_to_command(us_id, cmd.id)
+                        client.link_user_story_to_command(us_id, str(cmd.id))
                     except Exception:
                         pass  # User story might not exist
 
@@ -75,17 +86,17 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
                 # Link to corresponding command if available
                 cmd_id = commands[i].id if i < len(commands) else commands[0].id if commands else None
                 if cmd_id:
-                    client.create_event(
-                        id=evt.id,
-                        name=evt.name,
-                        command_id=cmd_id,
-                    )
+                    created_evt = client.create_event(name=evt.name, command_id=str(cmd_id))
+                    try:
+                        evt.id = created_evt.get("id")
+                    except Exception:
+                        pass
                     saved_items.append(f"      Event: {evt.name}")
 
                     # Link user stories to event (IMPLEMENTS)
                     for us_id in evt.user_story_ids:
                         try:
-                            client.link_user_story_to_event(us_id, evt.id)
+                            client.link_user_story_to_event(us_id, str(evt.id))
                         except Exception:
                             pass  # User story might not exist
 
@@ -114,14 +125,17 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
                                 break
 
             if trigger_event_id and invoke_command_id and target_bc_id:
-                client.create_policy(
-                    id=pol.id,
+                created_pol = client.create_policy(
                     name=pol.name,
-                    bc_id=target_bc_id,
+                    bc_id=str(target_bc_id),
                     trigger_event_id=trigger_event_id,
                     invoke_command_id=invoke_command_id,
                     description=pol.description,
                 )
+                try:
+                    pol.id = created_pol.get("id")
+                except Exception:
+                    pass
                 saved_items.append(f"  Policy: {pol.name}")
 
         return {

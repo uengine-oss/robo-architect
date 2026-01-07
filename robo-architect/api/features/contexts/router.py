@@ -192,12 +192,10 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     ORDER BY pol.name
     """
 
-    # Get ReadModels for this BC (and their properties)
+    # Get ReadModels for this BC
     rm_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_READMODEL]->(rm:ReadModel)
-    OPTIONAL MATCH (rm)-[:HAS_PROPERTY]->(prop:Property)
-    WITH rm, collect(prop {.id, .name, .type, .description, .isRequired}) as properties
-    RETURN rm {.id, .name, .description, .provisioningType} as readmodel, properties
+    RETURN rm {.id, .name, .description, .provisioningType} as readmodel
     ORDER BY readmodel.name
     """
 
@@ -298,7 +296,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
         for record in rm_result:
             rm = dict(record["readmodel"])
             rm["type"] = "ReadModel"
-            rm["properties"] = [p for p in (record["properties"] or []) if p and p.get("id")]
+            rm["properties"] = []
             rm["operations"] = []
             readmodels.append(rm)
             readmodels_map[rm["id"]] = rm
@@ -326,6 +324,55 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
         bc["policies"] = policies
         bc["readmodels"] = readmodels
         bc["uis"] = uis
+
+        # Attach properties to Aggregate/Command/Event/ReadModel (sorted):
+        # isKey desc -> isForeignKey desc -> name asc (null treated as false)
+        agg_ids = list(aggregates.keys())
+        cmd_ids = list(commands_map.keys())
+        evt_ids: list[str] = []
+        for a in aggregates.values():
+            for e in a.get("events", []) or []:
+                if e and e.get("id"):
+                    evt_ids.append(e["id"])
+            for c in a.get("commands", []) or []:
+                for e in c.get("events", []) or []:
+                    if e and e.get("id"):
+                        evt_ids.append(e["id"])
+        rm_ids = list(readmodels_map.keys())
+        parent_ids = [*agg_ids, *cmd_ids, *evt_ids, *rm_ids]
+
+        if parent_ids:
+            prop_query = """
+            UNWIND $parent_ids as pid
+            MATCH (prop:Property {parentId: pid})
+            WITH pid, prop
+            ORDER BY coalesce(prop.isKey, false) DESC,
+                     coalesce(prop.isForeignKey, false) DESC,
+                     prop.name ASC
+            WITH pid, collect(prop {
+                .id, .name, .type, .description,
+                .isKey, .isForeignKey, .isRequired,
+                .parentType, .parentId
+            }) as properties
+            RETURN pid as parentId, properties
+            """
+            prop_map: dict[str, list[dict[str, Any]]] = {}
+            for r in session.run(prop_query, parent_ids=parent_ids):
+                pid = r.get("parentId")
+                props = r.get("properties") or []
+                if pid:
+                    prop_map[str(pid)] = [dict(p) for p in props if p and p.get("id")]
+
+            for agg in aggregates.values():
+                agg["properties"] = prop_map.get(agg.get("id", ""), [])
+                for cmd in agg.get("commands", []) or []:
+                    cmd["properties"] = prop_map.get(cmd.get("id", ""), [])
+                    for evt in cmd.get("events", []) or []:
+                        evt["properties"] = prop_map.get(evt.get("id", ""), [])
+                for evt in agg.get("events", []) or []:
+                    evt["properties"] = prop_map.get(evt.get("id", ""), [])
+            for rm in readmodels:
+                rm["properties"] = prop_map.get(rm.get("id", ""), [])
 
         SmartLogger.log(
             "INFO",

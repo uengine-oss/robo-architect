@@ -29,7 +29,8 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
     all_commands: dict[str, Any] = {}
 
     for bc in ctx.bounded_contexts:
-        bc_id_short = bc.id.replace("BC-", "")
+        # Legacy field used only for prompt text; keep stable without prefix-based ids.
+        bc_id_short = (getattr(bc, "name", "") or "").strip()
         bc_aggregates = ctx.aggregates_by_bc.get(bc.id, [])
 
         for agg in bc_aggregates:
@@ -117,12 +118,22 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 )
 
             for cmd in commands:
-                ctx.client.create_command(id=cmd.id, name=cmd.name, aggregate_id=agg.id, actor=cmd.actor)
+                created_cmd = ctx.client.create_command(name=cmd.name, aggregate_id=agg.id, actor=cmd.actor)
+                # Overwrite LLM-proposed id with UUID from DB (canonical)
+                try:
+                    cmd.id = created_cmd.get("id")
+                except Exception:
+                    pass
+                # Preserve natural key (needed by downstream property generation prompts)
+                try:
+                    cmd.key = created_cmd.get("key")
+                except Exception:
+                    pass
 
                 # Traceability: UserStory -> Command
                 for us_id in getattr(cmd, "user_story_ids", []) or []:
                     try:
-                        ctx.client.link_user_story_to_command(us_id, cmd.id)
+                        ctx.client.link_user_story_to_command(us_id, created_cmd.get("id"))
                     except Exception:
                         pass
 
@@ -130,7 +141,10 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     phase=IngestionPhase.EXTRACTING_COMMANDS,
                     message=f"Command 생성: {cmd.name}",
                     progress=65,
-                    data={"type": "Command", "object": {"id": cmd.id, "name": cmd.name, "type": "Command", "parentId": agg.id}},
+                    data={
+                        "type": "Command",
+                        "object": {"id": created_cmd.get("id"), "name": cmd.name, "type": "Command", "parentId": agg.id},
+                    },
                 )
                 await asyncio.sleep(0.1)
 

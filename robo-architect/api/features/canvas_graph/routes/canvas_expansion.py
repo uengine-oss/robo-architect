@@ -81,6 +81,40 @@ def _to_jsonable(value: Any, _seen: set[int] | None = None) -> Any:
     return str(value)
 
 
+def _fetch_properties_by_parent_id(session: Any, parent_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """
+    Fetch Property lists for parent node ids (Aggregate/Command/Event/ReadModel).
+    Properties are sorted by:
+      isKey desc -> isForeignKey desc -> name asc
+    """
+    parent_ids = [pid for pid in (parent_ids or []) if pid]
+    if not parent_ids:
+        return {}
+
+    query = """
+    UNWIND $parent_ids as pid
+    MATCH (prop:Property {parentId: pid})
+    WITH pid, prop
+    ORDER BY coalesce(prop.isKey, false) DESC,
+             coalesce(prop.isForeignKey, false) DESC,
+             prop.name ASC
+    WITH pid, collect(prop {
+        .id, .name, .type, .description,
+        .isKey, .isForeignKey, .isRequired,
+        .parentType, .parentId
+    }) as properties
+    RETURN pid as parentId, properties
+    """
+    result = session.run(query, parent_ids=parent_ids)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for r in result:
+        pid = r.get("parentId")
+        props = r.get("properties") or []
+        if pid:
+            out[str(pid)] = [dict(p) for p in props if p and p.get("id")]
+    return out
+
+
 @router.get("/expand/{node_id}")
 async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
     """
@@ -267,6 +301,13 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                     cmd["type"] = "Command"
                     nodes.append(cmd)
                     relationships.append({"source": node_id, "target": cmd["id"], "type": "INVOKES"})
+
+        # Attach properties (do not display Property nodes on canvas; embed into parent nodes).
+        parent_ids = [n.get("id") for n in nodes if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id")]
+        prop_map = _fetch_properties_by_parent_id(session, parent_ids)
+        for n in nodes:
+            if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id"):
+                n["properties"] = prop_map.get(n["id"], [])
 
         return {"nodes": nodes, "relationships": _dedupe_relationships(relationships)}
 
@@ -464,9 +505,7 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
             # ReadModels in this BC
             rm_query = """
             MATCH (bc:BoundedContext {id: $node_id})-[:HAS_READMODEL]->(rm:ReadModel)
-            OPTIONAL MATCH (rm)-[:HAS_PROPERTY]->(prop:Property)
-            WITH rm, collect(prop {.id, .name, .type, .description, .isRequired}) as properties
-            RETURN rm, properties
+            RETURN rm
             """
             rm_result = session.run(rm_query, node_id=node_id)
             for record in rm_result:
@@ -474,8 +513,6 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
                     rm = dict(record["rm"])
                     rm["type"] = "ReadModel"
                     rm["bcId"] = node_id
-                    # Filter null properties
-                    rm["properties"] = [p for p in (record["properties"] or []) if p and p.get("id")]
                     nodes.append(rm)
                     seen_ids.add(rm["id"])
                     relationships.append({"source": node_id, "target": rm["id"], "type": "HAS_READMODEL"})
@@ -593,6 +630,13 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
                     cmd["bcId"] = bc_id
                     nodes.append(cmd)
                     relationships.append({"source": node_id, "target": cmd["id"], "type": "INVOKES"})
+
+        # Attach properties (do not display Property nodes on canvas; embed into parent nodes).
+        parent_ids = [n.get("id") for n in nodes if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id")]
+        prop_map = _fetch_properties_by_parent_id(session, parent_ids)
+        for n in nodes:
+            if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id"):
+                n["properties"] = prop_map.get(n["id"], [])
 
         payload = {
             "nodes": nodes,

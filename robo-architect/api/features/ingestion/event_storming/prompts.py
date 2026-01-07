@@ -31,11 +31,10 @@ When identifying Bounded Contexts, consider:
 - Business capability boundaries
 
 Use consistent naming conventions:
-- BC IDs: BC-NAME (e.g., BC-ORDER, BC-PAYMENT)
-- Aggregate IDs: AGG-NAME (e.g., AGG-ORDER)
-- Command IDs: CMD-VERB-NOUN (e.g., CMD-CANCEL-ORDER)
-- Event IDs: EVT-NOUN-PASTVERB (e.g., EVT-ORDER-CANCELLED)
-- Policy IDs: POL-ACTION-ON-TRIGGER (e.g., POL-REFUND-ON-CANCEL)
+IMPORTANT (IDs):
+- Do NOT invent or format IDs (no BC-/AGG-/CMD-/EVT-/POL- prefixes).
+- The server will assign UUID `id` and derive a natural `key` from names.
+- Your job is to propose good names + descriptions + traceability lists.
 """
 
 # =============================================================================
@@ -77,7 +76,6 @@ Guidelines for identifying Bounded Contexts:
 5. Don't create too fine-grained BCs - they become microservices later
 
 For each Bounded Context candidate, provide:
-- A unique ID (BC-NAME, e.g., BC-ORDER)
 - A descriptive name
 - What it's responsible for
 - Which user stories belong to it
@@ -124,8 +122,8 @@ User Story Breakdowns (ONLY for this BC):
 CRITICAL RULES:
 1. An Aggregate belongs to EXACTLY ONE Bounded Context - never shared across BCs
 2. Only consider the user stories listed above (which belong to THIS BC only)
-3. If similar concepts exist in other BCs, they are DIFFERENT aggregates with DIFFERENT IDs
-4. Aggregate IDs MUST include the BC name for uniqueness (e.g., AGG-{bc_id_short}-ORDER)
+3. If similar concepts exist in other BCs, they are DIFFERENT aggregates (modeled independently per BC)
+4. Do NOT generate IDs; server assigns UUID id + derives key.
 
 Guidelines for identifying Aggregates:
 1. An Aggregate is a cluster of domain objects treated as a single unit
@@ -135,7 +133,6 @@ Guidelines for identifying Aggregates:
 5. Other aggregates (even in other BCs) are referenced by ID only
 
 For each Aggregate, provide:
-- A unique ID: AGG-{bc_id_short}-NAME (e.g., AGG-ORDER-CART, AGG-INVENTORY-STOCK)
 - The aggregate name (unique within this BC)
 - The root entity name
 - Key invariants it enforces
@@ -143,11 +140,11 @@ For each Aggregate, provide:
 - user_story_ids: List of User Story IDs that this aggregate implements (IMPORTANT for traceability!)
 
 Example for Order BC:
-- AGG-ORDER-CART: Shopping cart management, implements [US-001]
-- AGG-ORDER-ORDER: Order lifecycle management, implements [US-001, US-002, US-003]
+- Cart: Shopping cart management, implements [US-001]
+- Order: Order lifecycle management, implements [US-001, US-002, US-003]
 
 Example for Inventory BC:
-- AGG-INVENTORY-STOCK: Stock level management, implements [US-009, US-010]
+- Stock: Stock level management, implements [US-009, US-010]
 
 IMPORTANT: Each aggregate must list which user stories from this BC it implements.
 This creates traceability from requirements to implementation.
@@ -175,15 +172,14 @@ Guidelines for identifying Commands:
 5. IMPORTANT: Track which user story each command implements
 
 For each Command, provide:
-- A unique ID: CMD-BCNAME-VERB-NOUN (e.g., CMD-ORDER-CANCEL-ORDER)
 - The command name in PascalCase
 - Who/what triggers this command (user, system, policy)
 - A description of what the command does
 - user_story_ids: List of User Story IDs that this command directly implements
 
 Example:
-- CMD-ORDER-PLACE-ORDER: PlaceOrder, implements [US-001]
-- CMD-ORDER-CANCEL-ORDER: CancelOrder, implements [US-002]
+- PlaceOrder: implements [US-001]
+- CancelOrder: implements [US-002]
 
 This creates traceability: UserStory -> Command
 
@@ -208,14 +204,13 @@ Guidelines for identifying Events:
 5. IMPORTANT: Inherit user_story_ids from the command that emits this event
 
 For each Event, provide:
-- A unique ID: EVT-BCNAME-NOUN-PASTVERB (e.g., EVT-ORDER-ORDER-CANCELLED)
 - The event name in PascalCase
 - A description of what happened
 - user_story_ids: List of User Story IDs (inherited from the emitting command)
 
 Example:
-- EVT-ORDER-ORDER-PLACED: OrderPlaced, implements [US-001]
-- EVT-ORDER-ORDER-CANCELLED: OrderCancelled, implements [US-002]
+- OrderPlaced: implements [US-001]
+- OrderCancelled: implements [US-002]
 
 This creates traceability: UserStory -> Command -> Event
 
@@ -248,6 +243,93 @@ If there are no query-type user stories, return an empty list.
 Output should be a list of ReadModelCandidate objects."""
 
 # =============================================================================
+# Property Generation (Phase 1)
+# =============================================================================
+
+GENERATE_PROPERTIES_AGGREGATE_BATCH_PROMPT = """You will generate domain-meaningful Properties (fields) for Event Storming nodes.
+
+Targets:
+- Aggregate, Command, Event (for ONE Aggregate scope)
+
+You are given:
+1) Bounded Context info
+2) Aggregate info (id + key are canonical from DB)
+3) Commands and Events under that Aggregate (id + key are canonical from DB)
+4) A list of known Aggregate keys in the whole system (optional hint list for FK targets)
+
+CRITICAL RULES (STRICT):
+1) Only output domain-meaningful fields. DO NOT spam generic/system fields (createdAt, updatedAt, version, deleted, tenantId, etc.) unless absolutely domain-required.
+2) Property `name` MUST be camelCase. Identifiers MUST be exactly `id` or end with `Id` (e.g., orderId, customerId).
+3) `type` MUST be a Java type string. Use: String, UUID, int, long, boolean, BigDecimal, LocalDateTime, LocalDate, List<T>.
+4) Every Property MUST include: name, type, description, isKey, isForeignKey, isRequired.
+5) `isForeignKey` is your decision (do not apply simple automatic rules). If isForeignKey=true, provide fkTargetHint whenever reasonably confident.
+6) fkTargetHint format (if provided): `<TargetType>:<TargetKey>:<TargetPropertyName>`
+   - TargetType is one of: Aggregate|ReadModel|Event|Command
+   - TargetKey is the Neo4j natural key of the target node
+   - TargetPropertyName should typically be `id` (or another isKey field if explicit)
+7) Output properties grouped by parent using PropertyBatch schema:
+   - parentType must be one of Aggregate|Command|Event
+   - parentKey MUST match one of the provided keys for this scope
+8) Keep the list compact but complete enough to build a usable first draft.
+
+Bounded Context:
+- id: {bc_id}
+- key: {bc_key}
+- name: {bc_name}
+- description: {bc_description}
+
+Aggregate (parentType=Aggregate):
+- id: {aggregate_id}
+- key: {aggregate_key}
+- name: {aggregate_name}
+- rootEntity: {aggregate_root_entity}
+- invariants: {aggregate_invariants}
+- description: {aggregate_description}
+
+Commands (parentType=Command):
+{commands}
+
+Events (parentType=Event):
+{events}
+
+Known Aggregate keys (FK target hints; optional):
+{known_aggregate_keys}
+
+Return ONLY a PropertyBatch object."""
+
+
+GENERATE_PROPERTIES_READMODELS_BATCH_PROMPT = """You will generate domain-meaningful Properties (fields) for ReadModels (query/projection models).
+
+Targets:
+- ReadModel(s) for ONE Bounded Context
+
+CRITICAL RULES (STRICT):
+1) Only output domain-meaningful query columns. Avoid generic/system fields unless truly needed.
+2) Property `name` MUST be camelCase. Identifiers MUST be exactly `id` or end with `Id`.
+3) `type` MUST be a Java type string. Use: String, UUID, int, long, boolean, BigDecimal, LocalDateTime, LocalDate, List<T>.
+4) Every Property MUST include: name, type, description, isKey, isForeignKey, isRequired.
+5) `isForeignKey` is your decision. If isForeignKey=true, provide fkTargetHint whenever reasonably confident.
+6) fkTargetHint format (if provided): `<TargetType>:<TargetKey>:<TargetPropertyName>`
+7) Output properties grouped by parent using PropertyBatch schema:
+   - parentType MUST be ReadModel
+   - parentKey MUST match one of the provided readmodel keys
+8) ReadModels are for QUERY. Prefer denormalized columns that support the user stories.
+
+Bounded Context:
+- id: {bc_id}
+- key: {bc_key}
+- name: {bc_name}
+- description: {bc_description}
+
+ReadModels (parentType=ReadModel):
+{readmodels}
+
+Known Aggregate keys (FK target hints; optional):
+{known_aggregate_keys}
+
+Return ONLY a PropertyBatch object."""
+
+# =============================================================================
 # Policy Identification
 # =============================================================================
 
@@ -274,7 +356,6 @@ Guidelines for identifying Policies:
 6. IMPORTANT: Inherit user_story_ids from the triggering event for traceability
 
 For each Policy, provide:
-- id: POL-ACTION-ON-TRIGGER format (e.g., POL-REFUND-ON-CANCEL)
 - name: Descriptive policy name (e.g., RefundOnOrderCancelled)
 - trigger_event: Event name that triggers this policy
 - trigger_event_bc: BC where the trigger event originates (MUST be different from target_bc)

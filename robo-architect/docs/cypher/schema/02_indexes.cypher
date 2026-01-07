@@ -2,7 +2,7 @@
 // Event Storming Impact Analysis - Indexes
 // ============================================================
 // 쿼리 성능 최적화를 위한 인덱스 정의
-// Neo4j 4.4+ 문법 사용
+// Neo4j 5.24+ 문법 사용
 // ============================================================
 
 // ------------------------------------------------------------
@@ -99,3 +99,17 @@ ON (ui.name);
 CREATE INDEX index_ui_attached IF NOT EXISTS
 FOR (ui:UI)
 ON (ui.attachedToId);
+
+// ------------------------------------------------------------
+// Property 인덱스
+// ------------------------------------------------------------
+
+// Property 조회: parentType + parentId (부모 노드의 필드 목록 조회용)
+CREATE INDEX index_property_parent IF NOT EXISTS
+FOR (p:Property)
+ON (p.parentType, p.parentId);
+
+// Property name 검색 (옵션)
+CREATE TEXT INDEX index_property_name IF NOT EXISTS
+FOR (p:Property)
+ON (p.name);

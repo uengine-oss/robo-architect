@@ -18,6 +18,8 @@ from api.platform.env import (
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
+from api.platform.keys import slugify
+
 from .node_runtime import dump_model, get_llm
 from .prompts import EXTRACT_AGGREGATES_PROMPT, SYSTEM_PROMPT
 from .state import EventStormingState, WorkflowPhase
@@ -34,6 +36,18 @@ def extract_aggregates_node(state: EventStormingState) -> Dict[str, Any]:
         }
 
     current_bc = state.approved_bcs[state.current_bc_index]
+    # Ensure we have a stable in-memory identifier even if LLM omitted `id`.
+    if not getattr(current_bc, "id", None):
+        fallback = getattr(current_bc, "key", None) or slugify(current_bc.name)
+        try:
+            current_bc.id = fallback
+        except Exception:
+            pass
+        if not getattr(current_bc, "key", None):
+            try:
+                current_bc.key = fallback
+            except Exception:
+                pass
     llm = get_llm()
 
     # Get breakdowns for this BC
@@ -49,8 +63,8 @@ def extract_aggregates_node(state: EventStormingState) -> Dict[str, Any]:
         ]
     )
 
-    # Extract short BC ID for aggregate naming (e.g., BC-ORDER -> ORDER)
-    bc_id_short = current_bc.id.replace("BC-", "")
+    # Legacy prompt helper (no longer derived from prefixed ids)
+    bc_id_short = slugify(current_bc.name).upper()
 
     prompt = EXTRACT_AGGREGATES_PROMPT.format(
         bc_name=current_bc.name,
@@ -99,6 +113,19 @@ def extract_aggregates_node(state: EventStormingState) -> Dict[str, Any]:
             }
         )
     aggregates = response.aggregates
+    # Fill missing ids/keys with deterministic natural-key-like strings (in-memory only).
+    bc_key_value = getattr(current_bc, "key", None) or slugify(current_bc.name)
+    for a in aggregates or []:
+        if not getattr(a, "key", None):
+            try:
+                a.key = f"{bc_key_value}.{slugify(a.name)}"
+            except Exception:
+                pass
+        if not getattr(a, "id", None):
+            try:
+                a.id = getattr(a, "key", None) or f"{bc_key_value}.{slugify(a.name)}"
+            except Exception:
+                pass
 
     # Store aggregates for this BC
     aggregate_candidates = dict(state.aggregate_candidates)

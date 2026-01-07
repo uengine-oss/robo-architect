@@ -18,7 +18,7 @@ def relationship_whitelist() -> List[str]:
     """
     raw = os.getenv(
         "CHANGE_PROPAGATION_REL_WHITELIST",
-        "IMPLEMENTS,HAS_AGGREGATE,HAS_COMMAND,EMITS,HAS_POLICY,TRIGGERS,INVOKES",
+        "IMPLEMENTS,HAS_AGGREGATE,HAS_COMMAND,EMITS,HAS_POLICY,TRIGGERS,INVOKES,HAS_PROPERTY,REFERENCES,ATTACHED_TO",
     )
     return [x.strip() for x in raw.split(",") if x.strip()]
 

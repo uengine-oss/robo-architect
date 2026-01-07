@@ -18,6 +18,8 @@ from api.platform.env import (
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
+from api.platform.keys import slugify
+
 from .node_runtime import dump_model, get_llm
 from .prompts import IDENTIFY_POLICIES_PROMPT, SYSTEM_PROMPT
 from .state import EventStormingState, WorkflowPhase
@@ -27,6 +29,10 @@ from .structured_outputs import PolicyList
 def identify_policies_node(state: EventStormingState) -> Dict[str, Any]:
     """Identify Policies for cross-BC communication."""
     llm = get_llm()
+
+    user_stories_text = "\n".join(
+        [f"[{us.get('id')}] As a {us.get('role', 'user')}, I want to {us.get('action', '?')}" for us in (state.user_stories or [])]
+    )
 
     # Collect all events
     all_events = []
@@ -45,23 +51,13 @@ def identify_policies_node(state: EventStormingState) -> Dict[str, Any]:
 
     events_text = "\n".join(all_events)
 
-    # Collect commands by BC
-    commands_by_bc = {}
-    for bc in state.approved_bcs:
-        bc_commands = []
-        for agg_id, aggregates in state.approved_aggregates.items():
-            if agg_id == bc.id or any(a.id.startswith(bc.id.replace("BC-", "AGG-")) for a in aggregates):
-                continue
-        # Get commands for aggregates in this BC
-        for agg_id, commands in state.command_candidates.items():
-            for aggregates in state.approved_aggregates.get(bc.id, []):
-                if agg_id == aggregates.id:
-                    bc_commands.extend([f"- {cmd.name}: {cmd.description}" for cmd in commands])
-        if not bc_commands:
-            # Fallback: collect all commands for this BC's aggregates
-            for agg in state.approved_aggregates.get(bc.id, []):
-                for cmd in state.command_candidates.get(agg.id, []):
-                    bc_commands.append(f"- {cmd.name}: {cmd.description}")
+    # Collect commands by BC (deterministic)
+    commands_by_bc: dict[str, str] = {}
+    for bc in state.approved_bcs or []:
+        bc_commands: list[str] = []
+        for agg in state.approved_aggregates.get(bc.id, []) or []:
+            for cmd in state.command_candidates.get(agg.id, []) or []:
+                bc_commands.append(f"- {cmd.name}: {cmd.description}")
         commands_by_bc[bc.name] = "\n".join(bc_commands) if bc_commands else "No commands"
 
     commands_text = "\n".join([f"{bc_name}:\n{cmds}" for bc_name, cmds in commands_by_bc.items()])
@@ -69,6 +65,7 @@ def identify_policies_node(state: EventStormingState) -> Dict[str, Any]:
     bc_text = "\n".join([f"- {bc.name}: {bc.description}" for bc in state.approved_bcs])
 
     prompt = IDENTIFY_POLICIES_PROMPT.format(
+        user_stories=user_stories_text,
         events=events_text,
         commands_by_bc=commands_text,
         bounded_contexts=bc_text,
@@ -113,6 +110,19 @@ def identify_policies_node(state: EventStormingState) -> Dict[str, Any]:
             }
         )
     policies = response.policies
+    # Fill missing ids/keys deterministically (in-memory only).
+    for p in policies or []:
+        target = getattr(p, "target_bc", "") or "target"
+        if not getattr(p, "key", None):
+            try:
+                p.key = f"{slugify(target)}.{slugify(p.name)}"
+            except Exception:
+                pass
+        if not getattr(p, "id", None):
+            try:
+                p.id = getattr(p, "key", None) or f"{slugify(target)}.{slugify(p.name)}"
+            except Exception:
+                pass
 
     return {
         "policy_candidates": policies,

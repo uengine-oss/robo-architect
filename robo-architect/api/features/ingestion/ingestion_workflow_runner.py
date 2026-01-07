@@ -19,6 +19,8 @@ from api.features.ingestion.workflow.phases.commands import extract_commands_pha
 from api.features.ingestion.workflow.phases.events import extract_events_phase
 from api.features.ingestion.workflow.phases.parsing import parsing_phase
 from api.features.ingestion.workflow.phases.policies import identify_policies_phase
+from api.features.ingestion.workflow.phases.properties import generate_properties_phase
+from api.features.ingestion.workflow.phases.references import generate_property_references_phase
 from api.features.ingestion.workflow.phases.readmodels import extract_readmodels_phase
 from api.features.ingestion.workflow.phases.ui_wireframes import generate_ui_wireframes_phase
 from api.features.ingestion.workflow.phases.user_stories import extract_user_stories_phase
@@ -111,6 +113,28 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in extract_readmodels_phase(ctx):
+            if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
+                yield ProgressEvent(
+                    phase=IngestionPhase.PAUSED,
+                    message="⏸️ 일시 정지됨 (채팅으로 일부를 수정한 후 재개하세요)",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"isPaused": True},
+                )
+                await wait_if_paused(session)
+            yield event
+
+        async for event in generate_properties_phase(ctx):
+            if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
+                yield ProgressEvent(
+                    phase=IngestionPhase.PAUSED,
+                    message="⏸️ 일시 정지됨 (채팅으로 일부를 수정한 후 재개하세요)",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"isPaused": True},
+                )
+                await wait_if_paused(session)
+            yield event
+
+        async for event in generate_property_references_phase(ctx):
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,

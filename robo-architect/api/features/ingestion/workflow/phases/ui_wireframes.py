@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.platform.env import get_llm_provider_model
+from api.platform.keys import ui_key as build_ui_key
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.ui_wireframe_template import normalize_ui_template
 
@@ -47,7 +48,7 @@ def _existing_ui_template_best_effort(ctx: IngestionWorkflowContext, ui_id: str)
         return None
     try:
         with ctx.client.session() as session:
-            rec = session.run("MATCH (ui:UI {id: $id}) RETURN ui.template as template", id=ui_id).single()
+            rec = session.run("MATCH (ui:UI {key: $key}) RETURN ui.template as template", key=ui_id).single()
             t = rec.get("template") if rec else None
             if isinstance(t, str) and t.strip():
                 return t
@@ -145,8 +146,8 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                 if not chosen_ui_desc:
                     continue
 
-                # Deterministic + collision-free (explicit target type)
-                ui_id = f"UI-CMD-{cmd.id}"
+                # Natural key (idempotent): based on attached target
+                ui_id = build_ui_key("Command", cmd.id)
                 ui_name = cmd.name
 
                 try:
@@ -266,7 +267,7 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                         )
 
                     ui = ctx.client.create_ui(
-                        id=ui_id,
+                        key=ui_id,
                         name=ui_name,
                         bc_id=bc.id,
                         description=chosen_ui_desc,
@@ -287,7 +288,7 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                         data={
                             "type": "UI",
                             "object": {
-                                "id": ui_id,
+                                "id": ui.get("id"),
                                 "name": ui_name,
                                 "type": "UI",
                                 "parentId": bc.id,
@@ -329,7 +330,7 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
             if not chosen_ui_desc:
                 continue
 
-            ui_id = f"UI-RM-{rm_id}"
+            ui_id = build_ui_key("ReadModel", rm_id)
             ui_name = rm.get('name', rm_id)
 
             try:
@@ -442,7 +443,7 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                     )
 
                 ui = ctx.client.create_ui(
-                    id=ui_id,
+                    key=ui_id,
                     name=ui_name,
                     bc_id=bc.id,
                     description=chosen_ui_desc,
@@ -463,7 +464,7 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                     data={
                         "type": "UI",
                         "object": {
-                            "id": ui_id,
+                            "id": ui.get("id"),
                             "name": ui_name,
                             "type": "UI",
                             "parentId": bc.id,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from api.platform.keys import bc_key
+
 
 class BoundedContextOps:
     # =========================================================================
@@ -29,21 +31,27 @@ class BoundedContextOps:
 
     def create_bounded_context(
         self,
-        id: str,
+        *,
         name: str,
+        key: str | None = None,
         description: str | None = None,
         owner: str | None = None,
     ) -> dict[str, Any]:
         """Create a new bounded context."""
+        key = key or bc_key(name)
         query = """
-        MERGE (bc:BoundedContext {id: $id})
+        MERGE (bc:BoundedContext {key: $key})
+        ON CREATE SET bc.id = randomUUID(),
+                      bc.createdAt = datetime()
         SET bc.name = $name,
+            bc.key = $key,
             bc.description = $description,
-            bc.owner = $owner
-        RETURN bc {.id, .name, .description, .owner} as bounded_context
+            bc.owner = $owner,
+            bc.updatedAt = datetime()
+        RETURN bc {.id, .key, .name, .description, .owner} as bounded_context
         """
         with self.session() as session:
-            result = session.run(query, id=id, name=name, description=description, owner=owner)
+            result = session.run(query, key=key, name=name, description=description, owner=owner)
             return dict(result.single()["bounded_context"])
 
     def link_user_story_to_bc(self, user_story_id: str, bc_id: str, confidence: float = 0.9) -> bool:

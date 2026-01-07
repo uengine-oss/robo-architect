@@ -47,6 +47,17 @@ def env_flag(key: str, default: bool = False) -> bool:
     return val in _TRUE_VALUES
 
 
+def env_int(key: str, default: int = 0) -> int:
+    """Read an environment variable as int with stripping and safe fallback."""
+    raw = (os.getenv(key) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
 def env_json(key: str, default: Any = None) -> Any:
     """
     Read an environment variable and parse it as JSON.
@@ -96,6 +107,17 @@ def get_llm_model(default: str = "gpt-4.1-2025-04-14") -> str:
     return env_str("LLM_MODEL", default) or default
 
 
+def get_chat_model(default: str = "gpt-4.1-2025-04-14") -> str:
+    """
+    Resolve a chat model name with legacy/feature-specific fallbacks.
+    Priority:
+    - OPENAI_MODEL (feature-local override)
+    - CHAT_MODEL (shared override)
+    - LLM_MODEL (platform default)
+    """
+    return env_first(["OPENAI_MODEL", "CHAT_MODEL", "LLM_MODEL"], default=default) or default
+
+
 def get_llm_provider_model(
     provider_default: str = "openai",
     model_default: str = "gpt-4.1-2025-04-14",
@@ -135,4 +157,5 @@ AI_AUDIT_LOG_FULL_OUTPUT = env_flag("AI_AUDIT_LOG_FULL_OUTPUT", False)
 # - If True, skip Neo4j UI node creation + LLM wireframe generation phase.
 IS_SKIP_UI_PHASE = env_flag("IS_SKIP_UI_PHASE", False)
 
-
+# Hard cap (chars) for ONLY the injected context block in /api/chat/modify prompt.
+MODEL_MODIFIER_CONTEXT_CHARS_LIMIT = env_int("MODEL_MODIFIER_CONTEXT_CHARS_LIMIT", 100_000)

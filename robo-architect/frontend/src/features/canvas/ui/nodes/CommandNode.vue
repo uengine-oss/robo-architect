@@ -10,10 +10,17 @@ const props = defineProps({
 
 const terminologyStore = useTerminologyStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Command')} >>`)
+
+const hasProperties = computed(() => Array.isArray(props.data?.properties) && props.data.properties.length > 0)
+const nodeStyle = computed(() => {
+  const h = props.data?.dynamicHeight
+  if (h && Number(h) > 0) return { height: `${h}px` }
+  return {}
+})
 </script>
 
 <template>
-  <div class="es-node es-node--command">
+  <div class="es-node es-node--command" :style="nodeStyle">
     <div class="es-node__header">
       {{ headerText }}
     </div>
@@ -29,6 +36,17 @@ const headerText = computed(() => `<< ${terminologyStore.getTerm('Command')} >>`
           <line x1="6" y1="11" x2="18" y2="11" stroke="currentColor" stroke-width="1.5"/>
         </svg>
         <span>{{ data.actor }}</span>
+      </div>
+
+      <div v-if="hasProperties" class="es-node__props">
+        <div v-for="prop in data.properties" :key="prop.id" class="es-node__prop">
+          <span class="prop-badges">
+            <span v-if="prop.isKey" class="prop-badge prop-badge--key">PK</span>
+            <span v-if="prop.isForeignKey" class="prop-badge prop-badge--fk">FK</span>
+          </span>
+          <span class="prop-name">{{ prop.name }}</span>
+          <span class="prop-type">{{ prop.type }}</span>
+        </div>
       </div>
     </div>
     
@@ -78,6 +96,62 @@ const headerText = computed(() => `<< ${terminologyStore.getTerm('Command')} >>`
 .es-node__actor-icon {
   width: 20px;
   height: 20px;
+}
+
+.es-node__props {
+  margin-top: 10px;
+  padding: 6px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  font-size: 0.7rem;
+}
+
+.es-node__prop {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.es-node__prop:last-child {
+  border-bottom: none;
+}
+
+.prop-badges {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.prop-badge {
+  font-size: 0.55rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.prop-badge--key {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.prop-badge--fk {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.prop-name {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-type {
+  color: rgba(255, 255, 255, 0.75);
+  font-style: italic;
 }
 
 /* Handle styling */

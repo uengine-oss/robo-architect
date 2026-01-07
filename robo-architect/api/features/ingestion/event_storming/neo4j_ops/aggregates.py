@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from api.platform.keys import aggregate_key
+
 
 class AggregateOps:
     # =========================================================================
@@ -29,45 +31,55 @@ class AggregateOps:
 
     def create_aggregate(
         self,
-        id: str,
+        *,
         name: str,
         bc_id: str,
+        key: str | None = None,
         root_entity: str | None = None,
         invariants: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a new aggregate and link it to a bounded context.
 
         IMPORTANT: One Aggregate belongs to exactly ONE Bounded Context.
-        If an aggregate with the same ID already exists and belongs to a different BC,
+        If an aggregate with the same key already exists and belongs to a different BC,
         this will raise an error.
         """
-        check_query = """
-        OPTIONAL MATCH (existing:Aggregate {id: $id})<-[:HAS_AGGREGATE]-(otherBC:BoundedContext)
-        WHERE otherBC.id <> $bc_id
-        RETURN otherBC.id as existing_bc
-        """
         with self.session() as session:
-            check_result = session.run(check_query, id=id, bc_id=bc_id)
-            record = check_result.single()
+            bc_rec = session.run("MATCH (bc:BoundedContext {id: $id}) RETURN bc.key as key", id=bc_id).single()
+            bc_key_value = (bc_rec or {}).get("key") or ""
+            if not bc_key_value:
+                raise ValueError(f"BoundedContext not found or missing key: {bc_id}")
+            key = key or aggregate_key(bc_key_value, name)
+
+            check_query = """
+            OPTIONAL MATCH (existing:Aggregate {key: $key})<-[:HAS_AGGREGATE]-(otherBC:BoundedContext)
+            WHERE otherBC.id <> $bc_id
+            RETURN otherBC.id as existing_bc
+            """
+            record = session.run(check_query, key=key, bc_id=bc_id).single()
             if record and record["existing_bc"]:
                 raise ValueError(
-                    f"Aggregate {id} already belongs to BC {record['existing_bc']}. "
+                    f"Aggregate {key} already belongs to BC {record['existing_bc']}. "
                     f"An Aggregate can only belong to ONE Bounded Context."
                 )
 
         query = """
         MATCH (bc:BoundedContext {id: $bc_id})
-        MERGE (agg:Aggregate {id: $id})
-        SET agg.name = $name,
+        MERGE (agg:Aggregate {key: $key})
+        ON CREATE SET agg.id = randomUUID(),
+                      agg.createdAt = datetime()
+        SET agg.key = $key,
+            agg.name = $name,
             agg.rootEntity = $root_entity,
-            agg.invariants = $invariants
+            agg.invariants = $invariants,
+            agg.updatedAt = datetime()
         MERGE (bc)-[:HAS_AGGREGATE {isPrimary: false}]->(agg)
-        RETURN agg {.id, .name, .rootEntity, .invariants} as aggregate
+        RETURN agg {.id, .key, .name, .rootEntity, .invariants} as aggregate
         """
         with self.session() as session:
             result = session.run(
                 query,
-                id=id,
+                key=key,
                 name=name,
                 bc_id=bc_id,
                 root_entity=root_entity or name,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict
 
 from api.platform.neo4j import get_session
@@ -322,6 +323,7 @@ _LABELS_BY_TYPE: dict[str, str] = {
     "ReadModel": "ReadModel",
     "UI": "UI",
     "BoundedContext": "BoundedContext",
+    "Property": "Property",
 }
 
 
@@ -335,6 +337,10 @@ _ALLOWED_UPDATE_FIELDS_BY_LABEL: dict[str, set[str]] = {
     "BoundedContext": {"description"},
     # UI: wireframe + attachment metadata
     "UI": {"description", "template", "attachedToId", "attachedToType", "attachedToName"},
+    # Property: field schema metadata
+    # NOTE: parentType/parentId are accepted as metadata for safer targeting / diff readability,
+    # but are NOT applied (we do not allow changing a property's parent via update).
+    "Property": {"name", "description", "type", "isKey", "isForeignKey", "isRequired", "parentType", "parentId"},
 }
 
 
@@ -345,6 +351,12 @@ def _get_node_info_tx(tx: Any, node_id: str) -> dict[str, Any] | None:
            n.id as id,
            n.name as name,
            n.description as description,
+           n.type as type,
+           n.isKey as isKey,
+           n.isForeignKey as isForeignKey,
+           n.isRequired as isRequired,
+           n.parentType as parentType,
+           n.parentId as parentId,
            n.template as template,
            n.attachedToId as attachedToId,
            n.attachedToType as attachedToType,
@@ -358,6 +370,12 @@ def _get_node_info_tx(tx: Any, node_id: str) -> dict[str, Any] | None:
         "id": rec.get("id"),
         "name": rec.get("name"),
         "description": rec.get("description"),
+        "type": rec.get("type"),
+        "isKey": rec.get("isKey"),
+        "isForeignKey": rec.get("isForeignKey"),
+        "isRequired": rec.get("isRequired"),
+        "parentType": rec.get("parentType"),
+        "parentId": rec.get("parentId"),
         "template": rec.get("template"),
         "attachedToId": rec.get("attachedToId"),
         "attachedToType": rec.get("attachedToType"),
@@ -378,7 +396,17 @@ def _validate_common(change: dict[str, Any]) -> list[str]:
     if not change.get("action"):
         errors.append("Missing action")
     if not change.get("targetId"):
-        errors.append("Missing targetId")
+        # For Property updates, we can resolve missing/placeholder targetId using (parentType,parentId,targetName).
+        target_type = str(change.get("targetType") or "").strip()
+        updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+        has_selector = bool(
+            target_type == "Property"
+            and str(updates.get("parentType") or "").strip()
+            and str(updates.get("parentId") or "").strip()
+            and str(change.get("targetName") or "").strip()
+        )
+        if not has_selector:
+            errors.append("Missing targetId")
     if change.get("action") == "rename":
         new_name = change.get("targetName")
         if not isinstance(new_name, str) or not new_name.strip():
@@ -392,6 +420,167 @@ def _validate_common(change: dict[str, Any]) -> list[str]:
         if not isinstance(change.get("updates"), dict):
             errors.append("updates must be an object")
     return errors
+
+
+def _normalize_for_match(s: str | None) -> str:
+    raw = (s or "").strip().lower()
+    if not raw:
+        return ""
+    # lower + remove whitespace + remove common separators
+    return re.sub(r"[\s_\-./:|\\]+", "", raw)
+
+
+def _levenshtein_distance(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    # O(|a|*|b|) DP, acceptable for small candidate sets
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        cur = [i]
+        for j, cb in enumerate(b, start=1):
+            cost = 0 if ca == cb else 1
+            cur.append(min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost))
+        prev = cur
+    return prev[-1]
+
+
+def _levenshtein_sim(a: str, b: str) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    dist = _levenshtein_distance(a, b)
+    denom = max(len(a), len(b))
+    return max(0.0, 1.0 - (dist / float(denom)))
+
+
+def _jaro_winkler(a: str, b: str) -> float:
+    # Minimal JW implementation (no external deps)
+    if a == b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+
+    a_len = len(a)
+    b_len = len(b)
+    match_distance = max(a_len, b_len) // 2 - 1
+
+    a_matches = [False] * a_len
+    b_matches = [False] * b_len
+
+    matches = 0
+    for i in range(a_len):
+        start = max(0, i - match_distance)
+        end = min(i + match_distance + 1, b_len)
+        for j in range(start, end):
+            if b_matches[j]:
+                continue
+            if a[i] != b[j]:
+                continue
+            a_matches[i] = True
+            b_matches[j] = True
+            matches += 1
+            break
+
+    if matches == 0:
+        return 0.0
+
+    # Transpositions
+    t = 0
+    k = 0
+    for i in range(a_len):
+        if not a_matches[i]:
+            continue
+        while not b_matches[k]:
+            k += 1
+        if a[i] != b[k]:
+            t += 1
+        k += 1
+    transpositions = t / 2.0
+
+    jaro = (
+        (matches / a_len + matches / b_len + (matches - transpositions) / matches) / 3.0
+    )
+
+    # Winkler boost
+    prefix = 0
+    for i in range(min(4, a_len, b_len)):
+        if a[i] == b[i]:
+            prefix += 1
+        else:
+            break
+    p = 0.1
+    return jaro + prefix * p * (1.0 - jaro)
+
+
+def _combined_similarity(a_raw: str | None, b_raw: str | None) -> dict[str, float]:
+    a = _normalize_for_match(a_raw)
+    b = _normalize_for_match(b_raw)
+    jw = _jaro_winkler(a, b)
+    lev = _levenshtein_sim(a, b)
+    score = 0.7 * jw + 0.3 * lev
+    return {"jw": jw, "lev_sim": lev, "score": score}
+
+
+def _resolve_property_target_id_tx(tx: Any, change: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]], str]:
+    """
+    Try to resolve Property UUID when change.targetId is missing/invalid.
+    Selector: updates.parentType, updates.parentId, and change.targetName (existing property name).
+    Returns (resolved_id, candidates_debug, selector_debug).
+    """
+    updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+    parent_type = str(updates.get("parentType") or "").strip()
+    parent_id = str(updates.get("parentId") or "").strip()
+    selector_name = str(change.get("targetName") or "").strip()
+    selector_dbg = f"parentType={parent_type} parentId={parent_id} targetName={selector_name}"
+
+    if not parent_type or not parent_id or not selector_name:
+        return None, [], selector_dbg
+
+    # Candidate set: only within the parent scope
+    recs = tx.run(
+        """
+        MATCH (p:Property {parentType: $pt, parentId: $pid})
+        RETURN p.id as id, p.name as name, p.type as type
+        """,
+        pt=parent_type,
+        pid=parent_id,
+    ).data() or []
+
+    if not recs:
+        return None, [], selector_dbg
+
+    scored: list[dict[str, Any]] = []
+    for r in recs:
+        pid = r.get("id")
+        pname = r.get("name")
+        sim = _combined_similarity(selector_name, pname)
+        scored.append(
+            {
+                "id": pid,
+                "name": pname,
+                "type": r.get("type"),
+                **sim,
+            }
+        )
+
+    scored.sort(key=lambda x: (-float(x.get("score", 0.0)), str(x.get("name") or "")))
+
+    best = scored[0]
+    best_score = float(best.get("score", 0.0))
+    second_score = float(scored[1].get("score", 0.0)) if len(scored) > 1 else -1.0
+
+    if best_score < 0.92:
+        return None, scored[:10], selector_dbg
+    if len(scored) > 1 and (best_score - second_score) < 0.02:
+        # Ambiguous
+        return "__AMBIGUOUS__", scored[:10], selector_dbg
+
+    return str(best.get("id")), scored[:10], selector_dbg
 
 
 def _validate_update_tx(tx: Any, change: dict[str, Any]) -> list[str]:
@@ -408,6 +597,26 @@ def _validate_update_tx(tx: Any, change: dict[str, Any]) -> list[str]:
     updates = change.get("updates") or {}
     if not updates:
         return ["update requires non-empty updates"]
+
+    # Property safety: parentType/parentId are metadata-only; they must match the actual parent if provided.
+    if label == "Property":
+        # Reject attempts to change parent linkage through update.
+        if "parentType" in updates and updates.get("parentType") is not None:
+            if not isinstance(updates.get("parentType"), str):
+                errors.append("parentType must be a string")
+            else:
+                provided = str(updates.get("parentType") or "").strip()
+                actual = str(info.get("parentType") or "").strip()
+                if provided and actual and provided != actual:
+                    errors.append(f"Property parentType mismatch: {provided} != {actual}")
+        if "parentId" in updates and updates.get("parentId") is not None:
+            if not isinstance(updates.get("parentId"), str):
+                errors.append("parentId must be a string")
+            else:
+                provided = str(updates.get("parentId") or "").strip()
+                actual = str(info.get("parentId") or "").strip()
+                if provided and actual and provided != actual:
+                    errors.append(f"Property parentId mismatch: {provided} != {actual}")
 
     # E2: deterministic normalization for UI templates (before field validation)
     # This prevents rejections on length/doc-root/style-scope violations by auto-correcting them.
@@ -440,11 +649,30 @@ def _validate_update_tx(tx: Any, change: dict[str, Any]) -> list[str]:
             errors.append(f"field not allowed for {label}: {field}")
             continue
 
+        if field == "name" and value is not None:
+            if not isinstance(value, str):
+                errors.append("name must be a string")
+            else:
+                if not value.strip():
+                    errors.append("name must be non-empty")
+                elif len(value) > MAX_NAME_LEN:
+                    errors.append(f"name too long (>{MAX_NAME_LEN})")
+
         if field == "description" and value is not None:
             if not isinstance(value, str):
                 errors.append("description must be a string")
             elif len(value) > MAX_DESCRIPTION_LEN:
                 errors.append(f"description too long (>{MAX_DESCRIPTION_LEN})")
+
+        if field == "type" and value is not None:
+            if not isinstance(value, str):
+                errors.append("type must be a string")
+            elif len(value) > MAX_NAME_LEN:
+                errors.append(f"type too long (>{MAX_NAME_LEN})")
+
+        if field in ("isKey", "isForeignKey", "isRequired") and value is not None:
+            if not isinstance(value, bool):
+                errors.append(f"{field} must be a boolean")
 
         if field == "template" and value is not None:
             if not isinstance(value, str):
@@ -522,11 +750,17 @@ def _apply_update_tx(tx: Any, change: dict[str, Any]) -> None:
     set_clauses: list[str] = ["n.updatedAt = datetime()"]
     params: dict[str, Any] = {"id": node_id}
     for k in [
+        "name",
         "description",
         "actor",
         "version",
         "rootEntity",
         "provisioningType",
+        # Property fields
+        "type",
+        "isKey",
+        "isForeignKey",
+        "isRequired",
         "template",
         "attachedToId",
         "attachedToType",
@@ -542,6 +776,19 @@ def _apply_update_tx(tx: Any, change: dict[str, Any]) -> None:
     RETURN n.id as id
     """
     tx.run(query, **params)
+
+    # Enrich response for Property updates (frontend needs parent info to update embedded list)
+    info_after = _get_node_info_tx(tx, node_id) or {}
+    if "Property" in (info_after.get("labels") or []):
+        change["targetType"] = "Property"
+        change["parentType"] = info_after.get("parentType")
+        change["parentId"] = info_after.get("parentId")
+        change["name"] = info_after.get("name")
+        change["type"] = info_after.get("type")
+        change["description"] = info_after.get("description")
+        change["isKey"] = info_after.get("isKey")
+        change["isForeignKey"] = info_after.get("isForeignKey")
+        change["isRequired"] = info_after.get("isRequired")
 
     # Update ATTACHED_TO relationship if UI and attachedToId changed
     if "attachedToId" in updates:
@@ -580,9 +827,40 @@ def _apply_rename_tx(tx: Any, change: dict[str, Any]) -> None:
         name=new_name,
     )
 
+    # Enrich response for Property rename (frontend needs parent info to update embedded list)
+    info_after = _get_node_info_tx(tx, node_id) or {}
+    if "Property" in (info_after.get("labels") or []):
+        change["targetType"] = "Property"
+        change["parentType"] = info_after.get("parentType")
+        change["parentId"] = info_after.get("parentId")
+        change["name"] = info_after.get("name")
+        change["type"] = info_after.get("type")
+        change["description"] = info_after.get("description")
+        change["isKey"] = info_after.get("isKey")
+        change["isForeignKey"] = info_after.get("isForeignKey")
+        change["isRequired"] = info_after.get("isRequired")
+
 
 def _apply_delete_tx(tx: Any, change: dict[str, Any]) -> None:
     node_id = str(change.get("targetId"))
+    info = _get_node_info_tx(tx, node_id) or {}
+    labels = info.get("labels") or []
+    if "Property" in labels:
+        # Enrich response so frontend can remove it from parent's embedded list
+        change["targetType"] = "Property"
+        change["targetName"] = info.get("name") or change.get("targetName")
+        change["parentType"] = info.get("parentType")
+        change["parentId"] = info.get("parentId")
+        # For Property, hard delete so the same (parentType,parentId,name) can be re-created later.
+        tx.run(
+            """
+            MATCH (p:Property {id: $id})
+            DETACH DELETE p
+            """,
+            id=node_id,
+        )
+        return
+
     tx.run(
         """
         MATCH (n {id: $id})
@@ -630,6 +908,34 @@ def _apply_connect_tx(tx: Any, change: dict[str, Any]) -> None:
             source_id=source_id,
             target_id=target_id,
         )
+    elif connection_type == "REFERENCES":
+        # Property FK reference: only allow tgt.isKey=true, and enforce src.isForeignKey=true
+        rec = tx.run(
+            """
+            MATCH (tgt:Property {id: $target_id})
+            RETURN tgt.isKey as isKey
+            """,
+            target_id=target_id,
+        ).single()
+        if not rec or not bool(rec.get("isKey")):
+            raise ValueError("REFERENCES target must have isKey=true")
+
+        tx.run(
+            """
+            MATCH (src:Property {id: $source_id})
+            MATCH (tgt:Property {id: $target_id})
+            SET src.isForeignKey = true
+            MERGE (src)-[:REFERENCES]->(tgt)
+            """,
+            source_id=source_id,
+            target_id=target_id,
+        )
+        # Enrich response so frontend can mark source property as FK in embedded list
+        src_info = _get_node_info_tx(tx, str(source_id)) or {}
+        if "Property" in (src_info.get("labels") or []):
+            change["sourceParentType"] = src_info.get("parentType")
+            change["sourceParentId"] = src_info.get("parentId")
+            change["sourcePropertyIsForeignKey"] = True
     else:
         raise ValueError(f"unsupported connectionType: {connection_type}")
 
@@ -745,7 +1051,73 @@ def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
                 target_id=attached_to_id,
             )
     else:
-        raise ValueError(f"unsupported targetType for create: {target_type}")
+        if target_type == "Property":
+            parent_type = str(updates.get("parentType") or "").strip()
+            parent_id = str(updates.get("parentId") or "").strip()
+            prop_name = str(updates.get("name") or target_name or "").strip()
+            prop_type = str(updates.get("type") or "").strip()
+
+            if not parent_type or parent_type not in ("Aggregate", "Command", "Event", "ReadModel"):
+                raise ValueError("Property create requires updates.parentType in Aggregate|Command|Event|ReadModel")
+            if not parent_id:
+                raise ValueError("Property create requires updates.parentId")
+            if not prop_name:
+                raise ValueError("Property create requires updates.name (or targetName)")
+            if not prop_type:
+                raise ValueError("Property create requires updates.type")
+
+            prop_description = str(updates.get("description") or "")
+            is_key = bool(updates.get("isKey", False))
+            is_fk = bool(updates.get("isForeignKey", False))
+            is_required = bool(updates.get("isRequired", False))
+
+            rec = tx.run(
+                """
+                MERGE (p:Property {parentType: $parent_type, parentId: $parent_id, name: $name})
+                ON CREATE SET p.id = randomUUID()
+                SET p.type = $type,
+                    p.description = $description,
+                    p.isKey = $is_key,
+                    p.isForeignKey = $is_fk,
+                    p.isRequired = $is_required,
+                    p.parentType = $parent_type,
+                    p.parentId = $parent_id
+                WITH p
+                MATCH (parent {id: $parent_id})
+                WHERE $parent_type IN labels(parent)
+                MERGE (parent)-[:HAS_PROPERTY]->(p)
+                RETURN p.id as id
+                """,
+                parent_type=parent_type,
+                parent_id=parent_id,
+                name=prop_name,
+                type=prop_type,
+                description=prop_description,
+                is_key=is_key,
+                is_fk=is_fk,
+                is_required=is_required,
+            ).single()
+            if not rec or not rec.get("id"):
+                raise ValueError("failed to create Property")
+
+            # Ensure applied response uses the canonical UUID id
+            change["targetId"] = str(rec.get("id"))
+            change["targetType"] = "Property"
+            change["targetName"] = prop_name
+            change["updates"] = {
+                **updates,
+                "id": str(rec.get("id")),
+                "name": prop_name,
+                "type": prop_type,
+                "description": prop_description,
+                "isKey": is_key,
+                "isForeignKey": is_fk,
+                "isRequired": is_required,
+                "parentType": parent_type,
+                "parentId": parent_id,
+            }
+        else:
+            raise ValueError(f"unsupported targetType for create: {target_type}")
 
     # Attach to BC when provided
     if bc_id and target_type in ("Policy", "UI"):
@@ -788,6 +1160,74 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                     break
 
                 action = change.get("action")
+                # ---------------------------------------------------------------------
+                # Fallback targetId resolution (accuracy-first; ambiguous => hard error)
+                # ---------------------------------------------------------------------
+                if action in ("update", "rename", "delete"):
+                    # Try to resolve Property UUID when targetId is missing/placeholder/non-existent
+                    target_type = str(change.get("targetType") or "").strip()
+                    target_id = str(change.get("targetId") or "").strip()
+                    exists = bool(target_id and _get_node_info_tx(tx, target_id))
+                    # NOTE: For Property rename we prefer action=update (updates.name). For action=rename,
+                    # targetName is the *new* name, so do not try to resolve by name.
+                    if target_type == "Property" and action != "rename" and not exists:
+                        resolved, candidates, selector_dbg = _resolve_property_target_id_tx(tx, change)
+                        if resolved == "__AMBIGUOUS__":
+                            msg = (
+                                "모호한 Property 대상입니다. 여러 후보가 유사합니다.\n"
+                                f"- selector: {selector_dbg}\n"
+                                f"- targetId(provided): {target_id or '(empty)'}\n"
+                                f"- candidates(top): {candidates}"
+                            )
+                            SmartLogger.log(
+                                "WARNING",
+                                "Property target resolve ambiguous; aborting atomic apply.",
+                                category="api.model_change.target_resolve.ambiguous",
+                                params={
+                                    "action": action,
+                                    "selector": selector_dbg,
+                                    "providedTargetId": target_id,
+                                    "candidates": candidates,
+                                },
+                            )
+                            errors.append(msg)
+                            break
+                        if resolved:
+                            SmartLogger.log(
+                                "INFO",
+                                "Property target resolved via fallback.",
+                                category="api.model_change.target_resolve",
+                                params={
+                                    "action": action,
+                                    "selector": selector_dbg,
+                                    "providedTargetId": target_id,
+                                    "resolvedTargetId": resolved,
+                                    "candidates": candidates,
+                                },
+                            )
+                            change["targetId"] = resolved
+                        else:
+                            # Explicit error (avoid generic "target not found" for troubleshooting)
+                            msg = (
+                                "Property 대상을 자동 보정할 수 없습니다(유사도 임계값 미달 또는 후보 없음).\n"
+                                f"- selector: {selector_dbg}\n"
+                                f"- targetId(provided): {target_id or '(empty)'}\n"
+                                f"- candidates(top): {candidates}"
+                            )
+                            SmartLogger.log(
+                                "WARNING",
+                                "Property target resolve failed (no confident match); aborting atomic apply.",
+                                category="api.model_change.target_resolve.none",
+                                params={
+                                    "action": action,
+                                    "selector": selector_dbg,
+                                    "providedTargetId": target_id,
+                                    "candidates": candidates,
+                                },
+                            )
+                            errors.append(msg)
+                            break
+
                 if action == "update":
                     errors.extend(_validate_update_tx(tx, change))
                 elif action == "connect":
@@ -813,8 +1253,13 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                     # Basic: must have targetType and targetName
                     if not change.get("targetType"):
                         errors.append("create requires targetType")
-                    if not change.get("targetName"):
-                        errors.append("create requires targetName")
+                    if str(change.get("targetType")) == "Property":
+                        updates = change.get("updates") or {}
+                        if not (change.get("targetName") or updates.get("name")):
+                            errors.append("create Property requires targetName or updates.name")
+                    else:
+                        if not change.get("targetName"):
+                            errors.append("create requires targetName")
                 else:
                     errors.append(f"unsupported action: {action}")
 

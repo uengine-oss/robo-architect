@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from api.platform.keys import command_key
+
 
 class CommandOps:
     # =========================================================================
@@ -10,26 +12,37 @@ class CommandOps:
 
     def create_command(
         self,
-        id: str,
+        *,
         name: str,
         aggregate_id: str,
+        key: str | None = None,
         actor: str = "user",
         input_schema: str | None = None,
     ) -> dict[str, Any]:
         """Create a new command and link it to an aggregate."""
-        query = """
-        MATCH (agg:Aggregate {id: $aggregate_id})
-        MERGE (cmd:Command {id: $id})
-        SET cmd.name = $name,
-            cmd.actor = $actor,
-            cmd.inputSchema = $input_schema
-        MERGE (agg)-[:HAS_COMMAND]->(cmd)
-        RETURN cmd {.id, .name, .actor, .inputSchema} as command
-        """
         with self.session() as session:
+            agg_rec = session.run("MATCH (agg:Aggregate {id: $id}) RETURN agg.key as key", id=aggregate_id).single()
+            agg_key_value = (agg_rec or {}).get("key") or ""
+            if not agg_key_value:
+                raise ValueError(f"Aggregate not found or missing key: {aggregate_id}")
+            key = key or command_key(agg_key_value, name)
+
+            query = """
+            MATCH (agg:Aggregate {id: $aggregate_id})
+            MERGE (cmd:Command {key: $key})
+            ON CREATE SET cmd.id = randomUUID(),
+                          cmd.createdAt = datetime()
+            SET cmd.key = $key,
+                cmd.name = $name,
+                cmd.actor = $actor,
+                cmd.inputSchema = $input_schema,
+                cmd.updatedAt = datetime()
+            MERGE (agg)-[:HAS_COMMAND]->(cmd)
+            RETURN cmd {.id, .key, .name, .actor, .inputSchema} as command
+            """
             result = session.run(
                 query,
-                id=id,
+                key=key,
                 name=name,
                 aggregate_id=aggregate_id,
                 actor=actor,

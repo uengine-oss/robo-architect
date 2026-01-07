@@ -31,6 +31,150 @@ class CQRSWhereCreate(BaseModel):
     operator: str = "="
 
 
+@router.get("/api/cqrs/property/{property_id}/references")
+async def get_cqrs_property_references(property_id: str, request: Request) -> dict[str, Any]:
+    """
+    Find CQRS references to a Property across ALL ReadModels.
+
+    Warning UX use-case: before deleting a Property, surface ReadModel/Operation/Mapping/Where
+    entries that reference it as:
+      - Mapping TARGET (targetPropertyId)
+      - Mapping SOURCE (sourcePropertyId)
+      - Where TARGET (targetPropertyId)
+      - Where SOURCE_EVENT_FIELD (sourceEventFieldId)
+    """
+    SmartLogger.log(
+        "INFO",
+        "CQRS property references requested.",
+        category="api.cqrs.property.references.request",
+        params={**http_context(request), "inputs": {"property_id": property_id}},
+    )
+
+    # Use UNION to keep role/kind explicit and avoid post-processing ambiguity.
+    query = """
+    // ---- Mapping: TARGET role ----
+    MATCH (rm:ReadModel)
+    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
+    MATCH (op)-[:HAS_MAPPING]->(m:CQRSMapping)-[:TARGET]->(p:Property {id: $property_id})
+    OPTIONAL MATCH (m)-[:SOURCE]->(src:Property)
+    RETURN {
+      readmodelId: rm.id,
+      readmodelName: rm.name,
+      operationId: op.id,
+      operationType: op.operationType,
+      triggerEventId: evt.id,
+      triggerEventName: evt.name,
+      refType: 'mapping',
+      refId: m.id,
+      role: 'targetPropertyId',
+      sourcePropertyId: src.id,
+      sourcePropertyName: src.name,
+      targetPropertyId: p.id,
+      targetPropertyName: p.name,
+      sourceEventFieldId: null,
+      sourceEventFieldName: null,
+      operator: null
+    } as ref
+    UNION
+    // ---- Mapping: SOURCE role ----
+    MATCH (rm:ReadModel)
+    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
+    MATCH (op)-[:HAS_MAPPING]->(m:CQRSMapping)-[:SOURCE]->(p:Property {id: $property_id})
+    OPTIONAL MATCH (m)-[:TARGET]->(tgt:Property)
+    RETURN {
+      readmodelId: rm.id,
+      readmodelName: rm.name,
+      operationId: op.id,
+      operationType: op.operationType,
+      triggerEventId: evt.id,
+      triggerEventName: evt.name,
+      refType: 'mapping',
+      refId: m.id,
+      role: 'sourcePropertyId',
+      sourcePropertyId: p.id,
+      sourcePropertyName: p.name,
+      targetPropertyId: tgt.id,
+      targetPropertyName: tgt.name,
+      sourceEventFieldId: null,
+      sourceEventFieldName: null,
+      operator: null
+    } as ref
+    UNION
+    // ---- Where: TARGET role ----
+    MATCH (rm:ReadModel)
+    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
+    MATCH (op)-[:HAS_WHERE]->(w:CQRSWhere)-[:TARGET]->(p:Property {id: $property_id})
+    OPTIONAL MATCH (w)-[:SOURCE_EVENT_FIELD]->(src:Property)
+    RETURN {
+      readmodelId: rm.id,
+      readmodelName: rm.name,
+      operationId: op.id,
+      operationType: op.operationType,
+      triggerEventId: evt.id,
+      triggerEventName: evt.name,
+      refType: 'where',
+      refId: w.id,
+      role: 'targetPropertyId',
+      sourcePropertyId: null,
+      sourcePropertyName: null,
+      targetPropertyId: p.id,
+      targetPropertyName: p.name,
+      sourceEventFieldId: src.id,
+      sourceEventFieldName: src.name,
+      operator: w.operator
+    } as ref
+    UNION
+    // ---- Where: SOURCE_EVENT_FIELD role ----
+    MATCH (rm:ReadModel)
+    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
+    MATCH (op)-[:HAS_WHERE]->(w:CQRSWhere)-[:SOURCE_EVENT_FIELD]->(p:Property {id: $property_id})
+    OPTIONAL MATCH (w)-[:TARGET]->(tgt:Property)
+    RETURN {
+      readmodelId: rm.id,
+      readmodelName: rm.name,
+      operationId: op.id,
+      operationType: op.operationType,
+      triggerEventId: evt.id,
+      triggerEventName: evt.name,
+      refType: 'where',
+      refId: w.id,
+      role: 'sourceEventFieldId',
+      sourcePropertyId: null,
+      sourcePropertyName: null,
+      targetPropertyId: tgt.id,
+      targetPropertyName: tgt.name,
+      sourceEventFieldId: p.id,
+      sourceEventFieldName: p.name,
+      operator: w.operator
+    } as ref
+    """
+
+    with get_session() as session:
+        result = session.run(query, property_id=property_id)
+        refs = [dict(r["ref"]) for r in result if r and r.get("ref") and r["ref"].get("refId") is not None]
+
+    # Stable ordering for UI display (ReadModel -> Operation -> Kind -> Role)
+    refs.sort(
+        key=lambda r: (
+            str(r.get("readmodelName") or ""),
+            str(r.get("readmodelId") or ""),
+            str(r.get("operationType") or ""),
+            str(r.get("operationId") or ""),
+            str(r.get("refType") or ""),
+            str(r.get("role") or ""),
+            str(r.get("refId") or ""),
+        )
+    )
+
+    SmartLogger.log(
+        "INFO",
+        "CQRS property references resolved.",
+        category="api.cqrs.property.references.done",
+        params={**http_context(request), "inputs": {"property_id": property_id}, "refCount": len(refs)},
+    )
+    return {"propertyId": property_id, "references": refs}
+
+
 @router.get("/api/readmodel/{readmodel_id}/cqrs")
 async def get_cqrs_config(readmodel_id: str, request: Request) -> dict[str, Any]:
     """
@@ -215,7 +359,8 @@ async def create_cqrs_operation(readmodel_id: str, operation: CQRSOperationCreat
     )
 
     cqrs_id = f"CQRS-{readmodel_id}"
-    op_id = f"CQRS-OP-{readmodel_id.replace('RM-', '')}-{operation.operation_type}-{operation.trigger_event_id.replace('EVT-', '')}"
+    # UUID ids are now canonical; do not rely on prefix-based replacements.
+    op_id = f"CQRS-OP-{readmodel_id}-{operation.operation_type}-{operation.trigger_event_id}"
     query = """
     MATCH (rm:ReadModel {id: $readmodel_id})
     MERGE (cqrs:CQRSConfig {id: $cqrs_id})

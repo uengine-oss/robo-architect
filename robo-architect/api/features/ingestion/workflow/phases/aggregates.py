@@ -30,7 +30,8 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
     progress_per_bc = 10 // max(len(ctx.bounded_contexts), 1)
 
     for bc_idx, bc in enumerate(ctx.bounded_contexts):
-        bc_id_short = bc.id.replace("BC-", "")
+        # Legacy field used only for prompt text; keep stable without prefix-based ids.
+        bc_id_short = (getattr(bc, "name", "") or "").strip()
         breakdowns_text = f"User Stories: {', '.join(bc.user_story_ids)}"
 
         prompt = EXTRACT_AGGREGATES_PROMPT.format(
@@ -100,18 +101,27 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         )
 
         for agg in aggregates:
-            ctx.client.create_aggregate(
-                id=agg.id,
+            created_agg = ctx.client.create_aggregate(
                 name=agg.name,
                 bc_id=bc.id,
                 root_entity=agg.root_entity,
                 invariants=agg.invariants,
             )
+            # Overwrite LLM-proposed id with UUID from DB (canonical)
+            try:
+                agg.id = created_agg.get("id")
+            except Exception:
+                pass
+            # Preserve natural key (needed by downstream property generation prompts)
+            try:
+                agg.key = created_agg.get("key")
+            except Exception:
+                pass
 
             # Traceability: UserStory -> Aggregate
             for us_id in getattr(agg, "user_story_ids", []) or []:
                 try:
-                    ctx.client.link_user_story_to_aggregate(us_id, agg.id)
+                    ctx.client.link_user_story_to_aggregate(us_id, created_agg.get("id"))
                 except Exception:
                     pass
 
@@ -119,7 +129,10 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                 phase=IngestionPhase.EXTRACTING_AGGREGATES,
                 message=f"Aggregate 생성: {agg.name}",
                 progress=45 + progress_per_bc * bc_idx,
-                data={"type": "Aggregate", "object": {"id": agg.id, "name": agg.name, "type": "Aggregate", "parentId": bc.id}},
+                data={
+                    "type": "Aggregate",
+                    "object": {"id": created_agg.get("id"), "name": agg.name, "type": "Aggregate", "parentId": bc.id},
+                },
             )
             await asyncio.sleep(0.15)
 

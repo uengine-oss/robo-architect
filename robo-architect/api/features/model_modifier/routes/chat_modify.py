@@ -5,8 +5,8 @@ from fastapi.responses import StreamingResponse
 from starlette.requests import Request
 
 from api.features.model_modifier.chat_contracts import ModifyRequest
-from api.features.model_modifier.chat_runtime_settings import AI_AUDIT_LOG_ENABLED, OPENAI_MODEL
 from api.features.model_modifier.react_streaming import stream_react_response
+from api.platform.env import AI_AUDIT_LOG_ENABLED
 from api.platform.observability.request_logging import http_context, summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -28,7 +28,6 @@ async def modify_nodes(request: ModifyRequest, http_request: Request):
             params={
                 **http_context(http_request),
                 "inputs": {
-                    "model": OPENAI_MODEL,
                     "prompt": request.prompt,
                     "selectedNodes": summarize_for_log(
                         request.selectedNodes, max_list=5000, max_dict_items=5000

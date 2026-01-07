@@ -19,7 +19,7 @@
 // ############################################################
 
 MATCH (us:UserStory {id: "US-001"})
-MATCH (bc:BoundedContext {id: "BC-ORDER"})
+MATCH (bc:BoundedContext {key: "order"})
 CREATE (us)-[:IMPLEMENTS {
     createdAt: datetime(),
     confidence: 0.95
@@ -36,8 +36,8 @@ CREATE (us)-[:IMPLEMENTS {
 //   - isPrimary: Boolean (주요 Aggregate 여부)
 // ############################################################
 
-MATCH (bc:BoundedContext {id: "BC-ORDER"})
-MATCH (agg:Aggregate {id: "AGG-ORDER"})
+MATCH (bc:BoundedContext {key: "order"})
+MATCH (agg:Aggregate {key: "order.order"})
 CREATE (bc)-[:HAS_AGGREGATE {
     isPrimary: true
 }]->(agg);
@@ -51,8 +51,8 @@ CREATE (bc)-[:HAS_AGGREGATE {
 //       Policy는 외부 Event에 반응하여 자신의 Command를 호출
 // ############################################################
 
-MATCH (bc:BoundedContext {id: "BC-PAYMENT"})
-MATCH (pol:Policy {id: "POL-REFUND-ON-CANCEL"})
+MATCH (bc:BoundedContext {key: "payment"})
+MATCH (pol:Policy {key: "payment.refund-on-order-cancellation"})
 CREATE (bc)-[:HAS_POLICY]->(pol);
 
 
@@ -66,8 +66,8 @@ CREATE (bc)-[:HAS_POLICY]->(pol);
 //   - isIdempotent: Boolean
 // ############################################################
 
-MATCH (agg:Aggregate {id: "AGG-ORDER"})
-MATCH (cmd:Command {id: "CMD-CANCEL-ORDER"})
+MATCH (agg:Aggregate {key: "order.order"})
+MATCH (cmd:Command {key: "order.order.cancel-order"})
 CREATE (agg)-[:HAS_COMMAND {
     isIdempotent: true
 }]->(cmd);
@@ -83,8 +83,8 @@ CREATE (agg)-[:HAS_COMMAND {
 //   - isGuaranteed: Boolean
 // ############################################################
 
-MATCH (cmd:Command {id: "CMD-CANCEL-ORDER"})
-MATCH (evt:Event {id: "EVT-ORDER-CANCELLED"})
+MATCH (cmd:Command {key: "order.order.cancel-order"})
+MATCH (evt:Event {key: "order.order.cancel-order.order-cancelled@1.0.0"})
 CREATE (cmd)-[:EMITS {
     isGuaranteed: true
 }]->(evt);
@@ -104,8 +104,8 @@ CREATE (cmd)-[:EMITS {
 //   - isEnabled: Boolean
 // ############################################################
 
-MATCH (evt:Event {id: "EVT-ORDER-CANCELLED"})
-MATCH (pol:Policy {id: "POL-REFUND-ON-CANCEL"})
+MATCH (evt:Event {key: "order.order.cancel-order.order-cancelled@1.0.0"})
+MATCH (pol:Policy {key: "payment.refund-on-order-cancellation"})
 CREATE (evt)-[:TRIGGERS {
     priority: 1,
     isEnabled: true
@@ -122,8 +122,8 @@ CREATE (evt)-[:TRIGGERS {
 //   - isAsync: Boolean
 // ############################################################
 
-MATCH (pol:Policy {id: "POL-REFUND-ON-CANCEL"})
-MATCH (cmd:Command {id: "CMD-PROCESS-REFUND"})
+MATCH (pol:Policy {key: "payment.refund-on-order-cancellation"})
+MATCH (cmd:Command {key: "payment.refund.process-refund"})
 CREATE (pol)-[:INVOKES {
     isAsync: true
 }]->(cmd);
@@ -140,8 +140,8 @@ CREATE (pol)-[:INVOKES {
 //   - integrationPattern: String ("event", "sync")
 // ############################################################
 
-MATCH (bc1:BoundedContext {id: "BC-ORDER"})
-MATCH (bc2:BoundedContext {id: "BC-PAYMENT"})
+MATCH (bc1:BoundedContext {key: "order"})
+MATCH (bc2:BoundedContext {key: "payment"})
 CREATE (bc1)-[:DEPENDS_ON {
     integrationPattern: "event"
 }]->(bc2);
@@ -155,8 +155,8 @@ CREATE (bc1)-[:DEPENDS_ON {
 //
 // ############################################################
 
-MATCH (bc:BoundedContext {id: "BC-ORDER"})
-MATCH (ui:UI {id: "UI-CMD-CANCEL-ORDER"})
+MATCH (bc:BoundedContext {key: "order"})
+MATCH (ui:UI {key: "ui.command.<commandId>"})
 CREATE (bc)-[:HAS_UI]->(ui);
 
 
@@ -168,8 +168,8 @@ CREATE (bc)-[:HAS_UI]->(ui);
 //
 // ############################################################
 
-MATCH (ui:UI {id: "UI-CMD-CANCEL-ORDER"})
-MATCH (cmd:Command {id: "CMD-CANCEL-ORDER"})
+MATCH (ui:UI {key: "ui.command.<commandId>"})
+MATCH (cmd:Command {key: "order.order.cancel-order"})
 CREATE (ui)-[:ATTACHED_TO]->(cmd);
 
 
@@ -181,9 +181,25 @@ CREATE (ui)-[:ATTACHED_TO]->(cmd);
 //
 // ############################################################
 
-MATCH (cmd:Command {id: "CMD-CANCEL-ORDER"})
-MATCH (prop:Property {id: "PROP-ORDER-ID"})
+MATCH (cmd:Command {key: "order.order.cancel-order"})
+MATCH (prop:Property {parentType: "Command", parentId: cmd.id, name: "orderId"})
 CREATE (cmd)-[:HAS_PROPERTY]->(prop);
+
+
+// ############################################################
+// 12. REFERENCES (외래키 참조)
+// ############################################################
+// 방향: Property(src FK) → Property(tgt PK)
+// 의미: FK가 PK를 참조함 (BC 경계 넘어도 허용)
+//
+// 최소 강제 조건(운영 로직에서 검증):
+//   - tgt.isKey = true 인 경우만 생성
+//   - 생성 시 src.isForeignKey = true 세팅
+//
+// ############################################################
+MATCH (src:Property {parentType: "ReadModel", parentId: "<readModelId>", name: "orderId"})
+MATCH (tgt:Property {parentType: "Aggregate", parentId: "<aggregateId>", name: "id"})
+CREATE (src)-[:REFERENCES]->(tgt);
 
 
 // ============================================================

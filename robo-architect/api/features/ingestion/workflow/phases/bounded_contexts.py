@@ -87,7 +87,17 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
     )
 
     for bc_idx, bc in enumerate(bc_candidates):
-        ctx.client.create_bounded_context(id=bc.id, name=bc.name, description=bc.description)
+        created_bc = ctx.client.create_bounded_context(name=bc.name, description=bc.description)
+        # Overwrite LLM-proposed id with UUID from DB (canonical)
+        try:
+            bc.id = created_bc.get("id")
+        except Exception:
+            pass
+        # Preserve natural key (helps downstream property generation prompts)
+        try:
+            bc.key = created_bc.get("key")
+        except Exception:
+            pass
 
         yield ProgressEvent(
             phase=IngestionPhase.IDENTIFYING_BC,
@@ -96,7 +106,7 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
             data={
                 "type": "BoundedContext",
                 "object": {
-                    "id": bc.id,
+                    "id": created_bc.get("id"),
                     "name": bc.name,
                     "type": "BoundedContext",
                     "description": bc.description,
@@ -108,14 +118,19 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
 
         for us_id in bc.user_story_ids:
             try:
-                ctx.client.link_user_story_to_bc(us_id, bc.id)
+                ctx.client.link_user_story_to_bc(us_id, created_bc.get("id"))
                 yield ProgressEvent(
                     phase=IngestionPhase.IDENTIFYING_BC,
                     message=f"User Story {us_id} → {bc.name}",
                     progress=30 + (10 * bc_idx // max(len(bc_candidates), 1)),
                     data={
                         "type": "UserStoryAssigned",
-                        "object": {"id": us_id, "type": "UserStory", "targetBcId": bc.id, "targetBcName": bc.name},
+                        "object": {
+                            "id": us_id,
+                            "type": "UserStory",
+                            "targetBcId": created_bc.get("id"),
+                            "targetBcName": bc.name,
+                        },
                     },
                 )
                 await asyncio.sleep(0.1)
@@ -124,7 +139,12 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                     "WARNING",
                     "User story to BC link skipped",
                     category="ingestion.neo4j.us_to_bc",
-                    params={"session_id": ctx.session.id, "user_story_id": us_id, "bc_id": bc.id, "error": str(e)},
+                    params={
+                        "session_id": ctx.session.id,
+                        "user_story_id": us_id,
+                        "bc_id": created_bc.get("id"),
+                        "error": str(e),
+                    },
                 )
 
 

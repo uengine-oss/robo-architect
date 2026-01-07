@@ -11,7 +11,7 @@ const canvasStore = useCanvasStore()
 
 // Get the display name
 const displayName = computed(() => {
-  return props.data?.name || props.id?.replace('BC-', '') || 'Context'
+  return props.data?.name || props.data?.label || props.id || 'Context'
 })
 
 // Check if BC is collapsed

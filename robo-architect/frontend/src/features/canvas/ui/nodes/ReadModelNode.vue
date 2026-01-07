@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 
@@ -11,8 +11,12 @@ const props = defineProps({
 const terminologyStore = useTerminologyStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('ReadModel')} >>`)
 
-const showProperties = ref(false)
 const hasProperties = computed(() => props.data?.properties && props.data.properties.length > 0)
+const nodeStyle = computed(() => {
+  const h = props.data?.dynamicHeight
+  if (h && Number(h) > 0) return { height: `${h}px` }
+  return {}
+})
 
 // Get provisioning type badge
 const provisioningType = computed(() => props.data?.provisioningType || 'CQRS')
@@ -26,14 +30,10 @@ const provisioningBadge = computed(() => {
   return badges[provisioningType.value] || badges.CQRS
 })
 
-function toggleProperties(e) {
-  e.stopPropagation()
-  showProperties.value = !showProperties.value
-}
 </script>
 
 <template>
-  <div class="es-node es-node--readmodel" :class="{ 'has-properties': hasProperties }">
+  <div class="es-node es-node--readmodel" :style="nodeStyle" :class="{ 'has-properties': hasProperties }">
     <div class="es-node__header">
       {{ headerText }}
       <span class="provisioning-badge" :class="provisioningBadge.class">
@@ -43,18 +43,13 @@ function toggleProperties(e) {
     <div class="es-node__body">
       <div class="es-node__name">{{ data?.name }}</div>
 
-      <!-- Properties Toggle -->
-      <div v-if="hasProperties" class="es-node__props-toggle" @click="toggleProperties">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline v-if="!showProperties" points="9 18 15 12 9 6"></polyline>
-          <polyline v-else points="18 15 12 9 6 15"></polyline>
-        </svg>
-        <span>{{ data.properties.length }} fields</span>
-      </div>
-
       <!-- Properties List -->
-      <div v-if="hasProperties && showProperties" class="es-node__props">
+      <div v-if="hasProperties" class="es-node__props">
         <div v-for="prop in data.properties" :key="prop.id" class="es-node__prop">
+          <span class="prop-badges">
+            <span v-if="prop.isKey" class="prop-badge prop-badge--key">PK</span>
+            <span v-if="prop.isForeignKey" class="prop-badge prop-badge--fk">FK</span>
+          </span>
           <span class="prop-name">{{ prop.name }}</span>
           <span class="prop-type">{{ prop.type }}</span>
         </div>
@@ -130,38 +125,19 @@ function toggleProperties(e) {
   text-align: center;
 }
 
-.es-node__props-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 4px 8px;
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 4px;
-  font-size: 0.65rem;
-  color: rgba(0, 0, 0, 0.7);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.es-node__props-toggle:hover {
-  background: rgba(0, 0, 0, 0.15);
-}
-
 .es-node__props {
   margin-top: 8px;
   padding: 6px;
   background: rgba(255, 255, 255, 0.5);
   border-radius: 4px;
   font-size: 0.65rem;
-  max-height: 120px;
-  overflow-y: auto;
 }
 
 .es-node__prop {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
   padding: 2px 4px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.1);
 }
@@ -173,6 +149,20 @@ function toggleProperties(e) {
 .prop-name {
   font-weight: 600;
   color: #1b5e20;
+}
+
+.prop-badges {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.prop-badge {
+  font-size: 0.55rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.12);
+  color: rgba(0, 0, 0, 0.75);
 }
 
 .prop-type {

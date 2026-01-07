@@ -2,12 +2,18 @@
 import { ref, computed, nextTick, watch } from 'vue'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import ImpactDetailsModal from '@/features/modelModifier/ui/ImpactDetailsModal.vue'
 
 const chatStore = useModelModifierStore()
 const canvasStore = useCanvasStore()
 
 const inputText = ref('')
 const messagesContainer = ref(null)
+
+// Impact details modal state
+const isImpactModalOpen = ref(false)
+const impactModalSeedNodes = ref([])
+const impactModalSummary = ref(null)
 
 // Selected nodes as chips
 const selectedChips = computed(() => {
@@ -112,6 +118,25 @@ function formatValue(value) {
   if (s.length > 240) return `${s.slice(0, 240)}… (${s.length} chars)`
   return s
 }
+
+function openImpactDetails(messageId) {
+  const idx = chatStore.messages.findIndex(m => m.id === messageId)
+  if (idx === -1) return
+
+  const msg = chatStore.messages[idx]
+  const summary = msg?.impactSummary || null
+  // Seed nodes = previous user message's selectedNodes (seed 정의: 선택 노드만)
+  const prevUser = [...chatStore.messages.slice(0, idx)].reverse().find(m => m.type === 'user')
+  impactModalSeedNodes.value = Array.isArray(prevUser?.selectedNodes) ? prevUser.selectedNodes : []
+  impactModalSummary.value = summary
+  isImpactModalOpen.value = true
+}
+
+function closeImpactDetails() {
+  isImpactModalOpen.value = false
+  impactModalSeedNodes.value = []
+  impactModalSummary.value = null
+}
 </script>
 
 <template>
@@ -190,6 +215,15 @@ function formatValue(value) {
                 Agent
               </span>
               <span class="chat-message__time">{{ formatTime(message.timestamp) }}</span>
+            </div>
+
+            <div v-if="message.impactSummary" class="chat-impact-summary">
+              <div class="chat-impact-summary__text">
+                영향도(confirmed): <strong>{{ message.impactSummary.confirmedCount }}</strong>개
+              </div>
+              <button class="chat-impact-summary__btn" @click="openImpactDetails(message.id)">
+                상세 보기
+              </button>
             </div>
 
             <div v-if="message.reactSteps && message.reactSteps.length > 0" class="chat-react-trace">
@@ -363,6 +397,13 @@ function formatValue(value) {
       </div>
     </div>
   </div>
+
+  <ImpactDetailsModal
+    :visible="isImpactModalOpen"
+    :seed-nodes="impactModalSeedNodes"
+    :impact-summary="impactModalSummary"
+    @close="closeImpactDetails"
+  />
 </template>
 
 <style scoped>
@@ -524,6 +565,38 @@ function formatValue(value) {
   background: rgba(0, 0, 0, 0.2);
   border-radius: var(--radius-sm);
   font-size: 0.75rem;
+}
+
+.chat-impact-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-xs) 0 var(--spacing-sm);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(34, 139, 230, 0.08);
+  border: 1px solid rgba(34, 139, 230, 0.18);
+}
+
+.chat-impact-summary__text {
+  font-size: 0.75rem;
+  color: var(--color-text);
+}
+
+.chat-impact-summary__btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.chat-impact-summary__btn:hover {
+  border-color: rgba(34, 139, 230, 0.35);
+  background: rgba(34, 139, 230, 0.12);
 }
 
 .chat-react-step {

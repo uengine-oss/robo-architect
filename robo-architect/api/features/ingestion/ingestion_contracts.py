@@ -21,6 +21,8 @@ class IngestionPhase(str, Enum):
     EXTRACTING_COMMANDS = "extracting_commands"
     EXTRACTING_EVENTS = "extracting_events"
     EXTRACTING_READMODELS = "extracting_readmodels"
+    GENERATING_PROPERTIES = "generating_properties"
+    GENERATING_REFERENCES = "generating_references"
     GENERATING_UI = "generating_ui"
     IDENTIFYING_POLICIES = "identifying_policies"
     SAVING = "saving"

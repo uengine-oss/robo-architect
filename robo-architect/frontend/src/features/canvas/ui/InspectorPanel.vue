@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './inspectors/nodeEditSchema'
+import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 
 const props = defineProps({
@@ -50,6 +51,19 @@ watch(
 const saving = ref(false)
 const error = ref(null)
 const successMsg = ref(null)
+
+const propertyEditorRef = ref(null)
+const propIsDirty = ref(false)
+const propHasBlockingErrors = ref(false)
+
+const showPropertyEditor = computed(() => {
+  return ['Aggregate', 'Command', 'Event', 'ReadModel'].includes(nodeLabel.value)
+})
+
+function onPropertyEditorStateChange(s) {
+  propIsDirty.value = !!s?.isDirty
+  propHasBlockingErrors.value = !!s?.hasBlockingErrors
+}
 
 const form = ref({
   name: '',
@@ -144,6 +158,13 @@ function resetToNode() {
   initial.value = { ...snap }
   error.value = null
   successMsg.value = null
+
+  // Keep Property editor snapshot in sync (node.id doesn't change on updates)
+  nextTick(() => {
+    if (showPropertyEditor.value) {
+      propertyEditorRef.value?.resetFromNode?.(node.value)
+    }
+  })
 }
 
 watch(
@@ -190,7 +211,11 @@ async function safeJson(response) {
 
 async function save() {
   if (!node.value || !initial.value) return
-  if (!isDirty.value) return
+  if (!isDirty.value && !propIsDirty.value) return
+  if (propHasBlockingErrors.value) {
+    error.value = 'Property 입력 오류를 수정한 뒤 저장하세요.'
+    return
+  }
 
   const opId = newOpId('save')
   saving.value = true
@@ -199,6 +224,17 @@ async function save() {
 
   try {
     const changes = []
+
+    // Property drafts (create/update/rename/delete)
+    if (showPropertyEditor.value) {
+      const propRes = propertyEditorRef.value?.buildDraftChanges?.() || { drafts: [], errors: [] }
+      const propErrors = Array.isArray(propRes?.errors) ? propRes.errors : []
+      if (propErrors.length) {
+        throw new Error(propErrors.join('\n'))
+      }
+      const propDrafts = Array.isArray(propRes?.drafts) ? propRes.drafts : []
+      propDrafts.forEach(d => changes.push(d))
+    }
 
     // rename (name)
     if (String(form.value.name) !== String(initial.value.name)) {
@@ -307,6 +343,13 @@ async function save() {
         const snap = snapshotFromNode(latest)
         form.value = { ...form.value, ...snap }
         initial.value = { ...snap }
+
+        // resync properties editor to store snapshot (keeps order stable while editing; sorts only after save)
+        nextTick(() => {
+          if (showPropertyEditor.value) {
+            propertyEditorRef.value?.resetFromNode?.(latest)
+          }
+        })
       } else {
         // fallback: do not lose user's edits
         initial.value = { ...form.value }
@@ -361,7 +404,12 @@ function requestChat() {
             <polyline points="21 3 21 9 15 9"></polyline>
           </svg>
         </button>
-        <button class="inspector-panel__btn primary" @click="save" title="Save" :disabled="saving || !node || !isDirty">
+        <button
+          class="inspector-panel__btn primary"
+          @click="save"
+          title="Save"
+          :disabled="saving || !node || (!isDirty && !propIsDirty) || propHasBlockingErrors"
+        >
           <span v-if="saving">저장 중...</span>
           <span v-else>저장</span>
         </button>
@@ -498,6 +546,14 @@ function requestChat() {
 
             <div v-if="field.helpText" class="inspector-field__help">{{ field.helpText }}</div>
           </div>
+
+          <PropertyEditorTable
+            v-if="showPropertyEditor"
+            ref="propertyEditorRef"
+            :node="node"
+            :disabled="saving"
+            @state-change="onPropertyEditorStateChange"
+          />
 
         </div>
       </div>
