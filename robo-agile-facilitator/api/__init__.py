@@ -1,3 +1,0 @@
-# AESF Backend Application
-
-
