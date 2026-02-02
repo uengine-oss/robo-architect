@@ -92,22 +92,30 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
     created_by_command: set[str] = set()
     created_by_readmodel: set[str] = set()
 
-    # Build set of command names that are invoked by policies (no UI needed)
+    # Build set of command IDs and names that are invoked by policies (no UI needed)
     # Policy-invoked commands are triggered by backend events, not user interaction
-    policy_invoked_commands: set[str] = set()
+    # These commands don't need UI because they are automatically triggered by policies
+    policy_invoked_command_ids: set[str] = set()
+    policy_invoked_command_names: set[str] = set()
     for pol in ctx.policies or []:
+        # Prefer command ID if available (more accurate)
+        invoke_cmd_id = getattr(pol, "invoke_command_id", None)
+        if invoke_cmd_id:
+            policy_invoked_command_ids.add(invoke_cmd_id)
+        # Fallback to command name for compatibility
         invoke_cmd = getattr(pol, "invoke_command", None)
         if invoke_cmd:
-            policy_invoked_commands.add(invoke_cmd)
+            policy_invoked_command_names.add(invoke_cmd)
 
-    if policy_invoked_commands:
+    if policy_invoked_command_ids or policy_invoked_command_names:
         SmartLogger.log(
             "INFO",
             "Policy-invoked commands identified (will skip UI generation)",
             category="ingestion.ui_wireframe.policy_filter",
             params={
                 "session_id": ctx.session.id,
-                "policy_invoked_commands": list(policy_invoked_commands),
+                "policy_invoked_command_ids": list(policy_invoked_command_ids),
+                "policy_invoked_command_names": list(policy_invoked_command_names),
             },
         )
 
@@ -121,7 +129,9 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                     continue
 
                 # Skip commands invoked by policies (they don't need UI - triggered by backend events)
-                if cmd.name in policy_invoked_commands:
+                # Policy-invoked commands are automatically triggered by policies when events occur,
+                # so they don't need user-facing UI
+                if cmd.id in policy_invoked_command_ids or cmd.name in policy_invoked_command_names:
                     SmartLogger.log(
                         "INFO",
                         "UI generation skipped for policy-invoked command",

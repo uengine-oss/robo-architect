@@ -18,6 +18,8 @@ class ReadModelOps:
         key: str | None = None,
         description: str | None = None,
         provisioning_type: str = "CQRS",
+        actor: str | None = None,
+        is_multiple_result: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a ReadModel node and link it to a BoundedContext via HAS_READMODEL.
@@ -42,9 +44,11 @@ class ReadModelOps:
                 rm.name = $name,
                 rm.description = $description,
                 rm.provisioningType = $provisioning_type,
+                rm.actor = $actor,
+                rm.isMultipleResult = $is_multiple_result,
                 rm.updatedAt = datetime()
             MERGE (bc)-[:HAS_READMODEL]->(rm)
-            RETURN rm {.id, .key, .name, .description, .provisioningType} as readmodel
+            RETURN rm {.id, .key, .name, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
             """
             result = session.run(
                 query,
@@ -53,6 +57,8 @@ class ReadModelOps:
                 bc_id=bc_id,
                 description=description,
                 provisioning_type=provisioning_type,
+                actor=actor,
+                is_multiple_result=is_multiple_result,
             )
             return dict(result.single()["readmodel"])
 

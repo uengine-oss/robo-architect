@@ -87,7 +87,12 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
     )
 
     for bc_idx, bc in enumerate(bc_candidates):
-        created_bc = ctx.client.create_bounded_context(name=bc.name, description=bc.description)
+        domain_type = getattr(bc, "domain_type", None)
+        created_bc = ctx.client.create_bounded_context(
+            name=bc.name,
+            description=bc.description,
+            domain_type=domain_type
+        )
         # Overwrite LLM-proposed id with UUID from DB (canonical)
         try:
             bc.id = created_bc.get("id")

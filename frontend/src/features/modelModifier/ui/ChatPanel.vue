@@ -17,11 +17,17 @@ const impactModalSummary = ref(null)
 
 // Selected nodes as chips
 const selectedChips = computed(() => {
-  return canvasStore.selectedNodes.map(n => ({
-    id: n.id,
-    name: n.data?.name || n.data?.label || n.id,
-    type: n.data?.type || n.type
-  }))
+  // Use modelModifierStore's currentSelectedNodes which handles both Design and other viewers
+  const nodes = chatStore.currentSelectedNodes
+  return nodes.map(n => {
+    // Handle both VueFlow node format (Design) and plain object format (other viewers)
+    const nodeData = n.data || n
+    return {
+      id: n.id || nodeData.id,
+      name: nodeData?.name || nodeData?.label || n.id || nodeData.id,
+      type: nodeData?.type || n.type || nodeData.type
+    }
+  })
 })
 
 function getTypeColor(type) {
@@ -65,7 +71,14 @@ function getTypeIcon(type) {
 }
 
 function removeChip(nodeId) {
-  canvasStore.removeFromSelection(nodeId)
+  // Remove from appropriate store based on viewer
+  if (chatStore.selectedNodes.length > 0) {
+    // Other viewer (Big Picture, Aggregate)
+    chatStore.setSelectedNodes(chatStore.selectedNodes.filter(n => (n.id || n.data?.id) !== nodeId))
+  } else {
+    // Design viewer
+    canvasStore.removeFromSelection(nodeId)
+  }
 }
 
 async function sendMessage() {

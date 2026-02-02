@@ -158,11 +158,15 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 cmd_id = (getattr(cmd, "id", None) or "").strip()
                 if not cmd_key or not cmd_id:
                     continue
+                cmd_category = getattr(cmd, "category", None) or ""
+                cmd_input_schema = getattr(cmd, "inputSchema", None) or ""
                 command_lines.append(
                     f"- key: {cmd_key}\n"
                     f"  id: {cmd_id}\n"
                     f"  name: {getattr(cmd, 'name', '')}\n"
                     f"  actor: {getattr(cmd, 'actor', '')}\n"
+                    f"  category: {cmd_category}\n"
+                    f"  inputSchema: {cmd_input_schema}\n"
                     f"  description: {getattr(cmd, 'description', '')}"
                 )
             commands_text = "\n".join(command_lines) if command_lines else "None"
@@ -173,11 +177,14 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 evt_id = (getattr(evt, "id", None) or "").strip()
                 if not evt_key or not evt_id:
                     continue
+                evt_version = getattr(evt, "version", "1.0.0") or "1.0.0"
+                evt_payload = getattr(evt, "payload", None) or ""
                 event_lines.append(
                     f"- key: {evt_key}\n"
                     f"  id: {evt_id}\n"
                     f"  name: {getattr(evt, 'name', '')}\n"
-                    f"  version: 1.0.0\n"
+                    f"  version: {evt_version}\n"
+                    f"  payload: {evt_payload}\n"
                     f"  description: {getattr(evt, 'description', '')}"
                 )
             events_text = "\n".join(event_lines) if event_lines else "None"

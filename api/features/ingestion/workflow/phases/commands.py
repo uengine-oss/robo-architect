@@ -118,7 +118,15 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 )
 
             for cmd in commands:
-                created_cmd = ctx.client.create_command(name=cmd.name, aggregate_id=agg.id, actor=cmd.actor)
+                category = getattr(cmd, "category", None)
+                input_schema = getattr(cmd, "inputSchema", None)
+                created_cmd = ctx.client.create_command(
+                    name=cmd.name,
+                    aggregate_id=agg.id,
+                    actor=cmd.actor,
+                    category=category,
+                    input_schema=input_schema,
+                )
                 # Overwrite LLM-proposed id with UUID from DB (canonical)
                 try:
                     cmd.id = created_cmd.get("id")

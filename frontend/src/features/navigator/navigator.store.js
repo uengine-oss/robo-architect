@@ -145,9 +145,12 @@ export const useNavigatorStore = defineStore('navigator', () => {
     // Track the assignment
     userStoryAssignments.value[usId] = bcId
     
-    // Remove from root level user stories
+    // Find the user story in root level
     const usIndex = userStories.value.findIndex(us => us.id === usId)
+    let usData = null
     if (usIndex !== -1) {
+      usData = userStories.value[usIndex]
+      // Remove from root level user stories
       userStories.value.splice(usIndex, 1)
     }
     
@@ -157,8 +160,33 @@ export const useNavigatorStore = defineStore('navigator', () => {
       bc.userStoryCount = (bc.userStoryCount || 0) + 1
     }
     
+    // Add to BC's tree structure
+    const tree = ensureTree(bcId)
+    if (usData) {
+      // Check if already exists in tree
+      const exists = tree.userStories.some(us => us.id === usId)
+      if (!exists) {
+        tree.userStories.push({
+          id: usData.id,
+          role: usData.role,
+          action: usData.action,
+          benefit: usData.benefit,
+          priority: usData.priority,
+          status: usData.status || 'draft',
+          type: 'UserStory',
+          name: usData.name || `${usData.role}: ${usData.action?.substring(0, 30)}...`
+        })
+        // Force reactivity update
+        contextTrees.value = { ...contextTrees.value }
+      }
+    }
+    
     // Mark the user story as newly added (will appear under BC)
     markAsNew(usId)
+    
+    // Auto-expand the BC to show the new user story
+    expandedNodes.value.add(bcId)
+    expandedNodes.value = new Set(expandedNodes.value)
   }
   
   // Helper to mark item as newly added
@@ -189,6 +217,9 @@ export const useNavigatorStore = defineStore('navigator', () => {
         id: aggregateData.id,
         name: aggregateData.name,
         type: 'Aggregate',
+        rootEntity: aggregateData.rootEntity,
+        enumerations: aggregateData.enumerations || [],
+        valueObjects: aggregateData.valueObjects || [],
         commands: [],
         events: []
       })

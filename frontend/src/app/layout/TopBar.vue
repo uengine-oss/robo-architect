@@ -2,6 +2,7 @@
 import { ref, defineProps, defineEmits } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
+import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
@@ -23,6 +24,7 @@ function selectTab(tab) {
 
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()
+const aggregateViewerStore = useAggregateViewerStore()
 const terminologyStore = useTerminologyStore()
 const showIngestionModal = ref(false)
 const showPRDModal = ref(false)
@@ -70,17 +72,15 @@ function handleIngestionComplete() {
         <span><strong>{{ bigPictureStore.filteredSwimlanes.length }}</strong> BC</span>
         <span class="top-bar__status-dot">•</span>
         <span><strong>{{ bigPictureStore.totalEvents }}</strong> Events</span>
-        <span class="top-bar__status-dot">•</span>
-        <span><strong>{{ bigPictureStore.crossBcConnections.length }}</strong> Cross-BC</span>
+        <!-- <span class="top-bar__status-dot">•</span> -->
+        <!-- <span><strong>{{ bigPictureStore.crossBcConnections.length }}</strong> Cross-BC</span> -->
       </div>
       
       <!-- Aggregate Panel Status -->
-      <div v-else-if="activeTab === 'Aggregate'" class="top-bar__status top-bar__status--placeholder">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
-          <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
-        </svg>
-        <span>Aggregate 설계 뷰 준비 중</span>
+      <div v-else-if="activeTab === 'Aggregate'" class="top-bar__status">
+        <span><strong>{{ aggregateViewerStore.filteredBoundedContexts.length }}</strong> BC</span>
+        <span class="top-bar__status-dot">•</span>
+        <span><strong>{{ aggregateViewerStore.filteredBoundedContexts.reduce((sum, bc) => sum + (bc.aggregates?.length || 0), 0) }}</strong> Aggregates</span>
       </div>
     </div>
 

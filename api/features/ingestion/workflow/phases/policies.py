@@ -151,6 +151,8 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                 # Overwrite LLM-proposed id with UUID from DB (canonical)
                 try:
                     pol.id = created_pol.get("id")
+                    # Store invoke_command_id for UI generation filtering
+                    pol.invoke_command_id = invoke_command_id
                 except Exception:
                     pass
 

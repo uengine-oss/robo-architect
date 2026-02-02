@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { MarkerType } from '@vue-flow/core'
 
 export const useCanvasStore = defineStore('canvas', () => {
   // Nodes on the canvas
@@ -83,7 +84,12 @@ export const useCanvasStore = defineStore('canvas', () => {
 
   function getPropertiesCount(data) {
     const props = data?.properties
-    return Array.isArray(props) ? props.length : 0
+    const enums = data?.enumerations
+    const vos = data?.valueObjects
+    const propsCount = Array.isArray(props) ? props.length : 0
+    const enumsCount = Array.isArray(enums) ? enums.length : 0
+    const vosCount = Array.isArray(vos) ? vos.length : 0
+    return propsCount + enumsCount + vosCount
   }
 
   function computeDynamicHeight(nodeType, data) {
@@ -864,6 +870,48 @@ export const useCanvasStore = defineStore('canvas', () => {
     return { x: baseX, y: baseY }
   }
   
+  // Helper function to get node's absolute X position (considering parent container)
+  function getNodeAbsoluteX(nodeId) {
+    const node = nodes.value.find(n => n.id === nodeId)
+    if (!node) return null
+    
+    let x = node.position?.x || 0
+    // If node has a parent, add parent's position
+    if (node.parentNode) {
+      const parent = nodes.value.find(n => n.id === node.parentNode)
+      if (parent) {
+        x += parent.position?.x || 0
+      }
+    }
+    return x
+  }
+
+  // Helper function to determine optimal handles based on node positions
+  function getOptimalHandles(sourceId, targetId) {
+    const sourceX = getNodeAbsoluteX(sourceId)
+    const targetX = getNodeAbsoluteX(targetId)
+    
+    if (sourceX === null || targetX === null) {
+      // Fallback: don't specify handles, let Vue Flow auto-select
+      return {}
+    }
+    
+    // If source is to the right of target, use left handle of source and right handle of target
+    if (sourceX > targetX) {
+      return {
+        sourceHandle: 'left',
+        targetHandle: 'right'
+      }
+    }
+    // If source is to the left of target, use right handle of source and left handle of target
+    else {
+      return {
+        sourceHandle: 'right',
+        targetHandle: 'left'
+      }
+    }
+  }
+
   // Add an edge between nodes
   function addEdge(sourceId, targetId, edgeType) {
     const edgeId = `${sourceId}-${targetId}`
@@ -883,18 +931,31 @@ export const useCanvasStore = defineStore('canvas', () => {
       return null
     }
     
+    const edgeStyle = getEdgeStyle(edgeType)
     const edge = {
       id: edgeId,
       source: sourceId,
       target: targetId,
       type: 'smoothstep',
       animated: edgeType === 'TRIGGERS',
-      style: getEdgeStyle(edgeType),
+      style: edgeStyle,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: edgeStyle.stroke || '#909296',
+      },
       label: getEdgeLabel(edgeType),
       labelStyle: { fill: '#c1c2c5', fontSize: 10, fontWeight: 500 },
       labelBgStyle: { fill: '#1e1e2e', fillOpacity: 0.9 },
-      labelBgPadding: [4, 4]
+      labelBgPadding: [4, 4],
+      data: {
+        edgeType: edgeType // Store edgeType for filtering
+      }
     }
+    
+    // Determine optimal handles based on node positions
+    const handles = getOptimalHandles(sourceId, targetId)
+    if (handles.sourceHandle) edge.sourceHandle = handles.sourceHandle
+    if (handles.targetHandle) edge.targetHandle = handles.targetHandle
     
     edges.value.push(edge)
     // Ensure consumers relying on reference changes (e.g. Vue Flow) observe updates.

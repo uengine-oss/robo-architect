@@ -59,6 +59,43 @@ class BoundedContextCandidate(BaseModel):
     user_story_ids: List[str] = Field(
         default_factory=list, description="User Story IDs that belong to this BC"
     )
+    domain_type: Optional[str] = Field(
+        default=None,
+        description="Domain classification: MUST be one of 'Core Domain', 'Supporting Domain', or 'Generic Domain'. This field is required for proper domain modeling."
+    )
+
+
+class EnumerationCandidate(BaseModel):
+    """An Enumeration within an Aggregate."""
+
+    name: str = Field(..., description="Enumeration name in PascalCase")
+    alias: Optional[str] = Field(default=None, description="Optional alias for display")
+    items: List[str] = Field(
+        default_factory=list, description="List of enumeration item values (e.g., ['PENDING', 'PROCESSING', 'COMPLETED'])"
+    )
+
+
+class ValueObjectField(BaseModel):
+    """A field within a Value Object."""
+
+    name: str = Field(..., description="Field name (e.g., 'street', 'city')")
+    type: str = Field(..., description="Field type (e.g., 'String', 'int', 'BigDecimal')")
+
+
+class ValueObjectCandidate(BaseModel):
+    """A Value Object within an Aggregate."""
+
+    name: str = Field(..., description="Value Object name in PascalCase")
+    alias: Optional[str] = Field(default=None, description="Optional alias for display")
+    referenced_aggregate_name: Optional[str] = Field(
+        default=None, description="Name of the referenced Aggregate (if this is a reference Value Object)"
+    )
+    referenced_aggregate_field: Optional[str] = Field(
+        default=None, description="Name of the field in the referenced Aggregate that this VO references (if this is a reference Value Object)"
+    )
+    fields: List[ValueObjectField] = Field(
+        default_factory=list, description="List of fields in this value object. Each field has 'name' and 'type' (e.g., [{'name': 'street', 'type': 'String'}, {'name': 'city', 'type': 'String'}])"
+    )
 
 
 class AggregateCandidate(BaseModel):
@@ -75,6 +112,12 @@ class AggregateCandidate(BaseModel):
     user_story_ids: List[str] = Field(
         default_factory=list, description="User Story IDs that this aggregate implements"
     )
+    enumerations: List[EnumerationCandidate] = Field(
+        default_factory=list, description="Enumerations associated with this aggregate"
+    )
+    value_objects: List[ValueObjectCandidate] = Field(
+        default_factory=list, description="Value Objects within this aggregate"
+    )
 
 
 class CommandCandidate(BaseModel):
@@ -83,7 +126,9 @@ class CommandCandidate(BaseModel):
     id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
     key: Optional[str] = Field(default=None, description="Optional natural key (derived from Aggregate + name).")
     name: str = Field(..., description="Command name in PascalCase like 'PlaceOrder'")
-    actor: str = Field(default="user", description="Who triggers this command")
+    actor: str = Field(default="user", description="Who triggers this command (should match User Story role when applicable)")
+    category: Optional[str] = Field(default=None, description="Command category: Create, Update, Delete, Process, Business Logic, or External Integration")
+    inputSchema: Optional[str] = Field(default=None, description="JSON schema or description of command input parameters")
     description: str = Field(..., description="What this command does")
     user_story_ids: List[str] = Field(
         default_factory=list, description="User Story IDs that this command implements"
@@ -96,6 +141,8 @@ class EventCandidate(BaseModel):
     id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
     key: Optional[str] = Field(default=None, description="Optional natural key (derived from Command + name + version).")
     name: str = Field(..., description="Event name in past tense like 'OrderPlaced'")
+    version: str = Field(default="1.0.0", description="Event version for schema evolution")
+    payload: Optional[str] = Field(default=None, description="JSON schema or description of event payload/data")
     description: str = Field(..., description="What happened")
     user_story_ids: List[str] = Field(
         default_factory=list, description="User Story IDs related to this event"
@@ -113,6 +160,14 @@ class ReadModelCandidate(BaseModel):
         description="ReadModel name in PascalCase using Noun+Purpose (e.g., OrderSummary, OrderStatus).",
     )
     description: str = Field(..., description="What this ReadModel provides for queries.")
+    actor: str = Field(
+        default="user",
+        description="Who uses this ReadModel: user, admin, or system. Should match User Story role when available.",
+    )
+    isMultipleResult: Optional[str] = Field(
+        default=None,
+        description="Result type: 'list' for ordered lists (e.g., OrderList), 'collection' for unordered collections (e.g., ProductCatalog), 'single result' for single item results (e.g., OrderDetail, UserProfile).",
+    )
     user_story_ids: List[str] = Field(
         default_factory=list,
         description="User Story IDs (within the BC) that this ReadModel supports (query intent).",

@@ -1,95 +1,1497 @@
 <script setup>
-// AggregatePanel - Placeholder for future implementation
+import { ref, computed, onMounted, watch, markRaw, nextTick, h } from 'vue'
+import { VueFlow, useVueFlow, MarkerType } from '@vue-flow/core'
+import { Background } from '@vue-flow/background'
+import { Controls } from '@vue-flow/controls'
+import { MiniMap } from '@vue-flow/minimap'
+import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
+import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
+import AggregateViewerNode from './nodes/AggregateViewerNode.vue'
+import EnumViewerNode from './nodes/EnumViewerNode.vue'
+import ValueObjectViewerNode from './nodes/ValueObjectViewerNode.vue'
+import AggregateContainerNode from './nodes/AggregateContainerNode.vue'
+import AggregateViewerInspector from './AggregateViewerInspector.vue'
+import ChatPanel from '@/features/modelModifier/ui/ChatPanel.vue'
+
+const store = useAggregateViewerStore()
+const chatStore = useModelModifierStore()
+const { fitView, zoomIn, zoomOut, getNodes, getNode, updateEdge } = useVueFlow()
+
+// Track node positions for edge handle updates (updated via onNodesChange)
+const nodePositions = ref(new Map())
+// Trigger ref to force edges computed to re-run when nodes are dragged
+const edgeUpdateTrigger = ref(0)
+
+// Hover state for highlighting connections
+const hoveredNodeId = ref(null)
+const hoveredEdgeId = ref(null)
+
+// Panel mode: 'none' | 'chat' | 'inspector'
+const panelMode = ref('chat')
+const chatPanelWidth = ref(360)
+const isResizingChat = ref(false)
+const inspectorPanelWidth = ref(400)
+const isResizingInspector = ref(false)
+
+// Inspector state
+const inspectingAggregateId = ref(null)
+const inspectingEnumIndex = ref(null)
+const inspectingVoIndex = ref(null)
+
+// Watch for data changes and update layout (handled in nodes watch below)
+
+// Drag and drop handlers
+const isDragOver = ref(false)
+
+function handleDragOver(event) {
+  event.preventDefault()
+  isDragOver.value = true
+  event.dataTransfer.dropEffect = 'copy'
+}
+
+function handleDragLeave() {
+  isDragOver.value = false
+}
+
+async function handleDrop(event) {
+  event.preventDefault()
+  isDragOver.value = false
+  
+  const data = event.dataTransfer.getData('application/json')
+  if (!data) return
+  
+  try {
+    const { nodeId, nodeType } = JSON.parse(data)
+    
+    // Only handle BoundedContext drops
+    if (nodeType === 'BoundedContext') {
+      await store.fetchAggregatesForBC(nodeId)
+      // Auto-layout after data is loaded
+      setTimeout(() => {
+        fitView({ padding: 0.2 })
+      }, 100)
+    }
+  } catch (error) {
+    console.error('Failed to handle drop:', error)
+  }
+}
+
+// Helper function to build nodes from store data
+function buildNodes() {
+  const result = []
+  let x = 100
+  const startY = 50
+  const xSpacing = 650  // Horizontal spacing between Aggregate containers
+  const ySpacing = 100  // Vertical spacing between Aggregate containers
+  
+  // Node dimensions
+  const aggregateBaseWidth = 280
+  const aggregateBaseHeight = 200
+  const enumVoWidth = 220
+  const enumVoHeight = 80
+  const containerPadding = 20  // Padding inside container
+  const containerHeaderHeight = 50  // BC name header height
+  const nodePadding = 20  // Padding between nodes inside container
+  
+  // Calculate Aggregate height including properties
+  function calculateAggregateHeight(agg) {
+    const propsCount = (agg.properties || []).length
+    const enumsCount = (agg.enumerations || []).length
+    const vosCount = (agg.valueObjects || []).length
+    const fieldsCount = propsCount + enumsCount + vosCount
+    
+    // Base height + header + fields
+    const baseHeight = 120  // Header + name + rootEntity
+    const fieldHeight = 24  // Per field row
+    const sectionPadding = 20  // Section dividers
+    
+    let height = baseHeight
+    if (fieldsCount > 0) {
+      height += sectionPadding + (fieldsCount * fieldHeight)
+    }
+    
+    return Math.max(aggregateBaseHeight, height)
+  }
+
+  // Calculate container dimensions based on content
+  function calculateContainerSize(agg) {
+    const aggHeight = calculateAggregateHeight(agg)
+    
+    // Calculate Enum/VO total height
+    let enumVoTotalHeight = 0
+    agg.enumerations?.forEach((enumItem) => {
+      const itemsCount = (enumItem.items || []).length
+      const enumNodeHeight = itemsCount > 0 
+        ? Math.max(enumVoHeight, 80 + (itemsCount * 24) + 20) 
+        : enumVoHeight
+      enumVoTotalHeight += enumNodeHeight + nodePadding
+    })
+    agg.valueObjects?.forEach((vo) => {
+      const fieldsCount = (vo.fields || []).length
+      const voNodeHeight = fieldsCount > 0
+        ? Math.max(enumVoHeight, 80 + (fieldsCount * 24) + 20)
+        : enumVoHeight
+      enumVoTotalHeight += voNodeHeight + nodePadding
+    })
+    if (enumVoTotalHeight > 0) {
+      enumVoTotalHeight -= nodePadding  // Remove last padding
+    }
+    
+    // Container width: Aggregate + padding + Enum/VO + padding
+    const containerWidth = aggregateBaseWidth + containerPadding + enumVoWidth + containerPadding
+    // Container height: header + max(Aggregate height, Enum/VO height) + padding
+    const containerHeight = containerHeaderHeight + Math.max(aggHeight, enumVoTotalHeight) + containerPadding * 2
+    
+    return { width: containerWidth, height: containerHeight }
+  }
+
+  // Flatten all aggregates from all BCs
+  const allAggregates = []
+  store.filteredBoundedContexts.forEach((bc) => {
+    bc.aggregates?.forEach((agg) => {
+      allAggregates.push({ ...agg, bcName: bc.name, bcId: bc.id })
+    })
+  })
+
+  // Layout aggregates in a grid (2 columns)
+  let currentX = x
+  let currentY = startY
+  const columnsPerRow = 2  // Number of containers per row
+  let rowMaxHeight = 0
+  
+  allAggregates.forEach((agg, aggIdx) => {
+    const containerSize = calculateContainerSize(agg)
+    const containerId = `agg-container-${agg.id}`
+    
+    // Check if we need to wrap to next row
+    if (aggIdx > 0 && aggIdx % columnsPerRow === 0) {
+      currentX = x
+      currentY += rowMaxHeight + ySpacing
+      rowMaxHeight = 0
+    }
+    
+    // Track max height in current row
+    rowMaxHeight = Math.max(rowMaxHeight, containerSize.height)
+    
+    // Create Aggregate container node
+    result.push({
+      id: containerId,
+      type: 'aggregateContainer',
+      position: { x: currentX, y: currentY },
+      data: {
+        bcName: agg.bcName,
+        aggregateId: agg.id,
+        aggregateName: agg.name,
+      },
+      style: {
+        width: `${containerSize.width}px`,
+        height: `${containerSize.height}px`,
+      },
+      draggable: true,
+      selectable: false,
+    })
+    
+    // Calculate positions relative to container (inside container)
+    const containerInnerX = containerPadding
+    const containerInnerY = containerHeaderHeight + containerPadding
+    const aggX = containerInnerX
+    const aggY = containerInnerY
+    
+    // Aggregate node (left side) - Aggregate Root
+    result.push({
+      id: `agg-${agg.id}`,
+      type: 'aggregateViewer',
+      position: { x: aggX, y: aggY },
+      data: {
+        ...agg,
+        bcName: agg.bcName,
+        type: 'Aggregate',
+      },
+      parentNode: containerId,
+      extent: 'parent',
+    })
+    
+    // Enum/VO nodes (right side)
+    const enumVoX = aggX + aggregateBaseWidth + nodePadding
+    let enumVoY = containerInnerY
+    
+    // Enumerations (top right)
+    agg.enumerations?.forEach((enumItem, enumIdx) => {
+      const itemsCount = (enumItem.items || []).length
+      const enumNodeHeight = itemsCount > 0 
+        ? Math.max(enumVoHeight, 80 + (itemsCount * 24) + 20) 
+        : enumVoHeight
+      
+      result.push({
+        id: `enum-${agg.id}-${enumIdx}`,
+        type: 'enumViewer',
+        position: { x: enumVoX, y: enumVoY },
+        data: {
+          ...enumItem,
+          aggregateId: agg.id,
+          aggregateName: agg.name,
+          type: 'Enumeration',
+          index: enumIdx,
+        },
+        parentNode: containerId,
+        extent: 'parent',
+      })
+      enumVoY += enumNodeHeight + nodePadding
+    })
+    
+    // Value Objects (bottom right, below enumerations)
+    agg.valueObjects?.forEach((vo, voIdx) => {
+      const fieldsCount = (vo.fields || []).length
+      const voNodeHeight = fieldsCount > 0
+        ? Math.max(enumVoHeight, 80 + (fieldsCount * 24) + 20)
+        : enumVoHeight
+      
+      result.push({
+        id: `vo-${agg.id}-${voIdx}`,
+        type: 'valueObjectViewer',
+        position: { x: enumVoX, y: enumVoY },
+        data: {
+          ...vo,
+          aggregateId: agg.id,
+          aggregateName: agg.name,
+          type: 'ValueObject',
+          index: voIdx,
+        },
+        parentNode: containerId,
+        extent: 'parent',
+      })
+      enumVoY += voNodeHeight + nodePadding
+    })
+    
+    // Move to next position
+    currentX += containerSize.width + xSpacing
+  })
+
+  return result
+}
+
+// Convert store data to Vue Flow nodes (use ref for stable references)
+const nodes = ref([])
+
+// Create edges from Aggregate to Enum/VO (use ref for manual updates)
+// Must be defined before watch that calls updateEdges()
+const edges = ref([])
+// Edge version counter to force Vue Flow to recognize edge updates
+const edgeVersion = ref(0)
+
+// Update edges when store data or node positions change
+// Must be defined before watch that calls it
+function updateEdges() {
+  console.log('[AggregatePanel] updateEdges: Rebuilding edges, nodes count:', nodes.value.length)
+  const newEdges = buildEdges()
+  
+  // Increment edge version to force Vue Flow to treat edges as completely new
+  edgeVersion.value++
+  
+  // Force Vue Flow to recognize handle changes by completely replacing the edges array
+  // Clear edges first to ensure Vue Flow removes all old edges
+  edges.value = []
+  
+  // Wait for Vue Flow to process the removal, then add new edges
+  // Use multiple nextTick calls and setTimeout to ensure Vue Flow has fully processed
+  nextTick(() => {
+    setTimeout(() => {
+      nextTick(() => {
+        // Wait for Vue Flow to fully render nodes and their handles
+        setTimeout(() => {
+          // Create completely new edge objects with versioned IDs to force Vue Flow to recreate them
+          // Store original ID in data for hover/selection logic
+          edges.value = newEdges.map(edge => {
+            const originalId = edge.id
+            const versionedId = `${originalId}-v${edgeVersion.value}`
+            
+            // Don't verify handles - Vue Flow will handle it automatically
+            // If handle doesn't exist, Vue Flow will use default handle
+            // The handle verification was causing issues because handleBounds might not be populated yet
+            const sourceHandle = edge.sourceHandle
+            const targetHandle = edge.targetHandle
+            
+            // Create a completely new object (not just a spread)
+            // IMPORTANT: Vue Flow requires handle IDs to match exactly what's defined in the node component
+            // Always set handles - Vue Flow will use them if they exist, or fall back to default if they don't
+            const newEdge = {
+              id: versionedId,
+              source: edge.source,
+              target: edge.target,
+              type: edge.type,
+              animated: edge.animated,
+              style: { ...edge.style },
+              markerEnd: { ...edge.markerEnd },
+              // Always set handles - Vue Flow will handle validation
+              ...(sourceHandle && { sourceHandle }),
+              ...(targetHandle && { targetHandle }),
+              data: {
+                ...(edge.data || {}),
+                originalId: originalId, // Store original ID for hover/selection
+              }
+            }
+            // Add optional properties if they exist
+            if (edge.label) newEdge.label = edge.label
+            if (edge.labelStyle) newEdge.labelStyle = { ...edge.labelStyle }
+            return newEdge
+          })
+          
+          console.log('[AggregatePanel] updateEdges: Built edges count:', edges.value.length, 'version:', edgeVersion.value)
+          
+          // Force Vue Flow to recalculate edge paths by updating each edge individually
+          // This ensures Vue Flow recognizes handle changes
+          setTimeout(() => {
+            edges.value.forEach(edge => {
+              if (typeof updateEdge === 'function') {
+                try {
+                  updateEdge(edge.id, {
+                    sourceHandle: edge.sourceHandle,
+                    targetHandle: edge.targetHandle
+                  })
+                } catch (e) {
+                  // updateEdge might not be available or might fail
+                  console.warn('[AggregatePanel] Could not update edge:', e)
+                }
+              }
+            })
+          }, 200)
+          
+          // Log first edge and a cross-aggregate edge to verify handles are set
+          if (edges.value.length > 0) {
+            console.log('[AggregatePanel] updateEdges: First edge handles:', {
+              id: edges.value[0].id,
+              originalId: edges.value[0].data?.originalId,
+              sourceHandle: edges.value[0].sourceHandle,
+              targetHandle: edges.value[0].targetHandle,
+              source: edges.value[0].source,
+              target: edges.value[0].target
+            })
+            // Find a cross-aggregate edge (VO -> Aggregate)
+            const crossEdge = edges.value.find(e => e.data?.originalId?.includes('vo-') && e.data?.originalId?.includes('ref-'))
+            if (crossEdge) {
+              console.log('[AggregatePanel] updateEdges: Cross-aggregate edge handles:', {
+                id: crossEdge.id,
+                originalId: crossEdge.data?.originalId,
+                sourceHandle: crossEdge.sourceHandle,
+                targetHandle: crossEdge.targetHandle,
+                source: crossEdge.source,
+                target: crossEdge.target
+              })
+              // Debug: Check if handles exist in DOM and if Vue Flow can find them
+              try {
+                const allNodes = typeof getNodes === 'function' ? getNodes() : nodes.value
+                const sourceNode = allNodes.find(n => n.id === crossEdge.source)
+                const targetNode = allNodes.find(n => n.id === crossEdge.target)
+                
+                if (sourceNode) {
+                  const sourceElement = document.querySelector(`[data-id="${sourceNode.id}"]`)
+                  const sourceHandles = sourceElement ? sourceElement.querySelectorAll('.vue-flow__handle') : []
+                  const targetSourceHandle = Array.from(sourceHandles).find(h => {
+                    return h.id === crossEdge.sourceHandle || 
+                           h.getAttribute('data-handleid') === crossEdge.sourceHandle ||
+                           h.getAttribute('data-handleid') === crossEdge.sourceHandle
+                  })
+                  console.log('[AggregatePanel] Source node handles:', {
+                    nodeId: sourceNode.id,
+                    sourceHandle: crossEdge.sourceHandle,
+                    domHandleCount: sourceHandles.length,
+                    targetHandleFound: !!targetSourceHandle,
+                    allHandleIds: Array.from(sourceHandles).map(h => h.id || h.getAttribute('data-handleid') || 'no-id')
+                  })
+                }
+                
+                if (targetNode) {
+                  const targetElement = document.querySelector(`[data-id="${targetNode.id}"]`)
+                  const targetHandles = targetElement ? targetElement.querySelectorAll('.vue-flow__handle') : []
+                  const targetTargetHandle = Array.from(targetHandles).find(h => {
+                    return h.id === crossEdge.targetHandle || 
+                           h.getAttribute('data-handleid') === crossEdge.targetHandle ||
+                           h.getAttribute('data-handleid') === crossEdge.targetHandle
+                  })
+                  console.log('[AggregatePanel] Target node handles:', {
+                    nodeId: targetNode.id,
+                    targetHandle: crossEdge.targetHandle,
+                    domHandleCount: targetHandles.length,
+                    targetHandleFound: !!targetTargetHandle,
+                    allHandleIds: Array.from(targetHandles).map(h => h.id || h.getAttribute('data-handleid') || 'no-id')
+                  })
+                }
+              } catch (e) {
+                console.warn('[AggregatePanel] Could not check handle bounds:', e)
+              }
+            }
+          }
+        }, 500) // Wait 500ms for Vue Flow to fully render nodes and handles (increased for handle registration)
+      })
+    }, 100) // Wait 100ms for Vue Flow to process edge removal
+  })
+}
+
+// Update nodes when store data changes
+watch(() => store.filteredBoundedContexts, () => {
+  nodes.value = buildNodes()
+  // Initialize node positions for new nodes
+  nodes.value.forEach(node => {
+    if (!nodePositions.value.has(node.id)) {
+      nodePositions.value.set(node.id, {
+        x: node.position.x,
+        y: node.position.y,
+        parentNode: node.parentNode
+      })
+    }
+  })
+  // Don't update edges here - wait for onNodesInitialized event
+  // This ensures Vue Flow has registered all handles before creating edges
+  console.log('[AggregatePanel] watch: Nodes updated, waiting for onNodesInitialized')
+  // Fit view after nodes are created
+  setTimeout(() => {
+    fitView({ padding: 0.2 })
+  }, 200)
+}, { immediate: true, deep: true })
+
+
+// Get connected node IDs for a given node (direct connections only)
+const getConnectedNodeIds = (nodeId) => {
+  const connectedNodes = new Set([nodeId])
+  const connectedEdges = edges.value.filter(edge => 
+    edge.source === nodeId || edge.target === nodeId
+  )
+  connectedEdges.forEach(edge => {
+    if (edge.source === nodeId) connectedNodes.add(edge.target)
+    if (edge.target === nodeId) connectedNodes.add(edge.source)
+  })
+  return connectedNodes
+}
+
+// Get connected edge IDs for a given node
+const getConnectedEdgeIds = (nodeId) => {
+  return edges.value
+    .filter(edge => edge.source === nodeId || edge.target === nodeId)
+    .map(edge => edge.id)
+}
+
+// Nodes with hover highlighting
+const nodesWithHighlight = computed(() => {
+  const connectedNodeIds = hoveredNodeId.value 
+    ? getConnectedNodeIds(hoveredNodeId.value)
+    : new Set()
+  const edgeConnectedNodeIds = hoveredEdgeId.value
+    ? new Set([edges.value.find(e => e.id === hoveredEdgeId.value)?.source, 
+                edges.value.find(e => e.id === hoveredEdgeId.value)?.target].filter(Boolean))
+    : new Set()
+  
+  return nodes.value.map(node => {
+    const isConnected = connectedNodeIds.has(node.id) || edgeConnectedNodeIds.has(node.id)
+    
+    return {
+      ...node,
+      class: [
+        node.class || '',
+        (hoveredNodeId.value === node.id || isConnected) ? 'aggregate-node--highlighted' : '',
+        hoveredNodeId.value && !isConnected && hoveredNodeId.value !== node.id ? 'aggregate-node--dimmed' : ''
+      ].filter(Boolean).join(' ')
+    }
+  })
+})
+
+// Edges with hover highlighting
+const edgesWithHighlight = computed(() => {
+  const connectedEdgeIds = hoveredNodeId.value
+    ? getConnectedEdgeIds(hoveredNodeId.value)
+    : []
+  
+  return edges.value.map(edge => {
+    const isConnected = connectedEdgeIds.includes(edge.id)
+    const isHovered = hoveredEdgeId.value === edge.id
+    
+    return {
+      ...edge,
+      class: [
+        isHovered || isConnected ? 'aggregate-edge--highlighted' : '',
+        hoveredNodeId.value && !isConnected && !isHovered ? 'aggregate-edge--dimmed' : ''
+      ].filter(Boolean).join(' '),
+      style: {
+        ...edge.style,
+        zIndex: isHovered || isConnected ? 1000 : (hoveredNodeId.value && !isConnected && !isHovered ? 1 : undefined)
+      }
+    }
+  })
+})
+
+// Helper function to get node's absolute X position (considering parent container)
+// Uses Vue Flow's actual node positions for real-time accuracy
+function getNodeAbsoluteX(nodeId, nodesList = null) {
+  // Prefer Vue Flow's actual nodes if available (most up-to-date)
+  let nodesToSearch = nodesList
+  if (!nodesToSearch) {
+    try {
+      // Try to get actual nodes from Vue Flow first
+      const vueFlowNodes = getNodes()
+      if (vueFlowNodes && vueFlowNodes.length > 0) {
+        nodesToSearch = vueFlowNodes
+      } else {
+        // Fallback to our tracked nodes
+        nodesToSearch = nodes.value
+      }
+    } catch (e) {
+      // Vue Flow not ready yet, use our tracked nodes
+      nodesToSearch = nodes.value
+    }
+  }
+  
+  const node = nodesToSearch.find(n => n.id === nodeId)
+  if (!node) {
+    console.warn('[AggregatePanel] getNodeAbsoluteX: Node not found', nodeId)
+    return null
+  }
+  
+  let x = node.position?.x || 0
+  // If node has a parent, add parent's position
+  if (node.parentNode) {
+    const parent = nodesToSearch.find(n => n.id === node.parentNode)
+    if (parent) {
+      const parentX = parent.position?.x || 0
+      x += parentX
+      // Debug log for parent position calculation
+      if (nodeId.includes('vo-') || nodeId.includes('enum-')) {
+        console.log('[AggregatePanel] getNodeAbsoluteX:', {
+          nodeId,
+          nodeX: node.position?.x,
+          parentId: node.parentNode,
+          parentX,
+          absoluteX: x
+        })
+      }
+    }
+  }
+  return x
+}
+
+// Helper function to determine optimal handles based on node positions
+// Uses real-time positions from Vue Flow when available
+// Now using simple handle IDs: 'left' and 'right' (one handle per position)
+function getOptimalHandles(sourceId, targetId, nodesList = null) {
+  const sourceX = getNodeAbsoluteX(sourceId, nodesList)
+  const targetX = getNodeAbsoluteX(targetId, nodesList)
+  
+  if (sourceX === null || targetX === null) {
+    console.warn('[AggregatePanel] getOptimalHandles: Missing position', { sourceId, targetId, sourceX, targetX })
+    // Fallback: don't specify handles, let Vue Flow auto-select
+    return {}
+  }
+  
+  // Each node now has: 'left' and 'right' handles (one per position)
+  // Vue Flow should respect these IDs when only one handle exists per position
+  if (sourceX > targetX) {
+    // Source on right, target on left
+    // Use source's left handle (closest) and target's right handle (closest)
+    return {
+      sourceHandle: 'left',
+      targetHandle: 'right'
+    }
+  } else {
+    // Source on left, target on right
+    // Use source's right handle (closest) and target's left handle (closest)
+    return {
+      sourceHandle: 'right',
+      targetHandle: 'left'
+    }
+  }
+}
+
+// Helper function to build edges from Aggregate to Enum/VO
+function buildEdges() {
+  const result = []
+  // Use Vue Flow's actual nodes for most up-to-date positions
+  let nodesList = nodes.value
+  try {
+    const vueFlowNodes = getNodes()
+    if (vueFlowNodes && vueFlowNodes.length > 0) {
+      nodesList = vueFlowNodes
+      console.log('[AggregatePanel] buildEdges: Using Vue Flow nodes, count:', nodesList.length)
+    }
+  } catch (e) {
+    console.warn('[AggregatePanel] buildEdges: Vue Flow not ready, using tracked nodes')
+  }
+  
+  store.filteredBoundedContexts.forEach((bc) => {
+    bc.aggregates?.forEach((agg) => {
+      // Connect Aggregate to Enumerations
+      agg.enumerations?.forEach((_, enumIdx) => {
+        // Determine optimal handles based on positions FIRST
+        const handles = getOptimalHandles(`agg-${agg.id}`, `enum-${agg.id}-${enumIdx}`, nodesList)
+        
+        const edge = {
+          id: `edge-agg-${agg.id}-enum-${enumIdx}`,
+          source: `agg-${agg.id}`,
+          target: `enum-${agg.id}-${enumIdx}`,
+          type: 'smoothstep',
+          animated: false,
+          style: { 
+            stroke: '#909296', 
+            strokeWidth: 1.5,
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: '#909296',
+          },
+          // Specify handles based on node positions for shortest path
+          ...(handles.sourceHandle && { sourceHandle: handles.sourceHandle }),
+          ...(handles.targetHandle && { targetHandle: handles.targetHandle }),
+        }
+        
+        result.push(edge)
+      })
+
+      // Connect Aggregate to Value Objects
+      agg.valueObjects?.forEach((_, voIdx) => {
+        // Determine optimal handles based on positions
+        const handles = getOptimalHandles(`agg-${agg.id}`, `vo-${agg.id}-${voIdx}`, nodesList)
+        
+        const edge = {
+          id: `edge-agg-${agg.id}-vo-${voIdx}`,
+          source: `agg-${agg.id}`,
+          target: `vo-${agg.id}-${voIdx}`,
+          type: 'smoothstep',
+          animated: false,
+          style: { 
+            stroke: '#909296', 
+            strokeWidth: 1.5,
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: '#909296',
+          },
+          // Specify handles based on node positions for shortest path
+          ...(handles.sourceHandle && { sourceHandle: handles.sourceHandle }),
+          ...(handles.targetHandle && { targetHandle: handles.targetHandle }),
+        }
+        
+        result.push(edge)
+      })
+
+      // Connect Value Objects to referenced Aggregates
+      agg.valueObjects?.forEach((vo, voIdx) => {
+        if (vo.referencedAggregateName) {
+          // Find the referenced aggregate
+          const refAgg = store.filteredBoundedContexts
+            .flatMap(bc => bc.aggregates || [])
+            .find(a => a.name === vo.referencedAggregateName)
+          
+          if (refAgg) {
+            // Build label with field reference if available
+            let labelText = 'references'
+            if (vo.referencedAggregateField) {
+              labelText = `→ ${vo.referencedAggregateField}`
+            }
+            
+            // Build edge object
+            const edge = {
+              id: `edge-vo-${agg.id}-${voIdx}-ref-${refAgg.id}`,
+              source: `vo-${agg.id}-${voIdx}`,
+              target: `agg-${refAgg.id}`,
+              type: 'smoothstep',
+              animated: true,
+              style: { 
+                stroke: '#5c7cfa', 
+                strokeWidth: 2, 
+                strokeDasharray: '5,5',
+              },
+              markerEnd: {
+                type: MarkerType.ArrowClosed,
+                color: '#5c7cfa',
+              },
+              label: labelText,
+              labelStyle: { fill: '#5c7cfa', fontWeight: 500 },
+              data: {
+                referencedField: vo.referencedAggregateField || null,
+                referencedAggregateName: vo.referencedAggregateName,
+              },
+            }
+            
+            // If we have a specific field reference, use that field's handle
+            if (vo.referencedAggregateField && refAgg.properties) {
+              // Try to find property by name (case-insensitive for robustness)
+              const targetProp = refAgg.properties.find(
+                p => p.name && p.name.toLowerCase() === vo.referencedAggregateField.toLowerCase()
+              )
+              if (targetProp) {
+                // Use the same ID format as in AggregateViewerNode: field-${prop.id || prop.name}
+                if (targetProp.id) {
+                  edge.targetHandle = `field-${String(targetProp.id)}`
+                } else if (targetProp.name) {
+                  edge.targetHandle = `field-${String(targetProp.name)}`
+                }
+                // Determine source handle based on position
+                const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`, nodesList)
+                if (handles.sourceHandle) edge.sourceHandle = handles.sourceHandle
+              } else {
+                // Field not found, use position-based handles
+                const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`, nodesList)
+                if (handles.sourceHandle) edge.sourceHandle = handles.sourceHandle
+                if (handles.targetHandle) edge.targetHandle = handles.targetHandle
+              }
+            } else {
+              // No field reference, use position-based handles
+              const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`, nodesList)
+              if (handles.sourceHandle) edge.sourceHandle = handles.sourceHandle
+              if (handles.targetHandle) edge.targetHandle = handles.targetHandle
+            }
+            
+            result.push(edge)
+          }
+        }
+      })
+    })
+  })
+  return result
+}
+
+
+// Node types
+const nodeTypes = {
+  aggregateViewer: markRaw(AggregateViewerNode),
+  enumViewer: markRaw(EnumViewerNode),
+  valueObjectViewer: markRaw(ValueObjectViewerNode),
+  aggregateContainer: markRaw(AggregateContainerNode),
+}
+
+// Edge types - using default smoothstep
+const edgeTypes = {}
+
+// Node click handler (single click - no action)
+// Panel management
+function toggleChatPanel() {
+  panelMode.value = panelMode.value === 'chat' ? 'none' : 'chat'
+}
+
+function startResizeChat(e) {
+  isResizingChat.value = true
+  document.addEventListener('mousemove', onResizeChat)
+  document.addEventListener('mouseup', stopResizeChat)
+}
+
+function onResizeChat(e) {
+  if (!isResizingChat.value) return
+  const next = window.innerWidth - e.clientX
+  chatPanelWidth.value = Math.max(280, Math.min(640, next))
+  try {
+    localStorage.setItem('aggregate_chat_panel_width', String(chatPanelWidth.value))
+  } catch {}
+}
+
+function stopResizeChat() {
+  isResizingChat.value = false
+  document.removeEventListener('mousemove', onResizeChat)
+  document.removeEventListener('mouseup', stopResizeChat)
+}
+
+function onNodeClick(event) {
+  const node = event.node
+  if (!node) return
+  
+  // Update Model Modifier with selected node
+  const nodeData = node.data || {}
+  const selectedNode = {
+    id: node.id,
+    name: nodeData.name || node.id,
+    type: node.type === 'aggregateViewer' ? 'Aggregate' : 
+         node.type === 'enumViewer' ? 'Enum' : 
+         node.type === 'valueObjectViewer' ? 'ValueObject' : node.type,
+    bcId: nodeData.bcId,
+    bcName: nodeData.bcName,
+    aggregateId: nodeData.aggregateId,
+    aggregateName: nodeData.aggregateName,
+    rootEntity: nodeData.rootEntity,
+    ...nodeData
+  }
+  chatStore.setSelectedNodes([selectedNode])
+  // Single click does nothing - use double click to open inspector
+}
+
+// Node double click handler
+function onNodeDoubleClick(event) {
+  const node = event.node
+  // Don't open inspector for container nodes
+  if (node.type === 'aggregateContainer') {
+    return
+  }
+  if (node.type === 'aggregateViewer') {
+    inspectingAggregateId.value = node.data.id
+    inspectingEnumIndex.value = null
+    inspectingVoIndex.value = null
+    panelMode.value = 'inspector'
+  } else if (node.type === 'enumViewer') {
+    inspectingAggregateId.value = node.data.aggregateId
+    inspectingEnumIndex.value = node.data.index
+    inspectingVoIndex.value = null
+    panelMode.value = 'inspector'
+  } else if (node.type === 'valueObjectViewer') {
+    inspectingAggregateId.value = node.data.aggregateId
+    inspectingEnumIndex.value = null
+    inspectingVoIndex.value = node.data.index
+    panelMode.value = 'inspector'
+  }
+}
+
+// Node hover handlers
+function onNodeMouseEnter(event) {
+  hoveredNodeId.value = event.node.id
+}
+
+function onNodeMouseLeave() {
+  hoveredNodeId.value = null
+}
+
+// Edge hover handlers
+function onEdgeMouseEnter(event) {
+  hoveredEdgeId.value = event.edge.id
+}
+
+function onEdgeMouseLeave() {
+  hoveredEdgeId.value = null
+}
+
+// Handle nodes initialization - called when Vue Flow has registered all handles
+function onNodesInitialized() {
+  console.log('[AggregatePanel] onNodesInitialized: Nodes and handles are ready')
+  // Wait a bit more to ensure handles are fully registered
+  setTimeout(() => {
+    // Verify handles are registered by checking DOM
+    try {
+      const allNodes = typeof getNodes === 'function' ? getNodes() : nodes.value
+      const sampleNode = allNodes.find(n => n.type === 'aggregateViewer' || n.type === 'enumViewer' || n.type === 'valueObjectViewer')
+      if (sampleNode) {
+        // Check DOM for actual handle elements
+        const nodeElement = document.querySelector(`[data-id="${sampleNode.id}"]`)
+        if (nodeElement) {
+          const handles = nodeElement.querySelectorAll('.vue-flow__handle')
+          console.log('[AggregatePanel] onNodesInitialized: DOM handles found:', {
+            nodeId: sampleNode.id,
+            handleCount: handles.length,
+            handleIds: Array.from(handles).map(h => {
+              // Check all possible attributes for handle ID
+              return {
+                id: h.id,
+                dataHandleId: h.getAttribute('data-handleid'),
+                dataHandleid: h.getAttribute('data-handleid'),
+                dataId: h.getAttribute('data-id'),
+                allAttributes: Array.from(h.attributes).map(attr => `${attr.name}="${attr.value}"`)
+              }
+            })
+          })
+        }
+        // Also check Vue Flow internal structure
+        console.log('[AggregatePanel] onNodesInitialized: Vue Flow node structure:', {
+          nodeId: sampleNode.id,
+          __vf: sampleNode.__vf ? Object.keys(sampleNode.__vf) : 'no __vf',
+          handleBounds: sampleNode.__vf?.handleBounds,
+          allKeys: Object.keys(sampleNode)
+        })
+      }
+    } catch (e) {
+      console.warn('[AggregatePanel] onNodesInitialized: Could not check handles:', e)
+    }
+    // Update edges now that handles are registered
+    updateEdges()
+  }, 500) // Increased delay to ensure DOM is ready
+}
+
+// Handle node position changes (for edge handle updates)
+function onNodesChange(changes) {
+  // When nodes are dragged, update their positions in our tracking map for edge handle calculations
+  const newPositions = new Map(nodePositions.value)
+  let hasChanges = false
+  
+  changes.forEach(change => {
+    if (change.type === 'position') {
+      const node = change.node
+      if (node) {
+        // Debug: log container node drag
+        if (node.type === 'aggregateContainer') {
+          console.log('[AggregatePanel] Container node position change:', {
+            id: node.id,
+            position: node.position,
+            dragging: change.dragging
+          })
+        }
+        
+        // Update node position in nodes array (create new object to trigger reactivity)
+        const nodeIndex = nodes.value.findIndex(n => n.id === node.id)
+        if (nodeIndex >= 0) {
+          // Create completely new node object to ensure reactivity
+          nodes.value[nodeIndex] = {
+            ...nodes.value[nodeIndex],
+            position: { x: node.position.x, y: node.position.y }
+          }
+          hasChanges = true
+        }
+        
+        // Save node positions for edge handle calculations
+        newPositions.set(node.id, {
+          x: node.position.x,
+          y: node.position.y,
+          parentNode: node.parentNode
+        })
+        // Also update parent position if node has parent
+        if (node.parentNode) {
+          const parentNode = nodes.value.find(n => n.id === node.parentNode)
+          if (parentNode) {
+            newPositions.set(parentNode.id, {
+              x: parentNode.position.x,
+              y: parentNode.position.y,
+              parentNode: parentNode.parentNode
+            })
+          }
+        }
+      }
+    }
+  })
+  
+  // Replace the entire Map and update edges when nodes are dragged
+  if (hasChanges) {
+    // Create new array with new node objects to ensure reactivity
+    nodes.value = nodes.value.map(n => ({ ...n }))
+    // Update nodePositions before updating edges
+    nodePositions.value = newPositions
+    // Update edges with new node positions (use nextTick to ensure Vue Flow has updated positions)
+    console.log('[AggregatePanel] onNodesChange: Updating edges after node position change, hasChanges:', hasChanges)
+    // Use multiple nextTick calls and setTimeout to ensure Vue Flow has fully updated the node positions
+    nextTick(() => {
+      setTimeout(() => {
+        nextTick(() => {
+          updateEdges()
+        })
+      }, 100) // Increased delay to ensure Vue Flow has updated node positions
+    })
+  } else {
+    nodePositions.value = newPositions
+  }
+}
+
+// Pane click handler
+function onPaneClick() {
+  // Clear selection when clicking on empty canvas
+  chatStore.clearSelection()
+  panelMode.value = 'none'
+  inspectingAggregateId.value = null
+  inspectingEnumIndex.value = null
+  inspectingVoIndex.value = null
+  hoveredNodeId.value = null
+  hoveredEdgeId.value = null
+}
+
+// Inspector panel resize
+function startResizeInspector(e) {
+  isResizingInspector.value = true
+  e.preventDefault()
+  document.addEventListener('mousemove', onResizeInspector)
+  document.addEventListener('mouseup', stopResizeInspector)
+}
+
+function onResizeInspector(e) {
+  if (!isResizingInspector.value) return
+  const next = Math.round(e.clientX - window.innerWidth + inspectorPanelWidth.value)
+  inspectorPanelWidth.value = Math.max(300, Math.min(600, next))
+  try {
+    localStorage.setItem('aggregate_viewer_inspector_width', String(inspectorPanelWidth.value))
+  } catch {}
+}
+
+function stopResizeInspector() {
+  isResizingInspector.value = false
+  document.removeEventListener('mousemove', onResizeInspector)
+  document.removeEventListener('mouseup', stopResizeInspector)
+}
+
+// Load saved inspector width
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem('aggregate_viewer_inspector_width')
+    if (saved) {
+      inspectorPanelWidth.value = parseInt(saved, 10)
+    }
+  } catch {}
+})
+
+// MiniMap node color
+function getNodeColor(node) {
+  const colors = {
+    aggregateViewer: '#fcc419',
+    enumViewer: '#fff9e6',
+    valueObjectViewer: '#fff9e6',
+    aggregateContainer: '#373a40',
+  }
+  return colors[node.type] || '#909296'
+}
 </script>
 
 <template>
-  <div class="aggregate-panel">
-    <div class="placeholder-content">
-      <div class="placeholder-icon">
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
-          <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
-        </svg>
+  <div class="aggregate-viewer">
+    <div class="aggregate-main-content">
+      <!-- Loading state -->
+      <div v-if="store.loading" class="aggregate-viewer__loading">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading aggregates...</div>
       </div>
-      <h2 class="placeholder-title">Aggregate</h2>
-      <p class="placeholder-description">
-        도메인 모델의 Aggregate 구조를 상세히 설계하고 관리하는 뷰입니다.
-      </p>
-      <div class="placeholder-badge">준비 중</div>
+
+      <!-- Error state -->
+      <div v-else-if="store.error" class="aggregate-viewer__error">
+        <div class="error-icon">⚠️</div>
+        <div class="error-text">{{ store.error }}</div>
+        <button class="error-retry" @click="store.fetchAllAggregates">Retry</button>
+      </div>
+
+      <!-- Main viewer -->
+      <div v-else class="aggregate-viewer__content">
+      <div 
+        class="aggregate-viewer__canvas" 
+        :class="{ 'drop-zone-active': isDragOver }"
+        @drop="handleDrop"
+        @dragover="handleDragOver"
+        @dragleave="handleDragLeave"
+      >
+        <div v-if="nodes.length === 0" class="aggregate-viewer__empty">
+          <div class="empty-icon">📦</div>
+          <div class="empty-text">No aggregates selected</div>
+          <div class="empty-hint">Drag a Bounded Context from the navigator to view its aggregates</div>
+        </div>
+
+        <VueFlow
+          v-else
+          :nodes="nodes"
+          :edges="edgesWithHighlight"
+          :node-types="nodeTypes"
+          :default-viewport="{ zoom: 0.8, x: 50, y: 50 }"
+          @nodes-initialized="onNodesInitialized"
+          :min-zoom="0.2"
+          :max-zoom="2"
+          :snap-to-grid="true"
+          :snap-grid="[10, 10]"
+          :nodes-draggable="true"
+          :nodes-connectable="false"
+          @node-mouseenter="onNodeMouseEnter"
+          @node-mouseleave="onNodeMouseLeave"
+          @edge-mouseenter="onEdgeMouseEnter"
+          @edge-mouseleave="onEdgeMouseLeave"
+          :pan-on-drag="true"
+          :zoom-on-scroll="true"
+          :prevent-scrolling="true"
+          fit-view-on-init
+          @node-click="onNodeClick"
+          @node-double-click="onNodeDoubleClick"
+          @pane-click="onPaneClick"
+          @nodes-change="onNodesChange"
+        >
+          <Background pattern-color="#2a2a3a" :gap="20" />
+          <MiniMap 
+            :node-color="getNodeColor"
+            :node-stroke-width="3"
+            pannable
+            zoomable
+          />
+        </VueFlow>
+
+        <!-- Canvas Control Toolbar (Bottom) -->
+        <div v-if="nodes.length > 0" class="aggregate-canvas-toolbar">
+          <button class="aggregate-canvas-toolbar__btn" @click="zoomIn()" title="Zoom In">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              <line x1="11" y1="8" x2="11" y2="14"></line>
+              <line x1="8" y1="11" x2="14" y2="11"></line>
+            </svg>
+          </button>
+
+          <button class="aggregate-canvas-toolbar__btn" @click="zoomOut()" title="Zoom Out">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              <line x1="8" y1="11" x2="14" y2="11"></line>
+            </svg>
+          </button>
+
+          <button class="aggregate-canvas-toolbar__btn" @click="fitView({ padding: 0.3 })" title="Fit View">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+            </svg>
+          </button>
+
+          <div class="aggregate-canvas-toolbar__divider"></div>
+
+          <button class="aggregate-canvas-toolbar__btn" @click="store.clearAllBCs()" title="Clear Canvas">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <!-- Resizer (between canvas and right-side panel) -->
+    <div
+      v-if="panelMode !== 'none'"
+      class="aggregate-chat-panel-resizer"
+      @mousedown="panelMode === 'chat' ? startResizeChat() : startResizeInspector($event)"
+      title="드래그하여 패널 너비 조절"
+    ></div>
+
+    <!-- Right-side Panel Wrapper -->
+    <div v-if="panelMode !== 'none'" class="aggregate-side-panel-wrapper" :style="{ width: (panelMode === 'chat' ? chatPanelWidth : inspectorPanelWidth) + 'px' }">
+      <div v-if="panelMode === 'chat'" class="aggregate-chat-panel-wrapper">
+        <ChatPanel />
+      </div>
+
+      <!-- Inspector Panel -->
+      <div v-else-if="panelMode === 'inspector'" class="aggregate-viewer__inspector">
+        <AggregateViewerInspector
+          :aggregate-id="inspectingAggregateId"
+          :enum-index="inspectingEnumIndex"
+          :vo-index="inspectingVoIndex"
+          @close="panelMode = 'none'"
+        />
+      </div>
+    </div>
+
+    <!-- Right Sidebar Icons (always visible) -->
+    <div class="aggregate-right-sidebar">
+      <button 
+        class="aggregate-right-sidebar__icon"
+        :class="{ 'is-active': panelMode === 'chat' }"
+        @click="toggleChatPanel"
+        title="Model Modifier"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+      </button>
+      <button 
+        class="aggregate-right-sidebar__icon"
+        :class="{ 'is-active': panelMode === 'inspector' }"
+        @click="panelMode = panelMode === 'inspector' ? 'none' : 'inspector'"
+        title="Inspector"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.aggregate-panel {
+.aggregate-viewer {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #1e1e2e 0%, #1a1b26 100%);
+  overflow: hidden;
+}
+
+.aggregate-main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e2e;
   position: relative;
   overflow: hidden;
 }
 
-.aggregate-panel::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: 
-    radial-gradient(circle at 70% 20%, rgba(252, 196, 25, 0.08) 0%, transparent 50%),
-    radial-gradient(circle at 30% 80%, rgba(177, 151, 252, 0.06) 0%, transparent 50%);
-  pointer-events: none;
-}
-
-.placeholder-content {
+.aggregate-viewer__loading,
+.aggregate-viewer__error {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 16px;
-  padding: 40px;
-  text-align: center;
-  position: relative;
-  z-index: 1;
-}
-
-.placeholder-icon {
-  color: var(--color-aggregate);
-  opacity: 0.5;
-  animation: pulse 2.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); opacity: 0.5; }
-  50% { transform: scale(1.05); opacity: 0.7; }
-}
-
-.placeholder-title {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: var(--color-text-bright);
-  margin: 0;
-}
-
-.placeholder-description {
-  font-size: 0.9rem;
   color: var(--color-text-light);
-  max-width: 320px;
-  line-height: 1.6;
-  margin: 0;
 }
 
-.placeholder-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 16px;
-  background: rgba(252, 196, 25, 0.15);
-  border: 1px solid rgba(252, 196, 25, 0.3);
-  border-radius: 20px;
-  font-size: 0.75rem;
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(252, 196, 25, 0.2);
+  border-top-color: var(--color-aggregate);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.error-icon {
+  font-size: 48px;
+}
+
+.error-retry {
+  padding: 8px 16px;
+  background: var(--color-aggregate);
+  color: #1e1e2e;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
   font-weight: 500;
-  color: var(--color-aggregate);
-  margin-top: 8px;
+}
+
+.error-retry:hover {
+  opacity: 0.9;
+}
+
+.aggregate-viewer__content {
+  flex: 1;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+.aggregate-viewer__canvas {
+  flex: 1;
+  position: relative;
+}
+
+.aggregate-viewer__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--color-text-light);
+}
+
+.aggregate-viewer__canvas.drop-zone-active {
+  background: rgba(252, 196, 25, 0.05);
+  border: 2px dashed rgba(252, 196, 25, 0.3);
+}
+
+/* ==========================================
+   Canvas Control Toolbar (Bottom)
+   ========================================== */
+.aggregate-canvas-toolbar {
+  position: absolute;
+  bottom: var(--spacing-md, 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: var(--spacing-xs, 8px);
+  background: rgba(30, 31, 42, 0.95);
+  padding: var(--spacing-xs, 8px);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 10;
+  backdrop-filter: blur(8px);
+}
+
+.aggregate-canvas-toolbar__btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--color-text, #e4e4e7);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.aggregate-canvas-toolbar__btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-bright, #ffffff);
+}
+
+.aggregate-canvas-toolbar__btn:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.aggregate-canvas-toolbar__divider {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: var(--spacing-xs, 8px) 0;
+}
+
+.empty-icon {
+  font-size: 64px;
+  opacity: 0.5;
+}
+
+.empty-text {
+  font-size: 1.2rem;
+  font-weight: 500;
+  color: var(--color-text-bright);
+}
+
+.empty-hint {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+.aggregate-viewer__inspector {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #252836;
+  overflow-y: auto;
+}
+
+.inspector-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.inspector-resizer:hover {
+  background: rgba(92, 124, 250, 0.12);
+}
+
+/* ==========================================
+   Chat Panel (same structure as Design Viewer)
+   ========================================== */
+.aggregate-chat-panel-resizer {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+}
+
+.aggregate-chat-panel-resizer:hover {
+  background: rgba(34, 139, 230, 0.12);
+}
+
+.aggregate-side-panel-wrapper {
+  flex-shrink: 0;
+  background: var(--color-bg-secondary);
+  border-left: 1px solid var(--color-border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.2s ease;
+}
+
+/* ==========================================
+   Node and Edge Hover Highlighting
+   ========================================== */
+
+/* Highlighted node (hovered or connected) */
+.vue-flow__node.aggregate-node--highlighted {
+  outline: 3px solid #fcc419 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 20px rgba(252, 196, 25, 0.5) !important;
+  z-index: 10 !important;
+  transition: all 0.2s ease !important;
+}
+
+/* Dimmed node (not connected to hovered node) */
+.vue-flow__node.aggregate-node--dimmed {
+  opacity: 0.6 !important;
+  transition: opacity 0.2s ease !important;
+  z-index: 1 !important;
+}
+
+/* Highlighted edge (hovered or connected to hovered node) */
+.vue-flow__edge.aggregate-edge--highlighted {
+  z-index: 1000 !important;
+  position: relative;
+  pointer-events: auto !important;
+}
+
+.vue-flow__edge.aggregate-edge--highlighted .vue-flow__edge-path {
+  stroke-width: 5 !important;
+  filter: 
+    drop-shadow(0 0 8px currentColor) 
+    drop-shadow(0 0 4px rgba(252, 196, 25, 1))
+    drop-shadow(0 0 2px rgba(255, 255, 255, 1));
+  z-index: 1000 !important;
+  transition: all 0.2s ease !important;
+  paint-order: stroke fill;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-opacity: 1;
+}
+
+.vue-flow__edge.aggregate-edge--highlighted .vue-flow__edge-text {
+  font-weight: 600 !important;
+  font-size: 11px !important;
+}
+
+/* Dimmed edge (not connected to hovered node) */
+.vue-flow__edge.aggregate-edge--dimmed {
+  z-index: 1 !important;
+}
+
+.vue-flow__edge.aggregate-edge--dimmed .vue-flow__edge-path {
+  opacity: 0.3 !important;
+  transition: opacity 0.2s ease !important;
+}
+
+/* Ensure edges layer is above nodes */
+.vue-flow__edges {
+  z-index: 5 !important;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.aggregate-chat-panel-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Right Sidebar Icons (always visible) */
+.aggregate-right-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--color-bg-secondary);
+  border-left: 1px solid var(--color-border);
+}
+
+.aggregate-right-sidebar__icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.aggregate-right-sidebar__icon:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.aggregate-right-sidebar__icon.is-active {
+  background: var(--color-accent);
+  color: white;
+}
+
+.aggregate-right-sidebar__icon.is-active:hover {
+  background: #1c7ed6;
 }
 </style>
-

@@ -219,11 +219,18 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         )
 
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
         SmartLogger.log(
             "ERROR",
             "Ingestion workflow failed",
             category="ingestion.workflow",
-            params={"session_id": session.id, "error": str(e)},
+            params={
+                "session_id": session.id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "traceback": error_trace,
+            },
         )
         yield ProgressEvent(phase=IngestionPhase.ERROR, message=f"❌ 오류 발생: {str(e)}", progress=0, data={"error": str(e)})
 

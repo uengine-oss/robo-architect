@@ -140,6 +140,8 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                 continue
 
             description = getattr(rm, "description", None)
+            actor = getattr(rm, "actor", "user") or "user"
+            is_multiple_result = getattr(rm, "isMultipleResult", None)  # 'list', 'collection', or 'single result'
             user_story_ids = list(getattr(rm, "user_story_ids", []) or [])
 
             try:
@@ -148,6 +150,8 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     bc_id=bc.id,
                     description=description,
                     provisioning_type="CQRS",
+                    actor=actor,
+                    is_multiple_result=is_multiple_result,
                 )
             except Exception as e:
                 SmartLogger.log(

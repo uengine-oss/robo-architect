@@ -24,7 +24,12 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
         # 1. Create Bounded Contexts
         for bc in state.approved_bcs:
             old_id = str(bc.id)
-            created_bc = client.create_bounded_context(name=bc.name, description=bc.description)
+            domain_type = getattr(bc, "domain_type", None)
+            created_bc = client.create_bounded_context(
+                name=bc.name,
+                description=bc.description,
+                domain_type=domain_type
+            )
             bc_id_map[old_id] = str(created_bc.get("id"))
             try:
                 bc.id = created_bc.get("id")
@@ -41,11 +46,32 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
             bc_uuid = bc_id_map.get(str(bc_id)) or str(bc_id)
             for agg in aggregates:
                 old_agg_id = str(agg.id)
+                # Convert enumerations and value_objects to dict format
+                enum_list = [
+                    {
+                        "name": e.name,
+                        "alias": e.alias,
+                        "items": getattr(e, "items", []) or []
+                    }
+                    for e in (agg.enumerations or [])
+                ]
+                vo_list = [
+                    {
+                        "name": vo.name,
+                        "alias": vo.alias,
+                        "referenced_aggregate_name": vo.referenced_aggregate_name,
+                        "referenced_aggregate_field": getattr(vo, "referenced_aggregate_field", None),
+                        "fields": getattr(vo, "fields", []) or []
+                    }
+                    for vo in (agg.value_objects or [])
+                ]
                 created_agg = client.create_aggregate(
                     name=agg.name,
                     bc_id=bc_uuid,
                     root_entity=agg.root_entity,
                     invariants=agg.invariants,
+                    enumerations=enum_list if enum_list else None,
+                    value_objects=vo_list if vo_list else None,
                 )
                 agg_id_map[old_agg_id] = str(created_agg.get("id"))
                 try:
@@ -65,7 +91,15 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
         for agg_id, commands in state.command_candidates.items():
             agg_uuid = agg_id_map.get(str(agg_id)) or str(agg_id)
             for cmd in commands:
-                created_cmd = client.create_command(name=cmd.name, aggregate_id=agg_uuid, actor=cmd.actor)
+                category = getattr(cmd, "category", None)
+                input_schema = getattr(cmd, "inputSchema", None)
+                created_cmd = client.create_command(
+                    name=cmd.name,
+                    aggregate_id=agg_uuid,
+                    actor=cmd.actor,
+                    category=category,
+                    input_schema=input_schema,
+                )
                 try:
                     cmd.id = created_cmd.get("id")
                 except Exception:
@@ -86,7 +120,14 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
                 # Link to corresponding command if available
                 cmd_id = commands[i].id if i < len(commands) else commands[0].id if commands else None
                 if cmd_id:
-                    created_evt = client.create_event(name=evt.name, command_id=str(cmd_id))
+                    version = getattr(evt, "version", "1.0.0")
+                    payload = getattr(evt, "payload", None)
+                    created_evt = client.create_event(
+                        name=evt.name,
+                        command_id=str(cmd_id),
+                        version=version,
+                        payload=payload,
+                    )
                     try:
                         evt.id = created_evt.get("id")
                     except Exception:

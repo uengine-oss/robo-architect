@@ -8,9 +8,11 @@ export type EditableFieldKey =
   | 'description'
   | 'template'
   | 'actor'
+  | 'category'
   | 'version'
   | 'rootEntity'
   | 'provisioningType'
+  | 'isMultipleResult'
   | 'attachedToId'
   | 'attachedToType'
   | 'attachedToName'
@@ -43,6 +45,13 @@ export const NodeEditSchemas: Record<NodeLabel, NodeEditSchema> = {
     title: 'Command',
     fields: [
       ...CommonFields,
+      {
+        key: 'category',
+        label: 'Category',
+        input: 'select',
+        options: ['Create', 'Update', 'Delete', 'Process', 'Business Logic', 'External Integration'],
+        helpText: '커맨드의 유형(종류)을 선택합니다.'
+      },
       {
         key: 'actor',
         label: 'Actor',
@@ -90,6 +99,20 @@ export const NodeEditSchemas: Record<NodeLabel, NodeEditSchema> = {
     title: 'ReadModel',
     fields: [
       ...CommonFields,
+      {
+        key: 'actor',
+        label: 'Actor',
+        input: 'text',
+        placeholder: '예: customer / seller / system',
+        helpText: 'ReadModel을 사용하는 주체(사람/시스템)를 입력합니다.'
+      },
+      {
+        key: 'isMultipleResult',
+        label: 'Is Multiple Result',
+        input: 'select',
+        options: ['list', 'collection', 'single result'],
+        helpText: 'list: 정렬된 목록, collection: 컬렉션/카탈로그, single result: 단일 항목'
+      },
       {
         key: 'provisioningType',
         label: 'Provisioning Type',

@@ -126,7 +126,14 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                 if not cmd_id:
                     continue
 
-                created_evt = ctx.client.create_event(name=evt.name, command_id=cmd_id)
+                version = getattr(evt, "version", "1.0.0") or "1.0.0"
+                payload = getattr(evt, "payload", None)
+                created_evt = ctx.client.create_event(
+                    name=evt.name,
+                    command_id=cmd_id,
+                    version=version,
+                    payload=payload,
+                )
                 # Overwrite LLM-proposed id with UUID from DB (canonical)
                 try:
                     evt.id = created_evt.get("id")

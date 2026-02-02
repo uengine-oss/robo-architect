@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
 from starlette.requests import Request
 
 from api.platform.neo4j import get_session
@@ -28,6 +29,7 @@ async def get_all_contexts(request: Request) -> list[dict[str, Any]]:
         name: bc.name,
         description: bc.description,
         owner: bc.owner,
+        domainType: bc.domainType,
         aggregateCount: aggregateCount,
         userStoryCount: userStoryCount
     } as context
@@ -150,7 +152,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get BC info
     bc_query = """
     MATCH (bc:BoundedContext {id: $context_id})
-    RETURN bc {.id, .name, .description, .owner} as bc
+    RETURN bc {.id, .name, .description, .owner, .domainType} as bc
     """
 
     # Get User Stories for this BC
@@ -163,21 +165,21 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get Aggregates
     agg_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)
-    RETURN agg {.id, .name, .rootEntity, .invariants} as aggregate
+    RETURN agg {.id, .name, .rootEntity, .invariants, .enumerations, .valueObjects} as aggregate
     ORDER BY agg.name
     """
 
     # Get Commands per Aggregate
     cmd_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
-    RETURN agg.id as aggregateId, cmd {.id, .name, .actor, .inputSchema} as command
+    RETURN agg.id as aggregateId, cmd {.id, .name, .actor, .category, .inputSchema} as command
     ORDER BY cmd.name
     """
 
     # Get Events
     evt_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_COMMAND]->(cmd:Command)-[:EMITS]->(evt:Event)
-    RETURN agg.id as aggregateId, cmd.id as commandId, evt {.id, .name, .version} as event
+    RETURN agg.id as aggregateId, cmd.id as commandId, evt {.id, .name, .version, .payload} as event
     ORDER BY evt.name
     """
 
@@ -195,7 +197,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get ReadModels for this BC
     rm_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_READMODEL]->(rm:ReadModel)
-    RETURN rm {.id, .name, .description, .provisioningType} as readmodel
+    RETURN rm {.id, .name, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
     ORDER BY readmodel.name
     """
 
@@ -253,6 +255,24 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
             agg["type"] = "Aggregate"
             agg["commands"] = []
             agg["events"] = []
+            
+            # Parse JSON strings for enumerations and valueObjects
+            if isinstance(agg.get("enumerations"), str):
+                try:
+                    agg["enumerations"] = json.loads(agg["enumerations"])
+                except (json.JSONDecodeError, TypeError):
+                    agg["enumerations"] = []
+            elif agg.get("enumerations") is None:
+                agg["enumerations"] = []
+            
+            if isinstance(agg.get("valueObjects"), str):
+                try:
+                    agg["valueObjects"] = json.loads(agg["valueObjects"])
+                except (json.JSONDecodeError, TypeError):
+                    agg["valueObjects"] = []
+            elif agg.get("valueObjects") is None:
+                agg["valueObjects"] = []
+            
             aggregates[agg["id"]] = agg
 
         # Commands
@@ -392,4 +412,304 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
         )
         return bc
 
+
+@router.get("/aggregates/viewer")
+async def get_all_aggregates_for_viewer(request: Request) -> dict[str, Any]:
+    """
+    GET /api/contexts/aggregates/viewer - 모든 BC의 Aggregate, VO, Enum 조회
+    Returns all Aggregates across all Bounded Contexts with their enumerations and value objects.
+    """
+    query = """
+    MATCH (bc:BoundedContext)
+    OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
+    OPTIONAL MATCH (agg)-[:HAS_PROPERTY]->(prop:Property)
+    WITH bc, agg, collect(DISTINCT prop {
+        .id, .name, .type, .description, .isKey, .isForeignKey, .isRequired
+    }) as properties
+    ORDER BY bc.name, agg.name
+    RETURN {
+        bcId: bc.id,
+        bcName: bc.name,
+        bcDescription: bc.description,
+        aggregateId: agg.id,
+        aggregateName: agg.name,
+        rootEntity: agg.rootEntity,
+        invariants: agg.invariants,
+        enumerations: agg.enumerations,
+        valueObjects: agg.valueObjects,
+        properties: properties
+    } as item
+    """
+    
+    SmartLogger.log(
+        "INFO",
+        "Aggregate viewer data requested: returning all aggregates with VO/Enum across all BCs.",
+        category="api.contexts.aggregates.viewer.request",
+        params=http_context(request),
+    )
+    
+    with get_session() as session:
+        result = session.run(query)
+        items = []
+        for record in result:
+            item = dict(record["item"])
+            # Parse JSON strings for enumerations and valueObjects
+            if isinstance(item.get("enumerations"), str):
+                try:
+                    item["enumerations"] = json.loads(item["enumerations"])
+                except (json.JSONDecodeError, TypeError):
+                    item["enumerations"] = []
+            elif item.get("enumerations") is None:
+                item["enumerations"] = []
+            
+            if isinstance(item.get("valueObjects"), str):
+                try:
+                    item["valueObjects"] = json.loads(item["valueObjects"])
+                except (json.JSONDecodeError, TypeError):
+                    item["valueObjects"] = []
+            elif item.get("valueObjects") is None:
+                item["valueObjects"] = []
+            
+            items.append(item)
+        
+        # Group by BC
+        bc_map: dict[str, Any] = {}
+        for item in items:
+            bc_id = item.get("bcId")
+            if not bc_id:
+                continue
+            
+            if bc_id not in bc_map:
+                bc_map[bc_id] = {
+                    "id": bc_id,
+                    "name": item.get("bcName", ""),
+                    "description": item.get("bcDescription", ""),
+                    "aggregates": []
+                }
+            
+            agg_id = item.get("aggregateId")
+            if agg_id:
+                bc_map[bc_id]["aggregates"].append({
+                    "id": agg_id,
+                    "name": item.get("aggregateName", ""),
+                    "rootEntity": item.get("rootEntity", ""),
+                    "invariants": item.get("invariants", []),
+                    "enumerations": item.get("enumerations", []),
+                    "valueObjects": item.get("valueObjects", []),
+                    "properties": item.get("properties", [])
+                })
+        
+        result_data = {
+            "boundedContexts": list(bc_map.values())
+        }
+        
+        SmartLogger.log(
+            "INFO",
+            "Aggregate viewer data returned.",
+            category="api.contexts.aggregates.viewer.done",
+            params={
+                **http_context(request),
+                "counts": {
+                    "boundedContexts": len(result_data["boundedContexts"]),
+                    "totalAggregates": sum(len(bc.get("aggregates", [])) for bc in result_data["boundedContexts"])
+                }
+            },
+        )
+        return result_data
+
+
+@router.put("/aggregates/{aggregate_id}/properties")
+async def update_aggregate_properties(
+    aggregate_id: str,
+    request: Request,
+    properties: list[dict[str, Any]] = Body(..., embed=True),
+) -> dict[str, Any]:
+    """
+    PUT /api/contexts/aggregates/{id}/properties - Aggregate의 Properties 업데이트
+    Aggregate Viewer에서 Properties를 수정할 때 사용됩니다.
+    """
+    SmartLogger.log(
+        "INFO",
+        f"Update request for Aggregate {aggregate_id} properties.",
+        category="api.contexts.aggregates.update_properties.request",
+        params={
+            **http_context(request),
+            "aggregate_id": aggregate_id,
+            "properties_count": len(properties),
+        },
+    )
+    try:
+        # Convert properties to PropertyOps format
+        rows = []
+        for prop in properties:
+            if not prop.get("name") or not prop.get("type"):
+                continue
+            rows.append({
+                "parentType": "Aggregate",
+                "parentId": aggregate_id,
+                "name": prop.get("name"),
+                "type": prop.get("type"),
+                "description": prop.get("description", ""),
+                "isKey": prop.get("isKey", False),
+                "isForeignKey": prop.get("isForeignKey", False),
+                "isRequired": prop.get("isRequired", False),
+                "fkTargetHint": prop.get("fkTargetHint"),
+            })
+        
+        if not rows:
+            raise ValueError("No valid properties provided")
+        
+        # Upsert properties using direct query
+        query = """
+        UNWIND $rows as row
+        WITH row
+        WHERE row.parentType IN ['Aggregate','Command','Event','ReadModel']
+          AND row.parentId IS NOT NULL AND trim(toString(row.parentId)) <> ''
+          AND row.name IS NOT NULL AND trim(toString(row.name)) <> ''
+          AND row.type IS NOT NULL AND trim(toString(row.type)) <> ''
+        MERGE (p:Property {parentType: row.parentType, parentId: row.parentId, name: row.name})
+        ON CREATE SET p.id = randomUUID(),
+                      p.createdAt = datetime()
+        SET p.type = row.type,
+            p.description = coalesce(row.description, ''),
+            p.isKey = coalesce(row.isKey, false),
+            p.isForeignKey = coalesce(row.isForeignKey, false),
+            p.isRequired = coalesce(row.isRequired, false),
+            p.parentType = row.parentType,
+            p.parentId = row.parentId,
+            p.fkTargetHint = row.fkTargetHint,
+            p.updatedAt = datetime()
+        WITH row, p
+        MATCH (parent {id: row.parentId})
+        WHERE row.parentType IN labels(parent)
+        MERGE (parent)-[:HAS_PROPERTY]->(p)
+        RETURN count(p) as upserted
+        """
+        with get_session() as session:
+            result = session.run(query, rows=rows).single()
+            upserted = int((result or {}).get("upserted") or 0)
+        
+        # Fetch updated aggregate with properties
+        query = """
+        MATCH (agg:Aggregate {id: $aggregate_id})
+        OPTIONAL MATCH (agg)-[:HAS_PROPERTY]->(prop:Property)
+        WITH agg, collect(DISTINCT prop {
+            .id, .name, .type, .description, .isKey, .isForeignKey, .isRequired
+        }) as properties
+        RETURN {
+            id: agg.id,
+            name: agg.name,
+            rootEntity: agg.rootEntity,
+            invariants: agg.invariants,
+            properties: properties
+        } as aggregate
+        """
+        with get_session() as session:
+            result_query = session.run(query, aggregate_id=aggregate_id)
+            record = result_query.single()
+            if not record:
+                raise ValueError(f"Aggregate {aggregate_id} not found")
+            agg_dict = dict(record["aggregate"])
+        
+        SmartLogger.log(
+            "INFO",
+            f"Aggregate {aggregate_id} properties updated successfully.",
+            category="api.contexts.aggregates.update_properties.done",
+            params={**http_context(request), "aggregate_id": aggregate_id, "upserted": upserted},
+        )
+        return agg_dict
+    except ValueError as e:
+        SmartLogger.log(
+            "ERROR",
+            f"Failed to update Aggregate {aggregate_id} properties: {e}",
+            category="api.contexts.aggregates.update_properties.error",
+            params={**http_context(request), "aggregate_id": aggregate_id, "error": str(e)},
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        SmartLogger.log(
+            "ERROR",
+            f"An unexpected error occurred while updating Aggregate {aggregate_id} properties: {e}",
+            category="api.contexts.aggregates.update_properties.unexpected_error",
+            params={**http_context(request), "aggregate_id": aggregate_id, "error": str(e)},
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.put("/aggregates/{aggregate_id}/enumerations-valueobjects")
+async def update_aggregate_enumerations_valueobjects(
+    aggregate_id: str,
+    request: Request,
+    enumerations: list[dict[str, Any]] = Body(default=[]),
+    value_objects: list[dict[str, Any]] = Body(default=[]),
+) -> dict[str, Any]:
+    """
+    PUT /api/contexts/aggregates/{id}/enumerations-valueobjects - Aggregate의 Enumerations와 ValueObjects 업데이트
+    Aggregate Viewer에서 Enumerations와 ValueObjects를 수정할 때 사용됩니다.
+    """
+    SmartLogger.log(
+        "INFO",
+        f"Update request for Aggregate {aggregate_id} enumerations and value objects.",
+        category="api.contexts.aggregates.update_enum_vo.request",
+        params={
+            **http_context(request),
+            "aggregate_id": aggregate_id,
+            "enumerations_count": len(enumerations),
+            "value_objects_count": len(value_objects),
+        },
+    )
+    try:
+        # Use get_session directly instead of AggregateOps instance
+        # AggregateOps methods use self.session() which requires Neo4jClient mixin
+        # So we'll implement the update logic directly here
+        from api.features.ingestion.event_storming.neo4j_ops.aggregates import AggregateOps
+        from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+        
+        neo4j_client = get_neo4j_client()
+        updated = neo4j_client.update_aggregate_enumerations_and_value_objects(
+            aggregate_id=aggregate_id,
+            enumerations=enumerations,
+            value_objects=value_objects,
+        )
+        
+        # Parse JSON strings back to lists for return value
+        if isinstance(updated.get("enumerations"), str):
+            try:
+                updated["enumerations"] = json.loads(updated["enumerations"])
+            except (json.JSONDecodeError, TypeError):
+                updated["enumerations"] = []
+        elif updated.get("enumerations") is None:
+            updated["enumerations"] = []
+        
+        if isinstance(updated.get("valueObjects"), str):
+            try:
+                updated["valueObjects"] = json.loads(updated["valueObjects"])
+            except (json.JSONDecodeError, TypeError):
+                updated["valueObjects"] = []
+        elif updated.get("valueObjects") is None:
+            updated["valueObjects"] = []
+        
+        SmartLogger.log(
+            "INFO",
+            f"Aggregate {aggregate_id} enumerations and value objects updated successfully.",
+            category="api.contexts.aggregates.update_enum_vo.done",
+            params={**http_context(request), "aggregate_id": aggregate_id},
+        )
+        return updated
+    except ValueError as e:
+        SmartLogger.log(
+            "ERROR",
+            f"Failed to update Aggregate {aggregate_id} enumerations and value objects: {e}",
+            category="api.contexts.aggregates.update_enum_vo.error",
+            params={**http_context(request), "aggregate_id": aggregate_id, "error": str(e)},
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        SmartLogger.log(
+            "ERROR",
+            f"An unexpected error occurred while updating Aggregate {aggregate_id} enumerations and value objects: {e}",
+            category="api.contexts.aggregates.update_enum_vo.unexpected_error",
+            params={**http_context(request), "aggregate_id": aggregate_id, "error": str(e)},
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 

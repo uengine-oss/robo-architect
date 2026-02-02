@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { VueFlow, useVueFlow } from '@vue-flow/core'
+import { ref, computed, onMounted, onUnmounted, markRaw } from 'vue'
+import { VueFlow, useVueFlow, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
@@ -59,26 +59,226 @@ const inspectingInitialTab = ref('properties')
 
 const { fitView, zoomIn, zoomOut } = useVueFlow()
 
+// Hover state for highlighting connections
+const hoveredNodeId = ref(null)
+const hoveredEdgeId = ref(null)
+
+// Get BC ID for a node
+const getNodeBcId = (nodeId) => {
+  const node = canvasStore.nodes.find(n => n.id === nodeId)
+  if (!node) return null
+  // BC node itself
+  if (node.type === 'boundedcontext') return node.id
+  // Node inside a BC
+  return node.parentNode || node.data?.bcId || null
+}
+
+// Get directly connected nodes and edges only (1-hop, no recursion)
+// Only follows actual relation edges (EMITS, TRIGGERS, INVOKES, HAS_COMMAND)
+const getAllConnectedNodesAndEdges = (startNodeId) => {
+  const connectedNodes = new Set([startNodeId])
+  const connectedEdges = new Set()
+  
+  // Valid relation edge types (exclude container membership edges)
+  const validEdgeTypes = ['EMITS', 'TRIGGERS', 'INVOKES', 'HAS_COMMAND']
+  
+  // Valid relation edge colors (for backward compatibility)
+  const validEdgeColors = ['#fd7e14', '#b197fc', '#5c7cfa', '#fcc419']
+  
+  // Find all edges directly connected to start node (1-hop only)
+  canvasStore.edges.forEach(edge => {
+    // Only follow valid relation edges
+    const edgeType = edge.data?.edgeType
+    
+    // Check if this is a valid relation edge
+    let isValidRelation = false
+    
+    if (edgeType) {
+      // If edgeType is stored, check if it's valid
+      isValidRelation = validEdgeTypes.includes(edgeType)
+    } else {
+      // If edgeType is not stored, be very strict:
+      // Must have valid color AND valid label
+      // This excludes container membership edges and other non-relation edges
+      const stroke = edge.style?.stroke
+      const hasValidLabel = edge.label && ['triggers', 'invokes', 'emits', 'has_command'].includes(edge.label.toLowerCase())
+      const hasValidColor = stroke && validEdgeColors.includes(stroke)
+      
+      // Only consider it valid if it has BOTH valid color AND valid label
+      isValidRelation = hasValidColor && hasValidLabel
+    }
+    
+    // Skip if not a valid relation edge
+    if (!isValidRelation) {
+      return
+    }
+    
+    // Additional check: exclude edges where source or target is a BC node
+    const sourceNode = canvasStore.nodes.find(n => n.id === edge.source)
+    const targetNode = canvasStore.nodes.find(n => n.id === edge.target)
+    if (sourceNode?.type === 'boundedcontext' || targetNode?.type === 'boundedcontext') {
+      return
+    }
+    
+    let nextNodeId = null
+    
+    if (edge.source === startNodeId) {
+      nextNodeId = edge.target
+    } else if (edge.target === startNodeId) {
+      nextNodeId = edge.source
+    }
+    
+    // Only proceed if we found a directly connected node
+    if (!nextNodeId) {
+      return
+    }
+    
+    // Add edge to connected set
+    connectedEdges.add(edge.id)
+    
+    // Add directly connected node (1-hop only, no recursion)
+    connectedNodes.add(nextNodeId)
+  })
+  
+  return {
+    nodes: connectedNodes,
+    edges: Array.from(connectedEdges)
+  }
+}
+
+// Get connected node IDs for a given node (legacy, kept for compatibility)
+const getConnectedNodeIds = (nodeId) => {
+  const { nodes } = getAllConnectedNodesAndEdges(nodeId)
+  return nodes
+}
+
+// Get connected edge IDs for a given node (including all chain connections)
+const getConnectedEdgeIds = (nodeId) => {
+  const { edges } = getAllConnectedNodesAndEdges(nodeId)
+  return edges
+}
+
+// Get cross-BC connected node IDs (nodes in other BCs connected via edges)
+const getCrossBcConnectedNodeIds = (nodeId) => {
+  const nodeBcId = getNodeBcId(nodeId)
+  const { nodes } = getAllConnectedNodesAndEdges(nodeId)
+  
+  // Filter to only nodes in different BCs
+  const crossBcNodes = new Set()
+  nodes.forEach(nodeId => {
+    const nodeBc = getNodeBcId(nodeId)
+    if (nodeBc !== nodeBcId && nodeBc !== null) {
+      crossBcNodes.add(nodeId)
+    }
+  })
+  
+  return crossBcNodes
+}
+
 const nodesWithSelection = computed(() => {
-  return canvasStore.nodes.map(node => ({
-    ...node,
-    class: canvasStore.isSelected(node.id) ? 'es-node--selected' : ''
-  }))
+  // Check if hovered node is a BC node - if so, don't highlight anything
+  const hoveredNode = hoveredNodeId.value ? canvasStore.nodes.find(n => n.id === hoveredNodeId.value) : null
+  const isHoveredBcNode = hoveredNode?.type === 'boundedcontext'
+  
+  // If hovering over BC node, don't apply any highlighting
+  if (isHoveredBcNode) {
+    return canvasStore.nodes.map(node => ({
+      ...node,
+      class: canvasStore.isSelected(node.id) ? 'es-node--selected' : ''
+    }))
+  }
+  
+  const connectedNodeIds = hoveredNodeId.value 
+    ? getConnectedNodeIds(hoveredNodeId.value)
+    : new Set()
+  const crossBcConnectedNodeIds = hoveredNodeId.value
+    ? getCrossBcConnectedNodeIds(hoveredNodeId.value)
+    : new Set()
+  const connectedEdgeIds = hoveredNodeId.value
+    ? getConnectedEdgeIds(hoveredNodeId.value)
+    : []
+  const edgeConnectedNodeIds = hoveredEdgeId.value
+    ? new Set([canvasStore.edges.find(e => e.id === hoveredEdgeId.value)?.source, 
+                canvasStore.edges.find(e => e.id === hoveredEdgeId.value)?.target].filter(Boolean))
+    : new Set()
+  
+  return canvasStore.nodes.map(node => {
+    // Skip highlighting for BC nodes themselves
+    if (node.type === 'boundedcontext') {
+      return {
+        ...node,
+        class: canvasStore.isSelected(node.id) ? 'es-node--selected' : ''
+      }
+    }
+    
+    const isConnected = connectedNodeIds.has(node.id) || edgeConnectedNodeIds.has(node.id)
+    const isCrossBcConnected = crossBcConnectedNodeIds.has(node.id)
+    
+    return {
+      ...node,
+      class: [
+        canvasStore.isSelected(node.id) ? 'es-node--selected' : '',
+        (hoveredNodeId.value === node.id || isConnected || isCrossBcConnected) ? 'es-node--highlighted' : '',
+        hoveredNodeId.value && !isConnected && !isCrossBcConnected && hoveredNodeId.value !== node.id ? 'es-node--dimmed' : ''
+      ].filter(Boolean).join(' ')
+    }
+  })
 })
 
 // Vue Flow sometimes relies on reference changes to refresh edges rendering.
 // Wrap edges in a computed that returns a new array to ensure updates are picked up.
-const edgesForFlow = computed(() => [...canvasStore.edges])
+const edgesForFlow = computed(() => {
+  // Check if hovered node is a BC node - if so, don't highlight anything
+  const hoveredNode = hoveredNodeId.value ? canvasStore.nodes.find(n => n.id === hoveredNodeId.value) : null
+  const isHoveredBcNode = hoveredNode?.type === 'boundedcontext'
+  
+  // If hovering over BC node, don't apply any highlighting
+  if (isHoveredBcNode) {
+    return canvasStore.edges.map(edge => ({ ...edge }))
+  }
+  
+  const connectedEdgeIds = hoveredNodeId.value
+    ? getConnectedEdgeIds(hoveredNodeId.value)
+    : []
+  
+  // Check if edge is cross-BC
+  const isCrossBcEdge = (edge) => {
+    const sourceBcId = getNodeBcId(edge.source)
+    const targetBcId = getNodeBcId(edge.target)
+    return sourceBcId !== null && targetBcId !== null && sourceBcId !== targetBcId
+  }
+  
+  return canvasStore.edges.map(edge => {
+    const isConnected = connectedEdgeIds.includes(edge.id)
+    const isHovered = hoveredEdgeId.value === edge.id
+    const isCrossBc = isCrossBcEdge(edge)
+    const isHighlighted = isHovered || isConnected
+    
+    return {
+      ...edge,
+      class: [
+        isHighlighted ? 'vue-flow__edge--highlighted' : '',
+        isCrossBc && isHighlighted ? 'vue-flow__edge--cross-bc' : '',
+        hoveredNodeId.value && !isConnected && !isHovered ? 'vue-flow__edge--dimmed' : ''
+      ].filter(Boolean).join(' '),
+      // Increase z-index for highlighted edges to appear above dimmed nodes
+      style: {
+        ...edge.style,
+        zIndex: isHighlighted ? 20 : (hoveredNodeId.value && !isConnected && !isHovered ? 1 : undefined)
+      }
+    }
+  })
+})
 
-// Node types mapping
+// Node types mapping (use markRaw to prevent reactive wrapping)
 const nodeTypes = {
-  command: CommandNode,
-  event: EventNode,
-  policy: PolicyNode,
-  aggregate: AggregateNode,
-  boundedcontext: BoundedContextNode,
-  readmodel: ReadModelNode,
-  ui: UINode
+  command: markRaw(CommandNode),
+  event: markRaw(EventNode),
+  policy: markRaw(PolicyNode),
+  aggregate: markRaw(AggregateNode),
+  boundedcontext: markRaw(BoundedContextNode),
+  readmodel: markRaw(ReadModelNode),
+  ui: markRaw(UINode)
 }
 
 // MiniMap node color
@@ -172,6 +372,28 @@ async function onNodeDoubleClick(event) {
 }
 
 // CQRS editor has been removed from the UI; keep Inspector as the single entry point.
+
+// Node hover handlers
+function onNodeMouseEnter(event) {
+  // Skip highlighting for BC nodes themselves
+  if (event.node.type === 'boundedcontext') {
+    return
+  }
+  hoveredNodeId.value = event.node.id
+}
+
+function onNodeMouseLeave() {
+  hoveredNodeId.value = null
+}
+
+// Edge hover handlers
+function onEdgeMouseEnter(event) {
+  hoveredEdgeId.value = event.edge.id
+}
+
+function onEdgeMouseLeave() {
+  hoveredEdgeId.value = null
+}
 
 // Handle drop from navigator
 async function handleDrop(event) {
@@ -323,6 +545,10 @@ onUnmounted(() => {
           @nodes-change="onNodesChange"
           @node-click="onNodeClick"
           @node-double-click="onNodeDoubleClick"
+          @node-mouse-enter="onNodeMouseEnter"
+          @node-mouse-leave="onNodeMouseLeave"
+          @edge-mouse-enter="onEdgeMouseEnter"
+          @edge-mouse-leave="onEdgeMouseLeave"
           @pane-click="onPaneClick"
         >
           <Background pattern-color="#2a2a3a" :gap="20" />
@@ -500,6 +726,79 @@ onUnmounted(() => {
   outline: 3px solid var(--color-accent) !important;
   outline-offset: 3px !important;
   box-shadow: 0 0 20px rgba(34, 139, 230, 0.4) !important;
+}
+
+/* Highlighted node (hovered or connected) */
+.vue-flow__node.es-node--highlighted {
+  outline: 3px solid #fcc419 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 20px rgba(252, 196, 25, 0.5) !important;
+  z-index: 10 !important;
+  transition: all 0.2s ease !important;
+}
+
+/* Ensure edges layer is above nodes */
+.vue-flow__edges {
+  z-index: 5 !important;
+}
+
+/* Dimmed node (not connected to hovered node) */
+.vue-flow__node.es-node--dimmed {
+  opacity: 0.6 !important;
+  transition: opacity 0.2s ease !important;
+  z-index: 1 !important;
+}
+
+/* Highlighted edge (hovered or connected to hovered node) - ensure it's above everything */
+.vue-flow__edge.vue-flow__edge--highlighted {
+  z-index: 1000 !important;
+  position: relative;
+  pointer-events: auto !important;
+}
+
+.vue-flow__edge.vue-flow__edge--highlighted .vue-flow__edge-path {
+  stroke-width: 7 !important;
+  filter: 
+    drop-shadow(0 0 10px currentColor) 
+    drop-shadow(0 0 6px rgba(252, 196, 25, 1))
+    drop-shadow(0 0 3px rgba(255, 255, 255, 1));
+  z-index: 1000 !important;
+  transition: all 0.2s ease !important;
+  paint-order: stroke fill;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Add a white outline effect for better visibility over nodes */
+  stroke: currentColor;
+  stroke-opacity: 1;
+}
+
+.vue-flow__edge.vue-flow__edge--highlighted .vue-flow__edge-text {
+  font-weight: 600 !important;
+  font-size: 11px !important;
+}
+
+/* Dimmed edge (not connected to hovered node) */
+.vue-flow__edge.vue-flow__edge--dimmed {
+  z-index: 1 !important;
+}
+
+.vue-flow__edge.vue-flow__edge--dimmed .vue-flow__edge-path {
+  opacity: 0.3 !important;
+  transition: opacity 0.2s ease !important;
+}
+
+/* Cross-BC edge highlight */
+.vue-flow__edge.vue-flow__edge--cross-bc .vue-flow__edge-path {
+  stroke-width: 3 !important;
+  stroke-dasharray: 8 4 !important;
+  filter: drop-shadow(0 0 6px #fcc419);
+}
+
+/* Edge hover effect */
+.vue-flow__edge:hover .vue-flow__edge-path {
+  stroke-width: 3 !important;
+  filter: drop-shadow(0 0 3px currentColor);
+  cursor: pointer;
 }
 
 /* Vue Flow Minimap custom styles */

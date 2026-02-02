@@ -17,6 +17,7 @@ class CommandOps:
         aggregate_id: str,
         key: str | None = None,
         actor: str = "user",
+        category: str | None = None,
         input_schema: str | None = None,
     ) -> dict[str, Any]:
         """Create a new command and link it to an aggregate."""
@@ -35,10 +36,11 @@ class CommandOps:
             SET cmd.key = $key,
                 cmd.name = $name,
                 cmd.actor = $actor,
+                cmd.category = $category,
                 cmd.inputSchema = $input_schema,
                 cmd.updatedAt = datetime()
             MERGE (agg)-[:HAS_COMMAND]->(cmd)
-            RETURN cmd {.id, .key, .name, .actor, .inputSchema} as command
+            RETURN cmd {.id, .key, .name, .actor, .category, .inputSchema} as command
             """
             result = session.run(
                 query,
@@ -46,6 +48,7 @@ class CommandOps:
                 name=name,
                 aggregate_id=aggregate_id,
                 actor=actor,
+                category=category,
                 input_schema=input_schema,
             )
             return dict(result.single()["command"])
@@ -60,6 +63,7 @@ class CommandOps:
             id: cmd.id,
             name: cmd.name,
             actor: cmd.actor,
+            category: cmd.category,
             inputSchema: cmd.inputSchema,
             emits: emits
         } as command

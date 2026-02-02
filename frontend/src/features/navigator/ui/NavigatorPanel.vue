@@ -172,7 +172,7 @@ async function handleRefresh() {
             <TreeNode
               v-for="ctx in navigatorStore.contexts"
               :key="ctx.id"
-              :node="{ ...ctx, type: 'BoundedContext' }"
+              :node="{ ...ctx, type: 'BoundedContext', domainType: ctx.domainType }"
               :tree="navigatorStore.contextTrees[ctx.id]"
             />
           </TransitionGroup>

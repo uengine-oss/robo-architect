@@ -1,7 +1,9 @@
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, inject } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
+import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.store'
 
 const props = defineProps({
@@ -21,7 +23,12 @@ const props = defineProps({
 
 const navigatorStore = useNavigatorStore()
 const canvasStore = useCanvasStore()
+const aggregateViewerStore = useAggregateViewerStore()
+const bigPictureStore = useBigPictureStore()
 const userStoryEditor = useUserStoryEditorStore()
+
+// Inject activeTab from App.vue
+const activeTab = inject('activeTab', ref('Design'))
 
 const isDragging = ref(false)
 const showEntrance = ref(false)
@@ -62,6 +69,22 @@ const displayName = computed(() => {
     const role = props.node.role || 'user'
     const action = props.node.action || ''
     return `${role}: ${action.substring(0, 30)}${action.length > 30 ? '...' : ''}`
+  }
+  if (props.node.type === 'BoundedContext') {
+    const name = props.node.name || ''
+    // Try multiple possible field names
+    const domainType = props.node.domainType || props.node.domain_type || props.node.domainType
+    if (domainType) {
+      // Map full names to short labels
+      const typeMap = {
+        'Core Domain': 'core',
+        'Supporting Domain': 'supporting',
+        'Generic Domain': 'generic'
+      }
+      const shortLabel = typeMap[domainType] || domainType.toLowerCase().replace(' domain', '')
+      return `${name} (${shortLabel})`
+    }
+    return name
   }
   if (props.node.type === 'CQRSOperation') {
     const opType = props.node.operationType || props.node.operation_type || 'OP'
@@ -154,7 +177,38 @@ const hasChildren = computed(() => children.value.length > 0)
 
 const isExpanded = computed(() => navigatorStore.isExpanded(props.node.id))
 
-const isOnCanvas = computed(() => canvasStore.isOnCanvas(props.node.id))
+// Check if node is on the currently active viewer's canvas
+// Only check the active viewer to ensure proper synchronization
+const isOnCanvas = computed(() => {
+  const nodeId = props.node.id
+  const nodeType = props.node.type
+  const currentTab = activeTab.value
+  
+  // For BoundedContext, check only the active viewer
+  if (nodeType === 'BoundedContext') {
+    if (currentTab === 'Design') {
+      // Design Viewer - use nodeIds computed (reactive)
+      return canvasStore.nodeIds.includes(nodeId)
+    } else if (currentTab === 'Aggregate') {
+      // Aggregate Viewer - check selectedBcIds
+      const selectedBcIdsArray = Array.from(aggregateViewerStore.selectedBcIds)
+      return selectedBcIdsArray.includes(nodeId)
+    } else if (currentTab === 'Big picture') {
+      // Big Picture Viewer - check swimlanes
+      const swimlanes = bigPictureStore.swimlanes
+      return swimlanes.some(lane => lane.bcId === nodeId)
+    }
+    // Default to Design Viewer
+    return canvasStore.nodeIds.includes(nodeId)
+  }
+  
+  // For other node types, check Design Viewer (default behavior)
+  if (currentTab === 'Design') {
+    return canvasStore.nodeIds.includes(nodeId)
+  }
+  // Other viewers don't show non-BC nodes in navigator
+  return false
+})
 
 function toggleExpand() {
   navigatorStore.toggleExpanded(props.node.id)
@@ -174,7 +228,10 @@ async function handleDoubleClick() {
 // Drag handlers
 function handleDragStart(event) {
   isDragging.value = true
+  // Include both formats for compatibility
   event.dataTransfer.setData('application/json', JSON.stringify({
+    id: props.node.id,
+    type: props.node.type,
     nodeId: props.node.id,
     nodeType: props.node.type,
     nodeData: props.node
@@ -188,8 +245,26 @@ function handleDragEnd() {
 
 // Add node to canvas with expanded data (including BC container)
 async function addToCanvas() {
+  const currentTab = activeTab.value
+  
+  // Check if already on the active viewer's canvas
   if (isOnCanvas.value) return
   
+  // For BoundedContext, check which viewer to add to based on activeTab
+  if (props.node.type === 'BoundedContext') {
+    if (currentTab === 'Aggregate') {
+      // Add to Aggregate Viewer
+      await aggregateViewerStore.fetchAggregatesForBC(props.node.id)
+      return
+    } else if (currentTab === 'Big picture') {
+      // Add to Big Picture Viewer with outbound flow
+      await bigPictureStore.addBCWithOutboundFlow(props.node.id)
+      return
+    }
+    // Fall through to Design Viewer for 'Design' tab or other cases
+  }
+  
+  // For other node types or BC when Design Viewer is active, add to Design Viewer
   try {
     // Use the new API that includes BC context
     const response = await fetch(`/api/graph/expand-with-bc/${props.node.id}`)

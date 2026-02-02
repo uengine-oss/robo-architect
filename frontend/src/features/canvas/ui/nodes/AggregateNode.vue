@@ -12,6 +12,9 @@ const terminologyStore = useTerminologyStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Aggregate')} >>`)
 
 const hasProperties = computed(() => Array.isArray(props.data?.properties) && props.data.properties.length > 0)
+const hasEnumerations = computed(() => Array.isArray(props.data?.enumerations) && props.data.enumerations.length > 0)
+const hasValueObjects = computed(() => Array.isArray(props.data?.valueObjects) && props.data.valueObjects.length > 0)
+const hasFields = computed(() => hasProperties.value || hasEnumerations.value || hasValueObjects.value)
 
 // Dynamic height based on (a) the number of Commands this Aggregate spans and (b) embedded properties
 const nodeStyle = computed(() => {
@@ -34,8 +37,11 @@ const nodeStyle = computed(() => {
         {{ data.rootEntity }}
       </div>
 
-      <div v-if="hasProperties" class="es-node__props">
-        <div v-for="prop in data.properties" :key="prop.id" class="es-node__prop">
+      <div v-if="hasFields" class="es-node__props">
+        <div class="es-node__section-label">Properties</div>
+        
+        <!-- Regular Properties -->
+        <div v-for="prop in (data.properties || [])" :key="prop.id" class="es-node__prop">
           <span class="prop-badges">
             <span v-if="prop.isKey" class="prop-badge prop-badge--key">PK</span>
             <span v-if="prop.isForeignKey" class="prop-badge prop-badge--fk">FK</span>
@@ -43,12 +49,30 @@ const nodeStyle = computed(() => {
           <span class="prop-name">{{ prop.name }}</span>
           <span class="prop-type">{{ prop.type }}</span>
         </div>
+        
+        <!-- Enumerations as fields -->
+        <div v-for="enumItem in (data.enumerations || [])" :key="`enum-${enumItem.name}`" class="es-node__prop">
+          <span class="prop-badges"></span>
+          <span class="prop-name">{{ enumItem.name }}</span>
+          <span class="prop-type">Enum</span>
+        </div>
+        
+        <!-- Value Objects as fields -->
+        <div v-for="vo in (data.valueObjects || [])" :key="`vo-${vo.name}`" class="es-node__prop">
+          <span class="prop-badges"></span>
+          <span class="prop-name">{{ vo.name }}</span>
+          <span class="prop-type">ValueObject</span>
+        </div>
       </div>
     </div>
     
     <!-- Connection handles -->
-    <Handle type="target" :position="Position.Top" />
-    <Handle type="source" :position="Position.Bottom" />
+    <!-- Top/Bottom handles for vertical flow (kept for backward compatibility) -->
+    <Handle type="target" :position="Position.Top" id="top" />
+    <Handle type="source" :position="Position.Bottom" id="bottom" />
+    <!-- Left/Right handles for horizontal flow (preferred for better edge routing) -->
+    <Handle type="target" :position="Position.Left" id="left" />
+    <Handle type="source" :position="Position.Right" id="right" />
   </div>
 </template>
 
@@ -121,6 +145,22 @@ const nodeStyle = computed(() => {
   color: rgba(0, 0, 0, 0.75);
 }
 
+.prop-badge--enum {
+  background: rgba(92, 124, 250, 0.2);
+  color: rgba(92, 124, 250, 0.9);
+}
+
+.prop-badge--vo {
+  background: rgba(64, 192, 87, 0.2);
+  color: rgba(64, 192, 87, 0.9);
+}
+
+.prop-badge--ref {
+  background: rgba(253, 126, 20, 0.2);
+  color: rgba(253, 126, 20, 0.9);
+  font-size: 0.5rem;
+}
+
 .prop-name {
   font-weight: 600;
   color: rgba(0, 0, 0, 0.8);
@@ -132,6 +172,16 @@ const nodeStyle = computed(() => {
 .prop-type {
   color: rgba(0, 0, 0, 0.55);
   font-style: italic;
+}
+
+.es-node__section-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.5);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.15);
 }
 
 /* Handle styling */

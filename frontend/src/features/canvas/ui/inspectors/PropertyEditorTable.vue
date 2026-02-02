@@ -67,8 +67,15 @@ function recommendedIdStyle(name, row) {
 
 function snapshotPropsFromNode(n) {
   const data = n?.data || {}
-  const list = Array.isArray(data?.properties) ? data.properties : []
-  return list.map(p => ({
+  const props = Array.isArray(data?.properties) ? data.properties : []
+  const enums = Array.isArray(data?.enumerations) ? data.enumerations : []
+  const vos = Array.isArray(data?.valueObjects) ? data.valueObjects : []
+  
+  const result = []
+  
+  // Add regular properties (editable) - first
+  props.forEach(p => {
+    result.push({
     id: String(p?.id || ''),
     name: String(p?.name ?? ''),
     type: String(p?.type ?? ''),
@@ -76,9 +83,53 @@ function snapshotPropsFromNode(n) {
     isKey: toBool(p?.isKey),
     isForeignKey: toBool(p?.isForeignKey),
     isRequired: toBool(p?.isRequired),
+      isReadOnly: false,
+      fieldType: 'property',
     parentType: String(p?.parentType ?? data?.type ?? ''),
     parentId: String(p?.parentId ?? n?.id ?? '')
-  }))
+    })
+  })
+  
+  // Add enumerations (read-only) - after properties
+  enums.forEach((e, idx) => {
+    if (e && e.name) {
+      result.push({
+        id: `enum-${e.name}-${idx}`,
+        name: String(e.name ?? ''),
+        type: 'Enum',
+        description: String(e.alias ?? ''),
+        isKey: false,
+        isForeignKey: false,
+        isRequired: false,
+        isReadOnly: true,
+        fieldType: 'enum',
+        parentType: String(data?.type ?? ''),
+        parentId: String(n?.id ?? '')
+      })
+    }
+  })
+  
+  // Add value objects (read-only) - after enumerations
+  vos.forEach((vo, idx) => {
+    if (vo && vo.name) {
+      result.push({
+        id: `vo-${vo.name}-${idx}`,
+        name: String(vo.name ?? ''),
+        type: 'ValueObject',
+        description: String(vo.alias ?? ''),
+        isKey: false,
+        isForeignKey: false,
+        isRequired: false,
+        isReadOnly: true,
+        fieldType: 'valueObject',
+        referencedAggregateName: vo.referencedAggregateName || null,
+        parentType: String(data?.type ?? ''),
+        parentId: String(n?.id ?? '')
+      })
+    }
+  })
+  
+  return result
 }
 
 const state = reactive({
@@ -625,10 +676,12 @@ onMounted(() => {
             v-for="(row, rowIndex) in visibleRows" 
             :key="row.id"
             class="prop-row"
+            :class="{ 'prop-row--readonly': row.isReadOnly }"
           >
             <!-- Name -->
             <td>
               <input
+                v-if="!row.isReadOnly"
                 class="prop-input"
                 type="text"
                 v-model="row.name"
@@ -636,17 +689,18 @@ onMounted(() => {
                 placeholder="ex) orderId"
                 @keydown="handleRowKeydown($event, row, rowIndex)"
               />
-              <div v-if="rowIssues[row.id]?.errors?.length" class="prop-issue error">
+              <span v-else class="prop-readonly">{{ row.name }}</span>
+              <div v-if="!row.isReadOnly && rowIssues[row.id]?.errors?.length" class="prop-issue error">
                 {{ rowIssues[row.id].errors[0] }}
               </div>
-              <div v-else-if="rowIssues[row.id]?.warnings?.length" class="prop-issue warn">
+              <div v-else-if="!row.isReadOnly && rowIssues[row.id]?.warnings?.length" class="prop-issue warn">
                 {{ rowIssues[row.id].warnings[0] }}
               </div>
             </td>
 
             <!-- Type (Combobox) -->
             <td>
-              <div class="prop-combobox">
+              <div v-if="!row.isReadOnly" class="prop-combobox">
                 <input
                   class="prop-input prop-combobox__input"
                   type="text"
@@ -678,6 +732,7 @@ onMounted(() => {
                   </div>
                 </div>
               </div>
+              <span v-else class="prop-readonly">{{ row.type }}</span>
             </td>
 
             <!-- Description (preview + edit button) -->
@@ -688,6 +743,7 @@ onMounted(() => {
                   :title="row.description || '(설명 없음)'"
                 >{{ truncateDesc(row.description) }}</span>
                 <button
+                  v-if="!row.isReadOnly"
                   class="prop-icon-btn prop-action"
                   :disabled="disabled"
                   @click="openDescPopover(row, $event)"
@@ -698,9 +754,17 @@ onMounted(() => {
               </div>
             </td>
 
-            <!-- Badges (Key, FK, Req) -->
+            <!-- Badges (Key, FK, Req, Enum, VO) -->
             <td>
               <div class="prop-badges">
+                <!-- Read-only badges for Enum/VO -->
+                <span v-if="row.fieldType === 'enum'" class="prop-badge prop-badge--enum-readonly">Enum</span>
+                <span v-if="row.fieldType === 'valueObject'" class="prop-badge prop-badge--vo-readonly">
+                  VO<span v-if="row.referencedAggregateName"> (→ {{ row.referencedAggregateName }})</span>
+                </span>
+                
+                <!-- Editable badges for properties -->
+                <template v-if="!row.isReadOnly">
                 <button
                   class="prop-badge"
                   :class="{ 'prop-badge--key': row.isKey }"
@@ -731,12 +795,14 @@ onMounted(() => {
                   <span class="prop-badge__icon" v-html="IconCheck"></span>
                   <span class="prop-badge__label">Req</span>
                 </button>
+                </template>
               </div>
             </td>
 
             <!-- Delete (trash icon) -->
             <td class="center">
               <button
+                v-if="!row.isReadOnly"
                 class="prop-icon-btn prop-icon-btn--delete prop-action"
                 :disabled="disabled"
                 @click="openDeleteConfirm(row)"
@@ -941,6 +1007,13 @@ onMounted(() => {
 .prop-row:hover {
   background: var(--color-bg-tertiary);
 }
+.prop-row--readonly {
+  background: var(--color-bg-tertiary);
+  opacity: 0.9;
+}
+.prop-row--readonly:hover {
+  background: var(--color-bg-tertiary);
+}
 
 /* Hover actions - show on row hover */
 .prop-action {
@@ -964,6 +1037,14 @@ onMounted(() => {
 .prop-input:focus {
   outline: none;
   border-color: var(--color-accent);
+}
+
+.prop-readonly {
+  display: inline-block;
+  padding: 4px 6px;
+  font-size: 0.65rem;
+  color: var(--color-text);
+  font-weight: 500;
 }
 
 .prop-issue {
@@ -1156,6 +1237,32 @@ onMounted(() => {
 /* Req locked (when isKey is true) */
 .prop-badge--locked {
   opacity: 0.7;
+}
+
+/* Read-only badges for Enum/VO */
+.prop-badge--enum-readonly {
+  background: rgba(92, 124, 250, 0.2);
+  border-color: #5c7cfa;
+  color: #5c7cfa;
+  opacity: 1;
+  cursor: default;
+}
+
+.prop-badge--vo-readonly {
+  background: rgba(64, 192, 87, 0.2);
+  border-color: #40c057;
+  color: #40c057;
+  opacity: 1;
+  cursor: default;
+}
+
+.prop-badge--ref-readonly {
+  background: rgba(253, 126, 20, 0.2);
+  border-color: #fd7e14;
+  color: #fd7e14;
+  opacity: 1;
+  cursor: default;
+  font-size: 0.6rem;
 }
 
 /* ============================================

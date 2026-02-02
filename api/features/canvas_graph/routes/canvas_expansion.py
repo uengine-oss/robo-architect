@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -22,6 +23,28 @@ def _dedupe_relationships(relationships: list[dict[str, Any]]) -> list[dict[str,
                 seen_rels.add(key)
                 unique_rels.append(rel)
     return unique_rels
+
+
+def _parse_aggregate_fields(agg_dict: dict[str, Any]) -> None:
+    """
+    Parse JSON strings for enumerations and valueObjects in an Aggregate node dict.
+    Modifies the dict in place.
+    """
+    if isinstance(agg_dict.get("enumerations"), str):
+        try:
+            agg_dict["enumerations"] = json.loads(agg_dict["enumerations"])
+        except (json.JSONDecodeError, TypeError):
+            agg_dict["enumerations"] = []
+    elif agg_dict.get("enumerations") is None:
+        agg_dict["enumerations"] = []
+    
+    if isinstance(agg_dict.get("valueObjects"), str):
+        try:
+            agg_dict["valueObjects"] = json.loads(agg_dict["valueObjects"])
+        except (json.JSONDecodeError, TypeError):
+            agg_dict["valueObjects"] = []
+    elif agg_dict.get("valueObjects") is None:
+        agg_dict["valueObjects"] = []
 
 
 def _to_jsonable(value: Any, _seen: set[int] | None = None) -> Any:
@@ -153,6 +176,9 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
         node_type = type_record["nodeType"]
         main_node = dict(type_record["node"])
         main_node["type"] = node_type
+        # Parse enumerations and valueObjects for Aggregate nodes
+        if node_type == "Aggregate":
+            _parse_aggregate_fields(main_node)
         SmartLogger.log(
             "INFO",
             "Expand node type resolved: determining expansion strategy.",
@@ -180,6 +206,7 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                 if record["agg"] and record["agg"]["id"] not in seen_ids:
                     agg = dict(record["agg"])
                     agg["type"] = "Aggregate"
+                    _parse_aggregate_fields(agg)
                     nodes.append(agg)
                     seen_ids.add(agg["id"])
                     if record["rel1"]["target"]:
@@ -415,6 +442,9 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
         bc = ctx_record["bc"]
         main_node = dict(ctx_record["n"])
         main_node["type"] = node_type
+        # Parse enumerations and valueObjects for Aggregate nodes
+        if node_type == "Aggregate":
+            _parse_aggregate_fields(main_node)
 
         nodes: list[dict[str, Any]] = []
         relationships: list[dict[str, Any]] = []
@@ -444,6 +474,7 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
                     agg = dict(record["agg"])
                     agg["type"] = "Aggregate"
                     agg["bcId"] = node_id
+                    _parse_aggregate_fields(agg)
                     nodes.append(agg)
                     seen_ids.add(agg["id"])
                     relationships.append({"source": node_id, "target": agg["id"], "type": "HAS_AGGREGATE"})

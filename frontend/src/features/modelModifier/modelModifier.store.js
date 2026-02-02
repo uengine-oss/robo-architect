@@ -35,16 +35,36 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
   // Confirm/apply state
   const isConfirming = ref(false)
 
+  // Selected nodes (for viewers other than Design)
+  // Format: [{id, name, type, ...}]
+  const selectedNodes = ref([])
+
   // Computed
   const hasMessages = computed(() => messages.value.length > 0)
   const lastMessage = computed(() => messages.value[messages.value.length - 1])
+  
+  // Get selected nodes from current viewer (Design uses canvasStore, others use selectedNodes)
+  const currentSelectedNodes = computed(() => {
+    // If using Design viewer, use canvasStore.selectedNodes
+    // For other viewers, use selectedNodes ref
+    // This will be determined by the active viewer context
+    return selectedNodes.value.length > 0 ? selectedNodes.value : canvasStore.selectedNodes
+  })
+
+  function setSelectedNodes(nodes) {
+    selectedNodes.value = Array.isArray(nodes) ? nodes : []
+  }
+
+  function clearSelection() {
+    selectedNodes.value = []
+  }
 
   async function sendMessage(content) {
     if (!content.trim()) return
 
-    // Get selected nodes context
-    const selectedNodes = canvasStore.selectedNodes
-    if (selectedNodes.length === 0) {
+    // Get selected nodes context (from current viewer)
+    const nodes = currentSelectedNodes.value
+    if (nodes.length === 0) {
       messages.value.push({
         id: generateId(),
         type: 'system',
@@ -75,7 +95,7 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     streamingContent.value = ''
 
     try {
-      await processModificationRequest(content, selectedNodes)
+      await processModificationRequest(content, nodes)
     } catch (e) {
       error.value = e.message
       messages.value.push({
@@ -407,7 +427,7 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     }
   }
 
-  return {
+    return {
     messages,
     isProcessing,
     isConfirming,
@@ -417,10 +437,14 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     reactTrace,
     error,
     appliedChanges,
+    selectedNodes,
+    currentSelectedNodes,
 
     hasMessages,
     lastMessage,
 
+    setSelectedNodes,
+    clearSelection,
     sendMessage,
     clearMessages,
     retryLast,

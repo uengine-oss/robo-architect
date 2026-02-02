@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref, watch, computed, shallowRef, markRaw } from 'vue'
+import { onMounted, onUnmounted, ref, watch, computed, shallowRef, markRaw, provide } from 'vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
@@ -15,6 +15,9 @@ const userStoryEditor = useUserStoryEditorStore()
 
 // Tab state management
 const activeTab = ref('Design')
+
+// Provide activeTab to child components
+provide('activeTab', activeTab)
 
 // Map tab names to components
 const tabComponents = {

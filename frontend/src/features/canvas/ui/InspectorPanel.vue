@@ -70,9 +70,11 @@ const form = ref({
   description: '',
   template: '',
   actor: '',
+  category: '',
   version: '',
   rootEntity: '',
   provisioningType: 'CQRS',
+  isMultipleResult: '',
   attachedToId: '',
   attachedToType: '',
   attachedToName: ''
@@ -109,12 +111,16 @@ function snapshotFromNode(n) {
     description: data.description ?? '',
     template: data.template ?? '',
     actor: data.actor ?? '',
+    category: data.category ?? '',
     version: data.version ?? '',
     rootEntity: data.rootEntity ?? '',
     provisioningType: data.provisioningType ?? 'CQRS',
+    isMultipleResult: data.isMultipleResult ?? '',
     attachedToId: data.attachedToId ?? '',
     attachedToType: data.attachedToType ?? '',
-    attachedToName: data.attachedToName ?? ''
+    attachedToName: data.attachedToName ?? '',
+    enumerations: data.enumerations ?? [],
+    valueObjects: data.valueObjects ?? []
   }
 }
 
@@ -131,9 +137,11 @@ function resetToNode() {
       description: '',
       template: '',
       actor: '',
+      category: '',
       version: '',
       rootEntity: '',
       provisioningType: 'CQRS',
+      isMultipleResult: '',
       attachedToId: '',
       attachedToType: '',
       attachedToName: ''
@@ -796,6 +804,29 @@ function requestChat() {
   overflow: auto;
   font-size: 0.6rem;
   color: var(--color-text);
+}
+
+.inspector-readonly__section {
+  margin-top: var(--spacing-md);
+}
+
+.inspector-readonly__section:first-child {
+  margin-top: 0;
+}
+
+.inspector-readonly__item {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.inspector-readonly__item:last-child {
+  border-bottom: none;
+}
+
+.inspector-readonly__ref {
+  color: var(--color-text-light);
+  font-size: 0.7rem;
+  margin-left: 4px;
 }
 
 .inspector-ui-preview {

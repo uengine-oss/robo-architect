@@ -21,6 +21,7 @@ class BoundedContextOps:
             name: bc.name,
             description: bc.description,
             owner: bc.owner,
+            domainType: bc.domainType,
             aggregates: aggregates
         } as bounded_context
         ORDER BY bounded_context.name
@@ -36,6 +37,7 @@ class BoundedContextOps:
         key: str | None = None,
         description: str | None = None,
         owner: str | None = None,
+        domain_type: str | None = None,
     ) -> dict[str, Any]:
         """Create a new bounded context."""
         key = key or bc_key(name)
@@ -47,11 +49,12 @@ class BoundedContextOps:
             bc.key = $key,
             bc.description = $description,
             bc.owner = $owner,
+            bc.domainType = $domain_type,
             bc.updatedAt = datetime()
-        RETURN bc {.id, .key, .name, .description, .owner} as bounded_context
+        RETURN bc {.id, .key, .name, .description, .owner, .domainType} as bounded_context
         """
         with self.session() as session:
-            result = session.run(query, key=key, name=name, description=description, owner=owner)
+            result = session.run(query, key=key, name=name, description=description, owner=owner, domain_type=domain_type)
             return dict(result.single()["bounded_context"])
 
     def link_user_story_to_bc(self, user_story_id: str, bc_id: str, confidence: float = 0.9) -> bool:

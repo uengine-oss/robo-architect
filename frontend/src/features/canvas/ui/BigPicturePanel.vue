@@ -1,8 +1,11 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
+import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
+import ChatPanel from '@/features/modelModifier/ui/ChatPanel.vue'
 
 const store = useBigPictureStore()
+const chatStore = useModelModifierStore()
 
 // DOM refs
 const tableContainer = ref(null)
@@ -10,9 +13,15 @@ const tableWrapper = ref(null)
 const svgContainer = ref(null)
 
 // Local UI state
-const showFilterDropdown = ref(false)
-const showLegend = ref(true)
 const viewMode = ref('timeline') // 'timeline' or 'flow'
+
+// Panel mode: 'none' | 'chat'
+const panelMode = ref('chat')
+const chatPanelWidth = ref(360)
+const isResizingChat = ref(false)
+
+// Drag and drop state for BCs from navigator
+const isDragOver = ref(false)
 
 // Pan state (for table panning)
 const isPanning = ref(false)
@@ -34,7 +43,7 @@ const EVENT_CARD_WIDTH = 140
 const EVENT_CARD_HEIGHT = 76
 const EVENT_VERTICAL_GAP = 10
 const EVENT_HORIZONTAL_GAP = 16
-const SEQUENCE_STEP_WIDTH = 165
+const SEQUENCE_STEP_WIDTH = 220
 const SWIMLANE_PADDING = 14
 const SWIMLANE_MIN_HEIGHT = 110  // Minimum height for swimlane with single event
 const SWIMLANE_GAP = 6
@@ -86,9 +95,14 @@ const swimlaneHeights = computed(() => {
   return heights
 })
 
-// Computed: timeline width based on max global sequence
+// Computed: timeline width based on max global sequence from filtered swimlanes
 const timelineWidth = computed(() => {
-  const maxSeq = store.maxSequence || 1
+  let maxSeq = 1
+  store.filteredSwimlanes.forEach(lane => {
+    lane.events.forEach(evt => {
+      if (evt.sequence > maxSeq) maxSeq = evt.sequence
+    })
+  })
   return SWIMLANE_HEADER_WIDTH + (maxSeq + 1) * SEQUENCE_STEP_WIDTH + 100
 })
 
@@ -99,35 +113,74 @@ const totalHeight = computed(() => {
   }, TIMELINE_HEADER_HEIGHT + 60)
 })
 
-// Computed: event positions map - stack vertically only when at same sequence
+// Computed: event positions map - same sequence events at same x position across all BCs
 const eventPositions = computed(() => {
   const positions = {}
   let currentY = TIMELINE_HEADER_HEIGHT + 20
   
-  store.filteredSwimlanes.forEach((lane, laneIndex) => {
-    const laneStartY = currentY
-    const laneHeight = swimlaneHeights.value[lane.bcId] || SWIMLANE_MIN_HEIGHT
-    
-    // Group events by sequence (X position) - stack vertically only at same sequence
-    const sequenceGroups = {}
+  // First pass: collect all events grouped by sequence (globally, across all BCs)
+  const globalSequenceGroups = {}
+  store.filteredSwimlanes.forEach(lane => {
     lane.events.forEach(evt => {
       const seq = evt.sequence || 1
-      if (!sequenceGroups[seq]) sequenceGroups[seq] = []
-      sequenceGroups[seq].push(evt)
+      if (!globalSequenceGroups[seq]) {
+        globalSequenceGroups[seq] = []
+      }
+      globalSequenceGroups[seq].push({ ...evt, bcId: lane.bcId, laneIndex: -1 }) // laneIndex will be set later
+    })
+  })
+  
+  // Sort events within each sequence group by BC name, then event name for consistent ordering
+  Object.keys(globalSequenceGroups).forEach(seq => {
+    globalSequenceGroups[seq].sort((a, b) => {
+      const bcCompare = (a.bcId || '').localeCompare(b.bcId || '')
+      if (bcCompare !== 0) return bcCompare
+      return (a.name || '').localeCompare(b.name || '')
+    })
+  })
+  
+  // Second pass: position events within each swimlane
+  store.filteredSwimlanes.forEach((lane, laneIndex) => {
+    const laneHeight = swimlaneHeights.value[lane.bcId] || SWIMLANE_MIN_HEIGHT
+    
+    // Group events in this lane by sequence
+    const laneSequenceGroups = {}
+    lane.events.forEach(evt => {
+      const seq = evt.sequence || 1
+      if (!laneSequenceGroups[seq]) laneSequenceGroups[seq] = []
+      laneSequenceGroups[seq].push(evt)
     })
     
-    // Position events - stack vertically only when multiple events at same sequence
-    Object.entries(sequenceGroups).forEach(([seq, events]) => {
+    // Sort sequence groups by sequence number
+    const sortedSequences = Object.keys(laneSequenceGroups).map(Number).sort((a, b) => a - b)
+    
+    // Position events - same sequence = same x position globally, stack vertically
+    sortedSequences.forEach(seq => {
+      const events = laneSequenceGroups[seq]
+      // Sort events within same sequence by name for consistent ordering
+      events.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      
+      // X position: same for ALL events at same sequence (globally across all BCs)
+      // Center the event card so its middle aligns with the sequence marker
+      // Sequence marker is at: SWIMLANE_HEADER_WIDTH + seq * SEQUENCE_STEP_WIDTH + SEQUENCE_STEP_WIDTH / 2
+      // Event card center should be at the same position
+      // So: x + EVENT_CARD_WIDTH / 2 = SWIMLANE_HEADER_WIDTH + seq * SEQUENCE_STEP_WIDTH + SEQUENCE_STEP_WIDTH / 2
+      // Therefore: x = SWIMLANE_HEADER_WIDTH + seq * SEQUENCE_STEP_WIDTH + SEQUENCE_STEP_WIDTH / 2 - EVENT_CARD_WIDTH / 2
+      const x = SWIMLANE_HEADER_WIDTH + seq * SEQUENCE_STEP_WIDTH + SEQUENCE_STEP_WIDTH / 2 - EVENT_CARD_WIDTH / 2
+      
+      // Y position: stack vertically when multiple events at same sequence in this lane
+      const totalEventsAtSequence = events.length
+      const totalHeight = totalEventsAtSequence * (EVENT_CARD_HEIGHT + EVENT_VERTICAL_GAP) - EVENT_VERTICAL_GAP
+      // Calculate relative Y position within the swimlane (from top of swimlane)
+      // Center the stack vertically within the swimlane
+      const relativeStartY = SWIMLANE_PADDING + Math.max(0, (laneHeight - SWIMLANE_PADDING * 2 - totalHeight) / 2)
+      
       events.forEach((evt, evtIndex) => {
-        // X position based on sequence
-        const x = SWIMLANE_HEADER_WIDTH + (evt.sequence) * SEQUENCE_STEP_WIDTH + EVENT_HORIZONTAL_GAP
-        
-        // Y position: center vertically if single event, stack if multiple at same sequence
-        const y = laneStartY + SWIMLANE_PADDING + evtIndex * (EVENT_CARD_HEIGHT + EVENT_VERTICAL_GAP)
+        const relativeY = relativeStartY + evtIndex * (EVENT_CARD_HEIGHT + EVENT_VERTICAL_GAP)
         
         positions[evt.id] = {
-          x,
-          y,
+          x, // Same x for all events at same sequence
+          y: relativeY, // Stack vertically: different y for each event
           laneIndex,
           eventIndex: evtIndex,
           sequence: evt.sequence,
@@ -137,8 +190,6 @@ const eventPositions = computed(() => {
         }
       })
     })
-    
-    currentY += laneHeight + SWIMLANE_GAP
   })
   
   return positions
@@ -154,34 +205,49 @@ const connectionPaths = computed(() => {
     
     if (!sourcePos || !targetPos) return
     
-    // Calculate start and end points
-    const startX = sourcePos.x + EVENT_CARD_WIDTH
-    const startY = sourcePos.y + EVENT_CARD_HEIGHT / 2
-    const endX = targetPos.x
-    const endY = targetPos.y + EVENT_CARD_HEIGHT / 2
+    // Get absolute Y positions by adding swimlane offset
+    const sourceLaneY = getSwimlaneY(sourcePos.laneIndex)
+    const targetLaneY = getSwimlaneY(targetPos.laneIndex)
+    
+    // Calculate start and end points in SVG coordinate system
+    // SVG is at top: 0, left: 0 of bp-table-container
+    // bp-table-container has padding: 0 20px, but SVG is inside it, so padding doesn't affect SVG coordinates
+    // eventPositions.x is absolute position from left edge of bp-table-container (includes SWIMLANE_HEADER_WIDTH)
+    // eventPositions.y is relative to swimlane top, so we add swimlane offset
+    // Connect directly to the edge of the cards (handle points)
+    const startX = sourcePos.x + EVENT_CARD_WIDTH  // Right edge of source node (handle point)
+    const startY = sourceLaneY + sourcePos.y + EVENT_CARD_HEIGHT / 2  // Vertical center of source node
+    const endX = targetPos.x  // Left edge of target node (handle point)
+    const endY = targetLaneY + targetPos.y + EVENT_CARD_HEIGHT / 2  // Vertical center of target node
     
     // Determine connection type for styling
     const isCrossBC = conn.type === 'cross-bc'
     const isSameBC = conn.type === 'same-bc'
     
     // Create bezier curve path
+    // Adjust end points to account for arrow marker size so arrow tip touches the card edge
+    const arrowOffset = 9 // Match refX value from marker (for normal arrows)
     let path
     const dx = endX - startX
     const dy = endY - startY
     
+    // Adjust endX to account for arrow marker, so arrow tip touches the card edge
+    // The path ends at adjustedEndX, and the arrow marker (refX=9) extends from there to endX
+    const adjustedEndX = endX - arrowOffset
+    
     if (Math.abs(dy) < 30) {
       // Nearly horizontal - simple curve
       const controlOffset = Math.min(50, Math.abs(dx) / 3)
-      path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${endX - controlOffset} ${endY}, ${endX} ${endY}`
+      path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${adjustedEndX - controlOffset} ${endY}, ${adjustedEndX} ${endY}`
     } else if (isCrossBC) {
       // Cross-BC - elegant S-curve going through middle
-      const midX = (startX + endX) / 2
+      const midX = (startX + adjustedEndX) / 2
       const controlOffset = Math.abs(dx) * 0.4
-      path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${midX} ${startY}, ${midX} ${(startY + endY) / 2} S ${endX - controlOffset} ${endY}, ${endX} ${endY}`
+      path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${midX} ${startY}, ${midX} ${(startY + endY) / 2} S ${adjustedEndX - controlOffset} ${endY}, ${adjustedEndX} ${endY}`
     } else {
       // Same BC - gentle curve
       const controlOffset = Math.min(80, Math.max(40, Math.abs(dy) * 0.5))
-      path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${endX - controlOffset} ${endY}, ${endX} ${endY}`
+      path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${adjustedEndX - controlOffset} ${endY}, ${adjustedEndX} ${endY}`
     }
     
     const isHighlighted = store.highlightedConnections.some(
@@ -216,7 +282,13 @@ const connectionPaths = computed(() => {
 // Computed: sequence markers for timeline header
 const sequenceMarkers = computed(() => {
   const markers = []
-  const maxSeq = store.maxSequence || 1
+  // Calculate max sequence from filtered swimlanes
+  let maxSeq = 1
+  store.filteredSwimlanes.forEach(lane => {
+    lane.events.forEach(evt => {
+      if (evt.sequence > maxSeq) maxSeq = evt.sequence
+    })
+  })
   
   for (let i = 1; i <= maxSeq; i++) {
     markers.push({
@@ -229,6 +301,46 @@ const sequenceMarkers = computed(() => {
 })
 
 // ==========================================
+// Panel Management
+// ==========================================
+
+function toggleChatPanel() {
+  panelMode.value = panelMode.value === 'chat' ? 'none' : 'chat'
+}
+
+function startResizeChat(e) {
+  isResizingChat.value = true
+  document.addEventListener('mousemove', onResizeChat)
+  document.addEventListener('mouseup', stopResizeChat)
+}
+
+function onResizeChat(e) {
+  if (!isResizingChat.value) return
+  const next = window.innerWidth - e.clientX
+  chatPanelWidth.value = Math.max(280, Math.min(640, next))
+  try {
+    localStorage.setItem('bigpicture_chat_panel_width', String(chatPanelWidth.value))
+  } catch {}
+}
+
+function stopResizeChat() {
+  isResizingChat.value = false
+  document.removeEventListener('mousemove', onResizeChat)
+  document.removeEventListener('mouseup', stopResizeChat)
+}
+
+onMounted(() => {
+  try {
+    const v = Number(localStorage.getItem('bigpicture_chat_panel_width'))
+    if (Number.isFinite(v) && v >= 200) chatPanelWidth.value = v
+  } catch {}
+})
+
+onUnmounted(() => {
+  stopResizeChat()
+})
+
+// ==========================================
 // Event Selection Handlers
 // ==========================================
 
@@ -236,8 +348,24 @@ function handleEventClick(event, evt, bcId) {
   event.stopPropagation()
   if (store.selectedEventId === evt.id) {
     store.clearSelection()
+    // Clear selection in Model Modifier
+    chatStore.clearSelection()
   } else {
     store.selectEvent(evt.id)
+    // Update Model Modifier with selected event
+    const selectedEventNode = {
+      id: evt.id,
+      name: evt.name,
+      type: 'Event',
+      bcId: bcId,
+      commandId: evt.commandId,
+      commandName: evt.commandName,
+      aggregateId: evt.aggregateId,
+      aggregateName: evt.aggregateName,
+      actor: evt.actor,
+      version: evt.version
+    }
+    chatStore.setSelectedNodes([selectedEventNode])
   }
 }
 
@@ -261,7 +389,6 @@ function handleConnectionLeave() {
 
 function handlePaneClick() {
   store.clearSelection()
-  showFilterDropdown.value = false
 }
 
 // ==========================================
@@ -271,9 +398,7 @@ function handlePaneClick() {
 function handlePanStart(e) {
   if (e.target.closest('.bp-event-card') || 
       e.target.closest('.bp-drag-handle') || 
-      e.target.closest('.bp-toolbar') ||
-      e.target.closest('.bp-filter-dropdown') ||
-      e.target.closest('.bp-legend')) {
+      false) {
     return
   }
   
@@ -363,20 +488,72 @@ function handleWheel(e) {
   }
 }
 
-function toggleFilterDropdown() {
-  showFilterDropdown.value = !showFilterDropdown.value
-}
-
-function toggleLegend() {
-  showLegend.value = !showLegend.value
-}
 
 // ==========================================
 // Lifecycle
 // ==========================================
 
+// ==========================================
+// Drag and Drop Handlers for BCs from Navigator
+// ==========================================
+
+function handleDragOver(e) {
+  // Check if dragging a BC from navigator
+  // During dragover, we can only check types, not data
+  if (e.dataTransfer?.types?.includes('application/json')) {
+    e.preventDefault()
+    e.stopPropagation()
+    isDragOver.value = true
+  }
+}
+
+function handleDragLeave(e) {
+  // Only clear if we're actually leaving the drop zone
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    isDragOver.value = false
+  }
+}
+
+async function handleDrop(e) {
+  e.preventDefault()
+  e.stopPropagation()
+  isDragOver.value = false
+
+  const dragData = e.dataTransfer?.getData('application/json')
+  if (!dragData) return
+
+  try {
+    const data = JSON.parse(dragData)
+    if (data.type === 'BoundedContext' && data.id) {
+      await store.addBCWithOutboundFlow(data.id)
+    }
+  } catch (err) {
+    console.error('Failed to handle BC drop:', err)
+  }
+}
+
+// Handle double-click on empty canvas to add BC
+function handleCanvasDoubleClick(e) {
+  // This can be used for future enhancement (e.g., show BC selection dialog)
+  // For now, we rely on drag and drop or double-click from navigator
+}
+
+// Fit view - scroll to show all content
+function fitView() {
+  if (tableWrapper.value) {
+    tableWrapper.value.scrollTo({
+      left: 0,
+      top: 0,
+      behavior: 'smooth'
+    })
+    // Reset zoom to 1
+    store.resetZoom()
+  }
+}
+
 onMounted(async () => {
-  await store.fetchTimeline()
+  // Don't fetch all timeline data on mount - start empty
+  // await store.fetchTimeline()
   
   document.addEventListener('mouseup', handlePanEnd)
   document.addEventListener('mousemove', handlePanMove)
@@ -424,7 +601,10 @@ function getActorsDisplay(actors) {
 }
 
 function getSwimlaneY(laneIndex) {
-  let y = TIMELINE_HEADER_HEIGHT + 20
+  // Calculate absolute Y position of swimlane within bp-table-container
+  // SVG is at top: 0, so we need absolute positions
+  // bp-swimlanes has margin-top: 20px, and each swimlane has its own height
+  let y = TIMELINE_HEADER_HEIGHT + 20  // Header height + swimlanes margin-top
   for (let i = 0; i < laneIndex; i++) {
     const lane = store.filteredSwimlanes[i]
     y += (swimlaneHeights.value[lane.bcId] || SWIMLANE_MIN_HEIGHT) + SWIMLANE_GAP
@@ -434,11 +614,15 @@ function getSwimlaneY(laneIndex) {
 </script>
 
 <template>
-  <div 
-    class="big-picture-panel"
-    @click="handlePaneClick"
-    @wheel="handleWheel"
-  >
+  <div class="big-picture-panel">
+    <div 
+      class="bp-main-content"
+      @click="handlePaneClick"
+      @wheel="handleWheel"
+      @dragover="handleDragOver"
+      @dragleave="handleDragLeave"
+      @drop="handleDrop"
+    >
     <!-- Loading State -->
     <div v-if="store.loading" class="bp-loading">
       <div class="bp-loading__spinner"></div>
@@ -458,7 +642,15 @@ function getSwimlaneY(laneIndex) {
     </div>
 
     <!-- Empty State -->
-    <div v-else-if="store.swimlanes.length === 0" class="bp-empty">
+    <div 
+      v-else-if="store.swimlanes.length === 0" 
+      class="bp-empty"
+      :class="{ 'drop-zone-active': isDragOver }"
+      @drop="handleDrop"
+      @dragover="handleDragOver"
+      @dragleave="handleDragLeave"
+      @dblclick="handleCanvasDoubleClick"
+    >
       <div class="bp-empty__visual">
         <div class="bp-empty__icon">
           <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
@@ -476,108 +668,20 @@ function getSwimlaneY(laneIndex) {
         </div>
       </div>
       <h2>Value Chain</h2>
-      <p>이벤트 스토밍 데이터가 없습니다.<br/>요구사항 문서를 업로드하여 도메인 분석을 시작하세요.</p>
+      <p>Bounded Context를 드래그하거나 더블클릭하여 Value Chain을 시작하세요.<br/>연결된 BC들이 자동으로 포함됩니다.</p>
     </div>
 
     <!-- Main Timeline View -->
     <template v-else>
-      <!-- Toolbar -->
-      <div class="bp-toolbar">
-        <div class="bp-toolbar__left">
-          <div class="bp-toolbar__title">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <line x1="3" y1="9" x2="21" y2="9"/>
-              <line x1="9" y1="21" x2="9" y2="9"/>
-            </svg>
-            <span>Value Chain</span>
-          </div>
-          
-          <!-- Filter Dropdown -->
-          <div class="bp-filter-container">
-            <button 
-              class="bp-filter-btn"
-              :class="{ 'has-filter': store.selectedBcIds.length > 0 }"
-              @click.stop="toggleFilterDropdown"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-              </svg>
-              <span>BC Filter{{ store.selectedBcIds.length > 0 ? ` (${store.selectedBcIds.length})` : '' }}</span>
-            </button>
-            
-            <div v-if="showFilterDropdown" class="bp-filter-dropdown" @click.stop>
-              <div class="bp-filter-dropdown__header">
-                <span>Bounded Context 필터</span>
-                <button v-if="store.selectedBcIds.length > 0" @click="store.clearFilters()">
-                  초기화
-                </button>
-              </div>
-              <div class="bp-filter-dropdown__list">
-                <label 
-                  v-for="(bc, idx) in store.allBCs" 
-                  :key="bc.id"
-                  class="bp-filter-item"
-                >
-                  <input 
-                    type="checkbox"
-                    :checked="store.selectedBcIds.includes(bc.id)"
-                    @change="store.toggleBCFilter(bc.id)"
-                  />
-                  <span 
-                    class="bp-filter-item__color" 
-                    :style="{ background: getBcColor(idx).accent }"
-                  ></span>
-                  <span>{{ bc.name }}</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="bp-toolbar__right">
-          <!-- Zoom Controls -->
-          <div class="bp-zoom-controls">
-            <button @click="store.zoomOut()" title="Zoom Out (Ctrl+Scroll)">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="11" cy="11" r="8"/>
-                <line x1="8" y1="11" x2="14" y2="11"/>
-              </svg>
-            </button>
-            <span class="bp-zoom-level">{{ Math.round(store.zoomLevel * 100) }}%</span>
-            <button @click="store.zoomIn()" title="Zoom In (Ctrl+Scroll)">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="11" cy="11" r="8"/>
-                <line x1="11" y1="8" x2="11" y2="14"/>
-                <line x1="8" y1="11" x2="14" y2="11"/>
-              </svg>
-            </button>
-            <button @click="store.resetZoom()" title="Reset Zoom">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-                <path d="M3 3v5h5"/>
-              </svg>
-            </button>
-          </div>
-          
-          <button class="bp-legend-toggle" @click="toggleLegend" :class="{ active: showLegend }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2"/>
-              <circle cx="8.5" cy="8.5" r="1.5"/>
-              <circle cx="8.5" cy="15.5" r="1.5"/>
-              <line x1="12" y1="8.5" x2="18" y2="8.5"/>
-              <line x1="12" y1="15.5" x2="18" y2="15.5"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-
       <!-- Timeline Container -->
       <div 
         ref="tableWrapper"
         class="bp-table-wrapper"
-        :class="{ 'is-panning': isPanning }"
+        :class="{ 'is-panning': isPanning, 'drop-zone-active': isDragOver }"
         @mousedown="handlePanStart"
+        @drop="handleDrop"
+        @dragover="handleDragOver"
+        @dragleave="handleDragLeave"
       >
         <!-- Zoomable Container -->
         <div 
@@ -623,7 +727,7 @@ function getSwimlaneY(laneIndex) {
                 <stop offset="100%" style="stop-color:#fd7e14;stop-opacity:1" />
               </linearGradient>
               
-              <!-- Arrow markers -->
+              <!-- Arrow markers (larger size, refX adjusted to touch path end) -->
               <marker
                 id="arrowhead-policy"
                 markerWidth="10"
@@ -631,18 +735,20 @@ function getSwimlaneY(laneIndex) {
                 refX="9"
                 refY="3.5"
                 orient="auto"
+                markerUnits="userSpaceOnUse"
               >
                 <polygon points="0 0, 10 3.5, 0 7" fill="#b197fc"/>
               </marker>
               <marker
                 id="arrowhead-policy-highlight"
-                markerWidth="12"
+                markerWidth="11"
                 markerHeight="8"
-                refX="11"
+                refX="10"
                 refY="4"
                 orient="auto"
+                markerUnits="userSpaceOnUse"
               >
-                <polygon points="0 0, 12 4, 0 8" fill="#fcc419"/>
+                <polygon points="0 0, 11 4, 0 8" fill="#fcc419"/>
               </marker>
               <marker
                 id="arrowhead-cross-bc"
@@ -651,6 +757,7 @@ function getSwimlaneY(laneIndex) {
                 refX="9"
                 refY="3.5"
                 orient="auto"
+                markerUnits="userSpaceOnUse"
               >
                 <polygon points="0 0, 10 3.5, 0 7" fill="#e64980"/>
               </marker>
@@ -810,8 +917,9 @@ function getSwimlaneY(laneIndex) {
                   :style="{
                     position: 'absolute',
                     left: (eventPositions[evt.id]?.x - SWIMLANE_HEADER_WIDTH || 0) + 'px',
-                    top: (eventPositions[evt.id]?.y - getSwimlaneY(laneIndex) || 0) + 'px',
-                    width: EVENT_CARD_WIDTH + 'px'
+                    top: (eventPositions[evt.id]?.y || 0) + 'px',
+                    width: EVENT_CARD_WIDTH + 'px',
+                    zIndex: 10
                   }"
                   :title="getEventTooltip(evt)"
                   @click="handleEventClick($event, evt, lane.bcId)"
@@ -855,49 +963,84 @@ function getSwimlaneY(laneIndex) {
         </div>
       </div>
 
-      <!-- Legend Panel -->
-      <transition name="slide-fade">
-        <div v-if="showLegend" class="bp-legend">
-          <div class="bp-legend__header">
-            <span class="bp-legend__title">범례</span>
-            <button class="bp-legend__close" @click="showLegend = false">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"/>
-                <line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-          </div>
-          
-          <div class="bp-legend__section">
-            <div class="bp-legend__section-title">Elements</div>
-            <div class="bp-legend__items">
-              <div class="bp-legend__item">
-                <div class="bp-legend__sample bp-legend__sample--event"></div>
-                <span>Domain Event</span>
-              </div>
-              <div class="bp-legend__item">
-                <div class="bp-legend__sample bp-legend__sample--actor"></div>
-                <span>Actor/Persona</span>
-              </div>
-            </div>
-          </div>
-          
-          <div class="bp-legend__hint">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
-            </svg>
-            <span>Ctrl+Scroll로 확대/축소, 드래그로 이동</span>
-          </div>
-        </div>
-      </transition>
     </template>
+
+    <!-- Canvas Control Toolbar (Bottom) -->
+    <div v-if="store.swimlanes.length > 0" class="bp-canvas-toolbar">
+      <button class="bp-canvas-toolbar__btn" @click="store.zoomIn()" title="Zoom In">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          <line x1="11" y1="8" x2="11" y2="14"></line>
+          <line x1="8" y1="11" x2="14" y2="11"></line>
+        </svg>
+      </button>
+
+      <button class="bp-canvas-toolbar__btn" @click="store.zoomOut()" title="Zoom Out">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          <line x1="8" y1="11" x2="14" y2="11"></line>
+        </svg>
+      </button>
+
+      <button class="bp-canvas-toolbar__btn" @click="fitView()" title="Fit View">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+        </svg>
+      </button>
+
+      <div class="bp-canvas-toolbar__divider"></div>
+
+      <button class="bp-canvas-toolbar__btn" @click="store.clearAllBCs()" title="Clear Canvas">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+      </button>
+    </div>
+
+    </div>
+
+    <!-- Resizer (between canvas and right-side panel) -->
+    <div
+      v-if="panelMode !== 'none'"
+      class="bp-chat-panel-resizer"
+      @mousedown="startResizeChat"
+      title="드래그하여 패널 너비 조절"
+    ></div>
+
+    <!-- Right-side Panel Wrapper -->
+    <div v-if="panelMode !== 'none'" class="bp-side-panel-wrapper" :style="{ width: chatPanelWidth + 'px' }">
+      <div v-if="panelMode === 'chat'" class="bp-chat-panel-wrapper">
+        <ChatPanel />
+      </div>
+    </div>
+
+    <!-- Right Sidebar Icons (always visible) -->
+    <div class="bp-right-sidebar">
+      <button 
+        class="bp-right-sidebar__icon"
+        :class="{ 'is-active': panelMode === 'chat' }"
+        @click="toggleChatPanel"
+        title="Model Modifier"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .big-picture-panel {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.bp-main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -983,6 +1126,14 @@ function getSwimlaneY(laneIndex) {
   color: var(--color-text-light);
   text-align: center;
   padding: 40px;
+  transition: all 0.2s ease;
+  border-radius: 8px;
+  border: 2px dashed transparent;
+}
+
+.bp-empty.drop-zone-active {
+  border-color: rgba(92, 124, 250, 0.5);
+  background: rgba(92, 124, 250, 0.05);
 }
 
 .bp-empty__visual {
@@ -1028,193 +1179,6 @@ function getSwimlaneY(laneIndex) {
 .bp-empty h2 { color: var(--color-text-bright); font-size: 1.6rem; margin: 0; font-weight: 600; }
 .bp-empty p { font-size: 1rem; line-height: 1.7; max-width: 400px; margin: 0; opacity: 0.7; }
 
-/* ==========================================
-   Toolbar
-   ========================================== */
-.bp-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 20px;
-  background: rgba(30, 31, 42, 0.95);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(8px);
-  gap: 20px;
-  z-index: 20;
-  flex-shrink: 0;
-}
-
-.bp-toolbar__left, .bp-toolbar__right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.bp-toolbar__title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--color-text-bright);
-}
-
-.bp-toolbar__title svg { color: var(--color-accent); }
-
-/* Filter */
-.bp-filter-container { position: relative; }
-
-.bp-filter-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  color: var(--color-text);
-  font-size: 0.8rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.bp-filter-btn:hover { 
-  border-color: rgba(34, 139, 230, 0.5);
-  background: rgba(34, 139, 230, 0.1);
-}
-
-.bp-filter-btn.has-filter {
-  background: rgba(34, 139, 230, 0.15);
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
-.bp-filter-dropdown {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  min-width: 240px;
-  background: rgba(30, 31, 42, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-  z-index: 100;
-  overflow: hidden;
-  backdrop-filter: blur(12px);
-}
-
-.bp-filter-dropdown__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--color-text-light);
-}
-
-.bp-filter-dropdown__header button {
-  background: none;
-  border: none;
-  color: var(--color-accent);
-  font-size: 0.75rem;
-  cursor: pointer;
-  opacity: 0.8;
-}
-
-.bp-filter-dropdown__header button:hover { opacity: 1; }
-
-.bp-filter-dropdown__list {
-  padding: 8px;
-  max-height: 280px;
-  overflow-y: auto;
-}
-
-.bp-filter-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  color: var(--color-text);
-  transition: background 0.15s ease;
-}
-
-.bp-filter-item:hover { background: rgba(255, 255, 255, 0.06); }
-
-.bp-filter-item input { 
-  accent-color: var(--color-accent);
-  width: 16px;
-  height: 16px;
-}
-
-.bp-filter-item__color {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-/* Zoom Controls */
-.bp-zoom-controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 4px;
-  border-radius: 8px;
-}
-
-.bp-zoom-controls button {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  color: var(--color-text);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.bp-zoom-controls button:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--color-text-bright);
-}
-
-.bp-zoom-level {
-  min-width: 50px;
-  text-align: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-text-light);
-}
-
-.bp-legend-toggle {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  color: var(--color-text);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.bp-legend-toggle:hover { background: rgba(255, 255, 255, 0.1); }
-.bp-legend-toggle.active { 
-  background: rgba(34, 139, 230, 0.15);
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
 
 /* ==========================================
    Table Wrapper
@@ -1224,10 +1188,17 @@ function getSwimlaneY(laneIndex) {
   overflow: auto;
   position: relative;
   cursor: grab;
+  transition: all 0.2s ease;
 }
 
 .bp-table-wrapper.is-panning {
   cursor: grabbing;
+}
+
+.bp-table-wrapper.drop-zone-active {
+  border: 2px dashed rgba(92, 124, 250, 0.5);
+  background: rgba(92, 124, 250, 0.02);
+  border-radius: 8px;
 }
 
 .bp-table-container {
@@ -1605,110 +1576,127 @@ function getSwimlaneY(laneIndex) {
   background: #e64980;
 }
 
+
 /* ==========================================
-   Legend Panel
+   Canvas Control Toolbar (Bottom)
    ========================================== */
-.bp-legend {
+.bp-canvas-toolbar {
   position: absolute;
-  bottom: 20px;
-  right: 20px;
-  background: rgba(26, 27, 38, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 0;
-  min-width: 240px;
-  z-index: 20;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(12px);
-  overflow: hidden;
-}
-
-.bp-legend__header {
+  bottom: var(--spacing-md, 16px);
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: var(--spacing-xs, 8px);
+  background: rgba(30, 31, 42, 0.95);
+  padding: var(--spacing-xs, 8px);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 10;
+  backdrop-filter: blur(8px);
 }
 
-.bp-legend__title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-text-light);
-}
-
-.bp-legend__close {
-  width: 24px;
-  height: 24px;
+.bp-canvas-toolbar__btn {
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
-  color: var(--color-text-light);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--color-text, #e4e4e7);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.bp-legend__close:hover {
+.bp-canvas-toolbar__btn:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--color-text);
+  color: var(--color-text-bright, #ffffff);
 }
 
-.bp-legend__section {
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+.bp-canvas-toolbar__btn:active {
+  background: rgba(255, 255, 255, 0.15);
 }
 
-.bp-legend__section:last-of-type {
-  border-bottom: none;
+.bp-canvas-toolbar__divider {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: var(--spacing-xs, 8px) 0;
 }
 
-.bp-legend__section-title {
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-light);
-  margin-bottom: 10px;
-  opacity: 0.7;
+/* ==========================================
+   Chat Panel (same structure as Design Viewer)
+   ========================================== */
+.bp-chat-panel-resizer {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
 }
 
-.bp-legend__items {
+.bp-chat-panel-resizer:hover {
+  background: rgba(34, 139, 230, 0.12);
+}
+
+.bp-side-panel-wrapper {
+  background: var(--color-bg-secondary);
+  border-left: 1px solid var(--color-border);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
-.bp-legend__item {
+.bp-chat-panel-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Container for canvas + chat */
+.big-picture-panel {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Right Sidebar Icons (always visible) */
+.bp-right-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--color-bg-secondary);
+  border-left: 1px solid var(--color-border);
+}
+
+.bp-right-sidebar__icon {
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 0.75rem;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bp-right-sidebar__icon:hover {
+  background: var(--color-bg-tertiary);
   color: var(--color-text);
 }
 
-.bp-legend__sample {
-  width: 20px;
-  height: 14px;
-  border-radius: 4px;
+.bp-right-sidebar__icon.is-active {
+  background: var(--color-accent);
+  color: white;
 }
 
-.bp-legend__sample--event { background: var(--color-event); }
-.bp-legend__sample--actor { background: #20c997; }
-
-.bp-legend__hint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  font-size: 0.7rem;
-  color: var(--color-text-light);
-  background: rgba(0, 0, 0, 0.2);
-  opacity: 0.8;
+.bp-right-sidebar__icon.is-active:hover {
+  background: #1c7ed6;
 }
 
 /* Transitions */
