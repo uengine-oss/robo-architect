@@ -124,6 +124,8 @@ def identify_policies_node(state: EventStormingState) -> Dict[str, Any]:
             except Exception:
                 pass
 
+        # GWT will be generated in generate_gwt_node after all commands/events/policies are created
+
     return {
         "policy_candidates": policies,
         "phase": WorkflowPhase.APPROVE_POLICIES,
@@ -141,10 +143,10 @@ def approve_policies_node(state: EventStormingState) -> Dict[str, Any]:
             "approved_policies": state.policy_candidates,
             "awaiting_human_approval": False,
             "human_feedback": None,
-            "phase": WorkflowPhase.SAVE_TO_GRAPH,
+            "phase": WorkflowPhase.GENERATE_GWT,
             "messages": [
                 HumanMessage(content="APPROVED"),
-                AIMessage(content="Policies approved! Saving everything to Neo4j..."),
+                AIMessage(content="Policies approved! Generating GWT structures..."),
             ],
         }
     elif feedback:

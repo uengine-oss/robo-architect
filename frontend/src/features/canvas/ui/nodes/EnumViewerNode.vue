@@ -29,10 +29,11 @@ const props = defineProps({
     </div>
 
     <!-- Handles: both source and target on each side for bidirectional connections -->
-    <Handle type="source" :position="Position.Left" id="left" />
-    <Handle type="target" :position="Position.Left" id="left" />
-    <Handle type="source" :position="Position.Right" id="right" />
-    <Handle type="target" :position="Position.Right" id="right" />
+    <!-- IMPORTANT: Each handle must have a unique ID for Vue Flow to identify them correctly -->
+    <Handle type="source" :position="Position.Left" id="left-source" />
+    <Handle type="target" :position="Position.Left" id="left-target" />
+    <Handle type="source" :position="Position.Right" id="right-source" />
+    <Handle type="target" :position="Position.Right" id="right-target" />
   </div>
 </template>
 

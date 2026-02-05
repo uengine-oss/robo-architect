@@ -214,3 +214,99 @@ REQUIRE ui.key IS NOT NULL;
 CREATE CONSTRAINT constraint_ui_name IF NOT EXISTS
 FOR (ui:UI)
 REQUIRE ui.name IS NOT NULL;
+
+// ------------------------------------------------------------
+// Given: GWT 구성 요소 중 Given
+// ------------------------------------------------------------
+CREATE CONSTRAINT constraint_given_id IF NOT EXISTS
+FOR (g:Given)
+REQUIRE g.id IS UNIQUE;
+
+CREATE CONSTRAINT constraint_given_key IF NOT EXISTS
+FOR (g:Given)
+REQUIRE g.key IS UNIQUE;
+
+CREATE CONSTRAINT constraint_given_key_exists IF NOT EXISTS
+FOR (g:Given)
+REQUIRE g.key IS NOT NULL;
+
+CREATE CONSTRAINT constraint_given_name IF NOT EXISTS
+FOR (g:Given)
+REQUIRE g.name IS NOT NULL;
+
+CREATE CONSTRAINT constraint_given_parentType IF NOT EXISTS
+FOR (g:Given)
+REQUIRE g.parentType IS NOT NULL;
+
+CREATE CONSTRAINT constraint_given_parentId IF NOT EXISTS
+FOR (g:Given)
+REQUIRE g.parentId IS NOT NULL;
+
+// 부모 내 Given 중복 방지: (parentType,parentId) 유니크 (하나의 Command/Policy당 하나의 Given)
+CREATE CONSTRAINT constraint_given_parent_unique IF NOT EXISTS
+FOR (g:Given)
+REQUIRE (g.parentType, g.parentId) IS UNIQUE;
+
+// ------------------------------------------------------------
+// When: GWT 구성 요소 중 When
+// ------------------------------------------------------------
+CREATE CONSTRAINT constraint_when_id IF NOT EXISTS
+FOR (w:When)
+REQUIRE w.id IS UNIQUE;
+
+CREATE CONSTRAINT constraint_when_key IF NOT EXISTS
+FOR (w:When)
+REQUIRE w.key IS UNIQUE;
+
+CREATE CONSTRAINT constraint_when_key_exists IF NOT EXISTS
+FOR (w:When)
+REQUIRE w.key IS NOT NULL;
+
+CREATE CONSTRAINT constraint_when_name IF NOT EXISTS
+FOR (w:When)
+REQUIRE w.name IS NOT NULL;
+
+CREATE CONSTRAINT constraint_when_parentType IF NOT EXISTS
+FOR (w:When)
+REQUIRE w.parentType IS NOT NULL;
+
+CREATE CONSTRAINT constraint_when_parentId IF NOT EXISTS
+FOR (w:When)
+REQUIRE w.parentId IS NOT NULL;
+
+// 부모 내 When 중복 방지: (parentType,parentId) 유니크 (하나의 Command/Policy당 하나의 When)
+CREATE CONSTRAINT constraint_when_parent_unique IF NOT EXISTS
+FOR (w:When)
+REQUIRE (w.parentType, w.parentId) IS UNIQUE;
+
+// ------------------------------------------------------------
+// Then: GWT 구성 요소 중 Then
+// ------------------------------------------------------------
+CREATE CONSTRAINT constraint_then_id IF NOT EXISTS
+FOR (t:Then)
+REQUIRE t.id IS UNIQUE;
+
+CREATE CONSTRAINT constraint_then_key IF NOT EXISTS
+FOR (t:Then)
+REQUIRE t.key IS UNIQUE;
+
+CREATE CONSTRAINT constraint_then_key_exists IF NOT EXISTS
+FOR (t:Then)
+REQUIRE t.key IS NOT NULL;
+
+CREATE CONSTRAINT constraint_then_name IF NOT EXISTS
+FOR (t:Then)
+REQUIRE t.name IS NOT NULL;
+
+CREATE CONSTRAINT constraint_then_parentType IF NOT EXISTS
+FOR (t:Then)
+REQUIRE t.parentType IS NOT NULL;
+
+CREATE CONSTRAINT constraint_then_parentId IF NOT EXISTS
+FOR (t:Then)
+REQUIRE t.parentId IS NOT NULL;
+
+// 부모 내 Then 중복 방지: (parentType,parentId) 유니크 (하나의 Command/Policy당 하나의 Then)
+CREATE CONSTRAINT constraint_then_parent_unique IF NOT EXISTS
+FOR (t:Then)
+REQUIRE (t.parentType, t.parentId) IS UNIQUE;

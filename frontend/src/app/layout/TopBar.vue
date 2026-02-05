@@ -1,11 +1,11 @@
 <script setup>
-import { ref, defineProps, defineEmits } from 'vue'
+import { ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
-import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
+import SettingsPanel from './SettingsPanel.vue'
 
 const props = defineProps({
   activeTab: {
@@ -25,9 +25,9 @@ function selectTab(tab) {
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()
 const aggregateViewerStore = useAggregateViewerStore()
-const terminologyStore = useTerminologyStore()
 const showIngestionModal = ref(false)
 const showPRDModal = ref(false)
+const showSettingsPanel = ref(false)
 
 function handleIngestionComplete() {
   // Modal will trigger navigator refresh
@@ -117,19 +117,24 @@ function handleIngestionComplete() {
         <span>PRD 생성</span>
       </button>
 
-      <!-- Developer Mode Toggle -->
-      <div class="term-toggle">
-        <span class="term-toggle__label">Developer Terms</span>
+      <!-- Settings Button -->
         <button 
-          class="term-toggle__switch"
-          :class="{ 'is-active': terminologyStore.developerMode }"
-          @click="terminologyStore.toggleDeveloperMode()"
-          :title="terminologyStore.developerMode ? 'Switch to Event Storming terms' : 'Switch to Developer terms'"
-        >
-          <span class="term-toggle__knob"></span>
+        class="settings-btn"
+        @click="showSettingsPanel = true"
+        title="Settings"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
         </button>
-      </div>
     </div>
+    
+    <!-- Settings Panel -->
+    <SettingsPanel 
+      :visible="showSettingsPanel"
+      @close="showSettingsPanel = false"
+    />
     
     <!-- Ingestion Modal -->
     <RequirementsIngestionModal 
@@ -323,54 +328,30 @@ function handleIngestionComplete() {
   cursor: not-allowed;
 }
 
-/* Developer Mode Toggle */
-.term-toggle {
+/* Settings Button */
+.settings-btn {
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-
-.term-toggle__label {
-  font-size: 0.7rem;
-  color: var(--color-text-light);
-  font-weight: 500;
-}
-
-.term-toggle__switch {
-  position: relative;
-  width: 36px;
-  height: 18px;
+  justify-content: center;
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
-  border-radius: 9px;
+  border-radius: 6px;
+  color: var(--color-text);
   cursor: pointer;
-  transition: all 0.25s ease;
+  transition: all 0.2s ease;
   padding: 0;
 }
 
-.term-toggle__switch:hover {
+.settings-btn:hover {
+  background: var(--color-bg-secondary);
   border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
-.term-toggle__switch.is-active {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  border-color: #059669;
-}
-
-.term-toggle__knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
-  background: white;
-  border-radius: 50%;
-  transition: transform 0.25s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-.term-toggle__switch.is-active .term-toggle__knob {
-  transform: translateX(18px);
+.settings-btn:active {
+  transform: scale(0.95);
 }
 </style>
 

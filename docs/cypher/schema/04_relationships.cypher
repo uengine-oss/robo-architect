@@ -202,6 +202,45 @@ MATCH (tgt:Property {parentType: "Aggregate", parentId: "<aggregateId>", name: "
 CREATE (src)-[:REFERENCES]->(tgt);
 
 
+// ############################################################
+// 13. HAS_GIVEN
+// ############################################################
+// 방향: Command/Policy → Given
+// 의미: Command/Policy가 Given 구성 요소를 가짐
+//
+// ############################################################
+
+MATCH (cmd:Command {key: "order.order.cancel-order"})
+MATCH (given:Given {parentType: "Command", parentId: cmd.id})
+CREATE (cmd)-[:HAS_GIVEN]->(given);
+
+
+// ############################################################
+// 14. HAS_WHEN
+// ############################################################
+// 방향: Command/Policy → When
+// 의미: Command/Policy가 When 구성 요소를 가짐
+//
+// ############################################################
+
+MATCH (cmd:Command {key: "order.order.cancel-order"})
+MATCH (when:When {parentType: "Command", parentId: cmd.id})
+CREATE (cmd)-[:HAS_WHEN]->(when);
+
+
+// ############################################################
+// 15. HAS_THEN
+// ############################################################
+// 방향: Command/Policy → Then
+// 의미: Command/Policy가 Then 구성 요소를 가짐
+//
+// ############################################################
+
+MATCH (cmd:Command {key: "order.order.cancel-order"})
+MATCH (then:Then {parentType: "Command", parentId: cmd.id})
+CREATE (cmd)-[:HAS_THEN]->(then);
+
+
 // ============================================================
 // Event Storming Flow 시각화
 // ============================================================

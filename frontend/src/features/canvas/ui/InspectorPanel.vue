@@ -60,6 +60,10 @@ const showPropertyEditor = computed(() => {
   return ['Aggregate', 'Command', 'Event', 'ReadModel'].includes(nodeLabel.value)
 })
 
+const showGWTEditor = computed(() => {
+  return ['Command', 'Policy'].includes(nodeLabel.value)
+})
+
 function onPropertyEditorStateChange(s) {
   propIsDirty.value = !!s?.isDirty
   propHasBlockingErrors.value = !!s?.hasBlockingErrors
@@ -77,7 +81,11 @@ const form = ref({
   isMultipleResult: '',
   attachedToId: '',
   attachedToType: '',
-  attachedToName: ''
+  attachedToName: '',
+  // GWT fields
+  given: null,
+  when: null,
+  then: null
 })
 
 const initial = ref(null)
@@ -120,7 +128,17 @@ function snapshotFromNode(n) {
     attachedToType: data.attachedToType ?? '',
     attachedToName: data.attachedToName ?? '',
     enumerations: data.enumerations ?? [],
-    valueObjects: data.valueObjects ?? []
+    valueObjects: data.valueObjects ?? [],
+    // GWT fields (backward compatibility: use first row if gwtSets exists)
+    gwtSets: data.gwtSets || (data.given || data.when || data.then ? [{
+      given: data.given ? { ...data.given, fieldValues: data.given.fieldValues || {} } : null,
+      when: data.when ? { ...data.when, fieldValues: data.when.fieldValues || {} } : null,
+      then: data.then ? { ...data.then, fieldValues: data.then.fieldValues || {} } : null
+    }] : []),
+    // For backward compatibility
+    given: data.given ? { ...data.given, fieldValues: data.given.fieldValues || {} } : null,
+    when: data.when ? { ...data.when, fieldValues: data.when.fieldValues || {} } : null,
+    then: data.then ? { ...data.then, fieldValues: data.then.fieldValues || {} } : null
   }
 }
 
@@ -144,7 +162,11 @@ function resetToNode() {
       isMultipleResult: '',
       attachedToId: '',
       attachedToType: '',
-      attachedToName: ''
+      attachedToName: '',
+      gwtSets: [],
+      given: null,
+      when: null,
+      then: null
     }
     return
   }
@@ -200,7 +222,21 @@ watch(
 const dirtyFields = computed(() => {
   if (!initial.value) return []
   const keys = schema.value?.fields?.map(f => f.key) || []
-  return keys.filter(k => String(form.value[k] ?? '') !== String(initial.value[k] ?? ''))
+  const dirty = keys.filter(k => String(form.value[k] ?? '') !== String(initial.value[k] ?? ''))
+  
+  // Check GWT fields
+  if (showGWTEditor.value) {
+    const gwtFields = ['given', 'when', 'then']
+    gwtFields.forEach(field => {
+      const current = form.value[field]
+      const original = initial.value[field]
+      if (JSON.stringify(current) !== JSON.stringify(original)) {
+        dirty.push(field)
+      }
+    })
+  }
+  
+  return dirty
 })
 
 const isDirty = computed(() => dirtyFields.value.length > 0)
@@ -232,6 +268,7 @@ async function save() {
 
   try {
     const changes = []
+    const shouldSaveGWTBundle = showGWTEditor.value && JSON.stringify(form.value.gwtSets || []) !== JSON.stringify(initial.value.gwtSets || [])
 
     // Property drafts (create/update/rename/delete)
     if (showPropertyEditor.value) {
@@ -266,6 +303,9 @@ async function save() {
         updates[f.key] = next
       }
     }
+    
+    // NOTE: GWT is saved via /api/graph/gwt/upsert (single bundle node), not via /api/chat/confirm.
+    
     if (Object.keys(updates).length) {
       changes.push({
         changeId: generateChangeId('update'),
@@ -277,7 +317,63 @@ async function save() {
       })
     }
 
-    if (!changes.length) return
+    // Save GWT bundle first (so UI doesn't lose decision-table edits)
+    if (shouldSaveGWTBundle) {
+      const first = (form.value.gwtSets || [])[0] || {}
+      const given = first?.given || null
+      const when = first?.when || null
+      const then = first?.then || null
+
+      const payload = {
+        parentType: nodeLabel.value,
+        parentId: node.value.id,
+        givenRef: given
+          ? {
+              referencedNodeId: given.referencedNodeId,
+              referencedNodeType: given.referencedNodeType,
+              name: given.name
+            }
+          : null,
+        whenRef: when
+          ? {
+              referencedNodeId: when.referencedNodeId,
+              referencedNodeType: when.referencedNodeType,
+              name: when.name
+            }
+          : null,
+        thenRef: then
+          ? {
+              referencedNodeId: then.referencedNodeId,
+              referencedNodeType: then.referencedNodeType,
+              name: then.name
+            }
+          : null,
+        testCases: (form.value.gwtSets || []).map(row => ({
+          scenarioDescription: getGWTDescription(row) || null,
+          givenFieldValues: (row?.given?.fieldValues || {}),
+          whenFieldValues: (row?.when?.fieldValues || {}),
+          thenFieldValues: (row?.then?.fieldValues || {})
+        }))
+      }
+
+      const gwtRes = await fetch('/api/graph/gwt/upsert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const gwtData = await safeJson(gwtRes)
+      if (!gwtRes.ok || !gwtData?.success) {
+        throw new Error(gwtData?.detail || 'GWT 저장 실패')
+      }
+    }
+
+    if (!changes.length) {
+      // Only GWT was saved
+      initial.value = { ...form.value }
+      successMsg.value = '저장되었습니다.'
+      emit('updated')
+      return
+    }
 
     const payload = {
       drafts: changes,
@@ -395,6 +491,488 @@ async function save() {
 function requestChat() {
   if (!node.value) return
   emit('request-chat', node.value.id)
+}
+
+function addGWT() {
+  // Legacy function - use addGWTSet instead
+  addGWTSet()
+}
+
+function addGWTSet() {
+  // Get the referenced nodes from the first set (if exists) or from node data
+  const firstSet = form.value.gwtSets[0]
+  const nodeData = node.value?.data
+  
+  // Use referenced nodes from first set if available, otherwise create new
+  // All rows share the same referenced nodes, only fieldValues differ
+  const newRow = {
+    given: firstSet?.given ? { 
+      ...firstSet.given, 
+      fieldValues: {} // Empty fieldValues for new test case
+    } : (nodeData?.given ? { 
+      ...nodeData.given, 
+      fieldValues: {} 
+    } : null),
+    when: firstSet?.when ? { 
+      ...firstSet.when, 
+      fieldValues: {} 
+    } : (nodeData?.when ? { 
+      ...nodeData.when, 
+      fieldValues: {} 
+    } : null),
+    then: firstSet?.then ? { 
+      ...firstSet.then, 
+      fieldValues: {} 
+    } : (nodeData?.then ? { 
+      ...nodeData.then, 
+      fieldValues: {} 
+    } : null)
+  }
+  
+  form.value.gwtSets.push(newRow)
+  
+  // Update backward compatibility fields (use first row)
+  if (form.value.gwtSets.length === 1) {
+    if (newRow.given) {
+      form.value.given = newRow.given
+    }
+    if (newRow.when) {
+      form.value.when = newRow.when
+    }
+    if (newRow.then) {
+      form.value.then = newRow.then
+    }
+  }
+}
+
+function removeGWTSet(rowIndex) {
+  if (rowIndex >= 0 && rowIndex < form.value.gwtSets.length) {
+    form.value.gwtSets.splice(rowIndex, 1)
+    
+    // Update backward compatibility fields
+    if (form.value.gwtSets.length > 0) {
+      const firstSet = form.value.gwtSets[0]
+      form.value.given = firstSet.given
+      form.value.when = firstSet.when
+      form.value.then = firstSet.then
+    } else {
+      form.value.given = null
+      form.value.when = null
+      form.value.then = null
+    }
+  }
+}
+
+// Get properties from referenced node
+function getReferencedNodeProperties(referencedNodeId, referencedNodeType) {
+  if (!referencedNodeId || !referencedNodeType) return []
+  
+  // Try to find node in canvas store
+  const canvasNode = canvasStore.nodes.find(n => n.id === referencedNodeId)
+  if (canvasNode && canvasNode.data && canvasNode.data.properties) {
+    return canvasNode.data.properties
+  }
+  
+  return []
+}
+
+// Get available properties for a GWT type (given/when/then)
+function getGWTDescription(gwtSet) {
+  // Extract scenario description from the first Given's description
+  // The scenario description is stored at the beginning of the description
+  // Only show if it looks like a business flow description (not fallback/hardcoded)
+  if (!gwtSet || !gwtSet.given || !gwtSet.given.description) return null
+  
+  const desc = gwtSet.given.description
+  // If description contains newline, take the first part (scenario description)
+  const lines = desc.split('\n')
+  const firstLine = lines[0].trim()
+  
+  if (!firstLine) return null
+  
+  // Filter out hardcoded fallback descriptions
+  const fallbackPatterns = [
+    /^Command .+ is available$/i,
+    /^Aggregate .+ handles this command$/i,
+    /^Event .+ is emitted$/i,
+    /^Event .+ triggers this policy$/i,
+    /^Aggregate .+ handles the invoked command$/i,
+    /^Event .+ is emitted by the invoked command$/i,
+  ]
+  
+  // Check if it matches any fallback pattern
+  const isFallback = fallbackPatterns.some(pattern => pattern.test(firstLine))
+  if (isFallback) return null
+  
+  // Check if it looks like a business flow description
+  // Business flow descriptions are typically longer and more descriptive
+  // They often contain words like "Happy path", "Scenario", "When", "User", etc.
+  const businessFlowIndicators = [
+    /happy path/i,
+    /scenario/i,
+    /when .+ then/i,
+    /user .+ successfully/i,
+    /policy triggers when/i,
+    /successfully invokes/i,
+  ]
+  
+  const looksLikeBusinessFlow = businessFlowIndicators.some(pattern => pattern.test(firstLine))
+  
+  // If it's short and doesn't look like business flow, it's probably just a technical description
+  if (firstLine.length < 30 && !looksLikeBusinessFlow) return null
+  
+  return firstLine
+}
+
+function getAvailableProperties(gwtSet, type) {
+  const gwt = gwtSet[type]
+  if (!gwt || !gwt.referencedNodeId || !gwt.referencedNodeType) return []
+  
+  return getReferencedNodeProperties(gwt.referencedNodeId, gwt.referencedNodeType)
+}
+
+// Cache for Policy relationship data
+const policyRelationsCache = ref({})
+
+// Fetch Policy relationships from API
+async function fetchPolicyRelations(policyId) {
+  if (policyRelationsCache.value[policyId]) {
+    return policyRelationsCache.value[policyId]
+  }
+  
+  try {
+    const response = await fetch(`/api/graph/expand/${policyId}`)
+    if (!response.ok) return null
+    
+    const data = await response.json()
+    const policyNode = data.nodes?.find(n => n.id === policyId && n.type === 'Policy')
+    if (!policyNode) return null
+    
+    // Extract relationships from the response
+    const relationships = data.relationships || []
+    const triggerEvents = relationships
+      .filter(r => r.target === policyId && r.type === 'TRIGGERS')
+      .map(r => {
+        const eventNode = data.nodes?.find(n => n.id === r.source && n.type === 'Event')
+        return eventNode?.name || null
+      })
+      .filter(Boolean)
+    
+    const invokeRel = relationships.find(r => r.source === policyId && r.type === 'INVOKES')
+    const commandNode = invokeRel ? data.nodes?.find(n => n.id === invokeRel.target && n.type === 'Command') : null
+    
+    const hasCommandRel = commandNode ? relationships.find(r => r.target === commandNode.id && r.type === 'HAS_COMMAND') : null
+    const aggregateNode = hasCommandRel ? data.nodes?.find(n => n.id === hasCommandRel.source && n.type === 'Aggregate') : null
+    
+    const emitsRel = commandNode ? relationships.find(r => r.source === commandNode.id && r.type === 'EMITS') : null
+    const eventNode = emitsRel ? data.nodes?.find(n => n.id === emitsRel.target && n.type === 'Event') : null
+    
+    const result = {
+      triggerEvents,
+      aggregateName: aggregateNode?.name || null,
+      eventName: eventNode?.name || null
+    }
+    
+    policyRelationsCache.value[policyId] = result
+    return result
+  } catch (error) {
+    console.error('Failed to fetch Policy relations:', error)
+    return null
+  }
+}
+
+// Get Policy mapped objects from API (when GWT not yet generated)
+const policyMappedGiven = ref(null)
+const policyMappedWhen = ref(null)
+const policyMappedThen = ref(null)
+
+watch(() => node.value?.id, async (policyId) => {
+  if (nodeLabel.value === 'Policy' && policyId) {
+    const relations = await fetchPolicyRelations(policyId)
+    if (relations) {
+      policyMappedGiven.value = relations.triggerEvents.length > 0 
+        ? relations.triggerEvents.map(name => `Event: ${name}`).join(', ')
+        : null
+      policyMappedWhen.value = relations.aggregateName ? `Aggregate: ${relations.aggregateName}` : null
+      policyMappedThen.value = relations.eventName ? `Event: ${relations.eventName}` : null
+    } else {
+      policyMappedGiven.value = null
+      policyMappedWhen.value = null
+      policyMappedThen.value = null
+    }
+  } else {
+    policyMappedGiven.value = null
+    policyMappedWhen.value = null
+    policyMappedThen.value = null
+  }
+}, { immediate: true })
+
+function getPolicyMappedGiven() {
+  return policyMappedGiven.value
+}
+
+function getPolicyMappedWhen() {
+  return policyMappedWhen.value
+}
+
+function getPolicyMappedThen() {
+  return policyMappedThen.value
+}
+
+// Get properties that are already in fieldValues
+function getUsedProperties(gwtSet, type) {
+  const gwt = gwtSet[type]
+  if (!gwt || !gwt.fieldValues) return []
+  return Object.keys(gwt.fieldValues)
+}
+
+// Get unused properties (available but not yet used)
+function getUnusedProperties(gwtSet, type) {
+  const available = getAvailableProperties(gwtSet, type)
+  const used = getUsedProperties(gwtSet, type)
+  return available.filter(prop => !used.includes(prop.name))
+}
+
+// Get all field names from Given/When/Then (union of all)
+function getAllFieldNames(gwtSet) {
+  const fields = new Set()
+  
+  if (gwtSet.given?.fieldValues) {
+    Object.keys(gwtSet.given.fieldValues).forEach(f => fields.add(f))
+  }
+  if (gwtSet.when?.fieldValues) {
+    Object.keys(gwtSet.when.fieldValues).forEach(f => fields.add(f))
+  }
+  if (gwtSet.then?.fieldValues) {
+    Object.keys(gwtSet.then.fieldValues).forEach(f => fields.add(f))
+  }
+  
+  return Array.from(fields).sort()
+}
+
+// Get all available properties from all referenced nodes (Given/When/Then)
+function getAllAvailableProperties(gwtSet) {
+  const allProps = new Set()
+  
+  const givenProps = getAvailableProperties(gwtSet, 'given')
+  const whenProps = getAvailableProperties(gwtSet, 'when')
+  const thenProps = getAvailableProperties(gwtSet, 'then')
+  
+  givenProps.forEach(p => allProps.add(p.name))
+  whenProps.forEach(p => allProps.add(p.name))
+  thenProps.forEach(p => allProps.add(p.name))
+  
+  return Array.from(allProps)
+}
+
+// Check if there are unused properties
+function hasUnusedProperties(gwtSet) {
+  const allAvailable = getAllAvailableProperties(gwtSet)
+  const allUsed = getAllFieldNames(gwtSet)
+  return allAvailable.some(prop => !allUsed.includes(prop))
+}
+
+// Add all fields to the set (adds to all Given/When/Then that have the property)
+function addAllFieldsToSet(gwtSet) {
+  const allAvailable = getAllAvailableProperties(gwtSet)
+  const allUsed = getAllFieldNames(gwtSet)
+  const unused = allAvailable.filter(prop => !allUsed.includes(prop))
+  
+  // Add to Given if it exists
+  if (gwtSet.given) {
+    if (!gwtSet.given.fieldValues) gwtSet.given.fieldValues = {}
+    const givenProps = getAvailableProperties(gwtSet, 'given')
+    givenProps.forEach(prop => {
+      if (unused.includes(prop.name) && !gwtSet.given.fieldValues[prop.name]) {
+        gwtSet.given.fieldValues[prop.name] = ''
+      }
+    })
+  }
+  
+  // Add to When if it exists
+  if (gwtSet.when) {
+    if (!gwtSet.when.fieldValues) gwtSet.when.fieldValues = {}
+    const whenProps = getAvailableProperties(gwtSet, 'when')
+    whenProps.forEach(prop => {
+      if (unused.includes(prop.name) && !gwtSet.when.fieldValues[prop.name]) {
+        gwtSet.when.fieldValues[prop.name] = ''
+      }
+    })
+  }
+  
+  // Add to Then if it exists
+  if (gwtSet.then) {
+    if (!gwtSet.then.fieldValues) gwtSet.then.fieldValues = {}
+    const thenProps = getAvailableProperties(gwtSet, 'then')
+    thenProps.forEach(prop => {
+      if (unused.includes(prop.name) && !gwtSet.then.fieldValues[prop.name]) {
+        gwtSet.then.fieldValues[prop.name] = ''
+      }
+    })
+  }
+  
+  // If no properties available at all, add a generic field
+  if (unused.length === 0 && getAllFieldNames(gwtSet).length === 0) {
+    const fieldName = `field_${Date.now()}`
+    if (gwtSet.given) {
+      if (!gwtSet.given.fieldValues) gwtSet.given.fieldValues = {}
+      gwtSet.given.fieldValues[fieldName] = ''
+    }
+  }
+}
+
+// Remove field from all Given/When/Then
+function removeFieldFromSet(gwtSet, fieldName) {
+  if (gwtSet.given?.fieldValues) {
+    delete gwtSet.given.fieldValues[fieldName]
+  }
+  if (gwtSet.when?.fieldValues) {
+    delete gwtSet.when.fieldValues[fieldName]
+  }
+  if (gwtSet.then?.fieldValues) {
+    delete gwtSet.then.fieldValues[fieldName]
+  }
+}
+
+// Update field value safely
+function updateFieldValue(gwtSet, type, fieldName, value) {
+  if (!gwtSet[type]) {
+    gwtSet[type] = { fieldValues: {} }
+  }
+  if (!gwtSet[type].fieldValues) {
+    gwtSet[type].fieldValues = {}
+  }
+  gwtSet[type].fieldValues[fieldName] = value
+}
+
+function addFieldValue(gwtType) {
+  const gwt = form.value[gwtType]
+  if (!gwt) return
+  if (!gwt.fieldValues) {
+    gwt.fieldValues = {}
+  }
+  const newKey = `field_${Object.keys(gwt.fieldValues).length + 1}`
+  gwt.fieldValues[newKey] = ''
+}
+
+function removeFieldValue(gwtType, key) {
+  const gwt = form.value[gwtType]
+  if (!gwt || !gwt.fieldValues) return
+  delete gwt.fieldValues[key]
+}
+
+function removeGWT() {
+  // Remove all GWT sets
+  form.value.gwtSets = []
+  form.value.given = null
+  form.value.when = null
+  form.value.then = null
+}
+
+const showGWTDetailModal = ref(false)
+const selectedGWTSetIndex = ref(0)
+
+function openGWTDetailModal(setIndex = null) {
+  if (setIndex !== null) {
+    selectedGWTSetIndex.value = setIndex
+  }
+  
+  // If GWT sets are empty but this is a Policy, initialize from relationships
+  if (nodeLabel.value === 'Policy' && (!form.value.gwtSets || form.value.gwtSets.length === 0)) {
+    const givenName = getPolicyMappedGiven()
+    const whenName = getPolicyMappedWhen()
+    const thenName = getPolicyMappedThen()
+    
+    if (givenName || whenName || thenName) {
+      // Find nodes from relationships
+      const nodeId = node.value.id
+      
+      // Find trigger events
+      const triggerEdges = canvasStore.edges.filter(e => {
+        const isTarget = e.target === nodeId
+        const isTriggers = e.data?.edgeType === 'TRIGGERS' || 
+                           e.label?.toLowerCase() === 'triggers' ||
+                           e.data?.type === 'TRIGGERS'
+        return isTarget && isTriggers
+      })
+      
+      // Find invoke command
+      const invokeEdge = canvasStore.edges.find(e => {
+        const isSource = e.source === nodeId
+        const isInvokes = e.data?.edgeType === 'INVOKES' || 
+                          e.label?.toLowerCase() === 'invokes' ||
+                          e.data?.type === 'INVOKES'
+        return isSource && isInvokes
+      })
+      
+      const commandNode = invokeEdge ? canvasStore.nodes.find(n => {
+        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
+        return n.id === invokeEdge.target && nodeType === 'Command'
+      }) : null
+      
+      // Find aggregate
+      const hasCommandEdge = commandNode ? canvasStore.edges.find(e => {
+        const isTarget = e.target === commandNode.id
+        const isHasCommand = e.data?.edgeType === 'HAS_COMMAND' || 
+                            e.label?.toLowerCase() === 'has_command' ||
+                            e.data?.type === 'HAS_COMMAND'
+        return isTarget && isHasCommand
+      }) : null
+      
+      const aggregateNode = hasCommandEdge ? canvasStore.nodes.find(n => {
+        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
+        return n.id === hasCommandEdge.source && nodeType === 'Aggregate'
+      }) : null
+      
+      // Find emitted event
+      const emitsEdge = commandNode ? canvasStore.edges.find(e => {
+        const isSource = e.source === commandNode.id
+        const isEmits = e.data?.edgeType === 'EMITS' || 
+                       e.label?.toLowerCase() === 'emits' ||
+                       e.data?.type === 'EMITS'
+        return isSource && isEmits
+      }) : null
+      
+      const eventNode = emitsEdge ? canvasStore.nodes.find(n => {
+        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
+        return n.id === emitsEdge.target && nodeType === 'Event'
+      }) : null
+      
+      // Create initial GWT set from relationships
+      const firstTriggerEvent = triggerEdges.length > 0 ? canvasStore.nodes.find(n => {
+        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
+        return n.id === triggerEdges[0].source && nodeType === 'Event'
+      }) : null
+      
+      form.value.gwtSets = [{
+        given: firstTriggerEvent ? {
+          name: firstTriggerEvent.data?.name || firstTriggerEvent.name,
+          referencedNodeId: firstTriggerEvent.id,
+          referencedNodeType: 'Event',
+          fieldValues: {}
+        } : null,
+        when: aggregateNode ? {
+          name: aggregateNode.data?.name || aggregateNode.name,
+          referencedNodeId: aggregateNode.id,
+          referencedNodeType: 'Aggregate',
+          fieldValues: {}
+        } : null,
+        then: eventNode ? {
+          name: eventNode.data?.name || eventNode.name,
+          referencedNodeId: eventNode.id,
+          referencedNodeType: 'Event',
+          fieldValues: {}
+        } : null
+      }]
+    }
+  }
+  
+  showGWTDetailModal.value = true
+}
+
+function closeGWTDetailModal() {
+  showGWTDetailModal.value = false
+  selectedGWTSetIndex.value = 0
 }
 </script>
 
@@ -567,6 +1145,515 @@ function requestChat() {
             @state-change="onPropertyEditorStateChange"
           />
 
+          <!-- GWT Editor Section -->
+          <div v-if="showGWTEditor" class="inspector-gwt-section">
+            <div class="inspector-section__header">
+              <h3 class="inspector-section__title">Given / When / Then</h3>
+            </div>
+
+            <!-- GWT Mapped Objects Display (Read-only) -->
+            <div v-if="form.gwtSets && form.gwtSets.length > 0" class="inspector-gwt-mapped-objects">
+              <div class="gwt-preview-item">
+                <span class="gwt-preview-label">Given:</span>
+                <span class="gwt-preview-value">{{ form.gwtSets[0]?.given?.name || 'Not set' }}</span>
+              </div>
+              <div class="gwt-preview-item">
+                <span class="gwt-preview-label">When:</span>
+                <span class="gwt-preview-value">{{ form.gwtSets[0]?.when?.name || 'Not set' }}</span>
+              </div>
+              <div class="gwt-preview-item">
+                <span class="gwt-preview-label">Then:</span>
+                <span class="gwt-preview-value">{{ form.gwtSets[0]?.then?.name || 'Not set' }}</span>
+              </div>
+              <div v-if="form.gwtSets.length > 1" class="gwt-test-cases-count">
+                <span class="gwt-test-cases-count-text">{{ form.gwtSets.length }} test cases</span>
+              </div>
+              <div class="gwt-preview-actions">
+                <button
+                  class="inspector-section__btn"
+                  @click="openGWTDetailModal()"
+                  :disabled="saving"
+                  title="Edit GWT Details"
+                >
+                  Detail
+                </button>
+              </div>
+            </div>
+            
+            <!-- Policy Mapped Objects from Relationships (when GWT not yet generated) -->
+            <div v-else-if="nodeLabel === 'Policy'" class="inspector-gwt-mapped-objects">
+              <div class="gwt-preview-item">
+                <span class="gwt-preview-label">Given:</span>
+                <span class="gwt-preview-value">{{ getPolicyMappedGiven() || 'Not set' }}</span>
+              </div>
+              <div class="gwt-preview-item">
+                <span class="gwt-preview-label">When:</span>
+                <span class="gwt-preview-value">{{ getPolicyMappedWhen() || 'Not set' }}</span>
+              </div>
+              <div class="gwt-preview-item">
+                <span class="gwt-preview-label">Then:</span>
+                <span class="gwt-preview-value">{{ getPolicyMappedThen() || 'Not set' }}</span>
+              </div>
+              <div class="gwt-preview-actions">
+                <button
+                  class="inspector-section__btn"
+                  @click="openGWTDetailModal()"
+                  :disabled="saving"
+                  title="Open GWT Detail Modal"
+                >
+                  Detail
+                </button>
+              </div>
+            </div>
+            
+            <!-- Empty State (for Command) -->
+            <div v-else class="inspector-gwt-empty">
+              <div class="gwt-empty-message">No GWT test cases defined</div>
+              <button
+                class="inspector-section__btn"
+                @click="openGWTDetailModal()"
+                :disabled="saving"
+                title="Open GWT Detail Modal"
+              >
+                Detail
+              </button>
+            </div>
+
+            <!-- Full GWT Editor (hidden, will be moved to modal) -->
+            <div v-if="false && (form.given || form.when || form.then)" class="inspector-gwt-editor">
+              <!-- Given -->
+              <div class="gwt-field">
+                <label class="gwt-field__label">
+                  Given
+                  <span v-if="dirtyFields.includes('given')" class="inspector-field__dirty">•</span>
+                </label>
+                <input
+                  class="inspector-input"
+                  type="text"
+                  placeholder="e.g., Command: CancelOrder or Event: OrderCancelled"
+                  v-model="form.given.name"
+                  :disabled="saving"
+                />
+                <textarea
+                  class="inspector-textarea"
+                  rows="2"
+                  placeholder="Given description (optional)"
+                  v-model="form.given.description"
+                  :disabled="saving"
+                />
+                <!-- Field Values -->
+                <div v-if="form.given" class="gwt-field-values">
+                  <label class="gwt-field-values__label">Field Values</label>
+                  <div v-for="(value, key) in form.given.fieldValues" :key="key" class="gwt-field-value-row">
+                    <input
+                      class="inspector-input gwt-field-value-key"
+                      type="text"
+                      :value="key"
+                      @input="form.given.fieldValues[$event.target.value] = form.given.fieldValues[key]; if ($event.target.value !== key) delete form.given.fieldValues[key]"
+                      placeholder="Property name"
+                      :disabled="saving"
+                    />
+                    <span class="gwt-field-value-separator">:</span>
+                    <input
+                      class="inspector-input gwt-field-value-value"
+                      type="text"
+                      v-model="form.given.fieldValues[key]"
+                      placeholder="Test value"
+                      :disabled="saving"
+                    />
+                    <button
+                      class="gwt-field-value-remove"
+                      @click="removeFieldValue('given', key)"
+                      :disabled="saving"
+                      title="Remove field"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <button
+                    class="gwt-field-value-add"
+                    @click="addFieldValue('given')"
+                    :disabled="saving"
+                    title="Add field value"
+                  >
+                    + Add Field Value
+                  </button>
+                </div>
+                <div class="gwt-field__actions">
+                  <button
+                    class="gwt-field__btn"
+                    @click="removeGWT('given')"
+                    :disabled="saving"
+                    title="Remove Given"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+
+              <!-- When -->
+              <div class="gwt-field">
+                <label class="gwt-field__label">
+                  When
+                  <span v-if="dirtyFields.includes('when')" class="inspector-field__dirty">•</span>
+                </label>
+                <input
+                  class="inspector-input"
+                  type="text"
+                  placeholder="e.g., Aggregate: Order"
+                  v-model="form.when.name"
+                  :disabled="saving"
+                />
+                <textarea
+                  class="inspector-textarea"
+                  rows="2"
+                  placeholder="When description (optional)"
+                  v-model="form.when.description"
+                  :disabled="saving"
+                />
+                <!-- Field Values -->
+                <div v-if="form.when" class="gwt-field-values">
+                  <label class="gwt-field-values__label">Field Values</label>
+                  <div v-for="(value, key) in form.when.fieldValues" :key="key" class="gwt-field-value-row">
+                    <input
+                      class="inspector-input gwt-field-value-key"
+                      type="text"
+                      :value="key"
+                      @input="form.when.fieldValues[$event.target.value] = form.when.fieldValues[key]; if ($event.target.value !== key) delete form.when.fieldValues[key]"
+                      placeholder="Property name"
+                      :disabled="saving"
+                    />
+                    <span class="gwt-field-value-separator">:</span>
+                    <input
+                      class="inspector-input gwt-field-value-value"
+                      type="text"
+                      v-model="form.when.fieldValues[key]"
+                      placeholder="Test value"
+                      :disabled="saving"
+                    />
+                    <button
+                      class="gwt-field-value-remove"
+                      @click="removeFieldValue('when', key)"
+                      :disabled="saving"
+                      title="Remove field"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <button
+                    class="gwt-field-value-add"
+                    @click="addFieldValue('when')"
+                    :disabled="saving"
+                    title="Add field value"
+                  >
+                    + Add Field Value
+                  </button>
+                </div>
+                <div class="gwt-field__actions">
+                  <button
+                    class="gwt-field__btn"
+                    @click="removeGWT('when')"
+                    :disabled="saving"
+                    title="Remove When"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+
+              <!-- Then -->
+              <div class="gwt-field">
+                <label class="gwt-field__label">
+                  Then
+                  <span v-if="dirtyFields.includes('then')" class="inspector-field__dirty">•</span>
+                </label>
+                <input
+                  class="inspector-input"
+                  type="text"
+                  placeholder="e.g., Event: OrderCancelled"
+                  v-model="form.then.name"
+                  :disabled="saving"
+                />
+                <textarea
+                  class="inspector-textarea"
+                  rows="2"
+                  placeholder="Then description (optional)"
+                  v-model="form.then.description"
+                  :disabled="saving"
+                />
+                <!-- Field Values -->
+                <div v-if="form.then" class="gwt-field-values">
+                  <label class="gwt-field-values__label">Field Values</label>
+                  <div v-for="(value, key) in form.then.fieldValues" :key="key" class="gwt-field-value-row">
+                    <input
+                      class="inspector-input gwt-field-value-key"
+                      type="text"
+                      :value="key"
+                      @input="form.then.fieldValues[$event.target.value] = form.then.fieldValues[key]; if ($event.target.value !== key) delete form.then.fieldValues[key]"
+                      placeholder="Property name"
+                      :disabled="saving"
+                    />
+                    <span class="gwt-field-value-separator">:</span>
+                    <input
+                      class="inspector-input gwt-field-value-value"
+                      type="text"
+                      v-model="form.then.fieldValues[key]"
+                      placeholder="Test value"
+                      :disabled="saving"
+                    />
+                    <button
+                      class="gwt-field-value-remove"
+                      @click="removeFieldValue('then', key)"
+                      :disabled="saving"
+                      title="Remove field"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <button
+                    class="gwt-field-value-add"
+                    @click="addFieldValue('then')"
+                    :disabled="saving"
+                    title="Add field value"
+                  >
+                    + Add Field Value
+                  </button>
+                </div>
+                <div class="gwt-field__actions">
+                  <button
+                    class="gwt-field__btn"
+                    @click="removeGWT('then')"
+                    :disabled="saving"
+                    title="Remove Then"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    
+    <!-- GWT Detail Modal -->
+    <div v-if="showGWTDetailModal" class="gwt-detail-modal-overlay" @click.self="closeGWTDetailModal">
+      <div class="gwt-detail-modal">
+        <div class="gwt-detail-modal__header">
+          <h3 class="gwt-detail-modal__title">Given / When / Then Details</h3>
+          <button class="gwt-detail-modal__close" @click="closeGWTDetailModal" title="Close">
+            ×
+          </button>
+        </div>
+        
+        <div class="gwt-detail-modal__content">
+          <!-- Business Flow Description -->
+          <div v-if="form.gwtSets.length > 0 && (form.gwtSets[0].scenarioDescription || getGWTDescription(form.gwtSets[0]))" class="gwt-description-header">
+            <div class="gwt-description__label">Business Flow:</div>
+            <div class="gwt-description__text">{{ form.gwtSets[0].scenarioDescription || getGWTDescription(form.gwtSets[0]) }}</div>
+          </div>
+          
+          <!-- Single GWT Table: Properties as columns, Test cases as rows -->
+          <div v-if="form.gwtSets.length > 0" class="gwt-unified-table">
+            <table class="gwt-decision-table">
+              <thead>
+                <!-- Section Header Row: Given/When/Then groups -->
+                <tr>
+                  <th class="gwt-decision-table__row-header-col" rowspan="2"></th>
+                  <!-- Given Section Header -->
+                  <th 
+                    v-if="form.gwtSets[0]?.given"
+                    :colspan="Math.max(getAvailableProperties(form.gwtSets[0], 'given').length, 1)"
+                    class="gwt-decision-table__section-header gwt-decision-table__section-header--given"
+                  >
+                    <div class="gwt-decision-table__section-title">Given</div>
+                    <div class="gwt-decision-table__section-subtitle">
+                      {{ nodeLabel === 'Policy' ? (getPolicyMappedGiven() || form.gwtSets[0].given.name) : form.gwtSets[0].given.name }}
+                    </div>
+                  </th>
+                  <!-- When Section Header -->
+                  <th 
+                    v-if="form.gwtSets[0]?.when"
+                    :colspan="Math.max(getAvailableProperties(form.gwtSets[0], 'when').length, 1)"
+                    class="gwt-decision-table__section-header gwt-decision-table__section-header--when"
+                  >
+                    <div class="gwt-decision-table__section-title">When</div>
+                    <div class="gwt-decision-table__section-subtitle">{{ form.gwtSets[0].when.name }}</div>
+                  </th>
+                  <!-- Then Section Header -->
+                  <th 
+                    v-if="form.gwtSets[0]?.then"
+                    :colspan="Math.max(getAvailableProperties(form.gwtSets[0], 'then').length, 1)"
+                    class="gwt-decision-table__section-header gwt-decision-table__section-header--then"
+                  >
+                    <div class="gwt-decision-table__section-title">Then</div>
+                    <div class="gwt-decision-table__section-subtitle">{{ form.gwtSets[0].then.name }}</div>
+                  </th>
+                  <th class="gwt-decision-table__action-col" rowspan="2"></th>
+                </tr>
+                <!-- Field Names Row -->
+                <tr>
+                  <!-- Given Field Names -->
+                  <template v-if="form.gwtSets[0]?.given">
+                    <template v-if="getAvailableProperties(form.gwtSets[0], 'given').length > 0">
+                      <th 
+                        v-for="prop in getAvailableProperties(form.gwtSets[0], 'given')" 
+                        :key="`given-${prop.name}`"
+                        class="gwt-decision-table__property-col"
+                      >
+                        {{ prop.name }}
+                      </th>
+                    </template>
+                    <th v-else class="gwt-decision-table__property-col">
+                      (No properties)
+                    </th>
+                  </template>
+                  <!-- When Field Names -->
+                  <template v-if="form.gwtSets[0]?.when">
+                    <th 
+                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'when')" 
+                      :key="`when-${prop.name}`"
+                      class="gwt-decision-table__property-col"
+                    >
+                      {{ prop.name }}
+                    </th>
+                  </template>
+                  <!-- Then Field Names -->
+                  <template v-if="form.gwtSets[0]?.then">
+                    <th 
+                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'then')" 
+                      :key="`then-${prop.name}`"
+                      class="gwt-decision-table__property-col"
+                    >
+                      {{ prop.name }}
+                    </th>
+                  </template>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="(gwtSet, rowIndex) in form.gwtSets" 
+                  :key="rowIndex"
+                  class="gwt-decision-table__row"
+                >
+                  <td class="gwt-decision-table__row-header-cell">{{ rowIndex + 1 }}</td>
+                  <!-- Given Values -->
+                  <template v-if="form.gwtSets[0]?.given">
+                    <template v-if="getAvailableProperties(form.gwtSets[0], 'given').length > 0">
+                      <td 
+                        v-for="prop in getAvailableProperties(form.gwtSets[0], 'given')" 
+                        :key="`given-${prop.name}-${rowIndex}`"
+                        class="gwt-decision-table__value-cell"
+                      >
+                        <input
+                          v-if="gwtSet.given && gwtSet.given.fieldValues"
+                          class="gwt-decision-table__input"
+                          type="text"
+                          :value="gwtSet.given.fieldValues[prop.name] || ''"
+                          @input="updateFieldValue(gwtSet, 'given', prop.name, $event.target.value)"
+                          :disabled="saving"
+                          placeholder="N/A"
+                        />
+                        <span v-else class="gwt-decision-table__empty">-</span>
+                      </td>
+                    </template>
+                    <td v-else class="gwt-decision-table__value-cell">
+                      <span class="gwt-decision-table__empty">No properties available</span>
+                    </td>
+                  </template>
+                  <!-- When Values -->
+                  <template v-if="form.gwtSets[0]?.when">
+                    <td 
+                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'when')" 
+                      :key="`when-${prop.name}-${rowIndex}`"
+                      class="gwt-decision-table__value-cell"
+                    >
+                      <input
+                        v-if="gwtSet.when && gwtSet.when.fieldValues"
+                        class="gwt-decision-table__input"
+                        type="text"
+                        :value="gwtSet.when.fieldValues[prop.name] || ''"
+                        @input="updateFieldValue(gwtSet, 'when', prop.name, $event.target.value)"
+                        :disabled="saving"
+                        placeholder="N/A"
+                      />
+                      <span v-else class="gwt-decision-table__empty">-</span>
+                    </td>
+                  </template>
+                  <!-- Then Values -->
+                  <template v-if="form.gwtSets[0]?.then">
+                    <td 
+                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'then')" 
+                      :key="`then-${prop.name}-${rowIndex}`"
+                      class="gwt-decision-table__value-cell"
+                    >
+                      <input
+                        v-if="gwtSet.then && gwtSet.then.fieldValues"
+                        class="gwt-decision-table__input"
+                        type="text"
+                        :value="gwtSet.then.fieldValues[prop.name] || ''"
+                        @input="updateFieldValue(gwtSet, 'then', prop.name, $event.target.value)"
+                        :disabled="saving"
+                        placeholder="N/A"
+                      />
+                      <span v-else class="gwt-decision-table__empty">-</span>
+                    </td>
+                  </template>
+                  <td class="gwt-decision-table__action-cell">
+                    <button
+                      class="gwt-decision-table__remove"
+                      @click="removeGWTSet(rowIndex)"
+                      :disabled="saving || form.gwtSets.length === 1"
+                      title="Remove test case"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            
+            <!-- Add Row Button -->
+            <div class="gwt-decision-table__add">
+              <button
+                class="gwt-decision-table__add-btn"
+                @click="addGWTSet"
+                :disabled="saving"
+                title="Add new test case row"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Add Row
+              </button>
+            </div>
+          </div>
+          
+          <!-- Empty State -->
+          <div v-else class="gwt-empty-state">
+            <div class="gwt-empty-message">No GWT test cases. Click "Add Row" to create one.</div>
+            <button
+              class="inspector-section__btn"
+              @click="addGWTSet"
+              :disabled="saving"
+              title="Add first test case row"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Row
+            </button>
+          </div>
+        </div>
+        
+        <div class="gwt-detail-modal__footer">
+          <button class="inspector-section__btn" @click="closeGWTDetailModal">Close</button>
         </div>
       </div>
     </div>
@@ -1066,6 +2153,800 @@ function requestChat() {
 .ui-preview-empty__btn:hover {
   background: #1c7ed6;
   transform: translateY(-1px);
+}
+
+/* GWT Editor Section */
+.inspector-gwt-section {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+}
+
+/* GWT Sets Container */
+.inspector-gwt-sets {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gwt-set-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gwt-set-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.gwt-set-number {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+}
+
+.gwt-set-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.inspector-gwt-empty {
+  padding: 20px;
+  text-align: center;
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.inspector-gwt-add-set {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.gwt-test-cases-count {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.gwt-test-cases-count-text {
+  font-size: 0.65rem;
+  color: var(--color-text-light);
+}
+
+.gwt-empty-message {
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+  margin-bottom: 12px;
+}
+
+/* GWT Detail Modal */
+.gwt-detail-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.gwt-detail-modal {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  width: 95%;
+  max-width: 1200px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.gwt-detail-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.gwt-detail-modal__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  margin: 0;
+}
+
+.gwt-detail-modal__close {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.gwt-detail-modal__close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-bright);
+}
+
+.gwt-detail-modal__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.gwt-description-header {
+  padding: 16px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 20px;
+}
+
+.gwt-description__label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+}
+
+.gwt-description__text {
+  font-size: 0.9rem;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.gwt-mapped-objects-header {
+  padding: 16px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 20px;
+}
+
+.gwt-mapped-object {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.gwt-mapped-object:last-child {
+  margin-bottom: 0;
+}
+
+.gwt-mapped-object__label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  min-width: 60px;
+}
+
+.gwt-mapped-object__value {
+  font-size: 0.75rem;
+  color: var(--color-text);
+}
+
+.gwt-detail-sets {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.gwt-detail-set {
+  padding: 16px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gwt-detail-set__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.gwt-detail-set__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+}
+
+.gwt-detail-set__remove {
+  padding: 4px 8px;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: var(--radius-sm);
+  color: #ff6b6b;
+  font-size: 0.65rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gwt-detail-set__remove:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.2);
+  border-color: #ff6b6b;
+}
+
+/* Unified GWT Decision Table */
+.gwt-unified-table {
+  margin-top: 16px;
+}
+
+.gwt-decision-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.gwt-decision-table thead {
+  background: var(--color-bg-tertiary);
+}
+
+.gwt-decision-table th {
+  padding: 12px;
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  border-bottom: 2px solid var(--color-border);
+}
+
+.gwt-decision-table__row-header-col {
+  width: 40px;
+  min-width: 40px;
+  text-align: center;
+}
+
+.gwt-decision-table__property-col {
+  width: 150px;
+  min-width: 150px;
+  text-align: center;
+}
+
+.gwt-decision-table__value-col {
+  width: 150px;
+  min-width: 150px;
+  padding: 8px;
+}
+
+.gwt-decision-table__action-col {
+  width: 40px;
+  min-width: 40px;
+  text-align: center;
+}
+
+.gwt-decision-table__section-header {
+  padding: 12px;
+  text-align: center;
+  border-right: 2px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+}
+
+.gwt-decision-table__section-header--given {
+  background: rgba(92, 124, 250, 0.1);
+  border-color: rgba(92, 124, 250, 0.3);
+}
+
+.gwt-decision-table__section-header--when {
+  background: rgba(253, 126, 20, 0.1);
+  border-color: rgba(253, 126, 20, 0.3);
+}
+
+.gwt-decision-table__section-header--then {
+  background: rgba(253, 126, 20, 0.1);
+  border-color: rgba(253, 126, 20, 0.3);
+}
+
+.gwt-decision-table__section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-bright);
+  margin-bottom: 4px;
+}
+
+.gwt-decision-table__section-subtitle {
+  font-size: 0.65rem;
+  color: var(--color-text-light);
+  font-weight: normal;
+}
+
+.gwt-decision-table__property-col {
+  padding: 8px 12px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+  border-right: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.gwt-decision-table__row {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.gwt-decision-table__row:last-child {
+  border-bottom: none;
+}
+
+.gwt-decision-table__row:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.gwt-decision-table__row-header-cell {
+  padding: 10px 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-light);
+  background: var(--color-bg-tertiary);
+  border-right: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.gwt-decision-table__value-cell {
+  padding: 8px 12px;
+}
+
+.gwt-decision-table__input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  transition: border-color 0.15s ease;
+  text-align: left;
+}
+
+.gwt-decision-table__input::placeholder {
+  color: var(--color-text-light);
+  font-style: italic;
+}
+
+.gwt-decision-table__input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.gwt-decision-table__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.gwt-decision-table__empty {
+  color: var(--color-text-light);
+  font-size: 0.7rem;
+  font-style: italic;
+}
+
+.gwt-decision-table__action-cell {
+  padding: 8px;
+  text-align: center;
+}
+
+.gwt-decision-table__remove {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.gwt-decision-table__remove:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+}
+
+.gwt-decision-table__add {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.gwt-decision-table__add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gwt-decision-table__add-btn:hover:not(:disabled) {
+  background: var(--color-bg);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.gwt-empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gwt-empty-message {
+  font-size: 0.75rem;
+  color: var(--color-text-light);
+  margin-bottom: 16px;
+}
+
+.gwt-field-values-table__header {
+  display: grid;
+  grid-template-columns: 1fr 2fr 32px;
+  gap: 8px;
+  padding: 8px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-text-light);
+}
+
+.gwt-field-values-table__row {
+  display: grid;
+  grid-template-columns: 1fr 2fr 32px;
+  gap: 8px;
+  align-items: center;
+}
+
+.gwt-field-values-table__field {
+  font-size: 0.7rem;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.gwt-field-values-table__input {
+  padding: 6px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.7rem;
+}
+
+.gwt-field-values-table__input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.gwt-field-values-table__remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.gwt-field-values-table__remove:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+}
+
+.gwt-field-values-table__add {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.gwt-field-values-table__add-btn {
+  padding: 6px 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gwt-field-values-table__add-btn:hover:not(:disabled) {
+  background: var(--color-bg);
+  border-color: var(--color-accent);
+}
+
+.gwt-detail-add-set {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+.gwt-detail-modal__footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* GWT Preview (Simple Display) */
+.inspector-gwt-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gwt-preview-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.7rem;
+}
+
+.gwt-preview-label {
+  font-weight: 600;
+  color: var(--color-text-bright);
+  min-width: 50px;
+  flex-shrink: 0;
+}
+
+.gwt-preview-value {
+  color: var(--color-text);
+  flex: 1;
+  word-break: break-word;
+}
+
+.gwt-preview-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.inspector-section__btn--danger {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+}
+
+.inspector-section__btn--danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.2);
+  border-color: #ff6b6b;
+}
+
+.inspector-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-sm);
+}
+
+.inspector-section__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  margin: 0;
+}
+
+.inspector-section__btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.65rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.inspector-section__btn:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-accent);
+}
+
+.inspector-section__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inspector-gwt-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.gwt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gwt-field__label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+}
+
+.gwt-field__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.gwt-field__btn {
+  padding: 4px 8px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  font-size: 0.65rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gwt-field__btn:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+}
+
+.gwt-field__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gwt-field-values {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.gwt-field-values__label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-text-light);
+  margin-bottom: 6px;
+}
+
+.gwt-field-value-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.gwt-field-value-key {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
+}
+
+.gwt-field-value-separator {
+  color: var(--color-text-light);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+.gwt-field-value-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
+}
+
+.gwt-field-value-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gwt-field-value-remove:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+}
+
+.gwt-field-value-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gwt-field-value-add {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  font-size: 0.65rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-top: 4px;
+}
+
+.gwt-field-value-add:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.gwt-field-value-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>
 

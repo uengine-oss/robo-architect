@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { useCanvasStore } from '@/features/canvas/canvas.store'
 
 const props = defineProps({
   id: String,
@@ -9,13 +10,43 @@ const props = defineProps({
 })
 
 const terminologyStore = useTerminologyStore()
+const canvasStore = useCanvasStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Event')} >>`)
 
 const hasProperties = computed(() => Array.isArray(props.data?.properties) && props.data.properties.length > 0)
+// Access showDesignLevel directly - Pinia store refs are reactive
+const shouldShowFields = computed(() => {
+  return canvasStore.showDesignLevel && hasProperties.value
+})
 const nodeStyle = computed(() => {
+  // Always compute height based on current showDesignLevel state
+  const baseHeight = 80
+  let computedHeight = baseHeight
+  
+  // Add height for properties if they should be shown
+  if (shouldShowFields.value && hasProperties.value) {
+    // Actual height: margin-top (10px) + padding (12px) + (rows * 22px)
+    const propsHeight = 10 + 12 + (props.data.properties.length * 22)
+    computedHeight = baseHeight + propsHeight
+  }
+  
+  // Use dynamicHeight as base if available, but adjust for current state
   const h = props.data?.dynamicHeight
-  if (h && Number(h) > 0) return { height: `${h}px` }
-  return {}
+  if (h && Number(h) > 0) {
+    // If fields should be shown but dynamicHeight doesn't account for them, use computed
+    if (shouldShowFields.value && hasProperties.value) {
+      // Ensure height is at least what we computed
+      computedHeight = Math.max(computedHeight, Number(h))
+    } else if (!canvasStore.showDesignLevel && hasProperties.value) {
+      // If fields are hidden, reduce from dynamicHeight
+      const propsHeight = 10 + 12 + (props.data.properties.length * 22)
+      computedHeight = Math.max(baseHeight, Number(h) - propsHeight)
+    } else {
+      computedHeight = Number(h)
+    }
+  }
+  
+  return { height: `${computedHeight}px` }
 })
 </script>
 
@@ -30,7 +61,7 @@ const nodeStyle = computed(() => {
         v{{ data.version }}
       </div>
 
-      <div v-if="hasProperties" class="es-node__props">
+      <div v-if="shouldShowFields" class="es-node__props">
         <div v-for="prop in data.properties" :key="prop.id" class="es-node__prop">
           <span class="prop-badges">
             <span v-if="prop.isKey" class="prop-badge prop-badge--key">PK</span>
@@ -42,9 +73,11 @@ const nodeStyle = computed(() => {
       </div>
     </div>
     
-    <!-- Connection handles -->
-    <Handle type="target" :position="Position.Left" />
-    <Handle type="source" :position="Position.Right" />
+    <!-- Connection handles - Left/Right for optimal routing -->
+    <Handle type="target" :position="Position.Left" id="left-target" />
+    <Handle type="source" :position="Position.Left" id="left-source" />
+    <Handle type="target" :position="Position.Right" id="right-target" />
+    <Handle type="source" :position="Position.Right" id="right-source" />
   </div>
 </template>
 
@@ -73,6 +106,10 @@ const nodeStyle = computed(() => {
 
 .es-node__body {
   padding: 10px 12px 12px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .es-node__name {
@@ -104,6 +141,7 @@ const nodeStyle = computed(() => {
   gap: 6px;
   padding: 3px 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  min-width: 0;
 }
 
 .es-node__prop:last-child {
@@ -138,6 +176,9 @@ const nodeStyle = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  word-break: break-word;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .prop-type {

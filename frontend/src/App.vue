@@ -8,10 +8,12 @@ import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
 import UserStoryEditModal from '@/features/userStories/ui/UserStoryEditModal.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.store'
+import { useThemeStore } from '@/app/theme.store'
 import { createLogger, newOpId } from '@/app/logging/logger'
 
 const navigatorStore = useNavigatorStore()
 const userStoryEditor = useUserStoryEditorStore()
+const themeStore = useThemeStore() // Initialize theme store
 
 // Tab state management
 const activeTab = ref('Design')

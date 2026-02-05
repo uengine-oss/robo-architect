@@ -24,6 +24,7 @@ from .neo4j_ops.analysis import GraphAnalysisOps
 from .neo4j_ops.bounded_contexts import BoundedContextOps
 from .neo4j_ops.commands import CommandOps
 from .neo4j_ops.events import EventOps
+from .neo4j_ops.gwt import GWTOps
 from .neo4j_ops.policies import PolicyOps
 from .neo4j_ops.properties import PropertyOps
 from .neo4j_ops.references import ReferenceOps
@@ -48,6 +49,7 @@ class Neo4jClient(
     AggregateOps,
     CommandOps,
     EventOps,
+    GWTOps,
     PolicyOps,
     PropertyOps,
     ReferenceOps,

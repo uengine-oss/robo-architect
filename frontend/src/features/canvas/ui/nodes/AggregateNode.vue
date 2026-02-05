@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { useCanvasStore } from '@/features/canvas/canvas.store'
 
 const props = defineProps({
   id: String,
@@ -9,20 +10,62 @@ const props = defineProps({
 })
 
 const terminologyStore = useTerminologyStore()
+const canvasStore = useCanvasStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Aggregate')} >>`)
 
 const hasProperties = computed(() => Array.isArray(props.data?.properties) && props.data.properties.length > 0)
 const hasEnumerations = computed(() => Array.isArray(props.data?.enumerations) && props.data.enumerations.length > 0)
 const hasValueObjects = computed(() => Array.isArray(props.data?.valueObjects) && props.data.valueObjects.length > 0)
 const hasFields = computed(() => hasProperties.value || hasEnumerations.value || hasValueObjects.value)
+// Access showDesignLevel directly - Pinia store refs are reactive
+const shouldShowFields = computed(() => {
+  return canvasStore.showDesignLevel && hasFields.value
+})
 
 // Dynamic height based on (a) the number of Commands this Aggregate spans and (b) embedded properties
 const nodeStyle = computed(() => {
+  // Always compute height based on current showDesignLevel state
+  const baseHeight = 80
+  let computedHeight = baseHeight
+  
+  // Add height for fields if they should be shown
+  if (shouldShowFields.value && hasFields.value) {
+    const propsCount = (props.data?.properties || []).length
+    const enumsCount = (props.data?.enumerations || []).length
+    const vosCount = (props.data?.valueObjects || []).length
+    const totalFields = propsCount + enumsCount + vosCount
+    if (totalFields > 0) {
+      // Section label (20px) + margin-top (10px) + padding (12px) + each field row (22px)
+      const fieldsHeight = 20 + 10 + 12 + (totalFields * 22)
+      computedHeight = baseHeight + fieldsHeight
+    }
+  }
+  
+  // Use dynamicHeight as base if available, but adjust for current state
   const dynamicHeight = props.data?.dynamicHeight
   if (dynamicHeight && Number(dynamicHeight) > 0) {
-    return { height: `${dynamicHeight}px` }
+    // If fields should be shown but dynamicHeight doesn't account for them, use computed
+    if (shouldShowFields.value && hasFields.value) {
+      // Ensure height is at least what we computed
+      computedHeight = Math.max(computedHeight, Number(dynamicHeight))
+    } else if (!canvasStore.showDesignLevel && hasFields.value) {
+      // If fields are hidden, reduce from dynamicHeight
+      const propsCount = (props.data?.properties || []).length
+      const enumsCount = (props.data?.enumerations || []).length
+      const vosCount = (props.data?.valueObjects || []).length
+      const totalFields = propsCount + enumsCount + vosCount
+      if (totalFields > 0) {
+        const fieldsHeight = 20 + 10 + 12 + (totalFields * 22)
+        computedHeight = Math.max(120, Number(dynamicHeight) - fieldsHeight)
+      } else {
+        computedHeight = Number(dynamicHeight)
+      }
+    } else {
+      computedHeight = Number(dynamicHeight)
+    }
   }
-  return {}
+  
+  return { height: `${computedHeight}px` }
 })
 </script>
 
@@ -37,7 +80,7 @@ const nodeStyle = computed(() => {
         {{ data.rootEntity }}
       </div>
 
-      <div v-if="hasFields" class="es-node__props">
+      <div v-if="shouldShowFields" class="es-node__props">
         <div class="es-node__section-label">Properties</div>
         
         <!-- Regular Properties -->
@@ -66,13 +109,11 @@ const nodeStyle = computed(() => {
       </div>
     </div>
     
-    <!-- Connection handles -->
-    <!-- Top/Bottom handles for vertical flow (kept for backward compatibility) -->
-    <Handle type="target" :position="Position.Top" id="top" />
-    <Handle type="source" :position="Position.Bottom" id="bottom" />
-    <!-- Left/Right handles for horizontal flow (preferred for better edge routing) -->
-    <Handle type="target" :position="Position.Left" id="left" />
-    <Handle type="source" :position="Position.Right" id="right" />
+    <!-- Connection handles - Left/Right only for optimal routing -->
+    <Handle type="target" :position="Position.Left" id="left-target" />
+    <Handle type="source" :position="Position.Left" id="left-source" />
+    <Handle type="target" :position="Position.Right" id="right-target" />
+    <Handle type="source" :position="Position.Right" id="right-source" />
   </div>
 </template>
 
@@ -94,6 +135,10 @@ const nodeStyle = computed(() => {
 
 .es-node__body {
   padding: 10px 12px 12px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .es-node__name {
@@ -125,6 +170,7 @@ const nodeStyle = computed(() => {
   gap: 6px;
   padding: 3px 4px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  min-width: 0;
 }
 
 .es-node__prop:last-child {
@@ -167,6 +213,9 @@ const nodeStyle = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  word-break: break-word;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .prop-type {

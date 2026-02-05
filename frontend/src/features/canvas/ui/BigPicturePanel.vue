@@ -199,42 +199,119 @@ const eventPositions = computed(() => {
 const connectionPaths = computed(() => {
   const paths = []
   
+  // Get SVG container element to measure actual position
+  const svgEl = svgContainer.value
+  if (!svgEl) return paths
+  
+  // Get SVG's bounding rect relative to bp-table-container
+  const svgRect = svgEl.getBoundingClientRect()
+  const containerEl = svgEl.parentElement // bp-table-container
+  if (!containerEl) return paths
+  const containerRect = containerEl.getBoundingClientRect()
+  
+  // CRITICAL: SVG is inside zoomable container with transform: scale()
+  // getBoundingClientRect() returns screen coordinates (after scale)
+  // SVG coordinate system uses original coordinates (before scale)
+  const zoomLevel = store.zoomLevel
+  
+  // Calculate SVG offset within container (accounts for padding)
+  // SVG is position:absolute, left:0, top:0, so it's at container's content edge
+  // Convert screen coordinates to SVG coordinates by dividing by zoom level
+  const svgOffsetX = (svgRect.left - containerRect.left) / zoomLevel
+  const svgOffsetY = (svgRect.top - containerRect.top) / zoomLevel
+  
   store.filteredConnections.forEach(conn => {
     const sourcePos = eventPositions.value[conn.sourceEventId]
     const targetPos = eventPositions.value[conn.targetEventId]
     
     if (!sourcePos || !targetPos) return
     
-    // Get absolute Y positions by adding swimlane offset
+    // Try to get actual DOM positions for cards
+    const sourceCardEl = document.querySelector(`[data-event-id="${conn.sourceEventId}"]`)
+    const targetCardEl = document.querySelector(`[data-event-id="${conn.targetEventId}"]`)
+    
+    let sourceCardRightEdge, startY, targetCardLeftEdge, endY
+    
+    if (sourceCardEl && targetCardEl) {
+      // Use actual DOM positions - most accurate method
+      const sourceRect = sourceCardEl.getBoundingClientRect()
+      const targetRect = targetCardEl.getBoundingClientRect()
+      
+      // CRITICAL: SVG is inside zoomable container with transform: scale()
+      // getBoundingClientRect() returns screen coordinates (after scale)
+      // SVG coordinate system uses original coordinates (before scale)
+      // Convert screen coordinates to SVG coordinates by dividing by zoom level
+      const zoomLevel = store.zoomLevel
+      
+      // Convert to SVG coordinates (relative to SVG element's top-left)
+      // Source: right edge of card (exact pixel)
+      // Screen coordinates -> SVG coordinates: divide by zoom level
+      sourceCardRightEdge = (sourceRect.right - svgRect.left) / zoomLevel
+      startY = (sourceRect.top + sourceRect.height / 2 - svgRect.top) / zoomLevel
+      
+      // Target: left edge of card (exact pixel where arrow tip should touch)
+      targetCardLeftEdge = (targetRect.left - svgRect.left) / zoomLevel
+      endY = (targetRect.top + targetRect.height / 2 - svgRect.top) / zoomLevel
+    } else {
+      // Fallback to calculated positions
     const sourceLaneY = getSwimlaneY(sourcePos.laneIndex)
     const targetLaneY = getSwimlaneY(targetPos.laneIndex)
     
-    // Calculate start and end points in SVG coordinate system
-    // SVG is at top: 0, left: 0 of bp-table-container
-    // bp-table-container has padding: 0 20px, but SVG is inside it, so padding doesn't affect SVG coordinates
-    // eventPositions.x is absolute position from left edge of bp-table-container (includes SWIMLANE_HEADER_WIDTH)
-    // eventPositions.y is relative to swimlane top, so we add swimlane offset
-    // Connect directly to the edge of the cards (handle points)
-    const startX = sourcePos.x + EVENT_CARD_WIDTH  // Right edge of source node (handle point)
-    const startY = sourceLaneY + sourcePos.y + EVENT_CARD_HEIGHT / 2  // Vertical center of source node
-    const endX = targetPos.x  // Left edge of target node (handle point)
-    const endY = targetLaneY + targetPos.y + EVENT_CARD_HEIGHT / 2  // Vertical center of target node
+      // Calculate card positions in container coordinates
+      // Card DOM: left = eventPositions.x - SWIMLANE_HEADER_WIDTH (relative to bp-swimlane__events)
+      // Card absolute in container = SWIMLANE_HEADER_WIDTH + (eventPositions.x - SWIMLANE_HEADER_WIDTH) = eventPositions.x
+      // In SVG coordinates: subtract SVG offset
+      sourceCardRightEdge = sourcePos.x + EVENT_CARD_WIDTH - svgOffsetX
+      startY = sourceLaneY + sourcePos.y + EVENT_CARD_HEIGHT / 2 - svgOffsetY
+      
+      targetCardLeftEdge = targetPos.x - svgOffsetX
+      endY = targetLaneY + targetPos.y + EVENT_CARD_HEIGHT / 2 - svgOffsetY
+    }
     
     // Determine connection type for styling
     const isCrossBC = conn.type === 'cross-bc'
     const isSameBC = conn.type === 'same-bc'
     
-    // Create bezier curve path
-    // Adjust end points to account for arrow marker size so arrow tip touches the card edge
-    const arrowOffset = 9 // Match refX value from marker (for normal arrows)
+    // Create bezier curve path with precise arrow positioning
+    // SVG marker positioning:
+    // - Path ends at a point
+    // - Marker origin (0,0) is placed at that point  
+    // - refX: distance from marker origin to arrow tip
+    // - polygon points="0 0, 10 3.5, 0 7": arrow tip is at x=10
+    // - To make arrow tip touch card edge: path must end at (cardEdge - refX)
+    // 
+    // Using actual DOM positions, so coordinates are pixel-perfect
+    // Source has no marker, so path starts exactly at card edge
+    // Target has marker, so path ends before card edge, marker extends to card edge
+    // 
+    // SVG marker with refX=0:
+    // - Marker origin (0,0) is at path end
+    // - Arrow tip is at x=10 in marker coordinates
+    // - So arrow tip is 10px from path end
+    // - To make arrow tip touch card edge: path ends at (cardEdge - 10)
+    const arrowTipLength = 10  // Distance from marker origin to arrow tip
+    const highlightedArrowTipLength = 11
+    
+    // Path coordinates - using actual DOM positions
+    // Source: path starts exactly at source card right edge (no marker)
+    const startX = sourceCardRightEdge
+    // Target: arrow tip should touch target card left edge exactly
+    const endX = targetCardLeftEdge
+    // CRITICAL: SVG marker positioning
+    // - Path ends at a point
+    // - Marker origin (0,0) is placed at that point
+    // - refX shifts the marker origin relative to the path end
+    // - polygon points="0 0, 10 3.5, 0 7": arrow tip is at x=10 in marker coordinates
+    // - With refX=0: marker origin at path end, arrow tip at path end + 10
+    // - To make arrow tip touch card edge: path must end at (cardEdge - 10)
+    // Now with refX=0, arrow tip extends 10px from path end
+    const adjustedEndX = endX - arrowTipLength  // Arrow extends 10px from path end
+    
     let path
     const dx = endX - startX
     const dy = endY - startY
     
-    // Adjust endX to account for arrow marker, so arrow tip touches the card edge
-    // The path ends at adjustedEndX, and the arrow marker (refX=9) extends from there to endX
-    const adjustedEndX = endX - arrowOffset
-    
+    // Build path ending at adjustedEndX (marker will extend to endX)
     if (Math.abs(dy) < 30) {
       // Nearly horizontal - simple curve
       const controlOffset = Math.min(50, Math.abs(dx) / 3)
@@ -254,13 +331,21 @@ const connectionPaths = computed(() => {
       h => h.sourceEventId === conn.sourceEventId && h.targetEventId === conn.targetEventId
     )
     
+    // For highlighted connections, adjust path end for different arrow tip length
+    let finalPath = path
+    if (isHighlighted) {
+      const highlightedAdjustedEndX = endX - highlightedArrowTipLength
+      // Replace the last coordinate in the path
+      finalPath = path.replace(new RegExp(`${adjustedEndX} ${endY}$`), `${highlightedAdjustedEndX} ${endY}`)
+    }
+    
     // Calculate label position (middle of curve)
     const labelX = (startX + endX) / 2 + 10
     const labelY = (startY + endY) / 2 - 8
     
     paths.push({
       id: `${conn.sourceEventId}-${conn.targetEventId}`,
-      path,
+      path: finalPath,
       sourceEventId: conn.sourceEventId,
       targetEventId: conn.targetEventId,
       policyName: conn.policyName,
@@ -480,11 +565,12 @@ function handleSwimlaneeDragEnd() {
 function handleWheel(e) {
   if (e.ctrlKey || e.metaKey) {
     e.preventDefault()
-    if (e.deltaY < 0) {
-      store.zoomIn()
-    } else {
-      store.zoomOut()
-    }
+    // Use deltaY to calculate smooth zoom like VueFlow
+    // Normalize deltaY to a reasonable zoom step (typically -120 to 120 per wheel notch)
+    // Use smaller step for smoother zoom experience
+    const zoomStep = -e.deltaY / 1000 // Negative because deltaY < 0 means scroll up (zoom in)
+    const newZoom = Math.max(0.3, Math.min(2.5, store.zoomLevel + zoomStep))
+    store.setZoom(newZoom)
   }
 }
 
@@ -683,6 +769,24 @@ function getSwimlaneY(laneIndex) {
         @dragover="handleDragOver"
         @dragleave="handleDragLeave"
       >
+        <!-- Timeline Header (Sequence Numbers) - Fixed outside zoomable container -->
+        <div class="bp-timeline-header" :style="{ width: (timelineWidth * store.zoomLevel) + 'px' }">
+          <div class="bp-timeline-header__label" :style="{ width: (SWIMLANE_HEADER_WIDTH * store.zoomLevel) + 'px' }">
+              <span>Bounded Context</span>
+            </div>
+            <div class="bp-timeline-header__markers">
+              <div 
+                v-for="marker in sequenceMarkers"
+                :key="marker.sequence"
+                class="bp-sequence-marker"
+              :style="{ left: (marker.x - SWIMLANE_HEADER_WIDTH) * store.zoomLevel + 'px' }"
+              >
+                <span class="bp-sequence-marker__number">{{ marker.sequence }}</span>
+                <span class="bp-sequence-marker__label">Step</span>
+              </div>
+            </div>
+          </div>
+
         <!-- Zoomable Container -->
         <div 
           ref="tableContainer"
@@ -694,23 +798,6 @@ function getSwimlaneY(laneIndex) {
             minHeight: totalHeight + 'px'
           }"
         >
-          <!-- Timeline Header (Sequence Numbers) -->
-          <div class="bp-timeline-header" :style="{ width: timelineWidth + 'px' }">
-            <div class="bp-timeline-header__label" :style="{ width: SWIMLANE_HEADER_WIDTH + 'px' }">
-              <span>Bounded Context</span>
-            </div>
-            <div class="bp-timeline-header__markers">
-              <div 
-                v-for="marker in sequenceMarkers"
-                :key="marker.sequence"
-                class="bp-sequence-marker"
-                :style="{ left: marker.x - SWIMLANE_HEADER_WIDTH + 'px' }"
-              >
-                <span class="bp-sequence-marker__number">{{ marker.sequence }}</span>
-                <span class="bp-sequence-marker__label">Step</span>
-              </div>
-            </div>
-          </div>
 
           <!-- SVG Layer for Connections -->
           <svg 
@@ -727,12 +814,19 @@ function getSwimlaneY(laneIndex) {
                 <stop offset="100%" style="stop-color:#fd7e14;stop-opacity:1" />
               </linearGradient>
               
-              <!-- Arrow markers (larger size, refX adjusted to touch path end) -->
+              <!-- Arrow markers -->
+              <!-- SVG marker positioning:
+                   - polygon points="0 0, 10 3.5, 0 7": arrow tip is at (10, 3.5)
+                   - refX: distance from marker origin (path end) to arrow tip
+                   - refX=10 means arrow tip is 10px from marker origin
+                   - To make arrow tip touch card edge: path ends at (cardEdge - refX)
+                   - markerWidth must be >= refX to contain the arrow
+              -->
               <marker
                 id="arrowhead-policy"
                 markerWidth="10"
                 markerHeight="7"
-                refX="9"
+                refX="0"
                 refY="3.5"
                 orient="auto"
                 markerUnits="userSpaceOnUse"
@@ -743,7 +837,7 @@ function getSwimlaneY(laneIndex) {
                 id="arrowhead-policy-highlight"
                 markerWidth="11"
                 markerHeight="8"
-                refX="10"
+                refX="0"
                 refY="4"
                 orient="auto"
                 markerUnits="userSpaceOnUse"
@@ -754,7 +848,7 @@ function getSwimlaneY(laneIndex) {
                 id="arrowhead-cross-bc"
                 markerWidth="10"
                 markerHeight="7"
-                refX="9"
+                refX="0"
                 refY="3.5"
                 orient="auto"
                 markerUnits="userSpaceOnUse"
@@ -908,6 +1002,7 @@ function getSwimlaneY(laneIndex) {
                   v-for="(evt, evtIndex) in lane.events"
                   :key="evt.id"
                   class="bp-event-card"
+                  :data-event-id="evt.id"
                   :class="{
                     'is-selected': store.selectedEventId === evt.id,
                     'is-hovered': store.hoveredEventId === evt.id,

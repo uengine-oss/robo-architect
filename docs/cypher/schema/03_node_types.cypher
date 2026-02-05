@@ -266,3 +266,106 @@ SET ui.name = "CancelOrder UI",
     ui.userStoryId = "US-001"
 MERGE (bc)-[:HAS_UI]->(ui)
 MERGE (ui)-[:ATTACHED_TO]->(cmd);
+
+
+// ############################################################
+// 10. Given (GWT - Given/When/Then)
+// ############################################################
+// 설명: BDD 스타일의 Given/When/Then 구성 요소 중 Given
+//       Command의 경우: Command 자체를 참조
+//       Policy의 경우: Policy를 트리거하는 Event를 참조
+// 관계:
+//   - HAS_GIVEN: Command/Policy → Given
+//   - REFERENCES: Given → Command/Event (참조 대상)
+//
+// 필수 속성:
+//   - id: String (UUID)
+//   - key: String (자연키)
+//   - name: String (Given 설명)
+//   - parentType: String ("Command" | "Policy")
+//   - parentId: String (부모 노드 UUID)
+//
+// 선택 속성:
+//   - description: String
+//   - referencedNodeId: String (참조하는 노드 ID - Command 또는 Event)
+//   - referencedNodeType: String ("Command" | "Event")
+// ############################################################
+
+MATCH (cmd:Command {key: "order.order.cancel-order"})
+MERGE (given:Given {parentType: "Command", parentId: cmd.id, key: "given." + cmd.id})
+ON CREATE SET given.id = randomUUID()
+SET given.name = "Command: CancelOrder",
+    given.description = "주문 취소 명령이 실행됨",
+    given.referencedNodeId = cmd.id,
+    given.referencedNodeType = "Command"
+MERGE (cmd)-[:HAS_GIVEN]->(given)
+MERGE (given)-[:REFERENCES]->(cmd);
+
+
+// ############################################################
+// 11. When (GWT - Given/When/Then)
+// ############################################################
+// 설명: BDD 스타일의 Given/When/Then 구성 요소 중 When
+//       Command/Policy를 처리하는 Aggregate를 참조
+// 관계:
+//   - HAS_WHEN: Command/Policy → When
+//   - REFERENCES: When → Aggregate (참조 대상)
+//
+// 필수 속성:
+//   - id: String (UUID)
+//   - key: String (자연키)
+//   - name: String (When 설명)
+//   - parentType: String ("Command" | "Policy")
+//   - parentId: String (부모 노드 UUID)
+//
+// 선택 속성:
+//   - description: String
+//   - referencedNodeId: String (참조하는 Aggregate ID)
+//   - referencedNodeType: String ("Aggregate")
+// ############################################################
+
+MATCH (cmd:Command {key: "order.order.cancel-order"})
+MATCH (agg:Aggregate {key: "order.order"})
+MERGE (when:When {parentType: "Command", parentId: cmd.id, key: "when." + cmd.id})
+ON CREATE SET when.id = randomUUID()
+SET when.name = "Aggregate: Order",
+    when.description = "Order Aggregate가 Command를 처리함",
+    when.referencedNodeId = agg.id,
+    when.referencedNodeType = "Aggregate"
+MERGE (cmd)-[:HAS_WHEN]->(when)
+MERGE (when)-[:REFERENCES]->(agg);
+
+
+// ############################################################
+// 12. Then (GWT - Given/When/Then)
+// ############################################################
+// 설명: BDD 스타일의 Given/When/Then 구성 요소 중 Then
+//       Command의 경우: Command가 emit하는 Event를 참조
+//       Policy의 경우: Policy가 invoke하는 Command가 emit하는 Event를 참조
+// 관계:
+//   - HAS_THEN: Command/Policy → Then
+//   - REFERENCES: Then → Event (참조 대상)
+//
+// 필수 속성:
+//   - id: String (UUID)
+//   - key: String (자연키)
+//   - name: String (Then 설명)
+//   - parentType: String ("Command" | "Policy")
+//   - parentId: String (부모 노드 UUID)
+//
+// 선택 속성:
+//   - description: String
+//   - referencedNodeId: String (참조하는 Event ID)
+//   - referencedNodeType: String ("Event")
+// ############################################################
+
+MATCH (cmd:Command {key: "order.order.cancel-order"})
+MATCH (evt:Event {key: "order.order.cancel-order.order-cancelled@1.0.0"})
+MERGE (then:Then {parentType: "Command", parentId: cmd.id, key: "then." + cmd.id})
+ON CREATE SET then.id = randomUUID()
+SET then.name = "Event: OrderCancelled",
+    then.description = "주문 취소 이벤트가 발생함",
+    then.referencedNodeId = evt.id,
+    then.referencedNodeType = "Event"
+MERGE (cmd)-[:HAS_THEN]->(then)
+MERGE (then)-[:REFERENCES]->(evt);

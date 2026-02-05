@@ -25,6 +25,7 @@ from .nodes_aggregates import approve_aggregates_node, extract_aggregates_node
 from .nodes_commands import extract_commands_node
 from .nodes_events import extract_events_node
 from .nodes_policies import approve_policies_node, identify_policies_node
+from .nodes_gwt import generate_gwt_node
 from .nodes_persist import save_to_graph_node
 from .nodes_routing import route_after_approval, route_by_phase
 
@@ -47,6 +48,7 @@ __all__ = [
     "extract_events_node",
     "identify_policies_node",
     "approve_policies_node",
+    "generate_gwt_node",
     "save_to_graph_node",
     # Routing
     "route_after_approval",

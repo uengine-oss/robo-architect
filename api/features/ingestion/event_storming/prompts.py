@@ -994,6 +994,9 @@ Common patterns:
 
 This creates traceability: UserStory → Command → Event → Policy → Command
 
+CRITICAL:
+- Do NOT generate IDs; server assigns UUID id + derives key.
+
 Output should be a list of PolicyCandidate objects."""
 
 # =============================================================================

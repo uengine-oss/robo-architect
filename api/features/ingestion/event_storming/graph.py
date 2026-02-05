@@ -35,6 +35,7 @@ from .nodes import (
     extract_aggregates_node,
     extract_commands_node,
     extract_events_node,
+    generate_gwt_node,
     identify_bc_node,
     identify_policies_node,
     init_node,
@@ -75,14 +76,55 @@ def route_after_aggregate_approval(
 
 def route_after_policy_approval(
     state: EventStormingState,
-) -> Literal["save_to_graph", "identify_policies"]:
+) -> Literal["generate_gwt", "identify_policies"]:
     """Route after policy approval."""
-    # Check if we're in SAVE_TO_GRAPH phase (means approval happened)
+    from api.platform.observability.smart_logger import SmartLogger
+    
+    # If we're in GENERATE_GWT phase, go to generate_gwt
+    if state.phase == WorkflowPhase.GENERATE_GWT:
+        SmartLogger.log(
+            "INFO",
+            "Route: approve_policies -> generate_gwt (phase is GENERATE_GWT)",
+            category="agent.graph.routing",
+            params={"phase": state.phase.value, "route": "generate_gwt"}
+        )
+        return "generate_gwt"
+    # If we're in SAVE_TO_GRAPH phase, we've already done GWT, skip it
     if state.phase == WorkflowPhase.SAVE_TO_GRAPH:
-        return "save_to_graph"
-    # Check if not awaiting approval and we've processed policies
-    if not state.awaiting_human_approval and state.phase != WorkflowPhase.IDENTIFY_POLICIES:
-        return "save_to_graph"
+        SmartLogger.log(
+            "INFO",
+            "Route: approve_policies -> generate_gwt (phase is SAVE_TO_GRAPH, will go to save_to_graph)",
+            category="agent.graph.routing",
+            params={"phase": state.phase.value, "route": "generate_gwt"}
+        )
+        return "generate_gwt"  # This will immediately go to save_to_graph via edge
+    # If policies were approved (not awaiting approval and we have approved_policies or policy_candidates)
+    if not state.awaiting_human_approval:
+        # If we have approved policies or we've processed policies, go to GWT generation
+        if state.approved_policies or (state.policy_candidates and state.phase != WorkflowPhase.IDENTIFY_POLICIES):
+            SmartLogger.log(
+                "INFO",
+                "Route: approve_policies -> generate_gwt (policies approved)",
+                category="agent.graph.routing",
+                params={
+                    "phase": state.phase.value,
+                    "approved_policies_count": len(state.approved_policies),
+                    "policy_candidates_count": len(state.policy_candidates),
+                    "route": "generate_gwt"
+                }
+            )
+            return "generate_gwt"
+    # Otherwise, go back to identify_policies (for revision)
+    SmartLogger.log(
+        "INFO",
+        "Route: approve_policies -> identify_policies (revision needed)",
+        category="agent.graph.routing",
+        params={
+            "phase": state.phase.value,
+            "awaiting_human_approval": state.awaiting_human_approval,
+            "route": "identify_policies"
+        }
+    )
     return "identify_policies"
 
 
@@ -134,6 +176,7 @@ def create_event_storming_graph(checkpointer=None):
     graph.add_node("extract_events", extract_events_node)
     graph.add_node("identify_policies", identify_policies_node)
     graph.add_node("approve_policies", approve_policies_node)
+    graph.add_node("generate_gwt", generate_gwt_node)
     graph.add_node("save_to_graph", save_to_graph_node)
 
     # ==========================================================================
@@ -195,15 +238,18 @@ def create_event_storming_graph(checkpointer=None):
     graph.add_edge("extract_events", "identify_policies")
     graph.add_edge("identify_policies", "approve_policies")
 
-    # After policy approval
+    # After policy approval -> Generate GWT -> Save to graph
     graph.add_conditional_edges(
         "approve_policies",
         route_after_policy_approval,
         {
-            "save_to_graph": "save_to_graph",
+            "generate_gwt": "generate_gwt",
             "identify_policies": "identify_policies",
         },
     )
+    
+    # Generate GWT -> Save to graph
+    graph.add_edge("generate_gwt", "save_to_graph")
 
     # Save to graph -> End
     graph.add_edge("save_to_graph", END)

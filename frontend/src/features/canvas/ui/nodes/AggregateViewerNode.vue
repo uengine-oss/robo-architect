@@ -21,14 +21,21 @@ const props = defineProps({
     <div v-if="data.properties && data.properties.length > 0" class="node-section">
       <div class="section-divider"></div>
       <div v-for="prop in data.properties" :key="prop.id || prop.name" class="node-field node-field-with-handle">
-        <!-- Left side handle for incoming edges -->
+        <!-- Left side target handle for incoming edges -->
         <Handle 
-          :id="prop.id ? `field-${String(prop.id)}` : (prop.name ? `field-${String(prop.name)}` : `field-unknown-${prop.id || prop.name}`)"
+          :id="prop.id ? `field-${String(prop.id)}-target-left` : (prop.name ? `field-${String(prop.name)}-target-left` : `field-unknown-${prop.id || prop.name}-target-left`)"
           type="target" 
           :position="Position.Left"
           class="field-handle field-handle--left"
         />
-        <!-- Right side handle for outgoing edges -->
+        <!-- Right side target handle for incoming edges (allows connections from right side) -->
+        <Handle 
+          :id="prop.id ? `field-${String(prop.id)}-target-right` : (prop.name ? `field-${String(prop.name)}-target-right` : `field-unknown-${prop.id || prop.name}-target-right`)"
+          type="target" 
+          :position="Position.Right"
+          class="field-handle field-handle--right"
+        />
+        <!-- Right side source handle for outgoing edges -->
         <Handle 
           :id="prop.id ? `field-${String(prop.id)}-source` : (prop.name ? `field-${String(prop.name)}-source` : `field-unknown-${prop.id || prop.name}-source`)"
           type="source" 
@@ -67,11 +74,11 @@ const props = defineProps({
     </div>
 
     <!-- Handles: both source and target on each side for bidirectional connections -->
-    <!-- Vue Flow requires: sourceHandle must use type="source", targetHandle must use type="target" -->
-    <Handle type="source" :position="Position.Left" id="left" />
-    <Handle type="target" :position="Position.Left" id="left" />
-    <Handle type="source" :position="Position.Right" id="right" />
-    <Handle type="target" :position="Position.Right" id="right" />
+    <!-- IMPORTANT: Each handle must have a unique ID for Vue Flow to identify them correctly -->
+    <Handle type="source" :position="Position.Left" id="left-source" />
+    <Handle type="target" :position="Position.Left" id="left-target" />
+    <Handle type="source" :position="Position.Right" id="right-source" />
+    <Handle type="target" :position="Position.Right" id="right-target" />
   </div>
 </template>
 

@@ -39,9 +39,11 @@ const hasTemplate = computed(() => !!props.data?.template)
       </div>
     </div>
 
-    <!-- Connection handles -->
-    <Handle type="target" :position="Position.Left" />
-    <Handle type="source" :position="Position.Right" />
+    <!-- Connection handles - Left/Right for optimal routing -->
+    <Handle type="target" :position="Position.Left" id="left-target" />
+    <Handle type="source" :position="Position.Left" id="left-source" />
+    <Handle type="target" :position="Position.Right" id="right-target" />
+    <Handle type="source" :position="Position.Right" id="right-source" />
   </div>
 </template>
 

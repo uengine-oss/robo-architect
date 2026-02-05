@@ -32,19 +32,22 @@
 8. extract_events (Event 추출)
 9. identify_policies (Policy 추출)
 10. approve_policies (Human-in-the-loop)
-11. save_to_graph (Neo4j 저장)
+11. generate_gwt (Given/When/Then 생성 - 후처리)
+12. save_to_graph (Neo4j 저장)
 ```
 
 ### 2.2 각 단계별 개선 포인트
 
-| 단계 | 현재 노드 | 개선 대상 | backend-generators 참고 | 우선순위 |
-|------|----------|----------|------------------------|---------|
+| 단계 | 현재 노드 | 개선 대상 | backend-generators 참고 | 상태 |
+|------|----------|----------|------------------------|------|
 | 1 | `load_user_stories_node` | User Story 검증/정제 | `user_story_generator.py` | ✅ 완료 |
 | 2 | `identify_bc_node` | BC 추출 프롬프트 강화 | `bounded_context_generator.py` | ✅ 완료 |
-| 4 | `breakdown_user_story_node` | Breakdown 구조화 | 선택적 (Aggregate 추출에서 활용) | 낮음 |
-| 5 | `extract_aggregates_node` | Aggregate 추출 강화 | `aggregate_draft_generator.py` | 높음 |
-| 7 | `extract_commands_node` | Command 추출 강화 | `command_readmodel_extractor.py` | 높음 |
-| 8 | `extract_events_node` | Event 추출 강화 | `requirements_validator.py` | 높음 |
+| 4 | `breakdown_user_story_node` | Breakdown 구조화 | 선택적 (Aggregate 추출에서 활용) | ⏸️ 선택적 |
+| 5 | `extract_aggregates_node` | Aggregate 추출 강화 | `aggregate_draft_generator.py` | ✅ 완료 |
+| 7 | `extract_commands_node` | Command 추출 강화 | `command_readmodel_extractor.py` | ✅ 완료 |
+| 8 | `extract_events_node` | Event 추출 강화 | `requirements_validator.py` | ✅ 완료 |
+| 9 | `identify_policies_node` | Policy 추출 강화 | - | ✅ 완료 |
+| 11 | `generate_gwt_node` | GWT (Given/When/Then) 생성 | - | ✅ 완료 |
 
 **중요 고려사항:**
 - **Event 추출**: `requirements_validator`는 요구사항에서 프로세스 단계를 이벤트로 추출합니다. 현재 Event Storming은 Command → Event 순서이지만, 요구사항 기반 직접 추출도 고려해야 합니다.
@@ -289,6 +292,64 @@
 
 ---
 
+### 3.7 Step 11: Given/When/Then (GWT) 생성
+
+**현재 상태:**
+- `generate_gwt_node`: Command와 Policy에 대한 GWT 구조 생성
+- 모든 요소(Command, Event, Aggregate, Policy)가 생성된 후 후처리 단계로 실행
+- Neo4j에 별도 노드로 저장되며, UI에서는 Command/Policy에 종속된 필드로 표시
+
+**개선 방향:**
+- Command, Event, Aggregate, Policy의 모든 정보가 준비된 상태에서 GWT 생성
+- 참조된 노드의 properties를 `fieldValues`로 자동 매핑
+- BDD 스타일 테스트 시나리오 생성 지원
+
+**구현 내용:**
+1. **후처리 단계 실행**
+   - `approve_policies` 이후, `save_to_graph` 이전에 실행
+   - 모든 Command, Event, Aggregate, Policy 정보가 state에 준비된 상태
+
+2. **GWT 구조 생성**
+   - **Given**: Command 자체 또는 Policy의 trigger Event
+   - **When**: Aggregate (Command를 처리하는 Aggregate)
+   - **Then**: Event (Command가 emit하는 Event)
+
+3. **fieldValues 자동 매핑**
+   - Command의 properties → `given.fieldValues`
+   - Aggregate의 properties → `when.fieldValues`
+   - Event의 properties → `then.fieldValues`
+   - LLM이 참조된 노드의 properties를 분석하여 적절한 테스트 값을 생성
+
+4. **Neo4j 저장**
+   - `Given`, `When`, `Then` 노드를 별도로 생성
+   - `HAS_GIVEN`, `HAS_WHEN`, `HAS_THEN` 관계로 Command/Policy와 연결
+   - `REFERENCES` 관계로 참조된 노드(Aggregate, Command, Event)와 연결
+   - `fieldValues`는 JSON 문자열로 저장
+
+5. **UI 통합**
+   - GWT는 Neo4j에서는 별도 노드이지만, UI에서는 Command/Policy 노드 내부에 필드로 표시
+   - Inspector Panel에서 GWT 편집 가능
+   - `fieldValues` 키-값 쌍을 추가/수정/삭제 가능
+
+6. **파일 위치:**
+   - `api/features/ingestion/event_storming/nodes_gwt.py` (생성됨)
+   - `api/features/ingestion/event_storming/neo4j_ops/gwt.py` (생성됨)
+   - `api/features/ingestion/event_storming/prompts.py` (GENERATE_GWT_PROMPT 추가)
+   - `docs/cypher/schema/03_node_types.cypher` (Given/When/Then 노드 타입 추가)
+   - `docs/cypher/schema/04_relationships.cypher` (GWT 관계 추가)
+
+**워크플로우 위치:**
+- `approve_policies` → `generate_gwt` → `save_to_graph`
+- 모든 참조 정보가 준비된 후 실행되므로 정확한 매핑 가능
+
+**특징:**
+- **후처리 방식**: 초기 생성 단계에서는 GWT를 생성하지 않고, 모든 요소가 완성된 후 생성
+- **동적 필드 추가**: Pydantic 모델에서 GWT 필드를 제외하여 structured output 스키마 유지
+- **런타임 추가**: `setattr()`를 사용하여 런타임에 GWT 필드를 동적으로 추가
+- **안전한 접근**: `getattr()`를 사용하여 동적으로 추가된 필드에 안전하게 접근
+
+---
+
 ## 4. 공통 개선 사항
 
 ### 4.1 대용량 요청 처리 (스캐닝 및 청킹)
@@ -310,11 +371,12 @@
    - 일관성 검증
 
 3. **적용 대상:**
-   - **BC 추출** (Step 2): 대용량 User Stories 처리
-   - **Aggregate 추출** (Step 5): 대용량 Breakdown 결과 처리
-   - **Command 추출** (Step 7): 대용량 요구사항 처리 (이미 명시됨)
-   - **Event 추출** (Step 8): 대용량 요구사항 처리
-   - **Policy 추출** (Step 9): 대용량 Event/Command 처리
+   - **BC 추출** (Step 2): 대용량 User Stories 처리 - 🔄 구현 예정
+   - **Aggregate 추출** (Step 5): 대용량 Breakdown 결과 처리 - 🔄 구현 예정
+   - **Command 추출** (Step 7): 대용량 요구사항 처리 - 🔄 구현 예정
+   - **Event 추출** (Step 8): 대용량 요구사항 처리 - 🔄 구현 예정
+   - **Policy 추출** (Step 9): 대용량 Event/Command 처리 - 🔄 구현 예정
+   - **GWT 생성** (Step 11): 대용량 Command/Policy 처리 - 🔄 구현 예정
 
 4. **참고 구현:**
    - `backend-generators/src/project_generator/workflows/sitemap/command_readmodel_extractor.py`
@@ -346,48 +408,57 @@
 2. **Bounded Context 추출 개선** (Step 2) - ✅ 완료
    - 도메인 분류 전략, Core Principles, Task Guidelines 강화
 
-### Phase 2: 핵심 개선 (우선순위 높음) - 진행 중
+### Phase 2: 핵심 개선 (우선순위 높음) - ✅ 완료
 
-**⚠️ 중요 고려사항:**
+**완료된 개선 사항:**
 
-#### A. Event 추출 방식 재검토 필요
-- **현재 Event Storming**: Command → Event 순서 (Command가 emit하는 Event 추출)
-- **`requirement_validator`**: 요구사항에서 프로세스의 각 단계를 이벤트로 직접 추출
-- **고려사항**: 두 방식을 결합하거나, 요구사항 기반 Event 추출을 먼저 수행한 후 Command와 매핑하는 방식 고려
-
-#### B. Command/ReadModel 추출 순서 재검토 필요
-- **현재 Event Storming**: Aggregate → Command 순서
-- **`command_readmodel_extractor`**: 요구사항에서 Command/ReadModel을 직접 추출 (Aggregate 정보 필요)
-- **고려사항**: 
-  - Command/ReadModel은 UI nodes로 사용될 수 있음
-  - Aggregate 추출 전에 먼저 추출하는 것도 고려 가능
-  - 또는 Aggregate 추출 후 Command/ReadModel을 더 정확하게 매핑
-
-#### C. 추천 우선순위
-
-**Option 1: 현재 순서 유지 (추천)**
-1. **Aggregate 추출 개선** (Step 5) - 다음 단계
+1. **Aggregate 추출 개선** (Step 5) - ✅ 완료
    - 설계 옵션 및 Pros/Cons 분석
    - Enumerations 및 Value Objects 식별
-   - Aggregate 구조가 명확해지면 Command/ReadModel 매핑이 더 정확해짐
+   - Aggregate 구조 분석 강화
 
-2. **Command 추출 개선** (Step 7)
-   - `command_readmodel_extractor.py` 노하우 활용
-   - 청크 처리, 구조화된 Command 추출
+2. **Command 추출 개선** (Step 7) - ✅ 완료
+   - 구조화된 Command 추출
    - Actor 분류 강화
    - Aggregate와의 매핑 검증
 
-3. **Event 추출 개선** (Step 8)
-   - `requirements_validator.py` 노하우 활용
+3. **Event 추출 개선** (Step 8) - ✅ 완료
    - Event Discovery Methodology 적용
    - Command-Event 매핑 검증
+   - Event 명명 규칙 강화
 
-**Option 2: 순서 변경 (대안)**
-- BC 추출 후 → Command/ReadModel 추출 → Aggregate 추출 → Event 추출
-- 장점: Command/ReadModel을 UI nodes로 먼저 활용 가능
-- 단점: Aggregate 정보 없이 Command 추출 시 매핑이 부정확할 수 있음
+4. **Policy 추출 개선** (Step 9) - ✅ 완료
+   - Cross-BC Policy 식별
+   - Event-Command 매핑 검증
 
-### Phase 3: 보완 개선 (우선순위 중간)
+5. **GWT 생성 추가** (Step 11) - ✅ 완료
+   - Given/When/Then 구조 생성
+   - fieldValues 자동 매핑
+   - 후처리 방식으로 모든 참조 정보 활용
+   - Neo4j 별도 노드 저장 및 UI 통합
+
+**결정 사항:**
+- 현재 순서 유지 (Aggregate → Command → Event → Policy → GWT)
+- 모든 요소 생성 후 GWT를 후처리로 생성하여 정확한 참조 매핑 가능
+
+### Phase 3: 대용량 요청 처리 (다음 단계) - 🔄 진행 예정
+
+**목표:**
+- 모든 추출 단계에서 대용량 요청을 안정적으로 처리
+- 청킹 및 병합 로직 구현
+
+**구현 계획:**
+1. **BC 추출** (Step 2): 대용량 User Stories 처리
+2. **Aggregate 추출** (Step 5): 대용량 Breakdown 결과 처리
+3. **Command 추출** (Step 7): 대용량 요구사항 처리
+4. **Event 추출** (Step 8): 대용량 요구사항 처리
+5. **Policy 추출** (Step 9): 대용량 Event/Command 처리
+
+**참고 구현:**
+- `backend-generators/src/project_generator/workflows/sitemap/command_readmodel_extractor.py`
+- `split_requirements_into_chunks()` 메서드 패턴 활용
+
+### Phase 4: 보완 개선 (우선순위 중간)
 4. **User Story Breakdown 개선** (Step 4) - 선택적
    - Breakdown은 Aggregate 추출의 준비 단계
    - Aggregate 추출 단계에서 Breakdown 결과를 더 효과적으로 활용하도록 개선하는 것이 더 유용할 수 있음
@@ -447,17 +518,26 @@
 
 ## 9. 다음 단계
 
-1. **Phase 1 구현 시작**
-   - Bounded Context 추출 개선부터 시작
-   - 프롬프트 구조 분석 및 통합
+### 9.1 현재 상태
+- ✅ **Phase 1 완료**: User Story 검증, BC 추출 개선
+- ✅ **Phase 2 완료**: Aggregate, Command, Event, Policy 추출 개선, GWT 생성 추가
+- 🔄 **Phase 3 진행 예정**: 대용량 요청 처리 (청킹 및 병합)
 
-2. **테스트 계획 수립**
-   - 각 단계별 단위 테스트
-   - 통합 테스트 시나리오 작성
+### 9.2 Phase 3 구현 계획
+1. **대용량 처리 로직 구현**
+   - 각 추출 단계에 청킹 로직 추가
+   - 결과 병합 및 중복 제거 로직 구현
+   - 일관성 검증 로직 추가
+
+2. **테스트 계획**
+   - 대용량 입력 데이터로 각 단계 테스트
+   - 청킹 및 병합 로직 검증
+   - 성능 및 정확도 측정
 
 3. **문서화**
-   - 개선된 프롬프트 문서화
-   - 사용 가이드 작성
+   - 청킹 전략 문서화
+   - 병합 로직 설명
+   - 성능 가이드라인 작성
 
 ---
 

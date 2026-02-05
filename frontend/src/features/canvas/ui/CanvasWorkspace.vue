@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, markRaw } from 'vue'
+import { ref, computed, onMounted, onUnmounted, markRaw, nextTick } from 'vue'
 import { VueFlow, useVueFlow, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -57,7 +57,7 @@ const isResizingChat = ref(false)
 const inspectingNodeId = ref(null)
 const inspectingInitialTab = ref('properties')
 
-const { fitView, zoomIn, zoomOut } = useVueFlow()
+const { fitView, zoomIn, zoomOut, getNodes } = useVueFlow()
 
 // Hover state for highlighting connections
 const hoveredNodeId = ref(null)
@@ -73,11 +73,16 @@ const getNodeBcId = (nodeId) => {
   return node.parentNode || node.data?.bcId || null
 }
 
-// Get directly connected nodes and edges only (1-hop, no recursion)
+// Get all connected nodes and edges recursively (follows all relation chains in both directions)
 // Only follows actual relation edges (EMITS, TRIGGERS, INVOKES, HAS_COMMAND)
+// Excludes Aggregate nodes from the chain (they don't trigger actions, so don't traverse through them)
+// When hovering a node, shows:
+//   - Previous flow: all nodes that lead to this node (backward traversal)
+//   - Next flow: all nodes that this node leads to (forward traversal)
 const getAllConnectedNodesAndEdges = (startNodeId) => {
   const connectedNodes = new Set([startNodeId])
   const connectedEdges = new Set()
+  const visited = new Set([startNodeId])
   
   // Valid relation edge types (exclude container membership edges)
   const validEdgeTypes = ['EMITS', 'TRIGGERS', 'INVOKES', 'HAS_COMMAND']
@@ -85,31 +90,30 @@ const getAllConnectedNodesAndEdges = (startNodeId) => {
   // Valid relation edge colors (for backward compatibility)
   const validEdgeColors = ['#fd7e14', '#b197fc', '#5c7cfa', '#fcc419']
   
-  // Find all edges directly connected to start node (1-hop only)
-  canvasStore.edges.forEach(edge => {
-    // Only follow valid relation edges
+  // Check if an edge is a valid relation edge
+  const isValidRelationEdge = (edge) => {
     const edgeType = edge.data?.edgeType
     
-    // Check if this is a valid relation edge
-    let isValidRelation = false
-    
     if (edgeType) {
-      // If edgeType is stored, check if it's valid
-      isValidRelation = validEdgeTypes.includes(edgeType)
+      return validEdgeTypes.includes(edgeType)
     } else {
       // If edgeType is not stored, be very strict:
       // Must have valid color AND valid label
-      // This excludes container membership edges and other non-relation edges
       const stroke = edge.style?.stroke
       const hasValidLabel = edge.label && ['triggers', 'invokes', 'emits', 'has_command'].includes(edge.label.toLowerCase())
       const hasValidColor = stroke && validEdgeColors.includes(stroke)
       
-      // Only consider it valid if it has BOTH valid color AND valid label
-      isValidRelation = hasValidColor && hasValidLabel
+      return hasValidColor && hasValidLabel
     }
-    
-    // Skip if not a valid relation edge
-    if (!isValidRelation) {
+  }
+  
+  // Recursive function to traverse connected nodes in a specific direction
+  // direction: 'forward' (follow edges from source to target) or 'backward' (follow edges from target to source)
+  const traverse = (nodeId, direction) => {
+    // Find all edges connected to this node
+    canvasStore.edges.forEach(edge => {
+      // Only follow valid relation edges
+      if (!isValidRelationEdge(edge)) {
       return
     }
     
@@ -121,24 +125,56 @@ const getAllConnectedNodesAndEdges = (startNodeId) => {
     }
     
     let nextNodeId = null
+      let shouldFollow = false
     
-    if (edge.source === startNodeId) {
+      if (direction === 'forward') {
+        // Forward: follow edges where this node is the source
+        if (edge.source === nodeId) {
       nextNodeId = edge.target
-    } else if (edge.target === startNodeId) {
+          shouldFollow = true
+        }
+      } else if (direction === 'backward') {
+        // Backward: follow edges where this node is the target
+        if (edge.target === nodeId) {
       nextNodeId = edge.source
+          shouldFollow = true
+        }
     }
     
-    // Only proceed if we found a directly connected node
-    if (!nextNodeId) {
+      // Only proceed if we found a connected node in the right direction
+      if (!nextNodeId || !shouldFollow) {
       return
     }
     
-    // Add edge to connected set
+      // Always add the edge if it's connected to the current node
     connectedEdges.add(edge.id)
     
-    // Add directly connected node (1-hop only, no recursion)
+      // Skip if already visited (prevent infinite loops)
+      if (visited.has(nextNodeId)) {
+        return
+      }
+      
+      // Get the next node to check its type
+      const nextNode = canvasStore.nodes.find(n => n.id === nextNodeId)
+      
+      // Skip Aggregate nodes - they don't trigger actions, so don't follow edges through them
+      // Don't add Aggregate nodes to the connected set (they're not part of the action flow)
+      if (nextNode?.type === 'aggregate') {
+        return
+      }
+      
+      // Add node and continue traversing
     connectedNodes.add(nextNodeId)
+      visited.add(nextNodeId)
+      
+      // Recursively traverse in the same direction
+      traverse(nextNodeId, direction)
   })
+  }
+  
+  // Traverse both forward (next flow) and backward (previous flow)
+  traverse(startNodeId, 'forward')
+  traverse(startNodeId, 'backward')
   
   return {
     nodes: connectedNodes,
@@ -176,12 +212,13 @@ const getCrossBcConnectedNodeIds = (nodeId) => {
 }
 
 const nodesWithSelection = computed(() => {
-  // Check if hovered node is a BC node - if so, don't highlight anything
+  // Check if hovered node is a BC node or Aggregate node - if so, don't highlight anything
   const hoveredNode = hoveredNodeId.value ? canvasStore.nodes.find(n => n.id === hoveredNodeId.value) : null
   const isHoveredBcNode = hoveredNode?.type === 'boundedcontext'
+  const isHoveredAggregateNode = hoveredNode?.type === 'aggregate'
   
-  // If hovering over BC node, don't apply any highlighting
-  if (isHoveredBcNode) {
+  // If hovering over BC node or Aggregate node, don't apply any highlighting
+  if (isHoveredBcNode || isHoveredAggregateNode) {
     return canvasStore.nodes.map(node => ({
       ...node,
       class: canvasStore.isSelected(node.id) ? 'es-node--selected' : ''
@@ -228,12 +265,13 @@ const nodesWithSelection = computed(() => {
 // Vue Flow sometimes relies on reference changes to refresh edges rendering.
 // Wrap edges in a computed that returns a new array to ensure updates are picked up.
 const edgesForFlow = computed(() => {
-  // Check if hovered node is a BC node - if so, don't highlight anything
+  // Check if hovered node is a BC node or Aggregate node - if so, don't highlight anything
   const hoveredNode = hoveredNodeId.value ? canvasStore.nodes.find(n => n.id === hoveredNodeId.value) : null
   const isHoveredBcNode = hoveredNode?.type === 'boundedcontext'
+  const isHoveredAggregateNode = hoveredNode?.type === 'aggregate'
   
-  // If hovering over BC node, don't apply any highlighting
-  if (isHoveredBcNode) {
+  // If hovering over BC node or Aggregate node, don't apply any highlighting
+  if (isHoveredBcNode || isHoveredAggregateNode) {
     return canvasStore.edges.map(edge => ({ ...edge }))
   }
   
@@ -375,8 +413,8 @@ async function onNodeDoubleClick(event) {
 
 // Node hover handlers
 function onNodeMouseEnter(event) {
-  // Skip highlighting for BC nodes themselves
-  if (event.node.type === 'boundedcontext') {
+  // Skip highlighting for BC nodes and Aggregate nodes (they don't trigger actions)
+  if (event.node.type === 'boundedcontext' || event.node.type === 'aggregate') {
     return
   }
   hoveredNodeId.value = event.node.id
@@ -413,6 +451,46 @@ async function handleDrop(event) {
     // Track new node IDs for cross-BC relation finding
     const newNodeIds = expandedData.nodes.map(n => n.id)
     
+    // CRITICAL: Before adding nodes, sync ALL BC positions from Vue Flow to preserve user-adjusted positions
+    // This must happen BEFORE addNodesWithLayout to prevent position reset
+    // Use both getNodes() and DOM to ensure we get the actual rendered positions
+    try {
+      const vueFlowNodes = getNodes()
+      vueFlowNodes.forEach(node => {
+        if (node.type === 'boundedcontext' && node.position) {
+          const storeNode = canvasStore.nodes.find(n => n.id === node.id)
+          if (storeNode) {
+            // Also check DOM for actual rendered position (more reliable)
+            try {
+              const nodeEl = document.querySelector(`[data-id="${node.id}"]`)
+              if (nodeEl) {
+                const transform = nodeEl.style.transform
+                if (transform) {
+                  const match = transform.match(/translate\(([^,]+)px,\s*([^)]+)px\)/)
+                  if (match) {
+                    const x = parseFloat(match[1])
+                    const y = parseFloat(match[2])
+                    if (!isNaN(x) && !isNaN(y)) {
+                      storeNode.position = { x, y }
+                      console.log(`[CanvasWorkspace] Synced BC position from DOM: ${node.id} -> (${x}, ${y})`)
+                      return
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              // Fall through to use Vue Flow position
+            }
+            // Fallback: use Vue Flow's position
+            storeNode.position = { x: node.position.x, y: node.position.y }
+            console.log(`[CanvasWorkspace] Synced BC position from Vue Flow: ${node.id} -> (${node.position.x}, ${node.position.y})`)
+          }
+        }
+      })
+    } catch (e) {
+      console.error('[CanvasWorkspace] Failed to sync BC positions before addNodes:', e)
+    }
+    
     canvasStore.addNodesWithLayout(
       expandedData.nodes, 
       expandedData.relationships, 
@@ -443,12 +521,42 @@ function handleDragLeave() {
 }
 
 // Watch for node changes and update positions
+// Handle node position changes - only update position, not edges
+// IMPORTANT: Do NOT update BC container positions here - they are managed by Vue Flow
+// Only update child node positions (which need to update BC size)
 function onNodesChange(changes) {
   changes.forEach(change => {
-    if (change.type === 'position' && change.position) {
-      canvasStore.updateNodePosition(change.id, change.position)
+    if (change.type === 'position') {
+      const node = change.node
+      if (node && change.position) {
+        // Skip BC containers - their positions are managed by Vue Flow directly
+        // Updating them here can cause position reset issues
+        if (node.type === 'boundedcontext') {
+          return
+        }
+        canvasStore.updateNodePosition(node.id, change.position)
+      }
     }
   })
+}
+
+// Handle node drag stop - update edges when drag ends
+function onNodeDragStop(e) {
+  const node = e.node
+  if (!node) return
+  
+  // CRITICAL: For BC nodes, save the final position to nodes.value
+  // This prevents position reset when new nodes are added
+  if (node.type === 'boundedcontext' && node.position) {
+    const storeNode = canvasStore.nodes.find(n => n.id === node.id)
+    if (storeNode) {
+      storeNode.position = { x: node.position.x, y: node.position.y }
+      console.log(`[CanvasWorkspace] Saved BC position after drag: ${node.id} -> (${node.position.x}, ${node.position.y})`)
+    }
+  }
+  
+  // Update edges for the dragged node
+  canvasStore.rerouteEdgesForMovedNodes([node.id])
 }
 
 function onNodeClick(event) {
@@ -531,6 +639,8 @@ onUnmounted(() => {
           :nodes="nodesWithSelection"
           :edges="edgesForFlow"
           :node-types="nodeTypes"
+          :connection-radius="40"
+          connection-mode="loose"
           :default-viewport="{ zoom: 0.8, x: 50, y: 50 }"
           :min-zoom="0.2"
           :max-zoom="2"
@@ -543,6 +653,7 @@ onUnmounted(() => {
           :prevent-scrolling="true"
           fit-view-on-init
           @nodes-change="onNodesChange"
+          @node-drag-stop="onNodeDragStop"
           @node-click="onNodeClick"
           @node-double-click="onNodeDoubleClick"
           @node-mouse-enter="onNodeMouseEnter"

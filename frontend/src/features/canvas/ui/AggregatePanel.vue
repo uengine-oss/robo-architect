@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch, markRaw, nextTick, h } from 'vue'
+import { ref, computed, onMounted, watch, markRaw, nextTick } from 'vue'
 import { VueFlow, useVueFlow, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -12,10 +12,12 @@ import ValueObjectViewerNode from './nodes/ValueObjectViewerNode.vue'
 import AggregateContainerNode from './nodes/AggregateContainerNode.vue'
 import AggregateViewerInspector from './AggregateViewerInspector.vue'
 import ChatPanel from '@/features/modelModifier/ui/ChatPanel.vue'
+import StraightEdge from './edges/StraightEdge.vue'
+import StepEdge from './edges/StepEdge.vue'
 
 const store = useAggregateViewerStore()
 const chatStore = useModelModifierStore()
-const { fitView, zoomIn, zoomOut, getNodes, getNode, updateEdge } = useVueFlow()
+const { fitView, zoomIn, zoomOut, getNodes, getNode, updateEdge, getViewport } = useVueFlow()
 
 // Track node positions for edge handle updates (updated via onNodesChange)
 const nodePositions = ref(new Map())
@@ -76,13 +78,43 @@ async function handleDrop(event) {
   }
 }
 
+// Store BC container positions in localStorage
+const STORAGE_KEY = 'aggregateViewer_bcPositions'
+
+function loadBcPositions() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored ? JSON.parse(stored) : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveBcPosition(containerId, position) {
+  try {
+    const positions = loadBcPositions()
+    positions[containerId] = position
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(positions))
+  } catch (e) {
+    console.warn('Failed to save BC position:', e)
+  }
+}
+
 // Helper function to build nodes from store data
-function buildNodes() {
+function buildNodes(preserveExistingPositions = false) {
   const result = []
   let x = 100
   const startY = 50
   const xSpacing = 650  // Horizontal spacing between Aggregate containers
   const ySpacing = 100  // Vertical spacing between Aggregate containers
+  
+  // Load saved BC positions
+  const savedPositions = loadBcPositions()
+  
+  // If preserving positions, also check current nodes
+  const currentPositions = preserveExistingPositions 
+    ? new Map(nodes.value.map(n => [n.id, n.position]))
+    : new Map()
   
   // Node dimensions
   const aggregateBaseWidth = 280
@@ -173,11 +205,20 @@ function buildNodes() {
     // Track max height in current row
     rowMaxHeight = Math.max(rowMaxHeight, containerSize.height)
     
+    // Priority: 1) current position (if preserving), 2) saved position, 3) calculated position
+    const currentPos = currentPositions.get(containerId)
+    const savedPos = savedPositions[containerId]
+    const containerPosition = currentPos
+      ? { x: currentPos.x, y: currentPos.y }
+      : (savedPos 
+        ? { x: savedPos.x, y: savedPos.y }
+        : { x: currentX, y: currentY })
+    
     // Create Aggregate container node
     result.push({
       id: containerId,
       type: 'aggregateContainer',
-      position: { x: currentX, y: currentY },
+      position: containerPosition,
       data: {
         bcName: agg.bcName,
         aggregateId: agg.id,
@@ -279,12 +320,12 @@ const edges = ref([])
 // Edge version counter to force Vue Flow to recognize edge updates
 const edgeVersion = ref(0)
 
+// Debug flag - set to false to disable verbose logging
+const DEBUG_EDGES = true // Temporarily enable to debug handle issues
+
 // Update edges when store data or node positions change
 // Must be defined before watch that calls it
 function updateEdges() {
-  console.log('[AggregatePanel] updateEdges: Rebuilding edges, nodes count:', nodes.value.length)
-  const newEdges = buildEdges()
-  
   // Increment edge version to force Vue Flow to treat edges as completely new
   edgeVersion.value++
   
@@ -298,22 +339,20 @@ function updateEdges() {
     setTimeout(() => {
       nextTick(() => {
         // Wait for Vue Flow to fully render nodes and their handles
+        // CRITICAL: buildEdges() must be called AFTER handles are rendered in DOM
         setTimeout(() => {
+          // Build edges now that handles are rendered
+          const newEdges = buildEdges()
+          
           // Create completely new edge objects with versioned IDs to force Vue Flow to recreate them
           // Store original ID in data for hover/selection logic
           edges.value = newEdges.map(edge => {
             const originalId = edge.id
             const versionedId = `${originalId}-v${edgeVersion.value}`
             
-            // Don't verify handles - Vue Flow will handle it automatically
-            // If handle doesn't exist, Vue Flow will use default handle
-            // The handle verification was causing issues because handleBounds might not be populated yet
-            const sourceHandle = edge.sourceHandle
-            const targetHandle = edge.targetHandle
-            
+            // CRITICAL: Include sourcePosition/targetPosition for smoothstep routing
             // Create a completely new object (not just a spread)
-            // IMPORTANT: Vue Flow requires handle IDs to match exactly what's defined in the node component
-            // Always set handles - Vue Flow will use them if they exist, or fall back to default if they don't
+            // IMPORTANT: Vue Flow requires handle IDs and positions to match exactly what's defined in the node component
             const newEdge = {
               id: versionedId,
               source: edge.source,
@@ -322,9 +361,11 @@ function updateEdges() {
               animated: edge.animated,
               style: { ...edge.style },
               markerEnd: { ...edge.markerEnd },
-              // Always set handles - Vue Flow will handle validation
-              ...(sourceHandle && { sourceHandle }),
-              ...(targetHandle && { targetHandle }),
+              // CRITICAL: sourcePosition/targetPosition are required for smoothstep to route correctly
+              sourceHandle: edge.sourceHandle || undefined,
+              sourcePosition: edge.sourcePosition || undefined,
+              targetHandle: edge.targetHandle || undefined,
+              targetPosition: edge.targetPosition || undefined,
               data: {
                 ...(edge.data || {}),
                 originalId: originalId, // Store original ID for hover/selection
@@ -336,100 +377,87 @@ function updateEdges() {
             return newEdge
           })
           
-          console.log('[AggregatePanel] updateEdges: Built edges count:', edges.value.length, 'version:', edgeVersion.value)
-          
-          // Force Vue Flow to recalculate edge paths by updating each edge individually
-          // This ensures Vue Flow recognizes handle changes
+          // Force Vue Flow to recalculate edge paths
+          // Vue Flow's smoothstep edge type should automatically use sourceHandle and targetHandle
+          // But we need to ensure edges are recreated to pick up handle changes
           setTimeout(() => {
-            edges.value.forEach(edge => {
-              if (typeof updateEdge === 'function') {
-                try {
-                  updateEdge(edge.id, {
-                    sourceHandle: edge.sourceHandle,
-                    targetHandle: edge.targetHandle
-                  })
-                } catch (e) {
-                  // updateEdge might not be available or might fail
-                  console.warn('[AggregatePanel] Could not update edge:', e)
-                }
-              }
+            // Force Vue Flow to update edges by removing and re-adding them
+            // This ensures Vue Flow picks up the handle IDs
+            const edgesCopy = edges.value.map(e => ({ ...e }))
+            edges.value = []
+            nextTick(() => {
+              edges.value = edgesCopy
             })
           }, 200)
-          
-          // Log first edge and a cross-aggregate edge to verify handles are set
-          if (edges.value.length > 0) {
-            console.log('[AggregatePanel] updateEdges: First edge handles:', {
-              id: edges.value[0].id,
-              originalId: edges.value[0].data?.originalId,
-              sourceHandle: edges.value[0].sourceHandle,
-              targetHandle: edges.value[0].targetHandle,
-              source: edges.value[0].source,
-              target: edges.value[0].target
-            })
-            // Find a cross-aggregate edge (VO -> Aggregate)
-            const crossEdge = edges.value.find(e => e.data?.originalId?.includes('vo-') && e.data?.originalId?.includes('ref-'))
-            if (crossEdge) {
-              console.log('[AggregatePanel] updateEdges: Cross-aggregate edge handles:', {
-                id: crossEdge.id,
-                originalId: crossEdge.data?.originalId,
-                sourceHandle: crossEdge.sourceHandle,
-                targetHandle: crossEdge.targetHandle,
-                source: crossEdge.source,
-                target: crossEdge.target
-              })
-              // Debug: Check if handles exist in DOM and if Vue Flow can find them
-              try {
-                const allNodes = typeof getNodes === 'function' ? getNodes() : nodes.value
-                const sourceNode = allNodes.find(n => n.id === crossEdge.source)
-                const targetNode = allNodes.find(n => n.id === crossEdge.target)
-                
-                if (sourceNode) {
-                  const sourceElement = document.querySelector(`[data-id="${sourceNode.id}"]`)
-                  const sourceHandles = sourceElement ? sourceElement.querySelectorAll('.vue-flow__handle') : []
-                  const targetSourceHandle = Array.from(sourceHandles).find(h => {
-                    return h.id === crossEdge.sourceHandle || 
-                           h.getAttribute('data-handleid') === crossEdge.sourceHandle ||
-                           h.getAttribute('data-handleid') === crossEdge.sourceHandle
-                  })
-                  console.log('[AggregatePanel] Source node handles:', {
-                    nodeId: sourceNode.id,
-                    sourceHandle: crossEdge.sourceHandle,
-                    domHandleCount: sourceHandles.length,
-                    targetHandleFound: !!targetSourceHandle,
-                    allHandleIds: Array.from(sourceHandles).map(h => h.id || h.getAttribute('data-handleid') || 'no-id')
-                  })
-                }
-                
-                if (targetNode) {
-                  const targetElement = document.querySelector(`[data-id="${targetNode.id}"]`)
-                  const targetHandles = targetElement ? targetElement.querySelectorAll('.vue-flow__handle') : []
-                  const targetTargetHandle = Array.from(targetHandles).find(h => {
-                    return h.id === crossEdge.targetHandle || 
-                           h.getAttribute('data-handleid') === crossEdge.targetHandle ||
-                           h.getAttribute('data-handleid') === crossEdge.targetHandle
-                  })
-                  console.log('[AggregatePanel] Target node handles:', {
-                    nodeId: targetNode.id,
-                    targetHandle: crossEdge.targetHandle,
-                    domHandleCount: targetHandles.length,
-                    targetHandleFound: !!targetTargetHandle,
-                    allHandleIds: Array.from(targetHandles).map(h => h.id || h.getAttribute('data-handleid') || 'no-id')
-                  })
-                }
-              } catch (e) {
-                console.warn('[AggregatePanel] Could not check handle bounds:', e)
-              }
-            }
-          }
         }, 500) // Wait 500ms for Vue Flow to fully render nodes and handles (increased for handle registration)
       })
     }, 100) // Wait 100ms for Vue Flow to process edge removal
   })
 }
 
-// Update nodes when store data changes
-watch(() => store.filteredBoundedContexts, () => {
-  nodes.value = buildNodes()
+// Track BC IDs to detect when BCs are actually added/removed (not just data changes)
+const previousBcIds = ref(new Set())
+const isRebuilding = ref(false) // Flag to prevent position reset during rebuild
+
+// Update nodes when store data changes - ONLY when BC structure changes
+watch(() => store.filteredBoundedContexts, (newBcs) => {
+  // Extract BC IDs from new data
+  const newBcIds = new Set(newBcs.map(bc => bc.id))
+  
+  // Check if BCs were actually added/removed (not just data updated)
+  const bcAdded = Array.from(newBcIds).some(id => !previousBcIds.value.has(id))
+  const bcRemoved = Array.from(previousBcIds.value).some(id => !newBcIds.has(id))
+  const bcStructureChanged = bcAdded || bcRemoved
+  
+  // If BC structure hasn't changed, don't rebuild - just return
+  if (!bcStructureChanged && previousBcIds.value.size > 0) {
+    return
+  }
+  
+  // Update previous BC IDs
+  previousBcIds.value = newBcIds
+  
+  // Set rebuilding flag
+  isRebuilding.value = true
+  
+  // Before rebuilding, capture current positions from Vue Flow (if available)
+  let currentVueFlowPositions = new Map()
+  try {
+    const vueFlowNodes = getNodes()
+    vueFlowNodes.forEach(node => {
+      if (node.type === 'aggregateContainer' && node.position) {
+        currentVueFlowPositions.set(node.id, { x: node.position.x, y: node.position.y })
+        // Save to localStorage immediately
+        saveBcPosition(node.id, { x: node.position.x, y: node.position.y })
+      }
+    })
+  } catch (e) {
+    // Vue Flow not ready yet, use nodes.value as fallback
+    nodes.value.forEach(node => {
+      if (node.type === 'aggregateContainer' && node.position) {
+        currentVueFlowPositions.set(node.id, { x: node.position.x, y: node.position.y })
+        saveBcPosition(node.id, { x: node.position.x, y: node.position.y })
+      }
+    })
+  }
+  
+  // Preserve existing node positions when rebuilding
+  // Pass current positions so buildNodes can use them
+  const newNodes = buildNodes(true)
+  
+  // Apply current Vue Flow positions to new nodes (if they exist)
+  // This ensures positions are preserved even if watch triggers
+  newNodes.forEach(node => {
+    if (node.type === 'aggregateContainer') {
+      const currentPos = currentVueFlowPositions.get(node.id)
+      if (currentPos) {
+        node.position = { x: currentPos.x, y: currentPos.y }
+      }
+    }
+  })
+  
+  nodes.value = newNodes
+  
   // Initialize node positions for new nodes
   nodes.value.forEach(node => {
     if (!nodePositions.value.has(node.id)) {
@@ -440,14 +468,21 @@ watch(() => store.filteredBoundedContexts, () => {
       })
     }
   })
+  
+  // Clear rebuilding flag after a short delay
+  setTimeout(() => {
+    isRebuilding.value = false
+  }, 100)
+  
   // Don't update edges here - wait for onNodesInitialized event
   // This ensures Vue Flow has registered all handles before creating edges
-  console.log('[AggregatePanel] watch: Nodes updated, waiting for onNodesInitialized')
-  // Fit view after nodes are created
-  setTimeout(() => {
-    fitView({ padding: 0.2 })
-  }, 200)
-}, { immediate: true, deep: true })
+  // Fit view after nodes are created (only if no existing nodes or BC structure changed)
+  if (currentVueFlowPositions.size === 0 || bcStructureChanged) {
+    setTimeout(() => {
+      fitView({ padding: 0.2 })
+    }, 200)
+  }
+}, { immediate: true, deep: false }) // deep: false to prevent unnecessary triggers
 
 
 // Get connected node IDs for a given node (direct connections only)
@@ -554,48 +589,160 @@ function getNodeAbsoluteX(nodeId, nodesList = null) {
       x += parentX
       // Debug log for parent position calculation
       if (nodeId.includes('vo-') || nodeId.includes('enum-')) {
-        console.log('[AggregatePanel] getNodeAbsoluteX:', {
-          nodeId,
-          nodeX: node.position?.x,
-          parentId: node.parentNode,
-          parentX,
-          absoluteX: x
-        })
+        // Debug log removed - too verbose
       }
     }
   }
   return x
 }
 
-// Helper function to determine optimal handles based on node positions
-// Uses real-time positions from Vue Flow when available
-// Now using simple handle IDs: 'left' and 'right' (one handle per position)
-function getOptimalHandles(sourceId, targetId, nodesList = null) {
-  const sourceX = getNodeAbsoluteX(sourceId, nodesList)
-  const targetX = getNodeAbsoluteX(targetId, nodesList)
-  
-  if (sourceX === null || targetX === null) {
-    console.warn('[AggregatePanel] getOptimalHandles: Missing position', { sourceId, targetId, sourceX, targetX })
-    // Fallback: don't specify handles, let Vue Flow auto-select
-    return {}
+// Helper function to get node center X in screen coordinates
+function getNodeCenterX(nodeId) {
+  const el = document.querySelector(`[data-id="${nodeId}"]`)
+  if (!el) return null
+  const r = el.getBoundingClientRect()
+  return r.left + r.width / 2
+}
+
+// Normalize position string to Vue Flow format
+function normalizePos(v) {
+  const s = String(v || '').toLowerCase()
+  if (s.includes('left')) return 'left'
+  if (s.includes('right')) return 'right'
+  if (s.includes('top')) return 'top'
+  if (s.includes('bottom')) return 'bottom'
+  return 'right' // fallback
+}
+
+// Helper function to get all available handles for a node (including field handles)
+// Returns handles with their screen coordinates (for distance comparison)
+// CRITICAL: Vue Flow stores handle IDs in data-handleid attribute, not id attribute
+function getAllHandlesForNode(nodeId) {
+  const nodeEl = document.querySelector(`[data-id="${nodeId}"]`)
+  if (!nodeEl) {
+    if (DEBUG_EDGES) console.warn('[getAllHandlesForNode] Node element not found in DOM:', nodeId)
+    return []
   }
   
-  // Each node now has: 'left' and 'right' handles (one per position)
-  // Vue Flow should respect these IDs when only one handle exists per position
-  if (sourceX > targetX) {
-    // Source on right, target on left
-    // Use source's left handle (closest) and target's right handle (closest)
-    return {
-      sourceHandle: 'left',
-      targetHandle: 'right'
+  // Get all handle elements with data-handleid attribute
+  // Vue Flow uses data-handleid, not id attribute
+  const handleEls = Array.from(nodeEl.querySelectorAll('.vue-flow__handle[data-handleid]'))
+  
+  if (handleEls.length === 0) {
+    if (DEBUG_EDGES) console.warn('[getAllHandlesForNode] No handles found for node:', nodeId)
+    return []
+  }
+  
+  return handleEls
+    .map((el) => {
+      // CRITICAL: Use data-handleid, not id attribute
+      const handleId = el.getAttribute('data-handleid')
+      if (!handleId) {
+        if (DEBUG_EDGES) console.warn('[getAllHandlesForNode] Handle without data-handleid found:', el)
+        return null
+      }
+      
+      // Get handle position in screen coordinates
+      // For distance comparison, screen coordinates work fine (same coordinate system)
+      const r = el.getBoundingClientRect()
+      return {
+        id: handleId,
+        // Screen coordinates - fine for distance comparison
+        x: r.left + r.width / 2,
+        y: r.top + r.height / 2,
+        // Normalized position for Vue Flow
+        pos: normalizePos(el.getAttribute('data-handlepos')),
+        type: el.getAttribute('data-handle-type') || 'unknown',
+      }
+    })
+    .filter(Boolean)
+}
+
+// Convert position to Vue Flow format
+function toVuePos(p) {
+  // Vue Flow expects lowercase position strings
+  if (p === 'left') return 'left'
+  if (p === 'right') return 'right'
+  if (p === 'top') return 'top'
+  if (p === 'bottom') return 'bottom'
+  return 'right' // fallback
+}
+
+// Helper function to determine optimal handles based on actual handle positions
+// Rules:
+// - Source: only general handles (left-source, right-source) - never field handles
+// - Target: field handle if specified, otherwise general handles (left-target, right-target)
+// - Use screen coordinates for distance comparison (same coordinate system)
+// - Returns handle IDs AND positions for smoothstep routing
+function getOptimalHandles(sourceId, targetId, options = {}) {
+  const { targetFieldHandle = null } = options
+  
+  // Get all available handles for both nodes
+  const srcAll = getAllHandlesForNode(sourceId)
+  const tgtAll = getAllHandlesForNode(targetId)
+  
+  // Source: only general source handles
+  const src = srcAll.filter(h => h.id === 'left-source' || h.id === 'right-source')
+  
+  // Target: field handle if specified, otherwise general target handles
+  let tgt = []
+  if (targetFieldHandle) {
+    // Use specific field handle if provided
+    tgt = tgtAll.filter(h => h.id === targetFieldHandle)
+    if (tgt.length === 0) {
+      // Fallback: general target handles if field handle not found
+      if (DEBUG_EDGES) {
+        console.warn('[getOptimalHandles] Field handle not found, falling back to general handles:', {
+          targetFieldHandle,
+          availableHandles: tgtAll.map(h => h.id)
+        })
+      }
+      tgt = tgtAll.filter(h => h.id === 'left-target' || h.id === 'right-target')
     }
   } else {
-    // Source on left, target on right
-    // Use source's right handle (closest) and target's left handle (closest)
-    return {
-      sourceHandle: 'right',
-      targetHandle: 'left'
+    // Use only general target handles
+    tgt = tgtAll.filter(h => h.id === 'left-target' || h.id === 'right-target')
+  }
+  
+  // Fallback if no handles found
+  if (!src.length || !tgt.length) {
+    if (DEBUG_EDGES) {
+      console.warn('[getOptimalHandles] No handles found, using defaults:', {
+        sourceId,
+        targetId,
+        sourceHandles: src.length,
+        targetHandles: tgt.length,
+        allSourceHandles: srcAll.map(h => h.id),
+        allTargetHandles: tgtAll.map(h => h.id)
+      })
     }
+    return {
+      sourceHandle: 'right-source',
+      sourcePosition: 'right',
+      targetHandle: targetFieldHandle || 'left-target',
+      targetPosition: 'left',
+    }
+  }
+  
+  // Find the closest handle pair using screen coordinates
+  // Store full handle objects, not just IDs
+  let best = { d: Infinity, s: src[0], t: tgt[0] }
+  for (const s of src) {
+    for (const t of tgt) {
+      const dx = t.x - s.x
+      const dy = t.y - s.y
+      const d = dx * dx + dy * dy // Squared distance (no need for sqrt for comparison)
+      if (d < best.d) {
+        best = { d, s, t }
+      }
+    }
+  }
+  
+  return {
+    sourceHandle: best.s.id,
+    sourcePosition: toVuePos(best.s.pos),
+    targetHandle: best.t.id,
+    targetPosition: toVuePos(best.t.pos),
   }
 }
 
@@ -608,10 +755,9 @@ function buildEdges() {
     const vueFlowNodes = getNodes()
     if (vueFlowNodes && vueFlowNodes.length > 0) {
       nodesList = vueFlowNodes
-      console.log('[AggregatePanel] buildEdges: Using Vue Flow nodes, count:', nodesList.length)
     }
   } catch (e) {
-    console.warn('[AggregatePanel] buildEdges: Vue Flow not ready, using tracked nodes')
+    // Vue Flow not ready, using tracked nodes
   }
   
   store.filteredBoundedContexts.forEach((bc) => {
@@ -619,7 +765,7 @@ function buildEdges() {
       // Connect Aggregate to Enumerations
       agg.enumerations?.forEach((_, enumIdx) => {
         // Determine optimal handles based on positions FIRST
-        const handles = getOptimalHandles(`agg-${agg.id}`, `enum-${agg.id}-${enumIdx}`, nodesList)
+        const handles = getOptimalHandles(`agg-${agg.id}`, `enum-${agg.id}-${enumIdx}`)
         
         const edge = {
           id: `edge-agg-${agg.id}-enum-${enumIdx}`,
@@ -635,9 +781,12 @@ function buildEdges() {
             type: MarkerType.ArrowClosed,
             color: '#909296',
           },
-          // Specify handles based on node positions for shortest path
-          ...(handles.sourceHandle && { sourceHandle: handles.sourceHandle }),
-          ...(handles.targetHandle && { targetHandle: handles.targetHandle }),
+          // Specify handles and positions based on node positions for shortest path
+          // CRITICAL: sourcePosition/targetPosition are required for smoothstep to route correctly
+          sourceHandle: handles.sourceHandle,
+          sourcePosition: handles.sourcePosition,
+          targetHandle: handles.targetHandle,
+          targetPosition: handles.targetPosition,
         }
         
         result.push(edge)
@@ -646,7 +795,7 @@ function buildEdges() {
       // Connect Aggregate to Value Objects
       agg.valueObjects?.forEach((_, voIdx) => {
         // Determine optimal handles based on positions
-        const handles = getOptimalHandles(`agg-${agg.id}`, `vo-${agg.id}-${voIdx}`, nodesList)
+        const handles = getOptimalHandles(`agg-${agg.id}`, `vo-${agg.id}-${voIdx}`)
         
         const edge = {
           id: `edge-agg-${agg.id}-vo-${voIdx}`,
@@ -662,9 +811,12 @@ function buildEdges() {
             type: MarkerType.ArrowClosed,
             color: '#909296',
           },
-          // Specify handles based on node positions for shortest path
-          ...(handles.sourceHandle && { sourceHandle: handles.sourceHandle }),
-          ...(handles.targetHandle && { targetHandle: handles.targetHandle }),
+          // Specify handles and positions based on node positions for shortest path
+          // CRITICAL: sourcePosition/targetPosition are required for smoothstep to route correctly
+          sourceHandle: handles.sourceHandle,
+          sourcePosition: handles.sourcePosition,
+          targetHandle: handles.targetHandle,
+          targetPosition: handles.targetPosition,
         }
         
         result.push(edge)
@@ -716,26 +868,60 @@ function buildEdges() {
                 p => p.name && p.name.toLowerCase() === vo.referencedAggregateField.toLowerCase()
               )
               if (targetProp) {
-                // Use the same ID format as in AggregateViewerNode: field-${prop.id || prop.name}
-                if (targetProp.id) {
-                  edge.targetHandle = `field-${String(targetProp.id)}`
-                } else if (targetProp.name) {
-                  edge.targetHandle = `field-${String(targetProp.name)}`
+                // Determine field handle ID - choose left or right target based on source/target positions
+                const fieldBase = targetProp.id 
+                  ? `field-${String(targetProp.id)}`
+                  : (targetProp.name ? `field-${String(targetProp.name)}` : null)
+                
+                if (!fieldBase) {
+                  // Fallback to general handles if field base ID cannot be determined
+                  const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`)
+                  edge.sourceHandle = handles.sourceHandle
+                  edge.sourcePosition = handles.sourcePosition
+                  edge.targetHandle = handles.targetHandle
+                  edge.targetPosition = handles.targetPosition
+                } else {
+                  // Determine which side target handle to use based on source/target node positions
+                  const sourceX = getNodeCenterX(`vo-${agg.id}-${voIdx}`)
+                  const targetX = getNodeCenterX(`agg-${refAgg.id}`)
+                  
+                  // If source is to the right of target, use right target handle for direct connection
+                  // Otherwise use left target handle
+                  const fieldHandleId = (sourceX !== null && targetX !== null && sourceX > targetX)
+                    ? `${fieldBase}-target-right`
+                    : `${fieldBase}-target-left`
+                  
+                  // Use getOptimalHandles with field handle option
+                  // This will find the closest general handle on VO (left-source or right-source)
+                  // and the specified field handle on Aggregate
+                  const handles = getOptimalHandles(
+                    `vo-${agg.id}-${voIdx}`, 
+                    `agg-${refAgg.id}`, 
+                    { targetFieldHandle: fieldHandleId }
+                  )
+                  edge.sourceHandle = handles.sourceHandle
+                  edge.sourcePosition = handles.sourcePosition
+                  edge.targetHandle = handles.targetHandle
+                  edge.targetPosition = handles.targetPosition
+                  
+                  // Store field handle ID in edge data for reroute
+                  edge.data.targetFieldHandle = fieldHandleId
                 }
-                // Determine source handle based on position
-                const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`, nodesList)
-                if (handles.sourceHandle) edge.sourceHandle = handles.sourceHandle
               } else {
-                // Field not found, use position-based handles
-                const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`, nodesList)
-                if (handles.sourceHandle) edge.sourceHandle = handles.sourceHandle
-                if (handles.targetHandle) edge.targetHandle = handles.targetHandle
+                // Field not found by name, use position-based handles
+                const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`)
+                edge.sourceHandle = handles.sourceHandle
+                edge.sourcePosition = handles.sourcePosition
+                edge.targetHandle = handles.targetHandle
+                edge.targetPosition = handles.targetPosition
               }
             } else {
-              // No field reference, use position-based handles
-              const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`, nodesList)
-              if (handles.sourceHandle) edge.sourceHandle = handles.sourceHandle
-              if (handles.targetHandle) edge.targetHandle = handles.targetHandle
+              // No field reference, use position-based handles (Aggregate node's general handles)
+              const handles = getOptimalHandles(`vo-${agg.id}-${voIdx}`, `agg-${refAgg.id}`)
+              edge.sourceHandle = handles.sourceHandle
+              edge.sourcePosition = handles.sourcePosition
+              edge.targetHandle = handles.targetHandle
+              edge.targetPosition = handles.targetPosition
             }
             
             result.push(edge)
@@ -756,8 +942,13 @@ const nodeTypes = {
   aggregateContainer: markRaw(AggregateContainerNode),
 }
 
-// Edge types - using default smoothstep
-const edgeTypes = {}
+// Edge types - use straight/step for shortest path routing
+// Same BC connections: step (clean right-angle routing)
+// Cross-aggregate connections: straight (direct shortest path)
+const edgeTypes = {
+  straight: markRaw(StraightEdge),
+  step: markRaw(StepEdge),
+}
 
 // Node click handler (single click - no action)
 // Panel management
@@ -854,119 +1045,129 @@ function onEdgeMouseLeave() {
 
 // Handle nodes initialization - called when Vue Flow has registered all handles
 function onNodesInitialized() {
-  console.log('[AggregatePanel] onNodesInitialized: Nodes and handles are ready')
   // Wait a bit more to ensure handles are fully registered
   setTimeout(() => {
-    // Verify handles are registered by checking DOM
-    try {
-      const allNodes = typeof getNodes === 'function' ? getNodes() : nodes.value
-      const sampleNode = allNodes.find(n => n.type === 'aggregateViewer' || n.type === 'enumViewer' || n.type === 'valueObjectViewer')
-      if (sampleNode) {
-        // Check DOM for actual handle elements
-        const nodeElement = document.querySelector(`[data-id="${sampleNode.id}"]`)
-        if (nodeElement) {
-          const handles = nodeElement.querySelectorAll('.vue-flow__handle')
-          console.log('[AggregatePanel] onNodesInitialized: DOM handles found:', {
-            nodeId: sampleNode.id,
-            handleCount: handles.length,
-            handleIds: Array.from(handles).map(h => {
-              // Check all possible attributes for handle ID
-              return {
-                id: h.id,
-                dataHandleId: h.getAttribute('data-handleid'),
-                dataHandleid: h.getAttribute('data-handleid'),
-                dataId: h.getAttribute('data-id'),
-                allAttributes: Array.from(h.attributes).map(attr => `${attr.name}="${attr.value}"`)
-              }
-            })
-          })
-        }
-        // Also check Vue Flow internal structure
-        console.log('[AggregatePanel] onNodesInitialized: Vue Flow node structure:', {
-          nodeId: sampleNode.id,
-          __vf: sampleNode.__vf ? Object.keys(sampleNode.__vf) : 'no __vf',
-          handleBounds: sampleNode.__vf?.handleBounds,
-          allKeys: Object.keys(sampleNode)
-        })
-      }
-    } catch (e) {
-      console.warn('[AggregatePanel] onNodesInitialized: Could not check handles:', e)
-    }
     // Update edges now that handles are registered
     updateEdges()
   }, 500) // Increased delay to ensure DOM is ready
 }
 
-// Handle node position changes (for edge handle updates)
+// Handle node position changes - only update position, not edges
 function onNodesChange(changes) {
-  // When nodes are dragged, update their positions in our tracking map for edge handle calculations
-  const newPositions = new Map(nodePositions.value)
-  let hasChanges = false
+  // Skip if we're rebuilding (to prevent position reset)
+  if (isRebuilding.value) {
+    return
+  }
   
   changes.forEach(change => {
     if (change.type === 'position') {
       const node = change.node
       if (node) {
-        // Debug: log container node drag
-        if (node.type === 'aggregateContainer') {
-          console.log('[AggregatePanel] Container node position change:', {
-            id: node.id,
-            position: node.position,
-            dragging: change.dragging
-          })
-        }
-        
-        // Update node position in nodes array (create new object to trigger reactivity)
+        // Update node position in nodes array
         const nodeIndex = nodes.value.findIndex(n => n.id === node.id)
         if (nodeIndex >= 0) {
-          // Create completely new node object to ensure reactivity
           nodes.value[nodeIndex] = {
             ...nodes.value[nodeIndex],
             position: { x: node.position.x, y: node.position.y }
           }
-          hasChanges = true
         }
         
-        // Save node positions for edge handle calculations
-        newPositions.set(node.id, {
-          x: node.position.x,
-          y: node.position.y,
-          parentNode: node.parentNode
-        })
-        // Also update parent position if node has parent
-        if (node.parentNode) {
-          const parentNode = nodes.value.find(n => n.id === node.parentNode)
-          if (parentNode) {
-            newPositions.set(parentNode.id, {
-              x: parentNode.position.x,
-              y: parentNode.position.y,
-              parentNode: parentNode.parentNode
-            })
-          }
+        // Save BC container positions to localStorage immediately
+        if (node.type === 'aggregateContainer') {
+          saveBcPosition(node.id, { x: node.position.x, y: node.position.y })
         }
       }
     }
   })
+}
+
+// Handle node drag stop - update edges when drag ends
+function onNodeDragStop(e) {
+  const node = e.node
+  if (!node) return
   
-  // Replace the entire Map and update edges when nodes are dragged
-  if (hasChanges) {
-    // Create new array with new node objects to ensure reactivity
-    nodes.value = nodes.value.map(n => ({ ...n }))
-    // Update nodePositions before updating edges
-    nodePositions.value = newPositions
-    // Update edges with new node positions (use nextTick to ensure Vue Flow has updated positions)
-    console.log('[AggregatePanel] onNodesChange: Updating edges after node position change, hasChanges:', hasChanges)
-    // Use multiple nextTick calls and setTimeout to ensure Vue Flow has fully updated the node positions
-    nextTick(() => {
-      setTimeout(() => {
-        nextTick(() => {
-          updateEdges()
-        })
-      }, 100) // Increased delay to ensure Vue Flow has updated node positions
-    })
-  } else {
-    nodePositions.value = newPositions
+  // Skip if we're rebuilding
+  if (isRebuilding.value) {
+    return
   }
+  
+  if (node.type === 'aggregateContainer') {
+    // Container drag: include all child nodes for reroute
+    const childIds = nodes.value
+      .filter(n => n.parentNode === node.id)
+      .map(n => n.id)
+    
+    rerouteEdgesForMovedNodes([node.id, ...childIds])
+  } else {
+    // Regular node drag
+    rerouteEdgesForMovedNodes([node.id])
+  }
+}
+
+// Recompute field handle left/right based on current node positions
+function recomputeFieldHandle(edge) {
+  const th = edge.data?.targetFieldHandle
+  if (!th) return null
+  
+  // field-xxx-target-left/right 형태라면 base 추출
+  const match = th.match(/^(.+)-target-(left|right)$/)
+  if (!match) return th
+  
+  const base = match[1]
+  const sourceX = getNodeCenterX(edge.source)
+  const targetX = getNodeCenterX(edge.target)
+  
+  if (sourceX == null || targetX == null) return th
+  
+  // Source가 target보다 오른쪽에 있으면 right, 왼쪽에 있으면 left
+  const side = sourceX > targetX ? 'right' : 'left'
+  return `${base}-target-${side}`
+}
+
+// Update edges for moved nodes - only recalculate handles for affected edges
+function rerouteEdgesForMovedNodes(movedNodeIds) {
+  // Wait for DOM to update with new positions
+  nextTick(() => {
+    setTimeout(() => {
+      const updatedEdges = edges.value.map(edge => {
+        // Only update edges connected to moved nodes
+        const touchesMoved = movedNodeIds.includes(edge.source) || movedNodeIds.includes(edge.target)
+        if (!touchesMoved) return edge
+        
+        // Recompute field handle left/right if it exists
+        const nextFieldHandle = recomputeFieldHandle(edge)
+        
+        // Recalculate optimal handles for this edge
+        const handles = getOptimalHandles(edge.source, edge.target, {
+          targetFieldHandle: nextFieldHandle
+        })
+        
+        // Only update if handles or positions changed
+        if (edge.sourceHandle !== handles.sourceHandle || 
+            edge.targetHandle !== handles.targetHandle ||
+            edge.sourcePosition !== handles.sourcePosition ||
+            edge.targetPosition !== handles.targetPosition) {
+          
+          return {
+            ...edge,
+            sourceHandle: handles.sourceHandle,
+            sourcePosition: handles.sourcePosition,
+            targetHandle: handles.targetHandle,
+            targetPosition: handles.targetPosition,
+            data: {
+              ...edge.data,
+              targetFieldHandle: nextFieldHandle // Update field handle if recomputed
+            }
+          }
+        }
+        
+        return edge
+      })
+      
+      // Update edges array
+      edges.value = updatedEdges
+    }, 50) // Small delay to ensure DOM is updated
+  })
 }
 
 // Pane click handler
@@ -1062,6 +1263,9 @@ function getNodeColor(node) {
           :nodes="nodes"
           :edges="edgesWithHighlight"
           :node-types="nodeTypes"
+          :connection-radius="40"
+          connection-mode="loose"
+          :edge-types="edgeTypes"
           :default-viewport="{ zoom: 0.8, x: 50, y: 50 }"
           @nodes-initialized="onNodesInitialized"
           :min-zoom="0.2"
@@ -1082,6 +1286,7 @@ function getNodeColor(node) {
           @node-double-click="onNodeDoubleClick"
           @pane-click="onPaneClick"
           @nodes-change="onNodesChange"
+          @node-drag-stop="onNodeDragStop"
         >
           <Background pattern-color="#2a2a3a" :gap="20" />
           <MiniMap 
@@ -1123,7 +1328,7 @@ function getNodeColor(node) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="3 6 5 6 21 6"></polyline>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
+        </svg>
           </button>
         </div>
       </div>

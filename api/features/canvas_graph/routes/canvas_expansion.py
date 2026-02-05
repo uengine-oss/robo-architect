@@ -104,6 +104,95 @@ def _to_jsonable(value: Any, _seen: set[int] | None = None) -> Any:
     return str(value)
 
 
+def _parse_gwt_bundle(gwt_node: dict[str, Any] | None) -> dict[str, Any] | None:
+    """
+    Convert a single (GWT) node payload into the frontend-compatible shape:
+    - gwtSets: array of rows (test cases)
+    - each row: given/when/then objects (mapped refs fixed; fieldValues per test case)
+    """
+    if not gwt_node or not isinstance(gwt_node, dict) or not gwt_node.get("id"):
+        return None
+
+    given_ref = gwt_node.get("givenRef")
+    when_ref = gwt_node.get("whenRef")
+    then_ref = gwt_node.get("thenRef")
+    test_cases = gwt_node.get("testCases")
+
+    if isinstance(given_ref, str):
+        try:
+            given_ref = json.loads(given_ref)
+        except Exception:
+            given_ref = None
+    if isinstance(when_ref, str):
+        try:
+            when_ref = json.loads(when_ref)
+        except Exception:
+            when_ref = None
+    if isinstance(then_ref, str):
+        try:
+            then_ref = json.loads(then_ref)
+        except Exception:
+            then_ref = None
+    if isinstance(test_cases, str):
+        try:
+            test_cases = json.loads(test_cases)
+        except Exception:
+            test_cases = []
+
+    if not isinstance(test_cases, list):
+        test_cases = []
+
+    def _ref_to_part(ref: Any) -> dict[str, Any] | None:
+        if not isinstance(ref, dict):
+            return None
+        rid = ref.get("referencedNodeId")
+        rtype = ref.get("referencedNodeType")
+        name = ref.get("name")
+        if not rid or not rtype:
+            return None
+        return {
+            "name": name or "",
+            "referencedNodeId": rid,
+            "referencedNodeType": rtype,
+            "fieldValues": {},
+        }
+
+    given_part = _ref_to_part(given_ref)
+    when_part = _ref_to_part(when_ref)
+    then_part = _ref_to_part(then_ref)
+
+    gwt_sets: list[dict[str, Any]] = []
+    for idx, tc in enumerate(test_cases):
+        tc = tc if isinstance(tc, dict) else {}
+        scenario_desc = tc.get("scenarioDescription")
+        # Store scenarioDescription in the first Given's description for backward compatibility
+        given_with_desc = None
+        if given_part:
+            given_with_desc = {**given_part, "fieldValues": tc.get("givenFieldValues") or {}}
+            if scenario_desc:
+                # Prepend scenario description to given description
+                existing_desc = given_part.get("description") or ""
+                if existing_desc:
+                    given_with_desc["description"] = f"{scenario_desc}\n\n{existing_desc}"
+                else:
+                    given_with_desc["description"] = scenario_desc
+        
+        gwt_sets.append(
+            {
+                "setIndex": idx,
+                "scenarioDescription": scenario_desc,
+                "given": given_with_desc,
+                "when": {**when_part, "fieldValues": tc.get("whenFieldValues") or {}} if when_part else None,
+                "then": {**then_part, "fieldValues": tc.get("thenFieldValues") or {}} if then_part else None,
+            }
+        )
+
+    return {
+        "gwtId": gwt_node.get("id"),
+        "gwtSets": gwt_sets,
+    }
+
+
 def _fetch_properties_by_parent_id(session: Any, parent_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
     """
     Fetch Property lists for parent node ids (Aggregate/Command/Event/ReadModel).
@@ -174,7 +263,7 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
 
         node_type = type_record["nodeType"]
-        main_node = dict(type_record["node"])
+        main_node = _to_jsonable(dict(type_record["node"]))
         main_node["type"] = node_type
         # Parse enumerations and valueObjects for Aggregate nodes
         if node_type == "Aggregate":
@@ -204,16 +293,16 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
 
             for record in agg_result:
                 if record["agg"] and record["agg"]["id"] not in seen_ids:
-                    agg = dict(record["agg"])
+                    agg = _to_jsonable(dict(record["agg"]))
                     agg["type"] = "Aggregate"
                     _parse_aggregate_fields(agg)
                     nodes.append(agg)
                     seen_ids.add(agg["id"])
                     if record["rel1"]["target"]:
-                        relationships.append(dict(record["rel1"]))
+                        relationships.append(_to_jsonable(dict(record["rel1"])))
 
                 if record["cmd"] and record["cmd"]["id"] not in seen_ids:
-                    cmd = dict(record["cmd"])
+                    cmd = _to_jsonable(dict(record["cmd"]))
                     cmd["type"] = "Command"
                     # Include parentId (Aggregate ID) for frontend layout (Aggregate height spans its Commands)
                     if record["agg"]:
@@ -221,15 +310,15 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                     nodes.append(cmd)
                     seen_ids.add(cmd["id"])
                     if record["rel2"]["target"]:
-                        relationships.append(dict(record["rel2"]))
+                        relationships.append(_to_jsonable(dict(record["rel2"])))
 
                 if record["evt"] and record["evt"]["id"] not in seen_ids:
-                    evt = dict(record["evt"])
+                    evt = _to_jsonable(dict(record["evt"]))
                     evt["type"] = "Event"
                     nodes.append(evt)
                     seen_ids.add(evt["id"])
                     if record["rel3"]["target"]:
-                        relationships.append(dict(record["rel3"]))
+                        relationships.append(_to_jsonable(dict(record["rel3"])))
 
             pol_query = """
             MATCH (bc:BoundedContext {id: $node_id})-[:HAS_POLICY]->(pol:Policy)
@@ -240,7 +329,7 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
             pol_result = session.run(pol_query, node_id=node_id)
             for record in pol_result:
                 if record["pol"] and record["pol"]["id"] not in seen_ids:
-                    pol = dict(record["pol"])
+                    pol = _to_jsonable(dict(record["pol"]))
                     pol["type"] = "Policy"
                     # Include invokeCommandId for frontend layout (place Policy left of Command)
                     if record["invokeCommandId"]:
@@ -264,7 +353,7 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
 
             for record in expand_result:
                 if record["cmd"] and record["cmd"]["id"] not in seen_ids:
-                    cmd = dict(record["cmd"])
+                    cmd = _to_jsonable(dict(record["cmd"]))
                     cmd["type"] = "Command"
                     # Include parentId (Aggregate ID) for frontend layout (Aggregate height spans its Commands)
                     cmd["parentId"] = node_id
@@ -273,7 +362,7 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                     relationships.append({"source": node_id, "target": cmd["id"], "type": "HAS_COMMAND"})
 
                 if record["evt"] and record["evt"]["id"] not in seen_ids:
-                    evt = dict(record["evt"])
+                    evt = _to_jsonable(dict(record["evt"]))
                     evt["type"] = "Event"
                     nodes.append(evt)
                     seen_ids.add(evt["id"])
@@ -288,7 +377,7 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
 
             for record in expand_result:
                 if record["evt"]:
-                    evt = dict(record["evt"])
+                    evt = _to_jsonable(dict(record["evt"]))
                     evt["type"] = "Event"
                     nodes.append(evt)
                     relationships.append({"source": node_id, "target": evt["id"], "type": "EMITS"})
@@ -304,7 +393,7 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
 
             for record in expand_result:
                 if record["pol"] and record["pol"]["id"] not in seen_ids:
-                    pol = dict(record["pol"])
+                    pol = _to_jsonable(dict(record["pol"]))
                     pol["type"] = "Policy"
                     # Include invokeCommandId for frontend layout (place Policy left of Command)
                     if record["cmd"]:
@@ -314,7 +403,7 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
                     relationships.append({"source": node_id, "target": pol["id"], "type": "TRIGGERS"})
 
                 if record["cmd"] and record["cmd"]["id"] not in seen_ids:
-                    cmd = dict(record["cmd"])
+                    cmd = _to_jsonable(dict(record["cmd"]))
                     cmd["type"] = "Command"
                     nodes.append(cmd)
                     seen_ids.add(cmd["id"])
@@ -322,17 +411,46 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
 
         elif node_type == "Policy":
             expand_query = """
-            MATCH (pol:Policy {id: $node_id})-[:INVOKES]->(cmd:Command)
-            RETURN cmd
+            MATCH (pol:Policy {id: $node_id})
+            OPTIONAL MATCH (evt:Event)-[:TRIGGERS]->(pol)
+            OPTIONAL MATCH (pol)-[:INVOKES]->(cmd:Command)
+            OPTIONAL MATCH (cmd)-[:EMITS]->(target_evt:Event)
+            OPTIONAL MATCH (agg:Aggregate)-[:HAS_COMMAND]->(cmd)
+            RETURN evt, cmd, target_evt, agg
             """
             expand_result = session.run(expand_query, node_id=node_id)
+            seen_ids = {node_id}
 
             for record in expand_result:
-                if record["cmd"]:
-                    cmd = dict(record["cmd"])
+                if record["evt"] and record["evt"]["id"] not in seen_ids:
+                    evt = _to_jsonable(dict(record["evt"]))
+                    evt["type"] = "Event"
+                    nodes.append(evt)
+                    seen_ids.add(evt["id"])
+                    relationships.append({"source": evt["id"], "target": node_id, "type": "TRIGGERS"})
+
+                if record["cmd"] and record["cmd"]["id"] not in seen_ids:
+                    cmd = _to_jsonable(dict(record["cmd"]))
                     cmd["type"] = "Command"
                     nodes.append(cmd)
+                    seen_ids.add(cmd["id"])
                     relationships.append({"source": node_id, "target": cmd["id"], "type": "INVOKES"})
+
+                if record["target_evt"] and record["target_evt"]["id"] not in seen_ids:
+                    target_evt = _to_jsonable(dict(record["target_evt"]))
+                    target_evt["type"] = "Event"
+                    nodes.append(target_evt)
+                    seen_ids.add(target_evt["id"])
+                    if record["cmd"]:
+                        relationships.append({"source": record["cmd"]["id"], "target": target_evt["id"], "type": "EMITS"})
+
+                if record["agg"] and record["agg"]["id"] not in seen_ids:
+                    agg = _to_jsonable(dict(record["agg"]))
+                    agg["type"] = "Aggregate"
+                    nodes.append(agg)
+                    seen_ids.add(agg["id"])
+                    if record["cmd"]:
+                        relationships.append({"source": agg["id"], "target": record["cmd"]["id"], "type": "HAS_COMMAND"})
 
         # Attach properties (do not display Property nodes on canvas; embed into parent nodes).
         parent_ids = [n.get("id") for n in nodes if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id")]
@@ -340,6 +458,45 @@ async def expand_node(node_id: str, request: Request) -> dict[str, Any]:
         for n in nodes:
             if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id"):
                 n["properties"] = prop_map.get(n["id"], [])
+        
+        # Attach GWT for Command and Policy nodes
+        # New structure: a single (GWT) bundle node per parent with testCases stored inside.
+        cmd_policy_ids = [n.get("id") for n in nodes if n.get("type") in ("Command", "Policy") and n.get("id")]
+        if cmd_policy_ids:
+            gwt_query = """
+            UNWIND $node_ids as node_id
+            MATCH (parent {id: node_id})
+            OPTIONAL MATCH (parent)-[:HAS_GWT]->(gwt:GWT)
+            RETURN node_id,
+                   gwt {.id, .givenRef, .whenRef, .thenRef, .testCases} as gwt
+            """
+            gwt_result = session.run(gwt_query, node_ids=cmd_policy_ids)
+            
+            gwt_map: dict[str, dict[str, Any]] = {}
+            for record in gwt_result:
+                nid = record.get("node_id")
+                gwt_val = record.get("gwt")
+                if nid and gwt_val and isinstance(gwt_val, dict) and gwt_val.get("id"):
+                    gwt_map[str(nid)] = _to_jsonable(dict(gwt_val))
+            
+            for n in nodes:
+                if n.get("type") in ("Command", "Policy") and n.get("id"):
+                    nid = n["id"]
+                    if nid in gwt_map:
+                        parsed = _parse_gwt_bundle(gwt_map[nid])
+                        if not parsed:
+                            continue
+                        n["gwtId"] = parsed.get("gwtId")
+                        n["gwtSets"] = parsed.get("gwtSets") or []
+                        if n["gwtSets"]:
+                            first_set = n["gwtSets"][0]
+                            if isinstance(first_set, dict):
+                                if first_set.get("given"):
+                                    n["given"] = first_set["given"]
+                                if first_set.get("when"):
+                                    n["when"] = first_set["when"]
+                                if first_set.get("then"):
+                                    n["then"] = first_set["then"]
 
         return {"nodes": nodes, "relationships": _dedupe_relationships(relationships)}
 
@@ -676,6 +833,44 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
         for n in nodes:
             if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id"):
                 n["properties"] = prop_map.get(n["id"], [])
+        
+        # Attach GWT for Command and Policy nodes (bundle node)
+        cmd_policy_ids = [n.get("id") for n in nodes if n.get("type") in ("Command", "Policy") and n.get("id")]
+        if cmd_policy_ids:
+            gwt_query = """
+            UNWIND $node_ids as node_id
+            MATCH (parent {id: node_id})
+            OPTIONAL MATCH (parent)-[:HAS_GWT]->(gwt:GWT)
+            RETURN node_id,
+                   gwt {.id, .givenRef, .whenRef, .thenRef, .testCases} as gwt
+            """
+            gwt_result = session.run(gwt_query, node_ids=cmd_policy_ids)
+            
+            gwt_map: dict[str, dict[str, Any]] = {}
+            for record in gwt_result:
+                nid = record.get("node_id")
+                gwt_val = record.get("gwt")
+                if nid and gwt_val and isinstance(gwt_val, dict) and gwt_val.get("id"):
+                    gwt_map[str(nid)] = _to_jsonable(dict(gwt_val))
+            
+            for n in nodes:
+                if n.get("type") in ("Command", "Policy") and n.get("id"):
+                    nid = n["id"]
+                    if nid in gwt_map:
+                        parsed = _parse_gwt_bundle(gwt_map[nid])
+                        if not parsed:
+                            continue
+                        n["gwtId"] = parsed.get("gwtId")
+                        n["gwtSets"] = parsed.get("gwtSets") or []
+                        if n["gwtSets"]:
+                            first_set = n["gwtSets"][0]
+                            if isinstance(first_set, dict):
+                                if first_set.get("given"):
+                                    n["given"] = first_set["given"]
+                                if first_set.get("when"):
+                                    n["when"] = first_set["when"]
+                                if first_set.get("then"):
+                                    n["then"] = first_set["then"]
 
         payload = {
             "nodes": nodes,

@@ -7,6 +7,39 @@ export const useCanvasStore = defineStore('canvas', () => {
   const nodes = ref([])
   const edges = ref([])
   
+  // Design level mode: show/hide detailed fields in nodes
+  // ALWAYS default to true (show fields) - completely ignore localStorage
+  // Force reset localStorage to 'true' to ensure fields are always shown by default
+  const showDesignLevel = ref(true)
+  
+  // Force reset localStorage to ensure default is always true
+  try {
+    localStorage.setItem('canvas_show_design_level', 'true')
+  } catch (e) {
+    // Ignore localStorage errors
+  }
+  
+  // Toggle design level and save to localStorage
+  function toggleDesignLevel() {
+    const newValue = !showDesignLevel.value
+    showDesignLevel.value = newValue
+    try {
+      localStorage.setItem('canvas_show_design_level', String(newValue))
+    } catch (e) {
+      console.warn('Failed to save showDesignLevel to localStorage:', e)
+    }
+  }
+  
+  // Force set design level (for initialization)
+  function setShowDesignLevel(value) {
+    showDesignLevel.value = Boolean(value)
+    try {
+      localStorage.setItem('canvas_show_design_level', String(showDesignLevel.value))
+    } catch (e) {
+      console.warn('Failed to save showDesignLevel to localStorage:', e)
+    }
+  }
+  
   // Right panel mode: 'none' | 'chat' | 'inspector'
   const rightPanelMode = ref('chat')
   
@@ -79,8 +112,15 @@ export const useCanvasStore = defineStore('canvas', () => {
   }
 
   // Property rendering (Option C): node height expands with field count.
-  const PROP_ROW_HEIGHT = 16
-  const PROP_SECTION_PADDING = 14
+  // Actual measurements from CSS:
+  // - es-node__props margin-top: 10px
+  // - es-node__props padding: 6px (top/bottom = 12px total)
+  // - es-node__prop padding: 3px 4px (top/bottom = 6px total per row)
+  // - es-node__prop line-height: ~16px
+  // Total per row: ~22px (6px padding + 16px content)
+  const PROP_ROW_HEIGHT = 22  // Increased from 16 to match actual CSS
+  const PROP_SECTION_MARGIN_TOP = 10  // es-node__props margin-top
+  const PROP_SECTION_PADDING = 12  // es-node__props padding top + bottom (6px * 2)
 
   function getPropertiesCount(data) {
     const props = data?.properties
@@ -96,7 +136,8 @@ export const useCanvasStore = defineStore('canvas', () => {
     const base = nodeTypeConfig?.[nodeType]?.height || 80
     const count = getPropertiesCount(data)
     if (!count) return base
-    return base + PROP_SECTION_PADDING + count * PROP_ROW_HEIGHT
+    // Calculate: base + margin-top + padding + (rows * row-height)
+    return base + PROP_SECTION_MARGIN_TOP + PROP_SECTION_PADDING + (count * PROP_ROW_HEIGHT)
   }
 
   function getNodeHeight(node) {
@@ -227,6 +268,29 @@ export const useCanvasStore = defineStore('canvas', () => {
       
       nodes.value.push(bcNode)
       bcContainers.value[bcId] = { nodeIds: [], bounds: {} }
+    } else {
+      // BC already exists - try to sync position from Vue Flow DOM
+      // This ensures we use the actual rendered position, not stale data
+      try {
+        const nodeEl = document.querySelector(`[data-id="${bcId}"]`)
+        if (nodeEl) {
+          const transform = nodeEl.style.transform
+          if (transform) {
+            // Extract x, y from transform: translate(xpx, ypx)
+            const match = transform.match(/translate\(([^,]+)px,\s*([^)]+)px\)/)
+            if (match) {
+              const x = parseFloat(match[1])
+              const y = parseFloat(match[2])
+              if (!isNaN(x) && !isNaN(y)) {
+                bcNode.position = { x, y }
+                console.log(`[getOrCreateBCContainer] Synced BC position from DOM: ${bcId} -> (${x}, ${y})`)
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore DOM access errors - use existing position
+      }
     }
     
     return bcNode
@@ -886,29 +950,92 @@ export const useCanvasStore = defineStore('canvas', () => {
     return x
   }
 
-  // Helper function to determine optimal handles based on node positions
+  // Normalize position string to Vue Flow format
+  function normalizePos(v) {
+    const s = String(v || '').toLowerCase()
+    if (s.includes('left')) return 'left'
+    if (s.includes('right')) return 'right'
+    if (s.includes('top')) return 'top'
+    if (s.includes('bottom')) return 'bottom'
+    return 'right' // fallback
+  }
+
+  // Convert position to Vue Flow format
+  function toVuePos(p) {
+    if (p === 'left') return 'left'
+    if (p === 'right') return 'right'
+    if (p === 'top') return 'top'
+    if (p === 'bottom') return 'bottom'
+    return 'right' // fallback
+  }
+
+  // Get all available handles for a node (DOM-based, same as AggregatePanel)
+  function getAllHandlesForNode(nodeId) {
+    const nodeEl = document.querySelector(`[data-id="${nodeId}"]`)
+    if (!nodeEl) return []
+    
+    const handleEls = Array.from(nodeEl.querySelectorAll('.vue-flow__handle[data-handleid]'))
+    
+    if (handleEls.length === 0) return []
+    
+    return handleEls
+      .map((el) => {
+        const handleId = el.getAttribute('data-handleid')
+        if (!handleId) return null
+        
+        const r = el.getBoundingClientRect()
+        return {
+          id: handleId,
+          // Screen coordinates for distance comparison
+          x: r.left + r.width / 2,
+          y: r.top + r.height / 2,
+          pos: normalizePos(el.getAttribute('data-handlepos')),
+          type: el.getAttribute('data-handle-type') || 'unknown',
+        }
+      })
+      .filter(Boolean)
+  }
+
+  // Helper function to determine optimal handles based on actual handle positions (DOM-based)
+  // Uses same logic as AggregatePanel for consistency
   function getOptimalHandles(sourceId, targetId) {
-    const sourceX = getNodeAbsoluteX(sourceId)
-    const targetX = getNodeAbsoluteX(targetId)
+    const srcAll = getAllHandlesForNode(sourceId)
+    const tgtAll = getAllHandlesForNode(targetId)
     
-    if (sourceX === null || targetX === null) {
-      // Fallback: don't specify handles, let Vue Flow auto-select
-      return {}
-    }
+    // Source: only general source handles (left-source, right-source)
+    const src = srcAll.filter(h => h.id === 'left-source' || h.id === 'right-source')
     
-    // If source is to the right of target, use left handle of source and right handle of target
-    if (sourceX > targetX) {
+    // Target: only general target handles (left-target, right-target)
+    const tgt = tgtAll.filter(h => h.id === 'left-target' || h.id === 'right-target')
+    
+    // Fallback if no handles found
+    if (!src.length || !tgt.length) {
       return {
-        sourceHandle: 'left',
-        targetHandle: 'right'
+        sourceHandle: 'right-source',
+        sourcePosition: 'right',
+        targetHandle: 'left-target',
+        targetPosition: 'left',
       }
     }
-    // If source is to the left of target, use right handle of source and left handle of target
-    else {
-      return {
-        sourceHandle: 'right',
-        targetHandle: 'left'
+    
+    // Find the closest handle pair using screen coordinates
+    let best = { d: Infinity, s: src[0], t: tgt[0] }
+    for (const s of src) {
+      for (const t of tgt) {
+        const dx = t.x - s.x
+        const dy = t.y - s.y
+        const d = dx * dx + dy * dy
+        if (d < best.d) {
+          best = { d, s, t }
+        }
       }
+    }
+    
+    return {
+      sourceHandle: best.s.id,
+      sourcePosition: toVuePos(best.s.pos),
+      targetHandle: best.t.id,
+      targetPosition: toVuePos(best.t.pos),
     }
   }
 
@@ -952,15 +1079,53 @@ export const useCanvasStore = defineStore('canvas', () => {
       }
     }
     
-    // Determine optimal handles based on node positions
+    // Determine optimal handles based on actual handle positions (DOM-based)
     const handles = getOptimalHandles(sourceId, targetId)
-    if (handles.sourceHandle) edge.sourceHandle = handles.sourceHandle
-    if (handles.targetHandle) edge.targetHandle = handles.targetHandle
+    edge.sourceHandle = handles.sourceHandle
+    edge.sourcePosition = handles.sourcePosition
+    edge.targetHandle = handles.targetHandle
+    edge.targetPosition = handles.targetPosition
     
     edges.value.push(edge)
     // Ensure consumers relying on reference changes (e.g. Vue Flow) observe updates.
     edges.value = [...edges.value]
     return edge
+  }
+
+  // Update edges for moved nodes - recalculate handles for affected edges
+  function rerouteEdgesForMovedNodes(movedNodeIds) {
+    if (!movedNodeIds || movedNodeIds.length === 0) return
+    
+    // Wait for DOM to update with new positions
+    setTimeout(() => {
+      const updatedEdges = edges.value.map(edge => {
+        // Only update edges connected to moved nodes
+        const touchesMoved = movedNodeIds.includes(edge.source) || movedNodeIds.includes(edge.target)
+        if (!touchesMoved) return edge
+        
+        // Recalculate optimal handles for this edge
+        const handles = getOptimalHandles(edge.source, edge.target)
+        
+        // Only update if handles or positions changed
+        if (edge.sourceHandle !== handles.sourceHandle || 
+            edge.targetHandle !== handles.targetHandle ||
+            edge.sourcePosition !== handles.sourcePosition ||
+            edge.targetPosition !== handles.targetPosition) {
+          return {
+            ...edge,
+            sourceHandle: handles.sourceHandle,
+            sourcePosition: handles.sourcePosition,
+            targetHandle: handles.targetHandle,
+            targetPosition: handles.targetPosition
+          }
+        }
+        
+        return edge
+      })
+      
+      // Update edges array
+      edges.value = updatedEdges
+    }, 50) // Small delay to ensure DOM is updated
   }
   
   // Get edge style based on type
@@ -1350,6 +1515,14 @@ export const useCanvasStore = defineStore('canvas', () => {
     }
   }
   
+  // Helper to sync BC position from Vue Flow (called from CanvasWorkspace)
+  function syncBCPositionFromVueFlow(bcId, vueFlowPosition) {
+    const bcNode = nodes.value.find(n => n.id === bcId && n.type === 'boundedcontext')
+    if (bcNode && vueFlowPosition) {
+      bcNode.position = { x: vueFlowPosition.x, y: vueFlowPosition.y }
+    }
+  }
+  
   // Find and add relations between existing nodes
   async function findAndAddRelations() {
     if (nodes.value.length < 2) return
@@ -1523,35 +1696,47 @@ export const useCanvasStore = defineStore('canvas', () => {
       // Place each BC with obstacle avoidance
       let bcOffsetY = 0
       for (const [bcId, { bc, children }] of Object.entries(bcMap)) {
-        // Calculate BC size based on children
-        const numChildren = children.length
-        const bcWidth = 550
-        const bcHeight = Math.max(300, 80 + Math.ceil(numChildren / 3) * 100 + 80)
+        // Check if BC already exists - if so, use existing position
+        const existingBC = nodes.value.find(n => n.id === bcId && n.type === 'boundedcontext')
+        let bcNode
+        let bcPosition
         
-        // Find position avoiding obstacles
-        const bcPosition = findAvoidingPosition(
-          startX,
-          startY + bcOffsetY,
-          bcWidth,
-          bcHeight
-        )
-        
-        // Create BC container
-        const bcNode = {
-          id: bc.id,
-          type: 'boundedcontext',
-          position: bcPosition,
-          data: {
-            ...bc,
-            label: bc.name
-          },
-          style: {
-            width: `${bcWidth}px`,
-            height: `${bcHeight}px`
-          },
-          className: 'bc-group-node'
+        if (existingBC) {
+          // BC already exists - use its current position (don't overwrite)
+          bcNode = existingBC
+          bcPosition = existingBC.position
+        } else {
+          // Calculate BC size based on children
+          const numChildren = children.length
+          const bcWidth = 550
+          const bcHeight = Math.max(300, 80 + Math.ceil(numChildren / 3) * 100 + 80)
+          
+          // Find position avoiding obstacles
+          bcPosition = findAvoidingPosition(
+            startX,
+            startY + bcOffsetY,
+            bcWidth,
+            bcHeight
+          )
+          
+          // Create BC container
+          bcNode = {
+            id: bc.id,
+            type: 'boundedcontext',
+            position: bcPosition,
+            data: {
+              ...bc,
+              label: bc.name
+            },
+            style: {
+              width: `${bcWidth}px`,
+              height: `${bcHeight}px`
+            },
+            className: 'bc-group-node'
+          }
+          nodes.value.push(bcNode)
         }
-        nodes.value.push(bcNode)
+        
         newNodes.push(bcNode)
         
         // Layout children inside BC
@@ -1785,6 +1970,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     bcContainers,
     collapsedBCs,
     rightPanelMode,
+    showDesignLevel, // Export showDesignLevel for reactivity
     isOnCanvas,
     isSelected,
     isBCCollapsed,
@@ -1812,6 +1998,10 @@ export const useCanvasStore = defineStore('canvas', () => {
     closeRightPanel,
     setRightPanelMode,
     toggleChatPanel,
-    toggleInspectorPanel
+    toggleInspectorPanel,
+    rerouteEdgesForMovedNodes,
+    syncBCPositionFromVueFlow,
+    toggleDesignLevel,
+    setShowDesignLevel
   }
 })

@@ -68,6 +68,42 @@
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
+/* Light Theme Overrides */
+:root.theme-light {
+  /* UI Colors - Light Mode */
+  --color-bg: #ffffff;
+  --color-bg-secondary: #f8f9fa;
+  --color-bg-tertiary: #e9ecef;
+  --color-text: #212529;
+  --color-text-light: #6c757d;
+  --color-text-bright: #000000;
+  --color-border: #dee2e6;
+  --color-accent: #228be6;
+  
+  /* Shadows - Lighter for light mode */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* Dark Theme (default) */
+:root.theme-dark {
+  /* UI Colors - Dark Mode (default values) */
+  --color-bg: #1a1b1e;
+  --color-bg-secondary: #25262b;
+  --color-bg-tertiary: #2c2e33;
+  --color-text: #c1c2c5;
+  --color-text-light: #909296;
+  --color-text-bright: #ffffff;
+  --color-border: #373a40;
+  --color-accent: #228be6;
+  
+  /* Shadows - Darker for dark mode */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -373,6 +409,9 @@ body {
   font-family: var(--font-main);
   cursor: grab;
   transition: transform 0.1s ease, box-shadow 0.1s ease;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .es-node:hover {
@@ -438,6 +477,10 @@ body {
 
 .es-node__body {
   padding: 10px 12px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .es-node__name {

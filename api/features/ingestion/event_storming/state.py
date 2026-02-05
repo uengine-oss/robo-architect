@@ -37,6 +37,7 @@ class WorkflowPhase(str, Enum):
     EXTRACT_EVENTS = "extract_events"
     IDENTIFY_POLICIES = "identify_policies"
     APPROVE_POLICIES = "approve_policies"  # Human-in-the-loop
+    GENERATE_GWT = "generate_gwt"
     SAVE_TO_GRAPH = "save_to_graph"
     COMPLETE = "complete"
 
@@ -120,6 +121,51 @@ class AggregateCandidate(BaseModel):
     )
 
 
+class GivenCandidate(BaseModel):
+    """A candidate Given (GWT - Given/When/Then) for Command or Policy."""
+
+    id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
+    key: Optional[str] = Field(default=None, description="Optional natural key.")
+    name: str = Field(..., description="Given description (e.g., 'Command: CancelOrder' or 'Event: OrderCancelled')")
+    description: Optional[str] = Field(default=None, description="Detailed description of the Given")
+    referencedNodeId: Optional[str] = Field(default=None, description="ID of the referenced node (Command or Event)")
+    referencedNodeType: Optional[str] = Field(default=None, description="Type of referenced node: 'Command' or 'Event'")
+    fieldValues: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Field values mapped from referenced node's properties. Key is property name, value is the test value for that field."
+    )
+
+
+class WhenCandidate(BaseModel):
+    """A candidate When (GWT - Given/When/Then) for Command or Policy."""
+
+    id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
+    key: Optional[str] = Field(default=None, description="Optional natural key.")
+    name: str = Field(..., description="When description (e.g., 'Aggregate: Order')")
+    description: Optional[str] = Field(default=None, description="Detailed description of the When")
+    referencedNodeId: Optional[str] = Field(default=None, description="ID of the referenced Aggregate")
+    referencedNodeType: Optional[str] = Field(default="Aggregate", description="Type of referenced node (always 'Aggregate')")
+    fieldValues: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Field values mapped from referenced Aggregate's properties. Key is property name, value is the test value for that field."
+    )
+
+
+class ThenCandidate(BaseModel):
+    """A candidate Then (GWT - Given/When/Then) for Command or Policy."""
+
+    id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
+    key: Optional[str] = Field(default=None, description="Optional natural key.")
+    name: str = Field(..., description="Then description (e.g., 'Event: OrderCancelled')")
+    description: Optional[str] = Field(default=None, description="Detailed description of the Then")
+    referencedNodeId: Optional[str] = Field(default=None, description="ID of the referenced Event")
+    referencedNodeType: Optional[str] = Field(default="Event", description="Type of referenced node (always 'Event')")
+    fieldValues: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Field values mapped from referenced Event's properties. Key is property name, value is the test value for that field."
+    )
+
+
 class CommandCandidate(BaseModel):
     """A candidate Command within an Aggregate."""
 
@@ -133,6 +179,9 @@ class CommandCandidate(BaseModel):
     user_story_ids: List[str] = Field(
         default_factory=list, description="User Story IDs that this command implements"
     )
+    # Note: GWT (given/when/then) is generated in post-processing step (generate_gwt_node)
+    # and stored separately in Neo4j. Not included in initial LLM structured output schema.
+    # GWT fields are added dynamically at runtime using setattr().
 
 
 class EventCandidate(BaseModel):
@@ -191,6 +240,9 @@ class PolicyCandidate(BaseModel):
         default_factory=list,
         description="User Story IDs that this policy supports (inherited from triggering event)",
     )
+    # Note: GWT (given/when/then) is generated in post-processing step (generate_gwt_node)
+    # and stored separately in Neo4j. Not included in initial LLM structured output schema.
+    # GWT fields are added dynamically at runtime using setattr().
 
 
 class UserStoryBreakdown(BaseModel):

@@ -22,6 +22,7 @@ from api.features.ingestion.workflow.phases.policies import identify_policies_ph
 from api.features.ingestion.workflow.phases.properties import generate_properties_phase
 from api.features.ingestion.workflow.phases.references import generate_property_references_phase
 from api.features.ingestion.workflow.phases.readmodels import extract_readmodels_phase
+from api.features.ingestion.workflow.phases.gwt import generate_gwt_phase
 from api.features.ingestion.workflow.phases.ui_wireframes import generate_ui_wireframes_phase
 from api.features.ingestion.workflow.phases.user_stories import extract_user_stories_phase
 from api.platform.env import IS_SKIP_UI_PHASE
@@ -147,6 +148,18 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
 
         # Policy phase MUST run before UI phase so we can exclude policy-invoked commands from UI generation
         async for event in identify_policies_phase(ctx):
+            if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
+                yield ProgressEvent(
+                    phase=IngestionPhase.PAUSED,
+                    message="⏸️ 일시 정지됨 (채팅으로 일부를 수정한 후 재개하세요)",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"isPaused": True},
+                )
+                await wait_if_paused(session)
+            yield event
+
+        # Generate GWT (Given/When/Then) for Commands and Policies
+        async for event in generate_gwt_phase(ctx):
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,

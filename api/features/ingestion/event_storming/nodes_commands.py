@@ -109,6 +109,8 @@ def extract_commands_node(state: EventStormingState) -> Dict[str, Any]:
                         c.id = getattr(c, "key", None) or f"{agg_key_value}.{slugify(c.name)}"
                     except Exception:
                         pass
+                
+                # GWT will be generated in generate_gwt_node after all commands/events are created
             command_candidates[agg.id] = cmds
 
     return {
