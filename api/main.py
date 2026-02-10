@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -28,6 +29,22 @@ from api.platform.observability.request_logging import (
 )
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.neo4j import init_neo4j_driver, close_neo4j_driver
+
+# Neo4j 드라이버의 경고 로그 필터링
+# "Received notification from DBMS server" 메시지를 필터링
+class Neo4jNotificationFilter(logging.Filter):
+    """Neo4j DBMS notification 경고를 필터링하는 필터"""
+    def filter(self, record):
+        # "Received notification from DBMS server" 메시지 필터링
+        if "Received notification from DBMS server" in record.getMessage():
+            return False
+        return True
+
+# Neo4j 로거에 필터 적용
+neo4j_logger = logging.getLogger("neo4j")
+neo4j_logger.addFilter(Neo4jNotificationFilter())
+# Neo4j 로거의 레벨을 ERROR로 설정하여 WARNING 메시지 차단
+neo4j_logger.setLevel(logging.ERROR)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

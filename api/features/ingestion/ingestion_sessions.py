@@ -27,6 +27,7 @@ class IngestionSession:
     error: Optional[str] = None
     content: str = ""
     is_paused: bool = False
+    is_cancelled: bool = False
     is_workflow_running: bool = False
     event_queues: list[asyncio.Queue] = field(default_factory=list)  # per-subscriber queues
     workflow_task: Optional[asyncio.Task] = None

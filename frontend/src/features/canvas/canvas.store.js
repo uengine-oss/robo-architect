@@ -779,35 +779,151 @@ export const useCanvasStore = defineStore('canvas', () => {
         })
         
         // Layout Policies (left of their invoking command)
-        let policyOffsetY = 0
-        typeGroups.Policy.forEach((pol, idx) => {
+        // Group policies by the command they invoke to handle multiple policies per command
+        const policiesByCommand = {}
+        const orphanPolicies = []
+        const policyToCommand = {}
+        relationships.forEach(rel => {
+          if (rel.type === 'INVOKES' && rel.source && rel.target) policyToCommand[rel.source] = rel.target
+        })
+        
+        typeGroups.Policy.forEach(pol => {
           if (!isOnCanvas(pol.id)) {
-            // Find the command this policy invokes
-            const invokedCmdId = pol.invokeCommandId
-            let yPos = currentY + policyOffsetY
+            // Try to find invokeCommandId from pol.invokeCommandId first, then from relationships
+            const invokedCmdId = pol.invokeCommandId || policyToCommand[pol.id]
+            if (invokedCmdId) {
+              // Group by command ID even if command is not yet on canvas
+              if (!policiesByCommand[invokedCmdId]) {
+                policiesByCommand[invokedCmdId] = []
+              }
+              policiesByCommand[invokedCmdId].push(pol)
+            } else {
+              orphanPolicies.push(pol)
+            }
+          }
+        })
+        
+        // Layout policies grouped by command (stack vertically to the left of each command)
+        // First, calculate total height of all policy groups to position them above commands
+        const policyGroupHeights = {}
+        Object.entries(policiesByCommand).forEach(([cmdId, policies]) => {
+          let totalHeight = 0
+          policies.forEach(pol => {
+            totalHeight += computeDynamicHeight('Policy', pol) + gapY
+          })
+          totalHeight -= gapY // Remove last gap
+          policyGroupHeights[cmdId] = totalHeight
+        })
+        
+        Object.entries(policiesByCommand).forEach(([cmdId, policies]) => {
+          const cmdPos = commandPositions[cmdId]
+          
+          // If command is on canvas, position policies above the command to avoid overlap
+          // Otherwise stack policies below existing content
+          let baseY, baseX
+          if (cmdPos) {
+            // Position policies above the command
+            // Calculate total height of this policy group
+            const groupHeight = policyGroupHeights[cmdId] || 0
+            // Position so that the last policy ends at or above the command's top
+            // This ensures policies don't extend below the command and overlap with Events
+            baseY = Math.max(currentY, cmdPos.y - groupHeight - gapY)
+            // Use policyX (left of command) to ensure policies are positioned to the left
+            // policyX is already calculated as commandX - policyWidth - gapX
+            baseX = policyX
+            
+            console.log(`[addNodesWithLayout] Policy group for command ${cmdId}:`, {
+              cmdPos: { x: cmdPos.x, y: cmdPos.y },
+              commandX,
+              policyX,
+              baseX,
+              baseY,
+              groupHeight,
+              policyCount: policies.length
+            })
+          } else {
+            // Command not on canvas, stack below existing content
+            baseY = maxBottom + 20
+            baseX = policyX
+          }
+          
+          // Stack policies vertically
+          // If policy group height exceeds command height, shift policies further left
+          const cmdHeight = cmdPos ? cmdPos.height : 0
+          const groupHeight = policyGroupHeights[cmdId] || 0
+          const exceedsCommandHeight = groupHeight > cmdHeight
+          
+          // Calculate X position: if exceeds command height, shift further left
+          const basePolicyX = policyX
+          const shiftedPolicyX = basePolicyX - policyWidth - gapX
+          const finalPolicyX = exceedsCommandHeight ? shiftedPolicyX : basePolicyX
+          
+          let policyY = baseY
+          policies.forEach((pol, idx) => {
             const h = computeDynamicHeight('Policy', pol)
             
-            if (invokedCmdId && commandPositions[invokedCmdId]) {
-              // Place policy at same Y as the command it invokes
-              yPos = commandPositions[invokedCmdId].y
-            } else {
-              // Default: stack below existing content
-              yPos = (maxBottom + 20) + policyOffsetY
-              policyOffsetY += h + gapY
+            // Calculate cumulative height up to this policy
+            let cumulativeHeight = 0
+            if (idx > 0) {
+              for (let i = 0; i < idx; i++) {
+                cumulativeHeight += computeDynamicHeight('Policy', policies[i]) + gapY
+              }
+            }
+            policyY = baseY + cumulativeHeight
+            
+            // If policy extends beyond command height, use shifted X position
+            const policyBottom = policyY + h
+            const cmdBottom = cmdPos ? (cmdPos.y + cmdHeight) : Infinity
+            const useShiftedX = policyBottom > cmdBottom
+            
+            const xPos = useShiftedX ? shiftedPolicyX : finalPolicyX
+            
+            if (idx === 0) {
+              console.log(`[addNodesWithLayout] Policy ${pol.name}:`, {
+                xPos,
+                yPos: policyY,
+                height: h,
+                cmdPos: cmdPos ? { x: cmdPos.x, y: cmdPos.y, height: cmdPos.height } : null,
+                exceedsCommandHeight,
+                useShiftedX
+              })
             }
             
             const node = {
               id: pol.id,
               type: 'policy',
-              position: { x: policyX, y: yPos },
+              // Use xPos directly to ensure policies are left of command
+              position: { x: xPos, y: policyY },
               data: { ...pol, label: pol.name, dynamicHeight: h },
               parentNode: bcId,
               extent: 'parent'
             }
             nodes.value.push(node)
             newNodes.push(node)
-            maxBottom = Math.max(maxBottom, yPos + h)
+            maxBottom = Math.max(maxBottom, policyY + h)
+          })
+        })
+        
+        // Layout orphan policies (those without an invokeCommandId)
+        // Stack them vertically to avoid overlap
+        let policyOffsetY = 0
+        orphanPolicies.forEach((pol) => {
+          const h = computeDynamicHeight('Policy', pol)
+          const yPos = (maxBottom + 20) + policyOffsetY
+          const xPos = policyX
+          
+          const node = {
+            id: pol.id,
+            type: 'policy',
+            position: { x: Math.max(leftPadding, xPos), y: yPos },
+            data: { ...pol, label: pol.name, dynamicHeight: h },
+            parentNode: bcId,
+            extent: 'parent'
           }
+          nodes.value.push(node)
+          newNodes.push(node)
+          maxBottom = Math.max(maxBottom, yPos + h)
+          policyOffsetY += h + gapY
         })
 
         // Layout ReadModels (bottom section, stacked vertically for proper UI alignment)
@@ -1658,14 +1774,17 @@ export const useCanvasStore = defineStore('canvas', () => {
       
       const data = await response.json()
       
-      if (data.nodes.length === 0) {
+      if (!data.nodes || data.nodes.length === 0) {
         console.log('Event has no triggers:', eventId)
         return []
       }
       
       // Find the source event node to position new nodes relative to it
       const sourceEventNode = nodes.value.find(n => n.id === eventId)
-      if (!sourceEventNode) return []
+      if (!sourceEventNode) {
+        console.log('Source event node not found on canvas:', eventId)
+        return []
+      }
       
       const startX = sourceEventNode.position.x + 200
       const startY = sourceEventNode.position.y
@@ -1676,7 +1795,8 @@ export const useCanvasStore = defineStore('canvas', () => {
       // Group nodes by BC
       data.nodes.forEach(nodeData => {
         if (nodeData.type === 'BoundedContext') {
-          if (!isOnCanvas(nodeData.id)) {
+          // Always add to bcMap, even if BC is already on canvas (to add children)
+          if (!bcMap[nodeData.id]) {
             bcMap[nodeData.id] = {
               bc: nodeData,
               children: []
@@ -1685,10 +1805,18 @@ export const useCanvasStore = defineStore('canvas', () => {
         }
       })
       
+      // If no BCs found in response, log and return
+      if (Object.keys(bcMap).length === 0) {
+        console.warn('No BoundedContexts found in API response for event:', eventId, 'nodes:', data.nodes)
+        return []
+      }
+      
       data.nodes.forEach(nodeData => {
         if (nodeData.type !== 'BoundedContext' && nodeData.bcId) {
           if (bcMap[nodeData.bcId]) {
             bcMap[nodeData.bcId].children.push(nodeData)
+          } else {
+            console.warn('Child node has bcId but BC not in bcMap:', nodeData.type, nodeData.id, 'bcId:', nodeData.bcId)
           }
         }
       })
@@ -1700,16 +1828,28 @@ export const useCanvasStore = defineStore('canvas', () => {
         const existingBC = nodes.value.find(n => n.id === bcId && n.type === 'boundedcontext')
         let bcNode
         let bcPosition
+        // Ensure bcWidth/bcHeight are always defined (used for placement & offset increment)
+        const bcWidth = 550
+        let bcHeight = 300
         
         if (existingBC) {
           // BC already exists - use its current position (don't overwrite)
           bcNode = existingBC
           bcPosition = existingBC.position
+          // Derive a reasonable height from existing style (fallback to default)
+          try {
+            const h = existingBC.style?.height
+            const parsed = typeof h === 'string' ? parseInt(h, 10) : Number(h)
+            if (!Number.isNaN(parsed) && parsed > 0) {
+              bcHeight = parsed
+            }
+          } catch (e) {
+            // keep default
+          }
         } else {
           // Calculate BC size based on children
           const numChildren = children.length
-          const bcWidth = 550
-          const bcHeight = Math.max(300, 80 + Math.ceil(numChildren / 3) * 100 + 80)
+          bcHeight = Math.max(300, 80 + Math.ceil(numChildren / 3) * 100 + 80)
           
           // Find position avoiding obstacles
           bcPosition = findAvoidingPosition(
@@ -1761,20 +1901,22 @@ export const useCanvasStore = defineStore('canvas', () => {
         const eventX = aggregateX + aggregateWidth + gapX
         const policyX = commandX - policyWidth - gapX
         
-        // Group by type
-        const typeGroups = { Aggregate: [], Command: [], Event: [], Policy: [] }
+        // Group by type (include UI and ReadModel)
+        const typeGroups = { Aggregate: [], Command: [], Event: [], Policy: [], UI: [], ReadModel: [] }
         children.forEach(child => {
           if (!isOnCanvas(child.id) && typeGroups[child.type]) {
             typeGroups[child.type].push(child)
           }
         })
 
-        // Parent maps from relationships (preferred) or fallback fields
+        // Parent maps from relationships (preferred) or fallback fields)
         const commandToAggregate = {}
         const eventToCommand = {}
+        const policyToCommand = {}  // Map Policy ID to Command ID via INVOKES relationship
         ;(data.relationships || []).forEach(rel => {
           if (rel.type === 'HAS_COMMAND' && rel.source && rel.target) commandToAggregate[rel.target] = rel.source
           if (rel.type === 'EMITS' && rel.source && rel.target) eventToCommand[rel.target] = rel.source
+          if (rel.type === 'INVOKES' && rel.source && rel.target) policyToCommand[rel.source] = rel.target
         })
         
         // Fallback: derive parentId from HAS_COMMAND relationships if not already set
@@ -1912,20 +2054,134 @@ export const useCanvasStore = defineStore('canvas', () => {
         })
         
         // Layout Policies (left of their invoking command)
-        let policyOffsetY = 0
-        typeGroups.Policy.forEach((pol, idx) => {
-          const invokedCmdId = pol.invokeCommandId
-          let yPos = currentY + policyOffsetY
-          let xPos = policyX
-          const h = computeDynamicHeight('Policy', pol)
-          
-          if (invokedCmdId && commandPositions[invokedCmdId]) {
-            yPos = commandPositions[invokedCmdId].y
-            xPos = commandPositions[invokedCmdId].x - 150
+        // Group policies by the command they invoke to handle multiple policies per command
+        const policiesByCommand = {}
+        const orphanPolicies = []
+        
+        // Calculate policyX if not already defined (for expandEventTriggers)
+        // policyWidth is already defined above, so reuse it
+        const calculatedPolicyX = policyX || (commandX - policyWidth - gapX)
+        
+        typeGroups.Policy.forEach(pol => {
+          // Try to find invokeCommandId from pol.invokeCommandId first, then from relationships
+          const invokedCmdId = pol.invokeCommandId || policyToCommand[pol.id]
+          if (invokedCmdId) {
+            // Group by command ID even if command is not yet on canvas
+            if (!policiesByCommand[invokedCmdId]) {
+              policiesByCommand[invokedCmdId] = []
+            }
+            policiesByCommand[invokedCmdId].push(pol)
           } else {
-            yPos = (maxBottom + 20) + policyOffsetY
-            policyOffsetY += h + gapY
+            orphanPolicies.push(pol)
           }
+        })
+        
+        // Layout policies grouped by command (stack vertically to the left of each command)
+        // First, calculate total height of all policy groups to position them above commands
+        const policyGroupHeights = {}
+        Object.entries(policiesByCommand).forEach(([cmdId, policies]) => {
+          let totalHeight = 0
+          policies.forEach(pol => {
+            totalHeight += computeDynamicHeight('Policy', pol) + gapY
+          })
+          totalHeight -= gapY // Remove last gap
+          policyGroupHeights[cmdId] = totalHeight
+        })
+        
+        Object.entries(policiesByCommand).forEach(([cmdId, policies]) => {
+          const cmdPos = commandPositions[cmdId]
+          
+          // If command is on canvas, position policies above the command to avoid overlap
+          // Otherwise stack policies below existing content
+          let baseY, baseX
+          if (cmdPos) {
+            // Position policies above the command
+            // Calculate total height of this policy group
+            const groupHeight = policyGroupHeights[cmdId] || 0
+            // Position so that the last policy ends at or above the command's top
+            // This ensures policies don't extend below the command and overlap with Events
+            baseY = Math.max(currentY, cmdPos.y - groupHeight - gapY)
+            // Use calculatedPolicyX to ensure policies are left of command
+            baseX = calculatedPolicyX
+            
+            console.log(`[expandEventTriggers] Policy group for command ${cmdId}:`, {
+              cmdPos: { x: cmdPos.x, y: cmdPos.y },
+              commandX,
+              policyX,
+              calculatedPolicyX,
+              baseX,
+              baseY,
+              groupHeight,
+              policyCount: policies.length
+            })
+          } else {
+            // Command not on canvas, stack below existing content
+            baseY = maxBottom + 20
+            baseX = calculatedPolicyX
+          }
+          
+          // Stack policies vertically starting from baseY
+          // If policy group height exceeds command height, shift policies further left
+          const cmdHeight = cmdPos ? cmdPos.height : 0
+          const groupHeight = policyGroupHeights[cmdId] || 0
+          const exceedsCommandHeight = groupHeight > cmdHeight
+          
+          // Calculate X position: if exceeds command height, shift further left
+          const basePolicyX = calculatedPolicyX
+          const shiftedPolicyX = basePolicyX - policyWidth - gapX
+          const finalPolicyX = exceedsCommandHeight ? shiftedPolicyX : basePolicyX
+          
+          let policyY = baseY
+          policies.forEach((pol, idx) => {
+            const h = computeDynamicHeight('Policy', pol)
+            
+            // Calculate cumulative height up to this policy
+            let cumulativeHeight = 0
+            if (idx > 0) {
+              for (let i = 0; i < idx; i++) {
+                cumulativeHeight += computeDynamicHeight('Policy', policies[i]) + gapY
+              }
+            }
+            policyY = baseY + cumulativeHeight
+            
+            // If policy extends beyond command height, use shifted X position
+            const policyBottom = policyY + h
+            const cmdBottom = cmdPos ? (cmdPos.y + cmdHeight) : Infinity
+            const useShiftedX = policyBottom > cmdBottom
+            
+            const xPos = useShiftedX ? shiftedPolicyX : finalPolicyX
+            
+            console.log(`[expandEventTriggers] Policy ${pol.name} (${idx}/${policies.length - 1}):`, {
+              xPos,
+              yPos: policyY,
+              height: h,
+              cmdPos: cmdPos ? { x: cmdPos.x, y: cmdPos.y, height: cmdPos.height } : null,
+              exceedsCommandHeight,
+              useShiftedX
+            })
+            
+            const node = {
+              id: pol.id,
+              type: 'policy',
+              // Use xPos directly to ensure policies are left of command
+              position: { x: xPos, y: policyY },
+              data: { ...pol, label: pol.name, dynamicHeight: h },
+              parentNode: bcId,
+              extent: 'parent'
+            }
+            nodes.value.push(node)
+            newNodes.push(node)
+            maxBottom = Math.max(maxBottom, policyY + h)
+          })
+        })
+        
+        // Layout orphan policies (those without an invokeCommandId)
+        // Stack them vertically to avoid overlap
+        let policyOffsetY = 0
+        orphanPolicies.forEach((pol) => {
+          const h = computeDynamicHeight('Policy', pol)
+          const yPos = (maxBottom + 20) + policyOffsetY
+          const xPos = policyX
           
           const node = {
             id: pol.id,
@@ -1938,6 +2194,78 @@ export const useCanvasStore = defineStore('canvas', () => {
           nodes.value.push(node)
           newNodes.push(node)
           maxBottom = Math.max(maxBottom, yPos + h)
+          policyOffsetY += h + gapY
+        })
+        
+        // Layout ReadModels (bottom section, stacked vertically)
+        const readModelPositions = {}
+        const readModelY = maxBottom + 40
+        const readModelWidth = nodeTypeConfig.ReadModel?.width || 170
+        const readModelX = aggregateX  // ReadModel below Aggregate
+        
+        typeGroups.ReadModel.forEach((rm, idx) => {
+          if (!isOnCanvas(rm.id)) {
+            const xPos = readModelX
+            const yPos = readModelY + idx * (nodeHeight + gapY)
+            readModelPositions[rm.id] = { x: xPos, y: yPos }
+            const h = computeDynamicHeight('ReadModel', rm)
+            const node = {
+              id: rm.id,
+              type: 'readmodel',
+              position: { x: xPos, y: yPos },
+              data: { ...rm, label: rm.name, dynamicHeight: h },
+              parentNode: bcId,
+              extent: 'parent'
+            }
+            nodes.value.push(node)
+            newNodes.push(node)
+            maxBottom = Math.max(maxBottom, yPos + h)
+          }
+        })
+        
+        // Layout UI stickers (positioned to the left of their attached Command/ReadModel)
+        const uiWidth = nodeTypeConfig.UI?.width || 130
+        const uiGap = 5
+        let uiFallbackY = currentY
+        let minUiX = Infinity
+        
+        typeGroups.UI.forEach((ui, idx) => {
+          if (!isOnCanvas(ui.id)) {
+            let xPos = policyX - uiWidth - gapX  // Left of Policy
+            let yPos = uiFallbackY
+            const uiH = computeDynamicHeight('UI', ui)
+            
+            if (ui.attachedToId) {
+              if (commandPositions[ui.attachedToId]) {
+                yPos = commandPositions[ui.attachedToId].y
+                xPos = commandPositions[ui.attachedToId].x - uiWidth - uiGap
+              } else if (readModelPositions[ui.attachedToId]) {
+                yPos = readModelPositions[ui.attachedToId].y
+                xPos = readModelPositions[ui.attachedToId].x - uiWidth - uiGap
+              }
+            } else if (typeGroups.Command.length > 0) {
+              // Default: position to the left of the first command
+              const firstCmd = typeGroups.Command[0]
+              if (commandPositions[firstCmd.id]) {
+                yPos = commandPositions[firstCmd.id].y
+                xPos = commandPositions[firstCmd.id].x - uiWidth - uiGap
+              }
+            }
+            
+            minUiX = Math.min(minUiX, xPos)
+            const node = {
+              id: ui.id,
+              type: 'ui',
+              position: { x: xPos, y: yPos },
+              data: { ...ui, label: ui.name, dynamicHeight: uiH },
+              parentNode: bcId,
+              extent: 'parent'
+            }
+            nodes.value.push(node)
+            newNodes.push(node)
+            maxBottom = Math.max(maxBottom, yPos + uiH)
+            uiFallbackY += uiH + gapY
+          }
         })
         
         updateBCSize(bcId, true)

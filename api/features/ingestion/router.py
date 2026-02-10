@@ -58,6 +58,10 @@ async def upload_document(
     """
     Upload a requirements document (text or PDF) to start ingestion.
     Returns a session_id for SSE streaming of progress.
+    
+    Note: Large file uploads are supported.
+    Text input is limited to 1024KB due to Starlette's FormData default limit.
+    For large content, please use file upload instead.
     """
     content = ""
 
@@ -210,17 +214,43 @@ async def stream_progress(session_id: str, request: Request, reconnect: bool = F
         async def _run():
             try:
                 async for event in run_ingestion_workflow(session, session.content):
+                    # Check cancellation before adding event
+                    if getattr(session, "is_cancelled", False):
+                        add_event(
+                            session,
+                            ProgressEvent(
+                                phase=IngestionPhase.ERROR,
+                                message="❌ 생성이 중단되었습니다",
+                                progress=session.progress or 0,
+                                data={"error": "Cancelled by user", "cancelled": True},
+                            ),
+                        )
+                        return
                     add_event(session, event)
-            except Exception as e:
+            except asyncio.CancelledError:
+                # Task was cancelled, emit cancellation event
                 add_event(
                     session,
                     ProgressEvent(
                         phase=IngestionPhase.ERROR,
-                        message=f"❌ 오류 발생: {str(e)}",
+                        message="❌ 생성이 중단되었습니다",
                         progress=session.progress or 0,
-                        data={"error": str(e)},
+                        data={"error": "Cancelled by user", "cancelled": True},
                     ),
                 )
+                raise  # Re-raise to properly cancel the task
+            except Exception as e:
+                # Only emit error if not cancelled
+                if not getattr(session, "is_cancelled", False):
+                    add_event(
+                        session,
+                        ProgressEvent(
+                            phase=IngestionPhase.ERROR,
+                            message=f"❌ 오류 발생: {str(e)}",
+                            progress=session.progress or 0,
+                            data={"error": str(e)},
+                        ),
+                    )
             finally:
                 session.is_workflow_running = False
 
@@ -310,6 +340,55 @@ async def resume_ingestion(session_id: str, request: Request) -> dict[str, Any]:
         params={**http_context(request), "inputs": {"session_id": session_id}},
     )
     return {"success": True, "status": "resumed", "session_id": session_id, "is_paused": session.is_paused}
+
+
+@router.post("/{session_id}/cancel")
+async def cancel_ingestion(session_id: str, request: Request) -> dict[str, Any]:
+    """Cancel an ongoing ingestion process."""
+    session = get_session(session_id)
+    if not session:
+        # Session already expired/deleted - return success since cancellation intent is clear
+        SmartLogger.log(
+            "INFO",
+            "Cancel requested for non-existent session: session already expired/deleted, treating as success",
+            category="ingestion.api.cancel.not_found",
+            params={**http_context(request), "inputs": {"session_id": session_id}},
+        )
+        return {"success": True, "status": "cancelled", "session_id": session_id, "message": "Session already expired or completed"}
+
+    # Mark session as cancelled
+    session.is_cancelled = True
+    session.is_paused = False  # Cancel overrides pause
+    
+    # Cancel the workflow task if it exists
+    if session.workflow_task and not session.workflow_task.done():
+        session.workflow_task.cancel()
+        SmartLogger.log(
+            "INFO",
+            "Ingestion workflow task cancelled",
+            category="ingestion.api.cancel",
+            params={**http_context(request), "inputs": {"session_id": session_id}},
+        )
+    
+    # Emit cancellation event
+    from api.features.ingestion.ingestion_contracts import ProgressEvent, IngestionPhase
+    add_event(
+        session,
+        ProgressEvent(
+            phase=IngestionPhase.ERROR,
+            message="❌ 생성이 중단되었습니다",
+            progress=session.progress or 0,
+            data={"error": "Cancelled by user", "cancelled": True},
+        ),
+    )
+    
+    SmartLogger.log(
+        "INFO",
+        "Ingestion cancelled",
+        category="ingestion.api.cancel",
+        params={**http_context(request), "inputs": {"session_id": session_id}},
+    )
+    return {"success": True, "status": "cancelled", "session_id": session_id, "is_cancelled": session.is_cancelled}
 
 
 # =============================================================================

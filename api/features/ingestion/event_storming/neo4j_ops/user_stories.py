@@ -63,17 +63,23 @@ class UserStoryOps:
         status: str = "draft",
         ui_description: str = "",
     ) -> dict[str, Any]:
-        """Create a new user story."""
+        """Create a new user story. Uses MERGE to prevent duplicates by id."""
         query = """
-        CREATE (us:UserStory {
-            id: $id,
-            role: $role,
-            action: $action,
-            benefit: $benefit,
-            priority: $priority,
-            status: $status,
-            uiDescription: $ui_description
-        })
+        MERGE (us:UserStory {id: $id})
+        ON CREATE SET us.role = $role,
+                      us.action = $action,
+                      us.benefit = $benefit,
+                      us.priority = $priority,
+                      us.status = $status,
+                      us.uiDescription = $ui_description,
+                      us.createdAt = datetime()
+        ON MATCH SET us.role = CASE WHEN $role IS NOT NULL AND $role <> '' THEN $role ELSE us.role END,
+                     us.action = CASE WHEN $action IS NOT NULL AND $action <> '' THEN $action ELSE us.action END,
+                     us.benefit = CASE WHEN $benefit IS NOT NULL AND $benefit <> '' THEN $benefit ELSE us.benefit END,
+                     us.priority = CASE WHEN $priority IS NOT NULL AND $priority <> '' THEN $priority ELSE us.priority END,
+                     us.status = CASE WHEN $status IS NOT NULL AND $status <> '' THEN $status ELSE us.status END,
+                     us.uiDescription = CASE WHEN $ui_description IS NOT NULL AND $ui_description <> '' THEN $ui_description ELSE us.uiDescription END,
+                     us.updatedAt = datetime()
         RETURN us {.id, .role, .action, .benefit, .priority, .status, uiDescription: us.uiDescription} as user_story
         """
         with self.session() as session:
@@ -87,6 +93,27 @@ class UserStoryOps:
                 status=status,
                 ui_description=ui_description,
             )
-            return dict(result.single()["user_story"])
+            record = result.single()
+            if record is None:
+                raise ValueError(f"create_user_story query returned no result for id={id}")
+            user_story_dict = dict(record["user_story"])
+            if not user_story_dict or not user_story_dict.get("id"):
+                raise ValueError(f"create_user_story returned invalid result for id={id}: {user_story_dict}")
+            return user_story_dict
+    
+    def update_user_story_role_only(self, user_story_id: str, role: str) -> dict[str, Any]:
+        """Update only the role field of an existing user story, preserving other fields."""
+        query = """
+        MATCH (us:UserStory {id: $user_story_id})
+        SET us.role = $role,
+            us.updatedAt = datetime()
+        RETURN us {.id, .role, .action, .benefit, .priority, .status, uiDescription: us.uiDescription} as user_story
+        """
+        with self.session() as session:
+            result = session.run(query, user_story_id=user_story_id, role=role)
+            record = result.single()
+            if not record:
+                raise ValueError(f"User Story {user_story_id} not found")
+            return dict(record["user_story"])
 
 

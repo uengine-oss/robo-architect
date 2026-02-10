@@ -371,12 +371,13 @@
    - 일관성 검증
 
 3. **적용 대상:**
-   - **BC 추출** (Step 2): 대용량 User Stories 처리 - 🔄 구현 예정
-   - **Aggregate 추출** (Step 5): 대용량 Breakdown 결과 처리 - 🔄 구현 예정
-   - **Command 추출** (Step 7): 대용량 요구사항 처리 - 🔄 구현 예정
-   - **Event 추출** (Step 8): 대용량 요구사항 처리 - 🔄 구현 예정
-   - **Policy 추출** (Step 9): 대용량 Event/Command 처리 - 🔄 구현 예정
-   - **GWT 생성** (Step 11): 대용량 Command/Policy 처리 - 🔄 구현 예정
+   - **User Story 추출** (Step 1): 대용량 요구사항 처리 - ✅ 완료
+   - **BC 추출** (Step 2): 대용량 User Stories 처리 - ✅ 완료
+   - **Aggregate 추출** (Step 5): BC 단위로 개별 처리되므로 청킹 미필요 - ⏸️ 구현 미필요
+   - **Command 추출** (Step 7): Aggregate 단위로 개별 처리되므로 청킹 미필요 - ⏸️ 구현 미필요
+   - **Event 추출** (Step 8): Aggregate 단위로 개별 처리되므로 청킹 미필요 - ⏸️ 구현 미필요
+   - **Policy 추출** (Step 9): 대용량 Event/Command 처리 - ✅ 완료
+   - **GWT 생성** (Step 11): Command/Policy 단위로 개별 처리되므로 청킹 미필요 - ⏸️ 구현 미필요
 
 4. **참고 구현:**
    - `backend-generators/src/project_generator/workflows/sitemap/command_readmodel_extractor.py`
@@ -441,18 +442,45 @@
 - 현재 순서 유지 (Aggregate → Command → Event → Policy → GWT)
 - 모든 요소 생성 후 GWT를 후처리로 생성하여 정확한 참조 매핑 가능
 
-### Phase 3: 대용량 요청 처리 (다음 단계) - 🔄 진행 예정
+### Phase 3: 대용량 요청 처리 - 🔄 부분 완료
 
 **목표:**
 - 모든 추출 단계에서 대용량 요청을 안정적으로 처리
 - 청킹 및 병합 로직 구현
 
-**구현 계획:**
-1. **BC 추출** (Step 2): 대용량 User Stories 처리
-2. **Aggregate 추출** (Step 5): 대용량 Breakdown 결과 처리
-3. **Command 추출** (Step 7): 대용량 요구사항 처리
-4. **Event 추출** (Step 8): 대용량 요구사항 처리
-5. **Policy 추출** (Step 9): 대용량 Event/Command 처리
+**완료된 구현:**
+1. **User Story 추출** (Step 1): 대용량 요구사항 처리 - ✅ 완료
+   - `split_text_with_overlap()` 활용한 텍스트 청킹
+   - `merge_chunk_results()` 활용한 결과 병합 및 중복 제거
+   - `calculate_chunk_progress()` 활용한 진행률 계산
+
+2. **BC 추출** (Step 2): 대용량 User Stories 처리 - ✅ 완료
+   - `split_list_with_overlap()` 활용한 리스트 청킹
+   - `merge_chunk_results()` 활용한 결과 병합 및 중복 제거
+   - `dedupe_key` 기반 중복 제거 (key, name, id 우선순위)
+
+3. **Policy 추출** (Step 9): 대용량 Event/Command 처리 - ✅ 완료
+   - `split_text_with_overlap()` 활용한 텍스트 청킹
+   - `merge_chunk_results()` 활용한 결과 병합 및 중복 제거
+
+**구현 미필요 (이미 개별 단위로 처리됨):**
+4. **Aggregate 추출** (Step 5): BC 단위로 개별 LLM 호출하므로 청킹 불필요
+5. **Command 추출** (Step 7): Aggregate 단위로 개별 LLM 호출하므로 청킹 불필요
+6. **Event 추출** (Step 8): Aggregate 단위로 개별 LLM 호출하므로 청킹 불필요
+7. **GWT 생성** (Step 11): Command/Policy 단위로 개별 LLM 호출하므로 청킹 불필요
+
+**참고:**
+- Aggregate, Command, Event, GWT는 이미 BC → Aggregate → Command/Event 단위로 분할되어 개별 처리되므로, 추가 청킹이 필요하지 않습니다.
+- 각 단계에서 입력 데이터가 이미 작은 단위로 제한되어 있어 토큰 제한을 초과할 가능성이 낮습니다.
+
+**구현된 유틸리티:**
+- `api/features/ingestion/workflow/utils/chunking.py`: 공통 청킹 유틸리티
+  - `estimate_tokens()`: 토큰 수 추정
+  - `should_chunk()`: 청킹 필요 여부 판단
+  - `split_text_with_overlap()`: 텍스트 청킹 (overlap 지원)
+  - `split_list_with_overlap()`: 리스트 청킹 (overlap 지원)
+  - `merge_chunk_results()`: 결과 병합 및 중복 제거
+  - `calculate_chunk_progress()`: 청크별 진행률 계산
 
 **참고 구현:**
 - `backend-generators/src/project_generator/workflows/sitemap/command_readmodel_extractor.py`
@@ -521,7 +549,7 @@
 ### 9.1 현재 상태
 - ✅ **Phase 1 완료**: User Story 검증, BC 추출 개선
 - ✅ **Phase 2 완료**: Aggregate, Command, Event, Policy 추출 개선, GWT 생성 추가
-- 🔄 **Phase 3 진행 예정**: 대용량 요청 처리 (청킹 및 병합)
+- ✅ **Phase 3 완료**: 대용량 요청 처리 (User Story, BC, Policy 청킹 완료, 나머지는 개별 처리로 청킹 불필요)
 
 ### 9.2 Phase 3 구현 계획
 1. **대용량 처리 로직 구현**
@@ -592,3 +620,113 @@
 **참고:**
 - backend-generators의 `_feedback_prompt` 메서드 패턴 참고 가능
 - LangGraph의 `messages` 히스토리 활용
+
+---
+
+### 10.2 Human-in-the-loop 일시정지 및 채팅 연동
+
+**현재 상태:**
+- ✅ **일시정지/재개 기능 구현 완료**
+  - 각 phase에서 `wait_if_paused()` 체크포인트 구현
+  - UI에서 일시정지/재개 버튼 제공
+  - 일시정지 메시지: "⏸️ 일시 정지됨 (채팅으로 일부를 수정한 후 재개하세요)"
+  - `IngestionSession.is_paused` 플래그로 상태 관리
+
+- ❌ **채팅 연동 미완성**
+  - 일시정지 후 채팅으로 생성된 데이터를 수정하는 기능이 없음
+  - 채팅에서 수정한 내용이 재개 시 workflow context에 반영되지 않음
+  - IngestionSession과 채팅 세션 간 연결이 없음
+
+**개선 방안:**
+1. **일시정지 시점의 컨텍스트 저장**
+   - 현재 생성된 데이터(User Stories, BCs, Aggregates 등)를 채팅에서 접근 가능하게
+   - `IngestionSession`에 현재 생성 상태 스냅샷 저장
+   - 채팅 세션과 IngestionSession 연결
+
+2. **채팅에서 수정 기능**
+   - 사용자가 채팅으로 생성된 요소를 수정/삭제/추가
+   - Neo4j에서 직접 수정하거나, 채팅을 통해 LLM이 수정 제안
+   - 수정사항을 `IngestionWorkflowContext`에 반영
+
+3. **재개 시 수정사항 반영**
+   - `wait_if_paused()`에서 재개 시 수정사항 확인
+   - `IngestionWorkflowContext`에 수정사항 반영
+   - 다음 phase가 수정된 데이터를 사용하도록
+
+4. **구현 예시:**
+   ```python
+   # 일시정지 시 컨텍스트 저장
+   if session.is_paused:
+       session.snapshot = {
+           "user_stories": ctx.user_stories,
+           "bounded_contexts": ctx.bounded_contexts,
+           "aggregates": ctx.aggregates_by_bc,
+           # ... 기타 생성된 데이터
+       }
+       # 채팅 세션과 연결
+       link_chat_session_to_ingestion(session.id, chat_session_id)
+   
+   # 재개 시 수정사항 확인
+   if session.snapshot:
+       modified_data = get_chat_modifications(chat_session_id)
+       if modified_data:
+           # context에 수정사항 반영
+           apply_modifications_to_context(ctx, modified_data)
+   ```
+
+**영향받는 컴포넌트:**
+- `api/features/ingestion/ingestion_sessions.py`: 스냅샷 저장 로직
+- `api/features/ingestion/ingestion_workflow_runner.py`: 재개 시 수정사항 반영
+- `api/features/ingestion/workflow/ingestion_workflow_context.py`: 수정사항 적용
+- 채팅 기능: IngestionSession과의 연동
+
+**우선순위:** 높음 (Human-in-the-loop의 핵심 기능)
+
+**참고:**
+- 현재 일시정지 기능은 구현되어 있으나, 실제 human-in-the-loop를 위해서는 채팅 연동이 필수
+- Event Storming 워크플로우의 `approve_*_node`와 유사한 패턴 활용 가능
+
+---
+
+### 10.3 생성 중단 기능 및 오류 처리 개선
+
+**완료된 구현:**
+- ✅ **중단 기능 구현 완료**
+  - `/api/ingest/{session_id}/cancel` 엔드포인트 추가
+  - `IngestionSession.is_cancelled` 플래그 추가
+  - 각 phase에서 `is_cancelled` 체크 및 즉시 중단
+  - `workflow_task.cancel()` 호출로 비동기 작업 취소
+  - UI에 중단 버튼 추가
+
+- ✅ **오류 알림 개선**
+  - 오류 발생 시 상세 메시지 표시 (`data.data?.error` 포함)
+  - Floating panel에 오류 메시지 영역 추가
+  - EventSource 연결 오류 시 명확한 메시지 표시
+  - 오류 발생 시 자동으로 연결 종료 및 상태 초기화
+
+**구현 위치:**
+- `api/features/ingestion/router.py`: cancel 엔드포인트
+- `api/features/ingestion/ingestion_workflow_runner.py`: 중단 체크 로직
+- `api/features/ingestion/ingestion_sessions.py`: is_cancelled 플래그
+- `frontend/src/features/requirementsIngestion/ui/RequirementsIngestionModal.vue`: UI 개선
+
+---
+
+### 10.4 User Story 품질 개선
+
+**완료된 구현:**
+- ✅ **Role 검증 강화**
+  - 프롬프트에 구체적인 role 요구사항 명시 ("user", "사용자", 빈 문자열 금지)
+  - 저장 전 최종 검증: 빈 role 또는 generic role인 경우 추론 시도
+  - `_infer_role_from_context()` 함수로 action/benefit에서 role 추론
+  - 추론 실패 시 "customer"로 fallback
+
+- ✅ **중복 제거 개선**
+  - 프론트엔드에서 `createdItems` 중복 체크 및 업데이트
+  - Neo4j에서 `MERGE` 연산으로 id 기반 중복 방지
+  - 청크 병합 시 `dedupe_key` 기반 중복 제거
+
+**구현 위치:**
+- `api/features/ingestion/requirements_to_user_stories.py`: role 추론 로직
+- `api/features/ingestion/workflow/phases/user_stories.py`: 최종 검증 로직
+- `frontend/src/features/requirementsIngestion/ui/RequirementsIngestionModal.vue`: 중복 제거

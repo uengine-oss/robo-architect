@@ -48,6 +48,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         )
 
         async for event in parsing_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -59,6 +67,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in extract_user_stories_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -70,6 +86,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in identify_bounded_contexts_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -81,6 +105,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in extract_aggregates_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -92,6 +124,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in extract_commands_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -103,6 +143,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in extract_events_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -114,6 +162,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in extract_readmodels_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -125,6 +181,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in generate_properties_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -136,6 +200,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield event
 
         async for event in generate_property_references_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -148,6 +220,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
 
         # Policy phase MUST run before UI phase so we can exclude policy-invoked commands from UI generation
         async for event in identify_policies_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -160,6 +240,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
 
         # Generate GWT (Given/When/Then) for Commands and Policies
         async for event in generate_gwt_phase(ctx):
+            if getattr(session, "is_cancelled", False):
+                yield ProgressEvent(
+                    phase=IngestionPhase.ERROR,
+                    message="❌ 생성이 중단되었습니다",
+                    progress=getattr(session, "progress", 0) or 0,
+                    data={"error": "Cancelled by user", "cancelled": True},
+                )
+                return
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                 yield ProgressEvent(
                     phase=IngestionPhase.PAUSED,
@@ -188,6 +276,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             )
         else:
             async for event in generate_ui_wireframes_phase(ctx):
+                if getattr(session, "is_cancelled", False):
+                    yield ProgressEvent(
+                        phase=IngestionPhase.ERROR,
+                        message="❌ 생성이 중단되었습니다",
+                        progress=getattr(session, "progress", 0) or 0,
+                        data={"error": "Cancelled by user", "cancelled": True},
+                    )
+                    return
                 if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
                     yield ProgressEvent(
                         phase=IngestionPhase.PAUSED,

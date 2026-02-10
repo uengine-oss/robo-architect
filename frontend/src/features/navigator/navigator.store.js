@@ -23,14 +23,35 @@ export const useNavigatorStore = defineStore('navigator', () => {
   async function fetchUserStories() {
     try {
       const response = await fetch('/api/user-stories/unassigned')
-      if (!response.ok) throw new Error('Failed to fetch user stories')
+      if (!response.ok) {
+        const errorMsg = `Failed to fetch user stories (HTTP ${response.status})`
+        log.error(
+          'navigator_fetch_user_stories_failed',
+          errorMsg,
+          { httpStatus: response.status, statusText: response.statusText }
+        )
+        throw new Error(errorMsg)
+      }
       userStories.value = await response.json()
     } catch (e) {
+      const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
+                             e?.message?.includes('ECONNRESET') ||
+                             e?.message?.includes('Failed to fetch') ||
+                             e?.name === 'TypeError'
+      const errorDetails = {
+        errorMessage: e?.message || String(e),
+        errorName: e?.name,
+        isNetworkError,
+        errorType: isNetworkError ? 'network' : 'http'
+      }
       log.error(
         'navigator_fetch_user_stories_failed',
-        'Failed to fetch unassigned user stories; Navigator root list may be stale.',
-        { errorMessage: e?.message || String(e) }
+        isNetworkError 
+          ? 'Failed to fetch unassigned user stories: 서버 연결 실패 (서버가 실행 중인지 확인해주세요)'
+          : 'Failed to fetch unassigned user stories; Navigator root list may be stale.',
+        errorDetails
       )
+      console.error('[Navigator] fetchUserStories error:', errorDetails)
     }
   }
   
@@ -41,15 +62,39 @@ export const useNavigatorStore = defineStore('navigator', () => {
     
     try {
       const response = await fetch('/api/contexts')
-      if (!response.ok) throw new Error('Failed to fetch contexts')
+      if (!response.ok) {
+        const errorMsg = `Failed to fetch contexts (HTTP ${response.status})`
+        log.error(
+          'navigator_fetch_contexts_failed',
+          errorMsg,
+          { httpStatus: response.status, statusText: response.statusText }
+        )
+        throw new Error(errorMsg)
+      }
       contexts.value = await response.json()
     } catch (e) {
-      error.value = e.message
+      const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
+                             e?.message?.includes('ECONNRESET') ||
+                             e?.message?.includes('Failed to fetch') ||
+                             e?.name === 'TypeError'
+      const errorMsg = isNetworkError 
+        ? '서버 연결 실패: 백엔드 서버가 실행 중인지 확인해주세요.'
+        : (e?.message || 'Failed to fetch contexts')
+      error.value = errorMsg
+      const errorDetails = {
+        errorMessage: e?.message || String(e),
+        errorName: e?.name,
+        isNetworkError,
+        errorType: isNetworkError ? 'network' : 'http'
+      }
       log.error(
         'navigator_fetch_contexts_failed',
-        'Failed to fetch bounded contexts; Navigator may be incomplete.',
-        { errorMessage: e?.message || String(e) }
+        isNetworkError 
+          ? 'Failed to fetch bounded contexts: 서버 연결 실패'
+          : 'Failed to fetch bounded contexts; Navigator may be incomplete.',
+        errorDetails
       )
+      console.error('[Navigator] fetchContexts error:', errorDetails)
     } finally {
       loading.value = false
     }
@@ -63,16 +108,39 @@ export const useNavigatorStore = defineStore('navigator', () => {
     
     try {
       const response = await fetch(`/api/contexts/${contextId}/full-tree`)
-      if (!response.ok) throw new Error('Failed to fetch context tree')
+      if (!response.ok) {
+        const errorMsg = `Failed to fetch context tree (HTTP ${response.status})`
+        log.error(
+          'navigator_fetch_context_tree_failed',
+          errorMsg,
+          { contextId, forceRefresh, httpStatus: response.status, statusText: response.statusText }
+        )
+        throw new Error(errorMsg)
+      }
       const tree = await response.json()
       contextTrees.value[contextId] = tree
       return tree
     } catch (e) {
+      const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
+                             e?.message?.includes('ECONNRESET') ||
+                             e?.message?.includes('Failed to fetch') ||
+                             e?.name === 'TypeError'
+      const errorDetails = {
+        contextId,
+        forceRefresh,
+        errorMessage: e?.message || String(e),
+        errorName: e?.name,
+        isNetworkError,
+        errorType: isNetworkError ? 'network' : 'http'
+      }
       log.error(
         'navigator_fetch_context_tree_failed',
-        'Failed to fetch context tree; this bounded context may appear empty until retry.',
-        { contextId, forceRefresh, errorMessage: e?.message || String(e) }
+        isNetworkError 
+          ? 'Failed to fetch context tree: 서버 연결 실패'
+          : 'Failed to fetch context tree; this bounded context may appear empty until retry.',
+        errorDetails
       )
+      console.error('[Navigator] fetchContextTree error:', errorDetails)
       return null
     }
   }
@@ -557,7 +625,13 @@ export const useNavigatorStore = defineStore('navigator', () => {
       )
       const response = await fetch('/api/contexts')
       if (!response.ok) {
-        throw new Error(`Failed to fetch contexts (http ${response.status})`)
+        const errorMsg = `Failed to fetch contexts (HTTP ${response.status})`
+        log.error(
+          'navigator_refresh_fetch_contexts_failed',
+          errorMsg,
+          { opId, httpStatus: response.status, statusText: response.statusText }
+        )
+        throw new Error(errorMsg)
       }
       contexts.value = await response.json()
       log.info(
@@ -605,13 +679,33 @@ export const useNavigatorStore = defineStore('navigator', () => {
       )
       
     } catch (e) {
-      error.value = e.message
+      const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
+                             e?.message?.includes('ECONNRESET') ||
+                             e?.message?.includes('Failed to fetch') ||
+                             e?.name === 'TypeError'
+      const errorMsg = isNetworkError 
+        ? '서버 연결 실패: 백엔드 서버가 실행 중인지 확인해주세요.'
+        : (e?.message || 'Navigator refresh failed')
+      error.value = errorMsg
       const durationMs = Math.round(((globalThis.performance && performance.now) ? performance.now() : Date.now()) - t0)
+      const errorDetails = {
+        opId,
+        trigger,
+        userStoryId,
+        durationMs,
+        errorMessage: e?.message || String(e),
+        errorName: e?.name,
+        isNetworkError,
+        errorType: isNetworkError ? 'network' : 'http'
+      }
       log.error(
         'navigator_refresh_failed',
-        'Navigator refresh failed; UI may be partially updated.',
-        { opId, trigger, userStoryId, durationMs, errorMessage: e?.message || String(e) }
+        isNetworkError 
+          ? 'Navigator refresh failed: 서버 연결 실패'
+          : 'Navigator refresh failed; UI may be partially updated.',
+        errorDetails
       )
+      console.error('[Navigator] refreshAll error:', errorDetails)
     } finally {
       loading.value = false
       const durationMs = Math.round(((globalThis.performance && performance.now) ? performance.now() : Date.now()) - t0)

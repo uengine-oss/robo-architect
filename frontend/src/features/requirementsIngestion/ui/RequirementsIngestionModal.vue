@@ -274,7 +274,14 @@ function connectToStream(sid, isReconnect = false) {
     // Handle created objects
     if (data.data?.object) {
       const obj = data.data.object
+      // Prevent duplicate items by checking if item with same id already exists
+      const existingIndex = createdItems.value.findIndex(item => item.id === obj.id && item.type === obj.type)
+      if (existingIndex === -1) {
       createdItems.value.push(obj)
+      } else {
+        // Update existing item instead of adding duplicate
+        createdItems.value[existingIndex] = obj
+      }
       
       // Trigger navigator updates for dynamic display
       if (obj.type === 'UserStory') {
@@ -323,18 +330,32 @@ function connectToStream(sid, isReconnect = false) {
       navigatorStore.refreshAll()
     }
     
-    // Handle error
+    // Handle error or cancellation
     if (data.phase === 'error') {
-      error.value = data.message
+      error.value = data.message || data.data?.error || '알 수 없는 오류가 발생했습니다'
       isProcessing.value = false
+      isPaused.value = false
       closeStream()
       clearSessionFromStorage()
     }
   })
   
-  eventSource.value.onerror = () => {
+  eventSource.value.onerror = (err) => {
     if (isProcessing.value) {
-      error.value = '연결이 끊어졌습니다'
+      const errorDetails = {
+        error: err,
+        eventSourceState: eventSource.value?.readyState,
+        url: eventSource.value?.url
+      }
+      console.error('[RequirementsIngestion] EventSource error:', errorDetails)
+      
+      // Check if it's a connection error
+      const isConnectionError = eventSource.value?.readyState === EventSource.CLOSED
+      error.value = isConnectionError 
+        ? '서버 연결이 끊어졌습니다. 백엔드 서버가 실행 중인지 확인해주세요.'
+        : '연결이 끊어졌습니다. 서버와의 연결을 확인해주세요.'
+      isProcessing.value = false
+      isPaused.value = false
     }
     closeStream()
   }
@@ -420,6 +441,51 @@ async function togglePause() {
     if (endpoint === 'resume') isPaused.value = false
   } catch (e) {
     console.error('Failed to toggle pause:', e)
+    error.value = e.message || '일시정지/재개 실패'
+  }
+}
+
+async function cancelIngestion() {
+  if (!sessionId.value) return
+  if (!confirm('생성을 중단하시겠습니까? 진행 중인 작업이 취소됩니다.')) {
+    return
+  }
+  try {
+    // Immediately close event source and update UI state
+    if (eventSource.value) {
+      eventSource.value.close()
+      eventSource.value = null
+    }
+    isProcessing.value = false
+    isPaused.value = false
+    error.value = '생성이 중단되었습니다'
+    
+    // Then call cancel API
+    try {
+      const response = await fetch(`/api/ingest/${sessionId.value}/cancel`, { method: 'POST' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        // 404 means session not found (already expired/deleted) - this is OK, just log it
+        if (response.status === 404) {
+          console.log('Session already expired or not found, cancellation may have already completed')
+          return // Exit early, UI is already updated
+        }
+        throw new Error(data.detail || data.message || 'Cancel failed')
+      }
+    } catch (fetchError) {
+      // Network error or other fetch issues - UI is already updated, just log
+      if (fetchError.name === 'TypeError' && fetchError.message.includes('fetch')) {
+        console.log('Network error during cancel request, but UI state is already updated')
+        return // Exit early, UI is already updated
+      }
+      throw fetchError // Re-throw other errors
+    }
+    
+    // Clear session from storage
+    clearSessionFromStorage()
+  } catch (e) {
+    console.error('Failed to cancel ingestion:', e)
+    error.value = e.message || '중단 실패'
   }
 }
 
@@ -905,6 +971,18 @@ function useSample() {
                 <polygon points="8 5 19 12 8 19 8 5"></polygon>
               </svg>
             </button>
+            <button
+              v-if="isProcessing && !summary && !error"
+              class="panel-btn panel-btn--cancel"
+              @click.stop="cancelIngestion"
+              title="중단"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="15" y1="9" x2="9" y2="15"></line>
+                <line x1="9" y1="9" x2="15" y2="15"></line>
+              </svg>
+            </button>
             <button class="panel-btn" @click.stop="toggleMinimize" :title="isPanelMinimized ? '펼치기' : '접기'">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline v-if="isPanelMinimized" points="18 15 12 9 6 15"></polyline>
@@ -925,13 +1003,22 @@ function useSample() {
           <div class="mini-progress-bar">
             <div class="mini-progress-fill" :style="{ width: `${progress}%` }"></div>
           </div>
-          <p class="floating-panel__message">{{ currentMessage }}</p>
+          <p class="floating-panel__message">{{ error || currentMessage }}</p>
         </div>
         
         <!-- Panel Body (collapsible) -->
         <div v-if="!isPanelMinimized" class="floating-panel__body">
+          <!-- Error Message -->
+          <div v-if="error" class="floating-panel__error">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span>{{ error }}</span>
+          </div>
           <!-- Live Created Items -->
-          <div v-if="isProcessing" class="mini-items">
+          <div v-if="isProcessing && !error" class="mini-items">
             <TransitionGroup name="item-list">
               <div 
                 v-for="item in createdItems.slice(-5)"
@@ -1628,6 +1715,19 @@ function useSample() {
 }
 
 .panel-btn--pause.is-paused {
+  color: var(--color-primary);
+}
+
+.panel-btn--cancel {
+  color: var(--color-error, #ef4444);
+}
+
+.panel-btn--cancel:hover {
+  background: var(--color-error-light, rgba(239, 68, 68, 0.1));
+  color: var(--color-error, #ef4444);
+}
+
+.panel-btn--pause.is-paused {
   color: #212529;
 }
 
@@ -1657,6 +1757,19 @@ function useSample() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.floating-panel__error {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  color: #ef4444;
+  font-size: 0.8rem;
+  margin: var(--spacing-sm) var(--spacing-md);
 }
 
 .floating-panel__body {

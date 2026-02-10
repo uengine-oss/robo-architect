@@ -20,6 +20,76 @@ from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 
+async def _create_event_with_links(
+    evt: Any,
+    evt_idx: int,
+    cmd_id: str,
+    ctx: IngestionWorkflowContext,
+) -> tuple[dict[str, Any] | None, str]:
+    """
+    Create a single event with user story links.
+    Returns (created_event_dict, error_message)
+    """
+    if not cmd_id:
+        return None, "Command ID not found"
+    
+    version = getattr(evt, "version", "1.0.0") or "1.0.0"
+    payload = getattr(evt, "payload", None)
+    
+    try:
+        created_evt = await asyncio.wait_for(
+            asyncio.to_thread(
+                ctx.client.create_event,
+                name=evt.name,
+                command_id=cmd_id,
+                version=version,
+                payload=payload,
+            ),
+            timeout=10.0
+        )
+        
+        # Overwrite LLM-proposed id with UUID from DB
+        try:
+            evt.id = created_evt.get("id")
+            evt.key = created_evt.get("key")
+        except Exception:
+            pass
+
+        # Link user stories (batch processing)
+        us_ids = getattr(evt, "user_story_ids", []) or []
+        if us_ids:
+            link_tasks = []
+            for us_id in us_ids:
+                link_task = asyncio.wait_for(
+                    asyncio.to_thread(
+                        ctx.client.link_user_story_to_event,
+                        us_id,
+                        created_evt.get("id")
+                    ),
+                    timeout=5.0
+                )
+                link_tasks.append(link_task)
+            
+            # Process in batches of 10
+            BATCH_SIZE = 10
+            for batch_start in range(0, len(link_tasks), BATCH_SIZE):
+                batch = link_tasks[batch_start:batch_start + BATCH_SIZE]
+                try:
+                    await asyncio.gather(*batch, return_exceptions=True)
+                except Exception:
+                    pass  # Individual failures are ignored
+
+        return {
+            "event": created_evt,
+            "evt": evt,
+            "cmd_id": cmd_id,
+        }, None
+    except asyncio.TimeoutError:
+        return None, "Event creation timeout"
+    except Exception as e:
+        return None, f"Event creation failed: {e}"
+
+
 async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[ProgressEvent, None]:
     """
     Phase 6: extract events per aggregate and persist them.
@@ -55,53 +125,11 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
             structured_llm = ctx.llm.with_structured_output(EventList)
 
             try:
-                provider, model = get_llm_provider_model()
-                if AI_AUDIT_LOG_ENABLED:
-                    SmartLogger.log(
-                        "INFO",
-                        "Ingestion: extract events - LLM invoke starting.",
-                        category="ingestion.llm.extract_events.start",
-                        params={
-                            "session_id": ctx.session.id,
-                            "llm": {"provider": provider, "model": model},
-                            "bc": {"id": bc.id, "name": bc.name},
-                            "aggregate": {"id": agg.id, "name": agg.name},
-                            "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                            "system_prompt": SYSTEM_PROMPT,
-                        }
-                    )
-
-                t_llm0 = time.perf_counter()
                 evt_response = structured_llm.invoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)])
-                llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                 events = evt_response.events
-
-                if AI_AUDIT_LOG_ENABLED:
-                    try:
-                        resp_dump = evt_response.model_dump() if hasattr(evt_response, "model_dump") else evt_response.dict()
-                    except Exception:
-                        resp_dump = {"__type__": type(evt_response).__name__, "__repr__": repr(evt_response)[:1000]}
-                    SmartLogger.log(
-                        "INFO",
-                        "Ingestion: extract events - LLM invoke completed.",
-                        category="ingestion.llm.extract_events.done",
-                        params={
-                            "session_id": ctx.session.id,
-                            "llm": {"provider": provider, "model": model},
-                            "bc": {"id": bc.id, "name": bc.name},
-                            "aggregate": {"id": agg.id, "name": agg.name},
-                            "llm_ms": llm_ms,
-                            "result": {
-                                "event_ids": summarize_for_log([getattr(e, "id", None) for e in events]),
-                                "response": resp_dump
-                                if AI_AUDIT_LOG_FULL_OUTPUT
-                                else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
-                            },
-                        }
-                    )
             except Exception as e:
                 SmartLogger.log(
-                    "WARNING",
+                    "ERROR",
                     "Event extraction failed (LLM)",
                     category="ingestion.workflow.events",
                     params={"session_id": ctx.session.id, "bc_id": bc.id, "agg_id": agg.id, "error": str(e)},
@@ -109,63 +137,78 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                 events = []
 
             all_events[agg.id] = events
+
+            # Process all events in parallel
             if events:
-                SmartLogger.log(
-                    "INFO",
-                    "Events extracted",
-                    category="ingestion.workflow.events",
-                    params={
-                        "session_id": ctx.session.id,
-                        "agg_id": agg.id,
-                        "events": summarize_for_log(events, max_list=5000, max_dict_items=5000),
-                    },
-                )
-
-            for i, evt in enumerate(events):
-                cmd_id = commands[i].id if i < len(commands) else commands[0].id if commands else None
-                if not cmd_id:
-                    continue
-
-                version = getattr(evt, "version", "1.0.0") or "1.0.0"
-                payload = getattr(evt, "payload", None)
-                created_evt = ctx.client.create_event(
-                    name=evt.name,
-                    command_id=cmd_id,
-                    version=version,
-                    payload=payload,
-                )
-                # Overwrite LLM-proposed id with UUID from DB (canonical)
-                try:
-                    evt.id = created_evt.get("id")
-                except Exception:
-                    pass
-                # Preserve natural key (needed by downstream property generation prompts)
-                try:
-                    evt.key = created_evt.get("key")
-                except Exception:
-                    pass
-
-                # Traceability: UserStory -> Event
-                for us_id in getattr(evt, "user_story_ids", []) or []:
-                    try:
-                        ctx.client.link_user_story_to_event(us_id, created_evt.get("id"))
-                    except Exception:
-                        pass
-                yield ProgressEvent(
-                    phase=IngestionPhase.EXTRACTING_EVENTS,
-                    message=f"Event 생성: {evt.name}",
-                    progress=80,
-                    data={
-                        "type": "Event",
-                        "object": {
-                            "id": created_evt.get("id"),
-                            "name": evt.name,
-                            "type": "Event",
-                            "parentId": cmd_id,
-                        },
-                    },
-                )
-                await asyncio.sleep(0.1)
+                # Check cancellation before parallel processing
+                if getattr(ctx.session, "is_cancelled", False):
+                    yield ProgressEvent(
+                        phase=IngestionPhase.ERROR,
+                        message="❌ 생성이 중단되었습니다",
+                        progress=getattr(ctx.session, "progress", 0) or 0,
+                        data={"error": "Cancelled by user", "cancelled": True},
+                    )
+                    return
+                
+                tasks = []
+                for i, evt in enumerate(events):
+                    cmd_id = commands[i].id if i < len(commands) else commands[0].id if commands else None
+                    tasks.append(_create_event_with_links(evt, i, cmd_id, ctx))
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Process results and yield progress events
+                created_count = 0
+                for evt_idx, result in enumerate(results):
+                    # Check cancellation during result processing
+                    if getattr(ctx.session, "is_cancelled", False):
+                        yield ProgressEvent(
+                            phase=IngestionPhase.ERROR,
+                            message="❌ 생성이 중단되었습니다",
+                            progress=getattr(ctx.session, "progress", 0) or 0,
+                            data={"error": "Cancelled by user", "cancelled": True},
+                        )
+                        return
+                    
+                    if isinstance(result, Exception):
+                        SmartLogger.log(
+                            "ERROR",
+                            f"Event creation exception: {result}",
+                            category="ingestion.neo4j.event.create.error",
+                            params={"session_id": ctx.session.id, "event_index": evt_idx + 1, "error": str(result)}
+                        )
+                        continue
+                    
+                    created_evt_data, error = result
+                    if error:
+                        SmartLogger.log(
+                            "ERROR",
+                            f"Event creation failed: {error}",
+                            category="ingestion.workflow.events.skip",
+                            params={"session_id": ctx.session.id, "event_index": evt_idx + 1, "error": error}
+                        )
+                        continue
+                    
+                    if created_evt_data:
+                        created_count += 1
+                        created_evt = created_evt_data["event"]
+                        evt = created_evt_data["evt"]
+                        cmd_id = created_evt_data["cmd_id"]
+                        
+                        yield ProgressEvent(
+                            phase=IngestionPhase.EXTRACTING_EVENTS,
+                            message=f"Event 생성: {evt.name} ({created_count}/{len(events)})",
+                            progress=80,
+                            data={
+                                "type": "Event",
+                                "object": {
+                                    "id": created_evt.get("id"),
+                                    "name": evt.name,
+                                    "type": "Event",
+                                    "parentId": cmd_id,
+                                },
+                            },
+                        )
 
     ctx.events_by_agg = all_events
 

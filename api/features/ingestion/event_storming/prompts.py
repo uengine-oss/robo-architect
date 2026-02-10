@@ -143,6 +143,7 @@ User Stories:
 <rule id="5">**Avoid Over-Granularity:** Don't create too many fine-grained BCs - they become microservices later</rule>
 <rule id="6">**Avoid Under-Granularity:** Don't create too few BCs - each should have a clear, cohesive purpose</rule>
 <rule id="7">**User Story Assignment:** Each user story should belong to exactly ONE primary Bounded Context</rule>
+<rule id="8">**CRITICAL - Complete Assignment:** You MUST assign EVERY SINGLE user story provided in the input to exactly ONE Bounded Context. No user story can be left unassigned. If a user story doesn't clearly fit any existing BC, you must either: (a) assign it to the most appropriate existing BC, or (b) create a new BC for it. Leaving any user story unassigned is NOT acceptable.</rule>
 </section>
 
 <section id="output_requirements">
@@ -150,8 +151,9 @@ User Stories:
 <requirement id="1">**Bounded Context Name:** Must be in English PascalCase (e.g., "OrderManagement", "PaymentProcessing")</requirement>
 <requirement id="2">**Description:** Clear explanation of what this BC is responsible for</requirement>
 <requirement id="3">**Rationale:** Detailed explanation of why this should be a separate BC, considering cohesion, coupling, and domain boundaries</requirement>
-<requirement id="4">**User Story Assignment:** List all user story IDs that belong to this BC</requirement>
+<requirement id="4">**User Story Assignment:** List ALL user story IDs that belong to this BC. CRITICAL: The union of all user_story_ids across all BCs MUST equal the complete set of user story IDs provided in the input. Every user story must appear in exactly one BC's user_story_ids list.</requirement>
 <requirement id="5">**Domain Classification:** MUST classify each BC as Core Domain, Supporting Domain, or Generic Domain. This classification is required for proper domain modeling and strategic design decisions.</requirement>
+<requirement id="6">**Verification:** Before finalizing your output, verify that every user story ID from the input appears in exactly one BC's user_story_ids list. If any user story is missing, you must assign it to an appropriate BC.</requirement>
 </section>
 </guidelines>
 </core_instructions>
@@ -174,10 +176,17 @@ For each Bounded Context candidate, provide:
 - **name:** Descriptive name in PascalCase
 - **description:** What this BC is responsible for
 - **rationale:** Why this should be a separate BC (consider cohesion, coupling, domain boundaries)
-- **user_story_ids:** List of User Story IDs that belong to this BC
+- **user_story_ids:** List of User Story IDs that belong to this BC. CRITICAL: Every user story from the input MUST appear in exactly one BC's user_story_ids list.
 - **domain_type:** MUST be one of: "Core Domain", "Supporting Domain", or "Generic Domain". This field is required and must be provided for each BC.
 
-Output should be a list of BoundedContextCandidate objects with clear, well-reasoned boundaries."""
+CRITICAL VERIFICATION STEP:
+Before finalizing your response, perform this check:
+1. Collect all user_story_ids from all BCs you've created
+2. Compare this set with the complete list of user story IDs provided in the input
+3. If any user story ID is missing, you MUST assign it to the most appropriate BC (or create a new BC if necessary)
+4. Ensure no user story ID appears in multiple BCs (each user story belongs to exactly ONE BC)
+
+Output should be a list of BoundedContextCandidate objects with clear, well-reasoned boundaries. EVERY user story from the input MUST be assigned to exactly ONE BC."""
 
 # =============================================================================
 # User Story Breakdown

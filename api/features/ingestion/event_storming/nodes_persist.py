@@ -39,7 +39,13 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
 
             # Link user stories to BC
             for us_id in bc.user_story_ids:
-                client.link_user_story_to_bc(us_id, bc_id_map[old_id])
+                link_result = client.link_user_story_to_bc(us_id, bc_id_map[old_id])
+                # link_user_story_to_bc는 (success, diagnostic) 튜플을 반환
+                if isinstance(link_result, tuple):
+                    success, _ = link_result
+                    if not success:
+                        # 연결 실패는 무시 (이미 로그에 기록됨)
+                        pass
 
         # 2. Create Aggregates and link to User Stories
         for bc_id, aggregates in state.approved_aggregates.items():

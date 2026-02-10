@@ -385,21 +385,44 @@ async function onNodeDoubleClick(event) {
     return
   }
 
-  // Event node: Shift+double click expands triggered policies; otherwise open Inspector
-  if (node.type === 'event' && nativeEvent?.shiftKey) {
-    log.info('event_expand_triggers_start', 'Expanding Event triggers (Shift+double click).', {
-      opId,
-      eventId: node.id,
-      nodeData: node.data
-    })
-    console.info('[RAW][CanvasWorkspace][event_expand_triggers_start]', { opId, eventId: node.id, nodeData: node.data })
-    try {
-      const newNodes = await canvasStore.expandEventTriggers(node.id)
-      log.info('event_expand_triggers_done', 'Expanded Event triggers.', { opId, eventId: node.id, newNodes })
-      console.info('[RAW][CanvasWorkspace][event_expand_triggers_done]', { opId, eventId: node.id, newNodes })
-    } catch (e) {
-      log.error('event_expand_triggers_error', 'Failed to expand Event triggers.', { opId, eventId: node.id, error: String(e) })
-      console.error('[RAW][CanvasWorkspace][event_expand_triggers_error]', { opId, eventId: node.id, error: e })
+  // Event node: Shift+double click expands triggered policies; otherwise open Inspector + auto-expand BCs
+  if (node.type === 'event') {
+    // Open Inspector first
+    canvasStore.selectNode(node.id)
+    openInspectorForNode(node.id)
+    
+    // If Shift+double click, expand triggered policies (existing behavior)
+    if (nativeEvent?.shiftKey) {
+      log.info('event_expand_triggers_start', 'Expanding Event triggers (Shift+double click).', {
+        opId,
+        eventId: node.id,
+        nodeData: node.data
+      })
+      console.info('[RAW][CanvasWorkspace][event_expand_triggers_start]', { opId, eventId: node.id, nodeData: node.data })
+      try {
+        const newNodes = await canvasStore.expandEventTriggers(node.id)
+        log.info('event_expand_triggers_done', 'Expanded Event triggers.', { opId, eventId: node.id, newNodes })
+        console.info('[RAW][CanvasWorkspace][event_expand_triggers_done]', { opId, eventId: node.id, newNodes })
+      } catch (e) {
+        log.error('event_expand_triggers_error', 'Failed to expand Event triggers.', { opId, eventId: node.id, error: String(e) })
+        console.error('[RAW][CanvasWorkspace][event_expand_triggers_error]', { opId, eventId: node.id, error: e })
+      }
+    } else {
+      // Normal double click: open Inspector + auto-expand BCs of policies that receive this event
+      log.info('event_expand_bcs_start', 'Auto-expanding BCs for Event triggers (double click).', {
+        opId,
+        eventId: node.id,
+        nodeData: node.data
+      })
+      console.info('[RAW][CanvasWorkspace][event_expand_bcs_start]', { opId, eventId: node.id, nodeData: node.data })
+      try {
+        const newNodes = await canvasStore.expandEventTriggers(node.id)
+        log.info('event_expand_bcs_done', 'Auto-expanded BCs for Event triggers.', { opId, eventId: node.id, newNodes })
+        console.info('[RAW][CanvasWorkspace][event_expand_bcs_done]', { opId, eventId: node.id, newNodes })
+      } catch (e) {
+        log.error('event_expand_bcs_error', 'Failed to auto-expand BCs for Event triggers.', { opId, eventId: node.id, error: String(e) })
+        console.error('[RAW][CanvasWorkspace][event_expand_bcs_error]', { opId, eventId: node.id, error: e })
+      }
     }
     return
   }

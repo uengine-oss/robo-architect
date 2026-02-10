@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
@@ -17,6 +17,66 @@ const hasProperties = computed(() => Array.isArray(props.data?.properties) && pr
 // Access showDesignLevel directly - Pinia store refs are reactive
 const shouldShowFields = computed(() => {
   return canvasStore.showDesignLevel && hasProperties.value
+})
+
+// Fetch outbound policy count from API (not just from canvas edges)
+const outboundPolicyCount = ref(-1) // -1 means not loaded yet, 0 means no policies, >0 means has policies
+const isLoadingPolicies = ref(false)
+
+async function fetchOutboundPolicyCount() {
+  if (isLoadingPolicies.value) return
+  isLoadingPolicies.value = true
+  try {
+    const response = await fetch(`/api/graph/event-triggers/${props.id}`)
+    if (response.ok) {
+      const data = await response.json()
+      // Count unique policies from relationships
+      const policyIds = new Set()
+      if (data.relationships) {
+        data.relationships.forEach(rel => {
+          if (rel.type === 'TRIGGERS' && rel.source === props.id) {
+            policyIds.add(rel.target)
+          }
+        })
+      }
+      outboundPolicyCount.value = policyIds.size
+    } else {
+      // API call failed, but don't fallback to canvas edges (they require BC on canvas)
+      // Keep previous value or set to -1 to indicate unknown
+      if (outboundPolicyCount.value === -1) {
+        outboundPolicyCount.value = 0
+      }
+    }
+  } catch (error) {
+    console.error('Failed to fetch outbound policies:', error)
+    // API call failed, but don't fallback to canvas edges
+    // Keep previous value or set to 0 to indicate no policies found
+    if (outboundPolicyCount.value === -1) {
+      outboundPolicyCount.value = 0
+    }
+  } finally {
+    isLoadingPolicies.value = false
+  }
+}
+
+// Use API count (always prefer API over canvas edges)
+const finalPolicyCount = computed(() => {
+  // If API hasn't loaded yet, return 0 to avoid showing badge prematurely
+  if (outboundPolicyCount.value === -1) {
+    return 0
+  }
+  return outboundPolicyCount.value
+})
+
+const hasOutboundPolicies = computed(() => finalPolicyCount.value > 0)
+
+// Fetch on mount and when event ID changes
+onMounted(() => {
+  fetchOutboundPolicyCount()
+})
+
+watch(() => props.id, () => {
+  fetchOutboundPolicyCount()
 })
 const nodeStyle = computed(() => {
   // Always compute height based on current showDesignLevel state
@@ -51,7 +111,7 @@ const nodeStyle = computed(() => {
 </script>
 
 <template>
-  <div class="es-node es-node--event" :style="nodeStyle" title="더블클릭: Inspector 열기 · Shift+더블클릭: Triggered Policy 확장">
+  <div class="es-node es-node--event" :style="nodeStyle" title="더블클릭: Inspector 열기 + Policy BC 자동 확장 · Shift+더블클릭: Triggered Policy 확장">
     <div class="es-node__header">
       {{ headerText }}
     </div>
@@ -73,6 +133,13 @@ const nodeStyle = computed(() => {
       </div>
     </div>
     
+    <!-- Outbound policies badge -->
+    <div v-if="hasOutboundPolicies" class="es-node__triggers">
+      <span class="es-node__trigger-badge" :title="`${finalPolicyCount}개의 Policy를 트리거합니다`">
+        policy: {{ finalPolicyCount }}
+      </span>
+    </div>
+    
     <!-- Connection handles - Left/Right for optimal routing -->
     <Handle type="target" :position="Position.Left" id="left-target" />
     <Handle type="source" :position="Position.Left" id="left-source" />
@@ -87,6 +154,7 @@ const nodeStyle = computed(() => {
   min-width: 130px;
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;
+  position: relative;
 }
 
 .es-node--event:hover {
@@ -197,6 +265,33 @@ const nodeStyle = computed(() => {
   height: 8px;
   background: white;
   border: 2px solid #e8590c;
+}
+
+/* Outbound policies badge */
+.es-node__triggers {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 10;
+}
+
+.es-node__trigger-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 10px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #e8590c;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  cursor: help;
+}
+
+.es-node__trigger-badge svg {
+  flex-shrink: 0;
+  stroke: #e8590c;
 }
 </style>
 

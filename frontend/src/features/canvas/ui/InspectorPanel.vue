@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './inspectors/nodeEditSchema'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
+import VoFieldsTable from './inspectors/VoFieldsTable.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 
 const props = defineProps({
@@ -61,7 +62,8 @@ const showPropertyEditor = computed(() => {
 })
 
 const showGWTEditor = computed(() => {
-  return ['Command', 'Policy'].includes(nodeLabel.value)
+  // Policy GWT generation is disabled - only show GWT editor for Commands
+  return nodeLabel.value === 'Command'
 })
 
 function onPropertyEditorStateChange(s) {
@@ -563,17 +565,79 @@ function removeGWTSet(rowIndex) {
   }
 }
 
-// Get properties from referenced node
+// Get properties from referenced node (including enumerations and value objects)
 function getReferencedNodeProperties(referencedNodeId, referencedNodeType) {
   if (!referencedNodeId || !referencedNodeType) return []
   
   // Try to find node in canvas store
   const canvasNode = canvasStore.nodes.find(n => n.id === referencedNodeId)
-  if (canvasNode && canvasNode.data && canvasNode.data.properties) {
-    return canvasNode.data.properties
-  }
+  if (!canvasNode || !canvasNode.data) return []
   
-  return []
+  const data = canvasNode.data
+  const result = []
+  
+  // Add regular properties
+  const props = Array.isArray(data.properties) ? data.properties : []
+  props.forEach(p => {
+    result.push({
+      id: String(p?.id || ''),
+      name: String(p?.name ?? ''),
+      type: String(p?.type ?? ''),
+      description: String(p?.description ?? ''),
+      isKey: Boolean(p?.isKey),
+      isForeignKey: Boolean(p?.isForeignKey),
+      isRequired: Boolean(p?.isRequired),
+      isReadOnly: false,
+      fieldType: 'property',
+      parentType: String(p?.parentType ?? data?.type ?? ''),
+      parentId: String(p?.parentId ?? referencedNodeId ?? '')
+    })
+  })
+  
+  // Add enumerations (read-only)
+  const enums = Array.isArray(data.enumerations) ? data.enumerations : []
+  enums.forEach((e, idx) => {
+    if (e && e.name) {
+      result.push({
+        id: `enum-${e.name}-${idx}`,
+        name: String(e.name ?? ''),
+        type: 'Enum',
+        description: String(e.alias ?? ''),
+        isKey: false,
+        isForeignKey: false,
+        isRequired: false,
+        isReadOnly: true,
+        fieldType: 'enum',
+        parentType: String(data?.type ?? ''),
+        parentId: String(referencedNodeId ?? ''),
+        enumItems: Array.isArray(e.items) ? e.items : []
+      })
+    }
+  })
+  
+  // Add value objects (read-only)
+  const vos = Array.isArray(data.valueObjects) ? data.valueObjects : []
+  vos.forEach((vo, idx) => {
+    if (vo && vo.name) {
+      result.push({
+        id: `vo-${vo.name}-${idx}`,
+        name: String(vo.name ?? ''),
+        type: 'ValueObject',
+        description: String(vo.alias ?? ''),
+        isKey: false,
+        isForeignKey: false,
+        isRequired: false,
+        isReadOnly: true,
+        fieldType: 'valueObject',
+        referencedAggregateName: vo.referencedAggregateName || null,
+        parentType: String(data?.type ?? ''),
+        parentId: String(referencedNodeId ?? ''),
+        voFields: Array.isArray(vo.fields) ? vo.fields : []
+      })
+    }
+  })
+  
+  return result
 }
 
 // Get available properties for a GWT type (given/when/then)
@@ -869,8 +933,187 @@ function removeGWT() {
   form.value.then = null
 }
 
+// Format field value for display (handle objects, arrays, etc.)
+function formatFieldValue(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return JSON.stringify(value)
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+// Get appropriate input type based on property type
+function getInputTypeForProperty(prop) {
+  if (!prop) return 'text'
+  
+  // Check if it's an Enum (fieldType or type)
+  if (prop.fieldType === 'enum' || (prop.type && String(prop.type).toLowerCase() === 'enum')) {
+    return 'select'
+  }
+  
+  // Check if it's a ValueObject
+  if (prop.fieldType === 'valueObject' || (prop.type && String(prop.type).toLowerCase() === 'valueobject')) {
+    return 'text' // ValueObject will be displayed as JSON string with edit button
+  }
+  
+  if (!prop.type) return 'text'
+  
+  const type = String(prop.type).toLowerCase()
+  
+  if (type.includes('int') || type.includes('long') || type === 'integer') {
+    return 'number'
+  }
+  if (type.includes('decimal') || type.includes('bigdecimal') || type.includes('double') || type.includes('float')) {
+    return 'number'
+  }
+  if (type.includes('boolean') || type === 'bool') {
+    return 'checkbox'
+  }
+  if (type.includes('date') && !type.includes('time')) {
+    return 'date'
+  }
+  if (type.includes('datetime') || type.includes('timestamp') || (type.includes('date') && type.includes('time'))) {
+    return 'datetime-local'
+  }
+  if (type.includes('time') && !type.includes('date')) {
+    return 'time'
+  }
+  
+  return 'text'
+}
+
+// Format field value for input (preserve type for number inputs)
+function formatFieldValueForInput(value, prop) {
+  if (value === null || value === undefined) return ''
+  
+  // Check if it's a ValueObject
+  if (prop?.fieldType === 'valueObject' || (prop?.type && String(prop.type).toLowerCase() === 'valueobject')) {
+    // ValueObject should be displayed as JSON string
+    if (typeof value === 'object') {
+      return JSON.stringify(value, null, 2)
+    }
+    if (typeof value === 'string') {
+      // Try to parse and reformat if it's already JSON
+      try {
+        const parsed = JSON.parse(value)
+        return JSON.stringify(parsed, null, 2)
+      } catch {
+        return value
+      }
+    }
+    return String(value)
+  }
+  
+  const type = prop?.type ? String(prop.type).toLowerCase() : ''
+  
+  // For number types, preserve as number string (no quotes)
+  if (type.includes('int') || type.includes('long') || type === 'integer' || 
+      type.includes('decimal') || type.includes('bigdecimal') || type.includes('double') || type.includes('float')) {
+    if (typeof value === 'number') return String(value)
+    if (typeof value === 'string') {
+      // Remove quotes if present
+      const unquoted = value.replace(/^["']|["']$/g, '')
+      // Try to parse as number
+      const num = parseFloat(unquoted)
+      if (!isNaN(num)) return String(num)
+      return unquoted
+    }
+    return String(value)
+  }
+  
+  // For boolean, convert to boolean string
+  if (type.includes('boolean') || type === 'bool') {
+    if (typeof value === 'boolean') return value
+    if (typeof value === 'string') {
+      const lower = value.toLowerCase().replace(/^["']|["']$/g, '')
+      return lower === 'true' ? 'true' : 'false'
+    }
+    return String(value)
+  }
+  
+  // For date/datetime, format appropriately
+  if (type.includes('date') || type.includes('time')) {
+    if (typeof value === 'string') {
+      // Remove quotes if present
+      return value.replace(/^["']|["']$/g, '')
+    }
+    return String(value)
+  }
+  
+  // For strings and others, use formatFieldValue
+  return formatFieldValue(value)
+}
+
+// Get placeholder based on property type
+function getPlaceholderForProperty(prop) {
+  if (!prop || !prop.type) return 'N/A'
+  
+  // Check if it's an Enum
+  if (prop.fieldType === 'enum' || String(prop.type).toLowerCase() === 'enum') {
+    const items = Array.isArray(prop.enumItems) && prop.enumItems.length > 0 
+      ? prop.enumItems.join(', ') 
+      : 'enum value'
+    return `Select: ${items}`
+  }
+  
+  // Check if it's a ValueObject
+  if (prop.fieldType === 'valueObject' || String(prop.type).toLowerCase() === 'valueobject') {
+    const fields = Array.isArray(prop.voFields) && prop.voFields.length > 0
+      ? prop.voFields.map(f => `${f.name || ''}: ${f.type || ''}`).join(', ')
+      : 'fields'
+    return `JSON: {"${fields}"}`
+  }
+  
+  const type = String(prop.type).toLowerCase()
+  
+  if (type.includes('int') || type.includes('long') || type === 'integer') {
+    return '123'
+  }
+  if (type.includes('decimal') || type.includes('bigdecimal') || type.includes('double') || type.includes('float')) {
+    return '100.50'
+  }
+  if (type.includes('boolean') || type === 'bool') {
+    return 'true/false'
+  }
+  if (type.includes('date') && !type.includes('time')) {
+    return '2024-01-15'
+  }
+  if (type.includes('datetime') || type.includes('timestamp')) {
+    return '2024-01-15T10:30:00'
+  }
+  if (type.includes('uuid')) {
+    return '550e8400-e29b-41d4-a716-446655440000'
+  }
+  
+  return 'N/A'
+}
+
+// Parse boolean value from various formats
+function parseBooleanValue(value) {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const lower = value.toLowerCase().replace(/^["']|["']$/g, '')
+    return lower === 'true' || lower === '1'
+  }
+  if (typeof value === 'number') return value !== 0
+  return Boolean(value)
+}
+
 const showGWTDetailModal = ref(false)
 const selectedGWTSetIndex = ref(0)
+
+// ValueObject editor modal state
+const voEditorModal = ref({
+  open: false,
+  gwtSet: null,
+  gwtType: null, // 'given', 'when', 'then'
+  propName: null,
+  prop: null, // prop object with voFields
+  currentValue: null, // current JSON value
+  fieldValues: {} // field name -> value mapping for editing
+})
 
 function openGWTDetailModal(setIndex = null) {
   if (setIndex !== null) {
@@ -973,6 +1216,177 @@ function openGWTDetailModal(setIndex = null) {
 function closeGWTDetailModal() {
   showGWTDetailModal.value = false
   selectedGWTSetIndex.value = 0
+}
+
+// Open ValueObject editor modal
+function openVoEditor(gwtSet, gwtType, propName, prop) {
+  const currentValue = gwtSet[gwtType]?.fieldValues?.[propName]
+  let fieldValues = {}
+  
+  // Parse current JSON value to field values
+  if (currentValue) {
+    try {
+      const parsed = typeof currentValue === 'string' ? JSON.parse(currentValue) : currentValue
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        fieldValues = parsed
+      }
+    } catch (e) {
+      // If parsing fails, start with empty object
+    }
+  }
+  
+  // Get VO fields from prop.voFields
+  const voFields = (prop?.voFields && Array.isArray(prop.voFields) && prop.voFields.length > 0) 
+    ? prop.voFields 
+    : []
+  
+  // Initialize field values for all VO fields (preserve existing, set defaults for new)
+  const initializedFieldValues = {}
+  voFields.forEach(field => {
+    const fieldName = field.name || ''
+    if (fieldName) {
+      if (fieldValues.hasOwnProperty(fieldName)) {
+        // Preserve existing value
+        initializedFieldValues[fieldName] = fieldValues[fieldName]
+      } else {
+        // Set default value based on type
+        const fieldType = (field.type || 'String').toLowerCase()
+        if (fieldType.includes('int') || fieldType.includes('long') || fieldType === 'integer') {
+          initializedFieldValues[fieldName] = 0
+        } else if (fieldType.includes('decimal') || fieldType.includes('bigdecimal') || fieldType.includes('double') || fieldType.includes('float')) {
+          initializedFieldValues[fieldName] = 0.0
+        } else if (fieldType.includes('boolean') || fieldType === 'bool') {
+          initializedFieldValues[fieldName] = false
+        } else {
+          initializedFieldValues[fieldName] = ''
+        }
+      }
+    }
+  })
+  
+  voEditorModal.value = {
+    open: true,
+    gwtSet,
+    gwtType,
+    propName,
+    prop,
+    currentValue,
+    fieldValues: initializedFieldValues
+  }
+}
+
+// Close ValueObject editor modal
+function closeVoEditor() {
+  voEditorModal.value.open = false
+}
+
+// Save ValueObject editor changes
+function saveVoEditor() {
+  if (!voEditorModal.value.gwtSet || !voEditorModal.value.gwtType || !voEditorModal.value.propName) return
+  
+  // Convert fieldValues to JSON object
+  const voObject = { ...voEditorModal.value.fieldValues }
+  
+  // Update fieldValues
+  updateFieldValue(
+    voEditorModal.value.gwtSet,
+    voEditorModal.value.gwtType,
+    voEditorModal.value.propName,
+    JSON.stringify(voObject)
+  )
+  
+  closeVoEditor()
+}
+
+// Get input type for VO field based on field type
+function getVoFieldInputType(fieldType) {
+  if (!fieldType) return 'text'
+  const type = String(fieldType).toLowerCase()
+  
+  if (type.includes('int') || type.includes('long') || type === 'integer') {
+    return 'number'
+  }
+  if (type.includes('decimal') || type.includes('bigdecimal') || type.includes('double') || type.includes('float')) {
+    return 'number'
+  }
+  if (type.includes('boolean') || type === 'bool') {
+    return 'checkbox'
+  }
+  if (type.includes('date') && !type.includes('time')) {
+    return 'date'
+  }
+  if (type.includes('datetime') || type.includes('timestamp') || (type.includes('date') && type.includes('time'))) {
+    return 'datetime-local'
+  }
+  if (type.includes('time') && !type.includes('date')) {
+    return 'time'
+  }
+  
+  return 'text'
+}
+
+// Format VO field value for input
+function formatVoFieldValueForInput(value, fieldType) {
+  if (value === null || value === undefined) return ''
+  
+  const type = fieldType ? String(fieldType).toLowerCase() : ''
+  
+  // For number types
+  if (type.includes('int') || type.includes('long') || type === 'integer' || 
+      type.includes('decimal') || type.includes('bigdecimal') || type.includes('double') || type.includes('float')) {
+    if (typeof value === 'number') return String(value)
+    if (typeof value === 'string') {
+      const num = parseFloat(value)
+      if (!isNaN(num)) return String(num)
+    }
+    return String(value)
+  }
+  
+  // For boolean
+  if (type.includes('boolean') || type === 'bool') {
+    if (typeof value === 'boolean') return value
+    if (typeof value === 'string') {
+      const lower = value.toLowerCase()
+      return lower === 'true' || lower === '1'
+    }
+    return Boolean(value)
+  }
+  
+  // For date/datetime
+  if (type.includes('date') || type.includes('time')) {
+    if (typeof value === 'string') {
+      return value.replace(/^["']|["']$/g, '')
+    }
+    return String(value)
+  }
+  
+  return String(value)
+}
+
+// Update VO field value
+function updateVoFieldValue(fieldName, value) {
+  if (!voEditorModal.value.fieldValues) {
+    voEditorModal.value.fieldValues = {}
+  }
+  
+  const field = (voEditorModal.value.prop?.voFields || []).find(f => f.name === fieldName)
+  if (!field) return
+  
+  const fieldType = (field.type || 'String').toLowerCase()
+  
+  // Convert value based on type
+  let convertedValue = value
+  if (fieldType.includes('int') || fieldType.includes('long') || fieldType === 'integer') {
+    convertedValue = value === '' ? 0 : parseInt(value, 10)
+    if (isNaN(convertedValue)) convertedValue = 0
+  } else if (fieldType.includes('decimal') || fieldType.includes('bigdecimal') || fieldType.includes('double') || fieldType.includes('float')) {
+    convertedValue = value === '' ? 0.0 : parseFloat(value)
+    if (isNaN(convertedValue)) convertedValue = 0.0
+  } else if (fieldType.includes('boolean') || fieldType === 'bool') {
+    convertedValue = typeof value === 'boolean' ? value : (value === true || value === 'true' || value === '1')
+  }
+  
+  voEditorModal.value.fieldValues[fieldName] = convertedValue
 }
 </script>
 
@@ -1546,14 +1960,65 @@ function closeGWTDetailModal() {
                         :key="`given-${prop.name}-${rowIndex}`"
                         class="gwt-decision-table__value-cell"
                       >
-                        <input
-                          v-if="gwtSet.given && gwtSet.given.fieldValues"
+                        <!-- Enum: Use select dropdown -->
+                        <select
+                          v-if="gwtSet.given && gwtSet.given.fieldValues && getInputTypeForProperty(prop) === 'select'"
                           class="gwt-decision-table__input"
-                          type="text"
-                          :value="gwtSet.given.fieldValues[prop.name] || ''"
+                          :value="formatFieldValueForInput(gwtSet.given.fieldValues[prop.name], prop)"
+                          @change="updateFieldValue(gwtSet, 'given', prop.name, $event.target.value)"
+                          :disabled="saving"
+                        >
+                          <option value="">-- Select --</option>
+                          <option 
+                            v-for="item in (prop.enumItems || [])" 
+                            :key="item" 
+                            :value="item"
+                          >
+                            {{ item }}
+                          </option>
+                        </select>
+                        <!-- Checkbox for boolean -->
+                        <input
+                          v-else-if="gwtSet.given && gwtSet.given.fieldValues && getInputTypeForProperty(prop) === 'checkbox'"
+                          class="gwt-decision-table__input"
+                          type="checkbox"
+                          :checked="parseBooleanValue(gwtSet.given.fieldValues[prop.name])"
+                          @change="updateFieldValue(gwtSet, 'given', prop.name, $event.target.checked)"
+                          :disabled="saving"
+                        />
+                        <!-- ValueObject: Show button to open editor modal -->
+                        <div
+                          v-else-if="gwtSet.given && gwtSet.given.fieldValues && (prop.fieldType === 'valueObject' || String(prop.type).toLowerCase() === 'valueobject')"
+                          class="gwt-vo-editor-wrapper"
+                        >
+                          <textarea
+                            class="gwt-decision-table__input gwt-decision-table__textarea"
+                            :value="formatFieldValueForInput(gwtSet.given.fieldValues[prop.name], prop)"
+                            @input="updateFieldValue(gwtSet, 'given', prop.name, $event.target.value)"
+                            :disabled="saving"
+                            :placeholder="getPlaceholderForProperty(prop)"
+                            rows="2"
+                            readonly
+                          />
+                          <button
+                            class="gwt-vo-editor-btn"
+                            @click="openVoEditor(gwtSet, 'given', prop.name, prop)"
+                            :disabled="saving"
+                            title="ValueObject 구조 편집"
+                          >
+                            ✏️
+                          </button>
+                        </div>
+                        <!-- Other input types -->
+                        <input
+                          v-else-if="gwtSet.given && gwtSet.given.fieldValues"
+                          class="gwt-decision-table__input"
+                          :type="getInputTypeForProperty(prop)"
+                          :value="formatFieldValueForInput(gwtSet.given.fieldValues[prop.name], prop)"
                           @input="updateFieldValue(gwtSet, 'given', prop.name, $event.target.value)"
                           :disabled="saving"
-                          placeholder="N/A"
+                          :placeholder="getPlaceholderForProperty(prop)"
+                          :step="prop.type && (prop.type.includes('Decimal') || prop.type.includes('BigDecimal') || prop.type.includes('Double') || prop.type.includes('Float')) ? '0.01' : undefined"
                         />
                         <span v-else class="gwt-decision-table__empty">-</span>
                       </td>
@@ -1569,14 +2034,65 @@ function closeGWTDetailModal() {
                       :key="`when-${prop.name}-${rowIndex}`"
                       class="gwt-decision-table__value-cell"
                     >
-                      <input
-                        v-if="gwtSet.when && gwtSet.when.fieldValues"
+                      <!-- Enum: Use select dropdown -->
+                      <select
+                        v-if="gwtSet.when && gwtSet.when.fieldValues && getInputTypeForProperty(prop) === 'select'"
                         class="gwt-decision-table__input"
-                        type="text"
-                        :value="gwtSet.when.fieldValues[prop.name] || ''"
+                        :value="formatFieldValueForInput(gwtSet.when.fieldValues[prop.name], prop)"
+                        @change="updateFieldValue(gwtSet, 'when', prop.name, $event.target.value)"
+                        :disabled="saving"
+                      >
+                        <option value="">-- Select --</option>
+                        <option 
+                          v-for="item in (prop.enumItems || [])" 
+                          :key="item" 
+                          :value="item"
+                        >
+                          {{ item }}
+                        </option>
+                      </select>
+                      <!-- Checkbox for boolean -->
+                      <input
+                        v-else-if="gwtSet.when && gwtSet.when.fieldValues && getInputTypeForProperty(prop) === 'checkbox'"
+                        class="gwt-decision-table__input"
+                        type="checkbox"
+                        :checked="parseBooleanValue(gwtSet.when.fieldValues[prop.name])"
+                        @change="updateFieldValue(gwtSet, 'when', prop.name, $event.target.checked)"
+                        :disabled="saving"
+                      />
+                      <!-- ValueObject: Show button to open editor modal -->
+                      <div
+                        v-else-if="gwtSet.when && gwtSet.when.fieldValues && (prop.fieldType === 'valueObject' || String(prop.type).toLowerCase() === 'valueobject')"
+                        class="gwt-vo-editor-wrapper"
+                      >
+                        <textarea
+                          class="gwt-decision-table__input gwt-decision-table__textarea"
+                          :value="formatFieldValueForInput(gwtSet.when.fieldValues[prop.name], prop)"
+                          @input="updateFieldValue(gwtSet, 'when', prop.name, $event.target.value)"
+                          :disabled="saving"
+                          :placeholder="getPlaceholderForProperty(prop)"
+                          rows="2"
+                          readonly
+                        />
+                        <button
+                          class="gwt-vo-editor-btn"
+                          @click="openVoEditor(gwtSet, 'when', prop.name, prop)"
+                          :disabled="saving"
+                          title="ValueObject 구조 편집"
+                        >
+                          ✏️
+                        </button>
+                      </div>
+                      <!-- Other input types -->
+                      <input
+                        v-else-if="gwtSet.when && gwtSet.when.fieldValues"
+                        class="gwt-decision-table__input"
+                        :type="getInputTypeForProperty(prop)"
+                        :value="formatFieldValueForInput(gwtSet.when.fieldValues[prop.name], prop)"
                         @input="updateFieldValue(gwtSet, 'when', prop.name, $event.target.value)"
                         :disabled="saving"
-                        placeholder="N/A"
+                        :placeholder="getPlaceholderForProperty(prop)"
+                        :step="prop.type && (prop.type.includes('Decimal') || prop.type.includes('BigDecimal') || prop.type.includes('Double') || prop.type.includes('Float')) ? '0.01' : undefined"
                       />
                       <span v-else class="gwt-decision-table__empty">-</span>
                     </td>
@@ -1588,14 +2104,65 @@ function closeGWTDetailModal() {
                       :key="`then-${prop.name}-${rowIndex}`"
                       class="gwt-decision-table__value-cell"
                     >
-                      <input
-                        v-if="gwtSet.then && gwtSet.then.fieldValues"
+                      <!-- Enum: Use select dropdown -->
+                      <select
+                        v-if="gwtSet.then && gwtSet.then.fieldValues && getInputTypeForProperty(prop) === 'select'"
                         class="gwt-decision-table__input"
-                        type="text"
-                        :value="gwtSet.then.fieldValues[prop.name] || ''"
+                        :value="formatFieldValueForInput(gwtSet.then.fieldValues[prop.name], prop)"
+                        @change="updateFieldValue(gwtSet, 'then', prop.name, $event.target.value)"
+                        :disabled="saving"
+                      >
+                        <option value="">-- Select --</option>
+                        <option 
+                          v-for="item in (prop.enumItems || [])" 
+                          :key="item" 
+                          :value="item"
+                        >
+                          {{ item }}
+                        </option>
+                      </select>
+                      <!-- Checkbox for boolean -->
+                      <input
+                        v-else-if="gwtSet.then && gwtSet.then.fieldValues && getInputTypeForProperty(prop) === 'checkbox'"
+                        class="gwt-decision-table__input"
+                        type="checkbox"
+                        :checked="parseBooleanValue(gwtSet.then.fieldValues[prop.name])"
+                        @change="updateFieldValue(gwtSet, 'then', prop.name, $event.target.checked)"
+                        :disabled="saving"
+                      />
+                      <!-- ValueObject: Show button to open editor modal -->
+                      <div
+                        v-else-if="gwtSet.then && gwtSet.then.fieldValues && (prop.fieldType === 'valueObject' || String(prop.type).toLowerCase() === 'valueobject')"
+                        class="gwt-vo-editor-wrapper"
+                      >
+                        <textarea
+                          class="gwt-decision-table__input gwt-decision-table__textarea"
+                          :value="formatFieldValueForInput(gwtSet.then.fieldValues[prop.name], prop)"
+                          @input="updateFieldValue(gwtSet, 'then', prop.name, $event.target.value)"
+                          :disabled="saving"
+                          :placeholder="getPlaceholderForProperty(prop)"
+                          rows="2"
+                          readonly
+                        />
+                        <button
+                          class="gwt-vo-editor-btn"
+                          @click="openVoEditor(gwtSet, 'then', prop.name, prop)"
+                          :disabled="saving"
+                          title="ValueObject 구조 편집"
+                        >
+                          ✏️
+                        </button>
+                      </div>
+                      <!-- Other input types -->
+                      <input
+                        v-else-if="gwtSet.then && gwtSet.then.fieldValues"
+                        class="gwt-decision-table__input"
+                        :type="getInputTypeForProperty(prop)"
+                        :value="formatFieldValueForInput(gwtSet.then.fieldValues[prop.name], prop)"
                         @input="updateFieldValue(gwtSet, 'then', prop.name, $event.target.value)"
                         :disabled="saving"
-                        placeholder="N/A"
+                        :placeholder="getPlaceholderForProperty(prop)"
+                        :step="prop.type && (prop.type.includes('Decimal') || prop.type.includes('BigDecimal') || prop.type.includes('Double') || prop.type.includes('Float')) ? '0.01' : undefined"
                       />
                       <span v-else class="gwt-decision-table__empty">-</span>
                     </td>
@@ -1655,6 +2222,102 @@ function closeGWTDetailModal() {
         <div class="gwt-detail-modal__footer">
           <button class="inspector-section__btn" @click="closeGWTDetailModal">Close</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ValueObject Editor Modal -->
+  <div v-if="voEditorModal.open" class="vo-editor-modal-overlay" @click.self="closeVoEditor">
+    <div class="vo-editor-modal">
+      <div class="vo-editor-modal__header">
+        <h3 class="vo-editor-modal__title">
+          ValueObject 편집: {{ voEditorModal.propName }}
+        </h3>
+        <button class="vo-editor-modal__close" @click="closeVoEditor">×</button>
+      </div>
+      <div class="vo-editor-modal__content">
+        <div v-if="!voEditorModal.prop?.voFields || voEditorModal.prop.voFields.length === 0" class="vo-editor-empty">
+          <p>ValueObject 필드 정보가 없습니다.</p>
+        </div>
+        <div v-else class="vo-editor-fields">
+          <div 
+            v-for="field in voEditorModal.prop.voFields" 
+            :key="field.name"
+            class="vo-editor-field"
+          >
+            <label class="vo-editor-field__label">
+              <span class="vo-editor-field__name">{{ field.name }}</span>
+              <span class="vo-editor-field__type">{{ field.type || 'String' }}</span>
+            </label>
+            <!-- Checkbox for boolean -->
+            <input
+              v-if="getVoFieldInputType(field.type) === 'checkbox'"
+              class="vo-editor-field__input"
+              type="checkbox"
+              :checked="formatVoFieldValueForInput(voEditorModal.fieldValues[field.name], field.type)"
+              @change="updateVoFieldValue(field.name, $event.target.checked)"
+              :disabled="saving"
+            />
+            <!-- Number input -->
+            <input
+              v-else-if="getVoFieldInputType(field.type) === 'number'"
+              class="vo-editor-field__input"
+              type="number"
+              :value="formatVoFieldValueForInput(voEditorModal.fieldValues[field.name], field.type)"
+              @input="updateVoFieldValue(field.name, $event.target.value)"
+              :disabled="saving"
+              :step="field.type && (field.type.includes('Decimal') || field.type.includes('BigDecimal') || field.type.includes('Double') || field.type.includes('Float')) ? '0.01' : undefined"
+            />
+            <!-- Date input -->
+            <input
+              v-else-if="getVoFieldInputType(field.type) === 'date'"
+              class="vo-editor-field__input"
+              type="date"
+              :value="formatVoFieldValueForInput(voEditorModal.fieldValues[field.name], field.type)"
+              @input="updateVoFieldValue(field.name, $event.target.value)"
+              :disabled="saving"
+            />
+            <!-- Datetime input -->
+            <input
+              v-else-if="getVoFieldInputType(field.type) === 'datetime-local'"
+              class="vo-editor-field__input"
+              type="datetime-local"
+              :value="formatVoFieldValueForInput(voEditorModal.fieldValues[field.name], field.type)"
+              @input="updateVoFieldValue(field.name, $event.target.value)"
+              :disabled="saving"
+            />
+            <!-- Time input -->
+            <input
+              v-else-if="getVoFieldInputType(field.type) === 'time'"
+              class="vo-editor-field__input"
+              type="time"
+              :value="formatVoFieldValueForInput(voEditorModal.fieldValues[field.name], field.type)"
+              @input="updateVoFieldValue(field.name, $event.target.value)"
+              :disabled="saving"
+            />
+            <!-- Text input -->
+            <input
+              v-else
+              class="vo-editor-field__input"
+              type="text"
+              :value="formatVoFieldValueForInput(voEditorModal.fieldValues[field.name], field.type)"
+              @input="updateVoFieldValue(field.name, $event.target.value)"
+              :disabled="saving"
+            />
+          </div>
+        </div>
+      </div>
+      <div class="vo-editor-modal__footer">
+        <button class="vo-editor-modal__btn vo-editor-modal__btn--cancel" @click="closeVoEditor">
+          취소
+        </button>
+        <button 
+          class="vo-editor-modal__btn vo-editor-modal__btn--save" 
+          @click="saveVoEditor"
+          :disabled="saving"
+        >
+          저장
+        </button>
       </div>
     </div>
   </div>
@@ -2543,6 +3206,230 @@ function closeGWTDetailModal() {
 .gwt-decision-table__input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.gwt-decision-table__textarea {
+  min-height: 60px;
+  resize: vertical;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.gwt-vo-editor-wrapper {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.gwt-vo-editor-wrapper .gwt-decision-table__textarea {
+  flex: 1;
+  min-height: 50px;
+}
+
+.gwt-vo-editor-btn {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.gwt-vo-editor-btn:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.gwt-vo-editor-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ValueObject Editor Modal */
+.vo-editor-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.vo-editor-modal {
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.vo-editor-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.vo-editor-modal__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  margin: 0;
+}
+
+.vo-editor-modal__close {
+  background: transparent;
+  border: none;
+  color: var(--color-text-light);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease;
+}
+
+.vo-editor-modal__close:hover {
+  color: var(--color-text);
+}
+
+.vo-editor-modal__content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.vo-editor-modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.vo-editor-modal__btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid var(--color-border);
+}
+
+.vo-editor-modal__btn--cancel {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.vo-editor-modal__btn--cancel:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-text-light);
+}
+
+.vo-editor-modal__btn--save {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+
+.vo-editor-modal__btn--save:hover:not(:disabled) {
+  background: var(--color-accent-dark);
+  border-color: var(--color-accent-dark);
+}
+
+.vo-editor-modal__btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.vo-editor-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--color-text-light);
+}
+
+.vo-editor-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.vo-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vo-editor-field__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-bright);
+}
+
+.vo-editor-field__name {
+  font-weight: 600;
+}
+
+.vo-editor-field__type {
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+  font-weight: normal;
+  padding: 2px 6px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.vo-editor-field__input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  transition: border-color 0.15s ease;
+}
+
+.vo-editor-field__input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.vo-editor-field__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.vo-editor-field__input[type="checkbox"] {
+  width: auto;
+  cursor: pointer;
 }
 
 .gwt-decision-table__empty {

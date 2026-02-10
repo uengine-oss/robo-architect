@@ -57,8 +57,15 @@ class BoundedContextOps:
             result = session.run(query, key=key, name=name, description=description, owner=owner, domain_type=domain_type)
             return dict(result.single()["bounded_context"])
 
-    def link_user_story_to_bc(self, user_story_id: str, bc_id: str, confidence: float = 0.9) -> bool:
-        """Link a user story to a bounded context via IMPLEMENTS relationship."""
+    def link_user_story_to_bc(self, user_story_id: str, bc_id: str, confidence: float = 0.9) -> tuple[bool, dict[str, Any] | None]:
+        """
+        Link a user story to a bounded context via IMPLEMENTS relationship.
+        
+        Returns:
+            (success: bool, diagnostic: dict | None)
+            - success: True if link was created, False otherwise
+            - diagnostic: If False, contains diagnostic info about why it failed
+        """
         query = """
         MATCH (us:UserStory {id: $user_story_id})
         MATCH (bc:BoundedContext {id: $bc_id})
@@ -69,6 +76,17 @@ class BoundedContextOps:
         """
         with self.session() as session:
             result = session.run(query, user_story_id=user_story_id, bc_id=bc_id, confidence=confidence)
-            return result.single() is not None
+            record = result.single()
+            if record is None:
+                # 진단: 왜 실패했는지 확인
+                us_exists = session.run("MATCH (us:UserStory {id: $user_story_id}) RETURN us.id", user_story_id=user_story_id).single()
+                bc_exists = session.run("MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.id", bc_id=bc_id).single()
+                return False, {
+                    "user_story_exists": us_exists is not None,
+                    "bc_exists": bc_exists is not None,
+                    "user_story_id": user_story_id,
+                    "bc_id": bc_id,
+                }
+            return True, None
 
 
