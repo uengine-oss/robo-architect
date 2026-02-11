@@ -755,7 +755,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Resizer (between canvas and right-side panel) -->
+    <!-- Resizer (between canvas and right-side panel, hover only) -->
     <div
       v-if="panelMode !== 'none'"
       class="chat-panel-resizer"
@@ -763,10 +763,35 @@ onUnmounted(() => {
       title="드래그하여 패널 너비 조절"
     ></div>
 
+    <!-- Right Panel Toggle Button (always visible when collapsed) -->
+    <div v-if="panelMode === 'none'" class="right-panel-controls-collapsed">
+      <button
+        class="right-panel-toggle is-collapsed"
+        @click="panelMode = 'chat'"
+        :title="'패널 펼치기'"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+    </div>
+
     <!-- Right-side Panel Wrapper -->
     <div v-if="panelMode !== 'none'" class="side-panel-wrapper" :style="{ width: chatPanelWidth + 'px' }">
+      <!-- Right Panel Toggle Button (inside panel when expanded) -->
+      <div class="right-panel-controls">
+        <button
+          class="right-panel-toggle"
+          @click="panelMode = 'none'"
+          :title="'패널 접기'"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+      </div>
       <div v-if="panelMode === 'chat'" class="chat-panel-wrapper">
-        <ChatPanel />
+        <ChatPanel @close="panelMode = 'none'" />
       </div>
 
       <!-- UI Preview Panel -->
@@ -777,6 +802,7 @@ onUnmounted(() => {
           :initial-tab="inspectingInitialTab"
           @updated="() => {}"
           @request-chat="switchToChatFromInspector"
+          @close="panelMode = 'none'"
         />
       </div>
     </div>
@@ -820,17 +846,20 @@ onUnmounted(() => {
   flex: 1;
   display: flex;
   overflow: hidden;
-}
-
-.chat-panel-resizer {
-  width: 6px;
-  cursor: col-resize;
-  background: transparent;
   position: relative;
 }
 
+.chat-panel-resizer {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
 .chat-panel-resizer:hover {
-  background: rgba(34, 139, 230, 0.12);
+  background: rgba(34, 139, 230, 0.3);
 }
 
 /* Vue Flow custom background */
@@ -1036,6 +1065,7 @@ onUnmounted(() => {
   height: 100%;
   overflow: hidden;
   animation: slideIn 0.2s ease;
+  position: relative;
 }
 
 .inspector-wrapper {
@@ -1089,5 +1119,63 @@ onUnmounted(() => {
 
 .right-sidebar__icon.is-active:hover {
   background: #1c7ed6;
+}
+
+/* Right Panel Controls */
+.right-panel-controls {
+  display: flex;
+  align-items: flex-start;
+  flex-shrink: 0;
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Right Panel Toggle Button */
+.right-panel-toggle {
+  width: 20px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-light);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  position: relative;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.right-panel-toggle.is-collapsed {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px 0 0 6px;
+}
+
+/* Right Panel Controls when collapsed (outside panel) */
+.right-panel-controls-collapsed {
+  display: flex;
+  align-items: flex-start;
+  flex-shrink: 0;
+  position: absolute;
+  right: 48px;
+  top: 0;
+  z-index: 10;
+}
+
+.right-panel-toggle:hover {
+  background: transparent;
+  color: var(--color-text);
+}
+
+.right-panel-toggle.is-collapsed:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border-color: var(--color-accent);
 }
 </style>

@@ -1097,18 +1097,30 @@ function getSwimlaneY(laneIndex) {
 
     </div>
 
-    <!-- Resizer (between canvas and right-side panel) -->
-    <div
-      v-if="panelMode !== 'none'"
-      class="bp-chat-panel-resizer"
-      @mousedown="startResizeChat"
-      title="드래그하여 패널 너비 조절"
-    ></div>
+    <!-- Right Panel Controls -->
+    <div v-if="panelMode !== 'none'" class="bp-right-panel-controls">
+      <button
+        class="bp-right-panel-toggle"
+        @click="panelMode = 'none'"
+        :title="'패널 접기'"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </button>
+
+      <!-- Resizer (between canvas and right-side panel) -->
+      <div
+        class="bp-chat-panel-resizer"
+        @mousedown="startResizeChat"
+        title="드래그하여 패널 너비 조절"
+      ></div>
+    </div>
 
     <!-- Right-side Panel Wrapper -->
     <div v-if="panelMode !== 'none'" class="bp-side-panel-wrapper" :style="{ width: chatPanelWidth + 'px' }">
       <div v-if="panelMode === 'chat'" class="bp-chat-panel-wrapper">
-        <ChatPanel />
+        <ChatPanel @close="panelMode = 'none'" />
       </div>
     </div>
 
@@ -1133,6 +1145,7 @@ function getSwimlaneY(laneIndex) {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
 .bp-main-content {
@@ -1723,15 +1736,48 @@ function getSwimlaneY(laneIndex) {
 /* ==========================================
    Chat Panel (same structure as Design Viewer)
    ========================================== */
+/* Right Panel Controls */
+.bp-right-panel-controls {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Right Panel Toggle Button */
+.bp-right-panel-toggle {
+  width: 20px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  color: var(--color-text-light);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+}
+
 .bp-chat-panel-resizer {
   width: 6px;
   cursor: col-resize;
   background: transparent;
   position: relative;
+  flex-shrink: 0;
 }
 
-.bp-chat-panel-resizer:hover {
-  background: rgba(34, 139, 230, 0.12);
+.bp-right-panel-toggle:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border-color: var(--color-accent);
 }
 
 .bp-side-panel-wrapper {

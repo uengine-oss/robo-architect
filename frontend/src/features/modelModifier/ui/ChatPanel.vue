@@ -4,6 +4,8 @@ import { useModelModifierStore } from '@/features/modelModifier/modelModifier.st
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import ImpactDetailsModal from '@/features/modelModifier/ui/ImpactDetailsModal.vue'
 
+const emit = defineEmits(['close'])
+
 const chatStore = useModelModifierStore()
 const canvasStore = useCanvasStore()
 
@@ -161,17 +163,19 @@ function closeImpactDetails() {
         </svg>
         <span>Model Modifier</span>
       </div>
-      <button
-        v-if="chatStore.hasMessages"
-        class="chat-panel__clear-btn"
-        @click="chatStore.clearMessages()"
-        title="Clear chat"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="3 6 5 6 21 6"></polyline>
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-        </svg>
-      </button>
+      <div class="chat-panel__header-actions">
+        <button
+          v-if="chatStore.hasMessages"
+          class="chat-panel__clear-btn"
+          @click="chatStore.clearMessages()"
+          title="Clear chat"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div class="chat-panel__messages" ref="messagesContainer">
@@ -433,6 +437,7 @@ function closeImpactDetails() {
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-sm) var(--spacing-md);
+  padding-left: calc(var(--spacing-md) + 20px);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-tertiary);
 }
@@ -446,7 +451,14 @@ function closeImpactDetails() {
   color: var(--color-text-bright);
 }
 
-.chat-panel__clear-btn {
+.chat-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-panel__clear-btn,
+.chat-panel__close-btn {
   background: none;
   border: none;
   color: var(--color-text-light);
@@ -454,9 +466,13 @@ function closeImpactDetails() {
   padding: 4px;
   border-radius: var(--radius-sm);
   transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.chat-panel__clear-btn:hover {
+.chat-panel__clear-btn:hover,
+.chat-panel__close-btn:hover {
   background: var(--color-bg);
   color: var(--color-text);
 }

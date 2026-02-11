@@ -2337,6 +2337,7 @@ function updateVoFieldValue(fieldName, value) {
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-sm) var(--spacing-md);
+  padding-left: calc(var(--spacing-md) + 20px);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-tertiary);
 }

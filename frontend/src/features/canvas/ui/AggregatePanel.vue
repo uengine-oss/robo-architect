@@ -1335,18 +1335,30 @@ function getNodeColor(node) {
     </div>
     </div>
 
-    <!-- Resizer (between canvas and right-side panel) -->
-    <div
-      v-if="panelMode !== 'none'"
-      class="aggregate-chat-panel-resizer"
-      @mousedown="panelMode === 'chat' ? startResizeChat() : startResizeInspector($event)"
-      title="드래그하여 패널 너비 조절"
-    ></div>
+    <!-- Right Panel Controls -->
+    <div v-if="panelMode !== 'none'" class="aggregate-right-panel-controls">
+      <button
+        class="aggregate-right-panel-toggle"
+        @click="panelMode = 'none'"
+        :title="'패널 접기'"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </button>
+
+      <!-- Resizer (between canvas and right-side panel) -->
+      <div
+        class="aggregate-chat-panel-resizer"
+        @mousedown="panelMode === 'chat' ? startResizeChat() : startResizeInspector($event)"
+        title="드래그하여 패널 너비 조절"
+      ></div>
+    </div>
 
     <!-- Right-side Panel Wrapper -->
     <div v-if="panelMode !== 'none'" class="aggregate-side-panel-wrapper" :style="{ width: (panelMode === 'chat' ? chatPanelWidth : inspectorPanelWidth) + 'px' }">
       <div v-if="panelMode === 'chat'" class="aggregate-chat-panel-wrapper">
-        <ChatPanel />
+        <ChatPanel @close="panelMode = 'none'" />
       </div>
 
       <!-- Inspector Panel -->
@@ -1392,6 +1404,7 @@ function getNodeColor(node) {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
 .aggregate-main-content {
@@ -1562,15 +1575,49 @@ function getNodeColor(node) {
 /* ==========================================
    Chat Panel (same structure as Design Viewer)
    ========================================== */
+
+/* Right Panel Controls */
+.aggregate-right-panel-controls {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Right Panel Toggle Button */
+.aggregate-right-panel-toggle {
+  width: 20px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  color: var(--color-text-light);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+}
+
 .aggregate-chat-panel-resizer {
   width: 6px;
   cursor: col-resize;
   background: transparent;
   position: relative;
+  flex-shrink: 0;
 }
 
-.aggregate-chat-panel-resizer:hover {
-  background: rgba(34, 139, 230, 0.12);
+.aggregate-right-panel-toggle:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border-color: var(--color-accent);
 }
 
 .aggregate-side-panel-wrapper {
