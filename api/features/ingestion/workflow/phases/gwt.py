@@ -104,7 +104,6 @@ async def _generate_gwt_for_command(
     Generate GWT for a single command.
     Returns the number of GWT test cases created.
     """
-    from api.features.ingestion.event_storming.neo4j_ops.gwt import GWTOps
     
     bc = task["bc"]
     agg = task["agg"]
@@ -388,24 +387,63 @@ If no properties are available, only then use empty fieldValues {{}}."""
                 "name": f"Command: {cmd.name}",
             }
         
-        # Save to Neo4j using GWTOps
-        gwt_ops = GWTOps(client)
-        gwt_ops.upsert_gwt_bundle(
-            parent_type="Command",
-            parent_id=cmd.id,
-            given_ref={
-                "referencedNodeId": agg.id,
-                "referencedNodeType": "Aggregate",
-                "name": f"Aggregate: {agg.name}",
-            },
-            when_ref=when_ref,
-            then_ref={
-                "referencedNodeId": evt.id,
-                "referencedNodeType": "Event",
-                "name": f"Event: {evt.name}",
-            } if evt else None,
-            test_cases=test_cases_payload,
-        )
+        # Save to Neo4j using direct query (same logic as _upsert_gwt_bundle)
+        given_ref = {
+            "referencedNodeId": agg.id,
+            "referencedNodeType": "Aggregate",
+            "name": f"Aggregate: {agg.name}",
+        }
+        then_ref = {
+            "referencedNodeId": evt.id,
+            "referencedNodeType": "Event",
+            "name": f"Event: {evt.name}",
+        } if evt else None
+        
+        query = """
+        MATCH (parent {id: $parent_id})
+        WHERE $parent_type IN labels(parent)
+        MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id})
+        ON CREATE SET gwt.id = randomUUID(),
+                      gwt.createdAt = datetime()
+        SET gwt.updatedAt = datetime(),
+            gwt.givenRef = $given_ref_json,
+            gwt.whenRef = $when_ref_json,
+            gwt.thenRef = $then_ref_json,
+            gwt.testCases = $test_cases_json
+        MERGE (parent)-[:HAS_GWT]->(gwt)
+        WITH gwt
+        OPTIONAL MATCH (gwt)-[r:REFERENCES]->()
+        DELETE r
+        WITH gwt, $refs as refs
+        UNWIND refs as ref
+        WITH gwt, ref
+        WHERE ref.id IS NOT NULL AND ref.type IS NOT NULL
+        MATCH (n {id: ref.id})
+        WHERE ref.type IN labels(n)
+        MERGE (gwt)-[:REFERENCES]->(n)
+        RETURN gwt.id as id
+        """
+        given_ref_json = json.dumps(given_ref) if given_ref else None
+        when_ref_json = json.dumps(when_ref) if when_ref else None
+        then_ref_json = json.dumps(then_ref) if then_ref else None
+        test_cases_json = json.dumps(test_cases_payload or [])
+        
+        refs: list[dict[str, Any]] = []
+        for ref in (given_ref, when_ref, then_ref):
+            if isinstance(ref, dict) and ref.get("referencedNodeId") and ref.get("referencedNodeType"):
+                refs.append({"id": ref["referencedNodeId"], "type": ref["referencedNodeType"]})
+        
+        with client.session() as session:
+            session.run(
+                query,
+                parent_type="Command",
+                parent_id=cmd.id,
+                given_ref_json=given_ref_json,
+                when_ref_json=when_ref_json,
+                then_ref_json=then_ref_json,
+                test_cases_json=test_cases_json,
+                refs=refs,
+            )
         
         return max(len(test_cases_payload), 1)
     except Exception as e:
@@ -430,28 +468,68 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     "name": f"Command: {cmd.name}",
                 }
             
-            gwt_ops = GWTOps(client)
-            gwt_ops.upsert_gwt_bundle(
-                parent_type="Command",
-                parent_id=cmd.id,
-                given_ref={
-                    "referencedNodeId": agg.id,
-                    "referencedNodeType": "Aggregate",
-                    "name": f"Aggregate: {agg.name}",
-                },
-                when_ref=fallback_when_ref,
-                then_ref={
-                    "referencedNodeId": evt.id,
-                    "referencedNodeType": "Event",
-                    "name": f"Event: {evt.name}",
-                } if evt else None,
-                test_cases=[{
-                    "scenarioDescription": None,
-                    "givenFieldValues": {},
-                    "whenFieldValues": {},
-                    "thenFieldValues": {},
-                }],
-            )
+            # Save to Neo4j using direct query (fallback)
+            fallback_given_ref = {
+                "referencedNodeId": agg.id,
+                "referencedNodeType": "Aggregate",
+                "name": f"Aggregate: {agg.name}",
+            }
+            fallback_then_ref = {
+                "referencedNodeId": evt.id,
+                "referencedNodeType": "Event",
+                "name": f"Event: {evt.name}",
+            } if evt else None
+            
+            fallback_query = """
+            MATCH (parent {id: $parent_id})
+            WHERE $parent_type IN labels(parent)
+            MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id})
+            ON CREATE SET gwt.id = randomUUID(),
+                          gwt.createdAt = datetime()
+            SET gwt.updatedAt = datetime(),
+                gwt.givenRef = $given_ref_json,
+                gwt.whenRef = $when_ref_json,
+                gwt.thenRef = $then_ref_json,
+                gwt.testCases = $test_cases_json
+            MERGE (parent)-[:HAS_GWT]->(gwt)
+            WITH gwt
+            OPTIONAL MATCH (gwt)-[r:REFERENCES]->()
+            DELETE r
+            WITH gwt, $refs as refs
+            UNWIND refs as ref
+            WITH gwt, ref
+            WHERE ref.id IS NOT NULL AND ref.type IS NOT NULL
+            MATCH (n {id: ref.id})
+            WHERE ref.type IN labels(n)
+            MERGE (gwt)-[:REFERENCES]->(n)
+            RETURN gwt.id as id
+            """
+            fallback_given_ref_json = json.dumps(fallback_given_ref) if fallback_given_ref else None
+            fallback_when_ref_json = json.dumps(fallback_when_ref) if fallback_when_ref else None
+            fallback_then_ref_json = json.dumps(fallback_then_ref) if fallback_then_ref else None
+            fallback_test_cases_json = json.dumps([{
+                "scenarioDescription": None,
+                "givenFieldValues": {},
+                "whenFieldValues": {},
+                "thenFieldValues": {},
+            }])
+            
+            fallback_refs: list[dict[str, Any]] = []
+            for ref in (fallback_given_ref, fallback_when_ref, fallback_then_ref):
+                if isinstance(ref, dict) and ref.get("referencedNodeId") and ref.get("referencedNodeType"):
+                    fallback_refs.append({"id": ref["referencedNodeId"], "type": ref["referencedNodeType"]})
+            
+            with client.session() as session:
+                session.run(
+                    fallback_query,
+                    parent_type="Command",
+                    parent_id=cmd.id,
+                    given_ref_json=fallback_given_ref_json,
+                    when_ref_json=fallback_when_ref_json,
+                    then_ref_json=fallback_then_ref_json,
+                    test_cases_json=fallback_test_cases_json,
+                    refs=fallback_refs,
+                )
             return 1
         except Exception:
             return 0

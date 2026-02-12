@@ -184,7 +184,28 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
     for bc_idx, bc in enumerate(ctx.bounded_contexts):
         # Legacy field used only for prompt text; keep stable without prefix-based ids.
         bc_id_short = (getattr(bc, "name", "") or "").strip()
-        breakdowns_text = f"User Stories: {', '.join(bc.user_story_ids)}"
+        
+        # BC 객체에서 user_story_ids를 안전하게 읽어오기
+        us_ids = []
+        try:
+            if hasattr(bc, "model_dump"):
+                bc_dict = bc.model_dump()
+                us_ids = bc_dict.get("user_story_ids", [])
+            elif hasattr(bc, "dict"):
+                bc_dict = bc.dict()
+                us_ids = bc_dict.get("user_story_ids", [])
+            elif isinstance(bc, dict):
+                us_ids = bc.get("user_story_ids", [])
+            else:
+                us_ids = getattr(bc, "user_story_ids", None) or []
+        except Exception:
+            us_ids = getattr(bc, "user_story_ids", None) or []
+        
+        if not isinstance(us_ids, list):
+            us_ids = []
+        us_ids = [us_id for us_id in us_ids if us_id]  # None이나 빈 문자열 제거
+        
+        breakdowns_text = f"User Stories: {', '.join(us_ids)}" if us_ids else "User Stories: (none assigned)"
 
         # Collect existing aggregates from previously processed BCs for reference validation
         existing_aggregates_text = ""

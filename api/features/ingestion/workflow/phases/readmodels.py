@@ -124,10 +124,30 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
     progress_per_bc = 6 // max(len(ctx.bounded_contexts), 1)
 
     for bc_idx, bc in enumerate(ctx.bounded_contexts or []):
+        # BC 객체에서 user_story_ids를 안전하게 읽어오기
+        bc_us_ids = []
+        try:
+            if hasattr(bc, "model_dump"):
+                bc_dict = bc.model_dump()
+                bc_us_ids = bc_dict.get("user_story_ids", [])
+            elif hasattr(bc, "dict"):
+                bc_dict = bc.dict()
+                bc_us_ids = bc_dict.get("user_story_ids", [])
+            elif isinstance(bc, dict):
+                bc_us_ids = bc.get("user_story_ids", [])
+            else:
+                bc_us_ids = getattr(bc, "user_story_ids", None) or []
+        except Exception:
+            bc_us_ids = getattr(bc, "user_story_ids", None) or []
+        
+        if not isinstance(bc_us_ids, list):
+            bc_us_ids = []
+        bc_us_ids = [us_id for us_id in bc_us_ids if us_id]  # None이나 빈 문자열 제거
+        
         # User stories in this BC (include ui_description to support UI phase later)
         bc_user_stories = []
         for us in ctx.user_stories or []:
-            if us.id in getattr(bc, "user_story_ids", []) or []:
+            if us.id in bc_us_ids:
                 ui_desc = getattr(us, "ui_description", "") or ""
                 bc_user_stories.append(
                     f"[{us.id}] As a {us.role}, I want to {us.action}, so that {us.benefit}"

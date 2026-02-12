@@ -58,7 +58,9 @@ class BoundedContextCandidate(BaseModel):
     description: str = Field(..., description="What this BC is responsible for")
     rationale: str = Field(..., description="Why this should be a separate BC")
     user_story_ids: List[str] = Field(
-        default_factory=list, description="User Story IDs that belong to this BC"
+        ...,
+        min_length=1,
+        description="REQUIRED: List of User Story IDs that belong to this BC. This field is MANDATORY - every BC MUST have at least one user_story_id. Every user story from the input MUST be assigned to exactly one BC's user_story_ids list."
     )
     domain_type: Optional[str] = Field(
         default=None,

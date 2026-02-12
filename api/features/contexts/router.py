@@ -30,6 +30,7 @@ async def get_all_contexts(request: Request) -> list[dict[str, Any]]:
         description: bc.description,
         owner: bc.owner,
         domainType: bc.domainType,
+        userStoryIds: bc.userStoryIds,
         aggregateCount: aggregateCount,
         userStoryCount: userStoryCount
     } as context
@@ -152,7 +153,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get BC info
     bc_query = """
     MATCH (bc:BoundedContext {id: $context_id})
-    RETURN bc {.id, .name, .description, .owner, .domainType} as bc
+    RETURN bc {.id, .name, .description, .owner, .domainType, .userStoryIds} as bc
     """
 
     # Get User Stories for this BC

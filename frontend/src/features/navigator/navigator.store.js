@@ -209,14 +209,15 @@ export const useNavigatorStore = defineStore('navigator', () => {
   }
   
   // Assign user story to a BC (move from root to BC)
-  function assignUserStoryToBC(usId, bcId, bcName) {
+  async function assignUserStoryToBC(usId, bcId, bcName, usDataFromEvent = null) {
     // Track the assignment
     userStoryAssignments.value[usId] = bcId
     
     // Find the user story in root level
     const usIndex = userStories.value.findIndex(us => us.id === usId)
-    let usData = null
+    let usData = usDataFromEvent || null
     if (usIndex !== -1) {
+      // Prefer data from root level if available (more complete)
       usData = userStories.value[usIndex]
       // Remove from root level user stories
       userStories.value.splice(usIndex, 1)
@@ -228,25 +229,52 @@ export const useNavigatorStore = defineStore('navigator', () => {
       bc.userStoryCount = (bc.userStoryCount || 0) + 1
     }
     
-    // Add to BC's tree structure
-    const tree = ensureTree(bcId)
-    if (usData) {
-      // Check if already exists in tree
-      const exists = tree.userStories.some(us => us.id === usId)
-      if (!exists) {
-        tree.userStories.push({
-          id: usData.id,
-          role: usData.role,
-          action: usData.action,
-          benefit: usData.benefit,
-          priority: usData.priority,
-          status: usData.status || 'draft',
-          type: 'UserStory',
-          name: usData.name || `${usData.role}: ${usData.action?.substring(0, 30)}...`
-        })
-        // Force reactivity update
-        contextTrees.value = { ...contextTrees.value }
+    // Ensure BC tree exists - fetch if not already loaded
+    let tree = contextTrees.value[bcId]
+    if (!tree || !tree.userStories) {
+      const fetchedTree = await fetchContextTree(bcId, false)
+      if (fetchedTree) {
+        tree = fetchedTree
+        // Preserve any user stories that were already added
+        const existingUsIds = new Set((tree.userStories || []).map(us => us.id))
+        if (!existingUsIds.has(usId)) {
+          // User story not in fetched tree, add it
+          if (!tree.userStories) {
+            tree.userStories = []
+          }
+        }
+      } else {
+        // If fetch failed, create empty tree
+        tree = ensureTree(bcId)
       }
+    } else {
+      tree = ensureTree(bcId)
+    }
+    
+    // Check if already exists in tree
+    const exists = tree.userStories.some(us => us.id === usId)
+    if (!exists) {
+      // Use usData if available, otherwise create entry from assignment data
+      const usEntry = usData || {
+        id: usId,
+        role: '',
+        action: '',
+        benefit: '',
+        priority: '',
+        status: 'draft'
+      }
+      tree.userStories.push({
+        id: usEntry.id,
+        role: usEntry.role,
+        action: usEntry.action,
+        benefit: usEntry.benefit,
+        priority: usEntry.priority,
+        status: usEntry.status || 'draft',
+        type: 'UserStory',
+        name: usEntry.name || `${usEntry.role}: ${usEntry.action?.substring(0, 30)}...` || usId
+      })
+      // Force reactivity update
+      contextTrees.value = { ...contextTrees.value }
     }
     
     // Mark the user story as newly added (will appear under BC)

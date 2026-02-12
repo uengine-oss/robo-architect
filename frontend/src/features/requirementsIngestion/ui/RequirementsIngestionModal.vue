@@ -271,9 +271,39 @@ function connectToStream(sid, isReconnect = false) {
       isPaused.value = false
     }
     
+    // Handle User Story assignment to BC FIRST (before created objects)
+    // This must happen before "Handle created objects" because we need to move user stories from root to BC trees
+    if (data.data && data.data.type === 'UserStoryAssigned') {
+      const assignment = data.data.object
+      if (!assignment) {
+        return
+      }
+      // Pass user story data from event if available
+      const usDataFromEvent = assignment.role || assignment.action ? {
+        id: assignment.id,
+        role: assignment.role || '',
+        action: assignment.action || '',
+        benefit: assignment.benefit || '',
+        priority: assignment.priority || '',
+        status: assignment.status || 'draft'
+      } : null
+      navigatorStore.assignUserStoryToBC(
+        assignment.id,
+        assignment.targetBcId,
+        assignment.targetBcName,
+        usDataFromEvent
+      )
+      // Return early to avoid processing this as a created object
+      return
+    }
+    
     // Handle created objects
     if (data.data?.object) {
       const obj = data.data.object
+      // Only add items that have a type property
+      if (!obj.type) {
+        return
+      }
       // Prevent duplicate items by checking if item with same id already exists
       const existingIndex = createdItems.value.findIndex(item => item.id === obj.id && item.type === obj.type)
       if (existingIndex === -1) {
@@ -305,16 +335,6 @@ function connectToStream(sid, isReconnect = false) {
       } else if (obj.type === 'Property') {
         navigatorStore.addProperty(obj)
       }
-    }
-    
-    // Handle User Story assignment to BC (move animation)
-    if (data.data?.type === 'UserStoryAssigned') {
-      const assignment = data.data.object
-      navigatorStore.assignUserStoryToBC(
-        assignment.id,
-        assignment.targetBcId,
-        assignment.targetBcName
-      )
     }
     
     // Handle summary
@@ -645,6 +665,7 @@ function getTypeIcon(type) {
 }
 
 function getTypeClass(type) {
+  if (!type) return 'item-icon--unknown'
   return `item-icon--${type.toLowerCase()}`
 }
 
@@ -1020,16 +1041,17 @@ function useSample() {
           <!-- Live Created Items -->
           <div v-if="isProcessing && !error" class="mini-items">
             <TransitionGroup name="item-list">
-              <div 
-                v-for="item in createdItems.slice(-5)"
-                :key="item.id"
-                class="mini-item"
-              >
-                <span class="item-icon" :class="getTypeClass(item.type)">
-                  {{ getTypeIcon(item.type) }}
-                </span>
-                <span class="mini-item__name">{{ item.name }}</span>
-              </div>
+              <template v-for="item in createdItems.slice(-5)" :key="item.id">
+                <div 
+                  v-if="item && item.type"
+                  class="mini-item"
+                >
+                  <span class="item-icon" :class="getTypeClass(item.type)">
+                    {{ getTypeIcon(item.type) }}
+                  </span>
+                  <span class="mini-item__name">{{ item.name || item.id }}</span>
+                </div>
+              </template>
             </TransitionGroup>
             <div v-if="createdItems.length > 5" class="mini-items__more">
               +{{ createdItems.length - 5 }} items

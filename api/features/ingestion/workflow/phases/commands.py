@@ -108,8 +108,28 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
         bc_aggregates = ctx.aggregates_by_bc.get(bc.id, [])
 
         for agg in bc_aggregates:
+            # BC 객체에서 user_story_ids를 안전하게 읽어오기
+            bc_us_ids = []
+            try:
+                if hasattr(bc, "model_dump"):
+                    bc_dict = bc.model_dump()
+                    bc_us_ids = bc_dict.get("user_story_ids", [])
+                elif hasattr(bc, "dict"):
+                    bc_dict = bc.dict()
+                    bc_us_ids = bc_dict.get("user_story_ids", [])
+                elif isinstance(bc, dict):
+                    bc_us_ids = bc.get("user_story_ids", [])
+                else:
+                    bc_us_ids = getattr(bc, "user_story_ids", None) or []
+            except Exception:
+                bc_us_ids = getattr(bc, "user_story_ids", None) or []
+            
+            if not isinstance(bc_us_ids, list):
+                bc_us_ids = []
+            bc_us_ids = [us_id for us_id in bc_us_ids if us_id]  # None이나 빈 문자열 제거
+            
             stories_context = "\n".join(
-                [f"[{us.id}] As a {us.role}, I want to {us.action}" for us in ctx.user_stories if us.id in bc.user_story_ids]
+                [f"[{us.id}] As a {us.role}, I want to {us.action}" for us in ctx.user_stories if us.id in bc_us_ids]
             )
 
             # 전체 프롬프트 텍스트 구성 (청킹 판단용)

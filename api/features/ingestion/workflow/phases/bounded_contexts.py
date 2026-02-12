@@ -40,13 +40,49 @@ async def _create_bc_with_links(
     """
     domain_type = getattr(bc, "domain_type", None)
     
+    # BC 생성 전에 user_story_ids를 먼저 읽어옴
+    us_ids = []
+    try:
+        # 방법 1: Pydantic model_dump 사용 (가장 안전)
+        if hasattr(bc, "model_dump"):
+            bc_dict = bc.model_dump()
+            us_ids = bc_dict.get("user_story_ids", [])
+        elif hasattr(bc, "dict"):
+            bc_dict = bc.dict()
+            us_ids = bc_dict.get("user_story_ids", [])
+        # 방법 2: dict 접근
+        elif isinstance(bc, dict):
+            us_ids = bc.get("user_story_ids", [])
+        # 방법 3: 직접 속성 접근 (fallback)
+        else:
+            us_ids = getattr(bc, "user_story_ids", None)
+            if us_ids is None:
+                us_ids = []
+    except Exception as e:
+        SmartLogger.log(
+            "WARN",
+            f"Failed to get user_story_ids from BC {getattr(bc, 'name', 'unknown')} before creation: {e}",
+            category="ingestion.workflow.bc.get_user_story_ids_error",
+            params={
+                "session_id": ctx.session.id,
+                "bc_name": getattr(bc, "name", "unknown"),
+                "error": str(e),
+            },
+        )
+    
+    # 리스트가 아니거나 비어있으면 빈 리스트로 설정
+    if not isinstance(us_ids, list):
+        us_ids = []
+    us_ids = [us_id for us_id in us_ids if us_id]  # None이나 빈 문자열 제거
+    
     try:
         created_bc = await asyncio.wait_for(
             asyncio.to_thread(
                 ctx.client.create_bounded_context,
                 name=bc.name,
                 description=bc.description,
-                domain_type=domain_type
+                domain_type=domain_type,
+                user_story_ids=us_ids
             ),
             timeout=10.0
         )
@@ -89,8 +125,36 @@ async def _create_bc_with_links(
         failed_us_ids = []
         skipped_us_ids = []
         
-        us_ids = getattr(bc, "user_story_ids", []) or []
+        # us_ids는 이미 위에서 읽어왔음
+        # 항상 로그 출력 (us_ids가 비어있어도)
+        SmartLogger.log(
+            "INFO" if us_ids else "WARN",
+            f"BC {bc.name} linking check: {len(us_ids)} User Story IDs found",
+            category="ingestion.workflow.bc.linking_check",
+            params={
+                "session_id": ctx.session.id,
+                "bc_id": created_bc.get("id"),
+                "bc_name": bc.name,
+                "user_story_ids": us_ids,
+                "user_story_count": len(us_ids),
+                "bc_type": type(bc).__name__,
+                "bc_has_user_story_ids_attr": hasattr(bc, "user_story_ids"),
+            },
+        )
+        
         if us_ids:
+            SmartLogger.log(
+                "INFO",
+                f"Linking {len(us_ids)} User Stories to BC {bc.name}",
+                category="ingestion.workflow.bc.linking_start",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_id": created_bc.get("id"),
+                    "bc_name": bc.name,
+                    "user_story_ids": us_ids,
+                },
+            )
+            
             link_tasks = []
             for us_id in us_ids:
                 link_task = asyncio.wait_for(
@@ -109,20 +173,164 @@ async def _create_bc_with_links(
                 batch = link_tasks[batch_start:batch_start + BATCH_SIZE]
                 for us_id, link_task in batch:
                     try:
-                        await link_task
-                        linked_count += 1
+                        link_result = await link_task
+                        # link_user_story_to_bc는 (success, diagnostic) 튜플을 반환할 수 있음
+                        if isinstance(link_result, tuple):
+                            success, diagnostic = link_result
+                            if success:
+                                linked_count += 1
+                                # 프론트엔드에 User Story 할당 이벤트 전송
+                                # User Story 정보 찾기
+                                us_obj = next((us for us in ctx.user_stories if us.id == us_id), None)
+                                us_data = {
+                                    "id": us_id,
+                                    "targetBcId": created_bc.get("id"),
+                                    "targetBcName": bc.name,
+                                }
+                                if us_obj:
+                                    us_data.update({
+                                        "role": getattr(us_obj, "role", ""),
+                                        "action": getattr(us_obj, "action", ""),
+                                        "benefit": getattr(us_obj, "benefit", ""),
+                                        "priority": getattr(us_obj, "priority", ""),
+                                        "status": getattr(us_obj, "status", "draft"),
+                                    })
+                                us_assigned_event = ProgressEvent(
+                                    phase=IngestionPhase.IDENTIFYING_BC,
+                                    message=f"User Story {us_id} 할당됨: {bc.name}",
+                                    progress=PHASE_END - 1,
+                                    data={
+                                        "type": "UserStoryAssigned",
+                                        "object": us_data,
+                                    },
+                                )
+                                progress_events.append(us_assigned_event)
+                            else:
+                                failed_count += 1
+                                failed_us_ids.append(us_id)
+                                SmartLogger.log(
+                                    "WARN",
+                                    f"Failed to link User Story {us_id} to BC {bc.name}",
+                                    category="ingestion.workflow.bc.link_failed",
+                                    params={
+                                        "session_id": ctx.session.id,
+                                        "user_story_id": us_id,
+                                        "bc_id": created_bc.get("id"),
+                                        "bc_name": bc.name,
+                                        "diagnostic": diagnostic,
+                                    },
+                                )
+                        else:
+                            # Boolean 반환인 경우
+                            if link_result:
+                                linked_count += 1
+                                # 프론트엔드에 User Story 할당 이벤트 전송
+                                # User Story 정보 찾기
+                                us_obj = next((us for us in ctx.user_stories if us.id == us_id), None)
+                                us_data = {
+                                    "id": us_id,
+                                    "targetBcId": created_bc.get("id"),
+                                    "targetBcName": bc.name,
+                                }
+                                if us_obj:
+                                    us_data.update({
+                                        "role": getattr(us_obj, "role", ""),
+                                        "action": getattr(us_obj, "action", ""),
+                                        "benefit": getattr(us_obj, "benefit", ""),
+                                        "priority": getattr(us_obj, "priority", ""),
+                                        "status": getattr(us_obj, "status", "draft"),
+                                    })
+                                us_assigned_event = ProgressEvent(
+                                    phase=IngestionPhase.IDENTIFYING_BC,
+                                    message=f"User Story {us_id} 할당됨: {bc.name}",
+                                    progress=PHASE_END - 1,
+                                    data={
+                                        "type": "UserStoryAssigned",
+                                        "object": us_data,
+                                    },
+                                )
+                                progress_events.append(us_assigned_event)
+                            else:
+                                failed_count += 1
+                                failed_us_ids.append(us_id)
                     except asyncio.TimeoutError:
                         failed_count += 1
                         failed_us_ids.append(us_id)
+                        SmartLogger.log(
+                            "WARN",
+                            f"Timeout linking User Story {us_id} to BC {bc.name}",
+                            category="ingestion.workflow.bc.link_timeout",
+                            params={
+                                "session_id": ctx.session.id,
+                                "user_story_id": us_id,
+                                "bc_id": created_bc.get("id"),
+                                "bc_name": bc.name,
+                            },
+                        )
                     except Exception as e:
                         # User Story가 ctx에 없거나 Neo4j에 없는 경우
                         us_in_ctx = next((us for us in ctx.user_stories if us.id == us_id), None)
                         if not us_in_ctx:
                             skipped_count += 1
                             skipped_us_ids.append(us_id)
+                            SmartLogger.log(
+                                "WARN",
+                                f"Skipping User Story {us_id} - not found in context",
+                                category="ingestion.workflow.bc.link_skipped",
+                                params={
+                                    "session_id": ctx.session.id,
+                                    "user_story_id": us_id,
+                                    "bc_id": created_bc.get("id"),
+                                    "bc_name": bc.name,
+                                },
+                            )
                         else:
                             failed_count += 1
                             failed_us_ids.append(us_id)
+                            SmartLogger.log(
+                                "ERROR",
+                                f"Exception linking User Story {us_id} to BC {bc.name}: {e}",
+                                category="ingestion.workflow.bc.link_exception",
+                                params={
+                                    "session_id": ctx.session.id,
+                                    "user_story_id": us_id,
+                                    "bc_id": created_bc.get("id"),
+                                    "bc_name": bc.name,
+                                    "error": str(e),
+                                    "error_type": type(e).__name__,
+                                },
+                            )
+            
+            SmartLogger.log(
+                "INFO",
+                f"BC {bc.name} linking completed: {linked_count} linked, {failed_count} failed, {skipped_count} skipped",
+                category="ingestion.workflow.bc.linking_summary",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_id": created_bc.get("id"),
+                    "bc_name": bc.name,
+                    "linked_count": linked_count,
+                    "failed_count": failed_count,
+                    "skipped_count": skipped_count,
+                    "failed_us_ids": failed_us_ids,
+                    "skipped_us_ids": skipped_us_ids,
+                },
+            )
+        else:
+            # us_ids가 비어있을 때 상세 로그 출력
+            SmartLogger.log(
+                "WARN",
+                f"BC {bc.name} has no user_story_ids assigned - skipping link creation",
+                category="ingestion.workflow.bc.no_user_stories",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_id": created_bc.get("id"),
+                    "bc_name": bc.name,
+                    "bc_type": type(bc).__name__,
+                    "bc_has_user_story_ids_attr": hasattr(bc, "user_story_ids"),
+                    "bc_attrs": [attr for attr in dir(bc) if not attr.startswith("_")][:20],
+                },
+            )
         
         return {
             "bounded_context": created_bc,
@@ -130,6 +338,8 @@ async def _create_bc_with_links(
             "linked_count": linked_count,
             "failed_count": failed_count,
             "skipped_count": skipped_count,
+            "failed_us_ids": failed_us_ids,
+            "skipped_us_ids": skipped_us_ids,
         }, progress_events, None
     except asyncio.TimeoutError:
         return None, [], "Bounded context creation timeout"
@@ -265,10 +475,26 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
             prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids)
             
             t_llm0 = time.perf_counter()
-            bc_response = await asyncio.to_thread(
-                structured_llm.invoke,
-                [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
-            )
+            try:
+                bc_response = await asyncio.to_thread(
+                    structured_llm.invoke,
+                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                )
+            except Exception as e:
+                # Validation error: user_story_ids가 비어있거나 누락된 경우
+                SmartLogger.log(
+                    "ERROR",
+                    f"BC identification failed: LLM response validation error - {str(e)}",
+                    category="ingestion.workflow.bc.llm_validation_error",
+                    params={
+                        "session_id": ctx.session.id,
+                        "chunk_index": i + 1,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
+                )
+                # 재시도 또는 기본값으로 처리
+                raise
             llm_ms = int((time.perf_counter() - t_llm0) * 1000)
             
             # Check cancellation after chunk processing
@@ -283,10 +509,84 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
             
             bcs = getattr(bc_response, "bounded_contexts", []) or []
             
-            # 청크 내 모든 User Story가 할당되었는지 검증
+            # BC 응답 검증: 모든 BC가 user_story_ids를 가지고 있는지 확인 (Pydantic model_dump 사용)
+            for bc in bcs:
+                us_ids = []
+                try:
+                    if hasattr(bc, "model_dump"):
+                        bc_dict = bc.model_dump()
+                        us_ids = bc_dict.get("user_story_ids", [])
+                    elif hasattr(bc, "dict"):
+                        bc_dict = bc.dict()
+                        us_ids = bc_dict.get("user_story_ids", [])
+                    elif isinstance(bc, dict):
+                        us_ids = bc.get("user_story_ids", [])
+                    else:
+                        us_ids = getattr(bc, "user_story_ids", None) or []
+                except Exception:
+                    us_ids = getattr(bc, "user_story_ids", None) or []
+                
+                if not isinstance(us_ids, list) or len(us_ids) == 0:
+                    SmartLogger.log(
+                        "ERROR",
+                        f"BC {getattr(bc, 'name', 'unknown')} has empty or missing user_story_ids - this violates the model constraint",
+                        category="ingestion.workflow.bc.empty_user_stories_after_llm",
+                        params={
+                            "session_id": ctx.session.id,
+                            "chunk_index": i + 1,
+                            "bc_name": getattr(bc, "name", "unknown"),
+                            "bc_id": getattr(bc, "id", None),
+                        },
+                    )
+            
+            # BC 식별 결과 로깅 (각 BC의 user_story_ids 확인)
+            for bc in bcs:
+                us_ids = []
+                try:
+                    if hasattr(bc, "model_dump"):
+                        bc_dict = bc.model_dump()
+                        us_ids = bc_dict.get("user_story_ids", [])
+                    elif hasattr(bc, "dict"):
+                        bc_dict = bc.dict()
+                        us_ids = bc_dict.get("user_story_ids", [])
+                    elif isinstance(bc, dict):
+                        us_ids = bc.get("user_story_ids", [])
+                    else:
+                        us_ids = getattr(bc, "user_story_ids", []) or []
+                except Exception:
+                    us_ids = getattr(bc, "user_story_ids", []) or []
+                SmartLogger.log(
+                    "INFO" if us_ids else "WARN",
+                    f"BC identified: {getattr(bc, 'name', 'unknown')} with {len(us_ids)} User Stories",
+                    category="ingestion.workflow.bc.identified",
+                    params={
+                        "session_id": ctx.session.id,
+                        "chunk_index": i + 1,
+                        "bc_name": getattr(bc, "name", "unknown"),
+                        "user_story_ids": us_ids,
+                        "user_story_count": len(us_ids),
+                        "bc_type": type(bc).__name__,
+                    },
+                )
+            
+            # 청크 내 모든 User Story가 할당되었는지 검증 (Pydantic model_dump 사용)
             chunk_assigned_us_ids = set()
             for bc in bcs:
-                chunk_assigned_us_ids.update(getattr(bc, "user_story_ids", []) or [])
+                us_ids = []
+                try:
+                    if hasattr(bc, "model_dump"):
+                        bc_dict = bc.model_dump()
+                        us_ids = bc_dict.get("user_story_ids", [])
+                    elif hasattr(bc, "dict"):
+                        bc_dict = bc.dict()
+                        us_ids = bc_dict.get("user_story_ids", [])
+                    elif isinstance(bc, dict):
+                        us_ids = bc.get("user_story_ids", [])
+                    else:
+                        us_ids = getattr(bc, "user_story_ids", []) or []
+                except Exception:
+                    us_ids = getattr(bc, "user_story_ids", []) or []
+                chunk_assigned_us_ids.update(us_ids)
             chunk_us_ids = {us.id for us in story_chunk}
             chunk_unassigned = chunk_us_ids - chunk_assigned_us_ids
             
@@ -294,10 +594,25 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                 # 누락된 User Story를 LLM에게 다시 할당 요청
                 unassigned_stories = [us for us in story_chunk if us.id in chunk_unassigned]
                 unassigned_text = "\n".join([us_to_text(us) for us in unassigned_stories])
-                existing_bcs_text = "\n".join([
-                    f"- {bc.name}: {bc.description} (Current user_story_ids: {', '.join(getattr(bc, 'user_story_ids', []) or [])})"
-                    for bc in bcs
-                ])
+                # BC의 user_story_ids를 안전하게 가져오기
+                bc_info_list = []
+                for bc in bcs:
+                    us_ids = []
+                    try:
+                        if hasattr(bc, "model_dump"):
+                            bc_dict = bc.model_dump()
+                            us_ids = bc_dict.get("user_story_ids", [])
+                        elif hasattr(bc, "dict"):
+                            bc_dict = bc.dict()
+                            us_ids = bc_dict.get("user_story_ids", [])
+                        elif isinstance(bc, dict):
+                            us_ids = bc.get("user_story_ids", [])
+                        else:
+                            us_ids = getattr(bc, "user_story_ids", []) or []
+                    except Exception:
+                        us_ids = getattr(bc, "user_story_ids", []) or []
+                    bc_info_list.append(f"- {bc.name}: {bc.description} (Current user_story_ids: {', '.join(us_ids)})")
+                existing_bcs_text = "\n".join(bc_info_list)
                 
                 fix_prompt = f"""The following User Stories from the previous analysis were NOT assigned to any Bounded Context. You MUST assign each of them to the most appropriate existing BC.
 
@@ -354,6 +669,84 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
                 f"__fallback_{id(bc)}"  # 최후의 수단: 객체 ID
             )
         )
+        
+        # BC 병합 후 user_story_ids 합치기: 같은 이름의 BC가 여러 청크에서 나타날 때 user_story_ids를 합쳐야 함
+        bc_by_name: dict[str, list[Any]] = {}
+        for bc in bc_candidates:
+            bc_name = getattr(bc, "name", None) or ""
+            if bc_name not in bc_by_name:
+                bc_by_name[bc_name] = []
+            bc_by_name[bc_name].append(bc)
+        
+        # 같은 이름의 BC가 여러 개 있으면 user_story_ids를 합침
+        merged_bc_candidates = []
+        for bc_name, bcs_with_same_name in bc_by_name.items():
+            if len(bcs_with_same_name) == 1:
+                # 중복이 없으면 그대로 사용
+                merged_bc_candidates.append(bcs_with_same_name[0])
+            else:
+                # 중복이 있으면 첫 번째 BC를 기준으로 user_story_ids를 합침
+                base_bc = bcs_with_same_name[0]
+                all_us_ids = set()
+                
+                # 모든 BC의 user_story_ids 수집
+                for bc in bcs_with_same_name:
+                    us_ids = []
+                    try:
+                        if hasattr(bc, "model_dump"):
+                            bc_dict = bc.model_dump()
+                            us_ids = bc_dict.get("user_story_ids", [])
+                        elif hasattr(bc, "dict"):
+                            bc_dict = bc.dict()
+                            us_ids = bc_dict.get("user_story_ids", [])
+                        elif isinstance(bc, dict):
+                            us_ids = bc.get("user_story_ids", [])
+                        else:
+                            us_ids = getattr(bc, "user_story_ids", []) or []
+                    except Exception:
+                        us_ids = getattr(bc, "user_story_ids", []) or []
+                    
+                    if isinstance(us_ids, list):
+                        all_us_ids.update(us_ids)
+                
+                # 합친 user_story_ids로 업데이트
+                merged_us_ids = list(all_us_ids)
+                try:
+                    if hasattr(base_bc, "model_copy"):
+                        merged_bc = base_bc.model_copy(update={"user_story_ids": merged_us_ids})
+                    elif hasattr(base_bc, "copy"):
+                        merged_bc = base_bc.copy(update={"user_story_ids": merged_us_ids})
+                    else:
+                        setattr(base_bc, "user_story_ids", merged_us_ids)
+                        merged_bc = base_bc
+                except Exception as e:
+                    SmartLogger.log(
+                        "WARN",
+                        f"Failed to merge user_story_ids for BC {bc_name}: {e}",
+                        category="ingestion.workflow.bc.merge_user_stories_error",
+                        params={
+                            "session_id": ctx.session.id,
+                            "bc_name": bc_name,
+                            "error": str(e),
+                        },
+                    )
+                    merged_bc = base_bc
+                
+                merged_bc_candidates.append(merged_bc)
+                
+                SmartLogger.log(
+                    "INFO",
+                    f"Merged BC {bc_name}: combined {len(bcs_with_same_name)} BCs with {len(merged_us_ids)} total User Stories",
+                    category="ingestion.workflow.bc.merge_complete",
+                    params={
+                        "session_id": ctx.session.id,
+                        "bc_name": bc_name,
+                        "bc_count": len(bcs_with_same_name),
+                        "merged_user_story_count": len(merged_us_ids),
+                    },
+                )
+        
+        bc_candidates = merged_bc_candidates
         ctx.bounded_contexts = bc_candidates
         
         # 결과 병합 완료
@@ -383,6 +776,37 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
         )
 
         bc_candidates = bc_response.bounded_contexts
+        
+        # BC 식별 결과 로깅 (각 BC의 user_story_ids 확인 - Pydantic model_dump 사용)
+        for bc in bc_candidates:
+            us_ids = []
+            try:
+                if hasattr(bc, "model_dump"):
+                    bc_dict = bc.model_dump()
+                    us_ids = bc_dict.get("user_story_ids", [])
+                elif hasattr(bc, "dict"):
+                    bc_dict = bc.dict()
+                    us_ids = bc_dict.get("user_story_ids", [])
+                elif isinstance(bc, dict):
+                    us_ids = bc.get("user_story_ids", [])
+                else:
+                    us_ids = getattr(bc, "user_story_ids", []) or []
+            except Exception:
+                us_ids = getattr(bc, "user_story_ids", []) or []
+            
+            SmartLogger.log(
+                "INFO" if us_ids else "WARN",
+                f"BC identified: {getattr(bc, 'name', 'unknown')} with {len(us_ids)} User Stories",
+                category="ingestion.workflow.bc.identified",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_name": getattr(bc, "name", "unknown"),
+                    "user_story_ids": us_ids,
+                    "user_story_count": len(us_ids),
+                    "bc_type": type(bc).__name__,
+                },
+            )
+        
         ctx.bounded_contexts = bc_candidates
         
         yield ProgressEvent(
@@ -398,11 +822,68 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
     valid_us_ids = {us.id for us in ctx.user_stories}
     us_to_bc_map: dict[str, str] = {}  # User Story ID -> BC 이름 (중복 할당 추적)
     
+    SmartLogger.log(
+        "INFO",
+        f"Validating BC user_story_ids assignments: {len(valid_us_ids)} valid User Stories, {len(bc_candidates)} BCs",
+        category="ingestion.workflow.bc.validation_start",
+        params={
+            "session_id": ctx.session.id,
+            "valid_us_count": len(valid_us_ids),
+            "bc_count": len(bc_candidates),
+        },
+    )
+    
     for bc in bc_candidates:
-        original_ids = getattr(bc, "user_story_ids", []) or []
+        # 여러 방법으로 user_story_ids 가져오기 (Pydantic 모델의 경우 model_dump 우선 사용)
+        original_ids = []
+        try:
+            # 방법 1: Pydantic model_dump 사용 (가장 안전)
+            if hasattr(bc, "model_dump"):
+                bc_dict = bc.model_dump()
+                original_ids = bc_dict.get("user_story_ids", [])
+            elif hasattr(bc, "dict"):
+                bc_dict = bc.dict()
+                original_ids = bc_dict.get("user_story_ids", [])
+            # 방법 2: dict 접근
+            elif isinstance(bc, dict):
+                original_ids = bc.get("user_story_ids", [])
+            # 방법 3: 직접 속성 접근 (fallback)
+            else:
+                original_ids = getattr(bc, "user_story_ids", None)
+                if original_ids is None:
+                    original_ids = []
+        except Exception as e:
+            SmartLogger.log(
+                "WARN",
+                f"Failed to get user_story_ids from BC {getattr(bc, 'name', 'unknown')} during validation: {e}",
+                category="ingestion.workflow.bc.validation_get_error",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_name": getattr(bc, "name", "unknown"),
+                    "error": str(e),
+                },
+            )
+        
+        if not isinstance(original_ids, list):
+            original_ids = []
+        original_ids = [us_id for us_id in original_ids if us_id]  # None이나 빈 문자열 제거
+        
         # 존재하는 User Story ID만 필터링
         valid_ids = [us_id for us_id in original_ids if us_id in valid_us_ids]
         invalid_ids = [us_id for us_id in original_ids if us_id not in valid_us_ids]
+        
+        # original_ids가 비어있으면 경고
+        if not original_ids:
+            SmartLogger.log(
+                "ERROR",
+                f"BC {getattr(bc, 'name', 'unknown')} has NO user_story_ids from LLM response - this is a critical issue",
+                category="ingestion.workflow.bc.no_user_stories_from_llm",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_name": getattr(bc, "name", "unknown"),
+                    "bc_type": type(bc).__name__,
+                },
+            )
         
         # 중복 할당 체크: 하나의 User Story는 하나의 BC에만 속해야 함 (DDD 원칙)
         deduplicated_ids = []
@@ -419,39 +900,101 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
         # user_story_ids 업데이트 (존재하지 않는 ID 제거 + 중복 제거)
         final_ids = deduplicated_ids
         
-        # BC 객체 업데이트 (리스트에도 반영되도록)
+        # BC 객체 업데이트 (Pydantic model이므로 model_copy 사용)
         updated_bc = None
         try:
-            setattr(bc, "user_story_ids", final_ids)
-            updated_bc = bc
-        except Exception:
-            # Pydantic model인 경우 model_copy 사용
-            try:
-                if hasattr(bc, "model_copy"):
-                    updated_bc = bc.model_copy(update={"user_story_ids": final_ids})
-                elif hasattr(bc, "copy"):
-                    updated_bc = bc.copy(update={"user_story_ids": final_ids})
-                else:
-                    updated_bc = bc
-            except Exception:
+            # Pydantic model인 경우 model_copy 사용 (setattr은 제대로 반영되지 않을 수 있음)
+            if hasattr(bc, "model_copy"):
+                updated_bc = bc.model_copy(update={"user_story_ids": final_ids})
+            elif hasattr(bc, "copy"):
+                updated_bc = bc.copy(update={"user_story_ids": final_ids})
+            else:
+                # 일반 객체인 경우 setattr 시도
+                setattr(bc, "user_story_ids", final_ids)
                 updated_bc = bc
+        except Exception as e:
+            SmartLogger.log(
+                "WARN",
+                f"Failed to update user_story_ids for BC {getattr(bc, 'name', 'unknown')}: {e}",
+                category="ingestion.workflow.bc.update_user_story_ids_error",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_name": getattr(bc, "name", "unknown"),
+                    "error": str(e),
+                },
+            )
+            updated_bc = bc
         
         # 리스트에 업데이트된 BC 객체 반영
-        if updated_bc is not None and updated_bc is not bc:
-            bc_idx_in_list = bc_candidates.index(bc) if bc in bc_candidates else -1
-            if bc_idx_in_list >= 0:
-                bc_candidates[bc_idx_in_list] = updated_bc
-                bc = updated_bc
+        bc_idx_in_list = bc_candidates.index(bc) if bc in bc_candidates else -1
+        if bc_idx_in_list >= 0:
+            bc_candidates[bc_idx_in_list] = updated_bc
+            # bc 변수도 업데이트하여 이후 참조가 최신 값을 사용하도록 함
+            bc = updated_bc
     
     # 검증 후 빈 user_story_ids를 가진 BC 제거 (BC는 최소 하나의 User Story를 가져야 함)
     bc_candidates_with_stories = []
     empty_bcs = []
     for bc in bc_candidates:
-        final_ids = getattr(bc, "user_story_ids", []) or []
+        # 여러 방법으로 user_story_ids 확인 (Pydantic 모델의 경우 model_dump 우선 사용)
+        final_ids = []
+        try:
+            # 방법 1: Pydantic model_dump 사용 (가장 안전)
+            if hasattr(bc, "model_dump"):
+                bc_dict = bc.model_dump()
+                final_ids = bc_dict.get("user_story_ids", [])
+            elif hasattr(bc, "dict"):
+                bc_dict = bc.dict()
+                final_ids = bc_dict.get("user_story_ids", [])
+            # 방법 2: dict 접근
+            elif isinstance(bc, dict):
+                final_ids = bc.get("user_story_ids", [])
+            # 방법 3: 직접 속성 접근 (fallback)
+            else:
+                final_ids = getattr(bc, "user_story_ids", None)
+                if final_ids is None:
+                    final_ids = []
+        except Exception:
+            pass
+        
+        if not isinstance(final_ids, list):
+            final_ids = []
+        final_ids = [us_id for us_id in final_ids if us_id]  # None이나 빈 문자열 제거
+        
         if not final_ids:
             empty_bcs.append(bc.name)
+            SmartLogger.log(
+                "WARN",
+                f"BC {bc.name} has empty user_story_ids after validation - will be removed",
+                category="ingestion.workflow.bc.empty_after_validation",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_name": bc.name,
+                },
+            )
         else:
             bc_candidates_with_stories.append(bc)
+            SmartLogger.log(
+                "INFO",
+                f"BC {bc.name} validated with {len(final_ids)} User Stories",
+                category="ingestion.workflow.bc.validated",
+                params={
+                    "session_id": ctx.session.id,
+                    "bc_name": bc.name,
+                    "user_story_count": len(final_ids),
+                },
+            )
+    
+    if empty_bcs:
+        SmartLogger.log(
+            "WARN",
+            f"Removing {len(empty_bcs)} BCs with no User Stories: {', '.join(empty_bcs)}",
+            category="ingestion.workflow.bc.empty_removed",
+            params={
+                "session_id": ctx.session.id,
+                "empty_bc_names": empty_bcs,
+            },
+        )
     
     # 빈 BC 제거 후 업데이트
     bc_candidates = bc_candidates_with_stories
@@ -460,10 +1003,38 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
     # 누락된 User Story 확인 및 자동 할당
     all_assigned_us_ids = set()
     for bc in bc_candidates:
-        all_assigned_us_ids.update(getattr(bc, "user_story_ids", []) or [])
+        # Pydantic 모델의 경우 model_dump 우선 사용
+        us_ids = []
+        try:
+            if hasattr(bc, "model_dump"):
+                bc_dict = bc.model_dump()
+                us_ids = bc_dict.get("user_story_ids", [])
+            elif hasattr(bc, "dict"):
+                bc_dict = bc.dict()
+                us_ids = bc_dict.get("user_story_ids", [])
+            elif isinstance(bc, dict):
+                us_ids = bc.get("user_story_ids", [])
+            else:
+                us_ids = getattr(bc, "user_story_ids", []) or []
+        except Exception:
+            us_ids = getattr(bc, "user_story_ids", []) or []
+        all_assigned_us_ids.update(us_ids)
     
     all_us_ids = {us.id for us in ctx.user_stories}
     unassigned_us_ids = all_us_ids - all_assigned_us_ids
+    
+    SmartLogger.log(
+        "INFO",
+        f"BC assignment validation: {len(all_assigned_us_ids)} assigned, {len(unassigned_us_ids)} unassigned out of {len(all_us_ids)} total",
+        category="ingestion.workflow.bc.validation_summary",
+        params={
+            "session_id": ctx.session.id,
+            "total_us_count": len(all_us_ids),
+            "assigned_count": len(all_assigned_us_ids),
+            "unassigned_count": len(unassigned_us_ids),
+            "unassigned_ids": list(unassigned_us_ids),
+        },
+    )
     
     if unassigned_us_ids:
         SmartLogger.log(
@@ -576,16 +1147,29 @@ IMPORTANT: Every User Story MUST be assigned to exactly ONE Bounded Context. Do 
                         current_ids = getattr(target_bc, "user_story_ids", []) or []
                         if us_id not in current_ids:
                             current_ids.append(us_id)
+                            # Pydantic model인 경우 model_copy 사용 (setattr은 제대로 반영되지 않을 수 있음)
                             try:
-                                setattr(target_bc, "user_story_ids", current_ids)
-                            except Exception:
-                                # Pydantic model인 경우
                                 if hasattr(target_bc, "model_copy"):
                                     target_bc = target_bc.model_copy(update={"user_story_ids": current_ids})
-                                    bc_candidates[bc_idx] = target_bc
                                 elif hasattr(target_bc, "copy"):
                                     target_bc = target_bc.copy(update={"user_story_ids": current_ids})
-                                    bc_candidates[bc_idx] = target_bc
+                                else:
+                                    # 일반 객체인 경우 setattr 시도
+                                    setattr(target_bc, "user_story_ids", current_ids)
+                                # 리스트에 업데이트된 BC 객체 반영
+                                bc_candidates[bc_idx] = target_bc
+                            except Exception as e:
+                                SmartLogger.log(
+                                    "WARN",
+                                    f"Failed to update user_story_ids for BC {bc_name} during auto-assignment: {e}",
+                                    category="ingestion.workflow.bc.auto_assignment_update_error",
+                                    params={
+                                        "session_id": ctx.session.id,
+                                        "bc_name": bc_name,
+                                        "user_story_id": us_id,
+                                        "error": str(e),
+                                    },
+                                )
                             assignment_count += 1
                             SmartLogger.log(
                                 "INFO",
@@ -620,14 +1204,47 @@ IMPORTANT: Every User Story MUST be assigned to exactly ONE Bounded Context. Do 
                 },
             )
     
-    # 생성 결과 요약
+    # 생성 결과 요약 및 최종 검증
+    empty_bc_names = []
+    for bc in bc_candidates:
+        us_ids = []
+        try:
+            if hasattr(bc, "model_dump"):
+                bc_dict = bc.model_dump()
+                us_ids = bc_dict.get("user_story_ids", [])
+            elif hasattr(bc, "dict"):
+                bc_dict = bc.dict()
+                us_ids = bc_dict.get("user_story_ids", [])
+            elif isinstance(bc, dict):
+                us_ids = bc.get("user_story_ids", [])
+            else:
+                us_ids = getattr(bc, "user_story_ids", []) or []
+        except Exception:
+            us_ids = getattr(bc, "user_story_ids", []) or []
+        
+        if not isinstance(us_ids, list) or len(us_ids) == 0:
+            empty_bc_names.append(getattr(bc, "name", "unknown"))
+    
+    if empty_bc_names:
+        SmartLogger.log(
+            "ERROR",
+            f"Found {len(empty_bc_names)} BCs with empty user_story_ids before creation: {', '.join(empty_bc_names)}",
+            category="ingestion.workflow.bc.empty_before_creation",
+            params={
+                "session_id": ctx.session.id,
+                "empty_bc_names": empty_bc_names,
+                "bc_count": len(bc_candidates),
+            },
+        )
+    
     SmartLogger.log(
         "INFO",
-        f"Bounded contexts identified: {len(bc_candidates)} BCs created",
+        f"Bounded contexts identified: {len(bc_candidates)} BCs ready for creation",
         category="ingestion.workflow.bc.summary",
         params={
             "session_id": ctx.session.id,
             "bc_count": len(bc_candidates),
+            "empty_bc_count": len(empty_bc_names),
         },
     )
 
@@ -643,9 +1260,130 @@ IMPORTANT: Every User Story MUST be assigned to exactly ONE Bounded Context. Do 
             )
             return
         
+        # BC 생성 전에 각 BC의 user_story_ids 확인 및 ProgressEvent로 전달
+        bc_summary = []
+        for bc in bc_candidates:
+            us_ids = []
+            try:
+                if hasattr(bc, "model_dump"):
+                    bc_dict = bc.model_dump()
+                    us_ids = bc_dict.get("user_story_ids", [])
+                elif hasattr(bc, "dict"):
+                    bc_dict = bc.dict()
+                    us_ids = bc_dict.get("user_story_ids", [])
+                elif isinstance(bc, dict):
+                    us_ids = bc.get("user_story_ids", [])
+                else:
+                    us_ids = getattr(bc, "user_story_ids", []) or []
+            except Exception:
+                us_ids = getattr(bc, "user_story_ids", []) or []
+            
+            bc_summary.append({
+                "name": getattr(bc, "name", "unknown"),
+                "user_story_count": len(us_ids) if isinstance(us_ids, list) else 0,
+                "has_user_stories": len(us_ids) > 0 if isinstance(us_ids, list) else False
+            })
+        
+        yield ProgressEvent(
+            phase=IngestionPhase.IDENTIFYING_BC,
+            message=f"BC 생성 준비: {len(bc_candidates)}개 BC, 총 {sum(s['user_story_count'] for s in bc_summary)}개 User Story 할당",
+            progress=PHASE_END - 1,
+            data={
+                "bc_summary": bc_summary,
+                "total_bcs": len(bc_candidates),
+                "total_user_stories": sum(s['user_story_count'] for s in bc_summary),
+            },
+        )
+        
         total_bcs = len(bc_candidates)
         tasks = []
         for bc_idx, bc in enumerate(bc_candidates):
+            bc_name = getattr(bc, "name", "unknown")
+            # BC 객체의 user_story_ids를 다시 확인하여 최신 값 사용
+            # Pydantic 모델의 경우 model_dump 우선 사용
+            us_ids = []
+            try:
+                # 방법 1: Pydantic model_dump 사용 (가장 안전)
+                if hasattr(bc, "model_dump"):
+                    bc_dict = bc.model_dump()
+                    us_ids = bc_dict.get("user_story_ids", [])
+                elif hasattr(bc, "dict"):
+                    bc_dict = bc.dict()
+                    us_ids = bc_dict.get("user_story_ids", [])
+                # 방법 2: dict 접근
+                elif isinstance(bc, dict):
+                    us_ids = bc.get("user_story_ids", [])
+                # 방법 3: 직접 속성 접근 (fallback)
+                else:
+                    us_ids = getattr(bc, "user_story_ids", None)
+                    if us_ids is None:
+                        us_ids = []
+            except Exception as e:
+                SmartLogger.log(
+                    "WARN",
+                    f"Failed to get user_story_ids from BC {getattr(bc, 'name', 'unknown')} before linking: {e}",
+                    category="ingestion.workflow.bc.pre_link_get_error",
+                    params={
+                        "session_id": ctx.session.id,
+                        "bc_name": getattr(bc, "name", "unknown"),
+                        "error": str(e),
+                    },
+                )
+            
+            if not isinstance(us_ids, list):
+                us_ids = []
+            us_ids = [us_id for us_id in us_ids if us_id]  # None이나 빈 문자열 제거
+            
+            # 상세 디버깅 로그: BC 객체의 모든 속성 확인
+            bc_debug_info = {
+                "bc_name": getattr(bc, "name", "unknown"),
+                "bc_type": type(bc).__name__,
+                "has_user_story_ids_attr": hasattr(bc, "user_story_ids"),
+                "user_story_ids_from_model_dump": None,
+                "user_story_ids_from_getattr": None,
+                "user_story_ids_final": us_ids,
+            }
+            
+            # model_dump로 확인
+            try:
+                if hasattr(bc, "model_dump"):
+                    bc_dict = bc.model_dump()
+                    bc_debug_info["user_story_ids_from_model_dump"] = bc_dict.get("user_story_ids", [])
+            except Exception:
+                pass
+            
+            # getattr로 확인
+            try:
+                bc_debug_info["user_story_ids_from_getattr"] = getattr(bc, "user_story_ids", None)
+            except Exception:
+                pass
+            
+            if us_ids:
+                SmartLogger.log(
+                    "INFO",
+                    f"BC {bc.name} will link {len(us_ids)} User Stories: {us_ids}",
+                    category="ingestion.workflow.bc.pre_link_check",
+                    params={
+                        "session_id": ctx.session.id,
+                        "bc_name": bc.name,
+                        "user_story_ids": us_ids,
+                        "user_story_count": len(us_ids),
+                        "debug_info": bc_debug_info,
+                    },
+                )
+            else:
+                SmartLogger.log(
+                    "ERROR",
+                    f"BC {bc.name} has NO user_story_ids - will skip linking. Debug info: {bc_debug_info}",
+                    category="ingestion.workflow.bc.no_user_stories_pre_link",
+                    params={
+                        "session_id": ctx.session.id,
+                        "bc_name": bc.name,
+                        "bc_type": type(bc).__name__,
+                        "debug_info": bc_debug_info,
+                        "bc_attrs": [attr for attr in dir(bc) if not attr.startswith("_")][:30],
+                    },
+                )
             tasks.append(_create_bc_with_links(bc, bc_idx, total_bcs, ctx))
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -684,6 +1422,27 @@ IMPORTANT: Every User Story MUST be assigned to exactly ONE Bounded Context. Do 
             if created_bc_data and progress_events:
                 for progress_event in progress_events:
                     yield progress_event
+                
+                # BC 생성 및 연결 결과 요약 로깅
+                if created_bc_data:
+                    linked_count = created_bc_data.get("linked_count", 0)
+                    failed_count = created_bc_data.get("failed_count", 0)
+                    skipped_count = created_bc_data.get("skipped_count", 0)
+                    bc_name = created_bc_data.get("bc", {}).get("name") if isinstance(created_bc_data.get("bc"), dict) else getattr(created_bc_data.get("bc"), "name", "unknown")
+                    
+                    if linked_count > 0 or failed_count > 0 or skipped_count > 0:
+                        yield ProgressEvent(
+                            phase=IngestionPhase.IDENTIFYING_BC,
+                            message=f"BC {bc_name}: {linked_count}개 User Story 연결 완료 ({failed_count}개 실패, {skipped_count}개 스킵)",
+                            progress=PHASE_END - 1,
+                            data={
+                                "type": "BoundedContext",
+                                "bc_name": bc_name,
+                                "linked_count": linked_count,
+                                "failed_count": failed_count,
+                                "skipped_count": skipped_count,
+                            },
+                        )
     
     # 모든 BC 생성 및 연결 완료 후, 여전히 unassigned 상태인 User Story 확인
     with ctx.client.session() as session:

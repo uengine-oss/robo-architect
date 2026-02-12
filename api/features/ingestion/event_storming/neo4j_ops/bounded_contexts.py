@@ -22,6 +22,7 @@ class BoundedContextOps:
             description: bc.description,
             owner: bc.owner,
             domainType: bc.domainType,
+            userStoryIds: bc.userStoryIds,
             aggregates: aggregates
         } as bounded_context
         ORDER BY bounded_context.name
@@ -38,6 +39,7 @@ class BoundedContextOps:
         description: str | None = None,
         owner: str | None = None,
         domain_type: str | None = None,
+        user_story_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a new bounded context."""
         key = key or bc_key(name)
@@ -50,34 +52,48 @@ class BoundedContextOps:
             bc.description = $description,
             bc.owner = $owner,
             bc.domainType = $domain_type,
+            bc.userStoryIds = $user_story_ids,
             bc.updatedAt = datetime()
-        RETURN bc {.id, .key, .name, .description, .owner, .domainType} as bounded_context
+        RETURN bc {.id, .key, .name, .description, .owner, .domainType, .userStoryIds} as bounded_context
         """
         with self.session() as session:
-            result = session.run(query, key=key, name=name, description=description, owner=owner, domain_type=domain_type)
+            result = session.run(query, key=key, name=name, description=description, owner=owner, domain_type=domain_type, user_story_ids=user_story_ids or [])
             return dict(result.single()["bounded_context"])
 
     def link_user_story_to_bc(self, user_story_id: str, bc_id: str, confidence: float = 0.9) -> tuple[bool, dict[str, Any] | None]:
         """
         Link a user story to a bounded context via IMPLEMENTS relationship.
+        Also updates the BC node's userStoryIds array property.
         
         Returns:
             (success: bool, diagnostic: dict | None)
             - success: True if link was created, False otherwise
             - diagnostic: If False, contains diagnostic info about why it failed
         """
-        query = """
+        # First, create the relationship
+        create_query = """
         MATCH (us:UserStory {id: $user_story_id})
         MATCH (bc:BoundedContext {id: $bc_id})
         MERGE (us)-[r:IMPLEMENTS]->(bc)
         SET r.confidence = $confidence,
             r.createdAt = datetime()
-        RETURN us.id, bc.id
+        RETURN us.id as us_id, bc.id as bc_id
         """
+        
+        # Then, update BC's userStoryIds array
+        update_query = """
+        MATCH (bc:BoundedContext {id: $bc_id})<-[:IMPLEMENTS]-(linked_us:UserStory)
+        WITH bc, collect(DISTINCT linked_us.id) as all_us_ids
+        SET bc.userStoryIds = all_us_ids,
+            bc.updatedAt = datetime()
+        RETURN bc.id, all_us_ids
+        """
+        
         with self.session() as session:
-            result = session.run(query, user_story_id=user_story_id, bc_id=bc_id, confidence=confidence)
-            record = result.single()
-            if record is None:
+            # Create the relationship first
+            create_result = session.run(create_query, user_story_id=user_story_id, bc_id=bc_id, confidence=confidence)
+            create_record = create_result.single()
+            if create_record is None:
                 # 진단: 왜 실패했는지 확인
                 us_exists = session.run("MATCH (us:UserStory {id: $user_story_id}) RETURN us.id", user_story_id=user_story_id).single()
                 bc_exists = session.run("MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.id", bc_id=bc_id).single()
@@ -87,6 +103,11 @@ class BoundedContextOps:
                     "user_story_id": user_story_id,
                     "bc_id": bc_id,
                 }
+            
+            # Update BC's userStoryIds array
+            update_result = session.run(update_query, bc_id=bc_id)
+            update_record = update_result.single()
+            
             return True, None
 
 
