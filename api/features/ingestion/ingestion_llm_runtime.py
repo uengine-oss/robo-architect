@@ -12,11 +12,14 @@ from api.platform.llm import get_llm as _platform_get_llm
 from api.platform.observability.smart_logger import SmartLogger
 
 
-def get_llm():
+def get_llm(**kwargs):
     """Get configured LLM instance."""
     provider, model = get_llm_provider_model()
-    SmartLogger.log("INFO", "LLM configured", category="ingestion.llm", params={"provider": provider, "model": model})
+    log_params = {"provider": provider, "model": model}
+    if kwargs:
+        log_params.update(kwargs)
+    SmartLogger.log("INFO", "LLM configured", category="ingestion.llm", params=log_params)
 
-    return _platform_get_llm()
+    return _platform_get_llm(**kwargs)
 
 

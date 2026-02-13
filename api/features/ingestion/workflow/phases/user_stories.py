@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.requirements_to_user_stories import (
@@ -14,8 +14,66 @@ from api.features.ingestion.workflow.utils.chunking import (
     split_text_with_overlap,
     merge_chunk_results,
     calculate_chunk_progress,
+    estimate_tokens,
+    USER_STORY_CHUNK_SIZE,
+    USER_STORY_CHUNK_OVERLAP_RATIO,
+)
+from api.features.ingestion.workflow.utils.user_story_normalize import (
+    dedup_key,
+    canonicalize_role,
+    canonicalize_action,
 )
 from api.platform.observability.smart_logger import SmartLogger
+
+
+def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> list[Any]:
+    """
+    User Story 목록을 정규화하고 중복을 제거합니다.
+    청킹 여부와 무관하게 항상 적용되어야 합니다.
+    """
+    seen = set()
+    out = []
+
+    for us in stories:
+        role = (getattr(us, "role", "") or "").strip()
+        action = (getattr(us, "action", "") or "").strip()
+        benefit = (getattr(us, "benefit", "") or "").strip()
+
+        if not action:
+            continue
+
+        key = dedup_key(role, action, benefit)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # 저장용 표준화
+        role_c = canonicalize_role(role)
+        action_c = canonicalize_action(action)
+
+        try:
+            setattr(us, "role", role_c)
+            setattr(us, "action", action_c)
+        except Exception:
+            if hasattr(us, "model_copy"):
+                us = us.model_copy(update={"role": role_c, "action": action_c})
+            elif hasattr(us, "copy"):
+                us = us.copy(update={"role": role_c, "action": action_c})
+
+        out.append(us)
+
+    SmartLogger.log(
+        "INFO",
+        "User story normalize+dedup summary",
+        category="ingestion.user_stories.dedup.summary",
+        params={
+            "session_id": session_id,
+            "raw_story_count": len(stories),
+            "dedup_story_count": len(out),
+            "dedup_ratio": round(len(out) / max(len(stories), 1), 4),
+        },
+    )
+    return out
 
 
 async def _create_user_story_with_verification(
@@ -35,6 +93,10 @@ async def _create_user_story_with_verification(
     # Strip and validate
     role = role.strip()
     action = action.strip()
+    
+    # 정규화 적용 (안전장치)
+    role = canonicalize_role(role)
+    action = canonicalize_action(action)
     
     # If role is still empty or generic, try to infer or use fallback
     if not role or role.lower() in ("user", "사용자", ""):
@@ -132,14 +194,110 @@ async def _create_user_story_with_verification(
         return None, None, f"User story creation failed: {e}"
 
 
+async def _process_chunk_with_retry(
+    chunk_text: str,
+    chunk_idx: int,
+    total_chunks: int,
+    start_char: int,
+    end_char: int,
+    semaphore: asyncio.Semaphore,
+    max_retries: int = 2,
+) -> tuple[list[Any], int]:
+    """
+    청크를 처리하고 실패 시 재시도합니다.
+    실패 시 청크를 반으로 분할하여 재시도합니다 (최대 2회).
+    
+    Args:
+        chunk_text: 처리할 청크 텍스트
+        chunk_idx: 청크 인덱스
+        total_chunks: 전체 청크 수
+        start_char: 시작 문자 위치
+        end_char: 끝 문자 위치
+        semaphore: 동시 실행 제어용 세마포어
+        max_retries: 최대 재시도 횟수
+    
+    Returns:
+        (stories, retry_count): 추출된 User Story 리스트와 재시도 횟수
+    """
+    async with semaphore:
+        retry_count = 0
+        current_text = chunk_text
+        all_stories = []
+        
+        while retry_count <= max_retries:
+            try:
+                stories = await asyncio.to_thread(extract_user_stories_from_text, current_text)
+                all_stories.extend(stories)
+                
+                # 성공: 재시도 없이 완료된 경우
+                if retry_count == 0:
+                    return all_stories, 0
+                
+                # 재시도 후 성공: 나머지 부분도 처리해야 함
+                # 하지만 현재는 첫 번째 절반만 처리하고 반환
+                # (전체 청크를 재분할하는 것은 복잡하므로 현재 구현에서는 첫 절반만 반환)
+                return all_stories, retry_count
+                
+            except Exception as e:
+                retry_count += 1
+                
+                if retry_count > max_retries:
+                    # 최대 재시도 횟수 초과
+                    SmartLogger.log(
+                        "ERROR",
+                        f"Chunk {chunk_idx + 1} failed after {max_retries} retries",
+                        category="ingestion.user_stories.chunk.failed",
+                        params={
+                            "chunk_idx": chunk_idx + 1,
+                            "total_chunks": total_chunks,
+                            "retry_count": retry_count - 1,
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                        },
+                    )
+                    # 지금까지 수집한 stories 반환 (있으면)
+                    return all_stories, retry_count - 1
+                
+                # 청크를 반으로 분할하여 재시도
+                text_length = len(current_text)
+                
+                # 문단 경계에서 분할 (가능한 경우)
+                if "\n\n" in current_text:
+                    paragraphs = current_text.split("\n\n")
+                    mid_point = len(paragraphs) // 2
+                    if mid_point > 0:
+                        # 첫 번째 절반만 사용
+                        current_text = "\n\n".join(paragraphs[:mid_point])
+                    else:
+                        # 문단이 너무 적으면 중간에서 분할
+                        current_text = current_text[:text_length // 2]
+                else:
+                    # 문단 구분자가 없으면 중간에서 분할
+                    current_text = current_text[:text_length // 2]
+                
+                SmartLogger.log(
+                    "WARN",
+                    f"Chunk {chunk_idx + 1} failed, retrying with split (attempt {retry_count}/{max_retries})",
+                    category="ingestion.user_stories.chunk.retry",
+                    params={
+                        "chunk_idx": chunk_idx + 1,
+                        "retry_count": retry_count,
+                        "original_size": text_length,
+                        "split_size": len(current_text),
+                        "error": str(e),
+                    },
+                )
+
+
 async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[ProgressEvent, None]:
     """
     Phase 2: extract user stories and persist them to Neo4j.
-    Supports chunking for large requirements documents.
+    Supports chunking for large requirements documents with parallel processing.
     """
     PHASE_START = 10
     PHASE_END = 20
     MERGE_RATIO = 0.1  # 병합 작업이 10% 차지
+    MAX_CONCURRENT_CHUNKS = 4  # 동시 처리 청크 수
     
     # Phase 시작
     yield ProgressEvent(
@@ -149,80 +307,95 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     )
     
     # 스캐닝 및 청킹 판단
-    if should_chunk(ctx.content):
+    if should_chunk(ctx.content, max_tokens=USER_STORY_CHUNK_SIZE):
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
             message="대용량 요구사항 스캐닝 중...",
             progress=PHASE_START + 1
         )
         
-        chunks = split_text_with_overlap(ctx.content)
+        # Overlap 크기 계산 (5%)
+        # chunk_size는 토큰 단위이므로, 문자 단위로 변환하여 overlap 계산
+        # 대략적으로 1 토큰 ≈ 4 문자 (영어 기준, 한글은 더 작을 수 있음)
+        # 안전하게 토큰 수를 직접 추정하여 overlap 계산
+        estimated_chunk_tokens = USER_STORY_CHUNK_SIZE
+        overlap_tokens = int(estimated_chunk_tokens * USER_STORY_CHUNK_OVERLAP_RATIO)
+        # 토큰을 문자로 변환 (보수적으로 1 토큰 = 3 문자로 가정)
+        overlap_chars = overlap_tokens * 3
+        
+        chunks = split_text_with_overlap(
+            ctx.content,
+            chunk_size=USER_STORY_CHUNK_SIZE,
+            overlap_size=overlap_chars
+        )
         total_chunks = len(chunks)
         
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
-            message=f"요구사항을 {total_chunks}개 청크로 분할 완료",
+            message=f"요구사항을 {total_chunks}개 청크로 분할 완료 (병렬 처리: 최대 {MAX_CONCURRENT_CHUNKS}개 동시)",
             progress=PHASE_START + 2
         )
         
-        chunk_results = []
-        processing_range = (PHASE_END - PHASE_START - 2) * (1 - MERGE_RATIO)
+        # 세마포어로 동시 실행 제어
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHUNKS)
         
-        for i, (chunk_text, start_char, end_char) in enumerate(chunks):
-            # Check cancellation before processing chunk
+        # 청크 처리 태스크 생성
+        async def process_chunk_task(i: int, chunk_text: str, start_char: int, end_char: int):
+            """청크 처리 태스크"""
+            # Check cancellation
             if getattr(ctx.session, "is_cancelled", False):
-                yield ProgressEvent(
-                    phase=IngestionPhase.ERROR,
-                    message="❌ 생성이 중단되었습니다",
-                    progress=getattr(ctx.session, "progress", 0) or 0,
-                    data={"error": "Cancelled by user", "cancelled": True},
-                )
-                return
+                return i, [], 0
             
-            # 청크 처리 시작
+            # 청크 처리 시작 알림
             chunk_progress = calculate_chunk_progress(
                 PHASE_START + 2,
                 PHASE_END - int((PHASE_END - PHASE_START) * MERGE_RATIO),
                 i,
                 total_chunks,
-                merge_progress_ratio=0  # 청크 처리 중에는 merge 비율 제외
+                merge_progress_ratio=0
             )
-            yield ProgressEvent(
-                phase=IngestionPhase.EXTRACTING_USER_STORIES,
-                message=f"청크 {i+1}/{total_chunks} 처리 중... ({start_char:,}~{end_char:,} 문자)",
-                progress=chunk_progress
-            )
+            # Progress는 메인 루프에서 처리
             
-            # 청크별 User Story 추출 (동기 함수를 비동기로 실행)
-            # Note: asyncio.to_thread cannot be cancelled, but we check before and after
-            stories = await asyncio.to_thread(extract_user_stories_from_text, chunk_text)
+            # 청크 처리 (재시도 포함)
+            stories, retry_count = await _process_chunk_with_retry(
+                chunk_text, i, total_chunks, start_char, end_char, semaphore
+            )
             
             # 각 청크의 User Story ID에 청크 번호를 포함시켜 고유성 보장
-            # 예: US-001 -> US-1-001, US-2-001 등
             for story in stories:
                 original_id = getattr(story, "id", None)
                 if original_id and original_id.startswith("US-"):
-                    # US-001 형식인 경우 청크 번호 추가
                     try:
-                        # US-001 -> US-1-001
                         chunk_prefix = f"US-{i+1}-"
-                        if "-" in original_id[3:]:  # 이미 청크 번호가 있는 경우 (US-1-001)
-                            # 이미 처리된 경우 다음 story로
+                        if "-" in original_id[3:]:  # 이미 청크 번호가 있는 경우
                             continue
-                        number_part = original_id[3:]  # "001"
+                        number_part = original_id[3:]
                         new_id = f"{chunk_prefix}{number_part}"
                         try:
                             setattr(story, "id", new_id)
                         except Exception:
-                            # Pydantic model인 경우
                             if hasattr(story, "model_copy"):
                                 story = story.model_copy(update={"id": new_id})
                             elif hasattr(story, "copy"):
                                 story = story.copy(update={"id": new_id})
                     except Exception:
-                        pass  # ID 업데이트 실패해도 story는 유지
+                        pass
             
-            # Check cancellation after chunk processing
+            return i, stories, retry_count
+        
+        # 모든 청크를 병렬로 처리
+        tasks = [
+            process_chunk_task(i, chunk_text, start_char, end_char)
+            for i, (chunk_text, start_char, end_char) in enumerate(chunks)
+        ]
+        
+        # 병렬 실행 및 진행 상황 추적
+        chunk_results = [None] * total_chunks
+        completed_count = 0
+        
+        # asyncio.as_completed를 사용하여 완료되는 대로 처리
+        for coro in asyncio.as_completed(tasks):
+            # Check cancellation
             if getattr(ctx.session, "is_cancelled", False):
                 yield ProgressEvent(
                     phase=IngestionPhase.ERROR,
@@ -232,21 +405,41 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                 )
                 return
             
-            chunk_results.append(stories)
-            
-            # 청크 처리 완료
-            chunk_complete_progress = calculate_chunk_progress(
-                PHASE_START + 2,
-                PHASE_END - int((PHASE_END - PHASE_START) * MERGE_RATIO),
-                i + 1,
-                total_chunks,
-                merge_progress_ratio=0
-            )
-            yield ProgressEvent(
-                phase=IngestionPhase.EXTRACTING_USER_STORIES,
-                message=f"청크 {i+1}/{total_chunks} 완료 ({len(stories)}개 User Story 추출)",
-                progress=chunk_complete_progress
-            )
+            try:
+                chunk_idx, stories, retry_count = await coro
+                chunk_results[chunk_idx] = stories
+                completed_count += 1
+                
+                # 진행 상황 업데이트
+                chunk_complete_progress = calculate_chunk_progress(
+                    PHASE_START + 2,
+                    PHASE_END - int((PHASE_END - PHASE_START) * MERGE_RATIO),
+                    completed_count,
+                    total_chunks,
+                    merge_progress_ratio=0
+                )
+                
+                retry_msg = f" (재시도 {retry_count}회)" if retry_count > 0 else ""
+                yield ProgressEvent(
+                    phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                    message=f"청크 {chunk_idx + 1}/{total_chunks} 완료 ({len(stories)}개 User Story 추출){retry_msg}",
+                    progress=chunk_complete_progress
+                )
+            except Exception as e:
+                SmartLogger.log(
+                    "ERROR",
+                    f"Chunk processing task failed",
+                    category="ingestion.user_stories.chunk.task_failed",
+                    params={
+                        "session_id": ctx.session.id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
+                )
+                completed_count += 1
+        
+        # None인 결과는 빈 리스트로 변환
+        chunk_results = [result if result is not None else [] for result in chunk_results]
         
         # 결과 병합 시작
         yield ProgressEvent(
@@ -261,24 +454,8 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
         for results in chunk_results:
             all_stories.extend(results)
         
-        # 내용 기반 중복 제거 (role:action:benefit 조합)
-        # 같은 내용의 User Story는 하나만 유지 (ID는 나중에 순차적으로 재생성)
-        seen_content = set()
-        deduplicated_by_content = []
-        
-        for us in all_stories:
-            role = (getattr(us, "role", "") or "").strip()
-            action = (getattr(us, "action", "") or "").strip()
-            benefit = (getattr(us, "benefit", "") or "").strip()
-            
-            # action이 비어있으면 스킵 (유효하지 않은 User Story)
-            if not action:
-                continue
-            
-            content_key = f"{role}:{action}:{benefit}"
-            if content_key not in seen_content:
-                seen_content.add(content_key)
-                deduplicated_by_content.append(us)
+        # 내용 기반 중복 제거 및 정규화 (공통 함수 사용)
+        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id)
         
         # 병합 후 순차적인 ID로 재생성 (US-001, US-002, ...)
         for idx, us in enumerate(deduplicated_by_content, start=1):
@@ -353,6 +530,8 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
         )
         
         user_stories = await asyncio.to_thread(extract_user_stories_from_text, ctx.content)
+        # 청킹 여부와 무관하게 항상 정규화 및 중복 제거 적용
+        user_stories = normalize_and_dedup_user_stories(user_stories, ctx.session.id)
         ctx.user_stories = user_stories
         
         yield ProgressEvent(

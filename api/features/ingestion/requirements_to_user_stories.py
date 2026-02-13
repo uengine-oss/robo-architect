@@ -30,34 +30,50 @@ EXTRACT_USER_STORIES_PROMPT = """분석할 요구사항 문서:
 
 위 요구사항을 분석하여 User Story 목록을 추출하세요.
 
+★ **CRITICAL - 기능 분해 원칙 (매우 중요, 반드시 준수):**
+1. **모든 기능을 개별 User Story로 변환**: 하나의 요구사항에 여러 기능이 나열되어 있으면, 반드시 각 기능을 별도의 User Story로 만들어야 합니다.
+   - 요구사항 문서의 구조를 분석하여 기능 목록, 상세 항목, 하위 요구사항 등을 식별하세요
+   - 각 기능은 반드시 독립적인 User Story가 되어야 합니다
+   - **절대로 여러 기능을 하나의 User Story로 합치지 마세요**
+   - **절대로 기능을 요약하거나 통합하지 마세요**
+   
+2. **단일 기능 원칙**: 각 User Story는 하나의 명확한 기능만 포함해야 합니다.
+   - 여러 기능을 하나의 User Story로 합치지 마세요
+   - 각 기능은 별도의 역할(role)과 액션(action)을 가져야 합니다
+   - 예: "사용자 앱은 주문을 생성하고, 매장 시스템은 주문을 수신한다" → 이는 2개의 별도 User Story여야 합니다
+
 지침:
-1. 각 기능/요구사항을 독립적인 User Story로 변환
+1. 각 기능을 독립적인 User Story로 변환
 2. "As a [role], I want to [action], so that [benefit]" 형식 사용
-3. **역할(role)은 반드시 구체적으로 명시해야 합니다** (customer, seller, admin, system, manager, operator 등). 
-   - **CRITICAL**: role 필드는 절대 빈 문자열("")이거나 공백만 있어서는 안 됩니다. 반드시 구체적인 역할을 제공하세요.
-   - "user", "사용자", 빈 문자열("")은 사용할 수 없습니다. 항상 구체적인 역할을 사용하세요.
-   - 요구사항에서 명확한 역할이 없으면, 문맥을 분석하여 가장 적절한 역할을 추론하세요:
-     * 주문/구매/결제 관련 → "customer"
-     * 판매/상품 관리 → "seller" 또는 "merchant"
-     * 관리/승인/설정 → "admin" 또는 "manager"
-     * 시스템 자동화/배치 → "system"
-     * 배송/운송 → "delivery_driver"
-     * 재고/창고 → "warehouse_manager"
-   - 예시: "user" ❌ → "customer" ✅, "사용자" ❌ → "customer" 또는 "seller" ✅
-4. 액션(action)은 명확한 동사로 시작하며 빈 값이 되어서는 안 됩니다.
-5. 이점(benefit)은 비즈니스 가치 설명 (선택 사항이지만 가능한 한 제공하세요).
+3. **역할(role)은 반드시 구체적으로 명시해야 합니다**
+   - **CRITICAL**: role 필드는 절대 빈 문자열("")이거나 공백만 있어서는 안 됩니다
+   - "user", "사용자" 같은 일반적인 용어는 사용하지 마세요. 문맥을 분석하여 구체적인 역할을 추론하세요
+   - 예: customer, seller, merchant, admin, manager, system, delivery_driver, operator 등
+4. 액션(action)은 명확한 동사로 시작하며 빈 값이 되어서는 안 됩니다
+5. 이점(benefit)은 비즈니스 가치 설명 (선택 사항이지만 가능한 한 제공하세요)
 6. 우선순위는 핵심 기능은 high, 부가 기능은 medium, 선택 기능은 low
 
-★ UI 요구사항 처리 (중요):
-- 요구사항에 "UI:", "화면", "페이지", "폼", "입력", "버튼", "인터페이스" 등 UI 관련 설명이 있으면
-  해당 설명을 ui_description 필드에 저장하세요.
-- 예시: ui_description="주문 화면에서 상품명, 수량, 배송지 주소를 입력하고 '주문하기' 버튼을 클릭한다"
-- UI 설명이 명시되지 않아도 ui_description은 반드시 작성하세요(빈 문자열 금지).
-  - 역할(role)과 액션(action), 그리고 요구사항 문맥을 근거로 해당 기능을 수행하기 위한 최소 화면/입력/버튼/상태를 1문장 이상으로 추론해 작성하세요.
-  - 과도한 추측(없는 기능 추가)은 피하고, 요구사항에 근거한 범위에서만 구체화하세요.
+★ UI 요구사항 처리:
+- 요구사항에 UI 관련 설명이 있으면 ui_description 필드에 저장하세요
+- UI 설명이 없어도 ui_description은 반드시 작성하세요(빈 문자열 금지)
+  - **중요: ui_description은 반드시 1문장으로 간단하게 작성하세요**
+  - 역할(role)과 액션(action), 그리고 요구사항 문맥을 근거로 해당 기능을 수행하기 위한 최소 화면/입력/버튼/상태를 1문장으로 요약하세요
+  - 과도한 추측은 피하고, 요구사항에 근거한 범위에서만 구체화하세요
+  - 예: "주문 화면에서 상품을 선택하고 주문하기 버튼을 클릭한다"
 
 User Story ID는 US-001, US-002 형식으로 순차적으로 부여하세요.
-모든 주요 기능을 빠짐없이 User Story로 추출하세요.
+
+★ **CRITICAL - 완전성 원칙 (절대 준수):**
+- **모든 기능을 빠짐없이 개별 User Story로 추출하세요**
+- **요약하거나 통합하지 마세요**
+- **생략하지 마세요**
+- 요구사항 문서에 나열된 모든 기능이 User Story로 변환되어야 합니다
+- 예를 들어, 요구사항에 10개의 기능이 나열되어 있으면 반드시 10개의 User Story를 생성해야 합니다
+
+★ **출력 제한 처리 (중요)**:
+- 출력 토큰 제한에 도달할 수 있는 경우, 가능한 한 많은 User Story를 생성하되
+- 모든 요구사항을 처리하지 못했다면, 다음 청크에서 나머지를 계속 처리할 것입니다.
+- 각 청크에서 처리 가능한 모든 기능을 빠짐없이 User Story로 추출하세요.
 """
 
 
@@ -65,19 +81,12 @@ def _fallback_ui_description(role: str | None, action: str | None, benefit: str 
     """
     Deterministic minimal UI description to avoid empty ui_description.
     Keep it short to reduce side effects on downstream prompt size.
+    Returns a single sentence description.
     """
     role_part = (role or "").strip() or "사용자"
     action_part = (action or "").strip() or "해당 작업"
-    benefit_part = (benefit or "").strip()
-    if benefit_part:
-        return (
-            f"{role_part}가 {action_part}을(를) 수행해 {benefit_part}을(를) 달성할 수 있도록, "
-            "입력 폼/필수 필드, 주요 버튼(확인/저장), 성공·오류 상태를 포함한 화면을 제공한다."
-        )
-    return (
-        f"{role_part}가 {action_part}을(를) 수행할 수 있도록, "
-        "입력 폼/필수 필드, 주요 버튼(확인/저장), 성공·오류 상태를 포함한 화면을 제공한다."
-    )
+    # 1문장으로 간단하게 작성
+    return f"{role_part}가 {action_part}을(를) 수행할 수 있는 화면을 제공한다."
 
 
 def ensure_nonempty_ui_description(role: str | None, action: str | None, benefit: str | None, ui_description: str | None) -> str:
@@ -89,12 +98,22 @@ def ensure_nonempty_ui_description(role: str | None, action: str | None, benefit
 
 def extract_user_stories_from_text(text: str) -> list[GeneratedUserStory]:
     """Extract user stories from text using LLM."""
-    llm = get_llm()
+    # max_tokens를 명시적으로 설정하여 출력 제한 방지
+    # 입력 14k + 시스템/프롬프트 3k + 출력 32k = 총 49k (128k 제한 내, 안전)
+    # 모델 최대 completion tokens: 32,768
+    llm = get_llm(max_tokens=32768)
     structured_llm = llm.with_structured_output(UserStoryList)
 
     system_prompt = """당신은 도메인 주도 설계(DDD) 전문가입니다. 
 요구사항을 User Story로 변환하는 작업을 수행합니다.
-User Story는 명확하고 테스트 가능해야 합니다."""
+
+**CRITICAL 원칙 (절대 준수):**
+1. **각 기능을 반드시 개별 User Story로 변환하세요.** 여러 기능을 하나의 User Story로 합치지 마세요.
+2. **요구사항 문서의 구조를 분석하여 모든 기능을 식별하고 개별 User Story로 변환하세요.**
+3. **User Story는 명확하고 테스트 가능해야 하며, 각 Story는 하나의 기능만 포함해야 합니다.**
+4. **요구사항에 나열된 모든 기능을 빠짐없이 User Story로 추출하세요. 요약하거나 통합하거나 생략하지 마세요.**
+5. **요구사항에 100개의 기능이 나열되어 있으면 반드시 100개의 User Story를 생성해야 합니다.**
+"""
 
     # 청킹 단계에서 이미 토큰 제한을 고려한 적절한 크기로 나뉘었으므로,
     # 여기서는 전체 텍스트를 모두 사용해야 함

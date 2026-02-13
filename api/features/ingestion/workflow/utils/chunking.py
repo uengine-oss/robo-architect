@@ -15,6 +15,14 @@ DEFAULT_MAX_TOKENS = 100000  # 입력용 (출력 제외)
 DEFAULT_CHUNK_SIZE = 80000   # 실제 청크 크기 (안전 마진 포함)
 DEFAULT_OVERLAP_SIZE = 2000  # Overlapping 크기 (문자 단위)
 
+# User Story 추출용 청크 크기 (출력 토큰 제한 고려)
+# User Story는 출력이 많을 수 있으므로 입력 청크를 적절히 설정
+# 입력 14k + 시스템/프롬프트 3k + 출력 16k = 총 33k (128k 제한 내, 안전)
+# 각 User Story가 평균 200 토큰이라면, 청크당 최대 80개 생성 가능
+# overlap: 5% (청크 크기의 5%)
+USER_STORY_CHUNK_SIZE = 14000  # User Story 추출용 청크 크기 (12k~16k 범위 중간값)
+USER_STORY_CHUNK_OVERLAP_RATIO = 0.05  # 5% overlap
+
 
 def estimate_tokens(text: str, model: str = "gpt-4") -> int:
     """
