@@ -79,7 +79,7 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
       id: generateId(),
       type: 'user',
       content,
-      selectedNodes: selectedNodes.map(n => ({
+      selectedNodes: nodes.map(n => ({
         id: n.id,
         name: n.data?.name || n.data?.label,
         type: n.data?.type || n.type
@@ -158,27 +158,37 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     }
     messages.value.push(assistantMessage)
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      buffer += decoder.decode(value, { stream: true })
+        buffer += decoder.decode(value, { stream: true })
 
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const data = line.slice(6)
-        if (data === '[DONE]') continue
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6)
+          if (data === '[DONE]') continue
 
-        try {
-          const event = JSON.parse(data)
-          handleStreamEvent(event, assistantMessage)
-        } catch (e) {
-          // ignore non-json events
+          try {
+            const event = JSON.parse(data)
+            handleStreamEvent(event, assistantMessage)
+          } catch (e) {
+            // ignore non-json events
+            console.warn('Failed to parse SSE event:', e, 'data:', data)
+          }
         }
       }
+    } catch (e) {
+      // Handle stream reading errors
+      assistantMessage.content = `❌ 스트림 읽기 오류: ${e.message || '알 수 없는 오류가 발생했습니다.'}`
+      assistantMessage.isComplete = true
+      assistantMessage.hasError = true
+      error.value = e.message || '스트림 읽기 오류'
+      console.error('SSE stream error:', e)
     }
 
     updateLastAssistantMessage(assistantMessage)
@@ -282,6 +292,13 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
         if (assistantMessage.changes?.length) {
           canvasStore.syncAfterChanges(assistantMessage.changes)
         }
+        break
+
+      case 'error':
+        assistantMessage.content = `❌ 오류: ${event.message || '알 수 없는 오류가 발생했습니다.'}`
+        assistantMessage.isComplete = true
+        assistantMessage.hasError = true
+        error.value = event.message || '알 수 없는 오류가 발생했습니다.'
         break
 
       case 'error':

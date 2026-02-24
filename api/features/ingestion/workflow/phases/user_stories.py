@@ -62,9 +62,16 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> lis
 
         out.append(us)
 
+    # 진단을 위한 표준 출력 (dedup 분석)
+    dedup_info = (
+        f"[DEDUP DEBUG] raw={len(stories)}, dedup={len(out)}, "
+        f"ratio={round(len(out) / max(len(stories), 1), 4):.2%}"
+    )
+    print(dedup_info)
+    
     SmartLogger.log(
         "INFO",
-        "User story normalize+dedup summary",
+        f"User story normalize+dedup summary - {dedup_info}",
         category="ingestion.user_stories.dedup.summary",
         params={
             "session_id": session_id,
@@ -205,7 +212,7 @@ async def _process_chunk_with_retry(
 ) -> tuple[list[Any], int]:
     """
     청크를 처리하고 실패 시 재시도합니다.
-    실패 시 청크를 반으로 분할하여 재시도합니다 (최대 2회).
+    실패 시 청크를 반으로 분할하여 양쪽 모두 처리합니다 (최대 2회).
     
     Args:
         chunk_text: 처리할 청크 텍스트
@@ -219,74 +226,124 @@ async def _process_chunk_with_retry(
     Returns:
         (stories, retry_count): 추출된 User Story 리스트와 재시도 횟수
     """
-    async with semaphore:
-        retry_count = 0
-        current_text = chunk_text
-        all_stories = []
+    async def _process_text_recursive(text: str, depth: int = 0) -> tuple[list[Any], int]:
+        """
+        재귀적으로 텍스트를 처리합니다.
+        실패 시 반으로 분할하여 양쪽 모두 처리합니다.
+        """
+        if depth > max_retries:
+            SmartLogger.log(
+                "ERROR",
+                f"Chunk {chunk_idx + 1} failed after {max_retries} recursive splits",
+                category="ingestion.user_stories.chunk.failed",
+                params={
+                    "chunk_idx": chunk_idx + 1,
+                    "total_chunks": total_chunks,
+                    "depth": depth,
+                    "text_length": len(text),
+                },
+            )
+            return [], depth
         
-        while retry_count <= max_retries:
-            try:
-                stories = await asyncio.to_thread(extract_user_stories_from_text, current_text)
-                all_stories.extend(stories)
-                
-                # 성공: 재시도 없이 완료된 경우
-                if retry_count == 0:
-                    return all_stories, 0
-                
-                # 재시도 후 성공: 나머지 부분도 처리해야 함
-                # 하지만 현재는 첫 번째 절반만 처리하고 반환
-                # (전체 청크를 재분할하는 것은 복잡하므로 현재 구현에서는 첫 절반만 반환)
-                return all_stories, retry_count
-                
-            except Exception as e:
-                retry_count += 1
-                
-                if retry_count > max_retries:
-                    # 최대 재시도 횟수 초과
-                    SmartLogger.log(
-                        "ERROR",
-                        f"Chunk {chunk_idx + 1} failed after {max_retries} retries",
-                        category="ingestion.user_stories.chunk.failed",
-                        params={
-                            "chunk_idx": chunk_idx + 1,
-                            "total_chunks": total_chunks,
-                            "retry_count": retry_count - 1,
-                            "error": str(e),
-                            "error_type": type(e).__name__,
-                        },
-                    )
-                    # 지금까지 수집한 stories 반환 (있으면)
-                    return all_stories, retry_count - 1
-                
-                # 청크를 반으로 분할하여 재시도
-                text_length = len(current_text)
-                
-                # 문단 경계에서 분할 (가능한 경우)
-                if "\n\n" in current_text:
-                    paragraphs = current_text.split("\n\n")
-                    mid_point = len(paragraphs) // 2
-                    if mid_point > 0:
-                        # 첫 번째 절반만 사용
-                        current_text = "\n\n".join(paragraphs[:mid_point])
-                    else:
-                        # 문단이 너무 적으면 중간에서 분할
-                        current_text = current_text[:text_length // 2]
-                else:
-                    # 문단 구분자가 없으면 중간에서 분할
-                    current_text = current_text[:text_length // 2]
-                
+        try:
+            stories = await asyncio.to_thread(extract_user_stories_from_text, text)
+            
+            # 청크별 상세 로깅 (기준 튜닝을 위한 디버깅 정보)
+            chunk_tokens = estimate_tokens(text)
+            chunk_info = (
+                f"[CHUNK DEBUG] chunk={chunk_idx + 1}/{total_chunks}, "
+                f"tokens={chunk_tokens}, stories={len(stories)}, depth={depth}"
+            )
+            print(chunk_info)
+            SmartLogger.log(
+                "INFO",
+                f"Chunk {chunk_idx + 1} processed: {len(stories)} stories for {chunk_tokens} tokens (depth: {depth})",
+                category="ingestion.user_stories.chunk.processed",
+                params={
+                    "chunk_idx": chunk_idx + 1,
+                    "total_chunks": total_chunks,
+                    "chunk_tokens": chunk_tokens,
+                    "stories_count": len(stories),
+                    "depth": depth,
+                    "text_length": len(text),
+                }
+            )
+            
+            # 불충분 출력 감지: 정상 응답이지만 출력이 너무 적은 경우
+            # 보수적 기준: 1800 토큰 이상인데 6개 미만이면 거의 확실히 이상
+            # (정상 변동 범위를 고려하여 과도한 split 방지)
+            
+            # 1800 토큰 이상인데 6개 미만이면 불충분으로 판단
+            # 이 기준은 정상 변동(10~25개)을 고려하여 매우 보수적으로 설정
+            if chunk_tokens >= 1800 and len(stories) < 6:
+                # 불충분한 출력으로 판단하여 예외 발생 (split 로직 재사용)
                 SmartLogger.log(
                     "WARN",
-                    f"Chunk {chunk_idx + 1} failed, retrying with split (attempt {retry_count}/{max_retries})",
-                    category="ingestion.user_stories.chunk.retry",
+                    f"Chunk {chunk_idx + 1} incomplete output detected: {len(stories)} stories for {chunk_tokens} tokens "
+                    f"(threshold: <6 stories for >=1800 tokens)",
+                    category="ingestion.user_stories.chunk.incomplete_output",
                     params={
                         "chunk_idx": chunk_idx + 1,
-                        "retry_count": retry_count,
-                        "original_size": text_length,
-                        "split_size": len(current_text),
-                        "error": str(e),
-                    },
+                        "total_chunks": total_chunks,
+                        "chunk_tokens": chunk_tokens,
+                        "stories_count": len(stories),
+                        "threshold_tokens": 1800,
+                        "threshold_stories": 6,
+                        "depth": depth,
+                    }
                 )
+                raise RuntimeError(
+                    f"incomplete_output: tokens={chunk_tokens}, stories={len(stories)} "
+                    f"(expected at least 6 stories for {chunk_tokens} tokens)"
+                )
+            
+            return stories, depth
+        except Exception as e:
+            # 실패 시 반으로 분할하여 양쪽 모두 처리
+            text_length = len(text)
+            
+            # 문단 경계에서 분할 (가능한 경우)
+            if "\n\n" in text:
+                paragraphs = text.split("\n\n")
+                mid_point = len(paragraphs) // 2
+                if mid_point > 0:
+                    first_half = "\n\n".join(paragraphs[:mid_point])
+                    second_half = "\n\n".join(paragraphs[mid_point:])
+                else:
+                    # 문단이 너무 적으면 중간에서 분할
+                    first_half = text[:text_length // 2]
+                    second_half = text[text_length // 2:]
+            else:
+                # 문단 구분자가 없으면 중간에서 분할
+                first_half = text[:text_length // 2]
+                second_half = text[text_length // 2:]
+            
+            SmartLogger.log(
+                "WARN",
+                f"Chunk {chunk_idx + 1} failed, splitting and retrying both halves (depth {depth + 1}/{max_retries})",
+                category="ingestion.user_stories.chunk.retry",
+                params={
+                    "chunk_idx": chunk_idx + 1,
+                    "depth": depth + 1,
+                    "original_size": text_length,
+                    "first_half_size": len(first_half),
+                    "second_half_size": len(second_half),
+                    "error": str(e),
+                },
+            )
+            
+            # 양쪽 모두 재귀적으로 처리
+            first_stories, first_depth = await _process_text_recursive(first_half, depth + 1)
+            second_stories, second_depth = await _process_text_recursive(second_half, depth + 1)
+            
+            # 더 깊은 재시도 횟수 반환
+            max_depth = max(first_depth, second_depth)
+            all_stories = first_stories + second_stories
+            
+            return all_stories, max_depth
+    
+    async with semaphore:
+        return await _process_text_recursive(chunk_text, 0)
 
 
 async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[ProgressEvent, None]:
@@ -297,7 +354,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     PHASE_START = 10
     PHASE_END = 20
     MERGE_RATIO = 0.1  # 병합 작업이 10% 차지
-    MAX_CONCURRENT_CHUNKS = 4  # 동시 처리 청크 수
+    MAX_CONCURRENT_CHUNKS = 3  # 동시 처리 청크 수 (출력 안정성 우선, 429 위험 최소화)
     
     # Phase 시작
     yield ProgressEvent(
@@ -307,7 +364,33 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     )
     
     # 스캐닝 및 청킹 판단
-    if should_chunk(ctx.content, max_tokens=USER_STORY_CHUNK_SIZE):
+    content_tokens = estimate_tokens(ctx.content)
+    should_chunk_result = should_chunk(ctx.content, max_tokens=USER_STORY_CHUNK_SIZE)
+    
+    # 디버깅: 청킹 판단 로그 (표준 출력에도 출력)
+    chunking_info = (
+        f"[CHUNKING DEBUG] content_tokens={content_tokens}, "
+        f"threshold={USER_STORY_CHUNK_SIZE}, "
+        f"should_chunk={should_chunk_result}, "
+        f"comparison={content_tokens} > {USER_STORY_CHUNK_SIZE} = {content_tokens > USER_STORY_CHUNK_SIZE}"
+    )
+    print(chunking_info)  # 표준 출력으로도 출력
+    SmartLogger.log(
+        "INFO",
+        f"User Story extraction: chunking decision - {chunking_info}",
+        category="ingestion.user_stories.chunking.decision",
+        params={
+            "session_id": ctx.session.id,
+            "content_length": len(ctx.content),
+            "content_tokens": content_tokens,
+            "chunk_size_threshold": USER_STORY_CHUNK_SIZE,
+            "should_chunk": should_chunk_result,
+            "comparison": f"{content_tokens} > {USER_STORY_CHUNK_SIZE} = {content_tokens > USER_STORY_CHUNK_SIZE}",
+        },
+    )
+    
+    if should_chunk_result:
+        print(f"[CHUNKING DEBUG] Entering chunking path - will split into chunks")
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
             message="대용량 요구사항 스캐닝 중...",
@@ -523,6 +606,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
         )
     else:
         # 기존 로직 (청킹 불필요)
+        print(f"[CHUNKING DEBUG] Entering non-chunking path - processing entire document at once")
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
             message="User Story 추출 중...",

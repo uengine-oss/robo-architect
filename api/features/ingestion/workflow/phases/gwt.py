@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from typing import AsyncGenerator
 
@@ -355,7 +356,67 @@ If no properties are available, only then use empty fieldValues {{}}."""
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
         
-        gwt_test_cases = json.loads(content)
+        # Clean up content: remove control characters, trailing commas, comments, etc.
+        # JSON에서 허용하지 않는 control character 제거
+        # 1. 전체 content에서 control character 제거 (JSON 구조 외부 및 문자열 값 내부 모두)
+        #    단, \n(\x0a), \r(\x0d), \t(\x09)는 유지 (JSON에서 허용)
+        content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', content)
+        
+        # 2. 유니코드 이스케이프 시퀀스 제거 (\u0000-\u001F, 단 \u0009, \u000A, \u000D 제외)
+        #    이스케이프된 control character도 제거
+        content = re.sub(r'\\u000[0-8a-f]|\\u001[0-9a-ce-f]', '', content)
+        
+        # 3. 이스케이프된 control character 제거 (\x00-\x1F 형태)
+        content = re.sub(r'\\x0[0-8a-f]|\\x1[0-9a-ce-f]', '', content)
+        
+        # Remove single-line comments (// ...)
+        content = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
+        # Remove multi-line comments (/* ... */)
+        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+        # Remove trailing commas before closing braces/brackets
+        content = re.sub(r',(\s*[}\]])', r'\1', content)
+        
+        try:
+            gwt_test_cases = json.loads(content)
+        except json.JSONDecodeError as json_err:
+            SmartLogger.log(
+                "WARN",
+                f"Command GWT JSON parse error for {cmd.name}: {json_err}. Content preview: {content[:500]}",
+                category="ingestion.workflow.gwt.command.json_parse_error",
+                params={
+                    "session_id": ctx.session.id,
+                    "command_id": cmd.id,
+                    "command_name": cmd.name,
+                    "error": str(json_err),
+                    "error_line": getattr(json_err, 'lineno', None),
+                    "error_col": getattr(json_err, 'colno', None),
+                    "content_preview": content[:500],
+                    "content_length": len(content),
+                }
+            )
+            # Try to extract JSON from the content more aggressively
+            # Look for JSON array pattern
+            json_match = re.search(r'\[[\s\S]*\]', content)
+            if json_match:
+                try:
+                    # 복구 시도 전에도 control character 제거
+                    recovered_content = json_match.group(0)
+                    recovered_content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', recovered_content)
+                    gwt_test_cases = json.loads(recovered_content)
+                    SmartLogger.log(
+                        "INFO",
+                        f"Command GWT JSON recovered from content for {cmd.name}",
+                        category="ingestion.workflow.gwt.command.json_recovered",
+                        params={
+                            "session_id": ctx.session.id,
+                            "command_name": cmd.name,
+                        }
+                    )
+                except json.JSONDecodeError:
+                    raise json_err
+            else:
+                raise json_err
+        
         if not isinstance(gwt_test_cases, list):
             gwt_test_cases = [gwt_test_cases]
         
@@ -1096,6 +1157,26 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
                     content = content.split("```json")[1].split("```")[0].strip()
                 elif "```" in content:
                     content = content.split("```")[1].split("```")[0].strip()
+                
+                # Clean up content: remove control characters, trailing commas, comments, etc.
+                # JSON에서 허용하지 않는 control character 제거
+                # 1. 전체 content에서 control character 제거 (JSON 구조 외부 및 문자열 값 내부 모두)
+                #    단, \n(\x0a), \r(\x0d), \t(\x09)는 유지 (JSON에서 허용)
+                content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', content)
+                
+                # 2. 유니코드 이스케이프 시퀀스 제거 (\u0000-\u001F, 단 \u0009, \u000A, \u000D 제외)
+                #    이스케이프된 control character도 제거
+                content = re.sub(r'\\u000[0-8a-f]|\\u001[0-9a-ce-f]', '', content)
+                
+                # 3. 이스케이프된 control character 제거 (\x00-\x1F 형태)
+                content = re.sub(r'\\x0[0-8a-f]|\\x1[0-9a-ce-f]', '', content)
+                
+                # Remove single-line comments (// ...)
+                content = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
+                # Remove multi-line comments (/* ... */)
+                content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+                # Remove trailing commas before closing braces/brackets
+                content = re.sub(r',(\s*[}\]])', r'\1', content)
                 
                 try:
                     gwt_test_cases = json.loads(content)

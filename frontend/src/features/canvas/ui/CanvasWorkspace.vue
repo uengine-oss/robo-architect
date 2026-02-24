@@ -602,6 +602,10 @@ function onNodeClick(event) {
 
 function onPaneClick() {
   canvasStore.clearSelection()
+  // 패널이 열려있으면 닫기
+  if (panelMode.value !== 'none') {
+    panelMode.value = 'none'
+  }
 }
 
 function startResizeChat(e) {

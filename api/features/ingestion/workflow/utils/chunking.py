@@ -15,16 +15,19 @@ DEFAULT_MAX_TOKENS = 100000  # 입력용 (출력 제외)
 DEFAULT_CHUNK_SIZE = 80000   # 실제 청크 크기 (안전 마진 포함)
 DEFAULT_OVERLAP_SIZE = 2000  # Overlapping 크기 (문자 단위)
 
-# User Story 추출용 청크 크기 (출력 토큰 제한 고려)
-# User Story는 출력이 많을 수 있으므로 입력 청크를 적절히 설정
-# 입력 14k + 시스템/프롬프트 3k + 출력 16k = 총 33k (128k 제한 내, 안전)
-# 각 User Story가 평균 200 토큰이라면, 청크당 최대 80개 생성 가능
-# overlap: 5% (청크 크기의 5%)
-USER_STORY_CHUNK_SIZE = 14000  # User Story 추출용 청크 크기 (12k~16k 범위 중간값)
+# User Story 추출용 청크 크기 (출력 안정성 기준)
+# 설계 원칙: 출력 안정성을 최우선으로 고려
+# - 모델: gpt-4.1-2025-04-14
+# - completion cap: 32,768 tokens
+# - story 1개당 평균: 300~600 tokens
+# - 한 번의 호출에서 안정적으로 생성 가능: 50~80개 (물리적 상한)
+# - 3k 입력이면 보통 10~25 story 생성 (completion cap 32k에서 안전)
+# - 형식 무관하게 모든 문서에 일관된 청킹 정책 적용
+USER_STORY_CHUNK_SIZE = 3000  # User Story 추출용 청크 크기 (출력 안정성 기준)
 USER_STORY_CHUNK_OVERLAP_RATIO = 0.05  # 5% overlap
 
 
-def estimate_tokens(text: str, model: str = "gpt-4") -> int:
+def estimate_tokens(text: str, model: str = "gpt-4.1-2025-04-14") -> int:
     """
     텍스트의 토큰 수를 추정.
     
@@ -37,10 +40,15 @@ def estimate_tokens(text: str, model: str = "gpt-4") -> int:
     """
     try:
         import tiktoken
-        encoding = tiktoken.encoding_for_model(model)
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+        except KeyError:
+            # 모델을 찾을 수 없는 경우, cl100k_base를 기본 인코딩으로 사용
+            # (GPT-4 계열 모델의 표준 인코딩)
+            encoding = tiktoken.get_encoding("cl100k_base")
         return len(encoding.encode(text))
-    except (ImportError, KeyError):
-        # tiktoken이 없거나 모델을 찾을 수 없는 경우, 대략적인 추정
+    except ImportError:
+        # tiktoken이 없는 경우, 대략적인 추정
         # 일반적으로 1 토큰 ≈ 4 문자 (영어 기준)
         return len(text) // 4
 
