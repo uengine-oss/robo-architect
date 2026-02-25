@@ -79,14 +79,20 @@ function closeBC(event) {
 .bc-container {
   width: 100%;
   height: 100%;
-  background: rgba(40, 42, 54, 0.6);
-  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: var(--color-bc-bg);
+  border: 2px solid var(--color-bc-border);
   border-radius: 16px;
   overflow: visible;
   box-shadow: 
     0 4px 24px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
   transition: height 0.2s ease-out;
+}
+
+:root.theme-light .bc-container {
+  box-shadow: 
+    0 4px 24px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(0, 0, 0, 0.05);
 }
 
 .bc-container--collapsed {
@@ -98,8 +104,8 @@ function closeBC(event) {
   align-items: center;
   justify-content: space-between;
   padding: 12px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--color-bc-border);
+  background: var(--color-bc-header-bg);
   border-radius: 14px 14px 0 0;
 }
 
@@ -111,7 +117,7 @@ function closeBC(event) {
 .bc-container__name {
   font-size: 1rem;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--color-bc-text);
   letter-spacing: 0.02em;
 }
 
@@ -131,14 +137,14 @@ function closeBC(event) {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--color-text-light);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .bc-container__action-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.9);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
 }
 
 .bc-container__action-btn--close:hover {

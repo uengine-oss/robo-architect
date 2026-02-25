@@ -1225,6 +1225,13 @@ function getNodeColor(node) {
   }
   return colors[node.type] || '#909296'
 }
+
+// Canvas pattern color based on theme
+const canvasPatternColor = computed(() => {
+  const root = document.documentElement
+  const isLight = root.classList.contains('theme-light')
+  return isLight ? '#e9ecef' : '#2a2a3a'
+})
 </script>
 
 <template>
@@ -1288,7 +1295,7 @@ function getNodeColor(node) {
           @nodes-change="onNodesChange"
           @node-drag-stop="onNodeDragStop"
         >
-          <Background pattern-color="#2a2a3a" :gap="20" />
+          <Background :pattern-color="canvasPatternColor" :gap="20" />
           <MiniMap 
             :node-color="getNodeColor"
             :node-stroke-width="3"
@@ -1411,7 +1418,7 @@ function getNodeColor(node) {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #1e1e2e;
+  background: var(--color-canvas-bg);
   position: relative;
   overflow: hidden;
 }
@@ -1554,7 +1561,7 @@ function getNodeColor(node) {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #252836;
+  background: var(--color-bg-secondary);
   overflow-y: auto;
 }
 

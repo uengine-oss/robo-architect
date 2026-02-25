@@ -1152,10 +1152,14 @@ function getSwimlaneY(laneIndex) {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(145deg, #13141a 0%, #1a1b26 50%, #1e1f2e 100%);
+  background: var(--color-canvas-bg);
   position: relative;
   overflow: hidden;
   user-select: none;
+}
+
+:root.theme-dark .bp-main-content {
+  background: linear-gradient(145deg, #13141a 0%, #1a1b26 50%, #1e1f2e 100%);
 }
 
 /* ==========================================

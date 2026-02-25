@@ -317,9 +317,14 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     const msg = messages.value[idx]
     if (!Array.isArray(msg.drafts)) return
 
-    msg.drafts = msg.drafts.map(d => ({ ...d, approved: !!approved }))
-    messages.value[idx] = { ...msg }
-    messages.value = [...messages.value]
+    // Create new drafts array with updated approval status
+    const updatedDrafts = msg.drafts.map(d => ({ ...d, approved: !!approved }))
+    // Create new message object to ensure reactivity
+    const updatedMessage = { ...msg, drafts: updatedDrafts }
+    // Create new messages array to trigger reactivity
+    const newMessages = [...messages.value]
+    newMessages[idx] = updatedMessage
+    messages.value = newMessages
   }
 
   function toggleDraftApproval(messageId, changeId, approved) {
@@ -328,9 +333,16 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     const msg = messages.value[idx]
     if (!Array.isArray(msg.drafts)) return
 
-    msg.drafts = msg.drafts.map(d => (d.changeId === changeId ? { ...d, approved: !!approved } : d))
-    messages.value[idx] = { ...msg }
-    messages.value = [...messages.value]
+    // Create new drafts array with updated approval status for the specific draft
+    const updatedDrafts = msg.drafts.map(d => 
+      d.changeId === changeId ? { ...d, approved: !!approved } : { ...d }
+    )
+    // Create new message object to ensure reactivity
+    const updatedMessage = { ...msg, drafts: updatedDrafts }
+    // Create new messages array to trigger reactivity
+    const newMessages = [...messages.value]
+    newMessages[idx] = updatedMessage
+    messages.value = newMessages
   }
 
   async function confirmDrafts(messageId) {
@@ -392,6 +404,18 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
         content: `적용 완료: ${applied.length}개의 변경사항이 반영되었습니다.`,
         timestamp: new Date().toISOString()
       })
+    } catch (e) {
+      // Handle errors during confirmation
+      const errorMessage = e.message || '알 수 없는 오류가 발생했습니다.'
+      messages.value.push({
+        id: generateId(),
+        type: 'system',
+        content: `❌ 적용 실패: ${errorMessage}`,
+        timestamp: new Date().toISOString(),
+        isError: true
+      })
+      error.value = errorMessage
+      console.error('Failed to confirm drafts:', e)
     } finally {
       isConfirming.value = false
     }

@@ -11,6 +11,7 @@ const canvasStore = useCanvasStore()
 
 const inputText = ref('')
 const messagesContainer = ref(null)
+const isComposing = ref(false)
 
 // Impact details modal state
 const isImpactModalOpen = ref(false)
@@ -84,18 +85,32 @@ function removeChip(nodeId) {
 }
 
 async function sendMessage() {
-  if (!inputText.value.trim() || chatStore.isProcessing) return
-  const message = inputText.value
+  if (!inputText.value.trim() || chatStore.isProcessing || isComposing.value) return
+  
+  // Wait for composition to complete if needed
+  await nextTick()
+  
+  const message = inputText.value.trim()
+  if (!message) return
+  
   inputText.value = ''
   await chatStore.sendMessage(message)
   scrollToBottom()
 }
 
 function handleKeyDown(event) {
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (event.key === 'Enter' && !event.shiftKey && !isComposing.value) {
     event.preventDefault()
     sendMessage()
   }
+}
+
+function handleCompositionStart() {
+  isComposing.value = true
+}
+
+function handleCompositionEnd() {
+  isComposing.value = false
 }
 
 function scrollToBottom() {
@@ -396,6 +411,8 @@ function closeImpactDetails() {
           placeholder="수정 요청을 입력하세요..."
           :disabled="chatStore.isProcessing || selectedChips.length === 0"
           @keydown="handleKeyDown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
           rows="1"
         ></textarea>
         <button
@@ -586,6 +603,9 @@ function closeImpactDetails() {
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--color-text);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
 
 .chat-react-trace {
@@ -640,12 +660,37 @@ function closeImpactDetails() {
 }
 
 .chat-react-step__content {
-  color: var(--color-text-light);
+  color: var(--color-text);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
 
-.chat-react-step--thought .chat-react-step__content { color: #a78bfa; }
-.chat-react-step--action .chat-react-step__content { color: #34d399; }
-.chat-react-step--observation .chat-react-step__content { color: #60a5fa; }
+/* ReAct step colors - adjusted for both dark and light themes */
+.chat-react-step--thought .chat-react-step__content { 
+  color: #8b5cf6; /* Darker purple for better contrast */
+}
+
+.chat-react-step--action .chat-react-step__content { 
+  color: #059669; /* Darker green for better contrast */
+}
+
+.chat-react-step--observation .chat-react-step__content { 
+  color: #0284c7; /* Darker blue for better contrast */
+}
+
+/* Light theme adjustments */
+:root.theme-light .chat-react-step--thought .chat-react-step__content { 
+  color: #7c3aed; /* Even darker purple for light mode */
+}
+
+:root.theme-light .chat-react-step--action .chat-react-step__content { 
+  color: #047857; /* Even darker green for light mode */
+}
+
+:root.theme-light .chat-react-step--observation .chat-react-step__content { 
+  color: #0369a1; /* Even darker blue for light mode */
+}
 
 .chat-changes {
   margin: var(--spacing-sm) 0;

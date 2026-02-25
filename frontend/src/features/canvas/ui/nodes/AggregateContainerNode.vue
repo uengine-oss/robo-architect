@@ -23,8 +23,8 @@ const props = defineProps({
 .aggregate-container-node {
   width: 100%;
   height: 100%;
-  background: rgba(55, 58, 64, 0.25);
-  border: 2px solid rgba(73, 80, 87, 0.6);
+  background: var(--color-bc-bg);
+  border: 2px solid var(--color-bc-border);
   border-radius: 12px;
   position: relative;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
@@ -35,9 +35,13 @@ const props = defineProps({
   user-select: none;
 }
 
+:root.theme-light .aggregate-container-node {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
 .container-header {
-  background: linear-gradient(135deg, #373a40 0%, #2c2e33 100%);
-  border-bottom: 2px solid rgba(73, 80, 87, 0.6);
+  background: var(--color-bc-header-bg);
+  border-bottom: 2px solid var(--color-bc-border);
   border-radius: 10px 10px 0 0;
   padding: 10px 16px;
   text-align: center;
@@ -47,10 +51,14 @@ const props = defineProps({
   user-select: none;
 }
 
+:root.theme-dark .container-header {
+  background: linear-gradient(135deg, #373a40 0%, #2c2e33 100%);
+}
+
 .bc-name {
   font-size: 0.9rem;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--color-bc-text);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }

@@ -333,6 +333,13 @@ function getNodeColor(node) {
   return colors[node.type] || '#909296'
 }
 
+// Canvas pattern color based on theme
+const canvasPatternColor = computed(() => {
+  const root = document.documentElement
+  const isLight = root.classList.contains('theme-light')
+  return isLight ? '#e9ecef' : '#2a2a3a'
+})
+
 function switchToChatFromInspector(nodeId) {
   panelMode.value = 'chat'
   if (nodeId) {
@@ -689,7 +696,7 @@ onUnmounted(() => {
           @edge-mouse-leave="onEdgeMouseLeave"
           @pane-click="onPaneClick"
         >
-          <Background pattern-color="#2a2a3a" :gap="20" />
+          <Background :pattern-color="canvasPatternColor" :gap="20" />
           <Controls position="bottom-left" />
           <MiniMap 
             :node-color="getNodeColor"
@@ -868,7 +875,7 @@ onUnmounted(() => {
 
 /* Vue Flow custom background */
 .vue-flow {
-  background: #1a1b26 !important;
+  background: var(--color-canvas-bg) !important;
 }
 
 /* BC Group Node styling */
