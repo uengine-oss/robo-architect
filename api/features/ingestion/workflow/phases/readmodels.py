@@ -47,12 +47,15 @@ async def _create_readmodel_with_links(
     is_multiple_result = getattr(rm, "isMultipleResult", None)
     user_story_ids = list(getattr(rm, "user_story_ids", []) or [])
     
+    # Handle both dict and object formats
+    bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+    
     try:
         created = await asyncio.wait_for(
             asyncio.to_thread(
                 ctx.client.create_readmodel,
                 name=name,
-                bc_id=bc.id,
+                bc_id=bc_id,
                 description=description,
                 provisioning_type="CQRS",
                 actor=actor,
@@ -62,11 +65,13 @@ async def _create_readmodel_with_links(
         )
         
         # Keep a runtime copy with traceability for later UI phase.
-        ctx.readmodels_by_bc[bc.id].append(
+        if bc_id not in ctx.readmodels_by_bc:
+            ctx.readmodels_by_bc[bc_id] = []
+        ctx.readmodels_by_bc[bc_id].append(
             {
                 **created,
                 "type": "ReadModel",
-                "bcId": bc.id,
+                "bcId": bc_id,
                 "user_story_ids": user_story_ids,
             }
         )
@@ -82,7 +87,7 @@ async def _create_readmodel_with_links(
                     "id": created.get("id"),
                     "name": created.get("name", name),
                     "type": "ReadModel",
-                    "parentId": bc.id,
+                    "parentId": bc_id,
                     "description": created.get("description", description),
                     "provisioningType": created.get("provisioningType", "CQRS"),
                     "userStoryIds": user_story_ids,
@@ -102,7 +107,7 @@ async def _create_readmodel_with_links(
             "WARNING",
             "ReadModel create skipped",
             category="ingestion.neo4j.readmodel",
-            params={"session_id": ctx.session.id, "readmodel_name": name, "bc_id": bc.id, "error": str(e)},
+            params={"session_id": ctx.session.id, "readmodel_name": name, "bc_id": bc_id, "error": str(e)},
         )
         return None, None, f"ReadModel creation failed: {e}"
 
@@ -124,6 +129,10 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
     progress_per_bc = 6 // max(len(ctx.bounded_contexts), 1)
 
     for bc_idx, bc in enumerate(ctx.bounded_contexts or []):
+        # Handle both dict and object formats
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+        
         # BC 객체에서 user_story_ids를 안전하게 읽어오기
         bc_us_ids = []
         try:
@@ -157,17 +166,21 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         user_stories_text = "\n".join(bc_user_stories) if bc_user_stories else "No user stories"
 
         # Events in this BC (flatten events for all aggregates in this BC)
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
         events_lines: list[str] = []
-        for agg in ctx.aggregates_by_bc.get(bc.id, []) or []:
-            for evt in ctx.events_by_agg.get(agg.id, []) or []:
-                desc = getattr(evt, "description", "") or ""
-                events_lines.append(f"- {evt.name}" + (f": {desc}" if desc else ""))
+        for agg in ctx.aggregates_by_bc.get(bc_id, []) or []:
+            agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+            for evt in ctx.events_by_agg.get(agg_id, []) or []:
+                evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
+                desc = evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", "") or ""
+                events_lines.append(f"- {evt_name}" + (f": {desc}" if desc else ""))
         events_text = "\n".join(events_lines) if events_lines else "No events"
 
         # 전체 프롬프트 텍스트 구성 (청킹 판단용)
         full_prompt_text = EXTRACT_READMODELS_PROMPT.format(
-            bc_name=bc.name,
-            bc_id=bc.id,
+            bc_name=bc_name,
+            bc_id=bc_id,
             bc_description=getattr(bc, "description", "") or "",
             user_stories=user_stories_text,
             events=events_text,
@@ -201,9 +214,9 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                 chunk_events, _, _ = events_chunks[i] if i < len(events_chunks) else (events_chunks[-1][0], 0, 0)
                 
                 chunk_prompt = EXTRACT_READMODELS_PROMPT.format(
-                    bc_name=bc.name,
-                    bc_id=bc.id,
-                    bc_description=getattr(bc, "description", "") or "",
+                    bc_name=bc_name,
+                    bc_id=bc_id,
+                    bc_description=bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "") or "",
                     user_stories=chunk_user_stories,
                     events=chunk_events,
                 )
@@ -219,7 +232,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                         params={
                             "session_id": ctx.session.id,
                             "llm": {"provider": provider, "model": model},
-                            "bc": {"id": bc.id, "name": bc.name},
+                            "bc": {"id": bc_id, "name": bc_name},
                             "chunk_index": i + 1,
                             "total_chunks": total_chunks,
                         }
@@ -239,12 +252,12 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                     SmartLogger.log(
                         "ERROR",
-                        f"ReadModel extraction LLM timeout for chunk {i+1}/{total_chunks} (BC: {bc.name})",
+                        f"ReadModel extraction LLM timeout for chunk {i+1}/{total_chunks} (BC: {bc_name})",
                         category="ingestion.llm.extract_readmodels.timeout",
                         params={
                             "session_id": ctx.session.id,
-                            "bc_id": bc.id,
-                            "bc_name": bc.name,
+                            "bc_id": bc_id,
+                            "bc_name": bc_name,
                             "chunk_index": i + 1,
                             "total_chunks": total_chunks,
                             "elapsed_ms": llm_ms,
@@ -257,12 +270,12 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                     SmartLogger.log(
                         "ERROR",
-                        f"ReadModel extraction LLM error for chunk {i+1}/{total_chunks} (BC: {bc.name})",
+                        f"ReadModel extraction LLM error for chunk {i+1}/{total_chunks} (BC: {bc_name})",
                         category="ingestion.llm.extract_readmodels.error",
                         params={
                             "session_id": ctx.session.id,
-                            "bc_id": bc.id,
-                            "bc_name": bc.name,
+                            "bc_id": bc_id,
+                            "bc_name": bc_name,
                             "chunk_index": i + 1,
                             "total_chunks": total_chunks,
                             "error": str(llm_error),
@@ -295,9 +308,9 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         else:
             # 청킹 불필요한 경우
             prompt = EXTRACT_READMODELS_PROMPT.format(
-                bc_name=bc.name,
-                bc_id=bc.id,
-                bc_description=getattr(bc, "description", "") or "",
+                bc_name=bc_name,
+                bc_id=bc_id,
+                bc_description=bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "") or "",
                 user_stories=user_stories_text,
                 events=events_text,
             )
@@ -314,7 +327,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                         params={
                             "session_id": ctx.session.id,
                             "llm": {"provider": provider, "model": model},
-                            "bc": {"id": bc.id, "name": bc.name},
+                            "bc": {"id": bc_id, "name": bc_name},
                             "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                             "system_prompt": SYSTEM_PROMPT,
                         },
@@ -335,12 +348,12 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                     SmartLogger.log(
                         "ERROR",
-                        f"ReadModel extraction LLM timeout (BC: {bc.name})",
+                        f"ReadModel extraction LLM timeout (BC: {bc_name})",
                         category="ingestion.llm.extract_readmodels.timeout",
                         params={
                             "session_id": ctx.session.id,
-                            "bc_id": bc.id,
-                            "bc_name": bc.name,
+                            "bc_id": bc_id,
+                            "bc_name": bc_name,
                             "elapsed_ms": llm_ms,
                         },
                     )
@@ -349,12 +362,12 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                     SmartLogger.log(
                         "ERROR",
-                        f"ReadModel extraction LLM error (BC: {bc.name})",
+                        f"ReadModel extraction LLM error (BC: {bc_name})",
                         category="ingestion.llm.extract_readmodels.error",
                         params={
                             "session_id": ctx.session.id,
-                            "bc_id": bc.id,
-                            "bc_name": bc.name,
+                            "bc_id": bc_id,
+                            "bc_name": bc_name,
                             "error": str(llm_error),
                             "error_type": type(llm_error).__name__,
                             "elapsed_ms": llm_ms,
@@ -374,7 +387,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                         params={
                             "session_id": ctx.session.id,
                             "llm": {"provider": provider, "model": model},
-                            "bc": {"id": bc.id, "name": bc.name},
+                            "bc": {"id": bc_id, "name": bc_name},
                             "llm_ms": llm_ms,
                             "result": {
                                 "readmodel_names": summarize_for_log([getattr(rm, "name", None) for rm in readmodels]),
@@ -389,12 +402,14 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     "ERROR",
                     "ReadModel extraction failed (LLM)",
                     category="ingestion.workflow.readmodels",
-                    params={"session_id": ctx.session.id, "bc_id": bc.id, "error": str(e)},
+                    params={"session_id": ctx.session.id, "bc_id": bc_id, "error": str(e)},
                 )
                 readmodels = []
 
-        all_readmodels[bc.id] = readmodels
-        ctx.readmodels_by_bc[bc.id] = []
+        all_readmodels[bc_id] = readmodels
+        if bc_id not in ctx.readmodels_by_bc:
+            ctx.readmodels_by_bc[bc_id] = []
+        ctx.readmodels_by_bc[bc_id] = []
 
         # Process all readmodels in parallel
         if readmodels:

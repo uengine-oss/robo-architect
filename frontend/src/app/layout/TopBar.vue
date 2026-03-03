@@ -102,10 +102,8 @@ function handleIngestionComplete() {
       <!-- PRD Generator Button -->
       <button 
         class="prd-btn"
-        :class="{ 'is-disabled': canvasStore.nodes.length === 0 }"
         @click="showPRDModal = true"
-        :disabled="canvasStore.nodes.length === 0"
-        title="캔버스 모델에서 PRD 생성"
+        title="모델에서 PRD 생성 (캔버스 노드 선택 시 해당 노드만, 미선택 시 전체)"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>

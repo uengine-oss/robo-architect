@@ -111,6 +111,16 @@ async def _generate_gwt_for_command(
     cmd = task["cmd"]
     evt = task["evt"]
     
+    # Handle both dict and object formats
+    cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+    cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+    agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+    agg_name = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "")
+    evt_id = evt.get("id") if isinstance(evt, dict) else getattr(evt, "id", None) if evt else None
+    evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "") if evt else ""
+    bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+    bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+    
     # Check if this Command is invoked by a Policy
     policy_trigger_event_id = None
     policy_trigger_event_name = None
@@ -123,7 +133,7 @@ async def _generate_gwt_for_command(
                 RETURN trigger_evt.id as trigger_event_id, trigger_evt.name as trigger_event_name
                 LIMIT 1
                 """
-                policy_result = session.run(policy_query, cmd_id=cmd.id)
+                policy_result = session.run(policy_query, cmd_id=cmd_id)
                 return policy_result.single()
         
         policy_record = await asyncio.wait_for(
@@ -142,13 +152,13 @@ async def _generate_gwt_for_command(
             with client.session() as session:
                 cmd_props_result = session.run(
                     "MATCH (cmd:Command {id: $cmd_id})-[:HAS_PROPERTY]->(p:Property) RETURN p.name as name, p.type as type ORDER BY p.name",
-                    cmd_id=cmd.id
+                    cmd_id=cmd_id
                 )
                 cmd_props_list = [{"name": r["name"], "type": r["type"]} for r in cmd_props_result if r.get("name")]
                 
                 agg_record = session.run(
                     "MATCH (agg:Aggregate {id: $agg_id}) RETURN agg.enumerations as enumerations, agg.valueObjects as valueObjects",
-                    agg_id=agg.id
+                    agg_id=agg_id
                 ).single()
                 
                 agg_enumerations_list = []
@@ -172,15 +182,15 @@ async def _generate_gwt_for_command(
                 
                 agg_props_result = session.run(
                     "MATCH (agg:Aggregate {id: $agg_id})-[:HAS_PROPERTY]->(p:Property) RETURN p.name as name, p.type as type ORDER BY p.name",
-                    agg_id=agg.id
+                    agg_id=agg_id
                 )
                 agg_props_list = [{"name": r["name"], "type": r["type"]} for r in agg_props_result if r.get("name")]
                 
                 evt_props_list = []
-                if evt:
+                if evt_id:
                     evt_props_result = session.run(
                         "MATCH (evt:Event {id: $evt_id})-[:HAS_PROPERTY]->(p:Property) RETURN p.name as name, p.type as type ORDER BY p.name",
-                        evt_id=evt.id
+                        evt_id=evt_id
                     )
                     evt_props_list = [{"name": r["name"], "type": r["type"]} for r in evt_props_result if r.get("name")]
                 
@@ -214,9 +224,9 @@ async def _generate_gwt_for_command(
     except Exception as e:
         SmartLogger.log(
             "ERROR",
-            f"Failed to query properties for Command {cmd.name}: {e}",
+            f"Failed to query properties for Command {cmd_name}: {e}",
             category="ingestion.workflow.gwt.properties_error",
-            params={"session_id": ctx.session.id, "command_name": cmd.name, "error": str(e)}
+            params={"session_id": ctx.session.id, "command_name": cmd_name, "error": str(e)}
         )
         cmd_props = []
         agg_props = []
@@ -263,41 +273,44 @@ Properties: {trigger_evt_props_text}
         when_example = f'"when": {{\n      "name": "Event: {policy_trigger_event_name}",'
     else:
         when_section = ""
-        when_instruction = f'- **when:** Reference the Command itself. Include `name` (e.g., "Command: {cmd.name}") and optional `description`. The `fieldValues` dictionary MUST map ALL property names from the Command (including Enum and ValueObject properties) to realistic test values. For each property, provide a realistic test value (e.g., for String type use "sample text", for Integer use 123, for Boolean use true/false, for Date use "2024-01-01", for Enum use one of the enum items, for ValueObject use a JSON object with nested fields). DO NOT leave fieldValues empty - always provide values for all available properties.'
-        when_example = f'"when": {{\n      "name": "Command: {cmd.name}",'
+        when_instruction = f'- **when:** Reference the Command itself. Include `name` (e.g., "Command: {cmd_name}") and optional `description`. The `fieldValues` dictionary MUST map ALL property names from the Command (including Enum and ValueObject properties) to realistic test values. For each property, provide a realistic test value (e.g., for String type use "sample text", for Integer use 123, for Boolean use true/false, for Date use "2024-01-01", for Enum use one of the enum items, for ValueObject use a JSON object with nested fields). DO NOT leave fieldValues empty - always provide values for all available properties.'
+        when_example = f'"when": {{\n      "name": "Command: {cmd_name}",'
     
     # Build prompt - use different when field based on whether Command is invoked by Policy
+    cmd_description = cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", "") or ""
+    evt_description = evt.get("description") if isinstance(evt, dict) and evt else (getattr(evt, "description", "") if evt else "Event will be emitted")
+    
     prompt = f"""Generate Given/When/Then (GWT) test cases for a Command to support BDD-style test scenarios.
 
 <command>
-Name: {cmd.name}
-Description: {getattr(cmd, "description", "") or ""}
+Name: {cmd_name}
+Description: {cmd_description}
 Properties: {cmd_props_text}
 </command>
 
 <aggregate>
-Name: {agg.name}
+Name: {agg_name}
 Properties: {agg_props_text}
 </aggregate>
 {when_section}
 <event>
-Name: {evt.name if evt else "UnknownEvent"}
-Description: {getattr(evt, "description", "") if evt else "Event will be emitted"}
+Name: {evt_name if evt_name else "UnknownEvent"}
+Description: {evt_description}
 Properties: {evt_props_text}
 </event>
 
 For this Command, generate multiple GWT test cases (typically 2-5 test cases covering different scenarios):
 - **scenarioDescription:** A brief description of the business flow/scenario this test case represents (e.g., "Happy path: User successfully creates an order with valid items")
-- **given:** Reference the Aggregate that handles this Command. Include `name` (e.g., "Aggregate: {agg.name}") and optional `description`. The `fieldValues` dictionary MUST map ALL property names from the Aggregate (including Enum and ValueObject properties) to realistic test values representing the INITIAL STATE of the Aggregate before the Command is executed. For each property listed in the Aggregate properties above, provide a realistic test value (e.g., for String type use "sample text", for Integer use 123, for Boolean use true/false, for Date use "2024-01-01", for Enum use one of the enum items, for ValueObject use a JSON object with nested fields). DO NOT leave fieldValues empty - always provide values for all available properties.
+- **given:** Reference the Aggregate that handles this Command. Include `name` (e.g., "Aggregate: {agg_name}") and optional `description`. The `fieldValues` dictionary MUST map ALL property names from the Aggregate (including Enum and ValueObject properties) to realistic test values representing the INITIAL STATE of the Aggregate before the Command is executed. For each property listed in the Aggregate properties above, provide a realistic test value (e.g., for String type use "sample text", for Integer use 123, for Boolean use true/false, for Date use "2024-01-01", for Enum use one of the enum items, for ValueObject use a JSON object with nested fields). DO NOT leave fieldValues empty - always provide values for all available properties.
 {when_instruction}
-- **then:** Reference the Event emitted by this Command. Include `name` (e.g., "Event: {evt.name if evt else "UnknownEvent"}") and optional `description`. The `fieldValues` dictionary MUST map ALL property names from the Event (including Enum and ValueObject properties) to realistic test values representing the RESULT STATE after the Command is executed. For each property listed in the Event properties above, provide a realistic test value (e.g., for String type use "sample text", for Integer use 123, for Boolean use true/false, for Date use "2024-01-01", for Enum use one of the enum items, for ValueObject use a JSON object with nested fields). DO NOT leave fieldValues empty - always provide values for all available properties.
+- **then:** Reference the Event emitted by this Command. Include `name` (e.g., "Event: {evt_name if evt_name else "UnknownEvent"}") and optional `description`. The `fieldValues` dictionary MUST map ALL property names from the Event (including Enum and ValueObject properties) to realistic test values representing the RESULT STATE after the Command is executed. For each property listed in the Event properties above, provide a realistic test value (e.g., for String type use "sample text", for Integer use 123, for Boolean use true/false, for Date use "2024-01-01", for Enum use one of the enum items, for ValueObject use a JSON object with nested fields). DO NOT leave fieldValues empty - always provide values for all available properties.
 
 Return a JSON array with multiple test cases:
 [
   {{
     "scenarioDescription": "Brief description of this test case's business flow",
     "given": {{
-      "name": "Aggregate: {agg.name}",
+      "name": "Aggregate: {agg_name}",
       "description": "...",
       "fieldValues": {{"propertyName": "testValue1", ...}}
     }},
@@ -306,7 +319,7 @@ Return a JSON array with multiple test cases:
       "fieldValues": {{"propertyName": "testValue1", ...}}
     }},
     "then": {{
-      "name": "Event: {evt.name if evt else "UnknownEvent"}",
+      "name": "Event: {evt_name if evt_name else "UnknownEvent"}",
       "description": "...",
       "fieldValues": {{"propertyName": "testValue1", ...}}
     }}
@@ -381,12 +394,12 @@ If no properties are available, only then use empty fieldValues {{}}."""
         except json.JSONDecodeError as json_err:
             SmartLogger.log(
                 "WARN",
-                f"Command GWT JSON parse error for {cmd.name}: {json_err}. Content preview: {content[:500]}",
+                f"Command GWT JSON parse error for {cmd_name}: {json_err}. Content preview: {content[:500]}",
                 category="ingestion.workflow.gwt.command.json_parse_error",
                 params={
                     "session_id": ctx.session.id,
-                    "command_id": cmd.id,
-                    "command_name": cmd.name,
+                    "command_id": cmd_id,
+                    "command_name": cmd_name,
                     "error": str(json_err),
                     "error_line": getattr(json_err, 'lineno', None),
                     "error_col": getattr(json_err, 'colno', None),
@@ -405,11 +418,11 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     gwt_test_cases = json.loads(recovered_content)
                     SmartLogger.log(
                         "INFO",
-                        f"Command GWT JSON recovered from content for {cmd.name}",
+                        f"Command GWT JSON recovered from content for {cmd_name}",
                         category="ingestion.workflow.gwt.command.json_recovered",
                         params={
                             "session_id": ctx.session.id,
-                            "command_name": cmd.name,
+                            "command_name": cmd_name,
                         }
                     )
                 except json.JSONDecodeError:
@@ -443,22 +456,22 @@ If no properties are available, only then use empty fieldValues {{}}."""
             }
         else:
             when_ref = {
-                "referencedNodeId": cmd.id,
+                "referencedNodeId": cmd_id,
                 "referencedNodeType": "Command",
-                "name": f"Command: {cmd.name}",
+                "name": f"Command: {cmd_name}",
             }
         
         # Save to Neo4j using direct query (same logic as _upsert_gwt_bundle)
         given_ref = {
-            "referencedNodeId": agg.id,
+            "referencedNodeId": agg_id,
             "referencedNodeType": "Aggregate",
-            "name": f"Aggregate: {agg.name}",
+            "name": f"Aggregate: {agg_name}",
         }
         then_ref = {
-            "referencedNodeId": evt.id,
+            "referencedNodeId": evt_id,
             "referencedNodeType": "Event",
-            "name": f"Event: {evt.name}",
-        } if evt else None
+            "name": f"Event: {evt_name}",
+        } if evt_id else None
         
         query = """
         MATCH (parent {id: $parent_id})
@@ -498,7 +511,7 @@ If no properties are available, only then use empty fieldValues {{}}."""
             session.run(
                 query,
                 parent_type="Command",
-                parent_id=cmd.id,
+                parent_id=cmd_id,
                 given_ref_json=given_ref_json,
                 when_ref_json=when_ref_json,
                 then_ref_json=then_ref_json,
@@ -510,9 +523,9 @@ If no properties are available, only then use empty fieldValues {{}}."""
     except Exception as e:
         SmartLogger.log(
             "ERROR",
-            f"Failed to generate GWT for Command {cmd.name}: {e}",
+            f"Failed to generate GWT for Command {cmd_name}: {e}",
             category="ingestion.workflow.gwt.command_error",
-            params={"session_id": ctx.session.id, "command_name": cmd.name, "error": str(e)}
+            params={"session_id": ctx.session.id, "command_name": cmd_name, "error": str(e)}
         )
         # Fallback: create empty GWT bundle
         try:
@@ -524,22 +537,22 @@ If no properties are available, only then use empty fieldValues {{}}."""
                 }
             else:
                 fallback_when_ref = {
-                    "referencedNodeId": cmd.id,
+                    "referencedNodeId": cmd_id,
                     "referencedNodeType": "Command",
-                    "name": f"Command: {cmd.name}",
+                    "name": f"Command: {cmd_name}",
                 }
             
             # Save to Neo4j using direct query (fallback)
             fallback_given_ref = {
-                "referencedNodeId": agg.id,
+                "referencedNodeId": agg_id,
                 "referencedNodeType": "Aggregate",
-                "name": f"Aggregate: {agg.name}",
+                "name": f"Aggregate: {agg_name}",
             }
             fallback_then_ref = {
-                "referencedNodeId": evt.id,
+                "referencedNodeId": evt_id,
                 "referencedNodeType": "Event",
-                "name": f"Event: {evt.name}",
-            } if evt else None
+                "name": f"Event: {evt_name}",
+            } if evt_id else None
             
             fallback_query = """
             MATCH (parent {id: $parent_id})
@@ -584,7 +597,7 @@ If no properties are available, only then use empty fieldValues {{}}."""
                 session.run(
                     fallback_query,
                     parent_type="Command",
-                    parent_id=cmd.id,
+                    parent_id=cmd_id,
                     given_ref_json=fallback_given_ref_json,
                     when_ref_json=fallback_when_ref_json,
                     then_ref_json=fallback_then_ref_json,
@@ -757,9 +770,11 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
     # Collect all commands with their context (BC, Aggregate, Event)
     all_command_tasks: list[dict[str, Any]] = []
     for bc in ctx.bounded_contexts:
-        for agg in ctx.aggregates_by_bc.get(bc.id, []):
-            commands = ctx.commands_by_agg.get(agg.id, [])
-            events = ctx.events_by_agg.get(agg.id, [])
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        for agg in ctx.aggregates_by_bc.get(bc_id, []):
+            agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+            commands = ctx.commands_by_agg.get(agg_id, [])
+            events = ctx.events_by_agg.get(agg_id, [])
             
             for i, cmd in enumerate(commands):
                 evt = events[i] if i < len(events) else (events[0] if events else None)
@@ -783,12 +798,21 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
         evt = task["evt"]
         bc = task["bc"]
         
+        # Handle both dict and object formats
+        cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+        cmd_desc = cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", "") or ""
+        agg_name = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "")
+        agg_desc = agg.get("description") if isinstance(agg, dict) else getattr(agg, "description", "") or ""
+        evt_name = evt.get("name") if isinstance(evt, dict) and evt else (getattr(evt, "name", "") if evt else "Unknown")
+        evt_desc = evt.get("description") if isinstance(evt, dict) and evt else (getattr(evt, "description", "") if evt else "")
+        bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+        
         # Estimate based on command, aggregate, event names and descriptions
         # This is a rough estimate - actual prompt will be longer with properties
-        cmd_text = f"Command: {cmd.name} {getattr(cmd, 'description', '') or ''}"
-        agg_text = f"Aggregate: {agg.name} {getattr(agg, 'description', '') or ''}"
-        evt_text = f"Event: {evt.name if evt else 'Unknown'} {getattr(evt, 'description', '') if evt else ''}"
-        bc_text = f"BC: {bc.name}"
+        cmd_text = f"Command: {cmd_name} {cmd_desc}"
+        agg_text = f"Aggregate: {agg_name} {agg_desc}"
+        evt_text = f"Event: {evt_name} {evt_desc}"
+        bc_text = f"BC: {bc_name}"
         
         # Add estimated properties (rough: ~10 properties per entity, ~50 chars each)
         estimated_props = "Properties: " + " ".join([f"prop{i}" for i in range(10)])
@@ -894,7 +918,8 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
                 RETURN pol.id as id, pol.name as name
                 ORDER BY pol.name
                 """
-                policies_result = session.run(policies_query, bc_id=bc.id)
+                bc_id_for_query = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+                policies_result = session.run(policies_query, bc_id=bc_id_for_query)
                 for r in policies_result:
                     if r.get("id"):
                         policies_list.append({"id": r["id"], "name": r["name"]})

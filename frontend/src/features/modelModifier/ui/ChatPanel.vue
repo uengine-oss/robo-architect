@@ -1,17 +1,23 @@
 <script setup>
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, inject } from 'vue'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 import ImpactDetailsModal from '@/features/modelModifier/ui/ImpactDetailsModal.vue'
 
 const emit = defineEmits(['close'])
 
 const chatStore = useModelModifierStore()
 const canvasStore = useCanvasStore()
+const ingestionStore = useIngestionStore()
+
+// Inject Inspector opening functions from CanvasWorkspace
+const inspectorFunctions = inject('openInspector', null)
 
 const inputText = ref('')
 const messagesContainer = ref(null)
 const isComposing = ref(false)
+const isDragOver = ref(false)
 
 // Impact details modal state
 const isImpactModalOpen = ref(false)
@@ -113,6 +119,70 @@ function handleCompositionEnd() {
   isComposing.value = false
 }
 
+// Drag and drop handlers for Navigator nodes
+function handleDragOver(event) {
+  event.preventDefault()
+  event.stopPropagation()
+  isDragOver.value = true
+  event.dataTransfer.dropEffect = 'copy'
+}
+
+function handleDragLeave(event) {
+  event.preventDefault()
+  event.stopPropagation()
+  isDragOver.value = false
+}
+
+function handleDrop(event) {
+  event.preventDefault()
+  event.stopPropagation()
+  isDragOver.value = false
+  
+  try {
+    const data = event.dataTransfer.getData('application/json')
+    if (!data) return
+    
+    const nodeData = JSON.parse(data)
+    if (!nodeData || !nodeData.id) return
+    
+    // Convert navigator node format to chat selection format
+    const selectedNode = {
+      id: nodeData.id || nodeData.nodeId,
+      name: nodeData.nodeData?.name || nodeData.name || nodeData.id,
+      type: nodeData.type || nodeData.nodeType || nodeData.nodeData?.type,
+      description: nodeData.nodeData?.description,
+      bcId: nodeData.nodeData?.bcId,
+      bcName: nodeData.nodeData?.bcName,
+      aggregateId: nodeData.nodeData?.aggregateId,
+      ...nodeData.nodeData
+    }
+    
+    // Add to selection (check if already selected)
+    const currentNodes = chatStore.currentSelectedNodes
+    const isAlreadySelected = currentNodes.some(n => (n.id || n.data?.id) === selectedNode.id)
+    
+    if (!isAlreadySelected) {
+      // Add to selection based on viewer
+      if (chatStore.selectedNodes.length > 0) {
+        // Other viewer (Big Picture, Aggregate)
+        chatStore.setSelectedNodes([...chatStore.selectedNodes, selectedNode])
+      } else {
+        // Design viewer - add to canvas selection
+        // First check if node exists on canvas, if not, we still add it to chat selection
+        const existingNode = canvasStore.nodes.find(n => n.id === selectedNode.id)
+        if (existingNode) {
+          canvasStore.addToSelection(selectedNode.id)
+        } else {
+          // Node not on canvas, add to chat selection directly
+          chatStore.setSelectedNodes([selectedNode])
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to handle drop:', error)
+  }
+}
+
 function scrollToBottom() {
   nextTick(() => {
     if (messagesContainer.value) {
@@ -203,11 +273,22 @@ function closeImpactDetails() {
           </svg>
         </div>
         <div class="chat-empty__text">
-          캔버스에서 객체를 선택하고<br />
-          수정 요청을 입력하세요
+          <template v-if="ingestionStore.isIngestionPaused">
+            모델 생성이 일시정지되었습니다.<br />
+            수정 요청을 입력하세요.
+          </template>
+          <template v-else>
+            캔버스에서 객체를 선택하고<br />
+            수정 요청을 입력하세요
+          </template>
         </div>
         <div class="chat-empty__hint">
-          예: "이 Command의 이름을 변경하고 관련 Event도 업데이트해줘"
+          <template v-if="ingestionStore.isIngestionPaused">
+            예: "이 User Story를 주문 BC에 할당해줘" 또는 "주문 Aggregate를 추가해줘"
+          </template>
+          <template v-else>
+            예: "이 Command의 이름을 변경하고 관련 Event도 업데이트해줘"
+          </template>
         </div>
       </div>
 
@@ -379,7 +460,13 @@ function closeImpactDetails() {
       </div>
     </div>
 
-    <div class="chat-panel__input-area">
+    <div 
+      class="chat-panel__input-area"
+      :class="{ 'drag-over': isDragOver }"
+      @dragover="handleDragOver"
+      @dragleave="handleDragLeave"
+      @drop="handleDrop"
+    >
       <div v-if="selectedChips.length > 0" class="chat-input__chips">
         <span
           v-for="chip in selectedChips"
@@ -401,15 +488,27 @@ function closeImpactDetails() {
       </div>
 
       <div v-else class="chat-input__hint">
-        캔버스에서 객체를 선택하세요 (Ctrl/Cmd+Click으로 다중 선택)
+        <template v-if="ingestionStore.isIngestionActive">
+          모델 생성이 진행 중입니다. 생성이 완료되거나 일시정지한 후 수정 요청을 보내주세요.
+        </template>
+        <template v-else-if="ingestionStore.isIngestionPaused">
+          모델 생성이 일시정지되었습니다. Explorer에서 노드를 Ctrl/Cmd+클릭하거나 드래그하여 추가한 후 수정 요청을 입력하세요.
+        </template>
+        <template v-else>
+          캔버스에서 객체를 선택하세요 (Ctrl/Cmd+Click으로 다중 선택)
+        </template>
       </div>
 
       <div class="chat-input__wrapper">
         <textarea
           v-model="inputText"
           class="chat-input__textarea"
-          placeholder="수정 요청을 입력하세요..."
-          :disabled="chatStore.isProcessing || selectedChips.length === 0"
+          :placeholder="ingestionStore.isIngestionPaused 
+            ? (selectedChips.length > 0 ? '수정 요청을 입력하세요...' : 'Explorer에서 노드를 선택하거나 캔버스에서 객체를 선택하세요')
+            : selectedChips.length > 0 
+              ? '수정 요청을 입력하세요...' 
+              : '캔버스에서 객체를 선택하고 수정 요청을 입력하세요'"
+          :disabled="chatStore.isProcessing || (selectedChips.length === 0)"
           @keydown="handleKeyDown"
           @compositionstart="handleCompositionStart"
           @compositionend="handleCompositionEnd"
@@ -1028,6 +1127,32 @@ function closeImpactDetails() {
 
 .chat-input__textarea::placeholder {
   color: var(--color-text-light);
+}
+
+.chat-panel__input-area {
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.chat-panel__input-area.drag-over {
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.chat-panel__input-area.drag-over::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 2px dashed var(--color-accent);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+}
+
+.chat-panel__input-area.drag-over .chat-input__hint {
+  color: var(--color-accent);
+  font-weight: 600;
 }
 
 .chat-input__textarea:disabled {

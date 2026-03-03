@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onUnmounted, onMounted } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
+import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 
 const props = defineProps({
   modelValue: {
@@ -12,6 +13,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'complete', 'session-restored'])
 
 const navigatorStore = useNavigatorStore()
+const ingestionStore = useIngestionStore()
 
 // LocalStorage key for persisting session (page refresh recovery)
 const SESSION_STORAGE_KEY = 'ingestion_active_session'
@@ -33,11 +35,13 @@ const error = ref(null)
 const summary = ref(null)
 const isPanelMinimized = ref(false)
 const isPaused = ref(false)
+const isPausing = ref(false) // Track if pause request is in progress
 
 // Draggable panel state
 const panelPosition = ref({ x: null, y: null })
 const isDragging = ref(false)
 const dragOffset = ref({ x: 0, y: 0 })
+const hasDragged = ref(false) // Track if actual dragging occurred
 
 // Cache state
 const isCacheEnabled = ref(false)
@@ -82,9 +86,9 @@ const phaseLabel = computed(() => {
   return labels[currentPhase.value] || currentPhase.value
 })
 
-// Show floating panel when processing or has summary
+// Show floating panel when processing, has summary, or has error/cancellation message
 const showFloatingPanel = computed(() => {
-  return isProcessing.value || summary.value !== null
+  return isProcessing.value || summary.value !== null || (error.value !== null && sessionId.value !== null)
 })
 
 // Has existing data
@@ -97,6 +101,19 @@ watch(isOpen, async (newVal) => {
   if (newVal) {
     await Promise.all([checkExistingData(), checkCacheStatus()])
   }
+})
+
+// Sync ingestion state to store
+watch([isProcessing, isPaused, currentPhase, sessionId], ([processing, paused, phase, sid]) => {
+  ingestionStore.setProcessing(processing)
+  ingestionStore.setPaused(paused)
+  ingestionStore.setPhase(phase || '')
+  ingestionStore.setSessionId(sid)
+}, { immediate: true })
+
+// Reset store on unmount
+onUnmounted(() => {
+  ingestionStore.reset()
 })
 
 // Methods
@@ -267,8 +284,10 @@ function connectToStream(sid, isReconnect = false) {
     // Pause state tracking
     if (data.phase === 'paused') {
       isPaused.value = true
+      isPausing.value = false // Pause request completed
     } else if (isPaused.value && data.phase !== 'paused') {
       isPaused.value = false
+      isPausing.value = false
     }
     
     // Handle User Story assignment to BC FIRST (before created objects)
@@ -352,11 +371,16 @@ function connectToStream(sid, isReconnect = false) {
     
     // Handle error or cancellation
     if (data.phase === 'error') {
-      error.value = data.message || data.data?.error || '알 수 없는 오류가 발생했습니다'
+      // Only set error message if not already set (prevent duplicates from cancelIngestion)
+      if (!error.value) {
+        error.value = data.message || data.data?.error || '알 수 없는 오류가 발생했습니다'
+      }
       isProcessing.value = false
       isPaused.value = false
+      isPausing.value = false
       closeStream()
-      clearSessionFromStorage()
+      // Don't clear sessionId immediately - keep panel open to show error message
+      // Session will be cleared when user manually closes the panel
     }
   })
   
@@ -369,13 +393,19 @@ function connectToStream(sid, isReconnect = false) {
       }
       console.error('[RequirementsIngestion] EventSource error:', errorDetails)
       
-      // Check if it's a connection error
-      const isConnectionError = eventSource.value?.readyState === EventSource.CLOSED
-      error.value = isConnectionError 
-        ? '서버 연결이 끊어졌습니다. 백엔드 서버가 실행 중인지 확인해주세요.'
-        : '연결이 끊어졌습니다. 서버와의 연결을 확인해주세요.'
+      // Only set error if not already set (prevent duplicates from cancelIngestion)
+      if (!error.value) {
+        // Check if it's a connection error
+        const isConnectionError = eventSource.value?.readyState === EventSource.CLOSED
+        error.value = isConnectionError 
+          ? '서버 연결이 끊어졌습니다. 백엔드 서버가 실행 중인지 확인해주세요.'
+          : '연결이 끊어졌습니다. 서버와의 연결을 확인해주세요.'
+      }
       isProcessing.value = false
       isPaused.value = false
+      isPausing.value = false
+      // Don't clear sessionId immediately - keep panel open to show error message
+      // Session will be cleared when user manually closes the panel
     }
     closeStream()
   }
@@ -449,19 +479,35 @@ async function toggleCache() {
 
 async function togglePause() {
   if (!sessionId.value) return
+  if (isPausing.value) return // Prevent multiple simultaneous pause requests
+  
   try {
     const endpoint = isPaused.value ? 'resume' : 'pause'
+    
+    // Set pausing state when requesting pause (not resume)
+    if (endpoint === 'pause') {
+      isPausing.value = true
+    }
+    
     const response = await fetch(`/api/ingest/${sessionId.value}/${endpoint}`, { method: 'POST' })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
       throw new Error(data.detail || 'Pause/Resume failed')
     }
+    
     // Server will also emit 'paused' on next checkpoint, but we can optimistically update UI.
-    if (endpoint === 'pause') isPaused.value = true
-    if (endpoint === 'resume') isPaused.value = false
+    // Note: Actual pause happens when current LLM request completes, so isPaused will be set to true
+    // when server emits 'paused' phase event. We keep isPausing true until then.
+    if (endpoint === 'resume') {
+      isPaused.value = false
+      isPausing.value = false
+    }
+    // For pause, don't set isPaused immediately - wait for server to emit 'paused' phase
+    // isPausing will be set to false when we receive the 'paused' phase event
   } catch (e) {
     console.error('Failed to toggle pause:', e)
     error.value = e.message || '일시정지/재개 실패'
+    isPausing.value = false
   }
 }
 
@@ -470,6 +516,7 @@ async function cancelIngestion() {
   if (!confirm('생성을 중단하시겠습니까? 진행 중인 작업이 취소됩니다.')) {
     return
   }
+  
   try {
     // Immediately close event source and update UI state
     if (eventSource.value) {
@@ -478,7 +525,13 @@ async function cancelIngestion() {
     }
     isProcessing.value = false
     isPaused.value = false
-    error.value = '생성이 중단되었습니다'
+    isPausing.value = false
+    
+    // Set error message only if not already set (prevent duplicates)
+    if (!error.value) {
+      error.value = '생성이 중단되었습니다'
+    }
+    // Keep panel open to show error message - don't clear sessionId yet
     
     // Then call cancel API
     try {
@@ -488,7 +541,8 @@ async function cancelIngestion() {
         // 404 means session not found (already expired/deleted) - this is OK, just log it
         if (response.status === 404) {
           console.log('Session already expired or not found, cancellation may have already completed')
-          return // Exit early, UI is already updated
+          // Keep error message and panel open
+          return
         }
         throw new Error(data.detail || data.message || 'Cancel failed')
       }
@@ -496,16 +550,21 @@ async function cancelIngestion() {
       // Network error or other fetch issues - UI is already updated, just log
       if (fetchError.name === 'TypeError' && fetchError.message.includes('fetch')) {
         console.log('Network error during cancel request, but UI state is already updated')
-        return // Exit early, UI is already updated
+        // Keep error message and panel open
+        return
       }
       throw fetchError // Re-throw other errors
     }
     
-    // Clear session from storage
-    clearSessionFromStorage()
+    // Don't clear sessionId immediately - keep panel open to show error message
+    // Session will be cleared when user manually closes the panel
   } catch (e) {
     console.error('Failed to cancel ingestion:', e)
-    error.value = e.message || '중단 실패'
+    // Only set error if not already set (prevent duplicates)
+    if (!error.value) {
+      error.value = e.message || '중단 실패'
+    }
+    // Keep panel open to show error message
   }
 }
 
@@ -578,8 +637,10 @@ function closeStream() {
 
 // Draggable floating panel handlers
 function startDrag(e) {
-  if (e.target.closest('.panel-btn')) return
+  // Don't start drag if clicking on buttons or their children
+  if (e.target.closest('.panel-btn') || e.target.closest('.floating-panel__actions')) return
   isDragging.value = true
+  hasDragged.value = false // Reset drag flag
   const panel = e.currentTarget.closest('.floating-panel')
   const rect = panel.getBoundingClientRect()
   dragOffset.value = { x: e.clientX - rect.left, y: e.clientY - rect.top }
@@ -589,6 +650,7 @@ function startDrag(e) {
 
 function onDrag(e) {
   if (!isDragging.value) return
+  hasDragged.value = true // Mark that actual dragging occurred
   const x = e.clientX - dragOffset.value.x
   const y = e.clientY - dragOffset.value.y
   const panelWidth = 320
@@ -601,6 +663,10 @@ function onDrag(e) {
 
 function stopDrag() {
   isDragging.value = false
+  // Reset hasDragged after a short delay to allow click handler to check it
+  setTimeout(() => {
+    hasDragged.value = false
+  }, 100)
   document.removeEventListener('mousemove', onDrag)
   document.removeEventListener('mouseup', stopDrag)
 }
@@ -631,14 +697,23 @@ function closeFloatingPanel() {
     isProcessing.value = false
   }
   
+  // If there's an error or cancellation message, ask for confirmation
+  if (error.value && !isProcessing.value) {
+    if (!confirm('오류 또는 중단 메시지가 표시되고 있습니다. 정말 닫으시겠습니까?')) {
+      return
+    }
+  }
+  
   // Reset state
   progress.value = 0
   currentPhase.value = ''
   currentMessage.value = ''
   createdItems.value = []
   summary.value = null
+  error.value = null
   isPaused.value = false
   panelPosition.value = { x: null, y: null }
+  sessionId.value = null
   clearSessionFromStorage()
   
   emit('complete')
@@ -646,6 +721,16 @@ function closeFloatingPanel() {
 
 function toggleMinimize() {
   isPanelMinimized.value = !isPanelMinimized.value
+}
+
+function handleHeaderClick(e) {
+  // Only toggle minimize if:
+  // 1. Not currently dragging
+  // 2. No actual drag occurred (just a click, not drag)
+  // 3. Not clicking on buttons
+  if (!isDragging.value && !hasDragged.value && !e.target.closest('.panel-btn') && !e.target.closest('.floating-panel__actions')) {
+    toggleMinimize()
+  }
 }
 
 function getTypeIcon(type) {
@@ -954,10 +1039,11 @@ function useSample() {
     <Transition name="slide-up">
       <div v-if="showFloatingPanel" class="floating-panel" :class="{ 'is-minimized': isPanelMinimized }" :style="panelStyle">
         <!-- Panel Header -->
-        <div class="floating-panel__header" @click="toggleMinimize">
+        <div class="floating-panel__header" @mousedown="startDrag" @click="handleHeaderClick">
           <div class="floating-panel__title">
-            <div class="floating-panel__status" :class="{ 'is-complete': summary, 'is-error': error, 'is-paused': isPaused }">
+            <div class="floating-panel__status" :class="{ 'is-complete': summary, 'is-error': error, 'is-paused': isPaused, 'is-pausing': isPausing }">
               <span v-if="isPaused" class="status-paused">⏸</span>
+              <span v-else-if="isPausing" class="status-pausing">⏸</span>
               <span v-else-if="isProcessing && !error" class="status-spinner"></span>
               <svg v-else-if="summary" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="20 6 9 17 4 12"></polyline>
@@ -969,20 +1055,18 @@ function useSample() {
               </svg>
             </div>
             <span class="floating-panel__label">
-              {{ summary ? '생성 완료' : error ? '오류 발생' : phaseLabel }}
+              {{ summary ? '생성 완료' : error ? (error.includes('중단') ? '생성 중단' : '오류 발생') : isPausing ? '일시정지 중...' : phaseLabel }}
             </span>
-            <span v-if="!summary && !error" class="floating-panel__percent">{{ progress }}%</span>
+            <span v-if="!summary && !error && !isPausing" class="floating-panel__percent">{{ progress }}%</span>
           </div>
-          <div class="floating-panel__actions">
-            <div class="floating-panel__drag-handle" @mousedown.stop="startDrag" title="드래그하여 이동">
-              <span></span><span></span><span></span>
-            </div>
+          <div class="floating-panel__actions" @mousedown.stop>
             <button
               v-if="isProcessing && !summary && !error"
               class="panel-btn panel-btn--pause"
-              :class="{ 'is-paused': isPaused }"
+              :class="{ 'is-paused': isPaused, 'is-pausing': isPausing }"
               @click.stop="togglePause"
-              :title="isPaused ? '재개' : '일시정지'"
+              :disabled="isPausing"
+              :title="isPausing ? '일시정지 중...' : isPaused ? '재개' : '일시정지'"
             >
               <svg v-if="!isPaused" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="4" width="4" height="16"></rect>
@@ -1019,25 +1103,30 @@ function useSample() {
           </div>
         </div>
         
-        <!-- Progress Bar (always visible in header area) -->
+        <!-- Progress Bar (visible when processing) -->
         <div v-if="isProcessing && !isPanelMinimized" class="floating-panel__progress">
           <div class="mini-progress-bar">
             <div class="mini-progress-fill" :style="{ width: `${progress}%` }"></div>
           </div>
-          <p class="floating-panel__message">{{ error || currentMessage }}</p>
+          <p class="floating-panel__message">
+            {{ isPausing ? '일시정지 요청 중... (현재 작업 완료 대기 중)' : currentMessage }}
+          </p>
         </div>
         
-        <!-- Panel Body (collapsible) -->
-        <div v-if="!isPanelMinimized" class="floating-panel__body">
-          <!-- Error Message -->
-          <div v-if="error" class="floating-panel__error">
+        <!-- Error/Cancellation Message (visible when not processing but has error) -->
+        <div v-if="!isProcessing && error && !isPanelMinimized" class="floating-panel__progress">
+          <div class="floating-panel__error-header">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"></circle>
               <line x1="12" y1="8" x2="12" y2="12"></line>
               <line x1="12" y1="16" x2="12.01" y2="16"></line>
             </svg>
-            <span>{{ error }}</span>
+            <p class="floating-panel__message floating-panel__message--error">{{ error }}</p>
           </div>
+        </div>
+        
+        <!-- Panel Body (collapsible) -->
+        <div v-if="!isPanelMinimized" class="floating-panel__body">
           <!-- Live Created Items -->
           <div v-if="isProcessing && !error" class="mini-items">
             <TransitionGroup name="item-list">
@@ -1087,11 +1176,6 @@ function useSample() {
               </div>
             </div>
             <p class="mini-summary__hint">네비게이터에서 확인하세요</p>
-          </div>
-          
-          <!-- Error -->
-          <div v-if="error && !isProcessing" class="mini-error">
-            {{ error }}
           </div>
         </div>
       </div>
@@ -1624,8 +1708,12 @@ function useSample() {
   justify-content: space-between;
   padding: var(--spacing-sm) var(--spacing-md);
   background: var(--color-bg-tertiary);
-  cursor: pointer;
+  cursor: grab;
   user-select: none;
+}
+
+.floating-panel__header:active {
+  cursor: grabbing;
 }
 
 .floating-panel__title {
@@ -1658,7 +1746,24 @@ function useSample() {
   color: #212529;
 }
 
-.status-paused {
+.floating-panel__status.is-pausing {
+  background: #fcc419;
+  color: #212529;
+  opacity: 0.7;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.status-paused,
+.status-pausing {
   font-size: 0.75rem;
   line-height: 1;
 }
@@ -1753,6 +1858,17 @@ function useSample() {
   color: #212529;
 }
 
+.panel-btn--pause.is-pausing {
+  opacity: 0.6;
+  cursor: wait;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.panel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .floating-panel__progress {
   padding: var(--spacing-sm) var(--spacing-md);
   border-bottom: 1px solid var(--color-border);
@@ -1779,6 +1895,23 @@ function useSample() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.floating-panel__message--error {
+  color: #ef4444;
+  font-weight: 500;
+}
+
+.floating-panel__error-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) 0;
+}
+
+.floating-panel__error-header svg {
+  color: #ef4444;
+  flex-shrink: 0;
 }
 
 .floating-panel__error {

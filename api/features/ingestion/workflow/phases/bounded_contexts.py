@@ -38,7 +38,10 @@ async def _create_bc_with_links(
     Create a single bounded context with user story links.
     Returns (created_bc_dict, progress_events, error_message)
     """
-    domain_type = getattr(bc, "domain_type", None)
+    # Handle both dict and object formats
+    bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+    bc_description = bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "")
+    domain_type = bc.get("domain_type") if isinstance(bc, dict) else getattr(bc, "domain_type", None)
     
     # BC 생성 전에 user_story_ids를 먼저 읽어옴
     us_ids = []
@@ -61,11 +64,11 @@ async def _create_bc_with_links(
     except Exception as e:
         SmartLogger.log(
             "WARN",
-            f"Failed to get user_story_ids from BC {getattr(bc, 'name', 'unknown')} before creation: {e}",
+            f"Failed to get user_story_ids from BC {bc_name} before creation: {e}",
             category="ingestion.workflow.bc.get_user_story_ids_error",
             params={
                 "session_id": ctx.session.id,
-                "bc_name": getattr(bc, "name", "unknown"),
+                "bc_name": bc_name,
                 "error": str(e),
             },
         )
@@ -79,22 +82,24 @@ async def _create_bc_with_links(
         created_bc = await asyncio.wait_for(
             asyncio.to_thread(
                 ctx.client.create_bounded_context,
-                name=bc.name,
-                description=bc.description,
+                name=bc_name,
+                description=bc_description,
                 domain_type=domain_type,
                 user_story_ids=us_ids
             ),
             timeout=10.0
         )
         
-        # Overwrite LLM-proposed id with UUID from DB (canonical)
+        # Overwrite LLM-proposed id with UUID from DB (canonical) - only if bc is an object, not dict
         try:
-            bc.id = created_bc.get("id")
+            if not isinstance(bc, dict):
+                bc.id = created_bc.get("id")
         except Exception:
             pass
         # Preserve natural key (helps downstream property generation prompts)
         try:
-            bc.key = created_bc.get("key")
+            if not isinstance(bc, dict):
+                bc.key = created_bc.get("key")
         except Exception:
             pass
         
@@ -104,16 +109,16 @@ async def _create_bc_with_links(
         # BC 생성 이벤트
         progress_events.append(ProgressEvent(
             phase=IngestionPhase.IDENTIFYING_BC,
-            message=f"Bounded Context 생성: {bc.name}",
+            message=f"Bounded Context 생성: {bc_name}",
             progress=PHASE_END - 2 + int((2 * bc_idx / max(total_bcs, 1))),
             data={
                 "type": "BoundedContext",
                 "object": {
                     "id": created_bc.get("id"),
-                    "name": bc.name,
+                    "name": bc_name,
                     "type": "BoundedContext",
-                    "description": bc.description,
-                    "userStoryIds": bc.user_story_ids,
+                    "description": bc_description,
+                    "userStoryIds": us_ids,
                 },
             },
         ))
@@ -129,28 +134,28 @@ async def _create_bc_with_links(
         # 항상 로그 출력 (us_ids가 비어있어도)
         SmartLogger.log(
             "INFO" if us_ids else "WARN",
-            f"BC {bc.name} linking check: {len(us_ids)} User Story IDs found",
+            f"BC {bc_name} linking check: {len(us_ids)} User Story IDs found",
             category="ingestion.workflow.bc.linking_check",
             params={
                 "session_id": ctx.session.id,
                 "bc_id": created_bc.get("id"),
-                "bc_name": bc.name,
+                "bc_name": bc_name,
                 "user_story_ids": us_ids,
                 "user_story_count": len(us_ids),
                 "bc_type": type(bc).__name__,
-                "bc_has_user_story_ids_attr": hasattr(bc, "user_story_ids"),
+                "bc_has_user_story_ids_attr": hasattr(bc, "user_story_ids") if not isinstance(bc, dict) else False,
             },
         )
         
         if us_ids:
             SmartLogger.log(
                 "INFO",
-                f"Linking {len(us_ids)} User Stories to BC {bc.name}",
+                f"Linking {len(us_ids)} User Stories to BC {bc_name}",
                 category="ingestion.workflow.bc.linking_start",
                 params={
                     "session_id": ctx.session.id,
                     "bc_id": created_bc.get("id"),
-                    "bc_name": bc.name,
+                    "bc_name": bc_name,
                     "user_story_ids": us_ids,
                 },
             )
@@ -185,7 +190,7 @@ async def _create_bc_with_links(
                                 us_data = {
                                     "id": us_id,
                                     "targetBcId": created_bc.get("id"),
-                                    "targetBcName": bc.name,
+                                    "targetBcName": bc_name,
                                 }
                                 if us_obj:
                                     us_data.update({
@@ -197,7 +202,7 @@ async def _create_bc_with_links(
                                     })
                                 us_assigned_event = ProgressEvent(
                                     phase=IngestionPhase.IDENTIFYING_BC,
-                                    message=f"User Story {us_id} 할당됨: {bc.name}",
+                                    message=f"User Story {us_id} 할당됨: {bc_name}",
                                     progress=PHASE_END - 1,
                                     data={
                                         "type": "UserStoryAssigned",
@@ -210,13 +215,13 @@ async def _create_bc_with_links(
                                 failed_us_ids.append(us_id)
                                 SmartLogger.log(
                                     "WARN",
-                                    f"Failed to link User Story {us_id} to BC {bc.name}",
+                                    f"Failed to link User Story {us_id} to BC {bc_name}",
                                     category="ingestion.workflow.bc.link_failed",
                                     params={
                                         "session_id": ctx.session.id,
                                         "user_story_id": us_id,
                                         "bc_id": created_bc.get("id"),
-                                        "bc_name": bc.name,
+                                        "bc_name": bc_name,
                                         "diagnostic": diagnostic,
                                     },
                                 )
@@ -230,7 +235,7 @@ async def _create_bc_with_links(
                                 us_data = {
                                     "id": us_id,
                                     "targetBcId": created_bc.get("id"),
-                                    "targetBcName": bc.name,
+                                    "targetBcName": bc_name,
                                 }
                                 if us_obj:
                                     us_data.update({
@@ -242,7 +247,7 @@ async def _create_bc_with_links(
                                     })
                                 us_assigned_event = ProgressEvent(
                                     phase=IngestionPhase.IDENTIFYING_BC,
-                                    message=f"User Story {us_id} 할당됨: {bc.name}",
+                                    message=f"User Story {us_id} 할당됨: {bc_name}",
                                     progress=PHASE_END - 1,
                                     data={
                                         "type": "UserStoryAssigned",
@@ -258,7 +263,7 @@ async def _create_bc_with_links(
                         failed_us_ids.append(us_id)
                         SmartLogger.log(
                             "WARN",
-                            f"Timeout linking User Story {us_id} to BC {bc.name}",
+                            f"Timeout linking User Story {us_id} to BC {bc_name}",
                             category="ingestion.workflow.bc.link_timeout",
                             params={
                                 "session_id": ctx.session.id,
@@ -289,7 +294,7 @@ async def _create_bc_with_links(
                             failed_us_ids.append(us_id)
                             SmartLogger.log(
                                 "ERROR",
-                                f"Exception linking User Story {us_id} to BC {bc.name}: {e}",
+                                f"Exception linking User Story {us_id} to BC {bc_name}: {e}",
                                 category="ingestion.workflow.bc.link_exception",
                                 params={
                                     "session_id": ctx.session.id,
@@ -303,7 +308,7 @@ async def _create_bc_with_links(
             
             SmartLogger.log(
                 "INFO",
-                f"BC {bc.name} linking completed: {linked_count} linked, {failed_count} failed, {skipped_count} skipped",
+                f"BC {bc_name} linking completed: {linked_count} linked, {failed_count} failed, {skipped_count} skipped",
                 category="ingestion.workflow.bc.linking_summary",
                 params={
                     "session_id": ctx.session.id,
@@ -320,7 +325,7 @@ async def _create_bc_with_links(
             # us_ids가 비어있을 때 상세 로그 출력
             SmartLogger.log(
                 "WARN",
-                f"BC {bc.name} has no user_story_ids assigned - skipping link creation",
+                f"BC {bc_name} has no user_story_ids assigned - skipping link creation",
                 category="ingestion.workflow.bc.no_user_stories",
                 params={
                     "session_id": ctx.session.id,
@@ -350,7 +355,7 @@ async def _create_bc_with_links(
             category="ingestion.neo4j.bounded_context.create_failed",
             params={
                 "session_id": ctx.session.id,
-                "bc_name": bc.name,
+                "bc_name": bc_name,
                 "error": str(e),
                 "error_type": type(e).__name__,
             },

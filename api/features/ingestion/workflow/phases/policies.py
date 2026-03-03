@@ -44,8 +44,9 @@ async def _create_policy_with_links(
     try:
         for events in ctx.events_by_agg.values():
             for evt in events:
-                if evt.name == pol.trigger_event:
-                    trigger_event_id = evt.id
+                evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
+                if evt_name == pol.trigger_event:
+                    trigger_event_id = evt.get("id") if isinstance(evt, dict) else getattr(evt, "id", None)
                     break
             if trigger_event_id:
                 break
@@ -55,12 +56,16 @@ async def _create_policy_with_links(
     # Find target BC and invoke command
     try:
         for bc in ctx.bounded_contexts:
-            if bc.name == pol.target_bc or bc.id == pol.target_bc:
-                target_bc_id = bc.id
-                for agg in ctx.aggregates_by_bc.get(bc.id, []):
-                    for cmd in ctx.commands_by_agg.get(agg.id, []):
-                        if cmd.name == pol.invoke_command:
-                            invoke_command_id = cmd.id
+            bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+            bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+            if bc_name == pol.target_bc or bc_id == pol.target_bc:
+                target_bc_id = bc_id
+                for agg in ctx.aggregates_by_bc.get(bc_id, []):
+                    agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+                    for cmd in ctx.commands_by_agg.get(agg_id, []):
+                        cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                        if cmd_name == pol.invoke_command:
+                            invoke_command_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
                             break
                     if invoke_command_id:
                         break
@@ -170,25 +175,37 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
         # Build events list with BC info and user_story_ids for cross-BC policy identification
         all_events_list: list[str] = []
         for bc in ctx.bounded_contexts:
-            for agg in ctx.aggregates_by_bc.get(bc.id, []):
-                for evt in ctx.events_by_agg.get(agg.id, []):
-                    us_ids = getattr(evt, "user_story_ids", []) or []
+            bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+            bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+            for agg in ctx.aggregates_by_bc.get(bc_id, []):
+                agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+                for evt in ctx.events_by_agg.get(agg_id, []):
+                    evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
+                    evt_desc = evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", "")
+                    us_ids = evt.get("user_story_ids", []) if isinstance(evt, dict) else getattr(evt, "user_story_ids", []) or []
                     us_ids_str = ", ".join(us_ids) if us_ids else "none"
                     all_events_list.append(
-                        f"- {evt.name} (from {bc.name}, user_stories: [{us_ids_str}]): {evt.description}"
+                        f"- {evt_name} (from {bc_name}, user_stories: [{us_ids_str}]): {evt_desc}"
                     )
         events_text = "\n".join(all_events_list)
 
         commands_by_bc: dict[str, str] = {}
         for bc in ctx.bounded_contexts:
+            bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+            bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
             bc_cmds: list[str] = []
-            for agg in ctx.aggregates_by_bc.get(bc.id, []):
-                for cmd in ctx.commands_by_agg.get(agg.id, []):
-                    bc_cmds.append(f"- {cmd.name}")
-            commands_by_bc[bc.name] = "\n".join(bc_cmds) if bc_cmds else "No commands"
+            for agg in ctx.aggregates_by_bc.get(bc_id, []):
+                agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+                for cmd in ctx.commands_by_agg.get(agg_id, []):
+                    cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                    bc_cmds.append(f"- {cmd_name}")
+            commands_by_bc[bc_name] = "\n".join(bc_cmds) if bc_cmds else "No commands"
 
         commands_text = "\n".join([f"{bc_name}:\n{cmds}" for bc_name, cmds in commands_by_bc.items()])
-        bc_text = "\n".join([f"- {bc.name}: {bc.description}" for bc in ctx.bounded_contexts])
+        bc_text = "\n".join([
+            f"- {bc.get('name') if isinstance(bc, dict) else getattr(bc, 'name', '')}: {bc.get('description') if isinstance(bc, dict) else getattr(bc, 'description', '')}"
+            for bc in ctx.bounded_contexts
+        ])
 
         # 전체 프롬프트 텍스트 구성 (청킹 판단용)
         full_prompt_text = IDENTIFY_POLICIES_PROMPT.format(

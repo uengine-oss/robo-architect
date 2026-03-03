@@ -5,6 +5,8 @@ import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.store'
+import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
+import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 
 const props = defineProps({
   node: {
@@ -26,6 +28,8 @@ const canvasStore = useCanvasStore()
 const aggregateViewerStore = useAggregateViewerStore()
 const bigPictureStore = useBigPictureStore()
 const userStoryEditor = useUserStoryEditorStore()
+const chatStore = useModelModifierStore()
+const ingestionStore = useIngestionStore()
 
 // Inject activeTab from App.vue
 const activeTab = inject('activeTab', ref('Design'))
@@ -210,8 +214,59 @@ const isOnCanvas = computed(() => {
   return false
 })
 
-function toggleExpand() {
+function toggleExpand(event) {
+  // If Ctrl/Cmd is pressed, add to chat selection instead of toggling expand
+  // This works both during normal operation and during ingestion pause
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault()
+    event.stopPropagation()
+    addToChatSelection()
+    return
+  }
+  
+  // Normal click: toggle expand/collapse (works in all states including pause)
   navigatorStore.toggleExpanded(props.node.id)
+}
+
+// Add node to chat selection
+function addToChatSelection() {
+  // Skip UserStory nodes (they're not modifiable via chat)
+  if (props.node.type === 'UserStory') {
+    return
+  }
+  
+  // Convert navigator node format to chat selection format
+  const selectedNode = {
+    id: props.node.id,
+    name: props.node.name || props.node.id,
+    type: props.node.type,
+    description: props.node.description,
+    bcId: props.node.bcId,
+    bcName: props.node.bcName,
+    aggregateId: props.node.aggregateId,
+    ...props.node
+  }
+  
+  // Add to selection (check if already selected)
+  const currentNodes = chatStore.currentSelectedNodes
+  const isAlreadySelected = currentNodes.some(n => (n.id || n.data?.id) === selectedNode.id)
+  
+  if (!isAlreadySelected) {
+    // Add to selection based on viewer
+    if (chatStore.selectedNodes.length > 0) {
+      // Other viewer (Big Picture, Aggregate)
+      chatStore.setSelectedNodes([...chatStore.selectedNodes, selectedNode])
+    } else {
+      // Design viewer - add to canvas selection if node exists on canvas
+      const existingNode = canvasStore.nodes.find(n => n.id === selectedNode.id)
+      if (existingNode) {
+        canvasStore.addToSelection(selectedNode.id)
+      } else {
+        // Node not on canvas, add to chat selection directly
+        chatStore.setSelectedNodes([selectedNode])
+      }
+    }
+  }
 }
 
 // Double click handler - for UserStory opens edit modal, for others adds to canvas

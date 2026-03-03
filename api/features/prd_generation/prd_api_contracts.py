@@ -57,7 +57,7 @@ class TechStackConfig(BaseModel):
 
 
 class PRDGenerationRequest(BaseModel):
-    node_ids: list[str] = Field(..., description="List of node IDs from canvas")
+    node_ids: list[str] | None = Field(default=None, description="List of node IDs from canvas. If empty or None, all Bounded Contexts will be included.")
     tech_stack: TechStackConfig = Field(default_factory=TechStackConfig)
 
 

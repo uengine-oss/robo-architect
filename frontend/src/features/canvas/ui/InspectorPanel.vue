@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './inspectors/nodeEditSchema'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
@@ -9,6 +10,10 @@ import { createLogger, newOpId } from '@/app/logging/logger'
 const props = defineProps({
   nodeId: {
     type: String,
+    default: null
+  },
+  nodeData: {
+    type: Object,
     default: null
   },
   initialTab: {
@@ -20,11 +25,124 @@ const props = defineProps({
 const emit = defineEmits(['close', 'updated', 'request-chat'])
 
 const canvasStore = useCanvasStore()
+const chatStore = useModelModifierStore()
 const log = createLogger({ scope: 'InspectorPanel' })
 
+// Currently viewing node index (for multiple selected nodes)
+const viewingNodeIndex = ref(0)
+
+// Get selected nodes from chat store
+const selectedNodes = computed(() => {
+  return chatStore.currentSelectedNodes || []
+})
+
+// Check if there are multiple selected nodes
+const hasMultipleNodes = computed(() => selectedNodes.value.length > 1)
+
+// Fetched node data from API (for nodes not on canvas)
+const fetchedNodeData = ref(null)
+const isLoadingNode = ref(false)
+
+// Fetch node details from API if not found on canvas
+async function fetchNodeFromAPI(nodeId) {
+  if (!nodeId || isLoadingNode.value) return null
+  
+  try {
+    isLoadingNode.value = true
+    const response = await fetch(`/api/node/${nodeId}`)
+    if (!response.ok) {
+      console.warn(`[InspectorPanel] Failed to fetch node ${nodeId}: ${response.status}`)
+      return null
+    }
+    const data = await response.json()
+    // Convert API response to VueFlow node format
+    const node = data.node
+    if (!node) return null
+    
+    // Transform to VueFlow node format
+    const vueFlowNode = {
+      id: node.id,
+      type: node.labels?.[0]?.toLowerCase() || node.type?.toLowerCase() || 'unknown',
+      data: {
+        ...node,
+        type: node.labels?.[0] || node.type,
+        name: node.name,
+        description: node.description,
+        bcId: node.bcId || data.boundedContext?.id,
+        bcName: node.bcName || data.boundedContext?.name
+      },
+      position: { x: 0, y: 0 } // Default position for non-canvas nodes
+    }
+    fetchedNodeData.value = vueFlowNode
+    return vueFlowNode
+  } catch (error) {
+    console.error(`[InspectorPanel] Error fetching node ${nodeId}:`, error)
+    return null
+  } finally {
+    isLoadingNode.value = false
+  }
+}
+
 const node = computed(() => {
-  if (!props.nodeId) return null
-  return canvasStore.nodes.find(n => n.id === props.nodeId) || null
+  // Priority 1: Use nodeData prop if provided
+  if (props.nodeData) {
+    // If nodeData is already in VueFlow format, use it directly
+    if (props.nodeData.id && props.nodeData.data) {
+      return props.nodeData
+    }
+    // Otherwise, convert to VueFlow format
+    return {
+      id: props.nodeData.id,
+      type: props.nodeData.type?.toLowerCase() || 'unknown',
+      data: {
+        ...props.nodeData,
+        type: props.nodeData.type,
+        name: props.nodeData.name,
+        description: props.nodeData.description
+      },
+      position: { x: 0, y: 0 }
+    }
+  }
+  
+  // Priority 2: Find in canvas store
+  if (props.nodeId) {
+    const canvasNode = canvasStore.nodes.find(n => n.id === props.nodeId)
+    if (canvasNode) return canvasNode
+    
+    // Priority 3: Use fetched node data if available
+    if (fetchedNodeData.value?.id === props.nodeId) {
+      return fetchedNodeData.value
+    }
+    
+    // Priority 4: Fetch from API (async, will update when done)
+    if (!isLoadingNode.value) {
+      fetchNodeFromAPI(props.nodeId)
+    }
+  }
+  
+  // Priority 5: Use selected nodes from chat store (only if no nodeId/nodeData prop)
+  if (!props.nodeId && !props.nodeData && selectedNodes.value.length > 0) {
+    const selectedNode = selectedNodes.value[viewingNodeIndex.value] || selectedNodes.value[0]
+    if (selectedNode) {
+      // Convert to VueFlow node format if needed
+      if (selectedNode.data) {
+        return selectedNode
+      }
+      return {
+        id: selectedNode.id,
+        type: selectedNode.type?.toLowerCase() || 'unknown',
+        data: {
+          ...selectedNode,
+          type: selectedNode.type,
+          name: selectedNode.name,
+          description: selectedNode.description
+        },
+        position: { x: 0, y: 0 }
+      }
+    }
+  }
+  
+  return null
 })
 
 const nodeLabel = computed(() => {
@@ -199,19 +317,48 @@ function resetToNode() {
   })
 }
 
+// Watch for selected nodes changes and reset index if needed
 watch(
-  () => props.nodeId,
+  () => selectedNodes.value.length,
+  (newLength, oldLength) => {
+    // Reset viewing index when selection changes
+    if (newLength === 0) {
+      viewingNodeIndex.value = 0
+    } else if (viewingNodeIndex.value >= newLength) {
+      viewingNodeIndex.value = newLength - 1
+    }
+  }
+)
+
+watch(
+  () => [props.nodeId, props.nodeData, viewingNodeIndex.value, selectedNodes.value.length],
   () => {
+    // Reset fetched node data when nodeId changes
+    if (props.nodeId && fetchedNodeData.value?.id !== props.nodeId) {
+      fetchedNodeData.value = null
+    }
+    
+    // Reset viewing index when nodeId or nodeData changes (not from selected nodes)
+    if (props.nodeId || props.nodeData) {
+      viewingNodeIndex.value = 0
+    }
+    
     const opId = newOpId('open')
-    log.info('inspector_open', 'Inspector opened / nodeId changed.', {
+    log.info('inspector_open', 'Inspector opened / nodeId or nodeData changed.', {
       opId,
       nodeId: props.nodeId,
+      hasNodeData: !!props.nodeData,
+      selectedNodesCount: selectedNodes.value.length,
+      viewingNodeIndex: viewingNodeIndex.value,
       initialTab: props.initialTab,
       node: redactForLog(node.value)
     })
     console.info('[RAW][InspectorPanel][inspector_open]', {
       opId,
       nodeId: props.nodeId,
+      hasNodeData: !!props.nodeData,
+      selectedNodesCount: selectedNodes.value.length,
+      viewingNodeIndex: viewingNodeIndex.value,
       initialTab: props.initialTab,
       node: redactForLog(node.value)
     })
@@ -1420,6 +1567,19 @@ function updateVoFieldValue(fieldName, value) {
       </div>
     </div>
 
+    <!-- Selected nodes selector (when multiple nodes are selected) - separate section -->
+    <div v-if="hasMultipleNodes && !props.nodeId && !props.nodeData" class="inspector-panel__node-selector-section">
+      <select 
+        class="inspector-panel__node-dropdown"
+        :value="viewingNodeIndex"
+        @change="viewingNodeIndex = parseInt($event.target.value)"
+      >
+        <option v-for="(selectedNode, index) in selectedNodes" :key="selectedNode.id" :value="index">
+          {{ index + 1 }}. {{ selectedNode.data?.name || selectedNode.name || selectedNode.id }} ({{ selectedNode.data?.type || selectedNode.type }})
+        </option>
+      </select>
+    </div>
+
     <div class="inspector-panel__body">
       <div v-if="!node" class="inspector-panel__empty">
         <div class="inspector-panel__empty-icon">
@@ -2355,6 +2515,33 @@ function updateVoFieldValue(fieldName, value) {
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--color-text-light);
+}
+
+.inspector-panel__node-selector-section {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.inspector-panel__node-dropdown {
+  width: 100%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.inspector-panel__node-dropdown:hover {
+  border-color: var(--color-accent);
+}
+
+.inspector-panel__node-dropdown:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(var(--color-accent-rgb), 0.2);
 }
 
 .inspector-panel__btn {

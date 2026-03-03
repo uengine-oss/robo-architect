@@ -30,8 +30,8 @@ router = APIRouter()
 @router.post("/generate")
 async def generate_prd(request: PRDGenerationRequest, http_request: Request):
     t0 = time.perf_counter()
-    if not request.node_ids:
-        raise HTTPException(status_code=400, detail="node_ids cannot be empty")
+    # Allow empty node_ids to generate PRD for all BCs
+    node_ids = request.node_ids if request.node_ids else []
 
     SmartLogger.log(
         "INFO",
@@ -39,11 +39,11 @@ async def generate_prd(request: PRDGenerationRequest, http_request: Request):
         category="api.prd.generate.request",
         params={
             **http_context(http_request),
-            "inputs": {"node_ids": summarize_for_log(request.node_ids), "tech_stack": request.tech_stack.model_dump()},
+            "inputs": {"node_ids": summarize_for_log(node_ids) if node_ids else "all", "tech_stack": request.tech_stack.model_dump()},
         },
     )
 
-    bcs = get_bcs_from_nodes(request.node_ids)
+    bcs = get_bcs_from_nodes(node_ids if node_ids else None)
     if not bcs:
         raise HTTPException(status_code=404, detail="No Bounded Contexts found for the given nodes")
 
@@ -82,8 +82,8 @@ async def generate_prd(request: PRDGenerationRequest, http_request: Request):
 @router.post("/download")
 async def download_prd_zip(request: PRDGenerationRequest, http_request: Request):
     t0 = time.perf_counter()
-    if not request.node_ids:
-        raise HTTPException(status_code=400, detail="node_ids cannot be empty")
+    # Allow empty node_ids to generate PRD for all BCs
+    node_ids = request.node_ids if request.node_ids else []
 
     SmartLogger.log(
         "INFO",
@@ -91,11 +91,11 @@ async def download_prd_zip(request: PRDGenerationRequest, http_request: Request)
         category="api.prd.download.request",
         params={
             **http_context(http_request),
-            "inputs": {"node_ids": summarize_for_log(request.node_ids), "tech_stack": request.tech_stack.model_dump()},
+            "inputs": {"node_ids": summarize_for_log(node_ids) if node_ids else "all", "tech_stack": request.tech_stack.model_dump()},
         },
     )
 
-    bcs = get_bcs_from_nodes(request.node_ids)
+    bcs = get_bcs_from_nodes(node_ids if node_ids else None)
     if not bcs:
         raise HTTPException(status_code=404, detail="No Bounded Contexts found for the given nodes")
 

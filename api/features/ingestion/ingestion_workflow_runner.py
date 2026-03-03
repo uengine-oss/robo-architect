@@ -63,7 +63,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "user_stories")
             yield event
 
         async for event in extract_user_stories_phase(ctx):
@@ -82,7 +82,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "bounded_contexts")
             yield event
 
         async for event in identify_bounded_contexts_phase(ctx):
@@ -101,7 +101,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "aggregates")
             yield event
 
         async for event in extract_aggregates_phase(ctx):
@@ -120,7 +120,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "commands")
             yield event
 
         async for event in extract_commands_phase(ctx):
@@ -139,7 +139,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "events")
             yield event
 
         async for event in extract_events_phase(ctx):
@@ -158,7 +158,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "readmodels")
             yield event
 
         async for event in extract_readmodels_phase(ctx):
@@ -177,7 +177,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "properties")
             yield event
 
         async for event in generate_properties_phase(ctx):
@@ -196,7 +196,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "policies")
             yield event
 
         async for event in generate_property_references_phase(ctx):
@@ -215,7 +215,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "policies")
             yield event
 
         # Policy phase MUST run before UI phase so we can exclude policy-invoked commands from UI generation
@@ -235,7 +235,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, "policies")
             yield event
 
         # Generate GWT (Given/When/Then) for Commands and Policies
@@ -255,7 +255,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, None)
             yield event
 
         if IS_SKIP_UI_PHASE:
@@ -266,7 +266,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
                 )
-                await wait_if_paused(session)
+                await wait_if_paused(session, ctx, None)
 
             yield ProgressEvent(
                 phase=IngestionPhase.GENERATING_UI,
@@ -291,7 +291,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                         progress=getattr(session, "progress", 0) or 0,
                         data={"isPaused": True},
                     )
-                    await wait_if_paused(session)
+                    await wait_if_paused(session, ctx, None)
                 yield event
 
         yield ProgressEvent(

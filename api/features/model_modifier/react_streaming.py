@@ -136,6 +136,28 @@ async def stream_react_response(
             streaming=True
         )
 
+        # Check if ingestion is paused
+        # During pause, we require node selection to avoid context size issues
+        # Users should select nodes from explorer or drag-drop to chat
+        is_ingestion_paused = False
+        ingestion_context = ""
+        try:
+            from api.features.ingestion.ingestion_sessions import list_active_sessions
+            active_sessions = list_active_sessions()
+            is_ingestion_paused = any(getattr(s, "is_paused", False) for s in active_sessions)
+            
+            # If ingestion is paused but no nodes selected, provide minimal context
+            # This encourages users to select nodes explicitly
+            if is_ingestion_paused and not selected_nodes:
+                ingestion_context = (
+                    "\n## Note: Model Generation Paused\n"
+                    "Please select nodes from the explorer or canvas before making modification requests. "
+                    "This ensures accurate context and avoids processing issues with large models."
+                )
+        except Exception:
+            # If check fails, continue without ingestion context
+            pass
+
         nodes_context = "\n".join(
             [
                 f"- {node.get('type', 'Unknown')}: {node.get('name', node.get('id'))} "
@@ -598,7 +620,9 @@ async def stream_react_response(
                 messages.append(AIMessage(content=msg.get("content", "")))
 
         current_message = f"""## Selected Nodes
-{nodes_context}
+{nodes_context if nodes_context else "(None selected)"}
+
+{ingestion_context}
 
 ## User Request
 {prompt}

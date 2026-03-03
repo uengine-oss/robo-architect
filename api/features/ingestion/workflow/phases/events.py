@@ -33,14 +33,19 @@ async def _create_event_with_links(
     if not cmd_id:
         return None, "Command ID not found"
     
-    version = getattr(evt, "version", "1.0.0") or "1.0.0"
-    payload = getattr(evt, "payload", None)
+    # Handle both dict and object formats
+    name = (evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "") or "").strip()
+    if not name:
+        return None, "Event name is empty"
+    
+    version = evt.get("version", "1.0.0") if isinstance(evt, dict) else (getattr(evt, "version", "1.0.0") or "1.0.0")
+    payload = evt.get("payload") if isinstance(evt, dict) else getattr(evt, "payload", None)
     
     try:
         created_evt = await asyncio.wait_for(
             asyncio.to_thread(
                 ctx.client.create_event,
-                name=evt.name,
+                name=name,
                 command_id=cmd_id,
                 version=version,
                 payload=payload,
@@ -48,10 +53,11 @@ async def _create_event_with_links(
             timeout=10.0
         )
         
-        # Overwrite LLM-proposed id with UUID from DB
+        # Overwrite LLM-proposed id with UUID from DB (only if evt is an object, not dict)
         try:
-            evt.id = created_evt.get("id")
-            evt.key = created_evt.get("key")
+            if not isinstance(evt, dict):
+                evt.id = created_evt.get("id")
+                evt.key = created_evt.get("key")
         except Exception:
             pass
 
@@ -101,23 +107,27 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
     for bc in ctx.bounded_contexts:
         # Legacy field used only for prompt text; keep stable without prefix-based ids.
         bc_id_short = (getattr(bc, "name", "") or "").strip()
-        bc_aggregates = ctx.aggregates_by_bc.get(bc.id, [])
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+        bc_aggregates = ctx.aggregates_by_bc.get(bc_id, [])
 
         for agg in bc_aggregates:
-            commands = ctx.commands_by_agg.get(agg.id, [])
+            agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+            agg_name = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "")
+            commands = ctx.commands_by_agg.get(agg_id, [])
             if not commands:
                 continue
 
             commands_text = "\n".join(
                 [
-                    f"- {cmd.name}: {cmd.description}" if hasattr(cmd, "description") else f"- {cmd.name}"
+                    f"- {cmd.get('name') if isinstance(cmd, dict) else getattr(cmd, 'name', '')}: {cmd.get('description') if isinstance(cmd, dict) else getattr(cmd, 'description', '')}"
                     for cmd in commands
                 ]
             )
 
             prompt = EXTRACT_EVENTS_PROMPT.format(
-                aggregate_name=agg.name,
-                bc_name=bc.name,
+                aggregate_name=agg_name,
+                bc_name=bc_name,
                 bc_short=bc_id_short,
                 commands=commands_text,
             )
@@ -132,11 +142,11 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                     "ERROR",
                     "Event extraction failed (LLM)",
                     category="ingestion.workflow.events",
-                    params={"session_id": ctx.session.id, "bc_id": bc.id, "agg_id": agg.id, "error": str(e)},
+                    params={"session_id": ctx.session.id, "bc_id": bc_id, "agg_id": agg_id, "error": str(e)},
                 )
                 events = []
 
-            all_events[agg.id] = events
+            all_events[agg_id] = events
 
             # Process all events in parallel
             if events:
@@ -152,7 +162,15 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                 
                 tasks = []
                 for i, evt in enumerate(events):
-                    cmd_id = commands[i].id if i < len(commands) else commands[0].id if commands else None
+                    # Handle both dict and object formats for commands
+                    if i < len(commands):
+                        cmd = commands[i]
+                        cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+                    elif commands:
+                        cmd = commands[0]
+                        cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+                    else:
+                        cmd_id = None
                     tasks.append(_create_event_with_links(evt, i, cmd_id, ctx))
                 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -195,15 +213,17 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                         evt = created_evt_data["evt"]
                         cmd_id = created_evt_data["cmd_id"]
                         
+                        # Handle both dict and object formats for event
+                        evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
                         yield ProgressEvent(
                             phase=IngestionPhase.EXTRACTING_EVENTS,
-                            message=f"Event 생성: {evt.name} ({created_count}/{len(events)})",
+                            message=f"Event 생성: {evt_name} ({created_count}/{len(events)})",
                             progress=80,
                             data={
                                 "type": "Event",
                                 "object": {
                                     "id": created_evt.get("id"),
-                                    "name": evt.name,
+                                    "name": evt_name,
                                     "type": "Event",
                                     "parentId": cmd_id,
                                 },

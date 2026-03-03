@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, markRaw, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide } from 'vue'
 import { VueFlow, useVueFlow, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -55,6 +55,7 @@ const isResizingChat = ref(false)
 
 // Inspector state
 const inspectingNodeId = ref(null)
+const inspectingNodeData = ref(null)
 const inspectingInitialTab = ref('properties')
 
 const { fitView, zoomIn, zoomOut, getNodes } = useVueFlow()
@@ -352,6 +353,7 @@ function openInspectorForNode(nodeId) {
   log.info('inspector_open', 'Opening Inspector for node.', { opId, nodeId, tab: 'properties' })
   console.info('[RAW][CanvasWorkspace][inspector_open]', { opId, nodeId, tab: 'properties' })
   inspectingNodeId.value = nodeId
+  inspectingNodeData.value = null // Clear nodeData when using nodeId
   inspectingInitialTab.value = 'properties'
   panelMode.value = 'inspector'
 }
@@ -361,10 +363,32 @@ function openInspectorForNodeTab(nodeId, tab) {
   log.info('inspector_open', 'Opening Inspector for node with tab.', { opId, nodeId, tab })
   console.info('[RAW][CanvasWorkspace][inspector_open]', { opId, nodeId, tab })
   inspectingNodeId.value = nodeId
+  inspectingNodeData.value = null // Clear nodeData when using nodeId
   // CQRS tab has been removed; keep this robust for any legacy callers.
   inspectingInitialTab.value = tab === 'preview' ? 'preview' : 'properties'
   panelMode.value = 'inspector'
 }
+
+// Function to open Inspector with node data (for nodes not on canvas)
+function openInspectorForNodeData(nodeData) {
+  const opId = newOpId('openInspectorForNodeData')
+  log.info('inspector_open', 'Opening Inspector for node data.', { opId, nodeId: nodeData?.id, hasNodeData: !!nodeData })
+  console.info('[RAW][CanvasWorkspace][inspector_open]', { opId, nodeId: nodeData?.id, hasNodeData: !!nodeData })
+  
+  if (nodeData?.id) {
+    inspectingNodeId.value = nodeData.id
+    inspectingNodeData.value = nodeData
+    inspectingInitialTab.value = 'properties'
+    panelMode.value = 'inspector'
+  }
+}
+
+// Provide Inspector opening functions for child components
+provide('openInspector', {
+  openInspectorForNode,
+  openInspectorForNodeTab,
+  openInspectorForNodeData
+})
 
 async function onNodeDoubleClick(event) {
   const opId = newOpId('dblclick')
@@ -485,7 +509,8 @@ async function handleDrop(event) {
     // This must happen BEFORE addNodesWithLayout to prevent position reset
     // Use both getNodes() and DOM to ensure we get the actual rendered positions
     try {
-      const vueFlowNodes = getNodes()
+      // Check if getNodes is available, otherwise use nodesWithSelection computed
+      const vueFlowNodes = typeof getNodes === 'function' ? getNodes() : (nodesWithSelection.value || [])
       vueFlowNodes.forEach(node => {
         if (node.type === 'boundedcontext' && node.position) {
           const storeNode = canvasStore.nodes.find(n => n.id === node.id)
@@ -810,6 +835,7 @@ onUnmounted(() => {
       <div v-else-if="panelMode === 'inspector'" class="inspector-wrapper">
         <InspectorPanel
           :node-id="inspectingNodeId"
+          :node-data="inspectingNodeData"
           :initial-tab="inspectingInitialTab"
           @updated="() => {}"
           @request-chat="switchToChatFromInspector"

@@ -97,11 +97,17 @@ async def _create_command_ui(
     policy_invoked_command_names: set[str],
 ) -> tuple[dict | None, ProgressEvent | None]:
     """Create a single Command UI asynchronously. Returns (ui_dict, progress_event) or (None, None) on skip/error."""
-    if cmd.id in policy_invoked_command_ids or cmd.name in policy_invoked_command_names:
+    # Handle both dict and object formats
+    cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+    cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+    bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+    bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+    
+    if cmd_id in policy_invoked_command_ids or cmd_name in policy_invoked_command_names:
         return None, None
 
-    ui_id = build_ui_key("Command", cmd.id)
-    ui_name = cmd.name
+    ui_id = build_ui_key("Command", cmd_id)
+    ui_name = cmd_name
 
     try:
         existing_template = await asyncio.to_thread(_existing_ui_template_best_effort, ctx, ui_id)
@@ -114,7 +120,7 @@ async def _create_command_ui(
             benefit = getattr(us_obj, "benefit", "") or ""
             user_story_text = f"[{chosen_us_id}] As a {role}, I want to {action}, so that {benefit}".strip()
 
-        events = await asyncio.to_thread(_fetch_command_events_best_effort, ctx, cmd.id)
+        events = await asyncio.to_thread(_fetch_command_events_best_effort, ctx, cmd_id)
         events_text = "\n".join([f"- {e}" for e in events]) if events else "No events found"
 
         theme_hint = f"{ui_name}\n{chosen_ui_desc}"
@@ -125,7 +131,7 @@ async def _create_command_ui(
                 theme_hint=theme_hint,
             )
         else:
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc.name} ({bc.id})\nAttached To: Command {cmd.name} ({cmd.id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}\n"""
+            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}\n"""
 
             raw_html = await _llm_invoke_to_html(ctx, prompt)
 
@@ -140,12 +146,12 @@ async def _create_command_ui(
                 ctx.client.create_ui,
                 key=ui_id,
                 name=ui_name,
-                bc_id=bc.id,
+                bc_id=bc_id,
                 description=chosen_ui_desc,
                 template=final_template,
-                attached_to_id=cmd.id,
+                attached_to_id=cmd_id,
                 attached_to_type="Command",
-                attached_to_name=cmd.name,
+                attached_to_name=cmd_name,
                 user_story_id=chosen_us_id,
             ),
             timeout=10.0
@@ -161,11 +167,11 @@ async def _create_command_ui(
                     "id": ui.get("id"),
                     "name": ui_name,
                     "type": "UI",
-                    "parentId": bc.id,
+                    "parentId": bc_id,
                     "template": final_template,
-                    "attachedToId": cmd.id,
+                    "attachedToId": cmd_id,
                     "attachedToType": "Command",
-                    "attachedToName": cmd.name,
+                    "attachedToName": cmd_name,
                     "userStoryId": chosen_us_id,
                     "description": chosen_ui_desc,
                 },
@@ -177,7 +183,7 @@ async def _create_command_ui(
             "ERROR",
             "UI creation failed",
             category="ingestion.neo4j.ui",
-            params={"session_id": ctx.session.id, "ui_id": ui_id, "command_id": cmd.id, "error": str(e)},
+            params={"session_id": ctx.session.id, "ui_id": ui_id, "command_id": cmd_id, "error": str(e)},
         )
         return None, None
 
@@ -191,6 +197,10 @@ async def _create_readmodel_ui(
     user_story_ui: dict[str, str],
 ) -> tuple[dict | None, ProgressEvent | None]:
     """Create a single ReadModel UI asynchronously. Returns (ui_dict, progress_event) or (None, None) on skip/error."""
+    # Handle both dict and object formats
+    bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+    bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+    
     rm_id = rm.get("id")
     ui_id = build_ui_key("ReadModel", rm_id)
     ui_name = rm.get('name', rm_id)
@@ -214,7 +224,7 @@ async def _create_readmodel_ui(
                 theme_hint=theme_hint,
             )
         else:
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc.name} ({bc.id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n"""
+            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n"""
 
             raw_html = await _llm_invoke_to_html(ctx, prompt)
 
@@ -229,7 +239,7 @@ async def _create_readmodel_ui(
                 ctx.client.create_ui,
                 key=ui_id,
                 name=ui_name,
-                bc_id=bc.id,
+                bc_id=bc_id,
                 description=chosen_ui_desc,
                 template=final_template,
                 attached_to_id=rm_id,
@@ -250,7 +260,7 @@ async def _create_readmodel_ui(
                     "id": ui.get("id"),
                     "name": ui_name,
                     "type": "UI",
-                    "parentId": bc.id,
+                    "parentId": bc_id,
                     "template": final_template,
                     "attachedToId": rm_id,
                     "attachedToType": "ReadModel",
@@ -289,7 +299,9 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
     for us in ctx.user_stories or []:
         ui_desc = getattr(us, "ui_description", "") or ""
         if ui_desc.strip():
-            user_story_ui[us.id] = ui_desc.strip()
+            us_id = us.get("id") if isinstance(us, dict) else getattr(us, "id", None)
+            if us_id:
+                user_story_ui[us_id] = ui_desc.strip()
 
     created = 0
     created_by_command: set[str] = set()
@@ -312,15 +324,22 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
     readmodel_ui_tasks: list[callable] = []
 
     for bc in ctx.bounded_contexts or []:
+        # Handle both dict and object formats
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        
         # -------------------------------------------------------------
         # Command UI - collect tasks
         # -------------------------------------------------------------
-        for agg in ctx.aggregates_by_bc.get(bc.id, []) or []:
-            for cmd in ctx.commands_by_agg.get(agg.id, []) or []:
-                if cmd.id in created_by_command:
+        for agg in ctx.aggregates_by_bc.get(bc_id, []) or []:
+            agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+            for cmd in ctx.commands_by_agg.get(agg_id, []) or []:
+                cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+                cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                
+                if cmd_id in created_by_command:
                     continue
 
-                if cmd.id in policy_invoked_command_ids or cmd.name in policy_invoked_command_names:
+                if cmd_id in policy_invoked_command_ids or cmd_name in policy_invoked_command_names:
                     continue
 
                 story_ids = getattr(cmd, "user_story_ids", []) or []
@@ -342,12 +361,12 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                         ctx, bc, cmd, chosen_us_id, chosen_ui_desc, user_story_ui, policy_invoked_command_ids, policy_invoked_command_names
                     )
                 )
-                created_by_command.add(cmd.id)
+                created_by_command.add(cmd_id)
 
         # -------------------------------------------------------------
         # ReadModel UI - collect tasks
         # -------------------------------------------------------------
-        for rm in ctx.readmodels_by_bc.get(bc.id, []) or []:
+        for rm in ctx.readmodels_by_bc.get(bc_id, []) or []:
             rm_id = rm.get("id")
             if not rm_id or rm_id in created_by_readmodel:
                 continue

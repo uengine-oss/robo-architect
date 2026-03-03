@@ -32,7 +32,9 @@ async def _create_aggregate_with_links(
     Create a single aggregate with user story links.
     Returns (created_aggregate_dict, error_message)
     """
-    agg_name = getattr(agg, "name", None) or ""
+    # Handle both dict and object formats
+    agg_name = (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None) or "").strip()
+    bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
     
     # Convert enumerations and value_objects to dict format for Neo4j
     enum_list = []
@@ -119,7 +121,7 @@ async def _create_aggregate_with_links(
             asyncio.to_thread(
                 ctx.client.create_aggregate,
                 name=agg_name,
-                bc_id=bc.id,
+                bc_id=bc_id,
                 root_entity=root_entity,
                 invariants=invariants,
                 enumerations=enum_list if enum_list else None,
@@ -182,8 +184,11 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
     progress_per_bc = 10 // max(len(ctx.bounded_contexts), 1)
 
     for bc_idx, bc in enumerate(ctx.bounded_contexts):
-        # Legacy field used only for prompt text; keep stable without prefix-based ids.
-        bc_id_short = (getattr(bc, "name", "") or "").strip()
+        # Handle both dict and object formats
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+        bc_description = bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "")
+        bc_id_short = bc_name.strip()
         
         # BC 객체에서 user_story_ids를 안전하게 읽어오기
         us_ids = []
@@ -212,11 +217,13 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         all_existing_aggregate_names = set()
         for prev_bc_idx in range(bc_idx):
             prev_bc = ctx.bounded_contexts[prev_bc_idx]
-            prev_aggregates = all_aggregates.get(prev_bc.id, [])
+            prev_bc_id = prev_bc.get("id") if isinstance(prev_bc, dict) else getattr(prev_bc, "id", None)
+            prev_bc_name = prev_bc.get("name") if isinstance(prev_bc, dict) else getattr(prev_bc, "name", "")
+            prev_aggregates = all_aggregates.get(prev_bc_id, [])
             if prev_aggregates:
-                agg_names = [getattr(agg, "name", "") for agg in prev_aggregates if getattr(agg, "name", None)]
+                agg_names = [agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "") for agg in prev_aggregates if (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None))]
                 if agg_names:
-                    existing_aggregates_text += f"  - {prev_bc.name}: {', '.join(agg_names)}\n"
+                    existing_aggregates_text += f"  - {prev_bc_name}: {', '.join(agg_names)}\n"
                     all_existing_aggregate_names.update(agg_names)
         
         if not existing_aggregates_text:
@@ -225,10 +232,10 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             existing_aggregates_text = "The following Aggregates already exist in other Bounded Contexts and can be referenced:\n" + existing_aggregates_text
 
         prompt = EXTRACT_AGGREGATES_PROMPT.format(
-            bc_name=bc.name,
-            bc_id=bc.id,
+            bc_name=bc_name,
+            bc_id=bc_id,
             bc_id_short=bc_id_short,
-            bc_description=bc.description,
+            bc_description=bc_description,
             breakdowns=breakdowns_text,
             existing_aggregates=existing_aggregates_text,
         )
@@ -255,15 +262,16 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     ref_name = getattr(vo, "referenced_aggregate_name", None)
                     if ref_name and ref_name not in all_existing_aggregate_names_for_validation:
                         # Remove invalid reference
+                        agg_name_for_warning = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "unknown")
                         validation_warnings.append(
-                            f"Removed invalid reference: {agg.name}.{getattr(vo, 'name', 'unknown')} → {ref_name} (Aggregate does not exist)"
+                            f"Removed invalid reference: {agg_name_for_warning}.{getattr(vo, 'name', 'unknown')} → {ref_name} (Aggregate does not exist)"
                         )
                         try:
                             vo.referenced_aggregate_name = None
                         except Exception:
                             pass
         
-        all_aggregates[bc.id] = aggregates
+        all_aggregates[bc_id] = aggregates
 
         # Process all aggregates in parallel
         if aggregates:
@@ -330,13 +338,15 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     created_agg = created_agg_data["aggregate"]
                     agg = created_agg_data["agg"]
                     
+                    # Handle both dict and object formats
+                    agg_name = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "")
                     yield ProgressEvent(
                         phase=IngestionPhase.EXTRACTING_AGGREGATES,
-                        message=f"Aggregate 생성: {agg.name} ({created_count}/{len(valid_aggregates)})",
+                        message=f"Aggregate 생성: {agg_name} ({created_count}/{len(valid_aggregates)})",
                         progress=45 + progress_per_bc * bc_idx,
                         data={
                             "type": "Aggregate",
-                            "object": {"id": created_agg.get("id"), "name": agg.name, "type": "Aggregate", "parentId": bc.id},
+                            "object": {"id": created_agg.get("id"), "name": agg_name, "type": "Aggregate", "parentId": bc_id},
                         },
                     )
 

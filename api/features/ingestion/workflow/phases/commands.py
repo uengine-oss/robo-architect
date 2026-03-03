@@ -36,26 +36,31 @@ async def _create_command_with_links(
     Create a single command with user story links.
     Returns (created_command_dict, error_message)
     """
-    category = getattr(cmd, "category", None)
-    input_schema = getattr(cmd, "inputSchema", None)
+    # Handle both dict and object formats
+    cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+    cmd_actor = cmd.get("actor") if isinstance(cmd, dict) else getattr(cmd, "actor", "user")
+    category = cmd.get("category") if isinstance(cmd, dict) else getattr(cmd, "category", None)
+    input_schema = cmd.get("inputSchema") if isinstance(cmd, dict) else getattr(cmd, "inputSchema", None)
+    agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
     
     try:
         created_cmd = await asyncio.wait_for(
             asyncio.to_thread(
                 ctx.client.create_command,
-                name=cmd.name,
-                aggregate_id=agg.id,
-                actor=cmd.actor,
+                name=cmd_name,
+                aggregate_id=agg_id,
+                actor=cmd_actor,
                 category=category,
                 input_schema=input_schema,
             ),
             timeout=10.0
         )
         
-        # Overwrite LLM-proposed id with UUID from DB
+        # Overwrite LLM-proposed id with UUID from DB (only if cmd is an object, not dict)
         try:
-            cmd.id = created_cmd.get("id")
-            cmd.key = created_cmd.get("key")
+            if not isinstance(cmd, dict):
+                cmd.id = created_cmd.get("id")
+                cmd.key = created_cmd.get("key")
         except Exception:
             pass
 
@@ -103,11 +108,17 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
     all_commands: dict[str, Any] = {}
 
     for bc in ctx.bounded_contexts:
-        # Legacy field used only for prompt text; keep stable without prefix-based ids.
-        bc_id_short = (getattr(bc, "name", "") or "").strip()
-        bc_aggregates = ctx.aggregates_by_bc.get(bc.id, [])
+        # Handle both dict and object formats
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+        bc_id_short = bc_name.strip()
+        bc_aggregates = ctx.aggregates_by_bc.get(bc_id, [])
 
         for agg in bc_aggregates:
+            # Handle both dict and object formats
+            agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+            agg_name = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "")
+            
             # BC 객체에서 user_story_ids를 안전하게 읽어오기
             bc_us_ids = []
             try:
@@ -134,9 +145,9 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
 
             # 전체 프롬프트 텍스트 구성 (청킹 판단용)
             full_prompt_text = EXTRACT_COMMANDS_PROMPT.format(
-                aggregate_name=agg.name,
-                aggregate_id=agg.id,
-                bc_name=bc.name,
+                aggregate_name=agg_name,
+                aggregate_id=agg_id,
+                bc_name=bc_name,
                 bc_short=bc_id_short,
                 user_story_context=stories_context,
             )
@@ -161,9 +172,9 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         return
                     
                     chunk_prompt = EXTRACT_COMMANDS_PROMPT.format(
-                        aggregate_name=agg.name,
-                        aggregate_id=agg.id,
-                        bc_name=bc.name,
+                        aggregate_name=agg_name,
+                        aggregate_id=agg_id,
+                        bc_name=bc_name,
                         bc_short=bc_id_short,
                         user_story_context=chunk_stories_context,
                     )
@@ -184,13 +195,13 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                         SmartLogger.log(
                             "ERROR",
-                            f"Command extraction LLM timeout for chunk {i+1}/{total_chunks} (aggregate: {agg.name})",
+                            f"Command extraction LLM timeout for chunk {i+1}/{total_chunks} (aggregate: {agg_name})",
                             category="ingestion.llm.extract_commands.timeout",
                             params={
                                 "session_id": ctx.session.id,
-                                "bc_id": bc.id,
-                                "agg_id": agg.id,
-                                "agg_name": agg.name,
+                                "bc_id": bc_id,
+                                "agg_id": agg_id,
+                                "agg_name": agg_name,
                                 "chunk_index": i + 1,
                                 "total_chunks": total_chunks,
                                 "elapsed_ms": llm_ms,
@@ -203,13 +214,13 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                         SmartLogger.log(
                             "ERROR",
-                            f"Command extraction LLM error for chunk {i+1}/{total_chunks} (aggregate: {agg.name})",
+                            f"Command extraction LLM error for chunk {i+1}/{total_chunks} (aggregate: {agg_name})",
                             category="ingestion.llm.extract_commands.error",
                             params={
                                 "session_id": ctx.session.id,
-                                "bc_id": bc.id,
-                                "agg_id": agg.id,
-                                "agg_name": agg.name,
+                                "bc_id": bc_id,
+                                "agg_id": agg_id,
+                                "agg_name": agg_name,
                                 "chunk_index": i + 1,
                                 "total_chunks": total_chunks,
                                 "error": str(llm_error),
@@ -242,9 +253,9 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
             else:
                 # 청킹 불필요한 경우
                 prompt = EXTRACT_COMMANDS_PROMPT.format(
-                    aggregate_name=agg.name,
-                    aggregate_id=agg.id,
-                    bc_name=bc.name,
+                    aggregate_name=agg_name,
+                    aggregate_id=agg_id,
+                    bc_name=bc_name,
                     bc_short=bc_id_short,
                     user_story_context=stories_context,
                 )
@@ -267,13 +278,13 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                         SmartLogger.log(
                             "ERROR",
-                            f"Command extraction LLM timeout (aggregate: {agg.name})",
+                            f"Command extraction LLM timeout (aggregate: {agg_name})",
                             category="ingestion.llm.extract_commands.timeout",
                             params={
                                 "session_id": ctx.session.id,
-                                "bc_id": bc.id,
-                                "agg_id": agg.id,
-                                "agg_name": agg.name,
+                                "bc_id": bc_id,
+                                "agg_id": agg_id,
+                                "agg_name": agg_name,
                                 "elapsed_ms": llm_ms,
                             },
                         )
@@ -282,13 +293,13 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                         SmartLogger.log(
                             "ERROR",
-                            f"Command extraction LLM error (aggregate: {agg.name})",
+                            f"Command extraction LLM error (aggregate: {agg_name})",
                             category="ingestion.llm.extract_commands.error",
                             params={
                                 "session_id": ctx.session.id,
-                                "bc_id": bc.id,
-                                "agg_id": agg.id,
-                                "agg_name": agg.name,
+                                "bc_id": bc_id,
+                                "agg_id": agg_id,
+                                "agg_name": agg_name,
                                 "error": str(llm_error),
                                 "error_type": type(llm_error).__name__,
                                 "elapsed_ms": llm_ms,
@@ -300,11 +311,11 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         "ERROR",
                         "Command extraction failed (LLM)",
                         category="ingestion.workflow.commands",
-                        params={"session_id": ctx.session.id, "bc_id": bc.id, "agg_id": agg.id, "error": str(e)},
+                        params={"session_id": ctx.session.id, "bc_id": bc_id, "agg_id": agg_id, "error": str(e)},
                     )
                     commands = []
 
-            all_commands[agg.id] = commands
+            all_commands[agg_id] = commands
 
             # Process all commands in parallel
             if commands:
@@ -362,13 +373,16 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         created_cmd = created_cmd_data["command"]
                         cmd = created_cmd_data["cmd"]
                         
+                        # Handle both dict and object formats
+                        cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                        
                         yield ProgressEvent(
                             phase=IngestionPhase.EXTRACTING_COMMANDS,
-                            message=f"Command 생성: {cmd.name} ({created_count}/{total_cmds})",
+                            message=f"Command 생성: {cmd_name} ({created_count}/{total_cmds})",
                             progress=65,
                             data={
                                 "type": "Command",
-                                "object": {"id": created_cmd.get("id"), "name": cmd.name, "type": "Command", "parentId": agg.id},
+                                "object": {"id": created_cmd.get("id"), "name": cmd_name, "type": "Command", "parentId": agg_id},
                             },
                         )
 

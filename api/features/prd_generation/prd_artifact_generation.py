@@ -23,14 +23,16 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 ## Bounded Contexts
 """
 
-    prd += "\n| BC Name | Aggregates | Commands | Events | Policies |\n"
-    prd += "|---------|------------|----------|--------|----------|\n"
+    prd += "\n| BC Name | Aggregates | Commands | Events | ReadModels | Policies | UIs |\n"
+    prd += "|---------|------------|----------|--------|------------|----------|-----|\n"
     for bc in bcs:
         aggs = bc.get("aggregates", []) or []
         cmds = sum(len(a.get("commands", []) or []) for a in aggs)
         evts = sum(len(a.get("events", []) or []) for a in aggs)
+        rms = len(bc.get("readmodels", []) or [])
         pols = len(bc.get("policies", []) or [])
-        prd += f"| {bc.get('name', 'Unknown')} | {len(aggs)} | {cmds} | {evts} | {pols} |\n"
+        uis = len(bc.get("uis", []) or [])
+        prd += f"| {bc.get('name', 'Unknown')} | {len(aggs)} | {cmds} | {evts} | {rms} | {pols} | {uis} |\n"
 
     prd += "\n## Notes\n- This PRD was generated from the Event Storming model stored in Neo4j.\n"
     return prd
@@ -50,22 +52,108 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
         spec += f"\n### {agg.get('name', 'Unknown')}\n"
         if agg.get("rootEntity"):
             spec += f"- Root Entity: `{agg['rootEntity']}`\n"
+        
+        # Aggregate Properties
+        if agg.get("properties"):
+            spec += "- Properties:\n"
+            for prop in agg["properties"]:
+                if prop.get("id"):
+                    prop_type = prop.get("type", "String")
+                    is_key = " (Key)" if prop.get("isKey") else ""
+                    is_fk = f" (FK -> {prop.get('fkTargetHint', '')})" if prop.get("isForeignKey") else ""
+                    spec += f"  - `{prop.get('name', '')}`: {prop_type}{is_key}{is_fk}\n"
+                    if prop.get("description"):
+                        spec += f"    - {prop.get('description')}\n"
+        
+        # Commands with Properties
         if agg.get("commands"):
             spec += "- Commands:\n"
             for cmd in agg["commands"]:
                 if cmd.get("id"):
                     spec += f"  - `{cmd.get('name','')}` (actor: {cmd.get('actor','')})\n"
+                    if cmd.get("properties"):
+                        spec += "    - Properties:\n"
+                        for prop in cmd["properties"]:
+                            if prop.get("id"):
+                                prop_type = prop.get("type", "String")
+                                is_required = " (required)" if prop.get("isRequired") else ""
+                                spec += f"      - `{prop.get('name', '')}`: {prop_type}{is_required}\n"
+        
+        # Events with Properties
         if agg.get("events"):
             spec += "- Events:\n"
             for evt in agg["events"]:
                 if evt.get("id"):
                     spec += f"  - `{evt.get('name','')}` (v{evt.get('version','1')})\n"
+                    if evt.get("properties"):
+                        spec += "    - Properties:\n"
+                        for prop in evt["properties"]:
+                            if prop.get("id"):
+                                prop_type = prop.get("type", "String")
+                                spec += f"      - `{prop.get('name', '')}`: {prop_type}\n"
 
+    # ReadModels
+    if bc.get("readmodels"):
+        spec += "\n## ReadModels\n"
+        for rm in bc["readmodels"]:
+            if rm.get("id"):
+                spec += f"\n### {rm.get('name', 'Unknown')}\n"
+                if rm.get("description"):
+                    spec += f"- Description: {rm.get('description')}\n"
+                if rm.get("provisioningType"):
+                    spec += f"- Provisioning Type: {rm.get('provisioningType')}\n"
+                if rm.get("properties"):
+                    spec += "- Properties:\n"
+                    for prop in rm["properties"]:
+                        if prop.get("id"):
+                            prop_type = prop.get("type", "String")
+                            spec += f"  - `{prop.get('name', '')}`: {prop_type}\n"
+
+    # Policies
     if bc.get("policies"):
         spec += "\n## Policies\n"
         for pol in bc["policies"]:
             if pol.get("id"):
-                spec += f"- `{pol.get('name','')}`: triggers `{pol.get('triggerEventId')}` -> invokes `{pol.get('invokeCommandId')}`\n"
+                spec += f"- `{pol.get('name','')}`\n"
+                if pol.get("description"):
+                    spec += f"  - Description: {pol.get('description')}\n"
+                spec += f"  - Triggers: `{pol.get('triggerEventName', 'N/A')}`\n"
+                spec += f"  - Invokes: `{pol.get('invokeCommandName', 'N/A')}`\n"
+
+    # UI Wireframes
+    if bc.get("uis"):
+        spec += "\n## UI Wireframes\n"
+        for ui in bc["uis"]:
+            if ui.get("id"):
+                spec += f"- `{ui.get('name', 'Unknown')}`\n"
+                if ui.get("description"):
+                    spec += f"  - Description: {ui.get('description')}\n"
+                if ui.get("attachedToType") and ui.get("attachedToName"):
+                    spec += f"  - Attached to: {ui.get('attachedToType')} `{ui.get('attachedToName')}`\n"
+
+    # GWT Test Cases
+    if bc.get("gwts"):
+        spec += "\n## GWT Test Cases\n"
+        for gwt in bc["gwts"]:
+            if gwt.get("id"):
+                parent_type = gwt.get("parentType", "Unknown")
+                spec += f"- GWT for {parent_type} `{gwt.get('parentId', '')}`\n"
+                if gwt.get("givenRef"):
+                    given = gwt["givenRef"]
+                    if isinstance(given, dict):
+                        spec += f"  - Given: {given.get('name', 'N/A')}\n"
+                if gwt.get("whenRef"):
+                    when = gwt["whenRef"]
+                    if isinstance(when, dict):
+                        spec += f"  - When: {when.get('name', 'N/A')}\n"
+                if gwt.get("thenRef"):
+                    then = gwt["thenRef"]
+                    if isinstance(then, dict):
+                        spec += f"  - Then: {then.get('name', 'N/A')}\n"
+                if gwt.get("testCases"):
+                    test_cases = gwt["testCases"]
+                    if isinstance(test_cases, list) and len(test_cases) > 0:
+                        spec += f"  - Test Cases: {len(test_cases)} scenarios\n"
 
     spec += "\n## Implementation Notes\n"
     spec += f"- Framework: `{config.framework.value}`\n- Messaging: `{config.messaging.value}`\n"

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 
 /**
  * Store for managing chat-based model modification with ReAct pattern.
@@ -13,6 +14,7 @@ import { useCanvasStore } from '@/features/canvas/canvas.store'
  */
 export const useModelModifierStore = defineStore('modelModifier', () => {
   const canvasStore = useCanvasStore()
+  const ingestionStore = useIngestionStore()
 
   // Message history
   const messages = ref([])
@@ -64,11 +66,14 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
 
     // Get selected nodes context (from current viewer)
     const nodes = currentSelectedNodes.value
+    // Require node selection even during ingestion pause (to avoid context size issues)
     if (nodes.length === 0) {
       messages.value.push({
         id: generateId(),
         type: 'system',
-        content: '먼저 캔버스에서 수정할 객체를 선택해주세요.',
+        content: ingestionStore.isIngestionPaused
+          ? '먼저 Explorer에서 노드를 선택하거나 캔버스에서 수정할 객체를 선택해주세요.'
+          : '먼저 캔버스에서 수정할 객체를 선택해주세요.',
         timestamp: new Date().toISOString()
       })
       return
@@ -79,11 +84,15 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
       id: generateId(),
       type: 'user',
       content,
-      selectedNodes: nodes.map(n => ({
-        id: n.id,
-        name: n.data?.name || n.data?.label,
-        type: n.data?.type || n.type
-      })),
+      selectedNodes: nodes.map(n => {
+        // Handle both VueFlow node format (Design viewer) and plain object format (other viewers)
+        const nodeData = n.data || n
+        return {
+          id: n.id || nodeData.id,
+          name: nodeData?.name || nodeData?.label || n.name || n.id || nodeData.id,
+          type: nodeData?.type || n.type || nodeData.type
+        }
+      }),
       timestamp: new Date().toISOString()
     }
     messages.value.push(userMessage)
@@ -113,20 +122,23 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
   }
 
   async function processModificationRequest(prompt, selectedNodes) {
-    const nodeContext = selectedNodes.map(n => {
-      // bcId from parentNode (VueFlow grouping) or data.bcId
-      const bcId = n.parentNode || n.data?.bcId
-      return {
-        id: n.id,
-        name: n.data?.name || n.data?.label,
-        type: n.data?.type || n.type,
-        description: n.data?.description,
-        bcId,
-        bcName: n.data?.bcName,
-        aggregateId: n.data?.aggregateId,
-        ...n.data
-      }
-    })
+    // Require node selection (even during ingestion pause, to avoid context size issues)
+    const nodeContext = Array.isArray(selectedNodes) && selectedNodes.length > 0
+      ? selectedNodes.map(n => {
+          // bcId from parentNode (VueFlow grouping) or data.bcId
+          const bcId = n.parentNode || n.data?.bcId
+          return {
+            id: n.id,
+            name: n.data?.name || n.data?.label,
+            type: n.data?.type || n.type,
+            description: n.data?.description,
+            bcId,
+            bcName: n.data?.bcName,
+            aggregateId: n.data?.aggregateId,
+            ...n.data
+          }
+        })
+      : []
 
     const response = await fetch('/api/chat/modify', {
       method: 'POST',

@@ -142,39 +142,52 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
     # A) Aggregate-scoped batch: Aggregate + Commands + Events
     # ---------------------------------------------------------------------
     for bc in ctx.bounded_contexts or []:
-        bc_key_value = (getattr(bc, "key", None) or "").strip() or build_bc_key(getattr(bc, "name", "") or "")
-        for agg in ctx.aggregates_by_bc.get(bc.id, []) or []:
-            agg_key = (getattr(agg, "key", None) or "").strip()
-            agg_id = (getattr(agg, "id", None) or "").strip()
+        # Handle both dict and object formats
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        bc_key = bc.get("key") if isinstance(bc, dict) else getattr(bc, "key", None)
+        bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", None)
+        bc_key_value = (str(bc_key).strip() if bc_key else "") or build_bc_key(str(bc_name) if bc_name else "")
+        for agg in ctx.aggregates_by_bc.get(bc_id, []) or []:
+            agg_key_raw = agg.get("key") if isinstance(agg, dict) else getattr(agg, "key", None)
+            agg_id_raw = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+            agg_key = str(agg_key_raw).strip() if agg_key_raw else ""
+            agg_id = str(agg_id_raw).strip() if agg_id_raw else ""
             if not agg_key or not agg_id:
                 continue
 
-            commands = ctx.commands_by_agg.get(agg.id, []) or []
-            events = ctx.events_by_agg.get(agg.id, []) or []
+            commands = ctx.commands_by_agg.get(agg_id, []) or []
+            events = ctx.events_by_agg.get(agg_id, []) or []
 
             command_lines: list[str] = []
             for cmd in commands:
-                cmd_key = (getattr(cmd, "key", None) or "").strip()
-                cmd_id = (getattr(cmd, "id", None) or "").strip()
+                cmd_key_raw = cmd.get("key") if isinstance(cmd, dict) else getattr(cmd, "key", None)
+                cmd_id_raw = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+                cmd_key = str(cmd_key_raw).strip() if cmd_key_raw else ""
+                cmd_id = str(cmd_id_raw).strip() if cmd_id_raw else ""
                 if not cmd_key or not cmd_id:
                     continue
-                cmd_category = getattr(cmd, "category", None) or ""
-                cmd_input_schema = getattr(cmd, "inputSchema", None) or ""
+                cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                cmd_actor = cmd.get("actor") if isinstance(cmd, dict) else getattr(cmd, "actor", "")
+                cmd_category = cmd.get("category") if isinstance(cmd, dict) else getattr(cmd, "category", None)
+                cmd_input_schema = cmd.get("inputSchema") if isinstance(cmd, dict) else getattr(cmd, "inputSchema", None)
+                cmd_description = cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", "")
                 command_lines.append(
                     f"- key: {cmd_key}\n"
                     f"  id: {cmd_id}\n"
-                    f"  name: {getattr(cmd, 'name', '')}\n"
-                    f"  actor: {getattr(cmd, 'actor', '')}\n"
-                    f"  category: {cmd_category}\n"
-                    f"  inputSchema: {cmd_input_schema}\n"
-                    f"  description: {getattr(cmd, 'description', '')}"
+                    f"  name: {cmd_name}\n"
+                    f"  actor: {cmd_actor}\n"
+                    f"  category: {cmd_category or ''}\n"
+                    f"  inputSchema: {cmd_input_schema or ''}\n"
+                    f"  description: {cmd_description}"
                 )
             commands_text = "\n".join(command_lines) if command_lines else "None"
 
             event_lines: list[str] = []
             for evt in events:
-                evt_key = (getattr(evt, "key", None) or "").strip()
-                evt_id = (getattr(evt, "id", None) or "").strip()
+                evt_key_raw = evt.get("key") if isinstance(evt, dict) else getattr(evt, "key", None)
+                evt_id_raw = evt.get("id") if isinstance(evt, dict) else getattr(evt, "id", None)
+                evt_key = str(evt_key_raw).strip() if evt_key_raw else ""
+                evt_id = str(evt_id_raw).strip() if evt_id_raw else ""
                 if not evt_key or not evt_id:
                     continue
                 evt_version = getattr(evt, "version", "1.0.0") or "1.0.0"
@@ -190,16 +203,16 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
             events_text = "\n".join(event_lines) if event_lines else "None"
 
             prompt = GENERATE_PROPERTIES_AGGREGATE_BATCH_PROMPT.format(
-                bc_id=bc.id,
+                bc_id=bc_id,
                 bc_key=bc_key_value,
-                bc_name=getattr(bc, "name", "") or "",
-                bc_description=getattr(bc, "description", "") or "",
+                bc_name=bc_name or "",
+                bc_description=(bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", None)) or "",
                 aggregate_id=agg_id,
                 aggregate_key=agg_key,
-                aggregate_name=getattr(agg, "name", "") or "",
-                aggregate_root_entity=getattr(agg, "root_entity", "") or "",
-                aggregate_invariants=summarize_for_log(getattr(agg, "invariants", []) or [], max_list=200),
-                aggregate_description=getattr(agg, "description", "") or "",
+                aggregate_name=(agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)) or "",
+                aggregate_root_entity=(agg.get("root_entity") if isinstance(agg, dict) else getattr(agg, "root_entity", None)) or "",
+                aggregate_invariants=summarize_for_log((agg.get("invariants") if isinstance(agg, dict) else getattr(agg, "invariants", None)) or [], max_list=200),
+                aggregate_description=(agg.get("description") if isinstance(agg, dict) else getattr(agg, "description", None)) or "",
                 commands=commands_text,
                 events=events_text,
                 known_aggregate_keys=known_aggregate_keys_text,
@@ -215,8 +228,8 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                         "session_id": ctx.session.id,
                         "llm": {"provider": provider, "model": model},
                         "scope": "aggregate_batch",
-                        "bc": {"id": bc.id, "name": getattr(bc, "name", None), "key": bc_key_value},
-                        "aggregate": {"id": agg_id, "name": getattr(agg, "name", None), "key": agg_key},
+                        "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
+                        "aggregate": {"id": agg_id, "name": (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)), "key": agg_key},
                         "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                         "system_prompt": SYSTEM_PROMPT,
                     },
@@ -233,7 +246,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                     params={
                         "session_id": ctx.session.id,
                         "scope": "aggregate_batch",
-                        "bc_id": bc.id,
+                        "bc_id": bc_id,
                         "agg_id": agg_id,
                         "error": str(e),
                     },
@@ -254,8 +267,8 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                         "session_id": ctx.session.id,
                         "llm": {"provider": provider, "model": model},
                         "scope": "aggregate_batch",
-                        "bc": {"id": bc.id, "name": getattr(bc, "name", None), "key": bc_key_value},
-                        "aggregate": {"id": agg_id, "name": getattr(agg, "name", None), "key": agg_key},
+                        "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
+                        "aggregate": {"id": agg_id, "name": (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)), "key": agg_key},
                         "llm_ms": llm_ms,
                         "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
                     },
@@ -264,13 +277,17 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
             # Build parentKey -> parentId map for this scope
             parent_id_by_key: dict[tuple[str, str], str] = {("Aggregate", agg_key): agg_id}
             for cmd in commands:
-                ck = (getattr(cmd, "key", None) or "").strip()
-                cid = (getattr(cmd, "id", None) or "").strip()
+                ck_raw = cmd.get("key") if isinstance(cmd, dict) else getattr(cmd, "key", None)
+                cid_raw = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+                ck = str(ck_raw).strip() if ck_raw else ""
+                cid = str(cid_raw).strip() if cid_raw else ""
                 if ck and cid:
                     parent_id_by_key[("Command", ck)] = cid
             for evt in events:
-                ek = (getattr(evt, "key", None) or "").strip()
-                eid = (getattr(evt, "id", None) or "").strip()
+                ek_raw = evt.get("key") if isinstance(evt, dict) else getattr(evt, "key", None)
+                eid_raw = evt.get("id") if isinstance(evt, dict) else getattr(evt, "id", None)
+                ek = str(ek_raw).strip() if ek_raw else ""
+                eid = str(eid_raw).strip() if eid_raw else ""
                 if ek and eid:
                     parent_id_by_key[("Event", ek)] = eid
 
@@ -322,8 +339,8 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                     params={
                         "session_id": ctx.session.id,
                         "scope": "aggregate_batch",
-                        "bc": {"id": bc.id, "name": getattr(bc, "name", None), "key": bc_key_value},
-                        "aggregate": {"id": agg_id, "name": getattr(agg, "name", None), "key": agg_key},
+                        "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
+                        "aggregate": {"id": agg_id, "name": (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)), "key": agg_key},
                         "rows": len(rows),
                         "upserted": upserted,
                     },
@@ -341,8 +358,12 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
     # B) BC-scoped batch: ReadModels
     # ---------------------------------------------------------------------
     for bc in ctx.bounded_contexts or []:
-        bc_key_value = (getattr(bc, "key", None) or "").strip() or build_bc_key(getattr(bc, "name", "") or "")
-        rms = ctx.readmodels_by_bc.get(bc.id, []) or []
+        # Handle both dict and object formats
+        bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+        bc_key = bc.get("key") if isinstance(bc, dict) else getattr(bc, "key", None)
+        bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", None)
+        bc_key_value = (str(bc_key).strip() if bc_key else "") or build_bc_key(str(bc_name) if bc_name else "")
+        rms = ctx.readmodels_by_bc.get(bc_id, []) or []
         if not rms:
             continue
 
@@ -365,10 +386,10 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
             continue
 
         prompt = GENERATE_PROPERTIES_READMODELS_BATCH_PROMPT.format(
-            bc_id=bc.id,
+            bc_id=bc_id,
             bc_key=bc_key_value,
-            bc_name=getattr(bc, "name", "") or "",
-            bc_description=getattr(bc, "description", "") or "",
+            bc_name=bc_name or "",
+            bc_description=(bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", None)) or "",
             readmodels=readmodels_text,
             known_aggregate_keys=known_aggregate_keys_text,
         )
@@ -383,7 +404,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                     "session_id": ctx.session.id,
                     "llm": {"provider": provider, "model": model},
                     "scope": "readmodels_batch",
-                    "bc": {"id": bc.id, "name": getattr(bc, "name", None), "key": bc_key_value},
+                    "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
                     "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
                     "system_prompt": SYSTEM_PROMPT,
                 },
@@ -397,7 +418,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 "WARNING",
                 "Property generation failed (LLM) - readmodels batch",
                 category="ingestion.workflow.properties",
-                params={"session_id": ctx.session.id, "scope": "readmodels_batch", "bc_id": bc.id, "error": str(e)},
+                params={"session_id": ctx.session.id, "scope": "readmodels_batch", "bc_id": bc_id, "error": str(e)},
             )
             continue
         llm_ms = int((time.perf_counter() - t_llm0) * 1000)
@@ -415,7 +436,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                     "session_id": ctx.session.id,
                     "llm": {"provider": provider, "model": model},
                     "scope": "readmodels_batch",
-                    "bc": {"id": bc.id, "name": getattr(bc, "name", None), "key": bc_key_value},
+                    "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
                     "llm_ms": llm_ms,
                     "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
                 },
@@ -469,7 +490,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 params={
                     "session_id": ctx.session.id,
                     "scope": "readmodels_batch",
-                    "bc": {"id": bc.id, "name": getattr(bc, "name", None), "key": bc_key_value},
+                    "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
                     "readmodels": len(parent_id_by_key_rm),
                     "rows": len(rows),
                     "upserted": upserted,
@@ -480,7 +501,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 phase=IngestionPhase.GENERATING_PROPERTIES,
                 message=f"ReadModel Property 생성/업데이트: {getattr(bc, 'name', '')}",
                 progress=88,
-                data={"scope": "readmodels_batch", "bcId": bc.id, "upserted": upserted, "rows": len(rows)},
+                data={"scope": "readmodels_batch", "bcId": bc_id, "upserted": upserted, "rows": len(rows)},
             )
             await asyncio.sleep(0.05)
 

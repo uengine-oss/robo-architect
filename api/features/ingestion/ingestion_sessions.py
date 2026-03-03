@@ -64,19 +64,40 @@ def add_event(session: IngestionSession, event: ProgressEvent) -> None:
             pass
 
 
-async def wait_if_paused(session: IngestionSession) -> bool:
+async def wait_if_paused(session: IngestionSession, ctx=None, current_phase: str | None = None) -> bool:
     """
     If the ingestion session is paused, wait until it is resumed.
+    After resuming, synchronize context from Neo4j if provided.
+
+    Args:
+        session: The ingestion session to check
+        ctx: Optional IngestionWorkflowContext to sync after resume
+        current_phase: Optional phase name to limit sync scope
 
     Returns True if we actually waited (was paused), False otherwise.
     """
     if not getattr(session, "is_paused", False):
         return False
 
+    # Reduced sleep interval for faster response (0.1s instead of 0.25s)
     while getattr(session, "is_paused", False):
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(0.1)
+
+    # After resume, sync context from Neo4j if provided
+    if ctx is not None and hasattr(ctx, "sync_from_neo4j"):
+        ctx.sync_from_neo4j(up_to_phase=current_phase)
 
     return True
+
+
+def check_pause(session: IngestionSession) -> bool:
+    """
+    Quick synchronous check if session is paused.
+    Use this before/after long-running operations for faster pause response.
+    
+    Returns True if paused, False otherwise.
+    """
+    return getattr(session, "is_paused", False)
 
 
 def subscribe(session: IngestionSession) -> asyncio.Queue:

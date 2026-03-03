@@ -6,6 +6,7 @@ from typing import Any, Dict
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.ui_wireframe_template import normalize_ui_template
+from api.platform.keys import aggregate_key, readmodel_key
 
 
 async def apply_change(change: Dict[str, Any]) -> bool:
@@ -940,12 +941,95 @@ def _apply_connect_tx(tx: Any, change: dict[str, Any]) -> None:
         raise ValueError(f"unsupported connectionType: {connection_type}")
 
 
-def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
+def _apply_create_tx(tx: Any, change: dict[str, Any], all_changes: list[dict[str, Any]] | None = None) -> None:
+    """
+    Apply a single create change within a transaction.
+    
+    Args:
+        tx: Neo4j transaction
+        change: The change to apply
+        all_changes: All changes in the batch (for bcId inference from related changes)
+    """
     target_id = str(change.get("targetId"))
     target_type = str(change.get("targetType") or "Command")
     target_name = str(change.get("targetName") or "NewNode")
     bc_id = change.get("bcId") or change.get("targetBcId")
     updates: dict[str, Any] = change.get("updates") or {}
+    
+    # Helper to infer bcId from parentId or related changes
+    def _infer_bc_id() -> str | None:
+        # If bcId is 'N/A' or invalid, try to infer from parentId or related changes
+        if bc_id and bc_id != "N/A" and bc_id.strip():
+            # Validate bcId exists
+            bc_check = tx.run("MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.id as id", bc_id=bc_id).single()
+            if bc_check:
+                return bc_id
+        
+        # For Property: try to get bcId from parentId (if parent is Aggregate)
+        if target_type == "Property":
+            parent_id = updates.get("parentId") or ""
+            parent_type = updates.get("parentType") or ""
+            if parent_id and parent_type == "Aggregate":
+                # Find the Aggregate's bcId
+                agg_bc = tx.run(
+                    """
+                    MATCH (agg:Aggregate {id: $agg_id})<-[:HAS_AGGREGATE]-(bc:BoundedContext)
+                    RETURN bc.id as bc_id
+                    LIMIT 1
+                    """,
+                    agg_id=parent_id
+                ).single()
+                if agg_bc and agg_bc.get("bc_id"):
+                    return agg_bc.get("bc_id")
+        
+        # For Aggregate: try to find bcId from related Property changes in the same batch
+        if target_type == "Aggregate" and all_changes:
+            # Strategy 1: Look for Property changes that reference this Aggregate
+            # and check if they reference another existing Aggregate that has a bcId
+            for other_change in all_changes:
+                if other_change.get("action") == "create" and other_change.get("targetType") == "Property":
+                    other_updates = other_change.get("updates") or {}
+                    if other_updates.get("parentId") == target_id and other_updates.get("parentType") == "Aggregate":
+                        # This Property references our Aggregate
+                        # Check if there's a foreign key reference to another Aggregate
+                        if other_updates.get("isForeignKey") and other_updates.get("name"):
+                            # Try to find the referenced Aggregate's bcId
+                            # (This is a best-effort approach)
+                            pass
+            
+            # Strategy 2: Look for other Aggregate changes in the same batch that have a valid bcId
+            # and assume they're in the same BC (common pattern: creating related aggregates)
+            for other_change in all_changes:
+                if (other_change.get("action") == "create" and 
+                    other_change.get("targetType") == "Aggregate" and
+                    other_change.get("targetId") != target_id):
+                    other_bc_id = other_change.get("bcId") or other_change.get("targetBcId")
+                    if other_bc_id and other_bc_id != "N/A" and other_bc_id.strip():
+                        bc_check = tx.run("MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.id as id", bc_id=other_bc_id).single()
+                        if bc_check:
+                            return other_bc_id
+            
+            # Strategy 3: Look for Property changes that reference existing Aggregates
+            # and use their bcId
+            for other_change in all_changes:
+                if other_change.get("action") == "create" and other_change.get("targetType") == "Property":
+                    other_updates = other_change.get("updates") or {}
+                    other_parent_id = other_updates.get("parentId")
+                    other_parent_type = other_updates.get("parentType")
+                    if other_parent_id and other_parent_type == "Aggregate" and other_parent_id != target_id:
+                        # This Property references another Aggregate, try to find its bcId
+                        agg_bc = tx.run(
+                            """
+                            MATCH (agg:Aggregate {id: $agg_id})<-[:HAS_AGGREGATE]-(bc:BoundedContext)
+                            RETURN bc.id as bc_id
+                            LIMIT 1
+                            """,
+                            agg_id=other_parent_id
+                        ).single()
+                        if agg_bc and agg_bc.get("bc_id"):
+                            return agg_bc.get("bc_id")
+        
+        return None
 
     # For create, we still accept top-level description/template for backward compatibility
     description = updates.get("description", change.get("description", "")) or ""
@@ -956,6 +1040,7 @@ def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
         raise ValueError(f"description too long (>{MAX_DESCRIPTION_LEN})")
 
     if target_type == "Command":
+        aggregate_id = updates.get("aggregateId") or change.get("aggregateId")
         tx.run(
             """
             MERGE (n:Command {id: $id})
@@ -965,7 +1050,18 @@ def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
             name=target_name,
             description=description,
         )
+        if aggregate_id:
+            tx.run(
+                """
+                MATCH (cmd:Command {id: $id})
+                MATCH (agg:Aggregate {id: $agg_id})
+                MERGE (agg)-[:HAS_COMMAND]->(cmd)
+                """,
+                id=target_id,
+                agg_id=aggregate_id,
+            )
     elif target_type == "Event":
+        command_id = updates.get("commandId") or change.get("commandId")
         tx.run(
             """
             MERGE (n:Event {id: $id})
@@ -975,6 +1071,16 @@ def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
             name=target_name,
             description=description,
         )
+        if command_id:
+            tx.run(
+                """
+                MATCH (evt:Event {id: $id})
+                MATCH (cmd:Command {id: $cmd_id})
+                MERGE (cmd)-[:EMITS {isGuaranteed: true}]->(evt)
+                """,
+                id=target_id,
+                cmd_id=command_id,
+            )
     elif target_type == "Policy":
         tx.run(
             """
@@ -984,6 +1090,97 @@ def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
             id=target_id,
             name=target_name,
             description=description,
+        )
+    elif target_type == "Aggregate":
+        # Try to infer bcId if not provided or invalid
+        if not bc_id or bc_id == "N/A" or not bc_id.strip():
+            inferred_bc_id = _infer_bc_id()
+            if inferred_bc_id:
+                bc_id = inferred_bc_id
+                change["bcId"] = bc_id  # Update the change dict for consistency
+        
+        if not bc_id or bc_id == "N/A" or not bc_id.strip():
+            raise ValueError("Aggregate create requires bcId. Please ensure the selected nodes include a BoundedContext or provide bcId explicitly.")
+        
+        # Get BC key to generate aggregate key
+        bc_rec = tx.run(
+            "MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.id as id, bc.key as key",
+            bc_id=bc_id
+        ).single()
+        if not bc_rec or not bc_rec.get("key"):
+            # Try one more time to infer from Property changes that reference existing Aggregates
+            if all_changes:
+                for other_change in all_changes:
+                    if (other_change.get("action") == "create" and 
+                        other_change.get("targetType") == "Property"):
+                        other_updates = other_change.get("updates") or {}
+                        other_parent_id = other_updates.get("parentId")
+                        other_parent_type = other_updates.get("parentType")
+                        if (other_parent_id and other_parent_type == "Aggregate" and 
+                            other_parent_id != target_id):
+                            # This Property references another Aggregate, try to find its bcId
+                            agg_bc = tx.run(
+                                """
+                                MATCH (agg:Aggregate {id: $agg_id})<-[:HAS_AGGREGATE]-(bc:BoundedContext)
+                                RETURN bc.id as bc_id, bc.key as bc_key
+                                LIMIT 1
+                                """,
+                                agg_id=other_parent_id
+                            ).single()
+                            if agg_bc and agg_bc.get("bc_id"):
+                                bc_id = agg_bc.get("bc_id")
+                                change["bcId"] = bc_id
+                                bc_rec = tx.run(
+                                    "MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.id as id, bc.key as key",
+                                    bc_id=bc_id
+                                ).single()
+                                if bc_rec and bc_rec.get("key"):
+                                    break
+            
+            if not bc_rec or not bc_rec.get("key"):
+                raise ValueError(f"BoundedContext not found or missing key: {bc_id}. Please ensure the selected nodes include a valid BoundedContext.")
+        
+        bc_key_value = bc_rec.get("key")
+        agg_key = aggregate_key(bc_key_value, target_name)
+        
+        # Check if aggregate with same key exists in different BC
+        existing_check = tx.run(
+            """
+            OPTIONAL MATCH (existing:Aggregate {key: $key})<-[:HAS_AGGREGATE]-(otherBC:BoundedContext)
+            WHERE otherBC.id <> $bc_id
+            RETURN otherBC.id as existing_bc
+            """,
+            key=agg_key,
+            bc_id=bc_id
+        ).single()
+        if existing_check and existing_check.get("existing_bc"):
+            raise ValueError(
+                f"Aggregate {agg_key} already belongs to BC {existing_check.get('existing_bc')}. "
+                f"An Aggregate can only belong to ONE Bounded Context."
+            )
+        
+        root_entity = updates.get("rootEntity") or target_name
+        
+        tx.run(
+            """
+            MATCH (bc:BoundedContext {id: $bc_id})
+            MERGE (agg:Aggregate {key: $key})
+            ON CREATE SET agg.id = $id,
+                          agg.createdAt = datetime()
+            SET agg.key = $key,
+                agg.name = $name,
+                agg.rootEntity = $root_entity,
+                agg.description = $description,
+                agg.updatedAt = datetime()
+            WITH bc, agg
+            MERGE (bc)-[:HAS_AGGREGATE {isPrimary: false}]->(agg)
+            """,
+            id=target_id,
+            key=agg_key,
+            name=target_name,
+            root_entity=root_entity,
+            description=description,
+            bc_id=bc_id,
         )
     elif target_type == "UI":
         raw_template = updates.get("template", change.get("template", "")) or ""
@@ -1116,10 +1313,61 @@ def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
                 "parentType": parent_type,
                 "parentId": parent_id,
             }
+        elif target_type == "ReadModel":
+            # Try to infer bcId if not provided or invalid
+            if not bc_id or bc_id == "N/A" or not bc_id.strip():
+                inferred_bc_id = _infer_bc_id()
+                if inferred_bc_id:
+                    bc_id = inferred_bc_id
+                    change["bcId"] = bc_id  # Update the change dict for consistency
+            
+            if not bc_id or bc_id == "N/A" or not bc_id.strip():
+                raise ValueError("ReadModel create requires bcId. Please ensure the selected nodes include a BoundedContext or provide bcId explicitly.")
+            
+            # Get BC key to generate readmodel key
+            bc_rec = tx.run(
+                "MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.key as key",
+                bc_id=bc_id
+            ).single()
+            if not bc_rec or not bc_rec.get("key"):
+                raise ValueError(f"BoundedContext not found or missing key: {bc_id}")
+            
+            bc_key_value = bc_rec.get("key")
+            rm_key = readmodel_key(bc_key_value, target_name)
+            
+            provisioning_type = updates.get("provisioningType") or "CQRS"
+            actor = updates.get("actor") or "user"
+            is_multiple_result = updates.get("isMultipleResult")
+            
+            tx.run(
+                """
+                MATCH (bc:BoundedContext {id: $bc_id})
+                MERGE (rm:ReadModel {key: $key})
+                ON CREATE SET rm.id = $id,
+                              rm.createdAt = datetime()
+                SET rm.key = $key,
+                    rm.name = $name,
+                    rm.description = $description,
+                    rm.provisioningType = $provisioning_type,
+                    rm.actor = $actor,
+                    rm.isMultipleResult = $is_multiple_result,
+                    rm.updatedAt = datetime()
+                WITH bc, rm
+                MERGE (bc)-[:HAS_READMODEL]->(rm)
+                """,
+                id=target_id,
+                key=rm_key,
+                name=target_name,
+                description=description,
+                provisioning_type=provisioning_type,
+                actor=actor,
+                is_multiple_result=is_multiple_result,
+                bc_id=bc_id,
+            )
         else:
             raise ValueError(f"unsupported targetType for create: {target_type}")
 
-    # Attach to BC when provided
+    # Attach to BC when provided (Aggregate and ReadModel are already attached above, so skip here)
     if bc_id and target_type in ("Policy", "UI"):
         rel = "HAS_POLICY" if target_type == "Policy" else "HAS_UI"
         tx.run(
@@ -1133,10 +1381,213 @@ def _apply_create_tx(tx: Any, change: dict[str, Any]) -> None:
         )
 
 
+def _auto_inject_bc_ids(session: Any, changes: list[dict[str, Any]]) -> None:
+    """
+    Automatically inject bcId for changes that need it but don't have a valid one.
+    
+    Uses a graph-based approach:
+    1. Build a dependency graph of changes (Property -> Aggregate, etc.)
+    2. Propagate bcId information through the graph
+    3. Query Neo4j for existing nodes' bcId when needed
+    """
+    # Step 1: Build a graph of change dependencies
+    # Maps: node_id -> bc_id (for nodes being created)
+    node_bc_map: dict[str, str] = {}
+    # Maps: node_id -> list of changes that reference it
+    references: dict[str, list[dict[str, Any]]] = {}
+    
+    # First pass: collect valid bcIds and build reference graph
+    for change in changes:
+        if change.get("action") != "create":
+            continue
+        
+        target_id = str(change.get("targetId") or "")
+        target_type = str(change.get("targetType") or "")
+        bc_id = change.get("bcId") or change.get("targetBcId")
+        
+        # Validate and store valid bcIds
+        if bc_id and bc_id != "N/A" and bc_id.strip():
+            bc_check = session.run("MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.id as id", bc_id=bc_id).single()
+            if bc_check:
+                node_bc_map[target_id] = bc_id
+        
+        # Build reference graph: Property -> Aggregate, etc.
+        if target_type == "Property":
+            updates = change.get("updates") or {}
+            parent_id = updates.get("parentId")
+            if parent_id:
+                if parent_id not in references:
+                    references[parent_id] = []
+                references[parent_id].append(change)
+    
+    # Step 2: Propagate bcId through the dependency graph
+    # Use iterative propagation until no more changes
+    max_iterations = len(changes)  # Prevent infinite loops
+    for _ in range(max_iterations):
+        changed = False
+        
+        for change in changes:
+            if change.get("action") != "create":
+                continue
+            
+            target_id = str(change.get("targetId") or "")
+            target_type = str(change.get("targetType") or "")
+            
+            # Skip if already has valid bcId
+            if target_id in node_bc_map:
+                continue
+            
+            # Strategy 1: Property gets bcId from its parent Aggregate
+            if target_type == "Property":
+                updates = change.get("updates") or {}
+                parent_id = updates.get("parentId")
+                parent_type = updates.get("parentType")
+                
+                if parent_id and parent_type == "Aggregate":
+                    if parent_id in node_bc_map:
+                        node_bc_map[target_id] = node_bc_map[parent_id]
+                        change["bcId"] = node_bc_map[parent_id]
+                        changed = True
+                    else:
+                        # Try to find existing Aggregate's bcId
+                        agg_bc = session.run(
+                            """
+                            MATCH (agg:Aggregate {id: $agg_id})<-[:HAS_AGGREGATE]-(bc:BoundedContext)
+                            RETURN bc.id as bc_id
+                            LIMIT 1
+                            """,
+                            agg_id=parent_id
+                        ).single()
+                        if agg_bc and agg_bc.get("bc_id"):
+                            node_bc_map[target_id] = agg_bc.get("bc_id")
+                            change["bcId"] = agg_bc.get("bc_id")
+                            changed = True
+            
+            # Strategy 2: Aggregate gets bcId from Properties that reference other Aggregates
+            elif target_type == "Aggregate":
+                # Strategy 2a: If a Property in this Aggregate is a FK, find the referenced Aggregate's bcId
+                # This is the most reliable: FK properties reference existing Aggregates
+                if target_id in references:
+                    for prop_change in references[target_id]:
+                        prop_updates = prop_change.get("updates") or {}
+                        if prop_updates.get("isForeignKey"):
+                            # This Property in our Aggregate is a FK
+                            # Try to find the referenced Aggregate by property name pattern
+                            # Example: "orderId" -> "Order" Aggregate
+                            fk_prop_name = prop_updates.get("name", "").lower()
+                            if fk_prop_name.endswith("id"):
+                                # Remove "id" suffix to get the referenced Aggregate name hint
+                                ref_agg_name_hint = fk_prop_name[:-2]
+                                # Try to find an Aggregate with this name (case-insensitive)
+                                agg_bc = session.run(
+                                    """
+                                    MATCH (agg:Aggregate)<-[:HAS_AGGREGATE]-(bc:BoundedContext)
+                                    WHERE toLower(agg.name) = toLower($hint)
+                                       OR toLower(agg.name) STARTS WITH toLower($hint)
+                                    RETURN bc.id as bc_id, agg.id as agg_id, agg.name as agg_name
+                                    ORDER BY 
+                                      CASE WHEN toLower(agg.name) = toLower($hint) THEN 0 ELSE 1 END
+                                    LIMIT 1
+                                    """,
+                                    hint=ref_agg_name_hint
+                                ).single()
+                                if agg_bc and agg_bc.get("bc_id"):
+                                    node_bc_map[target_id] = agg_bc.get("bc_id")
+                                    change["bcId"] = agg_bc.get("bc_id")
+                                    changed = True
+                                    SmartLogger.log(
+                                        "INFO",
+                                        f"Inferred bcId for Aggregate from FK property: {fk_prop_name} -> {agg_bc.get('agg_name')}",
+                                        category="api.model_change.bc_id.fk_inference",
+                                        params={
+                                            "targetId": target_id,
+                                            "fkPropertyName": fk_prop_name,
+                                            "referencedAggregate": agg_bc.get("agg_name"),
+                                            "inferredBcId": agg_bc.get("bc_id"),
+                                        },
+                                    )
+                                    break
+                
+                # Strategy 2b: Aggregate gets bcId from Properties that reference existing Aggregates (any parent)
+                if not changed:
+                    for other_change in changes:
+                        if (other_change.get("action") == "create" and 
+                            other_change.get("targetType") == "Property"):
+                            other_updates = other_change.get("updates") or {}
+                            other_parent_id = other_updates.get("parentId")
+                            other_parent_type = other_updates.get("parentType")
+                            if (other_parent_id and other_parent_type == "Aggregate" and 
+                                other_parent_id != target_id):
+                                # This Property references another Aggregate
+                                if other_parent_id in node_bc_map:
+                                    node_bc_map[target_id] = node_bc_map[other_parent_id]
+                                    change["bcId"] = node_bc_map[other_parent_id]
+                                    changed = True
+                                    break
+                                else:
+                                    # Try to find existing Aggregate's bcId
+                                    agg_bc = session.run(
+                                        """
+                                        MATCH (agg:Aggregate {id: $agg_id})<-[:HAS_AGGREGATE]-(bc:BoundedContext)
+                                        RETURN bc.id as bc_id
+                                        LIMIT 1
+                                        """,
+                                        agg_id=other_parent_id
+                                    ).single()
+                                    if agg_bc and agg_bc.get("bc_id"):
+                                        node_bc_map[target_id] = agg_bc.get("bc_id")
+                                        change["bcId"] = agg_bc.get("bc_id")
+                                        changed = True
+                                        break
+            
+            # Strategy 3: ReadModel gets bcId from other nodes in the same batch
+            elif target_type == "ReadModel":
+                for other_change in changes:
+                    if (other_change.get("action") == "create" and 
+                        other_change.get("targetType") in ("Aggregate", "ReadModel") and
+                        other_change.get("targetId") != target_id):
+                        other_bc_id = other_change.get("bcId") or other_change.get("targetBcId")
+                        if other_bc_id and other_bc_id in node_bc_map.values():
+                            # Find the first valid bcId from another node
+                            for node_id, bc_id_val in node_bc_map.items():
+                                bc_check = session.run("MATCH (bc:BoundedContext {id: $bc_id}) RETURN bc.id as id", bc_id=bc_id_val).single()
+                                if bc_check:
+                                    node_bc_map[target_id] = bc_id_val
+                                    change["bcId"] = bc_id_val
+                                    changed = True
+                                    break
+                            if changed:
+                                break
+        
+        if not changed:
+            break  # No more propagation possible
+    
+    # Step 3: Log injected bcIds
+    for change in changes:
+        if change.get("action") == "create" and change.get("bcId"):
+            target_type = str(change.get("targetType") or "")
+            target_id = str(change.get("targetId") or "")
+            if target_id in node_bc_map:
+                SmartLogger.log(
+                    "INFO",
+                    f"Auto-injected bcId for {target_type} create.",
+                    category="api.model_change.bc_id.auto_inject",
+                    params={
+                        "targetType": target_type,
+                        "targetId": target_id,
+                        "injectedBcId": node_bc_map[target_id],
+                    },
+                )
+    
+
+
 def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     """
     Validate and apply the approved change set in a single Neo4j transaction.
     All-or-nothing: any error => rollback and return errors.
+    
+    Automatically infers bcId for changes that need it but don't have it,
+    by looking up related nodes in the change set or in Neo4j.
     """
     if not approved_changes:
         return [], []
@@ -1150,6 +1601,10 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
         params={"approvedChanges": approved_changes},
     )
 
+    # Pre-process: Auto-inject bcId for changes that need it
+    with get_session() as session:
+        _auto_inject_bc_ids(session, approved_changes)
+
     with get_session() as session:
         tx = session.begin_transaction()
         try:
@@ -1160,6 +1615,8 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                     break
 
                 action = change.get("action")
+                target_id = str(change.get("targetId") or "").strip()
+                target_type = str(change.get("targetType") or "").strip()
                 # ---------------------------------------------------------------------
                 # Fallback targetId resolution (accuracy-first; ambiguous => hard error)
                 # ---------------------------------------------------------------------
@@ -1168,6 +1625,23 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                     target_type = str(change.get("targetType") or "").strip()
                     target_id = str(change.get("targetId") or "").strip()
                     exists = bool(target_id and _get_node_info_tx(tx, target_id))
+                    
+                    # For Property delete: if targetId is provided but Property doesn't exist,
+                    # it might be part of a coordinated change (e.g., refactoring) where the Property
+                    # was already deleted or never existed. Skip it instead of failing.
+                    if target_type == "Property" and action == "delete" and not exists:
+                        SmartLogger.log(
+                            "INFO",
+                            "Property delete target not found (likely already deleted or part of coordinated refactoring); skipping this change.",
+                            category="api.model_change.property_delete.skip",
+                            params={
+                                "targetId": target_id,
+                                "targetName": change.get("targetName"),
+                            },
+                        )
+                        change["_skip"] = True
+                        continue
+                    
                     # NOTE: For Property rename we prefer action=update (updates.name). For action=rename,
                     # targetName is the *new* name, so do not try to resolve by name.
                     if target_type == "Property" and action != "rename" and not exists:
@@ -1207,28 +1681,72 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                             )
                             change["targetId"] = resolved
                         else:
-                            # Explicit error (avoid generic "target not found" for troubleshooting)
-                            msg = (
-                                "Property 대상을 자동 보정할 수 없습니다(유사도 임계값 미달 또는 후보 없음).\n"
-                                f"- selector: {selector_dbg}\n"
-                                f"- targetId(provided): {target_id or '(empty)'}\n"
-                                f"- candidates(top): {candidates}"
-                            )
-                            SmartLogger.log(
-                                "WARNING",
-                                "Property target resolve failed (no confident match); aborting atomic apply.",
-                                category="api.model_change.target_resolve.none",
-                                params={
-                                    "action": action,
-                                    "selector": selector_dbg,
-                                    "providedTargetId": target_id,
-                                    "candidates": candidates,
-                                },
-                            )
-                            errors.append(msg)
-                            break
+                            # For ingestion pause feedback: if Property doesn't exist yet, skip this change
+                            # instead of failing the entire batch (allow other changes to proceed)
+                            # Also skip if parentType/parentId are missing (incomplete selector info)
+                            updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+                            parent_type = str(updates.get("parentType") or "").strip()
+                            parent_id = str(updates.get("parentId") or "").strip()
+                            has_selector = bool(parent_type and parent_id)
+                            
+                            if action == "update" and (not candidates or not has_selector):
+                                # Property doesn't exist yet or selector info is missing
+                                # Skip this change but don't fail the entire batch
+                                SmartLogger.log(
+                                    "INFO",
+                                    "Property target not found or selector incomplete (likely not yet created during ingestion); skipping this change.",
+                                    category="api.model_change.target_resolve.skip",
+                                    params={
+                                        "action": action,
+                                        "selector": selector_dbg,
+                                        "providedTargetId": target_id,
+                                        "hasSelector": has_selector,
+                                        "candidates": candidates,
+                                    },
+                                )
+                                # Mark this change to be skipped
+                                change["_skip"] = True
+                            else:
+                                # Explicit error (avoid generic "target not found" for troubleshooting)
+                                msg = (
+                                    "Property 대상을 자동 보정할 수 없습니다(유사도 임계값 미달 또는 후보 없음).\n"
+                                    f"- selector: {selector_dbg}\n"
+                                    f"- targetId(provided): {target_id or '(empty)'}\n"
+                                    f"- candidates(top): {candidates}"
+                                )
+                                SmartLogger.log(
+                                    "WARNING",
+                                    "Property target resolve failed (no confident match); aborting atomic apply.",
+                                    category="api.model_change.target_resolve.none",
+                                    params={
+                                        "action": action,
+                                        "selector": selector_dbg,
+                                        "providedTargetId": target_id,
+                                        "candidates": candidates,
+                                    },
+                                )
+                                errors.append(msg)
+                                break
 
                 if action == "update":
+                    # Check if target exists before validation
+                    if target_id:
+                        exists = bool(_get_node_info_tx(tx, target_id))
+                        if not exists:
+                            # For ingestion pause feedback: if node doesn't exist yet, skip this change
+                            # instead of failing the entire batch (allow other changes to proceed)
+                            SmartLogger.log(
+                                "INFO",
+                                f"{target_type} target not found (likely not yet created during ingestion); skipping this change.",
+                                category="api.model_change.target_not_found.skip",
+                                params={
+                                    "action": action,
+                                    "targetType": target_type,
+                                    "targetId": target_id,
+                                },
+                            )
+                            change["_skip"] = True
+                            continue
                     errors.extend(_validate_update_tx(tx, change))
                 elif action == "connect":
                     # Minimal validation: required fields + nodes exist
@@ -1238,17 +1756,51 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                         src = tx.run("MATCH (n {id: $id}) RETURN n.id as id", id=change.get("sourceId")).single()
                         tgt = tx.run("MATCH (n {id: $id}) RETURN n.id as id", id=change.get("targetId")).single()
                         if not src:
-                            errors.append(f"source not found: {change.get('sourceId')}")
+                            # For ingestion pause: skip if source doesn't exist
+                            SmartLogger.log(
+                                "INFO",
+                                f"Connect source not found (likely not yet created during ingestion); skipping this change.",
+                                category="api.model_change.connect_source_not_found.skip",
+                                params={"sourceId": change.get("sourceId")},
+                            )
+                            change["_skip"] = True
+                            continue
                         if not tgt:
-                            errors.append(f"target not found: {change.get('targetId')}")
+                            # For ingestion pause: skip if target doesn't exist
+                            SmartLogger.log(
+                                "INFO",
+                                f"Connect target not found (likely not yet created during ingestion); skipping this change.",
+                                category="api.model_change.connect_target_not_found.skip",
+                                params={"targetId": change.get("targetId")},
+                            )
+                            change["_skip"] = True
+                            continue
                 elif action == "delete":
-                    info = _get_node_info_tx(tx, str(change.get("targetId")))
-                    if not info:
-                        errors.append(f"target not found: {change.get('targetId')}")
+                    if target_id:
+                        info = _get_node_info_tx(tx, target_id)
+                        if not info:
+                            # For ingestion pause: skip if target doesn't exist
+                            SmartLogger.log(
+                                "INFO",
+                                f"{target_type} target not found for delete (likely not yet created during ingestion); skipping this change.",
+                                category="api.model_change.delete_target_not_found.skip",
+                                params={"targetType": target_type, "targetId": target_id},
+                            )
+                            change["_skip"] = True
+                            continue
                 elif action == "rename":
-                    info = _get_node_info_tx(tx, str(change.get("targetId")))
-                    if not info:
-                        errors.append(f"target not found: {change.get('targetId')}")
+                    if target_id:
+                        info = _get_node_info_tx(tx, target_id)
+                        if not info:
+                            # For ingestion pause: skip if target doesn't exist
+                            SmartLogger.log(
+                                "INFO",
+                                f"{target_type} target not found for rename (likely not yet created during ingestion); skipping this change.",
+                                category="api.model_change.rename_target_not_found.skip",
+                                params={"targetType": target_type, "targetId": target_id},
+                            )
+                            change["_skip"] = True
+                            continue
                 elif action == "create":
                     # Basic: must have targetType and targetName
                     if not change.get("targetType"):
@@ -1278,6 +1830,9 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
 
             # Apply pass
             for change in approved_changes:
+                # Skip changes marked to be skipped (e.g., Property not yet created during ingestion)
+                if change.get("_skip"):
+                    continue
                 action = change.get("action")
                 if action == "rename":
                     _apply_rename_tx(tx, change)
@@ -1288,7 +1843,7 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                 elif action == "connect":
                     _apply_connect_tx(tx, change)
                 elif action == "create":
-                    _apply_create_tx(tx, change)
+                    _apply_create_tx(tx, change, approved_changes)
 
             tx.commit()
 
@@ -1308,6 +1863,9 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
     # Flatten updates for frontend sync compatibility
     applied: list[dict[str, Any]] = []
     for change in approved_changes:
+        # Skip changes marked to be skipped
+        if change.get("_skip"):
+            continue
         c = dict(change)
         updates = c.get("updates") if isinstance(c.get("updates"), dict) else {}
         for k, v in (updates or {}).items():

@@ -76,16 +76,16 @@ onMounted(async () => {
 })
 
 function getCanvasNodeIds() {
-  return canvasStore.nodes.map(n => n.id)
+  // Return selected nodes if any, otherwise return all canvas nodes, or empty array for all BCs
+  const selected = canvasStore.selectedNodes.length > 0 
+    ? canvasStore.selectedNodes.map(n => n.id)
+    : canvasStore.nodes.map(n => n.id)
+  return selected.length > 0 ? selected : []
 }
 
 async function generatePreview() {
   const nodeIds = getCanvasNodeIds()
-
-  if (nodeIds.length === 0) {
-    error.value = 'No nodes on canvas. Please add Bounded Contexts to the canvas first.'
-    return
-  }
+  // Allow empty nodeIds to generate PRD for all BCs
 
   try {
     isGenerating.value = true
@@ -95,7 +95,7 @@ async function generatePreview() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        node_ids: nodeIds,
+        node_ids: nodeIds.length > 0 ? nodeIds : null,
         tech_stack: config.value
       })
     })
@@ -125,7 +125,7 @@ async function downloadZip() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        node_ids: nodeIds,
+        node_ids: nodeIds.length > 0 ? nodeIds : null,
         tech_stack: config.value
       })
     })

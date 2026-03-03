@@ -15,8 +15,10 @@ router = APIRouter()
 
 @router.post("/modify")
 async def modify_nodes(request: ModifyRequest, http_request: Request):
+    # Require node selection even during ingestion pause (to avoid context size issues)
+    # Users should select nodes from explorer or drag-drop to chat
     if not request.selectedNodes:
-        raise HTTPException(status_code=400, detail="No nodes selected")
+        raise HTTPException(status_code=400, detail="No nodes selected. Please select nodes from explorer or canvas before making modification requests.")
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt is required")
 
