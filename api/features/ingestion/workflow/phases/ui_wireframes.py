@@ -90,6 +90,7 @@ async def _create_command_ui(
     ctx: IngestionWorkflowContext,
     bc,
     cmd,
+    agg,
     chosen_us_id: str,
     chosen_ui_desc: str,
     user_story_ui: dict[str, str],
@@ -102,6 +103,8 @@ async def _create_command_ui(
     cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
     bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
     bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+    agg_name = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "") if agg else ""
+    agg_root = (agg.get("rootEntity") if isinstance(agg, dict) else getattr(agg, "rootEntity", None)) or ""
     
     if cmd_id in policy_invoked_command_ids or cmd_name in policy_invoked_command_names:
         return None, None
@@ -131,7 +134,8 @@ async def _create_command_ui(
                 theme_hint=theme_hint,
             )
         else:
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}\n"""
+            aggregate_context = f"Aggregate: {agg_name}" + (f" (root entity: {agg_root})" if agg_root else "") if agg_name else ""
+            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}\n\nUse labels and placeholders that fit this domain (e.g. field names that match the aggregate/command), not generic "Label" or "Input". Output ONLY the HTML fragment."""
 
             raw_html = await _llm_invoke_to_html(ctx, prompt)
 
@@ -224,7 +228,7 @@ async def _create_readmodel_ui(
                 theme_hint=theme_hint,
             )
         else:
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n"""
+            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nUse labels and placeholders that fit this read model (e.g. column/field names that match the data being displayed), not generic "Label" or "Column". Output ONLY the HTML fragment."""
 
             raw_html = await _llm_invoke_to_html(ctx, prompt)
 
@@ -358,7 +362,7 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                 command_ui_tasks.append(
                     partial(
                         _create_command_ui,
-                        ctx, bc, cmd, chosen_us_id, chosen_ui_desc, user_story_ui, policy_invoked_command_ids, policy_invoked_command_names
+                        ctx, bc, cmd, agg, chosen_us_id, chosen_ui_desc, user_story_ui, policy_invoked_command_ids, policy_invoked_command_names
                     )
                 )
                 created_by_command.add(cmd_id)

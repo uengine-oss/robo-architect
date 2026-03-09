@@ -642,6 +642,55 @@ function requestChat() {
   emit('request-chat', node.value.id)
 }
 
+// Wireframe from screenshot upload
+const wireframeUploading = ref(false)
+const wireframeUploadError = ref(null)
+const wireframeFileInputRef = ref(null)
+
+function triggerWireframeUpload() {
+  wireframeUploadError.value = null
+  wireframeFileInputRef.value?.click()
+}
+
+async function onWireframeFileSelected(event) {
+  const file = event.target.files?.[0]
+  if (!file || !node.value?.id) return
+  wireframeUploadError.value = null
+  wireframeUploading.value = true
+  try {
+    const form = new FormData()
+    form.append('ui_id', node.value.id)
+    form.append('file', file)
+    const res = await fetch('/api/chat/ui-wireframe-from-image', {
+      method: 'POST',
+      body: form
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      wireframeUploadError.value = data.detail || res.statusText || 'Wireframe generation failed'
+      return
+    }
+    const template = data.template
+    if (template != null) {
+      if (canvasStore.isOnCanvas(node.value.id)) {
+        canvasStore.patchNodeData(node.value.id, { template })
+      } else if (fetchedNodeData.value?.id === node.value.id) {
+        fetchedNodeData.value = {
+          ...fetchedNodeData.value,
+          data: { ...fetchedNodeData.value?.data, template }
+        }
+      }
+    }
+    successMsg.value = 'Wireframe updated from screenshot'
+    setTimeout(() => { successMsg.value = '' }, 3000)
+  } catch (e) {
+    wireframeUploadError.value = e?.message || 'Upload failed'
+  } finally {
+    wireframeUploading.value = false
+    event.target.value = ''
+  }
+}
+
 function addGWT() {
   // Legacy function - use addGWTSet instead
   addGWTSet()
@@ -1623,6 +1672,26 @@ function updateVoFieldValue(fieldName, value) {
               <span>UI Preview</span>
             </div>
             <div class="ui-preview-panel__actions">
+              <input
+                ref="wireframeFileInputRef"
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp"
+                class="ui-preview-panel__file-input"
+                @change="onWireframeFileSelected"
+              />
+              <button
+                class="ui-preview-panel__btn"
+                :disabled="wireframeUploading"
+                title="Regenerate wireframe from screenshot"
+                @click="triggerWireframeUpload"
+              >
+                <svg v-if="!wireframeUploading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+                <span v-else class="ui-preview-panel__btn-loading">...</span>
+              </button>
               <button class="ui-preview-panel__btn" @click="requestChat" title="Edit with AI">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
@@ -1630,6 +1699,8 @@ function updateVoFieldValue(fieldName, value) {
               </button>
             </div>
           </div>
+
+          <div v-if="wireframeUploadError" class="inspector-alert error">{{ wireframeUploadError }}</div>
 
           <div class="ui-preview-panel__info">
             <div class="ui-preview-panel__name">{{ node.data?.name }}</div>
@@ -1647,7 +1718,13 @@ function updateVoFieldValue(fieldName, value) {
                 </div>
                 <div class="browser-url">preview://{{ node.data?.name }}</div>
               </div>
-              <div class="ui-preview-frame__body" v-html="node.data?.template"></div>
+              <div class="ui-preview-frame__body">
+                <div v-if="wireframeUploading" class="ui-preview-frame__overlay" aria-live="polite">
+                  <div class="ui-preview-frame__spinner" />
+                  <div class="ui-preview-frame__overlay-text">재생성 중…</div>
+                </div>
+                <div v-html="node.data?.template"></div>
+              </div>
             </div>
             <div v-else class="ui-preview-empty">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
@@ -2807,9 +2884,27 @@ function updateVoFieldValue(fieldName, value) {
   transition: all 0.15s ease;
 }
 
-.ui-preview-panel__btn:hover {
+.ui-preview-panel__btn:hover:not(:disabled) {
   background: var(--color-bg);
   color: var(--color-text);
+}
+
+.ui-preview-panel__btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.ui-preview-panel__file-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.ui-preview-panel__btn-loading {
+  display: inline-block;
+  min-width: 1rem;
 }
 
 .ui-preview-panel__info {
@@ -2840,7 +2935,7 @@ function updateVoFieldValue(fieldName, value) {
 }
 
 .ui-preview-panel__content {
-  overflow-y: auto;
+  overflow: auto;
   padding: var(--spacing-md);
 }
 
@@ -2849,6 +2944,7 @@ function updateVoFieldValue(fieldName, value) {
   border-radius: var(--radius-md);
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  min-width: max-content;
 }
 
 .ui-preview-frame__browser-bar {
@@ -2888,9 +2984,47 @@ function updateVoFieldValue(fieldName, value) {
 .ui-preview-frame__body {
   padding: 12px;
   min-height: 180px;
+  min-width: min-content;
+  position: relative;
   color: #212529;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 0.72rem;
+}
+
+.ui-preview-frame__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(1px);
+  border: 2px dashed rgba(34, 139, 230, 0.55);
+  border-radius: 8px;
+  color: #0b2e5a;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.ui-preview-frame__overlay-text {
+  font-size: 0.9rem;
+}
+
+.ui-preview-frame__spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 3px solid rgba(34, 139, 230, 0.25);
+  border-top-color: rgba(34, 139, 230, 0.95);
+  animation: uiPreviewSpin 0.9s linear infinite;
+}
+
+@keyframes uiPreviewSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .ui-preview-frame__body :deep(input),

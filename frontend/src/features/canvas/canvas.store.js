@@ -1620,6 +1620,18 @@ export const useCanvasStore = defineStore('canvas', () => {
     }
   }
   
+  // Patch a node's data (e.g. after wireframe-from-image update)
+  function patchNodeData(nodeId, dataPatch) {
+    const idx = nodes.value.findIndex(n => n.id === nodeId)
+    if (idx === -1) return
+    const existing = nodes.value[idx]
+    nodes.value[idx] = {
+      ...existing,
+      data: { ...existing.data, ...dataPatch }
+    }
+    nodes.value = [...nodes.value]
+  }
+
   // Update node position
   function updateNodePosition(nodeId, position) {
     const node = nodes.value.find(n => n.id === nodeId)
@@ -2315,6 +2327,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     removeNode,
     removeBC,
     clearCanvas,
+    patchNodeData,
     updateNodePosition,
     updateBCSize,
     findAndAddRelations,

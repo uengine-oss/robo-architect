@@ -13,6 +13,7 @@ from .routes.chat_modify import router as chat_modify_router
 from .routes.chat_confirm import router as chat_confirm_router
 from .routes.chat_impact_details import router as chat_impact_details_router
 from .routes.node_details import router as node_details_router
+from .routes.ui_wireframe_from_image import router as ui_wireframe_from_image_router
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -20,5 +21,6 @@ router.include_router(chat_modify_router)
 router.include_router(chat_confirm_router)
 router.include_router(chat_impact_details_router)
 router.include_router(node_details_router)
+router.include_router(ui_wireframe_from_image_router)
 
 
