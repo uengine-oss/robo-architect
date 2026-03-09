@@ -11,38 +11,63 @@ def fetch_bc_data(bc_id: str) -> dict | None:
     query = """
     MATCH (bc:BoundedContext {id: $bc_id})
     
-    // Step 1: Aggregate Properties
+    // Step 1: Aggregate Properties and Additional Info
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
     WITH bc, agg
     OPTIONAL MATCH (agg)-[:HAS_PROPERTY]->(aggProp:Property)
-    WITH bc, agg, collect(DISTINCT aggProp {.id, .name, .type, .isKey, .isForeignKey, .description}) as aggProps
+    WITH bc, agg, collect(DISTINCT aggProp {.id, .name, .type, .isKey, .isForeignKey, .description, .fkTargetHint}) as aggProps
     
-    // Step 2: Commands with Properties
+    // Step 2: Commands with Properties and Additional Info
     OPTIONAL MATCH (agg)-[:HAS_COMMAND]->(cmd:Command)
     WITH bc, agg, aggProps, cmd
     OPTIONAL MATCH (cmd)-[:HAS_PROPERTY]->(cmdProp:Property)
     WITH bc, agg, aggProps, cmd, collect(DISTINCT cmdProp {.id, .name, .type, .isRequired, .description}) as cmdProps
+    WITH bc, agg, aggProps, cmd, cmdProps,
+         cmd.category as cmdCategory,
+         cmd.inputSchema as cmdInputSchema,
+         cmd.description as cmdDescription
     
-    // Step 3: Events with Properties
+    // Step 3: Events with Properties and Additional Info
     OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
-    WITH bc, agg, aggProps, cmd, cmdProps, evt
+    WITH bc, agg, aggProps, cmd, cmdProps, cmdCategory, cmdInputSchema, cmdDescription, evt
     OPTIONAL MATCH (evt)-[:HAS_PROPERTY]->(evtProp:Property)
-    WITH bc, agg, aggProps, cmd, cmdProps, evt, collect(DISTINCT evtProp {.id, .name, .type, .description}) as evtProps
+    WITH bc, agg, aggProps, cmd, cmdProps, cmdCategory, cmdInputSchema, cmdDescription, evt, 
+         collect(DISTINCT evtProp {.id, .name, .type, .description}) as evtProps,
+         evt.schema as evtSchema,
+         evt.description as evtDescription
     
     // Step 4: Group Commands and Events by Aggregate
     WITH bc, agg, aggProps,
-         collect(DISTINCT {id: cmd.id, name: cmd.name, actor: cmd.actor, properties: cmdProps}) as commands,
-         collect(DISTINCT {id: evt.id, name: evt.name, version: evt.version, properties: evtProps}) as events
+         collect(DISTINCT {
+             id: cmd.id, 
+             name: cmd.name, 
+             actor: cmd.actor, 
+             category: cmdCategory,
+             inputSchema: cmdInputSchema,
+             description: cmdDescription,
+             properties: cmdProps
+         }) as commands,
+         collect(DISTINCT {
+             id: evt.id, 
+             name: evt.name, 
+             version: evt.version, 
+             schema: evtSchema,
+             description: evtDescription,
+             properties: evtProps
+         }) as events
     WITH bc, collect(DISTINCT {
         id: agg.id,
         name: agg.name,
         rootEntity: agg.rootEntity,
+        invariants: agg.invariants,
+        enumerations: agg.enumerations,
+        valueObjects: agg.valueObjects,
         properties: aggProps,
         commands: commands,
         events: events
     }) as aggData
 
-    // Step 5: ReadModels with Properties
+    // Step 5: ReadModels with Properties and Additional Info
     OPTIONAL MATCH (bc)-[:HAS_READMODEL]->(rm:ReadModel)
     WITH bc, aggData, rm
     OPTIONAL MATCH (rm)-[:HAS_PROPERTY]->(rmProp:Property)
@@ -52,27 +77,35 @@ def fetch_bc_data(bc_id: str) -> dict | None:
         name: rm.name,
         description: rm.description,
         provisioningType: rm.provisioningType,
+        actor: rm.actor,
+        isMultipleResult: rm.isMultipleResult,
         properties: rmProps
     }) as rmData
 
-    // Step 6: Policies
+    // Step 6: Policies with Cross-BC Information
     OPTIONAL MATCH (bc)-[:HAS_POLICY]->(pol:Policy)
     WITH bc, aggData, rmData, pol
     OPTIONAL MATCH (triggerEvt:Event)-[:TRIGGERS]->(pol)
+    OPTIONAL MATCH (triggerEvt)<-[:EMITS]-(:Command)<-[:HAS_COMMAND]-(:Aggregate)<-[:HAS_AGGREGATE]-(triggerEvtBC:BoundedContext)
     OPTIONAL MATCH (pol)-[:INVOKES]->(invokeCmd:Command)
+    OPTIONAL MATCH (invokeCmd)<-[:HAS_COMMAND]-(:Aggregate)<-[:HAS_AGGREGATE]-(invokeCmdBC:BoundedContext)
     WITH bc, aggData, rmData, collect(DISTINCT {
         id: pol.id,
         name: pol.name,
         description: pol.description,
         triggerEventId: triggerEvt.id,
         triggerEventName: triggerEvt.name,
+        triggerEventBCId: triggerEvtBC.id,
+        triggerEventBCName: triggerEvtBC.name,
         invokeCommandId: invokeCmd.id,
-        invokeCommandName: invokeCmd.name
+        invokeCommandName: invokeCmd.name,
+        invokeCommandBCId: invokeCmdBC.id,
+        invokeCommandBCName: invokeCmdBC.name
     }) as polData
 
     // Step 7: UI Wireframes
     OPTIONAL MATCH (bc)-[:HAS_UI]->(ui:UI)
-    WITH bc, aggData, rmData, polData, collect(DISTINCT ui {.id, .name, .description, .attachedToId, .attachedToType, .attachedToName}) as uiData
+    WITH bc, aggData, rmData, polData, collect(DISTINCT ui {.id, .name, .description, .template, .attachedToId, .attachedToType, .attachedToName}) as uiData
 
     // Step 8: GWT
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(cmd2:Command)-[:HAS_GWT]->(gwt:GWT)

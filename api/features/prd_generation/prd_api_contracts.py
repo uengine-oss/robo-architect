@@ -23,6 +23,11 @@ class Framework(str, Enum):
     FIBER = "fiber"
 
 
+class FrontendFramework(str, Enum):
+    VUE = "vue"
+    REACT = "react"
+
+
 class MessagingPlatform(str, Enum):
     KAFKA = "kafka"
     RABBITMQ = "rabbitmq"
@@ -43,6 +48,11 @@ class Database(str, Enum):
     H2 = "h2"
 
 
+class AIAssistant(str, Enum):
+    CURSOR = "cursor"
+    CLAUDE = "claude"
+
+
 class TechStackConfig(BaseModel):
     language: Language = Language.JAVA
     framework: Framework = Framework.SPRING_BOOT
@@ -54,10 +64,14 @@ class TechStackConfig(BaseModel):
     include_docker: bool = True
     include_kubernetes: bool = False
     include_tests: bool = True
+    ai_assistant: AIAssistant = Field(default=AIAssistant.CURSOR, description="AI assistant to use: cursor or claude")
+    # Frontend options
+    frontend_framework: FrontendFramework | None = Field(default=None, description="Frontend framework (Vue, React, Angular, etc.)")
+    include_frontend: bool = Field(default=False, description="Include frontend PRD and rules")
 
 
 class PRDGenerationRequest(BaseModel):
-    node_ids: list[str] | None = Field(default=None, description="List of node IDs from canvas. If empty or None, all Bounded Contexts will be included.")
+    node_ids: list[str] | None = Field(default=None, description="List of node IDs from canvas. Note: PRD generation always includes all Bounded Contexts regardless of this parameter.")
     tech_stack: TechStackConfig = Field(default_factory=TechStackConfig)
 
 

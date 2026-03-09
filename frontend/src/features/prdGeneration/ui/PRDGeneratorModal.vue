@@ -19,7 +19,8 @@ const techStackOptions = ref({
   frameworks: [],
   messaging: [],
   deployments: [],
-  databases: []
+  databases: [],
+  frontend_frameworks: []
 })
 
 // Selected options
@@ -33,7 +34,10 @@ const config = ref({
   package_name: 'com.example',
   include_docker: true,
   include_kubernetes: false,
-  include_tests: true
+  include_tests: true,
+  ai_assistant: 'cursor', // 'cursor' or 'claude'
+  include_frontend: false,
+  frontend_framework: null // 'vue', 'react', 'angular', etc.
 })
 
 // UI State
@@ -66,7 +70,13 @@ onMounted(async () => {
     isLoading.value = true
     const response = await fetch('/api/prd/tech-stacks')
     if (response.ok) {
-      techStackOptions.value = await response.json()
+      const data = await response.json()
+      techStackOptions.value = data
+      // Ensure frontend_frameworks exists
+      if (!techStackOptions.value.frontend_frameworks) {
+        techStackOptions.value.frontend_frameworks = []
+      }
+      console.log('Tech stack options loaded:', techStackOptions.value)
     }
   } catch (e) {
     console.error('Failed to fetch tech stacks:', e)
@@ -211,7 +221,7 @@ function goBack() {
             <span>Preview</span>
           </div>
           <div class="step-line" :class="{ active: step > 2 }"></div>
-          <div class="step" :class="{ active: step >= 3 }">
+          <div class="step" :class="{ active: step >= 3, completed: step === 3 }">
             <div class="step-number">3</div>
             <span>Download</span>
           </div>
@@ -313,6 +323,55 @@ function goBack() {
             </div>
 
             <div class="config-section">
+              <h3>🎨 Frontend</h3>
+              <div class="form-group">
+                <label>
+                  <input type="checkbox" v-model="config.include_frontend" />
+                  Include Frontend PRD and Rules
+                </label>
+                <p class="form-hint">Generate Frontend-PRD.md and frontend framework-specific Cursor rules</p>
+              </div>
+              <div v-if="config.include_frontend" class="form-group" style="margin-top: 12px;">
+                <label>Frontend Framework</label>
+                <select v-model="config.frontend_framework" class="form-select">
+                  <option :value="null">Select framework...</option>
+                  <option v-for="fw in techStackOptions.frontend_frameworks" :key="fw.value" :value="fw.value">
+                    {{ fw.label }}
+                  </option>
+                </select>
+                <p v-if="techStackOptions.frontend_frameworks.length === 0" class="form-hint" style="color: #f59e0b;">
+                  No frontend frameworks available. Please refresh the page.
+                </p>
+                <p v-else class="form-hint">Select frontend framework for UI implementation guidelines</p>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <h3>🤖 AI Assistant</h3>
+              <div class="form-group">
+                <label>Choose AI Assistant</label>
+                <div class="radio-cards">
+                  <label class="radio-card" :class="{ selected: config.ai_assistant === 'cursor' }">
+                    <input type="radio" v-model="config.ai_assistant" value="cursor" />
+                    <div class="radio-card-content">
+                      <span class="radio-icon">🎯</span>
+                      <span class="radio-label">Cursor</span>
+                      <span class="radio-desc">Cursor IDE rules</span>
+                    </div>
+                  </label>
+                  <label class="radio-card" :class="{ selected: config.ai_assistant === 'claude' }">
+                    <input type="radio" v-model="config.ai_assistant" value="claude" />
+                    <div class="radio-card-content">
+                      <span class="radio-icon">🤖</span>
+                      <span class="radio-label">Claude</span>
+                      <span class="radio-desc">Claude Code agents (will be improved later)</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="config-section">
               <h3>⚙️ Additional Options</h3>
               <div class="checkbox-group">
                 <label class="checkbox-item">
@@ -359,8 +418,12 @@ function goBack() {
               <div class="tech-summary">
                 <div class="tech-item"><span class="tech-label">Language:</span><span class="tech-value">{{ previewData.tech_stack.language }}</span></div>
                 <div class="tech-item"><span class="tech-label">Framework:</span><span class="tech-value">{{ previewData.tech_stack.framework }}</span></div>
+                <div v-if="previewData.tech_stack.include_frontend && previewData.tech_stack.frontend_framework" class="tech-item">
+                  <span class="tech-label">Frontend:</span><span class="tech-value">{{ previewData.tech_stack.frontend_framework }}</span>
+                </div>
                 <div class="tech-item"><span class="tech-label">Messaging:</span><span class="tech-value">{{ previewData.tech_stack.messaging }}</span></div>
                 <div class="tech-item"><span class="tech-label">Deployment:</span><span class="tech-value">{{ previewData.tech_stack.deployment }}</span></div>
+                <div class="tech-item"><span class="tech-label">AI Assistant:</span><span class="tech-value">{{ previewData.tech_stack.ai_assistant === 'cursor' ? 'Cursor' : 'Claude Code' }}</span></div>
               </div>
             </div>
           </div>
@@ -373,10 +436,26 @@ function goBack() {
               <h4>Next Steps:</h4>
               <ol>
                 <li>Extract the ZIP file</li>
-                <li>Open the project in <strong>Cursor</strong> or use with <strong>Claude Code</strong></li>
-                <li>Read <code>CLAUDE.md</code> for AI assistant context</li>
+                <li v-if="config.ai_assistant === 'cursor'">
+                  Open the project in <strong>Cursor IDE</strong>
+                  <ul style="margin-top: 4px; padding-left: 20px;">
+                    <li>Review <code>PRD.md</code> for overall architecture</li>
+                    <li v-if="config.include_frontend && config.frontend_framework">Review <code>Frontend-PRD.md</code> for frontend requirements</li>
+                    <li>Check <code>specs/</code> folder for BC-specific specifications</li>
+                    <li>Backend rules: <code>.cursor/rules/{{ config.framework }}.mdc</code></li>
+                    <li v-if="config.include_frontend && config.frontend_framework">Frontend rules: <code>.cursor/rules/{{ config.frontend_framework }}.mdc</code></li>
+                    <li>Global rules are in <code>.cursorrules</code></li>
+                  </ul>
+                </li>
+                <li v-else>
+                  Use with <strong>Claude Code</strong>
+                  <ul style="margin-top: 4px; padding-left: 20px;">
+                    <li>BC-specific agents are in <code>.claude/agents/*.md</code></li>
+                    <li>Read <code>CLAUDE.md</code> for project context</li>
+                  </ul>
+                </li>
                 <li>Check <code>specs/</code> folder for BC-specific specifications</li>
-                <li>Use <code>.claude/agents/</code> for per-BC focused AI assistance</li>
+                <li>Read <code>PRD.md</code> for architecture guidelines</li>
               </ol>
             </div>
           </div>

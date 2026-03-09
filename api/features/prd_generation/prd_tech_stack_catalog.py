@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from api.features.prd_generation.prd_api_contracts import Database, DeploymentStyle, Framework, Language, MessagingPlatform
+from api.features.prd_generation.prd_api_contracts import Database, DeploymentStyle, Framework, FrontendFramework, Language, MessagingPlatform
 
 
 def _get_framework_languages(framework: Framework) -> list[str]:
@@ -40,6 +40,10 @@ def build_tech_stack_options() -> dict:
         ],
         "deployments": [{"value": d.value, "label": d.value.replace("-", " ").title()} for d in DeploymentStyle],
         "databases": [{"value": d.value, "label": d.value.title()} for d in Database],
+        "frontend_frameworks": [
+            {"value": f.value, "label": f.value.replace("-", " ").title()}
+            for f in FrontendFramework
+        ],
     }
 
 
