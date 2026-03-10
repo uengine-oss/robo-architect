@@ -12,6 +12,7 @@ const props = defineProps({
 const terminologyStore = useTerminologyStore()
 const canvasStore = useCanvasStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Aggregate')} >>`)
+const displayLabel = computed(() => terminologyStore.getLabel(props.data))
 
 const hasProperties = computed(() => Array.isArray(props.data?.properties) && props.data.properties.length > 0)
 const hasEnumerations = computed(() => Array.isArray(props.data?.enumerations) && props.data.enumerations.length > 0)
@@ -75,7 +76,7 @@ const nodeStyle = computed(() => {
       {{ headerText }}
     </div>
     <div class="es-node__body">
-      <div class="es-node__name">{{ data.name }}</div>
+      <div class="es-node__name">{{ displayLabel }}</div>
       <div v-if="data.rootEntity" class="es-node__root">
         {{ data.rootEntity }}
       </div>
@@ -89,21 +90,21 @@ const nodeStyle = computed(() => {
             <span v-if="prop.isKey" class="prop-badge prop-badge--key">PK</span>
             <span v-if="prop.isForeignKey" class="prop-badge prop-badge--fk">FK</span>
           </span>
-          <span class="prop-name">{{ prop.name }}</span>
+          <span class="prop-name">{{ terminologyStore.ubiquitousLanguageMode ? (prop.displayName || prop.name) : prop.name }}</span>
           <span class="prop-type">{{ prop.type }}</span>
         </div>
         
         <!-- Enumerations as fields -->
         <div v-for="enumItem in (data.enumerations || [])" :key="`enum-${enumItem.name}`" class="es-node__prop">
           <span class="prop-badges"></span>
-          <span class="prop-name">{{ enumItem.name }}</span>
+          <span class="prop-name">{{ terminologyStore.ubiquitousLanguageMode ? (enumItem.displayName || enumItem.name) : enumItem.name }}</span>
           <span class="prop-type">Enum</span>
         </div>
         
         <!-- Value Objects as fields -->
         <div v-for="vo in (data.valueObjects || [])" :key="`vo-${vo.name}`" class="es-node__prop">
           <span class="prop-badges"></span>
-          <span class="prop-name">{{ vo.name }}</span>
+          <span class="prop-name">{{ terminologyStore.ubiquitousLanguageMode ? (vo.displayName || vo.name) : vo.name }}</span>
           <span class="prop-type">ValueObject</span>
         </div>
       </div>

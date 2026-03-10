@@ -10,6 +10,7 @@ const props = defineProps({
 
 const terminologyStore = useTerminologyStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Policy')} >>`)
+const displayLabel = computed(() => terminologyStore.getLabel(props.data))
 
 const nodeStyle = computed(() => {
   const baseHeight = 60
@@ -23,7 +24,7 @@ const nodeStyle = computed(() => {
       {{ headerText }}
     </div>
     <div class="es-node__body">
-      <div class="es-node__name">{{ data.name }}</div>
+      <div class="es-node__name">{{ displayLabel }}</div>
     </div>
     
     <!-- Connection handles - Left/Right for optimal routing -->

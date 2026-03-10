@@ -20,6 +20,7 @@ class AggregateOps:
         RETURN {
             id: agg.id,
             name: agg.name,
+            displayName: agg.displayName,
             rootEntity: agg.rootEntity,
             invariants: agg.invariants,
             enumerations: agg.enumerations,
@@ -63,6 +64,7 @@ class AggregateOps:
         invariants: list[str] | None = None,
         enumerations: list[dict[str, Any]] | None = None,
         value_objects: list[dict[str, Any]] | None = None,
+        display_name: str | None = None,
     ) -> dict[str, Any]:
         """Create a new aggregate and link it to a bounded context.
 
@@ -96,6 +98,7 @@ class AggregateOps:
                       agg.createdAt = datetime()
         SET agg.key = $key,
             agg.name = $name,
+            agg.displayName = $display_name,
             agg.rootEntity = $root_entity,
             agg.invariants = $invariants,
             agg.enumerations = $enumerations_json,
@@ -108,6 +111,7 @@ class AggregateOps:
             id: agg.id,
             key: agg.key,
             name: agg.name,
+            displayName: agg.displayName,
             rootEntity: agg.rootEntity,
             invariants: agg.invariants,
             enumerations: agg.enumerations,
@@ -125,6 +129,7 @@ class AggregateOps:
                         if enum_name:  # Only add if name exists
                             enum_list.append({
                                 "name": str(enum_name),
+                                "displayName": enum.get("displayName"),
                                 "alias": enum.get("alias"),
                                 "items": enum.get("items", [])
                             })
@@ -134,6 +139,7 @@ class AggregateOps:
                         if enum_name:  # Only add if name exists
                             enum_list.append({
                                 "name": str(enum_name),
+                                "displayName": getattr(enum, "displayName", None),
                                 "alias": getattr(enum, "alias", None),
                                 "items": getattr(enum, "items", []) or []
                             })
@@ -158,6 +164,7 @@ class AggregateOps:
                                     })
                             vo_list.append({
                                 "name": str(vo_name),
+                                "displayName": vo.get("displayName"),
                                 "alias": vo.get("alias"),
                                 "referencedAggregateName": vo.get("referenced_aggregate_name"),
                                 "referencedAggregateField": vo.get("referenced_aggregate_field"),
@@ -181,6 +188,7 @@ class AggregateOps:
                                     })
                             vo_list.append({
                                 "name": str(vo_name),
+                                "displayName": getattr(vo, "displayName", None),
                                 "alias": getattr(vo, "alias", None),
                                 "referencedAggregateName": getattr(vo, "referenced_aggregate_name", None),
                                 "referencedAggregateField": getattr(vo, "referenced_aggregate_field", None),
@@ -191,12 +199,14 @@ class AggregateOps:
             enumerations_json = json.dumps(enum_list) if enum_list else "[]"
             value_objects_json = json.dumps(vo_list) if vo_list else "[]"
             
+            display_name = display_name or name
             try:
                 result = session.run(
                     query,
                     key=key,
                     name=name,
                     bc_id=bc_id,
+                    display_name=display_name,
                     root_entity=root_entity or name,
                     invariants=invariants or [],
                     enumerations_json=enumerations_json,
@@ -309,6 +319,7 @@ class AggregateOps:
                         if enum_name:  # Only add if name exists
                             enum_list.append({
                                 "name": str(enum_name),
+                                "displayName": enum.get("displayName"),
                                 "alias": enum.get("alias"),
                                 "items": enum.get("items", [])
                             })
@@ -318,6 +329,7 @@ class AggregateOps:
                         if enum_name:  # Only add if name exists
                             enum_list.append({
                                 "name": str(enum_name),
+                                "displayName": getattr(enum, "displayName", None),
                                 "alias": getattr(enum, "alias", None),
                                 "items": getattr(enum, "items", []) or []
                             })
@@ -330,6 +342,7 @@ class AggregateOps:
                         if vo_name:  # Only add if name exists
                             vo_list.append({
                                 "name": str(vo_name),
+                                "displayName": vo.get("displayName"),
                                 "alias": vo.get("alias"),
                                 "referencedAggregateName": vo.get("referenced_aggregate_name") or vo.get("referencedAggregateName"),
                                 "referencedAggregateField": vo.get("referenced_aggregate_field") or vo.get("referencedAggregateField"),
@@ -341,6 +354,7 @@ class AggregateOps:
                         if vo_name:  # Only add if name exists
                             vo_list.append({
                                 "name": str(vo_name),
+                                "displayName": getattr(vo, "displayName", None),
                                 "alias": getattr(vo, "alias", None),
                                 "referencedAggregateName": getattr(vo, "referenced_aggregate_name", None) or getattr(vo, "referencedAggregateName", None),
                                 "referencedAggregateField": getattr(vo, "referenced_aggregate_field", None) or getattr(vo, "referencedAggregateField", None),

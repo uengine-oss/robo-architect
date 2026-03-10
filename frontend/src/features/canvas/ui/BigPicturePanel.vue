@@ -2,10 +2,12 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import ChatPanel from '@/features/modelModifier/ui/ChatPanel.vue'
 
 const store = useBigPictureStore()
 const chatStore = useModelModifierStore()
+const terminologyStore = useTerminologyStore()
 
 // DOM refs
 const tableContainer = ref(null)
@@ -440,7 +442,7 @@ function handleEventClick(event, evt, bcId) {
     // Update Model Modifier with selected event
     const selectedEventNode = {
       id: evt.id,
-      name: evt.name,
+      name: terminologyStore.ubiquitousLanguageMode ? (evt.displayName || evt.name) : evt.name,
       type: 'Event',
       bcId: bcId,
       commandId: evt.commandId,
@@ -659,7 +661,7 @@ function hasTriggeredPolicies(evt) {
 }
 
 function getEventTooltip(evt) {
-  let tooltip = `${evt.name}`
+  let tooltip = `${terminologyStore.ubiquitousLanguageMode ? (evt.displayName || evt.name) : evt.name}`
   
   if (evt.actor) tooltip += `\n\nActor: ${evt.actor}`
   if (evt.commandName) tooltip += `\nCommand: ${evt.commandName}`
@@ -968,7 +970,7 @@ function getSwimlaneY(laneIndex) {
                       class="bp-swimlane__color-dot"
                       :style="{ background: getBcColor(laneIndex).accent }"
                     ></span>
-                    {{ lane.bcName }}
+                    {{ terminologyStore.ubiquitousLanguageMode ? (lane.bcDisplayName || lane.bcName) : lane.bcName }}
                   </div>
                   
                   <div class="bp-swimlane__actors">
@@ -1027,7 +1029,7 @@ function getSwimlaneY(laneIndex) {
                   </div>
                   
                   <div class="bp-event-card__body">
-                    <div class="bp-event-card__name">{{ evt.name }}</div>
+                    <div class="bp-event-card__name">{{ terminologyStore.ubiquitousLanguageMode ? (evt.displayName || evt.name) : evt.name }}</div>
                     
                     <div v-if="evt.actor" class="bp-event-card__actor">
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -21,7 +21,7 @@ const hasTemplate = computed(() => !!props.data?.template)
       {{ headerText }}
     </div>
     <div class="es-node__body">
-      <div class="es-node__name">{{ data?.name }}</div>
+      <div class="es-node__name">{{ terminologyStore.getLabel(data) }}</div>
 
       <!-- Attached To Indicator -->
       <div v-if="data?.attachedToName" class="es-node__attached">

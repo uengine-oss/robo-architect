@@ -19,8 +19,10 @@ class CommandOps:
         actor: str = "user",
         category: str | None = None,
         input_schema: str | None = None,
+        display_name: str | None = None,
     ) -> dict[str, Any]:
         """Create a new command and link it to an aggregate."""
+        display_name = display_name or name
         with self.session() as session:
             agg_rec = session.run("MATCH (agg:Aggregate {id: $id}) RETURN agg.key as key", id=aggregate_id).single()
             agg_key_value = (agg_rec or {}).get("key") or ""
@@ -35,17 +37,19 @@ class CommandOps:
                           cmd.createdAt = datetime()
             SET cmd.key = $key,
                 cmd.name = $name,
+                cmd.displayName = $display_name,
                 cmd.actor = $actor,
                 cmd.category = $category,
                 cmd.inputSchema = $input_schema,
                 cmd.updatedAt = datetime()
             MERGE (agg)-[:HAS_COMMAND]->(cmd)
-            RETURN cmd {.id, .key, .name, .actor, .category, .inputSchema} as command
+            RETURN cmd {.id, .key, .name, .displayName, .actor, .category, .inputSchema} as command
             """
             result = session.run(
                 query,
                 key=key,
                 name=name,
+                display_name=display_name,
                 aggregate_id=aggregate_id,
                 actor=actor,
                 category=category,
@@ -62,6 +66,7 @@ class CommandOps:
         RETURN {
             id: cmd.id,
             name: cmd.name,
+            displayName: cmd.displayName,
             actor: cmd.actor,
             category: cmd.category,
             inputSchema: cmd.inputSchema,

@@ -37,7 +37,9 @@ async def _create_event_with_links(
     name = (evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "") or "").strip()
     if not name:
         return None, "Event name is empty"
-    
+    evt_display_name = evt.get("displayName") if isinstance(evt, dict) else getattr(evt, "displayName", None)
+    if not evt_display_name:
+        evt_display_name = name
     version = evt.get("version", "1.0.0") if isinstance(evt, dict) else (getattr(evt, "version", "1.0.0") or "1.0.0")
     payload = evt.get("payload") if isinstance(evt, dict) else getattr(evt, "payload", None)
     
@@ -49,6 +51,7 @@ async def _create_event_with_links(
                 command_id=cmd_id,
                 version=version,
                 payload=payload,
+                display_name=evt_display_name,
             ),
             timeout=10.0
         )
@@ -130,6 +133,12 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                 bc_name=bc_name,
                 bc_short=bc_id_short,
                 commands=commands_text,
+            )
+            display_lang = getattr(ctx, "display_language", "ko") or "ko"
+            prompt += (
+                "\n\nFor each Event output displayName: a short UI label in Korean (e.g. '주문 접수됨', '결제 완료')."
+                if display_lang == "ko"
+                else "\n\nFor each Event output displayName: a short UI label in English (e.g. 'Order Placed', 'Payment Completed')."
             )
 
             structured_llm = ctx.llm.with_structured_output(EventList)

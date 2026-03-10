@@ -39,6 +39,27 @@ function handleBackdropClick(e) {
         </div>
 
         <div class="settings-panel__content">
+          <!-- Domain Terminology (Ubiquitous Language) Setting -->
+          <div class="settings-section">
+            <div class="settings-section__header">
+              <h3 class="settings-section__title">도메인 용어(보편 언어)</h3>
+              <span class="settings-section__description">업무/사용자 용어(displayName)를 기술명(name)보다 우선 표시합니다</span>
+            </div>
+            <div class="settings-section__control">
+              <div class="toggle-switch">
+                <span class="toggle-switch__label">도메인 용어로 표시</span>
+                <button 
+                  class="toggle-switch__button"
+                  :class="{ 'is-active': terminologyStore.ubiquitousLanguageMode }"
+                  @click="terminologyStore.toggleUbiquitousLanguageMode()"
+                  :title="terminologyStore.ubiquitousLanguageMode ? 'displayName 표시 (없으면 name)' : '기술명(name)만 표시'"
+                >
+                  <span class="toggle-switch__knob"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- Theme Setting -->
           <div class="settings-section">
             <div class="settings-section__header">

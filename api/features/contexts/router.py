@@ -153,7 +153,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get BC info
     bc_query = """
     MATCH (bc:BoundedContext {id: $context_id})
-    RETURN bc {.id, .name, .description, .owner, .domainType, .userStoryIds} as bc
+    RETURN bc {.id, .name, .displayName, .description, .owner, .domainType, .userStoryIds} as bc
     """
 
     # Get User Stories for this BC
@@ -166,21 +166,21 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get Aggregates
     agg_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)
-    RETURN agg {.id, .name, .rootEntity, .invariants, .enumerations, .valueObjects} as aggregate
+    RETURN agg {.id, .name, .displayName, .rootEntity, .invariants, .enumerations, .valueObjects} as aggregate
     ORDER BY agg.name
     """
 
     # Get Commands per Aggregate
     cmd_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
-    RETURN agg.id as aggregateId, cmd {.id, .name, .actor, .category, .inputSchema} as command
+    RETURN agg.id as aggregateId, cmd {.id, .name, .displayName, .actor, .category, .inputSchema} as command
     ORDER BY cmd.name
     """
 
     # Get Events
     evt_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_COMMAND]->(cmd:Command)-[:EMITS]->(evt:Event)
-    RETURN agg.id as aggregateId, cmd.id as commandId, evt {.id, .name, .version, .payload} as event
+    RETURN agg.id as aggregateId, cmd.id as commandId, evt {.id, .name, .displayName, .version, .payload} as event
     ORDER BY evt.name
     """
 
@@ -189,7 +189,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_POLICY]->(pol:Policy)
     OPTIONAL MATCH (evt:Event)-[:TRIGGERS]->(pol)
     OPTIONAL MATCH (pol)-[:INVOKES]->(cmd:Command)
-    RETURN pol {.id, .name, .description} as policy,
+    RETURN pol {.id, .name, .displayName, .description} as policy,
            evt.id as triggerEventId,
            cmd.id as invokeCommandId
     ORDER BY pol.name
@@ -198,14 +198,14 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get ReadModels for this BC
     rm_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_READMODEL]->(rm:ReadModel)
-    RETURN rm {.id, .name, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
+    RETURN rm {.id, .name, .displayName, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
     ORDER BY readmodel.name
     """
 
     # Get UI wireframes for this BC
     ui_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_UI]->(ui:UI)
-    RETURN ui {.id, .name, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId} as ui
+    RETURN ui {.id, .name, .displayName, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId} as ui
     ORDER BY ui.name
     """
 
@@ -371,7 +371,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
                      coalesce(prop.isForeignKey, false) DESC,
                      prop.name ASC
             WITH pid, collect(prop {
-                .id, .name, .type, .description,
+                .id, .name, .displayName, .type, .description,
                 .isKey, .isForeignKey, .isRequired,
                 .parentType, .parentId
             }) as properties
@@ -425,15 +425,17 @@ async def get_all_aggregates_for_viewer(request: Request) -> dict[str, Any]:
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
     OPTIONAL MATCH (agg)-[:HAS_PROPERTY]->(prop:Property)
     WITH bc, agg, collect(DISTINCT prop {
-        .id, .name, .type, .description, .isKey, .isForeignKey, .isRequired
+        .id, .name, .displayName, .type, .description, .isKey, .isForeignKey, .isRequired
     }) as properties
     ORDER BY bc.name, agg.name
     RETURN {
         bcId: bc.id,
         bcName: bc.name,
+        bcDisplayName: bc.displayName,
         bcDescription: bc.description,
         aggregateId: agg.id,
         aggregateName: agg.name,
+        aggregateDisplayName: agg.displayName,
         rootEntity: agg.rootEntity,
         invariants: agg.invariants,
         enumerations: agg.enumerations,
@@ -484,6 +486,7 @@ async def get_all_aggregates_for_viewer(request: Request) -> dict[str, Any]:
                 bc_map[bc_id] = {
                     "id": bc_id,
                     "name": item.get("bcName", ""),
+                    "displayName": item.get("bcDisplayName") or item.get("bcName", ""),
                     "description": item.get("bcDescription", ""),
                     "aggregates": []
                 }
@@ -493,6 +496,7 @@ async def get_all_aggregates_for_viewer(request: Request) -> dict[str, Any]:
                 bc_map[bc_id]["aggregates"].append({
                     "id": agg_id,
                     "name": item.get("aggregateName", ""),
+                    "displayName": item.get("aggregateDisplayName") or item.get("aggregateName", ""),
                     "rootEntity": item.get("rootEntity", ""),
                     "invariants": item.get("invariants", []),
                     "enumerations": item.get("enumerations", []),

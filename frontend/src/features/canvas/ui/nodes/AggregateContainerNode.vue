@@ -1,15 +1,19 @@
 <script setup>
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
+
 const props = defineProps({
   id: String,
   data: Object
 })
+
+const terminologyStore = useTerminologyStore()
 </script>
 
 <template>
   <div class="aggregate-container-node">
     <!-- BC Name Header -->
     <div class="container-header">
-      <div class="bc-name">{{ data.bcName }}</div>
+      <div class="bc-name">{{ terminologyStore.ubiquitousLanguageMode ? (data.bcDisplayName || data.bcName) : data.bcName }}</div>
     </div>
     
     <!-- Container content area (children will be positioned here) -->

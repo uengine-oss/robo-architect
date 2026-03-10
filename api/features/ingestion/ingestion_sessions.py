@@ -31,6 +31,8 @@ class IngestionSession:
     is_workflow_running: bool = False
     event_queues: list[asyncio.Queue] = field(default_factory=list)  # per-subscriber queues
     workflow_task: Optional[asyncio.Task] = None
+    # Display language for UI labels: "ko" (한글) or "en" (English). Used to generate displayName on nodes/properties.
+    display_language: str = "ko"
 
 
 # Active sessions (feature-local, in-memory)

@@ -68,9 +68,11 @@ class PropertyCandidate(BaseModel):
     NOTE:
     - `name` will be server-normalized to camelCase.
     - `fkTargetHint` is optional, but recommended when isForeignKey=true.
+    - `displayName` is the UI label in the chosen language (e.g. '주문 번호' or 'Order ID').
     """
 
     name: str = Field(..., description="Property name in camelCase. Identifiers MUST be `id` or `xxxId`.")
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '주문 번호' or 'Order ID').")
     type: str = Field(..., description="Java type string (e.g., String, UUID, int, BigDecimal, LocalDateTime, List<String>).")
     description: str = Field(default="", description="Short, domain-oriented description. Empty string allowed.")
     isKey: bool = Field(default=False, description="True if this is a key/identifier field for the parent object.")

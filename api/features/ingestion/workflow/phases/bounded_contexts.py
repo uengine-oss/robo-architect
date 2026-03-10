@@ -42,6 +42,9 @@ async def _create_bc_with_links(
     bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
     bc_description = bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "")
     domain_type = bc.get("domain_type") if isinstance(bc, dict) else getattr(bc, "domain_type", None)
+    bc_display_name = bc.get("displayName") if isinstance(bc, dict) else getattr(bc, "displayName", None)
+    if not bc_display_name:
+        bc_display_name = bc_name
     
     # BC 생성 전에 user_story_ids를 먼저 읽어옴
     us_ids = []
@@ -85,7 +88,8 @@ async def _create_bc_with_links(
                 name=bc_name,
                 description=bc_description,
                 domain_type=domain_type,
-                user_story_ids=us_ids
+                user_story_ids=us_ids,
+                display_name=bc_display_name,
             ),
             timeout=10.0
         )
@@ -477,7 +481,13 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
             chunk_us_ids = [us.id for us in story_chunk]
             stories_text_with_ids = f"Total User Stories in this chunk: {len(chunk_us_ids)}\nUser Story IDs: {', '.join(chunk_us_ids)}\n\n{stories_text}"
             structured_llm = ctx.llm.with_structured_output(BoundedContextList)
-            prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids)
+            display_lang = getattr(ctx, "display_language", "ko") or "ko"
+            display_name_instruction = (
+                "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in Korean (e.g. '주문 관리', '결제')."
+                if display_lang == "ko"
+                else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
+            )
+            prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
             
             t_llm0 = time.perf_counter()
             try:
@@ -773,7 +783,13 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
         all_us_ids = [us.id for us in ctx.user_stories]
         stories_text_with_ids = f"Total User Stories: {len(all_us_ids)}\nUser Story IDs: {', '.join(all_us_ids)}\n\n{stories_text}"
         structured_llm = ctx.llm.with_structured_output(BoundedContextList)
-        prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids)
+        display_lang = getattr(ctx, "display_language", "ko") or "ko"
+        display_name_instruction = (
+            "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in Korean (e.g. '주문 관리', '결제')."
+            if display_lang == "ko"
+            else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
+        )
+        prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
 
         bc_response = await asyncio.to_thread(
             structured_llm.invoke,

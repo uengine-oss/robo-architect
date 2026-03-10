@@ -22,6 +22,7 @@ class UIWireframeOps:
         attached_to_type: str = "Command",
         attached_to_name: str | None = None,
         user_story_id: str | None = None,
+        display_name: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a UI wireframe node and link it to:
@@ -40,6 +41,7 @@ class UIWireframeOps:
                         raise ValueError(f"BoundedContext not found or missing key: {bc_id}")
                     key = f"{bc_key_value}.ui.{slugify(name)}"
 
+            display_name_val = display_name if display_name is not None else name
             query = """
             MATCH (bc:BoundedContext {id: $bc_id})
             MERGE (ui:UI {key: $key})
@@ -47,6 +49,7 @@ class UIWireframeOps:
                           ui.createdAt = datetime()
             SET ui.key = $key,
                 ui.name = $name,
+                ui.displayName = $display_name,
                 ui.description = $description,
                 ui.template = $template,
                 ui.attachedToId = $attached_to_id,
@@ -55,12 +58,13 @@ class UIWireframeOps:
                 ui.userStoryId = $user_story_id,
                 ui.updatedAt = datetime()
             MERGE (bc)-[:HAS_UI]->(ui)
-            RETURN ui {.id, .key, .name, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId} as ui
+            RETURN ui {.id, .key, .name, .displayName, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId} as ui
             """
             result = session.run(
                 query,
                 key=key,
                 name=name,
+                display_name=display_name_val,
                 bc_id=bc_id,
                 description=description,
                 template=template,

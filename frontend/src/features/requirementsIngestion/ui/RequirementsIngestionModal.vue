@@ -43,6 +43,9 @@ const isDragging = ref(false)
 const dragOffset = ref({ x: 0, y: 0 })
 const hasDragged = ref(false) // Track if actual dragging occurred
 
+// Display language for node/property displayName (ko: 한글, en: English)
+const displayLanguage = ref('ko')
+
 // Cache state
 const isCacheEnabled = ref(false)
 const isTogglingCache = ref(false)
@@ -238,7 +241,8 @@ async function startIngestion() {
     } else {
       formData.append('text', textContent.value)
     }
-    
+    formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
+
     const uploadResponse = await fetch('/api/ingest/upload', {
       method: 'POST',
       body: formData
@@ -878,48 +882,65 @@ function useSample() {
             
             <!-- Normal upload UI (hidden during confirm) -->
             <template v-if="!showClearConfirm">
-              <!-- Options Row: Input Mode + Cache Toggle -->
-              <div class="options-row">
-                <!-- Input Mode Tabs -->
-                <div class="input-tabs">
-                <button 
-                  :class="['tab-btn', { active: inputMode === 'file' }]"
-                  @click="inputMode = 'file'"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
-                    <polyline points="13 2 13 9 20 9"></polyline>
-                  </svg>
-                  파일 업로드
-                </button>
-                <button 
-                  :class="['tab-btn', { active: inputMode === 'text' }]"
-                  @click="inputMode = 'text'"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="17" y1="10" x2="3" y2="10"></line>
-                    <line x1="21" y1="6" x2="3" y2="6"></line>
-                    <line x1="21" y1="14" x2="3" y2="14"></line>
-                    <line x1="17" y1="18" x2="3" y2="18"></line>
-                  </svg>
-                  텍스트 입력
-                </button>
-                </div>
-
-                <!-- Cache Toggle -->
-                <div class="cache-toggle">
-                  <label class="cache-toggle__label" title="LangChain 캐시를 활성화하면 동일한 요청의 속도가 빨라집니다">
-                    <span class="cache-toggle__text">캐시</span>
+              <!-- Row 1: Input Mode (파일 업로드 / 텍스트 입력) + Cache Toggle -->
+              <div class="options-block">
+                <div class="options-row">
+                  <div class="input-tabs">
                     <button 
-                      class="cache-toggle__switch"
-                      :class="{ 'is-enabled': isCacheEnabled }"
-                      @click="toggleCache"
-                      :disabled="isTogglingCache"
+                      :class="['tab-btn', { active: inputMode === 'file' }]"
+                      @click="inputMode = 'file'"
                     >
-                      <span class="cache-toggle__knob"></span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                        <polyline points="13 2 13 9 20 9"></polyline>
+                      </svg>
+                      파일 업로드
                     </button>
-                  </label>
-                  <span v-if="isTogglingCache" class="cache-toggle__pending">적용 중...</span>
+                    <button 
+                      :class="['tab-btn', { active: inputMode === 'text' }]"
+                      @click="inputMode = 'text'"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="17" y1="10" x2="3" y2="10"></line>
+                        <line x1="21" y1="6" x2="3" y2="6"></line>
+                        <line x1="21" y1="14" x2="3" y2="14"></line>
+                        <line x1="17" y1="18" x2="3" y2="18"></line>
+                      </svg>
+                      텍스트 입력
+                    </button>
+                  </div>
+                  <div class="cache-toggle">
+                    <label class="cache-toggle__label" title="LangChain 캐시를 활성화하면 동일한 요청의 속도가 빨라집니다">
+                      <span class="cache-toggle__text">캐시</span>
+                      <button 
+                        class="cache-toggle__switch"
+                        :class="{ 'is-enabled': isCacheEnabled }"
+                        @click="toggleCache"
+                        :disabled="isTogglingCache"
+                      >
+                        <span class="cache-toggle__knob"></span>
+                      </button>
+                    </label>
+                    <span v-if="isTogglingCache" class="cache-toggle__pending">적용 중...</span>
+                  </div>
+                </div>
+                <!-- Row 2: Display language (표시 언어) -->
+                <div class="display-language-row">
+                  <span class="display-language-label">표시 언어</span>
+                  <div class="display-language-tabs">
+                    <button
+                      :class="['tab-btn', 'tab-btn--small', { active: displayLanguage === 'ko' }]"
+                      @click="displayLanguage = 'ko'"
+                    >
+                      한글
+                    </button>
+                    <button
+                      :class="['tab-btn', 'tab-btn--small', { active: displayLanguage === 'en' }]"
+                      @click="displayLanguage = 'en'"
+                    >
+                      English
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1340,12 +1361,18 @@ function useSample() {
 }
 
 /* Input Tabs */
+.options-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
 .options-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-md);
-  margin-bottom: var(--spacing-md);
 }
 
 .input-tabs {
@@ -1378,6 +1405,32 @@ function useSample() {
   background: var(--color-accent);
   border-color: var(--color-accent);
   color: white;
+}
+
+.tab-btn--small {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: 0.8rem;
+}
+
+/* Display language (for displayName) */
+.display-language-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.display-language-label {
+  font-size: 0.8rem;
+  color: var(--color-text-light);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.display-language-tabs {
+  display: flex;
+  gap: var(--spacing-xs);
 }
 
 /* Cache Toggle */

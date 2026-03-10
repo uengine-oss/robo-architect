@@ -1,10 +1,13 @@
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 
 const props = defineProps({
   id: String,
   data: Object
 })
+
+const terminologyStore = useTerminologyStore()
 </script>
 
 <template>
@@ -16,7 +19,7 @@ const props = defineProps({
         <span v-if="data.referencedAggregateField">.{{ data.referencedAggregateField }}</span>
       </span>
     </div>
-    <div class="node-name">{{ data.name }}</div>
+    <div class="node-name">{{ terminologyStore.ubiquitousLanguageMode ? (data.displayName || data.name) : data.name }}</div>
     <div v-if="data.alias" class="node-alias">{{ data.alias }}</div>
     
     <div class="node-section">

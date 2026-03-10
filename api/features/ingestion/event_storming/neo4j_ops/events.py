@@ -19,8 +19,10 @@ class EventOps:
         version: str = "1.0.0",
         schema: str | None = None,
         payload: str | None = None,
+        display_name: str | None = None,
     ) -> dict[str, Any]:
         """Create a new event and link it to a command via EMITS."""
+        display_name = display_name or name
         with self.session() as session:
             cmd_rec = session.run("MATCH (cmd:Command {id: $id}) RETURN cmd.key as key", id=command_id).single()
             cmd_key_value = (cmd_rec or {}).get("key") or ""
@@ -35,18 +37,20 @@ class EventOps:
                           evt.createdAt = datetime()
             SET evt.key = $key,
                 evt.name = $name,
+                evt.displayName = $display_name,
                 evt.version = $version,
                 evt.schema = $schema,
                 evt.payload = $payload,
                 evt.isBreaking = false,
                 evt.updatedAt = datetime()
             MERGE (cmd)-[:EMITS {isGuaranteed: true}]->(evt)
-            RETURN evt {.id, .key, .name, .version, .schema, .payload} as event
+            RETURN evt {.id, .key, .name, .displayName, .version, .schema, .payload} as event
             """
             result = session.run(
                 query,
                 key=key,
                 name=name,
+                display_name=display_name,
                 command_id=command_id,
                 version=version,
                 schema=schema,

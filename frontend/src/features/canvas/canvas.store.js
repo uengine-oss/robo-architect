@@ -238,7 +238,7 @@ export const useCanvasStore = defineStore('canvas', () => {
   }
   
   // Get or create BC container for a given BC ID
-  function getOrCreateBCContainer(bcId, bcName, bcDescription) {
+  function getOrCreateBCContainer(bcId, bcName, bcDescription, bcDisplayName) {
     // Check if BC container already exists
     let bcNode = nodes.value.find(n => n.id === bcId && n.type === 'boundedcontext')
     
@@ -246,7 +246,7 @@ export const useCanvasStore = defineStore('canvas', () => {
       // Create new BC container
       const existingBCs = nodes.value.filter(n => n.type === 'boundedcontext')
       const offsetX = existingBCs.length * 600
-      
+      const displayName = bcDisplayName || bcName
       bcNode = {
         id: bcId,
         type: 'boundedcontext',
@@ -254,9 +254,10 @@ export const useCanvasStore = defineStore('canvas', () => {
         data: {
           id: bcId,
           name: bcName || bcId,
+          displayName: displayName || bcName || bcId,
           description: bcDescription,
           type: 'BoundedContext',
-          label: bcName
+          label: displayName || bcName
         },
         style: {
           width: '550px',
@@ -269,7 +270,11 @@ export const useCanvasStore = defineStore('canvas', () => {
       nodes.value.push(bcNode)
       bcContainers.value[bcId] = { nodeIds: [], bounds: {} }
     } else {
-      // BC already exists - try to sync position from Vue Flow DOM
+      // BC already exists - update displayName if provided
+      if (bcDisplayName != null && bcDisplayName !== '') {
+        bcNode.data = { ...bcNode.data, displayName: bcDisplayName, label: bcDisplayName || bcNode.data?.name }
+      }
+      // Try to sync position from Vue Flow DOM
       // This ensures we use the actual rendered position, not stale data
       try {
         const nodeEl = document.querySelector(`[data-id="${bcId}"]`)
@@ -439,7 +444,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     
     // If it's a BC, create container
     if (nodeType === 'BoundedContext') {
-      return getOrCreateBCContainer(nodeData.id, nodeData.name, nodeData.description)
+      return getOrCreateBCContainer(nodeData.id, nodeData.name, nodeData.description, nodeData.displayName)
     }
     
     // For other nodes, they should be inside a BC
@@ -452,7 +457,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     
     // If we have a parent BC, ensure container exists
     if (parentBcId) {
-      getOrCreateBCContainer(parentBcId, bcName)
+      getOrCreateBCContainer(parentBcId, bcName, undefined, undefined)
     }
     
     // Calculate position
@@ -579,7 +584,7 @@ export const useCanvasStore = defineStore('canvas', () => {
       let bcIndex = 0
       for (const [bcId, { bc, children }] of Object.entries(bcMap)) {
         // Create or get BC container
-        const bcNode = getOrCreateBCContainer(bcId, bc?.name, bc?.description)
+        const bcNode = getOrCreateBCContainer(bcId, bc?.name, bc?.description, bc?.displayName)
         if (!newNodes.find(n => n.id === bcId)) {
           newNodes.push(bcNode)
         }
@@ -1878,7 +1883,8 @@ export const useCanvasStore = defineStore('canvas', () => {
             position: bcPosition,
             data: {
               ...bc,
-              label: bc.name
+              displayName: bc.displayName || bc.name,
+              label: bc.displayName || bc.name
             },
             style: {
               width: `${bcWidth}px`,

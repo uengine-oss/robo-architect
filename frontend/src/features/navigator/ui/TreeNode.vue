@@ -7,6 +7,7 @@ import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 
 const props = defineProps({
   node: {
@@ -30,6 +31,7 @@ const bigPictureStore = useBigPictureStore()
 const userStoryEditor = useUserStoryEditorStore()
 const chatStore = useModelModifierStore()
 const ingestionStore = useIngestionStore()
+const terminologyStore = useTerminologyStore()
 
 // Inject activeTab from App.vue
 const activeTab = inject('activeTab', ref('Design'))
@@ -75,20 +77,18 @@ const displayName = computed(() => {
     return `${role}: ${action.substring(0, 30)}${action.length > 30 ? '...' : ''}`
   }
   if (props.node.type === 'BoundedContext') {
-    const name = props.node.name || ''
-    // Try multiple possible field names
+    const label = terminologyStore.getLabel(props.node)
     const domainType = props.node.domainType || props.node.domain_type || props.node.domainType
     if (domainType) {
-      // Map full names to short labels
       const typeMap = {
         'Core Domain': 'core',
         'Supporting Domain': 'supporting',
         'Generic Domain': 'generic'
       }
       const shortLabel = typeMap[domainType] || domainType.toLowerCase().replace(' domain', '')
-      return `${name} (${shortLabel})`
+      return `${label} (${shortLabel})`
     }
-    return name
+    return label
   }
   if (props.node.type === 'CQRSOperation') {
     const opType = props.node.operationType || props.node.operation_type || 'OP'
@@ -96,11 +96,11 @@ const displayName = computed(() => {
     return trigger ? `${opType} ← ${trigger}` : `${opType}`
   }
   if (props.node.type === 'Property') {
-    const name = props.node.name || props.node.id || 'property'
+    const name = terminologyStore.getLabel(props.node) || props.node.id || 'property'
     const t = props.node.dataType || props.node.typeName || props.node.data_type || props.node.propType || ''
     return t ? `${name}: ${t}` : name
   }
-  return props.node.name
+  return terminologyStore.getLabel(props.node)
 })
 
 // Get children based on node type

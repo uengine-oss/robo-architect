@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './inspectors/nodeEditSchema'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
@@ -26,6 +27,7 @@ const emit = defineEmits(['close', 'updated', 'request-chat'])
 
 const canvasStore = useCanvasStore()
 const chatStore = useModelModifierStore()
+const terminologyStore = useTerminologyStore()
 const log = createLogger({ scope: 'InspectorPanel' })
 
 // Currently viewing node index (for multiple selected nodes)
@@ -236,6 +238,7 @@ function snapshotFromNode(n) {
   const data = n?.data || {}
   return {
     name: data.name ?? '',
+    displayName: data.displayName ?? '',
     description: data.description ?? '',
     template: data.template ?? '',
     actor: data.actor ?? '',
@@ -272,6 +275,7 @@ function resetToNode() {
     initial.value = null
     form.value = {
       name: '',
+      displayName: '',
       description: '',
       template: '',
       actor: '',
@@ -914,7 +918,7 @@ async function fetchPolicyRelations(policyId) {
       .filter(r => r.target === policyId && r.type === 'TRIGGERS')
       .map(r => {
         const eventNode = data.nodes?.find(n => n.id === r.source && n.type === 'Event')
-        return eventNode?.name || null
+        return terminologyStore.ubiquitousLanguageMode ? (eventNode?.displayName || eventNode?.name || null) : (eventNode?.name || null)
       })
       .filter(Boolean)
     
@@ -929,8 +933,8 @@ async function fetchPolicyRelations(policyId) {
     
     const result = {
       triggerEvents,
-      aggregateName: aggregateNode?.name || null,
-      eventName: eventNode?.name || null
+      aggregateName: terminologyStore.ubiquitousLanguageMode ? (aggregateNode?.displayName || aggregateNode?.name || null) : (aggregateNode?.name || null),
+      eventName: terminologyStore.ubiquitousLanguageMode ? (eventNode?.displayName || eventNode?.name || null) : (eventNode?.name || null)
     }
     
     policyRelationsCache.value[policyId] = result
@@ -1385,19 +1389,19 @@ function openGWTDetailModal(setIndex = null) {
       
       form.value.gwtSets = [{
         given: firstTriggerEvent ? {
-          name: firstTriggerEvent.data?.name || firstTriggerEvent.name,
+          name: terminologyStore.ubiquitousLanguageMode ? (firstTriggerEvent.data?.displayName || firstTriggerEvent.data?.name || firstTriggerEvent.name) : (firstTriggerEvent.data?.name || firstTriggerEvent.name),
           referencedNodeId: firstTriggerEvent.id,
           referencedNodeType: 'Event',
           fieldValues: {}
         } : null,
         when: aggregateNode ? {
-          name: aggregateNode.data?.name || aggregateNode.name,
+          name: terminologyStore.ubiquitousLanguageMode ? (aggregateNode.data?.displayName || aggregateNode.data?.name || aggregateNode.name) : (aggregateNode.data?.name || aggregateNode.name),
           referencedNodeId: aggregateNode.id,
           referencedNodeType: 'Aggregate',
           fieldValues: {}
         } : null,
         then: eventNode ? {
-          name: eventNode.data?.name || eventNode.name,
+          name: terminologyStore.ubiquitousLanguageMode ? (eventNode.data?.displayName || eventNode.data?.name || eventNode.name) : (eventNode.data?.name || eventNode.name),
           referencedNodeId: eventNode.id,
           referencedNodeType: 'Event',
           fieldValues: {}
@@ -1595,7 +1599,7 @@ function updateVoFieldValue(fieldName, value) {
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
         <span>Inspector</span>
-        <span v-if="node" class="inspector-panel__subtitle">· {{ schema.title }} · {{ node.data?.name || node.id }}</span>
+        <span v-if="node" class="inspector-panel__subtitle">· {{ schema.title }} · {{ terminologyStore.ubiquitousLanguageMode ? (node.data?.displayName || node.data?.name || node.id) : (node.data?.name || node.id) }}</span>
       </div>
       <div class="inspector-panel__actions">
         <button class="inspector-panel__btn" @click="resetToNode" title="Reload" :disabled="saving">
@@ -1624,7 +1628,7 @@ function updateVoFieldValue(fieldName, value) {
         @change="viewingNodeIndex = parseInt($event.target.value)"
       >
         <option v-for="(selectedNode, index) in selectedNodes" :key="selectedNode.id" :value="index">
-          {{ index + 1 }}. {{ selectedNode.data?.name || selectedNode.name || selectedNode.id }} ({{ selectedNode.data?.type || selectedNode.type }})
+          {{ index + 1 }}. {{ terminologyStore.ubiquitousLanguageMode ? (selectedNode.data?.displayName || selectedNode.data?.name || selectedNode.name || selectedNode.id) : (selectedNode.data?.name || selectedNode.name || selectedNode.id) }} ({{ selectedNode.data?.type || selectedNode.type }})
         </option>
       </select>
     </div>
@@ -1703,7 +1707,7 @@ function updateVoFieldValue(fieldName, value) {
           <div v-if="wireframeUploadError" class="inspector-alert error">{{ wireframeUploadError }}</div>
 
           <div class="ui-preview-panel__info">
-            <div class="ui-preview-panel__name">{{ node.data?.name }}</div>
+            <div class="ui-preview-panel__name">{{ terminologyStore.ubiquitousLanguageMode ? (node.data?.displayName || node.data?.name) : node.data?.name }}</div>
             <div v-if="node.data?.attachedToName" class="ui-preview-panel__attached">
               <span class="label">Attached to:</span>
               <span class="value">{{ node.data?.attachedToName }}</span>

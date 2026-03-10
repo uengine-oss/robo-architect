@@ -50,6 +50,7 @@ async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
          collect(DISTINCT {
              id: evt.id,
              name: evt.name,
+             displayName: evt.displayName,
              commandId: cmd.id,
              commandName: cmd.name,
              aggregateId: agg.id,
@@ -73,6 +74,7 @@ async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
     RETURN {
         bcId: bc.id,
         bcName: bc.name,
+        bcDisplayName: bc.displayName,
         bcDescription: bc.description,
         actors: allActors,
         events: events
@@ -147,12 +149,14 @@ async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
         for lane in swimlanes_raw:
             bc_id = lane["bcId"]
             bc_name = lane["bcName"]
-            
+            bc_display_name = lane.get("bcDisplayName")
+
             all_bcs.append({
                 "id": bc_id,
-                "name": bc_name
+                "name": bc_name,
+                "displayName": bc_display_name or bc_name
             })
-            
+
             events = lane.get("events", [])
             bc_to_events[bc_id] = []
             
@@ -160,7 +164,8 @@ async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
                 evt_id = evt["id"]
                 all_events[evt_id] = {
                     "id": evt_id,
-                    "name": evt["name"],
+                    "name": evt.get("name"),
+                    "displayName": evt.get("displayName"),
                     "commandId": evt.get("commandId"),
                     "commandName": evt.get("commandName"),
                     "aggregateId": evt.get("aggregateId"),
@@ -168,6 +173,7 @@ async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
                     "actor": evt.get("actor"),
                     "bcId": bc_id,
                     "bcName": bc_name,
+                    "bcDisplayName": bc_display_name,
                     "bcDescription": lane.get("bcDescription"),
                     "triggeredPolicies": []
                 }
@@ -353,8 +359,9 @@ async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
         for lane in swimlanes_raw:
             bc_id = lane["bcId"]
             bc_name = lane["bcName"]
+            bc_display_name = lane.get("bcDisplayName")
             actors = list(set(lane.get("actors", [])))
-            
+
             processed_events = []
             for evt_id in bc_to_events.get(bc_id, []):
                 if evt_id in all_events:
@@ -363,7 +370,8 @@ async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
                     
                     processed_events.append({
                         "id": evt_data["id"],
-                        "name": evt_data["name"],
+                        "name": evt_data.get("name"),
+                        "displayName": evt_data.get("displayName"),
                         "sequence": sequence,
                         "commandId": evt_data.get("commandId"),
                         "commandName": evt_data.get("commandName"),
@@ -379,6 +387,7 @@ async def get_bigpicture_timeline(request: Request) -> dict[str, Any]:
             swimlanes.append({
                 "bcId": bc_id,
                 "bcName": bc_name,
+                "bcDisplayName": bc_display_name,
                 "bcDescription": lane.get("bcDescription"),
                 "actors": actors if actors else ["System"],
                 "events": processed_events
@@ -466,6 +475,7 @@ async def get_bigpicture_timeline_for_bc(bc_id: str, request: Request) -> dict[s
              collect(DISTINCT {
                  id: evt.id,
                  name: evt.name,
+                 displayName: evt.displayName,
                  commandId: cmd.id,
                  commandName: cmd.name,
                  aggregateId: agg.id,
@@ -489,6 +499,7 @@ async def get_bigpicture_timeline_for_bc(bc_id: str, request: Request) -> dict[s
         RETURN {
             bcId: bc.id,
             bcName: bc.name,
+            bcDisplayName: bc.displayName,
             bcDescription: bc.description,
             actors: allActors,
             events: events
@@ -640,12 +651,14 @@ async def get_bigpicture_timeline_for_bc(bc_id: str, request: Request) -> dict[s
         for idx, lane in enumerate(swimlanes_raw):
             bc_id_lane = lane["bcId"]
             bc_name = lane["bcName"]
-            
+            bc_display_name = lane.get("bcDisplayName")
+
             all_bcs.append({
                 "id": bc_id_lane,
-                "name": bc_name
+                "name": bc_name,
+                "displayName": bc_display_name or bc_name
             })
-            
+
             events = lane.get("events", [])
             actors = list(set(lane.get("actors", [])))
             
@@ -658,7 +671,8 @@ async def get_bigpicture_timeline_for_bc(bc_id: str, request: Request) -> dict[s
                 
                 event_data = {
                     "id": evt_id,
-                    "name": evt["name"],
+                    "name": evt.get("name"),
+                    "displayName": evt.get("displayName"),
                     "sequence": sequence,
                     "commandId": evt.get("commandId"),
                     "commandName": evt.get("commandName"),
@@ -679,6 +693,7 @@ async def get_bigpicture_timeline_for_bc(bc_id: str, request: Request) -> dict[s
             swimlanes.append({
                 "bcId": bc_id_lane,
                 "bcName": bc_name,
+                "bcDisplayName": bc_display_name,
                 "bcDescription": lane.get("bcDescription"),
                 "actors": actors if actors else ["System"],
                 "events": processed_events

@@ -554,12 +554,16 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
 ## Overview
 - **BC ID**: {bc.get("id", "")}
 - **Description**: {bc.get("description", "No description")}
+- **Display name (UI)**: {bc.get('displayName') or name}
 - **Main PRD**: See `PRD.md` for architecture principles and guidelines
+
+**UI text**: Use `displayName` for all UI labels, button text, and form field labels in this BC (see each node and property below).
 
 ## Aggregates
 """
     for agg in bc.get("aggregates", []) or []:
-        spec += f"\n### {agg.get('name', 'Unknown')}\n"
+        agg_display = agg.get("displayName") or agg.get("name", "Unknown")
+        spec += f"\n### {agg.get('name', 'Unknown')} (UI: {agg_display})\n"
         if agg.get("rootEntity"):
             spec += f"- Root Entity: `{agg['rootEntity']}`\n"
         
@@ -594,26 +598,28 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
         
         # Aggregate Properties
         if agg.get("properties"):
-            spec += "- Properties:\n"
+            spec += "- Properties (use displayName for form labels):\n"
             for prop in agg["properties"]:
                 if prop.get("id"):
                     prop_type = prop.get("type", "String")
                     is_key = " (Key)" if prop.get("isKey") else ""
                     is_fk = f" (FK -> {prop.get('fkTargetHint', '')})" if prop.get("isForeignKey") else ""
-                    spec += f"  - `{prop.get('name', '')}`: {prop_type}{is_key}{is_fk}\n"
+                    prop_display = prop.get("displayName") or prop.get("name", "")
+                    spec += f"  - `{prop.get('name', '')}` (UI label: {prop_display}): {prop_type}{is_key}{is_fk}\n"
                     if prop.get("description"):
                         spec += f"    - {prop.get('description')}\n"
         
         # Commands with Properties
         if agg.get("commands"):
-            spec += "- Commands:\n"
+            spec += "- Commands (use displayName for button/form title):\n"
             for cmd in agg["commands"]:
                 if cmd.get("id"):
                     cmd_name = cmd.get("name", "")
+                    cmd_display = cmd.get("displayName") or cmd_name
                     cmd_actor = cmd.get("actor", "")
                     cmd_category = cmd.get("category", "")
                     cmd_desc = cmd.get("description", "")
-                    spec += f"  - `{cmd_name}`"
+                    spec += f"  - `{cmd_name}` (UI label: {cmd_display})"
                     if cmd_actor:
                         spec += f" (actor: {cmd_actor})"
                     if cmd_category:
@@ -624,12 +630,13 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
                     if cmd.get("inputSchema"):
                         spec += f"    - Input Schema: {cmd['inputSchema']}\n"
                     if cmd.get("properties"):
-                        spec += "    - Properties:\n"
+                        spec += "    - Properties (use displayName for form field labels):\n"
                         for prop in cmd["properties"]:
                             if prop.get("id"):
                                 prop_type = prop.get("type", "String")
                                 is_required = " (required)" if prop.get("isRequired") else ""
-                                spec += f"      - `{prop.get('name', '')}`: {prop_type}{is_required}\n"
+                                prop_display = prop.get("displayName") or prop.get("name", "")
+                                spec += f"      - `{prop.get('name', '')}` (UI: {prop_display}): {prop_type}{is_required}\n"
         
         # Events with Properties
         if agg.get("events"):
@@ -637,26 +644,29 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
             for evt in agg["events"]:
                 if evt.get("id"):
                     evt_name = evt.get("name", "")
+                    evt_display = evt.get("displayName") or evt_name
                     evt_version = evt.get("version", "1")
                     evt_desc = evt.get("description", "")
-                    spec += f"  - `{evt_name}` (v{evt_version})\n"
+                    spec += f"  - `{evt_name}` (UI: {evt_display}, v{evt_version})\n"
                     if evt_desc:
                         spec += f"    - Description: {evt_desc}\n"
                     if evt.get("schema"):
                         spec += f"    - Schema: {evt['schema']}\n"
                     if evt.get("properties"):
-                        spec += "    - Properties:\n"
+                        spec += "    - Properties (use displayName for UI labels):\n"
                         for prop in evt["properties"]:
                             if prop.get("id"):
                                 prop_type = prop.get("type", "String")
-                                spec += f"      - `{prop.get('name', '')}`: {prop_type}\n"
+                                prop_display = prop.get("displayName") or prop.get("name", "")
+                                spec += f"      - `{prop.get('name', '')}` (UI: {prop_display}): {prop_type}\n"
 
     # ReadModels
     if bc.get("readmodels"):
-        spec += "\n## ReadModels\n"
+        spec += "\n## ReadModels (use displayName for page title/list headers)\n"
         for rm in bc["readmodels"]:
             if rm.get("id"):
-                spec += f"\n### {rm.get('name', 'Unknown')}\n"
+                rm_display = rm.get("displayName") or rm.get("name", "Unknown")
+                spec += f"\n### {rm.get('name', 'Unknown')} (UI: {rm_display})\n"
                 if rm.get("description"):
                     spec += f"- Description: {rm.get('description')}\n"
                 if rm.get("provisioningType"):
@@ -666,18 +676,20 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
                 if rm.get("isMultipleResult"):
                     spec += f"- Result Type: {rm.get('isMultipleResult')}\n"
                 if rm.get("properties"):
-                    spec += "- Properties:\n"
+                    spec += "- Properties (use displayName for column/field labels):\n"
                     for prop in rm["properties"]:
                         if prop.get("id"):
                             prop_type = prop.get("type", "String")
-                            spec += f"  - `{prop.get('name', '')}`: {prop_type}\n"
+                            prop_display = prop.get("displayName") or prop.get("name", "")
+                            spec += f"  - `{prop.get('name', '')}` (UI: {prop_display}): {prop_type}\n"
 
     # Policies
     if bc.get("policies"):
         spec += "\n## Policies\n"
         for pol in bc["policies"]:
             if pol.get("id"):
-                spec += f"- `{pol.get('name','')}`\n"
+                pol_display = pol.get("displayName") or pol.get("name", "")
+                spec += f"- `{pol.get('name','')}` (UI: {pol_display})\n"
                 if pol.get("description"):
                     spec += f"  - Description: {pol.get('description')}\n"
                 trigger_evt_name = pol.get('triggerEventName', 'N/A')
@@ -2220,7 +2232,9 @@ For each UI wireframe:
 1. **Read BC spec** (`specs/{{bc_name}}_spec.md`) - Contains complete wireframe templates and descriptions
 2. **Identify attached Command/ReadModel** from BC spec
 3. **Create view component** for the screen based on wireframe template
-4. **Implement form/display** based on Command/ReadModel properties from BC spec
+4. **Implement form/display** based on Command/ReadModel properties from BC spec—**use each node's and property's `displayName` for all UI text** (button labels, form field labels, page titles, column headers). The displayName was set at requirements upload (Korean or English).
+   - **CRITICAL**: **Do NOT translate or paraphrase** UI text. Use the `displayName` string **verbatim** as the user-facing label.
+   - If `displayName` is missing, fall back to `name` (technical identifier). Do not invent new labels.
 5. **Connect to API** using service layer (see Frontend Tech Stack Rules/Skills for technical patterns)
 6. **Handle responses** and update UI accordingly
 

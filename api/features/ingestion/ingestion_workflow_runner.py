@@ -37,7 +37,8 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
 
     client = get_neo4j_client()
     llm = get_llm()
-    ctx = IngestionWorkflowContext(session=session, content=content, client=client, llm=llm)
+    display_language = getattr(session, "display_language", "ko") or "ko"
+    ctx = IngestionWorkflowContext(session=session, content=content, client=client, llm=llm, display_language=display_language)
 
     try:
         SmartLogger.log(

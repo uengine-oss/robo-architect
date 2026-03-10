@@ -217,6 +217,12 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 events=events_text,
                 known_aggregate_keys=known_aggregate_keys_text,
             )
+            display_lang = getattr(ctx, "display_language", "ko") or "ko"
+            prompt += (
+                "\n\n10) For each Property output displayName: a short UI label in Korean (e.g. '주문 번호', '고객명')."
+                if display_lang == "ko"
+                else "\n\n10) For each Property output displayName: a short UI label in English (e.g. 'Order ID', 'Customer Name')."
+            )
 
             structured_llm = ctx.llm.with_structured_output(PropertyBatch)
             if AI_AUDIT_LOG_ENABLED:
@@ -311,11 +317,13 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                     is_fk = bool(getattr(prop, "isForeignKey", False))
                     is_req = bool(getattr(prop, "isRequired", False))
                     fk_hint = _clean_fk_hint(is_fk, getattr(prop, "fkTargetHint", None))
+                    prop_display_name = getattr(prop, "displayName", None) or name
                     rows.append(
                         {
                             "parentType": ptype,
                             "parentId": pid,
                             "name": name,
+                            "displayName": prop_display_name,
                             "type": ptype_str,
                             "description": desc,
                             "isKey": is_key,
@@ -393,6 +401,12 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
             readmodels=readmodels_text,
             known_aggregate_keys=known_aggregate_keys_text,
         )
+        display_lang = getattr(ctx, "display_language", "ko") or "ko"
+        prompt += (
+            "\n\nFor each Property output displayName: a short UI label in Korean (e.g. '주문 번호', '상태')."
+            if display_lang == "ko"
+            else "\n\nFor each Property output displayName: a short UI label in English (e.g. 'Order ID', 'Status')."
+        )
 
         structured_llm = ctx.llm.with_structured_output(PropertyBatch)
         if AI_AUDIT_LOG_ENABLED:
@@ -462,11 +476,13 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 is_fk = bool(getattr(prop, "isForeignKey", False))
                 is_req = bool(getattr(prop, "isRequired", False))
                 fk_hint = _clean_fk_hint(is_fk, getattr(prop, "fkTargetHint", None))
+                prop_display_name = getattr(prop, "displayName", None) or name
                 rows.append(
                     {
                         "parentType": ptype,
                         "parentId": pid,
                         "name": name,
+                        "displayName": prop_display_name,
                         "type": ptype_str,
                         "description": desc,
                         "isKey": is_key,

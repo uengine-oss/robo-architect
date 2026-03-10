@@ -60,6 +60,8 @@ class GeneratedUserStory(BaseModel):
     priority: str = "medium"
     # Optional UI description extracted from requirements (used to generate UI wireframe stickers)
     ui_description: str = ""
+    # Optional display label in chosen language for UI (e.g. '주문 생성' or 'Create Order')
+    displayName: Optional[str] = None
 
 
 class UserStoryList(BaseModel):

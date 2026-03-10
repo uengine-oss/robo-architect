@@ -29,10 +29,12 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
       const bc = {
         id: data.id,
         name: data.name,
+        displayName: data.displayName || data.name,
         description: data.description,
         aggregates: (data.aggregates || []).map(agg => ({
           id: agg.id,
           name: agg.name,
+          displayName: agg.displayName || agg.name,
           rootEntity: agg.rootEntity,
           invariants: agg.invariants || [],
           enumerations: agg.enumerations || [],

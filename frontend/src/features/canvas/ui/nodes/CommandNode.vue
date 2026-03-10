@@ -12,6 +12,7 @@ const props = defineProps({
 const terminologyStore = useTerminologyStore()
 const canvasStore = useCanvasStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Command')} >>`)
+const displayLabel = computed(() => terminologyStore.getLabel(props.data))
 
 const hasProperties = computed(() => Array.isArray(props.data?.properties) && props.data.properties.length > 0)
 const hasGWT = computed(() => !!(props.data?.given || props.data?.when || props.data?.then))
@@ -67,7 +68,7 @@ const nodeStyle = computed(() => {
       {{ headerText }}
     </div>
     <div class="es-node__body">
-      <div class="es-node__name">{{ data.name }}</div>
+      <div class="es-node__name">{{ displayLabel }}</div>
       <div v-if="data.actor" class="es-node__actor">
         <!-- Stick Figure Actor -->
         <svg class="es-node__actor-icon" viewBox="0 0 24 24" fill="currentColor">
@@ -86,7 +87,7 @@ const nodeStyle = computed(() => {
             <span v-if="prop.isKey" class="prop-badge prop-badge--key">PK</span>
             <span v-if="prop.isForeignKey" class="prop-badge prop-badge--fk">FK</span>
           </span>
-          <span class="prop-name">{{ prop.name }}</span>
+          <span class="prop-name">{{ terminologyStore.ubiquitousLanguageMode ? (prop.displayName || prop.name) : prop.name }}</span>
           <span class="prop-type">{{ prop.type }}</span>
         </div>
       </div>

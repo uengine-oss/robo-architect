@@ -41,7 +41,9 @@ async def _create_readmodel_with_links(
     name = (getattr(rm, "name", "") or "").strip()
     if not name:
         return None, None, "ReadModel name is empty"
-    
+    rm_display_name = getattr(rm, "displayName", None) or (rm.get("displayName") if isinstance(rm, dict) else None)
+    if not rm_display_name:
+        rm_display_name = name
     description = getattr(rm, "description", None)
     actor = getattr(rm, "actor", "user") or "user"
     is_multiple_result = getattr(rm, "isMultipleResult", None)
@@ -60,6 +62,7 @@ async def _create_readmodel_with_links(
                 provisioning_type="CQRS",
                 actor=actor,
                 is_multiple_result=is_multiple_result,
+                display_name=rm_display_name,
             ),
             timeout=10.0
         )
@@ -177,15 +180,21 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                 events_lines.append(f"- {evt_name}" + (f": {desc}" if desc else ""))
         events_text = "\n".join(events_lines) if events_lines else "No events"
 
+        display_lang = getattr(ctx, "display_language", "ko") or "ko"
+        display_name_tail = (
+            "\n\nFor each ReadModel output displayName: a short UI label in Korean (e.g. '주문 목록', '주문 요약')."
+            if display_lang == "ko"
+            else "\n\nFor each ReadModel output displayName: a short UI label in English (e.g. 'Order List', 'Order Summary')."
+        )
         # 전체 프롬프트 텍스트 구성 (청킹 판단용)
         full_prompt_text = EXTRACT_READMODELS_PROMPT.format(
             bc_name=bc_name,
             bc_id=bc_id,
-            bc_description=getattr(bc, "description", "") or "",
+            bc_description=(bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "")) or "",
             user_stories=user_stories_text,
             events=events_text,
-        )
-        
+        ) + display_name_tail
+
         # 청킹 필요 여부 판단
         if should_chunk(full_prompt_text):
             # user_stories_text와 events_text를 각각 청킹
@@ -219,8 +228,8 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     bc_description=bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "") or "",
                     user_stories=chunk_user_stories,
                     events=chunk_events,
-                )
-                
+                ) + display_name_tail
+
                 structured_llm = ctx.llm.with_structured_output(ReadModelList)
                 
                 provider, model = get_llm_provider_model()
@@ -307,13 +316,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             )
         else:
             # 청킹 불필요한 경우
-            prompt = EXTRACT_READMODELS_PROMPT.format(
-                bc_name=bc_name,
-                bc_id=bc_id,
-                bc_description=bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "") or "",
-                user_stories=user_stories_text,
-                events=events_text,
-            )
+            prompt = full_prompt_text
 
             structured_llm = ctx.llm.with_structured_output(ReadModelList)
 

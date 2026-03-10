@@ -36,6 +36,7 @@ class PropertyOps:
                       p.createdAt = datetime()
         SET p.type = row.type,
             p.description = coalesce(row.description, ''),
+            p.displayName = coalesce(row.displayName, row.name),
             p.isKey = coalesce(row.isKey, false),
             p.isForeignKey = coalesce(row.isForeignKey, false),
             p.isRequired = coalesce(row.isRequired, false),

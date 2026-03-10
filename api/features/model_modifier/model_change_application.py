@@ -329,19 +329,19 @@ _LABELS_BY_TYPE: dict[str, str] = {
 
 
 _ALLOWED_UPDATE_FIELDS_BY_LABEL: dict[str, set[str]] = {
-    # Default nodes: description + a small set of safe, whitelisted fields (Inspector MVP)
-    "Command": {"description", "actor"},
-    "Event": {"description", "version"},
-    "Policy": {"description"},
-    "Aggregate": {"description", "rootEntity"},
-    "ReadModel": {"description", "provisioningType"},
-    "BoundedContext": {"description"},
+    # Default nodes: description + displayName (UI label) + a small set of safe, whitelisted fields (Inspector MVP)
+    "Command": {"description", "displayName", "actor"},
+    "Event": {"description", "displayName", "version"},
+    "Policy": {"description", "displayName"},
+    "Aggregate": {"description", "displayName", "rootEntity"},
+    "ReadModel": {"description", "displayName", "provisioningType"},
+    "BoundedContext": {"description", "displayName"},
     # UI: wireframe + attachment metadata
     "UI": {"description", "template", "attachedToId", "attachedToType", "attachedToName"},
     # Property: field schema metadata
     # NOTE: parentType/parentId are accepted as metadata for safer targeting / diff readability,
     # but are NOT applied (we do not allow changing a property's parent via update).
-    "Property": {"name", "description", "type", "isKey", "isForeignKey", "isRequired", "parentType", "parentId"},
+    "Property": {"name", "displayName", "description", "type", "isKey", "isForeignKey", "isRequired", "parentType", "parentId"},
 }
 
 
@@ -752,6 +752,7 @@ def _apply_update_tx(tx: Any, change: dict[str, Any]) -> None:
     params: dict[str, Any] = {"id": node_id}
     for k in [
         "name",
+        "displayName",
         "description",
         "actor",
         "version",

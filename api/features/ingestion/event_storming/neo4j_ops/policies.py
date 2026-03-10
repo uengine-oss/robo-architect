@@ -19,6 +19,7 @@ class PolicyOps:
         invoke_command_id: str,
         key: str | None = None,
         description: str | None = None,
+        display_name: str | None = None,
     ) -> dict[str, Any]:
         """Create a policy with TRIGGERS and INVOKES relationships."""
         import time
@@ -42,6 +43,7 @@ class PolicyOps:
                     print(f"[NEO4J] create_policy ERROR: BoundedContext not found or missing key: {bc_id}", flush=True)
                     raise ValueError(f"BoundedContext not found or missing key: {bc_id}")
                 key = key or policy_key(bc_key_value, name)
+                display_name = display_name or name
                 query = """
                 MATCH (bc:BoundedContext {id: $bc_id})
                 MATCH (evt:Event {id: $trigger_event_id})
@@ -51,12 +53,13 @@ class PolicyOps:
                               pol.createdAt = datetime()
                 SET pol.key = $key,
                     pol.name = $name,
+                    pol.displayName = $display_name,
                     pol.description = $description,
                     pol.updatedAt = datetime()
                 MERGE (bc)-[:HAS_POLICY]->(pol)
                 MERGE (evt)-[:TRIGGERS {priority: 1, isEnabled: true}]->(pol)
                 MERGE (pol)-[:INVOKES {isAsync: true}]->(cmd)
-                RETURN pol {.id, .key, .name, .description} as policy
+                RETURN pol {.id, .key, .name, .displayName, .description} as policy
                 """
                 elapsed = time.time() - start_time
                 if elapsed > MAX_TIMEOUT:
@@ -66,6 +69,7 @@ class PolicyOps:
                     query,
                     key=key,
                     name=name,
+                    display_name=display_name,
                     bc_id=bc_id,
                     trigger_event_id=trigger_event_id,
                     invoke_command_id=invoke_command_id,

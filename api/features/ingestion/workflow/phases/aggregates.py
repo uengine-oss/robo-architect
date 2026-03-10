@@ -34,6 +34,9 @@ async def _create_aggregate_with_links(
     """
     # Handle both dict and object formats
     agg_name = (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None) or "").strip()
+    agg_display_name = agg.get("displayName") if isinstance(agg, dict) else getattr(agg, "displayName", None)
+    if not agg_display_name:
+        agg_display_name = agg_name
     bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
     
     # Convert enumerations and value_objects to dict format for Neo4j
@@ -46,6 +49,7 @@ async def _create_aggregate_with_links(
                     if enum_name:  # Only add if name exists
                         enum_list.append({
                             "name": str(enum_name),
+                            "displayName": e.get("displayName"),
                             "alias": e.get("alias"),
                             "items": e.get("items", [])
                         })
@@ -55,6 +59,7 @@ async def _create_aggregate_with_links(
                     if enum_name:  # Only add if name exists
                         enum_list.append({
                             "name": str(enum_name),
+                            "displayName": getattr(e, "displayName", None) or (e.get("displayName") if isinstance(e, dict) else None),
                             "alias": getattr(e, "alias", None),
                             "items": getattr(e, "items", []) or []
                         })
@@ -82,6 +87,7 @@ async def _create_aggregate_with_links(
                                 })
                         vo_list.append({
                             "name": str(vo_name),
+                            "displayName": vo.get("displayName"),
                             "alias": vo.get("alias"),
                             "referenced_aggregate_name": vo.get("referenced_aggregate_name"),
                             "referenced_aggregate_field": vo.get("referenced_aggregate_field"),
@@ -105,6 +111,7 @@ async def _create_aggregate_with_links(
                                 })
                         vo_list.append({
                             "name": str(vo_name),
+                            "displayName": getattr(vo, "displayName", None),
                             "alias": getattr(vo, "alias", None),
                             "referenced_aggregate_name": getattr(vo, "referenced_aggregate_name", None),
                             "referenced_aggregate_field": getattr(vo, "referenced_aggregate_field", None),
@@ -126,6 +133,7 @@ async def _create_aggregate_with_links(
                 invariants=invariants,
                 enumerations=enum_list if enum_list else None,
                 value_objects=vo_list if vo_list else None,
+                display_name=agg_display_name,
             ),
             timeout=10.0
         )
@@ -238,6 +246,17 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             bc_description=bc_description,
             breakdowns=breakdowns_text,
             existing_aggregates=existing_aggregates_text,
+        )
+        display_lang = getattr(ctx, "display_language", "ko") or "ko"
+        prompt += (
+            "\n\nFor each Aggregate output displayName: a short UI label in Korean (e.g. '장바구니', '주문')."
+            if display_lang == "ko"
+            else "\n\nFor each Aggregate output displayName: a short UI label in English (e.g. 'Cart', 'Order')."
+        )
+        prompt += (
+            "\n\nFor each Enumeration and each Value Object also output displayName: a short UI label in Korean (e.g. '주문 상태', '배송 주소')."
+            if display_lang == "ko"
+            else "\n\nFor each Enumeration and each Value Object also output displayName: a short UI label in English (e.g. 'Order Status', 'Shipping Address')."
         )
 
         structured_llm = ctx.llm.with_structured_output(AggregateList)

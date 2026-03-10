@@ -19,6 +19,7 @@ class BoundedContextOps:
         RETURN {
             id: bc.id,
             name: bc.name,
+            displayName: bc.displayName,
             description: bc.description,
             owner: bc.owner,
             domainType: bc.domainType,
@@ -40,24 +41,27 @@ class BoundedContextOps:
         owner: str | None = None,
         domain_type: str | None = None,
         user_story_ids: list[str] | None = None,
+        display_name: str | None = None,
     ) -> dict[str, Any]:
         """Create a new bounded context."""
         key = key or bc_key(name)
+        display_name = display_name or name
         query = """
         MERGE (bc:BoundedContext {key: $key})
         ON CREATE SET bc.id = randomUUID(),
                       bc.createdAt = datetime()
         SET bc.name = $name,
             bc.key = $key,
+            bc.displayName = $display_name,
             bc.description = $description,
             bc.owner = $owner,
             bc.domainType = $domain_type,
             bc.userStoryIds = $user_story_ids,
             bc.updatedAt = datetime()
-        RETURN bc {.id, .key, .name, .description, .owner, .domainType, .userStoryIds} as bounded_context
+        RETURN bc {.id, .key, .name, .displayName, .description, .owner, .domainType, .userStoryIds} as bounded_context
         """
         with self.session() as session:
-            result = session.run(query, key=key, name=name, description=description, owner=owner, domain_type=domain_type, user_story_ids=user_story_ids or [])
+            result = session.run(query, key=key, name=name, display_name=display_name, description=description, owner=owner, domain_type=domain_type, user_story_ids=user_story_ids or [])
             return dict(result.single()["bounded_context"])
 
     def link_user_story_to_bc(self, user_story_id: str, bc_id: str, confidence: float = 0.9) -> tuple[bool, dict[str, Any] | None]:

@@ -1,10 +1,13 @@
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 
 const props = defineProps({
   id: String,
   data: Object
 })
+
+const terminologyStore = useTerminologyStore()
 </script>
 
 <template>
@@ -13,7 +16,7 @@ const props = defineProps({
       <span class="node-type-badge">Aggregate Root</span>
       <!-- <span class="node-bc-name">{{ data.bcName }}</span> -->
     </div>
-    <div class="node-name">{{ data.name }}</div>
+    <div class="node-name">{{ terminologyStore.ubiquitousLanguageMode ? (data.displayName || data.name) : data.name }}</div>
     <div v-if="data.rootEntity" class="node-root-entity">
       {{ data.rootEntity }}
     </div>
@@ -46,7 +49,7 @@ const props = defineProps({
           <span v-if="prop.isKey" class="badge badge--key">PK</span>
           <span v-if="prop.isForeignKey" class="badge badge--fk">FK</span>
         </span>
-        <span class="field-name">{{ prop.name }}</span>
+        <span class="field-name">{{ terminologyStore.ubiquitousLanguageMode ? (prop.displayName || prop.name) : prop.name }}</span>
         <span class="field-type">: {{ prop.type }}</span>
       </div>
     </div>
@@ -55,7 +58,7 @@ const props = defineProps({
       <div class="section-divider"></div>
       <div class="section-label">Enumerations</div>
       <div v-for="enumItem in data.enumerations" :key="`enum-${enumItem.name}`" class="node-field">
-        <span class="field-name">{{ enumItem.name }}</span>
+        <span class="field-name">{{ terminologyStore.ubiquitousLanguageMode ? (enumItem.displayName || enumItem.name) : enumItem.name }}</span>
         <span class="field-type">: Enum</span>
       </div>
     </div>
@@ -64,7 +67,7 @@ const props = defineProps({
       <div class="section-divider"></div>
       <div class="section-label">Value Objects</div>
       <div v-for="vo in data.valueObjects" :key="`vo-${vo.name}`" class="node-field">
-        <span class="field-name">{{ vo.name }}</span>
+        <span class="field-name">{{ terminologyStore.ubiquitousLanguageMode ? (vo.displayName || vo.name) : vo.name }}</span>
         <span class="field-type">: ValueObject</span>
         <span v-if="vo.referencedAggregateName" class="field-ref">
           → {{ vo.referencedAggregateName }}

@@ -15,32 +15,35 @@ def fetch_bc_data(bc_id: str) -> dict | None:
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
     WITH bc, agg
     OPTIONAL MATCH (agg)-[:HAS_PROPERTY]->(aggProp:Property)
-    WITH bc, agg, collect(DISTINCT aggProp {.id, .name, .type, .isKey, .isForeignKey, .description, .fkTargetHint}) as aggProps
+    WITH bc, agg, collect(DISTINCT aggProp {.id, .name, .displayName, .type, .isKey, .isForeignKey, .description, .fkTargetHint}) as aggProps
     
     // Step 2: Commands with Properties and Additional Info
     OPTIONAL MATCH (agg)-[:HAS_COMMAND]->(cmd:Command)
     WITH bc, agg, aggProps, cmd
     OPTIONAL MATCH (cmd)-[:HAS_PROPERTY]->(cmdProp:Property)
-    WITH bc, agg, aggProps, cmd, collect(DISTINCT cmdProp {.id, .name, .type, .isRequired, .description}) as cmdProps
+    WITH bc, agg, aggProps, cmd, collect(DISTINCT cmdProp {.id, .name, .displayName, .type, .isRequired, .description}) as cmdProps
     WITH bc, agg, aggProps, cmd, cmdProps,
          cmd.category as cmdCategory,
          cmd.inputSchema as cmdInputSchema,
-         cmd.description as cmdDescription
+         cmd.description as cmdDescription,
+         cmd.displayName as cmdDisplayName
     
     // Step 3: Events with Properties and Additional Info
     OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
-    WITH bc, agg, aggProps, cmd, cmdProps, cmdCategory, cmdInputSchema, cmdDescription, evt
+    WITH bc, agg, aggProps, cmd, cmdProps, cmdCategory, cmdInputSchema, cmdDescription, cmdDisplayName, evt
     OPTIONAL MATCH (evt)-[:HAS_PROPERTY]->(evtProp:Property)
-    WITH bc, agg, aggProps, cmd, cmdProps, cmdCategory, cmdInputSchema, cmdDescription, evt, 
-         collect(DISTINCT evtProp {.id, .name, .type, .description}) as evtProps,
+    WITH bc, agg, aggProps, cmd, cmdProps, cmdCategory, cmdInputSchema, cmdDescription, cmdDisplayName, evt, 
+         collect(DISTINCT evtProp {.id, .name, .displayName, .type, .description}) as evtProps,
          evt.schema as evtSchema,
-         evt.description as evtDescription
+         evt.description as evtDescription,
+         evt.displayName as evtDisplayName
     
     // Step 4: Group Commands and Events by Aggregate
     WITH bc, agg, aggProps,
          collect(DISTINCT {
              id: cmd.id, 
              name: cmd.name, 
+             displayName: cmdDisplayName, 
              actor: cmd.actor, 
              category: cmdCategory,
              inputSchema: cmdInputSchema,
@@ -50,6 +53,7 @@ def fetch_bc_data(bc_id: str) -> dict | None:
          collect(DISTINCT {
              id: evt.id, 
              name: evt.name, 
+             displayName: evtDisplayName, 
              version: evt.version, 
              schema: evtSchema,
              description: evtDescription,
@@ -58,6 +62,7 @@ def fetch_bc_data(bc_id: str) -> dict | None:
     WITH bc, collect(DISTINCT {
         id: agg.id,
         name: agg.name,
+        displayName: agg.displayName,
         rootEntity: agg.rootEntity,
         invariants: agg.invariants,
         enumerations: agg.enumerations,
@@ -71,10 +76,11 @@ def fetch_bc_data(bc_id: str) -> dict | None:
     OPTIONAL MATCH (bc)-[:HAS_READMODEL]->(rm:ReadModel)
     WITH bc, aggData, rm
     OPTIONAL MATCH (rm)-[:HAS_PROPERTY]->(rmProp:Property)
-    WITH bc, aggData, rm, collect(DISTINCT rmProp {.id, .name, .type, .description}) as rmProps
+    WITH bc, aggData, rm, collect(DISTINCT rmProp {.id, .name, .displayName, .type, .description}) as rmProps
     WITH bc, aggData, collect(DISTINCT {
         id: rm.id,
         name: rm.name,
+        displayName: rm.displayName,
         description: rm.description,
         provisioningType: rm.provisioningType,
         actor: rm.actor,
@@ -92,6 +98,7 @@ def fetch_bc_data(bc_id: str) -> dict | None:
     WITH bc, aggData, rmData, collect(DISTINCT {
         id: pol.id,
         name: pol.name,
+        displayName: pol.displayName,
         description: pol.description,
         triggerEventId: triggerEvt.id,
         triggerEventName: triggerEvt.name,
@@ -117,6 +124,7 @@ def fetch_bc_data(bc_id: str) -> dict | None:
     RETURN {
         id: bc.id,
         name: bc.name,
+        displayName: bc.displayName,
         description: bc.description,
         aggregates: [a IN aggData WHERE a.id IS NOT NULL],
         readmodels: [r IN rmData WHERE r.id IS NOT NULL],

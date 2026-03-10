@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import EnumItemsTable from './inspectors/EnumItemsTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
@@ -14,6 +15,7 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 
 const store = useAggregateViewerStore()
+const terminologyStore = useTerminologyStore()
 
 // Get current aggregate data
 const aggregateData = computed(() => {
@@ -370,7 +372,7 @@ async function saveAggregateProperties() {
               :key="prop.id || prop.name" 
               :value="prop.name"
             >
-              {{ prop.name }}: {{ prop.type }}
+              {{ terminologyStore.ubiquitousLanguageMode ? (prop.displayName || prop.name) : prop.name }}: {{ prop.type }}
             </option>
           </select>
           <small class="form-help-text">
@@ -399,7 +401,7 @@ async function saveAggregateProperties() {
       <!-- Aggregate Editor -->
       <div v-else-if="aggregateData" class="inspector-section">
         <div class="section-header">
-          <h4>{{ aggregateData.name }}</h4>
+          <h4>{{ terminologyStore.ubiquitousLanguageMode ? (aggregateData.displayName || aggregateData.name) : aggregateData.name }}</h4>
           <span class="section-subtitle">{{ aggregateData.rootEntity }}</span>
         </div>
 
@@ -428,7 +430,7 @@ async function saveAggregateProperties() {
             <button class="btn-add-small" @click="addEnumeration">+ Add</button>
           </div>
           <div v-for="(enumItem, idx) in editingEnumerations" :key="idx" class="item-row">
-            <span class="item-value">{{ enumItem.name || '(unnamed)' }}</span>
+            <span class="item-value">{{ terminologyStore.ubiquitousLanguageMode ? (enumItem.displayName || enumItem.name || '(unnamed)') : (enumItem.name || '(unnamed)') }}</span>
             <button class="item-remove" @click="removeEnumeration(idx)">×</button>
           </div>
         </div>
@@ -441,7 +443,7 @@ async function saveAggregateProperties() {
           </div>
           <div v-for="(vo, idx) in editingValueObjects" :key="idx" class="item-row">
             <span class="item-value">
-              {{ vo.name || '(unnamed)' }}
+              {{ terminologyStore.ubiquitousLanguageMode ? (vo.displayName || vo.name || '(unnamed)') : (vo.name || '(unnamed)') }}
               <span v-if="vo.referencedAggregateName" class="item-ref">→ {{ vo.referencedAggregateName }}</span>
             </span>
             <button class="item-remove" @click="removeValueObject(idx)">×</button>

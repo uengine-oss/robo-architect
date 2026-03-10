@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useCanvasStore } from '../../canvas.store'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 
 const props = defineProps({
   id: String,
@@ -8,11 +9,9 @@ const props = defineProps({
 })
 
 const canvasStore = useCanvasStore()
+const terminologyStore = useTerminologyStore()
 
-// Get the display name
-const displayName = computed(() => {
-  return props.data?.name || props.data?.label || props.id || 'Context'
-})
+const displayName = computed(() => terminologyStore.getLabel(props.data) || props.id || 'Context')
 
 // Check if BC is collapsed
 const isCollapsed = computed(() => {
@@ -36,7 +35,7 @@ function closeBC(event) {
   <div class="bc-container" :class="{ 'bc-container--collapsed': isCollapsed }">
     <!-- Header -->
     <div class="bc-container__header">
-      <span class="bc-container__name">{{ displayName.toLowerCase() }}</span>
+      <span class="bc-container__name">{{ displayName || data?.name || '' }}</span>
       
       <!-- Header Actions -->
       <div class="bc-container__actions">

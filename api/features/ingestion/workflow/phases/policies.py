@@ -83,6 +83,7 @@ async def _create_policy_with_links(
     if not target_bc_id:
         return None, f"Target BC '{pol.target_bc}' not found"
 
+    pol_display_name = getattr(pol, "displayName", None) or pol.name
     # Create policy
     try:
         created_pol = await asyncio.wait_for(
@@ -93,6 +94,7 @@ async def _create_policy_with_links(
                 trigger_event_id=trigger_event_id,
                 invoke_command_id=invoke_command_id,
                 description=pol.description,
+                display_name=pol_display_name,
             ),
             timeout=8.0
         )
@@ -207,14 +209,20 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             for bc in ctx.bounded_contexts
         ])
 
+        display_lang = getattr(ctx, "display_language", "ko") or "ko"
+        display_name_tail = (
+            "\n\nFor each Policy output displayName: a short UI label in Korean (e.g. '주문 취소 시 환불')."
+            if display_lang == "ko"
+            else "\n\nFor each Policy output displayName: a short UI label in English (e.g. 'Refund on Order Cancelled')."
+        )
         # 전체 프롬프트 텍스트 구성 (청킹 판단용)
         full_prompt_text = IDENTIFY_POLICIES_PROMPT.format(
             user_stories=user_stories_text,
             events=events_text,
             commands_by_bc=commands_text,
             bounded_contexts=bc_text,
-        )
-        
+        ) + display_name_tail
+
         # 청킹 필요 여부 판단
         if should_chunk(full_prompt_text):
             yield ProgressEvent(
@@ -266,8 +274,8 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     events=chunk_events_text,
                     commands_by_bc=commands_text,
                     bounded_contexts=bc_text,
-                )
-                
+                ) + display_name_tail
+
                 structured_llm = ctx.llm.with_structured_output(PolicyList)
                 
                 provider, model = get_llm_provider_model()

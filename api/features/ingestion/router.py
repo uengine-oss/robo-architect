@@ -54,6 +54,7 @@ async def upload_document(
     request: Request,
     file: Optional[UploadFile] = File(None),
     text: Optional[str] = Form(None),
+    display_language: Optional[str] = Form("ko"),
 ) -> dict[str, Any]:
     """
     Upload a requirements document (text or PDF) to start ingestion.
@@ -143,14 +144,17 @@ async def upload_document(
 
     session = create_session()
     session.content = content
+    session.display_language = (display_language or "ko").strip().lower() or "ko"
+    if session.display_language not in ("ko", "en"):
+        session.display_language = "ko"
     SmartLogger.log(
         "INFO",
         "Ingestion session created",
         category="ingestion.api.upload",
-        params={"session_id": session.id},
+        params={"session_id": session.id, "display_language": session.display_language},
     )
 
-    return {"session_id": session.id, "content_length": len(content), "preview": content[:500] + "..." if len(content) > 500 else content}
+    return {"session_id": session.id, "content_length": len(content), "display_language": session.display_language, "preview": content[:500] + "..." if len(content) > 500 else content}
 
 
 @router.get("/session/{session_id}/status")

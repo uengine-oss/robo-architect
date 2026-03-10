@@ -101,6 +101,7 @@ async def _create_command_ui(
     # Handle both dict and object formats
     cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
     cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+    cmd_display_name = cmd.get("displayName") if isinstance(cmd, dict) else getattr(cmd, "displayName", None)
     bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
     bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
     agg_name = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "") if agg else ""
@@ -111,6 +112,7 @@ async def _create_command_ui(
 
     ui_id = build_ui_key("Command", cmd_id)
     ui_name = cmd_name
+    ui_display_name = cmd_display_name or cmd_name
 
     try:
         existing_template = await asyncio.to_thread(_existing_ui_template_best_effort, ctx, ui_id)
@@ -157,6 +159,7 @@ async def _create_command_ui(
                 attached_to_type="Command",
                 attached_to_name=cmd_name,
                 user_story_id=chosen_us_id,
+                display_name=ui_display_name,
             ),
             timeout=10.0
         )
@@ -170,6 +173,7 @@ async def _create_command_ui(
                 "object": {
                     "id": ui.get("id"),
                     "name": ui_name,
+                    "displayName": ui.get("displayName") or ui_display_name,
                     "type": "UI",
                     "parentId": bc_id,
                     "template": final_template,
@@ -208,6 +212,7 @@ async def _create_readmodel_ui(
     rm_id = rm.get("id")
     ui_id = build_ui_key("ReadModel", rm_id)
     ui_name = rm.get('name', rm_id)
+    ui_display_name = rm.get("displayName") or ui_name
 
     try:
         existing_template = await asyncio.to_thread(_existing_ui_template_best_effort, ctx, ui_id)
@@ -250,6 +255,7 @@ async def _create_readmodel_ui(
                 attached_to_type="ReadModel",
                 attached_to_name=rm.get("name"),
                 user_story_id=chosen_us_id,
+                display_name=ui_display_name,
             ),
             timeout=10.0
         )
@@ -263,6 +269,7 @@ async def _create_readmodel_ui(
                 "object": {
                     "id": ui.get("id"),
                     "name": ui_name,
+                    "displayName": ui.get("displayName") or ui_display_name,
                     "type": "UI",
                     "parentId": bc_id,
                     "template": final_template,

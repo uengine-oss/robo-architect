@@ -14,6 +14,7 @@ const canvasStore = useCanvasStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('Event')} >>`)
 
 const hasProperties = computed(() => Array.isArray(props.data?.properties) && props.data.properties.length > 0)
+const displayLabel = computed(() => terminologyStore.getLabel(props.data))
 // Access showDesignLevel directly - Pinia store refs are reactive
 const shouldShowFields = computed(() => {
   return canvasStore.showDesignLevel && hasProperties.value
@@ -116,7 +117,7 @@ const nodeStyle = computed(() => {
       {{ headerText }}
     </div>
     <div class="es-node__body">
-      <div class="es-node__name">{{ data.name }}</div>
+      <div class="es-node__name">{{ displayLabel }}</div>
       <div v-if="data.version" class="es-node__version">
         v{{ data.version }}
       </div>
@@ -127,7 +128,7 @@ const nodeStyle = computed(() => {
             <span v-if="prop.isKey" class="prop-badge prop-badge--key">PK</span>
             <span v-if="prop.isForeignKey" class="prop-badge prop-badge--fk">FK</span>
           </span>
-          <span class="prop-name">{{ prop.name }}</span>
+          <span class="prop-name">{{ terminologyStore.ubiquitousLanguageMode ? (prop.displayName || prop.name) : prop.name }}</span>
           <span class="prop-type">{{ prop.type }}</span>
         </div>
       </div>

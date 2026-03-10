@@ -6,6 +6,7 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import AggregateViewerNode from './nodes/AggregateViewerNode.vue'
 import EnumViewerNode from './nodes/EnumViewerNode.vue'
 import ValueObjectViewerNode from './nodes/ValueObjectViewerNode.vue'
@@ -17,6 +18,7 @@ import StepEdge from './edges/StepEdge.vue'
 
 const store = useAggregateViewerStore()
 const chatStore = useModelModifierStore()
+const terminologyStore = useTerminologyStore()
 const { fitView, zoomIn, zoomOut, getNodes, getNode, updateEdge, getViewport } = useVueFlow()
 
 // Track node positions for edge handle updates (updated via onNodesChange)
@@ -181,7 +183,12 @@ function buildNodes(preserveExistingPositions = false) {
   const allAggregates = []
   store.filteredBoundedContexts.forEach((bc) => {
     bc.aggregates?.forEach((agg) => {
-      allAggregates.push({ ...agg, bcName: bc.name, bcId: bc.id })
+      allAggregates.push({
+        ...agg,
+        bcName: bc.name,
+        bcDisplayName: bc.displayName || bc.name,
+        bcId: bc.id
+      })
     })
   })
 
@@ -221,6 +228,7 @@ function buildNodes(preserveExistingPositions = false) {
       position: containerPosition,
       data: {
         bcName: agg.bcName,
+        bcDisplayName: agg.bcDisplayName || agg.bcName,
         aggregateId: agg.id,
         aggregateName: agg.name,
       },
@@ -985,7 +993,7 @@ function onNodeClick(event) {
   const nodeData = node.data || {}
   const selectedNode = {
     id: node.id,
-    name: nodeData.name || node.id,
+    name: terminologyStore.ubiquitousLanguageMode ? (nodeData.displayName || nodeData.name || node.id) : (nodeData.name || node.id),
     type: node.type === 'aggregateViewer' ? 'Aggregate' : 
          node.type === 'enumViewer' ? 'Enum' : 
          node.type === 'valueObjectViewer' ? 'ValueObject' : node.type,

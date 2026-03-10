@@ -55,6 +55,7 @@ class BoundedContextCandidate(BaseModel):
     id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
     key: Optional[str] = Field(default=None, description="Optional natural key (slug).")
     name: str = Field(..., description="Short name like 'Order'")
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '주문 관리' or 'Order Management').")
     description: str = Field(..., description="What this BC is responsible for")
     rationale: str = Field(..., description="Why this should be a separate BC")
     user_story_ids: List[str] = Field(
@@ -72,6 +73,7 @@ class EnumerationCandidate(BaseModel):
     """An Enumeration within an Aggregate."""
 
     name: str = Field(..., description="Enumeration name in PascalCase")
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '주문 상태' or 'Order Status').")
     alias: Optional[str] = Field(default=None, description="Optional alias for display")
     items: List[str] = Field(
         default_factory=list, description="List of enumeration item values (e.g., ['PENDING', 'PROCESSING', 'COMPLETED'])"
@@ -89,6 +91,7 @@ class ValueObjectCandidate(BaseModel):
     """A Value Object within an Aggregate."""
 
     name: str = Field(..., description="Value Object name in PascalCase")
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '배송 주소' or 'Shipping Address').")
     alias: Optional[str] = Field(default=None, description="Optional alias for display")
     referenced_aggregate_name: Optional[str] = Field(
         default=None, description="Name of the referenced Aggregate (if this is a reference Value Object)"
@@ -107,6 +110,7 @@ class AggregateCandidate(BaseModel):
     id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
     key: Optional[str] = Field(default=None, description="Optional natural key (derived from BC + name).")
     name: str = Field(..., description="Aggregate name like 'Cart'")
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '장바구니' or 'Cart').")
     root_entity: str = Field(..., description="Root entity name")
     invariants: List[str] = Field(
         default_factory=list, description="Business invariants this aggregate enforces"
@@ -174,6 +178,7 @@ class CommandCandidate(BaseModel):
     id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
     key: Optional[str] = Field(default=None, description="Optional natural key (derived from Aggregate + name).")
     name: str = Field(..., description="Command name in PascalCase like 'PlaceOrder'")
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '주문하기' or 'Place Order').")
     actor: str = Field(default="user", description="Who triggers this command (should match User Story role when applicable)")
     category: Optional[str] = Field(default=None, description="Command category: Create, Update, Delete, Process, Business Logic, or External Integration")
     inputSchema: Optional[str] = Field(default=None, description="JSON schema or description of command input parameters")
@@ -192,6 +197,7 @@ class EventCandidate(BaseModel):
     id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
     key: Optional[str] = Field(default=None, description="Optional natural key (derived from Command + name + version).")
     name: str = Field(..., description="Event name in past tense like 'OrderPlaced'")
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '주문 접수됨' or 'Order Placed').")
     version: str = Field(default="1.0.0", description="Event version for schema evolution")
     payload: Optional[str] = Field(default=None, description="JSON schema or description of event payload/data")
     description: str = Field(..., description="What happened")
@@ -210,6 +216,7 @@ class ReadModelCandidate(BaseModel):
         ...,
         description="ReadModel name in PascalCase using Noun+Purpose (e.g., OrderSummary, OrderStatus).",
     )
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '주문 요약' or 'Order Summary').")
     description: str = Field(..., description="What this ReadModel provides for queries.")
     actor: str = Field(
         default="user",
@@ -231,6 +238,7 @@ class PolicyCandidate(BaseModel):
     id: Optional[str] = Field(default=None, description="Optional UUID (server-generated).")
     key: Optional[str] = Field(default=None, description="Optional natural key (derived from target BC + name).")
     name: str = Field(..., description="Policy name like 'RefundOnOrderCancelled'")
+    displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '주문 취소 시 환불' or 'Refund on Order Cancelled').")
     trigger_event: str = Field(..., description="Event that triggers this policy")
     trigger_event_bc: str = Field(
         default="", description="BC where the trigger event originates (must be different from target_bc)"

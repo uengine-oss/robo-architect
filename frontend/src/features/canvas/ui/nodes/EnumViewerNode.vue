@@ -1,10 +1,13 @@
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 
 const props = defineProps({
   id: String,
   data: Object
 })
+
+const terminologyStore = useTerminologyStore()
 </script>
 
 <template>
@@ -12,7 +15,7 @@ const props = defineProps({
     <div class="node-header">
       <span class="node-type-badge">Enum</span>
     </div>
-    <div class="node-name">{{ data.name }}</div>
+    <div class="node-name">{{ terminologyStore.ubiquitousLanguageMode ? (data.displayName || data.name) : data.name }}</div>
     <div v-if="data.alias" class="node-alias">{{ data.alias }}</div>
     
     <div class="node-section">

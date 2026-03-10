@@ -1,8 +1,10 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
 
 const log = createLogger({ scope: 'PropertyEditorTable' })
+const terminologyStore = useTerminologyStore()
 
 // ============================================
 // SVG Icons (inline)
@@ -78,6 +80,7 @@ function snapshotPropsFromNode(n) {
     result.push({
     id: String(p?.id || ''),
     name: String(p?.name ?? ''),
+    displayName: String(p?.displayName ?? ''),
     type: String(p?.type ?? ''),
     description: String(p?.description ?? ''),
     isKey: toBool(p?.isKey),
@@ -96,6 +99,7 @@ function snapshotPropsFromNode(n) {
       result.push({
         id: `enum-${e.name}-${idx}`,
         name: String(e.name ?? ''),
+        displayName: String(e.displayName ?? ''),
         type: 'Enum',
         description: String(e.alias ?? ''),
         isKey: false,
@@ -115,6 +119,7 @@ function snapshotPropsFromNode(n) {
       result.push({
         id: `vo-${vo.name}-${idx}`,
         name: String(vo.name ?? ''),
+        displayName: String(vo.displayName ?? ''),
         type: 'ValueObject',
         description: String(vo.alias ?? ''),
         isKey: false,
@@ -368,9 +373,11 @@ function buildDraftChanges() {
     const type = String(r.type ?? '').trim()
     const description = String(r.description ?? '').trim() || name
 
+    const displayName = String(r.displayName ?? '').trim()
     const normalizedRow = {
       ...r,
       name,
+      displayName: displayName || undefined,
       type,
       description,
       isKey: toBool(r.isKey),
@@ -390,6 +397,7 @@ function buildDraftChanges() {
         targetName: name,
         updates: {
           name,
+          displayName: displayName || undefined,
           type,
           description,
           isKey: normalizedRow.isKey,
@@ -419,6 +427,7 @@ function buildDraftChanges() {
     const updates = {}
     if (String(init.type ?? '') !== type) updates.type = type
     if (String(init.description ?? '') !== description) updates.description = description
+    if (String(init.displayName ?? '') !== displayName) updates.displayName = displayName || undefined
     if (toBool(init.isKey) !== normalizedRow.isKey) updates.isKey = normalizedRow.isKey
     if (toBool(init.isForeignKey) !== normalizedRow.isForeignKey) updates.isForeignKey = normalizedRow.isForeignKey
     if (toBool(init.isRequired) !== normalizedRow.isRequired) updates.isRequired = normalizedRow.isRequired
@@ -665,6 +674,7 @@ onMounted(() => {
         <thead>
           <tr>
             <th class="col-name">name</th>
+            <th class="col-display-name">표시 이름</th>
             <th class="col-type">type</th>
             <th class="col-desc">description</th>
             <th class="col-badges">속성</th>
@@ -678,7 +688,7 @@ onMounted(() => {
             class="prop-row"
             :class="{ 'prop-row--readonly': row.isReadOnly }"
           >
-            <!-- Name -->
+            <!-- Name (technical) -->
             <td>
               <input
                 v-if="!row.isReadOnly"
@@ -696,6 +706,20 @@ onMounted(() => {
               <div v-else-if="!row.isReadOnly && rowIssues[row.id]?.warnings?.length" class="prop-issue warn">
                 {{ rowIssues[row.id].warnings[0] }}
               </div>
+            </td>
+
+            <!-- Display name (UI label) -->
+            <td class="col-display-name">
+              <input
+                v-if="!row.isReadOnly"
+                class="prop-input"
+                type="text"
+                v-model="row.displayName"
+                :disabled="disabled"
+                placeholder="UI 라벨"
+                @keydown="handleRowKeydown($event, row, rowIndex)"
+              />
+              <span v-else class="prop-readonly">{{ terminologyStore.ubiquitousLanguageMode ? (row.displayName || row.name) : row.name }}</span>
             </td>
 
             <!-- Type (Combobox) -->
@@ -990,10 +1014,11 @@ onMounted(() => {
   z-index: 1;
 }
 
-.col-name { width: 25%; }
-.col-type { width: 20%; }
-.col-desc { width: 25%; }
-.col-badges { width: 22%; }
+.col-name { width: 20%; }
+.col-display-name { width: 18%; }
+.col-type { width: 16%; }
+.col-desc { width: 22%; }
+.col-badges { width: 18%; }
 .col-actions { width: 8%; }
 
 .center {

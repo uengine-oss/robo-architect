@@ -22,6 +22,7 @@ class UserStoryOps:
             priority: us.priority,
             status: us.status,
             uiDescription: us.uiDescription,
+            displayName: us.displayName,
             implemented_in: implemented_in
         } as user_story
         ORDER BY user_story.id
@@ -62,6 +63,7 @@ class UserStoryOps:
         priority: str = "medium",
         status: str = "draft",
         ui_description: str = "",
+        display_name: str | None = None,
     ) -> dict[str, Any]:
         """Create a new user story. Uses MERGE to prevent duplicates by id."""
         query = """
@@ -72,6 +74,7 @@ class UserStoryOps:
                       us.priority = $priority,
                       us.status = $status,
                       us.uiDescription = $ui_description,
+                      us.displayName = $display_name,
                       us.createdAt = datetime()
         ON MATCH SET us.role = CASE WHEN $role IS NOT NULL AND $role <> '' THEN $role ELSE us.role END,
                      us.action = CASE WHEN $action IS NOT NULL AND $action <> '' THEN $action ELSE us.action END,
@@ -79,8 +82,9 @@ class UserStoryOps:
                      us.priority = CASE WHEN $priority IS NOT NULL AND $priority <> '' THEN $priority ELSE us.priority END,
                      us.status = CASE WHEN $status IS NOT NULL AND $status <> '' THEN $status ELSE us.status END,
                      us.uiDescription = CASE WHEN $ui_description IS NOT NULL AND $ui_description <> '' THEN $ui_description ELSE us.uiDescription END,
+                     us.displayName = CASE WHEN $display_name IS NOT NULL AND $display_name <> '' THEN $display_name ELSE us.displayName END,
                      us.updatedAt = datetime()
-        RETURN us {.id, .role, .action, .benefit, .priority, .status, uiDescription: us.uiDescription} as user_story
+        RETURN us {.id, .role, .action, .benefit, .priority, .status, uiDescription: us.uiDescription, displayName: us.displayName} as user_story
         """
         with self.session() as session:
             result = session.run(
@@ -92,6 +96,7 @@ class UserStoryOps:
                 priority=priority,
                 status=status,
                 ui_description=ui_description,
+                display_name=display_name or "",
             )
             record = result.single()
             if record is None:

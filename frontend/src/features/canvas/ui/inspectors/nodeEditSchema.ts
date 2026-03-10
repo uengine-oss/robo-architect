@@ -5,6 +5,7 @@ export type FieldInputType = 'text' | 'textarea' | 'select'
 
 export type EditableFieldKey =
   | 'name'
+  | 'displayName'
   | 'description'
   | 'template'
   | 'actor'
@@ -36,6 +37,7 @@ export type NodeEditSchema = {
 
 const CommonFields: FieldSchema[] = [
   { key: 'name', label: '이름', input: 'text', placeholder: 'Name' },
+  { key: 'displayName', label: '표시 이름 (UI)', input: 'text', placeholder: 'UI에 표시할 라벨 (한글/영문)' },
   { key: 'description', label: '설명', input: 'textarea', placeholder: 'Description' }
 ]
 

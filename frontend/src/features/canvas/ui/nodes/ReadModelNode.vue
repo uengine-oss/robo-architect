@@ -12,6 +12,7 @@ const props = defineProps({
 const terminologyStore = useTerminologyStore()
 const canvasStore = useCanvasStore()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('ReadModel')} >>`)
+const displayLabel = computed(() => terminologyStore.getLabel(props.data))
 
 const hasProperties = computed(() => props.data?.properties && props.data.properties.length > 0)
 // Access showDesignLevel directly - Pinia store refs are reactive
@@ -72,7 +73,7 @@ const provisioningBadge = computed(() => {
       </span>
     </div>
     <div class="es-node__body">
-      <div class="es-node__name">{{ data?.name }}</div>
+      <div class="es-node__name">{{ displayLabel }}</div>
 
       <!-- Properties List -->
       <div v-if="shouldShowFields" class="es-node__props">
@@ -81,7 +82,7 @@ const provisioningBadge = computed(() => {
             <span v-if="prop.isKey" class="prop-badge prop-badge--key">PK</span>
             <span v-if="prop.isForeignKey" class="prop-badge prop-badge--fk">FK</span>
           </span>
-          <span class="prop-name">{{ prop.name }}</span>
+          <span class="prop-name">{{ terminologyStore.ubiquitousLanguageMode ? (prop.displayName || prop.name) : prop.name }}</span>
           <span class="prop-type">{{ prop.type }}</span>
         </div>
       </div>

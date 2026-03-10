@@ -1,13 +1,19 @@
 <script setup>
+import { computed } from 'vue'
+import { useTerminologyStore } from '@/features/terminology/terminology.store'
+
 const props = defineProps({
   id: String,
   data: Object
 })
+
+const terminologyStore = useTerminologyStore()
+const displayLabel = computed(() => terminologyStore.getLabel(props.data))
 </script>
 
 <template>
   <div class="bc-header-node">
-    <div class="bc-header__title">{{ data.name }}</div>
+    <div class="bc-header__title">{{ displayLabel }}</div>
     <div class="bc-header__count">
       {{ data.aggregateCount || 0 }} Aggregate{{ data.aggregateCount !== 1 ? 's' : '' }}
     </div>

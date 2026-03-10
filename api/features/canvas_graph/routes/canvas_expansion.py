@@ -211,7 +211,7 @@ def _fetch_properties_by_parent_id(session: Any, parent_ids: list[str]) -> dict[
              coalesce(prop.isForeignKey, false) DESC,
              prop.name ASC
     WITH pid, collect(prop {
-        .id, .name, .type, .description,
+        .id, .name, .displayName, .type, .description,
         .isKey, .isForeignKey, .isRequired,
         .parentType, .parentId
     }) as properties

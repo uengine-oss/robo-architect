@@ -20,6 +20,7 @@ class ReadModelOps:
         provisioning_type: str = "CQRS",
         actor: str | None = None,
         is_multiple_result: str | None = None,
+        display_name: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a ReadModel node and link it to a BoundedContext via HAS_READMODEL.
@@ -28,6 +29,7 @@ class ReadModelOps:
         - provisioningType is used by the UI to decide CQRS config behavior.
         - We keep this idempotent (MERGE on key).
         """
+        display_name = display_name or name
         with self.session() as session:
             bc_rec = session.run("MATCH (bc:BoundedContext {id: $id}) RETURN bc.key as key", id=bc_id).single()
             bc_key_value = (bc_rec or {}).get("key") or ""
@@ -42,18 +44,20 @@ class ReadModelOps:
                           rm.createdAt = datetime()
             SET rm.key = $key,
                 rm.name = $name,
+                rm.displayName = $display_name,
                 rm.description = $description,
                 rm.provisioningType = $provisioning_type,
                 rm.actor = $actor,
                 rm.isMultipleResult = $is_multiple_result,
                 rm.updatedAt = datetime()
             MERGE (bc)-[:HAS_READMODEL]->(rm)
-            RETURN rm {.id, .key, .name, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
+            RETURN rm {.id, .key, .name, .displayName, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
             """
             result = session.run(
                 query,
                 key=key,
                 name=name,
+                display_name=display_name,
                 bc_id=bc_id,
                 description=description,
                 provisioning_type=provisioning_type,

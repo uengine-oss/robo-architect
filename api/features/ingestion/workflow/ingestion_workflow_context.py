@@ -20,6 +20,8 @@ class IngestionWorkflowContext:
     content: str
     client: Any
     llm: Any
+    # Display language for node/property displayName: "ko" (한글) or "en" (English)
+    display_language: str = "ko"
 
     user_stories: list[Any] = field(default_factory=list)
     bounded_contexts: list[Any] = field(default_factory=list)
@@ -64,6 +66,7 @@ class IngestionWorkflowContext:
                         benefit=us.get("benefit", ""),
                         priority=us.get("priority", "medium"),
                         ui_description=us.get("uiDescription", "") or us.get("ui_description", ""),
+                        displayName=us.get("displayName"),
                     )
                     for us in user_stories_dict
                     if us.get("id") and us.get("action")  # Only include valid user stories
@@ -140,7 +143,7 @@ class IngestionWorkflowContext:
                             # Query events emitted by this command
                             query = """
                             MATCH (cmd:Command {id: $cmd_id})-[:EMITS]->(evt:Event)
-                            RETURN evt {.id, .name, .version, .schema, .payload} as event
+                            RETURN evt {.id, .name, .displayName, .version, .schema, .payload} as event
                             ORDER BY evt.name
                             """
                             with self.client.session() as session:
@@ -169,7 +172,7 @@ class IngestionWorkflowContext:
                         # Query readmodels for this BC
                         query = """
                         MATCH (bc:BoundedContext {id: $bc_id})-[:HAS_READMODEL]->(rm:ReadModel)
-                        RETURN rm {.id, .name, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
+                        RETURN rm {.id, .name, .displayName, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
                         ORDER BY rm.name
                         """
                         with self.client.session() as session:

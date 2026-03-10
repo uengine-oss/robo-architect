@@ -38,6 +38,9 @@ async def _create_command_with_links(
     """
     # Handle both dict and object formats
     cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+    cmd_display_name = cmd.get("displayName") if isinstance(cmd, dict) else getattr(cmd, "displayName", None)
+    if not cmd_display_name:
+        cmd_display_name = cmd_name
     cmd_actor = cmd.get("actor") if isinstance(cmd, dict) else getattr(cmd, "actor", "user")
     category = cmd.get("category") if isinstance(cmd, dict) else getattr(cmd, "category", None)
     input_schema = cmd.get("inputSchema") if isinstance(cmd, dict) else getattr(cmd, "inputSchema", None)
@@ -52,6 +55,7 @@ async def _create_command_with_links(
                 actor=cmd_actor,
                 category=category,
                 input_schema=input_schema,
+                display_name=cmd_display_name,
             ),
             timeout=10.0
         )
@@ -143,6 +147,12 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 [f"[{us.id}] As a {us.role}, I want to {us.action}" for us in ctx.user_stories if us.id in bc_us_ids]
             )
 
+            display_lang = getattr(ctx, "display_language", "ko") or "ko"
+            display_name_tail = (
+                "\n\nFor each Command output displayName: a short UI label in Korean (e.g. '주문하기', '취소')."
+                if display_lang == "ko"
+                else "\n\nFor each Command output displayName: a short UI label in English (e.g. 'Place Order', 'Cancel')."
+            )
             # 전체 프롬프트 텍스트 구성 (청킹 판단용)
             full_prompt_text = EXTRACT_COMMANDS_PROMPT.format(
                 aggregate_name=agg_name,
@@ -150,8 +160,8 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 bc_name=bc_name,
                 bc_short=bc_id_short,
                 user_story_context=stories_context,
-            )
-            
+            ) + display_name_tail
+
             # 청킹 필요 여부 판단
             if should_chunk(full_prompt_text):
                 # user_story_context를 청킹
@@ -177,8 +187,8 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         bc_name=bc_name,
                         bc_short=bc_id_short,
                         user_story_context=chunk_stories_context,
-                    )
-                    
+                    ) + display_name_tail
+
                     structured_llm = ctx.llm.with_structured_output(CommandList)
                     
                     t_llm0 = time.perf_counter()
@@ -252,13 +262,7 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 )
             else:
                 # 청킹 불필요한 경우
-                prompt = EXTRACT_COMMANDS_PROMPT.format(
-                    aggregate_name=agg_name,
-                    aggregate_id=agg_id,
-                    bc_name=bc_name,
-                    bc_short=bc_id_short,
-                    user_story_context=stories_context,
-                )
+                prompt = full_prompt_text
 
                 structured_llm = ctx.llm.with_structured_output(CommandList)
 

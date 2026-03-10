@@ -127,6 +127,7 @@ async def _create_user_story_with_verification(
         getattr(us, "benefit", None),
         getattr(us, "ui_description", None),
     )
+    us_display_name = getattr(us, "displayName", None) or ""
     
     try:
         # User Story 생성
@@ -140,6 +141,7 @@ async def _create_user_story_with_verification(
                 priority=getattr(us, "priority", "medium"),
                 status="draft",
                 ui_description=ui_desc,
+                display_name=us_display_name or None,
             ),
             timeout=10.0
         )

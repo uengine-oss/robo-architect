@@ -56,6 +56,7 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
                 enum_list = [
                     {
                         "name": e.name,
+                        "displayName": getattr(e, "displayName", None),
                         "alias": e.alias,
                         "items": getattr(e, "items", []) or []
                     }
@@ -64,6 +65,7 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
                 vo_list = [
                     {
                         "name": vo.name,
+                        "displayName": getattr(vo, "displayName", None),
                         "alias": vo.alias,
                         "referenced_aggregate_name": vo.referenced_aggregate_name,
                         "referenced_aggregate_field": getattr(vo, "referenced_aggregate_field", None),
