@@ -5,6 +5,7 @@ import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
 import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
 import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
+import ClaudeCodeTerminal from '@/features/claudeCode/ui/ClaudeCodeTerminal.vue'
 import UserStoryEditModal from '@/features/userStories/ui/UserStoryEditModal.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.store'
@@ -18,14 +19,22 @@ const themeStore = useThemeStore() // Initialize theme store
 // Tab state management
 const activeTab = ref('Design')
 
-// Provide activeTab to child components
+// Claude Code workdir state
+const claudeCodeWorkdir = ref('')
+
+// Provide activeTab and Claude Code controls to child components
 provide('activeTab', activeTab)
+provide('openClaudeCode', (workdir) => {
+  claudeCodeWorkdir.value = workdir || ''
+  activeTab.value = 'Claude Code'
+})
 
 // Map tab names to components
 const tabComponents = {
   'Big picture': markRaw(BigPicturePanel),
   'Design': markRaw(CanvasWorkspace),
-  'Aggregate': markRaw(AggregatePanel)
+  'Aggregate': markRaw(AggregatePanel),
+  'Claude Code': markRaw(ClaudeCodeTerminal)
 }
 
 const currentComponent = computed(() => tabComponents[activeTab.value])
@@ -215,38 +224,44 @@ watch(
       @update:active-tab="activeTab = $event"
     />
     <div class="main-content">
-      <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
-        <NavigatorPanel 
-          v-show="!isNavigatorCollapsed"
-          :style="{ width: navigatorWidth + 'px' }" 
-        />
-        
-        <!-- Navigator Toggle Button (always visible) -->
-        <button
-          class="navigator-toggle"
-          :class="{ 'is-collapsed': isNavigatorCollapsed }"
-          @click="toggleNavigator"
-          :title="isNavigatorCollapsed ? '네비게이터 펼치기' : '네비게이터 접기'"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline v-if="isNavigatorCollapsed" points="9 18 15 12 9 6"></polyline>
-            <polyline v-else points="15 18 9 12 15 6"></polyline>
-          </svg>
-        </button>
-      </div>
-      
-      <!-- Navigator Resizer (hover only) -->
-      <div 
-        v-if="!isNavigatorCollapsed"
-        class="navigator-resizer"
-        @mousedown="startResizeNavigator"
-        title="드래그하여 패널 너비 조절"
-      ></div>
-      
+      <template v-if="activeTab !== 'Claude Code'">
+        <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
+          <NavigatorPanel
+            v-show="!isNavigatorCollapsed"
+            :style="{ width: navigatorWidth + 'px' }"
+          />
+
+          <!-- Navigator Toggle Button (always visible) -->
+          <button
+            class="navigator-toggle"
+            :class="{ 'is-collapsed': isNavigatorCollapsed }"
+            @click="toggleNavigator"
+            :title="isNavigatorCollapsed ? '네비게이터 펼치기' : '네비게이터 접기'"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline v-if="isNavigatorCollapsed" points="9 18 15 12 9 6"></polyline>
+              <polyline v-else points="15 18 9 12 15 6"></polyline>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Navigator Resizer (hover only) -->
+        <div
+          v-if="!isNavigatorCollapsed"
+          class="navigator-resizer"
+          @mousedown="startResizeNavigator"
+          title="드래그하여 패널 너비 조절"
+        ></div>
+      </template>
+
       <!-- Tab Panel Container -->
       <div class="tab-panel-container">
         <KeepAlive>
-          <component :is="currentComponent" :key="activeTab" />
+          <component
+            :is="currentComponent"
+            :key="activeTab"
+            v-bind="activeTab === 'Claude Code' ? { workdir: claudeCodeWorkdir } : {}"
+          />
         </KeepAlive>
       </div>
     </div>

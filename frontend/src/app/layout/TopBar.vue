@@ -100,7 +100,7 @@ function handleIngestionComplete() {
       </button>
 
       <!-- PRD Generator Button -->
-      <button 
+      <button
         class="prd-btn"
         @click="showPRDModal = true"
         title="모델에서 PRD 생성 (캔버스 노드 선택 시 해당 노드만, 미선택 시 전체)"
@@ -113,6 +113,20 @@ function handleIngestionComplete() {
           <polyline points="10 9 9 9 8 9"/>
         </svg>
         <span>PRD 생성</span>
+      </button>
+
+      <!-- Claude Code Button -->
+      <button
+        class="claude-code-btn"
+        :class="{ 'is-active': activeTab === 'Claude Code' }"
+        @click="selectTab('Claude Code')"
+        title="Claude Code 터미널 열기"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" y1="19" x2="20" y2="19"></line>
+        </svg>
+        <span>Claude Code</span>
       </button>
 
       <!-- Settings Button -->
@@ -293,6 +307,35 @@ function handleIngestionComplete() {
 
 .upload-btn:active {
   transform: translateY(0);
+}
+
+/* Claude Code Button */
+.claude-code-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: linear-gradient(135deg, #1a1b26 0%, #292e42 100%);
+  border: 1px solid #414868;
+  border-radius: 4px;
+  color: #bb9af7;
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+
+.claude-code-btn:hover:not(.is-active) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(187, 154, 247, 0.3);
+  border-color: #bb9af7;
+}
+
+.claude-code-btn.is-active {
+  background: linear-gradient(135deg, #bb9af7 0%, #7c3aed 100%);
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(187, 154, 247, 0.4);
 }
 
 /* PRD Generator Button */

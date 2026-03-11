@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, inject } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 
 const props = defineProps({
@@ -12,6 +12,7 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 
 const canvasStore = useCanvasStore()
+const openClaudeCode = inject('openClaudeCode', null)
 
 // Tech stack options (fetched from API)
 const techStackOptions = ref({
@@ -43,9 +44,56 @@ const config = ref({
 // UI State
 const isLoading = ref(false)
 const isGenerating = ref(false)
+const isSettingUp = ref(false)
 const previewData = ref(null)
 const error = ref(null)
 const step = ref(1) // 1: Config, 2: Preview, 3: Download
+const projectPath = ref('~/projects/')
+const setupResult = ref(null)
+const showFolderPicker = ref(false)
+const folderPickerData = ref({ current_path: '', parent_path: null, directories: [] })
+const isBrowsing = ref(false)
+
+async function browseDirectory(path) {
+  try {
+    isBrowsing.value = true
+    const response = await fetch(`/api/claude-code/browse-directory?path=${encodeURIComponent(path || '~')}`)
+    if (response.ok) {
+      folderPickerData.value = await response.json()
+    }
+  } catch (e) {
+    console.error('Failed to browse directory:', e)
+  } finally {
+    isBrowsing.value = false
+  }
+}
+
+function openFolderPicker() {
+  showFolderPicker.value = true
+  browseDirectory(projectPath.value)
+}
+
+function selectFolder(dirName) {
+  const newPath = folderPickerData.value.current_path + '/' + dirName
+  browseDirectory(newPath)
+}
+
+function goToParent() {
+  if (folderPickerData.value.parent_path) {
+    browseDirectory(folderPickerData.value.parent_path)
+  }
+}
+
+function confirmFolderSelection() {
+  projectPath.value = folderPickerData.value.current_path + '/'
+  showFolderPicker.value = false
+}
+
+function createAndSelect() {
+  // Use current browsed path + project name
+  projectPath.value = folderPickerData.value.current_path + '/' + config.value.project_name
+  showFolderPicker.value = false
+}
 
 const availableFrameworks = computed(() => {
   return techStackOptions.value.frameworks.filter(f => f.languages.includes(config.value.language))
@@ -170,9 +218,53 @@ async function downloadZip() {
   }
 }
 
+async function setupAndOpenClaudeCode() {
+  const fullPath = projectPath.value.endsWith('/')
+    ? projectPath.value + config.value.project_name
+    : projectPath.value
+
+  try {
+    isSettingUp.value = true
+    error.value = null
+
+    const nodeIds = getCanvasNodeIds()
+    const response = await fetch('/api/claude-code/setup-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_path: fullPath,
+        prd_request: {
+          node_ids: nodeIds.length > 0 ? nodeIds : null,
+          tech_stack: config.value
+        }
+      })
+    })
+
+    if (!response.ok) {
+      const data = await response.json()
+      throw new Error(data.detail || 'Failed to setup project')
+    }
+
+    setupResult.value = await response.json()
+    step.value = 4
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    isSettingUp.value = false
+  }
+}
+
+function openInClaudeCode() {
+  if (setupResult.value && openClaudeCode) {
+    openClaudeCode(setupResult.value.project_path)
+    closeModal()
+  }
+}
+
 function closeModal() {
   step.value = 1
   previewData.value = null
+  setupResult.value = null
   error.value = null
   emit('close')
 }
@@ -432,8 +524,97 @@ function goBack() {
             <div class="complete-icon">✅</div>
             <h3>Download Complete!</h3>
             <p>Your PRD package has been downloaded.</p>
+
+            <div class="claude-code-setup">
+              <div class="setup-divider">
+                <span>or</span>
+              </div>
+              <h4>Claude Code에서 바로 열기</h4>
+              <p class="setup-desc">PRD 파일을 지정한 경로에 추출하고 Claude Code 터미널을 엽니다.</p>
+              <div class="setup-path-group">
+                <label>프로젝트 경로</label>
+                <div class="setup-path-input">
+                  <input
+                    v-model="projectPath"
+                    type="text"
+                    :placeholder="`~/projects/${config.project_name}`"
+                    class="form-input"
+                  />
+                  <button class="btn-browse" @click.stop="openFolderPicker" title="폴더 탐색">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                    </svg>
+                  </button>
+                </div>
+                <p class="form-hint">경로가 <code>/</code>로 끝나면 프로젝트 이름(<code>{{ config.project_name }}</code>)이 자동 추가됩니다.</p>
+              </div>
+
+              <!-- Folder Picker Overlay -->
+              <Teleport to="body">
+                <div v-if="showFolderPicker" class="folder-picker-overlay" @click.self="showFolderPicker = false">
+                  <div class="folder-picker">
+                    <div class="folder-picker__header">
+                      <h4>폴더 선택</h4>
+                      <button class="folder-picker__close" @click="showFolderPicker = false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    </div>
+                    <div class="folder-picker__nav">
+                      <button
+                        class="folder-picker__up"
+                        :disabled="!folderPickerData.parent_path"
+                        @click="goToParent"
+                        title="상위 폴더"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                      </button>
+                      <span class="folder-picker__path">{{ folderPickerData.current_path }}</span>
+                    </div>
+                    <div class="folder-picker__list">
+                      <div v-if="isBrowsing" class="folder-picker__loading">탐색 중...</div>
+                      <div v-else-if="folderPickerData.directories.length === 0" class="folder-picker__empty">하위 폴더 없음</div>
+                      <button
+                        v-for="dir in folderPickerData.directories"
+                        :key="dir"
+                        class="folder-picker__item"
+                        @click="selectFolder(dir)"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        <span>{{ dir }}</span>
+                      </button>
+                    </div>
+                    <div class="folder-picker__actions">
+                      <button class="btn-sm btn-ghost" @click="showFolderPicker = false">취소</button>
+                      <button class="btn-sm btn-ghost" @click="createAndSelect">
+                        여기에 <code>{{ config.project_name }}</code> 생성
+                      </button>
+                      <button class="btn-sm btn-accent" @click="confirmFolderSelection">이 폴더 선택</button>
+                    </div>
+                  </div>
+                </div>
+              </Teleport>
+              <button
+                class="btn btn-claude"
+                @click="setupAndOpenClaudeCode"
+                :disabled="isSettingUp || !projectPath"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="4 17 10 11 4 5"></polyline>
+                  <line x1="12" y1="19" x2="20" y2="19"></line>
+                </svg>
+                <span v-if="isSettingUp">프로젝트 설정 중...</span>
+                <span v-else>Claude Code에서 열기</span>
+              </button>
+            </div>
+
             <div class="next-steps">
-              <h4>Next Steps:</h4>
+              <h4>수동 설정 가이드:</h4>
               <ol>
                 <li>Extract the ZIP file</li>
                 <li v-if="config.ai_assistant === 'cursor'">
@@ -459,6 +640,25 @@ function goBack() {
               </ol>
             </div>
           </div>
+
+          <!-- Step 4: Setup complete, open Claude Code -->
+          <div v-if="step === 4 && setupResult" class="complete-step">
+            <div class="complete-icon">🚀</div>
+            <h3>프로젝트 설정 완료!</h3>
+            <p class="setup-path-result">
+              <code>{{ setupResult.project_path }}</code>
+            </p>
+            <p>{{ setupResult.files_extracted.length }}개 파일이 추출되었습니다.</p>
+
+            <div class="extracted-files">
+              <div v-for="file in setupResult.files_extracted" :key="file" class="file-item">
+                <span class="file-icon">
+                  {{ file.endsWith('.md') ? '📄' : file.endsWith('.yml') || file.endsWith('.yaml') ? '⚙️' : '📋' }}
+                </span>
+                <span class="file-name">{{ file }}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="modal-footer">
@@ -473,6 +673,13 @@ function goBack() {
             <span v-else>Download ZIP 📥</span>
           </button>
           <button v-if="step === 3" class="btn btn-primary" @click="closeModal">Done</button>
+          <button v-if="step === 4" class="btn btn-claude" @click="openInClaudeCode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+            Claude Code 터미널 열기
+          </button>
         </div>
       </div>
     </div>
@@ -714,6 +921,127 @@ function goBack() {
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-secondary { background: #3d4154; color: #a9b1d6; }
 .btn-secondary:hover { background: #4a4f66; }
+.btn-claude {
+  background: linear-gradient(135deg, #bb9af7, #7c3aed);
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-claude:hover:not(:disabled) { background: linear-gradient(135deg, #c9abff, #8b4cf6); transform: translateY(-1px); }
+.btn-claude:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.claude-code-setup {
+  width: 100%;
+  max-width: 500px;
+  margin-bottom: 24px;
+}
+
+.setup-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 16px;
+  color: #565a72;
+  font-size: 0.8rem;
+}
+
+.setup-divider::before,
+.setup-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #3d4154;
+}
+
+.setup-desc {
+  color: #787c99;
+  font-size: 0.8rem;
+  margin: 4px 0 16px;
+}
+
+.setup-path-group {
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.setup-path-group label {
+  font-size: 0.8rem;
+  color: #a9b1d6;
+  font-weight: 500;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.setup-path-input {
+  display: flex;
+  gap: 8px;
+}
+
+.setup-path-input .form-input {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+}
+
+.setup-path-result {
+  margin-bottom: 8px;
+}
+
+.setup-path-result code {
+  background: #16161e;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
+  color: #9ece6a;
+}
+
+.extracted-files {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  width: 100%;
+  max-width: 500px;
+  margin-top: 16px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* Browse button */
+.btn-browse {
+  padding: 10px 12px;
+  background: #3d4154;
+  border: 1px solid #565a72;
+  border-radius: 8px;
+  color: #a9b1d6;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.btn-browse:hover {
+  background: #4a4f66;
+  border-color: #7aa2f7;
+  color: #7aa2f7;
+}
+
+/* Folder Picker styles moved to unscoped <style> block below (Teleport to body) */
+
+.btn-sm {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+.btn-sm code { font-size: 0.7rem; background: none; padding: 0; color: inherit; }
+.btn-ghost { background: none; color: #787c99; }
+.btn-ghost:hover { color: #a9b1d6; background: #3d4154; }
+.btn-accent { background: #7aa2f7; color: #1a1b26; font-weight: 600; }
+.btn-accent:hover { background: #8aafff; }
 
 @media (max-width: 640px) {
   .form-grid, .radio-cards, .file-tree, .tech-summary { grid-template-columns: 1fr; }
@@ -721,6 +1049,147 @@ function goBack() {
   .step-line { width: 30px; }
   .step span { display: none; }
 }
+</style>
+
+<!-- Unscoped styles for Teleport'd folder picker -->
+<style>
+.folder-picker-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.folder-picker {
+  background: #1a1b26;
+  border: 1px solid #3d4154;
+  border-radius: 12px;
+  width: 500px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+}
+
+.folder-picker__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 12px;
+}
+
+.folder-picker__header h4 {
+  margin: 0;
+  color: #c0caf5;
+  font-size: 1rem;
+}
+
+.folder-picker__close {
+  background: none;
+  border: none;
+  color: #565a72;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+}
+.folder-picker__close:hover { color: #c0caf5; background: #3d4154; }
+
+.folder-picker__nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 12px;
+  border-bottom: 1px solid #3d4154;
+}
+
+.folder-picker__up {
+  background: none;
+  border: 1px solid #3d4154;
+  border-radius: 4px;
+  color: #a9b1d6;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+.folder-picker__up:hover:not(:disabled) { background: #3d4154; color: #7aa2f7; }
+.folder-picker__up:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.folder-picker__path {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: #7aa2f7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-picker__list {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.folder-picker__loading,
+.folder-picker__empty {
+  padding: 16px;
+  text-align: center;
+  color: #565a72;
+  font-size: 0.8rem;
+}
+
+.folder-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #a9b1d6;
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+.folder-picker__item:hover {
+  background: rgba(122, 162, 247, 0.1);
+  color: #c0caf5;
+}
+.folder-picker__item svg { color: #e0af68; flex-shrink: 0; }
+
+.folder-picker__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid #3d4154;
+  background: #16161e;
+  border-radius: 0 0 12px 12px;
+}
+
+.folder-picker .btn-sm {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+.folder-picker .btn-sm code { font-size: 0.7rem; background: none; padding: 0; color: inherit; }
+.folder-picker .btn-ghost { background: none; color: #787c99; }
+.folder-picker .btn-ghost:hover { color: #a9b1d6; background: #3d4154; }
+.folder-picker .btn-accent { background: #7aa2f7; color: #1a1b26; font-weight: 600; }
+.folder-picker .btn-accent:hover { background: #8aafff; }
 </style>
 
 

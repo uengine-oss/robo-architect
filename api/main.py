@@ -171,6 +171,10 @@ from api.features.readmodel_cqrs.router import router as readmodel_cqrs_router
 
 app.include_router(readmodel_cqrs_router)
 
+# Claude Code terminal WebSocket
+from api.features.claude_code.router import router as claude_code_router
+app.include_router(claude_code_router)
+
 
 if __name__ == "__main__":
     import uvicorn
