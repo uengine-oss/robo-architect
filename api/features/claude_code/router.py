@@ -9,22 +9,26 @@ raw text for output).
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import io
 import json
 import os
-import pty
 import signal
 import struct
-import termios
 import zipfile
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from api.features.prd_generation.prd_api_contracts import PRDGenerationRequest
 
 router = APIRouter(prefix="/api/claude-code", tags=["claude-code"])
+
+IS_UNIX_PTY_SUPPORTED = os.name == "posix"
+
+if IS_UNIX_PTY_SUPPORTED:
+    import fcntl
+    import pty
+    import termios
 
 
 # ─── Directory browsing ───
@@ -187,6 +191,8 @@ async def setup_project(request: SetupProjectRequest):
 
 def _set_pty_size(fd: int, rows: int, cols: int) -> None:
     """Send TIOCSWINSZ ioctl to resize the PTY."""
+    if not IS_UNIX_PTY_SUPPORTED:
+        raise RuntimeError("PTY terminal is only supported on POSIX hosts.")
     winsize = struct.pack("HHHH", rows, cols, 0, 0)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
@@ -208,6 +214,17 @@ async def terminal_ws(
 
     Server messages: raw terminal output bytes (text frames).
     """
+    if not IS_UNIX_PTY_SUPPORTED:
+        await websocket.accept()
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": "Claude Code terminal is only supported on POSIX hosts.",
+            }
+        )
+        await websocket.close(code=1011)
+        return
+
     await websocket.accept()
 
     # Resolve working directory
