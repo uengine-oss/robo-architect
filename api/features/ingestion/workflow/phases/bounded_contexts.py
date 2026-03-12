@@ -491,10 +491,21 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
             
             t_llm0 = time.perf_counter()
             try:
-                bc_response = await asyncio.to_thread(
-                    structured_llm.invoke,
-                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                bc_response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        structured_llm.invoke,
+                        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                    ),
+                    timeout=300.0,
                 )
+            except asyncio.TimeoutError:
+                SmartLogger.log(
+                    "ERROR",
+                    "BC identification timed out (300s)",
+                    category="ingestion.workflow.bc.timeout",
+                    params={"session_id": ctx.session.id, "chunk_index": i + 1},
+                )
+                continue
             except Exception as e:
                 # Validation error: user_story_ids가 비어있거나 누락된 경우
                 SmartLogger.log(
@@ -641,9 +652,12 @@ For each unassigned User Story, determine which existing Bounded Context it best
 
 CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Return the complete updated list of BoundedContextCandidate objects with all User Stories assigned."""
                 
-                fix_response = await asyncio.to_thread(
-                    structured_llm.invoke,
-                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=fix_prompt)]
+                fix_response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        structured_llm.invoke,
+                        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=fix_prompt)]
+                    ),
+                    timeout=300.0,
                 )
                 fixed_bcs = getattr(fix_response, "bounded_contexts", []) or []
                 
@@ -791,9 +805,12 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
         )
         prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
 
-        bc_response = await asyncio.to_thread(
-            structured_llm.invoke,
-            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+        bc_response = await asyncio.wait_for(
+            asyncio.to_thread(
+                structured_llm.invoke,
+                [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+            ),
+            timeout=300.0,
         )
 
         bc_candidates = bc_response.bounded_contexts
@@ -1120,9 +1137,12 @@ IMPORTANT: Every User Story MUST be assigned to exactly ONE Bounded Context. Do 
             llm = ctx.llm
             
             # LLM에게 할당 요청 (structured output 대신 JSON 파싱)
-            response = await asyncio.to_thread(
-                llm.invoke,
-                [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=assignment_prompt)]
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    llm.invoke,
+                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=assignment_prompt)]
+                ),
+                timeout=300.0,
             )
             
             # JSON 응답 파싱

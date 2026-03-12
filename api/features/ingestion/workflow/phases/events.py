@@ -144,8 +144,22 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
             structured_llm = ctx.llm.with_structured_output(EventList)
 
             try:
-                evt_response = structured_llm.invoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)])
+                evt_response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        structured_llm.invoke,
+                        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                    ),
+                    timeout=300.0,
+                )
                 events = evt_response.events
+            except asyncio.TimeoutError:
+                SmartLogger.log(
+                    "ERROR",
+                    "Event extraction timed out (300s)",
+                    category="ingestion.workflow.events.timeout",
+                    params={"session_id": ctx.session.id, "bc_id": bc_id, "agg_id": agg_id},
+                )
+                events = []
             except Exception as e:
                 SmartLogger.log(
                     "ERROR",
@@ -168,18 +182,41 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                         data={"error": "Cancelled by user", "cancelled": True},
                     )
                     return
-                
+
+                # Build command name → id lookup for explicit mapping
+                cmd_name_to_id = {}
+                for cmd in commands:
+                    c_name = (cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")).strip()
+                    c_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+                    if c_name and c_id:
+                        cmd_name_to_id[c_name] = c_id
+
                 tasks = []
                 for i, evt in enumerate(events):
-                    # Handle both dict and object formats for commands
-                    if i < len(commands):
-                        cmd = commands[i]
-                        cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
-                    elif commands:
-                        cmd = commands[0]
-                        cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
-                    else:
-                        cmd_id = None
+                    # Try explicit mapping via emitting_command_name first
+                    emitting_cmd_name = (
+                        (evt.get("emitting_command_name") if isinstance(evt, dict) else getattr(evt, "emitting_command_name", None)) or ""
+                    ).strip()
+
+                    cmd_id = cmd_name_to_id.get(emitting_cmd_name) if emitting_cmd_name else None
+
+                    # Fallback to index-based mapping if explicit mapping fails
+                    if not cmd_id:
+                        if emitting_cmd_name:
+                            evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
+                            SmartLogger.log(
+                                "WARN",
+                                f"Event '{evt_name}' references unknown command '{emitting_cmd_name}', falling back to index mapping",
+                                category="ingestion.workflow.events.mapping_fallback",
+                                params={"session_id": ctx.session.id, "event_name": evt_name, "emitting_command_name": emitting_cmd_name},
+                            )
+                        if i < len(commands):
+                            cmd = commands[i]
+                            cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+                        elif commands:
+                            cmd = commands[0]
+                            cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+
                     tasks.append(_create_event_with_links(evt, i, cmd_id, ctx))
                 
                 results = await asyncio.gather(*tasks, return_exceptions=True)

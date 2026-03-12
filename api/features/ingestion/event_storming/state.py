@@ -198,6 +198,7 @@ class EventCandidate(BaseModel):
     key: Optional[str] = Field(default=None, description="Optional natural key (derived from Command + name + version).")
     name: str = Field(..., description="Event name in past tense like 'OrderPlaced'")
     displayName: Optional[str] = Field(default=None, description="UI label in chosen language (e.g. '주문 접수됨' or 'Order Placed').")
+    emitting_command_name: Optional[str] = Field(default=None, description="Name of the Command that emits this Event (for explicit mapping)")
     version: str = Field(default="1.0.0", description="Event version for schema evolution")
     payload: Optional[str] = Field(default=None, description="JSON schema or description of event payload/data")
     description: str = Field(..., description="What happened")

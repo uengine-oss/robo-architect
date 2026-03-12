@@ -121,14 +121,22 @@ def generate_gwt_node(state: EventStormingState) -> Dict[str, Any]:
         # event_candidates is organized by aggregate_id: [events]
         aggregate_events = state.event_candidates.get(agg_id, [])
         events_by_command = {}
-        
-        # Map events to commands by index (simple heuristic: first event to first command, etc.)
-        # This is a fallback - ideally events should be explicitly linked to commands
+
+        # Build explicit mapping using emitting_command_name (preferred)
+        cmd_name_to_events: dict[str, list] = {}
+        for evt in aggregate_events:
+            ecn = (getattr(evt, "emitting_command_name", None) or "").strip()
+            if ecn:
+                cmd_name_to_events.setdefault(ecn, []).append(evt)
+
         for i, cmd in enumerate(commands):
-            if i < len(aggregate_events):
+            cmd_name = (getattr(cmd, "name", "") or "").strip()
+            matched = cmd_name_to_events.get(cmd_name, [])
+            if matched:
+                events_by_command[cmd.id] = matched[0]
+            elif i < len(aggregate_events):
                 events_by_command[cmd.id] = aggregate_events[i]
             elif aggregate_events:
-                # If more commands than events, use first event for remaining commands
                 events_by_command[cmd.id] = aggregate_events[0]
             else:
                 events_by_command[cmd.id] = None

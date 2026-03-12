@@ -651,6 +651,7 @@ Think about:
 <output_requirements>
 For each Event, provide:
 - **name:** Event name in PascalCase using Noun+PastParticiple pattern (e.g., OrderPlaced, PaymentProcessed, UserRegistered)
+- **emitting_command_name:** The exact name of the Command that emits this Event (REQUIRED for explicit Command→Event mapping). Must match one of the Command names listed above.
 - **version:** Event version (default: "1.0.0") for schema evolution
 - **payload:** JSON schema or description of event payload/data (optional but recommended for complex events)
 - **description:** Clear, concise description of what happened and why it's significant
@@ -659,6 +660,7 @@ For each Event, provide:
 CRITICAL:
 - Do NOT generate IDs; server assigns UUID id + derives key with version (e.g., @1.0.0).
 - Ensure ALL Commands have at least one corresponding Event.
+- **emitting_command_name is REQUIRED** — every Event MUST specify which Command emits it. Use the exact Command name from the list above.
 - Events should represent business facts, not technical implementation details.
 - Use past tense naming to reflect that events represent things that have already happened.
 - Consider both success and failure scenarios when appropriate.

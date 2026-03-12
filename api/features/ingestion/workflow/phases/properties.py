@@ -243,7 +243,21 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
 
             t_llm0 = time.perf_counter()
             try:
-                resp = structured_llm.invoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)])
+                resp = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        structured_llm.invoke,
+                        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                    ),
+                    timeout=300.0,
+                )
+            except asyncio.TimeoutError:
+                SmartLogger.log(
+                    "ERROR",
+                    "Property generation timed out (300s) - aggregate batch",
+                    category="ingestion.workflow.properties.timeout",
+                    params={"session_id": ctx.session.id, "scope": "aggregate_batch", "bc_id": bc_id, "agg_id": agg_id},
+                )
+                continue
             except Exception as e:
                 SmartLogger.log(
                     "WARNING",
@@ -426,7 +440,21 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
 
         t_llm0 = time.perf_counter()
         try:
-            resp = structured_llm.invoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)])
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(
+                    structured_llm.invoke,
+                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                ),
+                timeout=300.0,
+            )
+        except asyncio.TimeoutError:
+            SmartLogger.log(
+                "ERROR",
+                "Property generation timed out (300s) - readmodels batch",
+                category="ingestion.workflow.properties.timeout",
+                params={"session_id": ctx.session.id, "scope": "readmodels_batch", "bc_id": bc_id},
+            )
+            continue
         except Exception as e:
             SmartLogger.log(
                 "WARNING",

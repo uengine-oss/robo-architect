@@ -776,8 +776,26 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
             commands = ctx.commands_by_agg.get(agg_id, [])
             events = ctx.events_by_agg.get(agg_id, [])
             
+            # Build command name → event lookup using emitting_command_name
+            cmd_name_to_events: dict[str, list] = {}
+            for evt in events:
+                ecn = (evt.get("emitting_command_name") if isinstance(evt, dict) else getattr(evt, "emitting_command_name", None)) or ""
+                ecn = ecn.strip()
+                if ecn:
+                    cmd_name_to_events.setdefault(ecn, []).append(evt)
+
             for i, cmd in enumerate(commands):
-                evt = events[i] if i < len(events) else (events[0] if events else None)
+                cmd_name = (cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")).strip()
+                # Try explicit mapping first, then fallback to index
+                matched_events = cmd_name_to_events.get(cmd_name, [])
+                if matched_events:
+                    evt = matched_events[0]
+                elif i < len(events):
+                    evt = events[i]
+                elif events:
+                    evt = events[0]
+                else:
+                    evt = None
                 all_command_tasks.append({
                     "bc": bc,
                     "agg": agg,

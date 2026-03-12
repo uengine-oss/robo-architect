@@ -261,9 +261,31 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
 
         structured_llm = ctx.llm.with_structured_output(AggregateList)
 
-        agg_response = structured_llm.invoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)])
-
-        aggregates = agg_response.aggregates
+        try:
+            agg_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    structured_llm.invoke,
+                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                ),
+                timeout=300.0,
+            )
+            aggregates = agg_response.aggregates
+        except asyncio.TimeoutError:
+            SmartLogger.log(
+                "ERROR",
+                "Aggregate extraction timed out (300s)",
+                category="ingestion.workflow.aggregates.timeout",
+                params={"session_id": ctx.session.id, "bc_id": bc_id},
+            )
+            aggregates = []
+        except Exception as e:
+            SmartLogger.log(
+                "ERROR",
+                "Aggregate extraction failed (LLM)",
+                category="ingestion.workflow.aggregates",
+                params={"session_id": ctx.session.id, "bc_id": bc_id, "error": str(e)},
+            )
+            aggregates = []
         
         # Validate and fix Value Object references
         # Collect all existing aggregate names (from previously processed BCs and current BC)

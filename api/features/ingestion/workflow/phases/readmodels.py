@@ -410,8 +410,6 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                 readmodels = []
 
         all_readmodels[bc_id] = readmodels
-        if bc_id not in ctx.readmodels_by_bc:
-            ctx.readmodels_by_bc[bc_id] = []
         ctx.readmodels_by_bc[bc_id] = []
 
         # Process all readmodels in parallel
