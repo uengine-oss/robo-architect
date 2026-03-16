@@ -223,6 +223,9 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 if display_lang == "ko"
                 else "\n\n10) For each Property output displayName: a short UI label in English (e.g. 'Order ID', 'Customer Name')."
             )
+            if ctx.source_report:
+                from api.features.ingestion.workflow.utils.report_context import get_properties_context
+                prompt += "\n\n" + get_properties_context(ctx.source_report)
 
             structured_llm = ctx.llm.with_structured_output(PropertyBatch)
             if AI_AUDIT_LOG_ENABLED:
@@ -421,6 +424,9 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
             if display_lang == "ko"
             else "\n\nFor each Property output displayName: a short UI label in English (e.g. 'Order ID', 'Status')."
         )
+        if ctx.source_report:
+            from api.features.ingestion.workflow.utils.report_context import get_properties_context
+            prompt += "\n\n" + get_properties_context(ctx.source_report)
 
         structured_llm = ctx.llm.with_structured_output(PropertyBatch)
         if AI_AUDIT_LOG_ENABLED:

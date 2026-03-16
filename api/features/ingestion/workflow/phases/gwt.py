@@ -351,7 +351,12 @@ CRITICAL REQUIREMENTS:
    - For ValueObject types, represent as a JSON object with the ValueObject's fields as nested properties.
 
 If no properties are available, only then use empty fieldValues {{}}."""
-    
+
+    # Legacy report context injection for GWT
+    if ctx.source_report:
+        from api.features.ingestion.workflow.utils.report_context import get_gwt_context
+        prompt += "\n\n" + get_gwt_context(ctx.source_report)
+
     # LLM 호출
     try:
         response = await asyncio.wait_for(

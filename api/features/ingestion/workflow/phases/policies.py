@@ -222,6 +222,11 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             commands_by_bc=commands_text,
             bounded_contexts=bc_text,
         ) + display_name_tail
+        _report_context_tail = ""
+        if ctx.source_report:
+            from api.features.ingestion.workflow.utils.report_context import get_policies_context
+            _report_context_tail = "\n\n" + get_policies_context(ctx.source_report)
+        full_prompt_text += _report_context_tail
 
         # 청킹 필요 여부 판단
         if should_chunk(full_prompt_text):
@@ -274,7 +279,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     events=chunk_events_text,
                     commands_by_bc=commands_text,
                     bounded_contexts=bc_text,
-                ) + display_name_tail
+                ) + display_name_tail + _report_context_tail
 
                 structured_llm = ctx.llm.with_structured_output(PolicyList)
                 

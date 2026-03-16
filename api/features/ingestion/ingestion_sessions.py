@@ -33,6 +33,8 @@ class IngestionSession:
     workflow_task: Optional[asyncio.Task] = None
     # Display language for UI labels: "ko" (한글) or "en" (English). Used to generate displayName on nodes/properties.
     display_language: str = "ko"
+    # Source type: "rfp" (normal RFP flow) or "legacy_report" (legacy analysis report flow)
+    source_type: str = "rfp"
 
 
 # Active sessions (feature-local, in-memory)

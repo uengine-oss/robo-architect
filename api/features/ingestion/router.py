@@ -55,6 +55,7 @@ async def upload_document(
     file: Optional[UploadFile] = File(None),
     text: Optional[str] = Form(None),
     display_language: Optional[str] = Form("ko"),
+    source_type: Optional[str] = Form("rfp"),
 ) -> dict[str, Any]:
     """
     Upload a requirements document (text or PDF) to start ingestion.
@@ -147,14 +148,23 @@ async def upload_document(
     session.display_language = (display_language or "ko").strip().lower() or "ko"
     if session.display_language not in ("ko", "en"):
         session.display_language = "ko"
+    # source_type: "rfp" (default, normal RFP flow) or "legacy_report" (legacy analysis report flow)
+    resolved_source_type = (source_type or "rfp").strip().lower()
+    if resolved_source_type not in ("rfp", "legacy_report"):
+        resolved_source_type = "rfp"
+    # Auto-detect legacy report by filename (e.g., *.report.md)
+    if resolved_source_type == "rfp" and file and file.filename:
+        if file.filename.lower().endswith(".report.md"):
+            resolved_source_type = "legacy_report"
+    session.source_type = resolved_source_type
     SmartLogger.log(
         "INFO",
         "Ingestion session created",
         category="ingestion.api.upload",
-        params={"session_id": session.id, "display_language": session.display_language},
+        params={"session_id": session.id, "display_language": session.display_language, "source_type": session.source_type},
     )
 
-    return {"session_id": session.id, "content_length": len(content), "display_language": session.display_language, "preview": content[:500] + "..." if len(content) > 500 else content}
+    return {"session_id": session.id, "content_length": len(content), "display_language": session.display_language, "source_type": session.source_type, "preview": content[:500] + "..." if len(content) > 500 else content}
 
 
 @router.get("/session/{session_id}/status")

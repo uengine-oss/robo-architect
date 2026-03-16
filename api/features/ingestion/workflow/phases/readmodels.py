@@ -194,6 +194,11 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             user_stories=user_stories_text,
             events=events_text,
         ) + display_name_tail
+        _report_context_tail = ""
+        if ctx.source_report:
+            from api.features.ingestion.workflow.utils.report_context import get_readmodels_context
+            _report_context_tail = "\n\n" + get_readmodels_context(ctx.source_report)
+        full_prompt_text += _report_context_tail
 
         # 청킹 필요 여부 판단
         if should_chunk(full_prompt_text):
@@ -228,7 +233,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     bc_description=bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "") or "",
                     user_stories=chunk_user_stories,
                     events=chunk_events,
-                ) + display_name_tail
+                ) + display_name_tail + _report_context_tail
 
                 structured_llm = ctx.llm.with_structured_output(ReadModelList)
                 

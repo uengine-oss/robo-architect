@@ -46,6 +46,8 @@ const hasDragged = ref(false) // Track if actual dragging occurred
 // Display language for node/property displayName (ko: 한글, en: English)
 const displayLanguage = ref('ko')
 
+// Source type is auto-detected from filename (*.report.md → legacy_report)
+
 // Cache state
 const isCacheEnabled = ref(false)
 const isTogglingCache = ref(false)
@@ -924,22 +926,24 @@ function useSample() {
                     <span v-if="isTogglingCache" class="cache-toggle__pending">적용 중...</span>
                   </div>
                 </div>
-                <!-- Row 2: Display language (표시 언어) -->
-                <div class="display-language-row">
-                  <span class="display-language-label">표시 언어</span>
-                  <div class="display-language-tabs">
-                    <button
-                      :class="['tab-btn', 'tab-btn--small', { active: displayLanguage === 'ko' }]"
-                      @click="displayLanguage = 'ko'"
-                    >
-                      한글
-                    </button>
-                    <button
-                      :class="['tab-btn', 'tab-btn--small', { active: displayLanguage === 'en' }]"
-                      @click="displayLanguage = 'en'"
-                    >
-                      English
-                    </button>
+                <!-- Row 2: Source type + Display language -->
+                <div class="options-sub-row">
+                  <div class="display-language-row">
+                    <span class="display-language-label">표시 언어</span>
+                    <div class="display-language-tabs">
+                      <button
+                        :class="['tab-btn', 'tab-btn--small', { active: displayLanguage === 'ko' }]"
+                        @click="displayLanguage = 'ko'"
+                      >
+                        한글
+                      </button>
+                      <button
+                        :class="['tab-btn', 'tab-btn--small', { active: displayLanguage === 'en' }]"
+                        @click="displayLanguage = 'en'"
+                      >
+                        English
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1195,6 +1199,14 @@ function useSample() {
                 <span class="mini-stat__icon stat-icon--policy">P</span>
                 <span class="mini-stat__value">{{ summary.policies }}</span>
               </div>
+              <div class="mini-stat">
+                <span class="mini-stat__icon stat-icon--readmodel">RM</span>
+                <span class="mini-stat__value">{{ summary.readmodels || 0 }}</span>
+              </div>
+              <div class="mini-stat">
+                <span class="mini-stat__icon stat-icon--ui">UI</span>
+                <span class="mini-stat__value">{{ summary.uis || 0 }}</span>
+              </div>
             </div>
             <p class="mini-summary__hint">네비게이터에서 확인하세요</p>
           </div>
@@ -1415,6 +1427,13 @@ function useSample() {
 }
 
 /* Display language (for displayName) */
+.options-sub-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
 .display-language-row {
   display: flex;
   align-items: center;
@@ -2056,7 +2075,7 @@ function useSample() {
 /* Mini Summary */
 .mini-summary__stats {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-sm);
 }
@@ -2089,6 +2108,8 @@ function useSample() {
 .stat-icon--command { background: var(--color-command); }
 .stat-icon--event { background: var(--color-event); }
 .stat-icon--policy { background: var(--color-policy); }
+.stat-icon--readmodel { background: var(--color-readmodel, #22b8cf); font-size: 0.45rem; }
+.stat-icon--ui { background: var(--color-ui-light, #e9ecef); color: #343a40; border: 1px solid #ced4da; font-size: 0.5rem; }
 
 .mini-stat__value {
   font-size: 0.9rem;

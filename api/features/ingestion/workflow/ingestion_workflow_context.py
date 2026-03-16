@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from api.features.ingestion.ingestion_contracts import GeneratedUserStory
 from api.features.ingestion.ingestion_sessions import IngestionSession
+from api.features.ingestion.legacy_report.report_models import ParsedReport
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -22,6 +23,10 @@ class IngestionWorkflowContext:
     llm: Any
     # Display language for node/property displayName: "ko" (한글) or "en" (English)
     display_language: str = "ko"
+    # Source type: "rfp" (normal) or "legacy_report" (legacy analysis report)
+    source_type: str = "rfp"
+    # Parsed legacy report (set when source_type == "legacy_report")
+    source_report: ParsedReport | None = None
 
     user_stories: list[Any] = field(default_factory=list)
     bounded_contexts: list[Any] = field(default_factory=list)

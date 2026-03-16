@@ -38,14 +38,23 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
     client = get_neo4j_client()
     llm = get_llm()
     display_language = getattr(session, "display_language", "ko") or "ko"
-    ctx = IngestionWorkflowContext(session=session, content=content, client=client, llm=llm, display_language=display_language)
+    source_type = getattr(session, "source_type", "rfp") or "rfp"
+    ctx = IngestionWorkflowContext(
+        session=session, content=content, client=client, llm=llm,
+        display_language=display_language, source_type=source_type,
+    )
+
+    # Legacy report: parse and attach to ctx
+    if source_type == "legacy_report":
+        from api.features.ingestion.legacy_report.report_parser import parse_legacy_report
+        ctx.source_report = parse_legacy_report(content)
 
     try:
         SmartLogger.log(
             "INFO",
             "Ingestion workflow started",
             category="ingestion.workflow",
-            params={"session_id": session.id, "content_length": len(content)},
+            params={"session_id": session.id, "content_length": len(content), "source_type": source_type},
         )
 
         async for event in parsing_phase(ctx):

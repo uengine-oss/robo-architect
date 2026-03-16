@@ -30,6 +30,15 @@ When identifying Bounded Contexts, consider:
 - Data ownership (who owns what data)
 - Business capability boundaries
 
+IMPORTANT — EJB / Legacy Framework Exclusion:
+When the input originates from a legacy EJB system analysis, do NOT model the following as domain concepts:
+- EJB lifecycle callbacks: ejbCreate, ejbRemove, ejbActivate, ejbPassivate, ejbLoad, ejbStore
+- Container-managed persistence (CMP) infrastructure
+- JNDI lookups, DataSource/connection management, EJB Home/Remote interfaces
+- Deployment descriptors, transaction attributes, security roles (infrastructure)
+- Generic CRUD wrappers that merely delegate to Entity Bean lifecycle
+These are framework plumbing, not business capabilities. Focus on the business logic that these beans expose.
+
 Use consistent naming conventions:
 IMPORTANT (IDs):
 - Do NOT invent or format IDs (no BC-/AGG-/CMD-/EVT-/POL- prefixes).
@@ -286,6 +295,12 @@ Think about:
 - Which domain objects naturally belong together?
 - What would be the boundaries between different Aggregates?
 - How would Aggregates interact with each other (via Value Objects with references)?
+
+When the input originates from a legacy EJB system:
+- Entity Beans (CMP) are strong Aggregate Root candidates — but NOT every Entity Bean becomes an Aggregate
+- Entity Beans that are child tables (FK referencing a parent) may be Value Objects or part of a parent Aggregate
+- Do NOT create Aggregates for EJB infrastructure (Home interfaces, Factory classes, DTO wrappers)
+- Use FK relationships to determine ownership: parent table = Aggregate Root, child table = potential Value Object
 </analysis_approach>
 
 <output_requirements>
@@ -487,6 +502,8 @@ CRITICAL:
 - Use domain-specific command names, not generic CRUD unless explicitly required.
 - Commands should reflect business intent, not technical implementation details.
 - Actor should match User Story role when available - do not force into only 4 categories.
+- **Cross-Aggregate Deduplication:** If a business operation (e.g., "approve", "reject") logically belongs to the Aggregate whose STATE it changes, assign it there ONLY. Do NOT create the same Command on multiple Aggregates. For example, "ApproveLoanApplication" should belong to the LoanApplication Aggregate (whose status changes), not to LoanScreening (which triggers the approval).
+- **Query vs Command:** Read-only operations (calculate, validate, retrieve, get, find, check, list, search) are NOT Commands. Commands must change state. Do NOT model getter/calculator/validator methods as Commands.
 </output_requirements>
 
 <examples>

@@ -259,6 +259,10 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             else "\n\nFor each Enumeration and each Value Object also output displayName: a short UI label in English (e.g. 'Order Status', 'Shipping Address')."
         )
 
+        if ctx.source_report:
+            from api.features.ingestion.workflow.utils.report_context import get_aggregates_context
+            prompt += "\n\n" + get_aggregates_context(ctx.source_report)
+
         structured_llm = ctx.llm.with_structured_output(AggregateList)
 
         try:

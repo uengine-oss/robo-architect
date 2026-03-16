@@ -141,6 +141,10 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                 else "\n\nFor each Event output displayName: a short UI label in English (e.g. 'Order Placed', 'Payment Completed')."
             )
 
+            if ctx.source_report:
+                from api.features.ingestion.workflow.utils.report_context import get_events_context
+                prompt += "\n\n" + get_events_context(ctx.source_report)
+
             structured_llm = ctx.llm.with_structured_output(EventList)
 
             try:

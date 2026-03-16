@@ -104,15 +104,23 @@ def extract_user_stories_from_text(text: str) -> list[GeneratedUserStory]:
     llm = get_llm(max_tokens=32768)
     structured_llm = llm.with_structured_output(UserStoryList)
 
-    system_prompt = """당신은 도메인 주도 설계(DDD) 전문가입니다. 
+    system_prompt = """당신은 도메인 주도 설계(DDD) 전문가입니다.
 요구사항을 User Story로 변환하는 작업을 수행합니다.
 
 **CRITICAL 원칙 (절대 준수):**
 1. **각 기능을 반드시 개별 User Story로 변환하세요.** 여러 기능을 하나의 User Story로 합치지 마세요.
 2. **요구사항 문서의 구조를 분석하여 모든 기능을 식별하고 개별 User Story로 변환하세요.**
 3. **User Story는 명확하고 테스트 가능해야 하며, 각 Story는 하나의 기능만 포함해야 합니다.**
-4. **요구사항에 나열된 모든 기능을 빠짐없이 User Story로 추출하세요. 요약하거나 통합하거나 생략하지 마세요.**
-5. **요구사항에 100개의 기능이 나열되어 있으면 반드시 100개의 User Story를 생성해야 합니다.**
+4. **요구사항에 나열된 모든 비즈니스 기능을 빠짐없이 User Story로 추출하세요. 요약하거나 통합하거나 생략하지 마세요.**
+5. **요구사항에 100개의 비즈니스 기능이 나열되어 있으면 반드시 100개의 User Story를 생성해야 합니다.**
+
+**EJB/레거시 시스템 분석 보고서인 경우 — 반드시 제외할 항목:**
+- EJB 라이프사이클 콜백을 User Story로 만들지 마세요: ejbCreate, ejbRemove, ejbActivate, ejbPassivate, ejbLoad, ejbStore, ejbPostCreate, setEntityContext, unsetEntityContext, setSessionContext
+- EJB Finder 메서드를 User Story로 만들지 마세요: ejbFindByPrimaryKey, findByPrimaryKey
+- CMP/BMP 인프라 메서드를 User Story로 만들지 마세요: getConnection, closeConnection, getDataSource, lookup, getInitialContext
+- Entity Bean의 개별 getter/setter 메서드를 독립 User Story로 만들지 마세요 (상위 비즈니스 기능의 일부로만 참조)
+- role이 "system_administrator"인 인프라 초기화/정리 작업을 User Story로 만들지 마세요
+- **오직 비즈니스 사용자가 수행하는 도메인 기능만 User Story로 생성하세요**
 """
 
     # 청킹 단계에서 이미 토큰 제한을 고려한 적절한 크기로 나뉘었으므로,

@@ -137,7 +137,13 @@ async def _create_command_ui(
             )
         else:
             aggregate_context = f"Aggregate: {agg_name}" + (f" (root entity: {agg_root})" if agg_root else "") if agg_name else ""
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}\n\nUse labels and placeholders that fit this domain (e.g. field names that match the aggregate/command), not generic "Label" or "Input". Output ONLY the HTML fragment."""
+            display_lang = getattr(ctx, "display_language", "ko") or "ko"
+            lang_instruction = (
+                "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in Korean (한글). Do NOT use English for any user-facing text."
+                if display_lang == "ko"
+                else "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in English."
+            )
+            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}\n\nUse labels and placeholders that fit this domain (e.g. field names that match the aggregate/command), not generic "Label" or "Input". Output ONLY the HTML fragment.{lang_instruction}"""
 
             raw_html = await _llm_invoke_to_html(ctx, prompt)
 
@@ -233,7 +239,13 @@ async def _create_readmodel_ui(
                 theme_hint=theme_hint,
             )
         else:
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nUse labels and placeholders that fit this read model (e.g. column/field names that match the data being displayed), not generic "Label" or "Column". Output ONLY the HTML fragment."""
+            display_lang = getattr(ctx, "display_language", "ko") or "ko"
+            lang_instruction = (
+                "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in Korean (한글). Do NOT use English for any user-facing text."
+                if display_lang == "ko"
+                else "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in English."
+            )
+            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nUse labels and placeholders that fit this read model (e.g. column/field names that match the data being displayed), not generic "Label" or "Column". Output ONLY the HTML fragment.{lang_instruction}"""
 
             raw_html = await _llm_invoke_to_html(ctx, prompt)
 

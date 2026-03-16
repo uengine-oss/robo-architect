@@ -26,13 +26,42 @@ from api.features.ingestion.workflow.utils.user_story_normalize import (
 from api.platform.observability.smart_logger import SmartLogger
 
 
-def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> list[Any]:
+# EJB lifecycle patterns that should NOT become User Stories
+_EJB_LIFECYCLE_ACTION_PATTERNS = (
+    "ejbcreate", "ejbremove", "ejbactivate", "ejbpassivate",
+    "ejbload", "ejbstore", "ejbpostcreate", "ejbfind",
+    "setentitycontext", "unsetentitycontext", "setsessioncontext",
+    "findbyprimar", "find by primary", "by its primary key",
+    "initialize ejb", "clean up resource",
+    "handle post-creation", "handle postcreation",
+)
+
+
+def _is_ejb_lifecycle_us(action: str, role: str) -> bool:
+    """Check if a User Story represents an EJB lifecycle operation."""
+    action_lower = action.lower()
+    role_lower = role.lower()
+    # Filter by action content
+    for pattern in _EJB_LIFECYCLE_ACTION_PATTERNS:
+        if pattern in action_lower:
+            return True
+    # Filter by system_administrator role with infrastructure keywords
+    if role_lower == "system_administrator" and any(
+        kw in action_lower for kw in ("resource", "initialize", "cleanup", "clean up")
+    ):
+        return True
+    return False
+
+
+def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_legacy: bool = False) -> list[Any]:
     """
     User Story 목록을 정규화하고 중복을 제거합니다.
     청킹 여부와 무관하게 항상 적용되어야 합니다.
+    is_legacy=True인 경우 EJB 라이프사이클 US도 필터링합니다.
     """
     seen = set()
     out = []
+    ejb_filtered = 0
 
     for us in stories:
         role = (getattr(us, "role", "") or "").strip()
@@ -40,6 +69,11 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> lis
         benefit = (getattr(us, "benefit", "") or "").strip()
 
         if not action:
+            continue
+
+        # EJB lifecycle US filtering for legacy reports
+        if is_legacy and _is_ejb_lifecycle_us(action, role):
+            ejb_filtered += 1
             continue
 
         key = dedup_key(role, action, benefit)
@@ -65,10 +99,11 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> lis
     # 진단을 위한 표준 출력 (dedup 분석)
     dedup_info = (
         f"[DEDUP DEBUG] raw={len(stories)}, dedup={len(out)}, "
+        f"ejb_filtered={ejb_filtered}, "
         f"ratio={round(len(out) / max(len(stories), 1), 4):.2%}"
     )
     print(dedup_info)
-    
+
     SmartLogger.log(
         "INFO",
         f"User story normalize+dedup summary - {dedup_info}",
@@ -77,6 +112,7 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> lis
             "session_id": session_id,
             "raw_story_count": len(stories),
             "dedup_story_count": len(out),
+            "ejb_filtered_count": ejb_filtered,
             "dedup_ratio": round(len(out) / max(len(stories), 1), 4),
         },
     )
@@ -364,34 +400,107 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
         message="User Story 추출 시작...",
         progress=PHASE_START
     )
-    
-    # 스캐닝 및 청킹 판단
-    content_tokens = estimate_tokens(ctx.content)
-    should_chunk_result = should_chunk(ctx.content, max_tokens=USER_STORY_CHUNK_SIZE)
-    
-    # 디버깅: 청킹 판단 로그 (표준 출력에도 출력)
-    chunking_info = (
-        f"[CHUNKING DEBUG] content_tokens={content_tokens}, "
-        f"threshold={USER_STORY_CHUNK_SIZE}, "
-        f"should_chunk={should_chunk_result}, "
-        f"comparison={content_tokens} > {USER_STORY_CHUNK_SIZE} = {content_tokens > USER_STORY_CHUNK_SIZE}"
-    )
-    print(chunking_info)  # 표준 출력으로도 출력
-    SmartLogger.log(
-        "INFO",
-        f"User Story extraction: chunking decision - {chunking_info}",
-        category="ingestion.user_stories.chunking.decision",
-        params={
-            "session_id": ctx.session.id,
-            "content_length": len(ctx.content),
-            "content_tokens": content_tokens,
-            "chunk_size_threshold": USER_STORY_CHUNK_SIZE,
-            "should_chunk": should_chunk_result,
-            "comparison": f"{content_tokens} > {USER_STORY_CHUNK_SIZE} = {content_tokens > USER_STORY_CHUNK_SIZE}",
-        },
-    )
-    
-    if should_chunk_result:
+
+    # Legacy report: Session Bean별 개별 US 생성
+    input_content = ctx.content
+    _legacy_sb_processed = False
+    should_chunk_result = False
+    if ctx.source_report:
+        from api.features.ingestion.workflow.utils.report_context import (
+            get_per_session_bean_us_contexts,
+            get_user_stories_context,
+        )
+        sb_contexts = get_per_session_bean_us_contexts(ctx.source_report)
+        if sb_contexts:
+            # Session Bean별 개별 처리
+            all_sb_stories: list = []
+            for sb_idx, (sb_name, sb_context) in enumerate(sb_contexts):
+                if getattr(ctx.session, "is_cancelled", False):
+                    yield ProgressEvent(
+                        phase=IngestionPhase.ERROR,
+                        message="❌ 생성이 중단되었습니다",
+                        progress=getattr(ctx.session, "progress", 0) or 0,
+                        data={"error": "Cancelled by user", "cancelled": True},
+                    )
+                    return
+
+                progress = PHASE_START + int((sb_idx / len(sb_contexts)) * (PHASE_END - PHASE_START - 4))
+                yield ProgressEvent(
+                    phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                    message=f"User Story 추출 중... ({sb_name} {sb_idx+1}/{len(sb_contexts)})",
+                    progress=progress,
+                )
+
+                print(f"[LEGACY US] Processing Session Bean {sb_idx+1}/{len(sb_contexts)}: {sb_name} ({estimate_tokens(sb_context)} tokens)")
+                try:
+                    sb_stories = await asyncio.to_thread(extract_user_stories_from_text, sb_context)
+                    print(f"[LEGACY US] {sb_name}: {len(sb_stories)} US generated")
+                    all_sb_stories.extend(sb_stories)
+                except Exception as e:
+                    SmartLogger.log(
+                        "ERROR",
+                        f"US extraction failed for {sb_name}",
+                        category="ingestion.user_stories.session_bean.error",
+                        params={"session_id": ctx.session.id, "sb_name": sb_name, "error": str(e)},
+                    )
+
+            # 정규화 + 중복 제거 + EJB 필터
+            user_stories = normalize_and_dedup_user_stories(all_sb_stories, ctx.session.id, is_legacy=True)
+
+            # 순차 ID 재부여
+            for idx, us in enumerate(user_stories, start=1):
+                new_id = f"US-{idx:03d}"
+                try:
+                    setattr(us, "id", new_id)
+                except Exception:
+                    if hasattr(us, "model_copy"):
+                        us = us.model_copy(update={"id": new_id})
+
+            ctx.user_stories = user_stories
+            yield ProgressEvent(
+                phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                message=f"User Story 추출 완료 (총 {len(user_stories)}개, Session Bean {len(sb_contexts)}개 처리)",
+                progress=PHASE_END - 2,
+            )
+
+            # Skip to Neo4j 저장 (아래 chunking/non-chunking 경로 건너뜀)
+            # goto: Neo4j 저장 section (line after else block)
+            # Python에는 goto가 없으므로, 플래그로 제어
+            _legacy_sb_processed = True
+        else:
+            input_content = get_user_stories_context(ctx.source_report)
+            _legacy_sb_processed = False
+    else:
+        _legacy_sb_processed = False
+
+    if not _legacy_sb_processed:
+        # 스캐닝 및 청킹 판단
+        content_tokens = estimate_tokens(input_content)
+        should_chunk_result = should_chunk(input_content, max_tokens=USER_STORY_CHUNK_SIZE)
+
+        # 디버깅: 청킹 판단 로그 (표준 출력에도 출력)
+        chunking_info = (
+            f"[CHUNKING DEBUG] content_tokens={content_tokens}, "
+            f"threshold={USER_STORY_CHUNK_SIZE}, "
+            f"should_chunk={should_chunk_result}, "
+            f"comparison={content_tokens} > {USER_STORY_CHUNK_SIZE} = {content_tokens > USER_STORY_CHUNK_SIZE}"
+        )
+        print(chunking_info)
+        SmartLogger.log(
+            "INFO",
+            f"User Story extraction: chunking decision - {chunking_info}",
+            category="ingestion.user_stories.chunking.decision",
+            params={
+                "session_id": ctx.session.id,
+                "content_length": len(ctx.content),
+                "content_tokens": content_tokens,
+                "chunk_size_threshold": USER_STORY_CHUNK_SIZE,
+                "should_chunk": should_chunk_result,
+                "comparison": f"{content_tokens} > {USER_STORY_CHUNK_SIZE} = {content_tokens > USER_STORY_CHUNK_SIZE}",
+            },
+        )
+
+    if not _legacy_sb_processed and should_chunk_result:
         print(f"[CHUNKING DEBUG] Entering chunking path - will split into chunks")
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
@@ -409,7 +518,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
         overlap_chars = overlap_tokens * 3
         
         chunks = split_text_with_overlap(
-            ctx.content,
+            input_content,
             chunk_size=USER_STORY_CHUNK_SIZE,
             overlap_size=overlap_chars
         )
@@ -540,7 +649,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             all_stories.extend(results)
         
         # 내용 기반 중복 제거 및 정규화 (공통 함수 사용)
-        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id)
+        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id, is_legacy=ctx.source_report is not None)
         
         # 병합 후 순차적인 ID로 재생성 (US-001, US-002, ...)
         for idx, us in enumerate(deduplicated_by_content, start=1):
@@ -606,7 +715,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             message=f"User Story 추출 완료 (총 {len(user_stories)}개)",
             progress=PHASE_END - 2
         )
-    else:
+    elif not _legacy_sb_processed:
         # 기존 로직 (청킹 불필요)
         print(f"[CHUNKING DEBUG] Entering non-chunking path - processing entire document at once")
         yield ProgressEvent(
@@ -614,12 +723,12 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             message="User Story 추출 중...",
             progress=PHASE_START + 5
         )
-        
-        user_stories = await asyncio.to_thread(extract_user_stories_from_text, ctx.content)
+
+        user_stories = await asyncio.to_thread(extract_user_stories_from_text, input_content)
         # 청킹 여부와 무관하게 항상 정규화 및 중복 제거 적용
-        user_stories = normalize_and_dedup_user_stories(user_stories, ctx.session.id)
+        user_stories = normalize_and_dedup_user_stories(user_stories, ctx.session.id, is_legacy=ctx.source_report is not None)
         ctx.user_stories = user_stories
-        
+
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
             message=f"User Story 추출 완료 (총 {len(user_stories)}개)",

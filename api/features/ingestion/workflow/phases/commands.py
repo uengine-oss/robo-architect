@@ -110,6 +110,8 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
     yield ProgressEvent(phase=IngestionPhase.EXTRACTING_COMMANDS, message="Command 추출 중...", progress=60)
 
     all_commands: dict[str, Any] = {}
+    # Track already-created command names to prevent cross-aggregate duplication
+    _existing_command_names: list[str] = []
 
     for bc in ctx.bounded_contexts:
         # Handle both dict and object formats
@@ -161,6 +163,20 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 bc_short=bc_id_short,
                 user_story_context=stories_context,
             ) + display_name_tail
+            # Inject already-created commands to prevent cross-aggregate duplication
+            if _existing_command_names:
+                full_prompt_text += (
+                    "\n\n<already_created_commands>\n"
+                    "The following Commands have already been created in OTHER Aggregates. "
+                    "Do NOT create Commands with the same or very similar names/intent:\n"
+                    + "\n".join(f"- {name}" for name in _existing_command_names)
+                    + "\n</already_created_commands>"
+                )
+            _report_context_tail = ""
+            if ctx.source_report:
+                from api.features.ingestion.workflow.utils.report_context import get_commands_context
+                _report_context_tail = "\n\n" + get_commands_context(ctx.source_report)
+            full_prompt_text += _report_context_tail
 
             # 청킹 필요 여부 판단
             if should_chunk(full_prompt_text):
@@ -187,7 +203,7 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         bc_name=bc_name,
                         bc_short=bc_id_short,
                         user_story_context=chunk_stories_context,
-                    ) + display_name_tail
+                    ) + display_name_tail + _report_context_tail
 
                     structured_llm = ctx.llm.with_structured_output(CommandList)
                     
@@ -320,6 +336,11 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     commands = []
 
             all_commands[agg_id] = commands
+            # Collect command names for cross-aggregate dedup
+            for cmd in commands:
+                cmd_n = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                if cmd_n:
+                    _existing_command_names.append(cmd_n)
 
             # Process all commands in parallel
             if commands:

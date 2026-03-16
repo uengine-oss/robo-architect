@@ -488,7 +488,10 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                 else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
             )
             prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
-            
+            if ctx.source_report:
+                from api.features.ingestion.workflow.utils.report_context import get_bounded_contexts_context
+                prompt += "\n\n" + get_bounded_contexts_context(ctx.source_report)
+
             t_llm0 = time.perf_counter()
             try:
                 bc_response = await asyncio.wait_for(
@@ -804,6 +807,9 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
             else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
         )
         prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
+        if ctx.source_report:
+            from api.features.ingestion.workflow.utils.report_context import get_bounded_contexts_context
+            prompt += "\n\n" + get_bounded_contexts_context(ctx.source_report)
 
         bc_response = await asyncio.wait_for(
             asyncio.to_thread(
