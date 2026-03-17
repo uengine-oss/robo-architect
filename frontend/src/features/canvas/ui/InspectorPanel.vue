@@ -7,6 +7,15 @@ import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
+import {
+  parseHtmlWireframe,
+  elementsToFigmaClipboard,
+  copyToClipboard as copyFigmaToClipboard,
+  getCachedSchema,
+  cacheSchema,
+  cacheTextTemplate,
+  readClipboardHTML,
+} from './figma'
 
 const props = defineProps({
   nodeId: {
@@ -668,6 +677,67 @@ async function copyTemplateCode() {
     templateCopied.value = true
     setTimeout(() => { templateCopied.value = false }, 2000)
   }
+}
+
+// ── Export to Figma ──
+const figmaExporting = ref(false)
+const figmaCopied = ref(false)
+const figmaError = ref(null)
+const showFigmaSchemaModal = ref(false)
+const hasFigmaSchema = ref(!!getCachedSchema())
+
+async function exportToFigma() {
+  const html = node.value?.data?.template
+  if (!html) return
+
+  if (!getCachedSchema()) {
+    showFigmaSchemaModal.value = true
+    return
+  }
+
+  figmaError.value = null
+  figmaExporting.value = true
+  try {
+    const elements = parseHtmlWireframe(html)
+    if (elements.length === 0) {
+      figmaError.value = 'No wireframe elements detected'
+      return
+    }
+    const clipboardHtml = elementsToFigmaClipboard(elements)
+    await copyFigmaToClipboard(clipboardHtml)
+    figmaCopied.value = true
+    setTimeout(() => { figmaCopied.value = false }, 3000)
+  } catch (e) {
+    figmaError.value = e?.message || 'Export failed'
+    console.error('[ExportToFigma]', e)
+  } finally {
+    figmaExporting.value = false
+  }
+}
+
+async function onFigmaSchemaPaste(event) {
+  try {
+    const html = event.clipboardData?.getData('text/html')
+    if (!html) {
+      figmaError.value = 'No Figma data found. Copy an element from Figma first.'
+      return
+    }
+    const data = readClipboardHTML(html)
+    cacheSchema(data.schema)
+    cacheTextTemplate(data.message)
+    hasFigmaSchema.value = true
+    showFigmaSchemaModal.value = false
+    figmaError.value = null
+    // Auto-proceed with export after capturing schema
+    await exportToFigma()
+  } catch (e) {
+    figmaError.value = 'Failed to capture Figma schema. Make sure you copied an element from Figma.'
+    console.error('[FigmaSchema]', e)
+  }
+}
+
+function closeFigmaSchemaModal() {
+  showFigmaSchemaModal.value = false
 }
 
 // Wireframe from screenshot upload
@@ -1740,10 +1810,33 @@ function updateVoFieldValue(fieldName, value) {
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               </button>
+              <button
+                class="ui-preview-panel__btn ui-preview-panel__btn--figma"
+                :class="{ 'ui-preview-panel__btn--copied': figmaCopied }"
+                :disabled="!node.data?.template || figmaExporting"
+                :title="figmaCopied ? 'Copied! Paste in Figma (Ctrl+V)' : 'Export to Figma'"
+                @click="exportToFigma"
+              >
+                <svg v-if="figmaExporting" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else-if="figmaCopied" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z" />
+                  <path d="M12 2h3.5a3.5 3.5 0 1 1 0 7H12V2z" />
+                  <path d="M12 12.5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 1 1-7 0z" />
+                  <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z" />
+                  <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
+                </svg>
+              </button>
             </div>
           </div>
 
           <div v-if="wireframeUploadError" class="inspector-alert error">{{ wireframeUploadError }}</div>
+          <div v-if="figmaError" class="inspector-alert error">{{ figmaError }}</div>
+          <div v-if="figmaCopied" class="inspector-alert success">Figma clipboard ready — Ctrl+V in Figma to paste. If text is invisible, switch to another page and back.</div>
 
           <div class="ui-preview-panel__info">
             <div class="ui-preview-panel__name">{{ terminologyStore.ubiquitousLanguageMode ? (node.data?.displayName || node.data?.name) : node.data?.name }}</div>
@@ -2598,6 +2691,33 @@ function updateVoFieldValue(fieldName, value) {
         >
           저장
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Figma Schema Capture Modal -->
+  <div v-if="showFigmaSchemaModal" class="figma-schema-modal__backdrop" @click.self="closeFigmaSchemaModal">
+    <div class="figma-schema-modal">
+      <div class="figma-schema-modal__header">
+        <h3>Figma Schema Capture</h3>
+        <button class="figma-schema-modal__close" @click="closeFigmaSchemaModal">&times;</button>
+      </div>
+      <div class="figma-schema-modal__body">
+        <p>To export wireframes to Figma, we need to capture Figma's clipboard format once.</p>
+        <ol>
+          <li>Open Figma and create any simple shape (e.g., a rectangle)</li>
+          <li>Select and copy it (<kbd>Ctrl+C</kbd> / <kbd>Cmd+C</kbd>)</li>
+          <li>Click the input below and paste (<kbd>Ctrl+V</kbd> / <kbd>Cmd+V</kbd>)</li>
+        </ol>
+        <div
+          class="figma-schema-modal__paste-area"
+          contenteditable="true"
+          @paste.prevent="onFigmaSchemaPaste"
+          tabindex="0"
+        >
+          Click here and paste from Figma (Ctrl+V)
+        </div>
+        <div v-if="figmaError" class="inspector-alert error" style="margin-top:8px;">{{ figmaError }}</div>
       </div>
     </div>
   </div>
@@ -4203,6 +4323,113 @@ function updateVoFieldValue(fieldName, value) {
 .gwt-field-value-add:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ── Figma Export Button ── */
+.ui-preview-panel__btn--figma {
+  background: #1e1e1e;
+  color: #fff;
+  border-color: #333;
+}
+.ui-preview-panel__btn--figma:hover:not(:disabled) {
+  background: #333;
+}
+.ui-preview-panel__btn--figma.ui-preview-panel__btn--copied {
+  background: #0d9;
+  border-color: #0d9;
+  color: #fff;
+}
+.ui-preview-panel__btn--figma:disabled {
+  opacity: 0.4;
+}
+
+@keyframes figma-spin {
+  to { transform: rotate(360deg); }
+}
+.ui-preview-panel__btn-spin {
+  animation: figma-spin 0.8s linear infinite;
+}
+
+/* ── Figma Schema Capture Modal ── */
+.figma-schema-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.figma-schema-modal {
+  background: var(--color-bg-primary, #fff);
+  border-radius: 12px;
+  width: 480px;
+  max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.figma-schema-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border, #e5e5e5);
+}
+.figma-schema-modal__header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.figma-schema-modal__close {
+  background: none;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #666);
+  padding: 0 4px;
+  line-height: 1;
+}
+.figma-schema-modal__body {
+  padding: 20px;
+}
+.figma-schema-modal__body p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--color-text-secondary, #666);
+}
+.figma-schema-modal__body ol {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--color-text-secondary, #666);
+  line-height: 1.8;
+}
+.figma-schema-modal__body kbd {
+  background: var(--color-bg-tertiary, #f0f0f0);
+  border: 1px solid var(--color-border, #ddd);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.figma-schema-modal__paste-area {
+  border: 2px dashed var(--color-border, #d9d9d9);
+  border-radius: 8px;
+  padding: 24px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--color-text-secondary, #999);
+  cursor: text;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s;
+  outline: none;
+}
+.figma-schema-modal__paste-area:focus {
+  border-color: var(--color-accent, #1890ff);
+  color: var(--color-text-primary, #333);
 }
 </style>
 
