@@ -136,6 +136,10 @@ async def _request_id_middleware(request: Request, call_next):
 from api.features.ingestion.router import router as ingestion_router
 app.include_router(ingestion_router)
 
+# Include Confluence integration router
+from api.features.ingestion.confluence import router as confluence_router
+app.include_router(confluence_router)
+
 # Include change management router
 from api.features.change_management.router import router as change_router
 app.include_router(change_router)

@@ -22,7 +22,7 @@ const SESSION_STORAGE_KEY = 'ingestion_active_session'
 const dragActive = ref(false)
 const file = ref(null)
 const textContent = ref('')
-const inputMode = ref('file') // 'file' or 'text'
+const inputMode = ref('file') // 'file', 'text', or 'jira'
 const isUploading = ref(false)
 const isProcessing = ref(false)
 const sessionId = ref(null)
@@ -53,6 +53,20 @@ const isCacheEnabled = ref(false)
 const isTogglingCache = ref(false)
 const cacheFeedback = ref(null) // { kind: 'success' | 'error' | 'info', message: string }
 
+// JIRA/Confluence state
+const JIRA_CREDS_KEY = 'jira_confluence_creds'
+const jiraEmail = ref('')
+const jiraApiToken = ref('')
+const jiraBaseUrl = ref('https://uengine-team.atlassian.net')
+const isConnecting = ref(false)
+const confluencePages = ref([])
+const selectedPageId = ref(null)
+const selectedPageContent = ref(null) // { title, content, content_length }
+const isLoadingPageContent = ref(false)
+const jiraError = ref(null)
+const jiraConnected = ref(false)
+const pageSearchQuery = ref('')
+
 // Data clearing state
 const showClearConfirm = ref(false)
 const existingDataStats = ref(null)
@@ -69,7 +83,16 @@ const canSubmit = computed(() => {
   if (inputMode.value === 'file') {
     return file.value !== null
   }
+  if (inputMode.value === 'jira') {
+    return selectedPageContent.value !== null
+  }
   return textContent.value.trim().length > 10
+})
+
+const filteredPages = computed(() => {
+  if (!pageSearchQuery.value.trim()) return confluencePages.value
+  const q = pageSearchQuery.value.toLowerCase()
+  return confluencePages.value.filter(p => p.title.toLowerCase().includes(q))
 })
 
 const phaseLabel = computed(() => {
@@ -237,9 +260,15 @@ async function startIngestion() {
   
   try {
     const formData = new FormData()
-    
+
     if (inputMode.value === 'file' && file.value) {
       formData.append('file', file.value)
+    } else if (inputMode.value === 'jira' && selectedPageContent.value) {
+      const text = `# ${selectedPageContent.value.title}\n\n${selectedPageContent.value.content}`
+      if (!text.trim()) {
+        throw new Error('선택한 페이지의 내용이 비어있습니다.')
+      }
+      formData.append('text', text)
     } else {
       formData.append('text', textContent.value)
     }
@@ -273,6 +302,7 @@ async function startIngestion() {
     error.value = e.message
     isUploading.value = false
     isProcessing.value = false
+    isLoadingPageContent.value = false
   }
 }
 
@@ -690,6 +720,7 @@ function closeModal() {
   file.value = null
   textContent.value = ''
   error.value = null
+  jiraError.value = null
   showClearConfirm.value = false
   isOpen.value = false
 }
@@ -766,6 +797,7 @@ onUnmounted(() => {
 })
 
 onMounted(async () => {
+  loadJiraCreds()
   await checkAndRestoreSession()
 })
 
@@ -793,6 +825,146 @@ const sampleText = `# 온라인 쇼핑몰 요구사항
 ## 5. 알림
 - 주문 완료 시 고객에게 이메일 알림을 보내야 한다
 - 배송 시작 시 고객에게 알림을 보내야 한다`
+
+// JIRA/Confluence methods
+function loadJiraCreds() {
+  try {
+    const saved = localStorage.getItem(JIRA_CREDS_KEY)
+    if (saved) {
+      const creds = JSON.parse(saved)
+      jiraEmail.value = creds.email || ''
+      jiraApiToken.value = creds.apiToken || ''
+      jiraBaseUrl.value = creds.baseUrl || 'https://uengine-team.atlassian.net'
+    }
+  } catch (e) {
+    console.error('Failed to load JIRA credentials:', e)
+  }
+}
+
+function saveJiraCreds() {
+  localStorage.setItem(JIRA_CREDS_KEY, JSON.stringify({
+    email: jiraEmail.value,
+    apiToken: jiraApiToken.value,
+    baseUrl: jiraBaseUrl.value
+  }))
+}
+
+async function connectConfluence() {
+  if (!jiraEmail.value.trim() || !jiraApiToken.value.trim()) {
+    jiraError.value = '이메일과 API 토큰을 입력해주세요.'
+    return
+  }
+
+  jiraError.value = null
+  isConnecting.value = true
+  confluencePages.value = []
+  selectedPageId.value = null
+  selectedPageContent.value = null
+
+  try {
+    const response = await fetch('/api/ingest/confluence/pages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: jiraEmail.value.trim(),
+        api_token: jiraApiToken.value.trim(),
+        base_url: jiraBaseUrl.value.trim()
+      })
+    })
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}))
+      throw new Error(errData.detail || `연결 실패 (${response.status})`)
+    }
+
+    const data = await response.json()
+    confluencePages.value = data.pages || []
+    jiraConnected.value = true
+    saveJiraCreds()
+  } catch (e) {
+    jiraError.value = e.message || 'Confluence 연결에 실패했습니다.'
+    jiraConnected.value = false
+  } finally {
+    isConnecting.value = false
+  }
+}
+
+async function selectPage(pageId) {
+  if (selectedPageId.value === pageId) return
+  selectedPageId.value = pageId
+  selectedPageContent.value = null
+  isLoadingPageContent.value = true
+  jiraError.value = null
+
+  try {
+    const response = await fetch('/api/ingest/confluence/page-content', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: jiraEmail.value.trim(),
+        api_token: jiraApiToken.value.trim(),
+        base_url: jiraBaseUrl.value.trim(),
+        page_id: pageId
+      })
+    })
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}))
+      throw new Error(errData.detail || `페이지 내용을 가져올 수 없습니다.`)
+    }
+
+    selectedPageContent.value = await response.json()
+  } catch (e) {
+    jiraError.value = e.message
+    selectedPageId.value = null
+  } finally {
+    isLoadingPageContent.value = false
+  }
+}
+
+function clearSelectedPage() {
+  selectedPageId.value = null
+  selectedPageContent.value = null
+}
+
+async function refreshPages() {
+  selectedPageId.value = null
+  selectedPageContent.value = null
+  jiraError.value = null
+  isConnecting.value = true
+
+  try {
+    const response = await fetch('/api/ingest/confluence/pages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: jiraEmail.value.trim(),
+        api_token: jiraApiToken.value.trim(),
+        base_url: jiraBaseUrl.value.trim()
+      })
+    })
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}))
+      throw new Error(errData.detail || `새로고침 실패 (${response.status})`)
+    }
+
+    const data = await response.json()
+    confluencePages.value = data.pages || []
+  } catch (e) {
+    jiraError.value = e.message || '페이지 목록 새로고침에 실패했습니다.'
+  } finally {
+    isConnecting.value = false
+  }
+}
+
+function disconnectConfluence() {
+  jiraConnected.value = false
+  confluencePages.value = []
+  selectedPageId.value = null
+  selectedPageContent.value = null
+  pageSearchQuery.value = ''
+}
 
 function useSample() {
   textContent.value = sampleText
@@ -898,7 +1070,7 @@ function useSample() {
                       </svg>
                       파일 업로드
                     </button>
-                    <button 
+                    <button
                       :class="['tab-btn', { active: inputMode === 'text' }]"
                       @click="inputMode = 'text'"
                     >
@@ -909,6 +1081,17 @@ function useSample() {
                         <line x1="17" y1="18" x2="3" y2="18"></line>
                       </svg>
                       텍스트 입력
+                    </button>
+                    <button
+                      :class="['tab-btn', { active: inputMode === 'jira' }]"
+                      @click="inputMode = 'jira'"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                        <path d="M2 17l10 5 10-5"></path>
+                        <path d="M2 12l10 5 10-5"></path>
+                      </svg>
+                      JIRA
                     </button>
                   </div>
                   <div class="cache-toggle">
@@ -1019,6 +1202,149 @@ function useSample() {
                   샘플 요구사항 사용
                 </button>
               </div>
+
+              <!-- JIRA/Confluence Area -->
+              <div v-if="inputMode === 'jira'" class="jira-section">
+                <!-- Credentials Form -->
+                <div v-if="!jiraConnected" class="jira-creds">
+                  <div class="jira-field">
+                    <label class="jira-label">Confluence Base URL</label>
+                    <input
+                      v-model="jiraBaseUrl"
+                      type="url"
+                      class="jira-input"
+                      placeholder="https://your-team.atlassian.net"
+                    />
+                  </div>
+                  <div class="jira-field">
+                    <label class="jira-label">이메일</label>
+                    <input
+                      v-model="jiraEmail"
+                      type="email"
+                      class="jira-input"
+                      placeholder="your-email@company.com"
+                    />
+                  </div>
+                  <div class="jira-field">
+                    <label class="jira-label">API Token</label>
+                    <input
+                      v-model="jiraApiToken"
+                      type="password"
+                      class="jira-input"
+                      placeholder="Atlassian API Token"
+                    />
+                    <span class="jira-hint">
+                      <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">API 토큰 발급하기</a>
+                    </span>
+                  </div>
+                  <div v-if="jiraError" class="jira-error">{{ jiraError }}</div>
+                  <button
+                    class="btn btn--primary jira-connect-btn"
+                    :disabled="isConnecting || !jiraEmail.trim() || !jiraApiToken.trim()"
+                    @click="connectConfluence"
+                  >
+                    <template v-if="isConnecting">
+                      <span class="spinner"></span>
+                      연결 중...
+                    </template>
+                    <template v-else>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                        <polyline points="10 17 15 12 10 7"></polyline>
+                        <line x1="15" y1="12" x2="3" y2="12"></line>
+                      </svg>
+                      연동하기
+                    </template>
+                  </button>
+                </div>
+
+                <!-- Page List & Preview (after connection) -->
+                <div v-else class="jira-pages">
+                  <div class="jira-pages-header">
+                    <div class="jira-pages-info">
+                      <span class="jira-pages-count">{{ confluencePages.length }}개 페이지</span>
+                    </div>
+                    <div class="jira-header-actions">
+                      <button class="jira-action-btn" @click="refreshPages" :disabled="isConnecting" title="새로고침">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="{ 'is-spinning': isConnecting }">
+                          <polyline points="23 4 23 10 17 10"></polyline>
+                          <polyline points="1 20 1 14 7 14"></polyline>
+                          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                      </button>
+                      <button class="jira-action-btn jira-action-btn--disconnect" @click="disconnectConfluence" title="연결 해제">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                          <polyline points="16 17 21 12 16 7"></polyline>
+                          <line x1="21" y1="12" x2="9" y2="12"></line>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Content Preview (shown when a page is selected) -->
+                  <div v-if="selectedPageContent" class="jira-preview">
+                    <div class="jira-preview-header">
+                      <button class="jira-back-btn" @click="clearSelectedPage">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                        목록으로
+                      </button>
+                      <span class="jira-preview-size">{{ (selectedPageContent.content_length / 1024).toFixed(1) }} KB</span>
+                    </div>
+                    <h4 class="jira-preview-title">{{ selectedPageContent.title }}</h4>
+                    <div class="jira-preview-content">{{ selectedPageContent.content }}</div>
+                  </div>
+
+                  <!-- Loading state -->
+                  <div v-else-if="isLoadingPageContent" class="jira-loading">
+                    <span class="spinner"></span>
+                    <span>페이지 내용을 불러오는 중...</span>
+                  </div>
+
+                  <!-- Page list (shown when no page is selected) -->
+                  <template v-else>
+                    <div class="jira-search">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                      </svg>
+                      <input
+                        v-model="pageSearchQuery"
+                        type="text"
+                        class="jira-search-input"
+                        placeholder="페이지 검색..."
+                      />
+                    </div>
+                    <div class="jira-page-list">
+                      <div
+                        v-for="page in filteredPages"
+                        :key="page.id"
+                        class="jira-page-item"
+                        @click="selectPage(page.id)"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                          <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
+                        <div class="jira-page-info">
+                          <span class="jira-page-title">{{ page.title }}</span>
+                          <span class="jira-page-id">ID: {{ page.id }}</span>
+                        </div>
+                        <svg class="jira-page-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                      </div>
+                      <div v-if="filteredPages.length === 0" class="jira-empty">
+                        {{ pageSearchQuery ? '검색 결과가 없습니다.' : '페이지가 없습니다.' }}
+                      </div>
+                    </div>
+                  </template>
+
+                  <div v-if="jiraError" class="jira-error">{{ jiraError }}</div>
+                </div>
+              </div>
               
               <!-- Error Display -->
               <div v-if="error" class="error-message">
@@ -1039,12 +1365,12 @@ function useSample() {
             </button>
             <button 
               class="btn btn--primary"
-              :disabled="!canSubmit || isUploading"
+              :disabled="!canSubmit || isUploading || isLoadingPageContent"
               @click="handleStartClick"
             >
-              <template v-if="isUploading">
+              <template v-if="isUploading || isLoadingPageContent">
                 <span class="spinner"></span>
-                업로드 중...
+                {{ isLoadingPageContent ? '페이지 내용 가져오는 중...' : '업로드 중...' }}
               </template>
               <template v-else>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1406,6 +1732,7 @@ function useSample() {
   color: var(--color-text);
   cursor: pointer;
   font-size: 0.875rem;
+  white-space: nowrap;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
@@ -1544,6 +1871,302 @@ function useSample() {
   background: rgba(34, 139, 230, 0.08);
   border-color: rgba(34, 139, 230, 0.2);
   color: var(--color-text);
+}
+
+/* JIRA/Confluence Section */
+.jira-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.jira-creds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.jira-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.jira-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-text-light);
+}
+
+.jira-input {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.jira-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.jira-hint {
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+}
+
+.jira-hint a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.jira-hint a:hover {
+  text-decoration: underline;
+}
+
+.jira-connect-btn {
+  align-self: flex-start;
+  margin-top: var(--spacing-xs);
+}
+
+.jira-error {
+  padding: var(--spacing-sm);
+  background: rgba(255, 100, 100, 0.1);
+  border: 1px solid rgba(255, 100, 100, 0.3);
+  border-radius: var(--radius-md);
+  color: #ff6464;
+  font-size: 0.8rem;
+}
+
+.jira-pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.jira-pages-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.jira-pages-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.jira-pages-count {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text-bright);
+}
+
+.jira-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xl);
+  color: var(--color-text-light);
+  font-size: 0.85rem;
+}
+
+.jira-loading .spinner {
+  border-color: rgba(34, 139, 230, 0.3);
+  border-top-color: var(--color-accent);
+}
+
+.jira-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.jira-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.jira-action-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.jira-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.jira-action-btn--disconnect:hover {
+  border-color: #ff6464;
+  color: #ff6464;
+}
+
+.jira-action-btn .is-spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+.jira-search {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-light);
+}
+
+.jira-search svg {
+  flex-shrink: 0;
+}
+
+.jira-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  font-size: 0.8rem;
+  outline: none;
+}
+
+/* Preview */
+.jira-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.jira-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.jira-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-light);
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.jira-back-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.jira-preview-size {
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+}
+
+.jira-preview-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  margin: 0;
+}
+
+.jira-preview-content {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.jira-page-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.jira-page-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.jira-page-item:last-child {
+  border-bottom: none;
+}
+
+.jira-page-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.jira-page-item svg:first-child {
+  color: var(--color-text-light);
+  flex-shrink: 0;
+}
+
+.jira-page-arrow {
+  color: var(--color-text-light);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.jira-page-item:hover .jira-page-arrow {
+  opacity: 1;
+}
+
+.jira-page-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.jira-page-title {
+  font-size: 0.8rem;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jira-page-id {
+  font-size: 0.65rem;
+  color: var(--color-text-light);
+}
+
+.jira-empty {
+  padding: var(--spacing-lg);
+  text-align: center;
+  color: var(--color-text-light);
+  font-size: 0.8rem;
 }
 
 /* Dropzone */

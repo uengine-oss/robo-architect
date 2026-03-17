@@ -646,6 +646,30 @@ function requestChat() {
   emit('request-chat', node.value.id)
 }
 
+// Copy wireframe template code
+const templateCopied = ref(false)
+async function copyTemplateCode() {
+  const code = node.value?.data?.template
+  if (!code) return
+  try {
+    await navigator.clipboard.writeText(code)
+    templateCopied.value = true
+    setTimeout(() => { templateCopied.value = false }, 2000)
+  } catch {
+    // fallback
+    const ta = document.createElement('textarea')
+    ta.value = code
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+    templateCopied.value = true
+    setTimeout(() => { templateCopied.value = false }, 2000)
+  }
+}
+
 // Wireframe from screenshot upload
 const wireframeUploading = ref(false)
 const wireframeUploadError = ref(null)
@@ -1699,6 +1723,21 @@ function updateVoFieldValue(fieldName, value) {
               <button class="ui-preview-panel__btn" @click="requestChat" title="Edit with AI">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+              </button>
+              <button
+                class="ui-preview-panel__btn"
+                :class="{ 'ui-preview-panel__btn--copied': templateCopied }"
+                :disabled="!node.data?.template"
+                :title="templateCopied ? 'Copied!' : 'Copy wireframe code'"
+                @click="copyTemplateCode"
+              >
+                <svg v-if="!templateCopied" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12" />
                 </svg>
               </button>
             </div>
@@ -2896,6 +2935,10 @@ function updateVoFieldValue(fieldName, value) {
 .ui-preview-panel__btn:disabled {
   opacity: 0.6;
   cursor: wait;
+}
+
+.ui-preview-panel__btn--copied {
+  color: var(--color-success, #22c55e);
 }
 
 .ui-preview-panel__file-input {
