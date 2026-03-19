@@ -44,7 +44,8 @@ const dragOffset = ref({ x: 0, y: 0 })
 const hasDragged = ref(false) // Track if actual dragging occurred
 
 // Display language for node/property displayName (ko: 한글, en: English)
-const displayLanguage = ref('ko')
+const displayLanguage = ref(localStorage.getItem('app_display_language') || 'ko')
+watch(displayLanguage, (v) => { localStorage.setItem('app_display_language', v) })
 
 // Source type is auto-detected from filename (*.report.md → legacy_report)
 
