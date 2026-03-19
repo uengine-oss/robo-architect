@@ -86,6 +86,10 @@ function convertElement(el: Element, ctx: Ctx): WireframeElement | null {
   if (cls.includes('wf-label')) return convertLabel(el, ctx, style)
 
   // ── Tag-based detection ──
+  if (el.tagName === 'INPUT' && (el.getAttribute('type') === 'checkbox' || el.getAttribute('type') === 'radio')) {
+    return convertCheckbox(el, ctx)
+  }
+
   if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
     return convertInput(el, ctx, style)
   }
@@ -312,12 +316,26 @@ function convertTable(el: Element, ctx: Ctx): WireframeElement {
     })
     let colX = 0
     for (let i = 0; i < ths.length; i++) {
-      const text = ths[i].textContent?.trim() || ''
-      children.push({
-        id: nextId(), type: 'text',
-        x: colX + 8, y: curY + 10, width: colWidths[i] - 16, height: 20,
-        label: text, fontSize: 14, fillColor: '#595959',
-      })
+      const th = ths[i]
+      const thCheckbox = th.querySelector('input[type="checkbox"], input[type="radio"]')
+      if (thCheckbox) {
+        const isRadio = thCheckbox.getAttribute('type') === 'radio'
+        children.push({
+          id: nextId(), type: 'frame',
+          x: colX + Math.floor((colWidths[i] - 16) / 2), y: curY + 12,
+          width: 16, height: 16,
+          fillColor: '#FFFFFF', strokeColor: '#d9d9d9', strokeWidth: 1,
+          cornerRadius: isRadio ? 8 : 3,
+          label: isRadio ? 'Radio' : 'Checkbox',
+        })
+      } else {
+        const text = th.textContent?.trim() || ''
+        children.push({
+          id: nextId(), type: 'text',
+          x: colX + 8, y: curY + 10, width: colWidths[i] - 16, height: 20,
+          label: text, fontSize: 14, fillColor: '#595959',
+        })
+      }
       colX += colWidths[i]
     }
     curY += rowHeight
@@ -350,11 +368,22 @@ function convertTable(el: Element, ctx: Ctx): WireframeElement {
       const cell = cells[i]
       const colW = colWidths[i] || 150
 
+      const checkbox = cell.querySelector('input[type="checkbox"], input[type="radio"]')
       const chip = cell.querySelector('.wf-chip')
       const badge = cell.querySelector('.wf-badge')
       const btn = cell.querySelector('.wf-btn')
 
-      if (chip) {
+      if (checkbox) {
+        const isRadio = checkbox.getAttribute('type') === 'radio'
+        children.push({
+          id: nextId(), type: 'frame',
+          x: colX + Math.floor((colW - 16) / 2), y: curY + 12,
+          width: 16, height: 16,
+          fillColor: '#FFFFFF', strokeColor: '#d9d9d9', strokeWidth: 1,
+          cornerRadius: isRadio ? 8 : 3,
+          label: isRadio ? 'Radio' : 'Checkbox',
+        })
+      } else if (chip) {
         const chipStyle = parseInlineStyle(chip.getAttribute('style') || '')
         children.push({
           id: nextId(), type: 'button',
@@ -586,6 +615,22 @@ function convertButton(el: Element, ctx: Ctx, defaultColor: string): WireframeEl
     label,
     fillColor: isPrimary ? '#1890ff' : defaultColor,
     cornerRadius: 4, fontSize: 14,
+  }
+}
+
+function convertCheckbox(el: Element, ctx: Ctx): WireframeElement {
+  const isRadio = el.getAttribute('type') === 'radio'
+  const size = 16
+  return {
+    id: nextId(),
+    type: 'frame',
+    x: ctx.x, y: ctx.y,
+    width: size, height: size,
+    fillColor: '#FFFFFF',
+    strokeColor: '#d9d9d9',
+    strokeWidth: 1,
+    cornerRadius: isRadio ? 8 : 3,
+    label: isRadio ? 'Radio' : 'Checkbox',
   }
 }
 

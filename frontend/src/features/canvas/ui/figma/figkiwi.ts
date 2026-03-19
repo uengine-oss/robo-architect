@@ -188,22 +188,3 @@ export function cacheSchema(schema: any) {
   localStorage.setItem(SCHEMA_KEY, JSON.stringify(schema))
 }
 
-const TEXT_TEMPLATE_KEY = 'figma-text-node-template'
-
-/**
- * Extract a TEXT node from the sample message and cache it as a template.
- * This gives us the exact derivedTextData structure Figma expects.
- */
-export function cacheTextTemplate(message: any) {
-  if (!message?.nodeChanges) return
-  const textNode = message.nodeChanges.find((nc: any) => nc.type === 'TEXT')
-  if (textNode) {
-    localStorage.setItem(TEXT_TEMPLATE_KEY, JSON.stringify(textNode))
-  }
-}
-
-export function getCachedTextTemplate(): any | null {
-  const raw = localStorage.getItem(TEXT_TEMPLATE_KEY)
-  if (!raw) return null
-  try { return JSON.parse(raw) } catch { return null }
-}
