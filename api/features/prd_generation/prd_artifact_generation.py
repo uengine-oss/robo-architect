@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from api.features.prd_generation.prd_api_contracts import Database, Framework, FrontendFramework, TechStackConfig
+from api.features.prd_generation.prd_api_contracts import Database, DeploymentStyle, Framework, FrontendFramework, TechStackConfig
 
 
 def generate_main_prd(bcs: list[dict], config: TechStackConfig) -> str:
@@ -130,6 +130,9 @@ Each BC has a detailed specification file in the `specs/` directory:
 - **`.cursorrules`** (mention: `@.cursorrules`): Global DDD principles and coding standards (read this first)
 - **`.cursor/rules/{config.framework.value}.mdc`** (mention: `@{config.framework.value}`): {config.framework.value} ({config.language.value}) tech stack specific implementation guidelines
 """
+        if config.deployment == DeploymentStyle.MICROSERVICES:
+            prd += f"""- **`.cursor/rules/api-gateway.mdc`** (mention: `@api-gateway`): API Gateway routing, CORS, and service discovery configuration
+"""
     else:  # claude
         prd += f"""**Using Claude Code**:
 - **`.claude/skills/`**: Common implementation skills (DDD, Event Storming, Tech Stack)
@@ -137,6 +140,9 @@ Each BC has a detailed specification file in the `specs/` directory:
   - `eventstorming-implementation.md` - Sticker-to-code mapping (Command, Event, Aggregate, ReadModel, Policy, UI)
   - `gwt-test-generation.md` - GWT (Given/When/Then) test patterns
   - `{config.framework.value}.md` - {config.framework.value} implementation guidelines
+"""
+        if config.deployment == DeploymentStyle.MICROSERVICES:
+            prd += f"""  - `api-gateway.md` - API Gateway routing, CORS, and service discovery configuration
 """
         if config.include_frontend and config.frontend_framework:
             prd += f"  - `{config.frontend_framework.value}.md` - Frontend framework technical implementation patterns\n"
@@ -784,6 +790,8 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
         spec += f"- **Tech Stack Rules**: `.cursor/rules/{config.framework.value}.mdc` - {config.framework.value} implementation guidelines\n"
         if config.include_frontend and config.frontend_framework:
             spec += f"- **Frontend Rules**: `.cursor/rules/{config.frontend_framework.value}.mdc` - Frontend framework implementation guidelines\n"
+        if config.deployment == DeploymentStyle.MICROSERVICES:
+            spec += f"- **API Gateway**: `.cursor/rules/api-gateway.mdc` - Gateway routing, CORS, and service discovery\n"
     else:
         spec += f"\n### Claude Skills (Implementation Guidelines)\n"
         spec += f"- **DDD Principles**: `.claude/skills/ddd-principles.md` - DDD patterns (always reference)\n"
@@ -792,6 +800,8 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
         spec += f"- **Tech Stack Skills**: `.claude/skills/{config.framework.value}.md` - {config.framework.value} implementation guidelines\n"
         if config.include_frontend and config.frontend_framework:
             spec += f"- **Frontend Skills**: `.claude/skills/{config.frontend_framework.value}.md` - Frontend framework implementation guidelines\n"
+        if config.deployment == DeploymentStyle.MICROSERVICES:
+            spec += f"- **API Gateway**: `.claude/skills/api-gateway.md` - Gateway routing, CORS, and service discovery\n"
         spec += f"- **BC Agent**: `.claude/agents/{bc_name_slug}_agent.md` - BC-specific agent configuration\n"
     spec += f"- **Project Context**: `CLAUDE.md` - Project overview for AI assistants\n"
     return spec
@@ -2163,6 +2173,101 @@ Total Query Screens (ReadModels): {len(all_readmodels)}
                         prd += f"  - Description: {description}\n"
                     prd += f"  - **Wireframe Template**: See `specs/{bc_name_slug}_spec.md` for complete HTML template\n"
     
+    # API Endpoint Contract per BC
+    prd += "\n## API Endpoint Contract (Frontend ↔ Backend)\n\n"
+    prd += "Use these endpoints when implementing API integration in the frontend.\n"
+    prd += "For detailed property schemas, refer to each BC spec (`specs/{bc_name}_spec.md`).\n\n"
+
+    for bc in bcs:
+        bc_name = bc.get("name", "Unknown")
+        bc_slug = bc_name.lower().replace(" ", "_")
+        aggs = bc.get("aggregates", []) or []
+        rms = bc.get("readmodels", []) or []
+        has_endpoints = False
+
+        for agg in aggs:
+            if agg.get("commands"):
+                for cmd in agg["commands"]:
+                    if cmd.get("id"):
+                        has_endpoints = True
+                        break
+            if has_endpoints:
+                break
+        if not has_endpoints and rms:
+            for rm in rms:
+                if rm.get("id"):
+                    has_endpoints = True
+                    break
+
+        if not has_endpoints:
+            continue
+
+        prd += f"### {bc_name} API Endpoints\n\n"
+        prd += "| Method | Endpoint | Description | Request Body | Response |\n"
+        prd += "|--------|----------|-------------|--------------|----------|\n"
+
+        for agg in aggs:
+            agg_slug = (agg.get("name", "unknown") or "unknown").lower().replace(" ", "_")
+            for cmd in agg.get("commands", []) or []:
+                if not cmd.get("id"):
+                    continue
+                cmd_name = cmd.get("name", "")
+                cmd_slug = cmd_name.lower().replace(" ", "_") if cmd_name else "unknown"
+                cmd_display = cmd.get("displayName") or cmd_name
+
+                # Determine HTTP method from command name pattern
+                name_lower = cmd_name.lower()
+                if any(kw in name_lower for kw in ["delete", "remove", "cancel"]):
+                    method = "DELETE"
+                    endpoint = f"/api/{bc_slug}/{agg_slug}/{{{agg_slug}Id}}"
+                elif any(kw in name_lower for kw in ["update", "modify", "change", "edit"]):
+                    method = "PUT"
+                    endpoint = f"/api/{bc_slug}/{agg_slug}/{{{agg_slug}Id}}"
+                else:
+                    method = "POST"
+                    endpoint = f"/api/{bc_slug}/{agg_slug}"
+
+                # Build request body summary from command properties
+                props = cmd.get("properties", []) or []
+                if props:
+                    prop_parts = []
+                    for p in props:
+                        if p.get("id"):
+                            p_name = p.get("name", "")
+                            p_type = p.get("type", "String")
+                            req = "*" if p.get("isRequired") else ""
+                            prop_parts.append(f"{p_name}: {p_type}{req}")
+                    req_body = "`{ " + ", ".join(prop_parts) + " }`" if prop_parts else "-"
+                else:
+                    req_body = "-"
+
+                prd += f"| `{method}` | `{endpoint}` | {cmd_display} | {req_body} | Success/Error |\n"
+
+        for rm in rms:
+            if not rm.get("id"):
+                continue
+            rm_name = rm.get("name", "Unknown")
+            rm_slug = rm_name.lower().replace(" ", "_")
+            rm_display = rm.get("displayName") or rm_name
+            is_multi = rm.get("isMultipleResult", "")
+
+            # Build response summary from readmodel properties
+            props = rm.get("properties", []) or []
+            if props:
+                prop_parts = []
+                for p in props:
+                    if p.get("id"):
+                        prop_parts.append(f"{p.get('name', '')}: {p.get('type', 'String')}")
+                resp = "`{ " + ", ".join(prop_parts) + " }`"
+                if is_multi and "true" in str(is_multi).lower():
+                    resp = f"Array of {resp}"
+            else:
+                resp = "See spec"
+
+            prd += f"| `GET` | `/api/{bc_slug}/{rm_slug}` | {rm_display} | - | {resp} |\n"
+
+        prd += "\n"
+
     prd += f"""
 ### Query Screens (ReadModels)
 
@@ -2967,33 +3072,23 @@ def generate_docker_compose(config: TechStackConfig) -> str:
 
     # Messaging service
     if config.messaging.value == "kafka":
-        messaging_service = """  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  kafka:
+        messaging_service = """  kafka:
     image: confluentinc/cp-kafka:latest
-    depends_on:
-      - zookeeper
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     ports:
       - "9092:9092"
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -3049,9 +3144,285 @@ def generate_docker_compose(config: TechStackConfig) -> str:
             volumes = "\nvolumes:"
         volumes += "\n  redis_data:"
 
+    # API Gateway for microservices deployment
+    gateway_service = ""
+    if config.deployment == DeploymentStyle.MICROSERVICES:
+        gateway_service = """  api-gateway:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+"""
+
     # Modern Docker Compose V2 format (no version field needed)
     return f"""services:
-{db_service}{messaging_service}{volumes}
+{db_service}{messaging_service}{gateway_service}{volumes}
 """
 
 
+def generate_api_gateway_rule(config: TechStackConfig, bcs: list[dict]) -> str:
+    """Generate API Gateway Cursor rule for microservices deployment."""
+    bc_routes = ""
+    for bc in bcs:
+        bc_name = bc.get("name", "Unknown")
+        bc_slug = bc_name.lower().replace(" ", "_")
+        bc_routes += f"    - `/api/{bc_slug}/**` → `{bc_slug}-service`\n"
+
+    # Framework-specific gateway recommendation
+    if config.framework in [Framework.SPRING_BOOT, Framework.SPRING_WEBFLUX]:
+        gateway_rec = "Spring Cloud Gateway (recommended for Spring ecosystem)"
+        gateway_dep = "org.springframework.cloud:spring-cloud-starter-gateway"
+        gateway_alt = "Alternatively: nginx, Kong, or Traefik"
+    elif config.framework in [Framework.NESTJS, Framework.EXPRESS]:
+        gateway_rec = "nginx or Kong (recommended for Node.js ecosystem)"
+        gateway_dep = "npm: http-proxy-middleware (for custom Node.js gateway)"
+        gateway_alt = "Alternatively: Traefik, or custom NestJS gateway module"
+    elif config.framework == Framework.FASTAPI:
+        gateway_rec = "nginx or Traefik (recommended for Python ecosystem)"
+        gateway_dep = "pip: fastapi-gateway (for custom Python gateway)"
+        gateway_alt = "Alternatively: Kong, or custom FastAPI reverse proxy"
+    else:  # Go frameworks
+        gateway_rec = "nginx or Traefik (recommended for Go ecosystem)"
+        gateway_dep = "Go: net/http/httputil ReverseProxy (for custom gateway)"
+        gateway_alt = "Alternatively: Kong, or custom Go reverse proxy"
+
+    return f"""---
+alwaysApply: true
+description: API Gateway routing, CORS, and service discovery for microservices architecture
+---
+
+# API Gateway Configuration
+
+> **Always Applied**: API Gateway is required for microservices deployment.
+> All client requests (frontend, external) must go through the gateway — never call BC services directly.
+
+## Gateway Technology
+
+- **Recommended**: {gateway_rec}
+- **Dependency**: `{gateway_dep}`
+- {gateway_alt}
+
+## Service Routing
+
+All BC services are routed through the API gateway:
+
+{bc_routes}
+
+### Routing Rules
+
+- Each Bounded Context runs as an independent service with its own port
+- The gateway routes requests based on the URL path prefix (`/api/{{bc_name}}/`)
+- **No direct service-to-service HTTP calls** — use {config.messaging.value} for inter-BC communication
+
+## CORS Configuration
+
+```
+Allowed Origins: ${{CORS_ALLOWED_ORIGINS:-http://localhost:3000}}
+Allowed Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS
+Allowed Headers: Content-Type, Authorization, X-Request-ID
+Max Age: 3600
+```
+
+- Configure CORS at the gateway level only — individual BC services should NOT set CORS headers
+- In development, allow `localhost:3000` (frontend dev server)
+- In production, restrict to the actual frontend domain
+
+## Rate Limiting
+
+- **Global**: 1000 requests/minute per IP
+- **Per-endpoint**: Configure based on business requirements
+- Return `429 Too Many Requests` with `Retry-After` header
+
+## Health Check Aggregation
+
+The gateway should expose a unified health endpoint:
+
+- **`GET /health`** — aggregated health of all BC services
+- Check each downstream service health endpoint (`/actuator/health`, `/health`, etc.)
+- Return `200 OK` only if all critical services are healthy
+- Return `503 Service Unavailable` with details of unhealthy services
+
+## Service Discovery
+
+- **Docker Compose (dev)**: Use Docker DNS — service names resolve to container IPs (e.g., `http://{{bc_slug}}-service:8080`)
+- **Kubernetes (prod)**: Use Kubernetes DNS — `{{bc_slug}}-service.{{namespace}}.svc.cluster.local`
+- **Consul/Eureka**: Register each BC service at startup, gateway queries registry for routing
+
+## Gateway Implementation Checklist
+
+- [ ] Set up API Gateway service (nginx, Spring Cloud Gateway, etc.)
+- [ ] Configure routing for all BC services
+- [ ] Enable CORS for frontend origin
+- [ ] Add health check aggregation endpoint
+- [ ] Configure rate limiting
+- [ ] Add request logging and tracing (X-Request-ID propagation)
+- [ ] Set up SSL/TLS termination (production)
+- [ ] Configure timeout and circuit breaker for downstream services
+
+## nginx.conf Template (for nginx gateway)
+
+```nginx
+upstream {{bc_slug}}-service {{
+    server {{bc_slug}}-service:8080;
+}}
+
+server {{
+    listen 80;
+
+    # Health check
+    location /health {{
+        access_log off;
+        return 200 'OK';
+    }}
+
+    # BC routing
+{chr(10).join(f'    location /api/{bc.get("name", "").lower().replace(" ", "_")}/ {{{chr(10)}        proxy_pass http://{bc.get("name", "").lower().replace(" ", "_")}-service;{chr(10)}    }}' for bc in bcs)}
+
+    # CORS headers
+    add_header Access-Control-Allow-Origin ${{CORS_ORIGIN}} always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Request-ID" always;
+}}
+```
+
+## Related Rules
+
+- **DDD Principles**: `@ddd-principles` — BC isolation and boundaries
+- **Event Storming Implementation**: `@eventstorming-implementation` — Cross-BC communication via events
+- **Tech Stack Rules**: `@{config.framework.value}` — Framework-specific implementation guidelines
+"""
+
+
+def generate_claude_skill_api_gateway(config: TechStackConfig, bcs: list[dict]) -> str:
+    """Generate API Gateway Claude skill for microservices deployment."""
+    bc_routes = ""
+    for bc in bcs:
+        bc_name = bc.get("name", "Unknown")
+        bc_slug = bc_name.lower().replace(" ", "_")
+        bc_routes += f"    - `/api/{bc_slug}/**` → `{bc_slug}-service`\n"
+
+    # Framework-specific gateway recommendation
+    if config.framework in [Framework.SPRING_BOOT, Framework.SPRING_WEBFLUX]:
+        gateway_rec = "Spring Cloud Gateway (recommended for Spring ecosystem)"
+        gateway_dep = "org.springframework.cloud:spring-cloud-starter-gateway"
+        gateway_alt = "Alternatively: nginx, Kong, or Traefik"
+    elif config.framework in [Framework.NESTJS, Framework.EXPRESS]:
+        gateway_rec = "nginx or Kong (recommended for Node.js ecosystem)"
+        gateway_dep = "npm: http-proxy-middleware (for custom Node.js gateway)"
+        gateway_alt = "Alternatively: Traefik, or custom NestJS gateway module"
+    elif config.framework == Framework.FASTAPI:
+        gateway_rec = "nginx or Traefik (recommended for Python ecosystem)"
+        gateway_dep = "pip: fastapi-gateway (for custom Python gateway)"
+        gateway_alt = "Alternatively: Kong, or custom FastAPI reverse proxy"
+    else:  # Go frameworks
+        gateway_rec = "nginx or Traefik (recommended for Go ecosystem)"
+        gateway_dep = "Go: net/http/httputil ReverseProxy (for custom gateway)"
+        gateway_alt = "Alternatively: Kong, or custom Go reverse proxy"
+
+    return f"""# API Gateway Configuration
+
+> **Always Reference**: API Gateway is required for microservices deployment.
+> All client requests (frontend, external) must go through the gateway — never call BC services directly.
+> Reference this skill file (`.claude/skills/api-gateway.md`) when implementing the gateway or service routing.
+
+## Gateway Technology
+
+- **Recommended**: {gateway_rec}
+- **Dependency**: `{gateway_dep}`
+- {gateway_alt}
+
+## Service Routing
+
+All BC services are routed through the API gateway:
+
+{bc_routes}
+
+### Routing Rules
+
+- Each Bounded Context runs as an independent service with its own port
+- The gateway routes requests based on the URL path prefix (`/api/{{bc_name}}/`)
+- **No direct service-to-service HTTP calls** — use {config.messaging.value} for inter-BC communication
+
+## CORS Configuration
+
+```
+Allowed Origins: ${{CORS_ALLOWED_ORIGINS:-http://localhost:3000}}
+Allowed Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS
+Allowed Headers: Content-Type, Authorization, X-Request-ID
+Max Age: 3600
+```
+
+- Configure CORS at the gateway level only — individual BC services should NOT set CORS headers
+- In development, allow `localhost:3000` (frontend dev server)
+- In production, restrict to the actual frontend domain
+
+## Rate Limiting
+
+- **Global**: 1000 requests/minute per IP
+- **Per-endpoint**: Configure based on business requirements
+- Return `429 Too Many Requests` with `Retry-After` header
+
+## Health Check Aggregation
+
+The gateway should expose a unified health endpoint:
+
+- **`GET /health`** — aggregated health of all BC services
+- Check each downstream service health endpoint (`/actuator/health`, `/health`, etc.)
+- Return `200 OK` only if all critical services are healthy
+- Return `503 Service Unavailable` with details of unhealthy services
+
+## Service Discovery
+
+- **Docker Compose (dev)**: Use Docker DNS — service names resolve to container IPs (e.g., `http://{{bc_slug}}-service:8080`)
+- **Kubernetes (prod)**: Use Kubernetes DNS — `{{bc_slug}}-service.{{namespace}}.svc.cluster.local`
+- **Consul/Eureka**: Register each BC service at startup, gateway queries registry for routing
+
+## Gateway Implementation Checklist
+
+- [ ] Set up API Gateway service (nginx, Spring Cloud Gateway, etc.)
+- [ ] Configure routing for all BC services
+- [ ] Enable CORS for frontend origin
+- [ ] Add health check aggregation endpoint
+- [ ] Configure rate limiting
+- [ ] Add request logging and tracing (X-Request-ID propagation)
+- [ ] Set up SSL/TLS termination (production)
+- [ ] Configure timeout and circuit breaker for downstream services
+
+## nginx.conf Template (for nginx gateway)
+
+```nginx
+upstream {{bc_slug}}-service {{
+    server {{bc_slug}}-service:8080;
+}}
+
+server {{
+    listen 80;
+
+    # Health check
+    location /health {{
+        access_log off;
+        return 200 'OK';
+    }}
+
+    # BC routing
+{chr(10).join(f'    location /api/{bc.get("name", "").lower().replace(" ", "_")}/ {{{chr(10)}        proxy_pass http://{bc.get("name", "").lower().replace(" ", "_")}-service;{chr(10)}    }}' for bc in bcs)}
+
+    # CORS headers
+    add_header Access-Control-Allow-Origin ${{CORS_ORIGIN}} always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Request-ID" always;
+}}
+```
+
+## Related Skills
+
+- **DDD Principles**: `.claude/skills/ddd-principles.md` — BC isolation and boundaries
+- **Event Storming Implementation**: `.claude/skills/eventstorming-implementation.md` — Cross-BC communication via events
+- **Tech Stack Skills**: `.claude/skills/{config.framework.value}.md` — Framework-specific implementation guidelines
+"""

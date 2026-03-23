@@ -702,7 +702,7 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
     This phase runs after policies are created and before UI generation.
     """
     yield ProgressEvent(
-        phase=IngestionPhase.IDENTIFYING_POLICIES,  # Keep same phase for UI continuity
+        phase=IngestionPhase.GENERATING_GWT,  # Keep same phase for UI continuity
         message="GWT (Given/When/Then) 생성 중...",
         progress=91,
     )
@@ -888,7 +888,7 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
                 # Progress update
                 progress = 91 + int((95 - 91) * (chunk_idx + 1) / max(total_chunks, 1))
                 yield ProgressEvent(
-                    phase=IngestionPhase.IDENTIFYING_POLICIES,
+                    phase=IngestionPhase.GENERATING_GWT,
                     message=f"GWT 생성 중: 청크 {chunk_idx+1}/{total_chunks} 완료",
                     progress=min(progress, 95),
                 )
@@ -1428,7 +1428,7 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
     )
     
     yield ProgressEvent(
-        phase=IngestionPhase.IDENTIFYING_POLICIES,
+        phase=IngestionPhase.GENERATING_GWT,
         message=f"GWT 생성 완료 ({total_gwt_created}개 구성요소)",
         progress=92,
     )

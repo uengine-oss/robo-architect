@@ -10,11 +10,13 @@ from fastapi.responses import StreamingResponse
 from starlette.requests import Request
 
 from api.features.prd_generation.prd_api_contracts import PRDGenerationRequest
-from api.features.prd_generation.prd_api_contracts import AIAssistant
+from api.features.prd_generation.prd_api_contracts import AIAssistant, DeploymentStyle
 from api.features.prd_generation.prd_artifact_generation import (
     generate_agent_config,
+    generate_api_gateway_rule,
     generate_bc_spec,
     generate_claude_md,
+    generate_claude_skill_api_gateway,
     generate_claude_skill_ddd_principles,
     generate_claude_skill_eventstorming_implementation,
     generate_claude_skill_frontend,
@@ -73,6 +75,8 @@ async def generate_prd(request: PRDGenerationRequest, http_request: Request):
         if config.include_frontend and config.frontend_framework:
             files_to_generate.append(f".claude/skills/{config.frontend_framework.value}.md")
             files_to_generate.append("Frontend-PRD.md")
+        if config.deployment == DeploymentStyle.MICROSERVICES:
+            files_to_generate.append(".claude/skills/api-gateway.md")
     # Add tech stack specific rule (not BC-specific)
     if config.ai_assistant == AIAssistant.CURSOR:
         # Event Storming 기반 세분화된 rules 추가
@@ -87,7 +91,9 @@ async def generate_prd(request: PRDGenerationRequest, http_request: Request):
             frontend_rule_name = f"{config.frontend_framework.value}.mdc"
             files_to_generate.append(f".cursor/rules/{frontend_rule_name}")
             files_to_generate.append("Frontend-PRD.md")
-    
+        if config.deployment == DeploymentStyle.MICROSERVICES:
+            files_to_generate.append(".cursor/rules/api-gateway.mdc")
+
     for bc in bcs:
         bc_name = (bc.get("name", "unknown") or "unknown").lower().replace(" ", "_")
         files_to_generate.append(f"specs/{bc_name}_spec.md")
@@ -159,6 +165,8 @@ async def download_prd_zip(request: PRDGenerationRequest, http_request: Request)
                 frontend_prd = generate_frontend_prd(bcs, config)
                 if frontend_prd:
                     zip_file.writestr("Frontend-PRD.md", frontend_prd)
+            if config.deployment == DeploymentStyle.MICROSERVICES:
+                zip_file.writestr(".claude/skills/api-gateway.md", generate_claude_skill_api_gateway(config, bcs))
         zip_file.writestr("PRD.md", generate_main_prd(bcs, config))
         zip_file.writestr(".cursorrules", generate_cursor_rules(config))
 
@@ -181,7 +189,9 @@ async def download_prd_zip(request: PRDGenerationRequest, http_request: Request)
                 frontend_prd = generate_frontend_prd(bcs, config)
                 if frontend_prd:
                     zip_file.writestr("Frontend-PRD.md", frontend_prd)
-        
+            if config.deployment == DeploymentStyle.MICROSERVICES:
+                zip_file.writestr(".cursor/rules/api-gateway.mdc", generate_api_gateway_rule(config, bcs))
+
         for bc in bcs:
             bc_name = (bc.get("name", "unknown") or "unknown").lower().replace(" ", "_")
             zip_file.writestr(f"specs/{bc_name}_spec.md", generate_bc_spec(bc, config))

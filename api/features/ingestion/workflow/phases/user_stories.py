@@ -37,6 +37,34 @@ _EJB_LIFECYCLE_ACTION_PATTERNS = (
 )
 
 
+_IMPLEMENTATION_DETAIL_PATTERNS = (
+    "generate id", "generate repayment id", "record timestamp",
+    "calculate total", "set status to", "convert dto", "map entity",
+    "validate field", "initialize variable", "parse parameter",
+    "format output", "build response", "construct object",
+    "assign sequence", "increment counter",
+)
+
+_ERROR_HANDLING_PATTERNS = (
+    "rollback transaction", "display exception", "throw exception",
+    "handle error", "log error", "catch exception",
+    "display error message", "return error code", "show error",
+    "exception message", "error handling",
+)
+
+
+def _is_low_quality_us(action: str, role: str) -> bool:
+    """Check if a User Story represents an implementation detail or error handling step."""
+    action_lower = action.lower()
+    for pattern in _IMPLEMENTATION_DETAIL_PATTERNS:
+        if pattern in action_lower:
+            return True
+    for pattern in _ERROR_HANDLING_PATTERNS:
+        if pattern in action_lower:
+            return True
+    return False
+
+
 def _is_ejb_lifecycle_us(action: str, role: str) -> bool:
     """Check if a User Story represents an EJB lifecycle operation."""
     action_lower = action.lower()
@@ -62,6 +90,7 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_leg
     seen = set()
     out = []
     ejb_filtered = 0
+    low_quality_filtered = 0
 
     for us in stories:
         role = (getattr(us, "role", "") or "").strip()
@@ -74,6 +103,11 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_leg
         # EJB lifecycle US filtering for legacy reports
         if is_legacy and _is_ejb_lifecycle_us(action, role):
             ejb_filtered += 1
+            continue
+
+        # Low quality US filtering for legacy reports (implementation details, error handling)
+        if is_legacy and _is_low_quality_us(action, role):
+            low_quality_filtered += 1
             continue
 
         key = dedup_key(role, action, benefit)
@@ -99,7 +133,7 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_leg
     # 진단을 위한 표준 출력 (dedup 분석)
     dedup_info = (
         f"[DEDUP DEBUG] raw={len(stories)}, dedup={len(out)}, "
-        f"ejb_filtered={ejb_filtered}, "
+        f"ejb_filtered={ejb_filtered}, low_quality_filtered={low_quality_filtered}, "
         f"ratio={round(len(out) / max(len(stories), 1), 4):.2%}"
     )
     print(dedup_info)
@@ -113,6 +147,7 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_leg
             "raw_story_count": len(stories),
             "dedup_story_count": len(out),
             "ejb_filtered_count": ejb_filtered,
+            "low_quality_filtered_count": low_quality_filtered,
             "dedup_ratio": round(len(out) / max(len(stories), 1), 4),
         },
     )

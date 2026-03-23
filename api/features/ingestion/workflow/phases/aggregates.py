@@ -237,7 +237,17 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         if not existing_aggregates_text:
             existing_aggregates_text = "  (No aggregates have been extracted from other Bounded Contexts yet.)"
         else:
-            existing_aggregates_text = "The following Aggregates already exist in other Bounded Contexts and can be referenced:\n" + existing_aggregates_text
+            existing_aggregates_text = (
+                "The following Aggregates already exist in other Bounded Contexts and can be referenced:\n"
+                + existing_aggregates_text
+                + "\nCRITICAL — CROSS-BC DEDUPLICATION:\n"
+                "Do NOT create an Aggregate that represents the SAME domain concept as one listed above.\n"
+                "If this BC has User Stories related to a domain concept already covered by an existing Aggregate "
+                "in another BC, do NOT duplicate it. Instead, those User Stories should be handled via "
+                "cross-BC Policies or references (Value Objects with foreign keys).\n"
+                "Example: If 'Delinquency' already exists in another BC, do NOT create 'DelinquencyCase' "
+                "or 'DelinquencyRecord' here — they are the same domain concept."
+            )
 
         prompt = EXTRACT_AGGREGATES_PROMPT.format(
             bc_name=bc_name,
@@ -394,6 +404,119 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                             "object": {"id": created_agg.get("id"), "name": agg_name, "type": "Aggregate", "parentId": bc_id},
                         },
                     )
+
+    # ── Cross-BC Aggregate 중복 병합 (Hard Defense) ─────────────────────
+    # 동일 이름의 Aggregate가 여러 BC에 존재하면,
+    # US가 더 많이 연결된 BC의 것을 유지하고, 나머지의 US를 유지 쪽으로 이관.
+    # 이관 후 중복 Aggregate와 하위 노드를 Neo4j에서 삭제.
+    agg_name_to_bcs: dict[str, list[tuple[str, dict]]] = {}  # agg_name → [(bc_id, agg_dict)]
+    for bc_id, aggs in all_aggregates.items():
+        for agg in aggs:
+            agg_name = agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", "")
+            if agg_name:
+                if agg_name not in agg_name_to_bcs:
+                    agg_name_to_bcs[agg_name] = []
+                agg_name_to_bcs[agg_name].append((bc_id, agg))
+
+    merged_aggs: list[str] = []
+    for agg_name, bc_entries in agg_name_to_bcs.items():
+        if len(bc_entries) <= 1:
+            continue
+        # US 수 기준 정렬: 가장 많은 US를 가진 BC의 Aggregate를 유지
+        def _agg_us_count(entry: tuple[str, dict]) -> int:
+            _bc_id, agg = entry
+            us_ids = agg.get("user_story_ids") if isinstance(agg, dict) else getattr(agg, "user_story_ids", None)
+            return len(us_ids) if us_ids else 0
+
+        sorted_entries = sorted(bc_entries, key=_agg_us_count, reverse=True)
+        keep_bc_id, keep_agg = sorted_entries[0]
+        keep_agg_id = keep_agg.get("id") if isinstance(keep_agg, dict) else getattr(keep_agg, "id", None)
+
+        for bc_id, agg in sorted_entries[1:]:
+            agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+            if not agg_id:
+                continue
+
+            # 1) 흡수 대상의 US를 유지 Aggregate로 이관 (Neo4j)
+            try:
+                with ctx.client.session() as merge_session:
+                    # 흡수 Aggregate에 연결된 US → 유지 Aggregate로 관계 이동
+                    merge_session.run(
+                        """
+                        MATCH (us:UserStory)-[r:IMPLEMENTS]->(old_agg:Aggregate {id: $old_id})
+                        MATCH (new_agg:Aggregate {id: $new_id})
+                        MERGE (us)-[:IMPLEMENTS]->(new_agg)
+                        DELETE r
+                        """,
+                        old_id=agg_id,
+                        new_id=keep_agg_id,
+                    )
+                    # 흡수 Aggregate + 하위 Command/Event/Property 삭제
+                    merge_session.run(
+                        """
+                        MATCH (agg:Aggregate {id: $id})
+                        OPTIONAL MATCH (agg)-[:HAS_COMMAND]->(cmd:Command)
+                        OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
+                        OPTIONAL MATCH (cmd)-[:HAS_PROPERTY]->(cmd_prop:Property)
+                        OPTIONAL MATCH (evt)-[:HAS_PROPERTY]->(evt_prop:Property)
+                        OPTIONAL MATCH (agg)-[:HAS_PROPERTY]->(agg_prop:Property)
+                        DETACH DELETE evt_prop, cmd_prop, agg_prop, evt, cmd, agg
+                        """,
+                        id=agg_id,
+                    )
+            except Exception as e:
+                SmartLogger.log(
+                    "WARN",
+                    f"Failed to merge duplicate Aggregate {agg_name} (id={agg_id}): {e}",
+                    category="ingestion.workflow.aggregates.dedup_merge_error",
+                    params={"session_id": ctx.session.id, "agg_name": agg_name, "agg_id": agg_id, "error": str(e)},
+                )
+                continue
+
+            # 2) ctx에서도 흡수 대상의 US를 유지 쪽에 합산
+            absorbed_us_ids = agg.get("user_story_ids") if isinstance(agg, dict) else getattr(agg, "user_story_ids", None)
+            if absorbed_us_ids and keep_agg:
+                keep_us_ids = keep_agg.get("user_story_ids") if isinstance(keep_agg, dict) else getattr(keep_agg, "user_story_ids", None)
+                if keep_us_ids is not None:
+                    merged_ids = list(set(keep_us_ids) | set(absorbed_us_ids))
+                    if isinstance(keep_agg, dict):
+                        keep_agg["user_story_ids"] = merged_ids
+                    else:
+                        try:
+                            setattr(keep_agg, "user_story_ids", merged_ids)
+                        except Exception:
+                            pass
+
+            # 3) ctx에서 흡수 Aggregate 제거
+            if bc_id in all_aggregates:
+                all_aggregates[bc_id] = [
+                    a for a in all_aggregates[bc_id]
+                    if (a.get("id") if isinstance(a, dict) else getattr(a, "id", None)) != agg_id
+                ]
+            merged_aggs.append(f"{agg_name}(bc={bc_id} → bc={keep_bc_id})")
+
+            SmartLogger.log(
+                "INFO",
+                f"Merged duplicate Aggregate: {agg_name} from bc={bc_id} into bc={keep_bc_id} "
+                f"(US transferred: {len(absorbed_us_ids) if absorbed_us_ids else 0})",
+                category="ingestion.workflow.aggregates.cross_bc_merge",
+                params={
+                    "session_id": ctx.session.id,
+                    "agg_name": agg_name,
+                    "absorbed_bc_id": bc_id,
+                    "kept_bc_id": keep_bc_id,
+                    "transferred_us_count": len(absorbed_us_ids) if absorbed_us_ids else 0,
+                },
+            )
+
+    if merged_aggs:
+        SmartLogger.log(
+            "INFO",
+            f"Cross-BC Aggregate merge: merged {len(merged_aggs)} duplicates",
+            category="ingestion.workflow.aggregates.cross_bc_merge_summary",
+            params={"session_id": ctx.session.id, "merged": merged_aggs},
+        )
+    # ── End Cross-BC Aggregate 중복 병합 ──────────────────────────────
 
     ctx.aggregates_by_bc = all_aggregates
 

@@ -316,3 +316,27 @@ def calculate_chunk_progress(
     current_progress = phase_start + (processing_range * chunk_progress)
     
     return int(current_progress)
+
+
+# ── Cross-chunk context helpers ──────────────────────────────────────────
+
+# Maximum number of accumulated names to inject into the next chunk's prompt.
+# Beyond this limit, only the count is shown to avoid bloating the context window.
+ACCUMULATED_NAMES_MAX = 50
+
+
+def format_accumulated_names(names: list[str], max_items: int = ACCUMULATED_NAMES_MAX) -> str:
+    """Format a list of accumulated element names for prompt injection.
+
+    If the list exceeds *max_items*, only the first *max_items* are shown
+    with a trailing note (e.g., "... and 23 more").  This prevents the
+    accumulated context from overwhelming the main prompt on very large inputs.
+
+    Returns an empty string if *names* is empty.
+    """
+    if not names:
+        return ""
+    if len(names) <= max_items:
+        return ", ".join(names)
+    shown = ", ".join(names[:max_items])
+    return f"{shown} ... and {len(names) - max_items} more"

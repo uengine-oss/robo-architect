@@ -24,6 +24,26 @@ const isConnecting = ref(true)
 const connectionError = ref('')
 const workdirDisplay = ref('')
 
+// Write batching — collect incoming data and flush via requestAnimationFrame
+// to avoid excessive xterm.js render cycles during heavy output.
+let writeBuf = ''
+let writeRaf = null
+
+function flushTerminalWrites() {
+  writeRaf = null
+  if (writeBuf && terminal) {
+    terminal.write(writeBuf)
+    writeBuf = ''
+  }
+}
+
+function queueTerminalWrite(data) {
+  writeBuf += data
+  if (!writeRaf) {
+    writeRaf = requestAnimationFrame(flushTerminalWrites)
+  }
+}
+
 // Folder picker state
 const showFolderPicker = ref(false)
 const folderPickerData = ref({ current_path: '', parent_path: null, directories: [] })
@@ -145,7 +165,7 @@ function connect(workdir) {
 
   ws.onmessage = (event) => {
     if (terminal) {
-      terminal.write(event.data)
+      queueTerminalWrite(event.data)
     }
   }
 
@@ -229,6 +249,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (writeRaf) {
+    cancelAnimationFrame(writeRaf)
+    writeRaf = null
+  }
   if (resizeObserver) {
     resizeObserver.disconnect()
   }

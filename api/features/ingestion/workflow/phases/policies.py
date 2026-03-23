@@ -247,7 +247,8 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             )
             
             chunk_results = []
-            
+            _accumulated_policy_names: list[str] = []
+
             for i, (chunk_events_text, start_char, end_char) in enumerate(chunks):
                 # Check cancellation before processing chunk
                 if getattr(ctx.session, "is_cancelled", False):
@@ -280,6 +281,16 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     commands_by_bc=commands_text,
                     bounded_contexts=bc_text,
                 ) + display_name_tail + _report_context_tail
+
+                # 이전 청크에서 식별된 Policy 이름 전달 — 중복 생성 방지
+                if _accumulated_policy_names:
+                    from api.features.ingestion.workflow.utils.chunking import format_accumulated_names
+                    chunk_prompt += (
+                        "\n\n## ALREADY IDENTIFIED POLICIES (from previous chunks)\n"
+                        "The following Policies have already been identified. "
+                        "Do NOT create duplicate Policies with the same or very similar trigger_event → invoke_command mapping.\n"
+                        "Already identified: " + format_accumulated_names(_accumulated_policy_names)
+                    )
 
                 structured_llm = ctx.llm.with_structured_output(PolicyList)
                 
@@ -399,7 +410,13 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                 
                 policies = getattr(pol_response, "policies", []) or []
                 chunk_results.append(policies)
-                
+
+                # 이 청크에서 식별된 Policy 이름을 누적 (다음 청크 전달용)
+                for pol in policies:
+                    pol_name = getattr(pol, "name", "")
+                    if pol_name and pol_name not in _accumulated_policy_names:
+                        _accumulated_policy_names.append(pol_name)
+
                 # 청크 처리 완료
                 chunk_complete_progress = calculate_chunk_progress(
                     PHASE_START + 2,
@@ -526,7 +543,145 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
         
         # policies는 위에서 ctx.policies에 저장됨
         policies = ctx.policies
-        
+
+        # ── Self-loop 검증: trigger_event와 invoke_command가 같은 Event를 발생시키는 Policy 제거 ──
+        # Event→Command 매핑: 어떤 Command가 어떤 Event를 emit하는지 수집
+        command_to_events: dict[str, set[str]] = {}
+        for agg_id, events in (ctx.events_by_agg or {}).items():
+            for evt in events:
+                evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
+                emitting_cmd = evt.get("emittingCommandName") if isinstance(evt, dict) else getattr(evt, "emitting_command_name", None)
+                if not emitting_cmd:
+                    emitting_cmd = evt.get("emitting_command_name") if isinstance(evt, dict) else None
+                if emitting_cmd and evt_name:
+                    if emitting_cmd not in command_to_events:
+                        command_to_events[emitting_cmd] = set()
+                    command_to_events[emitting_cmd].add(evt_name)
+
+        # 또한 Neo4j의 Command→EMITS→Event 관계에서도 수집
+        for agg_id, cmds in (ctx.commands_by_agg or {}).items():
+            for cmd in cmds:
+                cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                cmd_events = cmd.get("events") if isinstance(cmd, dict) else getattr(cmd, "events", None)
+                if cmd_events and cmd_name:
+                    if cmd_name not in command_to_events:
+                        command_to_events[cmd_name] = set()
+                    for e in cmd_events:
+                        e_name = e.get("name") if isinstance(e, dict) else getattr(e, "name", "") if hasattr(e, "name") else str(e)
+                        if e_name:
+                            command_to_events[cmd_name].add(e_name)
+
+        valid_policies = []
+        removed_self_loops = []
+        for pol in policies:
+            trigger_event = getattr(pol, "trigger_event", "") or ""
+            invoke_command = getattr(pol, "invoke_command", "") or ""
+            # invoke_command가 emit하는 Event 목록에 trigger_event가 포함되면 self-loop
+            emitted = command_to_events.get(invoke_command, set())
+            if trigger_event and trigger_event in emitted:
+                removed_self_loops.append(getattr(pol, "name", "unknown"))
+                SmartLogger.log(
+                    "WARN",
+                    f"Policy self-loop removed: {getattr(pol, 'name', '?')} "
+                    f"({trigger_event} → {invoke_command} → emits {trigger_event})",
+                    category="ingestion.workflow.policy.self_loop_removed",
+                    params={
+                        "session_id": ctx.session.id,
+                        "policy_name": getattr(pol, "name", "unknown"),
+                        "trigger_event": trigger_event,
+                        "invoke_command": invoke_command,
+                        "emitted_events": list(emitted),
+                    },
+                )
+            else:
+                valid_policies.append(pol)
+
+        if removed_self_loops:
+            SmartLogger.log(
+                "INFO",
+                f"Removed {len(removed_self_loops)} self-loop Policies: {', '.join(removed_self_loops)}",
+                category="ingestion.workflow.policy.self_loop_summary",
+                params={"session_id": ctx.session.id, "removed": removed_self_loops},
+            )
+            policies = valid_policies
+            ctx.policies = policies
+
+        # ── Indirect cycle detection (2-hop) ─────────────────────────────
+        # Event→Policy→Command→Event 그래프를 구축하고 2-hop 순환을 탐지.
+        # A→B→A 순환에서 B 쪽 Policy를 제거 (A 쪽을 유지하여 한 방향만 남김).
+        # 먼저 Policy별 trigger→result event 매핑 구축
+        pol_trigger_to_results: dict[str, tuple[str, set[str]]] = {}  # pol_name → (trigger_event, {result_events})
+        for pol in policies:
+            pol_name = getattr(pol, "name", "")
+            trigger = getattr(pol, "trigger_event", "") or ""
+            invoke_cmd = getattr(pol, "invoke_command", "") or ""
+            result_events = command_to_events.get(invoke_cmd, set())
+            if trigger and pol_name:
+                pol_trigger_to_results[pol_name] = (trigger, result_events)
+
+        # 2-hop 순환 탐지: E1 → P1 → C1 → E2 → P2 → C2 → E1
+        cycle_policies_to_remove: set[str] = set()
+        for pol1_name, (trigger1, results1) in pol_trigger_to_results.items():
+            for mid_event in results1:
+                # mid_event를 trigger로 하는 다른 Policy 찾기
+                for pol2_name, (trigger2, results2) in pol_trigger_to_results.items():
+                    if pol2_name == pol1_name:
+                        continue
+                    if trigger2 == mid_event and trigger1 in results2:
+                        # 순환 발견: trigger1 → pol1 → mid_event → pol2 → trigger1
+                        # pol2를 제거 (역방향 Policy)
+                        cycle_policies_to_remove.add(pol2_name)
+                        SmartLogger.log(
+                            "WARN",
+                            f"Policy indirect cycle: {trigger1} → {pol1_name} → {mid_event} → {pol2_name} → {trigger1}. Removing {pol2_name}",
+                            category="ingestion.workflow.policy.indirect_cycle",
+                            params={
+                                "session_id": ctx.session.id,
+                                "pol1": pol1_name, "pol2": pol2_name,
+                                "event1": trigger1, "mid_event": mid_event,
+                            },
+                        )
+
+        if cycle_policies_to_remove:
+            policies = [p for p in policies if getattr(p, "name", "") not in cycle_policies_to_remove]
+            ctx.policies = policies
+            SmartLogger.log(
+                "INFO",
+                f"Removed {len(cycle_policies_to_remove)} indirect-cycle Policies: {', '.join(cycle_policies_to_remove)}",
+                category="ingestion.workflow.policy.indirect_cycle_summary",
+                params={"session_id": ctx.session.id, "removed": list(cycle_policies_to_remove)},
+            )
+
+        # ── Duplicate Policy 제거 (동일 trigger→command 매핑) ────────────
+        seen_mappings: dict[tuple[str, str], str] = {}  # (trigger, invoke_cmd) → first policy name
+        dup_policy_names: list[str] = []
+        for pol in policies:
+            trigger = getattr(pol, "trigger_event", "") or ""
+            invoke_cmd = getattr(pol, "invoke_command", "") or ""
+            mapping_key = (trigger, invoke_cmd)
+            if mapping_key in seen_mappings:
+                dup_policy_names.append(getattr(pol, "name", ""))
+                SmartLogger.log(
+                    "WARN",
+                    f"Duplicate Policy removed: {getattr(pol, 'name', '?')} "
+                    f"(same mapping as {seen_mappings[mapping_key]}: {trigger} → {invoke_cmd})",
+                    category="ingestion.workflow.policy.duplicate_removed",
+                    params={"session_id": ctx.session.id, "removed": getattr(pol, "name", ""), "kept": seen_mappings[mapping_key]},
+                )
+            else:
+                seen_mappings[mapping_key] = getattr(pol, "name", "")
+
+        if dup_policy_names:
+            policies = [p for p in policies if getattr(p, "name", "") not in dup_policy_names]
+            ctx.policies = policies
+            SmartLogger.log(
+                "INFO",
+                f"Removed {len(dup_policy_names)} duplicate Policies: {', '.join(dup_policy_names)}",
+                category="ingestion.workflow.policy.duplicate_summary",
+                params={"session_id": ctx.session.id, "removed": dup_policy_names},
+            )
+        # ── End Policy 후처리 검증 ────────────────────────────────────────
+
         # Policy 생성 단계 시작 - 병렬 처리
         if policies:
             yield ProgressEvent(

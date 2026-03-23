@@ -449,7 +449,9 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
         )
         
         chunk_results = []
-        
+        # 이전 청크까지 누적된 BC 목록 — 다음 청크에 전달하여 중복 BC 생성 방지
+        _accumulated_bcs: list[dict[str, str]] = []  # [{name, description, user_story_ids_summary}]
+
         for i, story_chunk in enumerate(story_chunks):
             # Check cancellation before processing chunk
             if getattr(ctx.session, "is_cancelled", False):
@@ -460,7 +462,7 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                     data={"error": "Cancelled by user", "cancelled": True},
                 )
                 return
-            
+
             # 청크 처리 시작
             chunk_progress = calculate_chunk_progress(
                 PHASE_START + 2,
@@ -474,7 +476,7 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                 message=f"청크 {i+1}/{total_chunks} 처리 중... ({len(story_chunk)}개 User Stories)",
                 progress=chunk_progress
             )
-            
+
             # 청크별 BC 추출
             stories_text = "\n".join([us_to_text(us) for us in story_chunk])
             # 청크 내 모든 User Story ID 목록을 프롬프트에 포함하여 검증 가능하도록
@@ -488,6 +490,30 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                 else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
             )
             prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
+
+            # 이전 청크에서 이미 식별된 BC 목록 전달 — 동일 도메인 US는 기존 BC에 할당 유도
+            if _accumulated_bcs:
+                from api.features.ingestion.workflow.utils.chunking import ACCUMULATED_NAMES_MAX
+                shown_bcs = _accumulated_bcs[:ACCUMULATED_NAMES_MAX]
+                existing_bc_lines = []
+                for prev_bc in shown_bcs:
+                    existing_bc_lines.append(
+                        f"- {prev_bc['name']}: {prev_bc['description']} "
+                        f"(assigned: {prev_bc['us_count']} User Stories)"
+                    )
+                if len(_accumulated_bcs) > ACCUMULATED_NAMES_MAX:
+                    existing_bc_lines.append(
+                        f"... and {len(_accumulated_bcs) - ACCUMULATED_NAMES_MAX} more BCs"
+                    )
+                prompt += (
+                    "\n\n## ALREADY IDENTIFIED BOUNDED CONTEXTS (from previous chunks)\n"
+                    "The following BCs have already been identified from earlier User Stories. "
+                    "If a User Story in THIS chunk belongs to one of these existing BCs, "
+                    "assign it to that BC using the EXACT SAME NAME. "
+                    "Only create a NEW BC if no existing one fits.\n\n"
+                    + "\n".join(existing_bc_lines)
+                )
+
             if ctx.source_report:
                 from api.features.ingestion.workflow.utils.report_context import get_bounded_contexts_context
                 prompt += "\n\n" + get_bounded_contexts_context(ctx.source_report)
@@ -669,7 +695,32 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
                     bcs = fixed_bcs
             
             chunk_results.append(bcs)
-            
+
+            # 이 청크에서 식별된 BC를 누적 목록에 추가 (다음 청크에 전달용)
+            for bc in bcs:
+                bc_name = getattr(bc, "name", "")
+                bc_desc = getattr(bc, "description", "")
+                us_ids = []
+                try:
+                    if hasattr(bc, "model_dump"):
+                        us_ids = bc.model_dump().get("user_story_ids", [])
+                    elif isinstance(bc, dict):
+                        us_ids = bc.get("user_story_ids", [])
+                    else:
+                        us_ids = getattr(bc, "user_story_ids", []) or []
+                except Exception:
+                    us_ids = getattr(bc, "user_story_ids", []) or []
+                # 이미 같은 이름의 BC가 있으면 US 수만 갱신
+                existing = next((b for b in _accumulated_bcs if b["name"] == bc_name), None)
+                if existing:
+                    existing["us_count"] = str(int(existing["us_count"]) + len(us_ids))
+                else:
+                    _accumulated_bcs.append({
+                        "name": bc_name,
+                        "description": bc_desc,
+                        "us_count": str(len(us_ids)),
+                    })
+
             # 청크 처리 완료
             chunk_complete_progress = calculate_chunk_progress(
                 PHASE_START + 2,
@@ -861,7 +912,175 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
 
     # bc_candidates는 위에서 ctx.bounded_contexts에 저장됨
     bc_candidates = ctx.bounded_contexts
-    
+
+    # ── BC 의미적 통합 (Semantic Consolidation) ──────────────────────────
+    # BC 후보가 7개 초과일 때만 실행: LLM에 BC 목록을 전달하여 의미적 유사 그룹 식별 후 병합
+    BC_CONSOLIDATION_THRESHOLD = 7
+    if len(bc_candidates) > BC_CONSOLIDATION_THRESHOLD:
+        from api.features.ingestion.event_storming.state import BCConsolidationResult
+        from api.features.ingestion.event_storming.prompts import CONSOLIDATE_BCS_PROMPT
+
+        # target_bc_count는 강제가 아닌 참고값.
+        # LLM이 BC 목록을 보고 의미적 유사성을 판단하므로 정확한 수치보다는
+        # "현재 수가 많다"는 시그널이 중요.
+        target_bc_count = max(3, len(bc_candidates) // 2)
+
+        # BC 후보 요약 텍스트 생성
+        bc_summary_lines = []
+        for bc in bc_candidates:
+            bc_name = getattr(bc, "name", "unknown")
+            bc_desc = getattr(bc, "description", "")
+            us_ids = []
+            try:
+                if hasattr(bc, "model_dump"):
+                    us_ids = bc.model_dump().get("user_story_ids", [])
+                elif isinstance(bc, dict):
+                    us_ids = bc.get("user_story_ids", [])
+                else:
+                    us_ids = getattr(bc, "user_story_ids", []) or []
+            except Exception:
+                us_ids = getattr(bc, "user_story_ids", []) or []
+            bc_summary_lines.append(f"- {bc_name}: {bc_desc} (User Stories: {len(us_ids)})")
+        bc_candidates_text = "\n".join(bc_summary_lines)
+
+        consolidation_prompt = CONSOLIDATE_BCS_PROMPT.format(
+            bc_candidates=bc_candidates_text,
+            target_bc_count=target_bc_count,
+        )
+
+        yield ProgressEvent(
+            phase=IngestionPhase.IDENTIFYING_BC,
+            message=f"BC 의미적 통합 분석 중... ({len(bc_candidates)}개 → 목표 ~{target_bc_count}개)",
+            progress=PHASE_END - 2,
+        )
+
+        try:
+            consolidation_llm = ctx.llm.with_structured_output(BCConsolidationResult)
+            consolidation_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    consolidation_llm.invoke,
+                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=consolidation_prompt)]
+                ),
+                timeout=120.0,
+            )
+
+            merge_instructions = getattr(consolidation_response, "merge_instructions", []) or []
+
+            if merge_instructions:
+                # BC 이름 → 인덱스 매핑
+                bc_name_to_idx = {getattr(bc, "name", ""): i for i, bc in enumerate(bc_candidates)}
+                absorbed_indices: set[int] = set()
+
+                for instruction in merge_instructions:
+                    keep_name = instruction.keep
+                    absorb_names = instruction.absorb
+
+                    keep_idx = bc_name_to_idx.get(keep_name)
+                    if keep_idx is None:
+                        continue
+
+                    keep_bc = bc_candidates[keep_idx]
+
+                    # 유지할 BC의 user_story_ids 수집
+                    keep_us_ids = set()
+                    try:
+                        if hasattr(keep_bc, "model_dump"):
+                            keep_us_ids = set(keep_bc.model_dump().get("user_story_ids", []))
+                        elif isinstance(keep_bc, dict):
+                            keep_us_ids = set(keep_bc.get("user_story_ids", []))
+                        else:
+                            keep_us_ids = set(getattr(keep_bc, "user_story_ids", []) or [])
+                    except Exception:
+                        keep_us_ids = set(getattr(keep_bc, "user_story_ids", []) or [])
+
+                    for absorb_name in absorb_names:
+                        absorb_idx = bc_name_to_idx.get(absorb_name)
+                        if absorb_idx is None or absorb_idx in absorbed_indices:
+                            continue
+
+                        absorb_bc = bc_candidates[absorb_idx]
+                        # 흡수될 BC의 user_story_ids 수집
+                        absorb_us_ids = []
+                        try:
+                            if hasattr(absorb_bc, "model_dump"):
+                                absorb_us_ids = absorb_bc.model_dump().get("user_story_ids", [])
+                            elif isinstance(absorb_bc, dict):
+                                absorb_us_ids = absorb_bc.get("user_story_ids", [])
+                            else:
+                                absorb_us_ids = getattr(absorb_bc, "user_story_ids", []) or []
+                        except Exception:
+                            absorb_us_ids = getattr(absorb_bc, "user_story_ids", []) or []
+
+                        keep_us_ids.update(absorb_us_ids)
+                        absorbed_indices.add(absorb_idx)
+
+                        SmartLogger.log(
+                            "INFO",
+                            f"BC semantic merge: {absorb_name} → {keep_name} ({len(absorb_us_ids)} US transferred)",
+                            category="ingestion.workflow.bc.semantic_merge",
+                            params={
+                                "session_id": ctx.session.id,
+                                "keep_bc": keep_name,
+                                "absorb_bc": absorb_name,
+                                "transferred_us_count": len(absorb_us_ids),
+                                "rationale": instruction.rationale,
+                            },
+                        )
+
+                    # 유지할 BC에 합산된 user_story_ids 업데이트
+                    merged_ids = list(keep_us_ids)
+                    try:
+                        if hasattr(keep_bc, "model_copy"):
+                            bc_candidates[keep_idx] = keep_bc.model_copy(update={"user_story_ids": merged_ids})
+                        elif hasattr(keep_bc, "copy"):
+                            bc_candidates[keep_idx] = keep_bc.copy(update={"user_story_ids": merged_ids})
+                        else:
+                            setattr(keep_bc, "user_story_ids", merged_ids)
+                    except Exception as e:
+                        SmartLogger.log(
+                            "WARN",
+                            f"Failed to update user_story_ids for kept BC {keep_name}: {e}",
+                            category="ingestion.workflow.bc.semantic_merge_update_error",
+                            params={"session_id": ctx.session.id, "bc_name": keep_name, "error": str(e)},
+                        )
+
+                # 흡수된 BC 제거
+                bc_candidates = [bc for i, bc in enumerate(bc_candidates) if i not in absorbed_indices]
+                ctx.bounded_contexts = bc_candidates
+
+                SmartLogger.log(
+                    "INFO",
+                    f"BC semantic consolidation complete: {len(absorbed_indices)} BCs absorbed, {len(bc_candidates)} BCs remaining",
+                    category="ingestion.workflow.bc.semantic_consolidation_summary",
+                    params={
+                        "session_id": ctx.session.id,
+                        "absorbed_count": len(absorbed_indices),
+                        "remaining_count": len(bc_candidates),
+                        "target_count": target_bc_count,
+                    },
+                )
+
+                yield ProgressEvent(
+                    phase=IngestionPhase.IDENTIFYING_BC,
+                    message=f"BC 의미적 통합 완료: {len(absorbed_indices)}개 병합 → {len(bc_candidates)}개 BC",
+                    progress=PHASE_END - 2,
+                )
+            else:
+                SmartLogger.log(
+                    "INFO",
+                    "BC semantic consolidation: no merges needed",
+                    category="ingestion.workflow.bc.semantic_consolidation_none",
+                    params={"session_id": ctx.session.id, "bc_count": len(bc_candidates)},
+                )
+        except Exception as e:
+            SmartLogger.log(
+                "WARN",
+                f"BC semantic consolidation failed, continuing without merge: {e}",
+                category="ingestion.workflow.bc.semantic_consolidation_error",
+                params={"session_id": ctx.session.id, "error": str(e), "error_type": type(e).__name__},
+            )
+    # ── End BC 의미적 통합 ──────────────────────────────────────────────
+
     # BC 후보의 user_story_ids 검증: 존재하지 않는 ID 제거 및 중복 할당 방지
     valid_us_ids = {us.id for us in ctx.user_stories}
     us_to_bc_map: dict[str, str] = {}  # User Story ID -> BC 이름 (중복 할당 추적)

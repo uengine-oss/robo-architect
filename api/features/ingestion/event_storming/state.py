@@ -69,6 +69,27 @@ class BoundedContextCandidate(BaseModel):
     )
 
 
+class BCMergeInstruction(BaseModel):
+    """Instruction to merge semantically similar Bounded Contexts."""
+
+    keep: str = Field(..., description="Name of the BC to keep (the primary BC)")
+    absorb: List[str] = Field(
+        ...,
+        min_length=1,
+        description="Names of BCs to absorb into the kept BC",
+    )
+    rationale: str = Field(..., description="Why these BCs should be merged")
+
+
+class BCConsolidationResult(BaseModel):
+    """Result of LLM-driven BC semantic consolidation."""
+
+    merge_instructions: List[BCMergeInstruction] = Field(
+        default_factory=list,
+        description="List of merge instructions for semantically similar BCs",
+    )
+
+
 class EnumerationCandidate(BaseModel):
     """An Enumeration within an Aggregate."""
 

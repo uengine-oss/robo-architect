@@ -131,6 +131,9 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
     all_readmodels: dict[str, Any] = {}
     progress_per_bc = 6 // max(len(ctx.bounded_contexts), 1)
 
+    # Cross-BC ReadModel dedup: track names already generated in previous BCs
+    _existing_readmodel_names: list[str] = []
+
     for bc_idx, bc in enumerate(ctx.bounded_contexts or []):
         # Handle both dict and object formats
         bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
@@ -200,6 +203,18 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             _report_context_tail = "\n\n" + get_readmodels_context(ctx.source_report)
         full_prompt_text += _report_context_tail
 
+        # Cross-BC ReadModel dedup: inject existing names into prompt
+        if _existing_readmodel_names:
+            from api.features.ingestion.workflow.utils.chunking import format_accumulated_names
+            dedup_warning = (
+                "\n\n## CROSS-BC READMODEL DEDUPLICATION\n"
+                "The following ReadModel names have ALREADY been created in other Bounded Contexts. "
+                "Do NOT create ReadModels with these exact names. If this BC needs similar query capability, "
+                "use a distinct name that reflects this BC's specific perspective.\n"
+                "Already existing: " + format_accumulated_names(_existing_readmodel_names)
+            )
+            full_prompt_text += dedup_warning
+
         # 청킹 필요 여부 판단
         if should_chunk(full_prompt_text):
             # user_stories_text와 events_text를 각각 청킹
@@ -234,9 +249,17 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     user_stories=chunk_user_stories,
                     events=chunk_events,
                 ) + display_name_tail + _report_context_tail
+                # Cross-BC ReadModel dedup for chunks too
+                if _existing_readmodel_names:
+                    chunk_prompt += (
+                        "\n\n## CROSS-BC READMODEL DEDUPLICATION\n"
+                        "The following ReadModel names have ALREADY been created in other Bounded Contexts. "
+                        "Do NOT create ReadModels with these exact names.\n"
+                        "Already existing: " + format_accumulated_names(_existing_readmodel_names)
+                    )
 
                 structured_llm = ctx.llm.with_structured_output(ReadModelList)
-                
+
                 provider, model = get_llm_provider_model()
                 if AI_AUDIT_LOG_ENABLED:
                     SmartLogger.log(
@@ -416,6 +439,12 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
 
         all_readmodels[bc_id] = readmodels
         ctx.readmodels_by_bc[bc_id] = []
+
+        # Track readmodel names for cross-BC dedup
+        for rm in readmodels:
+            rm_name = (getattr(rm, "name", "") or "").strip()
+            if rm_name and rm_name not in _existing_readmodel_names:
+                _existing_readmodel_names.append(rm_name)
 
         # Process all readmodels in parallel
         if readmodels:

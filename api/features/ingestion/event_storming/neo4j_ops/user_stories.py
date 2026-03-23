@@ -66,9 +66,12 @@ class UserStoryOps:
         display_name: str | None = None,
     ) -> dict[str, Any]:
         """Create a new user story. Uses MERGE to prevent duplicates by id."""
+        # name: "role: action (truncated)" 형태로 자동 생성
+        name = f"{role}: {action[:60]}" if action else f"{role}: (no action)"
         query = """
         MERGE (us:UserStory {id: $id})
-        ON CREATE SET us.role = $role,
+        ON CREATE SET us.name = $name,
+                      us.role = $role,
                       us.action = $action,
                       us.benefit = $benefit,
                       us.priority = $priority,
@@ -76,7 +79,8 @@ class UserStoryOps:
                       us.uiDescription = $ui_description,
                       us.displayName = $display_name,
                       us.createdAt = datetime()
-        ON MATCH SET us.role = CASE WHEN $role IS NOT NULL AND $role <> '' THEN $role ELSE us.role END,
+        ON MATCH SET us.name = CASE WHEN us.name IS NULL THEN $name ELSE us.name END,
+                     us.role = CASE WHEN $role IS NOT NULL AND $role <> '' THEN $role ELSE us.role END,
                      us.action = CASE WHEN $action IS NOT NULL AND $action <> '' THEN $action ELSE us.action END,
                      us.benefit = CASE WHEN $benefit IS NOT NULL AND $benefit <> '' THEN $benefit ELSE us.benefit END,
                      us.priority = CASE WHEN $priority IS NOT NULL AND $priority <> '' THEN $priority ELSE us.priority END,
@@ -84,12 +88,13 @@ class UserStoryOps:
                      us.uiDescription = CASE WHEN $ui_description IS NOT NULL AND $ui_description <> '' THEN $ui_description ELSE us.uiDescription END,
                      us.displayName = CASE WHEN $display_name IS NOT NULL AND $display_name <> '' THEN $display_name ELSE us.displayName END,
                      us.updatedAt = datetime()
-        RETURN us {.id, .role, .action, .benefit, .priority, .status, uiDescription: us.uiDescription, displayName: us.displayName} as user_story
+        RETURN us {.id, .name, .role, .action, .benefit, .priority, .status, uiDescription: us.uiDescription, displayName: us.displayName} as user_story
         """
         with self.session() as session:
             result = session.run(
                 query,
                 id=id,
+                name=name,
                 role=role,
                 action=action,
                 benefit=benefit,

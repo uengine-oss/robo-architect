@@ -460,6 +460,17 @@ def get_per_session_bean_us_contexts(report: ParsedReport) -> list[tuple[str, st
             "- Each query method may produce a User Story for data retrieval needs",
             "- Do NOT generate User Stories for EJB lifecycle, DTO conversion, or ID generation methods",
             "- Focus on the BUSINESS CAPABILITY that each method provides to end users",
+            "",
+            "### GRANULARITY RULES (CRITICAL):",
+            "- Each User Story MUST represent a BUSINESS-LEVEL capability, NOT an implementation step",
+            "- Do NOT create separate User Stories for: ID generation, timestamp recording, DTO conversion, "
+            "status field updates, variable initialization, parameter parsing, output formatting, "
+            "response building, object construction, sequence assignment, counter incrementing",
+            "- Do NOT create separate User Stories for: error handling, exception rollback, error display, "
+            "exception throwing, error logging, error code returning",
+            "- MERGE related internal steps into a single business-level User Story",
+            "- GOOD example: 'Register a new loan repayment' (one business US)",
+            "- BAD examples: 'Generate repayment ID', 'Record timestamp', 'Set status to active' (implementation details)",
         ])
 
         results.append((sb.name, "\n".join(lines)))
@@ -506,8 +517,69 @@ def get_user_stories_context(report: ParsedReport, max_tokens: int = REPORT_CONT
     return _truncate_to_tokens(text, max_tokens)
 
 
+def _build_sb_entity_sharing_summary(report: ParsedReport) -> str:
+    """SB-Entity Bean 연관 관계 요약 — LLM이 BC 경계를 판단할 수 있는 구조적 사실 제공.
+
+    기계적 클러스터링이 아닌, LLM에게 "어떤 SB가 어떤 Entity를 다루는지"를
+    사실 그대로 전달하여 비즈니스 도메인 판단을 위임한다.
+    """
+    session_beans = report.get_session_beans()
+    if not session_beans:
+        return ""
+
+    lines: list[str] = [
+        "## Session Bean → Entity Bean Relationships (for BC boundary judgment)",
+        "",
+        "The following shows which Session Beans operate on which Entity Beans.",
+        "Use this to identify which SBs belong to the SAME business domain.",
+        "NOTE: Multiple SBs referencing the same Entity does NOT automatically mean they belong",
+        "to the same BC — consider the BUSINESS CAPABILITY each SB provides.",
+        "",
+    ]
+
+    for sb in session_beans:
+        assocs = [r.target for r in sb.uml_relations if r.relation_type == "ASSOCIATION"]
+        cmds = [m.name for m in sb.methods if m.role == "command" and _is_business_method(m.name)]
+        if assocs or cmds:
+            entities_str = ", ".join(assocs) if assocs else "(none)"
+            cmds_str = ", ".join(cmds[:5]) if cmds else "(none)"
+            if len(cmds) > 5:
+                cmds_str += f" ... (+{len(cmds) - 5} more)"
+            lines.append(f"- **{sb.name}**: entities=[{entities_str}], commands=[{cmds_str}]")
+
+    # Entity 역방향: 어떤 Entity가 여러 SB에서 참조되는지
+    entity_to_sbs: dict[str, list[str]] = {}
+    for sb in session_beans:
+        for r in sb.uml_relations:
+            if r.relation_type == "ASSOCIATION":
+                if r.target not in entity_to_sbs:
+                    entity_to_sbs[r.target] = []
+                entity_to_sbs[r.target].append(sb.name)
+
+    shared_entities = {e: sbs for e, sbs in entity_to_sbs.items() if len(sbs) > 1}
+    if shared_entities:
+        lines.append("")
+        lines.append("### Shared Entities (referenced by multiple SBs):")
+        for entity, sbs in shared_entities.items():
+            lines.append(f"- {entity} ← [{', '.join(sbs)}]")
+        lines.append("")
+        lines.append(
+            "Shared entities are a SIGNAL, not a rule. "
+            "SBs sharing an entity MAY belong to the same BC if they serve the same business capability, "
+            "but they may also be in different BCs if they represent different business concerns "
+            "(e.g., OrderSB and ReportingSB both reference OrderBean but serve different purposes)."
+        )
+
+    return "\n".join(lines)
+
+
 def get_bounded_contexts_context(report: ParsedReport, max_tokens: int = REPORT_CONTEXT_MAX_TOKENS) -> str:
     """BC Phase: Entity 관계, 패키지 구조, 호출 체인."""
+    session_beans = report.get_session_beans()
+    entity_beans = report.get_entity_beans()
+    sb_count = len(session_beans) if session_beans else 0
+    eb_count = len(entity_beans) if entity_beans else 0
+
     sections = [
         "## Legacy System — Domain Structure Reference",
         _build_system_overview(report),
@@ -521,15 +593,27 @@ def get_bounded_contexts_context(report: ParsedReport, max_tokens: int = REPORT_
         _build_tables_fk_text(report),
         "\n## Cross-Service Call Chains (BC boundary signals)",
         _build_call_chains_text(report),
+    ]
+
+    # SB-Entity 연관 관계 요약 추가 (LLM이 BC 경계를 판단할 수 있는 구조적 사실)
+    sb_entity_summary = _build_sb_entity_sharing_summary(report)
+    if sb_entity_summary:
+        sections.append("\n" + sb_entity_summary)
+
+    sections.extend([
         "\n## BC IDENTIFICATION GUIDELINES FOR LEGACY SYSTEMS",
         (
             "- Group by BUSINESS DOMAIN, not by EJB layer (session/entity/servlet)\n"
             "- Session Beans that share Entity Bean associations likely belong to the same BC\n"
             "- FK clusters between tables suggest a single BC\n"
             "- Cross-service call chains may indicate BC boundaries\n"
-            "- Do NOT create a 'Common' or 'Infrastructure' BC for EJB framework classes"
+            "- Do NOT create a 'Common' or 'Infrastructure' BC for EJB framework classes\n"
+            f"- This system has {sb_count} Session Beans and {eb_count} Entity Beans. "
+            f"The number of BCs should reflect distinct BUSINESS DOMAINS, not the number of services. "
+            f"Typically far fewer BCs than Session Beans are appropriate.\n"
+            "- Multiple Session Beans operating on the same business domain entity MUST be merged into a single BC"
         ),
-    ]
+    ])
     text = "\n".join(sections)
     return _truncate_to_tokens(text, max_tokens)
 

@@ -165,11 +165,12 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
             ) + display_name_tail
             # Inject already-created commands to prevent cross-aggregate duplication
             if _existing_command_names:
+                from api.features.ingestion.workflow.utils.chunking import format_accumulated_names
                 full_prompt_text += (
                     "\n\n<already_created_commands>\n"
                     "The following Commands have already been created in OTHER Aggregates. "
                     "Do NOT create Commands with the same or very similar names/intent:\n"
-                    + "\n".join(f"- {name}" for name in _existing_command_names)
+                    + format_accumulated_names(_existing_command_names)
                     + "\n</already_created_commands>"
                 )
             _report_context_tail = ""
@@ -410,6 +411,97 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                                 "object": {"id": created_cmd.get("id"), "name": cmd_name, "type": "Command", "parentId": agg_id},
                             },
                         )
+
+    # ── Cross-Aggregate Command 중복 병합 (Hard Defense) ────────────────
+    # 동일 이름의 Command가 여러 Aggregate에 존재하면,
+    # US가 더 많이 연결된 쪽을 유지하고, 나머지의 US를 유지 쪽으로 이관 후 삭제.
+    cmd_name_to_aggs: dict[str, list[tuple[str, dict]]] = {}  # cmd_name → [(agg_id, cmd_dict)]
+    for agg_id, cmds in all_commands.items():
+        for cmd in cmds:
+            cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+            if cmd_name:
+                if cmd_name not in cmd_name_to_aggs:
+                    cmd_name_to_aggs[cmd_name] = []
+                cmd_name_to_aggs[cmd_name].append((agg_id, cmd))
+
+    merged_cmds: list[str] = []
+    for cmd_name, agg_entries in cmd_name_to_aggs.items():
+        if len(agg_entries) <= 1:
+            continue
+        def _us_count(entry: tuple[str, dict]) -> int:
+            _agg_id, cmd = entry
+            us_ids = cmd.get("user_story_ids") if isinstance(cmd, dict) else getattr(cmd, "user_story_ids", None)
+            return len(us_ids) if us_ids else 0
+
+        sorted_entries = sorted(agg_entries, key=_us_count, reverse=True)
+        keep_agg_id, keep_cmd = sorted_entries[0]
+        keep_cmd_id = keep_cmd.get("id") if isinstance(keep_cmd, dict) else getattr(keep_cmd, "id", None)
+
+        for agg_id, cmd in sorted_entries[1:]:
+            cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
+            if not cmd_id:
+                continue
+            # 1) 흡수 Command의 US를 유지 Command로 이관 (Neo4j)
+            try:
+                with ctx.client.session() as merge_session:
+                    merge_session.run(
+                        """
+                        MATCH (us:UserStory)-[r:IMPLEMENTS]->(old_cmd:Command {id: $old_id})
+                        MATCH (new_cmd:Command {id: $new_id})
+                        MERGE (us)-[:IMPLEMENTS]->(new_cmd)
+                        DELETE r
+                        """,
+                        old_id=cmd_id,
+                        new_id=keep_cmd_id,
+                    )
+                    # 흡수 Command + 하위 Event/Property 삭제
+                    merge_session.run(
+                        """
+                        MATCH (cmd:Command {id: $id})
+                        OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
+                        OPTIONAL MATCH (cmd)-[:HAS_PROPERTY]->(cmd_prop:Property)
+                        OPTIONAL MATCH (evt)-[:HAS_PROPERTY]->(evt_prop:Property)
+                        DETACH DELETE evt_prop, cmd_prop, evt, cmd
+                        """,
+                        id=cmd_id,
+                    )
+            except Exception as e:
+                SmartLogger.log(
+                    "WARN",
+                    f"Failed to merge duplicate Command {cmd_name} (id={cmd_id}): {e}",
+                    category="ingestion.workflow.commands.dedup_merge_error",
+                    params={"session_id": ctx.session.id, "cmd_name": cmd_name, "cmd_id": cmd_id, "error": str(e)},
+                )
+                continue
+
+            # 2) ctx에서 제거
+            if agg_id in all_commands:
+                all_commands[agg_id] = [
+                    c for c in all_commands[agg_id]
+                    if (c.get("id") if isinstance(c, dict) else getattr(c, "id", None)) != cmd_id
+                ]
+            merged_cmds.append(f"{cmd_name}(agg={agg_id} → agg={keep_agg_id})")
+
+            SmartLogger.log(
+                "INFO",
+                f"Merged duplicate Command: {cmd_name} from agg={agg_id} into agg={keep_agg_id}",
+                category="ingestion.workflow.commands.cross_agg_merge",
+                params={
+                    "session_id": ctx.session.id,
+                    "cmd_name": cmd_name,
+                    "absorbed_agg_id": agg_id,
+                    "kept_agg_id": keep_agg_id,
+                },
+            )
+
+    if merged_cmds:
+        SmartLogger.log(
+            "INFO",
+            f"Cross-aggregate Command merge: merged {len(merged_cmds)} duplicates",
+            category="ingestion.workflow.commands.cross_agg_merge_summary",
+            params={"session_id": ctx.session.id, "merged": merged_cmds},
+        )
+    # ── End Cross-Aggregate Command 중복 병합 ─────────────────────────
 
     ctx.commands_by_agg = all_commands
 

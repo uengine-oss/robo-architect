@@ -276,15 +276,75 @@ async def terminal_ws(
     fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
     async def _read_pty():
-        """Read PTY output and forward to WebSocket."""
+        """Read PTY output and forward to WebSocket.
+
+        Buffers partial UTF-8 sequences and batches output to reduce
+        the number of WebSocket messages and xterm.js render cycles.
+        """
+        leftover = b""
         try:
             while True:
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.02)
                 try:
-                    data = os.read(master_fd, 4096)
-                    if not data:
-                        break
-                    await websocket.send_text(data.decode("utf-8", errors="replace"))
+                    chunks = []
+                    # Drain all available data from the PTY
+                    while True:
+                        try:
+                            data = os.read(master_fd, 16384)
+                            if not data:
+                                # EOF — send remaining and exit
+                                if leftover or chunks:
+                                    combined = leftover + b"".join(chunks)
+                                    await websocket.send_text(
+                                        combined.decode("utf-8", errors="replace")
+                                    )
+                                return
+                            chunks.append(data)
+                        except BlockingIOError:
+                            break
+                        except OSError as e:
+                            if e.errno == 5:  # EIO — child exited
+                                if leftover or chunks:
+                                    combined = leftover + b"".join(chunks)
+                                    await websocket.send_text(
+                                        combined.decode("utf-8", errors="replace")
+                                    )
+                                return
+                            raise
+
+                    if not chunks:
+                        continue
+
+                    combined = leftover + b"".join(chunks)
+                    leftover = b""
+
+                    # Find the last valid UTF-8 boundary to avoid splitting
+                    # multi-byte characters (e.g. Korean, emoji, CJK).
+                    # Walk back from the end to find a safe cut point.
+                    end = len(combined)
+                    # Check up to 4 bytes back (max UTF-8 char length)
+                    for i in range(min(4, end)):
+                        byte = combined[end - 1 - i]
+                        if byte < 0x80:
+                            # ASCII — safe boundary right after this byte
+                            break
+                        elif byte >= 0xC0:
+                            # Start of a multi-byte sequence
+                            expected_len = (
+                                2 if byte < 0xE0 else 3 if byte < 0xF0 else 4
+                            )
+                            available = i + 1
+                            if available < expected_len:
+                                # Incomplete sequence — keep it for next round
+                                leftover = combined[end - available :]
+                                combined = combined[: end - available]
+                            break
+
+                    if combined:
+                        await websocket.send_text(
+                            combined.decode("utf-8", errors="replace")
+                        )
+
                 except OSError:
                     await asyncio.sleep(0.05)
                 except WebSocketDisconnect:

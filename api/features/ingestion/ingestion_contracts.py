@@ -25,6 +25,7 @@ class IngestionPhase(str, Enum):
     GENERATING_REFERENCES = "generating_references"
     GENERATING_UI = "generating_ui"
     IDENTIFYING_POLICIES = "identifying_policies"
+    GENERATING_GWT = "generating_gwt"
     SAVING = "saving"
     PAUSED = "paused"
     COMPLETE = "complete"

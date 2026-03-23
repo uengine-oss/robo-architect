@@ -153,6 +153,8 @@ User Stories:
 <rule id="6">**Avoid Under-Granularity:** Don't create too few BCs - each should have a clear, cohesive purpose</rule>
 <rule id="7">**User Story Assignment:** Each user story should belong to exactly ONE primary Bounded Context</rule>
 <rule id="8">**CRITICAL - Complete Assignment:** You MUST assign EVERY SINGLE user story provided in the input to exactly ONE Bounded Context. No user story can be left unassigned. If a user story doesn't clearly fit any existing BC, you must either: (a) assign it to the most appropriate existing BC, or (b) create a new BC for it. Leaving any user story unassigned is NOT acceptable.</rule>
+<rule id="9">**Semantic Consolidation:** User stories that share the same core domain concept (e.g., loan application management/processing/approval) MUST be grouped into a SINGLE Bounded Context. Do NOT create separate BCs for different verbs or aspects of the same business entity.</rule>
+<rule id="10">**Legacy System Source Structure:** In legacy systems, different service components (Session Beans, EJBs) often implement the same business domain. Group BCs by BUSINESS DOMAIN, not by source service/component structure. Multiple services operating on the same domain entity belong to the same BC.</rule>
 </section>
 
 <section id="output_requirements">
@@ -196,6 +198,39 @@ Before finalizing your response, perform this check:
 4. Ensure no user story ID appears in multiple BCs (each user story belongs to exactly ONE BC)
 
 Output should be a list of BoundedContextCandidate objects with clear, well-reasoned boundaries. EVERY user story from the input MUST be assigned to exactly ONE BC."""
+
+# =============================================================================
+# BC Semantic Consolidation
+# =============================================================================
+
+CONSOLIDATE_BCS_PROMPT = """You are given a list of Bounded Context (BC) candidates that were identified from a legacy system analysis. There are too many BCs — some are semantically similar and should be merged.
+
+Current BC candidates:
+{bc_candidates}
+
+Target BC count (approximate guideline, not a hard limit): {target_bc_count}
+
+Your task:
+1. Identify groups of BCs that represent the SAME or very similar business domain concept
+2. For each group, decide which BC name to KEEP (the most descriptive one) and which to ABSORB
+3. BCs with different suffixes but the same core concept should be merged (e.g., "LoanApplicationManagement" and "LoanApplicationProcessing" are the same domain)
+4. Only merge BCs that are genuinely semantically similar — do NOT merge unrelated BCs just to hit the target count
+
+For each merge group, provide:
+- **keep**: Name of the BC to keep (the primary BC)
+- **absorb**: List of BC names to absorb into the kept BC
+- **rationale**: Why these BCs should be merged
+
+If no merges are needed, return an empty merge_instructions list.
+
+CRITICAL:
+- Only merge BCs that share the same core business domain concept
+- Do NOT merge BCs from genuinely different business domains
+- The target count is a guideline, not a strict requirement
+- Every BC name in 'absorb' must exist in the current candidate list
+- A BC can only appear in ONE merge instruction (either as 'keep' or in 'absorb')
+
+Output should be a BCConsolidationResult object."""
 
 # =============================================================================
 # User Story Breakdown
@@ -1024,6 +1059,10 @@ This creates traceability: UserStory → Command → Event → Policy → Comman
 
 CRITICAL:
 - Do NOT generate IDs; server assigns UUID id + derives key.
+- **NO SELF-LOOPS:** The Command invoked by a Policy MUST NOT emit the same Event that triggered the Policy.
+  For example, if trigger_event is "DelinquencyResolved", the invoke_command MUST NOT emit "DelinquencyResolved" —
+  this creates an infinite loop (Event → Policy → Command → same Event → same Policy → ...).
+  If you detect such a cycle, either choose a different Command or do NOT create that Policy.
 
 Output should be a list of PolicyCandidate objects."""
 
