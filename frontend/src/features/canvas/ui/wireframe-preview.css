@@ -1,0 +1,248 @@
+/**
+ * Wireframe Preview Styles
+ * v-html로 렌더링되는 UI wireframe 템플릿의 공통 스타일.
+ * InspectorPanel, BpmnInspectorPanel 등에서 공유.
+ *
+ * 사용법: 컨테이너에 .wireframe-preview-body 클래스를 부여하고,
+ *         컴포넌트에서 이 파일을 non-scoped로 import.
+ */
+
+.wireframe-preview-body {
+  padding: 12px;
+  min-height: 180px;
+  min-width: min-content;
+  position: relative;
+  color: #212529;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.72rem;
+}
+
+.wireframe-preview-body input,
+.wireframe-preview-body select,
+.wireframe-preview-body textarea {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  border: 2px dashed #adb5bd;
+  border-radius: 4px;
+  background: #f8f9fa;
+  font-size: 0.72rem;
+}
+
+.wireframe-preview-body button {
+  padding: 6px 12px;
+  border: 2px dashed #228be6;
+  border-radius: 4px;
+  background: #e7f5ff;
+  color: #1971c2;
+  font-size: 0.72rem;
+  cursor: pointer;
+  margin: 3px;
+}
+
+.wireframe-preview-body label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #495057;
+  margin-bottom: 3px;
+}
+
+.wireframe-preview-body h1 {
+  color: #212529;
+  margin-bottom: 10px;
+  font-size: 1rem;
+}
+
+.wireframe-preview-body h2 {
+  color: #212529;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+
+.wireframe-preview-body h3 {
+  color: #212529;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+}
+
+.wireframe-preview-body .form-group {
+  margin-bottom: 12px;
+}
+
+.wireframe-preview-body .btn-group {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.wireframe-preview-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+}
+
+.wireframe-preview-body th,
+.wireframe-preview-body td {
+  padding: 4px 6px;
+  text-align: left;
+  font-size: 0.68rem;
+}
+
+.wireframe-preview-body th {
+  font-weight: 600;
+}
+
+.wireframe-preview-body p {
+  font-size: 0.72rem;
+  margin-bottom: 8px;
+}
+
+/* ── wf-* wireframe design system ── */
+.wireframe-preview-body .wf-root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  font-size: 13px;
+  color: #1f1f1f;
+}
+.wireframe-preview-body .wf-root * { box-sizing: border-box; }
+.wireframe-preview-body .wf-appbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #fff;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+.wireframe-preview-body .wf-appbar__left { display: flex; flex-direction: column; }
+.wireframe-preview-body .wf-appbar__right { display: flex; gap: 8px; }
+.wireframe-preview-body .wf-title { font-size: 14px; font-weight: 700; }
+.wireframe-preview-body .wf-subtitle { font-size: 11px; color: #8c8c8c; margin-top: 2px; }
+.wireframe-preview-body .wf-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.wireframe-preview-body .wf-main { padding: 12px; display: grid; gap: 10px; }
+.wireframe-preview-body .wf-card {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.wireframe-preview-body .wf-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  background: rgba(0,0,0,0.02);
+}
+.wireframe-preview-body .wf-card__title { font-weight: 700; font-size: 13px; }
+.wireframe-preview-body .wf-card__body { padding: 12px; }
+.wireframe-preview-body .wf-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 10px;
+}
+.wireframe-preview-body .wf-col-3 { grid-column: span 3; }
+.wireframe-preview-body .wf-col-4 { grid-column: span 4; }
+.wireframe-preview-body .wf-col-6 { grid-column: span 6; }
+.wireframe-preview-body .wf-col-8 { grid-column: span 8; }
+.wireframe-preview-body .wf-col-12 { grid-column: span 12; }
+.wireframe-preview-body .wf-btn {
+  appearance: none;
+  border: 1px solid rgba(0,0,0,0.10);
+  background: #fff;
+  color: #1f1f1f;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wireframe-preview-body .wf-btn--primary {
+  background: #1677FF;
+  border-color: #1677FF;
+  color: #fff;
+}
+.wireframe-preview-body .wf-input {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(0,0,0,0.10);
+  background: #fff;
+  font-size: 12px;
+}
+.wireframe-preview-body .wf-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #595959;
+}
+.wireframe-preview-body .wf-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.10);
+  color: #595959;
+  font-size: 11px;
+}
+.wireframe-preview-body .wf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px dashed rgba(0,0,0,0.10);
+  color: #595959;
+  font-size: 11px;
+}
+.wireframe-preview-body .wf-table { width: 100%; border-collapse: collapse; }
+.wireframe-preview-body .wf-table th,
+.wireframe-preview-body .wf-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  font-size: 11px;
+  text-align: left;
+}
+.wireframe-preview-body .wf-table th {
+  color: #595959;
+  font-weight: 700;
+  background: rgba(0,0,0,0.02);
+}
+.wireframe-preview-body .wf-table__toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.wireframe-preview-body .wf-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  color: #595959;
+  font-size: 11px;
+}
+.wireframe-preview-body .wf-empty {
+  border: 1px dashed rgba(0,0,0,0.10);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(0,0,0,0.01);
+}
+.wireframe-preview-body .wf-empty__title { font-weight: 800; margin-bottom: 4px; }
+.wireframe-preview-body .wf-empty__desc { color: #595959; font-size: 11px; }
+.wireframe-preview-body .wf-state {
+  border: 1px dashed rgba(0,0,0,0.10);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: #595959;
+  font-size: 11px;
+  margin-top: 4px;
+}
+.wireframe-preview-body .wf-state:empty { display: none; }
+.wireframe-preview-body .wf-state--error { border-color: #ff4d4f; }

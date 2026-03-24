@@ -1,11 +1,15 @@
 <script setup>
-import { computed, onMounted, ref, nextTick } from 'vue'
+import { computed, onMounted, ref, nextTick, inject } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import TreeNode from './TreeNode.vue'
 
 const navigatorStore = useNavigatorStore()
 const terminologyStore = useTerminologyStore()
+const bpmnStore = useBpmnStore()
+const activeTab = inject('activeTab', ref('Design'))
+const isBpmnMode = computed(() => activeTab.value === 'BPMN')
 const localLoading = ref(true)
 const isLoading = computed(() => localLoading.value || navigatorStore.loading)
 
@@ -67,6 +71,24 @@ async function handleRefresh() {
     localLoading.value = false
   }
 }
+
+// BPMN flow handlers
+function handleBpmnFlowDragStart(event, flow) {
+  event.dataTransfer.setData('application/json', JSON.stringify({
+    id: flow.id,
+    type: 'BpmnFlow',
+    name: flow.name,
+  }))
+  event.dataTransfer.effectAllowed = 'copy'
+}
+
+async function handleBpmnFlowDblClick(flow) {
+  if (bpmnStore.renderedFlowIds.has(flow.id)) {
+    bpmnStore.selectFlow(flow.id)
+    return
+  }
+  await bpmnStore.addFlow(flow.id)
+}
 </script>
 
 <template>
@@ -98,118 +120,203 @@ async function handleRefresh() {
     </div>
     
     <div class="panel-content">
-      <div v-if="isLoading" class="loading-state">
-        <div class="loading-spinner"></div>
-        <span>Loading contexts...</span>
-      </div>
-      
-      <div v-else-if="navigatorStore.error" class="error-state">
-        {{ navigatorStore.error }}
-      </div>
-      
-      <div v-else-if="navigatorStore.contexts.length === 0 && navigatorStore.userStories.length === 0" class="empty-state">
-        No data found
-      </div>
-      
+      <!-- BPMN Mode: Process Flow List -->
+      <template v-if="isBpmnMode">
+        <div v-if="bpmnStore.loading" class="loading-state">
+          <div class="loading-spinner"></div>
+          <span>Loading process flows...</span>
+        </div>
+        <div v-else-if="bpmnStore.error" class="error-state">
+          {{ bpmnStore.error }}
+        </div>
+        <div v-else-if="bpmnStore.processFlows.length === 0" class="empty-state">
+          No process flows found
+        </div>
+        <template v-else>
+          <div class="section-group">
+            <div class="section-header section-header--with-actions">
+              <div class="section-header__left">
+                <span class="section-title">Process Flows</span>
+                <span class="section-count">{{ bpmnStore.processFlows.length }}</span>
+              </div>
+              <div class="section-header__actions">
+                <button
+                  class="tree-action-btn"
+                  :class="{ 'is-spinning': bpmnStore.loading }"
+                  @click="bpmnStore.fetchProcessFlows()"
+                  title="Refresh"
+                  :disabled="bpmnStore.loading"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div
+              v-for="flow in bpmnStore.processFlows"
+              :key="flow.id"
+              class="bpmn-flow-item"
+              :class="{ 'is-on-canvas': bpmnStore.renderedFlowIds.has(flow.id) }"
+              :draggable="true"
+              @dragstart="handleBpmnFlowDragStart($event, flow)"
+              @dblclick="handleBpmnFlowDblClick(flow)"
+              :title="`${flow.name}\nActors: ${flow.actors?.join(', ') || 'System'}\nBC: ${flow.bcName || '-'}`"
+            >
+              <span class="bpmn-flow-item__icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="5" cy="12" r="3" />
+                  <line x1="8" y1="12" x2="16" y2="12" />
+                  <circle cx="19" cy="12" r="3" />
+                </svg>
+              </span>
+              <div class="bpmn-flow-item__content">
+                <span class="bpmn-flow-item__name">{{ flow.startCommandName || flow.name }}</span>
+              </div>
+              <span v-if="flow.nodeCount > 0" class="bpmn-flow-item__chip">{{ flow.nodeCount }}</span>
+              <span v-if="bpmnStore.renderedFlowIds.has(flow.id)" class="bpmn-flow-item__check">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </span>
+            </div>
+          </div>
+        </template>
+      </template>
+
+      <!-- Default Mode: BC Tree -->
       <template v-else>
-        <!-- Unassigned User Stories (root level) -->
-        <div v-if="navigatorStore.userStories.length > 0" class="section-group">
-          <div class="section-header">
-            <span class="section-title">Requirements</span>
-            <span class="section-count">{{ navigatorStore.userStories.length }}</span>
-          </div>
-          <TransitionGroup name="tree-item">
-            <TreeNode
-              v-for="us in navigatorStore.userStories"
-              :key="us.id"
-              :node="{ ...us, type: 'UserStory', name: us.name || `${us.role}: ${us.action?.substring(0, 25)}...` }"
-            />
-          </TransitionGroup>
+        <div v-if="isLoading" class="loading-state">
+          <div class="loading-spinner"></div>
+          <span>Loading contexts...</span>
         </div>
-        
-        <!-- Bounded Contexts -->
-        <div v-if="navigatorStore.contexts.length > 0" class="section-group">
-          <div class="section-header section-header--with-actions">
-            <div class="section-header__left">
-              <span class="section-title">{{ terminologyStore.getTerm('BoundedContext') }}s</span>
-              <span class="section-count">{{ navigatorStore.contexts.length }}</span>
-            </div>
-            <div class="section-header__actions">
-              <button 
-                class="tree-action-btn"
-                :class="{ 'is-spinning': isLoading }"
-                @click="handleRefresh"
-                title="Refresh"
-                :disabled="isLoading"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="23 4 23 10 17 10"></polyline>
-                  <polyline points="1 20 1 14 7 14"></polyline>
-                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                </svg>
-              </button>
-              <button 
-                class="tree-action-btn"
-                @click="navigatorStore.expandAll()"
-                title="Expand All"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-              </button>
-              <button 
-                class="tree-action-btn"
-                @click="navigatorStore.collapseAll()"
-                title="Collapse All"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="18 15 12 9 6 15"></polyline>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <TransitionGroup name="tree-item">
-            <TreeNode
-              v-for="ctx in navigatorStore.contexts"
-              :key="ctx.id"
-              :node="{ ...ctx, type: 'BoundedContext', domainType: ctx.domainType }"
-              :tree="navigatorStore.contextTrees[ctx.id]"
-            />
-          </TransitionGroup>
+
+        <div v-else-if="navigatorStore.error" class="error-state">
+          {{ navigatorStore.error }}
         </div>
+
+        <div v-else-if="navigatorStore.contexts.length === 0 && navigatorStore.userStories.length === 0" class="empty-state">
+          No data found
+        </div>
+
+        <template v-else>
+          <!-- Unassigned User Stories (root level) -->
+          <div v-if="navigatorStore.userStories.length > 0" class="section-group">
+            <div class="section-header">
+              <span class="section-title">Requirements</span>
+              <span class="section-count">{{ navigatorStore.userStories.length }}</span>
+            </div>
+            <TransitionGroup name="tree-item">
+              <TreeNode
+                v-for="us in navigatorStore.userStories"
+                :key="us.id"
+                :node="{ ...us, type: 'UserStory', name: us.name || `${us.role}: ${us.action?.substring(0, 25)}...` }"
+              />
+            </TransitionGroup>
+          </div>
+
+          <!-- Bounded Contexts -->
+          <div v-if="navigatorStore.contexts.length > 0" class="section-group">
+            <div class="section-header section-header--with-actions">
+              <div class="section-header__left">
+                <span class="section-title">{{ terminologyStore.getTerm('BoundedContext') }}s</span>
+                <span class="section-count">{{ navigatorStore.contexts.length }}</span>
+              </div>
+              <div class="section-header__actions">
+                <button
+                  class="tree-action-btn"
+                  :class="{ 'is-spinning': isLoading }"
+                  @click="handleRefresh"
+                  title="Refresh"
+                  :disabled="isLoading"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                  </svg>
+                </button>
+                <button
+                  class="tree-action-btn"
+                  @click="navigatorStore.expandAll()"
+                  title="Expand All"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </button>
+                <button
+                  class="tree-action-btn"
+                  @click="navigatorStore.collapseAll()"
+                  title="Collapse All"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="18 15 12 9 6 15"></polyline>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <TransitionGroup name="tree-item">
+              <TreeNode
+                v-for="ctx in navigatorStore.contexts"
+                :key="ctx.id"
+                :node="{ ...ctx, type: 'BoundedContext', domainType: ctx.domainType }"
+                :tree="navigatorStore.contextTrees[ctx.id]"
+              />
+            </TransitionGroup>
+          </div>
+        </template>
       </template>
     </div>
     
     <!-- Legend -->
     <div class="panel-legend">
-      <div class="legend-item">
-        <span class="legend-color legend-color--userstory"></span>
-        <span>UserStory</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color legend-color--aggregate"></span>
-        <span>{{ terminologyStore.getTerm('Aggregate') }}</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color legend-color--command"></span>
-        <span>{{ terminologyStore.getTerm('Command') }}</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color legend-color--event"></span>
-        <span>{{ terminologyStore.getTerm('Event') }}</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color legend-color--policy"></span>
-        <span>{{ terminologyStore.getTerm('Policy') }}</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color legend-color--readmodel"></span>
-        <span>{{ terminologyStore.getTerm('ReadModel') }}</span>
-      </div>
-      <div class="legend-item">
-        <span class="legend-color legend-color--ui"></span>
-        <span>{{ terminologyStore.getTerm('UI') }}</span>
-      </div>
+      <template v-if="isBpmnMode">
+        <div class="legend-item">
+          <span class="legend-color legend-color--command"></span>
+          <span>Activity (Command)</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--event"></span>
+          <span>Event</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color" style="background: #20c997;"></span>
+          <span>Swimlane (Actor)</span>
+        </div>
+      </template>
+      <template v-else>
+        <div class="legend-item">
+          <span class="legend-color legend-color--userstory"></span>
+          <span>UserStory</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--aggregate"></span>
+          <span>{{ terminologyStore.getTerm('Aggregate') }}</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--command"></span>
+          <span>{{ terminologyStore.getTerm('Command') }}</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--event"></span>
+          <span>{{ terminologyStore.getTerm('Event') }}</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--policy"></span>
+          <span>{{ terminologyStore.getTerm('Policy') }}</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--readmodel"></span>
+          <span>{{ terminologyStore.getTerm('ReadModel') }}</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--ui"></span>
+          <span>{{ terminologyStore.getTerm('UI') }}</span>
+        </div>
+      </template>
     </div>
   </aside>
 </template>
@@ -430,5 +537,80 @@ async function handleRefresh() {
 .legend-color--aggregate { background: var(--color-aggregate); }
 .legend-color--readmodel { background: var(--color-readmodel); }
 .legend-color--ui { background: var(--color-ui-light); border: 1px solid var(--color-ui); }
+
+/* BPMN Flow Items */
+.bpmn-flow-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-radius: var(--radius-sm);
+  margin: 1px 4px;
+}
+
+.bpmn-flow-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.bpmn-flow-item.is-on-canvas {
+  background: rgba(34, 139, 230, 0.1);
+}
+
+.bpmn-flow-item.is-on-canvas:hover {
+  background: rgba(34, 139, 230, 0.15);
+}
+
+.bpmn-flow-item__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(92, 124, 250, 0.15);
+  color: var(--color-command);
+}
+
+.bpmn-flow-item__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bpmn-flow-item__name {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bpmn-flow-item__chip {
+  flex-shrink: 0;
+  font-size: 0.55rem;
+  font-weight: 600;
+  min-width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-light);
+  border-radius: 9px;
+}
+
+.bpmn-flow-item__check {
+  flex-shrink: 0;
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+}
 </style>
 

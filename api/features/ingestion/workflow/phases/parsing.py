@@ -11,7 +11,10 @@ async def parsing_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Progres
     """
     Phase 1: parsing (UI feedback + basic validation in the future).
     """
-    yield ProgressEvent(phase=IngestionPhase.PARSING, message="문서 파싱 중...", progress=5)
+    if ctx.source_type == "figma":
+        yield ProgressEvent(phase=IngestionPhase.PARSING, message="Figma UI 요소 파싱 중...", progress=5)
+    else:
+        yield ProgressEvent(phase=IngestionPhase.PARSING, message="문서 파싱 중...", progress=5)
     await asyncio.sleep(0.3)
 
 

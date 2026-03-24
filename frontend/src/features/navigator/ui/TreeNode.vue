@@ -8,6 +8,7 @@ import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { useBpmnStore } from '@/features/canvas/bpmn.store'
 
 const props = defineProps({
   node: {
@@ -32,6 +33,7 @@ const userStoryEditor = useUserStoryEditorStore()
 const chatStore = useModelModifierStore()
 const ingestionStore = useIngestionStore()
 const terminologyStore = useTerminologyStore()
+const bpmnStore = useBpmnStore()
 
 // Inject activeTab from App.vue
 const activeTab = inject('activeTab', ref('Design'))

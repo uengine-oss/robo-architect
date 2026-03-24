@@ -9,6 +9,7 @@ from .routes.canvas_subgraph import router as canvas_subgraph_router
 from .routes.gwt import router as gwt_router
 from .routes.graph_maintenance import router as graph_maintenance_router
 from .routes.bigpicture_timeline import router as bigpicture_timeline_router
+from .routes.bpmn_process import router as bpmn_process_router
 
 router = APIRouter(prefix="/api/graph", tags=["canvas-graph"])
 
@@ -19,3 +20,4 @@ router.include_router(canvas_event_triggers_router)
 router.include_router(canvas_relationships_router)
 router.include_router(gwt_router)
 router.include_router(bigpicture_timeline_router)
+router.include_router(bpmn_process_router)

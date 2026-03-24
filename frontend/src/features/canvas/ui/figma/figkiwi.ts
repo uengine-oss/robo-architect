@@ -5,9 +5,22 @@ import {
   ByteBuffer,
 } from 'kiwi-schema'
 import { deflateRaw, inflateRaw } from 'pako'
+import { decompress as zstdDecompress } from 'fzstd'
 
 const FIG_KIWI_PRELUDE = 'fig-kiwi'
 const FIG_KIWI_VERSION = 15
+
+// zstd magic bytes: 0x28 0xB5 0x2F 0xFD
+function isZstd(buf: Uint8Array): boolean {
+  return buf.length >= 4 && buf[0] === 0x28 && buf[1] === 0xB5 && buf[2] === 0x2F && buf[3] === 0xFD
+}
+
+function decompressAuto(buf: Uint8Array): Uint8Array {
+  if (isZstd(buf)) {
+    return zstdDecompress(buf)
+  }
+  return inflateRaw(buf)
+}
 
 function parseArchive(buf: Uint8Array) {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
@@ -154,10 +167,10 @@ export function readClipboardHTML(html: string): FigmaClipboardData {
   const { files } = parseArchive(figma)
 
   const [schemaCompressed, dataCompressed] = files
-  const schemaBuf = inflateRaw(schemaCompressed)
+  const schemaBuf = decompressAuto(schemaCompressed)
   const schema = decodeBinarySchema(new ByteBuffer(schemaBuf))
   const compiled = compileSchema(schema)
-  const dataBuf = inflateRaw(dataCompressed)
+  const dataBuf = decompressAuto(dataCompressed)
   const message = compiled.decodeMessage(new ByteBuffer(dataBuf))
 
   return { meta, schema, message }

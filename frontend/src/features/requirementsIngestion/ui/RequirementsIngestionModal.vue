@@ -2,6 +2,7 @@
 import { ref, computed, watch, onUnmounted, onMounted } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
+import { readClipboardHTML } from '@/features/canvas/ui/figma'
 
 const props = defineProps({
   modelValue: {
@@ -22,7 +23,7 @@ const SESSION_STORAGE_KEY = 'ingestion_active_session'
 const dragActive = ref(false)
 const file = ref(null)
 const textContent = ref('')
-const inputMode = ref('file') // 'file', 'text', or 'jira'
+const inputMode = ref('file') // 'file', 'text', 'jira', or 'figma'
 const isUploading = ref(false)
 const isProcessing = ref(false)
 const sessionId = ref(null)
@@ -68,6 +69,12 @@ const jiraError = ref(null)
 const jiraConnected = ref(false)
 const pageSearchQuery = ref('')
 
+// Figma paste state
+const figmaNodeChanges = ref(null) // parsed nodeChanges from Figma clipboard
+const figmaPasteError = ref(null)
+const figmaScreenCount = ref(0)
+const figmaElementCount = ref(0)
+
 // Data clearing state
 const showClearConfirm = ref(false)
 const existingDataStats = ref(null)
@@ -87,6 +94,9 @@ const canSubmit = computed(() => {
   if (inputMode.value === 'jira') {
     return selectedPageContent.value !== null
   }
+  if (inputMode.value === 'figma') {
+    return figmaNodeChanges.value !== null
+  }
   return textContent.value.trim().length > 10
 })
 
@@ -99,7 +109,7 @@ const filteredPages = computed(() => {
 const phaseLabel = computed(() => {
   const labels = {
     'upload': '업로드 중',
-    'parsing': '문서 파싱',
+    'parsing': inputMode.value === 'figma' ? 'Figma UI 파싱' : '문서 파싱',
     'extracting_user_stories': 'User Story 추출',
     'identifying_bc': 'Bounded Context 식별',
     'extracting_aggregates': 'Aggregate 추출',
@@ -197,6 +207,58 @@ function removeFile() {
   file.value = null
 }
 
+// Figma clipboard paste handler
+async function handleFigmaPaste(e) {
+  figmaPasteError.value = null
+  const html = e.clipboardData?.getData('text/html')
+  if (!html) {
+    figmaPasteError.value = 'Figma에서 복사한 데이터가 아닙니다. Figma에서 요소를 선택하고 Ctrl+C로 복사한 뒤 붙여넣어 주세요.'
+    return
+  }
+
+  try {
+    const data = readClipboardHTML(html)
+    const nodeChanges = data.message?.nodeChanges || data.message?.pasteFileContent?.nodeChanges || []
+    if (!nodeChanges.length) {
+      figmaPasteError.value = 'Figma 요소를 찾을 수 없습니다. Figma에서 화면 프레임을 선택하고 복사해 주세요.'
+      return
+    }
+
+    // Extract meaningful info for display
+    const frames = nodeChanges.filter(n => n.type === 'FRAME' && !n.parentIndex?.guid?.localID)
+    const topLevelFrames = nodeChanges.filter(n => n.type === 'FRAME')
+    const textNodes = nodeChanges.filter(n => n.type === 'TEXT')
+
+    figmaScreenCount.value = frames.length || topLevelFrames.length
+    figmaElementCount.value = nodeChanges.length
+
+    // Serialize nodeChanges to a simplified structure for the backend
+    const simplified = nodeChanges.map(n => ({
+      type: n.type,
+      name: n.name || '',
+      text: n.textData?.characters || '',
+      width: n.size?.x || 0,
+      height: n.size?.y || 0,
+      parentId: n.parentIndex?.guid ? `${n.parentIndex.guid.sessionID}-${n.parentIndex.guid.localID}` : null,
+      id: n.guid ? `${n.guid.sessionID}-${n.guid.localID}` : null,
+      stackMode: n.stackMode || null,
+      visible: n.visible !== false,
+    }))
+
+    figmaNodeChanges.value = simplified
+  } catch (err) {
+    console.error('Figma paste parsing error:', err)
+    figmaPasteError.value = 'Figma 데이터 파싱에 실패했습니다. 다시 시도해 주세요.'
+  }
+}
+
+function clearFigmaData() {
+  figmaNodeChanges.value = null
+  figmaPasteError.value = null
+  figmaScreenCount.value = 0
+  figmaElementCount.value = 0
+}
+
 // Check for existing data in Neo4j
 async function checkExistingData() {
   isLoadingStats.value = true
@@ -264,25 +326,40 @@ async function startIngestion() {
   isPaused.value = false
   
   try {
-    const formData = new FormData()
+    let uploadResponse
 
-    if (inputMode.value === 'file' && file.value) {
-      formData.append('file', file.value)
-    } else if (inputMode.value === 'jira' && selectedPageContent.value) {
-      const text = `# ${selectedPageContent.value.title}\n\n${selectedPageContent.value.content}`
-      if (!text.trim()) {
-        throw new Error('선택한 페이지의 내용이 비어있습니다.')
-      }
-      formData.append('text', text)
+    if (inputMode.value === 'figma' && figmaNodeChanges.value) {
+      // Figma mode: send JSON directly (not FormData)
+      uploadResponse = await fetch('/api/ingest/upload/figma', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          figma_nodes: figmaNodeChanges.value,
+          source_type: 'figma',
+          display_language: displayLanguage.value === 'en' ? 'en' : 'ko',
+        })
+      })
     } else {
-      formData.append('text', textContent.value)
-    }
-    formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
+      const formData = new FormData()
 
-    const uploadResponse = await fetch('/api/ingest/upload', {
-      method: 'POST',
-      body: formData
-    })
+      if (inputMode.value === 'file' && file.value) {
+        formData.append('file', file.value)
+      } else if (inputMode.value === 'jira' && selectedPageContent.value) {
+        const text = `# ${selectedPageContent.value.title}\n\n${selectedPageContent.value.content}`
+        if (!text.trim()) {
+          throw new Error('선택한 페이지의 내용이 비어있습니다.')
+        }
+        formData.append('text', text)
+      } else {
+        formData.append('text', textContent.value)
+      }
+      formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
+
+      uploadResponse = await fetch('/api/ingest/upload', {
+        method: 'POST',
+        body: formData
+      })
+    }
     
     if (!uploadResponse.ok) {
       const errData = await uploadResponse.json()
@@ -726,6 +803,7 @@ function closeModal() {
   textContent.value = ''
   error.value = null
   jiraError.value = null
+  clearFigmaData()
   showClearConfirm.value = false
   isOpen.value = false
 }
@@ -1098,6 +1176,19 @@ function useSample() {
                       </svg>
                       JIRA
                     </button>
+                    <button
+                      :class="['tab-btn', { active: inputMode === 'figma' }]"
+                      @click="inputMode = 'figma'"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z"></path>
+                        <path d="M12 2h3.5a3.5 3.5 0 1 1 0 7H12V2z"></path>
+                        <path d="M12 12.5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 1 1-7 0z"></path>
+                        <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z"></path>
+                        <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z"></path>
+                      </svg>
+                      Figma
+                    </button>
                   </div>
                   <div class="cache-toggle">
                     <label class="cache-toggle__label" title="LangChain 캐시를 활성화하면 동일한 요청의 속도가 빨라집니다">
@@ -1206,6 +1297,67 @@ function useSample() {
                 <button class="sample-btn" @click="useSample">
                   샘플 요구사항 사용
                 </button>
+              </div>
+
+              <!-- Figma Paste Area -->
+              <div v-if="inputMode === 'figma'" class="figma-section">
+                <div v-if="!figmaNodeChanges" class="figma-paste-area" @paste="handleFigmaPaste" tabindex="0">
+                  <div class="figma-paste-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z"></path>
+                      <path d="M12 2h3.5a3.5 3.5 0 1 1 0 7H12V2z"></path>
+                      <path d="M12 12.5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 1 1-7 0z"></path>
+                      <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z"></path>
+                      <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z"></path>
+                    </svg>
+                  </div>
+                  <p class="figma-paste-text">Figma에서 화면을 복사한 후 여기를 클릭하고 <kbd>Ctrl+V</kbd> 붙여넣기</p>
+                  <p class="figma-paste-hint">Figma에서 스토리보드 프레임들을 선택 → Ctrl+C 복사 → 이 영역에 Ctrl+V 붙여넣기</p>
+                </div>
+                <div v-else class="figma-preview">
+                  <div class="figma-preview-header">
+                    <div class="figma-preview-stats">
+                      <span class="figma-stat">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        </svg>
+                        화면 {{ figmaScreenCount }}개
+                      </span>
+                      <span class="figma-stat">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <circle cx="12" cy="12" r="3"></circle>
+                          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                        요소 {{ figmaElementCount }}개
+                      </span>
+                    </div>
+                    <button class="figma-clear-btn" @click="clearFigmaData">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                      </svg>
+                      초기화
+                    </button>
+                  </div>
+                  <div class="figma-node-list">
+                    <div v-for="(node, idx) in figmaNodeChanges.filter(n => n.type === 'FRAME' && !n.parentId).slice(0, 10)" :key="idx" class="figma-node-item">
+                      <span class="figma-node-type">FRAME</span>
+                      <span class="figma-node-name">{{ node.name || '(이름 없음)' }}</span>
+                      <span class="figma-node-size">{{ Math.round(node.width) }} x {{ Math.round(node.height) }}</span>
+                    </div>
+                    <div v-if="figmaNodeChanges.filter(n => n.type === 'FRAME' && !n.parentId).length > 10" class="figma-more">
+                      ...외 {{ figmaNodeChanges.filter(n => n.type === 'FRAME' && !n.parentId).length - 10 }}개 프레임
+                    </div>
+                  </div>
+                </div>
+                <div v-if="figmaPasteError" class="figma-error">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                  </svg>
+                  {{ figmaPasteError }}
+                </div>
               </div>
 
               <!-- JIRA/Confluence Area -->
@@ -2805,5 +2957,167 @@ function useSample() {
 .item-list-leave-to {
   opacity: 0;
   transform: translateX(10px);
+}
+
+/* Figma Section */
+.figma-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.figma-paste-area {
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl) var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  outline: none;
+  min-height: 180px;
+  justify-content: center;
+}
+
+.figma-paste-area:hover,
+.figma-paste-area:focus {
+  border-color: var(--primary-color, #3b82f6);
+  background: var(--bg-hover, rgba(59, 130, 246, 0.04));
+}
+
+.figma-paste-icon {
+  color: var(--text-tertiary, #9ca3af);
+}
+
+.figma-paste-text {
+  font-size: 14px;
+  color: var(--text-secondary, #6b7280);
+  text-align: center;
+}
+
+.figma-paste-text kbd {
+  background: var(--bg-secondary, #f3f4f6);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.figma-paste-hint {
+  font-size: 12px;
+  color: var(--text-tertiary, #9ca3af);
+  text-align: center;
+}
+
+.figma-preview {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.figma-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-secondary, #f9fafb);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.figma-preview-stats {
+  display: flex;
+  gap: var(--spacing-md);
+}
+
+.figma-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-secondary, #6b7280);
+}
+
+.figma-clear-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary, #9ca3af);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.figma-clear-btn:hover {
+  color: var(--danger-color, #ef4444);
+  background: var(--bg-hover);
+}
+
+.figma-node-list {
+  padding: var(--spacing-sm);
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.figma-node-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary, #f9fafb);
+  font-size: 13px;
+}
+
+.figma-node-type {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--primary-color, #3b82f6);
+  background: var(--primary-bg, rgba(59, 130, 246, 0.1));
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.figma-node-name {
+  flex: 1;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figma-node-size {
+  font-size: 11px;
+  color: var(--text-tertiary, #9ca3af);
+  flex-shrink: 0;
+}
+
+.figma-more {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary, #9ca3af);
+  padding: 4px;
+}
+
+.figma-error {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--danger-color, #ef4444);
+  font-size: 13px;
+  padding: var(--spacing-sm);
+  background: rgba(239, 68, 68, 0.05);
+  border-radius: var(--radius-sm);
 }
 </style>

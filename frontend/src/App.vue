@@ -5,6 +5,7 @@ import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
 import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
 import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
+import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
 import ClaudeCodeTerminal from '@/features/claudeCode/ui/ClaudeCodeTerminal.vue'
 import UserStoryEditModal from '@/features/userStories/ui/UserStoryEditModal.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
@@ -31,6 +32,7 @@ provide('openClaudeCode', (workdir) => {
 
 // Map tab names to components
 const tabComponents = {
+  'BPMN': markRaw(BpmnPanel),
   'Big picture': markRaw(BigPicturePanel),
   'Design': markRaw(CanvasWorkspace),
   'Aggregate': markRaw(AggregatePanel),

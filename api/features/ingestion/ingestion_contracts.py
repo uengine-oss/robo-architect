@@ -63,6 +63,8 @@ class GeneratedUserStory(BaseModel):
     ui_description: str = ""
     # Optional display label in chosen language for UI (e.g. '주문 생성' or 'Create Order')
     displayName: Optional[str] = None
+    # Figma source screen name (set when source_type == "figma")
+    source_screen_name: Optional[str] = None
 
 
 class UserStoryList(BaseModel):

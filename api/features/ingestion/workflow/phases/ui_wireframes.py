@@ -119,11 +119,19 @@ async def _create_command_ui(
 
         us_obj = next((u for u in (ctx.user_stories or []) if getattr(u, "id", None) == chosen_us_id), None)
         user_story_text = ""
+        figma_screen_ref = ""
         if us_obj is not None:
             role = getattr(us_obj, "role", "") or ""
             action = getattr(us_obj, "action", "") or ""
             benefit = getattr(us_obj, "benefit", "") or ""
             user_story_text = f"[{chosen_us_id}] As a {role}, I want to {action}, so that {benefit}".strip()
+
+            # Figma screen reference: look up original screen structure
+            source_screen = getattr(us_obj, "source_screen_name", None) or ""
+            if source_screen and hasattr(ctx, "figma_screens") and ctx.figma_screens:
+                screen_data = ctx.figma_screens.get(source_screen, "")
+                if screen_data:
+                    figma_screen_ref = f"\n\n★ Figma 원본 화면 참조 ('{source_screen}'):\n이 Command의 UI는 아래 Figma 화면 구조를 충실히 반영하여 생성하세요.\n{screen_data}"
 
         events = await asyncio.to_thread(_fetch_command_events_best_effort, ctx, cmd_id)
         events_text = "\n".join([f"- {e}" for e in events]) if events else "No events found"
@@ -143,7 +151,7 @@ async def _create_command_ui(
                 if display_lang == "ko"
                 else "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in English."
             )
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}\n\nUse labels and placeholders that fit this domain (e.g. field names that match the aggregate/command), not generic "Label" or "Input". Output ONLY the HTML fragment.{lang_instruction}"""
+            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}{figma_screen_ref}\n\nUse labels and placeholders that fit this domain (e.g. field names that match the aggregate/command), not generic "Label" or "Input". Output ONLY the HTML fragment.{lang_instruction}"""
 
             raw_html = await _llm_invoke_to_html(ctx, prompt)
 
@@ -225,11 +233,19 @@ async def _create_readmodel_ui(
 
         us_obj = next((u for u in (ctx.user_stories or []) if getattr(u, "id", None) == chosen_us_id), None)
         user_story_text = ""
+        figma_screen_ref = ""
         if us_obj is not None:
             role = getattr(us_obj, "role", "") or ""
             action = getattr(us_obj, "action", "") or ""
             benefit = getattr(us_obj, "benefit", "") or ""
             user_story_text = f"[{chosen_us_id}] As a {role}, I want to {action}, so that {benefit}".strip()
+
+            # Figma screen reference
+            source_screen = getattr(us_obj, "source_screen_name", None) or ""
+            if source_screen and hasattr(ctx, "figma_screens") and ctx.figma_screens:
+                screen_data = ctx.figma_screens.get(source_screen, "")
+                if screen_data:
+                    figma_screen_ref = f"\n\n★ Figma 원본 화면 참조 ('{source_screen}'):\n이 ReadModel의 UI는 아래 Figma 화면 구조를 충실히 반영하여 생성하세요.\n{screen_data}"
 
         theme_hint = f"{ui_name}\n{chosen_ui_desc}"
         if existing_template is not None:
@@ -245,7 +261,7 @@ async def _create_readmodel_ui(
                 if display_lang == "ko"
                 else "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in English."
             )
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nUse labels and placeholders that fit this read model (e.g. column/field names that match the data being displayed), not generic "Label" or "Column". Output ONLY the HTML fragment.{lang_instruction}"""
+            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}{figma_screen_ref}\n\nUse labels and placeholders that fit this read model (e.g. column/field names that match the data being displayed), not generic "Label" or "Column". Output ONLY the HTML fragment.{lang_instruction}"""
 
             raw_html = await _llm_invoke_to_html(ctx, prompt)
 

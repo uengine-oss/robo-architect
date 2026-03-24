@@ -4,6 +4,14 @@ import asyncio
 from typing import Any, AsyncGenerator
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
+from api.features.ingestion.figma_to_user_stories import (
+    extract_user_stories_from_figma,
+    extract_user_stories_from_figma_chunk,
+    parse_and_chunk_figma_nodes,
+    _build_node_maps,
+    _describe_node,
+    MAX_CONCURRENT_CHUNKS as FIGMA_MAX_CONCURRENT,
+)
 from api.features.ingestion.requirements_to_user_stories import (
     ensure_nonempty_ui_description,
     extract_user_stories_from_text,
@@ -436,6 +444,111 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
         progress=PHASE_START
     )
 
+    # Figma source: extract user stories from UI node data (chunked by screen)
+    _figma_processed = False
+    if ctx.source_type == "figma":
+        yield ProgressEvent(
+            phase=IngestionPhase.EXTRACTING_USER_STORIES,
+            message="Figma UI 요소 분석 중...",
+            progress=PHASE_START + 2,
+        )
+
+        try:
+            # Parse nodes and split into screen-based chunks
+            nodes, children_map, screen_chunks = parse_and_chunk_figma_nodes(ctx.content)
+            total_chunks = len(screen_chunks)
+
+            # Build per-screen node structure summaries for UI wireframe phase
+            all_top_frames = [f for chunk in screen_chunks for f in chunk]
+            for frame in all_top_frames:
+                screen_name = frame.get("name", "")
+                if screen_name:
+                    screen_lines = _describe_node(frame, children_map, 0)
+                    ctx.figma_screens[screen_name] = "\n".join(screen_lines)
+
+            SmartLogger.log(
+                "INFO",
+                f"Figma chunking: {total_chunks} chunk(s) from {len(nodes)} nodes",
+                category="ingestion.user_stories.figma.chunking",
+                params={"session_id": ctx.session.id, "total_chunks": total_chunks, "total_nodes": len(nodes)},
+            )
+
+            if total_chunks == 1:
+                # Small storyboard: single LLM call
+                figma_stories = await asyncio.to_thread(extract_user_stories_from_figma, ctx.content)
+            else:
+                # Large storyboard: parallel chunk processing
+                semaphore = asyncio.Semaphore(FIGMA_MAX_CONCURRENT)
+                all_chunk_stories: list = []
+
+                async def process_chunk(chunk_idx: int, chunk: list) -> list:
+                    async with semaphore:
+                        if getattr(ctx.session, "is_cancelled", False):
+                            return []
+                        return await asyncio.to_thread(
+                            extract_user_stories_from_figma_chunk,
+                            nodes, chunk, children_map, chunk_idx, total_chunks,
+                        )
+
+                tasks = []
+                for ci, chunk in enumerate(screen_chunks):
+                    tasks.append(process_chunk(ci, chunk))
+
+                for ci, coro in enumerate(asyncio.as_completed(tasks)):
+                    if getattr(ctx.session, "is_cancelled", False):
+                        yield ProgressEvent(
+                            phase=IngestionPhase.ERROR,
+                            message="❌ 생성이 중단되었습니다",
+                            progress=getattr(ctx.session, "progress", 0) or 0,
+                            data={"error": "Cancelled by user", "cancelled": True},
+                        )
+                        return
+
+                    chunk_result = await coro
+                    all_chunk_stories.extend(chunk_result)
+
+                    chunk_progress = PHASE_START + 2 + int(((ci + 1) / total_chunks) * (PHASE_END - PHASE_START - 4))
+                    yield ProgressEvent(
+                        phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                        message=f"Figma UI 분석 중... ({ci + 1}/{total_chunks} 청크, {len(all_chunk_stories)}개 US)",
+                        progress=chunk_progress,
+                    )
+
+                figma_stories = all_chunk_stories
+
+            user_stories = normalize_and_dedup_user_stories(figma_stories, ctx.session.id)
+
+            # Re-assign sequential IDs
+            for idx, us in enumerate(user_stories, start=1):
+                new_id = f"US-{idx:03d}"
+                try:
+                    setattr(us, "id", new_id)
+                except Exception:
+                    if hasattr(us, "model_copy"):
+                        us = us.model_copy(update={"id": new_id})
+
+            ctx.user_stories = user_stories
+            yield ProgressEvent(
+                phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                message=f"Figma UI 분석 완료 (User Story {len(user_stories)}개 추출, {total_chunks}개 청크)",
+                progress=PHASE_END - 2,
+            )
+            _figma_processed = True
+        except Exception as e:
+            SmartLogger.log(
+                "ERROR",
+                "Figma user story extraction failed",
+                category="ingestion.user_stories.figma.error",
+                params={"session_id": ctx.session.id, "error": str(e)},
+            )
+            yield ProgressEvent(
+                phase=IngestionPhase.ERROR,
+                message=f"Figma UI 분석 실패: {e}",
+                progress=PHASE_START + 5,
+                data={"error": str(e)},
+            )
+            return
+
     # Legacy report: Session Bean별 개별 US 생성
     input_content = ctx.content
     _legacy_sb_processed = False
@@ -508,7 +621,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     else:
         _legacy_sb_processed = False
 
-    if not _legacy_sb_processed:
+    if not _legacy_sb_processed and not _figma_processed:
         # 스캐닝 및 청킹 판단
         content_tokens = estimate_tokens(input_content)
         should_chunk_result = should_chunk(input_content, max_tokens=USER_STORY_CHUNK_SIZE)
@@ -535,7 +648,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             },
         )
 
-    if not _legacy_sb_processed and should_chunk_result:
+    if not _legacy_sb_processed and not _figma_processed and should_chunk_result:
         print(f"[CHUNKING DEBUG] Entering chunking path - will split into chunks")
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
@@ -750,7 +863,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             message=f"User Story 추출 완료 (총 {len(user_stories)}개)",
             progress=PHASE_END - 2
         )
-    elif not _legacy_sb_processed:
+    elif not _legacy_sb_processed and not _figma_processed:
         # 기존 로직 (청킹 불필요)
         print(f"[CHUNKING DEBUG] Entering non-chunking path - processing entire document at once")
         yield ProgressEvent(

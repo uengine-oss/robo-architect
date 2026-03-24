@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
+import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
 import SettingsPanel from './SettingsPanel.vue'
@@ -16,7 +17,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:activeTab'])
 
-const tabs = ['Big picture', 'Design', 'Aggregate']
+const tabs = ['BPMN', 'Big picture', 'Design', 'Aggregate']
 
 function selectTab(tab) {
   emit('update:activeTab', tab)
@@ -25,6 +26,7 @@ function selectTab(tab) {
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()
 const aggregateViewerStore = useAggregateViewerStore()
+const bpmnStore = useBpmnStore()
 const showIngestionModal = ref(false)
 const showPRDModal = ref(false)
 const showSettingsPanel = ref(false)
@@ -60,8 +62,15 @@ function handleIngestionComplete() {
     </div>
     
     <div class="top-bar__center">
+      <!-- BPMN Panel Status -->
+      <div v-if="activeTab === 'BPMN'" class="top-bar__status">
+        <span><strong>{{ bpmnStore.renderedFlows.length }}</strong> flows</span>
+        <span class="top-bar__status-dot">•</span>
+        <span><strong>{{ bpmnStore.processFlows.length }}</strong> available</span>
+      </div>
+
       <!-- Design Panel Status -->
-      <div v-if="activeTab === 'Design'" class="top-bar__status">
+      <div v-else-if="activeTab === 'Design'" class="top-bar__status">
         <span><strong>{{ canvasStore.nodes.length }}</strong> nodes</span>
         <span class="top-bar__status-dot">•</span>
         <span><strong>{{ canvasStore.edges.length }}</strong> connections</span>

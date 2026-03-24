@@ -9,12 +9,14 @@ Business capability:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import asyncio
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
@@ -148,9 +150,9 @@ async def upload_document(
     session.display_language = (display_language or "ko").strip().lower() or "ko"
     if session.display_language not in ("ko", "en"):
         session.display_language = "ko"
-    # source_type: "rfp" (default, normal RFP flow) or "legacy_report" (legacy analysis report flow)
+    # source_type: "rfp" (default, normal RFP flow), "legacy_report", or "figma"
     resolved_source_type = (source_type or "rfp").strip().lower()
-    if resolved_source_type not in ("rfp", "legacy_report"):
+    if resolved_source_type not in ("rfp", "legacy_report", "figma"):
         resolved_source_type = "rfp"
     # Auto-detect legacy report by filename (e.g., *.report.md)
     if resolved_source_type == "rfp" and file and file.filename:
@@ -165,6 +167,60 @@ async def upload_document(
     )
 
     return {"session_id": session.id, "content_length": len(content), "display_language": session.display_language, "source_type": session.source_type, "preview": content[:500] + "..." if len(content) > 500 else content}
+
+
+class FigmaUploadRequest(BaseModel):
+    figma_nodes: List[dict]
+    source_type: str = "figma"
+    display_language: str = "ko"
+
+
+@router.post("/upload/figma")
+async def upload_figma_document(
+    request: Request,
+    body: FigmaUploadRequest,
+) -> dict[str, Any]:
+    """
+    Upload Figma node data (JSON) to start ingestion.
+    Parses Figma UI element structure into requirements for Event Storming extraction.
+    """
+    if not body.figma_nodes:
+        raise HTTPException(status_code=400, detail="figma_nodes must not be empty")
+
+    SmartLogger.log(
+        "INFO",
+        "Ingestion upload received (figma): parsing Figma node changes.",
+        category="ingestion.api.upload.figma",
+        params={
+            **http_context(request),
+            "node_count": len(body.figma_nodes),
+        },
+    )
+
+    # Serialize figma nodes as the content (JSON string for workflow)
+    content = json.dumps(body.figma_nodes, ensure_ascii=False)
+
+    session = create_session()
+    session.content = content
+    session.display_language = (body.display_language or "ko").strip().lower() or "ko"
+    if session.display_language not in ("ko", "en"):
+        session.display_language = "ko"
+    session.source_type = "figma"
+
+    SmartLogger.log(
+        "INFO",
+        "Ingestion session created (figma)",
+        category="ingestion.api.upload",
+        params={"session_id": session.id, "display_language": session.display_language, "source_type": "figma", "node_count": len(body.figma_nodes)},
+    )
+
+    return {
+        "session_id": session.id,
+        "content_length": len(content),
+        "display_language": session.display_language,
+        "source_type": "figma",
+        "preview": f"Figma storyboard: {len(body.figma_nodes)} UI elements",
+    }
 
 
 @router.get("/session/{session_id}/status")
