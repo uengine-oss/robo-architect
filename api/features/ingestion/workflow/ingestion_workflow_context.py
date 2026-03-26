@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+import json
+
 from api.features.ingestion.ingestion_contracts import GeneratedUserStory
 from api.features.ingestion.ingestion_sessions import IngestionSession
 from api.features.ingestion.legacy_report.report_models import ParsedReport
@@ -75,6 +77,7 @@ class IngestionWorkflowContext:
                         priority=us.get("priority", "medium"),
                         ui_description=us.get("uiDescription", "") or us.get("ui_description", ""),
                         displayName=us.get("displayName"),
+                        source_screen_name=us.get("sourceScreenName") or us.get("source_screen_name"),
                     )
                     for us in user_stories_dict
                     if us.get("id") and us.get("action")  # Only include valid user stories
@@ -228,6 +231,34 @@ class IngestionWorkflowContext:
                     },
                 )
 
+            # Rebuild figma_screens map from content if source_type is figma
+            if self.source_type == "figma" and self.content and not self.figma_screens:
+                try:
+                    from api.features.ingestion.figma_to_user_stories import (
+                        _build_node_maps,
+                        _describe_node,
+                    )
+                    nodes = json.loads(self.content)
+                    children_map, top_frames = _build_node_maps(nodes)
+                    for frame in top_frames:
+                        screen_name = frame.get("name", "")
+                        if screen_name:
+                            screen_lines = _describe_node(frame, children_map, 0)
+                            self.figma_screens[screen_name] = "\n".join(screen_lines)
+                    SmartLogger.log(
+                        "INFO",
+                        f"Rebuilt figma_screens map from content: {len(self.figma_screens)} screens",
+                        category="ingestion.workflow.context.sync.figma_screens",
+                        params={"session_id": self.session.id, "screen_count": len(self.figma_screens)},
+                    )
+                except Exception as figma_err:
+                    SmartLogger.log(
+                        "WARN",
+                        f"Failed to rebuild figma_screens map: {figma_err}",
+                        category="ingestion.workflow.context.sync.figma_screens.error",
+                        params={"session_id": self.session.id, "error": str(figma_err)},
+                    )
+
             SmartLogger.log(
                 "INFO",
                 "Completed syncing ingestion workflow context from Neo4j",
@@ -241,6 +272,7 @@ class IngestionWorkflowContext:
                     "events": sum(len(evts) for evts in self.events_by_agg.values()),
                     "readmodels": sum(len(rms) for rms in self.readmodels_by_bc.values()),
                     "policies": len(self.policies),
+                    "figma_screens": len(self.figma_screens),
                 },
             )
 

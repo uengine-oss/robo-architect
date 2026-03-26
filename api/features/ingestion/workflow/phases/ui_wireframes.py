@@ -7,12 +7,67 @@ from typing import AsyncGenerator
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from api.features.ingestion.figma_to_user_stories import _fuzzy_match_screen_name
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.platform.env import get_llm_provider_model
 from api.platform.keys import ui_key as build_ui_key
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.ui_wireframe_template import normalize_ui_template
+
+
+def _resolve_figma_screen_ref(
+    ctx: IngestionWorkflowContext,
+    source_screen: str,
+    target_type: str,
+    target_id: str,
+) -> str:
+    """
+    Resolve a Figma screen reference for UI prompt injection.
+    Uses fuzzy matching as fallback if exact match fails. Logs warnings on failures.
+    Returns the prompt injection string, or empty string if not found.
+    """
+    if not source_screen or not hasattr(ctx, "figma_screens") or not ctx.figma_screens:
+        return ""
+
+    screen_data = ctx.figma_screens.get(source_screen, "")
+    resolved_name = source_screen
+
+    if not screen_data:
+        # Try fuzzy matching
+        matched = _fuzzy_match_screen_name(source_screen, set(ctx.figma_screens.keys()))
+        if matched:
+            screen_data = ctx.figma_screens.get(matched, "")
+            resolved_name = matched
+            SmartLogger.log(
+                "INFO",
+                f"Figma screen fuzzy matched for UI: '{source_screen}' → '{matched}'",
+                category="ingestion.ui_wireframe.figma.fuzzy_match",
+                params={"session_id": ctx.session.id, "original": source_screen, "matched": matched, "target_type": target_type, "target_id": target_id},
+            )
+        else:
+            SmartLogger.log(
+                "WARN",
+                f"Figma screen '{source_screen}' not found in figma_screens (no fuzzy match). "
+                f"UI for {target_type} '{target_id}' will be generated without Figma reference.",
+                category="ingestion.ui_wireframe.figma.screen_not_found",
+                params={
+                    "session_id": ctx.session.id,
+                    "source_screen": source_screen,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "available_screens": list(ctx.figma_screens.keys())[:20],
+                },
+            )
+            return ""
+
+    if screen_data:
+        return (
+            f"\n\n★ Figma 원본 화면 참조 ('{resolved_name}'):\n"
+            f"이 {target_type}의 UI는 아래 Figma 화면 구조를 충실히 반영하여 생성하세요.\n"
+            f"{screen_data}"
+        )
+    return ""
 
 
 _UI_WIREFRAME_SYSTEM_PROMPT = """You generate a modern UI wireframe HTML fragment for a single screen (Ant Design-like or Material-like).\n\nOutput rules (STRICT):\n- Output ONLY raw HTML fragment. Do NOT use markdown or code fences.\n- Do NOT output <!doctype>, <html>, <head>, <body>.\n- Do NOT include <script> tags.\n- Do NOT include inline event handlers like onclick=, onload=, etc.\n- Do NOT use javascript: URLs.\n- You MAY include a <style> block, but:\n  - Every selector MUST be scoped under `.wf-root`\n  - MUST NOT use @import or url(...)\n\nRoot container (MUST):\n- The fragment MUST start with a root container like:\n  <div class=\"wf-root wf-theme-ant\" data-wf-root=\"1\"> ... </div>\n  or\n  <div class=\"wf-root wf-theme-material\" data-wf-root=\"1\"> ... </div>\n\nModern UI quality requirements:\n- Use an App Bar / Toolbar at the top (title + primary actions).\n- Use Card-based sections.\n- For table/list screens: include a table toolbar (search/filter/actions), column headers, row actions, and pagination area.\n- For form screens: use a 2-column grid layout, labels + help/validation placeholders, primary/secondary button group.\n- Optionally include tabs/segments, chips/badges, and empty/loading/error state placeholders.\n- No JS behavior; structure only. Prefer accessible attributes (aria-*, role).\n\nPrefer these classes to match the preview styling:\n- wf-appbar, wf-title, wf-subtitle, wf-card, wf-card__header, wf-card__title, wf-card__body,\n  wf-actions, wf-btn, wf-btn--primary, wf-input, wf-label, wf-grid, wf-col-6, wf-col-12,\n  wf-table, wf-table__toolbar, wf-pagination, wf-chip, wf-badge, wf-state, wf-state--error, wf-empty\n"""
@@ -126,12 +181,10 @@ async def _create_command_ui(
             benefit = getattr(us_obj, "benefit", "") or ""
             user_story_text = f"[{chosen_us_id}] As a {role}, I want to {action}, so that {benefit}".strip()
 
-            # Figma screen reference: look up original screen structure
+            # Figma screen reference: look up original screen structure with fuzzy fallback
             source_screen = getattr(us_obj, "source_screen_name", None) or ""
-            if source_screen and hasattr(ctx, "figma_screens") and ctx.figma_screens:
-                screen_data = ctx.figma_screens.get(source_screen, "")
-                if screen_data:
-                    figma_screen_ref = f"\n\n★ Figma 원본 화면 참조 ('{source_screen}'):\n이 Command의 UI는 아래 Figma 화면 구조를 충실히 반영하여 생성하세요.\n{screen_data}"
+            if source_screen:
+                figma_screen_ref = _resolve_figma_screen_ref(ctx, source_screen, "Command", cmd_id)
 
         events = await asyncio.to_thread(_fetch_command_events_best_effort, ctx, cmd_id)
         events_text = "\n".join([f"- {e}" for e in events]) if events else "No events found"
@@ -240,12 +293,10 @@ async def _create_readmodel_ui(
             benefit = getattr(us_obj, "benefit", "") or ""
             user_story_text = f"[{chosen_us_id}] As a {role}, I want to {action}, so that {benefit}".strip()
 
-            # Figma screen reference
+            # Figma screen reference with fuzzy fallback
             source_screen = getattr(us_obj, "source_screen_name", None) or ""
-            if source_screen and hasattr(ctx, "figma_screens") and ctx.figma_screens:
-                screen_data = ctx.figma_screens.get(source_screen, "")
-                if screen_data:
-                    figma_screen_ref = f"\n\n★ Figma 원본 화면 참조 ('{source_screen}'):\n이 ReadModel의 UI는 아래 Figma 화면 구조를 충실히 반영하여 생성하세요.\n{screen_data}"
+            if source_screen:
+                figma_screen_ref = _resolve_figma_screen_ref(ctx, source_screen, "ReadModel", rm_id)
 
         theme_hint = f"{ui_name}\n{chosen_ui_desc}"
         if existing_template is not None:

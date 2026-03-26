@@ -221,6 +221,7 @@ async def _create_user_story_with_verification(
                 status="draft",
                 ui_description=ui_desc,
                 display_name=us_display_name or None,
+                source_screen_name=getattr(us, "source_screen_name", None),
             ),
             timeout=10.0
         )
@@ -473,9 +474,12 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                 params={"session_id": ctx.session.id, "total_chunks": total_chunks, "total_nodes": len(nodes)},
             )
 
+            # Collect valid screen names for fuzzy matching validation
+            valid_screen_names = set(ctx.figma_screens.keys())
+
             if total_chunks == 1:
                 # Small storyboard: single LLM call
-                figma_stories = await asyncio.to_thread(extract_user_stories_from_figma, ctx.content)
+                figma_stories = await asyncio.to_thread(extract_user_stories_from_figma, ctx.content, valid_screen_names)
             else:
                 # Large storyboard: parallel chunk processing
                 semaphore = asyncio.Semaphore(FIGMA_MAX_CONCURRENT)
@@ -488,6 +492,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                         return await asyncio.to_thread(
                             extract_user_stories_from_figma_chunk,
                             nodes, chunk, children_map, chunk_idx, total_chunks,
+                            valid_screen_names,
                         )
 
                 tasks = []

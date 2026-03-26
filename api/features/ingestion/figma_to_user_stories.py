@@ -164,7 +164,84 @@ def _chunk_screens(top_frames: list[dict], max_per_chunk: int = MAX_SCREENS_PER_
 # Single-chunk extraction
 # ---------------------------------------------------------------------------
 
-def _extract_from_summary(figma_summary: str, chunk_label: str = "") -> list[GeneratedUserStory]:
+def _fuzzy_match_screen_name(
+    candidate: str,
+    valid_names: set[str],
+    threshold: float = 0.5,
+) -> str | None:
+    """
+    Find the best fuzzy match for a candidate screen name against valid names.
+    Returns the matched name, or None if no match above threshold.
+    """
+    if not candidate or not valid_names:
+        return None
+    # Exact match
+    if candidate in valid_names:
+        return candidate
+    # Case-insensitive exact match
+    lower_map = {n.lower().strip(): n for n in valid_names}
+    candidate_lower = candidate.lower().strip()
+    if candidate_lower in lower_map:
+        return lower_map[candidate_lower]
+    # Substring match (candidate contained in a valid name or vice versa)
+    for name in valid_names:
+        if candidate_lower in name.lower() or name.lower() in candidate_lower:
+            return name
+    # Character-level similarity (Jaccard on bigrams)
+    def bigrams(s: str) -> set[str]:
+        s = s.lower().strip()
+        return {s[i : i + 2] for i in range(len(s) - 1)} if len(s) > 1 else {s}
+
+    candidate_bg = bigrams(candidate)
+    best_score = 0.0
+    best_name: str | None = None
+    for name in valid_names:
+        name_bg = bigrams(name)
+        intersection = len(candidate_bg & name_bg)
+        union = len(candidate_bg | name_bg)
+        score = intersection / union if union > 0 else 0.0
+        if score > best_score:
+            best_score = score
+            best_name = name
+    if best_score >= threshold:
+        return best_name
+    return None
+
+
+def _validate_source_screen_names(
+    stories: list[GeneratedUserStory],
+    valid_screen_names: set[str],
+) -> list[GeneratedUserStory]:
+    """
+    Validate and correct source_screen_name for each story using fuzzy matching.
+    """
+    if not valid_screen_names:
+        return stories
+    corrected: list[GeneratedUserStory] = []
+    for s in stories:
+        screen_name = getattr(s, "source_screen_name", None)
+        if screen_name and screen_name not in valid_screen_names:
+            matched = _fuzzy_match_screen_name(screen_name, valid_screen_names)
+            if matched:
+                SmartLogger.log(
+                    "INFO",
+                    f"Figma screen name corrected: '{screen_name}' → '{matched}'",
+                    category="ingestion.figma.screen_name.corrected",
+                    params={"original": screen_name, "corrected": matched},
+                )
+                s = s.model_copy(update={"source_screen_name": matched})
+            else:
+                SmartLogger.log(
+                    "WARN",
+                    f"Figma screen name not found: '{screen_name}' (no fuzzy match)",
+                    category="ingestion.figma.screen_name.not_found",
+                    params={"screen_name": screen_name, "valid_names": list(valid_screen_names)[:20]},
+                )
+        corrected.append(s)
+    return corrected
+
+
+def _extract_from_summary(figma_summary: str, chunk_label: str = "", valid_screen_names: set[str] | None = None) -> list[GeneratedUserStory]:
     """Run LLM extraction on a single figma summary text."""
     llm = get_llm(max_tokens=32768)
     structured_llm = llm.with_structured_output(UserStoryList)
@@ -228,6 +305,9 @@ def _extract_from_summary(figma_summary: str, chunk_label: str = "") -> list[Gen
                 source_screen_name=getattr(s, "source_screen_name", None),
             )
         )
+    # Validate and correct source_screen_name via fuzzy matching
+    if valid_screen_names:
+        fixed = _validate_source_screen_names(fixed, valid_screen_names)
     return fixed
 
 
@@ -235,14 +315,14 @@ def _extract_from_summary(figma_summary: str, chunk_label: str = "") -> list[Gen
 # Public API (sync – called via asyncio.to_thread from workflow phase)
 # ---------------------------------------------------------------------------
 
-def extract_user_stories_from_figma(figma_nodes_json: str) -> list[GeneratedUserStory]:
+def extract_user_stories_from_figma(figma_nodes_json: str, valid_screen_names: set[str] | None = None) -> list[GeneratedUserStory]:
     """
     Extract user stories from Figma node data using LLM.
     Single-shot for small storyboards (≤ MAX_SCREENS_PER_CHUNK screens).
     """
     nodes = json.loads(figma_nodes_json)
     figma_summary = _summarize_figma_nodes(nodes)
-    return _extract_from_summary(figma_summary)
+    return _extract_from_summary(figma_summary, valid_screen_names=valid_screen_names)
 
 
 def extract_user_stories_from_figma_chunk(
@@ -251,6 +331,7 @@ def extract_user_stories_from_figma_chunk(
     children_map: dict,
     chunk_idx: int,
     total_chunks: int,
+    valid_screen_names: set[str] | None = None,
 ) -> list[GeneratedUserStory]:
     """
     Extract user stories from a single chunk of screens.
@@ -260,7 +341,7 @@ def extract_user_stories_from_figma_chunk(
     screen_names = [f.get("name", "?") for f in screen_chunk]
     label = f"chunk {chunk_idx + 1}/{total_chunks}: {', '.join(screen_names)}"
     print(f"[FIGMA CHUNK] Processing {label} ({len(summary)} chars)")
-    return _extract_from_summary(summary, chunk_label=label)
+    return _extract_from_summary(summary, chunk_label=label, valid_screen_names=valid_screen_names)
 
 
 def parse_and_chunk_figma_nodes(figma_nodes_json: str) -> tuple[list[dict], dict, list[list[dict]]]:
