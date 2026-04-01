@@ -1091,7 +1091,7 @@ def _parse_db_schema(text: str, is_v2: bool = False) -> tuple[list[TableSchema],
         table_name = lines[0].strip()
 
         # "컬럼 레벨 FK" 섹션 처리
-        if "컬럼 레벨 FK" in table_name or "FK_TO" in table_name:
+        if "컬럼 레벨 FK" in table_name or "FK_TO_COLUMN" in table_name:
             column_fks = _parse_column_level_fks(tsec)
             continue
 
