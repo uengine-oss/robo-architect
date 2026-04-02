@@ -152,7 +152,7 @@ async def upload_document(
         session.display_language = "ko"
     # source_type: "rfp" (default, normal RFP flow), "legacy_report", or "figma"
     resolved_source_type = (source_type or "rfp").strip().lower()
-    if resolved_source_type not in ("rfp", "legacy_report", "figma"):
+    if resolved_source_type not in ("rfp", "legacy_report", "analyzer_graph", "figma"):
         resolved_source_type = "rfp"
     # Auto-detect legacy report by filename (e.g., *.report.md)
     if resolved_source_type == "rfp" and file and file.filename:
