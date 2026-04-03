@@ -92,7 +92,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         ctx.source_report = parse_legacy_report(content)
     elif source_type == "analyzer_graph":
         from api.features.ingestion.analyzer_graph.graph_to_report import build_report_from_graph
-        ctx.source_report = build_report_from_graph(client)
+        ctx.source_report = build_report_from_graph()
 
     try:
         SmartLogger.log(

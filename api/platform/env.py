@@ -144,6 +144,12 @@ def get_neo4j_database() -> str | None:
     return (db or "").strip() or None
 
 
+def get_analyzer_neo4j_database() -> str | None:
+    """Get analyzer Neo4j database name (ANALYZER_NEO4J_DATABASE)."""
+    db = env_str("ANALYZER_NEO4J_DATABASE", "")
+    return db.strip() or None
+
+
 # =============================================================================
 # Common cross-feature flags
 # =============================================================================

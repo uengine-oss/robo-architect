@@ -6,12 +6,14 @@ robo-data-analyzer가 Neo4j에 저장한 그래프 데이터를 조회하여
 
 이렇게 하면 기존 phase 파일과 report_context.py를 전혀 수정하지 않고,
 analyzer 그래프 데이터를 Event Storming 생성에 활용할 수 있다.
+
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
 from api.features.ingestion.legacy_report.report_models import (
     CallRelation,
     ClassDetail,
@@ -66,9 +68,12 @@ def _to_role(stereotype: str, has_writes: bool = False) -> str:
 # Neo4j 쿼리 실행 헬퍼
 # ---------------------------------------------------------------------------
 
-def _run(client: Any, query: str, **params: Any) -> list[dict]:
-    """동기 Neo4j 쿼리 실행 → dict 리스트 반환."""
-    with client.session() as session:
+def _run(query: str, **params: Any) -> list[dict]:
+    """동기 Neo4j 쿼리 실행 → dict 리스트 반환.
+
+    ANALYZER_NEO4J_DATABASE가 설정되어 있으면 해당 DB에서 조회한다.
+    """
+    with get_session(database=ANALYZER_NEO4J_DATABASE) as session:
         result = session.run(query, **params)
         return [dict(record) for record in result]
 
@@ -77,7 +82,7 @@ def _run(client: Any, query: str, **params: Any) -> list[dict]:
 # 개별 조회 함수
 # ---------------------------------------------------------------------------
 
-def _fetch_overview(client: Any) -> SystemOverview:
+def _fetch_overview() -> SystemOverview:
     """시스템 개요 (노드 개수 집계)."""
     query = """
     OPTIONAL MATCH (pkg:PACKAGE)   WITH count(pkg)  AS pkg_cnt
@@ -87,7 +92,7 @@ def _fetch_overview(client: Any) -> SystemOverview:
     OPTIONAL MATCH (col:Column)    WITH pkg_cnt, mod_cnt, fn_cnt, tbl_cnt, count(col) AS col_cnt
     RETURN pkg_cnt, mod_cnt, fn_cnt, tbl_cnt, col_cnt
     """
-    rows = _run(client, query)
+    rows = _run(query)
     if not rows:
         return SystemOverview()
     r = rows[0]
@@ -100,7 +105,7 @@ def _fetch_overview(client: Any) -> SystemOverview:
     )
 
 
-def _fetch_packages(client: Any) -> list[PackageInfo]:
+def _fetch_packages() -> list[PackageInfo]:
     """PACKAGE 노드 → PackageInfo 목록."""
     query = """
     MATCH (p:PACKAGE)
@@ -114,11 +119,11 @@ def _fetch_packages(client: Any) -> list[PackageInfo]:
             full_path=r.get("fqn", ""),
             class_count=r.get("class_count", 0) or 0,
         )
-        for r in _run(client, query)
+        for r in _run(query)
     ]
 
 
-def _fetch_classes(client: Any) -> list[ClassDetail]:
+def _fetch_classes() -> list[ClassDetail]:
     """MODULE + FUNCTION + VARIABLE + 관계 → ClassDetail 목록."""
 
     # 1) MODULE 기본 정보 (함수가 있는 MODULE만 — Python FILE/CLASS 중복 방지)
@@ -130,7 +135,7 @@ def _fetch_classes(client: Any) -> list[ClassDetail]:
            labels(m) AS labels
     ORDER BY m.fqn
     """
-    modules = _run(client, modules_query)
+    modules = _run(modules_query)
 
     classes: list[ClassDetail] = []
     for mod in modules:
@@ -152,7 +157,7 @@ def _fetch_classes(client: Any) -> list[ClassDetail]:
                collect(DISTINCT rt.name) AS reads_tables
         ORDER BY f.start_line
         """
-        functions = _run(client, fn_query, fqn=mod_fqn)
+        functions = _run(fn_query, fqn=mod_fqn)
 
         methods: list[MethodInfo] = []
         table_access_set: set[tuple[str, str]] = set()
@@ -181,7 +186,7 @@ def _fetch_classes(client: Any) -> list[ClassDetail]:
         RETURN v.name AS name, v.variable_type AS type, v.summary AS summary
         ORDER BY v.name
         """
-        variables = _run(client, var_query, fqn=mod_fqn)
+        variables = _run(var_query, fqn=mod_fqn)
 
         fields = [
             FieldInfo(
@@ -199,7 +204,7 @@ def _fetch_classes(client: Any) -> list[ClassDetail]:
         RETURN type(r) AS rel_type, t.name AS target, t.fqn AS target_fqn,
                CASE WHEN 'EXTERNAL' IN labels(t) THEN 'EXTERNAL' ELSE 'INTERNAL' END AS scope
         """
-        relations = _run(client, rel_query, fqn=mod_fqn)
+        relations = _run(rel_query, fqn=mod_fqn)
 
         uml_relations = [
             UMLRelation(
@@ -271,7 +276,7 @@ def _module_stereotype_to_class(mod_stereotype: str) -> str:
     return mapping.get(mod_stereotype, mod_stereotype or "")
 
 
-def _fetch_tables(client: Any) -> list[TableSchema]:
+def _fetch_tables() -> list[TableSchema]:
     """Table + Column + FK → TableSchema 목록."""
     # 테이블 목록
     tables_query = """
@@ -279,7 +284,7 @@ def _fetch_tables(client: Any) -> list[TableSchema]:
     RETURN t.name AS name, t.schema AS schema, t.description AS description
     ORDER BY t.name
     """
-    tables = _run(client, tables_query)
+    tables = _run(tables_query)
 
     result: list[TableSchema] = []
     for tbl in tables:
@@ -293,7 +298,7 @@ def _fetch_tables(client: Any) -> list[TableSchema]:
                c.default_value AS default_value, c.description AS description
         ORDER BY c.name
         """
-        columns = _run(client, col_query, name=tbl_name)
+        columns = _run(col_query, name=tbl_name)
 
         col_infos = [
             ColumnInfo(
@@ -312,7 +317,7 @@ def _fetch_tables(client: Any) -> list[TableSchema]:
         RETURN fk.sourceColumn AS source_col, target.name AS target_table,
                fk.targetColumn AS target_col
         """
-        fks = _run(client, fk_query, name=tbl_name)
+        fks = _run(fk_query, name=tbl_name)
 
         fk_relations = [
             FKRelation(
@@ -332,7 +337,7 @@ def _fetch_tables(client: Any) -> list[TableSchema]:
         WHERE m.moduleStereotype = 'Entity'
         RETURN m.name AS entity_name LIMIT 1
         """
-        entity_rows = _run(client, entity_query, name=tbl_name)
+        entity_rows = _run(entity_query, name=tbl_name)
         mapped_entity = entity_rows[0].get("entity_name") if entity_rows else None
 
         result.append(TableSchema(
@@ -362,7 +367,7 @@ def _build_column_description(col: dict) -> str:
     return " ".join(parts)
 
 
-def _fetch_data_flow(client: Any) -> DataFlow:
+def _fetch_data_flow() -> DataFlow:
     """CALLS 관계 → DataFlow."""
     # 호출 관계
     calls_query = """
@@ -372,7 +377,7 @@ def _fetch_data_flow(client: Any) -> DataFlow:
     RETURN cm.name + '.' + caller.name AS caller_name,
            tm.name + '.' + callee.name AS callee_name
     """
-    calls = _run(client, calls_query)
+    calls = _run(calls_query)
 
     call_relations = [
         CallRelation(
@@ -391,7 +396,7 @@ def _fetch_data_flow(client: Any) -> DataFlow:
     RETURN caller.procedure_name AS caller_name,
            callee.procedure_name AS callee_name
     """
-    dbms_calls = _run(client, dbms_calls_query)
+    dbms_calls = _run(dbms_calls_query)
     call_relations.extend([
         CallRelation(
             caller=c.get("caller_name", ""),
@@ -409,7 +414,7 @@ def _fetch_data_flow(client: Any) -> DataFlow:
     RETURN m.name AS class_name, t.name AS table_name,
            CASE type(r) WHEN 'WRITES' THEN 'WRITES' ELSE 'FROM' END AS access_type
     """
-    accesses = _run(client, access_query)
+    accesses = _run(access_query)
 
     table_access_matrix = [
         TableAccessInfo(
@@ -426,13 +431,13 @@ def _fetch_data_flow(client: Any) -> DataFlow:
     )
 
 
-def _fetch_column_level_fks(client: Any) -> list[ColumnLevelFK]:
+def _fetch_column_level_fks() -> list[ColumnLevelFK]:
     """Column → FK_TO_COLUMN → Column 관계."""
     query = """
     MATCH (c1:Column)-[:FK_TO_COLUMN]->(c2:Column)
     RETURN c1.fqn AS source, c2.fqn AS target
     """
-    rows = _run(client, query)
+    rows = _run(query)
     return [
         ColumnLevelFK(
             source_column=r.get("source", ""),
@@ -447,7 +452,7 @@ def _fetch_column_level_fks(client: Any) -> list[ColumnLevelFK]:
 # DBMS: PROCEDURE 노드 → ClassDetail 변환
 # ---------------------------------------------------------------------------
 
-def _fetch_procedures(client: Any) -> list[ClassDetail]:
+def _fetch_procedures() -> list[ClassDetail]:
     """PROCEDURE + 하위 DML → ClassDetail 목록."""
     proc_query = """
     MATCH (p)
@@ -457,7 +462,7 @@ def _fetch_procedures(client: Any) -> list[ClassDetail]:
            p.schema_name AS schema_name
     ORDER BY p.procedure_name
     """
-    procedures = _run(client, proc_query)
+    procedures = _run(proc_query)
     if not procedures:
         return []
 
@@ -478,7 +483,7 @@ def _fetch_procedures(client: Any) -> list[ClassDetail]:
         RETURN collect(DISTINCT wt.name) AS writes_tables,
                collect(DISTINCT rt.name) AS reads_tables
         """
-        dml_rows = _run(client, dml_query, name=proc_name, dir=directory, file=file_name)
+        dml_rows = _run(dml_query, name=proc_name, dir=directory, file=file_name)
 
         table_access_set: set[tuple[str, str]] = set()
         has_any_writes = False
@@ -522,26 +527,26 @@ def _fetch_procedures(client: Any) -> list[ClassDetail]:
 # 진입점
 # ---------------------------------------------------------------------------
 
-def build_report_from_graph(client: Any) -> ParsedReport:
+def build_report_from_graph() -> ParsedReport:
     """Neo4j 그래프 데이터를 조회하여 ParsedReport 객체로 조립.
 
-    Args:
-        client: architect의 Neo4j 클라이언트 (동기, client.session() 사용)
+    ANALYZER_NEO4J_DATABASE 환경변수가 설정되어 있으면 해당 DB에서,
+    없으면 기본 NEO4J_DATABASE에서 조회한다.
 
     Returns:
         ParsedReport — 기존 phase 파일과 report_context.py가 그대로 사용 가능
     """
-    overview = _fetch_overview(client)
-    packages = _fetch_packages(client)
+    overview = _fetch_overview()
+    packages = _fetch_packages()
 
     # Framework 클래스 + DBMS 프로시저 모두 수집
-    classes = _fetch_classes(client)
-    procedures = _fetch_procedures(client)
+    classes = _fetch_classes()
+    procedures = _fetch_procedures()
     all_classes = classes + procedures
 
-    tables = _fetch_tables(client)
-    data_flow = _fetch_data_flow(client)
-    column_level_fks = _fetch_column_level_fks(client)
+    tables = _fetch_tables()
+    data_flow = _fetch_data_flow()
+    column_level_fks = _fetch_column_level_fks()
 
     return ParsedReport(
         title="Analyzer Graph Data",
