@@ -202,6 +202,23 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 )
             events_text = "\n".join(event_lines) if event_lines else "None"
 
+            # Aggregate에 연결된 US의 source_unit_id → 테이블 스키마 역추적
+            schema_context = ""
+            if getattr(ctx, "source_type", "") == "analyzer_graph":
+                agg_us_ids = (agg.get("user_story_ids") if isinstance(agg, dict) else getattr(agg, "user_story_ids", None)) or []
+                unit_ids = []
+                for us in (ctx.user_stories or []):
+                    if (getattr(us, "id", "") or "") in set(agg_us_ids):
+                        src = getattr(us, "source_unit_id", None)
+                        if src:
+                            unit_ids.append(src)
+                if unit_ids:
+                    try:
+                        from api.features.ingestion.analyzer_graph.graph_to_report import fetch_table_schemas_for_units
+                        schema_context = fetch_table_schemas_for_units(unit_ids)
+                    except Exception:
+                        pass
+
             prompt = GENERATE_PROPERTIES_AGGREGATE_BATCH_PROMPT.format(
                 bc_id=bc_id,
                 bc_key=bc_key_value,
@@ -217,16 +234,19 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 events=events_text,
                 known_aggregate_keys=known_aggregate_keys_text,
             )
+            if schema_context:
+                prompt += (
+                    f"\n\n{schema_context}\n"
+                    "위 테이블 스키마의 컬럼 타입을 참고하여 Property 타입을 맞추세요.\n"
+                    "FK 관계가 있으면 isForeignKey로 표시하세요."
+                )
+
             display_lang = getattr(ctx, "display_language", "ko") or "ko"
             prompt += (
                 "\n\n10) For each Property output displayName: a short UI label in Korean (e.g. '주문 번호', '고객명')."
                 if display_lang == "ko"
                 else "\n\n10) For each Property output displayName: a short UI label in English (e.g. 'Order ID', 'Customer Name')."
             )
-            if ctx.source_report:
-                from api.features.ingestion.workflow.utils.report_context import get_properties_context
-                prompt += "\n\n" + get_properties_context(ctx.source_report)
-
             structured_llm = ctx.llm.with_structured_output(PropertyBatch)
             if AI_AUDIT_LOG_ENABLED:
                 SmartLogger.log(
@@ -424,10 +444,6 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
             if display_lang == "ko"
             else "\n\nFor each Property output displayName: a short UI label in English (e.g. 'Order ID', 'Status')."
         )
-        if ctx.source_report:
-            from api.features.ingestion.workflow.utils.report_context import get_properties_context
-            prompt += "\n\n" + get_properties_context(ctx.source_report)
-
         structured_llm = ctx.llm.with_structured_output(PropertyBatch)
         if AI_AUDIT_LOG_ENABLED:
             SmartLogger.log(

@@ -163,5 +163,6 @@ AI_AUDIT_LOG_FULL_OUTPUT = env_flag("AI_AUDIT_LOG_FULL_OUTPUT", False)
 # - If True, skip Neo4j UI node creation + LLM wireframe generation phase.
 IS_SKIP_UI_PHASE = env_flag("IS_SKIP_UI_PHASE", False)
 
+
 # Hard cap (chars) for ONLY the injected context block in /api/chat/modify prompt.
 MODEL_MODIFIER_CONTEXT_CHARS_LIMIT = env_int("MODEL_MODIFIER_CONTEXT_CHARS_LIMIT", 100_000)

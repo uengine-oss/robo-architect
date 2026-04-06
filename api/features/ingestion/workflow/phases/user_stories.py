@@ -89,11 +89,11 @@ def _is_ejb_lifecycle_us(action: str, role: str) -> bool:
     return False
 
 
-def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_legacy: bool = False) -> list[Any]:
+def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_analyzer: bool = False) -> list[Any]:
     """
     User Story 목록을 정규화하고 중복을 제거합니다.
     청킹 여부와 무관하게 항상 적용되어야 합니다.
-    is_legacy=True인 경우 EJB 라이프사이클 US도 필터링합니다.
+    is_analyzer=True인 경우 EJB 라이프사이클 US도 필터링합니다.
     """
     seen = set()
     out = []
@@ -108,13 +108,13 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_leg
         if not action:
             continue
 
-        # EJB lifecycle US filtering for legacy reports
-        if is_legacy and _is_ejb_lifecycle_us(action, role):
+        # EJB lifecycle US filtering for analyzer graph
+        if is_analyzer and _is_ejb_lifecycle_us(action, role):
             ejb_filtered += 1
             continue
 
-        # Low quality US filtering for legacy reports (implementation details, error handling)
-        if is_legacy and _is_low_quality_us(action, role):
+        # Low quality US filtering for analyzer graph (implementation details, error handling)
+        if is_analyzer and _is_low_quality_us(action, role):
             low_quality_filtered += 1
             continue
 
@@ -222,6 +222,7 @@ async def _create_user_story_with_verification(
                 ui_description=ui_desc,
                 display_name=us_display_name or None,
                 source_screen_name=getattr(us, "source_screen_name", None),
+                source_unit_id=getattr(us, "source_unit_id", None),
                 sequence=getattr(us, "sequence", None),
             ),
             timeout=10.0
@@ -240,6 +241,22 @@ async def _create_user_story_with_verification(
             verify_record = verify_result.single()
             if not verify_record:
                 return None, None, f"User Story {us.id} was not found in Neo4j after creation"
+
+        # SOURCED_FROM 관계: UserStory → BusinessLogic (출처 연결)
+        source_uid = getattr(us, "source_unit_id", None)
+        if source_uid:
+            try:
+                with ctx.client.session() as link_session:
+                    link_session.run(
+                        "MATCH (us:UserStory {id: $us_id}) "
+                        "MATCH (f)-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic) "
+                        "WHERE f.function_id = $unit_id OR f.procedure_name = $unit_id OR f.name = $unit_id "
+                        "MERGE (us)-[:SOURCED_FROM]->(bl)",
+                        us_id=us.id,
+                        unit_id=source_uid,
+                    )
+            except Exception:
+                pass  # SOURCED_FROM 실패해도 US 생성은 유지
         
         PHASE_END = 20
         progress_event = ProgressEvent(
@@ -555,20 +572,17 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             )
             return
 
-    # Legacy report: Session Bean별 개별 US 생성
+    # Analyzer graph: 분석 단위별 개별 US 생성
     input_content = ctx.content
-    _legacy_sb_processed = False
+    _analyzer_processed = False
     should_chunk_result = False
-    if ctx.source_report:
-        from api.features.ingestion.workflow.utils.report_context import (
-            get_per_session_bean_us_contexts,
-            get_user_stories_context,
-        )
-        sb_contexts = get_per_session_bean_us_contexts(ctx.source_report)
+    if ctx.source_type == "analyzer_graph":
+        from api.features.ingestion.analyzer_graph.graph_to_report import build_unit_contexts
+        sb_contexts = build_unit_contexts()
         if sb_contexts:
-            # Session Bean별 개별 처리
+            # BusinessLogic 단위별 개별 처리
             all_sb_stories: list = []
-            for sb_idx, (sb_name, sb_context) in enumerate(sb_contexts):
+            for sb_idx, (sb_name, sb_unit_id, sb_context) in enumerate(sb_contexts):
                 if getattr(ctx.session, "is_cancelled", False):
                     yield ProgressEvent(
                         phase=IngestionPhase.ERROR,
@@ -585,10 +599,13 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                     progress=progress,
                 )
 
-                print(f"[LEGACY US] Processing Session Bean {sb_idx+1}/{len(sb_contexts)}: {sb_name} ({estimate_tokens(sb_context)} tokens)")
+                print(f"[ANALYZER US] Processing Session Bean {sb_idx+1}/{len(sb_contexts)}: {sb_name} ({estimate_tokens(sb_context)} tokens)")
                 try:
                     sb_stories = await asyncio.to_thread(extract_user_stories_from_text, sb_context)
-                    print(f"[LEGACY US] {sb_name}: {len(sb_stories)} US generated")
+                    print(f"[ANALYZER US] {sb_name}: {len(sb_stories)} US generated")
+                    # 출처 분석 단위(unit) 태깅 — 역추적용
+                    for us in sb_stories:
+                        us.source_unit_id = sb_unit_id
                     all_sb_stories.extend(sb_stories)
                 except Exception as e:
                     SmartLogger.log(
@@ -599,7 +616,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                     )
 
             # 정규화 + 중복 제거 + EJB 필터
-            user_stories = normalize_and_dedup_user_stories(all_sb_stories, ctx.session.id, is_legacy=True)
+            user_stories = normalize_and_dedup_user_stories(all_sb_stories, ctx.session.id, is_analyzer=True)
 
             # 순차 ID 재부여
             for idx, us in enumerate(user_stories, start=1):
@@ -620,14 +637,13 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             # Skip to Neo4j 저장 (아래 chunking/non-chunking 경로 건너뜀)
             # goto: Neo4j 저장 section (line after else block)
             # Python에는 goto가 없으므로, 플래그로 제어
-            _legacy_sb_processed = True
+            _analyzer_processed = True
         else:
-            input_content = get_user_stories_context(ctx.source_report)
-            _legacy_sb_processed = False
+            _analyzer_processed = False
     else:
-        _legacy_sb_processed = False
+        _analyzer_processed = False
 
-    if not _legacy_sb_processed and not _figma_processed:
+    if not _analyzer_processed and not _figma_processed:
         # 스캐닝 및 청킹 판단
         content_tokens = estimate_tokens(input_content)
         should_chunk_result = should_chunk(input_content, max_tokens=USER_STORY_CHUNK_SIZE)
@@ -654,7 +670,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             },
         )
 
-    if not _legacy_sb_processed and not _figma_processed and should_chunk_result:
+    if not _analyzer_processed and not _figma_processed and should_chunk_result:
         print(f"[CHUNKING DEBUG] Entering chunking path - will split into chunks")
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
@@ -803,7 +819,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             all_stories.extend(results)
         
         # 내용 기반 중복 제거 및 정규화 (공통 함수 사용)
-        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id, is_legacy=ctx.source_report is not None)
+        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id, is_analyzer=ctx.source_type == "analyzer_graph")
         
         # 병합 후 순차적인 ID로 재생성 (US-001, US-002, ...)
         for idx, us in enumerate(deduplicated_by_content, start=1):
@@ -869,7 +885,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             message=f"User Story 추출 완료 (총 {len(user_stories)}개)",
             progress=PHASE_END - 2
         )
-    elif not _legacy_sb_processed and not _figma_processed:
+    elif not _analyzer_processed and not _figma_processed:
         # 기존 로직 (청킹 불필요)
         print(f"[CHUNKING DEBUG] Entering non-chunking path - processing entire document at once")
         yield ProgressEvent(
@@ -880,7 +896,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
 
         user_stories = await asyncio.to_thread(extract_user_stories_from_text, input_content)
         # 청킹 여부와 무관하게 항상 정규화 및 중복 제거 적용
-        user_stories = normalize_and_dedup_user_stories(user_stories, ctx.session.id, is_legacy=ctx.source_report is not None)
+        user_stories = normalize_and_dedup_user_stories(user_stories, ctx.session.id, is_analyzer=ctx.source_type == "analyzer_graph")
         ctx.user_stories = user_stories
 
         yield ProgressEvent(

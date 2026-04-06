@@ -215,11 +215,6 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     + format_accumulated_names(_existing_command_names)
                     + "\n</already_created_commands>"
                 )
-            _report_context_tail = ""
-            if ctx.source_report:
-                from api.features.ingestion.workflow.utils.report_context import get_commands_context
-                _report_context_tail = "\n\n" + get_commands_context(ctx.source_report)
-            full_prompt_text += _report_context_tail
 
             # 청킹 필요 여부 판단
             if should_chunk(full_prompt_text):
@@ -246,8 +241,7 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         bc_name=bc_name,
                         bc_short=bc_id_short,
                         user_story_context=chunk_stories_context,
-                    ) + display_name_tail + _report_context_tail
-
+                    ) + display_name_tail
                     structured_llm = ctx.llm.with_structured_output(CommandList)
                     
                     t_llm0 = time.perf_counter()

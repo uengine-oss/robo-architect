@@ -299,6 +299,23 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         breakdowns_text = _user_story_breakdown_lines(ctx, us_id_set)
         bc_events_text = _bc_events_prompt_block(ctx, us_id_set)
 
+        # BC의 UserStory들에서 source_unit_id 수집 → 테이블 스키마 역추적
+        schema_context = ""
+        if ctx.source_type == "analyzer_graph":
+            unit_ids = []
+            for us in (ctx.user_stories or []):
+                uid = getattr(us, "id", "") or ""
+                if uid in us_id_set:
+                    src = getattr(us, "source_unit_id", None)
+                    if src:
+                        unit_ids.append(src)
+            if unit_ids:
+                try:
+                    from api.features.ingestion.analyzer_graph.graph_to_report import fetch_table_schemas_for_units
+                    schema_context = fetch_table_schemas_for_units(unit_ids)
+                except Exception:
+                    pass
+
         # Collect existing aggregates from previously processed BCs for reference validation
         existing_aggregates_text = ""
         all_existing_aggregate_names = set()
@@ -337,6 +354,14 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             bc_events=bc_events_text,
             existing_aggregates=existing_aggregates_text,
         )
+        # 테이블 스키마 컨텍스트 삽입
+        if schema_context:
+            prompt += (
+                f"\n\n{schema_context}\n"
+                "위 테이블 스키마가 있으면 Aggregate의 속성을 실제 컬럼 타입과 맞추세요.\n"
+                "FK 관계를 참고하여 Aggregate 경계를 결정하세요."
+            )
+
         display_lang = getattr(ctx, "display_language", "ko") or "ko"
         prompt += (
             "\n\nFor each Aggregate output displayName: a short UI label in Korean (e.g. '장바구니', '주문')."
@@ -349,9 +374,6 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             else "\n\nFor each Enumeration and each Value Object also output displayName: a short UI label in English (e.g. 'Order Status', 'Shipping Address')."
         )
 
-        if ctx.source_report:
-            from api.features.ingestion.workflow.utils.report_context import get_aggregates_context
-            prompt += "\n\n" + get_aggregates_context(ctx.source_report)
 
         structured_llm = ctx.llm.with_structured_output(AggregateList)
 

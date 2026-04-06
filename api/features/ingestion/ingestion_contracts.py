@@ -67,6 +67,8 @@ class GeneratedUserStory(BaseModel):
     displayName: Optional[str] = None
     # Figma source screen name (set when source_type == "figma")
     source_screen_name: Optional[str] = None
+    # Analyzer source unit ID (procedure fqn, class fqn 등 — 역추적용)
+    source_unit_id: Optional[str] = None
 
 
 class UserStoryList(BaseModel):
