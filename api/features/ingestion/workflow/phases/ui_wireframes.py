@@ -231,6 +231,23 @@ async def _create_command_ui(
             timeout=10.0
         )
 
+        # Command의 actor와 Event sequence를 가져와 UI 배치에 사용
+        ui_actor = None
+        ui_sequence = None
+        try:
+            with ctx.client.session() as _s:
+                _r = _s.run(
+                    "MATCH (cmd:Command {id: $cid}) OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event) RETURN cmd.actor AS actor, evt.sequence AS seq LIMIT 1",
+                    cid=cmd_id,
+                ).single()
+                if _r:
+                    ui_actor = _r["actor"]
+                    if _r["seq"] is not None:
+                        try: ui_sequence = int(_r["seq"])
+                        except (TypeError, ValueError): pass
+        except Exception:
+            pass
+
         progress_event = ProgressEvent(
             phase=IngestionPhase.GENERATING_UI,
             message=f"UI 생성: {ui_name}",
@@ -249,6 +266,9 @@ async def _create_command_ui(
                     "attachedToName": cmd_name,
                     "userStoryId": chosen_us_id,
                     "description": chosen_ui_desc,
+                    "actor": ui_actor,
+                    "sequence": ui_sequence,
+                    "commandId": cmd_id,
                 },
             },
         )
@@ -339,6 +359,21 @@ async def _create_readmodel_ui(
             timeout=10.0
         )
 
+        # ReadModel의 actor와 trigger event sequence를 가져와 UI 배치에 사용
+        rm_ui_actor = rm.get("actor") if isinstance(rm, dict) else getattr(rm, "actor", None)
+        rm_ui_sequence = None
+        try:
+            with ctx.client.session() as _s:
+                _r = _s.run(
+                    "MATCH (rm:ReadModel {id: $rid})-[:HAS_CQRS]->(:CQRSConfig)-[:HAS_OPERATION]->(:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event) RETURN evt.sequence AS seq LIMIT 1",
+                    rid=rm_id,
+                ).single()
+                if _r and _r["seq"] is not None:
+                    try: rm_ui_sequence = int(_r["seq"])
+                    except (TypeError, ValueError): pass
+        except Exception:
+            pass
+
         progress_event = ProgressEvent(
             phase=IngestionPhase.GENERATING_UI,
             message=f"UI 생성: {ui_name}",
@@ -357,6 +392,10 @@ async def _create_readmodel_ui(
                     "attachedToName": rm.get("name"),
                     "userStoryId": chosen_us_id,
                     "description": chosen_ui_desc,
+                    "actor": rm_ui_actor,
+                    "sequence": rm_ui_sequence,
+                    "readModelId": rm_id,
+                    "isOutput": True,
                 },
             },
         )

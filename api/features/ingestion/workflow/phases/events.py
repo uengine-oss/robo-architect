@@ -262,7 +262,7 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                         created_evt = created_evt_data["event"]
                         evt = created_evt_data["evt"]
                         cmd_id = created_evt_data["cmd_id"]
-                        
+
                         # Handle both dict and object formats for event
                         evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
                         yield ProgressEvent(

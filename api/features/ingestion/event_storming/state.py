@@ -140,6 +140,13 @@ class AggregateCandidate(BaseModel):
     user_story_ids: List[str] = Field(
         default_factory=list, description="User Story IDs that this aggregate implements"
     )
+    covered_event_names: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Domain Event names (exact PascalCase) from the BC event list that fall inside this aggregate's "
+            "consistency boundary — i.e. events whose state changes are owned by this aggregate."
+        ),
+    )
     enumerations: List[EnumerationCandidate] = Field(
         default_factory=list, description="Enumerations associated with this aggregate"
     )
@@ -207,6 +214,11 @@ class CommandCandidate(BaseModel):
     user_story_ids: List[str] = Field(
         default_factory=list, description="User Story IDs that this command implements"
     )
+    emits_event_names: List[str] = Field(
+        default_factory=list,
+        description="Exact Event names (PascalCase) that this Command emits. "
+        "Must match events from the available events list for this Aggregate.",
+    )
     # Note: GWT (given/when/then) is generated in post-processing step (generate_gwt_node)
     # and stored separately in Neo4j. Not included in initial LLM structured output schema.
     # GWT fields are added dynamically at runtime using setattr().
@@ -251,6 +263,12 @@ class ReadModelCandidate(BaseModel):
     user_story_ids: List[str] = Field(
         default_factory=list,
         description="User Story IDs (within the BC) that this ReadModel supports (query intent).",
+    )
+    trigger_event_names: List[str] = Field(
+        default_factory=list,
+        description="Names of Events that update/provision this ReadModel. "
+        "Can include events from this BC or other BCs (cross-BC projection). "
+        "Use exact event names from the available events list.",
     )
 
 

@@ -272,13 +272,23 @@ Description: {bc_description}
 {breakdowns}
 </user_story_breakdowns>
 
+<business_events_in_this_bc>
+{bc_events}
+</business_events_in_this_bc>
+
 <existing_aggregates_in_other_bcs>
 {existing_aggregates}
 </existing_aggregates_in_other_bcs>
 
 <core_instructions>
 <title>Aggregate Identification Task</title>
-<task_description>Analyze the User Story breakdowns and identify Aggregates that enforce business invariants and maintain transactional consistency within this Bounded Context. Each Aggregate should be a cluster of domain objects treated as a single unit with clear boundaries.</task_description>
+<task_description>
+Identify Aggregates that enforce business invariants and transactional consistency within this Bounded Context.
+When "business_events_in_this_bc" lists domain events, use those events as the **primary** signal for partitioning:
+group events that change the same aggregate root / invariant boundary together.
+User stories provide traceability (who/why); events provide transactional “what changed” cues.
+If no events are listed, derive aggregates from user story breakdowns only.
+</task_description>
 
 <guidelines>
 <title>Aggregate Identification Guidelines</title>
@@ -314,17 +324,19 @@ Description: {bc_description}
 <title>Traceability Requirements</title>
 <rule id="1">**User Story Mapping:** Each Aggregate MUST list which User Story IDs from this BC it implements. This creates traceability from requirements to implementation.</rule>
 <rule id="2">**Complete Coverage:** Ensure that all User Stories listed in the breakdowns are covered by at least one Aggregate.</rule>
+<rule id="3">**Event → Aggregate mapping (when events are listed):** Each Aggregate MUST include **covered_event_names**: exact Event **name** strings copied from `business_events_in_this_bc` only (no invented names). Every listed event MUST appear in exactly one Aggregate's `covered_event_names` (partition the full set). If an event truly spans two roots, pick the primary owner and document via user_story_ids / description.</rule>
 </section>
 </guidelines>
 </core_instructions>
 
 <analysis_approach>
 Consider the following when identifying Aggregates:
-1. **Business Invariants:** What business rules must be enforced atomically?
-2. **Transactional Boundaries:** What data must be changed together in a single transaction?
-3. **Domain Concepts:** What key entities/concepts are mentioned in the User Story breakdowns?
-4. **Consistency Requirements:** What data needs to be kept consistent together?
-5. **Potential Aggregates:** Review the "Potential Aggregates" listed in the breakdowns as starting points
+1. **Domain Events (when provided):** Which events change the same root entity and must stay consistent together?
+2. **Business Invariants:** What business rules must be enforced atomically?
+3. **Transactional Boundaries:** What data must be changed together in a single transaction?
+4. **Domain Concepts:** What key entities/concepts are mentioned in the User Story breakdowns?
+5. **Consistency Requirements:** What data needs to be kept consistent together?
+6. **Potential Aggregates:** Review the "Potential Aggregates" listed in the breakdowns as starting points
 
 Think about:
 - Which domain objects naturally belong together?
@@ -345,6 +357,7 @@ For each Aggregate, provide:
 - **invariants:** List of business invariants this aggregate enforces
 - **description:** What this aggregate manages
 - **user_story_ids:** List of User Story IDs that this aggregate implements (IMPORTANT for traceability!)
+- **covered_event_names:** List of Event **names** from `business_events_in_this_bc` whose state changes belong to this aggregate (REQUIRED when that section lists events; copy names exactly)
 - **enumerations:** (Optional) List of Enumerations associated with this aggregate (for state or similar information)
 - **value_objects:** (Optional) List of Value Objects within this aggregate (for properties or references to other Aggregates)
 
@@ -376,6 +389,7 @@ Example for Order BC:
   - Invariants: ["Cart total must be non-negative", "Cart items must have valid quantities"]
   - Description: Shopping cart management
   - User Story IDs: [US-001]
+  - covered_event_names: ["ItemAddedToCart", "CartCheckedOut"]  # exact names from business_events_in_this_bc
   - Enumerations: [{{"name": "CartStatus", "alias": "Cart Status", "items": ["ACTIVE", "ABANDONED", "CHECKED_OUT"]}}]
   - Value Objects: []
 
@@ -384,6 +398,7 @@ Example for Order BC:
   - Invariants: ["Order total must match sum of items", "Order must have at least one item"]
   - Description: Order lifecycle management
   - User Story IDs: [US-001, US-002, US-003]
+  - covered_event_names: ["OrderPlaced", "OrderShipped"]
   - Enumerations: [{{"name": "OrderStatus", "alias": "Order Status", "items": ["PENDING", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"]}}]
   - Value Objects: [
       {{"name": "CustomerReference", "alias": "Customer Reference", "referenced_aggregate_name": "Customer", "referenced_aggregate_field": "id", "fields": [{{"name": "customerId", "type": "String"}}]}},
@@ -396,6 +411,7 @@ Example for Inventory BC:
   - Invariants: ["Stock quantity cannot be negative"]
   - Description: Stock level management
   - User Story IDs: [US-009, US-010]
+  - covered_event_names: ["StockReserved", "StockReplenished"]
   - Enumerations: []
   - Value Objects: []
 </examples>
@@ -417,6 +433,10 @@ Bounded Context: {bc_name}
 <user_stories>
 {user_story_context}
 </user_stories>
+
+<available_events>
+{available_events}
+</available_events>
 
 <core_instructions>
 <title>Command Identification Task</title>
@@ -530,10 +550,14 @@ For each Command, provide:
 - **inputSchema:** JSON schema or description of command input parameters (optional but recommended for complex commands)
 - **description:** Clear, concise description of what this command does and its business purpose
 - **user_story_ids:** List of User Story IDs that this command directly implements (IMPORTANT for traceability!)
+- **emits_event_names:** List of exact Event names from the available_events list that this Command emits. Every Command MUST emit at least one Event. **MUST be copied EXACTLY character-for-character from the available_events list above. Do NOT translate, paraphrase, or reformat.**
 
 CRITICAL:
 - Do NOT generate IDs; server assigns UUID id + derives key.
 - Ensure ALL User Stories for this Aggregate are covered by at least one Command.
+- emits_event_names MUST reference events from the available_events list. Do NOT invent new event names.
+- **If an event name is in Korean (e.g., "고객 계정 등록됨"), use it EXACTLY as-is. Do NOT translate to English.**
+- **If an event name is in English (e.g., "CustomerAccountRegistered"), use it EXACTLY as-is. Do NOT translate to Korean.**
 - Use domain-specific command names, not generic CRUD unless explicitly required.
 - Commands should reflect business intent, not technical implementation details.
 - Actor should match User Story role when available - do not force into only 4 categories.
@@ -862,9 +886,10 @@ Description: {bc_description}
 
 <section id="event_projection">
 <title>Event-Based Projection</title>
-<rule id="1">**Event Updates:** ReadModels are updated by Events through projections. Consider which Events in this BC would update each ReadModel.</rule>
-<rule id="2">**Event Availability:** The available Events list shows which Events can be used to build projections for ReadModels.</rule>
-<rule id="3">**Denormalization:** ReadModels can be denormalized for query performance, combining data from multiple Aggregates or Events.</rule>
+<rule id="1">**Event Updates:** ReadModels are updated by Events through CQRS projections. You MUST specify which Events trigger each ReadModel via trigger_event_names.</rule>
+<rule id="2">**Same-BC Events:** The available Events list shows Events within this BC that can update ReadModels.</rule>
+<rule id="3">**Cross-BC Events:** ReadModels can also be provisioned by Events from OTHER Bounded Contexts. If cross-BC events are provided, consider whether this ReadModel needs data from other BCs.</rule>
+<rule id="4">**Denormalization:** ReadModels can be denormalized for query performance, combining data from multiple Aggregates or Events (including cross-BC events).</rule>
 </section>
 </guidelines>
 </core_instructions>
@@ -891,14 +916,18 @@ For each ReadModel, provide:
 - **isMultipleResult:** MUST be one of: 'list' (ordered lists), 'collection' (unordered collections/catalogs), or 'single result' (single item results)
 - **description:** Clear, concise description of what data this ReadModel retrieves and its purpose
 - **user_story_ids:** List of User Story IDs that this ReadModel supports (IMPORTANT for traceability!)
+- **trigger_event_names:** List of Event names that update this ReadModel (REQUIRED for CQRS projection). **MUST be copied EXACTLY character-for-character from the available events list. Do NOT translate, paraphrase, or reformat.** Can include events from this BC or cross-BC events if provided.
 
 CRITICAL:
 - Do NOT generate IDs; server assigns UUID id + derives key.
+- **If an event name is in Korean (e.g., "주문 생성됨"), use it EXACTLY as-is. Do NOT translate to English.**
+- **If an event name is in English (e.g., "OrderCreated"), use it EXACTLY as-is. Do NOT translate to Korean.**
 - ReadModels are for QUERY intent only - do NOT create ReadModels for commands that change state.
 - Keep it focused: prefer 0~3 ReadModels per Bounded Context for the first iteration.
 - provisioningType is fixed to CQRS (you do NOT need to output provisioningType).
 - Actor should match User Story role when available - do not force into only 3 categories.
 - Ensure ALL query-related User Stories are covered by at least one ReadModel.
+- trigger_event_names MUST reference at least one event — a ReadModel without trigger events cannot be provisioned.
 </output_requirements>
 
 <examples>
@@ -1043,12 +1072,18 @@ Guidelines for identifying Policies:
 
 For each Policy, provide:
 - name: Descriptive policy name (e.g., RefundOnOrderCancelled)
-- trigger_event: Event name that triggers this policy
-- trigger_event_bc: BC where the trigger event originates (MUST be different from target_bc)
-- target_bc: BC where this policy lives
-- invoke_command: Command this policy invokes (in target_bc)
+- trigger_event: Event name that triggers this policy — **MUST be copied EXACTLY from the Available Events list above (character-for-character match)**
+- trigger_event_bc: BC where the trigger event originates (MUST be different from target_bc) — **MUST match the BC name shown in parentheses in the Available Events list**
+- target_bc: BC where this policy lives — **MUST match one of the Bounded Context names listed above**
+- invoke_command: Command this policy invokes (in target_bc) — **MUST be copied EXACTLY from the Available Commands list above (character-for-character match)**
 - description: "When X then Y" format
 - user_story_ids: User Story IDs related to this policy (inherited from trigger event)
+
+CRITICAL — EXACT NAME MATCHING:
+- trigger_event MUST be an EXACT copy-paste from the "Available Events" list. Do NOT translate, paraphrase, or reformat.
+- invoke_command MUST be an EXACT copy-paste from the "Available Commands" list. Do NOT translate, paraphrase, or reformat.
+- If the event name is in Korean (e.g., "고객 계정 등록됨"), use it exactly as-is. Do NOT convert to English.
+- If the command name is in English (e.g., "RegisterCustomerAccount"), use it exactly as-is. Do NOT convert to Korean.
 
 Common patterns:
 - When OrderPlaced (Order BC) → ProcessPayment (Payment BC), user_story_ids from OrderPlaced

@@ -9,6 +9,7 @@ import { useModelModifierStore } from '@/features/modelModifier/modelModifier.st
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
+import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 
 const props = defineProps({
   node: {
@@ -34,6 +35,12 @@ const chatStore = useModelModifierStore()
 const ingestionStore = useIngestionStore()
 const terminologyStore = useTerminologyStore()
 const bpmnStore = useBpmnStore()
+const eventModelingStore = useEventModelingStore()
+
+// Event Modeling 캔버스에 표시된 BC IDs (reactive)
+const eventModelingBcIds = computed(() =>
+  new Set(eventModelingStore.systemSwimlanes.map(lane => lane.bcId))
+)
 
 // Inject activeTab from App.vue
 const activeTab = inject('activeTab', ref('Design'))
@@ -192,19 +199,17 @@ const isOnCanvas = computed(() => {
   
   // For BoundedContext, check only the active viewer
   if (nodeType === 'BoundedContext') {
-    if (currentTab === 'Design') {
-      // Design Viewer - use nodeIds computed (reactive)
+    if (currentTab === 'Event Modeling') {
+      return eventModelingBcIds.value.has(nodeId)
+    } else if (currentTab === 'Design') {
       return canvasStore.nodeIds.includes(nodeId)
     } else if (currentTab === 'Aggregate') {
-      // Aggregate Viewer - check selectedBcIds
       const selectedBcIdsArray = Array.from(aggregateViewerStore.selectedBcIds)
       return selectedBcIdsArray.includes(nodeId)
     } else if (currentTab === 'Big picture') {
-      // Big Picture Viewer - check swimlanes
       const swimlanes = bigPictureStore.swimlanes
       return swimlanes.some(lane => lane.bcId === nodeId)
     }
-    // Default to Design Viewer
     return canvasStore.nodeIds.includes(nodeId)
   }
   
@@ -309,16 +314,15 @@ async function addToCanvas() {
   
   // For BoundedContext, check which viewer to add to based on activeTab
   if (props.node.type === 'BoundedContext') {
-    if (currentTab === 'Aggregate') {
-      // Add to Aggregate Viewer
+    if (currentTab === 'Event Modeling') {
+      return  // Event Modeling은 프로세스 단위로 추가
+    } else if (currentTab === 'Aggregate') {
       await aggregateViewerStore.fetchAggregatesForBC(props.node.id)
       return
     } else if (currentTab === 'Big picture') {
-      // Add to Big Picture Viewer with outbound flow
       await bigPictureStore.addBCWithOutboundFlow(props.node.id)
       return
     }
-    // Fall through to Design Viewer for 'Design' tab or other cases
   }
   
   // For other node types or BC when Design Viewer is active, add to Design Viewer

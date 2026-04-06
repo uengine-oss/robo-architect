@@ -20,6 +20,66 @@ from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 
+def _allowed_event_names_for_bc(ctx: IngestionWorkflowContext, us_ids: set[str]) -> set[str]:
+    names: set[str] = set()
+    for e in ctx.events_from_us or []:
+        if not isinstance(e, dict):
+            continue
+        uid = e.get("userStoryId") or ""
+        if uid not in us_ids:
+            continue
+        n = (e.get("name") or "").strip()
+        if n:
+            names.add(n)
+    return names
+
+
+def _bc_events_prompt_block(ctx: IngestionWorkflowContext, us_ids: set[str]) -> str:
+    lines: list[str] = []
+    for e in ctx.events_from_us or []:
+        if not isinstance(e, dict):
+            continue
+        uid = e.get("userStoryId") or ""
+        if uid not in us_ids:
+            continue
+        name = (e.get("name") or "").strip()
+        if not name:
+            continue
+        desc = (e.get("description") or "").strip()
+        tail = f" — {desc[:300]}" if desc else ""
+        lines.append(f"- **{name}** (user_story_id={uid}){tail}")
+    if not lines:
+        return (
+            "(No domain events extracted yet for user stories in this BC. "
+            "Derive Aggregates from user story breakdowns only; set covered_event_names to [].)"
+        )
+    return "\n".join(lines)
+
+
+def _user_story_breakdown_lines(ctx: IngestionWorkflowContext, us_ids: set[str]) -> str:
+    lines: list[str] = []
+    for us in ctx.user_stories or []:
+        uid = getattr(us, "id", "") or ""
+        if uid not in us_ids:
+            continue
+        role = getattr(us, "role", "") or ""
+        action = getattr(us, "action", "") or ""
+        benefit = getattr(us, "benefit", "") or ""
+        lines.append(f"- [{uid}] As a {role}, I want to {action}, so that {benefit}")
+    if not lines:
+        return "User Stories: (none assigned)"
+    return "\n".join(lines)
+
+
+def _covered_event_names_from_agg(agg: Any) -> list[str]:
+    raw = getattr(agg, "covered_event_names", None)
+    if raw is None and isinstance(agg, dict):
+        raw = agg.get("covered_event_names")
+    if not raw:
+        return []
+    return [str(x).strip() for x in raw if str(x).strip()]
+
+
 async def _create_aggregate_with_links(
     agg: Any,
     agg_idx: int,
@@ -27,6 +87,7 @@ async def _create_aggregate_with_links(
     bc_idx: int,
     total_bcs: int,
     ctx: IngestionWorkflowContext,
+    allowed_event_names: set[str],
 ) -> tuple[dict[str, Any] | None, str]:
     """
     Create a single aggregate with user story links.
@@ -169,6 +230,22 @@ async def _create_aggregate_with_links(
                 except Exception:
                     pass  # Individual failures are ignored
 
+        if allowed_event_names:
+            for ename in _covered_event_names_from_agg(agg):
+                if ename not in allowed_event_names:
+                    continue
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            ctx.client.link_aggregate_to_event_by_name,
+                            created_agg.get("id"),
+                            ename,
+                        ),
+                        timeout=5.0,
+                    )
+                except Exception:
+                    pass
+
         return {
             "aggregate": created_agg,
             "agg": agg,
@@ -217,8 +294,10 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         if not isinstance(us_ids, list):
             us_ids = []
         us_ids = [us_id for us_id in us_ids if us_id]  # None이나 빈 문자열 제거
-        
-        breakdowns_text = f"User Stories: {', '.join(us_ids)}" if us_ids else "User Stories: (none assigned)"
+        us_id_set = set(us_ids)
+
+        breakdowns_text = _user_story_breakdown_lines(ctx, us_id_set)
+        bc_events_text = _bc_events_prompt_block(ctx, us_id_set)
 
         # Collect existing aggregates from previously processed BCs for reference validation
         existing_aggregates_text = ""
@@ -255,6 +334,7 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             bc_id_short=bc_id_short,
             bc_description=bc_description,
             breakdowns=breakdowns_text,
+            bc_events=bc_events_text,
             existing_aggregates=existing_aggregates_text,
         )
         display_lang = getattr(ctx, "display_language", "ko") or "ko"
@@ -349,9 +429,14 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                 valid_aggregates.append(agg)
             
             total_bcs = len(ctx.bounded_contexts)
+            allowed_names = _allowed_event_names_for_bc(ctx, us_id_set)
             tasks = []
             for agg_idx, agg in enumerate(valid_aggregates):
-                tasks.append(_create_aggregate_with_links(agg, agg_idx, bc, bc_idx, total_bcs, ctx))
+                tasks.append(
+                    _create_aggregate_with_links(
+                        agg, agg_idx, bc, bc_idx, total_bcs, ctx, allowed_names
+                    )
+                )
             
             results = await asyncio.gather(*tasks, return_exceptions=True)
             

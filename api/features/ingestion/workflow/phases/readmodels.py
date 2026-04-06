@@ -80,6 +80,21 @@ async def _create_readmodel_with_links(
         )
         
         progress_per_bc = 6 // max(len(ctx.bounded_contexts), 1)
+        # trigger event의 sequence를 가져와 ReadModel 배치에 사용
+        rm_sequence = None
+        trigger_event_names_val = list(getattr(rm, "trigger_event_names", []) or [])
+        if trigger_event_names_val:
+            try:
+                with ctx.client.session() as _s:
+                    _r = _s.run(
+                        "MATCH (evt:Event {name: $name}) RETURN evt.sequence AS seq LIMIT 1",
+                        name=trigger_event_names_val[0],
+                    ).single()
+                    if _r and _r["seq"] is not None:
+                        rm_sequence = int(_r["seq"])
+            except Exception:
+                pass
+
         progress_event = ProgressEvent(
             phase=IngestionPhase.EXTRACTING_READMODELS,
             message=f"ReadModel 생성: {name}",
@@ -89,15 +104,40 @@ async def _create_readmodel_with_links(
                 "object": {
                     "id": created.get("id"),
                     "name": created.get("name", name),
+                    "displayName": rm_display_name,
                     "type": "ReadModel",
                     "parentId": bc_id,
+                    "bcId": bc_id,
+                    "actor": actor,
+                    "sequence": rm_sequence,
+                    "triggerEventNames": trigger_event_names_val,
                     "description": created.get("description", description),
                     "provisioningType": created.get("provisioningType", "CQRS"),
-                    "userStoryIds": user_story_ids,
                 },
             },
         )
         
+        # Create CQRS relationships: ReadModel -> Event (trigger_event_names)
+        trigger_event_names = list(getattr(rm, "trigger_event_names", []) or [])
+        if trigger_event_names:
+            link_tasks = []
+            for evt_name in trigger_event_names:
+                evt_name = (evt_name or "").strip()
+                if not evt_name:
+                    continue
+                link_tasks.append(
+                    asyncio.wait_for(
+                        asyncio.to_thread(
+                            ctx.client.link_readmodel_to_event,
+                            readmodel_id=created.get("id"),
+                            event_name=evt_name,
+                        ),
+                        timeout=5.0,
+                    )
+                )
+            if link_tasks:
+                await asyncio.gather(*link_tasks, return_exceptions=True)
+
         return {
             "readmodel": created,
             "rm": rm,
@@ -171,17 +211,49 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
 
         user_stories_text = "\n".join(bc_user_stories) if bc_user_stories else "No user stories"
 
-        # Events in this BC (flatten events for all aggregates in this BC)
+        # Events in this BC (Neo4j BC -[:HAS_EVENT]-> Event 경로)
         bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
         bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
         events_lines: list[str] = []
-        for agg in ctx.aggregates_by_bc.get(bc_id, []) or []:
-            agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
-            for evt in ctx.events_by_agg.get(agg_id, []) or []:
-                evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
-                desc = evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", "") or ""
-                events_lines.append(f"- {evt_name}" + (f": {desc}" if desc else ""))
+        try:
+            with ctx.client.session() as _evt_sess:
+                _evt_result = _evt_sess.run(
+                    """
+                    MATCH (bc:BoundedContext {id: $bc_id})-[:HAS_EVENT]->(evt:Event)
+                    RETURN evt.name AS name, evt.description AS description
+                    ORDER BY evt.sequence
+                    """,
+                    bc_id=bc_id,
+                )
+                for _r in _evt_result:
+                    evt_name = _r["name"] or ""
+                    desc = _r["description"] or ""
+                    events_lines.append(f"- {evt_name}" + (f": {desc}" if desc else ""))
+        except Exception:
+            pass
         events_text = "\n".join(events_lines) if events_lines else "No events"
+
+        # Cross-BC events: 다른 BC의 이벤트 (Neo4j 조회)
+        cross_bc_events_lines: list[str] = []
+        try:
+            with ctx.client.session() as _xbc_sess:
+                _xbc_result = _xbc_sess.run(
+                    """
+                    MATCH (bc:BoundedContext)-[:HAS_EVENT]->(evt:Event)
+                    WHERE bc.id <> $bc_id
+                    RETURN evt.name AS name, bc.name AS bcName
+                    ORDER BY bc.name, evt.sequence
+                    """,
+                    bc_id=bc_id,
+                )
+                for _r in _xbc_result:
+                    cross_bc_events_lines.append(f"- {_r['name']} (BC: {_r['bcName']})")
+        except Exception:
+            pass
+
+        if cross_bc_events_lines:
+            events_text += "\n\n--- Cross-BC Events (from other Bounded Contexts) ---\n"
+            events_text += "\n".join(cross_bc_events_lines)
 
         display_lang = getattr(ctx, "display_language", "ko") or "ko"
         display_name_tail = (

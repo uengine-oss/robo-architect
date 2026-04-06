@@ -1,15 +1,19 @@
 <script setup>
-import { computed, onMounted, ref, nextTick, inject } from 'vue'
+import { computed, onMounted, ref, nextTick, inject, watch } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
+import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import TreeNode from './TreeNode.vue'
 
 const navigatorStore = useNavigatorStore()
 const terminologyStore = useTerminologyStore()
 const bpmnStore = useBpmnStore()
+const emStore = useEventModelingStore()
 const activeTab = inject('activeTab', ref('Design'))
 const isBpmnMode = computed(() => activeTab.value === 'BPMN')
+const isEventModelingMode = computed(() => activeTab.value === 'Event Modeling')
+const expandedProcesses = ref(new Set())
 const localLoading = ref(true)
 const isLoading = computed(() => localLoading.value || navigatorStore.loading)
 
@@ -88,6 +92,26 @@ async function handleBpmnFlowDblClick(flow) {
     return
   }
   await bpmnStore.addFlow(flow.id)
+}
+
+// Event Modeling: 탭 진입 시 프로세스 목록 자동 로드
+watch(isEventModelingMode, (active) => {
+  if (active && !emStore.processChains.length && !emStore.loading) {
+    emStore.fetchProcessList()
+  }
+}, { immediate: true })
+
+function handleProcessDblClick(proc) {
+  emStore.toggleProcessOnCanvas(proc.id)
+}
+
+function handleProcessDragStart(event, proc) {
+  event.dataTransfer.setData('application/json', JSON.stringify({
+    type: 'EventModelingProcess',
+    processId: proc.id,
+    name: proc.name,
+  }))
+  event.dataTransfer.effectAllowed = 'copy'
 }
 </script>
 
@@ -184,6 +208,71 @@ async function handleBpmnFlowDblClick(flow) {
             </div>
           </div>
         </template>
+      </template>
+
+      <!-- Event Modeling Mode: Process Flows Only -->
+      <template v-else-if="isEventModelingMode">
+        <div class="section-group">
+          <div class="section-header section-header--with-actions">
+            <div class="section-header__left">
+              <span class="section-title">Business Processes</span>
+              <span v-if="emStore.processChains.length" class="section-count">{{ emStore.processChains.length }}</span>
+            </div>
+            <div class="section-header__actions">
+              <button class="tree-action-btn" @click="emStore.fetchEventModeling()" title="Load All" :disabled="emStore.loading">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <path d="M3 9h18M9 3v18"/>
+                </svg>
+              </button>
+              <button class="tree-action-btn" :class="{ 'is-spinning': emStore.loading }" @click="emStore.fetchProcessList()" title="Refresh" :disabled="emStore.loading">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <polyline points="1 20 1 14 7 14"></polyline>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="emStore.loading" class="loading-state" style="padding:16px">
+            <div class="loading-spinner"></div>
+            <span>Loading...</span>
+          </div>
+          <div v-else-if="emStore.processChains.length === 0" class="empty-state" style="padding:16px">
+            <span>프로세스 데이터가 없습니다.</span>
+          </div>
+          <template v-else>
+            <div v-for="proc in emStore.processChains" :key="proc.id"
+                 class="em-process-item"
+                 :class="{ 'is-on-canvas': emStore.canvasProcessIds.has(proc.id) }"
+                 :draggable="true"
+                 @dragstart="handleProcessDragStart($event, proc)"
+                 @dblclick="handleProcessDblClick(proc)">
+              <div class="em-process-item__header" @click.stop="expandedProcesses.has(proc.id) ? expandedProcesses.delete(proc.id) : expandedProcesses.add(proc.id)">
+                <svg class="em-process-item__chevron" :class="{ 'is-open': expandedProcesses.has(proc.id) }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="9 18 15 12 9 6"></polyline>
+                </svg>
+                <span class="em-process-item__name" :title="proc.name">{{ proc.name }}</span>
+                <span class="em-process-item__chip">{{ proc.stepCount }}</span>
+                <span v-if="emStore.canvasProcessIds.has(proc.id)" class="em-process-item__check">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                </span>
+              </div>
+              <div v-if="expandedProcesses.has(proc.id)" class="em-process-item__steps">
+                <div v-for="step in proc.steps" :key="step.id"
+                     class="em-process-step"
+                     @click.stop="emStore.selectItem(step.id, step.type)"
+                     :class="{ 'is-selected': emStore.selectedItemId === step.id }">
+                  <span class="em-process-step__dot" :class="'em-process-step__dot--' + step.type"></span>
+                  <span class="em-process-step__name">{{ step.name }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
       </template>
 
       <!-- Default Mode: BC Tree -->
@@ -285,6 +374,20 @@ async function handleBpmnFlowDblClick(flow) {
         <div class="legend-item">
           <span class="legend-color" style="background: #20c997;"></span>
           <span>Swimlane (Actor)</span>
+        </div>
+      </template>
+      <template v-else-if="isEventModelingMode">
+        <div class="legend-item">
+          <span class="legend-color legend-color--command"></span>
+          <span>Command</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--event"></span>
+          <span>Event</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-color legend-color--readmodel"></span>
+          <span>ReadModel</span>
         </div>
       </template>
       <template v-else>
@@ -607,6 +710,115 @@ async function handleBpmnFlowDblClick(flow) {
 }
 
 .bpmn-flow-item__check {
+  flex-shrink: 0;
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+}
+
+/* Event Modeling Process Items */
+.em-process-item {
+  margin: 1px 4px;
+  cursor: grab;
+}
+
+.em-process-item.is-on-canvas {
+  background: rgba(34, 139, 230, 0.08);
+  border-radius: var(--radius-sm);
+}
+
+.em-process-item__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+
+.em-process-item__header:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.em-process-item__chevron {
+  flex-shrink: 0;
+  color: var(--color-text-light);
+  transition: transform 0.15s;
+}
+
+.em-process-item__chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.em-process-item__name {
+  flex: 1;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.em-process-item__chip {
+  flex-shrink: 0;
+  font-size: 0.55rem;
+  font-weight: 600;
+  min-width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-light);
+  border-radius: 9px;
+}
+
+.em-process-item__steps {
+  padding-left: 18px;
+}
+
+.em-process-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+
+.em-process-step:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.em-process-step.is-selected {
+  background: rgba(34, 139, 230, 0.15);
+}
+
+.em-process-step__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.em-process-step__dot--command { background: var(--color-command, #5c7cfa); }
+.em-process-step__dot--event { background: var(--color-event, #fd7e14); }
+.em-process-step__dot--readmodel { background: var(--color-readmodel, #40c057); }
+.em-process-step__dot--ui { background: #bdbdbd; border: 1px solid #999; }
+
+.em-process-step__name {
+  font-size: 0.65rem;
+  color: var(--color-text-light);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.em-process-item__check {
   flex-shrink: 0;
   color: var(--color-accent);
   display: flex;

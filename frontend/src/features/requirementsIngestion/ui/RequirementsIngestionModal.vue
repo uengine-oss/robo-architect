@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, watch, onUnmounted, onMounted } from 'vue'
+import { ref, computed, watch, inject, onUnmounted, onMounted } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
+import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
 
 const props = defineProps({
@@ -15,6 +16,8 @@ const emit = defineEmits(['update:modelValue', 'complete', 'session-restored'])
 
 const navigatorStore = useNavigatorStore()
 const ingestionStore = useIngestionStore()
+const eventModelingStore = useEventModelingStore()
+const activeTab = inject('activeTab', ref('Design'))
 
 // LocalStorage key for persisting session (page refresh recovery)
 const SESSION_STORAGE_KEY = 'ingestion_active_session'
@@ -389,6 +392,12 @@ async function startIngestion() {
 }
 
 function connectToStream(sid, isReconnect = false) {
+  // Ingestion 시작 → Event Modeling 탭 전환 + live mode
+  if (!isReconnect) {
+    activeTab.value = 'Event Modeling'
+    eventModelingStore.startLiveMode()
+  }
+
   const url = isReconnect ? `/api/ingest/stream/${sid}?reconnect=true` : `/api/ingest/stream/${sid}`
   eventSource.value = new EventSource(url)
   
@@ -408,6 +417,15 @@ function connectToStream(sid, isReconnect = false) {
       isPausing.value = false
     }
     
+    // Handle Event → BC assignment (Event Modeling canvas: move event to BC swimlane)
+    if (data.data && data.data.type === 'EventBCAssigned') {
+      const assignment = data.data.object
+      if (assignment) {
+        eventModelingStore.assignEventToBC(assignment.eventId, assignment.bcId, assignment.bcName)
+      }
+      return
+    }
+
     // Handle User Story assignment to BC FIRST (before created objects)
     // This must happen before "Handle created objects" because we need to move user stories from root to BC trees
     if (data.data && data.data.type === 'UserStoryAssigned') {
@@ -455,18 +473,23 @@ function connectToStream(sid, isReconnect = false) {
         navigatorStore.addUserStory(obj)
       } else if (obj.type === 'BoundedContext') {
         navigatorStore.addContext(obj)
+        eventModelingStore.addLiveBC(obj)
       } else if (obj.type === 'Aggregate') {
         navigatorStore.addAggregate(obj)
       } else if (obj.type === 'Command') {
         navigatorStore.addCommand(obj)
+        eventModelingStore.addLiveCommand(obj)
       } else if (obj.type === 'Event') {
         navigatorStore.addEvent(obj)
+        eventModelingStore.addLiveEvent(obj)
       } else if (obj.type === 'Policy') {
         navigatorStore.addPolicy(obj)
       } else if (obj.type === 'ReadModel') {
         navigatorStore.addReadModel(obj)
+        eventModelingStore.addLiveReadModel(obj)
       } else if (obj.type === 'UI') {
         navigatorStore.addUI(obj)
+        eventModelingStore.addLiveUI(obj)
       } else if (obj.type === 'CQRSOperation') {
         navigatorStore.addCQRSOperation(obj)
       } else if (obj.type === 'Property') {
@@ -485,6 +508,9 @@ function connectToStream(sid, isReconnect = false) {
       closeStream()
       clearSessionFromStorage()
       navigatorStore.refreshAll()
+      // Event Modeling: live mode 종료 후 전체 데이터 fetch
+      eventModelingStore.stopLiveMode()
+      eventModelingStore.fetchEventModeling()
     }
     
     // Handle error or cancellation

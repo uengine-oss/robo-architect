@@ -4,6 +4,7 @@ import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
+import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
 import SettingsPanel from './SettingsPanel.vue'
@@ -17,7 +18,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:activeTab'])
 
-const tabs = ['BPMN', 'Big picture', 'Design', 'Aggregate']
+const tabs = ['BPMN', 'Event Modeling', 'Big picture', 'Design', 'Aggregate']
 
 function selectTab(tab) {
   emit('update:activeTab', tab)
@@ -27,6 +28,7 @@ const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()
 const aggregateViewerStore = useAggregateViewerStore()
 const bpmnStore = useBpmnStore()
+const eventModelingStore = useEventModelingStore()
 const showIngestionModal = ref(false)
 const showPRDModal = ref(false)
 const showSettingsPanel = ref(false)
@@ -67,6 +69,15 @@ function handleIngestionComplete() {
         <span><strong>{{ bpmnStore.renderedFlows.length }}</strong> flows</span>
         <span class="top-bar__status-dot">•</span>
         <span><strong>{{ bpmnStore.processFlows.length }}</strong> available</span>
+      </div>
+
+      <!-- Event Modeling Panel Status -->
+      <div v-else-if="activeTab === 'Event Modeling'" class="top-bar__status">
+        <span><strong>{{ eventModelingStore.allActors.length }}</strong> Actors</span>
+        <span class="top-bar__status-dot">•</span>
+        <span><strong>{{ eventModelingStore.totalCommands }}</strong> Commands</span>
+        <span class="top-bar__status-dot">•</span>
+        <span><strong>{{ eventModelingStore.totalEvents }}</strong> Events</span>
       </div>
 
       <!-- Design Panel Status -->

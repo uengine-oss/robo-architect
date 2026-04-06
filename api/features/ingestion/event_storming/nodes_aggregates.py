@@ -89,6 +89,10 @@ def extract_aggregates_node(state: EventStormingState) -> Dict[str, Any]:
         bc_id_short=bc_id_short,
         bc_description=current_bc.description,
         breakdowns=breakdowns_text,
+        bc_events=(
+            "(Interactive Event Storming mode: no pre-extracted domain event list. "
+            "Derive Aggregates from breakdowns only; set covered_event_names to [].)"
+        ),
         existing_aggregates=existing_aggregates_text,
     )
 

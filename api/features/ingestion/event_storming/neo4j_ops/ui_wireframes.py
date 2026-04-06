@@ -42,6 +42,22 @@ class UIWireframeOps:
                     key = f"{bc_key_value}.ui.{slugify(name)}"
 
             display_name_val = display_name if display_name is not None else name
+
+            # Resolve actor from the attached Command/ReadModel
+            resolved_actor = None
+            if attached_to_id and attached_to_type == "Command":
+                actor_rec = session.run(
+                    "MATCH (cmd:Command {id: $id}) RETURN cmd.actor as actor",
+                    id=attached_to_id,
+                ).single()
+                resolved_actor = (actor_rec or {}).get("actor")
+            elif attached_to_id and attached_to_type == "ReadModel":
+                actor_rec = session.run(
+                    "MATCH (rm:ReadModel {id: $id}) RETURN rm.actor as actor",
+                    id=attached_to_id,
+                ).single()
+                resolved_actor = (actor_rec or {}).get("actor")
+
             query = """
             MATCH (bc:BoundedContext {id: $bc_id})
             MERGE (ui:UI {key: $key})
@@ -56,9 +72,10 @@ class UIWireframeOps:
                 ui.attachedToType = $attached_to_type,
                 ui.attachedToName = $attached_to_name,
                 ui.userStoryId = $user_story_id,
+                ui.actor = $actor,
                 ui.updatedAt = datetime()
             MERGE (bc)-[:HAS_UI]->(ui)
-            RETURN ui {.id, .key, .name, .displayName, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId} as ui
+            RETURN ui {.id, .key, .name, .displayName, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId, .actor} as ui
             """
             result = session.run(
                 query,
@@ -72,6 +89,7 @@ class UIWireframeOps:
                 attached_to_type=attached_to_type,
                 attached_to_name=attached_to_name,
                 user_story_id=user_story_id,
+                actor=resolved_actor,
             )
             ui = dict(result.single()["ui"])
 

@@ -92,6 +92,26 @@ async def _create_command_with_links(
                 except Exception:
                     pass  # Individual failures are ignored
 
+        # Link to existing Events via emits_event_names (EMITS relationship)
+        emits_names = getattr(cmd, "emits_event_names", []) or []
+        if isinstance(cmd, dict):
+            emits_names = cmd.get("emits_event_names", []) or []
+        for evt_name in emits_names:
+            evt_name = (evt_name or "").strip()
+            if not evt_name:
+                continue
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        ctx.client.link_command_to_event_by_name,
+                        command_id=created_cmd.get("id"),
+                        event_name=evt_name,
+                    ),
+                    timeout=5.0,
+                )
+            except Exception:
+                pass
+
         return {
             "command": created_cmd,
             "cmd": cmd,
@@ -149,6 +169,25 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 [f"[{us.id}] As a {us.role}, I want to {us.action}" for us in ctx.user_stories if us.id in bc_us_ids]
             )
 
+            # Aggregate에 속한 Event 목록 (SCOPE_EVENT 또는 BC의 HAS_EVENT)
+            agg_event_names = []
+            try:
+                with ctx.client.session() as _sess:
+                    _evt_result = _sess.run(
+                        """
+                        MATCH (agg:Aggregate {id: $agg_id})-[:SCOPE_EVENT]->(evt:Event)
+                        RETURN evt.name AS name
+                        UNION
+                        MATCH (bc:BoundedContext {id: $bc_id})-[:HAS_EVENT]->(evt:Event)
+                        RETURN evt.name AS name
+                        """,
+                        agg_id=agg_id, bc_id=bc_id,
+                    )
+                    agg_event_names = list({r["name"] for r in _evt_result if r["name"]})
+            except Exception:
+                pass
+            events_text = "\n".join(f"- {n}" for n in sorted(agg_event_names)) if agg_event_names else "(no events)"
+
             display_lang = getattr(ctx, "display_language", "ko") or "ko"
             display_name_tail = (
                 "\n\nFor each Command output displayName: a short UI label in Korean (e.g. '주문하기', '취소')."
@@ -162,6 +201,7 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 bc_name=bc_name,
                 bc_short=bc_id_short,
                 user_story_context=stories_context,
+                available_events=events_text,
             ) + display_name_tail
             # Inject already-created commands to prevent cross-aggregate duplication
             if _existing_command_names:
@@ -398,17 +438,44 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         created_count += 1
                         created_cmd = created_cmd_data["command"]
                         cmd = created_cmd_data["cmd"]
-                        
+
                         # Handle both dict and object formats
                         cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
-                        
+                        cmd_actor = cmd.get("actor") if isinstance(cmd, dict) else getattr(cmd, "actor", "user")
+                        cmd_emits = cmd.get("emits_event_names") if isinstance(cmd, dict) else getattr(cmd, "emits_event_names", [])
+                        cmd_display = cmd.get("displayName") if isinstance(cmd, dict) else getattr(cmd, "displayName", cmd_name)
+
+                        # EMITS된 Event의 sequence를 가져와서 Command 배치에 사용
+                        cmd_sequence = None
+                        if cmd_emits:
+                            try:
+                                with ctx.client.session() as _s:
+                                    _r = _s.run(
+                                        "MATCH (evt:Event {name: $name}) RETURN evt.sequence AS seq LIMIT 1",
+                                        name=cmd_emits[0],
+                                    ).single()
+                                    if _r and _r["seq"] is not None:
+                                        cmd_sequence = int(_r["seq"])
+                            except Exception:
+                                pass
+
                         yield ProgressEvent(
                             phase=IngestionPhase.EXTRACTING_COMMANDS,
                             message=f"Command 생성: {cmd_name} ({created_count}/{total_cmds})",
                             progress=65,
                             data={
                                 "type": "Command",
-                                "object": {"id": created_cmd.get("id"), "name": cmd_name, "type": "Command", "parentId": agg_id},
+                                "object": {
+                                    "id": created_cmd.get("id"),
+                                    "name": cmd_name,
+                                    "displayName": cmd_display,
+                                    "type": "Command",
+                                    "parentId": agg_id,
+                                    "bcId": bc_id,
+                                    "actor": cmd_actor,
+                                    "sequence": cmd_sequence,
+                                    "emitsEventNames": cmd_emits or [],
+                                },
                             },
                         )
 

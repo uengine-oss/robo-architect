@@ -59,31 +59,37 @@ async function fetchNodeFromAPI(nodeId) {
   
   try {
     isLoadingNode.value = true
-    const response = await fetch(`/api/node/${nodeId}`)
+    const response = await fetch(`/api/graph/expand-with-bc/${nodeId}`)
     if (!response.ok) {
       console.warn(`[InspectorPanel] Failed to fetch node ${nodeId}: ${response.status}`)
       return null
     }
     const data = await response.json()
-    // Convert API response to VueFlow node format
-    const node = data.node
-    if (!node) return null
-    
-    // Transform to VueFlow node format
+
+    // expand-with-bc 응답: { nodes: [...], relationships: [...], bcContext: {...} }
+    // 대상 노드 = nodes 중 요청한 ID와 일치하는 것 (첫 번째가 BC일 수 있음)
+    const targetNode = data.nodes?.find(n => n.id === nodeId)
+      || data.node  // fallback: node_details 형식
+    if (!targetNode) return null
+
+    const labels = targetNode.labels
+    const nodeType = labels?.[0] || targetNode.type
+    const bc = data.bcContext || data.boundedContext
+
     const vueFlowNode = {
-      id: node.id,
-      type: node.labels?.[0]?.toLowerCase() || node.type?.toLowerCase() || 'unknown',
+      id: targetNode.id,
+      type: nodeType?.toLowerCase() || 'unknown',
       data: {
-        ...node,
-        type: node.labels?.[0] || node.type,
-        name: node.name,
-        description: node.description,
-        bcId: node.bcId || data.boundedContext?.id,
-        bcName: node.bcName || data.boundedContext?.name
+        ...targetNode,
+        type: nodeType,
+        bcId: targetNode.bcId || bc?.id,
+        bcName: targetNode.bcName || bc?.name,
       },
-      position: { x: 0, y: 0 } // Default position for non-canvas nodes
+      position: { x: 0, y: 0 }
     }
     fetchedNodeData.value = vueFlowNode
+    // fetch 완료 후 form 재초기화 (watch의 resetToNode보다 늦게 도착하므로)
+    nextTick(() => resetToNode())
     return vueFlowNode
   } catch (error) {
     console.error(`[InspectorPanel] Error fetching node ${nodeId}:`, error)

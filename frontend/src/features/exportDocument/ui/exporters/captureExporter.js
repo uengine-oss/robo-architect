@@ -59,6 +59,16 @@ async function captureSvg(container, selector) {
   } catch { return null }
 }
 
+// ── Word 섹션 커버 페이지 ──
+function wordSectionCover(num, title, desc) {
+  return sec([
+    ...Array(6).fill(null).map(() => empty()),
+    para(String(num), { align: AlignmentType.CENTER, size: 72, bold: true, color: '228BE6', after: 200 }),
+    para(title, { align: AlignmentType.CENTER, size: 32, bold: true, after: 120 }),
+    para(desc, { align: AlignmentType.CENTER, size: 20, color: '6C757D', after: 200 }),
+  ])
+}
+
 // ════════════════════════════════════════
 //  WORD (.docx)
 // ════════════════════════════════════════
@@ -103,6 +113,7 @@ export async function exportToWord(data, container, onProgress) {
 
   // ── 1. 사용자 스토리 ──
   if (selectedSections.userStories) {
+    sections.push(wordSectionCover(sn.userStories, '사용자 스토리 종합', '시스템에 등록된 사용자 스토리를 Bounded Context 별로 정리합니다.'))
     sections.push(sec([
       h2(`${sn.userStories}. 사용자 스토리 종합`),
       allUserStories.length
@@ -115,6 +126,7 @@ export async function exportToWord(data, container, onProgress) {
 
   // ── 2. Bounded Context (요약 + 모든 BC 상세를 한 section에) ──
   if (selectedSections.boundedContext) {
+    sections.push(wordSectionCover(sn.boundedContext, 'Bounded Context 정의', '도메인을 구성하는 Bounded Context의 역할, 구성 요소, 상호 관계를 정의합니다.'))
     const ch = [
       h2(`${sn.boundedContext}. Bounded Context 정의`),
       tbl(['BC', '도메인 유형', '설명', 'Agg', 'Cmd', 'Evt', 'RM', 'US'],
@@ -151,6 +163,7 @@ export async function exportToWord(data, container, onProgress) {
 
   // ── 3. 모델 전반 (한 BC = 한 section, 내부 소분류 합침) ──
   if (selectedSections.modelOverview) {
+    sections.push(wordSectionCover(sn.modelOverview, '이벤트 스토밍 모델 전반 정보', 'Command, Event, Policy, Read Model 구성 요소를 정리합니다.'))
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return
       const bcN = bcName(ctx)
@@ -200,6 +213,7 @@ export async function exportToWord(data, container, onProgress) {
 
   // ── 4. API 명세 (한 BC = 한 section) ──
   if (selectedSections.apiSpecification) {
+    sections.push(wordSectionCover(sn.apiSpecification, 'API 명세', 'Command 및 Read Model 상세 정보입니다.'))
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return
       const ch = [h2(`${sn.apiSpecification}-${ci + 1}. ${bcName(ctx)} - API 명세`)]
@@ -231,6 +245,7 @@ export async function exportToWord(data, container, onProgress) {
 
   // ── 5. Aggregate 상세 (한 Aggregate = 한 section) ──
   if (selectedSections.aggregateDetail) {
+    sections.push(wordSectionCover(sn.aggregateDetail, 'Aggregate 상세', '속성, Enumeration, Value Object 구조를 정리합니다.'))
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t?.aggregates?.length) return
       t.aggregates.forEach((agg, ai) => {
@@ -292,10 +307,11 @@ function pptCover(pptx, stats, date) {
   if (date) s.addText(date, { x: 0, y: 4.9, w: '100%', fontSize: 9, color: 'ADB5BD', align: 'center', fontFace: PF })
 }
 
-function pptSec(pptx, num, title) {
+function pptSec(pptx, num, title, desc) {
   const s = pptx.addSlide({ bkgd: 'F8F9FA' })
   s.addText(String(num), { x: 0, y: 0.8, w: '100%', fontSize: 52, color: '228BE6', align: 'center', fontFace: PF, bold: true })
   s.addText(title, { x: 0, y: 1.8, w: '100%', fontSize: 24, color: '1A1A2E', align: 'center', fontFace: PF, bold: true })
+  if (desc) s.addText(desc, { x: 1, y: 2.6, w: 8, fontSize: 12, color: '6C757D', align: 'center', fontFace: PF })
 }
 
 /**
@@ -433,7 +449,7 @@ export async function exportToPPT(data, container, onProgress) {
 
   // ── 1. US ──
   if (selectedSections.userStories && allUserStories.length) {
-    pptSec(pptx, sn.userStories, '사용자 스토리 종합')
+    pptSec(pptx, sn.userStories, '사용자 스토리 종합', '시스템에 등록된 사용자 스토리를 Bounded Context 별로 정리합니다.')
     sb.startPage(`${sn.userStories}. 사용자 스토리 종합`)
     sb.addTable(['BC', 'As a', 'I want to', 'So that', '우선순위'],
       allUserStories.map(u => [u.bcName, u.role || '-', (u.action || u.name || '-').slice(0, 50), (u.benefit || '-').slice(0, 50), u.priority || '-']),
@@ -442,7 +458,7 @@ export async function exportToPPT(data, container, onProgress) {
 
   // ── 2. BC ──
   if (selectedSections.boundedContext) {
-    pptSec(pptx, sn.boundedContext, 'Bounded Context 정의')
+    pptSec(pptx, sn.boundedContext, 'Bounded Context 정의', '도메인을 구성하는 Bounded Context의 역할, 구성 요소, 상호 관계를 정의합니다.')
     sb.startPage(`${sn.boundedContext}. Bounded Context 요약`)
     sb.addTable(['BC', '도메인', '설명', 'Agg', 'Cmd', 'Evt', 'RM'],
       sortedContexts.map(c => { const t = bcTree(c); return [bcName(c), c.domainType || '-', (c.description || t?.description || '-').slice(0, 50), t?.aggregates?.length || 0, t?.aggregates?.reduce((a, x) => a + (x.commands?.length || 0), 0) || 0, t?.aggregates?.reduce((a, x) => a + (x.events?.length || 0), 0) || 0, t?.readmodels?.length || 0] }),
@@ -473,7 +489,7 @@ export async function exportToPPT(data, container, onProgress) {
 
   // ── 3. 모델 전반 — 한 BC의 소 주제들을 같은 슬라이드에 합침 ──
   if (selectedSections.modelOverview) {
-    pptSec(pptx, sn.modelOverview, '이벤트 스토밍 모델 전반 정보')
+    pptSec(pptx, sn.modelOverview, '이벤트 스토밍 모델 전반 정보', 'Command, Event, Policy, Read Model 구성 요소를 정리합니다.')
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return; const bcN = bcName(ctx); let sub = 0
       sb.startPage(`${sn.modelOverview}-${ci + 1}. ${bcN}`)
@@ -520,7 +536,7 @@ export async function exportToPPT(data, container, onProgress) {
 
   // ── 4. API ──
   if (selectedSections.apiSpecification) {
-    pptSec(pptx, sn.apiSpecification, 'API 명세')
+    pptSec(pptx, sn.apiSpecification, 'API 명세', 'Command 및 Read Model 상세 정보입니다.')
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return; const bcN = bcName(ctx)
       sb.startPage(`${sn.apiSpecification}-${ci + 1}. ${bcN}`)
@@ -545,7 +561,7 @@ export async function exportToPPT(data, container, onProgress) {
 
   // ── 5. Aggregate 상세 ──
   if (selectedSections.aggregateDetail) {
-    pptSec(pptx, sn.aggregateDetail, 'Aggregate 상세')
+    pptSec(pptx, sn.aggregateDetail, 'Aggregate 상세', '속성, Enumeration, Value Object 구조를 정리합니다.')
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t?.aggregates?.length) return; const bcN = bcName(ctx)
       t.aggregates.forEach((agg, ai) => {

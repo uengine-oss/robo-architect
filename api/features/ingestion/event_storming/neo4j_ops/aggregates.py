@@ -245,6 +245,24 @@ class AggregateOps:
                 agg_dict["valueObjects"] = []
             return agg_dict
 
+    def link_aggregate_to_event_by_name(self, aggregate_id: str, event_name: str) -> bool:
+        """Link Aggregate to an existing Event by natural name (ingestion: event-driven aggregate scope)."""
+        name = (event_name or "").strip()
+        if not name or not aggregate_id:
+            return False
+        query = """
+        MATCH (agg:Aggregate {id: $aggregate_id})
+        MATCH (evt:Event {name: $event_name})
+        MERGE (agg)-[r:SCOPE_EVENT]->(evt)
+        ON CREATE SET r.createdAt = datetime()
+        RETURN evt.id AS id
+        LIMIT 1
+        """
+        with self.session() as session:
+            result = session.run(query, aggregate_id=aggregate_id, event_name=name)
+            rec = result.single()
+            return bool(rec and rec.get("id"))
+
     def link_user_story_to_aggregate(self, user_story_id: str, aggregate_id: str, confidence: float = 0.9) -> bool:
         """Link a user story to an aggregate via IMPLEMENTS relationship."""
         query = """

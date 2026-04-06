@@ -222,6 +222,7 @@ async def _create_user_story_with_verification(
                 ui_description=ui_desc,
                 display_name=us_display_name or None,
                 source_screen_name=getattr(us, "source_screen_name", None),
+                sequence=getattr(us, "sequence", None),
             ),
             timeout=10.0
         )

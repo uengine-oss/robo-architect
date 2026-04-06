@@ -66,4 +66,51 @@ class ReadModelOps:
             )
             return dict(result.single()["readmodel"])
 
+    def link_readmodel_to_event(
+        self,
+        *,
+        readmodel_id: str,
+        event_name: str,
+    ) -> bool:
+        """
+        Create CQRS projection chain compatible with ReadModelCQRSEditor:
+          ReadModel -[:HAS_CQRS]-> CQRSConfig -[:HAS_OPERATION]-> CQRSOperation -[:TRIGGERED_BY]-> Event
+
+        ID conventions (must match readmodel_cqrs router):
+          CQRSConfig.id  = "CQRS-{readmodelId}"
+          CQRSOperation.id = "CQRS-OP-{readmodelId}-INSERT-{eventId}"
+
+        Finds Event by name (cross-BC safe). Idempotent via MERGE.
+        Returns True if link was created, False if Event not found.
+        """
+        with self.session() as session:
+            # name → displayName → 대소문자 무시 순으로 fuzzy matching
+            query = """
+            MATCH (rm:ReadModel {id: $rm_id})
+            OPTIONAL MATCH (evt1:Event {name: $event_name})
+            OPTIONAL MATCH (evt2:Event {displayName: $event_name})
+            OPTIONAL MATCH (evt3:Event) WHERE toLower(evt3.name) = toLower($event_name)
+               OR toLower(evt3.displayName) = toLower($event_name)
+            WITH rm, coalesce(evt1, evt2, evt3) AS evt
+            WHERE evt IS NOT NULL
+            WITH rm, evt, 'CQRS-' + rm.id AS cqrsId,
+                 'CQRS-OP-' + rm.id + '-INSERT-' + evt.id AS opId
+
+            MERGE (cqrs:CQRSConfig {id: cqrsId})
+            SET cqrs.readmodelId = rm.id
+            MERGE (rm)-[:HAS_CQRS]->(cqrs)
+
+            MERGE (op:CQRSOperation {id: opId})
+            SET op.operationType = 'INSERT',
+                op.cqrsConfigId = cqrsId,
+                op.triggerEventId = evt.id
+            MERGE (cqrs)-[:HAS_OPERATION]->(op)
+            MERGE (op)-[:TRIGGERED_BY]->(evt)
+            RETURN evt.id AS eventId
+            LIMIT 1
+            """
+            result = session.run(query, rm_id=readmodel_id, event_name=event_name)
+            record = result.single()
+            return record is not None
+
 

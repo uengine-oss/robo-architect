@@ -38,6 +38,9 @@ class IngestionWorkflowContext:
     events_by_agg: Dict[str, Any] = field(default_factory=dict)
     policies: List[Any] = field(default_factory=list)
 
+    # Event Modeling: events extracted per UserStory (before Command exists)
+    events_from_us: List[Any] = field(default_factory=list)
+
     # Optional artifacts
     uis: List[Any] = field(default_factory=list)
     readmodels_by_bc: Dict[str, Any] = field(default_factory=dict)

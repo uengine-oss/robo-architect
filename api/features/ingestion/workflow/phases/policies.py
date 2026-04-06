@@ -26,6 +26,43 @@ from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 
+def _fuzzy_match(query: str, candidates: list[tuple[str, str, Any]]) -> str | None:
+    """
+    query를 candidates [(name, displayName, obj)] 중에서 매칭.
+    1순위: name 정확 일치
+    2순위: displayName 정확 일치
+    3순위: name/displayName 대소문자 무시 일치
+    4순위: name/displayName에 query가 포함되거나 query에 name이 포함
+    Returns: 매칭된 obj의 id 또는 None
+    """
+    q = query.strip()
+    q_lower = q.lower()
+
+    # 1순위: name 정확 일치
+    for name, display_name, obj in candidates:
+        if name == q:
+            return obj.get("id") if isinstance(obj, dict) else getattr(obj, "id", None)
+
+    # 2순위: displayName 정확 일치
+    for name, display_name, obj in candidates:
+        if display_name and display_name == q:
+            return obj.get("id") if isinstance(obj, dict) else getattr(obj, "id", None)
+
+    # 3순위: 대소문자 무시
+    for name, display_name, obj in candidates:
+        if name.lower() == q_lower or (display_name and display_name.lower() == q_lower):
+            return obj.get("id") if isinstance(obj, dict) else getattr(obj, "id", None)
+
+    # 4순위: 포함 관계 (한글↔영문 혼용 대응)
+    for name, display_name, obj in candidates:
+        if q_lower in name.lower() or name.lower() in q_lower:
+            return obj.get("id") if isinstance(obj, dict) else getattr(obj, "id", None)
+        if display_name and (q_lower in display_name.lower() or display_name.lower() in q_lower):
+            return obj.get("id") if isinstance(obj, dict) else getattr(obj, "id", None)
+
+    return None
+
+
 async def _create_policy_with_links(
     pol: Any,
     pol_idx: int,
@@ -40,43 +77,87 @@ async def _create_policy_with_links(
     invoke_command_id = None
     target_bc_id = None
 
-    # Find trigger event
+    # Build event candidates for fuzzy matching — Neo4j에서 전체 Event 조회
+    event_candidates: list[tuple[str, str, Any]] = []
     try:
+        with ctx.client.session() as _s:
+            for rec in _s.run("MATCH (evt:Event) RETURN evt {.id, .name, .displayName} AS e"):
+                e = dict(rec["e"])
+                event_candidates.append((e.get("name", ""), e.get("displayName", ""), e))
+    except Exception as e:
+        # fallback: events_by_agg 사용
         for events in ctx.events_by_agg.values():
             for evt in events:
-                evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
-                if evt_name == pol.trigger_event:
-                    trigger_event_id = evt.get("id") if isinstance(evt, dict) else getattr(evt, "id", None)
-                    break
-            if trigger_event_id:
-                break
-    except Exception as e:
-        return None, f"Failed to find trigger event: {e}"
+                name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
+                display = evt.get("displayName") if isinstance(evt, dict) else getattr(evt, "displayName", "")
+                event_candidates.append((name, display or "", evt))
 
-    # Find target BC and invoke command
+    trigger_event_id = _fuzzy_match(pol.trigger_event, event_candidates)
+
+    # Find target BC and invoke command (with fuzzy matching)
     try:
+        # BC matching: exact name, then case-insensitive
         for bc in ctx.bounded_contexts:
             bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+            bc_display = bc.get("displayName") if isinstance(bc, dict) else getattr(bc, "displayName", "")
             bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
-            if bc_name == pol.target_bc or bc_id == pol.target_bc:
+            target_name = pol.target_bc.strip()
+            if bc_name == target_name or bc_id == target_name or bc_name.lower() == target_name.lower() or (bc_display and bc_display == target_name):
                 target_bc_id = bc_id
+                # Build command candidates for this BC
+                cmd_candidates: list[tuple[str, str, Any]] = []
                 for agg in ctx.aggregates_by_bc.get(bc_id, []):
                     agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
                     for cmd in ctx.commands_by_agg.get(agg_id, []):
                         cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
-                        if cmd_name == pol.invoke_command:
-                            invoke_command_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
-                            break
-                    if invoke_command_id:
-                        break
+                        cmd_display = cmd.get("displayName") if isinstance(cmd, dict) else getattr(cmd, "displayName", "")
+                        cmd_candidates.append((cmd_name, cmd_display or "", cmd))
+
+                invoke_command_id = _fuzzy_match(pol.invoke_command, cmd_candidates)
                 if invoke_command_id:
                     break
+
+        # BC not found by exact match — try fuzzy on all BCs
+        if not target_bc_id:
+            bc_candidates = [(
+                bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", ""),
+                bc.get("displayName") if isinstance(bc, dict) else getattr(bc, "displayName", ""),
+                bc,
+            ) for bc in ctx.bounded_contexts]
+            matched_bc_id = _fuzzy_match(pol.target_bc, bc_candidates)
+            if matched_bc_id:
+                target_bc_id = matched_bc_id
+                cmd_candidates = []
+                for agg in ctx.aggregates_by_bc.get(target_bc_id, []):
+                    agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
+                    for cmd in ctx.commands_by_agg.get(agg_id, []):
+                        cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                        cmd_display = cmd.get("displayName") if isinstance(cmd, dict) else getattr(cmd, "displayName", "")
+                        cmd_candidates.append((cmd_name, cmd_display or "", cmd))
+                invoke_command_id = _fuzzy_match(pol.invoke_command, cmd_candidates)
+
+        # Neo4j fallback: commands_by_agg에 없으면 Neo4j에서 해당 BC의 Command 직접 조회
+        if target_bc_id and not invoke_command_id:
+            try:
+                with ctx.client.session() as _cmd_s:
+                    _cmd_q = """
+                    MATCH (bc:BoundedContext {id: $bc_id})-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
+                    RETURN cmd {.id, .name, .displayName} AS c
+                    """
+                    neo4j_cmd_candidates = []
+                    for rec in _cmd_s.run(_cmd_q, bc_id=target_bc_id):
+                        c = dict(rec["c"])
+                        neo4j_cmd_candidates.append((c.get("name", ""), c.get("displayName", ""), c))
+                    if neo4j_cmd_candidates:
+                        invoke_command_id = _fuzzy_match(pol.invoke_command, neo4j_cmd_candidates)
+            except Exception:
+                pass  # 기존 로직으로 진행
     except Exception as e:
         return None, f"Failed to find target BC/command: {e}"
 
     if not trigger_event_id:
-        return None, f"Trigger event '{pol.trigger_event}' not found"
-    
+        return None, f"Trigger event '{pol.trigger_event}' not found (fuzzy match failed)"
+
     if not invoke_command_id:
         return None, f"Invoke command '{pol.invoke_command}' not found in target BC '{pol.target_bc}'"
     
@@ -174,8 +255,34 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             [f"[{us.id}] As a {us.role}, I want to {us.action}" for us in ctx.user_stories]
         )
 
-        # Build events list with BC info and user_story_ids for cross-BC policy identification
+        # Build events list — Neo4j에서 BC별 모든 Event 직접 조회 (events_by_agg EMITS 의존 제거)
         all_events_list: list[str] = []
+        _all_events_for_matching: list[dict] = []  # fuzzy match용
+        try:
+            with ctx.client.session() as _evt_session:
+                _evt_query = """
+                MATCH (bc:BoundedContext)-[:HAS_EVENT]->(evt:Event)
+                RETURN bc.name AS bcName, evt.id AS evtId, evt.name AS evtName,
+                       evt.displayName AS evtDisplayName, evt.description AS evtDesc
+                ORDER BY bc.name, evt.name
+                """
+                for rec in _evt_session.run(_evt_query):
+                    bc_name = rec["bcName"] or ""
+                    evt_name = rec["evtName"] or ""
+                    evt_display = rec["evtDisplayName"] or ""
+                    evt_desc = rec["evtDesc"] or ""
+                    label = evt_display or evt_name
+                    all_events_list.append(f"- {label} (from {bc_name}): {evt_desc}")
+                    _all_events_for_matching.append({
+                        "id": rec["evtId"], "name": evt_name, "displayName": evt_display,
+                    })
+        except Exception as e:
+            SmartLogger.log("ERROR", f"Failed to fetch events for policy phase: {e}",
+                           category="ingestion.workflow.policies.event_fetch_error",
+                           params={"session_id": ctx.session.id, "error": str(e)})
+
+        # events_by_agg 기반 이벤트도 보충 (fallback 1)
+        seen_evt_names = {line.split("(from")[0].strip("- ").strip() for line in all_events_list}
         for bc in ctx.bounded_contexts:
             bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
             bc_name = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
@@ -183,13 +290,72 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                 agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
                 for evt in ctx.events_by_agg.get(agg_id, []):
                     evt_name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
-                    evt_desc = evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", "")
-                    us_ids = evt.get("user_story_ids", []) if isinstance(evt, dict) else getattr(evt, "user_story_ids", []) or []
-                    us_ids_str = ", ".join(us_ids) if us_ids else "none"
-                    all_events_list.append(
-                        f"- {evt_name} (from {bc_name}, user_stories: [{us_ids_str}]): {evt_desc}"
-                    )
+                    evt_display = evt.get("displayName") if isinstance(evt, dict) else getattr(evt, "displayName", "")
+                    label = evt_display or evt_name
+                    if label not in seen_evt_names:
+                        evt_desc = evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", "")
+                        all_events_list.append(f"- {label} (from {bc_name}): {evt_desc}")
+                        seen_evt_names.add(label)
+                        _all_events_for_matching.append({
+                            "id": evt.get("id") if isinstance(evt, dict) else getattr(evt, "id", None),
+                            "name": evt_name, "displayName": evt_display,
+                        })
+
+        # 최종 fallback 2: BC→HAS_EVENT, events_by_agg 모두 비어있으면 Neo4j에서 전체 Event 직접 조회
+        if not all_events_list:
+            SmartLogger.log("WARN", "Policy phase: primary & fallback-1 returned no events — trying direct Event query",
+                           category="ingestion.workflow.policies.fallback_direct_event",
+                           params={"session_id": ctx.session.id})
+            try:
+                with ctx.client.session() as _fallback_session:
+                    _fallback_query = """
+                    MATCH (evt:Event)
+                    OPTIONAL MATCH (bc:BoundedContext)-[:HAS_EVENT]->(evt)
+                    OPTIONAL MATCH (us:UserStory)-[:HAS_EVENT]->(evt)
+                    OPTIONAL MATCH (us)-[:IMPLEMENTS]->(us_bc:BoundedContext)
+                    RETURN evt.id AS evtId, evt.name AS evtName,
+                           evt.displayName AS evtDisplayName, evt.description AS evtDesc,
+                           COALESCE(bc.name, us_bc.name, 'Unknown') AS bcName
+                    ORDER BY bcName, evt.name
+                    """
+                    for rec in _fallback_session.run(_fallback_query):
+                        evt_name = rec["evtName"] or ""
+                        evt_display = rec["evtDisplayName"] or ""
+                        evt_desc = rec["evtDesc"] or ""
+                        bc_name = rec["bcName"] or "Unknown"
+                        label = evt_display or evt_name
+                        if label not in seen_evt_names:
+                            all_events_list.append(f"- {label} (from {bc_name}): {evt_desc}")
+                            seen_evt_names.add(label)
+                            _all_events_for_matching.append({
+                                "id": rec["evtId"], "name": evt_name, "displayName": evt_display,
+                            })
+                SmartLogger.log("INFO", f"Policy phase fallback: found {len(all_events_list)} events via direct query",
+                               category="ingestion.workflow.policies.fallback_direct_event",
+                               params={"session_id": ctx.session.id, "events_count": len(all_events_list)})
+            except Exception as e:
+                SmartLogger.log("ERROR", f"Policy phase fallback event query failed: {e}",
+                               category="ingestion.workflow.policies.fallback_direct_event_error",
+                               params={"session_id": ctx.session.id, "error": str(e)})
+
         events_text = "\n".join(all_events_list)
+
+        SmartLogger.log("INFO", f"Policy phase: {len(all_events_list)} events, {len(ctx.bounded_contexts)} BCs collected for prompt",
+                       category="ingestion.workflow.policies.context",
+                       params={"session_id": ctx.session.id, "events_count": len(all_events_list)})
+
+        if not all_events_list:
+            SmartLogger.log("WARN", "Policy phase: no events found — skipping LLM call",
+                           category="ingestion.workflow.policies.no_events",
+                           params={"session_id": ctx.session.id,
+                                   "events_by_agg_count": sum(len(v) for v in ctx.events_by_agg.values()),
+                                   "bounded_contexts": len(ctx.bounded_contexts)})
+            yield ProgressEvent(
+                phase=IngestionPhase.IDENTIFYING_POLICIES,
+                message="Policy 식별 완료 (이벤트 없음 — 생성된 Policy 없음)",
+                progress=PHASE_END
+            )
+            return
 
         commands_by_bc: dict[str, str] = {}
         for bc in ctx.bounded_contexts:

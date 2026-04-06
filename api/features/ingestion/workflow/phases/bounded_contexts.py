@@ -1771,6 +1771,65 @@ IMPORTANT: Every User Story MUST be assigned to exactly ONE Bounded Context. Do 
         else:
             pass  # No remaining unassigned user stories
     
+    # BC ↔ Event 직접 연결: US -[:IMPLEMENTS]-> BC + US -[:HAS_EVENT]-> Event 경로로 매핑
+    try:
+        with ctx.client.session() as session:
+            # 1. HAS_EVENT 관계 생성
+            session.run("""
+                MATCH (us:UserStory)-[:IMPLEMENTS]->(bc:BoundedContext)
+                MATCH (us)-[:HAS_EVENT]->(evt:Event)
+                MERGE (bc)-[:HAS_EVENT]->(evt)
+            """)
+
+            # 2. 매핑 결과 조회하여 SSE로 전달
+            mapping_result = session.run("""
+                MATCH (bc:BoundedContext)-[:HAS_EVENT]->(evt:Event)
+                RETURN bc.id AS bcId, bc.name AS bcName,
+                       evt.id AS evtId, evt.name AS evtName, evt.sequence AS evtSeq
+            """)
+            bc_event_map = {}
+            for r in mapping_result:
+                bc_id = r["bcId"]
+                if bc_id not in bc_event_map:
+                    bc_event_map[bc_id] = {"bcName": r["bcName"], "events": []}
+                bc_event_map[bc_id]["events"].append({
+                    "id": r["evtId"], "name": r["evtName"], "sequence": r["evtSeq"],
+                })
+
+            total_linked = sum(len(v["events"]) for v in bc_event_map.values())
+            if total_linked > 0:
+                SmartLogger.log(
+                    "INFO",
+                    f"Linked {total_linked} Event(s) to {len(bc_event_map)} BC(s)",
+                    category="ingestion.workflow.bc.event_link",
+                    params={"session_id": ctx.session.id, "linked": total_linked},
+                )
+                # SSE: BC별 Event 매핑 알림
+                for bc_id, info in bc_event_map.items():
+                    for evt in info["events"]:
+                        yield ProgressEvent(
+                            phase=IngestionPhase.IDENTIFYING_BC,
+                            message=f"Event → BC: {evt['name']} → {info['bcName']}",
+                            progress=PHASE_END - 1,
+                            data={
+                                "type": "EventBCAssigned",
+                                "object": {
+                                    "eventId": evt["id"],
+                                    "eventName": evt["name"],
+                                    "bcId": bc_id,
+                                    "bcName": info["bcName"],
+                                    "sequence": evt.get("sequence"),
+                                },
+                            },
+                        )
+    except Exception as e:
+        SmartLogger.log(
+            "WARN",
+            f"BC-Event linking failed: {e}",
+            category="ingestion.workflow.bc.event_link.error",
+            params={"session_id": ctx.session.id, "error": str(e)},
+        )
+
     # Phase 완료
     yield ProgressEvent(
         phase=IngestionPhase.IDENTIFYING_BC,

@@ -66,6 +66,7 @@ class UserStoryOps:
         ui_description: str = "",
         display_name: str | None = None,
         source_screen_name: str | None = None,
+        sequence: int | None = None,
     ) -> dict[str, Any]:
         """Create a new user story. Uses MERGE to prevent duplicates by id."""
         # name: "role: action (truncated)" 형태로 자동 생성
@@ -81,6 +82,7 @@ class UserStoryOps:
                       us.uiDescription = $ui_description,
                       us.displayName = $display_name,
                       us.sourceScreenName = $source_screen_name,
+                      us.sequence = $sequence,
                       us.createdAt = datetime()
         ON MATCH SET us.name = CASE WHEN us.name IS NULL THEN $name ELSE us.name END,
                      us.role = CASE WHEN $role IS NOT NULL AND $role <> '' THEN $role ELSE us.role END,
@@ -91,8 +93,9 @@ class UserStoryOps:
                      us.uiDescription = CASE WHEN $ui_description IS NOT NULL AND $ui_description <> '' THEN $ui_description ELSE us.uiDescription END,
                      us.displayName = CASE WHEN $display_name IS NOT NULL AND $display_name <> '' THEN $display_name ELSE us.displayName END,
                      us.sourceScreenName = CASE WHEN $source_screen_name IS NOT NULL AND $source_screen_name <> '' THEN $source_screen_name ELSE us.sourceScreenName END,
+                     us.sequence = CASE WHEN $sequence IS NOT NULL THEN $sequence ELSE us.sequence END,
                      us.updatedAt = datetime()
-        RETURN us {.id, .name, .role, .action, .benefit, .priority, .status, uiDescription: us.uiDescription, displayName: us.displayName, sourceScreenName: us.sourceScreenName} as user_story
+        RETURN us {.id, .name, .role, .action, .benefit, .priority, .status, .sequence, uiDescription: us.uiDescription, displayName: us.displayName, sourceScreenName: us.sourceScreenName} as user_story
         """
         with self.session() as session:
             result = session.run(
@@ -107,6 +110,7 @@ class UserStoryOps:
                 ui_description=ui_description,
                 display_name=display_name or "",
                 source_screen_name=source_screen_name or "",
+                sequence=sequence,
             )
             record = result.single()
             if record is None:
