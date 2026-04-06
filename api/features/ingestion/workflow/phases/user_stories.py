@@ -242,21 +242,35 @@ async def _create_user_story_with_verification(
             if not verify_record:
                 return None, None, f"User Story {us.id} was not found in Neo4j after creation"
 
-        # SOURCED_FROM 관계: UserStory → BusinessLogic (출처 연결)
+        # SOURCED_FROM 관계: UserStory → BusinessLogic (sequence 기반 정확 매칭)
         source_uid = getattr(us, "source_unit_id", None)
+        source_bl = getattr(us, "source_bl", None) or []
         if source_uid:
             try:
-                with ctx.client.session() as link_session:
-                    link_session.run(
-                        "MATCH (us:UserStory {id: $us_id}) "
-                        "MATCH (f)-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic) "
-                        "WHERE f.function_id = $unit_id OR f.procedure_name = $unit_id OR f.name = $unit_id "
-                        "MERGE (us)-[:SOURCED_FROM]->(bl)",
-                        us_id=us.id,
-                        unit_id=source_uid,
-                    )
-            except Exception:
-                pass  # SOURCED_FROM 실패해도 US 생성은 유지
+                if source_bl:
+                    # sequence 기반 매칭
+                    with ctx.client.session() as link_session:
+                        link_session.run(
+                            "MATCH (us:UserStory {id: $us_id}) "
+                            "MATCH (f:FUNCTION {function_id: $unit_id})-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic) "
+                            "WHERE bl.sequence IN $sequences "
+                            "MERGE (us)-[:SOURCED_FROM]->(bl)",
+                            us_id=us.id,
+                            unit_id=source_uid,
+                            sequences=source_bl,
+                        )
+                else:
+                    # source_bl 없으면 해당 함수의 모든 BL에 연결 (fallback)
+                    with ctx.client.session() as link_session:
+                        link_session.run(
+                            "MATCH (us:UserStory {id: $us_id}) "
+                            "MATCH (f:FUNCTION {function_id: $unit_id})-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic) "
+                            "MERGE (us)-[:SOURCED_FROM]->(bl)",
+                            us_id=us.id,
+                            unit_id=source_uid,
+                        )
+            except Exception as e:
+                print(f"[SOURCED_FROM] Error for US={us.id}: {e}")
         
         PHASE_END = 20
         progress_event = ProgressEvent(

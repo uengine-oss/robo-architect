@@ -20,20 +20,19 @@ def _run(query: str, params: dict | None = None) -> list[dict]:
 
 
 def build_unit_contexts() -> list[tuple[str, str, str]]:
-    """BusinessLogic이 있는 함수만 조회하여 컨텍스트 생성.
+    """BusinessLogic이 있는 함수만 조회. BL을 sequence 순으로 정렬하여 컨텍스트 생성.
 
     Returns:
         [(unit_name, unit_id, context_text), ...]
-        - unit_name: 함수명 (표시용)
-        - unit_id: function_id (source_unit_id 태깅용)
-        - context_text: LLM에 전달할 컨텍스트
     """
     query = """
     MATCH (f)-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic)
     OPTIONAL MATCH (a:Actor)-[:ROLE]->(f)
+    WITH f, a, bl
+    ORDER BY bl.sequence
     WITH f,
          collect(DISTINCT a.name) AS actors,
-         collect(DISTINCT {title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios
+         collect({sequence: bl.sequence, title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios
     RETURN coalesce(f.procedure_name, f.name) AS unit_name,
            coalesce(f.function_id, f.procedure_name, f.name) AS unit_id,
            f.summary AS summary,
@@ -58,14 +57,15 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
             lines.append(f"Actor: {actor}")
         lines.append("")
 
-        # 비즈니스 로직 시나리오
+        # 비즈니스 로직 시나리오 (sequence 순서대로 = 비즈니스 프로세스 흐름)
         has_bl = False
         for sc in scenarios:
             if isinstance(sc, dict) and sc.get("title"):
                 if not has_bl:
-                    lines.append("### 비즈니스 규칙:")
+                    lines.append("### 비즈니스 규칙 (프로세스 흐름 순서):")
                     has_bl = True
-                lines.append(f"  - [{sc['title']}]")
+                seq = sc.get("sequence", "")
+                lines.append(f"  - BL[{seq}]: {sc['title']}")
                 if sc.get("given"):
                     lines.append(f"    Given: {sc['given']}")
                 if sc.get("when"):
@@ -73,7 +73,7 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
                 if sc.get("then"):
                     lines.append(f"    Then: {sc['then']}")
 
-        # BL이 없으면 이 함수는 조회 대상이 아니지만, 안전장치로 summary fallback
+        # BL이 없으면 summary fallback
         if not has_bl:
             summary = row.get("summary") or ""
             if summary:
@@ -82,7 +82,10 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
         lines.extend([
             "",
             "### GUIDELINES:",
+            "- BL 번호는 비즈니스 프로세스의 흐름 순서입니다",
             "- Generate User Stories from the business logic above",
+            "- Each User Story MUST include a 'source_bl' field with the BL sequence numbers it originated from",
+            "  Example: if a US comes from BL[1] and BL[3], set source_bl: [1, 3]",
             "- Each scenario should produce at least one User Story",
             "- Do NOT generate User Stories for implementation details",
         ])
@@ -93,11 +96,7 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
 
 
 def fetch_table_schemas_for_units(unit_ids: list[str]) -> str:
-    """source_unit_id 목록에서 READS/WRITES 관계로 관련 테이블 스키마를 역추적.
-
-    Returns:
-        컴팩트 스키마 텍스트. 테이블이 없으면 빈 문자열.
-    """
+    """source_unit_id 목록에서 READS/WRITES 관계로 관련 테이블 스키마를 역추적."""
     if not unit_ids:
         return ""
 

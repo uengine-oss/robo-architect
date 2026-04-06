@@ -69,6 +69,8 @@ class GeneratedUserStory(BaseModel):
     source_screen_name: Optional[str] = None
     # Analyzer source unit ID (procedure fqn, class fqn 등 — 역추적용)
     source_unit_id: Optional[str] = None
+    # BL 인덱스 (어떤 BusinessLogic에서 유래했는지 — SOURCED_FROM 정확 매칭용)
+    source_bl: Optional[list[int]] = None
 
 
 class UserStoryList(BaseModel):
