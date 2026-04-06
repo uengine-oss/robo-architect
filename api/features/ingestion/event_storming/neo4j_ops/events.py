@@ -20,6 +20,7 @@ class EventOps:
         schema: str | None = None,
         payload: str | None = None,
         display_name: str | None = None,
+        description: str | None = None,
     ) -> dict[str, Any]:
         """Create a new event and link it to a command via EMITS."""
         display_name = display_name or name
@@ -41,10 +42,11 @@ class EventOps:
                 evt.version = $version,
                 evt.schema = $schema,
                 evt.payload = $payload,
+                evt.description = $description,
                 evt.isBreaking = false,
                 evt.updatedAt = datetime()
             MERGE (cmd)-[:EMITS {isGuaranteed: true}]->(evt)
-            RETURN evt {.id, .key, .name, .displayName, .version, .schema, .payload} as event
+            RETURN evt {.id, .key, .name, .displayName, .version, .schema, .payload, .description} as event
             """
             result = session.run(
                 query,
@@ -55,6 +57,7 @@ class EventOps:
                 version=version,
                 schema=schema,
                 payload=payload,
+                description=description,
             )
             return dict(result.single()["event"])
 

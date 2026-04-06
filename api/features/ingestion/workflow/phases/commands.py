@@ -44,6 +44,7 @@ async def _create_command_with_links(
     cmd_actor = cmd.get("actor") if isinstance(cmd, dict) else getattr(cmd, "actor", "user")
     category = cmd.get("category") if isinstance(cmd, dict) else getattr(cmd, "category", None)
     input_schema = cmd.get("inputSchema") if isinstance(cmd, dict) else getattr(cmd, "inputSchema", None)
+    description = cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", None)
     agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
     
     try:
@@ -56,6 +57,7 @@ async def _create_command_with_links(
                 category=category,
                 input_schema=input_schema,
                 display_name=cmd_display_name,
+                description=description,
             ),
             timeout=10.0
         )
