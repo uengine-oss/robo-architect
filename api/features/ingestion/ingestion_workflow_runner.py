@@ -90,6 +90,9 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
     if source_type == "legacy_report":
         from api.features.ingestion.legacy_report.report_parser import parse_legacy_report
         ctx.source_report = parse_legacy_report(content)
+    elif source_type == "analyzer_graph":
+        from api.features.ingestion.analyzer_graph.graph_to_report import build_report_from_graph
+        ctx.source_report = build_report_from_graph(client)
 
     try:
         SmartLogger.log(
