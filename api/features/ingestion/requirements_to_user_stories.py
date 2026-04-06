@@ -121,6 +121,12 @@ def extract_user_stories_from_text(text: str) -> list[GeneratedUserStory]:
 - Entity Bean의 개별 getter/setter 메서드를 독립 User Story로 만들지 마세요 (상위 비즈니스 기능의 일부로만 참조)
 - role이 "system_administrator"인 인프라 초기화/정리 작업을 User Story로 만들지 마세요
 - **오직 비즈니스 사용자가 수행하는 도메인 기능만 User Story로 생성하세요**
+
+**source_bl 필수 (BL 번호가 있는 경우):**
+- 입력에 BL[1], BL[2], BL[3] 형태의 비즈니스 로직 번호가 있으면, 각 User Story의 source_bl 필드에 해당 BL 번호를 반드시 포함하세요.
+- 반드시 해당 User Story의 직접적인 출처가 되는 BL 번호만 포함하세요. 관련 없는 BL 번호를 넣지 마세요.
+- 예: BL[1]에서 나온 US → source_bl: [1], BL[2]와 BL[3]에서 나온 US → source_bl: [2, 3]
+- source_bl이 비어있으면 안 됩니다. 반드시 출처 BL 번호를 채우세요.
 """
 
     # 청킹 단계에서 이미 토큰 제한을 고려한 적절한 크기로 나뉘었으므로,
