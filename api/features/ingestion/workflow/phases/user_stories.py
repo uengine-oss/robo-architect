@@ -591,7 +591,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     _analyzer_processed = False
     should_chunk_result = False
     if ctx.source_type == "analyzer_graph":
-        from api.features.ingestion.analyzer_graph.graph_to_report import build_unit_contexts
+        from api.features.ingestion.analyzer_graph.graph_context_builder import build_unit_contexts
         sb_contexts = build_unit_contexts()
         if sb_contexts:
             # BusinessLogic 단위별 개별 처리

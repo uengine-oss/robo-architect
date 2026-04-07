@@ -427,7 +427,7 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                         unit_ids.append(src)
             if unit_ids:
                 try:
-                    from api.features.ingestion.analyzer_graph.graph_to_report import fetch_table_schemas_for_units
+                    from api.features.ingestion.analyzer_graph.graph_context_builder import fetch_table_schemas_for_units
                     schema_context = fetch_table_schemas_for_units(unit_ids)
                 except Exception:
                     pass
