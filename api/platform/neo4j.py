@@ -21,6 +21,7 @@ from neo4j import Driver
 
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.env import (
+    get_analyzer_neo4j_database,
     get_neo4j_database,
     get_neo4j_password,
     get_neo4j_uri,
@@ -32,6 +33,7 @@ NEO4J_URI = get_neo4j_uri()
 NEO4J_USER = get_neo4j_user()
 NEO4J_PASSWORD = get_neo4j_password()
 NEO4J_DATABASE = get_neo4j_database()
+ANALYZER_NEO4J_DATABASE = get_analyzer_neo4j_database()
 
 _driver: Optional[Driver] = None
 
@@ -86,10 +88,15 @@ def get_driver() -> Driver:
     return init_neo4j_driver(log=False)
 
 
-def get_session():
-    """Get a Neo4j session (optionally bound to configured database)."""
-    if NEO4J_DATABASE:
-        return get_driver().session(database=NEO4J_DATABASE)
+def get_session(database: str | None = None):
+    """Get a Neo4j session.
+
+    Args:
+        database: 지정 시 해당 DB로 연결. None이면 NEO4J_DATABASE 환경변수 사용.
+    """
+    db = database or NEO4J_DATABASE
+    if db:
+        return get_driver().session(database=db)
     return get_driver().session()
 
 

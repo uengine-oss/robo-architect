@@ -144,6 +144,12 @@ def get_neo4j_database() -> str | None:
     return (db or "").strip() or None
 
 
+def get_analyzer_neo4j_database() -> str | None:
+    """Get analyzer Neo4j database name (ANALYZER_NEO4J_DATABASE)."""
+    db = env_str("ANALYZER_NEO4J_DATABASE", "")
+    return db.strip() or None
+
+
 # =============================================================================
 # Common cross-feature flags
 # =============================================================================
@@ -156,6 +162,7 @@ AI_AUDIT_LOG_FULL_OUTPUT = env_flag("AI_AUDIT_LOG_FULL_OUTPUT", False)
 # Ingestion workflow: optional phase toggles
 # - If True, skip Neo4j UI node creation + LLM wireframe generation phase.
 IS_SKIP_UI_PHASE = env_flag("IS_SKIP_UI_PHASE", False)
+
 
 # Hard cap (chars) for ONLY the injected context block in /api/chat/modify prompt.
 MODEL_MODIFIER_CONTEXT_CHARS_LIMIT = env_int("MODEL_MODIFIER_CONTEXT_CHARS_LIMIT", 100_000)

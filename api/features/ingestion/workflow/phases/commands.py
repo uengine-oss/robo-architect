@@ -44,6 +44,7 @@ async def _create_command_with_links(
     cmd_actor = cmd.get("actor") if isinstance(cmd, dict) else getattr(cmd, "actor", "user")
     category = cmd.get("category") if isinstance(cmd, dict) else getattr(cmd, "category", None)
     input_schema = cmd.get("inputSchema") if isinstance(cmd, dict) else getattr(cmd, "inputSchema", None)
+    description = cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", None)
     agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
     
     try:
@@ -56,6 +57,7 @@ async def _create_command_with_links(
                 category=category,
                 input_schema=input_schema,
                 display_name=cmd_display_name,
+                description=description,
             ),
             timeout=10.0
         )
@@ -357,11 +359,6 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     + "\n".join(_cmd_lines)
                     + "\n</already_created_commands>"
                 )
-            _report_context_tail = ""
-            if ctx.source_report:
-                from api.features.ingestion.workflow.utils.report_context import get_commands_context
-                _report_context_tail = "\n\n" + get_commands_context(ctx.source_report)
-            full_prompt_text += _report_context_tail
 
             # 청킹 필요 여부 판단
             if should_chunk(full_prompt_text):
@@ -388,8 +385,7 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         bc_name=bc_name,
                         bc_short=bc_id_short,
                         user_story_context=chunk_stories_context,
-                    ) + display_name_tail + _report_context_tail
-
+                    ) + display_name_tail
                     structured_llm = ctx.llm.with_structured_output(CommandList)
                     
                     t_llm0 = time.perf_counter()

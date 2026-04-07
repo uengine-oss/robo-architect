@@ -501,8 +501,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     events=chunk_events_text,
                     commands_by_bc=commands_text,
                     bounded_contexts=bc_text,
-                ) + display_name_tail + _report_context_tail
-
+                ) + display_name_tail
                 # 이전 청크에서 식별된 Policy 이름 전달 — 중복 생성 방지
                 if _accumulated_policy_names:
                     from api.features.ingestion.workflow.utils.chunking import format_accumulated_names

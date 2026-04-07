@@ -42,7 +42,8 @@ async def _create_event_with_links(
         evt_display_name = name
     version = evt.get("version", "1.0.0") if isinstance(evt, dict) else (getattr(evt, "version", "1.0.0") or "1.0.0")
     payload = evt.get("payload") if isinstance(evt, dict) else getattr(evt, "payload", None)
-    
+    description = evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", None)
+
     try:
         created_evt = await asyncio.wait_for(
             asyncio.to_thread(
@@ -52,6 +53,7 @@ async def _create_event_with_links(
                 version=version,
                 payload=payload,
                 display_name=evt_display_name,
+                description=description,
             ),
             timeout=10.0
         )
@@ -141,9 +143,6 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                 else "\n\nFor each Event output displayName: a short UI label in English (e.g. 'Order Placed', 'Payment Completed')."
             )
 
-            if ctx.source_report:
-                from api.features.ingestion.workflow.utils.report_context import get_events_context
-                prompt += "\n\n" + get_events_context(ctx.source_report)
 
             structured_llm = ctx.llm.with_structured_output(EventList)
 

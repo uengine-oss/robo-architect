@@ -269,11 +269,6 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             user_stories=user_stories_text,
             events=events_text,
         ) + display_name_tail
-        _report_context_tail = ""
-        if ctx.source_report:
-            from api.features.ingestion.workflow.utils.report_context import get_readmodels_context
-            _report_context_tail = "\n\n" + get_readmodels_context(ctx.source_report)
-        full_prompt_text += _report_context_tail
 
         # Cross-BC ReadModel dedup: inject existing names into prompt
         if _existing_readmodel_names:
@@ -320,8 +315,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     bc_description=bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", "") or "",
                     user_stories=chunk_user_stories,
                     events=chunk_events,
-                ) + display_name_tail + _report_context_tail
-                # Cross-BC ReadModel dedup for chunks too
+                ) + display_name_tail                # Cross-BC ReadModel dedup for chunks too
                 if _existing_readmodel_names:
                     chunk_prompt += (
                         "\n\n## CROSS-BC READMODEL DEDUPLICATION\n"

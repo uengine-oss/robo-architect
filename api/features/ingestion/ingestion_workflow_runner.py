@@ -45,6 +45,7 @@ from api.features.ingestion.workflow.phases.user_story_sequencing import assign_
 from api.platform.env import IS_SKIP_UI_PHASE
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
+from api.features.ingestion.workflow.utils.phase_logger import save as log_phase, save_summary as log_summary
 
 
 async def _run_phase(session, ctx, phase_gen, pause_sync_target: str | None):
@@ -87,13 +88,6 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         display_language=display_language, source_type=source_type,
     )
 
-    if source_type == "legacy_report":
-        from api.features.ingestion.legacy_report.report_parser import parse_legacy_report
-        ctx.source_report = parse_legacy_report(content)
-    elif source_type == "analyzer_graph":
-        from api.features.ingestion.analyzer_graph.graph_to_report import build_report_from_graph
-        ctx.source_report = build_report_from_graph(client)
-
     try:
         SmartLogger.log(
             "INFO",
@@ -113,6 +107,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "01_user_stories")
 
         # 3. UserStory 시퀀스 할당
         async for ev in _run_phase(session, ctx, assign_user_story_sequences_phase(ctx), "events"):
@@ -125,54 +120,63 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "02_events_from_us")
 
         # 5. BoundedContext 식별
         async for ev in _run_phase(session, ctx, identify_bounded_contexts_phase(ctx), "aggregates"):
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "03_bounded_contexts")
 
         # 6. Aggregate 추출
         async for ev in _run_phase(session, ctx, extract_aggregates_phase(ctx), "commands"):
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "04_aggregates")
 
         # 7. Command 추출 (emits_event_names로 EMITS 직접 연결 포함)
         async for ev in _run_phase(session, ctx, extract_commands_phase(ctx), "readmodels"):
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "05_commands")
 
         # 8. ReadModel 추출
         async for ev in _run_phase(session, ctx, extract_readmodels_phase(ctx), "properties"):
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "06_readmodels")
 
         # 10. Properties 생성
         async for ev in _run_phase(session, ctx, generate_properties_phase(ctx), "policies"):
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "07_properties")
 
         # 11. Property References
         async for ev in _run_phase(session, ctx, generate_property_references_phase(ctx), "policies"):
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "08_references")
 
         # 12. Policy 식별
         async for ev in _run_phase(session, ctx, identify_policies_phase(ctx), "policies"):
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "09_policies")
 
         # 13. GWT 생성
         async for ev in _run_phase(session, ctx, generate_gwt_phase(ctx), None):
             if ev.phase == IngestionPhase.ERROR:
                 yield ev; return
             yield ev
+        log_phase(ctx, "10_gwt")
 
         # 14. UI Wireframe 생성
         if IS_SKIP_UI_PHASE:
@@ -195,6 +199,9 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 if ev.phase == IngestionPhase.ERROR:
                     yield ev; return
                 yield ev
+
+        log_phase(ctx, "11_ui_wireframes")
+        log_summary(ctx)
 
         # Complete — 실제 Neo4j에 생성된 Policy 수 카운트
         events_from_us_count = len(getattr(ctx, "events_from_us", []) or [])
