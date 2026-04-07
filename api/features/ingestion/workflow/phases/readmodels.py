@@ -571,6 +571,37 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                 if created_rm_data and progress_event:
                     yield progress_event
 
+    # ── CQRS 미연결 이벤트 보고 ──────────────────────────────────
+    # ReadModel phase 완료 후, TRIGGERED_BY 관계가 없는 Event를 집계하여 경고 로그.
+    try:
+        with ctx.client.session() as _check_sess:
+            _orphan_result = _check_sess.run(
+                """
+                MATCH (e:Event)
+                WHERE NOT (()-[:TRIGGERED_BY]->(e))
+                  AND NOT e.name ENDS WITH 'Failed'
+                OPTIONAL MATCH (bc:BoundedContext)-[:HAS_EVENT]->(e)
+                RETURN e.name AS event, bc.name AS bc
+                ORDER BY bc, e.name
+                """
+            )
+            orphan_events = [(r["event"], r["bc"]) for r in _orphan_result]
+            if orphan_events:
+                SmartLogger.log(
+                    "WARN",
+                    f"{len(orphan_events)} non-failure Events have no ReadModel CQRS projection. "
+                    f"These events will not appear in any UI view. "
+                    f"Examples: {[f'{e}({bc})' for e, bc in orphan_events[:8]]}",
+                    category="ingestion.workflow.readmodels.cqrs_orphan_events",
+                    params={
+                        "session_id": ctx.session.id,
+                        "orphan_count": len(orphan_events),
+                        "events": [{"name": e, "bc": bc} for e, bc in orphan_events],
+                    },
+                )
+    except Exception:
+        pass
+
     # Keep the raw LLM candidates too (optional)
     # ctx.readmodels_by_bc already holds the persisted/normalized objects.
     _ = all_readmodels

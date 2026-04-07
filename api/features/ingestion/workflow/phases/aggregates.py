@@ -230,8 +230,10 @@ async def _create_aggregate_with_links(
                 except Exception:
                     pass  # Individual failures are ignored
 
+        linked_event_count = 0
+        covered_names = _covered_event_names_from_agg(agg)
         if allowed_event_names:
-            for ename in _covered_event_names_from_agg(agg):
+            for ename in covered_names:
                 if ename not in allowed_event_names:
                     continue
                 try:
@@ -243,8 +245,26 @@ async def _create_aggregate_with_links(
                         ),
                         timeout=5.0,
                     )
+                    linked_event_count += 1
                 except Exception:
                     pass
+
+        # ── SCOPE_EVENT 0건 경고 ──────────────────────────────────
+        if covered_names and linked_event_count == 0:
+            SmartLogger.log(
+                "WARN",
+                f"Aggregate '{agg_name}' has {len(covered_names)} covered_event_names "
+                f"but 0 SCOPE_EVENT links were created (name mismatch?). "
+                f"Attempted: {covered_names[:5]}",
+                category="ingestion.workflow.aggregates.scope_event_zero",
+                params={
+                    "session_id": ctx.session.id,
+                    "aggregate_id": created_agg.get("id"),
+                    "aggregate_name": agg_name,
+                    "bc_id": bc_id,
+                    "covered_names": covered_names[:10],
+                },
+            )
 
         return {
             "aggregate": created_agg,
@@ -252,6 +272,7 @@ async def _create_aggregate_with_links(
             "bc": bc,
             "bc_idx": bc_idx,
             "total_bcs": total_bcs,
+            "linked_event_count": linked_event_count,
         }, None
     except asyncio.TimeoutError:
         return None, "Aggregate creation timeout"

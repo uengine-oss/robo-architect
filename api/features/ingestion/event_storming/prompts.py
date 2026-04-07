@@ -320,6 +320,12 @@ If no events are listed, derive aggregates from user story breakdowns only.
 <rule id="4">**PascalCase:** Use PascalCase for all names (e.g., "ShoppingCart", "OrderStatus", "PaymentReference").</rule>
 </section>
 
+<section id="query_only_bc">
+<title>Query-Only / Read-Heavy Bounded Contexts</title>
+<rule id="1">**Minimal Aggregates for query-only BCs:** If ALL user stories in this BC are about viewing, searching, filtering, or reporting data (no create/update/delete operations), this is a query-only BC. In CQRS architecture, the read side does NOT require Aggregates — ReadModels handle projections directly. For such BCs, create at most ONE Aggregate to group the query events, or ZERO if no write-side invariants exist. Do NOT create multiple Aggregates solely for categorizing read operations.</rule>
+<rule id="2">**Identifying query-only patterns:** Look for user story actions like "view", "search", "filter", "list", "monitor", "visualize", "report". If none of the user stories involve state mutation (create, update, delete, register, modify), treat the BC as query-only.</rule>
+</section>
+
 <section id="traceability">
 <title>Traceability Requirements</title>
 <rule id="1">**User Story Mapping:** Each Aggregate MUST list which User Story IDs from this BC it implements. This creates traceability from requirements to implementation.</rule>
@@ -550,18 +556,22 @@ For each Command, provide:
 - **inputSchema:** JSON schema or description of command input parameters (optional but recommended for complex commands)
 - **description:** Clear, concise description of what this command does and its business purpose
 - **user_story_ids:** List of User Story IDs that this command directly implements (IMPORTANT for traceability!)
-- **emits_event_names:** List of exact Event names from the available_events list that this Command emits. Every Command MUST emit at least one Event. **MUST be copied EXACTLY character-for-character from the available_events list above. Do NOT translate, paraphrase, or reformat.**
+- **emits_event_names:** List of exact Event **name** values from the available_events list that this Command emits.
+  Every Command MUST emit at least one Event.
+  **Copy ONLY the name part (the text before any parentheses/displayName) EXACTLY character-for-character.**
+  For example, if available_events shows `- CustomerAccountRegistered  (displayName: 고객 계정 등록됨)`,
+  then emits_event_names should contain `"CustomerAccountRegistered"` — NOT the displayName.
 
 CRITICAL:
 - Do NOT generate IDs; server assigns UUID id + derives key.
 - Ensure ALL User Stories for this Aggregate are covered by at least one Command.
 - emits_event_names MUST reference events from the available_events list. Do NOT invent new event names.
-- **If an event name is in Korean (e.g., "고객 계정 등록됨"), use it EXACTLY as-is. Do NOT translate to English.**
-- **If an event name is in English (e.g., "CustomerAccountRegistered"), use it EXACTLY as-is. Do NOT translate to Korean.**
+- **Copy the English PascalCase name exactly.** Do NOT use the displayName (Korean label) in emits_event_names.
 - Use domain-specific command names, not generic CRUD unless explicitly required.
 - Commands should reflect business intent, not technical implementation details.
 - Actor should match User Story role when available - do not force into only 4 categories.
 - **Cross-Aggregate Deduplication:** If a business operation (e.g., "approve", "reject") logically belongs to the Aggregate whose STATE it changes, assign it there ONLY. Do NOT create the same Command on multiple Aggregates. For example, "ApproveLoanApplication" should belong to the LoanApplication Aggregate (whose status changes), not to LoanScreening (which triggers the approval).
+- **Semantic Duplicate Detection:** When checking the `already_created_commands` list, consider semantic equivalence — not just exact name match. Commands like "NotifyOnDeliveryStatusChange" and "SendDeliveryStatusChangeNotification" have the same intent and are duplicates. Do NOT create a Command whose business purpose overlaps with an existing one.
 - **Query vs Command:** Read-only operations (calculate, validate, retrieve, get, find, check, list, search) are NOT Commands. Commands must change state. Do NOT model getter/calculator/validator methods as Commands.
 </output_requirements>
 
@@ -1062,14 +1072,38 @@ Available Commands in each BC:
 Bounded Contexts:
 {bounded_contexts}
 
-Guidelines for identifying Policies:
-1. Policies react to Events from OTHER Bounded Contexts (cross-BC only)
-2. A Policy triggers a Command in its OWN Bounded Context
-3. Pattern: "When [Event from BC-A] then [Command in BC-B]"
-4. Policies enable loose coupling between BCs
-5. IMPORTANT: The trigger_event_bc MUST be different from target_bc (cross-BC communication)
-6. IMPORTANT: Inherit user_story_ids from the triggering event for traceability
+## What is a Policy?
+A Policy is a reactive rule that listens to an Event from one Bounded Context and
+invokes a Command in a DIFFERENT Bounded Context. Policies are the **primary
+mechanism** for connecting BCs in an event-driven architecture.
 
+## Guidelines
+1. Policies react to Events from OTHER Bounded Contexts (cross-BC only).
+2. A Policy triggers a Command in its OWN Bounded Context.
+3. Pattern: "When [Event from BC-A] then [Command in BC-B]".
+4. Policies enable loose coupling between BCs.
+5. IMPORTANT: The trigger_event_bc MUST be different from target_bc.
+6. IMPORTANT: Inherit user_story_ids from the triggering event for traceability.
+
+## Mandatory cross-BC flow categories
+You MUST systematically check EVERY pair of BCs for potential Policies.
+Common cross-BC flow patterns to look for:
+
+- **Order → Payment**: Order placed → process/validate payment
+- **Payment → Order**: Payment approved/rejected → update order status
+- **Order → Notification**: Order placed/status changed → send notification
+- **Order → Delivery**: Order confirmed/paid → assign delivery
+- **Delivery → Notification**: Delivery status changed → send notification to customer
+- **Delivery → Order**: Delivery completed → update order status
+- **Account → Administration**: Account changes → detect abnormal activity
+- **Menu/Catalog → Notification**: Menu/product changed → notify interested parties
+- **Menu/Catalog → Sync**: Menu changed → propagate to customer-facing app
+- **Notification → Notification**: Notification failed → retry notification
+
+For EACH BC, ask: "When this BC emits an event, which OTHER BCs need to react?"
+If there are N Bounded Contexts, there are N×(N-1) potential directions — check each one.
+
+## Output format
 For each Policy, provide:
 - name: Descriptive policy name (e.g., RefundOnOrderCancelled)
 - trigger_event: Event name that triggers this policy — **MUST be copied EXACTLY from the Available Events list above (character-for-character match)**
@@ -1085,19 +1119,18 @@ CRITICAL — EXACT NAME MATCHING:
 - If the event name is in Korean (e.g., "고객 계정 등록됨"), use it exactly as-is. Do NOT convert to English.
 - If the command name is in English (e.g., "RegisterCustomerAccount"), use it exactly as-is. Do NOT convert to Korean.
 
-Common patterns:
-- When OrderPlaced (Order BC) → ProcessPayment (Payment BC), user_story_ids from OrderPlaced
-- When OrderCancelled (Order BC) → ProcessRefund (Payment BC), user_story_ids from OrderCancelled
-- When OrderCancelled (Order BC) → RestoreStock (Inventory BC), user_story_ids from OrderCancelled
-
-This creates traceability: UserStory → Command → Event → Policy → Command
-
 CRITICAL:
 - Do NOT generate IDs; server assigns UUID id + derives key.
+- **Prefer cross-BC:** Most Policies should connect DIFFERENT Bounded Contexts.
+  Same-BC Policies are acceptable only for intra-BC reactive/async flows
+  (e.g., NotificationFailed → ResendNotification within NotificationService).
+  Prioritize cross-BC Policies — they are the primary purpose of this phase.
 - **NO SELF-LOOPS:** The Command invoked by a Policy MUST NOT emit the same Event that triggered the Policy.
   For example, if trigger_event is "DelinquencyResolved", the invoke_command MUST NOT emit "DelinquencyResolved" —
   this creates an infinite loop (Event → Policy → Command → same Event → same Policy → ...).
   If you detect such a cycle, either choose a different Command or do NOT create that Policy.
+- **Be thorough:** In a typical e-commerce/delivery system with 5-7 BCs, expect at least 5-15 cross-BC Policies.
+  If you find fewer than 5, re-examine the BC pairs — you are likely missing important cross-BC flows.
 
 Output should be a list of PolicyCandidate objects."""
 

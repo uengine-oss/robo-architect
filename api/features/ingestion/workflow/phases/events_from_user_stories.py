@@ -54,12 +54,16 @@ Benefit: {benefit}
 
 <rules>
 1. Events represent **immutable business facts** that happened (past tense).
-2. Naming: PascalCase, Noun + Past Participle (e.g., OrderPlaced, PaymentProcessed, AccountRegistered).
-3. Include both **success** and **failure** events when appropriate (e.g., OrderPlaced + OrderPlacementFailed).
-4. Focus on **business-significant state changes**, not technical details.
-5. Do NOT duplicate events from the previously generated list. If a prior event covers this story, skip it.
-6. Typically 1~3 events per user story. Keep focused.
-7. **order**: Assign chronological order within this user story. If this story involves multiple steps (e.g., place order → then payment), the first event gets order=1, the next order=2. Failure events share the same order as their success counterpart.
+2. **name** field: MUST be English PascalCase, Noun + PastParticiple (e.g., OrderPlaced, PaymentProcessed, AccountRegistered).
+   - NEVER use Korean, spaces, or special characters in the name field.
+   - Even if the user story is written in Korean, the event name MUST be in English.
+3. **displayName** field: A short localized UI label (language specified separately).
+4. Include both **success** and **failure** events when appropriate.
+   - Failure event name = success name stem + "Failed" (e.g., OrderPlaced → OrderPlacementFailed).
+5. Focus on **business-significant state changes**, not technical details.
+6. Do NOT duplicate events from the previously generated list. If a prior event covers this story, skip it.
+7. Typically 1~3 events per user story. Keep focused.
+8. **order**: Assign chronological order within this user story. If this story involves multiple steps (e.g., place order → then payment), the first event gets order=1, the next order=2. Failure events share the same order as their success counterpart.
 </rules>
 
 Return the events for this user story."""

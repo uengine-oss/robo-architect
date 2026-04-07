@@ -96,12 +96,13 @@ async def _create_command_with_links(
         emits_names = getattr(cmd, "emits_event_names", []) or []
         if isinstance(cmd, dict):
             emits_names = cmd.get("emits_event_names", []) or []
+        emits_linked = 0
         for evt_name in emits_names:
             evt_name = (evt_name or "").strip()
             if not evt_name:
                 continue
             try:
-                await asyncio.wait_for(
+                linked = await asyncio.wait_for(
                     asyncio.to_thread(
                         ctx.client.link_command_to_event_by_name,
                         command_id=created_cmd.get("id"),
@@ -109,8 +110,131 @@ async def _create_command_with_links(
                     ),
                     timeout=5.0,
                 )
+                if linked:
+                    emits_linked += 1
             except Exception:
                 pass
+
+        # ── EMITS 0건 재시도: BC 전체 Event에서 substring/fuzzy 재매칭 ──
+        if emits_names and emits_linked == 0:
+            SmartLogger.log(
+                "WARN",
+                f"Command '{cmd_name}' declared {len(emits_names)} emits_event_names "
+                f"but 0 EMITS links — attempting BC-wide fuzzy retry. "
+                f"Attempted: {[n for n in emits_names[:5]]}",
+                category="ingestion.workflow.commands.emits_zero_retry",
+                params={
+                    "session_id": ctx.session.id,
+                    "command_id": created_cmd.get("id"),
+                    "command_name": cmd_name,
+                    "aggregate_id": agg_id,
+                    "attempted_events": emits_names[:10],
+                },
+            )
+            # Fetch all events in this BC for broader matching
+            try:
+                bc_id_for_retry = None
+                with ctx.client.session() as _bc_sess:
+                    _bc_rec = _bc_sess.run(
+                        "MATCH (bc:BoundedContext)-[:HAS_AGGREGATE]->(agg:Aggregate {id: $agg_id}) "
+                        "RETURN bc.id AS bcId",
+                        agg_id=agg_id,
+                    ).single()
+                    if _bc_rec:
+                        bc_id_for_retry = _bc_rec["bcId"]
+
+                if bc_id_for_retry:
+                    bc_events: list[dict] = []
+                    with ctx.client.session() as _evt_sess:
+                        for _r in _evt_sess.run(
+                            "MATCH (bc:BoundedContext {id: $bc_id})-[:HAS_EVENT]->(evt:Event) "
+                            "RETURN evt.id AS id, evt.name AS name, evt.displayName AS displayName",
+                            bc_id=bc_id_for_retry,
+                        ):
+                            bc_events.append(dict(_r))
+
+                    # For each declared emits name, try substring match against BC events
+                    for declared_name in emits_names:
+                        dn = (declared_name or "").strip()
+                        if not dn:
+                            continue
+                        dn_lower = dn.lower()
+                        best_match_id = None
+                        # 1) exact name/displayName (already tried above — skip)
+                        # 2) substring: declared name contained in event name or vice versa
+                        for evt in bc_events:
+                            en = (evt.get("name") or "").lower()
+                            edn = (evt.get("displayName") or "").lower()
+                            if dn_lower in en or en in dn_lower:
+                                best_match_id = evt["id"]
+                                break
+                            if edn and (dn_lower in edn or edn in dn_lower):
+                                best_match_id = evt["id"]
+                                break
+                        if best_match_id:
+                            try:
+                                with ctx.client.session() as _link_sess:
+                                    _link_sess.run(
+                                        "MATCH (cmd:Command {id: $cmd_id}), (evt:Event {id: $evt_id}) "
+                                        "MERGE (cmd)-[r:EMITS]->(evt) "
+                                        "ON CREATE SET r.isGuaranteed = true",
+                                        cmd_id=created_cmd.get("id"),
+                                        evt_id=best_match_id,
+                                    )
+                                emits_linked += 1
+                                SmartLogger.log(
+                                    "INFO",
+                                    f"EMITS retry succeeded: '{cmd_name}' → event id={best_match_id} "
+                                    f"(declared: '{dn}')",
+                                    category="ingestion.workflow.commands.emits_retry_success",
+                                    params={
+                                        "session_id": ctx.session.id,
+                                        "command_name": cmd_name,
+                                        "declared_name": dn,
+                                        "matched_event_id": best_match_id,
+                                    },
+                                )
+                            except Exception:
+                                pass
+            except Exception as retry_err:
+                SmartLogger.log(
+                    "WARN",
+                    f"EMITS retry failed for '{cmd_name}': {retry_err}",
+                    category="ingestion.workflow.commands.emits_retry_error",
+                    params={"session_id": ctx.session.id, "command_name": cmd_name, "error": str(retry_err)},
+                )
+
+            # Final log if still 0 after retry
+            if emits_linked == 0:
+                SmartLogger.log(
+                    "WARN",
+                    f"Command '{cmd_name}' still has 0 EMITS after BC-wide retry. "
+                    f"Declared: {emits_names[:5]}",
+                    category="ingestion.workflow.commands.emits_zero_final",
+                    params={
+                        "session_id": ctx.session.id,
+                        "command_id": created_cmd.get("id"),
+                        "command_name": cmd_name,
+                    },
+                )
+
+        # ── EMITS 상한 경고 (3개 초과) ────────────────────────────
+        _EMITS_WARN_THRESHOLD = 3
+        if emits_linked > _EMITS_WARN_THRESHOLD:
+            SmartLogger.log(
+                "WARN",
+                f"Command '{cmd_name}' has {emits_linked} EMITS links "
+                f"(threshold={_EMITS_WARN_THRESHOLD}). "
+                f"A single user intent rarely produces this many events — "
+                f"consider splitting the Command or consolidating Events.",
+                category="ingestion.workflow.commands.emits_excessive",
+                params={
+                    "session_id": ctx.session.id,
+                    "command_id": created_cmd.get("id"),
+                    "command_name": cmd_name,
+                    "emits_count": emits_linked,
+                },
+            )
 
         return {
             "command": created_cmd,
@@ -130,8 +254,9 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
     yield ProgressEvent(phase=IngestionPhase.EXTRACTING_COMMANDS, message="Command 추출 중...", progress=60)
 
     all_commands: dict[str, Any] = {}
-    # Track already-created command names to prevent cross-aggregate duplication
+    # Track already-created command names (with displayName) to prevent cross-aggregate duplication
     _existing_command_names: list[str] = []
+    _existing_command_display_names: dict[str, str] = {}  # name → displayName
 
     for bc in ctx.bounded_contexts:
         # Handle both dict and object formats
@@ -170,23 +295,37 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
             )
 
             # Aggregate에 속한 Event 목록 (SCOPE_EVENT 또는 BC의 HAS_EVENT)
-            agg_event_names = []
+            # name + displayName을 함께 가져와 LLM이 정확한 name을 복사하기 쉽게 함
+            agg_event_entries: list[tuple[str, str]] = []  # (name, displayName)
             try:
                 with ctx.client.session() as _sess:
                     _evt_result = _sess.run(
                         """
                         MATCH (agg:Aggregate {id: $agg_id})-[:SCOPE_EVENT]->(evt:Event)
-                        RETURN evt.name AS name
+                        RETURN evt.name AS name, evt.displayName AS displayName
                         UNION
                         MATCH (bc:BoundedContext {id: $bc_id})-[:HAS_EVENT]->(evt:Event)
-                        RETURN evt.name AS name
+                        RETURN evt.name AS name, evt.displayName AS displayName
                         """,
                         agg_id=agg_id, bc_id=bc_id,
                     )
-                    agg_event_names = list({r["name"] for r in _evt_result if r["name"]})
+                    seen_names: set[str] = set()
+                    for r in _evt_result:
+                        n = r["name"]
+                        if n and n not in seen_names:
+                            seen_names.add(n)
+                            dn = r.get("displayName") or ""
+                            agg_event_entries.append((n, dn))
             except Exception:
                 pass
-            events_text = "\n".join(f"- {n}" for n in sorted(agg_event_names)) if agg_event_names else "(no events)"
+            agg_event_names = [n for n, _ in agg_event_entries]
+            if agg_event_entries:
+                events_text = "\n".join(
+                    f"- {n}" + (f"  (displayName: {dn})" if dn and dn != n else "")
+                    for n, dn in sorted(agg_event_entries)
+                )
+            else:
+                events_text = "(no events)"
 
             display_lang = getattr(ctx, "display_language", "ko") or "ko"
             display_name_tail = (
@@ -205,12 +344,17 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
             ) + display_name_tail
             # Inject already-created commands to prevent cross-aggregate duplication
             if _existing_command_names:
-                from api.features.ingestion.workflow.utils.chunking import format_accumulated_names
+                # Include displayName so LLM can detect semantic duplicates
+                _cmd_lines = []
+                for _cn in _existing_command_names:
+                    _dn = _existing_command_display_names.get(_cn)
+                    _cmd_lines.append(f"- {_cn}" + (f" ({_dn})" if _dn and _dn != _cn else ""))
                 full_prompt_text += (
                     "\n\n<already_created_commands>\n"
                     "The following Commands have already been created in OTHER Aggregates. "
-                    "Do NOT create Commands with the same or very similar names/intent:\n"
-                    + format_accumulated_names(_existing_command_names)
+                    "Do NOT create Commands with the same or very similar names/intent "
+                    "(including semantic duplicates like 'NotifyX' vs 'SendXNotification'):\n"
+                    + "\n".join(_cmd_lines)
                     + "\n</already_created_commands>"
                 )
             _report_context_tail = ""
@@ -377,11 +521,14 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     commands = []
 
             all_commands[agg_id] = commands
-            # Collect command names for cross-aggregate dedup
+            # Collect command names (+ displayName) for cross-aggregate dedup
             for cmd in commands:
                 cmd_n = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
                 if cmd_n:
                     _existing_command_names.append(cmd_n)
+                    cmd_dn = cmd.get("displayName") if isinstance(cmd, dict) else getattr(cmd, "displayName", None)
+                    if cmd_dn:
+                        _existing_command_display_names[cmd_n] = cmd_dn
 
             # Process all commands in parallel
             if commands:

@@ -160,9 +160,35 @@ async def _create_policy_with_links(
 
     if not invoke_command_id:
         return None, f"Invoke command '{pol.invoke_command}' not found in target BC '{pol.target_bc}'"
-    
+
     if not target_bc_id:
         return None, f"Target BC '{pol.target_bc}' not found"
+
+    # ── Same-BC Policy 정보 로그 (차단하지 않음) ──
+    # 이벤트 모델링에서 same-BC 내 Event→Command 반응형 흐름도
+    # 연결선으로 표현되어야 하므로 same-BC Policy도 허용.
+    try:
+        with ctx.client.session() as _sbc_sess:
+            _sbc_rec = _sbc_sess.run(
+                "MATCH (bc:BoundedContext)-[:HAS_EVENT]->(evt:Event {id: $evt_id}) "
+                "RETURN bc.id AS bcId, bc.name AS bcName LIMIT 1",
+                evt_id=trigger_event_id,
+            ).single()
+            if _sbc_rec and _sbc_rec["bcId"] == target_bc_id:
+                SmartLogger.log(
+                    "INFO",
+                    f"Same-BC Policy: '{pol.name}' — trigger event "
+                    f"'{pol.trigger_event}' and invoke command in same BC "
+                    f"'{_sbc_rec['bcName']}'. Intra-BC reactive flow.",
+                    category="ingestion.workflow.policies.same_bc_info",
+                    params={
+                        "session_id": ctx.session.id,
+                        "policy_name": pol.name,
+                        "bc_name": _sbc_rec["bcName"],
+                    },
+                )
+    except Exception:
+        pass
 
     pol_display_name = getattr(pol, "displayName", None) or pol.name
     # Create policy
@@ -381,13 +407,42 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             if display_lang == "ko"
             else "\n\nFor each Policy output displayName: a short UI label in English (e.g. 'Refund on Order Cancelled')."
         )
+        # ── EMITS 없는 Command 목록 추가 (Policy invoke 후보 힌트) ──
+        _no_emits_hint = ""
+        try:
+            with ctx.client.session() as _ne_sess:
+                _ne_result = _ne_sess.run(
+                    """
+                    MATCH (bc:BoundedContext)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
+                    WHERE NOT (cmd)-[:EMITS]->(:Event)
+                    RETURN cmd.name AS cmdName, bc.name AS bcName
+                    ORDER BY bc.name, cmd.name
+                    """
+                )
+                _no_emits_cmds = [(r["cmdName"], r["bcName"]) for r in _ne_result]
+                if _no_emits_cmds:
+                    _lines = [f"- {cn} (BC: {bn})" for cn, bn in _no_emits_cmds]
+                    _no_emits_hint = (
+                        "\n\n<commands_without_emits>\n"
+                        "These Commands have no direct user-triggered Events yet. "
+                        "They are strong candidates for Policy invoke targets — "
+                        "i.e., Commands that should be triggered reactively by Events "
+                        "from OTHER BCs rather than by direct user action:\n"
+                        + "\n".join(_lines)
+                        + "\nConsider creating Policies that invoke these Commands "
+                        "when relevant Events occur in other BCs."
+                        "\n</commands_without_emits>"
+                    )
+        except Exception:
+            pass
+
         # 전체 프롬프트 텍스트 구성 (청킹 판단용)
         full_prompt_text = IDENTIFY_POLICIES_PROMPT.format(
             user_stories=user_stories_text,
             events=events_text,
             commands_by_bc=commands_text,
             bounded_contexts=bc_text,
-        ) + display_name_tail
+        ) + display_name_tail + _no_emits_hint
         _report_context_tail = ""
         if ctx.source_report:
             from api.features.ingestion.workflow.utils.report_context import get_policies_context
@@ -928,6 +983,103 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                         },
                     )
         
+        # ── Policy invoke Command의 BC 소속 보장 ────────────────────
+        # Policy가 INVOKES하는 Command가 어떤 BC의 Aggregate에도 HAS_COMMAND로
+        # 연결되지 않은 경우, target_bc의 첫 번째 Aggregate에 자동 연결.
+        try:
+            with ctx.client.session() as _bc_fix_sess:
+                _orphan_cmds = _bc_fix_sess.run(
+                    """
+                    MATCH (pol:Policy)-[:INVOKES]->(cmd:Command)
+                    WHERE NOT (:Aggregate)-[:HAS_COMMAND]->(cmd)
+                    MATCH (bc:BoundedContext)-[:HAS_POLICY]->(pol)
+                    OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
+                    RETURN cmd.id AS cmdId, cmd.name AS cmdName,
+                           bc.id AS bcId, bc.name AS bcName,
+                           collect(agg.id)[0] AS firstAggId
+                    """
+                )
+                fixed_count = 0
+                for rec in _orphan_cmds:
+                    agg_id = rec["firstAggId"]
+                    if agg_id:
+                        _bc_fix_sess.run(
+                            "MATCH (agg:Aggregate {id: $agg_id}), (cmd:Command {id: $cmd_id}) "
+                            "MERGE (agg)-[:HAS_COMMAND]->(cmd)",
+                            agg_id=agg_id, cmd_id=rec["cmdId"],
+                        )
+                        fixed_count += 1
+                        SmartLogger.log(
+                            "INFO",
+                            f"Auto-linked orphan Command '{rec['cmdName']}' to Aggregate in BC '{rec['bcName']}'",
+                            category="ingestion.workflow.policies.cmd_bc_fix",
+                            params={
+                                "session_id": ctx.session.id,
+                                "command_id": rec["cmdId"],
+                                "command_name": rec["cmdName"],
+                                "bc_name": rec["bcName"],
+                                "aggregate_id": agg_id,
+                            },
+                        )
+                    else:
+                        SmartLogger.log(
+                            "WARN",
+                            f"Policy invoke Command '{rec['cmdName']}' has no BC ownership "
+                            f"and BC '{rec['bcName']}' has no Aggregates to link to.",
+                            category="ingestion.workflow.policies.cmd_bc_orphan",
+                            params={
+                                "session_id": ctx.session.id,
+                                "command_id": rec["cmdId"],
+                                "command_name": rec["cmdName"],
+                                "bc_name": rec["bcName"],
+                            },
+                        )
+                if fixed_count:
+                    SmartLogger.log(
+                        "INFO",
+                        f"Fixed {fixed_count} orphan Policy-invoke Commands (linked to BC Aggregates)",
+                        category="ingestion.workflow.policies.cmd_bc_fix_summary",
+                        params={"session_id": ctx.session.id, "fixed_count": fixed_count},
+                    )
+        except Exception as e:
+            SmartLogger.log(
+                "WARN",
+                f"Policy invoke Command BC fix failed: {e}",
+                category="ingestion.workflow.policies.cmd_bc_fix_error",
+                params={"session_id": ctx.session.id, "error": str(e)},
+            )
+
+        # ── BC 고립 경고: outgoing Policy 없는 비조회 BC 탐지 ──────────
+        try:
+            with ctx.client.session() as _iso_sess:
+                _isolated = _iso_sess.run(
+                    """
+                    MATCH (bc:BoundedContext)
+                    WHERE NOT EXISTS {
+                        MATCH (bc)-[:HAS_EVENT]->(e:Event)-[:TRIGGERS]->(:Policy)
+                    }
+                    AND EXISTS {
+                        MATCH (bc)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(:Command)
+                    }
+                    RETURN bc.name AS bcName, bc.id AS bcId
+                    """
+                )
+                isolated_bcs = [(r["bcName"], r["bcId"]) for r in _isolated]
+                if isolated_bcs:
+                    SmartLogger.log(
+                        "WARN",
+                        f"{len(isolated_bcs)} BCs have Commands but no outgoing Policies "
+                        f"(their Events do not trigger any cross-BC flow): "
+                        f"{[name for name, _ in isolated_bcs]}",
+                        category="ingestion.workflow.policies.bc_isolated",
+                        params={
+                            "session_id": ctx.session.id,
+                            "isolated_bcs": [{"name": n, "id": i} for n, i in isolated_bcs],
+                        },
+                    )
+        except Exception:
+            pass
+
         # Policy 생성 완료
         if policies:
             yield ProgressEvent(

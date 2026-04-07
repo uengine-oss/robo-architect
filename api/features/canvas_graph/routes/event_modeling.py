@@ -287,6 +287,25 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
             cmd_sequence[cmd_id] = unlinked_offset
             unlinked_offset += 1
 
+    # ── 3a-2. 병렬 흐름: 같은 Command가 EMITS하는 이벤트는 동일 sequence ──
+    # 성공/실패 분기(예: OrderPlaced / OrderPlacementFailed)가 같은 column에 배치됨.
+    # 그룹 내 최소 sequence로 통일.
+    for cmd_id, evt_ids in cmd_to_events.items():
+        if len(evt_ids) <= 1:
+            continue
+        group_seqs = []
+        for eid in evt_ids:
+            ev = events.get(eid)
+            if ev and ev.get("storedSequence") is not None:
+                group_seqs.append(int(ev["storedSequence"]))
+        if not group_seqs:
+            continue
+        min_seq = min(group_seqs)
+        for eid in evt_ids:
+            ev = events.get(eid)
+            if ev and ev.get("storedSequence") is not None:
+                ev["storedSequence"] = min_seq
+
     # ── 3b. Sequence 압축: 표시되는 sequence를 1부터 연속 번호로 재매핑
     # (BC 필터 시 중간이 빈 sequence 30→1, 31→2 등으로 압축)
     used_seqs: set[int] = set()

@@ -58,8 +58,16 @@ class EventOps:
             )
             return dict(result.single()["event"])
 
-    def link_command_to_event_by_name(self, *, command_id: str, event_name: str) -> bool:
-        """Link an existing Event (matched by name or displayName) to a Command via EMITS."""
+    def link_command_to_event_by_name(
+        self, *, command_id: str, event_name: str,
+    ) -> bool:
+        """Link an existing Event (matched by name or displayName) to a Command via EMITS.
+
+        Cross-BC EMITS are **warned** but still created — the diagnostic log
+        helps identify cases that should use Policy instead.
+        """
+        from api.platform.observability.smart_logger import SmartLogger
+
         name = (event_name or "").strip()
         if not name or not command_id:
             return False
@@ -74,17 +82,54 @@ class EventOps:
                    OR toLower(evt3.displayName) = toLower($event_name)
                 WITH cmd, coalesce(evt1, evt2, evt3) AS evt
                 WHERE evt IS NOT NULL
-                MERGE (cmd)-[r:EMITS]->(evt)
-                ON CREATE SET r.isGuaranteed = true
-                SET r.isGuaranteed = coalesce(r.isGuaranteed, true)
-                RETURN evt.id AS id
+
+                // Resolve BC ownership for both sides
+                OPTIONAL MATCH (cmd_bc:BoundedContext)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(cmd)
+                OPTIONAL MATCH (evt_bc:BoundedContext)-[:HAS_EVENT]->(evt)
+
+                RETURN evt.id AS id, evt.name AS evt_name,
+                       cmd_bc.id AS cmd_bc_id, cmd_bc.name AS cmd_bc_name,
+                       evt_bc.id AS evt_bc_id, evt_bc.name AS evt_bc_name
                 LIMIT 1
                 """,
                 command_id=command_id,
                 event_name=name,
             )
             rec = result.single()
-            return bool(rec and rec.get("id"))
+            if not rec or not rec.get("id"):
+                return False
+
+            # ── Cross-BC EMITS warning (warn-only, not blocking) ─────
+            cmd_bc_id = rec.get("cmd_bc_id")
+            evt_bc_id = rec.get("evt_bc_id")
+            if cmd_bc_id and evt_bc_id and cmd_bc_id != evt_bc_id:
+                SmartLogger.log(
+                    "WARN",
+                    f"Cross-BC EMITS detected: Command(bc={rec.get('cmd_bc_name')}) "
+                    f"→ Event '{rec.get('evt_name')}'(bc={rec.get('evt_bc_name')}). "
+                    f"Consider using a Policy for cross-BC causality.",
+                    category="ingestion.neo4j.emits.cross_bc_warning",
+                    params={
+                        "command_id": command_id,
+                        "event_name": name,
+                        "cmd_bc": rec.get("cmd_bc_name"),
+                        "evt_bc": rec.get("evt_bc_name"),
+                    },
+                )
+
+            # Create the link (same-BC or cross-BC)
+            evt_id = rec["id"]
+            session.run(
+                """
+                MATCH (cmd:Command {id: $command_id}), (evt:Event {id: $evt_id})
+                MERGE (cmd)-[r:EMITS]->(evt)
+                ON CREATE SET r.isGuaranteed = true
+                SET r.isGuaranteed = coalesce(r.isGuaranteed, true)
+                """,
+                command_id=command_id,
+                evt_id=evt_id,
+            )
+            return True
 
     def get_events_emitted_by_command(self, command_id: str) -> list[dict[str, Any]]:
         """Return Event nodes linked from Command via EMITS (for workflow context)."""

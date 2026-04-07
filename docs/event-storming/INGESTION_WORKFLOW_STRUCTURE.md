@@ -88,6 +88,7 @@ Complete
 - **LLM 타임아웃**: 300s
 - **출력**: Neo4j Event 노드 직접 생성
 - **비고**: 기존 `events.py` (Command별 추출) 대신 사용. Command는 이후 단계에서 기존 Event에 EMITS 연결
+- **네이밍 규칙**: `name` 필드는 반드시 영문 PascalCase (한글/특수문자 금지). `displayName`에만 로컬라이즈 라벨. 실패 이벤트는 `성공이벤트명 stem + Failed` 패턴 (예: `OrderPlaced → OrderPlacementFailed`)
 
 ### 5. Bounded Contexts Phase
 - **파일**: `workflow/phases/bounded_contexts.py`
@@ -108,14 +109,21 @@ Complete
 - **LLM 타임아웃**: 300s
 - **출력**: `ctx.aggregates_by_bc`
 - **비고**: Value Object 참조 검증 (이전 BC의 Aggregate 이름 기준)
+- **SCOPE_EVENT 검증**: `covered_event_names` 매칭 결과가 0건이면 WARN 로그 (`ingestion.workflow.aggregates.scope_event_zero`)
+- **조회전용 BC 가이드**: 프롬프트에 `query_only_bc` 섹션 — 조회만 하는 BC는 Aggregate를 0~1개로 제한 (CQRS Read side는 ReadModel만으로 충분)
 
 ### 7. Commands Phase
 - **파일**: `workflow/phases/commands.py`
 - **프롬프트 위치**: `event_storming/prompts.py` (EXTRACT_COMMANDS_PROMPT)
 - **역할**: Aggregate별 Command 식별 + 기존 Event에 EMITS 링크
-- **EMITS 연결**: LLM 응답의 `emits_event_names` 필드로 기존 Event 노드에 `Command -[:EMITS]-> Event` 관계 생성
-  - Event는 step 4에서 이미 존재 — Command가 새로 생성하지 않고 연결만 함
-  - 이름 기반 fuzzy matching (`link_command_to_event_by_name`)
+- **available_events 구성**: Neo4j에서 `name` + `displayName` 모두 조회하여 `- EventName  (displayName: 한글라벨)` 형태로 LLM에 전달 → 정확한 name 복사 유도
+- **EMITS 연결** (4단계):
+  1. LLM 응답의 `emits_event_names`로 이름 기반 fuzzy matching (`link_command_to_event_by_name`: name → displayName → case-insensitive)
+  2. cross-BC EMITS 발생 시 WARN 로그 (차단하지 않음, 진단용)
+  3. **EMITS 0건 시 BC-wide fuzzy 재시도**: 해당 BC의 전체 Event를 Neo4j에서 조회하여 substring 기반 재매칭 (LLM 재호출 없음)
+  4. 재시도 후에도 0건이면 최종 WARN 로그 (`ingestion.workflow.commands.emits_zero_final`)
+- **EMITS 검증**: 3개 초과 시 WARN 로그 (`ingestion.workflow.commands.emits_excessive`)
+- **중복 검출**: `already_created_commands`에 displayName 포함 + Semantic Duplicate Detection 규칙 (프롬프트)
 - **청킹**: 지원 (User Story 텍스트 기반, DEFAULT_CHUNK_SIZE=80k 토큰, overlap=2k)
   - should_chunk(full_prompt_text) → 100k 토큰 초과 시 활성화
 - **LLM 타임아웃**: 300s
@@ -129,6 +137,7 @@ Complete
   - User Stories와 Events 텍스트를 각각 독립적으로 청킹한 뒤 조합
 - **LLM 타임아웃**: 300s
 - **출력**: `ctx.readmodels_by_bc`
+- **CQRS 미연결 이벤트 보고**: Phase 완료 후 `TRIGGERED_BY` 관계가 없고 `~Failed`로 끝나지 않는 Event 집계 → WARN 로그 (`ingestion.workflow.readmodels.cqrs_orphan_events`)
 
 ### 9. Properties Phase
 - **파일**: `workflow/phases/properties.py`
@@ -148,13 +157,19 @@ Complete
 ### 11. Policies Phase
 - **파일**: `workflow/phases/policies.py`
 - **프롬프트 위치**: `event_storming/prompts.py` (IDENTIFY_POLICIES_PROMPT)
-- **역할**: Event → Command Policy 식별 (cross-BC 프로세스 연결)
+- **역할**: Event → Command Policy(Automation) 식별
+  - **cross-BC + same-BC 모두 허용**: Event Modeling 이론에서 Policy(Automation)는 "이벤트에 반응하여 시스템이 자동 트리거하는 Command"를 의미하며 BC 경계와 무관. same-BC 생성 시 INFO 로그
+  - 프롬프트에서 cross-BC 우선 유도 (Mandatory cross-BC flow categories 체크리스트, N×(N-1) BC 쌍 전수 검토, 5개 미만 시 재검토 가이드)
 - **이벤트 조회 전략** (3단계 fallback):
   1. Neo4j `BC -[:HAS_EVENT]-> Event` 직접 조회
   2. `ctx.events_by_agg` 기반 보충
   3. Neo4j 전체 Event 직접 조회 (`MATCH (evt:Event)`)
 - **Command 조회 fallback**: `ctx.commands_by_agg` 미발견 시 Neo4j `BC→Aggregate→Command` 직접 조회
+- **추가 컨텍스트**: `<commands_without_emits>` 섹션 — EMITS 없는 Command를 Policy invoke 후보로 제시
 - **검증**: self-loop 제거, 2-hop 간접 cycle 감지, 중복 trigger→command 제거
+- **후처리**:
+  - invoke Command BC 소속 보장: `HAS_COMMAND` 관계 없는 orphan Command를 target BC의 Aggregate에 자동 연결
+  - BC 고립 경고: outgoing Policy 0개이면서 Command를 보유한 BC 탐지 → WARN 로그
 - **청킹**: 지원 (Events/Commands 텍스트 기반, DEFAULT_CHUNK_SIZE=80k 토큰)
 - **LLM 타임아웃**: 300s
 - **출력**: `ctx.policies`
@@ -291,13 +306,23 @@ UI -[:ATTACHED_TO]-> Command | ReadModel
 Event Modeling에서는 Event가 Command보다 먼저 생성됨. Command 생성 시 기존 Event에 연결:
 
 1. **LLM 응답 매핑**: Command의 `emits_event_names` 필드로 Event name 기준 매칭
-2. **Neo4j 이름 매칭**: `link_command_to_event_by_name` — displayName/name fuzzy matching
-3. **EMITS 관계 생성**: `Command -[:EMITS]-> Event` (Event 노드 재생성 없음)
+2. **Neo4j 이름 매칭**: `link_command_to_event_by_name` — name → displayName → case-insensitive fuzzy matching
+3. **cross-BC EMITS 진단**: Command BC ≠ Event BC인 경우 WARN 로그 (차단하지 않음)
+4. **EMITS 0건 BC-wide 재시도**: 1~2단계에서 0건이면 해당 BC 전체 Event를 Neo4j 조회 → substring 기반 fuzzy 재매칭 (LLM 재호출 없음)
+5. **EMITS 관계 생성**: `Command -[:EMITS]-> Event` (Event 노드 재생성 없음)
 
 > 기존 Event Storming 방식 (레거시):
 > 1. 명시적 매핑: Event의 `emitting_command_name` 필드로 Command name 매칭
 > 2. 인덱스 기반 fallback: `events[i] ↔ commands[i]`
 > 3. 최종 fallback: `commands[0]`에 연결
+
+## 병렬 흐름 (Event Modeling API)
+
+동일 Command가 EMITS하는 이벤트(성공/실패 분기)는 같은 타임라인 column에 배치:
+
+- **API 처리** (`canvas_graph/routes/event_modeling.py` 3a-2 단계): 같은 Command가 EMITS하는 Event들의 `storedSequence`를 그룹 내 최소값으로 통일
+- **프론트엔드**: 동일 sequence 카드를 Y축 스택 배치 (기존 `evtCardPos`, `cmdStackIndex` 로직 활용)
+- 예: `PlaceOrder → OrderPlaced(seq=5) / OrderPlacementFailed(seq=6)` → 둘 다 seq=5, 같은 column 위아래
 
 ## 주요 유틸리티
 
