@@ -70,7 +70,7 @@ class GeneratedUserStory(BaseModel):
     # Analyzer source unit ID (procedure fqn, class fqn 등 — 역추적용)
     source_unit_id: Optional[str] = None
     # BL sequence 번호 리스트 — 이 US가 어떤 BL에서 유래했는지 (필수: 입력의 BL[N] 번호)
-    source_bl: list[int] = Field(default_factory=list, description="List of BL sequence numbers this User Story originated from. MUST be filled with BL[N] numbers from the input.")
+    source_bl: list[int] = Field(default_factory=list, description="BL sequence numbers this US originated from. Only used when source_type is analyzer_graph.")
 
 
 class UserStoryList(BaseModel):

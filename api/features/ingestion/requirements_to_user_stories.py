@@ -114,19 +114,6 @@ def extract_user_stories_from_text(text: str) -> list[GeneratedUserStory]:
 4. **요구사항에 나열된 모든 비즈니스 기능을 빠짐없이 User Story로 추출하세요. 요약하거나 통합하거나 생략하지 마세요.**
 5. **요구사항에 100개의 비즈니스 기능이 나열되어 있으면 반드시 100개의 User Story를 생성해야 합니다.**
 
-**EJB/레거시 시스템 분석 보고서인 경우 — 반드시 제외할 항목:**
-- EJB 라이프사이클 콜백을 User Story로 만들지 마세요: ejbCreate, ejbRemove, ejbActivate, ejbPassivate, ejbLoad, ejbStore, ejbPostCreate, setEntityContext, unsetEntityContext, setSessionContext
-- EJB Finder 메서드를 User Story로 만들지 마세요: ejbFindByPrimaryKey, findByPrimaryKey
-- CMP/BMP 인프라 메서드를 User Story로 만들지 마세요: getConnection, closeConnection, getDataSource, lookup, getInitialContext
-- Entity Bean의 개별 getter/setter 메서드를 독립 User Story로 만들지 마세요 (상위 비즈니스 기능의 일부로만 참조)
-- role이 "system_administrator"인 인프라 초기화/정리 작업을 User Story로 만들지 마세요
-- **오직 비즈니스 사용자가 수행하는 도메인 기능만 User Story로 생성하세요**
-
-**source_bl 필수 (BL 번호가 있는 경우):**
-- 입력에 BL[1], BL[2], BL[3] 형태의 비즈니스 로직 번호가 있으면, 각 User Story의 source_bl 필드에 해당 BL 번호를 반드시 포함하세요.
-- 반드시 해당 User Story의 직접적인 출처가 되는 BL 번호만 포함하세요. 관련 없는 BL 번호를 넣지 마세요.
-- 예: BL[1]에서 나온 US → source_bl: [1], BL[2]와 BL[3]에서 나온 US → source_bl: [2, 3]
-- source_bl이 비어있으면 안 됩니다. 반드시 출처 BL 번호를 채우세요.
 """
 
     # 청킹 단계에서 이미 토큰 제한을 고려한 적절한 크기로 나뉘었으므로,

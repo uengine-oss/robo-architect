@@ -27,6 +27,7 @@ from api.features.ingestion.workflow.utils.chunking import (
 # context overflow as more Aggregates are processed.
 _CMD_DEDUP_BUDGET_TOKENS = 4000
 _CMD_DEDUP_RECENT_COUNT = 50  # always show the last N commands in detail
+from api.features.ingestion.workflow.utils.user_story_format import format_us_text
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
@@ -346,8 +347,9 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 bc_us_ids = []
             bc_us_ids = [us_id for us_id in bc_us_ids if us_id]  # None이나 빈 문자열 제거
             
+            _bl_map = getattr(ctx, 'bl_by_user_story', None)
             stories_context = "\n".join(
-                [f"[{us.id}] As a {us.role}, I want to {us.action}" for us in ctx.user_stories if us.id in bc_us_ids]
+                [format_us_text(us, bl_map=_bl_map, include_benefit=False) for us in ctx.user_stories if us.id in bc_us_ids]
             )
 
             # Aggregate에 속한 Event 목록 (SCOPE_EVENT 또는 BC의 HAS_EVENT)

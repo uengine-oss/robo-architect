@@ -21,6 +21,7 @@ from api.features.ingestion.workflow.utils.chunking import (
     ACCUMULATED_NAMES_MAX,
     DEFAULT_MAX_TOKENS,
 )
+from api.features.ingestion.workflow.utils.user_story_format import format_us_text
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
@@ -67,15 +68,13 @@ def _bc_events_prompt_block(ctx: IngestionWorkflowContext, us_ids: set[str]) -> 
 
 
 def _user_story_breakdown_lines(ctx: IngestionWorkflowContext, us_ids: set[str]) -> str:
+    bl_map = getattr(ctx, 'bl_by_user_story', None)
     lines: list[str] = []
     for us in ctx.user_stories or []:
         uid = getattr(us, "id", "") or ""
         if uid not in us_ids:
             continue
-        role = getattr(us, "role", "") or ""
-        action = getattr(us, "action", "") or ""
-        benefit = getattr(us, "benefit", "") or ""
-        lines.append(f"- [{uid}] As a {role}, I want to {action}, so that {benefit}")
+        lines.append(format_us_text(us, bl_map=bl_map, bullet_prefix="- "))
     if not lines:
         return "User Stories: (none assigned)"
     return "\n".join(lines)

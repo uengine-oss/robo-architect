@@ -23,6 +23,7 @@ from api.features.ingestion.workflow.utils.chunking import (
     format_accumulated_names,
     ACCUMULATED_NAMES_MAX,
 )
+from api.features.ingestion.workflow.utils.user_story_format import format_us_text
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
@@ -279,8 +280,9 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
     
     try:
         # Build user stories text for LLM context
+        _bl_map = getattr(ctx, 'bl_by_user_story', None)
         user_stories_text = "\n".join(
-            [f"[{us.id}] As a {us.role}, I want to {us.action}" for us in ctx.user_stories]
+            [format_us_text(us, bl_map=_bl_map, include_benefit=False) for us in ctx.user_stories]
         )
 
         # Build events list — Neo4j에서 BC별 모든 Event 직접 조회 (events_by_agg EMITS 의존 제거)
@@ -526,7 +528,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                             relevant_us_ids.update(bc_us_ids or [])
 
                     chunk_us_text = "\n".join(
-                        f"[{us.id}] As a {us.role}, I want to {us.action}"
+                        format_us_text(us, bl_map=_bl_map, include_benefit=False)
                         for us in ctx.user_stories
                         if getattr(us, "id", "") in relevant_us_ids
                     ) or user_stories_text  # fallback to full if filter is empty

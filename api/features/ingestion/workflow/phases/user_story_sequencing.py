@@ -21,6 +21,7 @@ from api.features.ingestion.workflow.utils.chunking import (
     should_chunk_list,
     split_list_with_overlap,
 )
+from api.features.ingestion.workflow.utils.user_story_format import format_us_text
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -54,10 +55,7 @@ _ACCUMULATED_SEQ_BUDGET_TOKENS = 4000  # Max token budget for accumulated contex
 
 
 def _us_to_text(us: Any) -> str:
-    us_id = getattr(us, "id", "") or ""
-    role = getattr(us, "role", "") or ""
-    action = getattr(us, "action", "") or ""
-    return f"- [{us_id}] As a {role}, I want to {action}"
+    return format_us_text(us, include_benefit=False, bullet_prefix="- ")
 
 
 def _format_accumulated_sequences(

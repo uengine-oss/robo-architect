@@ -28,15 +28,19 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
     query = """
     MATCH (f)-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic)
     OPTIONAL MATCH (a:Actor)-[:ROLE]->(f)
-    WITH f, a, bl
+    OPTIONAL MATCH (f)-[:READS]->(rt:Table)
+    OPTIONAL MATCH (f)-[:WRITES]->(wt:Table)
+    WITH f, a, bl, rt, wt
     ORDER BY bl.sequence
     WITH f,
          collect(DISTINCT a.name) AS actors,
-         collect({sequence: bl.sequence, title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios
+         collect(DISTINCT {sequence: bl.sequence, title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios,
+         collect(DISTINCT rt.name) AS reads_tables,
+         collect(DISTINCT wt.name) AS writes_tables
     RETURN coalesce(f.procedure_name, f.name) AS unit_name,
            coalesce(f.function_id, f.procedure_name, f.name) AS unit_id,
            f.summary AS summary,
-           actors, scenarios
+           actors, scenarios, reads_tables, writes_tables
     ORDER BY unit_name
     """
     rows = _run(query)
@@ -52,9 +56,19 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
         actor = ", ".join(actors_list)
         scenarios = row.get("scenarios") or []
 
+        reads = [t for t in (row.get("reads_tables") or []) if t]
+        writes = [t for t in (row.get("writes_tables") or []) if t]
+
         lines: list[str] = [f"## {name}"]
         if actor:
             lines.append(f"Actor: {actor}")
+        if reads or writes:
+            tables_parts = []
+            if reads:
+                tables_parts.append(f"READS: {', '.join(reads)}")
+            if writes:
+                tables_parts.append(f"WRITES: {', '.join(writes)}")
+            lines.append(f"Tables: {' | '.join(tables_parts)}")
         lines.append("")
 
         # 비즈니스 로직 시나리오 (sequence 순서대로 = 비즈니스 프로세스 흐름)
@@ -73,11 +87,10 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
                 if sc.get("then"):
                     lines.append(f"    Then: {sc['then']}")
 
-        # BL이 없으면 summary fallback
-        if not has_bl:
-            summary = row.get("summary") or ""
-            if summary:
-                lines.append(f"### Summary:\n{summary}")
+        # 함수 요약 (BL 유무와 관계없이 항상 포함)
+        summary = row.get("summary") or ""
+        if summary:
+            lines.append(f"\n### 함수 요약:\n{summary}")
 
         lines.extend([
             "",

@@ -26,6 +26,7 @@ from api.features.ingestion.workflow.utils.chunking import (
 
 # Token budget for the cross-BC ReadModel dedup section.
 _RM_DEDUP_BUDGET_TOKENS = 3000
+from api.features.ingestion.workflow.utils.user_story_format import format_us_text
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
@@ -229,13 +230,12 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         bc_us_ids = [us_id for us_id in bc_us_ids if us_id]  # None이나 빈 문자열 제거
         
         # User stories in this BC (include ui_description to support UI phase later)
+        _bl_map = getattr(ctx, 'bl_by_user_story', None)
         bc_user_stories = []
         for us in ctx.user_stories or []:
             if us.id in bc_us_ids:
-                ui_desc = getattr(us, "ui_description", "") or ""
                 bc_user_stories.append(
-                    f"[{us.id}] As a {us.role}, I want to {us.action}, so that {us.benefit}"
-                    + (f" (ui_description: {ui_desc})" if ui_desc.strip() else "")
+                    format_us_text(us, bl_map=_bl_map, include_ui_description=True)
                 )
 
         user_stories_text = "\n".join(bc_user_stories) if bc_user_stories else "No user stories"
