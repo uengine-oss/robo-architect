@@ -17,8 +17,15 @@ from pydantic import BaseModel, Field
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
+from api.features.ingestion.workflow.utils.chunking import estimate_tokens
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.smart_logger import SmartLogger
+
+# Token budget for accumulated previous events injected into each per-US prompt.
+# When exceeded, only the most recent events are shown in detail; older ones are
+# summarised as a count so the LLM still knows they exist but the prompt stays bounded.
+_PREV_EVENTS_BUDGET_TOKENS = 4000
+_PREV_EVENTS_RECENT_COUNT = 30  # always show the last N events in detail
 
 
 # ── LLM 출력 스키마 ──────────────────────────────────────────────
@@ -67,6 +74,50 @@ Benefit: {benefit}
 </rules>
 
 Return the events for this user story."""
+
+
+def _format_previous_events(accumulated: list[str]) -> str:
+    """Format previously generated event names for the per-US prompt.
+
+    Applies a token budget so that even with 500+ accumulated events the prompt
+    contribution stays bounded.  Strategy:
+    - Always show the most recent N events in detail (LLM needs these for
+      immediate dedup).
+    - Older events are represented as a compact count so the LLM knows they
+      exist but the prompt doesn't explode.
+    """
+    if not accumulated:
+        return "(none)"
+
+    total = len(accumulated)
+
+    # Fast path: small list fits in budget
+    if total <= _PREV_EVENTS_RECENT_COUNT:
+        full = "\n".join(f"- {e}" for e in accumulated)
+        if estimate_tokens(full) <= _PREV_EVENTS_BUDGET_TOKENS:
+            return full
+
+    # Split into older (summarised) and recent (detailed)
+    recent = accumulated[-_PREV_EVENTS_RECENT_COUNT:]
+    older_count = total - len(recent)
+
+    lines: list[str] = []
+    if older_count > 0:
+        lines.append(f"({older_count} earlier events omitted — names already taken, do NOT reuse)")
+    lines.extend(f"- {e}" for e in recent)
+
+    text = "\n".join(lines)
+
+    # If still over budget, truncate recent further
+    if estimate_tokens(text) > _PREV_EVENTS_BUDGET_TOKENS:
+        half = _PREV_EVENTS_RECENT_COUNT // 2
+        recent = accumulated[-half:]
+        older_count = total - len(recent)
+        lines = [f"({older_count} earlier events omitted — names already taken, do NOT reuse)"]
+        lines.extend(f"- {e}" for e in recent)
+        text = "\n".join(lines)
+
+    return text
 
 
 # ── 페이즈 실행 ──────────────────────────────────────────────────
@@ -121,8 +172,8 @@ async def extract_events_from_user_stories_phase(
         action = getattr(us, "action", "")
         benefit = getattr(us, "benefit", "")
 
-        # 이전 이벤트 목록 텍스트
-        prev_text = "\n".join(f"- {e}" for e in accumulated_events) if accumulated_events else "(none)"
+        # 이전 이벤트 목록 텍스트 (토큰 예산 제한 적용)
+        prev_text = _format_previous_events(accumulated_events)
 
         prompt = EXTRACT_EVENTS_FROM_US_PROMPT.format(
             us_id=us_id,

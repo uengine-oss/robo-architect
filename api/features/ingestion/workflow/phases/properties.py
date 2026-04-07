@@ -15,6 +15,12 @@ from api.features.ingestion.event_storming.prompts import (
 )
 from api.features.ingestion.event_storming.structured_outputs import PropertyBatch
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
+from api.features.ingestion.workflow.utils.chunking import (
+    estimate_tokens,
+    split_list_with_overlap,
+    ACCUMULATED_NAMES_MAX,
+    DEFAULT_MAX_TOKENS,
+)
 from api.platform.env import (
     AI_AUDIT_LOG_ENABLED,
     AI_AUDIT_LOG_FULL_OUTPUT,
@@ -24,6 +30,10 @@ from api.platform.env import (
 from api.platform.keys import bc_key as build_bc_key
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
+
+# Chunking constants for intra-aggregate command/event splitting
+_PROP_CHUNK_CMD_SIZE = 15
+_PROP_CHUNK_CMD_OVERLAP = 2
 
 
 _NON_ALNUM = re.compile(r"[^a-zA-Z0-9]+")
@@ -104,6 +114,111 @@ def _dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         out[k] = r
     return list(out.values())
+
+
+_PROP_ACCUMULATED_BUDGET_TOKENS = 4000  # Max token budget for accumulated properties context
+
+
+def _format_accumulated_properties(accumulated: list[dict[str, Any]]) -> str:
+    """Format already-generated properties for prompt injection across chunks.
+
+    Applies progressive compression:
+    1. Full detail (parent + props list) if within budget
+    2. Compact (parent + prop count) if over budget
+    """
+    if not accumulated:
+        return ""
+
+    header = (
+        "\n\n## ALREADY GENERATED PROPERTIES (previous chunks)\n"
+        "The following properties have already been generated. "
+        "Maintain consistency with existing property names and types. "
+        "Do NOT regenerate properties for these parents.\n\n"
+    )
+
+    # Group by parentType+parentName
+    groups: dict[str, list[str]] = {}
+    for row in accumulated:
+        ptype = row.get("parentType", "")
+        pname = row.get("parentName", "")
+        prop_name = row.get("name", "")
+        prop_type = row.get("type", "")
+        key = f"{ptype} {pname}"
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(f"{prop_name}: {prop_type}")
+
+    # Try full detail first
+    lines = []
+    shown = 0
+    for parent, props in groups.items():
+        if shown >= ACCUMULATED_NAMES_MAX:
+            lines.append(f"... and {len(groups) - shown} more parents")
+            break
+        props_str = ", ".join(props[:8])
+        if len(props) > 8:
+            props_str += f" ... +{len(props) - 8} more"
+        lines.append(f"- {parent}: ({props_str})")
+        shown += 1
+
+    body = "\n".join(lines)
+
+    # Check budget and compress if needed
+    if estimate_tokens(header + body) > _PROP_ACCUMULATED_BUDGET_TOKENS:
+        compact_lines = []
+        shown = 0
+        for parent, props in groups.items():
+            if shown >= ACCUMULATED_NAMES_MAX:
+                compact_lines.append(f"... and {len(groups) - shown} more")
+                break
+            compact_lines.append(f"- {parent}: {len(props)} properties")
+            shown += 1
+        body = "\n".join(compact_lines)
+
+    return header + body + "\n"
+
+
+def _extract_rows_from_response(
+    resp: Any,
+    parent_id_by_key: dict[tuple[str, str], str],
+) -> list[dict[str, Any]]:
+    """Extract property rows from a PropertyBatch LLM response."""
+    rows: list[dict[str, Any]] = []
+    for parent in getattr(resp, "parents", []) or []:
+        ptype = str(getattr(parent, "parentType", "") or "").strip()
+        pkey = str(getattr(parent, "parentKey", "") or "").strip()
+        pid = parent_id_by_key.get((ptype, pkey))
+        if not pid:
+            continue
+        for prop in getattr(parent, "properties", []) or []:
+            raw_name = str(getattr(prop, "name", "") or "")
+            name = _to_camel_case(raw_name)
+            if not name:
+                continue
+            ptype_str = str(getattr(prop, "type", "") or "").strip()
+            if not ptype_str:
+                continue
+            desc = str(getattr(prop, "description", "") or "")
+            is_key = bool(getattr(prop, "isKey", False))
+            is_fk = bool(getattr(prop, "isForeignKey", False))
+            is_req = bool(getattr(prop, "isRequired", False))
+            fk_hint = _clean_fk_hint(is_fk, getattr(prop, "fkTargetHint", None))
+            prop_display_name = getattr(prop, "displayName", None) or name
+            rows.append(
+                {
+                    "parentType": ptype,
+                    "parentId": pid,
+                    "name": name,
+                    "displayName": prop_display_name,
+                    "type": ptype_str,
+                    "description": desc,
+                    "isKey": is_key,
+                    "isForeignKey": is_fk,
+                    "isRequired": is_req,
+                    "fkTargetHint": fk_hint,
+                }
+            )
+    return rows
 
 
 async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[ProgressEvent, None]:
@@ -219,102 +334,25 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                     except Exception:
                         pass
 
-            prompt = GENERATE_PROPERTIES_AGGREGATE_BATCH_PROMPT.format(
-                bc_id=bc_id,
-                bc_key=bc_key_value,
-                bc_name=bc_name or "",
-                bc_description=(bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", None)) or "",
-                aggregate_id=agg_id,
-                aggregate_key=agg_key,
-                aggregate_name=(agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)) or "",
-                aggregate_root_entity=(agg.get("root_entity") if isinstance(agg, dict) else getattr(agg, "root_entity", None)) or "",
-                aggregate_invariants=summarize_for_log((agg.get("invariants") if isinstance(agg, dict) else getattr(agg, "invariants", None)) or [], max_list=200),
-                aggregate_description=(agg.get("description") if isinstance(agg, dict) else getattr(agg, "description", None)) or "",
-                commands=commands_text,
-                events=events_text,
-                known_aggregate_keys=known_aggregate_keys_text,
-            )
-            if schema_context:
-                prompt += (
-                    f"\n\n{schema_context}\n"
-                    "위 테이블 스키마의 컬럼 타입을 참고하여 Property 타입을 맞추세요.\n"
-                    "FK 관계가 있으면 isForeignKey로 표시하세요."
-                )
+            # Common prompt fragments
+            agg_name_val = (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)) or ""
+            bc_desc_val = (bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", None)) or ""
+            agg_root_val = (agg.get("root_entity") if isinstance(agg, dict) else getattr(agg, "root_entity", None)) or ""
+            agg_inv_val = summarize_for_log((agg.get("invariants") if isinstance(agg, dict) else getattr(agg, "invariants", None)) or [], max_list=200)
+            agg_desc_val = (agg.get("description") if isinstance(agg, dict) else getattr(agg, "description", None)) or ""
 
             display_lang = getattr(ctx, "display_language", "ko") or "ko"
-            prompt += (
+            display_tail = (
                 "\n\n10) For each Property output displayName: a short UI label in Korean (e.g. '주문 번호', '고객명')."
                 if display_lang == "ko"
                 else "\n\n10) For each Property output displayName: a short UI label in English (e.g. 'Order ID', 'Customer Name')."
             )
-            structured_llm = ctx.llm.with_structured_output(PropertyBatch)
-            if AI_AUDIT_LOG_ENABLED:
-                SmartLogger.log(
-                    "INFO",
-                    "Ingestion: generate properties (aggregate batch) - LLM invoke starting.",
-                    category="ingestion.llm.generate_properties.start",
-                    params={
-                        "session_id": ctx.session.id,
-                        "llm": {"provider": provider, "model": model},
-                        "scope": "aggregate_batch",
-                        "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
-                        "aggregate": {"id": agg_id, "name": (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)), "key": agg_key},
-                        "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
-                        "system_prompt": SYSTEM_PROMPT,
-                    },
-                )
-
-            t_llm0 = time.perf_counter()
-            try:
-                resp = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        structured_llm.invoke,
-                        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
-                    ),
-                    timeout=300.0,
-                )
-            except asyncio.TimeoutError:
-                SmartLogger.log(
-                    "ERROR",
-                    "Property generation timed out (300s) - aggregate batch",
-                    category="ingestion.workflow.properties.timeout",
-                    params={"session_id": ctx.session.id, "scope": "aggregate_batch", "bc_id": bc_id, "agg_id": agg_id},
-                )
-                continue
-            except Exception as e:
-                SmartLogger.log(
-                    "WARNING",
-                    "Property generation failed (LLM) - aggregate batch",
-                    category="ingestion.workflow.properties",
-                    params={
-                        "session_id": ctx.session.id,
-                        "scope": "aggregate_batch",
-                        "bc_id": bc_id,
-                        "agg_id": agg_id,
-                        "error": str(e),
-                    },
-                )
-                continue
-            llm_ms = int((time.perf_counter() - t_llm0) * 1000)
-
-            if AI_AUDIT_LOG_ENABLED:
-                try:
-                    resp_dump = resp.model_dump() if hasattr(resp, "model_dump") else resp.dict()
-                except Exception:
-                    resp_dump = {"__type__": type(resp).__name__, "__repr__": repr(resp)[:1000]}
-                SmartLogger.log(
-                    "INFO",
-                    "Ingestion: generate properties (aggregate batch) - LLM invoke completed.",
-                    category="ingestion.llm.generate_properties.done",
-                    params={
-                        "session_id": ctx.session.id,
-                        "llm": {"provider": provider, "model": model},
-                        "scope": "aggregate_batch",
-                        "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
-                        "aggregate": {"id": agg_id, "name": (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)), "key": agg_key},
-                        "llm_ms": llm_ms,
-                        "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
-                    },
+            schema_tail = ""
+            if schema_context:
+                schema_tail = (
+                    f"\n\n{schema_context}\n"
+                    "위 테이블 스키마의 컬럼 타입을 참고하여 Property 타입을 맞추세요.\n"
+                    "FK 관계가 있으면 isForeignKey로 표시하세요."
                 )
 
             # Build parentKey -> parentId map for this scope
@@ -334,43 +372,237 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 if ek and eid:
                     parent_id_by_key[("Event", ek)] = eid
 
-            rows: list[dict[str, Any]] = []
-            for parent in getattr(resp, "parents", []) or []:
-                ptype = str(getattr(parent, "parentType", "") or "").strip()
-                pkey = str(getattr(parent, "parentKey", "") or "").strip()
-                pid = parent_id_by_key.get((ptype, pkey))
-                if not pid:
-                    continue
-                for prop in getattr(parent, "properties", []) or []:
-                    raw_name = str(getattr(prop, "name", "") or "")
-                    name = _to_camel_case(raw_name)
-                    if not name:
+            # ── Chunking decision ──
+            test_prompt_tokens = estimate_tokens(
+                commands_text + events_text + schema_tail + known_aggregate_keys_text
+            )
+            needs_chunking = (
+                len(commands) > _PROP_CHUNK_CMD_SIZE
+                or test_prompt_tokens > DEFAULT_MAX_TOKENS
+            )
+
+            structured_llm = ctx.llm.with_structured_output(PropertyBatch)
+
+            if needs_chunking and commands:
+                # ── Chunked property generation ──
+                cmd_chunks = split_list_with_overlap(
+                    commands, chunk_size=_PROP_CHUNK_CMD_SIZE, overlap_count=_PROP_CHUNK_CMD_OVERLAP
+                )
+                # Also chunk events proportionally based on commands
+                evt_chunks = split_list_with_overlap(
+                    events, chunk_size=max(len(events) // len(cmd_chunks), 5), overlap_count=1
+                ) if events else [[] for _ in cmd_chunks]
+                # Pad evt_chunks to match cmd_chunks length
+                while len(evt_chunks) < len(cmd_chunks):
+                    evt_chunks.append([])
+
+                total_chunks = len(cmd_chunks)
+                SmartLogger.log(
+                    "INFO",
+                    f"Property generation for agg '{agg_name_val}': chunking {len(commands)} cmds + "
+                    f"{len(events)} evts into {total_chunks} chunks",
+                    category="ingestion.workflow.properties.chunking",
+                    params={
+                        "session_id": ctx.session.id,
+                        "agg_id": agg_id,
+                        "total_commands": len(commands),
+                        "total_events": len(events),
+                        "total_chunks": total_chunks,
+                    },
+                )
+
+                accumulated_props: list[dict[str, Any]] = []
+                all_rows: list[dict[str, Any]] = []
+
+                for chunk_idx in range(total_chunks):
+                    chunk_cmds = cmd_chunks[chunk_idx]
+                    chunk_evts = evt_chunks[chunk_idx] if chunk_idx < len(evt_chunks) else []
+
+                    # Build chunk-specific command/event text
+                    chunk_cmd_lines = []
+                    for cmd in chunk_cmds:
+                        cmd_key = str((cmd.get("key") if isinstance(cmd, dict) else getattr(cmd, "key", None)) or "").strip()
+                        cmd_id = str((cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)) or "").strip()
+                        if not cmd_key or not cmd_id:
+                            continue
+                        cmd_name = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                        cmd_actor = cmd.get("actor") if isinstance(cmd, dict) else getattr(cmd, "actor", "")
+                        cmd_category = cmd.get("category") if isinstance(cmd, dict) else getattr(cmd, "category", None)
+                        cmd_input_schema = cmd.get("inputSchema") if isinstance(cmd, dict) else getattr(cmd, "inputSchema", None)
+                        cmd_description = cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", "")
+                        chunk_cmd_lines.append(
+                            f"- key: {cmd_key}\n  id: {cmd_id}\n  name: {cmd_name}\n"
+                            f"  actor: {cmd_actor}\n  category: {cmd_category or ''}\n"
+                            f"  inputSchema: {cmd_input_schema or ''}\n  description: {cmd_description}"
+                        )
+                    chunk_cmds_text = "\n".join(chunk_cmd_lines) if chunk_cmd_lines else "None"
+
+                    chunk_evt_lines = []
+                    for evt in chunk_evts:
+                        evt_key = str((evt.get("key") if isinstance(evt, dict) else getattr(evt, "key", None)) or "").strip()
+                        evt_id = str((evt.get("id") if isinstance(evt, dict) else getattr(evt, "id", None)) or "").strip()
+                        if not evt_key or not evt_id:
+                            continue
+                        chunk_evt_lines.append(
+                            f"- key: {evt_key}\n  id: {evt_id}\n"
+                            f"  name: {getattr(evt, 'name', '')}\n"
+                            f"  version: {getattr(evt, 'version', '1.0.0') or '1.0.0'}\n"
+                            f"  payload: {getattr(evt, 'payload', None) or ''}\n"
+                            f"  description: {getattr(evt, 'description', '')}"
+                        )
+                    chunk_evts_text = "\n".join(chunk_evt_lines) if chunk_evt_lines else "None"
+
+                    chunk_prompt = GENERATE_PROPERTIES_AGGREGATE_BATCH_PROMPT.format(
+                        bc_id=bc_id, bc_key=bc_key_value, bc_name=bc_name or "",
+                        bc_description=bc_desc_val, aggregate_id=agg_id,
+                        aggregate_key=agg_key, aggregate_name=agg_name_val,
+                        aggregate_root_entity=agg_root_val,
+                        aggregate_invariants=agg_inv_val,
+                        aggregate_description=agg_desc_val,
+                        commands=chunk_cmds_text, events=chunk_evts_text,
+                        known_aggregate_keys=known_aggregate_keys_text,
+                    ) + schema_tail + display_tail
+
+                    # Inject accumulated properties from previous chunks
+                    if accumulated_props:
+                        chunk_prompt += _format_accumulated_properties(accumulated_props)
+
+                    t_llm0 = time.perf_counter()
+                    try:
+                        resp = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                structured_llm.invoke,
+                                [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=chunk_prompt)]
+                            ),
+                            timeout=300.0,
+                        )
+                    except asyncio.TimeoutError:
+                        SmartLogger.log(
+                            "ERROR",
+                            f"Property generation chunk {chunk_idx + 1}/{total_chunks} timed out",
+                            category="ingestion.workflow.properties.chunk_timeout",
+                            params={"session_id": ctx.session.id, "agg_id": agg_id, "chunk_index": chunk_idx},
+                        )
                         continue
-                    ptype_str = str(getattr(prop, "type", "") or "").strip()
-                    if not ptype_str:
+                    except Exception as e:
+                        SmartLogger.log(
+                            "WARNING",
+                            f"Property generation chunk {chunk_idx + 1}/{total_chunks} failed: {e}",
+                            category="ingestion.workflow.properties.chunk_error",
+                            params={"session_id": ctx.session.id, "agg_id": agg_id, "chunk_index": chunk_idx, "error": str(e)},
+                        )
                         continue
-                    desc = str(getattr(prop, "description", "") or "")
-                    is_key = bool(getattr(prop, "isKey", False))
-                    is_fk = bool(getattr(prop, "isForeignKey", False))
-                    is_req = bool(getattr(prop, "isRequired", False))
-                    fk_hint = _clean_fk_hint(is_fk, getattr(prop, "fkTargetHint", None))
-                    prop_display_name = getattr(prop, "displayName", None) or name
-                    rows.append(
-                        {
-                            "parentType": ptype,
-                            "parentId": pid,
-                            "name": name,
-                            "displayName": prop_display_name,
-                            "type": ptype_str,
-                            "description": desc,
-                            "isKey": is_key,
-                            "isForeignKey": is_fk,
-                            "isRequired": is_req,
-                            "fkTargetHint": fk_hint,
-                        }
+
+                    chunk_rows = _extract_rows_from_response(resp, parent_id_by_key)
+                    all_rows.extend(chunk_rows)
+
+                    # Accumulate for next chunk
+                    for row in chunk_rows:
+                        accumulated_props.append({
+                            "parentType": row.get("parentType", ""),
+                            "parentName": row.get("name", ""),
+                            "name": row.get("name", ""),
+                            "type": row.get("type", ""),
+                        })
+
+                    SmartLogger.log(
+                        "INFO",
+                        f"Property chunk {chunk_idx + 1}/{total_chunks} for agg '{agg_name_val}': "
+                        f"{len(chunk_rows)} properties",
+                        category="ingestion.workflow.properties.chunk_done",
+                        params={
+                            "session_id": ctx.session.id,
+                            "agg_id": agg_id,
+                            "chunk_index": chunk_idx,
+                            "chunk_rows": len(chunk_rows),
+                        },
                     )
 
-            rows = _dedupe_rows(rows)
+                rows = _dedupe_rows(all_rows)
+            else:
+                # ── Single LLM call (existing path) ──
+                prompt = GENERATE_PROPERTIES_AGGREGATE_BATCH_PROMPT.format(
+                    bc_id=bc_id, bc_key=bc_key_value, bc_name=bc_name or "",
+                    bc_description=bc_desc_val, aggregate_id=agg_id,
+                    aggregate_key=agg_key, aggregate_name=agg_name_val,
+                    aggregate_root_entity=agg_root_val,
+                    aggregate_invariants=agg_inv_val,
+                    aggregate_description=agg_desc_val,
+                    commands=commands_text, events=events_text,
+                    known_aggregate_keys=known_aggregate_keys_text,
+                ) + schema_tail + display_tail
+
+                if AI_AUDIT_LOG_ENABLED:
+                    SmartLogger.log(
+                        "INFO",
+                        "Ingestion: generate properties (aggregate batch) - LLM invoke starting.",
+                        category="ingestion.llm.generate_properties.start",
+                        params={
+                            "session_id": ctx.session.id,
+                            "llm": {"provider": provider, "model": model},
+                            "scope": "aggregate_batch",
+                            "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
+                            "aggregate": {"id": agg_id, "name": agg_name_val, "key": agg_key},
+                            "prompt": prompt if AI_AUDIT_LOG_FULL_PROMPT else summarize_for_log(prompt),
+                            "system_prompt": SYSTEM_PROMPT,
+                        },
+                    )
+
+                t_llm0 = time.perf_counter()
+                try:
+                    resp = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            structured_llm.invoke,
+                            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                        ),
+                        timeout=300.0,
+                    )
+                except asyncio.TimeoutError:
+                    SmartLogger.log(
+                        "ERROR",
+                        "Property generation timed out (300s) - aggregate batch",
+                        category="ingestion.workflow.properties.timeout",
+                        params={"session_id": ctx.session.id, "scope": "aggregate_batch", "bc_id": bc_id, "agg_id": agg_id},
+                    )
+                    continue
+                except Exception as e:
+                    SmartLogger.log(
+                        "WARNING",
+                        "Property generation failed (LLM) - aggregate batch",
+                        category="ingestion.workflow.properties",
+                        params={
+                            "session_id": ctx.session.id,
+                            "scope": "aggregate_batch",
+                            "bc_id": bc_id,
+                            "agg_id": agg_id,
+                            "error": str(e),
+                        },
+                    )
+                    continue
+                llm_ms = int((time.perf_counter() - t_llm0) * 1000)
+
+                if AI_AUDIT_LOG_ENABLED:
+                    try:
+                        resp_dump = resp.model_dump() if hasattr(resp, "model_dump") else resp.dict()
+                    except Exception:
+                        resp_dump = {"__type__": type(resp).__name__, "__repr__": repr(resp)[:1000]}
+                    SmartLogger.log(
+                        "INFO",
+                        "Ingestion: generate properties (aggregate batch) - LLM invoke completed.",
+                        category="ingestion.llm.generate_properties.done",
+                        params={
+                            "session_id": ctx.session.id,
+                            "llm": {"provider": provider, "model": model},
+                            "scope": "aggregate_batch",
+                            "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
+                            "aggregate": {"id": agg_id, "name": agg_name_val, "key": agg_key},
+                            "llm_ms": llm_ms,
+                            "response": resp_dump if AI_AUDIT_LOG_FULL_OUTPUT else summarize_for_log(resp_dump, max_list=5000, max_dict_items=5000),
+                        },
+                    )
+
+                rows = _dedupe_rows(_extract_rows_from_response(resp, parent_id_by_key))
+
             if rows:
                 res = ctx.client.upsert_properties_bulk(rows)
                 upserted = int((res or {}).get("upserted") or 0)
@@ -385,7 +617,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                         "session_id": ctx.session.id,
                         "scope": "aggregate_batch",
                         "bc": {"id": bc_id, "name": bc_name, "key": bc_key_value},
-                        "aggregate": {"id": agg_id, "name": (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)), "key": agg_key},
+                        "aggregate": {"id": agg_id, "name": agg_name_val, "key": agg_key},
                         "rows": len(rows),
                         "upserted": upserted,
                     },
@@ -393,7 +625,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
 
                 yield ProgressEvent(
                     phase=IngestionPhase.GENERATING_PROPERTIES,
-                    message=f"Property 생성/업데이트: {getattr(agg, 'name', '')}",
+                    message=f"Property 생성/업데이트: {agg_name_val}",
                     progress=87,
                     data={"scope": "aggregate_batch", "aggregateId": agg_id, "upserted": upserted, "rows": len(rows)},
                 )
@@ -506,43 +738,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 },
             )
 
-        rows: list[dict[str, Any]] = []
-        for parent in getattr(resp, "parents", []) or []:
-            ptype = str(getattr(parent, "parentType", "") or "").strip()
-            pkey = str(getattr(parent, "parentKey", "") or "").strip()
-            pid = parent_id_by_key_rm.get((ptype, pkey))
-            if not pid:
-                continue
-            for prop in getattr(parent, "properties", []) or []:
-                raw_name = str(getattr(prop, "name", "") or "")
-                name = _to_camel_case(raw_name)
-                if not name:
-                    continue
-                ptype_str = str(getattr(prop, "type", "") or "").strip()
-                if not ptype_str:
-                    continue
-                desc = str(getattr(prop, "description", "") or "")
-                is_key = bool(getattr(prop, "isKey", False))
-                is_fk = bool(getattr(prop, "isForeignKey", False))
-                is_req = bool(getattr(prop, "isRequired", False))
-                fk_hint = _clean_fk_hint(is_fk, getattr(prop, "fkTargetHint", None))
-                prop_display_name = getattr(prop, "displayName", None) or name
-                rows.append(
-                    {
-                        "parentType": ptype,
-                        "parentId": pid,
-                        "name": name,
-                        "displayName": prop_display_name,
-                        "type": ptype_str,
-                        "description": desc,
-                        "isKey": is_key,
-                        "isForeignKey": is_fk,
-                        "isRequired": is_req,
-                        "fkTargetHint": fk_hint,
-                    }
-                )
-
-        rows = _dedupe_rows(rows)
+        rows = _dedupe_rows(_extract_rows_from_response(resp, parent_id_by_key_rm))
         if rows:
             res = ctx.client.upsert_properties_bulk(rows)
             upserted = int((res or {}).get("upserted") or 0)

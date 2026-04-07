@@ -74,7 +74,10 @@ Complete
 - **역할**: 전체 UserStory에 비즈니스 흐름 순서(sequence) 할당
 - **방식**: 요약본(역할+행위)만 LLM에 전달하여 토큰 절감
 - **순서 기준**: 자연스러운 사용자 여정 (가입 → 인증 → 탐색 → 선택 → 주문 → 결제 → 배송 → 리뷰)
-- **LLM 타임아웃**: 300s
+- **청킹**: 지원 (80개 초과 시 60개씩 chunking, overlap 5개)
+  - 이전 청크의 `{us_id: sequence}` 매핑을 다음 청크에 전달 (분포 요약 + overlap US 상세)
+  - **토큰 예산**: accumulated context 4,000 토큰 제한
+- **LLM 타임아웃**: 120s
 - **출력**: `ctx.user_stories[].sequence` (Neo4j UserStory 노드에도 저장)
 - **비고**: Event Modeling 타임라인의 X축 기준이 됨
 
@@ -83,9 +86,11 @@ Complete
 - **프롬프트 위치**: 동일 파일 (EXTRACT_EVENTS_FROM_US_PROMPT)
 - **역할**: UserStory별 비즈니스 Event 독립 추출 (Command 없이)
 - **청킹**: 없음 (UserStory 단위 1회 호출)
+- **Accumulated context**: 이전 US에서 생성된 이벤트 목록을 누적 전달 (중복 방지)
+  - **토큰 예산**: 4,000 토큰 제한. 최근 30개 이벤트만 상세, 나머지는 개수 요약
 - **Event sequence**: UserStory의 sequence를 기반으로 Event에 자동 할당
 - **Neo4j 관계**: `UserStory -[:HAS_EVENT]-> Event` 생성
-- **LLM 타임아웃**: 300s
+- **LLM 타임아웃**: 60s
 - **출력**: Neo4j Event 노드 직접 생성
 - **비고**: 기존 `events.py` (Command별 추출) 대신 사용. Command는 이후 단계에서 기존 Event에 EMITS 연결
 - **네이밍 규칙**: `name` 필드는 반드시 영문 PascalCase (한글/특수문자 금지). `displayName`에만 로컬라이즈 라벨. 실패 이벤트는 `성공이벤트명 stem + Failed` 패턴 (예: `OrderPlaced → OrderPlacementFailed`)
@@ -105,7 +110,11 @@ Complete
 - **파일**: `workflow/phases/aggregates.py`
 - **프롬프트 위치**: `event_storming/prompts.py` (EXTRACT_AGGREGATES_PROMPT)
 - **역할**: BC별 Aggregate 식별
-- **청킹**: 없음 (BC 단위로 1회 LLM 호출)
+- **청킹**: 지원 (BC 내 events 30개 초과 또는 토큰 제한 초과 시 intra-BC chunking)
+  - events를 30개씩 분할, overlap 3개
+  - 이전 청크에서 생성된 aggregate + covered_events를 다음 청크에 전달
+  - cross-BC existing aggregates는 모든 청크에 동일 포함
+  - **토큰 예산**: intra-BC accumulated context 5,000 토큰 제한
 - **LLM 타임아웃**: 300s
 - **출력**: `ctx.aggregates_by_bc`
 - **비고**: Value Object 참조 검증 (이전 BC의 Aggregate 이름 기준)
@@ -124,6 +133,7 @@ Complete
   4. 재시도 후에도 0건이면 최종 WARN 로그 (`ingestion.workflow.commands.emits_zero_final`)
 - **EMITS 검증**: 3개 초과 시 WARN 로그 (`ingestion.workflow.commands.emits_excessive`)
 - **중복 검출**: `already_created_commands`에 displayName 포함 + Semantic Duplicate Detection 규칙 (프롬프트)
+  - **토큰 예산**: already_created_commands 4,000 토큰 제한. 최근 50개 상세, 나머지 개수 요약
 - **청킹**: 지원 (User Story 텍스트 기반, DEFAULT_CHUNK_SIZE=80k 토큰, overlap=2k)
   - should_chunk(full_prompt_text) → 100k 토큰 초과 시 활성화
 - **LLM 타임아웃**: 300s
@@ -135,6 +145,7 @@ Complete
 - **역할**: BC별 ReadModel 식별
 - **청킹**: 지원 (User Stories + Events 텍스트 기반, DEFAULT_CHUNK_SIZE=80k 토큰)
   - User Stories와 Events 텍스트를 각각 독립적으로 청킹한 뒤 조합
+  - cross-BC ReadModel dedup 섹션에 **토큰 예산 3,000 토큰** 적용
 - **LLM 타임아웃**: 300s
 - **출력**: `ctx.readmodels_by_bc`
 - **CQRS 미연결 이벤트 보고**: Phase 완료 후 `TRIGGERED_BY` 관계가 없고 `~Failed`로 끝나지 않는 Event 집계 → WARN 로그 (`ingestion.workflow.readmodels.cqrs_orphan_events`)
@@ -143,7 +154,10 @@ Complete
 - **파일**: `workflow/phases/properties.py`
 - **프롬프트 위치**: `event_storming/prompts.py` (GENERATE_PROPERTIES_AGGREGATE_BATCH_PROMPT, GENERATE_PROPERTIES_READMODELS_BATCH_PROMPT)
 - **역할**: Aggregate/Command/Event/ReadModel 속성 생성
-- **청킹**: 없음 (BC별 Aggregate 배치 + BC별 ReadModel 배치)
+- **청킹**: 지원 (Aggregate 내 commands 15개 초과 또는 토큰 제한 초과 시 chunking)
+  - commands를 15개씩 분할, overlap 2개. 관련 events도 비례 분할
+  - 이전 청크에서 생성된 property 요약을 다음 청크에 전달
+  - **토큰 예산**: accumulated properties context 4,000 토큰 제한
 - **LLM 타임아웃**: 300s (2곳: aggregate batch, readmodels batch)
 - **출력**: Neo4j에 직접 저장 (upsert)
 
@@ -268,18 +282,39 @@ UI -[:ATTACHED_TO]-> Command | ReadModel
 - **Commands**: 80k 토큰 (DEFAULT_CHUNK_SIZE), 2k 문자 overlap
   - 100k 토큰 초과 시 활성화
 - **ReadModels**: 80k 토큰, User Stories + Events 각각 독립 청킹
-- **Policies**: 80k 토큰, Events/Commands 텍스트 기반
+- **Policies**: 80k 토큰, Events 텍스트 기반. 관련 BC의 US/Commands만 필터링
 
 ### 리스트 기반 청킹 (split_list_with_overlap):
 - **Bounded Contexts**: 30개 User Stories per chunk, overlap 3개
+- **User Story Sequencing**: 60개 US per chunk, overlap 5개
+- **Aggregates (intra-BC)**: 30개 Events per chunk, overlap 3개
+- **Properties (intra-Aggregate)**: 15개 Commands per chunk, overlap 2개
 - **GWT**: 8개 Commands per chunk, overlap 1개, max_tokens 60k
 
 ### 청킹 없는 Phase:
-- **User Story Sequencing**: 전체 US 요약본 1회 호출
-- **Events (per US)**: UserStory 단위 1회 호출
-- **Aggregates**: BC 단위 1회 호출
-- **Properties**: BC별 Aggregate 배치 + BC별 ReadModel 배치
+- **Events (per US)**: UserStory 단위 1회 호출 (accumulated events는 토큰 예산 제한)
 - **UI Wireframes**: Command/ReadModel 단위 개별 호출
+- **References**: 규칙 기반 (LLM 미사용)
+- **Parsing**: 단순 검증 (LLM 미사용)
+
+### 토큰 예산 제한 (Token Budget)
+
+청킹 시 이전 청크 결과를 다음 청크에 전달(accumulated context)하면 해당 섹션이
+청크가 진행될수록 무한히 커질 수 있음. 이를 방지하기 위해 각 accumulated section에
+**하드 토큰 캡**을 설정:
+
+| Phase | Accumulated 내용 | 토큰 예산 | 압축 전략 |
+|-------|-----------------|----------|----------|
+| US Sequencing | `{us_id: seq}` 매핑 | 4,000 | 분포 요약 + overlap US만 상세. 초과 시 sample 제거 |
+| Events (per US) | 이전 이벤트 이름 | 4,000 | 최근 30개 상세, 나머지 개수 요약 |
+| Aggregates (intra-BC) | aggregate + covered events | 5,000 | `name [events]` → 초과 시 `name (N events)` |
+| Commands | already_created_commands | 4,000 | 최근 50개 상세+displayName → 초과 시 이름만 |
+| ReadModels | cross-BC RM names | 3,000 | format_accumulated_names → 초과 시 최근 30개+개수 |
+| Properties (intra-Agg) | property 요약 | 4,000 | `parent (props list)` → 초과 시 `parent: N props` |
+| Policies | trigger→invoke 매핑 | 4,000 | 상세 매핑 → 초과 시 이름 목록만 |
+
+**설계 원칙**: 예산 내에서는 상세 정보, 초과 시 자동으로 compact 포맷 전환.
+`estimate_tokens()`로 실측하여 압축 여부 결정.
 
 ## LLM 타임아웃
 
@@ -289,13 +324,13 @@ UI -[:ATTACHED_TO]-> Command | ReadModel
 |---|---|---|
 | Parsing | N/A | LLM 미사용 |
 | User Stories | 내부 관리 | extract_user_stories_from_text |
-| User Story Sequencing | 300s | 전체 US 1회 |
-| Events (per US) | 300s | UserStory별 |
+| User Story Sequencing | 120s | 청크별 (60개씩) |
+| Events (per US) | 60s | UserStory별 |
 | Bounded Contexts | 300s | 4곳 (청크별, 보정, 단일패스, 할당) |
-| Aggregates | 300s | BC별 1회 |
+| Aggregates | 300s | BC별 (intra-BC chunking 시 청크별) |
 | Commands | 300s | 청크별, EMITS 링크 포함 |
 | ReadModels | 300s | 청크별 |
-| Properties | 300s | 2곳 (aggregate batch, readmodels batch) |
+| Properties | 300s | aggregate batch (intra-agg chunking 시 청크별) + readmodels batch |
 | References | N/A | LLM 미사용 |
 | Policies | 300s | 청크별, 3단계 이벤트 fallback |
 | GWT | 300s | 청크별 |

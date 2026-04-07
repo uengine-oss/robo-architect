@@ -16,14 +16,43 @@ from api.features.ingestion.event_storming.structured_outputs import ReadModelLi
 from api.features.ingestion.event_storming.prompts import EXTRACT_READMODELS_PROMPT, SYSTEM_PROMPT
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.features.ingestion.workflow.utils.chunking import (
+    estimate_tokens,
     should_chunk,
     split_text_with_overlap,
     merge_chunk_results,
     calculate_chunk_progress,
+    format_accumulated_names,
 )
+
+# Token budget for the cross-BC ReadModel dedup section.
+_RM_DEDUP_BUDGET_TOKENS = 3000
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
+
+
+def _format_rm_dedup_section(names: list[str]) -> str:
+    """Format cross-BC ReadModel dedup section with token budget."""
+    header = (
+        "\n\n## CROSS-BC READMODEL DEDUPLICATION\n"
+        "The following ReadModel names have ALREADY been created in other Bounded Contexts. "
+        "Do NOT create ReadModels with these exact names. If this BC needs similar query capability, "
+        "use a distinct name that reflects this BC's specific perspective.\n"
+        "Already existing: "
+    )
+    body = format_accumulated_names(names)
+    section = header + body
+
+    if estimate_tokens(section) > _RM_DEDUP_BUDGET_TOKENS:
+        # Compress: just count + recent names
+        recent = names[-30:]
+        older = len(names) - len(recent)
+        compact = ", ".join(recent)
+        if older > 0:
+            compact = f"({older} earlier names omitted), " + compact
+        section = header + compact
+
+    return section
 
 
 async def _create_readmodel_with_links(
@@ -270,16 +299,9 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             events=events_text,
         ) + display_name_tail
 
-        # Cross-BC ReadModel dedup: inject existing names into prompt
+        # Cross-BC ReadModel dedup: inject existing names into prompt (with token budget)
         if _existing_readmodel_names:
-            from api.features.ingestion.workflow.utils.chunking import format_accumulated_names
-            dedup_warning = (
-                "\n\n## CROSS-BC READMODEL DEDUPLICATION\n"
-                "The following ReadModel names have ALREADY been created in other Bounded Contexts. "
-                "Do NOT create ReadModels with these exact names. If this BC needs similar query capability, "
-                "use a distinct name that reflects this BC's specific perspective.\n"
-                "Already existing: " + format_accumulated_names(_existing_readmodel_names)
-            )
+            dedup_warning = _format_rm_dedup_section(_existing_readmodel_names)
             full_prompt_text += dedup_warning
 
         # 청킹 필요 여부 판단
@@ -317,12 +339,7 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     events=chunk_events,
                 ) + display_name_tail                # Cross-BC ReadModel dedup for chunks too
                 if _existing_readmodel_names:
-                    chunk_prompt += (
-                        "\n\n## CROSS-BC READMODEL DEDUPLICATION\n"
-                        "The following ReadModel names have ALREADY been created in other Bounded Contexts. "
-                        "Do NOT create ReadModels with these exact names.\n"
-                        "Already existing: " + format_accumulated_names(_existing_readmodel_names)
-                    )
+                    chunk_prompt += _format_rm_dedup_section(_existing_readmodel_names)
 
                 structured_llm = ctx.llm.with_structured_output(ReadModelList)
 

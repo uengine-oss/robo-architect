@@ -16,10 +16,17 @@ from api.features.ingestion.event_storming.nodes import CommandList
 from api.features.ingestion.event_storming.prompts import EXTRACT_COMMANDS_PROMPT, SYSTEM_PROMPT
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.features.ingestion.workflow.utils.chunking import (
+    estimate_tokens,
     should_chunk,
     split_text_with_overlap,
     merge_chunk_results,
 )
+
+# Token budget for the <already_created_commands> section injected into each
+# per-Aggregate prompt.  Prevents the accumulated command list from causing
+# context overflow as more Aggregates are processed.
+_CMD_DEDUP_BUDGET_TOKENS = 4000
+_CMD_DEDUP_RECENT_COUNT = 50  # always show the last N commands in detail
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
@@ -249,6 +256,53 @@ async def _create_command_with_links(
         return None, f"Command creation failed: {e}"
 
 
+def _format_existing_commands(
+    names: list[str],
+    display_names: dict[str, str],
+) -> str:
+    """Format already-created command names for prompt injection with token budget.
+
+    Shows recent commands in detail, older ones as a count summary.
+    """
+    if not names:
+        return ""
+
+    header = (
+        "\n\n<already_created_commands>\n"
+        "The following Commands have already been created in OTHER Aggregates. "
+        "Do NOT create Commands with the same or very similar names/intent "
+        "(including semantic duplicates like 'NotifyX' vs 'SendXNotification'):\n"
+    )
+    footer = "\n</already_created_commands>"
+
+    total = len(names)
+
+    # Build full detail lines for recent commands
+    recent = names[-_CMD_DEDUP_RECENT_COUNT:]
+    older_count = total - len(recent)
+
+    lines: list[str] = []
+    if older_count > 0:
+        lines.append(f"({older_count} earlier commands omitted — names already taken)")
+    for cn in recent:
+        dn = display_names.get(cn)
+        lines.append(f"- {cn}" + (f" ({dn})" if dn and dn != cn else ""))
+
+    body = "\n".join(lines)
+
+    # Check budget; compress if needed
+    if estimate_tokens(header + body + footer) > _CMD_DEDUP_BUDGET_TOKENS:
+        # Ultra-compact: just names, no displayNames
+        half = _CMD_DEDUP_RECENT_COUNT // 2
+        recent = names[-half:]
+        older_count = total - len(recent)
+        lines = [f"({older_count} earlier commands omitted)"]
+        lines.extend(f"- {cn}" for cn in recent)
+        body = "\n".join(lines)
+
+    return header + body + footer
+
+
 async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[ProgressEvent, None]:
     """
     Phase 5: extract commands per aggregate and persist them.
@@ -345,20 +399,12 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 available_events=events_text,
             ) + display_name_tail
             # Inject already-created commands to prevent cross-aggregate duplication
+            # (with token budget to prevent accumulated context overflow)
             if _existing_command_names:
-                # Include displayName so LLM can detect semantic duplicates
-                _cmd_lines = []
-                for _cn in _existing_command_names:
-                    _dn = _existing_command_display_names.get(_cn)
-                    _cmd_lines.append(f"- {_cn}" + (f" ({_dn})" if _dn and _dn != _cn else ""))
-                full_prompt_text += (
-                    "\n\n<already_created_commands>\n"
-                    "The following Commands have already been created in OTHER Aggregates. "
-                    "Do NOT create Commands with the same or very similar names/intent "
-                    "(including semantic duplicates like 'NotifyX' vs 'SendXNotification'):\n"
-                    + "\n".join(_cmd_lines)
-                    + "\n</already_created_commands>"
+                _dedup_section = _format_existing_commands(
+                    _existing_command_names, _existing_command_display_names,
                 )
+                full_prompt_text += _dedup_section
 
             # 청킹 필요 여부 판단
             if should_chunk(full_prompt_text):

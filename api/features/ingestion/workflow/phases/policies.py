@@ -20,6 +20,8 @@ from api.features.ingestion.workflow.utils.chunking import (
     split_text_with_overlap,
     merge_chunk_results,
     calculate_chunk_progress,
+    format_accumulated_names,
+    ACCUMULATED_NAMES_MAX,
 )
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
@@ -468,7 +470,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             )
             
             chunk_results = []
-            _accumulated_policy_names: list[str] = []
+            _accumulated_policies: list[dict[str, str]] = []  # [{name, trigger, invoke, bc}]
 
             for i, (chunk_events_text, start_char, end_char) in enumerate(chunks):
                 # Check cancellation before processing chunk
@@ -480,7 +482,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                         data={"error": "Cancelled by user", "cancelled": True},
                     )
                     return
-                
+
                 # 청크 처리 시작
                 chunk_progress = calculate_chunk_progress(
                     PHASE_START + 2,
@@ -494,23 +496,85 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     message=f"청크 {i+1}/{total_chunks} 처리 중... ({start_char:,}~{end_char:,} 문자)",
                     progress=chunk_progress
                 )
-                
+
+                # Filter US/commands to BCs mentioned in this event chunk
+                chunk_bc_names: set[str] = set()
+                for line in chunk_events_text.split("\n"):
+                    # Extract BC name from "- EventName (from BCName): desc"
+                    if "(from " in line:
+                        bc_part = line.split("(from ")[-1].split(")")[0].strip()
+                        if bc_part:
+                            chunk_bc_names.add(bc_part)
+
+                # Build filtered user_stories/commands for relevant BCs only
+                if chunk_bc_names:
+                    # Get US IDs for relevant BCs
+                    relevant_us_ids: set[str] = set()
+                    for bc in ctx.bounded_contexts:
+                        bc_name_val = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+                        if bc_name_val in chunk_bc_names:
+                            bc_us_ids = []
+                            try:
+                                if hasattr(bc, "model_dump"):
+                                    bc_us_ids = bc.model_dump().get("user_story_ids", [])
+                                elif isinstance(bc, dict):
+                                    bc_us_ids = bc.get("user_story_ids", [])
+                                else:
+                                    bc_us_ids = getattr(bc, "user_story_ids", []) or []
+                            except Exception:
+                                pass
+                            relevant_us_ids.update(bc_us_ids or [])
+
+                    chunk_us_text = "\n".join(
+                        f"[{us.id}] As a {us.role}, I want to {us.action}"
+                        for us in ctx.user_stories
+                        if getattr(us, "id", "") in relevant_us_ids
+                    ) or user_stories_text  # fallback to full if filter is empty
+
+                    chunk_cmds_text = "\n".join(
+                        f"{bn}:\n{cmds}" for bn, cmds in commands_by_bc.items()
+                        if bn in chunk_bc_names
+                    ) or commands_text  # fallback to full
+                else:
+                    chunk_us_text = user_stories_text
+                    chunk_cmds_text = commands_text
+
                 # 청크별 프롬프트 구성
                 chunk_prompt = IDENTIFY_POLICIES_PROMPT.format(
-                    user_stories=user_stories_text,
+                    user_stories=chunk_us_text,
                     events=chunk_events_text,
-                    commands_by_bc=commands_text,
-                    bounded_contexts=bc_text,
+                    commands_by_bc=chunk_cmds_text,
+                    bounded_contexts=bc_text,  # BC list always in full
                 ) + display_name_tail
-                # 이전 청크에서 식별된 Policy 이름 전달 — 중복 생성 방지
-                if _accumulated_policy_names:
-                    from api.features.ingestion.workflow.utils.chunking import format_accumulated_names
-                    chunk_prompt += (
+                # 이전 청크에서 식별된 Policy 상세 정보 전달 — 중복 생성 방지 + 정합성
+                if _accumulated_policies:
+                    _POL_ACCUMULATED_BUDGET = 4000
+                    acc_header = (
                         "\n\n## ALREADY IDENTIFIED POLICIES (from previous chunks)\n"
-                        "The following Policies have already been identified. "
-                        "Do NOT create duplicate Policies with the same or very similar trigger_event → invoke_command mapping.\n"
-                        "Already identified: " + format_accumulated_names(_accumulated_policy_names)
+                        "The following Policies have already been identified with their "
+                        "trigger_event → invoke_command mappings. "
+                        "Do NOT create duplicate Policies with the same or very similar mapping.\n"
+                        "Check if a cross-BC flow is already covered before creating new Policies.\n\n"
                     )
+                    acc_lines = []
+                    for entry in _accumulated_policies[:ACCUMULATED_NAMES_MAX]:
+                        acc_lines.append(
+                            f"- \"{entry['name']}\": {entry['trigger']} ({entry.get('trigger_bc', '?')}) "
+                            f"→ {entry['invoke']} ({entry.get('target_bc', '?')})"
+                        )
+                    if len(_accumulated_policies) > ACCUMULATED_NAMES_MAX:
+                        acc_lines.append(f"... and {len(_accumulated_policies) - ACCUMULATED_NAMES_MAX} more")
+                    acc_body = "\n".join(acc_lines)
+
+                    # Token budget check — compress to names only if over budget
+                    from api.features.ingestion.workflow.utils.chunking import estimate_tokens
+                    if estimate_tokens(acc_header + acc_body) > _POL_ACCUMULATED_BUDGET:
+                        compact = format_accumulated_names(
+                            [e["name"] for e in _accumulated_policies]
+                        )
+                        acc_body = f"Already identified ({len(_accumulated_policies)} policies): {compact}"
+
+                    chunk_prompt += acc_header + acc_body
 
                 structured_llm = ctx.llm.with_structured_output(PolicyList)
                 
@@ -631,11 +695,19 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                 policies = getattr(pol_response, "policies", []) or []
                 chunk_results.append(policies)
 
-                # 이 청크에서 식별된 Policy 이름을 누적 (다음 청크 전달용)
+                # 이 청크에서 식별된 Policy를 누적 (다음 청크 전달용)
+                _seen_names = {e["name"] for e in _accumulated_policies}
                 for pol in policies:
                     pol_name = getattr(pol, "name", "")
-                    if pol_name and pol_name not in _accumulated_policy_names:
-                        _accumulated_policy_names.append(pol_name)
+                    if pol_name and pol_name not in _seen_names:
+                        _accumulated_policies.append({
+                            "name": pol_name,
+                            "trigger": getattr(pol, "trigger_event", "") or "",
+                            "invoke": getattr(pol, "invoke_command", "") or "",
+                            "target_bc": getattr(pol, "target_bc", "") or "",
+                            "trigger_bc": "",  # populated during creation
+                        })
+                        _seen_names.add(pol_name)
 
                 # 청크 처리 완료
                 chunk_complete_progress = calculate_chunk_progress(
