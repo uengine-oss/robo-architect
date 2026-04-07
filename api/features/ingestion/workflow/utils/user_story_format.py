@@ -16,7 +16,7 @@ def load_bl_for_user_stories(client: Any) -> dict[str, list[dict]]:
     """Query SOURCED_FROM relationships to build {us_id: [bl_dict, ...]} mapping.
 
     Returns a dict keyed by UserStory ID, each value is a list of BL dicts
-    sorted by sequence: [{seq, title, parent_seq}, ...]
+    sorted by sequence: [{seq, title, coupled_domain}, ...]
 
     Only returns data when SOURCED_FROM relationships exist (analyzer_graph source).
     For rfp/figma sources, this returns an empty dict.
@@ -24,7 +24,7 @@ def load_bl_for_user_stories(client: Any) -> dict[str, list[dict]]:
     query = """
     MATCH (us:UserStory)-[:SOURCED_FROM]->(bl:BusinessLogic)
     RETURN us.id AS us_id, bl.sequence AS seq, bl.title AS title,
-           bl.parent_sequence AS parent_seq,
+           bl.coupled_domain AS coupled_domain,
            bl.given AS given, bl.when AS wh, bl.then AS th
     ORDER BY us.id, bl.sequence
     """
@@ -37,7 +37,7 @@ def load_bl_for_user_stories(client: Any) -> dict[str, list[dict]]:
                     result.setdefault(us_id, []).append({
                         "seq": record["seq"],
                         "title": record["title"],
-                        "parent_seq": record["parent_seq"],
+                        "coupled_domain": record["coupled_domain"],
                         "given": record["given"],
                         "when": record["wh"],
                         "then": record["th"],
@@ -63,7 +63,7 @@ def format_us_text(
 
     Args:
         us: UserStory object (Pydantic model or dict)
-        bl_map: {us_id: [{seq, title, parent_seq}, ...]} or None
+        bl_map: {us_id: [{seq, title, coupled_domain}, ...]} or None
         include_benefit: Include "so that {benefit}" (default True)
         include_ui_description: Include "(ui: ...)" suffix (default False)
         bullet_prefix: Prefix for the line (e.g., "- " for bullet lists)
@@ -96,11 +96,11 @@ def format_us_text(
         if bls:
             text += "\n    [비즈니스 규칙]"
             for bl in bls:
-                parent = bl.get("parent_seq")
-                indent = "      " if parent else ""
+                domain = bl.get("coupled_domain")
+                indent = "      " if domain else ""
                 seq = bl['seq']
-                parent_info = f" (parent: BL[{parent}])" if parent else ""
-                text += f"\n    {indent}- BL[{seq}]{parent_info}: {bl['title']}"
+                coupled_info = f" (coupled: {domain})" if domain else ""
+                text += f"\n    {indent}- BL[{seq}]{coupled_info}: {bl['title']}"
                 if bl.get("given"):
                     text += f"\n    {indent}  Given: {bl['given']}"
                 if bl.get("when"):

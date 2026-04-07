@@ -78,7 +78,7 @@ Tables: READS: SUBSCRIBER, PLAN, BILL | WRITES: BILL
 가입자의 월별 청구서를 생성하고 할인을 적용하는 처리...
 ```
 
-전달 정보: **Actor + 테이블(READS/WRITES) + BL(sequence/parent_sequence/title/GWT) + 함수 summary**
+전달 정보: **Actor + 테이블(READS/WRITES) + BL(sequence/coupled_domain/title/GWT) + 함수 summary**
 
 ### graph_to_user_stories.py — US 추출
 

@@ -34,7 +34,7 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
     ORDER BY bl.sequence
     WITH f,
          collect(DISTINCT a.name) AS actors,
-         collect(DISTINCT {sequence: bl.sequence, parent_sequence: bl.parent_sequence, title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios,
+         collect(DISTINCT {sequence: bl.sequence, coupled_domain: bl.coupled_domain, title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios,
          collect(DISTINCT rt.name) AS reads_tables,
          collect(DISTINCT wt.name) AS writes_tables
     RETURN coalesce(f.procedure_name, f.name) AS unit_name,
@@ -79,9 +79,9 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
                     lines.append("### 비즈니스 규칙 (프로세스 흐름 순서):")
                     has_bl = True
                 seq = sc.get("sequence", "")
-                parent = sc.get("parent_sequence")
-                parent_info = f" (parent: BL[{parent}])" if parent else ""
-                lines.append(f"  - BL[{seq}]{parent_info}: {sc['title']}")
+                domain = sc.get("coupled_domain")
+                coupled_info = f" (coupled: {domain})" if domain else ""
+                lines.append(f"  - BL[{seq}]{coupled_info}: {sc['title']}")
                 if sc.get("given"):
                     lines.append(f"    Given: {sc['given']}")
                 if sc.get("when"):
