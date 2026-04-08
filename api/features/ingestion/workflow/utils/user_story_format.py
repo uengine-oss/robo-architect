@@ -94,19 +94,35 @@ def format_us_text(
     if bl_map and us_id and us_id in bl_map:
         bls = bl_map[us_id]
         if bls:
+            # 흐름도 표시
+            flow_parts = []
+            coupled_domains = []
+            for bl in bls:
+                seq = bl['seq']
+                domain = bl.get("coupled_domain")
+                if domain:
+                    flow_parts.append(f"BL[{seq}]*")
+                    coupled_domains.append((seq, domain))
+                else:
+                    flow_parts.append(f"BL[{seq}]")
+
+            text += f"\n    [비즈니스 흐름] {' → '.join(flow_parts)}"
+            if coupled_domains:
+                coupling_info = ", ".join(f"BL[{s}]→{d}" for s, d in coupled_domains)
+                text += f"\n    [도메인 커플링] {coupling_info} (★ = 분리 대상)"
+
             text += "\n    [비즈니스 규칙]"
             for bl in bls:
                 domain = bl.get("coupled_domain")
-                indent = "      " if domain else ""
                 seq = bl['seq']
-                coupled_info = f" (coupled: {domain})" if domain else ""
-                text += f"\n    {indent}- BL[{seq}]{coupled_info}: {bl['title']}"
+                domain_mark = f" [★ {domain}]" if domain else ""
+                text += f"\n    - BL[{seq}]{domain_mark}: {bl['title']}"
                 if bl.get("given"):
-                    text += f"\n    {indent}  Given: {bl['given']}"
+                    text += f"\n      Given: {bl['given']}"
                 if bl.get("when"):
-                    text += f"\n    {indent}  When: {bl['when']}"
+                    text += f"\n      When: {bl['when']}"
                 if bl.get("then"):
-                    text += f"\n    {indent}  Then: {bl['then']}"
+                    text += f"\n      Then: {bl['then']}"
 
     return text
 
