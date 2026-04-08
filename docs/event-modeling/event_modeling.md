@@ -262,9 +262,16 @@ Event → TRIGGERS → Policy → INVOKES → Command
 - [x] `aggregates` phase — per-BC지만 BC에 이벤트 다수 시 위험 → intra-BC chunking 추가 (events를 chunk_size=30으로 분할, 이전 청크에서 생성된 aggregate + covered_events를 다음 청크에 전달)
 - [x] `policies` phase — 기존 events-only chunking 개선: ① events 청크에 관련된 BC의 US/commands만 필터링하여 중복 오버헤드 제거, ② accumulated policy에 trigger_event → invoke_command + BC 쌍 상세 정보 포함하여 정합성 강화
 
-### Figma 연동(당장 고려 x)
-- [ ] Figma Ingestion된 화면이 Actor swimlane에 반영
-- [ ] UI 카드 클릭 시 Figma 원본 참조
+### Event Modeling의 자유로운 수정
+- [ ] ui, command, readmodel, event 등의 자유로운 추가 및 삭제가 가능해야함.
+- [ ] event를 드래그하여 위치를 서로 shuffling하면서 위치를 바꿀 수 있어야함. (sequence가 서로 바뀌는게 아니라, 옮겨진 event에 따라 이후의 이벤트들이 하나씩 뒤로 자연스럽게 이동되어야 하며, 옮겨진 Event와 함께 연결된 command, readmodel, ui도 함께 움직여야함)
+- [ ] 시퀀스 변경 뿐만 아니라, 스윔레인에서 bounded context 끼리 서로 이동 가능해야함.
+- [ ] 드래그 이동이 가능한 것은 event only + event의 이동에 따라서 연결된 노드들이 함께 위치 변경 업데이트
+
+### Figma 연동
+- [ ] Figma 인증 정보를 통한 api 연동 (프로젝트 목록 불러오기 및 추가하기)
+- [ ] 이벤트 스토밍에서 생성된 각각의 ui요소들이 Figma 프로젝트의 각각의 레이어로 화면들을 추가할 수 있게 api 연동
+- [ ] Figma에서 수정한 각 레이어들의 화면들을 그대로 다시 ui로 덮어씌우기 (ui 노드 name을 figma의 화면 이름으로 연결정보를 만들면 되지 않을까?)
 
 ### External System(당장 고려 x)
 - [ ] 톱니바퀴 아이콘

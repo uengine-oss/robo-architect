@@ -7,6 +7,7 @@ to maintain context across boundaries.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, List, Tuple
 
 # LLM 토큰 제한 (안전 마진 포함)
@@ -340,3 +341,21 @@ def format_accumulated_names(names: list[str], max_items: int = ACCUMULATED_NAME
         return ", ".join(names)
     shown = ", ".join(names[:max_items])
     return f"{shown} ... and {len(names) - max_items} more"
+
+
+# ── Prompt sanitisation ─────────────────────────────────────────────
+
+# Control characters that break JSON serialisation (C0 range minus \t \n \r)
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def sanitize_prompt(text: str) -> str:
+    """Strip control characters that break JSON serialisation in LLM API calls.
+
+    Preserves normal whitespace (tab, newline, carriage return) but removes
+    null bytes, backspace, form-feed, and other C0 control codes that cause
+    "could not parse the JSON body" errors from OpenAI/Anthropic APIs.
+    """
+    if not text:
+        return text
+    return _CONTROL_CHAR_RE.sub("", text)

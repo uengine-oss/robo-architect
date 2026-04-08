@@ -445,11 +445,9 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             commands_by_bc=commands_text,
             bounded_contexts=bc_text,
         ) + display_name_tail + _no_emits_hint
-        _report_context_tail = ""
-        if ctx.source_report:
-            from api.features.ingestion.workflow.utils.report_context import get_policies_context
-            _report_context_tail = "\n\n" + get_policies_context(ctx.source_report)
-        full_prompt_text += _report_context_tail
+        # NOTE: source_report is not yet implemented in IngestionWorkflowContext.
+        # When implemented, inject report context here:
+        # _report_context_tail = get_policies_context(ctx.source_report)
 
         # 청킹 필요 여부 판단
         if should_chunk(full_prompt_text):

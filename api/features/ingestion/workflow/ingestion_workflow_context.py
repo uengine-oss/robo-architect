@@ -5,9 +5,14 @@ from typing import Any, Dict, List
 
 import json
 
+import re
+
 from api.features.ingestion.ingestion_contracts import GeneratedUserStory
 from api.features.ingestion.ingestion_sessions import IngestionSession
 from api.platform.observability.smart_logger import SmartLogger
+
+# Control characters that break JSON serialisation (C0 range minus \t \n \r)
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 @dataclass
@@ -22,6 +27,12 @@ class IngestionWorkflowContext:
     content: str
     client: Any
     llm: Any
+
+    def __post_init__(self) -> None:
+        # Sanitize content at initialization to prevent JSON serialisation
+        # errors when content is embedded in LLM prompts across all phases.
+        if self.content:
+            self.content = _CONTROL_CHAR_RE.sub("", self.content)
     # Display language for node/property displayName: "ko" (한글) or "en" (English)
     display_language: str = "ko"
     source_type: str = "rfp"
