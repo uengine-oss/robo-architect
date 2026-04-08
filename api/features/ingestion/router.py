@@ -118,15 +118,21 @@ async def upload_document(
             params={"text": content},
         )
     else:
-        SmartLogger.log(
-            "WARNING",
-            "Ingestion upload rejected: neither 'file' nor 'text' was provided.",
-            category="ingestion.api.upload.invalid",
-            params=http_context(request),
-        )
-        raise HTTPException(status_code=400, detail="Either 'file' or 'text' must be provided")
+        resolved_source_type_early = (source_type or "rfp").strip().lower()
+        if resolved_source_type_early != "analyzer_graph":
+            SmartLogger.log(
+                "WARNING",
+                "Ingestion upload rejected: neither 'file' nor 'text' was provided.",
+                category="ingestion.api.upload.invalid",
+                params=http_context(request),
+            )
+            raise HTTPException(status_code=400, detail="Either 'file' or 'text' must be provided")
 
-    if not content.strip():
+    resolved_source_type = (source_type or "rfp").strip().lower()
+    if resolved_source_type not in ("rfp", "analyzer_graph", "figma"):
+        resolved_source_type = "rfp"
+
+    if not content.strip() and resolved_source_type != "analyzer_graph":
         SmartLogger.log(
             "WARNING",
             "Ingestion upload rejected: extracted content is empty after parsing.",
@@ -150,9 +156,6 @@ async def upload_document(
     session.display_language = (display_language or "ko").strip().lower() or "ko"
     if session.display_language not in ("ko", "en"):
         session.display_language = "ko"
-    resolved_source_type = (source_type or "rfp").strip().lower()
-    if resolved_source_type not in ("rfp", "analyzer_graph", "figma"):
-        resolved_source_type = "rfp"
     session.source_type = resolved_source_type
     SmartLogger.log(
         "INFO",

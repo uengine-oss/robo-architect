@@ -26,7 +26,11 @@ const SESSION_STORAGE_KEY = 'ingestion_active_session'
 const dragActive = ref(false)
 const file = ref(null)
 const textContent = ref('')
-const inputMode = ref('file') // 'file', 'text', 'jira', or 'figma'
+const inputMode = ref('file') // 'file', 'text', 'jira', 'figma', or 'analyzer'
+
+// Analyzer graph state
+const analyzerStats = ref(null) // { total, counts, hasData }
+const isLoadingAnalyzerStats = ref(false)
 const isUploading = ref(false)
 const isProcessing = ref(false)
 const sessionId = ref(null)
@@ -100,6 +104,9 @@ const canSubmit = computed(() => {
   if (inputMode.value === 'figma') {
     return figmaNodeChanges.value !== null
   }
+  if (inputMode.value === 'analyzer') {
+    return analyzerStats.value?.hasData === true
+  }
   return textContent.value.trim().length > 10
 })
 
@@ -107,6 +114,28 @@ const filteredPages = computed(() => {
   if (!pageSearchQuery.value.trim()) return confluencePages.value
   const q = pageSearchQuery.value.toLowerCase()
   return confluencePages.value.filter(p => p.title.toLowerCase().includes(q))
+})
+
+// Analyzer: load stats when tab is selected
+async function loadAnalyzerStats() {
+  isLoadingAnalyzerStats.value = true
+  analyzerStats.value = null
+  try {
+    const res = await fetch('/api/ingest/stats')
+    if (res.ok) {
+      analyzerStats.value = await res.json()
+    }
+  } catch (e) {
+    analyzerStats.value = { total: 0, counts: {}, hasData: false }
+  } finally {
+    isLoadingAnalyzerStats.value = false
+  }
+}
+
+watch(inputMode, (mode) => {
+  if (mode === 'analyzer') {
+    loadAnalyzerStats()
+  }
 })
 
 const phaseLabel = computed(() => {
@@ -299,7 +328,10 @@ async function clearExistingData() {
 
 // Handle start button click
 function handleStartClick() {
-  if (hasExistingData.value) {
+  if (inputMode.value === 'analyzer') {
+    // analyzer_graph: 원본 데이터를 유지해야 하므로 삭제 확인 건너뜀
+    startIngestion()
+  } else if (hasExistingData.value) {
     showClearConfirm.value = true
   } else {
     startIngestion()
@@ -345,7 +377,10 @@ async function startIngestion() {
     } else {
       const formData = new FormData()
 
-      if (inputMode.value === 'file' && file.value) {
+      if (inputMode.value === 'analyzer') {
+        // Analyzer graph: no file/text needed, source from Neo4j
+        formData.append('source_type', 'analyzer_graph')
+      } else if (inputMode.value === 'file' && file.value) {
         formData.append('file', file.value)
       } else if (inputMode.value === 'jira' && selectedPageContent.value) {
         const text = `# ${selectedPageContent.value.title}\n\n${selectedPageContent.value.content}`
@@ -1215,6 +1250,16 @@ function useSample() {
                       </svg>
                       Figma
                     </button>
+                    <button
+                      :class="['tab-btn', { active: inputMode === 'analyzer' }]"
+                      @click="inputMode = 'analyzer'"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                      </svg>
+                      코드 분석
+                    </button>
                   </div>
                   <div class="cache-toggle">
                     <label class="cache-toggle__label" title="LangChain 캐시를 활성화하면 동일한 요청의 속도가 빨라집니다">
@@ -1383,6 +1428,56 @@ function useSample() {
                     <line x1="12" y1="16" x2="12.01" y2="16"></line>
                   </svg>
                   {{ figmaPasteError }}
+                </div>
+              </div>
+
+              <!-- Analyzer Graph Area -->
+              <div v-if="inputMode === 'analyzer'" class="analyzer-section">
+                <div v-if="isLoadingAnalyzerStats" class="analyzer-loading">
+                  <span class="spinner"></span>
+                  분석 데이터 확인 중...
+                </div>
+                <div v-else-if="analyzerStats?.hasData" class="analyzer-ready">
+                  <div class="analyzer-header">
+                    <div class="analyzer-badge">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                      </svg>
+                    </div>
+                    <div>
+                      <p class="analyzer-title">코드 분석 데이터 준비됨</p>
+                      <p class="analyzer-subtitle">Neo4j 그래프에서 이벤트 스토밍 모델을 생성합니다</p>
+                    </div>
+                  </div>
+                  <div class="analyzer-grid">
+                    <div v-if="analyzerStats.counts.FUNCTION" class="analyzer-card">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.FUNCTION }}</span>
+                      <span class="analyzer-card__label">함수</span>
+                    </div>
+                    <div v-if="analyzerStats.counts.BusinessLogic" class="analyzer-card analyzer-card--accent">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.BusinessLogic }}</span>
+                      <span class="analyzer-card__label">비즈니스 로직</span>
+                    </div>
+                    <div v-if="analyzerStats.counts.Table" class="analyzer-card">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.Table }}</span>
+                      <span class="analyzer-card__label">테이블</span>
+                    </div>
+                    <div v-if="analyzerStats.counts.Actor" class="analyzer-card">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.Actor }}</span>
+                      <span class="analyzer-card__label">Actor</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="analyzer-empty">
+                  <div class="analyzer-empty-icon">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <polyline points="16 18 22 12 16 6"></polyline>
+                      <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                  </div>
+                  <p class="analyzer-title">분석 데이터가 없습니다</p>
+                  <p class="analyzer-subtitle">robo-data-analyzer로 소스코드를 먼저 분석해주세요</p>
                 </div>
               </div>
 
@@ -1900,15 +1995,18 @@ function useSample() {
   display: flex;
   gap: var(--spacing-xs);
   margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .tab-btn {
-  flex: 1;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm);
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-sm);
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -2986,6 +3084,119 @@ function useSample() {
 }
 
 /* Figma Section */
+/* Analyzer Graph Section */
+.analyzer-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.analyzer-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xl);
+  color: var(--color-text-muted);
+}
+
+.analyzer-ready {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-lg);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.analyzer-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.analyzer-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  flex-shrink: 0;
+}
+
+.analyzer-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.analyzer-subtitle {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.analyzer-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-sm);
+}
+
+.analyzer-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--spacing-sm) var(--spacing-xs);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color);
+}
+
+.analyzer-card--accent {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.analyzer-card__value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.analyzer-card--accent .analyzer-card__value {
+  color: #10b981;
+}
+
+.analyzer-card__label {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.analyzer-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xl) var(--spacing-lg);
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.analyzer-empty-icon {
+  color: var(--color-text-muted);
+  opacity: 0.5;
+}
+
 .figma-section {
   display: flex;
   flex-direction: column;
