@@ -168,10 +168,12 @@ def fetch_table_schemas_for_units(unit_ids: list[str]) -> str:
     OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:Column)
     OPTIONAL MATCH (t)-[fk:FK_TO_TABLE]->(ft:Table)
     RETURN t.name AS table_name, t.schema AS schema,
+           t.description AS table_description,
            collect(DISTINCT {
              name: c.name, dtype: c.dtype,
              pk: c.is_primary_key, nullable: c.nullable,
-             default_value: c.default_value
+             default_value: c.default_value,
+             description: c.description
            }) AS columns,
            collect(DISTINCT {
              source_col: fk.sourceColumn,
@@ -185,6 +187,8 @@ def fetch_table_schemas_for_units(unit_ids: list[str]) -> str:
 
     lines = ["[관련 테이블 스키마]"]
     for row in rows:
+        table_name = row["table_name"]
+        table_desc = row.get("table_description") or ""
         cols_list = [c for c in row.get("columns", []) if c.get("name")]
         cols = ", ".join(
             f"{'*' if c.get('pk') else ''}{c['name']} {c.get('dtype', '')}"
@@ -197,5 +201,14 @@ def fetch_table_schemas_for_units(unit_ids: list[str]) -> str:
                 f"{f['source_col']}->{f['target_table']}.{f['target_col']}"
                 for f in fks_list
             )
-        lines.append(f"  {row['table_name']}({cols}){fk_text}")
+        header = f"  {table_name}({cols}){fk_text}"
+        if table_desc:
+            header += f"\n    설명: {table_desc}"
+        # 컬럼 설명이 있는 경우 추가
+        col_descs = [c for c in cols_list if c.get("description")]
+        if col_descs:
+            header += "\n    컬럼설명: " + ", ".join(
+                f"{c['name']}={c['description']}" for c in col_descs
+            )
+        lines.append(header)
     return "\n".join(lines)
