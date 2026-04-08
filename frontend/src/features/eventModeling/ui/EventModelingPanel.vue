@@ -424,21 +424,301 @@ const selectedEvent = computed(() => {
   return null
 })
 
-// Event drag & drop
+// Event drag & drop (insert-shift 방식)
 const dragOverEventId = ref(null)
+const dropIndicatorSeq = ref(null)   // 시퀀스 이동 인디케이터 (세로선)
+const dropIndicatorParallel = ref(null) // 병렬 배치 인디케이터 { seq, bcId }
+const dropTargetBcId = ref(null)     // 크로스-BC 드롭 대상
 
 function onEvtDragStart(e, evt) {
   store.draggingEventId = evt.id
   e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData('text/plain', evt.id)
 }
 
-function onEvtDrop(targetEvt) {
-  const srcId = store.draggingEventId
-  if (srcId && srcId !== targetEvt.id) {
-    store.swapEventSequence(srcId, targetEvt.id)
+/**
+ * Event 카드 위에 드래그 →
+ *   - 좌/우 영역: 시퀀스 insert-shift (앞/뒤)
+ *   - 하단 영역: 같은 시퀀스에 병렬 배치 (스택)
+ */
+function onEvtDragOver(e, evt, bcIdx) {
+  e.preventDefault()
+  e.stopPropagation()                       // 캔버스의 onCanvasDragOver가 dropEffect를 'copy'로 덮어쓰는 것 방지
+  e.dataTransfer.dropEffect = 'move'        // effectAllowed='move'와 일치시켜야 drop 이벤트 발생
+  dragOverEventId.value = evt.id
+
+  const rect = e.currentTarget.getBoundingClientRect()
+  const relY = (e.clientY - rect.top) / rect.height  // 0~1 (위→아래)
+  const midX = rect.left + rect.width / 2
+
+  if (relY > 0.65) {
+    // 하단 35% 영역 → 병렬 배치 (같은 시퀀스에 스택)
+    dropIndicatorSeq.value = null
+    dropIndicatorParallel.value = { seq: evt.sequence, bcId: visibleSystemSwimlanes.value[bcIdx]?.bcId }
+  } else {
+    // 상단·좌우 영역 → 시퀀스 이동
+    dropIndicatorParallel.value = null
+    if (e.clientX < midX) {
+      dropIndicatorSeq.value = evt.sequence      // 앞에 삽입
+    } else {
+      dropIndicatorSeq.value = evt.sequence + 1  // 뒤에 삽입
+    }
   }
+}
+
+function onEvtDrop(targetEvt, bcIdx) {
+  const srcId = store.draggingEventId
+  if (!srcId) return
+
+  const targetLane = visibleSystemSwimlanes.value[bcIdx]
+
+  // 크로스-BC 이동 체크
+  let srcBcId = null
+  for (const lane of store.systemSwimlanes) {
+    if (lane.events.some(e => e.id === srcId)) { srcBcId = lane.bcId; break }
+  }
+  if (srcBcId && targetLane && srcBcId !== targetLane.bcId) {
+    store.moveEventToBC(srcId, targetLane.bcId)
+  }
+
+  if (dropIndicatorParallel.value && srcId !== targetEvt.id) {
+    // 병렬 배치: 같은 시퀀스로 설정 (shift 없이)
+    store.stackEventParallel(srcId, dropIndicatorParallel.value.seq)
+  } else if (dropIndicatorSeq.value !== null && srcId !== targetEvt.id) {
+    // 시퀀스 이동: insert-shift
+    store.moveEventToPosition(srcId, dropIndicatorSeq.value)
+  }
+
+  _clearDragState()
+}
+
+/** BC 스윔레인 빈 영역에 드롭 → 크로스-BC 이동 */
+function onBcLaneDragOver(e, lane) {
+  if (!store.draggingEventId) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'        // effectAllowed='move'와 일치
+  dropTargetBcId.value = lane.bcId
+}
+function onBcLaneDragLeave(lane) {
+  if (dropTargetBcId.value === lane.bcId) dropTargetBcId.value = null
+}
+function onBcLaneDrop(e, lane) {
+  e.preventDefault()
+  const srcId = store.draggingEventId
+  if (!srcId) return
+
+  let srcBcId = null
+  for (const l of store.systemSwimlanes) {
+    if (l.events.some(ev => ev.id === srcId)) { srcBcId = l.bcId; break }
+  }
+  if (srcBcId && srcBcId !== lane.bcId) {
+    store.moveEventToBC(srcId, lane.bcId)
+  }
+
+  _clearDragState()
+}
+
+function onEvtDragEnd() { _clearDragState() }
+
+function _clearDragState() {
   store.draggingEventId = null
   dragOverEventId.value = null
+  dropIndicatorSeq.value = null
+  dropIndicatorParallel.value = null
+  dropTargetBcId.value = null
+}
+
+// ── Palette (노드 추가/삭제) ────────────────────────────────
+const paletteNodeTypes = [
+  { type: 'event', label: 'Event', color: '#fd7e14' },
+  { type: 'command', label: 'Command', color: '#5c7cfa' },
+  { type: 'readmodel', label: 'ReadModel', color: '#40c057' },
+  { type: 'ui', label: 'UI', color: '#9e9e9e' },
+]
+
+function onPaletteDragStart(e, nodeType) {
+  e.dataTransfer.setData('application/em-palette', nodeType)
+  e.dataTransfer.effectAllowed = 'copy'
+}
+
+/** 캔버스 빈 영역에 팔레트 노드 드롭 → 새 노드 생성 */
+async function onCanvasDropPalette(e) {
+  const paletteType = e.dataTransfer.getData('application/em-palette')
+  if (!paletteType) return
+
+  e.preventDefault()
+
+  // 드롭 위치에서 sequence 추정
+  const canvasRect = scrollContainer.value?.getBoundingClientRect()
+  if (!canvasRect) return
+  const xInCanvas = (e.clientX - canvasRect.left + (scrollContainer.value?.scrollLeft || 0)) / store.zoomLevel
+  const dropSeq = Math.max(1, Math.round((xInCanvas - HEADER_W) / SEQ_STEP_W) + 1)
+
+  // 가장 가까운 BC 결정 (event용)
+  let closestBcId = store.systemSwimlanes[0]?.bcId || null
+
+  if (paletteType === 'event' || paletteType === 'command' || paletteType === 'readmodel') {
+    // Y 위치로 어떤 BC에 드롭했는지 판단
+    const yInCanvas = (e.clientY - canvasRect.top + (scrollContainer.value?.scrollTop || 0)) / store.zoomLevel
+    for (let i = 0; i < visibleSystemSwimlanes.value.length; i++) {
+      const laneTop = bcYVisible(i)
+      const laneH = bcHeights.value[visibleSystemSwimlanes.value[i].bcId] || SWIMLANE_MIN_H
+      if (yInCanvas >= laneTop && yInCanvas <= laneTop + laneH) {
+        closestBcId = visibleSystemSwimlanes.value[i].bcId
+        break
+      }
+    }
+  }
+
+  const name = `New${paletteType.charAt(0).toUpperCase() + paletteType.slice(1)}`
+  const payload = {
+    type: paletteType,
+    name,
+    displayName: name,
+    bcId: closestBcId,
+    sequence: dropSeq,
+    actor: 'User',
+  }
+
+  await store.addNode(payload)
+}
+
+/** 노드 삭제 (컨텍스트 메뉴) */
+const contextMenu = ref({ show: false, x: 0, y: 0, nodeId: null, nodeType: null })
+
+function onNodeContextMenu(e, nodeId, nodeType) {
+  e.preventDefault()
+  contextMenu.value = { show: true, x: e.clientX, y: e.clientY, nodeId, nodeType }
+}
+
+function closeContextMenu() {
+  contextMenu.value = { show: false, x: 0, y: 0, nodeId: null, nodeType: null }
+}
+
+function deleteSelectedNode() {
+  if (contextMenu.value.nodeId && contextMenu.value.nodeType) {
+    store.deleteNode(contextMenu.value.nodeId, contextMenu.value.nodeType)
+  }
+  closeContextMenu()
+}
+
+// 캔버스 클릭으로 컨텍스트 메뉴 닫기
+function onCanvasClick() {
+  if (contextMenu.value.show) closeContextMenu()
+  if (store.connectingFrom) store.cancelConnecting()
+}
+
+// ── 관계 연결 모드 ────────────────────────────────────────────
+const isConnectMode = ref(false)
+
+function toggleConnectMode() {
+  isConnectMode.value = !isConnectMode.value
+  if (!isConnectMode.value) store.cancelConnecting()
+}
+
+/** 노드 커넥터 도트 클릭 → 연결 시작 */
+function onConnectorMouseDown(e, nodeId, nodeType) {
+  if (!isConnectMode.value) return
+  e.stopPropagation()
+  e.preventDefault()
+  store.startConnecting(nodeId, nodeType)
+}
+
+/** 연결 모드 중 마우스 이동 → 라이브 라인 업데이트 */
+function onConnectMouseMove(e) {
+  if (!store.connectingFrom) return
+  const canvasRect = scrollContainer.value?.getBoundingClientRect()
+  if (!canvasRect) return
+  const x = (e.clientX - canvasRect.left + (scrollContainer.value?.scrollLeft || 0)) / store.zoomLevel
+  const y = (e.clientY - canvasRect.top + (scrollContainer.value?.scrollTop || 0)) / store.zoomLevel
+  store.updateConnectingPos(x, y)
+}
+
+/** 타겟 노드에서 마우스 업 → 관계 생성 */
+function onConnectorMouseUp(e, nodeId, nodeType) {
+  if (!store.connectingFrom || store.connectingFrom.id === nodeId) {
+    store.cancelConnecting()
+    return
+  }
+  e.stopPropagation()
+  store.createRelation(nodeId, nodeType)
+}
+
+/** 연결 시작 노드의 위치 (SVG 라이브 라인 시작점) */
+const connectLineStart = computed(() => {
+  if (!store.connectingFrom) return null
+  const src = store.connectingFrom
+  // Command
+  const cmd = store.interactionCommands.find(c => c.id === src.id)
+  if (cmd) {
+    const pos = cmdCardPos(cmd)
+    return { x: pos.x + CARD_W, y: interactionY.value + SWIMLANE_PAD + (cmdStackIndex.value[cmd.id] || 0) * (CARD_H + 8) + CARD_H / 2 }
+  }
+  // ReadModel
+  const rm = store.interactionReadModels.find(r => r.id === src.id)
+  if (rm) {
+    const pos = rmCardPos(rm)
+    return { x: pos.x + CARD_W, y: interactionY.value + SWIMLANE_PAD + (rmStackIndex.value[rm.id] || 0) * (CARD_H + 8) + CARD_H / 2 }
+  }
+  // Event
+  for (let i = 0; i < visibleSystemSwimlanes.value.length; i++) {
+    const evt = visibleSystemSwimlanes.value[i].events.find(e => e.id === src.id)
+    if (evt) {
+      const pos = evtCardPos(evt, i)
+      return { x: pos.x + CARD_W, y: pos.y + CARD_H / 2 }
+    }
+  }
+  // UI
+  for (let i = 0; i < visibleActorSwimlanes.value.length; i++) {
+    const ui = visibleActorSwimlanes.value[i].uis.find(u => u.id === src.id)
+    if (ui) {
+      const pos = uiCardPos(ui, i)
+      return { x: pos.x + CARD_W, y: pos.y + UI_CARD_H / 2 }
+    }
+  }
+  return null
+})
+
+/** Path 우클릭 → 관계 삭제 컨텍스트 메뉴 */
+const pathContextMenu = ref({ show: false, x: 0, y: 0, sourceId: null, targetId: null, flowType: null })
+
+function onPathContextMenu(e, p) {
+  e.preventDefault()
+  e.stopPropagation()
+  // flow에서 flowType 찾기
+  const flow = store.flows.find(f =>
+    (f.sourceId + f.targetId === p.id) ||
+    ('rm-ui-' + f.sourceId + f.targetId === p.id) ||
+    ('evt-rm-' + f.sourceId + f.targetId === p.id) ||
+    ('chain-' + f.sourceId + f.targetId === p.id)
+  )
+  if (!flow) return
+  pathContextMenu.value = { show: true, x: e.clientX, y: e.clientY, sourceId: p.srcId, targetId: p.tgtId, flowType: flow.type }
+}
+
+function closePathContextMenu() {
+  pathContextMenu.value = { show: false, x: 0, y: 0, sourceId: null, targetId: null, flowType: null }
+}
+
+function deleteSelectedRelation() {
+  const { sourceId, targetId, flowType } = pathContextMenu.value
+  if (sourceId && targetId && flowType) {
+    store.deleteRelation(sourceId, targetId, flowType)
+  }
+  closePathContextMenu()
+}
+
+/** 연결 가능한 타겟 타입 (시각 피드백용) */
+const CONNECTABLE_TARGETS = {
+  command: ['event'],
+  event: ['readmodel', 'command'],
+  ui: ['command', 'readmodel'],
+}
+
+function isValidDropTarget(targetType) {
+  if (!store.connectingFrom) return false
+  const allowed = CONNECTABLE_TARGETS[store.connectingFrom.type]
+  return allowed?.includes(targetType) || false
 }
 
 const selectedNodeWarnings = computed(() => {
@@ -509,7 +789,7 @@ function truncate(t, n = 14) { return !t ? '' : t.length > n ? t.slice(0, n) + '
 
 // Pan & zoom
 function startPan(e) {
-  if (e.button !== 0 || e.target.closest('.em-card')) return
+  if (e.button !== 0 || e.target.closest('.em-card') || e.target.closest('.em-connector') || isConnectMode.value) return
   isPanning.value = true
   panStart.value = { x: e.clientX, y: e.clientY }
   if (scrollContainer.value) scrollStart.value = { x: scrollContainer.value.scrollLeft, y: scrollContainer.value.scrollTop }
@@ -551,10 +831,19 @@ watch(scrollContainer, (el) => {
   }
 }, { immediate: false })
 
-// 프로세스 드래그 앤 드롭 수신
-function onCanvasDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }
+// 프로세스 드래그 앤 드롭 수신 + 팔레트 노드 드롭
+function onCanvasDragOver(e) {
+  e.preventDefault()
+  // 이벤트 드래그 중에는 'move', 팔레트/프로세스 드래그는 'copy'
+  e.dataTransfer.dropEffect = store.draggingEventId ? 'move' : 'copy'
+}
 function onCanvasDrop(e) {
   e.preventDefault()
+  // 팔레트 노드 드롭 처리
+  if (e.dataTransfer.getData('application/em-palette')) {
+    onCanvasDropPalette(e)
+    return
+  }
   try {
     const data = JSON.parse(e.dataTransfer.getData('application/json'))
     if (data.type === 'EventModelingProcess' && data.processId) {
@@ -575,7 +864,7 @@ function onCanvasDrop(e) {
         프로세스를 더블클릭하거나 드래그하여 캔버스에 추가하세요.
       </div>
 
-      <div v-else ref="scrollContainer" class="em-scroll" @mousedown="startPan" @wheel="handleWheel" @dragover="onCanvasDragOver" @drop="onCanvasDrop" :class="{ 'is-panning': isPanning }">
+      <div v-else ref="scrollContainer" class="em-scroll" @mousedown="startPan" @wheel="handleWheel" @dragover="onCanvasDragOver" @drop="onCanvasDrop" @click="onCanvasClick" @mousemove="onConnectMouseMove" :class="{ 'is-panning': isPanning, 'is-connecting': isConnectMode }">
         <div class="em-canvas" :style="{ width: timelineWidth+'px', height: totalHeight+'px', transform: `scale(${store.zoomLevel})`, transformOrigin: '0 0' }">
 
           <!-- SVG -->
@@ -599,11 +888,20 @@ function onCanvasDrop(e) {
             </defs>
             <!-- Grid -->
             <line v-for="s in store.maxSequence" :key="'g'+s" :x1="HEADER_W+(s-1)*SEQ_STEP_W" y1="0" :x2="HEADER_W+(s-1)*SEQ_STEP_W" :y2="totalHeight" stroke="rgba(200,200,200,0.12)" stroke-dasharray="4,4"/>
-            <!-- Paths -->
+            <!-- Paths (visible) -->
             <path v-for="p in paths" :key="p.id" :d="p.d" :stroke="p.color" fill="none"
                   :stroke-width="store.hoveredItemId && isPathHl(p) ? 3 : (p.chain ? 3 : 1.5)"
                   :marker-end="'url(#' + (p.marker || 'em-arr-orange') + ')'"
                   :opacity="store.hoveredItemId ? (isPathHl(p) ? 1 : 0.08) : 0.7"/>
+            <!-- Paths (invisible wide hit area for right-click) -->
+            <path v-for="p in paths" :key="'hit-'+p.id" :d="p.d" stroke="transparent" fill="none"
+                  stroke-width="12" style="pointer-events:stroke; cursor:pointer"
+                  @contextmenu="onPathContextMenu($event, p)"/>
+            <!-- Live connection line -->
+            <line v-if="connectLineStart && store.connectingToPos"
+                  :x1="connectLineStart.x" :y1="connectLineStart.y"
+                  :x2="store.connectingToPos.x" :y2="store.connectingToPos.y"
+                  stroke="#228be6" stroke-width="2" stroke-dasharray="6,4" opacity="0.8"/>
           </svg>
 
           <!-- ===== ACTOR SWIMLANES (상단) ===== -->
@@ -619,11 +917,17 @@ function onCanvasDrop(e) {
             <div v-for="ui in lane.uis" :key="ui.id" class="em-card" :class="[ui.isOutput?'em-card--rm-ui':'em-card--ui', { 'is-hl': isHl(ui.id), 'is-dimmed': store.hoveredItemId && !isHl(ui.id) && store.hoveredItemId !== ui.id }]"
                  :style="{ left: uiCardPos(ui,ai).x+'px', top: uiCardPos(ui,ai).y - actorYVisible(ai)+'px', width: CARD_W+'px', height: UI_CARD_H+'px' }"
                  @click="store.selectItem(ui.id,'ui')" @dblclick="openInspector(ui.id,'preview')" @mouseenter="store.setHoveredItem(ui.id)" @mouseleave="store.clearHover()"
+                 @contextmenu="onNodeContextMenu($event, ui.id, 'ui')"
                  :title="ui.displayName||ui.name">
               <div class="em-card__icon">
                 <svg width="18" height="14" viewBox="0 0 24 20" fill="none" stroke="#666" stroke-width="1.5"><rect x="2" y="2" width="20" height="14" rx="2"/><path d="M2 6h20"/></svg>
               </div>
               <div class="em-card__name">{{ truncate(ui.displayName||ui.name) }}</div>
+              <!-- Connector dots -->
+              <div v-if="isConnectMode" class="em-connector em-connector--right"
+                   :class="{ 'is-valid-target': isValidDropTarget('ui') }"
+                   @mousedown="onConnectorMouseDown($event, ui.id, 'ui')"
+                   @mouseup="onConnectorMouseUp($event, ui.id, 'ui')"></div>
             </div>
           </div>
 
@@ -636,50 +940,81 @@ function onCanvasDrop(e) {
             <div v-for="cmd in store.interactionCommands" v-show="store.isTypeVisible('command')" :key="cmd.id" class="em-card em-card--command" :class="{ 'is-hl': isHl(cmd.id), 'is-dimmed': store.hoveredItemId && !isHl(cmd.id) && store.hoveredItemId !== cmd.id }"
                  :style="{ left: cmdCardPos(cmd).x+'px', top: SWIMLANE_PAD + (cmdStackIndex[cmd.id] || 0) * (CARD_H + 8) + 'px', width: CARD_W+'px', height: CARD_H+'px' }"
                  @click="store.selectItem(cmd.id,'command')" @dblclick="openInspector(cmd.id)" @mouseenter="store.setHoveredItem(cmd.id)" @mouseleave="store.clearHover()"
+                 @contextmenu="onNodeContextMenu($event, cmd.id, 'command')"
                  :title="(cmd.displayName||cmd.name)+' ('+cmd.actor+')'">
               <div v-if="store.hoveredItemId === cmd.id && warningsFor(cmd.id).length" class="em-card__warnings" role="tooltip">
                 <div v-for="w in warningsFor(cmd.id)" :key="w.type">{{ warningLine(w) }}</div>
               </div>
               <div class="em-card__title">{{ truncate(cmd.displayName||cmd.name) }}</div>
               <div class="em-card__sub">{{ cmd.actor }}</div>
+              <div v-if="isConnectMode" class="em-connector em-connector--right"
+                   :class="{ 'is-valid-target': isValidDropTarget('command') }"
+                   @mousedown="onConnectorMouseDown($event, cmd.id, 'command')"
+                   @mouseup="onConnectorMouseUp($event, cmd.id, 'command')"></div>
             </div>
             <!-- ReadModels (우측) -->
             <div v-for="(rm, ri) in store.interactionReadModels" v-show="store.isTypeVisible('readmodel')" :key="rm.id" class="em-card em-card--readmodel" :class="{ 'is-hl': isHl(rm.id), 'is-dimmed': store.hoveredItemId && !isHl(rm.id) && store.hoveredItemId !== rm.id }"
                  :style="{ left: rmCardPos(rm).x+'px', top: SWIMLANE_PAD + (rmStackIndex[rm.id] || 0) * (CARD_H + 8) + 'px', width: CARD_W+'px', height: CARD_H+'px' }"
                  @click="store.selectItem(rm.id,'readmodel')" @dblclick="openInspector(rm.id)" @mouseenter="store.setHoveredItem(rm.id)" @mouseleave="store.clearHover()"
+                 @contextmenu="onNodeContextMenu($event, rm.id, 'readmodel')"
                  :title="rm.displayName||rm.name">
               <div class="em-card__title">{{ truncate(rm.displayName||rm.name) }}</div>
               <div class="em-card__sub">{{ rm.actor }}</div>
+              <div v-if="isConnectMode" class="em-connector em-connector--right"
+                   :class="{ 'is-valid-target': isValidDropTarget('readmodel') }"
+                   @mousedown="onConnectorMouseDown($event, rm.id, 'readmodel')"
+                   @mouseup="onConnectorMouseUp($event, rm.id, 'readmodel')"></div>
             </div>
           </div>
 
           <!-- ===== SYSTEM SWIMLANES (하단) ===== -->
           <div v-for="(lane, bi) in visibleSystemSwimlanes" :key="'bc-'+lane.bcId"
-               class="em-swimlane em-swimlane--system" :style="{ top: bcYVisible(bi)+'px', width: timelineWidth+'px',
+               class="em-swimlane em-swimlane--system"
+               :class="{ 'is-bc-drop-target': dropTargetBcId === lane.bcId }"
+               :style="{ top: bcYVisible(bi)+'px', width: timelineWidth+'px',
                height: (bcHeights[lane.bcId]||SWIMLANE_MIN_H)+'px',
-               background: getColor(bcColors,bi).bg, borderColor: getColor(bcColors,bi).border }">
+               background: getColor(bcColors,bi).bg, borderColor: getColor(bcColors,bi).border }"
+               @dragover="onBcLaneDragOver($event, lane)"
+               @dragleave="onBcLaneDragLeave(lane)"
+               @drop="onBcLaneDrop($event, lane)">
             <div class="em-swimlane__hdr" :style="{ width: HEADER_W+'px' }">
               <span>{{ lane.bcDisplayName||lane.bcName }}</span>
             </div>
             <!-- Events -->
             <div v-for="evt in lane.events" :key="evt.id"
                  class="em-card em-card--event"
-                 :class="{ 'is-hl': isHl(evt.id), 'is-dimmed': store.hoveredItemId && !isHl(evt.id) && store.hoveredItemId !== evt.id, 'is-dragging': store.draggingEventId === evt.id, 'is-drop-target': dragOverEventId === evt.id }"
+                 :class="{ 'is-hl': isHl(evt.id), 'is-dimmed': store.hoveredItemId && !isHl(evt.id) && store.hoveredItemId !== evt.id, 'is-dragging': store.draggingEventId === evt.id, 'is-drop-target': dragOverEventId === evt.id && !dropIndicatorParallel, 'is-drop-parallel': dragOverEventId === evt.id && !!dropIndicatorParallel }"
                  :style="{ left: evtCardPos(evt,bi).x+'px', top: evtCardPos(evt,bi).y - bcYVisible(bi)+'px', width: CARD_W+'px', height: CARD_H+'px' }"
                  draggable="true"
                  @dragstart="onEvtDragStart($event, evt)"
-                 @dragover.prevent="dragOverEventId = evt.id"
+                 @dragover="onEvtDragOver($event, evt, bi)"
                  @dragleave="dragOverEventId = null"
-                 @drop.prevent="onEvtDrop(evt)"
+                 @drop.stop.prevent="onEvtDrop(evt, bi)"
+                 @dragend="onEvtDragEnd"
                  @click="store.selectItem(evt.id,'event')" @dblclick="openInspector(evt.id)"
                  @mouseenter="store.setHoveredItem(evt.id)" @mouseleave="store.clearHover()"
+                 @contextmenu="onNodeContextMenu($event, evt.id, 'event')"
                  :title="(evt.displayName||evt.name)+'\n'+evt.commandName">
               <div v-if="store.hoveredItemId === evt.id && warningsFor(evt.id).length" class="em-card__warnings" role="tooltip">
                 <div v-for="w in warningsFor(evt.id)" :key="w.type">{{ warningLine(w) }}</div>
               </div>
               <div class="em-card__title">{{ truncate(evt.displayName||evt.name) }}</div>
               <div class="em-card__sub">{{ truncate(evt.commandName, 12) }}</div>
+              <div v-if="isConnectMode" class="em-connector em-connector--right"
+                   :class="{ 'is-valid-target': isValidDropTarget('event') }"
+                   @mousedown="onConnectorMouseDown($event, evt.id, 'event')"
+                   @mouseup="onConnectorMouseUp($event, evt.id, 'event')"></div>
             </div>
+            <!-- Drop indicator: 시퀀스 이동 (세로선) -->
+            <div v-if="store.draggingEventId && dropIndicatorSeq"
+                 class="em-drop-indicator em-drop-indicator--seq"
+                 :style="{ left: (seqX(dropIndicatorSeq) - SEQ_STEP_W/2 - 2) + 'px' }"></div>
+            <!-- Drop indicator: 병렬 배치 (가로선) -->
+            <div v-if="store.draggingEventId && dropIndicatorParallel && dropIndicatorParallel.bcId === lane.bcId"
+                 class="em-drop-indicator em-drop-indicator--parallel"
+                 :style="{ left: (seqX(dropIndicatorParallel.seq) - CARD_W/2 - 8) + 'px',
+                            width: (CARD_W + 16) + 'px',
+                            top: (lane.events.filter(e => e.sequence === dropIndicatorParallel.seq).length * (CARD_H + 8) + SWIMLANE_PAD) + 'px' }"></div>
           </div>
         </div>
       </div>
@@ -738,7 +1073,61 @@ function onCanvasDrop(e) {
           </svg>
         </button>
         <span v-if="store.isLiveMode" class="em-live-badge" style="margin-left:4px">LIVE {{ store.liveEventCount }}</span>
+
+        <div class="canvas-toolbar__divider"></div>
+
+        <!-- Connect mode toggle -->
+        <button class="canvas-toolbar__btn" :class="{ 'is-active': isConnectMode }" @click="toggleConnectMode" title="노드 연결 모드">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+        </button>
+        <!-- Palette toggle -->
+        <button class="canvas-toolbar__btn" :class="{ 'is-active': store.paletteOpen }" @click="store.togglePalette()" title="노드 팔레트">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+          </svg>
+        </button>
       </div>
+
+      <!-- Palette Panel (좌측 하단) -->
+      <div v-if="store.paletteOpen" class="em-palette" @click.stop>
+        <div class="em-palette__title">노드 추가</div>
+        <div class="em-palette__items">
+          <div v-for="item in paletteNodeTypes" :key="item.type"
+               class="em-palette__item"
+               :style="{ '--palette-color': item.color }"
+               draggable="true"
+               @dragstart="onPaletteDragStart($event, item.type)">
+            <span class="em-palette__item-dot" :style="{ background: item.color }"></span>
+            <span class="em-palette__item-label">{{ item.label }}</span>
+          </div>
+        </div>
+        <div class="em-palette__hint">드래그하여 캔버스에 추가</div>
+      </div>
+
+      <!-- Context Menu (우클릭) -->
+      <Teleport to="body">
+        <div v-if="contextMenu.show" class="em-context-menu" :style="{ left: contextMenu.x+'px', top: contextMenu.y+'px' }" @click.stop>
+          <button class="em-context-menu__item em-context-menu__item--delete" @click="deleteSelectedNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            삭제
+          </button>
+        </div>
+        <div v-if="contextMenu.show" class="em-context-menu__backdrop" @click="closeContextMenu"></div>
+        <!-- Path (관계) 삭제 컨텍스트 메뉴 -->
+        <div v-if="pathContextMenu.show" class="em-context-menu" :style="{ left: pathContextMenu.x+'px', top: pathContextMenu.y+'px' }" @click.stop>
+          <button class="em-context-menu__item em-context-menu__item--delete" @click="deleteSelectedRelation">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+            연결 삭제
+          </button>
+        </div>
+        <div v-if="pathContextMenu.show" class="em-context-menu__backdrop" @click="closePathContextMenu"></div>
+      </Teleport>
     </div>
 
     <!-- Resizer -->
@@ -812,6 +1201,7 @@ function onCanvasDrop(e) {
 .em-scroll.is-panning { cursor:grabbing; user-select:none }
 .em-canvas { position:relative; min-width:100%; min-height:100% }
 .em-svg { position:absolute; top:0; left:0; pointer-events:none; z-index:5 }
+.em-svg path[stroke="transparent"] { pointer-events:stroke }
 
 /* Swimlane */
 .em-swimlane { position:absolute; left:0; display:flex; border:1px solid var(--color-border,#414868); border-radius:4px }
@@ -848,6 +1238,7 @@ function onCanvasDrop(e) {
 }
 .em-card.is-dragging { opacity:.4; transform:scale(.95) }
 .em-card.is-drop-target { box-shadow:0 0 0 3px #228be6,0 4px 12px rgba(34,139,230,.4); transform:translateY(-2px) }
+.em-card.is-drop-parallel { box-shadow:0 0 0 3px #40c057,0 4px 12px rgba(64,192,87,.4); transform:translateY(-2px) }
 .em-card--ui { background:#fff; border:1px solid #bdbdbd }
 .em-card--rm-ui { background:#e8eaf6; border:1px solid #9fa8da }
 .em-card--command { background:var(--color-command,#5c7cfa); border:1px solid var(--color-command-dark,#4263eb); color:#fff }
@@ -878,4 +1269,40 @@ function onCanvasDrop(e) {
 .em-right-sidebar__icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; background:transparent; border:none; border-radius:var(--radius-sm); color:var(--color-text-light); cursor:pointer; transition:all .15s }
 .em-right-sidebar__icon:hover { background:var(--color-bg-tertiary); color:var(--color-text) }
 .em-right-sidebar__icon.is-active { background:var(--color-accent); color:#fff }
+
+/* Connect mode */
+.em-scroll.is-connecting { cursor:crosshair }
+.em-scroll.is-connecting .em-card { cursor:crosshair }
+.em-connector { position:absolute; width:10px; height:10px; border-radius:50%; background:rgba(34,139,230,.7); border:2px solid #228be6; cursor:crosshair; z-index:15; transition:all .15s }
+.em-connector--right { right:-5px; top:50%; transform:translateY(-50%) }
+.em-connector:hover { transform:translateY(-50%) scale(1.4); background:#228be6 }
+.em-connector.is-valid-target { background:rgba(64,192,87,.7); border-color:#40c057; animation:connector-pulse 1s infinite }
+@keyframes connector-pulse { 0%,100% { box-shadow:0 0 0 0 rgba(34,139,230,.4) } 50% { box-shadow:0 0 0 4px rgba(34,139,230,.15) } }
+
+/* Palette */
+.em-palette { position:absolute; left:12px; bottom:60px; z-index:40; background:var(--color-bg-secondary,#24283b); border:1px solid var(--color-border,#414868); border-radius:8px; padding:10px 12px; min-width:140px; box-shadow:0 4px 16px rgba(0,0,0,.35) }
+.em-palette__title { font-size:.6rem; font-weight:700; color:var(--color-text-light,#a9b1d6); margin-bottom:8px; text-transform:uppercase; letter-spacing:.5px }
+.em-palette__items { display:flex; flex-direction:column; gap:4px }
+.em-palette__item { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:6px; cursor:grab; transition:background .15s; border:1px solid transparent }
+.em-palette__item:hover { background:rgba(255,255,255,.06); border-color:var(--palette-color) }
+.em-palette__item:active { cursor:grabbing }
+.em-palette__item-dot { width:10px; height:10px; border-radius:2px; flex-shrink:0 }
+.em-palette__item-label { font-size:.65rem; font-weight:600; color:var(--color-text,#c0caf5) }
+.em-palette__hint { font-size:.5rem; color:var(--color-text-light,#a9b1d6); margin-top:8px; opacity:.7 }
+
+/* Context Menu */
+.em-context-menu { position:fixed; z-index:9999; background:var(--color-bg-secondary,#24283b); border:1px solid var(--color-border,#414868); border-radius:6px; padding:4px; min-width:120px; box-shadow:0 4px 16px rgba(0,0,0,.4) }
+.em-context-menu__item { display:flex; align-items:center; gap:6px; width:100%; padding:6px 10px; border:none; background:none; color:var(--color-text,#c0caf5); font-size:.65rem; font-weight:500; border-radius:4px; cursor:pointer; text-align:left }
+.em-context-menu__item:hover { background:rgba(255,255,255,.08) }
+.em-context-menu__item--delete:hover { background:rgba(229,57,53,.15); color:#ef5350 }
+.em-context-menu__backdrop { position:fixed; inset:0; z-index:9998 }
+
+/* Drop indicator */
+.em-drop-indicator { position:absolute; z-index:20; pointer-events:none; animation:drop-pulse .8s ease-in-out infinite }
+.em-drop-indicator--seq { top:8px; bottom:8px; width:3px; background:#228be6; border-radius:2px }
+.em-drop-indicator--parallel { height:3px; background:#40c057; border-radius:2px }
+@keyframes drop-pulse { 0%,100% { opacity:1 } 50% { opacity:.4 } }
+
+/* BC swimlane drop target highlight */
+.em-swimlane--system.is-bc-drop-target { box-shadow:inset 0 0 0 2px #228be6; background:rgba(34,139,230,.08) !important }
 </style>

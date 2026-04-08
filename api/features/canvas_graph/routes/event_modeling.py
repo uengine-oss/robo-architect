@@ -562,3 +562,458 @@ async def reorder_events(request: Request) -> dict[str, Any]:
     )
 
     return {"updated": len(orders)}
+
+
+@router.post("/event-modeling/nodes")
+async def add_event_modeling_node(request: Request) -> dict[str, Any]:
+    """
+    POST /api/graph/event-modeling/nodes
+
+    Event Modeling 뷰에서 새 노드를 추가.
+    Body: {
+      "type": "event" | "command" | "readmodel" | "ui",
+      "name": "NodeName",
+      "displayName": "표시 이름",
+      "bcId": "bounded-context-id",
+      "sequence": 3,
+      "actor": "User",
+      "aggregateId": "agg-id"  (command 전용),
+      "attachedToId": "cmd-or-rm-id"  (ui 전용),
+      "attachedToType": "Command" | "ReadModel"  (ui 전용),
+      "isOutput": false  (ui 전용)
+    }
+    """
+    body = await request.json()
+    node_type = body.get("type", "").lower()
+    name = body.get("name", "NewNode")
+    display_name = body.get("displayName", name)
+    bc_id = body.get("bcId")
+    sequence = body.get("sequence", 1)
+    actor = body.get("actor", "User")
+
+    if node_type not in ("event", "command", "readmodel", "ui"):
+        return {"error": f"Invalid node type: {node_type}"}
+
+    result_data: dict[str, Any] = {}
+
+    with get_session() as session:
+        if node_type == "event":
+            if not bc_id:
+                return {"error": "bcId is required for event"}
+            rec = session.run(
+                """
+                MATCH (bc:BoundedContext {id: $bcId})
+                CREATE (evt:Event {
+                    id: randomUUID(),
+                    name: $name,
+                    displayName: $displayName,
+                    sequence: $sequence,
+                    actor: $actor,
+                    createdAt: datetime(),
+                    updatedAt: datetime()
+                })
+                MERGE (bc)-[:HAS_EVENT]->(evt)
+                RETURN evt.id AS id, evt.name AS name, evt.displayName AS displayName
+                """,
+                bcId=bc_id, name=name, displayName=display_name,
+                sequence=int(sequence), actor=actor,
+            ).single()
+            if rec:
+                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "event", "bcId": bc_id, "sequence": sequence}
+
+        elif node_type == "command":
+            agg_id = body.get("aggregateId")
+            if not agg_id:
+                # aggregateId 없으면 BC 내 첫 번째 Aggregate 사용
+                agg_rec = session.run(
+                    "MATCH (bc:BoundedContext {id: $bcId})-[:HAS_AGGREGATE]->(agg:Aggregate) RETURN agg.id AS id LIMIT 1",
+                    bcId=bc_id,
+                ).single()
+                agg_id = agg_rec["id"] if agg_rec else None
+            if not agg_id:
+                return {"error": "No aggregate found for this BC"}
+            rec = session.run(
+                """
+                MATCH (agg:Aggregate {id: $aggId})
+                CREATE (cmd:Command {
+                    id: randomUUID(),
+                    name: $name,
+                    displayName: $displayName,
+                    actor: $actor,
+                    createdAt: datetime(),
+                    updatedAt: datetime()
+                })
+                MERGE (agg)-[:HAS_COMMAND]->(cmd)
+                RETURN cmd.id AS id, cmd.name AS name, cmd.displayName AS displayName
+                """,
+                aggId=agg_id, name=name, displayName=display_name, actor=actor,
+            ).single()
+            if rec:
+                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "command", "bcId": bc_id, "actor": actor}
+
+        elif node_type == "readmodel":
+            if not bc_id:
+                return {"error": "bcId is required for readmodel"}
+            rec = session.run(
+                """
+                MATCH (bc:BoundedContext {id: $bcId})
+                CREATE (rm:ReadModel {
+                    id: randomUUID(),
+                    name: $name,
+                    displayName: $displayName,
+                    actor: $actor,
+                    createdAt: datetime(),
+                    updatedAt: datetime()
+                })
+                MERGE (bc)-[:HAS_READMODEL]->(rm)
+                RETURN rm.id AS id, rm.name AS name, rm.displayName AS displayName
+                """,
+                bcId=bc_id, name=name, displayName=display_name, actor=actor,
+            ).single()
+            if rec:
+                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "readmodel", "bcId": bc_id, "actor": actor}
+
+        elif node_type == "ui":
+            attached_to_id = body.get("attachedToId")
+            attached_to_type = body.get("attachedToType", "Command")
+            rec = session.run(
+                """
+                CREATE (ui:UI {
+                    id: randomUUID(),
+                    name: $name,
+                    displayName: $displayName,
+                    actor: $actor,
+                    attachedToId: $attachedToId,
+                    attachedToType: $attachedToType,
+                    createdAt: datetime(),
+                    updatedAt: datetime()
+                })
+                RETURN ui.id AS id, ui.name AS name, ui.displayName AS displayName
+                """,
+                name=name, displayName=display_name, actor=actor,
+                attachedToId=attached_to_id or "", attachedToType=attached_to_type,
+            ).single()
+            if rec:
+                # ATTACHED_TO 관계 생성
+                if attached_to_id:
+                    session.run(
+                        """
+                        MATCH (ui:UI {id: $uiId}), (target {id: $targetId})
+                        MERGE (ui)-[:ATTACHED_TO]->(target)
+                        """,
+                        uiId=rec["id"], targetId=attached_to_id,
+                    )
+                # BC에도 연결
+                if bc_id:
+                    session.run(
+                        "MATCH (bc:BoundedContext {id: $bcId}), (ui:UI {id: $uiId}) MERGE (bc)-[:HAS_UI]->(ui)",
+                        bcId=bc_id, uiId=rec["id"],
+                    )
+                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "ui", "actor": actor}
+
+    SmartLogger.log(
+        "INFO",
+        f"Event Modeling node added: {node_type}",
+        category="api.graph.event_modeling.add_node",
+        params={**http_context(request), "nodeType": node_type, "result": result_data},
+    )
+
+    return {"node": result_data}
+
+
+@router.delete("/event-modeling/nodes/{node_type}/{node_id}")
+async def delete_event_modeling_node(request: Request, node_type: str, node_id: str) -> dict[str, Any]:
+    """
+    DELETE /api/graph/event-modeling/nodes/{node_type}/{node_id}
+
+    Event Modeling 뷰에서 노드 삭제. 연결된 관계도 함께 제거.
+    """
+    label_map = {"event": "Event", "command": "Command", "readmodel": "ReadModel", "ui": "UI"}
+    label = label_map.get(node_type.lower())
+    if not label:
+        return {"error": f"Invalid node type: {node_type}"}
+
+    with get_session() as session:
+        # DETACH DELETE로 모든 관계 포함 삭제
+        result = session.run(
+            f"MATCH (n:{label} {{id: $id}}) DETACH DELETE n RETURN count(n) AS cnt",
+            id=node_id,
+        ).single()
+        deleted = result["cnt"] if result else 0
+
+    SmartLogger.log(
+        "INFO",
+        f"Event Modeling node deleted: {node_type}/{node_id}",
+        category="api.graph.event_modeling.delete_node",
+        params={**http_context(request), "nodeType": node_type, "nodeId": node_id, "deleted": deleted},
+    )
+
+    return {"deleted": deleted}
+
+
+@router.put("/event-modeling/move-event")
+async def move_event_bc(request: Request) -> dict[str, Any]:
+    """
+    PUT /api/graph/event-modeling/move-event
+
+    Event를 다른 BoundedContext로 이동.
+    Body: { "eventId": "...", "targetBcId": "..." }
+    """
+    body = await request.json()
+    event_id = body.get("eventId")
+    target_bc_id = body.get("targetBcId")
+
+    if not event_id or not target_bc_id:
+        return {"error": "eventId and targetBcId are required"}
+
+    with get_session() as session:
+        # 기존 HAS_EVENT 관계 제거 + 새 BC에 연결
+        session.run(
+            """
+            MATCH (evt:Event {id: $eventId})
+            OPTIONAL MATCH (oldBc:BoundedContext)-[oldRel:HAS_EVENT]->(evt)
+            DELETE oldRel
+            WITH evt
+            MATCH (newBc:BoundedContext {id: $targetBcId})
+            MERGE (newBc)-[:HAS_EVENT]->(evt)
+            """,
+            eventId=event_id, targetBcId=target_bc_id,
+        )
+
+    SmartLogger.log(
+        "INFO",
+        f"Event moved to BC: {event_id} → {target_bc_id}",
+        category="api.graph.event_modeling.move_event",
+        params={**http_context(request), "eventId": event_id, "targetBcId": target_bc_id},
+    )
+
+    return {"moved": True, "eventId": event_id, "targetBcId": target_bc_id}
+
+
+# ── 노드 간 관계(Relation) CRUD ─────────────────────────────────
+
+# 허용되는 관계 매핑: (sourceLabel, targetLabel) → relationshipType
+_VALID_RELATIONS: dict[tuple[str, str], str] = {
+    ("Command", "Event"): "EMITS",
+    ("UI", "Command"): "ATTACHED_TO",
+    ("UI", "ReadModel"): "ATTACHED_TO",
+    ("Event", "Policy"): "TRIGGERS",
+    ("Policy", "Command"): "INVOKES",
+    ("Event", "ReadModel"): "EVENT_TO_READMODEL",  # CQRS 연결 (간접)
+}
+
+
+@router.post("/event-modeling/relations")
+async def create_relation(request: Request) -> dict[str, Any]:
+    """
+    POST /api/graph/event-modeling/relations
+
+    두 노드 간 관계 생성.
+    Body: {
+      "sourceId": "...",
+      "targetId": "...",
+      "sourceType": "command" | "event" | "readmodel" | "ui" | "policy",
+      "targetType": "command" | "event" | "readmodel" | "ui" | "policy"
+    }
+
+    sourceType/targetType 조합에 따라 적절한 관계를 자동 생성:
+      Command → Event : EMITS
+      UI → Command : ATTACHED_TO
+      UI → ReadModel : ATTACHED_TO
+      Event → Policy : TRIGGERS
+      Policy → Command : INVOKES
+      Event → ReadModel : CQRSConfig + CQRSOperation(TRIGGERED_BY) 자동 생성
+    """
+    body = await request.json()
+    source_id = body.get("sourceId")
+    target_id = body.get("targetId")
+    source_type = (body.get("sourceType") or "").capitalize()
+    target_type = (body.get("targetType") or "").capitalize()
+
+    # Readmodel → ReadModel 정규화
+    if source_type == "Readmodel":
+        source_type = "ReadModel"
+    if target_type == "Readmodel":
+        target_type = "ReadModel"
+
+    if not source_id or not target_id:
+        return {"error": "sourceId and targetId are required"}
+
+    rel_type = _VALID_RELATIONS.get((source_type, target_type))
+    if not rel_type:
+        return {
+            "error": f"Invalid relation: {source_type} → {target_type}",
+            "validRelations": [
+                {"from": k[0], "to": k[1], "type": v} for k, v in _VALID_RELATIONS.items()
+            ],
+        }
+
+    result_data: dict[str, Any] = {"sourceId": source_id, "targetId": target_id, "relationType": rel_type}
+
+    with get_session() as session:
+        if rel_type == "EVENT_TO_READMODEL":
+            # Event → ReadModel: CQRSConfig + CQRSOperation + TRIGGERED_BY 자동 생성
+            # 1. CQRSConfig 확인/생성
+            cqrs_id = f"CQRS-{target_id}"
+            session.run(
+                """
+                MATCH (rm:ReadModel {id: $rmId})
+                MERGE (cqrs:CQRSConfig {id: $cqrsId})
+                  ON CREATE SET cqrs.readmodelId = $rmId
+                MERGE (rm)-[:HAS_CQRS]->(cqrs)
+                """,
+                rmId=target_id, cqrsId=cqrs_id,
+            )
+            # 2. CQRSOperation + TRIGGERED_BY 생성
+            op_id = f"CQRS-OP-{target_id}-INSERT-{source_id}"
+            session.run(
+                """
+                MATCH (cqrs:CQRSConfig {id: $cqrsId}), (evt:Event {id: $evtId})
+                MERGE (op:CQRSOperation {id: $opId})
+                  ON CREATE SET op.operationType = 'INSERT',
+                               op.cqrsConfigId = $cqrsId,
+                               op.triggerEventId = $evtId
+                MERGE (cqrs)-[:HAS_OPERATION]->(op)
+                MERGE (op)-[:TRIGGERED_BY]->(evt)
+                """,
+                cqrsId=cqrs_id, evtId=source_id, opId=op_id,
+            )
+            result_data["relationType"] = "TRIGGERED_BY (via CQRSOperation)"
+        else:
+            # 일반 관계 MERGE
+            session.run(
+                f"""
+                MATCH (src:{source_type} {{id: $srcId}}), (tgt:{target_type} {{id: $tgtId}})
+                MERGE (src)-[:{rel_type}]->(tgt)
+                """,
+                srcId=source_id, tgtId=target_id,
+            )
+
+    SmartLogger.log(
+        "INFO",
+        f"Relation created: {source_type}-[{rel_type}]->{target_type}",
+        category="api.graph.event_modeling.create_relation",
+        params={**http_context(request), **result_data},
+    )
+
+    return {"created": True, **result_data}
+
+
+@router.delete("/event-modeling/relations")
+async def delete_relation(request: Request) -> dict[str, Any]:
+    """
+    DELETE /api/graph/event-modeling/relations
+
+    두 노드 간 관계 삭제.
+    Body: {
+      "sourceId": "...",
+      "targetId": "...",
+      "sourceType": "command" | "event" | "readmodel" | "ui" | "policy",
+      "targetType": "command" | "event" | "readmodel" | "ui" | "policy"
+    }
+    """
+    body = await request.json()
+    source_id = body.get("sourceId")
+    target_id = body.get("targetId")
+    source_type = (body.get("sourceType") or "").capitalize()
+    target_type = (body.get("targetType") or "").capitalize()
+
+    if source_type == "Readmodel":
+        source_type = "ReadModel"
+    if target_type == "Readmodel":
+        target_type = "ReadModel"
+
+    if not source_id or not target_id:
+        return {"error": "sourceId and targetId are required"}
+
+    rel_type = _VALID_RELATIONS.get((source_type, target_type))
+    if not rel_type:
+        return {"error": f"Invalid relation: {source_type} → {target_type}"}
+
+    with get_session() as session:
+        if rel_type == "EVENT_TO_READMODEL":
+            # CQRSOperation + TRIGGERED_BY 관계 삭제
+            session.run(
+                """
+                MATCH (op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event {id: $evtId})
+                WHERE op.cqrsConfigId = $cqrsId
+                DETACH DELETE op
+                """,
+                evtId=source_id, cqrsId=f"CQRS-{target_id}",
+            )
+        else:
+            session.run(
+                f"""
+                MATCH (src:{source_type} {{id: $srcId}})-[r:{rel_type}]->(tgt:{target_type} {{id: $tgtId}})
+                DELETE r
+                """,
+                srcId=source_id, tgtId=target_id,
+            )
+
+    SmartLogger.log(
+        "INFO",
+        f"Relation deleted: {source_type}-[{rel_type}]->{target_type}",
+        category="api.graph.event_modeling.delete_relation",
+        params={**http_context(request), "sourceId": source_id, "targetId": target_id, "relationType": rel_type},
+    )
+
+    return {"deleted": True, "sourceId": source_id, "targetId": target_id, "relationType": rel_type}
+
+
+@router.get("/event-modeling/connectable/{node_type}/{node_id}")
+async def get_connectable_targets(request: Request, node_type: str, node_id: str) -> dict[str, Any]:
+    """
+    GET /api/graph/event-modeling/connectable/{node_type}/{node_id}
+
+    해당 노드에서 연결 가능한 타겟 노드 목록 + 관계 유형.
+    현재 이미 연결된 노드는 제외.
+    """
+    source_label = node_type.capitalize()
+    if source_label == "Readmodel":
+        source_label = "ReadModel"
+
+    # 이 소스 타입에서 가능한 관계들
+    possible = [(tgt, rel) for (src, tgt), rel in _VALID_RELATIONS.items() if src == source_label]
+    if not possible:
+        return {"targets": [], "nodeType": node_type}
+
+    results = []
+
+    with get_session() as session:
+        for target_label, rel_type in possible:
+            actual_rel = rel_type if rel_type != "EVENT_TO_READMODEL" else "TRIGGERED_BY"
+
+            if rel_type == "EVENT_TO_READMODEL":
+                # 이미 CQRS 연결된 ReadModel 제외
+                records = session.run(
+                    """
+                    MATCH (tgt:ReadModel)
+                    WHERE NOT EXISTS {
+                        MATCH (tgt)-[:HAS_CQRS]->(:CQRSConfig)-[:HAS_OPERATION]->(:CQRSOperation)-[:TRIGGERED_BY]->(:Event {id: $srcId})
+                    }
+                    RETURN tgt.id AS id, tgt.name AS name, tgt.displayName AS displayName
+                    """,
+                    srcId=node_id,
+                ).data()
+            else:
+                records = session.run(
+                    f"""
+                    MATCH (tgt:{target_label})
+                    WHERE NOT EXISTS {{
+                        MATCH (:{source_label} {{id: $srcId}})-[:{actual_rel}]->(tgt)
+                    }}
+                    RETURN tgt.id AS id, tgt.name AS name, tgt.displayName AS displayName
+                    """,
+                    srcId=node_id,
+                ).data()
+
+            for rec in records:
+                results.append({
+                    "id": rec["id"],
+                    "name": rec["name"],
+                    "displayName": rec["displayName"] or rec["name"],
+                    "targetType": target_label.lower(),
+                    "relationType": rel_type,
+                })
+
+    return {"targets": results, "nodeType": node_type, "nodeId": node_id}

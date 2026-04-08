@@ -263,10 +263,10 @@ Event → TRIGGERS → Policy → INVOKES → Command
 - [x] `policies` phase — 기존 events-only chunking 개선: ① events 청크에 관련된 BC의 US/commands만 필터링하여 중복 오버헤드 제거, ② accumulated policy에 trigger_event → invoke_command + BC 쌍 상세 정보 포함하여 정합성 강화
 
 ### Event Modeling의 자유로운 수정
-- [ ] ui, command, readmodel, event 등의 자유로운 추가 및 삭제가 가능해야함.
-- [ ] event를 드래그하여 위치를 서로 shuffling하면서 위치를 바꿀 수 있어야함. (sequence가 서로 바뀌는게 아니라, 옮겨진 event에 따라 이후의 이벤트들이 하나씩 뒤로 자연스럽게 이동되어야 하며, 옮겨진 Event와 함께 연결된 command, readmodel, ui도 함께 움직여야함)
-- [ ] 시퀀스 변경 뿐만 아니라, 스윔레인에서 bounded context 끼리 서로 이동 가능해야함.
-- [ ] 드래그 이동이 가능한 것은 event only + event의 이동에 따라서 연결된 노드들이 함께 위치 변경 업데이트
+- [x] ui, command, readmodel, event 등의 자유로운 추가 및 삭제가 가능해야함. (팔레트 구현 필요)
+- [x] event를 드래그하여 위치를 서로 shuffling하면서 위치를 바꿀 수 있어야함. (sequence가 서로 바뀌는게 아니라, 옮겨진 event에 따라 이후의 이벤트들이 하나씩 뒤로 자연스럽게 이동되어야 하며, 옮겨진 Event와 함께 연결된 command, readmodel, ui도 함께 움직여야함)
+- [x] 시퀀스 변경 뿐만 아니라, 스윔레인에서 bounded context 끼리 서로 이동 가능해야함.
+- [x] 드래그 이동이 가능한 것은 event only + event의 이동에 따라서 연결된 노드들이 함께 위치 변경 업데이트
 
 ### Figma 연동
 - [ ] Figma 인증 정보를 통한 api 연동 (프로젝트 목록 불러오기 및 추가하기)
