@@ -23,6 +23,7 @@ from api.features.ingestion.workflow.utils.chunking import (
     merge_chunk_results,
     calculate_chunk_progress,
 )
+from api.features.ingestion.workflow.utils.user_story_format import format_us_text
 from api.platform.env import get_llm_provider_model
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
@@ -421,14 +422,11 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                     except Exception:
                         pass
     
+    _bl_map = getattr(ctx, 'bl_by_user_story', None)
+
     # User Stories를 텍스트로 변환하는 함수
     def us_to_text(us) -> str:
-        # Ensure role is valid before formatting
-        role = (getattr(us, "role", "") or "").strip()
-        if not role or role.lower() in ("user", "사용자", ""):
-            # Fallback to "customer" if role is still invalid
-            role = "customer"
-        return f"[{us.id}] As a {role}, I want to {us.action}, so that {us.benefit}"
+        return format_us_text(us, bl_map=_bl_map)
     
     # 청킹 필요 여부 판단
     if should_chunk_list(ctx.user_stories, item_to_text=us_to_text, max_items=50):
@@ -1313,11 +1311,7 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
         # 누락된 User Story들을 LLM에게 적절한 BC에 할당하도록 요청
         unassigned_stories = [us for us in ctx.user_stories if us.id in unassigned_us_ids]
         unassigned_stories_text = "\n".join(
-            [
-                f"[{us.id}] As a {getattr(us, 'role', 'user')}, I want to {getattr(us, 'action', '?')}"
-                + (f", so that {getattr(us, 'benefit', '')}" if getattr(us, "benefit", None) else "")
-                for us in unassigned_stories
-            ]
+            [format_us_text(us, bl_map=_bl_map) for us in unassigned_stories]
         )
         
         bc_info_text = "\n".join(

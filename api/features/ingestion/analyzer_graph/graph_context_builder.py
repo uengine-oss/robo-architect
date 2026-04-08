@@ -28,15 +28,19 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
     query = """
     MATCH (f)-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic)
     OPTIONAL MATCH (a:Actor)-[:ROLE]->(f)
-    WITH f, a, bl
+    OPTIONAL MATCH (f)-[:READS]->(rt:Table)
+    OPTIONAL MATCH (f)-[:WRITES]->(wt:Table)
+    WITH f, a, bl, rt, wt
     ORDER BY bl.sequence
     WITH f,
          collect(DISTINCT a.name) AS actors,
-         collect({sequence: bl.sequence, title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios
+         collect(DISTINCT {sequence: bl.sequence, coupled_domain: bl.coupled_domain, title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios,
+         collect(DISTINCT rt.name) AS reads_tables,
+         collect(DISTINCT wt.name) AS writes_tables
     RETURN coalesce(f.procedure_name, f.name) AS unit_name,
            coalesce(f.function_id, f.procedure_name, f.name) AS unit_id,
            f.summary AS summary,
-           actors, scenarios
+           actors, scenarios, reads_tables, writes_tables
     ORDER BY unit_name
     """
     rows = _run(query)
@@ -52,20 +56,59 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
         actor = ", ".join(actors_list)
         scenarios = row.get("scenarios") or []
 
+        reads = [t for t in (row.get("reads_tables") or []) if t]
+        writes = [t for t in (row.get("writes_tables") or []) if t]
+
         lines: list[str] = [f"## {name}"]
         if actor:
             lines.append(f"Actor: {actor}")
+        if reads or writes:
+            tables_parts = []
+            if reads:
+                tables_parts.append(f"READS: {', '.join(reads)}")
+            if writes:
+                tables_parts.append(f"WRITES: {', '.join(writes)}")
+            lines.append(f"Tables: {' | '.join(tables_parts)}")
         lines.append("")
 
         # 비즈니스 로직 시나리오 (sequence 순서대로 = 비즈니스 프로세스 흐름)
-        has_bl = False
-        for sc in scenarios:
-            if isinstance(sc, dict) and sc.get("title"):
-                if not has_bl:
-                    lines.append("### 비즈니스 규칙 (프로세스 흐름 순서):")
-                    has_bl = True
+        valid_scenarios = [sc for sc in scenarios if isinstance(sc, dict) and sc.get("title")]
+        has_bl = bool(valid_scenarios)
+
+        if has_bl:
+            # 흐름도: BL[1] → BL[2] → BL[3] (도메인 경계 표시)
+            flow_parts = []
+            coupled_bls = []
+            own_domain_bls = []
+            for sc in valid_scenarios:
                 seq = sc.get("sequence", "")
-                lines.append(f"  - BL[{seq}]: {sc['title']}")
+                domain = sc.get("coupled_domain")
+                if domain:
+                    flow_parts.append(f"BL[{seq}]*")
+                    coupled_bls.append((seq, domain, sc.get("title", "")))
+                else:
+                    flow_parts.append(f"BL[{seq}]")
+                    own_domain_bls.append(seq)
+
+            lines.append("### 비즈니스 프로세스 흐름:")
+            lines.append(f"  {' → '.join(flow_parts)}")
+
+            # 도메인 경계 요약
+            if coupled_bls:
+                lines.append("")
+                lines.append("### 도메인 경계 (Cross-Domain Coupling):")
+                lines.append(f"  현재 도메인: BL[{', '.join(str(s) for s in own_domain_bls)}]")
+                for seq, domain, title in coupled_bls:
+                    lines.append(f"  ★ BL[{seq}] → {domain} 도메인 (분리 대상): {title}")
+                lines.append("  → 커플링된 BL은 이후 DDD 전환 시 별도 서비스/이벤트로 분리해야 할 대상입니다")
+
+            lines.append("")
+            lines.append("### 비즈니스 규칙 상세:")
+            for sc in valid_scenarios:
+                seq = sc.get("sequence", "")
+                domain = sc.get("coupled_domain")
+                coupled_info = f" [★ {domain} 도메인]" if domain else ""
+                lines.append(f"  - BL[{seq}]{coupled_info}: {sc['title']}")
                 if sc.get("given"):
                     lines.append(f"    Given: {sc['given']}")
                 if sc.get("when"):
@@ -73,16 +116,17 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
                 if sc.get("then"):
                     lines.append(f"    Then: {sc['then']}")
 
-        # BL이 없으면 summary fallback
-        if not has_bl:
-            summary = row.get("summary") or ""
-            if summary:
-                lines.append(f"### Summary:\n{summary}")
+        # 함수 요약 (BL 유무와 관계없이 항상 포함)
+        summary = row.get("summary") or ""
+        if summary:
+            lines.append(f"\n### 함수 요약:\n{summary}")
 
         lines.extend([
             "",
             "### GUIDELINES:",
-            "- BL 번호는 비즈니스 프로세스의 흐름 순서입니다",
+            "- BL 번호는 비즈니스 프로세스의 흐름 순서입니다 (BL[1] → BL[2] → ...)",
+            "- ★표시 BL은 다른 도메인의 로직이 현재 함수에 포함된 것 (Cross-Domain Coupling)",
+            "- 커플링된 BL은 해당 도메인의 별도 US로 분리하거나, 도메인 간 이벤트/호출로 표현하세요",
             "- Generate User Stories from the business logic above",
             "- Each User Story MUST include a 'source_bl' field with the BL sequence numbers it originated from",
             "  Example: if a US comes from BL[1] and BL[3], set source_bl: [1, 3]",

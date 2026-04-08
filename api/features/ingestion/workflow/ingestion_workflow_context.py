@@ -55,6 +55,10 @@ class IngestionWorkflowContext:
     # Figma screen data: screen_name → node structure summary text (set when source_type == "figma")
     figma_screens: Dict[str, str] = field(default_factory=dict)
 
+    # BL (BusinessLogic) cache per UserStory ID: {us_id: [{seq, title, coupled_domain, given, when, then}, ...]}
+    # Populated after Phase 1 for source_type == "analyzer_graph". Empty for rfp/figma.
+    bl_by_user_story: Dict[str, List[Any]] = field(default_factory=dict)
+
     def sync_from_neo4j(self, up_to_phase: str | None = None) -> None:
         """
         Synchronize context from Neo4j to reflect any modifications made during pause.

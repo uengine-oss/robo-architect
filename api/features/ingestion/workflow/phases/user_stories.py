@@ -591,7 +591,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     _analyzer_processed = False
     should_chunk_result = False
     if ctx.source_type == "analyzer_graph":
-        from api.features.ingestion.analyzer_graph.graph_to_report import build_unit_contexts
+        from api.features.ingestion.analyzer_graph.graph_context_builder import build_unit_contexts
         sb_contexts = build_unit_contexts()
         if sb_contexts:
             # BusinessLogic 단위별 개별 처리
@@ -615,7 +615,8 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
 
                 print(f"[ANALYZER US] Processing Session Bean {sb_idx+1}/{len(sb_contexts)}: {sb_name} ({estimate_tokens(sb_context)} tokens)")
                 try:
-                    sb_stories = await asyncio.to_thread(extract_user_stories_from_text, sb_context)
+                    from api.features.ingestion.analyzer_graph.graph_to_user_stories import extract_user_stories_from_analyzer_graph
+                    sb_stories = await asyncio.to_thread(extract_user_stories_from_analyzer_graph, sb_context)
                     print(f"[ANALYZER US] {sb_name}: {len(sb_stories)} US generated")
                     # 출처 분석 단위(unit) 태깅 — 역추적용
                     for us in sb_stories:
@@ -1004,6 +1005,13 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             "failed_ids": failed_ids,
         },
     )
+
+    # analyzer_graph: BL 캐시 로딩 (이후 Phase에서 US 텍스트에 BL을 합쳐 전달하기 위함)
+    if ctx.source_type == "analyzer_graph":
+        from api.features.ingestion.workflow.utils.user_story_format import load_bl_for_user_stories
+        ctx.bl_by_user_story = load_bl_for_user_stories(ctx.client)
+        if ctx.bl_by_user_story:
+            print(f"[BL CACHE] Loaded BL for {len(ctx.bl_by_user_story)} user stories")
 
     # 최종 결과에 생성 성공/실패 정보 포함
     yield ProgressEvent(
