@@ -172,7 +172,42 @@ const schema = computed(() => {
 
 function normalizeInspectorTab(tab, label) {
   if (tab === 'preview' && label === 'UI') return 'preview'
+  if (tab === 'traceability') return 'traceability'
   return 'properties'
+}
+
+// Traceability state
+const traceData = ref(null)
+const traceLoading = ref(false)
+const traceError = ref(null)
+const expandedBLs = ref(new Set())
+
+function toggleBL(seq) {
+  if (expandedBLs.value.has(seq)) {
+    expandedBLs.value.delete(seq)
+  } else {
+    expandedBLs.value.add(seq)
+  }
+  expandedBLs.value = new Set(expandedBLs.value) // trigger reactivity
+}
+
+async function loadTraceability(nodeId) {
+  traceLoading.value = true
+  traceError.value = null
+  traceData.value = null
+  expandedBLs.value = new Set()
+  try {
+    const res = await fetch(`/api/graph/traceability/${encodeURIComponent(nodeId)}`)
+    if (!res.ok) {
+      traceError.value = res.status === 404 ? '출처 정보가 없습니다' : '조회 실패'
+      return
+    }
+    traceData.value = await res.json()
+  } catch (e) {
+    traceError.value = '서버 연결 실패'
+  } finally {
+    traceLoading.value = false
+  }
 }
 
 const activeTab = ref(normalizeInspectorTab(props.initialTab, nodeLabel.value))
@@ -182,6 +217,17 @@ watch(
     if (v) activeTab.value = normalizeInspectorTab(v, nodeLabel.value)
   }
 )
+
+watch(activeTab, (tab) => {
+  if (tab === 'traceability' && props.nodeId && !traceData.value) {
+    loadTraceability(props.nodeId)
+  }
+})
+
+watch(() => props.nodeId, () => {
+  traceData.value = null
+  traceError.value = null
+})
 
 const saving = ref(false)
 const error = ref(null)
@@ -1760,6 +1806,13 @@ function updateVoFieldValue(fieldName, value) {
           >
             Properties
           </button>
+          <button
+            class="inspector-tab"
+            :class="{ active: activeTab === 'traceability' }"
+            @click="activeTab = 'traceability'"
+          >
+            출처
+          </button>
         </div>
 
         <div v-if="error" class="inspector-alert error">{{ error }}</div>
@@ -2226,9 +2279,145 @@ function updateVoFieldValue(fieldName, value) {
           </div>
 
         </div>
+
+        <!-- Traceability Tab -->
+        <div v-if="activeTab === 'traceability'" class="inspector-traceability">
+          <div v-if="traceLoading" class="trace-loading">
+            <span class="spinner"></span> 출처 조회 중...
+          </div>
+          <div v-else-if="traceError" class="trace-empty">
+            {{ traceError }}
+          </div>
+          <div v-else-if="traceData" class="trace-content">
+
+            <template v-if="traceData.chains?.length">
+              <div v-for="(chain, cIdx) in traceData.chains" :key="cIdx" class="trace-chain">
+
+                <template v-for="(step, sIdx) in chain" :key="sIdx">
+                  <!-- 화살표 구분 -->
+                  <div v-if="sIdx > 0" class="trace-step-arrow">↑</div>
+
+                  <!-- DDD Node -->
+                  <div v-if="step.step === 'DDD Node'" class="trace-step trace-step--ddd">
+                    <span class="trace-step__badge" :class="`trace-step__badge--${step.type?.toLowerCase()}`">{{ step.type }}</span>
+                    <span class="trace-step__name">{{ step.name }}</span>
+                  </div>
+
+                  <!-- Bounded Context -->
+                  <div v-else-if="step.step === 'Bounded Context'" class="trace-step trace-step--bc">
+                    <span class="trace-step__badge trace-step__badge--bc">BC</span>
+                    <span class="trace-step__name">{{ step.name }}</span>
+                  </div>
+
+                  <!-- User Story -->
+                  <div v-else-if="step.step === 'User Story'" class="trace-step trace-step--us">
+                    <span class="trace-step__badge trace-step__badge--us">US</span>
+                    <span class="trace-step__name">{{ step.id }}: As a {{ step.role }}, {{ step.action }}</span>
+                  </div>
+
+                  <!-- Business Logic -->
+                  <div v-else-if="step.step === 'Business Logic'" class="trace-step trace-step--bl">
+                    <div class="trace-step__badge trace-step__badge--bl">BL</div>
+                    <!-- 흐름도 -->
+                    <div class="trace-flow">
+                      <template v-for="(bl, bIdx) in step.flow" :key="bl.seq">
+                        <span class="trace-flow__node" :class="{ 'trace-flow__node--coupled': bl.coupled_domain }" :title="bl.title">
+                          BL[{{ bl.seq }}]{{ bl.coupled_domain ? '*' : '' }}
+                        </span>
+                        <span v-if="bIdx < step.flow.length - 1" class="trace-flow__arrow">→</span>
+                      </template>
+                    </div>
+                    <!-- 커플링 -->
+                    <div v-for="c in step.domain_couplings" :key="c.seq" class="trace-coupling">
+                      <span class="trace-coupling__badge">★</span>
+                      BL[{{ c.seq }}] → <strong>{{ c.domain }}</strong>
+                      <span class="trace-coupling__hint">(분리 대상)</span>
+                    </div>
+                    <!-- BL 아코디언 -->
+                    <div v-for="bl in step.flow" :key="`bl-${cIdx}-${bl.seq}`" class="trace-bl">
+                      <button class="trace-bl__header" @click="toggleBL(`${cIdx}-${bl.seq}`)">
+                        <span class="trace-bl__toggle">{{ expandedBLs.has(`${cIdx}-${bl.seq}`) ? '▼' : '▶' }}</span>
+                        <span class="trace-bl__seq" :class="{ 'trace-bl__seq--coupled': bl.coupled_domain }">BL[{{ bl.seq }}]</span>
+                        <span v-if="bl.coupled_domain" class="trace-bl__domain">★{{ bl.coupled_domain }}</span>
+                        <span class="trace-bl__title">{{ bl.title }}</span>
+                      </button>
+                      <div v-if="expandedBLs.has(`${cIdx}-${bl.seq}`)" class="trace-bl__body">
+                        <div v-if="bl.given" class="trace-bl__gwt"><span class="trace-bl__gwt-label">Given</span><span class="trace-bl__gwt-text">{{ bl.given }}</span></div>
+                        <div v-if="bl.when" class="trace-bl__gwt"><span class="trace-bl__gwt-label">When</span><span class="trace-bl__gwt-text">{{ bl.when }}</span></div>
+                        <div v-if="bl.then" class="trace-bl__gwt"><span class="trace-bl__gwt-label">Then</span><span class="trace-bl__gwt-text">{{ bl.then }}</span></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Function -->
+                  <div v-else-if="step.step === 'Function'" class="trace-step trace-step--func">
+                    <div class="trace-func">
+                      <div class="trace-func__header">
+                        <span class="trace-step__badge trace-step__badge--func">FN</span>
+                        <span class="trace-func__name">{{ step.name || step.id }}</span>
+                        <span v-if="step.location" class="trace-func__location">{{ step.location }}</span>
+                      </div>
+
+                      <!-- 1. 함수 요약 -->
+                      <div v-if="step.summary" class="trace-func__summary">{{ step.summary }}</div>
+
+                      <!-- 2. 원본 코드 -->
+                      <div v-if="step.code" class="trace-func__code-wrap">
+                        <button class="trace-func__code-toggle" @click="toggleBL(`code-${cIdx}`)">
+                          <span>{{ expandedBLs.has(`code-${cIdx}`) ? '▼' : '▶' }}</span>
+                          원본 코드 보기
+                        </button>
+                        <pre v-if="expandedBLs.has(`code-${cIdx}`)" class="trace-func__code"><code>{{ step.code }}</code></pre>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Tables (Function 다음에 별도 스텝으로) -->
+                  <template v-if="step.step === 'Function' && step.tables?.length">
+                    <div class="trace-step-arrow">↑</div>
+                    <div class="trace-step trace-step--table">
+                      <div class="trace-tables">
+                        <div class="trace-tables__title">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 9h18M3 15h18M3 3h18v18H3z"/></svg>
+                          관련 테이블
+                        </div>
+                        <div v-for="tbl in step.tables" :key="tbl.name" class="trace-table">
+                          <div class="trace-table__header">
+                            <span class="trace-table__name">{{ tbl.name }}</span>
+                            <span v-for="acc in tbl.access" :key="acc"
+                              class="trace-table__access"
+                              :class="acc === 'READS' ? 'trace-table__access--reads' : 'trace-table__access--writes'"
+                            >{{ acc }}</span>
+                          </div>
+                          <div v-if="tbl.columns?.length" class="trace-table__cols">
+                            <span v-for="col in tbl.columns" :key="col.name" class="trace-table__col">
+                              <strong v-if="col.pk">*</strong>{{ col.name }}<span class="trace-table__col-type">{{ col.type }}</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </template>
+
+                <!-- 체인 구분선 -->
+                <hr v-if="cIdx < traceData.chains.length - 1" class="trace-divider" />
+              </div>
+            </template>
+
+            <div v-else class="trace-empty">
+              이 노드에 연결된 출처 정보가 없습니다
+            </div>
+
+          </div>
+          <div v-else class="trace-empty">
+            출처 탭을 선택하면 자동으로 조회됩니다
+          </div>
+        </div>
+
       </div>
     </div>
-    
+
     <!-- GWT Detail Modal -->
     <div v-if="showGWTDetailModal" class="gwt-detail-modal-overlay" @click.self="closeGWTDetailModal">
       <div class="gwt-detail-modal">
@@ -2869,6 +3058,452 @@ function updateVoFieldValue(fieldName, value) {
 .inspector-tab.active {
   color: var(--color-text-bright);
   border-color: var(--color-accent);
+}
+
+/* Traceability Tab */
+.inspector-traceability {
+  padding: var(--spacing-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  overflow-y: auto;
+}
+
+.trace-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  color: var(--color-text-muted);
+  padding: var(--spacing-lg);
+  justify-content: center;
+}
+
+.trace-empty {
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: var(--spacing-lg);
+  font-size: 0.85rem;
+}
+
+.trace-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.trace-section__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.trace-flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: var(--spacing-xs) 0;
+}
+
+.trace-flow__node {
+  background: var(--color-surface-elevated, rgba(255,255,255,0.06));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: default;
+}
+
+.trace-flow__node--coupled {
+  border-color: rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+}
+
+.trace-flow__arrow {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.trace-coupling {
+  font-size: 0.8rem;
+  color: var(--color-text);
+  padding: 4px 0;
+}
+
+.trace-coupling__badge {
+  color: #fbbf24;
+  margin-right: 2px;
+}
+
+.trace-coupling__hint {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.trace-bl {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.trace-bl + .trace-bl {
+  margin-top: 4px;
+}
+
+.trace-bl__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  color: var(--color-text);
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.trace-bl__header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.trace-bl__toggle {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  width: 12px;
+}
+
+.trace-bl__seq {
+  font-weight: 600;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+
+.trace-bl__seq--coupled {
+  color: #fbbf24;
+}
+
+.trace-bl__domain {
+  font-size: 0.7rem;
+  color: #fbbf24;
+  flex-shrink: 0;
+}
+
+.trace-bl__title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-bl__body {
+  padding: 6px 8px 8px 26px;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trace-bl__gwt {
+  display: flex;
+  gap: 6px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.trace-bl__gwt-label {
+  font-weight: 600;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  min-width: 42px;
+}
+
+.trace-bl__gwt-text {
+  color: var(--color-text);
+}
+
+.trace-chain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.trace-step-arrow {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  line-height: 1;
+  opacity: 0.5;
+}
+
+.trace-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  font-size: 0.82rem;
+  transition: border-color 0.15s;
+}
+
+.trace-step:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.trace-step--bl {
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  background: rgba(236, 72, 153, 0.03);
+  border-color: rgba(236, 72, 153, 0.15);
+}
+
+.trace-step--func {
+  background: rgba(99, 102, 241, 0.03);
+  border-color: rgba(99, 102, 241, 0.15);
+}
+
+.trace-step__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  color: white;
+  background: var(--color-text-muted);
+}
+
+.trace-step__badge--command { background: #3b82f6; }
+.trace-step__badge--event { background: #f97316; }
+.trace-step__badge--aggregate { background: #eab308; color: #000; }
+.trace-step__badge--readmodel { background: #22c55e; }
+.trace-step__badge--policy { background: #a855f7; }
+.trace-step__badge--bc { background: #64748b; }
+.trace-step__badge--us { background: #06b6d4; }
+.trace-step__badge--bl { background: #ec4899; }
+.trace-step__badge--func { background: #6366f1; }
+
+.trace-step__name {
+  flex: 1;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.trace-divider {
+  border: none;
+  border-top: 1px dashed var(--color-border);
+  margin: var(--spacing-sm) 0;
+}
+
+.trace-func {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.trace-func__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-func__name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  font-family: 'Consolas', 'Monaco', monospace;
+  color: var(--color-text-bright);
+}
+
+.trace-func__location {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  font-family: monospace;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.trace-func__summary {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid rgba(99, 102, 241, 0.3);
+}
+
+.trace-func__tables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trace-func__rw {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-family: monospace;
+}
+
+.trace-func__rw--reads {
+  background: rgba(59, 130, 246, 0.12);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.trace-func__rw--writes {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.trace-step--table {
+  background: rgba(34, 197, 94, 0.03);
+  border-color: rgba(34, 197, 94, 0.15);
+}
+
+/* Table details */
+.trace-tables {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.trace-tables__title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.trace-table {
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--color-border);
+}
+
+.trace-table__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-table__name {
+  font-weight: 600;
+  font-size: 0.8rem;
+  font-family: monospace;
+  color: var(--color-text-bright);
+}
+
+.trace-table__access {
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 8px;
+  text-transform: uppercase;
+}
+
+.trace-table__access--reads {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.trace-table__access--writes {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.trace-table__desc {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.trace-table__cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.trace-table__col {
+  font-size: 0.68rem;
+  font-family: monospace;
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.trace-table__col strong {
+  color: #eab308;
+  margin-right: 1px;
+}
+
+.trace-table__col-type {
+  color: var(--color-text-muted);
+  margin-left: 3px;
+  font-size: 0.62rem;
+}
+
+.trace-func__code-wrap {
+  margin-top: 2px;
+}
+
+.trace-func__code-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--color-accent, #60a5fa);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.trace-func__code-toggle:hover {
+  text-decoration: underline;
+}
+
+.trace-func__code {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  font-size: 0.72rem;
+  font-family: 'Consolas', 'Monaco', monospace;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--color-text);
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .inspector-alert {
