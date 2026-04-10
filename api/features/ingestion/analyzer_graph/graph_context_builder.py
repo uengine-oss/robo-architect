@@ -41,8 +41,8 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
     WITH f,
          collect(DISTINCT a.name) AS actors,
          collect(DISTINCT {sequence: bl.sequence, coupled_domain: bl.coupled_domain, title: bl.title, given: bl.given, `when`: bl.`when`, `then`: bl.`then`}) AS scenarios,
-         collect(DISTINCT rt.name) AS reads_tables,
-         collect(DISTINCT wt.name) AS writes_tables
+         collect(DISTINCT {name: rt.name, is_estimated: rt.is_estimated}) AS reads_tables,
+         collect(DISTINCT {name: wt.name, is_estimated: wt.is_estimated}) AS writes_tables
     RETURN coalesce(f.procedure_name, f.name) AS unit_name,
            coalesce(f.function_id, f.procedure_name, f.name) AS unit_id,
            f.summary AS summary,
@@ -62,12 +62,25 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
         actor = ", ".join(actors_list)
         scenarios = row.get("scenarios") or []
 
-        reads = [t for t in (row.get("reads_tables") or []) if t]
-        writes = [t for t in (row.get("writes_tables") or []) if t]
+        def _format_tables(table_list):
+            result = []
+            for t in (table_list or []):
+                if isinstance(t, dict) and t.get("name"):
+                    label = t["name"]
+                    if t.get("is_estimated"):
+                        label += "(추정)"
+                    result.append(label)
+                elif isinstance(t, str) and t:
+                    result.append(t)
+            return result
+
+        reads = _format_tables(row.get("reads_tables"))
+        writes = _format_tables(row.get("writes_tables"))
 
         lines: list[str] = [f"## {name}"]
         if actor:
             lines.append(f"Actor: {actor}")
+        has_estimated = any("(추정)" in t for t in reads + writes)
         if reads or writes:
             tables_parts = []
             if reads:
@@ -75,6 +88,8 @@ def build_unit_contexts() -> list[tuple[str, str, str]]:
             if writes:
                 tables_parts.append(f"WRITES: {', '.join(writes)}")
             lines.append(f"Tables: {' | '.join(tables_parts)}")
+        if has_estimated:
+            lines.append("⚠️ (추정) 표시된 테이블은 코드 패턴에서 추정한 것이며, DDL/헤더파일로 확정되지 않았습니다. 확신하지 마세요.")
         lines.append("")
 
         # 비즈니스 로직 시나리오 (sequence 순서대로 = 비즈니스 프로세스 흐름)
@@ -390,10 +405,12 @@ def fetch_table_schemas_for_units(unit_ids: list[str]) -> str:
     OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:Column)
     OPTIONAL MATCH (t)-[fk:FK_TO_TABLE]->(ft:Table)
     RETURN t.name AS table_name, t.schema AS schema,
+           t.description AS table_description,
            collect(DISTINCT {
              name: c.name, dtype: c.dtype,
              pk: c.is_primary_key, nullable: c.nullable,
-             default_value: c.default_value
+             default_value: c.default_value,
+             description: c.description
            }) AS columns,
            collect(DISTINCT {
              source_col: fk.sourceColumn,
@@ -407,6 +424,8 @@ def fetch_table_schemas_for_units(unit_ids: list[str]) -> str:
 
     lines = ["[관련 테이블 스키마]"]
     for row in rows:
+        table_name = row["table_name"]
+        table_desc = row.get("table_description") or ""
         cols_list = [c for c in row.get("columns", []) if c.get("name")]
         cols = ", ".join(
             f"{'*' if c.get('pk') else ''}{c['name']} {c.get('dtype', '')}"
@@ -419,5 +438,14 @@ def fetch_table_schemas_for_units(unit_ids: list[str]) -> str:
                 f"{f['source_col']}->{f['target_table']}.{f['target_col']}"
                 for f in fks_list
             )
-        lines.append(f"  {row['table_name']}({cols}){fk_text}")
+        header = f"  {table_name}({cols}){fk_text}"
+        if table_desc:
+            header += f"\n    설명: {table_desc}"
+        # 컬럼 설명이 있는 경우 추가
+        col_descs = [c for c in cols_list if c.get("description")]
+        if col_descs:
+            header += "\n    컬럼설명: " + ", ".join(
+                f"{c['name']}={c['description']}" for c in col_descs
+            )
+        lines.append(header)
     return "\n".join(lines)
