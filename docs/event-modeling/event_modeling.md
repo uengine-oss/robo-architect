@@ -267,11 +267,32 @@ Event → TRIGGERS → Policy → INVOKES → Command
 - [x] event를 드래그하여 위치를 서로 shuffling하면서 위치를 바꿀 수 있어야함. (sequence가 서로 바뀌는게 아니라, 옮겨진 event에 따라 이후의 이벤트들이 하나씩 뒤로 자연스럽게 이동되어야 하며, 옮겨진 Event와 함께 연결된 command, readmodel, ui도 함께 움직여야함)
 - [x] 시퀀스 변경 뿐만 아니라, 스윔레인에서 bounded context 끼리 서로 이동 가능해야함.
 - [x] 드래그 이동이 가능한 것은 event only + event의 이동에 따라서 연결된 노드들이 함께 위치 변경 업데이트
+- [ ] 정합성을 떨어 뜨리는 수정 액션에 대해 구조화하여 제어 및 알림 처리 (맞지 않는 릴레이션 방향 등)
+
+### 출처 역추적 (Source Traceability)
+- [ ] **US 생성 시 원본 소스 추출**: UserStory가 어떤 원본 텍스트 구간(chunk/paragraph)을 기반으로 생성되었는지 추출·저장
+  - 현재 `source_unit_id` (analyzer_graph), `source_screen_name` (figma)는 있지만, rfp 소스의 텍스트 위치 추적은 미구현
+  - US 추출 LLM 응답에 `source_text_ref` (원본 텍스트의 시작~끝 위치 또는 핵심 인용문) 필드 추가
+- [ ] **노드별 역추적 체인 조회 API**: 임의의 노드(Command, Event, ReadModel, Policy 등)에서 역방향으로 원본 소스까지 추적
+  - 경로: `Node → Aggregate → BC → UserStory → 원본 텍스트 구간`
+  - API: `GET /api/graph/traceability/{node_id}` → 역추적 체인 + 원본 소스 하이라이트 정보 반환
+- [ ] **프론트엔드 역추적 패널**: 노드 클릭 시 인스펙터에서 "출처" 탭으로 원본 소스 구간 표시
+  - 원본 텍스트에서 해당 구간 하이라이트
+  - 중간 노드 체인(US → BC → Aggregate → ...) 시각화
+- [ ] **청킹과 역추적 연계**: 청킹 처리 시 각 청크의 원본 텍스트 위치(start_char, end_char)를 보존하여 역추적 가능하도록 메타데이터 저장
+- [ ] **병렬 처리 고려사항**: BC 간 / Aggregate 간 외부 루프 병렬화는 역추적 체인에 영향 없음 (구조적 관계는 처리 순서와 무관). 단, cross-unit 중복 방지 품질이 약간 저하될 수 있으므로 병렬화는 처리 시간이 실제 병목이 될 때 적용
 
 ### Figma 연동
 - [ ] Figma 인증 정보를 통한 api 연동 (프로젝트 목록 불러오기 및 추가하기)
 - [ ] 이벤트 스토밍에서 생성된 각각의 ui요소들이 Figma 프로젝트의 각각의 레이어로 화면들을 추가할 수 있게 api 연동
 - [ ] Figma에서 수정한 각 레이어들의 화면들을 그대로 다시 ui로 덮어씌우기 (ui 노드 name을 figma의 화면 이름으로 연결정보를 만들면 되지 않을까?)
+
+### 코드 분석 Ingestion 품질 개선 (구현됨)
+- [x] **US 생성 — 관련 함수 그룹핑**: `build_grouped_unit_contexts()`로 같은 테이블/접두사 함수를 Union-Find로 묶어 배치 LLM 호출. 함수당 US 1:1 → 그룹당 통합 US
+- [x] **Events Phase — BL 컨텍스트 주입**: `events_from_user_stories.py`가 BL Given/When/Then을 `<business_rules>` 섹션으로 프롬프트에 주입. 분기별 과생성 방지 규칙 추가 (내부 검증/타입 체크는 별도 이벤트 아님)
+- [x] **Policies Phase — coupled_domain 활용**: BL의 coupled_domain에서 cross-function 호출 패턴을 `<cross_domain_coupling_hints>` 섹션으로 Policy 프롬프트에 주입. "source BC → target domain" 직접 제공
+- [x] **BC 과다 생성 방지**: `bounded_contexts.py`에 analyzer_graph 전용 통합 가이드 주입 — 함수명 접두사 기준 그룹핑, 같은 테이블 READS/WRITES 그룹핑, 목표 5~15개 BC
+- [x] **Events → BC 연계**: Phase 4에서 추출된 이벤트의 도메인 클러스터링 힌트를 Phase 5(BC 식별) 프롬프트에 주입. PascalCase 접두사 기반 자동 그룹핑. 전 source_type 공통 적용
 
 ### External System(당장 고려 x)
 - [ ] 톱니바퀴 아이콘

@@ -350,9 +350,15 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
 
   /**
    * Event를 targetSequence 위치로 이동 (insert-shift 방식).
-   * 이동된 event와 연결된 command, readmodel, ui도 함께 시퀀스 업데이트.
+   *
+   * 동작:
+   *   1. 이동 대상 이벤트를 기존 위치에서 "빼낸다" (임시 제거)
+   *   2. 빈 자리가 생기면 뒤쪽 이벤트들이 앞으로 당겨진다 (gap 압축)
+   *   3. targetSequence 위치에 "삽입" → 해당 위치 이상의 이벤트들이 한 칸씩 뒤로 밀린다
+   *   4. 연결된 Command, ReadModel, UI의 sequence도 함께 업데이트
+   *
    * @param {string} eventId - 이동할 이벤트 ID
-   * @param {number} targetSequence - 이동 목적지 시퀀스 (1-based)
+   * @param {number} targetSequence - 삽입 위치 시퀀스 (1-based)
    */
   async function moveEventToPosition(eventId, targetSequence) {
     // 이동 대상 이벤트 찾기
@@ -363,9 +369,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
       }
       if (movingEvt) break
     }
-    if (!movingEvt || movingEvt.sequence === targetSequence) return
-
-    const oldSeq = movingEvt.sequence
+    if (!movingEvt) return
 
     // 모든 이벤트 수집
     const allEvts = []
@@ -373,21 +377,35 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
       for (const e of lane.events) allEvts.push(e)
     }
 
-    // insert-shift: 이동 방향에 따라 사이 이벤트들의 sequence 조정
-    if (oldSeq < targetSequence) {
-      // 오른쪽 이동: oldSeq < seq <= targetSequence → seq - 1
-      for (const e of allEvts) {
-        if (e.id === eventId) continue
-        if (e.sequence > oldSeq && e.sequence <= targetSequence) e.sequence--
-      }
-    } else {
-      // 왼쪽 이동: targetSequence <= seq < oldSeq → seq + 1
-      for (const e of allEvts) {
-        if (e.id === eventId) continue
-        if (e.sequence >= targetSequence && e.sequence < oldSeq) e.sequence++
-      }
+    // Step 1: 이동 대상을 빼낸 뒤, 나머지를 고유 시퀀스 순으로 정렬하여 1부터 재할당
+    //         (같은 시퀀스 = 병렬 이벤트는 동일 번호 유지)
+    const others = allEvts.filter(e => e.id !== eventId)
+    const sortedSeqs = [...new Set(others.map(e => e.sequence))].sort((a, b) => a - b)
+    const compressMap = {}
+    sortedSeqs.forEach((seq, i) => { compressMap[seq] = i + 1 })
+    for (const e of others) {
+      e.sequence = compressMap[e.sequence]
     }
-    movingEvt.sequence = targetSequence
+
+    // Step 2: targetSequence 클램프 (압축 후 범위 내로)
+    const maxAfterCompress = sortedSeqs.length > 0 ? sortedSeqs.length + 1 : 1
+    let insertAt = Math.min(targetSequence, maxAfterCompress)
+    insertAt = Math.max(1, insertAt)
+
+    // Step 3: insertAt 이상의 이벤트들을 한 칸씩 뒤로 밀기
+    for (const e of others) {
+      if (e.sequence >= insertAt) e.sequence++
+    }
+
+    // Step 4: 이동 대상 이벤트를 insertAt에 배치
+    movingEvt.sequence = insertAt
+
+    // maxSequence 갱신
+    let newMax = insertAt
+    for (const e of allEvts) {
+      if (e.sequence > newMax) newMax = e.sequence
+    }
+    maxSequence.value = newMax
 
     // 연결된 Command, ReadModel, UI의 sequence도 업데이트
     _syncConnectedNodeSequences()
@@ -397,15 +415,8 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
       lane.events.sort((a, b) => a.sequence - b.sequence)
     }
 
-    // Neo4j 반영: 모든 이벤트의 sequence 일괄 업데이트
-    const orders = allEvts.map(e => ({ eventId: e.id, sequence: e.sequence }))
-    try {
-      await fetch('/api/graph/event-modeling/reorder', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orders }),
-      })
-    } catch (e) { /* silent */ }
+    // Neo4j 반영
+    _persistEventSequences(allEvts)
   }
 
   /**
@@ -426,23 +437,28 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
 
     const oldSeq = movingEvt.sequence
 
-    // 병렬 배치: 단순히 같은 시퀀스로 설정
+    // 병렬 배치: 같은 시퀀스로 설정
     movingEvt.sequence = targetSequence
 
-    // 기존 시퀀스에 이벤트가 0개가 되면 gap이 생기므로 압축
+    // 모든 이벤트 수집
     const allEvts = []
     for (const lane of systemSwimlanes.value) {
       for (const e of lane.events) allEvts.push(e)
     }
 
-    // oldSeq에 남은 이벤트가 없으면 이후 이벤트 시퀀스를 -1
+    // oldSeq에 남은 이벤트가 없으면 gap 압축
     const remainAtOld = allEvts.filter(e => e.sequence === oldSeq)
     if (remainAtOld.length === 0) {
+      // oldSeq보다 큰 시퀀스를 한 칸씩 앞으로 당김
       for (const e of allEvts) {
         if (e.sequence > oldSeq) e.sequence--
       }
-      if (maxSequence.value > 1) maxSequence.value--
     }
+
+    // maxSequence 재계산
+    let newMax = 1
+    for (const e of allEvts) { if (e.sequence > newMax) newMax = e.sequence }
+    maxSequence.value = newMax
 
     // 연결된 노드 동기화
     _syncConnectedNodeSequences()
@@ -453,7 +469,14 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     }
 
     // Neo4j 반영
-    const orders = allEvts.map(e => ({ eventId: e.id, sequence: e.sequence }))
+    _persistEventSequences(allEvts)
+  }
+
+  /** display sequence 기준 정렬 후 고유한 Neo4j sequence를 부여하여 저장 */
+  async function _persistEventSequences(allEvts) {
+    // 병렬 이벤트(같은 display seq)도 고유 값으로 펼쳐서 Neo4j에 저장
+    const sorted = [...allEvts].sort((a, b) => a.sequence - b.sequence || a.id.localeCompare(b.id))
+    const orders = sorted.map((e, i) => ({ eventId: e.id, sequence: i + 1 }))
     try {
       await fetch('/api/graph/event-modeling/reorder', {
         method: 'PUT',
@@ -562,10 +585,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     tgtLane.events.push(movingEvt)
     tgtLane.events.sort((a, b) => a.sequence - b.sequence)
 
-    // 빈 소스 레인 제거
-    if (srcLane.events.length === 0) {
-      systemSwimlanes.value = systemSwimlanes.value.filter(l => l.bcId !== srcLane.bcId)
-    }
+    // 빈 소스 레인은 유지 (BC 스윔레인은 이벤트가 없어도 보여야 함)
 
     // Neo4j 반영
     try {
@@ -660,7 +680,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
       for (const lane of systemSwimlanes.value) {
         lane.events = lane.events.filter(e => e.id !== nodeId)
       }
-      systemSwimlanes.value = systemSwimlanes.value.filter(l => l.events.length > 0)
+      // BC 스윔레인은 이벤트가 없어도 유지
     } else if (nodeType === 'command') {
       interactionCommands.value = interactionCommands.value.filter(c => c.id !== nodeId)
     } else if (nodeType === 'readmodel') {
@@ -690,14 +710,29 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
   const connectingFrom = ref(null)   // { id, type } — 드래그 시작 노드
   const connectingToPos = ref(null)  // { x, y } — 마우스 위치 (라이브 라인용)
 
-  /** 연결 가능한 관계 매핑 (소스 → 타겟 → flowType) */
-  const _RELATION_MAP = {
-    'command→event': 'command-to-event',
-    'ui→command': 'ui-to-command',
-    'ui→readmodel': 'readmodel-to-ui',  // readmodel→ui 역방향으로 저장
-    'event→readmodel': 'event-to-readmodel',
-    'event→command': 'event-to-command',  // Policy chain
+  // ── 토스트 알림 ─────────────────────────────────────────────
+  const toast = ref(null)  // { message, type: 'info'|'warn'|'error', id }
+  let _toastTimer = null
+
+  function showToast(message, type = 'info') {
+    clearTimeout(_toastTimer)
+    toast.value = { message, type, id: Date.now() }
+    _toastTimer = setTimeout(() => { toast.value = null }, 3000)
   }
+
+  /**
+   * 허용되는 연결 방향 (Vertical Slice 순서):
+   *   UI → Command → Event → ReadModel → UI(output)
+   */
+  const _RELATION_MAP = {
+    'ui→command': 'ui-to-command',
+    'command→event': 'command-to-event',
+    'event→readmodel': 'event-to-readmodel',
+    'readmodel→ui': 'readmodel-to-ui',
+  }
+
+  /** 연결 방향 설명 (알림용) */
+  const RELATION_RULES_DESC = 'UI → Command → Event → ReadModel → UI'
 
   function startConnecting(nodeId, nodeType) {
     connectingFrom.value = { id: nodeId, type: nodeType }
@@ -723,12 +758,15 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
 
     const key = `${src.type}→${targetType}`
     let flowType = _RELATION_MAP[key]
-    if (!flowType) return  // 유효하지 않은 조합
+    if (!flowType) {
+      // 유효하지 않은 연결 방향 → 알림
+      showToast(`연결 불가: ${src.type} → ${targetType}\n허용 방향: ${RELATION_RULES_DESC}`, 'warn')
+      return
+    }
 
     // flow에 추가 (캔버스 즉시 반영)
-    // ui→readmodel은 readmodel-to-ui로 저장 (sourceId=readmodel, targetId=ui)
-    if (key === 'ui→readmodel') {
-      flows.value.push({ type: 'readmodel-to-ui', sourceId: targetId, targetId: src.id })
+    if (key === 'readmodel→ui') {
+      flows.value.push({ type: 'readmodel-to-ui', sourceId: src.id, targetId: targetId })
     } else {
       flows.value.push({ type: flowType, sourceId: src.id, targetId: targetId })
     }
@@ -760,20 +798,18 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
       !(f.sourceId === sourceId && f.targetId === targetId && f.type === flowType)
     )
 
-    // flowType → sourceType/targetType 역매핑
+    // flowType → sourceType/targetType 역매핑 (Vertical Slice 방향)
     const typeMap = {
-      'command-to-event': { sourceType: 'command', targetType: 'event' },
       'ui-to-command': { sourceType: 'ui', targetType: 'command' },
+      'command-to-event': { sourceType: 'command', targetType: 'event' },
       'event-to-readmodel': { sourceType: 'event', targetType: 'readmodel' },
-      'readmodel-to-ui': { sourceType: 'ui', targetType: 'readmodel' },
-      'event-to-command': { sourceType: 'event', targetType: 'command' },
+      'readmodel-to-ui': { sourceType: 'readmodel', targetType: 'ui' },
     }
     const mapping = typeMap[flowType]
     if (!mapping) return
 
-    // readmodel-to-ui의 경우 source/target 역전
-    const apiSource = flowType === 'readmodel-to-ui' ? targetId : sourceId
-    const apiTarget = flowType === 'readmodel-to-ui' ? sourceId : targetId
+    const apiSource = sourceId
+    const apiTarget = targetId
 
     try {
       await fetch('/api/graph/event-modeling/relations', {
@@ -954,6 +990,8 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     draggingEventId, moveEventToPosition, moveEventToBC, stackEventParallel,
     // Palette CRUD
     paletteOpen, togglePalette, addNode, deleteNode,
+    // Toast
+    toast, showToast, RELATION_RULES_DESC,
     // Relation CRUD
     connectingFrom, connectingToPos,
     startConnecting, updateConnectingPos, cancelConnecting,

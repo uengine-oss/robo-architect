@@ -29,6 +29,78 @@ from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 
+_EVENT_CLUSTER_BUDGET_TOKENS = 5000  # Max token budget for event clustering hint
+
+
+def _build_event_cluster_hint(ctx: Any) -> str:
+    """Build event clustering hint from Phase 4 results.
+
+    Groups events by US and extracts common domain keywords from event names
+    to suggest natural BC boundaries.  For example, events like
+    AutoPaymentBlocked, AutoPaymentAccountRegistered, AutoPaymentChannelInfoSet
+    all share the "AutoPayment" prefix → suggest a single "AutoPayment" BC.
+    """
+    events = getattr(ctx, "events_from_us", None) or []
+    if not events:
+        return ""
+
+    # Group events by US, then extract domain keyword from event name prefix
+    # e.g., "AutoPaymentBlocked" → "AutoPayment", "OrderPlaced" → "Order"
+    import re
+    _PASCAL_SPLIT = re.compile(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+    domain_to_events: dict[str, list[str]] = {}
+    for evt in events:
+        name = evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")
+        if not name:
+            continue
+        # Extract domain prefix: take first 1-2 PascalCase words as domain
+        parts = _PASCAL_SPLIT.split(name)
+        if len(parts) >= 2:
+            # Use first 2 words as domain key (e.g., AutoPayment, OrderPlacement, Account)
+            domain = parts[0] + parts[1] if len(parts[0]) <= 4 else parts[0]
+        else:
+            domain = parts[0] if parts else name
+        domain_to_events.setdefault(domain, []).append(name)
+
+    if not domain_to_events:
+        return ""
+
+    # Sort by event count (largest clusters first), filter out singletons
+    sorted_domains = sorted(
+        domain_to_events.items(), key=lambda x: len(x[1]), reverse=True
+    )
+    significant = [(d, evts) for d, evts in sorted_domains if len(evts) >= 2]
+
+    if not significant:
+        return ""
+
+    lines = []
+    for domain, evts in significant[:30]:  # Top 30 clusters
+        sample = ", ".join(evts[:5])
+        if len(evts) > 5:
+            sample += f" ... +{len(evts) - 5} more"
+        lines.append(f"- **{domain}** ({len(evts)} events): {sample}")
+
+    body = "\n".join(lines)
+
+    # Token budget check
+    from api.features.ingestion.workflow.utils.chunking import estimate_tokens
+    if estimate_tokens(body) > _EVENT_CLUSTER_BUDGET_TOKENS:
+        # Compress: show only domain name + count
+        lines = [f"- {d} ({len(e)} events)" for d, e in significant[:30]]
+        body = "\n".join(lines)
+
+    return (
+        "\n\n## Event Domain Clusters (from previous phase)\n"
+        "The following event clusters were detected. Events sharing the same domain prefix "
+        "strongly suggest they belong to the SAME Bounded Context:\n\n"
+        + body
+        + "\n\nUse these clusters as primary signals for BC boundaries. "
+        "User Stories whose events fall into the same cluster should be in the same BC.\n"
+    )
+
+
 async def _create_bc_with_links(
     bc: Any,
     bc_idx: int,
@@ -427,6 +499,28 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
     # User Stories를 텍스트로 변환하는 함수
     def us_to_text(us) -> str:
         return format_us_text(us, bl_map=_bl_map)
+
+    # analyzer_graph 전용: BC 과다 생성 방지 가이드 + 이벤트 클러스터링 힌트
+    _analyzer_consolidation_guide = ""
+    if getattr(ctx, "source_type", "") == "analyzer_graph":
+        _analyzer_consolidation_guide = (
+            "\n\n## CRITICAL: Legacy Code Analysis — Bounded Context Consolidation\n"
+            "These User Stories were extracted from legacy code (functions/procedures). "
+            "Legacy systems often have HUNDREDS of small functions that each handle one task. "
+            "Do NOT create one BC per function or per small feature.\n\n"
+            "**Consolidation rules for code-analyzed systems:**\n"
+            "1. Group by BUSINESS DOMAIN (e.g., '자동납부', '청구', '계정관리'), not by function name\n"
+            "2. Functions that operate on the SAME database tables belong to the SAME BC\n"
+            "3. Functions with similar prefixes (e.g., ProcessAutoDebit*, ValidateAutoDebit*, ChangeAutoDebit*) "
+            "are almost certainly the SAME BC\n"
+            "4. Target: 5~15 BCs for a typical legacy system. More than 20 is almost always over-split\n"
+            "5. A BC should contain 5~50 User Stories. A BC with only 1~2 User Stories should be merged\n"
+            "6. Consider the [도메인 커플링] hints in User Stories — coupled domains suggest BC boundaries\n"
+        )
+
+    # 이벤트 클러스터링 힌트: Phase 4에서 추출된 이벤트를 도메인 키워드로 그룹핑
+    # (모든 source_type에서 활용 — events_from_us가 있으면 동작)
+    _event_cluster_hint = _build_event_cluster_hint(ctx)
     
     # 청킹 필요 여부 판단
     if should_chunk_list(ctx.user_stories, item_to_text=us_to_text, max_items=50):
@@ -487,7 +581,7 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                 if display_lang == "ko"
                 else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
             )
-            prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
+            prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction + _event_cluster_hint + _analyzer_consolidation_guide
 
             # 이전 청크에서 이미 식별된 BC 목록 전달 — 동일 도메인 US는 기존 BC에 할당 유도
             if _accumulated_bcs:
@@ -852,7 +946,7 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
             if display_lang == "ko"
             else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
         )
-        prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
+        prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction + _analyzer_consolidation_guide
         bc_response = await asyncio.wait_for(
             asyncio.to_thread(
                 structured_llm.invoke,

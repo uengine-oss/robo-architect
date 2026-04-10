@@ -443,8 +443,9 @@ function onEvtDragStart(e, evt) {
  */
 function onEvtDragOver(e, evt, bcIdx) {
   e.preventDefault()
-  e.stopPropagation()                       // 캔버스의 onCanvasDragOver가 dropEffect를 'copy'로 덮어쓰는 것 방지
-  e.dataTransfer.dropEffect = 'move'        // effectAllowed='move'와 일치시켜야 drop 이벤트 발생
+  e.stopPropagation()
+  // 이벤트 드래그 = 'move', 팔레트 드래그 = 'copy'
+  e.dataTransfer.dropEffect = store.draggingEventId ? 'move' : 'copy'
   dragOverEventId.value = evt.id
 
   const rect = e.currentTarget.getBoundingClientRect()
@@ -466,37 +467,46 @@ function onEvtDragOver(e, evt, bcIdx) {
   }
 }
 
-function onEvtDrop(targetEvt, bcIdx) {
-  const srcId = store.draggingEventId
-  if (!srcId) return
-
+function onEvtDrop(e, targetEvt, bcIdx) {
   const targetLane = visibleSystemSwimlanes.value[bcIdx]
+
+  // 팔레트 드롭 체크 (동기적으로 — dataTransfer는 이벤트 핸들러 내에서만 유효)
+  const paletteType = e.dataTransfer.getData('application/em-palette')
+  if (paletteType) {
+    tryPaletteDrop(e, { sequence: targetEvt.sequence, bcId: targetLane?.bcId })
+    _clearDragState()
+    return
+  }
+
+  // await 전에 모든 ref 값을 동기적으로 읽기 (dragend가 먼저 _clearDragState 호출할 수 있음)
+  const srcId = store.draggingEventId
+  const parallelHint = dropIndicatorParallel.value
+  const seqHint = dropIndicatorSeq.value
+
+  _clearDragState()
+
+  if (!srcId || srcId === targetEvt.id) return
 
   // 크로스-BC 이동 체크
   let srcBcId = null
   for (const lane of store.systemSwimlanes) {
-    if (lane.events.some(e => e.id === srcId)) { srcBcId = lane.bcId; break }
+    if (lane.events.some(ev => ev.id === srcId)) { srcBcId = lane.bcId; break }
   }
   if (srcBcId && targetLane && srcBcId !== targetLane.bcId) {
     store.moveEventToBC(srcId, targetLane.bcId)
   }
 
-  if (dropIndicatorParallel.value && srcId !== targetEvt.id) {
-    // 병렬 배치: 같은 시퀀스로 설정 (shift 없이)
-    store.stackEventParallel(srcId, dropIndicatorParallel.value.seq)
-  } else if (dropIndicatorSeq.value !== null && srcId !== targetEvt.id) {
-    // 시퀀스 이동: insert-shift
-    store.moveEventToPosition(srcId, dropIndicatorSeq.value)
+  if (parallelHint) {
+    store.stackEventParallel(srcId, parallelHint.seq)
+  } else if (seqHint !== null) {
+    store.moveEventToPosition(srcId, seqHint)
   }
-
-  _clearDragState()
 }
 
 /** BC 스윔레인 빈 영역에 드롭 → 크로스-BC 이동 */
 function onBcLaneDragOver(e, lane) {
-  if (!store.draggingEventId) return
   e.preventDefault()
-  e.dataTransfer.dropEffect = 'move'        // effectAllowed='move'와 일치
+  e.dataTransfer.dropEffect = store.draggingEventId ? 'move' : 'copy'
   dropTargetBcId.value = lane.bcId
 }
 function onBcLaneDragLeave(lane) {
@@ -504,7 +514,17 @@ function onBcLaneDragLeave(lane) {
 }
 function onBcLaneDrop(e, lane) {
   e.preventDefault()
+
+  // 팔레트 드롭 체크 (동기)
+  const paletteType = e.dataTransfer.getData('application/em-palette')
+  if (paletteType) {
+    tryPaletteDrop(e, { bcId: lane.bcId })
+    _clearDragState()
+    return
+  }
+
   const srcId = store.draggingEventId
+  _clearDragState()
   if (!srcId) return
 
   let srcBcId = null
@@ -514,8 +534,6 @@ function onBcLaneDrop(e, lane) {
   if (srcBcId && srcBcId !== lane.bcId) {
     store.moveEventToBC(srcId, lane.bcId)
   }
-
-  _clearDragState()
 }
 
 function onEvtDragEnd() { _clearDragState() }
@@ -541,46 +559,76 @@ function onPaletteDragStart(e, nodeType) {
   e.dataTransfer.effectAllowed = 'copy'
 }
 
-/** 캔버스 빈 영역에 팔레트 노드 드롭 → 새 노드 생성 */
-async function onCanvasDropPalette(e) {
+/**
+ * 팔레트 노드 드롭 → 새 노드 생성.
+ * 어디에 드롭하든 (빈 영역, 이벤트 카드 위, BC 레인 위) 호출됨.
+ * @param {DragEvent} e
+ * @param {{ sequence?: number, bcId?: string }} hint - 드롭 컨텍스트에서 얻은 힌트
+ * @returns {boolean} 팔레트 드롭이면 true, 아니면 false
+ */
+async function tryPaletteDrop(e, hint = {}) {
   const paletteType = e.dataTransfer.getData('application/em-palette')
-  if (!paletteType) return
-
-  e.preventDefault()
+  if (!paletteType) return false
 
   // 드롭 위치에서 sequence 추정
-  const canvasRect = scrollContainer.value?.getBoundingClientRect()
-  if (!canvasRect) return
-  const xInCanvas = (e.clientX - canvasRect.left + (scrollContainer.value?.scrollLeft || 0)) / store.zoomLevel
-  const dropSeq = Math.max(1, Math.round((xInCanvas - HEADER_W) / SEQ_STEP_W) + 1)
-
-  // 가장 가까운 BC 결정 (event용)
-  let closestBcId = store.systemSwimlanes[0]?.bcId || null
-
-  if (paletteType === 'event' || paletteType === 'command' || paletteType === 'readmodel') {
-    // Y 위치로 어떤 BC에 드롭했는지 판단
-    const yInCanvas = (e.clientY - canvasRect.top + (scrollContainer.value?.scrollTop || 0)) / store.zoomLevel
-    for (let i = 0; i < visibleSystemSwimlanes.value.length; i++) {
-      const laneTop = bcYVisible(i)
-      const laneH = bcHeights.value[visibleSystemSwimlanes.value[i].bcId] || SWIMLANE_MIN_H
-      if (yInCanvas >= laneTop && yInCanvas <= laneTop + laneH) {
-        closestBcId = visibleSystemSwimlanes.value[i].bcId
-        break
-      }
+  let dropSeq = hint.sequence || null
+  if (!dropSeq) {
+    const canvasRect = scrollContainer.value?.getBoundingClientRect()
+    if (canvasRect) {
+      const xInCanvas = (e.clientX - canvasRect.left + (scrollContainer.value?.scrollLeft || 0)) / store.zoomLevel
+      dropSeq = Math.max(1, Math.round((xInCanvas - HEADER_W) / SEQ_STEP_W) + 1)
+    } else {
+      // 빈 캔버스 (scrollContainer 미렌더) → 다음 시퀀스
+      dropSeq = store.maxSequence + 1
     }
   }
 
+  // BC 결정: hint > Y 위치 추정 > 첫 번째 BC
+  let bcId = hint.bcId || null
+  if (!bcId) {
+    const canvasRect = scrollContainer.value?.getBoundingClientRect()
+    if (canvasRect) {
+      const yInCanvas = (e.clientY - canvasRect.top + (scrollContainer.value?.scrollTop || 0)) / store.zoomLevel
+      for (let i = 0; i < visibleSystemSwimlanes.value.length; i++) {
+        const laneTop = bcYVisible(i)
+        const laneH = bcHeights.value[visibleSystemSwimlanes.value[i].bcId] || SWIMLANE_MIN_H
+        if (yInCanvas >= laneTop && yInCanvas <= laneTop + laneH) {
+          bcId = visibleSystemSwimlanes.value[i].bcId
+          break
+        }
+      }
+    }
+  }
+  if (!bcId) bcId = store.systemSwimlanes[0]?.bcId || null
+
+  // Actor 결정: hint > Y 위치로 Actor 스윔레인 감지 > 기존 첫 번째 actor
+  let actor = hint.actor || null
+  if (!actor) {
+    const cr = scrollContainer.value?.getBoundingClientRect()
+    if (cr) {
+      const yInCanvas = (e.clientY - cr.top + (scrollContainer.value?.scrollTop || 0)) / store.zoomLevel
+      for (let i = 0; i < visibleActorSwimlanes.value.length; i++) {
+        const laneTop = actorYVisible(i)
+        const laneH = actorHeights.value[visibleActorSwimlanes.value[i].actor] || SWIMLANE_MIN_H
+        if (yInCanvas >= laneTop && yInCanvas <= laneTop + laneH) {
+          actor = visibleActorSwimlanes.value[i].actor
+          break
+        }
+      }
+    }
+  }
+  if (!actor) actor = store.actorSwimlanes[0]?.actor || 'User'
+
   const name = `New${paletteType.charAt(0).toUpperCase() + paletteType.slice(1)}`
-  const payload = {
+  await store.addNode({
     type: paletteType,
     name,
     displayName: name,
-    bcId: closestBcId,
+    bcId,
     sequence: dropSeq,
-    actor: 'User',
-  }
-
-  await store.addNode(payload)
+    actor,
+  })
+  return true
 }
 
 /** 노드 삭제 (컨텍스트 메뉴) */
@@ -708,11 +756,14 @@ function deleteSelectedRelation() {
   closePathContextMenu()
 }
 
-/** 연결 가능한 타겟 타입 (시각 피드백용) */
+/** 연결 가능한 타겟 타입 — Vertical Slice 방향만 허용:
+ *  UI → Command → Event → ReadModel → UI(output)
+ */
 const CONNECTABLE_TARGETS = {
+  ui: ['command'],
   command: ['event'],
-  event: ['readmodel', 'command'],
-  ui: ['command', 'readmodel'],
+  event: ['readmodel'],
+  readmodel: ['ui'],
 }
 
 function isValidDropTarget(targetType) {
@@ -815,13 +866,23 @@ function onResizeChat(e) { if (!isResizingChat.value) return; chatPanelWidth.val
 function stopResizeChat() { isResizingChat.value = false; document.removeEventListener('mousemove', onResizeChat); document.removeEventListener('mouseup', stopResizeChat) }
 
 
+function onKeyDown(e) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && store.selectedItemId && store.selectedItemType) {
+    // input/textarea 내부에서는 무시
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+    e.preventDefault()
+    store.deleteNode(store.selectedItemId, store.selectedItemType)
+  }
+}
+
 onMounted(() => {
   // 탭 진입 시 캔버스 비어있는 상태 유지 (live 모드 제외)
   if (!store.isLiveMode) store.clearCanvas()
   document.addEventListener('mousemove', onPan)
   document.addEventListener('mouseup', stopPan)
+  document.addEventListener('keydown', onKeyDown)
 })
-onUnmounted(() => { document.removeEventListener('mousemove', onPan); document.removeEventListener('mouseup', stopPan); stopResizeChat() })
+onUnmounted(() => { document.removeEventListener('mousemove', onPan); document.removeEventListener('mouseup', stopPan); document.removeEventListener('keydown', onKeyDown); stopResizeChat() })
 
 // 스윔레인 헤더 고정용 scroll 이벤트 등록 (scrollContainer가 렌더된 뒤)
 watch(scrollContainer, (el) => {
@@ -839,9 +900,10 @@ function onCanvasDragOver(e) {
 }
 function onCanvasDrop(e) {
   e.preventDefault()
-  // 팔레트 노드 드롭 처리
-  if (e.dataTransfer.getData('application/em-palette')) {
-    onCanvasDropPalette(e)
+  // 팔레트 드롭 체크 (동기)
+  const paletteType = e.dataTransfer.getData('application/em-palette')
+  if (paletteType) {
+    tryPaletteDrop(e)
     return
   }
   try {
@@ -908,7 +970,9 @@ function onCanvasDrop(e) {
           <div v-for="(lane, ai) in visibleActorSwimlanes" :key="'a-'+lane.actor"
                class="em-swimlane" :style="{ top: actorYVisible(ai)+'px', width: timelineWidth+'px',
                height: (actorHeights[lane.actor]||SWIMLANE_MIN_H)+'px',
-               background: getColor(actorColors,ai).bg, borderColor: getColor(actorColors,ai).border }">
+               background: getColor(actorColors,ai).bg, borderColor: getColor(actorColors,ai).border }"
+               @dragover.prevent="e => e.dataTransfer.dropEffect = 'copy'"
+               @drop.stop.prevent="tryPaletteDrop($event, { actor: lane.actor })">
             <div class="em-swimlane__hdr" :style="{ width: HEADER_W+'px' }">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               <span>{{ lane.actor }}</span>
@@ -923,7 +987,9 @@ function onCanvasDrop(e) {
                 <svg width="18" height="14" viewBox="0 0 24 20" fill="none" stroke="#666" stroke-width="1.5"><rect x="2" y="2" width="20" height="14" rx="2"/><path d="M2 6h20"/></svg>
               </div>
               <div class="em-card__name">{{ truncate(ui.displayName||ui.name) }}</div>
-              <!-- Connector dots -->
+              <button v-if="store.selectedItemId === ui.id" class="em-card__delete" @click.stop="store.deleteNode(ui.id, 'ui')" title="삭제">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
               <div v-if="isConnectMode" class="em-connector em-connector--right"
                    :class="{ 'is-valid-target': isValidDropTarget('ui') }"
                    @mousedown="onConnectorMouseDown($event, ui.id, 'ui')"
@@ -932,7 +998,9 @@ function onCanvasDrop(e) {
           </div>
 
           <!-- ===== INTERACTION SWIMLANE (중간) ===== -->
-          <div v-show="showInteractionRow" class="em-swimlane em-swimlane--interaction" :style="{ top: interactionY+'px', width: timelineWidth+'px', height: INTERACTION_H+'px' }">
+          <div v-show="showInteractionRow" class="em-swimlane em-swimlane--interaction" :style="{ top: interactionY+'px', width: timelineWidth+'px', height: INTERACTION_H+'px' }"
+               @dragover.prevent="e => e.dataTransfer.dropEffect = 'copy'"
+               @drop.stop.prevent="tryPaletteDrop($event)">
             <div class="em-swimlane__hdr em-swimlane__hdr--int" :style="{ width: HEADER_W+'px' }">
               <span>Interactions</span>
             </div>
@@ -947,6 +1015,9 @@ function onCanvasDrop(e) {
               </div>
               <div class="em-card__title">{{ truncate(cmd.displayName||cmd.name) }}</div>
               <div class="em-card__sub">{{ cmd.actor }}</div>
+              <button v-if="store.selectedItemId === cmd.id" class="em-card__delete" @click.stop="store.deleteNode(cmd.id, 'command')" title="삭제">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
               <div v-if="isConnectMode" class="em-connector em-connector--right"
                    :class="{ 'is-valid-target': isValidDropTarget('command') }"
                    @mousedown="onConnectorMouseDown($event, cmd.id, 'command')"
@@ -960,6 +1031,9 @@ function onCanvasDrop(e) {
                  :title="rm.displayName||rm.name">
               <div class="em-card__title">{{ truncate(rm.displayName||rm.name) }}</div>
               <div class="em-card__sub">{{ rm.actor }}</div>
+              <button v-if="store.selectedItemId === rm.id" class="em-card__delete" @click.stop="store.deleteNode(rm.id, 'readmodel')" title="삭제">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
               <div v-if="isConnectMode" class="em-connector em-connector--right"
                    :class="{ 'is-valid-target': isValidDropTarget('readmodel') }"
                    @mousedown="onConnectorMouseDown($event, rm.id, 'readmodel')"
@@ -976,7 +1050,7 @@ function onCanvasDrop(e) {
                background: getColor(bcColors,bi).bg, borderColor: getColor(bcColors,bi).border }"
                @dragover="onBcLaneDragOver($event, lane)"
                @dragleave="onBcLaneDragLeave(lane)"
-               @drop="onBcLaneDrop($event, lane)">
+               @drop.stop="onBcLaneDrop($event, lane)">
             <div class="em-swimlane__hdr" :style="{ width: HEADER_W+'px' }">
               <span>{{ lane.bcDisplayName||lane.bcName }}</span>
             </div>
@@ -989,7 +1063,7 @@ function onCanvasDrop(e) {
                  @dragstart="onEvtDragStart($event, evt)"
                  @dragover="onEvtDragOver($event, evt, bi)"
                  @dragleave="dragOverEventId = null"
-                 @drop.stop.prevent="onEvtDrop(evt, bi)"
+                 @drop.stop.prevent="onEvtDrop($event, evt, bi)"
                  @dragend="onEvtDragEnd"
                  @click="store.selectItem(evt.id,'event')" @dblclick="openInspector(evt.id)"
                  @mouseenter="store.setHoveredItem(evt.id)" @mouseleave="store.clearHover()"
@@ -1000,6 +1074,9 @@ function onCanvasDrop(e) {
               </div>
               <div class="em-card__title">{{ truncate(evt.displayName||evt.name) }}</div>
               <div class="em-card__sub">{{ truncate(evt.commandName, 12) }}</div>
+              <button v-if="store.selectedItemId === evt.id" class="em-card__delete" @click.stop="store.deleteNode(evt.id, 'event')" title="삭제">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
               <div v-if="isConnectMode" class="em-connector em-connector--right"
                    :class="{ 'is-valid-target': isValidDropTarget('event') }"
                    @mousedown="onConnectorMouseDown($event, evt.id, 'event')"
@@ -1171,6 +1248,20 @@ function onCanvasDrop(e) {
         </svg>
       </button>
     </div>
+
+    <!-- Toast 알림 -->
+    <Transition name="em-toast">
+      <div v-if="store.toast" :key="store.toast.id"
+           class="em-toast" :class="'em-toast--' + store.toast.type">
+        {{ store.toast.message }}
+      </div>
+    </Transition>
+
+    <!-- 연결 모드 안내 배너 -->
+    <div v-if="isConnectMode" class="em-connect-banner">
+      허용 방향: <strong>UI → Command → Event → ReadModel → UI</strong>
+      <span class="em-connect-banner__hint">노드 커넥터를 드래그하여 연결</span>
+    </div>
   </div>
 </template>
 
@@ -1236,6 +1327,8 @@ function onCanvasDrop(e) {
   text-align:left;
   box-shadow:0 4px 12px rgba(0,0,0,.45);
 }
+.em-card__delete { position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%; background:#e53935; border:2px solid #fff; color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:20; padding:0; line-height:1; box-shadow:0 1px 4px rgba(0,0,0,.3); transition:transform .1s }
+.em-card__delete:hover { transform:scale(1.2); background:#c62828 }
 .em-card.is-dragging { opacity:.4; transform:scale(.95) }
 .em-card.is-drop-target { box-shadow:0 0 0 3px #228be6,0 4px 12px rgba(34,139,230,.4); transform:translateY(-2px) }
 .em-card.is-drop-parallel { box-shadow:0 0 0 3px #40c057,0 4px 12px rgba(64,192,87,.4); transform:translateY(-2px) }
@@ -1269,6 +1362,21 @@ function onCanvasDrop(e) {
 .em-right-sidebar__icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; background:transparent; border:none; border-radius:var(--radius-sm); color:var(--color-text-light); cursor:pointer; transition:all .15s }
 .em-right-sidebar__icon:hover { background:var(--color-bg-tertiary); color:var(--color-text) }
 .em-right-sidebar__icon.is-active { background:var(--color-accent); color:#fff }
+
+/* Toast */
+.em-toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%); z-index:9999; padding:10px 20px; border-radius:8px; font-size:.7rem; font-weight:600; color:#fff; white-space:pre-line; box-shadow:0 4px 16px rgba(0,0,0,.4); pointer-events:none }
+.em-toast--info { background:rgba(34,139,230,.9) }
+.em-toast--warn { background:rgba(253,126,20,.9) }
+.em-toast--error { background:rgba(229,57,53,.9) }
+.em-toast-enter-active { transition:all .25s ease-out }
+.em-toast-leave-active { transition:all .2s ease-in }
+.em-toast-enter-from { opacity:0; transform:translateX(-50%) translateY(12px) }
+.em-toast-leave-to { opacity:0; transform:translateX(-50%) translateY(-8px) }
+
+/* Connect mode banner */
+.em-connect-banner { position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:40; background:rgba(34,139,230,.9); color:#fff; padding:6px 16px; border-radius:6px; font-size:.6rem; display:flex; align-items:center; gap:12px; box-shadow:0 2px 8px rgba(0,0,0,.3); pointer-events:none }
+.em-connect-banner strong { font-weight:700 }
+.em-connect-banner__hint { opacity:.7; font-size:.55rem }
 
 /* Connect mode */
 .em-scroll.is-connecting { cursor:crosshair }

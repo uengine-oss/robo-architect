@@ -440,13 +440,62 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
         except Exception:
             pass
 
+        # ── Cross-domain coupling hints (analyzer_graph) ──
+        _coupling_hint = ""
+        if getattr(ctx, "source_type", "") == "analyzer_graph" and _bl_map:
+            # BL의 coupled_domain에서 cross-function 호출 패턴 추출
+            # → "이 BC의 BL이 다른 도메인을 호출한다" = Policy 후보
+            coupling_pairs: list[tuple[str, str, str]] = []  # (source_bc, target_domain, us_action)
+            for us in ctx.user_stories:
+                us_id = getattr(us, "id", "")
+                us_action = getattr(us, "action", "")
+                bls = _bl_map.get(us_id, [])
+                # Find which BC this US belongs to
+                source_bc = ""
+                for bc in ctx.bounded_contexts:
+                    bc_us_ids = []
+                    try:
+                        if hasattr(bc, "model_dump"):
+                            bc_us_ids = bc.model_dump().get("user_story_ids", [])
+                        elif isinstance(bc, dict):
+                            bc_us_ids = bc.get("user_story_ids", [])
+                    except Exception:
+                        pass
+                    if us_id in (bc_us_ids or []):
+                        source_bc = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
+                        break
+                for bl in bls:
+                    domain = bl.get("coupled_domain")
+                    if domain and source_bc:
+                        coupling_pairs.append((source_bc, domain, us_action))
+
+            if coupling_pairs:
+                # Deduplicate and format
+                seen = set()
+                coupling_lines = []
+                for src, tgt, action in coupling_pairs:
+                    key = (src, tgt)
+                    if key not in seen:
+                        seen.add(key)
+                        coupling_lines.append(f"- {src} → {tgt} (via: {action[:80]})")
+                _coupling_hint = (
+                    "\n\n<cross_domain_coupling_hints>\n"
+                    "The following cross-domain dependencies were detected from legacy code analysis.\n"
+                    "Each line means: source BC calls/depends on target domain.\n"
+                    "These are STRONG candidates for Policies (Event in source BC → Command in target BC):\n"
+                    + "\n".join(coupling_lines[:50])
+                )
+                if len(coupling_lines) > 50:
+                    _coupling_hint += f"\n... and {len(coupling_lines) - 50} more"
+                _coupling_hint += "\n</cross_domain_coupling_hints>"
+
         # 전체 프롬프트 텍스트 구성 (청킹 판단용)
         full_prompt_text = IDENTIFY_POLICIES_PROMPT.format(
             user_stories=user_stories_text,
             events=events_text,
             commands_by_bc=commands_text,
             bounded_contexts=bc_text,
-        ) + display_name_tail + _no_emits_hint
+        ) + display_name_tail + _no_emits_hint + _coupling_hint
         # NOTE: source_report is not yet implemented in IngestionWorkflowContext.
         # When implemented, inject report context here:
         # _report_context_tail = get_policies_context(ctx.source_report)

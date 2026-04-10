@@ -70,7 +70,16 @@ def _resolve_figma_screen_ref(
     return ""
 
 
-_UI_WIREFRAME_SYSTEM_PROMPT = """You generate a modern UI wireframe HTML fragment for a single screen (Ant Design-like or Material-like).\n\nOutput rules (STRICT):\n- Output ONLY raw HTML fragment. Do NOT use markdown or code fences.\n- Do NOT output <!doctype>, <html>, <head>, <body>.\n- Do NOT include <script> tags.\n- Do NOT include inline event handlers like onclick=, onload=, etc.\n- Do NOT use javascript: URLs.\n- You MAY include a <style> block, but:\n  - Every selector MUST be scoped under `.wf-root`\n  - MUST NOT use @import or url(...)\n\nRoot container (MUST):\n- The fragment MUST start with a root container like:\n  <div class=\"wf-root wf-theme-ant\" data-wf-root=\"1\"> ... </div>\n  or\n  <div class=\"wf-root wf-theme-material\" data-wf-root=\"1\"> ... </div>\n\nModern UI quality requirements:\n- Use an App Bar / Toolbar at the top (title + primary actions).\n- Use Card-based sections.\n- For table/list screens: include a table toolbar (search/filter/actions), column headers, row actions, and pagination area.\n- For form screens: use a 2-column grid layout, labels + help/validation placeholders, primary/secondary button group.\n- Optionally include tabs/segments, chips/badges, and empty/loading/error state placeholders.\n- No JS behavior; structure only. Prefer accessible attributes (aria-*, role).\n\nPrefer these classes to match the preview styling:\n- wf-appbar, wf-title, wf-subtitle, wf-card, wf-card__header, wf-card__title, wf-card__body,\n  wf-actions, wf-btn, wf-btn--primary, wf-input, wf-label, wf-grid, wf-col-6, wf-col-12,\n  wf-table, wf-table__toolbar, wf-pagination, wf-chip, wf-badge, wf-state, wf-state--error, wf-empty\n"""
+_UI_WIREFRAME_SYSTEM_PROMPT = """You generate a modern UI wireframe HTML fragment for a single screen (Ant Design-like or Material-like).
+\n\nOutput rules (STRICT):
+- Output ONLY raw HTML fragment. Do NOT use markdown or code fences.
+- Do NOT output <!doctype>, <html>, <head>, <body>.
+- Do NOT include <script> tags.
+- Do NOT include inline event handlers like onclick=, onload=, etc.
+- Do NOT use javascript: URLs.
+- You MAY include a <style> block, but:
+  - Every selector MUST be scoped under `.wf-root`
+  - MUST NOT use @import or url(...)\n\nRoot container (MUST):\n- The fragment MUST start with a root container like:\n  <div class=\"wf-root wf-theme-ant\" data-wf-root=\"1\"> ... </div>\n  or\n  <div class=\"wf-root wf-theme-material\" data-wf-root=\"1\"> ... </div>\n\nModern UI quality requirements:\n- Use an App Bar / Toolbar at the top (title + primary actions).\n- Use Card-based sections.\n- For table/list screens: include a table toolbar (search/filter/actions), column headers, row actions, and pagination area.\n- For form screens: use a 2-column grid layout, labels + help/validation placeholders, primary/secondary button group.\n- Optionally include tabs/segments, chips/badges, and empty/loading/error state placeholders.\n- No JS behavior; structure only. Prefer accessible attributes (aria-*, role).\n\nPrefer these classes to match the preview styling:\n- wf-appbar, wf-title, wf-subtitle, wf-card, wf-card__header, wf-card__title, wf-card__body,\n  wf-actions, wf-btn, wf-btn--primary, wf-input, wf-label, wf-grid, wf-col-6, wf-col-12,\n  wf-table, wf-table__toolbar, wf-pagination, wf-chip, wf-badge, wf-state, wf-state--error, wf-empty\n"""
 
 
 

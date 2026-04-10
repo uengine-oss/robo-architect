@@ -591,12 +591,21 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     _analyzer_processed = False
     should_chunk_result = False
     if ctx.source_type == "analyzer_graph":
-        from api.features.ingestion.analyzer_graph.graph_context_builder import build_unit_contexts
-        sb_contexts = build_unit_contexts()
-        if sb_contexts:
-            # BusinessLogic 단위별 개별 처리
+        from api.features.ingestion.analyzer_graph.graph_context_builder import build_grouped_unit_contexts
+        grouped_contexts = build_grouped_unit_contexts()
+        if grouped_contexts:
+            # 도메인 그룹 단위 배치 처리 (관련 함수들을 묶어서 LLM 호출)
             all_sb_stories: list = []
-            for sb_idx, (sb_name, sb_unit_id, sb_context) in enumerate(sb_contexts):
+            total_groups = len(grouped_contexts)
+
+            SmartLogger.log(
+                "INFO",
+                f"Analyzer graph: {total_groups} domain groups detected",
+                category="ingestion.user_stories.analyzer_graph.grouped",
+                params={"session_id": ctx.session.id, "total_groups": total_groups},
+            )
+
+            for grp_idx, (grp_name, grp_unit_ids, grp_context) in enumerate(grouped_contexts):
                 if getattr(ctx.session, "is_cancelled", False):
                     yield ProgressEvent(
                         phase=IngestionPhase.ERROR,
@@ -606,28 +615,30 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                     )
                     return
 
-                progress = PHASE_START + int((sb_idx / len(sb_contexts)) * (PHASE_END - PHASE_START - 4))
+                progress = PHASE_START + int((grp_idx / total_groups) * (PHASE_END - PHASE_START - 4))
                 yield ProgressEvent(
                     phase=IngestionPhase.EXTRACTING_USER_STORIES,
-                    message=f"User Story 추출 중... ({sb_name} {sb_idx+1}/{len(sb_contexts)})",
+                    message=f"User Story 추출 중... ({grp_name} {grp_idx+1}/{total_groups}, {len(grp_unit_ids)} functions)",
                     progress=progress,
                 )
 
-                print(f"[ANALYZER US] Processing Session Bean {sb_idx+1}/{len(sb_contexts)}: {sb_name} ({estimate_tokens(sb_context)} tokens)")
+                print(f"[ANALYZER US] Processing group {grp_idx+1}/{total_groups}: {grp_name} ({len(grp_unit_ids)} functions, {estimate_tokens(grp_context)} tokens)")
                 try:
                     from api.features.ingestion.analyzer_graph.graph_to_user_stories import extract_user_stories_from_analyzer_graph
-                    sb_stories = await asyncio.to_thread(extract_user_stories_from_analyzer_graph, sb_context)
-                    print(f"[ANALYZER US] {sb_name}: {len(sb_stories)} US generated")
-                    # 출처 분석 단위(unit) 태깅 — 역추적용
-                    for us in sb_stories:
-                        us.source_unit_id = sb_unit_id
-                    all_sb_stories.extend(sb_stories)
+                    grp_stories = await asyncio.to_thread(extract_user_stories_from_analyzer_graph, grp_context)
+                    print(f"[ANALYZER US] {grp_name}: {len(grp_stories)} US generated")
+                    # 출처 분석 단위(unit) 태깅 — 그룹의 첫 번째 unit_id를 기본으로 설정
+                    # (역추적: 그룹 내 모든 unit_id는 같은 도메인)
+                    primary_unit_id = grp_unit_ids[0] if grp_unit_ids else ""
+                    for us in grp_stories:
+                        us.source_unit_id = primary_unit_id
+                    all_sb_stories.extend(grp_stories)
                 except Exception as e:
                     SmartLogger.log(
                         "ERROR",
-                        f"US extraction failed for {sb_name}",
-                        category="ingestion.user_stories.session_bean.error",
-                        params={"session_id": ctx.session.id, "sb_name": sb_name, "error": str(e)},
+                        f"US extraction failed for group {grp_name}",
+                        category="ingestion.user_stories.analyzer_graph.group_error",
+                        params={"session_id": ctx.session.id, "group_name": grp_name, "error": str(e)},
                     )
 
             # 정규화 + 중복 제거 + EJB 필터

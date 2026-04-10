@@ -287,24 +287,12 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
             cmd_sequence[cmd_id] = unlinked_offset
             unlinked_offset += 1
 
-    # ── 3a-2. 병렬 흐름: 같은 Command가 EMITS하는 이벤트는 동일 sequence ──
-    # 성공/실패 분기(예: OrderPlaced / OrderPlacementFailed)가 같은 column에 배치됨.
-    # 그룹 내 최소 sequence로 통일.
-    for cmd_id, evt_ids in cmd_to_events.items():
-        if len(evt_ids) <= 1:
-            continue
-        group_seqs = []
-        for eid in evt_ids:
-            ev = events.get(eid)
-            if ev and ev.get("storedSequence") is not None:
-                group_seqs.append(int(ev["storedSequence"]))
-        if not group_seqs:
-            continue
-        min_seq = min(group_seqs)
-        for eid in evt_ids:
-            ev = events.get(eid)
-            if ev and ev.get("storedSequence") is not None:
-                ev["storedSequence"] = min_seq
+    # ── 3a-2. 병렬 흐름: 같은 Command가 EMITS하는 이벤트 처리 ──
+    # 각 이벤트는 자신의 고유 storedSequence를 유지한다.
+    # (이전에는 모든 이벤트를 최소 sequence로 통일했으나,
+    #  하나의 Command가 여러 독립 검증 이벤트를 EMITS하는 경우
+    #  전부 한 열에 쌓이는 문제가 있었음)
+    # Command의 sequence만 연결된 이벤트 중 최소값으로 설정 (위에서 이미 처리됨).
 
     # ── 3b. Sequence 압축: 표시되는 sequence를 1부터 연속 번호로 재매핑
     # (BC 필터 시 중간이 빈 sequence 30→1, 31→2 등으로 압축)
@@ -424,19 +412,24 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
     interaction_readmodels.sort(key=lambda r: r["sequence"])
 
     # --- System Swimlanes (하단): BC별 Events ---
+    # 같은 Command에서 EMITS된 이벤트(병렬)는 동일 열에 수직 스택.
+    # sequence(표시 열) = Command의 sequence, storedSequence(고유 순서) = 보존.
     bc_events_map = {}
     for evt_id, evt in events.items():
         bc_id = evt["bcId"]
         if bc_id not in bc_events_map:
             bc_events_map[bc_id] = []
         evt_cmd = event_to_cmd.get(evt_id)
-        if evt.get("storedSequence") is not None:
+        # 표시 열: Command에 연결된 경우 Command의 sequence 사용 (병렬 그룹핑)
+        if evt_cmd and evt_cmd in cmd_sequence:
+            evt_col = cmd_sequence[evt_cmd]
+        elif evt.get("storedSequence") is not None:
             try:
                 evt_col = int(evt["storedSequence"])
             except (TypeError, ValueError):
-                evt_col = cmd_sequence.get(evt_cmd, 1) if evt_cmd else 1
+                evt_col = 1
         else:
-            evt_col = cmd_sequence.get(evt_cmd, 1) if evt_cmd else 1
+            evt_col = 1
         bc_events_map[bc_id].append({
             **evt,
             "sequence": evt_col,
@@ -792,14 +785,13 @@ async def move_event_bc(request: Request) -> dict[str, Any]:
 
 # ── 노드 간 관계(Relation) CRUD ─────────────────────────────────
 
-# 허용되는 관계 매핑: (sourceLabel, targetLabel) → relationshipType
+# 허용되는 관계 매핑 — Vertical Slice 방향:
+#   UI → Command → Event → ReadModel → UI(output)
 _VALID_RELATIONS: dict[tuple[str, str], str] = {
-    ("Command", "Event"): "EMITS",
     ("UI", "Command"): "ATTACHED_TO",
-    ("UI", "ReadModel"): "ATTACHED_TO",
-    ("Event", "Policy"): "TRIGGERS",
-    ("Policy", "Command"): "INVOKES",
+    ("Command", "Event"): "EMITS",
     ("Event", "ReadModel"): "EVENT_TO_READMODEL",  # CQRS 연결 (간접)
+    ("ReadModel", "UI"): "ATTACHED_TO",
 }
 
 
