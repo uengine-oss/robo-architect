@@ -768,30 +768,37 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
 
     # Generate GWT for Commands
     # Collect all commands with their context (BC, Aggregate, Event)
+    # Event Modeling: Command→EMITS→Event 관계에서 직접 이벤트 조회
     all_command_tasks: list[dict[str, Any]] = []
+
+    # Pre-build command→emitted events map from Neo4j (EMITS relationship)
+    _cmd_emits_cache: dict[str, list[dict]] = {}
+    try:
+        with client.session() as _emits_sess:
+            _emits_result = _emits_sess.run("""
+                MATCH (cmd:Command)-[:EMITS]->(evt:Event)
+                RETURN cmd.id AS cmdId, evt {.id, .name, .displayName, .description} AS evt
+            """)
+            for rec in _emits_result:
+                _cmd_emits_cache.setdefault(rec["cmdId"], []).append(dict(rec["evt"]))
+    except Exception:
+        pass  # fallback to events_by_agg below
+
     for bc in ctx.bounded_contexts:
         bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
         for agg in ctx.aggregates_by_bc.get(bc_id, []):
             agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
             commands = ctx.commands_by_agg.get(agg_id, [])
             events = ctx.events_by_agg.get(agg_id, [])
-            
-            # Build command name → event lookup using emitting_command_name
-            cmd_name_to_events: dict[str, list] = {}
-            for evt in events:
-                ecn = (evt.get("emitting_command_name") if isinstance(evt, dict) else getattr(evt, "emitting_command_name", None)) or ""
-                ecn = ecn.strip()
-                if ecn:
-                    cmd_name_to_events.setdefault(ecn, []).append(evt)
 
             for i, cmd in enumerate(commands):
-                cmd_name = (cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")).strip()
-                # Try explicit mapping first, then fallback to index
-                matched_events = cmd_name_to_events.get(cmd_name, [])
-                if matched_events:
-                    evt = matched_events[0]
+                cmd_id = (cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)) or ""
+                # Primary: EMITS relationship from Neo4j
+                emitted = _cmd_emits_cache.get(cmd_id, [])
+                if emitted:
+                    evt = emitted[0]  # First emitted event as primary
                 elif i < len(events):
-                    evt = events[i]
+                    evt = events[i]  # Fallback: index-based
                 elif events:
                     evt = events[0]
                 else:

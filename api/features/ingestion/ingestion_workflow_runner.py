@@ -48,6 +48,45 @@ from api.platform.observability.smart_logger import SmartLogger
 from api.features.ingestion.workflow.utils.phase_logger import save as log_phase, save_summary as log_summary
 
 
+# Event Storming 노드 라벨 (ingestion이 생성하는 것들만)
+# FUNCTION, BusinessLogic, Actor, Table, Column 등 분석 그래프 노드는 제외
+_ES_LABELS = [
+    "UserStory", "BoundedContext", "Aggregate", "Command", "Event",
+    "ReadModel", "Policy", "Property", "UIWireframe",
+    "CQRSConfig", "CQRSOperation", "GWTScenario",
+]
+
+
+def _clear_event_storming_nodes(client, session_id: str) -> None:
+    """Delete all event storming nodes while preserving analyzer graph nodes."""
+    with client.session() as s:
+        # Count before
+        counts = {}
+        for label in _ES_LABELS:
+            r = s.run(f"MATCH (n:{label}) RETURN count(n) AS c").single()
+            if r and r["c"] > 0:
+                counts[label] = r["c"]
+
+        if not counts:
+            SmartLogger.log(
+                "INFO", "No previous event storming data to clear",
+                category="ingestion.workflow.clear_previous",
+                params={"session_id": session_id},
+            )
+            return
+
+        # Delete in dependency order (leaf nodes first)
+        for label in reversed(_ES_LABELS):
+            s.run(f"MATCH (n:{label}) DETACH DELETE n")
+
+        SmartLogger.log(
+            "INFO",
+            f"Cleared previous event storming data: {counts}",
+            category="ingestion.workflow.clear_previous",
+            params={"session_id": session_id, "deleted": counts},
+        )
+
+
 async def _run_phase(session, ctx, phase_gen, pause_sync_target: str | None):
     """Run a single phase with cancel/pause handling. Yields ProgressEvents."""
     async for event in phase_gen:
@@ -95,6 +134,23 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             category="ingestion.workflow",
             params={"session_id": session.id, "content_length": len(content), "source_type": source_type},
         )
+
+        # 0. 기존 이벤트스토밍 결과 삭제 (분석 그래프는 보존)
+        try:
+            _clear_event_storming_nodes(client, session.id)
+            yield ProgressEvent(
+                phase=IngestionPhase.PARSING,
+                message="이전 생성 결과 초기화 완료",
+                progress=1,
+                data={"type": "ClearAll", "cleared": True},
+            )
+        except Exception as e:
+            SmartLogger.log(
+                "WARN",
+                f"Failed to clear previous event storming data: {e}",
+                category="ingestion.workflow.clear_previous",
+                params={"session_id": session.id, "error": str(e)},
+            )
 
         # 1. Parsing
         async for ev in _run_phase(session, ctx, parsing_phase(ctx), "user_stories"):

@@ -199,8 +199,16 @@ def build_grouped_unit_contexts() -> list[tuple[str, list[str], str]]:
         name = row.get("unit_name") or ""
         if not name:
             continue
-        reads = set(t for t in (row.get("reads_tables") or []) if t)
-        writes = set(t for t in (row.get("writes_tables") or []) if t)
+        reads = set(
+            (t.get("name") if isinstance(t, dict) else t)
+            for t in (row.get("reads_tables") or [])
+            if (t.get("name") if isinstance(t, dict) else t)
+        )
+        writes = set(
+            (t.get("name") if isinstance(t, dict) else t)
+            for t in (row.get("writes_tables") or [])
+            if (t.get("name") if isinstance(t, dict) else t)
+        )
         units.append({
             "name": name,
             "unit_id": row.get("unit_id") or name,
@@ -347,8 +355,16 @@ def _build_single_unit_context(row: dict[str, Any]) -> str:
     actors_list = [a for a in (row.get("actors") or []) if a]
     actor = ", ".join(actors_list)
     scenarios = row.get("scenarios") or []
-    reads = [t for t in (row.get("reads_tables") or []) if t]
-    writes = [t for t in (row.get("writes_tables") or []) if t]
+    def _table_names(table_list):
+        result = []
+        for t in (table_list or []):
+            n = t.get("name") if isinstance(t, dict) else t
+            if n:
+                result.append(n)
+        return result
+
+    reads = _table_names(row.get("reads_tables"))
+    writes = _table_names(row.get("writes_tables"))
 
     lines: list[str] = [f"## {name}"]
     if actor:

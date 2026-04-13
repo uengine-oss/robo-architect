@@ -433,6 +433,7 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                         bc_name=bc_name,
                         bc_short=bc_id_short,
                         user_story_context=chunk_stories_context,
+                        available_events=events_text,
                     ) + display_name_tail
                     structured_llm = ctx.llm.with_structured_output(CommandList)
                     

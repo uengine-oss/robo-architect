@@ -656,7 +656,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             ctx.user_stories = user_stories
             yield ProgressEvent(
                 phase=IngestionPhase.EXTRACTING_USER_STORIES,
-                message=f"User Story 추출 완료 (총 {len(user_stories)}개, Session Bean {len(sb_contexts)}개 처리)",
+                message=f"User Story 추출 완료 (총 {len(user_stories)}개, {total_groups}개 그룹 처리)",
                 progress=PHASE_END - 2,
             )
 

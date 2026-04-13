@@ -594,7 +594,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     events=chunk_events_text,
                     commands_by_bc=chunk_cmds_text,
                     bounded_contexts=bc_text,  # BC list always in full
-                ) + display_name_tail
+                ) + display_name_tail + _no_emits_hint + _coupling_hint
                 # 이전 청크에서 식별된 Policy 상세 정보 전달 — 중복 생성 방지 + 정합성
                 if _accumulated_policies:
                     _POL_ACCUMULATED_BUDGET = 4000
