@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
@@ -15,6 +15,12 @@ import {
   cacheSchema,
   readClipboardHTML,
 } from './figma'
+
+// Open-Pencil federation components (lazy loaded)
+const FramePreview = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
+const FrameEditor = defineAsyncComponent(() => import('open-pencil-fed/FrameEditor.vue'))
+const FullPageEditor = defineAsyncComponent(() => import('open-pencil-fed/FullPageEditor.vue'))
+const AIChatPanel = defineAsyncComponent(() => import('open-pencil-fed/AIChat.vue'))
 
 const props = defineProps({
   nodeId: {
@@ -172,8 +178,137 @@ const schema = computed(() => {
 
 function normalizeInspectorTab(tab, label) {
   if (tab === 'preview' && label === 'UI') return 'preview'
+  if (tab === 'design' && label === 'UI') return 'design'
   if (tab === 'traceability') return 'traceability'
   return 'properties'
+}
+
+// ── Open-Pencil SceneGraph integration ──
+const sceneGraphData = computed(() => {
+  const n = node.value
+  if (!n?.data?.sceneGraph) return null
+  try {
+    return typeof n.data.sceneGraph === 'string'
+      ? JSON.parse(n.data.sceneGraph)
+      : n.data.sceneGraph
+  } catch { return null }
+})
+
+// Fix parentId/childIds in a serialized SceneGraph JSON (not a SceneGraph instance)
+function fixSceneGraphParentage(sg) {
+  if (!sg?.nodes || !sg.rootId) return
+  const root = sg.nodes[sg.rootId]
+  if (!root) return
+
+  // Find first CANVAS page
+  let pageId = null
+  for (const cid of root.childIds || []) {
+    if (sg.nodes[cid]?.type === 'CANVAS') { pageId = cid; break }
+  }
+  if (!pageId) return
+  const page = sg.nodes[pageId]
+
+  // Move FRAME nodes from root children to page children
+  const rootChildren = [...(root.childIds || [])]
+  for (const cid of rootChildren) {
+    const child = sg.nodes[cid]
+    if (child?.type === 'FRAME' && cid !== sg.rootId) {
+      root.childIds = root.childIds.filter(id => id !== cid)
+      if (!page.childIds.includes(cid)) page.childIds.push(cid)
+      child.parentId = pageId
+    }
+  }
+
+  // Fix parentId = "currentPage"
+  for (const [nid, n] of Object.entries(sg.nodes)) {
+    if (n.parentId === 'currentPage') {
+      n.parentId = pageId
+      if (!page.childIds.includes(nid)) page.childIds.push(nid)
+    }
+  }
+}
+
+const mainFrameId = computed(() => {
+  const sg = sceneGraphData.value
+  if (!sg?.nodes) return null
+  const root = sg.nodes[sg.rootId]
+  if (!root) return null
+
+  // Find the page (CANVAS) ID
+  let pageId = null
+  for (const cid of root.childIds || []) {
+    if (sg.nodes[cid]?.type === 'CANVAS') { pageId = cid; break }
+  }
+
+  // Strategy 1: Look in CANVAS.childIds for FRAME
+  if (pageId) {
+    const page = sg.nodes[pageId]
+    for (const childId of page.childIds || []) {
+      if (sg.nodes[childId]?.type === 'FRAME') return childId
+    }
+  }
+
+  // Strategy 2: Look in root.childIds for FRAME (AI may place frames as direct root children)
+  for (const cid of root.childIds || []) {
+    const child = sg.nodes[cid]
+    if (child?.type === 'FRAME' && cid !== sg.rootId) return cid
+  }
+
+  // Strategy 3: Find any FRAME whose parentId references the page, root, or "currentPage"
+  for (const [nid, n] of Object.entries(sg.nodes)) {
+    if (n.type === 'FRAME' && nid !== sg.rootId) {
+      if (n.parentId === pageId || n.parentId === sg.rootId || n.parentId === 'currentPage') return nid
+    }
+  }
+
+  return null
+})
+
+// SceneGraph is considered "real" (not just empty scaffold) when it has content beyond root+page
+const hasRealSceneGraph = computed(() => {
+  const sg = sceneGraphData.value
+  if (!sg?.nodes) return false
+  return Object.keys(sg.nodes).length > 2 // more than just root FRAME + CANVAS page
+})
+
+const showFullPageEditor = ref(false)
+
+function openFullPageEditor() {
+  showFullPageEditor.value = true
+}
+
+function closeFullPageEditor() {
+  showFullPageEditor.value = false
+}
+
+async function onDesignSave(data) {
+  const n = node.value
+  if (!n) return
+  try {
+    const sceneGraphStr = JSON.stringify(data)
+    await fetch(`/api/graph/update-node/${n.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sceneGraph: sceneGraphStr })
+    })
+    // Update local node data — ensure Vue reactivity triggers
+    if (n.data) {
+      n.data = { ...n.data, sceneGraph: sceneGraphStr }
+    }
+    // Also update in canvas store for reactivity
+    const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+    if (storeNode?.data) {
+      storeNode.data = { ...storeNode.data, sceneGraph: sceneGraphStr }
+    }
+    emit('updated')
+  } catch (e) {
+    console.error('[InspectorPanel] Failed to save design:', e)
+  }
+}
+
+async function onFullPageSave(data) {
+  await onDesignSave(data)
+  showFullPageEditor.value = false
 }
 
 // Traceability state
@@ -211,6 +346,12 @@ async function loadTraceability(nodeId) {
 }
 
 const activeTab = ref(normalizeInspectorTab(props.initialTab, nodeLabel.value))
+// Monotonic counter to force FrameEditor re-creation when Design tab is re-opened
+// (CanvasKit WebGL resources are destroyed on unmount and cannot be reused)
+const designEditorKey = ref(0)
+watch(activeTab, (tab) => {
+  if (tab === 'design') designEditorKey.value++
+})
 watch(
   () => props.initialTab,
   v => {
@@ -222,6 +363,8 @@ watch(activeTab, (tab) => {
   if (tab === 'traceability' && props.nodeId && !traceData.value) {
     loadTraceability(props.nodeId)
   }
+  // NOTE: Auto-generation removed — users should click the component button
+  // or explicitly start conversion from the Design tab's empty state UI.
 })
 
 watch(() => props.nodeId, () => {
@@ -735,6 +878,97 @@ const figmaExporting = ref(false)
 const figmaCopied = ref(false)
 const figmaError = ref(null)
 const showFigmaSchemaModal = ref(false)
+
+// ── Copy sceneGraph to Figma clipboard ──
+const figSceneCopying = ref(false)
+const figSceneCopied = ref(false)
+const figSceneError = ref(null)
+
+async function copySceneGraphToFigma() {
+  const n = node.value
+  if (!n?.data?.sceneGraph) return
+
+  figSceneCopying.value = true
+  figSceneError.value = null
+  try {
+    const { deserializeSceneGraph } = await import('open-pencil-fed/bridge/serialize')
+    const { buildFigmaClipboardHTML, prefetchFigmaSchema } = await import('@open-pencil/core')
+
+    await prefetchFigmaSchema()
+
+    const sgData = typeof n.data.sceneGraph === 'string'
+      ? JSON.parse(n.data.sceneGraph)
+      : n.data.sceneGraph
+    const graph = deserializeSceneGraph(sgData)
+
+    // Find the main wireframe frame
+    const pages = graph.getPages()
+    let frameNode = null
+    for (const page of pages) {
+      for (const childId of page.childIds) {
+        const child = graph.getNode(childId)
+        if (child?.type === 'FRAME') { frameNode = child; break }
+      }
+      if (frameNode) break
+    }
+
+    if (!frameNode) throw new Error('No wireframe frame found in sceneGraph')
+
+    const clipboardHtml = await buildFigmaClipboardHTML([frameNode], graph)
+    if (!clipboardHtml) throw new Error('Failed to build Figma clipboard data')
+
+    const blob = new Blob([clipboardHtml], { type: 'text/html' })
+    const textBlob = new Blob(['OpenPencil wireframe'], { type: 'text/plain' })
+    await navigator.clipboard.write([new ClipboardItem({ 'text/html': blob, 'text/plain': textBlob })])
+
+    figSceneCopied.value = true
+    setTimeout(() => { figSceneCopied.value = false }, 3000)
+  } catch (e) {
+    figSceneError.value = e?.message || 'Failed to copy to Figma clipboard'
+    console.error('[CopySceneToFigma]', e)
+  } finally {
+    figSceneCopying.value = false
+  }
+}
+
+// ── Export as .fig file ──
+const figFileExporting = ref(false)
+const figFileError = ref(null)
+
+async function exportAsFigFile() {
+  const n = node.value
+  if (!n?.data?.sceneGraph) return
+
+  figFileExporting.value = true
+  figFileError.value = null
+  try {
+    const resp = await fetch(`/api/graph/export-fig/${n.id}`, { method: 'POST' })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `Export failed (${resp.status})`)
+    }
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const disposition = resp.headers.get('Content-Disposition')
+    let filename = `${n.data.displayName || n.data.name || 'wireframe'}.fig`
+    if (disposition) {
+      const match = disposition.match(/filename="?([^"]+)"?/)
+      if (match) filename = decodeURIComponent(match[1])
+    }
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    URL.revokeObjectURL(url)
+    a.remove()
+  } catch (e) {
+    figFileError.value = e?.message || 'Failed to export .fig file'
+    console.error('[ExportFigFile]', e)
+  } finally {
+    figFileExporting.value = false
+  }
+}
 const hasFigmaSchema = ref(!!getCachedSchema())
 
 async function exportToFigma() {
@@ -794,6 +1028,163 @@ function closeFigmaSchemaModal() {
 const wireframeUploading = ref(false)
 const wireframeUploadError = ref(null)
 const wireframeFileInputRef = ref(null)
+
+// Wireframe generation mode: 'html-classic' or 'open-pencil-ai'
+const wireframeGenMode = ref(localStorage.getItem('wireframe_generation_mode') || 'html-classic')
+const showAIChatPanel = ref(false)
+
+function setWireframeGenMode(mode) {
+  wireframeGenMode.value = mode
+  localStorage.setItem('wireframe_generation_mode', mode)
+}
+
+const componentGenLoading = ref(false)
+const componentGenError = ref(null)
+
+async function generateComponentWireframe() {
+  const n = node.value
+  if (!n) return
+
+  componentGenLoading.value = true
+  componentGenError.value = null
+  try {
+    const resp = await fetch(`/api/graph/generate-component-wireframe/${n.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        display_language: localStorage.getItem('app_display_language') || 'ko'
+      })
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `Generation failed (${resp.status})`)
+    }
+    const result = await resp.json()
+    // Update local node data
+    if (n.data && result.sceneGraph) {
+      n.data = { ...n.data, sceneGraph: result.sceneGraph }
+    }
+    const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+    if (storeNode?.data && result.sceneGraph) {
+      storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph }
+    }
+    emit('updated')
+  } catch (e) {
+    componentGenError.value = e?.message || 'Failed to generate wireframe'
+    console.error('[ComponentWireframe]', e)
+  } finally {
+    componentGenLoading.value = false
+  }
+}
+
+function generateWithAI() {
+  if (wireframeGenMode.value === 'open-pencil-ai') {
+    showAIChatPanel.value = true
+  } else if (wireframeGenMode.value === 'component') {
+    generateComponentWireframe()
+  } else {
+    requestChat()
+  }
+}
+
+function onAIChatUpdate(data) {
+  // Save the SceneGraph from AI generation
+  onDesignSave(data)
+  showAIChatPanel.value = false
+}
+
+// ── Convert HTML wireframe to Figma-style design via open-pencil AI ──
+const convertingToDesign = ref(false)
+const convertPrompt = ref('')
+const convertFailed = ref(false)
+
+// Reset converting state when switching to a different node
+watch(() => props.nodeId, () => {
+  if (convertingToDesign.value) {
+    convertingToDesign.value = false
+    convertPrompt.value = ''
+  }
+  convertFailed.value = false
+})
+
+function startConvertToDesign() {
+  convertFailed.value = false
+  const n = node.value
+  if (!n?.data) return
+
+  const name = n.data.name || 'Wireframe'
+  const description = n.data.description || ''
+  const attachedTo = n.data.attachedToName || ''
+  const attachedType = n.data.attachedToType || ''
+  const htmlTemplate = n.data.template || ''
+
+  // Build a prompt that describes the wireframe scenario for AI generation
+  let prompt = `Create a wireframe design for "${name}"`
+  if (attachedTo) {
+    prompt += ` (${attachedType}: ${attachedTo})`
+  }
+  prompt += '.\n\n'
+
+  if (description) {
+    prompt += `Description: ${description}\n\n`
+  }
+
+  // Include HTML structure as reference for what to create
+  if (htmlTemplate) {
+    // Extract meaningful text content from the HTML for context
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = htmlTemplate
+    const textContent = tempDiv.textContent?.trim().slice(0, 800) || ''
+    const hasAppbar = htmlTemplate.includes('wf-appbar')
+    const hasTable = htmlTemplate.includes('wf-table')
+    const hasCard = htmlTemplate.includes('wf-card')
+    const hasForm = htmlTemplate.includes('wf-input')
+    const hasBtnPrimary = htmlTemplate.includes('wf-btn--primary')
+
+    prompt += 'The wireframe should include:\n'
+    if (hasAppbar) prompt += '- A top navigation bar/app bar with title\n'
+    if (hasCard) prompt += '- Card components for content sections\n'
+    if (hasTable) prompt += '- A data table with columns and rows\n'
+    if (hasForm) prompt += '- Form input fields\n'
+    if (hasBtnPrimary) prompt += '- Action buttons (primary CTA)\n'
+
+    if (textContent) {
+      prompt += `\nContent reference (labels, headers, field names):\n${textContent.slice(0, 500)}\n`
+    }
+  }
+
+  prompt += '\nIMPORTANT: You MUST use the `render` tool to create the design NOW. Do NOT just describe or plan — call the render tool immediately with JSX code. Start with the top-level Frame, then render child components. Use auto-layout (flex="col"/"row") for organized structure.'
+
+  convertPrompt.value = prompt
+  convertingToDesign.value = true
+}
+
+async function onConvertComplete(data) {
+  const nodeCount = data?.nodes ? Object.keys(data.nodes).length : 0
+  if (nodeCount > 2) {
+    // Fix orphaned frames before saving (AI may set parentId to "currentPage")
+    fixSceneGraphParentage(data)
+    await onDesignSave(data)
+    convertFailed.value = false
+  } else {
+    console.warn('[InspectorPanel] AI conversion produced empty SceneGraph, not saving')
+    convertFailed.value = true
+  }
+  convertingToDesign.value = false
+  convertPrompt.value = ''
+}
+
+function onConvertUpdate(data) {
+  if (data?.nodes && Object.keys(data.nodes).length > 2) {
+    fixSceneGraphParentage(data)
+    onDesignSave(data)
+  }
+}
+
+function cancelConvert() {
+  convertingToDesign.value = false
+  convertPrompt.value = ''
+}
 
 function triggerWireframeUpload() {
   wireframeUploadError.value = null
@@ -1800,6 +2191,14 @@ function updateVoFieldValue(fieldName, value) {
             UI Preview
           </button>
           <button
+            v-if="nodeLabel === 'UI'"
+            class="inspector-tab"
+            :class="{ active: activeTab === 'design' }"
+            @click="activeTab = 'design'"
+          >
+            Design
+          </button>
+          <button
             class="inspector-tab"
             :class="{ active: activeTab === 'properties' }"
             @click="activeTab = 'properties'"
@@ -1848,6 +2247,22 @@ function updateVoFieldValue(fieldName, value) {
                 </svg>
                 <span v-else class="ui-preview-panel__btn-loading">...</span>
               </button>
+              <button
+                class="ui-preview-panel__btn"
+                :disabled="componentGenLoading"
+                :title="componentGenLoading ? 'Generating...' : 'Generate from component library (.fig)'"
+                @click="generateComponentWireframe"
+              >
+                <svg v-if="componentGenLoading" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              </button>
               <button class="ui-preview-panel__btn" @click="requestChat" title="Edit with AI">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
@@ -1889,11 +2304,51 @@ function updateVoFieldValue(fieldName, value) {
                   <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
                 </svg>
               </button>
+              <button
+                class="ui-preview-panel__btn ui-preview-panel__btn--figma"
+                :class="{ 'ui-preview-panel__btn--copied': figSceneCopied }"
+                :disabled="!node.data?.sceneGraph || figSceneCopying"
+                :title="figSceneCopied ? 'Copied! Paste in Figma (Ctrl+V)' : 'Copy design to Figma clipboard'"
+                @click="copySceneGraphToFigma"
+              >
+                <svg v-if="figSceneCopying" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else-if="figSceneCopied" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z" />
+                  <path d="M12 2h3.5a3.5 3.5 0 1 1 0 7H12V2z" />
+                  <path d="M12 12.5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 1 1-7 0z" />
+                  <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z" />
+                  <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
+                </svg>
+              </button>
+              <button
+                class="ui-preview-panel__btn"
+                :disabled="!node.data?.sceneGraph || figFileExporting"
+                :title="figFileExporting ? 'Exporting...' : 'Download as .fig file'"
+                @click="exportAsFigFile"
+              >
+                <svg v-if="figFileExporting" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </button>
             </div>
           </div>
 
           <div v-if="wireframeUploadError" class="inspector-alert error">{{ wireframeUploadError }}</div>
           <div v-if="figmaError" class="inspector-alert error">{{ figmaError }}</div>
+          <div v-if="figFileError" class="inspector-alert error">{{ figFileError }}</div>
+          <div v-if="figSceneError" class="inspector-alert error">{{ figSceneError }}</div>
+          <div v-if="figSceneCopied" class="inspector-alert success">Figma clipboard ready — Ctrl+V in Figma to paste.</div>
+          <div v-if="componentGenError" class="inspector-alert error">{{ componentGenError }}</div>
           <div v-if="figmaCopied" class="inspector-alert success">Figma clipboard ready — Ctrl+V in Figma to paste. If text is invisible, switch to another page and back.</div>
 
           <div class="ui-preview-panel__info">
@@ -1905,7 +2360,63 @@ function updateVoFieldValue(fieldName, value) {
           </div>
 
           <div class="ui-preview-panel__content">
-            <div v-if="node.data?.template" class="ui-preview-frame">
+            <!-- OpenPencil SceneGraph preview (has real design content) -->
+            <div v-if="hasRealSceneGraph && mainFrameId" class="ui-preview-frame">
+              <div class="ui-preview-frame__browser-bar">
+                <div class="browser-dots">
+                  <span></span><span></span><span></span>
+                </div>
+                <div class="browser-url">preview://{{ node.data?.name }}</div>
+                <button class="ui-preview-frame__open-editor" @click="openFullPageEditor" title="Open Full Editor">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="ui-preview-frame__body">
+                <Suspense>
+                  <FramePreview
+                    :key="node?.id + '-preview-' + mainFrameId"
+                    :scene-data="sceneGraphData"
+                    :frame-id="mainFrameId"
+                    :width="400"
+                    :height="300"
+                  />
+                  <template #fallback>
+                    <div class="ui-preview-frame__overlay">
+                      <div class="ui-preview-frame__spinner" />
+                      <div class="ui-preview-frame__overlay-text">Loading design engine...</div>
+                    </div>
+                  </template>
+                </Suspense>
+              </div>
+            </div>
+
+            <!-- Converting: AI Chat generating design from HTML wireframe -->
+            <div v-else-if="convertingToDesign" class="inspector-design-ai-layout">
+              <div class="inspector-design-ai-layout__status">
+                <div class="ui-preview-convert-panel__spinner" />
+                <span>OpenPencil AI로 디자인 변환 중...</span>
+                <button class="ui-preview-convert-panel__cancel" @click="cancelConvert">취소</button>
+              </div>
+              <div class="inspector-design-ai-layout__chat">
+                <Suspense>
+                  <AIChatPanel
+                    :initial-prompt="convertPrompt"
+                    :on-update="onConvertUpdate"
+                    :on-complete="onConvertComplete"
+                  />
+                  <template #fallback>
+                    <div style="display:flex;align-items:center;justify-content:center;height:100px;color:#666;font-size:12px;">Loading AI...</div>
+                  </template>
+                </Suspense>
+              </div>
+            </div>
+
+            <!-- Legacy HTML template preview (fallback) + convert button -->
+            <div v-else-if="node.data?.template" class="ui-preview-frame">
               <div class="ui-preview-frame__browser-bar">
                 <div class="browser-dots">
                   <span></span><span></span><span></span>
@@ -1919,7 +2430,30 @@ function updateVoFieldValue(fieldName, value) {
                 </div>
                 <div v-html="node.data?.template"></div>
               </div>
+              <div v-if="convertFailed" class="ui-preview-frame__convert-bar ui-preview-frame__convert-bar--failed">
+                <span style="color:#f59e0b;font-size:12px;">AI가 디자인을 생성하지 못했습니다.</span>
+                <button class="ui-preview-frame__convert-btn" @click="startConvertToDesign">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"/><path d="M1 20V14h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                  </svg>
+                  <span>재시도</span>
+                </button>
+              </div>
+              <div v-else class="ui-preview-frame__convert-bar">
+                <button
+                  class="ui-preview-frame__convert-btn"
+                  @click="startConvertToDesign"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                  </svg>
+                  <span>Figma 스타일 와이어프레임으로 변환</span>
+                </button>
+              </div>
             </div>
+
             <div v-else class="ui-preview-empty">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
                 <rect x="2" y="3" width="20" height="18" rx="2" />
@@ -1928,10 +2462,141 @@ function updateVoFieldValue(fieldName, value) {
                 <rect x="4" y="14" width="16" height="2" rx="0.5" stroke-dasharray="2 1" />
               </svg>
               <p>No wireframe template yet</p>
-              <button class="ui-preview-empty__btn" @click="requestChat">Generate with AI</button>
+              <div class="ui-preview-empty__gen-group">
+                <button
+                  class="ui-preview-empty__btn"
+                  :disabled="componentGenLoading"
+                  @click="generateWithAI"
+                >
+                  {{ componentGenLoading ? 'Generating...' : 'Generate with AI' }}
+                </button>
+                <select
+                  class="ui-preview-empty__mode-select"
+                  :value="wireframeGenMode"
+                  @change="setWireframeGenMode($event.target.value)"
+                >
+                  <option value="html-classic">HTML (Classic)</option>
+                  <option value="open-pencil-ai">OpenPencil AI</option>
+                  <option value="component">Component (.fig)</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
+
+        <!-- Design tab: OpenPencil FrameEditor -->
+        <div v-if="activeTab === 'design' && nodeLabel === 'UI'" class="inspector-design-editor">
+          <div v-if="hasRealSceneGraph && mainFrameId" class="inspector-design-editor__content">
+            <Suspense>
+              <FrameEditor
+                :key="node?.id + '-' + mainFrameId + '-' + designEditorKey"
+                :scene-data="sceneGraphData"
+                :frame-id="mainFrameId"
+                :on-save="onDesignSave"
+              />
+              <template #fallback>
+                <div class="inspector-design-editor__loading">Loading design editor...</div>
+              </template>
+            </Suspense>
+          </div>
+          <div v-else class="inspector-design-editor__empty">
+            <div v-if="convertingToDesign" class="inspector-design-ai-layout">
+              <div class="inspector-design-ai-layout__status">
+                <div class="ui-preview-convert-panel__spinner" />
+                <span>AI로 디자인 생성 중...</span>
+                <button class="ui-preview-convert-panel__cancel" @click="cancelConvert">취소</button>
+              </div>
+              <div class="inspector-design-ai-layout__chat">
+                <Suspense>
+                  <AIChatPanel
+                    :initial-prompt="convertPrompt"
+                    :on-update="onConvertUpdate"
+                    :on-complete="onConvertComplete"
+                  />
+                  <template #fallback>
+                    <div style="display:flex;align-items:center;justify-content:center;height:100px;color:#666;font-size:12px;">Loading AI...</div>
+                  </template>
+                </Suspense>
+              </div>
+            </div>
+            <div v-else class="inspector-design-editor__generating" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;height:100%;color:#888;font-size:13px;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+              <p style="margin:0;">디자인이 없습니다</p>
+              <div style="display:flex;gap:8px;">
+                <button
+                  class="ui-preview-empty__btn"
+                  :disabled="componentGenLoading"
+                  @click="generateComponentWireframe"
+                  style="font-size:12px;"
+                >
+                  {{ componentGenLoading ? '생성 중...' : 'Component로 생성' }}
+                </button>
+                <button
+                  class="ui-preview-empty__btn"
+                  @click="startConvertToDesign"
+                  style="font-size:12px;background:#333;"
+                >
+                  OpenPencil AI로 생성
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Chat panel (OpenPencil mode) -->
+        <div v-if="showAIChatPanel && wireframeGenMode === 'open-pencil-ai'" class="inspector-ai-chat-panel">
+          <div class="inspector-ai-chat-panel__header">
+            <span>OpenPencil AI</span>
+            <button class="inspector-ai-chat-panel__close" @click="showAIChatPanel = false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="inspector-ai-chat-panel__body">
+            <Suspense>
+              <AIChatPanel
+                :scene-data="sceneGraphData"
+                :on-update="onAIChatUpdate"
+              />
+              <template #fallback>
+                <div style="display:flex;align-items:center;justify-content:center;height:200px;color:#888;font-size:12px;">
+                  Loading AI chat...
+                </div>
+              </template>
+            </Suspense>
+          </div>
+        </div>
+
+        <!-- Full Page Editor modal overlay -->
+        <Teleport to="body">
+          <div v-if="showFullPageEditor" class="full-page-editor-overlay">
+            <div class="full-page-editor-overlay__header">
+              <span>Page Editor - {{ node?.data?.name }}</span>
+              <button class="full-page-editor-overlay__close" @click="closeFullPageEditor">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div class="full-page-editor-overlay__body">
+              <Suspense>
+                <FullPageEditor
+                  :scene-data="sceneGraphData"
+                  :on-save="onFullPageSave"
+                />
+                <template #fallback>
+                  <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;">
+                    Loading full editor...
+                  </div>
+                </template>
+              </Suspense>
+            </div>
+          </div>
+        </Teleport>
 
         <div v-if="activeTab === 'properties'" class="inspector-form">
           <div class="inspector-kv">
@@ -5218,6 +5883,274 @@ function updateVoFieldValue(fieldName, value) {
 .figma-schema-modal__paste-area:focus {
   border-color: var(--color-accent, #1890ff);
   color: var(--color-text-primary, #333);
+}
+
+/* ── OpenPencil Design Editor tab ── */
+.inspector-design-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: calc(100vh - 180px);
+}
+.inspector-design-editor__content {
+  flex: 1;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--color-border, #e8e8e8);
+  min-height: 0;
+}
+.inspector-design-editor__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: #888;
+  font-size: 12px;
+}
+.inspector-design-editor__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+  gap: 4px;
+  position: relative;
+}
+.inspector-design-editor__generating {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 12px;
+  color: #7cb3ff;
+  font-size: 13px;
+}
+/* AI generation layout: status bar on top, chat panel filling remaining space */
+.inspector-design-ai-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.inspector-design-ai-layout__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #2a3a4a;
+  color: #7cb3ff;
+  font-size: 12px;
+  border-bottom: 1px solid #334;
+  flex-shrink: 0;
+}
+.inspector-design-ai-layout__chat {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #1e1e1e;
+}
+
+/* ── Open in Editor button ── */
+.ui-preview-frame__open-editor {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ui-preview-frame__open-editor:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+
+/* ── Full Page Editor overlay ── */
+.full-page-editor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+}
+.full-page-editor-overlay__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  font-size: 13px;
+  border-bottom: 1px solid #444;
+}
+.full-page-editor-overlay__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.full-page-editor-overlay__close:hover {
+  background: #444;
+  color: #fff;
+}
+.full-page-editor-overlay__body {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── AI generation mode selector ── */
+.ui-preview-empty__gen-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.ui-preview-empty__mode-select {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border, #d9d9d9);
+  border-radius: 4px;
+  background: var(--color-bg-elevated, #fff);
+  color: var(--color-text-secondary, #666);
+  cursor: pointer;
+}
+
+/* ── AI Chat panel (OpenPencil) ── */
+.inspector-ai-chat-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border, #e8e8e8);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+  max-height: 500px;
+}
+.inspector-ai-chat-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  font-size: 12px;
+}
+.inspector-ai-chat-panel__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.inspector-ai-chat-panel__close:hover {
+  background: #444;
+  color: #fff;
+}
+.inspector-ai-chat-panel__body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 300px;
+}
+
+/* ── Convert to design bar ── */
+.ui-preview-frame__convert-bar {
+  padding: 8px;
+  border-top: 1px solid var(--color-border, #e8e8e8);
+  background: var(--color-bg-elevated, #fafafa);
+}
+.ui-preview-frame__convert-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px dashed var(--color-accent, #1890ff);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-accent, #1890ff);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ui-preview-frame__convert-btn:hover:not(:disabled) {
+  background: rgba(24, 144, 255, 0.06);
+  border-style: solid;
+}
+.ui-preview-frame__convert-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Convert panel (AI generating) ── */
+.ui-preview-convert-panel {
+  margin-top: 8px;
+  border: 1px solid #334;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+.ui-preview-convert-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #2a3a4a;
+  color: #7cb3ff;
+  font-size: 12px;
+}
+.ui-preview-convert-panel__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #334;
+  border-top-color: #7cb3ff;
+  border-radius: 50%;
+  animation: convert-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes convert-spin {
+  to { transform: rotate(360deg); }
+}
+.ui-preview-convert-panel__cancel {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: transparent;
+  color: #aaa;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ui-preview-convert-panel__cancel:hover {
+  background: #333;
+  color: #fff;
+}
+.ui-preview-convert-panel__body {
+  max-height: 400px;
+  overflow: hidden;
 }
 </style>
 

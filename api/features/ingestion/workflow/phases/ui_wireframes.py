@@ -14,6 +14,7 @@ from api.platform.env import get_llm_provider_model
 from api.platform.keys import ui_key as build_ui_key
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.ui_wireframe_template import normalize_ui_template
+from api.platform import open_pencil_client
 
 
 def _resolve_figma_screen_ref(
@@ -69,6 +70,37 @@ def _resolve_figma_screen_ref(
         )
     return ""
 
+
+_UI_COMPONENT_SYSTEM_PROMPT_TEMPLATE = """You compose a mobile UI wireframe by selecting and arranging components from a design library.
+
+Output rules (STRICT):
+- Output ONLY valid JSON. No markdown fences, no explanatory text.
+- The JSON must have a "components" array at the top level.
+- Each element is an object with:
+  - "component": the exact component name from the library (case-insensitive match is supported)
+  - "overrides": (optional) object with text overrides. Keys are child node names (e.g. "title", "subtitle"), values are the replacement text strings.
+
+Example output:
+{{
+  "components": [
+    {{"component": "top-bar", "overrides": {{"title": "주문 관리"}}}},
+    {{"component": "input-search-gray-2"}},
+    {{"component": "com-card-product", "overrides": {{"title": "상품명"}}}},
+    {{"component": "btn-main-task", "overrides": {{"title": "주문하기"}}}}
+  ]
+}}
+
+Component selection guidelines:
+- Pick components that best match the screen's purpose (form, list, detail, etc.)
+- Use top-bar/navigation components at the top
+- Use btn-main-task or similar for primary actions at the bottom
+- Use card/list components for content areas
+- Use input components for form fields
+- Arrange components in a logical top-to-bottom flow (mobile layout)
+- Override text to match the domain context (Korean preferred for Korean apps)
+
+{component_catalog}
+"""
 
 _UI_WIREFRAME_SYSTEM_PROMPT = """You generate a modern UI wireframe HTML fragment for a single screen (Ant Design-like or Material-like).
 \n\nOutput rules (STRICT):
@@ -150,6 +182,90 @@ async def _llm_invoke_to_html(ctx: IngestionWorkflowContext, prompt: str) -> str
         raise
 
 
+# ------------------------------------------------------------------ #
+#  Component-based wireframe generation (open-pencil)                  #
+# ------------------------------------------------------------------ #
+
+_component_catalog_prompt: str | None = None
+
+
+def _get_component_catalog_prompt() -> str:
+    """Lazy-load component catalog prompt from the wireframe service."""
+    global _component_catalog_prompt
+    if _component_catalog_prompt is not None:
+        return _component_catalog_prompt
+    _component_catalog_prompt = open_pencil_client.get_component_catalog_for_prompt()
+    return _component_catalog_prompt
+
+
+def _is_open_pencil_available() -> bool:
+    """Check once if the open-pencil wireframe service is available."""
+    return open_pencil_client.is_available()
+
+
+async def _llm_invoke_to_component_json(ctx: IngestionWorkflowContext, prompt: str) -> str:
+    """
+    Invoke the LLM with the component-based system prompt.
+    Returns the raw JSON text from the LLM.
+    """
+    catalog = _get_component_catalog_prompt()
+    if not catalog:
+        raise RuntimeError("Component catalog not available")
+
+    system_prompt = _UI_COMPONENT_SYSTEM_PROMPT_TEMPLATE.format(component_catalog=catalog)
+
+    resp = await asyncio.wait_for(
+        asyncio.to_thread(
+            ctx.llm.invoke,
+            [SystemMessage(content=system_prompt), HumanMessage(content=prompt)],
+        ),
+        timeout=300.0,
+    )
+    if isinstance(resp, str):
+        return resp
+    content = getattr(resp, "content", None)
+    if isinstance(content, str):
+        return content
+    return str(resp)
+
+
+async def _generate_scene_graph(
+    ctx: IngestionWorkflowContext,
+    prompt: str,
+    ui_name: str,
+) -> dict | None:
+    """
+    Try to generate a wireframe as a SerializedSceneGraph via the component
+    pipeline.  Returns the scene graph dict, or None if unavailable / failed.
+    """
+    if not _is_open_pencil_available():
+        return None
+
+    try:
+        raw_json = await _llm_invoke_to_component_json(ctx, prompt)
+        scene_graph = await asyncio.to_thread(
+            open_pencil_client.parse_and_render_llm_output,
+            raw_json,
+            name=ui_name,
+        )
+        if scene_graph:
+            SmartLogger.log(
+                "INFO",
+                f"Component-based wireframe generated: {ui_name}",
+                category="ingestion.ui_wireframe.open_pencil.success",
+                params={"session_id": ctx.session.id, "ui_name": ui_name},
+            )
+        return scene_graph
+    except Exception as e:
+        SmartLogger.log(
+            "WARN",
+            f"Component-based wireframe failed, falling back to HTML: {e}",
+            category="ingestion.ui_wireframe.open_pencil.fallback",
+            params={"session_id": ctx.session.id, "ui_name": ui_name, "error": str(e)},
+        )
+        return None
+
+
 async def _create_command_ui(
     ctx: IngestionWorkflowContext,
     bc,
@@ -199,6 +315,8 @@ async def _create_command_ui(
         events_text = "\n".join([f"- {e}" for e in events]) if events else "No events found"
 
         theme_hint = f"{ui_name}\n{chosen_ui_desc}"
+        scene_graph_json: str | None = None
+
         if existing_template is not None:
             final_template, norm_report = normalize_ui_template(
                 str(existing_template),
@@ -209,19 +327,32 @@ async def _create_command_ui(
             aggregate_context = f"Aggregate: {agg_name}" + (f" (root entity: {agg_root})" if agg_root else "") if agg_name else ""
             display_lang = getattr(ctx, "display_language", "ko") or "ko"
             lang_instruction = (
-                "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in Korean (한글). Do NOT use English for any user-facing text."
+                "\n\nIMPORTANT: All visible text (overrides) MUST be written in Korean (한글)."
                 if display_lang == "ko"
-                else "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in English."
+                else "\n\nIMPORTANT: All visible text (overrides) MUST be written in English."
             )
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}{figma_screen_ref}\n\nUse labels and placeholders that fit this domain (e.g. field names that match the aggregate/command), not generic "Label" or "Input". Output ONLY the HTML fragment.{lang_instruction}"""
+            base_prompt = f"""UI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}{figma_screen_ref}{lang_instruction}"""
 
-            raw_html = await _llm_invoke_to_html(ctx, prompt)
-
-            final_template, norm_report = normalize_ui_template(
-                str(raw_html),
-                ui_name=ui_name,
-                theme_hint=theme_hint,
-            )
+            # --- Try component-based (open-pencil) first ---
+            sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
+            if sg is not None:
+                import json as _json
+                scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                # Still generate a minimal HTML template for backward compat
+                final_template, norm_report = normalize_ui_template(
+                    "",
+                    ui_name=ui_name,
+                    theme_hint=theme_hint,
+                )
+            else:
+                # --- Fallback to HTML generation ---
+                html_prompt = f"Generate a wireframe HTML template.\n\n{base_prompt}\n\nUse labels and placeholders that fit this domain, not generic \"Label\" or \"Input\". Output ONLY the HTML fragment."
+                raw_html = await _llm_invoke_to_html(ctx, html_prompt)
+                final_template, norm_report = normalize_ui_template(
+                    str(raw_html),
+                    ui_name=ui_name,
+                    theme_hint=theme_hint,
+                )
 
         ui = await asyncio.wait_for(
             asyncio.to_thread(
@@ -236,6 +367,7 @@ async def _create_command_ui(
                 attached_to_name=cmd_name,
                 user_story_id=chosen_us_id,
                 display_name=ui_display_name,
+                scene_graph=scene_graph_json,
             ),
             timeout=10.0
         )
@@ -275,6 +407,7 @@ async def _create_command_ui(
                     "attachedToName": cmd_name,
                     "userStoryId": chosen_us_id,
                     "description": chosen_ui_desc,
+                    "sceneGraph": scene_graph_json,
                     "actor": ui_actor,
                     "sequence": ui_sequence,
                     "commandId": cmd_id,
@@ -328,6 +461,8 @@ async def _create_readmodel_ui(
                 figma_screen_ref = _resolve_figma_screen_ref(ctx, source_screen, "ReadModel", rm_id)
 
         theme_hint = f"{ui_name}\n{chosen_ui_desc}"
+        scene_graph_json: str | None = None
+
         if existing_template is not None:
             final_template, norm_report = normalize_ui_template(
                 str(existing_template),
@@ -337,19 +472,31 @@ async def _create_readmodel_ui(
         else:
             display_lang = getattr(ctx, "display_language", "ko") or "ko"
             lang_instruction = (
-                "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in Korean (한글). Do NOT use English for any user-facing text."
+                "\n\nIMPORTANT: All visible text (overrides) MUST be written in Korean (한글)."
                 if display_lang == "ko"
-                else "\n\nIMPORTANT: All visible text in the wireframe (labels, placeholders, button text, column headers, titles, tooltips, help text, validation messages) MUST be written in English."
+                else "\n\nIMPORTANT: All visible text (overrides) MUST be written in English."
             )
-            prompt = f"""Generate a wireframe HTML template.\n\nUI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}{figma_screen_ref}\n\nUse labels and placeholders that fit this read model (e.g. column/field names that match the data being displayed), not generic "Label" or "Column". Output ONLY the HTML fragment.{lang_instruction}"""
+            base_prompt = f"""UI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}{figma_screen_ref}{lang_instruction}"""
 
-            raw_html = await _llm_invoke_to_html(ctx, prompt)
-
-            final_template, norm_report = normalize_ui_template(
-                str(raw_html),
-                ui_name=ui_name,
-                theme_hint=theme_hint,
-            )
+            # --- Try component-based (open-pencil) first ---
+            sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
+            if sg is not None:
+                import json as _json
+                scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                final_template, norm_report = normalize_ui_template(
+                    "",
+                    ui_name=ui_name,
+                    theme_hint=theme_hint,
+                )
+            else:
+                # --- Fallback to HTML generation ---
+                html_prompt = f"Generate a wireframe HTML template.\n\n{base_prompt}\n\nUse labels and placeholders that fit this read model, not generic \"Label\" or \"Column\". Output ONLY the HTML fragment."
+                raw_html = await _llm_invoke_to_html(ctx, html_prompt)
+                final_template, norm_report = normalize_ui_template(
+                    str(raw_html),
+                    ui_name=ui_name,
+                    theme_hint=theme_hint,
+                )
 
         ui = await asyncio.wait_for(
             asyncio.to_thread(
@@ -364,6 +511,7 @@ async def _create_readmodel_ui(
                 attached_to_name=rm.get("name"),
                 user_story_id=chosen_us_id,
                 display_name=ui_display_name,
+                scene_graph=scene_graph_json,
             ),
             timeout=10.0
         )
@@ -401,6 +549,7 @@ async def _create_readmodel_ui(
                     "attachedToName": rm.get("name"),
                     "userStoryId": chosen_us_id,
                     "description": chosen_ui_desc,
+                    "sceneGraph": scene_graph_json,
                     "actor": rm_ui_actor,
                     "sequence": rm_ui_sequence,
                     "readModelId": rm_id,

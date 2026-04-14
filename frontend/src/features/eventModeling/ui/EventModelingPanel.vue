@@ -862,7 +862,7 @@ function syncSwimlaneHeaders() {
 }
 function onScrollSync() { syncSwimlaneHeaders() }
 function startResizeChat(e) { isResizingChat.value = true; e.preventDefault(); document.addEventListener('mousemove', onResizeChat); document.addEventListener('mouseup', stopResizeChat) }
-function onResizeChat(e) { if (!isResizingChat.value) return; chatPanelWidth.value = Math.max(280, Math.min(600, window.innerWidth - e.clientX)) }
+function onResizeChat(e) { if (!isResizingChat.value) return; chatPanelWidth.value = Math.max(280, Math.min(window.innerWidth - 100, window.innerWidth - e.clientX)) }
 function stopResizeChat() { isResizingChat.value = false; document.removeEventListener('mousemove', onResizeChat); document.removeEventListener('mouseup', stopResizeChat) }
 
 

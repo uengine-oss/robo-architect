@@ -1,0 +1,27 @@
+/*
+ * Open-pencil Tailwind CSS integration.
+ * Only imports theme + utilities (NO preflight/base reset) to avoid breaking robo-architect styles.
+ */
+@import 'tailwindcss/theme' layer(theme);
+@import 'tailwindcss/utilities' layer(utilities);
+
+/* Scan open-pencil source directories for Tailwind class usage */
+@source "../../open-pencil/src";
+@source "../../open-pencil/packages/vue/src";
+
+/* Essential base rules from Tailwind preflight that open-pencil components depend on */
+[hidden] {
+  display: none !important;
+}
+
+@theme {
+  --color-panel: #2a2a2a;
+  --color-canvas: #1e1e1e;
+  --color-border: #3a3a3a;
+  --color-hover: #353535;
+  --color-accent: #3b82f6;
+  --color-surface: #e0e0e0;
+  --color-muted: #888888;
+  --color-input: #1e1e1e;
+  --color-component: #9747ff;
+}

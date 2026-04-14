@@ -4,7 +4,10 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from starlette.requests import Request
+
+import httpx
 
 from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
@@ -225,6 +228,234 @@ def _fetch_properties_by_parent_id(session: Any, parent_ids: list[str]) -> dict[
         if pid:
             out[str(pid)] = [dict(p) for p in props if p and p.get("id")]
     return out
+
+
+@router.put("/update-node/{node_id}")
+async def update_node(node_id: str, request: Request) -> dict[str, Any]:
+    """
+    Update specific properties of a node (sceneGraph, template, etc.).
+    Only allows safe fields to be updated.
+    """
+    body = await request.json()
+    allowed_fields = {"sceneGraph", "template", "description", "name", "displayName"}
+    updates = {k: v for k, v in body.items() if k in allowed_fields}
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    with get_session() as session:
+        set_clauses = ", ".join(f"n.{k} = ${k}" for k in updates)
+        query = f"""
+        MATCH (n {{id: $node_id}})
+        SET {set_clauses}, n.updatedAt = datetime()
+        RETURN n.id as id
+        """
+        params = {"node_id": node_id, **updates}
+        result = session.run(query, **params).single()
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+
+    return {"ok": True, "nodeId": node_id, "updated": list(updates.keys())}
+
+
+import os as _os
+
+_WIREFRAME_SERVICE_URL = _os.getenv("WIREFRAME_SERVICE_URL", "http://localhost:7610")
+
+
+@router.post("/export-fig/{node_id}")
+async def export_fig(node_id: str) -> StreamingResponse:
+    """
+    Export a UI node's sceneGraph as a .fig file (with component assets).
+    Proxies to the open-pencil wireframe service.
+    """
+    with get_session() as session:
+        rec = session.run(
+            "MATCH (n:UI {id: $id}) RETURN n.sceneGraph as sg, n.name as name, n.displayName as dn",
+            id=node_id,
+        ).single()
+        if not rec:
+            raise HTTPException(status_code=404, detail=f"UI node {node_id} not found")
+
+    sg_str = rec.get("sg")
+    if not sg_str:
+        raise HTTPException(status_code=400, detail="No sceneGraph data on this UI node")
+
+    try:
+        scene_graph = json.loads(sg_str) if isinstance(sg_str, str) else sg_str
+    except (json.JSONDecodeError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid sceneGraph JSON: {e}")
+
+    ui_name = rec.get("dn") or rec.get("name") or "wireframe"
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{_WIREFRAME_SERVICE_URL}/export-fig",
+                json={"sceneGraph": scene_graph, "name": ui_name},
+            )
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Wireframe service error: {e.response.text}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Wireframe service unavailable: {e}")
+
+    import io as _io
+
+    safe_name = ui_name.replace('"', '').replace("'", "")[:50]
+    return StreamingResponse(
+        _io.BytesIO(resp.content),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.fig"'},
+    )
+
+
+@router.post("/generate-component-wireframe/{node_id}")
+async def generate_component_wireframe(node_id: str, request: Request) -> dict[str, Any]:
+    """
+    Generate a wireframe using the .fig component library.
+    1. Fetch UI node context (name, description, attached command/readmodel)
+    2. Fetch component catalog from wireframe service
+    3. Call LLM to select components
+    4. Render via wireframe service → sceneGraph
+    5. Save sceneGraph to the UI node
+    """
+    from api.platform import open_pencil_client
+    from api.platform.llm import get_llm
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    # Check wireframe service availability
+    if not open_pencil_client.is_available():
+        raise HTTPException(status_code=503, detail="Wireframe service is not running")
+
+    # Fetch UI node context from Neo4j
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (ui:UI {id: $id})
+            OPTIONAL MATCH (ui)-[:ATTACHED_TO]->(target)
+            OPTIONAL MATCH (bc:BoundedContext)-[:HAS_UI]->(ui)
+            RETURN ui.name as name, ui.displayName as displayName,
+                   ui.description as description,
+                   ui.attachedToType as attachedToType,
+                   ui.attachedToName as attachedToName,
+                   labels(target)[0] as targetLabel,
+                   target.name as targetName,
+                   bc.name as bcName
+            """,
+            id=node_id,
+        ).single()
+        if not rec:
+            raise HTTPException(status_code=404, detail=f"UI node {node_id} not found")
+
+    ui_name = rec.get("displayName") or rec.get("name") or "Wireframe"
+    ui_desc = rec.get("description") or ""
+    attached_type = rec.get("attachedToType") or ""
+    attached_name = rec.get("attachedToName") or rec.get("targetName") or ""
+    bc_name = rec.get("bcName") or ""
+
+    # Get component catalog
+    catalog = open_pencil_client.get_component_catalog_for_prompt()
+    if not catalog:
+        raise HTTPException(status_code=503, detail="Component catalog not available")
+
+    # Read optional body overrides
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    display_lang = body.get("display_language", "ko")
+
+    lang_instruction = (
+        "All visible text (overrides) MUST be written in Korean (한글)."
+        if display_lang == "ko"
+        else "All visible text (overrides) MUST be written in English."
+    )
+
+    # Build LLM prompt
+    system_prompt = f"""You compose a mobile UI wireframe by selecting and arranging components from a design library.
+
+Output rules (STRICT):
+- Output ONLY valid JSON. No markdown fences, no explanatory text.
+- The JSON must have a "components" array at the top level.
+- Each element is an object with:
+  - "component": the exact component name from the library
+  - "overrides": (optional) object with text overrides
+
+Example:
+{{"components": [
+  {{"component": "header-main", "overrides": {{"title": "화면 제목"}}}},
+  {{"component": "input-search"}},
+  {{"component": "com-card-product"}},
+  {{"component": "btn-main-task-bottom", "overrides": {{"title": "확인"}}}}
+]}}
+
+{lang_instruction}
+
+{catalog}
+"""
+
+    user_prompt = f"""Generate a wireframe for:
+UI Name: {ui_name}
+Bounded Context: {bc_name}
+Attached To: {attached_type} {attached_name}
+Description: {ui_desc}
+
+Select appropriate components and arrange them top-to-bottom for a mobile screen."""
+
+    # Call LLM
+    llm = get_llm()
+    try:
+        resp = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ])
+        raw_text = resp.content if hasattr(resp, "content") else str(resp)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM call failed: {e}")
+
+    # Parse LLM JSON and render via wireframe service
+    import re as _re
+    clean_text = raw_text.strip()
+    # Strip markdown fences
+    if clean_text.startswith("```"):
+        clean_text = _re.sub(r"^```[a-zA-Z]*\n?", "", clean_text)
+        clean_text = _re.sub(r"\n?```$", "", clean_text).strip()
+
+    try:
+        llm_data = json.loads(clean_text, strict=False)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"LLM output is not valid JSON: {e}. Raw: {clean_text[:300]}")
+
+    components = llm_data.get("components")
+    if not isinstance(components, list) or not components:
+        raise HTTPException(status_code=500, detail=f"LLM output has no 'components' array. Keys: {list(llm_data.keys())}")
+
+    scene_graph = open_pencil_client.render_wireframe(
+        components=components, name=ui_name
+    )
+    if not scene_graph:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Wireframe service render failed. Components: {json.dumps(components[:3], ensure_ascii=False)}"
+        )
+
+    # Save sceneGraph to Neo4j
+    sg_str = json.dumps(scene_graph, ensure_ascii=False)
+    with get_session() as session:
+        session.run(
+            "MATCH (ui:UI {id: $id}) SET ui.sceneGraph = $sg, ui.updatedAt = datetime()",
+            id=node_id,
+            sg=sg_str,
+        )
+
+    return {
+        "ok": True,
+        "nodeId": node_id,
+        "sceneGraph": sg_str,
+        "uiName": ui_name,
+    }
 
 
 @router.get("/expand/{node_id}")

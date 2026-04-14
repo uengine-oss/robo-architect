@@ -337,7 +337,7 @@ _ALLOWED_UPDATE_FIELDS_BY_LABEL: dict[str, set[str]] = {
     "ReadModel": {"description", "displayName", "provisioningType"},
     "BoundedContext": {"description", "displayName"},
     # UI: wireframe + attachment metadata
-    "UI": {"description", "template", "attachedToId", "attachedToType", "attachedToName"},
+    "UI": {"description", "template", "sceneGraph", "attachedToId", "attachedToType", "attachedToName"},
     # Property: field schema metadata
     # NOTE: parentType/parentId are accepted as metadata for safer targeting / diff readability,
     # but are NOT applied (we do not allow changing a property's parent via update).

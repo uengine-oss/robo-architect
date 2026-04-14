@@ -973,7 +973,7 @@ function startResizeChat(e) {
 function onResizeChat(e) {
   if (!isResizingChat.value) return
   const next = window.innerWidth - e.clientX
-  chatPanelWidth.value = Math.max(280, Math.min(640, next))
+  chatPanelWidth.value = Math.max(280, Math.min(window.innerWidth - 100, next))
   try {
     localStorage.setItem('aggregate_chat_panel_width', String(chatPanelWidth.value))
   } catch {}

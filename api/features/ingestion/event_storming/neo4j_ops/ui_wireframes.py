@@ -18,6 +18,7 @@ class UIWireframeOps:
         key: str | None = None,
         description: str | None = None,
         template: str | None = None,
+        scene_graph: str | None = None,
         attached_to_id: str | None = None,
         attached_to_type: str = "Command",
         attached_to_name: str | None = None,
@@ -68,6 +69,7 @@ class UIWireframeOps:
                 ui.displayName = $display_name,
                 ui.description = $description,
                 ui.template = $template,
+                ui.sceneGraph = $scene_graph,
                 ui.attachedToId = $attached_to_id,
                 ui.attachedToType = $attached_to_type,
                 ui.attachedToName = $attached_to_name,
@@ -75,7 +77,7 @@ class UIWireframeOps:
                 ui.actor = $actor,
                 ui.updatedAt = datetime()
             MERGE (bc)-[:HAS_UI]->(ui)
-            RETURN ui {.id, .key, .name, .displayName, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId, .actor} as ui
+            RETURN ui {.id, .key, .name, .displayName, .description, .template, .sceneGraph, .attachedToId, .attachedToType, .attachedToName, .userStoryId, .actor} as ui
             """
             result = session.run(
                 query,
@@ -85,6 +87,7 @@ class UIWireframeOps:
                 bc_id=bc_id,
                 description=description,
                 template=template,
+                scene_graph=scene_graph,
                 attached_to_id=attached_to_id,
                 attached_to_type=attached_to_type,
                 attached_to_name=attached_to_name,

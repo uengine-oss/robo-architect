@@ -661,7 +661,7 @@ function onResizeChat(e) {
   if (!isResizingChat.value) return
   // Right-side panel width from viewport right edge
   const next = Math.round(window.innerWidth - e.clientX)
-  chatPanelWidth.value = Math.max(280, Math.min(640, next))
+  chatPanelWidth.value = Math.max(280, Math.min(window.innerWidth - 100, next))
   try {
     localStorage.setItem('canvas_chat_panel_width', String(chatPanelWidth.value))
   } catch {}
