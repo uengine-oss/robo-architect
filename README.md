@@ -6,6 +6,11 @@
 - **Frontend**: Vue + Vite (`frontend/`) — Event Storming 캔버스/네비게이터 UI
 - **Docs/Cypher**: `docs/cypher/` — 스키마/샘플데이터/쿼리 모음
 
+**Demo Video**
+🎥 [Code Generation from Legacy Analysis](https://youtu.be/NtIHSZHugpU?si=xQTYBPEHXdTDrO6B)
+🎥 [Legacy Analysis](https://youtu.be/9s54dhhERM0?si=GUj-b7NZ2TLLuF6y)
+🎥 [Figma & JIRA Integration](https://youtu.be/CHw9U1aQZFg?si=PmLI1R8o4zaDxfze)
+
 ---
 
 ## 목차
