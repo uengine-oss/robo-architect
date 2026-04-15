@@ -301,8 +301,112 @@ async function onDesignSave(data) {
       storeNode.data = { ...storeNode.data, sceneGraph: sceneGraphStr }
     }
     emit('updated')
+
+    // Push to Figma Plugin — use stored fileKey from Figma API creds
+    let fileKey = n.data?.figmaFileKey
+    if (!fileKey) {
+      try { fileKey = JSON.parse(localStorage.getItem('figma_api_creds') || '{}').fileKey } catch {}
+    }
+    if (fileKey) {
+      await pushToFigmaPlugin(fileKey, n.data?.figmaNodeId, n.data?.displayName || n.data?.name, data)
+    } else {
+      figmaPushStatus.value = 'saved'
+      figmaPushMessage.value = '저장 완료'
+      setTimeout(() => { figmaPushStatus.value = null }, 3000)
+    }
   } catch (e) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = '저장 실패: ' + (e?.message || e)
+    setTimeout(() => { figmaPushStatus.value = null }, 6000)
     console.error('[InspectorPanel] Failed to save design:', e)
+  }
+}
+
+const figmaPushStatus = ref(null) // null | 'pushing' | 'success' | 'error' | 'saved'
+const figmaPushMessage = ref('')
+
+/**
+ * Push SceneGraph to Figma Plugin via SYNC_FRAME command.
+ * Extracts all TEXT nodes with their content, fontSize, and name.
+ * For new frames: Plugin creates TEXT nodes.
+ * For existing frames: Plugin updates matching TEXT nodes by name.
+ */
+async function pushToFigmaPlugin(fileKey, figmaNodeId, frameName, sceneGraphData) {
+  if (!sceneGraphData?.nodes) return
+
+  figmaPushStatus.value = 'pushing'
+  figmaPushMessage.value = 'Figma 동기화 중...'
+
+  // Extract TEXT node info (name + text + fontSize for creation)
+  const textUpdates = []
+  for (const [nid, sn] of Object.entries(sceneGraphData.nodes)) {
+    if (sn.type !== 'TEXT' || !sn.text) continue
+    textUpdates.push({
+      nodeId: sn.componentId || nid.replace('_', ':'),
+      text: sn.text,
+      name: sn.name || '',
+      fontSize: sn.fontSize || 14,
+    })
+  }
+
+  try {
+    const resp = await fetch('/api/figma-plugin/update-nodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_key: fileKey,
+        node_updates: [{
+          nodeId: '__SYNC_FRAME__',
+          props: {
+            __syncFrame: true,
+            figmaNodeId: figmaNodeId || null,
+            frameName: frameName || 'Wireframe',
+            textUpdates,
+            sceneGraph: sceneGraphData,
+            uiNodeId: node.value?.id,
+          }
+        }]
+      })
+    })
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `Push 실패 (${resp.status})`)
+    }
+
+    const result = await resp.json()
+    figmaPushStatus.value = 'success'
+    figmaPushMessage.value = 'Figma에 전송됨, Plugin 처리 대기...'
+
+    // Poll for Plugin's result (handshake)
+    pollForPluginResult(fileKey, frameName)
+      .then((syncResult) => {
+        if (syncResult) {
+          figmaPushMessage.value = syncResult.message || `Figma 동기화 완료 (ID: ${syncResult.frameId})`
+          // Save the figmaNodeId from plugin result
+          if (syncResult.frameId && node.value) {
+            const n = node.value
+            if (n.data) n.data = { ...n.data, figmaNodeId: syncResult.frameId, figmaFileKey: fileKey }
+            const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+            if (storeNode?.data) storeNode.data = { ...storeNode.data, figmaNodeId: syncResult.frameId, figmaFileKey: fileKey }
+            // Persist to Neo4j
+            fetch(`/api/graph/update-node/${n.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ figmaNodeId: syncResult.frameId, figmaFileKey: fileKey })
+            }).catch(() => {})
+          }
+          setTimeout(() => { figmaPushStatus.value = null }, 4000)
+        }
+      })
+      .catch(() => {
+        setTimeout(() => { figmaPushStatus.value = null }, 5000)
+      })
+  } catch (e) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = e?.message || 'Figma 동기화 실패'
+    setTimeout(() => { figmaPushStatus.value = null }, 6000)
+    console.warn('[FigmaSync]', e)
   }
 }
 
@@ -928,6 +1032,202 @@ async function copySceneGraphToFigma() {
     console.error('[CopySceneToFigma]', e)
   } finally {
     figSceneCopying.value = false
+  }
+}
+
+// ── Auto-sync: poll for Figma changes pushed by Plugin ──
+let figmaAutoSyncTimer = null
+
+function startFigmaAutoSync() {
+  if (figmaAutoSyncTimer) return
+  figmaAutoSyncTimer = setInterval(async () => {
+    const n = node.value
+    if (!n?.data?.figmaFileKey || activeTab.value !== 'design') return
+    const frameName = n.data?.displayName || n.data?.name || ''
+    if (!frameName) return
+
+    try {
+      const resp = await fetch(`/api/figma-plugin/get-result?file_key=${encodeURIComponent(n.data.figmaFileKey)}&frame_name=${encodeURIComponent(frameName)}`)
+      if (!resp.ok) return
+      const data = await resp.json()
+      if (data.result && data.result.sceneGraph) {
+        // Update local data
+        if (n.data) n.data = { ...n.data, sceneGraph: data.result.sceneGraph }
+        const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+        if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: data.result.sceneGraph }
+        designEditorKey.value++
+        emit('updated')
+        figmaPushStatus.value = 'success'
+        figmaPushMessage.value = `Figma 변경 자동 반영됨`
+        setTimeout(() => { figmaPushStatus.value = null }, 3000)
+      }
+    } catch (_e) {}
+  }, 5000)
+}
+
+function stopFigmaAutoSync() {
+  if (figmaAutoSyncTimer) { clearInterval(figmaAutoSyncTimer); figmaAutoSyncTimer = null }
+}
+
+// Start/stop auto-sync based on active tab
+watch(activeTab, (tab) => {
+  if (tab === 'design') startFigmaAutoSync()
+  else stopFigmaAutoSync()
+}, { immediate: true })
+
+const hasFigmaConnection = computed(() => {
+  // Show pull button if figmaNodeId exists OR figma creds are configured
+  if (node.value?.data?.figmaNodeId) return true
+  try {
+    const creds = JSON.parse(localStorage.getItem('figma_api_creds') || '{}')
+    return !!(creds.apiToken && creds.fileKey)
+  } catch (_e) { return false }
+})
+
+// ── Figma Sync (pull/push) ──
+const figmaSyncPulling = ref(false)
+const figmaSyncError = ref(null)
+
+async function pullFromFigma() {
+  const n = node.value
+  if (!n?.data?.figmaNodeId || !n?.data?.figmaFileKey) return
+
+  // Get Figma API token from localStorage
+  let apiToken = ''
+  try {
+    const creds = JSON.parse(localStorage.getItem('figma_api_creds') || '{}')
+    apiToken = creds.apiToken || ''
+  } catch {}
+  if (!apiToken) {
+    figmaSyncError.value = 'Figma API 토큰이 없습니다. 인제스천 모달에서 먼저 연결하세요.'
+    return
+  }
+
+  figmaSyncPulling.value = true
+  figmaSyncError.value = null
+  try {
+    const resp = await fetch('/api/ingest/figma-sync/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_token: apiToken,
+        file_key: n.data.figmaFileKey,
+        figma_node_id: n.data.figmaNodeId,
+        ui_node_id: n.id,
+      })
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `Pull 실패 (${resp.status})`)
+    }
+    const result = await resp.json()
+    // Update local node data
+    if (n.data && result.sceneGraph) {
+      n.data = { ...n.data, sceneGraph: result.sceneGraph }
+    }
+    const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+    if (storeNode?.data && result.sceneGraph) {
+      storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph }
+    }
+    emit('updated')
+  } catch (e) {
+    figmaSyncError.value = e?.message || 'Pull 실패'
+    console.error('[FigmaSync:Pull]', e)
+  } finally {
+    figmaSyncPulling.value = false
+  }
+}
+
+/**
+ * Poll backend for Plugin sync result (handshake).
+ * Plugin reports SYNC_RESULT → ui.html → backend /api/figma-plugin/report-result
+ * Frontend polls /api/figma-plugin/get-result
+ */
+async function pollForPluginResult(fileKey, frameName, maxWait = 15000) {
+  const start = Date.now()
+  while (Date.now() - start < maxWait) {
+    await new Promise(r => setTimeout(r, 2000))
+    try {
+      const resp = await fetch(`/api/figma-plugin/get-result?file_key=${encodeURIComponent(fileKey)}&frame_name=${encodeURIComponent(frameName)}`)
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data.result) return data.result
+      }
+    } catch (_e) {}
+  }
+  return null
+}
+
+/**
+ * Pull from Figma and reload the Design editor.
+ * Called from the FrameEditor's pull button.
+ */
+async function pullFromFigmaToDesign() {
+  const n = node.value
+  if (!n) return
+
+  let fileKey = n.data?.figmaFileKey
+  if (!fileKey) {
+    try { fileKey = JSON.parse(localStorage.getItem('figma_api_creds') || '{}').fileKey } catch (_e) {}
+  }
+  if (!fileKey) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = 'Figma File Key가 없습니다'
+    setTimeout(() => { figmaPushStatus.value = null }, 4000)
+    return
+  }
+
+  figmaPushStatus.value = 'pushing'
+  figmaPushMessage.value = 'Figma Plugin에서 가져오는 중...'
+
+  const frameName = n.data?.displayName || n.data?.name || ''
+  const figmaNodeId = n.data?.figmaNodeId || null
+
+  try {
+    // Send EXPORT_FRAME command to Plugin (via polling queue)
+    const resp = await fetch('/api/figma-plugin/update-nodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_key: fileKey,
+        node_updates: [{
+          nodeId: '_EXPORT_',
+          props: {
+            __exportFrame: true,
+            figmaNodeId: figmaNodeId,
+            frameName: frameName,
+            uiNodeId: n.id,
+          }
+        }]
+      })
+    })
+    if (!resp.ok) throw new Error('Plugin 명령 전송 실패')
+
+    // Poll for result from Plugin
+    const result = await pollForPluginResult(fileKey, frameName, 20000)
+    if (!result) {
+      throw new Error('Plugin 응답 타임아웃 — Plugin이 연결되어 있는지 확인하세요')
+    }
+
+    // Update local node data with the new sceneGraph
+    if (result.sceneGraph) {
+      if (n.data) n.data = { ...n.data, sceneGraph: result.sceneGraph, figmaNodeId: result.frameId, figmaFileKey: fileKey }
+      const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+      if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph, figmaNodeId: result.frameId, figmaFileKey: fileKey }
+    }
+
+    // Force FrameEditor to re-create
+    designEditorKey.value++
+    emit('updated')
+
+    figmaPushStatus.value = 'success'
+    figmaPushMessage.value = result.message || `Figma에서 가져옴`
+    setTimeout(() => { figmaPushStatus.value = null }, 4000)
+  } catch (e) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = e?.message || 'Figma Pull 실패'
+    setTimeout(() => { figmaPushStatus.value = null }, 6000)
+    console.error('[FigmaPull]', e)
   }
 }
 
@@ -2349,6 +2649,15 @@ function updateVoFieldValue(fieldName, value) {
           <div v-if="figSceneError" class="inspector-alert error">{{ figSceneError }}</div>
           <div v-if="figSceneCopied" class="inspector-alert success">Figma clipboard ready — Ctrl+V in Figma to paste.</div>
           <div v-if="componentGenError" class="inspector-alert error">{{ componentGenError }}</div>
+          <div v-if="figmaPushStatus === 'pushing'" class="inspector-alert" style="background:#fef9c3;color:#854d0e;">
+            <svg width="14" height="14" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin" style="display:inline-block;vertical-align:middle;margin-right:4px;">
+              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+            </svg>
+            {{ figmaPushMessage }}
+          </div>
+          <div v-else-if="figmaPushStatus === 'success'" class="inspector-alert success">{{ figmaPushMessage }}</div>
+          <div v-else-if="figmaPushStatus === 'saved'" class="inspector-alert success" style="background:#dcfce7;color:#166534;">{{ figmaPushMessage }}</div>
+          <div v-else-if="figmaPushStatus === 'error'" class="inspector-alert error">{{ figmaPushMessage }}</div>
           <div v-if="figmaCopied" class="inspector-alert success">Figma clipboard ready — Ctrl+V in Figma to paste. If text is invisible, switch to another page and back.</div>
 
           <div class="ui-preview-panel__info">
@@ -2357,6 +2666,25 @@ function updateVoFieldValue(fieldName, value) {
               <span class="label">Attached to:</span>
               <span class="value">{{ node.data?.attachedToName }}</span>
             </div>
+            <div v-if="node.data?.figmaNodeId" class="ui-preview-panel__attached" style="margin-top:4px;">
+              <span class="label">Figma:</span>
+              <span class="value" style="font-family:monospace;font-size:11px;">{{ node.data.figmaNodeId }}</span>
+              <button
+                class="ui-preview-panel__btn"
+                style="margin-left:8px;width:24px;height:24px;"
+                :disabled="figmaSyncPulling"
+                :title="figmaSyncPulling ? 'Pulling...' : 'Pull from Figma'"
+                @click="pullFromFigma"
+              >
+                <svg v-if="figmaSyncPulling" width="12" height="12" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                </svg>
+              </button>
+            </div>
+            <div v-if="figmaSyncError" class="inspector-alert error" style="margin-top:4px;font-size:11px;">{{ figmaSyncError }}</div>
           </div>
 
           <div class="ui-preview-panel__content">
@@ -2493,6 +2821,7 @@ function updateVoFieldValue(fieldName, value) {
                 :scene-data="sceneGraphData"
                 :frame-id="mainFrameId"
                 :on-save="onDesignSave"
+                :on-pull="hasFigmaConnection ? pullFromFigmaToDesign : undefined"
               />
               <template #fallback>
                 <div class="inspector-design-editor__loading">Loading design editor...</div>

@@ -82,6 +82,112 @@ const figmaPasteError = ref(null)
 const figmaScreenCount = ref(0)
 const figmaElementCount = ref(0)
 
+// Figma API state (REST API mode)
+const FIGMA_CREDS_KEY = 'figma_api_creds'
+const figmaInputSubMode = ref('paste') // 'paste' | 'api'
+const figmaApiToken = ref('')
+const figmaFileKey = ref('')
+const figmaConnecting = ref(false)
+const figmaConnected = ref(false)
+const figmaApiError = ref(null)
+const figmaPages = ref([])
+const figmaSelectedFrameIds = ref(new Set())
+const figmaApiNodeIdMap = ref({}) // frame_name → figma_node_id
+
+function loadFigmaCreds() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FIGMA_CREDS_KEY) || '{}')
+    if (saved.apiToken) figmaApiToken.value = saved.apiToken
+    if (saved.fileKey) figmaFileKey.value = saved.fileKey
+  } catch {}
+}
+
+function saveFigmaCreds() {
+  localStorage.setItem(FIGMA_CREDS_KEY, JSON.stringify({
+    apiToken: figmaApiToken.value,
+    fileKey: figmaFileKey.value
+  }))
+}
+
+async function connectFigmaApi() {
+  if (!figmaApiToken.value.trim() || !figmaFileKey.value.trim()) {
+    figmaApiError.value = 'API 토큰과 File Key를 입력해주세요.'
+    return
+  }
+  figmaConnecting.value = true
+  figmaApiError.value = null
+  try {
+    const resp = await fetch('/api/ingest/figma-api/pages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_token: figmaApiToken.value, file_key: figmaFileKey.value })
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `연결 실패 (${resp.status})`)
+    }
+    const data = await resp.json()
+    figmaPages.value = data.pages || []
+    figmaConnected.value = true
+    saveFigmaCreds()
+  } catch (e) {
+    figmaApiError.value = e.message || '연결 실패'
+  } finally {
+    figmaConnecting.value = false
+  }
+}
+
+function toggleFigmaFrame(frameId) {
+  const s = new Set(figmaSelectedFrameIds.value)
+  if (s.has(frameId)) s.delete(frameId)
+  else s.add(frameId)
+  figmaSelectedFrameIds.value = s
+}
+
+function toggleAllPageFrames(page) {
+  const s = new Set(figmaSelectedFrameIds.value)
+  const allSelected = page.frames.every(f => s.has(f.id))
+  for (const f of page.frames) {
+    if (allSelected) s.delete(f.id)
+    else s.add(f.id)
+  }
+  figmaSelectedFrameIds.value = s
+}
+
+async function startFigmaApiIngestion() {
+  const ids = [...figmaSelectedFrameIds.value]
+  if (ids.length === 0) {
+    figmaApiError.value = '프레임을 선택해주세요.'
+    return
+  }
+  figmaApiError.value = null
+  try {
+    // 1. Fetch selected frame nodes
+    const nodesResp = await fetch('/api/ingest/figma-api/nodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_token: figmaApiToken.value, file_key: figmaFileKey.value, node_ids: ids })
+    })
+    if (!nodesResp.ok) {
+      const data = await nodesResp.json().catch(() => ({}))
+      throw new Error(data.detail || '노드 가져오기 실패')
+    }
+    const nodesData = await nodesResp.json()
+    const figmaNodes = nodesData.figma_nodes || []
+    figmaApiNodeIdMap.value = nodesData.node_id_map || {}
+
+    // Set the figmaNodeChanges (reuse existing ingestion flow)
+    figmaNodeChanges.value = figmaNodes
+    figmaScreenCount.value = ids.length
+    figmaElementCount.value = figmaNodes.length
+
+    // Auto-start ingestion
+    emit('start')
+  } catch (e) {
+    figmaApiError.value = e.message || '인제스천 시작 실패'
+  }
+}
+
 // Data clearing state
 const showClearConfirm = ref(false)
 const existingDataStats = ref(null)
@@ -102,6 +208,7 @@ const canSubmit = computed(() => {
     return selectedPageContent.value !== null
   }
   if (inputMode.value === 'figma') {
+    if (figmaInputSubMode.value === 'api') return figmaSelectedFrameIds.value.size > 0
     return figmaNodeChanges.value !== null
   }
   if (inputMode.value === 'analyzer') {
@@ -365,14 +472,20 @@ async function startIngestion() {
 
     if (inputMode.value === 'figma' && figmaNodeChanges.value) {
       // Figma mode: send JSON directly (not FormData)
+      const figmaBody = {
+        figma_nodes: figmaNodeChanges.value,
+        source_type: 'figma',
+        display_language: displayLanguage.value === 'en' ? 'en' : 'ko',
+      }
+      // Include Figma API metadata for node ID mapping (when using API mode)
+      if (figmaInputSubMode.value === 'api' && figmaFileKey.value) {
+        figmaBody.figma_file_key = figmaFileKey.value
+        figmaBody.figma_node_id_map = figmaApiNodeIdMap.value
+      }
       uploadResponse = await fetch('/api/ingest/upload/figma', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          figma_nodes: figmaNodeChanges.value,
-          source_type: 'figma',
-          display_language: displayLanguage.value === 'en' ? 'en' : 'ko',
-        })
+        body: JSON.stringify(figmaBody)
       })
     } else {
       const formData = new FormData()
@@ -942,6 +1055,7 @@ onUnmounted(() => {
 
 onMounted(async () => {
   loadJiraCreds()
+  loadFigmaCreds()
   await checkAndRestoreSession()
 })
 
@@ -1372,7 +1486,68 @@ function useSample() {
 
               <!-- Figma Paste Area -->
               <div v-if="inputMode === 'figma'" class="figma-section">
-                <div v-if="!figmaNodeChanges" class="figma-paste-area" @paste="handleFigmaPaste" tabindex="0">
+                <!-- Sub-mode toggle: Paste vs API -->
+                <div class="figma-submode-toggle" style="display:flex;gap:4px;margin-bottom:8px;">
+                  <button
+                    :class="['tab-btn', { active: figmaInputSubMode === 'paste' }]"
+                    @click="figmaInputSubMode = 'paste'"
+                    style="font-size:12px;padding:4px 12px;"
+                  >붙여넣기</button>
+                  <button
+                    :class="['tab-btn', { active: figmaInputSubMode === 'api' }]"
+                    @click="figmaInputSubMode = 'api'"
+                    style="font-size:12px;padding:4px 12px;"
+                  >API 연결</button>
+                </div>
+
+                <!-- Figma API Connection Mode -->
+                <div v-if="figmaInputSubMode === 'api'" class="figma-api-section">
+                  <div v-if="!figmaConnected" class="jira-creds" style="display:flex;flex-direction:column;gap:8px;">
+                    <div class="jira-field">
+                      <label>API Token</label>
+                      <input v-model="figmaApiToken" type="password" placeholder="figd_..." class="jira-input" />
+                    </div>
+                    <div class="jira-field">
+                      <label>File Key</label>
+                      <input v-model="figmaFileKey" type="text" placeholder="Figma URL의 /file/ 뒤 문자열" class="jira-input" />
+                    </div>
+                    <button
+                      class="jira-connect-btn"
+                      :disabled="figmaConnecting"
+                      @click="connectFigmaApi"
+                    >{{ figmaConnecting ? '연결 중...' : '연결' }}</button>
+                    <div v-if="figmaApiError" class="figma-error" style="margin-top:4px;">{{ figmaApiError }}</div>
+                  </div>
+
+                  <div v-else class="figma-api-pages">
+                    <div class="figma-preview-header" style="margin-bottom:8px;">
+                      <span style="font-size:13px;font-weight:600;">{{ figmaPages.length }}개 페이지</span>
+                      <button class="figma-clear-btn" @click="figmaConnected = false; figmaPages = []; figmaSelectedFrameIds = new Set()">
+                        연결 해제
+                      </button>
+                    </div>
+                    <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;">
+                      <div v-for="page in figmaPages" :key="page.id" class="figma-api-page">
+                        <div style="font-size:12px;font-weight:600;color:var(--color-text-secondary);margin-bottom:4px;cursor:pointer;" @click="toggleAllPageFrames(page)">
+                          📄 {{ page.name }}
+                        </div>
+                        <div v-for="frame in page.frames" :key="frame.id" class="figma-node-item" style="cursor:pointer;padding:6px 8px;" @click="toggleFigmaFrame(frame.id)">
+                          <input type="checkbox" :checked="figmaSelectedFrameIds.has(frame.id)" style="margin-right:6px;" />
+                          <span class="figma-node-name">{{ frame.name }}</span>
+                          <span class="figma-node-size">{{ frame.width }} × {{ frame.height }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="figmaSelectedFrameIds.size > 0" style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;">
+                      <span style="font-size:12px;color:var(--color-text-secondary);">선택: {{ figmaSelectedFrameIds.size }}개 프레임</span>
+                      <button class="jira-connect-btn" @click="startFigmaApiIngestion">인제스천 시작</button>
+                    </div>
+                    <div v-if="figmaApiError" class="figma-error" style="margin-top:4px;">{{ figmaApiError }}</div>
+                  </div>
+                </div>
+
+                <!-- Figma Paste Mode (existing) -->
+                <div v-if="figmaInputSubMode === 'paste' && !figmaNodeChanges" class="figma-paste-area" @paste="handleFigmaPaste" tabindex="0">
                   <div class="figma-paste-icon">
                     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                       <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z"></path>
@@ -1385,7 +1560,7 @@ function useSample() {
                   <p class="figma-paste-text">Figma에서 화면을 복사한 후 여기를 클릭하고 <kbd>Ctrl+V</kbd> 붙여넣기</p>
                   <p class="figma-paste-hint">Figma에서 스토리보드 프레임들을 선택 → Ctrl+C 복사 → 이 영역에 Ctrl+V 붙여넣기</p>
                 </div>
-                <div v-else class="figma-preview">
+                <div v-else-if="figmaInputSubMode === 'paste' && figmaNodeChanges" class="figma-preview">
                   <div class="figma-preview-header">
                     <div class="figma-preview-stats">
                       <span class="figma-stat">

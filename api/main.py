@@ -140,6 +140,14 @@ app.include_router(ingestion_router)
 from api.features.ingestion.confluence import router as confluence_router
 app.include_router(confluence_router)
 
+# Figma REST API integration + bidirectional sync
+from api.features.ingestion.figma_api import router as figma_api_router
+from api.features.ingestion.figma_sync import router as figma_sync_router
+from api.features.ingestion.figma_plugin_ws import router as figma_plugin_ws_router
+app.include_router(figma_api_router)
+app.include_router(figma_sync_router)
+app.include_router(figma_plugin_ws_router)
+
 # Include change management router
 from api.features.change_management.router import router as change_router
 app.include_router(change_router)

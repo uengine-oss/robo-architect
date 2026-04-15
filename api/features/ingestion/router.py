@@ -171,6 +171,8 @@ class FigmaUploadRequest(BaseModel):
     figma_nodes: List[dict]
     source_type: str = "figma"
     display_language: str = "ko"
+    figma_file_key: str | None = None
+    figma_node_id_map: dict[str, str] | None = None  # screen_name → figma_node_id
 
 
 @router.post("/upload/figma")
@@ -204,6 +206,11 @@ async def upload_figma_document(
     if session.display_language not in ("ko", "en"):
         session.display_language = "ko"
     session.source_type = "figma"
+    # Store Figma API metadata for the ingestion workflow to preserve node IDs
+    if body.figma_file_key:
+        session.figma_file_key = body.figma_file_key
+    if body.figma_node_id_map:
+        session.figma_node_id_map = body.figma_node_id_map
 
     SmartLogger.log(
         "INFO",

@@ -237,7 +237,7 @@ async def update_node(node_id: str, request: Request) -> dict[str, Any]:
     Only allows safe fields to be updated.
     """
     body = await request.json()
-    allowed_fields = {"sceneGraph", "template", "description", "name", "displayName"}
+    allowed_fields = {"sceneGraph", "template", "description", "name", "displayName", "figmaNodeId", "figmaFileKey"}
     updates = {k: v for k, v in body.items() if k in allowed_fields}
 
     if not updates:

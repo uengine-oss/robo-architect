@@ -24,6 +24,8 @@ class UIWireframeOps:
         attached_to_name: str | None = None,
         user_story_id: str | None = None,
         display_name: str | None = None,
+        figma_file_key: str | None = None,
+        figma_node_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a UI wireframe node and link it to:
@@ -75,9 +77,11 @@ class UIWireframeOps:
                 ui.attachedToName = $attached_to_name,
                 ui.userStoryId = $user_story_id,
                 ui.actor = $actor,
+                ui.figmaFileKey = $figma_file_key,
+                ui.figmaNodeId = $figma_node_id,
                 ui.updatedAt = datetime()
             MERGE (bc)-[:HAS_UI]->(ui)
-            RETURN ui {.id, .key, .name, .displayName, .description, .template, .sceneGraph, .attachedToId, .attachedToType, .attachedToName, .userStoryId, .actor} as ui
+            RETURN ui {.id, .key, .name, .displayName, .description, .template, .sceneGraph, .attachedToId, .attachedToType, .attachedToName, .userStoryId, .actor, .figmaFileKey, .figmaNodeId} as ui
             """
             result = session.run(
                 query,
@@ -93,6 +97,8 @@ class UIWireframeOps:
                 attached_to_name=attached_to_name,
                 user_story_id=user_story_id,
                 actor=resolved_actor,
+                figma_file_key=figma_file_key,
+                figma_node_id=figma_node_id,
             )
             ui = dict(result.single()["ui"])
 

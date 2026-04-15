@@ -55,6 +55,10 @@ class IngestionWorkflowContext:
     # Figma screen data: screen_name → node structure summary text (set when source_type == "figma")
     figma_screens: Dict[str, str] = field(default_factory=dict)
 
+    # Figma API sync: preserved when source is Figma REST API (not clipboard paste)
+    figma_file_key: str | None = None
+    figma_node_id_map: Dict[str, str] = field(default_factory=dict)  # screen_name → figma_node_id
+
     # BL (BusinessLogic) cache per UserStory ID: {us_id: [{seq, title, coupled_domain, given, when, then}, ...]}
     # Populated after Phase 1 for source_type == "analyzer_graph". Empty for rfp/figma.
     bl_by_user_story: Dict[str, List[Any]] = field(default_factory=dict)

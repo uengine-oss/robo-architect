@@ -1,0 +1,12 @@
+{
+  "name": "RoboArchitect Sync",
+  "id": "robo-architect-sync",
+  "api": "1.0.0",
+  "main": "dist/plugin.js",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": ["*"],
+    "reasoning": "Connects to local RoboArchitect backend via WebSocket for real-time design sync"
+  },
+  "permissions": ["currentuser"]
+}
