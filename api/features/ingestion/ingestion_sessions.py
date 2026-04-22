@@ -33,8 +33,11 @@ class IngestionSession:
     workflow_task: Optional[asyncio.Task] = None
     # Display language for UI labels: "ko" (한글) or "en" (English). Used to generate displayName on nodes/properties.
     display_language: str = "ko"
-    # Source type: "rfp" | "analyzer_graph" | "figma"
+    # Source type: "rfp" | "analyzer_graph" | "figma" | "hybrid"
     source_type: str = "rfp"
+    # When source_type == "hybrid": id of the upstream hybrid ingestion session
+    # whose BPM (BpmTask + Rule + REALIZED_BY) is the source of UserStories.
+    hybrid_source_session_id: Optional[str] = None
 
 
 # Active sessions (feature-local, in-memory)

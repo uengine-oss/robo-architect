@@ -589,7 +589,87 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     # Analyzer graph: 분석 단위별 개별 US 생성
     input_content = ctx.content
     _analyzer_processed = False
+    _hybrid_processed = False
     should_chunk_result = False
+
+    # Hybrid mode: BPM (Phase 1~4) → User Stories. One group = one BpmTask.
+    if ctx.source_type == "hybrid":
+        from api.features.ingestion.hybrid.bpm_context_builder import (
+            build_grouped_unit_contexts_from_bpm,
+        )
+        from api.features.ingestion.hybrid.bpm_to_user_stories import (
+            extract_user_stories_from_bpm_group,
+        )
+
+        hsid = getattr(ctx.session, "hybrid_source_session_id", None)
+        if not hsid:
+            yield ProgressEvent(
+                phase=IngestionPhase.ERROR,
+                message="❌ hybrid_source_session_id 가 세션에 없습니다",
+                progress=getattr(ctx.session, "progress", 0) or 0,
+                data={"error": "missing_hybrid_source_session_id"},
+            )
+            return
+
+        grouped_contexts = build_grouped_unit_contexts_from_bpm(hsid)
+        if grouped_contexts:
+            all_hb_stories: list = []
+            total_groups = len(grouped_contexts)
+            SmartLogger.log(
+                "INFO",
+                f"Hybrid: {total_groups} BpmTask groups detected",
+                category="ingestion.user_stories.hybrid.grouped",
+                params={"session_id": ctx.session.id, "hybrid_source_session_id": hsid, "total_groups": total_groups},
+            )
+
+            for grp_idx, (grp_name, grp_unit_ids, grp_context) in enumerate(grouped_contexts):
+                if getattr(ctx.session, "is_cancelled", False):
+                    yield ProgressEvent(
+                        phase=IngestionPhase.ERROR,
+                        message="❌ 생성이 중단되었습니다",
+                        progress=getattr(ctx.session, "progress", 0) or 0,
+                        data={"error": "Cancelled by user", "cancelled": True},
+                    )
+                    return
+
+                progress = PHASE_START + int((grp_idx / total_groups) * (PHASE_END - PHASE_START - 4))
+                yield ProgressEvent(
+                    phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                    message=f"User Story 추출 중... (Task: {grp_name} {grp_idx+1}/{total_groups})",
+                    progress=progress,
+                )
+
+                try:
+                    grp_stories = await asyncio.to_thread(extract_user_stories_from_bpm_group, grp_context)
+                    primary_unit_id = grp_unit_ids[0] if grp_unit_ids else ""
+                    for us in grp_stories:
+                        us.source_unit_id = primary_unit_id  # task_id — 역추적
+                    all_hb_stories.extend(grp_stories)
+                except Exception as e:
+                    SmartLogger.log(
+                        "ERROR",
+                        f"US extraction failed for hybrid Task {grp_name}",
+                        category="ingestion.user_stories.hybrid.group_error",
+                        params={"session_id": ctx.session.id, "task": grp_name, "error": str(e)},
+                    )
+
+            user_stories = normalize_and_dedup_user_stories(all_hb_stories, ctx.session.id, is_analyzer=False)
+            for idx, us in enumerate(user_stories, start=1):
+                new_id = f"US-{idx:03d}"
+                try:
+                    setattr(us, "id", new_id)
+                except Exception:
+                    if hasattr(us, "model_copy"):
+                        us = us.model_copy(update={"id": new_id})
+
+            ctx.user_stories = user_stories
+            yield ProgressEvent(
+                phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                message=f"User Story 추출 완료 (총 {len(user_stories)}개, BPM Task {total_groups}개 처리)",
+                progress=PHASE_END - 2,
+            )
+            _hybrid_processed = True
+
     if ctx.source_type == "analyzer_graph":
         from api.features.ingestion.analyzer_graph.graph_context_builder import build_grouped_unit_contexts
         grouped_contexts = build_grouped_unit_contexts()
@@ -669,7 +749,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
     else:
         _analyzer_processed = False
 
-    if not _analyzer_processed and not _figma_processed:
+    if not _analyzer_processed and not _figma_processed and not _hybrid_processed:
         # 스캐닝 및 청킹 판단
         content_tokens = estimate_tokens(input_content)
         should_chunk_result = should_chunk(input_content, max_tokens=USER_STORY_CHUNK_SIZE)
@@ -696,7 +776,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             },
         )
 
-    if not _analyzer_processed and not _figma_processed and should_chunk_result:
+    if not _analyzer_processed and not _figma_processed and not _hybrid_processed and should_chunk_result:
         print(f"[CHUNKING DEBUG] Entering chunking path - will split into chunks")
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
@@ -911,7 +991,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             message=f"User Story 추출 완료 (총 {len(user_stories)}개)",
             progress=PHASE_END - 2
         )
-    elif not _analyzer_processed and not _figma_processed:
+    elif not _analyzer_processed and not _figma_processed and not _hybrid_processed:
         # 기존 로직 (청킹 불필요)
         print(f"[CHUNKING DEBUG] Entering non-chunking path - processing entire document at once")
         yield ProgressEvent(

@@ -36,6 +36,41 @@ const showSettingsPanel = ref(false)
 function handleIngestionComplete() {
   // Modal will trigger navigator refresh
 }
+
+// ── Event Storming promotion (hybrid Phase 5) ──
+const esPromoting = ref(false)
+const esError = ref('')
+
+async function startEventStorming() {
+  const hsid = bpmnStore.hybridSessionId
+  if (!hsid) {
+    alert('BPM 을 먼저 생성하세요 (BPMN 탭에서 Hybrid Ingestion 실행).')
+    return
+  }
+  esPromoting.value = true
+  esError.value = ''
+
+  try {
+    // Wipe previous + trigger
+    await fetch(`/api/ingest/hybrid/${hsid}/promote-to-es`, { method: 'DELETE' })
+    const resp = await fetch(`/api/ingest/hybrid/${hsid}/promote-to-es`, { method: 'POST' })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || `${resp.status}`)
+    }
+    const { ingestion_session_id } = await resp.json()
+
+    // Delegate SSE handling to RequirementsIngestionModal — same infra as normal
+    // ingestion: floating progress panel + Event Modeling live mode + navigator updates.
+    window.dispatchEvent(new CustomEvent('robo:hybrid-promote', {
+      detail: { sessionId: ingestion_session_id },
+    }))
+    esPromoting.value = false
+  } catch (e) {
+    esError.value = e.message || String(e)
+    esPromoting.value = false
+  }
+}
 </script>
 
 <template>
@@ -60,6 +95,26 @@ function handleIngestionComplete() {
             {{ tab }}
           </button>
         </nav>
+
+        <!-- Event Storming promote button (beside tabs, not a tab) -->
+        <button
+          class="es-promote-btn"
+          :class="{ 'is-error': !!esError }"
+          :disabled="esPromoting"
+          @click="startEventStorming"
+          title="이벤트 스토밍 모델 생성 (BPM 기반)"
+        >
+          <template v-if="esPromoting">
+            <span class="es-spinner"></span>
+            <span>시작 중...</span>
+          </template>
+          <template v-else-if="esError">
+            <span>❌ {{ esError.slice(0, 30) }}</span>
+          </template>
+          <template v-else>
+            <span>⚡ 이벤트 스토밍</span>
+          </template>
+        </button>
       </div>
     </div>
     
@@ -413,6 +468,47 @@ function handleIngestionComplete() {
 
 .settings-btn:active {
   transform: scale(0.95);
+}
+
+/* Event Storming promote button (sits beside tabs) */
+.es-promote-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 4px 10px;
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+  border: none;
+  border-radius: 4px;
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
+  white-space: nowrap;
+}
+.es-promote-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(124, 58, 237, 0.35);
+}
+.es-promote-btn:disabled {
+  opacity: 0.85;
+  cursor: default;
+}
+.es-promote-btn.is-error {
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+}
+.es-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: es-spin 0.7s linear infinite;
+}
+@keyframes es-spin {
+  to { transform: rotate(360deg); }
 }
 </style>
 

@@ -3,6 +3,7 @@ import { ref, computed, watch, inject, onUnmounted, onMounted } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
+import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
 
 const props = defineProps({
@@ -17,6 +18,7 @@ const emit = defineEmits(['update:modelValue', 'complete', 'session-restored'])
 const navigatorStore = useNavigatorStore()
 const ingestionStore = useIngestionStore()
 const eventModelingStore = useEventModelingStore()
+const bpmnStore = useBpmnStore()
 const activeTab = inject('activeTab', ref('Design'))
 
 // LocalStorage key for persisting session (page refresh recovery)
@@ -336,6 +338,167 @@ function handleStartClick() {
   } else {
     startIngestion()
   }
+}
+
+// Hybrid (Document + Code → BPM-first) dev test button.
+// Calls POST /api/ingest/hybrid/upload and streams SSE from /api/ingest/hybrid/stream/{id}.
+const hybridIngestEnabled = (import.meta?.env?.VITE_HYBRID_INGEST_ENABLED ?? 'true') !== 'false'
+
+async function startHybridIngestion() {
+  error.value = null
+  isUploading.value = true
+  createdItems.value = []
+  summary.value = null
+  isPanelMinimized.value = false
+  isPaused.value = false
+
+  try {
+    // 1) Wipe only hybrid-owned nodes (preserves analyzer graph when both share the default DB).
+    try {
+      await fetch('/api/ingest/hybrid/reset', { method: 'DELETE' })
+    } catch (_) { /* non-fatal */ }
+
+    // 2) Reset frontend stores that mirror Neo4j state.
+    bpmnStore.clear()
+    bpmnStore.beginHybrid()
+    // navigator store is a setup store (no $reset). Refresh from the now-empty graph instead.
+    navigatorStore.refreshAll?.()
+
+    // 3) Build upload payload.
+    const formData = new FormData()
+    if (inputMode.value === 'file' && file.value) {
+      formData.append('file', file.value)
+    } else if (inputMode.value === 'text' && textContent.value) {
+      formData.append('text', textContent.value)
+    } else {
+      throw new Error('Hybrid 테스트는 파일 또는 텍스트 모드에서만 실행됩니다.')
+    }
+    formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
+
+    const res = await fetch('/api/ingest/hybrid/upload', { method: 'POST', body: formData })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Hybrid upload failed')
+    }
+    const { session_id } = await res.json()
+    sessionId.value = session_id
+    bpmnStore.setHybridSessionId(session_id)
+    isUploading.value = false
+    isProcessing.value = true
+    saveSessionToStorage(session_id)
+    isOpen.value = false
+
+    // 4) Switch to the BPMN tab so the canvas is visible while Phase 1 streams.
+    activeTab.value = 'BPMN'
+
+    connectToHybridStream(session_id)
+  } catch (e) {
+    error.value = e.message
+    isUploading.value = false
+    isProcessing.value = false
+    bpmnStore.endHybrid()
+  }
+}
+
+function connectToHybridStream(sid) {
+  eventSource.value = new EventSource(`/api/ingest/hybrid/stream/${sid}`)
+  eventSource.value.addEventListener('progress', (e) => {
+    const data = JSON.parse(e.data)
+    currentPhase.value = data.phase
+    currentMessage.value = data.message
+    progress.value = data.progress
+
+    const payload = data.data || {}
+    switch (payload.type) {
+      case 'HybridProcess':
+        if (payload.process) bpmnStore.addHybridProcess(payload.process, payload.bpmn_xml)
+        break
+      case 'HybridActor':
+        if (payload.actor) bpmnStore.addHybridActor(payload.actor, payload.process_id)
+        break
+      case 'HybridTask':
+        // Pass bpmn_xml per-process so store updates the owning process (not the canvas).
+        if (payload.task) bpmnStore.addHybridTask(payload.task, payload.bpmn_xml, payload.process_id)
+        break
+      case 'HybridBpmnComplete':
+        // Do NOT push the merged bpmn_xml to the canvas for multi-process docs —
+        // the user picks a process to render via drag/double-click.
+        bpmnStore.setHybridBpmn({
+          bpmnXml: payload.bpmn_xml,
+          processes: payload.processes,
+          actors: payload.actors,
+          tasks: payload.tasks,
+        })
+        break
+      case 'HybridRule':
+        if (payload.rule) bpmnStore.addHybridRule(payload.rule)
+        break
+      case 'HybridRulesComplete':
+        if (Array.isArray(payload.rules)) bpmnStore.setHybridRules(payload.rules)
+        break
+      case 'HybridBoundedContextTagged':
+      case 'HybridEsRoleTagged':
+        // Phase 2.5 / 2.6 emit the rules list with tags attached after each
+        // tagging pass. Replacing hybridRules keeps the Navigator "Rules by
+        // Context" and role-related widgets in sync without requiring a refresh.
+        if (Array.isArray(payload.rules)) bpmnStore.setHybridRules(payload.rules)
+        break
+      case 'HybridGlossary':
+        if (Array.isArray(payload.terms)) bpmnStore.setHybridGlossary(payload.terms)
+        break
+      case 'HybridReviewQueue':
+        if (Array.isArray(payload.items)) bpmnStore.setHybridReviewQueue(payload.items)
+        break
+      case 'HybridMapping':
+      case 'HybridOntologyUpdated':
+      case 'HybridPassages':
+      case 'HybridBpmEnriched':
+        // Progress-only events — task enrichment arrives via upserted HybridTask.
+        break
+      case 'HybridAgentTaskEvent':
+        // Per-task agent progress from Phase 3 (§8.7 UX). Drives the
+        // Navigator spinner on the task currently being explored.
+        if (payload.event_type === 'start' && payload.task_id) {
+          bpmnStore.setActiveExploringTaskId(payload.task_id)
+        } else if (payload.event_type === 'end' && payload.task_id) {
+          // Only clear if the spinner is still on THIS task (avoid races
+          // with the next task's start event arriving first).
+          if (bpmnStore.activeExploringTaskId === payload.task_id) {
+            bpmnStore.clearActiveExploringTaskId()
+          }
+        }
+        break
+      case 'HybridArbitrationStart':
+        // Step 4 started — contested tasks get the "under review" highlight
+        // and the banner appears. Clears when HybridArbitrationEnd arrives.
+        bpmnStore.setArbitratingTaskIds(payload.task_ids || [])
+        break
+      case 'HybridArbitrationDecision':
+        // Arbitrator picked a winner (or rejected all). Drop the losing
+        // mappings from the store optimistically so the Navigator's R count
+        // converges to the post-arbitration truth without a full rehydrate.
+        if (Array.isArray(payload.losing_task_ids) && payload.rule_id) {
+          for (const tid of payload.losing_task_ids) {
+            bpmnStore.removeRuleFromTask(tid, payload.rule_id)
+          }
+        }
+        break
+      case 'HybridArbitrationEnd':
+        bpmnStore.clearArbitrating()
+        break
+    }
+
+    if (data.phase === 'complete' || data.phase === 'error') {
+      eventSource.value?.close()
+      isProcessing.value = false
+      bpmnStore.endHybrid()
+    }
+  })
+  eventSource.value.addEventListener('error', () => {
+    eventSource.value?.close()
+    isProcessing.value = false
+    bpmnStore.endHybrid()
+  })
 }
 
 // User chose to clear existing data and proceed
@@ -938,11 +1101,29 @@ function getTypeClass(type) {
 // Cleanup on unmount
 onUnmounted(() => {
   closeStream()
+  window.removeEventListener('robo:hybrid-promote', _onHybridPromote)
 })
+
+// Listen for hybrid Event Storming promotion trigger (from TopBar button).
+// Reuses the standard ingestion SSE infra: floating progress panel + live mode
+// + navigator/eventModeling real-time updates.
+function _onHybridPromote(e) {
+  const sid = e?.detail?.sessionId
+  if (!sid) return
+  sessionId.value = sid
+  isProcessing.value = true
+  isOpen.value = false
+  isPanelMinimized.value = false
+  error.value = null
+  summary.value = null
+  createdItems.value = []
+  connectToStream(sid)
+}
 
 onMounted(async () => {
   loadJiraCreds()
   await checkAndRestoreSession()
+  window.addEventListener('robo:hybrid-promote', _onHybridPromote)
 })
 
 // Sample requirements text
@@ -1641,7 +1822,16 @@ function useSample() {
             <button class="btn btn--secondary" @click="closeModal">
               취소
             </button>
-            <button 
+            <button
+              v-if="hybridIngestEnabled && (inputMode === 'file' || inputMode === 'text')"
+              class="btn btn--secondary"
+              :disabled="!canSubmit || isUploading || isLoadingPageContent"
+              @click="startHybridIngestion"
+              title="Hybrid ingestion (Document → BPM-first) 테스트 실행"
+            >
+              🧪 테스트 (Hybrid)
+            </button>
+            <button
               class="btn btn--primary"
               :disabled="!canSubmit || isUploading || isLoadingPageContent"
               @click="handleStartClick"
@@ -1898,6 +2088,7 @@ function useSample() {
   padding: var(--spacing-md) var(--spacing-lg);
   border-top: 1px solid var(--color-border);
 }
+
 
 /* Existing Data Warning */
 .existing-data-warning {

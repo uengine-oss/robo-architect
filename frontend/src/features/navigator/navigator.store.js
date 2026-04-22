@@ -610,151 +610,38 @@ export const useNavigatorStore = defineStore('navigator', () => {
     const trigger = meta.trigger || 'unknown'
     const userStoryId = meta.userStoryId || null
 
-    const t0 = (globalThis.performance && performance.now) ? performance.now() : Date.now()
-    log.info(
-      'navigator_refresh_started',
-      'Starting Navigator refresh: will reload unassigned user stories, contexts, and per-context trees.',
-      {
-        opId,
-        trigger,
-        userStoryId,
-        before: {
-          contextsCount: contexts.value.length,
-          unassignedUserStoriesCount: userStories.value.length,
-          contextTreesCount: Object.keys(contextTrees.value).length,
-          loading: !!loading.value,
-          error: error.value
-        }
-      }
-    )
-
     loading.value = true
     error.value = null
-    
+
     try {
-      // Fetch unassigned user stories
-      log.debug(
-        'navigator_refresh_step_start',
-        'Refreshing unassigned user stories.',
-        { opId, step: 'fetchUserStories' }
-      )
       await fetchUserStories()
-      log.info(
-        'navigator_refresh_step_completed',
-        'Unassigned user stories refreshed.',
-        { opId, step: 'fetchUserStories', unassignedUserStoriesCount: userStories.value.length }
-      )
-      
-      // Fetch contexts
-      log.debug(
-        'navigator_refresh_step_start',
-        'Refreshing bounded contexts list.',
-        { opId, step: 'fetchContexts' }
-      )
+
       const response = await fetch('/api/contexts')
       if (!response.ok) {
-        const errorMsg = `Failed to fetch contexts (HTTP ${response.status})`
-        log.error(
-          'navigator_refresh_fetch_contexts_failed',
-          errorMsg,
-          { opId, httpStatus: response.status, statusText: response.statusText }
-        )
-        throw new Error(errorMsg)
+        throw new Error(`Failed to fetch contexts (HTTP ${response.status})`)
       }
       contexts.value = await response.json()
-      log.info(
-        'navigator_refresh_step_completed',
-        'Bounded contexts refreshed.',
-        { opId, step: 'fetchContexts', contextsCount: contexts.value.length }
-      )
-      
+
       // Clear old trees and fetch new ones
       contextTrees.value = {}
       userStoryAssignments.value = {}
-      
-      log.info(
-        'navigator_refresh_tree_reload_started',
-        'Reloading per-context trees (full-tree) after clearing cached trees.',
-        { opId, contextsToFetch: contexts.value.length }
-      )
 
-      let okCount = 0
-      let failCount = 0
       for (const ctx of contexts.value) {
-        log.debug(
-          'navigator_refresh_tree_fetch_attempt',
-          'Fetching context tree.',
-          { opId, contextId: ctx.id, contextName: ctx.name }
-        )
-
-        const tree = await fetchContextTree(ctx.id, true)
-        if (tree) okCount += 1
-        else failCount += 1
+        await fetchContextTree(ctx.id, true)
       }
 
-      log.info(
-        'navigator_refresh_tree_reload_completed',
-        'Per-context tree reload finished.',
-        { opId, okCount, failCount, contextTreesCount: Object.keys(contextTrees.value).length }
-      )
-      
-      // Auto-expand all for better visibility
       expandAll()
-      log.debug(
-        'navigator_refresh_expand_all_completed',
-        'Auto-expanded Navigator nodes for visibility.',
-        { opId, expandedNodesCount: expandedNodes.value?.size ?? 0 }
-      )
-      
     } catch (e) {
-      const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
+      const isNetworkError = e?.message?.includes('ECONNREFUSED') ||
                              e?.message?.includes('ECONNRESET') ||
                              e?.message?.includes('Failed to fetch') ||
                              e?.name === 'TypeError'
-      const errorMsg = isNetworkError 
+      error.value = isNetworkError
         ? '서버 연결 실패: 백엔드 서버가 실행 중인지 확인해주세요.'
         : (e?.message || 'Navigator refresh failed')
-      error.value = errorMsg
-      const durationMs = Math.round(((globalThis.performance && performance.now) ? performance.now() : Date.now()) - t0)
-      const errorDetails = {
-        opId,
-        trigger,
-        userStoryId,
-        durationMs,
-        errorMessage: e?.message || String(e),
-        errorName: e?.name,
-        isNetworkError,
-        errorType: isNetworkError ? 'network' : 'http'
-      }
-      log.error(
-        'navigator_refresh_failed',
-        isNetworkError 
-          ? 'Navigator refresh failed: 서버 연결 실패'
-          : 'Navigator refresh failed; UI may be partially updated.',
-        errorDetails
-      )
-      console.error('[Navigator] refreshAll error:', errorDetails)
+      console.error('[Navigator] refreshAll error:', e)
     } finally {
       loading.value = false
-      const durationMs = Math.round(((globalThis.performance && performance.now) ? performance.now() : Date.now()) - t0)
-      if (!error.value) {
-        log.info(
-          'navigator_refresh_completed',
-          'Navigator refresh completed successfully.',
-          {
-            opId,
-            trigger,
-            userStoryId,
-            durationMs,
-            after: {
-              contextsCount: contexts.value.length,
-              unassignedUserStoriesCount: userStories.value.length,
-              contextTreesCount: Object.keys(contextTrees.value).length,
-              expandedNodesCount: expandedNodes.value?.size ?? 0
-            }
-          }
-        )
-      }
     }
   }
   

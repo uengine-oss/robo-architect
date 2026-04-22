@@ -259,6 +259,17 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         log_phase(ctx, "11_ui_wireframes")
         log_summary(ctx)
 
+        # Hybrid (Phase 5) post-workflow hook: tag ES nodes with session_id,
+        # attach (BpmTask)-[:PROMOTED_TO]->(UserStory), detect cross-BC Policies.
+        if source_type == "hybrid":
+            from api.features.ingestion.hybrid.event_storming_bridge.promote_to_es import (
+                hybrid_post_workflow_hook,
+            )
+            hsid = getattr(session, "hybrid_source_session_id", None)
+            if hsid:
+                async for ev in hybrid_post_workflow_hook(hsid):
+                    yield ev
+
         # Complete — 실제 Neo4j에 생성된 Policy 수 카운트
         events_from_us_count = len(getattr(ctx, "events_from_us", []) or [])
         events_from_cmd_count = sum(len(evts) for evts in ctx.events_by_agg.values())

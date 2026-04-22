@@ -3,6 +3,9 @@ import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import BpmnViewer from 'bpmn-js/lib/NavigatedViewer'
 import BpmnInspectorPanel from './BpmnInspectorPanel.vue'
+import HybridTaskInspector from './HybridTaskInspector.vue'
+import HybridReviewModal from './HybridReviewModal.vue'
+import HybridBcRulesModal from './HybridBcRulesModal.vue'
 import 'bpmn-js/dist/assets/diagram-js.css'
 import 'bpmn-js/dist/assets/bpmn-js.css'
 import 'bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css'
@@ -12,13 +15,27 @@ const store = useBpmnStore()
 const bpmnContainer = ref(null)
 const isDragOver = ref(false)
 const showInspector = computed(() => !!store.selectedNodeData)
+const showHybridInspector = computed(() => !!store.selectedHybridTaskId)
 let viewer = null
 
 // 현재 렌더링된 flow 탭 목록
 const flowTabs = computed(() => store.renderedFlows)
 
-onMounted(() => {
+onMounted(async () => {
   store.fetchProcessFlows()
+  // App.vue triggers rehydrateHybrid at cold-load; if the user refreshed on a
+  // non-BPMN tab and then switched here, activeBpmnXml may already be set. The
+  // watch below picks it up via `immediate: true`. If rehydrate hasn't run yet
+  // (edge case — store was cleared by another tab), fire it now.
+  if (store.hybridSessionId && !store.activeBpmnXml && !store.isHybridRehydrating) {
+    try { await store.rehydrateHybrid() } catch { /* best-effort */ }
+  }
+  // If activeBpmnXml was already set before mount, the immediate watch ran at
+  // setup time when the viewer container wasn't attached yet. Render now.
+  if (store.activeBpmnXml && !viewer) {
+    await nextTick()
+    renderBpmn(store.activeBpmnXml)
+  }
 })
 
 onUnmounted(() => {
@@ -64,13 +81,22 @@ async function renderBpmn(xml) {
       const element = e.element
       if (!element || !element.id) return
 
-      // Task (Command) 또는 IntermediateThrowEvent (Event) 만 처리
       const id = element.id
+      // 1) Try hybrid task first (BPMN element id may match task.id directly,
+      //    or be wrapped as `Task_<safe(task.id)>` by the native builder).
+      const stripped = id.startsWith('Task_') ? id.slice('Task_'.length) : id
+      const hybridTask = store.hybridTasks.find(t => t.id === id || t.id === stripped)
+      if (hybridTask) {
+        e.originalEvent?.stopPropagation?.()
+        store.selectHybridTask(hybridTask.id)
+        highlightElement(id)
+        return
+      }
+
+      // 2) Fallback: legacy BPMN inspector (Task_/IntEvent_)
       if (id.startsWith('Task_') || id.startsWith('IntEvent_')) {
         e.originalEvent?.stopPropagation?.()
         store.selectNodeForInspector(id)
-
-        // 선택된 요소 하이라이트
         highlightElement(id)
       }
     })
@@ -80,6 +106,10 @@ async function renderBpmn(xml) {
       if (store.selectedNodeData) {
         clearHighlight()
         store.clearInspectorSelection()
+      }
+      if (store.selectedHybridTaskId) {
+        clearHighlight()
+        store.clearHybridTaskSelection()
       }
     })
   } catch (err) {
@@ -105,6 +135,16 @@ function handleFitViewport() {
   canvas.zoom('fit-viewport')
 }
 
+function handleClearCanvas() {
+  // Clear hybrid selection + the generic canvas XML + any ES-bpmn flows.
+  store.clearHybridProcessSelection()
+  store.activeBpmnXml = null
+  store.hybridBpmnXml = null
+  store.renderedFlows = []
+  store.selectedFlowId = null
+  store.activeStructured = null
+}
+
 // Drag & Drop: Navigator에서 프로세스 흐름을 드래그해올 때
 function handleDragOver(e) {
   e.preventDefault()
@@ -126,6 +166,8 @@ async function handleDrop(e) {
     const data = JSON.parse(raw)
     if (data.type === 'BpmnFlow' && data.id) {
       await store.addFlow(data.id)
+    } else if (data.type === 'HybridProcess' && data.processId) {
+      store.selectHybridProcess(data.processId)
     }
   } catch (err) {
     console.error('Drop error:', err)
@@ -221,6 +263,18 @@ function closeInspector() {
             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
           </svg>
         </button>
+        <button
+          class="ctrl-btn ctrl-btn--danger"
+          @click="handleClearCanvas"
+          title="캔버스 비우기"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <line x1="10" y1="11" x2="10" y2="17" />
+            <line x1="14" y1="11" x2="14" y2="17" />
+          </svg>
+        </button>
       </div>
 
       <!-- BPMN Viewer Container -->
@@ -266,6 +320,20 @@ function closeInspector() {
         @close="closeInspector"
       />
     </transition>
+
+    <!-- Hybrid Task Inspector (right side, opens on nav dblclick) -->
+    <transition name="slide-inspector">
+      <HybridTaskInspector
+        v-if="showHybridInspector"
+        @close="store.clearHybridTaskSelection"
+      />
+    </transition>
+
+    <!-- Hybrid Review Modal (centered overlay; self-contained via Teleport) -->
+    <HybridReviewModal />
+
+    <!-- BC-scoped rules management modal (opened from Navigator's Rules by Context) -->
+    <HybridBcRulesModal />
   </div>
 </template>
 
@@ -400,6 +468,11 @@ function closeInspector() {
 .ctrl-btn:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text);
+}
+
+.ctrl-btn--danger:hover {
+  background: rgba(230, 73, 73, 0.18);
+  color: #ff8a8a;
 }
 
 /* BPMN Canvas */
