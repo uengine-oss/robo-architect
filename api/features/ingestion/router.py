@@ -118,21 +118,19 @@ async def upload_document(
             params={"text": content},
         )
     else:
-        resolved_source_type_early = (source_type or "rfp").strip().lower()
-        if resolved_source_type_early != "analyzer_graph":
-            SmartLogger.log(
-                "WARNING",
-                "Ingestion upload rejected: neither 'file' nor 'text' was provided.",
-                category="ingestion.api.upload.invalid",
-                params=http_context(request),
-            )
-            raise HTTPException(status_code=400, detail="Either 'file' or 'text' must be provided")
+        SmartLogger.log(
+            "WARNING",
+            "Ingestion upload rejected: neither 'file' nor 'text' was provided.",
+            category="ingestion.api.upload.invalid",
+            params=http_context(request),
+        )
+        raise HTTPException(status_code=400, detail="Either 'file' or 'text' must be provided")
 
     resolved_source_type = (source_type or "rfp").strip().lower()
-    if resolved_source_type not in ("rfp", "analyzer_graph", "figma"):
+    if resolved_source_type not in ("rfp", "figma"):
         resolved_source_type = "rfp"
 
-    if not content.strip() and resolved_source_type != "analyzer_graph":
+    if not content.strip():
         SmartLogger.log(
             "WARNING",
             "Ingestion upload rejected: extracted content is empty after parsing.",

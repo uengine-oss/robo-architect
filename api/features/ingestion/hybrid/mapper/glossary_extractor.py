@@ -2,7 +2,7 @@
 
 Inputs combined:
 - Document: raw text + BpmTask names/descriptions + BpmActor names.
-- Analyzer graph: FUNCTION identifiers, BusinessLogic titles, BusinessLogic.coupled_domain
+- Analyzer graph: FUNCTION identifiers, Rule statements, HAS_RULE.coupled_domains
   (often Korean, so a direct ko↔en hint), Table names.
 
 The glossary feeds the lexical matcher (3.1) by expanding a Korean task name
@@ -90,12 +90,16 @@ def _collect_code_tokens() -> list[str]:
             ):
                 for tok in _split_identifier(rec["fn"] or ""):
                     tokens[tok] += 1
-            for rec in s.run("MATCH (bl:BusinessLogic) RETURN bl.title AS title, bl.coupled_domain AS domain"):
-                for tok in _split_identifier(rec["title"] or ""):
+            for rec in s.run(
+                "MATCH (f:FUNCTION)-[hr:HAS_RULE]->(r:Rule) "
+                "RETURN r.statement AS statement, coalesce(hr.coupled_domains, []) AS domains"
+            ):
+                for tok in _split_identifier(rec["statement"] or ""):
                     tokens[tok] += 1
-                d = (rec["domain"] or "").strip()
-                if d:
-                    ko_domains[d] += 1
+                for d in (rec["domains"] or []):
+                    d = (d or "").strip()
+                    if d:
+                        ko_domains[d] += 1
             for rec in s.run("MATCH (t:Table) RETURN t.name AS name"):
                 for tok in _split_identifier(rec["name"] or ""):
                     tokens[tok] += 1

@@ -208,7 +208,7 @@
 
 ---
 
-### Phase 3 — Hierarchical Agentic Retrieval (2026-04-21 재설계)
+### Phase 3 — Hierarchical Agentic Retrieval (2026-04-21 재설계 / 2026-04-23 정밀화)
 
 > **왜 재설계**: 기존 Phase 3.1 ~ 3.4 (lexical / embedding / structural / merge) 는 "빠르게 후보 많이 → score 로 거르기" 전략. "입력값 검증" 같은 공통 task 가 어느 **프로세스 맥락** 에 속한 BL 을 잡아야 하는지 구분 못 해 Task 당 13+ 개 over-match. Embedding 은 *유사도* 는 측정해도 *논리적 귀속* 은 측정하지 못함.
 >
@@ -218,66 +218,116 @@
 
 - 쿼리: `process.name + ' '.join(process.domain_keywords) + task.name (+ task.description)`
 - 대상: analyzer DB `(m:MODULE)` (없으면 `(f:FILE)` fallback). `m.summary` 가 비어있지 않은 것만
-- 방식: OpenAI `text-embedding-3-small` 코사인 유사도 → 기본 top-k = 5
+- 방식: OpenAI `text-embedding-3-small` 코사인 유사도 → 기본 `module_top_k = 20`
+- 두 단계 score 검사:
+  - 개별 모듈 floor: `MIN_MODULE_INCLUSION = 0.45` (long-tail noise 컷)
+  - process-level gate: 한 프로세스의 모든 task 에 걸친 max score 가 `MIN_MODULE_CONFIDENCE = 0.55` 미만이면 그 프로세스 전체 스킵 (해지/조회처럼 구현 모듈이 analyzer 에 없는 케이스 차단)
 - 세션 embedding 캐시 (`EmbeddingCache`) 재활용
 - Persist: `(BpmProcess).implemented_by / implemented_by_confidence / implemented_by_method` 프로퍼티 (§2.F — cross-DB 엣지 불가)
 
-**Step 2 — BL Filter within Modules**
+**Step 2 — BL Filter within Modules** (lean blob, 2026-04-23 정밀화)
 
 - 입력: Step 1 의 모듈 fqn 집합
 - Rule 중 `source_module` 이 해당 모듈에 속하는 것만 in-scope. `source_module` 미설정 rule 은 통과 (excluding proof 불가)
-- in-scope rule 을 embedding 으로 `task query` 와 비교 → **top-k = 15** (2026-04-21 8→15 상향: Step 3 에서 judgment quality 로 필터링할 여지를 확보)
+- **embedding 입력 (lean blob)**: `규칙: {title}\nGIVEN: ...\nWHEN: ...\nTHEN: ...` — title + GWT 만
+  - **function_summary 의도적으로 제외**: 같은 모듈의 모든 BL 이 공유하는 ~수백 토큰의 모듈 공통 어휘가 cosine 을 평탄화시키기 때문. lean blob 으로 cosine 분포가 0.45~0.55 좁은 띠에서 0.30~0.55 로 확장 → 신호 분리
+  - function_summary 는 Step 3 validator 프롬프트에는 그대로 들어가서 정확도 보존
+- 두 단계 cut:
+  - score floor: `MIN_BL_INCLUSION = 0.45`
+  - rank cap: `bl_top_k = 20`
 - **LLM 호출 없음** — 순전히 필터링
 
 **Step 3 — Per-process Agentic Validator** (`mapper/agent_validator.py`)
 
-- 입력: Step 2 top-k (≤ 15) + 각 BL 의 **parent chain** (Cypher 사전조회 — `callers`, `parent_module`, `parent_package`)
+- 입력: Step 2 top-k (≤ 20, 평균 10~15) + 각 BL 의 **parent chain** (Cypher 사전조회 — `callers`, `parent_module`, `parent_package`) + **sibling_tasks** (같은 process 의 다른 task 목록)
 - LLM 호출: task 당 **1회** (`with_structured_output(_ValidationResult)`). 후보 전체 묶어 일괄 판정
 - 출력: 후보마다 `{rule_id, verdict, rationale, evidence_refs}`
   - verdict ∈ {accept, reject}
   - rationale: 1~2 문장 한국어 + 증거(모듈명/함수명/summary 키워드) 포함 필수
-- 프롬프트 규칙 (2026-04-21 개정):
-  - "BL 은 대개 하나의 Task 에만 속한다. 여러 Task 에 걸쳐 보이면 가장 본질적으로 수행하는 Task 만 accept"
-  - **"accept 개수 제한 없음. 정당한 매핑은 모두 accept"** (이전 3개 cap 폐기)
-  - **"애매하면 accept"** — embedding 으로 이미 의미적으로 가까운 후보만 들어옴. judgment quality 로만 reject 판단
-  - "b000_main_proc 의 여러 인증 유형별 반영여부 결정 분기들이 모두 '실시간 인증결과 판정' task 에 속하는 것이 옳은 매핑" 예시 명시
-- 안전장치: `per_task_cap=20` (runaway 방지용, 실무적으론 무제한)
+- 프롬프트 규칙 (2026-04-22 개정):
+  - "BL 은 대개 하나의 Task 에만 속한다"
+  - "**동일 프로세스 내 여러 Task 에 걸치면 가장 본질적인 task 한 곳에만 accept**" (sibling_tasks 컨텍스트로 LLM 이 비교 가능)
+  - 핵심 동사 매핑 가이드: INSERT/판정/조립/검증
+  - "Process-domain 충돌 필터": 신청 stage BL 을 해지 task 에 매핑 같은 stage mismatch 는 reject
+  - **"애매하면 reject"** (이전 "애매하면 accept" 에서 반전 — cross-process 오염 차단)
+- 안전장치: `per_task_cap=20` (runaway 방지)
 - 프로젝트 LLM 패턴 준수: tool-calling / LangGraph 사용 안 함. Cypher 는 LLM 호출 **이전** 에 수행해 텍스트로 주입.
 
 **Step 4 — Cross-Process Arbitrator** (`mapper/cross_process_arbitrator.py`)
 
-> **스펙에 없던 추가 단계 (2026-04-21)**. Per-process validator 가 서로를 모르기 때문에 한 rule 이 여러 process 에 동시 accept 되는 contamination 발생 (실측: 14 rules × 2~5 processes). 이를 해결하려면 **session 전체를 보는 LLM 판정** 이 필요.
+> **스펙에 없던 추가 단계 (2026-04-21)**. Per-process validator 가 서로를 모르기 때문에 한 rule 이 여러 process 에 동시 accept 되는 contamination 발생. 이를 해결하려면 **session 전체를 보는 LLM 판정** 이 필요.
 
-- 실행 조건: 같은 `rule_id` 가 N > 1 개 프로세스에서 accept 됐을 때만
-- 입력: rule (GWT + context) + **경쟁 주장 전체** (process.name, process.domain_keywords, task.name, per-process rationale)
+- 실행 조건:
+  - 같은 `rule_id` 가 N > 1 개 process×task 에서 accept 됐을 때
+  - 또는 단일 claim 이지만 module_confidence < `SINGLE_CLAIM_ARBITRATION_THRESHOLD = 0.60` 일 때 (P3 — 2026-04-22 추가)
+- 입력: rule (GWT + context) + **경쟁 주장 전체** (process.name, domain_keywords, task.name, per-process rationale, **module_confidence**)
 - LLM 호출: 경쟁 rule 당 1회 (`arbitrate_rule_home` → `ArbitrationVerdict`)
 - 출력:
   - `reject=true` → cross-cutting utility 로 판정, 어느 process 에도 매핑 안 함
   - `reject=false` → `home_process_id`, `home_task_id`, `rationale`
+- 프롬프트 우선순위 (2026-04-22 개정):
+  - **stage/semantic 매치 = primary**
+  - module_confidence 수치 = **타이브레이커 전용 (차이 < 0.05 면 무시)**
 - 방어 로직: LLM 이 claim set 밖의 id 를 반환하면 첫 claim 으로 fallback
+
+**Per-task Persist 흐름 (2026-04-23 변경)**
+
+```
+Process N 의 task M 의 validator 종료
+  → AgentFinalMatches { task_id, accepts: [...], rejects: [...] }
+  → runner: save_mappings(accepts) + HybridTask upsert (Navigator R 뱃지 즉시 점등)
+  → frontend store: rejectedRulesByTask[task_id] 업데이트
+... 모든 process 끝 ...
+  → ArbitrationStart { contested_claims }
+  → Navigator: 보라색 펄스 + 배너 "⚖️ 중복 rule 우선순위 검증 중"
+  → for each contested rule:
+      LLM arbitrator → ArbitrationDecision { winner, losers }
+      runner: delete_task_rule_mapping(losers)
+      frontend store: removeRuleFromTask (loser 즉시 제거)
+  → ArbitrationEnd → 배너 닫힘
+```
+
+이전 "process 단위 partial persist" 폐기 — task 단위가 사용자 멘탈 모델과 일치 + 즉시 표시.
 
 **Persist**
 
 - `(BpmTask)-[:REALIZED_BY {confidence, method='agentic', reviewed=false, rationale, evidence_refs[], evidence_path[], agent_verdict='accept'}]->(Rule)`
 - `(ActivityMapping {task_id, rule_id, score, method, reviewed, rationale})` 감사 노드
 - 재탐색(🔄): `GET /api/ingest/hybrid/task/{sid}/{tid}/retrieve` SSE — 해당 task 의 REALIZED_BY 를 교체 persist
+  - `skip_process_gate=True` — 단일 task 재실행은 batch 시점의 gate 결과를 신뢰
+
+**SSE Lifecycle (2026-04-23)**
+
+- store 단위 관리 (`bpmn.store.js` 의 `agentEvents / agentState / _agentSource`)
+- panel close 가 SSE 를 끊지 않음 — 작업 진행 보존, Navigator spinner 유지
+- panel open 은 절대 LLM 호출 안 함 — 🔄 버튼 전용
+
+**Reject UI (2026-04-23)**
+
+- `AgentFinalMatches.rejects` 에 `score` (Step 2 cosine) 포함
+- Inspector "🛑 거부된 후보 [N]" 섹션 — **기본 collapsed**
+- 펼치면 score desc 정렬 상위 5 개만 노출 + "+ N 개 더 보기" 토글
+- "+ 이 매핑 추가" 버튼 → `assignRuleToTask` (manual method) — Agent 의 reject 를 사용자가 override
 
 **성능 / 비용**
 
-- Task 당 embedding (Step 1 모듈 ~N번 + Step 2 후보 8번) + LLM 1회 (Step 3)
+- Task 당 embedding: Step 1 (module N개 cached once) + Step 2 (rule pool, cached) + LLM 1회 (Step 3)
 - Session 전체: 경쟁 rule × 1 (Step 4)
-- 실측 (3 processes × 33 tasks): 약 40~50초. `HYBRID_EMBED_*` env 로 top-k 조정 가능
+- 실측 (3 processes × 33 tasks, 52 rules):
+  - Step 2 candidate 풀: 50 → **15** (lean blob + 0.45 floor)
+  - Validator LLM 입력: ~12.5k → **~5k tokens / call**
+  - 전체 Phase 3: baseline 의 **~50%** 시간
 
-**실측 결과 (3 processes, 52 rules)**
+**실측 결과 (3 processes, 52 rules, 2026-04-23)**
 
-| 지표 | 구 파이프라인 (lexical/embedding/structural/merge) | 1차 agentic (cap=3, bl_top_k=8) | 2차 튜닝 (cap 해제, bl_top_k=15, judgment-based) |
+| 지표 | 구 파이프라인 | §8 (lean blob 이전) | **§9 (lean blob + 0.45 floor)** |
 |---|---|---|---|
-| 매핑 총수 | ~80+ | 17 (과소) | 재측정 필요 |
+| 매핑 총수 | ~80+ | 40 | ≈40 (유지) |
 | rationale 부착율 | 0% | 100% | 100% |
-| 크로스 프로세스 오염 | 14 rules | **0** ✓ | **0** ✓ (유지) |
-| 0 매핑 task 비율 | 낮음 | 높음 (14/21 등) | 재측정 필요 |
-
-> 2차 튜닝은 "Task 당 자연스러운 매핑 개수는 구현 분기 수에 따름" 철학 — 3 cap 같은 artificial constraint 제거. 실측은 재 ingestion 후 확보.
+| 크로스 프로세스 오염 | 14 rules | 0 ✓ | 0 ✓ |
+| Step 2 candidate (입력값 검증) | — | 50 | **15** |
+| Reject 노출 (default) | — | 5 (collapsed) | **0** (collapsed) |
+| Reject 펼쳤을 때 (top 5) | — | 모두 noise 포함 | **near-miss 만** |
 
 ---
 
@@ -372,20 +422,33 @@ def _task_text(task, actor_name_by_id):
 [Actor: 자동납부담당기획팀]
 ```
 
-Rule 텍스트 예 (2026-04-20 기준 — BC 태그 + 부모 노드 컨텍스트 포함):
+Rule 텍스트 — 두 종류 사용 (2026-04-23):
+
+**(A) Step 2 ranking blob — lean** (검색용, 신호 분리 중요):
 ```
-[업무범주: 입력값검증]
-[모듈: zapamcom10060]
-[호출자: b000_main_proc]
+규칙: 핵심 필수값이 없으면 즉시 입력 오류로 거부한다
 GIVEN: 입력.acnt_num=RC_NRM 또는 ...
 WHEN: 청구번호, 업무구분, 납부방법 ... 중 하나가 누락된 상태로 요청한다.
 THEN: 누락된 항목에 맞는 오류 메시지로 즉시 RC_ERR를 반환한다 ...
-Summary: 입력 파라미터 유효성 검증 함수
-Function: apascrt00010t02_20260406.zapamcom10060.a000_input_validation
-Tables: reads=[...] writes=[...]
 ```
 
-→ 같은 토큰을 공유하는 Rule 이어도 다른 모듈·다른 호출 체인이면 코사인이 분리되어 cross-module 혼동 방지.
+**(B) Step 3 validator 프롬프트 — full context** (LLM 판정용):
+```
+[1] rule_id: rule_aff993af2668
+    title: 핵심 필수값이 없으면 즉시 입력 오류로 거부한다
+    given: ...
+    when:  ...
+    then:  ...
+    source_function: a000_input_validation
+    source_module:   apascrt00010t02_20260406.zapamcom10060
+    function_summary: 이 구간은 입력값의 필수 항목과 보정 규칙을 ...
+    callers: zapamcom10060
+    parent_module: zapamcom10060
+```
+
+→ 검색 (A) 은 **핵심 신호 (title + GWT)** 만으로 cosine 분리 강화 / LLM 판정 (B) 은 부모/호출자/summary 까지 포함해 정확한 stage 매치 가능.
+
+**왜 분리했나 (2026-04-23)**: 둘을 합치면 (이전 방식) function_summary 가 ~수백 토큰 차지 → 같은 모듈의 모든 BL 이 비슷한 cosine (0.45~0.55 좁은 띠) 받아 task 별 신호 구분 불가. 결과: validator 가 거의 모든 후보를 reject 하는 비효율 + 사용자에게 reject 노이즈 부담.
 
 Passage 텍스트 예: `{heading}\n{body 전문}`
 
@@ -413,15 +476,16 @@ Task: "카드사코드 추출"
 
 | 임베딩 대상 | 1 객체 = 1 벡터 | 텍스트 구성 | 쓰임 |
 |---|---|---|---|
-| **Task** (쿼리 측) | `BpmTask` 하나 | `name + description + [Actor: ...]` (actor 이름 쉼표로 이어붙임) | Phase 3.2 + 4.1 양쪽에서 **동일 벡터 재사용** (같은 `EmbeddingCache` hit) |
-| **Rule** (인덱스 측 — 코드) | `BusinessLogic = Rule` 하나 | `GIVEN + WHEN + THEN + Summary + {module}.{fn} + reads/writes Tables` | Phase 3.2 인덱스 |
-| **Passage** (인덱스 측 — 문서) | 청크 하나 (헤딩/윈도우) | `heading + body` | Phase 4.1 인덱스 |
+| **Module** (Step 1 인덱스) | `MODULE` (or `:FILE`) 하나 | `m.summary` (한국어 모듈 요약) | Step 1 코사인 |
+| **Task** (Step 1/2 쿼리 측) | `BpmTask` 하나 | `process.name + domain_keywords + task.name + task.description + [Actor: ...]` | Step 1, Step 2 양쪽에서 **동일 벡터 재사용** |
+| **Rule** (Step 2 인덱스) | `Rule` 하나 | **lean blob: 규칙(title) + GIVEN + WHEN + THEN** (function_summary 제외 — 2026-04-23) | Step 2 코사인 |
+| **Passage** (Phase 4.1 인덱스) | 청크 하나 (헤딩/윈도우) | `heading + body` | Phase 4.1 코사인 |
 
 #### 유의점
 
+- **Rule 임베딩이 `function_summary` 제외하는 이유 (2026-04-23)**: 같은 모듈의 모든 BL 이 ~수백 토큰 공통 어휘를 공유 → 모든 cosine 이 0.45~0.55 좁은 띠로 평탄화. 신호 분리하려면 핵심(title + GWT) 만 임베딩. function_summary 는 Step 3 validator 프롬프트에 그대로 들어가 정확도 보존.
 - **같은 `when` 을 공유하는 BL 분기는 별개 벡터**: "인증결과코드 보정 규칙 적용" 트리거가 EDI/FB/간편결제/기타 4개 채널별 `then` 을 가지면 → **4개 Rule, 4개 벡터**. 하나로 뭉개지 않음 (채널별 로직 보존).
 - **청크 크기 편차**: 헤딩 기반 청크는 50~2000자로 가변. 슬라이딩 윈도우 fallback 은 고정 400자. 너무 긴 청크는 임베딩 신호가 희석되므로, retrieval 품질이 나쁘면 `document_chunker.py::_MAX_AVG_CHUNK` 를 낮춰 윈도우 fallback 을 더 자주 타게 조정 가능.
-- **Rule 텍스트에 영문 식별자 포함**: `{module}.{fn}` 이 영문이라 한↔한 순수 의미 매칭보다 코사인이 약간 낮아질 수 있음. 필요 시 식별자 제외하고 GWT+Summary 만 임베딩하는 실험 가능.
 
 #### 실측 (방금 세션)
 
@@ -480,16 +544,24 @@ Navigator 좌측 BPMN 탭의 "미매핑 / Review" 섹션이 두 종류 항목을
 
 각 Rule 카드는 사용자가 BL 을 직접 제어할 수 있는 UI 를 제공 (구현: `HybridTaskInspector.vue`):
 
-**ES 역할 변경 (드롭다운)**:
+**ES 역할 변경 (드롭다운)** — debug 모드 전용:
 - ES 요소 배지 자체가 투명 `<select>` 오버레이로 덮여 있어 호버 시 dashed outline
 - 5개 옵션 모두 선택 가능 (Aggregate / Command / Policy / ReadModel / External System) — 이모지·괄호 설명은 없는 plain 텍스트
 - 변경 시 `PATCH /api/ingest/hybrid/rule/{sid}/{rid}/es-role` → `Rule.es_role` + `es_role_confidence = 1.0`
 - 낙관적 업데이트로 즉시 화면 반영 — `hybridRules` flat list 와 모든 task.rules 에서 동시 갱신
 
-**Rule 이동 / 제거 (⋯ 메뉴)**:
+**Rule 이동 / 제거 (⋯ 메뉴)** — debug 모드 전용:
 - Rule 카드 우측 `⋯` 버튼 클릭 → 팝오버 메뉴
 - "다른 Task 로 이동" 섹션: 현 Task 제외 전체 Task 리스트, 클릭 시 `POST /rule/{rid}/move/{from}/{to}` 원자적 실행 (unassign + assign)
 - "이 Task 에서 제거" 섹션 (danger red): `POST /rule/{rid}/unassign/{tid}`. 마지막 Task 에서 떨어지면 `unassigned_rule_ids` 에 등재되어 §6.2 pool 로 surface.
+
+**🛑 거부된 후보 검토 (2026-04-23 신규)** — 기본 모드에서 노출:
+- AgentFinalMatches.rejects (Step 2 후보로 올랐으나 Step 3 validator 가 reject) 가 store.rejectedRulesByTask[task_id] 에 누적
+- Inspector 에 "🛑 거부된 후보 [N]" 섹션 — **기본 collapsed** (인지 부하 최소화)
+- 헤더 클릭하면 **score desc 정렬 상위 5 개**만 노출 (validator 가 가장 close call 로 판정한 것들). 나머지는 "+ N 개 더 보기" 토글
+- 각 카드: source_function + module + title + GWT + Agent 거부 사유 (rationale)
+- "+ 이 매핑 추가" 버튼 → `POST /rule/{rid}/assign/{tid}` (manual 매핑) — Agent 의 reject 를 사용자가 override
+- score 자체는 **사용자에게 표시 안 함** (정렬 용도로만 내부 사용)
 
 **엔드포인트 요약**:
 ```
@@ -499,7 +571,17 @@ POST   /api/ingest/hybrid/rule/{sid}/{rid}/move/{from_tid}/{to_tid}
 PATCH  /api/ingest/hybrid/rule/{sid}/{rid}/es-role           (body: {"es_role": "..."})
 ```
 
-모든 수동 경로는 `method='manual', reviewed=true, confidence=1.0` 로 기록 — Phase 5 에서 user-confirmed 매핑임을 식별할 수 있도록.
+수동 경로는 `method='manual', reviewed=true, confidence=1.0` 로 기록 — Phase 5 에서 user-confirmed 매핑임을 식별할 수 있도록.
+
+### 6.6 Navigator 탐색 진행 표시 (2026-04-22)
+
+- **현재 탐색 중인 task** — store.activeExploringTaskId 가 set 되면 Navigator 에 노란 펄싱 spinner + .is-exploring wash
+  - 트리거: per-task `AgentStepBlSearch` (start), `AgentFinalMatches` (end). Step 1 의 빠른 loop 가 아님 — Step 2+3 의 LLM heavy 구간만 spinner.
+  - task 정렬: `_group_tasks_by_process` 가 `sequence_index` 순 정렬. 캔버스 순서대로 spinner 점등.
+  - 배치 ingestion 과 🔄 단일 task 재탐색 모두 동일 메커니즘.
+- **중복 rule 우선순위 검증 중** — store.arbitratingTaskIds 가 set 되면 보라색 펄스 + 상단 배너
+  - Step 4 ArbitrationStart 로 활성화, ArbitrationDecision 마다 losing edge 즉시 제거 (frontend store.removeRuleFromTask), ArbitrationEnd 로 비활성화.
+- 진행 모달 메시지: "🔎 탐색 중: 입력값 검증" / "🎯 완료: 입력값 검증 · 7 매핑" — task name 명시.
 
 ### 6.5 BC Rules Modal — BC 단위 일괄 Rule 관리 (2026-04-20)
 
@@ -854,3 +936,192 @@ RETURN t.name AS task, r.source_function AS fn, r.es_role AS role,
 ```bash
 curl http://localhost:8000/api/ingest/hybrid/debug/{session_id} | jq
 ```
+
+---
+
+## 10. 2026-05-04 Iteration — Analyzer 신스키마 적용 + 트리거 위치 + 거부 인지부하
+
+§9 이후 analyzer 측에서 BusinessLogic 노드를 폐기하고 `Rule + Example + Question` 3종으로 분할하는 스키마 변경이 단행되어 (`docs/legacy-ingestion-references/2026-04-22-BusinessLogic-노드-구조변경-아키텍트안내.md` 참조), robo-architect 측 Phase 2/3 도 그에 맞춰 정렬했다. 동시에 누적되어 있던 두 UX 부채 — Hybrid 트리거가 별도 dev-only 버튼이었던 점, 거부 후보가 Inspector 에 과다 노출되던 점 — 도 함께 정리.
+
+### 10.1 진단 — 이번 라운드의 5개 문제
+
+| # | 증상 | 원인 |
+|---|---|---|
+| 1 | Phase 2 가 0 rules 반환 → 파이프라인이 BPM 까지만 돌고 종료 | 모달의 "🧪 테스트 (Hybrid)" 버튼 첫 단계 `DELETE /api/ingest/hybrid/reset` 가 호출하는 `clear_all_hybrid_workspace()` 가 `:Rule` 라벨 전체를 무필터 `DETACH DELETE`. 신스키마에서 analyzer 가 `:Rule` 을 정식 사용하면서 라벨 충돌 → analyzer Rule 51 + HAS_RULE/HAS_EXAMPLE/AFFECTS_TABLE/NEXT/BRANCH 가 매 ingestion 시도마다 wipe 됨 |
+| 2 | `(:BusinessLogic)` 노드를 직접 쿼리하던 4 사이트가 0 rows 반환 | 신스키마에서 BusinessLogic 라벨 폐기. `rule_extractor.py` Phase 2 진입 쿼리, `glossary_extractor.py:93`, `analyzer_graph/graph_context_builder.py:35,175`, `traceability.py:149` 모두 영향 |
+| 3 | Hybrid 트리거가 dev-only 버튼으로 file/text 모드에만 노출 | "코드 분석" 모드는 BL 카운트만 표시하고 hybrid 진입 경로 없음. 사용자가 "코드 + 문서" 의도로 진입할 자연스러운 동선 부재 |
+| 4 | Inspector "🛑 거부된 후보 [N]" 배지 N=15+ — collapsed 라도 숫자 자체가 인지부하 | Step 2 후보 (`bl_top_k=20`, `MIN_BL_INCLUSION=0.45`) 가 거의 그대로 reject 로 누적 emit. 33 tasks × 평균 17 rejects = 560+ entries 가 store 에 떠있음 |
+| 5 | 모달 통계 카드의 "비즈니스 로직" 카운트가 0 | analyzer 통계 endpoint 가 `BusinessLogic` 라벨 카운트 — 신스키마에서 0 |
+
+### 10.2 적용한 수정
+
+**스키마 정렬 — 4 파일** (Hybrid Phase 2/3 한정 — ES 승격 경로는 별도 작업으로 보류)
+
+| 파일 | 변경 |
+|---|---|
+| [hybrid/contracts.py](../../api/features/ingestion/hybrid/contracts.py) | `ExampleDTO` 신설 / `RuleDTO` 에 `examples: list[ExampleDTO]` + `coupled_domains: list[str]` 추가 / 레거시 `context_cluster` `es_role` `es_role_confidence` 는 schema 호환만 유지 |
+| [hybrid/code_to_rules/rule_extractor.py](../../api/features/ingestion/hybrid/code_to_rules/rule_extractor.py) | Cypher 를 `(FUNCTION)-[hr:HAS_RULE]->(Rule)-[:HAS_EXAMPLE]->(Example)` 로 재작성. JSON 인코딩된 `given`/`then_` 에서 `narrative` 자동 추출. canonical example 은 non-boundary 우선 픽 / `bl.sequence` → `hr.local_id` / `bl.coupled_domain` (단일) → `hr.coupled_domains` (리스트) |
+| [hybrid/code_to_rules/rule_filters.py](../../api/features/ingestion/hybrid/code_to_rules/rule_filters.py) | 주석/문구만 갱신 (필터 로직 무변) |
+| [hybrid/mapper/glossary_extractor.py](../../api/features/ingestion/hybrid/mapper/glossary_extractor.py) | `MATCH (bl:BusinessLogic)` → `MATCH (f:FUNCTION)-[hr:HAS_RULE]->(r:Rule)`. coupled_domains 는 list 로 받아 UNWIND |
+
+**확인 — 마이그레이션 불필요 사이트**:
+- `rule_context.py`, `agent_validator.py` — 함수레벨 `READS`/`WRITES`/`CALLS`/`HAS_FUNCTION`/`BELONGS_TO_PACKAGE` 만 쿼리. 신스키마에도 그대로 살아있음
+- `es_role_tagger.py`, `bc_identifier.py` — Phase 2.5/2.6 폐기 후 어디서도 import 안 됨 (dead code)
+- `analyzer_graph/*`, `workflow/phases/*`, `traceability.py`, `user_story_format.py` — ES 승격 / 레거시 비-hybrid 경로. 별도 작업으로 보류
+
+**라벨 충돌 fix** — [hybrid/ontology/neo4j_ops.py:59-77](../../api/features/ingestion/hybrid/ontology/neo4j_ops.py#L59)
+- `clear_all_hybrid_workspace()` 에 `WHERE n.session_id IS NOT NULL` 가드 추가
+- hybrid 노드는 항상 session_id 보유 → 안전. analyzer 노드는 session_id 없음 → 영향 없음
+- 검증: `rule_hash="FAKE_ANALYZER_RULE"` (no session_id) + hybrid Rule (with session_id) 두 개 심고 reset → 후자만 삭제, 전자 생존 ✓
+- 다른 5 개 `DETACH DELETE` 사이트는 모두 `{session_id: $sid}` 맵 매칭으로 이미 안전
+
+**UI 트리거 재배치** — [RequirementsIngestionModal.vue](../../frontend/src/features/requirementsIngestion/ui/RequirementsIngestionModal.vue)
+- file/text 모드의 dev-only "🧪 테스트 (Hybrid)" 버튼 **삭제**
+- "코드 분석" 모드 통계 카드 아래에 "📄 업무 문서 첨부" 컴팩트 dropzone 추가 (`analyzerDocFile` ref — file 모드의 `file` 과 분리)
+- `canSubmit`: analyzer 모드는 `analyzerStats.hasData && analyzerDocFile !== null` 둘 다 충족 시만 활성
+- `handleStartClick`: analyzer 모드 → `startHybridIngestion()` 직접 라우팅
+- 통계 카드: `BusinessLogic` (0 으로 깨짐) → `Rule` + `Example` 로 교체. accent 강조는 Rule 카드로 이동
+
+**거부 후보 인지부하 축소** — backend cap + frontend 단순화
+
+[agentic_retriever.py](../../api/features/ingestion/hybrid/mapper/agentic_retriever.py) — close-call 만 emit:
+```python
+REJECT_NEAR_MISS_FLOOR = 0.45   # MIN_BL_INCLUSION 과 동일 — 0.45~0.50 near-miss 띠 보존
+REJECT_VISIBLE_CAP = 3          # task 당 reject emit 하드 캡 (score 내림차순 top-N)
+```
+- §9.1 분포에 따르면 0.45~0.50 이 진짜 near-miss 띠 (validator 가 갈팡질팡하는 영역). 0.50 이상은 거의 다 accept 로 빠지므로 reject 로 남는 게 적음
+- 초기 시도(`floor=0.50`)는 가장 검토 가치 있는 0.45~0.50 띠를 통째로 컷해 결과적으로 항상 0건이 나옴 — 즉시 0.45 로 정정
+- attention budget 통제는 **`REJECT_VISIBLE_CAP=3` 가 담당**: floor 는 "어디까지 후보로 인정할지", cap 은 "몇 개까지 보여줄지"
+
+[HybridTaskInspector.vue](../../frontend/src/features/canvas/ui/HybridTaskInspector.vue):
+- 섹션 라벨 "🛑 거부된 후보" → "🔎 검토 가능한 후보" (semantic 정렬)
+- "더 보기" 토글 + `REJECTED_DEFAULT_VISIBLE` 클라이언트 캡 제거 — 백엔드가 이미 ≤ 3 으로 잘라 보냄
+- 0 건이면 섹션 자체 미표시
+
+### 10.3 검증 수치 (2026-05-04 실측, pdf2bpmn 3 processes / 33 tasks / 51 analyzer rules)
+
+| 지표 | §9 직후 | 10.2 적용 후 | 비고 |
+|---|---|---|---|
+| Phase 2 RuleDTO 추출 | 51 | 51 ✓ | analyzer Rule 51 와 1:1 |
+| 보존된 Examples | — | 108 (boundary 57 + nominal 51) | 신스키마 `is_boundary` 메타 보존 |
+| coupled_domains 보유 rule | — | 17 / 51 | HAS_RULE.coupled_domains[] 정상 매핑 |
+| Phase 3 REALIZED_BY 매핑 | 40 | 29 | 신스키마 narrative 추출이 정확도 보존 |
+| 매핑 받은 task | — | 8 / 33 | 8/7/5/3/3/1/1/1 — 자연 분포 |
+| 0-매핑 task | — | 25 / 33 | 대부분 정당 (해지/조회 프로세스는 analyzer 에 구현 모듈 없음 — §8.5 참조) |
+| Inspector reject 건수 (default) | 5 (collapsed) | **0~3 (collapsed)** | backend cap REJECT_VISIBLE_CAP=3 + 0 건이면 섹션 미표시 |
+| 사용자 attention surface | 33 tasks × 5+ rejects = 165+ | task 당 ≤ 3 (top score) | floor 0.45 로 near-miss 띠 보존하면서 cap 으로 volume 제한 |
+
+### 10.4 구조적 교훈
+
+1. **공유 라벨 환경에서 Cypher DELETE 는 항상 distinguishing property 필수**
+   - 단일 DB 에 여러 파이프라인이 공존하면, 라벨만으로 ownership 구분 불가
+   - `session_id` 같은 ownership 마커 IS NOT NULL 가드를 모든 wipe 쿼리에 의무화
+2. **백엔드가 줄일 수 있으면 프론트 토글로 가리지 마라**
+   - 이전: backend emit all → frontend collapsed default + "더 보기"
+   - 현재: backend filter to ≤3 + drop section if 0 → frontend 단순 렌더
+   - 사용자가 "더 보기" 누르지 않더라도 store 에 떠있는 데이터 자체가 인지부하 (배지 N 값으로 노출)
+3. **Phase 2 의 `:Rule` shadow 노드는 향후 정리 후보**
+   - 신스키마에서 analyzer 가 이미 `:Rule {rule_hash, statement}` 를 보유. hybrid 가 `:Rule {id, session_id}` shadow 를 또 만드는 건 중복
+   - 현재는 라벨 충돌 fix 로 안전하게 공존하지만, 다음 라운드에서 REALIZED_BY 가 analyzer Rule 을 직접 가리키도록 refactor 하면 shadow 제거 가능
+   - 제거 시 snapshot/rehydrate 동선이 영향받으니 별도 검토 필요
+
+### 10.5 남은 과제 (후속)
+
+- **레거시 `source_type='analyzer_graph'` 경로 정리**: `workflow/phases/*` (US/Events/BC/Aggregates/Commands/Policies/ReadModels), `analyzer_graph/*`, `user_story_format.py`, `traceability.py` 등이 BL 가정으로 짜여 있음. UI 에서는 이미 진입 못하지만 코드는 살아있음 → 별도 PR 로 정리 예정
+- **Phase 5 재정렬**: Phase 2.5/2.6 폐기 후 Aggregate/Command/Policy/ReadModel/External 판정을 Phase 5 가 직접 수행하도록 (§7.6 / §8.7 / §9.6 항목 계승)
+- **Phase 2 Rule shadow 제거 검토**: §10.4#3 — REALIZED_BY 를 analyzer Rule 로 직접 라우팅하는 refactor
+
+---
+
+## 11. 2026-05-04+ Iteration — 탐색 비용 최적화 (lazy + cache + batch)
+
+§10 정리 직후 실측에서 가장 큰 비용은 Phase 3 agentic retrieval 의 LLM 호출이라는 점이 확인됐다 (33 tasks × validator 1회 + arbitration). 사용자가 실제로 열어보지 않는 task 까지 매 ingestion 마다 모두 LLM 을 거치는 건 낭비. §10.5 의 후속 과제 중 "사용자 trigger 로 전환" 항목을 이번 iteration 에서 구현.
+
+### 11.1 결정 사항
+
+| 축 | 변경 전 | 변경 후 |
+|---|---|---|
+| Phase 3 (매핑) 트리거 | ingestion 자동 — 모든 task | **lazy** — 사용자가 명시 트리거 |
+| Phase 4.2 (조건) 트리거 | ingestion 자동 — 모든 task | **lazy** — 매핑 후 자동 (해당 task 한정) |
+| Phase 3.0 (용어집) 트리거 | ingestion 자동 | 그대로 (세션 1회, 저렴) |
+| Phase 4.0/4.1 (passages) 트리거 | ingestion 자동 | 그대로 (LLM 없음) |
+| 단일 task 진입 동작 | Inspector 진입 시 cached 표시만 | **"🔍 탐색하기" 명시 버튼** (auto-fire 안 함) |
+| 프로세스 일괄 진입 | 없음 | **Navigator "🔍 전체 탐색" 버튼** (parallel N=3) |
+| 캐싱 | EmbeddingCache 인-메모리만 | **REALIZED_BY persisted = 캐시**. force=false 시 LLM 스킵 |
+| 충돌 해결 (arbitration) | ingestion 끝에 1회 일괄 | **explore op 직후 자동** — 충돌 0 건이면 호출 자체 안 함 |
+
+### 11.2 구현
+
+**파이프라인 — `hybrid_workflow_runner.py`** ([커밋 변경 라인 ~150 감소])
+- Phase 3 매핑 + Phase 4.2 조건 추출 블록 제거 → "💤 매핑 + 조건 추출은 사용자 트리거 대기" 메시지로 종료
+- Phase 3.0 (Glossary) + Phase 4.0/4.1 (chunk + passage retrieval) 는 그대로 유지
+
+**서비스 모듈 — [explore_service.py](../../api/features/ingestion/hybrid/explore_service.py) (신규)**
+- `explore_task(session_id, task_id, *, force, sink)` — 단일 task 탐색
+  - `force=False` (default): REALIZED_BY 가 이미 있으면 `AgentCacheHit` 이벤트 후 즉시 종료 (LLM 0회)
+  - `force=True`: 기존 매핑 atomic replace 후 새 retrieval 실행
+  - 매핑 저장 후 자동으로 Phase 4.2 conditions 재생성 (`extract_conditions_for_task`)
+- `explore_process(session_id, process_id, *, force, sink, max_concurrency=3)` — 프로세스 일괄
+  - `asyncio.Semaphore(3)` 으로 동시 3 task 탐색 (batch 파이프라인과 동일 부하)
+  - `force=False` 면 캐시된 task 는 자연스럽게 즉시 통과 (LLM 비용 0)
+  - 이벤트 이름이 단일 task 와 동일 → 프론트 store handler 재사용
+- `post_explore_arbitration(session_id, *, sink)` — 충돌 자동 해결
+  - 단일 Cypher 로 "≥2 (process, task) 가 같은 rule 을 claim 한 케이스" 탐지
+  - 0 건이면 LLM 미호출 (가장 흔한 케이스)
+  - N 건이면 기존 `arbitrate_rule_home` 재사용 → loser REALIZED_BY 삭제 + `ArbitrationDecision` SSE forward
+
+**라우터 — [router.py](../../api/features/ingestion/hybrid/router.py)**
+- `GET /api/ingest/hybrid/task/{sid}/{tid}/retrieve?force={true|false}` — 기존 엔드포인트, 캐시 단축회로 추가
+- `GET /api/ingest/hybrid/process/{sid}/{pid}/explore?force={true|false}` — 신규
+- 두 엔드포인트 모두 explore op 종료 후 `post_explore_arbitration` 자동 호출
+
+**프론트 — [bpmn.store.js](../../frontend/src/features/canvas/bpmn.store.js)**
+- `_wireAgentSseEvents(source)` 공유 핸들러 — 단일/프로세스 두 SSE 가 동일 이벤트 이름을 사용하므로 핸들러도 1개
+- `startAgentStream(sid, tid, {force})` — 기존 함수에 `force` 옵션 추가
+- `startProcessExplore(sid, pid, {force})` 신규
+- `resetAgentState(taskId)` 신규 — 미탐색 task 패널 진입 시 'idle' 로 둬서 "🔍 탐색하기" CTA 노출
+
+**프론트 — Inspector** ([HybridTaskInspector.vue](../../frontend/src/features/canvas/ui/HybridTaskInspector.vue))
+- 헤더 버튼 분기: 매핑 0건 → **"🔍 탐색하기"** (primary green) · 매핑 있음 → "🔄 재탐색" (secondary blue) · 진행중 → "탐색 중" (disabled)
+- 진입 시 자동 LLM 호출 절대 없음 — 명시 클릭만
+
+**프론트 — Navigator** ([NavigatorPanel.vue](../../frontend/src/features/navigator/ui/NavigatorPanel.vue))
+- 각 process 행 우측에 **"🔍 전체 탐색"** 버튼
+- 클릭 → `startProcessExplore` → 기존 task spinner cascade UI 가 그대로 동작
+
+### 11.3 비용 모델
+
+| 시나리오 | 변경 전 | 변경 후 |
+|---|---|---|
+| ingestion 1회 (33 tasks, 51 rules) | Phase 3 (33 validator + N arbitration) + Phase 4.2 (33 conditions) ≈ **65+ LLM calls** | Phase 3.0 (1 glossary) ≈ **1 LLM call** |
+| 사용자가 task 1개 열고 탐색 (cache miss) | n/a (자동) | validator 1 + conditions 1 + arbitration 0~1 ≈ **2~3 calls** |
+| 사용자가 같은 task 다시 열기 (cache hit) | n/a | **0 calls** (`AgentCacheHit` 즉시 응답) |
+| 사용자가 프로세스 전체 탐색 (11 tasks) | n/a | parallel ≈ 11 validator + 11 conditions + arbitration 0~M ≈ **22~25 calls** |
+| 모든 task 를 사용자가 결국 다 탐색하면? | 65+ | 65+ — same total, **분산 지불** + 안 본 task 는 영원히 비용 0 |
+
+핵심 절감: 사용자가 **실제로 보지 않는 task** 는 LLM 비용 0. 일반 사용 패턴 (한 프로세스만 보거나 일부 task 만 검토) 에서 80%+ 절감 예상.
+
+### 11.4 충돌 해결 (arbitration) 의 자연스러움
+
+신규 lazy 모델에서도 cross-process / cross-task 충돌은 일관 상태로 수렴:
+
+```
+초기: 0 매핑 → 0 충돌 → arbitration 0 호출
+task1 탐색 (rule R accept) → 1 claim → 0 충돌 → arbitration 0 호출
+task2 탐색 (rule R 도 accept) → 2 claims → 1 충돌 → arbitration 1 호출 → 패자 task 의 REALIZED_BY 삭제
+```
+
+매 explore op 직후 conflict-detection 쿼리 1회 (Cypher MATCH 단순). 변화 없으면 LLM 호출 자체가 발생하지 않으므로, "탐색 안 했던 영역" 의 비용은 그대로 0.
+
+### 11.5 부수 효과 (수용)
+
+- **Stale conditions**: task A 가 rule R 로 conditions 생성 → 이후 arbitration 으로 R 잃음 → A 의 conditions 는 stale (잃은 rule 기준). 즉시 regenerate 안 함 (추가 LLM 비용 회피). 사용자가 재탐색 시 자동 갱신.
+- **Cache invalidation 명시 트리거 부재**: analyzer 데이터가 갱신되어도 force=true 로 명시 재탐색 안 하면 캐시 그대로. dump 재로드 같은 큰 변경 시 hybrid reset 으로 일괄 처리.
+- **첫 진입 지연**: 캐시 미스 task 첫 진입은 LLM 1~2 call (~5~10s) 대기. progress UI 가 이를 가시화 (Agent Reasoning 스트림).
+
+### 11.6 남은 후속 과제
+
+- **stale conditions 자동 invalidation**: arbitration 으로 매핑 변동된 task 의 conditions 를 자동 재생성 옵션
+- **explore op 결과 toast**: arbitration 으로 매핑이 사라지면 사용자에게 "rule X 가 task A→B 로 이동" 명시
+- **process 단위 cancel**: 일괄 탐색 중 사용자가 중단 가능하도록 (현재는 SSE close 만 가능, 백엔드는 끝까지 실행)
+

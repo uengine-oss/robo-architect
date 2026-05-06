@@ -59,12 +59,17 @@ def clear_hybrid_nodes(session_id: str) -> dict[str, int]:
 def clear_all_hybrid_workspace() -> dict[str, int]:
     """Wipe every hybrid-owned node across all sessions. Analyzer/event-storming labels are
     NOT touched — safe to call even when analyzer and hybrid share the same Neo4j database.
+
+    The `session_id IS NOT NULL` guard is load-bearing: the new analyzer schema reuses
+    the `:Rule` label (and could reuse others later) on nodes that have no session_id.
+    Without this guard a hybrid reset would also wipe authoritative analyzer data.
     """
     counts: dict[str, int] = {}
     with get_session() as s:
         for label in ALL_HYBRID_LABELS:
             r = s.run(
-                f"MATCH (n:{label}) WITH n, count(n) AS c DETACH DELETE n RETURN c"
+                f"MATCH (n:{label}) WHERE n.session_id IS NOT NULL "
+                "WITH n, count(n) AS c DETACH DELETE n RETURN c"
             ).single()
             if r and r["c"]:
                 counts[label] = r["c"]
@@ -108,8 +113,15 @@ def save_bpm_skeleton(session_id: str, skeleton: BpmSkeleton) -> None:
             sid=session_id, xml=skeleton.bpmn_xml or "",
         )
         if process is not None:
+            # process_index — assigned on first MERGE to preserve ingestion order.
+            # Without this the snapshot ORDER BY would default to alphabetical (or
+            # internal node id), causing the Navigator to reshuffle processes
+            # mid-explore as rehydrate fires.
             s.run(
+                f"OPTIONAL MATCH (existing:{L_BPM_PROCESS} {{session_id: $sid}}) "
+                "WITH count(existing) AS next_idx "
                 f"MERGE (p:{L_BPM_PROCESS} {{id: $id, session_id: $sid}}) "
+                "ON CREATE SET p.process_index = next_idx "
                 "SET p.name = $name, p.description = $desc, "
                 "    p.domain_keywords = $keywords, "
                 "    p.source_pdf_name = $pdf_name, p.bpmn_xml = $xml, "
@@ -859,7 +871,7 @@ def fetch_session_snapshot(session_id: str) -> dict:
             WITH p, collect(DISTINCT t.id) AS task_ids
             OPTIONAL MATCH (p)-[:{R_HAS_ACTOR}]->(a:{L_BPM_ACTOR} {{session_id: $sid}})
             RETURN p, task_ids, collect(DISTINCT a.id) AS actor_ids
-            ORDER BY p.name
+            ORDER BY coalesce(p.process_index, 9999), p.name
             """,
             sid=session_id,
         ))

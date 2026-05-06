@@ -230,12 +230,11 @@ async def extract_readmodels_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         bc_us_ids = [us_id for us_id in bc_us_ids if us_id]  # None이나 빈 문자열 제거
         
         # User stories in this BC (include ui_description to support UI phase later)
-        _bl_map = getattr(ctx, 'bl_by_user_story', None)
         bc_user_stories = []
         for us in ctx.user_stories or []:
             if us.id in bc_us_ids:
                 bc_user_stories.append(
-                    format_us_text(us, bl_map=_bl_map, include_ui_description=True)
+                    format_us_text(us, include_ui_description=True)
                 )
 
         user_stories_text = "\n".join(bc_user_stories) if bc_user_stories else "No user stories"

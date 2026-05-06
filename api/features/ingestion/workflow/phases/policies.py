@@ -280,9 +280,8 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
     
     try:
         # Build user stories text for LLM context
-        _bl_map = getattr(ctx, 'bl_by_user_story', None)
         user_stories_text = "\n".join(
-            [format_us_text(us, bl_map=_bl_map, include_benefit=False) for us in ctx.user_stories]
+            [format_us_text(us, include_benefit=False) for us in ctx.user_stories]
         )
 
         # Build events list — Neo4j에서 BC별 모든 Event 직접 조회 (events_by_agg EMITS 의존 제거)
@@ -440,62 +439,13 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
         except Exception:
             pass
 
-        # ── Cross-domain coupling hints (analyzer_graph) ──
-        _coupling_hint = ""
-        if getattr(ctx, "source_type", "") == "analyzer_graph" and _bl_map:
-            # BL의 coupled_domain에서 cross-function 호출 패턴 추출
-            # → "이 BC의 BL이 다른 도메인을 호출한다" = Policy 후보
-            coupling_pairs: list[tuple[str, str, str]] = []  # (source_bc, target_domain, us_action)
-            for us in ctx.user_stories:
-                us_id = getattr(us, "id", "")
-                us_action = getattr(us, "action", "")
-                bls = _bl_map.get(us_id, [])
-                # Find which BC this US belongs to
-                source_bc = ""
-                for bc in ctx.bounded_contexts:
-                    bc_us_ids = []
-                    try:
-                        if hasattr(bc, "model_dump"):
-                            bc_us_ids = bc.model_dump().get("user_story_ids", [])
-                        elif isinstance(bc, dict):
-                            bc_us_ids = bc.get("user_story_ids", [])
-                    except Exception:
-                        pass
-                    if us_id in (bc_us_ids or []):
-                        source_bc = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", "")
-                        break
-                for bl in bls:
-                    domain = bl.get("coupled_domain")
-                    if domain and source_bc:
-                        coupling_pairs.append((source_bc, domain, us_action))
-
-            if coupling_pairs:
-                # Deduplicate and format
-                seen = set()
-                coupling_lines = []
-                for src, tgt, action in coupling_pairs:
-                    key = (src, tgt)
-                    if key not in seen:
-                        seen.add(key)
-                        coupling_lines.append(f"- {src} → {tgt} (via: {action[:80]})")
-                _coupling_hint = (
-                    "\n\n<cross_domain_coupling_hints>\n"
-                    "The following cross-domain dependencies were detected from legacy code analysis.\n"
-                    "Each line means: source BC calls/depends on target domain.\n"
-                    "These are STRONG candidates for Policies (Event in source BC → Command in target BC):\n"
-                    + "\n".join(coupling_lines[:50])
-                )
-                if len(coupling_lines) > 50:
-                    _coupling_hint += f"\n... and {len(coupling_lines) - 50} more"
-                _coupling_hint += "\n</cross_domain_coupling_hints>"
-
         # 전체 프롬프트 텍스트 구성 (청킹 판단용)
         full_prompt_text = IDENTIFY_POLICIES_PROMPT.format(
             user_stories=user_stories_text,
             events=events_text,
             commands_by_bc=commands_text,
             bounded_contexts=bc_text,
-        ) + display_name_tail + _no_emits_hint + _coupling_hint
+        ) + display_name_tail + _no_emits_hint
         # NOTE: source_report is not yet implemented in IngestionWorkflowContext.
         # When implemented, inject report context here:
         # _report_context_tail = get_policies_context(ctx.source_report)
@@ -575,7 +525,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                             relevant_us_ids.update(bc_us_ids or [])
 
                     chunk_us_text = "\n".join(
-                        format_us_text(us, bl_map=_bl_map, include_benefit=False)
+                        format_us_text(us, include_benefit=False)
                         for us in ctx.user_stories
                         if getattr(us, "id", "") in relevant_us_ids
                     ) or user_stories_text  # fallback to full if filter is empty
@@ -594,7 +544,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     events=chunk_events_text,
                     commands_by_bc=chunk_cmds_text,
                     bounded_contexts=bc_text,  # BC list always in full
-                ) + display_name_tail + _no_emits_hint + _coupling_hint
+                ) + display_name_tail + _no_emits_hint
                 # 이전 청크에서 식별된 Policy 상세 정보 전달 — 중복 생성 방지 + 정합성
                 if _accumulated_policies:
                     _POL_ACCUMULATED_BUDGET = 4000

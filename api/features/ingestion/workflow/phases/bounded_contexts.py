@@ -494,29 +494,9 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                     except Exception:
                         pass
     
-    _bl_map = getattr(ctx, 'bl_by_user_story', None)
-
     # User Stories를 텍스트로 변환하는 함수
     def us_to_text(us) -> str:
-        return format_us_text(us, bl_map=_bl_map)
-
-    # analyzer_graph 전용: BC 과다 생성 방지 가이드 + 이벤트 클러스터링 힌트
-    _analyzer_consolidation_guide = ""
-    if getattr(ctx, "source_type", "") == "analyzer_graph":
-        _analyzer_consolidation_guide = (
-            "\n\n## CRITICAL: Legacy Code Analysis — Bounded Context Consolidation\n"
-            "These User Stories were extracted from legacy code (functions/procedures). "
-            "Legacy systems often have HUNDREDS of small functions that each handle one task. "
-            "Do NOT create one BC per function or per small feature.\n\n"
-            "**Consolidation rules for code-analyzed systems:**\n"
-            "1. Group by BUSINESS DOMAIN (e.g., '자동납부', '청구', '계정관리'), not by function name\n"
-            "2. Functions that operate on the SAME database tables belong to the SAME BC\n"
-            "3. Functions with similar prefixes (e.g., ProcessAutoDebit*, ValidateAutoDebit*, ChangeAutoDebit*) "
-            "are almost certainly the SAME BC\n"
-            "4. Target: 5~15 BCs for a typical legacy system. More than 20 is almost always over-split\n"
-            "5. A BC should contain 5~50 User Stories. A BC with only 1~2 User Stories should be merged\n"
-            "6. Consider the [도메인 커플링] hints in User Stories — coupled domains suggest BC boundaries\n"
-        )
+        return format_us_text(us)
 
     # 이벤트 클러스터링 힌트: Phase 4에서 추출된 이벤트를 도메인 키워드로 그룹핑
     # (모든 source_type에서 활용 — events_from_us가 있으면 동작)
@@ -581,7 +561,7 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                 if display_lang == "ko"
                 else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
             )
-            prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction + _event_cluster_hint + _analyzer_consolidation_guide
+            prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction + _event_cluster_hint
 
             # 이전 청크에서 이미 식별된 BC 목록 전달 — 동일 도메인 US는 기존 BC에 할당 유도
             if _accumulated_bcs:
@@ -946,7 +926,7 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
             if display_lang == "ko"
             else "\n\nFor each Bounded Context you output, also provide displayName: a short UI label in English (e.g. 'Order Management', 'Payment')."
         )
-        prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction + _analyzer_consolidation_guide
+        prompt = IDENTIFY_BC_FROM_STORIES_PROMPT.format(user_stories=stories_text_with_ids) + display_name_instruction
         bc_response = await asyncio.wait_for(
             asyncio.to_thread(
                 structured_llm.invoke,
@@ -1405,7 +1385,7 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
         # 누락된 User Story들을 LLM에게 적절한 BC에 할당하도록 요청
         unassigned_stories = [us for us in ctx.user_stories if us.id in unassigned_us_ids]
         unassigned_stories_text = "\n".join(
-            [format_us_text(us, bl_map=_bl_map) for us in unassigned_stories]
+            [format_us_text(us) for us in unassigned_stories]
         )
         
         bc_info_text = "\n".join(

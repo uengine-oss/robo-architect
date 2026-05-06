@@ -33,6 +33,10 @@ const inputMode = ref('file') // 'file', 'text', 'jira', 'figma', or 'analyzer'
 // Analyzer graph state
 const analyzerStats = ref(null) // { total, counts, hasData }
 const isLoadingAnalyzerStats = ref(false)
+// Document attached inside the analyzer (코드 분석) mode — separate slot from
+// the generic 'file' input so switching tabs doesn't lose either selection.
+// Required for Hybrid ingestion to start from this mode.
+const analyzerDocFile = ref(null)
 const isUploading = ref(false)
 const isProcessing = ref(false)
 const sessionId = ref(null)
@@ -107,7 +111,8 @@ const canSubmit = computed(() => {
     return figmaNodeChanges.value !== null
   }
   if (inputMode.value === 'analyzer') {
-    return analyzerStats.value?.hasData === true
+    // Hybrid pipeline now drives this mode — both analyzer data AND a document are required.
+    return analyzerStats.value?.hasData === true && analyzerDocFile.value !== null
   }
   return textContent.value.trim().length > 10
 })
@@ -241,6 +246,34 @@ function removeFile() {
   file.value = null
 }
 
+// Analyzer-mode document slot — same accept/validate logic, different ref.
+function handleAnalyzerDocDrop(e) {
+  e.preventDefault()
+  dragActive.value = false
+  const files = e.dataTransfer.files
+  if (files.length > 0) handleAnalyzerDocFile(files[0])
+}
+
+function handleAnalyzerDocSelect(e) {
+  const files = e.target.files
+  if (files.length > 0) handleAnalyzerDocFile(files[0])
+}
+
+function handleAnalyzerDocFile(f) {
+  const validExtensions = ['.txt', '.pdf', '.md']
+  const isValid = validExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
+  if (!isValid) {
+    error.value = '지원하지 않는 파일 형식입니다. (txt, pdf, md 지원)'
+    return
+  }
+  analyzerDocFile.value = f
+  error.value = null
+}
+
+function removeAnalyzerDocFile() {
+  analyzerDocFile.value = null
+}
+
 // Figma clipboard paste handler
 async function handleFigmaPaste(e) {
   figmaPasteError.value = null
@@ -331,8 +364,9 @@ async function clearExistingData() {
 // Handle start button click
 function handleStartClick() {
   if (inputMode.value === 'analyzer') {
-    // analyzer_graph: 원본 데이터를 유지해야 하므로 삭제 확인 건너뜀
-    startIngestion()
+    // 코드 분석 모드는 항상 Hybrid 파이프라인으로 진입 — 첨부된 업무 문서가 분석된
+    // 코드 그래프와 매핑된다. canSubmit이 analyzerDocFile 존재를 보장.
+    startHybridIngestion()
   } else if (hasExistingData.value) {
     showClearConfirm.value = true
   } else {
@@ -366,12 +400,14 @@ async function startHybridIngestion() {
 
     // 3) Build upload payload.
     const formData = new FormData()
-    if (inputMode.value === 'file' && file.value) {
+    if (inputMode.value === 'analyzer' && analyzerDocFile.value) {
+      formData.append('file', analyzerDocFile.value)
+    } else if (inputMode.value === 'file' && file.value) {
       formData.append('file', file.value)
     } else if (inputMode.value === 'text' && textContent.value) {
       formData.append('text', textContent.value)
     } else {
-      throw new Error('Hybrid 테스트는 파일 또는 텍스트 모드에서만 실행됩니다.')
+      throw new Error('Hybrid ingestion에 첨부할 문서가 필요합니다.')
     }
     formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
 
@@ -466,6 +502,11 @@ function connectToHybridStream(sid) {
           if (bpmnStore.activeExploringTaskId === payload.task_id) {
             bpmnStore.clearActiveExploringTaskId()
           }
+          // Surface the validator's rejected candidates so the Inspector's
+          // "거부된 후보" panel can render them for manual review.
+          if (Array.isArray(payload.rejects)) {
+            bpmnStore.setRejectedRulesForTask(payload.task_id, payload.rejects)
+          }
         }
         break
       case 'HybridArbitrationStart':
@@ -540,10 +581,7 @@ async function startIngestion() {
     } else {
       const formData = new FormData()
 
-      if (inputMode.value === 'analyzer') {
-        // Analyzer graph: no file/text needed, source from Neo4j
-        formData.append('source_type', 'analyzer_graph')
-      } else if (inputMode.value === 'file' && file.value) {
+      if (inputMode.value === 'file' && file.value) {
         formData.append('file', file.value)
       } else if (inputMode.value === 'jira' && selectedPageContent.value) {
         const text = `# ${selectedPageContent.value.title}\n\n${selectedPageContent.value.content}`
@@ -1636,17 +1674,67 @@ function useSample() {
                       <span class="analyzer-card__value">{{ analyzerStats.counts.FUNCTION }}</span>
                       <span class="analyzer-card__label">함수</span>
                     </div>
-                    <div v-if="analyzerStats.counts.BusinessLogic" class="analyzer-card analyzer-card--accent">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.BusinessLogic }}</span>
-                      <span class="analyzer-card__label">비즈니스 로직</span>
+                    <div v-if="analyzerStats.counts.Rule" class="analyzer-card analyzer-card--accent">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.Rule }}</span>
+                      <span class="analyzer-card__label">Rule</span>
+                    </div>
+                    <div v-if="analyzerStats.counts.Example" class="analyzer-card">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.Example }}</span>
+                      <span class="analyzer-card__label">Example</span>
                     </div>
                     <div v-if="analyzerStats.counts.Table" class="analyzer-card">
                       <span class="analyzer-card__value">{{ analyzerStats.counts.Table }}</span>
                       <span class="analyzer-card__label">테이블</span>
                     </div>
-                    <div v-if="analyzerStats.counts.Actor" class="analyzer-card">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.Actor }}</span>
-                      <span class="analyzer-card__label">Actor</span>
+                  </div>
+
+                  <!-- Document attach slot — required to start Hybrid ingestion -->
+                  <div class="analyzer-doc-section">
+                    <div class="analyzer-doc-header">
+                      <span class="analyzer-doc-title">📄 업무 문서 첨부</span>
+                      <span class="analyzer-doc-hint">분석된 코드와 매핑할 업무 문서(PDF/TXT/MD)를 업로드하세요. 문서가 없으면 분석을 시작할 수 없습니다.</span>
+                    </div>
+                    <div
+                      class="dropzone dropzone--compact"
+                      :class="{ 'is-active': dragActive, 'has-file': analyzerDocFile }"
+                      @dragover="handleDragOver"
+                      @dragleave="handleDragLeave"
+                      @drop="handleAnalyzerDocDrop"
+                      @click="$refs.analyzerDocInput.click()"
+                    >
+                      <input
+                        ref="analyzerDocInput"
+                        type="file"
+                        accept=".txt,.pdf,.md"
+                        style="display: none"
+                        @change="handleAnalyzerDocSelect"
+                      />
+                      <div v-if="!analyzerDocFile" class="dropzone-content dropzone-content--compact">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                          <polyline points="17 8 12 3 7 8"></polyline>
+                          <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <p class="dropzone-text">문서 드래그 또는 클릭하여 선택</p>
+                      </div>
+                      <div v-else class="file-preview">
+                        <div class="file-icon">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                          </svg>
+                        </div>
+                        <div class="file-info">
+                          <span class="file-name">{{ analyzerDocFile.name }}</span>
+                          <span class="file-size">{{ (analyzerDocFile.size / 1024).toFixed(1) }} KB</span>
+                        </div>
+                        <button class="file-remove" @click.stop="removeAnalyzerDocFile">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1821,15 +1909,6 @@ function useSample() {
           <div v-if="!showClearConfirm" class="modal-footer">
             <button class="btn btn--secondary" @click="closeModal">
               취소
-            </button>
-            <button
-              v-if="hybridIngestEnabled && (inputMode === 'file' || inputMode === 'text')"
-              class="btn btn--secondary"
-              :disabled="!canSubmit || isUploading || isLoadingPageContent"
-              @click="startHybridIngestion"
-              title="Hybrid ingestion (Document → BPM-first) 테스트 실행"
-            >
-              🧪 테스트 (Hybrid)
             </button>
             <button
               class="btn btn--primary"
@@ -3381,6 +3460,49 @@ function useSample() {
   border: 2px dashed var(--border-color);
   border-radius: var(--radius-lg);
   text-align: center;
+}
+
+.analyzer-doc-section {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.analyzer-doc-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.analyzer-doc-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.analyzer-doc-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.dropzone--compact {
+  padding: var(--spacing-md);
+  min-height: 80px;
+}
+
+.dropzone-content--compact {
+  flex-direction: row;
+  gap: var(--spacing-sm);
+  padding: 0;
+}
+
+.dropzone-content--compact .dropzone-text {
+  margin: 0;
+  font-size: 0.85rem;
 }
 
 .analyzer-empty-icon {

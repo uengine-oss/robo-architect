@@ -202,11 +202,32 @@ export const useBpmnStore = defineStore('bpmn', () => {
   // Currently running SSE re-retrieval (🔄 재탐색). Navigator reads this to
   // show a spinner/badge on the task being explored. null = idle.
   const activeExploringTaskId = ref(null)
+  // Tracks the wall-clock when a task acquired the spinner. Used to enforce a
+  // minimum visual duration so very fast tasks (no Step-2 candidates → ~50ms
+  // through the agent) don't flash invisibly during process-batch explore.
+  let _activeExploringSetAt = 0
+  const _MIN_SPINNER_MS = 350
+
   function setActiveExploringTaskId(taskId) {
     activeExploringTaskId.value = taskId || null
+    _activeExploringSetAt = Date.now()
   }
   function clearActiveExploringTaskId() {
-    activeExploringTaskId.value = null
+    const elapsed = Date.now() - _activeExploringSetAt
+    if (elapsed >= _MIN_SPINNER_MS) {
+      activeExploringTaskId.value = null
+    } else {
+      // Defer clear so the spinner is visible for at least _MIN_SPINNER_MS.
+      // If a new task starts in between (sequential queue advances), the
+      // setter overwrites and the deferred clear is harmless (it'll see a
+      // mismatched id and bail out).
+      const tid = activeExploringTaskId.value
+      setTimeout(() => {
+        if (activeExploringTaskId.value === tid) {
+          activeExploringTaskId.value = null
+        }
+      }, _MIN_SPINNER_MS - elapsed)
+    }
   }
 
   // §8.7 — cross-process arbitration highlight. During Step 4 the Navigator
@@ -240,6 +261,38 @@ export const useBpmnStore = defineStore('bpmn', () => {
     ]
   }
 
+  // Rejected BL candidates per task — populated from AgentFinalMatches.rejects
+  // (both batch ingestion and 🔄 SSE re-retrieval). Inspector renders a
+  // "거부된 후보" panel that lets the user manually accept a close-call rule.
+  // Shape: { [taskId]: [{rule_id, rationale, evidence_refs}] }
+  const rejectedRulesByTask = ref({})
+  function setRejectedRulesForTask(taskId, rejects) {
+    if (!taskId) return
+    const list = Array.isArray(rejects) ? rejects : []
+    rejectedRulesByTask.value = {
+      ...rejectedRulesByTask.value,
+      [taskId]: list,
+    }
+  }
+  function clearRejectedRulesForTask(taskId) {
+    if (!taskId) return
+    if (!(taskId in rejectedRulesByTask.value)) return
+    const next = { ...rejectedRulesByTask.value }
+    delete next[taskId]
+    rejectedRulesByTask.value = next
+  }
+  /** Remove one rejected entry once user manually promotes it to an accept. */
+  function consumeRejectedRule(taskId, ruleId) {
+    const cur = rejectedRulesByTask.value[taskId]
+    if (!Array.isArray(cur)) return
+    const next = cur.filter(r => r.rule_id !== ruleId)
+    if (next.length === cur.length) return
+    rejectedRulesByTask.value = {
+      ...rejectedRulesByTask.value,
+      [taskId]: next,
+    }
+  }
+
   // --- Agent Reasoning SSE lifecycle (§2.C) ---
   // Managed here (not inside HybridTaskInspector) so closing the panel doesn't
   // abort a running re-retrieval. Backend's `asyncio.create_task(runner_task)`
@@ -249,7 +302,44 @@ export const useBpmnStore = defineStore('bpmn', () => {
   const agentState = ref('idle')      // 'idle' | 'running' | 'done' | 'cached' | 'error'
   const agentError = ref(null)
   const agentTaskId = ref(null)       // which task the stream is for
+  const exploringProcessId = ref(null) // which process is being batch-explored
   let _agentSource = null
+
+  // True iff any explore op (single task or process batch) is in flight.
+  // UI disables explore/rerun buttons against this so concurrent triggers
+  // don't silently cancel the previous SSE via _agentSource reassignment.
+  const isExploring = computed(() => agentState.value === 'running')
+
+  // Toast for arbitration moves — single ref, auto-dismisses after 4s.
+  // Mirrors eventModeling.store.js pattern. Rendered by BpmnPanel.vue.
+  const toast = ref(null)              // { message, type: 'info'|'warn', id }
+  let _toastTimer = null
+  function showToast(message, type = 'info') {
+    clearTimeout(_toastTimer)
+    toast.value = { message, type, id: Date.now() }
+    _toastTimer = setTimeout(() => { toast.value = null }, 4000)
+  }
+
+  // Tasks whose rule is being yanked by arbitration — Inspector strikes through
+  // those rule cards briefly before they vanish on rehydrate. Keyed
+  // `${taskId}::${ruleId}` so multiple concurrent removals can coexist.
+  const removingRuleKeys = ref(new Set())
+  function markRuleRemoving(taskId, ruleId) {
+    const key = `${taskId}::${ruleId}`
+    const next = new Set(removingRuleKeys.value)
+    next.add(key)
+    removingRuleKeys.value = next
+    // Auto-clear after the strikethrough animation duration so re-entries
+    // (same rule arbitrated in a later op) get a fresh strike.
+    setTimeout(() => {
+      const cur = new Set(removingRuleKeys.value)
+      cur.delete(key)
+      removingRuleKeys.value = cur
+    }, 1500)
+  }
+  function isRuleRemoving(taskId, ruleId) {
+    return removingRuleKeys.value.has(`${taskId}::${ruleId}`)
+  }
 
   function closeAgentStream() {
     if (_agentSource) {
@@ -257,9 +347,139 @@ export const useBpmnStore = defineStore('bpmn', () => {
       _agentSource = null
     }
     clearActiveExploringTaskId()
+    exploringProcessId.value = null
   }
 
-  function startAgentStream(sessionId, taskId) {
+  // Shared SSE event handler used by both single-task and per-process explore.
+  // The two streams emit the same event names from the same agent code path.
+  function _wireAgentSseEvents(source, { onPersisted } = {}) {
+    source.addEventListener('agent', (e) => {
+      try {
+        const payload = JSON.parse(e.data)
+        agentEvents.value = [...agentEvents.value, payload]
+        const t = payload.type
+
+        if (t === 'AgentDone') agentState.value = 'done'
+        if (t === 'AgentCacheHit' && payload.task_id) {
+          // §11 cache path: backend short-circuited (no LLM). Spinner off, no rehydrate.
+          if (activeExploringTaskId.value === payload.task_id) clearActiveExploringTaskId()
+          // Brief toast only for single-task explore — process batch's end
+          // toast already summarizes cache hits.
+          if (!exploringProcessId.value) {
+            const tname = payload.task_name || payload.task_id
+            showToast(`💾 "${tname}" 이미 탐색됨 — 캐시 결과 표시 (재탐색은 🔄)`, 'info')
+          }
+        }
+        if (t === 'TaskExploreStart' && payload.task_id) {
+          // Lights spinner the moment the task acquires its turn in the
+          // sequential queue — even if the task finishes in <100ms (no
+          // candidates after Step 2 filter), the FE sees who's "up next".
+          setActiveExploringTaskId(payload.task_id)
+        }
+        if (t === 'AgentStepBlSearch' && payload.task_id) {
+          setActiveExploringTaskId(payload.task_id)
+        }
+        if (t === 'AgentFinalMatches' && payload.task_id) {
+          if (Array.isArray(payload.rejects)) {
+            setRejectedRulesForTask(payload.task_id, payload.rejects)
+          }
+        }
+        if (t === 'AgentPersisted') {
+          // Single-task explore: rehydrate immediately so Inspector/Navigator
+          // reflect the new mappings.
+          // Process-batch explore: SKIP per-task rehydrate — defer to
+          // ProcessExploreEnd. Two reasons:
+          //   1. Snapshot fetch reorders processes by `process_index` each time;
+          //      mid-flight reorder feels wrong if user is watching the cascade.
+          //   2. N+1 snapshot fetches for an 11-task batch is wasteful.
+          if (!exploringProcessId.value) {
+            rehydrateHybrid().catch(() => {})
+          }
+          if (activeExploringTaskId.value === payload.task_id) clearActiveExploringTaskId()
+          if (onPersisted) onPersisted(payload)
+        }
+        if (t === 'AgentError') {
+          agentState.value = 'error'
+          agentError.value = payload.error
+          clearActiveExploringTaskId()
+        }
+
+        // Process-batch lifecycle events
+        if (t === 'ProcessExploreStart') {
+          agentState.value = 'running'
+          if (payload.process_id) exploringProcessId.value = payload.process_id
+        }
+        if (t === 'ProcessExploreEnd') {
+          // Single rehydrate at the end of the batch — Navigator + Inspector
+          // reflect all task mappings together (no mid-flight reordering).
+          const procName = (hybridProcesses.value.find(p => p.id === exploringProcessId.value)?.name) || ''
+          const explored = payload.explored ?? 0
+          const cached = payload.cached ?? 0
+          const errors = payload.errors ?? 0
+          const totalMappings = payload.total_mappings ?? 0
+          const totalTasks = explored + cached + errors
+          agentState.value = 'done'
+          exploringProcessId.value = null
+          rehydrateHybrid().catch(() => {})
+          // Toast wording — explicitly distinguish "tasks explored" from
+          // "rule mappings created". Earlier wording "매핑 5건" was ambiguous;
+          // users read it as 5 rule mappings when it actually meant 5 tasks.
+          const parts = [`✅ "${procName}" 탐색 완료`]
+          parts.push(`Task ${totalTasks}개 처리 (탐색 ${explored} · 캐시 ${cached}${errors ? ` · 오류 ${errors}` : ''})`)
+          parts.push(`Rule 매핑 총 ${totalMappings}건`)
+          showToast(parts.join('\n'), errors > 0 ? 'warn' : 'info')
+        }
+
+        // Post-explore arbitration (intra+cross process conflict resolution)
+        if (t === 'ArbitrationStart') {
+          const tids = (payload.contested_claims || [])
+            .flatMap(c => c.task_ids || (c.task_id ? [c.task_id] : []))
+          setArbitratingTaskIds(tids)
+        }
+        if (t === 'ArbitrationDecision') {
+          if (Array.isArray(payload.losing_task_ids) && payload.rule_id) {
+            // Build human-readable toast — resolve task + rule names once.
+            const taskById = new Map(hybridTasks.value.map(x => [x.id, x.name]))
+            const ruleById = new Map(hybridRules.value.map(x => [x.id, x.title || x.id]))
+            const ruleLabel = ruleById.get(payload.rule_id) || payload.rule_id
+            const losers = payload.losing_task_ids.map(tid => taskById.get(tid) || tid)
+            const winnerName = payload.winning_task_id
+              ? (taskById.get(payload.winning_task_id) || payload.winning_task_id)
+              : null
+
+            // Mark losing rule cards for strikethrough BEFORE the optimistic remove,
+            // so the Inspector can show "삭제 중..." styling for ~1.5s.
+            for (const tid of payload.losing_task_ids) {
+              markRuleRemoving(tid, payload.rule_id)
+            }
+            // Defer the actual store removal so the strikethrough is visible.
+            setTimeout(() => {
+              for (const tid of payload.losing_task_ids) {
+                removeRuleFromTask(tid, payload.rule_id)
+              }
+            }, 800)
+
+            // Toast: "rule X 이 task A → B 로 이동" or "rule X 이 task A 에서 제거됨"
+            const msg = payload.rejected
+              ? `🛑 rule "${ruleLabel}" 가 cross-cutting utility 로 판정 — ${losers.join(', ')} 에서 제거됨`
+              : winnerName
+                ? `⚖️ rule "${ruleLabel}" 가 ${losers.join(', ')} → ${winnerName} 으로 이동`
+                : `⚖️ rule "${ruleLabel}" 매핑 정정`
+            showToast(msg, payload.rejected ? 'warn' : 'info')
+          }
+        }
+        if (t === 'ArbitrationEnd') {
+          clearArbitrating()
+        }
+      } catch { /* ignore malformed */ }
+    })
+    source.addEventListener('error', () => {
+      if (agentState.value === 'running') agentState.value = 'error'
+      closeAgentStream()
+    })
+  }
+
+  function startAgentStream(sessionId, taskId, { force = false } = {}) {
     if (!sessionId || !taskId) return
     closeAgentStream()
     agentEvents.value = []
@@ -267,28 +487,25 @@ export const useBpmnStore = defineStore('bpmn', () => {
     agentState.value = 'running'
     agentTaskId.value = taskId
     setActiveExploringTaskId(taskId)
-    _agentSource = new EventSource(`/api/ingest/hybrid/task/${sessionId}/${taskId}/retrieve`)
-    _agentSource.addEventListener('agent', (e) => {
-      try {
-        const payload = JSON.parse(e.data)
-        agentEvents.value = [...agentEvents.value, payload]
-        if (payload.type === 'AgentDone') agentState.value = 'done'
-        if (payload.type === 'AgentPersisted') {
-          // Refresh snapshot so the newly saved mappings appear in the UI.
-          rehydrateHybrid().catch(() => {})
-          clearActiveExploringTaskId()
-        }
-        if (payload.type === 'AgentError') {
-          agentState.value = 'error'
-          agentError.value = payload.error
-          clearActiveExploringTaskId()
-        }
-      } catch { /* ignore malformed */ }
-    })
-    _agentSource.addEventListener('error', () => {
-      if (agentState.value === 'running') agentState.value = 'error'
-      closeAgentStream()
-    })
+    const url = `/api/ingest/hybrid/task/${sessionId}/${taskId}/retrieve?force=${force ? 'true' : 'false'}`
+    _agentSource = new EventSource(url)
+    _wireAgentSseEvents(_agentSource)
+  }
+
+  // Process-batch explore — Navigator "🔍 전체 탐색" button.
+  // Iterates every task in the process (parallel N=3 server-side), skips
+  // cache-hit tasks unless force=true. Same SSE event names as startAgentStream
+  // so the Navigator spinner cascade works without extra wiring.
+  function startProcessExplore(sessionId, processId, { force = false } = {}) {
+    if (!sessionId || !processId) return
+    closeAgentStream()
+    agentEvents.value = []
+    agentError.value = null
+    agentState.value = 'running'
+    agentTaskId.value = null
+    const url = `/api/ingest/hybrid/process/${sessionId}/${processId}/explore?force=${force ? 'true' : 'false'}`
+    _agentSource = new EventSource(url)
+    _wireAgentSseEvents(_agentSource)
   }
 
   function markAgentCached(taskId) {
@@ -296,6 +513,15 @@ export const useBpmnStore = defineStore('bpmn', () => {
     // display state without starting a stream.
     agentTaskId.value = taskId
     agentState.value = 'cached'
+    agentEvents.value = []
+    agentError.value = null
+  }
+
+  function resetAgentState(taskId) {
+    // Inspector opens a never-explored task — show idle state so the
+    // "🔍 탐색하기" CTA renders.
+    agentTaskId.value = taskId
+    agentState.value = 'idle'
     agentEvents.value = []
     agentError.value = null
   }
@@ -821,13 +1047,24 @@ export const useBpmnStore = defineStore('bpmn', () => {
     setArbitratingTaskIds,
     clearArbitrating,
     removeRuleFromTask,
+    rejectedRulesByTask,
+    setRejectedRulesForTask,
+    clearRejectedRulesForTask,
+    consumeRejectedRule,
     agentEvents,
     agentState,
     agentError,
     agentTaskId,
     startAgentStream,
+    startProcessExplore,
+    exploringProcessId,
+    isExploring,
+    toast,
+    showToast,
+    isRuleRemoving,
     closeAgentStream,
     markAgentCached,
+    resetAgentState,
     beginHybrid,
     addHybridProcess,
     addHybridActor,

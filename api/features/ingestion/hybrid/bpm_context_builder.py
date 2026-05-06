@@ -175,7 +175,6 @@ def _format_task_context(
         "- role 은 위 Actor 그대로 사용 (없으면 'system').",
         "- displayName 은 한국어 (예: '입력값 검증 — 입력 파라미터 유효성').",
         "- ui_description 은 해당 기능의 최소 화면을 1문장으로 요약.",
-        "- source_bl 필드는 비워두세요 (hybrid 는 후처리로 채웁니다).",
         "- 코드 식별자(camelCase)를 그대로 노출하지 말고 도메인 용어로 풀어쓰세요.",
     ])
     return "\n".join(lines)

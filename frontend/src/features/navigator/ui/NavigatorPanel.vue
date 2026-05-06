@@ -46,6 +46,20 @@ function handleHybridProcessDragStart(event, proc) {
   }))
   event.dataTransfer.effectAllowed = 'copy'
 }
+function processHasExplored(proc) {
+  // True if any task in this process already has REALIZED_BY mappings.
+  // Used to switch the button between "🔍 전체 탐색" (first-time, force=false)
+  // and "🔄 전체 재탐색" (re-run, force=true so cached tasks are also re-explored).
+  return (proc?.tasks || []).some(t => (t.rules || []).length > 0)
+}
+
+function exploreProcess(proc) {
+  if (!bpmnStore.hybridSessionId || !proc?.id) return
+  // Match per-task button semantics: re-explore overrides cache.
+  const force = processHasExplored(proc)
+  bpmnStore.startProcessExplore(bpmnStore.hybridSessionId, proc.id, { force })
+}
+
 function handleHybridProcessDblClick(proc) {
   bpmnStore.selectHybridProcess(proc.id)
 }
@@ -330,6 +344,25 @@ function handleProcessDragStart(event, proc) {
                   title="현재 캔버스에 표시 중"
                 >●</span>
                 <span class="hybrid-process-item__count">T {{ proc.tasks.length }}</span>
+                <button
+                  class="hybrid-process-item__explore"
+                  :class="{ 'is-running': bpmnStore.exploringProcessId === proc.id }"
+                  :disabled="bpmnStore.isExploring"
+                  :title="
+                    bpmnStore.exploringProcessId === proc.id
+                      ? '이 프로세스 탐색 진행 중'
+                      : bpmnStore.isExploring
+                        ? '다른 탐색이 진행 중 — 완료 후 재시도'
+                        : processHasExplored(proc)
+                          ? `${proc.name} 의 모든 Task 를 재탐색 (기존 매핑 교체)`
+                          : `${proc.name} 의 모든 Task 를 일괄 탐색`
+                  "
+                  @click.stop="exploreProcess(proc)"
+                >
+                  <template v-if="bpmnStore.exploringProcessId === proc.id">⏳ 탐색 중</template>
+                  <template v-else-if="processHasExplored(proc)">🔄 전체 재탐색</template>
+                  <template v-else>🔍 전체 탐색</template>
+                </button>
               </div>
               <div v-if="expandedHybridProcesses.has(proc.id)" class="hybrid-process-item__body">
                 <!-- Domain keywords — internal retrieval metadata, DEBUG ONLY -->
@@ -1230,6 +1263,34 @@ function handleProcessDragStart(event, proc) {
   border-radius: 8px;
   background: rgba(176, 120, 240, 0.18);
   color: #c4a5ee;
+}
+.hybrid-process-item__explore {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hybrid-process-item__explore:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.3);
+  border-color: rgba(16, 185, 129, 0.6);
+}
+.hybrid-process-item__explore:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.hybrid-process-item__explore.is-running {
+  opacity: 1;
+  background: rgba(255, 193, 7, 0.18);
+  color: #ffc107;
+  border-color: rgba(255, 193, 7, 0.5);
+  cursor: progress;
 }
 .hybrid-process-item__body {
   padding: 4px 4px 6px 14px;

@@ -347,9 +347,8 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 bc_us_ids = []
             bc_us_ids = [us_id for us_id in bc_us_ids if us_id]  # None이나 빈 문자열 제거
             
-            _bl_map = getattr(ctx, 'bl_by_user_story', None)
             stories_context = "\n".join(
-                [format_us_text(us, bl_map=_bl_map, include_benefit=False) for us in ctx.user_stories if us.id in bc_us_ids]
+                [format_us_text(us, include_benefit=False) for us in ctx.user_stories if us.id in bc_us_ids]
             )
 
             # Aggregate에 속한 Event 목록 (SCOPE_EVENT 또는 BC의 HAS_EVENT)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-# Substrings on function / BusinessLogic.title — case-insensitive match.
+# Substrings on function / Rule.statement — case-insensitive match.
 INFRA_KEYWORDS: tuple[str, ...] = (
     # EJB lifecycle
     "ejbcreate", "ejbremove", "ejbactivate", "ejbpassivate", "ejbstore", "ejbload",
@@ -37,7 +37,7 @@ def _norm(s: str | None) -> str:
 
 
 def is_infra(title: str | None, function_name: str | None = None) -> bool:
-    """True if the BusinessLogic entry is infrastructure / boilerplate, not a business rule."""
+    """True if the Rule statement / function pair is infrastructure / boilerplate, not a business rule."""
     hay = f"{_norm(title)} {_norm(function_name)}"
     if not hay.strip():
         return True  # nothing meaningful to keep

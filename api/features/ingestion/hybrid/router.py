@@ -44,19 +44,7 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     unassign_rule_from_task,
     update_rule_es_role_manual,
 )
-from api.features.ingestion.hybrid.contracts import (
-    ActivityRuleMapping,
-    BpmActor,
-    BpmProcess,
-    BpmTaskDTO,
-    RuleDTO,
-)
-from api.features.ingestion.hybrid.mapper.agentic_retriever import run_agentic_retrieval
-from api.features.ingestion.hybrid.mapper.rule_context import build_rule_contexts
-from api.features.ingestion.hybrid.ontology.neo4j_ops import (
-    save_mappings as _save_mappings,
-)
-from api.platform.neo4j import get_session as _get_session
+from typing import Any, Awaitable, Callable
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.ingestion_sessions import (
     add_event,
@@ -231,67 +219,15 @@ async def get_session_snapshot(session_id: str) -> dict[str, Any]:
     return fetch_session_snapshot(session_id)
 
 
-@router.get("/task/{session_id}/{task_id}/retrieve")
-async def task_agent_retrieval(session_id: str, task_id: str, request: Request):
-    """SSE — stream the agentic retrieval process for a single task.
+def _sse_runner(
+    work: "Callable[[Sink], Awaitable[Any]]",
+) -> tuple[asyncio.Queue, asyncio.Task]:
+    """Wire an SSE event_queue to an async work function that takes a sink.
 
-    Emits AgentStart → AgentStepModuleSearch → AgentStepBlSearch →
-    AgentStepDecision → AgentFinalMatches so the frontend Inspector's
-    "Agent Reasoning" section can show the pipeline live (§2.C).
-
-    The inspector can either (a) subscribe when the user opens the panel
-    and show live progress, or (b) read cached rationale from the snapshot
-    (REALIZED_BY.rationale) if the session's Phase 3 already ran.
+    Drains until `__done__` is enqueued. Used by both single-task and
+    process-batch SSE endpoints so the streaming/heartbeat plumbing stays
+    in one place.
     """
-    snap = fetch_session_snapshot(session_id)
-    task_dict = next((t for t in snap.get("tasks", []) if t["id"] == task_id), None)
-    if not task_dict:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    process_dict = None
-    for p in snap.get("processes", []):
-        if task_id in (p.get("task_ids") or []):
-            process_dict = p
-            break
-    if not process_dict:
-        # Fallback: synthesize a minimal process so the agent still runs.
-        process_dict = {
-            "id": "proc_fallback",
-            "name": task_dict.get("name") or "Process",
-            "domain_keywords": [],
-            "task_ids": [task_id],
-            "actor_ids": task_dict.get("actor_ids", []),
-        }
-
-    process = BpmProcess(
-        id=process_dict["id"],
-        name=process_dict.get("name") or "",
-        domain_keywords=process_dict.get("domain_keywords") or [],
-        source_pdf_name=process_dict.get("source_pdf_name"),
-        session_id=session_id,
-        actor_ids=process_dict.get("actor_ids") or [],
-        task_ids=process_dict.get("task_ids") or [],
-    )
-    task = BpmTaskDTO(
-        id=task_dict["id"],
-        name=task_dict.get("name", ""),
-        description=task_dict.get("description"),
-        sequence_index=task_dict.get("sequence_index", 0),
-        actor_ids=task_dict.get("actor_ids", []),
-        source_page=task_dict.get("source_page"),
-        source_section=task_dict.get("source_section"),
-        process_id=process.id,
-    )
-    actor_id_set = set(task.actor_ids) | set(process.actor_ids)
-    actors = [
-        BpmActor(id=a["id"], name=a.get("name", ""), description=a.get("description"))
-        for a in snap.get("actors", [])
-        if a["id"] in actor_id_set
-    ]
-    rules = [RuleDTO(**{k: v for k, v in r.items() if k != "_hidden"})
-             for r in snap.get("rules", [])]
-    contexts = build_rule_contexts(rules)
-
     event_queue: asyncio.Queue = asyncio.Queue()
 
     async def sink(ev: dict) -> None:
@@ -299,56 +235,18 @@ async def task_agent_retrieval(session_id: str, task_id: str, request: Request):
 
     async def runner_task():
         try:
-            # Single-task re-retrieval: the parent process already passed the
-            # batch-time process gate; recomputing the gate from this one
-            # task's module score would falsely reject legitimate tasks whose
-            # module score sits below 0.55 (e.g. "입력값 검증" scored 0.53
-            # while the process max was 0.60). Skip the gate here.
-            retrieval = await run_agentic_retrieval(
-                process=process, tasks=[task], actors=actors,
-                rules=rules, contexts=contexts, event_sink=sink,
-                skip_process_gate=True,
-            )
-            new_mappings = [
-                ActivityRuleMapping(
-                    task_id=m.task_id, rule_id=m.rule_id,
-                    score=float(m.score), method="agentic", reviewed=False,
-                    rationale=m.rationale,
-                    evidence_refs=list(m.evidence_refs or []),
-                    evidence_path=list(m.evidence_path or []),
-                    agent_verdict="accept",
-                )
-                for m in retrieval.accepted
-            ]
-            # Replace existing mappings atomically (delete + insert). If the
-            # re-retrieval returned empty, it's a real "no matches" result
-            # and we clear the old mappings — but only inside the same
-            # transaction so a transient failure can't wipe the DB.
-            with _get_session() as s:
-                s.run(
-                    "MATCH (t:BpmTask {id: $tid, session_id: $sid})"
-                    "-[rel:REALIZED_BY]->() DELETE rel",
-                    tid=task_id, sid=session_id,
-                )
-                s.run(
-                    "MATCH (am:ActivityMapping {session_id: $sid, task_id: $tid}) "
-                    "DETACH DELETE am",
-                    sid=session_id, tid=task_id,
-                )
-            if new_mappings:
-                _save_mappings(session_id, new_mappings)
-            await event_queue.put({
-                "type": "AgentPersisted",
-                "task_id": task_id,
-                "mapping_count": len(new_mappings),
-            })
+            await work(sink)
         except Exception as e:
             await event_queue.put({"type": "AgentError", "error": str(e)})
         finally:
             await event_queue.put({"type": "__done__"})
 
-    asyncio.create_task(runner_task())
+    task = asyncio.create_task(runner_task())
+    return event_queue, task
 
+
+def _sse_response(event_queue: asyncio.Queue, request: Request) -> EventSourceResponse:
+    """Stream `event_queue` until `__done__` arrives or the client disconnects."""
     async def event_gen():
         while True:
             if await request.is_disconnected():
@@ -356,7 +254,6 @@ async def task_agent_retrieval(session_id: str, task_id: str, request: Request):
             try:
                 ev = await asyncio.wait_for(event_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
-                # Heartbeat so the client knows we're alive.
                 yield {"event": "ping", "data": "{}"}
                 continue
             if ev.get("type") == "__done__":
@@ -365,6 +262,66 @@ async def task_agent_retrieval(session_id: str, task_id: str, request: Request):
             yield {"event": "agent", "data": _json.dumps(ev, ensure_ascii=False)}
 
     return EventSourceResponse(event_gen())
+
+
+@router.get("/task/{session_id}/{task_id}/retrieve")
+async def task_agent_retrieval(
+    session_id: str, task_id: str, request: Request,
+    force: bool = False,
+):
+    """SSE — explore (or replay) a single task's agentic retrieval.
+
+    `force=false` (default): if REALIZED_BY mappings already exist for this
+    task they are returned via an `AgentCacheHit` event without an LLM call.
+    `force=true` (passed by Inspector's 🔄 button): re-run the agent and
+    replace existing mappings.
+
+    After mappings are saved, post-explore arbitration runs to resolve any
+    new conflicts with already-accepted rules in other (process, task) pairs.
+    Cheap when there's nothing to arbitrate.
+    """
+    from api.features.ingestion.hybrid.explore_service import (
+        explore_task as _explore_task,
+        post_explore_arbitration as _post_arb,
+    )
+
+    async def work(sink):
+        result = await _explore_task(session_id, task_id, force=force, sink=sink)
+        # Don't run arbitration on a pure cache hit — nothing changed.
+        if not result.get("cached"):
+            await _post_arb(session_id, sink=sink)
+
+    queue, _ = _sse_runner(work)
+    return _sse_response(queue, request)
+
+
+@router.get("/process/{session_id}/{process_id}/explore")
+async def process_explore(
+    session_id: str, process_id: str, request: Request,
+    force: bool = False,
+):
+    """SSE — explore every task in a process (parallel, bounded concurrency).
+
+    `force=false`: tasks that already have REALIZED_BY mappings are skipped
+    via cache hits.
+    `force=true`: every task is re-explored and existing mappings replaced.
+
+    Per-task SSE events use the same names as `/task/.../retrieve` so the
+    frontend store handles them with the same code path.
+    """
+    from api.features.ingestion.hybrid.explore_service import (
+        explore_process as _explore_process,
+        post_explore_arbitration as _post_arb,
+    )
+
+    async def work(sink):
+        result = await _explore_process(session_id, process_id, force=force, sink=sink)
+        if result.get("explored", 0) > 0:
+            # Only run arbitration when something actually changed.
+            await _post_arb(session_id, sink=sink)
+
+    queue, _ = _sse_runner(work)
+    return _sse_response(queue, request)
 
 
 @router.get("/debug/{session_id}")

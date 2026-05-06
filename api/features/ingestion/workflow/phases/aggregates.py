@@ -68,13 +68,12 @@ def _bc_events_prompt_block(ctx: IngestionWorkflowContext, us_ids: set[str]) -> 
 
 
 def _user_story_breakdown_lines(ctx: IngestionWorkflowContext, us_ids: set[str]) -> str:
-    bl_map = getattr(ctx, 'bl_by_user_story', None)
     lines: list[str] = []
     for us in ctx.user_stories or []:
         uid = getattr(us, "id", "") or ""
         if uid not in us_ids:
             continue
-        lines.append(format_us_text(us, bl_map=bl_map, bullet_prefix="- "))
+        lines.append(format_us_text(us, bullet_prefix="- "))
     if not lines:
         return "User Stories: (none assigned)"
     return "\n".join(lines)
@@ -415,22 +414,7 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         bc_events_list = _bc_events_as_list(ctx, us_id_set)
         bc_events_text = _events_to_prompt_lines(bc_events_list)
 
-        # BC의 UserStory들에서 source_unit_id 수집 → 테이블 스키마 역추적
         schema_context = ""
-        if ctx.source_type == "analyzer_graph":
-            unit_ids = []
-            for us in (ctx.user_stories or []):
-                uid = getattr(us, "id", "") or ""
-                if uid in us_id_set:
-                    src = getattr(us, "source_unit_id", None)
-                    if src:
-                        unit_ids.append(src)
-            if unit_ids:
-                try:
-                    from api.features.ingestion.analyzer_graph.graph_context_builder import fetch_table_schemas_for_units
-                    schema_context = fetch_table_schemas_for_units(unit_ids)
-                except Exception:
-                    pass
 
         # Collect existing aggregates from previously processed BCs for reference validation
         existing_aggregates_text = ""

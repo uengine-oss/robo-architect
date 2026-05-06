@@ -47,16 +47,29 @@ from api.features.ingestion.hybrid.mapper.module_retriever import (
 )
 
 
-# Per-BL inclusion floor for Step 2 (§B in docs). Mirrors MIN_MODULE_INCLUSION
-# on the module side. A rule whose embedding cosine to the task query is below
-# this threshold is treated as "obviously unrelated" and cut before the
-# top-k rank.
+# Per-BL inclusion floor for Step 2.
 #
-# Why 0.35 (and not higher): rule.title boost narrows the gap between
-# semantically adjacent rules, so legitimate mappings can score as low as ~0.40.
-# 0.35 drops only the long tail (pure utility rules, tooling chatter).
-# Small test data (52 rules) sees ~0 impact — floor activates at scale.
-MIN_BL_INCLUSION = 0.35
+# Calibration (2026-04-23): with the lean rule_blob (title + GWT only), the
+# cosine distribution against task queries has clear separation:
+#   ≥ 0.50: high-confidence semantic match (typically validator-accepts)
+#   0.45 ~ 0.50: near-miss / close call (validator may accept, sometimes reject)
+#   < 0.45: stage- or domain-mismatch — validator essentially always rejects
+# Floor at 0.45 keeps near-misses (so user can review them in the rejected
+# panel) while excluding the long tail of obvious mismatches that previously
+# inflated reject lists to 40+ entries per task.
+MIN_BL_INCLUSION = 0.45
+
+# Reject surfacing thresholds — emit only true near-miss rejects to the user.
+# Per §9.1 calibration the cosine bands are:
+#   ≥ 0.50      — validator usually accepts (already mapped)
+#   0.45 ~ 0.50 — near-miss / close call (the band worth user review)
+#   < 0.45      — already cut by MIN_BL_INCLUSION at Step 2
+# Floor matches `MIN_BL_INCLUSION` (0.45) so the entire near-miss band is
+# eligible to surface. `REJECT_VISIBLE_CAP` is the actual attention-budget
+# control — only the top-N by score per task make it through.
+REJECT_NEAR_MISS_FLOOR = 0.45
+REJECT_VISIBLE_CAP = 3
+
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -138,12 +151,21 @@ def _candidates_for_task(
         parts.append(f"[Actor: {actors}]")
     query = " ".join(p for p in parts if p)
 
-    # rule.title is the tightest semantic signal — one sentence describing
-    # the business rule's intent. Putting it first (and giving it its own
-    # line) makes the embedding lean on this summary rather than the long,
-    # keyword-dense function_summary that tends to dominate by sheer token
-    # count. Without this, e.g. a000_input_validation rules lose to
-    # b000_main_proc rules whenever the process query contains "인증".
+    # LEAN BLOB — title + GWT only.
+    # Why drop function_summary / parent_module / callers from the embedding:
+    # all rules in a single legacy module share the SAME function_summary
+    # vocabulary ("자동납부", "인증", "결과반영" …). When we include it, every
+    # cosine collapses into a tight 0.45~0.55 band — even rules that are
+    # clearly stage-mismatched (an INSERT rule vs a 조회 task) score above
+    # the 0.35 floor. Validator then has to LLM-reject 40+ obvious mismatches
+    # per task, ballooning user-visible reject lists and validator cost.
+    #
+    # Measured (입력값 검증 task on test data, 52 rules):
+    #   blob WITH summary:  43 rules ≥ 0.45  (pool too wide, mostly noise)
+    #   blob lean (this):   15 rules ≥ 0.45  (real near-misses)
+    # function_summary is still passed to the validator separately (see
+    # agent_validator._format_candidate_for_prompt) so accept-side accuracy
+    # is unaffected — only the embedding ranking gets sharper.
     rule_by_id = {r.id: r for r in rules}
 
     def _rule_blob(ctx: RuleContext) -> str:
@@ -151,17 +173,9 @@ def _candidates_for_task(
         rule = rule_by_id.get(ctx.rule_id)
         if rule and rule.title:
             bits.append(f"규칙: {rule.title}")
-        if ctx.context_cluster:
-            bits.append(f"[업무범주: {ctx.context_cluster}]")
-        if ctx.parent_module:
-            bits.append(f"[모듈: {ctx.parent_module}]")
-        if ctx.callers:
-            bits.append(f"[호출자: {', '.join(ctx.callers[:3])}]")
         bits.append(f"GIVEN: {ctx.given}")
         bits.append(f"WHEN: {ctx.when}")
         bits.append(f"THEN: {ctx.then}")
-        if ctx.function_summary:
-            bits.append(f"Summary: {ctx.function_summary}")
         return "\n".join(bits)
 
     try:
@@ -170,7 +184,8 @@ def _candidates_for_task(
     except Exception:
         # No embeddings available — degrade to "return everything in scope"
         # and let the LLM validator do all the filtering.
-        return [CandidateBL(rule=r, context=ctx) for r, ctx in in_scope][: top_k]
+        return [CandidateBL(rule=r, context=ctx, score=0.0)
+                for r, ctx in in_scope][: top_k]
 
     scored = [
         (idx, cosine(qv, rv)) for idx, rv in enumerate(rule_vecs) if rv
@@ -179,10 +194,15 @@ def _candidates_for_task(
     # At scale this prevents long-tail noise from consuming validator tokens.
     scored = [(i, s) for i, s in scored if s >= MIN_BL_INCLUSION]
     scored.sort(key=lambda x: x[1], reverse=True)
-    picked_idx = {i for i, _ in scored[: max(1, top_k)]}
+    picked = scored[: max(1, top_k)]
+    score_by_idx = {i: s for i, s in picked}
     return [
-        CandidateBL(rule=in_scope[i][0], context=in_scope[i][1])
-        for i in range(len(in_scope)) if i in picked_idx
+        CandidateBL(
+            rule=in_scope[i][0],
+            context=in_scope[i][1],
+            score=float(score_by_idx[i]),
+        )
+        for i, _ in picked
     ]
 
 
@@ -204,15 +224,11 @@ async def run_agentic_retrieval(
     # 도 gate 에 걸림 — 그런 경우는 호출자가 `skip_process_gate=True` 로 우회.
     min_module_score: float = MIN_MODULE_CONFIDENCE,
     skip_process_gate: bool = False,
-    # 후보를 넉넉히 보여주어 validator 가 모든 정당한 매핑을 살릴 수 있게 함.
-    # 필터는 artificial cap 이 아니라 validator 의 semantic 판단이 담당.
-    # 실측:
-    #  - 15: 입력 검증처럼 vocabulary 가 얇은 task 는 process-keyword bias 에
-    #        밀려 해당 BL 이 한 개도 안 들어오는 케이스가 반복적으로 재현됨.
-    #  - 40: title boost 를 켜도 1 개 task 에서 a000 rule 5/11 만 통과.
-    #  - 50: 모듈당 평균 < 50 rule 인 실측 코드베이스에서 "사실상 무제한".
-    #        대형 모듈(>200 rule) 에서는 조정 필요.
-    bl_top_k: int = 50,
+    # 후보 cap — lean blob + 0.45 floor 적용 후 의미 있는 후보가 task 당
+    # 평균 10~15 개로 수렴 (실측). 20 으로 설정하면 lean 분포의 자연 상한을
+    # 살짝 넘게 두어 close-call 도 모두 들어옴. 대형 모듈(수백 BL)에서도
+    # validator LLM 입력이 안정적 (~5k tokens / call).
+    bl_top_k: int = 20,
     # 기본값은 "사실상 무제한" — 한 task 에 정당하게 5~10 개가 속하는 것이
     # 자연스러운 경우가 있음 (예: b000_main_proc 의 10 개 판정 분기).
     # 실제 limit 은 validator 가 의미 기준으로 판단. 아주 극단적 폭주 방지용 상한만 유지.
@@ -366,33 +382,61 @@ async def run_agentic_retrieval(
                 evidence_path=module_fqns,
             ))
 
+        # AgentFinalMatches now carries enough info that the runner can
+        # persist this single task's mappings IMMEDIATELY (per-task DB write
+        # + Navigator R-count update), without waiting for the whole process
+        # to finish. Rejected verdicts are filtered to true near-misses only
+        # (cognitive load reduction §10).
+        cand_score_by_rule = {c.rule.id: c.score for c in candidates}
+        # Surface only the closest-call rejects so the Inspector's "거부된 후보"
+        # panel stays small. Filter rules:
+        #   1. Step 2 cosine ≥ REJECT_NEAR_MISS_FLOOR (true near-miss territory)
+        #   2. Top REJECT_VISIBLE_CAP by score
+        # Anything below floor is an obvious-mismatch the validator confidently
+        # dropped — surfacing it adds no review value, only inbox clutter.
+        ranked_rejects = sorted(
+            (
+                {
+                    "rule_id": v.rule_id,
+                    "rationale": v.rationale,
+                    "evidence_refs": list(v.evidence_refs or []),
+                    "score": float(cand_score_by_rule.get(v.rule_id, 0.0)),
+                }
+                for v in verdicts if v.verdict != "accept"
+            ),
+            key=lambda x: x["score"],
+            reverse=True,
+        )
+        near_miss_rejects = [
+            r for r in ranked_rejects if r["score"] >= REJECT_NEAR_MISS_FLOOR
+        ][:REJECT_VISIBLE_CAP]
         await sink({
             "type": "AgentFinalMatches",
             "task_id": task.id,
+            "process_id": process.id,
             "rules": [
-                {"rule_id": m.rule_id, "score": m.score, "rationale": m.rationale}
+                {
+                    "rule_id": m.rule_id,
+                    "score": float(m.score),
+                    "rationale": m.rationale,
+                    "evidence_refs": list(m.evidence_refs or []),
+                    "evidence_path": list(m.evidence_path or []),
+                }
                 for m in accepted_this_task
             ],
+            "rejects": near_miss_rejects,
         })
         result.accepted.extend(accepted_this_task)
 
-    # --- Post-processing: cross-task dedup + per-task cap ---------------------
-    # A legacy function often spans multiple conceptual tasks; the LLM happily
-    # accepts the same rule on each task it touches. We force each rule to one
-    # primary task — the one where its embedding score is highest — so the
-    # navigator shows a clean 1-rule-to-1-task distribution. The audit trail
-    # (which tasks considered it) is preserved in the event stream.
-    by_rule: dict[str, AcceptedMapping] = {}
-    for m in result.accepted:
-        cur = by_rule.get(m.rule_id)
-        if cur is None or m.score > cur.score:
-            by_rule[m.rule_id] = m
-    deduped = list(by_rule.values())
-
-    # Per-task cap — avoid floods from orchestrator functions with many branches.
-    # Sort by score, keep top `per_task_cap` per task.
+    # --- Post-processing: per-task cap only ----------------------------------
+    # We intentionally do NOT cross-task dedup here anymore — same rule
+    # accepted by ≥2 tasks within one process now flows through the
+    # cross-process arbitrator (which already handles same-rule competing
+    # claims across any (process, task) pair). This lets the per-task UI
+    # show partial results immediately; arbitration corrects duplicates
+    # afterwards via DELETE events the runner forwards to the frontend.
     by_task: dict[str, list[AcceptedMapping]] = {}
-    for m in deduped:
+    for m in result.accepted:
         by_task.setdefault(m.task_id, []).append(m)
     final_accepted: list[AcceptedMapping] = []
     for tid, items in by_task.items():

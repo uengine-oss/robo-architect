@@ -92,10 +92,16 @@ class _ValidationResult(BaseModel):
 
 @dataclass
 class CandidateBL:
-    """Step 2 output entry — a rule + its analyzer-graph context."""
+    """Step 2 output entry — a rule + its analyzer-graph context.
+
+    `score` is the Step 2 cosine vs the task query. Stored here so that
+    rejected verdicts can be sorted by it in the Inspector — only the
+    closest near-misses are worth surfacing to the user.
+    """
 
     rule: RuleDTO
     context: RuleContext
+    score: float = 0.0
 
 
 # ---------------------------------------------------------------------------

@@ -50,15 +50,31 @@ function agentStepLabel(ev) {
   }
 }
 
-function rerunAgent() {
+function exploreTask() {
+  // First-time explore. force=false → backend uses cache if present.
   if (!task.value || !store.hybridSessionId) return
-  store.startAgentStream(store.hybridSessionId, task.value.id)
+  store.startAgentStream(store.hybridSessionId, task.value.id, { force: false })
 }
 
-// Panel open NEVER triggers LLM work automatically. Rule mapping happens
-// during ingestion (Phase 3); the panel only displays the cached result
-// (including tasks with 0 accepted rules — that's a valid cached "no match").
-// User must click "🔄 재탐색" to explicitly re-run.
+function rerunAgent() {
+  // Re-explore. force=true → backend replaces existing mappings.
+  if (!task.value || !store.hybridSessionId) return
+  store.startAgentStream(store.hybridSessionId, task.value.id, { force: true })
+}
+
+// Has this task been explored at all? Used to switch the panel between
+// "🔍 탐색하기" (no mappings yet) and the regular result + "🔄 재탐색" UI.
+const hasMappings = computed(() => (task.value?.rules || []).length > 0)
+
+// True only when the running explore op is for THIS task (vs. another task or
+// a process-batch covering other tasks). Drives the "탐색 중" label nuance.
+const thisTaskRunning = computed(() =>
+  store.agentState === 'running' && store.agentTaskId === task.value?.id,
+)
+
+// Panel open NEVER triggers LLM work automatically (§11). Per-task exploration
+// happens only when the user clicks "🔍 탐색하기" (first explore) or "🔄 재탐색"
+// (force re-run). The panel just shows current state.
 // IMPORTANT: panel close does NOT close the SSE — store keeps listening so
 // progress events keep flowing (Navigator spinner stays live) even after the
 // user dismisses the inspector. Aborting a re-retrieval would also lose the
@@ -67,9 +83,14 @@ watch(
   () => task.value?.id,
   (newTaskId) => {
     if (!newTaskId) return
-    // Only mark as cached if we're not actively streaming for this task.
-    if (store.agentTaskId !== newTaskId || store.agentState !== 'running') {
+    // Don't disturb a stream actively running on this task.
+    if (store.agentTaskId === newTaskId && store.agentState === 'running') return
+    // Has the task ever been explored? REALIZED_BY mappings = persisted cache.
+    // No mappings → 'idle' so the panel shows "🔍 탐색하기"; mappings present → 'cached'.
+    if (hasMappings.value) {
       store.markAgentCached(newTaskId)
+    } else {
+      store.resetAgentState(newTaskId)
     }
   },
   { immediate: true },
@@ -146,6 +167,35 @@ const functions = computed(() => task.value?.functions || [])
 const passages = computed(() => task.value?.document_passages || [])
 const conditions = computed(() => task.value?.conditions || [])
 
+// Rejected BL candidates for the current task — surfaced from
+// AgentFinalMatches.rejects via the store. The backend now caps emitted
+// rejects to a small near-miss set (REJECT_NEAR_MISS_FLOOR=0.50,
+// REJECT_VISIBLE_CAP=3 in agentic_retriever.py), so this list is already
+// short — no client-side capping or "더 보기" toggle needed.
+const rejectedExpanded = ref(false)
+const rejectedCandidates = computed(() => {
+  const tid = task.value?.id
+  if (!tid) return []
+  const rejects = store.rejectedRulesByTask?.[tid] || []
+  if (!rejects.length) return []
+  const ruleById = new Map(store.hybridRules.map(r => [r.id, r]))
+  const enriched = rejects.map(rj => ({
+    ...rj,
+    rule: ruleById.get(rj.rule_id) || { id: rj.rule_id, title: '(rule 정보 없음)' },
+  }))
+  enriched.sort((a, b) => (b.score || 0) - (a.score || 0))
+  return enriched
+})
+
+async function handleAcceptRejected(entry) {
+  const tid = task.value?.id
+  if (!tid || !entry?.rule?.id) return
+  const result = await store.assignRuleToTask(entry.rule.id, tid)
+  if (result?.ok) {
+    store.consumeRejectedRule(tid, entry.rule.id)
+  }
+}
+
 // Phase 2.6 internal role → Event Storming element label + sticky color.
 // 5-role taxonomy (2026-04-20): invariant + decision were merged into a single
 // `aggregate` role because both live inside the same Aggregate and the sub-split
@@ -174,14 +224,23 @@ function roleMeta(role) {
         <span class="hti-header__idx">{{ (task.sequence_index ?? 0) + 1 }}</span>
         <span class="hti-header__name" :title="task.name">{{ task.name }}</span>
         <button
-          v-if="agentState !== 'running'"
+          v-if="store.isExploring"
+          class="hti-rerun hti-rerun--running"
+          disabled
+          :title="thisTaskRunning ? '이 Task 탐색 중' : '다른 탐색이 진행 중 — 완료 후 재시도'"
+        ><span class="hti-rerun__dot"></span>{{ thisTaskRunning ? ' 탐색 중' : ' 다른 탐색 진행 중' }}</button>
+        <button
+          v-else-if="!hasMappings"
+          class="hti-explore"
+          title="이 Task 의 Rule 매핑을 Agent 가 탐색합니다"
+          @click.stop="exploreTask"
+        >🔍 탐색하기</button>
+        <button
+          v-else
           class="hti-rerun"
-          :title="agentState === 'cached' ? '재탐색 — 이 Task 에 한해 Agent 재실행' : 'Agent 탐색 시작'"
+          title="재탐색 — 이 Task 에 한해 Agent 재실행 (기존 매핑 교체)"
           @click.stop="rerunAgent"
         >🔄 재탐색</button>
-        <span v-else class="hti-rerun hti-rerun--running">
-          <span class="hti-rerun__dot"></span> 탐색 중
-        </span>
       </div>
       <button class="hti-close" @click="emit('close')" title="닫기">✕</button>
     </header>
@@ -216,15 +275,15 @@ function roleMeta(role) {
           <div v-if="agentState === 'cached' && !agentEvents.length" class="hti-agent__cached">
             <div class="hti-agent__cached-msg">
               <template v-if="rules.length">
-                이 Task 의 탐색은 ingestion 중 이미 완료되었습니다. 각 rule 아래 "근거"로 판정 이유가 표시됩니다. 헤더의 🔄 로 재실행 가능합니다.
+                이전 탐색 결과를 표시 중입니다. 각 rule 아래 "근거"로 판정 이유 확인. 헤더 🔄 로 재탐색.
               </template>
               <template v-else>
-                이 Task 에는 ingestion 중 Agent 가 매칭된 rule 을 찾지 못했습니다. 헤더의 🔄 로 재실행 가능합니다.
+                Agent 탐색 결과 매칭된 rule 이 없습니다 (정당한 0 매핑일 수 있음). 헤더 🔄 로 재탐색.
               </template>
             </div>
           </div>
           <div v-else-if="!agentEvents.length && agentState === 'idle'" class="hti-empty">
-            (대기 중)
+            아직 탐색되지 않음 — 헤더의 "🔍 탐색하기" 클릭
           </div>
           <div v-else-if="!agentEvents.length && agentState === 'running'" class="hti-agent__starting">
             에이전트가 탐색을 시작합니다…
@@ -331,7 +390,12 @@ function roleMeta(role) {
       <section class="hti-section">
         <div class="hti-label">⚖️ 비즈니스 규칙 (Given-When-Then)</div>
         <div v-if="rules.length" class="hti-stack">
-          <article v-for="r in rules" :key="r.id" class="hti-rule">
+          <article
+            v-for="r in rules"
+            :key="r.id"
+            class="hti-rule"
+            :class="{ 'hti-rule--removing': store.isRuleRemoving(task.id, r.id) }"
+          >
             <header v-if="r.source_function || r.es_role" class="hti-rule__head">
               <!-- Role badge: always visible. Dropdown to change it: debug only. -->
               <div v-if="roleMeta(r.es_role) && isDebug" class="hti-role-select-wrap">
@@ -413,6 +477,58 @@ function roleMeta(role) {
           </article>
         </div>
         <div v-else class="hti-empty">매핑된 규칙 없음</div>
+      </section>
+
+      <!-- 검토 가능한 후보 — Agent 가 이 Task 와 가장 근접하지만 reject 한 항목.
+           백엔드에서 cosine ≥ 0.50 + 최대 3개로 사전 필터되어 있어 client-side
+           cap이나 "더 보기"가 필요 없음. 0건이면 섹션 자체를 숨김. -->
+      <section v-if="rejectedCandidates.length" class="hti-section hti-rejects">
+        <header
+          class="hti-rejects__head"
+          :class="{ 'is-open': rejectedExpanded }"
+          @click="rejectedExpanded = !rejectedExpanded"
+          :title="rejectedExpanded ? '접기' : '근접 후보 펼치기'"
+        >
+          <span class="hti-rejects__chev" :class="{ 'is-open': rejectedExpanded }">▸</span>
+          <span class="hti-rejects__title">🔎 검토 가능한 후보</span>
+          <span class="hti-rejects__count">{{ rejectedCandidates.length }}</span>
+        </header>
+        <div v-if="rejectedExpanded" class="hti-rejects__body">
+          <div class="hti-rejects__hint">
+            Agent 가 이 Task 와 부합하지 않는다고 판단했지만 의미적으로 근접한 항목입니다. 필요 시 직접 매핑 가능.
+          </div>
+          <div class="hti-stack">
+            <article
+              v-for="entry in rejectedCandidates"
+              :key="entry.rule.id"
+              class="hti-rule hti-rule--rejected"
+            >
+              <header class="hti-rule__head">
+                <code v-if="entry.rule.source_function" class="hti-rule__fn">
+                  {{ entry.rule.source_function }}
+                </code>
+                <span v-if="entry.rule.source_module" class="hti-rule__mod">
+                  {{ entry.rule.source_module }}
+                </span>
+                <button
+                  class="hti-rejects__accept"
+                  title="Agent 의 reject 를 무시하고 이 Task 에 매핑"
+                  @click="handleAcceptRejected(entry)"
+                >+ 이 매핑 추가</button>
+              </header>
+              <div v-if="entry.rule.title" class="hti-rule__title">{{ entry.rule.title }}</div>
+              <dl class="hti-rule__gwt" v-if="entry.rule.given || entry.rule.when || entry.rule.then">
+                <div v-if="entry.rule.given"><dt>GIVEN</dt><dd>{{ entry.rule.given }}</dd></div>
+                <div v-if="entry.rule.when"><dt>WHEN</dt><dd>{{ entry.rule.when }}</dd></div>
+                <div v-if="entry.rule.then"><dt>THEN</dt><dd>{{ entry.rule.then }}</dd></div>
+              </dl>
+              <div v-if="entry.rationale" class="hti-rejects__rationale">
+                <span class="hti-rejects__label">Agent 거부 사유:</span>
+                {{ entry.rationale }}
+              </div>
+            </article>
+          </div>
+        </div>
       </section>
 
       <!-- 매핑된 함수 -->
@@ -525,6 +641,23 @@ function roleMeta(role) {
   white-space: nowrap;
 }
 .hti-rerun:hover { background: rgba(92, 124, 250, 0.28); }
+.hti-explore {
+  flex-shrink: 0;
+  margin-left: 8px;
+  padding: 4px 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: rgba(16, 185, 129, 0.18);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hti-explore:hover {
+  background: rgba(16, 185, 129, 0.32);
+  border-color: rgba(16, 185, 129, 0.7);
+}
 .hti-rerun--running {
   background: rgba(92, 124, 250, 0.25);
   color: #9cb2ff;
@@ -612,6 +745,111 @@ function roleMeta(role) {
   color: var(--color-text-dim);
   opacity: 0.65;
   padding: 2px 0;
+}
+/* Rejected-candidate review block. Visually distinct so users don't confuse
+   it with accepted mappings — muted red wash + dashed border. Default
+   collapsed; click header to expand. Cognitive-load minimization: most
+   rejects (40+) are obvious mismatches; only the closest near-misses are
+   shown by default, with "더 보기" to opt into the full list. */
+.hti-rejects {
+  border: 1px dashed rgba(248, 113, 113, 0.45);
+  border-radius: var(--radius-sm);
+  padding: 0;
+  background: rgba(248, 113, 113, 0.06);
+}
+.hti-rejects__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.hti-rejects__head:hover {
+  background: rgba(248, 113, 113, 0.1);
+}
+.hti-rejects__head.is-open {
+  border-bottom: 1px dashed rgba(248, 113, 113, 0.3);
+}
+.hti-rejects__chev {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  font-size: 0.7rem;
+  color: rgb(252, 165, 165);
+}
+.hti-rejects__chev.is-open {
+  transform: rotate(90deg);
+}
+.hti-rejects__title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgb(252, 165, 165);
+}
+.hti-rejects__body {
+  padding: 8px 10px 10px;
+}
+.hti-rejects__count {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: rgb(252, 165, 165);
+  background: rgba(248, 113, 113, 0.18);
+}
+.hti-rejects__hint {
+  font-size: 0.68rem;
+  color: var(--color-text-dim);
+  margin: 0 0 8px;
+}
+.hti-rejects__more {
+  margin-top: 8px;
+  width: 100%;
+  padding: 6px;
+  font-size: 0.68rem;
+  color: var(--color-text-dim);
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px dashed rgba(248, 113, 113, 0.35);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.hti-rejects__more:hover {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--color-text);
+}
+.hti-rule--rejected {
+  background: rgba(248, 113, 113, 0.04);
+  border: 1px solid rgba(248, 113, 113, 0.22);
+}
+.hti-rejects__accept {
+  margin-left: auto;
+  padding: 3px 8px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: rgb(187, 247, 208);
+  background: rgba(34, 197, 94, 0.18);
+  border: 1px solid rgba(34, 197, 94, 0.5);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.hti-rejects__accept:hover {
+  background: rgba(34, 197, 94, 0.3);
+}
+.hti-rejects__rationale {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 0.68rem;
+  color: var(--color-text-dim);
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid rgba(248, 113, 113, 0.55);
+  border-radius: 2px;
+}
+.hti-rejects__label {
+  font-weight: 600;
+  color: rgb(252, 165, 165);
+  margin-right: 4px;
 }
 .hti-badge {
   display: inline-flex;
@@ -873,6 +1111,16 @@ function roleMeta(role) {
   border: 1px solid rgba(245, 180, 65, 0.18);
   border-left: 3px solid var(--color-policy, #f5b441);
   border-radius: 4px;
+  transition: opacity 0.4s ease, background 0.4s ease;
+}
+/* Arbitration in flight — rule is being removed from THIS task in ~800ms.
+   Strikes through text + dims so the user sees the move before it vanishes. */
+.hti-rule--removing {
+  opacity: 0.55;
+  background: rgba(229, 57, 53, 0.08);
+  border-left-color: rgba(229, 57, 53, 0.6);
+  text-decoration: line-through;
+  text-decoration-color: rgba(229, 57, 53, 0.7);
 }
 .hti-rule__head {
   display: flex;

@@ -317,22 +317,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 )
             events_text = "\n".join(event_lines) if event_lines else "None"
 
-            # Aggregate에 연결된 US의 source_unit_id → 테이블 스키마 역추적
             schema_context = ""
-            if getattr(ctx, "source_type", "") == "analyzer_graph":
-                agg_us_ids = (agg.get("user_story_ids") if isinstance(agg, dict) else getattr(agg, "user_story_ids", None)) or []
-                unit_ids = []
-                for us in (ctx.user_stories or []):
-                    if (getattr(us, "id", "") or "") in set(agg_us_ids):
-                        src = getattr(us, "source_unit_id", None)
-                        if src:
-                            unit_ids.append(src)
-                if unit_ids:
-                    try:
-                        from api.features.ingestion.analyzer_graph.graph_context_builder import fetch_table_schemas_for_units
-                        schema_context = fetch_table_schemas_for_units(unit_ids)
-                    except Exception:
-                        pass
 
             # Common prompt fragments
             agg_name_val = (agg.get("name") if isinstance(agg, dict) else getattr(agg, "name", None)) or ""

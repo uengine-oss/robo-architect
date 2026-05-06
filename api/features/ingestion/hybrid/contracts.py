@@ -111,8 +111,29 @@ class ProcessBundle(BaseModel):
         )
 
 
+class ExampleDTO(BaseModel):
+    """One concrete test scenario attached to a Rule (analyzer Example node).
+
+    Examples carry the actual GWT triplet — `given`/`then_` may be JSON strings
+    when the analyzer wants structured data (writes[], inputs, exceptions); the
+    `narrative` field inside is the human-readable summary used elsewhere.
+    """
+
+    example_id: str
+    given: str = ""
+    when_: str = ""
+    then_: str = ""
+    is_boundary: bool = False
+    description: Optional[str] = None
+
+
 class RuleDTO(BaseModel):
-    """Phase 2 output: GWT business rule extracted from legacy code."""
+    """Phase 2 output: a business rule + its examples extracted from analyzer code graph.
+
+    The canonical `given`/`when`/`then` fields hold the human-readable narrative of
+    a chosen representative Example (non-boundary preferred). `examples` carries the
+    full set so retrieval/UI can surface boundary cases when needed.
+    """
 
     id: str
     given: str
@@ -121,15 +142,20 @@ class RuleDTO(BaseModel):
     source_function: Optional[str] = None
     source_module: Optional[str] = None
     confidence: float = 1.0
-    # BL.title — the human-readable one-line summary of this rule's business intent.
-    # Preferred over given/when/then for BC classification since those fields often
-    # hold concrete test-case values or side-effect details, while title is pure semantics.
+    # Rule.statement — the one-line business intent of this rule. Preferred over
+    # given/when/then for classification since GWT values often carry concrete
+    # test inputs or side-effect details, while statement is pure semantics.
     title: Optional[str] = None
-    # Phase 2.5 (BC pre-tagging) — domain term labelling this rule's business context
-    # e.g. "입력검증", "실시간인증", "이력관리", "오류처리". None until Phase 2.5 runs.
+    # Examples bound to this rule via (Rule)-[:HAS_EXAMPLE]->(Example).
+    # Always at least one element; canonical given/when/then mirror examples[0]
+    # (after sorting non-boundary first).
+    examples: list[ExampleDTO] = Field(default_factory=list)
+    # HAS_RULE.coupled_domains — domains this rule touches outside its host
+    # function's primary domain (e.g., a payment fn that mutates order state
+    # carries ["order"]).
+    coupled_domains: list[str] = Field(default_factory=list)
+    # Legacy Phase 2.5/2.6 fields — kept for schema compatibility, no longer populated.
     context_cluster: Optional[str] = None
-    # Phase 2.6 (DDD role tagging) — which Event Storming element this rule
-    # should be promoted into. One of: invariant/validation/decision/policy/query/external.
     es_role: Optional[str] = None
     es_role_confidence: float = 0.0
 

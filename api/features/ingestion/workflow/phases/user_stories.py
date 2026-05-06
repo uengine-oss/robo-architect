@@ -34,71 +34,13 @@ from api.features.ingestion.workflow.utils.user_story_normalize import (
 from api.platform.observability.smart_logger import SmartLogger
 
 
-# EJB lifecycle patterns that should NOT become User Stories
-_EJB_LIFECYCLE_ACTION_PATTERNS = (
-    "ejbcreate", "ejbremove", "ejbactivate", "ejbpassivate",
-    "ejbload", "ejbstore", "ejbpostcreate", "ejbfind",
-    "setentitycontext", "unsetentitycontext", "setsessioncontext",
-    "findbyprimar", "find by primary", "by its primary key",
-    "initialize ejb", "clean up resource",
-    "handle post-creation", "handle postcreation",
-)
-
-
-_IMPLEMENTATION_DETAIL_PATTERNS = (
-    "generate id", "generate repayment id", "record timestamp",
-    "calculate total", "set status to", "convert dto", "map entity",
-    "validate field", "initialize variable", "parse parameter",
-    "format output", "build response", "construct object",
-    "assign sequence", "increment counter",
-)
-
-_ERROR_HANDLING_PATTERNS = (
-    "rollback transaction", "display exception", "throw exception",
-    "handle error", "log error", "catch exception",
-    "display error message", "return error code", "show error",
-    "exception message", "error handling",
-)
-
-
-def _is_low_quality_us(action: str, role: str) -> bool:
-    """Check if a User Story represents an implementation detail or error handling step."""
-    action_lower = action.lower()
-    for pattern in _IMPLEMENTATION_DETAIL_PATTERNS:
-        if pattern in action_lower:
-            return True
-    for pattern in _ERROR_HANDLING_PATTERNS:
-        if pattern in action_lower:
-            return True
-    return False
-
-
-def _is_ejb_lifecycle_us(action: str, role: str) -> bool:
-    """Check if a User Story represents an EJB lifecycle operation."""
-    action_lower = action.lower()
-    role_lower = role.lower()
-    # Filter by action content
-    for pattern in _EJB_LIFECYCLE_ACTION_PATTERNS:
-        if pattern in action_lower:
-            return True
-    # Filter by system_administrator role with infrastructure keywords
-    if role_lower == "system_administrator" and any(
-        kw in action_lower for kw in ("resource", "initialize", "cleanup", "clean up")
-    ):
-        return True
-    return False
-
-
-def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_analyzer: bool = False) -> list[Any]:
+def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> list[Any]:
     """
     User Story 목록을 정규화하고 중복을 제거합니다.
     청킹 여부와 무관하게 항상 적용되어야 합니다.
-    is_analyzer=True인 경우 EJB 라이프사이클 US도 필터링합니다.
     """
     seen = set()
     out = []
-    ejb_filtered = 0
-    low_quality_filtered = 0
 
     for us in stories:
         role = (getattr(us, "role", "") or "").strip()
@@ -106,16 +48,6 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_ana
         benefit = (getattr(us, "benefit", "") or "").strip()
 
         if not action:
-            continue
-
-        # EJB lifecycle US filtering for analyzer graph
-        if is_analyzer and _is_ejb_lifecycle_us(action, role):
-            ejb_filtered += 1
-            continue
-
-        # Low quality US filtering for analyzer graph (implementation details, error handling)
-        if is_analyzer and _is_low_quality_us(action, role):
-            low_quality_filtered += 1
             continue
 
         key = dedup_key(role, action, benefit)
@@ -138,24 +70,14 @@ def normalize_and_dedup_user_stories(stories: list[Any], session_id: str, is_ana
 
         out.append(us)
 
-    # 진단을 위한 표준 출력 (dedup 분석)
-    dedup_info = (
-        f"[DEDUP DEBUG] raw={len(stories)}, dedup={len(out)}, "
-        f"ejb_filtered={ejb_filtered}, low_quality_filtered={low_quality_filtered}, "
-        f"ratio={round(len(out) / max(len(stories), 1), 4):.2%}"
-    )
-    print(dedup_info)
-
     SmartLogger.log(
         "INFO",
-        f"User story normalize+dedup summary - {dedup_info}",
+        f"User story normalize+dedup: raw={len(stories)} dedup={len(out)}",
         category="ingestion.user_stories.dedup.summary",
         params={
             "session_id": session_id,
             "raw_story_count": len(stories),
             "dedup_story_count": len(out),
-            "ejb_filtered_count": ejb_filtered,
-            "low_quality_filtered_count": low_quality_filtered,
             "dedup_ratio": round(len(out) / max(len(stories), 1), 4),
         },
     )
@@ -242,36 +164,6 @@ async def _create_user_story_with_verification(
             if not verify_record:
                 return None, None, f"User Story {us.id} was not found in Neo4j after creation"
 
-        # SOURCED_FROM 관계: UserStory → BusinessLogic (sequence 기반 정확 매칭)
-        source_uid = getattr(us, "source_unit_id", None)
-        source_bl = getattr(us, "source_bl", None) or []
-        if source_uid:
-            try:
-                if source_bl:
-                    # sequence 기반 매칭
-                    with ctx.client.session() as link_session:
-                        link_session.run(
-                            "MATCH (us:UserStory {id: $us_id}) "
-                            "MATCH (f:FUNCTION {function_id: $unit_id})-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic) "
-                            "WHERE bl.sequence IN $sequences "
-                            "MERGE (us)-[:SOURCED_FROM]->(bl)",
-                            us_id=us.id,
-                            unit_id=source_uid,
-                            sequences=source_bl,
-                        )
-                else:
-                    # source_bl 없으면 해당 함수의 모든 BL에 연결 (fallback)
-                    with ctx.client.session() as link_session:
-                        link_session.run(
-                            "MATCH (us:UserStory {id: $us_id}) "
-                            "MATCH (f:FUNCTION {function_id: $unit_id})-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic) "
-                            "MERGE (us)-[:SOURCED_FROM]->(bl)",
-                            us_id=us.id,
-                            unit_id=source_uid,
-                        )
-            except Exception as e:
-                print(f"[SOURCED_FROM] Error for US={us.id}: {e}")
-        
         PHASE_END = 20
         progress_event = ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
@@ -586,9 +478,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             )
             return
 
-    # Analyzer graph: 분석 단위별 개별 US 생성
     input_content = ctx.content
-    _analyzer_processed = False
     _hybrid_processed = False
     should_chunk_result = False
 
@@ -653,7 +543,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                         params={"session_id": ctx.session.id, "task": grp_name, "error": str(e)},
                     )
 
-            user_stories = normalize_and_dedup_user_stories(all_hb_stories, ctx.session.id, is_analyzer=False)
+            user_stories = normalize_and_dedup_user_stories(all_hb_stories, ctx.session.id)
             for idx, us in enumerate(user_stories, start=1):
                 new_id = f"US-{idx:03d}"
                 try:
@@ -670,86 +560,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             )
             _hybrid_processed = True
 
-    if ctx.source_type == "analyzer_graph":
-        from api.features.ingestion.analyzer_graph.graph_context_builder import build_grouped_unit_contexts
-        grouped_contexts = build_grouped_unit_contexts()
-        if grouped_contexts:
-            # 도메인 그룹 단위 배치 처리 (관련 함수들을 묶어서 LLM 호출)
-            all_sb_stories: list = []
-            total_groups = len(grouped_contexts)
-
-            SmartLogger.log(
-                "INFO",
-                f"Analyzer graph: {total_groups} domain groups detected",
-                category="ingestion.user_stories.analyzer_graph.grouped",
-                params={"session_id": ctx.session.id, "total_groups": total_groups},
-            )
-
-            for grp_idx, (grp_name, grp_unit_ids, grp_context) in enumerate(grouped_contexts):
-                if getattr(ctx.session, "is_cancelled", False):
-                    yield ProgressEvent(
-                        phase=IngestionPhase.ERROR,
-                        message="❌ 생성이 중단되었습니다",
-                        progress=getattr(ctx.session, "progress", 0) or 0,
-                        data={"error": "Cancelled by user", "cancelled": True},
-                    )
-                    return
-
-                progress = PHASE_START + int((grp_idx / total_groups) * (PHASE_END - PHASE_START - 4))
-                yield ProgressEvent(
-                    phase=IngestionPhase.EXTRACTING_USER_STORIES,
-                    message=f"User Story 추출 중... ({grp_name} {grp_idx+1}/{total_groups}, {len(grp_unit_ids)} functions)",
-                    progress=progress,
-                )
-
-                print(f"[ANALYZER US] Processing group {grp_idx+1}/{total_groups}: {grp_name} ({len(grp_unit_ids)} functions, {estimate_tokens(grp_context)} tokens)")
-                try:
-                    from api.features.ingestion.analyzer_graph.graph_to_user_stories import extract_user_stories_from_analyzer_graph
-                    grp_stories = await asyncio.to_thread(extract_user_stories_from_analyzer_graph, grp_context)
-                    print(f"[ANALYZER US] {grp_name}: {len(grp_stories)} US generated")
-                    # 출처 분석 단위(unit) 태깅 — 그룹의 첫 번째 unit_id를 기본으로 설정
-                    # (역추적: 그룹 내 모든 unit_id는 같은 도메인)
-                    primary_unit_id = grp_unit_ids[0] if grp_unit_ids else ""
-                    for us in grp_stories:
-                        us.source_unit_id = primary_unit_id
-                    all_sb_stories.extend(grp_stories)
-                except Exception as e:
-                    SmartLogger.log(
-                        "ERROR",
-                        f"US extraction failed for group {grp_name}",
-                        category="ingestion.user_stories.analyzer_graph.group_error",
-                        params={"session_id": ctx.session.id, "group_name": grp_name, "error": str(e)},
-                    )
-
-            # 정규화 + 중복 제거 + EJB 필터
-            user_stories = normalize_and_dedup_user_stories(all_sb_stories, ctx.session.id, is_analyzer=True)
-
-            # 순차 ID 재부여
-            for idx, us in enumerate(user_stories, start=1):
-                new_id = f"US-{idx:03d}"
-                try:
-                    setattr(us, "id", new_id)
-                except Exception:
-                    if hasattr(us, "model_copy"):
-                        us = us.model_copy(update={"id": new_id})
-
-            ctx.user_stories = user_stories
-            yield ProgressEvent(
-                phase=IngestionPhase.EXTRACTING_USER_STORIES,
-                message=f"User Story 추출 완료 (총 {len(user_stories)}개, {total_groups}개 그룹 처리)",
-                progress=PHASE_END - 2,
-            )
-
-            # Skip to Neo4j 저장 (아래 chunking/non-chunking 경로 건너뜀)
-            # goto: Neo4j 저장 section (line after else block)
-            # Python에는 goto가 없으므로, 플래그로 제어
-            _analyzer_processed = True
-        else:
-            _analyzer_processed = False
-    else:
-        _analyzer_processed = False
-
-    if not _analyzer_processed and not _figma_processed and not _hybrid_processed:
+    if not _figma_processed and not _hybrid_processed:
         # 스캐닝 및 청킹 판단
         content_tokens = estimate_tokens(input_content)
         should_chunk_result = should_chunk(input_content, max_tokens=USER_STORY_CHUNK_SIZE)
@@ -776,7 +587,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             },
         )
 
-    if not _analyzer_processed and not _figma_processed and not _hybrid_processed and should_chunk_result:
+    if not _figma_processed and not _hybrid_processed and should_chunk_result:
         print(f"[CHUNKING DEBUG] Entering chunking path - will split into chunks")
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
@@ -925,7 +736,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             all_stories.extend(results)
         
         # 내용 기반 중복 제거 및 정규화 (공통 함수 사용)
-        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id, is_analyzer=ctx.source_type == "analyzer_graph")
+        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id)
         
         # 병합 후 순차적인 ID로 재생성 (US-001, US-002, ...)
         for idx, us in enumerate(deduplicated_by_content, start=1):
@@ -991,7 +802,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             message=f"User Story 추출 완료 (총 {len(user_stories)}개)",
             progress=PHASE_END - 2
         )
-    elif not _analyzer_processed and not _figma_processed and not _hybrid_processed:
+    elif not _figma_processed and not _hybrid_processed:
         # 기존 로직 (청킹 불필요)
         print(f"[CHUNKING DEBUG] Entering non-chunking path - processing entire document at once")
         yield ProgressEvent(
@@ -1002,7 +813,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
 
         user_stories = await asyncio.to_thread(extract_user_stories_from_text, input_content)
         # 청킹 여부와 무관하게 항상 정규화 및 중복 제거 적용
-        user_stories = normalize_and_dedup_user_stories(user_stories, ctx.session.id, is_analyzer=ctx.source_type == "analyzer_graph")
+        user_stories = normalize_and_dedup_user_stories(user_stories, ctx.session.id)
         ctx.user_stories = user_stories
 
         yield ProgressEvent(
@@ -1096,13 +907,6 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             "failed_ids": failed_ids,
         },
     )
-
-    # analyzer_graph: BL 캐시 로딩 (이후 Phase에서 US 텍스트에 BL을 합쳐 전달하기 위함)
-    if ctx.source_type == "analyzer_graph":
-        from api.features.ingestion.workflow.utils.user_story_format import load_bl_for_user_stories
-        ctx.bl_by_user_story = load_bl_for_user_stories(ctx.client)
-        if ctx.bl_by_user_story:
-            print(f"[BL CACHE] Loaded BL for {len(ctx.bl_by_user_story)} user stories")
 
     # 최종 결과에 생성 성공/실패 정보 포함
     yield ProgressEvent(

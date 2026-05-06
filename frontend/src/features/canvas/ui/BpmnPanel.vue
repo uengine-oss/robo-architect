@@ -334,6 +334,14 @@ function closeInspector() {
 
     <!-- BC-scoped rules management modal (opened from Navigator's Rules by Context) -->
     <HybridBcRulesModal />
+
+    <!-- Arbitration toast — fires when post-explore arbitration moves/rejects a rule -->
+    <Transition name="bpmn-toast">
+      <div v-if="store.toast" :key="store.toast.id"
+           class="bpmn-toast" :class="'bpmn-toast--' + store.toast.type">
+        {{ store.toast.message }}
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -588,5 +596,35 @@ function closeInspector() {
   color: var(--color-accent);
   font-size: 0.8rem;
   font-weight: 500;
+}
+
+/* Arbitration toast — bottom-center, auto-fade */
+.bpmn-toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 12px 22px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: pre-line;
+  max-width: 540px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+.bpmn-toast--info { background: rgba(34, 139, 230, 0.92); }
+.bpmn-toast--warn { background: rgba(253, 126, 20, 0.92); }
+
+.bpmn-toast-enter-active,
+.bpmn-toast-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.bpmn-toast-enter-from,
+.bpmn-toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 8px);
 }
 </style>
