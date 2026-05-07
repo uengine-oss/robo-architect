@@ -7,6 +7,8 @@ import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
+import FigmaButton from '@/features/figmaBinding/ui/FigmaButton.vue'
+import FigmaBindingModal from '@/features/figmaBinding/ui/FigmaBindingModal.vue'
 import SettingsPanel from './SettingsPanel.vue'
 
 const props = defineProps({
@@ -31,6 +33,7 @@ const bpmnStore = useBpmnStore()
 const eventModelingStore = useEventModelingStore()
 const showIngestionModal = ref(false)
 const showPRDModal = ref(false)
+const showFigmaBindingModal = ref(false)
 const showSettingsPanel = ref(false)
 
 function handleIngestionComplete() {
@@ -135,6 +138,9 @@ function handleIngestionComplete() {
         <span>PRD 생성</span>
       </button>
 
+      <!-- Figma Binding Button (feature 016) -->
+      <FigmaButton v-model="showFigmaBindingModal" />
+
       <!-- Claude Code Button -->
       <button
         class="claude-code-btn"
@@ -175,10 +181,13 @@ function handleIngestionComplete() {
     />
 
     <!-- PRD Generator Modal -->
-    <PRDGeneratorModal 
+    <PRDGeneratorModal
       :visible="showPRDModal"
       @close="showPRDModal = false"
     />
+
+    <!-- Figma Binding Modal (feature 016) -->
+    <FigmaBindingModal v-model="showFigmaBindingModal" />
   </header>
 </template>
 

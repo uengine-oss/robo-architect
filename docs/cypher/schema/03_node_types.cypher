@@ -251,6 +251,20 @@ MERGE (cmd)-[:HAS_PROPERTY]->(prop);
 //   - attachedToType: String ("Command" | "ReadModel")
 //   - attachedToName: String
 //   - userStoryId: String (근거가 된 UserStory id)
+//
+// Figma 연동 속성 (016-figma-document-binding):
+//   - sceneGraph: String (JSON; open-pencil SerializedSceneGraph)
+//   - designSource: String ("html" | "figma-bound" | "imported")
+//   - figmaFileKey: String (도큐먼트 식별자)
+//   - figmaPageId: String (소속 페이지)
+//   - figmaNodeId: String (생성된 프레임 노드 id)
+//   - figmaBindingId: String (생성 시점의 :FigmaBinding.id 스냅샷 — replace 후 "from previous binding" 판별용)
+//   - figmaStoryboardCommandId: String (소속 스토리보드 = entry Command id)
+//
+// Figma 동기화 상태 속성 (v1.2 / FR-019b / FR-020):
+//   - figmaSyncStatus: String ("ok" | "failed", null = 시도 안됨)
+//   - figmaSyncLastError: String (마지막 실패 한국어 에러 메시지; status="ok" 시 null)
+//   - figmaSyncLastAttemptAt: DateTime (마지막 시도 ISO 8601 타임스탬프; 성공/실패 무관)
 // ############################################################
 
 MATCH (bc:BoundedContext { key: "order" })
@@ -369,3 +383,70 @@ SET then.name = "Event: OrderCancelled",
     then.referencedNodeType = "Event"
 MERGE (cmd)-[:HAS_THEN]->(then)
 MERGE (then)-[:REFERENCES]->(evt);
+
+
+// ############################################################
+// 13. FigmaBinding (피그마 다큐먼트 바인딩 — 싱글톤)
+// ############################################################
+// 설명: 현재 Event Modeling 프로젝트와 외부 Figma 다큐먼트 1건의 연결 정보.
+//       단일 활성 바인딩(`id="singleton"`)을 유지함. 016 feature(figma-document-binding) 참조.
+// 관계:
+//   - MAPS_STORYBOARD → BCPageMapping (스토리보드별 페이지 매핑)
+//   - LOGGED ← BindingHistoryEvent (감사 로그)
+//
+// 필수 속성:
+//   - id: String (고정 "singleton" — UNIQUE)
+//   - figmaFileKey: String
+//   - figmaFileName: String
+//   - connectedBy: String
+//   - connectedAt: DateTime
+//   - status: String ("active" | "unreachable" | "disconnected")
+//
+// 선택 속성:
+//   - lastSyncAt: DateTime
+// ############################################################
+
+// (생성 예시 — 실제 데이터는 런타임에 /api/figma-binding/connect 가 upsert)
+
+
+// ############################################################
+// 14. StoryboardPageMapping (스토리보드 ↔ Figma 페이지 매핑)
+// ############################################################
+// 설명: 좌측 BUSINESS PROCESSES 패널의 한 행(= entry Command 한 건 = 한 storyboard)이
+//       바인딩된 Figma 다큐먼트의 한 페이지에 1:1 매핑된 기록.
+//       UNIQUE: id (UUID), commandId (활성 매핑당 한 entry Command).
+// 관계:
+//   - MAPS_STORYBOARD ← FigmaBinding
+//   - MAPS → Command (해당 storyboard의 entry command)
+//
+// 필수 속성:
+//   - id: String (UUID)
+//   - commandId: String (entry Command.id)
+//   - figmaPageId: String (Figma page node id, 예: "0:42")
+//   - figmaPageName: String (cached display name)
+//   - status: String ("active" | "archived")
+//
+// 선택 속성:
+//   - lastRenameAt: DateTime
+// ############################################################
+
+
+// ############################################################
+// 15. BindingHistoryEvent (피그마 바인딩 감사 로그)
+// ############################################################
+// 설명: 016 feature의 모든 bind/sync/generate/disconnect 이벤트를 append-only로 저장.
+// 관계:
+//   - LOGGED → FigmaBinding
+//
+// 필수 속성:
+//   - id: String (UUID)
+//   - eventType: String ("connect" | "validate_failure" | "sync_storyboards" |
+//                        "page_renamed" | "page_archived" | "disconnect" | "replace" |
+//                        "generate_routed" | "orphan_ui_blocked")
+//   - actor: String
+//   - at: DateTime
+//
+// 선택 속성:
+//   - figmaFileKey: String
+//   - payload: String (JSON-encoded)
+// ############################################################

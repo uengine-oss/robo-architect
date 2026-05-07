@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
@@ -23,6 +24,32 @@ router = APIRouter(tags=["figma-plugin"])
 # ── Connected plugins registry (file_key → WebSocket) ──
 _connections: dict[str, WebSocket] = {}
 _lock = asyncio.Lock()
+
+# ── Plugin metadata (feature 016): supported message set per file_key ──
+# Populated either by REGISTER (websocket) or by POST /announce-support (polling).
+_plugin_metadata: dict[str, dict[str, Any]] = {}
+
+
+def is_message_supported(file_key: str, msg_type: str) -> bool:
+    """True if the connected plugin announced support for the given message type.
+    Returns True if no metadata is recorded yet (legacy plugin pre-016 — assume
+    only 009-era messages are supported; figma_binding callers gate on this
+    explicitly before invoking newer ops)."""
+    meta = _plugin_metadata.get(file_key)
+    if not meta:
+        return False
+    msgs = meta.get("supportedMessages") or []
+    return msg_type in msgs
+
+
+def get_plugin_metadata(file_key: str) -> dict[str, Any] | None:
+    return _plugin_metadata.get(file_key)
+
+
+def is_polling_active(file_key: str) -> bool:
+    """True if we have any signal (websocket or recent supportedMessages
+    announcement) that a plugin is reachable for this file key."""
+    return file_key in _connections or file_key in _plugin_metadata
 
 
 async def _register(file_key: str, ws: WebSocket) -> None:
@@ -94,6 +121,12 @@ async def figma_plugin_ws(ws: WebSocket):
                 if fk:
                     file_key = fk
                     await _register(file_key, ws)
+                    # Record plugin metadata (feature 016 protocol versioning)
+                    supported = msg.get("supportedMessages") or []
+                    _plugin_metadata[file_key] = {
+                        "supportedMessages": list(supported),
+                        "transport": "websocket",
+                    }
                     await ws.send_json({"type": "REGISTERED", "fileKey": file_key})
 
             elif msg_type == "PONG":
@@ -113,6 +146,22 @@ async def figma_plugin_ws(ws: WebSocket):
                     f"Plugin update complete: {msg.get('updated')}/{msg.get('total')} nodes",
                     category="figma_plugin.update_complete",
                 )
+
+            elif isinstance(msg_type, str) and msg_type.endswith("_ACK"):
+                # Feature 016 (US2 / US3): the plugin's response to a
+                # plugin_messages.send_and_wait(...) call. Correlated by
+                # requestId. Forward to the figma_binding correlator.
+                request_id = msg.get("requestId")
+                if request_id:
+                    try:
+                        from api.features.figma_binding.plugin_messages import _resolve  # noqa: PLC0415
+                        await _resolve(request_id, msg)
+                    except Exception as e:
+                        SmartLogger.log(
+                            "WARN",
+                            f"Failed to resolve websocket ack {msg_type} {request_id}: {e}",
+                            category="figma_plugin.ack.error",
+                        )
 
     except WebSocketDisconnect:
         pass
@@ -182,16 +231,79 @@ async def queue_update_for_plugin(file_key: str, message: dict) -> None:
             _pending_updates[file_key] = _pending_updates[file_key][-100:]
 
 
+class AnnounceSupportRequest(BaseModel):
+    file_key: str
+    supportedMessages: list[str]
+
+
+@router.post("/api/figma-plugin/announce-support")
+async def announce_support(req: AnnounceSupportRequest) -> dict[str, Any]:
+    """Polling-mode plugin announces its supported message set on connect.
+    Feature 016 uses this to detect old plugins lacking CREATE_PAGE / CREATE_FRAME_IN_PAGE.
+    """
+    _plugin_metadata[req.file_key] = {
+        "supportedMessages": list(req.supportedMessages),
+        "transport": "polling",
+    }
+    SmartLogger.log(
+        "INFO",
+        f"Plugin support announced: {req.file_key} → {req.supportedMessages}",
+        category="figma_plugin.support",
+    )
+    return {"ok": True}
+
+
+# Default supportedMessages for plugins that have not (yet) called
+# /announce-support. v1.2 plugins always announce the full set on connect,
+# but the backend's in-memory `_plugin_metadata` is wiped on every uvicorn
+# reload — so by the time bulk-with-binding fires, the plugin's announcement
+# may have been lost even though it is actively polling. Treating any
+# /poll caller as a v1.2 plugin is safe because that is the only plugin
+# version that exists in this codebase, and the alternative (PluginNotConnectedError
+# during bulk_sync) is much worse for the user.
+_DEFAULT_SUPPORTED_MESSAGES = [
+    "UPDATE_NODES",
+    "UPDATE_TEXT",
+    "SYNC_FRAME",
+    "CREATE_PAGE",
+    "CREATE_FRAME_IN_PAGE",
+]
+
+
 @router.get("/api/figma-plugin/poll")
 async def poll_updates(file_key: str = "") -> dict[str, Any]:
-    """Plugin polls this endpoint to get pending update commands."""
+    """Plugin polls this endpoint to get pending update commands.
+
+    Side effect: lazy-registers the plugin's metadata if missing. This
+    survives backend reloads where `_plugin_metadata` would otherwise be
+    empty until the plugin happens to reconnect.
+    """
     if not file_key:
         return {"updates": []}
+
+    if file_key not in _plugin_metadata:
+        _plugin_metadata[file_key] = {
+            "supportedMessages": list(_DEFAULT_SUPPORTED_MESSAGES),
+            "transport": "polling",
+            "inferred": True,  # marker: came from /poll, not /announce-support
+        }
+        SmartLogger.log(
+            "INFO",
+            f"Plugin metadata inferred from /poll: {file_key}",
+            category="figma_plugin.support.inferred",
+        )
 
     async with _pending_lock:
         updates = _pending_updates.pop(file_key, [])
 
     return {"updates": updates, "count": len(updates)}
+
+
+# NOTE: The polling-mode REST ack endpoints live in
+# `api/features/figma_binding/plugin_messages.py` as type-specific routes
+# (`/create-page-ack`, `/create-frame-in-page-ack`). The websocket branch
+# above (msg_type.endswith("_ACK")) reuses the same correlator via direct
+# import so both transports share one source of truth.
 
 
 class RegisterFrameRequest(BaseModel):
@@ -418,24 +530,57 @@ def _figma_export_to_scene_graph(frame_data: dict) -> dict:
         _counter[0] += 1
         return f"0:{_counter[0]}"
 
-    # Root + Page
+    # Default field set shared by root + page so the open-pencil deserializer
+    # finds every key it expects (even on nodes that are essentially empty).
+    def _empty_defaults() -> dict[str, Any]:
+        return {
+            "x": 0, "y": 0, "width": 0, "height": 0, "rotation": 0,
+            "fills": [], "strokes": [], "effects": [], "opacity": 1,
+            "cornerRadius": 0,
+            "topLeftRadius": 0, "topRightRadius": 0,
+            "bottomLeftRadius": 0, "bottomRightRadius": 0,
+            "independentCorners": False, "cornerSmoothing": 0,
+            "visible": True, "locked": False, "clipsContent": False,
+            "layoutMode": "NONE", "itemSpacing": 0,
+            "paddingTop": 0, "paddingRight": 0, "paddingBottom": 0, "paddingLeft": 0,
+            "primaryAxisSizing": "FIXED", "counterAxisSizing": "FIXED",
+            "primaryAxisAlign": "MIN", "counterAxisAlign": "MIN",
+            "layoutWrap": "NO_WRAP", "layoutGrow": 0, "layoutAlignSelf": "AUTO",
+            "layoutPositioning": "AUTO", "blendMode": "PASS_THROUGH",
+            "text": "", "fontSize": 14, "fontFamily": "Inter", "fontWeight": 400,
+            "italic": False, "textAlignHorizontal": "LEFT", "textAlignVertical": "TOP",
+            "letterSpacing": 0, "lineHeight": None,
+            "textAutoResize": "NONE", "textCase": "ORIGINAL", "textDecoration": "NONE",
+            "styleRuns": [],
+            "boundVariables": {}, "overrides": {}, "componentId": None,
+            "pluginData": [], "sharedPluginData": [], "pluginRelaunchData": [],
+            "vectorNetwork": None, "arcData": None,
+            "fillGeometry": [], "strokeGeometry": [],
+            "isMask": False, "maskType": "ALPHA", "expanded": True,
+            "horizontalConstraint": "MIN", "verticalConstraint": "MIN",
+            "strokeCap": "NONE", "strokeJoin": "MITER", "dashPattern": [],
+            "borderTopWeight": 0, "borderRightWeight": 0,
+            "borderBottomWeight": 0, "borderLeftWeight": 0,
+            "independentStrokeWeights": False, "strokeMiterLimit": 4,
+            "strokesIncludedInLayout": False, "itemReverseZIndex": False,
+            "counterAxisSpacing": 0, "counterAxisAlignContent": "AUTO",
+            "gridTemplateColumns": [], "gridTemplateRows": [],
+            "gridColumnGap": 0, "gridRowGap": 0, "gridPosition": None,
+            "minWidth": None, "maxWidth": None, "minHeight": None, "maxHeight": None,
+            "internalOnly": False, "flipX": False, "flipY": False, "autoRename": True,
+            "textTruncation": "DISABLED", "maxLines": None,
+            "pointCount": 5, "starInnerRadius": 0.38, "textDirection": "AUTO",
+        }
+
     nodes[root_id] = {
         "id": root_id, "type": "DOCUMENT", "name": "Document",
         "parentId": None, "childIds": [page_id],
-        "x": 0, "y": 0, "width": 0, "height": 0, "rotation": 0,
-        "fills": [], "strokes": [], "effects": [], "opacity": 1,
-        "cornerRadius": 0, "visible": True, "locked": False,
-        "clipsContent": False, "layoutMode": "NONE",
-        "text": "", "fontSize": 14, "fontFamily": "Inter", "fontWeight": 400,
+        **_empty_defaults(),
     }
     nodes[page_id] = {
         "id": page_id, "type": "CANVAS", "name": "Page 1",
         "parentId": root_id, "childIds": [],
-        "x": 0, "y": 0, "width": 0, "height": 0, "rotation": 0,
-        "fills": [], "strokes": [], "effects": [], "opacity": 1,
-        "cornerRadius": 0, "visible": True, "locked": False,
-        "clipsContent": False, "layoutMode": "NONE",
-        "text": "", "fontSize": 14, "fontFamily": "Inter", "fontWeight": 400,
+        **_empty_defaults(),
     }
 
     def convert(figma_node: dict, parent_sg_id: str) -> str:
@@ -452,25 +597,132 @@ def _figma_export_to_scene_graph(frame_data: dict) -> dict:
                               "ROUNDED_RECTANGLE", "LINE", "STAR", "POLYGON"):
             node_type = "FRAME"
 
+        # Font name → split into family/style. Figma sends {family, style},
+        # our SceneNode wants fontFamily + fontWeight numeric.
+        font_family = "Inter"
+        font_weight = 400
+        italic = False
+        font_name = figma_node.get("fontName")
+        if isinstance(font_name, dict):
+            if font_name.get("family"): font_family = font_name["family"]
+            style = (font_name.get("style") or "").lower()
+            italic = "italic" in style
+            if "thin" in style: font_weight = 100
+            elif "extralight" in style or "ultra light" in style: font_weight = 200
+            elif "light" in style: font_weight = 300
+            elif "medium" in style: font_weight = 500
+            elif "semibold" in style or "demi" in style: font_weight = 600
+            elif "extrabold" in style or "ultra bold" in style: font_weight = 800
+            elif "black" in style or "heavy" in style: font_weight = 900
+            elif "bold" in style: font_weight = 700
+
         sg_node = {
             "id": sg_id,
             "type": node_type,
             "name": figma_node.get("name", ""),
             "parentId": parent_sg_id,
             "childIds": child_ids,
-            "x": 0, "y": 0,
+            # Preserve Figma's actual position (relative to parent in auto-layout
+            # is fine; Figma's x/y are absolute on the page but renderer treats
+            # them per-parent — same as wireframe-service output).
+            "x": figma_node.get("x", 0),
+            "y": figma_node.get("y", 0),
             "width": figma_node.get("width", 0),
             "height": figma_node.get("height", 0),
-            "rotation": 0,
-            "fills": [], "strokes": [], "effects": [],
-            "opacity": 1, "cornerRadius": 0,
+            "rotation": figma_node.get("rotation", 0),
+            "fills": figma_node.get("fills") or [],
+            "strokes": figma_node.get("strokes") or [],
+            "effects": figma_node.get("effects") or [],
+            "opacity": figma_node.get("opacity", 1),
+            "cornerRadius": figma_node.get("cornerRadius", 0) if isinstance(figma_node.get("cornerRadius"), (int, float)) else 0,
+            "topLeftRadius": figma_node.get("topLeftRadius", 0) if isinstance(figma_node.get("topLeftRadius"), (int, float)) else 0,
+            "topRightRadius": figma_node.get("topRightRadius", 0) if isinstance(figma_node.get("topRightRadius"), (int, float)) else 0,
+            "bottomLeftRadius": figma_node.get("bottomLeftRadius", 0) if isinstance(figma_node.get("bottomLeftRadius"), (int, float)) else 0,
+            "bottomRightRadius": figma_node.get("bottomRightRadius", 0) if isinstance(figma_node.get("bottomRightRadius"), (int, float)) else 0,
             "visible": figma_node.get("visible", True),
-            "locked": False, "clipsContent": False,
-            "layoutMode": "NONE",
+            "locked": False,
+            "clipsContent": figma_node.get("clipsContent", False),
+            # Auto-layout
+            "layoutMode": figma_node.get("layoutMode", "NONE"),
+            "itemSpacing": figma_node.get("itemSpacing", 0),
+            "paddingTop": figma_node.get("paddingTop", 0),
+            "paddingRight": figma_node.get("paddingRight", 0),
+            "paddingBottom": figma_node.get("paddingBottom", 0),
+            "paddingLeft": figma_node.get("paddingLeft", 0),
+            "primaryAxisSizing": figma_node.get("primaryAxisSizing", "FIXED"),
+            "counterAxisSizing": figma_node.get("counterAxisSizing", "FIXED"),
+            "primaryAxisAlign": figma_node.get("primaryAxisAlign", "MIN"),
+            "counterAxisAlign": figma_node.get("counterAxisAlign", "MIN"),
+            "layoutWrap": figma_node.get("layoutWrap", "NO_WRAP"),
+            "layoutGrow": figma_node.get("layoutGrow", 0),
+            "layoutAlignSelf": figma_node.get("layoutAlignSelf", "AUTO"),
+            "layoutPositioning": figma_node.get("layoutPositioning", "AUTO"),
+            "blendMode": figma_node.get("blendMode", "PASS_THROUGH"),
+            # Text-specific
             "text": figma_node.get("characters", "") if node_type == "TEXT" else "",
-            "fontSize": figma_node.get("fontSize", 14) if node_type == "TEXT" else 14,
-            "fontFamily": "Inter", "fontWeight": 400,
+            "fontSize": figma_node.get("fontSize", 14) if isinstance(figma_node.get("fontSize"), (int, float)) else 14,
+            "fontFamily": font_family,
+            "fontWeight": font_weight,
+            "italic": italic,
+            "textAlignHorizontal": figma_node.get("textAlignHorizontal", "LEFT"),
+            "textAlignVertical": figma_node.get("textAlignVertical", "TOP"),
+            "letterSpacing": figma_node.get("letterSpacing", 0) if isinstance(figma_node.get("letterSpacing"), (int, float)) else 0,
+            "lineHeight": figma_node.get("lineHeight"),
+            "textAutoResize": figma_node.get("textAutoResize", "WIDTH_AND_HEIGHT") if node_type == "TEXT" else "NONE",
+            "textCase": figma_node.get("textCase", "ORIGINAL"),
+            "textDecoration": figma_node.get("textDecoration", "NONE"),
+            "styleRuns": figma_node.get("styleRuns", []),
+            # open-pencil renderer reads `node.boundVariables['fills/0/color']`
+            # etc; absence triggers "Cannot read properties of undefined" mid-render.
+            "boundVariables": figma_node.get("boundVariables", {}),
+            "overrides": figma_node.get("overrides", {}),
+            "componentId": figma_node.get("componentId"),
+            "pluginData": figma_node.get("pluginData", []),
+            "sharedPluginData": figma_node.get("sharedPluginData", []),
+            "pluginRelaunchData": figma_node.get("pluginRelaunchData", []),
+            "vectorNetwork": figma_node.get("vectorNetwork"),
+            "arcData": figma_node.get("arcData"),
+            "fillGeometry": figma_node.get("fillGeometry", []),
+            "strokeGeometry": figma_node.get("strokeGeometry", []),
+            "isMask": figma_node.get("isMask", False),
+            "maskType": figma_node.get("maskType", "ALPHA"),
+            "expanded": figma_node.get("expanded", True),
+            "horizontalConstraint": figma_node.get("horizontalConstraint", "MIN"),
+            "verticalConstraint": figma_node.get("verticalConstraint", "MIN"),
+            "strokeCap": figma_node.get("strokeCap", "NONE"),
+            "strokeJoin": figma_node.get("strokeJoin", "MITER"),
+            "dashPattern": figma_node.get("dashPattern", []),
+            "borderTopWeight": figma_node.get("borderTopWeight", 0),
+            "borderRightWeight": figma_node.get("borderRightWeight", 0),
+            "borderBottomWeight": figma_node.get("borderBottomWeight", 0),
+            "borderLeftWeight": figma_node.get("borderLeftWeight", 0),
+            "independentStrokeWeights": figma_node.get("independentStrokeWeights", False),
+            "independentCorners": figma_node.get("independentCorners", False),
+            "cornerSmoothing": figma_node.get("cornerSmoothing", 0),
+            "strokesIncludedInLayout": figma_node.get("strokesIncludedInLayout", False),
+            "itemReverseZIndex": figma_node.get("itemReverseZIndex", False),
+            "counterAxisSpacing": figma_node.get("counterAxisSpacing", 0),
+            "counterAxisAlignContent": figma_node.get("counterAxisAlignContent", "AUTO"),
+            "gridTemplateColumns": figma_node.get("gridTemplateColumns", []),
+            "gridTemplateRows": figma_node.get("gridTemplateRows", []),
+            "gridColumnGap": figma_node.get("gridColumnGap", 0),
+            "gridRowGap": figma_node.get("gridRowGap", 0),
+            "gridPosition": figma_node.get("gridPosition"),
+            "minWidth": figma_node.get("minWidth"),
+            "maxWidth": figma_node.get("maxWidth"),
+            "minHeight": figma_node.get("minHeight"),
+            "maxHeight": figma_node.get("maxHeight"),
+            "internalOnly": figma_node.get("internalOnly", False),
+            "flipX": figma_node.get("flipX", False),
+            "flipY": figma_node.get("flipY", False),
+            "autoRename": figma_node.get("autoRename", True),
+            "textTruncation": figma_node.get("textTruncation", "DISABLED"),
+            "maxLines": figma_node.get("maxLines"),
+            "pointCount": figma_node.get("pointCount", 5),
+            "starInnerRadius": figma_node.get("starInnerRadius", 0.38),
+            "textDirection": figma_node.get("textDirection", "AUTO"),
         }
+        # Also patch root + page nodes added at the top — they're emitted with a smaller field set.
         nodes[sg_id] = sg_node
         return sg_id
 

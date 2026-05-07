@@ -154,7 +154,103 @@
         case 'ERROR':
           addLog(msg.message, 'error')
           break
+
+        // Feature 016 / US2: plugin replies after attempting figma.createPage().
+        case 'CREATE_PAGE_RESULT':
+          if (msg.ok) addLog(`CREATE_PAGE → ${msg.figmaPageName} (${msg.figmaPageId})`, 'success')
+          else addLog(`CREATE_PAGE failed: ${msg.error}`, 'error')
+          reportCreatePageAck(msg)
+          break
+
+        // Feature 016 / US3 + FR-019b: plugin replies after creating a frame in a page.
+        case 'CREATE_FRAME_IN_PAGE_RESULT':
+          if (msg.ok) addLog(`CREATE_FRAME_IN_PAGE → ${msg.figmaFrameName} (${msg.figmaNodeId})  nodes=${msg.nodesCreated || 0}/${(msg.nodesCreated || 0) + (msg.nodesFailed || 0)}`, 'success')
+          else addLog(`CREATE_FRAME_IN_PAGE failed: ${msg.error}`, 'error')
+          reportCreateFrameInPageAck(msg)
+          break
+
+        // Feature 016 bidirectional sync results.
+        case 'UPDATE_FRAME_RESULT':
+          if (msg.ok) addLog(`UPDATE_FRAME → ${msg.figmaFrameName} (${msg.figmaNodeId})  nodes=${msg.nodesCreated || 0}/${(msg.nodesCreated || 0) + (msg.nodesFailed || 0)}`, 'success')
+          else addLog(`UPDATE_FRAME failed: ${msg.error}`, 'error')
+          reportUpdateFrameAck(msg)
+          break
+
+        case 'EXPORT_FRAME_BY_ID_RESULT':
+          if (msg.ok) addLog(`EXPORT_FRAME_BY_ID → ${msg.figmaFrameName} (${msg.figmaNodeId})`, 'success')
+          else addLog(`EXPORT_FRAME_BY_ID failed: ${msg.error}`, 'error')
+          reportExportFrameByIdAck(msg)
+          break
       }
+    }
+
+    function reportUpdateFrameAck(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/update-frame-ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          figmaNodeId: msg.figmaNodeId || null,
+          figmaFrameName: msg.figmaFrameName || null,
+          nodesCreated: typeof msg.nodesCreated === 'number' ? msg.nodesCreated : null,
+          nodesFailed: typeof msg.nodesFailed === 'number' ? msg.nodesFailed : null,
+          error: msg.error || null,
+        })
+      }).catch(e => addLog(`update-frame-ack POST failed: ${e.message || e}`, 'error'))
+    }
+
+    function reportExportFrameByIdAck(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/export-frame-by-id-ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          figmaNodeId: msg.figmaNodeId || null,
+          figmaFrameName: msg.figmaFrameName || null,
+          frameData: msg.frameData || null,
+          error: msg.error || null,
+        })
+      }).catch(e => addLog(`export-frame-by-id-ack POST failed: ${e.message || e}`, 'error'))
+    }
+
+    // Feature 016 ack helpers — POST plugin's reply back to the backend
+    // so plugin_messages._resolve(requestId) can return the awaited Future.
+
+    function reportCreatePageAck(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/create-page-ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          figmaPageId: msg.figmaPageId || null,
+          figmaPageName: msg.figmaPageName || null,
+          error: msg.error || null,
+        })
+      }).catch(e => addLog(`create-page-ack POST failed: ${e.message || e}`, 'error'))
+    }
+
+    function reportCreateFrameInPageAck(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/create-frame-in-page-ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          figmaPageId: msg.figmaPageId || null,
+          figmaNodeId: msg.figmaNodeId || null,
+          figmaFrameName: msg.figmaFrameName || null,
+          nodesCreated: typeof msg.nodesCreated === 'number' ? msg.nodesCreated : null,
+          nodesFailed: typeof msg.nodesFailed === 'number' ? msg.nodesFailed : null,
+          error: msg.error || null,
+        })
+      }).catch(e => addLog(`create-frame-in-page-ack POST failed: ${e.message || e}`, 'error'))
     }
 
     // ── WebSocket connection ──
@@ -201,6 +297,22 @@
           setStatus('connected')
           addLog(`Connected! Polling every 3s (file: ${fileKey || 'none'})`, 'success')
           document.getElementById('connectBtn').textContent = '연결 해제'
+
+          // Announce supported message set so the backend can detect old plugins
+          // (feature 016 — figma-document-binding adds CREATE_PAGE / CREATE_FRAME_IN_PAGE)
+          if (fileKey) {
+            fetch(`${httpUrl}/api/figma-plugin/announce-support`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+              body: JSON.stringify({
+                file_key: fileKey,
+                supportedMessages: [
+                  'UPDATE_NODES', 'UPDATE_TEXT', 'SYNC_FRAME',
+                  'CREATE_PAGE', 'CREATE_FRAME_IN_PAGE'
+                ]
+              })
+            }).catch(() => { /* best-effort */ })
+          }
 
           // Start polling for pending updates
           pollTimer = setInterval(() => pollUpdates(httpUrl), 3000)
@@ -320,6 +432,45 @@
 
         case 'PING':
           if (ws) ws.send(JSON.stringify({ type: 'PONG' }))
+          break
+
+        // Feature 016 / US2: backend asks plugin to create a Figma page.
+        case 'CREATE_PAGE':
+          addLog(`CREATE_PAGE: "${msg.name}"`)
+          parent.postMessage({ pluginMessage: { type: 'CREATE_PAGE', requestId: msg.requestId, name: msg.name } }, '*')
+          break
+
+        // Feature 016 / US3 + FR-019b: backend asks plugin to create a frame in a page.
+        case 'CREATE_FRAME_IN_PAGE':
+          addLog(`CREATE_FRAME_IN_PAGE: page=${msg.figmaPageId} frame="${msg.frameName}"`)
+          parent.postMessage({ pluginMessage: {
+            type: 'CREATE_FRAME_IN_PAGE',
+            requestId: msg.requestId,
+            figmaPageId: msg.figmaPageId,
+            frameName: msg.frameName,
+            sceneGraph: msg.sceneGraph,
+          } }, '*')
+          break
+
+        // Feature 016 bidirectional sync (RA → Figma in-place update).
+        case 'UPDATE_FRAME_FROM_SCENE_GRAPH':
+          addLog(`UPDATE_FRAME_FROM_SCENE_GRAPH: frame=${msg.figmaNodeId}`)
+          parent.postMessage({ pluginMessage: {
+            type: 'UPDATE_FRAME_FROM_SCENE_GRAPH',
+            requestId: msg.requestId,
+            figmaNodeId: msg.figmaNodeId,
+            sceneGraph: msg.sceneGraph,
+          } }, '*')
+          break
+
+        // Feature 016 bidirectional sync (Figma → RA pull via plugin).
+        case 'EXPORT_FRAME_BY_ID':
+          addLog(`EXPORT_FRAME_BY_ID: frame=${msg.figmaNodeId}`)
+          parent.postMessage({ pluginMessage: {
+            type: 'EXPORT_FRAME_BY_ID',
+            requestId: msg.requestId,
+            figmaNodeId: msg.figmaNodeId,
+          } }, '*')
           break
 
         default:

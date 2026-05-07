@@ -137,10 +137,14 @@ def render_wireframe(
         return None
 
     try:
+        # 120s: bulk ingestion fans out renders concurrently (capped by a
+        # semaphore in the agent). Even with the cap, a complex JSX render can
+        # take 30–60s on a busy service — a 60s ceiling caused frequent
+        # ReadTimeouts that surfaced as missing UIs in figma-mode runs.
         resp = httpx.post(
             f"{_base_url()}/render",
             json=body,
-            timeout=60.0,
+            timeout=120.0,
         )
         resp.raise_for_status()
         return resp.json()

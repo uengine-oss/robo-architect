@@ -13,16 +13,27 @@ router = APIRouter()
 @router.delete("/clear")
 async def clear_all_nodes(request: Request):
     """
-    DELETE /api/graph/clear - 모든 노드와 관계 삭제
+    DELETE /api/graph/clear - 도메인 노드와 관계 삭제
     새로운 인제스션 전에 기존 데이터를 모두 삭제합니다.
+
+    Preserved labels (NOT touched here): `:FigmaBinding`, `:StoryboardPageMapping`,
+    `:BindingHistoryEvent` — these are user-level configuration for spec 016
+    (Figma document binding). Wiping them on every re-ingestion would silently
+    disconnect the bound Figma document and contradict FR-005 ("Disconnection
+    MUST NOT delete previously generated Figma frames"); it would also defeat
+    FR-019b's bulk-with-binding flow because the binding row would be gone
+    before the ingestion phase reads it. Disconnect goes through the
+    dedicated `DELETE /api/figma-binding` endpoint, not this one.
     """
+    # Exclude figma_binding-feature labels from the wipe.
     query = """
     MATCH (n)
+    WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent)
     DETACH DELETE n
     """
     SmartLogger.log(
         "WARNING",
-        "Graph clear requested: DETACH DELETE all nodes/relationships (destructive).",
+        "Graph clear requested: DETACH DELETE all domain nodes (figma_binding labels preserved).",
         category="api.graph.clear.request",
         params=http_context(request),
     )
@@ -31,7 +42,7 @@ async def clear_all_nodes(request: Request):
         summary = result.consume()
         SmartLogger.log(
             "INFO",
-            "Graph cleared: all nodes/relationships removed.",
+            "Graph cleared: domain nodes/relationships removed; figma_binding state preserved.",
             category="api.graph.clear.done",
             params={
                 **http_context(request),

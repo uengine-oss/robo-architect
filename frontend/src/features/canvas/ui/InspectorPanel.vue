@@ -16,9 +16,18 @@ import {
   readClipboardHTML,
 } from './figma'
 
-// Open-Pencil federation components (lazy loaded)
+// Open-Pencil federation components.
+//
+// FrameEditor is loaded synchronously: defineAsyncComponent + Suspense +
+// KeepAlive made the second-and-later mounts crash with "Cannot destructure
+// property 'type' of 'vnode' as it is null" / "Cannot set properties of null
+// (setting '__vnode')". Each Suspense boundary held a stale promise from
+// the prior mount; when the new key forced a fresh tree, Vue's reconciler
+// patched into the now-dead Suspense subtree. Bundle size cost is
+// negligible because the editor is loaded whenever the inspector opens.
+import FrameEditor from 'open-pencil-fed/FrameEditor.vue'
+
 const FramePreview = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
-const FrameEditor = defineAsyncComponent(() => import('open-pencil-fed/FrameEditor.vue'))
 const FullPageEditor = defineAsyncComponent(() => import('open-pencil-fed/FullPageEditor.vue'))
 const AIChatPanel = defineAsyncComponent(() => import('open-pencil-fed/AIChat.vue'))
 
@@ -456,6 +465,14 @@ const designEditorKey = ref(0)
 watch(activeTab, (tab) => {
   if (tab === 'design') designEditorKey.value++
 })
+
+// FrameEditor visibility flag — kept as a stable `true` for now. The previous
+// two-phase remount (false → nextTick → true) actually amplified the vnode
+// errors by causing Suspense + async-component to interleave teardowns. The
+// real fix lives in open-pencil's FrameEditor.vue where pending async work
+// (setTimeout, ResizeObserver, font preload Promise) now bails out on
+// onBeforeUnmount via an `unmounted` guard.
+const frameEditorVisible = ref(true)
 watch(
   () => props.initialTab,
   v => {
@@ -1161,6 +1178,13 @@ async function pollForPluginResult(fileKey, frameName, maxWait = 15000) {
 /**
  * Pull from Figma and reload the Design editor.
  * Called from the FrameEditor's pull button.
+ *
+ * When a 016-style document binding is active, route through the new
+ * /api/figma-binding/pull-frame/{ui_id} endpoint — plugin sends the full
+ * Figma node tree (rich serializer), backend converts directly to a
+ * SceneGraph (no lossy component extraction). Otherwise fall back to the
+ * legacy 009 component-extraction flow which is still useful for files
+ * built from a Figma component library.
  */
 async function pullFromFigmaToDesign() {
   const n = node.value
@@ -1183,8 +1207,42 @@ async function pullFromFigmaToDesign() {
   const frameName = n.data?.displayName || n.data?.name || ''
   const figmaNodeId = n.data?.figmaNodeId || null
 
+  // Detect 016 binding: server-side check is the source of truth, but a
+  // local check on figmaBindingId saves a round-trip in the common case.
+  let useBindingPath = false
   try {
-    // Send EXPORT_FRAME command to Plugin (via polling queue)
+    const bindingResp = await fetch('/api/figma-binding')
+    if (bindingResp.ok) {
+      const b = await bindingResp.json()
+      useBindingPath = b?.status === 'active' && !!figmaNodeId
+    }
+  } catch (_e) { /* fall through */ }
+
+  try {
+    if (useBindingPath) {
+      // 016 path — direct sceneGraph conversion via plugin EXPORT_FRAME_BY_ID.
+      const resp = await fetch(`/api/figma-binding/pull-frame/${encodeURIComponent(n.id)}`, {
+        method: 'POST',
+      })
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}))
+        throw new Error(data.detail || `Pull 실패 (${resp.status})`)
+      }
+      const result = await resp.json()
+      if (result.sceneGraph) {
+        if (n.data) n.data = { ...n.data, sceneGraph: result.sceneGraph }
+        const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+        if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph }
+      }
+      designEditorKey.value++
+      emit('updated')
+      figmaPushStatus.value = 'success'
+      figmaPushMessage.value = `Figma에서 가져옴 (${result.nodeCount || 0}개 노드)`
+      setTimeout(() => { figmaPushStatus.value = null }, 4000)
+      return
+    }
+
+    // 009 legacy path — component-based extraction via plugin EXPORT_FRAME.
     const resp = await fetch('/api/figma-plugin/update-nodes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1203,20 +1261,17 @@ async function pullFromFigmaToDesign() {
     })
     if (!resp.ok) throw new Error('Plugin 명령 전송 실패')
 
-    // Poll for result from Plugin
     const result = await pollForPluginResult(fileKey, frameName, 20000)
     if (!result) {
       throw new Error('Plugin 응답 타임아웃 — Plugin이 연결되어 있는지 확인하세요')
     }
 
-    // Update local node data with the new sceneGraph
     if (result.sceneGraph) {
       if (n.data) n.data = { ...n.data, sceneGraph: result.sceneGraph, figmaNodeId: result.frameId, figmaFileKey: fileKey }
       const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
       if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph, figmaNodeId: result.frameId, figmaFileKey: fileKey }
     }
 
-    // Force FrameEditor to re-create
     designEditorKey.value++
     emit('updated')
 
@@ -1478,6 +1533,132 @@ function onConvertUpdate(data) {
   if (data?.nodes && Object.keys(data.nodes).length > 2) {
     fixSceneGraphParentage(data)
     onDesignSave(data)
+  }
+}
+
+// ── Backend wireframe generation (Phase 1: pure backend AI, replaces in-browser open-pencil agent) ──
+// Calls POST /api/ai-design/wireframe/{ui_node_id} which streams SSE events.
+// On success the backend already persisted the sceneGraph; we re-fetch the node
+// to refresh the UI.
+const backendGenLoading = ref(false)
+const backendGenProgress = ref('')
+const backendGenError = ref(null)
+
+async function generateBackendWireframe() {
+  const n = node.value
+  if (!n?.id) return
+  if (backendGenLoading.value) return
+
+  backendGenLoading.value = true
+  backendGenProgress.value = '시작…'
+  backendGenError.value = null
+
+  try {
+    const resp = await fetch(`/api/ai-design/wireframe/${n.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    if (!resp.ok || !resp.body) {
+      throw new Error(`HTTP ${resp.status}`)
+    }
+    const reader = resp.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    let lastEvent = null
+    let lastData = null
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let idx
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, idx)
+        buf = buf.slice(idx + 2)
+        const evtLine = block.match(/^event:\s*(.+)$/m)
+        const dataLine = block.match(/^data:\s*([\s\S]+)$/m)
+        if (!evtLine || !dataLine) continue
+        const evtName = evtLine[1].trim()
+        let data
+        try { data = JSON.parse(dataLine[1]) } catch { continue }
+        lastEvent = evtName
+        lastData = data
+        applyBackendGenEvent(evtName, data)
+      }
+    }
+    if (lastEvent !== 'done' && lastEvent !== 'persist_done') {
+      throw new Error(lastData?.message || '스트림이 done 없이 종료되었습니다.')
+    }
+    await refreshCurrentNodeFromBackend()
+  } catch (e) {
+    backendGenError.value = e?.message || String(e)
+    backendGenProgress.value = `실패: ${backendGenError.value}`
+    console.error('[InspectorPanel] backend wireframe generation failed:', e)
+    setTimeout(() => { backendGenLoading.value = false }, 4000)
+    return
+  }
+
+  backendGenProgress.value = '완료'
+  setTimeout(() => {
+    backendGenLoading.value = false
+    backendGenProgress.value = ''
+  }, 1500)
+}
+
+function applyBackendGenEvent(evtName, data) {
+  switch (evtName) {
+    case 'context_loaded':
+      backendGenProgress.value = `컨텍스트: ${data.displayName || ''}${data.bcName ? ' · ' + data.bcName : ''}`
+      break
+    case 'llm_step':
+      backendGenProgress.value = `LLM 단계 ${data.step}/${data.of}`
+      break
+    case 'tool_call':
+      backendGenProgress.value = `툴 호출: ${data.name}`
+      break
+    case 'tool_result':
+      if (data.ok && data.nodeCount != null) {
+        backendGenProgress.value = `툴 결과: ${data.nodeCount}개 노드`
+      } else if (!data.ok) {
+        backendGenProgress.value = `툴 오류: ${data.error || ''}`
+      }
+      break
+    case 'render_progress':
+      backendGenProgress.value = `렌더링 ${data.nodeCount}개 노드`
+      break
+    case 'persist_done':
+      backendGenProgress.value = `저장 완료 (${data.nodeCount}개 노드)`
+      break
+    case 'done':
+      backendGenProgress.value = data.summary || '완료'
+      break
+    case 'error':
+      backendGenError.value = data.message || '오류'
+      backendGenProgress.value = `오류: ${backendGenError.value}`
+      break
+  }
+}
+
+async function refreshCurrentNodeFromBackend() {
+  const n = node.value
+  if (!n?.id) return
+  try {
+    const r = await fetch(`/api/graph/expand-with-bc/${n.id}`)
+    if (!r.ok) return
+    const j = await r.json()
+    const ui = j.nodes?.find(x => x.id === n.id)
+    if (!ui?.sceneGraph) return
+    const patch = {
+      sceneGraph: ui.sceneGraph,
+      designSource: ui.designSource,
+      updatedAt: ui.updatedAt,
+    }
+    if (n.data) n.data = { ...n.data, ...patch }
+    const storeNode = canvasStore.nodes?.find(x => x.id === n.id)
+    if (storeNode?.data) storeNode.data = { ...storeNode.data, ...patch }
+    designEditorKey.value++
+  } catch (e) {
+    console.warn('[InspectorPanel] failed to refresh node after backend gen:', e)
   }
 }
 
@@ -2812,21 +2993,19 @@ function updateVoFieldValue(fieldName, value) {
           </div>
         </div>
 
-        <!-- Design tab: OpenPencil FrameEditor -->
+        <!-- Design tab: OpenPencil FrameEditor (synchronous mount; see import note above) -->
         <div v-if="activeTab === 'design' && nodeLabel === 'UI'" class="inspector-design-editor">
-          <div v-if="hasRealSceneGraph && mainFrameId" class="inspector-design-editor__content">
-            <Suspense>
-              <FrameEditor
-                :key="node?.id + '-' + mainFrameId + '-' + designEditorKey"
-                :scene-data="sceneGraphData"
-                :frame-id="mainFrameId"
-                :on-save="onDesignSave"
-                :on-pull="hasFigmaConnection ? pullFromFigmaToDesign : undefined"
-              />
-              <template #fallback>
-                <div class="inspector-design-editor__loading">Loading design editor...</div>
-              </template>
-            </Suspense>
+          <div v-if="hasRealSceneGraph && mainFrameId && frameEditorVisible" class="inspector-design-editor__content">
+            <FrameEditor
+              :key="node?.id + '-' + mainFrameId + '-' + designEditorKey"
+              :scene-data="sceneGraphData"
+              :frame-id="mainFrameId"
+              :on-save="onDesignSave"
+              :on-pull="hasFigmaConnection ? pullFromFigmaToDesign : undefined"
+            />
+          </div>
+          <div v-else-if="hasRealSceneGraph && mainFrameId && !frameEditorVisible" class="inspector-design-editor__loading">
+            Loading design editor...
           </div>
           <div v-else class="inspector-design-editor__empty">
             <div v-if="convertingToDesign" class="inspector-design-ai-layout">
@@ -2854,7 +3033,7 @@ function updateVoFieldValue(fieldName, value) {
                 <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
               </svg>
               <p style="margin:0;">디자인이 없습니다</p>
-              <div style="display:flex;gap:8px;">
+              <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
                 <button
                   class="ui-preview-empty__btn"
                   :disabled="componentGenLoading"
@@ -2870,6 +3049,18 @@ function updateVoFieldValue(fieldName, value) {
                 >
                   OpenPencil AI로 생성
                 </button>
+                <button
+                  class="ui-preview-empty__btn"
+                  :disabled="backendGenLoading"
+                  @click="generateBackendWireframe"
+                  style="font-size:12px;background:#0acf83;color:#fff;"
+                  title="백엔드 LLM이 와이어프레임을 직접 생성하고 Neo4j에 저장합니다 (브라우저 작업 없음)"
+                >
+                  {{ backendGenLoading ? backendGenProgress || '생성 중…' : '백엔드 AI로 생성' }}
+                </button>
+              </div>
+              <div v-if="backendGenLoading || backendGenError" style="margin-top:8px;font-size:11px;color:#888;max-width:320px;text-align:center;">
+                {{ backendGenProgress || backendGenError }}
               </div>
             </div>
           </div>

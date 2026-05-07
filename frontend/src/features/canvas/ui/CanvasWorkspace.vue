@@ -841,9 +841,15 @@ onUnmounted(() => {
       </div>
 
       <!-- UI Preview Panel -->
-      <!-- Inspector Panel (placeholder) -->
+      <!-- Inspector Panel — keyed on node id so a different UI sticker forces
+           a full re-mount of the panel and all of its child components
+           (FrameEditor, FramePreview, AIChatPanel). Without this, Vue tries
+           to re-use the previous panel instance for the new node, which
+           leaves open-pencil's CanvasKit/editor state half-destroyed and the
+           Design tab shows a blank/black box from the second UI onward. -->
       <div v-else-if="panelMode === 'inspector'" class="inspector-wrapper">
         <InspectorPanel
+          :key="inspectingNodeId || 'inspector-empty'"
           :node-id="inspectingNodeId"
           :node-data="inspectingNodeData"
           :initial-tab="inspectingInitialTab"

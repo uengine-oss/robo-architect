@@ -306,6 +306,21 @@ CREATE CONSTRAINT constraint_then_parentId IF NOT EXISTS
 FOR (t:Then)
 REQUIRE t.parentId IS NOT NULL;
 
+// ------------------------------------------------------------
+// FigmaBinding / StoryboardPageMapping / BindingHistoryEvent (016)
+// ------------------------------------------------------------
+CREATE CONSTRAINT figma_binding_singleton IF NOT EXISTS
+FOR (b:FigmaBinding) REQUIRE b.id IS UNIQUE;
+
+CREATE CONSTRAINT storyboard_page_mapping_id_unique IF NOT EXISTS
+FOR (m:StoryboardPageMapping) REQUIRE m.id IS UNIQUE;
+
+CREATE CONSTRAINT storyboard_page_mapping_command_unique IF NOT EXISTS
+FOR (m:StoryboardPageMapping) REQUIRE m.commandId IS UNIQUE;
+
+CREATE CONSTRAINT binding_history_event_id_unique IF NOT EXISTS
+FOR (e:BindingHistoryEvent) REQUIRE e.id IS UNIQUE;
+
 // 부모 내 Then 중복 방지: (parentType,parentId) 유니크 (하나의 Command/Policy당 하나의 Then)
 CREATE CONSTRAINT constraint_then_parent_unique IF NOT EXISTS
 FOR (t:Then)

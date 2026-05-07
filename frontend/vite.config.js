@@ -24,6 +24,27 @@ export default defineConfig({
         }
       }
     },
+    // Copy open-pencil bundled fonts to public/ so /Inter-Regular.ttf and
+    // /NotoNaskhArabic-Regular.ttf resolve. open-pencil's loadFont() falls back
+    // to these root-relative URLs when local-font access is denied and the
+    // Google Fonts API key is rate-limited; without them, CanvasKit gets the
+    // SPA index.html as the font payload and renders blank text.
+    // Pretendard-Regular.otf is committed under public/ directly (it lives in
+    // robo-architect, not open-pencil) and is preloaded as the CJK fallback
+    // by features/aiDesign/fonts.js.
+    {
+      name: 'copy-open-pencil-fonts',
+      buildStart() {
+        const fonts = ['Inter-Regular.ttf', 'NotoNaskhArabic-Regular.ttf']
+        for (const f of fonts) {
+          const src = resolve(OP, 'public', f)
+          const dest = resolve(__dirname, 'public', f)
+          if (existsSync(src) && !existsSync(dest)) {
+            copyFileSync(src, dest)
+          }
+        }
+      }
+    },
     // Vite plugin: override @/ resolution for open-pencil source files
     {
       name: 'open-pencil-at-alias',

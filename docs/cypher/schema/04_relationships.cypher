@@ -242,6 +242,23 @@ CREATE (cmd)-[:HAS_THEN]->(then);
 
 
 // ============================================================
+// Feature 016 — Figma Document Binding 관계 정의
+// ============================================================
+//
+// MAPS_STORYBOARD : (FigmaBinding)-[:MAPS_STORYBOARD]->(StoryboardPageMapping)
+//   - 활성 바인딩이 보유한 storyboard ↔ Figma 페이지 매핑들
+//   - replace 시 기존은 status='archived' 처리, 새 매핑은 신규 생성
+//
+// MAPS : (StoryboardPageMapping)-[:MAPS]->(Command)
+//   - 한 매핑이 가리키는 entry Command (= storyboard의 식별자)
+//
+// LOGGED : (BindingHistoryEvent)-[:LOGGED]->(FigmaBinding)
+//   - append-only 감사 이벤트 → 활성 바인딩
+//
+// ============================================================
+
+
+// ============================================================
 // Event Storming Flow 시각화
 // ============================================================
 //

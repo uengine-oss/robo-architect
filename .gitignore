@@ -64,3 +64,14 @@ logs/
 
 input/
 output/
+
+# Local Claude Code / speckit tooling state
+.claude/
+.specify/
+
+# Playwright test artifacts
+test-results/
+frontend/test-results/
+
+# Local implementation session logs (not part of project deliverables)
+docs/implementation-*

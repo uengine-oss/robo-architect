@@ -55,6 +55,13 @@ const hasDragged = ref(false) // Track if actual dragging occurred
 const displayLanguage = ref(localStorage.getItem('app_display_language') || 'ko')
 watch(displayLanguage, (v) => { localStorage.setItem('app_display_language', v) })
 
+// UI generation mode: 'html' (legacy HTML wireframe template) or 'figma'
+// (skip HTML, use the backend JSX agent — Phase 1 of the AI-design backend port).
+// When 'figma', the ingestion phase calls run_render_agent for each UI node
+// and stores the resulting sceneGraph; no HTML template is generated.
+const uiGenerationMode = ref(localStorage.getItem('app_ui_generation_mode') || 'html')
+watch(uiGenerationMode, (v) => { localStorage.setItem('app_ui_generation_mode', v) })
+
 // Source type is auto-detected from filename (*.report.md → legacy_report)
 
 // Cache state
@@ -476,6 +483,7 @@ async function startIngestion() {
         figma_nodes: figmaNodeChanges.value,
         source_type: 'figma',
         display_language: displayLanguage.value === 'en' ? 'en' : 'ko',
+        ui_generation_mode: uiGenerationMode.value === 'figma' ? 'figma' : 'html',
       }
       // Include Figma API metadata for node ID mapping (when using API mode)
       if (figmaInputSubMode.value === 'api' && figmaFileKey.value) {
@@ -505,6 +513,7 @@ async function startIngestion() {
         formData.append('text', textContent.value)
       }
       formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
+      formData.append('ui_generation_mode', uiGenerationMode.value === 'figma' ? 'figma' : 'html')
 
       uploadResponse = await fetch('/api/ingest/upload', {
         method: 'POST',
@@ -1390,7 +1399,7 @@ function useSample() {
                     <span v-if="isTogglingCache" class="cache-toggle__pending">적용 중...</span>
                   </div>
                 </div>
-                <!-- Row 2: Source type + Display language -->
+                <!-- Row 2: Source type + Display language + UI generation mode -->
                 <div class="options-sub-row">
                   <div class="display-language-row">
                     <span class="display-language-label">표시 언어</span>
@@ -1406,6 +1415,25 @@ function useSample() {
                         @click="displayLanguage = 'en'"
                       >
                         English
+                      </button>
+                    </div>
+                  </div>
+                  <div class="display-language-row" style="margin-left:16px;">
+                    <span class="display-language-label">UI 생성</span>
+                    <div class="display-language-tabs">
+                      <button
+                        :class="['tab-btn', 'tab-btn--small', { active: uiGenerationMode === 'html' }]"
+                        @click="uiGenerationMode = 'html'"
+                        title="기존 방식: HTML 와이어프레임 템플릿을 생성합니다"
+                      >
+                        HTML
+                      </button>
+                      <button
+                        :class="['tab-btn', 'tab-btn--small', { active: uiGenerationMode === 'figma' }]"
+                        @click="uiGenerationMode = 'figma'"
+                        title="피그마 모드: HTML 생성을 건너뛰고 백엔드 JSX 에이전트(open-pencil 기반)로 sceneGraph만 생성합니다"
+                      >
+                        Figma UI
                       </button>
                     </div>
                   </div>

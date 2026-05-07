@@ -153,6 +153,25 @@ test.describe('Design tab re-open', () => {
     expect(errorsAfterSecond.filter(e => e.includes('deleted')),
       'No "deleted object" errors on 2nd node'
     ).toHaveLength(0)
+    // The user-visible regression that motivates this test: open-pencil's
+    // CanvasKit renderer crashed mid-paint on `fills/0/color` access when a
+    // sceneGraph node lacked `boundVariables` (e.g., pulled-from-Figma
+    // sceneGraphs). When that crash fires, the FrameEditor mounts visually
+    // but the canvas stays blank. Guarding here keeps the renderer working
+    // even on non-canonical sceneGraphs.
+    const fillsCrashes = errorsAfterSecond.filter(e =>
+      e.includes("fills/0/color") ||
+      e.includes("Cannot read properties of undefined (reading 'fills/")
+    )
+    expect(fillsCrashes,
+      `No fills/color undefined crashes on 2nd node, got: ${fillsCrashes.slice(0, 3).join(' | ')}`
+    ).toHaveLength(0)
+    // Vue's KeepAlive + Suspense + async-component combination produces
+    // benign console warnings ("Cannot set properties of null (setting
+    // '__vnode')") when transitioning between two FrameEditor instances.
+    // These do NOT blank the canvas; they're noise. Keeping them out of
+    // the failing assertions until we have a structural fix for the
+    // KeepAlive interaction.
 
     console.log('[test] PASSED')
   })

@@ -70,11 +70,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for Vue.js frontend
+# CORS for Vue.js frontend + Figma plugin sandbox.
+#
+# allow_credentials MUST be False while allow_origins is "*", per CORS spec:
+# browsers reject any actual response (not just preflight) that combines
+# Access-Control-Allow-Origin: * with Access-Control-Allow-Credentials: true,
+# which surfaces in the Figma plugin as "Failed to fetch" with no other
+# diagnostic. The project has no cookie/session auth, so credentials are
+# unused — flipping the flag is safe. Switch back to a concrete origin
+# allow-list (and credentials=True) only when introducing real auth.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -186,6 +194,16 @@ app.include_router(readmodel_cqrs_router)
 # Claude Code terminal WebSocket
 from api.features.claude_code.router import router as claude_code_router
 app.include_router(claude_code_router)
+
+# Figma document binding (feature 016)
+from api.features.figma_binding.router import router as figma_binding_router
+from api.features.figma_binding.plugin_messages import router as figma_binding_plugin_ack_router
+app.include_router(figma_binding_router)
+app.include_router(figma_binding_plugin_ack_router)
+
+# AI Design proxy (open-pencil AI → backend LLM runtime)
+from api.features.ai_design.router import router as ai_design_router
+app.include_router(ai_design_router)
 
 
 if __name__ == "__main__":

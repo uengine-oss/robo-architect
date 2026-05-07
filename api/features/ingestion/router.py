@@ -58,6 +58,7 @@ async def upload_document(
     text: Optional[str] = Form(None),
     display_language: Optional[str] = Form("ko"),
     source_type: Optional[str] = Form("rfp"),
+    ui_generation_mode: Optional[str] = Form("html"),
 ) -> dict[str, Any]:
     """
     Upload a requirements document (text or PDF) to start ingestion.
@@ -157,14 +158,30 @@ async def upload_document(
     if session.display_language not in ("ko", "en"):
         session.display_language = "ko"
     session.source_type = resolved_source_type
+    resolved_ui_mode = (ui_generation_mode or "html").strip().lower()
+    if resolved_ui_mode not in ("html", "figma"):
+        resolved_ui_mode = "html"
+    session.ui_generation_mode = resolved_ui_mode
     SmartLogger.log(
         "INFO",
         "Ingestion session created",
         category="ingestion.api.upload",
-        params={"session_id": session.id, "display_language": session.display_language, "source_type": session.source_type},
+        params={
+            "session_id": session.id,
+            "display_language": session.display_language,
+            "source_type": session.source_type,
+            "ui_generation_mode": session.ui_generation_mode,
+        },
     )
 
-    return {"session_id": session.id, "content_length": len(content), "display_language": session.display_language, "source_type": session.source_type, "preview": content[:500] + "..." if len(content) > 500 else content}
+    return {
+        "session_id": session.id,
+        "content_length": len(content),
+        "display_language": session.display_language,
+        "source_type": session.source_type,
+        "ui_generation_mode": session.ui_generation_mode,
+        "preview": content[:500] + "..." if len(content) > 500 else content,
+    }
 
 
 class FigmaUploadRequest(BaseModel):
@@ -173,6 +190,7 @@ class FigmaUploadRequest(BaseModel):
     display_language: str = "ko"
     figma_file_key: str | None = None
     figma_node_id_map: dict[str, str] | None = None  # screen_name → figma_node_id
+    ui_generation_mode: str = "html"  # "html" | "figma"
 
 
 @router.post("/upload/figma")
@@ -206,6 +224,10 @@ async def upload_figma_document(
     if session.display_language not in ("ko", "en"):
         session.display_language = "ko"
     session.source_type = "figma"
+    resolved_ui_mode_figma = (body.ui_generation_mode or "html").strip().lower()
+    if resolved_ui_mode_figma not in ("html", "figma"):
+        resolved_ui_mode_figma = "html"
+    session.ui_generation_mode = resolved_ui_mode_figma
     # Store Figma API metadata for the ingestion workflow to preserve node IDs
     if body.figma_file_key:
         session.figma_file_key = body.figma_file_key
@@ -535,8 +557,14 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
             params=http_context(request),
         )
         with client.session() as session:
+            # Preserve figma_binding feature 016 labels — see graph_maintenance.py
+            # for the same guard. Disconnect goes through DELETE /api/figma-binding,
+            # not this endpoint; without this filter, `삭제하고 계속` in the
+            # ingestion modal silently disconnects the user's Figma document
+            # binding mid-flow (broke FR-019b end-to-end testing).
             count_query = """
             MATCH (n)
+            WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent)
             WITH labels(n)[0] as label, count(n) as count
             RETURN collect({label: label, count: count}) as counts
             """
@@ -546,6 +574,7 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
 
             delete_query = """
             MATCH (n)
+            WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent)
             DETACH DELETE n
             """
             session.run(delete_query)

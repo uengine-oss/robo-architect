@@ -266,6 +266,85 @@ async def _generate_scene_graph(
         return None
 
 
+async def _generate_jsx_scene_graph_for_figma_mode(
+    ctx: IngestionWorkflowContext,
+    *,
+    ui_display_name: str,
+    description: str,
+    bc_name: str,
+) -> dict | None:
+    """Figma-mode wireframe generation (no HTML, no figma-component picking).
+
+    Uses the Phase 1 backend JSX agent (`api/features/ai_design/wireframe_agent.run_render_agent`).
+    The result is a SerializedSceneGraph the caller embeds into the UI node it
+    is about to create.  Returns None on failure — the caller should treat
+    this as "no design yet" and leave the UI node without a sceneGraph.
+
+    Retries once on transient failure: the agent gives up after the first
+    failed render call (the LLM follows up the tool error with a summary
+    instead of retrying), so when the wireframe service times out under load
+    we end up with empty UI nodes. A second attempt with a fresh agent loop
+    almost always succeeds once the concurrency burst has passed.
+    """
+    # Local import to avoid widening this phase module's startup graph.
+    from api.features.ai_design.wireframe_agent import run_render_agent
+
+    MAX_ATTEMPTS = 3
+    last_summary: str | None = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        if attempt > 1:
+            # Brief jitter so retries don't thunder into the wireframe service
+            # at the same moment the rest of the batch is also retrying.
+            await asyncio.sleep(0.5 * attempt)
+        try:
+            sg, summary = await run_render_agent(
+                name=ui_display_name,
+                description=description or "",
+                bc_name=bc_name or "",
+            )
+        except Exception as e:
+            SmartLogger.log(
+                "WARN",
+                f"figma-mode wireframe agent crashed for {ui_display_name} (attempt {attempt}/{MAX_ATTEMPTS}): {e}",
+                category="ingestion.ui_wireframe.figma_mode.error",
+                params={"session_id": ctx.session.id, "ui_name": ui_display_name, "error": str(e), "attempt": attempt},
+            )
+            sg, summary = None, None
+        last_summary = summary or last_summary
+        if sg:
+            SmartLogger.log(
+                "INFO",
+                f"figma-mode wireframe generated: {ui_display_name} ({len(sg.get('nodes') or {})} nodes, attempt {attempt})",
+                category="ingestion.ui_wireframe.figma_mode.success",
+                params={
+                    "session_id": ctx.session.id,
+                    "ui_name": ui_display_name,
+                    "node_count": len(sg.get("nodes") or {}),
+                    "summary": summary,
+                    "attempt": attempt,
+                },
+            )
+            return sg
+        if attempt < MAX_ATTEMPTS:
+            SmartLogger.log(
+                "WARN",
+                f"figma-mode wireframe empty for {ui_display_name}, retrying (attempt {attempt}/{MAX_ATTEMPTS})",
+                category="ingestion.ui_wireframe.figma_mode.retry",
+                params={"session_id": ctx.session.id, "ui_name": ui_display_name, "attempt": attempt},
+            )
+    SmartLogger.log(
+        "WARN",
+        f"figma-mode wireframe agent returned no sceneGraph for {ui_display_name} after {MAX_ATTEMPTS} attempts",
+        category="ingestion.ui_wireframe.figma_mode.empty",
+        params={"session_id": ctx.session.id, "ui_name": ui_display_name, "summary": last_summary},
+    )
+    return None
+
+
+def _is_figma_ui_mode(ctx: IngestionWorkflowContext) -> bool:
+    return (getattr(ctx.session, "ui_generation_mode", "html") or "html").lower() == "figma"
+
+
 async def _create_command_ui(
     ctx: IngestionWorkflowContext,
     bc,
@@ -333,26 +412,41 @@ async def _create_command_ui(
             )
             base_prompt = f"""UI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}{figma_screen_ref}{lang_instruction}"""
 
-            # --- Try component-based (open-pencil) first ---
-            sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
-            if sg is not None:
-                import json as _json
-                scene_graph_json = _json.dumps(sg, ensure_ascii=False)
-                # Still generate a minimal HTML template for backward compat
-                final_template, norm_report = normalize_ui_template(
-                    "",
-                    ui_name=ui_name,
-                    theme_hint=theme_hint,
+            if _is_figma_ui_mode(ctx):
+                # --- Figma mode: pure JSX agent, NO HTML, NO component picking ---
+                sg = await _generate_jsx_scene_graph_for_figma_mode(
+                    ctx,
+                    ui_display_name=ui_display_name,
+                    description=chosen_ui_desc,
+                    bc_name=bc_name,
                 )
+                if sg is not None:
+                    import json as _json
+                    scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                # Skip HTML generation entirely in figma mode.
+                final_template = ""
+                norm_report = {"mode": "figma", "html_skipped": True}
             else:
-                # --- Fallback to HTML generation ---
-                html_prompt = f"Generate a wireframe HTML template.\n\n{base_prompt}\n\nUse labels and placeholders that fit this domain, not generic \"Label\" or \"Input\". Output ONLY the HTML fragment."
-                raw_html = await _llm_invoke_to_html(ctx, html_prompt)
-                final_template, norm_report = normalize_ui_template(
-                    str(raw_html),
-                    ui_name=ui_name,
-                    theme_hint=theme_hint,
-                )
+                # --- Try component-based (open-pencil) first ---
+                sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
+                if sg is not None:
+                    import json as _json
+                    scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                    # Still generate a minimal HTML template for backward compat
+                    final_template, norm_report = normalize_ui_template(
+                        "",
+                        ui_name=ui_name,
+                        theme_hint=theme_hint,
+                    )
+                else:
+                    # --- Fallback to HTML generation ---
+                    html_prompt = f"Generate a wireframe HTML template.\n\n{base_prompt}\n\nUse labels and placeholders that fit this domain, not generic \"Label\" or \"Input\". Output ONLY the HTML fragment."
+                    raw_html = await _llm_invoke_to_html(ctx, html_prompt)
+                    final_template, norm_report = normalize_ui_template(
+                        str(raw_html),
+                        ui_name=ui_name,
+                        theme_hint=theme_hint,
+                    )
 
         ui = await asyncio.wait_for(
             asyncio.to_thread(
@@ -478,25 +572,39 @@ async def _create_readmodel_ui(
             )
             base_prompt = f"""UI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}{figma_screen_ref}{lang_instruction}"""
 
-            # --- Try component-based (open-pencil) first ---
-            sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
-            if sg is not None:
-                import json as _json
-                scene_graph_json = _json.dumps(sg, ensure_ascii=False)
-                final_template, norm_report = normalize_ui_template(
-                    "",
-                    ui_name=ui_name,
-                    theme_hint=theme_hint,
+            if _is_figma_ui_mode(ctx):
+                # --- Figma mode: pure JSX agent, NO HTML, NO component picking ---
+                sg = await _generate_jsx_scene_graph_for_figma_mode(
+                    ctx,
+                    ui_display_name=ui_display_name,
+                    description=chosen_ui_desc,
+                    bc_name=bc_name,
                 )
+                if sg is not None:
+                    import json as _json
+                    scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                final_template = ""
+                norm_report = {"mode": "figma", "html_skipped": True}
             else:
-                # --- Fallback to HTML generation ---
-                html_prompt = f"Generate a wireframe HTML template.\n\n{base_prompt}\n\nUse labels and placeholders that fit this read model, not generic \"Label\" or \"Column\". Output ONLY the HTML fragment."
-                raw_html = await _llm_invoke_to_html(ctx, html_prompt)
-                final_template, norm_report = normalize_ui_template(
-                    str(raw_html),
-                    ui_name=ui_name,
-                    theme_hint=theme_hint,
-                )
+                # --- Try component-based (open-pencil) first ---
+                sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
+                if sg is not None:
+                    import json as _json
+                    scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                    final_template, norm_report = normalize_ui_template(
+                        "",
+                        ui_name=ui_name,
+                        theme_hint=theme_hint,
+                    )
+                else:
+                    # --- Fallback to HTML generation ---
+                    html_prompt = f"Generate a wireframe HTML template.\n\n{base_prompt}\n\nUse labels and placeholders that fit this read model, not generic \"Label\" or \"Column\". Output ONLY the HTML fragment."
+                    raw_html = await _llm_invoke_to_html(ctx, html_prompt)
+                    final_template, norm_report = normalize_ui_template(
+                        str(raw_html),
+                        ui_name=ui_name,
+                        theme_hint=theme_hint,
+                    )
 
         ui = await asyncio.wait_for(
             asyncio.to_thread(
@@ -679,6 +787,21 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
             )
             created_by_readmodel.add(rm_id)
 
+    # Bulk-with-binding (FR-019b): if a :FigmaBinding is active, after each
+    # batch of UI creations finishes we hand the just-created UI ids to
+    # figma_binding.bulk_sync.sync_batch which (a) ensures Figma pages exist
+    # for the storyboards owning these UIs and (b) pushes each sceneGraph as
+    # a Figma frame. Failures don't halt ingestion (FR-020 contract); they
+    # set figmaSyncStatus on the affected :UI nodes for the FR-020 retry UX.
+    # Lazy import — keeps the ingestion phase import graph clean.
+    from api.features.figma_binding import bulk_sync as _figma_bulk_sync, repository as _fb_repo
+
+    def _binding_active() -> bool:
+        try:
+            return _fb_repo.get_active_binding() is not None
+        except Exception:
+            return False
+
     # Process UI creation in batches (10 at a time to avoid overwhelming LLM API)
     BATCH_SIZE = 10
     all_tasks = command_ui_tasks + readmodel_ui_tasks
@@ -686,6 +809,9 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
     for i in range(0, len(all_tasks), BATCH_SIZE):
         batch = all_tasks[i:i + BATCH_SIZE]
         results = await asyncio.gather(*[task() for task in batch], return_exceptions=True)
+
+        # Collect UI ids written this batch for the figma sync sub-step.
+        batch_ui_ids: list[str] = []
 
         for result in results:
             if isinstance(result, Exception):
@@ -702,6 +828,47 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                 ctx.uis.append(ui)
                 created += 1
                 yield progress_event
+                ui_id = ui.get("id")
+                if ui_id:
+                    batch_ui_ids.append(ui_id)
+
+        # Figma sync sub-step (FR-019b). Skipped silently if no binding.
+        # FR-021: cancel-flag check happens AFTER this — the batch + its
+        # sync sub-step are treated as one logical unit that runs to
+        # natural completion before the next batch is dispatched.
+        if batch_ui_ids and _binding_active():
+            sync_events: list[tuple[str, dict]] = []
+
+            def _capture(name: str, payload: dict) -> None:
+                sync_events.append((name, payload))
+
+            try:
+                summary = await _figma_bulk_sync.sync_batch(
+                    session_id=ctx.session.id,
+                    ui_ids=batch_ui_ids,
+                    on_event=_capture,
+                )
+            except Exception as e:  # noqa: BLE001 — never fail ingestion on figma issues
+                SmartLogger.log(
+                    "ERROR",
+                    f"figma_binding.bulk_sync crashed: {e}",
+                    category="figma_binding.bulk_sync.error",
+                    params={"session_id": ctx.session.id, "error": str(e)},
+                )
+                summary = {"skipped": False, "syncedCount": 0, "failedCount": len(batch_ui_ids)}
+
+            # Forward the captured per-UI events into the ingestion SSE stream
+            # as ProgressEvent payloads. The frontend's existing 'progress'
+            # listener picks them up via the data.figmaSync key (no new SSE
+            # event type registration needed in this phase — see FR-020 UI
+            # bits in Group D for the dedicated frontend handlers).
+            for name, payload in sync_events:
+                yield ProgressEvent(
+                    phase=IngestionPhase.GENERATING_UI,
+                    message=f"Figma 동기화: {payload.get('uiId', '')}",
+                    progress=89,
+                    data={"figmaSync": {"event": name, **payload}},
+                )
 
     # 생성 결과 요약
     SmartLogger.log(
