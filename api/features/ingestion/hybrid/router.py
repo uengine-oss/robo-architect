@@ -30,6 +30,7 @@ from api.features.ingestion.hybrid.event_storming_bridge.promote_to_es import (
     clear_promoted_nodes,
 )
 from api.features.ingestion.hybrid.hybrid_workflow_runner import run_hybrid_workflow
+from api.features.ingestion.hybrid.pipeline_verification import verify_pipeline_status
 from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     accept_review_mapping,
     assign_rule_to_task,
@@ -217,6 +218,12 @@ async def get_session_snapshot(session_id: str) -> dict[str, Any]:
     rules + glossary + review queue + bpmn_xml. Source of truth is Neo4j; the
     frontend uses this on cold load instead of relying on localStorage."""
     return fetch_session_snapshot(session_id)
+
+
+@router.get("/session/{session_id}/pipeline-status")
+async def get_pipeline_status(session_id: str) -> dict[str, Any]:
+    """End-to-end readiness for BPM -> Rule mapping -> ES -> PRD generation."""
+    return verify_pipeline_status(session_id)
 
 
 def _sse_runner(

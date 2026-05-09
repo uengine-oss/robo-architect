@@ -553,6 +553,46 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                         us = us.model_copy(update={"id": new_id})
 
             ctx.user_stories = user_stories
+
+            # ─── Hybrid input boost — prefetch BL info per UserStory ─────────
+            # Downstream legacy ES phases (aggregates/commands/events_from_us/
+            # gwt/bcs/readmodels/policies) read `ctx.hybrid_us_rules` to weave
+            # analyzer Rule.statement / Example GWT / writes.op /
+            # coupled_domains / guard_rule_id chain into their LLM prompts.
+            # See Phase5_EventStorming_Promotion_PRD §12 (v3 input boost) for the rationale.
+            try:
+                from api.features.ingestion.hybrid.bpm_context_builder import (
+                    fetch_hybrid_us_rules,
+                )
+                # Each US's source_unit_id is the BpmTask.id it was extracted from.
+                us_to_task: list[tuple[str, str]] = [
+                    (us.id, getattr(us, "source_unit_id", "") or "")
+                    for us in user_stories
+                    if getattr(us, "source_unit_id", None)
+                ]
+                if us_to_task:
+                    ctx.hybrid_us_rules = fetch_hybrid_us_rules(hsid, us_to_task)
+                    enriched_us = sum(1 for v in ctx.hybrid_us_rules.values() if v)
+                    SmartLogger.log(
+                        "INFO",
+                        f"Hybrid input boost: {enriched_us}/{len(us_to_task)} US enriched with BL info",
+                        category="ingestion.user_stories.hybrid.boost",
+                        params={
+                            "session_id": ctx.session.id,
+                            "hybrid_source_session_id": hsid,
+                            "enriched_us": enriched_us,
+                            "total_us": len(us_to_task),
+                            "total_bl_entries": sum(len(v) for v in ctx.hybrid_us_rules.values()),
+                        },
+                    )
+            except Exception as boost_err:
+                SmartLogger.log(
+                    "WARN",
+                    "Hybrid BL prefetch failed; downstream phases will fall back to US-text-only LLM input",
+                    category="ingestion.user_stories.hybrid.boost.error",
+                    params={"session_id": ctx.session.id, "error": str(boost_err)},
+                )
+
             yield ProgressEvent(
                 phase=IngestionPhase.EXTRACTING_USER_STORIES,
                 message=f"User Story 추출 완료 (총 {len(user_stories)}개, BPM Task {total_groups}개 처리)",

@@ -55,6 +55,34 @@ class IngestionWorkflowContext:
     # Figma screen data: screen_name → node structure summary text (set when source_type == "figma")
     figma_screens: Dict[str, str] = field(default_factory=dict)
 
+    # Hybrid input boost — populated by user_stories.py at the end of its hybrid
+    # branch. Each entry maps `us.id` → list of BL info dicts (one per shadow Rule
+    # the matching BpmTask was REALIZED_BY). Downstream phases (aggregates,
+    # commands, events_from_us, gwt, bounded_contexts, readmodels, policies) read
+    # this dict from their hybrid sub-paths and weave the BL signals into LLM
+    # prompts so the resulting nodes carry the analyzer's domain intent rather
+    # than just the US text. See Phase5_EventStorming_Promotion_PRD §10.2 (input
+    # boost direction) and Phase5_EventStorming_Promotion_PRD §12 for the rationale.
+    #
+    # Shape per entry:
+    #   {
+    #     "rule_id":         str,        # shadow Rule.id (== analyzer Rule.id when matched)
+    #     "statement":       str,        # Rule.title — the one-line domain rule
+    #     "source_function": str | None, # FUNCTION.procedure_name
+    #     "given":           str,        # canonical Example.given (humanized)
+    #     "when_":           str,
+    #     "then_":           str,
+    #     "is_boundary":     bool,
+    #     "writes":          [{"table": str, "op": "INSERT"|"UPDATE"|"DELETE"}, ...],
+    #     "coupled_domains": [str, ...], # cross-BC signal
+    #     "guard_rule_id":   str | None, # precondition local_id chain
+    #     "branch_from":     str | None, # else-leg parent local_id
+    #     "local_id":        str | None, # "R1".."R8" within source_function
+    #     "examples":        [{"example_id", "given", "when_", "then_", "is_boundary",
+    #                          "writes": [{"table","op"}, ...]}, ...]   # full Example set
+    #   }
+    hybrid_us_rules: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+
     def sync_from_neo4j(self, up_to_phase: str | None = None) -> None:
         """
         Synchronize context from Neo4j to reflect any modifications made during pause.
@@ -164,7 +192,7 @@ class IngestionWorkflowContext:
                             # Query events emitted by this command
                             query = """
                             MATCH (cmd:Command {id: $cmd_id})-[:EMITS]->(evt:Event)
-                            RETURN evt {.id, .name, .displayName, .version, .schema, .payload} as event
+                            RETURN evt {.id, .key, .name, .displayName, .version, .schema, .payload} as event
                             ORDER BY evt.name
                             """
                             with self.client.session() as session:

@@ -351,6 +351,21 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                 [format_us_text(us, include_benefit=False) for us in ctx.user_stories if us.id in bc_us_ids]
             )
 
+            # ─── Hybrid input boost — append BL info per US to LLM input ────
+            # BL.guard_rule_id chain (preconditions) / branch_from (split commands) /
+            # AFFECTS_TABLE writes drive Command name + preconditions + emits.
+            # See Phase5_EventStorming_Promotion_PRD §12 (v3 input boost).
+            if getattr(ctx, "source_type", "") == "hybrid" and getattr(ctx, "hybrid_us_rules", None):
+                try:
+                    from api.features.ingestion.hybrid.bpm_context_builder import (
+                        render_hybrid_bl_block,
+                    )
+                    _bl_block = render_hybrid_bl_block(ctx.hybrid_us_rules, set(bc_us_ids))
+                    if _bl_block:
+                        stories_context = (stories_context or "") + _bl_block
+                except Exception:
+                    pass  # fall back to US-text-only prompt
+
             # Aggregate에 속한 Event 목록 (SCOPE_EVENT 또는 BC의 HAS_EVENT)
             # name + displayName을 함께 가져와 LLM이 정확한 name을 복사하기 쉽게 함
             agg_event_entries: list[tuple[str, str]] = []  # (name, displayName)
@@ -762,5 +777,52 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
     # ── End Cross-Aggregate Command 중복 병합 ─────────────────────────
 
     ctx.commands_by_agg = all_commands
+
+    # Build events_by_agg from Aggregate-HAS_COMMAND-Command-EMITS-Event chain.
+    # Properties phase needs evt.key to MERGE (Event)-[:HAS_PROPERTY]->(Property);
+    # without this populate the Event side stays empty and downstream GWT then-
+    # FieldValues end up {} (LLM gets "No properties available").
+    events_by_agg: dict[str, list[dict[str, Any]]] = {}
+    try:
+        with ctx.client.session() as _sess:
+            for agg_id in all_commands.keys():
+                rows = _sess.run(
+                    """
+                    MATCH (a:Aggregate {id: $agg_id})-[:HAS_COMMAND]->(:Command)-[:EMITS]->(e:Event)
+                    WITH DISTINCT e
+                    RETURN e {.id, .key, .name, .displayName, .version, .schema, .payload, .description, .sequence} AS evt
+                    ORDER BY evt.name
+                    """,
+                    agg_id=agg_id,
+                ).data()
+                merged: list[dict[str, Any]] = []
+                seen: set[str] = set()
+                for row in rows:
+                    evt = row["evt"]
+                    eid = evt.get("id") if isinstance(evt, dict) else None
+                    if eid and eid not in seen:
+                        seen.add(eid)
+                        merged.append(dict(evt))
+                if merged:
+                    events_by_agg[agg_id] = merged
+    except Exception as _e:
+        SmartLogger.log(
+            "WARNING",
+            f"Failed to build events_by_agg from Neo4j: {_e}",
+            category="ingestion.workflow.commands.events_by_agg",
+            params={"session_id": ctx.session.id},
+        )
+    ctx.events_by_agg = events_by_agg
+    SmartLogger.log(
+        "INFO",
+        f"events_by_agg built: {len(events_by_agg)} aggs / "
+        f"{sum(len(v) for v in events_by_agg.values())} events",
+        category="ingestion.workflow.commands.events_by_agg",
+        params={
+            "session_id": ctx.session.id,
+            "aggs_with_events": len(events_by_agg),
+            "total_events": sum(len(v) for v in events_by_agg.values()),
+        },
+    )
 
 

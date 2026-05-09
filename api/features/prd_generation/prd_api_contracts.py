@@ -72,6 +72,7 @@ class TechStackConfig(BaseModel):
 
 class PRDGenerationRequest(BaseModel):
     node_ids: list[str] | None = Field(default=None, description="List of node IDs from canvas. Note: PRD generation always includes all Bounded Contexts regardless of this parameter.")
+    session_id: str | None = Field(default=None, description="Optional session scope. When provided, PRD generation only includes BCs with this session_id.")
     tech_stack: TechStackConfig = Field(default_factory=TechStackConfig)
 
 

@@ -411,6 +411,23 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         us_id_set = set(us_ids)
 
         breakdowns_text = _user_story_breakdown_lines(ctx, us_id_set)
+
+        # ─── Hybrid input boost — append BL info per US to LLM input ────────
+        # See Phase5_EventStorming_Promotion_PRD §12 (v3 input boost). Adds rule statements + AFFECTS_TABLE
+        # writes + coupled_domains + guard chain + Example GWT into the prompt
+        # so Aggregate root_table / invariants / valueObjects reflect actual
+        # code intent rather than US text alone.
+        if getattr(ctx, "source_type", "") == "hybrid" and getattr(ctx, "hybrid_us_rules", None):
+            try:
+                from api.features.ingestion.hybrid.bpm_context_builder import (
+                    render_hybrid_bl_block,
+                )
+                _bl_block = render_hybrid_bl_block(ctx.hybrid_us_rules, us_id_set)
+                if _bl_block:
+                    breakdowns_text = (breakdowns_text or "") + _bl_block
+            except Exception:
+                pass  # fall back to US-text-only prompt
+
         bc_events_list = _bc_events_as_list(ctx, us_id_set)
         bc_events_text = _events_to_prompt_lines(bc_events_list)
 
@@ -510,8 +527,10 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
 
                 # Collect US IDs referenced by this chunk's events for breakdowns
                 chunk_us_ids = {e.get("userStoryId", "") for e in chunk_events if e.get("userStoryId")}
-                # Include all BC US IDs to maintain traceability (but events are scoped)
-                chunk_breakdowns = _user_story_breakdown_lines(ctx, us_id_set)
+                # Include all BC US IDs to maintain traceability (but events are scoped).
+                # `breakdowns_text` already carries the hybrid BL block when applicable —
+                # reuse instead of rebuilding so chunked prompts get the same code grounding.
+                chunk_breakdowns = breakdowns_text
 
                 # Merge cross-BC existing + intra-BC accumulated into existing_aggregates
                 intra_bc_section = _format_accumulated_intra_bc_aggs(_accumulated_intra_bc_aggs)

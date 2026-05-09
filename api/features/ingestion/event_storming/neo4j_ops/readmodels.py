@@ -113,4 +113,35 @@ class ReadModelOps:
             record = result.single()
             return record is not None
 
+    def link_user_story_to_readmodel(
+        self,
+        user_story_id: str,
+        readmodel_id: str,
+        confidence: float = 0.9,
+    ) -> bool:
+        """Persist (UserStory)-[:IMPLEMENTS]->(ReadModel) bidirectionally.
+
+        Mirrors `link_user_story_to_aggregate` / `_command` / `_event` — every
+        other ES node type already has this helper. Without it the Inspector
+        traceability "출처" tab cannot show distinct source US's per ReadModel
+        and falls back to BC-wide fan-out which makes all ReadModels in a BC
+        share identical sources (the original bug).
+        """
+        with self.session() as session:
+            result = session.run(
+                """
+                MATCH (us:UserStory {id: $usid})
+                MATCH (rm:ReadModel {id: $rmid})
+                MERGE (us)-[r1:IMPLEMENTS]->(rm)
+                  ON CREATE SET r1.confidence = $conf
+                MERGE (rm)-[r2:IMPLEMENTS]->(us)
+                  ON CREATE SET r2.confidence = $conf
+                RETURN id(us) AS uid
+                """,
+                usid=user_story_id,
+                rmid=readmodel_id,
+                conf=confidence,
+            )
+            return result.single() is not None
+
 

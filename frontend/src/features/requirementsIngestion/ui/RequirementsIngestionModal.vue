@@ -1682,6 +1682,10 @@ function useSample() {
                       <span class="analyzer-card__value">{{ analyzerStats.counts.Example }}</span>
                       <span class="analyzer-card__label">Example</span>
                     </div>
+                    <div v-if="analyzerStats.counts.Question" class="analyzer-card">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.Question }}</span>
+                      <span class="analyzer-card__label">Question</span>
+                    </div>
                     <div v-if="analyzerStats.counts.Table" class="analyzer-card">
                       <span class="analyzer-card__value">{{ analyzerStats.counts.Table }}</span>
                       <span class="analyzer-card__label">테이블</span>

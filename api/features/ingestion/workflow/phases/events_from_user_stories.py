@@ -9,6 +9,7 @@ Event는 Command 없이 독립적으로 생성되며, 이후 Command가 역도�
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any, AsyncGenerator
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -18,6 +19,16 @@ from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressE
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.features.ingestion.workflow.utils.chunking import estimate_tokens
 from api.platform.observability.smart_logger import SmartLogger
+
+
+def _event_key(name: str) -> str:
+    """Stable lowercase slug from Event.name for properties-phase mapping.
+
+    properties.py builds parent_id_by_key[("Event", ek)] = eid where `ek` reads
+    `evt.key`. Without this, all Events fall out of the mapping and end up
+    with zero HAS_PROPERTY edges, leaving GWT.thenFieldValues empty.
+    """
+    return re.sub(r"[^a-zA-Z0-9]+", "_", name or "").strip("_").lower() or "event"
 
 # Token budget for accumulated previous events injected into each prompt.
 _PREV_EVENTS_BUDGET_TOKENS = 4000
@@ -170,6 +181,28 @@ async def extract_events_from_user_stories_phase(
         else:
             prompt += "\n\nFor each Event, output displayName as a short English label (e.g. 'Order Placed')."
 
+        # ─── Hybrid input boost — append BL info per US to LLM input ────────
+        # Each Rule's writes.op (INSERT/UPDATE/DELETE) directly drives the
+        # Event's PastParticiple choice (Recorded/Updated/Removed). The
+        # canonical Example GWT becomes the Event's acceptance test seed.
+        # See Phase5_EventStorming_Promotion_PRD §12 (v3 input boost).
+        if getattr(ctx, "source_type", "") == "hybrid" and getattr(ctx, "hybrid_us_rules", None):
+            try:
+                from api.features.ingestion.hybrid.bpm_context_builder import (
+                    render_hybrid_bl_block,
+                )
+                _bl_block = render_hybrid_bl_block(ctx.hybrid_us_rules, {us_id})
+                if _bl_block:
+                    prompt += _bl_block
+                    prompt += (
+                        "\n\nINSTRUCTION: BL.writes.op 를 보고 Event 이름을 결정하세요. "
+                        "INSERT → ...Recorded/Created, UPDATE → ...Updated/Adjusted, "
+                        "DELETE → ...Removed/Cancelled. 각 Rule 의 statement 가 한 Event 의 "
+                        "도메인 의도, AFFECTS_TABLE 의 table 명이 Aggregate 이름의 근거입니다."
+                    )
+            except Exception:
+                pass  # fall back to US-text-only prompt
+
         try:
             response = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -263,13 +296,21 @@ def _create_standalone_event(
     user_story_id: str,
     sequence: int,
 ) -> dict[str, Any] | None:
-    """Create Event node without Command link (standalone for Event Modeling)."""
+    """Create Event node without Command link (standalone for Event Modeling).
+
+    `evt.key` is set so the downstream properties phase (properties.py)
+    can map (parentType=Event, parentKey=ek) → eid for HAS_PROPERTY
+    creation. Aggregate/Command set their key elsewhere; Events were
+    missing it — see hand-off doc §3.8 for the GWT thenFieldValues fix.
+    """
+    event_key = _event_key(name)
     with ctx.client.session() as session:
         query = """
         MERGE (evt:Event {name: $name})
         ON CREATE SET evt.id = randomUUID(),
                       evt.createdAt = datetime()
         SET evt.name = $name,
+            evt.key = $key,
             evt.displayName = $display_name,
             evt.description = $description,
             evt.userStoryId = $user_story_id,
@@ -277,11 +318,12 @@ def _create_standalone_event(
             evt.version = '1.0.0',
             evt.isBreaking = false,
             evt.updatedAt = datetime()
-        RETURN evt {.id, .name, .displayName, .description, .userStoryId, .sequence} as event
+        RETURN evt {.id, .name, .key, .displayName, .description, .userStoryId, .sequence} as event
         """
         result = session.run(
             query,
             name=name,
+            key=event_key,
             display_name=display_name,
             description=description,
             user_story_id=user_story_id,

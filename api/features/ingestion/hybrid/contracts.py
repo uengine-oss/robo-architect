@@ -125,6 +125,11 @@ class ExampleDTO(BaseModel):
     then_: str = ""
     is_boundary: bool = False
     description: Optional[str] = None
+    # Phase 5 §3.1 — table-write side effects driving Aggregate event classification.
+    # Union of (Example)-[:AFFECTS_TABLE {op}]->(Table) edges and the writes[] array
+    # parsed from the JSON-encoded `then_` field. Each entry: {"table": str,
+    # "op": "INSERT"|"UPDATE"|"DELETE"}. Deduplicated on (table, op).
+    writes: list[dict] = Field(default_factory=list)
 
 
 class RuleDTO(BaseModel):
@@ -154,6 +159,19 @@ class RuleDTO(BaseModel):
     # function's primary domain (e.g., a payment fn that mutates order state
     # carries ["order"]).
     coupled_domains: list[str] = Field(default_factory=list)
+    # Phase 5 §3.1 — analyzer flow/branch metadata carried on the HAS_RULE edge.
+    # local_id = "R1".."R8" (function-scoped order); flow_id = "1" main path or
+    # "2-1" / "2-2" branch slot; guard_rule_id = predecessor local_id that must
+    # succeed first; branch_from = parent local_id when this rule is the else
+    # leg of an if/else.
+    local_id: Optional[str] = None
+    flow_id: Optional[str] = None
+    guard_rule_id: Optional[str] = None
+    branch_from: Optional[str] = None
+    # Phase 5 §3.1 — same-function NEXT/BRANCH chains, carried as the target
+    # rules' local_ids (function_id is implicit in source_function).
+    next_rule_local_ids: list[str] = Field(default_factory=list)
+    branch_rule_local_ids: list[str] = Field(default_factory=list)
     # Legacy Phase 2.5/2.6 fields — kept for schema compatibility, no longer populated.
     context_cluster: Optional[str] = None
     es_role: Optional[str] = None

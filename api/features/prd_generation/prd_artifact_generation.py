@@ -5,6 +5,169 @@ from datetime import datetime
 from api.features.prd_generation.prd_api_contracts import Database, DeploymentStyle, Framework, FrontendFramework, TechStackConfig
 
 
+# ============================================================================
+# Source-of-truth render helpers (verification report §3.8)
+#
+# These surface the analyzer-grounded chain — Rule.statement / Example GWT /
+# Open Decisions / UserStory index — into the spec markdown so Cursor/Claude
+# receive code-grounded acceptance criteria rather than abstract descriptions.
+# Each helper returns "" when the input is empty so the section is silently
+# skipped from the spec instead of leaving an empty heading.
+# ============================================================================
+
+def render_source_rules_table(source_rules: list[dict]) -> str:
+    """Per-US Source Business Rules — analyzer Rule.statement + source_function.
+
+    Surfaces the *real source* of meaning (verification §3.8, source 1). The
+    function tag is back-tickable so Cursor can jump to the file.
+    """
+    rules = [r for r in (source_rules or []) if r and r.get("statement")]
+    if not rules:
+        return ""
+    out = "\n  - **Source Business Rules** (analyzer-grounded):\n\n"
+    out += "    | seq | statement | host fn |\n"
+    out += "    |---|---|---|\n"
+    for r in rules:
+        seq = (r.get("local_id") or "—").strip() or "—"
+        stmt = (r.get("statement") or "").replace("|", "\\|")[:100]
+        fn = (r.get("source_function") or "").strip()
+        fn_md = f"`{fn}`" if fn else "—"
+        out += f"    | {seq} | {stmt} | {fn_md} |\n"
+    return out
+
+
+def render_acceptance_tests(canonical_examples: list[dict]) -> str:
+    """Per-US Acceptance Tests — Example.given/when_/then_ + AFFECTS_TABLE writes.
+
+    Surfaces the schema-bound source (verification §3.8, source 2). Cursor/Claude
+    use these as BDD-style acceptance criteria when writing tests.
+    """
+    exs = [e for e in (canonical_examples or []) if e and e.get("example_id")]
+    if not exs:
+        return ""
+    out = "\n  - **Acceptance Tests** (from analyzer Examples):\n\n"
+    for ex in exs[:5]:  # cap at 5 to keep spec readable; full list lives in Inspector
+        eid = (ex.get("example_id") or "")[-40:]  # tail of long example_id
+        boundary = " (boundary)" if ex.get("boundary") else ""
+        given = (ex.get("given") or "").replace("\n", " ")[:120]
+        when_ = (ex.get("when_") or "").replace("\n", " ")[:120]
+        then_ = (ex.get("then_") or "").replace("\n", " ")[:120]
+        write_hint = ""
+        if ex.get("table") and ex.get("op"):
+            write_hint = f" — *{ex['op']} on `{ex['table']}`*"
+        out += f"    - **{eid}**{boundary}{write_hint}\n"
+        if given:
+            out += f"      - **Given**: {given}\n"
+        if when_:
+            out += f"      - **When**: {when_}\n"
+        if then_:
+            out += f"      - **Then**: {then_}\n"
+    if len(exs) > 5:
+        out += f"    - *(+{len(exs) - 5} more — see Inspector)*\n"
+    return out
+
+
+def render_open_decisions(questions: list[dict]) -> str:
+    """BC-level Open Decisions — analyzer Question nodes ATTACHED_TO this BC.
+
+    Each Question represents a policy/correctness decision the analyzer flagged
+    as ambiguous in the source code. Cursor/Claude should not silently resolve
+    these — they need user confirmation.
+    """
+    qs = [q for q in (questions or []) if q and q.get("text")]
+    if not qs:
+        return ""
+    out = "\n## Open Decisions (정책 검토 필요)\n\n"
+    out += "> ⚠️ The analyzer flagged these as ambiguous in the source code. **Confirm with the user before resolving in implementation.**\n\n"
+    for q in qs:
+        text = (q.get("text") or "").strip()
+        reason = (q.get("reason") or "").strip()
+        host_fn = (q.get("host_function") or "").strip()
+        host_md = f" (host fn: `{host_fn}`)" if host_fn else ""
+        out += f"- **Q**{host_md}: {text}\n"
+        if reason:
+            out += f"  - *Reason*: {reason}\n"
+    return out
+
+
+def render_node_source_rules(source_rules: list[dict], indent: str = "  ") -> str:
+    """Per-ES-node Source Business Rules — Aggregate / Command / Event level.
+
+    Same shape as render_source_rules_table but adds a `via_us` column so
+    Cursor/Claude can see which UserStory's grounding produced this rule
+    (multiple US's may IMPLEMENT the same Aggregate/Command).
+    """
+    rules = [r for r in (source_rules or []) if r and r.get("statement")]
+    if not rules:
+        return ""
+    out = f"\n{indent}- **Source Business Rules** ({len(rules)} via grounded US):\n\n"
+    out += f"{indent}  | seq | statement | host fn | via US |\n"
+    out += f"{indent}  |---|---|---|---|\n"
+    for r in rules:
+        seq = (r.get("local_id") or "—").strip() or "—"
+        stmt = (r.get("statement") or "").replace("|", "\\|").replace("\n", " ")[:90]
+        fn = (r.get("source_function") or "").strip()
+        fn_md = f"`{fn}`" if fn else "—"
+        via = (r.get("via_us") or "—")
+        out += f"{indent}  | {seq} | {stmt} | {fn_md} | {via} |\n"
+    return out
+
+
+def render_node_source_examples(source_examples: list[dict], indent: str = "    ") -> str:
+    """Per-Event Acceptance Tests from Example nodes (boundary cases included).
+
+    Cap at 3 to keep the per-Event subsection scannable; the full list lives
+    in the per-US section earlier in the spec.
+    """
+    exs = [e for e in (source_examples or []) if e and e.get("example_id")]
+    if not exs:
+        return ""
+    out = f"\n{indent}- **Acceptance source** (from Example):\n"
+    for ex in exs[:3]:
+        eid = (ex.get("example_id") or "")[-30:]
+        boundary = " (boundary)" if ex.get("boundary") else ""
+        write = ""
+        if ex.get("table") and ex.get("op"):
+            write = f" — *{ex['op']} on `{ex['table']}`*"
+        given = (ex.get("given") or "").replace("\n", " ")[:90]
+        when_ = (ex.get("when_") or "").replace("\n", " ")[:90]
+        then_ = (ex.get("then_") or "").replace("\n", " ")[:90]
+        out += f"{indent}  - **{eid}**{boundary}{write}\n"
+        if given: out += f"{indent}    - **Given**: {given}\n"
+        if when_: out += f"{indent}    - **When**: {when_}\n"
+        if then_: out += f"{indent}    - **Then**: {then_}\n"
+    if len(exs) > 3:
+        out += f"{indent}  - *(+{len(exs) - 3} more)*\n"
+    return out
+
+
+def render_user_story_index(user_stories: list[dict]) -> str:
+    """BC-level UserStory index with grounding indicator.
+
+    For each US, signals whether it has analyzer code-grounding (sourceRules > 0)
+    or is description-only (0-rule task — see verification §3.8). Cursor/Claude
+    treat the latter as "needs new implementation" rather than "translate
+    existing code intent".
+    """
+    uss = [u for u in (user_stories or []) if u and u.get("id")]
+    if not uss:
+        return ""
+    out = "\n## User Stories — code-grounding map\n\n"
+    out += "| US id | role | action | source rules | grounding |\n"
+    out += "|---|---|---|---|---|\n"
+    for us in uss:
+        sid = us.get("id", "")
+        role = (us.get("role") or "").strip() or "—"
+        action = (us.get("action") or "").replace("|", "\\|").replace("\n", " ")[:80]
+        rule_count = len(us.get("sourceRules") or [])
+        if rule_count > 0:
+            grounding = f"**{rule_count} rules** ✅"
+        else:
+            grounding = "0 — *description-only*"
+        out += f"| {sid} | {role} | {action} | {rule_count} | {grounding} |\n"
+    return out
+
+
 def generate_main_prd(bcs: list[dict], config: TechStackConfig) -> str:
     prd = f"""# {config.project_name} - Product Requirements Document
 
@@ -564,7 +727,35 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
 - **Main PRD**: See `PRD.md` for architecture principles and guidelines
 
 **UI text**: Use `displayName` for all UI labels, button text, and form field labels in this BC (see each node and property below).
+"""
 
+    # Open Decisions + UserStory index — surface analyzer-grounded source-of-truth
+    # at BC top so Cursor/Claude see grounding map before implementation guidance.
+    spec += render_open_decisions(bc.get("questions", []))
+    spec += render_user_story_index(bc.get("userStories", []))
+
+    # Per-US Source Rules + Acceptance Tests — verification §3.8 source 1+2
+    user_stories = bc.get("userStories", []) or []
+    grounded_us = [u for u in user_stories if u.get("sourceRules")]
+    if grounded_us:
+        spec += "\n## User Stories — analyzer-grounded detail\n"
+        spec += "\n> Each US below has **code-grounded source rules** (Rule.statement) and **acceptance tests** (Example GWT). Treat these as the implementation contract — the action text is narrative, the rules + examples are the source-of-truth.\n"
+        for us in grounded_us:
+            sid = us.get("id", "")
+            role = (us.get("role") or "").strip()
+            action = (us.get("action") or "").strip()
+            benefit = (us.get("benefit") or "").strip()
+            spec += f"\n### {sid}\n"
+            if role or action or benefit:
+                spec += "- **Story**:"
+                if role: spec += f" *as a* `{role}`"
+                if action: spec += f", *I want to* {action}"
+                if benefit: spec += f", *so that* {benefit}"
+                spec += "\n"
+            spec += render_source_rules_table(us.get("sourceRules", []))
+            spec += render_acceptance_tests(us.get("canonicalExamples", []))
+
+    spec += """
 ## Aggregates
 """
     for agg in bc.get("aggregates", []) or []:
@@ -614,7 +805,11 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
                     spec += f"  - `{prop.get('name', '')}` (UI label: {prop_display}): {prop_type}{is_key}{is_fk}\n"
                     if prop.get("description"):
                         spec += f"    - {prop.get('description')}\n"
-        
+
+        # Aggregate-level Source Business Rules — verification §3.8 source 1
+        # rolled up from grounded US's that IMPLEMENTS this Aggregate.
+        spec += render_node_source_rules(agg.get("sourceRules", []), indent="")
+
         # Commands with Properties
         if agg.get("commands"):
             spec += "- Commands (use displayName for button/form title):\n"
@@ -643,7 +838,9 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
                                 is_required = " (required)" if prop.get("isRequired") else ""
                                 prop_display = prop.get("displayName") or prop.get("name", "")
                                 spec += f"      - `{prop.get('name', '')}` (UI: {prop_display}): {prop_type}{is_required}\n"
-        
+                    # Per-Command Source Rules (= preconditions in DDD)
+                    spec += render_node_source_rules(cmd.get("sourceRules", []), indent="    ")
+
         # Events with Properties
         if agg.get("events"):
             spec += "- Events:\n"
@@ -665,6 +862,10 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
                                 prop_type = prop.get("type", "String")
                                 prop_display = prop.get("displayName") or prop.get("name", "")
                                 spec += f"      - `{prop.get('name', '')}` (UI: {prop_display}): {prop_type}\n"
+                    # Per-Event Source Rules (reached via emitting Command's US)
+                    spec += render_node_source_rules(evt.get("sourceRules", []), indent="    ")
+                    # Per-Event Acceptance source — Example given/when_/then_ + write op
+                    spec += render_node_source_examples(evt.get("sourceExamples", []), indent="    ")
 
     # ReadModels
     if bc.get("readmodels"):
@@ -822,7 +1023,13 @@ def generate_claude_md(bcs: list[dict], config: TechStackConfig) -> str:
 - Database: {config.database.value}
 
 ## Bounded Contexts
-{chr(10).join([f"- {bc.get('name','Unknown')} ({bc.get('id','')})" for bc in bcs])}
+{chr(10).join([
+    f"- {bc.get('name','Unknown')} ({bc.get('id','')}) — "
+    f"{len(bc.get('aggregates') or [])} aggregates, "
+    f"{sum(1 for u in (bc.get('userStories') or []) if u.get('sourceRules'))} grounded US, "
+    f"{len(bc.get('questions') or [])} open questions"
+    for bc in bcs
+])}
 
 ## Reference Files
 - **Main PRD**: `PRD.md` - Complete architecture, principles, and implementation guidelines
@@ -1964,6 +2171,14 @@ Before implementing, ensure you have loaded these skills:
 ## Your Responsibilities
 
 You are responsible for implementing the **{bc_display_name}** Bounded Context. This BC is part of a larger microservices architecture using Domain-Driven Design (DDD) and Event-Driven Architecture (EDA).
+
+### Source-of-truth grounding
+
+> The spec for this BC contains **analyzer-grounded source rules and acceptance tests** for each User Story (when available). These come from the original code analysis: `Rule.statement` describes the business intent, `Example.given/when/then` provides BDD-style acceptance criteria. **Treat these as the implementation contract** — the US action text is narrative; the rules and examples are what the code actually has to do.
+>
+> - **Grounded US** (with source rules): translate the rule statements into invariants/preconditions; use Example GWT as test seeds.
+> - **Description-only US** (0 source rules): no existing code to translate — implement from the action text and confirm edge cases with the user.
+> - **Open Decisions** (Question nodes at top of spec): the analyzer flagged these as ambiguous in the source. **Do not silently resolve — ask the user before choosing a behavior**.
 
 ### Key Components
 

@@ -1,10 +1,35 @@
 # Phase 5 — Event Storming Promotion PRD
 
-> **작성일**: 2026-05-04
-> **상태**: 설계 — 구현 미착수
-> **선결**: §10 (analyzer 신스키마 적용), §11 (탐색 비용 최적화) 완료
-> **참조 문서**: `Hybrid_Ingestion_Architecture.md` §11, `2026-04-22-BusinessLogic-노드-구조변경-아키텍트안내.md`
+> **작성일**: 2026-05-04 (v1) → 2026-05-06 (v1.1 실측) → v2 (augment-only) → v3 (input boost) → v3.1 (GWT corrected) → v3.2 (Event.key fix) → **v4 (검증 완료 + Inspector source-of-truth refactor, 2026-05-08)**
+> **상태**: v4 구현 완료 + 검증 완료. PRD 생성 (Phase 6) 진입 가능 — Phase 6 PRD 의 inject A~D 도 부분 구현됨 ([Phase6 status](Phase6_PRD_Generation_Traceability_Boost.md) 참조).
+> **방향성 변천 한 줄 요약**:
+>   - v1 (replace): 신 파이프라인 단독 영속 → wipe 위험 + LLM 비용 2배
+>   - v2 (augment-only): legacy 결과 보존 + sid 태깅/PROMOTED_TO/SOURCED_FROM/ATTACHED_TO/cross-BC Policy
+>   - v3 (input boost): legacy phase LLM input 에 BL 정보 합성 (5 phase 보강)
+>   - v3.1 (GWT corrected): GWT 는 LLM skip 이 아니라 LLM 호출 유지 + BL 을 reference 로 inject. 사용자 통찰 "BL 의 GWT 는 설명식, LLM 이 그것을 보고 ES properties 의 schema-bound fieldValues 를 구성해야 의미가 있어짐."
+>   - v3.2 (Event.key fix): `_create_standalone_event` 에 `evt.key` set 누락이 Event HAS_PROPERTY 0/N 의 root cause. 단순 slug set + 기존 데이터 backfill 로 해결.
+>   - **v4 (2026-05-08)**: Event HAS_PROPERTY = 0 잔여 결함 닫음 (events_by_agg helper Cypher syntax + properties.py dict accessor). traceability shadow→analyzer 매칭 깨짐 수정. Inspector "출처" 탭 chain → sources-per-US 재설계 + 노드 타입별 primary source emphasis. PRD 생성 endpoint 보강 (fetch_bc_data + 노드별 source rule rollup). **검증 완료** — GWT thenFieldValues 90% schema-bound, ES → Rule chain 의미 정합성 입증.
+>
+> **검증 보고서**: [Phase5_Phase6_Verification_Report.md](Phase5_Phase6_Verification_Report.md) — v4 산출물의 종합 audit (BPM/BL → ES 추적 무결성, 의미 정합성, PRD 진입 가능성 평가). 핸드오프 §1~§9 의 변경 이력은 본 PRD §12 (v4 구현 status) 와 검증 보고서 로 통합됨.
+> **참조 문서**:
+> - `Hybrid_Ingestion_Architecture.md` §10/§11 — 신스키마 적용 + 탐색 비용 최적화 결과
+> - `개선&재구조화.md` §9.6 — 후속 과제 진행 상태 + 본 PRD 진입점. Phase 2.5/2.6 폐기 결정 회의록도 포함
+> - `../../../input_resource/2026-04-22-BusinessLogic-노드-구조변경-아키텍트안내.md` — analyzer 신스키마 (Rule/Example/Question + 관계·속성) reference. 위치는 `docs/legacy-ingestion/` 외부 (`input_resource/`)
+>
+> **최신 보강 (2026-05-09)**:
+> - 후속 재검증 실측: `BpmTask 31`, mapped task `9`, 0-rule task `22`, `UserStory 35`, grounded US `13`, description-only US `22`
+> - 관계 타입 실측: `PROMOTED_TO / SOURCED_FROM / IMPLEMENTS / ATTACHED_TO` 확인
+> - 미영속: `PROMOTED_FROM / DERIVED_FROM / PRECONDITION_BY / GROUNDED_IN` (Phase 6 후속 과제로 유지)
+> - Phase 6 Step 7(`session_id` 필터) 구현 완료 — PRD generation request/route/model-data 전파
+> - Phase 6 Step 8 부분 진행 — 테스트 11건 통과: `test_prd_session_scope.py` 6건(`/generate`/`/download` session scope + node_ids 필터 + fetch 경계 처리) + `test_promote_to_es_traceability.py` 1건(Question fallback attach 로직) + `test_pipeline_verification.py` 2건(pipeline ready/not-ready 판정) + `test_pipeline_e2e_check.py` 2건(pipeline+PRD input ready 동시 판정)
+> - Question attach 보완 — `promote_to_es.py` fallback 쿼리 수정(BC 1개 선정 후 orphan Question 전체 attach)
+> - 최신 세션(`94b625fe`) 실측 검증: Question attach coverage **4/4** (`orphan_in_sid=0`)
+> - 최신 세션(`94b625fe`) pipeline verifier 실측: `pipeline_ready=true` (BPM/Rule매핑/ES/PRD-ready 전부 true)
+> - 최신 세션(`94b625fe`) e2e check 실측: `e2e_ready=true`, `prd_input_check.ready=true` (BC 6개 모두 spec 후보 충족)
+>
 > **선행 문서**: `Hybrid_Phase5_EventStorming_Promotion.md` (Phase 2.5/2.6 기반, **폐기 예정**)
+>
+> **인프라 사실**: 분석기 데이터와 robo-architect 자체 데이터는 **단일 Neo4j DB 에 공존** (실측). `ANALYZER_NEO4J_DATABASE` env 가 비어 있어 `get_session(database=ANALYZER_NEO4J_DATABASE)` 도 default DB 를 가리킴. 분석기 노드 (`Rule`/`Example`/`Question`/`Table`) 는 `session_id` 가 없고, robo-architect 가 만든 shadow 노드 (`Rule`/`BpmTask` 등) 는 `session_id` 보유로 구분.
 
 이 문서는 사용자가 BPM + Rule 매핑을 검토한 후 "이벤트 스토밍 모델 생성" 트리거 시 실행되는 Phase 5 의 새 설계를 정의한다. 핵심 변경:
 1. Phase 2.5 (BC pre-tag) / Phase 2.6 (ES role pre-tag) 폐기로, 모든 ES 요소 판정을 Phase 5 가 직접 수행
@@ -36,26 +61,122 @@
 
 ## §2 입력 계약
 
-Phase 5 가 시작될 때 그래프 상태 (zapamcom10060 기준 실측):
+Phase 5 가 시작될 때 그래프 상태 (zapamcom10060, **2026-05-06 실측**):
 
-| 노드 / 관계 | 개수 | 용도 |
-|---|---|---|
-| `BpmProcess` (`session_id` 보유) | 3 | BC 후보 군집 시작점 |
-| `BpmTask` | 33 | US + Aggregate/Command/Event 분해 단위 |
-| `BpmActor` | 2 | UserStory.role |
-| `(BpmTask)-[:REALIZED_BY]->(Rule)` | 29 (8/33 task) | ES 요소 분해 입력 |
-| `Rule` (analyzer, no session_id) | 51 | rule.statement = ES 요소 의도 |
-| `Example` (analyzer) | 108 | GWT + writes[] = AFFECTS_TABLE |
-| `(Rule)-[:HAS_EXAMPLE]->(Example)` | 108 | 1:N |
-| `(Example)-[:AFFECTS_TABLE {op}]->(Table)` | 34 | Aggregate root 결정 신호 |
-| `(FUNCTION)-[hr:HAS_RULE]->(Rule)` | 51 | hr 속성에 분기·흐름 메타 |
-| `Question` (analyzer) | 23 | 검토 메모 |
-| `(FUNCTION)-[:HAS_QUESTION]->(Question)` | 23 | BC 검토 메모 부착 |
-| `(Rule)-[:NEXT]->(Rule)` | 27 | 함수 내 메인 시나리오 흐름 |
-| `(Rule)-[:BRANCH]->(Rule)` | 12 | if/else 갈래 = Policy 분기 후보 |
-| `(BpmTask)-[:SOURCED_FROM]->(DocumentPassage)` | Phase 4.1 산출 | 문서 근거 |
+| 노드 / 관계 | 실측 | Phase 5 추출 경로 | 용도 |
+|---|---|---|---|
+| `BpmProcess` (`session_id` 보유) | 1 session | 메인 DB 직접 query | BC 후보 군집 시작점 |
+| `BpmTask` | 33 | 메인 DB | US + Aggregate/Command/Event 분해 단위 |
+| `BpmActor` | — | 메인 DB | UserStory.role |
+| `(BpmTask)-[:REALIZED_BY]->(Rule)` | 28 (8/33 task) | 메인 DB | ES 요소 분해 입력 |
+| `Rule` (analyzer, no `session_id`) | 59 | analyzer 영역 (같은 DB, `session_id IS NULL` 로 식별) | rule.statement = ES 요소 의도 |
+| `Example` (analyzer) | 87 | analyzer 영역 | GWT + `then_.writes[]` (JSON-encoded) |
+| `(Rule)-[:HAS_EXAMPLE]->(Example)` | 87 | analyzer 영역 | 1:N |
+| `(Example)-[:AFFECTS_TABLE {op}]->(Table)` | **26** | analyzer 영역 — **현재 robo-architect 가 traverse 안 함** (§2.1 보강 필요) | Aggregate root 결정 신호 |
+| `(FUNCTION)-[hr:HAS_RULE]->(Rule)` | 59 | analyzer 영역 — `hr` 속성: `local_id`, `flow_id`, `coupled_domains` (현재 추출), `guard_rule_id`, `branch_from` (**§2.1 보강 필요**) | hr 속성에 분기·흐름 메타 |
+| `HAS_RULE.guard_rule_id` non-null | 16/59 | (위 보강) | Command precondition chain |
+| `HAS_RULE.branch_from` non-null | 12/59 | (위 보강) | 별개 분기 Command |
+| `HAS_RULE.coupled_domains` non-empty | 11/59 | 추출 중 | cross-BC Policy 후보 |
+| `Question` (analyzer) | 4 | analyzer 영역 | 검토 메모 |
+| `(FUNCTION)-[:HAS_QUESTION]->(Question)` | 4 | analyzer 영역 | BC 검토 메모 부착 |
+| `(Rule)-[:NEXT]->(Rule)` | **33** | analyzer 영역 — **§2.1 보강 필요** | 함수 내 메인 시나리오 흐름 |
+| `(Rule)-[:BRANCH]->(Rule)` | **14** | analyzer 영역 — **§2.1 보강 필요** | if/else 갈래 = Policy 분기 후보 |
+| `(BpmTask)-[:SOURCED_FROM]->(DocumentPassage)` | Phase 4.1 산출 | 메인 DB | 문서 근거 |
 
-**Rule 매핑 분포 (현 실측)**: 8 tasks 가 1+ 매핑 (8/7/5/3/3/1/1/1), 25 tasks 0 매핑.
+> **수치 차이 주의**: PRD 초안의 51 / 108 / 34 / 23 / 27 / 12 는 이전 dump 시점 추정치. 위 표는 2026-05-06 현재 실측치.
+
+**Rule 매핑 분포 (현 실측)**: 8 tasks 가 1+ 매핑, 25 tasks 0 매핑 (REALIZED_BY 28건).
+
+---
+
+## §2.1 RuleDTO / ExampleDTO 입력 보강 (Phase 5 선결 작업)
+
+PRD §3.1 결정론 매트릭스의 신호 중 **5개**는 분석기 DB 에 실재하지만 현재 robo-architect 까지 흘러오지 않는다. Phase 5 본 구현 진입 전에 [`hybrid/code_to_rules/rule_extractor.py`](../../api/features/ingestion/hybrid/code_to_rules/rule_extractor.py) 와 [`hybrid/contracts.py`](../../api/features/ingestion/hybrid/contracts.py) 를 보강해 다음을 RuleDTO/ExampleDTO 가 carry 하도록 한다.
+
+### 2.1.1 막혀 있는 신호와 막힌 위치
+
+| §3.1 신호 | 분석기 DB | 막힌 위치 | 영향 |
+|---|---|---|---|
+| `Example.then_.writes[].op` (INSERT/UPDATE/DELETE) | ✅ JSON-encoded `then_` 안 (실측: `{"narrative":..., "writes":[{"table","op"}]}`) | `rule_extractor._humanize()` 가 `narrative` 만 뽑고 raw JSON 폐기 (`rule_extractor.py:135-137`) | Aggregate creation/mutation/removal Event 종류 결정 불가 |
+| `HAS_RULE.guard_rule_id` | ✅ 16건 | `_QUERY` RETURN 절 부재 (`rule_extractor.py:41-50`) | Command precondition chain 추출 불가 |
+| `HAS_RULE.branch_from` | ✅ 12건 | 같은 위치 부재 | 별개 분기 Command 추출 불가 |
+| `(Rule)-[:NEXT]->(Rule)` | ✅ 33건 | query 자체 없음 | Saga/순차 invariant 추출 불가 |
+| `(Rule)-[:BRANCH]->(Rule)` | ✅ 14건 | query 자체 없음 | Policy 분기 트리거 추출 불가 |
+| `(Example)-[:AFFECTS_TABLE {op}]->(Table)` | ✅ 26건 | 같은 — query 안 함 | root Table 군집 → Aggregate 통합 (§4.2) 불가능 |
+
+### 2.1.2 DTO 확장 명세
+
+```python
+# contracts.py — 추가 필드 (기존 필드는 그대로 보존)
+
+class ExampleDTO(BaseModel):
+    # ...기존 필드 유지 (example_id, given, when_, then_, is_boundary, description)
+    writes: list[dict] = Field(default_factory=list)   # [{"table": str, "op": "INSERT"|"UPDATE"|"DELETE"}, ...]
+    # 출처: AFFECTS_TABLE 엣지 (op 속성) 또는 then_ JSON 의 writes[] 둘 다 합치면 robust
+
+class RuleDTO(BaseModel):
+    # ...기존 필드 유지
+    local_id: Optional[str] = None         # HAS_RULE.local_id ("R1"~"R8")
+    flow_id: Optional[str] = None          # HAS_RULE.flow_id ("1", "2-1")
+    guard_rule_id: Optional[str] = None    # HAS_RULE.guard_rule_id (선행 local_id)
+    branch_from: Optional[str] = None      # HAS_RULE.branch_from (분기 부모 local_id)
+    next_rule_local_ids: list[str] = Field(default_factory=list)    # NEXT 후속 local_id
+    branch_rule_local_ids: list[str] = Field(default_factory=list)  # BRANCH 갈래 local_id
+```
+
+> `next_*`/`branch_*` 를 hash-id 가 아닌 **`local_id`** 로 carry 하는 이유: 같은 함수 내 분기 의도 표현이 목적이고, NEXT/BRANCH 관계 자체에 `function_id` 가 묶여 있어 (function, local_id) 만으로 식별 가능. cross-function 흐름은 PRD 범위 밖.
+
+### 2.1.3 Cypher 보강 (rule_extractor.py)
+
+```cypher
+MATCH (f:FUNCTION)-[hr:HAS_RULE]->(r:Rule)
+OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:Example)
+OPTIONAL MATCH (e)-[at:AFFECTS_TABLE]->(tbl:Table)
+WITH f, hr, r,
+     collect(DISTINCT {
+        example_id:  e.example_id,
+        given:       e.given,
+        when_:       e.when_,
+        then_:       e.then_,         // raw JSON 보존 (humanize 는 별도 narrative 필드로)
+        is_boundary: coalesce(e.is_boundary, false),
+        description: e.description,
+        writes:      collect(DISTINCT {table: tbl.name, op: at.op})
+     }) AS examples
+// NEXT/BRANCH 는 local_id 단위로 별도 collect (hr 와 같은 함수 한정)
+OPTIONAL MATCH (r)-[nx:NEXT]->(rn:Rule)<-[hrn:HAS_RULE]-(f)
+OPTIONAL MATCH (r)-[br:BRANCH]->(rb:Rule)<-[hrb:HAS_RULE]-(f)
+WITH f, hr, r, examples,
+     [x IN collect(DISTINCT hrn.local_id) WHERE x IS NOT NULL] AS next_local_ids,
+     [x IN collect(DISTINCT hrb.local_id) WHERE x IS NOT NULL] AS branch_local_ids
+RETURN
+    coalesce(f.function_id, f.procedure_name, f.name) AS function_id,
+    coalesce(f.procedure_name, f.name)                AS function_name,
+    f.procedure_name                                  AS procedure_name,
+    f.summary                                         AS function_summary,
+    r.statement                                       AS statement,
+    hr.local_id                                       AS local_id,
+    hr.flow_id                                        AS flow_id,
+    hr.guard_rule_id                                  AS guard_rule_id,
+    hr.branch_from                                    AS branch_from,
+    coalesce(hr.coupled_domains, [])                  AS coupled_domains,
+    examples                                          AS examples,
+    next_local_ids                                    AS next_rule_local_ids,
+    branch_local_ids                                  AS branch_rule_local_ids
+ORDER BY function_name, hr.local_id
+```
+
+> **AFFECTS_TABLE 와 then_.writes[] 둘 다 채워주는 이유**: 분석기가 둘 다 만들지만 일부 함수는 한쪽만 채워질 수 있음. ExampleDTO.writes 는 합집합 — `[{table, op}]` set 으로 dedup 후 carry. PRD §3.1 결정론 분류 (`writes[].op` 보유 여부) 의 robust 확보.
+
+### 2.1.4 검증 (zapamcom10060)
+
+보강 후 다음 실측치를 만족해야 한다:
+- 추출된 RuleDTO 중 `guard_rule_id IS NOT NULL` = **16** ± 0
+- 추출된 RuleDTO 중 `branch_from IS NOT NULL` = **12** ± 0
+- 추출된 ExampleDTO 중 `writes` non-empty = **26** ± few (AFFECTS_TABLE 26건 + then_.writes JSON 합집합이라 약간 더 많을 수 있음)
+- `next_rule_local_ids` 합산 = **33** ± 0
+- `branch_rule_local_ids` 합산 = **14** ± 0
+
+이 항목들이 통과하면 §3.1 매트릭스 100% 가용. Phase 5 본 구현 진입 가능.
 
 ---
 
@@ -65,22 +186,24 @@ Phase 5 가 시작될 때 그래프 상태 (zapamcom10060 기준 실측):
 
 ### 3.1 결정론 신호 (LLM 호출 없이 분류)
 
-| 분석기 정보 | ES 매핑 | 판정 규칙 |
-|---|---|---|
-| `Example.then_.writes[].op = "INSERT"` | **Aggregate creation Event** | 결정론 — 해당 Rule 1개당 1 Event |
-| `Example.then_.writes[].op = "UPDATE"` | **Aggregate state mutation invariant** | 결정론 — Rule.statement 가 invariant 본문 |
-| `Example.then_.writes[].op = "DELETE"` | **Aggregate removal Event** | 결정론 |
-| `Example.then_.writes` empty + (FUNCTION)-[:READS]->(Table) 존재 | **ReadModel query** | 결정론 |
-| `Rule.statement` 동사 매칭 `^(검증|거부|판정|확인|체크)` | **Command precondition** | 정규식 |
-| `HAS_RULE.guard_rule_id` 보유 | **Command precondition chain** | R2.guard=R1 → Command(R2) 의 precondition 에 R1 statement 포함 |
-| `HAS_RULE.branch_from` 보유 | **별개 Command 분기** | R3.branch_from=R2 → R2 fail 시 R3 트리거 (별도 Command 후보) |
-| `HAS_RULE.coupled_domains[]` non-empty | **Cross-BC Policy** | 자기 Aggregate 영역을 벗어난 영향 → Policy 강력 후보 |
-| `Example.is_boundary = true` | **Command acceptance test (GWT)** | 경계값 = invariant 검증 케이스 |
-| 같은 root Table (`AFFECTS_TABLE` 도착점) 공유하는 Rule 군 | **같은 Aggregate** | Aggregate 멤버십 결정 |
-| 같은 `HAS_RULE.flow_id` (e.g., "2-1", "2-2") 공유 | **같은 Aggregate / 같은 분기** | 분기 묶음 |
-| `(Rule)-[:NEXT]->(Rule)` chain | **Saga / Process flow** | 함수 내 시나리오 순서 |
-| `(Rule)-[:BRANCH]->(Rule)` | **Policy 트리거 분기** | 한 Rule 의 결과로 다른 Rule path 트리거 |
-| `Question` | **검토 메모 sticker** | 그대로 BC 에 부착, LLM 거치지 않음 |
+> 각 신호의 **현재 가용성** 컬럼: ✅ = RuleDTO/ExampleDTO 가 이미 carry, ⏳ = §2.1 보강 후 carry. 보강 전엔 ⏳ 행은 dead signal.
+
+| 분석기 정보 | ES 매핑 | 판정 규칙 | 현재 가용 |
+|---|---|---|---|
+| `Example.then_.writes[].op = "INSERT"` | **Aggregate creation Event** | 결정론 — 해당 Rule 1개당 1 Event | ⏳ §2.1 |
+| `Example.then_.writes[].op = "UPDATE"` | **Aggregate state mutation invariant** | 결정론 — Rule.statement 가 invariant 본문 | ⏳ §2.1 |
+| `Example.then_.writes[].op = "DELETE"` | **Aggregate removal Event** | 결정론 | ⏳ §2.1 |
+| `Example.then_.writes` empty + (FUNCTION)-[:READS]->(Table) 존재 | **ReadModel query** | 결정론 | ⏳ §2.1 |
+| `Rule.statement` 패턴 매칭 — head: `검증\|거부\|판정\|확인\|체크\|검사`, tail: `필수(다\|이다)\|오류(로 종료한다\|이다\|다)\|예외(이다\|다)` | **Command precondition** | head 또는 tail 매치. 실측 fixture (zapamcom10060) 의 statement 가 한국어 평서문 ("...오류로 종료한다", "...필수다") 위주라 head 만으로는 0건 매치 → tail 패턴 추가 | ✅ |
+| `HAS_RULE.guard_rule_id` 보유 | **Command precondition chain** | R2.guard=R1 → Command(R2) 의 precondition 에 R1 statement 포함 | ⏳ §2.1 |
+| `HAS_RULE.branch_from` 보유 | **별개 Command 분기** | R3.branch_from=R2 → R2 fail 시 R3 트리거 (별도 Command 후보) | ⏳ §2.1 |
+| `HAS_RULE.coupled_domains[]` non-empty | **Cross-BC Policy** | 자기 Aggregate 영역을 벗어난 영향 → Policy 강력 후보 | ✅ |
+| `Example.is_boundary = true` | **Command acceptance test (GWT)** | 경계값 = invariant 검증 케이스 | ✅ |
+| 같은 root Table (`AFFECTS_TABLE` 도착점) 공유하는 Rule 군 | **같은 Aggregate** | Aggregate 멤버십 결정 | ⏳ §2.1 |
+| 같은 `HAS_RULE.flow_id` (e.g., "2-1", "2-2") 공유 | **같은 Aggregate / 같은 분기** | 분기 묶음 | ⏳ §2.1 (필드 추가) |
+| `(Rule)-[:NEXT]->(Rule)` chain | **Saga / Process flow** | 함수 내 시나리오 순서 | ⏳ §2.1 |
+| `(Rule)-[:BRANCH]->(Rule)` | **Policy 트리거 분기** | 한 Rule 의 결과로 다른 Rule path 트리거 | ⏳ §2.1 |
+| `Question` | **검토 메모 sticker** | 그대로 BC 에 부착, LLM 거치지 않음 | ✅ |
 
 ### 3.2 LLM 단계 (이름·서술만)
 
@@ -155,8 +278,10 @@ Phase 5 가 시작될 때 그래프 상태 (zapamcom10060 기준 실측):
   4. Command 추출:
      - 1 Task = 1 Command 기본 (task.name 이 명령 의도)
      - precondition = bucket["command_guard"] 의 statement 들 (guard_rule_id 순)
+       * **Orphan guard fallback**: `R.guard_rule_id` 가 가리키는 rule 이 `is_infra` / `is_meaningful_gwt` 필터로 drop 된 경우 (rule_classifier.index_by_function_local_id 로 lookup 실패) — 그 chain link 는 무시하고 R 자체의 statement 만 precondition 에 포함. 실측 (zapamcom10060) 4/15 케이스가 이에 해당, 정합성 깨지면 안 됨
      - emits = bucket["aggregate_invariant" + "_creation" + "_removal"] 의 Rules → 각 Event
      - branch_from 보유 Rule 군 별로 별도 Command (분기 명령)
+       * **Orphan branch_from fallback**: 동일 — `R.branch_from` target 이 drop 된 경우 R 은 독립 Command 로 처리 (분기 부모 없음)
      - GWT = canonical Example 1건 (non-boundary 우선)
      - **command.user_story_id = us.id**  ← (Command)-[:IMPLEMENTS]->(US)
      - **command.rule_ids = [r.id for r in (guards + emit_sources)]**
@@ -503,7 +628,7 @@ RETURN us.id, us.action,
   - "🔍 Aggregate 식별 중... (3/8)"
   - "🏷️ BoundedContext 명명 중..."
   - "⚖️ Policy 추출 중..."
-  - "✅ 승격 완료: BC 3 / Aggregate 5 / Command 9 / Event 14 / Policy 2 / ReadModel 2"
+  - "✅ 생성 완료: BC 3 / Aggregate 5 / Command 9 / Event 14 / Policy 2 / ReadModel 2"
 - 완료 후 자동으로 Event Modeling 탭으로 전환
 - 재실행 confirm 모달 (위 §6.3)
 
@@ -616,7 +741,13 @@ RETURN us.id, sources, implementers AS unexpected
 ## §9 구현 순서 + 의존 관계
 
 ```
-[1. Cypher 매트릭스 구현]  ← 시작점
+[0. 입력 보강 (선결, §2.1)]
+  - api/features/ingestion/hybrid/code_to_rules/rule_extractor.py 의 _QUERY 보강
+  - api/features/ingestion/hybrid/contracts.py 의 RuleDTO/ExampleDTO 필드 추가
+  - 검증: §2.1.4 실측 카운트 (guard 16, branch 12, NEXT 33, BRANCH 14, writes ≈26)
+  - 통과 후에만 [1] 진입
+
+[1. Cypher 매트릭스 구현]
   - api/features/ingestion/hybrid/event_storming_bridge/rule_classifier.py 신규
   - 위 §3.1 결정론 분류 함수들
 
@@ -667,35 +798,43 @@ PRD 구현 시 동시 정리:
 - `api/features/ingestion/hybrid/mapper/bc_identifier.py` — 이미 unwired, 파일 삭제
 - `api/features/ingestion/hybrid/mapper/es_role_tagger.py` — 이미 unwired, 파일 삭제
 
+### 10.1.1 보강 (선결, §2.1 참조)
+- `api/features/ingestion/hybrid/code_to_rules/rule_extractor.py` `_QUERY` Cypher 확장 (guard_rule_id, branch_from, NEXT/BRANCH local_id, AFFECTS_TABLE op + raw `then_` JSON 보존)
+- `api/features/ingestion/hybrid/contracts.py` — `RuleDTO` (`local_id`, `flow_id`, `guard_rule_id`, `branch_from`, `next_rule_local_ids`, `branch_rule_local_ids`) + `ExampleDTO` (`writes: list[dict]`) 필드 추가
+
 ### 10.2 재활용 vs 신설 — 명확화
 
 > **중요**: legacy `workflow/phases/*` 의 **LLM 프롬프트, Pydantic 출력 스키마, Neo4j save 함수, 이름 정규화 헬퍼는 100% 재활용**. 신로직이 책임지는 건 **분해 알고리즘 + 입력 조립 + 호출 분기 + traceability 엣지** 뿐.
 
 **재활용 (그대로 import)**:
 
-| 자산 | 위치 | 신로직에서 사용 |
+| 자산 | 실재 위치 | 신로직에서 사용 |
 |---|---|---|
-| `IDENTIFY_BC_FROM_STORIES_PROMPT` + `BCList` 스키마 | `workflow/phases/bounded_contexts.py` | BC 그룹핑 LLM 단계 |
-| `EXTRACT_AGGREGATES_PROMPT` + `AggregateList` | `workflow/phases/aggregates.py` | Aggregate 이름·구조 LLM |
-| `EXTRACT_COMMANDS_PROMPT` + `CommandList` | `workflow/phases/commands.py` | Command displayName LLM |
-| `EXTRACT_EVENTS_FROM_US_PROMPT` + `EventFromUSList` | `workflow/phases/events_from_user_stories.py` | Event PastParticiple LLM |
-| `IDENTIFY_POLICIES_PROMPT` + `PolicyList` | `workflow/phases/policies.py` | Policy 명명 LLM |
-| `EXTRACT_READMODELS_PROMPT` + `ReadModelList` | `workflow/phases/readmodels.py` | ReadModel LLM |
-| `*_PROPERTIES_PROMPT` | `workflow/phases/properties.py` | 노드 프로퍼티 LLM |
-| `GENERATE_GWT_PROMPT` | `workflow/phases/gwt.py` | GWT 본문 LLM |
-| `UI_WIREFRAME_PROMPT` | `workflow/phases/ui_wireframes.py` | UI 생성 LLM |
-| `create_bounded_context`, `create_aggregate`, `create_command`, `create_event`, `create_policy`, `create_readmodel` | `event_storming/` ops | 모든 노드 영속 |
+| `IDENTIFY_BC_FROM_STORIES_PROMPT` (정의), `BoundedContextList` (스키마) | `event_storming/prompts.py` + `event_storming/structured_outputs.py` | BC 그룹핑 LLM 단계 |
+| `EXTRACT_AGGREGATES_PROMPT`, `AggregateList` | `event_storming/prompts.py` + `event_storming/structured_outputs.py` | Aggregate 이름·구조 LLM (단 신 단축 프롬프트로 보강 가능 — PRD §3.2 의 "이름만" 모드) |
+| `EXTRACT_COMMANDS_PROMPT`, `CommandList` | `event_storming/prompts.py` + `event_storming/structured_outputs.py` | Command displayName LLM |
+| `EXTRACT_EVENTS_FROM_US_PROMPT` + `EventFromUSList` | `workflow/phases/events_from_user_stories.py` (둘 다 phases 안에 정의) | Event PastParticiple LLM |
+| `IDENTIFY_POLICIES_PROMPT`, `PolicyList` | `event_storming/prompts.py` + `event_storming/structured_outputs.py` | Policy 명명 LLM (legacy `_name_cross_bc_policy` 가 더 단순한 cross-BC 단건 명명용) |
+| `EXTRACT_READMODELS_PROMPT`, `ReadModelList` | `event_storming/prompts.py` + `event_storming/structured_outputs.py` | ReadModel LLM |
+| `create_bounded_context`, `create_aggregate`, `create_command`, `create_event`, `create_policy`, `create_readmodel` | `event_storming/neo4j_ops/{bounded_contexts,aggregates,commands,events,policies,readmodels}.py` | 모든 노드 영속 |
+| `get_neo4j_client()` | `event_storming/neo4j_client.py` | 위 create_* 메서드 보유 wrapper |
+| `get_llm()` | `ingestion_llm_runtime.py` | LangChain LLM (`with_structured_output` 패턴) |
+| `_name_cross_bc_policy` | `event_storming_bridge/promote_to_es.py` (현재) | 신 promote_to_es 가 흡수 |
 | `dedup_key`, `canonicalize_role`, `canonicalize_action`, slug 헬퍼 | `workflow/utils/*` | 이름 정규화 |
 
-**신설 (PRD §3~§5 가 책임)**:
+> **legacy phase wrapper 함수** (`extract_aggregates_phase()` 등 `workflow/phases/*.py`) 는 **호출하지 않음**. 그 안의 프롬프트·스키마·LLM-호출 패턴은 reference 로만 사용. 신 layer 가 candidate dict 를 prompt args 로 직접 변환해 LLM 호출 + neo4j_ops.create_* 호출.
 
-| 신규 모듈/함수 | 책임 |
-|---|---|
-| `rule_classifier.py` | §3.1 결정론 분류 — Rule 동사 / Example.writes.op / coupled_domains 매트릭스 |
-| `decompose_task()` | §4.1 Task 단위 분해 (Aggregate/Command/Event/Policy/ReadModel 후보 + US 와의 IMPLEMENTS) |
-| `merge_session_decompositions()` | §4.2 세션 통합 (root Table 공유 Aggregate 합치기) |
-| `save_es_with_traceability()` | §5.1 PROMOTED_FROM / IMPLEMENTS / SOURCED_FROM / DERIVED_FROM 엣지 생성 |
-| 신 `promote_to_es.py` | 위를 orchestrate — 각 LLM 단계는 legacy 프롬프트 호출, 입력은 정제된 candidate dict |
+**신설 (PRD §3~§5 가 책임)** — 모두 `event_storming_bridge/` 안에 신설됨, 2026-05-06 구현 완료:
+
+| 신규 모듈/함수 | 위치 | 책임 |
+|---|---|---|
+| `rule_classifier.py` | `event_storming_bridge/rule_classifier.py` | §3.1 결정론 분류 — Rule 동사 / Example.writes.op / coupled_domains 매트릭스 + guard chain propagation |
+| `decompose_task()` / `merge_session_decompositions()` | `event_storming_bridge/decomposer.py` | §4.1 Task 단위 분해 + §4.2 세션 통합 (root Table 공유 Aggregate 합치기) |
+| `name_session()` | `event_storming_bridge/naming.py` | §3.2 LLM 이름 부여 (BC 그룹핑 = legacy IDENTIFY_BC 프롬프트 재활용 + Aggregate/Command/Event/Policy/ReadModel 신 단축 프롬프트). Deterministic fallback 보장 |
+| `save_named_session()` / `clear_promoted_nodes()` | `event_storming_bridge/persistence.py` | §5.1 모든 노드 MERGE + 26 종 traceability 엣지 (PROMOTED_FROM / IMPLEMENTS / SOURCED_FROM / DERIVED_FROM / GROUNDED_IN / PRECONDITION_BY / EMITS / HAS_*) + manual override 보존 |
+| `hybrid_post_workflow_hook()` | `event_storming_bridge/promote_to_es.py` (재작성) | 위를 orchestrate — fetch → classify → decompose → merge → name → tag-orphan → wipe → persist → invariant check |
+
+**Backwards-compat 유지**: `clear_promoted_nodes`, `ALL_PROMOTED_LABELS`, `hybrid_post_workflow_hook` export 모두 동일 — `router.py` / `ingestion_workflow_runner.py` 무수정.
 
 **경계 명확화**:
 
@@ -742,4 +881,121 @@ async def promote_hybrid_to_es(session_id):
 
 ---
 
-*작성일: 2026-05-04 — Phase 5 Event Storming Promotion PRD v1*
+## §12 v4 구현 status (2026-05-08)
+
+> 이 절은 v3.2 까지 구현 후 발견된 잔여 결함 + Inspector "출처" 탭 source-of-truth 정합 재설계 + PRD 생성 endpoint 보강 까지 포함하는 **이번 라운드 작업 정리**. 이전 핸드오프 (`Phase5_Phase6_HandOff.md`) 는 폐기됨 — 본 절 + [검증 보고서](Phase5_Phase6_Verification_Report.md) 가 sole source of truth.
+
+### 12.1 닫힌 결함
+
+| 결함 | 위치 | 수정 |
+|---|---|---|
+| Event HAS_PROPERTY = 0 (잔여) | `commands.py:790` events_by_agg helper Cypher 가 `RETURN DISTINCT e {...} ORDER BY e.name` 라 `DISTINCT` 후 변수 `e` 접근 불가 → SyntaxError → except 블록 → events_by_agg `{}` | `WITH DISTINCT e` 절 추가 + projection 변수 `evt.name` 으로 ORDER BY |
+| Event 가 dict 인데 `getattr` 만 사용 | `properties.py:308-318` + `:429-441` 의 Event property prompt 구성에서 `getattr(evt, 'name', '')` 가 dict 에서 항상 빈 문자열 반환 → LLM 프롬프트 Event 섹션 비어 → property 미생성 | `isinstance(evt, dict)` 가드로 dict-aware 접근 |
+| traceability BL 단계 누락 | `traceability.py:188-204` 의 BL Cypher 가 `(F)-[:HAS_RULE]->(shadow Rule)` 직매칭 — shadow Rule 은 FUNCTION 에 연결 안됨 → BL 단계 응답에서 빠짐 → Inspector 가 ES 단계 (DDD/BC/US) 까지만 표시 | shadow→analyzer Rule 매칭 (`source_function + statement`) 절 추가 후 FUNCTION 트래버스 |
+| Inspector 출처 탭 의미 흐릿 | DDD Node + BC + US + BL + Function 5 단계 chain 으로 **출처가 아닌 조직화 노드 (DDD/BC) 가 반복** 노출. 노드 별 13 chains 표시 등 UX 문제 | sources-per-US 모델로 재설계 ([§12.3](#123-inspector-출처-탭-재설계)) |
+| Inspector 가 노드 타입별 source emphasis 없음 | Aggregate 든 Event 든 동일 layout — 노드 의미 (Aggregate=Root Table, Event=GWT) 불부각 | 노드 타입별 primary source 박스 ([§12.4](#124-노드-타입별-primary-source-emphasis)) |
+
+### 12.2 코드 변경 — backend / frontend
+
+#### Backend
+
+| 파일 | 변경 |
+|---|---|
+| [`workflow/phases/commands.py`](../../api/features/ingestion/workflow/phases/commands.py#L780) | `extract_commands_phase` 끝에 `events_by_agg` 빌드 헬퍼 추가 (Aggregate-HAS_COMMAND-Command-EMITS-Event chain). v4 Cypher syntax fix 포함 |
+| [`workflow/phases/properties.py`](../../api/features/ingestion/workflow/phases/properties.py) | Event property prompt 구성 (single + chunked 두 path) 모두 `isinstance(evt, dict)` dict-aware 접근으로 통일 |
+| [`event_storming/neo4j_ops/events.py`](../../api/features/ingestion/event_storming/neo4j_ops/events.py#L146) | `get_events_emitted_by_command` Cypher RETURN 에 `.key` 추가 (방어) |
+| [`workflow/ingestion_workflow_context.py`](../../api/features/ingestion/workflow/ingestion_workflow_context.py#L195) | `sync_from_neo4j` Cypher RETURN 에 `.key` 추가 (resume 경로 방어) |
+| [`canvas_graph/routes/traceability.py`](../../api/features/canvas_graph/routes/traceability.py) | (1) shadow→analyzer Rule 매칭 chain. (2) 응답 schema chains → sources-per-US 로 전면 재설계. (3) `rule.writes` 추가 (Example.AFFECTS_TABLE → table+op). (4) 신 endpoint `GET /traceability/userstory/{us_id}/source-rules` |
+| [`prd_generation/prd_model_data.py`](../../api/features/prd_generation/prd_model_data.py) | `fetch_bc_data` Step 9 (UserStory + SOURCED_FROM + Example) + Step 10 (Question) 추가. `_attach_per_node_source_rules` 신설 — Aggregate/Command/Event 별 source rule rollup |
+| [`prd_generation/prd_artifact_generation.py`](../../api/features/prd_generation/prd_artifact_generation.py) | render helper 6종: `render_source_rules_table`, `render_acceptance_tests`, `render_open_decisions`, `render_user_story_index`, `render_node_source_rules`, `render_node_source_examples`. `generate_bc_spec` 의 BC 헤더 직후 + Aggregate/Command/Event 블록 안에 wiring. `generate_claude_md` BC 리스트 + `generate_agent_config` 의 Source-of-truth grounding 가이드 절 |
+
+#### Frontend
+
+| 파일 | 변경 |
+|---|---|
+| [`canvas/ui/InspectorPanel.vue`](../../frontend/src/features/canvas/ui/InspectorPanel.vue) | 출처 탭 전면 재설계. chain rendering 제거, sources-per-US US 카드 list 로 교체. 단일 list (grounded + ungrounded 통합), 펼치면 BL 유무 분기 표시. 노드 타입별 primary source 박스 (Aggregate=Root Tables 3-tier fallback / Command·Event=Acceptance Test). 다크 테마 CSS 토큰 정합 |
+| [`userStories/ui/UserStoryEditModal.vue`](../../frontend/src/features/userStories/ui/UserStoryEditModal.vue) | US 더블클릭 모달에 "Source Business Rules" 섹션 추가 (sourceRules.length > 0 가드). `/api/graph/traceability/userstory/{us_id}/source-rules` 호출 |
+| [`requirementsIngestion/ui/RequirementsIngestionModal.vue`](../../frontend/src/features/requirementsIngestion/ui/RequirementsIngestionModal.vue) | 분석 데이터 stats 패널에 Question 카드 추가 (count > 0 일 때) |
+
+### 12.3 Inspector "출처" 탭 재설계
+
+핵심 framing 교정 (verification report §3.8 참조):
+
+```
+ES 노드 (Aggregate / Command / Event)
+   │ IMPLEMENTS                ← 조직화 (출처가 아니라 어느 US 군집에 속함)
+   ▼
+UserStory                       ← gateway (narrative 컨테이너)
+   │ SOURCED_FROM
+   ▼
+Rule (statement)                ← ★ 진짜 source 1 (의도)
+   │ HAS_EXAMPLE
+   ▼
+Example (given/when_/then_)     ← ★ 진짜 source 2 (구체 시나리오)
+   │ AFFECTS_TABLE
+   ▼
+Table (write op)                ← ★ 진짜 source 3 (DB 영향)
+```
+
+**기존 chain 모델 폐기 이유**:
+- DDD Node + BC 가 매 chain 마다 반복 (예: Aggregate 가 13 US implements 시 13번 반복)
+- "출처가 아닌 노드" (DDD Node, BC) 가 출처 list 에 표시되어 의미 혼선
+
+**새 sources 모델**:
+```json
+{
+  "node": { id, type, name },        // 클릭한 노드 (1번)
+  "bc":   { id, name },              // 컨텍스트 (1번, 출처 아님)
+  "sources": [                        // 진짜 출처: US 별
+    {
+      "us": { id, role, action },
+      "rules": [{ seq, statement, given, when, then, writes, function_id }],
+      "functions": [{ name, location, code, tables }]
+    }
+  ]
+}
+```
+
+UI: 단일 US 카드 list. 펼치면 rules + function 표시. BL 매핑 없는 US 는 opacity 78% + "📄 매핑된 BL 없음 — BPM Task 자연어 설명만 source" 한 줄.
+
+### 12.4 노드 타입별 primary source emphasis
+
+각 노드 타입의 의미적 source 가 다름:
+
+| 노드 | Primary Source 박스 | 데이터 소스 |
+|---|---|---|
+| Aggregate | 📊 **Root Tables** — 영속되는 DB 테이블 + 컬럼 + INSERT/UPDATE/DELETE | 3-tier: Example.AFFECTS_TABLE writes (best) → FUNCTION.WRITES → FUNCTION.READS (fallback) |
+| Command | 🎯 **Acceptance Test** — 입력 + when + result | canonical Example given/when/then. **Rule.statement 가 헤더에서 의미적 condition 역할** (Example.when_ 가 phase 명일 때 보완) |
+| Event | 🎯 **Acceptance Test** — full BDD GWT | 동일 |
+| Policy / ReadModel | (primary 박스 없음, rules+functions 만) | — |
+
+색상 코드: INSERT=emerald, UPDATE=amber, DELETE=red, READS=blue (다크 테마 정합).
+
+### 12.5 검증 결과 — 핵심 수치
+
+[검증 보고서](Phase5_Phase6_Verification_Report.md) 의 종합 audit (zapamcom10060 fixture):
+
+| 검증 영역 | 결과 |
+|---|---|
+| 분석기 무손상 | FUNCTION 10 / Rule 116 (analyzer 59 + shadow 57) / Example 87 / AFFECTS_TABLE 26 ✅ |
+| BPM ↔ BL 매핑 | 9 task / 29 REALIZED_BY edges / 12 distinct analyzer Rules matched (17 shadow Rule 은 분석기 FUNCTION 누락으로 매칭 실패) |
+| US 생성 | 34 US (BL 매핑 11, BL 없음 23 — 0-rule task 유래) |
+| Property 영속 | Aggregate 33 / Command 82 / **Event 75** / ReadModel 109 (Event 0 였던 결함 회복) |
+| GWT thenFieldValues | **125 testCases 중 113 (90%)** schema-bound 채워짐 (이전 0%) |
+| 의미 정합성 | Aggregate.invariants 가 Rule.statement 의 의도 일반화 (수동 sample 검증) |
+
+### 12.6 알려진 한계 (architect 측 처리 외)
+
+- **분석기 FUNCTION 노드 누락**: dbio 함수들 (b200/b205/b210/b400/b410) 이 FUNCTION 노드로 등록 안 됨 → 17 shadow Rule 의 analyzer 매칭 실패. 분석기 측 (robo-data-analyzer) 보강 필요
+- **Example.when_ 의 phase-level 표현**: a000_input_validation 의 Example.when_ 이 모두 "입력값 검증" 같은 phase 명. 분석기 raw 데이터 한계 — Inspector 는 Rule.statement 헤더로 보완
+- **0-rule task US**: 23/34 US 가 BPM Task description 만으로 생성 (조회/검증 task — 분석기가 read-only 함수 깊이 분석 못 함). PRD spec 에 "BL 없는 US" 로 표시됨
+
+### 12.7 잔여 작업 (선택)
+
+- **DERIVED_FROM / PRECONDITION_BY 엣지 영속** — 현 구현은 IMPLEMENTS-via-US 우회로 충분, 별도 영속 안 함. Phase 6 PRD §4 inject 의 fallback Cypher 가 이 우회를 활용
+- **Question.ATTACHED_TO 부분 커버리지** — 4개 중 1개만 BC attach. promote_to_es.py fallback 절 강화 가능
+- **decomposer / naming / persistence 모듈 cleanup** — Phase 5 augment-only 전환으로 미사용. Phase 6 본 구현 후 별도 PR 가능
+
+---
+
+*v1 작성: 2026-05-04 / v4 구현 + 검증 + 문서 통합: 2026-05-08*

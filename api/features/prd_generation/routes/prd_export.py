@@ -53,11 +53,15 @@ async def generate_prd(request: PRDGenerationRequest, http_request: Request):
         category="api.prd.generate.request",
         params={
             **http_context(http_request),
-            "inputs": {"node_ids": "all (always)", "tech_stack": request.tech_stack.model_dump()},
+            "inputs": {
+                "node_ids": "all (always)",
+                "session_id": request.session_id,
+                "tech_stack": request.tech_stack.model_dump(),
+            },
         },
     )
 
-    bcs = get_bcs_from_nodes(None)  # Always get all BCs
+    bcs = get_bcs_from_nodes(None, session_id=request.session_id)  # Always get all BCs (optionally scoped by session_id)
     if not bcs:
         raise HTTPException(status_code=404, detail="No Bounded Contexts found for the given nodes")
 
@@ -136,11 +140,15 @@ async def download_prd_zip(request: PRDGenerationRequest, http_request: Request)
         category="api.prd.download.request",
         params={
             **http_context(http_request),
-            "inputs": {"node_ids": "all (always)", "tech_stack": request.tech_stack.model_dump()},
+            "inputs": {
+                "node_ids": "all (always)",
+                "session_id": request.session_id,
+                "tech_stack": request.tech_stack.model_dump(),
+            },
         },
     )
 
-    bcs = get_bcs_from_nodes(None)  # Always get all BCs
+    bcs = get_bcs_from_nodes(None, session_id=request.session_id)  # Always get all BCs (optionally scoped by session_id)
     if not bcs:
         raise HTTPException(status_code=404, detail="No Bounded Contexts found for the given nodes")
 

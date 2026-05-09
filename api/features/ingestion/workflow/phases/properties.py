@@ -305,15 +305,17 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 evt_id = str(evt_id_raw).strip() if evt_id_raw else ""
                 if not evt_key or not evt_id:
                     continue
-                evt_version = getattr(evt, "version", "1.0.0") or "1.0.0"
-                evt_payload = getattr(evt, "payload", None) or ""
+                evt_version = (evt.get("version") if isinstance(evt, dict) else getattr(evt, "version", None)) or "1.0.0"
+                evt_payload = (evt.get("payload") if isinstance(evt, dict) else getattr(evt, "payload", None)) or ""
+                evt_name = (evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")) or ""
+                evt_description = (evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", "")) or ""
                 event_lines.append(
                     f"- key: {evt_key}\n"
                     f"  id: {evt_id}\n"
-                    f"  name: {getattr(evt, 'name', '')}\n"
+                    f"  name: {evt_name}\n"
                     f"  version: {evt_version}\n"
                     f"  payload: {evt_payload}\n"
-                    f"  description: {getattr(evt, 'description', '')}"
+                    f"  description: {evt_description}"
                 )
             events_text = "\n".join(event_lines) if event_lines else "None"
 
@@ -428,12 +430,16 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                         evt_id = str((evt.get("id") if isinstance(evt, dict) else getattr(evt, "id", None)) or "").strip()
                         if not evt_key or not evt_id:
                             continue
+                        chunk_evt_name = (evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "")) or ""
+                        chunk_evt_version = (evt.get("version") if isinstance(evt, dict) else getattr(evt, "version", None)) or "1.0.0"
+                        chunk_evt_payload = (evt.get("payload") if isinstance(evt, dict) else getattr(evt, "payload", None)) or ""
+                        chunk_evt_description = (evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", "")) or ""
                         chunk_evt_lines.append(
                             f"- key: {evt_key}\n  id: {evt_id}\n"
-                            f"  name: {getattr(evt, 'name', '')}\n"
-                            f"  version: {getattr(evt, 'version', '1.0.0') or '1.0.0'}\n"
-                            f"  payload: {getattr(evt, 'payload', None) or ''}\n"
-                            f"  description: {getattr(evt, 'description', '')}"
+                            f"  name: {chunk_evt_name}\n"
+                            f"  version: {chunk_evt_version}\n"
+                            f"  payload: {chunk_evt_payload}\n"
+                            f"  description: {chunk_evt_description}"
                         )
                     chunk_evts_text = "\n".join(chunk_evt_lines) if chunk_evt_lines else "None"
 

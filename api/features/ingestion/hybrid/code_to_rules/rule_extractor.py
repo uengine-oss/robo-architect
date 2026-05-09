@@ -25,19 +25,28 @@ from api.platform.observability.smart_logger import SmartLogger
 # One row per (function, rule) pair. Examples are collected as a list so a single
 # rule with N examples (boundary + nominal) stays one RuleDTO. `coupled_domains`
 # lives on the HAS_RULE relationship per the new schema.
+#
+# Per-Example AFFECTS_TABLE writes are gathered with a sub-pattern collect inside
+# the example map so we don't fan out the (function, rule) row. NEXT/BRANCH are
+# function-scoped: we cross back through HAS_RULE on the same function `f` to
+# resolve the target rule's local_id, since (function, local_id) is the
+# downstream consumers' addressing scheme.
 _QUERY = """
 MATCH (f:FUNCTION)-[hr:HAS_RULE]->(r:Rule)
-OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:Example)
 WITH f, hr, r,
-     collect(DISTINCT {
-        example_id:  e.example_id,
-        given:       e.given,
-        when_:       e.when_,
-        then_:       e.then_,
-        is_boundary: coalesce(e.is_boundary, false),
-        description: e.description
-     }) AS examples
-ORDER BY coalesce(f.procedure_name, f.name), hr.local_id
+     [(r)-[:HAS_EXAMPLE]->(e:Example) |
+        {
+          example_id:  e.example_id,
+          given:       e.given,
+          when_:       e.when_,
+          then_:       e.then_,
+          is_boundary: coalesce(e.is_boundary, false),
+          description: e.description,
+          writes:      [(e)-[at:AFFECTS_TABLE]->(tbl:Table) | {table: tbl.name, op: at.op}]
+        }
+     ] AS examples,
+     [(r)-[:NEXT]->(rn:Rule)<-[hrn:HAS_RULE]-(f) | hrn.local_id]   AS next_rule_local_ids_raw,
+     [(r)-[:BRANCH]->(rb:Rule)<-[hrb:HAS_RULE]-(f) | hrb.local_id] AS branch_rule_local_ids_raw
 RETURN
     coalesce(f.function_id, f.procedure_name, f.name) AS function_id,
     coalesce(f.procedure_name, f.name)                AS function_name,
@@ -46,8 +55,13 @@ RETURN
     r.statement                                       AS statement,
     hr.local_id                                       AS local_id,
     hr.flow_id                                        AS flow_id,
+    hr.guard_rule_id                                  AS guard_rule_id,
+    hr.branch_from                                    AS branch_from,
     coalesce(hr.coupled_domains, [])                  AS coupled_domains,
-    examples                                          AS examples
+    examples                                          AS examples,
+    [x IN next_rule_local_ids_raw   WHERE x IS NOT NULL] AS next_rule_local_ids,
+    [x IN branch_rule_local_ids_raw WHERE x IS NOT NULL] AS branch_rule_local_ids
+ORDER BY function_name, hr.local_id
 """
 
 
@@ -101,6 +115,59 @@ def _pick_canonical(examples: list[dict]) -> dict | None:
     return valid[0]
 
 
+def _writes_from_then_json(then_value: str | None) -> list[dict]:
+    """Pull `writes[]` out of a JSON-encoded `then_` payload, if present.
+
+    Analyzer Examples encode `then_` as JSON when they carry side effects:
+    `{"narrative": "...", "writes": [{"table": "...", "op": "INSERT"}], ...}`.
+    Plain-text `then_` returns []. Tolerant of malformed JSON — returns [] on
+    any parse failure.
+    """
+    if not then_value:
+        return []
+    s = then_value.strip()
+    if not s.startswith("{"):
+        return []
+    try:
+        obj = json.loads(s)
+    except Exception:
+        return []
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("writes")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for w in raw:
+        if not isinstance(w, dict):
+            continue
+        tbl = w.get("table")
+        op = w.get("op")
+        if isinstance(tbl, str) and isinstance(op, str):
+            out.append({"table": tbl, "op": op.upper()})
+    return out
+
+
+def _merge_writes(*sources: list[dict]) -> list[dict]:
+    """Union writes lists into a stable, deduplicated list of {table, op} dicts."""
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for src in sources:
+        for w in src or []:
+            if not isinstance(w, dict):
+                continue
+            tbl = w.get("table")
+            op = w.get("op")
+            if not (isinstance(tbl, str) and isinstance(op, str)):
+                continue
+            key = (tbl, op.upper())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"table": tbl, "op": op.upper()})
+    return out
+
+
 async def extract_rules_from_analyzer_graph(
     analyzer_graph_ref: str | None = None,
 ) -> list[RuleDTO]:
@@ -152,6 +219,13 @@ async def extract_rules_from_analyzer_graph(
                 then_=_humanize(e.get("then_")),
                 is_boundary=bool(e.get("is_boundary")),
                 description=e.get("description") or None,
+                # Union of analyzer-edge writes (AFFECTS_TABLE) and JSON-embedded
+                # writes[] in the raw then_ — either alone is incomplete in some
+                # function fixtures, so we merge both for robust §3.1 classification.
+                writes=_merge_writes(
+                    e.get("writes") or [],
+                    _writes_from_then_json(e.get("then_")),
+                ),
             )
             for e in (rec.get("examples") or [])
             if isinstance(e, dict) and e.get("example_id")
@@ -169,6 +243,12 @@ async def extract_rules_from_analyzer_graph(
                 title=(statement or None),
                 examples=examples,
                 coupled_domains=list(rec.get("coupled_domains") or []),
+                local_id=rec.get("local_id"),
+                flow_id=rec.get("flow_id"),
+                guard_rule_id=rec.get("guard_rule_id"),
+                branch_from=rec.get("branch_from"),
+                next_rule_local_ids=list(rec.get("next_rule_local_ids") or []),
+                branch_rule_local_ids=list(rec.get("branch_rule_local_ids") or []),
             )
         )
 

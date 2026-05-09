@@ -28,6 +28,10 @@ const originalRole = ref('')
 const originalAction = ref('')
 const originalBenefit = ref('')
 
+// Source business rules (hybrid US only — empty for rfp/figma)
+const sourceRules = ref([])
+const sourceRulesLoading = ref(false)
+
 // UI state
 const currentStep = ref('edit') // 'edit' | 'analyzing' | 'plan' | 'feedback' | 'applying'
 const feedbackText = ref('')
@@ -61,8 +65,32 @@ watch(() => props.userStory, (newVal) => {
     editedBenefit.value = originalBenefit.value = newVal.benefit || ''
     currentStep.value = 'edit'
     feedbackText.value = ''
+    fetchSourceRules(newVal.id)
+  } else {
+    sourceRules.value = []
   }
 }, { immediate: true })
+
+async function fetchSourceRules(usId) {
+  if (!usId) {
+    sourceRules.value = []
+    return
+  }
+  sourceRulesLoading.value = true
+  try {
+    const response = await fetch(`/api/graph/traceability/userstory/${encodeURIComponent(usId)}/source-rules`)
+    if (!response.ok) {
+      sourceRules.value = []
+      return
+    }
+    const data = await response.json()
+    sourceRules.value = Array.isArray(data?.rules) ? data.rules : []
+  } catch (e) {
+    sourceRules.value = []
+  } finally {
+    sourceRulesLoading.value = false
+  }
+}
 
 // Reset when modal closes
 watch(() => props.visible, (visible) => {
@@ -248,6 +276,26 @@ function getActionLabel(action) {
                 ></textarea>
               </div>
               
+              <!-- Source Business Rules (hybrid only — section hidden when no SOURCED_FROM edges) -->
+              <div v-if="sourceRules.length > 0" class="source-rules">
+                <div class="source-rules__title">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                  </svg>
+                  Source Business Rules ({{ sourceRules.length }})
+                </div>
+                <ul class="source-rules__list">
+                  <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item">
+                    <span v-if="rule.local_id" class="source-rule-seq">{{ rule.local_id }}</span>
+                    <span class="source-rule-stmt">{{ rule.statement }}</span>
+                    <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>
+                  </li>
+                </ul>
+              </div>
+
               <!-- Changes Preview -->
               <div v-if="hasChanges" class="changes-preview">
                 <div class="changes-preview__title">
@@ -1177,6 +1225,71 @@ function getActionLabel(action) {
 .form-textarea {
   resize: vertical;
   min-height: 60px;
+}
+
+/* Source Business Rules */
+.source-rules {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+}
+
+.source-rules__title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #4338ca;
+  margin-bottom: var(--spacing-sm);
+}
+
+.source-rules__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.source-rule-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  flex-wrap: wrap;
+}
+
+.source-rule-seq {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #4338ca;
+  background: rgba(99, 102, 241, 0.15);
+  padding: 1px 6px;
+  border-radius: 4px;
+  min-width: 28px;
+  text-align: center;
+}
+
+.source-rule-stmt {
+  flex: 1 1 auto;
+  color: var(--color-text);
+  word-break: keep-all;
+}
+
+.source-rule-fn {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.75rem;
+  color: var(--color-text-light);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 
 /* Changes Preview */

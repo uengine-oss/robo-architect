@@ -182,6 +182,106 @@ const traceLoading = ref(false)
 const traceError = ref(null)
 const expandedBLs = ref(new Set())
 
+// Single sources list — no grounded/ungrounded split. Each US is shown the
+// same; expanding reveals BL+function detail if present, or a "매핑된 BL 없음"
+// note if not (verification §3.8: ungrounded US's source-of-truth ends at BPM
+// Task description, no Rule/Example chain to surface).
+const allSources = computed(() => traceData.value?.sources || [])
+// Count for caption — how many of the listed US's actually carry BL grounding.
+const groundedCount = computed(() =>
+  allSources.value.filter(s => (s.rules || []).length > 0).length
+)
+
+// Per-node-type primary-source emphasis (verification §3.8 + node intent):
+//   Aggregate → Root Table(s): the DB table this Aggregate is grounded in.
+//                Extracted from WRITES tables across all source functions.
+//   Command   → Input contract GWT: the canonical Example given/when as the
+//                command's input contract (then is emit territory).
+//   Event     → Acceptance test GWT: full given/when/then + writes as the
+//                event's output contract.
+const nodeType = computed(() => traceData.value?.node?.type || '')
+
+// Returns [{ name, ops, columns, sources }] — Aggregate's grounding tables.
+//
+// Signal priority:
+//   1. Example.AFFECTS_TABLE writes (best — operation-level Rule grounding)
+//   2. FUNCTION.WRITES (next — function-level write target)
+//   3. FUNCTION.READS (fallback — at least the source schema this Aggregate sees)
+//
+// Most ingestion runs land in tier 1 or 2; tier 3 covers read-mostly grounded
+// US's (validation/lookup functions) where the Aggregate's table grounding
+// only shows up as schema-read, not write.
+const primaryRootTables = computed(() => {
+  if (nodeType.value !== 'Aggregate') return []
+  const tableMap = new Map() // tname -> { name, ops: Set, columns, sources: Set, tier }
+  const upsert = (tname, op, columns, usid, tier) => {
+    if (!tableMap.has(tname)) {
+      tableMap.set(tname, {
+        name: tname,
+        ops: new Set(),
+        columns: columns || [],
+        sources: new Set(),
+        tier,
+      })
+    }
+    const entry = tableMap.get(tname)
+    if (op) entry.ops.add(op)
+    if (usid) entry.sources.add(usid)
+    if (tier < entry.tier) entry.tier = tier
+    if ((!entry.columns || !entry.columns.length) && columns?.length) {
+      entry.columns = columns
+    }
+  }
+  const groundedOnly = allSources.value.filter(s => (s.rules || []).length > 0)
+
+  // Tier 1: rule.writes from Example.AFFECTS_TABLE
+  for (const src of groundedOnly) {
+    const usid = src.us?.id || ''
+    for (const rule of (src.rules || [])) {
+      for (const w of (rule.writes || [])) {
+        if (!w.table || !w.op) continue
+        upsert(w.table, w.op, null, usid, 1)
+      }
+    }
+  }
+  // Tier 2 + 3: FUNCTION.WRITES / READS fallback
+  for (const src of groundedOnly) {
+    const usid = src.us?.id || ''
+    for (const fn of (src.functions || [])) {
+      for (const tbl of (fn.tables || [])) {
+        if (!tbl.name) continue
+        const access = tbl.access || []
+        if (access.includes('WRITES')) upsert(tbl.name, 'WRITES', tbl.columns, usid, 2)
+        if (access.includes('READS'))  upsert(tbl.name, 'READS',  tbl.columns, usid, 3)
+      }
+    }
+  }
+
+  return [...tableMap.values()]
+    .map(t => ({ ...t, ops: [...t.ops].sort(), sources: [...t.sources] }))
+    .sort((a, b) => a.tier - b.tier)
+})
+
+// Returns [{ given, when, then, fromUs, ruleSeq, ruleTitle }] — picks the
+// canonical Example GWT per US (first rule with given/when/then content).
+const primaryAcceptanceTests = computed(() => {
+  if (nodeType.value !== 'Command' && nodeType.value !== 'Event') return []
+  const out = []
+  for (const src of allSources.value) {
+    const ruleWithGwt = (src.rules || []).find(r => r.given || r.when || r.then)
+    if (!ruleWithGwt) continue
+    out.push({
+      usId: src.us?.id || '',
+      ruleSeq: ruleWithGwt.seq || '',
+      ruleTitle: ruleWithGwt.title || '',
+      given: ruleWithGwt.given || '',
+      when: ruleWithGwt.when || '',
+      then: ruleWithGwt.then || '',
+    })
+  }
+  return out
+})
+
 function toggleBL(seq) {
   if (expandedBLs.value.has(seq)) {
     expandedBLs.value.delete(seq)
@@ -2280,7 +2380,7 @@ function updateVoFieldValue(fieldName, value) {
 
         </div>
 
-        <!-- Traceability Tab -->
+        <!-- Traceability Tab — Source-of-truth view (verification §3.8) -->
         <div v-if="activeTab === 'traceability'" class="inspector-traceability">
           <div v-if="traceLoading" class="trace-loading">
             <span class="spinner"></span> 출처 조회 중...
@@ -2290,104 +2390,156 @@ function updateVoFieldValue(fieldName, value) {
           </div>
           <div v-else-if="traceData" class="trace-content">
 
-            <template v-if="traceData.chains?.length">
-              <div v-for="(chain, cIdx) in traceData.chains" :key="cIdx" class="trace-chain">
+            <!-- Header: which node + BC context (BC is NOT source — just orientation) -->
+            <div v-if="traceData.node" class="trace-node-header">
+              <span class="trace-step__badge"
+                :class="`trace-step__badge--${(traceData.node.type || '').toLowerCase()}`">
+                {{ traceData.node.type }}
+              </span>
+              <span class="trace-node-header__name">{{ traceData.node.name }}</span>
+              <span v-if="traceData.bc" class="trace-node-header__bc">in BC: {{ traceData.bc.name }}</span>
+            </div>
 
-                <template v-for="(step, sIdx) in chain" :key="sIdx">
-                  <!-- 화살표 구분 -->
-                  <div v-if="sIdx > 0" class="trace-step-arrow">↑</div>
+            <!-- Primary source emphasis — type-specific (Aggregate → Root Table,
+                 Command/Event → Acceptance GWT). The detailed BL rules + functions
+                 are still listed below; this just surfaces what most defines the
+                 node's grounding for quick scanning. -->
+            <div v-if="primaryRootTables.length" class="trace-primary trace-primary--table">
+              <div class="trace-primary__title">
+                <span class="trace-primary__icon">📊</span>
+                Root Tables — Aggregate 가 영속되는 DB 테이블
+              </div>
+              <div v-for="tbl in primaryRootTables" :key="tbl.name" class="trace-primary-table">
+                <div class="trace-primary-table__header">
+                  <span class="trace-primary-table__name">{{ tbl.name }}</span>
+                  <span v-for="op in tbl.ops" :key="op" class="trace-primary-table__access"
+                    :class="`trace-primary-table__access--${op.toLowerCase()}`">{{ op }}</span>
+                  <span v-if="tbl.columns.length" class="trace-primary-table__count">{{ tbl.columns.length }} cols</span>
+                </div>
+                <div v-if="tbl.columns.length" class="trace-primary-table__cols">
+                  <span v-for="col in tbl.columns" :key="col.name" class="trace-primary-table__col">
+                    <strong v-if="col.pk">🔑</strong>
+                    {{ col.name }}<span class="trace-primary-table__col-type">: {{ col.type }}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
 
-                  <!-- DDD Node -->
-                  <div v-if="step.step === 'DDD Node'" class="trace-step trace-step--ddd">
-                    <span class="trace-step__badge" :class="`trace-step__badge--${step.type?.toLowerCase()}`">{{ step.type }}</span>
-                    <span class="trace-step__name">{{ step.name }}</span>
+            <div v-if="primaryAcceptanceTests.length" class="trace-primary trace-primary--gwt">
+              <div class="trace-primary__title">
+                <span class="trace-primary__icon">🎯</span>
+                Acceptance Test
+                <span class="trace-primary__hint">— Rule.statement (헤더) 이 의미적 condition, Given/When/Then 은 분석기 Example raw</span>
+              </div>
+              <div v-for="(at, idx) in primaryAcceptanceTests" :key="`${at.usId}-${idx}`" class="trace-primary-gwt">
+                <div class="trace-primary-gwt__header">
+                  <span class="trace-step__badge trace-step__badge--us">{{ at.usId }}</span>
+                  <span v-if="at.ruleSeq" class="trace-primary-gwt__seq">{{ at.ruleSeq }}</span>
+                  <span class="trace-primary-gwt__title">{{ at.ruleTitle }}</span>
+                </div>
+                <div class="trace-primary-gwt__body">
+                  <div v-if="at.given" class="trace-primary-gwt__row">
+                    <span class="trace-primary-gwt__label">Given</span>
+                    <span class="trace-primary-gwt__text">{{ at.given }}</span>
                   </div>
-
-                  <!-- Bounded Context -->
-                  <div v-else-if="step.step === 'Bounded Context'" class="trace-step trace-step--bc">
-                    <span class="trace-step__badge trace-step__badge--bc">BC</span>
-                    <span class="trace-step__name">{{ step.name }}</span>
+                  <div v-if="at.when" class="trace-primary-gwt__row">
+                    <span class="trace-primary-gwt__label">When</span>
+                    <span class="trace-primary-gwt__text">{{ at.when }}</span>
                   </div>
+                  <div v-if="at.then" class="trace-primary-gwt__row">
+                    <span class="trace-primary-gwt__label">Then</span>
+                    <span class="trace-primary-gwt__text">{{ at.then }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-                  <!-- User Story -->
-                  <div v-else-if="step.step === 'User Story'" class="trace-step trace-step--us">
+            <template v-if="allSources.length">
+              <div class="trace-sources">
+                <div class="trace-sources__caption">
+                  이 노드는 <strong>{{ allSources.length }}개 User Story</strong> 위에서 만들어졌습니다
+                  <!-- <span v-if="groundedCount < allSources.length">
+                    (BL 매핑 보유 {{ groundedCount }}개 / 미매핑 {{ allSources.length - groundedCount }}개)
+                  </span> -->
+                </div>
+
+                <div v-for="(src, sIdx) in allSources" :key="src.us.id" class="trace-source"
+                  :class="{ 'trace-source--ungrounded': !(src.rules || []).length }">
+                  <!-- US header -->
+                  <button class="trace-source__header" @click="toggleBL(`src-${sIdx}`)">
+                    <span class="trace-source__toggle">{{ expandedBLs.has(`src-${sIdx}`) ? '▼' : '▶' }}</span>
                     <span class="trace-step__badge trace-step__badge--us">US</span>
-                    <span class="trace-step__name">{{ step.id }}: As a {{ step.role }}, {{ step.action }}</span>
-                  </div>
+                    <span class="trace-source__usid">{{ src.us.id }}</span>
+                    <span class="trace-source__action">
+                      <span v-if="src.us.role" class="trace-source__role">as a {{ src.us.role }},</span>
+                      {{ src.us.action }}
+                    </span>
+                    <span class="trace-source__rule-count"
+                      :class="{ 'trace-source__rule-count--zero': !(src.rules || []).length }">
+                      {{ (src.rules || []).length }} BL
+                    </span>
+                  </button>
 
-                  <!-- Business Logic -->
-                  <div v-else-if="step.step === 'Business Logic'" class="trace-step trace-step--bl">
-                    <div class="trace-step__badge trace-step__badge--bl">BL</div>
-                    <!-- 흐름도 -->
-                    <div class="trace-flow">
-                      <template v-for="(bl, bIdx) in step.flow" :key="bl.seq">
-                        <span class="trace-flow__node" :class="{ 'trace-flow__node--coupled': bl.coupled_domain }" :title="bl.title">
-                          BL[{{ bl.seq }}]{{ bl.coupled_domain ? '*' : '' }}
+                  <div v-if="expandedBLs.has(`src-${sIdx}`)" class="trace-source__body">
+                    <!-- BL not mapped — show simple note. The US itself was derived
+                         from the BPM Task description only (no Rule/Example chain). -->
+                    <div v-if="!(src.rules || []).length" class="trace-source__empty">
+                      📄 매핑된 BL 없음 — BPM Task 자연어 설명만 source
+                    </div>
+
+                    <!-- Source rules: Rule.statement + Example given/when/then -->
+                    <div v-for="rule in (src.rules || [])" :key="`${src.us.id}-${rule.seq}-${rule.title}`" class="trace-rule">
+                      <div class="trace-rule__header">
+                        <span class="trace-rule__seq" :class="{ 'trace-rule__seq--coupled': rule.coupled_domain }">
+                          {{ rule.seq || '—' }}
                         </span>
-                        <span v-if="bIdx < step.flow.length - 1" class="trace-flow__arrow">→</span>
-                      </template>
-                    </div>
-                    <!-- 커플링 -->
-                    <div v-for="c in step.domain_couplings" :key="c.seq" class="trace-coupling">
-                      <span class="trace-coupling__badge">★</span>
-                      BL[{{ c.seq }}] → <strong>{{ c.domain }}</strong>
-                      <span class="trace-coupling__hint">(분리 대상)</span>
-                    </div>
-                    <!-- BL 아코디언 -->
-                    <div v-for="bl in step.flow" :key="`bl-${cIdx}-${bl.seq}`" class="trace-bl">
-                      <button class="trace-bl__header" @click="toggleBL(`${cIdx}-${bl.seq}`)">
-                        <span class="trace-bl__toggle">{{ expandedBLs.has(`${cIdx}-${bl.seq}`) ? '▼' : '▶' }}</span>
-                        <span class="trace-bl__seq" :class="{ 'trace-bl__seq--coupled': bl.coupled_domain }">BL[{{ bl.seq }}]</span>
-                        <span v-if="bl.coupled_domain" class="trace-bl__domain">★{{ bl.coupled_domain }}</span>
-                        <span class="trace-bl__title">{{ bl.title }}</span>
-                      </button>
-                      <div v-if="expandedBLs.has(`${cIdx}-${bl.seq}`)" class="trace-bl__body">
-                        <div v-if="bl.given" class="trace-bl__gwt"><span class="trace-bl__gwt-label">Given</span><span class="trace-bl__gwt-text">{{ bl.given }}</span></div>
-                        <div v-if="bl.when" class="trace-bl__gwt"><span class="trace-bl__gwt-label">When</span><span class="trace-bl__gwt-text">{{ bl.when }}</span></div>
-                        <div v-if="bl.then" class="trace-bl__gwt"><span class="trace-bl__gwt-label">Then</span><span class="trace-bl__gwt-text">{{ bl.then }}</span></div>
+                        <span v-if="rule.coupled_domain" class="trace-rule__domain" :title="`coupled domain: ${rule.coupled_domain}`">
+                          ★{{ rule.coupled_domain }}
+                        </span>
+                        <span class="trace-rule__title">{{ rule.title }}</span>
+                      </div>
+                      <div v-if="rule.given || rule.when || rule.then" class="trace-rule__gwt">
+                        <div v-if="rule.given" class="trace-rule__gwt-row">
+                          <span class="trace-rule__gwt-label">Given</span>
+                          <span class="trace-rule__gwt-text">{{ rule.given }}</span>
+                        </div>
+                        <div v-if="rule.when" class="trace-rule__gwt-row">
+                          <span class="trace-rule__gwt-label">When</span>
+                          <span class="trace-rule__gwt-text">{{ rule.when }}</span>
+                        </div>
+                        <div v-if="rule.then" class="trace-rule__gwt-row">
+                          <span class="trace-rule__gwt-label">Then</span>
+                          <span class="trace-rule__gwt-text">{{ rule.then }}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <!-- Function -->
-                  <div v-else-if="step.step === 'Function'" class="trace-step trace-step--func">
-                    <div class="trace-func">
+                    <!-- Functions: code location + READS/WRITES tables -->
+                    <div v-for="(fn, fIdx) in (src.functions || [])" :key="fn.id" class="trace-func">
                       <div class="trace-func__header">
                         <span class="trace-step__badge trace-step__badge--func">FN</span>
-                        <span class="trace-func__name">{{ step.name || step.id }}</span>
-                        <span v-if="step.location" class="trace-func__location">{{ step.location }}</span>
+                        <span class="trace-func__name">{{ fn.name || fn.id }}</span>
+                        <span v-if="fn.location" class="trace-func__location">{{ fn.location }}</span>
                       </div>
-
-                      <!-- 1. 함수 요약 -->
-                      <div v-if="step.summary" class="trace-func__summary">{{ step.summary }}</div>
-
-                      <!-- 2. 원본 코드 -->
-                      <div v-if="step.code" class="trace-func__code-wrap">
-                        <button class="trace-func__code-toggle" @click="toggleBL(`code-${cIdx}`)">
-                          <span>{{ expandedBLs.has(`code-${cIdx}`) ? '▼' : '▶' }}</span>
+                      <div v-if="fn.summary" class="trace-func__summary">{{ fn.summary }}</div>
+                      <div v-if="fn.code" class="trace-func__code-wrap">
+                        <button class="trace-func__code-toggle" @click="toggleBL(`code-${sIdx}-${fIdx}`)">
+                          <span>{{ expandedBLs.has(`code-${sIdx}-${fIdx}`) ? '▼' : '▶' }}</span>
                           원본 코드 보기
                         </button>
-                        <pre v-if="expandedBLs.has(`code-${cIdx}`)" class="trace-func__code"><code>{{ step.code }}</code></pre>
+                        <pre v-if="expandedBLs.has(`code-${sIdx}-${fIdx}`)" class="trace-func__code"><code>{{ fn.code }}</code></pre>
                       </div>
-                    </div>
-                  </div>
-
-                  <!-- Tables (Function 다음에 별도 스텝으로) -->
-                  <template v-if="step.step === 'Function' && step.tables?.length">
-                    <div class="trace-step-arrow">↑</div>
-                    <div class="trace-step trace-step--table">
-                      <div class="trace-tables">
-                        <div class="trace-tables__title">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 9h18M3 15h18M3 3h18v18H3z"/></svg>
-                          관련 테이블
-                        </div>
-                        <div v-for="tbl in step.tables" :key="tbl.name" class="trace-table">
+                      <!-- Tables -->
+                      <div v-if="fn.tables?.length" class="trace-tables">
+                        <div class="trace-tables__title">관련 테이블</div>
+                        <div v-for="tbl in fn.tables" :key="tbl.name" class="trace-table">
                           <div class="trace-table__header">
                             <span class="trace-table__name">{{ tbl.name }}</span>
                             <span v-for="acc in tbl.access" :key="acc"
                               class="trace-table__access"
-                              :class="acc === 'READS' ? 'trace-table__access--reads' : 'trace-table__access--writes'"
-                            >{{ acc }}</span>
+                              :class="acc === 'READS' ? 'trace-table__access--reads' : 'trace-table__access--writes'">
+                              {{ acc }}
+                            </span>
                           </div>
                           <div v-if="tbl.columns?.length" class="trace-table__cols">
                             <span v-for="col in tbl.columns" :key="col.name" class="trace-table__col">
@@ -2397,16 +2549,13 @@ function updateVoFieldValue(fieldName, value) {
                         </div>
                       </div>
                     </div>
-                  </template>
-                </template>
-
-                <!-- 체인 구분선 -->
-                <hr v-if="cIdx < traceData.chains.length - 1" class="trace-divider" />
+                  </div>
+                </div>
               </div>
             </template>
 
             <div v-else class="trace-empty">
-              이 노드에 연결된 출처 정보가 없습니다
+              이 노드에 연결된 User Story 가 없습니다
             </div>
 
           </div>
@@ -3090,6 +3239,358 @@ function updateVoFieldValue(fieldName, value) {
   flex-direction: column;
   gap: var(--spacing-xs);
 }
+
+/* Source-of-truth view (verification §3.8) — uses theme tokens so it
+ * adapts to both dark (default) and light themes via [data-theme] root vars. */
+.trace-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+}
+.trace-node-header__name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--color-text-bright);
+}
+.trace-node-header__bc {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--color-text-light);
+  font-style: italic;
+}
+
+.trace-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.trace-sources__caption {
+  font-size: 0.8rem;
+  color: var(--color-text-light);
+  padding: 4px 0;
+}
+
+.trace-source {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+}
+.trace-source--ungrounded {
+  opacity: 0.78;
+}
+.trace-source--ungrounded .trace-source__header {
+  background: transparent;
+}
+.trace-source__empty {
+  font-size: 0.78rem;
+  color: var(--color-text-light);
+  font-style: italic;
+  padding: 4px 0;
+}
+.trace-source__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+.trace-source__header:hover {
+  background: var(--color-bg-tertiary);
+}
+.trace-source__toggle {
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+  flex-shrink: 0;
+}
+.trace-source__usid {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-weight: 600;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+  color: var(--color-text-bright);
+}
+.trace-source__role {
+  color: var(--color-text-light);
+  font-style: italic;
+  margin-right: 4px;
+}
+.trace-source__action {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+.trace-source__rule-count {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.18);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.trace-source__rule-count--zero {
+  color: var(--color-text-light);
+  background: var(--color-bg-tertiary);
+  font-weight: 500;
+}
+.trace-source__body {
+  padding: 10px 12px 12px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px dashed var(--color-border);
+  background: var(--color-bg-tertiary);
+}
+
+.trace-rule {
+  border-left: 2px solid rgba(129, 140, 248, 0.55);
+  padding-left: 10px;
+}
+.trace-rule__header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.trace-rule__seq {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.22);
+  padding: 1px 6px;
+  border-radius: 3px;
+  min-width: 32px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.trace-rule__seq--coupled {
+  background: rgba(245, 158, 11, 0.22);
+  color: #fcd34d;
+}
+.trace-rule__domain {
+  font-size: 0.7rem;
+  color: #fcd34d;
+}
+.trace-rule__title {
+  font-size: 0.83rem;
+  line-height: 1.4;
+  color: var(--color-text);
+}
+.trace-rule__gwt {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+.trace-rule__gwt-row {
+  display: flex;
+  gap: 8px;
+  font-size: 0.75rem;
+  align-items: baseline;
+}
+.trace-rule__gwt-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--color-text-light);
+  width: 38px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+.trace-rule__gwt-text {
+  flex: 1 1 auto;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+/* Primary source emphasis — type-specific (Aggregate → Table, Command/Event → GWT) */
+.trace-primary {
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.trace-primary--table {
+  border-left-color: #34d399; /* emerald — schema/data signal */
+}
+.trace-primary--gwt {
+  border-left-color: #fbbf24; /* amber — contract/test signal */
+}
+.trace-primary__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+  letter-spacing: 0.01em;
+}
+.trace-primary__icon {
+  font-size: 1rem;
+}
+.trace-primary__hint {
+  font-weight: 400;
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+  font-style: italic;
+}
+
+/* Aggregate → Root Tables */
+.trace-primary-table {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.trace-primary-table__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.trace-primary-table__name {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--color-text-bright);
+}
+.trace-primary-table__access {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  /* default = WRITES variant */
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.15);
+}
+.trace-primary-table__access--insert,
+.trace-primary-table__access--writes {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.15);
+}
+.trace-primary-table__access--update {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.18);
+}
+.trace-primary-table__access--delete {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.15);
+}
+.trace-primary-table__access--reads {
+  color: #93c5fd;
+  background: rgba(96, 165, 250, 0.15);
+}
+.trace-primary-table__count {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+}
+.trace-primary-table__cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.trace-primary-table__col {
+  font-size: 0.72rem;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.trace-primary-table__col-type {
+  color: var(--color-text-light);
+  font-size: 0.68rem;
+}
+
+/* Command/Event → GWT acceptance */
+.trace-primary-gwt {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.trace-primary-gwt__header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.trace-primary-gwt__seq {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #fcd34d;
+  background: rgba(251, 191, 36, 0.18);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.trace-primary-gwt__title {
+  font-size: 0.8rem;
+  color: var(--color-text);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.trace-primary-gwt__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.trace-primary-gwt__row {
+  display: flex;
+  gap: 8px;
+  font-size: 0.75rem;
+  align-items: baseline;
+}
+.trace-primary-gwt__label {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: #fcd34d;
+  width: 38px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.trace-primary-gwt__text {
+  flex: 1 1 auto;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
 
 .trace-section__title {
   font-size: 0.75rem;

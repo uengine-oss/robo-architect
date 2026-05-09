@@ -230,3 +230,193 @@ def fetch_task_metadata_for_bpm(session_id: str) -> dict[str, dict]:
                 "actor_names": [a for a in (r["actors"] or []) if a],
             }
     return out
+
+
+# =============================================================================
+# Hybrid input boost — BL prefetch per UserStory
+# =============================================================================
+
+
+def fetch_hybrid_us_rules(
+    session_id: str,
+    us_to_task: list[tuple[str, str]],
+) -> dict[str, list[dict]]:
+    """Bulk-fetch BL info per UserStory in one Neo4j round-trip.
+
+    Each entry of `us_to_task` is `(us_id, task_id)`. For every
+    `(BpmTask)-[:REALIZED_BY]->(shadow Rule)` we lift the analyzer-side
+    `(FUNCTION)-[hr:HAS_RULE]->(Rule)-[:HAS_EXAMPLE]->(Example)` chain when
+    the analyzer Rule matches the shadow by `(source_function, statement)`.
+    Result feeds `IngestionWorkflowContext.hybrid_us_rules` so downstream
+    legacy ES phases (aggregates / commands / events_from_us / gwt / bcs)
+    can compose LLM prompts that include AFFECTS_TABLE writes,
+    coupled_domains, guard chain, and canonical Example GWT — making the
+    resulting nodes carry the analyzer's domain intent rather than just
+    the US text.
+
+    Returns: {us_id: [bl_info, ...]} — empty list when the task has no
+    REALIZED_BY rules. Keys for every us_id in `us_to_task` are present.
+    """
+    out: dict[str, list[dict]] = {us_id: [] for us_id, _ in us_to_task}
+    if not us_to_task:
+        return out
+
+    pairs = [{"us_id": us_id, "task_id": task_id} for us_id, task_id in us_to_task]
+    cypher = """
+    UNWIND $pairs AS pair
+    MATCH (t:BpmTask {id: pair.task_id, session_id: $sid})
+          -[:REALIZED_BY]->(sh:Rule {session_id: $sid})
+    OPTIONAL MATCH (f:FUNCTION)-[hr:HAS_RULE]->(an:Rule)
+      WHERE an.session_id IS NULL
+        AND coalesce(f.procedure_name, f.name) = sh.source_function
+        AND an.statement = sh.title
+    WITH pair, sh, hr, an,
+         // canonical Example (non-boundary preferred) — for given/when_/then_
+         head([(an)-[:HAS_EXAMPLE]->(e:Example)
+               WHERE NOT coalesce(e.is_boundary, false) | e]) AS canonical_ex,
+         // full Example list with writes (table + op) — drives Aggregate root /
+         // Event PastParticiple / Acceptance test in downstream phases
+         [(an)-[:HAS_EXAMPLE]->(e:Example) | {
+            example_id: e.example_id,
+            given: e.given,
+            when_: e.when_,
+            then_: e.then_,
+            is_boundary: coalesce(e.is_boundary, false),
+            writes: [(e)-[at:AFFECTS_TABLE]->(tbl:Table)
+                     | {table: tbl.name, op: at.op}]
+         }] AS examples
+    RETURN pair.us_id AS us_id,
+           sh.id AS rule_id,
+           sh.title AS statement,
+           sh.source_function AS source_function,
+           coalesce(canonical_ex.given,  sh.given) AS given,
+           coalesce(canonical_ex.when_,  sh.when)  AS when_,
+           coalesce(canonical_ex.then_,  sh.then)  AS then_,
+           coalesce(canonical_ex.is_boundary, false) AS is_boundary,
+           coalesce(hr.local_id,        '')  AS local_id,
+           coalesce(hr.flow_id,         '')  AS flow_id,
+           coalesce(hr.guard_rule_id,   '')  AS guard_rule_id,
+           coalesce(hr.branch_from,     '')  AS branch_from,
+           coalesce(hr.coupled_domains, []) AS coupled_domains,
+           examples
+    """
+
+    with get_session() as s:
+        for r in s.run(cypher, pairs=pairs, sid=session_id):
+            us_id = r["us_id"]
+            if us_id not in out:
+                out[us_id] = []
+            out[us_id].append({
+                "rule_id":         r["rule_id"],
+                "statement":       r["statement"] or "",
+                "source_function": r["source_function"],
+                "given":           r["given"] or "",
+                "when_":           r["when_"] or "",
+                "then_":           r["then_"] or "",
+                "is_boundary":     bool(r["is_boundary"]),
+                "local_id":        r["local_id"] or None,
+                "flow_id":         r["flow_id"] or None,
+                "guard_rule_id":   r["guard_rule_id"] or None,
+                "branch_from":     r["branch_from"] or None,
+                "coupled_domains": list(r["coupled_domains"] or []),
+                "examples":        [e for e in (r["examples"] or []) if e and e.get("example_id")],
+            })
+    return out
+
+
+def render_hybrid_bl_block(
+    hybrid_us_rules: dict[str, list[dict]] | None,
+    us_id_set: set[str] | None = None,
+    *,
+    max_rules_per_us: int = 6,
+    max_examples_per_rule: int = 2,
+) -> str:
+    """Format BL prefetch payload as markdown text appended to LLM prompts.
+
+    Returns "" when no enrichment is available (rfp/figma source, or hybrid
+    that failed to prefetch). Downstream phases (aggregates / commands /
+    events_from_us / bcs / readmodels / policies) call this with the BC's
+    `us_id_set` to scope output to relevant stories.
+
+    Block shape:
+      ## Code-grounded Business Logic (analyzer-extracted)
+      - US `us_id`:
+        - R1 [b000_main_proc] "rule statement"
+          - writes: [INSERT zpay_ap_rltm_auth_hst]
+          - coupled_domains: ["order"]
+          - guard_rule_id: R0  (precondition chain)
+          - example: GIVEN ... / WHEN ... / THEN ... (boundary)
+
+    The LLM uses this to ground Aggregate root_table, Command preconditions,
+    Event PastParticiple, etc. in actual code rather than US text alone.
+    """
+    if not hybrid_us_rules:
+        return ""
+
+    lines: list[str] = []
+    relevant: list[tuple[str, list[dict]]] = []
+    for us_id, bls in hybrid_us_rules.items():
+        if us_id_set and us_id not in us_id_set:
+            continue
+        if bls:
+            relevant.append((us_id, bls))
+    if not relevant:
+        return ""
+
+    lines.append("\n\n## Code-grounded Business Logic (analyzer-extracted)")
+    lines.append(
+        "_아래는 각 UserStory 가 출처로 삼은 분석기 코드의 BL 정보 — Rule.statement, "
+        "AFFECTS_TABLE writes (INSERT/UPDATE/DELETE), coupled_domains (cross-BC 신호), "
+        "guard_rule_id chain (precondition), 그리고 canonical Example GWT 입니다. "
+        "Aggregate root, Command precondition, Event 이름 등 추론 시 이 정보를 "
+        "최우선 근거로 활용하세요._\n"
+    )
+    for us_id, bls in relevant:
+        lines.append(f"- US `{us_id}`:")
+        for bl in bls[:max_rules_per_us]:
+            tag = bl.get("local_id") or "R?"
+            fn = bl.get("source_function") or "?"
+            stmt = (bl.get("statement") or "").replace("\n", " ").strip()
+            lines.append(f"  - **{tag}** [`{fn}`] \"{stmt}\"")
+
+            # Aggregate writes across all examples (drives Aggregate root_table /
+            # Event PastParticiple / Command emit).
+            seen_writes: set[tuple[str, str]] = set()
+            for ex in bl.get("examples") or []:
+                for w in ex.get("writes") or []:
+                    tbl = w.get("table") or ""
+                    op = (w.get("op") or "").upper()
+                    if tbl and op:
+                        seen_writes.add((tbl, op))
+            if seen_writes:
+                writes_str = ", ".join(f"{op} `{tbl}`" for tbl, op in sorted(seen_writes))
+                lines.append(f"    - writes: {writes_str}")
+
+            if bl.get("coupled_domains"):
+                lines.append(f"    - coupled_domains: {bl['coupled_domains']}")
+            if bl.get("guard_rule_id"):
+                lines.append(f"    - guard_rule_id: {bl['guard_rule_id']}  (선행 조건)")
+            if bl.get("branch_from"):
+                lines.append(f"    - branch_from: {bl['branch_from']}  (분기 부모)")
+
+            # Canonical example GWT
+            given = (bl.get("given") or "").replace("\n", " ").strip()
+            when_ = (bl.get("when_") or "").replace("\n", " ").strip()
+            then_ = (bl.get("then_") or "").replace("\n", " ").strip()
+            if given or when_ or then_:
+                tail = " (boundary)" if bl.get("is_boundary") else ""
+                lines.append(f"    - example{tail}: GIVEN \"{given}\" / WHEN \"{when_}\" / THEN \"{then_}\"")
+
+            # Boundary examples (extra)
+            extras = [
+                ex for ex in (bl.get("examples") or [])
+                if ex.get("is_boundary") and (ex.get("given") or ex.get("when_") or ex.get("then_"))
+            ][:max_examples_per_rule]
+            for ex in extras:
+                eg = (ex.get("given") or "").replace("\n", " ").strip()
+                ew = (ex.get("when_") or "").replace("\n", " ").strip()
+                et = (ex.get("then_") or "").replace("\n", " ").strip()
+                lines.append(f"    - boundary example: GIVEN \"{eg}\" / WHEN \"{ew}\" / THEN \"{et}\"")
+        if len(bls) > max_rules_per_us:
+            lines.append(f"  - ...({len(bls) - max_rules_per_us} more rules)")
+    return "\n".join(lines)

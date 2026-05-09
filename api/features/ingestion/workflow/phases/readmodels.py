@@ -108,6 +108,27 @@ async def _create_readmodel_with_links(
                 "user_story_ids": user_story_ids,
             }
         )
+
+        # Persist (UserStory)-[:IMPLEMENTS]->(ReadModel) bidirectionally so the
+        # Inspector traceability tab can show distinct source US's per ReadModel.
+        # Without this, every ReadModel in a BC ended up sharing identical
+        # sources (BC fan-out fallback in `_US_QUERIES`).
+        rm_id = created.get("id")
+        if rm_id and user_story_ids:
+            for usid in user_story_ids:
+                if not usid:
+                    continue
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            ctx.client.link_user_story_to_readmodel,
+                            usid,
+                            rm_id,
+                        ),
+                        timeout=5.0,
+                    )
+                except Exception:
+                    pass  # individual failures are not fatal
         
         progress_per_bc = 6 // max(len(ctx.bounded_contexts), 1)
         # trigger event의 sequence를 가져와 ReadModel 배치에 사용

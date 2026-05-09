@@ -352,6 +352,43 @@ CRITICAL REQUIREMENTS:
 
 If no properties are available, only then use empty fieldValues {{}}."""
 
+    # ─── Hybrid input boost — analyzer Example 의 자연어 GWT 를 참고 자료로 ─
+    # Analyzer Example.given/when_/then_ 는 코드 실행 추적 결과의 자연어 설명
+    # (예: "balance=100, amount=200" / "출금 요청" / "InsufficientFundsException").
+    # ES GWT 의 구조화된 fieldValues 와 직결되지 않으므로, LLM 이 위 properties
+    # 와 함께 보고 적절한 schema-bound 데이터로 변환해야 한다. 그래서 prompt 끝
+    # 에 BL block 을 reference 로 inject — LLM 환각을 줄이고 코드 근거 fieldValues
+    # 추론.
+    if getattr(ctx, "source_type", "") == "hybrid" and getattr(ctx, "hybrid_us_rules", None):
+        try:
+            from api.features.ingestion.hybrid.bpm_context_builder import (
+                render_hybrid_bl_block,
+            )
+            # Aggregate 가 속한 BC 의 모든 US 의 BL 정보 합집합 — Command 별 정확한
+            # us_id 매핑은 IMPLEMENTS 엣지 부착 전이라 어렵다. BC 전체 BL 을 보고
+            # LLM 이 가장 관련 있는 것을 골라 fieldValues 에 반영.
+            bc_us_ids = bc.get("user_story_ids") if isinstance(bc, dict) else (
+                getattr(bc, "user_story_ids", None) or []
+            )
+            if isinstance(bc_us_ids, list) and bc_us_ids:
+                bl_block = render_hybrid_bl_block(ctx.hybrid_us_rules, set(bc_us_ids))
+                if bl_block:
+                    prompt += (
+                        "\n\n## 코드 추적 BL 참고 자료 (analyzer Example)\n"
+                        "_아래는 이 Aggregate/Command 와 관련된 코드 실행 추적의 "
+                        "자연어 GWT 설명입니다. fieldValues 의 values 를 결정할 때 "
+                        "이 설명을 최우선 참고 자료로 사용하세요. 예: given 이 "
+                        "'balance=100, amount=200' 이면 Aggregate properties 의 "
+                        "balance, amount fieldValue 로 100, 200 을 사용. then 이 "
+                        "'잔액부족 예외' 면 Event 의 status fieldValue 로 'FAILED' "
+                        "또는 적절한 enum value 를 사용. **단 ES properties 에 "
+                        "있는 필드명/타입은 반드시 따르되, value 는 BL 설명을 "
+                        "근거로 결정**._\n"
+                        + bl_block
+                    )
+        except Exception:
+            pass  # fall back to non-boosted prompt
+
     # LLM 호출
     try:
         response = await asyncio.wait_for(
@@ -695,6 +732,13 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
     """
     Phase: Generate Given/When/Then (GWT) structures for Commands and Policies.
     This phase runs after policies are created and before UI generation.
+
+    Hybrid mode: LLM 호출은 그대로 진행하되 prompt 에 BL 의 자연어 GWT 설명
+    (Example.given/when_/then_) 을 참고 자료로 합성한다. LLM 이 그 설명을 보고
+    Aggregate / Command / Event properties 의 fieldValues 를 더 정확하게 구성
+    하도록 유도. 분석기 Example 은 자연어 설명이라 ES GWT 의 구조화된
+    fieldValues 와 직결되지 않으므로, LLM 의 schema-aware 변환 단계가 필수
+    — 이 통찰은 사용자가 짚어줌. 자세한 배경은 Phase5_EventStorming_Promotion_PRD §12 (v3.1 GWT corrected).
     """
     yield ProgressEvent(
         phase=IngestionPhase.GENERATING_GWT,  # Keep same phase for UI continuity
@@ -1432,5 +1476,175 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
     yield ProgressEvent(
         phase=IngestionPhase.GENERATING_GWT,
         message=f"GWT 생성 완료 ({total_gwt_created}개 구성요소)",
+        progress=92,
+    )
+
+
+# =============================================================================
+# DEPRECATED — Hybrid path: deterministic GWT from analyzer Example (no LLM)
+#
+# v3 도입 시점에 LLM 호출 자체를 skip 하고 분석기 Example.given/when_/then_ 을
+# 그대로 GWT 노드로 영속하려 했으나, 사용자가 결정적 결함을 짚어줌:
+#   "GWT 는 Aggregate/Command/Event 의 properties 에 대한 구조화된 테스트 케이스
+#    데이터 (fieldValues) 인데, BL 의 GWT 는 자연어 설명문이라 그대로 박으면
+#    schema 가 안 맞음. LLM 이 BL GWT 를 참고 자료로 보고 fieldValues 를 구성
+#    해야 의미가 있음."
+#
+# 이에 따라 v3.1 에서 본 함수 호출을 제거하고, 대신 `_generate_gwt_for_command`
+# 의 prompt 끝에 BL block 을 reference 로 inject 하는 방식으로 변경. 본 함수는
+# 코드 보존만 (호출 안 됨, 향후 분석기 직결 GWT 가 의미를 갖는 별도 use case 가
+# 생기면 재활용 가능).
+# =============================================================================
+
+
+async def _generate_gwt_from_analyzer_examples(
+    ctx: IngestionWorkflowContext,
+) -> AsyncGenerator[ProgressEvent, None]:
+    """[DEPRECATED — see banner above. No longer wired into generate_gwt_phase.]
+
+    For each UserStory, use the analyzer-side Example.given/when_/then_ as
+    the GWT for every Command this story IMPLEMENTS. Skips LLM entirely —
+    the analyzer's runtime trace gives us higher-fidelity GWT than an LLM
+    could ever fabricate.
+
+    For each (US, BL) pair we persist one GWT bundle on every Command linked
+    to the US, with:
+      - givenRef.description = BL.given        (canonical Example.given)
+      - whenRef.description  = BL.when_
+      - thenRef.description  = BL.then_
+      - testCases[]          = full Example list including boundary cases,
+                                each with its writes[] for AFFECTS_TABLE
+                                grounding
+
+    Policies that the legacy phase produced get GWT only when one of their
+    triggering events maps to a BL — otherwise they're left without GWT
+    (vs. inventing one via LLM). Same applies to Aggregates.
+    """
+    yield ProgressEvent(
+        phase=IngestionPhase.GENERATING_GWT,
+        message="GWT (분석기 Example 기반 결정론 영속)...",
+        progress=91,
+    )
+
+    client = ctx.client
+    total = 0
+
+    # us.id → [Command.id] (which Commands does this US implement?)
+    us_to_commands: dict[str, list[str]] = {}
+    try:
+        with client.session() as s:
+            for r in s.run(
+                "MATCH (us:UserStory)-[:IMPLEMENTS]->(c:Command) "
+                "WHERE us.session_id IS NOT NULL "
+                "RETURN us.id AS us_id, c.id AS cmd_id"
+            ):
+                us_to_commands.setdefault(r["us_id"], []).append(r["cmd_id"])
+    except Exception as e:
+        SmartLogger.log(
+            "WARN",
+            "Hybrid GWT — failed to map US→Command; will skip GWT for orphan stories",
+            category="ingestion.workflow.gwt.hybrid.us_cmd_map",
+            params={"session_id": ctx.session.id, "error": str(e)},
+        )
+
+    def _upsert(parent_type: str, parent_id: str, bl: dict[str, Any]) -> None:
+        """Persist one GWT node tied to (parent) reflecting one BL's Example set."""
+        given_ref = {
+            "name": "Given",
+            "description": bl.get("given") or "",
+            "referencedNodeId": bl.get("rule_id"),
+            "referencedNodeType": "Rule",
+        }
+        when_ref = {
+            "name": "When",
+            "description": bl.get("when_") or "",
+            "referencedNodeId": bl.get("rule_id"),
+            "referencedNodeType": "Rule",
+        }
+        then_ref = {
+            "name": "Then",
+            "description": bl.get("then_") or "",
+            "referencedNodeId": bl.get("rule_id"),
+            "referencedNodeType": "Rule",
+        }
+        test_cases: list[dict[str, Any]] = []
+        for ex in bl.get("examples") or []:
+            test_cases.append({
+                "scenarioDescription": (
+                    f"[{'boundary' if ex.get('is_boundary') else 'nominal'}] "
+                    f"{ex.get('example_id') or ''}"
+                ),
+                "givenFieldValues": {"given": ex.get("given") or ""},
+                "whenFieldValues":  {"when":  ex.get("when_") or ""},
+                "thenFieldValues":  {"then":  ex.get("then_") or ""},
+                "writes": ex.get("writes") or [],  # [{table, op}, ...]
+            })
+
+        cypher = """
+        MATCH (parent {id: $parent_id})
+        WHERE $parent_type IN labels(parent)
+        MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id, ruleId: $rule_id})
+        ON CREATE SET gwt.id = randomUUID(), gwt.createdAt = datetime()
+        SET gwt.updatedAt = datetime(),
+            gwt.givenRef = $given_ref_json,
+            gwt.whenRef  = $when_ref_json,
+            gwt.thenRef  = $then_ref_json,
+            gwt.testCases = $test_cases_json,
+            gwt.source = 'analyzer_example',
+            gwt.derivedFromRuleId = $rule_id,
+            gwt.derivedFromFunction = $source_function
+        MERGE (parent)-[:HAS_GWT]->(gwt)
+        WITH gwt
+        // DERIVED_FROM Rule edge — Phase 6 PRD §5 traceability
+        OPTIONAL MATCH (r:Rule {id: $rule_id})
+        FOREACH (_ IN CASE WHEN r IS NOT NULL THEN [1] ELSE [] END |
+            MERGE (gwt)-[:DERIVED_FROM]->(r)
+        )
+        RETURN gwt.id AS id
+        """
+        with client.session() as s:
+            s.run(
+                cypher,
+                parent_id=parent_id,
+                parent_type=parent_type,
+                rule_id=bl.get("rule_id"),
+                source_function=bl.get("source_function"),
+                given_ref_json=json.dumps(given_ref),
+                when_ref_json=json.dumps(when_ref),
+                then_ref_json=json.dumps(then_ref),
+                test_cases_json=json.dumps(test_cases),
+            )
+
+    for us_id, bl_list in ctx.hybrid_us_rules.items():
+        if not bl_list:
+            continue
+        cmd_ids = us_to_commands.get(us_id, [])
+        for bl in bl_list:
+            for cmd_id in cmd_ids:
+                try:
+                    _upsert("Command", cmd_id, bl)
+                    total += 1
+                except Exception as e:
+                    SmartLogger.log(
+                        "WARN",
+                        f"Hybrid GWT upsert failed (Command={cmd_id} rule={bl.get('rule_id')})",
+                        category="ingestion.workflow.gwt.hybrid.upsert.error",
+                        params={"session_id": ctx.session.id, "error": str(e)},
+                    )
+
+    SmartLogger.log(
+        "INFO",
+        f"Hybrid GWT complete: {total} bundles persisted from analyzer Examples",
+        category="ingestion.workflow.gwt.hybrid.summary",
+        params={
+            "session_id": ctx.session.id,
+            "gwt_count": total,
+            "us_count": len(ctx.hybrid_us_rules),
+            "us_with_bl": sum(1 for v in ctx.hybrid_us_rules.values() if v),
+        },
+    )
+    yield ProgressEvent(
+        phase=IngestionPhase.GENERATING_GWT,
+        message=f"GWT 생성 완료 (분석기 Example 기반 {total}개 — LLM 호출 0)",
         progress=92,
     )
