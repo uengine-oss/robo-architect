@@ -130,3 +130,78 @@ class BindingHistoryEntry(BaseModel):
 
 class BindingHistoryResponse(BaseModel):
     items: list[BindingHistoryEntry]
+
+
+# ─── Full-sync (020) ──────────────────────────────────────────────────────
+
+
+class FullSyncStartResponse(BaseModel):
+    runId: str
+    kind: Literal["retroactive-sync", "manual-retry"]
+    startedAt: str
+    streamUrl: str
+
+
+class LockContendedResponse(BaseModel):
+    error: Literal["lock_contended"] = "lock_contended"
+    messageKr: str = "다른 사용자가 동기화 중입니다"
+    currentRunId: str
+    currentRunHolder: str | None = None
+    streamUrl: str
+
+
+# ─── Sync runs / failures (020) ───────────────────────────────────────────
+
+
+class SyncRunSummaryCounts(BaseModel):
+    storyboardsTotal: int = 0
+    pagesCreated: int = 0
+    pagesAlreadyOk: int = 0
+    uisTotal: int = 0
+    framesPushed: int = 0
+    generated: int = 0
+    overwrites: int = 0
+    failures: int = 0
+
+
+class SyncRunSummary(BaseModel):
+    runId: str
+    kind: Literal["retroactive-sync", "manual-retry"]
+    startedAt: str
+    finishedAt: str | None = None
+    status: Literal[
+        "running",
+        "succeeded",
+        "partially-succeeded",
+        "cancelled",
+        "aborted-binding-unreachable",
+    ]
+    summary: SyncRunSummaryCounts | None = None
+    actor: str
+    bindingFileKey: str
+    previousBinding: bool = False
+
+
+class SyncRunsListResponse(BaseModel):
+    currentBindingFileKey: str | None
+    runs: list[SyncRunSummary]
+
+
+Retryability = Literal["retryable", "non-retryable", "in-flight"]
+
+
+class FailureRow(BaseModel):
+    uiId: str
+    displayName: str
+    lastErrorKr: str | None = None
+    lastAttemptAt: str | None = None
+    retryability: Retryability
+    nonRetryableReason: str | None = None
+    bindingFileKey: str | None = None
+
+
+class FailuresListResponse(BaseModel):
+    currentBindingFileKey: str | None
+    retryable: list[FailureRow]
+    nonRetryable: list[FailureRow]
+    inFlight: list[FailureRow]

@@ -1,0 +1,36 @@
+# Frontend Framework
+
+Framework: {{ framework }}
+
+> Declared framework for this project's frontend, with conventions a coding
+> agent should default to when generating components from the wireframes
+> linked in `menu-structure.md` and `ui-flow.md`.
+>
+> Generated: {{ generated_at }}
+
+## Conventions
+
+{% if conventions %}
+- **Component file shape**: {{ conventions.component_file_shape }}
+- **State management default**: {{ conventions.state_default }}
+- **Routing default**: {{ conventions.routing_default }}
+- **Styling default**: {{ conventions.styling_default }}
+{% else %}
+(no curated conventions for this framework — confirm)
+
+The catalog does not yet record conventions for `{{ framework }}`. Document
+the project's choices below before generating components.
+
+- Component file shape: _confirm_
+- State management default: _confirm_
+- Routing default: _confirm_
+- Styling default: _confirm_
+{% endif %}
+
+## Project Structure
+
+- Components live next to the route they back (per the framework's routing default above).
+- **Wireframe assets are not duplicated under `specs/frontend/`.** Each `ui-flow.md` entry links back to the canonical SVG and element-tree blocks at
+  `../bounded-contexts/<bc>/requirements.assets/<userStoryId>-<ui-slug>.svg`
+  and the matching `Wireframe:` block in `../bounded-contexts/<bc>/requirements.md`.
+- Read `menu-structure.md` for the navigation table of contents and `ui-flow.md` for the user-journey order.

@@ -1,0 +1,37 @@
+# UI Flow
+
+> Causal ordering of UI screens, mirroring the event-modeling flow.
+> Upstream Bounded Contexts' screens appear before downstream ones; within
+> a User Story, screens appear in the story's wireframe order. Each entry
+> links back to the canonical SVG and the matching `Wireframe:` block in
+> the BC's `requirements.md` (where the element tree lives).
+>
+> Generated: {{ generated_at }}
+
+{% if ui_flow %}{% for entry in ui_flow %}
+## {{ entry.position }}. {{ entry.user_story_title }} ({{ bc_name_by_id(entry.bounded_context_id) }} / `{{ entry.user_story_id }}`)
+
+{% if entry.triggered_by and entry.triggered_by.kind == "event" %}Triggered by: `{{ entry.triggered_by.event_name }}` (from {{ bc_name_by_id(entry.triggered_by.from_bounded_context_id) }}).
+{% elif entry.triggered_by and entry.triggered_by.kind == "story_internal" %}Triggered by: previous screen in the same User Story.
+{% else %}Triggered by: _entry point — user starts here._
+{% endif %}
+Wireframe assets:
+
+- Element tree: see [`../bounded-contexts/{{ entry.bounded_context_slug }}/requirements.md`](../bounded-contexts/{{ entry.bounded_context_slug }}/requirements.md) § "Wireframe: {{ entry.wireframe_slug }}"
+- SVG: [`../bounded-contexts/{{ entry.bounded_context_slug }}/requirements.assets/{{ entry.user_story_id }}-{{ entry.wireframe_slug }}.svg`](../bounded-contexts/{{ entry.bounded_context_slug }}/requirements.assets/{{ entry.user_story_id }}-{{ entry.wireframe_slug }}.svg)
+
+{% endfor %}{% else %}
+_No bound UIs in the graph yet._
+{% endif %}
+
+{% if unreferenced_uis %}---
+
+## Unreferenced Screens (review)
+
+The following bound UIs are not reached by any cross-BC or intra-BC flow.
+Review and either add the missing flow in the event-storming canvas or
+confirm they are intentional standalone screens.
+
+{% for entry in unreferenced_uis %}- **{{ entry.user_story_title }}** ({{ bc_name_by_id(entry.bounded_context_id) }} / `{{ entry.user_story_id }}`) — `{{ entry.wireframe_slug }}` — (unreferenced flow — review)
+{% endfor %}
+{% endif %}

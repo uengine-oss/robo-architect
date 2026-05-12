@@ -1,0 +1,32 @@
+# Requirements: {{ bc.name }}
+
+> User Stories with EARS acceptance criteria and wireframes rendered from the event-storming graph.
+>
+> Generated: {{ generated_at }}
+
+{% for group in story_groups %}
+## Aggregate: {{ group.aggregate_name }}
+
+{% if group.stories %}{% for story in group.stories %}
+### {{ story.title }}
+
+{% if story.priority %}**Priority.** {{ story.priority }}{% endif %}
+
+{{ story.narrative }}
+
+**Acceptance Criteria.**
+
+{% if story.ears_lines %}{% for line in story.ears_lines %}{{ loop.index }}. {{ line }}
+{% endfor %}{% else %}_No acceptance criteria modeled._{% endif %}
+
+{% if story.wireframes %}{% for wf in story.wireframes %}
+#### Wireframe: {{ wf.name }}
+
+{% if wf.element_tree %}{{ wf.element_tree }}{% else %}_No scene graph modeled for this UI._{% endif %}
+
+{% if wf.svg_path %}<img src="./{{ wf.svg_path }}" alt="{{ wf.name }}">
+
+{% endif %}
+{% endfor %}{% endif %}
+{% endfor %}{% else %}_No user stories under this aggregate._{% endif %}
+{% endfor %}

@@ -4,6 +4,33 @@ from typing import Any
 
 from api.platform.keys import policy_key
 
+from ._bulk_helper import (
+    BulkResult,
+    bulk_flush,
+    reorder_to_input,
+    validate_required,
+)
+
+
+_POLICY_BULK_CYPHER = """
+UNWIND $rows AS r
+MATCH (bc:BoundedContext {id: r.bc_id})
+MATCH (evt:Event {id: r.trigger_event_id})
+MATCH (cmd:Command {id: r.invoke_command_id})
+MERGE (pol:Policy {key: r.key})
+  ON CREATE SET pol.id = randomUUID(),
+                pol.createdAt = datetime()
+SET pol.key = r.key,
+    pol.name = r.name,
+    pol.displayName = r.display_name,
+    pol.description = r.description,
+    pol.updatedAt = datetime()
+MERGE (bc)-[:HAS_POLICY]->(pol)
+MERGE (evt)-[:TRIGGERS {priority: 1, isEnabled: true}]->(pol)
+MERGE (pol)-[:INVOKES {isAsync: true}]->(cmd)
+RETURN pol {.id, .key, .name, .displayName, .description} AS result
+"""
+
 
 class PolicyOps:
     # =========================================================================
@@ -94,6 +121,84 @@ class PolicyOps:
             import traceback
             print(f"[NEO4J] create_policy ERROR: Traceback:\n{traceback.format_exc()}", flush=True)
             raise
+
+    def bulk_create_policies(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        session_id: str | None = None,
+        phase: str | None = None,
+    ) -> list[BulkResult]:
+        """Persist policies in batch — schema-equivalent to `create_policy`.
+
+        Required: `name`, `bc_id`, `trigger_event_id`, `invoke_command_id`.
+        Optional: `key`, `display_name`, `description`.
+
+        Rows whose trigger event or invoke command do not match an existing
+        node will produce no result row from the inner MATCH; the helper
+        marks those as `{ok: False, error: "missing trigger/invoke target"}`.
+        """
+        if not rows:
+            return []
+
+        valid, errors = validate_required(
+            rows, ["name", "bc_id", "trigger_event_id", "invoke_command_id"]
+        )
+
+        # Look up bc.key once per distinct bc_id.
+        bc_ids = sorted({r["bc_id"] for r in valid})
+        bc_key_map: dict[str, str] = {}
+        if bc_ids:
+            with self.session() as session:
+                cur = session.run(
+                    "MATCH (bc:BoundedContext) WHERE bc.id IN $ids RETURN bc.id AS id, bc.key AS key",
+                    ids=bc_ids,
+                )
+                for rec in cur:
+                    if rec and rec.get("id") and rec.get("key"):
+                        bc_key_map[rec["id"]] = rec["key"]
+
+        prepared: list[dict[str, Any]] = []
+        bc_missing: list[BulkResult] = []
+        for r in valid:
+            bc_key_value = bc_key_map.get(r["bc_id"])
+            if not bc_key_value:
+                bc_missing.append(
+                    {
+                        "ok": False,
+                        "error": f"BoundedContext not found: {r['bc_id']}",
+                        "error_field": "bc_id",
+                        "id": r.get("id"),
+                    }
+                )
+                continue
+            key = r.get("key") or policy_key(bc_key_value, r["name"])
+            prepared.append(
+                {
+                    "key": key,
+                    "name": r["name"],
+                    "bc_id": r["bc_id"],
+                    "trigger_event_id": r["trigger_event_id"],
+                    "invoke_command_id": r["invoke_command_id"],
+                    "display_name": r.get("display_name") or r["name"],
+                    "description": r.get("description"),
+                }
+            )
+
+        results = bulk_flush(
+            self.session,
+            entity="policy",
+            rows=prepared,
+            cypher=_POLICY_BULK_CYPHER,
+            return_field="result",
+            required_fields=["bc_id", "trigger_event_id", "invoke_command_id"],
+            dedupe_key="key",
+            session_id=session_id,
+            phase=phase,
+        )
+
+        all_errors = list(bc_missing) + list(errors)
+        return reorder_to_input(rows, results, all_errors)
 
     def link_user_story_to_policy(
         self, user_story_id: str, policy_id: str, confidence: float = 0.9

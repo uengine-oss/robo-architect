@@ -46,6 +46,8 @@ CREATE (r:Requirement {
 //   - priority: String
 //   - status: String ("draft", "approved", "implemented")
 //   - acceptanceCriteria: List<String>
+//   - criteriaUserEdited: Boolean   (true once a user has edited acceptanceCriteria via the Properties panel; blocks ingestion regen of that field per spec 019)
+//   - criteriaEditedAt: DateTime    (timestamp of the last manual criteria edit; null until first edit)
 // ############################################################
 
 CREATE (us:UserStory {
@@ -404,6 +406,10 @@ MERGE (then)-[:REFERENCES]->(evt);
 //
 // 선택 속성:
 //   - lastSyncAt: DateTime
+//
+// 020 (figma-sync-recovery) 추가 advisory lock 필드 — :SyncRun 활성 시에만 non-null:
+//   - currentRunId: String|null (활성 :SyncRun.id; 한 binding 당 동시에 1개 run)
+//   - currentRunHolder: String|null (run 시작자의 actor — UI 노출용)
 // ############################################################
 
 // (생성 예시 — 실제 데이터는 런타임에 /api/figma-binding/connect 가 upsert)
@@ -449,4 +455,46 @@ MERGE (then)-[:REFERENCES]->(evt);
 // 선택 속성:
 //   - figmaFileKey: String
 //   - payload: String (JSON-encoded)
+// ############################################################
+
+
+// ############################################################
+// 16. SyncRun (Figma 동기화 실행 요약 — 020)
+// ############################################################
+// 설명: 020 feature(figma-sync-recovery)의 retroactive full-sync 또는 manual-retry
+//       1회 dispatch 당 1행. 개별 페이지/프레임 결과는 :UI.figmaSync* 에 저장하고,
+//       :SyncRun 은 한 줄 요약(History 탭의 summary row)을 위한 집계 row.
+//       이전 binding 으로 dispatch 된 run 은 bindingFileKey 가 현재 binding 과
+//       다르므로 "이전 바인딩" 그룹 필터의 discriminator 역할.
+// 관계:
+//   - RUN_OF → FigmaBinding (project-scoped 조회용)
+//
+// 필수 속성:
+//   - id: String (UUID — UNIQUE; runId 로 API 노출)
+//   - kind: String ("retroactive-sync" | "manual-retry")
+//   - bindingFileKey: String (run 시점의 figmaFileKey 스냅샷)
+//   - actor: String
+//   - startedAt: DateTime
+//   - status: String ("running" | "succeeded" | "partially-succeeded" |
+//                     "cancelled" | "aborted-binding-unreachable")
+//
+// 선택 속성:
+//   - finishedAt: DateTime (status='running' 동안 null)
+//   - summary: String (JSON-encoded
+//        {storyboardsTotal, pagesCreated, pagesAlreadyOk, uisTotal,
+//         framesPushed, generated, overwrites, failures})
+// ############################################################
+
+
+// ############################################################
+// 17. UI 추가 속성 (020)
+// ############################################################
+// 설명: 016 v1.2 의 figmaSyncStatus / figmaSyncLastError / figmaSyncLastAttemptAt
+//       에 더해 020 은 다음 1개 속성을 추가한다:
+//
+//   - figmaSyncBindingFileKey: String|null
+//       — figmaSyncStatus 가 'ok' 또는 'failed' 로 set 될 때의
+//         활성 :FigmaBinding.figmaFileKey 스냅샷. classifier 의
+//         "이전 바인딩 (binding 이 replace 된 후 file key 가 다름)"
+//         판단에 사용된다 (research D5).
 // ############################################################

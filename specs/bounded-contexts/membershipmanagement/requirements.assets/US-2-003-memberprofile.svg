@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 518" width="375" height="518">
+<rect x="0" y="0" width="375" height="518" fill="rgb(248,249,251)" />
+<rect x="0" y="0" width="375" height="56" fill="rgb(255,255,255)" />
+<text x='16' y='31' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='20' font-weight='700' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="16" dy="0">내 프로필</tspan></text>
+<rect x="0" y="56" width="375" height="327" fill="rgb(255,255,255)" rx="20" ry="20" />
+<ellipse cx="188" cy="120" rx="40" ry="40" fill="rgb(224,231,239)" />
+<text x='171' y='191.3' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='18' font-weight='700' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="171" dy="0">홍길동</tspan></text>
+<text x='93' y='230.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(102,102,102)' text-anchor='start'><tspan x="93" dy="0">honggildong@email.com</tspan></text>
+<text x='155' y='266.05' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='13' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="155" dy="0">가입일</tspan></text>
+<text x='122' y='290.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='500' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="122" dy="0">2023-01-01</tspan></text>
+<text x='237' y='266.05' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='13' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="237" dy="0">등급</tspan></text>
+<text x='236' y='290.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='500' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="236" dy="0">일반</tspan></text>
+<rect x="24" y="315" width="327" height="44" fill="rgb(59,130,246)" rx="12" ry="12" />
+<text x='159' y='339.6' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='16' font-weight='700' font-style='normal' fill='rgb(255,255,255)' text-anchor='start'><tspan x="159" dy="0">프로필 수정</tspan></text>
+<text x='24' y='395.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="24" dy="0">휴대폰 번호</tspan></text>
+<text x='234' y='395.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="234" dy="0">010-1234-5678</tspan></text>
+<text x='24' y='436.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="24" dy="0">생년월일</tspan></text>
+<text x='261' y='436.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="261" dy="0">1990-05-15</tspan></text>
+<text x='24' y='477.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="24" dy="0">주소</tspan></text>
+<text x='270' y='477.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="270" dy="0">서울특별시 강남구</tspan></text>
+</svg>

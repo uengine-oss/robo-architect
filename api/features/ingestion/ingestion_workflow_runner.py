@@ -25,8 +25,15 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
+import asyncio
+import time
+
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
-from api.features.ingestion.ingestion_llm_runtime import get_llm
+from api.features.ingestion.ingestion_llm_runtime import (
+    get_llm,
+    set_current_session,
+    reset_current_session,
+)
 from api.features.ingestion.ingestion_sessions import IngestionSession, wait_if_paused
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.features.ingestion.workflow.phases.aggregates import extract_aggregates_phase
@@ -49,25 +56,139 @@ from api.features.ingestion.workflow.utils.phase_logger import save as log_phase
 
 
 async def _run_phase(session, ctx, phase_gen, pause_sync_target: str | None):
-    """Run a single phase with cancel/pause handling. Yields ProgressEvents."""
+    """Run a single phase with cancel/pause handling. Yields ProgressEvents.
+
+    Spec 017: every yielded event is augmented with the session's current
+    `tokens` block + `suspendState` (so the floating panel updates live), and
+    `session.current_phase` is tracked so the token callback can attribute
+    each LLM call to the right phase. At phase exit, emit a `session_total`
+    summary log for forensics (Constitution VII).
+    """
+    phase_start_total = int(getattr(session, "tokens_total", 0) or 0)
+    phase_label_for_log = ""
     async for event in phase_gen:
+        # Track phase for the token callback's per-phase aggregation.
+        try:
+            ev_phase = getattr(event, "phase", None)
+            if ev_phase is not None:
+                phase_value = getattr(ev_phase, "value", ev_phase)
+                if phase_value:
+                    session.current_phase = str(phase_value)
+                    phase_label_for_log = session.current_phase
+        except Exception:  # noqa: BLE001
+            pass
+
         if getattr(session, "is_cancelled", False):
-            yield ProgressEvent(
+            # Suspend ack: flip to "suspended" before emitting the final event.
+            session.suspend_state = "suspended"
+            yield _augment_event(session, ProgressEvent(
                 phase=IngestionPhase.ERROR,
                 message="❌ 생성이 중단되었습니다",
                 progress=getattr(session, "progress", 0) or 0,
                 data={"error": "Cancelled by user", "cancelled": True},
-            )
+            ))
             return
         if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
-            yield ProgressEvent(
+            yield _augment_event(session, ProgressEvent(
                 phase=IngestionPhase.PAUSED,
                 message="⏸️ 일시 정지됨 (채팅으로 일부를 수정한 후 재개하세요)",
                 progress=getattr(session, "progress", 0) or 0,
                 data={"isPaused": True},
-            )
+            ))
             await wait_if_paused(session, ctx, pause_sync_target)
-        yield event
+        yield _augment_event(session, event)
+
+    # Spec 017 — phase-exit log: how many tokens this phase consumed.
+    try:
+        phase_end_total = int(getattr(session, "tokens_total", 0) or 0)
+        phase_tokens = max(0, phase_end_total - phase_start_total)
+        SmartLogger.log(
+            "INFO",
+            f"Phase {phase_label_for_log} tokens: {phase_tokens} (session total: {phase_end_total})",
+            category="ingestion.tokens.session_total",
+            params={
+                "session_id": getattr(session, "id", None),
+                "phase": phase_label_for_log,
+                "phase_tokens": phase_tokens,
+                "session_total": phase_end_total,
+                "approximate": bool(getattr(session, "tokens_approximate", False)),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _augment_event(session: IngestionSession, ev: ProgressEvent) -> ProgressEvent:
+    """Attach the session's token state + suspend_state to a ProgressEvent.
+
+    Spec 017 SSE additions per contracts/sse-events.md:
+    - `tokens.total` always (when any tally has happened)
+    - `tokens.byPhase` only when at least one phase delta has changed since the
+      last emit (sparse — saves SSE bytes for high-frequency events)
+    - `tokens.approximate` and `tokens.lastCallTokens` always when present
+    - `suspendState` always
+
+    Mutates `session.last_progress_emit_at` and the per-phase emit snapshot
+    used to compute the next byPhase delta.
+    """
+    # Compute byPhase delta vs. the last emitted snapshot.
+    by_phase_now: dict[str, int] = dict(getattr(session, "tokens_by_phase", {}) or {})
+    by_phase_last: dict[str, int] = getattr(session, "_tokens_by_phase_emit_snapshot", {}) or {}
+    by_phase_delta: dict[str, int] = {
+        k: v for k, v in by_phase_now.items()
+        if v != by_phase_last.get(k)
+    }
+    if by_phase_delta:
+        session._tokens_by_phase_emit_snapshot = dict(by_phase_now)
+
+    tokens_block: dict | None = None
+    if (
+        getattr(session, "tokens_total", 0)
+        or getattr(session, "tokens_approximate", False)
+        or getattr(session, "tokens_last_call", None) is not None
+    ):
+        tokens_block = {
+            "total": int(getattr(session, "tokens_total", 0) or 0),
+            "approximate": bool(getattr(session, "tokens_approximate", False)),
+        }
+        last_call = getattr(session, "tokens_last_call", None)
+        if last_call is not None:
+            tokens_block["lastCallTokens"] = int(last_call)
+        if by_phase_delta:
+            tokens_block["byPhase"] = by_phase_delta
+
+    suspend_state = getattr(session, "suspend_state", "running") or "running"
+
+    # ProgressEvent fields are dataclass-style; we attach tokens / suspendState
+    # via dataclasses.replace if those fields exist, else as attributes.
+    try:
+        from dataclasses import replace, is_dataclass
+        if is_dataclass(ev):
+            updates: dict = {}
+            if hasattr(ev, "tokens"):
+                updates["tokens"] = tokens_block
+            if hasattr(ev, "suspendState"):
+                updates["suspendState"] = suspend_state
+            if updates:
+                ev = replace(ev, **updates)
+    except Exception:  # noqa: BLE001 — best-effort; never break the stream
+        pass
+
+    # Setattr fallback for non-dataclass / pydantic event types — frontend
+    # only cares about these as JSON-serialized fields, so attribute storage
+    # works for either model_dump or asdict serializers.
+    try:
+        if tokens_block is not None and getattr(ev, "tokens", None) != tokens_block:
+            object.__setattr__(ev, "tokens", tokens_block) if False else setattr(ev, "tokens", tokens_block)
+    except Exception:
+        pass
+    try:
+        setattr(ev, "suspendState", suspend_state)
+    except Exception:
+        pass
+
+    session.last_progress_emit_at = time.time()
+    return ev
 
 
 async def run_ingestion_workflow(session: IngestionSession, content: str) -> AsyncGenerator[ProgressEvent, None]:
@@ -78,6 +199,11 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
       Parsing → UserStory → Sequencing → Event(per US) → BC → Aggregate → Command → EMITS 링크 → ReadModel → ...
     """
     from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+
+    # Spec 017: pin the active session so every nested get_llm() call inside
+    # this workflow auto-attaches an IngestionTokenCallback. Reset in the
+    # outer except/return paths below (this generator may exit at many points).
+    _session_token = set_current_session(session)
 
     client = get_neo4j_client()
     llm = get_llm()
@@ -181,19 +307,19 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         # 14. UI Wireframe 생성
         if IS_SKIP_UI_PHASE:
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
-                yield ProgressEvent(
+                yield _augment_event(session, ProgressEvent(
                     phase=IngestionPhase.PAUSED,
                     message="⏸️ 일시 정지됨",
                     progress=getattr(session, "progress", 0) or 0,
                     data={"isPaused": True},
-                )
+                ))
                 await wait_if_paused(session, ctx, None)
-            yield ProgressEvent(
+            yield _augment_event(session, ProgressEvent(
                 phase=IngestionPhase.GENERATING_UI,
                 message="UI 단계 생략됨 (IS_SKIP_UI_PHASE=true)",
                 progress=92,
                 data={"skipped": True},
-            )
+            ))
         else:
             async for ev in _run_phase(session, ctx, generate_ui_wireframes_phase(ctx), None):
                 if ev.phase == IngestionPhase.ERROR:
@@ -215,7 +341,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         except Exception:
             created_policy_count = len(ctx.policies)  # fallback
 
-        yield ProgressEvent(
+        yield _augment_event(session, ProgressEvent(
             phase=IngestionPhase.COMPLETE,
             message="✅ 모델 생성 완료!",
             progress=100,
@@ -231,7 +357,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     "policies": created_policy_count,
                 }
             },
-        )
+        ))
         SmartLogger.log(
             "INFO",
             "Ingestion workflow complete",
@@ -245,6 +371,25 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             },
         )
 
+    except asyncio.CancelledError:
+        # Spec 017 FR-005: cooperative suspend via session_call_slot. Normal
+        # termination, not an error.
+        SmartLogger.log(
+            "INFO",
+            "Ingestion suspended (cooperative cancel via session_call_slot)",
+            category="ingestion.suspend.workflow",
+            params={
+                "session_id": session.id,
+                "session_total_tokens": int(getattr(session, "tokens_total", 0) or 0),
+            },
+        )
+        session.suspend_state = "suspended"
+        yield _augment_event(session, ProgressEvent(
+            phase=IngestionPhase.ERROR,
+            message="❌ 생성이 중단되었습니다 (취소됨)",
+            progress=getattr(session, "progress", 0) or 0,
+            data={"error": "Cancelled by user", "cancelled": True},
+        ))
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
@@ -259,4 +404,17 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 "traceback": error_trace,
             },
         )
-        yield ProgressEvent(phase=IngestionPhase.ERROR, message=f"❌ 오류 발생: {str(e)}", progress=0, data={"error": str(e)})
+        yield _augment_event(session, ProgressEvent(
+            phase=IngestionPhase.ERROR,
+            message=f"❌ 오류 발생: {str(e)}",
+            progress=0,
+            data={"error": str(e)},
+        ))
+    finally:
+        # Spec 017: clear the workflow's session context so subsequent get_llm()
+        # calls (e.g. /api/chat/modify) don't accidentally inherit this
+        # workflow's token callback.
+        try:
+            reset_current_session(_session_token)
+        except Exception:  # noqa: BLE001
+            pass

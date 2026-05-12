@@ -1,4 +1,4 @@
-"""Business logic for figma_binding feature 016.
+"""Business logic for figma_binding feature 016 (extended for spec 020).
 
 Endpoints in router.py thin-wrap these functions. SmartLogger events fire at
 phase boundaries per Constitution VII.
@@ -7,12 +7,16 @@ phase boundaries per Constitution VII.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncGenerator, Callable
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 from fastapi import HTTPException
 
 from api.platform.observability.smart_logger import SmartLogger
 
+from . import full_sync as _full_sync_orchestrator
 from . import plugin_messages, repository, storyboard_resolver
 from ._figma_validate import validate_file
 
@@ -812,3 +816,466 @@ async def pull_frame_via_plugin(ui_id: str) -> dict[str, Any]:
         "nodeCount": len(scene_graph.get("nodes") or {}),
         "sceneGraph": sg_str,  # so frontend can update local state without a re-fetch
     }
+
+
+# ─── 020: Retroactive full-sync ────────────────────────────────────────────
+
+
+def _now_iso_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# Per-run state held in process memory. Each entry: {
+#   "cancel_requested": bool,
+#   "subscribers": list[asyncio.Queue],
+#   "cached_run_started": dict | None,
+#   "cached_progress": dict | None,
+#   "terminal_event": tuple[str, dict] | None,  # frozen so late subscribers see it
+# }
+_FULL_SYNC_STATE: dict[str, dict[str, Any]] = {}
+
+
+def _new_run_state() -> dict[str, Any]:
+    return {
+        "cancel_requested": False,
+        "subscribers": [],
+        "cached_run_started": None,
+        "cached_progress": None,
+        "terminal_event": None,
+    }
+
+
+async def _broadcast(run_id: str, name: str, payload: dict[str, Any]) -> None:
+    state = _FULL_SYNC_STATE.get(run_id)
+    if not state:
+        return
+    if name == "run_started":
+        state["cached_run_started"] = payload
+    elif name == "progress":
+        state["cached_progress"] = payload
+    elif name in ("run_completed", "run_cancelled", "run_aborted"):
+        state["terminal_event"] = (name, payload)
+    for q in list(state["subscribers"]):
+        try:
+            q.put_nowait((name, payload))
+        except Exception:
+            pass
+
+
+async def full_sync(*, actor: str) -> dict[str, Any]:
+    """Start a retroactive full-sync. Returns the FullSyncStartResponse shape
+    on success or a LockContendedResponse on contention.
+
+    Raises HTTPException(404) if no active binding;
+    HTTPException(502) if binding is unreachable.
+    """
+    binding = repository.get_active_binding()
+    if not binding:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "no_active_binding", "messageKr": "활성화된 Figma 바인딩이 없습니다"},
+        )
+    if binding.get("status") == "unreachable":
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "binding_unreachable", "messageKr": "Figma 파일에 접근할 수 없습니다"},
+        )
+
+    run_id = str(uuid.uuid4())
+
+    SmartLogger.log(
+        "INFO",
+        f"figma_binding.full_sync.requested actor={actor}",
+        category="figma_binding.full_sync.requested",
+        params={"actor": actor},
+    )
+
+    # Try to acquire the project-scoped lock.
+    if not repository.try_acquire_run_lock(run_id=run_id, actor=actor):
+        holder = repository.get_current_lock_holder() or {}
+        contended_run_id = holder.get("currentRunId") or ""
+        SmartLogger.log(
+            "WARN",
+            f"figma_binding.full_sync.lock_contended actor={actor} held_by={holder.get('currentRunHolder')}",
+            category="figma_binding.full_sync.lock_contended",
+            params={"actor": actor, "currentRunId": contended_run_id},
+        )
+        return {
+            "_locked": True,
+            "error": "lock_contended",
+            "messageKr": "다른 사용자가 동기화 중입니다",
+            "currentRunId": contended_run_id,
+            "currentRunHolder": holder.get("currentRunHolder"),
+            "streamUrl": f"/api/figma-binding/full-sync/{contended_run_id}/stream",
+        }
+
+    binding_file_key = binding["figmaFileKey"]
+    started_at = _now_iso_utc()
+
+    # Persist the :SyncRun row.
+    repository.create_sync_run(
+        run_id=run_id,
+        kind="retroactive-sync",
+        binding_file_key=binding_file_key,
+        actor=actor,
+    )
+
+    # Set up per-run state, fire-and-forget the orchestrator.
+    state = _new_run_state()
+    _FULL_SYNC_STATE[run_id] = state
+
+    SmartLogger.log(
+        "INFO",
+        f"figma_binding.full_sync.run_started run_id={run_id}",
+        category="figma_binding.full_sync.run_started",
+        params={"runId": run_id, "actor": actor, "bindingFileKey": binding_file_key},
+    )
+
+    asyncio.create_task(
+        _full_sync_runner(
+            run_id=run_id,
+            actor=actor,
+            binding_file_key=binding_file_key,
+            started_at=started_at,
+        )
+    )
+
+    return {
+        "runId": run_id,
+        "kind": "retroactive-sync",
+        "startedAt": started_at,
+        "streamUrl": f"/api/figma-binding/full-sync/{run_id}/stream",
+    }
+
+
+async def _full_sync_runner(
+    *,
+    run_id: str,
+    actor: str,
+    binding_file_key: str,
+    started_at: str,
+) -> None:
+    """The fire-and-forget task that drives `full_sync.run_full_sync`. Handles
+    lock release + :SyncRun finalization in `finally`.
+    """
+    state = _FULL_SYNC_STATE[run_id]
+
+    async def _emit(name: str, payload: dict[str, Any]) -> None:
+        await _broadcast(run_id, name, payload)
+
+    def _is_cancelled() -> bool:
+        return state["cancel_requested"]
+
+    # Lazy import to avoid a circular import (ingestion → figma_binding via the
+    # bridge if the bridge ever imported back; today it doesn't, but the lazy
+    # form is defensive).
+    from api.features.ingestion.workflow.phases.ui_wireframes import (
+        generate_jsx_for_existing_ui,
+    )
+
+    summary: dict[str, Any] | None = None
+
+    await _emit(
+        "run_started",
+        {
+            "runId": run_id,
+            "kind": "retroactive-sync",
+            "actor": actor,
+            "startedAt": started_at,
+            "storyboardsTotal": 0,  # filled in by orchestrator's first emit later
+            "uisTotal": 0,
+        },
+    )
+
+    try:
+        async def _push_frame(ui_id: str, *, figma_page_id: str) -> dict[str, Any]:
+            return await push_frame_for_ui(ui_id, figma_page_id=figma_page_id)
+
+        async def _generate_jsx(*, ui_id: str, actor: str) -> dict | None:
+            return await generate_jsx_for_existing_ui(
+                ui_id=ui_id, actor=actor, correlation_id=run_id
+            )
+
+        async def _sync_pages(*, ui_ids: list[str]) -> dict[str, Any]:
+            return await sync_storyboards_for_ids(ui_ids)
+
+        summary = await _full_sync_orchestrator.run_full_sync(
+            run_id=run_id,
+            actor=actor,
+            on_event=_emit,
+            sync_storyboards_for_ids_fn=_sync_pages,
+            push_frame_fn=_push_frame,
+            generate_jsx_fn=_generate_jsx,
+            is_cancel_requested=_is_cancelled,
+            binding_file_key=binding_file_key,
+        )
+    except Exception as e:
+        SmartLogger.log(
+            "ERROR",
+            f"figma_binding.full_sync orchestrator crashed: {e}",
+            category="figma_binding.full_sync.run_aborted",
+            params={"runId": run_id, "error": str(e)},
+        )
+        summary = {
+            "storyboardsTotal": 0,
+            "pagesCreated": 0,
+            "pagesAlreadyOk": 0,
+            "uisTotal": 0,
+            "framesPushed": 0,
+            "generated": 0,
+            "overwrites": 0,
+            "failures": 0,
+            "status": "aborted-binding-unreachable",
+            "abortedReason": "internal_error",
+        }
+    finally:
+        # Determine terminal status.
+        final_status = (summary or {}).get("status", "succeeded")
+        terminal_summary = {
+            k: v
+            for k, v in (summary or {}).items()
+            if k not in ("status", "abortedReason")
+        }
+        try:
+            repository.finalize_sync_run(
+                run_id=run_id, status=final_status, summary=terminal_summary
+            )
+        except Exception as e:
+            SmartLogger.log(
+                "WARN",
+                f"figma_binding.full_sync.finalize_failed: {e}",
+                category="figma_binding.full_sync.run_aborted",
+                params={"runId": run_id},
+            )
+        try:
+            repository.release_run_lock(run_id=run_id)
+        except Exception:
+            pass
+
+        # Emit the terminal event.
+        if final_status == "cancelled":
+            event_name = "run_cancelled"
+        elif final_status == "aborted-binding-unreachable":
+            event_name = "run_aborted"
+        else:
+            event_name = "run_completed"
+
+        terminal_payload: dict[str, Any] = {"runId": run_id, "summary": terminal_summary}
+        if event_name == "run_completed":
+            terminal_payload["status"] = final_status
+        if event_name == "run_aborted":
+            terminal_payload["reason"] = (summary or {}).get("abortedReason") or "binding_unreachable"
+            terminal_payload["messageKr"] = "동기화 중 Figma 파일이 분리되었습니다"
+
+        await _broadcast(run_id, event_name, terminal_payload)
+
+        SmartLogger.log(
+            "INFO",
+            f"figma_binding.full_sync.{event_name} run_id={run_id} status={final_status}",
+            category=f"figma_binding.full_sync.{event_name}",
+            params={"runId": run_id, "status": final_status, "summary": terminal_summary},
+        )
+
+
+async def full_sync_stream(
+    run_id: str,
+) -> AsyncGenerator[tuple[str, dict[str, Any]], None]:
+    """SSE-friendly subscription to a running (or just-finished) full-sync.
+
+    Late subscribers receive the cached `run_started` and most recent `progress`
+    immediately so the UI can render current state without waiting for the
+    next event.
+    """
+    state = _FULL_SYNC_STATE.get(run_id)
+    # If the run already terminated and was cleaned up, fall back to the
+    # persisted :SyncRun row to construct a synthetic terminal event so the
+    # client doesn't hang.
+    if not state:
+        run = repository.get_sync_run(run_id)
+        if not run:
+            yield "error", {"detail": "no_such_run"}
+            return
+        kind = run.get("kind") or "retroactive-sync"
+        yield "run_started", {
+            "runId": run_id,
+            "kind": kind,
+            "actor": run.get("actor"),
+            "startedAt": run.get("startedAt"),
+            "storyboardsTotal": (run.get("summary") or {}).get("storyboardsTotal", 0),
+            "uisTotal": (run.get("summary") or {}).get("uisTotal", 0),
+        }
+        terminal_name = (
+            "run_cancelled"
+            if run.get("status") == "cancelled"
+            else "run_aborted"
+            if run.get("status") == "aborted-binding-unreachable"
+            else "run_completed"
+        )
+        yield terminal_name, {
+            "runId": run_id,
+            "status": run.get("status"),
+            "summary": run.get("summary") or {},
+        }
+        return
+
+    queue: asyncio.Queue = asyncio.Queue()
+    state["subscribers"].append(queue)
+
+    try:
+        if state["cached_run_started"]:
+            yield "run_started", state["cached_run_started"]
+        if state["cached_progress"]:
+            yield "progress", state["cached_progress"]
+        if state["terminal_event"]:
+            name, payload = state["terminal_event"]
+            yield name, payload
+            return
+
+        while True:
+            name, payload = await queue.get()
+            yield name, payload
+            if name in ("run_completed", "run_cancelled", "run_aborted"):
+                break
+    finally:
+        try:
+            state["subscribers"].remove(queue)
+        except ValueError:
+            pass
+
+
+async def cancel_full_sync(run_id: str) -> dict[str, Any]:
+    """Set the cancel flag on an in-flight full-sync. Returns 404-shape if the
+    run is unknown or already terminated.
+    """
+    state = _FULL_SYNC_STATE.get(run_id)
+    if not state or state.get("terminal_event"):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "no_such_run_or_terminated"},
+        )
+    state["cancel_requested"] = True
+    SmartLogger.log(
+        "INFO",
+        f"figma_binding.full_sync.cancel_requested run_id={run_id}",
+        category="figma_binding.full_sync.run_cancelled",
+        params={"runId": run_id},
+    )
+    return {"runId": run_id, "cancelledAt": _now_iso_utc()}
+
+
+def list_sync_runs(
+    *, limit: int = 20, include_previous_binding: bool = True
+) -> dict[str, Any]:
+    """Return run summaries for the History tab. Tags each row's
+    `previousBinding` boolean by comparing its `bindingFileKey` to the active
+    binding's.
+    """
+    binding = repository.get_active_binding()
+    current_file_key = binding["figmaFileKey"] if binding else None
+
+    rows = repository.list_sync_runs(
+        limit=limit,
+        include_previous_binding=include_previous_binding,
+        current_file_key=current_file_key,
+    )
+
+    out_rows: list[dict[str, Any]] = []
+    for r in rows:
+        out_rows.append(
+            {
+                "runId": r.get("id"),
+                "kind": r.get("kind"),
+                "startedAt": r.get("startedAt"),
+                "finishedAt": r.get("finishedAt"),
+                "status": r.get("status"),
+                "summary": r.get("summary"),
+                "actor": r.get("actor"),
+                "bindingFileKey": r.get("bindingFileKey"),
+                "previousBinding": (
+                    bool(current_file_key)
+                    and r.get("bindingFileKey") != current_file_key
+                ),
+            }
+        )
+
+    SmartLogger.log(
+        "DEBUG",
+        f"figma_binding.history.viewed sync_runs n={len(out_rows)}",
+        category="figma_binding.history.viewed",
+        params={"view": "sync-runs", "count": len(out_rows)},
+    )
+    return {"currentBindingFileKey": current_file_key, "runs": out_rows}
+
+
+def list_failures() -> dict[str, Any]:
+    """Return all current failures grouped by retryability for the History
+    tab + the canonical store the ingestion floating panel reads from.
+    """
+    from . import failure_classifier
+    from .retry_dedupe import get_store as _get_dedupe_store
+
+    binding = repository.get_active_binding()
+    raw = repository.list_failures_with_binding_key()
+    if not raw:
+        return {
+            "currentBindingFileKey": binding["figmaFileKey"] if binding else None,
+            "retryable": [],
+            "nonRetryable": [],
+            "inFlight": [],
+        }
+
+    in_flight = _get_dedupe_store().inflight_set()
+    ui_ids = [f["uiId"] for f in raw]
+    neo_view = repository.fetch_classifier_view(ui_ids)
+
+    retryable: list[dict[str, Any]] = []
+    non_retryable: list[dict[str, Any]] = []
+    inflight_rows: list[dict[str, Any]] = []
+
+    for f in raw:
+        cls = failure_classifier.classify(
+            failure=f, current_binding=binding, neo4j_view=neo_view, in_flight=in_flight
+        )
+        row = {
+            "uiId": f["uiId"],
+            "displayName": f["displayName"],
+            "lastErrorKr": f.get("lastErrorKr"),
+            "lastAttemptAt": f.get("lastAttemptAt"),
+            "retryability": cls["retryability"],
+            "nonRetryableReason": cls.get("nonRetryableReason"),
+            "bindingFileKey": f.get("figmaSyncBindingFileKey"),
+        }
+        if cls["retryability"] == "retryable":
+            retryable.append(row)
+        elif cls["retryability"] == "in-flight":
+            inflight_rows.append(row)
+        else:
+            non_retryable.append(row)
+
+    SmartLogger.log(
+        "DEBUG",
+        f"figma_binding.history.viewed failures r={len(retryable)} nr={len(non_retryable)} if={len(inflight_rows)}",
+        category="figma_binding.history.viewed",
+        params={"view": "failures"},
+    )
+
+    return {
+        "currentBindingFileKey": binding["figmaFileKey"] if binding else None,
+        "retryable": retryable,
+        "nonRetryable": non_retryable,
+        "inFlight": inflight_rows,
+    }
+
+
+def release_stale_locks_on_startup() -> int:
+    """Recovery hook: release any :SyncRun {status:'running'} > 30 min old.
+    Called from `api/main.py` startup."""
+    n = repository.release_stale_locks(older_than_minutes=30)
+    if n:
+        SmartLogger.log(
+            "WARN",
+            f"figma_binding.full_sync.stale_lock_released count={n}",
+            category="figma_binding.full_sync.stale_lock_released",
+            params={"count": n},
+        )
+    return n

@@ -35,6 +35,10 @@ class ApplyUserStoryRequest(BaseModel):
     userStory: dict
     targetBcId: Optional[str] = None
     changePlan: List[dict]
+    # Optional initial acceptance criteria. Persisted on the new node but does
+    # NOT flip ``criteriaUserEdited`` (creation-time criteria are seeds, not
+    # curated edits — see spec 019 / contracts/user-stories-api.md §2).
+    acceptance_criteria: Optional[List[str]] = None
 
 
 class AddUserStoryResponse(BaseModel):
@@ -44,6 +48,31 @@ class AddUserStoryResponse(BaseModel):
     relatedObjects: List[dict] = Field(default_factory=list)
     changes: List[dict]
     summary: str
+
+
+# Field constraints reused for both apply and patch validation.
+# Kept lenient — `priority` and `status` accept the historical values seeded
+# elsewhere in this codebase; we reject only blatantly invalid empty/whitespace
+# strings and over-cap criteria (per spec 019 / contracts/user-stories-api.md).
+_ALLOWED_PRIORITY = {"low", "medium", "high"}
+_MAX_ACCEPTANCE_CRITERIA = 100
+
+
+class UpdateUserStoryRequest(BaseModel):
+    """Partial-update body for ``PATCH /api/user-story/{id}``.
+
+    Every field is optional. Submitting a body with no recognised mutable
+    field results in HTTP 400. ``acceptance_criteria`` distinguishes
+    'not in payload' (None) from 'set to empty list' ([]) — only the latter
+    flips ``criteriaUserEdited`` to true.
+    """
+
+    role: Optional[str] = None
+    action: Optional[str] = None
+    benefit: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    acceptance_criteria: Optional[List[str]] = Field(default=None)
 
 
 @router.post("/add")
@@ -128,6 +157,9 @@ async def apply_user_story(request: ApplyUserStoryRequest, http_request: Request
         # Create the user story node
         try:
             t_us0 = time.perf_counter()
+            initial_criteria = list(request.acceptance_criteria or [])
+            # Strip empty-after-trim entries before persistence.
+            initial_criteria = [s.strip() for s in initial_criteria if isinstance(s, str) and s.strip()]
             session.run(
                 """
                 CREATE (us:UserStory {
@@ -137,6 +169,7 @@ async def apply_user_story(request: ApplyUserStoryRequest, http_request: Request
                     benefit: $benefit,
                     priority: 'medium',
                     status: 'new',
+                    acceptanceCriteria: $acceptance_criteria,
                     createdAt: datetime()
                 })
                 RETURN us.id as id
@@ -145,6 +178,7 @@ async def apply_user_story(request: ApplyUserStoryRequest, http_request: Request
                 role=request.userStory.get("role", ""),
                 action=request.userStory.get("action", ""),
                 benefit=request.userStory.get("benefit", ""),
+                acceptance_criteria=initial_criteria,
             )
             applied_changes.append(
                 {
@@ -456,7 +490,17 @@ async def get_unassigned_user_stories(http_request: Request) -> List[dict[str, A
     query = """
     MATCH (us:UserStory)
     WHERE NOT (us)-[:IMPLEMENTS]->(:BoundedContext)
-    RETURN us {.id, .role, .action, .benefit, .priority, .status} as userStory
+    RETURN {
+        id: us.id,
+        role: us.role,
+        action: us.action,
+        benefit: us.benefit,
+        priority: us.priority,
+        status: us.status,
+        acceptanceCriteria: coalesce(us.acceptanceCriteria, []),
+        criteriaUserEdited: coalesce(us.criteriaUserEdited, false),
+        criteriaEditedAt: us.criteriaEditedAt
+    } as userStory
     ORDER BY us.createdAt DESC
     """
     with get_session() as session:
@@ -476,3 +520,133 @@ async def get_unassigned_user_stories(http_request: Request) -> List[dict[str, A
         return items
 
 
+def _ops():
+    """Lazy-import the canonical Neo4jClient (mixes in UserStoryOps).
+
+    Imported inside the request handler to avoid a top-level import cycle.
+    """
+    from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+
+    return get_neo4j_client()
+
+
+@router.patch("/{user_story_id}")
+async def patch_user_story(
+    user_story_id: str,
+    request: UpdateUserStoryRequest,
+    http_request: Request,
+) -> dict[str, Any]:
+    """Partial update for a UserStory — used by the InspectorPanel save action.
+
+    Validation:
+      - At least one mutable field must be present (else 400).
+      - ``priority`` must be in {low, medium, high} when present (else 400).
+      - ``status`` and string fields must be non-empty when present.
+      - ``acceptance_criteria`` is capped at 100 entries; empty-after-trim
+        entries are stripped before write.
+
+    When ``acceptance_criteria`` is present (including empty list), the
+    UserStory's ``criteriaUserEdited`` flag is set to true and
+    ``criteriaEditedAt`` is set to ``datetime()`` — preventing future
+    ingestion regen from overwriting curated criteria (spec 019, FR-012).
+    """
+    t0 = time.perf_counter()
+    payload = request.model_dump(exclude_unset=True)
+    changed_fields = sorted(payload.keys())
+    criteria_present = "acceptance_criteria" in payload
+
+    SmartLogger.log(
+        "INFO",
+        "User story patch requested.",
+        category="api.user_story.patch.request",
+        params={
+            **http_context(http_request),
+            "userStoryId": user_story_id,
+            "changedFields": changed_fields,
+            "criteriaCount": (
+                len(request.acceptance_criteria or []) if criteria_present else None
+            ),
+        },
+    )
+
+    if not payload:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    # Validate non-empty strings when present.
+    for field in ("role", "action", "status"):
+        if field in payload and payload[field] is not None:
+            v = str(payload[field]).strip()
+            if not v:
+                raise HTTPException(status_code=400, detail=f"{field}: must be non-empty")
+            payload[field] = v
+    if "benefit" in payload and payload["benefit"] is not None:
+        # benefit is allowed to be empty string (existing semantics) but normalize.
+        payload["benefit"] = str(payload["benefit"]).strip()
+
+    if "priority" in payload and payload["priority"] is not None:
+        if payload["priority"] not in _ALLOWED_PRIORITY:
+            raise HTTPException(
+                status_code=400,
+                detail=f"priority: must be one of {sorted(_ALLOWED_PRIORITY)}",
+            )
+
+    if criteria_present and request.acceptance_criteria is not None:
+        if len(request.acceptance_criteria) > _MAX_ACCEPTANCE_CRITERIA:
+            raise HTTPException(
+                status_code=400,
+                detail=f"acceptance_criteria: max {_MAX_ACCEPTANCE_CRITERIA} entries",
+            )
+
+    try:
+        updated = _ops().update_user_story(
+            user_story_id,
+            role=payload.get("role"),
+            action=payload.get("action"),
+            benefit=payload.get("benefit"),
+            priority=payload.get("priority"),
+            status=payload.get("status"),
+            acceptance_criteria=request.acceptance_criteria if criteria_present else None,
+            acceptance_criteria_present=criteria_present,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        SmartLogger.log(
+            "ERROR",
+            "User story patch failed: write error.",
+            category="api.user_story.patch.error",
+            params={
+                **http_context(http_request),
+                "userStoryId": user_story_id,
+                "duration_ms": int((time.perf_counter() - t0) * 1000),
+                "error": {"type": type(e).__name__, "message": str(e)},
+            },
+        )
+        raise HTTPException(status_code=500, detail=f"failed to update user story: {e}")
+
+    if updated is None:
+        SmartLogger.log(
+            "WARNING",
+            "User story patch: id not found.",
+            category="api.user_story.patch.not_found",
+            params={
+                **http_context(http_request),
+                "userStoryId": user_story_id,
+                "duration_ms": int((time.perf_counter() - t0) * 1000),
+            },
+        )
+        raise HTTPException(status_code=404, detail="user story not found")
+
+    SmartLogger.log(
+        "INFO",
+        "User story patch completed.",
+        category="api.user_story.patch.done",
+        params={
+            **http_context(http_request),
+            "userStoryId": user_story_id,
+            "changedFields": changed_fields,
+            "criteriaUserEditedAfter": bool(updated.get("criteriaUserEdited")),
+            "duration_ms": int((time.perf_counter() - t0) * 1000),
+        },
+    )
+    return updated

@@ -274,6 +274,17 @@ async def get_ingestion_session_status(session_id: str) -> dict[str, Any]:
         "message": (last_event.get("message") if last_event else None) or "Processing...",
         "progress": (last_event.get("progress") if last_event else None) or 0,
         "isPaused": bool(getattr(session, "is_paused", False)),
+        # Spec 017 (FR-009): surface suspend state + token totals on reconnect
+        # so a page reload doesn't lose the chip's value or auto-resume a
+        # cancelled run.
+        "suspendState": getattr(session, "suspend_state", "running"),
+        "tokens": {
+            "total": int(getattr(session, "tokens_total", 0) or 0),
+            "approximate": bool(getattr(session, "tokens_approximate", False)),
+            "byPhase": dict(getattr(session, "tokens_by_phase", {}) or {}),
+        } if (
+            getattr(session, "tokens_total", 0) or getattr(session, "tokens_approximate", False)
+        ) else None,
     }
 
 
@@ -453,31 +464,43 @@ async def cancel_ingestion(session_id: str, request: Request) -> dict[str, Any]:
         )
         return {"success": True, "status": "cancelled", "session_id": session_id, "message": "Session already expired or completed"}
 
-    # Mark session as cancelled
+    # Mark session as cancelled (FR-005: cooperative cancel — the suspend gate
+    # will fire at the next LLM/wireframe/bulk-flush boundary).
     session.is_cancelled = True
     session.is_paused = False  # Cancel overrides pause
-    
-    # Cancel the workflow task if it exists
-    if session.workflow_task and not session.workflow_task.done():
-        session.workflow_task.cancel()
-        SmartLogger.log(
-            "INFO",
-            "Ingestion workflow task cancelled",
-            category="ingestion.api.cancel",
-            params={**http_context(request), "inputs": {"session_id": session_id}},
-        )
-    
-    # Emit cancellation event
+    # Spec 017: flip the user-visible state machine to "suspending" so the
+    # frontend chip dims immediately. The workflow runner sets it to
+    # "suspended" once the workflow actually unwinds through the gate.
+    session.suspend_state = "suspending"
+
+    # Spec 017 FR-005: do NOT call session.workflow_task.cancel() — that's the
+    # brutal force-cancel which can leave LangChain coroutines / Neo4j writes
+    # in inconsistent states. The cooperative gate (`session_call_slot`) is
+    # the canonical halt mechanism. The workflow's outer except CancelledError
+    # handler emits the final "suspended" event when the gate unwinds.
+
+    # Synthetic "suspending" SSE event so the panel flips to "취소 중..."
+    # within ~1 s of click without waiting for the next phase event.
     from api.features.ingestion.ingestion_contracts import ProgressEvent, IngestionPhase
-    add_event(
-        session,
-        ProgressEvent(
-            phase=IngestionPhase.ERROR,
-            message="❌ 생성이 중단되었습니다",
-            progress=session.progress or 0,
-            data={"error": "Cancelled by user", "cancelled": True},
-        ),
+    suspending_event = ProgressEvent(
+        phase=session.status if session.status else IngestionPhase.PARSING,
+        message="❌ 취소 요청 — 다음 LLM 호출 경계에서 정지합니다...",
+        progress=session.progress or 0,
+        data={"cancelRequested": True},
     )
+    # Manually set the spec-017 fields (add_event will broadcast them as-is).
+    try:
+        suspending_event.suspendState = "suspending"
+        # Include the locked-in token total so the chip stays accurate during
+        # the suspend wait.
+        if getattr(session, "tokens_total", 0) or getattr(session, "tokens_approximate", False):
+            suspending_event.tokens = {
+                "total": int(getattr(session, "tokens_total", 0) or 0),
+                "approximate": bool(getattr(session, "tokens_approximate", False)),
+            }
+    except Exception:  # noqa: BLE001
+        pass
+    add_event(session, suspending_event)
     
     SmartLogger.log(
         "INFO",

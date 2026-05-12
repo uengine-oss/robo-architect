@@ -5,6 +5,127 @@ from typing import Any
 
 from api.platform.keys import aggregate_key
 
+from ._bulk_helper import (
+    BulkResult,
+    chunked,
+    emit_flush_log,
+    reorder_to_input,
+    run_chunk,
+    validate_required,
+    with_retry,
+)
+
+
+def _normalize_aggregate_enums(enumerations: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not enumerations:
+        return out
+    for enum in enumerations:
+        if isinstance(enum, dict):
+            enum_name = enum.get("name")
+            if enum_name:
+                out.append(
+                    {
+                        "name": str(enum_name),
+                        "displayName": enum.get("displayName"),
+                        "alias": enum.get("alias"),
+                        "items": enum.get("items", []),
+                    }
+                )
+        else:
+            enum_name = getattr(enum, "name", None)
+            if enum_name:
+                out.append(
+                    {
+                        "name": str(enum_name),
+                        "displayName": getattr(enum, "displayName", None),
+                        "alias": getattr(enum, "alias", None),
+                        "items": getattr(enum, "items", []) or [],
+                    }
+                )
+    return out
+
+
+def _normalize_aggregate_value_objects(value_objects: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not value_objects:
+        return out
+    for vo in value_objects:
+        is_dict = isinstance(vo, dict)
+        vo_name = vo.get("name") if is_dict else getattr(vo, "name", None)
+        if not vo_name:
+            continue
+        fields_list = (vo.get("fields", []) if is_dict else getattr(vo, "fields", []) or []) or []
+        fields_dicts: list[dict[str, Any]] = []
+        for field in fields_list:
+            if isinstance(field, dict):
+                fields_dicts.append(field)
+            else:
+                fields_dicts.append(
+                    {"name": getattr(field, "name", ""), "type": getattr(field, "type", "")}
+                )
+        if is_dict:
+            ref_agg = vo.get("referenced_aggregate_name")
+            ref_field = vo.get("referenced_aggregate_field")
+            display_name = vo.get("displayName")
+            alias = vo.get("alias")
+        else:
+            ref_agg = getattr(vo, "referenced_aggregate_name", None)
+            ref_field = getattr(vo, "referenced_aggregate_field", None)
+            display_name = getattr(vo, "displayName", None)
+            alias = getattr(vo, "alias", None)
+        out.append(
+            {
+                "name": str(vo_name),
+                "displayName": display_name,
+                "alias": alias,
+                "referencedAggregateName": ref_agg,
+                "referencedAggregateField": ref_field,
+                "fields": fields_dicts,
+            }
+        )
+    return out
+
+
+_AGGREGATE_NODE_BULK_CYPHER = """
+UNWIND $rows AS r
+MATCH (bc:BoundedContext {id: r.bc_id})
+MERGE (agg:Aggregate {key: r.key})
+  ON CREATE SET agg.id = randomUUID(),
+                agg.createdAt = datetime()
+SET agg.key = r.key,
+    agg.name = r.name,
+    agg.displayName = r.display_name,
+    agg.rootEntity = r.root_entity,
+    agg.invariants = r.invariants,
+    agg.enumerations = r.enumerations_json,
+    agg.valueObjects = r.value_objects_json,
+    agg.updatedAt = datetime()
+MERGE (bc)-[:HAS_AGGREGATE {isPrimary: false}]->(agg)
+RETURN {
+  id: agg.id,
+  key: agg.key,
+  name: agg.name,
+  displayName: agg.displayName,
+  rootEntity: agg.rootEntity,
+  invariants: agg.invariants,
+  enumerations: agg.enumerations,
+  valueObjects: agg.valueObjects
+} AS result
+"""
+
+
+_AGGREGATE_USER_STORY_LINK_CYPHER = """
+UNWIND $rows AS r
+MATCH (us:UserStory {id: r.user_story_id})
+MATCH (agg:Aggregate {id: r.aggregate_id})
+MERGE (us)-[rel:IMPLEMENTS]->(agg)
+  ON CREATE SET rel.confidence = coalesce(r.confidence, 0.9),
+                rel.createdAt = datetime()
+SET rel.confidence = coalesce(r.confidence, rel.confidence, 0.9)
+RETURN {us_id: us.id, agg_id: agg.id} AS result
+"""
+
 
 class AggregateOps:
     # =========================================================================
@@ -244,6 +365,195 @@ class AggregateOps:
             if "valueObjects" not in agg_dict:
                 agg_dict["valueObjects"] = []
             return agg_dict
+
+    def bulk_create_aggregates(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        session_id: str | None = None,
+        phase: str | None = None,
+    ) -> list[BulkResult]:
+        """Persist aggregates in batch — schema-equivalent to `create_aggregate`.
+
+        Required: `name`, `bc_id`. Optional: `key`, `root_entity` (defaults to
+        `name`), `invariants`, `enumerations`, `value_objects`, `display_name`,
+        `user_story_ids`.
+
+        NOTE: cross-BC ownership protection — if an Aggregate with the same
+        canonical key already belongs to a *different* BC, that row is rejected
+        with `error_field="bc_id"` (matches the per-row helper's behavior).
+        """
+        if not rows:
+            return []
+
+        from time import perf_counter
+
+        started = perf_counter()
+        valid, errors = validate_required(rows, ["name", "bc_id"])
+
+        # Step 1 — bc.key lookup.
+        bc_ids = sorted({r["bc_id"] for r in valid})
+        bc_key_map: dict[str, str] = {}
+        if bc_ids:
+            with self.session() as session:
+                cur = session.run(
+                    "MATCH (bc:BoundedContext) WHERE bc.id IN $ids RETURN bc.id AS id, bc.key AS key",
+                    ids=bc_ids,
+                )
+                for rec in cur:
+                    if rec and rec.get("id") and rec.get("key"):
+                        bc_key_map[rec["id"]] = rec["key"]
+
+        # Step 2 — derive keys, normalize enums/VOs.
+        prepared: list[dict[str, Any]] = []
+        prep_errors: list[BulkResult] = []
+        for r in valid:
+            bc_key_value = bc_key_map.get(r["bc_id"])
+            if not bc_key_value:
+                prep_errors.append(
+                    {
+                        "ok": False,
+                        "error": f"BoundedContext not found: {r['bc_id']}",
+                        "error_field": "bc_id",
+                        "id": r.get("id"),
+                    }
+                )
+                continue
+            key = r.get("key") or aggregate_key(bc_key_value, r["name"])
+            enum_list = _normalize_aggregate_enums(r.get("enumerations"))
+            vo_list = _normalize_aggregate_value_objects(r.get("value_objects"))
+            display_name = r.get("display_name") or r["name"]
+            prepared.append(
+                {
+                    "key": key,
+                    "name": r["name"],
+                    "bc_id": r["bc_id"],
+                    "display_name": display_name,
+                    "root_entity": r.get("root_entity") or r["name"],
+                    "invariants": r.get("invariants") or [],
+                    "enumerations_json": json.dumps(enum_list) if enum_list else "[]",
+                    "value_objects_json": json.dumps(vo_list) if vo_list else "[]",
+                    "_user_story_ids": r.get("user_story_ids") or [],
+                }
+            )
+
+        # Step 3 — cross-BC ownership check (one query for all keys).
+        ownership_errors: list[BulkResult] = []
+        if prepared:
+            with self.session() as session:
+                cur = session.run(
+                    """
+                    UNWIND $rows AS r
+                    OPTIONAL MATCH (existing:Aggregate {key: r.key})<-[:HAS_AGGREGATE]-(otherBC:BoundedContext)
+                    WHERE otherBC.id <> r.bc_id
+                    WITH r, otherBC
+                    WHERE otherBC IS NOT NULL
+                    RETURN r.key AS key, otherBC.id AS existing_bc
+                    """,
+                    rows=[{"key": p["key"], "bc_id": p["bc_id"]} for p in prepared],
+                )
+                conflict_keys: dict[str, str] = {rec["key"]: rec["existing_bc"] for rec in cur if rec}
+            if conflict_keys:
+                kept: list[dict[str, Any]] = []
+                for p in prepared:
+                    if p["key"] in conflict_keys:
+                        ownership_errors.append(
+                            {
+                                "ok": False,
+                                "error": (
+                                    f"Aggregate {p['key']} already belongs to BC "
+                                    f"{conflict_keys[p['key']]}; one Aggregate per BC."
+                                ),
+                                "error_field": "bc_id",
+                            }
+                        )
+                    else:
+                        kept.append(p)
+                prepared = kept
+
+        # Step 4 — UNWIND nodes.
+        success: list[BulkResult] = []
+        chunk_count = 0
+        cmd_id_by_index: dict[int, str | None] = {}
+        cur_idx = 0
+        node_chunk_payloads = [
+            {k: v for k, v in row.items() if not k.startswith("_")} for row in prepared
+        ]
+        for chunk in chunked(node_chunk_payloads):
+            chunk_count += 1
+            try:
+                with self.session() as session:
+                    rs = with_retry(
+                        lambda s=session, c=chunk: run_chunk(
+                            s, _AGGREGATE_NODE_BULK_CYPHER, c, return_field="result"
+                        )
+                    )
+                for r in rs:
+                    if r:
+                        # Re-parse JSON columns to lists (matches per-row helper).
+                        if isinstance(r.get("enumerations"), str):
+                            try:
+                                r["enumerations"] = json.loads(r["enumerations"])
+                            except (json.JSONDecodeError, TypeError):
+                                r["enumerations"] = []
+                        if isinstance(r.get("valueObjects"), str):
+                            try:
+                                r["valueObjects"] = json.loads(r["valueObjects"])
+                            except (json.JSONDecodeError, TypeError):
+                                r["valueObjects"] = []
+                        cmd_id_by_index[cur_idx] = r.get("id")
+                        success.append({"ok": True, **r})
+                    else:
+                        cmd_id_by_index[cur_idx] = None
+                        success.append({"ok": False, "error": "no result row"})
+                    cur_idx += 1
+            except Exception as exc:  # noqa: BLE001
+                for _ in chunk:
+                    cmd_id_by_index[cur_idx] = None
+                    success.append({"ok": False, "error": str(exc)})
+                    cur_idx += 1
+
+        # Step 5 — UserStory IMPLEMENTS rels.
+        link_rows: list[dict[str, Any]] = []
+        for idx, prepared_row in enumerate(prepared):
+            agg_id = cmd_id_by_index.get(idx)
+            if not agg_id:
+                continue
+            for us_id in prepared_row["_user_story_ids"]:
+                if us_id:
+                    link_rows.append({"user_story_id": us_id, "aggregate_id": agg_id})
+        for chunk in chunked(link_rows):
+            try:
+                with self.session() as session:
+                    with_retry(
+                        lambda s=session, c=chunk: run_chunk(
+                            s, _AGGREGATE_USER_STORY_LINK_CYPHER, c, return_field="result"
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                from api.platform.observability.smart_logger import SmartLogger
+
+                SmartLogger.log(
+                    "WARN",
+                    f"ingestion.batch.aggregate.user_story_link_failed err={exc}",
+                    category="ingestion.batch.aggregate.user_story_link_failed",
+                    params={"error": str(exc), "linkChunk": len(chunk)},
+                )
+
+        # Step 6 — reassemble.
+        all_errors = list(ownership_errors) + list(prep_errors) + list(errors)
+        out = reorder_to_input(rows, success, all_errors)
+        duration_ms = (perf_counter() - started) * 1000.0
+        emit_flush_log(
+            "aggregate",
+            count=len(rows),
+            duration_ms=duration_ms,
+            chunks=chunk_count,
+            errors=sum(1 for r in out if not r.get("ok")),
+            session_id=session_id,
+            phase=phase,
+        )
+        return out
 
     def link_aggregate_to_event_by_name(self, aggregate_id: str, event_name: str) -> bool:
         """Link Aggregate to an existing Event by natural name (ingestion: event-driven aggregate scope)."""

@@ -1,0 +1,25 @@
+# Ubiquitous Language: {{ bc.name }}
+
+> The vocabulary of the **{{ bc.name }}** Bounded Context. Names defined here are authoritative inside this BC; cross-BC equivalents and intentionally-avoided aliases are called out per term.
+>
+> Generated: {{ generated_at }}
+
+{% for term in terms %}
+## Term: `{{ term.name }}`
+
+**Definition.** {{ term.definition }}
+
+**Business Context.** {{ term.business_context }}
+
+**Related Terms.**
+{% if term.related_terms %}{% for rel in term.related_terms %}- {{ rel }}
+{% endfor %}{% else %}- (none modeled)
+{% endif %}
+{% if term.aliases_to_avoid_mode == "suggest" or (term.aliases_to_avoid_mode == "graph" and term.aliases_to_avoid) %}
+**Aliases to AVOID.**
+{% if term.aliases_to_avoid %}{% for alias in term.aliases_to_avoid %}- `{{ alias }}`{% if term.aliases_to_avoid_suggested %} *(suggested — confirm)*{% endif %}
+{% endfor %}{% else %}- (none)
+{% endif %}
+{% endif %}
+
+{% endfor %}

@@ -4,7 +4,7 @@ import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
-import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.store'
+import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
@@ -30,7 +30,7 @@ const navigatorStore = useNavigatorStore()
 const canvasStore = useCanvasStore()
 const aggregateViewerStore = useAggregateViewerStore()
 const bigPictureStore = useBigPictureStore()
-const userStoryEditor = useUserStoryEditorStore()
+const inspectorRequest = useInspectorRequestStore()
 const chatStore = useModelModifierStore()
 const ingestionStore = useIngestionStore()
 const terminologyStore = useTerminologyStore()
@@ -276,13 +276,15 @@ function addToChatSelection() {
   }
 }
 
-// Double click handler - for UserStory opens edit modal, for others adds to canvas
+// Double click handler — UserStory opens in the unified InspectorPanel
+// (spec 019-userstory-properties-panel); other types add to canvas.
 async function handleDoubleClick() {
   if (props.node.type === 'UserStory') {
-    // Open edit modal for user stories (User Stories feature)
-    userStoryEditor.open(props.node)
+    if (activeTab && activeTab.value !== 'Design') {
+      activeTab.value = 'Design'
+    }
+    inspectorRequest.request(props.node)
   } else {
-    // Add other node types to canvas
     await addToCanvas()
   }
 }

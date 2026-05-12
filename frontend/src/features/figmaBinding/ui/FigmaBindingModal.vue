@@ -3,6 +3,10 @@ import { computed, ref, watch } from 'vue'
 import { useFigmaBindingStore } from '../figmaBinding.store'
 import { getStoredFigmaCreds } from '../api'
 import * as api from '../api'
+import FullSyncSection from './FullSyncSection.vue'
+import HistoryFailureRow from './HistoryFailureRow.vue'
+import HistorySyncRunRow from './HistorySyncRunRow.vue'
+import PreviousBindingGroup from './PreviousBindingGroup.vue'
 
 const props = defineProps({
   modelValue: {
@@ -103,6 +107,47 @@ async function loadHistory() {
   } finally {
     historyLoading.value = false
   }
+  // 020: Also load failures + sync-runs for the rebuilt History tab.
+  store.loadFailures().catch(() => {})
+  store.loadSyncRuns().catch(() => {})
+}
+
+// 020: Computeds that split rows into "current binding" vs "이전 바인딩".
+const currentFailuresRetryable = computed(() => {
+  const fk = store.failures.currentBindingFileKey
+  return store.failures.retryable.filter(
+    (f) => !fk || !f.bindingFileKey || f.bindingFileKey === fk
+  )
+})
+const currentFailuresInFlight = computed(() => store.failures.inFlight)
+const currentFailuresNonRetryable = computed(() => {
+  return store.failures.nonRetryable.filter(
+    (f) => f.nonRetryableReason !== '이전 바인딩'
+  )
+})
+const previousBindingFailures = computed(() => {
+  return store.failures.nonRetryable.filter(
+    (f) => f.nonRetryableReason === '이전 바인딩'
+  )
+})
+const currentSyncRuns = computed(() =>
+  store.syncRuns.rows.filter((r) => !r.previousBinding)
+)
+const previousSyncRuns = computed(() =>
+  store.syncRuns.rows.filter((r) => r.previousBinding)
+)
+
+const hasAnyHistory = computed(() =>
+  currentFailuresRetryable.value.length
+  || currentFailuresInFlight.value.length
+  || currentFailuresNonRetryable.value.length
+  || currentSyncRuns.value.length
+  || previousBindingFailures.value.length
+  || previousSyncRuns.value.length
+)
+
+async function onRetryAll() {
+  await store.retryAll()
 }
 
 watch(tab, (t) => {
@@ -177,16 +222,14 @@ watch(tab, (t) => {
             </span>
           </div>
 
+          <!-- 020: Retroactive full-sync controls -->
+          <FullSyncSection />
+
           <div class="fb-actions">
             <button class="fb-btn fb-btn--danger" @click="submitDisconnect">
               연결 해제
             </button>
           </div>
-
-          <p class="fb-hint">
-            <strong>참고:</strong> 스토리보드 동기화 및 UI 생성 라우팅은 다음 단계
-            (T028 이후)에 추가됩니다. 현재는 바인딩 lifecycle만 활성화되어 있습니다.
-          </p>
         </div>
 
         <!-- Connect tab -->
@@ -252,20 +295,64 @@ watch(tab, (t) => {
           </div>
         </form>
 
-        <!-- History tab -->
+        <!-- History tab (020: failures + summary rows + 이전 바인딩 group) -->
         <div v-if="tab === 'history'" class="fb-section">
-          <div v-if="historyLoading" class="fb-hint">불러오는 중...</div>
-          <div v-else-if="history.length === 0" class="fb-hint">이력 없음</div>
-          <ul v-else class="fb-history">
-            <li v-for="h in history" :key="h.id">
-              <span class="fb-history__time">{{ h.at }}</span>
-              <span class="fb-history__type">{{ h.eventType }}</span>
-              <span class="fb-history__actor">{{ h.actor }}</span>
-              <span v-if="h.payload" class="fb-history__payload" :title="JSON.stringify(h.payload)">
-                {{ JSON.stringify(h.payload).slice(0, 60) }}
-              </span>
-            </li>
-          </ul>
+          <div v-if="store.failures.isLoading || store.syncRuns.isLoading" class="fb-hint">
+            불러오는 중...
+          </div>
+
+          <!-- Empty state (FR-007 / spec § US3 acceptance scenario 3) -->
+          <div v-else-if="!hasAnyHistory" class="fb-hint">
+            이력 없음 — '연결 상태' 탭에서 전체 Figma 반영을 시작할 수 있습니다.
+          </div>
+
+          <template v-else>
+            <!-- Retryable failures + inFlight + non-retryable (current binding) -->
+            <div
+              v-if="currentFailuresRetryable.length || currentFailuresInFlight.length || currentFailuresNonRetryable.length"
+              class="fb-history-group"
+            >
+              <div class="fb-history-group__header">
+                <strong>실패 항목</strong>
+                <button
+                  v-if="currentFailuresRetryable.length"
+                  class="fb-btn fb-btn--small"
+                  @click="onRetryAll"
+                >전체 다시 시도 ({{ currentFailuresRetryable.length }})</button>
+              </div>
+              <HistoryFailureRow
+                v-for="f in currentFailuresRetryable"
+                :key="`r-${f.uiId}`"
+                :failure="f"
+              />
+              <HistoryFailureRow
+                v-for="f in currentFailuresInFlight"
+                :key="`if-${f.uiId}`"
+                :failure="f"
+              />
+              <HistoryFailureRow
+                v-for="f in currentFailuresNonRetryable"
+                :key="`nr-${f.uiId}`"
+                :failure="f"
+              />
+            </div>
+
+            <!-- Sync run summary rows (current binding) -->
+            <div v-if="currentSyncRuns.length" class="fb-history-group">
+              <div class="fb-history-group__header"><strong>최근 실행</strong></div>
+              <HistorySyncRunRow
+                v-for="r in currentSyncRuns"
+                :key="`sr-${r.runId}`"
+                :run="r"
+              />
+            </div>
+
+            <!-- Previous binding (collapsible) -->
+            <PreviousBindingGroup
+              :sync-runs="previousSyncRuns"
+              :failures="previousBindingFailures"
+            />
+          </template>
         </div>
       </div>
     </div>
@@ -400,6 +487,10 @@ watch(tab, (t) => {
   cursor: pointer;
 }
 .fb-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.fb-btn--small { padding: 3px 10px; font-size: 0.74rem; background: transparent; border: 1px solid #0acf83; color: #0acf83; }
+.fb-btn--small:hover:not(:disabled) { background: rgba(10,207,131,0.08); }
+.fb-history-group { display: flex; flex-direction: column; gap: 0; margin-bottom: 12px; }
+.fb-history-group__header { display: flex; justify-content: space-between; align-items: center; padding: 4px 0 6px; font-size: 0.78rem; }
 .fb-btn--primary { background: #0acf83; color: #fff; }
 .fb-btn--primary:hover:not(:disabled) { background: #08b774; }
 .fb-btn--danger {

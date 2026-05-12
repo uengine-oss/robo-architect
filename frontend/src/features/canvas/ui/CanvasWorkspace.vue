@@ -1,10 +1,11 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide } from 'vue'
+import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide, watch } from 'vue'
 import { VueFlow, useVueFlow, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { createLogger, newOpId } from '@/app/logging/logger'
 
 // Custom Nodes
@@ -399,6 +400,27 @@ provide('openInspector', {
   openInspectorForNodeTab,
   openInspectorForNodeData
 })
+
+// Cross-feature bridge: components outside CanvasWorkspace's provide tree
+// (e.g., navigator/TreeNode) push open-requests via the inspectorRequest
+// Pinia store. CanvasWorkspace watches and routes them to the in-tree
+// open-functions.
+const inspectorRequestStore = useInspectorRequestStore()
+watch(
+  () => inspectorRequestStore.requestId,
+  (id) => {
+    if (!id) return
+    const req = inspectorRequestStore.pendingRequest
+    if (!req) return
+    log.info('inspector_request_consumed', 'Consuming external inspector open-request.', {
+      requestId: id,
+      nodeId: req.id,
+      nodeType: req.type
+    })
+    openInspectorForNodeData(req)
+    inspectorRequestStore.consume()
+  }
+)
 
 async function onNodeDoubleClick(event) {
   const opId = newOpId('dblclick')

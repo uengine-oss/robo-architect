@@ -75,3 +75,6 @@ frontend/test-results/
 
 # Local implementation session logs (not part of project deliverables)
 docs/implementation-*
+
+# Ingestion debug snapshots (FR-010 of spec 018; opt-in via INGESTION_SNAPSHOT_DEBUG=1)
+logs/ingestion-snapshots/

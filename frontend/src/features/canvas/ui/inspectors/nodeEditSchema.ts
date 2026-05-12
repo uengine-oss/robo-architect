@@ -18,7 +18,7 @@ export type EditableFieldKey =
   | 'attachedToType'
   | 'attachedToName'
 
-export type NodeLabel = 'Command' | 'Event' | 'Policy' | 'Aggregate' | 'ReadModel' | 'UI' | 'BoundedContext'
+export type NodeLabel = 'Command' | 'Event' | 'Policy' | 'Aggregate' | 'ReadModel' | 'UI' | 'BoundedContext' | 'UserStory'
 
 export type FieldSchema = {
   key: EditableFieldKey
@@ -164,6 +164,16 @@ export const NodeEditSchemas: Record<NodeLabel, NodeEditSchema> = {
     label: 'BoundedContext',
     title: 'Bounded Context',
     fields: [...CommonFields]
+  },
+  UserStory: {
+    // UserStory uses a dedicated branch in InspectorPanel.vue (not the
+    // schema-driven properties form) because its fields (role/action/benefit
+    // + acceptanceCriteria list) don't fit the EditableFieldKey union.
+    // This entry exists so `NodeEditSchemas[nodeLabel]` returns truthy for
+    // 'UserStory'; the `fields` array is intentionally empty.
+    label: 'UserStory',
+    title: 'User Story',
+    fields: []
   }
 }
 
@@ -176,7 +186,8 @@ export function normalizeNodeLabel(raw) {
     v === 'Aggregate' ||
     v === 'ReadModel' ||
     v === 'UI' ||
-    v === 'BoundedContext'
+    v === 'BoundedContext' ||
+    v === 'UserStory'
   ) {
     return v
   }
@@ -188,6 +199,7 @@ export function normalizeNodeLabel(raw) {
   if (v === 'readmodel') return 'ReadModel'
   if (v === 'ui') return 'UI'
   if (v === 'boundedcontext') return 'BoundedContext'
+  if (v === 'userstory' || v === 'user_story' || v === 'user-story') return 'UserStory'
   return 'Policy'
 }
 

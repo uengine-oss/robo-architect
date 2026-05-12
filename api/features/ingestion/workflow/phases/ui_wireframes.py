@@ -345,6 +345,81 @@ def _is_figma_ui_mode(ctx: IngestionWorkflowContext) -> bool:
     return (getattr(ctx.session, "ui_generation_mode", "html") or "html").lower() == "figma"
 
 
+# ─── 020 bridge: figma-mode generator for an existing :UI ──────────────────
+#
+# Module-public bridge for spec 020 figma_binding.full_sync. Constitution V
+# forbids cross-feature internal imports — figma_binding calls this one named
+# function, never reaching into the underscore-prefixed helpers below. Mirrors
+# 016 v1.2's reverse bridge (bulk_sync.sync_batch imported from this module).
+
+
+class _MinimalCtx:
+    """Lightweight stand-in for IngestionWorkflowContext with just the fields
+    `_generate_jsx_scene_graph_for_figma_mode` reads.
+    """
+
+    class _Session:
+        def __init__(self, sid: str, mode: str) -> None:
+            self.id = sid
+            self.ui_generation_mode = mode
+
+    def __init__(self, session_id: str) -> None:
+        self.session = _MinimalCtx._Session(session_id, "figma")
+
+
+async def generate_jsx_for_existing_ui(
+    *, ui_id: str, actor: str, correlation_id: str | None = None
+) -> dict | None:
+    """Generate a figma-mode sceneGraph for a :UI that already exists in Neo4j.
+
+    Used by spec 020 retroactive full-sync (see specs/020-figma-sync-recovery
+    research D4). Reads the UI's display name + a description hint from the
+    graph, calls the same figma-mode agent the bulk path uses, and returns
+    the resulting sceneGraph dict (or None on failure).
+
+    The caller is responsible for persisting the sceneGraph onto the :UI node
+    if the call returns a non-None value.
+    """
+    from api.platform.neo4j import get_session
+
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (u:UI {id: $uid})
+            OPTIONAL MATCH (u)<-[:HAS_UI]-(bc:BoundedContext)
+            RETURN coalesce(u.displayName, u.name, '') AS displayName,
+                   coalesce(u.description, '') AS description,
+                   coalesce(bc.displayName, bc.name, '') AS bcName
+            """,
+            uid=ui_id,
+        ).single()
+
+    if not rec:
+        SmartLogger.log(
+            "WARN",
+            f"figma_binding.bridge: UI not found id={ui_id}",
+            category="ingestion.ui_wireframe.figma_mode.bridge_miss",
+            params={"uiId": ui_id, "actor": actor, "correlationId": correlation_id},
+        )
+        return None
+
+    display_name = rec["displayName"] or ui_id
+    description = rec["description"] or ""
+    bc_name = rec["bcName"] or ""
+
+    # Fabricate a session id so the existing logger params have something
+    # meaningful — actor is the real provenance.
+    fake_session_id = correlation_id or f"figma-binding-bridge:{actor}:{ui_id}"
+    ctx = _MinimalCtx(fake_session_id)
+
+    return await _generate_jsx_scene_graph_for_figma_mode(
+        ctx,  # type: ignore[arg-type]
+        ui_display_name=display_name,
+        description=description,
+        bc_name=bc_name,
+    )
+
+
 async def _create_command_ui(
     ctx: IngestionWorkflowContext,
     bc,

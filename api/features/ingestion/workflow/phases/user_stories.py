@@ -209,38 +209,13 @@ async def _create_user_story_with_verification(
     us_display_name = getattr(us, "displayName", None) or ""
     
     try:
-        # User Story 생성
-        result = await asyncio.wait_for(
-            asyncio.to_thread(
-                ctx.client.create_user_story,
-                id=us.id,
-                role=role,
-                action=action,
-                benefit=getattr(us, "benefit", None),
-                priority=getattr(us, "priority", "medium"),
-                status="draft",
-                ui_description=ui_desc,
-                display_name=us_display_name or None,
-                source_screen_name=getattr(us, "source_screen_name", None),
-                source_unit_id=getattr(us, "source_unit_id", None),
-                sequence=getattr(us, "sequence", None),
-            ),
-            timeout=10.0
-        )
-        
-        # 생성 결과 검증
+        # User Story 생성 — bulk 결과 캐시에서 조회 (FR-001).
+        # 페이즈 진입 시 단일 bulk_create_user_stories() 호출로 일괄 생성된 결과를
+        # `_bulk_us_results` 딕셔너리에 미리 저장해두고, 여기서는 룩업만 수행.
+        bulk_results: dict[str, dict[str, Any]] = getattr(ctx, "_bulk_us_results", None) or {}
+        result = bulk_results.get(us.id)
         if not result or not result.get("id"):
-            return None, None, f"create_user_story returned empty result for {us.id}"
-        
-        # 실제로 DB에 저장되었는지 확인
-        with ctx.client.session() as verify_session:
-            verify_result = verify_session.run(
-                "MATCH (us:UserStory {id: $id}) RETURN us.id as id",
-                id=us.id
-            )
-            verify_record = verify_result.single()
-            if not verify_record:
-                return None, None, f"User Story {us.id} was not found in Neo4j after creation"
+            return None, None, f"bulk_create_user_stories returned empty result for {us.id}"
 
         # SOURCED_FROM 관계: UserStory → BusinessLogic (sequence 기반 정확 매칭)
         source_uid = getattr(us, "source_unit_id", None)
@@ -794,12 +769,12 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                     data={"error": "Cancelled by user", "cancelled": True},
                 )
                 return
-            
+
             try:
                 chunk_idx, stories, retry_count = await coro
                 chunk_results[chunk_idx] = stories
                 completed_count += 1
-                
+
                 # 진행 상황 업데이트
                 chunk_complete_progress = calculate_chunk_progress(
                     PHASE_START + 2,
@@ -808,13 +783,51 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                     total_chunks,
                     merge_progress_ratio=0
                 )
-                
+
                 retry_msg = f" (재시도 {retry_count}회)" if retry_count > 0 else ""
                 yield ProgressEvent(
                     phase=IngestionPhase.EXTRACTING_USER_STORIES,
                     message=f"청크 {chunk_idx + 1}/{total_chunks} 완료 ({len(stories)}개 User Story 추출){retry_msg}",
                     progress=chunk_complete_progress
                 )
+
+                # ── 청크 단위 incremental tree 표시 ──
+                # 각 청크의 user story 들을 그 즉시 트리에 띄움. ID 는 청크별로
+                # 이미 unique ("US-{chunk_idx+1}-{n}") 하므로 그대로 사용.
+                # 나중에 dedup 으로 제거되는 항목은 UserStoryConsolidated 이벤트로
+                # 트리에서 제거됨. 이후의 per-row gather 도 같은 ID 로 다시 emit
+                # 하지만 frontend addUserStory 는 idempotent (exists 체크) 이라
+                # 무해함.
+                for s in stories:
+                    s_role = (getattr(s, "role", "") or "").strip()
+                    s_action = (getattr(s, "action", "") or "").strip()
+                    if not s_action:
+                        continue
+                    s_benefit = getattr(s, "benefit", None)
+                    s_id = getattr(s, "id", None)
+                    if not s_id:
+                        continue
+                    s_priority = getattr(s, "priority", "medium")
+                    s_ui_desc = getattr(s, "ui_description", None) or ""
+                    yield ProgressEvent(
+                        phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                        message=f"User Story 추출됨: {s_role}: {s_action[:30]}",
+                        progress=chunk_complete_progress,
+                        data={
+                            "type": "UserStory",
+                            "object": {
+                                "id": s_id,
+                                "name": f"{s_role}: {s_action[:30]}...",
+                                "type": "UserStory",
+                                "role": s_role,
+                                "action": s_action,
+                                "benefit": s_benefit,
+                                "priority": s_priority,
+                                "ui_description": s_ui_desc,
+                                "provisional": True,  # dedup 전, 임시 표시
+                            },
+                        },
+                    )
             except Exception as e:
                 SmartLogger.log(
                     "ERROR",
@@ -845,22 +858,74 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             all_stories.extend(results)
         
         # 내용 기반 중복 제거 및 정규화 (공통 함수 사용)
+        # 청크 단위 incremental 표시와의 정합성을 위해, 청크에서 부여된 ID
+        # ("US-{chunk}-{n}") 를 canonical 로 유지함. (이전에는 여기서 US-001,
+        # US-002 식으로 재명명했으나, 그러면 frontend 트리에서 ID 정체성이
+        # 깨짐 — chunk 단계에서 emit 했던 노드를 식별 못 함.)
+        pre_dedup_ids = [getattr(s, "id", None) for s in all_stories if getattr(s, "id", None)]
         deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id, is_analyzer=ctx.source_type == "analyzer_graph")
-        
-        # 병합 후 순차적인 ID로 재생성 (US-001, US-002, ...)
-        for idx, us in enumerate(deduplicated_by_content, start=1):
-            new_id = f"US-{idx:03d}"  # US-001, US-002, ...
+        post_dedup_ids = {getattr(s, "id", None) for s in deduplicated_by_content if getattr(s, "id", None)}
+        dedup_dropped_ids = [sid for sid in pre_dedup_ids if sid not in post_dedup_ids]
+
+        # ── Cross-chunk semantic consolidation (LLM-based) ──
+        # 청크 경계로 쪼개진 user story 들을 합치고, 필드 단위 규칙들을
+        # acceptance_criteria 로 흡수. 실패 시 fail-open (입력 그대로).
+        yield ProgressEvent(
+            phase=IngestionPhase.EXTRACTING_USER_STORIES,
+            message=f"User Story 통합 분석 중... ({len(deduplicated_by_content)}개 → 사용자 가치 단위로 정리)",
+            progress=PHASE_END - 5,
+        )
+        from api.features.ingestion.requirements_to_user_stories import consolidate_user_stories
+        consolidated, consolidation_dropped_ids = await asyncio.to_thread(
+            consolidate_user_stories, deduplicated_by_content, ctx.session.id
+        )
+
+        # 트리에서 제거되어야 하는 ID = dedup 으로 빠진 것 + consolidation 으로 흡수된 것
+        all_dropped_ids = list(dict.fromkeys([*dedup_dropped_ids, *consolidation_dropped_ids]))
+        if all_dropped_ids:
+            yield ProgressEvent(
+                phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                message=f"User Story 정리: {len(all_dropped_ids)}개 흡수/중복 제거",
+                progress=PHASE_END - 4,
+                data={
+                    "type": "UserStoryConsolidated",
+                    "removedIds": all_dropped_ids,
+                },
+            )
+
+        # Consolidation 결과로 acceptance_criteria 가 채워진 canonical user story
+        # 들을 다시 트리에 emit (frontend addUserStory 가 upsert 라 in-place 갱신).
+        # 이때 provisional=false 로 표시.
+        for cs in consolidated:
             try:
-                setattr(us, "id", new_id)
+                cs_role = (getattr(cs, "role", "") or "").strip()
+                cs_action = (getattr(cs, "action", "") or "").strip()
+                if not cs_action:
+                    continue
+                yield ProgressEvent(
+                    phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                    message=f"User Story 정리됨: {cs_role}: {cs_action[:30]}",
+                    progress=PHASE_END - 3,
+                    data={
+                        "type": "UserStory",
+                        "object": {
+                            "id": cs.id,
+                            "name": f"{cs_role}: {cs_action[:30]}...",
+                            "type": "UserStory",
+                            "role": cs_role,
+                            "action": cs_action,
+                            "benefit": getattr(cs, "benefit", None),
+                            "priority": getattr(cs, "priority", "medium"),
+                            "ui_description": getattr(cs, "ui_description", "") or "",
+                            "acceptance_criteria": list(getattr(cs, "acceptance_criteria", []) or []),
+                            "provisional": False,
+                        },
+                    },
+                )
             except Exception:
-                if hasattr(us, "model_copy"):
-                    us = us.model_copy(update={"id": new_id})
-                    deduplicated_by_content[idx - 1] = us
-                elif hasattr(us, "copy"):
-                    us = us.copy(update={"id": new_id})
-                    deduplicated_by_content[idx - 1] = us
-        
-        user_stories = deduplicated_by_content
+                pass
+
+        user_stories = consolidated
         
         # 병합 후 role 재검증 (청킹 처리 중 일부 role이 제대로 추론되지 않았을 수 있음)
         from api.features.ingestion.requirements_to_user_stories import _infer_role_from_context
@@ -952,10 +1017,77 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             return
         
         total_us = len(ctx.user_stories)
+
+        # ── Pre-build bulk rows + run ONE bulk_create_user_stories call ──
+        # FR-001 (spec 018): every entity type writes through a bulk helper.
+        # The per-row tasks below then look up their result instead of doing a
+        # Neo4j round-trip each.
+        bulk_rows: list[dict[str, Any]] = []
+        for us in ctx.user_stories:
+            role = (getattr(us, "role", "") or "").strip()
+            action = (getattr(us, "action", "") or "").strip()
+            if not action:
+                continue
+            role = canonicalize_role(role)
+            action = canonicalize_action(action)
+            if not role or role.lower() in ("user", "사용자", ""):
+                from api.features.ingestion.requirements_to_user_stories import _infer_role_from_context
+                benefit = getattr(us, "benefit", "") or ""
+                inferred = _infer_role_from_context(action, benefit)
+                role = inferred if inferred else "customer"
+                try:
+                    setattr(us, "role", role)
+                except Exception:
+                    pass
+            ui_desc = ensure_nonempty_ui_description(
+                role,
+                action,
+                getattr(us, "benefit", None),
+                getattr(us, "ui_description", None),
+            )
+            bulk_rows.append(
+                {
+                    "id": us.id,
+                    "role": role,
+                    "action": action,
+                    "benefit": getattr(us, "benefit", None),
+                    "priority": getattr(us, "priority", "medium"),
+                    "status": "draft",
+                    "ui_description": ui_desc,
+                    "display_name": getattr(us, "displayName", None) or None,
+                    "source_screen_name": getattr(us, "source_screen_name", None),
+                    "source_unit_id": getattr(us, "source_unit_id", None),
+                    "sequence": getattr(us, "sequence", None),
+                    "acceptance_criteria": list(getattr(us, "acceptance_criteria", []) or []),
+                }
+            )
+        from api.features.ingestion.suspend_gate import session_call_slot
+        try:
+            async with session_call_slot(ctx.session):
+                bulk_results_list = await asyncio.to_thread(
+                    ctx.client.bulk_create_user_stories,
+                    bulk_rows,
+                    session_id=ctx.session.id,
+                    phase="extracting_user_stories",
+                )
+        except Exception as exc:  # noqa: BLE001
+            SmartLogger.log(
+                "ERROR",
+                f"bulk_create_user_stories failed: {exc}",
+                category="ingestion.batch.user_story.flush_failed",
+                params={"session_id": ctx.session.id, "rowCount": len(bulk_rows), "error": str(exc)},
+            )
+            bulk_results_list = []
+        ctx._bulk_us_results = {  # type: ignore[attr-defined]
+            row["id"]: dict(res)
+            for row, res in zip(bulk_rows, bulk_results_list)
+            if res.get("ok") and res.get("id")
+        }
+
         tasks = []
         for us_idx, us in enumerate(ctx.user_stories):
             tasks.append(_create_user_story_with_verification(us, us_idx, total_us, ctx))
-        
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Process results and yield progress events

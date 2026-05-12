@@ -171,6 +171,7 @@ API는 기능별로 prefix가 구분돼 있습니다.
 - **Chat Model Modifier**: `/api/chat/...`
 - **PRD Generator**: `/api/prd/...`
 - **ReadModel/CQRS**: `/api/readmodel/...`, `/api/cqrs/...`
+- **DDD Spec Generation**: `/api/ddd-spec/...` — 이벤트 스토밍 그래프를 "DDD for SDD" 아티팩트 세트(`domain-terms.md` · `bc-<slug>.md` · `aggregate-<slug>.md` · `acl-<system>.md` · `requirements.md` · `context-map.md`)로 사출합니다. 출력 경로는 `specs/bounded-contexts/<bc-slug>/`와 `specs/context-map.md`이며, 기존의 `specs/NNN-*/` (SpecKit 피처 폴더)와 공존합니다. (feature 022)
 
 정확한 요청/응답 스펙은 `http://localhost:8000/docs`를 참고하세요.
 

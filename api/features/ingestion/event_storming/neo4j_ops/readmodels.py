@@ -4,6 +4,47 @@ from typing import Any
 
 from api.platform.keys import readmodel_key
 
+from ._bulk_helper import (
+    BulkResult,
+    bulk_flush,
+    chunked,
+    reorder_to_input,
+    run_chunk,
+    validate_required,
+    with_retry,
+)
+
+
+_READMODEL_BULK_CYPHER = """
+UNWIND $rows AS r
+MATCH (bc:BoundedContext {id: r.bc_id})
+MERGE (rm:ReadModel {key: r.key})
+  ON CREATE SET rm.id = randomUUID(),
+                rm.createdAt = datetime()
+SET rm.key = r.key,
+    rm.name = r.name,
+    rm.displayName = r.display_name,
+    rm.description = r.description,
+    rm.provisioningType = r.provisioning_type,
+    rm.actor = r.actor,
+    rm.isMultipleResult = r.is_multiple_result,
+    rm.updatedAt = datetime()
+MERGE (bc)-[:HAS_READMODEL]->(rm)
+RETURN rm {.id, .key, .name, .displayName, .description, .provisioningType, .actor, .isMultipleResult} AS result
+"""
+
+
+_READMODEL_USER_STORY_LINK_CYPHER = """
+UNWIND $rows AS r
+MATCH (us:UserStory {id: r.user_story_id})
+MATCH (rm:ReadModel {id: r.readmodel_id})
+MERGE (us)-[rel:IMPLEMENTS]->(rm)
+  ON CREATE SET rel.confidence = coalesce(r.confidence, 0.9),
+                rel.createdAt = datetime()
+SET rel.confidence = coalesce(r.confidence, rel.confidence, 0.9)
+RETURN {us_id: us.id, rm_id: rm.id} AS result
+"""
+
 
 class ReadModelOps:
     # =========================================================================
@@ -65,6 +106,142 @@ class ReadModelOps:
                 is_multiple_result=is_multiple_result,
             )
             return dict(result.single()["readmodel"])
+
+    def bulk_create_readmodels(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        session_id: str | None = None,
+        phase: str | None = None,
+    ) -> list[BulkResult]:
+        """Persist read models in batch — schema-equivalent to `create_readmodel`.
+
+        Required: `name`, `bc_id`. Optional: `key`, `description`,
+        `provisioning_type` (default `"CQRS"`), `actor`, `is_multiple_result`,
+        `display_name`, `user_story_ids`.
+        """
+        if not rows:
+            return []
+
+        valid, errors = validate_required(rows, ["name", "bc_id"])
+
+        bc_ids = sorted({r["bc_id"] for r in valid})
+        bc_key_map: dict[str, str] = {}
+        if bc_ids:
+            with self.session() as session:
+                cur = session.run(
+                    "MATCH (bc:BoundedContext) WHERE bc.id IN $ids RETURN bc.id AS id, bc.key AS key",
+                    ids=bc_ids,
+                )
+                for rec in cur:
+                    if rec and rec.get("id") and rec.get("key"):
+                        bc_key_map[rec["id"]] = rec["key"]
+
+        prepared: list[dict[str, Any]] = []
+        bc_missing: list[BulkResult] = []
+        for r in valid:
+            bc_key_value = bc_key_map.get(r["bc_id"])
+            if not bc_key_value:
+                bc_missing.append(
+                    {
+                        "ok": False,
+                        "error": f"BoundedContext not found: {r['bc_id']}",
+                        "error_field": "bc_id",
+                        "id": r.get("id"),
+                    }
+                )
+                continue
+            key = r.get("key") or readmodel_key(bc_key_value, r["name"])
+            prepared.append(
+                {
+                    "key": key,
+                    "name": r["name"],
+                    "bc_id": r["bc_id"],
+                    "display_name": r.get("display_name") or r["name"],
+                    "description": r.get("description"),
+                    "provisioning_type": r.get("provisioning_type") or "CQRS",
+                    "actor": r.get("actor"),
+                    "is_multiple_result": r.get("is_multiple_result"),
+                    "_user_story_ids": r.get("user_story_ids") or [],
+                }
+            )
+
+        # Pass 1: nodes via bulk_flush (no dedupe within batch — `key` is the
+        # natural unique field already and we want every input row to map 1:1).
+        # We can't use bulk_flush here because we need rm_id for pass-2 links;
+        # but bulk_flush already does this correctly when we read `id` from
+        # success results.
+        from time import perf_counter
+
+        from ._bulk_helper import emit_flush_log
+
+        started = perf_counter()
+        success: list[BulkResult] = []
+        chunk_count = 0
+        cur_idx = 0
+        rm_id_by_index: dict[int, str | None] = {}
+        node_chunk_payloads = [
+            {k: v for k, v in row.items() if not k.startswith("_")} for row in prepared
+        ]
+        for chunk in chunked(node_chunk_payloads):
+            chunk_count += 1
+            try:
+                with self.session() as session:
+                    rs = with_retry(
+                        lambda s=session, c=chunk: run_chunk(
+                            s, _READMODEL_BULK_CYPHER, c, return_field="result"
+                        )
+                    )
+                for r in rs:
+                    rm_id_by_index[cur_idx] = r.get("id") if r else None
+                    success.append({"ok": True, **r} if r else {"ok": False, "error": "no result row"})
+                    cur_idx += 1
+            except Exception as exc:  # noqa: BLE001
+                for _ in chunk:
+                    rm_id_by_index[cur_idx] = None
+                    success.append({"ok": False, "error": str(exc)})
+                    cur_idx += 1
+
+        # Pass 2: UserStory IMPLEMENTS rels.
+        link_rows: list[dict[str, Any]] = []
+        for idx, prepared_row in enumerate(prepared):
+            rm_id = rm_id_by_index.get(idx)
+            if not rm_id:
+                continue
+            for us_id in prepared_row["_user_story_ids"]:
+                if us_id:
+                    link_rows.append({"user_story_id": us_id, "readmodel_id": rm_id})
+        for chunk in chunked(link_rows):
+            try:
+                with self.session() as session:
+                    with_retry(
+                        lambda s=session, c=chunk: run_chunk(
+                            s, _READMODEL_USER_STORY_LINK_CYPHER, c, return_field="result"
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                from api.platform.observability.smart_logger import SmartLogger
+
+                SmartLogger.log(
+                    "WARN",
+                    f"ingestion.batch.readmodel.user_story_link_failed err={exc}",
+                    category="ingestion.batch.readmodel.user_story_link_failed",
+                    params={"error": str(exc), "linkChunk": len(chunk)},
+                )
+
+        all_errors = list(bc_missing) + list(errors)
+        out = reorder_to_input(rows, success, all_errors)
+        duration_ms = (perf_counter() - started) * 1000.0
+        emit_flush_log(
+            "readmodel",
+            count=len(rows),
+            duration_ms=duration_ms,
+            chunks=chunk_count,
+            errors=sum(1 for r in out if not r.get("ok")),
+            session_id=session_id,
+            phase=phase,
+        )
+        return out
 
     def link_readmodel_to_event(
         self,

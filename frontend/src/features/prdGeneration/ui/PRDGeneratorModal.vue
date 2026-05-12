@@ -37,6 +37,7 @@ const config = ref({
   include_kubernetes: false,
   include_tests: true,
   ai_assistant: 'cursor', // 'cursor' or 'claude'
+  spec_format: 'prd', // 'prd' (legacy flat) or 'ddd' (DDD-for-SDD artifact set; feature 022)
   include_frontend: false,
   frontend_framework: null // 'vue', 'react', 'angular', etc.
 })
@@ -47,9 +48,15 @@ const isGenerating = ref(false)
 const isSettingUp = ref(false)
 const previewData = ref(null)
 const error = ref(null)
-const step = ref(1) // 1: Config, 2: Preview, 3: Download
+// Step 1: Configure · 2: Preview · 3: Claude Code setup (path picker; may
+// or may not have downloaded the zip first) · 4: Setup complete.
+const step = ref(1)
 const projectPath = ref('~/projects/')
 const setupResult = ref(null)
+// Tracks whether the user landed on Step 3 via "Download ZIP" (true) or
+// via "Claude Code에서 열기" (false). The Step 3 view hides the
+// "Download Complete!" header in the latter case.
+const downloadedZip = ref(false)
 const showFolderPicker = ref(false)
 const folderPickerData = ref({ current_path: '', parent_path: null, directories: [] })
 const isBrowsing = ref(false)
@@ -210,12 +217,21 @@ async function downloadZip() {
     window.URL.revokeObjectURL(url)
     a.remove()
 
+    downloadedZip.value = true
     step.value = 3
   } catch (e) {
     error.value = e.message
   } finally {
     isGenerating.value = false
   }
+}
+
+function proceedToClaudeSetup() {
+  // Skip the download entirely and go straight to the Claude Code
+  // setup form. The user explicitly chose to extract into a project
+  // directory; no zip is downloaded.
+  downloadedZip.value = false
+  step.value = 3
 }
 
 async function setupAndOpenClaudeCode() {
@@ -265,6 +281,7 @@ function closeModal() {
   step.value = 1
   previewData.value = null
   setupResult.value = null
+  downloadedZip.value = false
   error.value = null
   emit('close')
 }
@@ -464,6 +481,36 @@ function goBack() {
             </div>
 
             <div class="config-section">
+              <h3>📑 Spec Format</h3>
+              <div class="form-group">
+                <label>Per-BC spec layout</label>
+                <div class="radio-cards">
+                  <label class="radio-card" :class="{ selected: config.spec_format === 'prd' }">
+                    <input type="radio" v-model="config.spec_format" value="prd" />
+                    <div class="radio-card-content">
+                      <span class="radio-icon">📄</span>
+                      <span class="radio-label">PRD-style (flat)</span>
+                      <span class="radio-desc">One <code>specs/&lt;bc&gt;_spec.md</code> per BC</span>
+                    </div>
+                  </label>
+                  <label class="radio-card" :class="{ selected: config.spec_format === 'ddd' }">
+                    <input type="radio" v-model="config.spec_format" value="ddd" />
+                    <div class="radio-card-content">
+                      <span class="radio-icon">🧩</span>
+                      <span class="radio-label">DDD for SDD</span>
+                      <span class="radio-desc">domain-terms · bc-canvas · aggregate · requirements · context-map</span>
+                    </div>
+                  </label>
+                </div>
+                <p class="form-hint">
+                  <strong>DDD for SDD</strong>는 이벤트 스토밍 그래프를 <code>specs/bounded-contexts/&lt;bc-slug&gt;/</code> 아래에
+                  <code>domain-terms.md</code>·<code>bc-&lt;slug&gt;.md</code>·<code>aggregates/aggregate-&lt;slug&gt;.md</code>·<code>requirements.md</code> +
+                  시스템 차원 <code>specs/context-map.md</code>로 사출합니다 (feature 022).
+                </p>
+              </div>
+            </div>
+
+            <div class="config-section">
               <h3>⚙️ Additional Options</h3>
               <div class="checkbox-group">
                 <label class="checkbox-item">
@@ -516,21 +563,32 @@ function goBack() {
                 <div class="tech-item"><span class="tech-label">Messaging:</span><span class="tech-value">{{ previewData.tech_stack.messaging }}</span></div>
                 <div class="tech-item"><span class="tech-label">Deployment:</span><span class="tech-value">{{ previewData.tech_stack.deployment }}</span></div>
                 <div class="tech-item"><span class="tech-label">AI Assistant:</span><span class="tech-value">{{ previewData.tech_stack.ai_assistant === 'cursor' ? 'Cursor' : 'Claude Code' }}</span></div>
+                <div class="tech-item">
+                  <span class="tech-label">Spec Format:</span>
+                  <span class="tech-value">{{ previewData.tech_stack.spec_format === 'ddd' ? 'DDD for SDD (feature 022)' : 'PRD-style (flat)' }}</span>
+                </div>
               </div>
             </div>
           </div>
 
           <div v-if="step === 3" class="complete-step">
-            <div class="complete-icon">✅</div>
-            <h3>Download Complete!</h3>
-            <p>Your PRD package has been downloaded.</p>
+            <template v-if="downloadedZip">
+              <div class="complete-icon">✅</div>
+              <h3>Download Complete!</h3>
+              <p>Your PRD package has been downloaded.</p>
+            </template>
+            <template v-else>
+              <div class="complete-icon">🚀</div>
+              <h3>Claude Code 에서 열기</h3>
+              <p>PRD 파일을 지정한 경로에 추출한 뒤 Claude Code 터미널을 엽니다.</p>
+            </template>
 
             <div class="claude-code-setup">
-              <div class="setup-divider">
+              <div v-if="downloadedZip" class="setup-divider">
                 <span>or</span>
               </div>
-              <h4>Claude Code에서 바로 열기</h4>
-              <p class="setup-desc">PRD 파일을 지정한 경로에 추출하고 Claude Code 터미널을 엽니다.</p>
+              <h4 v-if="downloadedZip">Claude Code에서 바로 열기</h4>
+              <p v-if="downloadedZip" class="setup-desc">PRD 파일을 지정한 경로에 추출하고 Claude Code 터미널을 엽니다.</p>
               <div class="setup-path-group">
                 <label>프로젝트 경로</label>
                 <div class="setup-path-input">
@@ -662,15 +720,22 @@ function goBack() {
         </div>
 
         <div class="modal-footer">
-          <button v-if="step > 1 && step < 3" class="btn btn-secondary" @click="goBack">← Back</button>
+          <button v-if="step > 1 && step <= 3" class="btn btn-secondary" @click="goBack">← Back</button>
           <div class="footer-spacer"></div>
           <button v-if="step === 1" class="btn btn-primary" @click="generatePreview" :disabled="isGenerating">
             <span v-if="isGenerating">Generating...</span>
             <span v-else>Preview →</span>
           </button>
-          <button v-if="step === 2" class="btn btn-primary" @click="downloadZip" :disabled="isGenerating">
+          <button v-if="step === 2" class="btn btn-secondary" @click="downloadZip" :disabled="isGenerating">
             <span v-if="isGenerating">Downloading...</span>
             <span v-else>Download ZIP 📥</span>
+          </button>
+          <button v-if="step === 2" class="btn btn-primary" @click="proceedToClaudeSetup" :disabled="isGenerating">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:middle">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+            Claude Code에서 열기
           </button>
           <button v-if="step === 3" class="btn btn-primary" @click="closeModal">Done</button>
           <button v-if="step === 4" class="btn btn-claude" @click="openInClaudeCode">

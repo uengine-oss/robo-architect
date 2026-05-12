@@ -45,6 +45,45 @@ const isPanelMinimized = ref(false)
 const isPaused = ref(false)
 const isPausing = ref(false) // Track if pause request is in progress
 
+// ─── Spec 017: Token counter + granular suspend ────────────────────────
+// Cumulative session token total surfaced in the floating status panel.
+// Updated from each progress event's `event.tokens` block.
+const tokensTotal = ref(0)
+const tokensByPhase = ref({})           // { [phaseKey]: cumulative tokens for that phase }
+const tokensApproximate = ref(false)    // sticky once true; drives the `~` prefix
+const tokensLastCall = ref(null)        // most recent call's contribution
+const tokensExpanded = ref(false)       // hover/click state for per-phase breakdown
+// Suspend state machine surfaced from each progress event's `event.suspendState`.
+// "running" | "suspending" | "suspended"
+const suspendState = ref('running')
+
+function formatTokens(n) {
+  if (typeof n !== 'number' || !isFinite(n) || n <= 0) return '0'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 10_000) return `${(n / 1_000).toFixed(0)}k`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
+
+const tokensDisplay = computed(() => {
+  const prefix = tokensApproximate.value ? '~' : ''
+  return `${prefix}${formatTokens(tokensTotal.value)} tokens`
+})
+
+// Per-phase breakdown rendered in stable phase-flow order.
+// Sorted descending by token count; falls back to insertion order.
+const tokensByPhaseList = computed(() => {
+  const entries = Object.entries(tokensByPhase.value || {})
+  return entries
+    .filter(([, v]) => typeof v === 'number' && v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([phase, tokens]) => ({ phase, tokens, formatted: formatTokens(tokens) }))
+})
+
+const showTokenChip = computed(() => {
+  return tokensTotal.value > 0 || tokensApproximate.value
+})
+
 // Draggable panel state
 const panelPosition = ref({ x: null, y: null })
 const isDragging = ref(false)
@@ -560,10 +599,24 @@ function connectToStream(sid, isReconnect = false) {
   
   eventSource.value.addEventListener('progress', (e) => {
     const data = JSON.parse(e.data)
-    
+
     currentPhase.value = data.phase
     currentMessage.value = data.message
     progress.value = data.progress
+
+    // ── Spec 017: token counter + suspend state ──────────────────────
+    if (data.tokens && typeof data.tokens === 'object') {
+      if (typeof data.tokens.total === 'number') tokensTotal.value = data.tokens.total
+      if (data.tokens.byPhase && typeof data.tokens.byPhase === 'object') {
+        // Sparse delta: merge into local map (later keys win).
+        tokensByPhase.value = { ...tokensByPhase.value, ...data.tokens.byPhase }
+      }
+      if (data.tokens.approximate === true) tokensApproximate.value = true   // sticky
+      if (typeof data.tokens.lastCallTokens === 'number') tokensLastCall.value = data.tokens.lastCallTokens
+    }
+    if (typeof data.suspendState === 'string') {
+      suspendState.value = data.suspendState
+    }
 
     // Pause state tracking
     if (data.phase === 'paused') {
@@ -579,6 +632,21 @@ function connectToStream(sid, isReconnect = false) {
       const assignment = data.data.object
       if (assignment) {
         eventModelingStore.assignEventToBC(assignment.eventId, assignment.bcId, assignment.bcName)
+      }
+      return
+    }
+
+    // Handle dedup-time consolidation: remove provisional user stories that
+    // were live-emitted at chunk completion but dropped during merge/dedup.
+    if (data.data && data.data.type === 'UserStoryConsolidated') {
+      const removedIds = Array.isArray(data.data.removedIds) ? data.data.removedIds : []
+      removedIds.forEach((rid) => navigatorStore.removeUserStory(rid))
+      // Also drop them from the local "created items" list shown elsewhere in the modal.
+      if (removedIds.length > 0) {
+        const removedSet = new Set(removedIds)
+        createdItems.value = createdItems.value.filter(
+          (it) => !(it.type === 'UserStory' && removedSet.has(it.id))
+        )
       }
       return
     }
@@ -814,26 +882,17 @@ async function togglePause() {
 
 async function cancelIngestion() {
   if (!sessionId.value) return
-  if (!confirm('생성을 중단하시겠습니까? 진행 중인 작업이 취소됩니다.')) {
+  if (!confirm('생성을 중단하시겠습니까? 진행 중인 작업이 취소됩니다. (현재 LLM 호출이 끝난 후 정지)')) {
     return
   }
-  
+
   try {
-    // Immediately close event source and update UI state
-    if (eventSource.value) {
-      eventSource.value.close()
-      eventSource.value = null
-    }
-    isProcessing.value = false
-    isPaused.value = false
-    isPausing.value = false
-    
-    // Set error message only if not already set (prevent duplicates)
-    if (!error.value) {
-      error.value = '생성이 중단되었습니다'
-    }
-    // Keep panel open to show error message - don't clear sessionId yet
-    
+    // Spec 017: do NOT close EventSource here. The backend's suspend gate
+    // halts the workflow at the next LLM boundary; the SSE stream will
+    // deliver "suspending" → "suspended" events as the workflow unwinds.
+    // Optimistically flip the local suspend state for instant UI feedback.
+    suspendState.value = 'suspending'
+
     // Then call cancel API
     try {
       const response = await fetch(`/api/ingest/${sessionId.value}/cancel`, { method: 'POST' })
@@ -920,6 +979,26 @@ async function checkAndRestoreSession() {
     currentMessage.value = status.message || '진행 중인 세션에 재연결 중...'
     progress.value = status.progress || 0
     isPaused.value = !!status.isPaused
+
+    // Spec 017 FR-009: pick up suspend state + token totals from status so a
+    // reload doesn't lose the chip and doesn't re-issue a cancel'd run.
+    if (typeof status.suspendState === 'string') {
+      suspendState.value = status.suspendState
+    }
+    if (status.tokens && typeof status.tokens === 'object') {
+      if (typeof status.tokens.total === 'number') tokensTotal.value = status.tokens.total
+      if (status.tokens.byPhase && typeof status.tokens.byPhase === 'object') {
+        tokensByPhase.value = { ...status.tokens.byPhase }
+      }
+      if (status.tokens.approximate === true) tokensApproximate.value = true
+    }
+    // If already suspended, do not re-subscribe to a live SSE stream.
+    if (suspendState.value === 'suspended') {
+      isProcessing.value = false
+      error.value = error.value || '생성이 중단되었습니다'
+      emit('session-restored')
+      return
+    }
 
     emit('session-restored')
     connectToStream(saved.sessionId, true)
@@ -1017,6 +1096,13 @@ function closeFloatingPanel() {
   isPaused.value = false
   panelPosition.value = { x: null, y: null }
   sessionId.value = null
+  // Spec 017: reset token + suspend state on session close (FR-016 / SC-001).
+  tokensTotal.value = 0
+  tokensByPhase.value = {}
+  tokensApproximate.value = false
+  tokensLastCall.value = null
+  tokensExpanded.value = false
+  suspendState.value = 'running'
   clearSessionFromStorage()
   
   emit('complete')
@@ -1911,8 +1997,10 @@ function useSample() {
             <button
               v-if="isProcessing && !summary && !error"
               class="panel-btn panel-btn--cancel"
+              :class="{ 'is-suspending': suspendState === 'suspending' }"
               @click.stop="cancelIngestion"
-              title="중단"
+              :disabled="suspendState === 'suspending' || suspendState === 'suspended'"
+              :title="suspendState === 'suspending' ? '취소 중... (현재 LLM 호출 완료 대기)' : suspendState === 'suspended' ? '취소됨' : '중단 (다음 LLM 호출 경계에서 정지)'"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"></circle>
@@ -1941,8 +2029,44 @@ function useSample() {
             <div class="mini-progress-fill" :style="{ width: `${progress}%` }"></div>
           </div>
           <p class="floating-panel__message">
-            {{ isPausing ? '일시정지 요청 중... (현재 작업 완료 대기 중)' : currentMessage }}
+            {{
+              suspendState === 'suspending' ? '취소 요청됨 — 다음 LLM 호출 경계에서 정지...'
+              : suspendState === 'suspended' ? '취소됨'
+              : isPausing ? '일시정지 요청 중... (현재 작업 완료 대기 중)'
+              : currentMessage
+            }}
           </p>
+          <!-- Spec 017: Token counter chip (US1). Visible across processing/complete/error states. -->
+          <div v-if="showTokenChip" class="token-chip" :class="{ 'is-suspending': suspendState === 'suspending', 'is-suspended': suspendState === 'suspended', 'is-expanded': tokensExpanded }" @click.stop="tokensExpanded = !tokensExpanded" :title="tokensApproximate ? '토큰 수는 추정치 (~ 표시) — usage_metadata 없는 호출은 tiktoken 으로 근사' : '토큰 누적'">
+            <span class="token-chip__icon">⊙</span>
+            <span class="token-chip__total">{{ tokensDisplay }}</span>
+            <span v-if="tokensLastCall != null && tokensLastCall > 0 && !tokensExpanded" class="token-chip__last">+{{ formatTokens(tokensLastCall) }}</span>
+            <span class="token-chip__caret">{{ tokensExpanded ? '▾' : '▸' }}</span>
+          </div>
+          <div v-if="showTokenChip && tokensExpanded" class="token-chip__breakdown">
+            <div v-for="row in tokensByPhaseList" :key="row.phase" class="token-chip__row">
+              <span class="token-chip__phase">{{ row.phase }}</span>
+              <span class="token-chip__phase-count">{{ row.formatted }}</span>
+            </div>
+            <div v-if="tokensByPhaseList.length === 0" class="token-chip__empty">
+              아직 phase 별 분해 데이터가 없습니다.
+            </div>
+          </div>
+        </div>
+
+        <!-- Spec 017 — keep token chip visible in completion/error/suspended states too (FR-004) -->
+        <div v-if="!isProcessing && !isPanelMinimized && showTokenChip" class="floating-panel__progress">
+          <div class="token-chip is-final" @click.stop="tokensExpanded = !tokensExpanded" :title="tokensApproximate ? '토큰 수는 추정치 (~ 표시)' : '최종 토큰 누적'">
+            <span class="token-chip__icon">⊙</span>
+            <span class="token-chip__total">{{ tokensDisplay }}</span>
+            <span class="token-chip__caret">{{ tokensExpanded ? '▾' : '▸' }}</span>
+          </div>
+          <div v-if="tokensExpanded" class="token-chip__breakdown">
+            <div v-for="row in tokensByPhaseList" :key="row.phase" class="token-chip__row">
+              <span class="token-chip__phase">{{ row.phase }}</span>
+              <span class="token-chip__phase-count">{{ row.formatted }}</span>
+            </div>
+          </div>
         </div>
         
         <!-- Error/Cancellation Message (visible when not processing but has error) -->
@@ -3559,5 +3683,81 @@ function useSample() {
   padding: var(--spacing-sm);
   background: rgba(239, 68, 68, 0.05);
   border-radius: var(--radius-sm);
+}
+
+/* ─── Spec 017: Token counter chip + suspend state styling ─────────── */
+.token-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6366f1;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+  font-feature-settings: "tnum" 1;
+}
+.token-chip:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+.token-chip__icon { opacity: 0.7; font-size: 11px; }
+.token-chip__total { font-weight: 600; }
+.token-chip__last { opacity: 0.7; font-size: 11px; }
+.token-chip__caret { opacity: 0.55; font-size: 10px; }
+.token-chip.is-suspending {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #d97706;
+  opacity: 0.8;
+}
+.token-chip.is-suspended {
+  background: rgba(107, 114, 128, 0.1);
+  border-color: rgba(107, 114, 128, 0.3);
+  color: #6b7280;
+}
+.token-chip.is-final {
+  margin-top: 0;
+  background: rgba(107, 114, 128, 0.08);
+  border-color: rgba(107, 114, 128, 0.2);
+  color: #4b5563;
+}
+.token-chip__breakdown {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.025);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 6px;
+  font-size: 11px;
+  font-feature-settings: "tnum" 1;
+}
+.token-chip__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+}
+.token-chip__phase {
+  color: #6b7280;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.token-chip__phase-count {
+  color: #4b5563;
+  font-weight: 500;
+  margin-left: 8px;
+}
+.token-chip__empty {
+  color: #9ca3af;
+  font-style: italic;
+  text-align: center;
 }
 </style>

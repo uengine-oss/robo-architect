@@ -279,19 +279,11 @@ async def _create_aggregate_with_links(
         root_entity = getattr(agg, "root_entity", None) or agg_name
         invariants = getattr(agg, "invariants", None) or []
         
-        created_agg = await asyncio.wait_for(
-            asyncio.to_thread(
-                ctx.client.create_aggregate,
-                name=agg_name,
-                bc_id=bc_id,
-                root_entity=root_entity,
-                invariants=invariants,
-                enumerations=enum_list if enum_list else None,
-                value_objects=vo_list if vo_list else None,
-                display_name=agg_display_name,
-            ),
-            timeout=10.0
-        )
+        # FR-001 (spec 018): aggregates created in batch up front; lookup here.
+        bulk_results: dict[tuple[str, str], dict[str, Any]] = getattr(ctx, "_bulk_agg_results", None) or {}
+        created_agg = bulk_results.get((bc_id, agg_name))
+        if not created_agg or not created_agg.get("id"):
+            return None, f"bulk_create_aggregates returned empty result for {agg_name}"
         
         # Overwrite LLM-proposed id with UUID from DB
         try:
@@ -716,6 +708,50 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             
             total_bcs = len(ctx.bounded_contexts)
             allowed_names = _allowed_event_names_for_bc(ctx, us_id_set)
+
+            # ── Pre-build bulk rows + run ONE bulk_create_aggregates per BC ──
+            # FR-001 (spec 018).
+            bulk_rows: list[dict[str, Any]] = []
+            for agg in valid_aggregates:
+                an = getattr(agg, "name", None)
+                if not an:
+                    continue
+                adn = getattr(agg, "displayName", None)
+                bulk_rows.append(
+                    {
+                        "name": an,
+                        "bc_id": bc_id,
+                        "display_name": adn or an,
+                        "root_entity": getattr(agg, "root_entity", None) or an,
+                        "invariants": getattr(agg, "invariants", None) or [],
+                        "enumerations": getattr(agg, "enumerations", None),
+                        "value_objects": getattr(agg, "value_objects", None),
+                        "user_story_ids": getattr(agg, "user_story_ids", []) or [],
+                    }
+                )
+            from api.features.ingestion.suspend_gate import session_call_slot
+            try:
+                async with session_call_slot(ctx.session):
+                    bulk_results_list = await asyncio.to_thread(
+                        ctx.client.bulk_create_aggregates,
+                        bulk_rows,
+                        session_id=ctx.session.id,
+                        phase="extracting_aggregates",
+                    )
+            except Exception as exc:  # noqa: BLE001
+                SmartLogger.log(
+                    "ERROR",
+                    f"bulk_create_aggregates failed: {exc}",
+                    category="ingestion.batch.aggregate.flush_failed",
+                    params={"session_id": ctx.session.id, "rowCount": len(bulk_rows), "error": str(exc)},
+                )
+                bulk_results_list = []
+            ctx._bulk_agg_results = {  # type: ignore[attr-defined]
+                (row["bc_id"], row["name"]): dict(res)
+                for row, res in zip(bulk_rows, bulk_results_list)
+                if res.get("ok") and res.get("id")
+            }
+
             tasks = []
             for agg_idx, agg in enumerate(valid_aggregates):
                 tasks.append(
@@ -723,7 +759,7 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                         agg, agg_idx, bc, bc_idx, total_bcs, ctx, allowed_names
                     )
                 )
-            
+
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # Process results and yield progress events

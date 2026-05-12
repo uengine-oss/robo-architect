@@ -2,14 +2,20 @@
 LangChain cache toggling (feature-local).
 
 This mirrors robo-architect's ability to speed up repeated extractions by enabling a SQLite cache.
+
+Default behavior: cache is **on** by default during ingestion (env-flag overridable
+via `INGESTION_CACHE_DEFAULT=0`). Call `ensure_default_cache_state()` once at
+process startup (e.g. from FastAPI lifespan) so the default takes effect.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from api.platform.env import env_flag
 from api.platform.observability.smart_logger import SmartLogger
 
 _cache_enabled = False
+_default_applied = False
 
 
 def enable_langchain_cache() -> bool:
@@ -56,5 +62,38 @@ def disable_langchain_cache() -> bool:
 
 def is_cache_enabled() -> bool:
     return _cache_enabled
+
+
+def ensure_default_cache_state() -> bool:
+    """Apply the env-driven default exactly once at process startup.
+
+    Default: ON (cache enabled). Override with `INGESTION_CACHE_DEFAULT=0` in
+    environment to start with cache off.
+
+    Idempotent: subsequent calls are no-ops. Manual `enable_langchain_cache()` /
+    `disable_langchain_cache()` calls (e.g. via the /api/ingest/cache/* router
+    endpoints) take precedence after startup.
+    """
+    global _default_applied
+    if _default_applied:
+        return _cache_enabled
+    _default_applied = True
+    default_on = env_flag("INGESTION_CACHE_DEFAULT", True)
+    if default_on:
+        ok = enable_langchain_cache()
+        SmartLogger.log(
+            "INFO",
+            f"Ingestion cache default state applied: enabled={ok}",
+            category="ingestion.cache.default",
+            params={"default": True, "enabled": _cache_enabled},
+        )
+        return ok
+    SmartLogger.log(
+        "INFO",
+        "Ingestion cache default state applied: disabled (INGESTION_CACHE_DEFAULT=0)",
+        category="ingestion.cache.default",
+        params={"default": False, "enabled": False},
+    )
+    return False
 
 

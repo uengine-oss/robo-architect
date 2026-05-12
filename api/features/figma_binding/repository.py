@@ -412,6 +412,306 @@ def clear_ui_sync_status_for_binding_replace() -> int:
         return int(rec["n"]) if rec and rec.get("n") is not None else 0
 
 
+# ─── 020: Run lock ─────────────────────────────────────────────────────────
+
+
+def try_acquire_run_lock(*, run_id: str, actor: str) -> bool:
+    """Atomically claim the singleton binding's advisory lock for `run_id`.
+
+    Returns True if acquired (binding active and currentRunId was null), False
+    on contention (someone else holds it) or if the binding isn't active.
+    """
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (b:FigmaBinding {id: $id})
+            WHERE b.currentRunId IS NULL AND b.status = 'active'
+            SET b.currentRunId = $rid,
+                b.currentRunHolder = $actor
+            RETURN b.currentRunId AS rid
+            """,
+            id=SINGLETON_ID,
+            rid=run_id,
+            actor=actor or "unknown",
+        ).single()
+    return bool(rec and rec.get("rid") == run_id)
+
+
+def release_run_lock(*, run_id: str) -> None:
+    """Release the lock held by `run_id`. No-op if the lock is held by a
+    different run (defensive — protects against late releases clobbering a
+    successor's lock).
+    """
+    with get_session() as session:
+        session.run(
+            """
+            MATCH (b:FigmaBinding {id: $id, currentRunId: $rid})
+            SET b.currentRunId = null,
+                b.currentRunHolder = null
+            """,
+            id=SINGLETON_ID,
+            rid=run_id,
+        )
+
+
+def get_current_lock_holder() -> dict[str, Any] | None:
+    """If a run is currently in flight, return `{currentRunId, currentRunHolder}`."""
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (b:FigmaBinding {id: $id})
+            WHERE b.currentRunId IS NOT NULL
+            RETURN b.currentRunId AS rid, b.currentRunHolder AS holder
+            """,
+            id=SINGLETON_ID,
+        ).single()
+    if not rec:
+        return None
+    return {"currentRunId": rec["rid"], "currentRunHolder": rec.get("holder")}
+
+
+# ─── 020: SyncRun ──────────────────────────────────────────────────────────
+
+
+def create_sync_run(
+    *,
+    run_id: str,
+    kind: str,
+    binding_file_key: str,
+    actor: str,
+) -> dict[str, Any]:
+    """Insert a `:SyncRun {status:'running'}` row and edge it to the binding."""
+    now = _now_iso()
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (b:FigmaBinding {id: $bid})
+            CREATE (r:SyncRun {
+                id: $rid,
+                kind: $kind,
+                bindingFileKey: $fk,
+                actor: $actor,
+                startedAt: $now,
+                status: 'running',
+                summary: null,
+                finishedAt: null
+            })
+            CREATE (r)-[:RUN_OF]->(b)
+            RETURN r
+            """,
+            bid=SINGLETON_ID,
+            rid=run_id,
+            kind=kind,
+            fk=binding_file_key,
+            actor=actor or "unknown",
+            now=now,
+        ).single()
+    return dict(rec["r"]) if rec else {}
+
+
+def finalize_sync_run(
+    *,
+    run_id: str,
+    status: str,
+    summary: dict[str, Any] | None = None,
+) -> None:
+    """Move a running :SyncRun to a terminal state and freeze its summary map."""
+    with get_session() as session:
+        session.run(
+            """
+            MATCH (r:SyncRun {id: $rid})
+            WHERE r.status = 'running'
+            SET r.status = $status,
+                r.finishedAt = $now,
+                r.summary = $summary
+            """,
+            rid=run_id,
+            status=status,
+            now=_now_iso(),
+            summary=json.dumps(summary, ensure_ascii=False) if summary else None,
+        )
+
+
+def list_sync_runs(
+    *,
+    limit: int = 20,
+    include_previous_binding: bool = True,
+    current_file_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Most-recent runs first. When include_previous_binding is False and
+    current_file_key is provided, only runs whose bindingFileKey matches are
+    returned.
+    """
+    limit = max(1, min(int(limit or 20), 100))
+    with get_session() as session:
+        if include_previous_binding or not current_file_key:
+            records = session.run(
+                """
+                MATCH (r:SyncRun)
+                RETURN r
+                ORDER BY r.startedAt DESC
+                LIMIT $lim
+                """,
+                lim=limit,
+            ).data()
+        else:
+            records = session.run(
+                """
+                MATCH (r:SyncRun)
+                WHERE r.bindingFileKey = $fk
+                RETURN r
+                ORDER BY r.startedAt DESC
+                LIMIT $lim
+                """,
+                fk=current_file_key,
+                lim=limit,
+            ).data()
+
+    out: list[dict[str, Any]] = []
+    for rec in records:
+        n = rec["r"]
+        d = dict(n)
+        if d.get("summary"):
+            try:
+                d["summary"] = json.loads(d["summary"])
+            except Exception:
+                pass
+        out.append(d)
+    return out
+
+
+def get_sync_run(run_id: str) -> dict[str, Any] | None:
+    with get_session() as session:
+        rec = session.run(
+            "MATCH (r:SyncRun {id: $rid}) RETURN r",
+            rid=run_id,
+        ).single()
+    if not rec:
+        return None
+    d = dict(rec["r"])
+    if d.get("summary"):
+        try:
+            d["summary"] = json.loads(d["summary"])
+        except Exception:
+            pass
+    return d
+
+
+def release_stale_locks(older_than_minutes: int = 30) -> int:
+    """Recovery hook: any :SyncRun stuck in 'running' for > N minutes plus its
+    associated binding lock are released. Returns count of runs reset.
+    """
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (r:SyncRun {status:'running'})
+            WHERE datetime(r.startedAt) < datetime() - duration({minutes: $m})
+            WITH r
+            OPTIONAL MATCH (b:FigmaBinding {currentRunId: r.id})
+            SET r.status = 'aborted-binding-unreachable',
+                r.finishedAt = datetime(),
+                r.summary = coalesce(r.summary, '{}')
+            FOREACH (bb IN CASE WHEN b IS NULL THEN [] ELSE [b] END |
+                SET bb.currentRunId = null, bb.currentRunHolder = null
+            )
+            RETURN count(r) AS n
+            """,
+            m=int(older_than_minutes),
+        ).single()
+    return int(rec["n"]) if rec else 0
+
+
+# ─── 020: Failures (extension of 016 v1.2 store) ──────────────────────────
+
+
+def list_failures_with_binding_key() -> list[dict[str, Any]]:
+    """Every :UI {figmaSyncStatus:'failed'} with the fields needed by the
+    classifier — superset of 016's list_failed_sync_uis (adds the file-key
+    snapshot needed for "이전 바인딩" detection).
+    """
+    with get_session() as session:
+        result = session.run(
+            """
+            MATCH (u:UI)
+            WHERE u.figmaSyncStatus = 'failed'
+            RETURN u.id AS id,
+                   coalesce(u.displayName, u.name, '') AS displayName,
+                   u.figmaSyncLastError AS lastError,
+                   toString(u.figmaSyncLastAttemptAt) AS lastAttemptAt,
+                   u.figmaSyncBindingFileKey AS bindingFileKey
+            ORDER BY u.figmaSyncLastAttemptAt DESC
+            """
+        )
+        return [
+            {
+                "uiId": r["id"],
+                "displayName": r["displayName"],
+                "lastErrorKr": r["lastError"],
+                "lastAttemptAt": r["lastAttemptAt"],
+                "figmaSyncBindingFileKey": r.get("bindingFileKey"),
+            }
+            for r in result
+            if r and r.get("id")
+        ]
+
+
+def fetch_classifier_view(ui_ids: list[str]) -> dict[str, Any]:
+    """One-shot Cypher to populate the classifier's `neo4j_view` for many ids
+    at once: `{ui_present: {id: bool}, storyboard_archived: {id: bool}}`.
+    """
+    if not ui_ids:
+        return {"ui_present": {}, "storyboard_archived": {}}
+
+    with get_session() as session:
+        # Which UI ids still exist
+        present_rows = session.run(
+            """
+            UNWIND $ids AS uid
+            OPTIONAL MATCH (u:UI {id: uid})
+            RETURN uid AS id, (u IS NOT NULL) AS present
+            """,
+            ids=ui_ids,
+        ).data()
+
+        # Owning-storyboard archived check: a UI is "owned by an archived
+        # storyboard" when the BFS-resolved entry-command's
+        # :StoryboardPageMapping.status = 'archived'.
+        archived_rows = session.run(
+            """
+            UNWIND $ids AS uid
+            OPTIONAL MATCH (u:UI {id: uid})<-[*1..30]-(c:Command)
+            WHERE c IS NOT NULL AND NOT EXISTS { (:Policy)-[:INVOKES]->(c) }
+            WITH uid, c LIMIT 1
+            OPTIONAL MATCH (m:StoryboardPageMapping {commandId: c.id})
+            RETURN uid AS id,
+                   coalesce(m.status, 'active') = 'archived' AS archived
+            """,
+            ids=ui_ids,
+        ).data()
+
+    ui_present: dict[str, bool] = {r["id"]: bool(r.get("present")) for r in present_rows}
+    storyboard_archived: dict[str, bool] = {
+        r["id"]: bool(r.get("archived")) for r in archived_rows
+    }
+    return {"ui_present": ui_present, "storyboard_archived": storyboard_archived}
+
+
+def update_ui_sync_binding_file_key(ui_id: str, file_key: str | None) -> None:
+    """Stamp the active binding's file key onto the :UI alongside figmaSync*
+    writes. Called by extended bulk_sync / push paths so the classifier's
+    "이전 바인딩" check has data to compare against.
+    """
+    with get_session() as session:
+        session.run(
+            """
+            MATCH (u:UI {id: $uid})
+            SET u.figmaSyncBindingFileKey = $fk
+            """,
+            uid=ui_id,
+            fk=file_key,
+        )
+
+
 # ─── helpers ──────────────────────────────────────────────────────────────
 
 

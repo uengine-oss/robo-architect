@@ -58,6 +58,28 @@ async def lifespan(app: FastAPI):
         },
     )
     init_neo4j_driver(log=True)
+    # Apply ingestion cache default (on by default; override INGESTION_CACHE_DEFAULT=0).
+    try:
+        from api.features.ingestion.langchain_cache import ensure_default_cache_state
+        ensure_default_cache_state()
+    except Exception as e:  # noqa: BLE001 — cache is best-effort
+        SmartLogger.log(
+            "WARN",
+            f"Failed to apply ingestion cache default: {e}",
+            category="ingestion.cache.default_failed",
+            params={"error": str(e)},
+        )
+    # 020: release any stale Figma full-sync locks left over from a prior crash.
+    try:
+        from api.features.figma_binding.service import release_stale_locks_on_startup
+        release_stale_locks_on_startup()
+    except Exception as e:  # noqa: BLE001 — recovery is best-effort
+        SmartLogger.log(
+            "WARN",
+            f"Failed to release stale figma_binding locks: {e}",
+            category="figma_binding.full_sync.stale_lock_released",
+            params={"error": str(e)},
+        )
     yield
     close_neo4j_driver(log=True)
     SmartLogger.log("INFO", "API stopped", category="api.lifespan")
@@ -204,6 +226,10 @@ app.include_router(figma_binding_plugin_ack_router)
 # AI Design proxy (open-pencil AI → backend LLM runtime)
 from api.features.ai_design.router import router as ai_design_router
 app.include_router(ai_design_router)
+
+# DDD-for-SDD artifact generation (feature 022)
+from api.features.ddd_spec.router import router as ddd_spec_router
+app.include_router(ddd_spec_router)
 
 
 if __name__ == "__main__":

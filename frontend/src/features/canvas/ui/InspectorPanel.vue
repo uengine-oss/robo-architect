@@ -510,6 +510,193 @@ const showGWTEditor = computed(() => {
   return nodeLabel.value === 'Command'
 })
 
+// UserStory branch (spec 019-userstory-properties-panel) — replaces the
+// legacy UserStoryEditModal. Editor lives inside the properties tab and
+// PATCHes /api/user-story/{id} on save.
+const showUserStoryEditor = computed(() => nodeLabel.value === 'UserStory')
+
+const USER_STORY_PRIORITY_OPTIONS = ['low', 'medium', 'high']
+const USER_STORY_STATUS_OPTIONS = ['draft', 'new', 'in-progress', 'approved', 'implemented', 'done']
+const MAX_ACCEPTANCE_CRITERIA = 100
+
+const userStoryForm = ref({
+  role: '',
+  action: '',
+  benefit: '',
+  priority: 'medium',
+  status: 'draft',
+  acceptanceCriteria: [],
+  criteriaUserEdited: false,
+  criteriaEditedAt: null
+})
+const userStoryInitial = ref(null)
+const userStorySaving = ref(false)
+const userStoryError = ref(null)
+const userStorySuccess = ref(null)
+
+function resetUserStoryFormFromNode() {
+  const n = node.value
+  if (!n) {
+    userStoryInitial.value = null
+    return
+  }
+  const d = n.data || {}
+  const snap = {
+    role: d.role || '',
+    action: d.action || '',
+    benefit: d.benefit || '',
+    priority: d.priority || 'medium',
+    status: d.status || 'draft',
+    acceptanceCriteria: Array.isArray(d.acceptanceCriteria) ? [...d.acceptanceCriteria] : [],
+    criteriaUserEdited: !!d.criteriaUserEdited,
+    criteriaEditedAt: d.criteriaEditedAt || null
+  }
+  userStoryForm.value = { ...snap }
+  userStoryInitial.value = { ...snap, acceptanceCriteria: [...snap.acceptanceCriteria] }
+  userStoryError.value = null
+  userStorySuccess.value = null
+}
+
+const userStoryDirty = computed(() => {
+  if (!userStoryInitial.value) return false
+  const cur = userStoryForm.value
+  const orig = userStoryInitial.value
+  if (cur.role !== orig.role) return true
+  if (cur.action !== orig.action) return true
+  if (cur.benefit !== orig.benefit) return true
+  if (cur.priority !== orig.priority) return true
+  if (cur.status !== orig.status) return true
+  if (cur.acceptanceCriteria.length !== orig.acceptanceCriteria.length) return true
+  for (let i = 0; i < cur.acceptanceCriteria.length; i++) {
+    if (cur.acceptanceCriteria[i] !== orig.acceptanceCriteria[i]) return true
+  }
+  return false
+})
+
+const userStoryCriteriaDirty = computed(() => {
+  if (!userStoryInitial.value) return false
+  const cur = userStoryForm.value.acceptanceCriteria
+  const orig = userStoryInitial.value.acceptanceCriteria
+  if (cur.length !== orig.length) return true
+  for (let i = 0; i < cur.length; i++) {
+    if (cur[i] !== orig[i]) return true
+  }
+  return false
+})
+
+function addAcceptanceCriterion() {
+  if (userStoryForm.value.acceptanceCriteria.length >= MAX_ACCEPTANCE_CRITERIA) {
+    userStoryError.value = `Acceptance Criteria 최대 ${MAX_ACCEPTANCE_CRITERIA}개까지 추가 가능합니다.`
+    return
+  }
+  userStoryForm.value.acceptanceCriteria.push('')
+}
+
+function removeAcceptanceCriterion(idx) {
+  if (idx < 0 || idx >= userStoryForm.value.acceptanceCriteria.length) return
+  userStoryForm.value.acceptanceCriteria.splice(idx, 1)
+}
+
+function moveCriterionUp(idx) {
+  if (idx <= 0 || idx >= userStoryForm.value.acceptanceCriteria.length) return
+  const arr = userStoryForm.value.acceptanceCriteria
+  ;[arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]
+}
+
+function moveCriterionDown(idx) {
+  const arr = userStoryForm.value.acceptanceCriteria
+  if (idx < 0 || idx >= arr.length - 1) return
+  ;[arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]
+}
+
+async function saveUserStory() {
+  if (!node.value) return
+  if (!userStoryDirty.value) return
+  const id = node.value.id
+  const opId = newOpId('us_save')
+
+  // Build delta-PATCH body — only include changed fields.
+  const cur = userStoryForm.value
+  const orig = userStoryInitial.value || {}
+  const body = {}
+  if (cur.role !== orig.role) body.role = cur.role
+  if (cur.action !== orig.action) body.action = cur.action
+  if (cur.benefit !== orig.benefit) body.benefit = cur.benefit
+  if (cur.priority !== orig.priority) body.priority = cur.priority
+  if (cur.status !== orig.status) body.status = cur.status
+  if (userStoryCriteriaDirty.value) {
+    // Strip empty-after-trim entries (server does the same but UX consistency
+    // matters: the user sees the same list they will get back).
+    body.acceptance_criteria = cur.acceptanceCriteria
+      .map(s => (typeof s === 'string' ? s.trim() : ''))
+      .filter(s => s.length > 0)
+  }
+
+  if (Object.keys(body).length === 0) return
+
+  userStorySaving.value = true
+  userStoryError.value = null
+  userStorySuccess.value = null
+  try {
+    const res = await fetch(`/api/user-story/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`
+      try {
+        const detail = await res.json()
+        if (detail && detail.detail) msg = detail.detail
+      } catch (_) { /* keep msg */ }
+      throw new Error(msg)
+    }
+    const updated = await res.json()
+    log.info('user_story_patch_done', 'UserStory PATCH succeeded.', {
+      opId,
+      nodeId: id,
+      changedFields: Object.keys(body),
+      criteriaUserEdited: !!updated.criteriaUserEdited
+    })
+
+    // Update local form state from the server response so subsequent dirty
+    // checks compare against the new persisted state.
+    if (node.value && node.value.data) {
+      Object.assign(node.value.data, {
+        role: updated.role,
+        action: updated.action,
+        benefit: updated.benefit,
+        priority: updated.priority,
+        status: updated.status,
+        acceptanceCriteria: updated.acceptanceCriteria || [],
+        criteriaUserEdited: !!updated.criteriaUserEdited,
+        criteriaEditedAt: updated.criteriaEditedAt || null
+      })
+    }
+    resetUserStoryFormFromNode()
+    userStorySuccess.value = '저장되었습니다.'
+
+    // Refresh the navigator so updated criteria/fields surface there too.
+    try {
+      const { useNavigatorStore } = await import('@/features/navigator/navigator.store')
+      const navigatorStore = useNavigatorStore()
+      await navigatorStore.refreshAll?.({ trigger: 'InspectorPanel:userStorySaved', userStoryId: id, opId })
+    } catch (e) {
+      log.warn('user_story_navigator_refresh_failed', 'Navigator refresh after UserStory save failed (non-fatal).', {
+        opId, nodeId: id, error: e?.message || String(e)
+      })
+    }
+    emit('updated', { id })
+  } catch (e) {
+    log.error('user_story_patch_error', 'UserStory PATCH failed.', {
+      opId, nodeId: id, error: e?.message || String(e)
+    })
+    userStoryError.value = e?.message || '저장에 실패했습니다.'
+  } finally {
+    userStorySaving.value = false
+  }
+}
+
 function onPropertyEditorStateChange(s) {
   propIsDirty.value = !!s?.isDirty
   propHasBlockingErrors.value = !!s?.hasBlockingErrors
@@ -643,6 +830,13 @@ function resetToNode() {
       propertyEditorRef.value?.resetFromNode?.(node.value)
     }
   })
+
+  // UserStory editor uses its own form/snapshot (not the schema-driven one).
+  if (showUserStoryEditor.value) {
+    resetUserStoryFormFromNode()
+  } else {
+    userStoryInitial.value = null
+  }
 }
 
 // Watch for selected nodes changes and reset index if needed
@@ -3126,6 +3320,124 @@ function updateVoFieldValue(fieldName, value) {
           <div class="inspector-kv">
             <div class="k">type</div>
             <div class="v">{{ nodeLabel }}</div>
+          </div>
+
+          <!-- UserStory branch (spec 019-userstory-properties-panel). -->
+          <div v-if="showUserStoryEditor" class="inspector-userstory-section">
+            <div class="inspector-field">
+              <label class="inspector-field__label">As a (role)</label>
+              <input
+                class="inspector-input"
+                type="text"
+                v-model="userStoryForm.role"
+                :disabled="userStorySaving"
+                placeholder="user, customer, admin..."
+              />
+            </div>
+            <div class="inspector-field">
+              <label class="inspector-field__label">I want to (action)</label>
+              <textarea
+                class="inspector-textarea"
+                v-model="userStoryForm.action"
+                :disabled="userStorySaving"
+                rows="3"
+                placeholder="perform some action..."
+              />
+            </div>
+            <div class="inspector-field">
+              <label class="inspector-field__label">So that (benefit)</label>
+              <textarea
+                class="inspector-textarea"
+                v-model="userStoryForm.benefit"
+                :disabled="userStorySaving"
+                rows="2"
+                placeholder="I can achieve some benefit..."
+              />
+            </div>
+            <div class="inspector-field">
+              <label class="inspector-field__label">Priority</label>
+              <select class="inspector-select" v-model="userStoryForm.priority" :disabled="userStorySaving">
+                <option v-for="opt in USER_STORY_PRIORITY_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+            <div class="inspector-field">
+              <label class="inspector-field__label">Status</label>
+              <select class="inspector-select" v-model="userStoryForm.status" :disabled="userStorySaving">
+                <option v-for="opt in USER_STORY_STATUS_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+
+            <!-- Acceptance Criteria editor -->
+            <div class="inspector-userstory-criteria">
+              <div class="inspector-section__header">
+                <h3 class="inspector-section__title">
+                  Acceptance Criteria
+                  <span v-if="userStoryForm.criteriaUserEdited" class="inspector-userstory-criteria__edited-badge" title="이 Acceptance Criteria는 수동 편집되었으며 재생성으로 덮어쓰지 않습니다.">edited</span>
+                </h3>
+              </div>
+              <div v-if="userStoryForm.acceptanceCriteria.length === 0" class="inspector-userstory-criteria__empty">
+                아직 작성된 Acceptance Criteria가 없습니다.
+              </div>
+              <div
+                v-for="(_, idx) in userStoryForm.acceptanceCriteria"
+                :key="idx"
+                class="inspector-userstory-criteria__row"
+              >
+                <span class="inspector-userstory-criteria__index">{{ idx + 1 }}.</span>
+                <textarea
+                  class="inspector-textarea inspector-userstory-criteria__input"
+                  v-model="userStoryForm.acceptanceCriteria[idx]"
+                  :disabled="userStorySaving"
+                  rows="2"
+                  placeholder="Given/When/Then 작성 시 참고할 조건을 입력하세요"
+                />
+                <div class="inspector-userstory-criteria__row-actions">
+                  <button
+                    type="button"
+                    class="inspector-userstory-criteria__btn"
+                    :disabled="userStorySaving || idx === 0"
+                    @click="moveCriterionUp(idx)"
+                    title="위로"
+                  >▲</button>
+                  <button
+                    type="button"
+                    class="inspector-userstory-criteria__btn"
+                    :disabled="userStorySaving || idx === userStoryForm.acceptanceCriteria.length - 1"
+                    @click="moveCriterionDown(idx)"
+                    title="아래로"
+                  >▼</button>
+                  <button
+                    type="button"
+                    class="inspector-userstory-criteria__btn inspector-userstory-criteria__btn--danger"
+                    :disabled="userStorySaving"
+                    @click="removeAcceptanceCriterion(idx)"
+                    title="삭제"
+                  >✕</button>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="inspector-userstory-criteria__add"
+                :disabled="userStorySaving || userStoryForm.acceptanceCriteria.length >= MAX_ACCEPTANCE_CRITERIA"
+                @click="addAcceptanceCriterion"
+              >
+                + Acceptance Criterion 추가
+              </button>
+            </div>
+
+            <div class="inspector-userstory-actions">
+              <button
+                type="button"
+                class="inspector-panel__btn primary"
+                :disabled="userStorySaving || !userStoryDirty"
+                @click="saveUserStory"
+              >
+                <span v-if="userStorySaving">저장 중...</span>
+                <span v-else>저장</span>
+              </button>
+            </div>
+            <div v-if="userStoryError" class="inspector-userstory-message inspector-userstory-message--error">{{ userStoryError }}</div>
+            <div v-if="userStorySuccess" class="inspector-userstory-message inspector-userstory-message--success">{{ userStorySuccess }}</div>
           </div>
 
           <div v-for="field in schema.fields" :key="field.key" class="inspector-field">
@@ -6671,6 +6983,108 @@ function updateVoFieldValue(fieldName, value) {
 .ui-preview-convert-panel__body {
   max-height: 400px;
   overflow: hidden;
+}
+
+/* UserStory branch (spec 019-userstory-properties-panel) */
+.inspector-userstory-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.inspector-userstory-criteria {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+.inspector-userstory-criteria__edited-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 8px;
+  background: #fde68a;
+  color: #92400e;
+  vertical-align: middle;
+}
+.inspector-userstory-criteria__empty {
+  padding: 8px 0;
+  color: var(--color-text-light, #6b7280);
+  font-size: 13px;
+  font-style: italic;
+}
+.inspector-userstory-criteria__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.inspector-userstory-criteria__index {
+  flex-shrink: 0;
+  padding-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-light, #6b7280);
+  min-width: 22px;
+}
+.inspector-userstory-criteria__input {
+  flex: 1;
+  min-width: 0;
+}
+.inspector-userstory-criteria__row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.inspector-userstory-criteria__btn {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  padding: 0;
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-bg, #fff);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.inspector-userstory-criteria__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.inspector-userstory-criteria__btn--danger:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+.inspector-userstory-criteria__add {
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: 1px dashed var(--color-border, #cbd5e1);
+  background: transparent;
+  color: var(--color-text, #374151);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.inspector-userstory-criteria__add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.inspector-userstory-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.inspector-userstory-message {
+  font-size: 13px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.inspector-userstory-message--error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.inspector-userstory-message--success {
+  background: #d1fae5;
+  color: #065f46;
 }
 </style>
 

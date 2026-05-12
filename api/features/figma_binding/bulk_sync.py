@@ -71,6 +71,10 @@ async def sync_batch(
     if not ui_ids:
         return {"skipped": False, "syncedCount": 0, "failedCount": 0}
 
+    # 020: Stamp every figmaSync* status write with the binding file key so the
+    # FR-020 retry classifier can detect "이전 바인딩" failures after a replace.
+    binding_file_key = binding.get("figmaFileKey")
+
     SmartLogger.log(
         "INFO",
         f"figma_binding.bulk_sync.start session={session_id} batch={len(ui_ids)}",
@@ -91,6 +95,7 @@ async def sync_batch(
     for uid in orphan_uis:
         err = "이 UI는 어떤 스토리보드에도 속하지 않습니다."
         repository.mark_ui_sync_failed(uid, error_ko=err)
+        repository.update_ui_sync_binding_file_key(uid, binding_file_key)
         if on_event:
             on_event(_EVT_FAILED, {"uiId": uid, "errorKo": err})
         SmartLogger.log(
@@ -117,6 +122,7 @@ async def sync_batch(
             first = unreachable_pages[0]
             err = first.get("error") or first.get("reason") or err
         repository.mark_ui_sync_failed(uid, error_ko=err)
+        repository.update_ui_sync_binding_file_key(uid, binding_file_key)
         if on_event:
             on_event(_EVT_FAILED, {"uiId": uid, "errorKo": err})
         failed_due_to_page.append(uid)
@@ -146,6 +152,7 @@ async def sync_batch(
                 page_id=result.get("figmaPageId") or ui_to_page_id[uid],
                 node_id=result["figmaNodeId"],
             )
+            repository.update_ui_sync_binding_file_key(uid, binding_file_key)
             synced += 1
             SmartLogger.log(
                 "INFO",
@@ -161,6 +168,7 @@ async def sync_batch(
         else:
             err = result.get("errorKo") or "Figma 동기화에 실패했습니다."
             repository.mark_ui_sync_failed(uid, error_ko=err)
+            repository.update_ui_sync_binding_file_key(uid, binding_file_key)
             failed += 1
             SmartLogger.log(
                 "WARN",

@@ -321,6 +321,18 @@ FOR (m:StoryboardPageMapping) REQUIRE m.commandId IS UNIQUE;
 CREATE CONSTRAINT binding_history_event_id_unique IF NOT EXISTS
 FOR (e:BindingHistoryEvent) REQUIRE e.id IS UNIQUE;
 
+// ------------------------------------------------------------
+// SyncRun (020 — figma-sync-recovery)
+// ------------------------------------------------------------
+CREATE CONSTRAINT sync_run_id_unique IF NOT EXISTS
+FOR (r:SyncRun) REQUIRE r.id IS UNIQUE;
+
+CREATE INDEX sync_run_status_idx IF NOT EXISTS
+FOR (r:SyncRun) ON (r.status);
+
+CREATE INDEX sync_run_binding_file_key_idx IF NOT EXISTS
+FOR (r:SyncRun) ON (r.bindingFileKey);
+
 // 부모 내 Then 중복 방지: (parentType,parentId) 유니크 (하나의 Command/Policy당 하나의 Then)
 CREATE CONSTRAINT constraint_then_parent_unique IF NOT EXISTS
 FOR (t:Then)

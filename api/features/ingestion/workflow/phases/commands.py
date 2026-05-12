@@ -56,19 +56,12 @@ async def _create_command_with_links(
     agg_id = agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None)
     
     try:
-        created_cmd = await asyncio.wait_for(
-            asyncio.to_thread(
-                ctx.client.create_command,
-                name=cmd_name,
-                aggregate_id=agg_id,
-                actor=cmd_actor,
-                category=category,
-                input_schema=input_schema,
-                display_name=cmd_display_name,
-                description=description,
-            ),
-            timeout=10.0
-        )
+        # FR-001 (spec 018): commands are created in batch up front;
+        # this lookup replaces the per-row Neo4j round-trip.
+        bulk_results: dict[tuple[str, str], dict[str, Any]] = getattr(ctx, "_bulk_cmd_results", None) or {}
+        created_cmd = bulk_results.get((agg_id, cmd_name))
+        if not created_cmd or not created_cmd.get("id"):
+            return None, f"bulk_create_commands returned empty result for {cmd_name}"
         
         # Overwrite LLM-proposed id with UUID from DB (only if cmd is an object, not dict)
         try:
@@ -587,10 +580,56 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     return
                 
                 total_cmds = len(commands)
+
+                # ── Pre-build bulk rows + run ONE bulk_create_commands per Agg ──
+                # FR-001 (spec 018): per-Aggregate batching; same trade-off as
+                # events phase — preserves streaming UX while still dropping
+                # N→1 Neo4j round-trips within an Aggregate's commands.
+                bulk_rows: list[dict[str, Any]] = []
+                for cmd in commands:
+                    cn = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")
+                    if not cn:
+                        continue
+                    cdn = cmd.get("displayName") if isinstance(cmd, dict) else getattr(cmd, "displayName", None)
+                    bulk_rows.append(
+                        {
+                            "name": cn,
+                            "aggregate_id": agg.get("id") if isinstance(agg, dict) else getattr(agg, "id", None),
+                            "actor": cmd.get("actor") if isinstance(cmd, dict) else getattr(cmd, "actor", "user"),
+                            "category": cmd.get("category") if isinstance(cmd, dict) else getattr(cmd, "category", None),
+                            "input_schema": cmd.get("inputSchema") if isinstance(cmd, dict) else getattr(cmd, "inputSchema", None),
+                            "display_name": cdn or cn,
+                            "description": cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", None),
+                            "user_story_ids": (cmd.get("user_story_ids") if isinstance(cmd, dict) else getattr(cmd, "user_story_ids", [])) or [],
+                        }
+                    )
+                from api.features.ingestion.suspend_gate import session_call_slot
+                try:
+                    async with session_call_slot(ctx.session):
+                        bulk_results_list = await asyncio.to_thread(
+                            ctx.client.bulk_create_commands,
+                            bulk_rows,
+                            session_id=ctx.session.id,
+                            phase="extracting_commands",
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    SmartLogger.log(
+                        "ERROR",
+                        f"bulk_create_commands failed: {exc}",
+                        category="ingestion.batch.command.flush_failed",
+                        params={"session_id": ctx.session.id, "rowCount": len(bulk_rows), "error": str(exc)},
+                    )
+                    bulk_results_list = []
+                ctx._bulk_cmd_results = {  # type: ignore[attr-defined]
+                    (row["aggregate_id"], row["name"]): dict(res)
+                    for row, res in zip(bulk_rows, bulk_results_list)
+                    if res.get("ok") and res.get("id")
+                }
+
                 tasks = []
                 for cmd_idx, cmd in enumerate(commands):
                     tasks.append(_create_command_with_links(cmd, cmd_idx, total_cmds, agg, ctx))
-                
+
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 
                 # Process results and yield progress events

@@ -259,6 +259,21 @@ CREATE (cmd)-[:HAS_THEN]->(then);
 
 
 // ============================================================
+// Feature 020 — Figma Sync Recovery 관계 정의
+// ============================================================
+//
+// RUN_OF : (SyncRun)-[:RUN_OF]->(FigmaBinding)
+//   - 한 :SyncRun 은 dispatch 시점의 binding 을 가리킨다.
+//   - cardinality: many → 1 (한 binding 에 여러 run; replace 후 새 run 들은
+//     새 binding 을 가리키며 이전 run 들은 그대로 이전 binding 노드를 가리키지만
+//     :FigmaBinding 은 singleton 이라 동일 노드 — 식별은 :SyncRun.bindingFileKey
+//     로 함).
+//   - 사용처: GET /api/figma-binding/sync-runs 가 binding 별 run 을 fetch 할 때.
+//
+// ============================================================
+
+
+// ============================================================
 // Event Storming Flow 시각화
 // ============================================================
 //

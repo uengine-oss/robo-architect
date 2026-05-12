@@ -87,4 +87,94 @@ export async function listStoryboards() {
   return (await asJsonOr404(r)) || []
 }
 
+// ─── 020: Retroactive full-sync ──────────────────────────────────────────
+
+/**
+ * Start a retroactive full-sync. Returns one of:
+ *   { runId, kind, startedAt, streamUrl }                         on 202
+ *   { locked: true, currentRunId, currentRunHolder, streamUrl }   on 409
+ * Throws on 404/502.
+ */
+export async function startFullSync() {
+  const r = await fetch(`${BASE}/full-sync`, { method: 'POST' })
+  if (r.status === 409) {
+    let body
+    try { body = await r.json() } catch { body = {} }
+    const detail = body?.detail || body || {}
+    return {
+      locked: true,
+      currentRunId: detail.currentRunId,
+      currentRunHolder: detail.currentRunHolder,
+      messageKr: detail.messageKr || '다른 사용자가 동기화 중입니다',
+      streamUrl: detail.streamUrl,
+    }
+  }
+  return asJsonOr404(r)
+}
+
+export async function cancelFullSync(runId) {
+  const r = await fetch(`${BASE}/full-sync/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+  })
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return r.json()
+}
+
+/**
+ * Subscribe to a full-sync's SSE progress stream. Returns a closer fn.
+ * Each event is delivered as { name, payload } to onEvent.
+ */
+export function subscribeFullSyncStream(runId, { onEvent, onClose, onError } = {}) {
+  const url = `${BASE}/full-sync/${encodeURIComponent(runId)}/stream`
+  const es = new EventSource(url)
+  const eventNames = [
+    'run_started', 'progress', 'page_ok', 'page_failed',
+    'ui_generated', 'ui_pushed', 'ui_failed',
+    'run_completed', 'run_cancelled', 'run_aborted', 'error',
+  ]
+  for (const name of eventNames) {
+    es.addEventListener(name, (ev) => {
+      let payload = {}
+      try { payload = JSON.parse(ev.data) } catch { /* keep empty */ }
+      onEvent && onEvent(name, payload)
+      if (name === 'run_completed' || name === 'run_cancelled' || name === 'run_aborted') {
+        es.close()
+        onClose && onClose(name, payload)
+      }
+    })
+  }
+  es.onerror = (ev) => {
+    onError && onError(ev)
+  }
+  return () => { try { es.close() } catch { /* noop */ } }
+}
+
+export async function listSyncRuns(limit = 20, includePreviousBinding = true) {
+  const url = `${BASE}/sync-runs?limit=${encodeURIComponent(limit)}&includePreviousBinding=${includePreviousBinding ? 'true' : 'false'}`
+  const r = await fetch(url)
+  return (await asJsonOr404(r)) || { currentBindingFileKey: null, runs: [] }
+}
+
+export async function listProjectFailures() {
+  const r = await fetch(`${BASE}/failures`)
+  return (await asJsonOr404(r)) || {
+    currentBindingFileKey: null, retryable: [], nonRetryable: [], inFlight: [],
+  }
+}
+
+// ─── 016 v1.2 retry-sync (extended in 020 with dedupe + classifier server-side) ──
+
+/**
+ * Trigger a retry of one or more failed UIs. uiIds=null/empty → retry all.
+ * Returns the synchronous summary { sessionId, syncedCount, failedCount, events, summary }.
+ */
+export async function retrySync(uiIds = null) {
+  const r = await fetch(`${BASE}/retry-sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uiIds: uiIds && uiIds.length ? uiIds : null }),
+  })
+  return asJsonOr404(r)
+}
+
 export { getStoredFigmaCreds, setStoredFigmaCreds }

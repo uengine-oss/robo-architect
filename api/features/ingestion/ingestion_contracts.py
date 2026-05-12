@@ -39,6 +39,11 @@ class ProgressEvent(BaseModel):
     message: str
     progress: int  # 0-100
     data: Optional[dict] = None  # Created objects / step payloads
+    # Spec 017 — additive, optional fields. Frontend treats absence as
+    # "no update; keep showing previous value." See contracts/sse-events.md
+    # for the full schema.
+    tokens: Optional[dict] = None  # {total, byPhase?, approximate?, lastCallTokens?}
+    suspendState: Optional[str] = None  # "running" | "suspending" | "suspended"
 
 
 class CreatedObject(BaseModel):
@@ -71,6 +76,13 @@ class GeneratedUserStory(BaseModel):
     source_unit_id: Optional[str] = None
     # BL sequence 번호 리스트 — 이 US가 어떤 BL에서 유래했는지 (필수: 입력의 BL[N] 번호)
     source_bl: list[int] = Field(default_factory=list, description="BL sequence numbers this US originated from. Only used when source_type is analyzer_graph.")
+    # Acceptance criteria — field-level / data-validation / business-rule details
+    # that belong to *this* user story but should not be promoted to a separate
+    # user story. Example: for "회원이 회원가입을 한다", the acceptance criteria
+    # might list ["이름·휴대폰번호·이메일·생년월일·성별이 저장된다", "약관 동의 결과가
+    # 함께 저장된다", ...]. Cross-chunk consolidation populates this from
+    # rule-fragments that the chunk-level extraction created as separate stories.
+    acceptance_criteria: list[str] = Field(default_factory=list, description="Field-level / business-rule details for this user story. Not separate stories.")
 
 
 class UserStoryList(BaseModel):

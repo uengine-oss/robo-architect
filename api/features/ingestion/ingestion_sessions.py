@@ -40,6 +40,39 @@ class IngestionSession:
     # JSX-based open-pencil agent — Phase 1 of the AI design backend port).
     ui_generation_mode: str = "html"
 
+    # ─── Spec 017: Token counter ─────────────────────────────────────────
+    # Cumulative across the run; updated by IngestionTokenCallback on every
+    # successful LLM call. Reset implicitly because sessions are recreated
+    # per upload.
+    tokens_total: int = 0
+    # Per-phase aggregation; key = `IngestionPhase` value (e.g. "extracting_events").
+    tokens_by_phase: dict[str, int] = field(default_factory=dict)
+    # Sticky once True — flips when at least one call was tokenized via the
+    # heuristic / fallback path (D2). Drives the `~` prefix in the UI chip.
+    tokens_approximate: bool = False
+    # Most recent LLM call's contribution. Used for the "this call cost N"
+    # diff-display in SSE; overwritten per call.
+    tokens_last_call: Optional[int] = None
+    # Sequence number of the most recent emitted-progress event that carried
+    # `tokens_by_phase`; lets the workflow runner emit a sparse `byPhase`
+    # diff (only include phases that changed since the last emit).
+    _tokens_by_phase_emit_snapshot: dict[str, int] = field(default_factory=dict)
+
+    # ─── Spec 017: Granular suspend ──────────────────────────────────────
+    # User-visible suspend state machine: "running" | "suspending" | "suspended".
+    # Distinct from `is_cancelled` (the trigger flag) so the UI doesn't have
+    # to combine multiple booleans. Transitions:
+    #   running ──user clicks 취소──▶ suspending ──gate fires──▶ suspended
+    suspend_state: str = "running"
+    # The phase currently executing — set by the workflow runner at each
+    # phase boundary; consumed by the suspend gate's log emit and by the
+    # token callback's per-phase aggregation.
+    current_phase: str = ""
+    # Wall-clock time of the most recent SSE progress event emit. Used by
+    # IngestionTokenCallback to decide whether to schedule a synthetic
+    # micro-emit (SC-003: ≤ 2 s update visibility).
+    last_progress_emit_at: float = 0.0
+
 
 # Active sessions (feature-local, in-memory)
 _sessions: dict[str, IngestionSession] = {}
