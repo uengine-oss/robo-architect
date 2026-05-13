@@ -49,12 +49,13 @@
 
 ## Inventory of bound UIs
 
-{% if hints %}{% for hint in hints %}### {{ hint.wireframe_name }}{% if hint.is_entry_point %} · **Entry point**{% elif hint.is_unreferenced %} · **(unreferenced — review)**{% endif %}
+{% if hints %}{% for hint in hints %}### {{ hint.wireframe_name }}{% if hint.is_entry_point %} · **Entry point**{% elif hint.is_unreferenced %} · **(unreferenced — review)**{% endif %}{% if hint.viewport_class %} · [viewport: {{ hint.viewport_class }}]{% endif %}
 
 - Workflow position: {% if hint.is_entry_point %}user-journey entry (no upstream trigger){% elif hint.is_unreferenced %}island — no flow reaches this UI{% else %}reached from an upstream flow — see `ui-flow.md` for the trigger{% endif %}
 - User Story: `{{ hint.user_story_id }}` — {{ hint.user_story_title }}
 - Actor: {{ hint.actor or '_n/a_' }}
 - Bound to: {% if hint.attached_to_type %}{{ hint.attached_to_type }} `{{ hint.attached_to_name }}`{% else %}_n/a_{% endif %}
+- Viewport: {% if hint.viewport_class %}{{ hint.viewport_class }}{% else %}_unknown_{% endif %}
 - Owning Bounded Context (for traceability only): **{{ hint.bc_name }}** (`{{ hint.bc_slug }}`)
 - Wireframe assets:
   - Element tree: [`../bounded-contexts/{{ hint.bc_slug }}/requirements.md`](../bounded-contexts/{{ hint.bc_slug }}/requirements.md) § "Wireframe: {{ hint.wireframe_slug }}"

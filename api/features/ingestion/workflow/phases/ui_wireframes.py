@@ -203,12 +203,38 @@ def _is_open_pencil_available() -> bool:
     return open_pencil_client.is_available()
 
 
-async def _llm_invoke_to_component_json(ctx: IngestionWorkflowContext, prompt: str) -> str:
+# Spec 024: bound-figma-file component catalog (refreshed every call so a
+# mid-run scan is picked up without restart).
+def _get_figma_binding_catalog_prompt() -> str:
+    try:
+        from api.features.figma_binding.component_library import (  # noqa: PLC0415
+            get_catalog_for_prompt,
+        )
+        return get_catalog_for_prompt() or ""
+    except Exception as e:  # noqa: BLE001
+        SmartLogger.log(
+            "WARN",
+            f"ingestion.ui_wireframe.figma_components.catalog_unavailable err={e}",
+            category="ingestion.ui_wireframe.figma_components.catalog_unavailable",
+            params={"error": str(e)},
+        )
+        return ""
+
+
+async def _llm_invoke_to_component_json(
+    ctx: IngestionWorkflowContext,
+    prompt: str,
+    *,
+    catalog_override: str | None = None,
+) -> str:
     """
     Invoke the LLM with the component-based system prompt.
     Returns the raw JSON text from the LLM.
+
+    When ``catalog_override`` is provided (spec 024 figma-with-components
+    mode), it is used in place of the local open-pencil catalog.
     """
-    catalog = _get_component_catalog_prompt()
+    catalog = catalog_override if catalog_override is not None else _get_component_catalog_prompt()
     if not catalog:
         raise RuntimeError("Component catalog not available")
 
@@ -342,7 +368,112 @@ async def _generate_jsx_scene_graph_for_figma_mode(
 
 
 def _is_figma_ui_mode(ctx: IngestionWorkflowContext) -> bool:
-    return (getattr(ctx.session, "ui_generation_mode", "html") or "html").lower() == "figma"
+    mode = (getattr(ctx.session, "ui_generation_mode", "html") or "html").lower()
+    return mode in ("figma", "figma-with-components")
+
+
+def _is_figma_with_components_mode(ctx: IngestionWorkflowContext) -> bool:
+    """Spec 024 — figma mode that should consult the bound file's component catalog first."""
+    mode = (getattr(ctx.session, "ui_generation_mode", "html") or "html").lower()
+    return mode == "figma-with-components"
+
+
+async def _generate_figma_components_scene_graph(
+    ctx: IngestionWorkflowContext,
+    prompt: str,
+    ui_name: str,
+    *,
+    bc_name: str = "",
+) -> dict | None:
+    """Spec 024 (revised): generate a sceneGraph that mixes user's Figma
+    design-system components AND custom primitive layout, by reusing the
+    open-pencil JSX agent.
+
+    Flow:
+      1. Build extra_context that lists the bound catalog and explains the
+         `$INSTANCE:Name|k=v` marker convention.
+      2. Call `run_render_agent` — open-pencil renders the LLM's JSX to a
+         proper SerializedSceneGraph (Yoga auto-layout, padding, alignment).
+      3. Post-process the sceneGraph: retype `$INSTANCE:Name` FRAME leaves
+         to INSTANCE so the Figma plugin instantiates the real components.
+
+    Returns the sceneGraph dict, or None when the catalog is empty / the
+    agent failed. The caller should fall back to the generic figma JSX path.
+    """
+    # Local import to avoid widening this phase module's startup graph.
+    from api.features.ai_design.wireframe_agent import run_render_agent  # noqa: PLC0415
+    from api.features.figma_binding.component_library import (  # noqa: PLC0415
+        build_jsx_agent_extra_context,
+        build_name_to_node_index,
+        retype_instance_markers,
+    )
+
+    catalog = _get_figma_binding_catalog_prompt()
+    if not catalog:
+        SmartLogger.log(
+            "INFO",
+            f"ingestion.ui_wireframe.figma_components.empty_catalog ui={ui_name}",
+            category="ingestion.ui_wireframe.figma_components.empty_catalog",
+            params={"session_id": ctx.session.id, "ui_name": ui_name},
+        )
+        return None
+
+    extra_ctx = build_jsx_agent_extra_context(catalog)
+    try:
+        scene_graph, summary = await run_render_agent(
+            name=ui_name or "Wireframe",
+            description=prompt,
+            bc_name=bc_name or "",
+            bc_description="",
+            extra_context=extra_ctx,
+        )
+    except Exception as e:
+        SmartLogger.log(
+            "WARN",
+            f"ingestion.ui_wireframe.figma_components.agent_failed ui={ui_name} err={e}",
+            category="ingestion.ui_wireframe.figma_components.agent_failed",
+            params={"session_id": ctx.session.id, "ui_name": ui_name, "error": str(e)},
+        )
+        return None
+
+    if not scene_graph:
+        SmartLogger.log(
+            "WARN",
+            f"ingestion.ui_wireframe.figma_components.agent_empty ui={ui_name}",
+            category="ingestion.ui_wireframe.figma_components.agent_empty",
+            params={"session_id": ctx.session.id, "ui_name": ui_name, "summary": summary},
+        )
+        return None
+
+    name_index = build_name_to_node_index()
+    scene_graph, counts = retype_instance_markers(scene_graph, name_index)
+    if counts["unresolved"]:
+        SmartLogger.log(
+            "WARN",
+            f"ingestion.ui_wireframe.figma_components.unresolved_names ui={ui_name} names={counts['unresolved']}",
+            category="ingestion.ui_wireframe.figma_components.unresolved_names",
+            params={
+                "session_id": ctx.session.id,
+                "ui_name": ui_name,
+                "unresolved": counts["unresolved"],
+                "retyped": counts["retyped"],
+            },
+        )
+
+    SmartLogger.log(
+        "INFO",
+        f"ingestion.ui_wireframe.figma_components.success ui={ui_name} instances={counts['retyped']} names={counts['instance_names']}",
+        category="ingestion.ui_wireframe.figma_components.success",
+        params={
+            "session_id": ctx.session.id,
+            "ui_name": ui_name,
+            "instances": counts["retyped"],
+            "instance_names": counts["instance_names"],
+            "summary": summary,
+        },
+    )
+
+    return scene_graph
 
 
 # ─── 020 bridge: figma-mode generator for an existing :UI ──────────────────
@@ -487,7 +618,30 @@ async def _create_command_ui(
             )
             base_prompt = f"""UI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: Command {cmd_name} ({cmd_id})\n{aggregate_context}\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}\n\nRelated Events emitted by the Command:\n{events_text}{figma_screen_ref}{lang_instruction}"""
 
-            if _is_figma_ui_mode(ctx):
+            if _is_figma_with_components_mode(ctx):
+                # --- 024 Figma+Components mode: bound catalog first, fall back to JSX ---
+                sg = await _generate_figma_components_scene_graph(
+                    ctx, base_prompt, ui_display_name, bc_name=bc_name
+                )
+                if sg is None:
+                    SmartLogger.log(
+                        "INFO",
+                        f"ingestion.ui_wireframe.figma_components.fallback ui={ui_display_name}",
+                        category="ingestion.ui_wireframe.figma_components.fallback",
+                        params={"session_id": ctx.session.id, "ui_name": ui_display_name},
+                    )
+                    sg = await _generate_jsx_scene_graph_for_figma_mode(
+                        ctx,
+                        ui_display_name=ui_display_name,
+                        description=chosen_ui_desc,
+                        bc_name=bc_name,
+                    )
+                if sg is not None:
+                    import json as _json
+                    scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                final_template = ""
+                norm_report = {"mode": "figma-with-components", "html_skipped": True}
+            elif _is_figma_ui_mode(ctx):
                 # --- Figma mode: pure JSX agent, NO HTML, NO component picking ---
                 sg = await _generate_jsx_scene_graph_for_figma_mode(
                     ctx,
@@ -647,7 +801,30 @@ async def _create_readmodel_ui(
             )
             base_prompt = f"""UI Name: {ui_display_name}\nBounded Context: {bc_name} ({bc_id})\nAttached To: ReadModel {rm.get('name', rm_id)} ({rm_id})\nUser Story: {user_story_text or f'[{chosen_us_id}]'}\nui_description:\n{chosen_ui_desc}{figma_screen_ref}{lang_instruction}"""
 
-            if _is_figma_ui_mode(ctx):
+            if _is_figma_with_components_mode(ctx):
+                # --- 024 Figma+Components mode: bound catalog first, fall back to JSX ---
+                sg = await _generate_figma_components_scene_graph(
+                    ctx, base_prompt, ui_display_name, bc_name=bc_name
+                )
+                if sg is None:
+                    SmartLogger.log(
+                        "INFO",
+                        f"ingestion.ui_wireframe.figma_components.fallback ui={ui_display_name}",
+                        category="ingestion.ui_wireframe.figma_components.fallback",
+                        params={"session_id": ctx.session.id, "ui_name": ui_display_name},
+                    )
+                    sg = await _generate_jsx_scene_graph_for_figma_mode(
+                        ctx,
+                        ui_display_name=ui_display_name,
+                        description=chosen_ui_desc,
+                        bc_name=bc_name,
+                    )
+                if sg is not None:
+                    import json as _json
+                    scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                final_template = ""
+                norm_report = {"mode": "figma-with-components", "html_skipped": True}
+            elif _is_figma_ui_mode(ctx):
                 # --- Figma mode: pure JSX agent, NO HTML, NO component picking ---
                 sg = await _generate_jsx_scene_graph_for_figma_mode(
                     ctx,

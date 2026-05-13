@@ -24,6 +24,43 @@ class FigmaBindingResponse(BaseModel):
     storyboardCounts: dict[str, int] = Field(
         default_factory=lambda: {"active": 0, "archived": 0}
     )
+    # 024: bound Figma file's scanned design-system components.
+    componentCount: int = 0
+
+
+# ─── 024: Components (bound design-system catalog) ───────────────────────
+
+
+class ScanComponentsRequest(BaseModel):
+    apiToken: str
+
+
+class ScanComponentsResponse(BaseModel):
+    scanned: int = 0
+    added: int = 0
+    updated: int = 0
+    removed: int = 0
+    vlmDescribed: int = 0
+    vlmFailures: int = 0
+    componentCount: int = 0
+    durationMs: int = 0
+
+
+class FigmaComponentRow(BaseModel):
+    id: str | None = None
+    figmaNodeId: str
+    name: str
+    pageName: str
+    widthPx: int = 0
+    heightPx: int = 0
+    vlmDescription: str = ""
+    figmaKey: str | None = None
+    scannedAt: str | None = None
+
+
+class FigmaComponentsListResponse(BaseModel):
+    components: list[FigmaComponentRow] = Field(default_factory=list)
+    componentCount: int = 0
 
 
 class ConnectRequest(BaseModel):

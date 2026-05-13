@@ -9,7 +9,7 @@
 > Generated: {{ generated_at }}
 
 {% if ui_flow %}{% for entry in ui_flow %}
-## {{ entry.position }}. {{ entry.user_story_title }} ({{ bc_name_by_id(entry.bounded_context_id) }} / `{{ entry.user_story_id }}`)
+## {{ entry.position }}. {{ entry.user_story_title }} ({{ bc_name_by_id(entry.bounded_context_id) }} / `{{ entry.user_story_id }}`){% if entry.viewport_class %} · [viewport: {{ entry.viewport_class }}]{% endif %}
 
 {% if entry.triggered_by and entry.triggered_by.kind == "event" %}Triggered by: `{{ entry.triggered_by.event_name }}` (from {{ bc_name_by_id(entry.triggered_by.from_bounded_context_id) }}).
 {% elif entry.triggered_by and entry.triggered_by.kind == "story_internal" %}Triggered by: previous screen in the same User Story.

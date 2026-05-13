@@ -405,3 +405,35 @@ The earlier note "Frontend is deferred to a follow-up PR" applies only to the *f
 - The per-BC agent deletion is permanent; no migration toggle. The user's stale-file warning in `SkippedItem` is the only backward-compat affordance.
 - The PRD↔CLAUDE lint is a hard abort by design (research D9). Do not add a "warn-only" mode — that defeats P6.
 - The UI-flow topological sort's tiebreaker is the only place "ordering" is decided. Adding a request-level override (e.g. "manual ordering") would be a future spec change, not part of this amendment.
+
+---
+
+## US5-V — Viewport intent check (2026-05-13 amendment, research D11, spec FR-025/026)
+
+Extends User Story 5. Implementation, tests, and spec updates landed in one pass on 2026-05-13. All tasks completed; recorded here for traceability.
+
+| Task | Description | Status |
+|------|-------------|--------|
+| T080 | Add `classify_viewport(width, height) -> Optional[ViewportClass]` + `extract_viewport_class(scene_graph_json)` to `wireframe_render.py`; thresholds `MOBILE_MAX_WIDTH=480`, `TABLET_MAX_WIDTH=1024` as module constants. | ✅ |
+| T081 | Extend `WireframeProjection` / `UIFlowEntry` / `MenuEntry` with `viewport_class: Optional[Literal["mobile","tablet","desktop"]]`. | ✅ |
+| T082 | Extend `FrontendCompositionProjection` with `viewport_summary: dict[str,int]` + `dominant_viewport: Optional[Literal[...]]`; introduce `DOMINANT_VIEWPORT_THRESHOLD=0.70` in `repository.py`. | ✅ |
+| T083 | `repository._load_wireframes_for_story` computes `viewport_class` per wireframe via `extract_viewport_class`. | ✅ |
+| T084 | `repository.load_frontend_composition` propagates `viewport_class` onto `UIFlowEntry` and aggregates `viewport_summary` + `dominant_viewport`. | ✅ |
+| T085 | `menu_builder.build_menu_hints` propagates `viewport_class` onto `MenuEntry`. | ✅ |
+| T086 | Templates: `frontend-framework.md.j2` renders `## Viewport summary` + per-class counts + `Dominant:` line; `frontend-ui-flow.md.j2` and `frontend-menu.md.j2` render `[viewport: <class>]` tags per entry. | ✅ |
+| T087 | `frontend_renderer.render_framework_md` passes `viewport_summary` + `dominant_viewport` to the framework template. | ✅ |
+| T088 | `frontend_renderer._emit_warnings` emits `frontend_viewport_dominant` or `frontend_viewport_mixed` based on the projection. | ✅ |
+| T089 | `prd_artifact_generation.generate_role_agent_frontend_engineer` adds a "Viewport intent check" step (0) and a Stop condition for `mixed — ask the user`. | ✅ |
+| T090 | `prd_artifact_generation.generate_claude_command_generate_frontend` adds a Plan step 0 (verbatim user question), an Inputs note (parse Viewport summary), and Stop conditions for `mixed` + tag-conflict. | ✅ |
+| T091 | New test file `api/features/ddd_spec/tests/test_viewport_classification.py` — 36 cases: 12 device-class parametrisations, classification rejects, `extract_viewport_class` parsing variants, composition aggregation (dominant / mixed / unknown-excluded), `MenuEntry` + `UIFlowEntry` viewport propagation, `framework.md` rendering (dominant + mixed), warning emission, agent + command body assertions. | ✅ |
+| T092 | Re-run full backend suite — 175 passed (36 new + 139 existing, no regressions). | ✅ |
+
+**Parallelisation note**: T080–T085 form one core sequence (each depends on the previous shape); T086–T088 are template/renderer fan-out that can run in parallel after T085; T089/T090 are independent agent+command updates and run in parallel; T091/T092 close the loop.
+
+**No new endpoint, no new env var, no request-body field added.** The threshold `DOMINANT_VIEWPORT_THRESHOLD` is a static module constant by design (research D11) — a runtime override would invite users to bypass the prompt rather than confront a mixed-direction project.
+
+### Validation milestone (after US5-V)
+
+- `pytest api/` → 175 passed.
+- Manual smoke: quickstart S11 (dominant mobile path) + S12 (mixed path) pass.
+- FR-025 / FR-026 / SC-014 satisfied.

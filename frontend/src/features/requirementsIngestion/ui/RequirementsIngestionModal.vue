@@ -94,12 +94,47 @@ const hasDragged = ref(false) // Track if actual dragging occurred
 const displayLanguage = ref(localStorage.getItem('app_display_language') || 'ko')
 watch(displayLanguage, (v) => { localStorage.setItem('app_display_language', v) })
 
-// UI generation mode: 'html' (legacy HTML wireframe template) or 'figma'
-// (skip HTML, use the backend JSX agent — Phase 1 of the AI-design backend port).
-// When 'figma', the ingestion phase calls run_render_agent for each UI node
-// and stores the resulting sceneGraph; no HTML template is generated.
+// UI generation mode: 'html' (legacy HTML wireframe template), 'figma'
+// (skip HTML, use the backend JSX agent — Phase 1 of the AI-design backend port),
+// or 'figma-with-components' (spec 024: bound Figma file's design-system catalog
+// is consulted first; falls back to 'figma' when no catalog entry resolves).
 const uiGenerationMode = ref(localStorage.getItem('app_ui_generation_mode') || 'html')
 watch(uiGenerationMode, (v) => { localStorage.setItem('app_ui_generation_mode', v) })
+
+// Spec 024: read the bound FigmaBinding to gate the "Figma + Components"
+// toggle. componentCount > 0 enables it; otherwise the option is disabled.
+const figmaBindingInfo = ref(null) // { status, componentCount, ... } | null
+async function loadFigmaBindingInfo() {
+  try {
+    const resp = await fetch('/api/figma-binding')
+    if (resp.status === 404) {
+      figmaBindingInfo.value = null
+      return
+    }
+    if (!resp.ok) return
+    figmaBindingInfo.value = await resp.json()
+  } catch {
+    figmaBindingInfo.value = null
+  }
+}
+const isFigmaWithComponentsEnabled = computed(() => {
+  const b = figmaBindingInfo.value
+  return !!(b && b.status === 'active' && (b.componentCount ?? 0) > 0)
+})
+const figmaWithComponentsDisabledReason = computed(() => {
+  const b = figmaBindingInfo.value
+  if (!b) return '먼저 상단 메뉴에서 Figma 다큐먼트를 연결하세요.'
+  if (b.status !== 'active') return 'Figma 바인딩이 활성 상태가 아닙니다.'
+  if ((b.componentCount ?? 0) === 0) return '바운드 파일에 컴포넌트가 없습니다 — 먼저 스캔하세요.'
+  return ''
+})
+// If a previously-saved mode is no longer valid (catalog cleared), coerce to figma.
+watch(isFigmaWithComponentsEnabled, (enabled) => {
+  if (!enabled && uiGenerationMode.value === 'figma-with-components') {
+    uiGenerationMode.value = 'figma'
+  }
+})
+loadFigmaBindingInfo()
 
 // Source type is auto-detected from filename (*.report.md → legacy_report)
 
@@ -522,7 +557,7 @@ async function startIngestion() {
         figma_nodes: figmaNodeChanges.value,
         source_type: 'figma',
         display_language: displayLanguage.value === 'en' ? 'en' : 'ko',
-        ui_generation_mode: uiGenerationMode.value === 'figma' ? 'figma' : 'html',
+        ui_generation_mode: (uiGenerationMode.value === 'figma' || uiGenerationMode.value === 'figma-with-components') ? uiGenerationMode.value : 'html',
       }
       // Include Figma API metadata for node ID mapping (when using API mode)
       if (figmaInputSubMode.value === 'api' && figmaFileKey.value) {
@@ -552,7 +587,7 @@ async function startIngestion() {
         formData.append('text', textContent.value)
       }
       formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
-      formData.append('ui_generation_mode', uiGenerationMode.value === 'figma' ? 'figma' : 'html')
+      formData.append('ui_generation_mode', (uiGenerationMode.value === 'figma' || uiGenerationMode.value === 'figma-with-components') ? uiGenerationMode.value : 'html')
 
       uploadResponse = await fetch('/api/ingest/upload', {
         method: 'POST',
@@ -1521,6 +1556,17 @@ function useSample() {
                       >
                         Figma UI
                       </button>
+                      <button
+                        :class="['tab-btn', 'tab-btn--small', { active: uiGenerationMode === 'figma-with-components' }]"
+                        @click="isFigmaWithComponentsEnabled && (uiGenerationMode = 'figma-with-components')"
+                        :disabled="!isFigmaWithComponentsEnabled"
+                        :title="isFigmaWithComponentsEnabled ? '바운드 Figma 파일의 디자인 시스템 컴포넌트를 우선 사용해 sceneGraph를 구성합니다.' : figmaWithComponentsDisabledReason"
+                      >
+                        Figma + Components
+                        <span v-if="figmaBindingInfo?.componentCount" class="component-count-pill">
+                          {{ figmaBindingInfo.componentCount }}
+                        </span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -2359,6 +2405,26 @@ function useSample() {
   min-width: 0;
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: 0.8rem;
+}
+
+.tab-btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.component-count-pill {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: rgba(10, 207, 131, 0.18);
+  color: #0acf83;
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+.tab-btn.active .component-count-pill {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
 }
 
 /* Display language (for displayName) */

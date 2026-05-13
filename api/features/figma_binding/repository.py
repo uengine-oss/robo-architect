@@ -715,6 +715,148 @@ def update_ui_sync_binding_file_key(ui_id: str, file_key: str | None) -> None:
 # ─── helpers ──────────────────────────────────────────────────────────────
 
 
+# ─── 024: FigmaComponent (bound design-system catalog) ────────────────────
+
+
+def upsert_figma_component(
+    *,
+    binding_file_key: str,
+    figma_node_id: str,
+    name: str,
+    page_name: str,
+    width_px: int,
+    height_px: int,
+    vlm_description: str,
+    figma_key: str | None = None,
+    figma_node_last_modified: str | None = None,
+) -> dict[str, Any]:
+    """Create or update a :FigmaComponent row for the singleton binding.
+
+    Idempotent on (bindingFileKey, figmaNodeId). Sets scannedAt on every call so
+    callers can detect stale rows for cleanup.
+    """
+    now = _now_iso()
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (b:FigmaBinding {id: $bid})
+            MERGE (c:FigmaComponent {bindingFileKey: $fk, figmaNodeId: $nid})
+            ON CREATE SET c.id = $newid
+            SET c.name = $name,
+                c.pageName = $page_name,
+                c.widthPx = $w,
+                c.heightPx = $h,
+                c.vlmDescription = $desc,
+                c.figmaKey = $fkey,
+                c.figmaNodeLastModified = $last_mod,
+                c.scannedAt = $now
+            MERGE (b)-[:HAS_COMPONENT]->(c)
+            RETURN c
+            """,
+            bid=SINGLETON_ID,
+            fk=binding_file_key,
+            nid=figma_node_id,
+            newid=str(uuid.uuid4()),
+            name=name,
+            page_name=page_name,
+            w=int(width_px or 0),
+            h=int(height_px or 0),
+            desc=vlm_description or "",
+            fkey=figma_key,
+            last_mod=figma_node_last_modified,
+            now=now,
+        ).single()
+    return dict(rec["c"]) if rec else {}
+
+
+def list_figma_components(
+    binding_file_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return all :FigmaComponent rows for a binding, name-sorted.
+
+    When binding_file_key is None, returns components for the active binding.
+    """
+    if binding_file_key is None:
+        b = get_active_binding()
+        if not b:
+            return []
+        binding_file_key = b.get("figmaFileKey")
+        if not binding_file_key:
+            return []
+    with get_session() as session:
+        records = session.run(
+            """
+            MATCH (c:FigmaComponent {bindingFileKey: $fk})
+            RETURN c
+            ORDER BY c.pageName, c.name
+            """,
+            fk=binding_file_key,
+        ).data()
+    return [dict(r["c"]) for r in records]
+
+
+def count_figma_components(binding_file_key: str | None = None) -> int:
+    """Count :FigmaComponent rows for a binding. 0 if no binding."""
+    if binding_file_key is None:
+        b = get_active_binding()
+        if not b:
+            return 0
+        binding_file_key = b.get("figmaFileKey")
+        if not binding_file_key:
+            return 0
+    with get_session() as session:
+        rec = session.run(
+            "MATCH (c:FigmaComponent {bindingFileKey: $fk}) RETURN count(c) AS n",
+            fk=binding_file_key,
+        ).single()
+    return int(rec["n"]) if rec else 0
+
+
+def delete_figma_components(binding_file_key: str | None = None) -> int:
+    """Hard-delete every :FigmaComponent for a binding. Returns count removed."""
+    if binding_file_key is None:
+        b = get_active_binding()
+        if not b:
+            return 0
+        binding_file_key = b.get("figmaFileKey")
+        if not binding_file_key:
+            return 0
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (c:FigmaComponent {bindingFileKey: $fk})
+            WITH c, count(c) AS n
+            DETACH DELETE c
+            RETURN n
+            """,
+            fk=binding_file_key,
+        ).single()
+    return int(rec["n"]) if rec else 0
+
+
+def delete_stale_figma_components(
+    binding_file_key: str, kept_figma_node_ids: list[str]
+) -> int:
+    """Delete components whose figmaNodeId is NOT in kept_figma_node_ids.
+
+    Called at the tail of a scan to clean up rows for components that no
+    longer exist in the source Figma file.
+    """
+    with get_session() as session:
+        rec = session.run(
+            """
+            MATCH (c:FigmaComponent {bindingFileKey: $fk})
+            WHERE NOT c.figmaNodeId IN $kept
+            WITH c, count(c) AS n
+            DETACH DELETE c
+            RETURN n
+            """,
+            fk=binding_file_key,
+            kept=list(kept_figma_node_ids or []),
+        ).single()
+    return int(rec["n"]) if rec else 0
+
+
 def _binding_node_to_dict(node: Any) -> dict[str, Any]:
     """Convert a Neo4j node to a plain dict, normalizing datetime fields."""
     if node is None:

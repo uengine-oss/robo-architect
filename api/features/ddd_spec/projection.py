@@ -75,6 +75,9 @@ class WireframeProjection(BaseModel):
     attached_to_type: Optional[Literal["Command", "ReadModel"]] = None
     attached_to_name: Optional[str] = None
     actor: Optional[str] = None
+    # ``None`` = unknown (scene graph missing / dimensionless). The frontend
+    # composition aggregator skips ``None`` from the dominant-viewport tally.
+    viewport_class: Optional[Literal["mobile", "tablet", "desktop"]] = None
 
 
 class UserStoryProjection(BaseModel):
@@ -179,6 +182,7 @@ class UIFlowEntry(BaseModel):
     wireframe_slug: str
     triggered_by: Optional[TriggerOrigin] = None
     is_unreferenced: bool = False
+    viewport_class: Optional[Literal["mobile", "tablet", "desktop"]] = None
 
 
 class MenuEntry(BaseModel):
@@ -207,6 +211,7 @@ class MenuEntry(BaseModel):
     attached_to_name: Optional[str] = None
     is_entry_point: bool = False
     is_unreferenced: bool = False
+    viewport_class: Optional[Literal["mobile", "tablet", "desktop"]] = None
 
 
 class FrontendCompositionProjection(BaseModel):
@@ -220,5 +225,13 @@ class FrontendCompositionProjection(BaseModel):
     unreferenced_uis: list[UIFlowEntry] = Field(default_factory=list)
     # Pairs of ``(from_node_key, to_node_key)`` removed to break cycles.
     cycle_broken_edges: list[tuple[str, str]] = Field(default_factory=list)
+    # Counts of each viewport class across bound wireframes ("mobile" /
+    # "tablet" / "desktop" / "unknown"). Drives the framework.md summary
+    # block and the dominant-viewport agent prompt.
+    viewport_summary: dict[str, int] = Field(default_factory=dict)
+    # The single dominant class when one class covers ``DOMINANT_VIEWPORT_THRESHOLD``
+    # (default 70%) or more of the *known* wireframes. ``None`` means mixed
+    # (the agent must ask the user which way to design).
+    dominant_viewport: Optional[Literal["mobile", "tablet", "desktop"]] = None
 
 

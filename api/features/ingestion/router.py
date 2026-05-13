@@ -159,7 +159,7 @@ async def upload_document(
         session.display_language = "ko"
     session.source_type = resolved_source_type
     resolved_ui_mode = (ui_generation_mode or "html").strip().lower()
-    if resolved_ui_mode not in ("html", "figma"):
+    if resolved_ui_mode not in ("html", "figma", "figma-with-components"):
         resolved_ui_mode = "html"
     session.ui_generation_mode = resolved_ui_mode
     SmartLogger.log(
@@ -225,7 +225,7 @@ async def upload_figma_document(
         session.display_language = "ko"
     session.source_type = "figma"
     resolved_ui_mode_figma = (body.ui_generation_mode or "html").strip().lower()
-    if resolved_ui_mode_figma not in ("html", "figma"):
+    if resolved_ui_mode_figma not in ("html", "figma", "figma-with-components"):
         resolved_ui_mode_figma = "html"
     session.ui_generation_mode = resolved_ui_mode_figma
     # Store Figma API metadata for the ingestion workflow to preserve node IDs

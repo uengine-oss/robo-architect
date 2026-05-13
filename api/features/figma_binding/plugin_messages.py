@@ -154,6 +154,8 @@ class CreateFrameInPageAckBody(BaseModel):
     figmaFrameName: str | None = None
     nodesCreated: int | None = None  # plugin's report from buildFrameFromSceneGraph
     nodesFailed: int | None = None
+    renderErrors: list[str] | None = None  # 024: per-node failure reasons
+    buildId: str | None = None  # 024: spec024 plugin build identifier (e.g. "v5")
     error: str | None = None
 
 

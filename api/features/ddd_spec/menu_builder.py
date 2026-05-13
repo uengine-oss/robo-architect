@@ -79,6 +79,7 @@ def build_menu_hints(
                 attached_to_name=wf.attached_to_name,
                 is_entry_point=(not unreferenced_flag) and (entry.triggered_by is None),
                 is_unreferenced=unreferenced_flag,
+                viewport_class=wf.viewport_class,
             )
         )
 

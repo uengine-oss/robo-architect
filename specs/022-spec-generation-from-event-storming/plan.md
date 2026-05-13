@@ -1,9 +1,11 @@
 # Implementation Plan: DDD Artifact Generation from Event Storming
 
-**Branch**: `022-spec-generation-from-event-storming` | **Date**: 2026-05-12 (amended) | **Spec**: [spec.md](./spec.md)
+**Branch**: `022-spec-generation-from-event-storming` | **Date**: 2026-05-13 (amended) | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/022-spec-generation-from-event-storming/spec.md`
 
 > **2026-05-12 amendment**: The spec was extended with stories P5 (frontend framework declaration + `specs/frontend/` artifact set), P6 (PRD.md ↔ CLAUDE.md content split), and P7 (drop per-BC agents; emit role-based agents + `/generate-frontend` slash command). This plan re-baselines the backend feature module (`api/features/ddd_spec/`) and adds a thin packaging seam in `api/features/prd_generation/` to honour the new contracts. No new endpoint, no new env var, no graph mutation. See research.md D7–D10 for the new design decisions.
+>
+> **2026-05-13 amendment**: P5 deepens with a **viewport-intent check** (FR-025/026, research D11). `WireframeProjection`/`UIFlowEntry`/`MenuEntry` gain a `viewport_class` field; `FrontendCompositionProjection` gains `viewport_summary` + `dominant_viewport`. `framework.md` renders a `## Viewport summary` block; `ui-flow.md` / `menu-structure.md` carry per-entry `[viewport: <class>]` tags; the `frontend-engineer` agent body + `/generate-frontend` command body contain a "Viewport intent check" step that runs BEFORE IA generation and asks the user the mobile/tablet/desktop-first question. Two new warning codes: `frontend_viewport_dominant`, `frontend_viewport_mixed`. Implementation in `api/features/ddd_spec/wireframe_render.py` (`classify_viewport`, `extract_viewport_class`), `repository.py` (aggregation + threshold), `frontend_renderer.py` (warnings + framework.md context), templates (3 files), `prd_artifact_generation.py` (agent + command body). 36 new unit tests in `test_viewport_classification.py`; full suite passes 175/175. No new endpoint, no new env var, no request-body change, no graph mutation.
 
 ## Summary
 
@@ -54,9 +56,9 @@ The 2026-05-12 amendment widens the scope to own the **consumer-side packaging s
 specs/022-spec-generation-from-event-storming/
 ├── spec.md              # Feature spec (DDD artifact generation + P5–P7 frontend perspective; authored via /speckit-specify)
 ├── plan.md              # This file
-├── research.md          # Phase 0: D1–D6 (v1) + D7–D10 (2026-05-12 amendment) — frontend folder layout, UI-flow ordering, PRD↔CLAUDE split, role-based agents
-├── data-model.md        # Pydantic shapes (request/response + internal projection + SSE events) + §6 frontend additions
-├── quickstart.md        # 10 manual smoke scenarios (7 original + S8–S10 for the frontend perspective)
+├── research.md          # Phase 0: D1–D6 (v1) + D7–D10 (2026-05-12) + D11 (2026-05-13 viewport classification + dominant-viewport agent prompt)
+├── data-model.md        # Pydantic shapes (request/response + internal projection + SSE events) + §6 frontend additions (incl. 2026-05-13 viewport fields)
+├── quickstart.md        # 12 manual smoke scenarios (7 original + S8–S10 frontend + S11–S12 viewport intent)
 ├── contracts/
 │   └── rest-api.md      # /api/ddd-spec endpoints (unchanged) + /api/prd/* contract additions for frontend_framework + consumer-side file contract
 ├── checklists/

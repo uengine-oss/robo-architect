@@ -1,6 +1,6 @@
 # Phase 0 Research: DDD Artifact Generation from Event Storming
 
-Six decisions (D1–D6) from v1 (2026-05-11). Four new decisions (D7–D10) added in the 2026-05-12 amendment to cover stories P5–P7 (frontend perspective, PRD↔CLAUDE split, role-based agents). D1 records the pivot away from the earlier SpecKit-rendering / Figma-token approach; D2–D6 nail down the v1 design before contracts can be drawn; D7 fixes the frontend artifact folder layout + framework declaration; D8 fixes the UI-flow causal-ordering algorithm; D9 fixes the PRD↔CLAUDE content split rule; D10 fixes role-based agents + per-BC agent migration.
+Six decisions (D1–D6) from v1 (2026-05-11). Four new decisions (D7–D10) added in the 2026-05-12 amendment to cover stories P5–P7 (frontend perspective, PRD↔CLAUDE split, role-based agents). One additional decision (D11) added in the 2026-05-13 amendment to cover viewport-intent classification and the agent prompt that gates IA generation on the user's mobile/tablet/desktop direction. D1 records the pivot away from the earlier SpecKit-rendering / Figma-token approach; D2–D6 nail down the v1 design before contracts can be drawn; D7 fixes the frontend artifact folder layout + framework declaration; D8 fixes the UI-flow causal-ordering algorithm; D9 fixes the PRD↔CLAUDE content split rule; D10 fixes role-based agents + per-BC agent migration; D11 fixes viewport classification + dominant-viewport agent prompt.
 
 ---
 
@@ -295,3 +295,39 @@ Both files keep a one-line pointer to the other ("See PRD.md for the BC inventor
 - **Keep per-BC agents and add role-based agents alongside**. Rejected per user direction; also duplicates the skills-reference list N times.
 - **One single "engineer" role-based agent**. Rejected — frontend and DDD reads diverge enough (UI scene-graph parsing vs. EARS-to-precondition translation) that one merged agent's body would either over-include or under-include for any given session.
 - **Auto-delete stale per-BC agent files**. Rejected — too aggressive; the user might have hand-edited one. Warn instead.
+
+---
+
+## D11 — Viewport classification and the dominant-viewport agent prompt (2026-05-13 amendment)
+
+**Decision**: Classify every bound wireframe's primary frame into one of `{mobile, tablet, desktop, unknown}` using the frame's **width** alone, with thresholds:
+
+| Class | Rule |
+|-------|------|
+| `mobile` | `0 < width ≤ 480` |
+| `tablet` | `480 < width ≤ 1024` |
+| `desktop` | `width > 1024` |
+| `unknown` | Scene graph missing, malformed, or primary frame has no positive width/height |
+
+Aggregate counts per class across the whole project on `FrontendCompositionProjection.viewport_summary`. The single class covering ≥ **70%** of the *known-viewport* total (mobile + tablet + desktop, **excluding** unknown) becomes `dominant_viewport`; otherwise `None`. The threshold is the static module-level constant `api.features.ddd_spec.repository.DOMINANT_VIEWPORT_THRESHOLD = 0.70`; not a request field.
+
+`specs/frontend/framework.md` renders the summary + `Dominant: <name>` (or `Dominant: mixed — ask the user`). The `frontend-engineer` agent body and `/generate-frontend` command body both carry a "Viewport intent check" step that runs BEFORE IA generation and asks the user verbatim:
+
+> "Wireframes are predominantly `<dominant>` ({counts}). Should I design the whole menu IA, routing, breakpoints, and component chrome `<dominant>`-first?"
+
+When the summary is `mixed`, the agent asks "Which viewport class should drive the IA?" instead. The answer is recorded at the top of the generated project's `README.md` and governs every downstream decision (breakpoints, container max-widths, navigation chrome — bottom-tab vs. sidebar — touch vs. pointer affordances). The agent's Stop conditions include (a) unanswered `mixed` state and (b) any `[viewport: <class>]` tag on a `ui-flow.md` entry that conflicts with the confirmed intent.
+
+**Rationale**:
+
+- **Width, not `max(w,h)` or `min(w,h)`**: the open-pencil flow in this repo always draws wireframes with frame width = device natural-orientation width. iPhone wireframes are 375×812 (mobile) or 390×844 (mobile); iPad wireframes are 768×1024 (tablet portrait) or 1024×768 (tablet landscape); desktop wireframes are 1440×900+. `max(w,h)` misfires on iPhone portrait (812 reads as tablet); `min(w,h)` misfires on 1440×900 (900 reads as tablet). Width tracks designer intent directly. Verified against 12 device cases in `test_viewport_classification.py`.
+- **70% threshold**: tolerates 2–3 companion screens (admin panels, print views) on a project of ~10 wireframes without flipping the dominant to mixed, but catches the genuinely-mixed case where the project is split between two device targets. Picked once in code (not a knob) because a runtime override would invite users to "just bump it to 60%" rather than confront a real mixed-direction project, defeating the prompt's purpose.
+- **Excluding `unknown` from the dominant calculation**: an `unknown` wireframe gave us no signal; bucketing it as a guess (e.g. "assume mobile") would shift the dominant percentage in invisible ways. Better to surface the `Unknown` row in `framework.md` so the user can see how much signal was lost.
+- **Agent asks at run-time, NOT during PRD build**: the PRD build is non-interactive (zip export); the right moment to ask is when the user runs `/generate-frontend` in their Claude Code session, with the user present. The `framework.md` block + agent prompt body is the carrier.
+- **Stop condition on tag conflict**: a single 1440-wide screen in an otherwise 375-wide project is a real design decision (admin desktop view, full-screen dashboard) — silently rendering it desktop-style under a mobile-first IA breaks the user's mental model. Forcing the agent to ask "companion / redirect / responsive breakpoint?" forces the design intent to surface.
+
+**Alternatives considered**:
+
+- **Skip classification, let the agent eyeball SVGs**. Rejected — defeats determinism (SC-005 + SC-014 require byte-stable framework.md across runs). Also offloads the decision to the agent, which gets it wrong silently.
+- **Ask the user during PRD build (HTTP form field)**. Rejected — PRD build is one-shot and stateless; the user might generate a PRD for a graph they haven't seen yet. The agent's session at `/generate-frontend` is the right context (the wireframes are in front of them).
+- **Make the 70% threshold a request body field**. Rejected — see "70% threshold" rationale; runtime knob defeats the prompt.
+- **Five buckets (xs/sm/md/lg/xl)**. Rejected — more granularity than `mobile/tablet/desktop` adds without changing the IA question. Frontend agents need to know "phone or computer or in-between"; `xs` vs. `sm` is a CSS breakpoint detail.

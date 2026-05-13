@@ -142,6 +142,45 @@ Manual smoke test for feature 022. Run after the implementation lands; verifies 
 
 ---
 
+### S11 — Viewport intent check, dominant mobile (Story 5 scenario 6; FR-025/026; SC-014; research D11)
+
+1. Use (or construct) a graph where ≥ 70% of the bound wireframes have primary-frame width ≤ 480 (typical mobile-only product — e.g. 14 phone screens + 1 admin desktop screen).
+2. `curl -X POST http://localhost:8000/api/prd/download -d '{"tech_stack":{"spec_format":"ddd","ai_assistant":"claude","include_frontend":true,"frontend_framework":"vue"}}' -H 'Content-Type: application/json' -o pkg.zip`.
+3. `unzip -p pkg.zip specs/frontend/framework.md` and confirm:
+   - A `## Viewport summary` heading exists.
+   - The block lists `Mobile (frame width ≤ 480px): N`, `Tablet (frame width 481–1024px): N`, `Desktop (frame width > 1024px): N`, `Unknown (no scene-graph dimensions): N`.
+   - The block ends with `Dominant: **mobile**`.
+   - The closing prose contains the sentence "MUST ask the user whether the whole menu / routing / breakpoint system should be designed in that direction".
+4. `unzip -p pkg.zip .claude/agents/frontend-engineer.md` and confirm the body contains:
+   - A "Viewport intent check" step (under "How you work").
+   - The phrase "Should the whole menu, routing, and layout be designed `<dominant>`-first?".
+   - A Stop condition "Viewport summary reads `mixed — ask the user`, or you have not yet received the user's viewport-intent answer for the current run → stop and ask before generating components."
+5. `unzip -p pkg.zip .claude/commands/generate-frontend.md` and confirm the body contains:
+   - A Plan step "0. **Confirm viewport intent with the user — BEFORE doing anything else.**".
+   - The literal template "Wireframes are predominantly `<dominant>` ({counts})." (the agent fills in counts at run time).
+   - Stop conditions referencing the `mixed` state and `[viewport: ...]` tag conflicts.
+6. `unzip -p pkg.zip specs/frontend/ui-flow.md` and confirm at least one numbered entry heading ends with `· [viewport: mobile]`.
+7. `unzip -p pkg.zip specs/frontend/menu-structure.md` and confirm at least one entry carries a `Viewport: mobile` line (or a `[viewport: mobile]` tag in the heading).
+8. Inspect the generation response JSON (from `/api/prd/generate` with the same body) and confirm `warnings` contains `{"code":"frontend_viewport_dominant", ...}` with the per-class counts.
+
+✅ Pass when: `framework.md` carries the summary + `Dominant: mobile`, the agent + command bodies carry the verbatim viewport-intent question, every UI-flow / menu entry shows its viewport tag, and the response warns `frontend_viewport_dominant`.
+
+---
+
+### S12 — Viewport intent check, mixed project (FR-025/026; research D11)
+
+1. Use a graph where wireframes are split across mobile + tablet + desktop with no class hitting 70% (e.g. 3 + 3 + 4 = 10 total).
+2. Repeat S11 steps 2–5 but expect:
+   - `framework.md` Dominant line reads `Dominant: **mixed — ask the user**`.
+   - The agent body's `mixed` branch fires (the agent asks "Which viewport class should drive the IA?" instead of "should be designed `<dominant>`-first?").
+   - The response `warnings` array contains `frontend_viewport_mixed` (not `frontend_viewport_dominant`).
+3. **Manual agent smoke** (optional, requires a live Claude Code session): extract the zip into an empty repo, open Claude Code, run `/generate-frontend`. Confirm the agent stops at step 0 and asks for the viewport intent verbatim instead of silently picking one — the build refuses to advance until you answer.
+4. **Tag-conflict smoke** (optional): given a mobile-first answer, point Claude Code at a `ui-flow.md` entry tagged `[viewport: desktop]`. Confirm the agent stops and asks whether to treat it as a companion screen / redirect / responsive breakpoint, per the Stop condition added to the command body.
+
+✅ Pass when: the response warns `frontend_viewport_mixed`, the agent body's mixed-branch question is present, and (if smoke-tested live) the agent does refuse to proceed without the user's answer.
+
+---
+
 ### Non-regression check — existing features untouched
 
 Quickly confirm these behave exactly as before this PR:

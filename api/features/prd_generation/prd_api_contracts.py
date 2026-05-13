@@ -97,6 +97,14 @@ class TechStackConfig(BaseModel):
     # Frontend options
     frontend_framework: FrontendFramework | None = Field(default=None, description="Frontend framework (Vue, React, Angular, etc.)")
     include_frontend: bool = Field(default=False, description="Include frontend PRD and rules")
+    # HTML policy-document extension (feature 023). When enabled, the
+    # generated zip also contains a self-contained ``PRD.html`` rendered
+    # from a Jinja-based template under
+    # ``api/features/prd_generation/html_templates/templates/<template_id>/``.
+    # LLM-fill sections degrade to deterministic fallbacks when no LLM
+    # provider is configured — the zip build never fails because of HTML.
+    include_html_policy: bool = Field(default=False, description="Include HTML policy document (POL-* style)")
+    html_template_id: str = Field(default="policy-doc-full", description="HTML template id under html_templates/templates/")
 
 
 class PRDGenerationRequest(BaseModel):

@@ -127,6 +127,7 @@ Populated by `api/features/ddd_spec/repository.py`. Read-only; never persisted. 
 | `attached_to_type` | `Literal["Command","ReadModel"] \| None` | `UI.attachedToType`. |
 | `attached_to_name` | `str \| None` | `UI.attachedToName`. |
 | `actor` | `str \| None` | `UI.actor`. |
+| `viewport_class` | `Literal["mobile","tablet","desktop"] \| None` | **(2026-05-13)** Computed at projection-load time by `wireframe_render.extract_viewport_class(scene_graph_json)` — finds the primary frame in the scene graph and buckets its **width**: `≤480 → mobile`, `481..1024 → tablet`, `>1024 → desktop`, otherwise `None`. See research D11. |
 
 (Note: `UI.figmaFileKey` / `UI.figmaNodeId` exist on the node but are deliberately **not** read by this feature — no Figma call is ever made.)
 
@@ -268,9 +269,11 @@ These outputs are not entities the system tracks afterward — once written they
 
 **None.** This feature reads the existing schema in `docs/cypher/schema/03_node_types.cypher` / `04_relationships.cypher` and adds nothing. If a needed property turns out to be unmodeled (e.g. a Bounded Context's strategic classification, or a relationship's DDD pattern), the artifact renders an explicit "(not modeled — confirm)" / "(inferred — confirm)" marker rather than the generator inventing data or a parallel store; the long-term fix for a recurring gap is to extend the relevant event-storming ingestion phase to capture it.
 
-## 6. Frontend perspective additions (2026-05-12 amendment)
+## 6. Frontend perspective additions (2026-05-12 amendment; 2026-05-13 viewport extension)
 
 These shapes back stories P5–P7. They live alongside the existing types in the same module — no new package. The frontend artifact set under `specs/frontend/` is materialised by the new `api/features/ddd_spec/frontend_renderer.py` consumed via `inproc.render_frontend_spec_to_zip` from the PRD-generation flow's `prd_export.py`.
+
+**2026-05-13 amendment**: extends `WireframeProjection`, `UIFlowEntry`, `MenuEntry`, and `FrontendCompositionProjection` with viewport-classification fields (research D11, spec FR-025/026). No graph schema change; no request-body change. The classification is computed during projection load via `api.features.ddd_spec.wireframe_render.extract_viewport_class(scene_graph_json)`.
 
 ### 6.1 Read-side projection additions
 
@@ -287,6 +290,8 @@ Top-level projection passed to the frontend renderer. Populated by a small new w
 | `ui_flow` | `list[UIFlowEntry]` | Linearised cross-BC narrative; see D8. |
 | `unreferenced_uis` | `list[UIFlowEntry]` | Bound UIs that ended up as DAG islands; rendered at the tail of `ui-flow.md` with "(unreferenced flow — review)". |
 | `cycle_broken_edges` | `list[tuple[str,str]]` | Edges the topological sort removed to break a cycle, if any; one `ui_flow_cycle_broken` warning per entry. |
+| `viewport_summary` | `dict[str,int]` | **(2026-05-13)** Per-class counts across `ui_flow + unreferenced_uis`: keys `"mobile"`, `"tablet"`, `"desktop"`, `"unknown"`. Drives the `## Viewport summary` block in `framework.md`. |
+| `dominant_viewport` | `Literal["mobile","tablet","desktop"] \| None` | **(2026-05-13)** The single class covering ≥ 70% of `mobile + tablet + desktop` (unknown excluded). `None` ⇒ mixed; rendered as `Dominant: mixed — ask the user`. Threshold lives in `repository.DOMINANT_VIEWPORT_THRESHOLD`. |
 
 #### `FrameworkConventions`
 
@@ -300,17 +305,23 @@ Top-level projection passed to the frontend renderer. Populated by a small new w
 
 #### `MenuEntry`
 
-A node in the menu hierarchy. Top-level entries group by Bounded Context; leaf entries name a route + the bound User Story / UI.
+**(Shape revised in implementation: flat inventory, not a hierarchy.)** One bound UI surfaced as a *hint* to the frontend-engineer agent. The agent designs the actual menu IA from `ui-flow.md` (the user-journey order); BC fields here are traceability metadata only — they do NOT group the menu. Entry-point and unreferenced flags tell the agent which UIs are natural top-level / island candidates.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `kind` | `Literal["bc_group","route"]` | |
-| `label` | `str` | BC display name when `kind="bc_group"`; the route's human label when `kind="route"`. |
-| `bounded_context_id` | `str \| None` | Set on both kinds; `route` entries also carry it for grouping. |
-| `route` | `str \| None` | E.g. `/orders/:id`; only on `kind="route"`. |
-| `user_story_id` | `str \| None` | Only on `kind="route"`. |
-| `wireframe_slug` | `str \| None` | The slug used in `requirements.assets/<userStoryId>-<ui-slug>.{scene.json,svg}` so the menu line can reference the canonical asset path. |
-| `children` | `list[MenuEntry]` | Only on `kind="bc_group"`. |
+| `bc_id` | `str` | Owning Bounded Context id (traceability). |
+| `bc_slug` | `str` | For path composition into `requirements.assets/`. |
+| `bc_name` | `str` | Display name for citation comments. |
+| `user_story_id` | `str` | |
+| `user_story_title` | `str` | |
+| `wireframe_slug` | `str` | Used to build the `requirements.assets/<userStoryId>-<ui-slug>.{scene.json,svg}` paths. |
+| `wireframe_name` | `str` | |
+| `actor` | `str \| None` | If the wireframe records an actor. |
+| `attached_to_type` | `Literal["Command","ReadModel"] \| None` | The DDD object the wireframe binds to. |
+| `attached_to_name` | `str \| None` | |
+| `is_entry_point` | `bool` | `True` when the UI has no upstream trigger in the flow DAG (natural top-level navigation candidate). |
+| `is_unreferenced` | `bool` | `True` for DAG-island UIs the agent must ask the user to place. |
+| `viewport_class` | `Literal["mobile","tablet","desktop"] \| None` | **(2026-05-13)** Inherited from the owning `WireframeProjection` (D11). Rendered in `menu-structure.md` as `[viewport: <class>]` next to the entry heading and as a `Viewport:` field in the bullet list. |
 
 #### `UIFlowEntry`
 
@@ -327,6 +338,7 @@ A single screen in the narrative. The renderer numbers these 1..N in `ui-flow.md
 | `wireframe_slug` | `str` | Used to build the `requirements.assets/<userStoryId>-<ui-slug>.{scene.json,svg}` relative paths. |
 | `triggered_by` | `TriggerOrigin \| None` | What caused the user to arrive here in the causal chain; `None` for entry points. |
 | `is_unreferenced` | `bool` | `true` for DAG islands rendered with "(unreferenced flow — review)". |
+| `viewport_class` | `Literal["mobile","tablet","desktop"] \| None` | **(2026-05-13)** Inherited from the owning `WireframeProjection` (D11). `None` ⇒ unknown viewport. Surfaced in `ui-flow.md` as `[viewport: <class>]` after the entry heading. |
 
 #### `TriggerOrigin`
 
@@ -385,6 +397,8 @@ The `kind` field on `ArtifactFileInfo` (data-model.md §2 / `api/features/ddd_sp
 | `ui_flow_cycle_broken` | The topological sort detected a cycle and removed a back-edge to linearise; `target` names the removed edge. |
 | `ui_unreferenced_flow` | A bound UI did not participate in any flow chain; it is rendered at the tail of `ui-flow.md` with the "(unreferenced flow — review)" label. |
 | `prd_split_lint_failed` | The PRD↔CLAUDE content-split lint (D9) failed; the build aborts with this code in the response. |
+| `frontend_viewport_dominant` | **(2026-05-13)** A single viewport class covers ≥ 70% of the known-viewport wireframes; `target` carries `{dominant, mobile, tablet, desktop, unknown}` counts. Informational — the agent reads `framework.md` and asks the user to confirm mobile/tablet/desktop-first direction. |
+| `frontend_viewport_mixed` | **(2026-05-13)** No single viewport class covers ≥ 70%; `target` carries the same counts. The agent reads `framework.md` and asks the user which viewport drives the IA. |
 
 ### 6.4 Filesystem output additions
 
@@ -415,5 +429,6 @@ SC-005 / SC-010 require byte-stable output across runs against an unchanged grap
 - The topological sort tiebreaker is fully deterministic (`(bc_insertion_index, user_story_priority, user_story_insertion_index, ui_order_in_story)`) — no time, no random, no LLM in the loop.
 - `framework.md`'s conventions come from a static catalog dict, not from LLM text.
 - Relative path generation is deterministic given the BC/Story/UI slugs from §1 (`AggregateProjection.slug` etc.).
+- **(2026-05-13)** The `## Viewport summary` block is computed from `viewport_summary` (count aggregation) + a fixed 70% threshold — same scene graphs ⇒ same counts ⇒ same dominant. Viewport tags on `ui-flow.md` / `menu-structure.md` entries are derived per-wireframe from the primary-frame width, so they are also stable.
 
 The only volatile content is the `Generated:` timestamp line (excluded from byte-stability by FR-015, same as the v1 artifacts).

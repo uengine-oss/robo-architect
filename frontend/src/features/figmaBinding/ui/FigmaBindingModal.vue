@@ -30,6 +30,88 @@ const replaceTokenInput = ref('')
 const history = ref([])
 const historyLoading = ref(false)
 
+// ─── 024: Component library ────────────────────────────────────────────
+const componentsScanning = ref(false)
+const componentsScanResult = ref(null) // { added, updated, removed, vlmDescribed, vlmFailures, componentCount }
+const componentsScanError = ref(null)
+const componentsClearing = ref(false)
+
+async function submitScanComponents() {
+  componentsScanError.value = null
+  componentsScanResult.value = null
+  const creds = getStoredFigmaCreds()
+  const token = creds.token || tokenInput.value || replaceTokenInput.value
+  if (!token) {
+    componentsScanError.value = 'Figma 토큰이 필요합니다. 연결 정보를 확인하세요.'
+    return
+  }
+  componentsScanning.value = true
+  try {
+    const data = await api.scanComponents(token)
+    componentsScanResult.value = data
+    await store.loadBinding()
+  } catch (e) {
+    componentsScanError.value = e.message || '컴포넌트 스캔 실패'
+  } finally {
+    componentsScanning.value = false
+  }
+}
+
+async function submitClearComponents() {
+  if (!confirm('스캔된 컴포넌트 메타데이터를 모두 삭제합니다. 계속할까요?')) return
+  componentsClearing.value = true
+  componentsScanError.value = null
+  try {
+    await api.clearComponents()
+    componentsScanResult.value = null
+    await store.loadBinding()
+  } catch (e) {
+    componentsScanError.value = e.message || '삭제 실패'
+  } finally {
+    componentsClearing.value = false
+  }
+}
+
+// ─── 024-DEV: Sample wireframe generator (mixed instance + native) ─────
+const sampleBrief = ref(
+  '상품 검색 화면: 상단에 검색창(이메일/상품명 입력), 중간에는 검색된 상품 목록 3건 표시(아이폰 15 Pro 1,550,000원, 맥북 에어 M3 1,790,000원, 에어팟 프로 2 359,000원), 맨 아래에 "장바구니에 추가" 버튼.'
+)
+const sampleFrameName = ref('상품 검색')
+const sampleGenerating = ref(false)
+const sampleResult = ref(null) // { ok, instanceCount, nativeCount, figmaPageName, ... }
+const sampleError = ref(null)
+
+async function submitGenerateSample() {
+  sampleError.value = null
+  sampleResult.value = null
+  if (!sampleBrief.value.trim()) {
+    sampleError.value = '브리프를 입력하세요.'
+    return
+  }
+  sampleGenerating.value = true
+  try {
+    const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '')
+    const resp = await fetch('/api/figma-binding/components/_dev/test-render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        screen_brief: sampleBrief.value,
+        frame_name: `${sampleFrameName.value || '샘플'} ${stamp}`,
+        page_name: `${sampleFrameName.value || '샘플'} ${stamp}`,
+      }),
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail?.messageKr || data.detail || `HTTP ${resp.status}`)
+    }
+    sampleResult.value = await resp.json()
+  } catch (e) {
+    sampleError.value = e.message || '생성 실패'
+  } finally {
+    sampleGenerating.value = false
+  }
+}
+
 watch(
   () => props.modelValue,
   (open) => {
@@ -224,6 +306,112 @@ watch(tab, (t) => {
 
           <!-- 020: Retroactive full-sync controls -->
           <FullSyncSection />
+
+          <!-- 024-DEV: Sample wireframe generator (mixed instance + native) -->
+          <div class="fb-components" data-test="sample-wireframe-panel">
+            <div class="fb-components__header">
+              <strong>샘플 와이어프레임 생성</strong>
+              <span class="fb-components__count">
+                {{ store.binding.componentCount ?? 0 }}개 컴포넌트 사용 가능
+              </span>
+            </div>
+            <p class="fb-hint">
+              아래 브리프로 LLM이 카탈로그에서 컴포넌트를 픽하고, 카탈로그에 없는 부분은
+              네이티브 프리미티브(리스트·텍스트·이미지)로 만들어 Figma 새 페이지에 즉시 반영합니다.
+            </p>
+            <div class="fb-field">
+              <label>화면 이름</label>
+              <input
+                v-model="sampleFrameName"
+                type="text"
+                data-test="sample-frame-name"
+                placeholder="예: 상품 검색"
+              />
+            </div>
+            <div class="fb-field">
+              <label>화면 브리프</label>
+              <textarea
+                v-model="sampleBrief"
+                rows="5"
+                data-test="sample-brief"
+                style="width:100%; padding:7px 10px; background:rgba(255,255,255,0.05); border:1px solid var(--color-border, #2a2e3d); border-radius:4px; color:inherit; font-size:0.8rem; font-family:inherit; resize:vertical;"
+              ></textarea>
+            </div>
+            <div v-if="sampleResult" class="fb-hint" style="color:#0acf83;" data-test="sample-result">
+              ✓ 생성 완료 — page <code>{{ sampleResult.figmaPageName }}</code>
+              ({{ sampleResult.figmaPageId }}),
+              instance {{ sampleResult.instanceCount }} / native {{ sampleResult.nativeCount }} ·
+              plugin nodesCreated={{ sampleResult.nodesCreated }}, failed={{ sampleResult.nodesFailed }}
+              <span v-if="sampleResult.unresolved?.length" style="color:#f59e0b;">
+                — unresolved: {{ sampleResult.unresolved.join(', ') }}
+              </span>
+              <div v-if="sampleResult.figmaUrl" style="margin-top:6px;">
+                →
+                <a
+                  :href="sampleResult.figmaUrl"
+                  target="_blank"
+                  rel="noopener"
+                  data-test="sample-figma-url"
+                  style="color:#0acf83; text-decoration:underline;"
+                >
+                  Figma에서 열기
+                </a>
+              </div>
+            </div>
+            <div v-if="sampleError" class="fb-error" data-test="sample-error">{{ sampleError }}</div>
+            <div class="fb-actions">
+              <button
+                class="fb-btn fb-btn--primary"
+                data-test="sample-generate"
+                @click="submitGenerateSample"
+                :disabled="sampleGenerating"
+              >
+                {{ sampleGenerating ? '생성 중...' : '와이어프레임 생성' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 024: Component library scan -->
+          <div class="fb-components">
+            <div class="fb-components__header">
+              <strong>디자인 시스템 컴포넌트</strong>
+              <span class="fb-components__count">
+                {{ store.binding.componentCount ?? 0 }}개 인식됨
+              </span>
+            </div>
+            <p class="fb-hint">
+              연결된 Figma 파일의 <code>COMPONENT</code> / <code>COMPONENT_SET</code>
+              노드를 추출하고 시각 LLM으로 1줄 설명을 채웁니다. 와이어프레임 생성 시
+              <strong>Figma + Components</strong> 모드에서 이 카탈로그가 사용됩니다.
+            </p>
+            <div v-if="componentsScanResult" class="fb-hint" style="color:#0acf83;">
+              스캔 완료: 추가 {{ componentsScanResult.added }} /
+              갱신 {{ componentsScanResult.updated }} /
+              제거 {{ componentsScanResult.removed }} ·
+              VLM 성공 {{ componentsScanResult.vlmDescribed }} / 실패 {{ componentsScanResult.vlmFailures }}
+              ({{ componentsScanResult.durationMs }}ms)
+            </div>
+            <div v-if="componentsScanError" class="fb-error">
+              {{ componentsScanError }}
+            </div>
+            <div class="fb-actions">
+              <button
+                class="fb-btn fb-btn--primary"
+                @click="submitScanComponents"
+                :disabled="componentsScanning"
+              >
+                {{ componentsScanning ? '스캔 중...' : '컴포넌트 스캔' }}
+              </button>
+              <button
+                v-if="(store.binding.componentCount ?? 0) > 0"
+                class="fb-btn fb-btn--small"
+                @click="submitClearComponents"
+                :disabled="componentsClearing"
+              >
+                카탈로그 비우기
+              </button>
+            </div>
+          </div>
 
           <div class="fb-actions">
             <button class="fb-btn fb-btn--danger" @click="submitDisconnect">
@@ -540,4 +728,25 @@ watch(tab, (t) => {
 .fb-history__type { color: #0acf83; }
 .fb-history__actor { color: #aaa; }
 .fb-history__payload { color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.fb-components {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border, #2a2e3d);
+  border-radius: 6px;
+  margin-top: 8px;
+}
+.fb-components__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+}
+.fb-components__count {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: #0acf83;
+}
 </style>

@@ -39,6 +39,7 @@ _CREATE_FRAME_TIMEOUT = 120.0
 
 def _to_response(binding: dict[str, Any]) -> dict[str, Any]:
     counts = repository.count_storyboard_mappings_by_status()
+    component_count = repository.count_figma_components(binding.get("figmaFileKey"))
     return {
         "id": binding.get("id", "singleton"),
         "figmaFileKey": binding.get("figmaFileKey"),
@@ -48,6 +49,7 @@ def _to_response(binding: dict[str, Any]) -> dict[str, Any]:
         "lastSyncAt": binding.get("lastSyncAt"),
         "status": binding.get("status", "active"),
         "storyboardCounts": counts,
+        "componentCount": component_count,
     }
 
 

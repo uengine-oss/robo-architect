@@ -6,7 +6,8 @@ import zipfile
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from api.features.prd_generation.prd_api_contracts import PRDGenerationRequest
@@ -175,6 +176,30 @@ def build_prd_zip(zip_file: zipfile.ZipFile, bcs: list, config) -> None:
 
     zip_file.writestr("README.md", generate_readme(bcs, config))
 
+    # Feature 023 — HTML policy-document extension. Pure add-on; degrades
+    # to deterministic fallbacks when no LLM provider is configured.
+    if getattr(config, "include_html_policy", False):
+        try:
+            from api.features.prd_generation.html_templates.orchestrator import (
+                render_policy_doc_from_neo4j,
+            )
+            from api.features.prd_generation.html_templates.registry import (
+                TemplateNotFoundError,
+            )
+
+            html_text = render_policy_doc_from_neo4j(
+                config.html_template_id,
+                project_name=getattr(config, "project_name", "") or "",
+            )
+            zip_file.writestr("PRD.html", html_text)
+        except TemplateNotFoundError as exc:
+            # Template missing isn't fatal for the existing zip path —
+            # surface a marker file the user can inspect.
+            zip_file.writestr(
+                "PRD.html.error.txt",
+                f"HTML policy template '{config.html_template_id}' not found: {exc}",
+            )
+
 
 @router.post("/generate")
 async def generate_prd(request: PRDGenerationRequest, http_request: Request):
@@ -270,6 +295,10 @@ async def generate_prd(request: PRDGenerationRequest, http_request: Request):
     if config.include_docker:
         files_to_generate.append("docker-compose.yml")
         files_to_generate.append("Dockerfile")
+
+    # Feature 023 — HTML policy document is an opt-in add-on (default off).
+    if getattr(config, "include_html_policy", False):
+        files_to_generate.append("PRD.html")
 
     # FR-023 / US7 — surface previously-emitted per-BC `<bc_name>_agent.md`
     # paths as "deprecated" so the user knows to delete their local
@@ -377,5 +406,80 @@ async def download_prd_zip(request: PRDGenerationRequest, http_request: Request)
     zip_buffer = io.BytesIO(zip_bytes)
     zip_buffer.seek(0)
     return StreamingResponse(zip_buffer, media_type="application/zip", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+# ----- Feature 023: HTML policy document preview --------------------------
+
+
+class HTMLPolicyRequest(BaseModel):
+    template_id: str = Field(default="policy-doc-full")
+    project_name: str = Field(default="")
+    use_llm: bool = Field(default=True)
+
+
+@router.post("/html-policy")
+async def render_html_policy(request: HTMLPolicyRequest, http_request: Request):
+    """Render a single self-contained HTML policy document from the current
+    Neo4j event-storming graph. Useful for fast preview without rebuilding
+    the full PRD zip."""
+    t0 = time.perf_counter()
+    SmartLogger.log(
+        "INFO",
+        "PRD: html-policy preview requested.",
+        category="api.prd.html_policy.request",
+        params={
+            **http_context(http_request),
+            "inputs": request.model_dump(),
+        },
+    )
+    try:
+        from api.features.prd_generation.html_templates.orchestrator import (
+            render_policy_doc_from_neo4j,
+        )
+        from api.features.prd_generation.html_templates.registry import (
+            TemplateNotFoundError,
+        )
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "html_template_module_unavailable", "message": str(exc)},
+        )
+
+    try:
+        html_text = render_policy_doc_from_neo4j(
+            request.template_id,
+            project_name=request.project_name,
+            use_llm=request.use_llm,
+        )
+    except TemplateNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "html_template_not_found", "message": str(exc)},
+        )
+    except Exception as exc:  # neo4j connection, manifest errors, etc.
+        # Distinguish Neo4j availability from other issues by message
+        # heuristic; the underlying driver raises ServiceUnavailable.
+        text = str(exc)
+        if "ServiceUnavailable" in type(exc).__name__ or "neo4j" in text.lower():
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "neo4j_unavailable", "message": text},
+            )
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "html_render_failed", "message": text},
+        )
+
+    SmartLogger.log(
+        "INFO",
+        "PRD: html-policy preview rendered.",
+        category="api.prd.html_policy.done",
+        params={
+            **http_context(http_request),
+            "duration_ms": int((time.perf_counter() - t0) * 1000),
+            "summary": {"bytes": len(html_text)},
+        },
+    )
+    return HTMLResponse(content=html_text, status_code=200)
 
 

@@ -1,0 +1,79 @@
+<h3>가. 액터</h3>
+<table>
+<thead>
+<tr>
+<th style="width: 130px;">액터 ID</th>
+<th style="width: 170px;">액터명</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+{% for actor in actors %}
+<tr>
+<td class="mono">{{ actor.id|e }}</td>
+<td>{{ actor.name|e }}</td>
+<td>{{ actor.description|e }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+<h3>나. 유즈케이스</h3>
+{% if use_cases %}
+<table>
+<thead>
+<tr>
+<th style="width: 140px;">유즈케이스 ID</th>
+<th style="width: 150px;">액터</th>
+<th style="width: 180px;">유즈케이스명</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+{% for uc in use_cases %}
+<tr>
+<td class="mono">{{ uc.id|e }}</td>
+<td>{% for aid in uc.actor_ids %}{{ actor_name_by_id.get(aid, aid)|e }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+<td>{{ uc.name|e }}</td>
+<td>{{ uc.description|e }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="subtle">(그래프에 모델링된 User Story 가 없습니다.)</p>
+{% endif %}
+
+<h3>다. 유즈케이스 다이어그램</h3>
+{% if usecase_diagram_svg %}
+<div class="diagram-wrap">{{ usecase_diagram_svg|safe }}</div>
+{% else %}
+<p class="subtle">(다이어그램을 그릴 수 있는 액터·유즈케이스 데이터가 부족합니다.)</p>
+{% endif %}
+
+<h3>라. 상태 전이표</h3>
+{% if state_transitions %}
+<p class="plain-text">현재 그래프의 Aggregate 와 Command → Event 체인으로부터 도출된 상태 전이 기준이다.</p>
+<table>
+<thead>
+<tr>
+<th style="width: 200px;">현재 상태</th>
+<th style="width: 220px;">전이 이벤트</th>
+<th style="width: 200px;">다음 상태</th>
+<th>처리 기준</th>
+</tr>
+</thead>
+<tbody>
+{% for tr in state_transitions %}
+<tr>
+<td>{{ tr.from_state|e }}</td>
+<td>{{ tr.event|e }}</td>
+<td>{{ tr.to_state|e }}</td>
+<td>{{ tr.trigger|e }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="subtle">(상태 전이를 추출할 Command/Event 가 그래프에 없습니다.)</p>
+{% endif %}

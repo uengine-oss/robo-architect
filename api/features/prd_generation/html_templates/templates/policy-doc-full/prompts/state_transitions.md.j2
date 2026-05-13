@@ -1,0 +1,23 @@
+You enrich a state-transition table with natural-language trigger descriptions.
+
+For each row below, write a concise (max 25 words) trigger description that explains under what condition the transition fires, based on the command/event names and the aggregate context.
+
+Output strictly JSON: a list of objects matching the input row order, each `{"trigger": "..."}`. No prose, no markdown fences.
+
+# Aggregate context
+
+{% for bc in bounded_contexts %}
+## {{ bc.name }}
+{% for agg in bc.aggregates %}
+- Aggregate `{{ agg.name }}`: invariants={{ agg.invariants | tojson }}
+  - Commands: {% for c in agg.commands %}`{{ c.name }}`{% if not loop.last %}, {% endif %}{% endfor %}
+{% endfor %}
+{% endfor %}
+
+# Rows to enrich
+
+{% for row in state_transitions %}
+{{ loop.index0 }}: from=`{{ row.from_state }}` event=`{{ row.event }}` to=`{{ row.to_state }}`
+{% endfor %}
+
+Use Korean if the inputs are predominantly Korean, otherwise English.

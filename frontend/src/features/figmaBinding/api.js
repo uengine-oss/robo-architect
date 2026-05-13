@@ -177,4 +177,30 @@ export async function retrySync(uiIds = null) {
   return asJsonOr404(r)
 }
 
+// ─── 024: Bound-file component library ───────────────────────────────────
+
+/**
+ * Scan the bound Figma file's COMPONENT/COMPONENT_SET nodes and persist
+ * them with VLM-derived descriptions. Returns {scanned, added, updated,
+ * removed, vlmDescribed, vlmFailures, componentCount, durationMs}.
+ */
+export async function scanComponents(apiToken) {
+  const r = await fetch(`${BASE}/components/scan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiToken }),
+  })
+  return asJsonOr404(r)
+}
+
+export async function listComponents() {
+  const r = await fetch(`${BASE}/components`)
+  return (await asJsonOr404(r)) || { components: [], componentCount: 0 }
+}
+
+export async function clearComponents() {
+  const r = await fetch(`${BASE}/components`, { method: 'DELETE' })
+  if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`)
+}
+
 export { getStoredFigmaCreds, setStoredFigmaCreds }

@@ -8,6 +8,24 @@ Framework: {{ framework }}
 >
 > Generated: {{ generated_at }}
 
+## Viewport summary
+
+{% if viewport_summary %}- Mobile (frame width ≤ 480px): {{ viewport_summary.get('mobile', 0) }}
+- Tablet (frame width 481–1024px): {{ viewport_summary.get('tablet', 0) }}
+- Desktop (frame width > 1024px): {{ viewport_summary.get('desktop', 0) }}
+- Unknown (no scene-graph dimensions): {{ viewport_summary.get('unknown', 0) }}
+
+Dominant: **{% if dominant_viewport %}{{ dominant_viewport }}{% else %}mixed — ask the user{% endif %}**
+{% else %}_No wireframes classified yet._
+{% endif %}
+
+> The dominant class above reflects ≥70% of the wireframes that ship with a
+> known viewport. The `frontend-engineer` agent reads this block FIRST and
+> MUST ask the user whether the whole menu / routing / breakpoint system
+> should be designed in that direction before generating components. When
+> the dominant is `mixed`, the agent must ask the user which viewport
+> drives the IA — do not silently pick one.
+
 ## Conventions
 
 {% if conventions %}

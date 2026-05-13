@@ -55,16 +55,17 @@
 
   <div class="field">
     <label>Backend URL</label>
-    <input id="serverUrl" type="text" value="https://d11c-49-165-8-37.ngrok-free.app" />
+    <input id="serverUrl" type="text" placeholder="http://localhost:8000 또는 https://&lt;tunnel&gt;" oninput="this.dataset.userEdited = '1'" />
   </div>
   <div class="field">
-    <label>File Key (auto-detected or manual)</label>
-    <input id="fileKeyInput" type="text" placeholder="Figma file key" />
+    <label>File Key (auto-detected or manual override)</label>
+    <input id="fileKeyInput" type="text" placeholder="Figma file key" oninput="this.dataset.userEdited = '1'" />
   </div>
 
   <div style="display:flex;gap:6px;margin-bottom:8px;">
     <button id="connectBtn" class="btn btn--primary" onclick="toggleConnection()">연결</button>
     <button class="btn btn--secondary" onclick="listFrames()">프레임 목록</button>
+    <button class="btn btn--secondary" onclick="resetSavedConfig()" title="clientStorage + localStorage 모두 비움">초기화</button>
   </div>
 
   <div id="frames" class="frames"></div>
@@ -86,13 +87,60 @@
           fileKey = msg.fileKey
           if (fileKey) document.getElementById('fileKeyInput').value = fileKey
           addLog(`Plugin ready. File: ${fileKey || '(auto-detect failed — enter manually)'}`)
-          // Auto-connect if URL is saved
+          // Tier-1 restore: localStorage (synchronous, instant pre-fill).
+          // Tier-2 restore arrives via RESTORED_CONFIG below — clientStorage,
+          // async, and authoritative (survives Figma cache clears that wipe
+          // localStorage).
           try {
-            const saved = localStorage.getItem('robo_sync_url')
-            if (saved) {
-              document.getElementById('serverUrl').value = saved
+            const savedUrl = localStorage.getItem('robo_sync_url')
+            if (savedUrl) {
+              document.getElementById('serverUrl').value = savedUrl
+            }
+            const savedFileKey = localStorage.getItem('robo_sync_file_key')
+            if (savedFileKey && !fileKey) {
+              fileKey = savedFileKey
+              document.getElementById('fileKeyInput').value = savedFileKey
+            }
+          } catch {}
+          break
+
+        case 'RESTORED_CONFIG':
+          // Tier-2 restore from figma.clientStorage. Treat as authoritative
+          // when the user hasn't already typed something into the inputs.
+          // Auto-connect after restore so the user doesn't have to click 연결
+          // on every plugin launch.
+          {
+            const urlInput = document.getElementById('serverUrl')
+            if (msg.backendUrl && !urlInput.dataset.userEdited) {
+              urlInput.value = msg.backendUrl
+              try { localStorage.setItem('robo_sync_url', msg.backendUrl) } catch {}
+            }
+            const fkInput = document.getElementById('fileKeyInput')
+            if (msg.fileKeyOverride && !fkInput.dataset.userEdited) {
+              fkInput.value = msg.fileKeyOverride
+              fileKey = msg.fileKeyOverride
+              try { localStorage.setItem('robo_sync_file_key', msg.fileKeyOverride) } catch {}
+            } else if (msg.autoDetectedFileKey) {
+              // No saved override — use Figma's auto-detected fileKey.
+              fileKey = msg.autoDetectedFileKey
+              if (!fkInput.value) fkInput.value = msg.autoDetectedFileKey
+            }
+            if (urlInput.value && !connected) {
+              addLog('Auto-connecting with saved config...')
               connect()
             }
+          }
+          break
+
+        case 'CONFIG_SAVED':
+          addLog('연결 정보 저장됨 (clientStorage)', 'success')
+          break
+
+        case 'CONFIG_RESET':
+          addLog('저장된 연결 정보 삭제됨', 'success')
+          try {
+            localStorage.removeItem('robo_sync_url')
+            localStorage.removeItem('robo_sync_file_key')
           } catch {}
           break
 
@@ -164,7 +212,7 @@
 
         // Feature 016 / US3 + FR-019b: plugin replies after creating a frame in a page.
         case 'CREATE_FRAME_IN_PAGE_RESULT':
-          if (msg.ok) addLog(`CREATE_FRAME_IN_PAGE → ${msg.figmaFrameName} (${msg.figmaNodeId})  nodes=${msg.nodesCreated || 0}/${(msg.nodesCreated || 0) + (msg.nodesFailed || 0)}`, 'success')
+          if (msg.ok) addLog(`CREATE_FRAME_IN_PAGE → ${msg.figmaFrameName} (${msg.figmaNodeId})  nodes=${msg.nodesCreated || 0}/${(msg.nodesCreated || 0) + (msg.nodesFailed || 0)}  build=${msg.buildId || 'unknown'}`, 'success')
           else addLog(`CREATE_FRAME_IN_PAGE failed: ${msg.error}`, 'error')
           reportCreateFrameInPageAck(msg)
           break
@@ -248,6 +296,8 @@
           figmaFrameName: msg.figmaFrameName || null,
           nodesCreated: typeof msg.nodesCreated === 'number' ? msg.nodesCreated : null,
           nodesFailed: typeof msg.nodesFailed === 'number' ? msg.nodesFailed : null,
+          renderErrors: Array.isArray(msg.renderErrors) ? msg.renderErrors : null,
+          buildId: msg.buildId || null,
           error: msg.error || null,
         })
       }).catch(e => addLog(`create-frame-in-page-ack POST failed: ${e.message || e}`, 'error'))
@@ -263,14 +313,42 @@
     function connect() {
       const baseUrl = document.getElementById('serverUrl').value
       if (!baseUrl) return
+      const manualFileKey = document.getElementById('fileKeyInput').value.trim()
 
       setStatus('connecting')
-      try { localStorage.setItem('robo_sync_url', baseUrl) } catch {}
+
+      // Tier-1 (fast): localStorage. Tier-2 (durable): plugin sandbox's
+      // figma.clientStorage. Both write together so a Figma session that
+      // clears one still has the other.
+      try {
+        localStorage.setItem('robo_sync_url', baseUrl)
+        if (manualFileKey) localStorage.setItem('robo_sync_file_key', manualFileKey)
+        else localStorage.removeItem('robo_sync_file_key')
+      } catch {}
+      parent.postMessage({ pluginMessage: {
+        type: 'SAVE_CONFIG',
+        backendUrl: baseUrl,
+        fileKeyOverride: manualFileKey || null,
+      } }, '*')
 
       // Figma plugin iframe cannot connect to localhost directly.
       // Use HTTP polling instead of WebSocket.
       addLog('Polling mode (Figma sandbox)')
       startPolling(baseUrl)
+    }
+
+    function resetSavedConfig() {
+      if (!confirm('저장된 연결 정보(Backend URL, File Key override)를 모두 지웁니다.\nclientStorage + localStorage 양쪽 모두 비웁니다.')) return
+      document.getElementById('serverUrl').value = ''
+      document.getElementById('fileKeyInput').value = ''
+      delete document.getElementById('serverUrl').dataset.userEdited
+      delete document.getElementById('fileKeyInput').dataset.userEdited
+      try {
+        localStorage.removeItem('robo_sync_url')
+        localStorage.removeItem('robo_sync_file_key')
+      } catch {}
+      parent.postMessage({ pluginMessage: { type: 'RESET_CONFIG' } }, '*')
+      if (connected) disconnect()
     }
 
     let pollTimer = null

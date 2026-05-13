@@ -27,6 +27,16 @@ from api.features.ddd_spec.projection import (
     UserStoryProjection,
     WireframeProjection,
 )
+from api.features.ddd_spec.wireframe_render import extract_viewport_class
+
+
+# Fraction of known-viewport wireframes one class must cover for it to be
+# called the project's "dominant" viewport. Below this, the agent has to
+# ask the user which viewport drives the IA — that's the whole point of
+# the check. 70% is a defensible default: it tolerates a couple of
+# companion screens (admin panels, print views) without flipping the
+# whole project to "mixed".
+DOMINANT_VIEWPORT_THRESHOLD: float = 0.70
 
 
 # --- low-level helpers ----------------------------------------------------
@@ -353,18 +363,20 @@ def _load_wireframes_for_story(session, user_story_id: str) -> list[WireframePro
         ui_id = r["id"]
         name = r.get("name") or ui_id
         slug = unique_slug(name, ui_id, taken)
+        scene_graph_json = _strip(r.get("sceneGraph"))
         out.append(
             WireframeProjection(
                 ui_id=ui_id,
                 name=name,
                 slug=slug,
-                scene_graph_json=_strip(r.get("sceneGraph")),
+                scene_graph_json=scene_graph_json,
                 template=_strip(r.get("template")),
                 attached_to_type=r.get("attachedToType")
                 if r.get("attachedToType") in {"Command", "ReadModel"}
                 else None,
                 attached_to_name=_strip(r.get("attachedToName")),
                 actor=_strip(r.get("actor")),
+                viewport_class=extract_viewport_class(scene_graph_json),
             )
         )
     return out
@@ -623,6 +635,7 @@ def load_frontend_composition(
                     "story_title": story.title or story.id,
                     "ui_id": wf.ui_id,
                     "ui_slug": wf.slug,
+                    "viewport_class": wf.viewport_class,
                 }
 
     # ---- Build edges.
@@ -766,6 +779,7 @@ def load_frontend_composition(
                     wireframe_slug=meta["ui_slug"],
                     triggered_by=None,
                     is_unreferenced=True,
+                    viewport_class=meta.get("viewport_class"),
                 )
             )
             continue
@@ -781,8 +795,25 @@ def load_frontend_composition(
                 wireframe_slug=meta["ui_slug"],
                 triggered_by=_triggered_by(key),
                 is_unreferenced=False,
+                viewport_class=meta.get("viewport_class"),
             )
         )
+
+    # Viewport summary across all bound wireframes (ui_flow + unreferenced).
+    # ``unknown`` collects entries whose scene graph was missing or
+    # dimensionless so the agent sees that too (a project full of unknown
+    # viewports gets no dominant — same shape as "mixed").
+    summary: dict[str, int] = {"mobile": 0, "tablet": 0, "desktop": 0, "unknown": 0}
+    for entry in (*ui_flow, *unreferenced):
+        bucket = entry.viewport_class or "unknown"
+        summary[bucket] = summary.get(bucket, 0) + 1
+    known_total = summary["mobile"] + summary["tablet"] + summary["desktop"]
+    dominant: Optional[str] = None
+    if known_total > 0:
+        for cls in ("mobile", "tablet", "desktop"):
+            if summary[cls] / known_total >= DOMINANT_VIEWPORT_THRESHOLD:
+                dominant = cls
+                break
 
     return FrontendCompositionProjection(
         framework=framework,
@@ -798,4 +829,6 @@ def load_frontend_composition(
         ui_flow=ui_flow,
         unreferenced_uis=unreferenced,
         cycle_broken_edges=list(cycle_broken),
+        viewport_summary=summary,
+        dominant_viewport=dominant,
     )

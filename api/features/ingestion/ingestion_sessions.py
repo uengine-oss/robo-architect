@@ -35,9 +35,14 @@ class IngestionSession:
     display_language: str = "ko"
     # Source type: "rfp" | "analyzer_graph" | "figma"
     source_type: str = "rfp"
-    # UI generation mode: "html" (default — legacy HTML wireframe template path)
-    # or "figma" (skip HTML entirely, generate sceneGraph via the backend
-    # JSX-based open-pencil agent — Phase 1 of the AI design backend port).
+    # UI generation mode (one of):
+    #   "html"                    legacy HTML wireframe template path
+    #   "figma"                   skip HTML; generate sceneGraph via the backend
+    #                             JSX-based open-pencil agent (spec 020 path)
+    #   "figma-with-components"   spec 024 — same as "figma" but seeds the LLM
+    #                             prompt with the bound Figma file's scanned
+    #                             component catalog so the resulting sceneGraph
+    #                             references existing design-system components
     ui_generation_mode: str = "html"
 
     # ─── Spec 017: Token counter ─────────────────────────────────────────

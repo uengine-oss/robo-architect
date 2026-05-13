@@ -21,7 +21,10 @@ from .schemas import (
     ConnectRequest,
     FailuresListResponse,
     FigmaBindingResponse,
+    FigmaComponentsListResponse,
     FullSyncStartResponse,
+    ScanComponentsRequest,
+    ScanComponentsResponse,
     StoryboardListItem,
     SyncRunsListResponse,
     SyncStoryboardsResponse,
@@ -89,6 +92,245 @@ async def post_replace(req: ConnectRequest, request: Request) -> dict[str, Any]:
 async def get_history(limit: int = 50) -> dict[str, Any]:
     items = service.get_history(limit=limit)
     return {"items": items}
+
+
+# ─── 024: Component library (scan / list / clear) ────────────────────────
+
+
+@router.post("/components/scan", response_model=ScanComponentsResponse)
+async def post_scan_components(req: ScanComponentsRequest, request: Request) -> dict[str, Any]:
+    """Scan the bound Figma file's component library.
+
+    Synchronous. Returns counts (scanned/added/updated/removed) plus the
+    final component count for the singleton binding. Per FR-010, returns
+    404 if no binding, 409 if a scan is already in flight.
+    """
+    from . import component_library  # noqa: PLC0415
+
+    actor = _actor_from_request(request)
+    SmartLogger.log(
+        "INFO",
+        f"figma_binding.components.scan.requested actor={actor}",
+        category="figma_binding.components.scan.requested",
+        params={"actor": actor},
+    )
+    return await component_library.scan_components(api_token=req.apiToken, actor=actor)
+
+
+@router.get("/components", response_model=FigmaComponentsListResponse)
+async def get_components() -> dict[str, Any]:
+    from . import component_library  # noqa: PLC0415
+
+    rows = component_library.list_components()
+    return {"components": rows, "componentCount": len(rows)}
+
+
+@router.delete("/components", status_code=204)
+async def delete_components(request: Request) -> None:
+    from . import component_library  # noqa: PLC0415
+
+    actor = _actor_from_request(request)
+    removed = component_library.clear_components()
+    SmartLogger.log(
+        "INFO",
+        f"figma_binding.components.cleared actor={actor} removed={removed}",
+        category="figma_binding.components.cleared",
+        params={"actor": actor, "removed": removed},
+    )
+
+
+# ─── 024-DEV: end-to-end component-render smoke test ────────────────────
+# Demonstrates the full pipeline: bound catalog → LLM pick → INSTANCE
+# sceneGraph → Figma plugin push (new page + frame).
+# Useful for manual smoke testing; the production path is the ingestion
+# upload flow with `ui_generation_mode = "figma-with-components"`.
+
+
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+
+class _ComponentRenderTestRequest(_BaseModel):
+    screen_brief: str
+    frame_name: str = "Spec 024 Test Frame"
+    page_name: str | None = None  # default: f"Spec 024 Test {timestamp}"
+
+
+@router.post("/components/_dev/test-render")
+async def post_test_component_render(req: _ComponentRenderTestRequest, request: Request) -> dict[str, Any]:
+    """End-to-end smoke for spec 024 figma-with-components mode.
+
+    Flow: run the open-pencil JSX agent with the bound component catalog
+    injected as extra_context → post-process the returned sceneGraph
+    (retype `$INSTANCE:Name` FRAME leaves to INSTANCE leaves with
+    componentId) → push the sceneGraph to Figma via the plugin
+    (new page + frame). Mirrors the production figma-with-components
+    ingestion path (`_generate_figma_components_scene_graph`).
+    """
+    import asyncio as _asyncio  # noqa: PLC0415
+    import time as _time  # noqa: PLC0415
+
+    from . import component_library, plugin_messages, repository  # noqa: PLC0415
+    from ..ingestion.figma_plugin_ws import is_polling_active  # noqa: PLC0415
+    from api.features.ai_design.wireframe_agent import run_render_agent  # noqa: PLC0415
+
+    binding = repository.get_active_binding()
+    if not binding:
+        raise HTTPException(status_code=404, detail="활성 바인딩 없음")
+    file_key = binding["figmaFileKey"]
+
+    if not is_polling_active(file_key):
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "plugin_not_connected", "messageKr": "Figma 플러그인이 연결되어 있지 않습니다."},
+        )
+
+    catalog = component_library.get_catalog_for_prompt()
+    if not catalog:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "empty_catalog", "messageKr": "스캔된 컴포넌트가 없습니다. 먼저 /components/scan을 호출하세요."},
+        )
+
+    actor = _actor_from_request(request)
+    SmartLogger.log(
+        "INFO",
+        f"figma_binding.components.dev_render.start brief_len={len(req.screen_brief)} actor={actor}",
+        category="figma_binding.components.dev_render.start",
+        params={"actor": actor, "brief_preview": req.screen_brief[:120]},
+    )
+
+    # 1) Invoke the open-pencil JSX agent with the bound catalog injected as
+    #    extra_context. The agent renders JSX → SceneGraph via Yoga so layout
+    #    properly respects auto-layout, padding, alignment.
+    extra_ctx = component_library.build_jsx_agent_extra_context(catalog)
+    agent_events: list[dict[str, Any]] = []
+    def _capture_event(name: str, data: dict[str, Any]) -> None:
+        # Trim long payloads so the dev response stays readable.
+        compact = {k: (v if not isinstance(v, str) else (v[:200] + "…" if len(v) > 200 else v)) for k, v in (data or {}).items()}
+        agent_events.append({"name": name, **compact})
+
+    started = _time.monotonic()
+    scene_graph, summary = await run_render_agent(
+        name=req.frame_name,
+        description=req.screen_brief,
+        bc_name="",
+        bc_description="",
+        extra_context=extra_ctx,
+        on_event=_capture_event,
+    )
+    llm_ms = int((_time.monotonic() - started) * 1000)
+
+    if not scene_graph:
+        return {
+            "ok": False,
+            "step": "run_render_agent_failed",
+            "llmDurationMs": llm_ms,
+            "summary": summary,
+            "catalogChars": len(catalog),
+            "extraContextChars": len(extra_ctx),
+            "agentEvents": agent_events[-30:],
+        }
+
+    # 2) Post-process: retype `$INSTANCE:Name|k=v` FRAME leaves to INSTANCE
+    #    nodes (the Figma plugin instantiates them by name from its local cache).
+    name_index = component_library.build_name_to_node_index()
+    scene_graph, retype_counts = component_library.retype_instance_markers(
+        scene_graph, name_index
+    )
+    instance_count = retype_counts["retyped"]
+    instance_names = retype_counts["instance_names"]
+    unresolved = retype_counts["unresolved"]
+
+    # Count "native" (non-INSTANCE non-Document/CANVAS) leaves for visibility.
+    native_count = 0
+    if isinstance(scene_graph.get("nodes"), dict):
+        for n in scene_graph["nodes"].values():
+            t = (n.get("type") or "").upper()
+            if t in ("TEXT", "RECTANGLE", "ELLIPSE", "LINE", "VECTOR"):
+                native_count += 1
+
+    page_name = req.page_name or f"Spec 024 Test {int(_time.time())}"
+
+    # Step A: create page.
+    create_page_msg = plugin_messages.build_create_page(page_name)
+    try:
+        page_ack = await plugin_messages.send_and_wait(file_key, create_page_msg, 90.0)
+    except plugin_messages.PluginNotConnectedError:
+        raise HTTPException(status_code=503, detail="Figma 플러그인 연결이 끊겼습니다.")
+    except _asyncio.TimeoutError:
+        return {"ok": False, "step": "create_page_timeout"}
+    if not page_ack.get("ok") or not page_ack.get("figmaPageId"):
+        return {"ok": False, "step": "create_page_failed", "ack": page_ack}
+    page_id = page_ack["figmaPageId"]
+
+    # Step B: build frame on the new page using the sceneGraph.
+    frame_msg = plugin_messages.build_create_frame_in_page(
+        figma_page_id=page_id, frame_name=req.frame_name, scene_graph=scene_graph
+    )
+    try:
+        frame_ack = await plugin_messages.send_and_wait(file_key, frame_msg, 120.0)
+    except _asyncio.TimeoutError:
+        return {"ok": False, "step": "create_frame_timeout", "figmaPageId": page_id}
+
+    SmartLogger.log(
+        "INFO",
+        f"figma_binding.components.dev_render.done instances={instance_count} natives={native_count} unresolved={unresolved}",
+        category="figma_binding.components.dev_render.done",
+        params={
+            "instances": instance_count,
+            "natives": native_count,
+            "unresolved": unresolved,
+            "pageId": page_id,
+            "frameAck": frame_ack,
+        },
+    )
+
+    # Build a deep link so the user can jump straight to the new frame
+    # in Figma. URL encoding rule: replace ":" with "-" in node id.
+    figma_node_id_for_url = (frame_ack.get("figmaNodeId") or "").replace(":", "-")
+    file_name_url_safe = (binding.get("figmaFileName") or "Wireframe").replace(" ", "-")
+    figma_url = (
+        f"https://www.figma.com/design/{file_key}/{file_name_url_safe}?node-id={figma_node_id_for_url}"
+        if figma_node_id_for_url
+        else None
+    )
+
+    return {
+        "ok": frame_ack.get("ok", False),
+        "llmDurationMs": llm_ms,
+        "summary": summary,
+        "instanceCount": instance_count,
+        "nativeCount": native_count,
+        "instanceNames": instance_names,
+        "unresolved": unresolved,
+        "sceneGraph": scene_graph,
+        "figmaPageId": page_id,
+        "figmaPageName": page_ack.get("figmaPageName"),
+        "figmaNodeId": frame_ack.get("figmaNodeId"),
+        "figmaFrameName": frame_ack.get("figmaFrameName"),
+        "figmaUrl": figma_url,
+        "nodesCreated": frame_ack.get("nodesCreated"),
+        "nodesFailed": frame_ack.get("nodesFailed"),
+        "renderErrors": frame_ack.get("renderErrors") or [],
+        "pluginBuildId": frame_ack.get("buildId"),
+        "frameAck": frame_ack,
+    }
+
+
+def _hex_to_rgb(hex_color: str) -> dict[str, float]:
+    """Convert "#rrggbb" to Figma SOLID color dict {r,g,b} 0–1."""
+    s = (hex_color or "#9ca3af").lstrip("#")
+    if len(s) == 3:
+        s = "".join(c * 2 for c in s)
+    if len(s) != 6:
+        s = "9ca3af"
+    try:
+        r = int(s[0:2], 16) / 255.0
+        g = int(s[2:4], 16) / 255.0
+        b = int(s[4:6], 16) / 255.0
+    except ValueError:
+        r, g, b = 0.6, 0.6, 0.6
+    return {"r": r, "g": g, "b": b}
 
 
 # ─── Storyboards (read-only listing) ────────────────────────────────────

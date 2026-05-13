@@ -33,7 +33,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Literal, Optional
 
 import httpx
 
@@ -41,6 +41,16 @@ from api.platform import open_pencil_client
 from api.platform.observability.smart_logger import SmartLogger
 
 from api.features.ddd_spec.paths import atomic_write_bytes, atomic_write_text
+
+
+# Viewport classification thresholds (research D7+ amendment, 2026-05-12).
+# Anchors taken from common breakpoint conventions: ≤480px is phone-class,
+# 481–1024 is tablet-class, >1024 is desktop-class. The frontend-engineer
+# agent reads the dominant class from ``framework.md`` to decide whether to
+# ask the user "should the whole IA be mobile-first / desktop-first?".
+ViewportClass = Literal["mobile", "tablet", "desktop"]
+MOBILE_MAX_WIDTH: float = 480.0
+TABLET_MAX_WIDTH: float = 1024.0
 
 
 # --- scene-graph traversal ----------------------------------------------
@@ -114,6 +124,57 @@ def _primary_frame(nodes: dict[str, Any], root_id: Optional[str]) -> Optional[st
             return nid
         queue.extend(node.get("childIds") or [])
     return root_id
+
+
+def classify_viewport(width: float, height: float) -> Optional[ViewportClass]:
+    """Bucket a primary-frame ``(width, height)`` pair into a viewport class.
+
+    Returns ``None`` when the input is missing or non-positive — callers
+    treat that as "unknown" and skip it in the dominant-viewport summary.
+
+    Classification uses ``width`` directly: designers in open-pencil
+    always set the frame width to the *device* width (375 / 390 for
+    phones, 768 for tablet portrait, 1280+ for desktop), regardless of
+    how tall the screen is. ``max(w, h)`` misfires on portrait phones
+    (375×812 looks "tablet") and ``min(w, h)`` misfires on shorter
+    desktops (1440×900 looks "tablet"). Width tracks designer intent.
+    """
+    try:
+        w = float(width)
+        h = float(height)
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    if w <= MOBILE_MAX_WIDTH:
+        return "mobile"
+    if w <= TABLET_MAX_WIDTH:
+        return "tablet"
+    return "desktop"
+
+
+def extract_viewport_class(scene_graph_json: Optional[str]) -> Optional[ViewportClass]:
+    """Parse a scene graph and classify its primary frame's viewport.
+
+    Returns ``None`` for missing / invalid / dimensionless graphs so the
+    repository can leave the projection field unset (and the summary
+    can skip that wireframe entirely instead of bucketing it as a guess).
+    """
+    graph = _parse_scene_graph(scene_graph_json)
+    if graph is None:
+        return None
+    nodes, root_id = _scene_nodes(graph)
+    if not nodes or not root_id:
+        return None
+    frame_id = _primary_frame(nodes, root_id)
+    if frame_id is None:
+        return None
+    frame = nodes.get(frame_id) or {}
+    width = frame.get("width")
+    height = frame.get("height")
+    if not width or not height:
+        return None
+    return classify_viewport(width, height)
 
 
 def _abs_positions(

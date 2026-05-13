@@ -68,6 +68,31 @@ def _emit_warnings(ctx, comp: FrontendCompositionProjection, *, cross_bc_edge_co
                 "ui_id": entry.wireframe_ui_id,
             },
         )
+    # Viewport-intent warnings (research D7+ amendment 2026-05-12). The
+    # generated framework.md asks the agent to confirm direction with the
+    # user before designing the IA; the warning is the operator-side
+    # mirror of that prompt.
+    summary = comp.viewport_summary or {}
+    known_total = (
+        summary.get("mobile", 0) + summary.get("tablet", 0) + summary.get("desktop", 0)
+    )
+    if known_total > 0:
+        if comp.dominant_viewport is not None:
+            ctx.warn(
+                "frontend_viewport_dominant",
+                f"{comp.dominant_viewport.title()}-class wireframes dominate "
+                f"({summary.get(comp.dominant_viewport, 0)}/{known_total}); the agent "
+                "will ask the user whether to design the whole IA "
+                f"{comp.dominant_viewport}-first.",
+                {"dominant": comp.dominant_viewport, **summary},
+            )
+        else:
+            ctx.warn(
+                "frontend_viewport_mixed",
+                "No single viewport class covers ≥70% of bound wireframes; the agent "
+                "must ask the user which viewport drives the IA.",
+                {**summary},
+            )
 
 
 def render_framework_md(
@@ -82,6 +107,8 @@ def render_framework_md(
         framework=comp.framework,
         conventions=comp.framework_conventions,
         generated_at=generated_at,
+        viewport_summary=comp.viewport_summary,
+        dominant_viewport=comp.dominant_viewport,
     )
 
 

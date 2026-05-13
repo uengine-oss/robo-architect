@@ -4,6 +4,41 @@
 
 figma.showUI(__html__, { width: 320, height: 400, themeColors: true })
 
+// ── Persistent config (Figma clientStorage; survives plugin/Figma restarts) ──
+//
+// Two keys:
+//   roboArchitectBackendUrl     last successfully-connected Backend URL
+//   roboArchitectFileKeyOverride manual file-key override (used when the
+//                                sandbox's auto-detect figma.fileKey doesn't
+//                                fit, e.g., running against a different file
+//                                than the one open in Figma's tab)
+//
+// On plugin launch we read both and post them to the UI so the input fields
+// pre-fill BEFORE auto-detection kicks in.
+
+const CFG_KEY_URL = 'roboArchitectBackendUrl'
+const CFG_KEY_FILE_KEY = 'roboArchitectFileKeyOverride'
+
+async function loadAndSendStoredConfig(): Promise<void> {
+  try {
+    const [savedUrl, savedFileKey] = await Promise.all([
+      figma.clientStorage.getAsync(CFG_KEY_URL),
+      figma.clientStorage.getAsync(CFG_KEY_FILE_KEY),
+    ])
+    figma.ui.postMessage({
+      type: 'RESTORED_CONFIG',
+      backendUrl: typeof savedUrl === 'string' ? savedUrl : null,
+      fileKeyOverride: typeof savedFileKey === 'string' ? savedFileKey : null,
+      autoDetectedFileKey: figma.fileKey || null,
+    })
+  } catch (_e) { /* best-effort */ }
+}
+
+// Fire as soon as the UI iframe is alive. PLUGIN_READY (existing message)
+// already gives a hook but it carries figma.fileKey only; we add a richer
+// RESTORED_CONFIG so the UI can decide which value to pre-fill.
+setTimeout(() => { void loadAndSendStoredConfig() }, 50)
+
 // ── Message router ──
 
 figma.ui.onmessage = async (msg: any) => {
@@ -45,6 +80,31 @@ figma.ui.onmessage = async (msg: any) => {
       case 'EXPORT_FRAME_BY_ID':
         await handleExportFrameById(msg)
         break
+      case 'SAVE_CONFIG': {
+        // Persist Backend URL and optional file-key override across sessions.
+        // Empty / null values clear the slot.
+        const setOrClear = async (key: string, val: unknown): Promise<void> => {
+          if (typeof val === 'string' && val.trim()) {
+            await figma.clientStorage.setAsync(key, val.trim())
+          } else if (val === null || val === '') {
+            await figma.clientStorage.deleteAsync(key)
+          }
+        }
+        await Promise.all([
+          setOrClear(CFG_KEY_URL, msg.backendUrl),
+          setOrClear(CFG_KEY_FILE_KEY, msg.fileKeyOverride),
+        ])
+        figma.ui.postMessage({ type: 'CONFIG_SAVED' })
+        break
+      }
+      case 'RESET_CONFIG': {
+        await Promise.all([
+          figma.clientStorage.deleteAsync(CFG_KEY_URL),
+          figma.clientStorage.deleteAsync(CFG_KEY_FILE_KEY),
+        ])
+        figma.ui.postMessage({ type: 'CONFIG_RESET' })
+        break
+      }
     }
   } catch (e: any) {
     figma.ui.postMessage({ type: 'ERROR', message: (e && e.message) || String(e) })
@@ -97,6 +157,8 @@ async function handleCreatePage(msg: { requestId?: string; name?: string }) {
 // (recursive renderer for JSX-primitive sceneGraphs from open-pencil's
 // wireframe service). Old `buildFrameFromSceneGraph` (component-based)
 // is retained for the legacy SYNC_FRAME flow (009).
+const SPEC024_PLUGIN_BUILD = 'v6'
+
 async function handleCreateFrameInPage(msg: {
   requestId?: string
   figmaPageId?: string
@@ -104,11 +166,15 @@ async function handleCreateFrameInPage(msg: {
   sceneGraph?: any
 }) {
   const requestId = msg.requestId
+  // Diagnostic: surface the build id so the backend can tell whether the
+  // currently-running plugin window is the freshly-built bundle.
+  try { figma.notify(`spec024 plugin build ${SPEC024_PLUGIN_BUILD}`) } catch (_e) {}
   const fail = (error: string) => figma.ui.postMessage({
     type: 'CREATE_FRAME_IN_PAGE_RESULT',
     requestId,
     ok: false,
     error,
+    buildId: SPEC024_PLUGIN_BUILD,
   })
   try {
     if (!msg.figmaPageId) return fail('figmaPageId가 비어 있습니다.')
@@ -144,6 +210,13 @@ async function handleCreateFrameInPage(msg: {
       renderErrors = result.errors
     }
 
+    // Scroll the viewport so the new frame is visible when the user
+    // switches to the new page (Figma does not auto-center on programmatic
+    // frame creation — spec 024 smoke test bug, user saw an empty viewport).
+    try {
+      figma.viewport.scrollAndZoomIntoView([frame])
+    } catch (_e) { /* best-effort */ }
+
     const ackBody: any = {
       type: 'CREATE_FRAME_IN_PAGE_RESULT',
       requestId,
@@ -153,9 +226,11 @@ async function handleCreateFrameInPage(msg: {
       figmaFrameName: frame.name,
       nodesCreated,
       nodesFailed,
+      buildId: SPEC024_PLUGIN_BUILD,
     }
     if (renderErrors.length > 0) {
-      ackBody.renderErrors = renderErrors.slice(0, 5)
+      // Up the slice limit so the v4/v5 trace lines all make it through.
+      ackBody.renderErrors = renderErrors.slice(0, 40)
     }
     figma.ui.postMessage(ackBody)
   } catch (e: any) {
@@ -487,6 +562,193 @@ async function renderSceneNode(
       applyContainerProps(l, sn)
       applyFillsAndStrokes(l, sn)
       ctx.created++
+    } else if (sn.type === 'INSTANCE') {
+      // Spec 024 — sceneGraph references a Figma COMPONENT / COMPONENT_SET by
+      // name. Look up the local component, instantiate, append, then apply
+      // text overrides (sn.overrides: {childName: text}).
+      const compName = (sn.name || '').trim().toLowerCase()
+      let comp: ComponentNode | null = null
+      if (compName) {
+        // Exact match first, then substring fallback (mirrors the old
+        // buildFrameFromSceneGraph cache lookup).
+        const visit = (node: BaseNode, exact: boolean): void => {
+          if (comp) return
+          const lower = (node as any).name ? (node as any).name.toLowerCase() : ''
+          if (node.type === 'COMPONENT') {
+            if (exact ? lower === compName : (lower.includes(compName) || compName.includes(lower))) {
+              comp = node as ComponentNode; return
+            }
+          } else if (node.type === 'COMPONENT_SET') {
+            if (exact ? lower === compName : (lower.includes(compName) || compName.includes(lower))) {
+              const set = node as ComponentSetNode
+              const variant = (set as any).defaultVariant || (set.children && set.children[0])
+              if (variant && variant.type === 'COMPONENT') { comp = variant as ComponentNode; return }
+            }
+          }
+          if ('children' in node) {
+            for (const c of (node as ChildrenMixin).children) {
+              visit(c, exact)
+              if (comp) return
+            }
+          }
+        }
+        for (const page of figma.root.children) { visit(page, true); if (comp) break }
+        if (!comp) {
+          for (const page of figma.root.children) { visit(page, false); if (comp) break }
+        }
+      }
+      if (!comp) {
+        ctx.failed++
+        ctx.errors.push(`INSTANCE "${sn.name}": component not found in local file`)
+        return
+      }
+      try {
+        const inst = (comp as ComponentNode).createInstance()
+        inst.name = sn.name || (comp as ComponentNode).name
+        parent.appendChild(inst)
+        // Spec 024: do NOT call applyContainerProps for INSTANCE — that would
+        // overwrite the variant's natural size with the catalog bbox (which
+        // for COMPONENT_SET is the size of ALL variants stacked, ~10× too tall).
+        // The natural variant size from createInstance() is the right thing.
+        // Apply non-size container props only (opacity, rotation, corners).
+        if (typeof sn.opacity === 'number' && sn.opacity !== 1) {
+          try { inst.opacity = sn.opacity } catch (_e) {}
+        }
+        if (typeof sn.rotation === 'number' && sn.rotation !== 0) {
+          try { inst.rotation = sn.rotation } catch (_e) {}
+        }
+        // Spec 024 text overrides — apply 3 strategies in order:
+        //   (1) Figma component-property overrides via setProperties()
+        //   (2) Named text-child match (override[name] → tn.characters)
+        //   (3) Generic fallback (override.text|label|title|placeholder → first text)
+        // We walk the instance's TEXT descendants and replace by name match.
+        const overrides = (sn.overrides && typeof sn.overrides === 'object') ? sn.overrides : null
+        if (overrides) {
+          // (1) Try Figma component-property overrides first. Variant TEXT
+          //     properties have suffixed names like "label#1:0" — we match by
+          //     stripping the suffix and lowercasing on both sides.
+          try {
+            const compProps = (inst as any).componentProperties as
+              | Record<string, { type: string; value: any }>
+              | undefined
+            if (compProps) {
+              const updates: Record<string, string | boolean> = {}
+              for (const [overrideKey, overrideVal] of Object.entries(overrides)) {
+                if (typeof overrideVal !== 'string') continue
+                const okLow = overrideKey.toLowerCase()
+                for (const propKey of Object.keys(compProps)) {
+                  const prop = compProps[propKey]
+                  if (prop.type !== 'TEXT') continue
+                  // "label#1:0" → "label"
+                  const bareName = propKey.split('#')[0].toLowerCase()
+                  if (bareName === okLow || okLow === 'text' || okLow === 'label') {
+                    updates[propKey] = overrideVal
+                    break
+                  }
+                }
+              }
+              if (Object.keys(updates).length > 0) {
+                ;(inst as any).setProperties(updates)
+              }
+            }
+          } catch (_e) { /* setProperties may throw on variant mismatch */ }
+
+          // (2 + 3) Direct text-node override fallback — works for non-property
+          //     text leaves OR when setProperties didn't catch the override.
+          const textNodes: TextNode[] = []
+          const collect = (n: BaseNode): void => {
+            if (n.type === 'TEXT') textNodes.push(n as TextNode)
+            if ('children' in n) for (const c of (n as ChildrenMixin).children) collect(c)
+          }
+          collect(inst)
+          // Build-identifier trace so renderErrors can confirm the plugin is
+          // running the spec-024-v4 bundle (a stale plugin window would not
+          // emit this string).
+          ctx.errors.push(`[trace v4] INSTANCE "${sn.name}" overrides=${JSON.stringify(overrides)}`)
+
+          // Robust font-loader + text setter — Figma INSTANCE text often
+          // references private fonts (e.g. Pretendard) that load asynchronously
+          // and that Figma sometimes reports as "unloaded" even after a
+          // successful await. We use a two-tier strategy:
+          //   1. Natural-font path: try to load the text's current font, then
+          //      write. Preserves the component's typography.
+          //   2. Inter-Regular fallback: if (1) throws OR the write throws,
+          //      replace the node's fontName with Inter Regular (always
+          //      loadable in Figma) and write. The text is still updated;
+          //      typography may degrade.
+          const safeSetText = async (tn: TextNode, val: string): Promise<boolean> => {
+            // (1) Natural-font path.
+            try {
+              const fn = (tn as any).fontName
+              if (fn === (figma as any).mixed) {
+                const len = tn.characters.length
+                const fonts: { family: string; style: string }[] = []
+                for (let i = 0; i < len; i++) {
+                  const f = tn.getRangeFontName(i, i + 1) as any
+                  if (f !== (figma as any).mixed && f && f.family) fonts.push({ family: f.family, style: f.style })
+                }
+                for (const f of fonts) await figma.loadFontAsync(f)
+              } else if (fn && fn.family) {
+                await figma.loadFontAsync(fn as FontName)
+              }
+              tn.characters = val
+              return true
+            } catch (_e1: any) {
+              /* fall through to Inter-Regular fallback */
+            }
+            // (2) Inter-Regular fallback — force the font, then write.
+            try {
+              await figma.loadFontAsync({ family: 'Inter', style: 'Regular' })
+              ;(tn as any).fontName = { family: 'Inter', style: 'Regular' }
+              tn.characters = val
+              return true
+            } catch (e2: any) {
+              ctx.errors.push(`INSTANCE "${sn.name}" override of TEXT "${tn.name}": ${(e2 && e2.message) || e2}`)
+              return false
+            }
+          }
+          ctx.errors.push(`[trace v4] INSTANCE "${sn.name}" found ${textNodes.length} TEXT nodes: ${textNodes.map(t => `${t.name}=${JSON.stringify(t.characters).slice(0, 30)}`).join(', ')}`)
+          const used = new Set<TextNode>()
+          for (const [key, val] of Object.entries(overrides)) {
+            if (typeof val !== 'string') continue
+            for (const tn of textNodes) {
+              if (used.has(tn)) continue
+              if ((tn.name || '').toLowerCase() === key.toLowerCase()) {
+                if (await safeSetText(tn, val)) used.add(tn)
+                break
+              }
+            }
+          }
+          const generic = (overrides as any).text || (overrides as any).label || (overrides as any).title || (overrides as any).placeholder
+          if (typeof generic === 'string' && textNodes.length > 0 && used.size === 0) {
+            // No keyed match worked — apply the generic override to every TEXT
+            // child whose current content looks like a placeholder/variant
+            // label (`{xxx}`, "default", current chars equal to a known variant
+            // hint). Otherwise stamp the first TEXT.
+            const looksLikePlaceholder = (s: string): boolean =>
+              !!s && (/^\{.+\}$/.test(s.trim()) || /^(default|placeholder|label|텍스트|text)$/i.test(s.trim()))
+            let appliedAny = false
+            for (const tn of textNodes) {
+              if (looksLikePlaceholder(tn.characters)) {
+                const beforeChars = tn.characters
+                const ok = await safeSetText(tn, generic)
+                ctx.errors.push(`[trace v4] INSTANCE "${sn.name}" placeholder-match ${tn.name}: ${JSON.stringify(beforeChars).slice(0, 20)} → ${ok ? 'ok' : 'failed'} actual=${JSON.stringify(tn.characters).slice(0, 30)}`)
+                if (ok) appliedAny = true
+              }
+            }
+            if (!appliedAny) {
+              const tn = textNodes[0]
+              const beforeChars = tn.characters
+              const ok = await safeSetText(tn, generic)
+              ctx.errors.push(`[trace v4] INSTANCE "${sn.name}" first-text-fallback ${tn.name}: ${JSON.stringify(beforeChars).slice(0, 20)} → ${ok ? 'ok' : 'failed'} actual=${JSON.stringify(tn.characters).slice(0, 30)}`)
+            }
+          }
+        }
+        ctx.created++
+      } catch (e: any) {
+        ctx.failed++
+        ctx.errors.push(`INSTANCE "${sn.name}": ${(e && e.message) || e}`)
+      }
     } else {
       ctx.failed++
       ctx.errors.push('Unsupported node type: ' + sn.type)

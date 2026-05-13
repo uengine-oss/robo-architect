@@ -3323,6 +3323,17 @@ itself; this agent file does not restate them.
 
 ## How you work
 
+0. **Viewport intent check.** After loading `framework.md`, read its
+   `Viewport summary` block. **Before designing any IA, routing, or
+   breakpoint system, ask the user**: "The wireframes are predominantly
+   `<dominant>` (see Viewport summary in `framework.md`). Should the
+   whole menu, routing, and layout be designed `<dominant>`-first?" Wait
+   for the user's confirmation before continuing. When the dominant
+   reads `mixed — ask the user`, ask the user which viewport class
+   should drive the IA instead of guessing. The answer governs
+   breakpoint defaults, container max-widths, navigation chrome
+   (bottom-tab vs. sidebar), and gesture vs. pointer affordances —
+   apply it consistently across every component you generate next.
 1. Load `specs/frontend/framework.md` first — its `Framework:` line +
    Conventions block decide component file shape, state management,
    routing library, styling.
@@ -3330,7 +3341,10 @@ itself; this agent file does not restate them.
    input. Each numbered entry's `Triggered by` line tells you the
    causal step that brings the user to that screen. Use the order to
    design the menu IA (entry-point UIs become top-level entries;
-   consecutive UIs in the same flow nest as sub-routes).
+   consecutive UIs in the same flow nest as sub-routes). Each entry
+   also carries a `[viewport: mobile|tablet|desktop]` tag — use it to
+   sanity-check the user's viewport-intent answer above; flag any
+   wireframe whose tag conflicts with the chosen direction.
 3. Load `specs/frontend/menu-structure.md` for the flat inventory +
    per-UI traceability. Use it to map each UI to its owning BC for
    the *naming lookup* — not for grouping.
@@ -3365,6 +3379,9 @@ itself; this agent file does not restate them.
   under "Aliases to AVOID" → stop, do not invent or synonym.
 - `framework.md` Conventions reads `(no curated conventions for this
   framework — confirm)` → stop and ask the user.
+- `framework.md` Viewport summary reads `mixed — ask the user`, or
+  you have not yet received the user's viewport-intent answer for the
+  current run → stop and ask before generating components.
 """
 
 
@@ -3416,7 +3433,11 @@ You are generating the project's frontend in **{front_fw}**. Adopt the
 
 1. `specs/frontend/framework.md` — parse line `Framework: <name>`; use
    the Conventions block for component file shape, state management,
-   routing library, styling.
+   routing library, styling. **Also parse the `Viewport summary`
+   block** — it reports counts of mobile / tablet / desktop / unknown
+   wireframes and a `Dominant:` line. The dominant value (or `mixed —
+   ask the user` when no class crosses 70%) drives step 0 of the plan
+   below.
 2. `specs/frontend/ui-flow.md` — the **causal order** of UI screens
    across the user's whole journey. This is the only structural input.
 3. `specs/frontend/menu-structure.md` — a flat **inventory** of bound
@@ -3439,8 +3460,21 @@ You are generating the project's frontend in **{front_fw}**. Adopt the
 
 ## Plan
 
+0. **Confirm viewport intent with the user — BEFORE doing anything
+   else.** Read the `Viewport summary` block in `framework.md`. Ask
+   the user verbatim:
+   > "Wireframes are predominantly `<dominant>` ({{counts}}). Should I
+   > design the whole menu IA, routing, breakpoints, and component
+   > chrome `<dominant>`-first?"
+   When the summary reads `mixed — ask the user`, instead ask which
+   viewport class should drive the IA (mobile / tablet / desktop) and
+   why; don't pick one silently. Record the answer at the top of the
+   generated project's README and use it consistently below.
 1. Build the project skeleton per the framework's conventions
-   (component shape, state library, routing library, styling).
+   (component shape, state library, routing library, styling). Apply
+   the viewport-intent answer from step 0 to: default container
+   max-widths, navigation chrome (bottom-tab vs. sidebar vs. top-nav),
+   touch vs. pointer affordances, breakpoint thresholds.
 2. **Design the menu IA from the user's workflow.** Read
    `ui-flow.md` end-to-end and decide:
    - Top-level entries from entry-point UIs (no upstream trigger) and
@@ -3488,6 +3522,15 @@ You are generating the project's frontend in **{front_fw}**. Adopt the
   stop, do not guess a layout.
 - `framework.md` Conventions reads `(no curated conventions for this
   framework — confirm)` → stop and ask the user.
+- `framework.md` Viewport summary `Dominant:` reads `mixed — ask the
+  user`, or you have not yet asked the user to confirm viewport
+  intent for the current run → stop and ask before any code is
+  generated.
+- A `ui-flow.md` entry's `[viewport: ...]` tag conflicts with the
+  user's confirmed viewport intent (e.g. a `desktop` wireframe in an
+  otherwise mobile-first project) → stop and ask whether to render it
+  as a companion screen, redirect to mobile, or treat as a separate
+  responsive breakpoint.
 - A name you would use in code is not present in the BC's
   `domain-terms.md`, or appears under "Aliases to AVOID" → stop, do
   not invent or synonym-substitute.
