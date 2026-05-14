@@ -19,6 +19,8 @@ const emit = defineEmits(['update:modelValue', 'complete', 'session-restored'])
 const navigatorStore = useNavigatorStore()
 const ingestionStore = useIngestionStore()
 const eventModelingStore = useEventModelingStore()
+const canvasStore = useCanvasStore()
+const inspectorRequestStore = useInspectorRequestStore()
 const activeTab = inject('activeTab', ref('Design'))
 
 // LocalStorage key for persisting session (page refresh recovery)
@@ -1194,6 +1196,26 @@ function getTypeClass(type) {
   return `item-icon--${type.toLowerCase()}`
 }
 
+// Click a streamed item to select it on the canvas and open the
+// InspectorPanel with its properties. Works mid-generation: the node may
+// already be rendered on the canvas (in which case it gets highlighted),
+// or only present as a streamed payload (in which case the Inspector
+// renders directly from the payload via openInspectorForNodeData).
+function onMiniItemClick(item) {
+  if (!item || !item.id) return
+  if (activeTab && activeTab.value !== 'Design') {
+    activeTab.value = 'Design'
+  }
+  try {
+    canvasStore.selectNode(item.id)
+  } catch (e) {
+    // Selection is a nice-to-have; failure here must not block the
+    // inspector open below.
+    console.warn('[ingestion.mini-item] selectNode failed', e)
+  }
+  inspectorRequestStore.request(item)
+}
+
 // Cleanup on unmount
 onUnmounted(() => {
   closeStream()
@@ -2149,9 +2171,16 @@ function useSample() {
           <div v-if="isProcessing && !error" class="mini-items">
             <TransitionGroup name="item-list">
               <template v-for="item in createdItems.slice(-5)" :key="item.id">
-                <div 
+                <div
                   v-if="item && item.type"
                   class="mini-item"
+                  :class="{ 'mini-item--selected': canvasStore.isSelected(item.id) }"
+                  role="button"
+                  tabindex="0"
+                  :title="`${item.type}: ${item.name || item.id} 속성 보기`"
+                  @click="onMiniItemClick(item)"
+                  @keydown.enter.prevent="onMiniItemClick(item)"
+                  @keydown.space.prevent="onMiniItemClick(item)"
                 >
                   <span class="item-icon" :class="getTypeClass(item.type)">
                     {{ getTypeIcon(item.type) }}
@@ -3333,6 +3362,22 @@ function useSample() {
   background: var(--color-bg);
   border-radius: var(--radius-sm);
   animation: slideIn 0.2s ease;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mini-item:hover {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.mini-item:focus-visible {
+  outline: 2px solid var(--color-accent, #4c6ef5);
+  outline-offset: 1px;
+}
+
+.mini-item--selected {
+  background: var(--color-bg-selected, rgba(76, 110, 245, 0.18));
+  box-shadow: inset 2px 0 0 var(--color-accent, #4c6ef5);
 }
 
 @keyframes slideIn {
