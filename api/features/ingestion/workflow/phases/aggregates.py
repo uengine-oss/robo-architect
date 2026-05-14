@@ -570,16 +570,16 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                         # Merge covered events into existing aggregate
                         existing_covered = set(existing_entry.get("covered_events", []))
                         existing_covered.update(covered)
-                        existing_entry["covered_events"] = list(existing_covered)
+                        existing_entry["covered_events"] = sorted(existing_covered)
                         # Merge user_story_ids
                         new_us = set(getattr(agg, "user_story_ids", []) or [])
                         old_us = set(existing_entry.get("user_story_ids", []))
-                        existing_entry["user_story_ids"] = list(old_us | new_us)
+                        existing_entry["user_story_ids"] = sorted(old_us | new_us)
                     else:
                         _accumulated_intra_bc_aggs.append({
                             "name": agg_name,
-                            "covered_events": covered,
-                            "user_story_ids": list(getattr(agg, "user_story_ids", []) or []),
+                            "covered_events": sorted(set(covered)),
+                            "user_story_ids": sorted(set(getattr(agg, "user_story_ids", []) or [])),
                         })
                 chunk_aggregates_all.extend(chunk_aggs)
 
@@ -608,7 +608,7 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     keep = seen_names[agg_name]
                     keep_covered = set(_covered_event_names_from_agg(keep))
                     new_covered = set(_covered_event_names_from_agg(agg))
-                    merged_covered = list(keep_covered | new_covered)
+                    merged_covered = sorted(keep_covered | new_covered)
                     try:
                         keep.covered_event_names = merged_covered
                     except Exception:
@@ -616,7 +616,7 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
                     # Merge user_story_ids
                     keep_us = set(getattr(keep, "user_story_ids", []) or [])
                     new_us = set(getattr(agg, "user_story_ids", []) or [])
-                    merged_us = list(keep_us | new_us)
+                    merged_us = sorted(keep_us | new_us)
                     try:
                         keep.user_story_ids = merged_us
                     except Exception:
@@ -885,7 +885,7 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
             if absorbed_us_ids and keep_agg:
                 keep_us_ids = keep_agg.get("user_story_ids") if isinstance(keep_agg, dict) else getattr(keep_agg, "user_story_ids", None)
                 if keep_us_ids is not None:
-                    merged_ids = list(set(keep_us_ids) | set(absorbed_us_ids))
+                    merged_ids = sorted(set(keep_us_ids) | set(absorbed_us_ids))
                     if isinstance(keep_agg, dict):
                         keep_agg["user_story_ids"] = merged_ids
                     else:

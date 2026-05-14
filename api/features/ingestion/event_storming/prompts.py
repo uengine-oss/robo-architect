@@ -264,7 +264,6 @@ EXTRACT_AGGREGATES_PROMPT = """You are tasked with identifying Aggregates within
 
 <target_bounded_context>
 Name: {bc_name}
-ID: {bc_id}
 Description: {bc_description}
 </target_bounded_context>
 
@@ -432,7 +431,6 @@ EXTRACT_COMMANDS_PROMPT = """You are tasked with identifying Commands for the gi
 
 <target_aggregate>
 Name: {aggregate_name}
-ID: {aggregate_id}
 Bounded Context: {bc_name}
 </target_aggregate>
 
@@ -790,7 +788,6 @@ EXTRACT_READMODELS_PROMPT = """You are tasked with identifying ReadModels (query
 
 <target_bounded_context>
 Name: {bc_name}
-ID: {bc_id}
 Description: {bc_description}
 </target_bounded_context>
 
@@ -998,13 +995,11 @@ CRITICAL RULES (STRICT):
 9) Keep the list compact but complete enough to build a usable first draft.
 
 Bounded Context:
-- id: {bc_id}
 - key: {bc_key}
 - name: {bc_name}
 - description: {bc_description}
 
 Aggregate (parentType=Aggregate):
-- id: {aggregate_id}
 - key: {aggregate_key}
 - name: {aggregate_name}
 - rootEntity: {aggregate_root_entity}
@@ -1041,7 +1036,6 @@ CRITICAL RULES (STRICT):
 8) ReadModels are for QUERY. Prefer denormalized columns that support the user stories.
 
 Bounded Context:
-- id: {bc_id}
 - key: {bc_key}
 - name: {bc_name}
 - description: {bc_description}

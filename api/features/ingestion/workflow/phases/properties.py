@@ -288,7 +288,6 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 cmd_description = cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", "")
                 command_lines.append(
                     f"- key: {cmd_key}\n"
-                    f"  id: {cmd_id}\n"
                     f"  name: {cmd_name}\n"
                     f"  actor: {cmd_actor}\n"
                     f"  category: {cmd_category or ''}\n"
@@ -309,7 +308,6 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 evt_payload = getattr(evt, "payload", None) or ""
                 event_lines.append(
                     f"- key: {evt_key}\n"
-                    f"  id: {evt_id}\n"
                     f"  name: {getattr(evt, 'name', '')}\n"
                     f"  version: {evt_version}\n"
                     f"  payload: {evt_payload}\n"
@@ -431,7 +429,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                         cmd_input_schema = cmd.get("inputSchema") if isinstance(cmd, dict) else getattr(cmd, "inputSchema", None)
                         cmd_description = cmd.get("description") if isinstance(cmd, dict) else getattr(cmd, "description", "")
                         chunk_cmd_lines.append(
-                            f"- key: {cmd_key}\n  id: {cmd_id}\n  name: {cmd_name}\n"
+                            f"- key: {cmd_key}\n  name: {cmd_name}\n"
                             f"  actor: {cmd_actor}\n  category: {cmd_category or ''}\n"
                             f"  inputSchema: {cmd_input_schema or ''}\n  description: {cmd_description}"
                         )
@@ -444,7 +442,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                         if not evt_key or not evt_id:
                             continue
                         chunk_evt_lines.append(
-                            f"- key: {evt_key}\n  id: {evt_id}\n"
+                            f"- key: {evt_key}\n"
                             f"  name: {getattr(evt, 'name', '')}\n"
                             f"  version: {getattr(evt, 'version', '1.0.0') or '1.0.0'}\n"
                             f"  payload: {getattr(evt, 'payload', None) or ''}\n"
@@ -654,7 +652,6 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
             parent_id_by_key_rm[("ReadModel", rm_key)] = rm_id
             rm_lines.append(
                 f"- key: {rm_key}\n"
-                f"  id: {rm_id}\n"
                 f"  name: {str((rm or {}).get('name') or '')}\n"
                 f"  description: {str((rm or {}).get('description') or '')}"
             )

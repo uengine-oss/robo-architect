@@ -585,9 +585,12 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
             # not this endpoint; without this filter, `삭제하고 계속` in the
             # ingestion modal silently disconnects the user's Figma document
             # binding mid-flow (broke FR-019b end-to-end testing).
+            # `:FigmaComponent` (spec 024 scan catalog) is also preserved so the
+            # user-triggered "컴포넌트 스캔" survives re-ingestion; the dedicated
+            # `DELETE /api/figma-binding/components` clears it explicitly.
             count_query = """
             MATCH (n)
-            WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent)
+            WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent OR n:FigmaComponent)
             WITH labels(n)[0] as label, count(n) as count
             RETURN collect({label: label, count: count}) as counts
             """
@@ -597,7 +600,7 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
 
             delete_query = """
             MATCH (n)
-            WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent)
+            WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent OR n:FigmaComponent)
             DETACH DELETE n
             """
             session.run(delete_query)

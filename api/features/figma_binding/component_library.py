@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -22,6 +23,10 @@ from fastapi import HTTPException
 from api.platform.observability.smart_logger import SmartLogger
 
 from . import component_vlm, repository
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 FIGMA_API_BASE = "https://api.figma.com/v1"
 _FILE_TIMEOUT_SEC = 60.0
@@ -51,6 +56,56 @@ def _claim_scan_slot() -> bool:
 def _release_scan_slot() -> None:
     global _scan_in_flight
     _scan_in_flight = False
+
+
+# ─── Live progress state ───────────────────────────────────────────────────
+# Single-binding ⇒ single progress slot. The SSE endpoint polls a version
+# counter; the scan bumps it on every meaningful step (phase change, item
+# completed). One asyncio.Event re-armed per bump notifies any waiters
+# without per-subscriber queues.
+
+_progress: dict[str, Any] = {
+    "phase": "idle",          # idle | fetching | thumbnails | describing | persisting | done | error
+    "total": 0,               # discovered component count (set after fetch)
+    "described": 0,           # VLM completions so far
+    "scanned": 0,             # DB upserts so far
+    "lastItem": "",           # most recent component name
+    "lastDescription": "",    # most recent VLM sentence (truncated)
+    "error": None,            # error message when phase == "error"
+    "result": None,           # final summary when phase == "done"
+    "version": 0,             # monotonic — drives SSE wake-ups
+    "startedAt": None,
+}
+_progress_event: asyncio.Event = asyncio.Event()
+
+
+def _set_progress(**kwargs: Any) -> None:
+    """Update the progress snapshot and wake any SSE subscribers.
+
+    `version` is auto-incremented; callers pass real fields only.
+    """
+    _progress.update(kwargs)
+    _progress["version"] = int(_progress.get("version", 0)) + 1
+    # set→clear is cheap; subscribers that called `await event.wait()` will
+    # immediately observe the set and proceed to read the snapshot.
+    _progress_event.set()
+    _progress_event.clear()
+
+
+def get_progress_snapshot() -> dict[str, Any]:
+    """Return a shallow copy of the current progress state. Public for router."""
+    return dict(_progress)
+
+
+async def wait_for_progress(last_version: int, timeout: float = 15.0) -> bool:
+    """Block until `version > last_version` or timeout. Returns True if updated."""
+    if _progress.get("version", 0) > last_version:
+        return True
+    try:
+        await asyncio.wait_for(_progress_event.wait(), timeout=timeout)
+        return True
+    except asyncio.TimeoutError:
+        return False
 
 
 # ─── Public scan entrypoint ────────────────────────────────────────────────
@@ -97,22 +152,53 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
         params={"fileKey": file_key, "actor": actor},
     )
 
+    # Reset live progress for this run. `version` keeps climbing so late SSE
+    # subscribers can detect they missed earlier events.
+    _set_progress(
+        phase="fetching",
+        total=0,
+        described=0,
+        scanned=0,
+        lastItem="",
+        lastDescription="",
+        error=None,
+        result=None,
+        startedAt=_now_iso(),
+    )
+
     try:
         components = await _fetch_component_nodes(file_key, api_token)
+        _set_progress(phase="thumbnails", total=len(components))
+
         image_map: dict[str, str] = {}
         if components:
             image_map = await _fetch_thumbnails(
                 file_key, api_token, [c["figmaNodeId"] for c in components]
             )
 
-        # VLM describe (best-effort).
+        # VLM describe (best-effort). Emit per-completion progress so the UI
+        # can name the component as it lands.
         described: dict[str, str] = {}
         if image_map:
+            _set_progress(phase="describing")
+            name_by_id = {c["figmaNodeId"]: c["name"] for c in components}
+
+            def _on_vlm_each(nid: str, desc: str) -> None:
+                described_count = int(_progress.get("described", 0)) + 1
+                _set_progress(
+                    phase="describing",
+                    described=described_count,
+                    lastItem=name_by_id.get(nid, nid),
+                    lastDescription=(desc or "")[:140],
+                )
+
             described = await component_vlm.describe_components(
                 [(c["figmaNodeId"], c["name"], image_map.get(c["figmaNodeId"], ""))
-                 for c in components if image_map.get(c["figmaNodeId"])]
+                 for c in components if image_map.get(c["figmaNodeId"])],
+                on_each=_on_vlm_each,
             )
 
+        _set_progress(phase="persisting", scanned=0)
         existing = {c["figmaNodeId"]: c for c in repository.list_figma_components(file_key)}
         added = 0
         updated = 0
@@ -140,6 +226,11 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
                 updated += 1
             else:
                 added += 1
+            _set_progress(
+                phase="persisting",
+                scanned=added + updated,
+                lastItem=comp["name"],
+            )
 
         kept_ids = [c["figmaNodeId"] for c in components]
         removed = repository.delete_stale_figma_components(file_key, kept_ids)
@@ -169,7 +260,7 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
             },
         )
 
-        return {
+        result = {
             "scanned": len(components),
             "added": added,
             "updated": updated,
@@ -179,6 +270,20 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
             "componentCount": component_count,
             "durationMs": duration_ms,
         }
+        _set_progress(
+            phase="done",
+            scanned=len(components),
+            described=vlm_described,
+            total=len(components),
+            result=result,
+        )
+        return result
+    except HTTPException as e:
+        _set_progress(phase="error", error=str(e.detail))
+        raise
+    except Exception as e:  # noqa: BLE001
+        _set_progress(phase="error", error=str(e))
+        raise
     finally:
         _release_scan_slot()
 

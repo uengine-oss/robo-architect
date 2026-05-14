@@ -120,11 +120,16 @@ async def _describe_one(
 
 async def describe_components(
     inputs: Iterable[tuple[str, str, str]],
+    on_each: "callable | None" = None,
 ) -> dict[str, str]:
     """Describe each component with one VLM sentence.
 
     Args:
         inputs: iterable of (figma_node_id, name, image_url).
+        on_each: optional callback fired after each task completes with
+                 (figma_node_id, description). Used by spec 024 progress SSE
+                 to surface "currently extracting X" in the UI. Best-effort:
+                 a callback exception is logged but never aborts the scan.
 
     Returns:
         {figma_node_id: description} — missing entries / failures map to "".
@@ -144,6 +149,16 @@ async def describe_components(
             try:
                 nid, desc = await fut
                 out[nid] = desc
+                if on_each is not None:
+                    try:
+                        on_each(nid, desc)
+                    except Exception as cb_err:  # noqa: BLE001
+                        SmartLogger.log(
+                            "WARN",
+                            f"figma_binding.components.vlm.on_each_failed err={cb_err}",
+                            category="figma_binding.components.vlm.on_each_failed",
+                            params={"error": str(cb_err)},
+                        )
             except Exception as e:  # noqa: BLE001
                 SmartLogger.log(
                     "WARN",

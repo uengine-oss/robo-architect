@@ -3,6 +3,8 @@ import { ref, computed, watch, inject, onUnmounted, onMounted } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
+import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
 
 const props = defineProps({
@@ -44,6 +46,12 @@ const summary = ref(null)
 const isPanelMinimized = ref(false)
 const isPaused = ref(false)
 const isPausing = ref(false) // Track if pause request is in progress
+
+// Derived flag — covers the race where the SSE-driven `isPaused` ref may lag
+// behind `currentPhase` after a 'paused' event arrives (or be reset by a
+// later spurious event). The label/icon/button all read this so they can
+// never disagree.
+const isPausedView = computed(() => isPaused.value || currentPhase.value === 'paused')
 
 // ─── Spec 017: Token counter + granular suspend ────────────────────────
 // Cumulative session token total surfaced in the floating status panel.
@@ -343,6 +351,7 @@ const phaseLabel = computed(() => {
     'generating_ui': 'UI 생성',
     'saving': '저장 중',
     'paused': '⏸️ 일시 정지됨',
+    'resuming': '▶ 재개 중...',
     'complete': '완료',
     'error': '오류'
   }
@@ -362,12 +371,12 @@ const hasExistingData = computed(() => {
 // Watch for modal open to check existing data + cache status
 watch(isOpen, async (newVal) => {
   if (newVal) {
-    await Promise.all([checkExistingData(), checkCacheStatus()])
+    await Promise.all([checkExistingData(), checkCacheStatus(), loadFigmaBindingInfo()])
   }
 })
 
 // Sync ingestion state to store
-watch([isProcessing, isPaused, currentPhase, sessionId], ([processing, paused, phase, sid]) => {
+watch([isProcessing, isPausedView, currentPhase, sessionId], ([processing, paused, phase, sid]) => {
   ingestionStore.setProcessing(processing)
   ingestionStore.setPaused(paused)
   ingestionStore.setPhase(phase || '')
@@ -654,6 +663,7 @@ function connectToStream(sid, isReconnect = false) {
     }
 
     // Pause state tracking
+    console.debug('[ingestion.sse]', { phase: data.phase, suspendState: data.suspendState, isPausedBefore: isPaused.value, isPausingBefore: isPausing.value })
     if (data.phase === 'paused') {
       isPaused.value = true
       isPausing.value = false // Pause request completed
@@ -886,25 +896,31 @@ async function togglePause() {
   if (isPausing.value) return // Prevent multiple simultaneous pause requests
   
   try {
-    const endpoint = isPaused.value ? 'resume' : 'pause'
-    
+    const endpoint = isPausedView.value ? 'resume' : 'pause'
+
     // Set pausing state when requesting pause (not resume)
     if (endpoint === 'pause') {
       isPausing.value = true
     }
-    
+
     const response = await fetch(`/api/ingest/${sessionId.value}/${endpoint}`, { method: 'POST' })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
       throw new Error(data.detail || 'Pause/Resume failed')
     }
-    
+
     // Server will also emit 'paused' on next checkpoint, but we can optimistically update UI.
     // Note: Actual pause happens when current LLM request completes, so isPaused will be set to true
     // when server emits 'paused' phase event. We keep isPausing true until then.
     if (endpoint === 'resume') {
       isPaused.value = false
       isPausing.value = false
+      // Clear the paused phase so `isPausedView` (computed) flips immediately;
+      // the next SSE event will overwrite this with the resumed phase.
+      if (currentPhase.value === 'paused') {
+        currentPhase.value = 'resuming'
+        currentMessage.value = '▶ 재개 중...'
+      }
     }
     // For pause, don't set isPaused immediately - wait for server to emit 'paused' phase
     // isPausing will be set to false when we receive the 'paused' phase event
@@ -2005,8 +2021,8 @@ function useSample() {
         <!-- Panel Header -->
         <div class="floating-panel__header" @mousedown="startDrag" @click="handleHeaderClick">
           <div class="floating-panel__title">
-            <div class="floating-panel__status" :class="{ 'is-complete': summary, 'is-error': error, 'is-paused': isPaused, 'is-pausing': isPausing }">
-              <span v-if="isPaused" class="status-paused">⏸</span>
+            <div class="floating-panel__status" :class="{ 'is-complete': summary, 'is-error': error, 'is-paused': isPausedView, 'is-pausing': isPausing }">
+              <span v-if="isPausedView" class="status-paused">⏸</span>
               <span v-else-if="isPausing" class="status-pausing">⏸</span>
               <span v-else-if="isProcessing && !error" class="status-spinner"></span>
               <svg v-else-if="summary" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2019,7 +2035,7 @@ function useSample() {
               </svg>
             </div>
             <span class="floating-panel__label">
-              {{ summary ? '생성 완료' : error ? (error.includes('중단') ? '생성 중단' : '오류 발생') : isPausing ? '일시정지 중...' : phaseLabel }}
+              {{ summary ? '생성 완료' : error ? (error.includes('중단') ? '생성 중단' : '오류 발생') : isPausing ? '일시정지 중...' : isPausedView ? '⏸️ 일시 정지됨' : phaseLabel }}
             </span>
             <span v-if="!summary && !error && !isPausing" class="floating-panel__percent">{{ progress }}%</span>
           </div>
@@ -2027,12 +2043,12 @@ function useSample() {
             <button
               v-if="isProcessing && !summary && !error"
               class="panel-btn panel-btn--pause"
-              :class="{ 'is-paused': isPaused, 'is-pausing': isPausing }"
+              :class="{ 'is-paused': isPausedView, 'is-pausing': isPausing }"
               @click.stop="togglePause"
               :disabled="isPausing"
-              :title="isPausing ? '일시정지 중...' : isPaused ? '재개' : '일시정지'"
+              :title="isPausing ? '일시정지 중...' : isPausedView ? '재개' : '일시정지'"
             >
-              <svg v-if="!isPaused" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg v-if="!isPausedView" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="4" width="4" height="16"></rect>
                 <rect x="14" y="4" width="4" height="16"></rect>
               </svg>

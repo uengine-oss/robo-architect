@@ -17,18 +17,21 @@ async def clear_all_nodes(request: Request):
     새로운 인제스션 전에 기존 데이터를 모두 삭제합니다.
 
     Preserved labels (NOT touched here): `:FigmaBinding`, `:StoryboardPageMapping`,
-    `:BindingHistoryEvent` — these are user-level configuration for spec 016
-    (Figma document binding). Wiping them on every re-ingestion would silently
-    disconnect the bound Figma document and contradict FR-005 ("Disconnection
-    MUST NOT delete previously generated Figma frames"); it would also defeat
-    FR-019b's bulk-with-binding flow because the binding row would be gone
-    before the ingestion phase reads it. Disconnect goes through the
-    dedicated `DELETE /api/figma-binding` endpoint, not this one.
+    `:BindingHistoryEvent`, `:FigmaComponent` — these are user-level configuration
+    for spec 016 (Figma document binding) and spec 024 (scanned component catalog).
+    Wiping them on every re-ingestion would silently disconnect the bound Figma
+    document and contradict FR-005 ("Disconnection MUST NOT delete previously
+    generated Figma frames"); it would also defeat FR-019b's bulk-with-binding
+    flow because the binding row would be gone before the ingestion phase reads
+    it. The scanned `:FigmaComponent` catalog (spec 024) is preserved so users
+    don't have to re-scan after every `/clear`. Disconnect goes through the
+    dedicated `DELETE /api/figma-binding` endpoint, and catalog clear through
+    `DELETE /api/figma-binding/components` — not this one.
     """
     # Exclude figma_binding-feature labels from the wipe.
     query = """
     MATCH (n)
-    WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent)
+    WHERE NOT (n:FigmaBinding OR n:StoryboardPageMapping OR n:BindingHistoryEvent OR n:FigmaComponent)
     DETACH DELETE n
     """
     SmartLogger.log(

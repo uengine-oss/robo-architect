@@ -203,4 +203,30 @@ export async function clearComponents() {
   if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`)
 }
 
+/**
+ * Subscribe to the active (or most recent) component scan's progress stream.
+ * Fires `onEvent(name, payload)` for `snapshot`, `progress`, `done`, `error`.
+ * Returns a closer fn that tears down the EventSource.
+ */
+export function subscribeComponentsScanStream({ onEvent, onClose, onError } = {}) {
+  const es = new EventSource(`${BASE}/components/scan/stream`)
+  const handle = (name) => (ev) => {
+    let payload = {}
+    try { payload = JSON.parse(ev.data) } catch { /* keep empty */ }
+    onEvent && onEvent(name, payload)
+    if (name === 'done' || name === 'error') {
+      es.close()
+      onClose && onClose(name, payload)
+    }
+  }
+  es.addEventListener('snapshot', handle('snapshot'))
+  es.addEventListener('progress', handle('progress'))
+  es.addEventListener('done', handle('done'))
+  es.addEventListener('error', handle('error'))
+  // Some browsers also fire es.onerror on network blips. We don't auto-close
+  // there — the EventSource auto-reconnects and snapshot will resync state.
+  es.onerror = (ev) => { onError && onError(ev) }
+  return () => { try { es.close() } catch { /* noop */ } }
+}
+
 export { getStoredFigmaCreds, setStoredFigmaCreds }

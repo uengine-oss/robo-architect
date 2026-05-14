@@ -35,10 +35,38 @@ const componentsScanning = ref(false)
 const componentsScanResult = ref(null) // { added, updated, removed, vlmDescribed, vlmFailures, componentCount }
 const componentsScanError = ref(null)
 const componentsClearing = ref(false)
+// Live progress from the SSE stream — populated while a scan is running.
+const scanProgress = ref(null) // { phase, total, described, scanned, lastItem, lastDescription }
+let scanStreamCloser = null
+
+const scanPhaseLabel = computed(() => {
+  const p = scanProgress.value?.phase
+  return ({
+    fetching: 'Figma 파일 분석',
+    thumbnails: '썸네일 수집',
+    describing: '시각 LLM 설명 생성',
+    persisting: 'DB 저장',
+    done: '완료',
+    error: '오류',
+    idle: '대기',
+  })[p] || ''
+})
+
+const scanProgressPct = computed(() => {
+  const p = scanProgress.value
+  if (!p) return 0
+  const total = p.total || 0
+  if (!total) return 0
+  if (p.phase === 'describing') return Math.min(100, Math.round((p.described / total) * 100))
+  if (p.phase === 'persisting') return Math.min(100, Math.round((p.scanned / total) * 100))
+  if (p.phase === 'done') return 100
+  return 0
+})
 
 async function submitScanComponents() {
   componentsScanError.value = null
   componentsScanResult.value = null
+  scanProgress.value = null
   const creds = getStoredFigmaCreds()
   const token = creds.token || tokenInput.value || replaceTokenInput.value
   if (!token) {
@@ -46,6 +74,17 @@ async function submitScanComponents() {
     return
   }
   componentsScanning.value = true
+  // Open the progress stream BEFORE the POST so we don't miss the early
+  // `fetching` event. The stream is fan-in shared state — it'll deliver the
+  // current snapshot on subscribe regardless of timing.
+  scanStreamCloser = api.subscribeComponentsScanStream({
+    onEvent: (name, payload) => {
+      if (name === 'snapshot' || name === 'progress' || name === 'done' || name === 'error') {
+        scanProgress.value = payload
+      }
+    },
+    onClose: () => { scanStreamCloser = null },
+  })
   try {
     const data = await api.scanComponents(token)
     componentsScanResult.value = data
@@ -54,6 +93,7 @@ async function submitScanComponents() {
     componentsScanError.value = e.message || '컴포넌트 스캔 실패'
   } finally {
     componentsScanning.value = false
+    if (scanStreamCloser) { try { scanStreamCloser() } catch {} scanStreamCloser = null }
   }
 }
 
@@ -384,6 +424,40 @@ watch(tab, (t) => {
               노드를 추출하고 시각 LLM으로 1줄 설명을 채웁니다. 와이어프레임 생성 시
               <strong>Figma + Components</strong> 모드에서 이 카탈로그가 사용됩니다.
             </p>
+            <!-- Live progress (spec 024 phase 2) -->
+            <div
+              v-if="componentsScanning && scanProgress && scanProgress.phase !== 'idle'"
+              class="fb-scan-progress"
+            >
+              <div class="fb-scan-progress__row">
+                <span class="fb-scan-progress__phase">{{ scanPhaseLabel }}</span>
+                <span class="fb-scan-progress__counts">
+                  <template v-if="scanProgress.phase === 'describing'">
+                    {{ scanProgress.described }} / {{ scanProgress.total }}
+                  </template>
+                  <template v-else-if="scanProgress.phase === 'persisting'">
+                    {{ scanProgress.scanned }} / {{ scanProgress.total }}
+                  </template>
+                  <template v-else-if="scanProgress.phase === 'thumbnails'">
+                    {{ scanProgress.total }}개 발견
+                  </template>
+                </span>
+              </div>
+              <div class="fb-scan-progress__bar">
+                <div
+                  class="fb-scan-progress__bar-fill"
+                  :style="{ width: scanProgressPct + '%' }"
+                ></div>
+              </div>
+              <div v-if="scanProgress.lastItem" class="fb-scan-progress__item">
+                <span class="fb-scan-progress__item-label">추출 중:</span>
+                <strong>{{ scanProgress.lastItem }}</strong>
+                <span
+                  v-if="scanProgress.lastDescription"
+                  class="fb-scan-progress__item-desc"
+                >— {{ scanProgress.lastDescription }}</span>
+              </div>
+            </div>
             <div v-if="componentsScanResult" class="fb-hint" style="color:#0acf83;">
               스캔 완료: 추가 {{ componentsScanResult.added }} /
               갱신 {{ componentsScanResult.updated }} /
@@ -702,6 +776,59 @@ watch(tab, (t) => {
   padding: 8px 10px;
   border-radius: 4px;
   font-size: 0.78rem;
+}
+
+.fb-scan-progress {
+  background: rgba(56, 132, 255, 0.08);
+  border: 1px solid rgba(56, 132, 255, 0.25);
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fb-scan-progress__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.fb-scan-progress__phase {
+  font-weight: 600;
+  color: #74a8ff;
+}
+.fb-scan-progress__counts {
+  font-family: ui-monospace, monospace;
+  color: #aac3ff;
+}
+.fb-scan-progress__bar {
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.fb-scan-progress__bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3884ff, #74a8ff);
+  transition: width 0.25s ease;
+}
+.fb-scan-progress__item {
+  display: block;
+  color: #cfd6e4;
+  font-size: 0.74rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fb-scan-progress__item-label {
+  color: #8a98b3;
+  margin-right: 4px;
+}
+.fb-scan-progress__item-desc {
+  margin-left: 6px;
+  color: #8a98b3;
+  font-weight: normal;
 }
 
 .fb-history {

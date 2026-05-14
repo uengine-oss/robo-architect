@@ -125,6 +125,49 @@ async def get_components() -> dict[str, Any]:
     return {"components": rows, "componentCount": len(rows)}
 
 
+@router.get("/components/scan/stream")
+async def get_components_scan_stream(request: Request) -> StreamingResponse:
+    """Server-Sent Events stream of the active (or most recent) scan's progress.
+
+    Emits an initial `snapshot` with the current state, then one `progress`
+    event per state bump (phase change, VLM completion, upsert). Terminal
+    events `done` or `error` close the stream. Heartbeats every ~15s keep
+    proxies from buffering. Multiple subscribers are supported — each gets
+    woken on the shared progress Event.
+    """
+    from . import component_library  # noqa: PLC0415
+
+    async def _gen():
+        snap = component_library.get_progress_snapshot()
+        last_version = snap.get("version", 0)
+        yield f"event: snapshot\ndata: {json.dumps(snap, ensure_ascii=False)}\n\n"
+        # If the scan already finished before subscribing, snapshot carries
+        # done/error — close immediately so the client doesn't hang.
+        if snap.get("phase") in ("done", "error"):
+            return
+        while True:
+            if await request.is_disconnected():
+                return
+            updated = await component_library.wait_for_progress(last_version, timeout=15.0)
+            snap = component_library.get_progress_snapshot()
+            if snap.get("version", 0) <= last_version:
+                # Heartbeat keeps the connection open through long VLM stalls.
+                yield ": keepalive\n\n"
+                continue
+            last_version = snap["version"]
+            phase = snap.get("phase", "")
+            event_name = phase if phase in ("done", "error") else "progress"
+            yield f"event: {event_name}\ndata: {json.dumps(snap, ensure_ascii=False)}\n\n"
+            if phase in ("done", "error"):
+                return
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.delete("/components", status_code=204)
 async def delete_components(request: Request) -> None:
     from . import component_library  # noqa: PLC0415
