@@ -1,7 +1,7 @@
 """Hybrid ingestion API router (dev-only toggle).
 
 Endpoints:
-- POST /api/ingest/hybrid/upload      — upload doc + optional analyzer_graph_ref
+- POST /api/ingest/hybrid/upload      — one or more docs (`file` and/or repeated `files`) + optional `text`
 - GET  /api/ingest/hybrid/stream/{id} — SSE progress
 - GET  /api/ingest/hybrid/bpm/{id}    — read BpmTask graph (cytoscape elements)
 
@@ -15,7 +15,7 @@ import asyncio
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -45,7 +45,6 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     unassign_rule_from_task,
     update_rule_es_role_manual,
 )
-from typing import Any, Awaitable, Callable
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.ingestion_sessions import (
     add_event,
@@ -63,65 +62,116 @@ router = APIRouter(prefix="/api/ingest/hybrid", tags=["ingestion-hybrid"])
 
 @router.post("/upload")
 async def upload_hybrid(
-    request: Request,
-    file: Optional[UploadFile] = File(None),
+    file: Optional[UploadFile] = File(
+        None,
+        description="단일 업로드 (기존 호환). `files`와 함께내면 모두 합쳐 처리합니다.",
+    ),
+    files: Optional[list[UploadFile]] = File(
+        None,
+        description="같은 필드명 `files`로 여러 파일을 보낼 수 있습니다 (multipart).",
+    ),
     text: Optional[str] = Form(None),
     analyzer_graph_ref: Optional[str] = Form(None),
     display_language: Optional[str] = Form("ko"),
 ) -> dict[str, Any]:
-    content = ""
+    """여러 문서의 본문은 합치고, PDF가 여러 개면 파일마다 저장한 뒤 Phase1에서 A2A를 PDF별로 호출합니다."""
+
+    def _gather_uploads() -> list[UploadFile]:
+        out: list[UploadFile] = []
+        if file is not None and (file.filename or "").strip():
+            out.append(file)
+        if files:
+            for uf in files:
+                if uf is not None and (uf.filename or "").strip():
+                    out.append(uf)
+        return out
+
+    uploads = _gather_uploads()
+    if not uploads and not (text or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Provide `file`, one or more `files`, and/or `text`.",
+        )
+
+    content_parts: list[str] = []
+    pdf_raws: list[bytes] = []
+    pdf_names: list[str] = []
+
+    for uf in uploads:
+        raw = await uf.read()
+        name = Path(uf.filename or "document").name
+        if name.lower().endswith(".pdf"):
+            content_parts.append(f"=== {name} ===\n{extract_text_from_pdf(raw)}")
+            pdf_raws.append(raw)
+            pdf_names.append(name)
+        else:
+            try:
+                decoded = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                decoded = raw.decode("latin-1")
+            content_parts.append(f"=== {name} ===\n{decoded}")
+
+    if (text or "").strip():
+        content_parts.append(f"=== form text ===\n{(text or '').strip()}")
+
+    content = "\n\n".join(p for p in content_parts if p.strip())
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Document content is empty")
+
     pdf_path: Optional[str] = None
     pdf_url: Optional[str] = None
     source_pdf_name: Optional[str] = None
-    if file:
-        raw = await file.read()
-        filename = file.filename or ""
-        if filename:
-            source_pdf_name = Path(filename).name
-        if filename.lower().endswith(".pdf"):
-            content = extract_text_from_pdf(raw)
-            # Persist the raw PDF so the external A2A pdf2bpmn service can fetch it.
-            shared_dir = a2a_pdf_tmp_dir()
-            os.makedirs(shared_dir, exist_ok=True)
-            stored_name = f"{uuid.uuid4().hex}_{Path(filename).name or 'doc.pdf'}"
-            pdf_path = str(Path(shared_dir) / stored_name)
-            with open(pdf_path, "wb") as fp:
-                fp.write(raw)
-            # A2A server downloads via httpx — serve the PDF over HTTP.
-            pdf_url = f"{hybrid_public_base_url()}/api/ingest/hybrid/pdf/{stored_name}"
-            # Stash extracted text next to the PDF (Phase 3 glossary debug / re-use).
-            try:
-                with open(pdf_path + ".txt", "w", encoding="utf-8") as fp:
-                    fp.write(content)
-            except OSError:
-                pass  # best-effort only
-        else:
-            try:
-                content = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                content = raw.decode("latin-1")
-    elif text:
-        content = text
-    else:
-        raise HTTPException(status_code=400, detail="Either 'file' or 'text' must be provided")
+    pdf_artifacts: list[dict[str, str]] = []
 
-    if not content.strip():
-        raise HTTPException(status_code=400, detail="Document content is empty")
+    if pdf_raws:
+        shared_dir = a2a_pdf_tmp_dir()
+        os.makedirs(shared_dir, exist_ok=True)
+        for raw, name in zip(pdf_raws, pdf_names):
+            stored_name = f"{uuid.uuid4().hex}_{name}"
+            full_path = str(Path(shared_dir) / stored_name)
+            with open(full_path, "wb") as fp:
+                fp.write(raw)
+            url = f"{hybrid_public_base_url()}/api/ingest/hybrid/pdf/{stored_name}"
+            pdf_artifacts.append(
+                {
+                    "pdf_path": full_path,
+                    "pdf_url": url,
+                    "source_pdf_name": name,
+                }
+            )
+        pdf_path = pdf_artifacts[0]["pdf_path"]
+        pdf_url = pdf_artifacts[0]["pdf_url"]
+        source_pdf_name = pdf_artifacts[0]["source_pdf_name"]
+        try:
+            with open(pdf_path + ".txt", "w", encoding="utf-8") as fp:
+                fp.write(content)
+        except OSError:
+            pass
 
     session = create_session()
     session.content = content
     session.source_type = "hybrid"
     session.display_language = (display_language or "ko").strip().lower() or "ko"
-    # Stash analyzer_graph_ref + pdf_path on session for the runner
     setattr(session, "analyzer_graph_ref", analyzer_graph_ref)
     setattr(session, "pdf_path", pdf_path)
     setattr(session, "pdf_url", pdf_url)
     setattr(session, "source_pdf_name", source_pdf_name)
+    setattr(session, "hybrid_pdf_artifacts", pdf_artifacts if pdf_artifacts else None)
+    setattr(session, "hybrid_upload_pdf_count", len(pdf_raws))
+    setattr(session, "hybrid_upload_file_count", len(uploads))
 
     SmartLogger.log(
-        "INFO", "Hybrid ingestion session created",
+        "INFO",
+        "Hybrid ingestion session created",
         category="ingestion.hybrid.upload",
-        params={"session_id": session.id, "chars": len(content), "analyzer_graph_ref": analyzer_graph_ref},
+        params={
+            "session_id": session.id,
+            "chars": len(content),
+            "analyzer_graph_ref": analyzer_graph_ref,
+            "upload_count": len(uploads),
+            "pdf_count": len(pdf_raws),
+            "a2a_pdf_passes": len(pdf_artifacts),
+        },
     )
 
     return {
@@ -129,6 +179,9 @@ async def upload_hybrid(
         "content_length": len(content),
         "source_type": "hybrid",
         "preview": content[:500] + ("..." if len(content) > 500 else ""),
+        "upload_count": len(uploads),
+        "pdf_count": len(pdf_raws),
+        "a2a_pdf_passes": len(pdf_artifacts),
     }
 
 
@@ -146,6 +199,7 @@ async def stream_hybrid(session_id: str, request: Request, reconnect: bool = Fal
         pdf_path = getattr(session, "pdf_path", None)
         pdf_url = getattr(session, "pdf_url", None)
         source_pdf_name = getattr(session, "source_pdf_name", None)
+        pdf_artifacts = getattr(session, "hybrid_pdf_artifacts", None)
 
         async def _run():
             try:
@@ -153,6 +207,7 @@ async def stream_hybrid(session_id: str, request: Request, reconnect: bool = Fal
                     session.id, session.content, analyzer_graph_ref,
                     pdf_path=pdf_path, pdf_url=pdf_url,
                     source_pdf_name=source_pdf_name,
+                    pdf_artifacts=pdf_artifacts,
                 ):
                     if getattr(session, "is_cancelled", False):
                         add_event(session, ProgressEvent(

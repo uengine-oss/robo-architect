@@ -33,10 +33,9 @@ const inputMode = ref('file') // 'file', 'text', 'jira', 'figma', or 'analyzer'
 // Analyzer graph state
 const analyzerStats = ref(null) // { total, counts, hasData }
 const isLoadingAnalyzerStats = ref(false)
-// Document attached inside the analyzer (코드 분석) mode — separate slot from
-// the generic 'file' input so switching tabs doesn't lose either selection.
-// Required for Hybrid ingestion to start from this mode.
-const analyzerDocFile = ref(null)
+// Documents attached in analyzer (코드 분석) mode — multiple PDF/TXT/MD for one Hybrid run.
+// Backend merges PDFs; `FormData` sends each as repeated field `files`.
+const analyzerDocFiles = ref([])
 const isUploading = ref(false)
 const isProcessing = ref(false)
 const sessionId = ref(null)
@@ -112,7 +111,7 @@ const canSubmit = computed(() => {
   }
   if (inputMode.value === 'analyzer') {
     // Hybrid pipeline now drives this mode — both analyzer data AND a document are required.
-    return analyzerStats.value?.hasData === true && analyzerDocFile.value !== null
+    return analyzerStats.value?.hasData === true && analyzerDocFiles.value.length > 0
   }
   return textContent.value.trim().length > 10
 })
@@ -246,32 +245,53 @@ function removeFile() {
   file.value = null
 }
 
-// Analyzer-mode document slot — same accept/validate logic, different ref.
+// Analyzer-mode document slot — append multiple files (dialog multi-select or drag-drop batch).
+function appendAnalyzerDocFiles(fileList) {
+  const validExtensions = ['.txt', '.pdf', '.md']
+  const incoming = Array.from(fileList || [])
+  if (!incoming.length) return
+  let added = 0
+  let rejected = 0
+  const next = [...analyzerDocFiles.value]
+  const sig = (f) => `${f.name}:${f.size}:${f.lastModified}`
+  const existing = new Set(next.map(sig))
+  for (const f of incoming) {
+    const ok = validExtensions.some((ext) => f.name.toLowerCase().endsWith(ext))
+    if (!ok) {
+      rejected++
+      continue
+    }
+    const s = sig(f)
+    if (existing.has(s)) continue
+    existing.add(s)
+    next.push(f)
+    added++
+  }
+  analyzerDocFiles.value = next
+  if (added === 0 && rejected > 0) {
+    error.value = '지원하지 않는 파일 형식입니다. (txt, pdf, md 지원)'
+  } else if (rejected > 0) {
+    error.value = `일부 파일은 형식이 맞지 않아 제외했습니다. (${added}개 추가)`
+  } else {
+    error.value = null
+  }
+}
+
 function handleAnalyzerDocDrop(e) {
   e.preventDefault()
   dragActive.value = false
   const files = e.dataTransfer.files
-  if (files.length > 0) handleAnalyzerDocFile(files[0])
+  if (files.length > 0) appendAnalyzerDocFiles(files)
 }
 
 function handleAnalyzerDocSelect(e) {
   const files = e.target.files
-  if (files.length > 0) handleAnalyzerDocFile(files[0])
+  if (files.length > 0) appendAnalyzerDocFiles(files)
+  e.target.value = ''
 }
 
-function handleAnalyzerDocFile(f) {
-  const validExtensions = ['.txt', '.pdf', '.md']
-  const isValid = validExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
-  if (!isValid) {
-    error.value = '지원하지 않는 파일 형식입니다. (txt, pdf, md 지원)'
-    return
-  }
-  analyzerDocFile.value = f
-  error.value = null
-}
-
-function removeAnalyzerDocFile() {
-  analyzerDocFile.value = null
+function removeAnalyzerDocAt(idx) {
+  analyzerDocFiles.value = analyzerDocFiles.value.filter((_, i) => i !== idx)
 }
 
 // Figma clipboard paste handler
@@ -365,7 +385,7 @@ async function clearExistingData() {
 function handleStartClick() {
   if (inputMode.value === 'analyzer') {
     // 코드 분석 모드는 항상 Hybrid 파이프라인으로 진입 — 첨부된 업무 문서가 분석된
-    // 코드 그래프와 매핑된다. canSubmit이 analyzerDocFile 존재를 보장.
+    // 코드 그래프와 매핑된다. canSubmit이 analyzerDocFiles 비어 있지 않음을 보장.
     startHybridIngestion()
   } else if (hasExistingData.value) {
     showClearConfirm.value = true
@@ -400,8 +420,10 @@ async function startHybridIngestion() {
 
     // 3) Build upload payload.
     const formData = new FormData()
-    if (inputMode.value === 'analyzer' && analyzerDocFile.value) {
-      formData.append('file', analyzerDocFile.value)
+    if (inputMode.value === 'analyzer' && analyzerDocFiles.value.length) {
+      for (const f of analyzerDocFiles.value) {
+        formData.append('files', f)
+      }
     } else if (inputMode.value === 'file' && file.value) {
       formData.append('file', file.value)
     } else if (inputMode.value === 'text' && textContent.value) {
@@ -1696,11 +1718,11 @@ function useSample() {
                   <div class="analyzer-doc-section">
                     <div class="analyzer-doc-header">
                       <span class="analyzer-doc-title">📄 업무 문서 첨부</span>
-                      <span class="analyzer-doc-hint">분석된 코드와 매핑할 업무 문서(PDF/TXT/MD)를 업로드하세요. 문서가 없으면 분석을 시작할 수 없습니다.</span>
+                      <span class="analyzer-doc-hint">분석된 코드와 매핑할 업무 문서를 올리세요. PDF·TXT·MD 여러 개 선택 가능(순서대로 병합·처리). 없으면 시작할 수 없습니다.</span>
                     </div>
                     <div
                       class="dropzone dropzone--compact"
-                      :class="{ 'is-active': dragActive, 'has-file': analyzerDocFile }"
+                      :class="{ 'is-active': dragActive, 'has-file': analyzerDocFiles.length > 0 }"
                       @dragover="handleDragOver"
                       @dragleave="handleDragLeave"
                       @drop="handleAnalyzerDocDrop"
@@ -1709,35 +1731,43 @@ function useSample() {
                       <input
                         ref="analyzerDocInput"
                         type="file"
+                        multiple
                         accept=".txt,.pdf,.md"
                         style="display: none"
                         @change="handleAnalyzerDocSelect"
                       />
-                      <div v-if="!analyzerDocFile" class="dropzone-content dropzone-content--compact">
+                      <div v-if="analyzerDocFiles.length === 0" class="dropzone-content dropzone-content--compact">
                         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                           <polyline points="17 8 12 3 7 8"></polyline>
                           <line x1="12" y1="3" x2="12" y2="15"></line>
                         </svg>
-                        <p class="dropzone-text">문서 드래그 또는 클릭하여 선택</p>
+                        <p class="dropzone-text">문서 드래그 또는 클릭하여 선택 (여러 파일)</p>
                       </div>
-                      <div v-else class="file-preview">
-                        <div class="file-icon">
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                            <polyline points="14 2 14 8 20 8"></polyline>
-                          </svg>
+                      <div v-else class="analyzer-doc-files">
+                        <div
+                          v-for="(doc, idx) in analyzerDocFiles"
+                          :key="`${doc.name}-${doc.size}-${idx}`"
+                          class="file-preview file-preview--stacked"
+                        >
+                          <div class="file-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                              <polyline points="14 2 14 8 20 8"></polyline>
+                            </svg>
+                          </div>
+                          <div class="file-info">
+                            <span class="file-name">{{ doc.name }}</span>
+                            <span class="file-size">{{ (doc.size / 1024).toFixed(1) }} KB</span>
+                          </div>
+                          <button class="file-remove" type="button" @click.stop="removeAnalyzerDocAt(idx)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <line x1="18" y1="6" x2="6" y2="18"></line>
+                              <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                          </button>
                         </div>
-                        <div class="file-info">
-                          <span class="file-name">{{ analyzerDocFile.name }}</span>
-                          <span class="file-size">{{ (analyzerDocFile.size / 1024).toFixed(1) }} KB</span>
-                        </div>
-                        <button class="file-remove" @click.stop="removeAnalyzerDocFile">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                          </svg>
-                        </button>
+                        <p class="analyzer-doc-more-hint">추가하려면 영역을 다시 클릭하거나 파일을 드롭하세요.</p>
                       </div>
                     </div>
                   </div>
@@ -2744,6 +2774,27 @@ function useSample() {
   border-style: solid;
   border-color: var(--color-accent);
   background: rgba(34, 139, 230, 0.05);
+}
+
+.analyzer-doc-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  max-height: 220px;
+  overflow-y: auto;
+  text-align: left;
+  padding: var(--spacing-xs) 0;
+}
+
+.file-preview--stacked {
+  flex-shrink: 0;
+}
+
+.analyzer-doc-more-hint {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+  text-align: center;
 }
 
 .dropzone-icon {

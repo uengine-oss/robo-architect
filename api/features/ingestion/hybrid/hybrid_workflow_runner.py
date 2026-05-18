@@ -61,6 +61,7 @@ async def run_hybrid_workflow(
     pdf_path: Optional[str] = None,
     pdf_url: Optional[str] = None,
     source_pdf_name: Optional[str] = None,
+    pdf_artifacts: Optional[list[dict[str, Optional[str]]]] = None,
 ) -> AsyncGenerator[ProgressEvent, None]:
     try:
         yield _ev(HybridPhase.UPLOAD, "📥 문서 준비 완료", 3, {"chars": len(content)})
@@ -70,7 +71,9 @@ async def run_hybrid_workflow(
         clear_hybrid_nodes(session_id)
         phase1 = await extract_bpm_skeleton(
             content=content, session_id=session_id,
-            pdf_path=pdf_path, pdf_url=pdf_url, source_pdf_name=source_pdf_name,
+            pdf_path=pdf_path, pdf_url=pdf_url,
+            source_pdf_name=source_pdf_name,
+            pdf_artifacts=pdf_artifacts,
         )
         bundle: ProcessBundle = phase1.bundle
         src_label = "외부 A2A 서비스" if phase1.source == "a2a" else "내장 추출기"

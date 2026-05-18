@@ -253,6 +253,27 @@ def _merge_bpmn_definitions(xmls: list[str]) -> Optional[str]:
         return None
 
 
+def merge_process_bundles(bundles: list[ProcessBundle]) -> ProcessBundle:
+    """Stack `ProcessBundle`s from separate A2A runs (e.g. one PDF per run).
+
+    Combined ``bpmn_xml`` is for canvas preview only; per-process XML lives on
+    each ``BpmSkeleton`` (same rules as ``_merge_bpmn_definitions`` for id clashes).
+    """
+    if not bundles:
+        return ProcessBundle(processes=[], bpmn_xml=None)
+    processes: list[BpmSkeleton] = []
+    xmls: list[str] = []
+    for b in bundles:
+        processes.extend(b.processes)
+        bx = b.bpmn_xml
+        if bx and str(bx).strip():
+            xmls.append(str(bx))
+    combined: Optional[str] = None
+    if xmls:
+        combined = xmls[0] if len(xmls) == 1 else (_merge_bpmn_definitions(xmls) or xmls[0])
+    return ProcessBundle(processes=processes, bpmn_xml=combined)
+
+
 def parse_bpmn_xml_per_process(bpmn_xml: str) -> list[BpmSkeleton]:
     """Split a BPMN XML doc with N `<bpmn:process>` elements into N skeletons.
 
