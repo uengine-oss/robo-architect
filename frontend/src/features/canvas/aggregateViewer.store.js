@@ -10,55 +10,125 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   // Selected BC IDs (for filtering)
   const selectedBcIds = ref(new Set())
 
+  // Aggregate-level visibility filter: ids of aggregates currently shown on
+  // the canvas. Lets the viewer show a single aggregate, not the whole BC.
+  const visibleAggregateIds = ref(new Set())
+
+  // One-shot cross-tab focus intent: { aggregateId, bcId } | null
+  const pendingFocus = ref(null)
+
   // Selected node for editing
   const selectedNodeId = ref(null)
   const selectedNodeType = ref(null) // 'aggregate' | 'enum' | 'valueObject'
 
-  // Fetch aggregates for a specific BC
+  // Load a BC's full tree into state without changing aggregate visibility.
+  async function loadBcTree(bcId) {
+    const response = await fetch(`/api/contexts/${bcId}/full-tree`)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch aggregates: ${response.statusText}`)
+    }
+    const data = await response.json()
+
+    const bc = {
+      id: data.id,
+      name: data.name,
+      displayName: data.displayName || data.name,
+      description: data.description,
+      aggregates: (data.aggregates || []).map(agg => ({
+        id: agg.id,
+        name: agg.name,
+        displayName: agg.displayName || agg.name,
+        rootEntity: agg.rootEntity,
+        invariants: agg.invariants || [],
+        enumerations: agg.enumerations || [],
+        valueObjects: agg.valueObjects || [],
+        properties: agg.properties || []
+      }))
+    }
+
+    const existingIndex = boundedContexts.value.findIndex(b => b.id === bcId)
+    if (existingIndex >= 0) {
+      boundedContexts.value[existingIndex] = bc
+    } else {
+      boundedContexts.value.push(bc)
+    }
+    selectedBcIds.value.add(bcId)
+    return bc
+  }
+
+  // Resolve the owning BoundedContext id for an aggregate via the graph.
+  async function resolveBcId(aggregateId) {
+    const response = await fetch(`/api/graph/expand-with-bc/${aggregateId}`)
+    if (!response.ok) {
+      throw new Error(`Failed to resolve bounded context: ${response.statusText}`)
+    }
+    const data = await response.json()
+    const nodes = data.nodes || []
+    const bcNode = nodes.find(n => n.type === 'BoundedContext')
+    const aggNode = nodes.find(n => n.id === aggregateId)
+    return bcNode?.id || aggNode?.bcId || null
+  }
+
+  // Fetch a whole BC and make all of its aggregates visible.
   async function fetchAggregatesForBC(bcId) {
     loading.value = true
     error.value = null
     try {
-      const response = await fetch(`/api/contexts/${bcId}/full-tree`)
-      if (!response.ok) {
-        throw new Error(`Failed to fetch aggregates: ${response.statusText}`)
-      }
-      const data = await response.json()
-      
-      // Extract BC info and aggregates
-      const bc = {
-        id: data.id,
-        name: data.name,
-        displayName: data.displayName || data.name,
-        description: data.description,
-        aggregates: (data.aggregates || []).map(agg => ({
-          id: agg.id,
-          name: agg.name,
-          displayName: agg.displayName || agg.name,
-          rootEntity: agg.rootEntity,
-          invariants: agg.invariants || [],
-          enumerations: agg.enumerations || [],
-          valueObjects: agg.valueObjects || [],
-          properties: agg.properties || []
-        }))
-      }
-      
-      // Add or update BC in boundedContexts
-      const existingIndex = boundedContexts.value.findIndex(b => b.id === bcId)
-      if (existingIndex >= 0) {
-        boundedContexts.value[existingIndex] = bc
-      } else {
-        boundedContexts.value.push(bc)
-      }
-      
-      // Add to selected BCs
-      selectedBcIds.value.add(bcId)
+      const bc = await loadBcTree(bcId)
+      bc.aggregates.forEach(agg => {
+        if (agg.id) visibleAggregateIds.value.add(agg.id)
+      })
+      visibleAggregateIds.value = new Set(visibleAggregateIds.value)
     } catch (err) {
       error.value = err.message
       console.error('Failed to fetch aggregates:', err)
     } finally {
       loading.value = false
     }
+  }
+
+  // Fetch a single aggregate and make only it visible (additive, de-duplicated).
+  async function fetchAggregate(aggregateId, bcId = null) {
+    if (!aggregateId) return
+    loading.value = true
+    error.value = null
+    try {
+      let resolvedBcId = bcId
+      if (!resolvedBcId) {
+        resolvedBcId = await resolveBcId(aggregateId)
+      }
+      if (!resolvedBcId) {
+        throw new Error('Could not determine the bounded context for this aggregate')
+      }
+
+      const alreadyLoaded = boundedContexts.value.find(b => b.id === resolvedBcId)
+      const bc = alreadyLoaded || await loadBcTree(resolvedBcId)
+
+      const found = bc.aggregates?.some(a => a.id === aggregateId)
+      if (!found) {
+        throw new Error('Aggregate not found in its bounded context')
+      }
+
+      visibleAggregateIds.value.add(aggregateId)
+      visibleAggregateIds.value = new Set(visibleAggregateIds.value)
+    } catch (err) {
+      error.value = err.message
+      console.error('Failed to fetch aggregate:', err)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // Set / consume a one-shot cross-tab focus target.
+  function focusAggregate(aggregateId, bcId = null) {
+    if (!aggregateId) return
+    pendingFocus.value = { aggregateId, bcId: bcId || null }
+  }
+
+  function consumeFocus() {
+    const target = pendingFocus.value
+    pendingFocus.value = null
+    return target
   }
 
   // Remove BC from viewer
@@ -70,15 +140,23 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   // Clear all selected BCs
   function clearAllBCs() {
     selectedBcIds.value.clear()
+    visibleAggregateIds.value = new Set()
+    pendingFocus.value = null
     boundedContexts.value = []
   }
 
-  // Get filtered bounded contexts (only selected ones)
+  // Get filtered bounded contexts (selected BCs, aggregates gated by visibility)
   const filteredBoundedContexts = computed(() => {
     if (selectedBcIds.value.size === 0) {
       return []
     }
-    return boundedContexts.value.filter(bc => selectedBcIds.value.has(bc.id))
+    return boundedContexts.value
+      .filter(bc => selectedBcIds.value.has(bc.id))
+      .map(bc => ({
+        ...bc,
+        aggregates: (bc.aggregates || []).filter(agg => visibleAggregateIds.value.has(agg.id))
+      }))
+      .filter(bc => bc.aggregates.length > 0)
   })
 
   // Fetch all aggregates with VO/Enum/Properties (deprecated - use fetchAggregatesForBC instead)
@@ -224,6 +302,8 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     loading,
     error,
     selectedBcIds,
+    visibleAggregateIds,
+    pendingFocus,
     selectedNodeId,
     selectedNodeType,
     filteredBoundedContexts,
@@ -232,6 +312,9 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     totalValueObjects,
     fetchAllAggregates,
     fetchAggregatesForBC,
+    fetchAggregate,
+    focusAggregate,
+    consumeFocus,
     removeBC,
     clearAllBCs,
     updateAggregateEnumVo,

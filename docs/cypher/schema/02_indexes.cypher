@@ -113,3 +113,45 @@ ON (p.parentType, p.parentId);
 CREATE TEXT INDEX index_property_name IF NOT EXISTS
 FOR (p:Property)
 ON (p.name);
+
+// ------------------------------------------------------------
+// Journey 인덱스 (025 v3 — ui-flow-edges)
+// ------------------------------------------------------------
+
+// BC별 여정 조회용
+CREATE INDEX journey_bc_idx IF NOT EXISTS
+FOR (j:Journey)
+ON (j.boundedContextId);
+
+// 여정 slug 검색용 (프런트 그룹핑 키)
+CREATE INDEX journey_slug_idx IF NOT EXISTS
+FOR (j:Journey)
+ON (j.journeyId);
+
+// ------------------------------------------------------------
+// Feature 인덱스 (026 — requirements-tab)
+// ------------------------------------------------------------
+
+// BC별 Feature 조회용
+CREATE INDEX feature_bc_idx IF NOT EXISTS
+FOR (f:Feature)
+ON (f.boundedContextId);
+
+// Feature name 검색용
+CREATE TEXT INDEX feature_name_idx IF NOT EXISTS
+FOR (f:Feature)
+ON (f.name);
+
+// ------------------------------------------------------------
+// Invariant 인덱스 (027 — aggregate-invariants)
+// ------------------------------------------------------------
+
+// Aggregate별 Invariant 조회용
+CREATE INDEX invariant_aggregate_idx IF NOT EXISTS
+FOR (inv:Invariant)
+ON (inv.aggregateId);
+
+// Invariant 선언문 텍스트 검색용
+CREATE TEXT INDEX invariant_declaration_idx IF NOT EXISTS
+FOR (inv:Invariant)
+ON (inv.declaration);

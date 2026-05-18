@@ -100,7 +100,12 @@ SET bc.name = "Order",
 //
 // 선택 속성:
 //   - rootEntity: String
-//   - invariants: List<String>
+//   - invariants: List<String>   (027 이후 레거시 — Invariant 노드로 이관, 이관 후 비워짐)
+//   - invariantsMigratedAt: DateTime  (027 — 레거시 invariants 이관 완료 스탬프)
+//   - enumerations / valueObjects: String (JSON) — 어그리거트 내부 도메인 객체
+//   - exceptions: String (JSON, 027) — 어그리거트 Exception 도메인 객체 카탈로그.
+//       각 항목 {name, message, fields:[{name,type,description?}]}. GWT Then이
+//       (Command·Invariant 공통) name으로 참조한다.
 // ############################################################
 
 MATCH (bc:BoundedContext { key: "order" })
@@ -498,3 +503,136 @@ MERGE (then)-[:REFERENCES]->(evt);
 //         "이전 바인딩 (binding 이 replace 된 후 file key 가 다름)"
 //         판단에 사용된다 (research D5).
 // ############################################################
+
+
+// ############################################################
+// 18. Journey / JourneyStep (UI-layer 사용자 여정) — 025 v3 ui-flow-edges
+// ############################################################
+// 설명: 목적 있는 하나의 사용자 여정(Journey)과 그 단계(JourneyStep).
+//       JourneyStep 은 'screen'(공유 UI 를 SHOWS) 또는 'gateway'(분기
+//       다이아몬드). 단계 간 흐름은 NEXT 엣지(분기 조건 포함)로 표현한다.
+//       재사용 화면은 여정마다 별도 JourneyStep 이 되며 모두 같은 UI 를 가리킨다.
+//
+// 관계:
+//   - BoundedContext-[:HAS_JOURNEY]->Journey
+//   - Journey-[:HAS_STEP]->JourneyStep
+//   - JourneyStep-[:SHOWS]->UI                 (screen 단계만)
+//   - JourneyStep-[:NEXT {condition}]->JourneyStep
+//
+// Journey 필수 속성:
+//   - id: String (UUID v5, journey.key 기반)
+//   - key: String (`<bc.key>.journey.<journeySlug>`)
+//   - journeyId: String (journeySlug — 프런트 그룹핑/필터 키)
+//   - name: String (여정명, 예: "정상 회원가입")
+//   - description: String
+//   - boundedContextId: String (소유 BC = 화면이 가장 많은 BC)
+//   - source: String ("llm" | "manual")
+//
+// JourneyStep 필수 속성:
+//   - id: String (UUID v5, step.key 기반)
+//   - key: String (`<journey.key>.step.<kind>.<ref>`)
+//   - kind: String ("screen" | "gateway")
+//   - label: String (screen=화면명, gateway=의사결정 질문)
+//   - sequence: Int (레이아웃 힌트 — 위상정렬 순위)
+//   - source: String ("llm" | "manual")
+// ############################################################
+
+CREATE (j:Journey {
+    id: "00000000-0000-5000-8000-000000000001",
+    key: "membership.journey.normal-signup-abc123",
+    journeyId: "normal-signup-abc123",
+    name: "정상 회원가입",
+    description: "신규 사용자가 약관 동의부터 가입 완료까지 진행하는 여정",
+    boundedContextId: "<bc-uuid>",
+    source: "llm",
+    createdAt: datetime(),
+    updatedAt: datetime()
+});
+
+CREATE (s:JourneyStep {
+    id: "00000000-0000-5000-8000-000000000002",
+    key: "membership.journey.normal-signup-abc123.step.gateway.approve-xyz",
+    kind: "gateway",
+    label: "가입 가능 여부?",
+    sequence: 3,
+    source: "llm",
+    createdAt: datetime(),
+    updatedAt: datetime()
+});
+
+
+// ############################################################
+// 19. Feature (피처 — 026 requirements-tab)
+// ############################################################
+// 설명: BoundedContext(Epic)와 UserStory 사이의 그룹 단위.
+//       관련 User Story 묶음을 나타낸다. 하나의 BC에 속하고
+//       여러 User Story를 포함한다(Feature→UserStory: HAS_USER_STORY).
+// 관계:
+//   - BoundedContext-[:HAS_FEATURE]->Feature
+//   - Feature-[:HAS_USER_STORY]->UserStory
+//
+// 필수 속성:
+//   - id: String (UUID — ON CREATE randomUUID())
+//   - key: String (자연키 — `<bc.key>.feature.<slug(name)>`, 멱등 MERGE 기준)
+//   - name: String (Feature 이름)
+//   - boundedContextId: String (소속 BC의 id — 조회 편의용 비정규화)
+//   - source: String ("llm" | "manual")
+//
+// 선택 속성:
+//   - description: String
+//   - sequence: Int (트리 내 정렬 힌트)
+//   - createdAt / updatedAt: DateTime
+// ############################################################
+
+MATCH (bc:BoundedContext { key: "order" })
+MERGE (f:Feature { key: "order.feature.order-cancellation" })
+ON CREATE SET f.id = randomUUID(), f.createdAt = datetime(), f.source = "llm"
+SET f.name = "주문 취소",
+    f.description = "고객이 주문을 취소하고 환불을 받는 기능 묶음",
+    f.boundedContextId = bc.id,
+    f.sequence = 1,
+    f.updatedAt = datetime()
+MERGE (bc)-[:HAS_FEATURE]->(f);
+
+
+// ############################################################
+// 20. Invariant (인베리언트 — 027 aggregate-invariants)
+// ############################################################
+// 설명: 어그리거트가 항상 준수해야 하는 비즈니스 규칙을 나타내는 1급 객체.
+//       어그리거트 하위에 0..N개 부착. 디자인 트리에서만 노출(캔버스 스티커 아님).
+//       세부 검증 조건은 (a) 커맨드의 GWT 인수조건을 VERIFIED_BY로 공유 참조하거나
+//       (b) parentType="Invariant"인 인베리언트 전용 GWT 노드로 보유한다.
+// 관계:
+//   - Aggregate-[:HAS_INVARIANT]->Invariant
+//   - Invariant-[:VERIFIED_BY]->Command   (커맨드 GWT 인수조건 공유 참조)
+//   - Invariant-[:HAS_GWT]->GWT           (인베리언트 전용 GWT)
+//
+// 필수 속성:
+//   - id: String (UUID — ON CREATE randomUUID())
+//   - key: String (자연키 — `<aggregate.key>.invariant.<slug>-<hash>`, 멱등 MERGE 기준)
+//   - declaration: String (규칙 선언문 — 자연어 문장)
+//
+// 선택 속성:
+//   - name: String (짧은 제목)
+//   - description: String
+//   - source: String ("manual" | "ingested" | "migrated")
+//   - seq: Int (어그리거트 내 정렬 순서)
+//   - aggregateId: String (소유 Aggregate의 id — 조회 편의용 비정규화)
+//   - createdAt / updatedAt: DateTime
+//
+// 참고: GWT 노드의 parentType 속성은 027부터 "Invariant" 값도 허용한다 —
+//       인베리언트 전용 GWT는 GWT {parentType:"Invariant", parentId:<inv.id>}.
+//       인베리언트 GWT는 Given·Then만 사용한다("When"은 규칙에 해당되지 않아
+//       편집기에서 숨겨짐). Then은 어그리거트 exceptions 카탈로그의 Exception을
+//       thenRef.exceptionName으로 참조해 예외 결과를 선언할 수 있다(Command GWT 공통).
+// ############################################################
+
+MATCH (agg:Aggregate { key: "order.order" })
+MERGE (inv:Invariant { key: "order.order.invariant.order-total-positive-abc123def456" })
+ON CREATE SET inv.id = randomUUID(), inv.createdAt = datetime(), inv.source = "manual"
+SET inv.declaration = "주문 총액은 항상 0보다 커야 한다",
+    inv.name = "주문 총액 양수",
+    inv.aggregateId = agg.id,
+    inv.seq = 1,
+    inv.updatedAt = datetime()
+MERGE (agg)-[:HAS_INVARIANT]->(inv);

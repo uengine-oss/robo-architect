@@ -10,6 +10,7 @@ import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.st
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
+import { useInvariantsStore } from '@/features/invariants/invariants.store'
 
 const props = defineProps({
   node: {
@@ -36,6 +37,7 @@ const ingestionStore = useIngestionStore()
 const terminologyStore = useTerminologyStore()
 const bpmnStore = useBpmnStore()
 const eventModelingStore = useEventModelingStore()
+const invariantsStore = useInvariantsStore()
 
 // Event Modeling 캔버스에 표시된 BC IDs (reactive)
 const eventModelingBcIds = computed(() =>
@@ -73,7 +75,9 @@ const nodeIcon = computed(() => {
     ReadModel: 'RM',
     UI: 'UI',
     CQRSOperation: '⚡',
-    Property: '{ }'
+    Property: '{ }',
+    InvariantGroup: 'INV',
+    Invariant: 'I'
   }
   return icons[props.node.type] || '?'
 })
@@ -108,6 +112,13 @@ const displayName = computed(() => {
     const name = terminologyStore.getLabel(props.node) || props.node.id || 'property'
     const t = props.node.dataType || props.node.typeName || props.node.data_type || props.node.propType || ''
     return t ? `${name}: ${t}` : name
+  }
+  if (props.node.type === 'InvariantGroup') {
+    return 'Invariants'
+  }
+  if (props.node.type === 'Invariant') {
+    const text = props.node.declaration || props.node.name || 'invariant'
+    return `${text.substring(0, 40)}${text.length > 40 ? '...' : ''}`
   }
   return terminologyStore.getLabel(props.node)
 })
@@ -154,9 +165,30 @@ const children = computed(() => {
       ...e,
       type: 'Event'
     }))
-    return [...commands, ...events]
+    // Invariants (027) — a drill-down group below the Aggregate's other
+    // design objects. Always present so a planner can add the first one.
+    const invariantGroup = {
+      id: `${props.node.id}::invariants`,
+      type: 'InvariantGroup',
+      name: 'Invariants',
+      aggregateId: props.node.id
+    }
+    return [...commands, ...events, invariantGroup]
   }
-  
+
+  if (type === 'InvariantGroup') {
+    const aggId = props.node.aggregateId
+    return invariantsStore.itemsFor(aggId).map(inv => ({
+      ...inv,
+      type: 'Invariant',
+      aggregateId: aggId
+    }))
+  }
+
+  if (type === 'Invariant') {
+    return []
+  }
+
   if (type === 'Command') {
     return (props.node.events || []).map(e => ({
       ...e,
@@ -186,7 +218,11 @@ const children = computed(() => {
   return []
 })
 
-const hasChildren = computed(() => children.value.length > 0)
+const hasChildren = computed(() => {
+  // The Invariants group is always expandable (lazy-loaded on expand).
+  if (props.node.type === 'InvariantGroup') return true
+  return children.value.length > 0
+})
 
 const isExpanded = computed(() => navigatorStore.isExpanded(props.node.id))
 
@@ -233,12 +269,35 @@ function toggleExpand(event) {
   
   // Normal click: toggle expand/collapse (works in all states including pause)
   navigatorStore.toggleExpanded(props.node.id)
+
+  // Lazy-load invariants when the Invariants group is opened (027). The first
+  // load also triggers the backend's legacy-text migration.
+  if (props.node.type === 'InvariantGroup' && navigatorStore.isExpanded(props.node.id)) {
+    invariantsStore.ensureLoaded(props.node.aggregateId)
+  }
+}
+
+// Create a new Invariant under an Aggregate from the Invariants group header.
+async function addInvariant(event) {
+  event.stopPropagation()
+  const aggId = props.node.aggregateId
+  const declaration = (window.prompt('새 인베리언트 선언문을 입력하세요') || '').trim()
+  if (!declaration) return
+  try {
+    await invariantsStore.create(aggId, declaration)
+    if (!navigatorStore.isExpanded(props.node.id)) {
+      navigatorStore.toggleExpanded(props.node.id)
+    }
+  } catch (e) {
+    console.error('Failed to create invariant:', e)
+    window.alert(`인베리언트 생성 실패: ${e.message || e}`)
+  }
 }
 
 // Add node to chat selection
 function addToChatSelection() {
-  // Skip UserStory nodes (they're not modifiable via chat)
-  if (props.node.type === 'UserStory') {
+  // Skip nodes that are not modifiable via chat.
+  if (['UserStory', 'Invariant', 'InvariantGroup'].includes(props.node.type)) {
     return
   }
   
@@ -284,6 +343,14 @@ async function handleDoubleClick() {
       activeTab.value = 'Design'
     }
     inspectorRequest.request(props.node)
+  } else if (props.node.type === 'Invariant') {
+    // 027 — open the Invariant in the right-side property panel (InspectorPanel).
+    if (activeTab && activeTab.value !== 'Design') {
+      activeTab.value = 'Design'
+    }
+    inspectorRequest.request(props.node)
+  } else if (props.node.type === 'InvariantGroup') {
+    // Group node — single click already toggles; nothing extra to do.
   } else {
     await addToCanvas()
   }
@@ -291,6 +358,11 @@ async function handleDoubleClick() {
 
 // Drag handlers
 function handleDragStart(event) {
+  // Invariants are never placed on the canvas (027) — block their drag.
+  if (['Invariant', 'InvariantGroup'].includes(props.node.type)) {
+    event.preventDefault()
+    return
+  }
   isDragging.value = true
   // Include both formats for compatibility
   event.dataTransfer.setData('application/json', JSON.stringify({
@@ -401,9 +473,22 @@ async function addToCanvas() {
         {{ children.length }}
       </span>
       
+      <!-- Add button for the Invariants group (027) -->
+      <button
+        v-if="node.type === 'InvariantGroup'"
+        class="tree-node__edit-btn"
+        title="인베리언트 추가"
+        @click.stop="addInvariant"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+
       <!-- Edit button for user stories -->
-      <button 
-        v-if="node.type === 'UserStory'" 
+      <button
+        v-if="node.type === 'UserStory'"
         class="tree-node__edit-btn"
         title="Edit User Story (Double-click)"
         @click.stop="handleDoubleClick"

@@ -1,11 +1,14 @@
 <script setup>
-import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './inspectors/nodeEditSchema'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
+import GwtFieldInput from './GwtFieldInput.vue'
+import InvariantEditor from '@/features/invariants/ui/InvariantEditor.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 import {
   parseHtmlWireframe,
@@ -49,9 +52,13 @@ const props = defineProps({
 const emit = defineEmits(['close', 'updated', 'request-chat'])
 
 const canvasStore = useCanvasStore()
+const aggregateViewerStore = useAggregateViewerStore()
 const chatStore = useModelModifierStore()
 const terminologyStore = useTerminologyStore()
 const log = createLogger({ scope: 'InspectorPanel' })
+
+// App-level tab state (provided by App.vue) — used to switch to the Aggregate tab.
+const appActiveTab = inject('activeTab', null)
 
 // Currently viewing node index (for multiple selected nodes)
 const viewingNodeIndex = ref(0)
@@ -510,10 +517,30 @@ const showGWTEditor = computed(() => {
   return nodeLabel.value === 'Command'
 })
 
+// Aggregate-only "View Detail" affordance — drills into the Aggregate tab.
+const isAggregateNode = computed(() => nodeLabel.value === 'Aggregate')
+
+function openAggregateDetail() {
+  const n = node.value
+  if (!n) return
+  const aggregateId = n.id || n.data?.id
+  if (!aggregateId) return
+  // bcId from the canvas node's parent BC, else the fetched bcId; otherwise
+  // null — the store resolves it via expand-with-bc.
+  const bcId = n.parentNode || n.data?.bcId || null
+  aggregateViewerStore.focusAggregate(aggregateId, bcId)
+  if (appActiveTab) appActiveTab.value = 'Aggregate'
+}
+
 // UserStory branch (spec 019-userstory-properties-panel) — replaces the
 // legacy UserStoryEditModal. Editor lives inside the properties tab and
 // PATCHes /api/user-story/{id} on save.
 const showUserStoryEditor = computed(() => nodeLabel.value === 'UserStory')
+
+// Invariant branch (027 — aggregate-invariants). Invariant property editing
+// lives in this right-side panel; the dedicated editor manages its own
+// load/save against /api/invariants.
+const showInvariantEditor = computed(() => nodeLabel.value === 'Invariant')
 
 const USER_STORY_PRIORITY_OPTIONS = ['low', 'medium', 'high']
 const USER_STORY_STATUS_OPTIONS = ['draft', 'new', 'in-progress', 'approved', 'implemented', 'done']
@@ -1993,6 +2020,7 @@ function getReferencedNodeProperties(referencedNodeId, referencedNodeType) {
     result.push({
       id: String(p?.id || ''),
       name: String(p?.name ?? ''),
+      displayName: String(p?.displayName ?? ''),
       type: String(p?.type ?? ''),
       description: String(p?.description ?? ''),
       isKey: Boolean(p?.isKey),
@@ -2012,6 +2040,7 @@ function getReferencedNodeProperties(referencedNodeId, referencedNodeType) {
       result.push({
         id: `enum-${e.name}-${idx}`,
         name: String(e.name ?? ''),
+        displayName: String(e.displayName ?? e.alias ?? ''),
         type: 'Enum',
         description: String(e.alias ?? ''),
         isKey: false,
@@ -2033,6 +2062,7 @@ function getReferencedNodeProperties(referencedNodeId, referencedNodeType) {
       result.push({
         id: `vo-${vo.name}-${idx}`,
         name: String(vo.name ?? ''),
+        displayName: String(vo.displayName ?? vo.alias ?? ''),
         type: 'ValueObject',
         description: String(vo.alias ?? ''),
         isKey: false,
@@ -2515,6 +2545,172 @@ function parseBooleanValue(value) {
 const showGWTDetailModal = ref(false)
 const selectedGWTSetIndex = ref(0)
 
+// --- GWT detail modal: layout mode (table | card) ---
+const GWT_LAYOUT_KEY = 'gwt-detail-layout-mode'
+const gwtLayoutMode = ref(
+  (typeof localStorage !== 'undefined' && localStorage.getItem(GWT_LAYOUT_KEY)) || 'card'
+)
+watch(gwtLayoutMode, (mode) => {
+  try {
+    localStorage.setItem(GWT_LAYOUT_KEY, mode)
+  } catch {
+    /* ignore storage failures */
+  }
+})
+
+// --- Card layout: logical-name label for a property ---
+function gwtPropLabel(prop) {
+  if (!prop) return ''
+  return prop.displayName || prop.name || ''
+}
+
+// Section keys (given/when/then) that actually exist on a test case.
+function gwtSectionKeys(gwtSet) {
+  return ['given', 'when', 'then'].filter((k) => gwtSet && gwtSet[k])
+}
+
+function gwtSectionTitle(sec) {
+  return sec ? sec.charAt(0).toUpperCase() + sec.slice(1) : ''
+}
+
+function gwtSectionSubtitle(gwtSet, sec) {
+  if (sec === 'given' && nodeLabel.value === 'Policy') {
+    return getPolicyMappedGiven() || gwtSet?.given?.name || ''
+  }
+  return gwtSet?.[sec]?.name || ''
+}
+
+// Which section (given/when/then) references the Aggregate, if any.
+function getAggregateSection(gwtSet) {
+  for (const k of ['given', 'when', 'then']) {
+    if (gwtSet?.[k]?.referencedNodeType === 'Aggregate') return k
+  }
+  return null
+}
+
+// Candidate properties for a card section (metadata source + picker grouping).
+// The `then` section additionally offers the Aggregate's properties so a
+// scenario can assert the resulting aggregate state next to the emitted event.
+function getCardCandidateProps(gwtSet, type) {
+  const own = getAvailableProperties(gwtSet, type).map((p) => ({ ...p, source: 'self' }))
+  if (type !== 'then') return own
+  const aggSec = getAggregateSection(gwtSet)
+  if (!aggSec || aggSec === 'then') return own
+  const seen = new Set(own.map((p) => p.name))
+  const aggProps = getAvailableProperties(gwtSet, aggSec)
+    .filter((p) => !seen.has(p.name))
+    .map((p) => ({ ...p, source: 'aggregate' }))
+  return [...own, ...aggProps]
+}
+
+// Resolve property metadata for values already present in fieldValues.
+// Falls back to a minimal String descriptor for ad-hoc fields with no schema.
+function getCardSectionProps(gwtSet, type) {
+  const gwt = gwtSet?.[type]
+  if (!gwt || !gwt.fieldValues) return []
+  const candidates = getCardCandidateProps(gwtSet, type)
+  return Object.keys(gwt.fieldValues).map((name) => {
+    const meta = candidates.find((p) => p.name === name)
+    return (
+      meta || {
+        id: name,
+        name,
+        displayName: '',
+        type: 'String',
+        fieldType: 'property',
+        enumItems: [],
+        source: 'self',
+      }
+    )
+  })
+}
+
+// Unused candidate properties for a card section's "add property" picker.
+function getCardUnusedProps(gwtSet, type) {
+  const used = new Set(Object.keys(gwtSet?.[type]?.fieldValues || {}))
+  return getCardCandidateProps(gwtSet, type).filter((p) => !used.has(p.name))
+}
+
+// Add an unused property to a card section (seeds an empty value).
+function addPropertyToCard(gwtSet, type, propName) {
+  if (!propName) return
+  updateFieldValue(gwtSet, type, propName, '')
+}
+
+// Remove a property from a single card section.
+function removePropertyFromCard(gwtSet, type, propName) {
+  if (gwtSet?.[type]?.fieldValues) {
+    delete gwtSet[type].fieldValues[propName]
+  }
+}
+
+// Which section's "add property" picker is open: `${rowIndex}:${type}` or null.
+const gwtCardPickerKey = ref(null)
+function toggleCardPicker(rowIndex, type) {
+  const key = `${rowIndex}:${type}`
+  gwtCardPickerKey.value = gwtCardPickerKey.value === key ? null : key
+}
+
+// --- Card layout: natural-language -> GWT field values ---
+const gwtNlText = ref({}) // rowIndex -> input string
+const gwtNlBusy = ref({}) // rowIndex -> bool
+const gwtNlError = ref({}) // rowIndex -> error string
+
+function sectionPayloadForNL(gwtSet, type) {
+  const gwt = gwtSet?.[type]
+  if (!gwt || !gwt.referencedNodeId) return null
+  return {
+    name: gwt.name || '',
+    properties: getAvailableProperties(gwtSet, type).map((p) => ({
+      name: p.name,
+      displayName: p.displayName || '',
+      type: p.type || 'String',
+      enumItems: Array.isArray(p.enumItems) ? p.enumItems : [],
+    })),
+  }
+}
+
+function applyParsedValues(gwtSet, type, values) {
+  if (!values || typeof values !== 'object' || !gwtSet?.[type]) return
+  if (!gwtSet[type].fieldValues) gwtSet[type].fieldValues = {}
+  for (const [key, value] of Object.entries(values)) {
+    gwtSet[type].fieldValues[key] = value
+  }
+}
+
+async function applyNLToCard(rowIndex) {
+  const gwtSet = form.value.gwtSets?.[rowIndex]
+  const text = (gwtNlText.value[rowIndex] || '').trim()
+  if (!gwtSet || !text) return
+
+  gwtNlBusy.value = { ...gwtNlBusy.value, [rowIndex]: true }
+  gwtNlError.value = { ...gwtNlError.value, [rowIndex]: '' }
+  try {
+    const res = await fetch('/api/graph/gwt/parse-nl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        given: sectionPayloadForNL(gwtSet, 'given'),
+        when: sectionPayloadForNL(gwtSet, 'when'),
+        then: sectionPayloadForNL(gwtSet, 'then'),
+      }),
+    })
+    const data = await safeJson(res)
+    if (!res.ok || !data?.success) {
+      throw new Error(data?.detail || '자연어 해석 실패')
+    }
+    applyParsedValues(gwtSet, 'given', data.givenFieldValues)
+    applyParsedValues(gwtSet, 'when', data.whenFieldValues)
+    applyParsedValues(gwtSet, 'then', data.thenFieldValues)
+    gwtNlText.value = { ...gwtNlText.value, [rowIndex]: '' }
+  } catch (err) {
+    gwtNlError.value = { ...gwtNlError.value, [rowIndex]: err?.message || String(err) }
+  } finally {
+    gwtNlBusy.value = { ...gwtNlBusy.value, [rowIndex]: false }
+  }
+}
+
 // ValueObject editor modal state
 const voEditorModal = ref({
   open: false,
@@ -2526,101 +2722,107 @@ const voEditorModal = ref({
   fieldValues: {} // field name -> value mapping for editing
 })
 
+// Resolve the expected Given/When/Then referenced nodes from canvas relationships.
+//   Command: given = owning Aggregate, when = the Command, then = emitted Event.
+//   Policy:  given = trigger Event, when = invoked Command's Aggregate, then = emitted Event.
+function resolveGWTRefsFromCanvas() {
+  const current = node.value
+  const empty = { given: null, when: null, then: null }
+  if (!current) return empty
+
+  const typeOf = (n) => normalizeNodeLabel(n?.data?.type || n?.type)
+  const edgeIs = (e, type) =>
+    e.data?.edgeType === type ||
+    e.data?.type === type ||
+    (e.label || '').toLowerCase() === type.toLowerCase()
+  const findNode = (id, type) =>
+    canvasStore.nodes.find((n) => n.id === id && typeOf(n) === type) || null
+  const nameOf = (n) =>
+    !n
+      ? ''
+      : terminologyStore.ubiquitousLanguageMode
+        ? n.data?.displayName || n.data?.name || n.name || ''
+        : n.data?.name || n.name || ''
+  const refPart = (n, type) =>
+    n ? { name: nameOf(n), referencedNodeId: n.id, referencedNodeType: type } : null
+
+  if (nodeLabel.value === 'Command') {
+    const cmdId = current.id
+    const hasCmdEdge = canvasStore.edges.find((e) => e.target === cmdId && edgeIs(e, 'HAS_COMMAND'))
+    const aggregateNode = hasCmdEdge ? findNode(hasCmdEdge.source, 'Aggregate') : null
+    const emitsEdge = canvasStore.edges.find((e) => e.source === cmdId && edgeIs(e, 'EMITS'))
+    const eventNode = emitsEdge ? findNode(emitsEdge.target, 'Event') : null
+    return {
+      given: refPart(aggregateNode, 'Aggregate'),
+      when: { name: nameOf(current), referencedNodeId: cmdId, referencedNodeType: 'Command' },
+      then: refPart(eventNode, 'Event'),
+    }
+  }
+
+  if (nodeLabel.value === 'Policy') {
+    const polId = current.id
+    const triggerEdge = canvasStore.edges.find((e) => e.target === polId && edgeIs(e, 'TRIGGERS'))
+    const triggerEvent = triggerEdge ? findNode(triggerEdge.source, 'Event') : null
+    const invokeEdge = canvasStore.edges.find((e) => e.source === polId && edgeIs(e, 'INVOKES'))
+    const commandNode = invokeEdge ? findNode(invokeEdge.target, 'Command') : null
+    const hasCmdEdge = commandNode
+      ? canvasStore.edges.find((e) => e.target === commandNode.id && edgeIs(e, 'HAS_COMMAND'))
+      : null
+    const aggregateNode = hasCmdEdge ? findNode(hasCmdEdge.source, 'Aggregate') : null
+    const emitsEdge = commandNode
+      ? canvasStore.edges.find((e) => e.source === commandNode.id && edgeIs(e, 'EMITS'))
+      : null
+    const eventNode = emitsEdge ? findNode(emitsEdge.target, 'Event') : null
+    return {
+      given: refPart(triggerEvent, 'Event'),
+      when: refPart(aggregateNode, 'Aggregate'),
+      then: refPart(eventNode, 'Event'),
+    }
+  }
+
+  return empty
+}
+
+// Fill in missing/incomplete section refs on every test case from the canvas,
+// without touching fieldValues the user or LLM already populated. This recovers
+// e.g. a `then` Event that was unlinked when the GWT bundle was first generated.
+function repairGWTRefs() {
+  const resolved = resolveGWTRefsFromCanvas()
+  if (!resolved.given && !resolved.when && !resolved.then) return
+
+  if (!form.value.gwtSets || form.value.gwtSets.length === 0) {
+    form.value.gwtSets = [
+      {
+        given: resolved.given ? { ...resolved.given, fieldValues: {} } : null,
+        when: resolved.when ? { ...resolved.when, fieldValues: {} } : null,
+        then: resolved.then ? { ...resolved.then, fieldValues: {} } : null,
+      },
+    ]
+    return
+  }
+
+  for (const set of form.value.gwtSets) {
+    for (const sec of ['given', 'when', 'then']) {
+      const ref = resolved[sec]
+      if (!ref) continue
+      const existing = set[sec]
+      if (!existing) {
+        set[sec] = { ...ref, fieldValues: {} }
+      } else if (!existing.referencedNodeId || !existing.referencedNodeType) {
+        existing.referencedNodeId = ref.referencedNodeId
+        existing.referencedNodeType = ref.referencedNodeType
+        if (!existing.name) existing.name = ref.name
+        if (!existing.fieldValues) existing.fieldValues = {}
+      }
+    }
+  }
+}
+
 function openGWTDetailModal(setIndex = null) {
   if (setIndex !== null) {
     selectedGWTSetIndex.value = setIndex
   }
-  
-  // If GWT sets are empty but this is a Policy, initialize from relationships
-  if (nodeLabel.value === 'Policy' && (!form.value.gwtSets || form.value.gwtSets.length === 0)) {
-    const givenName = getPolicyMappedGiven()
-    const whenName = getPolicyMappedWhen()
-    const thenName = getPolicyMappedThen()
-    
-    if (givenName || whenName || thenName) {
-      // Find nodes from relationships
-      const nodeId = node.value.id
-      
-      // Find trigger events
-      const triggerEdges = canvasStore.edges.filter(e => {
-        const isTarget = e.target === nodeId
-        const isTriggers = e.data?.edgeType === 'TRIGGERS' || 
-                           e.label?.toLowerCase() === 'triggers' ||
-                           e.data?.type === 'TRIGGERS'
-        return isTarget && isTriggers
-      })
-      
-      // Find invoke command
-      const invokeEdge = canvasStore.edges.find(e => {
-        const isSource = e.source === nodeId
-        const isInvokes = e.data?.edgeType === 'INVOKES' || 
-                          e.label?.toLowerCase() === 'invokes' ||
-                          e.data?.type === 'INVOKES'
-        return isSource && isInvokes
-      })
-      
-      const commandNode = invokeEdge ? canvasStore.nodes.find(n => {
-        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
-        return n.id === invokeEdge.target && nodeType === 'Command'
-      }) : null
-      
-      // Find aggregate
-      const hasCommandEdge = commandNode ? canvasStore.edges.find(e => {
-        const isTarget = e.target === commandNode.id
-        const isHasCommand = e.data?.edgeType === 'HAS_COMMAND' || 
-                            e.label?.toLowerCase() === 'has_command' ||
-                            e.data?.type === 'HAS_COMMAND'
-        return isTarget && isHasCommand
-      }) : null
-      
-      const aggregateNode = hasCommandEdge ? canvasStore.nodes.find(n => {
-        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
-        return n.id === hasCommandEdge.source && nodeType === 'Aggregate'
-      }) : null
-      
-      // Find emitted event
-      const emitsEdge = commandNode ? canvasStore.edges.find(e => {
-        const isSource = e.source === commandNode.id
-        const isEmits = e.data?.edgeType === 'EMITS' || 
-                       e.label?.toLowerCase() === 'emits' ||
-                       e.data?.type === 'EMITS'
-        return isSource && isEmits
-      }) : null
-      
-      const eventNode = emitsEdge ? canvasStore.nodes.find(n => {
-        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
-        return n.id === emitsEdge.target && nodeType === 'Event'
-      }) : null
-      
-      // Create initial GWT set from relationships
-      const firstTriggerEvent = triggerEdges.length > 0 ? canvasStore.nodes.find(n => {
-        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
-        return n.id === triggerEdges[0].source && nodeType === 'Event'
-      }) : null
-      
-      form.value.gwtSets = [{
-        given: firstTriggerEvent ? {
-          name: terminologyStore.ubiquitousLanguageMode ? (firstTriggerEvent.data?.displayName || firstTriggerEvent.data?.name || firstTriggerEvent.name) : (firstTriggerEvent.data?.name || firstTriggerEvent.name),
-          referencedNodeId: firstTriggerEvent.id,
-          referencedNodeType: 'Event',
-          fieldValues: {}
-        } : null,
-        when: aggregateNode ? {
-          name: terminologyStore.ubiquitousLanguageMode ? (aggregateNode.data?.displayName || aggregateNode.data?.name || aggregateNode.name) : (aggregateNode.data?.name || aggregateNode.name),
-          referencedNodeId: aggregateNode.id,
-          referencedNodeType: 'Aggregate',
-          fieldValues: {}
-        } : null,
-        then: eventNode ? {
-          name: terminologyStore.ubiquitousLanguageMode ? (eventNode.data?.displayName || eventNode.data?.name || eventNode.name) : (eventNode.data?.name || eventNode.name),
-          referencedNodeId: eventNode.id,
-          referencedNodeType: 'Event',
-          fieldValues: {}
-        } : null
-      }]
-    }
-  }
-  
+  repairGWTRefs()
   showGWTDetailModal.value = true
 }
 
@@ -2810,7 +3012,7 @@ function updateVoFieldValue(fieldName, value) {
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
         <span>Inspector</span>
-        <span v-if="node" class="inspector-panel__subtitle">· {{ schema.title }} · {{ terminologyStore.ubiquitousLanguageMode ? (node.data?.displayName || node.data?.name || node.id) : (node.data?.name || node.id) }}</span>
+        <span v-if="node" class="inspector-panel__subtitle">· {{ schema?.title || nodeLabel }} · {{ terminologyStore.ubiquitousLanguageMode ? (node.data?.displayName || node.data?.name || node.id) : (node.data?.name || node.id) }}</span>
       </div>
       <div class="inspector-panel__actions">
         <button class="inspector-panel__btn" @click="resetToNode" title="Reload" :disabled="saving">
@@ -3322,6 +3524,11 @@ function updateVoFieldValue(fieldName, value) {
             <div class="v">{{ nodeLabel }}</div>
           </div>
 
+          <!-- Invariant branch (027 — aggregate-invariants). -->
+          <div v-if="showInvariantEditor" class="inspector-invariant-section">
+            <InvariantEditor :invariant-id="node.id" @deleted="$emit('close')" />
+          </div>
+
           <!-- UserStory branch (spec 019-userstory-properties-panel). -->
           <div v-if="showUserStoryEditor" class="inspector-userstory-section">
             <div class="inspector-field">
@@ -3440,7 +3647,7 @@ function updateVoFieldValue(fieldName, value) {
             <div v-if="userStorySuccess" class="inspector-userstory-message inspector-userstory-message--success">{{ userStorySuccess }}</div>
           </div>
 
-          <div v-for="field in schema.fields" :key="field.key" class="inspector-field">
+          <div v-for="field in (schema?.fields || [])" :key="field.key" class="inspector-field">
             <label class="inspector-field__label">
               {{ field.label }}
               <span v-if="dirtyFields.includes(field.key)" class="inspector-field__dirty">•</span>
@@ -3486,6 +3693,19 @@ function updateVoFieldValue(fieldName, value) {
             :disabled="saving"
             @state-change="onPropertyEditorStateChange"
           />
+
+          <!-- Aggregate drill-down: open the Aggregate tab focused on this aggregate -->
+          <div v-if="isAggregateNode" class="inspector-aggregate-detail">
+            <button class="inspector-aggregate-detail__btn" @click="openAggregateDetail">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+              <span>어그리거트 디테일 보기</span>
+            </button>
+          </div>
 
           <!-- GWT Editor Section -->
           <div v-if="showGWTEditor" class="inspector-gwt-section">
@@ -3934,7 +4154,7 @@ function updateVoFieldValue(fieldName, value) {
           
           <!-- Single GWT Table: Properties as columns, Test cases as rows -->
           <div v-if="form.gwtSets.length > 0" class="gwt-unified-table">
-            <table class="gwt-decision-table">
+            <table v-if="gwtLayoutMode === 'table'" class="gwt-decision-table">
               <thead>
                 <!-- Section Header Row: Given/When/Then groups -->
                 <tr>
@@ -3975,12 +4195,13 @@ function updateVoFieldValue(fieldName, value) {
                   <!-- Given Field Names -->
                   <template v-if="form.gwtSets[0]?.given">
                     <template v-if="getAvailableProperties(form.gwtSets[0], 'given').length > 0">
-                      <th 
-                        v-for="prop in getAvailableProperties(form.gwtSets[0], 'given')" 
+                      <th
+                        v-for="prop in getAvailableProperties(form.gwtSets[0], 'given')"
                         :key="`given-${prop.name}`"
                         class="gwt-decision-table__property-col"
+                        :title="prop.name"
                       >
-                        {{ prop.name }}
+                        {{ gwtPropLabel(prop) }}
                       </th>
                     </template>
                     <th v-else class="gwt-decision-table__property-col">
@@ -3989,22 +4210,24 @@ function updateVoFieldValue(fieldName, value) {
                   </template>
                   <!-- When Field Names -->
                   <template v-if="form.gwtSets[0]?.when">
-                    <th 
-                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'when')" 
+                    <th
+                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'when')"
                       :key="`when-${prop.name}`"
                       class="gwt-decision-table__property-col"
+                      :title="prop.name"
                     >
-                      {{ prop.name }}
+                      {{ gwtPropLabel(prop) }}
                     </th>
                   </template>
                   <!-- Then Field Names -->
                   <template v-if="form.gwtSets[0]?.then">
-                    <th 
-                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'then')" 
+                    <th
+                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'then')"
                       :key="`then-${prop.name}`"
                       class="gwt-decision-table__property-col"
+                      :title="prop.name"
                     >
-                      {{ prop.name }}
+                      {{ gwtPropLabel(prop) }}
                     </th>
                   </template>
                 </tr>
@@ -4247,7 +4470,128 @@ function updateVoFieldValue(fieldName, value) {
                 </tr>
               </tbody>
             </table>
-            
+
+            <!-- CARD LAYOUT: one card per test case, only set properties shown -->
+            <div v-else class="gwt-card-list">
+              <div
+                v-for="(gwtSet, rowIndex) in form.gwtSets"
+                :key="`gwt-card-${rowIndex}`"
+                class="gwt-card"
+              >
+                <div class="gwt-card__header">
+                  <span class="gwt-card__index">시나리오 {{ rowIndex + 1 }}</span>
+                  <button
+                    class="gwt-card__remove"
+                    :disabled="saving || form.gwtSets.length === 1"
+                    title="시나리오 삭제"
+                    @click="removeGWTSet(rowIndex)"
+                  >
+                    삭제
+                  </button>
+                </div>
+
+                <!-- Natural-language scenario input -->
+                <div class="gwt-card__nl">
+                  <textarea
+                    class="gwt-card__nl-input"
+                    :value="gwtNlText[rowIndex] || ''"
+                    rows="2"
+                    :disabled="saving || gwtNlBusy[rowIndex]"
+                    placeholder="자연어로 시나리오를 입력하세요. 예: 계좌 잔액이 25달러일 때 20달러 출금을 요청하면 거래가 승인되고 잔액은 5달러가 된다"
+                    @input="gwtNlText = { ...gwtNlText, [rowIndex]: $event.target.value }"
+                  />
+                  <button
+                    class="gwt-card__nl-btn"
+                    :disabled="saving || gwtNlBusy[rowIndex] || !(gwtNlText[rowIndex] || '').trim()"
+                    @click="applyNLToCard(rowIndex)"
+                  >
+                    {{ gwtNlBusy[rowIndex] ? '해석 중…' : '자연어 적용' }}
+                  </button>
+                </div>
+                <div v-if="gwtNlError[rowIndex]" class="gwt-card__nl-error">
+                  {{ gwtNlError[rowIndex] }}
+                </div>
+
+                <!-- Given / When / Then sections -->
+                <div class="gwt-card__sections">
+                  <div
+                    v-for="sec in gwtSectionKeys(gwtSet)"
+                    :key="sec"
+                    class="gwt-card__section"
+                    :class="`gwt-card__section--${sec}`"
+                  >
+                    <div class="gwt-card__section-head">
+                      <span class="gwt-card__section-title">{{ gwtSectionTitle(sec) }}</span>
+                      <span class="gwt-card__section-subtitle">{{ gwtSectionSubtitle(gwtSet, sec) }}</span>
+                    </div>
+
+                    <div
+                      v-if="getCardSectionProps(gwtSet, sec).length === 0"
+                      class="gwt-card__empty"
+                    >
+                      설정된 속성이 없습니다.
+                    </div>
+                    <div
+                      v-for="prop in getCardSectionProps(gwtSet, sec)"
+                      :key="`${sec}-${prop.name}`"
+                      class="gwt-card__field"
+                    >
+                      <label class="gwt-card__field-label" :title="prop.name">
+                        {{ gwtPropLabel(prop) }}
+                        <span v-if="prop.source === 'aggregate'" class="gwt-card__src-badge">상태</span>
+                      </label>
+                      <div class="gwt-card__field-control">
+                        <GwtFieldInput
+                          :model-value="gwtSet[sec].fieldValues[prop.name]"
+                          :prop="prop"
+                          :disabled="saving"
+                          @update:model-value="updateFieldValue(gwtSet, sec, prop.name, $event)"
+                          @edit-vo="openVoEditor(gwtSet, sec, prop.name, prop)"
+                        />
+                        <button
+                          class="gwt-card__field-remove"
+                          :disabled="saving"
+                          title="속성 제거"
+                          @click="removePropertyFromCard(gwtSet, sec, prop.name)"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Add property picker -->
+                    <div class="gwt-card__add-prop">
+                      <button
+                        class="gwt-card__add-prop-btn"
+                        :disabled="saving || getCardUnusedProps(gwtSet, sec).length === 0"
+                        @click="toggleCardPicker(rowIndex, sec)"
+                      >
+                        + 속성 추가
+                      </button>
+                      <div
+                        v-if="gwtCardPickerKey === `${rowIndex}:${sec}`"
+                        class="gwt-card__picker"
+                      >
+                        <button
+                          v-for="prop in getCardUnusedProps(gwtSet, sec)"
+                          :key="`${prop.source}-${prop.name}`"
+                          class="gwt-card__picker-item"
+                          :title="prop.name"
+                          @click="addPropertyToCard(gwtSet, sec, prop.name); gwtCardPickerKey = null"
+                        >
+                          <span class="gwt-card__picker-name">
+                            {{ gwtPropLabel(prop) }}
+                            <span v-if="prop.source === 'aggregate'" class="gwt-card__src-badge">상태</span>
+                          </span>
+                          <span class="gwt-card__picker-type">{{ prop.type }}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Add Row Button -->
             <div class="gwt-decision-table__add">
               <button
@@ -4284,6 +4628,23 @@ function updateVoFieldValue(fieldName, value) {
         </div>
         
         <div class="gwt-detail-modal__footer">
+          <div class="gwt-layout-toggle" role="group" aria-label="레이아웃 전환">
+            <span class="gwt-layout-toggle__label">레이아웃</span>
+            <button
+              class="gwt-layout-toggle__btn"
+              :class="{ 'gwt-layout-toggle__btn--active': gwtLayoutMode === 'card' }"
+              @click="gwtLayoutMode = 'card'"
+            >
+              카드
+            </button>
+            <button
+              class="gwt-layout-toggle__btn"
+              :class="{ 'gwt-layout-toggle__btn--active': gwtLayoutMode === 'table' }"
+              @click="gwtLayoutMode = 'table'"
+            >
+              테이블
+            </button>
+          </div>
           <button class="inspector-section__btn" @click="closeGWTDetailModal">Close</button>
         </div>
       </div>
@@ -5599,6 +5960,35 @@ function updateVoFieldValue(fieldName, value) {
   border-top: 1px solid var(--color-border);
 }
 
+/* Aggregate drill-down button */
+.inspector-aggregate-detail {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+}
+
+.inspector-aggregate-detail__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(252, 196, 25, 0.12);
+  border: 1px solid rgba(252, 196, 25, 0.5);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.inspector-aggregate-detail__btn:hover {
+  background: rgba(252, 196, 25, 0.22);
+  border-color: var(--color-aggregate, #fcc419);
+}
+
 /* GWT Sets Container */
 .inspector-gwt-sets {
   display: flex;
@@ -6372,7 +6762,314 @@ function updateVoFieldValue(fieldName, value) {
   padding: 16px 20px;
   border-top: 1px solid var(--color-border);
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Layout toggle (table <-> card) */
+.gwt-layout-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gwt-layout-toggle__label {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+  margin-right: 2px;
+}
+
+.gwt-layout-toggle__btn {
+  padding: 4px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gwt-layout-toggle__btn:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.gwt-layout-toggle__btn--active {
+  background: var(--color-accent, #5b8cff);
+  border-color: var(--color-accent, #5b8cff);
+  color: #fff;
+}
+
+.gwt-layout-toggle__btn--active:hover {
+  background: var(--color-accent, #5b8cff);
+}
+
+/* ============ GWT Card Layout ============ */
+.gwt-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gwt-card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.gwt-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.gwt-card__index {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+}
+
+.gwt-card__remove {
+  padding: 3px 10px;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: var(--radius-sm);
+  color: #ff6b6b;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.gwt-card__remove:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.2);
+}
+
+.gwt-card__remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.gwt-card__nl {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 6px;
+}
+
+.gwt-card__nl-input {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-bright);
+  font-size: 0.78rem;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.gwt-card__nl-input:focus {
+  outline: none;
+  border-color: var(--color-accent, #5b8cff);
+}
+
+.gwt-card__nl-btn {
+  flex-shrink: 0;
+  padding: 0 14px;
+  background: var(--color-accent, #5b8cff);
+  border: 1px solid var(--color-accent, #5b8cff);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gwt-card__nl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gwt-card__nl-error {
+  font-size: 0.72rem;
+  color: #ff6b6b;
+  margin-bottom: 8px;
+}
+
+.gwt-card__sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.gwt-card__section {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  padding: 10px;
+}
+
+.gwt-card__section--given {
+  border-left-color: #4dabf7;
+}
+
+.gwt-card__section--when {
+  border-left-color: #ffd43b;
+}
+
+.gwt-card__section--then {
+  border-left-color: #69db7c;
+}
+
+.gwt-card__section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 8px;
+}
+
+.gwt-card__section-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-text-bright);
+}
+
+.gwt-card__section-subtitle {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+}
+
+.gwt-card__empty {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.gwt-card__field {
+  margin-bottom: 8px;
+}
+
+.gwt-card__field-label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--color-text);
+  margin-bottom: 3px;
+}
+
+.gwt-card__field-control {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.gwt-card__field-control > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.gwt-card__field-remove {
+  flex-shrink: 0;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gwt-card__field-remove:hover:not(:disabled) {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+
+.gwt-card__add-prop {
+  position: relative;
+  margin-top: 4px;
+}
+
+.gwt-card__add-prop-btn {
+  width: 100%;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.gwt-card__add-prop-btn:hover:not(:disabled) {
+  border-color: var(--color-accent, #5b8cff);
+  color: var(--color-text-bright);
+}
+
+.gwt-card__add-prop-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.gwt-card__picker {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.gwt-card__picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gwt-card__picker-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.gwt-card__picker-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.gwt-card__picker-type {
+  font-size: 0.64rem;
+  color: var(--color-text-secondary);
+}
+
+.gwt-card__src-badge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  background: rgba(105, 219, 124, 0.15);
+  border: 1px solid rgba(105, 219, 124, 0.4);
+  border-radius: 8px;
+  color: #69db7c;
+  font-size: 0.6rem;
+  font-weight: 600;
 }
 
 /* GWT Preview (Simple Display) */

@@ -13,6 +13,10 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
   const flows = ref([])
   const maxSequence = ref(1)
 
+  // spec 025 — UI-flow layer (Gateway diamonds + NEXT_UI arrows between UI stickers)
+  const gateways = ref([])           // [{id, key, label, kind, bounded_context_id, source, ...}]
+  const uiFlowEdges = ref([])        // [{id, source_id, source_kind, target_id, target_kind, condition, source, document_excerpt}]
+
   // 전체 API 응답 (Navigator 프로세스 목록용)
   const _allResponse = ref(null)
   const canvasProcessIds = ref(new Set())
@@ -30,6 +34,18 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
   const selectedItemType = ref(null)
   const selectedItemDetail = ref(null)
   const hoveredItemId = ref(null)
+
+  // spec 025 — NEXT_UI 연결선 곡선/직선 표시 옵션 (기본: 베이지어 곡선)
+  const uiFlowCurved = ref(true)
+  function toggleUiFlowCurve() { uiFlowCurved.value = !uiFlowCurved.value }
+
+  // spec 025 v2 — 캔버스에 표시 중인 여정 id 집합. 비어 있으면 여정 필터 없음.
+  // NEXT_UI 엣지/게이트웨이는 이 집합에 속한 journeyId 만 캔버스에 렌더된다.
+  const activeJourneyIds = ref(new Set())
+  // 캔버스에 올라온 네비게이터 항목(journeyChains item) id 집합 — 단일 진실원.
+  // canvasProcessIds 는 이 집합에서 파생되므로, 여정 간 공유 프로세스가
+  // 한 여정을 꺼도 잘못 사라지지 않는다.
+  const activeItemIds = ref(new Set())
 
   const allActors = computed(() => actorSwimlanes.value.map(a => a.actor))
   const totalCommands = computed(() => interactionCommands.value.length)
@@ -159,6 +175,106 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
 
   // ── 프로세스 체인 (Navigator — _allResponse 기반) ───────────
   const processChains = computed(() => _buildProcessChains(_allResponse.value))
+
+  /**
+   * spec 025 v2 — 여정(Journey) 기준 네비게이터 목록.
+   *
+   * NEXT_UI 엣지의 `journey_id` 어트리뷰트로 그룹핑한다 (그래프 연결성 아님).
+   * 재사용 화면은 여정마다 자기 엣지를 가지므로 더 이상 하나의 블롭으로
+   * 합쳐지지 않는다.
+   *  - 상단: 여정 = 같은 journey_id 를 가진 NEXT_UI 엣지 묶음
+   *  - 하단: 어떤 여정에도 포함되지 않은 명령 체인 = 개별 항목
+   * 각 항목: { id, kind, journeyId, name, badge, steps, processIds, uiCount }.
+   */
+  const journeyChains = computed(() => {
+    const data = _allResponse.value
+    if (!data) return []
+    const chains = processChains.value
+    const edges = Array.isArray(data.uiFlowEdges) ? data.uiFlowEdges : []
+
+    // UI id → Set(chainId), chainId → chain
+    const uiToChains = new Map()
+    const chainById = new Map()
+    for (const ch of chains) {
+      chainById.set(ch.id, ch)
+      for (const s of ch.steps) {
+        if (s.type !== 'ui') continue
+        if (!uiToChains.has(s.id)) uiToChains.set(s.id, new Set())
+        uiToChains.get(s.id).add(ch.id)
+      }
+    }
+
+    const mergeSteps = (chainIds) => {
+      const seen = new Set()
+      const steps = []
+      for (const cid of chainIds) {
+        const ch = chainById.get(cid)
+        if (!ch) continue
+        for (const s of ch.steps) {
+          if (seen.has(s.id)) continue
+          seen.add(s.id); steps.push(s)
+        }
+      }
+      steps.sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+      return steps
+    }
+
+    // NEXT_UI 엣지를 journey_id 로 그룹핑
+    const byJourney = new Map()  // journeyId → { name, uiIds:Set, edgeCount }
+    for (const e of edges) {
+      const jid = e.journey_id || ''
+      if (!jid) continue
+      if (!byJourney.has(jid)) {
+        byJourney.set(jid, { name: e.journey_name || jid, uiIds: new Set(), edgeCount: 0 })
+      }
+      const g = byJourney.get(jid)
+      g.edgeCount += 1
+      if (e.source_kind === 'ui') g.uiIds.add(e.source_id)
+      if (e.target_kind === 'ui') g.uiIds.add(e.target_id)
+    }
+
+    const items = []
+    const coveredChainIds = new Set()
+
+    // 상단: 여정 (UI 수 내림차순)
+    const journeyList = [...byJourney.entries()]
+      .sort((a, b) => b[1].uiIds.size - a[1].uiIds.size)
+    for (const [jid, g] of journeyList) {
+      const chainIds = new Set()
+      for (const uid of g.uiIds) {
+        for (const cid of (uiToChains.get(uid) || [])) chainIds.add(cid)
+      }
+      for (const cid of chainIds) coveredChainIds.add(cid)
+      const steps = mergeSteps(chainIds)
+      items.push({
+        id: 'journey-' + jid,
+        kind: 'journey',
+        journeyId: jid,
+        name: g.name,
+        badge: g.edgeCount,
+        steps,
+        processIds: [...chainIds],
+        uiCount: g.uiIds.size,
+      })
+    }
+
+    // 하단: 여정에 포함되지 않은 명령 체인 = 개별 항목
+    for (const ch of chains) {
+      if (coveredChainIds.has(ch.id)) continue
+      items.push({
+        id: 'proc-' + ch.id,
+        kind: 'process',
+        journeyId: '',
+        name: ch.name,
+        badge: ch.stepCount,
+        steps: ch.steps,
+        processIds: [ch.id],
+        uiCount: ch.steps.filter(s => s.type === 'ui').length,
+      })
+    }
+
+    return items
+  })
 
   const highlightedIds = computed(() => {
     if (!hoveredItemId.value) return new Set()
@@ -827,9 +943,10 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
 
   // ── 프로세스 단위 캔버스 제어 ────────────────────────────────
 
-  /** 프로세스를 캔버스에 추가 */
+  /** 프로세스를 캔버스에 추가 (spec 025 — NEXT_UI로 연결된 프로세스도 함께 포함) */
   function addProcessToCanvas(procId) {
-    canvasProcessIds.value = new Set([...canvasProcessIds.value, procId])
+    const base = new Set([...canvasProcessIds.value, procId])
+    canvasProcessIds.value = _expandWithUiFlowProcesses(base)
     _rebuildCanvas()
   }
 
@@ -841,10 +958,51 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     _rebuildCanvas()
   }
 
-  /** 프로세스 토글 (더블클릭용) */
-  function toggleProcessOnCanvas(procId) {
-    if (canvasProcessIds.value.has(procId)) removeProcessFromCanvas(procId)
-    else addProcessToCanvas(procId)
+  /** spec 025 v2 — activeItemIds 에서 canvasProcessIds + activeJourneyIds 파생 후 재구성. */
+  function _recomputeFromActiveItems() {
+    const procIds = new Set()
+    const journeys = new Set()
+    for (const it of journeyChains.value) {
+      if (!activeItemIds.value.has(it.id)) continue
+      for (const pid of it.processIds) procIds.add(pid)
+      if (it.journeyId) journeys.add(it.journeyId)
+    }
+    canvasProcessIds.value = procIds
+    activeJourneyIds.value = journeys
+    _rebuildCanvas()
+  }
+
+  /**
+   * spec 025 — 네비게이터 항목(여정/개별)을 캔버스에 단독 표시 (단일 클릭 = 교체).
+   * 여정 항목이면 그 여정의 NEXT_UI 엣지만 캔버스에 필터링된다.
+   */
+  function showCanvasItem(item) {
+    activeItemIds.value = new Set(item?.id ? [item.id] : [])
+    _recomputeFromActiveItems()
+  }
+
+  /**
+   * spec 025 — 네비게이터 항목을 캔버스에 토글 (Ctrl/Cmd 클릭 = 다중 비교).
+   * 활성 항목 집합을 토글하고 canvasProcessIds 를 재계산하므로, 여정 간
+   * 공유 프로세스는 다른 여정이 살아 있는 한 유지된다.
+   */
+  function toggleCanvasItem(item) {
+    // 드롭 경로 등 id 없는 합성 항목 — 단순 누적 (항목 추적 없음)
+    if (!item?.id) {
+      const cur = new Set(canvasProcessIds.value)
+      for (const id of (item?.processIds || [])) cur.add(id)
+      canvasProcessIds.value = cur
+      if (item?.journeyId) {
+        activeJourneyIds.value = new Set([...activeJourneyIds.value, item.journeyId])
+      }
+      _rebuildCanvas()
+      return
+    }
+    const s = new Set(activeItemIds.value)
+    if (s.has(item.id)) s.delete(item.id)
+    else s.add(item.id)
+    activeItemIds.value = s
+    _recomputeFromActiveItems()
   }
 
   /** 선택된 프로세스 기반으로 캔버스 재구성 */
@@ -902,33 +1060,246 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
       .filter(f => allIds.has(f.sourceId) && allIds.has(f.targetId))
       .map(f => ({ ...f }))
 
-    // ── 3. 시퀀스 압축: 빈 구간 없이 1부터 연속 번호로 재매핑 ──
+    // ── 3. spec 025 — UI-flow layer ──────────────────────────────────
+    // v2: if a journey is active, render ONLY that journey's NEXT_UI edges
+    // (a screen reused across journeys shows only the active journey's flow).
+    const allGateways = Array.isArray(data.gateways) ? data.gateways : []
+    const journeyFilter = activeJourneyIds.value
+    const allEdges = (Array.isArray(data.uiFlowEdges) ? data.uiFlowEdges : [])
+      .filter(e => journeyFilter.size === 0 || journeyFilter.has(e.journey_id || ''))
+
+    // A Gateway renders only if it has at least one NEXT_UI edge connecting
+    // it (directly or via another anchored Gateway) to a UI on the canvas.
+
+    // Pass 1: a gateway is directly anchored if it has an edge to a UI on canvas.
+    const anchoredGwIds = new Set()
+    for (const e of allEdges) {
+      if (e.source_kind === 'gateway' && e.target_kind === 'ui' && uiIds.has(e.target_id)) {
+        anchoredGwIds.add(e.source_id)
+      }
+      if (e.target_kind === 'gateway' && e.source_kind === 'ui' && uiIds.has(e.source_id)) {
+        anchoredGwIds.add(e.target_id)
+      }
+    }
+    // Pass 2: propagate anchoring across gateway→gateway edges (fixpoint).
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const e of allEdges) {
+        if (e.source_kind === 'gateway' && e.target_kind === 'gateway') {
+          if (anchoredGwIds.has(e.source_id) && !anchoredGwIds.has(e.target_id)) {
+            anchoredGwIds.add(e.target_id); changed = true
+          }
+          if (anchoredGwIds.has(e.target_id) && !anchoredGwIds.has(e.source_id)) {
+            anchoredGwIds.add(e.source_id); changed = true
+          }
+        }
+      }
+    }
+    const filteredGateways = allGateways
+      .filter(g => anchoredGwIds.has(g.id))
+      .map(g => ({ ...g }))
+    const keptGwIds = new Set(filteredGateways.map(g => g.id))
+    // An edge renders only if both endpoints are renderable.
+    const filteredUiFlowEdges = allEdges
+      .filter(e => {
+        const srcOk = (e.source_kind === 'gateway' && keptGwIds.has(e.source_id))
+                  || (e.source_kind === 'ui' && uiIds.has(e.source_id))
+        const tgtOk = (e.target_kind === 'gateway' && keptGwIds.has(e.target_id))
+                  || (e.target_kind === 'ui' && uiIds.has(e.target_id))
+        return srcOk && tgtOk
+      })
+      .map(e => ({ ...e }))
+
+    // ── 4. 시퀀스 압축 + NEXT_UI 흐름 기반 컬럼 재배치 ────────
     const usedSeqs = new Set()
     filteredCmds.forEach(c => usedSeqs.add(c.sequence))
     filteredRms.forEach(r => usedSeqs.add(r.sequence))
     filteredSysLanes.forEach(l => l.events.forEach(e => usedSeqs.add(e.sequence)))
     filteredActorLanes.forEach(l => l.uis.forEach(u => usedSeqs.add(u.sequence)))
 
-    const sortedSeqs = [...usedSeqs].sort((a, b) => a - b)
+    // spec 025 — order columns by the NEXT_UI flow topology when edges exist;
+    // a whole vertical slice (UI + its Command/Event/ReadModel) moves together
+    // because the column key is the shared `sequence`.
+    const orderedSeqs = _orderColumnsByUiFlow(
+      [...usedSeqs], filteredActorLanes, filteredUiFlowEdges, filteredGateways,
+    )
     const seqRemap = {}
-    sortedSeqs.forEach((seq, i) => { seqRemap[seq] = i + 1 })
+    orderedSeqs.forEach((seq, i) => { seqRemap[seq] = i + 1 })
 
     filteredCmds.forEach(c => { c.sequence = seqRemap[c.sequence] ?? c.sequence })
     filteredRms.forEach(r => { r.sequence = seqRemap[r.sequence] ?? r.sequence })
     filteredSysLanes.forEach(l => l.events.forEach(e => { e.sequence = seqRemap[e.sequence] ?? e.sequence }))
     filteredActorLanes.forEach(l => l.uis.forEach(u => { u.sequence = seqRemap[u.sequence] ?? u.sequence }))
 
-    // ── 4. 캔버스 refs 갱신 ─────────────────────────────────
+    // ── 5. 캔버스 refs 갱신 ─────────────────────────────────
     interactionCommands.value = filteredCmds
     interactionReadModels.value = filteredRms
     systemSwimlanes.value = filteredSysLanes
     actorSwimlanes.value = filteredActorLanes
     flows.value = filteredFlows
-    maxSequence.value = sortedSeqs.length || 1
+    maxSequence.value = orderedSeqs.length || 1
+    gateways.value = filteredGateways
+    uiFlowEdges.value = filteredUiFlowEdges
 
     selectedItemId.value = null
     selectedItemType.value = null
     selectedItemDetail.value = null
+  }
+
+  /**
+   * spec 025 — resolve NEXT_UI edges (including Gateway pass-through) into a
+   * flat list of [sourceUiId, targetUiId] pairs.
+   */
+  function _resolveUiFlowUiPairs(edges, gateways) {
+    const gwIn = new Map()   // gatewayId -> [uiId, ...]
+    const gwOut = new Map()  // gatewayId -> [uiId, ...]
+    const pairs = []
+    for (const e of edges) {
+      if (e.source_kind === 'ui' && e.target_kind === 'ui') {
+        pairs.push([e.source_id, e.target_id])
+      } else if (e.source_kind === 'ui' && e.target_kind === 'gateway') {
+        if (!gwIn.has(e.target_id)) gwIn.set(e.target_id, [])
+        gwIn.get(e.target_id).push(e.source_id)
+      } else if (e.source_kind === 'gateway' && e.target_kind === 'ui') {
+        if (!gwOut.has(e.source_id)) gwOut.set(e.source_id, [])
+        gwOut.get(e.source_id).push(e.target_id)
+      }
+      // gateway→gateway: ignored for column ordering (rare; v1)
+    }
+    for (const gw of gateways) {
+      const ins = gwIn.get(gw.id) || []
+      const outs = gwOut.get(gw.id) || []
+      for (const a of ins) for (const b of outs) pairs.push([a, b])
+    }
+    return pairs
+  }
+
+  /**
+   * spec 025 — order the canvas columns (each a `sequence` value = one vertical
+   * slice) by NEXT_UI flow.
+   *
+   * Uses **chain-following** topological sort: it stays topological
+   * (predecessor before successor → edges point left-to-right) but, after
+   * placing a column, it prefers to place that column's NEXT_UI successor
+   * NEXT — keeping a flow's columns contiguous so connecting lines stay as
+   * short as possible. Plain Kahn with a numeric tie-break interleaves
+   * unrelated chains and stretches the lines; this does not.
+   */
+  function _orderColumnsByUiFlow(seqs, actorLanes, edges, gws) {
+    const numericSorted = [...seqs].sort((a, b) => a - b)
+    if (!edges || edges.length === 0) return numericSorted
+
+    const uiSeq = new Map()
+    for (const lane of actorLanes) {
+      for (const ui of lane.uis) uiSeq.set(ui.id, ui.sequence)
+    }
+
+    const pairs = _resolveUiFlowUiPairs(edges, gws)
+    const adj = new Map()
+    const indeg = new Map()
+    for (const s of numericSorted) { adj.set(s, new Set()); indeg.set(s, 0) }
+    for (const [aUi, bUi] of pairs) {
+      const ca = uiSeq.get(aUi)
+      const cb = uiSeq.get(bUi)
+      if (ca === undefined || cb === undefined || ca === cb) continue
+      if (!adj.has(ca) || !adj.has(cb)) continue
+      if (!adj.get(ca).has(cb)) {
+        adj.get(ca).add(cb)
+        indeg.set(cb, indeg.get(cb) + 1)
+      }
+    }
+
+    // Chain-following Kahn's algorithm.
+    const result = []
+    const available = new Set(numericSorted.filter(s => indeg.get(s) === 0))
+    const remaining = new Set(numericSorted)
+    const numericMin = (set) => [...set].sort((a, b) => a - b)[0]
+
+    let lastPlaced = null
+    while (available.size) {
+      // Prefer a just-freed successor of the column we placed last — this
+      // continues the active flow chain and keeps its line at length 1.
+      let pick = null
+      if (lastPlaced !== null) {
+        const cand = [...adj.get(lastPlaced)].filter(c => available.has(c))
+        if (cand.length) pick = cand.sort((a, b) => a - b)[0]
+      }
+      if (pick === null) pick = numericMin(available)
+
+      available.delete(pick)
+      remaining.delete(pick)
+      result.push(pick)
+      lastPlaced = pick
+      for (const nxt of adj.get(pick)) {
+        indeg.set(nxt, indeg.get(nxt) - 1)
+        if (indeg.get(nxt) === 0) available.add(nxt)
+      }
+    }
+    // Cycle leftovers — append in numeric order so nothing is dropped.
+    if (remaining.size) {
+      for (const s of numericSorted) if (remaining.has(s)) result.push(s)
+    }
+    return result
+  }
+
+  /**
+   * spec 025 — expand a set of process-chain ids to also include every
+   * process whose UI stickers are connected (transitively) via NEXT_UI.
+   *
+   * Process chains are command/data-flow centric (`_buildProcessChains`), so
+   * a single user journey that crosses NEXT_UI edges is split across several
+   * chains. When the user adds one process to the canvas, the connected
+   * processes are pulled in so the journey is drawn whole.
+   */
+  function _expandWithUiFlowProcesses(procIds) {
+    const data = _allResponse.value
+    if (!data) return procIds
+    const edges = Array.isArray(data.uiFlowEdges) ? data.uiFlowEdges : []
+    if (edges.length === 0) return procIds
+    const gws = Array.isArray(data.gateways) ? data.gateways : []
+    const chains = processChains.value
+
+    // UI id → Set(process id) containing that UI
+    const uiToProcs = new Map()
+    const chainById = new Map()
+    for (const ch of chains) {
+      chainById.set(ch.id, ch)
+      for (const step of ch.steps) {
+        if (step.type !== 'ui') continue
+        if (!uiToProcs.has(step.id)) uiToProcs.set(step.id, new Set())
+        uiToProcs.get(step.id).add(ch.id)
+      }
+    }
+
+    // Undirected NEXT_UI UI-adjacency (Gateway pass-through resolved).
+    const uiAdj = new Map()
+    const link = (a, b) => {
+      if (!uiAdj.has(a)) uiAdj.set(a, new Set())
+      uiAdj.get(a).add(b)
+    }
+    for (const [a, b] of _resolveUiFlowUiPairs(edges, gws)) { link(a, b); link(b, a) }
+
+    // Fixpoint: a newly pulled-in chain may carry UIs that connect further.
+    const result = new Set(procIds)
+    let frontier = [...procIds]
+    while (frontier.length) {
+      const next = []
+      for (const pid of frontier) {
+        const ch = chainById.get(pid)
+        if (!ch) continue
+        for (const step of ch.steps) {
+          if (step.type !== 'ui') continue
+          for (const neighborUi of (uiAdj.get(step.id) || [])) {
+            for (const np of (uiToProcs.get(neighborUi) || [])) {
+              if (!result.has(np)) { result.add(np); next.push(np) }
+            }
+          }
+        }
+      }
+      frontier = next
+    }
+    return result
   }
 
   /** 캔버스 비우기 (_allResponse 유지) */
@@ -940,6 +1311,10 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     systemSwimlanes.value = []
     flows.value = []
     maxSequence.value = 1
+    gateways.value = []
+    uiFlowEdges.value = []
+    activeJourneyIds.value = new Set()
+    activeItemIds.value = new Set()
     selectedItemId.value = null
     selectedItemType.value = null
     selectedItemDetail.value = null
@@ -959,12 +1334,12 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     } finally { loading.value = false }
   }
 
-  /** 전체 로드 → 캔버스에 모두 표시 (툴바 새로고침) */
+  /** 전체 로드 → 모든 여정/항목을 캔버스에 표시 (툴바 새로고침) */
   async function fetchEventModeling() {
     await fetchProcessList()
     if (_allResponse.value) {
-      canvasProcessIds.value = new Set(processChains.value.map(p => p.id))
-      _rebuildCanvas()
+      activeItemIds.value = new Set(journeyChains.value.map(i => i.id))
+      _recomputeFromActiveItems()
     }
   }
 
@@ -972,6 +1347,8 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     _allResponse.value = null; canvasProcessIds.value = new Set()
     actorSwimlanes.value = []; interactionCommands.value = []; interactionReadModels.value = []
     systemSwimlanes.value = []; flows.value = []; maxSequence.value = 1
+    gateways.value = []; uiFlowEdges.value = []
+    activeJourneyIds.value = new Set(); activeItemIds.value = new Set()
     zoomLevel.value = 1; selectedItemId.value = null; hoveredItemId.value = null
     selectedItemDetail.value = null; isLiveMode.value = false; liveEventCount.value = 0
     loading.value = false; error.value = null
@@ -982,10 +1359,13 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     loading, error,
     actorSwimlanes, interactionCommands, interactionReadModels, systemSwimlanes,
     flows, maxSequence,
+    // spec 025
+    gateways, uiFlowEdges,
     isLiveMode, liveEventCount, visibleTypes,
     zoomLevel, selectedItemId, selectedItemType, selectedItemDetail, hoveredItemId,
+    uiFlowCurved, toggleUiFlowCurve, activeJourneyIds, activeItemIds,
     allActors, totalCommands, totalEvents, highlightedIds, validationWarnings, warningNodeIds,
-    processChains, canvasProcessIds,
+    processChains, journeyChains, canvasProcessIds,
     // Drag reorder
     draggingEventId, moveEventToPosition, moveEventToBC, stackEventParallel,
     // Palette CRUD
@@ -1004,7 +1384,8 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     // Selection
     selectItem, clearSelection, setHoveredItem, clearHover,
     zoomIn, zoomOut, resetZoom, setZoom,
-    addProcessToCanvas, removeProcessFromCanvas, toggleProcessOnCanvas,
+    addProcessToCanvas, removeProcessFromCanvas,
+    showCanvasItem, toggleCanvasItem,
     clearCanvas, fetchProcessList, fetchEventModeling, reset,
   }
 })

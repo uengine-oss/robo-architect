@@ -20,7 +20,8 @@ const props = defineProps({
 
 const emit = defineEmits(['update:activeTab'])
 
-const tabs = ['BPMN', 'Event Modeling', 'Big picture', 'Design', 'Aggregate']
+// BPMN 탭은 UI에서 제거됨 (기능/코드는 유지 — BpmnPanel·bpmn.store·백엔드 라우트 그대로).
+const tabs = ['Requirements', 'Event Modeling', 'Big picture', 'Design', 'Aggregate']
 
 function selectTab(tab) {
   emit('update:activeTab', tab)

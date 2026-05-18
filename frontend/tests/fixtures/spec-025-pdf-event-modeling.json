@@ -1,0 +1,4381 @@
+{
+  "actorSwimlanes": [
+    {
+      "actor": "고객",
+      "uis": [
+        {
+          "id": "cd1190ef-39b9-416f-b377-5a44c5f0a265",
+          "name": "RegisterMembership",
+          "displayName": "회원가입 완료",
+          "description": "회원가입 화면에서 약관 동의, 개인정보 입력, 본인인증, 법정대리인 동의(필요 시) 후 가입 버튼을 누른다",
+          "template": "",
+          "actor": "고객",
+          "commandId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "sequence": 7
+        },
+        {
+          "id": "87793b91-b800-4148-88e4-faa02e9c66b9",
+          "name": "TermsConsentRequirementList",
+          "displayName": "재동의 필요 약관 목록",
+          "template": "",
+          "actor": "고객",
+          "readModelId": "58a1ba62-eafa-45b1-bb45-46492ff6b209",
+          "readModelName": "TermsConsentRequirementList",
+          "isOutput": true,
+          "sequence": 54
+        },
+        {
+          "id": "a97cfdd3-5be2-4e99-853a-a85e94eeeefd",
+          "name": "SubmitLegalGuardianConsent",
+          "displayName": "법정대리인 동의 제출",
+          "description": "법정대리인 동의 화면에서 인증수단을 통해 동의를 제출한다",
+          "template": "",
+          "actor": "고객",
+          "commandId": "fd0b9ebc-864d-4e70-89e3-a4e74de5fefc",
+          "sequence": 64
+        },
+        {
+          "id": "eb6d801d-e15d-4b13-b53b-814f6f6e5415",
+          "name": "SubmitWithdrawalFinalConsent",
+          "displayName": "탈퇴 최종 동의 제출",
+          "description": "탈퇴 최종 동의 화면에서 탈퇴 의사를 확인하고 동의 버튼을 누른다",
+          "template": "",
+          "actor": "고객",
+          "commandId": "625c6443-6d8c-4b7a-90ea-daf3f6c8702a",
+          "sequence": 222
+        },
+        {
+          "id": "29ca7be4-d590-4704-8a0e-5b4cdaf5e0d3",
+          "name": "GiveTermsReconsent",
+          "displayName": "약관 재동의",
+          "description": "약관 동의 화면에서 재동의가 필요한 약관을 확인하고 동의 버튼을 누른다",
+          "template": "",
+          "actor": "고객",
+          "commandId": "f8fa08d9-9603-45ec-8fb7-d1d67164c473",
+          "sequence": 224
+        }
+      ]
+    },
+    {
+      "actor": "미성년자_고객",
+      "uis": []
+    },
+    {
+      "actor": "미성년자_회원",
+      "uis": [
+        {
+          "id": "ff328852-c5ce-4f02-b691-3c4b04dd17e3",
+          "name": "ObtainParentalConsent",
+          "displayName": "법정대리인 동의",
+          "description": "회원가입 과정에서 법정대리인 정보를 입력하고 인증 및 동의 절차를 진행한다.",
+          "template": "",
+          "actor": "미성년자_회원",
+          "commandId": "48a9cee0-a655-4c28-8526-30b7d0bb72ec",
+          "sequence": 219
+        }
+      ]
+    },
+    {
+      "actor": "법정대리인",
+      "uis": [
+        {
+          "id": "51a3e14e-f65a-49b5-ac36-65e3c3bfea7e",
+          "name": "ConfirmLegalGuardianConsent",
+          "displayName": "법정대리인 동의/확인",
+          "description": "동의 요청 화면에서 동의 또는 확인 버튼을 눌러 처리한다",
+          "template": "",
+          "actor": "법정대리인",
+          "commandId": "da72cebc-0617-4594-b87a-4b31f57291c3",
+          "sequence": 55
+        },
+        {
+          "id": "6510c350-b1b1-4f12-a06e-d6eceb6f62c6",
+          "name": "LegalGuardianConsentStatus",
+          "displayName": "법정대리인 동의 현황",
+          "template": "",
+          "actor": "법정대리인",
+          "readModelId": "0e035724-8056-473b-8145-2c1206804534",
+          "readModelName": "LegalGuardianConsentStatus",
+          "isOutput": true,
+          "sequence": 144
+        },
+        {
+          "id": "7ec31a66-83f3-4897-8278-37be432fde90",
+          "name": "LegalGuardianConsentHistory",
+          "displayName": "법정대리인 동의 이력",
+          "template": "",
+          "actor": "법정대리인",
+          "readModelId": "3286e7ac-63a0-44c3-81dd-dde1f9ee0561",
+          "readModelName": "LegalGuardianConsentHistory",
+          "isOutput": true,
+          "sequence": 144
+        }
+      ]
+    },
+    {
+      "actor": "시스템",
+      "uis": [
+        {
+          "id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+          "name": "SwitchMemberSession",
+          "displayName": "회원 세션 전환",
+          "description": "회원가입 완료 후 자동으로 임시 세션이 종료되고 정회원 세션이 생성된다",
+          "template": "",
+          "actor": "시스템",
+          "commandId": "68d69f29-9b6e-428d-b19b-57fb867a197d",
+          "sequence": 118
+        }
+      ]
+    },
+    {
+      "actor": "인증_시스템",
+      "uis": [
+        {
+          "id": "137283c8-cf67-40fc-9588-3286413e6e76",
+          "name": "RecordAuthenticationHistory",
+          "displayName": "인증 이력 저장",
+          "description": "인증 처리 완료 시 인증 이력 정보를 저장한다(화면 없음, 시스템 처리)",
+          "template": "",
+          "actor": "인증_시스템",
+          "commandId": "b5627d47-1451-4417-b8a0-5b1fea26102d",
+          "sequence": 221
+        }
+      ]
+    },
+    {
+      "actor": "회원",
+      "uis": [
+        {
+          "id": "8fdef553-69be-4f21-8f73-4c3fa87e7cfb",
+          "name": "LoginMember",
+          "displayName": "로그인",
+          "description": "로그인 화면에서 아이디와 비밀번호를 입력하고 로그인 버튼을 누른다.",
+          "template": "",
+          "actor": "회원",
+          "commandId": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+          "sequence": 27
+        },
+        {
+          "id": "ace944c0-dd98-48fe-90a1-9282af00fb9b",
+          "name": "RejoinMembership",
+          "displayName": "재가입 완료",
+          "description": "재가입 화면에서 본인인증 및 기존 이력 확인 후 개인정보 입력과 재가입 버튼을 누른다",
+          "template": "",
+          "actor": "회원",
+          "commandId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "sequence": 29
+        },
+        {
+          "id": "1c041cb6-9120-45bd-ac3c-68792fd24a0c",
+          "name": "UpdateMemberProfile",
+          "displayName": "프로필 정보 변경",
+          "description": "프로필 관리 화면에서 이메일, 연락처, 마케팅 수신 설정을 수정하고 저장 버튼을 누른다.",
+          "template": "",
+          "actor": "회원",
+          "commandId": "83586ca6-eabe-4cc0-9909-c1dfb7942f70",
+          "sequence": 73
+        },
+        {
+          "id": "689ac4e2-8837-4ec9-8dbd-b8129dd5f623",
+          "name": "UpdateMemberInformation",
+          "displayName": "회원정보 변경",
+          "description": "회원정보 수정 화면에서 정보를 입력하고 저장 버튼을 누른다",
+          "template": "",
+          "actor": "회원",
+          "commandId": "920f2065-85de-4fed-b159-1da7913bd14b",
+          "sequence": 77
+        },
+        {
+          "id": "f96be58f-f6bd-4b98-b326-cbead7542d25",
+          "name": "CancelMembershipWithdrawal",
+          "displayName": "회원 탈퇴 철회",
+          "description": "탈퇴 유예 기간 중 탈퇴 철회 안내 화면에서 철회 버튼을 누른다",
+          "template": "",
+          "actor": "회원",
+          "commandId": "3e8fab7e-8cdd-4e2c-bd77-acfe517090be",
+          "sequence": 79
+        },
+        {
+          "id": "2538e9c2-9a1e-4997-8226-a03d437469a8",
+          "name": "MemberProfile",
+          "displayName": "회원 프로필",
+          "template": "",
+          "actor": "회원",
+          "readModelId": "fa01b55e-ff52-44eb-9cee-190bb32e2a8a",
+          "readModelName": "MemberProfile",
+          "isOutput": true,
+          "sequence": 90
+        },
+        {
+          "id": "8f140d36-12d3-4d38-99bc-a82306efe397",
+          "name": "RequestMembershipWithdrawal",
+          "displayName": "회원 탈퇴 요청",
+          "description": "회원 탈퇴 화면에서 본인인증, 탈퇴 사유 입력, 안내 확인, 최종 동의 후 탈퇴 버튼을 누른다",
+          "template": "",
+          "actor": "회원",
+          "commandId": "ca9c3420-9f5c-471b-a7fc-d1746d5ac734",
+          "sequence": 141
+        },
+        {
+          "id": "f3c4d776-1361-4e58-b2ad-f5358d2b33de",
+          "name": "SubmitWithdrawalReason",
+          "displayName": "탈퇴 사유 제출",
+          "description": "탈퇴 사유 입력 화면에서 사유를 선택하거나 직접 입력한다",
+          "template": "",
+          "actor": "회원",
+          "commandId": "ac79b98c-6918-48b1-ae49-7bfbbf31cb29",
+          "sequence": 145
+        },
+        {
+          "id": "7ac4775d-5a14-45d0-84c4-f808a9c71e69",
+          "name": "TermsConsentHistory",
+          "displayName": "약관 동의 이력",
+          "template": "",
+          "actor": "회원",
+          "readModelId": "2662b6d1-b5e3-4e97-958a-c585916da96c",
+          "readModelName": "TermsConsentHistory",
+          "isOutput": true,
+          "sequence": 179
+        },
+        {
+          "id": "7415a7ec-b941-4cd1-971d-3beb59f83880",
+          "name": "AgreementConsentHistoryList",
+          "displayName": "약관 동의 이력 목록",
+          "template": "",
+          "actor": "회원",
+          "readModelId": "f7d0a817-99ba-4e75-9a14-72209fb31d5b",
+          "readModelName": "AgreementConsentHistoryList",
+          "isOutput": true,
+          "sequence": 180
+        },
+        {
+          "id": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+          "name": "PerformHighRiskActionAuthentication",
+          "displayName": "고위험 업무 추가 인증",
+          "description": "회원 탈퇴 프로세스 중 본인인증 화면에서 인증수단을 선택해 인증을 수행한다",
+          "template": "",
+          "actor": "회원",
+          "commandId": "fc5eb62a-344c-4091-83b2-13cefadfbaa0",
+          "sequence": 188
+        },
+        {
+          "id": "bce90f49-9316-4a7e-a77e-ea315211be42",
+          "name": "MembershipStatus",
+          "displayName": "회원 상태",
+          "template": "",
+          "actor": "회원",
+          "readModelId": "678f031c-d745-4b82-87db-32a1fe80a138",
+          "readModelName": "MembershipStatus",
+          "isOutput": true,
+          "sequence": 206
+        },
+        {
+          "id": "2a17b719-e4f9-4a86-883d-bffd4552f96e",
+          "name": "MembershipWithdrawalStatus",
+          "displayName": "탈퇴 상태 및 안내",
+          "template": "",
+          "actor": "회원",
+          "readModelId": "a0904fd6-63ee-4508-a356-0972697aaf55",
+          "readModelName": "MembershipWithdrawalStatus",
+          "isOutput": true,
+          "sequence": 206
+        },
+        {
+          "id": "2dfe4303-1a47-42f5-9384-b6f889344c50",
+          "name": "RejoinEligibility",
+          "displayName": "재가입 가능 여부",
+          "template": "",
+          "actor": "회원",
+          "readModelId": "d9be9679-1b4c-4287-99ff-6a84d5f7f9e0",
+          "readModelName": "RejoinEligibility",
+          "isOutput": true,
+          "sequence": 212
+        },
+        {
+          "id": "96ece9e2-94e8-4f17-9557-6a78660a6bd1",
+          "name": "MembershipProcessingHistory",
+          "displayName": "회원 처리 이력",
+          "template": "",
+          "actor": "회원",
+          "readModelId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+          "readModelName": "MembershipProcessingHistory",
+          "isOutput": true,
+          "sequence": 215
+        },
+        {
+          "id": "f7108871-4917-49e2-9cd5-81399de4600f",
+          "name": "AgreeToTerms",
+          "displayName": "약관 동의",
+          "description": "회원가입 화면에서 필수 및 선택 약관을 확인하고 동의 체크박스를 선택한다",
+          "template": "",
+          "actor": "회원",
+          "commandId": "0417efa3-d73b-4c27-b594-83ca502c94e1",
+          "sequence": 218
+        },
+        {
+          "id": "8c993cf8-6758-4586-930a-6be9f448064f",
+          "name": "WithdrawTermsConsent",
+          "displayName": "약관 동의 철회",
+          "description": "약관 동의 이력 화면에서 동의 내역을 확인하거나 철회 버튼을 통해 동의를 철회한다",
+          "template": "",
+          "actor": "회원",
+          "commandId": "5fdbb2b2-a4b5-4a4b-9b3d-3df870e24e7b",
+          "sequence": 225
+        }
+      ]
+    },
+    {
+      "actor": "회원_정책_담당자",
+      "uis": [
+        {
+          "id": "198e7f20-770e-4e55-b233-d7ff50fec2ba",
+          "name": "AuthenticationHistoryList",
+          "displayName": "인증 이력 목록",
+          "template": "",
+          "actor": "회원_정책_담당자",
+          "readModelId": "1936efa3-dd0d-4026-b62b-9cbd8e911952",
+          "readModelName": "AuthenticationHistoryList",
+          "isOutput": true,
+          "sequence": 189
+        }
+      ]
+    },
+    {
+      "actor": "휴면_회원",
+      "uis": [
+        {
+          "id": "79833ab8-bf49-4851-8621-899e6045ada5",
+          "name": "RestoreDormantAccount",
+          "displayName": "휴면 해제 처리",
+          "description": "휴면 안내 화면에서 본인인증 및 약관 재동의를 진행하고 휴면 해제 버튼을 누른다.",
+          "template": "",
+          "actor": "휴면_회원",
+          "commandId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+          "sequence": 36
+        },
+        {
+          "id": "4a6a093d-570d-4246-baa0-ec13f9307d67",
+          "name": "RequestDormantAccountRestoration",
+          "displayName": "휴면 해제 신청",
+          "description": "휴면 해제 안내 화면에서 본인인증 후 휴면 해제 버튼을 누른다",
+          "template": "",
+          "actor": "휴면_회원",
+          "commandId": "3bef4807-5171-48f8-a712-a36e50fd200a",
+          "sequence": 42
+        }
+      ]
+    }
+  ],
+  "interactionCommands": [
+    {
+      "id": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "name": "RegisterMembership",
+      "displayName": "회원가입 완료",
+      "actor": "고객",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 7,
+      "uiId": "cd1190ef-39b9-416f-b377-5a44c5f0a265",
+      "eventIds": [
+        "a8c2ddae-2710-4574-8acb-4b73f4a093b5",
+        "b8847724-c183-4c57-923d-c3eaa5e2dd65",
+        "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+        "9ee46c81-65bd-4d4b-88f4-1370fe7bd27a",
+        "07df889a-8709-4b1b-99ae-a206fae361a4",
+        "bec17f2d-ee8c-4640-8ce0-412fea27c853"
+      ]
+    },
+    {
+      "id": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+      "name": "LoginMember",
+      "displayName": "로그인",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 27,
+      "uiId": "8fdef553-69be-4f21-8f73-4c3fa87e7cfb",
+      "eventIds": [
+        "3afaa85a-eab6-440b-a3f4-9b221c3b5eb8",
+        "fe57afb5-3d75-467f-ab3a-042c963a081b"
+      ]
+    },
+    {
+      "id": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "name": "RejoinMembership",
+      "displayName": "재가입 완료",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 29,
+      "uiId": "ace944c0-dd98-48fe-90a1-9282af00fb9b",
+      "eventIds": [
+        "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+        "871e5c60-967e-4688-a664-f028724c83f0",
+        "825b06ea-3e3b-4c2f-8bec-e6e00dd6dfed",
+        "9432193e-b40c-4124-996f-a0c89a0e9c39",
+        "a38e5b0e-a2cc-4cad-887b-0cc4442cd8cd",
+        "bb8ffca3-d26f-49d9-a88b-d1dd41c2694e",
+        "36c161e5-00d9-48a6-acaf-6ba5a3fbeacd"
+      ]
+    },
+    {
+      "id": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "name": "RestoreDormantAccount",
+      "displayName": "휴면 해제 처리",
+      "actor": "휴면_회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 36,
+      "uiId": "79833ab8-bf49-4851-8621-899e6045ada5",
+      "eventIds": [
+        "8df1636f-41ec-41ca-b717-308f5f25d670",
+        "1f60f73c-06c5-4420-b491-9b453bc2b3b1",
+        "e026c052-9a9f-438e-abb3-7c438e8f6a60",
+        "90f7e8c4-3976-4d7b-8ef0-9070939b3668",
+        "b20592df-42ac-41ca-a3de-5b5a779a9b61",
+        "40040733-a700-4b0e-bc97-447d56b70ca9"
+      ]
+    },
+    {
+      "id": "3bef4807-5171-48f8-a712-a36e50fd200a",
+      "name": "RequestDormantAccountRestoration",
+      "displayName": "휴면 해제 신청",
+      "actor": "휴면_회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 42,
+      "uiId": "4a6a093d-570d-4246-baa0-ec13f9307d67",
+      "eventIds": [
+        "9eccaba7-5c04-4ff2-b5d6-d76774cd64eb"
+      ]
+    },
+    {
+      "id": "da72cebc-0617-4594-b87a-4b31f57291c3",
+      "name": "ConfirmLegalGuardianConsent",
+      "displayName": "법정대리인 동의/확인",
+      "actor": "법정대리인",
+      "aggregateName": "LegalGuardianConsent",
+      "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+      "sequence": 55,
+      "uiId": "51a3e14e-f65a-49b5-ac36-65e3c3bfea7e",
+      "eventIds": [
+        "97834e45-3e6d-465b-b2c7-f5ed4eb473cb",
+        "d4355f6c-826a-4487-a291-c7963df1a6f7"
+      ]
+    },
+    {
+      "id": "fd0b9ebc-864d-4e70-89e3-a4e74de5fefc",
+      "name": "SubmitLegalGuardianConsent",
+      "displayName": "법정대리인 동의 제출",
+      "actor": "고객",
+      "aggregateName": "LegalGuardianConsent",
+      "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+      "sequence": 64,
+      "uiId": "a97cfdd3-5be2-4e99-853a-a85e94eeeefd",
+      "eventIds": [
+        "81cca102-9ec9-4a9a-8852-3c72b1d72810",
+        "2f88b6c8-bf7e-420d-82f7-8a2dc92b3cf5"
+      ]
+    },
+    {
+      "id": "4a604096-d435-4651-a318-af694d27c160",
+      "name": "PerformAuthentication",
+      "displayName": "본인인증 수행",
+      "actor": "고객",
+      "aggregateName": "AuthenticationHistory",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "sequence": 71,
+      "uiId": null,
+      "eventIds": [
+        "18003c5d-c7cc-497d-ac39-d78e7bff5ad0"
+      ]
+    },
+    {
+      "id": "83586ca6-eabe-4cc0-9909-c1dfb7942f70",
+      "name": "UpdateMemberProfile",
+      "displayName": "프로필 정보 변경",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 73,
+      "uiId": "1c041cb6-9120-45bd-ac3c-68792fd24a0c",
+      "eventIds": [
+        "7b133416-e9e7-4094-a047-6823dfd90943"
+      ]
+    },
+    {
+      "id": "920f2065-85de-4fed-b159-1da7913bd14b",
+      "name": "UpdateMemberInformation",
+      "displayName": "회원정보 변경",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 77,
+      "uiId": "689ac4e2-8837-4ec9-8dbd-b8129dd5f623",
+      "eventIds": [
+        "1769bc03-1e84-4e44-be31-2bb12e75f3ae"
+      ]
+    },
+    {
+      "id": "3e8fab7e-8cdd-4e2c-bd77-acfe517090be",
+      "name": "CancelMembershipWithdrawal",
+      "displayName": "회원 탈퇴 철회",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 79,
+      "uiId": "f96be58f-f6bd-4b98-b326-cbead7542d25",
+      "eventIds": [
+        "5099b039-54b5-4e3e-9fe3-d6117e3c2c14"
+      ]
+    },
+    {
+      "id": "68d69f29-9b6e-428d-b19b-57fb867a197d",
+      "name": "SwitchMemberSession",
+      "displayName": "회원 세션 전환",
+      "actor": "시스템",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 118,
+      "uiId": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "eventIds": [
+        "e21217ff-f793-4608-89db-6e6e221012f3"
+      ]
+    },
+    {
+      "id": "ca9c3420-9f5c-471b-a7fc-d1746d5ac734",
+      "name": "RequestMembershipWithdrawal",
+      "displayName": "회원 탈퇴 요청",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 141,
+      "uiId": "8f140d36-12d3-4d38-99bc-a82306efe397",
+      "eventIds": [
+        "3165245c-0702-4d3d-b244-bbfae4d74316"
+      ]
+    },
+    {
+      "id": "ac79b98c-6918-48b1-ae49-7bfbbf31cb29",
+      "name": "SubmitWithdrawalReason",
+      "displayName": "탈퇴 사유 제출",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 145,
+      "uiId": "f3c4d776-1361-4e58-b2ad-f5358d2b33de",
+      "eventIds": [
+        "2f6128dc-e955-4f3d-aed4-9a4ce97b97a2"
+      ]
+    },
+    {
+      "id": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+      "name": "FinalizeMembershipWithdrawal",
+      "displayName": "회원 탈퇴 완료",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 150,
+      "uiId": null,
+      "eventIds": [
+        "168af452-fca8-4028-b705-1c4b7ebaa06f",
+        "097b060d-bd36-4787-9f43-44081e2f641a",
+        "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+        "a4d9fa67-9184-4fef-9a48-90cc193da38c",
+        "2ca4049b-969f-460d-a295-76e101c2a055"
+      ]
+    },
+    {
+      "id": "fc5eb62a-344c-4091-83b2-13cefadfbaa0",
+      "name": "PerformHighRiskActionAuthentication",
+      "displayName": "고위험 업무 추가 인증",
+      "actor": "회원",
+      "aggregateName": "AuthenticationHistory",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "sequence": 188,
+      "uiId": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+      "eventIds": [
+        "7325266d-8e9e-439c-a76b-33df6d8d9c92"
+      ]
+    },
+    {
+      "id": "0417efa3-d73b-4c27-b594-83ca502c94e1",
+      "name": "AgreeToTerms",
+      "displayName": "약관 동의",
+      "actor": "회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 218,
+      "uiId": "f7108871-4917-49e2-9cd5-81399de4600f",
+      "eventIds": []
+    },
+    {
+      "id": "48a9cee0-a655-4c28-8526-30b7d0bb72ec",
+      "name": "ObtainParentalConsent",
+      "displayName": "법정대리인 동의",
+      "actor": "미성년자_회원",
+      "aggregateName": "MemberAccount",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "sequence": 219,
+      "uiId": "ff328852-c5ce-4f02-b691-3c4b04dd17e3",
+      "eventIds": []
+    },
+    {
+      "id": "e6653a05-22cc-44a1-96f4-7032939656d1",
+      "name": "RequestLegalGuardianConsent",
+      "displayName": "법정대리인 동의 요청",
+      "actor": "미성년자_고객",
+      "aggregateName": "LegalGuardianConsent",
+      "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+      "sequence": 220,
+      "uiId": null,
+      "eventIds": []
+    },
+    {
+      "id": "b5627d47-1451-4417-b8a0-5b1fea26102d",
+      "name": "RecordAuthenticationHistory",
+      "displayName": "인증 이력 저장",
+      "actor": "인증_시스템",
+      "aggregateName": "AuthenticationHistory",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "sequence": 221,
+      "uiId": "137283c8-cf67-40fc-9588-3286413e6e76",
+      "eventIds": []
+    },
+    {
+      "id": "625c6443-6d8c-4b7a-90ea-daf3f6c8702a",
+      "name": "SubmitWithdrawalFinalConsent",
+      "displayName": "탈퇴 최종 동의 제출",
+      "actor": "고객",
+      "aggregateName": "AuthenticationHistory",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "sequence": 222,
+      "uiId": "eb6d801d-e15d-4b13-b53b-814f6f6e5415",
+      "eventIds": []
+    },
+    {
+      "id": "2ed2b29a-1b11-4e57-86b7-b7e2b4e91ec5",
+      "name": "GiveTermsConsent",
+      "displayName": "약관 동의",
+      "actor": "고객",
+      "aggregateName": "AuthenticationHistory",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "sequence": 223,
+      "uiId": null,
+      "eventIds": []
+    },
+    {
+      "id": "f8fa08d9-9603-45ec-8fb7-d1d67164c473",
+      "name": "GiveTermsReconsent",
+      "displayName": "약관 재동의",
+      "actor": "고객",
+      "aggregateName": "AuthenticationHistory",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "sequence": 224,
+      "uiId": "29ca7be4-d590-4704-8a0e-5b4cdaf5e0d3",
+      "eventIds": []
+    },
+    {
+      "id": "5fdbb2b2-a4b5-4a4b-9b3d-3df870e24e7b",
+      "name": "WithdrawTermsConsent",
+      "displayName": "약관 동의 철회",
+      "actor": "회원",
+      "aggregateName": "AuthenticationHistory",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "sequence": 225,
+      "uiId": "8c993cf8-6758-4586-930a-6be9f448064f",
+      "eventIds": []
+    }
+  ],
+  "interactionReadModels": [
+    {
+      "id": "58a1ba62-eafa-45b1-bb45-46492ff6b209",
+      "name": "TermsConsentRequirementList",
+      "displayName": "재동의 필요 약관 목록",
+      "actor": "고객",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "triggerEventIds": [
+        "fb8c70d8-2ca6-491b-8313-0d643ccac633",
+        "ff0bed79-7570-4ed8-840a-33f2cf53f7fa"
+      ],
+      "sequence": 54,
+      "uiId": "87793b91-b800-4148-88e4-faa02e9c66b9",
+      "uiDisplayName": "재동의 필요 약관 목록"
+    },
+    {
+      "id": "fa01b55e-ff52-44eb-9cee-190bb32e2a8a",
+      "name": "MemberProfile",
+      "displayName": "회원 프로필",
+      "actor": "회원",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "triggerEventIds": [
+        "9ee46c81-65bd-4d4b-88f4-1370fe7bd27a",
+        "97b73542-55f8-4b42-8a0d-d0349bfe6765",
+        "cc0acfc8-9902-4fa9-8f51-92d4e2974da6",
+        "1769bc03-1e84-4e44-be31-2bb12e75f3ae",
+        "3880445e-f3ae-429f-8dc5-841ebdc9e423",
+        "ae56f237-267f-4426-a1dc-3ba2ddb95e68",
+        "d081bcc4-adc5-4144-b67b-ffa09c07b62d",
+        "7b133416-e9e7-4094-a047-6823dfd90943",
+        "bb89bb38-fad0-4a4f-ac53-84f0efc42c23"
+      ],
+      "sequence": 90,
+      "uiId": "2538e9c2-9a1e-4997-8226-a03d437469a8",
+      "uiDisplayName": "회원 프로필"
+    },
+    {
+      "id": "0e035724-8056-473b-8145-2c1206804534",
+      "name": "LegalGuardianConsentStatus",
+      "displayName": "법정대리인 동의 현황",
+      "actor": "법정대리인",
+      "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+      "triggerEventIds": [
+        "81cca102-9ec9-4a9a-8852-3c72b1d72810",
+        "2f88b6c8-bf7e-420d-82f7-8a2dc92b3cf5",
+        "bc6cc8e0-8b4e-4a42-82c3-cda94fe925ff",
+        "97834e45-3e6d-465b-b2c7-f5ed4eb473cb",
+        "24bb97fd-7f5f-4cfa-97e0-cc0e2cb5664b",
+        "d4355f6c-826a-4487-a291-c7963df1a6f7"
+      ],
+      "sequence": 144,
+      "uiId": "6510c350-b1b1-4f12-a06e-d6eceb6f62c6",
+      "uiDisplayName": "법정대리인 동의 현황"
+    },
+    {
+      "id": "3286e7ac-63a0-44c3-81dd-dde1f9ee0561",
+      "name": "LegalGuardianConsentHistory",
+      "displayName": "법정대리인 동의 이력",
+      "actor": "법정대리인",
+      "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+      "triggerEventIds": [
+        "bc6cc8e0-8b4e-4a42-82c3-cda94fe925ff",
+        "97834e45-3e6d-465b-b2c7-f5ed4eb473cb",
+        "81cca102-9ec9-4a9a-8852-3c72b1d72810",
+        "24bb97fd-7f5f-4cfa-97e0-cc0e2cb5664b",
+        "2f88b6c8-bf7e-420d-82f7-8a2dc92b3cf5",
+        "d4355f6c-826a-4487-a291-c7963df1a6f7"
+      ],
+      "sequence": 144,
+      "uiId": "7ec31a66-83f3-4897-8278-37be432fde90",
+      "uiDisplayName": "법정대리인 동의 이력"
+    },
+    {
+      "id": "2662b6d1-b5e3-4e97-958a-c585916da96c",
+      "name": "TermsConsentHistory",
+      "displayName": "약관 동의 이력",
+      "actor": "회원",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "triggerEventIds": [
+        "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+        "da50669a-e5f8-4b90-a2da-ae9c01e560d2",
+        "971f13be-f9a2-4eb2-8b0d-41669896f232",
+        "cf592942-0264-4b0e-8b8b-37c80d023298",
+        "4787d092-9512-4133-b341-62fc7d1f4a22",
+        "2371d8c6-7477-4ccb-b6ae-719c92a71183"
+      ],
+      "sequence": 179,
+      "uiId": "7ac4775d-5a14-45d0-84c4-f808a9c71e69",
+      "uiDisplayName": "약관 동의 이력"
+    },
+    {
+      "id": "f7d0a817-99ba-4e75-9a14-72209fb31d5b",
+      "name": "AgreementConsentHistoryList",
+      "displayName": "약관 동의 이력 목록",
+      "actor": "회원",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "triggerEventIds": [
+        "971f13be-f9a2-4eb2-8b0d-41669896f232",
+        "da50669a-e5f8-4b90-a2da-ae9c01e560d2",
+        "fb8c70d8-2ca6-491b-8313-0d643ccac633",
+        "9ece9de6-0e09-4498-93cd-b3e08ca21352"
+      ],
+      "sequence": 180,
+      "uiId": "7415a7ec-b941-4cd1-971d-3beb59f83880",
+      "uiDisplayName": "약관 동의 이력 목록"
+    },
+    {
+      "id": "1936efa3-dd0d-4026-b62b-9cbd8e911952",
+      "name": "AuthenticationHistoryList",
+      "displayName": "인증 이력 목록",
+      "actor": "회원_정책_담당자",
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "triggerEventIds": [
+        "d049efe4-fcf8-43aa-93c3-aa6b8b652ede",
+        "d9c0c679-05ee-418d-8cc7-6659d9600370",
+        "d67fc2cb-9940-4eb0-a12b-75e00c6b4b6b",
+        "18003c5d-c7cc-497d-ac39-d78e7bff5ad0",
+        "33fc98b5-2bd3-4d07-b924-8ea25440ee89",
+        "7325266d-8e9e-439c-a76b-33df6d8d9c92"
+      ],
+      "sequence": 189,
+      "uiId": "198e7f20-770e-4e55-b233-d7ff50fec2ba",
+      "uiDisplayName": "인증 이력 목록"
+    },
+    {
+      "id": "678f031c-d745-4b82-87db-32a1fe80a138",
+      "name": "MembershipStatus",
+      "displayName": "회원 상태",
+      "actor": "회원",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "triggerEventIds": [
+        "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+        "5099b039-54b5-4e3e-9fe3-d6117e3c2c14",
+        "1197f01d-ccba-4e34-b39d-106828f0beee",
+        "c53ed27c-e6cf-42a6-afa5-448856796516",
+        "40040733-a700-4b0e-bc97-447d56b70ca9",
+        "b20592df-42ac-41ca-a3de-5b5a779a9b61",
+        "27c6aa33-038e-4934-abeb-c3d5c699054d",
+        "168af452-fca8-4028-b705-1c4b7ebaa06f",
+        "4337e613-ead6-4646-978b-c48aada801c9",
+        "12c29f72-6e80-48bb-a5ba-dbf979b47f70",
+        "02019980-dec2-4cdf-96a4-162764db48ae",
+        "90f7e8c4-3976-4d7b-8ef0-9070939b3668",
+        "0bbaea05-244b-4075-a0a6-34be2c285fe6",
+        "6dfcf89c-ddad-4094-831d-452f7a01d64c",
+        "19211362-be0d-4418-8894-5c4c9f978c57"
+      ],
+      "sequence": 206,
+      "uiId": "bce90f49-9316-4a7e-a77e-ea315211be42",
+      "uiDisplayName": "회원 상태"
+    },
+    {
+      "id": "a0904fd6-63ee-4508-a356-0972697aaf55",
+      "name": "MembershipWithdrawalStatus",
+      "displayName": "탈퇴 상태 및 안내",
+      "actor": "회원",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "triggerEventIds": [
+        "2ca4049b-969f-460d-a295-76e101c2a055",
+        "12c29f72-6e80-48bb-a5ba-dbf979b47f70",
+        "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+        "0cca9de4-aad2-45df-a240-7824c4c613bb",
+        "4bdd5ae7-38e1-40ac-94a7-48659f00abc0",
+        "f4a16e9a-e7fa-4530-988b-4ee83a0a176f",
+        "ae2c3368-5692-4a18-8c84-936b5b81bdfd",
+        "3e34fdcf-4925-4071-a2df-8530554ef4aa",
+        "19211362-be0d-4418-8894-5c4c9f978c57",
+        "c22aa21b-9e7d-418d-a548-33ae3d5864f3",
+        "2baee858-52e3-47c9-b194-ff57b5ebf14d",
+        "6f485931-cd7d-4c67-b3c7-5b244433afeb"
+      ],
+      "sequence": 206,
+      "uiId": "2a17b719-e4f9-4a86-883d-bffd4552f96e",
+      "uiDisplayName": "탈퇴 상태 및 안내"
+    },
+    {
+      "id": "d9be9679-1b4c-4287-99ff-6a84d5f7f9e0",
+      "name": "RejoinEligibility",
+      "displayName": "재가입 가능 여부",
+      "actor": "회원",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "triggerEventIds": [
+        "8ba0829f-cca0-4b20-923e-fac5c3fcd1d9",
+        "fc407add-edb7-4854-a56f-e45dc52dba3b",
+        "600b639b-974e-4363-a1cc-469367930232",
+        "248e94ef-af8b-4f67-87b5-7fd35e6dcc26",
+        "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+        "7e127101-45df-4759-8a99-42244ef733b4",
+        "07d15880-36be-41a0-8fbb-911f72f85ae5",
+        "aa54f330-83fb-4cdb-beb6-54abf3b636b6",
+        "ba0ded8e-bcb7-47be-a74e-1178fc9bade5",
+        "4b086d77-c85d-4310-9bc0-4bce74298fe0",
+        "21771850-1181-49b6-b278-21030c4585a1"
+      ],
+      "sequence": 212,
+      "uiId": "2dfe4303-1a47-42f5-9384-b6f889344c50",
+      "uiDisplayName": "재가입 가능 여부"
+    },
+    {
+      "id": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "name": "MembershipProcessingHistory",
+      "displayName": "회원 처리 이력",
+      "actor": "회원",
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "triggerEventIds": [
+        "8d94d239-a183-420f-a25f-559b427cc3d8",
+        "88746db9-88e5-4b89-9a23-d96e4b124854",
+        "d2e062a5-4c6f-4e68-8c38-c62263d8b5ad",
+        "600b639b-974e-4363-a1cc-469367930232",
+        "40040733-a700-4b0e-bc97-447d56b70ca9",
+        "19211362-be0d-4418-8894-5c4c9f978c57",
+        "ed0adfc7-89ec-40b7-82c7-bfccc9df3fc9",
+        "a38e5b0e-a2cc-4cad-887b-0cc4442cd8cd",
+        "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+        "00dfac32-cbd1-45e2-a79b-3049cb4e7736",
+        "bec17f2d-ee8c-4640-8ce0-412fea27c853",
+        "f773647d-b507-44ce-9df8-5a9c7f66d7f1",
+        "67339091-ab5f-4639-8660-2135190dfbfa",
+        "5099b039-54b5-4e3e-9fe3-d6117e3c2c14",
+        "4337e613-ead6-4646-978b-c48aada801c9",
+        "168af452-fca8-4028-b705-1c4b7ebaa06f",
+        "c86911ca-4607-4986-b839-8cc1f1561b45",
+        "064bd068-b61d-4659-8348-21d9b098ab95",
+        "27c6aa33-038e-4934-abeb-c3d5c699054d",
+        "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+        "6dfcf89c-ddad-4094-831d-452f7a01d64c",
+        "f246ae20-14f4-42b9-8ea3-c5376e785fed",
+        "bbce87b2-e477-4f12-a14c-94eff44dfd56",
+        "86606957-a100-4588-a9df-7d3bfefe7966"
+      ],
+      "sequence": 215,
+      "uiId": "96ece9e2-94e8-4f17-9557-6a78660a6bd1",
+      "uiDisplayName": "회원 처리 이력"
+    }
+  ],
+  "systemSwimlanes": [
+    {
+      "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+      "bcName": "LegalConsentManagement",
+      "bcDisplayName": "법정대리인 동의 관리",
+      "events": [
+        {
+          "id": "97834e45-3e6d-465b-b2c7-f5ed4eb473cb",
+          "name": "LegalGuardianConsentObtained",
+          "displayName": "법정대리인 동의 완료됨",
+          "commandId": "da72cebc-0617-4594-b87a-4b31f57291c3",
+          "commandName": "ConfirmLegalGuardianConsent",
+          "actor": "법정대리인",
+          "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+          "storedSequence": 55,
+          "sequence": 55
+        },
+        {
+          "id": "d4355f6c-826a-4487-a291-c7963df1a6f7",
+          "name": "LegalGuardianConsentObtainingFailed",
+          "displayName": "법정대리인 동의 실패됨",
+          "commandId": "da72cebc-0617-4594-b87a-4b31f57291c3",
+          "commandName": "ConfirmLegalGuardianConsent",
+          "actor": "법정대리인",
+          "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+          "storedSequence": 56,
+          "sequence": 55
+        },
+        {
+          "id": "81cca102-9ec9-4a9a-8852-3c72b1d72810",
+          "name": "LegalGuardianConsentSubmitted",
+          "displayName": "법정대리인 동의 제출됨",
+          "commandId": "fd0b9ebc-864d-4e70-89e3-a4e74de5fefc",
+          "commandName": "SubmitLegalGuardianConsent",
+          "actor": "고객",
+          "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+          "storedSequence": 64,
+          "sequence": 64
+        },
+        {
+          "id": "2f88b6c8-bf7e-420d-82f7-8a2dc92b3cf5",
+          "name": "LegalGuardianConsentSubmissionFailed",
+          "displayName": "법정대리인 동의 제출 실패",
+          "commandId": "fd0b9ebc-864d-4e70-89e3-a4e74de5fefc",
+          "commandName": "SubmitLegalGuardianConsent",
+          "actor": "고객",
+          "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+          "storedSequence": 65,
+          "sequence": 64
+        },
+        {
+          "id": "bc6cc8e0-8b4e-4a42-82c3-cda94fe925ff",
+          "name": "ParentalConsentGiven",
+          "displayName": "법정대리인 동의 완료됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+          "storedSequence": 143,
+          "sequence": 143
+        },
+        {
+          "id": "24bb97fd-7f5f-4cfa-97e0-cc0e2cb5664b",
+          "name": "ParentalConsentFailed",
+          "displayName": "법정대리인 동의 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "c49c694f-6c5d-463c-9a4f-bd9a63d10ff8",
+          "storedSequence": 144,
+          "sequence": 144
+        }
+      ]
+    },
+    {
+      "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "bcName": "MembershipManagement",
+      "bcDisplayName": "회원 관리",
+      "events": [
+        {
+          "id": "6094d0d4-de63-4a17-85e2-818777116747",
+          "name": "AccountRegistered",
+          "displayName": "계정 생성됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 1,
+          "sequence": 1
+        },
+        {
+          "id": "6e363dae-990f-4b7b-bd43-2c2fe03d660b",
+          "name": "AccountRegistrationFailed",
+          "displayName": "계정 생성 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 2,
+          "sequence": 2
+        },
+        {
+          "id": "c20bead8-ff00-46b8-bf99-54aed13067d5",
+          "name": "InputValidated",
+          "displayName": "입력 정보 검증 완료",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 3,
+          "sequence": 3
+        },
+        {
+          "id": "911fea6a-566d-4bd2-b0bb-5e4084275f49",
+          "name": "InputValidationFailed",
+          "displayName": "입력 정보 검증 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 4,
+          "sequence": 4
+        },
+        {
+          "id": "deb7b36e-a86b-41a1-a012-2518dd3d4675",
+          "name": "DuplicateIdentificationChecked",
+          "displayName": "식별정보 중복 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 5,
+          "sequence": 5
+        },
+        {
+          "id": "4ab57d42-52af-443e-97c0-72a1f5578b74",
+          "name": "DuplicateIdentificationCheckFailed",
+          "displayName": "식별정보 중복 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 6,
+          "sequence": 6
+        },
+        {
+          "id": "a8c2ddae-2710-4574-8acb-4b73f4a093b5",
+          "name": "IdentityVerified",
+          "displayName": "본인 인증됨",
+          "commandId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "commandName": "RegisterMembership",
+          "actor": "고객",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 7,
+          "sequence": 7
+        },
+        {
+          "id": "b8847724-c183-4c57-923d-c3eaa5e2dd65",
+          "name": "ParentalConsentObtained",
+          "displayName": "법정대리인 동의 완료됨",
+          "commandId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "commandName": "RegisterMembership",
+          "actor": "고객",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 9,
+          "sequence": 7
+        },
+        {
+          "id": "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+          "name": "TermsAgreed",
+          "displayName": "약관 동의됨",
+          "commandId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "commandName": "RegisterMembership",
+          "actor": "고객",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 11,
+          "sequence": 7
+        },
+        {
+          "id": "9ee46c81-65bd-4d4b-88f4-1370fe7bd27a",
+          "name": "ProfileCreated",
+          "displayName": "프로필 생성됨",
+          "commandId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "commandName": "RegisterMembership",
+          "actor": "고객",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 15,
+          "sequence": 7
+        },
+        {
+          "id": "07df889a-8709-4b1b-99ae-a206fae361a4",
+          "name": "MemberAccountCreated",
+          "displayName": "회원 계정 생성됨",
+          "commandId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "commandName": "RegisterMembership",
+          "actor": "고객",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 83,
+          "sequence": 7
+        },
+        {
+          "id": "bec17f2d-ee8c-4640-8ce0-412fea27c853",
+          "name": "MembershipRegistered",
+          "displayName": "회원가입 완료됨",
+          "commandId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "commandName": "RegisterMembership",
+          "actor": "고객",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 85,
+          "sequence": 7
+        },
+        {
+          "id": "551a93ec-b226-48a2-8e2b-8b07ec8ded52",
+          "name": "IdentityVerificationFailed",
+          "displayName": "본인 인증 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 8,
+          "sequence": 8
+        },
+        {
+          "id": "f0c46ec8-0289-4f67-ba72-09474f218992",
+          "name": "ParentalConsentObtainingFailed",
+          "displayName": "법정대리인 동의 실패됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 10,
+          "sequence": 10
+        },
+        {
+          "id": "cf592942-0264-4b0e-8b8b-37c80d023298",
+          "name": "TermsAgreementFailed",
+          "displayName": "약관 동의 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 12,
+          "sequence": 12
+        },
+        {
+          "id": "4bdb61da-344f-41d4-b518-ad3a060b513f",
+          "name": "AccountCreated",
+          "displayName": "계정 생성됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 13,
+          "sequence": 13
+        },
+        {
+          "id": "3a74ba20-6476-4914-8aa5-c54fae4e5c55",
+          "name": "AccountCreationFailed",
+          "displayName": "계정 생성 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 14,
+          "sequence": 14
+        },
+        {
+          "id": "d0e12109-1391-4fe3-8a7c-52df903b756b",
+          "name": "ProfileCreationFailed",
+          "displayName": "프로필 생성 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 16,
+          "sequence": 16
+        },
+        {
+          "id": "29c23bc5-ce1c-4e05-9455-e247c603d80a",
+          "name": "SignUpEligibilityChecked",
+          "displayName": "회원가입 가능 여부 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 17,
+          "sequence": 17
+        },
+        {
+          "id": "043bf940-bc7b-4b7c-98b5-ded092cd3a08",
+          "name": "SignUpEligibilityCheckFailed",
+          "displayName": "회원가입 가능 여부 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 18,
+          "sequence": 18
+        },
+        {
+          "id": "6121f065-d82d-4ac1-8bd5-4e07dafacab0",
+          "name": "SignUpFlowEntered",
+          "displayName": "회원가입 플로우 진입됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 19,
+          "sequence": 19
+        },
+        {
+          "id": "6dfcf89c-ddad-4094-831d-452f7a01d64c",
+          "name": "AccountRestored",
+          "displayName": "계정 복원됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 20,
+          "sequence": 20
+        },
+        {
+          "id": "5a67e8ab-b9a9-4881-857b-b36d978a9ecb",
+          "name": "AccountRestorationFailed",
+          "displayName": "계정 복원 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 21,
+          "sequence": 21
+        },
+        {
+          "id": "308f80c4-e465-4d02-b308-6e15cc32bc00",
+          "name": "LoggedIn",
+          "displayName": "로그인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 22,
+          "sequence": 22
+        },
+        {
+          "id": "000133b4-e9e0-4dae-9cf2-e9a21607476c",
+          "name": "LoginFailed",
+          "displayName": "로그인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 23,
+          "sequence": 23
+        },
+        {
+          "id": "204d6f30-85c1-472d-9086-16d237dd6cc4",
+          "name": "DormantAccountLoginAttempted",
+          "displayName": "휴면 계정 로그인 시도됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 24,
+          "sequence": 24
+        },
+        {
+          "id": "c53ed27c-e6cf-42a6-afa5-448856796516",
+          "name": "DormantStatusChecked",
+          "displayName": "휴면 상태 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 25,
+          "sequence": 25
+        },
+        {
+          "id": "e9667f2b-0eb1-42c2-aadc-09463e130db2",
+          "name": "DormantStatusCheckFailed",
+          "displayName": "휴면 상태 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 26,
+          "sequence": 26
+        },
+        {
+          "id": "3afaa85a-eab6-440b-a3f4-9b221c3b5eb8",
+          "name": "SessionCreated",
+          "displayName": "세션 생성됨",
+          "commandId": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+          "commandName": "LoginMember",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 27,
+          "sequence": 27
+        },
+        {
+          "id": "fe57afb5-3d75-467f-ab3a-042c963a081b",
+          "name": "MemberLoggedIn",
+          "displayName": "회원 로그인됨",
+          "commandId": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+          "commandName": "LoginMember",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 139,
+          "sequence": 27
+        },
+        {
+          "id": "7c0a5d74-c776-4a24-aa2b-4ef5f8a351d8",
+          "name": "SessionCreationFailed",
+          "displayName": "세션 생성 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 28,
+          "sequence": 28
+        },
+        {
+          "id": "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+          "name": "RestorationScopeChecked",
+          "displayName": "이력 복원 범위 확인됨",
+          "commandId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "commandName": "RejoinMembership",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 163,
+          "sequence": 29
+        },
+        {
+          "id": "871e5c60-967e-4688-a664-f028724c83f0",
+          "name": "ReenrollmentInformationSubmitted",
+          "displayName": "재가입 정보 제출됨",
+          "commandId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "commandName": "RejoinMembership",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 165,
+          "sequence": 29
+        },
+        {
+          "id": "825b06ea-3e3b-4c2f-8bec-e6e00dd6dfed",
+          "name": "MembershipReenrollmentCompleted",
+          "displayName": "재가입 처리 완료됨",
+          "commandId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "commandName": "RejoinMembership",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 169,
+          "sequence": 29
+        },
+        {
+          "id": "9432193e-b40c-4124-996f-a0c89a0e9c39",
+          "name": "ReenrollmentResultNotified",
+          "displayName": "재가입 결과 안내됨",
+          "commandId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "commandName": "RejoinMembership",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 171,
+          "sequence": 29
+        },
+        {
+          "id": "a38e5b0e-a2cc-4cad-887b-0cc4442cd8cd",
+          "name": "MemberRejoined",
+          "displayName": "회원 재가입 완료됨",
+          "commandId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "commandName": "RejoinMembership",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 214,
+          "sequence": 29
+        },
+        {
+          "id": "bb8ffca3-d26f-49d9-a88b-d1dd41c2694e",
+          "name": "SessionCreatedOrSwitchedAfterRejoin",
+          "displayName": "재가입 후 세션 생성 또는 전환됨",
+          "commandId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "commandName": "RejoinMembership",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 29,
+          "sequence": 29
+        },
+        {
+          "id": "36c161e5-00d9-48a6-acaf-6ba5a3fbeacd",
+          "name": "MembershipReenrolled",
+          "displayName": "재가입 완료됨",
+          "commandId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "commandName": "RejoinMembership",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 167,
+          "sequence": 29
+        },
+        {
+          "id": "04fa6e83-6aa8-4f84-a054-bb538cdd35db",
+          "name": "SessionCreationOrSwitchFailedAfterRejoin",
+          "displayName": "재가입 후 세션 생성 또는 전환 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 30,
+          "sequence": 30
+        },
+        {
+          "id": "3a3ad08a-29ec-41bb-a960-0c3424ab538d",
+          "name": "SessionCreatedOrSwitched",
+          "displayName": "세션 생성 또는 전환됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 31,
+          "sequence": 31
+        },
+        {
+          "id": "b1c21c19-0079-4e73-b490-22b9d4daa072",
+          "name": "SessionCreationOrSwitchFailed",
+          "displayName": "세션 생성 또는 전환 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 32,
+          "sequence": 32
+        },
+        {
+          "id": "3b301fa5-54d3-4336-aefc-e884eb410dec",
+          "name": "LoginAttempted",
+          "displayName": "로그인 시도됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 33,
+          "sequence": 33
+        },
+        {
+          "id": "02019980-dec2-4cdf-96a4-162764db48ae",
+          "name": "DormantStatusReactivated",
+          "displayName": "휴면 해제됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 34,
+          "sequence": 34
+        },
+        {
+          "id": "58e0fa51-e1a9-4578-b0bc-44a227bf2f86",
+          "name": "DormantStatusReactivationFailed",
+          "displayName": "휴면 해제 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 35,
+          "sequence": 35
+        },
+        {
+          "id": "8df1636f-41ec-41ca-b717-308f5f25d670",
+          "name": "PersonalDataRestored",
+          "displayName": "개인정보 복원됨",
+          "commandId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+          "commandName": "RestoreDormantAccount",
+          "actor": "휴면_회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 36,
+          "sequence": 36
+        },
+        {
+          "id": "1f60f73c-06c5-4420-b491-9b453bc2b3b1",
+          "name": "ServiceUsageDataRestored",
+          "displayName": "서비스 이용 데이터 복원됨",
+          "commandId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+          "commandName": "RestoreDormantAccount",
+          "actor": "휴면_회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 38,
+          "sequence": 36
+        },
+        {
+          "id": "e026c052-9a9f-438e-abb3-7c438e8f6a60",
+          "name": "SessionRestoredAfterDormancy",
+          "displayName": "휴면 해제 후 세션 복구됨",
+          "commandId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+          "commandName": "RestoreDormantAccount",
+          "actor": "휴면_회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 40,
+          "sequence": 36
+        },
+        {
+          "id": "90f7e8c4-3976-4d7b-8ef0-9070939b3668",
+          "name": "DormantStatusDeactivated",
+          "displayName": "휴면 상태 해제됨",
+          "commandId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+          "commandName": "RestoreDormantAccount",
+          "actor": "휴면_회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 61,
+          "sequence": 36
+        },
+        {
+          "id": "b20592df-42ac-41ca-a3de-5b5a779a9b61",
+          "name": "MembershipActivated",
+          "displayName": "정상 회원 상태로 전환됨",
+          "commandId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+          "commandName": "RestoreDormantAccount",
+          "actor": "휴면_회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 87,
+          "sequence": 36
+        },
+        {
+          "id": "40040733-a700-4b0e-bc97-447d56b70ca9",
+          "name": "DormantAccountRestored",
+          "displayName": "휴면 해제 데이터 복원됨",
+          "commandId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+          "commandName": "RestoreDormantAccount",
+          "actor": "휴면_회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 122,
+          "sequence": 36
+        },
+        {
+          "id": "3374f00c-b25f-45a9-aef5-6bfcc6c4ad39",
+          "name": "PersonalDataRestorationFailed",
+          "displayName": "개인정보 복원 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 37,
+          "sequence": 37
+        },
+        {
+          "id": "e3591663-9e42-4ed1-8897-b31fcf9505fe",
+          "name": "ServiceUsageDataRestorationFailed",
+          "displayName": "서비스 이용 데이터 복원 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 39,
+          "sequence": 39
+        },
+        {
+          "id": "33f23bb7-1f36-4c23-8864-4003314c2df0",
+          "name": "SessionRestorationAfterDormancyFailed",
+          "displayName": "휴면 해제 후 세션 복구 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 41,
+          "sequence": 41
+        },
+        {
+          "id": "9eccaba7-5c04-4ff2-b5d6-d76774cd64eb",
+          "name": "DormantAccountRestorationRequested",
+          "displayName": "휴면 해제 신청됨",
+          "commandId": "3bef4807-5171-48f8-a712-a36e50fd200a",
+          "commandName": "RequestDormantAccountRestoration",
+          "actor": "휴면_회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 42,
+          "sequence": 42
+        },
+        {
+          "id": "aa54da02-d271-4c25-86db-e49944deff76",
+          "name": "DormantAccountRestorationRequestFailed",
+          "displayName": "휴면 해제 신청 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 43,
+          "sequence": 43
+        },
+        {
+          "id": "35a7e087-2b0c-4194-b36d-32ec9756528a",
+          "name": "DormantStatusAcknowledged",
+          "displayName": "휴면 전환 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 44,
+          "sequence": 44
+        },
+        {
+          "id": "27c6aa33-038e-4934-abeb-c3d5c699054d",
+          "name": "DormantAccountReactivated",
+          "displayName": "휴면 해제됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 45,
+          "sequence": 45
+        },
+        {
+          "id": "6ebf7dd3-8a6d-408a-9554-cd0c024e997f",
+          "name": "DormantAccountReactivationFailed",
+          "displayName": "휴면 해제 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 46,
+          "sequence": 46
+        },
+        {
+          "id": "a8a54ca7-5895-433a-8410-6b4673ba2a15",
+          "name": "DormantAccountReactivationResultNotified",
+          "displayName": "휴면 해제 처리 결과 안내됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 47,
+          "sequence": 47
+        },
+        {
+          "id": "40166ff7-cb33-44a4-b944-ecc6746dd899",
+          "name": "DormantAccountReactivationEligibilityChecked",
+          "displayName": "휴면 해제 가능 여부 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 48,
+          "sequence": 48
+        },
+        {
+          "id": "740c6ba5-7469-4b42-8f3b-914de3ac9815",
+          "name": "DormantAccountReactivationEligibilityCheckFailed",
+          "displayName": "휴면 해제 가능 여부 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 49,
+          "sequence": 49
+        },
+        {
+          "id": "3a44bf03-eeca-487d-806f-6911a85afdd8",
+          "name": "DormantAccountReactivationRequested",
+          "displayName": "휴면 해제 신청됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 51,
+          "sequence": 51
+        },
+        {
+          "id": "614132d4-ef13-447d-b4d3-ae4311f7c486",
+          "name": "DormantAccountReactivationRequestFailed",
+          "displayName": "휴면 해제 신청 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 52,
+          "sequence": 52
+        },
+        {
+          "id": "47a33df5-3ead-4245-8c5b-47f87ae6b8c7",
+          "name": "DormantAccountReactivationOutcomeNotified",
+          "displayName": "휴면 해제 처리 결과 안내됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 53,
+          "sequence": 53
+        },
+        {
+          "id": "ce0ae48e-4c0f-4927-b2e3-b1d5b5d7afb4",
+          "name": "MemberInformationValidated",
+          "displayName": "회원 정보 검증됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 57,
+          "sequence": 57
+        },
+        {
+          "id": "707be90a-2cca-45ac-a0ba-1d835f2842e5",
+          "name": "MemberInformationValidationFailed",
+          "displayName": "회원 정보 검증 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 58,
+          "sequence": 58
+        },
+        {
+          "id": "02222fae-2623-42d7-af06-5cf8495ed6e2",
+          "name": "EligibilityChecked",
+          "displayName": "가입 가능 여부 판정됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 59,
+          "sequence": 59
+        },
+        {
+          "id": "050cc1c4-a3a3-4bca-a778-7900f53f5448",
+          "name": "EligibilityCheckFailed",
+          "displayName": "가입 가능 여부 판정 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 60,
+          "sequence": 60
+        },
+        {
+          "id": "c66cad2a-2ea0-486c-ba7c-7bce93534c76",
+          "name": "DormantStatusDeactivationFailed",
+          "displayName": "휴면 상태 해제 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 62,
+          "sequence": 62
+        },
+        {
+          "id": "c86d7404-896f-4e12-ab92-9e0d4097c5a2",
+          "name": "DormantAccountReactivationResultAcknowledged",
+          "displayName": "휴면 해제 결과 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 63,
+          "sequence": 63
+        },
+        {
+          "id": "0bbaea05-244b-4075-a0a6-34be2c285fe6",
+          "name": "MembershipStatusChecked",
+          "displayName": "회원 상태 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 66,
+          "sequence": 66
+        },
+        {
+          "id": "1587dbe8-3bc0-485a-8d57-a685493cc8e1",
+          "name": "MembershipStatusCheckFailed",
+          "displayName": "회원 상태 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 67,
+          "sequence": 67
+        },
+        {
+          "id": "24fb284a-3cf9-4769-9233-584d00fc333c",
+          "name": "DormantAccountReactivationAttempted",
+          "displayName": "휴면 해제 시도됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 68,
+          "sequence": 68
+        },
+        {
+          "id": "36229dec-f01a-48fe-93c6-92ee1aaf40ca",
+          "name": "DormantAccountRestorationCompleted",
+          "displayName": "휴면 해제 처리 완료됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 69,
+          "sequence": 69
+        },
+        {
+          "id": "92e8dcbb-46c1-4035-af15-ba78cb6be465",
+          "name": "DormantAccountRestorationFailed",
+          "displayName": "휴면 해제 처리 실패됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 70,
+          "sequence": 70
+        },
+        {
+          "id": "7b133416-e9e7-4094-a047-6823dfd90943",
+          "name": "ProfileInformationUpdated",
+          "displayName": "프로필 정보 변경됨",
+          "commandId": "83586ca6-eabe-4cc0-9909-c1dfb7942f70",
+          "commandName": "UpdateMemberProfile",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 73,
+          "sequence": 73
+        },
+        {
+          "id": "bb89bb38-fad0-4a4f-ac53-84f0efc42c23",
+          "name": "ProfileInformationUpdateFailed",
+          "displayName": "프로필 정보 변경 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 74,
+          "sequence": 74
+        },
+        {
+          "id": "d081bcc4-adc5-4144-b67b-ffa09c07b62d",
+          "name": "MemberInformationViewed",
+          "displayName": "회원정보 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 75,
+          "sequence": 75
+        },
+        {
+          "id": "cc0acfc8-9902-4fa9-8f51-92d4e2974da6",
+          "name": "MemberInformationViewFailed",
+          "displayName": "회원정보 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 76,
+          "sequence": 76
+        },
+        {
+          "id": "1769bc03-1e84-4e44-be31-2bb12e75f3ae",
+          "name": "MemberInformationChanged",
+          "displayName": "회원정보 변경됨",
+          "commandId": "920f2065-85de-4fed-b159-1da7913bd14b",
+          "commandName": "UpdateMemberInformation",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 77,
+          "sequence": 77
+        },
+        {
+          "id": "ae56f237-267f-4426-a1dc-3ba2ddb95e68",
+          "name": "MemberInformationChangeFailed",
+          "displayName": "회원정보 변경 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 78,
+          "sequence": 78
+        },
+        {
+          "id": "5099b039-54b5-4e3e-9fe3-d6117e3c2c14",
+          "name": "MembershipWithdrawalCancelled",
+          "displayName": "회원 탈퇴 철회됨",
+          "commandId": "3e8fab7e-8cdd-4e2c-bd77-acfe517090be",
+          "commandName": "CancelMembershipWithdrawal",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 79,
+          "sequence": 79
+        },
+        {
+          "id": "e35f5492-8e37-40e7-8876-446a0eac022b",
+          "name": "MembershipWithdrawalCancellationFailed",
+          "displayName": "회원 탈퇴 철회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 80,
+          "sequence": 80
+        },
+        {
+          "id": "4787d092-9512-4133-b341-62fc7d1f4a22",
+          "name": "TermsConsentHistoryViewed",
+          "displayName": "약관 동의 이력 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 81,
+          "sequence": 81
+        },
+        {
+          "id": "2371d8c6-7477-4ccb-b6ae-719c92a71183",
+          "name": "TermsConsentHistoryViewFailed",
+          "displayName": "약관 동의 이력 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 82,
+          "sequence": 82
+        },
+        {
+          "id": "fad4bd78-a55c-4053-bd00-1d839cfcb1d4",
+          "name": "MemberAccountCreationFailed",
+          "displayName": "회원 계정 생성 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 84,
+          "sequence": 84
+        },
+        {
+          "id": "4337e613-ead6-4646-978b-c48aada801c9",
+          "name": "MembershipRegistrationFailed",
+          "displayName": "회원가입 실패됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 86,
+          "sequence": 86
+        },
+        {
+          "id": "60181ead-d511-42c6-b93a-b434fbfaf143",
+          "name": "MembershipActivationFailed",
+          "displayName": "정상 회원 상태 전환 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 88,
+          "sequence": 88
+        },
+        {
+          "id": "97b73542-55f8-4b42-8a0d-d0349bfe6765",
+          "name": "ProfileViewed",
+          "displayName": "프로필 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 89,
+          "sequence": 89
+        },
+        {
+          "id": "3880445e-f3ae-429f-8dc5-841ebdc9e423",
+          "name": "ProfileViewFailed",
+          "displayName": "프로필 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 90,
+          "sequence": 90
+        },
+        {
+          "id": "bbce87b2-e477-4f12-a14c-94eff44dfd56",
+          "name": "MembershipRegistrationResultViewed",
+          "displayName": "회원가입 처리 결과 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 91,
+          "sequence": 91
+        },
+        {
+          "id": "86606957-a100-4588-a9df-7d3bfefe7966",
+          "name": "MembershipRegistrationHistoryViewed",
+          "displayName": "회원가입 이력 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 92,
+          "sequence": 92
+        },
+        {
+          "id": "73071d23-7a80-4676-8374-c6b216bfe8a9",
+          "name": "MembershipRegistrationNotificationHistoryViewed",
+          "displayName": "회원가입 알림 이력 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 93,
+          "sequence": 93
+        },
+        {
+          "id": "3403f55e-f420-4c69-95cf-13906fd770a2",
+          "name": "MembershipRegistrationNotificationHistoryViewFailed",
+          "displayName": "회원가입 알림 이력 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 94,
+          "sequence": 94
+        },
+        {
+          "id": "ee247de9-227b-4753-a8a3-c6846e4ebf15",
+          "name": "MemberSessionStarted",
+          "displayName": "정회원 세션 시작됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 95,
+          "sequence": 95
+        },
+        {
+          "id": "9c757e20-e968-42fc-bd4c-023d0c0b6d53",
+          "name": "MemberSessionStartFailed",
+          "displayName": "정회원 세션 시작 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 96,
+          "sequence": 96
+        },
+        {
+          "id": "d2e062a5-4c6f-4e68-8c38-c62263d8b5ad",
+          "name": "DormantAccountReactivationResultViewed",
+          "displayName": "휴면 해제 결과 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 97,
+          "sequence": 97
+        },
+        {
+          "id": "9da43527-6b77-4c14-a4db-9e855f103fc9",
+          "name": "MemberHistoryViewed",
+          "displayName": "회원 이력 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 98,
+          "sequence": 98
+        },
+        {
+          "id": "8dc7693d-6d6a-4c27-b8b2-d09e1c575619",
+          "name": "MemberHistoryViewFailed",
+          "displayName": "회원 이력 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 99,
+          "sequence": 99
+        },
+        {
+          "id": "ba0ded8e-bcb7-47be-a74e-1178fc9bade5",
+          "name": "RejoinEligibilityChecked",
+          "displayName": "재가입 가능 여부 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 100,
+          "sequence": 100
+        },
+        {
+          "id": "8ba0829f-cca0-4b20-923e-fac5c3fcd1d9",
+          "name": "RejoinEligibilityCheckFailed",
+          "displayName": "재가입 가능 여부 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 101,
+          "sequence": 101
+        },
+        {
+          "id": "67339091-ab5f-4639-8660-2135190dfbfa",
+          "name": "MembershipRejoined",
+          "displayName": "회원 재가입됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 102,
+          "sequence": 102
+        },
+        {
+          "id": "c86911ca-4607-4986-b839-8cc1f1561b45",
+          "name": "MembershipRejoinFailed",
+          "displayName": "회원 재가입 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 103,
+          "sequence": 103
+        },
+        {
+          "id": "4c5af2e4-8d09-4058-94fd-e39e7891d365",
+          "name": "PersonalInformationEntered",
+          "displayName": "개인정보 입력됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 104,
+          "sequence": 104
+        },
+        {
+          "id": "7e09bb03-6319-46a0-af5a-0188a156387a",
+          "name": "PersonalInformationEntryFailed",
+          "displayName": "개인정보 입력 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 105,
+          "sequence": 105
+        },
+        {
+          "id": "ee56bb52-b78b-4b0e-9d8c-6e56cc0692db",
+          "name": "MemberInformationDuplicationChecked",
+          "displayName": "회원 정보 중복 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 106,
+          "sequence": 106
+        },
+        {
+          "id": "a83433ec-7aad-4e04-bb60-be8e0769d3cb",
+          "name": "MemberInformationDuplicationCheckFailed",
+          "displayName": "회원 정보 중복 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 107,
+          "sequence": 107
+        },
+        {
+          "id": "bab8125e-6fd2-4980-ac51-a305c78374cf",
+          "name": "MembershipRegistrationNotificationSent",
+          "displayName": "회원가입 안내 발송됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 108,
+          "sequence": 108
+        },
+        {
+          "id": "1c4aed8c-7388-4e69-b8c6-e520b06930be",
+          "name": "MembershipRegistrationNotificationFailed",
+          "displayName": "회원가입 안내 발송 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 109,
+          "sequence": 109
+        },
+        {
+          "id": "1197f01d-ccba-4e34-b39d-106828f0beee",
+          "name": "MemberStatusChecked",
+          "displayName": "회원 상태 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 112,
+          "sequence": 112
+        },
+        {
+          "id": "c0fdb2e7-23f4-4a26-beef-ba23d2a4c488",
+          "name": "MemberStatusCheckFailed",
+          "displayName": "회원 상태 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 113,
+          "sequence": 113
+        },
+        {
+          "id": "ec9eed43-db32-4c3a-92a4-4f1bb83083b8",
+          "name": "MembershipEligibilityDetermined",
+          "displayName": "회원 가입 가능 여부 판정됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 114,
+          "sequence": 114
+        },
+        {
+          "id": "d1213cbf-deb7-411d-bc57-dbacfa9fede2",
+          "name": "MembershipEligibilityDeterminationFailed",
+          "displayName": "회원 가입 가능 여부 판정 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 115,
+          "sequence": 115
+        },
+        {
+          "id": "0fa4035f-0c09-4c82-9d9d-40cc0886641a",
+          "name": "MemberProfileInitialized",
+          "displayName": "회원 프로필 초기화됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 116,
+          "sequence": 116
+        },
+        {
+          "id": "b07437b1-b817-480c-9c27-153587527937",
+          "name": "MemberProfileInitializationFailed",
+          "displayName": "회원 프로필 초기화 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 117,
+          "sequence": 117
+        },
+        {
+          "id": "e21217ff-f793-4608-89db-6e6e221012f3",
+          "name": "MemberSessionSwitched",
+          "displayName": "회원 세션 전환됨",
+          "commandId": "68d69f29-9b6e-428d-b19b-57fb867a197d",
+          "commandName": "SwitchMemberSession",
+          "actor": "시스템",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 118,
+          "sequence": 118
+        },
+        {
+          "id": "e4761f14-4476-4683-8d5a-23a273a42f7e",
+          "name": "MemberSessionSwitchFailed",
+          "displayName": "회원 세션 전환 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 119,
+          "sequence": 119
+        },
+        {
+          "id": "94311ffd-a2b3-4015-b447-a3f280d2701f",
+          "name": "MemberPathBranched",
+          "displayName": "회원 경로 분기됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 120,
+          "sequence": 120
+        },
+        {
+          "id": "32c0cad9-5962-4414-ad72-8f2c5d61653b",
+          "name": "MemberPathBranchingFailed",
+          "displayName": "회원 경로 분기 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 121,
+          "sequence": 121
+        },
+        {
+          "id": "064bd068-b61d-4659-8348-21d9b098ab95",
+          "name": "MembershipRejoinRequested",
+          "displayName": "재가입 신청됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 123,
+          "sequence": 123
+        },
+        {
+          "id": "00373bd0-d029-4d89-b07c-de458a6ba951",
+          "name": "MembershipRejoinRequestFailed",
+          "displayName": "재가입 신청 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 124,
+          "sequence": 124
+        },
+        {
+          "id": "ebd5c7c4-04ab-4068-be67-8a5e3d19cda2",
+          "name": "MembershipRejoinApplicationSubmitted",
+          "displayName": "재가입 신청됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 125,
+          "sequence": 125
+        },
+        {
+          "id": "40732c80-2283-427a-904e-ba6224ab0d4a",
+          "name": "MembershipRejoinApplicationSubmissionFailed",
+          "displayName": "재가입 신청 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 126,
+          "sequence": 126
+        },
+        {
+          "id": "4b086d77-c85d-4310-9bc0-4bce74298fe0",
+          "name": "RejoinPossibilityDetermined",
+          "displayName": "재가입 가능 여부 판정됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 127,
+          "sequence": 127
+        },
+        {
+          "id": "21771850-1181-49b6-b278-21030c4585a1",
+          "name": "RejoinPossibilityDeterminationFailed",
+          "displayName": "재가입 가능 여부 판정 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 128,
+          "sequence": 128
+        },
+        {
+          "id": "890b0958-5f23-48cc-9bbf-9a36ae470530",
+          "name": "PersonalInformationSubmitted",
+          "displayName": "개인정보 제출됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 129,
+          "sequence": 129
+        },
+        {
+          "id": "57431763-b7f5-4fe9-9ba5-89196c769033",
+          "name": "PersonalInformationSubmissionFailed",
+          "displayName": "개인정보 제출 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 130,
+          "sequence": 130
+        },
+        {
+          "id": "8f3a09da-7976-4bd0-a3f1-e384ae64c8d7",
+          "name": "LoginAttemptFailed",
+          "displayName": "로그인 시도 실패됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 131,
+          "sequence": 131
+        },
+        {
+          "id": "2fba1e4e-4076-4972-8fa8-736aa269a7f0",
+          "name": "DormantMembershipReactivated",
+          "displayName": "휴면 해제 완료됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 132,
+          "sequence": 132
+        },
+        {
+          "id": "05a648b8-09d5-490d-8eb4-f2bb054cde54",
+          "name": "DormantMembershipReactivationFailed",
+          "displayName": "휴면 해제 실패됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 133,
+          "sequence": 133
+        },
+        {
+          "id": "ed0adfc7-89ec-40b7-82c7-bfccc9df3fc9",
+          "name": "DormantAccountRestorationResultViewed",
+          "displayName": "휴면 해제 처리 결과 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 134,
+          "sequence": 134
+        },
+        {
+          "id": "67232815-a06e-440b-8aa5-efebff5cba76",
+          "name": "DormancyNotificationSent",
+          "displayName": "휴면 안내 발송됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 135,
+          "sequence": 135
+        },
+        {
+          "id": "22ada590-bd09-4770-b01c-a012db294e06",
+          "name": "DormancyNotificationFailed",
+          "displayName": "휴면 안내 발송 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 136,
+          "sequence": 136
+        },
+        {
+          "id": "19211362-be0d-4418-8894-5c4c9f978c57",
+          "name": "MembershipWithdrawalCompleted",
+          "displayName": "회원 탈퇴 완료됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 137,
+          "sequence": 137
+        },
+        {
+          "id": "00dfac32-cbd1-45e2-a79b-3049cb4e7736",
+          "name": "MembershipWithdrawalFailed",
+          "displayName": "회원 탈퇴 실패됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 138,
+          "sequence": 138
+        },
+        {
+          "id": "36c90439-fbfa-400c-8833-1919d8269916",
+          "name": "MemberLoginFailed",
+          "displayName": "회원 로그인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 140,
+          "sequence": 140
+        },
+        {
+          "id": "3165245c-0702-4d3d-b244-bbfae4d74316",
+          "name": "MembershipWithdrawalRequested",
+          "displayName": "회원 탈퇴 요청됨",
+          "commandId": "ca9c3420-9f5c-471b-a7fc-d1746d5ac734",
+          "commandName": "RequestMembershipWithdrawal",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 141,
+          "sequence": 141
+        },
+        {
+          "id": "9b099038-1268-4bfb-b865-d6648eb5c766",
+          "name": "MembershipWithdrawalRequestFailed",
+          "displayName": "회원 탈퇴 요청 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 142,
+          "sequence": 142
+        },
+        {
+          "id": "2f6128dc-e955-4f3d-aed4-9a4ce97b97a2",
+          "name": "MembershipWithdrawalReasonSubmitted",
+          "displayName": "탈퇴 사유 제출됨",
+          "commandId": "ac79b98c-6918-48b1-ae49-7bfbbf31cb29",
+          "commandName": "SubmitWithdrawalReason",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 145,
+          "sequence": 145
+        },
+        {
+          "id": "35876b00-5ca8-44f0-aace-2e4393d928cd",
+          "name": "MembershipWithdrawalReasonSubmissionFailed",
+          "displayName": "탈퇴 사유 제출 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 146,
+          "sequence": 146
+        },
+        {
+          "id": "c22aa21b-9e7d-418d-a548-33ae3d5864f3",
+          "name": "WithdrawalGuidanceDisplayed",
+          "displayName": "탈퇴 안내사항 표시됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 147,
+          "sequence": 147
+        },
+        {
+          "id": "168af452-fca8-4028-b705-1c4b7ebaa06f",
+          "name": "MembershipWithdrawalFinalized",
+          "displayName": "회원 탈퇴 최종 반영됨",
+          "commandId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+          "commandName": "FinalizeMembershipWithdrawal",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 158,
+          "sequence": 150
+        },
+        {
+          "id": "097b060d-bd36-4787-9f43-44081e2f641a",
+          "name": "AllSessionsAndTokensTerminated",
+          "displayName": "모든 세션 및 토큰 종료됨",
+          "commandId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+          "commandName": "FinalizeMembershipWithdrawal",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 202,
+          "sequence": 150
+        },
+        {
+          "id": "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+          "name": "MembershipWithdrawn",
+          "displayName": "회원 탈퇴 완료됨",
+          "commandId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+          "commandName": "FinalizeMembershipWithdrawal",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 206,
+          "sequence": 150
+        },
+        {
+          "id": "a4d9fa67-9184-4fef-9a48-90cc193da38c",
+          "name": "MemberDataDeleted",
+          "displayName": "회원 데이터 삭제됨",
+          "commandId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+          "commandName": "FinalizeMembershipWithdrawal",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 208,
+          "sequence": 150
+        },
+        {
+          "id": "2ca4049b-969f-460d-a295-76e101c2a055",
+          "name": "WithdrawalResultNotified",
+          "displayName": "탈퇴 결과 안내됨",
+          "commandId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+          "commandName": "FinalizeMembershipWithdrawal",
+          "actor": "회원",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 150,
+          "sequence": 150
+        },
+        {
+          "id": "6f485931-cd7d-4c67-b3c7-5b244433afeb",
+          "name": "WithdrawalStatusAndReversalPossibilityNotified",
+          "displayName": "탈퇴 상태 및 철회 가능 여부 안내됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 151,
+          "sequence": 151
+        },
+        {
+          "id": "88746db9-88e5-4b89-9a23-d96e4b124854",
+          "name": "WithdrawalHistoryViewed",
+          "displayName": "탈퇴 이력 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 152,
+          "sequence": 152
+        },
+        {
+          "id": "5003d36d-9718-4326-a4c4-3d04397a59dd",
+          "name": "MembershipNotificationReceived",
+          "displayName": "회원 알림 수신됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 153,
+          "sequence": 153
+        },
+        {
+          "id": "8ba514ab-ecae-4cb8-9a01-08efe44cd44c",
+          "name": "MembershipNotificationReceptionFailed",
+          "displayName": "회원 알림 수신 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 154,
+          "sequence": 154
+        },
+        {
+          "id": "346a9cdf-865c-4b7a-ac4a-8cb8632f2184",
+          "name": "WithdrawalEligibilityChecked",
+          "displayName": "탈퇴 가능 여부 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 155,
+          "sequence": 155
+        },
+        {
+          "id": "cbfbc90c-d69e-4084-92b6-2eb90130725f",
+          "name": "WithdrawalEligibilityCheckFailed",
+          "displayName": "탈퇴 가능 여부 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 156,
+          "sequence": 156
+        },
+        {
+          "id": "9bf65fc2-2159-4061-aa39-6de24745964d",
+          "name": "WithdrawalImpactInformationAcknowledged",
+          "displayName": "탈퇴 영향 안내 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 157,
+          "sequence": 157
+        },
+        {
+          "id": "719f8596-807f-44f4-b4d3-666936f035d0",
+          "name": "MembershipWithdrawalFinalizationFailed",
+          "displayName": "회원 탈퇴 최종 반영 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 159,
+          "sequence": 159
+        },
+        {
+          "id": "600b639b-974e-4363-a1cc-469367930232",
+          "name": "RestorationScopeDisplayed",
+          "displayName": "복원 범위 안내됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 160,
+          "sequence": 160
+        },
+        {
+          "id": "248e94ef-af8b-4f67-87b5-7fd35e6dcc26",
+          "name": "ReenrollmentEligibilityChecked",
+          "displayName": "재가입 가능 여부 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 161,
+          "sequence": 161
+        },
+        {
+          "id": "aa54f330-83fb-4cdb-beb6-54abf3b636b6",
+          "name": "ReenrollmentEligibilityCheckFailed",
+          "displayName": "재가입 가능 여부 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 162,
+          "sequence": 162
+        },
+        {
+          "id": "4b5ef132-70e9-4ecb-854d-67a51c0e8b64",
+          "name": "RestorationScopeCheckFailed",
+          "displayName": "이력 복원 범위 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 164,
+          "sequence": 164
+        },
+        {
+          "id": "2c172311-84a7-4427-af69-e003239b64f2",
+          "name": "ReenrollmentInformationSubmissionFailed",
+          "displayName": "재가입 정보 제출 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 166,
+          "sequence": 166
+        },
+        {
+          "id": "4eb4c7ec-f468-4d72-be41-db9a4d8c9567",
+          "name": "MembershipReenrollmentFailed",
+          "displayName": "재가입 완료 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 168,
+          "sequence": 168
+        },
+        {
+          "id": "63374e3f-c370-433c-b7e4-9fb1e5e16c03",
+          "name": "MembershipReenrollmentCompletionFailed",
+          "displayName": "재가입 처리 실패됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 170,
+          "sequence": 170
+        },
+        {
+          "id": "a88b2efb-9ab4-4bed-b1c9-3044c04b9db2",
+          "name": "ReenrollmentCompletionNotified",
+          "displayName": "재가입 완료 안내됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 172,
+          "sequence": 172
+        },
+        {
+          "id": "a9d0c857-697b-4332-bec4-1658e7ae8bd4",
+          "name": "PersonalInformationDestroyed",
+          "displayName": "개인정보 파기됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 173,
+          "sequence": 173
+        },
+        {
+          "id": "5ed4bf5e-91d5-441f-b108-a4060f554e7c",
+          "name": "PersonalInformationDestructionOrSeparationFailed",
+          "displayName": "개인정보 파기 또는 분리보관 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 174,
+          "sequence": 174
+        },
+        {
+          "id": "e02629f5-721d-422c-a8f5-5f0ddba62e3d",
+          "name": "PersonalInformationRetentionSeparated",
+          "displayName": "개인정보 분리보관됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 175,
+          "sequence": 175
+        },
+        {
+          "id": "8d94d239-a183-420f-a25f-559b427cc3d8",
+          "name": "ProcessingHistoryRetrieved",
+          "displayName": "업무 처리 이력 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 176,
+          "sequence": 176
+        },
+        {
+          "id": "f246ae20-14f4-42b9-8ea3-c5376e785fed",
+          "name": "ProcessingHistoryRetrievalFailed",
+          "displayName": "업무 처리 이력 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 177,
+          "sequence": 177
+        },
+        {
+          "id": "ae2c3368-5692-4a18-8c84-936b5b81bdfd",
+          "name": "WithdrawalImpactInformationDisplayed",
+          "displayName": "탈퇴 영향 안내 표시됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 181,
+          "sequence": 181
+        },
+        {
+          "id": "77ecf969-d9e8-479f-b646-a179c8d4f5f5",
+          "name": "WithdrawalImpactInformationDisplayFailed",
+          "displayName": "탈퇴 영향 안내 표시 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 182,
+          "sequence": 182
+        },
+        {
+          "id": "80bf0a15-11b6-4005-96d0-c2706108fc43",
+          "name": "WithdrawalFinalConsentGiven",
+          "displayName": "탈퇴 최종 동의 완료됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 183,
+          "sequence": 183
+        },
+        {
+          "id": "436968c9-b575-4e8b-8e17-e20f78362c7f",
+          "name": "WithdrawalFinalConsentGivingFailed",
+          "displayName": "탈퇴 최종 동의 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 184,
+          "sequence": 184
+        },
+        {
+          "id": "f4a16e9a-e7fa-4530-988b-4ee83a0a176f",
+          "name": "WithdrawalResultNotificationFailed",
+          "displayName": "탈퇴 처리 결과 안내 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 185,
+          "sequence": 185
+        },
+        {
+          "id": "b139eb00-c0a9-4e8c-bffc-473e719b6d08",
+          "name": "WithdrawalCancellationRequested",
+          "displayName": "탈퇴 철회 요청됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 186,
+          "sequence": 186
+        },
+        {
+          "id": "56c02884-a887-41a9-9800-dc7965743c97",
+          "name": "WithdrawalCancellationRequestFailed",
+          "displayName": "탈퇴 철회 요청 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 187,
+          "sequence": 187
+        },
+        {
+          "id": "f804c8b2-cd67-42af-8746-b2a02fcd5cfc",
+          "name": "WithdrawalReasonSubmitted",
+          "displayName": "탈퇴 사유 제출됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 190,
+          "sequence": 190
+        },
+        {
+          "id": "eeee7269-5a03-4712-a339-6a795d4f9f5c",
+          "name": "WithdrawalReasonSubmissionFailed",
+          "displayName": "탈퇴 사유 제출 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 191,
+          "sequence": 191
+        },
+        {
+          "id": "3e34fdcf-4925-4071-a2df-8530554ef4aa",
+          "name": "OutstandingItemsChecked",
+          "displayName": "미납 미처리 항목 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 192,
+          "sequence": 192
+        },
+        {
+          "id": "b24955e9-ee21-4d85-9bd6-081388e37bff",
+          "name": "OutstandingItemsCheckFailed",
+          "displayName": "미납 미처리 항목 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 193,
+          "sequence": 193
+        },
+        {
+          "id": "0cca9de4-aad2-45df-a240-7824c4c613bb",
+          "name": "AssetExpirationInformationDisplayed",
+          "displayName": "자산 소멸 안내 표시됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 194,
+          "sequence": 194
+        },
+        {
+          "id": "280ab19b-51ae-43fa-85b7-2bf726a5dc9d",
+          "name": "AssetExpirationInformationDisplayFailed",
+          "displayName": "자산 소멸 안내 표시 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 195,
+          "sequence": 195
+        },
+        {
+          "id": "4bdd5ae7-38e1-40ac-94a7-48659f00abc0",
+          "name": "LinkedServiceImpactInformationAcknowledged",
+          "displayName": "연계 서비스 영향 안내 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 196,
+          "sequence": 196
+        },
+        {
+          "id": "dd972583-9ecb-40f3-8043-c9eb481d313f",
+          "name": "LinkedServiceImpactInformationAcknowledgementFailed",
+          "displayName": "연계 서비스 영향 안내 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 197,
+          "sequence": 197
+        },
+        {
+          "id": "2baee858-52e3-47c9-b194-ff57b5ebf14d",
+          "name": "WithdrawalGuidanceAcknowledged",
+          "displayName": "탈퇴 안내 사항 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 198,
+          "sequence": 198
+        },
+        {
+          "id": "c5b42e38-d619-4037-aa7b-93001b5aa598",
+          "name": "WithdrawalGuidanceAcknowledgementFailed",
+          "displayName": "탈퇴 안내 사항 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 199,
+          "sequence": 199
+        },
+        {
+          "id": "12c29f72-6e80-48bb-a5ba-dbf979b47f70",
+          "name": "MembershipWithdrawalStatusChanged",
+          "displayName": "회원 탈퇴 상태로 전환됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 200,
+          "sequence": 200
+        },
+        {
+          "id": "fc98ad86-6bef-44a1-b27d-4c7ed082ecc7",
+          "name": "MembershipWithdrawalStatusChangeFailed",
+          "displayName": "회원 탈퇴 상태 전환 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 201,
+          "sequence": 201
+        },
+        {
+          "id": "e20cd1e9-c526-495d-8406-8a8751b3f10c",
+          "name": "AllSessionsAndTokensTerminationFailed",
+          "displayName": "모든 세션 및 토큰 종료 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 203,
+          "sequence": 203
+        },
+        {
+          "id": "66840d7f-29db-45ce-aaa2-e716e326150d",
+          "name": "WithdrawalCancellationRevoked",
+          "displayName": "탈퇴 철회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 204,
+          "sequence": 204
+        },
+        {
+          "id": "29c61b43-e140-46e2-b644-4a3063d23ecd",
+          "name": "WithdrawalCancellationRevocationFailed",
+          "displayName": "탈퇴 철회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 205,
+          "sequence": 205
+        },
+        {
+          "id": "3ed80ff8-2779-4019-a65e-98f9c1c50354",
+          "name": "MemberDataRetained",
+          "displayName": "회원 데이터 보관됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 207,
+          "sequence": 207
+        },
+        {
+          "id": "94e1f911-5ccb-4365-80f1-ca26475fe5f5",
+          "name": "MemberDataRetentionOrDeletionFailed",
+          "displayName": "회원 데이터 보관 또는 삭제 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 209,
+          "sequence": 209
+        },
+        {
+          "id": "fc407add-edb7-4854-a56f-e45dc52dba3b",
+          "name": "AccountRestorationEligibilityChecked",
+          "displayName": "계정 복원 가능 여부 확인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 210,
+          "sequence": 210
+        },
+        {
+          "id": "07d15880-36be-41a0-8fbb-911f72f85ae5",
+          "name": "AccountRestorationEligibilityCheckFailed",
+          "displayName": "계정 복원 가능 여부 확인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 211,
+          "sequence": 211
+        },
+        {
+          "id": "7e127101-45df-4759-8a99-42244ef733b4",
+          "name": "RejoinRestrictionExceptionApproved",
+          "displayName": "재가입 제한 예외 승인됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 212,
+          "sequence": 212
+        },
+        {
+          "id": "cb97eff1-7502-4c50-971d-b5439766d5d9",
+          "name": "RejoinRestrictionExceptionApprovalFailed",
+          "displayName": "재가입 제한 예외 승인 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 213,
+          "sequence": 213
+        },
+        {
+          "id": "f773647d-b507-44ce-9df8-5a9c7f66d7f1",
+          "name": "MemberRejoinFailed",
+          "displayName": "회원 재가입 실패함",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 215,
+          "sequence": 215
+        },
+        {
+          "id": "6f187113-084f-4f46-a03c-112807f9751a",
+          "name": "RejoinGuidanceDisplayed",
+          "displayName": "재가입 안내 표시됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 216,
+          "sequence": 216
+        },
+        {
+          "id": "800f12a5-643d-4944-97e0-e4c9f32ee4d2",
+          "name": "RejoinGuidanceDisplayFailed",
+          "displayName": "재가입 안내 표시 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+          "storedSequence": 217,
+          "sequence": 217
+        }
+      ]
+    },
+    {
+      "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+      "bcName": "TermsAndAuthenticationManagement",
+      "bcDisplayName": "약관 및 본인인증 관리",
+      "events": [
+        {
+          "id": "fb8c70d8-2ca6-491b-8313-0d643ccac633",
+          "name": "TermsConsented",
+          "displayName": "약관 동의됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 50,
+          "sequence": 50
+        },
+        {
+          "id": "ff0bed79-7570-4ed8-840a-33f2cf53f7fa",
+          "name": "TermsConsentGivingFailed",
+          "displayName": "약관 동의 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 54,
+          "sequence": 54
+        },
+        {
+          "id": "18003c5d-c7cc-497d-ac39-d78e7bff5ad0",
+          "name": "AuthenticationHistoryRecorded",
+          "displayName": "인증 이력 저장됨",
+          "commandId": "4a604096-d435-4651-a318-af694d27c160",
+          "commandName": "PerformAuthentication",
+          "actor": "고객",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 71,
+          "sequence": 71
+        },
+        {
+          "id": "d9c0c679-05ee-418d-8cc7-6659d9600370",
+          "name": "AuthenticationHistoryRecordingFailed",
+          "displayName": "인증 이력 저장 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 72,
+          "sequence": 72
+        },
+        {
+          "id": "33fc98b5-2bd3-4d07-b924-8ea25440ee89",
+          "name": "AuthenticationHistoryViewed",
+          "displayName": "인증 이력 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 110,
+          "sequence": 110
+        },
+        {
+          "id": "d67fc2cb-9940-4eb0-a12b-75e00c6b4b6b",
+          "name": "AuthenticationHistoryViewFailed",
+          "displayName": "인증 이력 조회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 111,
+          "sequence": 111
+        },
+        {
+          "id": "65acb752-0b10-442b-988c-0e4ee0ca376c",
+          "name": "MembershipWithdrawalConfirmed",
+          "displayName": "회원 탈퇴 확정됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 148,
+          "sequence": 148
+        },
+        {
+          "id": "2438c14d-faa2-4930-82de-b1d3e054cec1",
+          "name": "MembershipWithdrawalConfirmationFailed",
+          "displayName": "회원 탈퇴 확정 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 149,
+          "sequence": 149
+        },
+        {
+          "id": "971f13be-f9a2-4eb2-8b0d-41669896f232",
+          "name": "AgreementConsentHistoryViewed",
+          "displayName": "약관 동의 이력 조회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 178,
+          "sequence": 178
+        },
+        {
+          "id": "da50669a-e5f8-4b90-a2da-ae9c01e560d2",
+          "name": "AgreementConsentWithdrawn",
+          "displayName": "약관 동의 철회됨",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 179,
+          "sequence": 179
+        },
+        {
+          "id": "9ece9de6-0e09-4498-93cd-b3e08ca21352",
+          "name": "AgreementConsentWithdrawalFailed",
+          "displayName": "약관 동의 철회 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 180,
+          "sequence": 180
+        },
+        {
+          "id": "7325266d-8e9e-439c-a76b-33df6d8d9c92",
+          "name": "HighRiskActionAuthenticationSucceeded",
+          "displayName": "고위험 업무 추가 인증 성공",
+          "commandId": "fc5eb62a-344c-4091-83b2-13cefadfbaa0",
+          "commandName": "PerformHighRiskActionAuthentication",
+          "actor": "회원",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 188,
+          "sequence": 188
+        },
+        {
+          "id": "d049efe4-fcf8-43aa-93c3-aa6b8b652ede",
+          "name": "HighRiskActionAuthenticationFailed",
+          "displayName": "고위험 업무 추가 인증 실패",
+          "commandId": null,
+          "commandName": "",
+          "actor": "System",
+          "bcId": "fd931fa3-d5de-49f4-a2c1-27750f434dab",
+          "storedSequence": 189,
+          "sequence": 189
+        }
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "type": "ui-to-command",
+      "sourceId": "cd1190ef-39b9-416f-b377-5a44c5f0a265",
+      "targetId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "sequence": 7
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "targetId": "a8c2ddae-2710-4574-8acb-4b73f4a093b5",
+      "sequence": 7
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "targetId": "b8847724-c183-4c57-923d-c3eaa5e2dd65",
+      "sequence": 7
+    },
+    {
+      "type": "event-to-command",
+      "sourceId": "b8847724-c183-4c57-923d-c3eaa5e2dd65",
+      "targetId": "2ed2b29a-1b11-4e57-86b7-b7e2b4e91ec5",
+      "sequence": 7
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "targetId": "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+      "sequence": 7
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+      "targetId": "2662b6d1-b5e3-4e97-958a-c585916da96c",
+      "sequence": 7
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "targetId": "9ee46c81-65bd-4d4b-88f4-1370fe7bd27a",
+      "sequence": 7
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "9ee46c81-65bd-4d4b-88f4-1370fe7bd27a",
+      "targetId": "fa01b55e-ff52-44eb-9cee-190bb32e2a8a",
+      "sequence": 7
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "targetId": "07df889a-8709-4b1b-99ae-a206fae361a4",
+      "sequence": 7
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "targetId": "bec17f2d-ee8c-4640-8ce0-412fea27c853",
+      "sequence": 7
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "bec17f2d-ee8c-4640-8ce0-412fea27c853",
+      "targetId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "sequence": 7
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "8fdef553-69be-4f21-8f73-4c3fa87e7cfb",
+      "targetId": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+      "sequence": 27
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+      "targetId": "3afaa85a-eab6-440b-a3f4-9b221c3b5eb8",
+      "sequence": 27
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+      "targetId": "fe57afb5-3d75-467f-ab3a-042c963a081b",
+      "sequence": 27
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "1c041cb6-9120-45bd-ac3c-68792fd24a0c",
+      "targetId": "83586ca6-eabe-4cc0-9909-c1dfb7942f70",
+      "sequence": 73
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "83586ca6-eabe-4cc0-9909-c1dfb7942f70",
+      "targetId": "7b133416-e9e7-4094-a047-6823dfd90943",
+      "sequence": 73
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "7b133416-e9e7-4094-a047-6823dfd90943",
+      "targetId": "fa01b55e-ff52-44eb-9cee-190bb32e2a8a",
+      "sequence": 73
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "689ac4e2-8837-4ec9-8dbd-b8129dd5f623",
+      "targetId": "920f2065-85de-4fed-b159-1da7913bd14b",
+      "sequence": 77
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "920f2065-85de-4fed-b159-1da7913bd14b",
+      "targetId": "1769bc03-1e84-4e44-be31-2bb12e75f3ae",
+      "sequence": 77
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "1769bc03-1e84-4e44-be31-2bb12e75f3ae",
+      "targetId": "fa01b55e-ff52-44eb-9cee-190bb32e2a8a",
+      "sequence": 77
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "8f140d36-12d3-4d38-99bc-a82306efe397",
+      "targetId": "ca9c3420-9f5c-471b-a7fc-d1746d5ac734",
+      "sequence": 141
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "ca9c3420-9f5c-471b-a7fc-d1746d5ac734",
+      "targetId": "3165245c-0702-4d3d-b244-bbfae4d74316",
+      "sequence": 141
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+      "targetId": "168af452-fca8-4028-b705-1c4b7ebaa06f",
+      "sequence": 150
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "168af452-fca8-4028-b705-1c4b7ebaa06f",
+      "targetId": "678f031c-d745-4b82-87db-32a1fe80a138",
+      "sequence": 150
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "168af452-fca8-4028-b705-1c4b7ebaa06f",
+      "targetId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "sequence": 150
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+      "targetId": "097b060d-bd36-4787-9f43-44081e2f641a",
+      "sequence": 150
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+      "targetId": "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+      "sequence": 150
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+      "targetId": "678f031c-d745-4b82-87db-32a1fe80a138",
+      "sequence": 150
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+      "targetId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "sequence": 150
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+      "targetId": "a0904fd6-63ee-4508-a356-0972697aaf55",
+      "sequence": 150
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+      "targetId": "a4d9fa67-9184-4fef-9a48-90cc193da38c",
+      "sequence": 150
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+      "targetId": "2ca4049b-969f-460d-a295-76e101c2a055",
+      "sequence": 150
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "2ca4049b-969f-460d-a295-76e101c2a055",
+      "targetId": "a0904fd6-63ee-4508-a356-0972697aaf55",
+      "sequence": 150
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "f96be58f-f6bd-4b98-b326-cbead7542d25",
+      "targetId": "3e8fab7e-8cdd-4e2c-bd77-acfe517090be",
+      "sequence": 79
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "3e8fab7e-8cdd-4e2c-bd77-acfe517090be",
+      "targetId": "5099b039-54b5-4e3e-9fe3-d6117e3c2c14",
+      "sequence": 79
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "5099b039-54b5-4e3e-9fe3-d6117e3c2c14",
+      "targetId": "678f031c-d745-4b82-87db-32a1fe80a138",
+      "sequence": 79
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "5099b039-54b5-4e3e-9fe3-d6117e3c2c14",
+      "targetId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "sequence": 79
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "4a6a093d-570d-4246-baa0-ec13f9307d67",
+      "targetId": "3bef4807-5171-48f8-a712-a36e50fd200a",
+      "sequence": 42
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "3bef4807-5171-48f8-a712-a36e50fd200a",
+      "targetId": "9eccaba7-5c04-4ff2-b5d6-d76774cd64eb",
+      "sequence": 42
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "79833ab8-bf49-4851-8621-899e6045ada5",
+      "targetId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "sequence": 36
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "targetId": "8df1636f-41ec-41ca-b717-308f5f25d670",
+      "sequence": 36
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "targetId": "1f60f73c-06c5-4420-b491-9b453bc2b3b1",
+      "sequence": 36
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "targetId": "e026c052-9a9f-438e-abb3-7c438e8f6a60",
+      "sequence": 36
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "targetId": "90f7e8c4-3976-4d7b-8ef0-9070939b3668",
+      "sequence": 36
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "90f7e8c4-3976-4d7b-8ef0-9070939b3668",
+      "targetId": "678f031c-d745-4b82-87db-32a1fe80a138",
+      "sequence": 36
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "targetId": "b20592df-42ac-41ca-a3de-5b5a779a9b61",
+      "sequence": 36
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "b20592df-42ac-41ca-a3de-5b5a779a9b61",
+      "targetId": "678f031c-d745-4b82-87db-32a1fe80a138",
+      "sequence": 36
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "targetId": "40040733-a700-4b0e-bc97-447d56b70ca9",
+      "sequence": 36
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "40040733-a700-4b0e-bc97-447d56b70ca9",
+      "targetId": "678f031c-d745-4b82-87db-32a1fe80a138",
+      "sequence": 36
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "40040733-a700-4b0e-bc97-447d56b70ca9",
+      "targetId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "sequence": 36
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "ace944c0-dd98-48fe-90a1-9282af00fb9b",
+      "targetId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "sequence": 29
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "targetId": "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+      "sequence": 29
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+      "targetId": "d9be9679-1b4c-4287-99ff-6a84d5f7f9e0",
+      "sequence": 29
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+      "targetId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "sequence": 29
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "targetId": "871e5c60-967e-4688-a664-f028724c83f0",
+      "sequence": 29
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "targetId": "825b06ea-3e3b-4c2f-8bec-e6e00dd6dfed",
+      "sequence": 29
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "targetId": "9432193e-b40c-4124-996f-a0c89a0e9c39",
+      "sequence": 29
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "targetId": "a38e5b0e-a2cc-4cad-887b-0cc4442cd8cd",
+      "sequence": 29
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "a38e5b0e-a2cc-4cad-887b-0cc4442cd8cd",
+      "targetId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "sequence": 29
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "targetId": "bb8ffca3-d26f-49d9-a88b-d1dd41c2694e",
+      "sequence": 29
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "targetId": "36c161e5-00d9-48a6-acaf-6ba5a3fbeacd",
+      "sequence": 29
+    },
+    {
+      "type": "event-to-command",
+      "sourceId": "36c161e5-00d9-48a6-acaf-6ba5a3fbeacd",
+      "targetId": "2ed2b29a-1b11-4e57-86b7-b7e2b4e91ec5",
+      "sequence": 29
+    },
+    {
+      "type": "event-to-command",
+      "sourceId": "36c161e5-00d9-48a6-acaf-6ba5a3fbeacd",
+      "targetId": "4a604096-d435-4651-a318-af694d27c160",
+      "sequence": 29
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "f3c4d776-1361-4e58-b2ad-f5358d2b33de",
+      "targetId": "ac79b98c-6918-48b1-ae49-7bfbbf31cb29",
+      "sequence": 145
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "ac79b98c-6918-48b1-ae49-7bfbbf31cb29",
+      "targetId": "2f6128dc-e955-4f3d-aed4-9a4ce97b97a2",
+      "sequence": 145
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "f7108871-4917-49e2-9cd5-81399de4600f",
+      "targetId": "0417efa3-d73b-4c27-b594-83ca502c94e1",
+      "sequence": 218
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "ff328852-c5ce-4f02-b691-3c4b04dd17e3",
+      "targetId": "48a9cee0-a655-4c28-8526-30b7d0bb72ec",
+      "sequence": 219
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "targetId": "68d69f29-9b6e-428d-b19b-57fb867a197d",
+      "sequence": 118
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "68d69f29-9b6e-428d-b19b-57fb867a197d",
+      "targetId": "e21217ff-f793-4608-89db-6e6e221012f3",
+      "sequence": 118
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "a97cfdd3-5be2-4e99-853a-a85e94eeeefd",
+      "targetId": "fd0b9ebc-864d-4e70-89e3-a4e74de5fefc",
+      "sequence": 64
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "fd0b9ebc-864d-4e70-89e3-a4e74de5fefc",
+      "targetId": "81cca102-9ec9-4a9a-8852-3c72b1d72810",
+      "sequence": 64
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "81cca102-9ec9-4a9a-8852-3c72b1d72810",
+      "targetId": "0e035724-8056-473b-8145-2c1206804534",
+      "sequence": 64
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "81cca102-9ec9-4a9a-8852-3c72b1d72810",
+      "targetId": "3286e7ac-63a0-44c3-81dd-dde1f9ee0561",
+      "sequence": 64
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "fd0b9ebc-864d-4e70-89e3-a4e74de5fefc",
+      "targetId": "2f88b6c8-bf7e-420d-82f7-8a2dc92b3cf5",
+      "sequence": 64
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "2f88b6c8-bf7e-420d-82f7-8a2dc92b3cf5",
+      "targetId": "0e035724-8056-473b-8145-2c1206804534",
+      "sequence": 64
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "2f88b6c8-bf7e-420d-82f7-8a2dc92b3cf5",
+      "targetId": "3286e7ac-63a0-44c3-81dd-dde1f9ee0561",
+      "sequence": 64
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "51a3e14e-f65a-49b5-ac36-65e3c3bfea7e",
+      "targetId": "da72cebc-0617-4594-b87a-4b31f57291c3",
+      "sequence": 55
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "da72cebc-0617-4594-b87a-4b31f57291c3",
+      "targetId": "97834e45-3e6d-465b-b2c7-f5ed4eb473cb",
+      "sequence": 55
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "97834e45-3e6d-465b-b2c7-f5ed4eb473cb",
+      "targetId": "0e035724-8056-473b-8145-2c1206804534",
+      "sequence": 55
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "97834e45-3e6d-465b-b2c7-f5ed4eb473cb",
+      "targetId": "3286e7ac-63a0-44c3-81dd-dde1f9ee0561",
+      "sequence": 55
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "da72cebc-0617-4594-b87a-4b31f57291c3",
+      "targetId": "d4355f6c-826a-4487-a291-c7963df1a6f7",
+      "sequence": 55
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "d4355f6c-826a-4487-a291-c7963df1a6f7",
+      "targetId": "0e035724-8056-473b-8145-2c1206804534",
+      "sequence": 55
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "d4355f6c-826a-4487-a291-c7963df1a6f7",
+      "targetId": "3286e7ac-63a0-44c3-81dd-dde1f9ee0561",
+      "sequence": 55
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "4a604096-d435-4651-a318-af694d27c160",
+      "targetId": "18003c5d-c7cc-497d-ac39-d78e7bff5ad0",
+      "sequence": 71
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "18003c5d-c7cc-497d-ac39-d78e7bff5ad0",
+      "targetId": "1936efa3-dd0d-4026-b62b-9cbd8e911952",
+      "sequence": 71
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "137283c8-cf67-40fc-9588-3286413e6e76",
+      "targetId": "b5627d47-1451-4417-b8a0-5b1fea26102d",
+      "sequence": 221
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+      "targetId": "fc5eb62a-344c-4091-83b2-13cefadfbaa0",
+      "sequence": 188
+    },
+    {
+      "type": "command-to-event",
+      "sourceId": "fc5eb62a-344c-4091-83b2-13cefadfbaa0",
+      "targetId": "7325266d-8e9e-439c-a76b-33df6d8d9c92",
+      "sequence": 188
+    },
+    {
+      "type": "event-to-readmodel",
+      "sourceId": "7325266d-8e9e-439c-a76b-33df6d8d9c92",
+      "targetId": "1936efa3-dd0d-4026-b62b-9cbd8e911952",
+      "sequence": 188
+    },
+    {
+      "type": "event-to-command",
+      "sourceId": "7325266d-8e9e-439c-a76b-33df6d8d9c92",
+      "targetId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+      "sequence": 188
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "eb6d801d-e15d-4b13-b53b-814f6f6e5415",
+      "targetId": "625c6443-6d8c-4b7a-90ea-daf3f6c8702a",
+      "sequence": 222
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "29ca7be4-d590-4704-8a0e-5b4cdaf5e0d3",
+      "targetId": "f8fa08d9-9603-45ec-8fb7-d1d67164c473",
+      "sequence": 224
+    },
+    {
+      "type": "ui-to-command",
+      "sourceId": "8c993cf8-6758-4586-930a-6be9f448064f",
+      "targetId": "5fdbb2b2-a4b5-4a4b-9b3d-3df870e24e7b",
+      "sequence": 225
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "678f031c-d745-4b82-87db-32a1fe80a138",
+      "targetId": "bce90f49-9316-4a7e-a77e-ea315211be42"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "2662b6d1-b5e3-4e97-958a-c585916da96c",
+      "targetId": "7ac4775d-5a14-45d0-84c4-f808a9c71e69"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "fa01b55e-ff52-44eb-9cee-190bb32e2a8a",
+      "targetId": "2538e9c2-9a1e-4997-8226-a03d437469a8"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "d9be9679-1b4c-4287-99ff-6a84d5f7f9e0",
+      "targetId": "2dfe4303-1a47-42f5-9384-b6f889344c50"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "3ed68195-7885-4454-8b34-1908fc0e8440",
+      "targetId": "96ece9e2-94e8-4f17-9557-6a78660a6bd1"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "a0904fd6-63ee-4508-a356-0972697aaf55",
+      "targetId": "2a17b719-e4f9-4a86-883d-bffd4552f96e"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "0e035724-8056-473b-8145-2c1206804534",
+      "targetId": "6510c350-b1b1-4f12-a06e-d6eceb6f62c6"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "3286e7ac-63a0-44c3-81dd-dde1f9ee0561",
+      "targetId": "7ec31a66-83f3-4897-8278-37be432fde90"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "58a1ba62-eafa-45b1-bb45-46492ff6b209",
+      "targetId": "87793b91-b800-4148-88e4-faa02e9c66b9"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "f7d0a817-99ba-4e75-9a14-72209fb31d5b",
+      "targetId": "7415a7ec-b941-4cd1-971d-3beb59f83880"
+    },
+    {
+      "type": "readmodel-to-ui",
+      "sourceId": "1936efa3-dd0d-4026-b62b-9cbd8e911952",
+      "targetId": "198e7f20-770e-4e55-b233-d7ff50fec2ba"
+    }
+  ],
+  "maxSequence": 225,
+  "gateways": [
+    {
+      "id": "dc034732-d27b-5437-930f-d4e143026575",
+      "key": "membershipmanagement.journey.unnamed-2e2729392809.step.gateway.unnamed-62cd2120cca7",
+      "label": "가입 가능 여부?",
+      "kind": "exclusive",
+      "bounded_context_id": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "source": "llm",
+      "journey_id": "unnamed-2e2729392809",
+      "journey_name": "회원 가입",
+      "created_at": "2026-05-15T10:40:30.391Z",
+      "updated_at": "2026-05-15T10:40:30.391Z"
+    },
+    {
+      "id": "f45ce39c-b081-5f72-8a81-267e03265e9c",
+      "key": "membershipmanagement.journey.unnamed-f213558fcbb4.step.gateway.unnamed-3e554e7880ac",
+      "label": "휴면 회원 여부?",
+      "kind": "exclusive",
+      "bounded_context_id": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "source": "llm",
+      "journey_id": "unnamed-f213558fcbb4",
+      "journey_name": "휴면 해제",
+      "created_at": "2026-05-15T10:40:30.495Z",
+      "updated_at": "2026-05-15T10:40:30.495Z"
+    },
+    {
+      "id": "359f85f7-4691-5530-b039-3b2dbb5157f0",
+      "key": "membershipmanagement.journey.unnamed-55ddf85d0d0f.step.gateway.unnamed-7cd5feca36f5",
+      "label": "탈퇴 진행 여부?",
+      "kind": "exclusive",
+      "bounded_context_id": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "source": "llm",
+      "journey_id": "unnamed-55ddf85d0d0f",
+      "journey_name": "회원 탈퇴",
+      "created_at": "2026-05-15T10:40:30.521Z",
+      "updated_at": "2026-05-15T10:40:30.521Z"
+    },
+    {
+      "id": "1cb1b916-f000-5850-954b-4af64ecca5c8",
+      "key": "membershipmanagement.journey.unnamed-2a6a7184e0ac.step.gateway.unnamed-47ae7cae2c9d",
+      "label": "재가입 가능 여부?",
+      "kind": "exclusive",
+      "bounded_context_id": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+      "source": "llm",
+      "journey_id": "unnamed-2a6a7184e0ac",
+      "journey_name": "재가입",
+      "created_at": "2026-05-15T10:40:30.548Z",
+      "updated_at": "2026-05-15T10:40:30.548Z"
+    }
+  ],
+  "uiFlowEdges": [
+    {
+      "id": "68fe33a8-88c2-5f7f-9caa-d8f9407c1c0c",
+      "source_id": "f7108871-4917-49e2-9cd5-81399de4600f",
+      "source_kind": "ui",
+      "target_id": "689ac4e2-8837-4ec9-8dbd-b8129dd5f623",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-001-01 ... 후행 프로세스 개인정보 입력",
+      "journey_id": "unnamed-2e2729392809",
+      "journey_name": "회원 가입",
+      "created_at": "2026-05-15T10:40:30.455Z",
+      "updated_at": "2026-05-15T10:40:30.455Z"
+    },
+    {
+      "id": "8c83bbb0-2a17-508d-a8b8-f95498feddf4",
+      "source_id": "689ac4e2-8837-4ec9-8dbd-b8129dd5f623",
+      "source_kind": "ui",
+      "target_id": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-001-02 ... 후행 프로세스 본인인증",
+      "journey_id": "unnamed-2e2729392809",
+      "journey_name": "회원 가입",
+      "created_at": "2026-05-15T10:40:30.455Z",
+      "updated_at": "2026-05-15T10:40:30.455Z"
+    },
+    {
+      "id": "42996666-7588-5b28-b158-413ea3350695",
+      "source_id": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+      "source_kind": "ui",
+      "target_id": "bce90f49-9316-4a7e-a77e-ea315211be42",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-001-03 ... 후행 프로세스 회원 검증",
+      "journey_id": "unnamed-2e2729392809",
+      "journey_name": "회원 가입",
+      "created_at": "2026-05-15T10:40:30.455Z",
+      "updated_at": "2026-05-15T10:40:30.455Z"
+    },
+    {
+      "id": "486115cd-58c9-5e40-a8af-ad543ede98dc",
+      "source_id": "dc034732-d27b-5437-930f-d4e143026575",
+      "source_kind": "gateway",
+      "target_id": "bce90f49-9316-4a7e-a77e-ea315211be42",
+      "target_kind": "ui",
+      "condition": "아니오",
+      "source": "llm",
+      "document_excerpt": "BPMN: 아니오: 가입제한/재가입 안내",
+      "journey_id": "unnamed-2e2729392809",
+      "journey_name": "회원 가입",
+      "created_at": "2026-05-15T10:40:30.455Z",
+      "updated_at": "2026-05-15T10:40:30.455Z"
+    },
+    {
+      "id": "85d079c3-c5e2-5ff9-b009-4d011570ffe4",
+      "source_id": "dc034732-d27b-5437-930f-d4e143026575",
+      "source_kind": "gateway",
+      "target_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "target_kind": "ui",
+      "condition": "예",
+      "source": "llm",
+      "document_excerpt": "BPMN: 예 → 가입 처리",
+      "journey_id": "unnamed-2e2729392809",
+      "journey_name": "회원 가입",
+      "created_at": "2026-05-15T10:40:30.455Z",
+      "updated_at": "2026-05-15T10:40:30.455Z"
+    },
+    {
+      "id": "f20f14d3-a5be-599f-b618-aad56a7e85cf",
+      "source_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "source_kind": "ui",
+      "target_id": "cd1190ef-39b9-416f-b377-5a44c5f0a265",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-001-05 ... 후행 프로세스 -",
+      "journey_id": "unnamed-2e2729392809",
+      "journey_name": "회원 가입",
+      "created_at": "2026-05-15T10:40:30.455Z",
+      "updated_at": "2026-05-15T10:40:30.455Z"
+    },
+    {
+      "id": "4d6f7ff6-c834-532d-a6fe-de6e23b455a7",
+      "source_id": "bce90f49-9316-4a7e-a77e-ea315211be42",
+      "source_kind": "ui",
+      "target_id": "dc034732-d27b-5437-930f-d4e143026575",
+      "target_kind": "gateway",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-001-04 ... 후행 프로세스 가입 처리",
+      "journey_id": "unnamed-2e2729392809",
+      "journey_name": "회원 가입",
+      "created_at": "2026-05-15T10:40:30.455Z",
+      "updated_at": "2026-05-15T10:40:30.455Z"
+    },
+    {
+      "id": "21c4f7b4-5705-5a8d-8093-d9a6103d01c8",
+      "source_id": "8fdef553-69be-4f21-8f73-4c3fa87e7cfb",
+      "source_kind": "ui",
+      "target_id": "4a6a093d-570d-4246-baa0-ec13f9307d67",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-002-01 ... 후행 프로세스 휴면 여부 확인",
+      "journey_id": "unnamed-f213558fcbb4",
+      "journey_name": "휴면 해제",
+      "created_at": "2026-05-15T10:40:30.508Z",
+      "updated_at": "2026-05-15T10:40:30.508Z"
+    },
+    {
+      "id": "26ad10dc-7dd2-5396-b607-06ac25492230",
+      "source_id": "f45ce39c-b081-5f72-8a81-267e03265e9c",
+      "source_kind": "gateway",
+      "target_id": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+      "target_kind": "ui",
+      "condition": "예",
+      "source": "llm",
+      "document_excerpt": "BPMN: 예 → 본인인증",
+      "journey_id": "unnamed-f213558fcbb4",
+      "journey_name": "휴면 해제",
+      "created_at": "2026-05-15T10:40:30.508Z",
+      "updated_at": "2026-05-15T10:40:30.508Z"
+    },
+    {
+      "id": "9303eaf2-9f9d-5d43-8aa3-5ce679790b82",
+      "source_id": "79833ab8-bf49-4851-8621-899e6045ada5",
+      "source_kind": "ui",
+      "target_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-002-05 ... 후행 프로세스 휴면 해제 처리 결과 안내",
+      "journey_id": "unnamed-f213558fcbb4",
+      "journey_name": "휴면 해제",
+      "created_at": "2026-05-15T10:40:30.508Z",
+      "updated_at": "2026-05-15T10:40:30.508Z"
+    },
+    {
+      "id": "04b8ca39-0004-5c71-9429-c2eb3d68fece",
+      "source_id": "f45ce39c-b081-5f72-8a81-267e03265e9c",
+      "source_kind": "gateway",
+      "target_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "target_kind": "ui",
+      "condition": "아니오",
+      "source": "llm",
+      "document_excerpt": "BPMN: 아니오: 일반 로그인 결과 반환",
+      "journey_id": "unnamed-f213558fcbb4",
+      "journey_name": "휴면 해제",
+      "created_at": "2026-05-15T10:40:30.508Z",
+      "updated_at": "2026-05-15T10:40:30.508Z"
+    },
+    {
+      "id": "e33c03ba-6046-57ef-9ff3-34b18e0d0f9f",
+      "source_id": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+      "source_kind": "ui",
+      "target_id": "f7108871-4917-49e2-9cd5-81399de4600f",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-002-03 ... 후행 프로세스 약관 동의",
+      "journey_id": "unnamed-f213558fcbb4",
+      "journey_name": "휴면 해제",
+      "created_at": "2026-05-15T10:40:30.508Z",
+      "updated_at": "2026-05-15T10:40:30.508Z"
+    },
+    {
+      "id": "eccdfb2f-2596-5214-841e-87a33a6549d0",
+      "source_id": "f7108871-4917-49e2-9cd5-81399de4600f",
+      "source_kind": "ui",
+      "target_id": "79833ab8-bf49-4851-8621-899e6045ada5",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-002-04 ... 후행 프로세스 휴면 해제 처리",
+      "journey_id": "unnamed-f213558fcbb4",
+      "journey_name": "휴면 해제",
+      "created_at": "2026-05-15T10:40:30.508Z",
+      "updated_at": "2026-05-15T10:40:30.508Z"
+    },
+    {
+      "id": "822244ba-6317-5023-bf01-4eb76845c4e0",
+      "source_id": "4a6a093d-570d-4246-baa0-ec13f9307d67",
+      "source_kind": "ui",
+      "target_id": "f45ce39c-b081-5f72-8a81-267e03265e9c",
+      "target_kind": "gateway",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "BPMN: X 휴면 회원?",
+      "journey_id": "unnamed-f213558fcbb4",
+      "journey_name": "휴면 해제",
+      "created_at": "2026-05-15T10:40:30.508Z",
+      "updated_at": "2026-05-15T10:40:30.508Z"
+    },
+    {
+      "id": "504837d9-7feb-5d7f-b9df-651b286c03ba",
+      "source_id": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+      "source_kind": "ui",
+      "target_id": "f3c4d776-1361-4e58-b2ad-f5358d2b33de",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-003-01 ... 후행 프로세스 탈퇴 사유 입력",
+      "journey_id": "unnamed-55ddf85d0d0f",
+      "journey_name": "회원 탈퇴",
+      "created_at": "2026-05-15T10:40:30.535Z",
+      "updated_at": "2026-05-15T10:40:30.535Z"
+    },
+    {
+      "id": "565a70ab-4220-534c-ab19-5f3aeb6a4132",
+      "source_id": "f3c4d776-1361-4e58-b2ad-f5358d2b33de",
+      "source_kind": "ui",
+      "target_id": "2a17b719-e4f9-4a86-883d-bffd4552f96e",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-003-02 ... 후행 프로세스 탈퇴 전 안내 확인",
+      "journey_id": "unnamed-55ddf85d0d0f",
+      "journey_name": "회원 탈퇴",
+      "created_at": "2026-05-15T10:40:30.535Z",
+      "updated_at": "2026-05-15T10:40:30.535Z"
+    },
+    {
+      "id": "520171f8-bd50-5056-b1b0-a43a890d56b2",
+      "source_id": "2a17b719-e4f9-4a86-883d-bffd4552f96e",
+      "source_kind": "ui",
+      "target_id": "eb6d801d-e15d-4b13-b53b-814f6f6e5415",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-003-03 ... 후행 프로세스 탈퇴 최종 동의",
+      "journey_id": "unnamed-55ddf85d0d0f",
+      "journey_name": "회원 탈퇴",
+      "created_at": "2026-05-15T10:40:30.535Z",
+      "updated_at": "2026-05-15T10:40:30.535Z"
+    },
+    {
+      "id": "863d7212-315b-5519-b5fa-40c736d69d34",
+      "source_id": "359f85f7-4691-5530-b039-3b2dbb5157f0",
+      "source_kind": "gateway",
+      "target_id": "8f140d36-12d3-4d38-99bc-a82306efe397",
+      "target_kind": "ui",
+      "condition": "예",
+      "source": "llm",
+      "document_excerpt": "BPMN: 예 → 탈퇴 처리",
+      "journey_id": "unnamed-55ddf85d0d0f",
+      "journey_name": "회원 탈퇴",
+      "created_at": "2026-05-15T10:40:30.535Z",
+      "updated_at": "2026-05-15T10:40:30.535Z"
+    },
+    {
+      "id": "dbef089e-f676-510d-8d71-9870ae77e586",
+      "source_id": "8f140d36-12d3-4d38-99bc-a82306efe397",
+      "source_kind": "ui",
+      "target_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-003-05 ... 후행 프로세스 탈퇴 결과 안내",
+      "journey_id": "unnamed-55ddf85d0d0f",
+      "journey_name": "회원 탈퇴",
+      "created_at": "2026-05-15T10:40:30.535Z",
+      "updated_at": "2026-05-15T10:40:30.535Z"
+    },
+    {
+      "id": "aaba4de6-e636-5bb6-863e-c5dddeefb5ee",
+      "source_id": "359f85f7-4691-5530-b039-3b2dbb5157f0",
+      "source_kind": "gateway",
+      "target_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "target_kind": "ui",
+      "condition": "아니오",
+      "source": "llm",
+      "document_excerpt": "BPMN: 아니오: 탈퇴 중단",
+      "journey_id": "unnamed-55ddf85d0d0f",
+      "journey_name": "회원 탈퇴",
+      "created_at": "2026-05-15T10:40:30.535Z",
+      "updated_at": "2026-05-15T10:40:30.535Z"
+    },
+    {
+      "id": "ab9728db-418b-5b66-a2ad-d4cac71e663d",
+      "source_id": "eb6d801d-e15d-4b13-b53b-814f6f6e5415",
+      "source_kind": "ui",
+      "target_id": "359f85f7-4691-5530-b039-3b2dbb5157f0",
+      "target_kind": "gateway",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "BPMN: X 탈퇴 진행?",
+      "journey_id": "unnamed-55ddf85d0d0f",
+      "journey_name": "회원 탈퇴",
+      "created_at": "2026-05-15T10:40:30.535Z",
+      "updated_at": "2026-05-15T10:40:30.535Z"
+    },
+    {
+      "id": "da6c01ce-564a-5c7e-98d9-3d984be3a565",
+      "source_id": "f634dfa9-b667-45a2-a7bb-5f2d35a22612",
+      "source_kind": "ui",
+      "target_id": "2dfe4303-1a47-42f5-9384-b6f889344c50",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-004-01 ... 후행 프로세스 기존 회원 이력 확인",
+      "journey_id": "unnamed-2a6a7184e0ac",
+      "journey_name": "재가입",
+      "created_at": "2026-05-15T10:40:30.56Z",
+      "updated_at": "2026-05-15T10:40:30.56Z"
+    },
+    {
+      "id": "061e0869-4290-552c-9949-ea3baffc4e96",
+      "source_id": "1cb1b916-f000-5850-954b-4af64ecca5c8",
+      "source_kind": "gateway",
+      "target_id": "689ac4e2-8837-4ec9-8dbd-b8129dd5f623",
+      "target_kind": "ui",
+      "condition": "예",
+      "source": "llm",
+      "document_excerpt": "BPMN: 예 → 개인정보 입력",
+      "journey_id": "unnamed-2a6a7184e0ac",
+      "journey_name": "재가입",
+      "created_at": "2026-05-15T10:40:30.56Z",
+      "updated_at": "2026-05-15T10:40:30.56Z"
+    },
+    {
+      "id": "22a74a29-a927-5b5d-8af3-f7e097f1989c",
+      "source_id": "689ac4e2-8837-4ec9-8dbd-b8129dd5f623",
+      "source_kind": "ui",
+      "target_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-004-04 ... 후행 프로세스 재가입 처리",
+      "journey_id": "unnamed-2a6a7184e0ac",
+      "journey_name": "재가입",
+      "created_at": "2026-05-15T10:40:30.56Z",
+      "updated_at": "2026-05-15T10:40:30.56Z"
+    },
+    {
+      "id": "0ac05ddc-b5f6-5187-a402-5aed16bb220c",
+      "source_id": "1cb1b916-f000-5850-954b-4af64ecca5c8",
+      "source_kind": "gateway",
+      "target_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "target_kind": "ui",
+      "condition": "아니오",
+      "source": "llm",
+      "document_excerpt": "BPMN: 아니오: 재가입제한 안내",
+      "journey_id": "unnamed-2a6a7184e0ac",
+      "journey_name": "재가입",
+      "created_at": "2026-05-15T10:40:30.56Z",
+      "updated_at": "2026-05-15T10:40:30.56Z"
+    },
+    {
+      "id": "168b6eb7-7483-59b2-b713-50830a368b39",
+      "source_id": "00e94d18-ecb7-4947-a559-1c2a7b7e6ca6",
+      "source_kind": "ui",
+      "target_id": "ace944c0-dd98-48fe-90a1-9282af00fb9b",
+      "target_kind": "ui",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "PR-MBR-CS-004-05 ... 후행 프로세스 -",
+      "journey_id": "unnamed-2a6a7184e0ac",
+      "journey_name": "재가입",
+      "created_at": "2026-05-15T10:40:30.56Z",
+      "updated_at": "2026-05-15T10:40:30.56Z"
+    },
+    {
+      "id": "e2ff55da-b020-5f88-85c5-70249579d728",
+      "source_id": "2dfe4303-1a47-42f5-9384-b6f889344c50",
+      "source_kind": "ui",
+      "target_id": "1cb1b916-f000-5850-954b-4af64ecca5c8",
+      "target_kind": "gateway",
+      "condition": "",
+      "source": "llm",
+      "document_excerpt": "BPMN: X 재가입 가능?",
+      "journey_id": "unnamed-2a6a7184e0ac",
+      "journey_name": "재가입",
+      "created_at": "2026-05-15T10:40:30.56Z",
+      "updated_at": "2026-05-15T10:40:30.56Z"
+    }
+  ]
+}

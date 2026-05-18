@@ -169,6 +169,7 @@ _EXTRACTORS: dict[str, Any] = {
     "09_policies": _extract_policies,
     "10_gwt": _extract_count_only,
     "11_ui_wireframes": _extract_count_only,
+    "12_ui_flow_edges": _extract_count_only,  # spec 025
 }
 
 

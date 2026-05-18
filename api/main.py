@@ -231,6 +231,14 @@ app.include_router(ai_design_router)
 from api.features.ddd_spec.router import router as ddd_spec_router
 app.include_router(ddd_spec_router)
 
+# Requirements tab (feature 026)
+from api.features.requirements.router import router as requirements_router
+app.include_router(requirements_router)
+
+# Aggregate Invariants (feature 027)
+from api.features.invariants.router import router as invariants_router
+app.include_router(invariants_router)
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -40,13 +40,16 @@ from api.features.ingestion.workflow.phases.aggregates import extract_aggregates
 from api.features.ingestion.workflow.phases.bounded_contexts import identify_bounded_contexts_phase
 from api.features.ingestion.workflow.phases.commands import extract_commands_phase
 from api.features.ingestion.workflow.phases.events_from_user_stories import extract_events_from_user_stories_phase
+from api.features.ingestion.workflow.phases.feature_grouping import feature_grouping_phase  # spec 026
 from api.features.ingestion.workflow.phases.parsing import parsing_phase
 from api.features.ingestion.workflow.phases.policies import identify_policies_phase
 from api.features.ingestion.workflow.phases.properties import generate_properties_phase
 from api.features.ingestion.workflow.phases.references import generate_property_references_phase
 from api.features.ingestion.workflow.phases.readmodels import extract_readmodels_phase
 from api.features.ingestion.workflow.phases.gwt import generate_gwt_phase
+from api.features.ingestion.workflow.phases.extract_invariants import extract_invariants_phase  # spec 027
 from api.features.ingestion.workflow.phases.ui_wireframes import generate_ui_wireframes_phase
+from api.features.ingestion.workflow.phases.ui_flow_edges import generate_ui_flow_edges_phase  # spec 025
 from api.features.ingestion.workflow.phases.user_stories import extract_user_stories_phase
 from api.features.ingestion.workflow.phases.user_story_sequencing import assign_user_story_sequences_phase
 from api.platform.env import IS_SKIP_UI_PHASE
@@ -255,6 +258,13 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield ev
         log_phase(ctx, "03_bounded_contexts")
 
+        # 5b. Feature 묶음 (spec 026) — BC 분류 직후, Aggregate 추출 이전
+        async for ev in _run_phase(session, ctx, feature_grouping_phase(ctx), "aggregates"):
+            if ev.phase == IngestionPhase.ERROR:
+                yield ev; return
+            yield ev
+        log_phase(ctx, "03b_feature_grouping")
+
         # 6. Aggregate 추출
         async for ev in _run_phase(session, ctx, extract_aggregates_phase(ctx), "commands"):
             if ev.phase == IngestionPhase.ERROR:
@@ -304,6 +314,13 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             yield ev
         log_phase(ctx, "10_gwt")
 
+        # 13b. 어그리거트 인베리언트 추출 (spec 027) — GWT 생성 직후
+        async for ev in _run_phase(session, ctx, extract_invariants_phase(ctx), None):
+            if ev.phase == IngestionPhase.ERROR:
+                yield ev; return
+            yield ev
+        log_phase(ctx, "10b_invariants")
+
         # 14. UI Wireframe 생성
         if IS_SKIP_UI_PHASE:
             if getattr(session, "is_paused", False) and session.status != IngestionPhase.PAUSED:
@@ -327,6 +344,15 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 yield ev
 
         log_phase(ctx, "11_ui_wireframes")
+
+        # 15. UI Flow Edges (spec 025) — only run if there are UIs to wire up
+        if not IS_SKIP_UI_PHASE:
+            async for ev in _run_phase(session, ctx, generate_ui_flow_edges_phase(ctx), None):
+                if ev.phase == IngestionPhase.ERROR:
+                    yield ev; return
+                yield ev
+            log_phase(ctx, "12_ui_flow_edges")
+
         log_summary(ctx)
 
         # Complete — 실제 Neo4j에 생성된 Policy 수 카운트
@@ -340,6 +366,9 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 created_policy_count = _pol_count["cnt"] if _pol_count else 0
         except Exception:
             created_policy_count = len(ctx.policies)  # fallback
+
+        # spec 025 — UI-flow counters (populated by generate_ui_flow_edges_phase)
+        ui_flow_summary = getattr(ctx, "ui_flow_summary", None) or {}
 
         yield _augment_event(session, ProgressEvent(
             phase=IngestionPhase.COMPLETE,
@@ -355,6 +384,11 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     "readmodels": sum(len(rms) for rms in (getattr(ctx, "readmodels_by_bc", {}) or {}).values()),
                     "uis": len(getattr(ctx, "uis", []) or []),
                     "policies": created_policy_count,
+                    # spec 025 — UI flow layer counters
+                    "journeys_created": int(ui_flow_summary.get("journeys_created", 0)),
+                    "next_ui_edges_created": int(ui_flow_summary.get("next_ui_edges_created", 0)),
+                    "gateways_created": int(ui_flow_summary.get("gateways_created", 0)),
+                    "ui_flow_warnings": dict(ui_flow_summary.get("warnings_by_code", {})),
                 }
             },
         ))

@@ -350,6 +350,7 @@ const phaseLabel = computed(() => {
     'generating_references': 'Reference 생성',
     'identifying_policies': 'Policy 식별',
     'generating_gwt': '테스트 케이스 생성',
+    'extracting_invariants': '인베리언트 추출',
     'generating_ui': 'UI 생성',
     'saving': '저장 중',
     'paused': '⏸️ 일시 정지됨',
@@ -526,15 +527,11 @@ async function clearExistingData() {
 }
 
 // Handle start button click
+// 026 requirements-tab: 업로드는 항상 증분 upsert. 기존 데이터를 자동
+// 삭제하지 않는다. 전체 삭제는 Requirements 탭의 별도 "데이터 삭제"
+// 버튼(=/api/ingest/clear-all)으로만 수행한다.
 function handleStartClick() {
-  if (inputMode.value === 'analyzer') {
-    // analyzer_graph: 원본 데이터를 유지해야 하므로 삭제 확인 건너뜀
-    startIngestion()
-  } else if (hasExistingData.value) {
-    showClearConfirm.value = true
-  } else {
-    startIngestion()
-  }
+  startIngestion()
 }
 
 // User chose to clear existing data and proceed

@@ -101,15 +101,22 @@ watch(isEventModelingMode, (active) => {
   }
 }, { immediate: true })
 
-function handleProcessDblClick(proc) {
-  emStore.toggleProcessOnCanvas(proc.id)
+// spec 025 — 여정 기준 목록: 단일 클릭 = 캔버스 교체, Ctrl/Cmd 클릭 = 토글(다중 비교)
+function handleJourneyClick(event, item) {
+  if (event.ctrlKey || event.metaKey) emStore.toggleCanvasItem(item)
+  else emStore.showCanvasItem(item)
 }
 
-function handleProcessDragStart(event, proc) {
+function journeyOnCanvas(item) {
+  return emStore.activeItemIds.has(item.id)
+}
+
+function handleProcessDragStart(event, item) {
   event.dataTransfer.setData('application/json', JSON.stringify({
     type: 'EventModelingProcess',
-    processId: proc.id,
-    name: proc.name,
+    processIds: item.processIds,
+    journeyId: item.journeyId || '',
+    name: item.name,
   }))
   event.dataTransfer.effectAllowed = 'copy'
 }
@@ -215,8 +222,8 @@ function handleProcessDragStart(event, proc) {
         <div class="section-group">
           <div class="section-header section-header--with-actions">
             <div class="section-header__left">
-              <span class="section-title">Business Processes</span>
-              <span v-if="emStore.processChains.length" class="section-count">{{ emStore.processChains.length }}</span>
+              <span class="section-title">User Journeys</span>
+              <span v-if="emStore.journeyChains.length" class="section-count">{{ emStore.journeyChains.length }}</span>
             </div>
             <div class="section-header__actions">
               <button class="tree-action-btn" @click="emStore.fetchEventModeling()" title="Load All" :disabled="emStore.loading">
@@ -239,30 +246,43 @@ function handleProcessDragStart(event, proc) {
             <div class="loading-spinner"></div>
             <span>Loading...</span>
           </div>
-          <div v-else-if="emStore.processChains.length === 0" class="empty-state" style="padding:16px">
+          <div v-else-if="emStore.journeyChains.length === 0" class="empty-state" style="padding:16px">
             <span>프로세스 데이터가 없습니다.</span>
           </div>
           <template v-else>
-            <div v-for="proc in emStore.processChains" :key="proc.id"
+            <div v-for="item in emStore.journeyChains" :key="item.id"
                  class="em-process-item"
-                 :class="{ 'is-on-canvas': emStore.canvasProcessIds.has(proc.id) }"
+                 :class="{ 'is-on-canvas': journeyOnCanvas(item) }"
                  :draggable="true"
-                 @dragstart="handleProcessDragStart($event, proc)"
-                 @dblclick="handleProcessDblClick(proc)">
-              <div class="em-process-item__header" @click.stop="expandedProcesses.has(proc.id) ? expandedProcesses.delete(proc.id) : expandedProcesses.add(proc.id)">
-                <svg class="em-process-item__chevron" :class="{ 'is-open': expandedProcesses.has(proc.id) }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <polyline points="9 18 15 12 9 6"></polyline>
-                </svg>
-                <span class="em-process-item__name" :title="proc.name">{{ proc.name }}</span>
-                <span class="em-process-item__chip">{{ proc.stepCount }}</span>
-                <span v-if="emStore.canvasProcessIds.has(proc.id)" class="em-process-item__check">
+                 @dragstart="handleProcessDragStart($event, item)">
+              <div class="em-process-item__header"
+                   :title="(item.kind === 'journey' ? 'NEXT_UI 여정' : '미분류 화면') + ' — 클릭: 단독 표시 · Ctrl+클릭: 다중 비교'"
+                   @click="handleJourneyClick($event, item)">
+                <span class="em-process-item__chevron-btn"
+                      @click.stop="expandedProcesses.has(item.id) ? expandedProcesses.delete(item.id) : expandedProcesses.add(item.id)">
+                  <svg class="em-process-item__chevron" :class="{ 'is-open': expandedProcesses.has(item.id) }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </span>
+                <span class="em-process-item__kind" :class="'em-process-item__kind--' + item.kind">
+                  <svg v-if="item.kind === 'journey'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/>
+                    <path d="M5 8.5v3a3 3 0 0 0 3 3h3M19 8.5v3a3 3 0 0 1-3 3h-3"/>
+                  </svg>
+                  <svg v-else width="12" height="12" viewBox="0 0 24 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <rect x="2" y="2" width="20" height="14" rx="2"/><path d="M2 6h20"/>
+                  </svg>
+                </span>
+                <span class="em-process-item__name" :title="item.name">{{ item.name }}</span>
+                <span class="em-process-item__chip">{{ item.badge }}</span>
+                <span v-if="journeyOnCanvas(item)" class="em-process-item__check">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                     <polyline points="20 6 9 17 4 12"></polyline>
                   </svg>
                 </span>
               </div>
-              <div v-if="expandedProcesses.has(proc.id)" class="em-process-item__steps">
-                <div v-for="step in proc.steps" :key="step.id"
+              <div v-if="expandedProcesses.has(item.id)" class="em-process-item__steps">
+                <div v-for="step in item.steps" :key="step.id"
                      class="em-process-step"
                      @click.stop="emStore.selectItem(step.id, step.type)"
                      :class="{ 'is-selected': emStore.selectedItemId === step.id }">
@@ -741,6 +761,20 @@ function handleProcessDragStart(event, proc) {
   background: var(--color-bg-tertiary);
 }
 
+.em-process-item__chevron-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+
+.em-process-item__chevron-btn:hover {
+  background: var(--color-bg-tertiary);
+}
+
 .em-process-item__chevron {
   flex-shrink: 0;
   color: var(--color-text-light);
@@ -750,6 +784,16 @@ function handleProcessDragStart(event, proc) {
 .em-process-item__chevron.is-open {
   transform: rotate(90deg);
 }
+
+.em-process-item__kind {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.em-process-item__kind--journey { color: #9c7bd0; }
+.em-process-item__kind--process { color: var(--color-text-light); }
 
 .em-process-item__name {
   flex: 1;

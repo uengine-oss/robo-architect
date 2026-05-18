@@ -5,8 +5,8 @@ import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
 import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
 import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
-import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
 import EventModelingPanel from '@/features/eventModeling/ui/EventModelingPanel.vue'
+import RequirementsPanel from '@/features/requirements/ui/RequirementsPanel.vue'
 import ClaudeCodeWorkspace from '@/features/claudeCode/ui/ClaudeCodeWorkspace.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useThemeStore } from '@/app/theme.store'
@@ -29,8 +29,9 @@ provide('openClaudeCode', (workdir) => {
 })
 
 // Map tab names to components
+// BPMN 탭은 UI에서 제거됨 (BpmnPanel 컴포넌트·기능은 코드에 유지).
 const tabComponents = {
-  'BPMN': markRaw(BpmnPanel),
+  'Requirements': markRaw(RequirementsPanel),
   'Event Modeling': markRaw(EventModelingPanel),
   'Big picture': markRaw(BigPicturePanel),
   'Design': markRaw(CanvasWorkspace),
@@ -136,7 +137,7 @@ onUnmounted(() => {
       @update:active-tab="activeTab = $event"
     />
     <div class="main-content">
-      <template v-if="activeTab !== 'Claude Code'">
+      <template v-if="activeTab !== 'Claude Code' && activeTab !== 'Requirements'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"

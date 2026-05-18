@@ -17,6 +17,7 @@ class IngestionPhase(str, Enum):
     PARSING = "parsing"
     EXTRACTING_USER_STORIES = "extracting_user_stories"
     IDENTIFYING_BC = "identifying_bc"
+    GROUPING_FEATURES = "grouping_features"  # spec 026 — group user stories into Features within each BC
     EXTRACTING_AGGREGATES = "extracting_aggregates"
     EXTRACTING_COMMANDS = "extracting_commands"
     EXTRACTING_EVENTS = "extracting_events"
@@ -24,8 +25,10 @@ class IngestionPhase(str, Enum):
     GENERATING_PROPERTIES = "generating_properties"
     GENERATING_REFERENCES = "generating_references"
     GENERATING_UI = "generating_ui"
+    GENERATING_UI_FLOW = "generating_ui_flow"  # spec 025 — UI-to-UI flow edges + Gateway derivation
     IDENTIFYING_POLICIES = "identifying_policies"
     GENERATING_GWT = "generating_gwt"
+    EXTRACTING_INVARIANTS = "extracting_invariants"  # spec 027 — aggregate invariants
     SAVING = "saving"
     PAUSED = "paused"
     COMPLETE = "complete"
@@ -44,6 +47,16 @@ class ProgressEvent(BaseModel):
     # for the full schema.
     tokens: Optional[dict] = None  # {total, byPhase?, approximate?, lastCallTokens?}
     suspendState: Optional[str] = None  # "running" | "suspending" | "suspended"
+
+
+# spec 025 — warning codes emitted by the UI-flow phase. String constants
+# (not an enum) so they survive JSON serialization to the SSE channel as-is.
+UI_FLOW_WARNING_CODES: tuple[str, ...] = (
+    "ui_flow_unclear",              # No detectable screen flow in the source document
+    "ui_flow_unresolved_target",    # LLM referenced a screen name that doesn't bind to any UI node
+    "gateway_single_branch",        # Gateway has only one outgoing NEXT_UI edge (degenerate)
+    "gateway_kind_downgrade",       # LLM emitted parallel/inclusive → downgraded to exclusive (research D6)
+)
 
 
 class CreatedObject(BaseModel):

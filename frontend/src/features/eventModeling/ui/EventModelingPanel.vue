@@ -115,8 +115,14 @@ const showEventArea = computed(() => store.isTypeVisible('event'))
 const visibleActorSwimlanes = computed(() => (showUiLane.value ? store.actorSwimlanes : []))
 const visibleSystemSwimlanes = computed(() => (showEventArea.value ? store.systemSwimlanes : []))
 
+// spec 025 — leave room at the canvas top for the gateway row when any gateways exist
+const canvasTopOffset = computed(() => {
+  const has = (store.gateways || []).length > 0
+  return has ? 32 + 64 : 32
+})
+
 function actorYVisible(idx) {
-  let y = 32
+  let y = canvasTopOffset.value
   for (let i = 0; i < idx; i++) {
     const lane = visibleActorSwimlanes.value[i]
     y += (actorHeights.value[lane.actor] || SWIMLANE_MIN_H) + SWIMLANE_GAP
@@ -125,7 +131,7 @@ function actorYVisible(idx) {
 }
 
 const interactionY = computed(() => {
-  let y = 32
+  let y = canvasTopOffset.value
   visibleActorSwimlanes.value.forEach(lane => {
     y += (actorHeights.value[lane.actor] || SWIMLANE_MIN_H) + SWIMLANE_GAP
   })
@@ -282,6 +288,183 @@ function hStepPath(x1, y1, x2, y2, midXOffset = 0) {
 /**
  * SVG connections — 직각 꺾임 경로 + midY 분산으로 겹침 방지
  */
+// ───────────────────────────────────────────────────────────────────
+// spec 025 — UI-flow layer: Gateway diamonds + NEXT_UI dashed edges
+// ───────────────────────────────────────────────────────────────────
+
+const GATEWAY_W = 88
+const GATEWAY_H = 56
+const GATEWAY_ROW_PAD = 8  // padding around the gateway row at canvas top
+
+// Build a map: ui.id -> { x, y, w, h } of its rendered card
+const uiPositions = computed(() => {
+  const map = new Map()
+  const visA = visibleActorSwimlanes.value
+  for (let i = 0; i < visA.length; i++) {
+    for (const ui of visA[i].uis) {
+      const p = uiCardPos(ui, i)
+      map.set(ui.id, { x: p.x, y: p.y, w: CARD_W, h: UI_CARD_H })
+    }
+  }
+  return map
+})
+
+// Build a map: gateway.id -> { x, y } using avg X of its connected endpoints
+const gatewayPositions = computed(() => {
+  const result = new Map()
+  const gws = store.gateways || []
+  const edges = store.uiFlowEdges || []
+  if (!gws.length) return result
+
+  // For each Gateway, collect connected UI positions (incoming + outgoing UIs only)
+  // Iteratively resolve Gateway-to-Gateway connections by averaging known positions.
+  const initial = new Map()
+  for (const gw of gws) {
+    const xs = []
+    for (const e of edges) {
+      if (e.source_kind === 'gateway' && e.source_id === gw.id && e.target_kind === 'ui') {
+        const p = uiPositions.value.get(e.target_id)
+        if (p) xs.push(p.x + p.w / 2)
+      } else if (e.target_kind === 'gateway' && e.target_id === gw.id && e.source_kind === 'ui') {
+        const p = uiPositions.value.get(e.source_id)
+        if (p) xs.push(p.x + p.w / 2)
+      }
+    }
+    if (xs.length) {
+      const ax = xs.reduce((a, b) => a + b, 0) / xs.length
+      initial.set(gw.id, ax)
+    }
+  }
+  // Resolve Gateway endpoints by referring to other gateways' positions
+  for (const gw of gws) {
+    if (initial.has(gw.id)) continue
+    const xs = []
+    for (const e of edges) {
+      if (e.source_kind === 'gateway' && e.source_id === gw.id) {
+        if (e.target_kind === 'ui') {
+          const p = uiPositions.value.get(e.target_id); if (p) xs.push(p.x + p.w / 2)
+        } else {
+          const x = initial.get(e.target_id); if (x !== undefined) xs.push(x)
+        }
+      } else if (e.target_kind === 'gateway' && e.target_id === gw.id) {
+        if (e.source_kind === 'ui') {
+          const p = uiPositions.value.get(e.source_id); if (p) xs.push(p.x + p.w / 2)
+        } else {
+          const x = initial.get(e.source_id); if (x !== undefined) xs.push(x)
+        }
+      }
+    }
+    if (xs.length) initial.set(gw.id, xs.reduce((a, b) => a + b, 0) / xs.length)
+  }
+
+  // Gateway row Y: sits in the gap between y=32 (canvas top) and the first actor swimlane
+  const gwY = 32 + GATEWAY_ROW_PAD
+  // Distribute X to avoid overlap: sort by X and bump if too close
+  const sorted = gws.map(g => ({ gw: g, x: initial.get(g.id) ?? 200 }))
+    .sort((a, b) => a.x - b.x)
+  let lastX = -Infinity
+  for (const item of sorted) {
+    let x = item.x - GATEWAY_W / 2
+    if (x < lastX + 10) x = lastX + 10
+    result.set(item.gw.id, { x, y: gwY, w: GATEWAY_W, h: GATEWAY_H })
+    lastX = x + GATEWAY_W
+  }
+  return result
+})
+
+// SVG path data for NEXT_UI edges. Returns [{id, d, condition, source, document_excerpt}, ...]
+const uiFlowPaths = computed(() => {
+  const edges = store.uiFlowEdges || []
+  if (!edges.length) return []
+  const out = []
+  for (const e of edges) {
+    const sp = endpointPos(e.source_id, e.source_kind)
+    const tp = endpointPos(e.target_id, e.target_kind)
+    if (!sp || !tp) continue
+    // spec 025 — NEXT_UI edges attach at the LEFT or RIGHT side of each box
+    // (never the top). The side is chosen by the horizontal direction toward
+    // the other endpoint, so the curve leaves/enters horizontally.
+    const sCx = sp.x + sp.w / 2
+    const tCx = tp.x + tp.w / 2
+    const srcRight = tCx >= sCx           // source exits its right side?
+    const srcAttach = {
+      x: srcRight ? sp.x + sp.w : sp.x,
+      y: sp.y + sp.h / 2,
+    }
+    const tgtAttach = {
+      x: srcRight ? tp.x : tp.x + tp.w,   // target entered from the opposite side
+      y: tp.y + tp.h / 2,
+    }
+    // Horizontal exit/enter direction: +1 = right, -1 = left.
+    const srcDir = srcRight ? 1 : -1
+    const tgtDir = srcRight ? -1 : 1
+    const curved = store.uiFlowCurved
+    const bezK = Math.max(40, Math.min(160, Math.abs(tgtAttach.x - srcAttach.x) * 0.5))
+    // Label midpoint of the cubic Bezier (control pts share endpoint Y).
+    const labelX = (srcAttach.x + tgtAttach.x) / 2 + 0.375 * bezK * (srcDir + tgtDir)
+    const labelY = (srcAttach.y + tgtAttach.y) / 2 - 4
+    out.push({
+      id: e.id,
+      d: curved
+        ? bezierPath(srcAttach.x, srcAttach.y, srcDir, tgtAttach.x, tgtAttach.y, tgtDir)
+        : hStepPath(srcAttach.x, srcAttach.y, tgtAttach.x, tgtAttach.y, 0),
+      condition: e.condition || '',
+      labelX,
+      labelY,
+      source: e.source,
+      documentExcerpt: e.document_excerpt || '',
+      sourceId: e.source_id,
+      targetId: e.target_id,
+    })
+  }
+  return out
+})
+
+function endpointPos(id, kind) {
+  if (kind === 'gateway') return gatewayPositions.value.get(id)
+  return uiPositions.value.get(id)
+}
+
+/**
+ * spec 025 — cubic Bezier for a NEXT_UI edge. Endpoints attach at the LEFT or
+ * RIGHT side of a box; control points are offset HORIZONTALLY (hdir = +1 right,
+ * -1 left) so the curve leaves/enters the side flat — never over the top.
+ */
+function bezierPath(x1, y1, hdir1, x2, y2, hdir2) {
+  const K = Math.max(40, Math.min(160, Math.abs(x2 - x1) * 0.5))
+  const c1x = x1 + hdir1 * K
+  const c2x = x2 + hdir2 * K
+  return `M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}`
+}
+
+/**
+ * spec 025 — vertical-tangent cubic Bezier, for the data-flow edges
+ * (UI→Command→Event→ReadModel) which connect card top/bottom edges. The
+ * curve leaves/enters vertically so it reads like a smooth flowchart link.
+ */
+function bezierPathV(x1, y1, x2, y2) {
+  const dy = y2 - y1
+  const K = Math.max(28, Math.min(110, Math.abs(dy) * 0.45))
+  const v = dy >= 0 ? 1 : -1
+  return `M ${x1} ${y1} C ${x1} ${y1 + v * K}, ${x2} ${y2 - v * K}, ${x2} ${y2}`
+}
+
+function gatewayPolygonPoints(p) {
+  // Diamond inscribed in (x, y, w, h)
+  const cx = p.x + p.w / 2
+  const cy = p.y + p.h / 2
+  const left = `${p.x},${cy}`
+  const top = `${cx},${p.y}`
+  const right = `${p.x + p.w},${cy}`
+  const bottom = `${cx},${p.y + p.h}`
+  return `${left} ${top} ${right} ${bottom}`
+}
+
+function truncateLabel(s, max = 24) {
+  if (!s) return ''
+  return s.length > max ? s.slice(0, max - 1) + '…' : s
+}
+
 const paths = computed(() => {
   if (!showInteractionRow.value) return []
 
@@ -354,7 +537,9 @@ const paths = computed(() => {
 
     result.push({
       id: c.id, srcId: c.srcId, tgtId: c.tgtId,
-      d: stepPath(c.x1, c.y1, c.x2, c.y2, midYOff),
+      d: store.uiFlowCurved
+        ? bezierPathV(c.x1, c.y1, c.x2, c.y2)
+        : stepPath(c.x1, c.y1, c.x2, c.y2, midYOff),
       color: c.color, marker: c.marker,
     })
   }
@@ -372,16 +557,18 @@ const paths = computed(() => {
       const x1 = ep.x + CARD_W / 2
       const x2 = rmCardPos(rm).x + CARD_W / 2
       const R = 6
-      const d = Math.abs(x1 - x2) < 1
-        ? `M ${x1} ${y1} L ${x1} ${belowY} L ${x2} ${belowY} L ${x2} ${y2}`
-        : [
-          `M ${x1} ${y1}`,
-          `L ${x1} ${belowY - R}`,
-          `Q ${x1} ${belowY}, ${x1 + (x2 > x1 ? R : -R)} ${belowY}`,
-          `L ${x2 - (x2 > x1 ? R : -R)} ${belowY}`,
-          `Q ${x2} ${belowY}, ${x2} ${belowY - R}`,
-          `L ${x2} ${y2}`,
-        ].join(' ')
+      const d = store.uiFlowCurved
+        ? bezierPathV(x1, y1, x2, y2)
+        : (Math.abs(x1 - x2) < 1
+          ? `M ${x1} ${y1} L ${x1} ${belowY} L ${x2} ${belowY} L ${x2} ${y2}`
+          : [
+            `M ${x1} ${y1}`,
+            `L ${x1} ${belowY - R}`,
+            `Q ${x1} ${belowY}, ${x1 + (x2 > x1 ? R : -R)} ${belowY}`,
+            `L ${x2 - (x2 > x1 ? R : -R)} ${belowY}`,
+            `Q ${x2} ${belowY}, ${x2} ${belowY - R}`,
+            `L ${x2} ${y2}`,
+          ].join(' '))
       result.push({ id: 'evt-rm-' + f.sourceId + f.targetId, srcId: f.sourceId, tgtId: f.targetId, d, color: '#40c057', marker: 'em-arr-green' })
     })
   }
@@ -395,9 +582,13 @@ const paths = computed(() => {
       const cmd = store.interactionCommands.find(c => c.id === f.targetId)
       if (!ep || !cmd) return
       const midXOff = chainCount > 1 ? (i - (chainCount - 1) / 2) * SPREAD_GAP : 0
+      const cx1 = ep.x + CARD_W, cy1 = ep.y + CARD_H / 2
+      const cx2 = cmdCardPos(cmd).x, cy2 = cmdY(cmd.id) + CARD_H / 2
       result.push({
         id: 'chain-' + f.sourceId + f.targetId, srcId: f.sourceId, tgtId: f.targetId,
-        d: hStepPath(ep.x + CARD_W, ep.y + CARD_H / 2, cmdCardPos(cmd).x, cmdY(cmd.id) + CARD_H / 2, midXOff),
+        d: store.uiFlowCurved
+          ? bezierPath(cx1, cy1, cx2 >= cx1 ? 1 : -1, cx2, cy2, cx2 >= cx1 ? -1 : 1)
+          : hStepPath(cx1, cy1, cx2, cy2, midXOff),
         color: '#e57373', marker: 'em-arr-chain', chain: true,
       })
     })
@@ -908,8 +1099,13 @@ function onCanvasDrop(e) {
   }
   try {
     const data = JSON.parse(e.dataTransfer.getData('application/json'))
-    if (data.type === 'EventModelingProcess' && data.processId) {
-      store.addProcessToCanvas(data.processId)
+    if (data.type === 'EventModelingProcess') {
+      // spec 025 — journey items carry processIds[]; drop = additive add only
+      const ids = Array.isArray(data.processIds)
+        ? data.processIds
+        : (data.processId ? [data.processId] : [])
+      const missing = ids.filter(id => !store.canvasProcessIds.has(id))
+      if (missing.length) store.toggleCanvasItem({ processIds: missing, journeyId: data.journeyId || '' })
     }
   } catch { /* ignore */ }
 }
@@ -947,6 +1143,10 @@ function onCanvasDrop(e) {
               <marker id="em-arr-teal" markerWidth="12" markerHeight="9" refX="11" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
                 <polygon points="0 0,12 4.5,0 9" fill="#20c997"/>
               </marker>
+              <!-- spec 025 — UI flow arrow (light gray, solid) -->
+              <marker id="em-arr-uiflow" markerWidth="12" markerHeight="9" refX="11" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
+                <polygon points="0 0,12 4.5,0 9" fill="#c4c8d0"/>
+              </marker>
             </defs>
             <!-- Grid -->
             <line v-for="s in store.maxSequence" :key="'g'+s" :x1="HEADER_W+(s-1)*SEQ_STEP_W" y1="0" :x2="HEADER_W+(s-1)*SEQ_STEP_W" :y2="totalHeight" stroke="rgba(200,200,200,0.12)" stroke-dasharray="4,4"/>
@@ -964,6 +1164,53 @@ function onCanvasDrop(e) {
                   :x1="connectLineStart.x" :y1="connectLineStart.y"
                   :x2="store.connectingToPos.x" :y2="store.connectingToPos.y"
                   stroke="#228be6" stroke-width="2" stroke-dasharray="6,4" opacity="0.8"/>
+
+            <!-- ===== spec 025 — UI flow paths (NEXT_UI light-gray solid) ===== -->
+            <g class="em-uiflow-paths">
+              <path v-for="p in uiFlowPaths" :key="'uiflow-'+p.id"
+                    :d="p.d" stroke="#c4c8d0" fill="none"
+                    stroke-width="2"
+                    marker-end="url(#em-arr-uiflow)" opacity="0.9">
+                <title>{{ (p.condition ? '['+p.condition+'] ' : '') + (p.documentExcerpt ? p.documentExcerpt.slice(0,200) + (p.documentExcerpt.length > 200 ? '…' : '') : '') }}</title>
+              </path>
+              <!-- Condition labels at edge midpoint -->
+              <g v-for="p in uiFlowPaths" :key="'uiflow-lbl-'+p.id" v-show="p.condition">
+                <rect :x="p.labelX - (Math.min(p.condition.length, 24) * 3.5)" :y="p.labelY - 9"
+                      :width="Math.min(p.condition.length, 24) * 7 + 8" height="14"
+                      rx="3" fill="#ffffff" stroke="#c4c8d0" stroke-width="0.5" opacity="0.95"/>
+                <text :x="p.labelX" :y="p.labelY + 1" text-anchor="middle"
+                      fill="#5a6070" font-size="11" font-weight="500" style="pointer-events:none">
+                  {{ truncateLabel(p.condition) }}
+                </text>
+              </g>
+            </g>
+
+            <!-- ===== spec 025 — Gateway diamonds ===== -->
+            <g class="em-gateways" data-testid="em-gateways-layer">
+              <g v-for="gw in store.gateways" :key="'gw-'+gw.id"
+                 v-show="gatewayPositions.get(gw.id)"
+                 class="em-gateway"
+                 :data-gateway-id="gw.id"
+                 :data-testid="'em-gateway-'+gw.id"
+                 style="cursor:pointer; pointer-events:all"
+                 @click.stop="store.selectItem(gw.id, 'gateway')"
+                 @mouseenter="store.setHoveredItem(gw.id)"
+                 @mouseleave="store.clearHover()">
+                <polygon v-if="gatewayPositions.get(gw.id)"
+                         :points="gatewayPolygonPoints(gatewayPositions.get(gw.id))"
+                         fill="#fff8db" stroke="#f08c00" stroke-width="2"
+                         :stroke-dasharray="store.selectedItemId === gw.id ? '' : 'none'"
+                         :style="{ filter: store.selectedItemId === gw.id ? 'drop-shadow(0 0 4px #f08c00)' : 'none' }"/>
+                <text v-if="gatewayPositions.get(gw.id)"
+                      :x="gatewayPositions.get(gw.id).x + GATEWAY_W / 2"
+                      :y="gatewayPositions.get(gw.id).y + GATEWAY_H / 2 + 4"
+                      text-anchor="middle" fill="#6b4006" font-size="11" font-weight="600"
+                      style="pointer-events:none">
+                  {{ truncateLabel(gw.label, 12) }}
+                </text>
+                <title>{{ gw.label }} ({{ gw.kind }})</title>
+              </g>
+            </g>
           </svg>
 
           <!-- ===== ACTOR SWIMLANES (상단) ===== -->
@@ -1113,6 +1360,15 @@ function onCanvasDrop(e) {
         <button class="canvas-toolbar__btn" @click="store.resetZoom()" title="줌 초기화">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          </svg>
+        </button>
+
+        <!-- spec 025 — UI 흐름선 곡선/직선 토글 -->
+        <button class="canvas-toolbar__btn" :class="{ 'is-active': store.uiFlowCurved }"
+                @click="store.toggleUiFlowCurve()"
+                :title="store.uiFlowCurved ? 'UI 흐름선: 곡선 (클릭 시 직선)' : 'UI 흐름선: 직선 (클릭 시 곡선)'">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M3 17c4.5 0 4.5-10 9-10s4.5 10 9 10"/>
           </svg>
         </button>
 

@@ -24,11 +24,14 @@ from .neo4j_ops.analysis import GraphAnalysisOps
 from .neo4j_ops.bounded_contexts import BoundedContextOps
 from .neo4j_ops.commands import CommandOps
 from .neo4j_ops.events import EventOps
+from .neo4j_ops.features import FeatureOps
 from .neo4j_ops.gwt import GWTOps
+from .neo4j_ops.invariants import InvariantOps
 from .neo4j_ops.policies import PolicyOps
 from .neo4j_ops.properties import PropertyOps
 from .neo4j_ops.references import ReferenceOps
 from .neo4j_ops.readmodels import ReadModelOps
+from .neo4j_ops.ui_flow import UIFlowOps
 from .neo4j_ops.ui_wireframes import UIWireframeOps
 from .neo4j_ops.user_stories import UserStoryOps
 
@@ -49,12 +52,15 @@ class Neo4jClient(
     AggregateOps,
     CommandOps,
     EventOps,
+    FeatureOps,
     GWTOps,
+    InvariantOps,
     PolicyOps,
     PropertyOps,
     ReferenceOps,
     ReadModelOps,
     UIWireframeOps,
+    UIFlowOps,
     GraphAnalysisOps,
 ):
     """Neo4j client for Event Storming graph operations."""

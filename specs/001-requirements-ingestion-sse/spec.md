@@ -64,6 +64,21 @@ The analyst accidentally refreshes the browser. The frontend calls `GET /api/ing
 2. **Given** the session has completed or errored, **When** status is queried, **Then** `active: false` is returned with a reason.
 3. **Given** the SSE endpoint is hit with `reconnect=true`, **When** the stream opens, **Then** all stored events are replayed first, then live events resume.
 
+### User Story 5 - Inspect a streamed object mid-generation without waiting (Priority: P3)
+
+While the progress panel is still streaming entities, the analyst spots a name in the live created-items list (e.g. a `Trigger…` policy) and wants to read its properties immediately — not after the run finishes. They click the row in the panel; the corresponding sticker is highlighted on the canvas and the unified InspectorPanel opens with that object's properties pre-populated, even if the node has not yet been laid out on the canvas.
+
+**Why this priority**: Long ingestion runs surface dozens or hundreds of items before completion (the panel shows `+436 items` in flight). Today the analyst has to wait for `complete` before they can click anything; allowing inspection mid-run shortens the feedback loop for catching wrongly named or mis-extracted entities (the same problem User Story 2's pause/resume targets, but without having to halt the workflow).
+
+**Independent Test**: With an active session, push a `progress` event whose `data.object` carries a typed entity payload, then click the corresponding `.mini-item` row in the floating panel. Assert that (a) the row receives the `mini-item--selected` style, (b) `canvasStore.selectedNodeIds` contains that id, and (c) the InspectorPanel renders for that node — even when the node is not yet present on the canvas (the inspector falls back to the inlined node payload).
+
+**Acceptance Scenarios**:
+
+1. **Given** the floating progress panel is showing live items, **When** the analyst clicks a row, **Then** the row's `aria role` is `button`, the canvas store records the id as selected, and the InspectorPanel opens with that object's properties.
+2. **Given** the clicked entity exists on the canvas, **When** the click handler runs, **Then** the corresponding sticker is visually marked selected (`es-node--selected` style) in addition to the panel row.
+3. **Given** the clicked entity has only been streamed (not yet rendered on the canvas), **When** the click handler runs, **Then** the InspectorPanel still opens by reading the inlined `nodeData` payload pushed through `inspectorRequestStore.request` — without requiring a successful `GET /api/graph/...` fetch.
+4. **Given** the user is on a non-Design tab (e.g. Event Modeling) when they click a row, **When** the click fires, **Then** `activeTab` switches to `Design` before the InspectorPanel opens.
+
 ### Edge Cases
 
 - An upload without either `file` or `text` is rejected with HTTP 400 (`Either 'file' or 'text' must be provided`), unless `source_type=analyzer_graph` (which feeds from another data source).
@@ -93,6 +108,7 @@ The analyst accidentally refreshes the browser. The frontend calls `GET /api/ing
 - **FR-013**: System MUST provide `GET /api/ingest/sessions` listing all currently active sessions with their status, progress, paused flag, and workflow-running flag.
 - **FR-014**: System MUST expose runtime LLM-cache controls (`GET /api/ingest/cache/status`, `POST /api/ingest/cache/enable`, `POST /api/ingest/cache/disable`) so operators can toggle response caching during experimentation.
 - **FR-015**: System MUST persist all extracted entities to a graph store with node labels including `BoundedContext`, `Aggregate`, `Command`, `Event`, `Policy`, `Property`, `ReadModel`, `UI`, and `UserStory`, and relationships including `HAS_AGGREGATE`, `HAS_COMMAND`, `EMITS`, `TRIGGERS`, `INVOKES`, `HAS_POLICY`, `HAS_PROPERTY`, `HAS_UI`, `HAS_READMODEL`, and `IMPLEMENTS`.
+- **FR-016**: The floating ingestion progress panel MUST render the live created-items list (`createdItems.slice(-5)` plus an overflow counter) as interactive rows. Each row MUST expose `role="button"`, be keyboard-activatable (Enter / Space), and visually indicate hover and selected states. Activating a row MUST (a) call `canvasStore.selectNode(item.id)` so the matching canvas sticker is highlighted and the row receives the `mini-item--selected` style, (b) push the row's payload through `inspectorRequestStore.request(item)` so `CanvasWorkspace` opens the unified `InspectorPanel` with that node's properties — using the inlined payload as a fallback when the node has not yet been laid out on the canvas, and (c) switch the active workspace tab to `Design` if it is not already there. This MUST work while the workflow is mid-run (no pause required) and MUST NOT affect SSE streaming, pause/resume, or cancel semantics.
 
 ### Key Entities
 
@@ -112,6 +128,7 @@ The analyst accidentally refreshes the browser. The frontend calls `GET /api/ing
 - **SC-004**: Cancellation reliably stops further LLM calls within one phase boundary and frees the session from active memory once the stream closes.
 - **SC-005**: A page refresh during an active ingestion can be recovered: the user sees the prior history of the run (via reconnect replay) and continues to receive new events without manual intervention.
 - **SC-006**: After `clear-all`, the next ingestion starts from a verifiably empty graph (`stats.total == 0`).
+- **SC-007**: While the workflow is still streaming (`phase` ∈ extracting_* / generating_*), clicking any row in the live created-items list opens the InspectorPanel with that object's properties within one render frame, with no dependency on the workflow having reached `complete`. Regression coverage: `frontend/tests/ingestion-mini-item-select.spec.ts`.
 
 ## Assumptions
 

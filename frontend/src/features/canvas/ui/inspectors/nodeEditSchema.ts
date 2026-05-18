@@ -187,12 +187,14 @@ export function normalizeNodeLabel(raw) {
     v === 'ReadModel' ||
     v === 'UI' ||
     v === 'BoundedContext' ||
-    v === 'UserStory'
+    v === 'UserStory' ||
+    v === 'Invariant'
   ) {
     return v
   }
   // vue-flow node.type is lower-case
   if (v === 'command') return 'Command'
+  if (v === 'invariant') return 'Invariant'
   if (v === 'event') return 'Event'
   if (v === 'policy') return 'Policy'
   if (v === 'aggregate') return 'Aggregate'
