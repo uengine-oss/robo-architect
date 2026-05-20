@@ -1,0 +1,54 @@
+# Frontend Framework
+
+Framework: {{ framework }}
+
+> Declared framework for this project's frontend, with conventions a coding
+> agent should default to when generating components from the wireframes
+> linked in `menu-structure.md` and `ui-flow.md`.
+>
+> Generated: {{ generated_at }}
+
+## Viewport summary
+
+{% if viewport_summary %}- Mobile (frame width ≤ 480px): {{ viewport_summary.get('mobile', 0) }}
+- Tablet (frame width 481–1024px): {{ viewport_summary.get('tablet', 0) }}
+- Desktop (frame width > 1024px): {{ viewport_summary.get('desktop', 0) }}
+- Unknown (no scene-graph dimensions): {{ viewport_summary.get('unknown', 0) }}
+
+Dominant: **{% if dominant_viewport %}{{ dominant_viewport }}{% else %}mixed — ask the user{% endif %}**
+{% else %}_No wireframes classified yet._
+{% endif %}
+
+> The dominant class above reflects ≥70% of the wireframes that ship with a
+> known viewport. The `frontend-engineer` agent reads this block FIRST and
+> MUST ask the user whether the whole menu / routing / breakpoint system
+> should be designed in that direction before generating components. When
+> the dominant is `mixed`, the agent must ask the user which viewport
+> drives the IA — do not silently pick one.
+
+## Conventions
+
+{% if conventions %}
+- **Component file shape**: {{ conventions.component_file_shape }}
+- **State management default**: {{ conventions.state_default }}
+- **Routing default**: {{ conventions.routing_default }}
+- **Styling default**: {{ conventions.styling_default }}
+{% else %}
+(no curated conventions for this framework — confirm)
+
+The catalog does not yet record conventions for `{{ framework }}`. Document
+the project's choices below before generating components.
+
+- Component file shape: _confirm_
+- State management default: _confirm_
+- Routing default: _confirm_
+- Styling default: _confirm_
+{% endif %}
+
+## Project Structure
+
+- Components live next to the route they back (per the framework's routing default above).
+- **Wireframe assets are not duplicated under `specs/frontend/`.** Each `ui-flow.md` entry links back to the canonical SVG and element-tree blocks at
+  `../bounded-contexts/<bc>/requirements.assets/<userStoryId>-<ui-slug>.svg`
+  and the matching `Wireframe:` block in `../bounded-contexts/<bc>/requirements.md`.
+- Read `menu-structure.md` for the navigation table of contents and `ui-flow.md` for the user-journey order.

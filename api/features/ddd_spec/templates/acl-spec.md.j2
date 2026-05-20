@@ -1,0 +1,59 @@
+# Anti-Corruption Layer Spec: {{ ext.external_system_name }}
+
+> Bounded Context: **{{ bc.name }}** · Direction: {{ ext.direction }} · Generated: {{ generated_at }}
+
+## Purpose
+
+Translate between the `{{ bc.name }}` domain and the `{{ ext.external_system_name }}` external system without leaking external concepts inward.
+
+## Boundary
+
+**Inside our domain.**
+{% if ext.our_concepts %}{% for c in ext.our_concepts %}- `{{ c }}`
+{% endfor %}{% else %}_(not modeled — confirm)_{% endif %}
+
+**Outside (external system).**
+{% if ext.external_concepts %}{% for c in ext.external_concepts %}- `{{ c }}`
+{% endfor %}{% else %}_(not modeled — confirm)_{% endif %}
+
+## Translation Map (inbound)
+
+{% if ext.inbound_field_map %}
+| External field | Our field | Translation |
+|---|---|---|
+{% for row in ext.inbound_field_map %}| `{{ row[0] }}` | `{{ row[1] }}` | {{ row[2] }} |
+{% endfor %}
+{% else %}
+_(to be defined)_
+{% endif %}
+
+## Translation Map (outbound)
+
+{% if ext.outbound_call_map %}
+| Our command | External API | Notes |
+|---|---|---|
+{% for row in ext.outbound_call_map %}| `{{ row[0] }}` | `{{ row[1] }}` | {{ row[2] }} |
+{% endfor %}
+{% else %}
+_(to be defined)_
+{% endif %}
+
+## Error Translation
+
+{% if ext.error_map %}
+| External code | Our exception |
+|---|---|
+{% for row in ext.error_map %}| `{{ row[0] }}` | `{{ row[1] }}` |
+{% endfor %}
+{% else %}
+_(to be defined)_
+{% endif %}
+
+## Idempotency
+
+_(to be defined — confirm whether the external system requires idempotency keys or supports replay-safe operations)_
+
+## Forbidden Concepts
+
+{% if ext.forbidden_concepts %}{% for c in ext.forbidden_concepts %}- `{{ c }}` — must not leak into the core
+{% endfor %}{% else %}_(to be defined)_{% endif %}

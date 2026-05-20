@@ -4,6 +4,42 @@ from typing import Any
 
 from api.platform.keys import bc_key
 
+from ._bulk_helper import (
+    BulkResult,
+    bulk_flush,
+    reorder_to_input,
+)
+
+
+_BC_BULK_CYPHER = """
+UNWIND $rows AS r
+MERGE (bc:BoundedContext {key: r.key})
+  ON CREATE SET bc.id = randomUUID(),
+                bc.createdAt = datetime()
+SET bc.name = r.name,
+    bc.key = r.key,
+    bc.displayName = r.display_name,
+    bc.description = r.description,
+    bc.owner = r.owner,
+    bc.domainType = r.domain_type,
+    bc.userStoryIds = r.user_story_ids,
+    bc.updatedAt = datetime()
+RETURN bc {.id, .key, .name, .displayName, .description, .owner, .domainType, .userStoryIds} AS result
+"""
+
+
+def _normalize_bc_row(r: dict[str, Any]) -> dict[str, Any]:
+    name = r.get("name") or ""
+    return {
+        "key": r.get("key") or bc_key(name),
+        "name": name,
+        "display_name": r.get("display_name") or name,
+        "description": r.get("description"),
+        "owner": r.get("owner"),
+        "domain_type": r.get("domain_type"),
+        "user_story_ids": r.get("user_story_ids") or [],
+    }
+
 
 class BoundedContextOps:
     # =========================================================================
@@ -63,6 +99,38 @@ class BoundedContextOps:
         with self.session() as session:
             result = session.run(query, key=key, name=name, display_name=display_name, description=description, owner=owner, domain_type=domain_type, user_story_ids=user_story_ids or [])
             return dict(result.single()["bounded_context"])
+
+    def bulk_create_bounded_contexts(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        session_id: str | None = None,
+        phase: str | None = None,
+    ) -> list[BulkResult]:
+        """Persist bounded contexts in batch — schema-equivalent to
+        `create_bounded_context`.
+
+        Required: `name`. Optional: everything else `create_bounded_context`
+        accepts. Note: `key` is the merge field (auto-derived from `name` via
+        `bc_key()` when absent), so passing the same `name` twice in one batch
+        will dedupe to one node — call `dedupe_by_key` upstream if you need a
+        warning instead.
+        """
+        if not rows:
+            return []
+        normalized = [_normalize_bc_row(r) for r in rows]
+        results = bulk_flush(
+            self.session,
+            entity="bounded_context",
+            rows=normalized,
+            cypher=_BC_BULK_CYPHER,
+            return_field="result",
+            required_fields=["name"],
+            dedupe_key="key",
+            session_id=session_id,
+            phase=phase,
+        )
+        return reorder_to_input(rows, results, [])
 
     def link_user_story_to_bc(self, user_story_id: str, bc_id: str, confidence: float = 0.9) -> tuple[bool, dict[str, Any] | None]:
         """

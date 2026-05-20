@@ -1,0 +1,72 @@
+# Menu Structure — Agent-Designed
+
+> **This file does NOT define the menu structure.** It is the input the
+> `frontend-engineer` agent reads to *design* the menu IA from the wider
+> event-modeling flow, not from BC boundaries.
+>
+> The menu must follow the **user's workflow** — the business flow
+> captured in [`ui-flow.md`](./ui-flow.md) — not arbitrary BC slicing.
+> BC labels in the inventory below are for traceability (so generated
+> code can cite the owning BC), not for grouping.
+>
+> Generated: {{ generated_at }}
+
+## How to use this file
+
+1. **Read [`ui-flow.md`](./ui-flow.md) first.** It carries the causal
+   order of UI screens across the whole event-modeling flow — the
+   user-journey shape lives there. **This is the only structural
+   input.**
+2. For each UI in the inventory below, follow the relative link to its
+   element tree (in the BC's `requirements.md`) and its scene-graph /
+   SVG assets. Understand the *business task* the user is performing,
+   not just which BC owns it.
+3. **Naming is the only thing BC artifacts are for.** For each UI,
+   open the owning BC's
+   `../bounded-contexts/<bc-slug>/domain-terms.md` and pull the
+   Aggregate / Command / Event / ReadModel / Property names verbatim.
+   Use those for component names, store names, type names, route
+   segments, and API path segments. Entries under "Aliases to AVOID"
+   are forbidden. Do not read other BC files (`bc-*.md`,
+   `aggregate-*.md`) — that would re-introduce BC-centric thinking
+   into the frontend's structure.
+4. **Design the menu IA from the workflow**, not from BC boundaries.
+   Concretely:
+   - Top-level menu entries should reflect user roles, modes, or
+     workflow stages — not BC names.
+   - Group sub-entries by sub-flow (consecutive UIs the same user
+     traverses), not by BC.
+   - Entry-point UIs (marked **Entry point** below) are the natural
+     candidates for top-level entries — they have no upstream flow,
+     so a user lands on them directly.
+   - Unreferenced UIs (marked **(unreferenced — review)**) need user
+     confirmation before placement; do not silently bury them in the
+     menu.
+5. Cross-reference [`framework.md`](./framework.md) for the routing
+   library's defaults; that decides *how* routes are physically
+   declared (Vue Router config, React Router `<Outlet>`, SvelteKit
+   file-based, …) — not which routes exist.
+
+## Inventory of bound UIs
+
+{% if hints %}{% for hint in hints %}### {{ hint.wireframe_name }}{% if hint.is_entry_point %} · **Entry point**{% elif hint.is_unreferenced %} · **(unreferenced — review)**{% endif %}{% if hint.viewport_class %} · [viewport: {{ hint.viewport_class }}]{% endif %}
+
+- Workflow position: {% if hint.is_entry_point %}user-journey entry (no upstream trigger){% elif hint.is_unreferenced %}island — no flow reaches this UI{% else %}reached from an upstream flow — see `ui-flow.md` for the trigger{% endif %}
+- User Story: `{{ hint.user_story_id }}` — {{ hint.user_story_title }}
+- Actor: {{ hint.actor or '_n/a_' }}
+- Bound to: {% if hint.attached_to_type %}{{ hint.attached_to_type }} `{{ hint.attached_to_name }}`{% else %}_n/a_{% endif %}
+- Viewport: {% if hint.viewport_class %}{{ hint.viewport_class }}{% else %}_unknown_{% endif %}
+- Owning Bounded Context (for traceability only): **{{ hint.bc_name }}** (`{{ hint.bc_slug }}`)
+- Wireframe assets:
+  - Element tree: [`../bounded-contexts/{{ hint.bc_slug }}/requirements.md`](../bounded-contexts/{{ hint.bc_slug }}/requirements.md) § "Wireframe: {{ hint.wireframe_slug }}"
+  - SVG: [`../bounded-contexts/{{ hint.bc_slug }}/requirements.assets/{{ hint.user_story_id }}-{{ hint.wireframe_slug }}.svg`](../bounded-contexts/{{ hint.bc_slug }}/requirements.assets/{{ hint.user_story_id }}-{{ hint.wireframe_slug }}.svg)
+
+{% endfor %}{% else %}
+_No bound UIs in the graph yet._
+{% endif %}
+
+## See also
+
+- [`ui-flow.md`](./ui-flow.md) — causal order of UI screens across the entire event-modeling flow (the only structural input).
+- [`framework.md`](./framework.md) — declared framework + routing/styling conventions (*how* routes are declared, not *which* routes exist).
+- `../bounded-contexts/<bc>/domain-terms.md` — Ubiquitous Language dictionary for each BC. Open only the one matching the UI you are implementing, and only to pull names — not for IA.

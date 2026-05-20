@@ -273,6 +273,48 @@ async function exportToPPT() {
   }
 }
 
+// ── HTML 정책서 (Feature 023): self-contained policy-doc HTML from backend ──
+async function exportToHTMLPolicy() {
+  if (isExporting.value) return
+  isExporting.value = true
+  exportStatus.value = '정책서(HTML) 생성 중...'
+  showExportMenu.value = false
+
+  try {
+    const response = await fetch('/api/prd/html-policy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: 'policy-doc-full' }),
+    })
+    if (!response.ok) {
+      let msg = `HTTP ${response.status}`
+      try {
+        const errBody = await response.json()
+        if (errBody?.detail?.message) msg = errBody.detail.message
+        else if (errBody?.detail?.code) msg = errBody.detail.code
+      } catch (_) {}
+      throw new Error(msg)
+    }
+    const htmlText = await response.text()
+    const blob = new Blob([htmlText], { type: 'text/html;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const win = window.open(url, '_blank')
+    if (!win) {
+      downloadBlob(blob, 'html')
+      showSnackbar('팝업이 차단되어 파일로 저장했습니다.', 'success')
+    } else {
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      showSnackbar('정책서(HTML)가 새 탭에서 열렸습니다.', 'success')
+    }
+  } catch (error) {
+    console.error('[ExportDoc] HTML policy error:', error)
+    showSnackbar('정책서 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
+  } finally {
+    isExporting.value = false
+    exportStatus.value = ''
+  }
+}
+
 // ── Download helper ──
 function downloadBlob(blob, ext) {
   const url = URL.createObjectURL(blob)
@@ -357,6 +399,13 @@ defineExpose({ show })
                   <line x1="12" y1="17" x2="12" y2="21"></line>
                 </svg>
                 PowerPoint (.pptx) 로 내보내기
+              </button>
+              <button class="export-dropdown__item" @click="exportToHTMLPolicy">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="16 18 22 12 16 6"></polyline>
+                  <polyline points="8 6 2 12 8 18"></polyline>
+                </svg>
+                정책서 (.html) 로 내보내기
               </button>
             </div>
           </div>

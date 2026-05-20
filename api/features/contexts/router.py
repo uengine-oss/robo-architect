@@ -166,7 +166,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get Aggregates
     agg_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)
-    RETURN agg {.id, .name, .displayName, .rootEntity, .invariants, .enumerations, .valueObjects} as aggregate
+    RETURN agg {.id, .name, .displayName, .rootEntity, .invariants, .enumerations, .valueObjects, .exceptions} as aggregate
     ORDER BY agg.name
     """
 
@@ -207,6 +207,21 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_UI]->(ui:UI)
     RETURN ui {.id, .name, .displayName, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId} as ui
     ORDER BY ui.name
+    """
+
+    # Get Invariants per Aggregate (027 — aggregate-invariants).
+    # Read-only projection of existing :Invariant nodes; the lazy legacy-text
+    # migration is triggered by GET /api/aggregates/{id}/invariants.
+    inv_query = """
+    MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_INVARIANT]->(inv:Invariant)
+    OPTIONAL MATCH (inv)-[:VERIFIED_BY]->(c:Command)
+    OPTIONAL MATCH (inv)-[:HAS_GWT]->(g:GWT)
+    WITH agg.id AS aggregateId, inv,
+         count(DISTINCT c) AS refCount, count(DISTINCT g) AS ownCount
+    RETURN aggregateId,
+           inv {.id, .key, .name, .declaration, .source, .seq} AS invariant,
+           refCount, ownCount
+    ORDER BY coalesce(inv.seq, 0), inv.declaration
     """
 
     # Get CQRS Operations for ReadModels in this BC
@@ -273,7 +288,16 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
                     agg["valueObjects"] = []
             elif agg.get("valueObjects") is None:
                 agg["valueObjects"] = []
-            
+
+            # Exception domain objects (027) — sibling to enum/value objects.
+            if isinstance(agg.get("exceptions"), str):
+                try:
+                    agg["exceptions"] = json.loads(agg["exceptions"])
+                except (json.JSONDecodeError, TypeError):
+                    agg["exceptions"] = []
+            elif agg.get("exceptions") is None:
+                agg["exceptions"] = []
+
             aggregates[agg["id"]] = agg
 
         # Commands
@@ -339,6 +363,21 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
             ui = dict(record["ui"])
             ui["type"] = "UI"
             uis.append(ui)
+
+        # Invariants per Aggregate (027). Overwrites the legacy `invariants`
+        # string list on each Aggregate with structured Invariant summaries.
+        inv_result = session.run(inv_query, context_id=context_id)
+        invariants_map: dict[str, list[dict[str, Any]]] = {}
+        for record in inv_result:
+            agg_id = record["aggregateId"]
+            inv = dict(record["invariant"])
+            inv["type"] = "Invariant"
+            inv["seq"] = int(inv.get("seq") or 0)
+            inv["referencedCommandCount"] = int(record["refCount"] or 0)
+            inv["isSpecified"] = (record["refCount"] or 0) > 0 or (record["ownCount"] or 0) > 0
+            invariants_map.setdefault(agg_id, []).append(inv)
+        for agg in aggregates.values():
+            agg["invariants"] = invariants_map.get(agg.get("id", ""), [])
 
         bc["userStories"] = user_stories
         bc["aggregates"] = list(aggregates.values())

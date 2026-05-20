@@ -58,6 +58,28 @@ async def lifespan(app: FastAPI):
         },
     )
     init_neo4j_driver(log=True)
+    # Apply ingestion cache default (on by default; override INGESTION_CACHE_DEFAULT=0).
+    try:
+        from api.features.ingestion.langchain_cache import ensure_default_cache_state
+        ensure_default_cache_state()
+    except Exception as e:  # noqa: BLE001 — cache is best-effort
+        SmartLogger.log(
+            "WARN",
+            f"Failed to apply ingestion cache default: {e}",
+            category="ingestion.cache.default_failed",
+            params={"error": str(e)},
+        )
+    # 020: release any stale Figma full-sync locks left over from a prior crash.
+    try:
+        from api.features.figma_binding.service import release_stale_locks_on_startup
+        release_stale_locks_on_startup()
+    except Exception as e:  # noqa: BLE001 — recovery is best-effort
+        SmartLogger.log(
+            "WARN",
+            f"Failed to release stale figma_binding locks: {e}",
+            category="figma_binding.full_sync.stale_lock_released",
+            params={"error": str(e)},
+        )
     yield
     close_neo4j_driver(log=True)
     SmartLogger.log("INFO", "API stopped", category="api.lifespan")
@@ -70,11 +92,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for Vue.js frontend
+# CORS for Vue.js frontend + Figma plugin sandbox.
+#
+# allow_credentials MUST be False while allow_origins is "*", per CORS spec:
+# browsers reject any actual response (not just preflight) that combines
+# Access-Control-Allow-Origin: * with Access-Control-Allow-Credentials: true,
+# which surfaces in the Figma plugin as "Failed to fetch" with no other
+# diagnostic. The project has no cookie/session auth, so credentials are
+# unused — flipping the flag is safe. Switch back to a concrete origin
+# allow-list (and credentials=True) only when introducing real auth.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -144,6 +174,14 @@ app.include_router(hybrid_ingestion_router)
 from api.features.ingestion.confluence import router as confluence_router
 app.include_router(confluence_router)
 
+# Figma REST API integration + bidirectional sync
+from api.features.ingestion.figma_api import router as figma_api_router
+from api.features.ingestion.figma_sync import router as figma_sync_router
+from api.features.ingestion.figma_plugin_ws import router as figma_plugin_ws_router
+app.include_router(figma_api_router)
+app.include_router(figma_sync_router)
+app.include_router(figma_plugin_ws_router)
+
 # Include change management router
 from api.features.change_management.router import router as change_router
 app.include_router(change_router)
@@ -182,6 +220,28 @@ app.include_router(readmodel_cqrs_router)
 # Claude Code terminal WebSocket
 from api.features.claude_code.router import router as claude_code_router
 app.include_router(claude_code_router)
+
+# Figma document binding (feature 016)
+from api.features.figma_binding.router import router as figma_binding_router
+from api.features.figma_binding.plugin_messages import router as figma_binding_plugin_ack_router
+app.include_router(figma_binding_router)
+app.include_router(figma_binding_plugin_ack_router)
+
+# AI Design proxy (open-pencil AI → backend LLM runtime)
+from api.features.ai_design.router import router as ai_design_router
+app.include_router(ai_design_router)
+
+# DDD-for-SDD artifact generation (feature 022)
+from api.features.ddd_spec.router import router as ddd_spec_router
+app.include_router(ddd_spec_router)
+
+# Requirements tab (feature 026)
+from api.features.requirements.router import router as requirements_router
+app.include_router(requirements_router)
+
+# Aggregate Invariants (feature 027)
+from api.features.invariants.router import router as invariants_router
+app.include_router(invariants_router)
 
 
 if __name__ == "__main__":

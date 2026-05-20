@@ -155,17 +155,11 @@ async def _create_bc_with_links(
     us_ids = [us_id for us_id in us_ids if us_id]  # None이나 빈 문자열 제거
     
     try:
-        created_bc = await asyncio.wait_for(
-            asyncio.to_thread(
-                ctx.client.create_bounded_context,
-                name=bc_name,
-                description=bc_description,
-                domain_type=domain_type,
-                user_story_ids=us_ids,
-                display_name=bc_display_name,
-            ),
-            timeout=10.0
-        )
+        # FR-001 (spec 018): BCs are created in batch up front; lookup here.
+        bulk_results: dict[str, dict[str, Any]] = getattr(ctx, "_bulk_bc_results", None) or {}
+        created_bc = bulk_results.get(bc_name)
+        if not created_bc or not created_bc.get("id"):
+            return None, f"bulk_create_bounded_contexts returned empty result for {bc_name}"
         
         # Overwrite LLM-proposed id with UUID from DB (canonical) - only if bc is an object, not dict
         try:
@@ -1712,7 +1706,55 @@ IMPORTANT: Every User Story MUST be assigned to exactly ONE Bounded Context. Do 
                     },
                 )
             tasks.append(_create_bc_with_links(bc, bc_idx, total_bcs, ctx))
-        
+
+        # ── Pre-build bulk rows + run ONE bulk_create_bounded_contexts ──
+        # FR-001 (spec 018).
+        bulk_rows: list[dict[str, Any]] = []
+        for bc in ctx.bounded_contexts:
+            bn = bc.get("name") if isinstance(bc, dict) else getattr(bc, "name", None)
+            if not bn:
+                continue
+            bdn = bc.get("displayName") if isinstance(bc, dict) else getattr(bc, "displayName", None)
+            us_ids = (
+                bc.get("user_story_ids") if isinstance(bc, dict)
+                else getattr(bc, "user_story_ids", None)
+            ) or []
+            bulk_rows.append(
+                {
+                    "name": bn,
+                    "description": (
+                        bc.get("description") if isinstance(bc, dict) else getattr(bc, "description", None)
+                    ),
+                    "domain_type": (
+                        bc.get("domain_type") if isinstance(bc, dict) else getattr(bc, "domain_type", None)
+                    ),
+                    "user_story_ids": list(us_ids),
+                    "display_name": bdn or bn,
+                }
+            )
+        from api.features.ingestion.suspend_gate import session_call_slot
+        try:
+            async with session_call_slot(ctx.session):
+                bulk_results_list = await asyncio.to_thread(
+                    ctx.client.bulk_create_bounded_contexts,
+                    bulk_rows,
+                    session_id=ctx.session.id,
+                    phase="extracting_bounded_contexts",
+                )
+        except Exception as exc:  # noqa: BLE001
+            SmartLogger.log(
+                "ERROR",
+                f"bulk_create_bounded_contexts failed: {exc}",
+                category="ingestion.batch.bounded_context.flush_failed",
+                params={"session_id": ctx.session.id, "rowCount": len(bulk_rows), "error": str(exc)},
+            )
+            bulk_results_list = []
+        ctx._bulk_bc_results = {  # type: ignore[attr-defined]
+            row["name"]: dict(res)
+            for row, res in zip(bulk_rows, bulk_results_list)
+            if res.get("ok") and res.get("id")
+        }
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Process results and yield progress events

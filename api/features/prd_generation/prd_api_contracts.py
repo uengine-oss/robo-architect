@@ -24,8 +24,18 @@ class Framework(str, Enum):
 
 
 class FrontendFramework(str, Enum):
+    """Frontend frameworks supported by the PRD-generation flow.
+
+    v1 ships ``vue`` and ``react``; the 2026-05-12 amendment (feature 022 P5)
+    adds ``svelte``. Adding a new framework requires registering its
+    conventions in
+    :data:`api.features.prd_generation.prd_tech_stack_catalog.FRAMEWORK_CONVENTIONS`
+    so ``specs/frontend/framework.md`` can render its conventions block.
+    """
+
     VUE = "vue"
     REACT = "react"
+    SVELTE = "svelte"
 
 
 class MessagingPlatform(str, Enum):
@@ -53,6 +63,19 @@ class AIAssistant(str, Enum):
     CLAUDE = "claude"
 
 
+class SpecFormat(str, Enum):
+    """How per-BC spec markdown is laid out inside the generated package.
+
+    - ``prd``: legacy flat layout — one ``specs/<bc_name>_spec.md`` per BC.
+    - ``ddd``: the "DDD for SDD" artifact set from feature 022 —
+      ``specs/bounded-contexts/<bc-slug>/{domain-terms,bc-<slug>,aggregates/aggregate-*,acl-*,requirements}.md``
+      plus ``specs/context-map.md``. Generated via ``api.features.ddd_spec``.
+    """
+
+    PRD = "prd"
+    DDD = "ddd"
+
+
 class TechStackConfig(BaseModel):
     language: Language = Language.JAVA
     framework: Framework = Framework.SPRING_BOOT
@@ -65,9 +88,23 @@ class TechStackConfig(BaseModel):
     include_kubernetes: bool = False
     include_tests: bool = True
     ai_assistant: AIAssistant = Field(default=AIAssistant.CURSOR, description="AI assistant to use: cursor or claude")
+    # Spec layout — choose between legacy flat per-BC specs and the
+    # "DDD for SDD" artifact set produced by feature 022.
+    spec_format: SpecFormat = Field(
+        default=SpecFormat.PRD,
+        description="Per-BC spec layout: 'prd' (legacy flat) or 'ddd' (DDD-for-SDD artifact set; feature 022)",
+    )
     # Frontend options
     frontend_framework: FrontendFramework | None = Field(default=None, description="Frontend framework (Vue, React, Angular, etc.)")
     include_frontend: bool = Field(default=False, description="Include frontend PRD and rules")
+    # HTML policy-document extension (feature 023). When enabled, the
+    # generated zip also contains a self-contained ``PRD.html`` rendered
+    # from a Jinja-based template under
+    # ``api/features/prd_generation/html_templates/templates/<template_id>/``.
+    # LLM-fill sections degrade to deterministic fallbacks when no LLM
+    # provider is configured — the zip build never fails because of HTML.
+    include_html_policy: bool = Field(default=False, description="Include HTML policy document (POL-* style)")
+    html_template_id: str = Field(default="policy-doc-full", description="HTML template id under html_templates/templates/")
 
 
 class PRDGenerationRequest(BaseModel):

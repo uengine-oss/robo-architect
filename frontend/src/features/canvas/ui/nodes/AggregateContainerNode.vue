@@ -11,8 +11,9 @@ const terminologyStore = useTerminologyStore()
 
 <template>
   <div class="aggregate-container-node">
-    <!-- BC Name Header -->
+    <!-- Aggregate boundary header -->
     <div class="container-header">
+      <div class="container-stereotype">&laquo;Aggregate&raquo;</div>
       <div class="bc-name">{{ terminologyStore.ubiquitousLanguageMode ? (data.bcDisplayName || data.bcName) : data.bcName }}</div>
     </div>
     
@@ -27,8 +28,9 @@ const terminologyStore = useTerminologyStore()
 .aggregate-container-node {
   width: 100%;
   height: 100%;
-  background: var(--color-bc-bg);
-  border: 2px solid var(--color-bc-border);
+  /* Subtle aggregate-yellow tint so the grouping box reads as an aggregate boundary */
+  background: color-mix(in srgb, var(--color-bc-bg) 90%, var(--color-aggregate, #fcc419));
+  border: 2px solid rgba(252, 196, 25, 0.55);
   border-radius: 12px;
   position: relative;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
@@ -44,10 +46,10 @@ const terminologyStore = useTerminologyStore()
 }
 
 .container-header {
-  background: var(--color-bc-header-bg);
-  border-bottom: 2px solid var(--color-bc-border);
+  background: color-mix(in srgb, var(--color-bc-bg) 78%, var(--color-aggregate, #fcc419));
+  border-bottom: 2px solid rgba(252, 196, 25, 0.55);
   border-radius: 10px 10px 0 0;
-  padding: 10px 16px;
+  padding: 8px 16px;
   text-align: center;
   flex-shrink: 0;
   z-index: 1;
@@ -55,8 +57,12 @@ const terminologyStore = useTerminologyStore()
   user-select: none;
 }
 
-:root.theme-dark .container-header {
-  background: linear-gradient(135deg, #373a40 0%, #2c2e33 100%);
+.container-stereotype {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: color-mix(in srgb, var(--color-bc-text) 55%, var(--color-aggregate, #fcc419));
+  margin-bottom: 2px;
 }
 
 .bc-name {

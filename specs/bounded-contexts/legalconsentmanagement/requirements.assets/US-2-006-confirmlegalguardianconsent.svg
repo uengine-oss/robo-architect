@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 642" width="375" height="642">
+<rect x="0" y="0" width="375" height="642" fill="rgb(248,249,251)" />
+<line x1="39" y1="44" x2="33" y2="38" stroke="rgb(34,34,34)" stroke-width="2" stroke-linecap="round" /><line x1="33" y1="38" x2="39" y2="32" stroke="rgb(34,34,34)" stroke-width="2" stroke-linecap="round" />
+<text x='60' y='41' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='20' font-weight='700' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="60" dy="0">법정대리인 동의/확인</tspan></text>
+<text x='24' y='97.6' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='16' font-weight='400' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="24" dy="0">서비스 이용을 위해 법정대리인의 동의가 필요합니다. 아래 내용을 확인 후 동의 또는 확인 버튼을 눌러주세요.</tspan></text>
+<rect x="24" y="265" width="327" height="273" fill="rgb(255,255,255)" rx="20" ry="20" />
+<text x='44' y='297.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='700' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="44" dy="0">동의 내용</tspan></text>
+<text x='44' y='329.9' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='14' font-weight='400' font-style='normal' fill='rgb(85,85,85)' text-anchor='start'><tspan x="44" dy="0">- 개인정보 수집 및 이용 동의 - 서비스 이용 약관 동의 - 기타 법정대리인 확인 관련 안내</tspan></text>
+<rect x="32" y="570" width="140" height="48" fill="rgb(37,99,235)" rx="12" ry="12" />
+<text x='92' y='596.6' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='16' font-weight='700' font-style='normal' fill='rgb(255,255,255)' text-anchor='start'><tspan x="92" dy="0">동의</tspan></text>
+<rect x="204" y="570" width="140" height="48" fill="rgb(229,231,235)" rx="12" ry="12" />
+<text x='264' y='596.6' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='16' font-weight='700' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="264" dy="0">확인</tspan></text>
+</svg>

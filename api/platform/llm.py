@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from api.platform.env import env_dict, env_str, get_llm_provider
+from api.platform.env import env_dict, env_first, env_str, get_llm_provider
 
 OPENAI_DEFAULT_MODEL = "gpt-4.1-2025-04-14"
 
@@ -90,6 +90,20 @@ def get_llm(
     effective_kwargs: dict[str, Any] = dict(model_kwargs_from_env)
     effective_kwargs.update(kwargs)
 
+    # Clamp output tokens against the deployed model's actual capacity.
+    # Some self-hosted / OpenAI-compatible servers (e.g. dream-flow's vLLM
+    # frentis-ai-model) have only 32k total context, so feature code that
+    # historically passed `max_tokens=32768` (sized for GPT-4.1's 128k window)
+    # would overflow. `LLM_MAX_OUTPUT_TOKENS` lets ops set a global ceiling
+    # without editing every feature call site.
+    from api.platform.env import env_int as _env_int
+    output_cap = _env_int("LLM_MAX_OUTPUT_TOKENS", 0)
+    if output_cap > 0:
+        for k in ("max_tokens", "max_completion_tokens"):
+            v = effective_kwargs.get(k)
+            if isinstance(v, int) and v > output_cap:
+                effective_kwargs[k] = output_cap
+
     # Avoid passing reserved constructor arguments twice.
     if "model" in effective_kwargs:
         raise ValueError(
@@ -98,6 +112,13 @@ def get_llm(
 
     if resolved_provider == "openai":
         from langchain_openai import ChatOpenAI
+
+        # Allow pointing at any OpenAI-compatible server (e.g. self-hosted vLLM,
+        # LocalAI, OpenRouter). Honor either `OPENAI_BASE_URL` (modern) or
+        # `OPENAI_API_BASE` (legacy / SDK historical name).
+        base_url = env_first(["OPENAI_BASE_URL", "OPENAI_API_BASE"], default=None)
+        if base_url and "base_url" not in effective_kwargs:
+            effective_kwargs["base_url"] = base_url
 
         return ChatOpenAI(model=resolved_model, **effective_kwargs)
 

@@ -17,6 +17,7 @@ class IngestionPhase(str, Enum):
     PARSING = "parsing"
     EXTRACTING_USER_STORIES = "extracting_user_stories"
     IDENTIFYING_BC = "identifying_bc"
+    GROUPING_FEATURES = "grouping_features"  # spec 026 — group user stories into Features within each BC
     EXTRACTING_AGGREGATES = "extracting_aggregates"
     EXTRACTING_COMMANDS = "extracting_commands"
     EXTRACTING_EVENTS = "extracting_events"
@@ -24,8 +25,10 @@ class IngestionPhase(str, Enum):
     GENERATING_PROPERTIES = "generating_properties"
     GENERATING_REFERENCES = "generating_references"
     GENERATING_UI = "generating_ui"
+    GENERATING_UI_FLOW = "generating_ui_flow"  # spec 025 — UI-to-UI flow edges + Gateway derivation
     IDENTIFYING_POLICIES = "identifying_policies"
     GENERATING_GWT = "generating_gwt"
+    EXTRACTING_INVARIANTS = "extracting_invariants"  # spec 027 — aggregate invariants
     SAVING = "saving"
     PAUSED = "paused"
     COMPLETE = "complete"
@@ -39,6 +42,21 @@ class ProgressEvent(BaseModel):
     message: str
     progress: int  # 0-100
     data: Optional[dict] = None  # Created objects / step payloads
+    # Spec 017 — additive, optional fields. Frontend treats absence as
+    # "no update; keep showing previous value." See contracts/sse-events.md
+    # for the full schema.
+    tokens: Optional[dict] = None  # {total, byPhase?, approximate?, lastCallTokens?}
+    suspendState: Optional[str] = None  # "running" | "suspending" | "suspended"
+
+
+# spec 025 — warning codes emitted by the UI-flow phase. String constants
+# (not an enum) so they survive JSON serialization to the SSE channel as-is.
+UI_FLOW_WARNING_CODES: tuple[str, ...] = (
+    "ui_flow_unclear",              # No detectable screen flow in the source document
+    "ui_flow_unresolved_target",    # LLM referenced a screen name that doesn't bind to any UI node
+    "gateway_single_branch",        # Gateway has only one outgoing NEXT_UI edge (degenerate)
+    "gateway_kind_downgrade",       # LLM emitted parallel/inclusive → downgraded to exclusive (research D6)
+)
 
 
 class CreatedObject(BaseModel):
@@ -69,6 +87,15 @@ class GeneratedUserStory(BaseModel):
     source_screen_name: Optional[str] = None
     # Source unit ID (procedure fqn, class fqn, BpmTask id 등 — 역추적용)
     source_unit_id: Optional[str] = None
+    # BL sequence 번호 리스트 — 이 US가 어떤 BL에서 유래했는지 (필수: 입력의 BL[N] 번호)
+    source_bl: list[int] = Field(default_factory=list, description="BL sequence numbers this US originated from. Only used when source_type is analyzer_graph.")
+    # Acceptance criteria — field-level / data-validation / business-rule details
+    # that belong to *this* user story but should not be promoted to a separate
+    # user story. Example: for "회원이 회원가입을 한다", the acceptance criteria
+    # might list ["이름·휴대폰번호·이메일·생년월일·성별이 저장된다", "약관 동의 결과가
+    # 함께 저장된다", ...]. Cross-chunk consolidation populates this from
+    # rule-fragments that the chunk-level extraction created as separate stories.
+    acceptance_criteria: list[str] = Field(default_factory=list, description="Field-level / business-rule details for this user story. Not separate stories.")
 
 
 class UserStoryList(BaseModel):

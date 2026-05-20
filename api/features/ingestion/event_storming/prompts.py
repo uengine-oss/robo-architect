@@ -264,7 +264,6 @@ EXTRACT_AGGREGATES_PROMPT = """You are tasked with identifying Aggregates within
 
 <target_bounded_context>
 Name: {bc_name}
-ID: {bc_id}
 Description: {bc_description}
 </target_bounded_context>
 
@@ -432,7 +431,6 @@ EXTRACT_COMMANDS_PROMPT = """You are tasked with identifying Commands for the gi
 
 <target_aggregate>
 Name: {aggregate_name}
-ID: {aggregate_id}
 Bounded Context: {bc_name}
 </target_aggregate>
 
@@ -790,7 +788,6 @@ EXTRACT_READMODELS_PROMPT = """You are tasked with identifying ReadModels (query
 
 <target_bounded_context>
 Name: {bc_name}
-ID: {bc_id}
 Description: {bc_description}
 </target_bounded_context>
 
@@ -998,13 +995,11 @@ CRITICAL RULES (STRICT):
 9) Keep the list compact but complete enough to build a usable first draft.
 
 Bounded Context:
-- id: {bc_id}
 - key: {bc_key}
 - name: {bc_name}
 - description: {bc_description}
 
 Aggregate (parentType=Aggregate):
-- id: {aggregate_id}
 - key: {aggregate_key}
 - name: {aggregate_name}
 - rootEntity: {aggregate_root_entity}
@@ -1041,7 +1036,6 @@ CRITICAL RULES (STRICT):
 8) ReadModels are for QUERY. Prefer denormalized columns that support the user stories.
 
 Bounded Context:
-- id: {bc_id}
 - key: {bc_key}
 - name: {bc_name}
 - description: {bc_description}
@@ -1180,4 +1174,61 @@ Please review and provide feedback:
 
 If approved, respond with "APPROVED".
 If changes needed, describe the changes."""
+
+
+# =============================================================================
+# UI Flow Derivation (spec 025)
+# =============================================================================
+
+UI_FLOW_SYSTEM_PROMPT = """You analyze a product/requirements document and extract **purpose-driven user journeys** as flows between UI screens.
+
+Your output is a structured graph layer that sits ABOVE the data flow (UI → Command → Event → ReadModel → UI). You are NOT modeling data; you model "for a given goal, after the user finishes screen A, where do they go next?"
+
+You will be given:
+1. The full source document text (PRD / BRD / Confluence-imported notes / Figma textual descriptions).
+2. A catalog of existing UI screens — each with `id`, `displayName`, and `bounded_context_name`. You MUST bind every transition to a screen from this catalog.
+
+CORE PRINCIPLE — SPLIT BY JOURNEY, NOT BY SHARED SCREENS:
+A "journey" is ONE coherent flow with ONE purpose/goal — for example "정상 회원가입", "미성년자 회원가입", "회원 탈퇴", "휴면 회원 해제", "재가입". The SAME screen (e.g. "로그인", "회원 세션 전환") is reused across many journeys. You MUST NOT merge journeys just because they share a screen. Each journey carries its OWN edges through the shared screens. Produce a SEPARATE journey object for every distinct goal you find in the document — expect several (typically 3-8) journeys, not one giant flow.
+
+Output a JSON object that conforms to this schema:
+
+{
+  "journeys": [
+    {
+      "name": "<short journey name describing the goal, e.g. '정상 회원가입'>",
+      "description": "<one-line description of the journey goal>",
+      "gateways": [
+        { "label": "주문 승인?", "kind": "exclusive", "bounded_context_name": "<exact BC name from catalog>" }
+      ],
+      "edges": [
+        {
+          "source_name": "<UI displayName OR Gateway label>",
+          "source_kind": "ui" | "gateway",
+          "target_name": "<UI displayName OR Gateway label>",
+          "target_kind": "ui" | "gateway",
+          "condition": "<branch label — REQUIRED when source_kind='gateway'; empty string otherwise>",
+          "document_excerpt": "<the sentence/passage in the source that motivated this edge; max ~400 chars>"
+        }
+      ]
+    }
+  ],
+  "unresolved": [ "<screen name seen in text but not bindable to any catalog entry>" ]
+}
+
+RULES:
+
+- **One journey = one purpose.** Identify each distinct goal-oriented flow as its own journey object. Do NOT output a single journey containing every screen.
+- **Reused screens.** If "로그인" appears in both "회원 탈퇴" and "휴면 해제" journeys, emit it in BOTH journeys' edge lists. Gateways and edges are journey-local.
+- **Bind to the catalog — critical.** The UI catalog is the AUTHORITATIVE and COMPLETE screen list. Every `source_name`/`target_name` with `kind='ui'` MUST be an EXACT copy of a catalog `displayName`.
+- The document often uses different wording than the catalog (e.g. doc says "재가입 처리", catalog has "재가입 완료"; doc says "본인인증", catalog has "고위험 업무 추가 인증"). Map every such phrase to the SEMANTICALLY CLOSEST catalog entry and output the **catalog** name. Only when no catalog screen plausibly corresponds, put the phrase in `unresolved`.
+- **Linear flow.** "after A the user goes to B" → one edge, empty `condition`.
+- **Branching flow.** "if X then B else C" → one gateway labelled by the decision, then `A → gateway`, `gateway → B (condition "X")`, `gateway → C (condition antonym)`.
+- **No fabrication.** If the document describes no screen flow, return `"journeys": []`. Do not invent flow from the data model.
+- **No data flow.** Do not emit "Login → server validates credentials". Screen-to-screen navigation only.
+- **Cross-BC and loops** are allowed. **Self-loops** (validation error stays on same screen) — source = target with the condition.
+- **Document excerpts** must be quoted verbatim from the input, ≤400 chars, no paraphrase.
+- **kind=exclusive only.** Emit `"exclusive"` even for parallel/inclusive semantics.
+- **JSON only.** Output ONLY the JSON object — no prose, no markdown fences.
+"""
 

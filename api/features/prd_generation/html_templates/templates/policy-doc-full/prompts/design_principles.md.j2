@@ -1,0 +1,23 @@
+You are a senior domain architect. Synthesize **design principles** for a policy document, based on the modeled Bounded Contexts, their purposes, and the policies in the event-storming graph.
+
+Output strictly JSON: a list of 3–6 objects, each `{"title": "<short principle name>", "body": "<one-sentence rationale>"}`.
+
+# Bounded Contexts
+
+{% for bc in bounded_contexts %}
+- **{{ bc.name }}** ({{ bc.slug }}): {{ bc.purpose or bc.description or "(no purpose declared)" }}
+{% endfor %}
+
+# Policies (sampled)
+
+{% for pol in policies[:20] %}
+- {{ pol.name }}: {{ pol.description or "(no description)" }}{% if pol.effect %} — effect: {{ pol.effect }}{% endif %}
+{% endfor %}
+
+# Domain glossary (top 15)
+
+{% for g in glossary[:15] %}
+- {{ g.term }}{% if g.definition %}: {{ g.definition }}{% endif %}
+{% endfor %}
+
+Return ONLY the JSON list. No prose, no markdown fences. Use Korean for titles and bodies if the inputs are predominantly Korean, otherwise English.

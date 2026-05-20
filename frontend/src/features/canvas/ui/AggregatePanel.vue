@@ -5,6 +5,7 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
+import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import AggregateViewerNode from './nodes/AggregateViewerNode.vue'
@@ -17,6 +18,7 @@ import StraightEdge from './edges/StraightEdge.vue'
 import StepEdge from './edges/StepEdge.vue'
 
 const store = useAggregateViewerStore()
+const canvasStore = useCanvasStore()
 const chatStore = useModelModifierStore()
 const terminologyStore = useTerminologyStore()
 const { fitView, zoomIn, zoomOut, getNodes, getNode, updateEdge, getViewport } = useVueFlow()
@@ -65,15 +67,18 @@ async function handleDrop(event) {
   if (!data) return
   
   try {
-    const { nodeId, nodeType } = JSON.parse(data)
-    
-    // Only handle BoundedContext drops
+    const { nodeId, nodeType, nodeData } = JSON.parse(data)
+
     if (nodeType === 'BoundedContext') {
+      // BoundedContext drop: show all of its aggregates (unchanged behavior)
       await store.fetchAggregatesForBC(nodeId)
-      // Auto-layout after data is loaded
       setTimeout(() => {
         fitView({ padding: 0.2 })
       }, 100)
+    } else if (nodeType === 'Aggregate') {
+      // Aggregate drop: show just this aggregate (additive, de-duplicated)
+      const bcId = nodeData?.bcId || nodeData?.parentId || null
+      await focusOnAggregate(nodeId, bcId)
     }
   } catch (error) {
     console.error('Failed to handle drop:', error)
@@ -405,25 +410,35 @@ function updateEdges() {
 
 // Track BC IDs to detect when BCs are actually added/removed (not just data changes)
 const previousBcIds = ref(new Set())
+// Track visible aggregate IDs — aggregate-level visibility can change without
+// the BC set changing (e.g. drilling into one aggregate of an already-loaded BC).
+const previousAggIds = ref(new Set())
 const isRebuilding = ref(false) // Flag to prevent position reset during rebuild
 
-// Update nodes when store data changes - ONLY when BC structure changes
+// Update nodes when store data changes - when BC OR aggregate structure changes
 watch(() => store.filteredBoundedContexts, (newBcs) => {
   // Extract BC IDs from new data
   const newBcIds = new Set(newBcs.map(bc => bc.id))
-  
+
   // Check if BCs were actually added/removed (not just data updated)
   const bcAdded = Array.from(newBcIds).some(id => !previousBcIds.value.has(id))
   const bcRemoved = Array.from(previousBcIds.value).some(id => !newBcIds.has(id))
   const bcStructureChanged = bcAdded || bcRemoved
-  
-  // If BC structure hasn't changed, don't rebuild - just return
-  if (!bcStructureChanged && previousBcIds.value.size > 0) {
+
+  // Check if the set of visible aggregates changed
+  const newAggIds = new Set(newBcs.flatMap(bc => (bc.aggregates || []).map(a => a.id)))
+  const aggAdded = Array.from(newAggIds).some(id => !previousAggIds.value.has(id))
+  const aggRemoved = Array.from(previousAggIds.value).some(id => !newAggIds.has(id))
+  const aggStructureChanged = aggAdded || aggRemoved
+
+  // If neither BC nor aggregate structure changed, don't rebuild
+  if (!bcStructureChanged && !aggStructureChanged && previousBcIds.value.size > 0) {
     return
   }
-  
-  // Update previous BC IDs
+
+  // Update previous BC / aggregate IDs
   previousBcIds.value = newBcIds
+  previousAggIds.value = newAggIds
   
   // Set rebuilding flag
   isRebuilding.value = true
@@ -484,8 +499,8 @@ watch(() => store.filteredBoundedContexts, (newBcs) => {
   
   // Don't update edges here - wait for onNodesInitialized event
   // This ensures Vue Flow has registered all handles before creating edges
-  // Fit view after nodes are created (only if no existing nodes or BC structure changed)
-  if (currentVueFlowPositions.size === 0 || bcStructureChanged) {
+  // Fit view after nodes are created (only if no existing nodes or structure changed)
+  if (currentVueFlowPositions.size === 0 || bcStructureChanged || aggStructureChanged) {
     setTimeout(() => {
       fitView({ padding: 0.2 })
     }, 200)
@@ -973,7 +988,7 @@ function startResizeChat(e) {
 function onResizeChat(e) {
   if (!isResizingChat.value) return
   const next = window.innerWidth - e.clientX
-  chatPanelWidth.value = Math.max(280, Math.min(640, next))
+  chatPanelWidth.value = Math.max(280, Math.min(window.innerWidth - 100, next))
   try {
     localStorage.setItem('aggregate_chat_panel_width', String(chatPanelWidth.value))
   } catch {}
@@ -1223,13 +1238,54 @@ onMounted(() => {
   } catch {}
 })
 
+// Ensure an aggregate is loaded and bring its grouping box into view.
+async function focusOnAggregate(aggregateId, bcId) {
+  if (!aggregateId) return
+  if (!store.visibleAggregateIds.has(aggregateId)) {
+    await store.fetchAggregate(aggregateId, bcId || null)
+  }
+  // Wait for the canvas to (re)build nodes for the now-visible aggregate.
+  await nextTick()
+  setTimeout(() => {
+    try {
+      fitView({ nodes: [`agg-container-${aggregateId}`], padding: 0.3 })
+    } catch (e) {
+      console.warn('[AggregatePanel] focus fitView failed:', e)
+    }
+  }, 400)
+}
+
+// US2: if no explicit focus intent, fall back to the Design-tab selection —
+// but only when exactly one aggregate is selected (ambiguous/empty → no-op).
+function resolveCanvasSelectedAggregate() {
+  const sel = canvasStore.selectedNodes || []
+  const aggs = sel.filter(n => n?.data?.type === 'Aggregate')
+  if (aggs.length !== 1) return null
+  const n = aggs[0]
+  const aggregateId = n.id || n.data?.id
+  if (!aggregateId) return null
+  return { aggregateId, bcId: n.parentNode || n.data?.bcId || null }
+}
+
+// On mount (the tab remounts on every switch), consume any cross-tab focus
+// intent: explicit "View Detail" intent first, else the Design-tab selection.
+onMounted(async () => {
+  let target = store.consumeFocus()
+  if (!target?.aggregateId) {
+    target = resolveCanvasSelectedAggregate()
+  }
+  if (target?.aggregateId) {
+    await focusOnAggregate(target.aggregateId, target.bcId)
+  }
+})
+
 // MiniMap node color
 function getNodeColor(node) {
   const colors = {
     aggregateViewer: '#fcc419',
     enumViewer: '#fff9e6',
     valueObjectViewer: '#fff9e6',
-    aggregateContainer: '#373a40',
+    aggregateContainer: '#f8e3a3',
   }
   return colors[node.type] || '#909296'
 }
@@ -1270,7 +1326,7 @@ const canvasPatternColor = computed(() => {
         <div v-if="nodes.length === 0" class="aggregate-viewer__empty">
           <div class="empty-icon">📦</div>
           <div class="empty-text">No aggregates selected</div>
-          <div class="empty-hint">Drag a Bounded Context from the navigator to view its aggregates</div>
+          <div class="empty-hint">Drag a Bounded Context or an Aggregate from the navigator onto the canvas</div>
         </div>
 
         <VueFlow

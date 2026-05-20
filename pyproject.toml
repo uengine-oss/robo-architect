@@ -36,6 +36,17 @@ dependencies = [
 
     # Optional (used by ingestion when uploading PDFs)
     "PyMuPDF>=1.23.0",
+
+    # Tokenizer fallback for the ingestion token counter (spec 017).
+    # Used only when LangChain's standardized usage_metadata is absent
+    # (e.g. older provider adapters or self-hosted models).
+    "tiktoken>=0.7.0",
+
+    # DDD-for-SDD artifact generation (spec 022).
+    # Jinja2: markdown templates for the article-format DDD artifacts.
+    # python-slugify: ASCII-safe slugs from Korean BC / Aggregate names.
+    "Jinja2>=3.1.0",
+    "python-slugify>=8.0.0",
 ]
 
 [project.optional-dependencies]

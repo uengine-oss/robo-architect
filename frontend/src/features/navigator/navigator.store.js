@@ -147,21 +147,51 @@ export const useNavigatorStore = defineStore('navigator', () => {
   
   // Add a user story to root level (during ingestion)
   function addUserStory(usData) {
-    const exists = userStories.value.some(us => us.id === usData.id)
-    if (!exists) {
-      userStories.value.push({
-        id: usData.id,
-        role: usData.role,
-        action: usData.action,
-        benefit: usData.benefit,
-        priority: usData.priority,
-        type: 'UserStory',
-        name: usData.name || `${usData.role}: ${usData.action?.substring(0, 30)}...`
-      })
-      
-      // Mark as newly added
-      markAsNew(usData.id)
+    const idx = userStories.value.findIndex(us => us.id === usData.id)
+    const next = {
+      id: usData.id,
+      role: usData.role,
+      action: usData.action,
+      benefit: usData.benefit,
+      priority: usData.priority,
+      type: 'UserStory',
+      name: usData.name || `${usData.role}: ${usData.action?.substring(0, 30)}...`,
+      provisional: !!usData.provisional,
     }
+    if (idx === -1) {
+      userStories.value.push(next)
+      markAsNew(usData.id)
+    } else {
+      // Upsert: a later non-provisional emit (per-row gather) replaces the
+      // earlier provisional chunk emit. Preserves tree-node identity so
+      // selection / expansion state survives the upgrade.
+      const prev = userStories.value[idx]
+      userStories.value[idx] = {
+        ...prev,
+        ...next,
+        // Confirmed wins over provisional.
+        provisional: prev.provisional && next.provisional,
+      }
+    }
+  }
+
+  /**
+   * Remove user stories that were dropped during dedup/normalization.
+   * Receives the list of IDs that the backend determined to be duplicates
+   * AFTER they were already emitted live during chunked extraction.
+   */
+  function removeUserStory(usId) {
+    const idx = userStories.value.findIndex(us => us.id === usId)
+    if (idx !== -1) {
+      userStories.value.splice(idx, 1)
+    }
+    // Also try to remove from any BC tree (in case it was already assigned).
+    Object.values(contextTrees.value).forEach(tree => {
+      if (Array.isArray(tree.userStories)) {
+        const ti = tree.userStories.findIndex(us => us.id === usId)
+        if (ti !== -1) tree.userStories.splice(ti, 1)
+      }
+    })
   }
 
   function ensureTree(bcId) {
@@ -703,6 +733,7 @@ export const useNavigatorStore = defineStore('navigator', () => {
     fetchUserStories,
     addContext,
     addUserStory,
+    removeUserStory,
     assignUserStoryToBC,
     addAggregate,
     addCommand,

@@ -22,11 +22,34 @@ from typing import Any
 from fastapi import APIRouter
 from starlette.requests import Request
 
+from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
 from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter()
+
+
+def _read_ui_flow_layer(system_swimlanes: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """spec 025 — fetch Gateway nodes + NEXT_UI edges for the BCs in scope.
+
+    Returns the response shape expected by the event-modeling frontend store:
+    `{"gateways": [...], "edges": [...]}` already shaped as DTOs.
+    """
+    bc_ids = [sw.get("bcId") for sw in (system_swimlanes or []) if sw.get("bcId")]
+    if not bc_ids:
+        return {"gateways": [], "edges": []}
+    try:
+        client = get_neo4j_client()
+        return client.read_ui_flow_for_bcs(bc_ids)
+    except Exception as e:
+        SmartLogger.log(
+            "WARNING",
+            "UI flow layer read failed — returning empty layer",
+            category="api.graph.ui_flow.read.error",
+            params={"error": str(e), "bc_count": len(bc_ids)},
+        )
+        return {"gateways": [], "edges": []}
 
 
 @router.get("/event-modeling")
@@ -494,6 +517,9 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
             "targetId": rm_ui["id"],
         })
 
+    # ── spec 025 — UI-flow layer (Gateway nodes + NEXT_UI edges) ─────
+    ui_flow_payload = _read_ui_flow_layer(system_swimlanes)
+
     payload = {
         "actorSwimlanes": actor_swimlanes,
         "interactionCommands": interaction_commands,
@@ -501,6 +527,9 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
         "systemSwimlanes": system_swimlanes,
         "flows": flows,
         "maxSequence": max_sequence,
+        # spec 025 — additive, optional fields (back-compat for older clients)
+        "gateways": ui_flow_payload["gateways"],
+        "uiFlowEdges": ui_flow_payload["edges"],
     }
 
     SmartLogger.log(

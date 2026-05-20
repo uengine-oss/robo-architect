@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 353" width="375" height="353">
+<rect x="0" y="0" width="375" height="353" fill="rgb(248,249,251)" />
+<text x='3384' y='44.4' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='24' font-weight='700' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="3384" dy="0">약관에 동의해 주세요</tspan></text>
+<rect x="3384" y="77" width="325" height="140" fill="rgb(255,255,255)" />
+<rect x="3384" y="77" width="325" height="24" fill="rgb(255,255,255)" />
+<rect x="3384" y="77" width="24" height="24" fill="rgb(255,255,255)" rx="6" ry="6" />
+<text x='3420' y='92.95' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='17' font-weight='500' font-style='normal' fill='rgb(0,122,255)' text-anchor='start'><tspan x="3420" dy="0">필수 약관에 동의해야 가입할 수 있습니다</tspan></text>
+<rect x="3384" y="121" width="268" height="56" fill="rgb(255,255,255)" />
+<rect x="3384" y="121" width="254" height="20" fill="rgb(255,255,255)" />
+<rect x="3384" y="121" width="20" height="20" fill="rgb(255,255,255)" rx="4" ry="4" />
+<text x='3416' y='134.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="3416" dy="0">[필수] 서비스 이용약관 동의</tspan></text>
+<text x='3604' y='134.05' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='13' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="3604" dy="0">(보기)</tspan></text>
+<rect x="3384" y="157" width="268" height="20" fill="rgb(255,255,255)" />
+<rect x="3384" y="157" width="20" height="20" fill="rgb(255,255,255)" rx="4" ry="4" />
+<text x='3416' y='170.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="3416" dy="0">[필수] 개인정보 처리방침 동의</tspan></text>
+<text x='3618' y='170.05' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='13' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="3618" dy="0">(보기)</tspan></text>
+<rect x="3384" y="197" width="258" height="20" fill="rgb(255,255,255)" />
+<rect x="3384" y="197" width="258" height="20" fill="rgb(255,255,255)" />
+<rect x="3384" y="197" width="20" height="20" fill="rgb(255,255,255)" rx="4" ry="4" />
+<text x='3416' y='210.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="3416" dy="0">[선택] 마케팅 정보 수신 동의</tspan></text>
+<text x='3608' y='210.05' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='13' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="3608" dy="0">(보기)</tspan></text>
+<rect x="3384" y="241" width="222" height="88" fill="rgb(255,255,255)" />
+<rect x="3384" y="257" width="138" height="48" fill="rgb(0,122,255)" rx="12" ry="12" />
+<text x='3384' y='284.95' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='17' font-weight='700' font-style='normal' fill='rgb(255,255,255)' text-anchor='start'><tspan x="3384" dy="0">동의 후 가입합니다. </tspan></text>
+<text x='3495' y='324.05' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='13' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='middle'><tspan x="3495" dy="0">필수 약관에 동의해야 가입할 수 있습니다</tspan></text>
+</svg>

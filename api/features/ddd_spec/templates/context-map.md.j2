@@ -1,0 +1,30 @@
+# Context Map
+
+> Strategic-level relationships between the system's Bounded Contexts.
+>
+> Generated: {{ generated_at }}
+
+## Diagram
+
+```mermaid
+graph LR
+{% for bc in bcs %}    {{ bc.node_id }}["{{ bc.name }}"]
+{% endfor %}{% for edge in edges %}    {{ edge.from_node_id }} -->|"{{ edge.label }}"| {{ edge.to_node_id }}
+{% endfor %}
+```
+
+## Relationships
+
+{% if edges %}{% for edge in edges %}
+### {{ edge.from_bc_name }} → {{ edge.to_bc_name }}
+
+- **Pattern.** {{ edge.pattern }}{% if edge.pattern_inferred %} *(inferred — confirm)*{% endif %}
+
+- **Direction.** {{ edge.direction }}
+- **Translation.** {{ edge.translation }}
+- **Reason.** {{ edge.reason }}
+- **Spec file.** [`{{ edge.spec_file }}`]({{ edge.spec_file }})
+
+{% endfor %}{% else %}
+_Only one Bounded Context modeled; no cross-BC relationships._
+{% endif %}

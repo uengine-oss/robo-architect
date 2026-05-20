@@ -1,21 +1,20 @@
 <script setup>
-import { onMounted, onUnmounted, ref, computed, shallowRef, markRaw, provide } from 'vue'
+import { onMounted, onUnmounted, ref, computed, markRaw, provide } from 'vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
 import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
 import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
-import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
 import EventModelingPanel from '@/features/eventModeling/ui/EventModelingPanel.vue'
-import ClaudeCodeTerminal from '@/features/claudeCode/ui/ClaudeCodeTerminal.vue'
-import UserStoryEditModal from '@/features/userStories/ui/UserStoryEditModal.vue'
+import RequirementsPanel from '@/features/requirements/ui/RequirementsPanel.vue'
+import ClaudeCodeWorkspace from '@/features/claudeCode/ui/ClaudeCodeWorkspace.vue'
+import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
-import { useUserStoryEditorStore } from '@/features/userStories/userStoryEditor.store'
 import { useThemeStore } from '@/app/theme.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
+import { createLogger, newOpId } from '@/app/logging/logger'
 
 const navigatorStore = useNavigatorStore()
-const userStoryEditor = useUserStoryEditorStore()
 const themeStore = useThemeStore() // Initialize theme store
 const bpmnStore = useBpmnStore()
 
@@ -33,13 +32,15 @@ provide('openClaudeCode', (workdir) => {
 })
 
 // Map tab names to components
+// BPMN 탭은 UI에서 제거됨 (BpmnPanel 컴포넌트·기능은 코드에 유지).
 const tabComponents = {
+  'Requirements': markRaw(RequirementsPanel),
   'BPMN': markRaw(BpmnPanel),
   'Event Modeling': markRaw(EventModelingPanel),
   'Big picture': markRaw(BigPicturePanel),
   'Design': markRaw(CanvasWorkspace),
   'Aggregate': markRaw(AggregatePanel),
-  'Claude Code': markRaw(ClaudeCodeTerminal)
+  'Claude Code': markRaw(ClaudeCodeWorkspace)
 }
 
 // Cross-component tab switching (HybridEventStormingPanel → Event Modeling)
@@ -97,17 +98,19 @@ function toggleNavigator() {
   } catch {}
 }
 
-async function handleUserStorySaved() {
-  try {
-    await navigatorStore.refreshAll({ trigger: 'UserStoryEditModal:saved' })
-  } catch (e) {
-    console.error('[App] navigator refresh failed:', e)
+const log = createLogger({ scope: 'App' })
+const appInstanceId = newOpId('app')
+
+function getNavigatorSnapshot() {
+  return {
+    contextsCount: navigatorStore.contexts?.length ?? 0,
+    unassignedUserStoriesCount: navigatorStore.userStories?.length ?? 0,
+    contextTreesCount: navigatorStore.contextTrees ? Object.keys(navigatorStore.contextTrees).length : 0,
+    navigatorLoading: !!navigatorStore.loading,
+    navigatorError: navigatorStore.error ?? null
   }
 }
 
-function handleUserStoryModalClose() {
-  userStoryEditor.close()
-}
 
 onMounted(() => {
   // Load saved navigator width and collapsed state
@@ -132,6 +135,16 @@ onMounted(() => {
 
   // Listen for cross-component tab switch requests
   window.addEventListener('robo:switch-tab', _onSwitchTab)
+
+  log.info('app_mounted', 'App mounted; core layout components are ready.', {
+    appInstanceId,
+    envMode: (() => {
+      try { return import.meta?.env?.MODE } catch { return undefined }
+    })(),
+    initial: {
+      navigator: getNavigatorSnapshot()
+    }
+  })
 })
 
 onUnmounted(() => {
@@ -147,7 +160,7 @@ onUnmounted(() => {
       @update:active-tab="activeTab = $event"
     />
     <div class="main-content">
-      <template v-if="activeTab !== 'Claude Code'">
+      <template v-if="activeTab !== 'Claude Code' && activeTab !== 'Requirements'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"
@@ -188,14 +201,6 @@ onUnmounted(() => {
         </KeepAlive>
       </div>
     </div>
-    
-    <!-- User Story Edit Modal -->
-    <UserStoryEditModal 
-      :visible="userStoryEditor.isOpen"
-      :user-story="userStoryEditor.userStory"
-      @close="handleUserStoryModalClose"
-      @saved="handleUserStorySaved"
-    />
   </div>
 </template>
 

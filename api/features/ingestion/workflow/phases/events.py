@@ -45,19 +45,13 @@ async def _create_event_with_links(
     description = evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", None)
 
     try:
-        created_evt = await asyncio.wait_for(
-            asyncio.to_thread(
-                ctx.client.create_event,
-                name=name,
-                command_id=cmd_id,
-                version=version,
-                payload=payload,
-                display_name=evt_display_name,
-                description=description,
-            ),
-            timeout=10.0
-        )
-        
+        # FR-001 (spec 018): event nodes are created in batch up front.
+        # Look up the bulk result by (cmd_id, name) — the phase pre-builds it.
+        bulk_results: dict[tuple[str, str], dict[str, Any]] = getattr(ctx, "_bulk_evt_results", None) or {}
+        created_evt = bulk_results.get((cmd_id, name))
+        if not created_evt or not created_evt.get("id"):
+            return None, f"bulk_create_events returned empty result for {name}"
+
         # Overwrite LLM-proposed id with UUID from DB (only if evt is an object, not dict)
         try:
             if not isinstance(evt, dict):
@@ -221,7 +215,65 @@ async def extract_events_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[
                             cmd_id = cmd.get("id") if isinstance(cmd, dict) else getattr(cmd, "id", None)
 
                     tasks.append(_create_event_with_links(evt, i, cmd_id, ctx))
-                
+
+                # ── Pre-build bulk rows + run ONE bulk_create_events per Agg ──
+                # FR-001 (spec 018). We batch per-Aggregate (not once per phase)
+                # so the streaming progress UX is preserved — N→1 round-trips
+                # within an Aggregate's events still gives ≥ 70% reduction
+                # (SC-001) because most Aggregates have many events.
+                bulk_rows: list[dict[str, Any]] = []
+                for i, evt in enumerate(events):
+                    name = (evt.get("name") if isinstance(evt, dict) else getattr(evt, "name", "") or "").strip()
+                    if not name:
+                        continue
+                    emitting_cmd_name_x = (
+                        (evt.get("emitting_command_name") if isinstance(evt, dict) else getattr(evt, "emitting_command_name", None)) or ""
+                    ).strip()
+                    cmd_id_x = cmd_name_to_id.get(emitting_cmd_name_x) if emitting_cmd_name_x else None
+                    if not cmd_id_x:
+                        if i < len(commands):
+                            _c = commands[i]
+                        elif commands:
+                            _c = commands[0]
+                        else:
+                            _c = None
+                        cmd_id_x = _c.get("id") if isinstance(_c, dict) else getattr(_c, "id", None) if _c else None
+                    if not cmd_id_x:
+                        continue
+                    display_name = evt.get("displayName") if isinstance(evt, dict) else getattr(evt, "displayName", None)
+                    bulk_rows.append(
+                        {
+                            "name": name,
+                            "command_id": cmd_id_x,
+                            "version": (evt.get("version", "1.0.0") if isinstance(evt, dict) else (getattr(evt, "version", "1.0.0") or "1.0.0")),
+                            "payload": evt.get("payload") if isinstance(evt, dict) else getattr(evt, "payload", None),
+                            "display_name": display_name or name,
+                            "description": evt.get("description") if isinstance(evt, dict) else getattr(evt, "description", None),
+                        }
+                    )
+                from api.features.ingestion.suspend_gate import session_call_slot
+                try:
+                    async with session_call_slot(ctx.session):
+                        bulk_results_list = await asyncio.to_thread(
+                            ctx.client.bulk_create_events,
+                            bulk_rows,
+                            session_id=ctx.session.id,
+                            phase="extracting_events",
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    SmartLogger.log(
+                        "ERROR",
+                        f"bulk_create_events failed: {exc}",
+                        category="ingestion.batch.event.flush_failed",
+                        params={"session_id": ctx.session.id, "rowCount": len(bulk_rows), "error": str(exc)},
+                    )
+                    bulk_results_list = []
+                ctx._bulk_evt_results = {  # type: ignore[attr-defined]
+                    (row["command_id"], row["name"]): dict(res)
+                    for row, res in zip(bulk_rows, bulk_results_list)
+                    if res.get("ok") and res.get("id")
+                }
+
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 
                 # Process results and yield progress events

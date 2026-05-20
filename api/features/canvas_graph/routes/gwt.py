@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
@@ -18,6 +20,10 @@ class _GWTRef(BaseModel):
     referencedNodeId: str | None = None
     referencedNodeType: str | None = None
     name: str | None = None
+    # 027 — a Then may declare an Exception outcome instead of (or alongside) an
+    # Event. `exceptionName` resolves to an entry in the owning Aggregate's
+    # `exceptions` domain-object catalog. Applies to Command and Invariant GWT.
+    exceptionName: str | None = None
 
 
 class _GWTTestCase(BaseModel):
@@ -28,7 +34,10 @@ class _GWTTestCase(BaseModel):
 
 
 class UpsertGWTRequest(BaseModel):
-    parentType: Literal["Command", "Policy"]
+    # "Invariant" added by feature 027 — an invariant-owned GWT bundle is stored
+    # as GWT {parentType:"Invariant", parentId:<invariant.id>}. The upsert query
+    # matches the parent by id + label, so no further change is needed.
+    parentType: Literal["Command", "Policy", "Invariant"]
     parentId: str
     givenRef: _GWTRef | None = None
     whenRef: _GWTRef | None = None
@@ -115,4 +124,160 @@ async def upsert_gwt(payload: UpsertGWTRequest, request: Request) -> dict[str, A
             session.run(ref_query, parent_type=payload.parentType, parent_id=payload.parentId, refs=refs)
 
     return {"success": True, "gwt": out}
+
+
+@router.get("/gwt/{parent_type}/{parent_id}")
+async def get_gwt(parent_type: str, parent_id: str) -> dict[str, Any]:
+    """Read the single GWT bundle for a parent (Command/Policy/Invariant).
+
+    Returns ``{"gwt": null}`` when the parent has no GWT yet. Added by feature
+    027 so the Invariant editor can load both invariant-owned and referenced
+    Command GWT bundles into the shared editor component.
+    """
+    query = """
+    MATCH (gwt:GWT {parentType: $parent_type, parentId: $parent_id})
+    RETURN gwt {.id, .parentType, .parentId, .givenRef, .whenRef, .thenRef, .testCases} AS gwt
+    """
+    with get_session() as session:
+        rec = session.run(query, parent_type=parent_type, parent_id=parent_id).single()
+    return {"gwt": dict(rec["gwt"]) if rec else None}
+
+
+# ---------------------------------------------------------------------------
+# Natural-language -> GWT field values
+# ---------------------------------------------------------------------------
+
+
+class _NLProperty(BaseModel):
+    name: str
+    displayName: str | None = None
+    type: str | None = None
+    enumItems: list[str] = Field(default_factory=list)
+
+
+class _NLSection(BaseModel):
+    name: str | None = None
+    properties: list[_NLProperty] = Field(default_factory=list)
+
+
+class ParseNLRequest(BaseModel):
+    text: str
+    given: _NLSection | None = None
+    when: _NLSection | None = None
+    then: _NLSection | None = None
+
+
+def _section_brief(label: str, section: _NLSection | None) -> str:
+    """Render a section's property catalog for the LLM prompt."""
+    if section is None:
+        return f"{label}: (not applicable — omit this section in the output)"
+    if not section.properties:
+        return f"{label} ({section.name or ''}): (no properties)"
+    lines = [f"{label} ({section.name or ''}):"]
+    for p in section.properties:
+        logical = f" / 논리명: {p.displayName}" if p.displayName and p.displayName != p.name else ""
+        enum = f" / enum 값: {', '.join(p.enumItems)}" if p.enumItems else ""
+        lines.append(f"  - {p.name} (type: {p.type or 'String'}{logical}{enum})")
+    return "\n".join(lines)
+
+
+def _strip_json_fence(content: str) -> str:
+    if "```json" in content:
+        content = content.split("```json", 1)[1].split("```", 1)[0]
+    elif "```" in content:
+        content = content.split("```", 1)[1].split("```", 1)[0]
+    content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
+    return content.strip()
+
+
+@router.post("/gwt/parse-nl")
+async def parse_gwt_nl(payload: ParseNLRequest, request: Request) -> dict[str, Any]:
+    """
+    Parse a natural-language scenario sentence into Given/When/Then field values.
+
+    The caller supplies the property catalog (physical name, logical/display name,
+    type, enum items) for each section so the LLM can map free text onto the exact
+    physical property keys and emit type-correct values.
+    """
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    catalog = "\n".join(
+        [
+            _section_brief("Given", payload.given),
+            _section_brief("When", payload.when),
+            _section_brief("Then", payload.then),
+        ]
+    )
+
+    system_prompt = (
+        "You convert a natural-language Given/When/Then test scenario into structured "
+        "field values for an event-storming model. You are given the property catalog "
+        "for each section. Map the described facts onto the EXACT physical property "
+        "names (the `name`, not the logical name). Only include properties that the "
+        "sentence actually states or clearly implies — never invent values for "
+        "unmentioned properties. Match value types strictly: numbers without quotes, "
+        "booleans as true/false, enum values must be one of the listed enum items, "
+        "dates as ISO strings. Respond with ONLY a JSON object of the form "
+        '{"givenFieldValues": {...}, "whenFieldValues": {...}, "thenFieldValues": {...}}. '
+        "Omit a section entirely (use {}) if it is not applicable or nothing is stated for it."
+    )
+    human_prompt = (
+        f"PROPERTY CATALOG:\n{catalog}\n\n"
+        f"NATURAL LANGUAGE SCENARIO:\n{text}\n\n"
+        "Return the JSON object now."
+    )
+
+    SmartLogger.log(
+        "INFO",
+        "Parse GWT natural language requested.",
+        category="api.graph.gwt.parse_nl",
+        params={**http_context(request), "textLength": len(text)},
+    )
+
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from api.platform.llm import get_llm
+
+        llm = get_llm()
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                llm.invoke,
+                [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)],
+            ),
+            timeout=120.0,
+        )
+        content = response.content if hasattr(response, "content") else str(response)
+        parsed = json.loads(_strip_json_fence(content))
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="자연어 해석 시간 초과")
+    except json.JSONDecodeError as exc:
+        SmartLogger.log(
+            "WARNING",
+            "Parse GWT NL: invalid JSON from LLM.",
+            category="api.graph.gwt.parse_nl",
+            params={**http_context(request), "error": str(exc)},
+        )
+        raise HTTPException(status_code=502, detail="자연어 해석 결과를 파싱하지 못했습니다")
+    except Exception as exc:  # noqa: BLE001 - surface LLM/config errors to the client
+        SmartLogger.log(
+            "ERROR",
+            "Parse GWT NL failed.",
+            category="api.graph.gwt.parse_nl",
+            params={**http_context(request), "error": str(exc)},
+        )
+        raise HTTPException(status_code=500, detail=f"자연어 해석 실패: {exc}")
+
+    def _section_values(key: str) -> dict[str, Any]:
+        value = parsed.get(key) if isinstance(parsed, dict) else None
+        return value if isinstance(value, dict) else {}
+
+    return {
+        "success": True,
+        "givenFieldValues": _section_values("givenFieldValues"),
+        "whenFieldValues": _section_values("whenFieldValues"),
+        "thenFieldValues": _section_values("thenFieldValues"),
+    }
 

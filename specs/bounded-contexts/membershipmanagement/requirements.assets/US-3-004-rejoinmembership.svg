@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 704" width="375" height="704">
+<rect x="0" y="0" width="375" height="704" fill="rgb(249,250,251)" rx="24" ry="24" />
+<text x='24' y='47.8' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='28' font-weight='700' font-style='normal' fill='rgb(34,34,34)' text-anchor='start'><tspan x="24" dy="0">재가입</tspan></text>
+<rect x="24" y="88" width="327" height="249" fill="rgb(255,255,255)" rx="16" ry="16" />
+<text x='44' y='121.6' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='16' font-weight='500' font-style='normal' fill='rgb(51,51,51)' text-anchor='start'><tspan x="44" dy="0">본인인증</tspan></text>
+<rect x="44" y="148" width="180" height="44" fill="rgb(243,244,246)" rx="8" ry="8" />
+<text x='56' y='172.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="56" dy="0">휴대폰 번호</tspan></text>
+<rect x="232" y="147" width="69" height="45" fill="rgb(37,99,235)" rx="8" ry="8" />
+<text x='244' y='171.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='500' font-style='normal' fill='rgb(255,255,255)' text-anchor='start'><tspan x="244" dy="0">인증 요청</tspan></text>
+<rect x="44" y="209" width="120" height="44" fill="rgb(243,244,246)" rx="8" ry="8" />
+<text x='56' y='233.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="56" dy="0">인증번호</tspan></text>
+<rect x="172" y="208" width="42" height="45" fill="rgb(37,99,235)" rx="8" ry="8" />
+<text x='184' y='232.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='500' font-style='normal' fill='rgb(255,255,255)' text-anchor='start'><tspan x="184" dy="0">확인</tspan></text>
+<line x1="45.5" y1="297" x2="53" y2="304.5" stroke="rgb(37,99,235)" stroke-width="1.5" stroke-linecap="round" /><line x1="53" y1="304.5" x2="60.5" y2="297" stroke="rgb(37,99,235)" stroke-width="1.5" stroke-linecap="round" /><line x1="60.5" y1="297" x2="53" y2="289.5" stroke="rgb(37,99,235)" stroke-width="1.5" stroke-linecap="round" /><line x1="53" y1="289.5" x2="45.5" y2="297" stroke="rgb(37,99,235)" stroke-width="1.5" stroke-linecap="round" />
+<line x1="53" y1="300" x2="53" y2="297" stroke="rgb(37,99,235)" stroke-width="1.5" stroke-linecap="round" /><line x1="53" y1="294" x2="53.01" y2="294" stroke="rgb(37,99,235)" stroke-width="1.5" stroke-linecap="round" />
+<text x='70' y='288.9' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='14' font-weight='400' font-style='normal' fill='rgb(37,99,235)' text-anchor='start'><tspan x="70" dy="0">기존 이력이 확인되었습니다.</tspan></text>
+<rect x="24" y="361" width="327" height="243" fill="rgb(255,255,255)" rx="16" ry="16" />
+<text x='44' y='394.6' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='16' font-weight='500' font-style='normal' fill='rgb(51,51,51)' text-anchor='start'><tspan x="44" dy="0">개인정보 입력</tspan></text>
+<rect x="44" y="420" width="287" height="44" fill="rgb(243,244,246)" rx="8" ry="8" />
+<text x='56' y='444.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="56" dy="0">이름</tspan></text>
+<rect x="44" y="480" width="287" height="44" fill="rgb(243,244,246)" rx="8" ry="8" />
+<text x='56' y='504.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="56" dy="0">이메일</tspan></text>
+<rect x="44" y="540" width="287" height="44" fill="rgb(243,244,246)" rx="8" ry="8" />
+<text x='56' y='564.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(136,136,136)' text-anchor='start'><tspan x="56" dy="0">생년월일 (YYYYMMDD)</tspan></text>
+<rect x="24" y="628" width="327" height="52" fill="rgb(37,99,235)" rx="12" ry="12" />
+<text x='172' y='656.45' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='17' font-weight='700' font-style='normal' fill='rgb(255,255,255)' text-anchor='start'><tspan x="172" dy="0">재가입</tspan></text>
+</svg>

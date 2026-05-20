@@ -1,10 +1,11 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide } from 'vue'
+import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide, watch } from 'vue'
 import { VueFlow, useVueFlow, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { createLogger, newOpId } from '@/app/logging/logger'
 
 // Custom Nodes
@@ -400,6 +401,27 @@ provide('openInspector', {
   openInspectorForNodeData
 })
 
+// Cross-feature bridge: components outside CanvasWorkspace's provide tree
+// (e.g., navigator/TreeNode) push open-requests via the inspectorRequest
+// Pinia store. CanvasWorkspace watches and routes them to the in-tree
+// open-functions.
+const inspectorRequestStore = useInspectorRequestStore()
+watch(
+  () => inspectorRequestStore.requestId,
+  (id) => {
+    if (!id) return
+    const req = inspectorRequestStore.pendingRequest
+    if (!req) return
+    log.info('inspector_request_consumed', 'Consuming external inspector open-request.', {
+      requestId: id,
+      nodeId: req.id,
+      nodeType: req.type
+    })
+    openInspectorForNodeData(req)
+    inspectorRequestStore.consume()
+  }
+)
+
 async function onNodeDoubleClick(event) {
   const opId = newOpId('dblclick')
   const node = event.node
@@ -661,7 +683,7 @@ function onResizeChat(e) {
   if (!isResizingChat.value) return
   // Right-side panel width from viewport right edge
   const next = Math.round(window.innerWidth - e.clientX)
-  chatPanelWidth.value = Math.max(280, Math.min(640, next))
+  chatPanelWidth.value = Math.max(280, Math.min(window.innerWidth - 100, next))
   try {
     localStorage.setItem('canvas_chat_panel_width', String(chatPanelWidth.value))
   } catch {}
@@ -841,9 +863,15 @@ onUnmounted(() => {
       </div>
 
       <!-- UI Preview Panel -->
-      <!-- Inspector Panel (placeholder) -->
+      <!-- Inspector Panel — keyed on node id so a different UI sticker forces
+           a full re-mount of the panel and all of its child components
+           (FrameEditor, FramePreview, AIChatPanel). Without this, Vue tries
+           to re-use the previous panel instance for the new node, which
+           leaves open-pencil's CanvasKit/editor state half-destroyed and the
+           Design tab shows a blank/black box from the second UI onward. -->
       <div v-else-if="panelMode === 'inspector'" class="inspector-wrapper">
         <InspectorPanel
+          :key="inspectingNodeId || 'inspector-empty'"
           :node-id="inspectingNodeId"
           :node-data="inspectingNodeData"
           :initial-tab="inspectingInitialTab"

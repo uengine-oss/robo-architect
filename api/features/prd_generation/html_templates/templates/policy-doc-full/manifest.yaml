@@ -1,0 +1,52 @@
+id: policy-doc-full
+name: 정책서 Full
+version: v1.0
+description: 회원가입·탈퇴 정책서 스타일의 풀 HTML 정책서 (이벤트 스토밍 그래프 기반)
+master_template: document.html.j2
+metadata:
+  doc_id_prefix: POL
+  author_default: 자동 생성 (robo-architect)
+sections:
+  - id: meta
+    kind: derived
+  - id: overview.scope
+    kind: derived
+  - id: overview.principles
+    kind: llm
+    prompt: prompts/design_principles.md.j2
+    inputs:
+      - bounded_contexts
+      - policies
+      - glossary
+  - id: glossary
+    kind: derived
+  - id: usecase.actors
+    kind: derived
+  - id: usecase.list
+    kind: derived
+  - id: usecase.diagram
+    kind: derived
+  - id: usecase.state_table
+    kind: hybrid
+    prompt: prompts/state_transitions.md.j2
+    inputs:
+      - state_transitions
+      - bounded_contexts
+  - id: process.list
+    kind: derived
+  - id: process.flowchart
+    kind: derived
+  - id: process.detail
+    kind: derived
+  - id: function.list
+    kind: derived
+  - id: function.detail
+    kind: derived
+  - id: policy.list
+    kind: derived
+  - id: policy.detail
+    kind: hybrid
+    prompt: prompts/policy_prose.md.j2
+    inputs:
+      - policies
+      - bounded_contexts

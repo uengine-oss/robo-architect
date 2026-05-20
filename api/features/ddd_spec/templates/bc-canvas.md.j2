@@ -1,0 +1,66 @@
+# Bounded Context Canvas: {{ bc.name }}
+
+> Generated: {{ generated_at }}
+
+## Purpose
+
+{% if bc.purpose %}{{ bc.purpose }}{% else %}_(not modeled — confirm)_{% endif %}
+
+## Strategic Classification
+
+{% if bc.strategic %}
+- **Domain Type.** {{ bc.strategic.domain_type or "(not modeled — confirm)" }}
+- **Business Model.** {{ bc.strategic.business_model or "(not modeled — confirm)" }}
+- **Evolution.** {{ bc.strategic.evolution or "(not modeled — confirm)" }}
+{% else %}
+_(not classified — confirm)_
+{% endif %}
+
+## Inbound Communication
+
+{% if bc.inbound_flows %}
+| From context | Channel | Message | Pattern |
+|---|---|---|---|
+{% for flow in bc.inbound_flows %}| {{ flow.from_bc_name }} | {{ flow.channel }} | {{ flow.message }} | {{ flow.pattern_display }} |
+{% endfor %}
+{% else %}
+_No modeled inbound communication._
+{% endif %}
+
+## Outbound Communication
+
+{% if bc.outbound_flows %}
+| To context | Channel | Message | Pattern |
+|---|---|---|---|
+{% for flow in bc.outbound_flows %}| {{ flow.to_bc_name }} | {{ flow.channel }} | {{ flow.message }} | {{ flow.pattern_display }} |
+{% endfor %}
+{% else %}
+_No modeled outbound communication._
+{% endif %}
+
+## Ubiquitous Language (summary)
+
+See [`domain-terms.md`](./domain-terms.md) for the full glossary. Key terms in this BC:
+
+{% if bc.key_terms %}{% for kt in bc.key_terms %}- `{{ kt }}`
+{% endfor %}{% else %}- (none modeled)
+{% endif %}
+
+## Business Decisions
+
+_(not modeled — confirm)_
+
+## Assumptions
+
+_(not modeled — confirm)_
+
+## External Integrations
+
+{% if bc.external_integrations %}
+| External system | Direction | ACL spec |
+|---|---|---|
+{% for ext in bc.external_integrations %}| {{ ext.external_system_name }} | {{ ext.direction }} | [`acl-{{ ext.slug }}.md`](./acl-{{ ext.slug }}.md) |
+{% endfor %}
+{% else %}
+_No external-system integrations modeled for this BC._
+{% endif %}

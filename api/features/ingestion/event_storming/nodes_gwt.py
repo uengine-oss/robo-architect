@@ -25,7 +25,7 @@ from .prompts import SYSTEM_PROMPT
 from .state import EventStormingState, WorkflowPhase, GivenCandidate, WhenCandidate, ThenCandidate
 
 GENERATE_GWT_PROMPT = """Generate Given/When/Then (GWT) structures for Commands and Policies to support BDD-style test scenarios.
-
+{user_story_criteria_section}
 <command>
 Name: {command_name}
 Description: {command_description}
@@ -69,6 +69,70 @@ Return a JSON object with:
 
 If properties are not available or empty, use empty fieldValues {{}}.
 """
+
+
+# Soft cap on criteria injected per prompt. Realistic counts are <50;
+# this protects against pathological inputs (spec 019 / contracts §4).
+_MAX_CRITERIA_PER_PROMPT = 200
+
+
+def _build_user_story_criteria_section(state: EventStormingState, user_story_ids: list[str] | None) -> str:
+    """Build the optional 'Acceptance Criteria from linked user stories' prompt
+    section for a given Command/Policy.
+
+    Spec 019 / D3: criteria are grouped by source UserStory. Stories with empty
+    or missing criteria are skipped. If, after filtering, no story contributes
+    any criteria, return the empty string — caller embeds it into the prompt
+    template, leaving the prompt byte-equivalent to today's behaviour
+    (FR-008 fallback).
+    """
+    if not user_story_ids:
+        return ""
+    by_id: dict[str, dict] = {}
+    for us in state.user_stories or []:
+        if isinstance(us, dict) and us.get("id"):
+            by_id[us["id"]] = us
+    blocks: list[str] = []
+    total = 0
+    truncated = False
+    for us_id in user_story_ids:
+        us = by_id.get(us_id)
+        if not us:
+            continue
+        criteria = us.get("acceptanceCriteria") or us.get("acceptance_criteria") or []
+        criteria = [str(c).strip() for c in criteria if isinstance(c, (str, bytes)) and str(c).strip()]
+        if not criteria:
+            continue
+        role = (us.get("role") or "user").strip()
+        action = (us.get("action") or "").strip()
+        benefit = (us.get("benefit") or "").strip()
+        header = f'  - From UserStory "{role}: {action}'
+        if benefit:
+            header += f" (so that {benefit})"
+        header += '":'
+        lines = [header]
+        for i, c in enumerate(criteria, start=1):
+            if total + 1 > _MAX_CRITERIA_PER_PROMPT:
+                truncated = True
+                break
+            lines.append(f"    {i}. {c}")
+            total += 1
+        blocks.append("\n".join(lines))
+        if truncated:
+            break
+
+    if not blocks:
+        return ""
+
+    if truncated:
+        SmartLogger.log(
+            "WARN",
+            "EventStorming: GWT prompt criteria truncated.",
+            category="agent.nodes.generate_gwt.criteria.truncated",
+            params={"max_criteria": _MAX_CRITERIA_PER_PROMPT, "user_story_ids": user_story_ids}
+        )
+
+    return "\nAcceptance Criteria from linked user stories:\n" + "\n".join(blocks) + "\n"
 
 
 def generate_gwt_node(state: EventStormingState) -> Dict[str, Any]:
@@ -159,6 +223,9 @@ def generate_gwt_node(state: EventStormingState) -> Dict[str, Any]:
             agg_props_text = "\n".join([f"- {p.get('name', '')}: {p.get('type', '')}" for p in agg_props]) if agg_props else "No properties available yet"
             evt_props_text = "\n".join([f"- {p.get('name', '')}: {p.get('type', '')}" for p in evt_props]) if evt and evt_props else "No properties available yet"
             
+            user_story_criteria_section = _build_user_story_criteria_section(
+                state, getattr(cmd, "user_story_ids", None)
+            )
             prompt = GENERATE_GWT_PROMPT.format(
                 command_name=cmd.name,
                 command_description=cmd.description,
@@ -168,6 +235,7 @@ def generate_gwt_node(state: EventStormingState) -> Dict[str, Any]:
                 event_name=evt.name if evt else "UnknownEvent",
                 event_description=evt.description if evt else "Event will be emitted",
                 event_properties=evt_props_text,
+                user_story_criteria_section=user_story_criteria_section,
             )
             
             provider, model = get_llm_provider_model()

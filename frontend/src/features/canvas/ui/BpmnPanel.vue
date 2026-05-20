@@ -21,6 +21,42 @@ let viewer = null
 // 현재 렌더링된 flow 탭 목록
 const flowTabs = computed(() => store.renderedFlows)
 
+// ── Event Storming promotion (hybrid Phase 5) ──
+// BPM 생성 결과를 Event Storming 모델로 승격. 캔버스 플로팅 컨트롤러로 노출.
+const esPromoting = ref(false)
+const esError = ref('')
+
+async function startEventStorming() {
+  const hsid = store.hybridSessionId
+  if (!hsid) {
+    alert('BPM 을 먼저 생성하세요 (BPMN 탭에서 Hybrid Ingestion 실행).')
+    return
+  }
+  esPromoting.value = true
+  esError.value = ''
+
+  try {
+    // Wipe previous + trigger
+    await fetch(`/api/ingest/hybrid/${hsid}/promote-to-es`, { method: 'DELETE' })
+    const resp = await fetch(`/api/ingest/hybrid/${hsid}/promote-to-es`, { method: 'POST' })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || `${resp.status}`)
+    }
+    const { ingestion_session_id } = await resp.json()
+
+    // Delegate SSE handling to RequirementsIngestionModal — same infra as normal
+    // ingestion: floating progress panel + Event Modeling live mode + navigator updates.
+    window.dispatchEvent(new CustomEvent('robo:hybrid-promote', {
+      detail: { sessionId: ingestion_session_id },
+    }))
+    esPromoting.value = false
+  } catch (e) {
+    esError.value = e.message || String(e)
+    esPromoting.value = false
+  }
+}
+
 onMounted(async () => {
   store.fetchProcessFlows()
   // App.vue triggers rehydrateHybrid at cold-load; if the user refreshed on a
@@ -277,6 +313,26 @@ function closeInspector() {
         </button>
       </div>
 
+      <!-- Event Storming promote — floating controller (BPMN tab only) -->
+      <button
+        class="es-promote-fab"
+        :class="{ 'is-error': !!esError }"
+        :disabled="esPromoting"
+        @click="startEventStorming"
+        title="이벤트 스토밍 모델 생성 (BPM 기반)"
+      >
+        <template v-if="esPromoting">
+          <span class="es-spinner"></span>
+          <span>시작 중...</span>
+        </template>
+        <template v-else-if="esError">
+          <span>❌ {{ esError.slice(0, 30) }}</span>
+        </template>
+        <template v-else>
+          <span>✨ 이벤트 스토밍 생성</span>
+        </template>
+      </button>
+
       <!-- BPMN Viewer Container -->
       <div ref="bpmnContainer" class="bpmn-canvas" />
 
@@ -481,6 +537,58 @@ function closeInspector() {
 .ctrl-btn--danger:hover {
   background: rgba(230, 73, 73, 0.18);
   color: #ff8a8a;
+}
+
+/* Event Storming promote — floating controller (top-center) */
+.es-promote-fab {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  background: var(--color-accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s, filter 0.15s;
+  white-space: nowrap;
+}
+
+.es-promote-fab:hover:not(:disabled) {
+  transform: translateX(-50%) translateY(-1px);
+  filter: brightness(1.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+}
+
+.es-promote-fab:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.es-promote-fab.is-error {
+  background: #e03131;
+}
+
+.es-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: es-spin 0.7s linear infinite;
+}
+
+@keyframes es-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* BPMN Canvas */

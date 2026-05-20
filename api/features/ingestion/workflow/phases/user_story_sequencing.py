@@ -173,23 +173,33 @@ async def assign_user_story_sequences_phase(
     if not mapping:
         return
 
-    # Apply sequences to user stories and update Neo4j
+    # Apply sequences to user stories and update Neo4j (FR-001 spec 018: batch).
     updated = 0
+    bulk_rows: list[dict[str, Any]] = []
     for us in user_stories:
         us_id = getattr(us, "id", "")
         seq = mapping.get(us_id)
         if seq is not None:
             us.sequence = int(seq)
-            try:
-                await asyncio.wait_for(
-                    asyncio.to_thread(
-                        _update_us_sequence, ctx, us_id, int(seq)
-                    ),
-                    timeout=5.0,
+            bulk_rows.append({"us_id": us_id, "sequence": int(seq)})
+    if bulk_rows:
+        from api.features.ingestion.suspend_gate import session_call_slot
+        try:
+            async with session_call_slot(ctx.session):
+                results = await asyncio.to_thread(
+                    ctx.client.bulk_set_user_story_sequence,
+                    bulk_rows,
+                    session_id=ctx.session.id,
+                    phase="extracting_user_stories",
                 )
-                updated += 1
-            except Exception:
-                pass
+                updated = sum(1 for r in results if r.get("ok"))
+        except Exception as exc:  # noqa: BLE001
+            SmartLogger.log(
+                "ERROR",
+                f"bulk_set_user_story_sequence failed: {exc}",
+                category="ingestion.batch.user_story_sequence.flush_failed",
+                params={"session_id": ctx.session.id, "rowCount": len(bulk_rows), "error": str(exc)},
+            )
 
     SmartLogger.log(
         "INFO",

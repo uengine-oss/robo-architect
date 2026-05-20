@@ -107,6 +107,44 @@ def get_llm_model(default: str = "gpt-4.1-2025-04-14") -> str:
     return env_str("LLM_MODEL", default) or default
 
 
+def get_ingestion_batch_size(default: int = 500) -> int:
+    """Maximum rows per Neo4j transaction in the ingestion bulk-write helpers
+    (`bulk_create_<entity>` in event_storming/neo4j_ops). 500 is the empirical
+    sweet spot — larger chunks risk transaction-size limits on big entities
+    (e.g. UI sceneGraphs of 100KB+); smaller chunks reduce throughput.
+
+    Per-deployment override: `INGESTION_BATCH_SIZE=N`.
+    """
+    return env_int("INGESTION_BATCH_SIZE", default)
+
+
+def get_ingestion_snapshot_debug(default: bool = False) -> bool:
+    """When True, every ingestion bulk flush also writes its input rows to
+    `logs/ingestion-snapshots/<session_id>/<phase>.<entity>.json` for offline
+    forensics / replay. Best-effort; failures don't abort ingestion. Default
+    off so production runs don't spend disk IO. Toggle via
+    `INGESTION_SNAPSHOT_DEBUG=1`.
+    """
+    return env_flag("INGESTION_SNAPSHOT_DEBUG", default)
+
+
+def get_llm_tokenizer_fallback(default: str = "tiktoken") -> str:
+    """Fallback tokenizer strategy when an LLM response lacks
+    `usage_metadata` (spec 017 / D2). Returns one of:
+
+    - "tiktoken" (default) — use `tiktoken` (cl100k_base for non-OpenAI models).
+      Best accuracy; ~1 ms per call.
+    - "heuristic" — `len(text) // 4`. Zero-cost; lower accuracy. Used when
+      `tiktoken` import / encode fails.
+    - "none" — skip the fallback entirely; that LLM call contributes 0 to the
+      session's token total but the `tokens_approximate` flag still flips.
+
+    Override per deployment via `LLM_TOKENIZER_FALLBACK=heuristic|none`.
+    """
+    val = (env_str("LLM_TOKENIZER_FALLBACK", default) or default).strip().lower()
+    return val if val in {"tiktoken", "heuristic", "none"} else default
+
+
 def get_chat_model(default: str = "gpt-4.1-2025-04-14") -> str:
     """
     Resolve a chat model name with legacy/feature-specific fallbacks.

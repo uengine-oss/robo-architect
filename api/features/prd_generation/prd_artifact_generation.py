@@ -169,92 +169,51 @@ def render_user_story_index(user_stories: list[dict]) -> str:
 
 
 def generate_main_prd(bcs: list[dict], config: TechStackConfig) -> str:
-    prd = f"""# {config.project_name} - Product Requirements Document
+    """PRD.md — project composition (FR-022, research D9).
 
-Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    Holds only compositional content: project name, technology-stack
+    table, Bounded Contexts inventory, project-file index, deployment
+    view, and pointers to the engineering constitution that lives in
+    ``CLAUDE.md`` (when ``ai_assistant=claude``) or ``.cursorrules``
+    (when ``ai_assistant=cursor``). Prescriptive prose (read-order, DDD
+    principles, EARS rules, GWT obligation, "🚨 CRITICAL"-style imperative
+    blocks) does NOT belong here — the
+    :func:`api.features.prd_generation.prd_split_lint.lint_disjoint` lint
+    aborts the zip build with ``prd_split_lint_failed`` if it leaks back in.
+    """
+    has_frontend = bool(config.include_frontend and config.frontend_framework)
+    using_claude = config.ai_assistant.value == "claude"
+    spec_uses_ddd = config.spec_format.value == "ddd"
 
-## 🚨 CRITICAL: Before Starting Implementation
+    parts: list[str] = []
+    parts.append(f"# {config.project_name}\n")
+    parts.append("")
+    parts.append("> Project composition. The engineering rules live in")
+    parts.append(
+        "> `CLAUDE.md`" if using_claude else "> `.cursorrules`"
+    )
+    parts.append("> — read that before writing code.")
+    parts.append("")
 
-**When you are asked to "진행해" (proceed) or start implementation, you MUST:**
+    # Technology Stack table.
+    parts.append("## Technology Stack")
+    parts.append("")
+    parts.append("| Component | Choice |")
+    parts.append("|-----------|--------|")
+    parts.append(f"| Language | {config.language.value} |")
+    parts.append(f"| Framework | {config.framework.value} |")
+    parts.append(f"| Messaging | {config.messaging.value} |")
+    parts.append(f"| Database | {config.database.value} |")
+    parts.append(f"| Deployment | {config.deployment.value} |")
+    if has_frontend:
+        parts.append(f"| Frontend framework | {config.frontend_framework.value} |")
+    parts.append("")
 
-1. **Read the BC Specification** (`specs/{{bc_name}}_spec.md`) FIRST - This contains ALL implementation details:
-   - ✅ **Aggregates**: Complete properties, invariants, enumerations, value objects
-   - ✅ **Commands**: Input schemas, properties, actor requirements
-   - ✅ **Events**: Schemas, properties, publishing requirements
-   - ✅ **ReadModels**: Properties, query patterns, actor filtering
-   - ✅ **Policies**: Trigger events, invoke commands, cross-BC relationships
-   - ✅ **UI Wireframes**: Template HTML, attached Commands/ReadModels, descriptions
-   - ✅ **GWT Tests**: Complete test scenarios with Given/When/Then
-
-2. **Reference Cursor Rules** (use @mention):
-   - ✅ `@.cursorrules` - Global DDD principles
-   - ✅ `@ddd-principles` - DDD patterns (always applied)
-   - ✅ `@eventstorming-implementation` - Sticker-to-code mapping (Command → API, Event → Message, ReadModel → Query API, UI → Component)
-   - ✅ `@gwt-test-generation` - GWT test patterns
-   - ✅ `@{config.framework.value}` - Tech stack specific guidelines (e.g., `@spring-boot`)
-   - ✅ `@{config.frontend_framework.value if config.frontend_framework else "N/A"}` - Frontend guidelines (if frontend included)
-
-3. **Read Frontend PRD** (if frontend included) - **MUST READ TOGETHER WITH THIS PRD**:
-   - ✅ `Frontend-PRD.md` - Frontend architecture, implementation strategy, UI guidelines
-   - ✅ **Frontend Implementation Strategy**: Start with main landing page, then add BC features incrementally
-   - ✅ **Reference both PRD.md and Frontend-PRD.md** when implementing frontend
-
-**DO NOT start coding without reading these files!**
-
-**For Frontend Implementation**:
-- **Read PRD.md AND Frontend-PRD.md together** before starting
-- **Start with main landing page** (navigation foundation)
-- **Add BC features incrementally** (one BC at a time)
-- **Reference BC specs** for detailed wireframe templates
-
-## ⚠️ Important: Read All Reference Files
-
-**This PRD provides the high-level architecture and principles. For implementation, you MUST read the following files:**
-
-1. **BC Specifications** (`specs/{{bc_name}}_spec.md`): Complete detailed requirements for each Bounded Context
-   - All aggregates with properties, invariants, enumerations, value objects
-   - All commands with input schemas and properties
-   - All events with schemas and properties
-   - All ReadModels with properties
-   - All Policies with trigger/invoke relationships
-   - **All UI Wireframes with templates and attached Commands/ReadModels**
-   - All GWT test cases with scenarios
-
-2. **AI Assistant Guides** (use @mention in Cursor):
-   - **Cursor**: `@.cursorrules` (global DDD rules) + `@{{framework}}` (tech stack specific, e.g., `@spring-boot`)
-   - **Cursor Rules**: `@ddd-principles`, `@eventstorming-implementation`, `@gwt-test-generation`
-   - **Frontend Rules**: `@{{frontend_framework}}` (if frontend included, e.g., `@vue`, `@react`)
-   - **Claude**: `.claude/agents/{{bc_name}}_agent.md` (BC-specific agent config)
-
-3. **Frontend PRD** (if frontend included) - **MUST READ TOGETHER WITH THIS PRD**:
-   - `Frontend-PRD.md` - Frontend architecture, implementation strategy (main page first, then BC features), UI guidelines
-   - **For Frontend**: Always read both PRD.md and Frontend-PRD.md together before starting
-
-4. **Project Context**: `CLAUDE.md` for overall project overview
-
-**When implementing code for a specific BC, always:**
-- Start with this PRD for architecture understanding
-- **Read the BC spec file (`specs/{{bc_name}}_spec.md`) FIRST** - It contains ALL details (aggregates, commands, events, ReadModels, Policies, UI wireframes, GWT tests)
-- **Reference Cursor rules** using @mention (`@ddd-principles`, `@eventstorming-implementation`, `@{config.framework.value}`, etc.)
-- **For Frontend**: **Read Frontend-PRD.md TOGETHER with this PRD** - Start with main landing page, then add BC features incrementally
-- Follow the AI assistant guide for implementation patterns
-- Refer to other BC specs when implementing cross-BC features
-
-## Technology Stack
-
-| Component | Choice |
-|-----------|--------|
-| **Language** | {config.language.value} |
-| **Framework** | {config.framework.value} |
-| **Messaging** | {config.messaging.value} |
-| **Database** | {config.database.value} |
-| **Deployment** | {config.deployment.value} |
-
-## Bounded Contexts
-"""
-
-    prd += "\n| BC Name | Aggregates | Commands | Events | ReadModels | Policies | UIs |\n"
-    prd += "|---------|------------|----------|--------|------------|----------|-----|\n"
+    # Bounded Contexts inventory table.
+    parts.append("## Bounded Contexts")
+    parts.append("")
+    parts.append("| BC Name | Aggregates | Commands | Events | ReadModels | Policies | UIs |")
+    parts.append("|---------|------------|----------|--------|------------|----------|-----|")
     for bc in bcs:
         aggs = bc.get("aggregates", []) or []
         cmds = sum(len(a.get("commands", []) or []) for a in aggs)
@@ -262,452 +221,73 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         rms = len(bc.get("readmodels", []) or [])
         pols = len(bc.get("policies", []) or [])
         uis = len(bc.get("uis", []) or [])
-        prd += f"| {bc.get('name', 'Unknown')} | {len(aggs)} | {cmds} | {evts} | {rms} | {pols} | {uis} |\n"
+        parts.append(
+            f"| {bc.get('name', 'Unknown')} | {len(aggs)} | {cmds} | {evts} | {rms} | {pols} | {uis} |"
+        )
+    parts.append("")
 
-    prd += f"""
-
-## Project Structure & Reference Files
-
-**IMPORTANT**: This PRD is the entry point. When implementing, you MUST read and follow the detailed specifications in the files listed below.
-
-### Core Documentation Files
-- **`PRD.md`** (this file): Overall architecture, principles, and guidelines
-- **`CLAUDE.md`**: Project context and BC overview for AI assistants
-- **`README.md`**: Project overview and BC descriptions
-
-### Bounded Context Specifications
-Each BC has a detailed specification file in the `specs/` directory:
-"""
-    
-    for bc in bcs:
-        bc_name = bc.get("name", "Unknown")
-        bc_name_slug = bc_name.lower().replace(" ", "_")
-        prd += f"- **`specs/{bc_name_slug}_spec.md`**: Complete specification for {bc_name} BC\n"
-    
-    prd += f"""
-### AI Assistant Configuration Files
-
-"""
-    if config.ai_assistant.value == "cursor":
-        prd += f"""**Using Cursor IDE**:
-- **`.cursorrules`** (mention: `@.cursorrules`): Global DDD principles and coding standards (read this first)
-- **`.cursor/rules/{config.framework.value}.mdc`** (mention: `@{config.framework.value}`): {config.framework.value} ({config.language.value}) tech stack specific implementation guidelines
-"""
-        if config.deployment == DeploymentStyle.MICROSERVICES:
-            prd += f"""- **`.cursor/rules/api-gateway.mdc`** (mention: `@api-gateway`): API Gateway routing, CORS, and service discovery configuration
-"""
-    else:  # claude
-        prd += f"""**Using Claude Code**:
-- **`.claude/skills/`**: Common implementation skills (DDD, Event Storming, Tech Stack)
-  - `ddd-principles.md` - DDD patterns (always reference)
-  - `eventstorming-implementation.md` - Sticker-to-code mapping (Command, Event, Aggregate, ReadModel, Policy, UI)
-  - `gwt-test-generation.md` - GWT (Given/When/Then) test patterns
-  - `{config.framework.value}.md` - {config.framework.value} implementation guidelines
-"""
-        if config.deployment == DeploymentStyle.MICROSERVICES:
-            prd += f"""  - `api-gateway.md` - API Gateway routing, CORS, and service discovery configuration
-"""
-        if config.include_frontend and config.frontend_framework:
-            prd += f"  - `{config.frontend_framework.value}.md` - Frontend framework technical implementation patterns\n"
-            prd += f"- **`Frontend-PRD.md`**: Frontend architecture, strategy, and UI overview (read together with this PRD)\n"
-        prd += f"- **`.claude/agents/`**: BC-specific agent configurations\n"
+    # Project file index — pure listing, no imperatives.
+    parts.append("## Project Files")
+    parts.append("")
+    if using_claude:
+        parts.append("- `CLAUDE.md` — engineering constitution for AI assistants")
+    else:
+        parts.append("- `.cursorrules` — engineering constitution for the Cursor IDE")
+    parts.append("- `README.md` — project overview")
+    if spec_uses_ddd:
+        parts.append("- `specs/context-map.md` — system-level Context Map")
+        parts.append("- `specs/bounded-contexts/<bc-slug>/` — per-BC DDD artifacts (domain-terms, bc-canvas, aggregate specs, requirements + wireframes)")
+        if has_frontend:
+            parts.append("- `specs/frontend/framework.md` — declared frontend framework + conventions")
+            parts.append("- `specs/frontend/menu-structure.md` — navigation tree grouped by BC")
+            parts.append("- `specs/frontend/ui-flow.md` — causal ordering of UI screens across the event-modeling flow")
+    else:
         for bc in bcs:
             bc_name = bc.get("name", "Unknown")
             bc_name_slug = bc_name.lower().replace(" ", "_")
-            prd += f"  - **`.claude/agents/{bc_name_slug}_agent.md`**: Agent configuration for {bc_name} BC\n"
-    
-    prd += f"""
-### Implementation Workflow
+            parts.append(f"- `specs/{bc_name_slug}_spec.md` — {bc_name} specification")
+    if using_claude:
+        parts.append("- `.claude/skills/` — reference skills (DDD principles, Event Storming mapping, GWT tests, tech stack)")
+        if spec_uses_ddd:
+            parts.append("- `.claude/agents/ddd-specialist.md` — role-based agent for backend / domain work")
+            if has_frontend:
+                parts.append("- `.claude/agents/frontend-engineer.md` — role-based agent for frontend work")
+            parts.append("- `.claude/commands/implement-ddd-bc.md` — slash command for one BC's full implementation")
+            parts.append("- `.claude/commands/implement-ddd-wireframe.md` — slash command for a single wireframe")
+            if has_frontend:
+                parts.append("- `.claude/commands/generate-frontend.md` — slash command for the whole frontend")
+    else:
+        parts.append("- `.cursor/rules/` — Cursor rule files (DDD, Event Storming, GWT, tech stack)")
+    if config.include_docker:
+        parts.append("- `docker-compose.yml`, `Dockerfile` — local container setup")
+    parts.append("")
 
-**When starting implementation for a specific BC:**
+    # Deployment view — descriptive (no imperatives).
+    parts.append("## Deployment View")
+    parts.append("")
+    parts.append(f"- Deployment style: {config.deployment.value}")
+    parts.append(f"- Messaging platform: {config.messaging.value}")
+    parts.append(f"- Database: {config.database.value}")
+    parts.append(f"- Container packaging: {'included (docker-compose + Dockerfile)' if config.include_docker else 'not included'}")
+    parts.append(f"- Kubernetes manifests: {'included' if config.include_kubernetes else 'not included'}")
+    parts.append("")
 
-1. **Read this PRD** (`PRD.md`) to understand overall architecture and principles
-2. **Read the BC specification** (`specs/{{bc_name}}_spec.md`) for detailed requirements
-3. **Read the AI assistant guide**:
-   - For Cursor: `.cursorrules` (global) + `.cursor/rules/{{bc_name}}.mdc` (BC-specific)
-   - For Claude: `.claude/agents/{{bc_name}}_agent.md`
-4. **Follow the implementation guidelines** in the AI assistant guide
-5. **Refer to other BC specs** when implementing cross-BC policies or event contracts
-
-**Key Principle**: Always check the BC specification file (`specs/{{bc_name}}_spec.md`) for:
-- Complete aggregate definitions with all properties
-- Command and Event schemas
-- ReadModel structures
-- Policy trigger/invoke relationships
-- GWT test case scenarios
-
-## Architecture Principles
-
-### Domain-Driven Design (DDD)
-- **Bounded Contexts**: Each BC represents a distinct domain boundary with its own models and language
-- **Aggregates**: Enforce business invariants and maintain transactional consistency
-- **Commands**: Represent user/system intentions to change state (imperative: CreateOrder, CancelOrder)
-- **Events**: Represent immutable facts that happened (past tense: OrderCreated, PaymentProcessed)
-- **Policies**: Enable cross-BC communication through event-driven patterns
-
-### Event-Driven Architecture
-- **Asynchronous Communication**: BCs communicate via events through {config.messaging.value}
-- **Loose Coupling**: BCs are independent and communicate only through well-defined event contracts
-- **Event Sourcing Ready**: Events represent the source of truth for state changes
-- **CQRS Pattern**: Separate read models (ReadModels) from write models (Aggregates)
-
-### Service Independence & Dependencies
-- **Independent Deployment**: Each BC can be deployed independently without affecting others
-- **Event-Based Dependencies**: Dependencies are only through event contracts, not direct service calls
-- **Backward Compatibility**: Event schema changes must maintain backward compatibility (use versioning)
-- **No Direct Service Calls**: BCs must NOT call other BCs' APIs directly - use events only
-- **Dependency Direction**: 
-  - Event Publisher BC: Independent (no dependency on consumers)
-  - Event Consumer BC (Policy): Depends on event contract, not publisher service
-  - Consumer can be deployed/updated independently as long as event contract is maintained
-
-### Development Guidelines
-
-#### 1. Command Implementation
-
-**Command Handler:**
-- **Naming**: Use imperative verbs (CreateOrder, CancelOrder, ProcessPayment)
-- **Validation**: Validate all invariants before executing commands
-- **Input Schema**: Use the provided `inputSchema` to define command DTOs
-- **Actor Authorization**: Check actor permissions before command execution
-- **Execution**: Execute through aggregate root
-- **Event Emission**: Emit events after successful command execution
-- **Idempotency**: Consider idempotency for commands that may be retried
-
-**REST API Endpoints:**
-- **HTTP Method**: POST (all commands change state)
-- **Endpoint Pattern**: `POST /api/{{bc_name}}/{{command-name}}`
-- **Request Mapping**: Map request body to command DTO using `inputSchema`
-- **Response Codes**: 
-  - `201 Created` for Create commands
-  - `200 OK` for Update/Process commands
-  - `204 No Content` for Delete commands
-  - `400 Bad Request` for validation errors
-  - `403 Forbidden` for authorization failures
-- **Response Body**: Include command result or emitted event information
-
-#### 2. Event Implementation
-
-**Event Class:**
-- **Naming**: Use past tense (OrderCreated, PaymentProcessed, UserRegistered)
-- **Schema**: Use the provided `schema` to define event classes
-- **Properties**: Map all properties from spec to event fields
-- **Immutability**: Events are immutable once emitted
-- **Versioning**: Use semantic versioning for event schema evolution
-- **Metadata**: Include eventId, timestamp, version, etc.
-
-**Event Publishing:**
-- **Publisher**: Use event publisher service in `infrastructure/messaging/`
-- **Platform**: Publish to {config.messaging.value} after successful command execution
-- **Async**: Publish asynchronously to avoid blocking command execution
-- **Versioning**: Include event version in message headers/topic
-  - **Schema Version**: Use semantic versioning (e.g., v1.0.0, v1.1.0 for backward-compatible changes)
-  - **Breaking Changes**: Create new version (v2.0.0) and maintain old version for backward compatibility
-- **Error Handling**: Handle publishing failures (retry, dead-letter queue)
-- **Independence**: Publisher BC has NO dependency on consumer BCs - publish and forget
-
-**Event Consumption (Policies):**
-- **Listener**: Implement event listeners for Policies
-- **Subscription**: Subscribe to events via {config.messaging.value} consumer
-- **Cross-BC**: Handle events from other BCs (deserialize using other BC event schemas)
-  - **Reference Other BC Specs**: Check `specs/{{other_bc_name}}_spec.md` for event schemas
-  - **Schema Contract**: Use exact event schema from publisher BC spec
-  - **Version Handling**: Support multiple event versions if needed (backward compatibility)
-- **Idempotency**: Implement idempotency checks for duplicate events
-  - **Event ID**: Use eventId to detect duplicates
-  - **Idempotency Key**: Store processed event IDs to prevent reprocessing
-- **Independence**: Consumer BC depends on event contract, NOT on publisher BC service
-  - Consumer can be deployed/updated independently
-  - Consumer can be temporarily down without affecting publisher
-
-#### 3. Aggregate Implementation
-- **Root Entity**: Use the `rootEntity` as the aggregate root class
-- **Invariants**: Enforce all listed invariants in aggregate methods
-- **Properties**: Map all properties with correct types (use `isKey` for primary keys, `isForeignKey` for references)
-   - **Reference BC Spec**: Check `specs/{{bc_name}}_spec.md` for complete property definitions
-- **Enumerations**: Use provided enumerations for state management
-- **Value Objects**: Implement value objects for complex domain concepts
-- **Persistence**: Persist aggregates using {config.database.value} through repository pattern
-   - **Database Schema**: Create tables/collections based on aggregate properties in spec
-   - **Reference Database Rules**: Check `@{config.framework.value}` rule for database-specific guidelines
-- **Transactions**: Keep database transactions within aggregate boundaries only
-
-#### 4. ReadModel Implementation
-
-**ReadModel Projection:**
-- **CQRS Pattern**: ReadModels are updated via event projections
-- **Projection Handler**: Implement event projection handlers in `domain/readmodels/`
-- **Actor Support**: Filter/authorize based on `actor` field
-- **Denormalization**: Denormalize data for query performance
-- **Eventual Consistency**: Accept eventual consistency (ReadModels may be slightly stale)
-
-**Query API Endpoints:**
-- **HTTP Method**: GET (queries don't change state)
-- **Endpoint Patterns**:
-  - Single result: `GET /api/{{bc_name}}/{{readmodel-name}}/{{id}}`
-  - List: `GET /api/{{bc_name}}/{{readmodel-name}}?filter=value&page=1&size=10`
-  - Collection: `GET /api/{{bc_name}}/{{readmodel-name}}`
-- **Return Types** (based on `isMultipleResult`):
-  - `list`: Return ordered arrays (e.g., `List<OrderSummary>`)
-  - `collection`: Return unordered collections (e.g., `Set<Product>`)
-  - `single result`: Return single objects (e.g., `OrderDetail`)
-- **Features**: Support filtering, pagination, and sorting for list/collection types
-- **Authorization**: Apply actor-based filtering
-- **Response**: `200 OK` with data or `404 Not Found`
-
-#### 5. Policy Implementation
-
-**Event Listener:**
-- **Subscription**: Subscribe to trigger events via {config.messaging.value} consumer
-- **Cross-BC Events**: Handle events from other BCs (deserialize using other BC event schemas)
-  - **Reference Publisher BC Spec**: Check `specs/{{publisher_bc_name}}_spec.md` for event schema
-  - **Schema Contract**: Use exact event schema from publisher BC spec
-  - **Version Support**: Support multiple event versions for backward compatibility
-- **Idempotency**: Implement idempotency checks to handle duplicate events
-  - **Event ID Tracking**: Store processed event IDs to prevent reprocessing
-  - **Idempotency Key**: Use eventId + consumerId as idempotency key
-
-**Command Invocation:**
-- **Async Invocation**: Invoke target commands asynchronously via {config.messaging.value}
-- **Cross-BC Commands**: Handle command invocation in different BCs
-  - **Reference Target BC Spec**: Check `specs/{{target_bc_name}}_spec.md` for command schema
-  - **Command Contract**: Use exact command inputSchema from target BC spec
-- **Data Mapping**: Map event data to command input using event/command schemas
-  - **Schema Mapping**: Map event properties to command inputSchema properties
-  - **Validation**: Validate mapped command input before invocation
-- **Retry Logic**: Implement retry logic for failed invocations
-  - **Exponential Backoff**: Use exponential backoff for retries
-  - **Max Retries**: Set maximum retry attempts (e.g., 3-5 times)
-- **Dead-Letter Queue**: Use dead-letter queues for permanently failed invocations
-  - **DLQ Monitoring**: Monitor DLQ for failed invocations
-  - **Manual Recovery**: Provide mechanism to reprocess DLQ messages
-
-**Service Dependencies:**
-- **No Direct Dependencies**: Policy BC does NOT depend on target BC service
-- **Event Contract Dependency**: Only depends on event contract (schema), not service implementation
-- **Independent Deployment**: Policy BC can be deployed/updated independently
-- **Target BC Availability**: Policy can handle target BC being temporarily unavailable
-  - Events are queued in messaging platform
-  - Policy retries when target BC becomes available
-
-**Error Handling:**
-- **Duplicate Events**: Handle duplicate events with idempotency checks
-- **Deserialization**: Handle event deserialization failures gracefully
-  - **Schema Mismatch**: Log and send to DLQ if event schema doesn't match
-  - **Version Mismatch**: Support multiple event versions or reject unsupported versions
-- **Invocation Failures**: Handle command invocation failures with retry logic
-  - **Transient Failures**: Retry transient failures (network, timeout)
-  - **Permanent Failures**: Send to DLQ for permanent failures (validation errors, etc.)
-- **Logging**: Log all policy executions for debugging
-  - **Event Received**: Log when event is received
-  - **Command Invoked**: Log when command is invoked
-  - **Failures**: Log all failures with context
-
-#### 6. UI Wireframe Implementation
-
-**UI Components (from BC Spec):**
-- **Reference BC Spec**: Check `specs/{{bc_name}}_spec.md` for UI wireframes section
-- **Wireframe Templates**: Use the `template` field (HTML wireframes) from spec
-- **Attached Commands**: UI wireframes attached to Commands → Create form components
-- **Attached ReadModels**: UI wireframes attached to ReadModels → Create display/list components
-- **Frontend PRD**: Check `Frontend-PRD.md` for UI wireframe implementation guidelines
-- **API Integration**: Connect UI to backend APIs (Command POST, ReadModel GET)
-- **State Management**: Use framework-specific state management (Pinia, Redux, etc.)
-- **Reference Frontend Rules**: Use `@{config.frontend_framework.value if config.frontend_framework else "N/A"}` for frontend patterns
-
-**Service Pages:**
-- **Command Pages**: Create pages for each Command (form submission)
-- **ReadModel Pages**: Create pages for each ReadModel (query results display)
-- **Navigation**: Implement routing based on UI wireframes in spec
-- **Invocation Failures**: Handle command invocation failures with retry logic
-- **Logging**: Log all policy executions for debugging
-
-#### 6. Testing
-- **GWT Test Cases**: Implement Given/When/Then tests based on provided scenarios
-- **Test Scenarios**: Use `testCases` field values for test data
-- **Integration Tests**: Test cross-BC communication via events
-- **Unit Tests**: Test aggregate invariants and command validation
-
-### BC-Specific Implementation Notes
-
-"""
-    for bc in bcs:
-        bc_name = bc.get("name", "Unknown")
-        bc_desc = bc.get("description", "No description")
-        aggs = bc.get("aggregates", []) or []
-        agg_names = [a.get("name", "") for a in aggs if a.get("name")]
-        rms = bc.get("readmodels", []) or []
-        rm_names = [rm.get("name", "") for rm in rms if rm.get("name")]
-        pols = bc.get("policies", []) or []
-        
-        prd += f"#### {bc_name}\n"
-        prd += f"- **Description**: {bc_desc}\n"
-        if agg_names:
-            prd += f"- **Aggregates**: {', '.join(agg_names)}\n"
-        if rm_names:
-            prd += f"- **ReadModels**: {', '.join(rm_names)}\n"
-        if pols:
-            pol_names = [p.get("name", "") for p in pols if p.get("name")]
-            if pol_names:
-                prd += f"- **Policies**: {', '.join(pol_names)}\n"
-        prd += f"- **Spec File**: `specs/{bc_name.lower().replace(' ', '_')}_spec.md`\n"
-        prd += "\n"
-
-    prd += f"""
-## Implementation Checklist
-
-### For Each Bounded Context:
-
-#### 1. Read BC Spec First (MANDATORY)
-- [ ] **Read BC Spec** (`specs/{{bc_name}}_spec.md`) FIRST - Contains ALL implementation details
-- [ ] **List ALL Aggregates** - Count and verify all aggregates from spec
-- [ ] **List ALL Commands** - Count and verify all commands from spec (every command MUST have an API endpoint)
-- [ ] **List ALL Events** - Count and verify all events from spec (every command MUST emit events)
-- [ ] **List ALL ReadModels** - Count and verify all ReadModels from spec (every ReadModel MUST have a query API)
-- [ ] **List ALL Policies** - Count and verify all policies from spec
-- [ ] **List ALL UI Wireframes** - Count and verify all UI wireframes from spec
-
-#### 2. Database Setup (MANDATORY)
-- [ ] **Set up database connection** - Configure {config.database.value} connection in application config
-- [ ] **Create database schema** - Create tables/collections for ALL aggregates (from spec properties)
-- [ ] **Create indexes** - Index foreign keys and frequently queried columns
-- [ ] **Test database connection** - Verify connection works before proceeding
-
-#### 3. Implement ALL Aggregates (100% Coverage Required)
-For EACH Aggregate in BC spec:
-- [ ] **Create aggregate root entity** - With ALL properties from spec (including isKey, isForeignKey)
-- [ ] **Implement invariants** - ALL invariants from spec MUST be enforced
-- [ ] **Implement enumerations** - ALL enumerations from spec
-- [ ] **Implement value objects** - ALL value objects from spec
-- [ ] **Create repository** - Repository for aggregate persistence
-
-#### 4. Implement ALL Commands (100% Coverage Required)
-For EACH Command in BC spec:
-- [ ] **Create command DTO** - Using inputSchema from spec
-- [ ] **Create command handler** - Handler with validation
-- [ ] **Validate all inputs** - Use inputSchema and properties from spec
-- [ ] **Check actor authorization** - Verify actor permissions
-- [ ] **Execute through aggregate** - Execute command via aggregate root
-- [ ] **Emit events** - Emit ALL events after successful execution
-- [ ] **Create REST API endpoint** - `POST /api/{{bc_name}}/{{command-name}}` (MANDATORY)
-- [ ] **Return proper response codes** - 201 for Create, 200 for Update, 400 for validation errors, 403 for authorization failures
-- [ ] **Handle errors** - Proper error handling and messages
-
-**CRITICAL**: If a Command exists in BC spec, it MUST have:
-1. A command handler
-2. A REST API endpoint (POST)
-3. Event emission after execution
-4. Input validation
-5. Actor authorization
-
-#### 5. Implement ALL Events (100% Coverage Required)
-For EACH Event in BC spec:
-- [ ] **Create event class** - With ALL properties from spec
-- [ ] **Include event schema** - Use schema from spec
-- [ ] **Include version** - Use version from spec
-- [ ] **Include metadata** - eventId, timestamp, version
-- [ ] **Set up event publishing** - Publish to {config.messaging.value} after command execution
-- [ ] **Handle publishing errors** - Retry logic, dead-letter queue
-
-**CRITICAL**: Every Command MUST emit at least one Event. Verify all events are published.
-
-#### 6. Implement ALL ReadModels (100% Coverage Required)
-For EACH ReadModel in BC spec:
-- [ ] **Create ReadModel class** - With ALL properties from spec
-- [ ] **Create projection handler** - Update ReadModel from events
-- [ ] **Create query API endpoint** - `GET /api/{{bc_name}}/{{readmodel-name}}` (MANDATORY)
-- [ ] **Support pagination** - If isMultipleResult is 'list', support pagination
-- [ ] **Support filtering** - Support actor filtering if actor is specified
-- [ ] **Return proper format** - Single result, list, or collection based on isMultipleResult
-
-**CRITICAL**: If a ReadModel exists in BC spec, it MUST have:
-1. A ReadModel class with all properties
-2. A query API endpoint (GET)
-3. Event projection handler
-4. Proper response format (single/list/collection)
-
-#### 7. Implement ALL Policies (100% Coverage Required)
-For EACH Policy in BC spec:
-- [ ] **Create event listener** - Subscribe to trigger events from {config.messaging.value}
-- [ ] **Handle cross-BC events** - Deserialize events from other BCs
-- [ ] **Implement idempotency** - Handle duplicate events
-- [ ] **Invoke target commands** - Invoke commands asynchronously via {config.messaging.value}
-- [ ] **Handle errors** - Retry logic, dead-letter queue
-
-#### 8. Messaging Setup (MANDATORY)
-- [ ] **Configure {config.messaging.value} connection** - Set up connection to messaging platform
-- [ ] **Set up event publishers** - Publisher service for all events
-- [ ] **Set up event consumers** - Consumer service for policies
-- [ ] **Test messaging connection** - Verify events can be published and consumed
-- [ ] **Set up dead-letter queues** - For failed event processing
-
-#### 9. Frontend Integration (If frontend included)
-- [ ] **Implement UI wireframes** - All wireframes from spec as frontend components/pages
-- [ ] **Create service pages** - Pages for Commands (forms) and ReadModels (displays)
-- [ ] **Connect UI to APIs** - All UI buttons/forms MUST call backend APIs
-
-#### 10. Testing (MANDATORY)
-- [ ] **Implement GWT test cases** - All test scenarios from spec
-- [ ] **Test all commands** - Verify all commands work correctly
-- [ ] **Test all ReadModels** - Verify all ReadModels return correct data
-- [ ] **Test event publishing** - Verify all events are published
-- [ ] **Test event consumption** - Verify policies consume events correctly
-- [ ] **Test API endpoints** - Verify all REST endpoints work
-
-### Cross-BC Integration:
-- [ ] **Verify event contracts** match between BCs (check publisher BC spec for event schema, consumer BC spec for expected schema)
-- [ ] **Set up event subscriptions** for Policies (subscribe to trigger events from other BCs)
-- [ ] **Implement idempotency** for event consumption (prevent duplicate processing)
-- [ ] **Set up dead-letter queues** for failed event processing
-- [ ] **Test end-to-end workflows** across BCs (verify event flow from publisher to consumer)
-- [ ] **Monitor event flow** and error handling (track event publishing, consumption, failures)
-- [ ] **Verify service independence** (each BC can be deployed independently)
-- [ ] **Document event contracts** (which BC publishes which events, which BC consumes which events)
-
-## Notes
-- This PRD was generated from the Event Storming model stored in Neo4j.
-- **Always refer to individual BC spec files** (`specs/{{bc_name}}_spec.md`) FIRST for detailed implementation requirements:
-  - ✅ Aggregates, Commands, Events, ReadModels, Policies
-  - ✅ **UI Wireframes with templates** (HTML wireframes)
-  - ✅ **Database schema requirements** (properties, foreign keys)
-  - ✅ GWT test cases
-- **Reference Cursor Rules** using @mention:
-  - `@.cursorrules`, `@ddd-principles`, `@eventstorming-implementation`, `@gwt-test-generation`
-  - `@{config.framework.value}` (tech stack), `@{config.frontend_framework.value if config.frontend_framework else "N/A"}` (frontend, if included)
-- **Check Frontend PRD** (`Frontend-PRD.md`) if implementing UI components
-- Follow the technology stack choices consistently across all BCs.
-- Maintain BC boundaries strictly - no direct database access between BCs.
-
-## File Reference Quick Guide
-
-**When implementing code (e.g., "진행해"), use this file reference in order:**
-
-1. **Architecture & Principles**: `PRD.md` (this file) - High-level overview
-2. **BC Details** (MUST READ FIRST): `specs/{{bc_name}}_spec.md` - Contains:
-   - ✅ All aggregates with properties, invariants, enumerations
-   - ✅ All commands with input schemas → **Implement as REST API endpoints**
-   - ✅ All events with schemas → **Implement as message publishing**
-   - ✅ All ReadModels with properties → **Implement as query API endpoints**
-   - ✅ All Policies with trigger/invoke → **Implement as event listeners**
-   - ✅ **All UI Wireframes with templates** → **Implement as frontend components/pages**
-   - ✅ All GWT test cases → **Implement as test code**
-   - ✅ **Database schema requirements** (properties, foreign keys)
-3. **Cursor Rules** (use @mention):
-   - `@.cursorrules` - Global DDD principles
-   - `@ddd-principles` - DDD patterns
-   - `@eventstorming-implementation` - Sticker-to-code mapping
-   - `@gwt-test-generation` - GWT test patterns
-   - `@{config.framework.value}` - Tech stack guidelines (e.g., `@spring-boot`)
-   - `@{config.frontend_framework.value if config.frontend_framework else "N/A"}` - Frontend guidelines (if frontend included)
-4. **Frontend PRD** (if frontend included): `Frontend-PRD.md` - UI wireframes, API integration
-5. **Project Context**: `CLAUDE.md` - Overview for AI assistants
-
-**Remember**: 
-- The spec files (`specs/{{bc_name}}_spec.md`) contain the complete, detailed requirements including UI wireframes, database schemas, and API contracts.
-- This PRD provides the high-level architecture and principles.
-- **Always read the BC spec file FIRST before implementing any code.**
-"""
-    return prd
+    # Cross-references — pointer lines only.
+    parts.append("## Cross-References")
+    parts.append("")
+    if using_claude:
+        parts.append("- Read `CLAUDE.md` for the engineering constitution and read-order before writing code.")
+    else:
+        parts.append("- Read `.cursorrules` for the engineering constitution and read-order before writing code.")
+    if spec_uses_ddd:
+        parts.append("- Read `specs/bounded-contexts/<bc-slug>/` for each BC's domain model.")
+        parts.append("- Read `specs/context-map.md` for cross-BC relationships.")
+        if has_frontend:
+            parts.append("- Read `specs/frontend/{framework,menu-structure,ui-flow}.md` for the frontend perspective.")
+    else:
+        parts.append("- Read each `specs/<bc_name>_spec.md` for that BC's details.")
+    parts.append("")
+    return "\n".join(parts)
 
 
 def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
@@ -1009,41 +589,129 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
 
 
 def generate_claude_md(bcs: list[dict], config: TechStackConfig) -> str:
-    return f"""# CLAUDE.md - AI Assistant Context
+    """CLAUDE.md — the engineering constitution (FR-022, research D9).
 
-> **Note**: This file provides project context for AI assistants.  
-> For detailed architecture and implementation guidelines, refer to **`PRD.md`** (main PRD document).  
-> For BC-specific details, refer to `specs/{{bc_name}}_spec.md` files.
+    Holds the prescriptive content the PRD.md used to carry: read-order,
+    DDD principles, EARS-translation rules, GWT-test obligation,
+    "do-not-invent-domain-concepts" rule, and skills references. Does NOT
+    restate the technology-stack table or the Bounded Contexts inventory
+    — those live in ``PRD.md`` and this file references them by pointer.
+    The
+    :func:`api.features.prd_generation.prd_split_lint.lint_disjoint` lint
+    aborts the zip build with ``prd_split_lint_failed`` if either rule is
+    violated.
+    """
+    spec_uses_ddd = config.spec_format.value == "ddd"
+    has_frontend = bool(config.include_frontend and config.frontend_framework)
+    fw = config.framework.value
+    front_fw = config.frontend_framework.value if has_frontend else None
+    in_microservices = config.deployment == DeploymentStyle.MICROSERVICES
 
-## Project
-- Name: {config.project_name}
-- Deployment: {config.deployment.value}
-- Stack: {config.language.value} / {config.framework.value}
-- Messaging: {config.messaging.value}
-- Database: {config.database.value}
+    parts: list[str] = []
+    parts.append("# CLAUDE.md — Engineering Constitution")
+    parts.append("")
+    parts.append("> The rules every coding pass MUST honour. See `PRD.md` for the")
+    parts.append("> project composition (stack, BC inventory, file index, deployment view).")
+    parts.append("")
 
-## Bounded Contexts
-{chr(10).join([
-    f"- {bc.get('name','Unknown')} ({bc.get('id','')}) — "
-    f"{len(bc.get('aggregates') or [])} aggregates, "
-    f"{sum(1 for u in (bc.get('userStories') or []) if u.get('sourceRules'))} grounded US, "
-    f"{len(bc.get('questions') or [])} open questions"
-    for bc in bcs
-])}
+    # --- Read-order (read this first) ------------------------------------
+    parts.append("## Read Order")
+    parts.append("")
+    parts.append("Before writing any code, load these in order:")
+    parts.append("")
+    parts.append("1. This file (`CLAUDE.md`) — the constitution.")
+    if spec_uses_ddd:
+        parts.append("2. `specs/context-map.md` — system-level Context Map. Inferred patterns carry `(inferred — confirm)`; pause and consult the user before treating them as authoritative.")
+        parts.append("3. For each Bounded Context you touch: `specs/bounded-contexts/<bc-slug>/`")
+        parts.append("   - `bc-<bc-slug>.md` (Bounded Context Canvas) → module docstring / README + cross-BC contract direction.")
+        parts.append("   - `domain-terms.md` (Ubiquitous Language) → every name in code MUST appear verbatim in this file. Entries under \"Aliases to AVOID\" are forbidden names.")
+        parts.append("   - `aggregates/aggregate-<slug>.md` → translate the nine sections directly onto code (root entity, member entities/VOs, properties + mutability, EARS invariants, corrective policies, commands table, events emitted, repository interface).")
+        parts.append("   - `requirements.md` → user stories grouped by aggregate; each story's acceptance criteria appears in EARS form.")
+        parts.append("   - `acl-<system>.md` (when present) → adapter translation maps; no external type leaks into core.")
+        parts.append("4. `.claude/skills/ddd-spec-implementation.md` — implementation order + verification checklist (binding).")
+        parts.append("5. `.claude/skills/ddd-principles.md`, `eventstorming-implementation.md`, `gwt-test-generation.md` — pattern references.")
+        parts.append(f"6. `.claude/skills/{fw}.md` — {fw} implementation patterns.")
+        if has_frontend:
+            parts.append("7. `specs/frontend/framework.md` / `menu-structure.md` / `ui-flow.md` — read all three before writing frontend code.")
+            parts.append(f"8. `.claude/skills/{front_fw}.md` — {front_fw}-specific frontend patterns.")
+    else:
+        parts.append("2. For each Bounded Context you touch: `specs/<bc_name>_spec.md` — contains aggregates, commands, events, ReadModels, policies, UI wireframes, GWT tests.")
+        parts.append("3. `.claude/skills/ddd-principles.md`, `eventstorming-implementation.md`, `gwt-test-generation.md` — pattern references.")
+        parts.append(f"4. `.claude/skills/{fw}.md` — {fw} implementation patterns.")
+        if has_frontend:
+            parts.append(f"5. `.claude/skills/{front_fw}.md` — frontend-specific patterns.")
+    parts.append("")
+    parts.append("Skip this read-order at your peril: every spec file is the binding contract for the slice of code you are about to write.")
+    parts.append("")
 
-## Reference Files
-- **Main PRD**: `PRD.md` - Complete architecture, principles, and implementation guidelines
-- **BC Specs**: `specs/{{bc_name}}_spec.md` - Detailed specifications for each BC
-- **AI Assistant Guides**: 
-  - Cursor: `.cursorrules` (global) + `.cursor/rules/{{framework}}.mdc` (tech stack)
-  - Claude: 
-    - `.claude/skills/` - Common implementation skills (DDD, Event Storming, Tech Stack)
-      - `ddd-principles.md` - DDD patterns (always reference)
-      - `eventstorming-implementation.md` - Sticker-to-code mapping
-      - `gwt-test-generation.md` - GWT test patterns
-      - `{{framework}}.md` - Tech stack specific guidelines
-    - `.claude/agents/{{bc_name}}_agent.md` - BC-specific agent configuration
-"""
+    # --- DDD principles -------------------------------------------------
+    parts.append("## DDD Principles")
+    parts.append("")
+    parts.append("- **Names are sacred.** Aggregate / Command / Event / ReadModel / Policy names in code MUST match the spec verbatim. No `Confirm` → `Approve` synonym drift. Entries under domain-terms.md's \"Aliases to AVOID\" are forbidden names.")
+    parts.append("- **Aggregate is the consistency boundary.** State changes happen only through commands on the aggregate root; cross-aggregate updates ride events.")
+    parts.append("- **Commands are imperative** (`CreateOrder`, `CancelOrder`); **Events are past tense** (`OrderCreated`, `OrderCancelled`).")
+    parts.append("- **No direct cross-BC calls.** BCs communicate via events through the messaging platform. A Policy in one BC subscribes to events from another and invokes its own commands.")
+    parts.append("- **Do not invent domain concepts.** If a needed concept is not in the spec, pause and ask. The graph is the source of truth; the artifacts are its projection.")
+    parts.append("- **Mutability hints in the Properties table are binding.** \"Immutable after creation\" → no setter. \"Mutable through commands only\" → state changes only via aggregate command methods, never via direct field assignment.")
+    parts.append("")
+
+    # --- EARS translation rules ----------------------------------------
+    parts.append("## EARS Translation Rules")
+    parts.append("")
+    parts.append("Each numbered line in `Enforced Invariants` / `Acceptance Criteria` is in EARS form. Translate as follows:")
+    parts.append("")
+    parts.append("- `THE <Aggregate> SHALL <C>` → unconditional invariant. Assert in the constructor AND every state-changing method. The aggregate is never legally in a state that violates it.")
+    parts.append("- `WHEN <trigger> THEN system SHALL <obligation>` → command method `<trigger>` MUST produce `<obligation>` (state change + event emission) when called.")
+    parts.append("- `WHEN <trigger> IF <state> THEN system SHALL <obligation>` → command method `<trigger>` has precondition `<state>` (guard clause that rejects when false) and postcondition `<obligation>`. Use the `.claude/skills/gwt-test-generation.md` patterns for the matching tests.")
+    parts.append("- Multiple `Given` clauses are joined with `AND`; multiple `Then` lines each become a separate `SHALL` line under the same `WHEN/IF`.")
+    parts.append("")
+
+    # --- GWT obligation ------------------------------------------------
+    parts.append("## GWT-Test Obligation")
+    parts.append("")
+    parts.append("Every numbered EARS line in an aggregate spec MUST have a corresponding test that fails if the invariant is broken. Use Given/When/Then style following `.claude/skills/gwt-test-generation.md`. Cross-BC scenarios in `requirements.md` MUST have integration tests that exercise the event flow.")
+    parts.append("")
+
+    # --- Skills references --------------------------------------------
+    parts.append("## Skills")
+    parts.append("")
+    parts.append("Reference these by relative path; they are not restated here:")
+    parts.append("")
+    parts.append("- `.claude/skills/ddd-principles.md` — DDD patterns and aggregate rules (always).")
+    parts.append("- `.claude/skills/eventstorming-implementation.md` — sticker-to-code mapping (Command → API, Event → message, ReadModel → query API, UI → component).")
+    parts.append("- `.claude/skills/gwt-test-generation.md` — Given/When/Then patterns for tests of EARS invariants.")
+    parts.append(f"- `.claude/skills/{fw}.md` — {fw} implementation patterns.")
+    if spec_uses_ddd:
+        parts.append("- `.claude/skills/ddd-spec-implementation.md` — order to read the DDD artifact set + verification checklist (binding).")
+    if in_microservices:
+        parts.append("- `.claude/skills/api-gateway.md` — gateway routing, CORS, service discovery for microservice deployments.")
+    if has_frontend:
+        parts.append(f"- `.claude/skills/{front_fw}.md` — {front_fw}-specific frontend patterns.")
+    parts.append("")
+
+    # --- Role-based agents --------------------------------------------
+    if spec_uses_ddd:
+        parts.append("## Agents")
+        parts.append("")
+        parts.append("Role-based agents (one per project; no per-BC agents):")
+        parts.append("")
+        parts.append("- `.claude/agents/ddd-specialist.md` — backend / domain implementation. Invoked by `/implement-ddd-bc` and `/implement-ddd-wireframe`.")
+        if has_frontend:
+            parts.append("- `.claude/agents/frontend-engineer.md` — frontend implementation. Invoked by `/generate-frontend`.")
+        parts.append("")
+
+    # --- Compositional pointers ----------------------------------------
+    parts.append("## See Also")
+    parts.append("")
+    parts.append("- `PRD.md` — project composition: stack, BC inventory, file index, deployment view.")
+    if spec_uses_ddd:
+        parts.append("- `specs/context-map.md` — Bounded Context relationships.")
+        parts.append("- `specs/bounded-contexts/<bc>/` — per-BC artifact folders.")
+        if has_frontend:
+            parts.append("- `specs/frontend/` — frontend perspective (framework, menu hints, ui-flow). Read these for IA/structure; name your components from `specs/bounded-contexts/<bc>/domain-terms.md`.")
+    parts.append("")
+    return "\n".join(parts)
+
 
 
 def generate_cursor_rules(config: TechStackConfig) -> str:
@@ -2121,182 +1789,6 @@ When implementing frontend code:
 - **Event Storming Implementation**: `.claude/skills/eventstorming-implementation.md` - UI wireframe implementation patterns
 - **Tech Stack Skills**: `.claude/skills/{config.framework.value}.md` - Backend API patterns
 - **DDD Principles**: `.claude/skills/ddd-principles.md` - DDD patterns
-"""
-
-
-def generate_agent_config(bc: dict, config: TechStackConfig) -> str:
-    bc_name = (bc.get("name", "unknown") or "unknown").lower().replace(" ", "_")
-    bc_display_name = bc.get("name", "Unknown")
-    bc_desc = bc.get("description", "No description")
-    
-    aggs = bc.get("aggregates", []) or []
-    agg_names = [a.get("name", "") for a in aggs if a.get("name")]
-    
-    rms = bc.get("readmodels", []) or []
-    rm_names = [rm.get("name", "") for rm in rms if rm.get("name")]
-    
-    pols = bc.get("policies", []) or []
-    
-    # Count commands and events
-    total_cmds = sum(len(a.get("commands", []) or []) for a in aggs)
-    total_evts = sum(len(a.get("events", []) or []) for a in aggs)
-    
-    # Build skills reference list
-    skills_refs = [
-        f"- `.claude/skills/ddd-principles.md` - DDD patterns and BC boundaries (always reference)",
-        f"- `.claude/skills/eventstorming-implementation.md` - Sticker-to-code mapping (Command, Event, Aggregate, ReadModel, Policy, UI)",
-        f"- `.claude/skills/gwt-test-generation.md` - GWT (Given/When/Then) test patterns",
-        f"- `.claude/skills/{config.framework.value}.md` - {config.framework.value} implementation guidelines",
-    ]
-    if config.include_frontend and config.frontend_framework:
-        skills_refs.append(f"- `.claude/skills/{config.frontend_framework.value}.md` - Frontend framework guidelines")
-    
-    skills_refs_text = "\n".join(skills_refs)
-    
-    return f"""# Agent Configuration: {bc_display_name}
-
-## Scope & Boundaries
-- **Bounded Context**: {bc_display_name}
-- **Directory**: Only modify files within `{bc_name}/`
-- **Spec File**: Refer to `specs/{bc_name}_spec.md` for complete requirements
-- **BC Description**: {bc_desc}
-
-## Required Skills
-
-Before implementing, ensure you have loaded these skills:
-{skills_refs_text}
-
-**Note**: These skills provide common implementation patterns. Reference them when implementing Commands, Events, Aggregates, ReadModels, Policies, and UI components.
-
-## Your Responsibilities
-
-You are responsible for implementing the **{bc_display_name}** Bounded Context. This BC is part of a larger microservices architecture using Domain-Driven Design (DDD) and Event-Driven Architecture (EDA).
-
-### Source-of-truth grounding
-
-> The spec for this BC contains **analyzer-grounded source rules and acceptance tests** for each User Story (when available). These come from the original code analysis: `Rule.statement` describes the business intent, `Example.given/when/then` provides BDD-style acceptance criteria. **Treat these as the implementation contract** — the US action text is narrative; the rules and examples are what the code actually has to do.
->
-> - **Grounded US** (with source rules): translate the rule statements into invariants/preconditions; use Example GWT as test seeds.
-> - **Description-only US** (0 source rules): no existing code to translate — implement from the action text and confirm edge cases with the user.
-> - **Open Decisions** (Question nodes at top of spec): the analyzer flagged these as ambiguous in the source. **Do not silently resolve — ask the user before choosing a behavior**.
-
-### Key Components
-
-#### Aggregates ({len(agg_names)} total)
-{chr(10).join([f"- **{name}**" for name in agg_names if name]) if agg_names else "- None defined"}
-
-**Your Tasks:**
-- Implement aggregate root entities with all properties (see spec for complete property list)
-- Enforce business invariants listed in the spec
-- Implement enumerations and value objects
-- Maintain transactional consistency within each aggregate
-
-**Reference Skills:**
-- `.claude/skills/ddd-principles.md` - Aggregate rules and transaction boundaries
-- `.claude/skills/eventstorming-implementation.md` - Aggregate implementation patterns
-- `.claude/skills/{config.framework.value}.md` - Framework-specific aggregate patterns
-
-#### Commands ({total_cmds} total)
-
-**Reference Skills for Implementation:**
-- `.claude/skills/eventstorming-implementation.md` - Command handler and REST API endpoint patterns
-- `.claude/skills/{config.framework.value}.md` - Framework-specific command implementation
-- `.claude/skills/ddd-principles.md` - Command validation and actor authorization
-
-**Key Requirements:**
-- All commands MUST have REST API endpoints: `POST /api/{bc_name}/{{command-name}}`
-- Validate inputs using `inputSchema` from spec
-- Check actor authorization (match actor field from spec)
-- Emit events after successful execution
-
-#### Events ({total_evts} total)
-
-**Reference Skills for Implementation:**
-- `.claude/skills/eventstorming-implementation.md` - Event class, publishing, and consumption patterns
-- `.claude/skills/{config.framework.value}.md` - Framework-specific event implementation
-
-**Key Requirements:**
-- All events MUST be published to {config.messaging.value}
-- Include version in message headers/topic
-- Handle failures (retry, dead-letter queue)
-
-#### ReadModels ({len(rm_names)} total)
-{chr(10).join([f"- **{name}**" for name in rm_names if name]) if rm_names else "- None defined"}
-
-**Reference Skills for Implementation:**
-- `.claude/skills/eventstorming-implementation.md` - ReadModel projection and query API endpoint patterns
-- `.claude/skills/{config.framework.value}.md` - Framework-specific ReadModel implementation
-
-**Key Requirements:**
-- All ReadModels MUST have query API endpoints: `GET /api/{bc_name}/{{readmodel-name}}`
-- Support actor-based filtering (check actor from spec)
-- Support pagination for list/collection types
-
-#### Policies ({len(pols)} total)
-
-**Reference Skills for Implementation:**
-- `.claude/skills/eventstorming-implementation.md` - Policy event listener and command invocation patterns
-- `.claude/skills/ddd-principles.md` - Cross-BC communication patterns
-
-**Key Requirements:**
-- Subscribe to trigger events via {config.messaging.value} consumer
-- Invoke target commands asynchronously via {config.messaging.value}
-- Implement idempotency checks
-- Handle cross-BC events (deserialize using other BC event schemas)
-
-## BC-Specific Implementation Notes
-
-### Technology Stack
-- **Language**: {config.language.value}
-- **Framework**: {config.framework.value}
-- **Messaging**: {config.messaging.value}
-- **Database**: {config.database.value}
-- **Deployment**: {config.deployment.value}
-
-**Note**: For detailed tech stack implementation guidelines, see `.claude/skills/{config.framework.value}.md`
-
-### BC-Specific Constraints
-
-1. **BC Boundary**: Do NOT access other BCs' databases or internal APIs directly
-2. **Event Contracts**: Do NOT change event schemas without versioning
-3. **Aggregate Invariants**: Always enforce all invariants listed in the spec
-4. **Actor Authorization**: Check actor permissions for all commands
-5. **Transaction Scope**: Keep transactions within a single aggregate
-
-## Reference Files (Efficient Context Usage)
-
-**Claude Code Context Strategy:**
-- This agent file provides **BC-specific guidance** (scope, boundaries, component counts)
-- The spec file (`specs/{bc_name}_spec.md`) provides **complete requirements** (all properties, schemas, test cases)
-- The skills files (`.claude/skills/*.md`) provide **common implementation patterns**
-- The main PRD (`PRD.md`) provides **architecture context** (principles, cross-BC patterns)
-- **Load only what you need**: Reference specific sections rather than loading entire files
-
-**File References:**
-- **Spec**: `specs/{bc_name}_spec.md` - Complete BC specification with all details (MUST READ FIRST)
-- **Skills**: `.claude/skills/*.md` - Common implementation patterns (reference as needed)
-- **Main PRD**: `PRD.md` - Overall architecture and guidelines
-- **Project Context**: `CLAUDE.md` - Project overview
-
-## Getting Started
-
-1. **Load Required Skills**: Ensure all required skills (listed above) are loaded
-2. **Read BC Spec**: Open `specs/{bc_name}_spec.md` to get complete requirements (aggregates, commands, events, properties, GWT tests)
-3. **Reference Skills**: Use skills files for implementation patterns when needed
-4. **Check Architecture**: Reference `PRD.md` when implementing cross-BC features or policies
-
-**Implementation Order:**
-1. Aggregate root entities (check spec for properties)
-2. Commands and events (check spec for schemas)
-3. ReadModel projections (check spec for structure)
-4. Policies (check spec and PRD for cross-BC contracts)
-5. GWT tests (check spec for test scenarios)
-6. API endpoints
-
-**Remember**: 
-- You are implementing ONE bounded context. Focus on this BC's responsibilities.
-- Communicate with other BCs only through events.
-- Reference skills files for common patterns, spec file for BC-specific requirements.
 """
 
 
@@ -3641,3 +3133,619 @@ server {{
 - **Event Storming Implementation**: `.claude/skills/eventstorming-implementation.md` — Cross-BC communication via events
 - **Tech Stack Skills**: `.claude/skills/{config.framework.value}.md` — Framework-specific implementation guidelines
 """
+
+
+# ============================================================
+# Feature 022 — DDD-for-SDD artifact-aware skills + commands
+# ============================================================
+
+
+def generate_claude_skill_ddd_spec_implementation(config: TechStackConfig) -> str:
+    """Skill for translating the DDD-for-SDD artifact set into code.
+
+    Generated when ``ai_assistant=claude`` AND ``spec_format=ddd``. Maps
+    each artifact (``domain-terms.md`` / ``bc-<slug>.md`` / ``aggregate-<slug>.md`` /
+    ``acl-<system>.md`` / ``requirements.md`` / ``context-map.md``) onto a
+    concrete implementation step so Claude Code can read the spec folder
+    and produce backend + frontend code that matches the original design.
+    """
+    framework = config.framework.value
+    language = config.language.value
+    frontend = config.frontend_framework.value if config.frontend_framework else None
+    has_frontend = config.include_frontend and frontend is not None
+    frontend_block = (
+        f"- **`requirements.md` (per BC)** → user stories grouped by aggregate;\n"
+        f"  acceptance criteria are in EARS form (``WHEN trigger IF state THEN system SHALL obligation``).\n"
+        f"  Each story may list one or more **Wireframes** with two signals:\n"
+        f"  1. a textual element tree (semantic / hierarchical, ideal for code structure),\n"
+        f"  2. an embedded `<img src='./requirements.assets/<story>-<ui>.svg'>` (the visual reference).\n"
+        f"  When you generate a `{frontend or 'frontend'}` component, **use both** —\n"
+        f"  the element tree for component decomposition + accessibility names, the SVG to\n"
+        f"  verify the result visually. Pull numeric values you need (sizes, padding, colors)\n"
+        f"  from the SVG itself (`<rect>` / `<text>` attributes). The scene-graph JSON sidecar\n"
+        f"  is no longer emitted (2026-05-12 amendment).\n"
+        if has_frontend
+        else
+        f"- **`requirements.md` (per BC)** → user stories grouped by aggregate;\n"
+        f"  acceptance criteria are in EARS form. Wireframe sections (element tree + SVG) "
+        f"document the UI even when a frontend is not in this PR's scope.\n"
+    )
+
+    return f"""---
+name: ddd-spec-implementation
+description: |
+  Translate the DDD-for-SDD artifact set (feature 022: domain-terms, bc-canvas,
+  aggregate-spec, acl-spec, requirements + wireframes, context-map) into running
+  {framework}/{language}{'+' + frontend if has_frontend else ''} code. Trigger
+  whenever you encounter `specs/bounded-contexts/<bc-slug>/` or
+  `specs/context-map.md` and need to write source files that match the design.
+---
+
+# DDD-for-SDD Implementation Skill
+
+> Reference this skill (`.claude/skills/ddd-spec-implementation.md`) whenever you
+> implement a bounded context whose specs live under `specs/bounded-contexts/<bc-slug>/`.
+
+This skill closes the gap between the **graph-projected** DDD artifact set
+(`specs/bounded-contexts/...`, generated by feature 022 of the Event Storming
+Navigator) and your code. Treat each artifact as an authoritative semantic
+contract — do **not** invent domain concepts that aren't in the spec, do **not**
+rename them, and do **not** silently merge aggregates.
+
+## Artifact map (read in this order)
+
+1. **`specs/context-map.md`** (system level) → Strategic relationships between
+   Bounded Contexts. Inferred patterns carry `(inferred — confirm)`; consult the
+   user before treating them as authoritative.
+2. **`specs/bounded-contexts/<bc-slug>/bc-<slug>.md`** → BC Canvas. Use **Purpose**
+   for module-level docstrings/READMEs, **Strategic Classification** for
+   architectural decisions (core vs supporting determines testing depth), and
+   **Inbound/Outbound Communication** for inter-service contracts.
+3. **`specs/bounded-contexts/<bc-slug>/domain-terms.md`** → Ubiquitous Language.
+   Every Aggregate / Command / Event / ReadModel name **must** appear verbatim
+   in code (no `Confirm` → `Approve` synonym drift). "Aliases to AVOID" entries
+   are forbidden names; never use them.
+4. **`specs/bounded-contexts/<bc-slug>/aggregates/aggregate-<slug>.md`** →
+   Aggregate Design Spec. The nine sections map directly onto code:
+   - **Aggregate Root** → primary class (e.g. `class Order` for `Order`)
+   - **Member Entities & Value Objects** → owned types in the same module
+   - **Properties** → fields with the listed `Type` + `Mutability` (immutable
+     after creation → no setter; mutable through commands only → state changes
+     only via method invocation, not field assignment)
+   - **Enforced Invariants** → guard clauses inside command methods + property
+     setters. Each numbered EARS line translates as follows:
+     - `THE <Agg> SHALL <C>` → unconditional invariant; assert in constructor +
+       every state change.
+     - `WHEN <trigger> IF <state> THEN system SHALL <obligation>` → command
+       method `<trigger>` precondition `<state>` + postcondition `<obligation>`.
+       Use the `.claude/skills/gwt-test-generation.md` skill for the matching tests.
+   - **Corrective Policies** → eventual-consistency reactions; implement as
+     event handlers in the policy's BC, not inline in the aggregate.
+   - **Commands** table → public methods on the aggregate (Preconditions →
+     guard clauses; Postconditions → state mutations; Events emitted → domain
+     events appended in the same transaction).
+   - **Domain Events Emitted** → event classes (immutable records).
+   - **Repository Interface** → exact contract; the stub is intentionally
+     minimal — extend only with methods needed by Commands.
+   - **Open Decisions** → blockers. Stop and ask the user before guessing.
+5. **`specs/bounded-contexts/<bc-slug>/acl-<system>.md`** (when present) →
+   external-system integrations. Implement the Translation Maps verbatim;
+   forbidden concepts must NOT appear in the core domain types.
+6. **`specs/bounded-contexts/<bc-slug>/requirements.md`** → User stories with
+   EARS acceptance criteria + wireframes.
+
+{frontend_block}
+## Implementation order
+
+For each Bounded Context, generate code in this order so dependencies resolve:
+
+1. Identity Value Objects (e.g. `OrderId`) — from the Repository Interface stub.
+2. Member Entities & Value Objects + property mutability rules.
+3. Domain Events (immutable records named verbatim from "Domain Events Emitted").
+4. Aggregate Root with Commands as methods + invariant guards.
+5. Repository Interface + an in-memory implementation for tests.
+6. Corrective Policies as event handlers — they live in the BC that owns them
+   (look at the `bc-<slug>.md` "Inbound Communication" table to confirm
+   ownership).
+7. Application services / use-cases that orchestrate Command dispatch.
+8. {('Frontend components mirroring the element-tree, styled from the SVG (read sizes / colors / fonts from `<rect>` / `<text>` attributes)' if has_frontend else 'API controllers / handlers, one per Command and one per ReadModel query')}.
+9. Tests — see `.claude/skills/gwt-test-generation.md`. Generate one test per
+   EARS acceptance criterion AND one per Enforced Invariant.
+
+## Verification checklist (run before reporting done)
+
+- [ ] Every name in `domain-terms.md` appears verbatim in code; no banned aliases.
+- [ ] Every numbered EARS line in each `aggregate-<slug>.md` has a matching test.
+- [ ] Each Command on the aggregate emits exactly the events listed under "Events emitted".
+- [ ] No cross-BC type imports — communication is via events (see `context-map.md`).
+- [ ] {('Wireframe components render at the documented frame size (read from the SVG root `viewBox` / `width`/`height`)' if has_frontend else 'Acceptance criteria from requirements.md are covered by integration tests')}.
+
+## Related skills + commands
+
+- **DDD Principles**: `.claude/skills/ddd-principles.md`
+- **Event Storming Implementation**: `.claude/skills/eventstorming-implementation.md`
+- **GWT Test Generation**: `.claude/skills/gwt-test-generation.md`
+- **Tech Stack**: `.claude/skills/{framework}.md`
+{('- **Frontend**: `.claude/skills/' + frontend + '.md`' + chr(10)) if has_frontend else ''}- **Slash commands**: `/implement-ddd-bc <bc-slug>` and `/implement-ddd-wireframe <bc-slug> <story-id> <ui-slug>`
+"""
+
+
+def generate_claude_command_implement_ddd_bc(config: TechStackConfig) -> str:
+    """Slash command: read one BC's full spec folder and implement it."""
+    framework = config.framework.value
+    return f"""---
+description: Implement an entire Bounded Context from its DDD-for-SDD artifact folder.
+argument-hint: <bc-slug>
+---
+
+You are implementing the Bounded Context whose spec folder is
+`specs/bounded-contexts/$1/` using the **{framework}** framework.
+
+## Plan
+
+1. Load the spec folder. **You must read every file before writing code**:
+   - `specs/bounded-contexts/$1/bc-$1.md` (Canvas)
+   - `specs/bounded-contexts/$1/domain-terms.md` (Ubiquitous Language)
+   - All files under `specs/bounded-contexts/$1/aggregates/*.md`
+   - All files under `specs/bounded-contexts/$1/acl-*.md` if present
+   - `specs/bounded-contexts/$1/requirements.md`
+   - `specs/context-map.md` — only the rows where `$1` is upstream or downstream
+2. Skim `.claude/skills/ddd-spec-implementation.md` for the implementation order
+   and verification checklist. Treat both as binding.
+3. For each aggregate spec, in alphabetical order:
+   1. Generate the Aggregate Root, its identity VO, member entities/VOs,
+      and Domain Events. Use the exact names from `domain-terms.md`.
+   2. Implement Commands as methods on the aggregate. Translate EARS lines
+      into precondition guards (IF clauses), state mutations (THEN), and
+      emitted events.
+   3. Generate the Repository interface + an in-memory implementation.
+   4. Generate GWT-style tests for every numbered EARS line (use the
+      `.claude/skills/gwt-test-generation.md` patterns).
+4. If `acl-<system>.md` files exist, implement the translation maps as
+   adapter modules — no external type may leak into the core types.
+5. From `requirements.md`, generate one application service / use case per
+   user story. Wire them to the aggregates via the repository interface.
+6. Run the verification checklist from
+   `.claude/skills/ddd-spec-implementation.md`. Report any item you cannot
+   tick off.
+
+## Output expectations
+
+- Produce one Pull Request worth of changes (commits grouped per aggregate).
+- Do NOT touch other Bounded Contexts unless their `bc-<slug>.md` explicitly
+  flags an inbound/outbound dependency you must satisfy.
+- Keep imports inside the BC's module; cross-BC use only happens via the
+  events listed in `context-map.md`.
+- If any artifact has `(not modeled — confirm)`, `(inferred — confirm)`, or
+  an item in "Open Decisions", **STOP and ask the user** before guessing.
+
+## Done criteria
+
+- All tests pass.
+- Every name in `domain-terms.md` shows up as an identifier in the produced code.
+- Every numbered EARS line in `aggregate-*.md` has a matching test that fails
+  if the invariant is broken.
+"""
+
+
+def generate_claude_command_implement_ddd_wireframe(config: TechStackConfig) -> str:
+    """Slash command: implement one wireframe → frontend component."""
+    frontend = config.frontend_framework.value if config.frontend_framework else "vue"
+    return f"""---
+description: Generate one frontend component from a single wireframe (element tree + SVG).
+argument-hint: <bc-slug> <story-id> <ui-slug>
+---
+
+You are generating a single **{frontend}** component for the wireframe
+`specs/bounded-contexts/$1/requirements.assets/$2-$3.svg` and the
+matching `requirements.md` section that describes it.
+
+## Inputs (read both, in order)
+
+1. **Element tree** — open `specs/bounded-contexts/$1/requirements.md` and find
+   the `#### Wireframe: <name>` block whose linked SVG is `$2-$3.svg`. The
+   nested bullet list is your component-decomposition hint:
+   - `frame: <name> · layout: vertical|horizontal` → a flex container with the
+     stated direction.
+   - `rect: <name>` containing a `text: "..."` child → a button.
+   - `text: "..."` → a heading / paragraph / label, depending on font size.
+   - `icon: <name>` → an inline SVG (look it up by `name`; for `lucide:*` names
+     use the `lucide-{frontend}` library if installed, otherwise inline the
+     path from the SVG below).
+2. **SVG** (`requirements.assets/$2-$3.svg`) — the visual reference and the
+   only source of numeric values. Read positions, sizes, colors,
+   typography directly from the SVG's `<rect>` / `<text>` / `<svg>`
+   attributes:
+   - position / size: `x`, `y`, `width`, `height` attributes on each element.
+   - color: `fill` / `stroke` attributes (already in `rgba(...)` form).
+   - corner radius: `rx` on `<rect>`.
+   - typography: `font-size`, `font-family`, `font-weight`,
+     `text-anchor` on `<text>`.
+   After you write your component, open the SVG side-by-side with your
+   rendered output and check the diff visually.
+
+   The scene-graph JSON sidecar is no longer emitted (2026-05-12
+   amendment); if you remember it from older specs, do not look for it.
+
+## Output
+
+- One **{frontend}** single-file component, named from the BC's
+  `domain-terms.md` (Ubiquitous Language) — not from the wireframe slug
+  if the names differ. Use PascalCase.
+- Use CSS-in-template (scoped styles) with the **exact** numeric values
+  from the SVG. Do not approximate — if `rx="12"`, write `border-radius: 12px`.
+- Korean text content goes in verbatim — never translate.
+- Accessibility: every interactive `<rect>` becomes a `<button>`, every
+  `<text>` with `font-size >= 18` becomes an `<h*>` (heading level
+  based on hierarchy), every container with a name becomes an
+  `aria-label`-ed `<section>`.
+
+## Verification
+
+After writing the component, render it (the project has a dev server). Open the
+original SVG in another browser tab and compare:
+
+- Background color (the root SVG's outermost `<rect fill="...">`).
+- Container dimensions (the SVG `viewBox` / root `<rect width/height>`).
+- Typography (font sizes and weights match per `<text>`).
+- Interactive elements (`<rect>` + child `<text>`) render as buttons
+  in the expected positions with the expected colors.
+
+If a wireframe's SVG is missing or its `_No scene graph modeled for this UI._`
+marker appears in `requirements.md`, stop and report it — do not guess a layout.
+
+## Related
+
+- **DDD-for-SDD Implementation skill**: `.claude/skills/ddd-spec-implementation.md`
+- **Frontend skill**: `.claude/skills/{frontend}.md`
+"""
+
+
+def generate_role_agent_ddd_specialist(config: TechStackConfig) -> str:
+    """Role-based agent `.claude/agents/ddd-specialist.md` (US7, research D10).
+
+    One per project (replaces the previous per-BC `<bc_name>_agent.md`
+    files). Body references skills by relative path; does NOT restate
+    skill content; lists the slash commands that may invoke it.
+    """
+    framework = config.framework.value
+    in_microservices = config.deployment == DeploymentStyle.MICROSERVICES
+    skill_refs = [
+        "- `.claude/skills/ddd-spec-implementation.md` — order to read the DDD artifact set + verification checklist.",
+        "- `.claude/skills/ddd-principles.md` — aggregate rules, transaction boundaries, naming conventions.",
+        "- `.claude/skills/eventstorming-implementation.md` — sticker-to-code mapping (Command → API, Event → message, ReadModel → query API, Policy → event listener).",
+        "- `.claude/skills/gwt-test-generation.md` — Given/When/Then patterns for testing EARS invariants.",
+        f"- `.claude/skills/{framework}.md` — {framework} implementation patterns.",
+    ]
+    if in_microservices:
+        skill_refs.append("- `.claude/skills/api-gateway.md` — gateway routing, CORS, service discovery for microservice deployments.")
+    skills_block = "\n".join(skill_refs)
+    return f"""---
+name: ddd-specialist
+description: Backend / domain implementation persona. Reads the DDD-for-SDD artifact folders under `specs/bounded-contexts/<bc>/` and produces aggregate + command + event + policy + repository code in the project's chosen tech stack.
+---
+
+# DDD Specialist
+
+You implement Bounded Contexts from their DDD-for-SDD artifact folders.
+You do **not** invent domain concepts — every name in code matches the
+spec verbatim — and you do **not** silently merge aggregates.
+
+## Skills you reference
+
+Reference these by relative path. Their full content is in the file
+itself; this agent file does not restate them.
+
+{skills_block}
+
+## When you are invoked
+
+- `/implement-ddd-bc <bc-slug>` — implement one Bounded Context's full
+  spec folder (aggregates, commands, events, policies, repository, tests).
+- `/implement-ddd-wireframe <bc-slug> <story-id> <ui-slug>` — implement
+  a single wireframe's backing code path (the Command or ReadModel API
+  the wireframe is bound to).
+
+## How you work
+
+1. Load every file in the BC's spec folder before writing code (see the
+   read-order in the `ddd-spec-implementation` skill).
+2. For each aggregate, translate the nine sections of its spec onto
+   code: root entity, member entities/VOs, properties with mutability,
+   EARS invariants → guards + tests, corrective policies → event
+   handlers, commands → public methods, events → emitted records,
+   repository → interface stub.
+3. Produce one Pull Request worth of changes per BC, grouped by
+   aggregate. Do not touch other BCs unless `bc-<slug>.md` records an
+   inbound/outbound dependency that requires it.
+4. If any artifact carries `(not modeled — confirm)`, `(inferred — confirm)`,
+   or an item in "Open Decisions", stop and ask the user before guessing.
+"""
+
+
+def generate_role_agent_frontend_engineer(config: TechStackConfig) -> str:
+    """Role-based agent `.claude/agents/frontend-engineer.md` (US7, research D10).
+
+    Emitted only when ``config.include_frontend`` is true AND
+    ``config.frontend_framework`` is set. References the chosen frontend
+    skill by relative path.
+    """
+    framework = config.framework.value
+    front_fw = config.frontend_framework.value if config.frontend_framework else "vue"
+    skill_refs = [
+        "- `.claude/skills/ddd-principles.md` — DDD vocabulary the wireframes use (Aggregate / Command / ReadModel names).",
+        "- `.claude/skills/eventstorming-implementation.md` — sticker-to-component mapping (Command → form, ReadModel → display).",
+        "- `.claude/skills/gwt-test-generation.md` — component tests for the bound criteria.",
+        f"- `.claude/skills/{framework}.md` — {framework} (backend) implementation patterns — needed for understanding the APIs the components call.",
+        f"- `.claude/skills/{front_fw}.md` — {front_fw} component patterns.",
+    ]
+    skills_block = "\n".join(skill_refs)
+    return f"""---
+name: frontend-engineer
+description: Frontend implementation persona. Reads `specs/frontend/*` for IA/structure, `specs/bounded-contexts/<bc>/domain-terms.md` for naming (Ubiquitous Language), and each wireframe's element tree + SVG for layout. Produces {front_fw} components that match the wireframes and serve the user's business task.
+---
+
+# Frontend Engineer
+
+You implement the frontend by consuming **only** the frontend
+perspective under `specs/frontend/` plus the canonical wireframe assets
+and the Ubiquitous Language dictionary for each UI's owning BC. You do
+not browse the rest of each BC's spec folder; that material is for the
+DDD specialist, not for shaping the UI.
+
+## Two-rule operating model
+
+1. **Names come from Ubiquitous Language.** Every component, widget,
+   store, type, route segment, and API path segment MUST use a name
+   that appears verbatim in some BC's `domain-terms.md`. Synonyms,
+   translations, and "friendlier" renames are forbidden — and so is
+   anything listed under "Aliases to AVOID".
+2. **Structure comes from the UI flow.** Menu IA, routing tree, module
+   layout, folder grouping, and navigation order all derive from
+   `specs/frontend/ui-flow.md` (the user's journey). BC boundaries do
+   not shape the frontend's structure; BC fields in
+   `menu-structure.md` are traceability metadata only.
+
+Everything in the user's job is one of those two things — naming or
+structure — and each has exactly one source.
+
+## Skills you reference
+
+Reference these by relative path. Their full content is in the file
+itself; this agent file does not restate them.
+
+{skills_block}
+
+## When you are invoked
+
+- `/generate-frontend` — generate the whole frontend from
+  `specs/frontend/*` (structure) + each UI's BC `domain-terms.md`
+  (naming).
+
+## How you work
+
+0. **Viewport intent check.** After loading `framework.md`, read its
+   `Viewport summary` block. **Before designing any IA, routing, or
+   breakpoint system, ask the user**: "The wireframes are predominantly
+   `<dominant>` (see Viewport summary in `framework.md`). Should the
+   whole menu, routing, and layout be designed `<dominant>`-first?" Wait
+   for the user's confirmation before continuing. When the dominant
+   reads `mixed — ask the user`, ask the user which viewport class
+   should drive the IA instead of guessing. The answer governs
+   breakpoint defaults, container max-widths, navigation chrome
+   (bottom-tab vs. sidebar), and gesture vs. pointer affordances —
+   apply it consistently across every component you generate next.
+1. Load `specs/frontend/framework.md` first — its `Framework:` line +
+   Conventions block decide component file shape, state management,
+   routing library, styling.
+2. Load `specs/frontend/ui-flow.md` — this is your **only** structural
+   input. Each numbered entry's `Triggered by` line tells you the
+   causal step that brings the user to that screen. Use the order to
+   design the menu IA (entry-point UIs become top-level entries;
+   consecutive UIs in the same flow nest as sub-routes). Each entry
+   also carries a `[viewport: mobile|tablet|desktop]` tag — use it to
+   sanity-check the user's viewport-intent answer above; flag any
+   wireframe whose tag conflicts with the chosen direction.
+3. Load `specs/frontend/menu-structure.md` for the flat inventory +
+   per-UI traceability. Use it to map each UI to its owning BC for
+   the *naming lookup* — not for grouping.
+4. For each UI, in `ui-flow.md` order:
+   a. Open the BC's `domain-terms.md` and pick the matching name
+      (Aggregate / Command / ReadModel name for the bound entity).
+      That name becomes the component name in PascalCase, the route
+      segment in kebab-case, the store name, the type name, etc.
+   b. Open the wireframe's element tree (in the BC's
+      `requirements.md`) and its `.svg`. Use the element tree for
+      decomposition + a11y; pull numeric values (sizes, padding,
+      colors, typography) from the SVG's `<rect>` / `<text>` /
+      `<svg>` attributes; the SVG itself is the visual verification
+      reference. There is no scene-graph JSON sidecar.
+   c. Bind to backend APIs using verbatim BC names: Commands → `POST
+      /api/<bc-slug>/<command-name>`; ReadModels → `GET
+      /api/<bc-slug>/<readmodel-name>`. Sub-component / prop / type
+      names also come from `domain-terms.md` (Member Entity / Value
+      Object / Property names).
+5. For each numbered EARS line in the bound story's Acceptance
+   Criteria, generate a component test per the
+   `gwt-test-generation.md` patterns. Test descriptions cite the EARS
+   line verbatim.
+
+## Stop conditions
+
+- A `ui-flow.md` entry is `(unreferenced — review)` → stop and ask
+  the user.
+- A wireframe's scene-graph reference says `_No scene graph modeled_`
+  → stop, do not guess.
+- A name you would use is missing from `domain-terms.md`, or appears
+  under "Aliases to AVOID" → stop, do not invent or synonym.
+- `framework.md` Conventions reads `(no curated conventions for this
+  framework — confirm)` → stop and ask the user.
+- `framework.md` Viewport summary reads `mixed — ask the user`, or
+  you have not yet received the user's viewport-intent answer for the
+  current run → stop and ask before generating components.
+"""
+
+
+def generate_claude_command_generate_frontend(config: TechStackConfig) -> str:
+    """Slash command `.claude/commands/generate-frontend.md` (US7, FR-024).
+
+    Emitted only when ``config.ai_assistant=claude`` AND
+    ``config.spec_format=ddd`` AND ``config.include_frontend=true``.
+    Its body limits the agent's inputs to ``specs/frontend/*`` plus the
+    referenced wireframe assets, separates **naming** (Ubiquitous
+    Language from each BC's ``domain-terms.md``) from **structure** (UI
+    flow only — never BC slicing), and frames the work around the
+    user's business task.
+    """
+    front_fw = config.frontend_framework.value if config.frontend_framework else "vue"
+    return f"""---
+description: Generate the whole frontend from `specs/frontend/`. BC artifacts are consulted ONLY for naming (Ubiquitous Language); IA / routing / module structure come from the UI flow alone.
+argument-hint: (no arguments)
+---
+
+You are generating the project's frontend in **{front_fw}**. Adopt the
+`@.claude/agents/frontend-engineer.md` agent persona for this session.
+
+## Core principles (read these before anything else)
+
+1. **Business purpose first.** Each screen exists to let a specific
+   user complete a specific business task. Your job is to make those
+   tasks easy and obvious. The DDD model is a *vocabulary*, not a UI
+   blueprint.
+2. **Naming from Ubiquitous Language, structure from UI flow.**
+   - **Names** of components, widgets, stores, route paths, page
+     titles, props, and types MUST come from
+     `specs/bounded-contexts/<bc>/domain-terms.md` for the BC whose
+     wireframe you are implementing. No synonyms, no translations, no
+     "friendlier" renames. Entries under "Aliases to AVOID" are
+     forbidden names — never use them.
+   - **Everything else** — IA, routing tree, module layout, folder
+     grouping, menu hierarchy, navigation order — is decided strictly
+     from `specs/frontend/ui-flow.md` and the inventory in
+     `specs/frontend/menu-structure.md`. BC boundaries do not shape
+     the frontend structure.
+3. **Do not read BC artifacts for IA.** The only BC files you load are
+   `domain-terms.md` (naming) and the per-wireframe scene-graph /
+   element-tree assets referenced from `ui-flow.md`. Do not browse
+   `bc-<slug>.md`, `aggregate-<slug>.md`, or other BC files looking
+   for module structure — that would re-introduce BC-centric thinking.
+
+## Inputs (read in this exact order)
+
+1. `specs/frontend/framework.md` — parse line `Framework: <name>`; use
+   the Conventions block for component file shape, state management,
+   routing library, styling. **Also parse the `Viewport summary`
+   block** — it reports counts of mobile / tablet / desktop / unknown
+   wireframes and a `Dominant:` line. The dominant value (or `mixed —
+   ask the user` when no class crosses 70%) drives step 0 of the plan
+   below.
+2. `specs/frontend/ui-flow.md` — the **causal order** of UI screens
+   across the user's whole journey. This is the only structural input.
+3. `specs/frontend/menu-structure.md` — a flat **inventory** of bound
+   UIs with entry-point / unreferenced markers and traceability fields
+   (owning BC, story, actor, binding). Use this to design the menu IA
+   yourself; do NOT take its BC labels as a grouping directive.
+4. For each UI in the inventory, follow the relative links to its
+   canonical wireframe assets (NOT into the rest of the BC folder):
+   - the matching `Wireframe:` block in
+     `../bounded-contexts/<bc>/requirements.md` (element tree).
+   - `../bounded-contexts/<bc>/requirements.assets/<userStoryId>-<ui-slug>.svg`
+     — the only visual asset. Read numeric values you need (positions,
+     sizes, colors, typography) directly from its `<rect>` / `<text>` /
+     `<svg>` attributes. There is no scene-graph JSON sidecar.
+5. **Naming lookup only:**
+   `../bounded-contexts/<bc>/domain-terms.md` for the BC of each UI —
+   to pull Aggregate / Command / Event / ReadModel / Property names
+   verbatim. Treat this file as a dictionary; do not read its
+   "Business Context" prose looking for IA hints.
+
+## Plan
+
+0. **Confirm viewport intent with the user — BEFORE doing anything
+   else.** Read the `Viewport summary` block in `framework.md`. Ask
+   the user verbatim:
+   > "Wireframes are predominantly `<dominant>` ({{counts}}). Should I
+   > design the whole menu IA, routing, breakpoints, and component
+   > chrome `<dominant>`-first?"
+   When the summary reads `mixed — ask the user`, instead ask which
+   viewport class should drive the IA (mobile / tablet / desktop) and
+   why; don't pick one silently. Record the answer at the top of the
+   generated project's README and use it consistently below.
+1. Build the project skeleton per the framework's conventions
+   (component shape, state library, routing library, styling). Apply
+   the viewport-intent answer from step 0 to: default container
+   max-widths, navigation chrome (bottom-tab vs. sidebar vs. top-nav),
+   touch vs. pointer affordances, breakpoint thresholds.
+2. **Design the menu IA from the user's workflow.** Read
+   `ui-flow.md` end-to-end and decide:
+   - Top-level entries from entry-point UIs (no upstream trigger) and
+     workflow stages or user roles. **Not** from BC names.
+   - Sub-flows grouped by consecutive UIs the same user traverses.
+   - Where to place entries marked `(unreferenced — review)` — if you
+     cannot justify a placement, stop and ask the user.
+   The BC labels in the inventory are *traceability metadata*, not
+   menu sections.
+3. For each `ui-flow.md` entry in order, generate one component. Its
+   name MUST come from the owning BC's `domain-terms.md` (Aggregate /
+   Command / ReadModel name, in PascalCase). Wire it into the route
+   you decided in step 2.
+4. For each wireframe component:
+   - Use the element tree for component decomposition + accessibility
+     names. Sub-component names come from `domain-terms.md` of the
+     same BC (Member Entity / Value Object / Property names) — never
+     invented from English UI labels.
+   - Read numeric values (positions, sizes, colors, typography) from
+     the SVG's `<rect>` / `<text>` / `<svg>` attributes directly. The
+     scene-graph JSON sidecar is no longer emitted.
+   - Open the SVG side-by-side with your rendered output and check
+     the visual diff (colors, positions, font sizes).
+5. **Bind to backend APIs using Ubiquitous-Language names.**
+   - A wireframe attached to a Command → POST to `/api/<bc-slug>/<command-name>`
+     using the Command name from `domain-terms.md` verbatim. The
+     request shape comes from the Command's properties (also in
+     `domain-terms.md`).
+   - A wireframe attached to a ReadModel → GET from `/api/<bc-slug>/<readmodel-name>`
+     using the ReadModel name from `domain-terms.md` verbatim.
+6. Stores / state modules carry the same names as the underlying
+   Aggregate or ReadModel (e.g. a Pinia store for `Order` is
+   `useOrderStore`, not `useOrderManagementStore`). Types/interfaces
+   in TypeScript match Aggregate / Value Object names from
+   `domain-terms.md`.
+7. For each numbered EARS line in the bound story's Acceptance Criteria,
+   generate a matching test using the `.claude/skills/gwt-test-generation.md`
+   patterns. Test descriptions cite the EARS line verbatim.
+
+## Stop conditions
+
+- A `ui-flow.md` entry is `(unreferenced — review)` → stop and ask
+  where to place it.
+- A wireframe's scene-graph link returns `_No scene graph modeled_` →
+  stop, do not guess a layout.
+- `framework.md` Conventions reads `(no curated conventions for this
+  framework — confirm)` → stop and ask the user.
+- `framework.md` Viewport summary `Dominant:` reads `mixed — ask the
+  user`, or you have not yet asked the user to confirm viewport
+  intent for the current run → stop and ask before any code is
+  generated.
+- A `ui-flow.md` entry's `[viewport: ...]` tag conflicts with the
+  user's confirmed viewport intent (e.g. a `desktop` wireframe in an
+  otherwise mobile-first project) → stop and ask whether to render it
+  as a companion screen, redirect to mobile, or treat as a separate
+  responsive breakpoint.
+- A name you would use in code is not present in the BC's
+  `domain-terms.md`, or appears under "Aliases to AVOID" → stop, do
+  not invent or synonym-substitute.
+
+## Done criteria
+
+- Every `ui-flow.md` entry has a component implementing the user task
+  it documents.
+- Every public identifier (component, store, type, route segment, API
+  path segment) appears verbatim in some BC's `domain-terms.md`.
+- Menu IA reflects user workflow (entry points → flows → sub-flows),
+  not BC boundaries. A reviewer reading the navigation should see the
+  *business journey*, not the *bounded-context inventory*.
+- Every component's bound EARS criteria have matching tests.
+- The frontend builds and the navigation renders end-to-end.
+"""
+

@@ -1,0 +1,80 @@
+# Aggregate Design Spec: {{ agg.name }}
+
+> Bounded Context: **{{ bc.name }}** · Generated: {{ generated_at }}
+
+## Description
+
+{{ agg.description or "_(not modeled — confirm)_" }}
+
+## Aggregate Root
+
+`{{ agg.root_entity }}`
+
+## Member Entities & Value Objects
+
+{% if agg.member_entities %}{% for m in agg.member_entities %}- `{{ m.name }}` *(
+
+{%- if m.kind == "entity" %}entity, owned
+{%- elif m.kind == "value_object" %}value object
+{%- elif m.kind == "enum" %}enum
+{%- elif m.kind == "identifier" %}identifier
+{%- else %}{{ m.kind }}{% endif -%}
+
+{% if m.note %} — {{ m.note }}{% endif %})*
+{% endfor %}{% else %}_(not modeled — confirm)_{% endif %}
+
+## Properties
+
+{% if agg.attributes %}
+| Field | Type | Mutability |
+|---|---|---|
+{% for a in agg.attributes %}| `{{ a.name }}` | `{{ a.type }}` | {{ a.mutability }} |
+{% endfor %}
+{% else %}
+_(not modeled — confirm)_
+{% endif %}
+
+## Enforced Invariants
+
+{% if invariant_lines %}
+{% for line in invariant_lines %}{{ loop.index }}. {{ line }}
+{% endfor %}
+{% else %}
+_No invariants modeled — confirm whether `{{ agg.name }}` has none, or this is unmodeled._
+{% endif %}
+
+## Corrective Policies
+
+{% if agg.policies %}{% for p in agg.policies %}- **{{ p.name }}** — {{ p.effect or p.description or "(no effect description modeled)" }}
+{% endfor %}{% else %}_No corrective policies modeled._{% endif %}
+
+## Commands
+
+{% if agg.commands %}
+| Command | Preconditions | Postconditions | Events emitted |
+|---|---|---|---|
+{% for c in agg.commands %}| `{{ c.name }}` | {% if c.preconditions %}{{ c.preconditions | join("; ") }}{% else %}none{% endif %} | {% if c.postconditions %}{{ c.postconditions | join("; ") }}{% else %}_(not modeled)_{% endif %} | {% if c.events_emitted %}{{ c.events_emitted | join(", ") }}{% else %}_(none)_{% endif %} |
+{% endfor %}
+{% else %}
+_No commands modeled._
+{% endif %}
+
+## Domain Events Emitted
+
+{% if agg.events %}{% for e in agg.events %}- `{{ e.name }}` — {{ e.description or "(no description modeled)" }}
+{% endfor %}{% else %}_No events modeled._{% endif %}
+
+## Repository Interface
+
+```python
+class {{ agg.name }}Repository(Protocol):
+    def get(self, id: "{{ agg.identity_type }}") -> "{{ agg.name }}": ...
+    def save(self, aggregate: "{{ agg.name }}") -> None: ...
+    {% for c in agg.commands %}# Command: {{ c.name }}
+    {% endfor %}
+```
+
+## Open Decisions
+
+{% if open_decisions %}{% for od in open_decisions %}- {{ od }}
+{% endfor %}{% else %}_None._{% endif %}

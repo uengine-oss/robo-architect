@@ -1,0 +1,66 @@
+<h3>가. 기능 목록</h3>
+{% if functions %}
+{% set fns_by_pr = functions_by_process %}
+{% if fns_by_pr %}
+{% for pr in processes %}
+<h4>{{ loop.index }}) {{ pr.name|e }} (<span class="mono">{{ pr.id|e }}</span>)</h4>
+<table>
+<thead>
+<tr>
+<th style="width: 170px;">기능 ID</th>
+<th style="width: 210px;">기능명</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+{% set fn_list = fns_by_pr.get(pr.id, []) %}
+{% if fn_list %}
+{% for fn in fn_list %}
+<tr>
+<td class="mono">{{ fn.id|e }}</td>
+<td>{{ fn.name|e }}</td>
+<td>{{ fn.description|e }}</td>
+</tr>
+{% endfor %}
+{% else %}
+<tr><td colspan="3" class="subtle">(이 프로세스에 직접 매핑된 기능이 없습니다.)</td></tr>
+{% endif %}
+</tbody>
+</table>
+{% endfor %}
+{% else %}
+<table>
+<thead>
+<tr>
+<th style="width: 170px;">기능 ID</th>
+<th style="width: 210px;">기능명</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+{% for fn in functions %}
+<tr>
+<td class="mono">{{ fn.id|e }}</td>
+<td>{{ fn.name|e }}</td>
+<td>{{ fn.description|e }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+{% else %}
+<p class="subtle">(기능을 도출할 Command 가 그래프에 없습니다.)</p>
+{% endif %}
+
+<h3>나. 기능 상세</h3>
+{% for fn in functions %}
+<div class="policy-detail-guide">
+<div class="policy-item-title"><span class="mono">{{ fn.id|e }}</span> · {{ fn.name|e }}</div>
+<div class="policy-item-content">
+{% if fn.description %}<p style="margin: 2px 0;">{{ fn.description|e }}</p>{% endif %}
+{% if fn.preconditions %}<div><b>사전 조건</b><ul>{% for p in fn.preconditions %}<li>{{ p|e }}</li>{% endfor %}</ul></div>{% endif %}
+{% if fn.postconditions %}<div><b>사후 조건</b><ul>{% for p in fn.postconditions %}<li>{{ p|e }}</li>{% endfor %}</ul></div>{% endif %}
+{% if fn.events_emitted %}<div><b>발행 이벤트</b><ul>{% for e in fn.events_emitted %}<li class="mono">{{ e|e }}</li>{% endfor %}</ul></div>{% endif %}
+</div>
+</div>
+{% endfor %}

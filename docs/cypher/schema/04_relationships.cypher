@@ -242,6 +242,38 @@ CREATE (cmd)-[:HAS_THEN]->(then);
 
 
 // ============================================================
+// Feature 016 — Figma Document Binding 관계 정의
+// ============================================================
+//
+// MAPS_STORYBOARD : (FigmaBinding)-[:MAPS_STORYBOARD]->(StoryboardPageMapping)
+//   - 활성 바인딩이 보유한 storyboard ↔ Figma 페이지 매핑들
+//   - replace 시 기존은 status='archived' 처리, 새 매핑은 신규 생성
+//
+// MAPS : (StoryboardPageMapping)-[:MAPS]->(Command)
+//   - 한 매핑이 가리키는 entry Command (= storyboard의 식별자)
+//
+// LOGGED : (BindingHistoryEvent)-[:LOGGED]->(FigmaBinding)
+//   - append-only 감사 이벤트 → 활성 바인딩
+//
+// ============================================================
+
+
+// ============================================================
+// Feature 020 — Figma Sync Recovery 관계 정의
+// ============================================================
+//
+// RUN_OF : (SyncRun)-[:RUN_OF]->(FigmaBinding)
+//   - 한 :SyncRun 은 dispatch 시점의 binding 을 가리킨다.
+//   - cardinality: many → 1 (한 binding 에 여러 run; replace 후 새 run 들은
+//     새 binding 을 가리키며 이전 run 들은 그대로 이전 binding 노드를 가리키지만
+//     :FigmaBinding 은 singleton 이라 동일 노드 — 식별은 :SyncRun.bindingFileKey
+//     로 함).
+//   - 사용처: GET /api/figma-binding/sync-runs 가 binding 별 run 을 fetch 할 때.
+//
+// ============================================================
+
+
+// ============================================================
 // Event Storming Flow 시각화
 // ============================================================
 //
@@ -268,3 +300,100 @@ CREATE (cmd)-[:HAS_THEN]->(then);
 //  └─────────────────────────────────────────────────────────┘
 //
 // ============================================================
+
+
+// ############################################################
+// HAS_JOURNEY / HAS_STEP / SHOWS / NEXT — 사용자 여정 그래프 (025 v3)
+// ############################################################
+// 사용자 여정 레이어. 기존 데이터 흐름(UI→Command→Event→ReadModel→UI)과는
+// 별개. 흐름은 JourneyStep 간 NEXT 엣지로 표현(분기 가능).
+//
+// HAS_JOURNEY: BoundedContext → Journey   (소유 — 화면이 가장 많은 BC)
+// HAS_STEP:    Journey → JourneyStep
+// SHOWS:       JourneyStep → UI           (screen 단계만; UI 는 여정 간 공유)
+// NEXT:        JourneyStep → JourneyStep  (흐름 엣지)
+//   - id: String (UUID v5, `uuid5(NS, "<src.step.key>-><tgt.step.key>#<slug(condition)>")`)
+//   - condition: String (gateway 출구 분기 라벨; 그 외 "")
+//   - documentExcerpt: String (원본 문서 인용; ≤500자)
+//   - source: String ("llm" | "manual")
+//   - createdAt / updatedAt: DateTime
+// ############################################################
+
+MATCH (bc:BoundedContext {id: "<bc-id>"})
+MATCH (j:Journey {id: "<journey-id>"})
+MERGE (bc)-[:HAS_JOURNEY]->(j);
+
+MATCH (j:Journey {id: "<journey-id>"})
+MATCH (s:JourneyStep {id: "<step-id>"})
+MERGE (j)-[:HAS_STEP]->(s);
+
+MATCH (s:JourneyStep {id: "<screen-step-id>"})
+MATCH (u:UI {id: "<ui-id>"})
+MERGE (s)-[:SHOWS]->(u);
+
+MATCH (a:JourneyStep {id: "<step-a-id>"})
+MATCH (b:JourneyStep {id: "<step-b-id>"})
+MERGE (a)-[r:NEXT {id: "<deterministic-uuid5>"}]->(b)
+ON CREATE SET r.createdAt = datetime()
+SET r.condition = "",
+    r.documentExcerpt = "원본 문서 인용",
+    r.source = "llm",
+    r.updatedAt = datetime();
+
+
+// ############################################################
+// HAS_FEATURE / HAS_USER_STORY — 요구사항 그룹 계층 (026 requirements-tab)
+// ############################################################
+// Epic(BC) → Feature → UserStory 드릴다운 계층.
+// UserStory의 BC 소속은 기존 UserStory-[:IMPLEMENTS]->BoundedContext 유지.
+//
+// HAS_FEATURE: BoundedContext → Feature   (BC가 Feature 소유)
+//   - createdAt: DateTime
+//
+// HAS_USER_STORY: Feature → UserStory     (Feature가 US 포함)
+//   - 카디널리티: UserStory는 최대 1개 Feature에 소속(없으면 미분류)
+//   - source: String ("llm" | "manual") — 자동 분류/수동 재배치 구분
+//   - confidence: Float (LLM 분류 신뢰도; manual은 생략 가능)
+//   - createdAt: DateTime
+//
+// drag-n-drop 재배치 = 기존 HAS_USER_STORY 1개 삭제 후 대상 Feature로
+// 신규 MERGE(source='manual'). 재인제스트는 source='manual' 관계를 보존.
+// ############################################################
+
+MATCH (bc:BoundedContext { key: "order" })
+MATCH (f:Feature { key: "order.feature.order-cancellation" })
+MERGE (bc)-[hf:HAS_FEATURE]->(f)
+ON CREATE SET hf.createdAt = datetime();
+
+MATCH (f:Feature { key: "order.feature.order-cancellation" })
+MATCH (us:UserStory { id: "US-001" })
+MERGE (f)-[hus:HAS_USER_STORY]->(us)
+ON CREATE SET hus.createdAt = datetime()
+SET hus.source = "llm", hus.confidence = 0.9;
+
+
+// ############################################################
+// HAS_INVARIANT / VERIFIED_BY — 인베리언트 그래프 (027 aggregate-invariants)
+// ############################################################
+// HAS_INVARIANT: Aggregate → Invariant
+//   - 어그리거트가 보유하는 인베리언트(불변식). cardinality 1 → many.
+//
+// VERIFIED_BY: Invariant → Command
+//   - 인베리언트의 세부 검증 조건이 커맨드의 GWT 인수조건을 "공유 참조"함.
+//   - cardinality many → many (한 커맨드 GWT가 여러 인베리언트에서 공유될 수 있고
+//     한 인베리언트가 여러 커맨드를 참조할 수 있음).
+//   - 공유 참조이므로 GWT 노드는 물리적으로 1개 — 어느 쪽에서 편집해도 자동 전파.
+//   - VERIFIED_BY 엣지 1개를 지워도 커맨드 GWT 자체는 보존됨.
+//
+// 인베리언트 전용 GWT는 HAS_GWT(Invariant → GWT, parentType="Invariant")로 표현하며
+// 별도 관계 정의 없이 기존 HAS_GWT 관계를 재사용한다.
+// ############################################################
+
+MATCH (agg:Aggregate { key: "order.order" })
+MATCH (inv:Invariant { key: "order.order.invariant.order-total-positive-abc123def456" })
+MERGE (agg)-[:HAS_INVARIANT]->(inv);
+
+MATCH (inv:Invariant { key: "order.order.invariant.order-total-positive-abc123def456" })
+MATCH (cmd:Command { key: "order.order.cancel-order" })
+MERGE (inv)-[vb:VERIFIED_BY]->(cmd)
+ON CREATE SET vb.createdAt = datetime();

@@ -146,13 +146,25 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
     bc_info = bc_rows[0] if bc_rows else None
 
     # 3) Find UserStories — these ARE the source narrative for this ES node.
-    us_query = _US_QUERIES.get(node_type)
-    if not us_query:
-        us_query = """
-            MATCH (us:UserStory)-[]->(n {id: $id})
-            RETURN DISTINCT us.id AS id, us.role AS role, us.action AS action, us.sourceUnitId AS src
-        """
-    us_rows = _query(us_query, {"id": node_id})
+    # When the node itself IS a UserStory, treat it as its own source US so the
+    # 출처 tab can surface the BL/source-rules mapping (hybrid US only).
+    if node_type == "UserStory":
+        us_rows = _query(
+            """
+            MATCH (us:UserStory {id: $id})
+            RETURN us.id AS id, us.role AS role, us.action AS action,
+                   coalesce(us.id, us.sourceUnitId) AS src
+            """,
+            {"id": node_id},
+        )
+    else:
+        us_query = _US_QUERIES.get(node_type)
+        if not us_query:
+            us_query = """
+                MATCH (us:UserStory)-[]->(n {id: $id})
+                RETURN DISTINCT us.id AS id, us.role AS role, us.action AS action, us.sourceUnitId AS src
+            """
+        us_rows = _query(us_query, {"id": node_id})
 
     # 4) Per US, build a `source` entry: { us, rules, function }.
     #    Rules + Function are the *real* source-of-truth (verification §3.8) —

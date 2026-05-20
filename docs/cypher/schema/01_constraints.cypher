@@ -306,7 +306,75 @@ CREATE CONSTRAINT constraint_then_parentId IF NOT EXISTS
 FOR (t:Then)
 REQUIRE t.parentId IS NOT NULL;
 
+// ------------------------------------------------------------
+// FigmaBinding / StoryboardPageMapping / BindingHistoryEvent (016)
+// ------------------------------------------------------------
+CREATE CONSTRAINT figma_binding_singleton IF NOT EXISTS
+FOR (b:FigmaBinding) REQUIRE b.id IS UNIQUE;
+
+CREATE CONSTRAINT storyboard_page_mapping_id_unique IF NOT EXISTS
+FOR (m:StoryboardPageMapping) REQUIRE m.id IS UNIQUE;
+
+CREATE CONSTRAINT storyboard_page_mapping_command_unique IF NOT EXISTS
+FOR (m:StoryboardPageMapping) REQUIRE m.commandId IS UNIQUE;
+
+CREATE CONSTRAINT binding_history_event_id_unique IF NOT EXISTS
+FOR (e:BindingHistoryEvent) REQUIRE e.id IS UNIQUE;
+
+// ------------------------------------------------------------
+// SyncRun (020 — figma-sync-recovery)
+// ------------------------------------------------------------
+CREATE CONSTRAINT sync_run_id_unique IF NOT EXISTS
+FOR (r:SyncRun) REQUIRE r.id IS UNIQUE;
+
+// ------------------------------------------------------------
+// Journey / JourneyStep (025 v3 — ui-flow-edges)
+//   사용자 여정(Journey)과 그 단계(JourneyStep) 노드
+// ------------------------------------------------------------
+CREATE CONSTRAINT journey_id_unique IF NOT EXISTS
+FOR (j:Journey) REQUIRE j.id IS UNIQUE;
+
+CREATE CONSTRAINT journey_key_unique IF NOT EXISTS
+FOR (j:Journey) REQUIRE j.key IS UNIQUE;
+
+CREATE CONSTRAINT journey_step_id_unique IF NOT EXISTS
+FOR (s:JourneyStep) REQUIRE s.id IS UNIQUE;
+
+CREATE CONSTRAINT journey_step_key_unique IF NOT EXISTS
+FOR (s:JourneyStep) REQUIRE s.key IS UNIQUE;
+
+CREATE INDEX sync_run_status_idx IF NOT EXISTS
+FOR (r:SyncRun) ON (r.status);
+
+CREATE INDEX sync_run_binding_file_key_idx IF NOT EXISTS
+FOR (r:SyncRun) ON (r.bindingFileKey);
+
 // 부모 내 Then 중복 방지: (parentType,parentId) 유니크 (하나의 Command/Policy당 하나의 Then)
 CREATE CONSTRAINT constraint_then_parent_unique IF NOT EXISTS
 FOR (t:Then)
 REQUIRE (t.parentType, t.parentId) IS UNIQUE;
+
+// ------------------------------------------------------------
+// Feature (026 — requirements-tab)
+// ------------------------------------------------------------
+CREATE CONSTRAINT feature_id_unique IF NOT EXISTS
+FOR (f:Feature) REQUIRE f.id IS UNIQUE;
+
+CREATE CONSTRAINT feature_key_unique IF NOT EXISTS
+FOR (f:Feature) REQUIRE f.key IS UNIQUE;
+
+// ------------------------------------------------------------
+// Invariant (027 — aggregate-invariants)
+//   어그리거트 하위 1급 객체. 선언문 + 세부 GWT 조건.
+// ------------------------------------------------------------
+CREATE CONSTRAINT invariant_id_unique IF NOT EXISTS
+FOR (inv:Invariant) REQUIRE inv.id IS UNIQUE;
+
+CREATE CONSTRAINT invariant_key_unique IF NOT EXISTS
+FOR (inv:Invariant) REQUIRE inv.key IS UNIQUE;
+
+CREATE CONSTRAINT invariant_key_exists IF NOT EXISTS
+FOR (inv:Invariant) REQUIRE inv.key IS NOT NULL;
+
+CREATE CONSTRAINT invariant_declaration_exists IF NOT EXISTS
+FOR (inv:Invariant) REQUIRE inv.declaration IS NOT NULL;

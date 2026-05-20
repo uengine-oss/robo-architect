@@ -145,6 +145,32 @@ npm run dev
 - `POST /api/change/plan`
 - `POST /api/change/apply`
 
+### 4b) 요구사항 탭 (Requirements — Epic→Feature→User Story 드릴다운)
+
+기획자 전용 Requirements 탭. Epic(BC)→Feature→User Story→Acceptance Criteria 트리 탐색,
+요구사항 증분 추가(문서/자연어), User Story 설계 괘적 시각화, 백그라운드 영향도 분석.
+
+대표 API:
+- `GET /api/requirements/tree`
+- `POST /api/requirements/feature`, `DELETE /api/requirements/feature`
+- `POST /api/requirements/user-story/propose`, `POST /api/requirements/user-story/confirm`
+- `PATCH /api/requirements/user-story/move`, `DELETE /api/requirements/user-story`
+- `GET /api/requirements/user-story/{id}/design-trace`
+- `GET /api/requirements/impact-report/{report_id}`
+
+#### 어그리거트 인베리언트 (Aggregate Invariants, spec 027)
+
+어그리거트 하위 1급 객체 `Invariant`. 디자인 트리에서 드릴다운하여 선언문과 세부
+GWT 검증 조건을 편집. 세부 조건은 커맨드 인수조건을 공유 참조(`VERIFIED_BY`)하거나
+인베리언트 전용 GWT로 선언. 인제스트 시 자동 추출.
+
+대표 API:
+- `GET /api/aggregates/{aggregate_id}/invariants` (최초 조회 시 레거시 텍스트 이관)
+- `POST /api/aggregates/{aggregate_id}/invariants`
+- `GET /api/invariants/{id}`, `PATCH /api/invariants/{id}`, `DELETE /api/invariants/{id}`
+- `GET /api/invariants/{id}/reference-candidates`
+- `POST /api/invariants/{id}/references`, `DELETE /api/invariants/{id}/references/{command_id}`
+
 ### 5) 모델 수정(Chat) (ReAct + Streaming)
 
 대표 API:
@@ -176,6 +202,7 @@ API는 기능별로 prefix가 구분돼 있습니다.
 - **Chat Model Modifier**: `/api/chat/...`
 - **PRD Generator**: `/api/prd/...`
 - **ReadModel/CQRS**: `/api/readmodel/...`, `/api/cqrs/...`
+- **DDD Spec Generation**: `/api/ddd-spec/...` — 이벤트 스토밍 그래프를 "DDD for SDD" 아티팩트 세트(`domain-terms.md` · `bc-<slug>.md` · `aggregate-<slug>.md` · `acl-<system>.md` · `requirements.md` · `context-map.md`)로 사출합니다. 출력 경로는 `specs/bounded-contexts/<bc-slug>/`와 `specs/context-map.md`이며, 기존의 `specs/NNN-*/` (SpecKit 피처 폴더)와 공존합니다. (feature 022)
 
 정확한 요청/응답 스펙은 `http://localhost:8000/docs`를 참고하세요.
 

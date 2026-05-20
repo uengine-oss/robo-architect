@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 455" width="375" height="455">
+<rect x="0" y="0" width="375" height="455" fill="rgb(248,250,252)" />
+<line x1="207.6" y1="44" x2="196.021" y2="66.314" stroke="rgb(34,197,94)" stroke-width="4" stroke-linecap="round" /><line x1="196.021" y1="66.314" x2="171.773" y2="59.6799" stroke="rgb(34,197,94)" stroke-width="4" stroke-linecap="round" /><line x1="171.773" y1="59.6799" x2="173.167" y2="34.5793" stroke="rgb(34,197,94)" stroke-width="4" stroke-linecap="round" /><line x1="173.167" y1="34.5793" x2="198" y2="30.67" stroke="rgb(34,197,94)" stroke-width="4" stroke-linecap="round" />
+<line x1="182" y1="46" x2="188" y2="52" stroke="rgb(34,197,94)" stroke-width="4" stroke-linecap="round" /><line x1="188" y1="52" x2="208" y2="32" stroke="rgb(34,197,94)" stroke-width="4" stroke-linecap="round" />
+<text x='94' y='104.4' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='24' font-weight='700' font-style='normal' fill='rgb(17,24,39)' text-anchor='start'><tspan x="94" dy="0">회원가입이 완료되었습니다</tspan></text>
+<text x='187.5' y='142.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(107,114,128)' text-anchor='middle'><tspan x="187.5" dy="0">임시 세션이 종료되고 정회원 세션으로 전환되었습니다.</tspan></text>
+<ellipse cx="137" cy="220" rx="16" ry="16" fill="rgb(229,231,235)" />
+<text x='117' y='251.05' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='13' font-weight='400' font-style='normal' fill='rgb(107,114,128)' text-anchor='start'><tspan x="117" dy="0">임시 세션</tspan></text>
+<text x='126' y='273.2' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='12' font-weight='400' font-style='normal' fill='rgb(239,68,68)' text-anchor='start'><tspan x="126" dy="0">종료됨</tspan></text>
+<line x1="177" y1="242" x2="191" y2="242" stroke="rgb(163,163,163)" stroke-width="2" stroke-linecap="round" /><line x1="184" y1="235" x2="191" y2="242" stroke="rgb(163,163,163)" stroke-width="2" stroke-linecap="round" /><line x1="191" y1="242" x2="184" y2="249" stroke="rgb(163,163,163)" stroke-width="2" stroke-linecap="round" />
+<ellipse cx="236" cy="220" rx="16" ry="16" fill="rgb(34,197,94)" />
+<text x='212' y='251.05' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='13' font-weight='400' font-style='normal' fill='rgb(17,24,39)' text-anchor='start'><tspan x="212" dy="0">정회원 세션</tspan></text>
+<text x='221' y='273.2' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='12' font-weight='400' font-style='normal' fill='rgb(34,197,94)' text-anchor='start'><tspan x="221" dy="0">활성화됨</tspan></text>
+<text x='187.5' y='324.75' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='15' font-weight='400' font-style='normal' fill='rgb(55,65,81)' text-anchor='middle'><tspan x="187.5" dy="0">이제 모든 서비스를 이용하실 수 있습니다.</tspan></text>
+<rect x="24" y="383" width="327" height="48" fill="rgb(34,197,94)" rx="12" ry="12" />
+<text x='152' y='409.45' font-family='"Inter", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif' font-size='17' font-weight='700' font-style='normal' fill='rgb(255,255,255)' text-anchor='start'><tspan x="152" dy="0">메인으로 이동</tspan></text>
+</svg>

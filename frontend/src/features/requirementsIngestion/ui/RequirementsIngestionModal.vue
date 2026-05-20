@@ -4,6 +4,8 @@ import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
+import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
 
 const props = defineProps({
@@ -19,6 +21,8 @@ const navigatorStore = useNavigatorStore()
 const ingestionStore = useIngestionStore()
 const eventModelingStore = useEventModelingStore()
 const bpmnStore = useBpmnStore()
+const canvasStore = useCanvasStore()
+const inspectorRequestStore = useInspectorRequestStore()
 const activeTab = inject('activeTab', ref('Design'))
 
 // LocalStorage key for persisting session (page refresh recovery)
@@ -50,6 +54,51 @@ const isPanelMinimized = ref(false)
 const isPaused = ref(false)
 const isPausing = ref(false) // Track if pause request is in progress
 
+// Derived flag — covers the race where the SSE-driven `isPaused` ref may lag
+// behind `currentPhase` after a 'paused' event arrives (or be reset by a
+// later spurious event). The label/icon/button all read this so they can
+// never disagree.
+const isPausedView = computed(() => isPaused.value || currentPhase.value === 'paused')
+
+// ─── Spec 017: Token counter + granular suspend ────────────────────────
+// Cumulative session token total surfaced in the floating status panel.
+// Updated from each progress event's `event.tokens` block.
+const tokensTotal = ref(0)
+const tokensByPhase = ref({})           // { [phaseKey]: cumulative tokens for that phase }
+const tokensApproximate = ref(false)    // sticky once true; drives the `~` prefix
+const tokensLastCall = ref(null)        // most recent call's contribution
+const tokensExpanded = ref(false)       // hover/click state for per-phase breakdown
+// Suspend state machine surfaced from each progress event's `event.suspendState`.
+// "running" | "suspending" | "suspended"
+const suspendState = ref('running')
+
+function formatTokens(n) {
+  if (typeof n !== 'number' || !isFinite(n) || n <= 0) return '0'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 10_000) return `${(n / 1_000).toFixed(0)}k`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
+
+const tokensDisplay = computed(() => {
+  const prefix = tokensApproximate.value ? '~' : ''
+  return `${prefix}${formatTokens(tokensTotal.value)} tokens`
+})
+
+// Per-phase breakdown rendered in stable phase-flow order.
+// Sorted descending by token count; falls back to insertion order.
+const tokensByPhaseList = computed(() => {
+  const entries = Object.entries(tokensByPhase.value || {})
+  return entries
+    .filter(([, v]) => typeof v === 'number' && v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([phase, tokens]) => ({ phase, tokens, formatted: formatTokens(tokens) }))
+})
+
+const showTokenChip = computed(() => {
+  return tokensTotal.value > 0 || tokensApproximate.value
+})
+
 // Draggable panel state
 const panelPosition = ref({ x: null, y: null })
 const isDragging = ref(false)
@@ -59,6 +108,48 @@ const hasDragged = ref(false) // Track if actual dragging occurred
 // Display language for node/property displayName (ko: 한글, en: English)
 const displayLanguage = ref(localStorage.getItem('app_display_language') || 'ko')
 watch(displayLanguage, (v) => { localStorage.setItem('app_display_language', v) })
+
+// UI generation mode: 'html' (legacy HTML wireframe template), 'figma'
+// (skip HTML, use the backend JSX agent — Phase 1 of the AI-design backend port),
+// or 'figma-with-components' (spec 024: bound Figma file's design-system catalog
+// is consulted first; falls back to 'figma' when no catalog entry resolves).
+const uiGenerationMode = ref(localStorage.getItem('app_ui_generation_mode') || 'html')
+watch(uiGenerationMode, (v) => { localStorage.setItem('app_ui_generation_mode', v) })
+
+// Spec 024: read the bound FigmaBinding to gate the "Figma + Components"
+// toggle. componentCount > 0 enables it; otherwise the option is disabled.
+const figmaBindingInfo = ref(null) // { status, componentCount, ... } | null
+async function loadFigmaBindingInfo() {
+  try {
+    const resp = await fetch('/api/figma-binding')
+    if (resp.status === 404) {
+      figmaBindingInfo.value = null
+      return
+    }
+    if (!resp.ok) return
+    figmaBindingInfo.value = await resp.json()
+  } catch {
+    figmaBindingInfo.value = null
+  }
+}
+const isFigmaWithComponentsEnabled = computed(() => {
+  const b = figmaBindingInfo.value
+  return !!(b && b.status === 'active' && (b.componentCount ?? 0) > 0)
+})
+const figmaWithComponentsDisabledReason = computed(() => {
+  const b = figmaBindingInfo.value
+  if (!b) return '먼저 상단 메뉴에서 Figma 다큐먼트를 연결하세요.'
+  if (b.status !== 'active') return 'Figma 바인딩이 활성 상태가 아닙니다.'
+  if ((b.componentCount ?? 0) === 0) return '바운드 파일에 컴포넌트가 없습니다 — 먼저 스캔하세요.'
+  return ''
+})
+// If a previously-saved mode is no longer valid (catalog cleared), coerce to figma.
+watch(isFigmaWithComponentsEnabled, (enabled) => {
+  if (!enabled && uiGenerationMode.value === 'figma-with-components') {
+    uiGenerationMode.value = 'figma'
+  }
+})
+loadFigmaBindingInfo()
 
 // Source type is auto-detected from filename (*.report.md → legacy_report)
 
@@ -87,6 +178,112 @@ const figmaPasteError = ref(null)
 const figmaScreenCount = ref(0)
 const figmaElementCount = ref(0)
 
+// Figma API state (REST API mode)
+const FIGMA_CREDS_KEY = 'figma_api_creds'
+const figmaInputSubMode = ref('paste') // 'paste' | 'api'
+const figmaApiToken = ref('')
+const figmaFileKey = ref('')
+const figmaConnecting = ref(false)
+const figmaConnected = ref(false)
+const figmaApiError = ref(null)
+const figmaPages = ref([])
+const figmaSelectedFrameIds = ref(new Set())
+const figmaApiNodeIdMap = ref({}) // frame_name → figma_node_id
+
+function loadFigmaCreds() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FIGMA_CREDS_KEY) || '{}')
+    if (saved.apiToken) figmaApiToken.value = saved.apiToken
+    if (saved.fileKey) figmaFileKey.value = saved.fileKey
+  } catch {}
+}
+
+function saveFigmaCreds() {
+  localStorage.setItem(FIGMA_CREDS_KEY, JSON.stringify({
+    apiToken: figmaApiToken.value,
+    fileKey: figmaFileKey.value
+  }))
+}
+
+async function connectFigmaApi() {
+  if (!figmaApiToken.value.trim() || !figmaFileKey.value.trim()) {
+    figmaApiError.value = 'API 토큰과 File Key를 입력해주세요.'
+    return
+  }
+  figmaConnecting.value = true
+  figmaApiError.value = null
+  try {
+    const resp = await fetch('/api/ingest/figma-api/pages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_token: figmaApiToken.value, file_key: figmaFileKey.value })
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `연결 실패 (${resp.status})`)
+    }
+    const data = await resp.json()
+    figmaPages.value = data.pages || []
+    figmaConnected.value = true
+    saveFigmaCreds()
+  } catch (e) {
+    figmaApiError.value = e.message || '연결 실패'
+  } finally {
+    figmaConnecting.value = false
+  }
+}
+
+function toggleFigmaFrame(frameId) {
+  const s = new Set(figmaSelectedFrameIds.value)
+  if (s.has(frameId)) s.delete(frameId)
+  else s.add(frameId)
+  figmaSelectedFrameIds.value = s
+}
+
+function toggleAllPageFrames(page) {
+  const s = new Set(figmaSelectedFrameIds.value)
+  const allSelected = page.frames.every(f => s.has(f.id))
+  for (const f of page.frames) {
+    if (allSelected) s.delete(f.id)
+    else s.add(f.id)
+  }
+  figmaSelectedFrameIds.value = s
+}
+
+async function startFigmaApiIngestion() {
+  const ids = [...figmaSelectedFrameIds.value]
+  if (ids.length === 0) {
+    figmaApiError.value = '프레임을 선택해주세요.'
+    return
+  }
+  figmaApiError.value = null
+  try {
+    // 1. Fetch selected frame nodes
+    const nodesResp = await fetch('/api/ingest/figma-api/nodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_token: figmaApiToken.value, file_key: figmaFileKey.value, node_ids: ids })
+    })
+    if (!nodesResp.ok) {
+      const data = await nodesResp.json().catch(() => ({}))
+      throw new Error(data.detail || '노드 가져오기 실패')
+    }
+    const nodesData = await nodesResp.json()
+    const figmaNodes = nodesData.figma_nodes || []
+    figmaApiNodeIdMap.value = nodesData.node_id_map || {}
+
+    // Set the figmaNodeChanges (reuse existing ingestion flow)
+    figmaNodeChanges.value = figmaNodes
+    figmaScreenCount.value = ids.length
+    figmaElementCount.value = figmaNodes.length
+
+    // Auto-start ingestion
+    emit('start')
+  } catch (e) {
+    figmaApiError.value = e.message || '인제스천 시작 실패'
+  }
+}
+
 // Data clearing state
 const showClearConfirm = ref(false)
 const existingDataStats = ref(null)
@@ -107,6 +304,7 @@ const canSubmit = computed(() => {
     return selectedPageContent.value !== null
   }
   if (inputMode.value === 'figma') {
+    if (figmaInputSubMode.value === 'api') return figmaSelectedFrameIds.value.size > 0
     return figmaNodeChanges.value !== null
   }
   if (inputMode.value === 'analyzer') {
@@ -158,9 +356,11 @@ const phaseLabel = computed(() => {
     'generating_references': 'Reference 생성',
     'identifying_policies': 'Policy 식별',
     'generating_gwt': '테스트 케이스 생성',
+    'extracting_invariants': '인베리언트 추출',
     'generating_ui': 'UI 생성',
     'saving': '저장 중',
     'paused': '⏸️ 일시 정지됨',
+    'resuming': '▶ 재개 중...',
     'complete': '완료',
     'error': '오류'
   }
@@ -180,12 +380,12 @@ const hasExistingData = computed(() => {
 // Watch for modal open to check existing data + cache status
 watch(isOpen, async (newVal) => {
   if (newVal) {
-    await Promise.all([checkExistingData(), checkCacheStatus()])
+    await Promise.all([checkExistingData(), checkCacheStatus(), loadFigmaBindingInfo()])
   }
 })
 
 // Sync ingestion state to store
-watch([isProcessing, isPaused, currentPhase, sessionId], ([processing, paused, phase, sid]) => {
+watch([isProcessing, isPausedView, currentPhase, sessionId], ([processing, paused, phase, sid]) => {
   ingestionStore.setProcessing(processing)
   ingestionStore.setPaused(paused)
   ingestionStore.setPhase(phase || '')
@@ -382,13 +582,14 @@ async function clearExistingData() {
 }
 
 // Handle start button click
+// 026 requirements-tab: 업로드는 항상 증분 upsert. 기존 데이터를 자동
+// 삭제하지 않는다. 전체 삭제는 Requirements 탭의 별도 "데이터 삭제"
+// 버튼(=/api/ingest/clear-all)으로만 수행한다.
 function handleStartClick() {
   if (inputMode.value === 'analyzer') {
     // 코드 분석 모드는 항상 Hybrid 파이프라인으로 진입 — 첨부된 업무 문서가 분석된
     // 코드 그래프와 매핑된다. canSubmit이 analyzerDocFiles 비어 있지 않음을 보장.
     startHybridIngestion()
-  } else if (hasExistingData.value) {
-    showClearConfirm.value = true
   } else {
     startIngestion()
   }
@@ -591,14 +792,21 @@ async function startIngestion() {
 
     if (inputMode.value === 'figma' && figmaNodeChanges.value) {
       // Figma mode: send JSON directly (not FormData)
+      const figmaBody = {
+        figma_nodes: figmaNodeChanges.value,
+        source_type: 'figma',
+        display_language: displayLanguage.value === 'en' ? 'en' : 'ko',
+        ui_generation_mode: (uiGenerationMode.value === 'figma' || uiGenerationMode.value === 'figma-with-components') ? uiGenerationMode.value : 'html',
+      }
+      // Include Figma API metadata for node ID mapping (when using API mode)
+      if (figmaInputSubMode.value === 'api' && figmaFileKey.value) {
+        figmaBody.figma_file_key = figmaFileKey.value
+        figmaBody.figma_node_id_map = figmaApiNodeIdMap.value
+      }
       uploadResponse = await fetch('/api/ingest/upload/figma', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          figma_nodes: figmaNodeChanges.value,
-          source_type: 'figma',
-          display_language: displayLanguage.value === 'en' ? 'en' : 'ko',
-        })
+        body: JSON.stringify(figmaBody)
       })
     } else {
       const formData = new FormData()
@@ -615,6 +823,7 @@ async function startIngestion() {
         formData.append('text', textContent.value)
       }
       formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
+      formData.append('ui_generation_mode', (uiGenerationMode.value === 'figma' || uiGenerationMode.value === 'figma-with-components') ? uiGenerationMode.value : 'html')
 
       uploadResponse = await fetch('/api/ingest/upload', {
         method: 'POST',
@@ -661,12 +870,27 @@ function connectToStream(sid, isReconnect = false) {
   
   eventSource.value.addEventListener('progress', (e) => {
     const data = JSON.parse(e.data)
-    
+
     currentPhase.value = data.phase
     currentMessage.value = data.message
     progress.value = data.progress
 
+    // ── Spec 017: token counter + suspend state ──────────────────────
+    if (data.tokens && typeof data.tokens === 'object') {
+      if (typeof data.tokens.total === 'number') tokensTotal.value = data.tokens.total
+      if (data.tokens.byPhase && typeof data.tokens.byPhase === 'object') {
+        // Sparse delta: merge into local map (later keys win).
+        tokensByPhase.value = { ...tokensByPhase.value, ...data.tokens.byPhase }
+      }
+      if (data.tokens.approximate === true) tokensApproximate.value = true   // sticky
+      if (typeof data.tokens.lastCallTokens === 'number') tokensLastCall.value = data.tokens.lastCallTokens
+    }
+    if (typeof data.suspendState === 'string') {
+      suspendState.value = data.suspendState
+    }
+
     // Pause state tracking
+    console.debug('[ingestion.sse]', { phase: data.phase, suspendState: data.suspendState, isPausedBefore: isPaused.value, isPausingBefore: isPausing.value })
     if (data.phase === 'paused') {
       isPaused.value = true
       isPausing.value = false // Pause request completed
@@ -680,6 +904,21 @@ function connectToStream(sid, isReconnect = false) {
       const assignment = data.data.object
       if (assignment) {
         eventModelingStore.assignEventToBC(assignment.eventId, assignment.bcId, assignment.bcName)
+      }
+      return
+    }
+
+    // Handle dedup-time consolidation: remove provisional user stories that
+    // were live-emitted at chunk completion but dropped during merge/dedup.
+    if (data.data && data.data.type === 'UserStoryConsolidated') {
+      const removedIds = Array.isArray(data.data.removedIds) ? data.data.removedIds : []
+      removedIds.forEach((rid) => navigatorStore.removeUserStory(rid))
+      // Also drop them from the local "created items" list shown elsewhere in the modal.
+      if (removedIds.length > 0) {
+        const removedSet = new Set(removedIds)
+        createdItems.value = createdItems.value.filter(
+          (it) => !(it.type === 'UserStory' && removedSet.has(it.id))
+        )
       }
       return
     }
@@ -884,25 +1123,31 @@ async function togglePause() {
   if (isPausing.value) return // Prevent multiple simultaneous pause requests
   
   try {
-    const endpoint = isPaused.value ? 'resume' : 'pause'
-    
+    const endpoint = isPausedView.value ? 'resume' : 'pause'
+
     // Set pausing state when requesting pause (not resume)
     if (endpoint === 'pause') {
       isPausing.value = true
     }
-    
+
     const response = await fetch(`/api/ingest/${sessionId.value}/${endpoint}`, { method: 'POST' })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
       throw new Error(data.detail || 'Pause/Resume failed')
     }
-    
+
     // Server will also emit 'paused' on next checkpoint, but we can optimistically update UI.
     // Note: Actual pause happens when current LLM request completes, so isPaused will be set to true
     // when server emits 'paused' phase event. We keep isPausing true until then.
     if (endpoint === 'resume') {
       isPaused.value = false
       isPausing.value = false
+      // Clear the paused phase so `isPausedView` (computed) flips immediately;
+      // the next SSE event will overwrite this with the resumed phase.
+      if (currentPhase.value === 'paused') {
+        currentPhase.value = 'resuming'
+        currentMessage.value = '▶ 재개 중...'
+      }
     }
     // For pause, don't set isPaused immediately - wait for server to emit 'paused' phase
     // isPausing will be set to false when we receive the 'paused' phase event
@@ -915,26 +1160,17 @@ async function togglePause() {
 
 async function cancelIngestion() {
   if (!sessionId.value) return
-  if (!confirm('생성을 중단하시겠습니까? 진행 중인 작업이 취소됩니다.')) {
+  if (!confirm('생성을 중단하시겠습니까? 진행 중인 작업이 취소됩니다. (현재 LLM 호출이 끝난 후 정지)')) {
     return
   }
-  
+
   try {
-    // Immediately close event source and update UI state
-    if (eventSource.value) {
-      eventSource.value.close()
-      eventSource.value = null
-    }
-    isProcessing.value = false
-    isPaused.value = false
-    isPausing.value = false
-    
-    // Set error message only if not already set (prevent duplicates)
-    if (!error.value) {
-      error.value = '생성이 중단되었습니다'
-    }
-    // Keep panel open to show error message - don't clear sessionId yet
-    
+    // Spec 017: do NOT close EventSource here. The backend's suspend gate
+    // halts the workflow at the next LLM boundary; the SSE stream will
+    // deliver "suspending" → "suspended" events as the workflow unwinds.
+    // Optimistically flip the local suspend state for instant UI feedback.
+    suspendState.value = 'suspending'
+
     // Then call cancel API
     try {
       const response = await fetch(`/api/ingest/${sessionId.value}/cancel`, { method: 'POST' })
@@ -1021,6 +1257,26 @@ async function checkAndRestoreSession() {
     currentMessage.value = status.message || '진행 중인 세션에 재연결 중...'
     progress.value = status.progress || 0
     isPaused.value = !!status.isPaused
+
+    // Spec 017 FR-009: pick up suspend state + token totals from status so a
+    // reload doesn't lose the chip and doesn't re-issue a cancel'd run.
+    if (typeof status.suspendState === 'string') {
+      suspendState.value = status.suspendState
+    }
+    if (status.tokens && typeof status.tokens === 'object') {
+      if (typeof status.tokens.total === 'number') tokensTotal.value = status.tokens.total
+      if (status.tokens.byPhase && typeof status.tokens.byPhase === 'object') {
+        tokensByPhase.value = { ...status.tokens.byPhase }
+      }
+      if (status.tokens.approximate === true) tokensApproximate.value = true
+    }
+    // If already suspended, do not re-subscribe to a live SSE stream.
+    if (suspendState.value === 'suspended') {
+      isProcessing.value = false
+      error.value = error.value || '생성이 중단되었습니다'
+      emit('session-restored')
+      return
+    }
 
     emit('session-restored')
     connectToStream(saved.sessionId, true)
@@ -1118,6 +1374,13 @@ function closeFloatingPanel() {
   isPaused.value = false
   panelPosition.value = { x: null, y: null }
   sessionId.value = null
+  // Spec 017: reset token + suspend state on session close (FR-016 / SC-001).
+  tokensTotal.value = 0
+  tokensByPhase.value = {}
+  tokensApproximate.value = false
+  tokensLastCall.value = null
+  tokensExpanded.value = false
+  suspendState.value = 'running'
   clearSessionFromStorage()
   
   emit('complete')
@@ -1158,6 +1421,26 @@ function getTypeClass(type) {
   return `item-icon--${type.toLowerCase()}`
 }
 
+// Click a streamed item to select it on the canvas and open the
+// InspectorPanel with its properties. Works mid-generation: the node may
+// already be rendered on the canvas (in which case it gets highlighted),
+// or only present as a streamed payload (in which case the Inspector
+// renders directly from the payload via openInspectorForNodeData).
+function onMiniItemClick(item) {
+  if (!item || !item.id) return
+  if (activeTab && activeTab.value !== 'Design') {
+    activeTab.value = 'Design'
+  }
+  try {
+    canvasStore.selectNode(item.id)
+  } catch (e) {
+    // Selection is a nice-to-have; failure here must not block the
+    // inspector open below.
+    console.warn('[ingestion.mini-item] selectNode failed', e)
+  }
+  inspectorRequestStore.request(item)
+}
+
 // Cleanup on unmount
 onUnmounted(() => {
   closeStream()
@@ -1182,6 +1465,7 @@ function _onHybridPromote(e) {
 
 onMounted(async () => {
   loadJiraCreds()
+  loadFigmaCreds()
   await checkAndRestoreSession()
   window.addEventListener('robo:hybrid-promote', _onHybridPromote)
 })
@@ -1517,7 +1801,7 @@ function useSample() {
                     <span v-if="isTogglingCache" class="cache-toggle__pending">적용 중...</span>
                   </div>
                 </div>
-                <!-- Row 2: Source type + Display language -->
+                <!-- Row 2: Source type + Display language + UI generation mode -->
                 <div class="options-sub-row">
                   <div class="display-language-row">
                     <span class="display-language-label">표시 언어</span>
@@ -1533,6 +1817,36 @@ function useSample() {
                         @click="displayLanguage = 'en'"
                       >
                         English
+                      </button>
+                    </div>
+                  </div>
+                  <div class="display-language-row" style="margin-left:16px;">
+                    <span class="display-language-label">UI 생성</span>
+                    <div class="display-language-tabs">
+                      <button
+                        :class="['tab-btn', 'tab-btn--small', { active: uiGenerationMode === 'html' }]"
+                        @click="uiGenerationMode = 'html'"
+                        title="기존 방식: HTML 와이어프레임 템플릿을 생성합니다"
+                      >
+                        HTML
+                      </button>
+                      <button
+                        :class="['tab-btn', 'tab-btn--small', { active: uiGenerationMode === 'figma' }]"
+                        @click="uiGenerationMode = 'figma'"
+                        title="피그마 모드: HTML 생성을 건너뛰고 백엔드 JSX 에이전트(open-pencil 기반)로 sceneGraph만 생성합니다"
+                      >
+                        Figma UI
+                      </button>
+                      <button
+                        :class="['tab-btn', 'tab-btn--small', { active: uiGenerationMode === 'figma-with-components' }]"
+                        @click="isFigmaWithComponentsEnabled && (uiGenerationMode = 'figma-with-components')"
+                        :disabled="!isFigmaWithComponentsEnabled"
+                        :title="isFigmaWithComponentsEnabled ? '바운드 Figma 파일의 디자인 시스템 컴포넌트를 우선 사용해 sceneGraph를 구성합니다.' : figmaWithComponentsDisabledReason"
+                      >
+                        Figma + Components
+                        <span v-if="figmaBindingInfo?.componentCount" class="component-count-pill">
+                          {{ figmaBindingInfo.componentCount }}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -1613,7 +1927,68 @@ function useSample() {
 
               <!-- Figma Paste Area -->
               <div v-if="inputMode === 'figma'" class="figma-section">
-                <div v-if="!figmaNodeChanges" class="figma-paste-area" @paste="handleFigmaPaste" tabindex="0">
+                <!-- Sub-mode toggle: Paste vs API -->
+                <div class="figma-submode-toggle" style="display:flex;gap:4px;margin-bottom:8px;">
+                  <button
+                    :class="['tab-btn', { active: figmaInputSubMode === 'paste' }]"
+                    @click="figmaInputSubMode = 'paste'"
+                    style="font-size:12px;padding:4px 12px;"
+                  >붙여넣기</button>
+                  <button
+                    :class="['tab-btn', { active: figmaInputSubMode === 'api' }]"
+                    @click="figmaInputSubMode = 'api'"
+                    style="font-size:12px;padding:4px 12px;"
+                  >API 연결</button>
+                </div>
+
+                <!-- Figma API Connection Mode -->
+                <div v-if="figmaInputSubMode === 'api'" class="figma-api-section">
+                  <div v-if="!figmaConnected" class="jira-creds" style="display:flex;flex-direction:column;gap:8px;">
+                    <div class="jira-field">
+                      <label>API Token</label>
+                      <input v-model="figmaApiToken" type="password" placeholder="figd_..." class="jira-input" />
+                    </div>
+                    <div class="jira-field">
+                      <label>File Key</label>
+                      <input v-model="figmaFileKey" type="text" placeholder="Figma URL의 /file/ 뒤 문자열" class="jira-input" />
+                    </div>
+                    <button
+                      class="jira-connect-btn"
+                      :disabled="figmaConnecting"
+                      @click="connectFigmaApi"
+                    >{{ figmaConnecting ? '연결 중...' : '연결' }}</button>
+                    <div v-if="figmaApiError" class="figma-error" style="margin-top:4px;">{{ figmaApiError }}</div>
+                  </div>
+
+                  <div v-else class="figma-api-pages">
+                    <div class="figma-preview-header" style="margin-bottom:8px;">
+                      <span style="font-size:13px;font-weight:600;">{{ figmaPages.length }}개 페이지</span>
+                      <button class="figma-clear-btn" @click="figmaConnected = false; figmaPages = []; figmaSelectedFrameIds = new Set()">
+                        연결 해제
+                      </button>
+                    </div>
+                    <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;">
+                      <div v-for="page in figmaPages" :key="page.id" class="figma-api-page">
+                        <div style="font-size:12px;font-weight:600;color:var(--color-text-secondary);margin-bottom:4px;cursor:pointer;" @click="toggleAllPageFrames(page)">
+                          📄 {{ page.name }}
+                        </div>
+                        <div v-for="frame in page.frames" :key="frame.id" class="figma-node-item" style="cursor:pointer;padding:6px 8px;" @click="toggleFigmaFrame(frame.id)">
+                          <input type="checkbox" :checked="figmaSelectedFrameIds.has(frame.id)" style="margin-right:6px;" />
+                          <span class="figma-node-name">{{ frame.name }}</span>
+                          <span class="figma-node-size">{{ frame.width }} × {{ frame.height }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="figmaSelectedFrameIds.size > 0" style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;">
+                      <span style="font-size:12px;color:var(--color-text-secondary);">선택: {{ figmaSelectedFrameIds.size }}개 프레임</span>
+                      <button class="jira-connect-btn" @click="startFigmaApiIngestion">인제스천 시작</button>
+                    </div>
+                    <div v-if="figmaApiError" class="figma-error" style="margin-top:4px;">{{ figmaApiError }}</div>
+                  </div>
+                </div>
+
+                <!-- Figma Paste Mode (existing) -->
+                <div v-if="figmaInputSubMode === 'paste' && !figmaNodeChanges" class="figma-paste-area" @paste="handleFigmaPaste" tabindex="0">
                   <div class="figma-paste-icon">
                     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                       <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z"></path>
@@ -1626,7 +2001,7 @@ function useSample() {
                   <p class="figma-paste-text">Figma에서 화면을 복사한 후 여기를 클릭하고 <kbd>Ctrl+V</kbd> 붙여넣기</p>
                   <p class="figma-paste-hint">Figma에서 스토리보드 프레임들을 선택 → Ctrl+C 복사 → 이 영역에 Ctrl+V 붙여넣기</p>
                 </div>
-                <div v-else class="figma-preview">
+                <div v-else-if="figmaInputSubMode === 'paste' && figmaNodeChanges" class="figma-preview">
                   <div class="figma-preview-header">
                     <div class="figma-preview-stats">
                       <span class="figma-stat">
@@ -1973,8 +2348,8 @@ function useSample() {
         <!-- Panel Header -->
         <div class="floating-panel__header" @mousedown="startDrag" @click="handleHeaderClick">
           <div class="floating-panel__title">
-            <div class="floating-panel__status" :class="{ 'is-complete': summary, 'is-error': error, 'is-paused': isPaused, 'is-pausing': isPausing }">
-              <span v-if="isPaused" class="status-paused">⏸</span>
+            <div class="floating-panel__status" :class="{ 'is-complete': summary, 'is-error': error, 'is-paused': isPausedView, 'is-pausing': isPausing }">
+              <span v-if="isPausedView" class="status-paused">⏸</span>
               <span v-else-if="isPausing" class="status-pausing">⏸</span>
               <span v-else-if="isProcessing && !error" class="status-spinner"></span>
               <svg v-else-if="summary" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1987,7 +2362,7 @@ function useSample() {
               </svg>
             </div>
             <span class="floating-panel__label">
-              {{ summary ? '생성 완료' : error ? (error.includes('중단') ? '생성 중단' : '오류 발생') : isPausing ? '일시정지 중...' : phaseLabel }}
+              {{ summary ? '생성 완료' : error ? (error.includes('중단') ? '생성 중단' : '오류 발생') : isPausing ? '일시정지 중...' : isPausedView ? '⏸️ 일시 정지됨' : phaseLabel }}
             </span>
             <span v-if="!summary && !error && !isPausing" class="floating-panel__percent">{{ progress }}%</span>
           </div>
@@ -1995,12 +2370,12 @@ function useSample() {
             <button
               v-if="isProcessing && !summary && !error"
               class="panel-btn panel-btn--pause"
-              :class="{ 'is-paused': isPaused, 'is-pausing': isPausing }"
+              :class="{ 'is-paused': isPausedView, 'is-pausing': isPausing }"
               @click.stop="togglePause"
               :disabled="isPausing"
-              :title="isPausing ? '일시정지 중...' : isPaused ? '재개' : '일시정지'"
+              :title="isPausing ? '일시정지 중...' : isPausedView ? '재개' : '일시정지'"
             >
-              <svg v-if="!isPaused" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg v-if="!isPausedView" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="4" width="4" height="16"></rect>
                 <rect x="14" y="4" width="4" height="16"></rect>
               </svg>
@@ -2011,8 +2386,10 @@ function useSample() {
             <button
               v-if="isProcessing && !summary && !error"
               class="panel-btn panel-btn--cancel"
+              :class="{ 'is-suspending': suspendState === 'suspending' }"
               @click.stop="cancelIngestion"
-              title="중단"
+              :disabled="suspendState === 'suspending' || suspendState === 'suspended'"
+              :title="suspendState === 'suspending' ? '취소 중... (현재 LLM 호출 완료 대기)' : suspendState === 'suspended' ? '취소됨' : '중단 (다음 LLM 호출 경계에서 정지)'"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"></circle>
@@ -2041,8 +2418,44 @@ function useSample() {
             <div class="mini-progress-fill" :style="{ width: `${progress}%` }"></div>
           </div>
           <p class="floating-panel__message">
-            {{ isPausing ? '일시정지 요청 중... (현재 작업 완료 대기 중)' : currentMessage }}
+            {{
+              suspendState === 'suspending' ? '취소 요청됨 — 다음 LLM 호출 경계에서 정지...'
+              : suspendState === 'suspended' ? '취소됨'
+              : isPausing ? '일시정지 요청 중... (현재 작업 완료 대기 중)'
+              : currentMessage
+            }}
           </p>
+          <!-- Spec 017: Token counter chip (US1). Visible across processing/complete/error states. -->
+          <div v-if="showTokenChip" class="token-chip" :class="{ 'is-suspending': suspendState === 'suspending', 'is-suspended': suspendState === 'suspended', 'is-expanded': tokensExpanded }" @click.stop="tokensExpanded = !tokensExpanded" :title="tokensApproximate ? '토큰 수는 추정치 (~ 표시) — usage_metadata 없는 호출은 tiktoken 으로 근사' : '토큰 누적'">
+            <span class="token-chip__icon">⊙</span>
+            <span class="token-chip__total">{{ tokensDisplay }}</span>
+            <span v-if="tokensLastCall != null && tokensLastCall > 0 && !tokensExpanded" class="token-chip__last">+{{ formatTokens(tokensLastCall) }}</span>
+            <span class="token-chip__caret">{{ tokensExpanded ? '▾' : '▸' }}</span>
+          </div>
+          <div v-if="showTokenChip && tokensExpanded" class="token-chip__breakdown">
+            <div v-for="row in tokensByPhaseList" :key="row.phase" class="token-chip__row">
+              <span class="token-chip__phase">{{ row.phase }}</span>
+              <span class="token-chip__phase-count">{{ row.formatted }}</span>
+            </div>
+            <div v-if="tokensByPhaseList.length === 0" class="token-chip__empty">
+              아직 phase 별 분해 데이터가 없습니다.
+            </div>
+          </div>
+        </div>
+
+        <!-- Spec 017 — keep token chip visible in completion/error/suspended states too (FR-004) -->
+        <div v-if="!isProcessing && !isPanelMinimized && showTokenChip" class="floating-panel__progress">
+          <div class="token-chip is-final" @click.stop="tokensExpanded = !tokensExpanded" :title="tokensApproximate ? '토큰 수는 추정치 (~ 표시)' : '최종 토큰 누적'">
+            <span class="token-chip__icon">⊙</span>
+            <span class="token-chip__total">{{ tokensDisplay }}</span>
+            <span class="token-chip__caret">{{ tokensExpanded ? '▾' : '▸' }}</span>
+          </div>
+          <div v-if="tokensExpanded" class="token-chip__breakdown">
+            <div v-for="row in tokensByPhaseList" :key="row.phase" class="token-chip__row">
+              <span class="token-chip__phase">{{ row.phase }}</span>
+              <span class="token-chip__phase-count">{{ row.formatted }}</span>
+            </div>
+          </div>
         </div>
         
         <!-- Error/Cancellation Message (visible when not processing but has error) -->
@@ -2063,9 +2476,16 @@ function useSample() {
           <div v-if="isProcessing && !error" class="mini-items">
             <TransitionGroup name="item-list">
               <template v-for="item in createdItems.slice(-5)" :key="item.id">
-                <div 
+                <div
                   v-if="item && item.type"
                   class="mini-item"
+                  :class="{ 'mini-item--selected': canvasStore.isSelected(item.id) }"
+                  role="button"
+                  tabindex="0"
+                  :title="`${item.type}: ${item.name || item.id} 속성 보기`"
+                  @click="onMiniItemClick(item)"
+                  @keydown.enter.prevent="onMiniItemClick(item)"
+                  @keydown.space.prevent="onMiniItemClick(item)"
                 >
                   <span class="item-icon" :class="getTypeClass(item.type)">
                     {{ getTypeIcon(item.type) }}
@@ -2336,6 +2756,26 @@ function useSample() {
   min-width: 0;
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: 0.8rem;
+}
+
+.tab-btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.component-count-pill {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: rgba(10, 207, 131, 0.18);
+  color: #0acf83;
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+.tab-btn.active .component-count-pill {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
 }
 
 /* Display language (for displayName) */
@@ -3249,6 +3689,22 @@ function useSample() {
   background: var(--color-bg);
   border-radius: var(--radius-sm);
   animation: slideIn 0.2s ease;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mini-item:hover {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.mini-item:focus-visible {
+  outline: 2px solid var(--color-accent, #4c6ef5);
+  outline-offset: 1px;
+}
+
+.mini-item--selected {
+  background: var(--color-bg-selected, rgba(76, 110, 245, 0.18));
+  box-shadow: inset 2px 0 0 var(--color-accent, #4c6ef5);
 }
 
 @keyframes slideIn {
@@ -3724,5 +4180,81 @@ function useSample() {
   padding: var(--spacing-sm);
   background: rgba(239, 68, 68, 0.05);
   border-radius: var(--radius-sm);
+}
+
+/* ─── Spec 017: Token counter chip + suspend state styling ─────────── */
+.token-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6366f1;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+  font-feature-settings: "tnum" 1;
+}
+.token-chip:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+.token-chip__icon { opacity: 0.7; font-size: 11px; }
+.token-chip__total { font-weight: 600; }
+.token-chip__last { opacity: 0.7; font-size: 11px; }
+.token-chip__caret { opacity: 0.55; font-size: 10px; }
+.token-chip.is-suspending {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #d97706;
+  opacity: 0.8;
+}
+.token-chip.is-suspended {
+  background: rgba(107, 114, 128, 0.1);
+  border-color: rgba(107, 114, 128, 0.3);
+  color: #6b7280;
+}
+.token-chip.is-final {
+  margin-top: 0;
+  background: rgba(107, 114, 128, 0.08);
+  border-color: rgba(107, 114, 128, 0.2);
+  color: #4b5563;
+}
+.token-chip__breakdown {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.025);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 6px;
+  font-size: 11px;
+  font-feature-settings: "tnum" 1;
+}
+.token-chip__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+}
+.token-chip__phase {
+  color: #6b7280;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.token-chip__phase-count {
+  color: #4b5563;
+  font-weight: 500;
+  margin-left: 8px;
+}
+.token-chip__empty {
+  color: #9ca3af;
+  font-style: italic;
+  text-align: center;
 }
 </style>

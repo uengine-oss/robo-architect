@@ -1,11 +1,14 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './inspectors/nodeEditSchema'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
+import GwtFieldInput from './GwtFieldInput.vue'
+import InvariantEditor from '@/features/invariants/ui/InvariantEditor.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 import {
   parseHtmlWireframe,
@@ -15,6 +18,21 @@ import {
   cacheSchema,
   readClipboardHTML,
 } from './figma'
+
+// Open-Pencil federation components.
+//
+// FrameEditor is loaded synchronously: defineAsyncComponent + Suspense +
+// KeepAlive made the second-and-later mounts crash with "Cannot destructure
+// property 'type' of 'vnode' as it is null" / "Cannot set properties of null
+// (setting '__vnode')". Each Suspense boundary held a stale promise from
+// the prior mount; when the new key forced a fresh tree, Vue's reconciler
+// patched into the now-dead Suspense subtree. Bundle size cost is
+// negligible because the editor is loaded whenever the inspector opens.
+import FrameEditor from 'open-pencil-fed/FrameEditor.vue'
+
+const FramePreview = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
+const FullPageEditor = defineAsyncComponent(() => import('open-pencil-fed/FullPageEditor.vue'))
+const AIChatPanel = defineAsyncComponent(() => import('open-pencil-fed/AIChat.vue'))
 
 const props = defineProps({
   nodeId: {
@@ -34,9 +52,13 @@ const props = defineProps({
 const emit = defineEmits(['close', 'updated', 'request-chat'])
 
 const canvasStore = useCanvasStore()
+const aggregateViewerStore = useAggregateViewerStore()
 const chatStore = useModelModifierStore()
 const terminologyStore = useTerminologyStore()
 const log = createLogger({ scope: 'InspectorPanel' })
+
+// App-level tab state (provided by App.vue) — used to switch to the Aggregate tab.
+const appActiveTab = inject('activeTab', null)
 
 // Currently viewing node index (for multiple selected nodes)
 const viewingNodeIndex = ref(0)
@@ -172,8 +194,241 @@ const schema = computed(() => {
 
 function normalizeInspectorTab(tab, label) {
   if (tab === 'preview' && label === 'UI') return 'preview'
+  if (tab === 'design' && label === 'UI') return 'design'
   if (tab === 'traceability') return 'traceability'
   return 'properties'
+}
+
+// ── Open-Pencil SceneGraph integration ──
+const sceneGraphData = computed(() => {
+  const n = node.value
+  if (!n?.data?.sceneGraph) return null
+  try {
+    return typeof n.data.sceneGraph === 'string'
+      ? JSON.parse(n.data.sceneGraph)
+      : n.data.sceneGraph
+  } catch { return null }
+})
+
+// Fix parentId/childIds in a serialized SceneGraph JSON (not a SceneGraph instance)
+function fixSceneGraphParentage(sg) {
+  if (!sg?.nodes || !sg.rootId) return
+  const root = sg.nodes[sg.rootId]
+  if (!root) return
+
+  // Find first CANVAS page
+  let pageId = null
+  for (const cid of root.childIds || []) {
+    if (sg.nodes[cid]?.type === 'CANVAS') { pageId = cid; break }
+  }
+  if (!pageId) return
+  const page = sg.nodes[pageId]
+
+  // Move FRAME nodes from root children to page children
+  const rootChildren = [...(root.childIds || [])]
+  for (const cid of rootChildren) {
+    const child = sg.nodes[cid]
+    if (child?.type === 'FRAME' && cid !== sg.rootId) {
+      root.childIds = root.childIds.filter(id => id !== cid)
+      if (!page.childIds.includes(cid)) page.childIds.push(cid)
+      child.parentId = pageId
+    }
+  }
+
+  // Fix parentId = "currentPage"
+  for (const [nid, n] of Object.entries(sg.nodes)) {
+    if (n.parentId === 'currentPage') {
+      n.parentId = pageId
+      if (!page.childIds.includes(nid)) page.childIds.push(nid)
+    }
+  }
+}
+
+const mainFrameId = computed(() => {
+  const sg = sceneGraphData.value
+  if (!sg?.nodes) return null
+  const root = sg.nodes[sg.rootId]
+  if (!root) return null
+
+  // Find the page (CANVAS) ID
+  let pageId = null
+  for (const cid of root.childIds || []) {
+    if (sg.nodes[cid]?.type === 'CANVAS') { pageId = cid; break }
+  }
+
+  // Strategy 1: Look in CANVAS.childIds for FRAME
+  if (pageId) {
+    const page = sg.nodes[pageId]
+    for (const childId of page.childIds || []) {
+      if (sg.nodes[childId]?.type === 'FRAME') return childId
+    }
+  }
+
+  // Strategy 2: Look in root.childIds for FRAME (AI may place frames as direct root children)
+  for (const cid of root.childIds || []) {
+    const child = sg.nodes[cid]
+    if (child?.type === 'FRAME' && cid !== sg.rootId) return cid
+  }
+
+  // Strategy 3: Find any FRAME whose parentId references the page, root, or "currentPage"
+  for (const [nid, n] of Object.entries(sg.nodes)) {
+    if (n.type === 'FRAME' && nid !== sg.rootId) {
+      if (n.parentId === pageId || n.parentId === sg.rootId || n.parentId === 'currentPage') return nid
+    }
+  }
+
+  return null
+})
+
+// SceneGraph is considered "real" (not just empty scaffold) when it has content beyond root+page
+const hasRealSceneGraph = computed(() => {
+  const sg = sceneGraphData.value
+  if (!sg?.nodes) return false
+  return Object.keys(sg.nodes).length > 2 // more than just root FRAME + CANVAS page
+})
+
+const showFullPageEditor = ref(false)
+
+function openFullPageEditor() {
+  showFullPageEditor.value = true
+}
+
+function closeFullPageEditor() {
+  showFullPageEditor.value = false
+}
+
+async function onDesignSave(data) {
+  const n = node.value
+  if (!n) return
+  try {
+    const sceneGraphStr = JSON.stringify(data)
+    await fetch(`/api/graph/update-node/${n.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sceneGraph: sceneGraphStr })
+    })
+    // Update local node data — ensure Vue reactivity triggers
+    if (n.data) {
+      n.data = { ...n.data, sceneGraph: sceneGraphStr }
+    }
+    // Also update in canvas store for reactivity
+    const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+    if (storeNode?.data) {
+      storeNode.data = { ...storeNode.data, sceneGraph: sceneGraphStr }
+    }
+    emit('updated')
+
+    // Push to Figma Plugin — use stored fileKey from Figma API creds
+    let fileKey = n.data?.figmaFileKey
+    if (!fileKey) {
+      try { fileKey = JSON.parse(localStorage.getItem('figma_api_creds') || '{}').fileKey } catch {}
+    }
+    if (fileKey) {
+      await pushToFigmaPlugin(fileKey, n.data?.figmaNodeId, n.data?.displayName || n.data?.name, data)
+    } else {
+      figmaPushStatus.value = 'saved'
+      figmaPushMessage.value = '저장 완료'
+      setTimeout(() => { figmaPushStatus.value = null }, 3000)
+    }
+  } catch (e) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = '저장 실패: ' + (e?.message || e)
+    setTimeout(() => { figmaPushStatus.value = null }, 6000)
+    console.error('[InspectorPanel] Failed to save design:', e)
+  }
+}
+
+const figmaPushStatus = ref(null) // null | 'pushing' | 'success' | 'error' | 'saved'
+const figmaPushMessage = ref('')
+
+/**
+ * Push SceneGraph to Figma Plugin via SYNC_FRAME command.
+ * Extracts all TEXT nodes with their content, fontSize, and name.
+ * For new frames: Plugin creates TEXT nodes.
+ * For existing frames: Plugin updates matching TEXT nodes by name.
+ */
+async function pushToFigmaPlugin(fileKey, figmaNodeId, frameName, sceneGraphData) {
+  if (!sceneGraphData?.nodes) return
+
+  figmaPushStatus.value = 'pushing'
+  figmaPushMessage.value = 'Figma 동기화 중...'
+
+  // Extract TEXT node info (name + text + fontSize for creation)
+  const textUpdates = []
+  for (const [nid, sn] of Object.entries(sceneGraphData.nodes)) {
+    if (sn.type !== 'TEXT' || !sn.text) continue
+    textUpdates.push({
+      nodeId: sn.componentId || nid.replace('_', ':'),
+      text: sn.text,
+      name: sn.name || '',
+      fontSize: sn.fontSize || 14,
+    })
+  }
+
+  try {
+    const resp = await fetch('/api/figma-plugin/update-nodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_key: fileKey,
+        node_updates: [{
+          nodeId: '__SYNC_FRAME__',
+          props: {
+            __syncFrame: true,
+            figmaNodeId: figmaNodeId || null,
+            frameName: frameName || 'Wireframe',
+            textUpdates,
+            sceneGraph: sceneGraphData,
+            uiNodeId: node.value?.id,
+          }
+        }]
+      })
+    })
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `Push 실패 (${resp.status})`)
+    }
+
+    const result = await resp.json()
+    figmaPushStatus.value = 'success'
+    figmaPushMessage.value = 'Figma에 전송됨, Plugin 처리 대기...'
+
+    // Poll for Plugin's result (handshake)
+    pollForPluginResult(fileKey, frameName)
+      .then((syncResult) => {
+        if (syncResult) {
+          figmaPushMessage.value = syncResult.message || `Figma 동기화 완료 (ID: ${syncResult.frameId})`
+          // Save the figmaNodeId from plugin result
+          if (syncResult.frameId && node.value) {
+            const n = node.value
+            if (n.data) n.data = { ...n.data, figmaNodeId: syncResult.frameId, figmaFileKey: fileKey }
+            const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+            if (storeNode?.data) storeNode.data = { ...storeNode.data, figmaNodeId: syncResult.frameId, figmaFileKey: fileKey }
+            // Persist to Neo4j
+            fetch(`/api/graph/update-node/${n.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ figmaNodeId: syncResult.frameId, figmaFileKey: fileKey })
+            }).catch(() => {})
+          }
+          setTimeout(() => { figmaPushStatus.value = null }, 4000)
+        }
+      })
+      .catch(() => {
+        setTimeout(() => { figmaPushStatus.value = null }, 5000)
+      })
+  } catch (e) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = e?.message || 'Figma 동기화 실패'
+    setTimeout(() => { figmaPushStatus.value = null }, 6000)
+    console.warn('[FigmaSync]', e)
+  }
+}
+
+async function onFullPageSave(data) {
+  await onDesignSave(data)
+  showFullPageEditor.value = false
 }
 
 // Traceability state
@@ -311,6 +566,20 @@ async function loadTraceability(nodeId) {
 }
 
 const activeTab = ref(normalizeInspectorTab(props.initialTab, nodeLabel.value))
+// Monotonic counter to force FrameEditor re-creation when Design tab is re-opened
+// (CanvasKit WebGL resources are destroyed on unmount and cannot be reused)
+const designEditorKey = ref(0)
+watch(activeTab, (tab) => {
+  if (tab === 'design') designEditorKey.value++
+})
+
+// FrameEditor visibility flag — kept as a stable `true` for now. The previous
+// two-phase remount (false → nextTick → true) actually amplified the vnode
+// errors by causing Suspense + async-component to interleave teardowns. The
+// real fix lives in open-pencil's FrameEditor.vue where pending async work
+// (setTimeout, ResizeObserver, font preload Promise) now bails out on
+// onBeforeUnmount via an `unmounted` guard.
+const frameEditorVisible = ref(true)
 watch(
   () => props.initialTab,
   v => {
@@ -322,6 +591,8 @@ watch(activeTab, (tab) => {
   if (tab === 'traceability' && props.nodeId && !traceData.value) {
     loadTraceability(props.nodeId)
   }
+  // NOTE: Auto-generation removed — users should click the component button
+  // or explicitly start conversion from the Design tab's empty state UI.
 })
 
 watch(() => props.nodeId, () => {
@@ -345,6 +616,213 @@ const showGWTEditor = computed(() => {
   // Policy GWT generation is disabled - only show GWT editor for Commands
   return nodeLabel.value === 'Command'
 })
+
+// Aggregate-only "View Detail" affordance — drills into the Aggregate tab.
+const isAggregateNode = computed(() => nodeLabel.value === 'Aggregate')
+
+function openAggregateDetail() {
+  const n = node.value
+  if (!n) return
+  const aggregateId = n.id || n.data?.id
+  if (!aggregateId) return
+  // bcId from the canvas node's parent BC, else the fetched bcId; otherwise
+  // null — the store resolves it via expand-with-bc.
+  const bcId = n.parentNode || n.data?.bcId || null
+  aggregateViewerStore.focusAggregate(aggregateId, bcId)
+  if (appActiveTab) appActiveTab.value = 'Aggregate'
+}
+
+// UserStory branch (spec 019-userstory-properties-panel) — replaces the
+// legacy UserStoryEditModal. Editor lives inside the properties tab and
+// PATCHes /api/user-story/{id} on save.
+const showUserStoryEditor = computed(() => nodeLabel.value === 'UserStory')
+
+// Invariant branch (027 — aggregate-invariants). Invariant property editing
+// lives in this right-side panel; the dedicated editor manages its own
+// load/save against /api/invariants.
+const showInvariantEditor = computed(() => nodeLabel.value === 'Invariant')
+
+const USER_STORY_PRIORITY_OPTIONS = ['low', 'medium', 'high']
+const USER_STORY_STATUS_OPTIONS = ['draft', 'new', 'in-progress', 'approved', 'implemented', 'done']
+const MAX_ACCEPTANCE_CRITERIA = 100
+
+const userStoryForm = ref({
+  role: '',
+  action: '',
+  benefit: '',
+  priority: 'medium',
+  status: 'draft',
+  acceptanceCriteria: [],
+  criteriaUserEdited: false,
+  criteriaEditedAt: null
+})
+const userStoryInitial = ref(null)
+const userStorySaving = ref(false)
+const userStoryError = ref(null)
+const userStorySuccess = ref(null)
+
+function resetUserStoryFormFromNode() {
+  const n = node.value
+  if (!n) {
+    userStoryInitial.value = null
+    return
+  }
+  const d = n.data || {}
+  const snap = {
+    role: d.role || '',
+    action: d.action || '',
+    benefit: d.benefit || '',
+    priority: d.priority || 'medium',
+    status: d.status || 'draft',
+    acceptanceCriteria: Array.isArray(d.acceptanceCriteria) ? [...d.acceptanceCriteria] : [],
+    criteriaUserEdited: !!d.criteriaUserEdited,
+    criteriaEditedAt: d.criteriaEditedAt || null
+  }
+  userStoryForm.value = { ...snap }
+  userStoryInitial.value = { ...snap, acceptanceCriteria: [...snap.acceptanceCriteria] }
+  userStoryError.value = null
+  userStorySuccess.value = null
+}
+
+const userStoryDirty = computed(() => {
+  if (!userStoryInitial.value) return false
+  const cur = userStoryForm.value
+  const orig = userStoryInitial.value
+  if (cur.role !== orig.role) return true
+  if (cur.action !== orig.action) return true
+  if (cur.benefit !== orig.benefit) return true
+  if (cur.priority !== orig.priority) return true
+  if (cur.status !== orig.status) return true
+  if (cur.acceptanceCriteria.length !== orig.acceptanceCriteria.length) return true
+  for (let i = 0; i < cur.acceptanceCriteria.length; i++) {
+    if (cur.acceptanceCriteria[i] !== orig.acceptanceCriteria[i]) return true
+  }
+  return false
+})
+
+const userStoryCriteriaDirty = computed(() => {
+  if (!userStoryInitial.value) return false
+  const cur = userStoryForm.value.acceptanceCriteria
+  const orig = userStoryInitial.value.acceptanceCriteria
+  if (cur.length !== orig.length) return true
+  for (let i = 0; i < cur.length; i++) {
+    if (cur[i] !== orig[i]) return true
+  }
+  return false
+})
+
+function addAcceptanceCriterion() {
+  if (userStoryForm.value.acceptanceCriteria.length >= MAX_ACCEPTANCE_CRITERIA) {
+    userStoryError.value = `Acceptance Criteria 최대 ${MAX_ACCEPTANCE_CRITERIA}개까지 추가 가능합니다.`
+    return
+  }
+  userStoryForm.value.acceptanceCriteria.push('')
+}
+
+function removeAcceptanceCriterion(idx) {
+  if (idx < 0 || idx >= userStoryForm.value.acceptanceCriteria.length) return
+  userStoryForm.value.acceptanceCriteria.splice(idx, 1)
+}
+
+function moveCriterionUp(idx) {
+  if (idx <= 0 || idx >= userStoryForm.value.acceptanceCriteria.length) return
+  const arr = userStoryForm.value.acceptanceCriteria
+  ;[arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]
+}
+
+function moveCriterionDown(idx) {
+  const arr = userStoryForm.value.acceptanceCriteria
+  if (idx < 0 || idx >= arr.length - 1) return
+  ;[arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]
+}
+
+async function saveUserStory() {
+  if (!node.value) return
+  if (!userStoryDirty.value) return
+  const id = node.value.id
+  const opId = newOpId('us_save')
+
+  // Build delta-PATCH body — only include changed fields.
+  const cur = userStoryForm.value
+  const orig = userStoryInitial.value || {}
+  const body = {}
+  if (cur.role !== orig.role) body.role = cur.role
+  if (cur.action !== orig.action) body.action = cur.action
+  if (cur.benefit !== orig.benefit) body.benefit = cur.benefit
+  if (cur.priority !== orig.priority) body.priority = cur.priority
+  if (cur.status !== orig.status) body.status = cur.status
+  if (userStoryCriteriaDirty.value) {
+    // Strip empty-after-trim entries (server does the same but UX consistency
+    // matters: the user sees the same list they will get back).
+    body.acceptance_criteria = cur.acceptanceCriteria
+      .map(s => (typeof s === 'string' ? s.trim() : ''))
+      .filter(s => s.length > 0)
+  }
+
+  if (Object.keys(body).length === 0) return
+
+  userStorySaving.value = true
+  userStoryError.value = null
+  userStorySuccess.value = null
+  try {
+    const res = await fetch(`/api/user-story/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`
+      try {
+        const detail = await res.json()
+        if (detail && detail.detail) msg = detail.detail
+      } catch (_) { /* keep msg */ }
+      throw new Error(msg)
+    }
+    const updated = await res.json()
+    log.info('user_story_patch_done', 'UserStory PATCH succeeded.', {
+      opId,
+      nodeId: id,
+      changedFields: Object.keys(body),
+      criteriaUserEdited: !!updated.criteriaUserEdited
+    })
+
+    // Update local form state from the server response so subsequent dirty
+    // checks compare against the new persisted state.
+    if (node.value && node.value.data) {
+      Object.assign(node.value.data, {
+        role: updated.role,
+        action: updated.action,
+        benefit: updated.benefit,
+        priority: updated.priority,
+        status: updated.status,
+        acceptanceCriteria: updated.acceptanceCriteria || [],
+        criteriaUserEdited: !!updated.criteriaUserEdited,
+        criteriaEditedAt: updated.criteriaEditedAt || null
+      })
+    }
+    resetUserStoryFormFromNode()
+    userStorySuccess.value = '저장되었습니다.'
+
+    // Refresh the navigator so updated criteria/fields surface there too.
+    try {
+      const { useNavigatorStore } = await import('@/features/navigator/navigator.store')
+      const navigatorStore = useNavigatorStore()
+      await navigatorStore.refreshAll?.({ trigger: 'InspectorPanel:userStorySaved', userStoryId: id, opId })
+    } catch (e) {
+      log.warn('user_story_navigator_refresh_failed', 'Navigator refresh after UserStory save failed (non-fatal).', {
+        opId, nodeId: id, error: e?.message || String(e)
+      })
+    }
+    emit('updated', { id })
+  } catch (e) {
+    log.error('user_story_patch_error', 'UserStory PATCH failed.', {
+      opId, nodeId: id, error: e?.message || String(e)
+    })
+    userStoryError.value = e?.message || '저장에 실패했습니다.'
+  } finally {
+    userStorySaving.value = false
+  }
+}
 
 function onPropertyEditorStateChange(s) {
   propIsDirty.value = !!s?.isDirty
@@ -479,6 +957,13 @@ function resetToNode() {
       propertyEditorRef.value?.resetFromNode?.(node.value)
     }
   })
+
+  // UserStory editor uses its own form/snapshot (not the schema-driven one).
+  if (showUserStoryEditor.value) {
+    resetUserStoryFormFromNode()
+  } else {
+    userStoryInitial.value = null
+  }
 }
 
 // Watch for selected nodes changes and reset index if needed
@@ -835,6 +1320,331 @@ const figmaExporting = ref(false)
 const figmaCopied = ref(false)
 const figmaError = ref(null)
 const showFigmaSchemaModal = ref(false)
+
+// ── Copy sceneGraph to Figma clipboard ──
+const figSceneCopying = ref(false)
+const figSceneCopied = ref(false)
+const figSceneError = ref(null)
+
+async function copySceneGraphToFigma() {
+  const n = node.value
+  if (!n?.data?.sceneGraph) return
+
+  figSceneCopying.value = true
+  figSceneError.value = null
+  try {
+    const { deserializeSceneGraph } = await import('open-pencil-fed/bridge/serialize')
+    const { buildFigmaClipboardHTML, prefetchFigmaSchema } = await import('@open-pencil/core')
+
+    await prefetchFigmaSchema()
+
+    const sgData = typeof n.data.sceneGraph === 'string'
+      ? JSON.parse(n.data.sceneGraph)
+      : n.data.sceneGraph
+    const graph = deserializeSceneGraph(sgData)
+
+    // Find the main wireframe frame
+    const pages = graph.getPages()
+    let frameNode = null
+    for (const page of pages) {
+      for (const childId of page.childIds) {
+        const child = graph.getNode(childId)
+        if (child?.type === 'FRAME') { frameNode = child; break }
+      }
+      if (frameNode) break
+    }
+
+    if (!frameNode) throw new Error('No wireframe frame found in sceneGraph')
+
+    const clipboardHtml = await buildFigmaClipboardHTML([frameNode], graph)
+    if (!clipboardHtml) throw new Error('Failed to build Figma clipboard data')
+
+    const blob = new Blob([clipboardHtml], { type: 'text/html' })
+    const textBlob = new Blob(['OpenPencil wireframe'], { type: 'text/plain' })
+    await navigator.clipboard.write([new ClipboardItem({ 'text/html': blob, 'text/plain': textBlob })])
+
+    figSceneCopied.value = true
+    setTimeout(() => { figSceneCopied.value = false }, 3000)
+  } catch (e) {
+    figSceneError.value = e?.message || 'Failed to copy to Figma clipboard'
+    console.error('[CopySceneToFigma]', e)
+  } finally {
+    figSceneCopying.value = false
+  }
+}
+
+// ── Auto-sync: poll for Figma changes pushed by Plugin ──
+let figmaAutoSyncTimer = null
+
+function startFigmaAutoSync() {
+  if (figmaAutoSyncTimer) return
+  figmaAutoSyncTimer = setInterval(async () => {
+    const n = node.value
+    if (!n?.data?.figmaFileKey || activeTab.value !== 'design') return
+    const frameName = n.data?.displayName || n.data?.name || ''
+    if (!frameName) return
+
+    try {
+      const resp = await fetch(`/api/figma-plugin/get-result?file_key=${encodeURIComponent(n.data.figmaFileKey)}&frame_name=${encodeURIComponent(frameName)}`)
+      if (!resp.ok) return
+      const data = await resp.json()
+      if (data.result && data.result.sceneGraph) {
+        // Update local data
+        if (n.data) n.data = { ...n.data, sceneGraph: data.result.sceneGraph }
+        const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+        if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: data.result.sceneGraph }
+        designEditorKey.value++
+        emit('updated')
+        figmaPushStatus.value = 'success'
+        figmaPushMessage.value = `Figma 변경 자동 반영됨`
+        setTimeout(() => { figmaPushStatus.value = null }, 3000)
+      }
+    } catch (_e) {}
+  }, 5000)
+}
+
+function stopFigmaAutoSync() {
+  if (figmaAutoSyncTimer) { clearInterval(figmaAutoSyncTimer); figmaAutoSyncTimer = null }
+}
+
+// Start/stop auto-sync based on active tab
+watch(activeTab, (tab) => {
+  if (tab === 'design') startFigmaAutoSync()
+  else stopFigmaAutoSync()
+}, { immediate: true })
+
+const hasFigmaConnection = computed(() => {
+  // Show pull button if figmaNodeId exists OR figma creds are configured
+  if (node.value?.data?.figmaNodeId) return true
+  try {
+    const creds = JSON.parse(localStorage.getItem('figma_api_creds') || '{}')
+    return !!(creds.apiToken && creds.fileKey)
+  } catch (_e) { return false }
+})
+
+// ── Figma Sync (pull/push) ──
+const figmaSyncPulling = ref(false)
+const figmaSyncError = ref(null)
+
+async function pullFromFigma() {
+  const n = node.value
+  if (!n?.data?.figmaNodeId || !n?.data?.figmaFileKey) return
+
+  // Get Figma API token from localStorage
+  let apiToken = ''
+  try {
+    const creds = JSON.parse(localStorage.getItem('figma_api_creds') || '{}')
+    apiToken = creds.apiToken || ''
+  } catch {}
+  if (!apiToken) {
+    figmaSyncError.value = 'Figma API 토큰이 없습니다. 인제스천 모달에서 먼저 연결하세요.'
+    return
+  }
+
+  figmaSyncPulling.value = true
+  figmaSyncError.value = null
+  try {
+    const resp = await fetch('/api/ingest/figma-sync/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_token: apiToken,
+        file_key: n.data.figmaFileKey,
+        figma_node_id: n.data.figmaNodeId,
+        ui_node_id: n.id,
+      })
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `Pull 실패 (${resp.status})`)
+    }
+    const result = await resp.json()
+    // Update local node data
+    if (n.data && result.sceneGraph) {
+      n.data = { ...n.data, sceneGraph: result.sceneGraph }
+    }
+    const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+    if (storeNode?.data && result.sceneGraph) {
+      storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph }
+    }
+    emit('updated')
+  } catch (e) {
+    figmaSyncError.value = e?.message || 'Pull 실패'
+    console.error('[FigmaSync:Pull]', e)
+  } finally {
+    figmaSyncPulling.value = false
+  }
+}
+
+/**
+ * Poll backend for Plugin sync result (handshake).
+ * Plugin reports SYNC_RESULT → ui.html → backend /api/figma-plugin/report-result
+ * Frontend polls /api/figma-plugin/get-result
+ */
+async function pollForPluginResult(fileKey, frameName, maxWait = 15000) {
+  const start = Date.now()
+  while (Date.now() - start < maxWait) {
+    await new Promise(r => setTimeout(r, 2000))
+    try {
+      const resp = await fetch(`/api/figma-plugin/get-result?file_key=${encodeURIComponent(fileKey)}&frame_name=${encodeURIComponent(frameName)}`)
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data.result) return data.result
+      }
+    } catch (_e) {}
+  }
+  return null
+}
+
+/**
+ * Pull from Figma and reload the Design editor.
+ * Called from the FrameEditor's pull button.
+ *
+ * When a 016-style document binding is active, route through the new
+ * /api/figma-binding/pull-frame/{ui_id} endpoint — plugin sends the full
+ * Figma node tree (rich serializer), backend converts directly to a
+ * SceneGraph (no lossy component extraction). Otherwise fall back to the
+ * legacy 009 component-extraction flow which is still useful for files
+ * built from a Figma component library.
+ */
+async function pullFromFigmaToDesign() {
+  const n = node.value
+  if (!n) return
+
+  let fileKey = n.data?.figmaFileKey
+  if (!fileKey) {
+    try { fileKey = JSON.parse(localStorage.getItem('figma_api_creds') || '{}').fileKey } catch (_e) {}
+  }
+  if (!fileKey) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = 'Figma File Key가 없습니다'
+    setTimeout(() => { figmaPushStatus.value = null }, 4000)
+    return
+  }
+
+  figmaPushStatus.value = 'pushing'
+  figmaPushMessage.value = 'Figma Plugin에서 가져오는 중...'
+
+  const frameName = n.data?.displayName || n.data?.name || ''
+  const figmaNodeId = n.data?.figmaNodeId || null
+
+  // Detect 016 binding: server-side check is the source of truth, but a
+  // local check on figmaBindingId saves a round-trip in the common case.
+  let useBindingPath = false
+  try {
+    const bindingResp = await fetch('/api/figma-binding')
+    if (bindingResp.ok) {
+      const b = await bindingResp.json()
+      useBindingPath = b?.status === 'active' && !!figmaNodeId
+    }
+  } catch (_e) { /* fall through */ }
+
+  try {
+    if (useBindingPath) {
+      // 016 path — direct sceneGraph conversion via plugin EXPORT_FRAME_BY_ID.
+      const resp = await fetch(`/api/figma-binding/pull-frame/${encodeURIComponent(n.id)}`, {
+        method: 'POST',
+      })
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}))
+        throw new Error(data.detail || `Pull 실패 (${resp.status})`)
+      }
+      const result = await resp.json()
+      if (result.sceneGraph) {
+        if (n.data) n.data = { ...n.data, sceneGraph: result.sceneGraph }
+        const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+        if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph }
+      }
+      designEditorKey.value++
+      emit('updated')
+      figmaPushStatus.value = 'success'
+      figmaPushMessage.value = `Figma에서 가져옴 (${result.nodeCount || 0}개 노드)`
+      setTimeout(() => { figmaPushStatus.value = null }, 4000)
+      return
+    }
+
+    // 009 legacy path — component-based extraction via plugin EXPORT_FRAME.
+    const resp = await fetch('/api/figma-plugin/update-nodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_key: fileKey,
+        node_updates: [{
+          nodeId: '_EXPORT_',
+          props: {
+            __exportFrame: true,
+            figmaNodeId: figmaNodeId,
+            frameName: frameName,
+            uiNodeId: n.id,
+          }
+        }]
+      })
+    })
+    if (!resp.ok) throw new Error('Plugin 명령 전송 실패')
+
+    const result = await pollForPluginResult(fileKey, frameName, 20000)
+    if (!result) {
+      throw new Error('Plugin 응답 타임아웃 — Plugin이 연결되어 있는지 확인하세요')
+    }
+
+    if (result.sceneGraph) {
+      if (n.data) n.data = { ...n.data, sceneGraph: result.sceneGraph, figmaNodeId: result.frameId, figmaFileKey: fileKey }
+      const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+      if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph, figmaNodeId: result.frameId, figmaFileKey: fileKey }
+    }
+
+    designEditorKey.value++
+    emit('updated')
+
+    figmaPushStatus.value = 'success'
+    figmaPushMessage.value = result.message || `Figma에서 가져옴`
+    setTimeout(() => { figmaPushStatus.value = null }, 4000)
+  } catch (e) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = e?.message || 'Figma Pull 실패'
+    setTimeout(() => { figmaPushStatus.value = null }, 6000)
+    console.error('[FigmaPull]', e)
+  }
+}
+
+// ── Export as .fig file ──
+const figFileExporting = ref(false)
+const figFileError = ref(null)
+
+async function exportAsFigFile() {
+  const n = node.value
+  if (!n?.data?.sceneGraph) return
+
+  figFileExporting.value = true
+  figFileError.value = null
+  try {
+    const resp = await fetch(`/api/graph/export-fig/${n.id}`, { method: 'POST' })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `Export failed (${resp.status})`)
+    }
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const disposition = resp.headers.get('Content-Disposition')
+    let filename = `${n.data.displayName || n.data.name || 'wireframe'}.fig`
+    if (disposition) {
+      const match = disposition.match(/filename="?([^"]+)"?/)
+      if (match) filename = decodeURIComponent(match[1])
+    }
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    URL.revokeObjectURL(url)
+    a.remove()
+  } catch (e) {
+    figFileError.value = e?.message || 'Failed to export .fig file'
+    console.error('[ExportFigFile]', e)
+  } finally {
+    figFileExporting.value = false
+  }
+}
 const hasFigmaSchema = ref(!!getCachedSchema())
 
 async function exportToFigma() {
@@ -894,6 +1704,289 @@ function closeFigmaSchemaModal() {
 const wireframeUploading = ref(false)
 const wireframeUploadError = ref(null)
 const wireframeFileInputRef = ref(null)
+
+// Wireframe generation mode: 'html-classic' or 'open-pencil-ai'
+const wireframeGenMode = ref(localStorage.getItem('wireframe_generation_mode') || 'html-classic')
+const showAIChatPanel = ref(false)
+
+function setWireframeGenMode(mode) {
+  wireframeGenMode.value = mode
+  localStorage.setItem('wireframe_generation_mode', mode)
+}
+
+const componentGenLoading = ref(false)
+const componentGenError = ref(null)
+
+async function generateComponentWireframe() {
+  const n = node.value
+  if (!n) return
+
+  componentGenLoading.value = true
+  componentGenError.value = null
+  try {
+    const resp = await fetch(`/api/graph/generate-component-wireframe/${n.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        display_language: localStorage.getItem('app_display_language') || 'ko'
+      })
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `Generation failed (${resp.status})`)
+    }
+    const result = await resp.json()
+    // Update local node data
+    if (n.data && result.sceneGraph) {
+      n.data = { ...n.data, sceneGraph: result.sceneGraph }
+    }
+    const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+    if (storeNode?.data && result.sceneGraph) {
+      storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph }
+    }
+    emit('updated')
+  } catch (e) {
+    componentGenError.value = e?.message || 'Failed to generate wireframe'
+    console.error('[ComponentWireframe]', e)
+  } finally {
+    componentGenLoading.value = false
+  }
+}
+
+function generateWithAI() {
+  if (wireframeGenMode.value === 'open-pencil-ai') {
+    showAIChatPanel.value = true
+  } else if (wireframeGenMode.value === 'component') {
+    generateComponentWireframe()
+  } else {
+    requestChat()
+  }
+}
+
+function onAIChatUpdate(data) {
+  // Save the SceneGraph from AI generation
+  onDesignSave(data)
+  showAIChatPanel.value = false
+}
+
+// ── Convert HTML wireframe to Figma-style design via open-pencil AI ──
+const convertingToDesign = ref(false)
+const convertPrompt = ref('')
+const convertFailed = ref(false)
+
+// Reset converting state when switching to a different node
+watch(() => props.nodeId, () => {
+  if (convertingToDesign.value) {
+    convertingToDesign.value = false
+    convertPrompt.value = ''
+  }
+  convertFailed.value = false
+})
+
+function startConvertToDesign() {
+  convertFailed.value = false
+  const n = node.value
+  if (!n?.data) return
+
+  const name = n.data.name || 'Wireframe'
+  const description = n.data.description || ''
+  const attachedTo = n.data.attachedToName || ''
+  const attachedType = n.data.attachedToType || ''
+  const htmlTemplate = n.data.template || ''
+
+  // Build a prompt that describes the wireframe scenario for AI generation
+  let prompt = `Create a wireframe design for "${name}"`
+  if (attachedTo) {
+    prompt += ` (${attachedType}: ${attachedTo})`
+  }
+  prompt += '.\n\n'
+
+  if (description) {
+    prompt += `Description: ${description}\n\n`
+  }
+
+  // Include HTML structure as reference for what to create
+  if (htmlTemplate) {
+    // Extract meaningful text content from the HTML for context
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = htmlTemplate
+    const textContent = tempDiv.textContent?.trim().slice(0, 800) || ''
+    const hasAppbar = htmlTemplate.includes('wf-appbar')
+    const hasTable = htmlTemplate.includes('wf-table')
+    const hasCard = htmlTemplate.includes('wf-card')
+    const hasForm = htmlTemplate.includes('wf-input')
+    const hasBtnPrimary = htmlTemplate.includes('wf-btn--primary')
+
+    prompt += 'The wireframe should include:\n'
+    if (hasAppbar) prompt += '- A top navigation bar/app bar with title\n'
+    if (hasCard) prompt += '- Card components for content sections\n'
+    if (hasTable) prompt += '- A data table with columns and rows\n'
+    if (hasForm) prompt += '- Form input fields\n'
+    if (hasBtnPrimary) prompt += '- Action buttons (primary CTA)\n'
+
+    if (textContent) {
+      prompt += `\nContent reference (labels, headers, field names):\n${textContent.slice(0, 500)}\n`
+    }
+  }
+
+  prompt += '\nIMPORTANT: You MUST use the `render` tool to create the design NOW. Do NOT just describe or plan — call the render tool immediately with JSX code. Start with the top-level Frame, then render child components. Use auto-layout (flex="col"/"row") for organized structure.'
+
+  convertPrompt.value = prompt
+  convertingToDesign.value = true
+}
+
+async function onConvertComplete(data) {
+  const nodeCount = data?.nodes ? Object.keys(data.nodes).length : 0
+  if (nodeCount > 2) {
+    // Fix orphaned frames before saving (AI may set parentId to "currentPage")
+    fixSceneGraphParentage(data)
+    await onDesignSave(data)
+    convertFailed.value = false
+  } else {
+    console.warn('[InspectorPanel] AI conversion produced empty SceneGraph, not saving')
+    convertFailed.value = true
+  }
+  convertingToDesign.value = false
+  convertPrompt.value = ''
+}
+
+function onConvertUpdate(data) {
+  if (data?.nodes && Object.keys(data.nodes).length > 2) {
+    fixSceneGraphParentage(data)
+    onDesignSave(data)
+  }
+}
+
+// ── Backend wireframe generation (Phase 1: pure backend AI, replaces in-browser open-pencil agent) ──
+// Calls POST /api/ai-design/wireframe/{ui_node_id} which streams SSE events.
+// On success the backend already persisted the sceneGraph; we re-fetch the node
+// to refresh the UI.
+const backendGenLoading = ref(false)
+const backendGenProgress = ref('')
+const backendGenError = ref(null)
+
+async function generateBackendWireframe() {
+  const n = node.value
+  if (!n?.id) return
+  if (backendGenLoading.value) return
+
+  backendGenLoading.value = true
+  backendGenProgress.value = '시작…'
+  backendGenError.value = null
+
+  try {
+    const resp = await fetch(`/api/ai-design/wireframe/${n.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    if (!resp.ok || !resp.body) {
+      throw new Error(`HTTP ${resp.status}`)
+    }
+    const reader = resp.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    let lastEvent = null
+    let lastData = null
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let idx
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, idx)
+        buf = buf.slice(idx + 2)
+        const evtLine = block.match(/^event:\s*(.+)$/m)
+        const dataLine = block.match(/^data:\s*([\s\S]+)$/m)
+        if (!evtLine || !dataLine) continue
+        const evtName = evtLine[1].trim()
+        let data
+        try { data = JSON.parse(dataLine[1]) } catch { continue }
+        lastEvent = evtName
+        lastData = data
+        applyBackendGenEvent(evtName, data)
+      }
+    }
+    if (lastEvent !== 'done' && lastEvent !== 'persist_done') {
+      throw new Error(lastData?.message || '스트림이 done 없이 종료되었습니다.')
+    }
+    await refreshCurrentNodeFromBackend()
+  } catch (e) {
+    backendGenError.value = e?.message || String(e)
+    backendGenProgress.value = `실패: ${backendGenError.value}`
+    console.error('[InspectorPanel] backend wireframe generation failed:', e)
+    setTimeout(() => { backendGenLoading.value = false }, 4000)
+    return
+  }
+
+  backendGenProgress.value = '완료'
+  setTimeout(() => {
+    backendGenLoading.value = false
+    backendGenProgress.value = ''
+  }, 1500)
+}
+
+function applyBackendGenEvent(evtName, data) {
+  switch (evtName) {
+    case 'context_loaded':
+      backendGenProgress.value = `컨텍스트: ${data.displayName || ''}${data.bcName ? ' · ' + data.bcName : ''}`
+      break
+    case 'llm_step':
+      backendGenProgress.value = `LLM 단계 ${data.step}/${data.of}`
+      break
+    case 'tool_call':
+      backendGenProgress.value = `툴 호출: ${data.name}`
+      break
+    case 'tool_result':
+      if (data.ok && data.nodeCount != null) {
+        backendGenProgress.value = `툴 결과: ${data.nodeCount}개 노드`
+      } else if (!data.ok) {
+        backendGenProgress.value = `툴 오류: ${data.error || ''}`
+      }
+      break
+    case 'render_progress':
+      backendGenProgress.value = `렌더링 ${data.nodeCount}개 노드`
+      break
+    case 'persist_done':
+      backendGenProgress.value = `저장 완료 (${data.nodeCount}개 노드)`
+      break
+    case 'done':
+      backendGenProgress.value = data.summary || '완료'
+      break
+    case 'error':
+      backendGenError.value = data.message || '오류'
+      backendGenProgress.value = `오류: ${backendGenError.value}`
+      break
+  }
+}
+
+async function refreshCurrentNodeFromBackend() {
+  const n = node.value
+  if (!n?.id) return
+  try {
+    const r = await fetch(`/api/graph/expand-with-bc/${n.id}`)
+    if (!r.ok) return
+    const j = await r.json()
+    const ui = j.nodes?.find(x => x.id === n.id)
+    if (!ui?.sceneGraph) return
+    const patch = {
+      sceneGraph: ui.sceneGraph,
+      designSource: ui.designSource,
+      updatedAt: ui.updatedAt,
+    }
+    if (n.data) n.data = { ...n.data, ...patch }
+    const storeNode = canvasStore.nodes?.find(x => x.id === n.id)
+    if (storeNode?.data) storeNode.data = { ...storeNode.data, ...patch }
+    designEditorKey.value++
+  } catch (e) {
+    console.warn('[InspectorPanel] failed to refresh node after backend gen:', e)
+  }
+}
+
+function cancelConvert() {
+  convertingToDesign.value = false
+  convertPrompt.value = ''
+}
 
 function triggerWireframeUpload() {
   wireframeUploadError.value = null
@@ -1027,6 +2120,7 @@ function getReferencedNodeProperties(referencedNodeId, referencedNodeType) {
     result.push({
       id: String(p?.id || ''),
       name: String(p?.name ?? ''),
+      displayName: String(p?.displayName ?? ''),
       type: String(p?.type ?? ''),
       description: String(p?.description ?? ''),
       isKey: Boolean(p?.isKey),
@@ -1046,6 +2140,7 @@ function getReferencedNodeProperties(referencedNodeId, referencedNodeType) {
       result.push({
         id: `enum-${e.name}-${idx}`,
         name: String(e.name ?? ''),
+        displayName: String(e.displayName ?? e.alias ?? ''),
         type: 'Enum',
         description: String(e.alias ?? ''),
         isKey: false,
@@ -1067,6 +2162,7 @@ function getReferencedNodeProperties(referencedNodeId, referencedNodeType) {
       result.push({
         id: `vo-${vo.name}-${idx}`,
         name: String(vo.name ?? ''),
+        displayName: String(vo.displayName ?? vo.alias ?? ''),
         type: 'ValueObject',
         description: String(vo.alias ?? ''),
         isKey: false,
@@ -1549,6 +2645,172 @@ function parseBooleanValue(value) {
 const showGWTDetailModal = ref(false)
 const selectedGWTSetIndex = ref(0)
 
+// --- GWT detail modal: layout mode (table | card) ---
+const GWT_LAYOUT_KEY = 'gwt-detail-layout-mode'
+const gwtLayoutMode = ref(
+  (typeof localStorage !== 'undefined' && localStorage.getItem(GWT_LAYOUT_KEY)) || 'card'
+)
+watch(gwtLayoutMode, (mode) => {
+  try {
+    localStorage.setItem(GWT_LAYOUT_KEY, mode)
+  } catch {
+    /* ignore storage failures */
+  }
+})
+
+// --- Card layout: logical-name label for a property ---
+function gwtPropLabel(prop) {
+  if (!prop) return ''
+  return prop.displayName || prop.name || ''
+}
+
+// Section keys (given/when/then) that actually exist on a test case.
+function gwtSectionKeys(gwtSet) {
+  return ['given', 'when', 'then'].filter((k) => gwtSet && gwtSet[k])
+}
+
+function gwtSectionTitle(sec) {
+  return sec ? sec.charAt(0).toUpperCase() + sec.slice(1) : ''
+}
+
+function gwtSectionSubtitle(gwtSet, sec) {
+  if (sec === 'given' && nodeLabel.value === 'Policy') {
+    return getPolicyMappedGiven() || gwtSet?.given?.name || ''
+  }
+  return gwtSet?.[sec]?.name || ''
+}
+
+// Which section (given/when/then) references the Aggregate, if any.
+function getAggregateSection(gwtSet) {
+  for (const k of ['given', 'when', 'then']) {
+    if (gwtSet?.[k]?.referencedNodeType === 'Aggregate') return k
+  }
+  return null
+}
+
+// Candidate properties for a card section (metadata source + picker grouping).
+// The `then` section additionally offers the Aggregate's properties so a
+// scenario can assert the resulting aggregate state next to the emitted event.
+function getCardCandidateProps(gwtSet, type) {
+  const own = getAvailableProperties(gwtSet, type).map((p) => ({ ...p, source: 'self' }))
+  if (type !== 'then') return own
+  const aggSec = getAggregateSection(gwtSet)
+  if (!aggSec || aggSec === 'then') return own
+  const seen = new Set(own.map((p) => p.name))
+  const aggProps = getAvailableProperties(gwtSet, aggSec)
+    .filter((p) => !seen.has(p.name))
+    .map((p) => ({ ...p, source: 'aggregate' }))
+  return [...own, ...aggProps]
+}
+
+// Resolve property metadata for values already present in fieldValues.
+// Falls back to a minimal String descriptor for ad-hoc fields with no schema.
+function getCardSectionProps(gwtSet, type) {
+  const gwt = gwtSet?.[type]
+  if (!gwt || !gwt.fieldValues) return []
+  const candidates = getCardCandidateProps(gwtSet, type)
+  return Object.keys(gwt.fieldValues).map((name) => {
+    const meta = candidates.find((p) => p.name === name)
+    return (
+      meta || {
+        id: name,
+        name,
+        displayName: '',
+        type: 'String',
+        fieldType: 'property',
+        enumItems: [],
+        source: 'self',
+      }
+    )
+  })
+}
+
+// Unused candidate properties for a card section's "add property" picker.
+function getCardUnusedProps(gwtSet, type) {
+  const used = new Set(Object.keys(gwtSet?.[type]?.fieldValues || {}))
+  return getCardCandidateProps(gwtSet, type).filter((p) => !used.has(p.name))
+}
+
+// Add an unused property to a card section (seeds an empty value).
+function addPropertyToCard(gwtSet, type, propName) {
+  if (!propName) return
+  updateFieldValue(gwtSet, type, propName, '')
+}
+
+// Remove a property from a single card section.
+function removePropertyFromCard(gwtSet, type, propName) {
+  if (gwtSet?.[type]?.fieldValues) {
+    delete gwtSet[type].fieldValues[propName]
+  }
+}
+
+// Which section's "add property" picker is open: `${rowIndex}:${type}` or null.
+const gwtCardPickerKey = ref(null)
+function toggleCardPicker(rowIndex, type) {
+  const key = `${rowIndex}:${type}`
+  gwtCardPickerKey.value = gwtCardPickerKey.value === key ? null : key
+}
+
+// --- Card layout: natural-language -> GWT field values ---
+const gwtNlText = ref({}) // rowIndex -> input string
+const gwtNlBusy = ref({}) // rowIndex -> bool
+const gwtNlError = ref({}) // rowIndex -> error string
+
+function sectionPayloadForNL(gwtSet, type) {
+  const gwt = gwtSet?.[type]
+  if (!gwt || !gwt.referencedNodeId) return null
+  return {
+    name: gwt.name || '',
+    properties: getAvailableProperties(gwtSet, type).map((p) => ({
+      name: p.name,
+      displayName: p.displayName || '',
+      type: p.type || 'String',
+      enumItems: Array.isArray(p.enumItems) ? p.enumItems : [],
+    })),
+  }
+}
+
+function applyParsedValues(gwtSet, type, values) {
+  if (!values || typeof values !== 'object' || !gwtSet?.[type]) return
+  if (!gwtSet[type].fieldValues) gwtSet[type].fieldValues = {}
+  for (const [key, value] of Object.entries(values)) {
+    gwtSet[type].fieldValues[key] = value
+  }
+}
+
+async function applyNLToCard(rowIndex) {
+  const gwtSet = form.value.gwtSets?.[rowIndex]
+  const text = (gwtNlText.value[rowIndex] || '').trim()
+  if (!gwtSet || !text) return
+
+  gwtNlBusy.value = { ...gwtNlBusy.value, [rowIndex]: true }
+  gwtNlError.value = { ...gwtNlError.value, [rowIndex]: '' }
+  try {
+    const res = await fetch('/api/graph/gwt/parse-nl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        given: sectionPayloadForNL(gwtSet, 'given'),
+        when: sectionPayloadForNL(gwtSet, 'when'),
+        then: sectionPayloadForNL(gwtSet, 'then'),
+      }),
+    })
+    const data = await safeJson(res)
+    if (!res.ok || !data?.success) {
+      throw new Error(data?.detail || '자연어 해석 실패')
+    }
+    applyParsedValues(gwtSet, 'given', data.givenFieldValues)
+    applyParsedValues(gwtSet, 'when', data.whenFieldValues)
+    applyParsedValues(gwtSet, 'then', data.thenFieldValues)
+    gwtNlText.value = { ...gwtNlText.value, [rowIndex]: '' }
+  } catch (err) {
+    gwtNlError.value = { ...gwtNlError.value, [rowIndex]: err?.message || String(err) }
+  } finally {
+    gwtNlBusy.value = { ...gwtNlBusy.value, [rowIndex]: false }
+  }
+}
+
 // ValueObject editor modal state
 const voEditorModal = ref({
   open: false,
@@ -1560,101 +2822,107 @@ const voEditorModal = ref({
   fieldValues: {} // field name -> value mapping for editing
 })
 
+// Resolve the expected Given/When/Then referenced nodes from canvas relationships.
+//   Command: given = owning Aggregate, when = the Command, then = emitted Event.
+//   Policy:  given = trigger Event, when = invoked Command's Aggregate, then = emitted Event.
+function resolveGWTRefsFromCanvas() {
+  const current = node.value
+  const empty = { given: null, when: null, then: null }
+  if (!current) return empty
+
+  const typeOf = (n) => normalizeNodeLabel(n?.data?.type || n?.type)
+  const edgeIs = (e, type) =>
+    e.data?.edgeType === type ||
+    e.data?.type === type ||
+    (e.label || '').toLowerCase() === type.toLowerCase()
+  const findNode = (id, type) =>
+    canvasStore.nodes.find((n) => n.id === id && typeOf(n) === type) || null
+  const nameOf = (n) =>
+    !n
+      ? ''
+      : terminologyStore.ubiquitousLanguageMode
+        ? n.data?.displayName || n.data?.name || n.name || ''
+        : n.data?.name || n.name || ''
+  const refPart = (n, type) =>
+    n ? { name: nameOf(n), referencedNodeId: n.id, referencedNodeType: type } : null
+
+  if (nodeLabel.value === 'Command') {
+    const cmdId = current.id
+    const hasCmdEdge = canvasStore.edges.find((e) => e.target === cmdId && edgeIs(e, 'HAS_COMMAND'))
+    const aggregateNode = hasCmdEdge ? findNode(hasCmdEdge.source, 'Aggregate') : null
+    const emitsEdge = canvasStore.edges.find((e) => e.source === cmdId && edgeIs(e, 'EMITS'))
+    const eventNode = emitsEdge ? findNode(emitsEdge.target, 'Event') : null
+    return {
+      given: refPart(aggregateNode, 'Aggregate'),
+      when: { name: nameOf(current), referencedNodeId: cmdId, referencedNodeType: 'Command' },
+      then: refPart(eventNode, 'Event'),
+    }
+  }
+
+  if (nodeLabel.value === 'Policy') {
+    const polId = current.id
+    const triggerEdge = canvasStore.edges.find((e) => e.target === polId && edgeIs(e, 'TRIGGERS'))
+    const triggerEvent = triggerEdge ? findNode(triggerEdge.source, 'Event') : null
+    const invokeEdge = canvasStore.edges.find((e) => e.source === polId && edgeIs(e, 'INVOKES'))
+    const commandNode = invokeEdge ? findNode(invokeEdge.target, 'Command') : null
+    const hasCmdEdge = commandNode
+      ? canvasStore.edges.find((e) => e.target === commandNode.id && edgeIs(e, 'HAS_COMMAND'))
+      : null
+    const aggregateNode = hasCmdEdge ? findNode(hasCmdEdge.source, 'Aggregate') : null
+    const emitsEdge = commandNode
+      ? canvasStore.edges.find((e) => e.source === commandNode.id && edgeIs(e, 'EMITS'))
+      : null
+    const eventNode = emitsEdge ? findNode(emitsEdge.target, 'Event') : null
+    return {
+      given: refPart(triggerEvent, 'Event'),
+      when: refPart(aggregateNode, 'Aggregate'),
+      then: refPart(eventNode, 'Event'),
+    }
+  }
+
+  return empty
+}
+
+// Fill in missing/incomplete section refs on every test case from the canvas,
+// without touching fieldValues the user or LLM already populated. This recovers
+// e.g. a `then` Event that was unlinked when the GWT bundle was first generated.
+function repairGWTRefs() {
+  const resolved = resolveGWTRefsFromCanvas()
+  if (!resolved.given && !resolved.when && !resolved.then) return
+
+  if (!form.value.gwtSets || form.value.gwtSets.length === 0) {
+    form.value.gwtSets = [
+      {
+        given: resolved.given ? { ...resolved.given, fieldValues: {} } : null,
+        when: resolved.when ? { ...resolved.when, fieldValues: {} } : null,
+        then: resolved.then ? { ...resolved.then, fieldValues: {} } : null,
+      },
+    ]
+    return
+  }
+
+  for (const set of form.value.gwtSets) {
+    for (const sec of ['given', 'when', 'then']) {
+      const ref = resolved[sec]
+      if (!ref) continue
+      const existing = set[sec]
+      if (!existing) {
+        set[sec] = { ...ref, fieldValues: {} }
+      } else if (!existing.referencedNodeId || !existing.referencedNodeType) {
+        existing.referencedNodeId = ref.referencedNodeId
+        existing.referencedNodeType = ref.referencedNodeType
+        if (!existing.name) existing.name = ref.name
+        if (!existing.fieldValues) existing.fieldValues = {}
+      }
+    }
+  }
+}
+
 function openGWTDetailModal(setIndex = null) {
   if (setIndex !== null) {
     selectedGWTSetIndex.value = setIndex
   }
-  
-  // If GWT sets are empty but this is a Policy, initialize from relationships
-  if (nodeLabel.value === 'Policy' && (!form.value.gwtSets || form.value.gwtSets.length === 0)) {
-    const givenName = getPolicyMappedGiven()
-    const whenName = getPolicyMappedWhen()
-    const thenName = getPolicyMappedThen()
-    
-    if (givenName || whenName || thenName) {
-      // Find nodes from relationships
-      const nodeId = node.value.id
-      
-      // Find trigger events
-      const triggerEdges = canvasStore.edges.filter(e => {
-        const isTarget = e.target === nodeId
-        const isTriggers = e.data?.edgeType === 'TRIGGERS' || 
-                           e.label?.toLowerCase() === 'triggers' ||
-                           e.data?.type === 'TRIGGERS'
-        return isTarget && isTriggers
-      })
-      
-      // Find invoke command
-      const invokeEdge = canvasStore.edges.find(e => {
-        const isSource = e.source === nodeId
-        const isInvokes = e.data?.edgeType === 'INVOKES' || 
-                          e.label?.toLowerCase() === 'invokes' ||
-                          e.data?.type === 'INVOKES'
-        return isSource && isInvokes
-      })
-      
-      const commandNode = invokeEdge ? canvasStore.nodes.find(n => {
-        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
-        return n.id === invokeEdge.target && nodeType === 'Command'
-      }) : null
-      
-      // Find aggregate
-      const hasCommandEdge = commandNode ? canvasStore.edges.find(e => {
-        const isTarget = e.target === commandNode.id
-        const isHasCommand = e.data?.edgeType === 'HAS_COMMAND' || 
-                            e.label?.toLowerCase() === 'has_command' ||
-                            e.data?.type === 'HAS_COMMAND'
-        return isTarget && isHasCommand
-      }) : null
-      
-      const aggregateNode = hasCommandEdge ? canvasStore.nodes.find(n => {
-        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
-        return n.id === hasCommandEdge.source && nodeType === 'Aggregate'
-      }) : null
-      
-      // Find emitted event
-      const emitsEdge = commandNode ? canvasStore.edges.find(e => {
-        const isSource = e.source === commandNode.id
-        const isEmits = e.data?.edgeType === 'EMITS' || 
-                       e.label?.toLowerCase() === 'emits' ||
-                       e.data?.type === 'EMITS'
-        return isSource && isEmits
-      }) : null
-      
-      const eventNode = emitsEdge ? canvasStore.nodes.find(n => {
-        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
-        return n.id === emitsEdge.target && nodeType === 'Event'
-      }) : null
-      
-      // Create initial GWT set from relationships
-      const firstTriggerEvent = triggerEdges.length > 0 ? canvasStore.nodes.find(n => {
-        const nodeType = normalizeNodeLabel(n?.data?.type || n?.type)
-        return n.id === triggerEdges[0].source && nodeType === 'Event'
-      }) : null
-      
-      form.value.gwtSets = [{
-        given: firstTriggerEvent ? {
-          name: terminologyStore.ubiquitousLanguageMode ? (firstTriggerEvent.data?.displayName || firstTriggerEvent.data?.name || firstTriggerEvent.name) : (firstTriggerEvent.data?.name || firstTriggerEvent.name),
-          referencedNodeId: firstTriggerEvent.id,
-          referencedNodeType: 'Event',
-          fieldValues: {}
-        } : null,
-        when: aggregateNode ? {
-          name: terminologyStore.ubiquitousLanguageMode ? (aggregateNode.data?.displayName || aggregateNode.data?.name || aggregateNode.name) : (aggregateNode.data?.name || aggregateNode.name),
-          referencedNodeId: aggregateNode.id,
-          referencedNodeType: 'Aggregate',
-          fieldValues: {}
-        } : null,
-        then: eventNode ? {
-          name: terminologyStore.ubiquitousLanguageMode ? (eventNode.data?.displayName || eventNode.data?.name || eventNode.name) : (eventNode.data?.name || eventNode.name),
-          referencedNodeId: eventNode.id,
-          referencedNodeType: 'Event',
-          fieldValues: {}
-        } : null
-      }]
-    }
-  }
-  
+  repairGWTRefs()
   showGWTDetailModal.value = true
 }
 
@@ -1844,7 +3112,7 @@ function updateVoFieldValue(fieldName, value) {
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
         <span>Inspector</span>
-        <span v-if="node" class="inspector-panel__subtitle">· {{ schema.title }} · {{ terminologyStore.ubiquitousLanguageMode ? (node.data?.displayName || node.data?.name || node.id) : (node.data?.name || node.id) }}</span>
+        <span v-if="node" class="inspector-panel__subtitle">· {{ schema?.title || nodeLabel }} · {{ terminologyStore.ubiquitousLanguageMode ? (node.data?.displayName || node.data?.name || node.id) : (node.data?.name || node.id) }}</span>
       </div>
       <div class="inspector-panel__actions">
         <button class="inspector-panel__btn" @click="resetToNode" title="Reload" :disabled="saving">
@@ -1900,6 +3168,14 @@ function updateVoFieldValue(fieldName, value) {
             UI Preview
           </button>
           <button
+            v-if="nodeLabel === 'UI'"
+            class="inspector-tab"
+            :class="{ active: activeTab === 'design' }"
+            @click="activeTab = 'design'"
+          >
+            Design
+          </button>
+          <button
             class="inspector-tab"
             :class="{ active: activeTab === 'properties' }"
             @click="activeTab = 'properties'"
@@ -1948,6 +3224,22 @@ function updateVoFieldValue(fieldName, value) {
                 </svg>
                 <span v-else class="ui-preview-panel__btn-loading">...</span>
               </button>
+              <button
+                class="ui-preview-panel__btn"
+                :disabled="componentGenLoading"
+                :title="componentGenLoading ? 'Generating...' : 'Generate from component library (.fig)'"
+                @click="generateComponentWireframe"
+              >
+                <svg v-if="componentGenLoading" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              </button>
               <button class="ui-preview-panel__btn" @click="requestChat" title="Edit with AI">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
@@ -1989,11 +3281,60 @@ function updateVoFieldValue(fieldName, value) {
                   <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
                 </svg>
               </button>
+              <button
+                class="ui-preview-panel__btn ui-preview-panel__btn--figma"
+                :class="{ 'ui-preview-panel__btn--copied': figSceneCopied }"
+                :disabled="!node.data?.sceneGraph || figSceneCopying"
+                :title="figSceneCopied ? 'Copied! Paste in Figma (Ctrl+V)' : 'Copy design to Figma clipboard'"
+                @click="copySceneGraphToFigma"
+              >
+                <svg v-if="figSceneCopying" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else-if="figSceneCopied" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z" />
+                  <path d="M12 2h3.5a3.5 3.5 0 1 1 0 7H12V2z" />
+                  <path d="M12 12.5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 1 1-7 0z" />
+                  <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z" />
+                  <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
+                </svg>
+              </button>
+              <button
+                class="ui-preview-panel__btn"
+                :disabled="!node.data?.sceneGraph || figFileExporting"
+                :title="figFileExporting ? 'Exporting...' : 'Download as .fig file'"
+                @click="exportAsFigFile"
+              >
+                <svg v-if="figFileExporting" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </button>
             </div>
           </div>
 
           <div v-if="wireframeUploadError" class="inspector-alert error">{{ wireframeUploadError }}</div>
           <div v-if="figmaError" class="inspector-alert error">{{ figmaError }}</div>
+          <div v-if="figFileError" class="inspector-alert error">{{ figFileError }}</div>
+          <div v-if="figSceneError" class="inspector-alert error">{{ figSceneError }}</div>
+          <div v-if="figSceneCopied" class="inspector-alert success">Figma clipboard ready — Ctrl+V in Figma to paste.</div>
+          <div v-if="componentGenError" class="inspector-alert error">{{ componentGenError }}</div>
+          <div v-if="figmaPushStatus === 'pushing'" class="inspector-alert" style="background:#fef9c3;color:#854d0e;">
+            <svg width="14" height="14" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin" style="display:inline-block;vertical-align:middle;margin-right:4px;">
+              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+            </svg>
+            {{ figmaPushMessage }}
+          </div>
+          <div v-else-if="figmaPushStatus === 'success'" class="inspector-alert success">{{ figmaPushMessage }}</div>
+          <div v-else-if="figmaPushStatus === 'saved'" class="inspector-alert success" style="background:#dcfce7;color:#166534;">{{ figmaPushMessage }}</div>
+          <div v-else-if="figmaPushStatus === 'error'" class="inspector-alert error">{{ figmaPushMessage }}</div>
           <div v-if="figmaCopied" class="inspector-alert success">Figma clipboard ready — Ctrl+V in Figma to paste. If text is invisible, switch to another page and back.</div>
 
           <div class="ui-preview-panel__info">
@@ -2002,10 +3343,85 @@ function updateVoFieldValue(fieldName, value) {
               <span class="label">Attached to:</span>
               <span class="value">{{ node.data?.attachedToName }}</span>
             </div>
+            <div v-if="node.data?.figmaNodeId" class="ui-preview-panel__attached" style="margin-top:4px;">
+              <span class="label">Figma:</span>
+              <span class="value" style="font-family:monospace;font-size:11px;">{{ node.data.figmaNodeId }}</span>
+              <button
+                class="ui-preview-panel__btn"
+                style="margin-left:8px;width:24px;height:24px;"
+                :disabled="figmaSyncPulling"
+                :title="figmaSyncPulling ? 'Pulling...' : 'Pull from Figma'"
+                @click="pullFromFigma"
+              >
+                <svg v-if="figmaSyncPulling" width="12" height="12" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                </svg>
+              </button>
+            </div>
+            <div v-if="figmaSyncError" class="inspector-alert error" style="margin-top:4px;font-size:11px;">{{ figmaSyncError }}</div>
           </div>
 
           <div class="ui-preview-panel__content">
-            <div v-if="node.data?.template" class="ui-preview-frame">
+            <!-- OpenPencil SceneGraph preview (has real design content) -->
+            <div v-if="hasRealSceneGraph && mainFrameId" class="ui-preview-frame">
+              <div class="ui-preview-frame__browser-bar">
+                <div class="browser-dots">
+                  <span></span><span></span><span></span>
+                </div>
+                <div class="browser-url">preview://{{ node.data?.name }}</div>
+                <button class="ui-preview-frame__open-editor" @click="openFullPageEditor" title="Open Full Editor">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="ui-preview-frame__body">
+                <Suspense>
+                  <FramePreview
+                    :key="node?.id + '-preview-' + mainFrameId"
+                    :scene-data="sceneGraphData"
+                    :frame-id="mainFrameId"
+                    :width="400"
+                    :height="300"
+                  />
+                  <template #fallback>
+                    <div class="ui-preview-frame__overlay">
+                      <div class="ui-preview-frame__spinner" />
+                      <div class="ui-preview-frame__overlay-text">Loading design engine...</div>
+                    </div>
+                  </template>
+                </Suspense>
+              </div>
+            </div>
+
+            <!-- Converting: AI Chat generating design from HTML wireframe -->
+            <div v-else-if="convertingToDesign" class="inspector-design-ai-layout">
+              <div class="inspector-design-ai-layout__status">
+                <div class="ui-preview-convert-panel__spinner" />
+                <span>OpenPencil AI로 디자인 변환 중...</span>
+                <button class="ui-preview-convert-panel__cancel" @click="cancelConvert">취소</button>
+              </div>
+              <div class="inspector-design-ai-layout__chat">
+                <Suspense>
+                  <AIChatPanel
+                    :initial-prompt="convertPrompt"
+                    :on-update="onConvertUpdate"
+                    :on-complete="onConvertComplete"
+                  />
+                  <template #fallback>
+                    <div style="display:flex;align-items:center;justify-content:center;height:100px;color:#666;font-size:12px;">Loading AI...</div>
+                  </template>
+                </Suspense>
+              </div>
+            </div>
+
+            <!-- Legacy HTML template preview (fallback) + convert button -->
+            <div v-else-if="node.data?.template" class="ui-preview-frame">
               <div class="ui-preview-frame__browser-bar">
                 <div class="browser-dots">
                   <span></span><span></span><span></span>
@@ -2019,7 +3435,30 @@ function updateVoFieldValue(fieldName, value) {
                 </div>
                 <div v-html="node.data?.template"></div>
               </div>
+              <div v-if="convertFailed" class="ui-preview-frame__convert-bar ui-preview-frame__convert-bar--failed">
+                <span style="color:#f59e0b;font-size:12px;">AI가 디자인을 생성하지 못했습니다.</span>
+                <button class="ui-preview-frame__convert-btn" @click="startConvertToDesign">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"/><path d="M1 20V14h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                  </svg>
+                  <span>재시도</span>
+                </button>
+              </div>
+              <div v-else class="ui-preview-frame__convert-bar">
+                <button
+                  class="ui-preview-frame__convert-btn"
+                  @click="startConvertToDesign"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                  </svg>
+                  <span>Figma 스타일 와이어프레임으로 변환</span>
+                </button>
+              </div>
             </div>
+
             <div v-else class="ui-preview-empty">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
                 <rect x="2" y="3" width="20" height="18" rx="2" />
@@ -2028,10 +3467,152 @@ function updateVoFieldValue(fieldName, value) {
                 <rect x="4" y="14" width="16" height="2" rx="0.5" stroke-dasharray="2 1" />
               </svg>
               <p>No wireframe template yet</p>
-              <button class="ui-preview-empty__btn" @click="requestChat">Generate with AI</button>
+              <div class="ui-preview-empty__gen-group">
+                <button
+                  class="ui-preview-empty__btn"
+                  :disabled="componentGenLoading"
+                  @click="generateWithAI"
+                >
+                  {{ componentGenLoading ? 'Generating...' : 'Generate with AI' }}
+                </button>
+                <select
+                  class="ui-preview-empty__mode-select"
+                  :value="wireframeGenMode"
+                  @change="setWireframeGenMode($event.target.value)"
+                >
+                  <option value="html-classic">HTML (Classic)</option>
+                  <option value="open-pencil-ai">OpenPencil AI</option>
+                  <option value="component">Component (.fig)</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
+
+        <!-- Design tab: OpenPencil FrameEditor (synchronous mount; see import note above) -->
+        <div v-if="activeTab === 'design' && nodeLabel === 'UI'" class="inspector-design-editor">
+          <div v-if="hasRealSceneGraph && mainFrameId && frameEditorVisible" class="inspector-design-editor__content">
+            <FrameEditor
+              :key="node?.id + '-' + mainFrameId + '-' + designEditorKey"
+              :scene-data="sceneGraphData"
+              :frame-id="mainFrameId"
+              :on-save="onDesignSave"
+              :on-pull="hasFigmaConnection ? pullFromFigmaToDesign : undefined"
+            />
+          </div>
+          <div v-else-if="hasRealSceneGraph && mainFrameId && !frameEditorVisible" class="inspector-design-editor__loading">
+            Loading design editor...
+          </div>
+          <div v-else class="inspector-design-editor__empty">
+            <div v-if="convertingToDesign" class="inspector-design-ai-layout">
+              <div class="inspector-design-ai-layout__status">
+                <div class="ui-preview-convert-panel__spinner" />
+                <span>AI로 디자인 생성 중...</span>
+                <button class="ui-preview-convert-panel__cancel" @click="cancelConvert">취소</button>
+              </div>
+              <div class="inspector-design-ai-layout__chat">
+                <Suspense>
+                  <AIChatPanel
+                    :initial-prompt="convertPrompt"
+                    :on-update="onConvertUpdate"
+                    :on-complete="onConvertComplete"
+                  />
+                  <template #fallback>
+                    <div style="display:flex;align-items:center;justify-content:center;height:100px;color:#666;font-size:12px;">Loading AI...</div>
+                  </template>
+                </Suspense>
+              </div>
+            </div>
+            <div v-else class="inspector-design-editor__generating" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;height:100%;color:#888;font-size:13px;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+              <p style="margin:0;">디자인이 없습니다</p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
+                <button
+                  class="ui-preview-empty__btn"
+                  :disabled="componentGenLoading"
+                  @click="generateComponentWireframe"
+                  style="font-size:12px;"
+                >
+                  {{ componentGenLoading ? '생성 중...' : 'Component로 생성' }}
+                </button>
+                <button
+                  class="ui-preview-empty__btn"
+                  @click="startConvertToDesign"
+                  style="font-size:12px;background:#333;"
+                >
+                  OpenPencil AI로 생성
+                </button>
+                <button
+                  class="ui-preview-empty__btn"
+                  :disabled="backendGenLoading"
+                  @click="generateBackendWireframe"
+                  style="font-size:12px;background:#0acf83;color:#fff;"
+                  title="백엔드 LLM이 와이어프레임을 직접 생성하고 Neo4j에 저장합니다 (브라우저 작업 없음)"
+                >
+                  {{ backendGenLoading ? backendGenProgress || '생성 중…' : '백엔드 AI로 생성' }}
+                </button>
+              </div>
+              <div v-if="backendGenLoading || backendGenError" style="margin-top:8px;font-size:11px;color:#888;max-width:320px;text-align:center;">
+                {{ backendGenProgress || backendGenError }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Chat panel (OpenPencil mode) -->
+        <div v-if="showAIChatPanel && wireframeGenMode === 'open-pencil-ai'" class="inspector-ai-chat-panel">
+          <div class="inspector-ai-chat-panel__header">
+            <span>OpenPencil AI</span>
+            <button class="inspector-ai-chat-panel__close" @click="showAIChatPanel = false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="inspector-ai-chat-panel__body">
+            <Suspense>
+              <AIChatPanel
+                :scene-data="sceneGraphData"
+                :on-update="onAIChatUpdate"
+              />
+              <template #fallback>
+                <div style="display:flex;align-items:center;justify-content:center;height:200px;color:#888;font-size:12px;">
+                  Loading AI chat...
+                </div>
+              </template>
+            </Suspense>
+          </div>
+        </div>
+
+        <!-- Full Page Editor modal overlay -->
+        <Teleport to="body">
+          <div v-if="showFullPageEditor" class="full-page-editor-overlay">
+            <div class="full-page-editor-overlay__header">
+              <span>Page Editor - {{ node?.data?.name }}</span>
+              <button class="full-page-editor-overlay__close" @click="closeFullPageEditor">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div class="full-page-editor-overlay__body">
+              <Suspense>
+                <FullPageEditor
+                  :scene-data="sceneGraphData"
+                  :on-save="onFullPageSave"
+                />
+                <template #fallback>
+                  <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;">
+                    Loading full editor...
+                  </div>
+                </template>
+              </Suspense>
+            </div>
+          </div>
+        </Teleport>
 
         <div v-if="activeTab === 'properties'" class="inspector-form">
           <div class="inspector-kv">
@@ -2043,7 +3624,130 @@ function updateVoFieldValue(fieldName, value) {
             <div class="v">{{ nodeLabel }}</div>
           </div>
 
-          <div v-for="field in schema.fields" :key="field.key" class="inspector-field">
+          <!-- Invariant branch (027 — aggregate-invariants). -->
+          <div v-if="showInvariantEditor" class="inspector-invariant-section">
+            <InvariantEditor :invariant-id="node.id" @deleted="$emit('close')" />
+          </div>
+
+          <!-- UserStory branch (spec 019-userstory-properties-panel). -->
+          <div v-if="showUserStoryEditor" class="inspector-userstory-section">
+            <div class="inspector-field">
+              <label class="inspector-field__label">As a (role)</label>
+              <input
+                class="inspector-input"
+                type="text"
+                v-model="userStoryForm.role"
+                :disabled="userStorySaving"
+                placeholder="user, customer, admin..."
+              />
+            </div>
+            <div class="inspector-field">
+              <label class="inspector-field__label">I want to (action)</label>
+              <textarea
+                class="inspector-textarea"
+                v-model="userStoryForm.action"
+                :disabled="userStorySaving"
+                rows="3"
+                placeholder="perform some action..."
+              />
+            </div>
+            <div class="inspector-field">
+              <label class="inspector-field__label">So that (benefit)</label>
+              <textarea
+                class="inspector-textarea"
+                v-model="userStoryForm.benefit"
+                :disabled="userStorySaving"
+                rows="2"
+                placeholder="I can achieve some benefit..."
+              />
+            </div>
+            <div class="inspector-field">
+              <label class="inspector-field__label">Priority</label>
+              <select class="inspector-select" v-model="userStoryForm.priority" :disabled="userStorySaving">
+                <option v-for="opt in USER_STORY_PRIORITY_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+            <div class="inspector-field">
+              <label class="inspector-field__label">Status</label>
+              <select class="inspector-select" v-model="userStoryForm.status" :disabled="userStorySaving">
+                <option v-for="opt in USER_STORY_STATUS_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+
+            <!-- Acceptance Criteria editor -->
+            <div class="inspector-userstory-criteria">
+              <div class="inspector-section__header">
+                <h3 class="inspector-section__title">
+                  Acceptance Criteria
+                  <span v-if="userStoryForm.criteriaUserEdited" class="inspector-userstory-criteria__edited-badge" title="이 Acceptance Criteria는 수동 편집되었으며 재생성으로 덮어쓰지 않습니다.">edited</span>
+                </h3>
+              </div>
+              <div v-if="userStoryForm.acceptanceCriteria.length === 0" class="inspector-userstory-criteria__empty">
+                아직 작성된 Acceptance Criteria가 없습니다.
+              </div>
+              <div
+                v-for="(_, idx) in userStoryForm.acceptanceCriteria"
+                :key="idx"
+                class="inspector-userstory-criteria__row"
+              >
+                <span class="inspector-userstory-criteria__index">{{ idx + 1 }}.</span>
+                <textarea
+                  class="inspector-textarea inspector-userstory-criteria__input"
+                  v-model="userStoryForm.acceptanceCriteria[idx]"
+                  :disabled="userStorySaving"
+                  rows="2"
+                  placeholder="Given/When/Then 작성 시 참고할 조건을 입력하세요"
+                />
+                <div class="inspector-userstory-criteria__row-actions">
+                  <button
+                    type="button"
+                    class="inspector-userstory-criteria__btn"
+                    :disabled="userStorySaving || idx === 0"
+                    @click="moveCriterionUp(idx)"
+                    title="위로"
+                  >▲</button>
+                  <button
+                    type="button"
+                    class="inspector-userstory-criteria__btn"
+                    :disabled="userStorySaving || idx === userStoryForm.acceptanceCriteria.length - 1"
+                    @click="moveCriterionDown(idx)"
+                    title="아래로"
+                  >▼</button>
+                  <button
+                    type="button"
+                    class="inspector-userstory-criteria__btn inspector-userstory-criteria__btn--danger"
+                    :disabled="userStorySaving"
+                    @click="removeAcceptanceCriterion(idx)"
+                    title="삭제"
+                  >✕</button>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="inspector-userstory-criteria__add"
+                :disabled="userStorySaving || userStoryForm.acceptanceCriteria.length >= MAX_ACCEPTANCE_CRITERIA"
+                @click="addAcceptanceCriterion"
+              >
+                + Acceptance Criterion 추가
+              </button>
+            </div>
+
+            <div class="inspector-userstory-actions">
+              <button
+                type="button"
+                class="inspector-panel__btn primary"
+                :disabled="userStorySaving || !userStoryDirty"
+                @click="saveUserStory"
+              >
+                <span v-if="userStorySaving">저장 중...</span>
+                <span v-else>저장</span>
+              </button>
+            </div>
+            <div v-if="userStoryError" class="inspector-userstory-message inspector-userstory-message--error">{{ userStoryError }}</div>
+            <div v-if="userStorySuccess" class="inspector-userstory-message inspector-userstory-message--success">{{ userStorySuccess }}</div>
+          </div>
+
+          <div v-for="field in (schema?.fields || [])" :key="field.key" class="inspector-field">
             <label class="inspector-field__label">
               {{ field.label }}
               <span v-if="dirtyFields.includes(field.key)" class="inspector-field__dirty">•</span>
@@ -2089,6 +3793,19 @@ function updateVoFieldValue(fieldName, value) {
             :disabled="saving"
             @state-change="onPropertyEditorStateChange"
           />
+
+          <!-- Aggregate drill-down: open the Aggregate tab focused on this aggregate -->
+          <div v-if="isAggregateNode" class="inspector-aggregate-detail">
+            <button class="inspector-aggregate-detail__btn" @click="openAggregateDetail">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+              <span>어그리거트 디테일 보기</span>
+            </button>
+          </div>
 
           <!-- GWT Editor Section -->
           <div v-if="showGWTEditor" class="inspector-gwt-section">
@@ -2586,7 +4303,7 @@ function updateVoFieldValue(fieldName, value) {
           
           <!-- Single GWT Table: Properties as columns, Test cases as rows -->
           <div v-if="form.gwtSets.length > 0" class="gwt-unified-table">
-            <table class="gwt-decision-table">
+            <table v-if="gwtLayoutMode === 'table'" class="gwt-decision-table">
               <thead>
                 <!-- Section Header Row: Given/When/Then groups -->
                 <tr>
@@ -2627,12 +4344,13 @@ function updateVoFieldValue(fieldName, value) {
                   <!-- Given Field Names -->
                   <template v-if="form.gwtSets[0]?.given">
                     <template v-if="getAvailableProperties(form.gwtSets[0], 'given').length > 0">
-                      <th 
-                        v-for="prop in getAvailableProperties(form.gwtSets[0], 'given')" 
+                      <th
+                        v-for="prop in getAvailableProperties(form.gwtSets[0], 'given')"
                         :key="`given-${prop.name}`"
                         class="gwt-decision-table__property-col"
+                        :title="prop.name"
                       >
-                        {{ prop.name }}
+                        {{ gwtPropLabel(prop) }}
                       </th>
                     </template>
                     <th v-else class="gwt-decision-table__property-col">
@@ -2641,22 +4359,24 @@ function updateVoFieldValue(fieldName, value) {
                   </template>
                   <!-- When Field Names -->
                   <template v-if="form.gwtSets[0]?.when">
-                    <th 
-                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'when')" 
+                    <th
+                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'when')"
                       :key="`when-${prop.name}`"
                       class="gwt-decision-table__property-col"
+                      :title="prop.name"
                     >
-                      {{ prop.name }}
+                      {{ gwtPropLabel(prop) }}
                     </th>
                   </template>
                   <!-- Then Field Names -->
                   <template v-if="form.gwtSets[0]?.then">
-                    <th 
-                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'then')" 
+                    <th
+                      v-for="prop in getAvailableProperties(form.gwtSets[0], 'then')"
                       :key="`then-${prop.name}`"
                       class="gwt-decision-table__property-col"
+                      :title="prop.name"
                     >
-                      {{ prop.name }}
+                      {{ gwtPropLabel(prop) }}
                     </th>
                   </template>
                 </tr>
@@ -2899,7 +4619,128 @@ function updateVoFieldValue(fieldName, value) {
                 </tr>
               </tbody>
             </table>
-            
+
+            <!-- CARD LAYOUT: one card per test case, only set properties shown -->
+            <div v-else class="gwt-card-list">
+              <div
+                v-for="(gwtSet, rowIndex) in form.gwtSets"
+                :key="`gwt-card-${rowIndex}`"
+                class="gwt-card"
+              >
+                <div class="gwt-card__header">
+                  <span class="gwt-card__index">시나리오 {{ rowIndex + 1 }}</span>
+                  <button
+                    class="gwt-card__remove"
+                    :disabled="saving || form.gwtSets.length === 1"
+                    title="시나리오 삭제"
+                    @click="removeGWTSet(rowIndex)"
+                  >
+                    삭제
+                  </button>
+                </div>
+
+                <!-- Natural-language scenario input -->
+                <div class="gwt-card__nl">
+                  <textarea
+                    class="gwt-card__nl-input"
+                    :value="gwtNlText[rowIndex] || ''"
+                    rows="2"
+                    :disabled="saving || gwtNlBusy[rowIndex]"
+                    placeholder="자연어로 시나리오를 입력하세요. 예: 계좌 잔액이 25달러일 때 20달러 출금을 요청하면 거래가 승인되고 잔액은 5달러가 된다"
+                    @input="gwtNlText = { ...gwtNlText, [rowIndex]: $event.target.value }"
+                  />
+                  <button
+                    class="gwt-card__nl-btn"
+                    :disabled="saving || gwtNlBusy[rowIndex] || !(gwtNlText[rowIndex] || '').trim()"
+                    @click="applyNLToCard(rowIndex)"
+                  >
+                    {{ gwtNlBusy[rowIndex] ? '해석 중…' : '자연어 적용' }}
+                  </button>
+                </div>
+                <div v-if="gwtNlError[rowIndex]" class="gwt-card__nl-error">
+                  {{ gwtNlError[rowIndex] }}
+                </div>
+
+                <!-- Given / When / Then sections -->
+                <div class="gwt-card__sections">
+                  <div
+                    v-for="sec in gwtSectionKeys(gwtSet)"
+                    :key="sec"
+                    class="gwt-card__section"
+                    :class="`gwt-card__section--${sec}`"
+                  >
+                    <div class="gwt-card__section-head">
+                      <span class="gwt-card__section-title">{{ gwtSectionTitle(sec) }}</span>
+                      <span class="gwt-card__section-subtitle">{{ gwtSectionSubtitle(gwtSet, sec) }}</span>
+                    </div>
+
+                    <div
+                      v-if="getCardSectionProps(gwtSet, sec).length === 0"
+                      class="gwt-card__empty"
+                    >
+                      설정된 속성이 없습니다.
+                    </div>
+                    <div
+                      v-for="prop in getCardSectionProps(gwtSet, sec)"
+                      :key="`${sec}-${prop.name}`"
+                      class="gwt-card__field"
+                    >
+                      <label class="gwt-card__field-label" :title="prop.name">
+                        {{ gwtPropLabel(prop) }}
+                        <span v-if="prop.source === 'aggregate'" class="gwt-card__src-badge">상태</span>
+                      </label>
+                      <div class="gwt-card__field-control">
+                        <GwtFieldInput
+                          :model-value="gwtSet[sec].fieldValues[prop.name]"
+                          :prop="prop"
+                          :disabled="saving"
+                          @update:model-value="updateFieldValue(gwtSet, sec, prop.name, $event)"
+                          @edit-vo="openVoEditor(gwtSet, sec, prop.name, prop)"
+                        />
+                        <button
+                          class="gwt-card__field-remove"
+                          :disabled="saving"
+                          title="속성 제거"
+                          @click="removePropertyFromCard(gwtSet, sec, prop.name)"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Add property picker -->
+                    <div class="gwt-card__add-prop">
+                      <button
+                        class="gwt-card__add-prop-btn"
+                        :disabled="saving || getCardUnusedProps(gwtSet, sec).length === 0"
+                        @click="toggleCardPicker(rowIndex, sec)"
+                      >
+                        + 속성 추가
+                      </button>
+                      <div
+                        v-if="gwtCardPickerKey === `${rowIndex}:${sec}`"
+                        class="gwt-card__picker"
+                      >
+                        <button
+                          v-for="prop in getCardUnusedProps(gwtSet, sec)"
+                          :key="`${prop.source}-${prop.name}`"
+                          class="gwt-card__picker-item"
+                          :title="prop.name"
+                          @click="addPropertyToCard(gwtSet, sec, prop.name); gwtCardPickerKey = null"
+                        >
+                          <span class="gwt-card__picker-name">
+                            {{ gwtPropLabel(prop) }}
+                            <span v-if="prop.source === 'aggregate'" class="gwt-card__src-badge">상태</span>
+                          </span>
+                          <span class="gwt-card__picker-type">{{ prop.type }}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Add Row Button -->
             <div class="gwt-decision-table__add">
               <button
@@ -2936,6 +4777,23 @@ function updateVoFieldValue(fieldName, value) {
         </div>
         
         <div class="gwt-detail-modal__footer">
+          <div class="gwt-layout-toggle" role="group" aria-label="레이아웃 전환">
+            <span class="gwt-layout-toggle__label">레이아웃</span>
+            <button
+              class="gwt-layout-toggle__btn"
+              :class="{ 'gwt-layout-toggle__btn--active': gwtLayoutMode === 'card' }"
+              @click="gwtLayoutMode = 'card'"
+            >
+              카드
+            </button>
+            <button
+              class="gwt-layout-toggle__btn"
+              :class="{ 'gwt-layout-toggle__btn--active': gwtLayoutMode === 'table' }"
+              @click="gwtLayoutMode = 'table'"
+            >
+              테이블
+            </button>
+          </div>
           <button class="inspector-section__btn" @click="closeGWTDetailModal">Close</button>
         </div>
       </div>
@@ -4603,6 +6461,35 @@ function updateVoFieldValue(fieldName, value) {
   border-top: 1px solid var(--color-border);
 }
 
+/* Aggregate drill-down button */
+.inspector-aggregate-detail {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+}
+
+.inspector-aggregate-detail__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(252, 196, 25, 0.12);
+  border: 1px solid rgba(252, 196, 25, 0.5);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.inspector-aggregate-detail__btn:hover {
+  background: rgba(252, 196, 25, 0.22);
+  border-color: var(--color-aggregate, #fcc419);
+}
+
 /* GWT Sets Container */
 .inspector-gwt-sets {
   display: flex;
@@ -5376,7 +7263,314 @@ function updateVoFieldValue(fieldName, value) {
   padding: 16px 20px;
   border-top: 1px solid var(--color-border);
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Layout toggle (table <-> card) */
+.gwt-layout-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gwt-layout-toggle__label {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+  margin-right: 2px;
+}
+
+.gwt-layout-toggle__btn {
+  padding: 4px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gwt-layout-toggle__btn:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.gwt-layout-toggle__btn--active {
+  background: var(--color-accent, #5b8cff);
+  border-color: var(--color-accent, #5b8cff);
+  color: #fff;
+}
+
+.gwt-layout-toggle__btn--active:hover {
+  background: var(--color-accent, #5b8cff);
+}
+
+/* ============ GWT Card Layout ============ */
+.gwt-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gwt-card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.gwt-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.gwt-card__index {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
+}
+
+.gwt-card__remove {
+  padding: 3px 10px;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: var(--radius-sm);
+  color: #ff6b6b;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.gwt-card__remove:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.2);
+}
+
+.gwt-card__remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.gwt-card__nl {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 6px;
+}
+
+.gwt-card__nl-input {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-bright);
+  font-size: 0.78rem;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.gwt-card__nl-input:focus {
+  outline: none;
+  border-color: var(--color-accent, #5b8cff);
+}
+
+.gwt-card__nl-btn {
+  flex-shrink: 0;
+  padding: 0 14px;
+  background: var(--color-accent, #5b8cff);
+  border: 1px solid var(--color-accent, #5b8cff);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gwt-card__nl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gwt-card__nl-error {
+  font-size: 0.72rem;
+  color: #ff6b6b;
+  margin-bottom: 8px;
+}
+
+.gwt-card__sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.gwt-card__section {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  padding: 10px;
+}
+
+.gwt-card__section--given {
+  border-left-color: #4dabf7;
+}
+
+.gwt-card__section--when {
+  border-left-color: #ffd43b;
+}
+
+.gwt-card__section--then {
+  border-left-color: #69db7c;
+}
+
+.gwt-card__section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 8px;
+}
+
+.gwt-card__section-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-text-bright);
+}
+
+.gwt-card__section-subtitle {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+}
+
+.gwt-card__empty {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.gwt-card__field {
+  margin-bottom: 8px;
+}
+
+.gwt-card__field-label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--color-text);
+  margin-bottom: 3px;
+}
+
+.gwt-card__field-control {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.gwt-card__field-control > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.gwt-card__field-remove {
+  flex-shrink: 0;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gwt-card__field-remove:hover:not(:disabled) {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+
+.gwt-card__add-prop {
+  position: relative;
+  margin-top: 4px;
+}
+
+.gwt-card__add-prop-btn {
+  width: 100%;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.gwt-card__add-prop-btn:hover:not(:disabled) {
+  border-color: var(--color-accent, #5b8cff);
+  color: var(--color-text-bright);
+}
+
+.gwt-card__add-prop-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.gwt-card__picker {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.gwt-card__picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gwt-card__picker-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.gwt-card__picker-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.gwt-card__picker-type {
+  font-size: 0.64rem;
+  color: var(--color-text-secondary);
+}
+
+.gwt-card__src-badge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  background: rgba(105, 219, 124, 0.15);
+  border: 1px solid rgba(105, 219, 124, 0.4);
+  border-radius: 8px;
+  color: #69db7c;
+  font-size: 0.6rem;
+  font-weight: 600;
 }
 
 /* GWT Preview (Simple Display) */
@@ -5719,6 +7913,376 @@ function updateVoFieldValue(fieldName, value) {
 .figma-schema-modal__paste-area:focus {
   border-color: var(--color-accent, #1890ff);
   color: var(--color-text-primary, #333);
+}
+
+/* ── OpenPencil Design Editor tab ── */
+.inspector-design-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: calc(100vh - 180px);
+}
+.inspector-design-editor__content {
+  flex: 1;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--color-border, #e8e8e8);
+  min-height: 0;
+}
+.inspector-design-editor__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: #888;
+  font-size: 12px;
+}
+.inspector-design-editor__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+  gap: 4px;
+  position: relative;
+}
+.inspector-design-editor__generating {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 12px;
+  color: #7cb3ff;
+  font-size: 13px;
+}
+/* AI generation layout: status bar on top, chat panel filling remaining space */
+.inspector-design-ai-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.inspector-design-ai-layout__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #2a3a4a;
+  color: #7cb3ff;
+  font-size: 12px;
+  border-bottom: 1px solid #334;
+  flex-shrink: 0;
+}
+.inspector-design-ai-layout__chat {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #1e1e1e;
+}
+
+/* ── Open in Editor button ── */
+.ui-preview-frame__open-editor {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ui-preview-frame__open-editor:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+
+/* ── Full Page Editor overlay ── */
+.full-page-editor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+}
+.full-page-editor-overlay__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  font-size: 13px;
+  border-bottom: 1px solid #444;
+}
+.full-page-editor-overlay__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.full-page-editor-overlay__close:hover {
+  background: #444;
+  color: #fff;
+}
+.full-page-editor-overlay__body {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── AI generation mode selector ── */
+.ui-preview-empty__gen-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.ui-preview-empty__mode-select {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border, #d9d9d9);
+  border-radius: 4px;
+  background: var(--color-bg-elevated, #fff);
+  color: var(--color-text-secondary, #666);
+  cursor: pointer;
+}
+
+/* ── AI Chat panel (OpenPencil) ── */
+.inspector-ai-chat-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border, #e8e8e8);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+  max-height: 500px;
+}
+.inspector-ai-chat-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  font-size: 12px;
+}
+.inspector-ai-chat-panel__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.inspector-ai-chat-panel__close:hover {
+  background: #444;
+  color: #fff;
+}
+.inspector-ai-chat-panel__body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 300px;
+}
+
+/* ── Convert to design bar ── */
+.ui-preview-frame__convert-bar {
+  padding: 8px;
+  border-top: 1px solid var(--color-border, #e8e8e8);
+  background: var(--color-bg-elevated, #fafafa);
+}
+.ui-preview-frame__convert-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px dashed var(--color-accent, #1890ff);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-accent, #1890ff);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ui-preview-frame__convert-btn:hover:not(:disabled) {
+  background: rgba(24, 144, 255, 0.06);
+  border-style: solid;
+}
+.ui-preview-frame__convert-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Convert panel (AI generating) ── */
+.ui-preview-convert-panel {
+  margin-top: 8px;
+  border: 1px solid #334;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+.ui-preview-convert-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #2a3a4a;
+  color: #7cb3ff;
+  font-size: 12px;
+}
+.ui-preview-convert-panel__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #334;
+  border-top-color: #7cb3ff;
+  border-radius: 50%;
+  animation: convert-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes convert-spin {
+  to { transform: rotate(360deg); }
+}
+.ui-preview-convert-panel__cancel {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: transparent;
+  color: #aaa;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ui-preview-convert-panel__cancel:hover {
+  background: #333;
+  color: #fff;
+}
+.ui-preview-convert-panel__body {
+  max-height: 400px;
+  overflow: hidden;
+}
+
+/* UserStory branch (spec 019-userstory-properties-panel) */
+.inspector-userstory-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.inspector-userstory-criteria {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+.inspector-userstory-criteria__edited-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 8px;
+  background: #fde68a;
+  color: #92400e;
+  vertical-align: middle;
+}
+.inspector-userstory-criteria__empty {
+  padding: 8px 0;
+  color: var(--color-text-light, #6b7280);
+  font-size: 13px;
+  font-style: italic;
+}
+.inspector-userstory-criteria__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.inspector-userstory-criteria__index {
+  flex-shrink: 0;
+  padding-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-light, #6b7280);
+  min-width: 22px;
+}
+.inspector-userstory-criteria__input {
+  flex: 1;
+  min-width: 0;
+}
+.inspector-userstory-criteria__row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.inspector-userstory-criteria__btn {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  padding: 0;
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-bg, #fff);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.inspector-userstory-criteria__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.inspector-userstory-criteria__btn--danger:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+.inspector-userstory-criteria__add {
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: 1px dashed var(--color-border, #cbd5e1);
+  background: transparent;
+  color: var(--color-text, #374151);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.inspector-userstory-criteria__add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.inspector-userstory-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.inspector-userstory-message {
+  font-size: 13px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.inspector-userstory-message--error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.inspector-userstory-message--success {
+  background: #d1fae5;
+  color: #065f46;
 }
 </style>
 

@@ -29,7 +29,10 @@ async def get_all_user_stories(request: Request) -> list[dict[str, Any]]:
         priority: us.priority,
         status: us.status,
         bcId: bc.id,
-        bcName: bc.name
+        bcName: bc.name,
+        acceptanceCriteria: coalesce(us.acceptanceCriteria, []),
+        criteriaUserEdited: coalesce(us.criteriaUserEdited, false),
+        criteriaEditedAt: us.criteriaEditedAt
     } as user_story
     ORDER BY us.id
     """
@@ -65,7 +68,10 @@ async def get_unassigned_user_stories(request: Request) -> list[dict[str, Any]]:
         action: us.action,
         benefit: us.benefit,
         priority: us.priority,
-        status: us.status
+        status: us.status,
+        acceptanceCriteria: coalesce(us.acceptanceCriteria, []),
+        criteriaUserEdited: coalesce(us.criteriaUserEdited, false),
+        criteriaEditedAt: us.criteriaEditedAt
     } as user_story
     ORDER BY us.id
     """

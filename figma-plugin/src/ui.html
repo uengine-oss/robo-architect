@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Inter, system-ui, sans-serif;
+      font-size: 12px;
+      color: var(--figma-color-text, #333);
+      background: var(--figma-color-bg, #fff);
+      padding: 12px;
+    }
+    .header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .header h2 { font-size: 14px; font-weight: 600; }
+    .status { display: flex; align-items: center; gap: 6px; padding: 8px; border-radius: 6px; margin-bottom: 8px; }
+    .status--connected { background: #dcfce7; color: #166534; }
+    .status--disconnected { background: #fef2f2; color: #991b1b; }
+    .status--connecting { background: #fef9c3; color: #854d0e; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot--green { background: #22c55e; }
+    .dot--red { background: #ef4444; }
+    .dot--yellow { background: #eab308; animation: pulse 1s infinite; }
+    @keyframes pulse { 50% { opacity: 0.5; } }
+    .field { margin-bottom: 8px; }
+    .field label { display: block; font-size: 11px; color: #888; margin-bottom: 3px; }
+    .field input { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+    .field input:focus { outline: none; border-color: #3b82f6; }
+    .btn { padding: 6px 12px; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; }
+    .btn--primary { background: #3b82f6; color: #fff; }
+    .btn--primary:hover { background: #2563eb; }
+    .btn--primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn--secondary { background: #f3f4f6; color: #374151; }
+    .log { margin-top: 8px; max-height: 150px; overflow-y: auto; font-size: 11px; color: #666; }
+    .log-entry { padding: 2px 0; border-bottom: 1px solid #f0f0f0; }
+    .log-entry--error { color: #ef4444; }
+    .log-entry--success { color: #22c55e; }
+    .frames { margin-top: 8px; max-height: 120px; overflow-y: auto; }
+    .frame-item { padding: 4px 6px; border-radius: 3px; font-size: 11px; cursor: default; }
+    .frame-item:hover { background: #f3f4f6; }
+    .frame-id { color: #888; font-family: monospace; margin-left: 4px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+    </svg>
+    <h2>RoboArchitect Sync</h2>
+  </div>
+
+  <div id="status" class="status status--disconnected">
+    <div class="dot dot--red"></div>
+    <span>연결 안 됨</span>
+  </div>
+
+  <div class="field">
+    <label>Backend URL</label>
+    <input id="serverUrl" type="text" placeholder="http://localhost:8000 또는 https://&lt;tunnel&gt;" oninput="this.dataset.userEdited = '1'" />
+  </div>
+  <div class="field">
+    <label>File Key (auto-detected or manual override)</label>
+    <input id="fileKeyInput" type="text" placeholder="Figma file key" oninput="this.dataset.userEdited = '1'" />
+  </div>
+
+  <div style="display:flex;gap:6px;margin-bottom:8px;">
+    <button id="connectBtn" class="btn btn--primary" onclick="toggleConnection()">연결</button>
+    <button class="btn btn--secondary" onclick="listFrames()">프레임 목록</button>
+    <button class="btn btn--secondary" onclick="resetSavedConfig()" title="clientStorage + localStorage 모두 비움">초기화</button>
+  </div>
+
+  <div id="frames" class="frames"></div>
+  <div id="log" class="log"></div>
+
+  <script>
+    let ws = null
+    let connected = false
+    let fileKey = null
+
+    // ── Plugin message handling ──
+
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage
+      if (!msg) return
+
+      switch (msg.type) {
+        case 'PLUGIN_READY':
+          fileKey = msg.fileKey
+          if (fileKey) document.getElementById('fileKeyInput').value = fileKey
+          addLog(`Plugin ready. File: ${fileKey || '(auto-detect failed — enter manually)'}`)
+          // Tier-1 restore: localStorage (synchronous, instant pre-fill).
+          // Tier-2 restore arrives via RESTORED_CONFIG below — clientStorage,
+          // async, and authoritative (survives Figma cache clears that wipe
+          // localStorage).
+          try {
+            const savedUrl = localStorage.getItem('robo_sync_url')
+            if (savedUrl) {
+              document.getElementById('serverUrl').value = savedUrl
+            }
+            const savedFileKey = localStorage.getItem('robo_sync_file_key')
+            if (savedFileKey && !fileKey) {
+              fileKey = savedFileKey
+              document.getElementById('fileKeyInput').value = savedFileKey
+            }
+          } catch {}
+          break
+
+        case 'RESTORED_CONFIG':
+          // Tier-2 restore from figma.clientStorage. Treat as authoritative
+          // when the user hasn't already typed something into the inputs.
+          // Auto-connect after restore so the user doesn't have to click 연결
+          // on every plugin launch.
+          {
+            const urlInput = document.getElementById('serverUrl')
+            if (msg.backendUrl && !urlInput.dataset.userEdited) {
+              urlInput.value = msg.backendUrl
+              try { localStorage.setItem('robo_sync_url', msg.backendUrl) } catch {}
+            }
+            const fkInput = document.getElementById('fileKeyInput')
+            if (msg.fileKeyOverride && !fkInput.dataset.userEdited) {
+              fkInput.value = msg.fileKeyOverride
+              fileKey = msg.fileKeyOverride
+              try { localStorage.setItem('robo_sync_file_key', msg.fileKeyOverride) } catch {}
+            } else if (msg.autoDetectedFileKey) {
+              // No saved override — use Figma's auto-detected fileKey.
+              fileKey = msg.autoDetectedFileKey
+              if (!fkInput.value) fkInput.value = msg.autoDetectedFileKey
+            }
+            if (urlInput.value && !connected) {
+              addLog('Auto-connecting with saved config...')
+              connect()
+            }
+          }
+          break
+
+        case 'CONFIG_SAVED':
+          addLog('연결 정보 저장됨 (clientStorage)', 'success')
+          break
+
+        case 'CONFIG_RESET':
+          addLog('저장된 연결 정보 삭제됨', 'success')
+          try {
+            localStorage.removeItem('robo_sync_url')
+            localStorage.removeItem('robo_sync_file_key')
+          } catch {}
+          break
+
+        case 'FILE_KEY':
+          fileKey = msg.fileKey
+          break
+
+        case 'UPDATE_RESULT':
+          addLog(`Updated ${msg.updated}/${msg.total} nodes` + (msg.failed > 0 ? ` (${msg.failed} failed)` : ''), msg.failed > 0 ? 'error' : 'success')
+          break
+
+        case 'SYNC_RESULT':
+          addLog(msg.message, msg.success ? 'success' : 'error')
+          if (msg.errors?.length) {
+            for (const e of msg.errors.slice(0, 5)) addLog(`  - ${e}`, 'error')
+          }
+          // Report result to backend (handshake — saves figmaNodeId + notifies frontend)
+          reportSyncResult(msg)
+          break
+
+        case 'SYNC_CREATED':
+          addLog(msg.message, 'success')
+          if (msg.nodeId && msg.frameName) {
+            reportNewFrameToBackend(msg.nodeId, msg.frameName)
+          }
+          break
+
+        case 'EXPORT_RESULT':
+          if (msg.success) {
+            addLog(`Exported "${msg.frameName}" (${msg.frameId})`, 'success')
+          } else {
+            addLog(`Export failed: ${msg.error}`, 'error')
+          }
+          reportExportResult(msg)
+          break
+
+        case 'AUTO_EXPORT':
+          addLog(`Auto-sync: "${msg.frameName}" changed`)
+          // Send changed frame data to backend automatically
+          reportExportResult({
+            success: true,
+            frameId: msg.frameId,
+            frameName: msg.frameName,
+            frameData: msg.frameData,
+            uiNodeId: null, // Backend will match by frameName
+          })
+          break
+
+        case 'SELECTION':
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'SELECTION', nodes: msg.nodes, fileKey }))
+          }
+          break
+
+        case 'FRAMES_LIST':
+          showFrames(msg.frames)
+          break
+
+        case 'ERROR':
+          addLog(msg.message, 'error')
+          break
+
+        // Feature 016 / US2: plugin replies after attempting figma.createPage().
+        case 'CREATE_PAGE_RESULT':
+          if (msg.ok) addLog(`CREATE_PAGE → ${msg.figmaPageName} (${msg.figmaPageId})`, 'success')
+          else addLog(`CREATE_PAGE failed: ${msg.error}`, 'error')
+          reportCreatePageAck(msg)
+          break
+
+        // Feature 016 / US3 + FR-019b: plugin replies after creating a frame in a page.
+        case 'CREATE_FRAME_IN_PAGE_RESULT':
+          if (msg.ok) addLog(`CREATE_FRAME_IN_PAGE → ${msg.figmaFrameName} (${msg.figmaNodeId})  nodes=${msg.nodesCreated || 0}/${(msg.nodesCreated || 0) + (msg.nodesFailed || 0)}  build=${msg.buildId || 'unknown'}`, 'success')
+          else addLog(`CREATE_FRAME_IN_PAGE failed: ${msg.error}`, 'error')
+          reportCreateFrameInPageAck(msg)
+          break
+
+        // Feature 016 bidirectional sync results.
+        case 'UPDATE_FRAME_RESULT':
+          if (msg.ok) addLog(`UPDATE_FRAME → ${msg.figmaFrameName} (${msg.figmaNodeId})  nodes=${msg.nodesCreated || 0}/${(msg.nodesCreated || 0) + (msg.nodesFailed || 0)}`, 'success')
+          else addLog(`UPDATE_FRAME failed: ${msg.error}`, 'error')
+          reportUpdateFrameAck(msg)
+          break
+
+        case 'EXPORT_FRAME_BY_ID_RESULT':
+          if (msg.ok) addLog(`EXPORT_FRAME_BY_ID → ${msg.figmaFrameName} (${msg.figmaNodeId})`, 'success')
+          else addLog(`EXPORT_FRAME_BY_ID failed: ${msg.error}`, 'error')
+          reportExportFrameByIdAck(msg)
+          break
+      }
+    }
+
+    function reportUpdateFrameAck(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/update-frame-ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          figmaNodeId: msg.figmaNodeId || null,
+          figmaFrameName: msg.figmaFrameName || null,
+          nodesCreated: typeof msg.nodesCreated === 'number' ? msg.nodesCreated : null,
+          nodesFailed: typeof msg.nodesFailed === 'number' ? msg.nodesFailed : null,
+          error: msg.error || null,
+        })
+      }).catch(e => addLog(`update-frame-ack POST failed: ${e.message || e}`, 'error'))
+    }
+
+    function reportExportFrameByIdAck(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/export-frame-by-id-ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          figmaNodeId: msg.figmaNodeId || null,
+          figmaFrameName: msg.figmaFrameName || null,
+          frameData: msg.frameData || null,
+          error: msg.error || null,
+        })
+      }).catch(e => addLog(`export-frame-by-id-ack POST failed: ${e.message || e}`, 'error'))
+    }
+
+    // Feature 016 ack helpers — POST plugin's reply back to the backend
+    // so plugin_messages._resolve(requestId) can return the awaited Future.
+
+    function reportCreatePageAck(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/create-page-ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          figmaPageId: msg.figmaPageId || null,
+          figmaPageName: msg.figmaPageName || null,
+          error: msg.error || null,
+        })
+      }).catch(e => addLog(`create-page-ack POST failed: ${e.message || e}`, 'error'))
+    }
+
+    function reportCreateFrameInPageAck(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/create-frame-in-page-ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          figmaPageId: msg.figmaPageId || null,
+          figmaNodeId: msg.figmaNodeId || null,
+          figmaFrameName: msg.figmaFrameName || null,
+          nodesCreated: typeof msg.nodesCreated === 'number' ? msg.nodesCreated : null,
+          nodesFailed: typeof msg.nodesFailed === 'number' ? msg.nodesFailed : null,
+          renderErrors: Array.isArray(msg.renderErrors) ? msg.renderErrors : null,
+          buildId: msg.buildId || null,
+          error: msg.error || null,
+        })
+      }).catch(e => addLog(`create-frame-in-page-ack POST failed: ${e.message || e}`, 'error'))
+    }
+
+    // ── WebSocket connection ──
+
+    function toggleConnection() {
+      if (connected) disconnect()
+      else connect()
+    }
+
+    function connect() {
+      const baseUrl = document.getElementById('serverUrl').value
+      if (!baseUrl) return
+      const manualFileKey = document.getElementById('fileKeyInput').value.trim()
+
+      setStatus('connecting')
+
+      // Tier-1 (fast): localStorage. Tier-2 (durable): plugin sandbox's
+      // figma.clientStorage. Both write together so a Figma session that
+      // clears one still has the other.
+      try {
+        localStorage.setItem('robo_sync_url', baseUrl)
+        if (manualFileKey) localStorage.setItem('robo_sync_file_key', manualFileKey)
+        else localStorage.removeItem('robo_sync_file_key')
+      } catch {}
+      parent.postMessage({ pluginMessage: {
+        type: 'SAVE_CONFIG',
+        backendUrl: baseUrl,
+        fileKeyOverride: manualFileKey || null,
+      } }, '*')
+
+      // Figma plugin iframe cannot connect to localhost directly.
+      // Use HTTP polling instead of WebSocket.
+      addLog('Polling mode (Figma sandbox)')
+      startPolling(baseUrl)
+    }
+
+    function resetSavedConfig() {
+      if (!confirm('저장된 연결 정보(Backend URL, File Key override)를 모두 지웁니다.\nclientStorage + localStorage 양쪽 모두 비웁니다.')) return
+      document.getElementById('serverUrl').value = ''
+      document.getElementById('fileKeyInput').value = ''
+      delete document.getElementById('serverUrl').dataset.userEdited
+      delete document.getElementById('fileKeyInput').dataset.userEdited
+      try {
+        localStorage.removeItem('robo_sync_url')
+        localStorage.removeItem('robo_sync_file_key')
+      } catch {}
+      parent.postMessage({ pluginMessage: { type: 'RESET_CONFIG' } }, '*')
+      if (connected) disconnect()
+    }
+
+    let pollTimer = null
+
+    function startPolling(baseUrl) {
+      // Normalize URL (remove trailing slash, ws→http conversion)
+      const httpUrl = baseUrl.replace(/\/$/, '').replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://').replace(/\/ws\/figma-plugin.*$/, '')
+
+      // Register via REST
+      addLog(`Connecting to ${httpUrl}...`)
+      fetch(`${httpUrl}/api/figma-plugin/status`, {
+        headers: { 'ngrok-skip-browser-warning': '1' }
+      })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.json()
+        })
+        .then(data => {
+          connected = true
+          // Use manual fileKey if sandbox didn't provide one
+          if (!fileKey) {
+            fileKey = document.getElementById('fileKeyInput').value.trim() || null
+          }
+          setStatus('connected')
+          addLog(`Connected! Polling every 3s (file: ${fileKey || 'none'})`, 'success')
+          document.getElementById('connectBtn').textContent = '연결 해제'
+
+          // Announce supported message set so the backend can detect old plugins
+          // (feature 016 — figma-document-binding adds CREATE_PAGE / CREATE_FRAME_IN_PAGE)
+          if (fileKey) {
+            fetch(`${httpUrl}/api/figma-plugin/announce-support`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+              body: JSON.stringify({
+                file_key: fileKey,
+                supportedMessages: [
+                  'UPDATE_NODES', 'UPDATE_TEXT', 'SYNC_FRAME',
+                  'CREATE_PAGE', 'CREATE_FRAME_IN_PAGE'
+                ]
+              })
+            }).catch(() => { /* best-effort */ })
+          }
+
+          // Start polling for pending updates
+          pollTimer = setInterval(() => pollUpdates(httpUrl), 3000)
+        })
+        .catch(e => {
+          setStatus('disconnected')
+          addLog(`Connection failed: ${e.message || e}`, 'error')
+        })
+    }
+
+    function pollUpdates(httpUrl) {
+      // If fileKey not available from plugin sandbox, extract from the URL input
+      if (!fileKey) {
+        const url = document.getElementById('serverUrl').value
+        // Try to extract file key from a Figma URL or use a default
+        const match = url.match(/file_key=([^&]+)/)
+        if (match) fileKey = match[1]
+      }
+      if (!connected || !fileKey) {
+        // Try asking plugin sandbox for fileKey
+        parent.postMessage({ pluginMessage: { type: 'GET_FILE_KEY' } }, '*')
+        return
+      }
+      fetch(`${httpUrl}/api/figma-plugin/poll?file_key=${fileKey}`, {
+        headers: { 'ngrok-skip-browser-warning': '1' }
+      })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.json()
+        })
+        .then(data => {
+          if (data.updates && data.updates.length > 0) {
+            addLog(`Received ${data.updates.length} update(s)`)
+            for (const update of data.updates) {
+              handleServerMessage(update)
+            }
+          }
+        })
+        .catch(e => {
+          addLog(`Poll error: ${e.message || e}`, 'error')
+        })
+    }
+
+    function disconnect() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+      connected = false
+      setStatus('disconnected')
+      document.getElementById('connectBtn').textContent = '연결'
+    }
+
+    // ── Handle messages from backend ──
+
+    function handleServerMessage(msg) {
+      switch (msg.type) {
+        case 'UPDATE_NODES':
+          // Check for SYNC_FRAME command embedded in node updates
+          // Check for EXPORT_FRAME command
+          const exportUpdate = msg.nodeUpdates?.find(u => u.props?.__exportFrame)
+          if (exportUpdate) {
+            addLog(`Export request: "${exportUpdate.props.frameName}"`)
+            parent.postMessage({ pluginMessage: {
+              type: 'EXPORT_FRAME',
+              figmaNodeId: exportUpdate.props.figmaNodeId,
+              frameName: exportUpdate.props.frameName,
+              uiNodeId: exportUpdate.props.uiNodeId,
+            } }, '*')
+            break
+          }
+          // Check for LIST_FRAMES command
+          const listUpdate = msg.nodeUpdates?.find(u => u.props?.__listFrames)
+          if (listUpdate) {
+            parent.postMessage({ pluginMessage: { type: 'LIST_FRAMES' } }, '*')
+            break
+          }
+          // Check for FIND_AND_REPLACE command
+          const frUpdate = msg.nodeUpdates?.find(u => u.props?.__findReplace)
+          if (frUpdate) {
+            const frMsg = {
+              type: 'FIND_AND_REPLACE_TEXT',
+              pageName: frUpdate.props.pageName,
+              searchText: frUpdate.props.searchText,
+              replaceText: frUpdate.props.replaceText,
+            }
+            addLog(`Find&Replace: "${frUpdate.props.searchText}" → "${frUpdate.props.replaceText}"`)
+            parent.postMessage({ pluginMessage: frMsg }, '*')
+            break
+          }
+          // Check for SYNC_FRAME command
+          const syncUpdate = msg.nodeUpdates?.find(u => u.props?.__syncFrame)
+          if (syncUpdate) {
+            // Save uiNodeId for handshake when result comes back
+            lastSyncUiNodeId = syncUpdate.props.uiNodeId || null
+            const syncMsg = {
+              type: 'SYNC_FRAME',
+              figmaNodeId: syncUpdate.props.figmaNodeId,
+              frameName: syncUpdate.props.frameName,
+              textUpdates: syncUpdate.props.textUpdates || [],
+              sceneGraph: syncUpdate.props.sceneGraph || null,
+            }
+            addLog(`Sync frame: "${syncUpdate.props.frameName}" (${syncUpdate.props.textUpdates?.length || 0} texts)`)
+            parent.postMessage({ pluginMessage: syncMsg }, '*')
+          } else {
+            addLog(`Received ${msg.nodeUpdates?.length || 0} node updates`)
+            parent.postMessage({ pluginMessage: msg }, '*')
+          }
+          break
+
+        case 'UPDATE_TEXT':
+          addLog(`Text update: ${msg.nodeId} → "${msg.text?.slice(0, 20)}..."`)
+          parent.postMessage({ pluginMessage: msg }, '*')
+          break
+
+        case 'FIND_AND_REPLACE_TEXT':
+          addLog(`Find&Replace: "${msg.searchText || '(first)'}" → "${msg.replaceText}" on page "${msg.pageName || 'current'}"`)
+          parent.postMessage({ pluginMessage: msg }, '*')
+          break
+
+        case 'PING':
+          if (ws) ws.send(JSON.stringify({ type: 'PONG' }))
+          break
+
+        // Feature 016 / US2: backend asks plugin to create a Figma page.
+        case 'CREATE_PAGE':
+          addLog(`CREATE_PAGE: "${msg.name}"`)
+          parent.postMessage({ pluginMessage: { type: 'CREATE_PAGE', requestId: msg.requestId, name: msg.name } }, '*')
+          break
+
+        // Feature 016 / US3 + FR-019b: backend asks plugin to create a frame in a page.
+        case 'CREATE_FRAME_IN_PAGE':
+          addLog(`CREATE_FRAME_IN_PAGE: page=${msg.figmaPageId} frame="${msg.frameName}"`)
+          parent.postMessage({ pluginMessage: {
+            type: 'CREATE_FRAME_IN_PAGE',
+            requestId: msg.requestId,
+            figmaPageId: msg.figmaPageId,
+            frameName: msg.frameName,
+            sceneGraph: msg.sceneGraph,
+          } }, '*')
+          break
+
+        // Feature 016 bidirectional sync (RA → Figma in-place update).
+        case 'UPDATE_FRAME_FROM_SCENE_GRAPH':
+          addLog(`UPDATE_FRAME_FROM_SCENE_GRAPH: frame=${msg.figmaNodeId}`)
+          parent.postMessage({ pluginMessage: {
+            type: 'UPDATE_FRAME_FROM_SCENE_GRAPH',
+            requestId: msg.requestId,
+            figmaNodeId: msg.figmaNodeId,
+            sceneGraph: msg.sceneGraph,
+          } }, '*')
+          break
+
+        // Feature 016 bidirectional sync (Figma → RA pull via plugin).
+        case 'EXPORT_FRAME_BY_ID':
+          addLog(`EXPORT_FRAME_BY_ID: frame=${msg.figmaNodeId}`)
+          parent.postMessage({ pluginMessage: {
+            type: 'EXPORT_FRAME_BY_ID',
+            requestId: msg.requestId,
+            figmaNodeId: msg.figmaNodeId,
+          } }, '*')
+          break
+
+        default:
+          addLog(`Unknown message: ${msg.type}`)
+      }
+    }
+
+    // ── UI helpers ──
+
+    function setStatus(state) {
+      const el = document.getElementById('status')
+      el.className = `status status--${state}`
+      const dot = el.querySelector('.dot')
+      dot.className = `dot dot--${state === 'connected' ? 'green' : state === 'connecting' ? 'yellow' : 'red'}`
+      el.querySelector('span').textContent = state === 'connected' ? '연결됨' : state === 'connecting' ? '연결 중...' : '연결 안 됨'
+    }
+
+    function addLog(text, level = '') {
+      const log = document.getElementById('log')
+      const entry = document.createElement('div')
+      entry.className = `log-entry${level ? ` log-entry--${level}` : ''}`
+      entry.textContent = `${new Date().toLocaleTimeString()} ${text}`
+      log.prepend(entry)
+      if (log.children.length > 50) log.lastChild.remove()
+    }
+
+    // The uiNodeId from the last SYNC_FRAME request (for handshake)
+    let lastSyncUiNodeId = null
+
+    function reportExportResult(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      const effectiveFileKey = fileKey || document.getElementById('fileKeyInput').value.trim()
+      if (!effectiveFileKey) { addLog('No file key — cannot report', 'error'); return }
+      fetch(`${httpUrl}/api/figma-plugin/export-result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          file_key: effectiveFileKey,
+          frame_id: msg.frameId || '',
+          frame_name: msg.frameName || '',
+          frame_data: msg.frameData || null,
+          ui_node_id: msg.uiNodeId || null,
+          success: msg.success || false,
+          error: msg.error || '',
+        })
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.ok) addLog(`Saved to backend (${data.nodeCount || 0} nodes)`, 'success')
+          else addLog(`Backend save failed: ${data.detail || JSON.stringify(data)}`, 'error')
+        })
+        .catch(e => addLog(`Export report failed: ${e.message || e}`, 'error'))
+    }
+
+    function reportSyncResult(msg) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      fetch(`${httpUrl}/api/figma-plugin/report-result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          file_key: fileKey,
+          frame_name: msg.frameName || '',
+          frame_id: msg.frameId || '',
+          is_new_frame: msg.isNewFrame || false,
+          updated: msg.updated || 0,
+          failed: msg.failed || 0,
+          message: msg.message || '',
+          ui_node_id: lastSyncUiNodeId,
+        })
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.ok) addLog('Result reported to backend', 'success')
+        })
+        .catch(e => addLog(`Report failed: ${e.message || e}`, 'error'))
+    }
+
+    function reportNewFrameToBackend(figmaNodeId, frameName) {
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      addLog(`Reporting new frame to backend: ${figmaNodeId} "${frameName}"`)
+      fetch(`${httpUrl}/api/figma-plugin/register-frame`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({
+          file_key: fileKey,
+          figma_node_id: figmaNodeId,
+          frame_name: frameName
+        })
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.ok) addLog(`Frame ID saved: ${figmaNodeId}`, 'success')
+          else addLog(`Failed to save frame ID: ${data.detail || ''}`, 'error')
+        })
+        .catch(e => addLog(`Report failed: ${e.message || e}`, 'error'))
+    }
+
+    function listFrames() {
+      parent.postMessage({ pluginMessage: { type: 'LIST_FRAMES' } }, '*')
+    }
+
+    function showFrames(frames) {
+      const el = document.getElementById('frames')
+      el.innerHTML = frames.map(f =>
+        `<div class="frame-item">${f.pageName} / ${f.name} <span class="frame-id">${f.id}</span></div>`
+      ).join('')
+      addLog(`${frames.length} frames found`)
+    }
+  </script>
+</body>
+</html>

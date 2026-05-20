@@ -1,0 +1,125 @@
+// src/plugin.ts
+figma.showUI(__html__, { width: 320, height: 400, themeColors: true });
+figma.ui.onmessage = async (msg) => {
+  switch (msg.type) {
+    case "UPDATE_NODES":
+      await handleNodeUpdates(msg.nodeUpdates || []);
+      break;
+    case "UPDATE_TEXT":
+      await handleTextUpdate(msg.nodeId, msg.text);
+      break;
+    case "UPDATE_NAME":
+      handleNameUpdate(msg.nodeId, msg.name);
+      break;
+    case "GET_SELECTION":
+      sendSelection();
+      break;
+    case "GET_FILE_KEY":
+      figma.ui.postMessage({ type: "FILE_KEY", fileKey: figma.fileKey });
+      break;
+    case "LIST_FRAMES":
+      listAllFrames();
+      break;
+  }
+};
+async function handleNodeUpdates(updates) {
+  let updated = 0;
+  let failed = 0;
+  for (const update of updates) {
+    const node = figma.getNodeById(update.nodeId);
+    if (!node) {
+      failed++;
+      continue;
+    }
+    try {
+      applyProps(node, update.props);
+      updated++;
+    } catch (e) {
+      console.error(`Failed to update node ${update.nodeId}:`, e);
+      failed++;
+    }
+  }
+  figma.ui.postMessage({
+    type: "UPDATE_RESULT",
+    updated,
+    failed,
+    total: updates.length
+  });
+}
+async function handleTextUpdate(nodeId, text) {
+  const node = figma.getNodeById(nodeId);
+  if (!node || node.type !== "TEXT") {
+    figma.ui.postMessage({ type: "ERROR", message: `Text node ${nodeId} not found` });
+    return;
+  }
+  const textNode = node;
+  await Promise.all(textNode.getRangeAllFontNames(0, textNode.characters.length).map(figma.loadFontAsync));
+  textNode.characters = text;
+  figma.ui.postMessage({ type: "UPDATE_RESULT", updated: 1, failed: 0, total: 1 });
+}
+function handleNameUpdate(nodeId, name) {
+  const node = figma.getNodeById(nodeId);
+  if (!node)
+    return;
+  node.name = name;
+}
+function applyProps(node, props) {
+  for (const [key, value] of Object.entries(props)) {
+    if (key === "text" && node.type === "TEXT") {
+      continue;
+    }
+    if (key === "fills" && "fills" in node) {
+      node.fills = value;
+    } else if (key === "strokes" && "strokes" in node) {
+      node.strokes = value;
+    } else if (key === "x" && "x" in node) {
+      node.x = value;
+    } else if (key === "y" && "y" in node) {
+      node.y = value;
+    } else if (key === "width" && "resize" in node) {
+      node.resize(value, node.height);
+    } else if (key === "height" && "resize" in node) {
+      node.resize(node.width, value);
+    } else if (key === "name") {
+      node.name = value;
+    } else if (key === "visible") {
+      node.visible = value;
+    } else if (key === "opacity" && "opacity" in node) {
+      node.opacity = value;
+    } else if (key === "cornerRadius" && "cornerRadius" in node) {
+      node.cornerRadius = value;
+    }
+  }
+}
+function sendSelection() {
+  const selection = figma.currentPage.selection.map((n) => ({
+    id: n.id,
+    name: n.name,
+    type: n.type,
+    width: "width" in n ? n.width : 0,
+    height: "height" in n ? n.height : 0
+  }));
+  figma.ui.postMessage({ type: "SELECTION", nodes: selection });
+}
+function listAllFrames() {
+  const frames = [];
+  for (const page of figma.root.children) {
+    for (const child of page.children) {
+      if (child.type === "FRAME" || child.type === "COMPONENT" || child.type === "COMPONENT_SET") {
+        frames.push({
+          id: child.id,
+          name: child.name,
+          width: child.width,
+          height: child.height,
+          pageId: page.id,
+          pageName: page.name
+        });
+      }
+    }
+  }
+  figma.ui.postMessage({ type: "FRAMES_LIST", frames });
+}
+figma.on("selectionchange", () => {
+  sendSelection();
+});
+figma.ui.postMessage({ type: "PLUGIN_READY", fileKey: figma.fileKey });

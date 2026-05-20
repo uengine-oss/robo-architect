@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>{{ meta.title|e }} {{ meta.version|e }}</title>
+<style>
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", Arial, sans-serif;
+      margin: 0; background: #f5f7fa; color: #111827;
+    }
+    .page { width: 1020px; margin: 28px auto; background: #fff; padding: 52px 60px 64px 60px; box-shadow: 0 6px 24px rgba(0,0,0,.08); border-radius: 12px; }
+    .eyebrow { font-size: 13px; color: #6b7280; margin-bottom: 18px; letter-spacing: .2px; }
+    h1 { font-size: 31px; line-height: 1.35; margin: 0 0 26px 0; font-weight: 700; }
+    h2 { font-size: 21px; line-height: 1.4; margin: 42px 0 14px 0; font-weight: 700; }
+    h3 { font-size: 16px; line-height: 1.4; margin: 18px 0 8px 0; font-weight: 700; }
+    h4 { font-size: 15px; line-height: 1.4; margin: 16px 0 8px 0; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; margin-bottom: 14px; }
+    th, td { border: 1px solid #d9dde3; padding: 12px 14px; text-align: left; vertical-align: top; word-break: keep-all; line-height: 1.6; }
+    th { background: #f3f5f7; font-weight: 600; }
+    .meta th { width: 170px; }
+    .box { border: 1px solid #d9dde3; background: #fff; padding: 16px 18px; line-height: 1.75; font-size: 15px; }
+    ul { margin: 6px 0 0 0; padding-left: 18px; }
+    li { margin: 4px 0; line-height: 1.7; font-size: 15px; }
+    .small { color: #6b7280; font-size: 13px; margin-top: 14px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .center { text-align: center; font-weight: 600; }
+    .subtle { color: #4b5563; font-size: 14px; margin: -2px 0 10px 0; }
+    .plain-text { font-size: 15px; line-height: 1.75; margin: 6px 0 12px 0; }
+    .principle-text { font-size: 15px; line-height: 1.75; margin: 4px 0; }
+    .policy-group { margin: 22px 0 30px 0; padding-top: 2px; }
+    .policy-item { padding: 10px 0 12px 0; margin: 0; }
+    .policy-item-title { font-weight: 700; line-height: 1.55; font-size: 14px; color: #111827; margin-bottom: 4px; }
+    .policy-item-title .mono { color: #4b5563; font-weight: 500; }
+    .policy-item-content { line-height: 1.65; font-size: 14px; word-break: keep-all; color: #111827; padding-left: 12px; }
+    .policy-detail-guide { border: 1px solid #d9dde3; background: #f9fafb; border-radius: 10px; padding: 13px 15px; margin: 10px 0 18px 0; font-size: 14px; line-height: 1.7; color: #374151; }
+    .diagram-wrap { border: 1px solid #d9dde3; background: #fff; padding: 12px; border-radius: 8px; margin: 10px 0 18px 0; overflow-x: auto; }
+    .warning-box { border: 1px solid #f3d28a; background: #fff8e6; color: #6a4a00; padding: 10px 12px; border-radius: 6px; font-size: 13px; margin: 12px 0; }
+    table, table th, table td, table td *, table th *, table li, table .mono {
+      font-size: 14px !important; line-height: 1.6;
+      -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+    }
+</style>
+</head>
+<body>
+<div class="page">
+<div class="eyebrow">{{ meta.eyebrow|e }}</div>
+<h1>{{ meta.title|e }}</h1>
+
+<table class="meta">
+<tr><th>정책서 ID</th><td class="mono">{{ meta.doc_id|e }}</td></tr>
+<tr><th>문서 구분</th><td>{{ meta.doc_kind|e }}</td></tr>
+<tr><th>문서 상태</th><td>{{ meta.doc_status|e }}</td></tr>
+<tr><th>버전</th><td class="mono">{{ meta.version|e }}</td></tr>
+<tr><th>작성자</th><td>{{ meta.author|e }}</td></tr>
+<tr><th>작성일</th><td>{{ meta.generated_at|e }}</td></tr>
+{% if meta.git_sha %}<tr><th>소스 커밋</th><td class="mono">{{ meta.git_sha|e }}</td></tr>{% endif %}
+</table>
+
+<h2>0. 문서 히스토리</h2>
+<table>
+<thead>
+<tr>
+<th style="width: 90px;">버전</th>
+<th>변경 내용</th>
+<th style="width: 120px;">변경일자</th>
+<th style="width: 180px;">변경자</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>{{ meta.version|e }}</td><td>이벤트 스토밍 그래프로부터 자동 생성된 초기 정책서</td><td>{{ meta.generated_at|e }}</td><td>{{ meta.author|e }}</td></tr>
+</tbody>
+</table>
+
+<h2>1. 개요</h2>
+<h3>가. 범위</h3>
+<p class="plain-text">{{ scope_text|safe }}</p>
+<h3>나. 설계 원칙</h3>
+{% if principles %}
+{% for p in principles %}<p class="principle-text">• {% if p.title %}<b>{{ p.title|e }}</b>: {% endif %}{{ p.body|e }}</p>{% endfor %}
+{% else %}
+<p class="principle-text">• <b>이벤트 일관성</b>: 모든 상태 변경은 명시적 이벤트로 표현한다.</p>
+<p class="principle-text">• <b>경계 책임</b>: 각 Bounded Context 는 자기 Aggregate 의 일관성만 책임진다.</p>
+<p class="principle-text">• <b>정책 단일 출처</b>: 정책 판정 기준은 그래프 상의 Policy 노드에서만 정의한다.</p>
+{% endif %}
+
+<h2>2. 주요 용어</h2>
+{% include "partials/section_glossary.j2" %}
+
+<h2>3. 유즈케이스 정의</h2>
+{% include "partials/section_usecase.j2" %}
+
+<h2>4. 프로세스 정의</h2>
+{% include "partials/section_process.j2" %}
+
+<h2>5. 기능 정의</h2>
+{% include "partials/section_function.j2" %}
+
+<h2>6. 정책 정의</h2>
+{% include "partials/section_policy.j2" %}
+
+{% if warnings %}
+<div class="warning-box">
+<b>자동 생성 경고</b>
+<ul>
+{% for w in warnings %}<li>{{ w|e }}</li>{% endfor %}
+</ul>
+</div>
+{% endif %}
+
+<p class="small">본 정책서는 robo-architect 의 이벤트 스토밍 그래프로부터 자동 생성된 초안입니다. 도출이 불가능한 일부 항목(설계 원칙, 정책 prose, 상태 전이 trigger 자연어 설명)은 LLM 합성 또는 폴백 텍스트로 채워졌습니다.</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<p class="plain-text">본 장의 용어는 본 정책서 전반에서 동일한 의미로 사용한다.</p>
+{% if glossary %}
+<table>
+<thead>
+<tr>
+<th style="width: 130px;">용어 ID</th>
+<th style="width: 220px;">용어</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+{% for term in glossary %}
+<tr>
+<td class="mono">TM-{{ "%03d" % loop.index }}</td>
+<td>{{ term.term|e }}</td>
+<td>{{ term.definition|e }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="subtle">(그래프에 모델링된 도메인 용어가 없습니다.)</p>
+{% endif %}

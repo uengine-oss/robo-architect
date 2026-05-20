@@ -199,6 +199,9 @@ async def link_commands_to_existing_events_phase(
                 if cn and cid:
                     cmd_name_to_id[cn] = cid
 
+            # ── Resolve event names → IDs in a single query, then bulk-MERGE ──
+            # FR-001 (spec 018): drops the per-(cmd,evt) Neo4j round-trips.
+            pending_pairs: list[tuple[str, str]] = []  # (cmd_id, event_name)
             for row in links:
                 cname = (row.command_name or "").strip()
                 cmd_id = cmd_name_to_id.get(cname)
@@ -208,16 +211,55 @@ async def link_commands_to_existing_events_phase(
                     ename = (ename or "").strip()
                     if not ename or ename not in allowed_set:
                         continue
-                    ok = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            ctx.client.link_command_to_event_by_name,
-                            command_id=cmd_id,
-                            event_name=ename,
-                        ),
-                        timeout=10.0,
+                    pending_pairs.append((cmd_id, ename))
+
+            if pending_pairs:
+                # Resolve every distinct event name once.
+                distinct_names = sorted({en for _, en in pending_pairs})
+                event_id_by_lower: dict[str, str] = {}
+                with ctx.client.session() as session:
+                    cur = session.run(
+                        """
+                        UNWIND $names AS n
+                        OPTIONAL MATCH (evt1:Event {name: n})
+                        OPTIONAL MATCH (evt2:Event {displayName: n})
+                        OPTIONAL MATCH (evt3:Event)
+                          WHERE toLower(evt3.name) = toLower(n)
+                             OR toLower(evt3.displayName) = toLower(n)
+                        WITH n, coalesce(evt1, evt2, evt3) AS evt
+                        WHERE evt IS NOT NULL
+                        RETURN n AS lookup, evt.id AS id LIMIT 1000
+                        """,
+                        names=distinct_names,
                     )
-                    if ok:
-                        linked_total += 1
+                    for rec in cur:
+                        if rec and rec.get("id"):
+                            event_id_by_lower[rec["lookup"].lower()] = rec["id"]
+
+                emit_rows: list[dict[str, Any]] = []
+                for cmd_id, ename in pending_pairs:
+                    evt_id = event_id_by_lower.get(ename.lower())
+                    if evt_id:
+                        emit_rows.append({"cmd_id": cmd_id, "evt_id": evt_id})
+
+                if emit_rows:
+                    from api.features.ingestion.suspend_gate import session_call_slot
+                    try:
+                        async with session_call_slot(ctx.session):
+                            results = await asyncio.to_thread(
+                                ctx.client.bulk_link_emits,
+                                emit_rows,
+                                session_id=ctx.session.id,
+                                phase="link_command_to_events",
+                            )
+                            linked_total += sum(1 for r in results if r.get("ok"))
+                    except Exception as exc:  # noqa: BLE001
+                        SmartLogger.log(
+                            "ERROR",
+                            f"bulk_link_emits failed: {exc}",
+                            category="ingestion.batch.emits_link.flush_failed",
+                            params={"session_id": ctx.session.id, "rowCount": len(emit_rows), "error": str(exc)},
+                        )
 
     _refresh_events_by_agg(ctx)
 

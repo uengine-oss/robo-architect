@@ -1,0 +1,36 @@
+<h3>가. 정책 목록</h3>
+{% if policies %}
+<table>
+<thead>
+<tr>
+<th style="width: 170px;">정책 ID</th>
+<th style="width: 220px;">정책명</th>
+<th>요약</th>
+</tr>
+</thead>
+<tbody>
+{% for pol in policies %}
+<tr>
+<td class="mono">{{ pol.id|e }}</td>
+<td>{{ pol.name|e }}</td>
+<td>{{ pol.description|e }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+<h3>나. 정책 상세</h3>
+<div class="policy-group">
+{% for pol in policies %}
+<div class="policy-item">
+<div class="policy-item-title"><span class="mono">{{ pol.id|e }}</span> · {{ pol.name|e }}</div>
+<div class="policy-item-content">
+{% if pol.prose %}<p style="margin: 2px 0;">{{ pol.prose|e }}</p>{% endif %}
+{% if pol.effect %}<p style="margin: 2px 0;"><b>판정 조건</b>: {{ pol.effect|e }}</p>{% endif %}
+</div>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<p class="subtle">(정책 노드가 그래프에 모델링되어 있지 않습니다.)</p>
+{% endif %}

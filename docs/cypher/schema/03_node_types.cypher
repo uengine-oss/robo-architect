@@ -46,6 +46,8 @@ CREATE (r:Requirement {
 //   - priority: String
 //   - status: String ("draft", "approved", "implemented")
 //   - acceptanceCriteria: List<String>
+//   - criteriaUserEdited: Boolean   (true once a user has edited acceptanceCriteria via the Properties panel; blocks ingestion regen of that field per spec 019)
+//   - criteriaEditedAt: DateTime    (timestamp of the last manual criteria edit; null until first edit)
 // ############################################################
 
 CREATE (us:UserStory {
@@ -98,7 +100,12 @@ SET bc.name = "Order",
 //
 // 선택 속성:
 //   - rootEntity: String
-//   - invariants: List<String>
+//   - invariants: List<String>   (027 이후 레거시 — Invariant 노드로 이관, 이관 후 비워짐)
+//   - invariantsMigratedAt: DateTime  (027 — 레거시 invariants 이관 완료 스탬프)
+//   - enumerations / valueObjects: String (JSON) — 어그리거트 내부 도메인 객체
+//   - exceptions: String (JSON, 027) — 어그리거트 Exception 도메인 객체 카탈로그.
+//       각 항목 {name, message, fields:[{name,type,description?}]}. GWT Then이
+//       (Command·Invariant 공통) name으로 참조한다.
 // ############################################################
 
 MATCH (bc:BoundedContext { key: "order" })
@@ -251,6 +258,20 @@ MERGE (cmd)-[:HAS_PROPERTY]->(prop);
 //   - attachedToType: String ("Command" | "ReadModel")
 //   - attachedToName: String
 //   - userStoryId: String (근거가 된 UserStory id)
+//
+// Figma 연동 속성 (016-figma-document-binding):
+//   - sceneGraph: String (JSON; open-pencil SerializedSceneGraph)
+//   - designSource: String ("html" | "figma-bound" | "imported")
+//   - figmaFileKey: String (도큐먼트 식별자)
+//   - figmaPageId: String (소속 페이지)
+//   - figmaNodeId: String (생성된 프레임 노드 id)
+//   - figmaBindingId: String (생성 시점의 :FigmaBinding.id 스냅샷 — replace 후 "from previous binding" 판별용)
+//   - figmaStoryboardCommandId: String (소속 스토리보드 = entry Command id)
+//
+// Figma 동기화 상태 속성 (v1.2 / FR-019b / FR-020):
+//   - figmaSyncStatus: String ("ok" | "failed", null = 시도 안됨)
+//   - figmaSyncLastError: String (마지막 실패 한국어 에러 메시지; status="ok" 시 null)
+//   - figmaSyncLastAttemptAt: DateTime (마지막 시도 ISO 8601 타임스탬프; 성공/실패 무관)
 // ############################################################
 
 MATCH (bc:BoundedContext { key: "order" })
@@ -369,3 +390,249 @@ SET then.name = "Event: OrderCancelled",
     then.referencedNodeType = "Event"
 MERGE (cmd)-[:HAS_THEN]->(then)
 MERGE (then)-[:REFERENCES]->(evt);
+
+
+// ############################################################
+// 13. FigmaBinding (피그마 다큐먼트 바인딩 — 싱글톤)
+// ############################################################
+// 설명: 현재 Event Modeling 프로젝트와 외부 Figma 다큐먼트 1건의 연결 정보.
+//       단일 활성 바인딩(`id="singleton"`)을 유지함. 016 feature(figma-document-binding) 참조.
+// 관계:
+//   - MAPS_STORYBOARD → BCPageMapping (스토리보드별 페이지 매핑)
+//   - LOGGED ← BindingHistoryEvent (감사 로그)
+//
+// 필수 속성:
+//   - id: String (고정 "singleton" — UNIQUE)
+//   - figmaFileKey: String
+//   - figmaFileName: String
+//   - connectedBy: String
+//   - connectedAt: DateTime
+//   - status: String ("active" | "unreachable" | "disconnected")
+//
+// 선택 속성:
+//   - lastSyncAt: DateTime
+//
+// 020 (figma-sync-recovery) 추가 advisory lock 필드 — :SyncRun 활성 시에만 non-null:
+//   - currentRunId: String|null (활성 :SyncRun.id; 한 binding 당 동시에 1개 run)
+//   - currentRunHolder: String|null (run 시작자의 actor — UI 노출용)
+// ############################################################
+
+// (생성 예시 — 실제 데이터는 런타임에 /api/figma-binding/connect 가 upsert)
+
+
+// ############################################################
+// 14. StoryboardPageMapping (스토리보드 ↔ Figma 페이지 매핑)
+// ############################################################
+// 설명: 좌측 BUSINESS PROCESSES 패널의 한 행(= entry Command 한 건 = 한 storyboard)이
+//       바인딩된 Figma 다큐먼트의 한 페이지에 1:1 매핑된 기록.
+//       UNIQUE: id (UUID), commandId (활성 매핑당 한 entry Command).
+// 관계:
+//   - MAPS_STORYBOARD ← FigmaBinding
+//   - MAPS → Command (해당 storyboard의 entry command)
+//
+// 필수 속성:
+//   - id: String (UUID)
+//   - commandId: String (entry Command.id)
+//   - figmaPageId: String (Figma page node id, 예: "0:42")
+//   - figmaPageName: String (cached display name)
+//   - status: String ("active" | "archived")
+//
+// 선택 속성:
+//   - lastRenameAt: DateTime
+// ############################################################
+
+
+// ############################################################
+// 15. BindingHistoryEvent (피그마 바인딩 감사 로그)
+// ############################################################
+// 설명: 016 feature의 모든 bind/sync/generate/disconnect 이벤트를 append-only로 저장.
+// 관계:
+//   - LOGGED → FigmaBinding
+//
+// 필수 속성:
+//   - id: String (UUID)
+//   - eventType: String ("connect" | "validate_failure" | "sync_storyboards" |
+//                        "page_renamed" | "page_archived" | "disconnect" | "replace" |
+//                        "generate_routed" | "orphan_ui_blocked")
+//   - actor: String
+//   - at: DateTime
+//
+// 선택 속성:
+//   - figmaFileKey: String
+//   - payload: String (JSON-encoded)
+// ############################################################
+
+
+// ############################################################
+// 16. SyncRun (Figma 동기화 실행 요약 — 020)
+// ############################################################
+// 설명: 020 feature(figma-sync-recovery)의 retroactive full-sync 또는 manual-retry
+//       1회 dispatch 당 1행. 개별 페이지/프레임 결과는 :UI.figmaSync* 에 저장하고,
+//       :SyncRun 은 한 줄 요약(History 탭의 summary row)을 위한 집계 row.
+//       이전 binding 으로 dispatch 된 run 은 bindingFileKey 가 현재 binding 과
+//       다르므로 "이전 바인딩" 그룹 필터의 discriminator 역할.
+// 관계:
+//   - RUN_OF → FigmaBinding (project-scoped 조회용)
+//
+// 필수 속성:
+//   - id: String (UUID — UNIQUE; runId 로 API 노출)
+//   - kind: String ("retroactive-sync" | "manual-retry")
+//   - bindingFileKey: String (run 시점의 figmaFileKey 스냅샷)
+//   - actor: String
+//   - startedAt: DateTime
+//   - status: String ("running" | "succeeded" | "partially-succeeded" |
+//                     "cancelled" | "aborted-binding-unreachable")
+//
+// 선택 속성:
+//   - finishedAt: DateTime (status='running' 동안 null)
+//   - summary: String (JSON-encoded
+//        {storyboardsTotal, pagesCreated, pagesAlreadyOk, uisTotal,
+//         framesPushed, generated, overwrites, failures})
+// ############################################################
+
+
+// ############################################################
+// 17. UI 추가 속성 (020)
+// ############################################################
+// 설명: 016 v1.2 의 figmaSyncStatus / figmaSyncLastError / figmaSyncLastAttemptAt
+//       에 더해 020 은 다음 1개 속성을 추가한다:
+//
+//   - figmaSyncBindingFileKey: String|null
+//       — figmaSyncStatus 가 'ok' 또는 'failed' 로 set 될 때의
+//         활성 :FigmaBinding.figmaFileKey 스냅샷. classifier 의
+//         "이전 바인딩 (binding 이 replace 된 후 file key 가 다름)"
+//         판단에 사용된다 (research D5).
+// ############################################################
+
+
+// ############################################################
+// 18. Journey / JourneyStep (UI-layer 사용자 여정) — 025 v3 ui-flow-edges
+// ############################################################
+// 설명: 목적 있는 하나의 사용자 여정(Journey)과 그 단계(JourneyStep).
+//       JourneyStep 은 'screen'(공유 UI 를 SHOWS) 또는 'gateway'(분기
+//       다이아몬드). 단계 간 흐름은 NEXT 엣지(분기 조건 포함)로 표현한다.
+//       재사용 화면은 여정마다 별도 JourneyStep 이 되며 모두 같은 UI 를 가리킨다.
+//
+// 관계:
+//   - BoundedContext-[:HAS_JOURNEY]->Journey
+//   - Journey-[:HAS_STEP]->JourneyStep
+//   - JourneyStep-[:SHOWS]->UI                 (screen 단계만)
+//   - JourneyStep-[:NEXT {condition}]->JourneyStep
+//
+// Journey 필수 속성:
+//   - id: String (UUID v5, journey.key 기반)
+//   - key: String (`<bc.key>.journey.<journeySlug>`)
+//   - journeyId: String (journeySlug — 프런트 그룹핑/필터 키)
+//   - name: String (여정명, 예: "정상 회원가입")
+//   - description: String
+//   - boundedContextId: String (소유 BC = 화면이 가장 많은 BC)
+//   - source: String ("llm" | "manual")
+//
+// JourneyStep 필수 속성:
+//   - id: String (UUID v5, step.key 기반)
+//   - key: String (`<journey.key>.step.<kind>.<ref>`)
+//   - kind: String ("screen" | "gateway")
+//   - label: String (screen=화면명, gateway=의사결정 질문)
+//   - sequence: Int (레이아웃 힌트 — 위상정렬 순위)
+//   - source: String ("llm" | "manual")
+// ############################################################
+
+CREATE (j:Journey {
+    id: "00000000-0000-5000-8000-000000000001",
+    key: "membership.journey.normal-signup-abc123",
+    journeyId: "normal-signup-abc123",
+    name: "정상 회원가입",
+    description: "신규 사용자가 약관 동의부터 가입 완료까지 진행하는 여정",
+    boundedContextId: "<bc-uuid>",
+    source: "llm",
+    createdAt: datetime(),
+    updatedAt: datetime()
+});
+
+CREATE (s:JourneyStep {
+    id: "00000000-0000-5000-8000-000000000002",
+    key: "membership.journey.normal-signup-abc123.step.gateway.approve-xyz",
+    kind: "gateway",
+    label: "가입 가능 여부?",
+    sequence: 3,
+    source: "llm",
+    createdAt: datetime(),
+    updatedAt: datetime()
+});
+
+
+// ############################################################
+// 19. Feature (피처 — 026 requirements-tab)
+// ############################################################
+// 설명: BoundedContext(Epic)와 UserStory 사이의 그룹 단위.
+//       관련 User Story 묶음을 나타낸다. 하나의 BC에 속하고
+//       여러 User Story를 포함한다(Feature→UserStory: HAS_USER_STORY).
+// 관계:
+//   - BoundedContext-[:HAS_FEATURE]->Feature
+//   - Feature-[:HAS_USER_STORY]->UserStory
+//
+// 필수 속성:
+//   - id: String (UUID — ON CREATE randomUUID())
+//   - key: String (자연키 — `<bc.key>.feature.<slug(name)>`, 멱등 MERGE 기준)
+//   - name: String (Feature 이름)
+//   - boundedContextId: String (소속 BC의 id — 조회 편의용 비정규화)
+//   - source: String ("llm" | "manual")
+//
+// 선택 속성:
+//   - description: String
+//   - sequence: Int (트리 내 정렬 힌트)
+//   - createdAt / updatedAt: DateTime
+// ############################################################
+
+MATCH (bc:BoundedContext { key: "order" })
+MERGE (f:Feature { key: "order.feature.order-cancellation" })
+ON CREATE SET f.id = randomUUID(), f.createdAt = datetime(), f.source = "llm"
+SET f.name = "주문 취소",
+    f.description = "고객이 주문을 취소하고 환불을 받는 기능 묶음",
+    f.boundedContextId = bc.id,
+    f.sequence = 1,
+    f.updatedAt = datetime()
+MERGE (bc)-[:HAS_FEATURE]->(f);
+
+
+// ############################################################
+// 20. Invariant (인베리언트 — 027 aggregate-invariants)
+// ############################################################
+// 설명: 어그리거트가 항상 준수해야 하는 비즈니스 규칙을 나타내는 1급 객체.
+//       어그리거트 하위에 0..N개 부착. 디자인 트리에서만 노출(캔버스 스티커 아님).
+//       세부 검증 조건은 (a) 커맨드의 GWT 인수조건을 VERIFIED_BY로 공유 참조하거나
+//       (b) parentType="Invariant"인 인베리언트 전용 GWT 노드로 보유한다.
+// 관계:
+//   - Aggregate-[:HAS_INVARIANT]->Invariant
+//   - Invariant-[:VERIFIED_BY]->Command   (커맨드 GWT 인수조건 공유 참조)
+//   - Invariant-[:HAS_GWT]->GWT           (인베리언트 전용 GWT)
+//
+// 필수 속성:
+//   - id: String (UUID — ON CREATE randomUUID())
+//   - key: String (자연키 — `<aggregate.key>.invariant.<slug>-<hash>`, 멱등 MERGE 기준)
+//   - declaration: String (규칙 선언문 — 자연어 문장)
+//
+// 선택 속성:
+//   - name: String (짧은 제목)
+//   - description: String
+//   - source: String ("manual" | "ingested" | "migrated")
+//   - seq: Int (어그리거트 내 정렬 순서)
+//   - aggregateId: String (소유 Aggregate의 id — 조회 편의용 비정규화)
+//   - createdAt / updatedAt: DateTime
+//
+// 참고: GWT 노드의 parentType 속성은 027부터 "Invariant" 값도 허용한다 —
+//       인베리언트 전용 GWT는 GWT {parentType:"Invariant", parentId:<inv.id>}.
+//       인베리언트 GWT는 Given·Then만 사용한다("When"은 규칙에 해당되지 않아
+//       편집기에서 숨겨짐). Then은 어그리거트 exceptions 카탈로그의 Exception을
+//       thenRef.exceptionName으로 참조해 예외 결과를 선언할 수 있다(Command GWT 공통).
+// ############################################################
+
+MATCH (agg:Aggregate { key: "order.order" })
+MERGE (inv:Invariant { key: "order.order.invariant.order-total-positive-abc123def456" })
+ON CREATE SET inv.id = randomUUID(), inv.createdAt = datetime(), inv.source = "manual"
+SET inv.declaration = "주문 총액은 항상 0보다 커야 한다",
+    inv.name = "주문 총액 양수",
+    inv.aggregateId = agg.id,
+    inv.seq = 1,
+    inv.updatedAt = datetime()
+MERGE (agg)-[:HAS_INVARIANT]->(inv);

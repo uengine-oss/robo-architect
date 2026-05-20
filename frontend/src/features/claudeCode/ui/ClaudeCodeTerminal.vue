@@ -12,6 +12,8 @@ const props = defineProps({
   }
 })
 
+const emit = defineEmits(['workdir-picked'])
+
 const terminalRef = ref(null)
 let terminal = null
 let fitAddon = null
@@ -88,6 +90,7 @@ function confirmFolderSelection() {
     terminal.clear()
   }
   connect(selectedPath)
+  emit('workdir-picked', selectedPath)
 }
 
 function getWsUrl(workdir) {

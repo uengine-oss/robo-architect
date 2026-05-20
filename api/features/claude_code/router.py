@@ -16,12 +16,31 @@ import signal
 import struct
 import zipfile
 
+import logging
+
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from api.features.claude_code.workspace_fs import (
+    list_directory,
+    read_text_file,
+    resolve_under_root,
+    write_text_file_atomic,
+)
+from api.features.claude_code.workspace_schemas import (
+    FileResponse as WorkspaceFileResponse,
+)
+from api.features.claude_code.workspace_schemas import (
+    FileWriteRequest,
+    FileWriteResponse,
+    TreeChild,
+    TreeResponse,
+)
 from api.features.prd_generation.prd_api_contracts import PRDGenerationRequest
 
 router = APIRouter(prefix="/api/claude-code", tags=["claude-code"])
+
+logger = logging.getLogger(__name__)
 
 IS_UNIX_PTY_SUPPORTED = os.name == "posix"
 
@@ -69,6 +88,54 @@ async def browse_directory(path: str = "~"):
     }
 
 
+# ─── IDE workspace: file tree + read/write (feature 021) ───
+
+
+@router.get("/tree", response_model=TreeResponse)
+async def workspace_tree(root: str, path: str = ""):
+    """List one level of children at `root + path` for the IDE workspace tree."""
+    resolved = resolve_under_root(root, path)
+    children = list_directory(resolved)
+    if path == "":
+        logger.info(
+            "claude_code.workspace.tree_root_listed",
+            extra={"root": root, "child_count": len(children)},
+        )
+    return TreeResponse(
+        root=os.path.realpath(os.path.expanduser(root)),
+        path=path,
+        children=[TreeChild(**c) for c in children],
+    )
+
+
+@router.get("/file", response_model=WorkspaceFileResponse)
+async def workspace_read_file(root: str, path: str):
+    """Read a single file's content + metadata for the IDE workspace editor."""
+    resolved = resolve_under_root(root, path)
+    content, size, mtime_ns, binary = read_text_file(resolved)
+    return WorkspaceFileResponse(
+        path=path,
+        size=size,
+        mtime_ns=str(mtime_ns),
+        binary=binary,
+        content=content,
+        encoding="utf-8",
+    )
+
+
+@router.put("/file", response_model=FileWriteResponse)
+async def workspace_write_file(req: FileWriteRequest):
+    """Save a file's contents with optimistic-concurrency check via mtime_ns."""
+    resolved = resolve_under_root(req.root, req.path)
+    expected = int(req.expected_mtime_ns) if req.expected_mtime_ns else None
+    new_size, new_mtime_ns = write_text_file_atomic(resolved, req.content, expected)
+    return FileWriteResponse(
+        path=req.path,
+        size=new_size,
+        mtime_ns=str(new_mtime_ns),
+    )
+
+
 # ─── Project setup (extract PRD to target directory) ───
 
 
@@ -83,30 +150,27 @@ async def setup_project(request: SetupProjectRequest):
     """
     Generate PRD files and extract them to the specified project directory.
     Returns the resolved absolute path.
+
+    Uses the shared :func:`api.features.prd_generation.routes.prd_export.build_prd_zip`
+    helper so the on-disk artifact set produced here is **bit-identical**
+    to the one ``/api/prd/download`` ships — no per-BC agent files, no
+    ``Frontend-PRD.md``, no ``.scene.json`` sidecars, role-based agents
+    + ``/generate-frontend`` command emitted when applicable, and the
+    PRD↔CLAUDE / PRD↔.cursorrules disjointness lint enforced (hard
+    abort on violation).
     """
-    from api.features.prd_generation.prd_api_contracts import AIAssistant
-    from api.features.prd_generation.prd_artifact_generation import (
-        generate_agent_config,
-        generate_bc_spec,
-        generate_claude_md,
-        generate_claude_skill_ddd_principles,
-        generate_claude_skill_eventstorming_implementation,
-        generate_claude_skill_frontend,
-        generate_claude_skill_gwt_test_generation,
-        generate_claude_skill_tech_stack,
-        generate_cursor_tech_stack_rule,
-        generate_cursor_rules,
-        generate_docker_compose,
-        generate_dockerfile,
-        generate_ddd_principles_rule,
-        generate_eventstorming_implementation_rule,
-        generate_gwt_test_generation_rule,
-        generate_frontend_cursor_rule,
-        generate_frontend_prd,
-        generate_main_prd,
-        generate_readme,
-    )
+    from fastapi import HTTPException
+
     from api.features.prd_generation.prd_model_data import get_bcs_from_nodes
+    from api.features.prd_generation.prd_split_lint import PrdSplitLintError
+    from api.features.prd_generation.routes.prd_export import (
+        _require_frontend_framework,
+        build_prd_zip,
+    )
+
+    # Enforce FR-020 — when include_frontend=true, frontend_framework
+    # MUST be set. Same contract as /api/prd/{generate,download}.
+    _require_frontend_framework(request.prd_request.tech_stack)
 
     # Resolve and validate path
     project_path = os.path.expanduser(request.project_path)
@@ -117,55 +181,33 @@ async def setup_project(request: SetupProjectRequest):
 
     bcs = get_bcs_from_nodes(None)
     if not bcs:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="No Bounded Contexts found")
 
     config = request.prd_request.tech_stack
 
-    # Build ZIP in memory (reuse existing logic)
+    # Build ZIP in memory via the shared helper.
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        if config.ai_assistant == AIAssistant.CLAUDE:
-            zf.writestr("CLAUDE.md", generate_claude_md(bcs, config))
-            zf.writestr(".claude/skills/ddd-principles.md", generate_claude_skill_ddd_principles(config))
-            zf.writestr(".claude/skills/eventstorming-implementation.md", generate_claude_skill_eventstorming_implementation(config))
-            zf.writestr(".claude/skills/gwt-test-generation.md", generate_claude_skill_gwt_test_generation(config))
-            zf.writestr(f".claude/skills/{config.framework.value}.md", generate_claude_skill_tech_stack(config))
-            if config.include_frontend and config.frontend_framework:
-                frontend_skill = generate_claude_skill_frontend(config)
-                if frontend_skill:
-                    zf.writestr(f".claude/skills/{config.frontend_framework.value}.md", frontend_skill)
-                frontend_prd = generate_frontend_prd(bcs, config)
-                if frontend_prd:
-                    zf.writestr("Frontend-PRD.md", frontend_prd)
+    try:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            build_prd_zip(zf, bcs, config)
+    except PrdSplitLintError as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": e.code,
+                "file": e.offending_file,
+                "substring": e.offending_substring,
+                "offset": e.offset,
+                "message": str(e),
+            },
+        )
 
-        zf.writestr("PRD.md", generate_main_prd(bcs, config))
-        zf.writestr(".cursorrules", generate_cursor_rules(config))
-
-        if config.ai_assistant == AIAssistant.CURSOR:
-            zf.writestr(".cursor/rules/ddd-principles.mdc", generate_ddd_principles_rule(config))
-            zf.writestr(".cursor/rules/eventstorming-implementation.mdc", generate_eventstorming_implementation_rule(config))
-            zf.writestr(".cursor/rules/gwt-test-generation.mdc", generate_gwt_test_generation_rule(config))
-            zf.writestr(f".cursor/rules/{config.framework.value}.mdc", generate_cursor_tech_stack_rule(config))
-            if config.include_frontend and config.frontend_framework:
-                frontend_rule = generate_frontend_cursor_rule(config)
-                if frontend_rule:
-                    zf.writestr(f".cursor/rules/{config.frontend_framework.value}.mdc", frontend_rule)
-                frontend_prd = generate_frontend_prd(bcs, config)
-                if frontend_prd:
-                    zf.writestr("Frontend-PRD.md", frontend_prd)
-
-        for bc in bcs:
-            bc_name = (bc.get("name", "unknown") or "unknown").lower().replace(" ", "_")
-            zf.writestr(f"specs/{bc_name}_spec.md", generate_bc_spec(bc, config))
-            if config.ai_assistant == AIAssistant.CLAUDE:
-                zf.writestr(f".claude/agents/{bc_name}_agent.md", generate_agent_config(bc, config))
-
-        if config.include_docker:
-            zf.writestr("docker-compose.yml", generate_docker_compose(config))
-            zf.writestr("Dockerfile", generate_dockerfile(config))
-
-        zf.writestr("README.md", generate_readme(bcs, config))
+    # Remove legacy files that older setup-project runs may have left
+    # in this working copy but that the current contract no longer
+    # emits (per-BC agents, Frontend-PRD.md, scene-graph JSON sidecars).
+    # Without this, a re-run would leave stale files alongside the new
+    # role-based agents — exactly the duplication users reported.
+    deprecated_removed = _cleanup_deprecated_local_paths(project_path, bcs, config)
 
     # Extract ZIP to target directory
     zip_buffer.seek(0)
@@ -183,7 +225,72 @@ async def setup_project(request: SetupProjectRequest):
         "success": True,
         "project_path": project_path,
         "files_extracted": extracted_files,
+        "deprecated_removed": deprecated_removed,
     }
+
+
+def _cleanup_deprecated_local_paths(project_path: str, bcs: list, config) -> list[str]:
+    """Remove files that older setup-project runs wrote to disk but that
+    the current contract no longer emits. Returns the list of removed
+    paths (relative to ``project_path``).
+
+    Targets:
+    - ``.claude/agents/<bc_name>_agent.md`` (one per BC the user has now)
+      — FR-023 / US7: per-BC agents are replaced by two role-based agents.
+    - ``Frontend-PRD.md`` — 2026-05-12 amendment: the frontend
+      perspective lives in ``specs/frontend/*`` instead.
+    - ``specs/**/*.scene.json`` — 2026-05-12 amendment: scene-graph
+      sidecars are no longer emitted; the SVG is the only visual asset.
+
+    Scope is intentionally narrow: we only delete files whose paths
+    match exactly the patterns the *old* contract emitted, never
+    arbitrary user content.
+    """
+    from api.features.prd_generation.prd_api_contracts import AIAssistant
+
+    removed: list[str] = []
+
+    # Per-BC agent files — only delete those whose slug matches a BC
+    # currently in the graph (a hand-renamed agent file stays put).
+    if config.ai_assistant == AIAssistant.CLAUDE:
+        agents_dir = os.path.join(project_path, ".claude", "agents")
+        if os.path.isdir(agents_dir):
+            for bc in bcs:
+                bc_name_slug = (
+                    (bc.get("name", "unknown") or "unknown").lower().replace(" ", "_")
+                )
+                stale = os.path.join(agents_dir, f"{bc_name_slug}_agent.md")
+                if os.path.isfile(stale):
+                    try:
+                        os.remove(stale)
+                        removed.append(os.path.relpath(stale, project_path))
+                    except OSError:
+                        pass
+
+    # Frontend-PRD.md (top level only — never recursive, to avoid
+    # touching unrelated trees the user may have created).
+    fpath = os.path.join(project_path, "Frontend-PRD.md")
+    if os.path.isfile(fpath):
+        try:
+            os.remove(fpath)
+            removed.append("Frontend-PRD.md")
+        except OSError:
+            pass
+
+    # scene-graph JSON sidecars under specs/.
+    specs_root = os.path.join(project_path, "specs")
+    if os.path.isdir(specs_root):
+        for root, _dirs, files in os.walk(specs_root):
+            for fname in files:
+                if fname.endswith(".scene.json"):
+                    p = os.path.join(root, fname)
+                    try:
+                        os.remove(p)
+                        removed.append(os.path.relpath(p, project_path))
+                    except OSError:
+                        pass
+
+    return sorted(removed)
 
 
 # ─── PTY Terminal WebSocket ───

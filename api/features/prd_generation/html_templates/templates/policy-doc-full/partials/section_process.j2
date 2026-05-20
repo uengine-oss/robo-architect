@@ -1,0 +1,61 @@
+<h3>가. 프로세스 목록</h3>
+{% if processes %}
+<table>
+<thead>
+<tr>
+<th style="width: 160px;">프로세스 ID</th>
+<th style="width: 200px;">프로세스명</th>
+<th style="width: 140px;">담당 액터</th>
+<th>요약</th>
+</tr>
+</thead>
+<tbody>
+{% for pr in processes %}
+<tr>
+<td class="mono">{{ pr.id|e }}</td>
+<td>{{ pr.name|e }}</td>
+<td>{{ actor_name_by_id.get(pr.actor_id, "")|e }}</td>
+<td>{{ pr.summary|e }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="subtle">(프로세스로 환산할 User Story 가 없습니다.)</p>
+{% endif %}
+
+<h3>나. 전체 업무 흐름도</h3>
+{% if process_flowchart_svg %}
+<div class="diagram-wrap">{{ process_flowchart_svg|safe }}</div>
+{% else %}
+<p class="subtle">(흐름도 생성에 필요한 프로세스 시퀀스가 부족합니다.)</p>
+{% endif %}
+
+<h3>다. 프로세스 상세</h3>
+{% for pr in processes %}
+<h4>{{ loop.index }}) {{ pr.name|e }} (<span class="mono">{{ pr.id|e }}</span>)</h4>
+{% if pr.steps %}
+<table>
+<thead>
+<tr>
+<th style="width: 70px;">순서</th>
+<th style="width: 230px;">단계</th>
+<th style="width: 180px;">관련 기능</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+{% for step in pr.steps %}
+<tr>
+<td class="center">{{ step.seq }}</td>
+<td>{{ step.name|e }}</td>
+<td>{% if step.function_id %}<span class="mono">{{ step.function_id|e }}</span>{% endif %}</td>
+<td>{{ step.description|e }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="subtle">(이 프로세스에 단계가 모델링되어 있지 않습니다.)</p>
+{% endif %}
+{% endfor %}
