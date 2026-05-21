@@ -85,6 +85,27 @@ async def extract_invariants_phase(
         progress=PHASE_START,
     )
 
+    # Housekeeping — re-ingestion wipes session-scoped Aggregates but Invariant
+    # nodes are not session-tagged. If a prior run's aggregate was renamed, its
+    # invariants are left orphaned. Drop them before re-extracting so the model
+    # only carries invariants attached to current aggregates.
+    try:
+        pruned = client.prune_orphan_invariants()
+        if pruned:
+            SmartLogger.log(
+                "INFO",
+                f"Pruned {pruned} orphan invariant(s) before extraction",
+                category="agent.invariants.extract.prune",
+                params={"session_id": session_id, "pruned": pruned},
+            )
+    except Exception as exc:  # noqa: BLE001 — housekeeping is best-effort
+        SmartLogger.log(
+            "WARN",
+            f"Orphan-invariant prune failed (non-fatal): {exc}",
+            category="agent.invariants.extract.prune.error",
+            params={"session_id": session_id, "error": str(exc)},
+        )
+
     with client.session() as session:
         agg_rows = list(
             session.run(

@@ -71,3 +71,24 @@ class InvariantOps:
         """
         with self.session() as session:
             return session.run(query, iid=invariant_id, cid=command_id).single() is not None
+
+    def prune_orphan_invariants(self) -> int:
+        """Delete Invariant nodes not attached to any Aggregate.
+
+        Invariants are MERGEd on `aggregate_key + declaration` and are not
+        session-scoped. When a re-ingestion wipes the session's Aggregates and
+        the model re-extraction renames an aggregate, the old aggregate's
+        invariants are left dangling (no `HAS_INVARIANT` parent). Every
+        invariant-creation path attaches the node to its Aggregate, so an
+        unattached Invariant is always stale — safe to remove. Run as
+        housekeeping at the start of the extract-invariants phase.
+        """
+        query = """
+        MATCH (inv:Invariant)
+        WHERE NOT (:Aggregate)-[:HAS_INVARIANT]->(inv)
+        DETACH DELETE inv
+        RETURN count(inv) AS pruned
+        """
+        with self.session() as session:
+            rec = session.run(query).single()
+            return int(rec["pruned"]) if rec else 0
