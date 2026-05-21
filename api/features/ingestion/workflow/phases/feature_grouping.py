@@ -185,6 +185,7 @@ async def feature_grouping_phase(
                 description=group.feature_description or None,
                 source="llm",
                 sequence=seq,
+                session_id=session_id,
             )
             if not feature:
                 continue

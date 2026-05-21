@@ -31,8 +31,14 @@ class FeatureOps:
         description: str | None = None,
         source: str = "llm",
         sequence: int | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any] | None:
         """MERGE a Feature node by its natural key and attach it to its BC.
+
+        `source` and `session_id` are only set on create. The feature-grouping
+        ingestion phase passes the run's `session_id` so its features join the
+        session-scoped wipe on re-ingestion; the `/api/requirements` CRUD route
+        passes none, so manually-created features survive re-ingestion.
 
         Returns the feature dict, or None if the BC does not exist.
         """
@@ -42,7 +48,8 @@ class FeatureOps:
         MERGE (f:Feature {key: $key})
           ON CREATE SET f.id = randomUUID(),
                         f.createdAt = datetime(),
-                        f.source = $source
+                        f.source = $source,
+                        f.session_id = $session_id
         SET f.name = $name,
             f.description = $description,
             f.boundedContextId = bc.id,
@@ -61,6 +68,7 @@ class FeatureOps:
                 description=description,
                 source=source,
                 sequence=sequence,
+                session_id=session_id,
             ).single()
             return dict(rec["feature"]) if rec else None
 

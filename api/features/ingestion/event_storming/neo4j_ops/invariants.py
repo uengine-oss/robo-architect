@@ -26,11 +26,15 @@ class InvariantOps:
         name: str | None = None,
         source: str = "ingested",
         seq: int | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any] | None:
         """MERGE an Invariant by its natural key and attach it to its Aggregate.
 
-        `source` is only set on create, so a re-ingest never clobbers an
-        invariant a planner has since edited.
+        `source` and `session_id` are only set on create, so a re-ingest never
+        clobbers an invariant a planner has since edited. An ingestion-created
+        invariant carries the run's `session_id` (joins the session-scoped
+        wipe on re-ingestion); a manually-created invariant has none and
+        survives re-ingestion.
         """
         key = _invariant_key(aggregate_key, declaration)
         query = """
@@ -38,7 +42,8 @@ class InvariantOps:
         MERGE (inv:Invariant {key: $key})
           ON CREATE SET inv.id = randomUUID(),
                         inv.createdAt = datetime(),
-                        inv.source = $source
+                        inv.source = $source,
+                        inv.session_id = $session_id
         SET inv.declaration = $declaration,
             inv.name = $name,
             inv.aggregateId = agg.id,
@@ -56,6 +61,7 @@ class InvariantOps:
                 name=(name or declaration)[:80],
                 source=source,
                 seq=seq,
+                session_id=session_id,
             ).single()
             return dict(rec["invariant"]) if rec else None
 

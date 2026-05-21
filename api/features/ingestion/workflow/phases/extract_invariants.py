@@ -184,6 +184,7 @@ async def extract_invariants_phase(
                 declaration=declaration,
                 source="ingested",
                 seq=seq,
+                session_id=session_id,
             )
             if not invariant:
                 continue

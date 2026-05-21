@@ -74,6 +74,14 @@ ALL_PROMOTED_LABELS = (
     "UI", "GWT",
 )
 
+# Labels wiped on re-ingestion but NOT auto-tagged by
+# `_tag_es_nodes_with_session_id`. Feature (spec 026) and Invariant (spec 027)
+# set their own `session_id` at creation time only for the ingestion path —
+# manually-created Features/Invariants have no `session_id` and must survive
+# re-ingestion, so the blanket tag pass must never touch them.
+_CLEAR_ONLY_LABELS = ("Feature", "Invariant")
+ALL_CLEARED_LABELS = ALL_PROMOTED_LABELS + _CLEAR_ONLY_LABELS
+
 
 def _ev(message: str, progress: int, data: dict | None = None) -> ProgressEvent:
     payload = dict(data or {})
@@ -115,10 +123,11 @@ def _tag_es_nodes_with_session_id(hybrid_session_id: str) -> dict[str, int]:
 
 def clear_promoted_nodes(hybrid_session_id: str) -> dict[str, int]:
     """Wipe ES nodes tagged with the given hybrid session_id. Untagged ES nodes
-    (legacy ingestion) are preserved. Used by /reset and the test harness."""
+    (legacy ingestion, and manually-created Features/Invariants) are preserved.
+    Used by /reset and the test harness."""
     counts: dict[str, int] = {}
     with get_session() as s:
-        for label in ALL_PROMOTED_LABELS:
+        for label in ALL_CLEARED_LABELS:
             r = s.run(
                 f"MATCH (n:{label} {{session_id: $sid}}) "
                 "WHERE size(labels(n)) = 1 "
