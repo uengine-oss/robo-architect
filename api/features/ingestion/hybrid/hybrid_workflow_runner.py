@@ -29,7 +29,7 @@ from api.features.ingestion.hybrid.mapper.passage_retriever import (
     retrieve_passages_per_task,
 )
 from api.features.ingestion.hybrid.ontology.neo4j_ops import (
-    clear_hybrid_nodes,
+    clear_all_hybrid_workspace,
     relabel_pdf2bpmn_nodes,
     save_bpm_skeleton,
     save_glossary,
@@ -39,6 +39,8 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     save_task_passage_links,
 )
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
+from api.features.ingestion.ingestion_workflow_runner import clear_event_storming_nodes
+from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
 from api.platform.observability.smart_logger import SmartLogger
 
 # Small delay between incremental emits so the UI sees a smooth reveal.
@@ -68,7 +70,20 @@ async def run_hybrid_workflow(
 
         # --- Phase 1: Document → BPM (multi-process) ----------------------------------
         yield _ev(HybridPhase.DOCUMENT_BPM, "📘 문서에서 업무 프로세스(들) 추출 중...", 10)
-        clear_hybrid_nodes(session_id)
+        # A document upload regenerates from BPM up — wipe every previously
+        # generated artifact (all BPM workspaces + all event-storming nodes)
+        # so re-ingestion is a clean rebuild. The analyzer code-analysis
+        # graph is preserved (single-label / session_id guards).
+        clear_all_hybrid_workspace()
+        try:
+            clear_event_storming_nodes(get_neo4j_client(), session_id)
+        except Exception as exc:  # noqa: BLE001 — clear is best-effort
+            SmartLogger.log(
+                "WARN",
+                f"ES clear before hybrid BPM ingestion failed (non-fatal): {exc}",
+                category="ingestion.hybrid.clear_es.error",
+                params={"session_id": session_id, "error": str(exc)},
+            )
         phase1 = await extract_bpm_skeleton(
             content=content, session_id=session_id,
             pdf_path=pdf_path, pdf_url=pdf_url,

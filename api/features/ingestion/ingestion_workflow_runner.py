@@ -60,14 +60,18 @@ from api.features.ingestion.workflow.utils.phase_logger import save as log_phase
 
 # Event Storming 노드 라벨 (ingestion이 생성하는 것들만)
 # FUNCTION, BusinessLogic, Actor, Table, Column 등 분석 그래프 노드는 제외
+# Every event-storming node label. A fresh ingestion wipes all of these
+# (single-model semantics) while leaving the analyzer code-analysis graph
+# (FUNCTION / Rule / Table / Example …) and hybrid BPM nodes untouched.
+# Keep in sync with ALL_CLEARED_LABELS in promote_to_es.py.
 _ES_LABELS = [
     "UserStory", "BoundedContext", "Aggregate", "Command", "Event",
-    "ReadModel", "Policy", "Property", "UIWireframe",
-    "CQRSConfig", "CQRSOperation", "GWTScenario",
+    "ReadModel", "Policy", "Property", "CQRSConfig", "CQRSOperation",
+    "UI", "GWT", "Feature", "Invariant",
 ]
 
 
-def _clear_event_storming_nodes(client, session_id: str) -> None:
+def clear_event_storming_nodes(client, session_id: str = "") -> None:
     """Delete all event storming nodes while preserving analyzer graph nodes."""
     with client.session() as s:
         # Count before
@@ -266,7 +270,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
 
         # 0. 기존 이벤트스토밍 결과 삭제 (분석 그래프는 보존)
         try:
-            _clear_event_storming_nodes(client, session.id)
+            clear_event_storming_nodes(client, session.id)
             yield ProgressEvent(
                 phase=IngestionPhase.PARSING,
                 message="이전 생성 결과 초기화 완료",
