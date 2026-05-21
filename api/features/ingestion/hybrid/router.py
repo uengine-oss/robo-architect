@@ -459,13 +459,14 @@ async def reset_hybrid_workspace() -> dict[str, Any]:
     deleted = clear_all_hybrid_workspace()
     # Phase 5 promoted nodes use the same labels as legacy ES but are tagged with session_id.
     # We only wipe nodes that carry a session_id (legacy ingestion ones lack it → preserved).
+    # ALL_CLEARED_LABELS includes Feature/Invariant so re-ingestion leaves nothing behind.
     from api.features.ingestion.hybrid.event_storming_bridge.promote_to_es import (
-        ALL_PROMOTED_LABELS,
+        ALL_CLEARED_LABELS,
     )
     from api.platform.neo4j import get_session as _gs
     promoted_deleted: dict[str, int] = {}
     with _gs() as s:
-        for label in ALL_PROMOTED_LABELS:
+        for label in ALL_CLEARED_LABELS:
             r = s.run(
                 f"MATCH (n:{label}) WHERE n.session_id IS NOT NULL "
                 "WITH n, count(n) AS c DETACH DELETE n RETURN c"
