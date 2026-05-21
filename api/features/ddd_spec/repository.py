@@ -6,6 +6,7 @@ rendered from ``UI.sceneGraph`` only, no Figma roundtrip.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from api.platform.neo4j import get_session
@@ -95,31 +96,62 @@ def _load_aggregate_attributes(session, aggregate_id: str) -> list[AggregateAttr
     return attrs
 
 
+def _load_json(raw: Any) -> Any:
+    """GWT ref / testCase fields are persisted as JSON strings — tolerate
+    dicts/lists (already decoded) and malformed values."""
+    if raw is None:
+        return None
+    if isinstance(raw, (dict, list)):
+        return raw
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _load_gwt(session, parent_id: str, parent_type: str = "Command") -> list[GwtCriterion]:
-    rows = session.run(
+    """Read the single-`GWT`-node bundle attached to a Command/Policy/Invariant.
+
+    The graph stores one `GWT` node per parent (via `HAS_GWT`) carrying
+    `givenRef`/`whenRef`/`thenRef` (the Given-When-Then skeleton — node
+    references) and `testCases` (concrete acceptance scenarios). Projects
+    them into the `GwtCriterion` shape the DDD-spec renderer consumes.
+    """
+    row = session.run(
         """
-        MATCH (p {id: $pid})
-        OPTIONAL MATCH (p)-[:HAS_GIVEN]->(g:Given) WHERE g.parentType = $ptype
-        WITH p, collect(DISTINCT g.description) AS gs_desc, collect(DISTINCT g.name) AS gs_name
-        OPTIONAL MATCH (p)-[:HAS_WHEN]->(w:When) WHERE w.parentType = $ptype
-        WITH p, gs_desc, gs_name, collect(DISTINCT coalesce(w.description, w.name))[0] AS w_text
-        OPTIONAL MATCH (p)-[:HAS_THEN]->(t:Then) WHERE t.parentType = $ptype
-        WITH p, gs_desc, gs_name, w_text,
-             collect(DISTINCT coalesce(t.description, t.name)) AS ts_desc
-        RETURN gs_desc, gs_name, w_text, ts_desc
+        MATCH (p {id: $pid})-[:HAS_GWT]->(g:GWT)
+        WHERE g.parentType = $ptype
+        RETURN g.givenRef AS givenRef, g.whenRef AS whenRef,
+               g.thenRef AS thenRef, g.testCases AS testCases
         """,
         pid=parent_id,
         ptype=parent_type,
-    )
-    row = rows.single()
+    ).single()
     if not row:
         return []
-    givens = _list_of_str(row.get("gs_desc")) or _list_of_str(row.get("gs_name"))
-    when = _strip(row.get("w_text")) or ""
-    thens = _list_of_str(row.get("ts_desc"))
-    if not (givens or when or thens):
+
+    def _ref_text(raw: Any) -> Optional[str]:
+        ref = _load_json(raw)
+        if isinstance(ref, dict):
+            return _strip(ref.get("name")) or _strip(ref.get("exceptionName"))
+        return None
+
+    given_text = _ref_text(row.get("givenRef"))
+    when_text = _ref_text(row.get("whenRef")) or ""
+    then_text = _ref_text(row.get("thenRef"))
+
+    givens = [given_text] if given_text else []
+    thens = [then_text] if then_text else []
+    # Concrete acceptance scenarios become additional Then outcomes.
+    for tc in _load_json(row.get("testCases")) or []:
+        if isinstance(tc, dict):
+            desc = _strip(tc.get("scenarioDescription"))
+            if desc:
+                thens.append(desc)
+
+    if not (givens or when_text or thens):
         return []
-    return [GwtCriterion(id=parent_id, given=givens, when=when, then=thens)]
+    return [GwtCriterion(id=parent_id, given=givens, when=when_text, then=thens)]
 
 
 def _load_commands(session, aggregate_id: str) -> list[CommandProjection]:

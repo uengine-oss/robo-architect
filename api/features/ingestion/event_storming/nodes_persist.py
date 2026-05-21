@@ -121,37 +121,21 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
                     except Exception:
                         pass  # User story might not exist
 
-                # Create GWT for Command (using getattr for dynamically added fields)
+                # GWT for Command — single GWT node (HAS_GWT). given/when are
+                # written now; `then` is filled in below once events exist.
                 cmd_id = created_cmd.get("id")
                 cmd_given = getattr(cmd, "given", None)
-                if cmd_given:
-                    try:
-                        client.create_given(
-                            parent_type="Command",
-                            parent_id=cmd_id,
-                            name=cmd_given.name,
-                            description=cmd_given.description,
-                            referenced_node_id=cmd_given.referencedNodeId,
-                            referenced_node_type=cmd_given.referencedNodeType,
-                            field_values=cmd_given.fieldValues if hasattr(cmd_given, 'fieldValues') else None,
-                        )
-                    except Exception:
-                        pass
                 cmd_when = getattr(cmd, "when", None)
-                if cmd_when:
+                if cmd_given or cmd_when:
                     try:
-                        client.create_when(
+                        client.upsert_gwt(
                             parent_type="Command",
                             parent_id=cmd_id,
-                            name=cmd_when.name,
-                            description=cmd_when.description,
-                            referenced_node_id=cmd_when.referencedNodeId,
-                            referenced_node_type=cmd_when.referencedNodeType,
-                            field_values=cmd_when.fieldValues if hasattr(cmd_when, 'fieldValues') else None,
+                            given=cmd_given,
+                            when=cmd_when,
                         )
                     except Exception:
                         pass
-                # Then will be created after events are created (below)
 
         # 4. Create Events and link to User Stories
         # Track command-to-event mapping for GWT Then updates
@@ -201,17 +185,21 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
                 event_list = cmd_to_event_map.get(cmd_id_str, [])
                 cmd_then = getattr(cmd, "then", None)
                 if event_list and cmd_then:
-                    # Use the first event for the Then component
+                    # Use the first event for the Then component; the GWT node
+                    # was MERGEd above so this only fills the `then` slot.
                     first_event = event_list[0]
                     try:
-                        client.create_then(
+                        client.upsert_gwt(
                             parent_type="Command",
                             parent_id=cmd_id_str,
-                            name=cmd_then.name or f"Event: {first_event['name']}",
-                            description=cmd_then.description or f"{first_event['name']} 이벤트가 발생함",
-                            referenced_node_id=first_event["id"],
-                            referenced_node_type="Event",
-                            field_values=cmd_then.fieldValues if hasattr(cmd_then, 'fieldValues') else None,
+                            then={
+                                "name": cmd_then.name or f"Event: {first_event['name']}",
+                                "description": cmd_then.description
+                                or f"{first_event['name']} 이벤트가 발생함",
+                                "referencedNodeId": first_event["id"],
+                                "referencedNodeType": "Event",
+                                "fieldValues": getattr(cmd_then, "fieldValues", None),
+                            },
                         )
                     except Exception:
                         pass
@@ -254,47 +242,19 @@ def save_to_graph_node(state: EventStormingState) -> Dict[str, Any]:
                     pass
                 saved_items.append(f"  Policy: {pol.name}")
                 
-                # Create GWT for Policy (using getattr for dynamically added fields)
+                # GWT for Policy — single GWT node (HAS_GWT), all slots at once.
                 pol_id = created_pol.get("id")
                 pol_given = getattr(pol, "given", None)
-                if pol_given:
-                    try:
-                        client.create_given(
-                            parent_type="Policy",
-                            parent_id=pol_id,
-                            name=pol_given.name,
-                            description=pol_given.description,
-                            referenced_node_id=pol_given.referencedNodeId,
-                            referenced_node_type=pol_given.referencedNodeType,
-                            field_values=pol_given.fieldValues if hasattr(pol_given, 'fieldValues') else None,
-                        )
-                    except Exception:
-                        pass
                 pol_when = getattr(pol, "when", None)
-                if pol_when:
-                    try:
-                        client.create_when(
-                            parent_type="Policy",
-                            parent_id=pol_id,
-                            name=pol_when.name,
-                            description=pol_when.description,
-                            referenced_node_id=pol_when.referencedNodeId,
-                            referenced_node_type=pol_when.referencedNodeType,
-                            field_values=pol_when.fieldValues if hasattr(pol_when, 'fieldValues') else None,
-                        )
-                    except Exception:
-                        pass
                 pol_then = getattr(pol, "then", None)
-                if pol_then:
+                if pol_given or pol_when or pol_then:
                     try:
-                        client.create_then(
+                        client.upsert_gwt(
                             parent_type="Policy",
                             parent_id=pol_id,
-                            name=pol_then.name,
-                            description=pol_then.description,
-                            referenced_node_id=pol_then.referencedNodeId,
-                            referenced_node_type=pol_then.referencedNodeType,
-                            field_values=pol_then.fieldValues if hasattr(pol_then, 'fieldValues') else None,
+                            given=pol_given,
+                            when=pol_when,
+                            then=pol_then,
                         )
                     except Exception:
                         pass

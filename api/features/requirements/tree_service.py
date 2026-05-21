@@ -39,65 +39,26 @@ def _load_json(raw: Any) -> Any:
 def _gwt_by_command() -> dict[str, list[AcceptanceCriterionDTO]]:
     """Acceptance criteria (Given/When/Then) keyed by Command id.
 
-    The graph carries GWT in two shapes depending on the ingestion path:
-      * Separate ``Given``/``When``/``Then`` nodes via ``HAS_GIVEN`` /
-        ``HAS_WHEN`` / ``HAS_THEN`` (the ``nodes_persist`` path).
-      * A single ``GWT`` node via ``HAS_GWT`` carrying ``givenRef`` /
-        ``whenRef`` / ``thenRef`` + ``testCases`` (the ``generate_gwt``
-        phase and the interactive GWT editor).
-    Both are read; a command's criteria come from whichever model
-    populated it (legacy nodes win when both exist).
+    Reads the single-`GWT`-node model: each Command has at most one `GWT`
+    node (via `HAS_GWT`) carrying `givenRef`/`whenRef`/`thenRef` (the
+    Given-When-Then skeleton — node references) and `testCases` (concrete
+    acceptance scenarios). This is the one GWT model written by every code
+    path (the `generate_gwt` ingestion phase, the interactive GWT editor,
+    and the legacy event-storming persistence).
     """
-    out: dict[str, list[AcceptanceCriterionDTO]] = {}
-
-    # ── Model A — separate Given/When/Then nodes ────────────────────────
-    legacy_query = """
-    MATCH (cmd:Command)
-    OPTIONAL MATCH (cmd)-[:HAS_GIVEN]->(g:Given)
-    OPTIONAL MATCH (cmd)-[:HAS_WHEN]->(w:When)
-    OPTIONAL MATCH (cmd)-[:HAS_THEN]->(t:Then)
-    WITH cmd, g, w, t
-    WHERE g IS NOT NULL OR w IS NOT NULL OR t IS NOT NULL
-    RETURN cmd.id AS cmdId,
-           g {.name, .description} AS given,
-           w {.name, .description} AS when,
-           t {.name, .description} AS then
-    """
-    with get_session() as session:
-        for rec in session.run(legacy_query):
-            cmd_id = rec["cmdId"]
-            if not cmd_id:
-                continue
-            criteria: list[AcceptanceCriterionDTO] = []
-            for kind, payload in (
-                ("given", rec["given"]),
-                ("when", rec["when"]),
-                ("then", rec["then"]),
-            ):
-                if payload and payload.get("name"):
-                    criteria.append(
-                        AcceptanceCriterionDTO(
-                            kind=kind,  # type: ignore[arg-type]
-                            name=payload.get("name") or "",
-                            description=payload.get("description"),
-                        )
-                    )
-            if criteria:
-                out[cmd_id] = criteria
-
-    # ── Model B — single GWT node (givenRef/whenRef/thenRef + testCases) ─
-    gwt_query = """
+    query = """
     MATCH (cmd:Command)-[:HAS_GWT]->(g:GWT)
     RETURN cmd.id AS cmdId,
            g.givenRef AS givenRef, g.whenRef AS whenRef,
            g.thenRef AS thenRef, g.testCases AS testCases
     """
+    out: dict[str, list[AcceptanceCriterionDTO]] = {}
     with get_session() as session:
-        for rec in session.run(gwt_query):
+        for rec in session.run(query):
             cmd_id = rec["cmdId"]
-            if not cmd_id or cmd_id in out:
-                continue  # legacy nodes already supplied this command's criteria
-            criteria = []
+            if not cmd_id:
+                continue
+            criteria: list[AcceptanceCriterionDTO] = []
             # Given-When-Then skeleton from the node references.
             for kind, raw in (
                 ("given", rec["givenRef"]),
@@ -120,7 +81,6 @@ def _gwt_by_command() -> dict[str, list[AcceptanceCriterionDTO]]:
                     criteria.append(AcceptanceCriterionDTO(kind="then", name=desc))
             if criteria:
                 out[cmd_id] = criteria
-
     return out
 
 
