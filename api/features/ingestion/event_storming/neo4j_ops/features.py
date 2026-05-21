@@ -64,6 +64,26 @@ class FeatureOps:
             ).single()
             return dict(rec["feature"]) if rec else None
 
+    def prune_orphan_features(self) -> int:
+        """Delete Feature nodes not attached to any BoundedContext.
+
+        Features MERGE on `bc_key + name` and are not session-scoped. A
+        re-ingestion wipes the session's BoundedContexts; if a later run
+        renames a BC, the old BC's features are left dangling (no
+        `HAS_FEATURE` parent). Every feature-creation path attaches the
+        node to its BC, so an unattached Feature is always stale — safe
+        to remove. Run as housekeeping at the start of feature grouping.
+        """
+        query = """
+        MATCH (f:Feature)
+        WHERE NOT (:BoundedContext)-[:HAS_FEATURE]->(f)
+        DETACH DELETE f
+        RETURN count(f) AS pruned
+        """
+        with self.session() as session:
+            rec = session.run(query).single()
+            return int(rec["pruned"]) if rec else 0
+
     def link_user_story_to_feature(
         self,
         user_story_id: str,

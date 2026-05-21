@@ -55,11 +55,21 @@ def _build_prompt(bc_name: str, stories: list[dict]) -> str:
         action = us.get("action") or ""
         benefit = us.get("benefit") or ""
         lines.append(f'{i}. As a {role}, I want {action}, so that {benefit}')
+    n = len(stories)
+    target = max(2, round(n / 4)) if n > 5 else 1
     lines += [
         "",
-        "Group these user stories into 1-N Features. Every user story index "
-        "MUST appear in exactly one feature. Prefer 2-6 stories per feature; "
-        "do not create one feature per story unless they are truly unrelated.",
+        f"Group these {n} user stories into Features. Every user story index "
+        "MUST appear in exactly one feature. A Feature is one user-facing "
+        "capability — group by the capability the stories serve, not by how "
+        "many there are.",
+        "Sizing rules (hard constraints):",
+        "- Aim for 3-6 stories per feature.",
+        f"- With {n} stories, produce roughly {target} feature(s).",
+        "- NEVER put more than 8 stories in one feature.",
+        "- NEVER collapse everything into a single feature when stories span "
+        "distinct capabilities — distinct capabilities must be separate Features.",
+        "- Do not create one feature per story either.",
     ]
     return "\n".join(lines)
 
@@ -76,6 +86,26 @@ async def feature_grouping_phase(
         message="🧩 User Story를 Feature 단위로 묶는 중...",
         progress=PHASE_START,
     )
+
+    # Housekeeping — re-ingestion wipes session-scoped BoundedContexts but
+    # Feature nodes are not session-tagged. If a prior run's BC was renamed,
+    # its features are left orphaned. Drop them before re-grouping.
+    try:
+        pruned = client.prune_orphan_features()
+        if pruned:
+            SmartLogger.log(
+                "INFO",
+                f"Pruned {pruned} orphan feature(s) before grouping",
+                category="agent.requirements.feature_grouping.prune",
+                params={"session_id": session_id, "pruned": pruned},
+            )
+    except Exception as exc:  # noqa: BLE001 — housekeeping is best-effort
+        SmartLogger.log(
+            "WARN",
+            f"Orphan-feature prune failed (non-fatal): {exc}",
+            category="agent.requirements.feature_grouping.prune.error",
+            params={"session_id": session_id, "error": str(exc)},
+        )
 
     # Collect (bc, [user stories]) pairs from Neo4j (US linked via IMPLEMENTS).
     with client.session() as session:

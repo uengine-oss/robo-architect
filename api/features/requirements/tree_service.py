@@ -10,6 +10,7 @@ Bucketing (research R8):
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from api.platform.neo4j import get_session
@@ -22,22 +23,51 @@ from api.features.requirements.requirements_contracts import (
 )
 
 
+def _load_json(raw: Any) -> Any:
+    """GWT ref / testCase fields are persisted as JSON strings — tolerate
+    dicts/lists (already decoded) and malformed values."""
+    if raw is None:
+        return None
+    if isinstance(raw, (dict, list)):
+        return raw
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _gwt_by_command() -> dict[str, list[AcceptanceCriterionDTO]]:
-    """Acceptance criteria (Given/When/Then) keyed by Command id."""
-    query = """
+    """Acceptance criteria (Given/When/Then) keyed by Command id.
+
+    The graph carries GWT in two shapes depending on the ingestion path:
+      * Separate ``Given``/``When``/``Then`` nodes via ``HAS_GIVEN`` /
+        ``HAS_WHEN`` / ``HAS_THEN`` (the ``nodes_persist`` path).
+      * A single ``GWT`` node via ``HAS_GWT`` carrying ``givenRef`` /
+        ``whenRef`` / ``thenRef`` + ``testCases`` (the ``generate_gwt``
+        phase and the interactive GWT editor).
+    Both are read; a command's criteria come from whichever model
+    populated it (legacy nodes win when both exist).
+    """
+    out: dict[str, list[AcceptanceCriterionDTO]] = {}
+
+    # ── Model A — separate Given/When/Then nodes ────────────────────────
+    legacy_query = """
     MATCH (cmd:Command)
     OPTIONAL MATCH (cmd)-[:HAS_GIVEN]->(g:Given)
     OPTIONAL MATCH (cmd)-[:HAS_WHEN]->(w:When)
     OPTIONAL MATCH (cmd)-[:HAS_THEN]->(t:Then)
+    WITH cmd, g, w, t
+    WHERE g IS NOT NULL OR w IS NOT NULL OR t IS NOT NULL
     RETURN cmd.id AS cmdId,
            g {.name, .description} AS given,
            w {.name, .description} AS when,
            t {.name, .description} AS then
     """
-    out: dict[str, list[AcceptanceCriterionDTO]] = {}
     with get_session() as session:
-        for rec in session.run(query):
+        for rec in session.run(legacy_query):
             cmd_id = rec["cmdId"]
+            if not cmd_id:
+                continue
             criteria: list[AcceptanceCriterionDTO] = []
             for kind, payload in (
                 ("given", rec["given"]),
@@ -54,6 +84,43 @@ def _gwt_by_command() -> dict[str, list[AcceptanceCriterionDTO]]:
                     )
             if criteria:
                 out[cmd_id] = criteria
+
+    # ── Model B — single GWT node (givenRef/whenRef/thenRef + testCases) ─
+    gwt_query = """
+    MATCH (cmd:Command)-[:HAS_GWT]->(g:GWT)
+    RETURN cmd.id AS cmdId,
+           g.givenRef AS givenRef, g.whenRef AS whenRef,
+           g.thenRef AS thenRef, g.testCases AS testCases
+    """
+    with get_session() as session:
+        for rec in session.run(gwt_query):
+            cmd_id = rec["cmdId"]
+            if not cmd_id or cmd_id in out:
+                continue  # legacy nodes already supplied this command's criteria
+            criteria = []
+            # Given-When-Then skeleton from the node references.
+            for kind, raw in (
+                ("given", rec["givenRef"]),
+                ("when", rec["whenRef"]),
+                ("then", rec["thenRef"]),
+            ):
+                ref = _load_json(raw)
+                if isinstance(ref, dict):
+                    label = (ref.get("name") or ref.get("exceptionName") or "").strip()
+                    if label:
+                        criteria.append(
+                            AcceptanceCriterionDTO(kind=kind, name=label)  # type: ignore[arg-type]
+                        )
+            # Concrete acceptance scenarios.
+            for tc in _load_json(rec["testCases"]) or []:
+                if not isinstance(tc, dict):
+                    continue
+                desc = (tc.get("scenarioDescription") or "").strip()
+                if desc:
+                    criteria.append(AcceptanceCriterionDTO(kind="then", name=desc))
+            if criteria:
+                out[cmd_id] = criteria
+
     return out
 
 
