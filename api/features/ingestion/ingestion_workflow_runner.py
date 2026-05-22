@@ -101,6 +101,23 @@ def clear_event_storming_nodes(client, session_id: str = "") -> None:
         )
 
 
+def tag_all_es_nodes(client, session_id: str) -> None:
+    """Stamp every event-storming node with this run's `session_id`.
+
+    Runs at the end of the workflow so the whole model — standard *and*
+    hybrid paths — carries one unified `session_id`. The per-phase upserts
+    only tag some labels (Feature/Invariant set it themselves; BC/UserStory/
+    Command/Event/… don't), so this closing pass makes every node consistent.
+    Safe because `clear_event_storming_nodes` wiped the graph at the start —
+    everything present now belongs to this session.
+    """
+    if not session_id:
+        return
+    with client.session() as s:
+        for label in _ES_LABELS:
+            s.run(f"MATCH (n:{label}) SET n.session_id = $sid", sid=session_id)
+
+
 async def _run_phase(session, ctx, phase_gen, pause_sync_target: str | None):
     """Run a single phase with cancel/pause handling. Yields ProgressEvents.
 
@@ -425,6 +442,18 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             if hsid:
                 async for ev in hybrid_post_workflow_hook(hsid):
                     yield ev
+
+        # Unify session_id across every ES node this run produced (standard +
+        # hybrid). Done last so post-hook nodes (cross-BC Policy, …) are covered.
+        try:
+            tag_all_es_nodes(client, session.id)
+        except Exception as e:  # noqa: BLE001 — tagging is best-effort
+            SmartLogger.log(
+                "WARN",
+                f"Failed to tag ES nodes with session_id: {e}",
+                category="ingestion.workflow.tag_session",
+                params={"session_id": session.id, "error": str(e)},
+            )
 
         # Complete — 실제 Neo4j에 생성된 Policy 수 카운트
         events_from_us_count = len(getattr(ctx, "events_from_us", []) or [])

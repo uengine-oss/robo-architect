@@ -5,6 +5,7 @@ import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import { useDebugMode } from '@/app/debug'
+import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
 import TreeNode from './TreeNode.vue'
 
 const { isDebug } = useDebugMode()
@@ -13,6 +14,10 @@ const navigatorStore = useNavigatorStore()
 const terminologyStore = useTerminologyStore()
 const bpmnStore = useBpmnStore()
 const emStore = useEventModelingStore()
+
+// Reload the navigator tree whenever an ingestion completes or data is cleared.
+useDataRefresh(() => handleRefresh())
+
 const activeTab = inject('activeTab', ref('Design'))
 const isBpmnMode = computed(() => activeTab.value === 'BPMN')
 const isEventModelingMode = computed(() => activeTab.value === 'Event Modeling')

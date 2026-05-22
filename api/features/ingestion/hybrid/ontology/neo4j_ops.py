@@ -27,7 +27,7 @@ from api.features.ingestion.hybrid.ontology.schema import (
     L_DOCUMENT_PASSAGE,
     L_EXTERNAL_TABLE,
     L_GLOSSARY_TERM,
-    L_HYBRID_SESSION,
+    L_BPM_SESSION,
     L_RULE,
     R_CONTAINS,
     R_EVALUATES,
@@ -98,7 +98,7 @@ def save_bpm_processes(session_id: str, processes: list[BpmProcess]) -> None:
 
 def save_bpm_skeleton(session_id: str, skeleton: BpmSkeleton) -> None:
     """Persist actors, tasks, sequences, and NEXT relations to Neo4j.
-    Also writes a :HybridSession marker node holding the bpmn_xml so the
+    Also writes a :BpmSession marker node holding the bpmn_xml so the
     frontend can rehydrate the canvas without relying on localStorage.
 
     If `skeleton.process` is set, each Actor/Task node is stamped with the
@@ -108,7 +108,7 @@ def save_bpm_skeleton(session_id: str, skeleton: BpmSkeleton) -> None:
     pid = process.id if process else None
     with get_session() as s:
         s.run(
-            f"MERGE (h:{L_HYBRID_SESSION} {{id: $sid, session_id: $sid}}) "
+            f"MERGE (h:{L_BPM_SESSION} {{id: $sid, session_id: $sid}}) "
             "SET h.bpmn_xml = $xml, h.updated_at = datetime()",
             sid=session_id, xml=skeleton.bpmn_xml or "",
         )
@@ -353,13 +353,13 @@ def fetch_rules(session_id: str) -> list[dict]:
 
 
 def save_session_bpmn_xml(session_id: str, bpmn_xml: str) -> None:
-    """Update the HybridSession marker's bpmn_xml. Used after Phase 1 has decided
+    """Update the BpmSession marker's bpmn_xml. Used after Phase 1 has decided
     the final XML (A2A response or native build fallback)."""
     if not bpmn_xml:
         return
     with get_session() as s:
         s.run(
-            f"MERGE (h:{L_HYBRID_SESSION} {{id: $sid, session_id: $sid}}) "
+            f"MERGE (h:{L_BPM_SESSION} {{id: $sid, session_id: $sid}}) "
             "SET h.bpmn_xml = $xml, h.updated_at = datetime()",
             sid=session_id, xml=bpmn_xml,
         )
@@ -713,7 +713,7 @@ def fetch_session_snapshot(session_id: str) -> dict:
     with get_session() as s:
         # Session marker (bpmn_xml)
         session_rec = s.run(
-            f"MATCH (h:{L_HYBRID_SESSION} {{session_id: $sid}}) RETURN h",
+            f"MATCH (h:{L_BPM_SESSION} {{session_id: $sid}}) RETURN h",
             sid=session_id,
         ).single()
         bpmn_xml = dict(session_rec["h"]).get("bpmn_xml") if session_rec else None
@@ -949,7 +949,7 @@ def fetch_session_snapshot(session_id: str) -> dict:
             rules_with_edges.add(row["rid"])
         unassigned_rule_ids = [rid for rid in rules_by_id if rid not in rules_with_edges]
 
-    # If HybridSession didn't store bpmn_xml (old session or A2A-empty case),
+    # If BpmSession didn't store bpmn_xml (old session or A2A-empty case),
     # reconstruct from the actor/task/sequence graph so the frontend canvas
     # can still render on cold load.
     if not bpmn_xml and actors and tasks:

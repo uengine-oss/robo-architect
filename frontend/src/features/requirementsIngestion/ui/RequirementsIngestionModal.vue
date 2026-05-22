@@ -7,6 +7,7 @@ import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
+import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
 
 const props = defineProps({
   modelValue: {
@@ -570,6 +571,7 @@ async function clearExistingData() {
     if (response.ok) {
       existingDataStats.value = { total: 0, by_type: {} }
       navigatorStore.clearAll()
+      emitDataChanged('cleared')  // 모든 탭 네비게이터/캔버스 비우기
       return true
     }
     return false
@@ -756,6 +758,9 @@ function connectToHybridStream(sid) {
       eventSource.value?.close()
       isProcessing.value = false
       bpmnStore.endHybrid()
+    }
+    if (data.phase === 'complete') {
+      emitDataChanged('ingestion-complete')  // BPM 단계 완료 → 모든 탭 네비게이터 갱신
     }
   })
   eventSource.value.addEventListener('error', () => {
@@ -1008,6 +1013,8 @@ function connectToStream(sid, isReconnect = false) {
       // Event Modeling: live mode 종료 후 전체 데이터 fetch
       eventModelingStore.stopLiveMode()
       eventModelingStore.fetchEventModeling()
+      // 모든 탭 네비게이터/캔버스 갱신 (Requirements·Big Picture 등 포함)
+      emitDataChanged('ingestion-complete')
     }
     
     // Handle error or cancellation

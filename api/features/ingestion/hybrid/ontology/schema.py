@@ -16,7 +16,7 @@ L_ACTIVITY_MAPPING = "ActivityMapping"
 L_GLOSSARY_TERM = "GlossaryTerm"
 L_EXTERNAL_TABLE = "ExternalTable"  # shadow of analyzer Table (hybrid DB side)
 L_DOCUMENT_PASSAGE = "DocumentPassage"
-L_HYBRID_SESSION = "HybridSession"  # session marker — bpmn_xml + metadata
+L_BPM_SESSION = "BpmSession"  # BPM-stage session record — bpmn_xml + metadata
 
 # pdf2bpmn extractor 가 기본 DB에 남기는 노드들 — 충돌 회피 위해 hybrid 쪽에서 `Bpmn*` 로 relabel.
 # 각 라벨은 pdf2bpmn 만의 고유 프로퍼티로 식별 가능 (event_type/gateway_type/proc_id).
@@ -47,7 +47,7 @@ ALL_HYBRID_LABELS = [
     L_GLOSSARY_TERM,
     L_EXTERNAL_TABLE,
     L_DOCUMENT_PASSAGE,
-    L_HYBRID_SESSION,
+    L_BPM_SESSION,
     L_BPMN_EVENT,
     L_BPMN_GATEWAY,
     L_BPMN_PROCESS,

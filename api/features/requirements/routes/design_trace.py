@@ -145,6 +145,8 @@ async def get_design_trace(
                     cmd_id=cmd_id,
                 ):
                     agg = rec["agg"]
+                    if not agg or not agg.get("id"):
+                        continue
                     nodes.setdefault(agg["id"], _node(agg, "Aggregate"))
                     add_rel(agg["id"], cmd_id, "HAS_COMMAND")
 
@@ -158,7 +160,7 @@ async def get_design_trace(
                     cmd_id=cmd_id,
                 ):
                     ui = rec["ui"]
-                    if ui:
+                    if ui and ui.get("id"):
                         nodes.setdefault(ui["id"], _node(ui, "UI"))
                         add_rel(ui["id"], cmd_id, "ATTACHED_TO")
 
@@ -173,15 +175,15 @@ async def get_design_trace(
                     cmd_id=cmd_id,
                 ):
                     evt = rec["evt"]
-                    if evt:
+                    if evt and evt.get("id"):
                         nodes.setdefault(evt["id"], _node(evt, "Event"))
                         add_rel(cmd_id, evt["id"], "EMITS")
                     pol = rec["pol"]
-                    if evt and pol:
+                    if evt and evt.get("id") and pol and pol.get("id"):
                         nodes.setdefault(pol["id"], _node(pol, "Policy"))
                         add_rel(evt["id"], pol["id"], "TRIGGERS")
                     nxt = rec["next"]
-                    if pol and nxt:
+                    if pol and pol.get("id") and nxt and nxt.get("id"):
                         if nxt["id"] not in nodes:
                             nodes[nxt["id"]] = _node(nxt, "Command")
                             next_frontier.append(nxt["id"])

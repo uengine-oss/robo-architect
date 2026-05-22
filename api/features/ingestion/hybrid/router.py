@@ -502,7 +502,10 @@ async def promote_start(session_id: str) -> dict[str, Any]:
             detail="BPM 가 아직 없습니다. Phase 1~4 (BPM 생성) 를 먼저 완료하세요.",
         )
 
-    ingestion_session = create_session()
+    # Reuse the hybrid session id as the ingestion session id so the whole
+    # pipeline (BPM + Event Storming) carries one unified `session_id` — no
+    # split between a BpmSession id and a separate ingestion id.
+    ingestion_session = create_session(session_id)
     ingestion_session.source_type = "hybrid"
     ingestion_session.hybrid_source_session_id = session_id
     ingestion_session.content = ""  # downstream phases don't use ctx.content in hybrid mode

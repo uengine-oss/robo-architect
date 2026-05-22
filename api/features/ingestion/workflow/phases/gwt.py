@@ -4,9 +4,10 @@ import asyncio
 import json
 import re
 import time
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.event_storming.neo4j_ops.gwt import GWTOps
@@ -24,6 +25,35 @@ from api.platform.env import (
 )
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
+
+
+# ── Structured-output schema for the command-GWT recovery retry ──────────────
+# When the LLM's free-form JSON is structurally broken (missing commas,
+# unescaped quotes — anything regex cleanup can't fix), the command-GWT path
+# re-asks the model with this schema bound. Tool-calling enforces the shape,
+# so the result is well-formed by construction — no manual json.loads.
+class _GwtRef(BaseModel):
+    """One side (given / when / then) of a GWT test case."""
+    name: str = Field(default="", description="Reference label, e.g. 'Aggregate: Order'")
+    description: str | None = Field(default=None)
+    fieldValues: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Map of property name → realistic test value",
+    )
+
+
+class _GwtTestCase(BaseModel):
+    scenarioDescription: str | None = Field(
+        default=None, description="Brief description of this scenario's business flow"
+    )
+    given: _GwtRef = Field(default_factory=_GwtRef)
+    when: _GwtRef = Field(default_factory=_GwtRef)
+    then: _GwtRef = Field(default_factory=_GwtRef)
+
+
+class _GwtTestCaseSet(BaseModel):
+    testCases: list[_GwtTestCase] = Field(default_factory=list)
+
 
 GENERATE_GWT_PROMPT_COMMAND = """Generate Given/When/Then (GWT) test cases for a Command to support BDD-style test scenarios.
 
@@ -427,7 +457,12 @@ If no properties are available, only then use empty fieldValues {{}}."""
         content = re.sub(r',(\s*[}\]])', r'\1', content)
         
         try:
-            gwt_test_cases = json.loads(content)
+            # strict=False: tolerate literal control chars (newline/tab) inside
+            # string values. The cleanup above keeps \n\r\t for structural
+            # readability, but the LLM also embeds them unescaped inside
+            # description strings — strict json.loads rejects those
+            # ("Invalid control character"). strict=False keeps them as-is.
+            gwt_test_cases = json.loads(content, strict=False)
         except json.JSONDecodeError as json_err:
             SmartLogger.log(
                 "WARN",
@@ -444,28 +479,66 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     "content_length": len(content),
                 }
             )
-            # Try to extract JSON from the content more aggressively
-            # Look for JSON array pattern
+            # Recovery 1: extract the [...] array and strip stray control chars.
+            gwt_test_cases = None
             json_match = re.search(r'\[[\s\S]*\]', content)
             if json_match:
                 try:
-                    # 복구 시도 전에도 control character 제거
-                    recovered_content = json_match.group(0)
-                    recovered_content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', recovered_content)
-                    gwt_test_cases = json.loads(recovered_content)
+                    recovered_content = re.sub(
+                        r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_match.group(0)
+                    )
+                    gwt_test_cases = json.loads(recovered_content, strict=False)
                     SmartLogger.log(
                         "INFO",
                         f"Command GWT JSON recovered from content for {cmd_name}",
                         category="ingestion.workflow.gwt.command.json_recovered",
+                        params={"session_id": ctx.session.id, "command_name": cmd_name},
+                    )
+                except json.JSONDecodeError:
+                    pass
+
+            # Recovery 2: re-ask the LLM with structured output bound. The
+            # schema is enforced via tool-calling, so the result is well-formed
+            # by construction — this fixes structurally-broken JSON (missing
+            # commas, unescaped quotes) that regex cleanup cannot.
+            if gwt_test_cases is None:
+                try:
+                    # method="function_calling": the OpenAI default ("json_schema",
+                    # strict) rejects open objects like `fieldValues: dict[str, Any]`.
+                    # Function-calling mode tolerates them.
+                    structured_llm = llm.with_structured_output(
+                        _GwtTestCaseSet, method="function_calling"
+                    )
+                    retry_result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            structured_llm.invoke,
+                            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)],
+                        ),
+                        timeout=300.0,
+                    )
+                    gwt_test_cases = [tc.model_dump() for tc in retry_result.testCases]
+                    SmartLogger.log(
+                        "INFO",
+                        f"Command GWT recovered via structured output for {cmd_name}",
+                        category="ingestion.workflow.gwt.command.structured_recovered",
                         params={
                             "session_id": ctx.session.id,
                             "command_name": cmd_name,
-                        }
+                            "test_cases": len(gwt_test_cases),
+                        },
                     )
-                except json.JSONDecodeError:
+                except Exception as retry_err:  # noqa: BLE001
+                    SmartLogger.log(
+                        "WARN",
+                        f"Command GWT structured-output retry failed for {cmd_name}: {retry_err}",
+                        category="ingestion.workflow.gwt.command.structured_recovery_failed",
+                        params={
+                            "session_id": ctx.session.id,
+                            "command_name": cmd_name,
+                            "error": str(retry_err),
+                        },
+                    )
                     raise json_err
-            else:
-                raise json_err
         
         if not isinstance(gwt_test_cases, list):
             gwt_test_cases = [gwt_test_cases]

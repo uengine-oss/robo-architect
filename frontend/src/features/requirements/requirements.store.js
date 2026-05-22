@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { createLogger } from '@/app/logging/logger'
+import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
 
 /**
  * Requirements tab store (026 — requirements-tab).
@@ -189,6 +190,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     selectedUserStory.value = null
     designTrace.value = { nodes: [], relationships: [], empty: false }
     impactReport.value = null
+    emitDataChanged('cleared')  // 다른 탭 네비게이터/캔버스도 비우기
     return res.json()
   }
 

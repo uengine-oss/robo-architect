@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
+import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
 import RequirementsTree from './RequirementsTree.vue'
 import UserStoryDetail from './UserStoryDetail.vue'
 import DesignTraceCanvas from './DesignTraceCanvas.vue'
@@ -15,6 +16,9 @@ import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
  * canvas, requirement authoring, and non-blocking impact report.
  */
 const store = useRequirementsStore()
+
+// Reload the requirements tree whenever an ingestion completes or data is cleared.
+useDataRefresh(() => store.fetchTree())
 
 const showAddDialog = ref(false)
 const showIngestionModal = ref(false)

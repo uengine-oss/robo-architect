@@ -3,11 +3,15 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
 import ChatPanel from '@/features/modelModifier/ui/ChatPanel.vue'
 
 const store = useBigPictureStore()
 const chatStore = useModelModifierStore()
 const terminologyStore = useTerminologyStore()
+
+// Reload the timeline whenever an ingestion completes or data is cleared.
+useDataRefresh(() => store.fetchTimeline())
 
 // DOM refs
 const tableContainer = ref(null)

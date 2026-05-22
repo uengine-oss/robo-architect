@@ -2,11 +2,15 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
+import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
 import ChatPanel from '@/features/modelModifier/ui/ChatPanel.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
 
 const store = useEventModelingStore()
 const chatStore = useModelModifierStore()
+
+// Reload the canvas whenever an ingestion completes or data is cleared.
+useDataRefresh(() => store.fetchEventModeling())
 
 const scrollContainer = ref(null)
 const panelMode = ref('chat')  // 'chat' | 'inspector' | 'none'

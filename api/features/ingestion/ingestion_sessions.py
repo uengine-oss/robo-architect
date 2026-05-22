@@ -90,10 +90,17 @@ def get_session(session_id: str) -> Optional[IngestionSession]:
     return _sessions.get(session_id)
 
 
-def create_session() -> IngestionSession:
-    session_id = str(uuid.uuid4())[:8]
-    session = IngestionSession(id=session_id)
-    _sessions[session_id] = session
+def create_session(session_id: str | None = None) -> IngestionSession:
+    """Create (or re-create) an ingestion session.
+
+    `session_id` lets a caller pin a known id instead of a fresh random one.
+    The hybrid → Event Storming promotion passes its upstream hybrid session
+    id so the whole pipeline (BPM + ES) carries one unified `session_id` —
+    no split between a Hybrid id and a separate ingestion id.
+    """
+    sid = session_id or str(uuid.uuid4())[:8]
+    session = IngestionSession(id=sid)
+    _sessions[sid] = session
     return session
 
 

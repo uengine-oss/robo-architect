@@ -57,7 +57,7 @@ async def sync_batch(
 
     Returns a summary dict for caller logging:
         {
-          "skipped": True,                      # if no active binding
+          "skipped": True,                      # no active binding, or no plugin connected
           "syncedCount": int,                   # successful pushes
           "failedCount": int,                   # failed pushes (incl orphans + unreachable pages)
           "orphanUis": list[str],
@@ -74,6 +74,31 @@ async def sync_batch(
     # 020: Stamp every figmaSync* status write with the binding file key so the
     # FR-020 retry classifier can detect "이전 바인딩" failures after a replace.
     binding_file_key = binding.get("figmaFileKey")
+
+    # Plugin-presence guard. If no Figma plugin is currently polling for this
+    # file, every push_frame_for_ui below would burn its full 120 s timeout —
+    # silently, since push_frame_for_ui never raises — stalling the ingestion
+    # UI phase ~20 min per batch. Skip fast instead; the architect can sync
+    # later from the Design tab once the plugin is connected.
+    from ..ingestion.figma_plugin_ws import is_polling_active  # noqa: PLC0415
+    if not binding_file_key or not is_polling_active(binding_file_key):
+        SmartLogger.log(
+            "INFO",
+            f"figma_binding.bulk_sync.skipped_no_plugin session={session_id} "
+            f"batch={len(ui_ids)} (Figma 플러그인 미연결 — 푸시 건너뜀)",
+            category="figma_binding.bulk_sync.skipped_no_plugin",
+            params={
+                "sessionId": session_id,
+                "batchSize": len(ui_ids),
+                "figmaFileKey": binding_file_key,
+            },
+        )
+        return {
+            "skipped": True,
+            "reason": "plugin-not-connected",
+            "syncedCount": 0,
+            "failedCount": 0,
+        }
 
     SmartLogger.log(
         "INFO",
