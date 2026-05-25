@@ -9,7 +9,14 @@ import ClarificationSummary from './ClarificationSummary.vue'
  * - Drives the per-question answer → propose → apply loop.
  * - Renders the disambiguation re-prompt when the agent can't interpret an answer.
  * - Hands off to ClarificationSummary on session end.
+ *
+ * Two render modes:
+ *   - default (overlay)     — shows title + 닫기 toolbar
+ *   - embedded=true         — header trimmed; hosted inside UserStoryDetail tab
  */
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+})
 const store = useRequirementsStore()
 const emit = defineEmits(['close'])
 
@@ -74,13 +81,14 @@ function close() {
 </script>
 
 <template>
-  <div class="clarification-panel">
-    <div class="cp-toolbar">
+  <div class="clarification-panel" :class="{ 'is-embedded': props.embedded }">
+    <div v-if="!props.embedded" class="cp-toolbar">
       <span class="cp-title">요구사항 명확화</span>
       <span v-if="session" class="cp-scope">— {{ session.scope?.scopeName }}</span>
       <span v-if="progressLabel" class="cp-progress">{{ progressLabel }}</span>
       <button class="cp-btn" @click="close">닫기</button>
     </div>
+    <div v-else-if="progressLabel" class="cp-embedded-status">{{ progressLabel }}</div>
 
     <div v-if="store.clarificationError" class="cp-error">
       {{ store.clarificationError }}
@@ -201,6 +209,18 @@ function close() {
   background: var(--color-bg-secondary, #fff);
   border: 1px solid var(--color-border, #e5e5e5);
   border-radius: 6px;
+}
+/* Embedded inside the UserStoryDetail clarification tab — drop the visual
+ * frame and toolbar; the tab provides its own context. */
+.clarification-panel.is-embedded {
+  padding: 4px 4px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+.cp-embedded-status {
+  font-size: 0.72rem; color: var(--color-text-light, #888);
+  padding: 0 4px 4px;
 }
 .cp-toolbar { display: flex; align-items: center; gap: 8px; }
 .cp-title { font-weight: 700; font-size: 0.85rem; }

@@ -1,15 +1,16 @@
 import { test, expect, Page } from '@playwright/test'
 
 /**
- * Spec 030 — Requirements Clarification flow.
+ * Spec 030 — Requirements Clarification flow (tab-based UX).
  *
  * Drives the new clarification UX end-to-end against a mocked backend:
- *  - flagged ambiguity badge renders on a user story (US-1)
- *  - right-click context menu on a user story → "🔍 이 요구사항 명확화"
- *  - clarification panel opens, SSE stream delivers questions_ready
- *  - first question + 추천 답변 + 옵션 표시
- *  - 추천 답변 수락 → /answer 호출 → before/after diff 표시
- *  - "적용" → /apply 호출 → 패널 진행
+ *  - ambiguity badge renders on a user story (us-fast)
+ *  - clicking the user story opens the detail panel
+ *  - the detail panel has a "명확화" tab with a badge counter
+ *  - opening that tab fires a single-story clarification session
+ *  - SSE stream delivers questions_ready, queue renders inside the tab
+ *  - "추천 답변 수락" → /answer → before/after diff
+ *  - "적용" → /apply → proposal collapses
  *
  * No Neo4j / LLM / real backend process required.
  */
@@ -146,20 +147,16 @@ async function mockBackend(page: Page) {
 
   await page.route('**/api/requirements/tree', (r) => r.fulfill({ json: TREE }))
 
-  // Flags — first call returns 1 flagged story, subsequent calls return empty.
-  let flagsCalls = 0
+  // Flags — return FLAGS_INITIAL until /apply has been called, then empty.
+  let applyCalled = false
   await page.route('**/api/requirements/clarification/flags', (r) => {
-    flagsCalls += 1
-    r.fulfill({ json: flagsCalls === 1 ? FLAGS_INITIAL : FLAGS_EMPTY })
+    r.fulfill({ json: applyCalled ? FLAGS_EMPTY : FLAGS_INITIAL })
   })
 
   // Session POST.
   await page.route('**/api/requirements/clarification/sessions', (r) => {
-    if (r.request().method() === 'POST') {
-      r.fulfill({ json: SESSION_INITIAL })
-    } else {
-      r.fulfill({ json: {} })
-    }
+    if (r.request().method() === 'POST') r.fulfill({ json: SESSION_INITIAL })
+    else r.fulfill({ json: {} })
   })
 
   // SSE stream — single questions_ready event then end.
@@ -174,7 +171,7 @@ async function mockBackend(page: Page) {
     },
   )
 
-  // Session snapshot — return awaiting_answers (questions visible).
+  // Session snapshot.
   await page.route(
     `**/api/requirements/clarification/sessions/${SESSION_ID}`,
     (r) => {
@@ -183,77 +180,82 @@ async function mockBackend(page: Page) {
     },
   )
 
-  // Answer.
   await page.route(
     `**/api/requirements/clarification/sessions/${SESSION_ID}/answer`,
     (r) => r.fulfill({ json: PROPOSAL }),
   )
 
-  // Apply.
   await page.route(
     `**/api/requirements/clarification/sessions/${SESSION_ID}/apply`,
-    (r) => r.fulfill({ json: APPLY_RESP }),
+    (r) => { applyCalled = true; r.fulfill({ json: APPLY_RESP }) },
   )
 }
 
-test.use({ headless: false, viewport: { width: 1400, height: 900 } })
+test.use({ headless: false, viewport: { width: 1500, height: 900 } })
 
-// Screenshots land next to the spec for visual proof / manual.
-const SHOT = (name: string) => `../docs/clarification-manual/images/${name}`
+const SHOT = (name: string) => `../specs/030-requirements-clarify-agent/manual/images/${name}`
 
-test('Requirements clarification: right-click → scan → answer → apply', async ({ page }) => {
+test('Requirements clarification: select → tab → scan → answer → apply', async ({ page }) => {
   await mockBackend(page)
   await page.goto('/')
 
   // ── Open the Requirements tab ──────────────────────────────────────────
   await page.getByRole('button', { name: 'Requirements' }).first().click()
 
-  // Tree loaded — expand the BC + Feature so US rows are visible.
+  // Tree loaded — expand BC + Feature so US rows are visible.
   await page.getByText('Order', { exact: true }).first().click()
   await page.getByText('주문 검색', { exact: true }).first().click()
 
-  // ── Ambiguity badge shows on us-fast (flagged by previous session) ─────
+  // ── Ambiguity badge on us-fast row only ────────────────────────────────
   const fastRow = page.locator('.tree-node--us', { hasText: '주문을 빠르게 검색하고 싶다' })
   await expect(fastRow.locator('.ambig-badge')).toBeVisible()
   await expect(fastRow.locator('.ambig-badge')).toContainText('1')
-  await page.screenshot({ path: SHOT('01-ambiguity-badge.png'), fullPage: false })
 
-  // us-clear should NOT have an ambiguity badge.
   const clearRow = page.locator('.tree-node--us', { hasText: '4개 필터로 검색한다' })
   await expect(clearRow.locator('.ambig-badge')).toHaveCount(0)
+  await page.screenshot({ path: SHOT('01-tree-badge.png'), fullPage: false })
 
-  // ── Right-click on us-fast → context menu shows ────────────────────────
-  await fastRow.locator('.us-row').first().click({ button: 'right' })
-  await expect(page.locator('.ctx-menu')).toBeVisible()
-  await expect(page.getByRole('button', { name: /이 요구사항 명확화/ })).toBeVisible()
-  await page.screenshot({ path: SHOT('02-context-menu.png'), fullPage: false })
+  // ── Click us-fast → detail panel opens; flagged story auto-jumps to the
+  //    "명확화" tab so the user immediately sees what needs attention. ───
+  await fastRow.locator('.us-row').first().click()
 
-  // ── Click "이 요구사항 명확화" → clarification panel opens ──────────────
-  await page.getByRole('button', { name: /이 요구사항 명확화/ }).click()
+  // Tab bar visible with both tabs (scoped to the detail tabbar — the
+  // toolbar's "요구사항 명확화 (전체)" button shares text otherwise).
+  const tabbar = page.locator('.us-tabs')
+  await expect(tabbar.getByRole('button', { name: '개요' })).toBeVisible()
+  const clarifTab = tabbar.getByRole('button', { name: /명확화/ })
+  await expect(clarifTab).toBeVisible()
 
-  // Wait for the panel to switch from analyzing → awaiting_answers + render Q1.
+  // The clarification tab carries the same ❓ counter as the tree badge.
+  await expect(clarifTab.locator('.tab-badge')).toContainText('1')
+
+  // Wait for the agent to deliver the queue (SSE + snapshot refresh).
   await expect(page.locator('.cp-question')).toBeVisible({ timeout: 10_000 })
   await expect(page.locator('.cp-question')).toContainText('빠르게')
   await expect(page.locator('.cp-pill').first()).toContainText('non_functional')
-
-  // Recommended answer + closed options rendered.
   await expect(page.locator('.cp-recommended')).toContainText('p95 1초 이내')
   await expect(page.locator('.cp-btn--option')).toHaveCount(2)
-  await page.screenshot({ path: SHOT('03-question-queue.png'), fullPage: false })
+  await page.screenshot({ path: SHOT('02-detail-tab-question.png'), fullPage: false })
 
-  // ── Accept the recommended answer → /answer call → proposal renders ────
+  // ── Switch to 개요 to show coexistence + come back ─────────────────────
+  await tabbar.getByRole('button', { name: '개요' }).click()
+  await expect(page.locator('.us-detail__statement')).toBeVisible()
+  await page.screenshot({ path: SHOT('03-overview-tab.png'), fullPage: false })
+  await clarifTab.click()
+  await expect(page.locator('.cp-question')).toBeVisible()
+
+  // ── Accept the recommended answer → /answer → proposal renders ─────────
   await page.getByRole('button', { name: '추천 답변 수락' }).click()
-
-  // before/after diff appears.
   await expect(page.locator('.cp-proposal-header')).toBeVisible({ timeout: 5_000 })
   await expect(page.locator('.cp-diff-col').first()).toContainText('빠르게')
   await expect(page.locator('.cp-diff-col').nth(1)).toContainText('p95 1초 이내')
   await page.screenshot({ path: SHOT('04-edit-proposal.png'), fullPage: false })
 
-  // ── "적용" → /apply call ───────────────────────────────────────────────
+  // ── "적용" → /apply → proposal collapses, badge clears ─────────────────
   await page.getByRole('button', { name: '적용' }).click()
-
-  // Proposal collapses after apply (cleared).
   await expect(page.locator('.cp-proposal-header')).toBeHidden({ timeout: 5_000 })
+
+  // After apply, the second /flags call returns empty → tab badge gone.
+  await expect(clarifTab.locator('.tab-badge')).toHaveCount(0, { timeout: 5_000 })
   await page.screenshot({ path: SHOT('05-after-apply.png'), fullPage: false })
 })

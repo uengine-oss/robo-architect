@@ -6,7 +6,6 @@ import RequirementsTree from './RequirementsTree.vue'
 import UserStoryDetail from './UserStoryDetail.vue'
 import DesignTraceCanvas from './DesignTraceCanvas.vue'
 import AddRequirementDialog from './AddRequirementDialog.vue'
-import ClarificationPanel from './ClarificationPanel.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
@@ -125,19 +124,15 @@ function onIngestionComplete() {
 }
 
 // ── Clarification (spec 030) ───────────────────────────────────────────
-const showClarification = ref(false)
-
+// Scope-level (Project / BoundedContext / Feature) clarification: kick a
+// session and surface its flags as tree badges. Per-UserStory clarification
+// lives inside UserStoryDetail's "명확화" tab — no overlay needed here.
 async function onClarifyScope({ scopeType, scopeId }) {
   try {
     await store.startClarification(scopeType, scopeId)
-    showClarification.value = true
   } catch (e) {
     window.alert(`요구사항 명확화 시작 실패: ${e?.message || e}`)
   }
-}
-
-function onClarificationClose() {
-  showClarification.value = false
 }
 </script>
 
@@ -215,11 +210,6 @@ function onClarificationClose() {
 
     <AddRequirementDialog v-model="showAddDialog" @added="store.fetchTree()" />
     <RequirementsIngestionModal v-model="showIngestionModal" @complete="onIngestionComplete" />
-
-    <!-- Clarification overlay (spec 030) -->
-    <div v-if="showClarification" class="req-clarification-overlay">
-      <ClarificationPanel @close="onClarificationClose" />
-    </div>
   </div>
 </template>
 
@@ -266,11 +256,5 @@ function onClarificationClose() {
 }
 .req-inspector-resizer:hover {
   background: rgba(34, 139, 230, 0.3);
-}
-.req-clarification-overlay {
-  position: absolute; top: 48px; right: 16px; bottom: 16px;
-  width: min(520px, 60vw);
-  z-index: 30;
-  box-shadow: -4px 0 14px rgba(0, 0, 0, 0.12);
 }
 </style>
