@@ -1,9 +1,13 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
 /**
  * Requirements tree (026 — US1/US4): Epic → Feature → UserStory → AcceptanceCriteria.
- * Supports drag-n-drop of user stories between features and delete actions.
+ * Supports drag-n-drop of user stories between features, delete actions,
+ * and (spec 030) a right-click context menu on UserStory rows that triggers
+ * a single-story clarification session, plus an ambiguity badge for stories
+ * flagged by a previous scan.
  */
 const props = defineProps({
   tree: { type: Object, default: () => ({ epics: [], unassigned: [] }) },
@@ -17,8 +21,31 @@ const emit = defineEmits([
   'clarify-scope',
 ])
 
+const store = useRequirementsStore()
+
 const expanded = ref(new Set())
 const dragOverFeature = ref(null)
+
+// ── Right-click context menu (spec 030) ───────────────────────────────
+const ctxMenu = ref(null) // { x, y, userStoryId } | null
+function openCtxMenu(evt, userStoryId) {
+  evt.preventDefault()
+  ctxMenu.value = { x: evt.clientX, y: evt.clientY, userStoryId }
+}
+function closeCtxMenu() { ctxMenu.value = null }
+function clarifyFromCtx() {
+  if (!ctxMenu.value) return
+  const usId = ctxMenu.value.userStoryId
+  closeCtxMenu()
+  emit('clarify-scope', { scopeType: 'user_story', scopeId: usId, scopeName: '' })
+}
+
+function ambiguityInfo(usId) {
+  const f = store.clarificationFlags[usId]
+  if (!f) return null
+  const cats = (f.categories || []).filter(Boolean)
+  return { count: (f.questionIds || []).length, categories: cats }
+}
 
 function key(prefix, id) {
   return `${prefix}:${id}`
@@ -102,8 +129,9 @@ function onDrop(evt, featureId) {
               >
                 <div
                   class="tree-row us-row"
-                  :class="{ 'is-selected': selectedId === us.id }"
+                  :class="{ 'is-selected': selectedId === us.id, 'has-ambiguity': ambiguityInfo(us.id) }"
                   @click="emit('select', us.id)"
+                  @contextmenu="openCtxMenu($event, us.id)"
                 >
                   <span
                     class="caret"
@@ -111,6 +139,11 @@ function onDrop(evt, featureId) {
                   >{{ isOpen(key('us', us.id)) ? '▾' : '▸' }}</span>
                   <span class="node-icon us">US</span>
                   <span class="node-label">{{ us.role }}: {{ us.action }}</span>
+                  <span
+                    v-if="ambiguityInfo(us.id)"
+                    class="ambig-badge"
+                    :title="`명확화 필요 — ${ambiguityInfo(us.id).count}개 질문 (${ambiguityInfo(us.id).categories.join(', ')})`"
+                  >❓ {{ ambiguityInfo(us.id).count }}</span>
                   <button
                     class="del-btn"
                     title="User Story 삭제"
@@ -156,13 +189,19 @@ function onDrop(evt, featureId) {
           v-for="us in tree.unassigned"
           :key="us.id"
           class="tree-row us-row"
-          :class="{ 'is-selected': selectedId === us.id }"
+          :class="{ 'is-selected': selectedId === us.id, 'has-ambiguity': ambiguityInfo(us.id) }"
           draggable="true"
           @dragstart="onDragStart($event, us.id)"
           @click="emit('select', us.id)"
+          @contextmenu="openCtxMenu($event, us.id)"
         >
           <span class="node-icon us">US</span>
           <span class="node-label">{{ us.role }}: {{ us.action }}</span>
+          <span
+            v-if="ambiguityInfo(us.id)"
+            class="ambig-badge"
+            :title="`명확화 필요 — ${ambiguityInfo(us.id).count}개 질문`"
+          >❓ {{ ambiguityInfo(us.id).count }}</span>
         </div>
       </div>
     </div>
@@ -170,6 +209,17 @@ function onDrop(evt, featureId) {
     <div v-if="!(tree.epics || []).length && !(tree.unassigned || []).length" class="tree-row empty-row">
       요구사항이 없습니다. 문서를 업로드하거나 요구사항을 추가하세요.
     </div>
+
+    <!-- Right-click context menu (spec 030) -->
+    <div
+      v-if="ctxMenu"
+      class="ctx-menu"
+      :style="{ top: ctxMenu.y + 'px', left: ctxMenu.x + 'px' }"
+      @click.stop
+    >
+      <button class="ctx-item" @click="clarifyFromCtx">🔍 이 요구사항 명확화</button>
+    </div>
+    <div v-if="ctxMenu" class="ctx-backdrop" @click="closeCtxMenu" @contextmenu.prevent="closeCtxMenu"></div>
   </div>
 </template>
 
@@ -208,4 +258,30 @@ function onDrop(evt, featureId) {
 .empty-row, .ac-row.empty { color: var(--color-text-light); font-style: italic; padding-left: 18px; }
 .tree-node--feature.drag-over { outline: 2px dashed var(--color-accent); border-radius: 4px; }
 .tree-node--us[draggable='true'] { cursor: grab; }
+
+/* spec 030 — ambiguity badge + context menu */
+.us-row.has-ambiguity {
+  background: linear-gradient(90deg, rgba(255, 196, 0, 0.10), transparent 60%);
+}
+.ambig-badge {
+  font-size: 0.66rem; padding: 1px 6px; border-radius: 4px;
+  background: rgba(255, 196, 0, 0.25); color: #8a6500;
+  margin-left: 4px; cursor: help; white-space: nowrap;
+}
+.ctx-menu {
+  position: fixed; z-index: 1000;
+  background: var(--color-bg-secondary, #fff);
+  border: 1px solid var(--color-border, #ccc); border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  padding: 4px 0; min-width: 180px;
+}
+.ctx-item {
+  display: block; width: 100%; padding: 6px 12px; text-align: left;
+  background: transparent; border: none; cursor: pointer; font-size: 0.78rem;
+  color: var(--color-text, #222);
+}
+.ctx-item:hover { background: var(--color-bg-tertiary, #f4f4f4); }
+.ctx-backdrop {
+  position: fixed; inset: 0; z-index: 999; background: transparent;
+}
 </style>

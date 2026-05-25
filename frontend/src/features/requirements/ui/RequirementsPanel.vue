@@ -19,7 +19,10 @@ import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
 const store = useRequirementsStore()
 
 // Reload the requirements tree whenever an ingestion completes or data is cleared.
-useDataRefresh(() => store.fetchTree())
+useDataRefresh(() => {
+  store.fetchTree()
+  store.fetchClarificationFlags()
+})
 
 const showAddDialog = ref(false)
 const showIngestionModal = ref(false)
@@ -55,6 +58,7 @@ function stopResizeInspector() {
 
 onMounted(() => {
   store.fetchTree()
+  store.fetchClarificationFlags()
   try {
     const v = Number(localStorage.getItem('requirements_inspector_width'))
     if (Number.isFinite(v) && v >= 280) inspectorWidth.value = v

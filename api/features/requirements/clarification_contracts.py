@@ -16,20 +16,27 @@ from pydantic import BaseModel, Field
 
 
 class AmbiguityCategory(str, Enum):
+    """SpecKit `/speckit-clarify` skill taxonomy
+    (`.claude/skills/speckit-clarify/SKILL.md` §Outline step 2).
+    """
+
     functional_scope = "functional_scope"
     domain_data_model = "domain_data_model"
     interaction_flow = "interaction_flow"
     non_functional = "non_functional"
     integration_dependencies = "integration_dependencies"
     edge_cases = "edge_cases"
+    constraints_tradeoffs = "constraints_tradeoffs"
     terminology = "terminology"
     completion_signals = "completion_signals"
+    misc_placeholders = "misc_placeholders"
 
 
 class ScopeType(str, Enum):
     project = "project"
     bounded_context = "bounded_context"
     feature = "feature"
+    user_story = "user_story"
 
 
 class SessionStatus(str, Enum):

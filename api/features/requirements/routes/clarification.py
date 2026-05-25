@@ -26,6 +26,13 @@ from api.features.requirements.clarification_agent.answer_encoder import (
     encode_answer,
     normalize_final_answer,
 )
+from api.features.requirements.clarification_agent.clarification_flags import (
+    FlagInfo,
+    clear_flag,
+    clear_session_flags,
+    record_flags,
+    snapshot as snapshot_flags,
+)
 from api.features.requirements.clarification_agent.clarification_log import (
     append_log_entry,
     mark_log_entries_reverted,
@@ -112,6 +119,23 @@ def _scope_name_and_user_stories(
             ]:
                 if feature.id == scope_id:
                     return feature.name, list(feature.userStories or [])
+        return None, []
+
+    if scope_type == ScopeType.user_story:
+        # Walk the tree to find the single user story by id.
+        for epic in tree.epics:
+            for feature in [
+                *epic.features,
+                *([epic.unassignedFeature] if epic.unassignedFeature else []),
+            ]:
+                for us in feature.userStories or []:
+                    if us.id == scope_id:
+                        label = (us.role or us.id) + ": " + (us.action or "")
+                        return label.strip(": "), [us]
+        for us in tree.unassigned or []:
+            if us.id == scope_id:
+                label = (us.role or us.id) + ": " + (us.action or "")
+                return label.strip(": "), [us]
         return None, []
 
     return None, []
@@ -218,6 +242,13 @@ def _run_scan_background(session_id: str, user_story_nodes: list) -> None:
             queue.questions,
             no_ambiguities=queue.noAmbiguities,
             deferred_note=queue.deferredNote,
+        )
+        # Flag each surfaced UserStory so the tree can render an ambiguity badge.
+        record_flags(
+            session_id=session_id,
+            scope_type=sess.scope.scopeType.value,
+            scope_id=sess.scope.scopeId,
+            questions=queue.questions,
         )
         SmartLogger.log(
             "INFO",
@@ -509,6 +540,9 @@ async def apply_clarification(
 
         applied_ids.append(edit.requirementId)
         applied_snapshots[edit.requirementId] = result.after_snapshot.model_dump()
+        # Clear the pending-clarification flag on this UserStory (ambiguity
+        # has been addressed via the applied edit).
+        clear_flag(edit.requirementId)
         if result.changed:
             any_change = True
             report_id = create_report("edit")  # type: ignore[arg-type]
@@ -722,6 +756,9 @@ async def revert_clarification_change(
         )
 
     mark_log_entries_reverted(req.requirementId, session_id=session_id)
+    # Restoring the pre-session snapshot also clears the pending-clarification
+    # marker: the requirement is "back to start", not "still unclear".
+    clear_flag(req.requirementId)
 
     if result.changed:
         report_id = create_report("edit")  # type: ignore[arg-type]
@@ -807,6 +844,9 @@ async def discard_clarification_session(
     if sess is None:
         raise HTTPException(status_code=404, detail="session_not_found")
     sess.discard()
+    # Drop pending-clarification flags so the tree no longer shows badges
+    # for questions the user explicitly threw away.
+    clear_session_flags(session_id)
     SmartLogger.log(
         "INFO",
         "Clarification session discarded.",
@@ -814,3 +854,38 @@ async def discard_clarification_session(
         params={**http_context(request), "session_id": session_id},
     )
     return sess.to_dto()
+
+
+# ── 10. GET /clarification/flags ─────────────────────────────────────────
+
+
+@router.get("/clarification/flags")
+async def get_clarification_flags(request: Request) -> dict:
+    """Snapshot of in-memory pending-clarification flags per UserStory.
+
+    Returned shape: `{ "userStoryFlags": { "<usId>": FlagInfo, ... } }`.
+    The frontend hits this when it loads the requirements tree so it can
+    render an ambiguity badge on flagged user stories.
+    """
+    flags = snapshot_flags()
+    payload = {
+        "userStoryFlags": {
+            us_id: {
+                "userStoryId": info.userStoryId,
+                "sessionId": info.sessionId,
+                "questionIds": info.questionIds,
+                "categories": info.categories,
+                "scopeType": info.scopeType,
+                "scopeId": info.scopeId,
+                "flaggedAt": info.flaggedAt,
+            }
+            for us_id, info in flags.items()
+        }
+    }
+    SmartLogger.log(
+        "INFO",
+        "Clarification flags snapshot fetched.",
+        category="requirements.clarification.flags_fetch",
+        params={**http_context(request), "flagged_count": len(flags)},
+    )
+    return payload

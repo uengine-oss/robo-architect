@@ -189,6 +189,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
   const clarificationLog = ref([])
   const clarificationError = ref(null)
   const clarificationDisambiguation = ref(null)
+  const clarificationFlags = ref({}) // { [userStoryId]: FlagInfo }
   let clarificationEventSource = null
 
   function _closeClarificationStream() {
@@ -208,6 +209,8 @@ export const useRequirementsStore = defineStore('requirements', () => {
         const event = JSON.parse(ev.data)
         if (event.phase === 'questions_ready') {
           fetchClarificationSession(sessionId)
+          // Backend recorded flags during the scan — refresh tree badges.
+          fetchClarificationFlags()
         } else if (event.phase === 'error') {
           clarificationError.value = event.message || '분석 실패'
           fetchClarificationSession(sessionId)
@@ -327,6 +330,8 @@ export const useRequirementsStore = defineStore('requirements', () => {
       watchImpactReport(data.impactReportIds[data.impactReportIds.length - 1])
     }
     await fetchTree()
+    // Backend cleared the flag on the applied requirement — re-sync.
+    await fetchClarificationFlags()
     return data
   }
 
@@ -363,7 +368,23 @@ export const useRequirementsStore = defineStore('requirements', () => {
     if (!res.ok) throw new Error(`revert failed: ${res.status}`)
     clarificationSummary.value = await res.json()
     await fetchTree()
+    await fetchClarificationFlags()
     return clarificationSummary.value
+  }
+
+  async function fetchClarificationFlags() {
+    try {
+      const res = await fetch('/api/requirements/clarification/flags')
+      if (!res.ok) throw new Error(`flags fetch failed: ${res.status}`)
+      const data = await res.json()
+      clarificationFlags.value = data.userStoryFlags || {}
+    } catch (e) {
+      log.warn('clarif_fetch_flags', 'Clarification flags fetch failed', { error: String(e) })
+    }
+  }
+
+  function isUserStoryFlagged(userStoryId) {
+    return !!clarificationFlags.value[userStoryId]
   }
 
   async function fetchClarificationLog(scopeType, scopeId) {
@@ -426,6 +447,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     clarificationLog,
     clarificationError,
     clarificationDisambiguation,
+    clarificationFlags,
     startClarification,
     fetchClarificationSession,
     answerQuestion,
@@ -435,6 +457,8 @@ export const useRequirementsStore = defineStore('requirements', () => {
     fetchSummary,
     revertChange,
     fetchClarificationLog,
+    fetchClarificationFlags,
+    isUserStoryFlagged,
     closeClarification,
   }
 })
