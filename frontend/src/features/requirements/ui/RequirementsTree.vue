@@ -9,7 +9,13 @@ const props = defineProps({
   tree: { type: Object, default: () => ({ epics: [], unassigned: [] }) },
   selectedId: { type: String, default: null },
 })
-const emit = defineEmits(['select', 'move', 'delete-feature', 'delete-user-story'])
+const emit = defineEmits([
+  'select',
+  'move',
+  'delete-feature',
+  'delete-user-story',
+  'clarify-scope',
+])
 
 const expanded = ref(new Set())
 const dragOverFeature = ref(null)
@@ -48,6 +54,11 @@ function onDrop(evt, featureId) {
         <span class="caret">{{ isOpen(key('epic', epic.id)) ? '▾' : '▸' }}</span>
         <span class="node-icon epic">EPIC</span>
         <span class="node-label">{{ epic.name }}</span>
+        <button
+          class="clarify-btn"
+          title="요구사항 명확화"
+          @click.stop="emit('clarify-scope', { scopeType: 'bounded_context', scopeId: epic.id, scopeName: epic.name })"
+        >🔍</button>
       </div>
 
       <div v-if="isOpen(key('epic', epic.id))" class="tree-children">
@@ -67,6 +78,12 @@ function onDrop(evt, featureId) {
               <span class="caret">{{ isOpen(key('feature', feature.id)) ? '▾' : '▸' }}</span>
               <span class="node-icon feature">FEAT</span>
               <span class="node-label">{{ feature.name }}</span>
+              <button
+                v-if="isRealFeature(feature.id)"
+                class="clarify-btn"
+                title="요구사항 명확화"
+                @click.stop="emit('clarify-scope', { scopeType: 'feature', scopeId: feature.id, scopeName: feature.name })"
+              >🔍</button>
               <button
                 v-if="isRealFeature(feature.id)"
                 class="del-btn"
@@ -182,6 +199,12 @@ function onDrop(evt, featureId) {
   color: var(--color-text-light); font-size: 0.9rem; padding: 0 4px;
 }
 .del-btn:hover { color: #e03131; }
+.clarify-btn {
+  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  color: var(--color-text-light); font-size: 0.8rem; padding: 0 4px;
+}
+.clarify-btn:hover { color: var(--color-accent, #228be6); }
+.clarify-btn + .del-btn { margin-left: 0; }
 .empty-row, .ac-row.empty { color: var(--color-text-light); font-style: italic; padding-left: 18px; }
 .tree-node--feature.drag-over { outline: 2px dashed var(--color-accent); border-radius: 4px; }
 .tree-node--us[draggable='true'] { cursor: grab; }

@@ -6,6 +6,7 @@ import RequirementsTree from './RequirementsTree.vue'
 import UserStoryDetail from './UserStoryDetail.vue'
 import DesignTraceCanvas from './DesignTraceCanvas.vue'
 import AddRequirementDialog from './AddRequirementDialog.vue'
+import ClarificationPanel from './ClarificationPanel.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
@@ -118,6 +119,22 @@ async function onClearData() {
 function onIngestionComplete() {
   store.fetchTree()
 }
+
+// ── Clarification (spec 030) ───────────────────────────────────────────
+const showClarification = ref(false)
+
+async function onClarifyScope({ scopeType, scopeId }) {
+  try {
+    await store.startClarification(scopeType, scopeId)
+    showClarification.value = true
+  } catch (e) {
+    window.alert(`요구사항 명확화 시작 실패: ${e?.message || e}`)
+  }
+}
+
+function onClarificationClose() {
+  showClarification.value = false
+}
 </script>
 
 <template>
@@ -126,6 +143,10 @@ function onIngestionComplete() {
       <span class="req-toolbar__title">Requirements</span>
       <button class="tb-btn tb-btn--primary" @click="showAddDialog = true">+ 요구사항 추가</button>
       <button class="tb-btn" @click="showIngestionModal = true">문서 업로드</button>
+      <button
+        class="tb-btn"
+        @click="onClarifyScope({ scopeType: 'project', scopeId: '*' })"
+      >🔍 요구사항 명확화 (전체)</button>
       <button class="tb-btn tb-btn--danger" @click="onClearData">데이터 삭제</button>
       <span v-if="store.loading" class="req-toolbar__status">불러오는 중...</span>
       <span v-else-if="store.error" class="req-toolbar__status error">{{ store.error }}</span>
@@ -140,6 +161,7 @@ function onIngestionComplete() {
           @move="onMove"
           @delete-feature="onDeleteFeature"
           @delete-user-story="onDeleteUserStory"
+          @clarify-scope="onClarifyScope"
         />
       </div>
 
@@ -189,6 +211,11 @@ function onIngestionComplete() {
 
     <AddRequirementDialog v-model="showAddDialog" @added="store.fetchTree()" />
     <RequirementsIngestionModal v-model="showIngestionModal" @complete="onIngestionComplete" />
+
+    <!-- Clarification overlay (spec 030) -->
+    <div v-if="showClarification" class="req-clarification-overlay">
+      <ClarificationPanel @close="onClarificationClose" />
+    </div>
   </div>
 </template>
 
@@ -235,5 +262,11 @@ function onIngestionComplete() {
 }
 .req-inspector-resizer:hover {
   background: rgba(34, 139, 230, 0.3);
+}
+.req-clarification-overlay {
+  position: absolute; top: 48px; right: 16px; bottom: 16px;
+  width: min(520px, 60vw);
+  z-index: 30;
+  box-shadow: -4px 0 14px rgba(0, 0, 0, 0.12);
 }
 </style>

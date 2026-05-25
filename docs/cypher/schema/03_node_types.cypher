@@ -48,6 +48,10 @@ CREATE (r:Requirement {
 //   - acceptanceCriteria: List<String>
 //   - criteriaUserEdited: Boolean   (true once a user has edited acceptanceCriteria via the Properties panel; blocks ingestion regen of that field per spec 019)
 //   - criteriaEditedAt: DateTime    (timestamp of the last manual criteria edit; null until first edit)
+//   - clarifications: String (JSON) (spec 030 — append-only `List<ClarificationLogEntry>` of applied clarification answers
+//                                    for this user story: {sessionId, questionId, question, answer, category, before, after, at};
+//                                    absent/`"[]"` when no clarification has been applied. No new node label — same
+//                                    provenance pattern as `criteriaUserEdited`.)
 // ############################################################
 
 CREATE (us:UserStory {
