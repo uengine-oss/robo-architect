@@ -60,6 +60,48 @@ class QuestionQueue(BaseModel):
     coverage: list[CoverageRow] = Field(default_factory=list)
 
 
+# ── Strict schemas for the terminal tool's args ──────────────────────────
+# Defined at module scope so LangChain's @tool decorator can resolve them
+# via `get_type_hints()` (forward refs from `from __future__ import
+# annotations` only resolve at module level, not inside closures).
+
+class AgentQuestionOption(BaseModel):
+    key: str = Field(description="Short stable key for the option")
+    label: str = Field(description="Human-readable option text")
+
+
+class AgentQuestion(BaseModel):
+    category: str = Field(
+        description=(
+            "One of: functional_scope, domain_data_model, interaction_flow, "
+            "non_functional, integration_dependencies, edge_cases, "
+            "terminology, completion_signals"
+        )
+    )
+    questionType: str = Field(
+        description="'closed' (with options) or 'short_answer' (≤5 word free-form)"
+    )
+    questionText: str = Field(description="The clarification question, in Korean")
+    referencedRequirementIds: list[str] = Field(
+        description="UserStory ids from the input scope this question targets"
+    )
+    recommendedAnswer: str = Field(
+        description="A concrete answer that, if accepted, resolves the gap"
+    )
+    options: list[AgentQuestionOption] = Field(
+        default_factory=list,
+        description="2–5 mutually exclusive options when questionType=closed; empty otherwise",
+    )
+    priority: int = Field(
+        default=1, description="1=highest priority by Impact × Uncertainty"
+    )
+
+
+class AgentCoverageRow(BaseModel):
+    category: str
+    status: str = Field(description="resolved | deferred | clear | outstanding")
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
@@ -163,6 +205,19 @@ def _normalize_questions(
     return normalized
 
 
+def _last_message_preview(result: Any) -> str:
+    """Best-effort extract the agent's final message text for diagnostics."""
+    try:
+        messages = result.get("messages") if isinstance(result, dict) else None
+        if not messages:
+            return "(no messages)"
+        last = messages[-1]
+        content = getattr(last, "content", None) or (last.get("content") if isinstance(last, dict) else None)
+        return (str(content) or "(empty)")[:400]
+    except Exception:  # noqa: BLE001
+        return "(unreadable)"
+
+
 def _normalize_coverage(raw_coverage: list[dict[str, Any]]) -> list[CoverageRow]:
     rows: list[CoverageRow] = []
     seen: set[AmbiguityCategory] = set()
@@ -228,16 +283,22 @@ def run_ambiguity_scan(
 
     @tool("submit_clarification_questions")
     def submit_clarification_questions(
-        questions: list[dict[str, Any]],
+        questions: list[AgentQuestion],
         noAmbiguities: bool = False,
         deferredNote: Optional[str] = None,
-        coverage: Optional[list[dict[str, Any]]] = None,
+        coverage: Optional[list[AgentCoverageRow]] = None,
     ) -> str:
-        """Submit the final clarification question queue (terminal tool)."""
-        captured["questions"] = questions or []
+        """Submit the final clarification question queue (terminal tool).
+
+        Call this exactly once at the end of your scan. `questions` must
+        contain between 0 and 5 items; if there are no material ambiguities
+        set `noAmbiguities=true` and pass an empty list. Use `deferredNote`
+        to name any categories you had to defer because of the cap.
+        """
+        captured["questions"] = [q.model_dump() for q in questions or []]
         captured["noAmbiguities"] = bool(noAmbiguities)
         captured["deferredNote"] = deferredNote
-        captured["coverage"] = coverage or []
+        captured["coverage"] = [c.model_dump() for c in (coverage or [])]
         return "queue accepted"
 
     user_message = (
@@ -274,9 +335,9 @@ def run_ambiguity_scan(
         ) from exc
 
     agent = create_deep_agent(
-        tools=[submit_clarification_questions],
-        instructions=DEEP_AGENT_INSTRUCTIONS,
         model=get_llm(),
+        tools=[submit_clarification_questions],
+        system_prompt=DEEP_AGENT_INSTRUCTIONS,
     )
 
     _emit(
@@ -289,17 +350,31 @@ def run_ambiguity_scan(
         ),
     )
 
-    agent.invoke({"messages": [{"role": "user", "content": user_message}]})
+    result = agent.invoke({"messages": [{"role": "user", "content": user_message}]})
 
     if "questions" not in captured:
         SmartLogger.log(
             "WARN",
             "Deep agent finished without calling submit_clarification_questions",
             category="requirements.clarification.no_terminal_call",
-            params={"requirementCount": len(requirements)},
+            params={
+                "requirementCount": len(requirements),
+                "last_message_preview": _last_message_preview(result),
+            },
         )
         # Treat as analysis failure so the route layer can surface it.
         raise RuntimeError("deep agent did not submit a question queue")
+
+    SmartLogger.log(
+        "INFO",
+        "Deep agent submitted clarification queue.",
+        category="requirements.clarification.queue_captured",
+        params={
+            "raw_question_count": len(captured.get("questions") or []),
+            "raw_noAmbiguities": captured.get("noAmbiguities"),
+            "raw_coverage_count": len(captured.get("coverage") or []),
+        },
+    )
 
     questions = _normalize_questions(
         captured["questions"], valid_requirement_ids=valid_ids

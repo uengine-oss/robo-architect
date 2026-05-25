@@ -42,11 +42,10 @@ def _install_fake_deepagents(scripted_queue: dict[str, Any]) -> None:
 
     fake = types.ModuleType("deepagents")
 
-    def _create_deep_agent(*, tools, instructions, model):  # noqa: ARG001
+    def _create_deep_agent(model=None, tools=None, *, system_prompt=None, **_kwargs):  # noqa: ARG001
         submit_tool = None
-        for t in tools:
-            name = getattr(t, "name", None)
-            if name == "submit_clarification_questions":
+        for t in tools or []:
+            if getattr(t, "name", None) == "submit_clarification_questions":
                 submit_tool = t
                 break
         assert submit_tool is not None, "submit_clarification_questions tool missing"
