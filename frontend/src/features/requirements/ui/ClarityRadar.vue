@@ -29,6 +29,31 @@ const LABELS = {
   misc_placeholders: '미해결/플레이스홀더',
 }
 
+// SKILL.md step-8 coverage statuses → radar dot color.
+// Same palette the report-summary coverage table uses.
+const STATUS_COLOR = {
+  clear: '#40c057',        // 초록 — 충분
+  resolved: '#228be6',     // 파랑 — 이번 세션에서 해결
+  deferred: '#fab005',     // 황색 — cap에 밀려 보류
+  outstanding: '#e03131',  // 적색 — 미해결
+}
+const STATUS_LABEL = {
+  clear: 'Clear',
+  resolved: 'Resolved',
+  deferred: 'Deferred',
+  outstanding: 'Outstanding',
+}
+function dotColor(row) {
+  if (row.status) return STATUS_COLOR[row.status] || '#868e96'
+  // No scan yet for this scope — fall back to flag-based shade.
+  return (row.flaggedCount ?? 0) > 0 ? '#fab005' : '#40c057'
+}
+function rowTitle(row) {
+  const pct = Math.round((row.score ?? 0) * 100)
+  const status = row.status ? `상태: ${STATUS_LABEL[row.status] || row.status}` : '상태: 미스캔'
+  return `${row.category} — ${pct}% · ${status} · flagged ${row.flaggedCount} · resolved ${row.resolvedCount}`
+}
+
 const cx = computed(() => props.size / 2)
 const cy = computed(() => props.size / 2 + 6) // slight nudge so labels fit
 const radius = computed(() => props.size * 0.35)
@@ -114,7 +139,7 @@ const flagged = computed(() => props.scores?.flaggedUserStories ?? 0)
           :text-anchor="a.anchor"
           :dominant-baseline="a.baseline"
           class="cr-axis-label"
-        >{{ a.label }}<title>{{ a.category }} — score {{ Math.round((a.score ?? 0) * 100) }}% (flagged {{ a.flaggedCount }})</title></text>
+        >{{ a.label }}<title>{{ rowTitle(a) }}</title></text>
       </g>
       <!-- Data polygon -->
       <polygon
@@ -122,22 +147,24 @@ const flagged = computed(() => props.scores?.flaggedUserStories ?? 0)
         fill="rgba(34, 139, 230, 0.22)"
         stroke="#228be6" stroke-width="1.5" stroke-linejoin="round"
       />
-      <!-- Data point dots -->
+      <!-- Data point dots — colored by SKILL.md coverage status -->
       <circle
         v-for="(a, i) in axes" :key="`dot-${i}`"
         :cx="cx + Math.cos(a.theta) * radius * (a.score ?? 0)"
         :cy="cy + Math.sin(a.theta) * radius * (a.score ?? 0)"
-        r="3"
-        :fill="(a.flaggedCount ?? 0) > 0 ? '#fab005' : '#40c057'"
-        stroke="#fff" stroke-width="1"
-      />
+        r="4"
+        :fill="dotColor(a)"
+        stroke="#fff" stroke-width="1.5"
+      ><title>{{ rowTitle(a) }}</title></circle>
       <!-- Center label -->
       <text :x="cx" :y="cy + 4" text-anchor="middle" class="cr-center">{{ overallPct }}%</text>
     </svg>
 
-    <div class="cr-legend">
-      <span><span class="cr-dot cr-dot--clear"></span> 모든 요구사항 명확</span>
-      <span><span class="cr-dot cr-dot--flagged"></span> 일부 요구사항 모호</span>
+    <div class="cr-legend" title="SpecKit clarify 스킬의 4-상태 coverage 모델">
+      <span><span class="cr-dot" style="background:#40c057"></span> Clear (충분)</span>
+      <span><span class="cr-dot" style="background:#228be6"></span> Resolved (이번 세션)</span>
+      <span><span class="cr-dot" style="background:#fab005"></span> Deferred (보류)</span>
+      <span><span class="cr-dot" style="background:#e03131"></span> Outstanding (미해결)</span>
     </div>
   </div>
 </template>
@@ -168,10 +195,9 @@ const flagged = computed(() => props.scores?.flaggedUserStories ?? 0)
   font-size: 14px; font-weight: 800; fill: var(--color-text-light, #888);
 }
 .cr-legend {
-  display: flex; gap: 14px; font-size: 0.72rem; color: var(--color-text-light, #888);
-  margin-top: 4px;
+  display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.68rem;
+  color: var(--color-text-light, #888); margin-top: 4px;
+  justify-content: center;
 }
 .cr-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
-.cr-dot--clear { background: #40c057; }
-.cr-dot--flagged { background: #fab005; }
 </style>

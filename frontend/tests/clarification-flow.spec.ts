@@ -141,23 +141,25 @@ const FLAGS_INITIAL = {
 
 const FLAGS_EMPTY = { userStoryFlags: {} }
 
+// SKILL.md step-8 4-state coverage statuses on every axis so the radar's
+// status-colored dots render exactly as documented in the user guide.
 const CLARITY_BEFORE = {
   scope: { scopeType: 'project', scopeId: '*', scopeName: '전체 프로젝트' },
   totalUserStories: 2,
   flaggedUserStories: 1,
   resolvedUserStories: 0,
-  overallScore: 0.85,
+  overallScore: 0.75,
   scores: [
-    { category: 'functional_scope',         score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
-    { category: 'domain_data_model',        score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
-    { category: 'interaction_flow',         score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
-    { category: 'non_functional',           score: 0.5,  flaggedCount: 1, resolvedCount: 0 },
-    { category: 'integration_dependencies', score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
-    { category: 'edge_cases',               score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
-    { category: 'constraints_tradeoffs',    score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
-    { category: 'terminology',              score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
-    { category: 'completion_signals',       score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
-    { category: 'misc_placeholders',        score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'functional_scope',         status: 'clear',       score: 1.0, flaggedCount: 0, resolvedCount: 0 },
+    { category: 'domain_data_model',        status: 'clear',       score: 1.0, flaggedCount: 0, resolvedCount: 0 },
+    { category: 'interaction_flow',         status: 'clear',       score: 1.0, flaggedCount: 0, resolvedCount: 0 },
+    { category: 'non_functional',           status: 'outstanding', score: 0.0, flaggedCount: 1, resolvedCount: 0 },
+    { category: 'integration_dependencies', status: 'clear',       score: 1.0, flaggedCount: 0, resolvedCount: 0 },
+    { category: 'edge_cases',               status: 'deferred',    score: 0.5, flaggedCount: 0, resolvedCount: 0 },
+    { category: 'constraints_tradeoffs',    status: 'clear',       score: 1.0, flaggedCount: 0, resolvedCount: 0 },
+    { category: 'terminology',              status: 'clear',       score: 1.0, flaggedCount: 0, resolvedCount: 0 },
+    { category: 'completion_signals',       status: 'clear',       score: 1.0, flaggedCount: 0, resolvedCount: 0 },
+    { category: 'misc_placeholders',        status: 'clear',       score: 1.0, flaggedCount: 0, resolvedCount: 0 },
   ],
 }
 
@@ -210,17 +212,23 @@ async function mockBackend(page: Page) {
     (r) => { applyCalled = true; r.fulfill({ json: APPLY_RESP }) },
   )
 
-  // Clarity radar — initial 85% (1 of 2 US flagged on non_functional),
-  // after apply jumps to 100%.
+  // Clarity radar — before: 75% (non_functional outstanding + edge_cases deferred),
+  // after apply: non_functional flips to Resolved (sticky, blue), edge_cases stays deferred.
   await page.route('**/api/requirements/clarification/clarity*', (r) => {
     if (applyCalled) {
-      const clean = {
+      const post = {
         ...CLARITY_BEFORE,
         flaggedUserStories: 0,
-        overallScore: 1.0,
-        scores: CLARITY_BEFORE.scores.map((s) => ({ ...s, score: 1.0, flaggedCount: 0 })),
+        resolvedUserStories: 1,
+        overallScore: 0.95,
+        scores: CLARITY_BEFORE.scores.map((s) => {
+          if (s.category === 'non_functional') {
+            return { ...s, status: 'resolved', score: 1.0, flaggedCount: 0, resolvedCount: 1 }
+          }
+          return s
+        }),
       }
-      r.fulfill({ json: clean })
+      r.fulfill({ json: post })
     } else {
       r.fulfill({ json: CLARITY_BEFORE })
     }
@@ -254,10 +262,12 @@ test('Requirements clarification: select → tab → scan → answer → apply',
   // (No user story is selected yet, so the right pane shows the radar.)
   const radar = page.locator('.clarity-radar')
   await expect(radar).toBeVisible({ timeout: 5_000 })
-  await expect(radar.locator('.cr-pct')).toContainText('85%')
+  await expect(radar.locator('.cr-pct')).toContainText('75%')
   await expect(radar.locator('polygon')).toHaveCount(1)
   // 10 axis labels — one per SpecKit clarify category.
   await expect(radar.locator('.cr-axis-label')).toHaveCount(10)
+  // 4-state legend visible (Clear / Resolved / Deferred / Outstanding).
+  await expect(radar.locator('.cr-legend')).toContainText('Outstanding')
   await page.screenshot({ path: SHOT('00-clarity-radar.png'), fullPage: false })
   await page.screenshot({ path: SHOT('01-tree-badge.png'), fullPage: false })
 

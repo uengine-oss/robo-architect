@@ -26,6 +26,10 @@ from api.features.requirements.clarification_agent.answer_encoder import (
     encode_answer,
     normalize_final_answer,
 )
+from api.features.requirements.clarification_agent.clarification_coverage import (
+    mark_resolved as mark_coverage_resolved,
+    record_coverage,
+)
 from api.features.requirements.clarification_agent.clarification_flags import (
     FlagInfo,
     clear_flag,
@@ -34,7 +38,7 @@ from api.features.requirements.clarification_agent.clarification_flags import (
     snapshot as snapshot_flags,
 )
 from api.features.requirements.clarification_agent.clarity_score import (
-    compute_clarity_scores,
+    compute_clarity_scores_for_scope,
 )
 from api.features.requirements.clarification_agent.clarification_log import (
     append_log_entry,
@@ -254,6 +258,16 @@ def _run_scan_background(session_id: str, user_story_nodes: list) -> None:
             scope_type=sess.scope.scopeType.value,
             scope_id=sess.scope.scopeId,
             questions=queue.questions,
+        )
+        # Persist the agent's per-category coverage map (SKILL.md step 8 —
+        # Clear/Resolved/Deferred/Outstanding) so the clarity radar can
+        # score with the skill's intended 4-state weighting instead of a
+        # crude flagged-or-not binary.
+        record_coverage(
+            session_id=session_id,
+            scope_type=sess.scope.scopeType.value,
+            scope_id=sess.scope.scopeId,
+            rows=queue.coverage,
         )
         SmartLogger.log(
             "INFO",
@@ -575,6 +589,11 @@ async def apply_clarification(
         )
 
     question.status = QuestionStatus.applied
+    # SKILL.md step 8: Resolved = was Partial/Missing and addressed. Upgrade
+    # the scope's coverage row for this question's category sticky.
+    mark_coverage_resolved(
+        sess.scope.scopeType.value, sess.scope.scopeId, question.category
+    )
     sess.applied_requirement_ids[req.questionId] = list(applied_ids)
     for rid, snap in applied_snapshots.items():
         from api.features.requirements.clarification_contracts import UserStorySnapshot
@@ -915,7 +934,7 @@ async def get_clarification_clarity(
         raise HTTPException(status_code=404, detail="scope_not_found")
 
     us_ids = [node.id for node in user_story_nodes]
-    raw = compute_clarity_scores(us_ids)
+    raw = compute_clarity_scores_for_scope(us_ids, scopeType.value, scopeId)
     overall = sum(s.score for s in raw.scores) / max(1, len(raw.scores))
 
     response = ClarityScoresResponse(
@@ -928,6 +947,7 @@ async def get_clarification_clarity(
             CategoryClarityScore(
                 category=s.category,
                 score=s.score,
+                status=s.status,
                 flaggedCount=s.flaggedCount,
                 resolvedCount=s.resolvedCount,
             )

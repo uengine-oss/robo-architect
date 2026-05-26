@@ -250,10 +250,17 @@ class ClarificationLogResponse(BaseModel):
 
 
 class CategoryClarityScore(BaseModel):
-    """Clarity score for one ambiguity category, used by the radar chart."""
+    """Clarity score for one ambiguity category, used by the radar chart.
+
+    Mirrors the SpecKit `/speckit-clarify` skill's step-8 coverage model:
+    `status` is one of {clear, resolved, deferred, outstanding} when an
+    agent scan has reported on this category for the scope; `None` when
+    no scan has run yet (the score then comes from the flag/log fallback).
+    """
 
     category: AmbiguityCategory
-    score: float = Field(ge=0.0, le=1.0, description="1.0 = fully clear, 0.0 = every requirement flagged")
+    score: float = Field(ge=0.0, le=1.0, description="1.0 fully clear · 0.0 every requirement flagged. Weights: clear/resolved=1.0, deferred=0.5, outstanding=0.0")
+    status: Optional[CoverageStatus] = None
     flaggedCount: int = 0
     resolvedCount: int = 0
 
