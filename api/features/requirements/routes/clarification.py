@@ -33,6 +33,9 @@ from api.features.requirements.clarification_agent.clarification_flags import (
     record_flags,
     snapshot as snapshot_flags,
 )
+from api.features.requirements.clarification_agent.clarity_score import (
+    compute_clarity_scores,
+)
 from api.features.requirements.clarification_agent.clarification_log import (
     append_log_entry,
     mark_log_entries_reverted,
@@ -53,6 +56,7 @@ from api.features.requirements.clarification_contracts import (
     AnswerRequest,
     ApplyRequest,
     ApplyResponse,
+    CategoryClarityScore,
     ChangedRequirement,
     ClarificationLogEntry,
     ClarificationLogResponse,
@@ -60,6 +64,7 @@ from api.features.requirements.clarification_contracts import (
     ClarificationScope,
     ClarificationSessionDTO,
     ClarificationSummaryDTO,
+    ClarityScoresResponse,
     CoverageRow,
     CoverageStatus,
     EditConflict,
@@ -889,3 +894,57 @@ async def get_clarification_flags(request: Request) -> dict:
         params={**http_context(request), "flagged_count": len(flags)},
     )
     return payload
+
+
+# ── 11. GET /clarification/clarity (radar chart data) ───────────────────
+
+
+@router.get("/clarification/clarity", response_model=ClarityScoresResponse)
+async def get_clarification_clarity(
+    scopeType: ScopeType, scopeId: str, request: Request
+) -> ClarityScoresResponse:
+    """Per-category clarity score for a scope — drives the radar chart.
+
+    Returns 10 axes (one per `AmbiguityCategory`), each scoring [0,1]
+    where 1.0 means no in-scope requirement is currently flagged for
+    that category. Together with `flaggedUserStories` and `totalUserStories`
+    the frontend can render a polygon and an overall % gauge.
+    """
+    scope_name, user_story_nodes = _scope_name_and_user_stories(scopeType, scopeId)
+    if scope_name is None:
+        raise HTTPException(status_code=404, detail="scope_not_found")
+
+    us_ids = [node.id for node in user_story_nodes]
+    raw = compute_clarity_scores(us_ids)
+    overall = sum(s.score for s in raw.scores) / max(1, len(raw.scores))
+
+    response = ClarityScoresResponse(
+        scope=ClarificationScope(scopeType=scopeType, scopeId=scopeId, scopeName=scope_name),
+        totalUserStories=raw.totalUserStories,
+        flaggedUserStories=raw.flaggedUserStories,
+        resolvedUserStories=raw.resolvedUserStories,
+        overallScore=round(overall, 3),
+        scores=[
+            CategoryClarityScore(
+                category=s.category,
+                score=s.score,
+                flaggedCount=s.flaggedCount,
+                resolvedCount=s.resolvedCount,
+            )
+            for s in raw.scores
+        ],
+    )
+    SmartLogger.log(
+        "INFO",
+        "Clarification clarity scores computed.",
+        category="requirements.clarification.clarity_fetch",
+        params={
+            **http_context(request),
+            "scope_type": scopeType.value,
+            "scope_id": scopeId,
+            "total": raw.totalUserStories,
+            "flagged": raw.flaggedUserStories,
+            "overall_score": round(overall, 3),
+        },
+    )
+    return response

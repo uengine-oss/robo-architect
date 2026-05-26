@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 import ClarificationPanel from './ClarificationPanel.vue'
+import ClarityRadar from './ClarityRadar.vue'
 
 const props = defineProps({
   userStory: { type: Object, default: null },
@@ -93,7 +94,8 @@ function onSelectTab(name) {
 <template>
   <div class="us-detail">
     <div v-if="!hasStory" class="us-detail__empty">
-      왼쪽 트리에서 User Story를 선택하세요.
+      <p class="us-detail__empty-hint">왼쪽 트리에서 User Story를 선택하세요.</p>
+      <ClarityRadar v-if="store.clarityScores" :scores="store.clarityScores" />
     </div>
     <template v-else>
       <!-- Tab bar (spec 030) ─────────────────────────────────────── -->
@@ -175,7 +177,12 @@ function onSelectTab(name) {
 
 <style scoped>
 .us-detail { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-.us-detail__empty { color: var(--color-text-light); font-size: 0.85rem; padding: 24px; }
+.us-detail__empty {
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+  color: var(--color-text-light); font-size: 0.85rem; padding: 16px;
+  overflow-y: auto;
+}
+.us-detail__empty-hint { margin: 0; padding-top: 8px; }
 
 /* Tab bar */
 .us-tabs {

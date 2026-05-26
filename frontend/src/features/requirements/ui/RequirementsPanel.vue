@@ -21,6 +21,7 @@ const store = useRequirementsStore()
 useDataRefresh(() => {
   store.fetchTree()
   store.fetchClarificationFlags()
+  store.fetchClarityScores()
 })
 
 const showAddDialog = ref(false)
@@ -58,6 +59,7 @@ function stopResizeInspector() {
 onMounted(() => {
   store.fetchTree()
   store.fetchClarificationFlags()
+  store.fetchClarityScores()
   try {
     const v = Number(localStorage.getItem('requirements_inspector_width'))
     if (Number.isFinite(v) && v >= 280) inspectorWidth.value = v

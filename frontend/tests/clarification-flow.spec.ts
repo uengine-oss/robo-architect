@@ -141,6 +141,26 @@ const FLAGS_INITIAL = {
 
 const FLAGS_EMPTY = { userStoryFlags: {} }
 
+const CLARITY_BEFORE = {
+  scope: { scopeType: 'project', scopeId: '*', scopeName: '전체 프로젝트' },
+  totalUserStories: 2,
+  flaggedUserStories: 1,
+  resolvedUserStories: 0,
+  overallScore: 0.85,
+  scores: [
+    { category: 'functional_scope',         score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'domain_data_model',        score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'interaction_flow',         score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'non_functional',           score: 0.5,  flaggedCount: 1, resolvedCount: 0 },
+    { category: 'integration_dependencies', score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'edge_cases',               score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'constraints_tradeoffs',    score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'terminology',              score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'completion_signals',       score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+    { category: 'misc_placeholders',        score: 1.0,  flaggedCount: 0, resolvedCount: 0 },
+  ],
+}
+
 async function mockBackend(page: Page) {
   // Catch-all for any unmocked GETs (returns empty JSON).
   await page.route('**/api/**', (route) => route.fulfill({ json: {} }))
@@ -189,6 +209,22 @@ async function mockBackend(page: Page) {
     `**/api/requirements/clarification/sessions/${SESSION_ID}/apply`,
     (r) => { applyCalled = true; r.fulfill({ json: APPLY_RESP }) },
   )
+
+  // Clarity radar — initial 85% (1 of 2 US flagged on non_functional),
+  // after apply jumps to 100%.
+  await page.route('**/api/requirements/clarification/clarity*', (r) => {
+    if (applyCalled) {
+      const clean = {
+        ...CLARITY_BEFORE,
+        flaggedUserStories: 0,
+        overallScore: 1.0,
+        scores: CLARITY_BEFORE.scores.map((s) => ({ ...s, score: 1.0, flaggedCount: 0 })),
+      }
+      r.fulfill({ json: clean })
+    } else {
+      r.fulfill({ json: CLARITY_BEFORE })
+    }
+  })
 }
 
 test.use({ headless: false, viewport: { width: 1500, height: 900 } })
@@ -213,6 +249,16 @@ test('Requirements clarification: select → tab → scan → answer → apply',
 
   const clearRow = page.locator('.tree-node--us', { hasText: '4개 필터로 검색한다' })
   await expect(clearRow.locator('.ambig-badge')).toHaveCount(0)
+
+  // ── Radar dashboard appears in the empty-state of the detail pane ─────
+  // (No user story is selected yet, so the right pane shows the radar.)
+  const radar = page.locator('.clarity-radar')
+  await expect(radar).toBeVisible({ timeout: 5_000 })
+  await expect(radar.locator('.cr-pct')).toContainText('85%')
+  await expect(radar.locator('polygon')).toHaveCount(1)
+  // 10 axis labels — one per SpecKit clarify category.
+  await expect(radar.locator('.cr-axis-label')).toHaveCount(10)
+  await page.screenshot({ path: SHOT('00-clarity-radar.png'), fullPage: false })
   await page.screenshot({ path: SHOT('01-tree-badge.png'), fullPage: false })
 
   // ── Click us-fast → detail panel opens; flagged story auto-jumps to the

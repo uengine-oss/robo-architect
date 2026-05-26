@@ -190,6 +190,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
   const clarificationError = ref(null)
   const clarificationDisambiguation = ref(null)
   const clarificationFlags = ref({}) // { [userStoryId]: FlagInfo }
+  const clarityScores = ref(null) // ClarityScoresResponse | null
   let clarificationEventSource = null
 
   function _closeClarificationStream() {
@@ -209,8 +210,9 @@ export const useRequirementsStore = defineStore('requirements', () => {
         const event = JSON.parse(ev.data)
         if (event.phase === 'questions_ready') {
           fetchClarificationSession(sessionId)
-          // Backend recorded flags during the scan — refresh tree badges.
+          // Backend recorded flags during the scan — refresh tree badges + radar.
           fetchClarificationFlags()
+          fetchClarityScores()
         } else if (event.phase === 'error') {
           clarificationError.value = event.message || '분석 실패'
           fetchClarificationSession(sessionId)
@@ -332,6 +334,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     await fetchTree()
     // Backend cleared the flag on the applied requirement — re-sync.
     await fetchClarificationFlags()
+    await fetchClarityScores()
     return data
   }
 
@@ -369,6 +372,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     clarificationSummary.value = await res.json()
     await fetchTree()
     await fetchClarificationFlags()
+    await fetchClarityScores()
     return clarificationSummary.value
   }
 
@@ -385,6 +389,19 @@ export const useRequirementsStore = defineStore('requirements', () => {
 
   function isUserStoryFlagged(userStoryId) {
     return !!clarificationFlags.value[userStoryId]
+  }
+
+  async function fetchClarityScores(scopeType = 'project', scopeId = '*') {
+    try {
+      const qs = new URLSearchParams({ scopeType, scopeId }).toString()
+      const res = await fetch(`/api/requirements/clarification/clarity?${qs}`)
+      if (!res.ok) throw new Error(`clarity fetch failed: ${res.status}`)
+      clarityScores.value = await res.json()
+      return clarityScores.value
+    } catch (e) {
+      log.warn('clarif_fetch_clarity', 'Clarity fetch failed', { error: String(e) })
+      return null
+    }
   }
 
   async function fetchClarificationLog(scopeType, scopeId) {
@@ -448,6 +465,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     clarificationError,
     clarificationDisambiguation,
     clarificationFlags,
+    clarityScores,
     startClarification,
     fetchClarificationSession,
     answerQuestion,
@@ -458,6 +476,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     revertChange,
     fetchClarificationLog,
     fetchClarificationFlags,
+    fetchClarityScores,
     isUserStoryFlagged,
     closeClarification,
   }

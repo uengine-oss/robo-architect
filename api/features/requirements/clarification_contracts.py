@@ -244,3 +244,27 @@ class ClarificationLogEntry(BaseModel):
 class ClarificationLogResponse(BaseModel):
     scope: ClarificationScope
     entries: list[ClarificationLogEntry] = Field(default_factory=list)
+
+
+# ── Clarity radar (030 — visualization) ─────────────────────────────────
+
+
+class CategoryClarityScore(BaseModel):
+    """Clarity score for one ambiguity category, used by the radar chart."""
+
+    category: AmbiguityCategory
+    score: float = Field(ge=0.0, le=1.0, description="1.0 = fully clear, 0.0 = every requirement flagged")
+    flaggedCount: int = 0
+    resolvedCount: int = 0
+
+
+class ClarityScoresResponse(BaseModel):
+    scope: ClarificationScope
+    totalUserStories: int = 0
+    flaggedUserStories: int = 0
+    resolvedUserStories: int = 0
+    overallScore: float = Field(
+        ge=0.0, le=1.0, default=1.0,
+        description="Average of per-category scores — convenience for the dashboard header.",
+    )
+    scores: list[CategoryClarityScore] = Field(default_factory=list)

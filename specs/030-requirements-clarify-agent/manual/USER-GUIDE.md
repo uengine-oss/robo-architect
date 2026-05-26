@@ -28,9 +28,34 @@
 
 # 2. 핵심 개념
 
+## 2.1 모호성 분류 체계 (10개 카테고리 · 30개 세부 기준)
+
+SpecKit `/speckit-clarify` 스킬(`.claude/skills/speckit-clarify/SKILL.md`)의
+taxonomy를 그대로 사용합니다. **상위 10개 카테고리**, 그 아래 **세부 기준
+30개**:
+
+| # | 카테고리 (enum) | 세부 기준 |
+|---|-----------------|-----------|
+| 1 | `functional_scope` (기능 범위) | (1) Core user goals & success criteria · (2) Explicit out-of-scope declarations · (3) User roles / personas differentiation |
+| 2 | `domain_data_model` (도메인 모델) | (1) Entities, attributes, relationships · (2) Identity & uniqueness rules · (3) Lifecycle / state transitions · (4) Data volume / scale assumptions |
+| 3 | `interaction_flow` (UX 흐름) | (1) Critical user journeys / sequences · (2) Error / empty / loading states · (3) Accessibility or localization notes |
+| 4 | `non_functional` (비기능) | (1) Performance (latency, throughput) · (2) Scalability · (3) Reliability & availability · (4) Observability · (5) Security & privacy · (6) Compliance / regulatory |
+| 5 | `integration_dependencies` (외부 연동) | (1) External services / APIs & failure modes · (2) Data import / export formats · (3) Protocol / versioning assumptions |
+| 6 | `edge_cases` (엣지 케이스) | (1) Negative scenarios · (2) Rate limiting / throttling · (3) Conflict resolution (concurrent edits) |
+| 7 | `constraints_tradeoffs` (제약·트레이드오프) | (1) Technical constraints (language, storage, hosting) · (2) Explicit tradeoffs or rejected alternatives |
+| 8 | `terminology` (용어 일관성) | (1) Canonical glossary terms · (2) Avoided synonyms / deprecated terms |
+| 9 | `completion_signals` (완료 신호) | (1) Acceptance criteria testability · (2) Measurable Definition of Done indicators |
+| 10 | `misc_placeholders` (미해결 / 플레이스홀더) | (1) TODO markers / unresolved decisions · (2) Ambiguous adjectives ("robust", "intuitive") lacking quantification |
+
+레이더 차트의 10개 축은 위 1~10에 1:1 매핑됩니다. 세부 기준 30개는 딥
+에이전트가 system_prompt에 verbatim으로 받아 스캔 시 내부 코버리지 맵으로
+활용합니다 (사용자에게 직접 노출되진 않지만, 질문이 어떤 세부 영역에서
+나왔는지 결정합니다).
+
+## 2.2 그 외 핵심 개념
+
 | 개념 | 설명 |
 |------|------|
-| **모호성 분류 체계** | SpecKit `/speckit-clarify` 스킬의 10개 카테고리: `functional_scope`, `domain_data_model`, `interaction_flow`, `non_functional`, `integration_dependencies`, `edge_cases`, `constraints_tradeoffs`, `terminology`, `completion_signals`, `misc_placeholders` |
 | **질문 큐 (Question Queue)** | 세션당 최대 5개. Impact × Uncertainty 휴리스틱으로 우선순위화. |
 | **명확화 세션 (Session)** | `analyzing → awaiting_answers → encoding → completed / discarded / failed` 상태 머신. 범위당 동시에 1개만 활성. |
 | **편집 제안 (Edit Proposal)** | 답변을 인코딩한 결과. 영향받는 요구사항별 before/after 스냅샷. **적용 전까지 그래프 무변경.** |
@@ -43,16 +68,52 @@
 
 # 3. UI 구조
 
-Requirements 탭은 세 영역으로 나뉘어 명확화를 자연스럽게 흡수합니다.
+Requirements 탭은 네 영역으로 나뉘어 명확화를 자연스럽게 흡수합니다.
 
 1. **좌측 트리** — Epic(BoundedContext) → Feature → UserStory 트리. 모호성
    배지(❓N)는 트리 행에 직접 표시되어 어떤 요구사항이 검토가 필요한지
    한눈에 보입니다.
-2. **우상단 디테일 패널** — UserStory를 클릭하면 열리며, **개요** /
-   **명확화** 두 탭으로 구성됩니다. 모든 명확화 작업은 이 패널 안에서
-   완결되며 별도 오버레이/팝업이 뜨지 않습니다.
-3. **상단 툴바** — *🔍 요구사항 명확화 (전체)* 버튼으로 프로젝트 전체를
-   한 번에 스캔하면, 결과 배지가 영향받는 UserStory들에 자동 부착됩니다.
+2. **우상단 디테일 패널 — 명확화 대시보드 (레이더 차트)** — 아직 어떤
+   UserStory도 선택하지 않은 상태에서는 SpecKit `clarify` 분류 체계의
+   10개 카테고리(축)별 명확화율을 한눈에 보여주는 레이더 차트가
+   표시됩니다. 어느 카테고리가 약한지·전체 명확화율(예: 85%)이 얼마인지
+   바로 파악할 수 있습니다.
+3. **우상단 디테일 패널 — UserStory 상세** — UserStory를 클릭하면 열리며,
+   **개요** / **명확화** 두 탭으로 구성됩니다. 모든 명확화 작업은 이 패널
+   안에서 완결되며 별도 오버레이/팝업이 뜨지 않습니다.
+4. **상단 툴바** — *🔍 요구사항 명확화 (전체)* 버튼으로 프로젝트 전체를
+   한 번에 스캔하면, 결과 배지가 영향받는 UserStory들에 자동 부착되고
+   레이더 차트가 새 점수로 즉시 갱신됩니다.
+
+## 3.1 명확화 레이더 차트 (Clarity Radar)
+
+SpecKit `clarify` SKILL.md가 정의하는 **10개의 모호성 분류 체계**를 한
+화면에서 모니터링합니다. 각 축이 한 카테고리(예: `non_functional`,
+`edge_cases`)이며, 축 위의 점이 가장자리에 가까울수록 그 카테고리가
+명확합니다. 데이터 점이 안쪽으로 들어가면 해당 영역에 모호한 요구사항이
+존재한다는 신호입니다.
+
+![명확화 레이더 차트 — 비기능 축이 50%로 함몰 (1건 모호)](images/00-clarity-radar.png)
+
+- **중앙의 큰 숫자(%)**: 10개 축의 평균 점수. 80% 이상은 초록, 50~79%는
+  황색, 50% 미만은 적색으로 표시.
+- **헤더의 카운터**: "1건 모호 / 2건 전체" 처럼 범위 내 전체 UserStory 수
+  대비 모호로 판정된 수를 직접 보여줍니다.
+- **점의 색**: 초록 = 모든 요구사항이 그 카테고리에서 명확, 황색 = 일부
+  요구사항이 모호.
+- **축 라벨 hover** (또는 SVG `<title>`): 카테고리 enum 이름과 정확한
+  점수(%)·플래그된 요구사항 수를 표시.
+
+대시보드는 다음 시점에 자동 갱신됩니다.
+
+- Requirements 탭 마운트 시
+- 명확화 세션의 스캔이 끝났을 때
+- `/apply` 또는 `/revert` 직후
+- 인제스트가 완료되거나 데이터가 초기화될 때
+
+> 큰 프로젝트에서 어느 카테고리부터 손볼지 결정할 때 가장 빠른 방법입니다.
+> 가장 안쪽으로 들어간 축의 카테고리부터 우선 검토하면 명확화율을 효율적
+> 으로 끌어올릴 수 있습니다.
 
 # 4. 트리의 모호성 배지
 
@@ -179,6 +240,7 @@ priority·인수조건·Source Business Rules를 확인할 수 있습니다. 다
 | POST   | `/api/requirements/clarification/sessions/{id}/discard` | 세션 폐기 |
 | GET    | `/api/requirements/clarification/log` | 명확화 로그 조회 |
 | GET    | `/api/requirements/clarification/flags` | 현재 ambiguity 배지 상태 |
+| GET    | `/api/requirements/clarification/clarity` | 명확화 레이더 차트 데이터 (10개 카테고리 점수 + 전체 %) |
 
 # 13. 검증 결과 (2026-05-25)
 
@@ -200,13 +262,15 @@ priority·인수조건·Source Business Rules를 확인할 수 있습니다. 다
 ## 13.3 Playwright E2E (headed mode)
 
 `frontend/tests/clarification-flow.spec.ts` — mocked backend으로 UX 흐름
-자동 구동, **4.6초 1 passed**:
+자동 구동, **5.0초 1 passed**:
 
+- **명확화 레이더 대시보드** 렌더 (10개 축, 비기능 50%, overall 85%)
 - 트리 ambiguity 배지 렌더 (flagged에만 표시)
 - US 행 클릭 → 디테일 패널 + 명확화 탭 자동 활성 + 탭 배지 표시
 - SSE 스트림으로 질문 큐 도착, 질문/추천/옵션 렌더
 - "추천 답변 수락" → before/after JSON diff 렌더
-- "적용" → 편집안 collapse + 트리·탭 배지 모두 클리어
+- "적용" → 편집안 collapse + 트리·탭 배지 모두 클리어 + 레이더가 100%로
+  업데이트
 
 # 14. 다음 단계
 
