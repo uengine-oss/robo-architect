@@ -21,7 +21,9 @@ import { initLogging, log } from "./logging";
 let mainWindow: BrowserWindow | null = null;
 
 function createMainWindow(): BrowserWindow {
-  const preloadPath = path.join(__dirname, "..", "preload", "index.js");
+  // Project references produce dist/main/main/ and dist/preload/preload/; resolve
+  // the preload relative to the app root so the path survives any outDir tweak.
+  const preloadPath = path.join(app.getAppPath(), "dist", "preload", "preload", "index.js");
 
   const window = new BrowserWindow({
     width: 1280,

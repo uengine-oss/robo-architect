@@ -12,7 +12,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "declaration": false,
+    "declaration": true,
     "sourceMap": true,
     "composite": true
   }
