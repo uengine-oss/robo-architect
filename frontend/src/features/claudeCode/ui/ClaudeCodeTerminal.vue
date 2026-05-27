@@ -98,10 +98,20 @@ function getWsUrl(workdir) {
   const host = import.meta.env.VITE_API_HOST || window.location.hostname
   const port = import.meta.env.VITE_API_PORT || '8000'
   let url = `${protocol}//${host}:${port}/api/claude-code/terminal`
-  if (workdir) {
-    url += `?workdir=${encodeURIComponent(workdir)}`
-  }
-  return url
+  const params = new URLSearchParams()
+  if (workdir) params.set('workdir', workdir)
+  // Pass-through for the e2e bypass path: the playwright spec opens the
+  // SPA at /?permission_mode=bypassPermissions so the embedded `claude`
+  // doesn't pause on per-tool permission prompts (which would deadlock
+  // the headless test). Default behavior — interactive prompts — is
+  // unchanged for human users who don't add the query param.
+  try {
+    const pageParams = new URLSearchParams(window.location.search)
+    const pm = pageParams.get('permission_mode')
+    if (pm) params.set('permission_mode', pm)
+  } catch {}
+  const qs = params.toString()
+  return qs ? `${url}?${qs}` : url
 }
 
 function createTerminal() {

@@ -48,7 +48,7 @@ neo4j_logger.setLevel(logging.ERROR)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage Neo4j connection lifecycle."""
+    """Manage Neo4j connection lifecycle + Robo-Spec MCP session manager."""
     SmartLogger.log(
         "INFO",
         "Starting API (lifespan init)",
@@ -80,7 +80,13 @@ async def lifespan(app: FastAPI):
             category="figma_binding.full_sync.stale_lock_released",
             params={"error": str(e)},
         )
-    yield
+    # 029: enter the robo-spec MCP session-manager context for the lifetime
+    # of the app. Without this the streamable-HTTP handler raises
+    # "Task group is not initialized" on the first request. Falls back to
+    # a no-op when the MCP SDK is unavailable.
+    from api.features.robo_spec.router import mcp_lifespan
+    async with mcp_lifespan():
+        yield
     close_neo4j_driver(log=True)
     SmartLogger.log("INFO", "API stopped", category="api.lifespan")
 
@@ -242,6 +248,11 @@ app.include_router(requirements_router)
 # Aggregate Invariants (feature 027)
 from api.features.invariants.router import router as invariants_router
 app.include_router(invariants_router)
+
+# Robo Spec — Claude Code skill MCP bridge (feature 029)
+from api.features.robo_spec.router import router as robo_spec_router, mount_mcp as _mount_robo_spec_mcp
+app.include_router(robo_spec_router)
+_mount_robo_spec_mcp(app)
 
 
 if __name__ == "__main__":

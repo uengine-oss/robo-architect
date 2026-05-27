@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Header
+from pydantic import BaseModel
 from starlette.requests import Request
 
 from api.platform.neo4j import get_session
@@ -11,6 +12,144 @@ from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter(prefix="/api/contexts", tags=["contexts"])
+
+
+# ---------------------------------------------------------------------------
+# E2 / E3 — BoundedContext.classification (feature 029 robo-spec-skills)
+# ---------------------------------------------------------------------------
+#
+# These two routes live here (alongside the rest of /api/contexts) rather
+# than under /api/robo-spec because they read/write a property on the
+# canonical BoundedContext node — sharing the prefix keeps the surface
+# discoverable to anyone already looking at /api/contexts/* in Swagger.
+#
+# See: specs/029-robo-spec-skills/contracts/http-api.md (E2, E3) and
+#      specs/029-robo-spec-skills/data-model.md §1.1.
+
+
+Classification = Literal["core", "supporting"]
+
+
+class ClassificationPayload(BaseModel):
+    classification: Classification
+
+
+@router.get("/{bc_id}/classification")
+async def get_bc_classification(bc_id: str, request: Request) -> dict[str, Any]:
+    """Return the BC's `core | supporting` classification, or null when unset."""
+    query = """
+    MATCH (bc:BoundedContext {id: $bc_id})
+    RETURN bc.classification AS classification
+    """
+    SmartLogger.log(
+        "INFO",
+        "BC classification requested.",
+        category="api.contexts.classification.get.request",
+        params={**http_context(request), "inputs": {"bc_id": bc_id}},
+    )
+    with get_session() as session:
+        record = session.run(query, bc_id=bc_id).single()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Context {bc_id} not found")
+    return {"bcId": bc_id, "classification": record["classification"]}
+
+
+@router.patch("/{bc_id}/classification")
+async def patch_bc_classification(
+    bc_id: str,
+    payload: ClassificationPayload,
+    request: Request,
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
+) -> dict[str, Any]:
+    """Set the BC's classification to "core" or "supporting".
+
+    Optional ``If-Match`` header carries the BC's last-known integer
+    version (when available); a mismatch returns 412. Version tracking
+    on BoundedContext is best-effort for v1 — see research R8 — so a
+    missing/mismatched header falls back to the unconditional write.
+    """
+    # Pydantic + Literal already validates `classification`; if it ever
+    # widens beyond the enum, this guard catches drift between the
+    # schema and the route.
+    if payload.classification not in ("core", "supporting"):
+        raise HTTPException(
+            status_code=422,
+            detail="classification must be 'core' or 'supporting'",
+        )
+
+    fetch_query = """
+    MATCH (bc:BoundedContext {id: $bc_id})
+    RETURN bc.classification AS old, coalesce(bc.version, 0) AS version
+    """
+    update_query = """
+    MATCH (bc:BoundedContext {id: $bc_id})
+    SET bc.classification = $classification,
+        bc.version = coalesce(bc.version, 0) + 1
+    RETURN bc.classification AS classification, bc.version AS version
+    """
+
+    with get_session() as session:
+        existing = session.run(fetch_query, bc_id=bc_id).single()
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Context {bc_id} not found")
+
+        if if_match is not None:
+            try:
+                expected_version = int(if_match)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="If-Match header must be an integer version",
+                )
+            if expected_version != int(existing["version"] or 0):
+                raise HTTPException(
+                    status_code=412,
+                    detail={
+                        "code": "VERSION_MISMATCH",
+                        "expected": expected_version,
+                        "actual": int(existing["version"] or 0),
+                    },
+                )
+
+        old_value = existing["old"]
+
+        # Idempotent no-op when the value is unchanged.
+        if old_value == payload.classification:
+            SmartLogger.log(
+                "INFO",
+                "BC classification PATCH is a no-op (same value).",
+                category="api.contexts.classification.patch.noop",
+                params={
+                    **http_context(request),
+                    "inputs": {"bc_id": bc_id, "classification": payload.classification},
+                },
+            )
+            return {
+                "bcId": bc_id,
+                "classification": payload.classification,
+            }
+
+        updated = session.run(
+            update_query,
+            bc_id=bc_id,
+            classification=payload.classification,
+        ).single()
+
+    SmartLogger.log(
+        "INFO",
+        "BC classification changed.",
+        category="bc.classification.changed",
+        params={
+            **http_context(request),
+            "inputs": {"bc_id": bc_id},
+            "delta": {"from": old_value, "to": payload.classification},
+            "newVersion": int(updated["version"]) if updated else None,
+        },
+    )
+    return {
+        "bcId": bc_id,
+        "classification": payload.classification,
+    }
 
 
 @router.get("")
@@ -107,6 +246,7 @@ async def get_context_tree(context_id: str, request: Request) -> dict[str, Any]:
         name: bc.name,
         type: 'BoundedContext',
         description: bc.description,
+        classification: bc.classification,
         aggregates: aggregates,
         policies: policies
     } as tree
@@ -153,7 +293,7 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     # Get BC info
     bc_query = """
     MATCH (bc:BoundedContext {id: $context_id})
-    RETURN bc {.id, .name, .displayName, .description, .owner, .domainType, .userStoryIds} as bc
+    RETURN bc {.id, .name, .displayName, .description, .owner, .domainType, .classification, .userStoryIds} as bc
     """
 
     # Get User Stories for this BC
@@ -433,6 +573,42 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
                     evt["properties"] = prop_map.get(evt.get("id", ""), [])
             for rm in readmodels:
                 rm["properties"] = prop_map.get(rm.get("id", ""), [])
+
+            # feature 029: attach implementationFiles[] (the
+            # [:IMPLEMENTED_IN] → :ImplementationFile relation) to every
+            # element. The navigator tree uses this to render a
+            # drill-down node per file underneath each design element.
+            # Files are not project-scoped here (the navigator wants to
+            # see every registered implementation regardless of which
+            # workspace registered it).
+            files_query = """
+            UNWIND $parent_ids as eid
+            MATCH (e {id: eid})-[:IMPLEMENTED_IN]->(impl:ImplementationFile)
+            RETURN eid as elementId,
+                   collect({
+                       id: impl.id,
+                       projectId: impl.projectId,
+                       path: impl.path,
+                       role: impl.role,
+                       lastSeenAt: impl.lastSeenAt
+                   }) as files
+            """
+            files_map: dict[str, list[dict[str, Any]]] = {}
+            for r in session.run(files_query, parent_ids=parent_ids):
+                eid = r.get("elementId")
+                if eid:
+                    files_map[str(eid)] = [dict(f) for f in (r.get("files") or [])]
+
+            for agg in aggregates.values():
+                agg["implementationFiles"] = files_map.get(agg.get("id", ""), [])
+                for cmd in agg.get("commands", []) or []:
+                    cmd["implementationFiles"] = files_map.get(cmd.get("id", ""), [])
+                    for evt in cmd.get("events", []) or []:
+                        evt["implementationFiles"] = files_map.get(evt.get("id", ""), [])
+                for evt in agg.get("events", []) or []:
+                    evt["implementationFiles"] = files_map.get(evt.get("id", ""), [])
+            for rm in readmodels:
+                rm["implementationFiles"] = files_map.get(rm.get("id", ""), [])
 
         SmartLogger.log(
             "INFO",

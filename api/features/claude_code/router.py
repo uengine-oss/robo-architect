@@ -15,6 +15,7 @@ import os
 import signal
 import struct
 import zipfile
+from typing import Any
 
 import logging
 
@@ -22,7 +23,9 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from api.features.claude_code.workspace_fs import (
+    delete_entry,
     list_directory,
+    move_entry,
     read_text_file,
     resolve_under_root,
     write_text_file_atomic,
@@ -31,8 +34,12 @@ from api.features.claude_code.workspace_schemas import (
     FileResponse as WorkspaceFileResponse,
 )
 from api.features.claude_code.workspace_schemas import (
+    DeleteRequest,
+    DeleteResponse,
     FileWriteRequest,
     FileWriteResponse,
+    MoveRequest,
+    MoveResponse,
     TreeChild,
     TreeResponse,
 )
@@ -136,13 +143,77 @@ async def workspace_write_file(req: FileWriteRequest):
     )
 
 
+@router.delete("/file", response_model=DeleteResponse)
+async def workspace_delete_entry(req: DeleteRequest):
+    """Delete a file or directory inside the workspace.
+
+    Refuses to delete the workspace root (path must be non-empty).
+    Directory deletion is recursive (``shutil.rmtree``).
+    """
+    from fastapi import HTTPException
+
+    if not req.path:
+        raise HTTPException(status_code=400, detail="path is required (cannot delete root)")
+    resolved = resolve_under_root(req.root, req.path)
+    deleted_type = delete_entry(resolved)
+    logger.info(
+        "claude_code.workspace.entry_deleted",
+        extra={"root": req.root, "path": req.path, "kind": deleted_type},
+    )
+    return DeleteResponse(path=req.path, deleted_type=deleted_type)
+
+
+@router.post("/move", response_model=MoveResponse)
+async def workspace_move_entry(req: MoveRequest):
+    """Move or rename a file/directory inside the workspace.
+
+    Both ``from_path`` and ``to_path`` are sandbox-checked. Refuses to
+    overwrite an existing destination (409) or move a directory into
+    itself (400).
+    """
+    from fastapi import HTTPException
+
+    if not req.from_path or not req.to_path:
+        raise HTTPException(status_code=400, detail="from_path and to_path are required")
+    src = resolve_under_root(req.root, req.from_path)
+    dst = resolve_under_root(req.root, req.to_path)
+    moved_type = move_entry(src, dst)
+    logger.info(
+        "claude_code.workspace.entry_moved",
+        extra={
+            "root": req.root,
+            "from_path": req.from_path,
+            "to_path": req.to_path,
+            "kind": moved_type,
+        },
+    )
+    return MoveResponse(
+        from_path=req.from_path,
+        to_path=req.to_path,
+        moved_type=moved_type,
+    )
+
+
 # ─── Project setup (extract PRD to target directory) ───
 
 
 class SetupProjectRequest(BaseModel):
-    """Extract generated PRD files to a target directory for Claude Code."""
+    """Extract generated PRD files to a target directory for Claude Code.
+
+    ``output_mode`` (feature 029) controls which structure is laid down:
+
+    - ``"robo-spec"`` (default, recommended): skip the legacy PRD pipeline
+      entirely; only install the verbatim robo-spec skill set + speckit
+      inheritance chain + ``.mcp.json`` + ``.claude/robo-project.json``.
+      The user generates ``plan.md`` / ``tasks.md`` / source on demand in
+      Claude Code via ``/robo-plan``, ``/robo-tasks``, ``/robo-implement``.
+    - ``"prd"``: pre-029 behavior — generate the full PRD ZIP
+      (PRD.md, specs/, .cursor/rules/, agents/, ...) AND ALSO install the
+      robo-spec skills on top. ``prd_request.tech_stack`` is required.
+    """
     project_path: str
     prd_request: PRDGenerationRequest
+    output_mode: str = "robo-spec"
 
 
 @router.post("/setup-project")
@@ -168,16 +239,40 @@ async def setup_project(request: SetupProjectRequest):
         build_prd_zip,
     )
 
+    # Resolve and validate path (shared by both output modes).
+    project_path = os.path.expanduser(request.project_path)
+    project_path = os.path.abspath(project_path)
+    os.makedirs(project_path, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Robo-Spec Skills mode (feature 029, default): skip the heavy PRD
+    # pipeline entirely. The user produces plan/tasks/source on demand
+    # in Claude Code via /robo-plan, /robo-tasks, /robo-implement.
+    # ------------------------------------------------------------------
+    if request.output_mode == "robo-spec":
+        # We still need at least one BC in the graph so the user has
+        # something to /robo-plan against. (The check exists in the
+        # legacy path too; surfaced here as 404 with a clear message.)
+        bcs = get_bcs_from_nodes(None)
+        if not bcs:
+            raise HTTPException(status_code=404, detail="No Bounded Contexts found")
+
+        robo_install = _install_robo_spec(project_path)
+        return {
+            "success": True,
+            "project_path": project_path,
+            "files_extracted": [],
+            "deprecated_removed": [],
+            "output_mode": "robo-spec",
+            **robo_install,
+        }
+
+    # ------------------------------------------------------------------
+    # Legacy PRD mode (pre-029): generate the full PRD ZIP + robo-spec.
+    # ------------------------------------------------------------------
     # Enforce FR-020 — when include_frontend=true, frontend_framework
     # MUST be set. Same contract as /api/prd/{generate,download}.
     _require_frontend_framework(request.prd_request.tech_stack)
-
-    # Resolve and validate path
-    project_path = os.path.expanduser(request.project_path)
-    project_path = os.path.abspath(project_path)
-
-    # Create directory if it doesn't exist
-    os.makedirs(project_path, exist_ok=True)
 
     bcs = get_bcs_from_nodes(None)
     if not bcs:
@@ -221,12 +316,221 @@ async def setup_project(request: SetupProjectRequest):
                 f.write(zf.read(member).decode("utf-8"))
             extracted_files.append(member)
 
+    # ------------------------------------------------------------------
+    # Robo-Spec verbatim install (feature 029 — E1 extension, T013)
+    # ------------------------------------------------------------------
+    # Per FR-012: files under <repo>/robo-spec/.claude/skills/ MUST be
+    # copied byte-for-byte (no Jinja, no template substitution) into
+    # <workspace>/.claude/skills/. The project-specific config files
+    # (.claude/robo-project.json and .claude/mcp.json) are generated
+    # alongside the copy because they carry per-project URLs — they're
+    # explicitly NOT under skills/ so FR-012's "byte-identical for
+    # skills/" guarantee stands (data-model.md §2.5 + SC-006).
+    robo_install = _install_robo_spec(project_path)
+
     return {
         "success": True,
         "project_path": project_path,
         "files_extracted": extracted_files,
         "deprecated_removed": deprecated_removed,
+        **robo_install,
     }
+
+
+def _install_robo_spec(project_path: str) -> dict[str, Any]:
+    """Copy <repo>/robo-spec/.claude/skills/ verbatim into the workspace,
+    then write the per-project config files. Returns a fragment merged
+    into the setup-project response (see schemas.RoboSpecInstallSummary).
+
+    Idempotent: re-running on a workspace that already has the install
+    overwrites the skill files (FR-012 — they're derivable from the
+    /robo-spec source) and refreshes mcp.json's URL. The project_id in
+    robo-project.json is NEVER mutated on re-run — a different id
+    incoming when an existing id is present surfaces as HTTP 409.
+
+    The project_id at v1 is the workspace's resolved absolute path
+    hashed to a UUID — a stable per-host identifier that does not require
+    a server-side project registry. When a real Robo Architect project
+    UUID becomes available (e.g., via a future request field), the
+    derivation can be replaced without changing the on-disk shape.
+    """
+    import hashlib
+    import shutil
+    import uuid
+    from fastapi import HTTPException
+
+    repo_root = _resolve_repo_root()
+    src_skills = os.path.join(repo_root, "robo-spec", ".claude", "skills")
+    if not os.path.isdir(src_skills):
+        # Packaging bug, not a user error — surface explicitly.
+        raise HTTPException(
+            status_code=500,
+            detail=f"robo-spec/.claude/skills/ not found at {src_skills}",
+        )
+
+    dest_claude = os.path.join(project_path, ".claude")
+    dest_skills = os.path.join(dest_claude, "skills")
+    os.makedirs(dest_claude, exist_ok=True)
+
+    # Verbatim copy of the robo-* skill tree. dirs_exist_ok=True lets
+    # re-runs overwrite cleanly.
+    shutil.copytree(src_skills, dest_skills, dirs_exist_ok=True)
+
+    # Inheritance dependency (research R11): the robo-{plan,tasks,implement}
+    # skills explicitly delegate to their `speckit-*` counterparts at runtime
+    # ("read .claude/skills/speckit-plan/SKILL.md first"). For that read to
+    # succeed in the target workspace we MUST ship the matching speckit
+    # SKILL.md files alongside. We copy them from this repo's own speckit
+    # install — the version we pin against in the robo-* frontmatter
+    # (`requires-speckit`) is whatever this repo has on disk.
+    #
+    # Only the three skills the robo-* overrides extend are shipped. Other
+    # speckit-* skills (constitution, clarify, taskstoissues, git helpers)
+    # are not part of the inheritance chain and are intentionally omitted.
+    speckit_src_root = os.path.join(repo_root, ".claude", "skills")
+    for speckit_name in ("speckit-plan", "speckit-tasks", "speckit-implement"):
+        speckit_src = os.path.join(speckit_src_root, speckit_name)
+        if not os.path.isdir(speckit_src):
+            # Treat as a packaging error rather than continuing silently —
+            # without speckit-plan/SKILL.md in the workspace, /robo-plan's
+            # inheritance step would dead-end at runtime.
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"upstream {speckit_name}/ not found at {speckit_src} — "
+                    "robo-* skills depend on these via the inheritance "
+                    "pattern (research R11)."
+                ),
+            )
+        shutil.copytree(
+            speckit_src,
+            os.path.join(dest_skills, speckit_name),
+            dirs_exist_ok=True,
+        )
+
+    # Derive a stable project_id from the workspace path. Hash → UUIDv5-like
+    # 32-hex string, prefixed with `ws-` so it's visually distinguishable
+    # from a real Robo Architect project UUID when both appear in logs.
+    derived_project_id = "ws-" + hashlib.sha256(
+        project_path.encode("utf-8")
+    ).hexdigest()[:32]
+
+    backend_url = os.environ.get("ROBO_SPEC_BACKEND_URL", "http://localhost:8000")
+    mcp_endpoint = backend_url.rstrip("/") + "/mcp"
+
+    robo_project_json_path = os.path.join(dest_claude, "robo-project.json")
+    if os.path.isfile(robo_project_json_path):
+        try:
+            with open(robo_project_json_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            existing_pid = existing.get("projectId")
+        except (OSError, json.JSONDecodeError):
+            existing_pid = None
+        if existing_pid and existing_pid != derived_project_id:
+            # Per E1: re-running on a workspace that already has a
+            # different projectId is a conflict — protects the developer
+            # against accidentally re-linking the wrong project.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "PROJECT_ID_MISMATCH",
+                    "existing": existing_pid,
+                    "incoming": derived_project_id,
+                    "hint": (
+                        "Delete .claude/robo-project.json (and review what "
+                        "was previously linked) before re-running setup-project."
+                    ),
+                },
+            )
+
+    robo_project_doc = {
+        "projectId": derived_project_id,
+        "backendUrl": backend_url,
+        "mcpEndpoint": mcp_endpoint,
+        "createdAt": (existing.get("createdAt")  # type: ignore[has-type]
+                      if os.path.isfile(robo_project_json_path)
+                      else _now_iso()),
+    }
+    with open(robo_project_json_path, "w", encoding="utf-8") as f:
+        json.dump(robo_project_doc, f, indent=2)
+
+    # .mcp.json — Claude Code reads this to discover project-scoped MCP
+    # servers. MUST live at the project root (NOT under .claude/) — that
+    # is the discovery path Claude Code's MCP loader looks at; an
+    # otherwise-correct file under .claude/ is silently ignored.
+    # The URL carries a trailing slash so Claude's HTTP client doesn't
+    # hit FastAPI's 307 redirect from `/mcp` → `/mcp/`.
+    mcp_endpoint_with_slash = (
+        mcp_endpoint if mcp_endpoint.endswith("/") else mcp_endpoint + "/"
+    )
+    mcp_json_path = os.path.join(project_path, ".mcp.json")
+    mcp_json_doc = {
+        "mcpServers": {
+            "robo-spec": {
+                "type": "http",
+                "url": mcp_endpoint_with_slash,
+            }
+        }
+    }
+    with open(mcp_json_path, "w", encoding="utf-8") as f:
+        json.dump(mcp_json_doc, f, indent=2)
+
+    # Checksum of the freshly-copied skills/ subtree — SC-006 verifies
+    # byte-identical install by comparing this to a digest of the source.
+    checksum = _sha256_directory(dest_skills)
+
+    return {
+        "roboSpecInstalled": True,
+        "roboSpecChecksum": f"sha256:{checksum}",
+        "roboProjectId": derived_project_id,
+    }
+
+
+def _resolve_repo_root() -> str:
+    """Find the repo root by walking up until we find both `api/` and
+    `robo-spec/`. This avoids hard-coding ``__file__`` parents which
+    breaks when the package is editable-installed elsewhere.
+    """
+    here = os.path.abspath(os.path.dirname(__file__))
+    while True:
+        if (
+            os.path.isdir(os.path.join(here, "api"))
+            and os.path.isdir(os.path.join(here, "robo-spec"))
+        ):
+            return here
+        parent = os.path.dirname(here)
+        if parent == here:
+            # Reached filesystem root — fall back to the four-parent
+            # default (matches the current repo layout).
+            return os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "..")
+            )
+        here = parent
+
+
+def _sha256_directory(path: str) -> str:
+    """Stable sha256 of a directory tree's file contents. Sorts walk
+    output deterministically so the digest is reproducible.
+    """
+    import hashlib
+
+    h = hashlib.sha256()
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
+        for fname in sorted(files):
+            full = os.path.join(root, fname)
+            rel = os.path.relpath(full, path).replace(os.sep, "/")
+            h.update(rel.encode("utf-8"))
+            h.update(b"\x00")
+            with open(full, "rb") as f:
+                h.update(f.read())
+            h.update(b"\x00")
+    return h.hexdigest()
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _cleanup_deprecated_local_paths(project_path: str, bcs: list, config) -> list[str]:
@@ -308,18 +612,21 @@ def _set_pty_size(fd: int, rows: int, cols: int) -> None:
 async def terminal_ws(
     websocket: WebSocket,
     workdir: str = Query(default=""),
+    permission_mode: str = Query(default=""),
 ):
     """
     WebSocket ↔ PTY bridge.
 
     Query params:
       workdir — working directory for the claude CLI session.
-
-    Client messages (JSON):
-      {"type": "input", "data": "<keystrokes>"}
-      {"type": "resize", "cols": 80, "rows": 24}
-
-    Server messages: raw terminal output bytes (text frames).
+      permission_mode — optional pass-through to claude's
+        ``--permission-mode`` flag (e.g. ``acceptEdits``,
+        ``bypassPermissions``, ``plan``). Leave blank to use claude's
+        default interactive prompting. Robo-spec e2e tests pass
+        ``bypassPermissions`` so the MCP tool calls (set_bc_classification,
+        register_implementation_files, …) don't pause on a permission
+        prompt under each invocation; for human use the default is
+        recommended.
     """
     if not IS_UNIX_PTY_SUPPORTED:
         await websocket.accept()
@@ -368,8 +675,20 @@ async def terminal_ws(
         if slave_fd > 2:
             os.close(slave_fd)
 
+        # Build claude argv, optionally with --permission-mode.
+        # Allow-list is intentionally narrow to mirror claude's own
+        # supported values; an unknown value is silently ignored
+        # rather than failing the spawn.
+        ALLOWED_PERMISSION_MODES = {
+            "acceptEdits", "auto", "bypassPermissions",
+            "default", "dontAsk", "plan",
+        }
+        claude_argv = ["claude"]
+        if permission_mode in ALLOWED_PERMISSION_MODES:
+            claude_argv += ["--permission-mode", permission_mode]
+
         try:
-            os.execvpe("claude", ["claude"], env)
+            os.execvpe("claude", claude_argv, env)
         except OSError:
             # claude CLI not found — fallback to shell
             shell = os.environ.get("SHELL", "/bin/zsh")

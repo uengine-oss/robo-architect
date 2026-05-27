@@ -1,0 +1,5 @@
+{
+  "roboSpecInstalled": true,
+  "roboSpecChecksum": "sha256:9855e1e0a93a24032171fb78e871c164389e43d1c25acd8fa219f8a6b0d0607e",
+  "roboProjectId": "ws-53778d3667b257afaca3d42e7edeae7e"
+}

@@ -51,6 +51,18 @@ const error = ref(null)
 // Step 1: Configure · 2: Preview · 3: Claude Code setup (path picker; may
 // or may not have downloaded the zip first) · 4: Setup complete.
 const step = ref(1)
+
+// Output mode (feature 029 robo-spec-skills): controls which structure
+// setup-project lays down inside the project home.
+//   - 'robo-spec' (default; recommended): copies the verbatim /robo-spec
+//     skill set + writes .mcp.json + robo-project.json. The user then
+//     drives /robo-plan, /robo-tasks, /robo-implement in Claude Code
+//     to generate plan.md / tasks.md / scaffolded source on demand.
+//     No legacy PRD ZIP is emitted.
+//   - 'prd' (legacy): the pre-029 behavior — generates the full PRD ZIP
+//     (PRD.md, specs/, .cursor/rules/, etc.) AND ALSO installs the
+//     robo-spec skills (so you can use either path).
+const outputMode = ref('robo-spec')
 const projectPath = ref('~/projects/')
 const setupResult = ref(null)
 // Tracks whether the user landed on Step 3 via "Download ZIP" (true) or
@@ -234,6 +246,17 @@ function proceedToClaudeSetup() {
   step.value = 3
 }
 
+// feature 029: robo-spec mode skips the Preview / Download steps
+// (there is no PRD to preview) and jumps directly to the path picker.
+function proceedFromConfig() {
+  if (outputMode.value === 'robo-spec') {
+    downloadedZip.value = false
+    step.value = 3
+  } else {
+    generatePreview()
+  }
+}
+
 async function setupAndOpenClaudeCode() {
   const fullPath = projectPath.value.endsWith('/')
     ? projectPath.value + config.value.project_name
@@ -249,6 +272,8 @@ async function setupAndOpenClaudeCode() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         project_path: fullPath,
+        // feature 029: skip legacy PRD generation when in robo-spec mode.
+        output_mode: outputMode.value,
         prd_request: {
           node_ids: nodeIds.length > 0 ? nodeIds : null,
           tech_stack: config.value
@@ -307,8 +332,8 @@ function goBack() {
               <polyline points="10 9 9 9 8 9"/>
             </svg>
             <div>
-              <h2>Generate PRD for Vibe Coding</h2>
-              <p class="header-subtitle">Create AI-ready project specs from your Event Storming model</p>
+              <h2>프로젝트 홈 생성</h2>
+              <p class="header-subtitle">Create a Claude Code project home from your Event Storming model — Robo-Spec Skills (recommended) or legacy PRD</p>
             </div>
           </div>
           <button class="close-btn" @click="closeModal">
@@ -348,6 +373,46 @@ function goBack() {
           </div>
 
           <div v-if="step === 1" class="config-step">
+            <!-- feature 029: output mode picker. Robo-Spec Skills is the
+                 recommended default and skips the legacy PRD pipeline;
+                 the user generates plan / tasks / source on demand via
+                 /robo-plan, /robo-tasks, /robo-implement in Claude Code.
+                 Legacy PRD mode keeps the pre-029 behavior (full ZIP +
+                 .cursor rules + specs/ etc.) and ALSO installs the
+                 robo-spec skills on top. -->
+            <div class="config-section">
+              <h3>🎯 출력 모드</h3>
+              <div class="form-grid">
+                <div class="form-group">
+                  <div class="radio-cards">
+                    <label class="radio-card" :class="{ selected: outputMode === 'robo-spec' }">
+                      <input type="radio" v-model="outputMode" value="robo-spec" />
+                      <div class="radio-card-content">
+                        <span class="radio-icon">🤖</span>
+                        <span class="radio-label">Robo-Spec Skills (권장)</span>
+                        <span class="radio-desc">
+                          robo-* skill set + MCP only. plan / tasks / source는
+                          Claude Code 안에서 /robo-plan, /robo-tasks,
+                          /robo-implement 슬래시 커맨드로 생성합니다.
+                        </span>
+                      </div>
+                    </label>
+                    <label class="radio-card" :class="{ selected: outputMode === 'prd' }">
+                      <input type="radio" v-model="outputMode" value="prd" />
+                      <div class="radio-card-content">
+                        <span class="radio-icon">📄</span>
+                        <span class="radio-label">기존 PRD (Legacy)</span>
+                        <span class="radio-desc">
+                          PRD.md / .cursor/rules / specs/ 까지 한 번에 추출 +
+                          robo-spec skill 도 함께 설치 (기존 029-이전 동작).
+                        </span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="config-section">
               <h3>📦 Project Information</h3>
               <div class="form-grid">
@@ -355,12 +420,19 @@ function goBack() {
                   <label>Project Name</label>
                   <input v-model="config.project_name" type="text" placeholder="my-project" class="form-input" />
                 </div>
-                <div class="form-group">
+                <div v-if="outputMode === 'prd'" class="form-group">
                   <label>Package Name (Java/Kotlin)</label>
                   <input v-model="config.package_name" type="text" placeholder="com.example" class="form-input" />
                 </div>
               </div>
             </div>
+
+            <!-- feature 029: the heavy tech-stack / architecture / spec-
+                 format / extras sections are hidden in robo-spec mode
+                 because the slash commands handle architecture choice
+                 themselves (clean-vs-default by BC classification) and
+                 do not need a pre-baked PRD pipeline. -->
+            <template v-if="outputMode === 'prd'">
 
             <div class="config-section">
               <h3>🛠️ Technology Stack</h3>
@@ -526,6 +598,18 @@ function goBack() {
                   <span class="checkbox-label">Include Test Templates</span>
                 </label>
               </div>
+            </div>
+            </template>
+
+            <div v-if="outputMode === 'robo-spec'" class="config-section robo-spec-info">
+              <h3>ℹ️ What you'll get</h3>
+              <ul class="robo-spec-bullets">
+                <li><code>.claude/skills/robo-{plan,tasks,implement,sync}/</code> — verbatim from <code>robo-spec/</code></li>
+                <li><code>.claude/skills/speckit-{plan,tasks,implement}/</code> — the inheritance chain</li>
+                <li><code>.claude/robo-project.json</code> — projectId + backend URL</li>
+                <li><code>.mcp.json</code> — points Claude Code at the robo-spec MCP server</li>
+                <li>No <code>PRD.md</code>, no <code>specs/</code>, no <code>.cursor/rules/</code> — those are produced on demand by <code>/robo-plan</code> in Claude Code</li>
+              </ul>
             </div>
           </div>
 
@@ -722,8 +806,9 @@ function goBack() {
         <div class="modal-footer">
           <button v-if="step > 1 && step <= 3" class="btn btn-secondary" @click="goBack">← Back</button>
           <div class="footer-spacer"></div>
-          <button v-if="step === 1" class="btn btn-primary" @click="generatePreview" :disabled="isGenerating">
+          <button v-if="step === 1" class="btn btn-primary" @click="proceedFromConfig" :disabled="isGenerating">
             <span v-if="isGenerating">Generating...</span>
+            <span v-else-if="outputMode === 'robo-spec'">Next →</span>
             <span v-else>Preview →</span>
           </button>
           <button v-if="step === 2" class="btn btn-secondary" @click="downloadZip" :disabled="isGenerating">

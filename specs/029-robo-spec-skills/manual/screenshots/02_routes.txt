@@ -1,0 +1,5 @@
+Routes registered under /api/robo-spec and the new classification/setup-project surface:
+----------------------------------------------------------------------
+POST /api/claude-code/setup-project
+GET,PATCH /api/contexts/{bc_id}/classification
+GET /api/robo-spec/health

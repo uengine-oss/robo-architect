@@ -1,19 +1,30 @@
 <script setup>
-import { ref, watch, reactive } from 'vue'
-import { fetchTree } from '../workspace.api.js'
+import { ref, watch, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { deleteEntry, fetchTree, moveEntry } from '../workspace.api.js'
 
 const props = defineProps({
   root: { type: String, required: true },
   activePath: { type: String, default: null },
 })
 
-const emit = defineEmits(['open', 'externalCheck'])
+const emit = defineEmits(['open', 'externalCheck', 'renamed', 'moved', 'deleted'])
 
 const rootChildren = ref([])
 const expanded = reactive(new Map())   // path -> { children, loading, error }
 const loadingRoot = ref(false)
 const rootError = ref(null)
 const refreshing = ref(false)
+
+// Context menu state — single popup at a time, keyed by anchor path.
+const menu = reactive({ open: false, x: 0, y: 0, path: '', isDir: false })
+
+// Inline rename state — only one row can be in rename mode at a time.
+const renaming = ref({ path: null, value: '', error: null, busy: false })
+
+// Drag state — show a highlight on the folder under the pointer.
+const dragOverPath = ref(null)
+const dragOverRoot = ref(false)
+const draggingPath = ref(null)
 
 async function loadDir(path) {
   if (!props.root) return
@@ -81,6 +92,215 @@ async function refresh() {
   }
 }
 
+// ─── Context menu ───
+
+function parentPathOf(path) {
+  const idx = path.lastIndexOf('/')
+  return idx === -1 ? '' : path.slice(0, idx)
+}
+
+function basenameOf(path) {
+  const idx = path.lastIndexOf('/')
+  return idx === -1 ? path : path.slice(idx + 1)
+}
+
+function openMenu(event, path, isDir) {
+  event.preventDefault()
+  event.stopPropagation()
+  menu.open = true
+  menu.x = event.clientX
+  menu.y = event.clientY
+  menu.path = path
+  menu.isDir = isDir
+}
+
+function closeMenu() {
+  menu.open = false
+  menu.path = ''
+}
+
+function onDocClick(e) {
+  if (!menu.open) return
+  // Click anywhere outside the menu closes it.
+  if (!(e.target instanceof Element) || !e.target.closest('.tree-context-menu')) {
+    closeMenu()
+  }
+}
+
+function onDocKey(e) {
+  if (e.key === 'Escape') {
+    if (renaming.value.path) cancelRename()
+    if (menu.open) closeMenu()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', onDocClick)
+  document.addEventListener('keydown', onDocKey)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick)
+  document.removeEventListener('keydown', onDocKey)
+})
+
+// ─── Rename ───
+
+function startRename(path) {
+  closeMenu()
+  renaming.value = {
+    path,
+    value: basenameOf(path),
+    error: null,
+    busy: false,
+    focused: false,
+  }
+}
+
+function cancelRename() {
+  renaming.value = { path: null, value: '', error: null, busy: false, focused: false }
+}
+
+async function commitRename() {
+  const oldPath = renaming.value.path
+  const newName = renaming.value.value.trim()
+  if (!oldPath || !newName) {
+    cancelRename()
+    return
+  }
+  if (newName === basenameOf(oldPath)) {
+    cancelRename()
+    return
+  }
+  if (newName.includes('/') || newName === '.' || newName === '..') {
+    renaming.value.error = '잘못된 이름입니다'
+    return
+  }
+  const parent = parentPathOf(oldPath)
+  const newPath = parent ? `${parent}/${newName}` : newName
+  renaming.value.busy = true
+  try {
+    const r = await moveEntry({ root: props.root, fromPath: oldPath, toPath: newPath })
+    cancelRename()
+    await refreshParent(parent)
+    emit('renamed', { fromPath: oldPath, toPath: newPath, kind: r.moved_type })
+  } catch (e) {
+    renaming.value.error = e.body?.detail || e.message || '이름 변경 실패'
+    renaming.value.busy = false
+  }
+}
+
+async function refreshParent(parentPath) {
+  if (parentPath === '') {
+    await loadDir('')
+  } else if (expanded.has(parentPath)) {
+    await loadDir(parentPath)
+  } else {
+    // Also refresh root in case the change is visible at the top level.
+    await loadDir('')
+  }
+}
+
+// ─── Delete ───
+
+async function confirmDelete(path, isDir) {
+  closeMenu()
+  const label = isDir ? '폴더' : '파일'
+  const ok = window.confirm(
+    `이 ${label}을(를) 삭제하시겠습니까?\n\n${path}\n\n${isDir ? '하위 내용까지 모두 삭제됩니다.' : ''}`,
+  )
+  if (!ok) return
+  try {
+    const r = await deleteEntry({ root: props.root, path })
+    await refreshParent(parentPathOf(path))
+    emit('deleted', { path, kind: r.deleted_type })
+  } catch (e) {
+    window.alert(`삭제 실패: ${e.body?.detail || e.message}`)
+  }
+}
+
+// ─── Drag & drop ───
+
+function onDragStart(event, path) {
+  draggingPath.value = path
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('application/x-ccw-path', path)
+    event.dataTransfer.setData('text/plain', path)
+  }
+}
+
+function onDragEnd() {
+  draggingPath.value = null
+  dragOverPath.value = null
+  dragOverRoot.value = false
+}
+
+function isDescendant(parent, child) {
+  if (!parent) return false
+  return child === parent || child.startsWith(parent + '/')
+}
+
+function onDragOverFolder(event, folderPath) {
+  if (!draggingPath.value) return
+  // Forbid dropping onto self or own descendants.
+  if (isDescendant(draggingPath.value, folderPath)) return
+  // Forbid dropping into current parent (no-op).
+  if (parentPathOf(draggingPath.value) === folderPath) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'move'
+  dragOverPath.value = folderPath
+}
+
+function onDragLeaveFolder(folderPath) {
+  if (dragOverPath.value === folderPath) dragOverPath.value = null
+}
+
+function onDragOverRoot(event) {
+  if (!draggingPath.value) return
+  if (parentPathOf(draggingPath.value) === '') return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'move'
+  dragOverRoot.value = true
+}
+
+function onDragLeaveRoot() {
+  dragOverRoot.value = false
+}
+
+async function performDrop(targetFolderPath) {
+  const src = draggingPath.value
+  draggingPath.value = null
+  dragOverPath.value = null
+  dragOverRoot.value = false
+  if (!src) return
+  if (isDescendant(src, targetFolderPath)) return
+  const oldParent = parentPathOf(src)
+  if (oldParent === targetFolderPath) return
+  const base = basenameOf(src)
+  const newPath = targetFolderPath ? `${targetFolderPath}/${base}` : base
+  try {
+    const r = await moveEntry({ root: props.root, fromPath: src, toPath: newPath })
+    await Promise.all([
+      refreshParent(oldParent),
+      refreshParent(targetFolderPath),
+    ])
+    emit('moved', { fromPath: src, toPath: newPath, kind: r.moved_type })
+  } catch (e) {
+    window.alert(`이동 실패: ${e.body?.detail || e.message}`)
+  }
+}
+
+function onDropFolder(event, folderPath) {
+  event.preventDefault()
+  performDrop(folderPath)
+}
+
+function onDropRoot(event) {
+  event.preventDefault()
+  performDrop('')
+}
+
 // Reload from scratch when the root changes.
 watch(
   () => props.root,
@@ -88,6 +308,8 @@ watch(
     if (r) {
       rootChildren.value = []
       expanded.clear()
+      cancelRename()
+      closeMenu()
       loadDir('')
     }
   },
@@ -115,7 +337,13 @@ defineExpose({ refresh })
       </button>
     </div>
 
-    <div class="tree-body">
+    <div
+      class="tree-body"
+      :class="{ 'is-drop-root': dragOverRoot }"
+      @dragover="onDragOverRoot"
+      @dragleave="onDragLeaveRoot"
+      @drop="onDropRoot"
+    >
       <div v-if="loadingRoot" class="tree-status">Loading…</div>
       <div v-else-if="rootError" class="tree-status tree-error">{{ rootError }}</div>
       <ul v-else class="tree-list">
@@ -129,9 +357,32 @@ defineExpose({ refresh })
           :is-expanded="isExpanded"
           :toggle-expand="toggleExpand"
           :on-file-click="clickFile"
+          :on-context-menu="openMenu"
+          :on-drag-start="onDragStart"
+          :on-drag-end="onDragEnd"
+          :on-drag-over-folder="onDragOverFolder"
+          :on-drag-leave-folder="onDragLeaveFolder"
+          :on-drop-folder="onDropFolder"
+          :drag-over-path="dragOverPath"
+          :dragging-path="draggingPath"
+          :renaming="renaming"
+          :on-rename-input="(v) => renaming.value = v"
+          :on-rename-commit="commitRename"
+          :on-rename-cancel="cancelRename"
           :depth="0"
         />
       </ul>
+    </div>
+
+    <!-- Context menu portal -->
+    <div
+      v-if="menu.open"
+      class="tree-context-menu"
+      :style="{ top: menu.y + 'px', left: menu.x + 'px' }"
+      @click.stop
+    >
+      <button class="ctx-item" @click="startRename(menu.path)">이름 변경</button>
+      <button class="ctx-item ctx-danger" @click="confirmDelete(menu.path, menu.isDir)">삭제</button>
     </div>
   </div>
 </template>
@@ -261,6 +512,18 @@ const TreeNodeView = defineComponent({
     isExpanded: { type: Function, required: true },
     toggleExpand: { type: Function, required: true },
     onFileClick: { type: Function, required: true },
+    onContextMenu: { type: Function, required: true },
+    onDragStart: { type: Function, required: true },
+    onDragEnd: { type: Function, required: true },
+    onDragOverFolder: { type: Function, required: true },
+    onDragLeaveFolder: { type: Function, required: true },
+    onDropFolder: { type: Function, required: true },
+    dragOverPath: { type: String, default: null },
+    draggingPath: { type: String, default: null },
+    renaming: { type: Object, required: true },
+    onRenameInput: { type: Function, required: true },
+    onRenameCommit: { type: Function, required: true },
+    onRenameCancel: { type: Function, required: true },
     depth: { type: Number, default: 0 },
   },
   setup(props) {
@@ -269,6 +532,106 @@ const TreeNodeView = defineComponent({
       const open = isDir && props.isExpanded(props.path)
       const slot = props.expanded.get(props.path)
       const isActive = !isDir && props.activePath === props.path
+      const isRenaming = props.renaming.path === props.path
+      const isDropTarget = isDir && props.dragOverPath === props.path
+      const isDragSource = props.draggingPath === props.path
+
+      const rowChildren = [
+        h(
+          'span',
+          {
+            class: 'tree-caret',
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '12px',
+              minWidth: '12px',
+              flexShrink: 0,
+              color: '#565f89',
+            },
+          },
+          isDir ? [chevronIcon(open)] : [],
+        ),
+        isDir ? folderIcon(open) : fileIconFor(props.node.name),
+      ]
+
+      if (isRenaming) {
+        rowChildren.push(
+          h('input', {
+            class: 'tree-rename-input',
+            value: props.renaming.value,
+            disabled: props.renaming.busy,
+            ref: (el) => {
+              // Only focus on first mount of this input. Re-renders during
+              // typing would otherwise yank the cursor back to selection.
+              if (el && !props.renaming.focused) {
+                props.renaming.focused = true
+                queueMicrotask(() => {
+                  try {
+                    el.focus()
+                    const dot = el.value.lastIndexOf('.')
+                    el.setSelectionRange(0, dot > 0 ? dot : el.value.length)
+                  } catch {}
+                })
+              }
+            },
+            style: {
+              flex: 1,
+              minWidth: 0,
+              background: '#0f1018',
+              color: '#c0caf5',
+              border: '1px solid #7aa2f7',
+              borderRadius: '3px',
+              padding: '1px 4px',
+              fontSize: '13px',
+              fontFamily: 'inherit',
+              outline: 'none',
+            },
+            onClick: (e) => e.stopPropagation(),
+            onInput: (e) => {
+              props.renaming.value = e.target.value
+              props.renaming.error = null
+            },
+            onKeydown: (e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                props.onRenameCommit()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                props.onRenameCancel()
+              }
+            },
+            onBlur: () => {
+              // Commit on blur unless we're already busy.
+              if (!props.renaming.busy) props.onRenameCommit()
+            },
+          }),
+        )
+        if (props.renaming.error) {
+          rowChildren.push(
+            h(
+              'span',
+              {
+                class: 'tree-rename-error',
+                style: { fontSize: '11px', color: '#f7768e', marginLeft: '6px' },
+              },
+              props.renaming.error,
+            ),
+          )
+        }
+      } else {
+        rowChildren.push(
+          h(
+            'span',
+            {
+              class: 'tree-name',
+              style: { overflow: 'hidden', textOverflow: 'ellipsis' },
+            },
+            props.node.name,
+          ),
+        )
+      }
 
       // Inline-style critical layout rules because TreeNodeView is a separate
       // component instance — the parent's <style scoped> rules don't reach
@@ -280,7 +643,10 @@ const TreeNodeView = defineComponent({
             'tree-row',
             isDir ? 'tree-row-dir' : 'tree-row-file',
             isActive ? 'is-active' : null,
+            isDropTarget ? 'is-drop-target' : null,
+            isDragSource ? 'is-drag-source' : null,
           ],
+          draggable: !isRenaming,
           style: {
             paddingLeft: `${ROW_BASE_PX + props.depth * INDENT_PX}px`,
             display: 'flex',
@@ -293,39 +659,22 @@ const TreeNodeView = defineComponent({
             whiteSpace: 'nowrap',
             userSelect: 'none',
             lineHeight: '1.5',
+            opacity: isDragSource ? 0.5 : 1,
+            background: isDropTarget ? 'rgba(115, 218, 202, 0.18)' : undefined,
           },
           onClick: () => {
+            if (isRenaming) return
             if (isDir) props.toggleExpand(props.path)
             else props.onFileClick(props.path)
           },
+          onContextmenu: (e) => props.onContextMenu(e, props.path, isDir),
+          onDragstart: (e) => props.onDragStart(e, props.path),
+          onDragend: () => props.onDragEnd(),
+          onDragover: isDir ? (e) => props.onDragOverFolder(e, props.path) : null,
+          onDragleave: isDir ? () => props.onDragLeaveFolder(props.path) : null,
+          onDrop: isDir ? (e) => props.onDropFolder(e, props.path) : null,
         },
-        [
-          h(
-            'span',
-            {
-              class: 'tree-caret',
-              style: {
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '12px',
-                minWidth: '12px',
-                flexShrink: 0,
-                color: '#565f89',
-              },
-            },
-            isDir ? [chevronIcon(open)] : [],
-          ),
-          isDir ? folderIcon(open) : fileIconFor(props.node.name),
-          h(
-            'span',
-            {
-              class: 'tree-name',
-              style: { overflow: 'hidden', textOverflow: 'ellipsis' },
-            },
-            props.node.name,
-          ),
-        ],
+        rowChildren,
       )
 
       const children = []
@@ -355,6 +704,18 @@ const TreeNodeView = defineComponent({
                 isExpanded: props.isExpanded,
                 toggleExpand: props.toggleExpand,
                 onFileClick: props.onFileClick,
+                onContextMenu: props.onContextMenu,
+                onDragStart: props.onDragStart,
+                onDragEnd: props.onDragEnd,
+                onDragOverFolder: props.onDragOverFolder,
+                onDragLeaveFolder: props.onDragLeaveFolder,
+                onDropFolder: props.onDropFolder,
+                dragOverPath: props.dragOverPath,
+                draggingPath: props.draggingPath,
+                renaming: props.renaming,
+                onRenameInput: props.onRenameInput,
+                onRenameCommit: props.onRenameCommit,
+                onRenameCancel: props.onRenameCancel,
                 depth: props.depth + 1,
               }),
             )
@@ -390,6 +751,7 @@ export default {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   font-size: 13px;
   overflow: hidden;
+  position: relative;
 }
 
 .tree-header {
@@ -435,6 +797,11 @@ export default {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: box-shadow 120ms ease;
+}
+
+.tree-body.is-drop-root {
+  box-shadow: inset 0 0 0 2px #73daca;
 }
 
 .tree-list {
@@ -456,6 +823,11 @@ export default {
   color: #ffffff;
 }
 
+.tree-list :deep(.tree-row.is-drop-target) {
+  outline: 1px dashed #73daca;
+  outline-offset: -2px;
+}
+
 .tree-list :deep(.tree-status) {
   font-size: 12px;
   color: #565f89;
@@ -469,5 +841,41 @@ export default {
 
 .tree-list :deep(.tree-empty) {
   opacity: 0.6;
+}
+
+.tree-context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: #1f2335;
+  border: 1px solid #2f3242;
+  border-radius: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  padding: 4px 0;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ctx-item {
+  background: transparent;
+  border: none;
+  color: #c0caf5;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.ctx-item:hover {
+  background: rgba(122, 162, 247, 0.18);
+}
+
+.ctx-item.ctx-danger {
+  color: #f7768e;
+}
+
+.ctx-item.ctx-danger:hover {
+  background: rgba(247, 118, 142, 0.18);
 }
 </style>

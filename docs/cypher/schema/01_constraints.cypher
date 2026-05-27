@@ -378,3 +378,15 @@ FOR (inv:Invariant) REQUIRE inv.key IS NOT NULL;
 
 CREATE CONSTRAINT invariant_declaration_exists IF NOT EXISTS
 FOR (inv:Invariant) REQUIRE inv.declaration IS NOT NULL;
+
+// ------------------------------------------------------------
+// ImplementationFile (029 — robo-spec-skills)
+//   디자인 엘리먼트 ↔ 소스 파일 매핑의 단일 보관소. 같은 프로젝트 안에서
+//   같은 경로를 가리키는 두 개의 :ImplementationFile 이 생기지 않도록
+//   (projectId, path) 복합키를 유일하게 강제한다.
+// ------------------------------------------------------------
+CREATE CONSTRAINT implementationfile_id_unique IF NOT EXISTS
+FOR (impl:ImplementationFile) REQUIRE impl.id IS UNIQUE;
+
+CREATE CONSTRAINT implementationfile_project_path_unique IF NOT EXISTS
+FOR (impl:ImplementationFile) REQUIRE (impl.projectId, impl.path) IS UNIQUE;

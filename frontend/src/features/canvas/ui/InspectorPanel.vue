@@ -34,6 +34,13 @@ const FramePreview = defineAsyncComponent(() => import('open-pencil-fed/FramePre
 const FullPageEditor = defineAsyncComponent(() => import('open-pencil-fed/FullPageEditor.vue'))
 const AIChatPanel = defineAsyncComponent(() => import('open-pencil-fed/AIChat.vue'))
 
+// 029 — read-only source viewer for ImplementationFile nodes drilled-down
+// from Aggregate/Command/Event/ReadModel in the navigator. Reuses the
+// Claude Code editor component (same CodeMirror + Tokyo Night palette).
+const FileEditorPane = defineAsyncComponent(
+  () => import('@/features/claudeCode/ui/FileEditorPane.vue'),
+)
+
 const props = defineProps({
   nodeId: {
     type: String,
@@ -59,6 +66,9 @@ const log = createLogger({ scope: 'InspectorPanel' })
 
 // App-level tab state (provided by App.vue) — used to switch to the Aggregate tab.
 const appActiveTab = inject('activeTab', null)
+// 029 — workspace root for the active Claude Code project. Provided by App.vue.
+// Used to render source files when an ImplementationFile node is opened.
+const claudeCodeWorkdir = inject('claudeCodeWorkdir', ref(''))
 
 // Currently viewing node index (for multiple selected nodes)
 const viewingNodeIndex = ref(0)
@@ -641,6 +651,25 @@ const showUserStoryEditor = computed(() => nodeLabel.value === 'UserStory')
 // lives in this right-side panel; the dedicated editor manages its own
 // load/save against /api/invariants.
 const showInvariantEditor = computed(() => nodeLabel.value === 'Invariant')
+
+// 029 — ImplementationFile branch. Tabs/forms are hidden; the body is just
+// the source viewer + a back link to the parent design element.
+const isImplementationFile = computed(() => nodeLabel.value === 'ImplementationFile')
+const implementationFilePath = computed(() => {
+  if (!isImplementationFile.value) return null
+  const n = node.value
+  return n?.data?.path || n?.data?.file_path || null
+})
+const implementationFileParent = computed(() => {
+  if (!isImplementationFile.value) return null
+  const n = node.value
+  return {
+    id: n?.data?.elementId || null,
+    kind: n?.data?.elementKind || null,
+    name: n?.data?.elementName || null,
+    role: n?.data?.role || 'primary',
+  }
+})
 
 const USER_STORY_PRIORITY_OPTIONS = ['low', 'medium', 'high']
 const USER_STORY_STATUS_OPTIONS = ['draft', 'new', 'in-progress', 'approved', 'implemented', 'done']
@@ -3156,6 +3185,32 @@ function updateVoFieldValue(fieldName, value) {
         </div>
         <div class="inspector-panel__empty-text">선택된 객체가 없습니다.</div>
         <div class="inspector-panel__empty-hint">캔버스에서 객체를 선택하세요</div>
+      </div>
+      <!-- 029 — ImplementationFile: source-code viewer (no tabs/forms) -->
+      <div v-else-if="isImplementationFile" class="inspector-panel__content inspector-impl-file">
+        <div class="inspector-impl-file__header">
+          <div class="inspector-impl-file__parent">
+            <span
+              v-if="implementationFileParent.kind"
+              class="inspector-impl-file__chip"
+              :class="`inspector-impl-file__chip--${implementationFileParent.kind.toLowerCase()}`"
+            >{{ implementationFileParent.kind }}</span>
+            <span class="inspector-impl-file__parent-name">{{ implementationFileParent.name }}</span>
+          </div>
+          <div class="inspector-impl-file__path" :title="implementationFilePath">
+            <span>{{ implementationFilePath }}</span>
+            <span
+              v-if="implementationFileParent.role && implementationFileParent.role !== 'primary'"
+              class="inspector-impl-file__role"
+            >{{ implementationFileParent.role }}</span>
+          </div>
+        </div>
+        <div v-if="!claudeCodeWorkdir" class="inspector-impl-file__warning">
+          워크스페이스가 열려있지 않습니다. Claude Code 탭에서 프로젝트를 먼저 여세요.
+        </div>
+        <div v-else class="inspector-impl-file__editor">
+          <FileEditorPane :root="claudeCodeWorkdir" :path="implementationFilePath" />
+        </div>
       </div>
       <div v-else class="inspector-panel__content">
         <div class="inspector-tabs">
@@ -8283,6 +8338,91 @@ function updateVoFieldValue(fieldName, value) {
 .inspector-userstory-message--success {
   background: #d1fae5;
   color: #065f46;
+}
+
+/* 029 — ImplementationFile source viewer (drilled-down from Aggregate/etc.) */
+/* The default panel body padding gets in the way of an edge-to-edge editor —
+   when the body holds an impl-file viewer we strip padding and let it expand. */
+.inspector-panel__body:has(.inspector-impl-file) {
+  padding: 0;
+  overflow: hidden;
+}
+.inspector-impl-file {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+}
+.inspector-impl-file__header {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--color-border, #2f3242);
+  background: var(--color-bg-secondary, #1a1b26);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.inspector-impl-file__parent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text, #c0caf5);
+}
+.inspector-impl-file__chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: rgba(122, 162, 247, 0.18);
+  color: #7aa2f7;
+}
+.inspector-impl-file__chip--command {
+  background: rgba(187, 154, 247, 0.18);
+  color: #bb9af7;
+}
+.inspector-impl-file__chip--event {
+  background: rgba(255, 158, 100, 0.18);
+  color: #ff9e64;
+}
+.inspector-impl-file__chip--readmodel {
+  background: rgba(115, 218, 202, 0.18);
+  color: #73daca;
+}
+.inspector-impl-file__parent-name {
+  font-weight: 600;
+}
+.inspector-impl-file__path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--color-text-light, #9aa5ce);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inspector-impl-file__role {
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-light, #9aa5ce);
+}
+.inspector-impl-file__warning {
+  padding: 16px;
+  font-size: 12px;
+  color: #f7768e;
+}
+.inspector-impl-file__editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 </style>
 

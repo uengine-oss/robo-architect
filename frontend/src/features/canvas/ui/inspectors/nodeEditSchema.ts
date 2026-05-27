@@ -188,7 +188,8 @@ export function normalizeNodeLabel(raw) {
     v === 'UI' ||
     v === 'BoundedContext' ||
     v === 'UserStory' ||
-    v === 'Invariant'
+    v === 'Invariant' ||
+    v === 'ImplementationFile'
   ) {
     return v
   }
@@ -202,6 +203,7 @@ export function normalizeNodeLabel(raw) {
   if (v === 'ui') return 'UI'
   if (v === 'boundedcontext') return 'BoundedContext'
   if (v === 'userstory' || v === 'user_story' || v === 'user-story') return 'UserStory'
+  if (v === 'implementationfile') return 'ImplementationFile'
   return 'Policy'
 }
 

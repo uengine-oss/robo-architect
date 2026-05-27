@@ -77,13 +77,20 @@ CREATE (us:UserStory {
 // 선택 속성:
 //   - description: String
 //   - owner: String (담당 팀)
+//   - classification: String (029) — 'core' | 'supporting'. /robo-plan 이
+//       core 도메인은 clean architecture, supporting 은 default speckit
+//       아키텍처로 plan.md 를 생성하기 위해 참조한다. 미설정 시 /robo-plan
+//       이 개발자에게 묻고 그 답을 MCP `set_bc_classification` 로 다시
+//       기록한다. enum validation 은 API 계층(PATCH /api/contexts/{id}/
+//       classification)에서 수행하며, Cypher 제약은 추가하지 않는다.
 // ############################################################
 
 MERGE (bc:BoundedContext { key: "order" })
 ON CREATE SET bc.id = randomUUID()
 SET bc.name = "Order",
     bc.description = "주문 생성, 수정, 취소 및 주문 상태 관리",
-    bc.owner = "Order Team";
+    bc.owner = "Order Team",
+    bc.classification = "core";
 
 
 // ############################################################
@@ -636,3 +643,46 @@ SET inv.declaration = "주문 총액은 항상 0보다 커야 한다",
     inv.seq = 1,
     inv.updatedAt = datetime()
 MERGE (agg)-[:HAS_INVARIANT]->(inv);
+
+
+// ############################################################
+// 99. ImplementationFile (소스 파일 매핑 — 029)
+// ############################################################
+// 설명: Robo Architect 디자인 엘리먼트(Aggregate / Command / Event /
+//       ReadModel)를 실제 구현 파일에 연결하는 노드. /robo-spec 의
+//       단일 소스-매핑 원칙(R5)에 따라 워크스페이스 로컬 매니페스트
+//       (.robo-link.json 등)는 사용하지 않고, 모든 매핑은 이 노드와
+//       [:IMPLEMENTED_IN] 관계에만 저장된다.
+//
+// 관계:
+//   - (:Aggregate|Command|Event|ReadModel)-[:IMPLEMENTED_IN]->(:ImplementationFile)
+//     N:M (하나의 엘리먼트가 여러 파일에 걸칠 수 있고, 한 파일이 여러
+//     엘리먼트를 백킹할 수 있음).
+//
+// 필수 속성:
+//   - id: String (UUID)
+//   - projectId: String (Robo Architect 프로젝트 UUID — 같은 프로젝트가
+//       여러 워크스페이스에 링크되더라도 매핑은 워크스페이스 독립적)
+//   - path: String (워크스페이스 루트 기준 POSIX 경로; 절대경로/'..' 금지 —
+//       검증은 api/features/robo_spec/implementation_files.py 에서 수행)
+//   - role: String (primary | interface-adapter | infrastructure | test | other)
+//   - createdAt: DateTime ISO-8601
+//   - lastSeenAt: DateTime ISO-8601 (/robo-implement 와 /robo-sync 가 파일을
+//       관측할 때마다 갱신)
+//
+// 고유성: (projectId, path) — 01_constraints.cypher 에 unique constraint
+//   추가됨(constraint_implementationfile_project_path).
+// ############################################################
+
+// 예시 — Order 어그리거트가 src/order/domain/Order.ts 에 구현됨
+MATCH (agg:Aggregate { key: "order.order" })
+MERGE (impl:ImplementationFile {
+    projectId: "00000000-0000-0000-0000-000000000000",
+    path: "src/order/domain/Order.ts"
+})
+ON CREATE SET impl.id = randomUUID(),
+              impl.role = "primary",
+              impl.createdAt = datetime(),
+              impl.lastSeenAt = datetime()
+ON MATCH SET impl.lastSeenAt = datetime()
+MERGE (agg)-[:IMPLEMENTED_IN]->(impl);

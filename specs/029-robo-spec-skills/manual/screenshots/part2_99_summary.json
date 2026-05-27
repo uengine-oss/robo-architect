@@ -1,0 +1,10 @@
+{
+  "workspace": "/tmp/robo-spec-real-flow",
+  "planMd": "/tmp/robo-spec-real-flow/specs/001-membership-management/plan.md",
+  "tasksMd": "/tmp/robo-spec-real-flow/specs/001-membership-management/tasks.md",
+  "memberAccountTs": "/tmp/robo-spec-real-flow/src/membership-management/entities/MemberAccount.ts",
+  "tasksUncheckedInitial": 6,
+  "tasksCheckedAfterImplement": 1,
+  "constraint": "MemberAccount aggregate entity only — Phase 2 partial scaffold",
+  "roboMarkersInSrc": "(none — R7 enforced)"
+}

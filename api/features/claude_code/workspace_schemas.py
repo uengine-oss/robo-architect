@@ -53,3 +53,25 @@ class FileWriteResponse(BaseModel):
     path: str
     size: int
     mtime_ns: str
+
+
+class DeleteRequest(BaseModel):
+    root: str
+    path: str
+
+
+class DeleteResponse(BaseModel):
+    path: str
+    deleted_type: Literal["file", "directory"]
+
+
+class MoveRequest(BaseModel):
+    root: str
+    from_path: str
+    to_path: str
+
+
+class MoveResponse(BaseModel):
+    from_path: str
+    to_path: str
+    moved_type: Literal["file", "directory"]

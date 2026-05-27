@@ -1,0 +1,21 @@
+=================================================================
+BEFORE /robo-plan — classification of all 3 BCs via E2 endpoint
+=================================================================
+
+$ curl http://127.0.0.1:8000/api/contexts/<id>/classification
+
+  LegalConsentManagement:              {"bcId":"c49c694f-6c5d-463c-9a4f-bd9a63d10ff8","classification":null}
+  MembershipManagement:                {"bcId":"24fa4636-6a5c-493a-8cfa-a08833e245eb","classification":null}
+  TermsAndAuthenticationManagement:    {"bcId":"fd931fa3-d5de-49f4-a2c1-27750f434dab","classification":null}
+
+=================================================================
+AFTER /robo-plan — classification persisted via MCP T3
+=================================================================
+
+  LegalConsentManagement:              {"bcId":"c49c694f-6c5d-463c-9a4f-bd9a63d10ff8","classification":null}
+  MembershipManagement:                {"bcId":"24fa4636-6a5c-493a-8cfa-a08833e245eb","classification":"core"}
+  TermsAndAuthenticationManagement:    {"bcId":"fd931fa3-d5de-49f4-a2c1-27750f434dab","classification":null}
+
+  Note: only MembershipManagement was the /robo-plan argument.
+  The other two BCs are unaffected (proves T3 wrote only the targeted BC,
+  not all BCs).

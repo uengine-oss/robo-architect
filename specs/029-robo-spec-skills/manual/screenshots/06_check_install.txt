@@ -1,0 +1,8 @@
+[check 1/3] diff -r /Users/uengine/main-robo-arch/robo-architect/robo-spec/.claude/skills /var/folders/k3/h8kj6dc91354mkr_hntl5k6r0000gn/T/robo_spec_e2e_XXXX.80AV8xCi0n/.claude/skills
+  ok — installed tree is byte-identical to source
+[check 2/3] grep for Jinja markers under /Users/uengine/main-robo-arch/robo-architect/robo-spec/.claude/skills
+  ok — no Jinja markers in source
+[check 3/3] grep '@robo:' in workspace source (R7 enforcement)
+  ok — no @robo: markers in workspace source
+
+PASS: robo-spec install at /var/folders/k3/h8kj6dc91354mkr_hntl5k6r0000gn/T/robo_spec_e2e_XXXX.80AV8xCi0n is byte-identical and marker-free.
