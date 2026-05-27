@@ -397,3 +397,31 @@ MATCH (inv:Invariant { key: "order.order.invariant.order-total-positive-abc123de
 MATCH (cmd:Command { key: "order.order.cancel-order" })
 MERGE (inv)-[vb:VERIFIED_BY]->(cmd)
 ON CREATE SET vb.createdAt = datetime();
+
+
+// ############################################################
+// IMPLEMENTED_IN — 디자인 엘리먼트 ↔ 구현 파일 매핑 (029 robo-spec-skills)
+// ############################################################
+// 방향: (:Aggregate | :Command | :Event | :ReadModel) → (:ImplementationFile)
+// 카디널리티: N:M
+//
+// /robo-spec 의 단일 소스-매핑 원칙(R5)에 따라 워크스페이스 로컬
+// 매니페스트 없이 매핑 전체를 그래프에만 보관한다. 관계 자체는 속성을
+// 갖지 않으며, role / lastSeenAt 같은 디스크리미네이터는 모두
+// :ImplementationFile 노드 쪽에 살아 있다(03_node_types.cypher §99 참고).
+//
+// 라이프사이클:
+//   - 생성: /robo-implement 가 파일을 스캐폴딩한 직후 MCP 도구
+//     `register_implementation_files(mode=merge|replace)` 호출.
+//   - 갱신: /robo-sync 가 파일 이동/리네임을 감지했을 때 동일 도구를
+//     `mode=replace` 로 재호출.
+//   - 정리: 파일이 디스크에서 사라지면 다음 /robo-sync 에서 제안되어
+//     개발자 확인 후 관계가 삭제됨(Principle IV).
+// ############################################################
+
+MATCH (agg:Aggregate { key: "order.order" })
+MATCH (impl:ImplementationFile {
+    projectId: "00000000-0000-0000-0000-000000000000",
+    path: "src/order/domain/Order.ts"
+})
+MERGE (agg)-[:IMPLEMENTED_IN]->(impl);

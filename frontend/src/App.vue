@@ -21,11 +21,19 @@ const bpmnStore = useBpmnStore()
 // Tab state management
 const activeTab = ref('Design')
 
-// Claude Code workdir state
-const claudeCodeWorkdir = ref('')
+// Claude Code workdir state — hydrated from localStorage so the inspector's
+// source viewer (feature 029) can resolve ImplementationFile paths even
+// when the user hasn't visited the Claude Code tab this session.
+const claudeCodeWorkdir = ref((() => {
+  try { return localStorage.getItem('claude_code_workspace_root') || '' } catch { return '' }
+})())
 
 // Provide activeTab and Claude Code controls to child components
 provide('activeTab', activeTab)
+// 029 — InspectorPanel needs the workspace root to render source files
+// attached to design elements via [:IMPLEMENTED_IN]. Provide the ref so
+// the value stays reactive when the user picks a new project home.
+provide('claudeCodeWorkdir', claudeCodeWorkdir)
 provide('openClaudeCode', (workdir) => {
   claudeCodeWorkdir.value = workdir || ''
   activeTab.value = 'Code'

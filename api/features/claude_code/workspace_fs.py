@@ -209,6 +209,86 @@ def write_text_file_atomic(
     return (st.st_size, st.st_mtime_ns)
 
 
+def delete_entry(abs_path: str) -> str:
+    """Delete a file or directory at ``abs_path``.
+
+    Returns the kind ("file" | "directory") that was deleted so the
+    caller can echo it back to the UI.
+
+    Refuses to delete the workspace root itself (caller should pass
+    a non-empty `path`); refuses to follow a symlink target out of the
+    sandbox (the caller has already passed the path through
+    :func:`resolve_under_root` so the realpath is verified inside root).
+
+    Raises HTTPException(404) when the path does not exist;
+    HTTPException(403) on permission denied.
+    """
+    import shutil
+
+    if not os.path.lexists(abs_path):
+        raise HTTPException(status_code=404, detail="path not found")
+
+    try:
+        if os.path.islink(abs_path) or os.path.isfile(abs_path):
+            os.remove(abs_path)
+            return "file"
+        if os.path.isdir(abs_path):
+            shutil.rmtree(abs_path)
+            return "directory"
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail="permission denied") from e
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    raise HTTPException(status_code=400, detail="unsupported file type")
+
+
+def move_entry(src_abs: str, dst_abs: str) -> str:
+    """Move (rename) ``src_abs`` to ``dst_abs``.
+
+    Both paths must have already been validated via :func:`resolve_under_root`.
+
+    Returns the kind ("file" | "directory") that was moved.
+
+    - Refuses to overwrite an existing destination (409).
+    - Refuses when src == dst (400).
+    - Refuses to move a directory into itself or a subpath of itself (400).
+    - Parent directory of ``dst_abs`` must exist (404 otherwise).
+    """
+    if src_abs == dst_abs:
+        raise HTTPException(status_code=400, detail="source and destination are identical")
+
+    if not os.path.lexists(src_abs):
+        raise HTTPException(status_code=404, detail="source not found")
+
+    if os.path.lexists(dst_abs):
+        raise HTTPException(status_code=409, detail="destination already exists")
+
+    dst_parent = os.path.dirname(dst_abs)
+    if not os.path.isdir(dst_parent):
+        raise HTTPException(status_code=404, detail="destination parent not found")
+
+    # Block moving a directory into itself or any descendant.
+    if os.path.isdir(src_abs):
+        src_with_sep = src_abs.rstrip(os.sep) + os.sep
+        if dst_abs == src_abs or dst_abs.startswith(src_with_sep):
+            raise HTTPException(
+                status_code=400,
+                detail="cannot move a directory into itself",
+            )
+
+    src_is_dir = os.path.isdir(src_abs) and not os.path.islink(src_abs)
+
+    try:
+        os.rename(src_abs, dst_abs)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail="permission denied") from e
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return "directory" if src_is_dir else "file"
+
+
 _HIDDEN_WHITELIST = {".claude", ".specify"}
 
 

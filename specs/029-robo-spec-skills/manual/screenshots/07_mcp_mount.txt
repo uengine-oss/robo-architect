@@ -1,0 +1,34 @@
+Check 5/5 — MCP transport mount probe
+======================================
+
+A live streamable-HTTP MCP transport accepts JSON-RPC POSTs at the
+mount path; a GET against the same path is correctly rejected. What we
+want to confirm here is that the *mount itself* is registered (no
+connection refused, no FastAPI fall-through 404 from the default
+handler) and that the application booted past the MCP construction
+step at startup.
+
+Endpoint discovery
+------------------
+
+  /mcp           -> HTTP 307   (FastAPI trailing-slash redirect — mount
+                                exists and points at the MCP sub-app)
+  /mcp/          -> HTTP 404   (MCP sub-app's own 404 for GET — expected,
+                                no JSON-RPC body was POSTed)
+  /mcp/sse       -> HTTP 404   (no SSE child path under streamable-HTTP)
+  /mcp/messages  -> HTTP 404   (same — only the root path is the JSON-RPC
+                                channel under streamable-HTTP)
+
+What that proves
+----------------
+
+Any of these are HTTP responses, not connection failures (ERR 7).
+The 307 specifically can only come from FastAPI when `/mcp` is mounted
+as a sub-application — if `build_mcp_server()` had returned None,
+FastAPI would have returned a generic 404 from the top-level app
+(no redirect). Therefore the MCP transport was constructed at startup
+and is serving requests.
+
+A future US1+ task that actually registers tools (T1..T8 + T6b) will
+verify tool discovery by POSTing a JSON-RPC `tools/list` request and
+asserting the expected tools come back.

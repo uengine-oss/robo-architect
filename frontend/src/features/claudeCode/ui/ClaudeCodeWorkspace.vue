@@ -28,6 +28,15 @@ const activeRoot = ref(props.workdir || readPersisted(ROOT_KEY))
 const persistedActivePath = readPersisted(ACTIVE_PATH_KEY)
 const activePath = ref(activeRoot.value && persistedActivePath ? persistedActivePath : null)
 
+// 029 — share the active workspace path back up to App.vue's ref so other
+// features (e.g. InspectorPanel's source-viewer for ImplementationFile
+// nodes) can resolve relative paths even when the user reached this tab
+// without going through the wizard (cold reload, manual tab click, etc).
+const appWorkdirRef = inject('claudeCodeWorkdir', null)
+if (appWorkdirRef && activeRoot.value && appWorkdirRef.value !== activeRoot.value) {
+  appWorkdirRef.value = activeRoot.value
+}
+
 watch(
   () => props.workdir,
   (w) => {
@@ -43,6 +52,9 @@ watch(activeRoot, (v) => {
     if (v) localStorage.setItem(ROOT_KEY, v)
     else localStorage.removeItem(ROOT_KEY)
   } catch {}
+  if (appWorkdirRef && appWorkdirRef.value !== v) {
+    appWorkdirRef.value = v || ''
+  }
 })
 
 watch(activePath, (v) => {
@@ -195,6 +207,38 @@ function onTreeExternalCheck() {
   editorRef.value?.checkExternalModification()
 }
 
+function isUnderPath(target, parent) {
+  if (!target || !parent) return false
+  return target === parent || target.startsWith(parent + '/')
+}
+
+function rewriteActivePath(fromPath, toPath) {
+  // Called when a rename/move succeeded. If the open file is the moved
+  // entry itself or sits inside a moved directory, rewrite its path so
+  // the editor keeps tracking the same content.
+  const cur = activePath.value
+  if (!cur) return
+  if (cur === fromPath) {
+    activePath.value = toPath
+  } else if (cur.startsWith(fromPath + '/')) {
+    activePath.value = toPath + cur.slice(fromPath.length)
+  }
+}
+
+function onTreeRenamed({ fromPath, toPath }) {
+  rewriteActivePath(fromPath, toPath)
+}
+
+function onTreeMoved({ fromPath, toPath }) {
+  rewriteActivePath(fromPath, toPath)
+}
+
+function onTreeDeleted({ path }) {
+  if (isUnderPath(activePath.value, path)) {
+    activePath.value = null
+  }
+}
+
 function onTerminalWorkdirPicked(path) {
   if (path && path !== activeRoot.value) {
     activeRoot.value = path
@@ -270,6 +314,9 @@ onBeforeUnmount(() => {
         :active-path="activePath"
         @open="onOpenFile"
         @external-check="onTreeExternalCheck"
+        @renamed="onTreeRenamed"
+        @moved="onTreeMoved"
+        @deleted="onTreeDeleted"
       />
     </div>
     <button

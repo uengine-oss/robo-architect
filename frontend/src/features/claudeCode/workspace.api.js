@@ -66,4 +66,24 @@ export async function saveFile({ root, path, content, expectedMtimeNs }) {
   return res.json()
 }
 
+export async function deleteEntry({ root, path }) {
+  const res = await fetch(`${apiBase()}/api/claude-code/file`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root, path }),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function moveEntry({ root, fromPath, toPath }) {
+  const res = await fetch(`${apiBase()}/api/claude-code/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root, from_path: fromPath, to_path: toPath }),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
 export { WorkspaceApiError }

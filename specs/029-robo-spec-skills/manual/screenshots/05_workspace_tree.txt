@@ -1,0 +1,36 @@
+Workspace tree after install:
+----------------------------
+.claude
+.claude/mcp.json
+.claude/robo-project.json
+.claude/skills
+.claude/skills/robo-implement
+.claude/skills/robo-implement/SKILL.md
+.claude/skills/robo-plan
+.claude/skills/robo-plan/SKILL.md
+.claude/skills/robo-sync
+.claude/skills/robo-sync/SKILL.md
+.claude/skills/robo-sync/extractors
+.claude/skills/robo-sync/extractors/package.json
+.claude/skills/robo-sync/extractors/python_extract.py
+.claude/skills/robo-sync/extractors/ts_extract.mjs
+.claude/skills/robo-tasks
+.claude/skills/robo-tasks/SKILL.md
+
+--- robo-project.json ---
+{
+  "projectId": "ws-53778d3667b257afaca3d42e7edeae7e",
+  "backendUrl": "http://localhost:8000",
+  "mcpEndpoint": "http://localhost:8000/mcp",
+  "createdAt": "2026-05-26T21:59:15.565916+00:00"
+}
+
+--- mcp.json ---
+{
+  "mcpServers": {
+    "robo-spec": {
+      "type": "streamable-http",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}

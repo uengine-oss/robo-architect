@@ -1,0 +1,40 @@
+{
+  "feature": "029-robo-spec-skills",
+  "skill": "/robo-sync",
+  "workspace": "/tmp/robo-spec-real-flow",
+  "file_edited": "src/membership-management/entities/MemberAccount.ts",
+  "bc_id": "24fa4636-6a5c-493a-8cfa-a08833e245eb",
+  "aggregate_id": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+  "aggregate_name": "MemberAccount",
+  "before": {
+    "source_field_count": 7,
+    "source_fields": ["id", "status", "profile", "personalInformation", "identityVerification", "parentalConsent", "termsConsents"],
+    "graph_property_count": 7,
+    "graph_properties": ["id", "identityVerification", "parentalConsent", "personalInformation", "profile", "status", "termsConsents"],
+    "aggregate_version": 0
+  },
+  "after": {
+    "source_field_count": 8,
+    "source_fields_added": ["email"],
+    "graph_property_count": 8,
+    "graph_properties": ["email", "id", "identityVerification", "parentalConsent", "personalInformation", "profile", "status", "termsConsents"],
+    "aggregate_version": 1
+  },
+  "mcp_round_trip": {
+    "extractor_called": "node robo-spec/.claude/skills/robo-sync/extractors/ts_extract.mjs <file>",
+    "tools_called": ["get_bc_design", "propose_sync", "apply_proposal"],
+    "proposal_diff": { "added": 1, "modified": 7, "removed": 0 },
+    "requires_confirmation": [],
+    "apply_status": "applied",
+    "graph_version_bumped": "0 -> 1"
+  },
+  "captured_visuals": {
+    "sync_01_source_before_edit.png": "MemberAccount.ts in Claude Code editor pane — 7 fields (BEFORE)",
+    "sync_02_source_after_edit.png": "MemberAccount.ts after the developer adds email — 8 fields",
+    "sync_03_robo_sync_running.png": "/robo-sync mid-execution in the embedded Claude Code terminal — MCP tool calls visible",
+    "sync_04_graph_after_api_response.png": "Raw GET /api/contexts/{bc_id}/full-tree response showing MemberAccount.properties[] now contains 'email'",
+    "sync_05_member_account_after_graph.json": "Pretty-printed JSON slice of the MemberAccount node from the graph AFTER /robo-sync; email field present",
+    "sync_06_aggregate_view_with_email.png": "SPA Aggregate tab — navigator shows MembershipManagement (core) expanded with MemberAccount visible"
+  },
+  "ui_limitation_noted": "The Aggregate Viewer's canvas requires HTML5 drag-and-drop from the navigator. Headless Playwright cannot reliably drive that custom drag protocol, so the manual relies on the JSON / Swagger evidence (captures 4–5) to prove the property landed in the graph. Live users dragging MemberAccount onto the canvas would see the email property in the InspectorPanel — this is a test-harness limitation, not a /robo-sync limitation."
+}

@@ -1,0 +1,13 @@
+LegalGuardianConsent properties via get_bc_design (the fix):
+
+  id                               : String [key]
+  memberId                         : String
+  consentDocument                  : String
+  consentStatus                    : String
+  consentType                      : String
+  legalGuardianContact             : String
+  legalGuardianId                  : String
+  legalGuardianName                : String
+  legalGuardianRelationship        : String
+
+Total: 9 properties (vs old buggy scaffold: 1)

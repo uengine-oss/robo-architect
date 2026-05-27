@@ -1,0 +1,44 @@
+=== MCP tool calls during the e2e (uvicorn HTTP log) ===
+[05/27/26 07:15:48] INFO     StreamableHTTP       streamable_http_manager.py:128
+INFO:     127.0.0.1:63875 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63876 - "POST /mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:63877 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:63931 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63931 - "POST /mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:63978 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63978 - "POST /mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:63978 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:63980 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:63981 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:63990 - "POST /mcp/ HTTP/1.1" 200 OK
+[05/27/26 07:19:27] INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:63993 - "POST /mcp/ HTTP/1.1" 200 OK
+[05/27/26 07:19:34] INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:63993 - "POST /mcp/ HTTP/1.1" 200 OK
+[05/27/26 07:19:36] INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64001 - "POST /mcp/ HTTP/1.1" 200 OK
+[05/27/26 07:20:19] INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64028 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64028 - "POST /mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:64028 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64030 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64031 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64034 - "POST /mcp/ HTTP/1.1" 200 OK
+[05/27/26 07:22:48] INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64060 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64060 - "POST /mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:64060 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64062 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64063 - "POST /mcp/ HTTP/1.1" 200 OK
+                    INFO     Processing request of type            server.py:727
+INFO:     127.0.0.1:64075 - "POST /mcp/ HTTP/1.1" 200 OK
+[05/27/26 07:25:05] INFO     Processing request of type            server.py:727

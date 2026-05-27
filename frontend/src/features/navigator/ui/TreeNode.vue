@@ -77,7 +77,35 @@ const nodeIcon = computed(() => {
     CQRSOperation: '⚡',
     Property: '{ }',
     InvariantGroup: 'INV',
-    Invariant: 'I'
+    Invariant: 'I',
+    ImplementationFile: '📄',
+    // 029 — designed sub-objects under the aggregate
+    ValueObject: 'VO',
+    Enumeration: 'EN',
+    DomainException: 'EX',
+    // 029 — group folder wrapping the BC's user stories
+    UserStoryGroup: 'US',
+    // 029 — group folder wrapping the aggregate's / read-model's properties
+    PropertyGroup: '{ }'
+  }
+  // feature 029: ImplementationFile gets a language-specific icon
+  // derived from the file extension so the developer can tell a .ts
+  // from a .py from a .java at a glance.
+  if (props.node.type === 'ImplementationFile') {
+    const path = props.node.path || ''
+    const ext = path.split('.').pop()?.toLowerCase()
+    const fileIcons = {
+      ts: 'TS', tsx: 'TSX',
+      js: 'JS', jsx: 'JSX', mjs: 'JS', cjs: 'JS',
+      py: 'PY',
+      java: 'JV', kt: 'KT',
+      go: 'GO',
+      rb: 'RB', php: 'PHP',
+      cs: 'C#', rs: 'RS',
+      json: '{}', yaml: 'YML', yml: 'YML', md: 'MD',
+      sql: 'SQL',
+    }
+    return fileIcons[ext] || '📄'
   }
   return icons[props.node.type] || '?'
 })
@@ -116,9 +144,30 @@ const displayName = computed(() => {
   if (props.node.type === 'InvariantGroup') {
     return 'Invariants'
   }
+  if (props.node.type === 'UserStoryGroup') {
+    const count = (props.node.items || []).length
+    return count > 0 ? `User Stories (${count})` : 'User Stories'
+  }
+  if (props.node.type === 'PropertyGroup') {
+    const count = (props.node.items || []).length
+    return count > 0 ? `Properties (${count})` : 'Properties'
+  }
   if (props.node.type === 'Invariant') {
     const text = props.node.declaration || props.node.name || 'invariant'
     return `${text.substring(0, 40)}${text.length > 40 ? '...' : ''}`
+  }
+  if (props.node.type === 'ImplementationFile') {
+    // Show just the basename + role tag — full path lives in the title attr
+    const path = props.node.path || ''
+    const basename = path.split('/').pop() || path
+    const role = props.node.role
+    return role && role !== 'primary' ? `${basename}  (${role})` : basename
+  }
+  if (props.node.type === 'ValueObject' || props.node.type === 'Enumeration' || props.node.type === 'DomainException') {
+    // VO / Enum / Exception come from /full-tree as plain dicts (no id).
+    // Prefer displayName when ubiquitous-language mode is on; otherwise name.
+    const label = props.node.displayName || props.node.name || props.node.alias || props.node.id || ''
+    return terminologyStore.ubiquitousLanguageMode ? (props.node.displayName || label) : label
   }
   return terminologyStore.getLabel(props.node)
 })
@@ -129,14 +178,23 @@ const children = computed(() => {
   
   if (type === 'BoundedContext') {
     if (!props.tree) return []
-    
-    // User Stories under this BC come first
+
+    // User Stories under this BC come first — wrapped in a "User Stories"
+    // group folder so the BC root stays compact and the design objects
+    // (Aggregate / Policy / ReadModel / UI) read at the same depth.
     const userStories = (props.tree.userStories || []).map(us => ({
       ...us,
       type: 'UserStory',
       name: us.name || `${us.role}: ${us.action?.substring(0, 25)}...`
     }))
-    
+    const userStoryGroup = userStories.length > 0 ? {
+      id: `${props.node.id}::userstories`,
+      type: 'UserStoryGroup',
+      name: 'User Stories',
+      bcId: props.node.id,
+      items: userStories,
+    } : null
+
     const aggregates = (props.tree.aggregates || []).map(a => ({
       ...a,
       type: 'Aggregate'
@@ -153,7 +211,17 @@ const children = computed(() => {
       ...ui,
       type: 'UI'
     }))
-    return [...userStories, ...aggregates, ...policies, ...readmodels, ...uis]
+    return [
+      ...(userStoryGroup ? [userStoryGroup] : []),
+      ...aggregates,
+      ...policies,
+      ...readmodels,
+      ...uis,
+    ]
+  }
+
+  if (type === 'UserStoryGroup') {
+    return props.node.items || []
   }
   
   if (type === 'Aggregate') {
@@ -165,6 +233,43 @@ const children = computed(() => {
       ...e,
       type: 'Event'
     }))
+    // 029 — the user wants ALL designed sub-objects under the aggregate,
+    // each followed by the implementation files registered for them.
+    // VO / Enumeration / Exception don't have graph ids in the current
+    // schema, so they appear in the tree but can't (yet) link to files;
+    // properties live as their own leaves.
+    const valueObjects = (props.node.valueObjects || []).map(v => ({
+      ...v,
+      id: `${props.node.id}::vo::${v.name}`,
+      type: 'ValueObject',
+      aggregateId: props.node.id
+    }))
+    const enumerations = (props.node.enumerations || []).map(e => ({
+      ...e,
+      id: `${props.node.id}::enum::${e.name}`,
+      type: 'Enumeration',
+      aggregateId: props.node.id
+    }))
+    const exceptions = (props.node.exceptions || []).map(x => ({
+      ...x,
+      id: `${props.node.id}::exc::${x.name || x.id || ''}`,
+      type: 'DomainException',
+      aggregateId: props.node.id
+    }))
+    // 029 — wrap the 9+ properties under a "Properties (N)" folder so the
+    // aggregate root stays compact (matches the User Stories pattern).
+    const aggProps = (props.node.properties || []).map(p => ({
+      ...p,
+      dataType: p.dataType || (p.type && p.type !== 'Property' ? p.type : p.data_type),
+      type: 'Property'
+    }))
+    const propertyGroup = aggProps.length > 0 ? {
+      id: `${props.node.id}::properties`,
+      type: 'PropertyGroup',
+      name: 'Properties',
+      parentId: props.node.id,
+      items: aggProps,
+    } : null
     // Invariants (027) — a drill-down group below the Aggregate's other
     // design objects. Always present so a planner can add the first one.
     const invariantGroup = {
@@ -173,7 +278,48 @@ const children = computed(() => {
       name: 'Invariants',
       aggregateId: props.node.id
     }
-    return [...commands, ...events, invariantGroup]
+    // feature 029: implementation files [:IMPLEMENTED_IN] also drill-down
+    const files = (props.node.implementationFiles || []).map(f => ({
+      ...f,
+      id: `${props.node.id}::file::${f.path}`,
+      // basename so the inspector header doesn't show the long pseudo-id.
+      name: (f.path || '').split('/').pop() || f.path,
+      type: 'ImplementationFile',
+      elementId: props.node.id,
+      elementKind: 'Aggregate',
+      elementName: props.node.name
+    }))
+    return [
+      ...(propertyGroup ? [propertyGroup] : []),
+      ...commands,
+      ...events,
+      ...valueObjects,
+      ...enumerations,
+      ...exceptions,
+      invariantGroup,
+      ...files,
+    ]
+  }
+
+  if (type === 'PropertyGroup') {
+    return props.node.items || []
+  }
+
+  // 029 — VO/Enum/Exception leaves. They currently have no implementation
+  // files in the graph (no [:IMPLEMENTED_IN] because the schema doesn't
+  // give them ids), so they have no expandable children. Once the backend
+  // mints ids for these elements, we can attach files exactly like Events.
+  if (type === 'ValueObject' || type === 'Enumeration' || type === 'DomainException') {
+    const files = (props.node.implementationFiles || []).map(f => ({
+      ...f,
+      id: `${props.node.id}::file::${f.path}`,
+      name: (f.path || '').split('/').pop() || f.path,
+      type: 'ImplementationFile',
+      elementId: props.node.id,
+      elementKind: type,
+      elementName: props.node.name
+    }))
+    return files
   }
 
   if (type === 'InvariantGroup') {
@@ -190,10 +336,33 @@ const children = computed(() => {
   }
 
   if (type === 'Command') {
-    return (props.node.events || []).map(e => ({
+    const events = (props.node.events || []).map(e => ({
       ...e,
       type: 'Event'
     }))
+    const files = (props.node.implementationFiles || []).map(f => ({
+      ...f,
+      id: `${props.node.id}::file::${f.path}`,
+      name: (f.path || '').split('/').pop() || f.path,
+      type: 'ImplementationFile',
+      elementId: props.node.id,
+      elementKind: 'Command',
+      elementName: props.node.name
+    }))
+    return [...events, ...files]
+  }
+
+  if (type === 'Event') {
+    const files = (props.node.implementationFiles || []).map(f => ({
+      ...f,
+      id: `${props.node.id}::file::${f.path}`,
+      name: (f.path || '').split('/').pop() || f.path,
+      type: 'ImplementationFile',
+      elementId: props.node.id,
+      elementKind: 'Event',
+      elementName: props.node.name
+    }))
+    return files
   }
 
   if (type === 'ReadModel') {
@@ -207,7 +376,27 @@ const children = computed(() => {
       dataType: p.dataType || (p.type && p.type !== 'Property' ? p.type : p.data_type),
       type: 'Property'
     }))
-    return [...ops, ...propsList]
+    const propertyGroup = propsList.length > 0 ? {
+      id: `${props.node.id}::properties`,
+      type: 'PropertyGroup',
+      name: 'Properties',
+      parentId: props.node.id,
+      items: propsList,
+    } : null
+    const files = (props.node.implementationFiles || []).map(f => ({
+      ...f,
+      id: `${props.node.id}::file::${f.path}`,
+      name: (f.path || '').split('/').pop() || f.path,
+      type: 'ImplementationFile',
+      elementId: props.node.id,
+      elementKind: 'ReadModel',
+      elementName: props.node.name
+    }))
+    return [...ops, ...(propertyGroup ? [propertyGroup] : []), ...files]
+  }
+
+  if (type === 'ImplementationFile') {
+    return []  // leaf
   }
   
   // UserStory has no children
@@ -266,7 +455,17 @@ function toggleExpand(event) {
     addToChatSelection()
     return
   }
-  
+
+  // 029 — ImplementationFile leaf: open the source in the right-side
+  // InspectorPanel via the inspectorRequest bridge. No expand to toggle.
+  if (props.node.type === 'ImplementationFile') {
+    if (activeTab && activeTab.value !== 'Design') {
+      activeTab.value = 'Design'
+    }
+    inspectorRequest.request(props.node)
+    return
+  }
+
   // Normal click: toggle expand/collapse (works in all states including pause)
   navigatorStore.toggleExpanded(props.node.id)
 
@@ -351,6 +550,17 @@ async function handleDoubleClick() {
     inspectorRequest.request(props.node)
   } else if (props.node.type === 'InvariantGroup') {
     // Group node — single click already toggles; nothing extra to do.
+  } else if (
+    // 029 — these nodes use synthetic ids (no graph node behind them),
+    // so /expand-with-bc has nothing to fetch. Don't try to add to canvas.
+    props.node.type === 'ImplementationFile' ||
+    props.node.type === 'ValueObject' ||
+    props.node.type === 'Enumeration' ||
+    props.node.type === 'DomainException' ||
+    props.node.type === 'UserStoryGroup' ||
+    props.node.type === 'PropertyGroup'
+  ) {
+    // no-op
   } else {
     await addToCanvas()
   }
@@ -359,7 +569,13 @@ async function handleDoubleClick() {
 // Drag handlers
 function handleDragStart(event) {
   // Invariants are never placed on the canvas (027) — block their drag.
-  if (['Invariant', 'InvariantGroup'].includes(props.node.type)) {
+  // 029 — also block the synthetic UserStoryGroup wrapper and the per-element
+  // ImplementationFile / VO / Enum / Exception leaves (no graph node behind them).
+  if ([
+    'Invariant', 'InvariantGroup',
+    'UserStoryGroup', 'PropertyGroup',
+    'ImplementationFile', 'ValueObject', 'Enumeration', 'DomainException',
+  ].includes(props.node.type)) {
     event.preventDefault()
     return
   }

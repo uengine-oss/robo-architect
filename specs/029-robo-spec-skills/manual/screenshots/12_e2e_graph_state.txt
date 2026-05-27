@@ -1,0 +1,12 @@
+=== Neo4j state after /robo-implement ===
+
+BoundedContext MembershipManagement:
+  id=24fa4636-6a5c-493a-8cfa-a08833e245eb
+  classification='core'   <-- set via MCP T3 during /robo-plan
+  version=1
+
+IMPLEMENTED_IN (1):
+  (['Aggregate'] "MemberAccount") -[:IMPLEMENTED_IN]-> :ImplementationFile
+    projectId=ws-ae0e677230a8b54766d4cfc8277b46ba
+    path     =src/membership-management/entities/MemberAccount.ts
+    role     =primary

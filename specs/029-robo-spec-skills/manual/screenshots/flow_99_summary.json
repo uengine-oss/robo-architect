@@ -1,0 +1,15 @@
+{
+  "beforeClassification": null,
+  "afterClassification": "core",
+  "mcpUrl": "http://localhost:8000/mcp/",
+  "planMd": "/tmp/robo-spec-prd-flow/specs/001-membership-management/plan.md",
+  "tasksMd": "/tmp/robo-spec-prd-flow/specs/001-membership-management/tasks.md",
+  "scaffoldedFiles": [
+    "/tmp/robo-spec-prd-flow/src/membership-management/container.ts",
+    "/tmp/robo-spec-prd-flow/src/membership-management/entities/MemberAccount.ts",
+    "/tmp/robo-spec-prd-flow/src/membership-management/frameworks_and_drivers/InMemoryMemberAccountRepository.ts",
+    "/tmp/robo-spec-prd-flow/src/membership-management/frameworks_and_drivers/MemberAccountRepository.ts",
+    "/tmp/robo-spec-prd-flow/src/membership-management/usecases/IMemberAccountRepository.ts"
+  ],
+  "roboMarkersInSrc": "(none — R7 enforced)"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "robo-sync-ts-extractor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client-side TypeScript AST extractor invoked by /robo-sync via Bash. Ships verbatim under robo-spec/ and runs inside the developer's Claude Code workspace; never executes in the backend.",
+  "type": "module",
+  "bin": {
+    "robo-sync-ts-extract": "./ts_extract.mjs"
+  },
+  "dependencies": {
+    "@typescript-eslint/typescript-estree": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

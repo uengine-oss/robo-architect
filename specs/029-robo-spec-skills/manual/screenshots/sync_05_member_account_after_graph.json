@@ -1,0 +1,1366 @@
+{
+  "displayName": "\ud68c\uc6d0 \uacc4\uc815",
+  "enumerations": [
+    {
+      "name": "MemberStatus",
+      "displayName": "\ud68c\uc6d0 \uc0c1\ud0dc",
+      "alias": null,
+      "items": [
+        "ACTIVE",
+        "DORMANT",
+        "WITHDRAWN",
+        "PENDING",
+        "REJOINED",
+        "SUSPENDED"
+      ]
+    },
+    {
+      "name": "RegistrationStep",
+      "displayName": "\ud68c\uc6d0\uac00\uc785 \ub2e8\uacc4",
+      "alias": null,
+      "items": [
+        "STARTED",
+        "INPUT_VALIDATED",
+        "IDENTITY_VERIFIED",
+        "TERMS_AGREED",
+        "PARENTAL_CONSENT_OBTAINED",
+        "COMPLETED",
+        "FAILED"
+      ]
+    },
+    {
+      "name": "LoginStatus",
+      "displayName": "\ub85c\uadf8\uc778 \uc0c1\ud0dc",
+      "alias": null,
+      "items": [
+        "LOGGED_IN",
+        "LOGGED_OUT",
+        "LOGIN_FAILED",
+        "SESSION_EXPIRED"
+      ]
+    },
+    {
+      "name": "WithdrawalReason",
+      "displayName": "\ud0c8\ud1f4 \uc0ac\uc720",
+      "alias": null,
+      "items": [
+        "USER_REQUEST",
+        "INACTIVITY",
+        "POLICY_VIOLATION",
+        "MINOR_AGE",
+        "OTHER"
+      ]
+    }
+  ],
+  "exceptions": [],
+  "id": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+  "invariants": [],
+  "name": "MemberAccount",
+  "rootEntity": "MemberAccount",
+  "valueObjects": [
+    {
+      "name": "Identification",
+      "displayName": "\uc2dd\ubcc4 \uc815\ubcf4",
+      "alias": null,
+      "referencedAggregateName": null,
+      "referencedAggregateField": null,
+      "fields": [
+        {
+          "name": "identificationType",
+          "type": "String"
+        },
+        {
+          "name": "identificationValue",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "displayName": "\ud504\ub85c\ud544",
+      "alias": null,
+      "referencedAggregateName": null,
+      "referencedAggregateField": null,
+      "fields": [
+        {
+          "name": "nickname",
+          "type": "String"
+        },
+        {
+          "name": "email",
+          "type": "String"
+        },
+        {
+          "name": "phoneNumber",
+          "type": "String"
+        },
+        {
+          "name": "profileImageUrl",
+          "type": "String"
+        },
+        {
+          "name": "notificationPreference",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "name": "TermsAgreement",
+      "displayName": "\uc57d\uad00 \ub3d9\uc758",
+      "alias": null,
+      "referencedAggregateName": null,
+      "referencedAggregateField": null,
+      "fields": [
+        {
+          "name": "termsVersion",
+          "type": "String"
+        },
+        {
+          "name": "agreedAt",
+          "type": "DateTime"
+        },
+        {
+          "name": "agreementType",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "name": "ParentalConsent",
+      "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758",
+      "alias": null,
+      "referencedAggregateName": null,
+      "referencedAggregateField": null,
+      "fields": [
+        {
+          "name": "guardianName",
+          "type": "String"
+        },
+        {
+          "name": "guardianContact",
+          "type": "String"
+        },
+        {
+          "name": "consentGivenAt",
+          "type": "DateTime"
+        }
+      ]
+    },
+    {
+      "name": "Session",
+      "displayName": "\uc138\uc158",
+      "alias": null,
+      "referencedAggregateName": null,
+      "referencedAggregateField": null,
+      "fields": [
+        {
+          "name": "sessionId",
+          "type": "String"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime"
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime"
+        },
+        {
+          "name": "status",
+          "type": "String"
+        }
+      ]
+    }
+  ],
+  "type": "Aggregate",
+  "commands": [
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Process",
+      "displayName": "\uc57d\uad00 \ub3d9\uc758",
+      "id": "0417efa3-d73b-4c27-b594-83ca502c94e1",
+      "inputSchema": "{ \"termsConsents\": { \"type\": \"array\", \"items\": { \"type\": \"object\" } } }",
+      "name": "AgreeToTerms",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\uc57d\uad00 \ub3d9\uc758\ub428",
+          "id": "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+          "name": "TermsAgreed",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "List of terms and conditions consents agreed to by the member.",
+          "displayName": "\uc57d\uad00 \ub3d9\uc758 \ub0b4\uc5ed",
+          "id": "a2a61f3d-de15-4308-96f7-9362f8d0f3b7",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "termsConsents",
+          "parentId": "0417efa3-d73b-4c27-b594-83ca502c94e1",
+          "parentType": "Command",
+          "type": "List<Object>"
+        }
+      ]
+    },
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Update",
+      "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \ucca0\ud68c",
+      "id": "3e8fab7e-8cdd-4e2c-bd77-acfe517090be",
+      "inputSchema": "{ \"memberId\": \"string\" }",
+      "name": "CancelMembershipWithdrawal",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \ucca0\ud68c\ub428",
+          "id": "5099b039-54b5-4e3e-9fe3-d6117e3c2c14",
+          "name": "MembershipWithdrawalCancelled",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Identifier of the member account for which withdrawal is being cancelled.",
+          "displayName": "\ud68c\uc6d0 \uacc4\uc815 ID",
+          "id": "06025828-0b43-4896-85b5-d2acb115baad",
+          "isForeignKey": true,
+          "isKey": false,
+          "isRequired": true,
+          "name": "memberId",
+          "parentId": "3e8fab7e-8cdd-4e2c-bd77-acfe517090be",
+          "parentType": "Command",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Delete",
+      "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \uc644\ub8cc",
+      "id": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+      "inputSchema": "{ \"finalConsent\": \"boolean\" }",
+      "name": "FinalizeMembershipWithdrawal",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ubaa8\ub4e0 \uc138\uc158 \ubc0f \ud1a0\ud070 \uc885\ub8cc\ub428",
+          "id": "097b060d-bd36-4787-9f43-44081e2f641a",
+          "name": "AllSessionsAndTokensTerminated",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud68c\uc6d0 \ub370\uc774\ud130 \uc0ad\uc81c\ub428",
+          "id": "a4d9fa67-9184-4fef-9a48-90cc193da38c",
+          "name": "MemberDataDeleted",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \ucd5c\uc885 \ubc18\uc601\ub428",
+          "id": "168af452-fca8-4028-b705-1c4b7ebaa06f",
+          "name": "MembershipWithdrawalFinalized",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \uc644\ub8cc\ub428",
+          "id": "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+          "name": "MembershipWithdrawn",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud0c8\ud1f4 \uacb0\uacfc \uc548\ub0b4\ub428",
+          "id": "2ca4049b-969f-460d-a295-76e101c2a055",
+          "name": "WithdrawalResultNotified",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Final consent to complete the withdrawal process.",
+          "displayName": "\ucd5c\uc885 \ub3d9\uc758 \uc5ec\ubd80",
+          "id": "450d6530-3527-42a2-a669-041f7fbff8ab",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "finalConsent",
+          "parentId": "16d1eb6d-3db6-4190-8f30-dcf859b60995",
+          "parentType": "Command",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Process",
+      "displayName": "\ub85c\uadf8\uc778",
+      "id": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+      "inputSchema": "{ \"memberId\": \"string\", \"password\": \"string\" }",
+      "name": "LoginMember",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud68c\uc6d0 \ub85c\uadf8\uc778\ub428",
+          "id": "fe57afb5-3d75-467f-ab3a-042c963a081b",
+          "name": "MemberLoggedIn",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc138\uc158 \uc0dd\uc131\ub428",
+          "id": "3afaa85a-eab6-440b-a3f4-9b221c3b5eb8",
+          "name": "SessionCreated",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Identifier of the member account to log in.",
+          "displayName": "\ud68c\uc6d0 \uacc4\uc815 ID",
+          "id": "90c5c13d-8385-44f4-8170-af119155b129",
+          "isForeignKey": true,
+          "isKey": false,
+          "isRequired": true,
+          "name": "memberId",
+          "parentId": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+          "parentType": "Command",
+          "type": "String"
+        },
+        {
+          "description": "Password for member authentication.",
+          "displayName": "\ube44\ubc00\ubc88\ud638",
+          "id": "d2ffed35-ff15-4d18-9b55-dea0510272f4",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "password",
+          "parentId": "fb3ea0b6-3adc-4977-8d20-2fe45de442ce",
+          "parentType": "Command",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "actor": "\ubbf8\uc131\ub144\uc790_\ud68c\uc6d0",
+      "category": "Process",
+      "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758",
+      "id": "48a9cee0-a655-4c28-8526-30b7d0bb72ec",
+      "inputSchema": "{ \"parentalConsentInformation\": { \"type\": \"object\" } }",
+      "name": "ObtainParentalConsent",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758 \uc644\ub8cc\ub428",
+          "id": "b8847724-c183-4c57-923d-c3eaa5e2dd65",
+          "name": "ParentalConsentObtained",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Parental or legal guardian consent information for minor members.",
+          "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758 \uc815\ubcf4",
+          "id": "b3eee288-4c83-4336-8a90-580aa7cf6483",
+          "isForeignKey": true,
+          "isKey": false,
+          "isRequired": true,
+          "name": "parentalConsentInformation",
+          "parentId": "48a9cee0-a655-4c28-8526-30b7d0bb72ec",
+          "parentType": "Command",
+          "type": "Object"
+        }
+      ]
+    },
+    {
+      "actor": "\uace0\uac1d",
+      "category": "Create",
+      "displayName": "\ud68c\uc6d0\uac00\uc785 \uc644\ub8cc",
+      "id": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+      "inputSchema": "{ \"personalInformation\": { \"type\": \"object\" }, \"profile\": { \"type\": \"object\" }, \"termsConsents\": { \"type\": \"array\", \"items\": { \"type\": \"object\" } }, \"identityVerification\": { \"type\": \"object\" }, \"parentalConsent\": { \"type\": \"object\", \"nullable\": true } }",
+      "name": "RegisterMembership",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ubcf8\uc778 \uc778\uc99d\ub428",
+          "id": "a8c2ddae-2710-4574-8acb-4b73f4a093b5",
+          "name": "IdentityVerified",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud68c\uc6d0 \uacc4\uc815 \uc0dd\uc131\ub428",
+          "id": "07df889a-8709-4b1b-99ae-a206fae361a4",
+          "name": "MemberAccountCreated",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud68c\uc6d0\uac00\uc785 \uc644\ub8cc\ub428",
+          "id": "bec17f2d-ee8c-4640-8ce0-412fea27c853",
+          "name": "MembershipRegistered",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758 \uc644\ub8cc\ub428",
+          "id": "b8847724-c183-4c57-923d-c3eaa5e2dd65",
+          "name": "ParentalConsentObtained",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud504\ub85c\ud544 \uc0dd\uc131\ub428",
+          "id": "9ee46c81-65bd-4d4b-88f4-1370fe7bd27a",
+          "name": "ProfileCreated",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc57d\uad00 \ub3d9\uc758\ub428",
+          "id": "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+          "name": "TermsAgreed",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Parental/legal guardian consent information (required for minors).",
+          "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758",
+          "id": "b35c1cb5-c897-481c-bbc9-7ee4e3e493de",
+          "isForeignKey": true,
+          "isKey": false,
+          "isRequired": false,
+          "name": "parentalConsent",
+          "parentId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "parentType": "Command",
+          "type": "Object"
+        },
+        {
+          "description": "Identity verification data for registration.",
+          "displayName": "\ubcf8\uc778 \uc778\uc99d \uc815\ubcf4",
+          "id": "be56a4af-10ca-4a0c-9e5a-cfac0d9bd73d",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "identityVerification",
+          "parentId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "parentType": "Command",
+          "type": "Object"
+        },
+        {
+          "description": "Personal information for registration (e.g., name, birthdate, contact info).",
+          "displayName": "\uac1c\uc778 \uc815\ubcf4",
+          "id": "91c2ce57-fa33-497b-ad7b-bea893e6a61d",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "personalInformation",
+          "parentId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "parentType": "Command",
+          "type": "Object"
+        },
+        {
+          "description": "Profile data for the new member account.",
+          "displayName": "\ud504\ub85c\ud544 \uc815\ubcf4",
+          "id": "4334f5ec-36ab-4f1b-b7c2-e235484d83f7",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "profile",
+          "parentId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "parentType": "Command",
+          "type": "Object"
+        },
+        {
+          "description": "List of terms and conditions consents for registration.",
+          "displayName": "\uc57d\uad00 \ub3d9\uc758 \ub0b4\uc5ed",
+          "id": "0acb0b56-bac0-42c7-91b6-f9a79cb0a909",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "termsConsents",
+          "parentId": "f6a7522b-51e2-464f-8cc1-ac6ef32f5d7f",
+          "parentType": "Command",
+          "type": "List<Object>"
+        }
+      ]
+    },
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Create",
+      "displayName": "\uc7ac\uac00\uc785 \uc644\ub8cc",
+      "id": "58835270-440a-4c65-ba27-32b6a330f7fe",
+      "inputSchema": "{ \"personalInformation\": { \"type\": \"object\" }, \"profile\": { \"type\": \"object\" }, \"termsConsents\": { \"type\": \"array\", \"items\": { \"type\": \"object\" } }, \"restorationScope\": { \"type\": \"object\", \"nullable\": true } }",
+      "name": "RejoinMembership",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud68c\uc6d0 \uc7ac\uac00\uc785 \uc644\ub8cc\ub428",
+          "id": "a38e5b0e-a2cc-4cad-887b-0cc4442cd8cd",
+          "name": "MemberRejoined",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc7ac\uac00\uc785 \uc644\ub8cc\ub428",
+          "id": "36c161e5-00d9-48a6-acaf-6ba5a3fbeacd",
+          "name": "MembershipReenrolled",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc7ac\uac00\uc785 \ucc98\ub9ac \uc644\ub8cc\ub428",
+          "id": "825b06ea-3e3b-4c2f-8bec-e6e00dd6dfed",
+          "name": "MembershipReenrollmentCompleted",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc7ac\uac00\uc785 \uc815\ubcf4 \uc81c\ucd9c\ub428",
+          "id": "871e5c60-967e-4688-a664-f028724c83f0",
+          "name": "ReenrollmentInformationSubmitted",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc7ac\uac00\uc785 \uacb0\uacfc \uc548\ub0b4\ub428",
+          "id": "9432193e-b40c-4124-996f-a0c89a0e9c39",
+          "name": "ReenrollmentResultNotified",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc774\ub825 \ubcf5\uc6d0 \ubc94\uc704 \ud655\uc778\ub428",
+          "id": "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+          "name": "RestorationScopeChecked",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc7ac\uac00\uc785 \ud6c4 \uc138\uc158 \uc0dd\uc131 \ub610\ub294 \uc804\ud658\ub428",
+          "id": "bb8ffca3-d26f-49d9-a88b-d1dd41c2694e",
+          "name": "SessionCreatedOrSwitchedAfterRejoin",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Personal information for rejoining membership.",
+          "displayName": "\uac1c\uc778 \uc815\ubcf4",
+          "id": "c3720b07-e253-4c81-a349-1f3530242ae8",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "personalInformation",
+          "parentId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "parentType": "Command",
+          "type": "Object"
+        },
+        {
+          "description": "Profile data for the rejoining member.",
+          "displayName": "\ud504\ub85c\ud544 \uc815\ubcf4",
+          "id": "0bd58d3b-8dfd-4615-b652-4aacfac746aa",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "profile",
+          "parentId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "parentType": "Command",
+          "type": "Object"
+        },
+        {
+          "description": "Scope of data and history to be restored for rejoining (nullable).",
+          "displayName": "\ubcf5\uc6d0 \ubc94\uc704",
+          "id": "6dc103d6-4c62-4d75-8814-8c7305a5d788",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": false,
+          "name": "restorationScope",
+          "parentId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "parentType": "Command",
+          "type": "Object"
+        },
+        {
+          "description": "List of terms and conditions consents for rejoining.",
+          "displayName": "\uc57d\uad00 \ub3d9\uc758 \ub0b4\uc5ed",
+          "id": "b4fc318b-32ac-4fc2-89ff-c81aed5bd0e8",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "termsConsents",
+          "parentId": "58835270-440a-4c65-ba27-32b6a330f7fe",
+          "parentType": "Command",
+          "type": "List<Object>"
+        }
+      ]
+    },
+    {
+      "actor": "\ud734\uba74_\ud68c\uc6d0",
+      "category": "Process",
+      "displayName": "\ud734\uba74 \ud574\uc81c \uc2e0\uccad",
+      "id": "3bef4807-5171-48f8-a712-a36e50fd200a",
+      "inputSchema": "{ \"memberId\": \"string\" }",
+      "name": "RequestDormantAccountRestoration",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud734\uba74 \ud574\uc81c \uc2e0\uccad\ub428",
+          "id": "9eccaba7-5c04-4ff2-b5d6-d76774cd64eb",
+          "name": "DormantAccountRestorationRequested",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Identifier of the dormant member account to restore.",
+          "displayName": "\ud68c\uc6d0 \uacc4\uc815 ID",
+          "id": "93c104b1-0aec-46ef-ac52-6f6f0869276d",
+          "isForeignKey": true,
+          "isKey": false,
+          "isRequired": true,
+          "name": "memberId",
+          "parentId": "3bef4807-5171-48f8-a712-a36e50fd200a",
+          "parentType": "Command",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Delete",
+      "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \uc694\uccad",
+      "id": "ca9c3420-9f5c-471b-a7fc-d1746d5ac734",
+      "inputSchema": "{ \"withdrawalReason\": \"string\" }",
+      "name": "RequestMembershipWithdrawal",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \uc694\uccad\ub428",
+          "id": "3165245c-0702-4d3d-b244-bbfae4d74316",
+          "name": "MembershipWithdrawalRequested",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Reason for requesting membership withdrawal.",
+          "displayName": "\ud0c8\ud1f4 \uc0ac\uc720",
+          "id": "2a01b45d-181d-45d8-a0e1-580f0a07511c",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "withdrawalReason",
+          "parentId": "ca9c3420-9f5c-471b-a7fc-d1746d5ac734",
+          "parentType": "Command",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "actor": "\ud734\uba74_\ud68c\uc6d0",
+      "category": "Process",
+      "displayName": "\ud734\uba74 \ud574\uc81c \ucc98\ub9ac",
+      "id": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+      "inputSchema": "{ \"memberId\": \"string\" }",
+      "name": "RestoreDormantAccount",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud734\uba74 \ud574\uc81c \ub370\uc774\ud130 \ubcf5\uc6d0\ub428",
+          "id": "40040733-a700-4b0e-bc97-447d56b70ca9",
+          "name": "DormantAccountRestored",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud734\uba74 \uc0c1\ud0dc \ud574\uc81c\ub428",
+          "id": "90f7e8c4-3976-4d7b-8ef0-9070939b3668",
+          "name": "DormantStatusDeactivated",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc815\uc0c1 \ud68c\uc6d0 \uc0c1\ud0dc\ub85c \uc804\ud658\ub428",
+          "id": "b20592df-42ac-41ca-a3de-5b5a779a9b61",
+          "name": "MembershipActivated",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uac1c\uc778\uc815\ubcf4 \ubcf5\uc6d0\ub428",
+          "id": "8df1636f-41ec-41ca-b717-308f5f25d670",
+          "name": "PersonalDataRestored",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\uc11c\ube44\uc2a4 \uc774\uc6a9 \ub370\uc774\ud130 \ubcf5\uc6d0\ub428",
+          "id": "1f60f73c-06c5-4420-b491-9b453bc2b3b1",
+          "name": "ServiceUsageDataRestored",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        },
+        {
+          "displayName": "\ud734\uba74 \ud574\uc81c \ud6c4 \uc138\uc158 \ubcf5\uad6c\ub428",
+          "id": "e026c052-9a9f-438e-abb3-7c438e8f6a60",
+          "name": "SessionRestoredAfterDormancy",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Identifier of the dormant member account to be restored.",
+          "displayName": "\ud68c\uc6d0 \uacc4\uc815 ID",
+          "id": "40e6d35b-77cc-4405-aad2-24a74251d789",
+          "isForeignKey": true,
+          "isKey": false,
+          "isRequired": true,
+          "name": "memberId",
+          "parentId": "2bd8a1af-37d2-4cb8-9bc6-4c9d7706c277",
+          "parentType": "Command",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Process",
+      "displayName": "\ud0c8\ud1f4 \uc0ac\uc720 \uc81c\ucd9c",
+      "id": "ac79b98c-6918-48b1-ae49-7bfbbf31cb29",
+      "inputSchema": "{ \"withdrawalReason\": \"string\" }",
+      "name": "SubmitWithdrawalReason",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud0c8\ud1f4 \uc0ac\uc720 \uc81c\ucd9c\ub428",
+          "id": "2f6128dc-e955-4f3d-aed4-9a4ce97b97a2",
+          "name": "MembershipWithdrawalReasonSubmitted",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Reason submitted for membership withdrawal.",
+          "displayName": "\ud0c8\ud1f4 \uc0ac\uc720",
+          "id": "49d85fc9-3bbf-4b4c-84cb-874fc210e2d5",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "withdrawalReason",
+          "parentId": "ac79b98c-6918-48b1-ae49-7bfbbf31cb29",
+          "parentType": "Command",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "actor": "\uc2dc\uc2a4\ud15c",
+      "category": "Process",
+      "displayName": "\ud68c\uc6d0 \uc138\uc158 \uc804\ud658",
+      "id": "68d69f29-9b6e-428d-b19b-57fb867a197d",
+      "inputSchema": "{ \"memberId\": \"string\", \"sessionType\": \"string\" }",
+      "name": "SwitchMemberSession",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud68c\uc6d0 \uc138\uc158 \uc804\ud658\ub428",
+          "id": "e21217ff-f793-4608-89db-6e6e221012f3",
+          "name": "MemberSessionSwitched",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Identifier of the member account whose session is being switched.",
+          "displayName": "\ud68c\uc6d0 \uacc4\uc815 ID",
+          "id": "e48cca3d-431b-4a88-a71d-48bbdd36e8d4",
+          "isForeignKey": true,
+          "isKey": false,
+          "isRequired": true,
+          "name": "memberId",
+          "parentId": "68d69f29-9b6e-428d-b19b-57fb867a197d",
+          "parentType": "Command",
+          "type": "String"
+        },
+        {
+          "description": "Type of session to switch to (e.g., full, provisional).",
+          "displayName": "\uc138\uc158 \uc720\ud615",
+          "id": "8ad37642-f208-42f5-b8f2-3c770ce3d7e6",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "sessionType",
+          "parentId": "68d69f29-9b6e-428d-b19b-57fb867a197d",
+          "parentType": "Command",
+          "type": "String"
+        }
+      ]
+    },
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Update",
+      "displayName": "\ud68c\uc6d0\uc815\ubcf4 \ubcc0\uacbd",
+      "id": "920f2065-85de-4fed-b159-1da7913bd14b",
+      "inputSchema": "{ \"memberInformation\": { \"type\": \"object\" } }",
+      "name": "UpdateMemberInformation",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud68c\uc6d0\uc815\ubcf4 \ubcc0\uacbd\ub428",
+          "id": "1769bc03-1e84-4e44-be31-2bb12e75f3ae",
+          "name": "MemberInformationChanged",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Updated member information such as contact details or preferences.",
+          "displayName": "\ud68c\uc6d0 \uc815\ubcf4",
+          "id": "7a028cf1-5bd4-47d2-944b-9abf4af0aeee",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "memberInformation",
+          "parentId": "920f2065-85de-4fed-b159-1da7913bd14b",
+          "parentType": "Command",
+          "type": "Object"
+        }
+      ]
+    },
+    {
+      "actor": "\ud68c\uc6d0",
+      "category": "Update",
+      "displayName": "\ud504\ub85c\ud544 \uc815\ubcf4 \ubcc0\uacbd",
+      "id": "83586ca6-eabe-4cc0-9909-c1dfb7942f70",
+      "inputSchema": "{ \"profile\": { \"type\": \"object\" } }",
+      "name": "UpdateMemberProfile",
+      "type": "Command",
+      "events": [
+        {
+          "displayName": "\ud504\ub85c\ud544 \uc815\ubcf4 \ubcc0\uacbd\ub428",
+          "id": "7b133416-e9e7-4094-a047-6823dfd90943",
+          "name": "ProfileInformationUpdated",
+          "payload": null,
+          "version": "1.0.0",
+          "type": "Event",
+          "properties": []
+        }
+      ],
+      "properties": [
+        {
+          "description": "Updated profile information for the member account.",
+          "displayName": "\ud504\ub85c\ud544 \uc815\ubcf4",
+          "id": "9fa572f8-4972-466c-a21e-fb66285a67f8",
+          "isForeignKey": false,
+          "isKey": false,
+          "isRequired": true,
+          "name": "profile",
+          "parentId": "83586ca6-eabe-4cc0-9909-c1dfb7942f70",
+          "parentType": "Command",
+          "type": "Object"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "displayName": "\ubaa8\ub4e0 \uc138\uc158 \ubc0f \ud1a0\ud070 \uc885\ub8cc\ub428",
+      "id": "097b060d-bd36-4787-9f43-44081e2f641a",
+      "name": "AllSessionsAndTokensTerminated",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud734\uba74 \ud574\uc81c \uc2e0\uccad\ub428",
+      "id": "9eccaba7-5c04-4ff2-b5d6-d76774cd64eb",
+      "name": "DormantAccountRestorationRequested",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud734\uba74 \ud574\uc81c \ub370\uc774\ud130 \ubcf5\uc6d0\ub428",
+      "id": "40040733-a700-4b0e-bc97-447d56b70ca9",
+      "name": "DormantAccountRestored",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud734\uba74 \uc0c1\ud0dc \ud574\uc81c\ub428",
+      "id": "90f7e8c4-3976-4d7b-8ef0-9070939b3668",
+      "name": "DormantStatusDeactivated",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ubcf8\uc778 \uc778\uc99d\ub428",
+      "id": "a8c2ddae-2710-4574-8acb-4b73f4a093b5",
+      "name": "IdentityVerified",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \uacc4\uc815 \uc0dd\uc131\ub428",
+      "id": "07df889a-8709-4b1b-99ae-a206fae361a4",
+      "name": "MemberAccountCreated",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \ub370\uc774\ud130 \uc0ad\uc81c\ub428",
+      "id": "a4d9fa67-9184-4fef-9a48-90cc193da38c",
+      "name": "MemberDataDeleted",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0\uc815\ubcf4 \ubcc0\uacbd\ub428",
+      "id": "1769bc03-1e84-4e44-be31-2bb12e75f3ae",
+      "name": "MemberInformationChanged",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \ub85c\uadf8\uc778\ub428",
+      "id": "fe57afb5-3d75-467f-ab3a-042c963a081b",
+      "name": "MemberLoggedIn",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \uc7ac\uac00\uc785 \uc644\ub8cc\ub428",
+      "id": "a38e5b0e-a2cc-4cad-887b-0cc4442cd8cd",
+      "name": "MemberRejoined",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \uc138\uc158 \uc804\ud658\ub428",
+      "id": "e21217ff-f793-4608-89db-6e6e221012f3",
+      "name": "MemberSessionSwitched",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc815\uc0c1 \ud68c\uc6d0 \uc0c1\ud0dc\ub85c \uc804\ud658\ub428",
+      "id": "b20592df-42ac-41ca-a3de-5b5a779a9b61",
+      "name": "MembershipActivated",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc7ac\uac00\uc785 \uc644\ub8cc\ub428",
+      "id": "36c161e5-00d9-48a6-acaf-6ba5a3fbeacd",
+      "name": "MembershipReenrolled",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc7ac\uac00\uc785 \ucc98\ub9ac \uc644\ub8cc\ub428",
+      "id": "825b06ea-3e3b-4c2f-8bec-e6e00dd6dfed",
+      "name": "MembershipReenrollmentCompleted",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0\uac00\uc785 \uc644\ub8cc\ub428",
+      "id": "bec17f2d-ee8c-4640-8ce0-412fea27c853",
+      "name": "MembershipRegistered",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \ucca0\ud68c\ub428",
+      "id": "5099b039-54b5-4e3e-9fe3-d6117e3c2c14",
+      "name": "MembershipWithdrawalCancelled",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \ucd5c\uc885 \ubc18\uc601\ub428",
+      "id": "168af452-fca8-4028-b705-1c4b7ebaa06f",
+      "name": "MembershipWithdrawalFinalized",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud0c8\ud1f4 \uc0ac\uc720 \uc81c\ucd9c\ub428",
+      "id": "2f6128dc-e955-4f3d-aed4-9a4ce97b97a2",
+      "name": "MembershipWithdrawalReasonSubmitted",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \uc694\uccad\ub428",
+      "id": "3165245c-0702-4d3d-b244-bbfae4d74316",
+      "name": "MembershipWithdrawalRequested",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud68c\uc6d0 \ud0c8\ud1f4 \uc644\ub8cc\ub428",
+      "id": "ded0798e-9336-4311-ad84-bd4c59c27a4a",
+      "name": "MembershipWithdrawn",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758 \uc644\ub8cc\ub428",
+      "id": "b8847724-c183-4c57-923d-c3eaa5e2dd65",
+      "name": "ParentalConsentObtained",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758 \uc644\ub8cc\ub428",
+      "id": "b8847724-c183-4c57-923d-c3eaa5e2dd65",
+      "name": "ParentalConsentObtained",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uac1c\uc778\uc815\ubcf4 \ubcf5\uc6d0\ub428",
+      "id": "8df1636f-41ec-41ca-b717-308f5f25d670",
+      "name": "PersonalDataRestored",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud504\ub85c\ud544 \uc0dd\uc131\ub428",
+      "id": "9ee46c81-65bd-4d4b-88f4-1370fe7bd27a",
+      "name": "ProfileCreated",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud504\ub85c\ud544 \uc815\ubcf4 \ubcc0\uacbd\ub428",
+      "id": "7b133416-e9e7-4094-a047-6823dfd90943",
+      "name": "ProfileInformationUpdated",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc7ac\uac00\uc785 \uc815\ubcf4 \uc81c\ucd9c\ub428",
+      "id": "871e5c60-967e-4688-a664-f028724c83f0",
+      "name": "ReenrollmentInformationSubmitted",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc7ac\uac00\uc785 \uacb0\uacfc \uc548\ub0b4\ub428",
+      "id": "9432193e-b40c-4124-996f-a0c89a0e9c39",
+      "name": "ReenrollmentResultNotified",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc774\ub825 \ubcf5\uc6d0 \ubc94\uc704 \ud655\uc778\ub428",
+      "id": "6a9e4b6e-2f44-4c4e-a72f-ee65aa1082ae",
+      "name": "RestorationScopeChecked",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc11c\ube44\uc2a4 \uc774\uc6a9 \ub370\uc774\ud130 \ubcf5\uc6d0\ub428",
+      "id": "1f60f73c-06c5-4420-b491-9b453bc2b3b1",
+      "name": "ServiceUsageDataRestored",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc138\uc158 \uc0dd\uc131\ub428",
+      "id": "3afaa85a-eab6-440b-a3f4-9b221c3b5eb8",
+      "name": "SessionCreated",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc7ac\uac00\uc785 \ud6c4 \uc138\uc158 \uc0dd\uc131 \ub610\ub294 \uc804\ud658\ub428",
+      "id": "bb8ffca3-d26f-49d9-a88b-d1dd41c2694e",
+      "name": "SessionCreatedOrSwitchedAfterRejoin",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud734\uba74 \ud574\uc81c \ud6c4 \uc138\uc158 \ubcf5\uad6c\ub428",
+      "id": "e026c052-9a9f-438e-abb3-7c438e8f6a60",
+      "name": "SessionRestoredAfterDormancy",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc57d\uad00 \ub3d9\uc758\ub428",
+      "id": "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+      "name": "TermsAgreed",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\uc57d\uad00 \ub3d9\uc758\ub428",
+      "id": "b4584e23-8afe-4c8d-9a8e-126796d9808c",
+      "name": "TermsAgreed",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    },
+    {
+      "displayName": "\ud0c8\ud1f4 \uacb0\uacfc \uc548\ub0b4\ub428",
+      "id": "2ca4049b-969f-460d-a295-76e101c2a055",
+      "name": "WithdrawalResultNotified",
+      "payload": null,
+      "version": "1.0.0",
+      "type": "Event",
+      "properties": []
+    }
+  ],
+  "properties": [
+    {
+      "description": "Member account unique identifier.",
+      "displayName": "\ud68c\uc6d0 \uacc4\uc815 ID",
+      "id": "275bc68d-305d-4529-a9a8-68cbaa0c5256",
+      "isForeignKey": false,
+      "isKey": true,
+      "isRequired": true,
+      "name": "id",
+      "parentId": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+      "parentType": "Aggregate",
+      "type": "string"
+    },
+    {
+      "description": "Parental or legal guardian consent information for minor members.",
+      "displayName": "\ubc95\uc815\ub300\ub9ac\uc778 \ub3d9\uc758",
+      "id": "ad1460a8-de37-4237-b03f-4cbe4d2a636c",
+      "isForeignKey": true,
+      "isKey": false,
+      "isRequired": false,
+      "name": "parentalConsent",
+      "parentId": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+      "parentType": "Aggregate",
+      "type": "object"
+    },
+    {
+      "description": null,
+      "displayName": null,
+      "id": "54ce14b3-5126-47b5-8896-96d90183432b",
+      "isForeignKey": null,
+      "isKey": null,
+      "isRequired": null,
+      "name": "email",
+      "parentId": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+      "parentType": "Aggregate",
+      "type": "string"
+    },
+    {
+      "description": "Identity verification details for the member account.",
+      "displayName": "\ubcf8\uc778 \uc778\uc99d \uc815\ubcf4",
+      "id": "2c4f7033-841d-4a08-804e-17e133bcfd9a",
+      "isForeignKey": false,
+      "isKey": false,
+      "isRequired": true,
+      "name": "identityVerification",
+      "parentId": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+      "parentType": "Aggregate",
+      "type": "object"
+    },
+    {
+      "description": "Personal information associated with the member (e.g., name, birthdate, contact info).",
+      "displayName": "\uac1c\uc778 \uc815\ubcf4",
+      "id": "ab650eb0-9650-4176-9c50-487602ec50a3",
+      "isForeignKey": false,
+      "isKey": false,
+      "isRequired": true,
+      "name": "personalInformation",
+      "parentId": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+      "parentType": "Aggregate",
+      "type": "object"
+    },
+    {
+      "description": "Profile details for the member account (e.g., nickname, avatar, preferences).",
+      "displayName": "\ud504\ub85c\ud544 \uc815\ubcf4",
+      "id": "b3a9035f-0f4e-4cf3-bf93-8e990814762e",
+      "isForeignKey": false,
+      "isKey": false,
+      "isRequired": true,
+      "name": "profile",
+      "parentId": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+      "parentType": "Aggregate",
+      "type": "object"
+    },
+    {
+      "description": "Current status of the member account (e.g., ACTIVE, DORMANT, WITHDRAWN).",
+      "displayName": "\ud68c\uc6d0 \uc0c1\ud0dc",
+      "id": "32bc3908-62f6-430a-9dbd-71b7121e950f",
+      "isForeignKey": false,
+      "isKey": false,
+      "isRequired": true,
+      "name": "status",
+      "parentId": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+      "parentType": "Aggregate",
+      "type": "string"
+    },
+    {
+      "description": "List of terms and conditions consents agreed to by the member.",
+      "displayName": "\uc57d\uad00 \ub3d9\uc758 \ub0b4\uc5ed",
+      "id": "9e064260-5333-490e-81d5-07765442888d",
+      "isForeignKey": false,
+      "isKey": false,
+      "isRequired": true,
+      "name": "termsConsents",
+      "parentId": "82704ceb-bbf2-4cd3-b010-bc6ab82b09e4",
+      "parentType": "Aggregate",
+      "type": "object[]"
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+=== workspace tree after /robo-plan + /robo-tasks + /robo-implement ===
+/Users/uengine/robo-spec-e2e-ws/.mcp.json
+/Users/uengine/robo-spec-e2e-ws/specs/001-membership-management/plan.md
+/Users/uengine/robo-spec-e2e-ws/specs/001-membership-management/tasks.md
+/Users/uengine/robo-spec-e2e-ws/src/membership-management/README.md
+/Users/uengine/robo-spec-e2e-ws/src/membership-management/entities/IMemberAccountRepository.ts
+/Users/uengine/robo-spec-e2e-ws/src/membership-management/entities/MemberAccount.ts
+/Users/uengine/robo-spec-e2e-ws/src/membership-management/frameworks_and_drivers/MemberAccountRepository.ts
+/Users/uengine/robo-spec-e2e-ws/src/membership-management/index.ts
+
+=== source files scaffolded ===
+
+--- src/membership-management/README.md ---
+# MembershipManagement Bounded Context
+
+## Overview
+
+This bounded context implements the **MembershipManagement** domain using **Clean Architecture** for a core domain.
+
+## Architecture Layers
+
+### 1. Entities Layer (`entities/`)
+Contains enterprise business rules and domain entities.
+- `MemberAccount.ts` - Core aggregate root
+- `IMemberAccountRepository.ts` - Repository interface (Dependency Inversion Principle)
+
+### 2. Use Cases Layer (`usecases/`)
+Contains application-specific business rules and command handlers.
+- Command handlers will be added here when commands are defined in the design
+
+### 3. Interface Adapters Layer (`interface_adapters/`)
+Contains controllers, presenters, and adapters that convert data between use cases and external systems.
+- Controllers will be added here when commands are defined
+
+### 4. Frameworks & Drivers Layer (`frameworks_and_drivers/`)
+Contains external frameworks, databases, and infrastructure concerns.
+- `MemberAccountRepository.ts` - Concrete repository implementation
+
+## Repository Usage
+
+```typescript
+import { MemberAccountRepository, IMemberAccountRepository } from './index';
+
+// Create repository instance
+const repository: IMemberAccountRepository = new MemberAccountRepository();
+
+// Find by ID
+const account = await repository.findById('account-123');
+
+// Save
+await repository.save(account);
+```
+
+## Next Steps
+
+When commands are added to the Robo Architect graph:
+1. Use case handlers will be added to `usecases/`
+2. Controllers will be added to `interface_adapters/`
+3. Run `/robo-sync` to sync code changes back to the graph
+
+--- src/membership-management/entities/IMemberAccountRepository.ts ---
+import { MemberAccount } from './MemberAccount';
+
+export interface IMemberAccountRepository {
+  findById(id: string): Promise<MemberAccount | null>;
+  save(memberAccount: MemberAccount): Promise<void>;
+}
+
+--- src/membership-management/entities/MemberAccount.ts ---
+export class MemberAccount {
+  // TODO: invariants
+
+  constructor() {
+    // Initialize root entity
+  }
+}
+
+--- src/membership-management/frameworks_and_drivers/MemberAccountRepository.ts ---
+import { IMemberAccountRepository } from '../entities/IMemberAccountRepository';
+import { MemberAccount } from '../entities/MemberAccount';
+
+export class MemberAccountRepository implements IMemberAccountRepository {
+  async findById(id: string): Promise<MemberAccount | null> {
+    // TODO: implement persistence logic
+    throw new Error('Not implemented');
+  }
+
+  async save(memberAccount: MemberAccount): Promise<void> {
+    // TODO: implement persistence logic
+    throw new Error('Not implemented');
+  }
+}
+
+--- src/membership-management/index.ts ---
+// Entities Layer
+export { MemberAccount } from './entities/MemberAccount';
+export { IMemberAccountRepository } from './entities/IMemberAccountRepository';
+
+// Frameworks & Drivers Layer
+export { MemberAccountRepository } from './frameworks_and_drivers/MemberAccountRepository';

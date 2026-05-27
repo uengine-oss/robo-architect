@@ -1,0 +1,20 @@
+{
+  "output_mode": "robo-spec",
+  "prdMdExisted": false,
+  "mcpJsonInstalled": true,
+  "roboSpecSkills": [
+    "robo-plan",
+    "robo-tasks",
+    "robo-implement",
+    "robo-sync"
+  ],
+  "speckitInheritance": [
+    "speckit-plan",
+    "speckit-tasks",
+    "speckit-implement"
+  ],
+  "beforeClassification": null,
+  "afterClassification": "core",
+  "planMd": "/tmp/robo-spec-real-flow/specs/001-membership-management/plan.md",
+  "drivenBy": "embedded xterm.js terminal (not claude -p side-channel)"
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "robo-spec": {
+      "type": "streamable-http",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
