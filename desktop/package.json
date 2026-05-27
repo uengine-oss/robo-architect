@@ -1,0 +1,33 @@
+{
+  "name": "robo-architect-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron desktop shell for Robo-Architect (wraps the FastAPI backend + Vue SPA + bundled Neo4j).",
+  "license": "UNLICENSED",
+  "main": "dist/main/main/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "build:clean": "tsc -b --clean && tsc -b",
+    "dev": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "test": "playwright test",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\""
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^25.0.0",
+    "eslint": "^8.57.0",
+    "playwright": "^1.47.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0",
+    "get-port": "^7.1.0"
+  }
+}
