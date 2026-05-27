@@ -14,7 +14,7 @@ from api.features.prd_generation.prd_api_contracts import PRDGenerationRequest
 from api.features.prd_generation.prd_api_contracts import AIAssistant, DeploymentStyle, SpecFormat
 from api.features.prd_generation.prd_artifact_generation import (
     generate_api_gateway_rule,
-    generate_bc_spec,
+    generate_bc_spec_files,
     generate_claude_command_generate_frontend,
     generate_claude_command_implement_ddd_bc,
     generate_claude_command_implement_ddd_wireframe,
@@ -32,6 +32,7 @@ from api.features.prd_generation.prd_artifact_generation import (
     generate_dockerfile,
     generate_ddd_principles_rule,
     generate_eventstorming_implementation_rule,
+    generate_frontend_prd,
     generate_gwt_test_generation_rule,
     generate_frontend_cursor_rule,
     generate_main_prd,
@@ -167,8 +168,15 @@ def build_prd_zip(zip_file: zipfile.ZipFile, bcs: list, config) -> None:
                 )
     else:
         for bc in bcs:
-            bc_name = (bc.get("name", "unknown") or "unknown").lower().replace(" ", "_")
-            zip_file.writestr(f"specs/{bc_name}_spec.md", generate_bc_spec(bc, config))
+            for path, content in generate_bc_spec_files(bc, config).items():
+                zip_file.writestr(path, content)
+        # Frontend-PRD.md carries UI flow / wireframe inventory / API
+        # endpoint contract for the PRD layout. The 2026-05-12 amendment
+        # removed it from the DDD path (where `specs/frontend/*.md` +
+        # `specs/bounded-contexts/<bc>/domain-terms.md` cover the same
+        # ground) but the PRD path has no such replacement.
+        if config.include_frontend and config.frontend_framework is not None:
+            zip_file.writestr("Frontend-PRD.md", generate_frontend_prd(bcs, config))
 
     if config.include_docker:
         zip_file.writestr("docker-compose.yml", generate_docker_compose(config))
@@ -291,8 +299,11 @@ async def generate_prd(request: PRDGenerationRequest, http_request: Request):
                 files_to_generate.append(".claude/commands/generate-frontend.md")
     else:
         for bc in bcs:
-            bc_name = (bc.get("name", "unknown") or "unknown").lower().replace(" ", "_")
-            files_to_generate.append(f"specs/{bc_name}_spec.md")
+            # Same builder the zip-packager uses so the preview matches
+            # the actual emitted files (auto-split when oversized).
+            files_to_generate.extend(generate_bc_spec_files(bc, config).keys())
+        if config.include_frontend and config.frontend_framework is not None:
+            files_to_generate.append("Frontend-PRD.md")
         # Non-DDD path also drops per-BC agents — agent set is consistent
         # across spec_format choices (FR-023).
 

@@ -52,13 +52,15 @@ def fetch_bc_data(bc_id: str, session_id: str | None = None) -> dict | None:
              properties: cmdProps
          }) as commands,
          collect(DISTINCT {
-             id: evt.id, 
-             name: evt.name, 
-             displayName: evtDisplayName, 
-             version: evt.version, 
+             id: evt.id,
+             name: evt.name,
+             displayName: evtDisplayName,
+             version: evt.version,
              schema: evtSchema,
              description: evtDescription,
-             properties: evtProps
+             properties: evtProps,
+             emittingCommandId: cmd.id,
+             emittingCommandName: cmd.name
          }) as events
     WITH bc, collect(DISTINCT {
         id: agg.id,

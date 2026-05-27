@@ -21,6 +21,32 @@ class FigmaFileMetadata(TypedDict, total=False):
     error: str  # populated when ok=False
 
 
+def _format_429(resp: httpx.Response) -> str:
+    retry_after = resp.headers.get("retry-after")
+    plan_tier = resp.headers.get("x-figma-plan-tier")
+    limit_type = resp.headers.get("x-figma-rate-limit-type")
+
+    wait_part = ""
+    if retry_after:
+        try:
+            secs = int(float(retry_after))
+            if secs >= 3600:
+                wait_part = f" 약 {secs // 3600}시간 {(secs % 3600) // 60}분 후 재시도 가능."
+            elif secs >= 60:
+                wait_part = f" 약 {secs // 60}분 후 재시도 가능."
+            else:
+                wait_part = f" {secs}초 후 재시도 가능."
+        except ValueError:
+            wait_part = f" Retry-After: {retry_after}."
+
+    plan_part = ""
+    if plan_tier or limit_type:
+        bits = [b for b in (plan_tier, limit_type and f"{limit_type} 카테고리") if b]
+        plan_part = f" (Figma 플랜: {', '.join(bits)})"
+
+    return f"Figma API 호출 한도를 초과했습니다 (429).{wait_part}{plan_part}"
+
+
 async def validate_file(file_key: str, api_token: str) -> FigmaFileMetadata:
     """Fetch minimal file metadata. Returns {ok, fileName} on success
     or {ok: False, error: <korean message>} on failure.
@@ -46,6 +72,8 @@ async def validate_file(file_key: str, api_token: str) -> FigmaFileMetadata:
         return {"ok": False, "error": "Figma 토큰이 유효하지 않거나 파일 접근 권한이 없습니다."}
     if resp.status_code == 404:
         return {"ok": False, "error": f"Figma 파일을 찾을 수 없습니다 (file_key={file_key})."}
+    if resp.status_code == 429:
+        return {"ok": False, "error": _format_429(resp)}
     if resp.status_code >= 400:
         return {"ok": False, "error": f"Figma API 오류 ({resp.status_code})."}
 

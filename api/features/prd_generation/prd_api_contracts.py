@@ -66,7 +66,10 @@ class AIAssistant(str, Enum):
 class SpecFormat(str, Enum):
     """How per-BC spec markdown is laid out inside the generated package.
 
-    - ``prd``: legacy flat layout — one ``specs/<bc_name>_spec.md`` per BC.
+    - ``prd``: per-BC folder layout — ``specs/<bc_name>/index.md`` per BC,
+      auto-split into per-aggregate or per-command files when the BC's
+      monolithic spec exceeds ``BC_SPEC_SPLIT_LINE_THRESHOLD`` (800 lines
+      by default).
     - ``ddd``: the "DDD for SDD" artifact set from feature 022 —
       ``specs/bounded-contexts/<bc-slug>/{domain-terms,bc-<slug>,aggregates/aggregate-*,acl-*,requirements}.md``
       plus ``specs/context-map.md``. Generated via ``api.features.ddd_spec``.
