@@ -21,11 +21,7 @@ const props = defineProps({
 const emit = defineEmits(['update:activeTab'])
 
 // 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 App.vue tabComponents 에 유지).
-const tabs = ['Requirements', 'BPMN', 'Event Modeling', 'Design', 'Aggregate']
-
-function selectTab(tab) {
-  emit('update:activeTab', tab)
-}
+const tabs = ['Requirements', 'Process', 'Event Modeling', 'Design', 'Aggregate', 'Code']
 
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()
@@ -36,6 +32,26 @@ const showIngestionModal = ref(false)
 const showPRDModal = ref(false)
 const showFigmaBindingModal = ref(false)
 const showSettingsPanel = ref(false)
+
+// ClaudeCodeWorkspace 가 workspace root 를 저장하는 키와 동일.
+// Code 탭 첫 진입(=프로젝트 홈 미생성) 시 PRD 생성 모달을 띄워 홈 생성을 유도하는 데 사용.
+const CODE_WORKSPACE_ROOT_KEY = 'claude_code_workspace_root'
+
+function hasProjectHome() {
+  try {
+    return !!localStorage.getItem(CODE_WORKSPACE_ROOT_KEY)
+  } catch {
+    return false
+  }
+}
+
+function selectTab(tab) {
+  if (tab === 'Code' && !hasProjectHome()) {
+    showPRDModal.value = true
+    return
+  }
+  emit('update:activeTab', tab)
+}
 
 function handleIngestionComplete() {
   // Modal will trigger navigator refresh
@@ -68,8 +84,8 @@ function handleIngestionComplete() {
     </div>
     
     <div class="top-bar__center">
-      <!-- BPMN Panel Status -->
-      <div v-if="activeTab === 'BPMN'" class="top-bar__status">
+      <!-- Process Panel Status -->
+      <div v-if="activeTab === 'Process'" class="top-bar__status">
         <span><strong>{{ bpmnStore.renderedFlows.length }}</strong> flows</span>
         <span class="top-bar__status-dot">•</span>
         <span><strong>{{ bpmnStore.processFlows.length }}</strong> available</span>
@@ -141,20 +157,6 @@ function handleIngestionComplete() {
 
       <!-- Figma Binding Button (feature 016) -->
       <FigmaButton v-model="showFigmaBindingModal" />
-
-      <!-- Claude Code Button -->
-      <button
-        class="claude-code-btn"
-        :class="{ 'is-active': activeTab === 'Claude Code' }"
-        @click="selectTab('Claude Code')"
-        title="Claude Code 워크스페이스 열기"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="4 17 10 11 4 5"></polyline>
-          <line x1="12" y1="19" x2="20" y2="19"></line>
-        </svg>
-        <span>Claude Code</span>
-      </button>
 
       <!-- Settings Button -->
         <button 
@@ -337,35 +339,6 @@ function handleIngestionComplete() {
 
 .upload-btn:active {
   transform: translateY(0);
-}
-
-/* Claude Code Button */
-.claude-code-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: linear-gradient(135deg, #1a1b26 0%, #292e42 100%);
-  border: 1px solid #414868;
-  border-radius: 4px;
-  color: #bb9af7;
-  font-size: 0.7rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
-}
-
-.claude-code-btn:hover:not(.is-active) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(187, 154, 247, 0.3);
-  border-color: #bb9af7;
-}
-
-.claude-code-btn.is-active {
-  background: linear-gradient(135deg, #bb9af7 0%, #7c3aed 100%);
-  color: white;
-  border-color: transparent;
-  box-shadow: 0 2px 8px rgba(187, 154, 247, 0.4);
 }
 
 /* PRD Generator Button */

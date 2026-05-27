@@ -19,7 +19,7 @@ const emStore = useEventModelingStore()
 useDataRefresh(() => handleRefresh())
 
 const activeTab = inject('activeTab', ref('Design'))
-const isBpmnMode = computed(() => activeTab.value === 'BPMN')
+const isBpmnMode = computed(() => activeTab.value === 'Process')
 const isEventModelingMode = computed(() => activeTab.value === 'Event Modeling')
 const expandedProcesses = ref(new Set())
 // Hybrid Process tree expand/collapse — separate state from Event Modeling.

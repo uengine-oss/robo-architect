@@ -208,13 +208,13 @@ let switchingAway = false
 watch(
   () => (activeTab ? activeTab.value : null),
   async (newTab, oldTab) => {
-    if (oldTab === 'Claude Code' && newTab !== 'Claude Code' && isDirty()) {
+    if (oldTab === 'Code' && newTab !== 'Code' && isDirty()) {
       if (switchingAway) return
       switchingAway = true
       try {
-        const decision = await confirmDiscardOrSave('Claude Code 워크스페이스를 떠나려고 합니다.')
+        const decision = await confirmDiscardOrSave('Code 워크스페이스를 떠나려고 합니다.')
         if (decision === 'cancel' && activeTab) {
-          activeTab.value = 'Claude Code'  // Snap back.
+          activeTab.value = 'Code'  // Snap back.
         }
       } finally {
         switchingAway = false

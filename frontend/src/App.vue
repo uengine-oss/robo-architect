@@ -28,19 +28,19 @@ const claudeCodeWorkdir = ref('')
 provide('activeTab', activeTab)
 provide('openClaudeCode', (workdir) => {
   claudeCodeWorkdir.value = workdir || ''
-  activeTab.value = 'Claude Code'
+  activeTab.value = 'Code'
 })
 
 // Map tab names to components
-// BPMN 탭은 UI에서 제거됨 (BpmnPanel 컴포넌트·기능은 코드에 유지).
+// 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 tabComponents 에 유지).
 const tabComponents = {
   'Requirements': markRaw(RequirementsPanel),
-  'BPMN': markRaw(BpmnPanel),
+  'Process': markRaw(BpmnPanel),
   'Event Modeling': markRaw(EventModelingPanel),
   'Big picture': markRaw(BigPicturePanel),
   'Design': markRaw(CanvasWorkspace),
   'Aggregate': markRaw(AggregatePanel),
-  'Claude Code': markRaw(ClaudeCodeWorkspace)
+  'Code': markRaw(ClaudeCodeWorkspace)
 }
 
 // Cross-component tab switching (HybridEventStormingPanel → Event Modeling)
@@ -160,7 +160,7 @@ onUnmounted(() => {
       @update:active-tab="activeTab = $event"
     />
     <div class="main-content">
-      <template v-if="activeTab !== 'Claude Code' && activeTab !== 'Requirements'">
+      <template v-if="activeTab !== 'Code' && activeTab !== 'Requirements'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"
@@ -196,7 +196,7 @@ onUnmounted(() => {
           <component
             :is="currentComponent"
             :key="activeTab"
-            v-bind="activeTab === 'Claude Code' ? { workdir: claudeCodeWorkdir } : {}"
+            v-bind="activeTab === 'Code' ? { workdir: claudeCodeWorkdir } : {}"
           />
         </KeepAlive>
       </div>

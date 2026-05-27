@@ -649,8 +649,8 @@ async function startHybridIngestion() {
     saveSessionToStorage(session_id)
     isOpen.value = false
 
-    // 4) Switch to the BPMN tab so the canvas is visible while Phase 1 streams.
-    activeTab.value = 'BPMN'
+    // 4) Switch to the Process tab so the canvas is visible while Phase 1 streams.
+    activeTab.value = 'Process'
 
     connectToHybridStream(session_id)
   } catch (e) {
