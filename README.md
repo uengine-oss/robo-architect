@@ -158,6 +158,24 @@ npm run dev
 - `GET /api/requirements/user-story/{id}/design-trace`
 - `GET /api/requirements/impact-report/{report_id}`
 
+##### 요구사항 명확화 (Requirements Clarification, spec 030)
+LangChain 딥 에이전트가 SpecKit `clarify` 분류 체계로 추출된 요구사항을 스캔해
+우선순위 질문 큐(≤5)를 만들고, 사용자의 답변을 영향받는 UserStory의 편집안으로
+인코딩한다. `/answer`는 제안만(그래프 무변경), `/apply`만 그래프에 반영하며 기존
+임팩트 분석 트리거를 승계한다. 명확화 로그는 신규 노드 라벨 없이
+`UserStory.clarifications` 속성에 영구 보관된다.
+
+대표 API:
+- `POST /api/requirements/clarification/sessions` (세션 시작)
+- `GET /api/requirements/clarification/sessions/{id}` (스냅샷/재접속)
+- `GET /api/requirements/clarification/sessions/{id}/stream` (SSE 진척)
+- `POST /api/requirements/clarification/sessions/{id}/answer` (편집 제안)
+- `POST /api/requirements/clarification/sessions/{id}/apply` (편집 반영)
+- `POST /api/requirements/clarification/sessions/{id}/end` (세션 종료 + 요약)
+- `GET /api/requirements/clarification/sessions/{id}/summary` (종료 요약)
+- `POST /api/requirements/clarification/sessions/{id}/revert` (개별 변경 되돌리기)
+- `GET /api/requirements/clarification/log?scopeType=&scopeId=` (영구 로그 조회)
+
 #### 어그리거트 인베리언트 (Aggregate Invariants, spec 027)
 
 어그리거트 하위 1급 객체 `Invariant`. 디자인 트리에서 드릴다운하여 선언문과 세부

@@ -176,6 +176,6 @@ class ImpactFinding(BaseModel):
 class ImpactReportDTO(BaseModel):
     id: str
     status: Literal["running", "done", "failed"] = "running"
-    trigger: Literal["add", "delete", "move"] = "add"
+    trigger: Literal["add", "delete", "move", "edit"] = "add"
     findings: list[ImpactFinding] = Field(default_factory=list)
     createdAt: Optional[str] = None

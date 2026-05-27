@@ -18,7 +18,11 @@ import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
 const store = useRequirementsStore()
 
 // Reload the requirements tree whenever an ingestion completes or data is cleared.
-useDataRefresh(() => store.fetchTree())
+useDataRefresh(() => {
+  store.fetchTree()
+  store.fetchClarificationFlags()
+  store.fetchClarityScores()
+})
 
 const showAddDialog = ref(false)
 const showIngestionModal = ref(false)
@@ -54,6 +58,8 @@ function stopResizeInspector() {
 
 onMounted(() => {
   store.fetchTree()
+  store.fetchClarificationFlags()
+  store.fetchClarityScores()
   try {
     const v = Number(localStorage.getItem('requirements_inspector_width'))
     if (Number.isFinite(v) && v >= 280) inspectorWidth.value = v
@@ -118,6 +124,18 @@ async function onClearData() {
 function onIngestionComplete() {
   store.fetchTree()
 }
+
+// ── Clarification (spec 030) ───────────────────────────────────────────
+// Scope-level (Project / BoundedContext / Feature) clarification: kick a
+// session and surface its flags as tree badges. Per-UserStory clarification
+// lives inside UserStoryDetail's "명확화" tab — no overlay needed here.
+async function onClarifyScope({ scopeType, scopeId }) {
+  try {
+    await store.startClarification(scopeType, scopeId)
+  } catch (e) {
+    window.alert(`요구사항 명확화 시작 실패: ${e?.message || e}`)
+  }
+}
 </script>
 
 <template>
@@ -126,6 +144,10 @@ function onIngestionComplete() {
       <span class="req-toolbar__title">Requirements</span>
       <button class="tb-btn tb-btn--primary" @click="showAddDialog = true">+ 요구사항 추가</button>
       <button class="tb-btn" @click="showIngestionModal = true">문서 업로드</button>
+      <button
+        class="tb-btn"
+        @click="onClarifyScope({ scopeType: 'project', scopeId: '*' })"
+      >🔍 요구사항 명확화 (전체)</button>
       <button class="tb-btn tb-btn--danger" @click="onClearData">데이터 삭제</button>
       <span v-if="store.loading" class="req-toolbar__status">불러오는 중...</span>
       <span v-else-if="store.error" class="req-toolbar__status error">{{ store.error }}</span>
@@ -140,6 +162,7 @@ function onIngestionComplete() {
           @move="onMove"
           @delete-feature="onDeleteFeature"
           @delete-user-story="onDeleteUserStory"
+          @clarify-scope="onClarifyScope"
         />
       </div>
 

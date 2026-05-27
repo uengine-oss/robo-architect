@@ -1,16 +1,21 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRequirementsStore } from '@/features/requirements/requirements.store'
+import ClarificationPanel from './ClarificationPanel.vue'
+import ClarityRadar from './ClarityRadar.vue'
 
 const props = defineProps({
   userStory: { type: Object, default: null },
 })
+
+const store = useRequirementsStore()
 
 const kindLabel = { given: 'Given', when: 'When', then: 'Then' }
 
 const hasStory = computed(() => !!props.userStory)
 const criteria = computed(() => props.userStory?.acceptanceCriteria || [])
 
-// Source business rules (hybrid US only — empty for rfp/figma)
+// ── Source business rules (hybrid US only — empty for rfp/figma) ─────
 const sourceRules = ref([])
 
 async function fetchSourceRules(usId) {
@@ -31,71 +36,188 @@ async function fetchSourceRules(usId) {
   }
 }
 
+// ── Tabs (spec 030) ─────────────────────────────────────────────────
+// "overview" = the existing detail view; "clarification" = the new
+// per-UserStory clarification surface that lives inside this panel.
+const activeTab = ref('overview')
+
+const ambiguityFlag = computed(() => {
+  const id = props.userStory?.id
+  if (!id) return null
+  return store.clarificationFlags[id] || null
+})
+
+// When the user opens a new story, reset to overview unless the new story
+// is flagged — then jump straight to the clarification tab so the user
+// sees the "needs attention" surface immediately.
 watch(() => props.userStory?.id, (id) => {
-  if (id) fetchSourceRules(id)
-  else sourceRules.value = []
+  if (id) {
+    fetchSourceRules(id)
+    if (store.clarificationFlags[id]) {
+      onSelectTab('clarification')
+    } else {
+      activeTab.value = 'overview'
+    }
+  } else {
+    sourceRules.value = []
+    activeTab.value = 'overview'
+  }
 }, { immediate: true })
+
+// The clarification tab is "live" for the current user story even when no
+// session has started yet — selecting the tab fires a single-story session
+// the first time (or re-uses an existing one for this scope).
+const isCurrentSession = computed(() => {
+  const sess = store.clarificationSession
+  const id = props.userStory?.id
+  return !!(sess && id && sess.scope?.scopeType === 'user_story' && sess.scope?.scopeId === id)
+})
+
+async function startClarificationHere() {
+  if (!props.userStory?.id) return
+  if (isCurrentSession.value) return
+  try {
+    await store.startClarification('user_story', props.userStory.id)
+  } catch (e) {
+    window.alert(`명확화 시작 실패: ${e?.message || e}`)
+  }
+}
+
+function onSelectTab(name) {
+  activeTab.value = name
+  if (name === 'clarification' && props.userStory?.id && !isCurrentSession.value) {
+    startClarificationHere()
+  }
+}
 </script>
 
 <template>
   <div class="us-detail">
     <div v-if="!hasStory" class="us-detail__empty">
-      왼쪽 트리에서 User Story를 선택하세요.
+      <p class="us-detail__empty-hint">왼쪽 트리에서 User Story를 선택하세요.</p>
+      <ClarityRadar v-if="store.clarityScores" :scores="store.clarityScores" />
     </div>
     <template v-else>
-      <div class="us-detail__statement">
-        <span class="frag frag--role">As a {{ userStory.role || '사용자' }}</span>
-        <span class="frag frag--action">I want {{ userStory.action }}</span>
-        <span v-if="userStory.benefit" class="frag frag--benefit">so that {{ userStory.benefit }}</span>
+      <!-- Tab bar (spec 030) ─────────────────────────────────────── -->
+      <div class="us-tabs">
+        <button
+          class="us-tab"
+          :class="{ 'is-active': activeTab === 'overview' }"
+          @click="onSelectTab('overview')"
+        >개요</button>
+        <button
+          class="us-tab"
+          :class="{ 'is-active': activeTab === 'clarification' }"
+          @click="onSelectTab('clarification')"
+        >
+          명확화
+          <span v-if="ambiguityFlag" class="tab-badge" :title="ambiguityFlag.categories.join(', ')">
+            ❓ {{ (ambiguityFlag.questionIds || []).length }}
+          </span>
+        </button>
       </div>
 
-      <div class="us-detail__meta">
-        <span class="badge">우선순위: {{ userStory.priority || 'medium' }}</span>
-        <span class="badge">상태: {{ userStory.status || 'draft' }}</span>
-        <span v-if="userStory.commandName" class="badge badge--cmd">
-          Command: {{ userStory.commandName }}
-        </span>
-      </div>
-
-      <div v-if="sourceRules.length > 0" class="source-rules">
-        <div class="source-rules__title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-            <polyline points="14 2 14 8 20 8"></polyline>
-            <line x1="16" y1="13" x2="8" y2="13"></line>
-            <line x1="16" y1="17" x2="8" y2="17"></line>
-          </svg>
-          Source Business Rules ({{ sourceRules.length }})
+      <!-- Overview tab ──────────────────────────────────────────── -->
+      <div v-if="activeTab === 'overview'" class="us-tab-body">
+        <div class="us-detail__statement">
+          <span class="frag frag--role">As a {{ userStory.role || '사용자' }}</span>
+          <span class="frag frag--action">I want {{ userStory.action }}</span>
+          <span v-if="userStory.benefit" class="frag frag--benefit">so that {{ userStory.benefit }}</span>
         </div>
-        <ul class="source-rules__list">
-          <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item">
-            <span v-if="rule.local_id" class="source-rule-seq">{{ rule.local_id }}</span>
-            <span class="source-rule-stmt">{{ rule.statement }}</span>
-            <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>
-          </li>
-        </ul>
+
+        <div class="us-detail__meta">
+          <span class="badge">우선순위: {{ userStory.priority || 'medium' }}</span>
+          <span class="badge">상태: {{ userStory.status || 'draft' }}</span>
+          <span v-if="userStory.commandName" class="badge badge--cmd">
+            Command: {{ userStory.commandName }}
+          </span>
+        </div>
+
+        <div v-if="sourceRules.length > 0" class="source-rules">
+          <div class="source-rules__title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            Source Business Rules ({{ sourceRules.length }})
+          </div>
+          <ul class="source-rules__list">
+            <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item">
+              <span v-if="rule.local_id" class="source-rule-seq">{{ rule.local_id }}</span>
+              <span class="source-rule-stmt">{{ rule.statement }}</span>
+              <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>
+            </li>
+          </ul>
+        </div>
+
+        <div class="us-detail__criteria">
+          <h4>인수조건 (Acceptance Criteria)</h4>
+          <p v-if="!criteria.length" class="us-detail__no-criteria">
+            {{ userStory.commandId ? '인수조건 없음' : '연결된 Command가 없어 인수조건을 표시할 수 없습니다.' }}
+          </p>
+          <ul v-else>
+            <li v-for="(c, i) in criteria" :key="i">
+              <span class="gwt-kind" :class="`gwt-kind--${c.kind}`">{{ kindLabel[c.kind] }}</span>
+              <span class="gwt-name">{{ c.name }}</span>
+              <span v-if="c.description" class="gwt-desc">— {{ c.description }}</span>
+            </li>
+          </ul>
+        </div>
       </div>
 
-      <div class="us-detail__criteria">
-        <h4>인수조건 (Acceptance Criteria)</h4>
-        <p v-if="!criteria.length" class="us-detail__no-criteria">
-          {{ userStory.commandId ? '인수조건 없음' : '연결된 Command가 없어 인수조건을 표시할 수 없습니다.' }}
-        </p>
-        <ul v-else>
-          <li v-for="(c, i) in criteria" :key="i">
-            <span class="gwt-kind" :class="`gwt-kind--${c.kind}`">{{ kindLabel[c.kind] }}</span>
-            <span class="gwt-name">{{ c.name }}</span>
-            <span v-if="c.description" class="gwt-desc">— {{ c.description }}</span>
-          </li>
-        </ul>
+      <!-- Clarification tab (spec 030) ─────────────────────────── -->
+      <div v-else-if="activeTab === 'clarification'" class="us-tab-body us-tab-body--clarification">
+        <ClarificationPanel embedded />
       </div>
     </template>
   </div>
 </template>
 
 <style scoped>
-.us-detail { padding: 16px; overflow-y: auto; }
-.us-detail__empty { color: var(--color-text-light); font-size: 0.85rem; padding: 24px 0; }
+.us-detail { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.us-detail__empty {
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+  color: var(--color-text-light); font-size: 0.85rem; padding: 16px;
+  overflow-y: auto;
+}
+.us-detail__empty-hint { margin: 0; padding-top: 8px; }
+
+/* Tab bar */
+.us-tabs {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 12px 0; flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.us-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px;
+  font-size: 0.78rem; font-weight: 600;
+  background: transparent; border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-light); cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+.us-tab:hover { color: var(--color-text); }
+.us-tab.is-active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent, #228be6);
+  background: var(--color-bg-tertiary);
+}
+.tab-badge {
+  font-size: 0.66rem; padding: 1px 6px; border-radius: 4px;
+  background: rgba(255, 196, 0, 0.25); color: #8a6500;
+}
+
+.us-tab-body {
+  flex: 1; overflow-y: auto;
+  padding: 16px;
+}
+.us-tab-body--clarification {
+  padding: 8px;
+}
+
 .us-detail__statement {
   display: flex; flex-direction: column; gap: 4px;
   padding: 14px; border-radius: 8px; background: var(--color-bg-tertiary);

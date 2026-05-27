@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from .routes.clarification import router as clarification_router
 from .routes.design_trace import router as design_trace_router
 from .routes.feature_crud import router as feature_crud_router
 from .routes.impact_report import router as impact_report_router
@@ -24,3 +25,4 @@ router.include_router(feature_crud_router)
 router.include_router(user_story_crud_router)
 router.include_router(design_trace_router)
 router.include_router(impact_report_router)
+router.include_router(clarification_router)

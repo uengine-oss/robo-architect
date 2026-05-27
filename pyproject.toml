@@ -21,7 +21,8 @@ dependencies = [
     "langchain-google-genai>=0.2.0",
     "langgraph>=0.2.0",
     "langgraph-checkpoint>=2.0.0",
-    
+    "deepagents>=0.1.0",
+
     # FastAPI (for future API server)
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",

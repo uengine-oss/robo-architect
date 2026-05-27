@@ -1,18 +1,38 @@
 <script setup>
 import { ref } from 'vue'
+import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
 /**
  * Requirements tree (026 — US1/US4): Epic → Feature → UserStory → AcceptanceCriteria.
  * Supports drag-n-drop of user stories between features and delete actions.
+ *
+ * Spec 030 — UserStory rows that the clarification agent flagged as
+ * ambiguous show a yellow ❓N badge. Clicking the row selects the story
+ * and opens its detail panel where the "명확화" tab takes over.
  */
 const props = defineProps({
   tree: { type: Object, default: () => ({ epics: [], unassigned: [] }) },
   selectedId: { type: String, default: null },
 })
-const emit = defineEmits(['select', 'move', 'delete-feature', 'delete-user-story'])
+const emit = defineEmits([
+  'select',
+  'move',
+  'delete-feature',
+  'delete-user-story',
+  'clarify-scope',
+])
+
+const store = useRequirementsStore()
 
 const expanded = ref(new Set())
 const dragOverFeature = ref(null)
+
+function ambiguityInfo(usId) {
+  const f = store.clarificationFlags[usId]
+  if (!f) return null
+  const cats = (f.categories || []).filter(Boolean)
+  return { count: (f.questionIds || []).length, categories: cats }
+}
 
 function key(prefix, id) {
   return `${prefix}:${id}`
@@ -48,6 +68,11 @@ function onDrop(evt, featureId) {
         <span class="caret">{{ isOpen(key('epic', epic.id)) ? '▾' : '▸' }}</span>
         <span class="node-icon epic">EPIC</span>
         <span class="node-label">{{ epic.name }}</span>
+        <button
+          class="clarify-btn"
+          title="요구사항 명확화"
+          @click.stop="emit('clarify-scope', { scopeType: 'bounded_context', scopeId: epic.id, scopeName: epic.name })"
+        >🔍</button>
       </div>
 
       <div v-if="isOpen(key('epic', epic.id))" class="tree-children">
@@ -69,6 +94,12 @@ function onDrop(evt, featureId) {
               <span class="node-label">{{ feature.name }}</span>
               <button
                 v-if="isRealFeature(feature.id)"
+                class="clarify-btn"
+                title="요구사항 명확화"
+                @click.stop="emit('clarify-scope', { scopeType: 'feature', scopeId: feature.id, scopeName: feature.name })"
+              >🔍</button>
+              <button
+                v-if="isRealFeature(feature.id)"
                 class="del-btn"
                 title="Feature 삭제"
                 @click.stop="emit('delete-feature', feature)"
@@ -85,7 +116,7 @@ function onDrop(evt, featureId) {
               >
                 <div
                   class="tree-row us-row"
-                  :class="{ 'is-selected': selectedId === us.id }"
+                  :class="{ 'is-selected': selectedId === us.id, 'has-ambiguity': ambiguityInfo(us.id) }"
                   @click="emit('select', us.id)"
                 >
                   <span
@@ -94,6 +125,11 @@ function onDrop(evt, featureId) {
                   >{{ isOpen(key('us', us.id)) ? '▾' : '▸' }}</span>
                   <span class="node-icon us">US</span>
                   <span class="node-label">{{ us.role }}: {{ us.action }}</span>
+                  <span
+                    v-if="ambiguityInfo(us.id)"
+                    class="ambig-badge"
+                    :title="`명확화 필요 — ${ambiguityInfo(us.id).count}개 질문 (${ambiguityInfo(us.id).categories.join(', ')})`"
+                  >❓ {{ ambiguityInfo(us.id).count }}</span>
                   <button
                     class="del-btn"
                     title="User Story 삭제"
@@ -139,13 +175,18 @@ function onDrop(evt, featureId) {
           v-for="us in tree.unassigned"
           :key="us.id"
           class="tree-row us-row"
-          :class="{ 'is-selected': selectedId === us.id }"
+          :class="{ 'is-selected': selectedId === us.id, 'has-ambiguity': ambiguityInfo(us.id) }"
           draggable="true"
           @dragstart="onDragStart($event, us.id)"
           @click="emit('select', us.id)"
         >
           <span class="node-icon us">US</span>
           <span class="node-label">{{ us.role }}: {{ us.action }}</span>
+          <span
+            v-if="ambiguityInfo(us.id)"
+            class="ambig-badge"
+            :title="`명확화 필요 — ${ambiguityInfo(us.id).count}개 질문`"
+          >❓ {{ ambiguityInfo(us.id).count }}</span>
         </div>
       </div>
     </div>
@@ -182,7 +223,23 @@ function onDrop(evt, featureId) {
   color: var(--color-text-light); font-size: 0.9rem; padding: 0 4px;
 }
 .del-btn:hover { color: #e03131; }
+.clarify-btn {
+  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  color: var(--color-text-light); font-size: 0.8rem; padding: 0 4px;
+}
+.clarify-btn:hover { color: var(--color-accent, #228be6); }
+.clarify-btn + .del-btn { margin-left: 0; }
 .empty-row, .ac-row.empty { color: var(--color-text-light); font-style: italic; padding-left: 18px; }
 .tree-node--feature.drag-over { outline: 2px dashed var(--color-accent); border-radius: 4px; }
 .tree-node--us[draggable='true'] { cursor: grab; }
+
+/* spec 030 — ambiguity badge */
+.us-row.has-ambiguity {
+  background: linear-gradient(90deg, rgba(255, 196, 0, 0.10), transparent 60%);
+}
+.ambig-badge {
+  font-size: 0.66rem; padding: 1px 6px; border-radius: 4px;
+  background: rgba(255, 196, 0, 0.25); color: #8a6500;
+  margin-left: 4px; cursor: help; white-space: nowrap;
+}
 </style>
