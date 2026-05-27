@@ -1414,12 +1414,11 @@ watch(activeTab, (tab) => {
 }, { immediate: true })
 
 const hasFigmaConnection = computed(() => {
-  // Show pull button if figmaNodeId exists OR figma creds are configured
-  if (node.value?.data?.figmaNodeId) return true
-  try {
-    const creds = JSON.parse(localStorage.getItem('figma_api_creds') || '{}')
-    return !!(creds.apiToken && creds.fileKey)
-  } catch (_e) { return false }
+  // The REST-API-token path is being retired in favour of the Figma plugin,
+  // so we no longer treat localStorage credentials as a "connection". Pull
+  // is only meaningful when the node already carries a figmaNodeId — and
+  // even then it's wired to a button that's currently hidden (see template).
+  return !!node.value?.data?.figmaNodeId
 })
 
 // ── Figma Sync (pull/push) ──
@@ -3346,7 +3345,11 @@ function updateVoFieldValue(fieldName, value) {
             <div v-if="node.data?.figmaNodeId" class="ui-preview-panel__attached" style="margin-top:4px;">
               <span class="label">Figma:</span>
               <span class="value" style="font-family:monospace;font-size:11px;">{{ node.data.figmaNodeId }}</span>
+              <!-- Pull from Figma uses REST API token (figma_api_creds.apiToken),
+                   which the new plugin-only flow no longer issues. The button
+                   is hidden until the plugin push path replaces it. -->
               <button
+                v-if="false"
                 class="ui-preview-panel__btn"
                 style="margin-left:8px;width:24px;height:24px;"
                 :disabled="figmaSyncPulling"

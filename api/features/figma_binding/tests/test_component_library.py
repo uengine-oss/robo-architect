@@ -1,8 +1,8 @@
-"""Unit tests for spec 024 figma_binding.component_library.
+"""Unit tests for figma_binding.component_library (plugin-pushed scan).
 
-Focus: the synchronous orchestrator that walks the Figma file, persists
-:FigmaComponent rows, and surfaces a catalog string for prompt injection.
-Network and VLM are mocked; Neo4j repo is patched at module boundary.
+REST + API-token path was retired — the Figma plugin walks the document and
+ships pre-rendered PNGs to the backend, so these tests exercise the
+``components`` payload directly. VLM and Neo4j repo are mocked.
 """
 from __future__ import annotations
 
@@ -23,54 +23,13 @@ def _fake_binding(file_key: str = "abc123") -> dict:
     }
 
 
-# ─── _flatten_components ──────────────────────────────────────────────────
+def _png_b64() -> str:
+    # Smallest valid PNG (1x1 transparent) — content doesn't matter, the
+    # tests mock the VLM call. Just need *something* truthy in pngBase64.
+    return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
 
-def test_flatten_components_collects_component_and_set_only():
-    page = {
-        "type": "CANVAS",
-        "name": "Library",
-        "children": [
-            {
-                "type": "COMPONENT",
-                "id": "1:1",
-                "name": "btn-primary",
-                "absoluteBoundingBox": {"width": 120, "height": 40},
-            },
-            {
-                "type": "COMPONENT_SET",
-                "id": "1:2",
-                "name": "card",
-                "absoluteBoundingBox": {"width": 320, "height": 180},
-                "children": [
-                    # Variant child should NOT appear (we don't descend into sets).
-                    {"type": "COMPONENT", "id": "1:3", "name": "card/active"}
-                ],
-            },
-            {
-                "type": "FRAME",
-                "id": "1:4",
-                "name": "some-frame",
-                "children": [
-                    {
-                        "type": "COMPONENT",
-                        "id": "1:5",
-                        "name": "deeply-nested",
-                        "absoluteBoundingBox": {"width": 50, "height": 50},
-                    }
-                ],
-            },
-        ],
-    }
-    out: list[dict] = []
-    for child in page["children"]:
-        component_library._flatten_components(child, "Library", out)
-    names = sorted(c["name"] for c in out)
-    # card variant excluded; nested COMPONENT inside a FRAME included.
-    assert names == ["btn-primary", "card", "deeply-nested"]
-
-
-# ─── get_catalog_for_prompt ────────────────────────────────────────────────
+# ─── get_catalog_for_prompt (unchanged) ────────────────────────────────────
 
 
 def test_get_catalog_for_prompt_empty_when_no_rows():
@@ -81,41 +40,20 @@ def test_get_catalog_for_prompt_empty_when_no_rows():
 
 def test_get_catalog_for_prompt_formats_by_page():
     rows = [
-        {
-            "name": "btn-primary",
-            "pageName": "Components",
-            "widthPx": 120,
-            "heightPx": 40,
-            "vlmDescription": "Primary action button.",
-        },
-        {
-            "name": "card",
-            "pageName": "Components",
-            "widthPx": 320,
-            "heightPx": 180,
-            "vlmDescription": "",  # no description
-        },
-        {
-            "name": "header",
-            "pageName": "Headers",
-            "widthPx": 375,
-            "heightPx": 56,
-            "vlmDescription": "Top bar with title.",
-        },
+        {"name": "btn-primary", "pageName": "Components", "widthPx": 120, "heightPx": 40, "vlmDescription": "Primary action button."},
+        {"name": "card", "pageName": "Components", "widthPx": 320, "heightPx": 180, "vlmDescription": ""},
+        {"name": "header", "pageName": "Headers", "widthPx": 375, "heightPx": 56, "vlmDescription": "Top bar with title."},
     ]
     with patch.object(component_library, "repository") as repo:
         repo.list_figma_components.return_value = rows
         catalog = component_library.get_catalog_for_prompt()
-    assert "Components" in catalog
-    assert "Headers" in catalog
-    assert "btn-primary" in catalog
+    assert "Components" in catalog and "Headers" in catalog
+    assert "btn-primary" in catalog and "header" in catalog
     assert "Primary action button." in catalog
     assert "(no description)" in catalog
-    # name should appear (case sensitivity is per-prompt instruction, not the row).
-    assert "header" in catalog
 
 
-# ─── build_name_to_node_index / get_figma_node_id_by_name ───────────────────
+# ─── build_name_to_node_index / get_figma_node_id_by_name (unchanged) ─────
 
 
 def test_name_to_node_index_lowercases_and_includes_size():
@@ -138,17 +76,13 @@ def test_get_figma_node_id_by_name_exact_and_substring():
     ]
     with patch.object(component_library, "repository") as repo:
         repo.list_figma_components.return_value = rows
-        # Exact (case-insensitive).
         assert component_library.get_figma_node_id_by_name("Btn-Main-Task") == "9:1"
-        # Substring.
         assert component_library.get_figma_node_id_by_name("input-search") == "9:2"
-        # Miss.
         assert component_library.get_figma_node_id_by_name("nonexistent") is None
-        # Empty.
         assert component_library.get_figma_node_id_by_name("") is None
 
 
-# ─── scan_components: 404 when no binding ──────────────────────────────────
+# ─── scan_components (plugin-pushed) ───────────────────────────────────────
 
 
 def test_scan_components_requires_active_binding():
@@ -157,23 +91,21 @@ def test_scan_components_requires_active_binding():
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as ei:
             asyncio.run(
-                component_library.scan_components(api_token="x", actor="tester")
+                component_library.scan_components(components=[], actor="tester")
             )
         assert ei.value.status_code == 404
 
 
-# ─── scan_components: happy path with mocked deps ──────────────────────────
-
-
-def test_scan_components_happy_path():
+def test_scan_components_happy_path_plugin_payload():
     binding = _fake_binding("file-1")
-    components_from_figma = [
+    pushed = [
         {
             "figmaNodeId": "1:1",
             "name": "btn-primary",
             "pageName": "Components",
             "widthPx": 120,
             "heightPx": 40,
+            "pngBase64": _png_b64(),
         },
         {
             "figmaNodeId": "1:2",
@@ -181,9 +113,9 @@ def test_scan_components_happy_path():
             "pageName": "Components",
             "widthPx": 320,
             "heightPx": 180,
+            "pngBase64": _png_b64(),
         },
     ]
-    image_map = {"1:1": "https://figma-image/1.png", "1:2": "https://figma-image/2.png"}
     described = {"1:1": "A primary call-to-action button.", "1:2": ""}
 
     upsert_calls: list[dict] = []
@@ -198,10 +130,6 @@ def test_scan_components_happy_path():
         return 0
 
     with patch.object(component_library, "repository") as repo, \
-         patch.object(component_library, "_fetch_component_nodes",
-                      new=AsyncMock(return_value=components_from_figma)), \
-         patch.object(component_library, "_fetch_thumbnails",
-                      new=AsyncMock(return_value=image_map)), \
          patch.object(component_library, "component_vlm") as vlm:
         repo.get_active_binding.return_value = binding
         repo.list_figma_components.return_value = []
@@ -209,11 +137,10 @@ def test_scan_components_happy_path():
         repo.delete_stale_figma_components.side_effect = _delete_stale
         repo.count_figma_components.return_value = 2
         vlm.describe_components = AsyncMock(return_value=described)
-        # Reset the module-level scan-lock from a prior test that may have hit a fault.
         component_library._scan_in_flight = False
 
         out = asyncio.run(
-            component_library.scan_components(api_token="x", actor="tester")
+            component_library.scan_components(components=pushed, actor="tester")
         )
 
     assert out["scanned"] == 2
@@ -222,16 +149,44 @@ def test_scan_components_happy_path():
     assert out["componentCount"] == 2
     assert out["vlmDescribed"] == 1
     assert out["vlmFailures"] == 1
-    # delete_stale received both kept ids.
     assert sorted(delete_calls[0]) == ["1:1", "1:2"]
-    # upsert called once per component with the described value (empty for the second).
     descs = {c["figma_node_id"]: c["vlm_description"] for c in upsert_calls}
     assert descs["1:1"].startswith("A primary")
     assert descs["1:2"] == ""
+    # VLM was handed data: URIs, never raw URLs.
+    vlm.describe_components.assert_awaited_once()
+    args = vlm.describe_components.await_args
+    handed_in = list(args.args[0]) if args.args else list(args.kwargs.get("inputs") or [])
+    assert all(url.startswith("data:image/png;base64,") for _, _, url in handed_in)
+
+
+def test_scan_components_skips_items_without_png():
+    """A plugin-pushed item without pngBase64 still persists as a row but
+    contributes no VLM input (so it falls into vlmFailures)."""
+    binding = _fake_binding("file-1")
+    pushed = [
+        {"figmaNodeId": "1:1", "name": "no-image", "pageName": "P", "widthPx": 1, "heightPx": 1, "pngBase64": ""},
+    ]
+    with patch.object(component_library, "repository") as repo, \
+         patch.object(component_library, "component_vlm") as vlm:
+        repo.get_active_binding.return_value = binding
+        repo.list_figma_components.return_value = []
+        repo.upsert_figma_component.return_value = {}
+        repo.delete_stale_figma_components.return_value = 0
+        repo.count_figma_components.return_value = 1
+        vlm.describe_components = AsyncMock(return_value={})
+        component_library._scan_in_flight = False
+        out = asyncio.run(
+            component_library.scan_components(components=pushed, actor="tester")
+        )
+    assert out["scanned"] == 1
+    assert out["vlmDescribed"] == 0
+    assert out["vlmFailures"] == 1
+    # VLM helper called with an empty input list — caller filters png-less items.
+    vlm.describe_components.assert_not_awaited()
 
 
 def test_scan_components_concurrent_returns_409():
-    """A second scan while one is in-flight should immediately 409."""
     binding = _fake_binding("file-1")
     component_library._scan_in_flight = True
     try:
@@ -240,7 +195,7 @@ def test_scan_components_concurrent_returns_409():
             from fastapi import HTTPException
             with pytest.raises(HTTPException) as ei:
                 asyncio.run(
-                    component_library.scan_components(api_token="x", actor="tester")
+                    component_library.scan_components(components=[], actor="tester")
                 )
             assert ei.value.status_code == 409
     finally:

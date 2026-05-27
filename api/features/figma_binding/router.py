@@ -65,9 +65,9 @@ async def get_binding() -> dict[str, Any]:
 @router.post("/connect", response_model=FigmaBindingResponse)
 async def post_connect(req: ConnectRequest, request: Request) -> dict[str, Any]:
     actor = _actor_from_request(request)
-    return await service.connect_binding(
+    return service.connect_binding(
         figma_file_key=req.figmaFileKey,
-        api_token=req.apiToken,
+        figma_file_name=req.figmaFileName,
         actor=actor,
     )
 
@@ -81,9 +81,9 @@ async def delete_binding(request: Request) -> None:
 @router.post("/replace", response_model=FigmaBindingResponse)
 async def post_replace(req: ConnectRequest, request: Request) -> dict[str, Any]:
     actor = _actor_from_request(request)
-    return await service.replace_binding(
+    return service.replace_binding(
         figma_file_key=req.figmaFileKey,
-        api_token=req.apiToken,
+        figma_file_name=req.figmaFileName,
         actor=actor,
     )
 
@@ -110,11 +110,14 @@ async def post_scan_components(req: ScanComponentsRequest, request: Request) -> 
     actor = _actor_from_request(request)
     SmartLogger.log(
         "INFO",
-        f"figma_binding.components.scan.requested actor={actor}",
+        f"figma_binding.components.scan.requested actor={actor} pushed={len(req.components)}",
         category="figma_binding.components.scan.requested",
-        params={"actor": actor},
+        params={"actor": actor, "pushed": len(req.components)},
     )
-    return await component_library.scan_components(api_token=req.apiToken, actor=actor)
+    return await component_library.scan_components(
+        components=[c.model_dump() for c in req.components],
+        actor=actor,
+    )
 
 
 @router.get("/components", response_model=FigmaComponentsListResponse)

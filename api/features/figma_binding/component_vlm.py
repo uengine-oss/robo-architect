@@ -65,12 +65,16 @@ async def _describe_one(
 ) -> tuple[str, str]:
     """Return (figma_node_id, description). Empty string on any failure."""
     async with sem:
-        downloaded = await _download_image(client, image_url)
-        if not downloaded:
-            return figma_node_id, ""
-
-        body, mime = downloaded
-        data_url = f"data:{mime};base64,{base64.b64encode(body).decode('utf-8')}"
+        if image_url.startswith("data:"):
+            # Plugin-pushed scan (no REST): the caller has already inlined the
+            # PNG bytes as a data URI, so skip the HTTP fetch.
+            data_url = image_url
+        else:
+            downloaded = await _download_image(client, image_url)
+            if not downloaded:
+                return figma_node_id, ""
+            body, mime = downloaded
+            data_url = f"data:{mime};base64,{base64.b64encode(body).decode('utf-8')}"
 
         kwargs: dict = {}
         if _VISION_MODEL_OVERRIDE:

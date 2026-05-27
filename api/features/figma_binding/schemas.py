@@ -31,8 +31,29 @@ class FigmaBindingResponse(BaseModel):
 # ─── 024: Components (bound design-system catalog) ───────────────────────
 
 
+class PluginComponentItem(BaseModel):
+    """One COMPONENT/COMPONENT_SET node captured by the Figma plugin."""
+
+    figmaNodeId: str
+    name: str
+    pageName: str = ""
+    widthPx: int = 0
+    heightPx: int = 0
+    # Base64-encoded PNG bytes (no data-URI prefix). The plugin renders this
+    # via ``node.exportAsync({format: 'PNG'})`` and ships it inline so the
+    # backend never has to call Figma's REST `/v1/images` endpoint.
+    pngBase64: str
+
+
 class ScanComponentsRequest(BaseModel):
-    apiToken: str
+    """Plugin-driven scan payload — no REST API key required.
+
+    The Figma plugin walks ``figma.root.findAll(n => n.type === 'COMPONENT'
+    || n.type === 'COMPONENT_SET')`` and posts each node with its rendered
+    PNG. Replaces the legacy REST path that needed an X-Figma-Token.
+    """
+
+    components: list[PluginComponentItem] = Field(default_factory=list)
 
 
 class ScanComponentsResponse(BaseModel):
@@ -64,8 +85,13 @@ class FigmaComponentsListResponse(BaseModel):
 
 
 class ConnectRequest(BaseModel):
+    """Plugin-pushed binding request. The plugin reads ``figma.fileKey`` and
+    ``figma.root.name`` and ships them to the backend — no REST API key
+    needed because the plugin's mere presence in Figma proves the user has
+    permission to the file."""
+
     figmaFileKey: str
-    apiToken: str
+    figmaFileName: str
 
 
 # ─── Sync storyboards ─────────────────────────────────────────────────────

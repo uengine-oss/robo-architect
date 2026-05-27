@@ -1,29 +1,13 @@
 /**
- * REST + SSE client for /api/figma-binding/* (feature 016).
+ * REST + SSE client for /api/figma-binding/*.
  *
- * Token storage continues to follow spec 009's pattern: the
- * `figma_api_creds` localStorage entry holds `{ token, fileKey }`.
- * We read it for connect/replace; we never write a separate token store.
+ * Connect / replace happen from the Figma plugin (which posts file_key +
+ * file_name directly to the backend) — no API token, no localStorage
+ * credential cache. The architect UI only reads binding state and exposes
+ * disconnect.
  */
 
 const BASE = '/api/figma-binding'
-
-function getStoredFigmaCreds() {
-  try {
-    return JSON.parse(localStorage.getItem('figma_api_creds') || '{}')
-  } catch {
-    return {}
-  }
-}
-
-function setStoredFigmaCreds(creds) {
-  try {
-    const prev = getStoredFigmaCreds()
-    localStorage.setItem('figma_api_creds', JSON.stringify({ ...prev, ...creds }))
-  } catch {
-    // best-effort
-  }
-}
 
 async function asJsonOr404(resp) {
   if (resp.status === 404) return null
@@ -47,33 +31,11 @@ export async function getBinding() {
   return asJsonOr404(r)
 }
 
-export async function connect(fileKey, apiToken) {
-  const r = await fetch(`${BASE}/connect`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ figmaFileKey: fileKey, apiToken }),
-  })
-  const data = await asJsonOr404(r)
-  if (data) setStoredFigmaCreds({ fileKey, token: apiToken })
-  return data
-}
-
 export async function disconnect() {
   const r = await fetch(BASE, { method: 'DELETE' })
   if (!r.ok && r.status !== 204) {
     throw new Error(`HTTP ${r.status}`)
   }
-}
-
-export async function replace(fileKey, apiToken) {
-  const r = await fetch(`${BASE}/replace`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ figmaFileKey: fileKey, apiToken }),
-  })
-  const data = await asJsonOr404(r)
-  if (data) setStoredFigmaCreds({ fileKey, token: apiToken })
-  return data
 }
 
 export async function getHistory(limit = 50) {
@@ -180,15 +142,20 @@ export async function retrySync(uiIds = null) {
 // ─── 024: Bound-file component library ───────────────────────────────────
 
 /**
- * Scan the bound Figma file's COMPONENT/COMPONENT_SET nodes and persist
- * them with VLM-derived descriptions. Returns {scanned, added, updated,
- * removed, vlmDescribed, vlmFailures, componentCount, durationMs}.
+ * Persist a plugin-pushed component scan. The Figma plugin walks
+ * ``figma.root.findAll(COMPONENT|COMPONENT_SET)``, exports each node's
+ * PNG with ``node.exportAsync({format:'PNG'})``, and posts the batch
+ * here. ``components`` is the array of
+ * ``{figmaNodeId, name, pageName, widthPx, heightPx, pngBase64}``.
+ *
+ * Exposed for completeness; in practice the plugin itself calls this
+ * endpoint, not the architect UI.
  */
-export async function scanComponents(apiToken) {
+export async function scanComponents(components) {
   const r = await fetch(`${BASE}/components/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ apiToken }),
+    body: JSON.stringify({ components: components || [] }),
   })
   return asJsonOr404(r)
 }
@@ -229,4 +196,3 @@ export function subscribeComponentsScanStream({ onEvent, onClose, onError } = {}
   return () => { try { es.close() } catch { /* noop */ } }
 }
 
-export { getStoredFigmaCreds, setStoredFigmaCreds }

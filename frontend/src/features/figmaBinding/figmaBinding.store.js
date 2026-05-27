@@ -1,9 +1,9 @@
 /**
- * Pinia store for the Figma document binding (feature 016).
+ * Pinia store for the Figma document binding.
  *
- * State sources:
- *   - server-of-truth: `/api/figma-binding/*` (Neo4j-backed)
- *   - token storage: spec 009's `figma_api_creds` in localStorage (read-only here)
+ * Connect / replace happen from the Figma plugin (which posts file_key +
+ * file_name directly to the backend), so the architect UI only reads
+ * binding state and exposes disconnect. No REST API token involved.
  */
 
 import { defineStore } from 'pinia'
@@ -86,43 +86,12 @@ export const useFigmaBindingStore = defineStore('figmaBinding', () => {
     }
   }
 
-  async function connect(fileKeyInput, apiToken) {
-    isLoading.value = true
-    lastError.value = null
-    try {
-      binding.value = await api.connect(fileKeyInput, apiToken)
-      return true
-    } catch (e) {
-      lastError.value = e?.message || String(e)
-      return false
-    } finally {
-      isLoading.value = false
-    }
-  }
-
   async function disconnect() {
     isLoading.value = true
     lastError.value = null
     try {
       await api.disconnect()
       binding.value = null
-      storyboards.value = []
-      return true
-    } catch (e) {
-      lastError.value = e?.message || String(e)
-      return false
-    } finally {
-      isLoading.value = false
-    }
-  }
-
-  async function replace(fileKeyInput, apiToken) {
-    isLoading.value = true
-    lastError.value = null
-    try {
-      binding.value = await api.replace(fileKeyInput, apiToken)
-      // Storyboard mappings from the previous file are archived server-side;
-      // refresh the local view to reflect that.
       storyboards.value = []
       return true
     } catch (e) {
@@ -349,9 +318,7 @@ export const useFigmaBindingStore = defineStore('figmaBinding', () => {
     syncFailedUis,
     // actions
     loadBinding,
-    connect,
     disconnect,
-    replace,
     loadStoryboards,
     // 020 actions
     startFullSync,

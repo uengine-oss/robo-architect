@@ -17,7 +17,6 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
 from fastapi import HTTPException
 
 from api.platform.observability.smart_logger import SmartLogger
@@ -27,15 +26,6 @@ from . import component_vlm, repository
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-FIGMA_API_BASE = "https://api.figma.com/v1"
-_FILE_TIMEOUT_SEC = 60.0
-_IMAGES_TIMEOUT_SEC = 60.0
-_IMAGES_BATCH = 50  # Figma /images endpoint accepts comma-separated ids
-_IMAGES_SCALE = 1.0
-_IMAGES_FORMAT = "png"
-
-_COMPONENT_TYPES = {"COMPONENT", "COMPONENT_SET"}
 
 
 # ─── In-process scan-lock ──────────────────────────────────────────────────
@@ -111,23 +101,21 @@ async def wait_for_progress(last_version: int, timeout: float = 15.0) -> bool:
 # ─── Public scan entrypoint ────────────────────────────────────────────────
 
 
-async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
-    """Scan the bound Figma file's component library and persist results.
+async def scan_components(
+    *, components: list[dict[str, Any]], actor: str
+) -> dict[str, Any]:
+    """Persist a plugin-pushed component scan and run VLM description.
 
-    Returns:
-        {
-          "scanned": int,        # COMPONENT/COMPONENT_SET nodes found
-          "added": int,
-          "updated": int,
-          "removed": int,        # stale rows deleted post-scan
-          "vlmDescribed": int,
-          "vlmFailures": int,
-          "componentCount": int, # final row count
-          "durationMs": int,
-        }
+    The Figma plugin walks ``figma.root.findAll(n => n.type === 'COMPONENT'
+    || n.type === 'COMPONENT_SET')`` and ships each node with its rendered
+    PNG (``node.exportAsync({format:'PNG'})``) as base64. We just decode +
+    describe + persist — no Figma REST call, no API token.
 
-    Raises HTTPException(404) if no active binding, (409) if a scan is
-    already in flight, (502) on Figma API failure.
+    Each ``components`` item:
+        {figmaNodeId, name, pageName, widthPx, heightPx, pngBase64}
+
+    Raises HTTPException(404) when no active binding, (409) when a scan is
+    already in flight.
     """
     binding = repository.get_active_binding()
     if not binding:
@@ -147,16 +135,14 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
 
     SmartLogger.log(
         "INFO",
-        f"figma_binding.components.scan.start file_key={file_key} actor={actor}",
+        f"figma_binding.components.scan.start file_key={file_key} actor={actor} pushed={len(components)}",
         category="figma_binding.components.scan.start",
-        params={"fileKey": file_key, "actor": actor},
+        params={"fileKey": file_key, "actor": actor, "pushed": len(components)},
     )
 
-    # Reset live progress for this run. `version` keeps climbing so late SSE
-    # subscribers can detect they missed earlier events.
     _set_progress(
-        phase="fetching",
-        total=0,
+        phase="describing" if components else "persisting",
+        total=len(components),
         described=0,
         scanned=0,
         lastItem="",
@@ -167,21 +153,11 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
     )
 
     try:
-        components = await _fetch_component_nodes(file_key, api_token)
-        _set_progress(phase="thumbnails", total=len(components))
-
-        image_map: dict[str, str] = {}
-        if components:
-            image_map = await _fetch_thumbnails(
-                file_key, api_token, [c["figmaNodeId"] for c in components]
-            )
-
-        # VLM describe (best-effort). Emit per-completion progress so the UI
-        # can name the component as it lands.
+        # Plugin already supplied PNG bytes inline — build data URIs and let
+        # the VLM describe them directly (no HTTP fetch).
         described: dict[str, str] = {}
-        if image_map:
-            _set_progress(phase="describing")
-            name_by_id = {c["figmaNodeId"]: c["name"] for c in components}
+        if components:
+            name_by_id = {c["figmaNodeId"]: c.get("name", "") for c in components}
 
             def _on_vlm_each(nid: str, desc: str) -> None:
                 described_count = int(_progress.get("described", 0)) + 1
@@ -192,11 +168,21 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
                     lastDescription=(desc or "")[:140],
                 )
 
-            described = await component_vlm.describe_components(
-                [(c["figmaNodeId"], c["name"], image_map.get(c["figmaNodeId"], ""))
-                 for c in components if image_map.get(c["figmaNodeId"])],
-                on_each=_on_vlm_each,
-            )
+            vlm_inputs: list[tuple[str, str, str]] = []
+            for c in components:
+                png = c.get("pngBase64") or ""
+                if not png:
+                    continue
+                # The VLM helper detects data: URIs and skips its download path.
+                vlm_inputs.append((
+                    c["figmaNodeId"],
+                    c.get("name", ""),
+                    f"data:image/png;base64,{png}",
+                ))
+            if vlm_inputs:
+                described = await component_vlm.describe_components(
+                    vlm_inputs, on_each=_on_vlm_each
+                )
 
         _set_progress(phase="persisting", scanned=0)
         existing = {c["figmaNodeId"]: c for c in repository.list_figma_components(file_key)}
@@ -214,10 +200,10 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
             repository.upsert_figma_component(
                 binding_file_key=file_key,
                 figma_node_id=nid,
-                name=comp["name"],
-                page_name=comp["pageName"],
-                width_px=comp["widthPx"],
-                height_px=comp["heightPx"],
+                name=comp.get("name", "") or nid,
+                page_name=comp.get("pageName", "") or "",
+                width_px=int(comp.get("widthPx", 0) or 0),
+                height_px=int(comp.get("heightPx", 0) or 0),
                 vlm_description=desc,
                 figma_key=comp.get("figmaKey"),
                 figma_node_last_modified=comp.get("figmaNodeLastModified"),
@@ -229,7 +215,7 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
             _set_progress(
                 phase="persisting",
                 scanned=added + updated,
-                lastItem=comp["name"],
+                lastItem=comp.get("name", "") or nid,
             )
 
         kept_ids = [c["figmaNodeId"] for c in components]
@@ -286,139 +272,6 @@ async def scan_components(*, api_token: str, actor: str) -> dict[str, Any]:
         raise
     finally:
         _release_scan_slot()
-
-
-# ─── Figma REST helpers ────────────────────────────────────────────────────
-
-
-def _flatten_components(
-    node: dict, page_name: str, out: list[dict[str, Any]]
-) -> None:
-    """Recurse into a Figma node tree, collecting COMPONENT/COMPONENT_SET leaves.
-
-    A COMPONENT_SET's variant COMPONENT children are skipped (the set itself is
-    the addressable instance handle in the plugin's component cache).
-    """
-    ntype = node.get("type")
-    if ntype in _COMPONENT_TYPES:
-        bb = node.get("absoluteBoundingBox") or {}
-        out.append({
-            "figmaNodeId": node.get("id", ""),
-            "name": node.get("name", "") or node.get("id", ""),
-            "pageName": page_name,
-            "widthPx": int(round(bb.get("width", 0) or 0)),
-            "heightPx": int(round(bb.get("height", 0) or 0)),
-            "figmaKey": node.get("key") or None,
-            "figmaNodeLastModified": None,
-        })
-        return  # do not descend into variants of a component set
-    for child in node.get("children") or []:
-        _flatten_components(child, page_name, out)
-
-
-async def _fetch_component_nodes(file_key: str, api_token: str) -> list[dict[str, Any]]:
-    """GET /v1/files/{key}?depth=4 and flatten all components on every CANVAS."""
-    url = f"{FIGMA_API_BASE}/files/{file_key}"
-    headers = {"X-Figma-Token": api_token, "Accept": "application/json"}
-    params = {"depth": 4}
-
-    try:
-        async with httpx.AsyncClient(timeout=_FILE_TIMEOUT_SEC) as client:
-            resp = await client.get(url, headers=headers, params=params)
-    except httpx.HTTPError as e:
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "figma_unreachable", "messageKr": f"Figma 연결 실패: {e}"},
-        )
-
-    if resp.status_code in (401, 403):
-        raise HTTPException(
-            status_code=resp.status_code,
-            detail={"error": "figma_auth_failed", "messageKr": "Figma 토큰이 유효하지 않습니다."},
-        )
-    if resp.status_code == 404:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "figma_file_not_found", "messageKr": "Figma 파일을 찾을 수 없습니다."},
-        )
-    if resp.status_code == 429:
-        raise HTTPException(
-            status_code=429,
-            detail={"error": "figma_rate_limit", "messageKr": "Figma API 요청 한도 초과."},
-        )
-    if resp.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "figma_api_error", "messageKr": f"Figma API 오류 ({resp.status_code})."},
-        )
-
-    data = resp.json()
-    document = data.get("document") or {}
-
-    out: list[dict[str, Any]] = []
-    for page in document.get("children") or []:
-        if page.get("type") != "CANVAS":
-            continue
-        page_name = page.get("name") or ""
-        for top in page.get("children") or []:
-            _flatten_components(top, page_name, out)
-
-    # Dedupe by figmaNodeId (defensive).
-    seen: set[str] = set()
-    deduped: list[dict[str, Any]] = []
-    for c in out:
-        nid = c.get("figmaNodeId") or ""
-        if not nid or nid in seen:
-            continue
-        seen.add(nid)
-        deduped.append(c)
-    return deduped
-
-
-async def _fetch_thumbnails(
-    file_key: str, api_token: str, node_ids: list[str]
-) -> dict[str, str]:
-    """Call /v1/images in batches; returns {figmaNodeId: image_url}."""
-    if not node_ids:
-        return {}
-    headers = {"X-Figma-Token": api_token, "Accept": "application/json"}
-    out: dict[str, str] = {}
-
-    async with httpx.AsyncClient(timeout=_IMAGES_TIMEOUT_SEC) as client:
-        for i in range(0, len(node_ids), _IMAGES_BATCH):
-            batch = node_ids[i : i + _IMAGES_BATCH]
-            params = {
-                "ids": ",".join(batch),
-                "format": _IMAGES_FORMAT,
-                "scale": _IMAGES_SCALE,
-            }
-            try:
-                resp = await client.get(
-                    f"{FIGMA_API_BASE}/images/{file_key}",
-                    headers=headers,
-                    params=params,
-                )
-            except httpx.HTTPError as e:
-                SmartLogger.log(
-                    "WARN",
-                    f"figma_binding.components.images.batch_failed err={e}",
-                    category="figma_binding.components.images.batch_failed",
-                    params={"error": str(e), "batchSize": len(batch)},
-                )
-                continue
-            if resp.status_code >= 400:
-                SmartLogger.log(
-                    "WARN",
-                    f"figma_binding.components.images.http_{resp.status_code}",
-                    category="figma_binding.components.images.http_error",
-                    params={"status": resp.status_code, "batchSize": len(batch)},
-                )
-                continue
-            data = resp.json() or {}
-            for nid, url in (data.get("images") or {}).items():
-                if url:
-                    out[nid] = url
-    return out
 
 
 # ─── Catalog for ingestion-phase prompt injection ──────────────────────────
