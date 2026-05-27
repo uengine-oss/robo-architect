@@ -78,3 +78,14 @@ docs/implementation-*
 
 # Ingestion debug snapshots (FR-010 of spec 018; opt-in via INGESTION_SNAPSHOT_DEBUG=1)
 logs/ingestion-snapshots/
+
+# 023 Electron desktop shell — generated/bundled artifacts
+# resources/python/ and resources/neo4j/ are produced by desktop/scripts/bundle-*
+# at build time; they are intentionally not tracked.
+desktop/dist/
+desktop/out/
+desktop/resources/python/
+desktop/resources/neo4j/
+desktop/playwright-report/
+desktop/test-results/
+desktop/.playwright/

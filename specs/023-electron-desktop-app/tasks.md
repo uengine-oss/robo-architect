@@ -24,12 +24,12 @@ description: "Task list for 023-electron-desktop-app implementation"
 
 **Purpose**: Scaffold the new `desktop/` module.
 
-- [ ] T001 Create the `desktop/` module structure per plan.md — directories `desktop/src/main/`, `desktop/src/preload/`, `desktop/src/shared/`, `desktop/resources/python/`, `desktop/resources/neo4j/`, `desktop/resources/icons/`, `desktop/scripts/`, `desktop/tests/`
-- [ ] T002 Initialize `desktop/package.json` — deps: `electron@^31`, `electron-builder`, `electron-updater`, `typescript`, `@playwright/test` (+ Electron support), `get-port`; scripts: `dev`, `build` (tsc), `pack`, `dist` (electron-builder), `test` (playwright)
-- [ ] T003 [P] Create `desktop/tsconfig.json` — `target: ES2022`, `module: CommonJS`, `strict: true`, separate `outDir` for `src/main` & `src/preload`, include `src/shared`
-- [ ] T004 [P] Create base `desktop/electron-builder.yml` — `appId`, `productName: "Robo-Architect"`, `directories.output`, `win: { target: nsis }` (per-user, no admin), `mac: { target: [dmg, zip] }`, `asarUnpack: [resources/python/**, resources/neo4j/**]`; signing & `publish` blocks added in later phases
-- [ ] T005 [P] Create `desktop/src/shared/ipc-contract.ts` — TS types mirroring `contracts/ipc-contract.md`: `DesktopSettings`/`DesktopSettingsWritable`, `RuntimeState` (incl. the `status` & `updateState` enums from data-model.md), `SecretId` union, the per-channel request/response signatures, the closed `IpcErrorCode` enum, and the `{ ok: true; data: T } | { ok: false; error: { code: IpcErrorCode; message: string } }` envelope
-- [ ] T006 [P] Configure lint/format for `desktop/` — ESLint + Prettier (or reuse the repo's conventions) in `desktop/.eslintrc.cjs` / `desktop/package.json`
+- [x] T001 Create the `desktop/` module structure per plan.md — directories `desktop/src/main/`, `desktop/src/preload/`, `desktop/src/shared/`, `desktop/resources/python/`, `desktop/resources/neo4j/`, `desktop/resources/icons/`, `desktop/scripts/`, `desktop/tests/`
+- [x] T002 Initialize `desktop/package.json` — deps: `electron@^31`, `electron-builder`, `electron-updater`, `typescript`, `@playwright/test` (+ Electron support), `get-port`; scripts: `dev`, `build` (tsc), `pack`, `dist` (electron-builder), `test` (playwright)
+- [x] T003 [P] Create `desktop/tsconfig.json` — `target: ES2022`, `module: CommonJS`, `strict: true`, separate `outDir` for `src/main` & `src/preload`, include `src/shared`
+- [x] T004 [P] Create base `desktop/electron-builder.yml` — `appId`, `productName: "Robo-Architect"`, `directories.output`, `win: { target: nsis }` (per-user, no admin), `mac: { target: [dmg, zip] }`, `asarUnpack: [resources/python/**, resources/neo4j/**]`; signing & `publish` blocks added in later phases
+- [x] T005 [P] Create `desktop/src/shared/ipc-contract.ts` — TS types mirroring `contracts/ipc-contract.md`: `DesktopSettings`/`DesktopSettingsWritable`, `RuntimeState` (incl. the `status` & `updateState` enums from data-model.md), `SecretId` union, the per-channel request/response signatures, the closed `IpcErrorCode` enum, and the `{ ok: true; data: T } | { ok: false; error: { code: IpcErrorCode; message: string } }` envelope
+- [x] T006 [P] Configure lint/format for `desktop/` — ESLint + Prettier (or reuse the repo's conventions) in `desktop/.eslintrc.cjs` / `desktop/package.json`
 
 ---
 
@@ -39,12 +39,12 @@ description: "Task list for 023-electron-desktop-app implementation"
 
 **⚠️ CRITICAL**: No user-story work begins until this phase is complete.
 
-- [ ] T007 Implement the Electron app-lifecycle skeleton in `desktop/src/main/index.ts` — `app.whenReady`, `window-all-closed`, `before-quit`, `activate`; placeholder hooks for startup orchestration (filled in US1)
-- [ ] T008 [P] Implement `desktop/src/main/logging.ts` — resolve `<dataDir>/logs/`, a structured JSONL log writer with size-based rotation, `revealLogs()` (opens the folder in the OS file manager); used by all subsystems
-- [ ] T009 [P] Implement `desktop/src/main/data-dir.ts` (basic) — default data root = `app.getPath('userData')`; ensure `logs/` and `neo4j/` subdirs exist; export `getDataDir()`. (Writability fallback + `choose()` land in US1/US3.)
-- [ ] T010 Implement IPC plumbing in `desktop/src/main/ipc.ts` — `registerHandlers()` that wraps every `ipcMain.handle` in the `{ ok, data } | { ok: false, error }` envelope and maps thrown errors to `IpcErrorCode` (`INTERNAL` fallback, always logged); a `pushToRenderer(channel, payload)` helper for subscription channels. Concrete handlers are registered by their owning story.
-- [ ] T011 [P] Implement `desktop/src/preload/index.ts` — `contextBridge.exposeInMainWorld('desktop', …)` exposing **only** the contracted channels from `contracts/ipc-contract.md`; subscription channels return an unsubscribe function; no `ipcRenderer`/`require`/`process`/Node API leaks to the renderer
-- [ ] T012 [P] Add `desktop/tests/smoke.spec.ts` skeleton — Playwright-for-Electron: launch the (dev) app and assert a window opens; assertions are fleshed out in T030
+- [x] T007 Implement the Electron app-lifecycle skeleton in `desktop/src/main/index.ts` — `app.whenReady`, `window-all-closed`, `before-quit`, `activate`; placeholder hooks for startup orchestration (filled in US1)
+- [x] T008 [P] Implement `desktop/src/main/logging.ts` — resolve `<dataDir>/logs/`, a structured JSONL log writer with size-based rotation, `revealLogs()` (opens the folder in the OS file manager); used by all subsystems
+- [x] T009 [P] Implement `desktop/src/main/data-dir.ts` (basic) — default data root = `app.getPath('userData')`; ensure `logs/` and `neo4j/` subdirs exist; export `getDataDir()`. (Writability fallback + `choose()` land in US1/US3.)
+- [x] T010 Implement IPC plumbing in `desktop/src/main/ipc.ts` — `registerHandlers()` that wraps every `ipcMain.handle` in the `{ ok, data } | { ok: false, error }` envelope and maps thrown errors to `IpcErrorCode` (`INTERNAL` fallback, always logged); a `pushToRenderer(channel, payload)` helper for subscription channels. Concrete handlers are registered by their owning story.
+- [x] T011 [P] Implement `desktop/src/preload/index.ts` — `contextBridge.exposeInMainWorld('desktop', …)` exposing **only** the contracted channels from `contracts/ipc-contract.md`; subscription channels return an unsubscribe function; no `ipcRenderer`/`require`/`process`/Node API leaks to the renderer
+- [x] T012 [P] Add `desktop/tests/smoke.spec.ts` skeleton — Playwright-for-Electron: launch the (dev) app and assert a window opens; assertions are fleshed out in T030
 
 **Checkpoint**: Module skeleton runs; `npm --prefix desktop run dev` opens an empty hardened window.
 
