@@ -89,3 +89,8 @@ desktop/resources/neo4j/
 desktop/playwright-report/
 desktop/test-results/
 desktop/.playwright/
+
+# 023 dev convenience: symlink/copy of the Vue dist for the Electron shell.
+# Production builds go through desktop/scripts/build-frontend.* (T016).
+frontend/dist
+frontend/dist/
