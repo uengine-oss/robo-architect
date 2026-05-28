@@ -87,7 +87,7 @@ Above-the-fold view at `1600×2400`:
 
 ## Check 4/5 — Verbatim install into a temp workspace
 
-Calls `api.features.claude_code.router._install_robo_spec(<tmp>)` directly. The function does what `POST /api/claude-code/setup-project` does for the robo-spec portion: copy `robo-spec/.claude/skills/` byte-for-byte into the workspace, then generate `.claude/robo-project.json` + `.claude/mcp.json`, and return a sha256 checksum of the copied subtree.
+Calls `api.features.claude_code.router._install_robo_spec(<tmp>)` directly. The function does what `POST /api/claude-code/setup-project` does for the robo-spec portion: copy `skills/robo-spec/` byte-for-byte into the workspace, then generate `.claude/robo-project.json` + `.claude/mcp.json`, and return a sha256 checksum of the copied subtree.
 
 ```json
 {
@@ -145,9 +145,9 @@ Generated `.claude/mcp.json`:
 Then the install-integrity check script runs the three guarantees mandated by FR-012, SC-006, and research R7:
 
 ```text
-[check 1/3] diff -r robo-spec/.claude/skills <tmp>/.claude/skills
+[check 1/3] diff -r skills/robo-spec/skills <tmp>/.claude/skills
   ok — installed tree is byte-identical to source
-[check 2/3] grep for Jinja markers under robo-spec/.claude/skills
+[check 2/3] grep for Jinja markers under skills/robo-spec/skills
   ok — no Jinja markers in source
 [check 3/3] grep '@robo:' in workspace source (R7 enforcement)
   ok — no @robo: markers in workspace source

@@ -126,7 +126,7 @@ Click **Claude Code에서 열기**. Backend hits
 `POST /api/claude-code/setup-project` with `output_mode: "robo-spec"`.
 The backend skips the legacy PRD pipeline entirely and just calls
 `_install_robo_spec(project_path)` — copies the verbatim skill tree
-from `<repo>/robo-spec/.claude/skills/` plus the
+from `<repo>/skills/robo-spec/` plus the
 `speckit-{plan,tasks,implement}/` upstream skills, then writes
 `.claude/robo-project.json` and `.mcp.json`.
 
@@ -226,7 +226,7 @@ visible in earlier in-flight frames as "Called robo-spec 2 times".
 │   ├── robo-project.json      ← written by setup-project
 │   └── skills/
 │       ├── robo-plan/SKILL.md         ┐
-│       ├── robo-tasks/SKILL.md        │ verbatim from <repo>/robo-spec/.claude/skills/
+│       ├── robo-tasks/SKILL.md        │ verbatim from <repo>/skills/robo-spec/
 │       ├── robo-implement/SKILL.md    │
 │       ├── robo-sync/SKILL.md         │
 │       │   └── extractors/{python_extract.py, ts_extract.mjs, package.json}

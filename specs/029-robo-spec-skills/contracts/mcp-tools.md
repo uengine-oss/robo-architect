@@ -4,7 +4,7 @@
 
 **Surface**: MCP server mounted at `<backendUrl>/mcp` (streamable-HTTP transport).
 
-**Audience**: The four `robo-*` skill files under `robo-spec/.claude/skills/`.
+**Audience**: The four `robo-*` skill files under `skills/robo-spec/`.
 
 **Authority**: The MCP server is the **sole channel** through which the skills read or write Robo Architect data (FR-006). Skills MUST NOT bypass it.
 

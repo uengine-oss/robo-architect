@@ -19,7 +19,7 @@ def _bcs():
     ]
 
 
-def _setup_payload(target_dir: str, **tech_stack_overrides) -> dict:
+def _setup_payload(target_dir: str, output_mode: str = "prd", **tech_stack_overrides) -> dict:
     base = dict(
         ai_assistant="claude",
         spec_format="ddd",
@@ -28,10 +28,10 @@ def _setup_payload(target_dir: str, **tech_stack_overrides) -> dict:
         deployment="microservices",
     )
     base.update(tech_stack_overrides)
-    return {"project_path": target_dir, "prd_request": {"tech_stack": base}}
+    return {"project_path": target_dir, "output_mode": output_mode, "prd_request": {"tech_stack": base}}
 
 
-def _do_setup(target: str, _bcs, **tech_stack_overrides):
+def _do_setup(target: str, _bcs, output_mode: str = "prd", **tech_stack_overrides):
     """Invoke /api/claude-code/setup-project; return (status, body)."""
     from fastapi.testclient import TestClient
     from api.main import app
@@ -50,14 +50,14 @@ def _do_setup(target: str, _bcs, **tech_stack_overrides):
         return_value=[],
     ):
         client = TestClient(app)
-        r = client.post("/api/claude-code/setup-project", json=_setup_payload(target, **tech_stack_overrides))
+        r = client.post("/api/claude-code/setup-project", json=_setup_payload(target, output_mode=output_mode, **tech_stack_overrides))
     return r
 
 
 def test_setup_project_extracts_role_based_agents_no_per_bc(_bcs):
-    """The on-disk layout MUST mirror the new zip contract."""
+    """The on-disk layout MUST mirror the new zip contract (prd mode)."""
     with tempfile.TemporaryDirectory(prefix="setup-test-") as tmp:
-        r = _do_setup(tmp, _bcs)
+        r = _do_setup(tmp, _bcs, output_mode="prd")
         assert r.status_code == 200, r.text
         # Role-based agents present.
         assert os.path.isfile(os.path.join(tmp, ".claude/agents/ddd-specialist.md"))
@@ -75,7 +75,7 @@ def test_setup_project_extracts_role_based_agents_no_per_bc(_bcs):
 
 def test_setup_project_does_not_emit_frontend_prd_or_scene_json(_bcs):
     with tempfile.TemporaryDirectory(prefix="setup-test-") as tmp:
-        r = _do_setup(tmp, _bcs)
+        r = _do_setup(tmp, _bcs, output_mode="prd")
         assert r.status_code == 200, r.text
         assert not os.path.exists(os.path.join(tmp, "Frontend-PRD.md"))
         # Walk the tree — no .scene.json anywhere.
@@ -110,7 +110,7 @@ def test_setup_project_cleans_up_legacy_files(_bcs):
         with open(custom_agent, "w") as f:
             f.write("hand-written")
 
-        r = _do_setup(tmp, _bcs)
+        r = _do_setup(tmp, _bcs, output_mode="prd")
         assert r.status_code == 200, r.text
         body = r.json()
 
@@ -145,6 +145,7 @@ def test_setup_project_enforces_frontend_framework_required(_bcs):
                 "/api/claude-code/setup-project",
                 json={
                     "project_path": tmp,
+                    "output_mode": "prd",
                     "prd_request": {
                         "tech_stack": {
                             "ai_assistant": "claude",

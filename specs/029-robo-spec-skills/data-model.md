@@ -146,7 +146,7 @@ Earlier drafts proposed a per-feature `.robo-link.json` to hold element→file m
 
 ### 2.5 `<workspace>/.claude/skills/robo-{plan,tasks,implement,sync}/SKILL.md`
 
-These are the verbatim-copied skill files. Their **on-disk content** is byte-identical to `<repo>/robo-spec/.claude/skills/robo-*/SKILL.md`. No template substitution at install time (FR-012). Validation is by checksum (SC-006).
+These are the verbatim-copied skill files. Their **on-disk content** is byte-identical to `<repo>/skills/robo-spec/robo-*/SKILL.md`. No template substitution at install time (FR-012). Validation is by checksum (SC-006).
 
 ---
 

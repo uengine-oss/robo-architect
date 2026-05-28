@@ -3,7 +3,7 @@
 # check_robo_spec_install.sh — feature 029 T019
 #
 # Verifies that a workspace's .claude/skills/ subtree is a byte-identical
-# copy of <repo>/robo-spec/.claude/skills/ (FR-012 / SC-006), and that no
+# copy of <repo>/skills/robo-spec/ (FR-012 / SC-006), and that no
 # Jinja template markers leaked into the source. Used in CI and by smoke
 # scenario quickstart S1.
 #
@@ -19,7 +19,7 @@ if [[ "${1:-}" == "" ]]; then
 usage: check_robo_spec_install.sh <target-workspace>
 
 Validates that <target-workspace>/.claude/skills/ matches
-<repo>/robo-spec/.claude/skills/ byte-for-byte, and that the source tree
+<repo>/skills/robo-spec/ byte-for-byte, and that the source tree
 contains no Jinja markers (FR-012 / SC-006).
 EOF
     exit 2
@@ -32,7 +32,7 @@ if [[ ! -d "$target" ]]; then
 fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-src_skills="${repo_root}/robo-spec/.claude/skills"
+src_skills="${repo_root}/skills/robo-spec"
 target_skills="${target}/.claude/skills"
 
 if [[ ! -d "$src_skills" ]]; then
@@ -57,7 +57,7 @@ echo "  ok — installed tree is byte-identical to source"
 # (2) No Jinja markers in the source (would break FR-012's verbatim guarantee).
 echo "[check 2/3] grep for Jinja markers under $src_skills"
 if grep -rIlE '\{\{|\{%' "$src_skills" >&2; then
-    echo "FAIL: Jinja control tokens found in robo-spec/ source. " \
+    echo "FAIL: Jinja control tokens found in skills/robo-spec/ source. " \
          "FR-012 requires verbatim copy with no template substitution." >&2
     exit 1
 fi

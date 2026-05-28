@@ -14,7 +14,7 @@
 
 **New behavior**:
 
-1. After the existing PRD ZIP extraction, perform a **verbatim copy** of `<repo-root>/robo-spec/.claude/` into `<workspace>/.claude/`. No Jinja, no template substitution (FR-012).
+1. After the existing PRD ZIP extraction, perform a **verbatim copy** of `<repo-root>/skills/robo-spec/` into `<workspace>/.claude/skills/`. No Jinja, no template substitution (FR-012).
 2. Write `<workspace>/.claude/robo-project.json` with the resolved `projectId`, `backendUrl`, and `mcpEndpoint` (per §2.1 of `data-model.md`).
 3. Idempotent: re-running on a workspace that already has these files re-copies (overwriting) the skill files and updates `robo-project.json`'s `backendUrl` / `mcpEndpoint` (in case of tunnel rotation). The file `robo-project.json`'s `projectId` MUST NOT change on re-run — if it would, the call returns `409 Conflict` and asks the operator to use a fresh workspace.
 
@@ -23,13 +23,13 @@
 ```json
 {
   "roboSpecInstalled": true,
-  "roboSpecChecksum": "sha256:..."   // checksum of the copied .claude/ subtree; matches a digest of /robo-spec/.claude/ at release time (SC-006)
+  "roboSpecChecksum": "sha256:..."   // checksum of the copied skills/ subtree; matches a digest of skills/robo-spec/ at release time (SC-006)
 }
 ```
 
 **Failure modes**:
 
-- `/robo-spec/.claude/` missing in the deployed backend → `500 Internal Server Error` with diagnostic; this is a packaging bug, not a user error.
+- `skills/robo-spec/` missing in the deployed backend → `500 Internal Server Error` with diagnostic; this is a packaging bug, not a user error.
 - Target workspace not writable → `403 Forbidden`.
 
 ---

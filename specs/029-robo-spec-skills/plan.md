@@ -6,7 +6,7 @@
 
 ## Summary
 
-Ship four Claude Code skills (`/robo-plan`, `/robo-tasks`, `/robo-implement`, `/robo-sync`) and the MCP server that backs them, so a developer can go from a Robo Architect design (BC / Aggregate) to scaffolded, layered code — and back — without ever authoring a local `spec.md` / `data-model.md` / `contracts/`. The skill set lives **verbatim** under a new repo-root directory `robo-spec/` and is copied byte-for-byte into the linked Claude Code workspace by the existing `setup-project` flow (no Jinja). The MCP server is mounted **in-process** in the existing FastAPI app over streamable-HTTP transport (Principles I, VI, VII). Architecture style in the generated `plan.md` is driven by a new optional `BoundedContext.classification ∈ {core, supporting}` property: `core` ⇒ clean architecture; `supporting` ⇒ default speckit-plan layout. Source mapping (which file backs which Aggregate/Command/Event/ReadModel) lives **only in the Neo4j ontology** as `(:Element)-[:IMPLEMENTED_IN]->(:ImplementationFile)`; there is no workspace-local mapping file, and no marker comments are written into the developer's source code at codegen time. `/robo-sync` discovers element changes via **full AST extraction** of the linked files (Python via stdlib `ast`, TypeScript via a small `@typescript-eslint/typescript-estree` Node helper shipped in `robo-spec/`), normalizes the structural extract, and proposes a diff that the developer confirms before any destructive change reaches the graph (Principle IV). Progress is reflected on Robo Architect's Design tab in ≤5 s via a backend `watchfiles` watcher over `<workspace>/specs/**/tasks.md` and an SSE channel (Principle III). Click-to-open-file from the Design tab resolves through the same graph-only mapping plus the existing claude-code workspace file API.
+Ship four Claude Code skills (`/robo-plan`, `/robo-tasks`, `/robo-implement`, `/robo-sync`) and the MCP server that backs them, so a developer can go from a Robo Architect design (BC / Aggregate) to scaffolded, layered code — and back — without ever authoring a local `spec.md` / `data-model.md` / `contracts/`. The skill set lives **verbatim** under a new repo-root directory `skills/robo-spec/` and is copied byte-for-byte into the linked Claude Code workspace by the existing `setup-project` flow (no Jinja). The MCP server is mounted **in-process** in the existing FastAPI app over streamable-HTTP transport (Principles I, VI, VII). Architecture style in the generated `plan.md` is driven by a new optional `BoundedContext.classification ∈ {core, supporting}` property: `core` ⇒ clean architecture; `supporting` ⇒ default speckit-plan layout. Source mapping (which file backs which Aggregate/Command/Event/ReadModel) lives **only in the Neo4j ontology** as `(:Element)-[:IMPLEMENTED_IN]->(:ImplementationFile)`; there is no workspace-local mapping file, and no marker comments are written into the developer's source code at codegen time. `/robo-sync` discovers element changes via **full AST extraction** of the linked files (Python via stdlib `ast`, TypeScript via a small `@typescript-eslint/typescript-estree` Node helper shipped in `skills/robo-spec/`), normalizes the structural extract, and proposes a diff that the developer confirms before any destructive change reaches the graph (Principle IV). Progress is reflected on Robo Architect's Design tab in ≤5 s via a backend `watchfiles` watcher over `<workspace>/specs/**/tasks.md` and an SSE channel (Principle III). Click-to-open-file from the Design tab resolves through the same graph-only mapping plus the existing claude-code workspace file API.
 
 ## Technical Context
 
@@ -16,7 +16,7 @@ Ship four Claude Code skills (`/robo-plan`, `/robo-tasks`, `/robo-implement`, `/
 
 - Backend: FastAPI, Pydantic, Neo4j driver (existing); new — `mcp` (official Anthropic Python SDK) for the in-process MCP server, `watchfiles` for the tasks.md filesystem watcher.
 - Frontend: Vue 3 + Vue Flow + native `EventSource` (existing). No new framework dependencies.
-- `/robo-sync` AST extractors (run client-side inside the workspace, shipped verbatim under `robo-spec/.claude/skills/robo-sync/extractors/`): Python stdlib `ast` (no extra deps); for TypeScript, a tiny Node helper using `@typescript-eslint/typescript-estree`. The helpers are invoked by Claude Code via Bash; no extractor code runs in the backend.
+- `/robo-sync` AST extractors (run client-side inside the workspace, shipped verbatim under `skills/robo-spec/robo-sync/extractors/`): Python stdlib `ast` (no extra deps); for TypeScript, a tiny Node helper using `@typescript-eslint/typescript-estree`. The helpers are invoked by Claude Code via Bash; no extractor code runs in the backend.
 - Skill files: zero runtime dependencies — they are pure Markdown / YAML frontmatter consumed by Claude Code's skill loader.
 
 **Storage**: Neo4j (existing) for the design **and the source mapping** — one new optional property (`BoundedContext.classification`), one new node label (`:ImplementationFile`), and one new relationship (`[:IMPLEMENTED_IN]`). On-disk workspace files under `<workspace>/.claude/` and `<workspace>/specs/<NNN>-<slug>/` for skill text, plan, and tasks **only** — no workspace-local source-mapping file. No new databases.
@@ -25,20 +25,20 @@ Ship four Claude Code skills (`/robo-plan`, `/robo-tasks`, `/robo-implement`, `/
 
 **Target Platform**: macOS and Linux developer workstations running Claude Code (desktop / IDE / web), backed by the existing Robo Architect backend that already runs on Linux/macOS.
 
-**Project Type**: Web application (FastAPI backend + Vue 3 frontend), with an additional **distribution artifact** — the verbatim-copyable `robo-spec/` skill tree at the repo root.
+**Project Type**: Web application (FastAPI backend + Vue 3 frontend), with an additional **distribution artifact** — the verbatim-copyable `skills/robo-spec/` skill tree at the repo root.
 
 **Performance Goals**:
 
 - MCP read tools (`resolve_design_element`, `get_bc_design`, `compute_drift`) p95 < 500 ms for a BC with up to ~30 child elements.
 - `tasks.md` change ⇒ Design-tab badge update median < 2 s, p95 < 5 s (SC-003).
 - Click-to-open from Design tab median < 2 s, p90 < 2 s (SC-004).
-- `setup-project` install (verbatim copy of `robo-spec/.claude/`) < 1 s on local disk.
+- `setup-project` install (verbatim copy of `skills/robo-spec/`) < 1 s on local disk.
 
 **Constraints**:
 
 - The MCP server MUST be the sole channel skills use to read/write Robo Architect data (FR-006, Principle I).
 - `/robo-plan` MUST NOT produce `spec.md`, `data-model.md`, or `contracts/` in the consumer workspace (FR-001, FR-004).
-- Skill files under `robo-spec/` MUST be byte-identical to what lands in `<workspace>/.claude/skills/` (FR-012, SC-006).
+- Skill files under `skills/robo-spec/` MUST be byte-identical to what lands in `<workspace>/.claude/skills/` (FR-012, SC-006).
 - Source mapping (element → implementation file) MUST live exclusively in the Neo4j ontology — there is no workspace-local mapping file, and no marker comments are written into developer source code at codegen time. Read/write goes through MCP T2 / T6b (Principle I).
 - `/robo-sync` MUST propose before applying destructive (rename/delete) design changes (FR-011, Principle IV). The proposal is built from a full AST extract of the linked source files, not from in-source markers.
 - All new HTTP routes MUST appear in `/docs` (Constitution Development Workflow rule).
@@ -87,18 +87,16 @@ specs/029-robo-spec-skills/
 This is a multi-component layout that **extends** existing trees rather than introducing parallel ones:
 
 ```text
-robo-spec/                                  # NEW — verbatim source-of-truth for skill files (FR-012)
-└── .claude/
-    ├── skills/
-    │   ├── robo-plan/SKILL.md              # thin delegation+override on speckit-plan (R11)
-    │   ├── robo-tasks/SKILL.md             # thin delegation+override on speckit-tasks (R11)
-    │   ├── robo-implement/SKILL.md         # thin delegation+override on speckit-implement (R11)
-    │   └── robo-sync/                      # no speckit counterpart — self-contained
-    │       ├── SKILL.md
-    │       └── extractors/                 # client-side AST extractors (run via Bash in the workspace)
-    │           ├── python_extract.py       # stdlib `ast` based
-    │           └── ts_extract.mjs          # @typescript-eslint/typescript-estree based
-    └── mcp.json                            # MCP client config for the target workspace
+skills/                                     # NEW — verbatim source-of-truth for skill files (FR-012)
+└── robo-spec/
+    ├── robo-plan/SKILL.md                  # thin delegation+override on speckit-plan (R11)
+    ├── robo-tasks/SKILL.md                 # thin delegation+override on speckit-tasks (R11)
+    ├── robo-implement/SKILL.md             # thin delegation+override on speckit-implement (R11)
+    └── robo-sync/                          # no speckit counterpart — self-contained
+        ├── SKILL.md
+        └── extractors/                     # client-side AST extractors (run via Bash in the workspace)
+            ├── python_extract.py           # stdlib `ast` based
+            └── ts_extract.mjs             # @typescript-eslint/typescript-estree based
 
 api/
 ├── features/
@@ -136,7 +134,7 @@ frontend/
         └── eventModeling/ui/EventModelingPanel.vue  # EXTEND — render ProgressBadge per node, wire click-to-open
 ```
 
-**Structure Decision**: Standard Robo Architect layout (Principle V: backend feature ↔ frontend feature mirror) plus a top-level `robo-spec/` directory whose only job is to be a verbatim source for `setup-project` to copy. Putting it under `api/features/prd_generation/` would invite Jinja templating; putting it under `.claude/skills/` (the in-repo skills directory) would conflate the Robo Architect repo's own developer skills with the skills shipped to consumer workspaces. The repo-root location keeps that boundary explicit. The AST extractors live under `robo-spec/.claude/skills/robo-sync/extractors/` so they ride the same verbatim-copy install path as the SKILL.md files and never touch the backend.
+**Structure Decision**: Standard Robo Architect layout (Principle V: backend feature ↔ frontend feature mirror) plus a top-level `skills/robo-spec/` directory whose only job is to be a verbatim source for `setup-project` to copy. Putting it under `api/features/prd_generation/` would invite Jinja templating; putting it under `.claude/skills/` (the in-repo skills directory) would conflate the Robo Architect repo's own developer skills with the skills shipped to consumer workspaces. The `skills/` prefix makes the distribution intent explicit, and nesting under `robo-spec/` naturally groups future additional skill sets (one subdirectory per product). The AST extractors live under `skills/robo-spec/robo-sync/extractors/` so they ride the same verbatim-copy install path as the SKILL.md files and never touch the backend.
 
 **Skill-inheritance shape** (R11): each of `robo-plan`, `robo-tasks`, `robo-implement` is a **thin delegation-and-override `SKILL.md`** that explicitly inherits the workspace-installed upstream `speckit-{plan,tasks,implement}/SKILL.md` and applies a numbered override list on top. No build step, no template engine — verbatim copy of the override file is sufficient. Frontmatter pins `requires-speckit:` to a tested range; quickstart S14 re-validates inheritance whenever speckit is upgraded. `/robo-sync` has no upstream counterpart and ships a self-contained SKILL.md.
 

@@ -278,7 +278,7 @@ MemberAccount의 8개 프로퍼티(`email` 포함)를 나열하는 InspectorPane
     "aggregate_version": 1
   },
   "mcp_round_trip": {
-    "extractor_called": "node robo-spec/.claude/skills/robo-sync/extractors/ts_extract.mjs <file>",
+    "extractor_called": "node skills/robo-spec/robo-sync/extractors/ts_extract.mjs <file>",
     "tools_called": ["get_bc_design", "propose_sync", "apply_proposal"],
     "proposal_diff": { "added": 1, "modified": 7, "removed": 0 },
     "requires_confirmation": [],

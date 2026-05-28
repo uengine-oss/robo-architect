@@ -103,7 +103,7 @@ The relevant fragment of `tasks.md`:
 of the line, with the correct aggregate UUID and `kind="Aggregate"`.
 Setup / integration tasks (T001..T004, T008..T009) deliberately have
 **no** marker because they don't map to a single design element — this
-matches Override 3 in [robo-tasks/SKILL.md](../../../robo-spec/.claude/skills/robo-tasks/SKILL.md).
+matches Override 3 in [robo-tasks/SKILL.md](../../../skills/robo-spec/robo-tasks/SKILL.md).
 
 Full final `tasks.md` is captured at
 [screenshots/11_e2e_tasks_after_implement.md](screenshots/11_e2e_tasks_after_implement.md).
@@ -166,7 +166,7 @@ Full source dump at
 ```
 
 The `@robo` marker on T005 is preserved exactly as `/robo-tasks` wrote
-it — Override 2 in [robo-implement/SKILL.md](../../../robo-spec/.claude/skills/robo-implement/SKILL.md) requires this so a re-run of
+it — Override 2 in [robo-implement/SKILL.md](../../../skills/robo-spec/robo-implement/SKILL.md) requires this so a re-run of
 `/robo-tasks` can still map T005 back to the MemberAccount aggregate.
 
 ## 3.3 Graph state — `[:IMPLEMENTED_IN]` relationship created

@@ -10,7 +10,7 @@ This document resolves every NEEDS CLARIFICATION raised by the Technical Context
 
 ## R1. MCP transport and hosting
 
-**Decision**: Run the MCP server **in-process** with the existing FastAPI app, exposed over **streamable-HTTP** transport. Add a single MCP endpoint mount (e.g., `/mcp`) inside `api/features/robo_spec/router.py` using the official `mcp` Python SDK. The target workspace's `.mcp.json` (shipped under `robo-spec/.claude/mcp.json`) points to that URL.
+**Decision**: Run the MCP server **in-process** with the existing FastAPI app, exposed over **streamable-HTTP** transport. Add a single MCP endpoint mount (e.g., `/mcp`) inside `api/features/robo_spec/router.py` using the official `mcp` Python SDK. The target workspace's `.mcp.json` (shipped under `skills/robo-spec/mcp.json`) points to that URL.
 
 **Rationale**:
 
@@ -55,7 +55,7 @@ robo-spec/
 
 ## R3. Workspace path discovery (for code-link and "open file in editor")
 
-**Decision**: Reuse the existing per-session workspace path established by spec 021 (`claude-code-ide-workspace`). The MCP server resolves the calling workspace's path by reading the per-project `WorkspaceState` keyed by the project ID that the MCP client (the skill) passes in every call. The skill knows its project ID from a small file written at install time (`robo-spec/.claude/robo-project.json`, populated by `setup-project` from the requesting Robo Architect project).
+**Decision**: Reuse the existing per-session workspace path established by spec 021 (`claude-code-ide-workspace`). The MCP server resolves the calling workspace's path by reading the per-project `WorkspaceState` keyed by the project ID that the MCP client (the skill) passes in every call. The skill knows its project ID from a small file written at install time (`skills/robo-spec/robo-project.json`, populated by `setup-project` from the requesting Robo Architect project).
 
 **Rationale**:
 
@@ -136,7 +136,7 @@ When the developer clicks a node in the Design tab, the frontend calls a new end
 
 ## R7. `/robo-sync` diff strategy
 
-**Decision**: `/robo-sync` uses **full AST extraction** of the files reached via `[:IMPLEMENTED_IN]` (R5), with **no marker comments** written into source at codegen time. v1 supports two languages — **Python (stdlib `ast`)** and **TypeScript (`@typescript-eslint/typescript-estree` driven by a small Node helper)** — chosen to match the project's own stacks and to keep the v1 parser surface small. The AST extractors are shipped verbatim under `robo-spec/.claude/skills/robo-sync/extractors/` and run locally inside the developer's workspace via Claude Code's Bash tool — they do not ship in the backend, so adding a new language later does not require a backend release.
+**Decision**: `/robo-sync` uses **full AST extraction** of the files reached via `[:IMPLEMENTED_IN]` (R5), with **no marker comments** written into source at codegen time. v1 supports two languages — **Python (stdlib `ast`)** and **TypeScript (`@typescript-eslint/typescript-estree` driven by a small Node helper)** — chosen to match the project's own stacks and to keep the v1 parser surface small. The AST extractors are shipped verbatim under `skills/robo-spec/robo-sync/extractors/` and run locally inside the developer's workspace via Claude Code's Bash tool — they do not ship in the backend, so adding a new language later does not require a backend release.
 
 The flow:
 

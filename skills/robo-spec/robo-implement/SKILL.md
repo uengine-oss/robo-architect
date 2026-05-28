@@ -1,0 +1,153 @@
+---
+name: robo-implement
+description: Robo Architect-aware implementation loop. Inherits speckit-implement; constrains file placement to the layout dictated by plan.md, ticks tasks.md checkboxes as work completes, registers scaffolded files in the graph via MCP, and never writes marker comments into developer source code.
+extends: speckit-implement
+requires-speckit: ">=0.8.13, <0.9.0"
+user-invocable: true
+---
+
+## Inheritance
+
+This skill inherits the workflow of `/speckit-implement`. Read
+`.claude/skills/speckit-implement/SKILL.md` first for the default
+outline, then apply the Overrides below verbatim on top.
+
+If the installed speckit version is outside `requires-speckit`, warn
+the developer in your first reply and ask for confirmation.
+
+## Overrides
+
+### Override 1 — locate the feature directory and project id
+
+1. Find the most recent `specs/<NNN>-<slug>/` containing both
+   `plan.md` and `tasks.md`. If either is missing, stop and tell the
+   developer to run `/robo-plan` and `/robo-tasks` first.
+2. Read `<workspace>/.claude/robo-project.json` for `projectId`. Fail
+   clearly if it's missing — the install step writes it; absence means
+   the workspace wasn't set up via `setup-project`.
+
+### Override 2 — work tasks in order, scaffold with real design data
+
+**Before** processing tasks, call MCP `get_bc_design(bcId=<BC id>)`
+once to fetch the live design slice. The response gives every
+Aggregate / Command / Event / ReadModel its full **`properties[]`**
+list (name + type + isKey + isForeignKey + isRequired) **and** its
+existing `implementationFiles[]`. Build an in-memory map
+`{elementId → {kind, name, properties, files}}` from this — it's the
+source of truth for what each scaffold should contain.
+
+For each unticked checkbox in `tasks.md` (in order from top to
+bottom):
+
+1. Parse the task line: extract the task description and the
+   `<!-- @robo elementId="..." kind="..." -->` marker (if any).
+2. Look up the file path for this element in `plan.md`'s "File
+   Layout" section. **Use that exact path — do not invent paths.**
+3. Look up the element in the map you built from `get_bc_design`.
+   Its `properties[]` is what populates the scaffold. **Do not emit
+   an empty `constructor(public readonly id: string)` stub** —
+   every property the graph already has must appear in the scaffold
+   so the file mirrors the canonical design.
+
+4. Create the file with **real scaffolding driven by the design**:
+   - For a `core` BC's **Aggregate** at `entities/<Name>.ts`: emit a
+     TypeScript class with one constructor parameter per
+     `properties[]` entry. Mark `isKey: true` ones as
+     `public readonly`, others as `public`. Map graph types to TS
+     types with the same naming style the existing scaffolds use
+     (`String` → `string`, `UUID` → `string`, `Object` →
+     `object`, `List<Object>` → `object[]`, `Boolean` →
+     `boolean`, `Date` / `DateTime` → `Date`, `Long`/`Int` → `number`,
+     anything else → keep as-is). Include the `// TODO: invariants`
+     placeholder above the constructor.
+
+     Example shape for an aggregate the graph reports with 3
+     properties (id [isKey], email, status):
+
+     ```ts
+     export class MemberAccount {
+       // TODO: invariants
+       constructor(
+         public readonly id: string,
+         public email: string,
+         public status: string,
+       ) {}
+     }
+     ```
+
+   - For a **Command** at `usecases/<Name>.ts`: emit a class whose
+     `handle(...)` method takes one parameter per property in the
+     command's `properties[]`. If the graph reports zero properties,
+     emit `handle()` with no params (NOT an arbitrary `id` stub).
+   - For an **Event** at `events/<Name>.ts` (when emitted): emit a
+     `readonly` class — every property is `public readonly`.
+   - For a **ReadModel** at `readmodels/<Name>.ts`: same as Aggregate
+     but every property `readonly`.
+   - For a **Repository** at
+     `frameworks_and_drivers/<Name>Repository.ts`: emit an interface
+     `IXxxRepository` with `findById(id: <id-type>)` and
+     `save(entity: <Name>)` signatures, then a stub class implementing
+     it. Pull the id type from the matching aggregate's id-typed
+     property in the design map.
+   - Match the architectural layer of the file to the layer's purpose.
+
+5. After the file is created, call MCP
+   `register_implementation_files`:
+
+   ```
+   register_implementation_files(
+       projectId   = <from .claude/robo-project.json>,
+       elementId   = <from the @robo marker>,
+       files       = [{"path": "<predicted path>", "role": "primary"}],
+       mode        = "merge"
+   )
+   ```
+
+   Choose the `role` based on the layer:
+     - `entities/` → `"primary"`
+     - `usecases/` → `"primary"`
+     - `interface_adapters/` → `"interface-adapter"`
+     - `frameworks_and_drivers/` → `"infrastructure"`
+     - test files → `"test"`
+
+6. Atomically rewrite the checkbox line in `tasks.md` from `- [ ]` to
+   `- [x]` (write-temp-then-rename so a concurrent reader never sees
+   a half-written file). Preserve the `@robo` marker exactly.
+
+**If `get_bc_design` returns zero properties for an element, the
+graph is genuinely empty for that element.** In that case (and only
+that case) it is OK to scaffold `constructor(public readonly id:
+string)` as a placeholder, but you MUST surface a warning to the
+developer that the element has no design-side properties and they
+may want to add them in Robo Architect before continuing.
+
+### Override 3 — never write marker comments into source
+
+Under no circumstances write `// @robo:aggregate=...` or any analogous
+annotation into the developer's source files. `/robo-sync` uses full
+AST extraction instead (research R7). Marker comments are explicitly
+rejected as invasive and formatter-fragile.
+
+### Override 4 — stop on the first blocking task
+
+If a task cannot complete (e.g., ambiguous invariant, missing
+information), leave the checkbox unticked and append a short reason
+comment on the line below:
+
+```markdown
+- [ ] T003 Implement OrderInvariant <!-- @robo elementId="..." kind="Aggregate" -->
+  <!-- blocked: invariant declaration is empty in the design -->
+```
+
+Then stop and report to the developer. Do not continue to the next
+task — blocked items often cascade, and ticking later ones would lie
+about the implementation state.
+
+## What this skill does NOT do
+
+- Does NOT regenerate `plan.md` or `tasks.md`.
+- Does NOT write tests unless an explicit task asks for one.
+- Does NOT push design changes back to the graph — that's
+  `/robo-sync`.
+- Does NOT scaffold full method bodies. Minimal stubs only; the
+  developer fills in business logic.

@@ -121,7 +121,7 @@ robo-spec 모드에서는 푸터 버튼이 **Next →** 표기 ("Preview →"가
 `POST /api/claude-code/setup-project`를 `output_mode: "robo-spec"`로
 호출. 백엔드는 레거시 PRD 파이프라인을 통째로 건너뛰고
 `_install_robo_spec(project_path)`만 호출 —
-`<repo>/robo-spec/.claude/skills/`의 verbatim 스킬 트리와
+`<repo>/skills/robo-spec/`의 verbatim 스킬 트리와
 `speckit-{plan,tasks,implement}/` 업스트림 스킬을 복사한 뒤,
 `.claude/robo-project.json`과 `.mcp.json`을 작성.
 
@@ -218,7 +218,7 @@ bash `mkdir -p`로 feature 디렉토리 생성 → `plan.md` 작성. Override 6
 │   ├── robo-project.json      ← setup-project가 작성
 │   └── skills/
 │       ├── robo-plan/SKILL.md         ┐
-│       ├── robo-tasks/SKILL.md        │ <repo>/robo-spec/.claude/skills/에서 verbatim 복사
+│       ├── robo-tasks/SKILL.md        │ <repo>/skills/robo-spec/에서 verbatim 복사
 │       ├── robo-implement/SKILL.md    │
 │       ├── robo-sync/SKILL.md         │
 │       │   └── extractors/{python_extract.py, ts_extract.mjs, package.json}

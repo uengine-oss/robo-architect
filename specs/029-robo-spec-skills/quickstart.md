@@ -18,7 +18,7 @@
 1. From the Robo Architect UI for your test project, link the scratch workspace via the existing setup-project flow.
 2. Confirm `<workspace>/.claude/skills/` now contains `robo-plan/`, `robo-tasks/`, `robo-implement/`, `robo-sync/`.
 3. Confirm `<workspace>/.claude/robo-project.json` exists with a non-empty `projectId` and a `mcpEndpoint` pointing at the running backend.
-4. Run `diff -r robo-spec/.claude/skills/ <workspace>/.claude/skills/` from the Robo Architect repo root — there should be **zero** differences.
+4. Run `diff -r skills/robo-spec/ <workspace>/.claude/skills/` from the Robo Architect repo root — there should be **zero** differences.
 5. Run `grep -r '{{' <workspace>/.claude/skills/` and `grep -r '{%' <workspace>/.claude/skills/` — both must return nothing. (SC-006 + FR-012 — no Jinja markers leak.)
 
 ## S2. `/robo-plan` for a core BC produces clean-architecture plan, no spec.md/data-model.md/contracts (US1, FR-004, FR-005)
@@ -108,7 +108,7 @@
 
 ## S14. Skill inheritance survives a speckit upgrade (R11, FR-002)
 
-1. Note the currently installed speckit version (e.g., `0.8.13`) and confirm it sits inside the `requires-speckit` range declared in `robo-spec/.claude/skills/robo-plan/SKILL.md`'s frontmatter.
+1. Note the currently installed speckit version (e.g., `0.8.13`) and confirm it sits inside the `requires-speckit` range declared in `skills/robo-spec/robo-plan/SKILL.md`'s frontmatter.
 2. Upgrade speckit in the workspace to the next minor release (e.g., `0.9.x`) without changing anything under `<workspace>/.claude/skills/robo-*/`.
 3. Re-run `/robo-plan <BC-name>` on a `core` BC and `/robo-tasks` after it.
 4. Expected behaviors:

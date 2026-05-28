@@ -319,7 +319,7 @@ async def setup_project(request: SetupProjectRequest):
     # ------------------------------------------------------------------
     # Robo-Spec verbatim install (feature 029 — E1 extension, T013)
     # ------------------------------------------------------------------
-    # Per FR-012: files under <repo>/robo-spec/.claude/skills/ MUST be
+    # Per FR-012: files under <repo>/skills/robo-spec/ MUST be
     # copied byte-for-byte (no Jinja, no template substitution) into
     # <workspace>/.claude/skills/. The project-specific config files
     # (.claude/robo-project.json and .claude/mcp.json) are generated
@@ -338,13 +338,13 @@ async def setup_project(request: SetupProjectRequest):
 
 
 def _install_robo_spec(project_path: str) -> dict[str, Any]:
-    """Copy <repo>/robo-spec/.claude/skills/ verbatim into the workspace,
+    """Copy <repo>/skills/robo-spec/ verbatim into the workspace,
     then write the per-project config files. Returns a fragment merged
     into the setup-project response (see schemas.RoboSpecInstallSummary).
 
     Idempotent: re-running on a workspace that already has the install
     overwrites the skill files (FR-012 — they're derivable from the
-    /robo-spec source) and refreshes mcp.json's URL. The project_id in
+    skills/robo-spec source) and refreshes mcp.json's URL. The project_id in
     robo-project.json is NEVER mutated on re-run — a different id
     incoming when an existing id is present surfaces as HTTP 409.
 
@@ -360,12 +360,12 @@ def _install_robo_spec(project_path: str) -> dict[str, Any]:
     from fastapi import HTTPException
 
     repo_root = _resolve_repo_root()
-    src_skills = os.path.join(repo_root, "robo-spec", ".claude", "skills")
+    src_skills = os.path.join(repo_root, "skills", "robo-spec")
     if not os.path.isdir(src_skills):
         # Packaging bug, not a user error — surface explicitly.
         raise HTTPException(
             status_code=500,
-            detail=f"robo-spec/.claude/skills/ not found at {src_skills}",
+            detail=f"skills/robo-spec/ not found at {src_skills}",
         )
 
     dest_claude = os.path.join(project_path, ".claude")
@@ -488,14 +488,14 @@ def _install_robo_spec(project_path: str) -> dict[str, Any]:
 
 def _resolve_repo_root() -> str:
     """Find the repo root by walking up until we find both `api/` and
-    `robo-spec/`. This avoids hard-coding ``__file__`` parents which
+    `skills/`. This avoids hard-coding ``__file__`` parents which
     breaks when the package is editable-installed elsewhere.
     """
     here = os.path.abspath(os.path.dirname(__file__))
     while True:
         if (
             os.path.isdir(os.path.join(here, "api"))
-            and os.path.isdir(os.path.join(here, "robo-spec"))
+            and os.path.isdir(os.path.join(here, "skills"))
         ):
             return here
         parent = os.path.dirname(here)
