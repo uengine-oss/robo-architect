@@ -49,7 +49,11 @@ def test_download_route_passes_session_id(monkeypatch):
     monkeypatch.setattr(prd_export, "generate_main_prd", lambda bcs, config: "# PRD")
     monkeypatch.setattr(prd_export, "generate_cursor_rules", lambda config: "rules")
     monkeypatch.setattr(prd_export, "generate_readme", lambda bcs, config: "readme")
-    monkeypatch.setattr(prd_export, "generate_bc_spec", lambda bc, config: f"# {bc.get('name')}")
+    monkeypatch.setattr(
+        prd_export,
+        "generate_bc_spec_files",
+        lambda bc, config: {f"specs/{(bc.get('name') or 'unknown').lower()}/index.md": f"# {bc.get('name')}"},
+    )
 
     client = TestClient(app)
     response = client.post(

@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from api.features.prd_generation.prd_api_contracts import Database, DeploymentStyle, Framework, FrontendFramework, TechStackConfig
+
+
+def _bc_spec_split_threshold() -> int:
+    try:
+        return int(os.getenv("BC_SPEC_SPLIT_LINE_THRESHOLD", "800"))
+    except ValueError:
+        return 800
+
+
+def _slug(name: str | None) -> str:
+    return (name or "unknown").lower().replace(" ", "_")
 
 
 # ============================================================================
@@ -245,10 +257,22 @@ def generate_main_prd(bcs: list[dict], config: TechStackConfig) -> str:
         for bc in bcs:
             bc_name = bc.get("name", "Unknown")
             bc_name_slug = bc_name.lower().replace(" ", "_")
-            parts.append(f"- `specs/{bc_name_slug}_spec.md` — {bc_name} specification")
+            parts.append(f"- `specs/{bc_name_slug}/index.md` — {bc_name} specification (auto-split into per-aggregate / per-command files when oversized; follow the index's link table)")
+        if has_frontend:
+            parts.append("- `Frontend-PRD.md` — frontend architecture, UI wireframe inventory, API endpoint contract")
     if using_claude:
-        parts.append("- `.claude/skills/` — reference skills (DDD principles, Event Storming mapping, GWT tests, tech stack)")
+        # Enumerate the actual skill files so consumers know exactly what
+        # to @-mention, not just "look in this folder".
+        parts.append("- `.claude/skills/ddd-principles.md` — DDD patterns")
+        parts.append("- `.claude/skills/eventstorming-implementation.md` — Event Storming sticker → code mapping")
+        parts.append("- `.claude/skills/gwt-test-generation.md` — Given/When/Then test patterns")
+        parts.append(f"- `.claude/skills/{config.framework.value}.md` — {config.framework.value} backend implementation patterns")
+        if has_frontend and config.frontend_framework:
+            parts.append(f"- `.claude/skills/{config.frontend_framework.value}.md` — {config.frontend_framework.value} frontend implementation patterns")
+        if config.deployment == DeploymentStyle.MICROSERVICES:
+            parts.append("- `.claude/skills/api-gateway.md` — gateway routing / CORS / service discovery")
         if spec_uses_ddd:
+            parts.append("- `.claude/skills/ddd-spec-implementation.md` — DDD-for-SDD implementation guide")
             parts.append("- `.claude/agents/ddd-specialist.md` — role-based agent for backend / domain work")
             if has_frontend:
                 parts.append("- `.claude/agents/frontend-engineer.md` — role-based agent for frontend work")
@@ -257,7 +281,14 @@ def generate_main_prd(bcs: list[dict], config: TechStackConfig) -> str:
             if has_frontend:
                 parts.append("- `.claude/commands/generate-frontend.md` — slash command for the whole frontend")
     else:
-        parts.append("- `.cursor/rules/` — Cursor rule files (DDD, Event Storming, GWT, tech stack)")
+        parts.append("- `.cursor/rules/ddd-principles.mdc` — DDD patterns (always applied)")
+        parts.append("- `.cursor/rules/eventstorming-implementation.mdc` — Event Storming sticker → code mapping")
+        parts.append("- `.cursor/rules/gwt-test-generation.mdc` — Given/When/Then test patterns")
+        parts.append(f"- `.cursor/rules/{config.framework.value}.mdc` — {config.framework.value} backend implementation patterns")
+        if has_frontend and config.frontend_framework:
+            parts.append(f"- `.cursor/rules/{config.frontend_framework.value}.mdc` — {config.frontend_framework.value} frontend implementation patterns")
+        if config.deployment == DeploymentStyle.MICROSERVICES:
+            parts.append("- `.cursor/rules/api-gateway.mdc` — gateway routing / CORS / service discovery")
     if config.include_docker:
         parts.append("- `docker-compose.yml`, `Dockerfile` — local container setup")
     parts.append("")
@@ -285,7 +316,9 @@ def generate_main_prd(bcs: list[dict], config: TechStackConfig) -> str:
         if has_frontend:
             parts.append("- Read `specs/frontend/{framework,menu-structure,ui-flow}.md` for the frontend perspective.")
     else:
-        parts.append("- Read each `specs/<bc_name>_spec.md` for that BC's details.")
+        parts.append("- Read each `specs/<bc_name>/index.md` as the BC entrypoint; oversized BCs link out to per-aggregate / per-command files.")
+        if has_frontend:
+            parts.append("- Read `Frontend-PRD.md` for the frontend architecture, wireframe inventory, and per-UI file pointers.")
     parts.append("")
     return "\n".join(parts)
 
@@ -588,6 +621,233 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
     return spec
 
 
+def generate_bc_spec_files(bc: dict, config: TechStackConfig) -> dict[str, str]:
+    """Render the per-BC spec as one or more markdown files inside
+    ``specs/{bc}/``.
+
+    Returns ``{path: content}`` for the ZIP packager. Every BC lives under
+    its own folder with an ``index.md`` entrypoint — Cursor/Claude always
+    see the same shape, no special-case for "small BC = flat file".
+
+    BCs whose monolithic spec exceeds ``BC_SPEC_SPLIT_LINE_THRESHOLD``
+    (default 800 lines) are split along domain boundaries — Aggregate when
+    there are 2+, Command when there is a single dominant Aggregate.
+    Command-attached UIs follow their command into the per-command file so
+    the index doesn't drag every HTML template along. Splits never cut
+    mid-node; the threshold only gates the decision.
+    """
+    monolith = generate_bc_spec(bc, config)
+    bc_slug = _slug(bc.get("name"))
+    if monolith.count("\n") + 1 <= _bc_spec_split_threshold():
+        return {f"specs/{bc_slug}/index.md": monolith}
+
+    aggregates = bc.get("aggregates") or []
+    if len(aggregates) >= 2:
+        return _split_bc_spec_by_aggregate(bc, config)
+    if len(aggregates) == 1 and len(aggregates[0].get("commands") or []) >= 2:
+        return _split_bc_spec_by_command(bc, config)
+    return {f"specs/{bc_slug}/index.md": monolith}
+
+
+def _aggregate_summary_row(agg: dict, target_path: str) -> str:
+    name = agg.get("name", "Unknown")
+    display = agg.get("displayName") or name
+    cmd_count = len(agg.get("commands") or [])
+    evt_count = len(agg.get("events") or [])
+    root = agg.get("rootEntity") or "—"
+    return (
+        f"| [`{name}`]({target_path}) | {display} | `{root}` | "
+        f"{cmd_count} | {evt_count} |\n"
+    )
+
+
+def _command_summary_row(
+    cmd: dict, evt_count: int, ui_count: int, target_path: str
+) -> str:
+    name = cmd.get("name", "Unknown")
+    display = cmd.get("displayName") or name
+    actor = cmd.get("actor") or "—"
+    category = cmd.get("category") or "—"
+    return (
+        f"| [`{name}`]({target_path}) | {display} | {actor} | "
+        f"{category} | {evt_count} | {ui_count} |\n"
+    )
+
+
+def _ui_attached_to_command(ui: dict, cmd: dict) -> bool:
+    if (ui.get("attachedToType") or "").lower() != "command":
+        return False
+    target = ui.get("attachedToName") or ui.get("attachedToId")
+    return target in {cmd.get("name"), cmd.get("id")}
+
+
+def _aggregate_by_command_lookup(bc: dict) -> dict[str, dict]:
+    """Build cmd-name/id → aggregate map so Frontend-PRD can resolve the
+    file path of a command-attached wireframe without re-walking the BC.
+    """
+    lookup: dict[str, dict] = {}
+    for agg in bc.get("aggregates") or []:
+        for cmd in agg.get("commands") or []:
+            for key in (cmd.get("name"), cmd.get("id")):
+                if key:
+                    lookup[key] = agg
+    return lookup
+
+
+def _wireframe_template_path(
+    ui: dict, bc_slug: str, is_split: bool, agg_by_cmd: dict[str, dict]
+) -> str:
+    """Return the spec file path that actually carries this UI's HTML
+    template. Falls back to the BC index when the UI isn't command-attached
+    or the BC is small enough to stay monolithic."""
+    if is_split and (ui.get("attachedToType") or "").lower() == "command":
+        target = ui.get("attachedToName") or ui.get("attachedToId")
+        agg = agg_by_cmd.get(target)
+        if agg:
+            agg_slug = _slug(agg.get("name"))
+            cmd_slug = _slug(target)
+            return f"specs/{bc_slug}/{agg_slug}/cmds/{cmd_slug}.md"
+    return f"specs/{bc_slug}/index.md"
+
+
+def _split_bc_spec_by_aggregate(bc: dict, config: TechStackConfig) -> dict[str, str]:
+    bc_slug = _slug(bc.get("name"))
+    files: dict[str, str] = {}
+    aggregates = bc.get("aggregates") or []
+    all_uis = bc.get("uis") or []
+
+    # Per-aggregate file: every UI attached to any command this aggregate
+    # owns rides along; BC-level sections stay in the index.
+    consumed_ui_ids: set[str] = set()
+    for agg in aggregates:
+        agg_slug = _slug(agg.get("name"))
+        agg_uis = [
+            ui for ui in all_uis
+            if any(_ui_attached_to_command(ui, c) for c in (agg.get("commands") or []))
+        ]
+        for ui in agg_uis:
+            if ui.get("id"):
+                consumed_ui_ids.add(ui["id"])
+        sub_bc = {
+            **bc,
+            "aggregates": [agg],
+            "readmodels": [],
+            "policies": [],
+            "uis": agg_uis,
+            "gwts": [],
+            "questions": [],
+            "userStories": [],
+        }
+        files[f"specs/{bc_slug}/{agg_slug}.md"] = generate_bc_spec(sub_bc, config)
+
+    # Index: BC overview + open decisions + US grounded detail + Aggregate
+    # link table + BC-level sections + UIs that no per-aggregate file claimed.
+    index_bc = {
+        **bc,
+        "aggregates": [],
+        "uis": [ui for ui in all_uis if ui.get("id") not in consumed_ui_ids],
+    }
+    index = generate_bc_spec(index_bc, config)
+    table = "\n## Aggregates (per-file)\n\n"
+    table += "| Aggregate | Display | Root Entity | Commands | Events |\n"
+    table += "|---|---|---|---:|---:|\n"
+    for agg in aggregates:
+        agg_slug = _slug(agg.get("name"))
+        table += _aggregate_summary_row(agg, f"{agg_slug}.md")
+    # Insert the table immediately before the Implementation Notes footer so
+    # the link block sits where the inlined "## Aggregates" used to be.
+    marker = "\n## Implementation Notes\n"
+    if marker in index:
+        index = index.replace(marker, table + marker, 1)
+    else:
+        index += table
+    files[f"specs/{bc_slug}/index.md"] = index
+    return files
+
+
+def _events_emitted_by(agg: dict, cmd_id: str | None, cmd_name: str | None) -> list[dict]:
+    out: list[dict] = []
+    for evt in agg.get("events") or []:
+        eid = evt.get("emittingCommandId")
+        ename = evt.get("emittingCommandName")
+        if (cmd_id and eid == cmd_id) or (cmd_name and ename == cmd_name):
+            out.append(evt)
+    return out
+
+
+def _split_bc_spec_by_command(bc: dict, config: TechStackConfig) -> dict[str, str]:
+    bc_slug = _slug(bc.get("name"))
+    files: dict[str, str] = {}
+    agg = (bc.get("aggregates") or [{}])[0]
+    agg_slug = _slug(agg.get("name"))
+    commands = agg.get("commands") or []
+    all_uis = bc.get("uis") or []
+    # Events that no command claims authorship of — keep them in the index
+    # so they're never dropped silently.
+    claimed_ids = set()
+    for cmd in commands:
+        for evt in _events_emitted_by(agg, cmd.get("id"), cmd.get("name")):
+            claimed_ids.add(evt.get("id"))
+    unclaimed_events = [
+        e for e in (agg.get("events") or []) if e.get("id") not in claimed_ids
+    ]
+
+    # Per-command file: aggregate skeleton + one command + its emitted events
+    # + the UIs attached to that command (full HTML template rides along).
+    cmd_ui_counts: dict[str, int] = {}
+    consumed_ui_ids: set[str] = set()
+    for cmd in commands:
+        cmd_slug = _slug(cmd.get("name"))
+        cmd_events = _events_emitted_by(agg, cmd.get("id"), cmd.get("name"))
+        cmd_uis = [ui for ui in all_uis if _ui_attached_to_command(ui, cmd)]
+        cmd_ui_counts[cmd.get("id") or cmd_slug] = len(cmd_uis)
+        for ui in cmd_uis:
+            if ui.get("id"):
+                consumed_ui_ids.add(ui["id"])
+        sub_agg = {**agg, "commands": [cmd], "events": cmd_events}
+        sub_bc = {
+            **bc,
+            "aggregates": [sub_agg],
+            "readmodels": [],
+            "policies": [],
+            "uis": cmd_uis,
+            "gwts": [],
+            "questions": [],
+            "userStories": [],
+        }
+        files[f"specs/{bc_slug}/{agg_slug}/cmds/{cmd_slug}.md"] = generate_bc_spec(
+            sub_bc, config
+        )
+
+    # Index: BC overview + aggregate header (no commands, no events) + cmd
+    # link table + any unclaimed events + BC-level sections + UIs not claimed
+    # by a command (ReadModel-attached, Aggregate-attached, or orphan).
+    skeleton_agg = {**agg, "commands": [], "events": unclaimed_events}
+    index_bc = {
+        **bc,
+        "aggregates": [skeleton_agg],
+        "uis": [ui for ui in all_uis if ui.get("id") not in consumed_ui_ids],
+    }
+    index = generate_bc_spec(index_bc, config)
+    table = "\n## Commands (per-file)\n\n"
+    table += "| Command | Display | Actor | Category | Emits | UIs |\n"
+    table += "|---|---|---|---|---:|---:|\n"
+    for cmd in commands:
+        cmd_slug = _slug(cmd.get("name"))
+        evt_count = len(_events_emitted_by(agg, cmd.get("id"), cmd.get("name")))
+        ui_count = cmd_ui_counts.get(cmd.get("id") or cmd_slug, 0)
+        table += _command_summary_row(
+            cmd, evt_count, ui_count, f"{agg_slug}/cmds/{cmd_slug}.md"
+        )
+    marker = "\n## Implementation Notes\n"
+    if marker in index:
+        index = index.replace(marker, table + marker, 1)
+    else:
+        index += table
+    files[f"specs/{bc_slug}/index.md"] = index
+    return files
+
+
 def generate_claude_md(bcs: list[dict], config: TechStackConfig) -> str:
     """CLAUDE.md — the engineering constitution (FR-022, research D9).
 
@@ -635,7 +895,7 @@ def generate_claude_md(bcs: list[dict], config: TechStackConfig) -> str:
             parts.append("7. `specs/frontend/framework.md` / `menu-structure.md` / `ui-flow.md` — read all three before writing frontend code.")
             parts.append(f"8. `.claude/skills/{front_fw}.md` — {front_fw}-specific frontend patterns.")
     else:
-        parts.append("2. For each Bounded Context you touch: `specs/<bc_name>_spec.md` — contains aggregates, commands, events, ReadModels, policies, UI wireframes, GWT tests.")
+        parts.append("2. For each Bounded Context you touch: `specs/<bc_name>/index.md` — contains aggregates, commands, events, ReadModels, policies, UI wireframes, GWT tests.")
         parts.append("3. `.claude/skills/ddd-principles.md`, `eventstorming-implementation.md`, `gwt-test-generation.md` — pattern references.")
         parts.append(f"4. `.claude/skills/{fw}.md` — {fw} implementation patterns.")
         if has_frontend:
@@ -1024,7 +1284,7 @@ globs: {globs_pattern}
 # {config.framework.value} ({config.language.value}) Implementation Guidelines
 
 > **Tech Stack Rule**: This rule applies when implementing code using {config.framework.value} with {config.language.value}.
-> Reference BC-specific specs in `specs/{{bc_name}}_spec.md` for detailed requirements.
+> Reference BC-specific specs in `specs/{{bc_name}}/index.md` for detailed requirements.
 > Use mention feature (`@{config.framework.value}`) to reference these tech stack standards.
 
 ## Technology Stack
@@ -1045,7 +1305,7 @@ globs: {globs_pattern}
 ## Reference Files
 
 When implementing a specific BC:
-1. **Read BC Spec**: `specs/{{bc_name}}_spec.md` - Complete BC requirements (aggregates, commands, events, properties, GWT tests)
+1. **Read BC Spec**: `specs/{{bc_name}}/index.md` — BC entrypoint (oversized BCs auto-split into per-aggregate / per-command files; follow the index's link table for full detail)
 2. **Follow Tech Stack Rules**: This file (mention: `@{config.framework.value}`) - {config.framework.value} specific implementation patterns
 3. **Check DDD Principles**: `@ddd-principles` - DDD patterns (always applied)
 4. **Check Event Storming Rules**: `@eventstorming-implementation` - Sticker-to-code mapping
@@ -1057,7 +1317,7 @@ When implementing a specific BC:
 ### For Each Bounded Context:
 
 #### 1. Read BC Spec First (MANDATORY)
-- [ ] **Read BC Spec** (`specs/{{bc_name}}_spec.md`) - Contains ALL requirements
+- [ ] **Read BC Spec** (`specs/{{bc_name}}/index.md`) — BC entrypoint; follow the link table to per-aggregate / per-command files when present
 - [ ] **Count ALL elements** - Aggregates, Commands, Events, ReadModels, Policies, UI Wireframes
 - [ ] **Verify completeness** - Ensure spec has all required information
 
@@ -1104,7 +1364,7 @@ For EACH ReadModel in BC spec:
 ## Getting Started
 
 1. **Choose a BC**: Select a Bounded Context from `specs/` directory
-2. **Read BC Spec**: Review `specs/{{bc_name}}_spec.md` for complete requirements
+2. **Read BC Spec**: Review `specs/{{bc_name}}/index.md` for complete requirements
 3. **Follow Tech Stack**: Use mention `@{config.framework.value}` for {config.framework.value} implementation patterns
 4. **Reference Other Rules**: Use `@ddd-principles`, `@eventstorming-implementation`, `@gwt-test-generation` as needed
 5. **Follow Checklist**: Use the checklist above to ensure 100% implementation coverage
@@ -1113,7 +1373,7 @@ For EACH ReadModel in BC spec:
 - **100% Coverage Required** - Every Command, Event, ReadModel, Policy MUST be implemented
 - **No Partial Implementation** - Don't skip any element from BC spec
 - **Complete API Endpoints** - Every Command and ReadModel MUST have a REST API endpoint
-- This rule provides **tech stack specific** guidance. BC-specific requirements are in `specs/{{bc_name}}_spec.md`.
+- This rule provides **tech stack specific** guidance. BC-specific requirements are in `specs/{{bc_name}}/index.md`.
 """
 
 
@@ -1387,7 +1647,7 @@ def generate_claude_skill_eventstorming_implementation(config: TechStackConfig) 
     return f"""# Event Storming Implementation Patterns
 
 > **Event Storming Skill**: This skill maps Event Storming stickers to code implementation patterns.
-> Reference BC specs (`specs/{{bc_name}}_spec.md`) for complete sticker details from Event Storming model.
+> Reference BC specs (`specs/{{bc_name}}/index.md`) for complete sticker details from Event Storming model.
 > Reference this skill file (`.claude/skills/eventstorming-implementation.md`) when implementing Commands, Events, Aggregates, ReadModels, Policies, and UI.
 
 ## Command Implementation
@@ -1539,7 +1799,7 @@ def generate_claude_skill_gwt_test_generation(config: TechStackConfig) -> str:
     return f"""# GWT Test Generation Guidelines
 
 > **GWT Test Skill**: This skill provides guidelines for writing GWT (Given/When/Then) tests based on Event Storming model.
-> Reference BC specs (`specs/{{bc_name}}_spec.md`) for GWT test cases from Event Storming.
+> Reference BC specs (`specs/{{bc_name}}/index.md`) for GWT test cases from Event Storming.
 > Reference this skill file (`.claude/skills/gwt-test-generation.md`) when writing tests.
 
 ## GWT (Given/When/Then) Test Pattern
@@ -1599,7 +1859,7 @@ def generate_claude_skill_tech_stack(config: TechStackConfig) -> str:
     return f"""# {config.framework.value} ({config.language.value}) Implementation Guidelines
 
 > **Tech Stack Skill**: This skill provides {config.framework.value} with {config.language.value} implementation guidelines.
-> Reference BC-specific specs in `specs/{{bc_name}}_spec.md` for detailed requirements.
+> Reference BC-specific specs in `specs/{{bc_name}}/index.md` for detailed requirements.
 > Reference this skill file (`.claude/skills/{config.framework.value}.md`) when implementing code.
 
 ## Technology Stack
@@ -1632,7 +1892,7 @@ def generate_claude_skill_tech_stack(config: TechStackConfig) -> str:
 ## Reference Files
 
 When implementing a specific BC:
-1. **Read BC Spec**: `specs/{{bc_name}}_spec.md` - Complete BC requirements (aggregates, commands, events, properties, GWT tests)
+1. **Read BC Spec**: `specs/{{bc_name}}/index.md` — BC entrypoint (oversized BCs auto-split into per-aggregate / per-command files; follow the index's link table for full detail)
 2. **Follow Tech Stack Skills**: This file (`.claude/skills/{config.framework.value}.md`) - {config.framework.value} specific implementation patterns
 3. **Check DDD Principles**: `.claude/skills/ddd-principles.md` - DDD patterns (always reference)
 4. **Check Event Storming Skills**: `.claude/skills/eventstorming-implementation.md` - Sticker-to-code mapping
@@ -1644,7 +1904,7 @@ When implementing a specific BC:
 ### For Each Bounded Context:
 
 #### 1. Read BC Spec First (MANDATORY)
-- [ ] **Read BC Spec** (`specs/{{bc_name}}_spec.md`) - Contains ALL requirements
+- [ ] **Read BC Spec** (`specs/{{bc_name}}/index.md`) — BC entrypoint; follow the link table to per-aggregate / per-command files when present
 - [ ] **Count ALL elements** - Aggregates, Commands, Events, ReadModels, Policies, UI Wireframes
 - [ ] **Verify completeness** - Ensure spec has all required information
 
@@ -1691,7 +1951,7 @@ For EACH ReadModel in BC spec:
 ## Getting Started
 
 1. **Choose a BC**: Select a Bounded Context from `specs/` directory
-2. **Read BC Spec**: Review `specs/{{bc_name}}_spec.md` for complete requirements
+2. **Read BC Spec**: Review `specs/{{bc_name}}/index.md` for complete requirements
 3. **Follow Tech Stack Skills**: Reference `.claude/skills/{config.framework.value}.md` for {config.framework.value} implementation patterns
 4. **Reference Other Skills**: Use `.claude/skills/ddd-principles.md`, `.claude/skills/eventstorming-implementation.md`, `.claude/skills/gwt-test-generation.md` as needed
 5. **Follow Checklist**: Use the checklist above to ensure 100% implementation coverage
@@ -1700,7 +1960,7 @@ For EACH ReadModel in BC spec:
 - **100% Coverage Required** - Every Command, Event, ReadModel, Policy MUST be implemented
 - **No Partial Implementation** - Don't skip any element from BC spec
 - **Complete API Endpoints** - Every Command and ReadModel MUST have a REST API endpoint
-- This skill provides **tech stack specific** guidance. BC-specific requirements are in `specs/{{bc_name}}_spec.md`.
+- This skill provides **tech stack specific** guidance. BC-specific requirements are in `specs/{{bc_name}}/index.md`.
 
 ## Related Skills
 
@@ -1721,7 +1981,7 @@ def generate_claude_skill_frontend(config: TechStackConfig) -> str:
 
 > **Frontend Skill**: This skill provides {config.frontend_framework.value} **technical implementation patterns** (HOW to implement).
 > For frontend architecture and strategy (WHAT/WHY), refer to `Frontend-PRD.md`.
-> Reference BC specs (`specs/{{bc_name}}_spec.md`) for UI wireframes and attached Commands/ReadModels.
+> Reference BC specs at `specs/{{bc_name}}/index.md` — command-attached UI wireframes live in their per-command file when the BC is auto-split.
 > Reference this skill file (`.claude/skills/{config.frontend_framework.value}.md`) when writing frontend code.
 
 ## Frontend Framework
@@ -1755,7 +2015,7 @@ frontend/
 When implementing frontend code:
 1. **Read Frontend PRD**: `Frontend-PRD.md` - Frontend architecture, strategy, and UI overview (read this first)
 2. **Read Backend PRD**: `PRD.md` - Backend architecture and API endpoints
-3. **Read BC Specs**: `specs/{{bc_name}}_spec.md` - UI wireframes and API contracts
+3. **Read BC Specs**: `specs/{{bc_name}}/index.md` — BC entrypoint (command-attached UI wireframes live in their per-command file when split)
 4. **Follow Frontend Skills**: This file - {config.frontend_framework.value} technical implementation patterns
 5. **Check Backend Skills**: `.claude/skills/{config.framework.value}.md` - Backend API patterns
 
@@ -1808,7 +2068,38 @@ def generate_frontend_prd(bcs: list[dict], config: TechStackConfig) -> str:
         return ""
     
     frontend_fw = config.frontend_framework.value
-    
+    backend_fw = config.framework.value
+
+    # Resolve AI-assistant-specific references once so the prose below
+    # only mentions paths that actually exist in the emitted ZIP.
+    using_claude = config.ai_assistant.value == "claude"
+    constitution_path = "CLAUDE.md" if using_claude else ".cursorrules"
+    frontend_skill_ref = (
+        f"`.claude/skills/{frontend_fw}.md`"
+        if using_claude
+        else f"`@{frontend_fw}` (Cursor @-mention) or `.cursor/rules/{frontend_fw}.mdc`"
+    )
+    backend_skill_ref = (
+        f"`.claude/skills/{backend_fw}.md`"
+        if using_claude
+        else f"`@{backend_fw}` or `.cursor/rules/{backend_fw}.mdc`"
+    )
+    ddd_skill_ref = (
+        "`.claude/skills/ddd-principles.md`"
+        if using_claude
+        else "`@ddd-principles` or `.cursor/rules/ddd-principles.mdc`"
+    )
+    es_skill_ref = (
+        "`.claude/skills/eventstorming-implementation.md`"
+        if using_claude
+        else "`@eventstorming-implementation` or `.cursor/rules/eventstorming-implementation.mdc`"
+    )
+    gwt_skill_ref = (
+        "`.claude/skills/gwt-test-generation.md`"
+        if using_claude
+        else "`@gwt-test-generation` or `.cursor/rules/gwt-test-generation.mdc`"
+    )
+
     # Collect all UIs and their attached commands/readmodels
     all_uis = []
     for bc in bcs:
@@ -1838,10 +2129,10 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 ## ⚠️ Important: Read All Reference Files
 
 **This Frontend PRD provides frontend architecture, strategy, and UI overview (WHAT/WHY). For technical implementation patterns (HOW), refer to:**
-1. **Frontend Tech Stack Rules/Skills**: `.cursor/rules/{frontend_fw}.mdc` (Cursor) or `.claude/skills/{frontend_fw}.md` (Claude) - Technical implementation patterns
+1. **Frontend Tech Stack Rules/Skills**: {frontend_skill_ref} — frontend technical implementation patterns
 2. **Backend PRD** (`PRD.md`) - Backend architecture and API endpoints
-3. **BC Specifications** (`specs/{{bc_name}}_spec.md`) - Complete backend requirements including UI wireframes
-4. **Backend Tech Stack Rules/Skills**: `.cursor/rules/{config.framework.value}.mdc` (Cursor) or `.claude/skills/{config.framework.value}.md` (Claude) - Backend API patterns
+3. **BC Specifications** (`specs/{{bc_name}}/index.md`) — BC entrypoint; oversized BCs auto-split with command-attached wireframes living in their per-command file
+4. **Backend Tech Stack Rules/Skills**: {backend_skill_ref} — backend API patterns
 
 ## Technology Stack
 
@@ -1863,9 +2154,20 @@ Total Query Screens (ReadModels): {len(all_readmodels)}
         uis = bc.get("uis", []) or []
         if uis:
             bc_name = bc.get("name", "Unknown")
-            bc_name_slug = bc_name.lower().replace(" ", "_")
+            bc_name_slug = _slug(bc_name)
+            # Resolve the actual file each wireframe lives in. Command-attached
+            # UIs follow their command into per-cmd files when the BC is
+            # auto-split; everything else stays in the index. Determined once
+            # per BC by inspecting the emitted file map.
+            bc_files = generate_bc_spec_files(bc, config)
+            is_split = len(bc_files) > 1
+            agg_by_cmd = _aggregate_by_command_lookup(bc)
             prd += f"\n#### {bc_name} ({len(uis)} screens)\n"
-            prd += f"**Reference**: See `specs/{bc_name_slug}_spec.md` for detailed UI wireframes with templates.\n\n"
+            prd += f"**Reference**: Start at `specs/{bc_name_slug}/index.md`. "
+            if is_split:
+                prd += "Command-attached wireframes live in their per-command file (see below).\n\n"
+            else:
+                prd += "All wireframe templates are inlined there.\n\n"
             for ui in uis:
                 if ui.get("id"):
                     ui_name = ui.get("name", "Unknown")
@@ -1878,12 +2180,15 @@ Total Query Screens (ReadModels): {len(all_readmodels)}
                     prd += "\n"
                     if description:
                         prd += f"  - Description: {description}\n"
-                    prd += f"  - **Wireframe Template**: See `specs/{bc_name_slug}_spec.md` for complete HTML template\n"
+                    template_path = _wireframe_template_path(
+                        ui, bc_name_slug, is_split, agg_by_cmd
+                    )
+                    prd += f"  - **Wireframe Template**: See `{template_path}` for complete HTML template\n"
     
     # API Endpoint Contract per BC
     prd += "\n## API Endpoint Contract (Frontend ↔ Backend)\n\n"
     prd += "Use these endpoints when implementing API integration in the frontend.\n"
-    prd += "For detailed property schemas, refer to each BC spec (`specs/{bc_name}_spec.md`).\n\n"
+    prd += "For detailed property schemas, refer to each BC spec (`specs/{bc_name}/index.md`).\n\n"
 
     for bc in bcs:
         bc_name = bc.get("name", "Unknown")
@@ -2041,7 +2346,7 @@ Total Query Screens (ReadModels): {len(all_readmodels)}
 ## Wireframe Implementation Overview
 
 For each UI wireframe:
-1. **Read BC spec** (`specs/{{bc_name}}_spec.md`) - Contains complete wireframe templates and descriptions
+1. **Read BC spec** (`specs/{{bc_name}}/index.md`) — BC entrypoint; command-attached wireframe templates live in their per-command file when the BC is auto-split
 2. **Identify attached Command/ReadModel** from BC spec
 3. **Create view component** for the screen based on wireframe template
 4. **Implement form/display** based on Command/ReadModel properties from BC spec—**use each node's and property's `displayName` for all UI text** (button labels, form field labels, page titles, column headers). The displayName was set at requirements upload (Korean or English).
@@ -2051,22 +2356,19 @@ For each UI wireframe:
 6. **Handle responses** and update UI accordingly
 
 **Important**: 
-- Wireframe templates (HTML) are stored in BC specs, not in this Frontend-PRD. Always refer to `specs/{{bc_name}}_spec.md` for detailed wireframe templates.
+- Wireframe templates (HTML) are stored in BC specs, not in this Frontend-PRD. Start at `specs/{{bc_name}}/index.md` — command-attached wireframe templates live alongside their command file when the BC is auto-split.
 - For technical implementation patterns (API integration, state management, component structure), refer to Frontend Tech Stack Rules/Skills.
 
 ## Reference Files
 
-- **Backend PRD**: `PRD.md` - Backend architecture and API endpoints
-- **BC Specs**: `specs/{{bc_name}}_spec.md` - Complete backend requirements including UI wireframes
-- **Frontend Tech Stack Rules/Skills**: 
-  - Cursor: `@{frontend_fw}` - {frontend_fw} technical implementation patterns (use @mention)
-  - Claude: `.claude/skills/{frontend_fw}.md` - {frontend_fw} technical implementation patterns
-- **Backend Tech Stack Rules/Skills**: 
-  - Cursor: `@{config.framework.value}` - Backend API patterns (use @mention)
-  - Claude: `.claude/skills/{config.framework.value}.md` - Backend API patterns
-- **Event Storming Rules/Skills**: 
-  - Cursor: `@eventstorming-implementation` - UI wireframe implementation patterns
-  - Claude: `.claude/skills/eventstorming-implementation.md` - UI wireframe implementation patterns
+- **Engineering Constitution**: `{constitution_path}` — read-order, DDD principles, EARS rules, GWT obligation
+- **Backend PRD**: `PRD.md` — backend architecture and API endpoints
+- **BC Specs**: `specs/{{bc_name}}/index.md` — BC entrypoint; oversized BCs auto-split with command-attached wireframes living in their per-command file
+- **DDD Principles**: {ddd_skill_ref}
+- **Event Storming**: {es_skill_ref} — UI wireframe implementation patterns
+- **GWT Test Generation**: {gwt_skill_ref}
+- **Frontend Tech Stack**: {frontend_skill_ref}
+- **Backend Tech Stack**: {backend_skill_ref}
 
 ## Getting Started
 
@@ -2077,7 +2379,7 @@ For each UI wireframe:
 1. **Read Both PRDs Together** (Architecture & Strategy):
    - ✅ **Backend PRD** (`PRD.md`) - Understand API endpoints and data contracts
    - ✅ **Frontend PRD** (`Frontend-PRD.md`) - This file for frontend architecture, strategy, and UI overview
-   - ✅ **BC Specs** (`specs/{{bc_name}}_spec.md`) - Check UI wireframes with templates and attached Commands/ReadModels
+   - ✅ **BC Specs** (`specs/{{bc_name}}/index.md`) — BC entrypoint; command-attached wireframes live alongside their command file when the BC is auto-split
 
 2. **Start with Main Landing Page** (Follow strategy from this PRD):
    - Create main/home page first (navigation foundation)
@@ -2086,7 +2388,7 @@ For each UI wireframe:
    - Configure state management infrastructure
 
 3. **Add BC Features Incrementally** (Follow strategy from this PRD):
-   - For each BC, read its spec (`specs/{{bc_name}}_spec.md`)
+   - For each BC, read its spec (`specs/{{bc_name}}/index.md`)
    - Create BC feature directory: `features/{{bc_name}}/`
    - Implement BC pages/components based on wireframes from BC spec
    - Add BC routes to main navigation
@@ -2098,7 +2400,7 @@ For each UI wireframe:
    - **Event Storming Rules/Skills**: For UI wireframe implementation patterns
 
 5. **For Each BC Feature**:
-   - Read wireframe template from BC spec (`specs/{{bc_name}}_spec.md`)
+   - Read wireframe template from BC spec (`specs/{{bc_name}}/index.md`)
    - Create components based on wireframe template
    - Use attached Command/ReadModel properties from BC spec
    - Connect to APIs using service layer (see Frontend Tech Stack Rules/Skills for technical details)
@@ -2143,7 +2445,7 @@ globs: frontend/**/{file_extensions},src/**/{file_extensions}
 
 > **Frontend Tech Stack Rule**: This rule provides {frontend_fw} **technical implementation patterns** (HOW to implement).
 > For frontend architecture and strategy (WHAT/WHY), refer to `Frontend-PRD.md`.
-> Reference backend PRD (`PRD.md`) and BC specs (`specs/{{bc_name}}_spec.md`) for API contracts.
+> Reference backend PRD (`PRD.md`) and BC specs (`specs/{{bc_name}}/index.md`) for API contracts.
 > Use mention feature (`@{frontend_fw}`) to reference these frontend standards.
 
 ## Technology Stack
@@ -2183,7 +2485,7 @@ frontend/
 When implementing frontend code:
 1. **Read Frontend PRD**: `Frontend-PRD.md` - Frontend architecture, strategy, and UI overview (read this first)
 2. **Read Backend PRD**: `PRD.md` - Backend architecture and API endpoints
-3. **Read BC Specs**: `specs/{{bc_name}}_spec.md` - UI wireframes and API contracts
+3. **Read BC Specs**: `specs/{{bc_name}}/index.md` — BC entrypoint (command-attached UI wireframes live in their per-command file when split)
 4. **Follow Frontend Rules**: This file (mention: `@{frontend_fw}`) - {frontend_fw} technical implementation patterns
 5. **Check Backend Rules**: `.cursor/rules/{config.framework.value}.mdc` (mention: `@{config.framework.value}`) - Backend API patterns
 
@@ -2192,7 +2494,7 @@ When implementing frontend code:
 ### For Each Bounded Context:
 
 #### 1. Read BC Spec First
-- [ ] **Read BC Spec** (`specs/{{bc_name}}_spec.md`) - Contains ALL UI wireframes, Commands, ReadModels
+- [ ] **Read BC Spec** (`specs/{{bc_name}}/index.md`) — BC entrypoint; command-attached wireframes live alongside their command file when the BC is auto-split
 - [ ] **Identify all Commands** in the BC spec - Each Command MUST have a UI button/form
 - [ ] **Identify all ReadModels** in the BC spec - Each ReadModel MUST have a display/list page
 - [ ] **Check UI Wireframes** - Each wireframe template shows the UI structure
@@ -2246,7 +2548,7 @@ For EACH UI Wireframe in BC spec:
 ## Getting Started
 
 1. **Choose a BC**: Select a Bounded Context from `specs/` directory
-2. **Read BC Spec**: Review `specs/{{bc_name}}_spec.md` for UI wireframes and API contracts
+2. **Read BC Spec**: Start at `specs/{{bc_name}}/index.md`; command-attached UI wireframes live in their per-command file when the BC is auto-split
 3. **Follow Frontend Tech Stack**: Use this rule for {frontend_fw} implementation patterns
 4. **Check Backend PRD**: Reference `PRD.md` for API endpoint details
 5. **Implement ALL Commands and ReadModels** - Use the checklist above
@@ -2341,7 +2643,7 @@ globs: **/*Test*.java,**/*Test*.kt,**/*test*.py,**/*test*.ts,**/*test*.go,**/*sp
 # GWT Test Generation Rules
 
 > **GWT Test Rule**: This rule applies when writing GWT (Given/When/Then) tests based on Event Storming model.
-> Reference BC specs (`specs/{{bc_name}}_spec.md`) for GWT test cases from Event Storming.
+> Reference BC specs (`specs/{{bc_name}}/index.md`) for GWT test cases from Event Storming.
 > Use mention feature (`@gwt-test-generation`) to reference these testing patterns.
 
 ## GWT (Given/When/Then) Test Pattern
@@ -2400,7 +2702,7 @@ globs: **/*
 # Event Storming Implementation Rules
 
 > **Event Storming Rule**: This rule maps Event Storming stickers to code implementation patterns.
-> Reference BC specs (`specs/{{bc_name}}_spec.md`) for complete sticker details from Event Storming model.
+> Reference BC specs (`specs/{{bc_name}}/index.md`) for complete sticker details from Event Storming model.
 > Use mention feature (`@eventstorming-implementation`) to reference these patterns.
 
 ## Command Implementation
