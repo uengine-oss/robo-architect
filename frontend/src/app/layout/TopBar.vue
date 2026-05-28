@@ -5,7 +5,6 @@ import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
-import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
 import FigmaButton from '@/features/figmaBinding/ui/FigmaButton.vue'
 import FigmaBindingModal from '@/features/figmaBinding/ui/FigmaBindingModal.vue'
@@ -28,7 +27,6 @@ const bigPictureStore = useBigPictureStore()
 const aggregateViewerStore = useAggregateViewerStore()
 const bpmnStore = useBpmnStore()
 const eventModelingStore = useEventModelingStore()
-const showIngestionModal = ref(false)
 const showPRDModal = ref(false)
 const showFigmaBindingModal = ref(false)
 const showSettingsPanel = ref(false)
@@ -53,9 +51,6 @@ function selectTab(tab) {
   emit('update:activeTab', tab)
 }
 
-function handleIngestionComplete() {
-  // Modal will trigger navigator refresh
-}
 </script>
 
 <template>
@@ -125,36 +120,6 @@ function handleIngestionComplete() {
     </div>
 
     <div class="top-bar__right">
-      <!-- Upload Button -->
-      <button 
-        class="upload-btn"
-        @click="showIngestionModal = true"
-        title="요구사항 문서 업로드"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-          <polyline points="17 8 12 3 7 8"></polyline>
-          <line x1="12" y1="3" x2="12" y2="15"></line>
-        </svg>
-        <span>문서 업로드</span>
-      </button>
-
-      <!-- Project Home Generator Button (feature 029: was "PRD 생성") -->
-      <button
-        class="prd-btn"
-        @click="showPRDModal = true"
-        title="모델에서 프로젝트 홈 생성 — Robo-Spec Skills 모드(권장) 또는 기존 PRD 형식"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="16" y1="13" x2="8" y2="13"/>
-          <line x1="16" y1="17" x2="8" y2="17"/>
-          <polyline points="10 9 9 9 8 9"/>
-        </svg>
-        <span>프로젝트 홈 생성</span>
-      </button>
-
       <!-- Figma Binding Button (feature 016) -->
       <FigmaButton v-model="showFigmaBindingModal" />
 
@@ -172,18 +137,12 @@ function handleIngestionComplete() {
     </div>
     
     <!-- Settings Panel -->
-    <SettingsPanel 
+    <SettingsPanel
       :visible="showSettingsPanel"
       @close="showSettingsPanel = false"
     />
-    
-    <!-- Ingestion Modal -->
-    <RequirementsIngestionModal 
-      v-model="showIngestionModal"
-      @complete="handleIngestionComplete"
-    />
 
-    <!-- PRD Generator Modal -->
+    <!-- PRD Generator Modal (Code 메뉴 첫클릭 시 자동 노출) -->
     <PRDGeneratorModal
       :visible="showPRDModal"
       @close="showPRDModal = false"
@@ -315,61 +274,6 @@ function handleIngestionComplete() {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-}
-
-.upload-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: linear-gradient(135deg, var(--color-accent) 0%, #1c7ed6 100%);
-  border: none;
-  border-radius: 4px;
-  color: white;
-  font-size: 0.7rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-
-.upload-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(34, 139, 230, 0.3);
-}
-
-.upload-btn:active {
-  transform: translateY(0);
-}
-
-/* PRD Generator Button */
-.prd-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
-  border: none;
-  border-radius: 4px;
-  color: white;
-  font-size: 0.7rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
-}
-
-.prd-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(147, 51, 234, 0.4);
-}
-
-.prd-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.prd-btn:disabled,
-.prd-btn.is-disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Settings Button */

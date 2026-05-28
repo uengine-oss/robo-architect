@@ -166,6 +166,7 @@ async def get_all_contexts(request: Request) -> list[dict[str, Any]]:
     RETURN {
         id: bc.id,
         name: bc.name,
+        displayName: bc.displayName,
         description: bc.description,
         owner: bc.owner,
         domainType: bc.domainType,

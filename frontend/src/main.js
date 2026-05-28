@@ -9,9 +9,15 @@ import './open-pencil-theme.css'
 
 import { bootstrapAIDesign } from './features/aiDesign/bootstrap'
 import { preloadKoreanFont } from './features/aiDesign/fonts'
+// 032: identity-header interceptor — installed before any data fetch so
+// every backend request carries X-User-Name/X-User-Email once the launcher
+// has populated the session store. In web mode the interceptor stays
+// installed but is a no-op (session.user is null).
+import { installIdentityInterceptor } from './app/http.js'
 
 const app = createApp(App)
 app.use(createPinia())
+installIdentityInterceptor()
 
 // Wire open-pencil's AI provider to the backend proxy. Pure static config —
 // no backend fetch needed. The real provider/model/credentials live on the

@@ -26,6 +26,32 @@ const isConnecting = ref(true)
 const connectionError = ref('')
 const workdirDisplay = ref('')
 
+// In Electron, window.location.hostname resolves to 'app' (custom app:// protocol)
+// which is not a real network host. Fetch the actual backend port from the main
+// process and use loopback instead.
+const electronBackendPort = ref(null)
+
+async function initElectronBackendPort() {
+  if (!window.desktop) return
+  try {
+    const result = await window.desktop.app.getRuntimeState()
+    if (result.ok && result.data.backendPort) {
+      electronBackendPort.value = result.data.backendPort
+    }
+  } catch {}
+}
+
+function resolveBackendCoords() {
+  if (electronBackendPort.value) {
+    return { protocol: 'ws:', host: '127.0.0.1', port: String(electronBackendPort.value) }
+  }
+  return {
+    protocol: window.location.protocol === 'https:' ? 'wss:' : 'ws:',
+    host: import.meta.env.VITE_API_HOST || window.location.hostname,
+    port: import.meta.env.VITE_API_PORT || '8000',
+  }
+}
+
 // Write batching — collect incoming data and flush via requestAnimationFrame
 // to avoid excessive xterm.js render cycles during heavy output.
 let writeBuf = ''
@@ -54,9 +80,9 @@ const isBrowsing = ref(false)
 async function browseDirectory(path) {
   try {
     isBrowsing.value = true
-    const host = import.meta.env.VITE_API_HOST || window.location.hostname
-    const port = import.meta.env.VITE_API_PORT || '8000'
-    const response = await fetch(`http://${host}:${port}/api/claude-code/browse-directory?path=${encodeURIComponent(path || '~')}`)
+    const { host, port } = resolveBackendCoords()
+    const httpProto = electronBackendPort.value ? 'http:' : (window.location.protocol === 'https:' ? 'https:' : 'http:')
+    const response = await fetch(`${httpProto}//${host}:${port}/api/claude-code/browse-directory?path=${encodeURIComponent(path || '~')}`)
     if (response.ok) {
       folderPickerData.value = await response.json()
     }
@@ -94,9 +120,7 @@ function confirmFolderSelection() {
 }
 
 function getWsUrl(workdir) {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = import.meta.env.VITE_API_HOST || window.location.hostname
-  const port = import.meta.env.VITE_API_PORT || '8000'
+  const { protocol, host, port } = resolveBackendCoords()
   let url = `${protocol}//${host}:${port}/api/claude-code/terminal`
   const params = new URLSearchParams()
   if (workdir) params.set('workdir', workdir)
@@ -237,6 +261,10 @@ watch(() => props.workdir, (newWorkdir) => {
 
 onMounted(async () => {
   await nextTick()
+
+  // Resolve the real backend port before opening the WebSocket — in Electron
+  // window.location.hostname is 'app' (custom protocol, not a real host).
+  await initElectronBackendPort()
 
   createTerminal()
   terminal.open(terminalRef.value)

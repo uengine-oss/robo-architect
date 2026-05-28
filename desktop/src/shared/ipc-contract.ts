@@ -24,6 +24,14 @@ export const IpcErrorCodes = {
   UPDATE_NOT_READY: "UPDATE_NOT_READY",
   BLOCKED_SCHEME: "BLOCKED_SCHEME",
   INTERNAL: "INTERNAL",
+  // ---- added by 032 (desktop launcher) ----
+  CONNECTION_DUPLICATE: "CONNECTION_DUPLICATE",
+  CONNECTION_NOT_FOUND: "CONNECTION_NOT_FOUND",
+  DISCOVERY_UNAVAILABLE: "DISCOVERY_UNAVAILABLE",
+  PROJECT_ROOT_INVALID: "PROJECT_ROOT_INVALID",
+  PROJECT_ROOT_UNREADABLE: "PROJECT_ROOT_UNREADABLE",
+  GIT_UNAVAILABLE: "GIT_UNAVAILABLE",
+  LAUNCHER_ALREADY_ENTERED: "LAUNCHER_ALREADY_ENTERED",
 } as const;
 
 export type IpcErrorCode = (typeof IpcErrorCodes)[keyof typeof IpcErrorCodes];
@@ -65,6 +73,13 @@ export interface DesktopSettings {
   update: { autoCheck: boolean; lastCheckedAt: string | null };
   window: { bounds: WindowBounds | null; maximized: boolean };
   lastPorts: { backend: number | null; bolt: number | null };
+  // ---- added by 032 (DesktopSettings v2) ----
+  // Each field is populated by the v1 → v2 migration; pre-existing
+  // 023 v1 files are upgraded in-place on first load.
+  savedConnections: import("./launcher-contract").SavedConnection[];
+  /** Absolute paths, most-recent first, max 5. */
+  recentProjectRoots: string[];
+  lastProfile: import("./launcher-contract").LaunchProfile | null;
 }
 
 /**

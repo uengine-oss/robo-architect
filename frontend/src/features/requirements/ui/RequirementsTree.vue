@@ -67,11 +67,11 @@ function onDrop(evt, featureId) {
       <div class="tree-row" @click="toggle(key('epic', epic.id))">
         <span class="caret">{{ isOpen(key('epic', epic.id)) ? '▾' : '▸' }}</span>
         <span class="node-icon epic">EPIC</span>
-        <span class="node-label">{{ epic.name }}</span>
+        <span class="node-label">{{ epic.displayName || epic.name }}</span>
         <button
           class="clarify-btn"
           title="요구사항 명확화"
-          @click.stop="emit('clarify-scope', { scopeType: 'bounded_context', scopeId: epic.id, scopeName: epic.name })"
+          @click.stop="emit('clarify-scope', { scopeType: 'bounded_context', scopeId: epic.id, scopeName: epic.displayName || epic.name })"
         >🔍</button>
       </div>
 

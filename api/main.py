@@ -168,6 +168,21 @@ async def _request_id_middleware(request: Request, call_next):
         # Avoid leaking request_id into unrelated async contexts.
         set_request_id(None)
 
+
+# -----------------------------------------------------------------------------
+# Identity propagation (spec 032)
+# -----------------------------------------------------------------------------
+# Reads `X-User-Name` / `X-User-Email` headers set by the Electron launcher
+# hand-off and attaches an `Actor` to `request.state.actor`. Registered AFTER
+# the request_id middleware so the actor log line carries the same
+# correlation id as the rest of the request lifecycle.
+#
+# Trust model: local-loopback only. See
+# `specs/032-desktop-startup-picker/contracts/identity-header-contract.md`.
+from api.platform.identity import IdentityMiddleware  # noqa: E402
+
+app.add_middleware(IdentityMiddleware)
+
 # Include ingestion router
 from api.features.ingestion.router import router as ingestion_router
 app.include_router(ingestion_router)
