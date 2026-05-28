@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.ingestion_llm_runtime import get_llm
@@ -129,7 +130,7 @@ def encode_answer(
     try:
         structured = get_llm().with_structured_output(_LLMProposal)
         raw: _LLMProposal = structured.invoke(
-            [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+            [build_system_message(_SYSTEM_PROMPT), HumanMessage(content=prompt)]
         )
     except Exception as exc:  # noqa: BLE001
         SmartLogger.log(

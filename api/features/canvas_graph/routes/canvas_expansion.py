@@ -322,7 +322,8 @@ async def generate_component_wireframe(node_id: str, request: Request) -> dict[s
     """
     from api.platform import open_pencil_client
     from api.platform.llm import get_llm
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from api.platform.llm_messages import build_system_message
+    from langchain_core.messages import HumanMessage
 
     # Check wireframe service availability
     if not open_pencil_client.is_available():
@@ -408,7 +409,7 @@ Select appropriate components and arrange them top-to-bottom for a mobile screen
     llm = get_llm()
     try:
         resp = llm.invoke([
-            SystemMessage(content=system_prompt),
+            build_system_message(system_prompt),
             HumanMessage(content=user_prompt),
         ])
         raw_text = resp.content if hasattr(resp, "content") else str(resp)

@@ -12,7 +12,8 @@ import asyncio
 import re
 from typing import Any, AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
@@ -207,7 +208,7 @@ async def extract_events_from_user_stories_phase(
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     structured_llm.invoke,
-                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)],
+                    [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)],
                 ),
                 timeout=60.0,
             )

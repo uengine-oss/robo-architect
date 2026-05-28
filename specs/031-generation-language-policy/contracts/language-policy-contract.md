@@ -119,15 +119,26 @@ Test failure message MUST include the offending file:line and a one-paragraph ex
 
 ---
 
-## Contract 3 — Frontend chokepoint: `useLanguageStore` + HTTP interceptor
+## Contract 3 — Frontend chokepoint: `useLanguageStore` + global `window.fetch` patch
+
+> **Mechanism revision (during implementation, T002 audit)**: the original plan
+> specified an Axios request interceptor. The codebase has no axios dependency
+> and uses raw `window.fetch()` directly from ~50 feature-local `*.api.js`
+> modules and inline component blocks. Migrating every caller would defeat
+> the "single chokepoint" property (FR-008). Instead, the chokepoint is a
+> **global `window.fetch` patch installed once at app bootstrap** — every
+> caller (existing and future) inherits the `Accept-Language` header for free.
+> Functionally equivalent to the Axios interceptor pattern, deployed at a
+> different platform boundary.
 
 ### Surface
 
 | Module | Path | Public API |
 |---|---|---|
-| Pinia store | `frontend/src/app/language.store.js` | `useLanguageStore()` exposing `{ language: Ref<string>, setLanguage(tag: string): void, initLanguage(): void }` |
-| HTTP interceptor | `frontend/src/services/httpClient.js` (or the existing equivalent — to be confirmed in T002) | Axios request interceptor that reads from `useLanguageStore()` and sets `config.headers['Accept-Language']` |
-| Settings UI | [frontend/src/app/layout/SettingsPanel.vue](../../../../../../frontend/src/app/layout/SettingsPanel.vue) | New section labeled "Language" with a `<select>` (or `<input>` with datalist of recommended tags) bound via `v-model` to `useLanguageStore().language` |
+| Pinia store | [frontend/src/app/language.store.js](../../../../../../frontend/src/app/language.store.js) | `useLanguageStore()` exposing `{ language: Ref<string>, setLanguage(tag: string): void, initLanguage(): void }` |
+| Fetch interceptor | [frontend/src/app/httpInterceptor.js](../../../../../../frontend/src/app/httpInterceptor.js) | `installLanguageFetchInterceptor(): void` — idempotent global `window.fetch` patch. Reads from `useLanguageStore()` on every call, sets `Accept-Language` on the outbound request (preserving any caller-set value). |
+| Settings UI | [frontend/src/app/layout/SettingsPanel.vue](../../../../../../frontend/src/app/layout/SettingsPanel.vue) | New "Language" section with a free-form `<input>` + `<datalist>` of recommended tags (`ko-KR`, `en-US`, `ja-JP`, `zh-CN`), bound via `v-model` (through a computed wrapper that delegates to `setLanguage()` for validation + persistence). |
+| Bootstrap wiring | [frontend/src/main.js](../../../../../../frontend/src/main.js) | After Pinia registration: `useLanguageStore()` (forces eager init) + `installLanguageFetchInterceptor()`. |
 
 ### Rules
 

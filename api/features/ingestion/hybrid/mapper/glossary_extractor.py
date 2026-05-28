@@ -15,7 +15,8 @@ import re
 from collections import Counter
 from typing import Iterable
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.hybrid.contracts import BpmSkeleton, GlossaryTerm
@@ -149,7 +150,7 @@ async def extract_glossary(document_text: str, skeleton: BpmSkeleton) -> list[Gl
         llm = get_llm()
         structured = llm.with_structured_output(_GlossaryResult)
         result: _GlossaryResult = await structured.ainvoke([
-            SystemMessage(content=SYSTEM_PROMPT),
+            build_system_message(SYSTEM_PROMPT),
             HumanMessage(content=user),
         ])
     except Exception as e:

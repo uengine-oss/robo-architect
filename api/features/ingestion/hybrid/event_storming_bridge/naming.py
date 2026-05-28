@@ -28,7 +28,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.event_storming.prompts import (
@@ -370,7 +371,7 @@ async def _name_bcs(
                 user_stories=_stories_text_for_bc_prompt(user_stories),
             )
             result: BoundedContextList = await structured.ainvoke([
-                SystemMessage(content="You are a Domain-Driven Design Bounded Context analyst. Output Korean displayName."),
+                build_system_message("You are a Domain-Driven Design Bounded Context analyst. Output Korean displayName."),
                 HumanMessage(content=prompt),
             ])
             if result and result.bounded_contexts:
@@ -458,7 +459,7 @@ async def _name_aggregate(
                 f"- removal rules: {len(agg.removal_rule_ids)}\n"
             )
             result: _AggregateNamingOut = await structured.ainvoke([
-                SystemMessage(content=_SYSTEM_AGGREGATE),
+                build_system_message(_SYSTEM_AGGREGATE),
                 HumanMessage(content=user_msg),
             ])
             if result and result.name:
@@ -522,7 +523,7 @@ async def _name_command(
                 + ("\n".join(f"- {s}" for s in sample_statements) or "(없음)")
             )
             result: _CommandNamingOut = await structured.ainvoke([
-                SystemMessage(content=_SYSTEM_COMMAND),
+                build_system_message(_SYSTEM_COMMAND),
                 HumanMessage(content=user_msg),
             ])
             if result and result.name:
@@ -569,7 +570,7 @@ async def _name_event(
                 f"- source rule statement: {statement or '(none)'}\n"
             )
             result: _EventNamingOut = await structured.ainvoke([
-                SystemMessage(content=_SYSTEM_EVENT),
+                build_system_message(_SYSTEM_EVENT),
                 HumanMessage(content=user_msg),
             ])
             if result and result.name:
@@ -611,7 +612,7 @@ async def _name_policy(
                 "위 정보로 정책 이름과 한국어 설명을 만드세요."
             )
             result: _PolicyNamingOut = await structured.ainvoke([
-                SystemMessage(content=_SYSTEM_POLICY),
+                build_system_message(_SYSTEM_POLICY),
                 HumanMessage(content=user_msg),
             ])
             if result and result.name:
@@ -659,7 +660,7 @@ async def _name_user_story(
                 "'so that' 의도 (benefit) 를 한국어로 작성하세요."
             )
             result: _UserStoryNamingOut = await structured.ainvoke([
-                SystemMessage(content=_SYSTEM_USER_STORY),
+                build_system_message(_SYSTEM_USER_STORY),
                 HumanMessage(content=user_msg),
             ])
             if result and (result.action or result.benefit):
@@ -697,7 +698,7 @@ async def _name_read_model(
                 + ("\n".join(f"  - {s}" for s in statements[:5]) or "  (없음)")
             )
             result: _ReadModelNamingOut = await structured.ainvoke([
-                SystemMessage(content=_SYSTEM_READMODEL),
+                build_system_message(_SYSTEM_READMODEL),
                 HumanMessage(content=user_msg),
             ])
             if result and result.name:

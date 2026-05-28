@@ -5,7 +5,8 @@ import json
 import time
 from typing import Any, AsyncGenerator, Dict, List, Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.platform.llm import get_llm as get_platform_llm
@@ -188,7 +189,7 @@ async def stream_react_response(
             human = f"Selected nodes:\n{nodes_context}\n\nUser request:\n{prompt}\n"
             try:
                 structured = llm_non_streaming.with_structured_output(IntentAnalysis)
-                return structured.invoke([SystemMessage(content=system), HumanMessage(content=human)])
+                return structured.invoke([build_system_message(system), HumanMessage(content=human)])
             except Exception as e:
                 SmartLogger.log(
                     "WARNING",
@@ -552,7 +553,7 @@ async def stream_react_response(
 
             rankings: dict[str, dict[str, Any]] = {}
             try:
-                resp = llm_non_streaming.invoke([SystemMessage(content=rank_system), HumanMessage(content=rank_human)])
+                resp = llm_non_streaming.invoke([build_system_message(rank_system), HumanMessage(content=rank_human)])
                 raw = getattr(resp, "content", "") or ""
                 if "```json" in raw:
                     raw = raw.split("```json", 1)[1].split("```", 1)[0].strip()
@@ -612,7 +613,7 @@ async def stream_react_response(
         if bool(intent.property_focus) or ("Property" in (intent.required_types or [])):
             injected_context = _build_injected_context_block()
 
-        messages = [SystemMessage(content=REACT_SYSTEM_PROMPT)]
+        messages = [build_system_message(REACT_SYSTEM_PROMPT)]
         for msg in conversation_history[-5:]:
             if msg.get("type") == "user":
                 messages.append(HumanMessage(content=msg.get("content", "")))
