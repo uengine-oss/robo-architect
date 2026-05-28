@@ -8,10 +8,28 @@
 // All non-2xx responses throw an Error whose `.status` and `.body` are
 // inspectable so callers can branch on 409 (conflict) and 413 (too large).
 
-function apiBase() {
-  const host = import.meta.env.VITE_API_HOST || window.location.hostname
-  const port = import.meta.env.VITE_API_PORT || '8000'
-  return `http://${host}:${port}`
+// In Electron, window.location.hostname is 'app' (custom app:// protocol) — not a
+// real network host. Resolve once per session using window.desktop.app.getRuntimeState()
+// so every fetch goes to http://127.0.0.1:<dynamicPort> instead of http://app:8000.
+let _apiBasePromise = null
+
+async function apiBase() {
+  if (!_apiBasePromise) {
+    _apiBasePromise = (async () => {
+      if (window.desktop) {
+        try {
+          const result = await window.desktop.app.getRuntimeState()
+          if (result.ok && result.data.backendPort) {
+            return `http://127.0.0.1:${result.data.backendPort}`
+          }
+        } catch {}
+      }
+      const host = import.meta.env.VITE_API_HOST || window.location.hostname
+      const port = import.meta.env.VITE_API_PORT || '8000'
+      return `http://${host}:${port}`
+    })()
+  }
+  return _apiBasePromise
 }
 
 class WorkspaceApiError extends Error {
@@ -34,7 +52,8 @@ async function parseError(response) {
 }
 
 export async function fetchTree(root, path = '') {
-  const url = new URL(`${apiBase()}/api/claude-code/tree`)
+  const base = await apiBase()
+  const url = new URL(`${base}/api/claude-code/tree`)
   url.searchParams.set('root', root)
   if (path) url.searchParams.set('path', path)
   const res = await fetch(url.toString())
@@ -43,7 +62,8 @@ export async function fetchTree(root, path = '') {
 }
 
 export async function fetchFile(root, path) {
-  const url = new URL(`${apiBase()}/api/claude-code/file`)
+  const base = await apiBase()
+  const url = new URL(`${base}/api/claude-code/file`)
   url.searchParams.set('root', root)
   url.searchParams.set('path', path)
   const res = await fetch(url.toString())
@@ -52,7 +72,8 @@ export async function fetchFile(root, path) {
 }
 
 export async function saveFile({ root, path, content, expectedMtimeNs }) {
-  const res = await fetch(`${apiBase()}/api/claude-code/file`, {
+  const base = await apiBase()
+  const res = await fetch(`${base}/api/claude-code/file`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -67,7 +88,8 @@ export async function saveFile({ root, path, content, expectedMtimeNs }) {
 }
 
 export async function deleteEntry({ root, path }) {
-  const res = await fetch(`${apiBase()}/api/claude-code/file`, {
+  const base = await apiBase()
+  const res = await fetch(`${base}/api/claude-code/file`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root, path }),
@@ -77,7 +99,8 @@ export async function deleteEntry({ root, path }) {
 }
 
 export async function moveEntry({ root, fromPath, toPath }) {
-  const res = await fetch(`${apiBase()}/api/claude-code/move`, {
+  const base = await apiBase()
+  const res = await fetch(`${base}/api/claude-code/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root, from_path: fromPath, to_path: toPath }),

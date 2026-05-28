@@ -36,6 +36,10 @@ import {
   startBackend,
   stopBackend,
 } from "./backend";
+// 032: register stub launcher handlers so the renderer's window.desktop
+// surface answers (with a typed VALIDATION error) for every launcher channel
+// until each gating task lands a real handler.
+import { registerLauncherIpcStubs } from "./launcher/ipc-handlers";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -174,6 +178,7 @@ function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
+    title: "Robo Architect",
     show: false,
     webPreferences: {
       preload: preloadPath,
@@ -206,6 +211,13 @@ function createMainWindow(): BrowserWindow {
   });
 
   void window.loadURL("app://app/");
+
+  // Cmd+Shift+I (macOS) / Ctrl+Shift+I opens DevTools for debugging.
+  window.webContents.on("before-input-event", (_e, input) => {
+    if (input.type === "keyDown" && input.key === "I" && input.shift && (input.meta || input.control)) {
+      window.webContents.toggleDevTools();
+    }
+  });
 
   window.once("ready-to-show", () => window.show());
   window.webContents.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL) => {
@@ -263,7 +275,7 @@ function registerIpcHandlers(): void {
     });
   });
 
-  // Stubs for channels whose owning task hasn't shipped yet — kept here so
+  // Stubs for 023 channels whose owning task hasn't shipped yet — kept here so
   // the renderer can call them without crashing the bridge. Each returns a
   // typed `VALIDATION` error pointing at the gating task.
   const unimplemented = [
@@ -285,6 +297,11 @@ function registerIpcHandlers(): void {
       );
     });
   }
+
+  // 032 launcher channels — same pattern but in a separate module so each
+  // gating task can opt out of the stub by passing its channel to the skip
+  // set when it registers a real handler.
+  registerLauncherIpcStubs();
 }
 
 // ---------------------------------------------------------------------------
@@ -329,15 +346,7 @@ if (gotLock) {
   });
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") {
-      app.quit();
-    }
-  });
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createMainWindow();
-    }
+    app.quit();
   });
 
   app.on("before-quit", async (event) => {

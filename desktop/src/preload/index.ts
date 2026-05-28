@@ -36,6 +36,27 @@ import type {
   UpdateCheckResult,
   UpdateStateEvent,
 } from "../shared/ipc-contract";
+// 032: extend window.desktop with launcher channels.
+import type {
+  ConnectionsDeleteInput,
+  ConnectionsSaveInput,
+  ConnectionsUpdateInput,
+  DiscoveredConnection,
+  IdentityResolveInput,
+  IdentitySetGitConfigInput,
+  LauncherDesktopBridge,
+  LauncherEnterInput,
+  LauncherEnterResult,
+  ProbeStatusInput,
+  ProbeStatusResult,
+  ProjectRootChooseResult,
+  ProjectRootCreateInput,
+  ProjectRootEntry,
+  ProjectRootValidateInput,
+  ProjectRootValidateResult,
+  SavedConnection,
+  SessionUser,
+} from "../shared/launcher-contract";
 
 function invoke<T>(channel: string, args?: unknown): Promise<IpcResult<T>> {
   return ipcRenderer.invoke(channel, args) as Promise<IpcResult<T>>;
@@ -52,7 +73,49 @@ function subscribe<C extends IpcSubscriptionChannel>(
   };
 }
 
-const bridge: DesktopBridge = {
+// 032 launcher surface — built separately and merged into the exposed bridge
+// below. Keeps the 023 DesktopBridge type clean while letting us share the
+// `invoke` helper.
+const launcherBridge: LauncherDesktopBridge = {
+  connections: {
+    list: () => invoke<SavedConnection[]>("connections:list"),
+    save: (input: ConnectionsSaveInput) => invoke<SavedConnection>("connections:save", input),
+    update: (input: ConnectionsUpdateInput) =>
+      invoke<SavedConnection>("connections:update", input),
+    delete: (input: ConnectionsDeleteInput) =>
+      invoke<{ ok: true }>("connections:delete", input),
+    discoverNeo4jDesktop: () =>
+      invoke<DiscoveredConnection[]>("connections:discoverNeo4jDesktop"),
+    probeStatus: (input: ProbeStatusInput) =>
+      invoke<ProbeStatusResult>("connections:probeStatus", input),
+    test: (params: TestNeo4jConnectionParams) =>
+      invoke<TestNeo4jConnectionData>("connections:test", params),
+  },
+  projectRoot: {
+    choose: () => invoke<ProjectRootChooseResult>("projectRoot:choose"),
+    createNew: (input: ProjectRootCreateInput) =>
+      invoke<ProjectRootChooseResult>("projectRoot:createNew", input),
+    listRecent: () => invoke<ProjectRootEntry[]>("projectRoot:listRecent"),
+    validate: (input: ProjectRootValidateInput) =>
+      invoke<ProjectRootValidateResult>("projectRoot:validate", input),
+  },
+  identity: {
+    resolve: (input: IdentityResolveInput) => invoke<SessionUser>("identity:resolve", input),
+    setGitConfig: (input: IdentitySetGitConfigInput) =>
+      invoke<SessionUser>("identity:setGitConfig", input),
+  },
+  launcher: {
+    enter: (input: LauncherEnterInput) =>
+      invoke<LauncherEnterResult>("launcher:enter", input),
+    reopen: () => invoke<{ ok: true }>("launcher:reopen"),
+  },
+};
+
+// `DesktopBridge` now also includes the launcher surface (via module
+// augmentation in launcher-contract.ts). We compose it in two literals
+// and merge below — the `Omit` narrows the annotation to the 023 half so
+// TypeScript doesn't ask for launcher methods in the same literal.
+const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher"> = {
   app: {
     getRuntimeState: () => invoke<RuntimeState>("app:getRuntimeState"),
     openExternal: (params: OpenExternalParams) =>
@@ -88,4 +151,6 @@ const bridge: DesktopBridge = {
   },
 };
 
-contextBridge.exposeInMainWorld("desktop", bridge);
+// Merge 023 surface + 032 launcher surface into the single `window.desktop`
+// object. Spread is safe because the two halves share no top-level keys.
+contextBridge.exposeInMainWorld("desktop", { ...bridge, ...launcherBridge });

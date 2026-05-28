@@ -124,7 +124,7 @@ def build_requirements_tree() -> RequirementsTreeDTO:
     with get_session() as session:
         bc_rows = list(
             session.run(
-                "MATCH (bc:BoundedContext) RETURN bc.id AS id, bc.name AS name ORDER BY bc.name"
+                "MATCH (bc:BoundedContext) RETURN bc.id AS id, bc.name AS name, bc.displayName AS displayName ORDER BY bc.name"
             )
         )
         feature_rows = list(
@@ -195,6 +195,7 @@ def build_requirements_tree() -> RequirementsTreeDTO:
             EpicNodeDTO(
                 id=bc_id,
                 name=bc["name"] or "",
+                displayName=bc["displayName"],
                 features=epic_features,
                 unassignedFeature=(
                     FeatureNodeDTO(

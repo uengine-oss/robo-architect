@@ -58,6 +58,7 @@ class FeatureNodeDTO(BaseModel):
 class EpicNodeDTO(BaseModel):
     id: str  # = BoundedContext id
     name: str
+    displayName: Optional[str] = None
     features: list[FeatureNodeDTO] = Field(default_factory=list)
     # User stories assigned to this BC but to no Feature.
     unassignedFeature: Optional[FeatureNodeDTO] = None

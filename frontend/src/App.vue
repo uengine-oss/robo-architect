@@ -13,10 +13,17 @@ import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useThemeStore } from '@/app/theme.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { createLogger, newOpId } from '@/app/logging/logger'
+// 032: desktop launcher gate — when running inside Electron the launcher
+// view is shown until the user picks (Neo4j connection, project root) and
+// the session identity is established. Web mode bypasses (session.entered
+// starts true) so this gate is transparent to the existing SPA deployment.
+import LauncherView from '@/features/desktop-launcher/LauncherView.vue'
+import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 
 const navigatorStore = useNavigatorStore()
 const themeStore = useThemeStore() // Initialize theme store
 const bpmnStore = useBpmnStore()
+const session = useSessionStore()
 
 // Tab state management
 const activeTab = ref('Design')
@@ -162,8 +169,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-container">
-    <TopBar 
+  <!-- 032: launcher gate. In Electron mode, block the rest of the app until
+       the user has completed the launcher hand-off (connection + project
+       root + identity). In web mode session.entered is true from the start,
+       so the entire branch is unreachable and the existing SPA renders as-is. -->
+  <LauncherView v-if="session.isDesktop && !session.entered" />
+  <div v-else class="app-container">
+    <TopBar
       :active-tab="activeTab"
       @update:active-tab="activeTab = $event"
     />
