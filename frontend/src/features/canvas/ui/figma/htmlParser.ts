@@ -3,7 +3,7 @@ import type { WireframeElement } from './types'
 /**
  * Improved HTML → WireframeElement[] parser.
  *
- * Fixes over figma-integration original:
+ * Fixes over the prior parser:
  * 1. Semantic HTML tags (MAIN, SECTION, HEADER, NAV, FOOTER, FORM, FIELDSET,
  *    ARTICLE, ASIDE, FIGURE) are recursed into — not just DIV/SPAN.
  * 2. Added handlers: wf-grid, wf-col-*, wf-label, wf-badge, wf-state,
