@@ -1,8 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
+import PromoteToEsModal from './PromoteToEsModal.vue'
 
 const bpmnStore = useBpmnStore()
+
+const showPromoteModal = ref(false)
 
 // Source hybrid BPM session id (set by Phase 1~4 ingestion)
 const hsid = computed(() => bpmnStore.hybridSessionId)
@@ -61,7 +64,14 @@ function closeStream() {
   }
 }
 
-async function startPromotion() {
+function openPromoteModal() {
+  if (!hsid.value) return
+  lastError.value = ''
+  showPromoteModal.value = true
+}
+
+async function startPromotion({ displayLanguage, uiGenerationMode }) {
+  showPromoteModal.value = false
   if (!hsid.value) return
   isPromoting.value = true
   progress.value = 0
@@ -73,8 +83,15 @@ async function startPromotion() {
     // 1) Wipe previous promotion (idempotent re-run friendly)
     await fetch(`/api/ingest/hybrid/${hsid.value}/promote-to-es`, { method: 'DELETE' })
 
-    // 2) Trigger
-    const resp = await fetch(`/api/ingest/hybrid/${hsid.value}/promote-to-es`, { method: 'POST' })
+    // 2) Trigger with user-selected display_language + ui_generation_mode
+    const resp = await fetch(`/api/ingest/hybrid/${hsid.value}/promote-to-es`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        display_language: displayLanguage,
+        ui_generation_mode: uiGenerationMode,
+      }),
+    })
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}))
       throw new Error(err.detail || `promote start failed: ${resp.status}`)
@@ -164,7 +181,7 @@ onBeforeUnmount(() => { closeStream() })
         <strong>Task × source_function</strong> 단위로 UserStory 도출 → Event/BoundedContext/Aggregate/Command/Policy/ReadModel 차례로 생성 →
         BpmTask ↔ UserStory 역추적 엣지 부착 → BC 간 자동 흐름은 Cross-BC Policy 로 추출됩니다.
       </p>
-      <button class="btn-primary" :disabled="!hsid" @click="startPromotion">
+      <button class="btn-primary" :disabled="!hsid" @click="openPromoteModal">
         🌩  모델 생성 시작
       </button>
       <p v-if="snapshotError" class="error-text">{{ snapshotError }}</p>
@@ -205,11 +222,18 @@ onBeforeUnmount(() => { closeStream() })
         <button class="btn-primary" @click="switchToEventModeling">
           📊 Event Modeling 탭에서 시각화 보기
         </button>
-        <button class="btn-secondary" @click="startPromotion">
+        <button class="btn-secondary" @click="openPromoteModal">
           🔄 재생성 (LLM 다시 호출)
         </button>
       </div>
     </section>
+
+    <!-- ES Promotion modal — collects display_language + ui_generation_mode -->
+    <PromoteToEsModal
+      :visible="showPromoteModal"
+      @close="showPromoteModal = false"
+      @submit="startPromotion"
+    />
   </div>
 </template>
 

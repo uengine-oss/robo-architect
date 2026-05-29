@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
@@ -481,8 +482,30 @@ async def reset_hybrid_workspace() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+_VALID_UI_MODES = ("html", "figma", "figma-with-components")
+
+
+class PromoteToEsRequest(BaseModel):
+    """Settings collected by the frontend PromoteToEsModal at promote time.
+
+    These are user choices that downstream ES phases consume:
+      - `display_language`: language for UserStory / Event / Command labels
+      - `ui_generation_mode`: drives the UI Wireframe phase's branch
+        ("html" / "figma" / "figma-with-components")
+
+    Defaults exist so curl / older clients still work, but in practice the UI
+    always sends both.
+    """
+
+    display_language: str = "ko"
+    ui_generation_mode: str = "figma"
+
+
 @router.post("/{session_id}/promote-to-es")
-async def promote_start(session_id: str) -> dict[str, Any]:
+async def promote_start(
+    session_id: str,
+    body: PromoteToEsRequest | None = None,
+) -> dict[str, Any]:
     """Start Phase 5 Event Storming promotion for a finished BPM session.
 
     Reuses the standard ingestion infrastructure:
@@ -494,6 +517,11 @@ async def promote_start(session_id: str) -> dict[str, Any]:
          existing event_storming code unchanged.
       4. After the workflow finishes, hybrid_post_workflow_hook attaches BpmTask→US/Event/Cmd
          PROMOTED_TO bridges + cross-BC Policy auto-detection.
+
+    `display_language` and `ui_generation_mode` come from the frontend
+    PromoteToEsModal — the BPM-creation modal cannot capture them because they
+    only matter at the ES stage (BPM analysis is language-neutral and has no
+    UI phase).
     """
     snap = fetch_session_snapshot(session_id)
     if not snap.get("tasks"):
@@ -502,6 +530,14 @@ async def promote_start(session_id: str) -> dict[str, Any]:
             detail="BPM 가 아직 없습니다. Phase 1~4 (BPM 생성) 를 먼저 완료하세요.",
         )
 
+    body = body or PromoteToEsRequest()
+    resolved_lang = (body.display_language or "ko").strip().lower()
+    if resolved_lang not in ("ko", "en"):
+        resolved_lang = "ko"
+    resolved_ui_mode = (body.ui_generation_mode or "figma").strip().lower()
+    if resolved_ui_mode not in _VALID_UI_MODES:
+        resolved_ui_mode = "figma"
+
     # Reuse the hybrid session id as the ingestion session id so the whole
     # pipeline (BPM + Event Storming) carries one unified `session_id` — no
     # split between a BpmSession id and a separate ingestion id.
@@ -509,23 +545,24 @@ async def promote_start(session_id: str) -> dict[str, Any]:
     ingestion_session.source_type = "hybrid"
     ingestion_session.hybrid_source_session_id = session_id
     ingestion_session.content = ""  # downstream phases don't use ctx.content in hybrid mode
-    # Default to the figma JSX agent so the UI phase builds sceneGraphs out of
-    # native primitives (FRAME / TEXT / RECTANGLE / …) rather than INSTANCE
-    # references that need a populated design system. Without this, promote-to-es
-    # inherits the global default ("html") whose `_generate_scene_graph` uses
-    # the component-based prompt — the LLM then synthesises gentry-line
-    # `Card` / `Input` / `Button/Primary` INSTANCE nodes that never resolve in
-    # an empty Figma file, leaving the architect with blank frames.
-    ingestion_session.ui_generation_mode = "figma"
+    ingestion_session.display_language = resolved_lang
+    ingestion_session.ui_generation_mode = resolved_ui_mode
     SmartLogger.log(
         "INFO", "Hybrid → Event Storming promotion session created",
         category="ingestion.hybrid.es.promote",
-        params={"ingestion_session_id": ingestion_session.id, "hybrid_source_session_id": session_id},
+        params={
+            "ingestion_session_id": ingestion_session.id,
+            "hybrid_source_session_id": session_id,
+            "display_language": resolved_lang,
+            "ui_generation_mode": resolved_ui_mode,
+        },
     )
     return {
         # The frontend should subscribe to /api/ingest/stream/{ingestion_session_id}
         "ingestion_session_id": ingestion_session.id,
         "hybrid_source_session_id": session_id,
+        "display_language": resolved_lang,
+        "ui_generation_mode": resolved_ui_mode,
     }
 
 
