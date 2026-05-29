@@ -105,6 +105,9 @@ figma.ui.onmessage = async (msg: any) => {
         figma.ui.postMessage({ type: 'CONFIG_RESET' })
         break
       }
+      case 'SCAN_COMPONENTS':
+        await handleScanComponents()
+        break
     }
   } catch (e: any) {
     figma.ui.postMessage({ type: 'ERROR', message: (e && e.message) || String(e) })
@@ -157,7 +160,7 @@ async function handleCreatePage(msg: { requestId?: string; name?: string }) {
 // (recursive renderer for JSX-primitive sceneGraphs from open-pencil's
 // wireframe service). Old `buildFrameFromSceneGraph` (component-based)
 // is retained for the legacy SYNC_FRAME flow (009).
-const SPEC024_PLUGIN_BUILD = 'v6'
+const SPEC024_PLUGIN_BUILD = 'v7'
 
 async function handleCreateFrameInPage(msg: {
   requestId?: string
@@ -598,8 +601,49 @@ async function renderSceneNode(
         }
       }
       if (!comp) {
-        ctx.failed++
-        ctx.errors.push(`INSTANCE "${sn.name}": component not found in local file`)
+        // Fallback (v7): the bound Figma file doesn't actually contain a
+        // matching COMPONENT — most commonly because the architect started
+        // from an empty file with no design system. Instead of failing
+        // silently and leaving an invisible gap in the wireframe, render a
+        // grey placeholder FRAME labelled with the missing component name.
+        // The user still sees the spatial structure the LLM intended.
+        try {
+          const ph = figma.createFrame()
+          ph.name = `«${sn.name || 'INSTANCE'}»`
+          parent.appendChild(ph)
+          applyContainerProps(ph, sn)
+          // Grey fill so it reads as "not the real component".
+          try {
+            ph.fills = [{ type: 'SOLID', color: { r: 0.92, g: 0.92, b: 0.94 }, opacity: 1 }]
+          } catch (_e) {}
+          try {
+            ph.strokes = [{ type: 'SOLID', color: { r: 0.70, g: 0.72, b: 0.78 }, opacity: 1 }]
+            ph.strokeWeight = 1
+            ph.dashPattern = [4, 4]
+          } catch (_e) {}
+          // Tiny label so the architect can identify what should go there.
+          try {
+            await figma.loadFontAsync({ family: 'Inter', style: 'Regular' })
+            const label = figma.createText()
+            label.fontName = { family: 'Inter', style: 'Regular' }
+            label.fontSize = 11
+            label.characters = sn.name || 'INSTANCE'
+            try { label.fills = [{ type: 'SOLID', color: { r: 0.35, g: 0.36, b: 0.42 }, opacity: 1 }] } catch (_e) {}
+            ph.appendChild(label)
+            // Center the label inside the placeholder when parent layout permits.
+            const w = (ph as any).width || 0
+            const h = (ph as any).height || 0
+            try {
+              label.x = Math.max(0, (w - label.width) / 2)
+              label.y = Math.max(0, (h - label.height) / 2)
+            } catch (_e) {}
+          } catch (_e) { /* font load failed — placeholder still useful */ }
+          ctx.created++
+          ctx.errors.push(`INSTANCE "${sn.name}": component not found — rendered placeholder`)
+        } catch (e: any) {
+          ctx.failed++
+          ctx.errors.push(`INSTANCE "${sn.name}" placeholder failed: ${(e && e.message) || e}`)
+        }
         return
       }
       try {
@@ -1508,4 +1552,91 @@ figma.on('documentchange', (event) => {
   }, CHANGE_DEBOUNCE_MS) as unknown as number
 })
 
-figma.ui.postMessage({ type: 'PLUGIN_READY', fileKey: figma.fileKey })
+// ── Component scan (replaces the legacy REST `/v1/files/{key}` walk) ──
+//
+// Walks every COMPONENT / COMPONENT_SET in the document, exports each as a
+// PNG, and ships them to the UI iframe which POSTs to
+// `/api/figma-binding/components/scan`. Replaces the REST-API-token path —
+// the plugin's mere presence inside Figma proves the user can read these
+// nodes, so no `X-Figma-Token` is needed.
+async function handleScanComponents(): Promise<void> {
+  let nodes: SceneNode[]
+  try {
+    nodes = figma.root.findAll(
+      (n: SceneNode) => n.type === 'COMPONENT' || n.type === 'COMPONENT_SET'
+    )
+  } catch (e: any) {
+    figma.ui.postMessage({
+      type: 'SCAN_COMPONENTS_RESULT',
+      ok: false,
+      error: `Document walk failed: ${(e && e.message) || String(e)}`,
+    })
+    return
+  }
+
+  figma.ui.postMessage({ type: 'SCAN_COMPONENTS_PROGRESS', total: nodes.length, exported: 0 })
+
+  const components: any[] = []
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i] as any
+    try {
+      const bytes: Uint8Array = await n.exportAsync({ format: 'PNG' })
+      components.push({
+        figmaNodeId: n.id,
+        name: n.name || n.id,
+        pageName: pageNameOf(n),
+        widthPx: Math.round(n.width || 0),
+        heightPx: Math.round(n.height || 0),
+        pngBase64: bytesToBase64(bytes),
+      })
+    } catch (e: any) {
+      // Non-fatal — surface so the operator notices misconfigured nodes.
+      figma.ui.postMessage({
+        type: 'SCAN_COMPONENTS_SKIP',
+        nodeId: n.id,
+        name: n.name,
+        reason: (e && e.message) || String(e),
+      })
+    }
+    figma.ui.postMessage({
+      type: 'SCAN_COMPONENTS_PROGRESS',
+      total: nodes.length,
+      exported: components.length,
+      lastName: n.name,
+    })
+  }
+
+  figma.ui.postMessage({
+    type: 'SCAN_COMPONENTS_RESULT',
+    ok: true,
+    components,
+  })
+}
+
+function pageNameOf(node: any): string {
+  let cur: any = node
+  while (cur && cur.type !== 'PAGE') cur = cur.parent
+  return cur ? cur.name : ''
+}
+
+// Uint8Array → base64. Use figma.base64Encode where available (newer
+// plugin API, single call); otherwise chunked String.fromCharCode + btoa
+// to avoid stack overflow on multi-MB PNGs.
+function bytesToBase64(bytes: Uint8Array): string {
+  const f: any = figma as any
+  if (typeof f.base64Encode === 'function') return f.base64Encode(bytes)
+  const CHUNK = 0x8000
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)))
+  }
+  return btoa(bin)
+}
+
+figma.ui.postMessage({
+  type: 'PLUGIN_READY',
+  fileKey: figma.fileKey,
+  // figma.root.name is the file name — the UI uses it for the binding
+  // payload so the architect modal can show "Connected to <fileName>".
+  fileName: (figma.root && figma.root.name) || '',
+})

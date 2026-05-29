@@ -1,124 +1,55 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useFigmaBindingStore } from '../figmaBinding.store'
-import { getStoredFigmaCreds } from '../api'
 import * as api from '../api'
 import FullSyncSection from './FullSyncSection.vue'
 import HistoryFailureRow from './HistoryFailureRow.vue'
 import HistorySyncRunRow from './HistorySyncRunRow.vue'
 import PreviousBindingGroup from './PreviousBindingGroup.vue'
 
+// Connect / Replace happen from the Figma plugin (which posts file_key +
+// file_name to /api/figma-binding/connect). This modal is read-only +
+// disconnect; the plugin is the source of truth for "which file are we
+// bound to right now". Same for component scan — the plugin walks
+// figma.root.findAll(COMPONENT|COMPONENT_SET), exports PNGs, and pushes.
+
 const props = defineProps({
-  modelValue: {
-    type: Boolean,
-    default: false,
-  },
+  modelValue: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue'])
 
 const store = useFigmaBindingStore()
 
-const tab = ref('main') // 'main' | 'connect' | 'replace' | 'history'
+const tab = ref('main') // 'main' | 'history'
 
-// Form state
-const fileKeyInput = ref('')
-const tokenInput = ref('')
-const replaceFileKeyInput = ref('')
-const replaceTokenInput = ref('')
-
-// History items lazily loaded
 const history = ref([])
 const historyLoading = ref(false)
 
-// ─── 024: Component library ────────────────────────────────────────────
-const componentsScanning = ref(false)
-const componentsScanResult = ref(null) // { added, updated, removed, vlmDescribed, vlmFailures, componentCount }
-const componentsScanError = ref(null)
+// ─── Component library clear-only (scan now lives in the Figma plugin) ──
 const componentsClearing = ref(false)
-// Live progress from the SSE stream — populated while a scan is running.
-const scanProgress = ref(null) // { phase, total, described, scanned, lastItem, lastDescription }
-let scanStreamCloser = null
-
-const scanPhaseLabel = computed(() => {
-  const p = scanProgress.value?.phase
-  return ({
-    fetching: 'Figma 파일 분석',
-    thumbnails: '썸네일 수집',
-    describing: '시각 LLM 설명 생성',
-    persisting: 'DB 저장',
-    done: '완료',
-    error: '오류',
-    idle: '대기',
-  })[p] || ''
-})
-
-const scanProgressPct = computed(() => {
-  const p = scanProgress.value
-  if (!p) return 0
-  const total = p.total || 0
-  if (!total) return 0
-  if (p.phase === 'describing') return Math.min(100, Math.round((p.described / total) * 100))
-  if (p.phase === 'persisting') return Math.min(100, Math.round((p.scanned / total) * 100))
-  if (p.phase === 'done') return 100
-  return 0
-})
-
-async function submitScanComponents() {
-  componentsScanError.value = null
-  componentsScanResult.value = null
-  scanProgress.value = null
-  const creds = getStoredFigmaCreds()
-  const token = creds.token || tokenInput.value || replaceTokenInput.value
-  if (!token) {
-    componentsScanError.value = 'Figma 토큰이 필요합니다. 연결 정보를 확인하세요.'
-    return
-  }
-  componentsScanning.value = true
-  // Open the progress stream BEFORE the POST so we don't miss the early
-  // `fetching` event. The stream is fan-in shared state — it'll deliver the
-  // current snapshot on subscribe regardless of timing.
-  scanStreamCloser = api.subscribeComponentsScanStream({
-    onEvent: (name, payload) => {
-      if (name === 'snapshot' || name === 'progress' || name === 'done' || name === 'error') {
-        scanProgress.value = payload
-      }
-    },
-    onClose: () => { scanStreamCloser = null },
-  })
-  try {
-    const data = await api.scanComponents(token)
-    componentsScanResult.value = data
-    await store.loadBinding()
-  } catch (e) {
-    componentsScanError.value = e.message || '컴포넌트 스캔 실패'
-  } finally {
-    componentsScanning.value = false
-    if (scanStreamCloser) { try { scanStreamCloser() } catch {} scanStreamCloser = null }
-  }
-}
+const componentsActionError = ref(null)
 
 async function submitClearComponents() {
   if (!confirm('스캔된 컴포넌트 메타데이터를 모두 삭제합니다. 계속할까요?')) return
   componentsClearing.value = true
-  componentsScanError.value = null
+  componentsActionError.value = null
   try {
     await api.clearComponents()
-    componentsScanResult.value = null
     await store.loadBinding()
   } catch (e) {
-    componentsScanError.value = e.message || '삭제 실패'
+    componentsActionError.value = e.message || '삭제 실패'
   } finally {
     componentsClearing.value = false
   }
 }
 
-// ─── 024-DEV: Sample wireframe generator (mixed instance + native) ─────
+// ─── DEV: Sample wireframe generator (mixed instance + native) ─────────
 const sampleBrief = ref(
   '상품 검색 화면: 상단에 검색창(이메일/상품명 입력), 중간에는 검색된 상품 목록 3건 표시(아이폰 15 Pro 1,550,000원, 맥북 에어 M3 1,790,000원, 에어팟 프로 2 359,000원), 맨 아래에 "장바구니에 추가" 버튼.'
 )
 const sampleFrameName = ref('상품 검색')
 const sampleGenerating = ref(false)
-const sampleResult = ref(null) // { ok, instanceCount, nativeCount, figmaPageName, ... }
+const sampleResult = ref(null)
 const sampleError = ref(null)
 
 async function submitGenerateSample() {
@@ -156,57 +87,14 @@ watch(
   () => props.modelValue,
   (open) => {
     if (open) {
-      // Pre-fill the connect form from 009's existing token storage
-      const creds = getStoredFigmaCreds()
-      if (!fileKeyInput.value) fileKeyInput.value = creds.fileKey || ''
-      if (!tokenInput.value) tokenInput.value = creds.token || ''
-      if (!replaceTokenInput.value) replaceTokenInput.value = creds.token || ''
-      // Reset to default tab depending on current state
-      tab.value = store.binding ? 'main' : 'connect'
+      tab.value = 'main'
       store.loadBinding()
     }
   }
 )
 
-const canSubmitConnect = computed(
-  () => !!fileKeyInput.value.trim() && !!tokenInput.value.trim() && !store.isLoading
-)
-const canSubmitReplace = computed(
-  () =>
-    !!replaceFileKeyInput.value.trim() &&
-    !!replaceTokenInput.value.trim() &&
-    !store.isLoading
-)
-
 function close() {
   emit('update:modelValue', false)
-}
-
-function extractFileKey(input) {
-  // Accept either a raw file key or a full Figma URL.
-  // Figma URLs look like: https://www.figma.com/file/<KEY>/<title> OR /design/<KEY>/...
-  const m = input.match(/figma\.com\/(?:file|design)\/([A-Za-z0-9]+)/)
-  return m ? m[1] : input.trim()
-}
-
-async function submitConnect() {
-  if (!canSubmitConnect.value) return
-  const ok = await store.connect(extractFileKey(fileKeyInput.value), tokenInput.value)
-  if (ok) {
-    tab.value = 'main'
-  }
-}
-
-async function submitReplace() {
-  if (!canSubmitReplace.value) return
-  const ok = await store.replace(
-    extractFileKey(replaceFileKeyInput.value),
-    replaceTokenInput.value
-  )
-  if (ok) {
-    replaceFileKeyInput.value = ''
-    tab.value = 'main'
-  }
 }
 
 async function submitDisconnect() {
@@ -216,25 +104,22 @@ async function submitDisconnect() {
   )) {
     return
   }
-  const ok = await store.disconnect()
-  if (ok) tab.value = 'connect'
+  await store.disconnect()
 }
 
 async function loadHistory() {
   historyLoading.value = true
   try {
     history.value = await api.getHistory(50)
-  } catch (e) {
+  } catch {
     history.value = []
   } finally {
     historyLoading.value = false
   }
-  // 020: Also load failures + sync-runs for the rebuilt History tab.
   store.loadFailures().catch(() => {})
   store.loadSyncRuns().catch(() => {})
 }
 
-// 020: Computeds that split rows into "current binding" vs "이전 바인딩".
 const currentFailuresRetryable = computed(() => {
   const fk = store.failures.currentBindingFileKey
   return store.failures.retryable.filter(
@@ -242,23 +127,18 @@ const currentFailuresRetryable = computed(() => {
   )
 })
 const currentFailuresInFlight = computed(() => store.failures.inFlight)
-const currentFailuresNonRetryable = computed(() => {
-  return store.failures.nonRetryable.filter(
-    (f) => f.nonRetryableReason !== '이전 바인딩'
-  )
-})
-const previousBindingFailures = computed(() => {
-  return store.failures.nonRetryable.filter(
-    (f) => f.nonRetryableReason === '이전 바인딩'
-  )
-})
+const currentFailuresNonRetryable = computed(() =>
+  store.failures.nonRetryable.filter((f) => f.nonRetryableReason !== '이전 바인딩')
+)
+const previousBindingFailures = computed(() =>
+  store.failures.nonRetryable.filter((f) => f.nonRetryableReason === '이전 바인딩')
+)
 const currentSyncRuns = computed(() =>
   store.syncRuns.rows.filter((r) => !r.previousBinding)
 )
 const previousSyncRuns = computed(() =>
   store.syncRuns.rows.filter((r) => r.previousBinding)
 )
-
 const hasAnyHistory = computed(() =>
   currentFailuresRetryable.value.length
   || currentFailuresInFlight.value.length
@@ -289,20 +169,8 @@ watch(tab, (t) => {
         <button
           class="fb-modal__tab"
           :class="{ 'is-active': tab === 'main' }"
-          :disabled="!store.binding"
           @click="tab = 'main'"
         >연결 상태</button>
-        <button
-          class="fb-modal__tab"
-          :class="{ 'is-active': tab === 'connect' }"
-          @click="tab = 'connect'"
-        >연결</button>
-        <button
-          class="fb-modal__tab"
-          :class="{ 'is-active': tab === 'replace' }"
-          :disabled="!store.binding"
-          @click="tab = 'replace'"
-        >교체</button>
         <button
           class="fb-modal__tab"
           :class="{ 'is-active': tab === 'history' }"
@@ -311,7 +179,24 @@ watch(tab, (t) => {
       </nav>
 
       <div class="fb-modal__body">
-        <!-- Main tab: status + disconnect -->
+        <!-- No binding yet → plugin instructions -->
+        <div v-if="tab === 'main' && !store.binding" class="fb-section">
+          <p class="fb-hint">
+            바인딩된 Figma 다큐먼트가 없습니다. 연동은 <strong>RoboArchitect Sync 플러그인</strong>에서
+            진행합니다 — 별도의 API 토큰은 필요하지 않습니다.
+          </p>
+          <ol class="fb-steps">
+            <li>Figma 데스크톱에서 연동하려는 파일을 엽니다.</li>
+            <li>Plugins → Development → <strong>RoboArchitect Sync</strong>를 실행합니다.</li>
+            <li>Backend URL에 이 Robo Architect 백엔드 주소를 입력하고 <strong>연결</strong>을 누릅니다.
+              자동으로 이 파일이 바인딩 등록됩니다.</li>
+            <li>연결되면 이 모달을 다시 열어 상태를 확인할 수 있습니다. 디자인 시스템
+              컴포넌트를 가져오려면 플러그인의 <strong>디자인 시스템 스캔</strong>을 누르세요.</li>
+          </ol>
+          <div v-if="store.lastError" class="fb-error">{{ store.lastError }}</div>
+        </div>
+
+        <!-- Main tab: status + components + disconnect -->
         <div v-if="tab === 'main' && store.binding" class="fb-section">
           <div class="fb-row">
             <label>상태</label>
@@ -344,10 +229,9 @@ watch(tab, (t) => {
             </span>
           </div>
 
-          <!-- 020: Retroactive full-sync controls -->
           <FullSyncSection />
 
-          <!-- 024-DEV: Sample wireframe generator (mixed instance + native) -->
+          <!-- DEV: Sample wireframe generator -->
           <div class="fb-components" data-test="sample-wireframe-panel">
             <div class="fb-components__header">
               <strong>샘플 와이어프레임 생성</strong>
@@ -393,9 +277,7 @@ watch(tab, (t) => {
                   rel="noopener"
                   data-test="sample-figma-url"
                   style="color:#0acf83; text-decoration:underline;"
-                >
-                  Figma에서 열기
-                </a>
+                >Figma에서 열기</a>
               </div>
             </div>
             <div v-if="sampleError" class="fb-error" data-test="sample-error">{{ sampleError }}</div>
@@ -411,7 +293,7 @@ watch(tab, (t) => {
             </div>
           </div>
 
-          <!-- 024: Component library scan -->
+          <!-- Component catalog: scan is plugin-driven; modal only shows count + clear -->
           <div class="fb-components">
             <div class="fb-components__header">
               <strong>디자인 시스템 컴포넌트</strong>
@@ -420,64 +302,17 @@ watch(tab, (t) => {
               </span>
             </div>
             <p class="fb-hint">
-              연결된 Figma 파일의 <code>COMPONENT</code> / <code>COMPONENT_SET</code>
-              노드를 추출하고 시각 LLM으로 1줄 설명을 채웁니다. 와이어프레임 생성 시
-              <strong>Figma + Components</strong> 모드에서 이 카탈로그가 사용됩니다.
+              컴포넌트 스캔은 <strong>RoboArchitect Sync 플러그인의 "디자인 시스템 스캔"</strong> 버튼에서 실행합니다 —
+              <code>COMPONENT</code> / <code>COMPONENT_SET</code> 노드를 찾아
+              PNG 와 함께 백엔드로 전송하면, 백엔드가 시각 LLM 으로 1줄 설명을
+              채우고 카탈로그를 갱신합니다. 와이어프레임 생성 시
+              <strong>Figma + Components</strong> 모드에서 사용됩니다.
             </p>
-            <!-- Live progress (spec 024 phase 2) -->
-            <div
-              v-if="componentsScanning && scanProgress && scanProgress.phase !== 'idle'"
-              class="fb-scan-progress"
-            >
-              <div class="fb-scan-progress__row">
-                <span class="fb-scan-progress__phase">{{ scanPhaseLabel }}</span>
-                <span class="fb-scan-progress__counts">
-                  <template v-if="scanProgress.phase === 'describing'">
-                    {{ scanProgress.described }} / {{ scanProgress.total }}
-                  </template>
-                  <template v-else-if="scanProgress.phase === 'persisting'">
-                    {{ scanProgress.scanned }} / {{ scanProgress.total }}
-                  </template>
-                  <template v-else-if="scanProgress.phase === 'thumbnails'">
-                    {{ scanProgress.total }}개 발견
-                  </template>
-                </span>
-              </div>
-              <div class="fb-scan-progress__bar">
-                <div
-                  class="fb-scan-progress__bar-fill"
-                  :style="{ width: scanProgressPct + '%' }"
-                ></div>
-              </div>
-              <div v-if="scanProgress.lastItem" class="fb-scan-progress__item">
-                <span class="fb-scan-progress__item-label">추출 중:</span>
-                <strong>{{ scanProgress.lastItem }}</strong>
-                <span
-                  v-if="scanProgress.lastDescription"
-                  class="fb-scan-progress__item-desc"
-                >— {{ scanProgress.lastDescription }}</span>
-              </div>
+            <div v-if="componentsActionError" class="fb-error">
+              {{ componentsActionError }}
             </div>
-            <div v-if="componentsScanResult" class="fb-hint" style="color:#0acf83;">
-              스캔 완료: 추가 {{ componentsScanResult.added }} /
-              갱신 {{ componentsScanResult.updated }} /
-              제거 {{ componentsScanResult.removed }} ·
-              VLM 성공 {{ componentsScanResult.vlmDescribed }} / 실패 {{ componentsScanResult.vlmFailures }}
-              ({{ componentsScanResult.durationMs }}ms)
-            </div>
-            <div v-if="componentsScanError" class="fb-error">
-              {{ componentsScanError }}
-            </div>
-            <div class="fb-actions">
+            <div v-if="(store.binding.componentCount ?? 0) > 0" class="fb-actions">
               <button
-                class="fb-btn fb-btn--primary"
-                @click="submitScanComponents"
-                :disabled="componentsScanning"
-              >
-                {{ componentsScanning ? '스캔 중...' : '컴포넌트 스캔' }}
-              </button>
-              <button
-                v-if="(store.binding.componentCount ?? 0) > 0"
                 class="fb-btn fb-btn--small"
                 @click="submitClearComponents"
                 :disabled="componentsClearing"
@@ -494,82 +329,17 @@ watch(tab, (t) => {
           </div>
         </div>
 
-        <!-- Connect tab -->
-        <form v-if="tab === 'connect'" class="fb-section" @submit.prevent="submitConnect">
-          <p v-if="store.binding" class="fb-hint">
-            이미 다른 다큐먼트가 바인딩되어 있습니다. <strong>교체</strong> 탭을 사용하거나
-            먼저 연결을 해제해 주세요.
-          </p>
-          <div class="fb-field">
-            <label>Figma 파일 URL 또는 File Key</label>
-            <input
-              v-model="fileKeyInput"
-              type="text"
-              placeholder="https://www.figma.com/file/abcd1234/..."
-              :disabled="!!store.binding"
-            />
-          </div>
-          <div class="fb-field">
-            <label>개인 액세스 토큰 (figd_…)</label>
-            <input
-              v-model="tokenInput"
-              type="password"
-              placeholder="figd_..."
-              :disabled="!!store.binding"
-            />
-          </div>
-          <div v-if="store.lastError && tab === 'connect'" class="fb-error">
-            {{ store.lastError }}
-          </div>
-          <div class="fb-actions">
-            <button
-              type="submit"
-              class="fb-btn fb-btn--primary"
-              :disabled="!canSubmitConnect || !!store.binding"
-            >
-              {{ store.isLoading ? '검증 중...' : '연결' }}
-            </button>
-          </div>
-        </form>
-
-        <!-- Replace tab -->
-        <form v-if="tab === 'replace' && store.binding" class="fb-section" @submit.prevent="submitReplace">
-          <p class="fb-hint">
-            새 Figma 다큐먼트로 교체합니다. 기존 매핑은 <strong>archive</strong> 처리되며,
-            기존에 만든 Figma 프레임은 그대로 둡니다. 이전 바인딩에서 생성된 UI 노드는
-            "from previous binding" 표시가 붙습니다.
-          </p>
-          <div class="fb-field">
-            <label>새 Figma 파일 URL 또는 File Key</label>
-            <input v-model="replaceFileKeyInput" type="text" placeholder="https://www.figma.com/file/..." />
-          </div>
-          <div class="fb-field">
-            <label>개인 액세스 토큰</label>
-            <input v-model="replaceTokenInput" type="password" placeholder="figd_..." />
-          </div>
-          <div v-if="store.lastError && tab === 'replace'" class="fb-error">
-            {{ store.lastError }}
-          </div>
-          <div class="fb-actions">
-            <button type="submit" class="fb-btn fb-btn--primary" :disabled="!canSubmitReplace">
-              {{ store.isLoading ? '검증 중...' : '교체' }}
-            </button>
-          </div>
-        </form>
-
-        <!-- History tab (020: failures + summary rows + 이전 바인딩 group) -->
+        <!-- History tab (failure rows + sync run summaries + 이전 바인딩) -->
         <div v-if="tab === 'history'" class="fb-section">
           <div v-if="store.failures.isLoading || store.syncRuns.isLoading" class="fb-hint">
             불러오는 중...
           </div>
 
-          <!-- Empty state (FR-007 / spec § US3 acceptance scenario 3) -->
           <div v-else-if="!hasAnyHistory" class="fb-hint">
             이력 없음 — '연결 상태' 탭에서 전체 Figma 반영을 시작할 수 있습니다.
           </div>
 
           <template v-else>
-            <!-- Retryable failures + inFlight + non-retryable (current binding) -->
             <div
               v-if="currentFailuresRetryable.length || currentFailuresInFlight.length || currentFailuresNonRetryable.length"
               class="fb-history-group"
@@ -599,7 +369,6 @@ watch(tab, (t) => {
               />
             </div>
 
-            <!-- Sync run summary rows (current binding) -->
             <div v-if="currentSyncRuns.length" class="fb-history-group">
               <div class="fb-history-group__header"><strong>최근 실행</strong></div>
               <HistorySyncRunRow
@@ -609,7 +378,6 @@ watch(tab, (t) => {
               />
             </div>
 
-            <!-- Previous binding (collapsible) -->
             <PreviousBindingGroup
               :sync-runs="previousSyncRuns"
               :failures="previousBindingFailures"
@@ -778,83 +546,16 @@ watch(tab, (t) => {
   font-size: 0.78rem;
 }
 
-.fb-scan-progress {
-  background: rgba(56, 132, 255, 0.08);
-  border: 1px solid rgba(56, 132, 255, 0.25);
-  padding: 10px 12px;
-  border-radius: 6px;
-  font-size: 0.78rem;
+.fb-steps {
+  margin: 0;
+  padding: 8px 24px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  font-size: 0.8rem;
+  color: var(--color-text, #ddd);
 }
-.fb-scan-progress__row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.fb-scan-progress__phase {
-  font-weight: 600;
-  color: #74a8ff;
-}
-.fb-scan-progress__counts {
-  font-family: ui-monospace, monospace;
-  color: #aac3ff;
-}
-.fb-scan-progress__bar {
-  width: 100%;
-  height: 5px;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.fb-scan-progress__bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #3884ff, #74a8ff);
-  transition: width 0.25s ease;
-}
-.fb-scan-progress__item {
-  display: block;
-  color: #cfd6e4;
-  font-size: 0.74rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.fb-scan-progress__item-label {
-  color: #8a98b3;
-  margin-right: 4px;
-}
-.fb-scan-progress__item-desc {
-  margin-left: 6px;
-  color: #8a98b3;
-  font-weight: normal;
-}
-
-.fb-history {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 50vh;
-  overflow-y: auto;
-}
-
-.fb-history li {
-  display: grid;
-  grid-template-columns: 150px 130px 100px 1fr;
-  gap: 8px;
-  font-size: 0.72rem;
-  padding: 4px 6px;
-  border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
-}
-
-.fb-history__time { color: #888; font-family: ui-monospace, monospace; }
-.fb-history__type { color: #0acf83; }
-.fb-history__actor { color: #aaa; }
-.fb-history__payload { color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-steps li { line-height: 1.4; }
 
 .fb-components {
   display: flex;

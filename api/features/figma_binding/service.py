@@ -18,7 +18,6 @@ from api.platform.observability.smart_logger import SmartLogger
 
 from . import full_sync as _full_sync_orchestrator
 from . import plugin_messages, repository, storyboard_resolver
-from ._figma_validate import validate_file
 
 
 # Plugin call timeouts. The lower bound is set by Figma plugin sandbox's
@@ -63,17 +62,22 @@ def get_active_binding_response() -> dict[str, Any] | None:
     return _to_response(b)
 
 
-async def connect_binding(
-    *, figma_file_key: str, api_token: str, actor: str
+def connect_binding(
+    *, figma_file_key: str, figma_file_name: str, actor: str
 ) -> dict[str, Any]:
-    """Validate file via Figma REST then persist the singleton binding."""
+    """Persist the singleton binding from plugin-supplied metadata.
+
+    The Figma plugin reads ``figma.fileKey`` / ``figma.root.name`` directly,
+    so the backend trusts those values rather than calling Figma's REST API
+    with a personal token. Permission to the file is implicit: the user
+    couldn't have run the plugin on a file they can't open.
+    """
     SmartLogger.log(
         "INFO",
         f"figma_binding.connect.start file_key={figma_file_key}",
         category="figma_binding.connect",
     )
 
-    # Reject if an active binding already exists.
     existing = repository.get_active_binding()
     if existing:
         raise HTTPException(
@@ -81,34 +85,16 @@ async def connect_binding(
             detail="이미 다른 Figma 다큐먼트가 바인딩되어 있습니다. 먼저 해제하거나 /replace를 사용하세요.",
         )
 
-    meta = await validate_file(figma_file_key, api_token)
-    if not meta.get("ok"):
-        repository.append_history_event_no_binding(
-            event_type="validate_failure",
-            actor=actor,
-            figma_file_key=figma_file_key,
-            payload={"error": meta.get("error", "")},
-        )
-        SmartLogger.log(
-            "WARN",
-            f"figma_binding.validate failed: {meta.get('error')}",
-            category="figma_binding.validate",
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Figma 파일에 접근할 수 없습니다: {meta.get('error', '')}",
-        )
-
     binding = repository.upsert_binding(
         figma_file_key=figma_file_key,
-        figma_file_name=meta.get("fileName") or "Untitled",
+        figma_file_name=figma_file_name or "Untitled",
         connected_by=actor,
     )
     repository.append_history_event(
         event_type="connect",
         actor=actor,
         figma_file_key=figma_file_key,
-        payload={"fileName": meta.get("fileName")},
+        payload={"fileName": figma_file_name},
     )
     SmartLogger.log(
         "INFO",
@@ -132,25 +118,14 @@ def disconnect_binding(*, actor: str) -> None:
     SmartLogger.log("INFO", "figma_binding.disconnect.done", category="figma_binding.disconnect")
 
 
-async def replace_binding(
-    *, figma_file_key: str, api_token: str, actor: str
+def replace_binding(
+    *, figma_file_key: str, figma_file_name: str, actor: str
 ) -> dict[str, Any]:
+    """Swap the singleton binding to a different Figma file. Plugin-pushed,
+    no REST validation — same trust model as :func:`connect_binding`."""
     SmartLogger.log("INFO", f"figma_binding.replace.start new_file_key={figma_file_key}", category="figma_binding.replace")
 
     existing = repository.get_active_binding()
-    # Validate the new file FIRST — never archive prior state if the new file is bad.
-    meta = await validate_file(figma_file_key, api_token)
-    if not meta.get("ok"):
-        repository.append_history_event_no_binding(
-            event_type="validate_failure",
-            actor=actor,
-            figma_file_key=figma_file_key,
-            payload={"phase": "replace", "error": meta.get("error", "")},
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Figma 파일에 접근할 수 없습니다: {meta.get('error', '')}",
-        )
 
     if existing:
         # Archive prior mappings and append a 'replace' event before swapping the binding row.
@@ -178,14 +153,14 @@ async def replace_binding(
 
     binding = repository.upsert_binding(
         figma_file_key=figma_file_key,
-        figma_file_name=meta.get("fileName") or "Untitled",
+        figma_file_name=figma_file_name or "Untitled",
         connected_by=actor,
     )
     repository.append_history_event(
         event_type="connect",
         actor=actor,
         figma_file_key=figma_file_key,
-        payload={"fileName": meta.get("fileName"), "via": "replace"},
+        payload={"fileName": figma_file_name, "via": "replace"},
     )
     SmartLogger.log("INFO", f"figma_binding.replace.done new_file_key={figma_file_key}", category="figma_binding.replace")
     return _to_response(binding)

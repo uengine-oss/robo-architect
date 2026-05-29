@@ -1769,7 +1769,11 @@ function useSample() {
                       </svg>
                       JIRA
                     </button>
+                    <!-- Figma 입력 모드는 도구의 REST API 토큰 기반 경로 — 플러그인-driven
+                         아키텍처로 옮기는 동안 진입점을 숨겨둠. 백엔드 핸들러와 figma
+                         파싱 코드는 그대로 둬서 추후 재노출 시 살릴 수 있게 보존. -->
                     <button
+                      v-if="false"
                       :class="['tab-btn', { active: inputMode === 'figma' }]"
                       @click="inputMode = 'figma'"
                     >

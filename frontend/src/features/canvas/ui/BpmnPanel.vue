@@ -6,6 +6,7 @@ import BpmnInspectorPanel from './BpmnInspectorPanel.vue'
 import HybridTaskInspector from './HybridTaskInspector.vue'
 import HybridReviewModal from './HybridReviewModal.vue'
 import HybridBcRulesModal from './HybridBcRulesModal.vue'
+import PromoteToEsModal from './PromoteToEsModal.vue'
 import 'bpmn-js/dist/assets/diagram-js.css'
 import 'bpmn-js/dist/assets/bpmn-js.css'
 import 'bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css'
@@ -25,20 +26,36 @@ const flowTabs = computed(() => store.renderedFlows)
 // BPM 생성 결과를 Event Storming 모델로 승격. 캔버스 플로팅 컨트롤러로 노출.
 const esPromoting = ref(false)
 const esError = ref('')
+const showPromoteModal = ref(false)
 
-async function startEventStorming() {
+function openPromoteModal() {
   const hsid = store.hybridSessionId
   if (!hsid) {
     alert('BPM 을 먼저 생성하세요 (BPMN 탭에서 Hybrid Ingestion 실행).')
     return
   }
+  esError.value = ''
+  showPromoteModal.value = true
+}
+
+async function runPromotion({ displayLanguage, uiGenerationMode }) {
+  showPromoteModal.value = false
+  const hsid = store.hybridSessionId
+  if (!hsid) return
   esPromoting.value = true
   esError.value = ''
 
   try {
     // Wipe previous + trigger
     await fetch(`/api/ingest/hybrid/${hsid}/promote-to-es`, { method: 'DELETE' })
-    const resp = await fetch(`/api/ingest/hybrid/${hsid}/promote-to-es`, { method: 'POST' })
+    const resp = await fetch(`/api/ingest/hybrid/${hsid}/promote-to-es`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        display_language: displayLanguage,
+        ui_generation_mode: uiGenerationMode,
+      }),
+    })
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}))
       throw new Error(err.detail || `${resp.status}`)
@@ -318,7 +335,7 @@ function closeInspector() {
         class="es-promote-fab"
         :class="{ 'is-error': !!esError }"
         :disabled="esPromoting"
-        @click="startEventStorming"
+        @click="openPromoteModal"
         title="이벤트 스토밍 모델 생성 (BPM 기반)"
       >
         <template v-if="esPromoting">
@@ -390,6 +407,13 @@ function closeInspector() {
 
     <!-- BC-scoped rules management modal (opened from Navigator's Rules by Context) -->
     <HybridBcRulesModal />
+
+    <!-- ES Promotion modal — collects display_language + ui_generation_mode -->
+    <PromoteToEsModal
+      :visible="showPromoteModal"
+      @close="showPromoteModal = false"
+      @submit="runPromotion"
+    />
 
     <!-- Arbitration toast — fires when post-explore arbitration moves/rejects a rule -->
     <Transition name="bpmn-toast">
