@@ -62,8 +62,9 @@
     <input id="fileKeyInput" type="text" placeholder="Figma file key" oninput="this.dataset.userEdited = '1'" />
   </div>
 
-  <div style="display:flex;gap:6px;margin-bottom:8px;">
+  <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
     <button id="connectBtn" class="btn btn--primary" onclick="toggleConnection()">연결</button>
+    <button id="scanBtn" class="btn btn--secondary" onclick="startComponentScan()" title="문서 내 COMPONENT / COMPONENT_SET 노드를 PNG로 export 후 백엔드에 전송">디자인 시스템 스캔</button>
     <button class="btn btn--secondary" onclick="listFrames()">프레임 목록</button>
     <button class="btn btn--secondary" onclick="resetSavedConfig()" title="clientStorage + localStorage 모두 비움">초기화</button>
   </div>
@@ -75,6 +76,12 @@
     let ws = null
     let connected = false
     let fileKey = null
+    let fileName = ''
+    // Track whether this session has already registered a binding with the
+    // backend (POST /api/figma-binding/connect). Done once per "연결" click
+    // so re-polls don't spam the binding endpoint.
+    let bindingRegistered = false
+    let scanInFlight = false
 
     // ── Plugin message handling ──
 
@@ -85,8 +92,9 @@
       switch (msg.type) {
         case 'PLUGIN_READY':
           fileKey = msg.fileKey
+          fileName = msg.fileName || ''
           if (fileKey) document.getElementById('fileKeyInput').value = fileKey
-          addLog(`Plugin ready. File: ${fileKey || '(auto-detect failed — enter manually)'}`)
+          addLog(`Plugin ready. File: ${fileKey || '(auto-detect failed — enter manually)'}${fileName ? ` "${fileName}"` : ''}`)
           // Tier-1 restore: localStorage (synchronous, instant pre-fill).
           // Tier-2 restore arrives via RESTORED_CONFIG below — clientStorage,
           // async, and authoritative (survives Figma cache clears that wipe
@@ -228,6 +236,18 @@
           if (msg.ok) addLog(`EXPORT_FRAME_BY_ID → ${msg.figmaFrameName} (${msg.figmaNodeId})`, 'success')
           else addLog(`EXPORT_FRAME_BY_ID failed: ${msg.error}`, 'error')
           reportExportFrameByIdAck(msg)
+          break
+
+        case 'SCAN_COMPONENTS_PROGRESS':
+          handleScanComponentsProgress(msg)
+          break
+
+        case 'SCAN_COMPONENTS_SKIP':
+          addLog(`Skipped "${msg.name}" (${msg.nodeId}): ${msg.reason}`, 'error')
+          break
+
+        case 'SCAN_COMPONENTS_RESULT':
+          handleScanComponentsResult(msg)
           break
       }
     }
@@ -390,6 +410,14 @@
                 ]
               })
             }).catch(() => { /* best-effort */ })
+          }
+
+          // Register this file as the architect's active Figma binding —
+          // replaces the legacy "enter URL + API token" connect modal.
+          // Only fires once per session; user can hit 연결 again after
+          // disconnecting to re-register.
+          if (fileKey && !bindingRegistered) {
+            registerBinding(httpUrl)
           }
 
           // Start polling for pending updates
@@ -656,6 +684,143 @@
         `<div class="frame-item">${f.pageName} / ${f.name} <span class="frame-id">${f.id}</span></div>`
       ).join('')
       addLog(`${frames.length} frames found`)
+    }
+
+    // ── Architect binding registration ──
+    //
+    // Calls POST /api/figma-binding/connect. If a different file is already
+    // bound (409), automatically POSTs /replace — the user already chose
+    // "이 파일을 robo로 sync" by clicking 연결, so there's nothing further
+    // to confirm.
+    function registerBinding(httpUrl) {
+      const body = JSON.stringify({
+        figmaFileKey: fileKey,
+        figmaFileName: fileName || (document.getElementById('fileKeyInput').value.trim() || 'Untitled'),
+      })
+      addLog(`Registering binding for ${fileName ? `"${fileName}" ` : ''}${fileKey}...`)
+      fetch(`${httpUrl}/api/figma-binding/connect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': '1',
+          'X-User-Email': 'figma-plugin',
+        },
+        body,
+      })
+        .then(async r => {
+          if (r.status === 409) {
+            addLog('Another file is bound — replacing...', 'success')
+            return fetch(`${httpUrl}/api/figma-binding/replace`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': '1',
+                'X-User-Email': 'figma-plugin',
+              },
+              body,
+            })
+          }
+          return r
+        })
+        .then(async r => {
+          if (!r.ok) {
+            const data = await r.json().catch(() => ({}))
+            throw new Error(extractError(data, r.status))
+          }
+          const data = await r.json()
+          bindingRegistered = true
+          addLog(`Binding active: "${data.figmaFileName}" (${data.figmaFileKey})`, 'success')
+        })
+        .catch(e => addLog(`Binding registration failed: ${e.message || e}`, 'error'))
+    }
+
+    function extractError(body, status) {
+      if (!body) return `HTTP ${status}`
+      const d = body.detail
+      if (typeof d === 'string') return d
+      if (d && typeof d === 'object') return d.messageKr || d.error || JSON.stringify(d)
+      return body.error || `HTTP ${status}`
+    }
+
+    // ── Component scan ──
+    //
+    // Replaces the legacy REST `/v1/files/{key}/components` + `/v1/images`
+    // path. The sandbox walks the document and exports each component as a
+    // PNG, then we POST the batch (with inline base64 PNGs) to
+    // `/api/figma-binding/components/scan`. Backend asks the VLM for a
+    // 1-line description per component and persists the catalog.
+    function startComponentScan() {
+      if (scanInFlight) return
+      if (!connected) {
+        addLog('Connect first (연결).', 'error')
+        return
+      }
+      if (!bindingRegistered) {
+        addLog('Binding not yet registered — wait a moment and retry.', 'error')
+        return
+      }
+      scanInFlight = true
+      document.getElementById('scanBtn').disabled = true
+      addLog('Walking document for COMPONENT / COMPONENT_SET nodes...')
+      parent.postMessage({ pluginMessage: { type: 'SCAN_COMPONENTS' } }, '*')
+    }
+
+    function handleScanComponentsProgress(msg) {
+      if (msg.exported === 0 && msg.total > 0) {
+        addLog(`Found ${msg.total} component(s) — exporting PNGs...`)
+        return
+      }
+      // Only log every 5th and the final to keep the log readable.
+      if (msg.exported === msg.total || msg.exported % 5 === 0) {
+        const last = msg.lastName ? ` — ${msg.lastName}` : ''
+        addLog(`${msg.exported} / ${msg.total} exported${last}`)
+      }
+    }
+
+    function handleScanComponentsResult(msg) {
+      if (!msg.ok) {
+        scanInFlight = false
+        document.getElementById('scanBtn').disabled = false
+        addLog(`Scan failed: ${msg.error}`, 'error')
+        return
+      }
+      const components = msg.components || []
+      if (!components.length) {
+        scanInFlight = false
+        document.getElementById('scanBtn').disabled = false
+        addLog('No COMPONENT / COMPONENT_SET nodes in this file.', 'error')
+        return
+      }
+      const httpUrl = document.getElementById('serverUrl').value.replace(/\/$/, '')
+      addLog(`Uploading ${components.length} component(s) to backend...`)
+      fetch(`${httpUrl}/api/figma-binding/components/scan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': '1',
+          'X-User-Email': 'figma-plugin',
+        },
+        body: JSON.stringify({ components }),
+      })
+        .then(async r => {
+          if (!r.ok) {
+            const data = await r.json().catch(() => ({}))
+            throw new Error(extractError(data, r.status))
+          }
+          return r.json()
+        })
+        .then(result => {
+          const total = (result.vlmDescribed || 0) + (result.vlmFailures || 0)
+          addLog(
+            `Scan done — added ${result.added} · updated ${result.updated} · removed ${result.removed} · VLM ${result.vlmDescribed}/${total}`,
+            'success'
+          )
+        })
+        .catch(e => addLog(`Upload failed: ${e.message || e}`, 'error'))
+        .finally(() => {
+          scanInFlight = false
+          document.getElementById('scanBtn').disabled = false
+        })
     }
   </script>
 </body>

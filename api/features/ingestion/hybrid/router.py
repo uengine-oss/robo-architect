@@ -509,6 +509,14 @@ async def promote_start(session_id: str) -> dict[str, Any]:
     ingestion_session.source_type = "hybrid"
     ingestion_session.hybrid_source_session_id = session_id
     ingestion_session.content = ""  # downstream phases don't use ctx.content in hybrid mode
+    # Default to the figma JSX agent so the UI phase builds sceneGraphs out of
+    # native primitives (FRAME / TEXT / RECTANGLE / …) rather than INSTANCE
+    # references that need a populated design system. Without this, promote-to-es
+    # inherits the global default ("html") whose `_generate_scene_graph` uses
+    # the component-based prompt — the LLM then synthesises gentry-line
+    # `Card` / `Input` / `Button/Primary` INSTANCE nodes that never resolve in
+    # an empty Figma file, leaving the architect with blank frames.
+    ingestion_session.ui_generation_mode = "figma"
     SmartLogger.log(
         "INFO", "Hybrid → Event Storming promotion session created",
         category="ingestion.hybrid.es.promote",

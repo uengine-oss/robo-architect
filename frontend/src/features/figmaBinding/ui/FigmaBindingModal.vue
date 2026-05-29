@@ -182,14 +182,16 @@ watch(tab, (t) => {
         <!-- No binding yet → plugin instructions -->
         <div v-if="tab === 'main' && !store.binding" class="fb-section">
           <p class="fb-hint">
-            바인딩된 Figma 다큐먼트가 없습니다. 연동은 <strong>Figma 플러그인</strong>에서
+            바인딩된 Figma 다큐먼트가 없습니다. 연동은 <strong>RoboArchitect Sync 플러그인</strong>에서
             진행합니다 — 별도의 API 토큰은 필요하지 않습니다.
           </p>
           <ol class="fb-steps">
-            <li>Figma에서 연동하려는 파일을 엽니다.</li>
-            <li>플러그인 메뉴에서 <strong>Robo Architect</strong>를 실행합니다.</li>
-            <li>플러그인의 <strong>"이 파일을 Robo Architect에 연결"</strong> 버튼을 누릅니다.</li>
-            <li>연결되면 이 모달을 다시 열어 상태를 확인할 수 있습니다.</li>
+            <li>Figma 데스크톱에서 연동하려는 파일을 엽니다.</li>
+            <li>Plugins → Development → <strong>RoboArchitect Sync</strong>를 실행합니다.</li>
+            <li>Backend URL에 이 Robo Architect 백엔드 주소를 입력하고 <strong>연결</strong>을 누릅니다.
+              자동으로 이 파일이 바인딩 등록됩니다.</li>
+            <li>연결되면 이 모달을 다시 열어 상태를 확인할 수 있습니다. 디자인 시스템
+              컴포넌트를 가져오려면 플러그인의 <strong>디자인 시스템 스캔</strong>을 누르세요.</li>
           </ol>
           <div v-if="store.lastError" class="fb-error">{{ store.lastError }}</div>
         </div>
@@ -300,7 +302,7 @@ watch(tab, (t) => {
               </span>
             </div>
             <p class="fb-hint">
-              컴포넌트 스캔은 <strong>Figma 플러그인</strong>에서 실행합니다 —
+              컴포넌트 스캔은 <strong>RoboArchitect Sync 플러그인의 "디자인 시스템 스캔"</strong> 버튼에서 실행합니다 —
               <code>COMPONENT</code> / <code>COMPONENT_SET</code> 노드를 찾아
               PNG 와 함께 백엔드로 전송하면, 백엔드가 시각 LLM 으로 1줄 설명을
               채우고 카탈로그를 갱신합니다. 와이어프레임 생성 시
