@@ -97,6 +97,48 @@ Epic이나 Feature를 선택하면, 전용 화면의 **명확도 레이더**가 
 이를 통해 "이 Epic은 어느 항목이 아직 모호한가"를 범위별로 빠르게 가늠할 수 있습니다.
 (7·8번 화면 아래쪽의 레이더가 각각 해당 Epic·Feature 범위를 나타냅니다.)
 
+### 8. 하위 User Story 자동 생성
+
+Epic이나 Feature를 선택한 뒤 전용 화면 위쪽의 **"✨ 하위 US 자동생성"** 버튼을 누르면,
+AI가 그 단위에 어울리는 User Story 후보를 자동으로 만들어 제안합니다. 제안 창에서 각 항목을
+체크/해제하고 내용을 직접 수정한 뒤 **"선택 항목 추가"** 를 누르면, 체크한 항목만 트리에
+추가됩니다. (확정하기 전에는 아무것도 저장되지 않습니다.)
+
+![AI가 제안한 하위 User Story 후보를 검토·선택합니다](screenshots/13_generate_review.png){ width=100% }
+
+### 9. DDD 적합성 검증
+
+전용 화면의 **"🔎 DDD 검증"** 버튼을 누르면, 해당 Feature/Epic이 올바른 영역(BC)에
+적정한 크기로 들어가 있는지, 기존 요구사항과 충돌하지 않는지 AI가 검토합니다. 문제가 있으면
+유형(잘못된 BC 배치 / 과도한 입도 / 기존 요구사항 충돌)과 함께 교정안을 제안하고, 문제가
+없으면 "적합합니다"라고 알려 줍니다. 이 제안은 권장 사항이며 강제되지 않습니다.
+
+![DDD 적합성 검증 결과](screenshots/12_ddd_validation.png){ width=100% }
+
+### 10. Epic·Feature를 AI로 제안받아 등록
+
+"+ 요구사항 추가"에서 Epic 또는 Feature 단위를 고른 뒤 **"AI 제안"** 탭을 선택하면, 자연어로
+설명만 입력해도 AI가 후보를 제안합니다. 각 후보의 이름·설명을 수정하고 **"추가"** 를 누르면
+바로 등록됩니다.
+
+![자연어 설명으로 Epic 후보를 제안받습니다](screenshots/14_epic_ai_propose.png){ width=100% }
+
+### 11. 설계에 반영되지 않은 요구사항 알림
+
+요구사항을 추가한 뒤 **"Event Modeling"** 또는 **"Design"** 탭으로 이동하면, 아직 설계에
+반영되지 않은 User Story가 있을 경우 **"설계에 반영하시겠습니까?"** 안내가 나타납니다.
+대상 User Story 목록을 확인하고, 지금 진행할지(예) / 나중에 할지(아니오) / 이번 세션 동안
+보지 않을지를 선택할 수 있습니다.
+
+![미반영 요구사항이 있을 때 표시되는 설계 반영 안내](screenshots/15_design_reflect_prompt.png){ width=100% }
+
+### 12. 생성 엔진 선택 (설정)
+
+상단 오른쪽 **설정(⚙️)** 의 **"요구사항 생성 엔진"** 에서 하위 User Story 자동 생성에 사용할
+엔진을 고를 수 있습니다 — **in-process LLM**(서버 내장, 추가 설치 불필요) 또는 **Claude IDE**
+(로컬 Claude Code + speckit 필요). "Claude IDE"를 골랐는데 로컬에 도구가 없으면, 생성 대신
+설치 안내가 표시됩니다.
+
 ## 자주 묻는 질문
 
 - **Feature를 추가하려는데 소속 Epic이 목록에 없어요.**
@@ -121,19 +163,25 @@ Epic이나 Feature를 선택하면, 전용 화면의 **명확도 레이더**가 
 | Epic·Feature 편집(이름·설명) 즉시 반영 | PASS | 09·10 PNG, 13_api_patch_feature_ok.txt |
 | 빈 이름 저장 차단(버튼 비활성/422) | PASS | 11 PNG, 14_api_validation.txt |
 | 없는 항목 편집 → 404 | PASS | 14_api_validation.txt |
-| 편집 시 하위 연결 보존(관계 무변경) | PASS | 13_api_patch_feature_ok.txt |
+| 편집 시 하위 연결 보존(관계 무변경) | PASS | 17_api_patch_feature_ok.txt |
 | 선택 범위별 명확도 레이더 표시 | PASS | 07·08 PNG |
+| 하위 User Story 자동 생성(제안→확인) | PASS | 13 PNG |
+| DDD 적합성·입도·정합성 검증 | PASS | 12 PNG |
+| Epic·Feature AI 제안 등록 | PASS | 14 PNG |
+| 설계 미반영 User Story 알림 | PASS | 15 PNG, 21_api_pending_design.txt |
+| 생성 엔진 설치 점검(Claude IDE) | PASS | 20_api_local_tooling.txt |
 
-검증 백엔드 엔드포인트: `POST /api/requirements/bounded-context`(Epic 생성),
-`PATCH /api/requirements/bounded-context`(Epic 편집), `PATCH /api/requirements/feature`(Feature 편집).
-재사용: `GET /api/requirements/tree`, `POST /api/requirements/feature`,
-`GET /api/requirements/clarification/clarity`.
+검증 백엔드 엔드포인트: `POST·PATCH /api/requirements/bounded-context`(Epic 생성·편집),
+`PATCH /api/requirements/feature`(Feature 편집), `POST /api/requirements/epic|feature/propose`(AI 제안),
+`POST /api/requirements/generate-stories/{scope}/{id}` · `/child-stories/confirm`(하위 US 자동생성),
+`POST /api/requirements/validate`(DDD 검증), `GET /api/requirements/user-stories/pending-design`(미반영 식별),
+`GET /api/requirements/local-tooling/status`(엔진 설치 점검). 모든 LLM 산출물은 입력 언어를 따릅니다.
 
 ## 향후 지원 예정
 
 아래 항목은 이번 범위에 포함되지 않았으며 후속 작업으로 제공될 예정입니다.
 
-- Epic·Feature의 **AI 제안** 등록(자연어 설명 → 후보 제안 → 확정). 현재는 수동 입력만 지원합니다.
-- Epic·Feature 등록 시 **하위 User Story 자동 생성**.
-- 요구사항의 **DDD 적합성·입도·기존 스펙 정합성 검증**.
-- Event Modeling·Design 탭 진입 시 **미반영 요구사항의 설계 자동 반영**.
+- **설계 자동 생성 실행**: 현재는 미반영 User Story를 식별해 안내하는 단계까지 제공합니다.
+  "예"를 눌렀을 때 Aggregate·Command 등 설계를 자동으로 생성하는 단계는 후속에서 제공됩니다.
+- **Claude IDE 엔진의 실제 생성**: 엔진 선택과 설치 점검·안내까지 제공합니다. 로컬 Claude를
+  직접 구동해 생성하는 단계는 후속에서 제공됩니다(현재는 in-process 엔진으로 생성).

@@ -56,10 +56,10 @@ echo "── Playwright UI capture ──"
   && echo "playwright: PASS" || echo "playwright: completed with failures (see output)"
 
 echo "── backend text evidence (curl) ──"
-# 12 — Create Epic via API
+# 16 — Create Epic via API
 EPIC_JSON=$(curl -sf -m 8 -X POST "$BACK/api/requirements/bounded-context" \
   -H 'Content-Type: application/json' -d '{"name":"E2E-API 검증 Epic","description":"API 검증용"}')
-{ echo "# POST /api/requirements/bounded-context"; echo "$EPIC_JSON" | jq .; } > "$SHOTS/12_api_create_epic.txt"
+{ echo "# POST /api/requirements/bounded-context"; echo "$EPIC_JSON" | jq .; } > "$SHOTS/16_api_create_epic.txt"
 BC_ID=$(echo "$EPIC_JSON" | jq -r '.boundedContext.id')
 
 # Create a feature under it (reused endpoint), then PATCH it
@@ -72,9 +72,9 @@ FID=$(echo "$FEAT_JSON" | jq -r '.feature.id')
   echo; echo "# PATCH 결과 본문:";
   curl -s -m 8 -X PATCH "$BACK/api/requirements/feature" -H 'Content-Type: application/json' \
     -d "{\"featureId\":\"$FID\",\"description\":\"설명 추가\"}" | jq .;
-} > "$SHOTS/13_api_patch_feature_ok.txt"
+} > "$SHOTS/17_api_patch_feature_ok.txt"
 
-# 14 — validation: blank name → 422, missing id → 404
+# 18 — validation: blank name → 422, missing id → 404
 { echo "# PATCH /feature  빈 이름 → 422";
   curl -s -m 8 -o /dev/null -w "HTTP %{http_code}\n" -X PATCH "$BACK/api/requirements/feature" \
     -H 'Content-Type: application/json' -d "{\"featureId\":\"$FID\",\"name\":\"   \"}";
@@ -84,10 +84,19 @@ FID=$(echo "$FEAT_JSON" | jq -r '.feature.id')
   echo "# PATCH /bounded-context  빈 이름 → 422";
   curl -s -m 8 -o /dev/null -w "HTTP %{http_code}\n" -X PATCH "$BACK/api/requirements/bounded-context" \
     -H 'Content-Type: application/json' -d "{\"boundedContextId\":\"$BC_ID\",\"name\":\"\"}";
-} > "$SHOTS/14_api_validation.txt"
+} > "$SHOTS/18_api_validation.txt"
 
-# 15 — tree summary
-curl -sf -m 8 "$BACK/api/requirements/tree" | jq '{epics:[.epics[].name], featureCount:[.epics[].features|length]|add}' > "$SHOTS/15_api_tree.txt"
+# 19 — tree summary
+curl -sf -m 8 "$BACK/api/requirements/tree" | jq '{epics:[.epics[].name], featureCount:[.epics[].features|length]|add}' > "$SHOTS/19_api_tree.txt"
+
+# 20 — local tooling (US5 claude-ide engine install check)
+{ echo "# GET /api/requirements/local-tooling/status (Claude IDE 엔진 설치 점검)";
+  curl -sf -m 8 "$BACK/api/requirements/local-tooling/status" | jq .; } > "$SHOTS/20_api_local_tooling.txt"
+
+# 21 — pending-design (US7 미반영 설계 식별)
+{ echo "# GET /api/requirements/user-stories/pending-design (설계 미반영 US)";
+  curl -sf -m 8 "$BACK/api/requirements/user-stories/pending-design" \
+    | jq '{pendingCount:(.pending|length), sample:[.pending[0:3][]|.action]}'; } > "$SHOTS/21_api_pending_design.txt"
 
 echo "── done. screenshots: $SHOTS ──"
 ls -1 "$SHOTS"

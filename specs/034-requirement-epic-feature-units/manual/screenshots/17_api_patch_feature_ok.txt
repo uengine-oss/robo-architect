@@ -4,10 +4,11 @@ HTTP 200
 # PATCH 결과 본문:
 {
   "feature": {
-    "id": "c860f515-68a6-4886-abef-d3aaf8eda325",
+    "id": "63e39674-c19b-42c8-b568-43b1fe66619c",
     "name": "E2E 검증 Feature (수정됨)",
     "description": "설명 추가",
     "source": "manual",
+    "boundedContextId": null,
     "userStories": []
   }
 }

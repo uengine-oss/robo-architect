@@ -103,4 +103,39 @@ test('전체 시나리오 — 등록·뷰·편집·radar', async ({ page }) => {
   await shot(page, '11_feature_edit_validation.png')
   // close
   await page.locator('.dialog:has-text("Feature 편집")').getByRole('button', { name: '취소' }).click()
+
+  // ── 12 DDD 적합성 검증 (US6, 실 LLM) ─────────────────────────────
+  await page.locator('.feature-detail .fd-validate').click()
+  await page.waitForSelector('.dialog:has-text("DDD 적합성 검증")', { timeout: 45_000 })
+  await page.waitForTimeout(500)
+  await shot(page, '12_ddd_validation.png')
+  await page.locator('.dialog:has-text("DDD 적합성 검증")').getByRole('button', { name: '확인' }).click()
+
+  // ── 13 하위 User Story 자동 생성 — 제안 검토 (US5, 실 LLM) ────────
+  await page.locator('.feature-detail .fd-gen').click()
+  await page.waitForSelector('.dialog:has-text("하위 User Story 자동 생성")', { timeout: 60_000 })
+  await page.waitForTimeout(500)
+  await shot(page, '13_generate_review.png')
+  await page.locator('.dialog:has-text("하위 User Story 자동 생성")').getByRole('button', { name: '취소' }).click()
+
+  // ── 14 Epic AI 제안 (US1, 실 LLM) ────────────────────────────────
+  await page.getByRole('button', { name: '+ 요구사항 추가' }).click()
+  await page.waitForSelector('.dialog__units')
+  await page.locator('.dialog__units button', { hasText: 'Epic' }).click()
+  await page.locator('.dialog__tabs button', { hasText: 'AI 제안' }).click()
+  await page.getByPlaceholder('만들고 싶은 업무 영역(Epic)을 자연어로 설명하세요...').fill(
+    '배송과 물류를 관리하는 영역이 필요하다. 출고, 배송추적, 반품 회수.',
+  )
+  await page.getByRole('button', { name: '제안 받기' }).click()
+  await page.waitForSelector('.proposal', { timeout: 45_000 })
+  await page.waitForTimeout(400)
+  await shot(page, '14_epic_ai_propose.png')
+  await page.locator('.dialog__close').click()
+
+  // ── 15 설계 자동 반영 프롬프트 — Event Modeling 탭 진입 (US7) ─────
+  await page.locator('.top-bar__tabs button', { hasText: 'Event Modeling' }).first().click()
+  await page.waitForSelector('.drp', { timeout: 20_000 })
+  await page.waitForTimeout(400)
+  await shot(page, '15_design_reflect_prompt.png')
+  await page.locator('.drp').getByRole('button', { name: '아니오' }).click()
 })
