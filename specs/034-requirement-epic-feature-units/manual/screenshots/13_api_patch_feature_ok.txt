@@ -1,0 +1,13 @@
+# PATCH /api/requirements/feature  (rename → 200)
+HTTP 200
+
+# PATCH 결과 본문:
+{
+  "feature": {
+    "id": "c860f515-68a6-4886-abef-d3aaf8eda325",
+    "name": "E2E 검증 Feature (수정됨)",
+    "description": "설명 추가",
+    "source": "manual",
+    "userStories": []
+  }
+}

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useThemeStore } from '@/app/theme.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
 const props = defineProps({
   visible: {
@@ -16,6 +17,7 @@ const emit = defineEmits(['close'])
 const terminologyStore = useTerminologyStore()
 const themeStore = useThemeStore()
 const canvasStore = useCanvasStore()
+const requirementsStore = useRequirementsStore()
 
 function handleBackdropClick(e) {
   if (e.target === e.currentTarget) {
@@ -136,6 +138,29 @@ function handleBackdropClick(e) {
                 >
                   <span class="toggle-switch__knob"></span>
                 </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 요구사항 생성 엔진 (034 US5) -->
+          <div class="settings-section">
+            <div class="settings-section__header">
+              <h3 class="settings-section__title">요구사항 생성 엔진</h3>
+              <span class="settings-section__description">하위 User Story 자동 생성에 사용할 엔진을 선택합니다</span>
+            </div>
+            <div class="settings-section__control">
+              <div class="engine-options">
+                <button
+                  class="engine-option"
+                  :class="{ 'is-active': requirementsStore.generationEngine === 'in-process' }"
+                  @click="requirementsStore.setGenerationEngine('in-process')"
+                >in-process LLM</button>
+                <button
+                  class="engine-option"
+                  :class="{ 'is-active': requirementsStore.generationEngine === 'claude-ide' }"
+                  @click="requirementsStore.setGenerationEngine('claude-ide')"
+                  title="로컬 Claude Code + speckit 필요 (미설치 시 설치 안내)"
+                >Claude IDE</button>
               </div>
             </div>
           </div>
@@ -260,6 +285,26 @@ function handleBackdropClick(e) {
   font-weight: 500;
 }
 
+.engine-options {
+  display: flex;
+  gap: 6px;
+}
+.engine-option {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-light);
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+.engine-option.is-active {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: transparent;
+  font-weight: 600;
+}
 .theme-option:first-child {
   margin-right: 8px;
 }

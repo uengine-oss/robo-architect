@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref, computed, markRaw, provide } from 'vue'
+import { onMounted, onUnmounted, ref, computed, markRaw, provide, watch } from 'vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
@@ -19,6 +19,9 @@ import { createLogger, newOpId } from '@/app/logging/logger'
 // starts true) so this gate is transparent to the existing SPA deployment.
 import LauncherView from '@/features/desktop-launcher/LauncherView.vue'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
+// 034 US7 — 설계 미반영 User Story 식별 + 반영 프롬프트.
+import DesignReflectPrompt from '@/features/requirements/ui/DesignReflectPrompt.vue'
+import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
 const navigatorStore = useNavigatorStore()
 const themeStore = useThemeStore() // Initialize theme store
@@ -67,6 +70,33 @@ function _onSwitchTab(e) {
 }
 
 const currentComponent = computed(() => tabComponents[activeTab.value])
+
+// 034 US7 — Event Modeling / Design 탭 진입 시 설계 미반영 User Story를 감지해
+// "설계에 반영하시겠습니까?" 프롬프트를 띄운다. (생성 오케스트레이션은 후속.)
+const requirementsStore = useRequirementsStore()
+const designPending = ref(null) // PendingUS[] | null
+const suppressDesignPrompt = ref(false) // 이번 세션 동안 묻지 않기
+watch(activeTab, async (tab) => {
+  if (tab !== 'Event Modeling' && tab !== 'Design') return
+  if (suppressDesignPrompt.value || designPending.value) return
+  try {
+    const res = await requirementsStore.fetchPendingDesign()
+    if (res?.pending?.length) designPending.value = res.pending
+  } catch {
+    /* advisory only — never block tab navigation */
+  }
+})
+function onDesignReflectConfirm() {
+  // 설계 생성 엔진 연동은 후속 — 현재는 사용자를 해당 탭에 두고 프롬프트를 닫는다.
+  designPending.value = null
+}
+function onDesignReflectDismiss() {
+  designPending.value = null
+}
+function onDesignReflectDontAsk() {
+  suppressDesignPrompt.value = true
+  designPending.value = null
+}
 
 // Navigator panel resize state
 const navigatorWidth = ref(320)
@@ -221,6 +251,15 @@ onUnmounted(() => {
         </KeepAlive>
       </div>
     </div>
+
+    <!-- 034 US7 — 설계 미반영 User Story 반영 프롬프트 -->
+    <DesignReflectPrompt
+      v-if="designPending"
+      :pending="designPending"
+      @confirm="onDesignReflectConfirm"
+      @dismiss="onDesignReflectDismiss"
+      @dont-ask="onDesignReflectDontAsk"
+    />
   </div>
 </template>
 
