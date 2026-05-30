@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
 /**
@@ -27,6 +27,35 @@ const featureForm = ref({ boundedContextId: '', name: '', description: '' })
 const efText = ref('')
 const efProposed = ref(false)
 const efProposals = ref([]) // [{name, description, boundedContextId?}]
+
+/**
+ * 다이얼로그를 열 때, 트리에서 선택된 노드 기준으로 추가 단위를 자동 선택한다(034):
+ *  - 아무것도 선택 안 됨 → Epic
+ *  - Epic 선택 → 그 Epic 하위 Feature (소속 Epic 미리 채움)
+ *  - Feature 선택 → 그 Feature 하위 User Story (소속 Epic·Feature 미리 채움)
+ */
+function applyContextDefault() {
+  const node = store.selectedNode || { type: null }
+  if (node.type === 'feature' && store.selectedFeature) {
+    unit.value = 'userStory'
+    mode.value = 'manual' // 미리 채운 소속을 바로 보여주기 위해 수동 탭
+    manual.value.boundedContextId = store.selectedFeature.boundedContextId || ''
+    manual.value.featureId = store.selectedFeature.id
+  } else if (node.type === 'epic' && store.selectedEpic) {
+    unit.value = 'feature'
+    featureForm.value.boundedContextId = store.selectedEpic.id
+  } else {
+    unit.value = 'epic'
+  }
+}
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open) applyContextDefault()
+  },
+  { immediate: true },
+)
 
 async function runProposeEpic() {
   if (!efText.value.trim()) return
