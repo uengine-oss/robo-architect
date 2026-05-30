@@ -22,7 +22,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+import json
+
 from api.features.requirements.clarification_contracts import UserStorySnapshot
+from api.platform.identity.models import Actor
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -45,6 +48,7 @@ class UserStoryEdit:
     requirement_id: str
     after: UserStorySnapshot
     base_updated_at: Optional[str] = None
+    actor: Optional[Actor] = None
 
 
 @dataclass
@@ -142,6 +146,8 @@ def apply_user_story_edit(edit: UserStoryEdit) -> EditResult:
         )
 
     after = edit.after
+    changes = _compute_diff(current.snapshot, after)
+    actor = edit.actor
     query = """
     MATCH (us:UserStory {id: $id})
     SET us.role = $role,
@@ -156,6 +162,15 @@ def apply_user_story_edit(edit: UserStoryEdit) -> EditResult:
         us.criteriaEditedAt = CASE
             WHEN size($acceptanceCriteria) > 0 THEN datetime() ELSE us.criteriaEditedAt END,
         us.updatedAt = datetime()
+    WITH us
+    CREATE (h:EditHistory {
+        id: randomUUID(),
+        timestamp: datetime(),
+        userName: $user_name,
+        userEmail: $user_email,
+        changes: $changes_json
+    })
+    CREATE (us)-[:HAS_HISTORY]->(h)
     RETURN us.updatedAt AS updatedAt
     """
     with get_session() as session:
@@ -168,6 +183,9 @@ def apply_user_story_edit(edit: UserStoryEdit) -> EditResult:
             priority=after.priority or "medium",
             status=after.status or "draft",
             acceptanceCriteria=list(after.acceptanceCriteria or []),
+            user_name=actor.name if actor else "unknown",
+            user_email=actor.email if actor else "unknown",
+            changes_json=json.dumps(changes, ensure_ascii=False),
         ).single()
 
     updated_at = _updated_at_str(row["updatedAt"]) if row else _now_iso()
@@ -191,3 +209,14 @@ def apply_user_story_edit(edit: UserStoryEdit) -> EditResult:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _compute_diff(before: UserStorySnapshot, after: UserStorySnapshot) -> dict:
+    """Return only the changed scalar fields as {field: {before, after}}."""
+    diff: dict = {}
+    for field in ("role", "action", "benefit", "priority", "status"):
+        b = getattr(before, field, "")
+        a = getattr(after, field, "")
+        if b != a:
+            diff[field] = {"before": b, "after": a}
+    return diff
