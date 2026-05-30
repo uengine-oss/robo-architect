@@ -181,6 +181,46 @@ class DesignReflectResponse(BaseModel):
     reflected: list[ReflectedDesign] = Field(default_factory=list)
 
 
+# ── 설계 커버리지 검증·복구 (034 — 인제스천 사후 검증) ────────────────────
+# 인제스천이 US→Command/ReadModel IMPLEMENTS 링크를 일부 누락(특히 조회성 US는
+# ReadModel 링크가 통째로 비는 문제)하므로, 사후에 누락 US를 기존 Command(액션)/
+# ReadModel(조회)에 매핑해 링크하고, 남은 진짜 공백을 리포트한다.
+
+
+class CoverageBC(BaseModel):
+    boundedContextId: str
+    name: str
+    totalUS: int = 0
+    orphanUS: int = 0          # 어떤 behavioral 설계객체에도 안 붙은 US 수
+    orphanSample: list[str] = Field(default_factory=list)
+
+
+class CoverageReport(BaseModel):
+    bcs: list[CoverageBC] = Field(default_factory=list)
+    totalOrphan: int = 0
+
+
+class ReconcileRequest(BaseModel):
+    boundedContextId: Optional[str] = None  # None이면 전체 BC
+    dryRun: bool = False
+
+
+class ReconcileResult(BaseModel):
+    boundedContextId: str
+    name: str
+    orphanBefore: int = 0
+    linkedToCommand: int = 0
+    linkedToReadModel: int = 0
+    unmapped: int = 0           # 적합한 기존 객체가 없어 못 붙인(진짜 공백)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ReconcileResponse(BaseModel):
+    results: list[ReconcileResult] = Field(default_factory=list)
+    totalLinked: int = 0
+    totalUnmapped: int = 0
+
+
 # ── Epic / Feature AI 제안 (034 — US1) ───────────────────────────────────
 # 자연어 설명 → LLM 후보 제안(미확정). 확정은 기존 create 경로 재사용.
 

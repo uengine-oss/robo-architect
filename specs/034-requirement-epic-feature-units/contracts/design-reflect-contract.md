@@ -24,6 +24,23 @@
 - **동작**: A2가 만든 `changeProposal`을 사용자 확인 후 그래프 반영(HITL). 기존 설계와의 충돌·영향 표시.
 - **충족**: FR-033, US7-AC4
 
+## A'. 설계 커버리지 검증·복구 (인제스천 사후, US7 정확도 보강)
+
+> 핵심 로직 `api/features/ingestion/workflow/post_coverage.py`(인제스천 워크플로 종료 시 best-effort 호출 + 엔드포인트 공유). "고아 US" = Command/ReadModel/Event/Policy 어디에도 `IMPLEMENTS` 없는 US.
+
+### A'1. 검증 리포트 — `GET /api/requirements/design-coverage`
+- **Res 200**: `CoverageReport { bcs: CoverageBC[], totalOrphan }` — BC별 `{boundedContextId, name, totalUS, orphanUS, orphanSample}`.
+- **용도**: 인제스천 사후 누락 검증 체크리스트. (FR-037)
+
+### A'2. 복구 — `POST /api/requirements/design-coverage/reconcile`
+- **Req**: `ReconcileRequest { boundedContextId?, dryRun }`
+- **Res 200**: `ReconcileResponse { results: ReconcileResult[], totalLinked, totalUnmapped }`
+- **동작**: 고아 US를 LLM이 기존 Command(액션)/ReadModel(조회)에 매핑 → `IMPLEMENTS` 링크. **새 객체 생성 없음**(중복 회피); 환각 이름·미매칭은 `unmapped`로 리포트. `kind`는 무시하고 `targetName`을 실제 객체명에 매칭(LLM kind 혼동 방어). (FR-038)
+- **실검증**: MembershipManagement 고아 61 → Command 13 + ReadModel 46 링크, unmapped 4. 전체 63→4. US→ReadModel 0→46.
+
+### A'3. 인제스천 자동 수행
+- `ingestion_workflow_runner` 종료 직전 `reconcile_best_effort()` 호출(try/except로 인제스천 비차단). (FR-039)
+
 ## B. 프런트 UI 계약
 
 ### B1. 탭 진입 훅

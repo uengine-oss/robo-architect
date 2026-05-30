@@ -15,6 +15,7 @@ from .routes.bounded_context_crud import router as bounded_context_crud_router
 from .routes.child_story_generation import router as child_story_generation_router
 from .routes.clarification import router as clarification_router
 from .routes.ddd_validation import router as ddd_validation_router
+from .routes.design_coverage import router as design_coverage_router
 from .routes.design_reflect import router as design_reflect_router
 from .routes.design_trace import router as design_trace_router
 from .routes.edit import router as edit_router
@@ -31,6 +32,7 @@ router.include_router(bounded_context_crud_router)
 router.include_router(child_story_generation_router)
 router.include_router(ddd_validation_router)
 router.include_router(epic_feature_propose_router)
+router.include_router(design_coverage_router)
 router.include_router(design_reflect_router)
 router.include_router(feature_crud_router)
 router.include_router(user_story_crud_router)
