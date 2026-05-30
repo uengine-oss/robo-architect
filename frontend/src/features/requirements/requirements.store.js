@@ -627,6 +627,60 @@ export const useRequirementsStore = defineStore('requirements', () => {
     clarificationDisambiguation.value = null
   }
 
+  // ── Direct edit + history (spec 033) ────────────────────────────────────
+
+  const editHistory = ref([])
+  const editHistoryLoading = ref(false)
+  const editSaving = ref(false)
+  const editError = ref(null)
+
+  async function updateUserStory(userStoryId, fields, baseUpdatedAt = null) {
+    editSaving.value = true
+    editError.value = null
+    try {
+      const res = await fetch(`/api/requirements/user-story/${encodeURIComponent(userStoryId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...fields, baseUpdatedAt }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = data?.detail?.code === 'EDIT_CONFLICT'
+          ? '다른 사용자가 이미 수정했습니다. 새로고침 후 다시 시도하세요.'
+          : `저장 실패: ${res.status}`
+        throw new Error(msg)
+      }
+      // Refresh tree so the left panel reflects the new text
+      await fetchTree()
+      // Update selected story in memory
+      if (selectedUserStoryId.value === userStoryId) {
+        selectedUserStory.value = data.userStory
+      }
+      return data
+    } catch (e) {
+      editError.value = String(e.message || e)
+      log.error('us_update', 'User story update failed', { error: String(e) })
+      throw e
+    } finally {
+      editSaving.value = false
+    }
+  }
+
+  async function fetchHistory(userStoryId) {
+    editHistoryLoading.value = true
+    try {
+      const res = await fetch(`/api/requirements/user-story/${encodeURIComponent(userStoryId)}/history`)
+      if (!res.ok) throw new Error(`history fetch failed: ${res.status}`)
+      const data = await res.json()
+      editHistory.value = data.items || []
+    } catch (e) {
+      editHistory.value = []
+      log.warn('us_history', 'Edit history fetch failed', { error: String(e) })
+    } finally {
+      editHistoryLoading.value = false
+    }
+  }
+
   /** Explicit data deletion (US6) — calls the existing clear-all endpoint. */
   async function clearAllData() {
     const res = await fetch('/api/ingest/clear-all', { method: 'DELETE' })
@@ -680,6 +734,13 @@ export const useRequirementsStore = defineStore('requirements', () => {
     watchImpactReport,
     dismissImpactReport,
     clearAllData,
+    // ── Direct edit + history (033) ───────────────────────────────────
+    editHistory,
+    editHistoryLoading,
+    editSaving,
+    editError,
+    updateUserStory,
+    fetchHistory,
     // ── Clarification (030) ────────────────────────────────────────────
     clarificationSession,
     clarificationProposal,

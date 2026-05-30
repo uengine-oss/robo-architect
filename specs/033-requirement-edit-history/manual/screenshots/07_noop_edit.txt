@@ -1,0 +1,46 @@
+{
+  "userStory": {
+    "id": "US-2-006",
+    "role": "법정대리인",
+    "action": "E2E 테스트 편집 - 업무처리 동의를 검토하고 제출한다",
+    "benefit": "미성년자 또는 대리 동의가 필요한 고객의 회원가입 및 관련 업무가 적법하게 처리된다",
+    "priority": "medium",
+    "status": "draft",
+    "commandId": "da72cebc-0617-4594-b87a-4b31f57291c3",
+    "commandName": "ConfirmLegalGuardianConsent",
+    "acceptanceCriteria": [
+      {
+        "kind": "given",
+        "name": "Aggregate: LegalGuardianConsent",
+        "description": null
+      },
+      {
+        "kind": "when",
+        "name": "Command: ConfirmLegalGuardianConsent",
+        "description": null
+      },
+      {
+        "kind": "then",
+        "name": "Happy path: Legal guardian successfully confirms consent for a minor using phone verification.",
+        "description": null
+      },
+      {
+        "kind": "then",
+        "name": "Consent confirmation fails due to mismatched legal guardian ID.",
+        "description": null
+      },
+      {
+        "kind": "then",
+        "name": "Consent already obtained: Attempt to confirm again is ignored.",
+        "description": null
+      },
+      {
+        "kind": "then",
+        "name": "Consent confirmation fails due to expired consent document.",
+        "description": null
+      }
+    ]
+  },
+  "changed": false,
+  "updatedAt": "2026-05-30T09:06:26.489000000+00:00"
+}

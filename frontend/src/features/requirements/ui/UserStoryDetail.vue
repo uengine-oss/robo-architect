@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 import ClarificationPanel from './ClarificationPanel.vue'
 import ClarityRadar from './ClarityRadar.vue'
+import EditHistoryPanel from './EditHistoryPanel.vue'
 
 const props = defineProps({
   userStory: { type: Object, default: null },
@@ -88,6 +89,46 @@ function onSelectTab(name) {
   if (name === 'clarification' && props.userStory?.id && !isCurrentSession.value) {
     startClarificationHere()
   }
+  if (name === 'history' && props.userStory?.id) {
+    store.fetchHistory(props.userStory.id)
+  }
+  if (name === 'edit' && props.userStory) {
+    resetEditForm()
+  }
+}
+
+// ── Edit form (spec 033) ─────────────────────────────────────────────────
+
+const editForm = reactive({ role: '', action: '', benefit: '', priority: 'medium', status: 'draft' })
+const editNotice = ref(null)
+
+function resetEditForm() {
+  const us = props.userStory
+  if (!us) return
+  editForm.role = us.role || ''
+  editForm.action = us.action || ''
+  editForm.benefit = us.benefit || ''
+  editForm.priority = us.priority || 'medium'
+  editForm.status = us.status || 'draft'
+  editNotice.value = null
+}
+
+async function saveEdit() {
+  if (!props.userStory?.id) return
+  editNotice.value = null
+  try {
+    await store.updateUserStory(props.userStory.id, {
+      role: editForm.role,
+      action: editForm.action,
+      benefit: editForm.benefit,
+      priority: editForm.priority,
+      status: editForm.status,
+    })
+    editNotice.value = { type: 'success', text: '저장되었습니다.' }
+    activeTab.value = 'overview'
+  } catch (e) {
+    editNotice.value = { type: 'error', text: e.message || '저장 실패' }
+  }
 }
 </script>
 
@@ -98,23 +139,17 @@ function onSelectTab(name) {
       <ClarityRadar v-if="store.clarityScores" :scores="store.clarityScores" />
     </div>
     <template v-else>
-      <!-- Tab bar (spec 030) ─────────────────────────────────────── -->
+      <!-- Tab bar (spec 030 + 033) ──────────────────────────────────── -->
       <div class="us-tabs">
-        <button
-          class="us-tab"
-          :class="{ 'is-active': activeTab === 'overview' }"
-          @click="onSelectTab('overview')"
-        >개요</button>
-        <button
-          class="us-tab"
-          :class="{ 'is-active': activeTab === 'clarification' }"
-          @click="onSelectTab('clarification')"
-        >
+        <button class="us-tab" :class="{ 'is-active': activeTab === 'overview' }" @click="onSelectTab('overview')">개요</button>
+        <button class="us-tab" :class="{ 'is-active': activeTab === 'edit' }" @click="onSelectTab('edit')">편집</button>
+        <button class="us-tab" :class="{ 'is-active': activeTab === 'clarification' }" @click="onSelectTab('clarification')">
           명확화
           <span v-if="ambiguityFlag" class="tab-badge" :title="ambiguityFlag.categories.join(', ')">
             ❓ {{ (ambiguityFlag.questionIds || []).length }}
           </span>
         </button>
+        <button class="us-tab" :class="{ 'is-active': activeTab === 'history' }" @click="onSelectTab('history')">이력</button>
       </div>
 
       <!-- Overview tab ──────────────────────────────────────────── -->
@@ -167,9 +202,59 @@ function onSelectTab(name) {
         </div>
       </div>
 
+      <!-- Edit tab (spec 033) ──────────────────────────────────── -->
+      <div v-else-if="activeTab === 'edit'" class="us-tab-body">
+        <div v-if="editNotice" class="edit-notice" :class="`edit-notice--${editNotice.type}`">
+          {{ editNotice.text }}
+        </div>
+        <div class="edit-form">
+          <label class="edit-field">
+            <span class="edit-field__label">역할 (As a)</span>
+            <input v-model="editForm.role" class="edit-input" placeholder="법정대리인" />
+          </label>
+          <label class="edit-field">
+            <span class="edit-field__label">목적 (I want)</span>
+            <textarea v-model="editForm.action" class="edit-textarea" rows="3" placeholder="업무처리 동의 또는 확인을 한다" />
+          </label>
+          <label class="edit-field">
+            <span class="edit-field__label">혜택 (so that)</span>
+            <textarea v-model="editForm.benefit" class="edit-textarea" rows="2" placeholder="미성년자 또는 대리 동의가 필요한 고객의 회원가입 및 관련 업무가 적법하게 처리된다" />
+          </label>
+          <div class="edit-row">
+            <label class="edit-field edit-field--half">
+              <span class="edit-field__label">우선순위</span>
+              <select v-model="editForm.priority" class="edit-select">
+                <option value="high">high</option>
+                <option value="medium">medium</option>
+                <option value="low">low</option>
+              </select>
+            </label>
+            <label class="edit-field edit-field--half">
+              <span class="edit-field__label">상태</span>
+              <select v-model="editForm.status" class="edit-select">
+                <option value="draft">draft</option>
+                <option value="ready">ready</option>
+                <option value="done">done</option>
+              </select>
+            </label>
+          </div>
+          <div class="edit-actions">
+            <button class="btn btn--secondary" @click="onSelectTab('overview')">취소</button>
+            <button class="btn btn--primary" :disabled="store.editSaving" @click="saveEdit">
+              {{ store.editSaving ? '저장 중…' : '저장' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Clarification tab (spec 030) ─────────────────────────── -->
       <div v-else-if="activeTab === 'clarification'" class="us-tab-body us-tab-body--clarification">
         <ClarificationPanel embedded />
+      </div>
+
+      <!-- History tab (spec 033) ───────────────────────────────── -->
+      <div v-else-if="activeTab === 'history'" class="us-tab-body">
+        <EditHistoryPanel :items="store.editHistory" :loading="store.editHistoryLoading" />
       </div>
     </template>
   </div>
@@ -209,6 +294,36 @@ function onSelectTab(name) {
   font-size: 0.66rem; padding: 1px 6px; border-radius: 4px;
   background: rgba(255, 196, 0, 0.25); color: #8a6500;
 }
+
+/* Edit form */
+.edit-form { display: flex; flex-direction: column; gap: 12px; }
+.edit-field { display: flex; flex-direction: column; gap: 4px; }
+.edit-field--half { flex: 1; }
+.edit-field__label { font-size: 0.72rem; font-weight: 600; color: var(--color-text-light); }
+.edit-input,
+.edit-textarea,
+.edit-select {
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  width: 100%;
+  box-sizing: border-box;
+}
+.edit-textarea { resize: vertical; font-family: inherit; }
+.edit-row { display: flex; gap: 12px; }
+.edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.btn { padding: 6px 18px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; cursor: pointer; border: none; }
+.btn--primary { background: var(--color-accent, #228be6); color: #fff; }
+.btn--primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn--secondary { background: var(--color-bg-tertiary); color: var(--color-text); }
+.edit-notice {
+  padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; margin-bottom: 4px;
+}
+.edit-notice--success { background: rgba(47, 158, 68, 0.15); color: #2f9e44; }
+.edit-notice--error { background: rgba(224, 49, 49, 0.15); color: #e03131; }
 
 .us-tab-body {
   flex: 1; overflow-y: auto;

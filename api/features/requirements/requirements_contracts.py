@@ -359,6 +359,36 @@ class DesignTraceResponse(BaseModel):
     empty: bool = False
 
 
+# ── User Story direct edit (033 — requirement-edit-history) ──────────────
+
+
+class UserStoryPatchRequest(BaseModel):
+    role: Optional[str] = None
+    action: Optional[str] = None
+    benefit: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    baseUpdatedAt: Optional[str] = None
+
+
+class UserStoryPatchResponse(BaseModel):
+    userStory: UserStoryNodeDTO
+    changed: bool
+    updatedAt: str
+
+
+class EditHistoryItemDTO(BaseModel):
+    id: str
+    timestamp: str
+    userName: str
+    userEmail: str
+    changes: dict
+
+
+class EditHistoryResponse(BaseModel):
+    items: list[EditHistoryItemDTO] = Field(default_factory=list)
+
+
 # ── Impact report ────────────────────────────────────────────────────────
 
 
