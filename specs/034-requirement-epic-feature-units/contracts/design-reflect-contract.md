@@ -10,7 +10,7 @@
 - **Query(옵션)**: `scopeType ∈ {project, bounded_context, feature}`, `scopeId`
 - **Res 200**: `PendingDesignResponse { pending: PendingUS[] }`
   - `PendingUS { userStoryId, role, action, benefit, featureId, boundedContextId }`
-- **동작**: 범위 내 US 중 `design_trace`가 empty(=IMPLEMENTS→Command 없음)인 것만 반환.
+- **동작**: 범위 내 US 중 **어떤 설계객체(Aggregate/Command/Event/Policy/ReadModel)에도 `IMPLEMENTS`로 연결되지 않은** US만 반환. (Command 부재만 보면, 인제스천이 Aggregate엔 배치했지만 Command는 일부만 매핑한 US까지 과대 보고됨 — 특히 조회/알림성. 따라서 Aggregate 등 어떤 설계 연결이라도 있으면 "반영됨"으로 본다.)
 - **충족**: FR-030, US7-AC1/AC5
 
 ### A2. 설계 반영(제안) — `POST /api/requirements/design/reflect` (SSE)
