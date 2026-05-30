@@ -163,8 +163,17 @@ def http_context(request: Request) -> dict[str, Any]:
     """
     rid = get_request_id()
     client_host = getattr(getattr(request, "client", None), "host", None)
+    # Feature 031: include resolved per-request generation language so every
+    # log line carries the tag alongside request_id. Late import keeps the
+    # observability module free of an upward dependency on feature code.
+    try:
+        from api.platform.language import get_request_language
+        language = get_request_language()
+    except Exception:  # noqa: BLE001 — logging must not fail on import issues
+        language = None
     return {
         "request_id": rid,
+        "language": language,
         "http": {
             "method": getattr(request, "method", None),
             "path": str(getattr(getattr(request, "url", None), "path", None)),

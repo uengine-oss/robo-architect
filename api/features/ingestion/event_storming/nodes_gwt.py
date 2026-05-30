@@ -9,7 +9,8 @@ from __future__ import annotations
 import time
 from typing import Any, Dict
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.platform.env import (
     AI_AUDIT_LOG_ENABLED,
@@ -255,7 +256,7 @@ def generate_gwt_node(state: EventStormingState) -> Dict[str, Any]:
             t_llm0 = time.perf_counter()
             try:
                 # Use JSON mode for structured output
-                response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)])
+                response = llm.invoke([build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)])
                 llm_ms = int((time.perf_counter() - t_llm0) * 1000)
                 
                 # Parse JSON response

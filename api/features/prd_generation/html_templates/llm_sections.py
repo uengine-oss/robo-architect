@@ -69,14 +69,15 @@ def _extract_json(raw: str) -> Any:
 
 def _invoke_llm(prompt: str) -> str:
     """Lazy import + invoke. Raises on failure — caller catches."""
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage
 
     from api.platform.llm import get_llm
+    from api.platform.llm_messages import build_system_message
 
     llm = get_llm()
     response = llm.invoke(
         [
-            SystemMessage(content="You output structured JSON only. No prose outside JSON."),
+            build_system_message("You output structured JSON only. No prose outside JSON."),
             HumanMessage(content=prompt),
         ]
     )

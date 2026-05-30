@@ -6,7 +6,8 @@ import re
 import time
 from typing import Any, AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
@@ -424,7 +425,7 @@ If no properties are available, only then use empty fieldValues {{}}."""
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 llm.invoke,
-                [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)]
             ),
             timeout=300.0
         )
@@ -512,7 +513,7 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     retry_result = await asyncio.wait_for(
                         asyncio.to_thread(
                             structured_llm.invoke,
-                            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)],
+                            [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)],
                         ),
                         timeout=300.0,
                     )
@@ -1297,7 +1298,7 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
                 response = await asyncio.wait_for(
                     asyncio.to_thread(
                         llm.invoke,
-                        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                        [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)]
                     ),
                     timeout=300.0  # 5분 타임아웃
                 )

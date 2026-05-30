@@ -34,7 +34,8 @@ import re
 from collections import defaultdict
 from typing import AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.hybrid.bpm_context_builder import (
@@ -335,7 +336,7 @@ async def _name_cross_bc_policy(
         llm = get_llm()
         structured = llm.with_structured_output(_CrossBcPolicyOut)
         result: _CrossBcPolicyOut = await structured.ainvoke([
-            SystemMessage(content=_CROSS_BC_POLICY_SYSTEM),
+            build_system_message(_CROSS_BC_POLICY_SYSTEM),
             HumanMessage(content=user_msg),
         ])
         if result and result.name:

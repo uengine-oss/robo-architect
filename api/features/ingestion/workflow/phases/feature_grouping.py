@@ -16,7 +16,8 @@ from typing import AsyncGenerator
 
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
@@ -152,7 +153,7 @@ async def feature_grouping_phase(
                 asyncio.to_thread(
                     structured_llm.invoke,
                     [
-                        SystemMessage(content=_SYSTEM_PROMPT),
+                        build_system_message(_SYSTEM_PROMPT),
                         HumanMessage(content=_build_prompt(bc_name, stories)),
                     ],
                 ),

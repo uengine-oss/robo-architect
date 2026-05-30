@@ -18,7 +18,8 @@ import time
 from collections import Counter
 from typing import Any, AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.features.ingestion.event_storming.prompts import UI_FLOW_SYSTEM_PROMPT
 from api.features.ingestion.event_storming.structured_outputs import (
@@ -192,7 +193,7 @@ Return the JSON object now."""
     t0 = time.perf_counter()
     try:
         response = ctx.llm.invoke(
-            [SystemMessage(content=UI_FLOW_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+            [build_system_message(UI_FLOW_SYSTEM_PROMPT), HumanMessage(content=prompt)]
         )
         llm_ms = int((time.perf_counter() - t0) * 1000)
     except Exception as e:

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.features.ingestion.hybrid.contracts import (
     BpmSkeleton,
@@ -82,7 +83,7 @@ async def extract_conditions_for_task(
         llm = get_llm()
         structured = llm.with_structured_output(_ConditionList)
         result: _ConditionList = await structured.ainvoke([
-            SystemMessage(content=SYSTEM_PROMPT),
+            build_system_message(SYSTEM_PROMPT),
             HumanMessage(content=_build_user_prompt(task_name, task_description, passages, rules)),
         ])
     except Exception as e:

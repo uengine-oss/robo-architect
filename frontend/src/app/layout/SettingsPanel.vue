@@ -1,9 +1,10 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useThemeStore } from '@/app/theme.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
+import { useLanguageStore } from '@/app/language.store'
 
 const props = defineProps({
   visible: {
@@ -18,6 +19,16 @@ const terminologyStore = useTerminologyStore()
 const themeStore = useThemeStore()
 const canvasStore = useCanvasStore()
 const requirementsStore = useRequirementsStore()
+const languageStore = useLanguageStore()
+
+// Two-way binding for the Language <input>. Reads from the store directly;
+// on write, runs through setLanguage() so validation + localStorage
+// persistence fire. Free-form input — FR-011 requires accepting any
+// BCP-47 tag, recommended list rendered as a <datalist> for discoverability.
+const languageInput = computed({
+  get: () => languageStore.language,
+  set: (value) => languageStore.setLanguage(value),
+})
 
 function handleBackdropClick(e) {
   if (e.target === e.currentTarget) {
@@ -97,6 +108,33 @@ function handleBackdropClick(e) {
                 </svg>
                 <span>Light</span>
               </button>
+            </div>
+          </div>
+
+          <!-- Generation Output Language Setting (feature 031) -->
+          <div class="settings-section">
+            <div class="settings-section__header">
+              <h3 class="settings-section__title">Language</h3>
+              <span class="settings-section__description">
+                AI 생성물(user story, acceptance criteria, 설명 등) 출력 언어 (BCP-47). 사용자 입력 라벨은 그대로 보존됩니다.
+              </span>
+            </div>
+            <div class="settings-section__control settings-section__control--stack">
+              <input
+                v-model="languageInput"
+                type="text"
+                class="language-input"
+                list="language-options"
+                placeholder="ko-KR"
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <datalist id="language-options">
+                <option value="ko-KR">한국어 (ko-KR)</option>
+                <option value="en-US">English (en-US)</option>
+                <option value="ja-JP">日本語 (ja-JP)</option>
+                <option value="zh-CN">简体中文 (zh-CN)</option>
+              </datalist>
             </div>
           </div>
 
@@ -264,6 +302,29 @@ function handleBackdropClick(e) {
 .settings-section__control {
   display: flex;
   align-items: center;
+}
+
+.settings-section__control--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.language-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-bright);
+  font-size: 0.9rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  transition: border-color 0.2s ease;
+}
+
+.language-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
 }
 
 /* Theme Options */

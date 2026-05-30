@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import time
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.features.ingestion.ingestion_contracts import GeneratedUserStory, UserStoryList
 from api.features.ingestion.ingestion_llm_runtime import get_llm
@@ -75,7 +76,7 @@ def extract_user_stories_from_bpm_group(context: str) -> list[GeneratedUserStory
 
     t0 = time.perf_counter()
     response = structured_llm.invoke([
-        SystemMessage(content=HYBRID_BPM_SYSTEM_PROMPT),
+        build_system_message(HYBRID_BPM_SYSTEM_PROMPT),
         HumanMessage(content=prompt),
     ])
     llm_ms = int((time.perf_counter() - t0) * 1000)

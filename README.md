@@ -224,6 +224,16 @@ API는 기능별로 prefix가 구분돼 있습니다.
 
 정확한 요청/응답 스펙은 `http://localhost:8000/docs`를 참고하세요.
 
+### 출력 언어 (Accept-Language) — spec 031
+
+모든 `/api/*` 엔드포인트는 LLM이 새로 생성하는 자연어 결과물(user story / acceptance criteria / 이벤트·어그리거트 설명 등)의 출력 언어를 표준 `Accept-Language` 요청 헤더로 결정합니다. SPA는 톱니바퀴 Settings의 Language 선택값(기본 = `navigator.language`)을 모든 요청에 자동 부착하므로 별도 작업이 필요 없습니다. 외부 API 클라이언트(스크립트, MCP 브리지 등)는 단일 BCP-47 태그를 직접 지정하거나, 헤더를 보내지 않을 경우 `GENERATION_LANGUAGE_DEFAULT` 환경변수(기본 `en-US`)가 적용됩니다.
+
+```
+curl -H "Accept-Language: ko-KR" -X POST http://localhost:8000/api/userstory/plan ...
+```
+
+사용자가 직접 입력한 라벨(이벤트명, 역할명 등)은 그대로 보존되며, LLM이 새로 생성하는 산문에만 정책이 적용됩니다.
+
 ---
 
 ## 그래프(Neo4j) 스키마

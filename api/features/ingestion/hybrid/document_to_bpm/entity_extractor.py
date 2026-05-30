@@ -16,7 +16,8 @@ import hashlib
 import uuid
 from typing import Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.hybrid.contracts import (
@@ -127,7 +128,7 @@ async def extract_bpm_from_document(
     )
 
     result: _ExtractionResult = await structured.ainvoke([
-        SystemMessage(content=SYSTEM_PROMPT),
+        build_system_message(SYSTEM_PROMPT),
         HumanMessage(content=f"문서:\n\n{text}\n\n추출하세요."),
     ])
 
@@ -207,6 +208,6 @@ async def extract_process_identity(
         f"이 프로세스의 `name` 과 `domain_keywords` 를 추출하세요."
     )
     return await structured.ainvoke([
-        SystemMessage(content=_IDENTITY_SYSTEM_PROMPT),
+        build_system_message(_IDENTITY_SYSTEM_PROMPT),
         HumanMessage(content=user),
     ])

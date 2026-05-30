@@ -237,15 +237,16 @@ async def parse_gwt_nl(payload: ParseNLRequest, request: Request) -> dict[str, A
     )
 
     try:
-        from langchain_core.messages import HumanMessage, SystemMessage
+        from langchain_core.messages import HumanMessage
 
         from api.platform.llm import get_llm
+        from api.platform.llm_messages import build_system_message
 
         llm = get_llm()
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 llm.invoke,
-                [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)],
+                [build_system_message(system_prompt), HumanMessage(content=human_prompt)],
             ),
             timeout=120.0,
         )

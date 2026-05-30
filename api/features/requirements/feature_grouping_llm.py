@@ -11,7 +11,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.features.ingestion.ingestion_llm_runtime import get_llm
 from api.features.requirements.requirements_contracts import (
@@ -82,7 +83,7 @@ def decompose_requirement(
     try:
         structured = get_llm().with_structured_output(_LLMDecomposition)
         result: _LLMDecomposition = structured.invoke(
-            [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+            [build_system_message(_SYSTEM_PROMPT), HumanMessage(content=prompt)]
         )
         llm_proposals = result.proposals or []
     except Exception as exc:  # noqa: BLE001

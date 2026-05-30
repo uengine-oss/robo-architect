@@ -17,7 +17,8 @@ import json
 import time
 from typing import List, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.platform.env import (
@@ -302,7 +303,7 @@ def generate_change_plan(
 
     t_llm0 = time.perf_counter()
     response = structured_llm.invoke(
-        [SystemMessage(content=CHANGE_PLANNER_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+        [build_system_message(CHANGE_PLANNER_SYSTEM_PROMPT), HumanMessage(content=prompt)]
     )
     llm_ms = int((time.perf_counter() - t_llm0) * 1000)
 
