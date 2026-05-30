@@ -18,7 +18,8 @@ const FEATURE_RENAMED = '결제 수단 등록·관리'
 
 async function shot(page, name: string) {
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: `${SHOTS}/${name}`, fullPage: true })
+  // Viewport-only capture (not fullPage) → tight, readable frames.
+  await page.screenshot({ path: `${SHOTS}/${name}` })
 }
 
 async function openRequirementsTab(page) {

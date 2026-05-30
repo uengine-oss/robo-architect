@@ -162,6 +162,25 @@ class PendingDesignResponse(BaseModel):
     pending: list[PendingUS] = Field(default_factory=list)
 
 
+class DesignReflectRequest(BaseModel):
+    userStoryIds: list[str] = Field(default_factory=list)
+
+
+class ReflectedDesign(BaseModel):
+    userStoryId: str
+    boundedContextId: Optional[str] = None
+    aggregateName: Optional[str] = None
+    commandName: Optional[str] = None
+    eventName: Optional[str] = None
+    reusedAggregate: bool = False
+    ok: bool = True
+    message: Optional[str] = None
+
+
+class DesignReflectResponse(BaseModel):
+    reflected: list[ReflectedDesign] = Field(default_factory=list)
+
+
 # ── Epic / Feature AI 제안 (034 — US1) ───────────────────────────────────
 # 자연어 설명 → LLM 후보 제안(미확정). 확정은 기존 create 경로 재사용.
 

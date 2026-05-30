@@ -76,9 +76,11 @@ const currentComponent = computed(() => tabComponents[activeTab.value])
 const requirementsStore = useRequirementsStore()
 const designPending = ref(null) // PendingUS[] | null
 const suppressDesignPrompt = ref(false) // 이번 세션 동안 묻지 않기
+const designReflecting = ref(false) // 설계 생성 진행 중 오버레이
+const DESIGN_REFLECT_BATCH = 5 // 한 번에 반영할 최대 개수(응답성 위해 제한)
 watch(activeTab, async (tab) => {
   if (tab !== 'Event Modeling' && tab !== 'Design') return
-  if (suppressDesignPrompt.value || designPending.value) return
+  if (suppressDesignPrompt.value || designPending.value || designReflecting.value) return
   try {
     const res = await requirementsStore.fetchPendingDesign()
     if (res?.pending?.length) designPending.value = res.pending
@@ -86,9 +88,25 @@ watch(activeTab, async (tab) => {
     /* advisory only — never block tab navigation */
   }
 })
-function onDesignReflectConfirm() {
-  // 설계 생성 엔진 연동은 후속 — 현재는 사용자를 해당 탭에 두고 프롬프트를 닫는다.
+async function onDesignReflectConfirm() {
+  const batch = (designPending.value || []).slice(0, DESIGN_REFLECT_BATCH)
+  const total = (designPending.value || []).length
   designPending.value = null
+  if (!batch.length) return
+  designReflecting.value = true
+  try {
+    const res = await requirementsStore.reflectDesign(batch.map((p) => p.userStoryId))
+    const ok = (res.reflected || []).filter((r) => r.ok).length
+    const remaining = Math.max(0, total - ok)
+    window.alert(
+      `${ok}개 User Story의 설계를 생성했습니다.` +
+        (remaining > 0 ? `\n남은 ${remaining}개는 탭에 다시 진입하면 이어서 반영할 수 있습니다.` : ''),
+    )
+  } catch (e) {
+    window.alert(`설계 반영 실패: ${e?.message || e}`)
+  } finally {
+    designReflecting.value = false
+  }
 }
 function onDesignReflectDismiss() {
   designPending.value = null
@@ -260,6 +278,9 @@ onUnmounted(() => {
       @dismiss="onDesignReflectDismiss"
       @dont-ask="onDesignReflectDontAsk"
     />
+    <div v-if="designReflecting" class="design-reflect-overlay">
+      <div class="design-reflect-box">🧩 미반영 User Story의 설계를 생성하는 중입니다…</div>
+    </div>
   </div>
 </template>
 
@@ -332,6 +353,23 @@ onUnmounted(() => {
   flex-direction: column;
   overflow: hidden;
   position: relative;
+}
+.design-reflect-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1250;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.design-reflect-box {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  padding: 18px 26px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  border: 1px solid var(--color-border);
 }
 </style>
 

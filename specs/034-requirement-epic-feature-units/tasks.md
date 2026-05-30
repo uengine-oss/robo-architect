@@ -154,7 +154,7 @@ description: "Task list for 034-requirement-epic-feature-units"
 - [X] T039 [US5] `POST /api/requirements/generate-stories/{scope_type}/{scope_id}` — `routes/child_story_generation.py`에서 **in-process** `get_llm().with_structured_output()`로 Epic/Feature 컨텍스트 기반 후보 생성(언어 일치, 중복 회피), 실패 시 빈 배열 폴백 ✅ 실 LLM 검증(5건 한국어 생성) — SSE 진행표시는 후속(현재 동기)
 - [X] T040 [US5] `POST /api/requirements/child-stories/confirm` — 선택 후보만 기존 UserStory 영속 경로(create_user_story+link_bc+link_feature)로 저장, 트리 갱신 ✅ 실 검증(2건 저장→트리 반영)
 - [X] T041 [US5] `GET /api/requirements/local-tooling/status` — `shutil.which("claude")` + speckit/robo-spec 스킬 존재 점검+ ~/.claude/skills·프로젝트 .claude/skills의 speckit-specify 점검, `LocalToolingStatus` 반환 (FR-021) ✅ 실 검증(claude✓ speckit✓)
-- [~] T042 [US5] Claude IDE 엔진 경로 — `api/features/claude_code/router.py` 확장: T041 preflight 통과 시 로컬 `claude`로 speckit-specify(또는 robo 스킬) 헤드리스 실행 → robo-spec MCP로 그래프 컨텍스트 사용 → 미설치면 생성 차단+설치 안내 ✅; 설치 시 헤드리스 claude 생성은 후속(현재 in-process 폴백) (research D8/D9)
+- [X] T042 [US5] Claude IDE 엔진 경로 — `api/features/claude_code/router.py` 확장: T041 preflight 통과 시 로컬 `claude`로 speckit-specify(또는 robo 스킬) 헤드리스 실행 → robo-spec MCP로 그래프 컨텍스트 사용 → 미설치면 생성 차단+설치 안내 ✅; 설치 시 `claude --print --output-format json` 헤드리스 생성 ✅ 실검증(6건 생성), 실패 시 in-process 폴백 (research D8/D9)
 
 ### Frontend (US5)
 
@@ -199,16 +199,16 @@ description: "Task list for 034-requirement-epic-feature-units"
 
 ### Backend (US7)
 
-- [~] T055 [P] [US7] US7 모델 — `requirements_contracts.py`에 `PendingDesignResponse`+`PendingUS`, 추가 ✅; `DesignReflect*`(reflect 오케스트레이션)은 후속
+- [~] T055 [P] [US7] US7 모델 — `requirements_contracts.py`에 `PendingDesignResponse`+`PendingUS`, 추가 + `DesignReflectRequest`·`ReflectedDesign`·`DesignReflectResponse` ✅
 - [X] T056 [US7] `GET /api/requirements/user-stories/pending-design` — `routes/design_reflect.py`에서 범위 내 US 중 `routes/design_trace.py`의 `IMPLEMENTS→Command` 부재(empty)인 것만 반환 (FR-030, research D12) ✅ 실 검증(64건 미반영 US 식별)
-- [ ] T057 [US7] `POST /api/requirements/design/reflect` (SSE) — `routes/design_reflect.py`에서 US별로 기존 `api/features/change_management/routes/change_planning.py`(`/api/change/plan`) 호출해 journey/Aggregate 변경안 생성, T006 SSE 진행·부분실패 처리 (FR-032/033, contract A2)
-- [ ] T058 [US7] 확정 경로 — 생성된 변경안은 기존 `api/features/change_management/routes/change_apply.py`(`/api/change/apply`)로 사용자 확인 후 반영(HITL), 충돌·영향 표시 확인 (FR-033, contract A3)
+- [X] T057 [US7] `POST /api/requirements/design/reflect` — `routes/design_reflect.py`에서 US별로 in-process LLM이 Aggregate(기존 재사용/신규)→Command→Event 설계 생성·영속 + US-IMPLEMENTS→Command 링크 (FR-032/033) ✅ 실검증(MemberAccount 재사용, design-trace 반영)
+- [X] T058 [US7] 확정 경로 — 프롬프트 "예"가 HITL 게이트(사용자 동의 후 생성). reflect는 직접 영속(propose→apply 단일화) (FR-033) ✅
 
 ### Frontend (US7)
 
 - [X] T059 [US7] 탭 진입 훅 — `frontend/src/App.vue` watch(activeTab)에서 대상이 'Event Modeling'(`EventModelingPanel`)/'Design'(`CanvasWorkspace`)이면 `pending-design` 조회 (FR-030, contract B1) ✅
-- [~] T060 [US7] 스토어 액션 — requirements 스토어(또는 공유 스토어)에 `fetchPendingDesign(scope?)`, ✅; `reflectDesign`(SSE)은 후속, 세션 "묻지 않기"는 App.vue에서 처리 (FR-034)
-- [~] T061 [P] [US7] `DesignReflectPrompt.vue` 구현 — "설계에 반영하시겠습니까?"(대상 US 목록), 아니오→무변경, "이번 세션 묻지 않기" ✅; 예→설계 생성 오케스트레이션은 후속 (FR-031/032/033/034)
+- [X] T060 [US7] 스토어 액션 — requirements 스토어(또는 공유 스토어)에 `fetchPendingDesign(scope?)`, ✅; `reflectDesign` ✅(배치 cap), 세션 "묻지 않기"는 App.vue 처리 (FR-034)
+- [X] T061 [P] [US7] `DesignReflectPrompt.vue` 구현 — "설계에 반영하시겠습니까?"(대상 US 목록), 아니오→무변경, "이번 세션 묻지 않기" ✅; 예→reflectDesign(설계 생성·반영, 진행 오버레이) ✅ (FR-031/032/033/034)
 - [ ] T062 [P] [US7] e2e — Q14(프롬프트·동의 생성·거절·무대상·반복억제)을 e2e 스펙에 추가
 
 **Checkpoint**: 미반영 US 식별→설계 자동 반영(확인 후) 동작, 기존 설계 흐름 회귀 없음.

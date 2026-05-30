@@ -128,7 +128,10 @@ AI가 그 단위에 어울리는 User Story 후보를 자동으로 만들어 제
 요구사항을 추가한 뒤 **"Event Modeling"** 또는 **"Design"** 탭으로 이동하면, 아직 설계에
 반영되지 않은 User Story가 있을 경우 **"설계에 반영하시겠습니까?"** 안내가 나타납니다.
 대상 User Story 목록을 확인하고, 지금 진행할지(예) / 나중에 할지(아니오) / 이번 세션 동안
-보지 않을지를 선택할 수 있습니다.
+보지 않을지를 선택할 수 있습니다. **"예"** 를 누르면 각 User Story에 맞는 설계(Aggregate·
+Command·Event)가 자동으로 생성되어 모델에 반영됩니다. 같은 영역에 이미 있는 Aggregate가
+있으면 새로 만들지 않고 재사용합니다. (응답성을 위해 한 번에 일부씩 반영하며, 남은 항목은
+탭에 다시 들어가면 이어서 반영할 수 있습니다.)
 
 ![미반영 요구사항이 있을 때 표시되는 설계 반영 안내](screenshots/15_design_reflect_prompt.png){ width=100% }
 
@@ -136,8 +139,9 @@ AI가 그 단위에 어울리는 User Story 후보를 자동으로 만들어 제
 
 상단 오른쪽 **설정(⚙️)** 의 **"요구사항 생성 엔진"** 에서 하위 User Story 자동 생성에 사용할
 엔진을 고를 수 있습니다 — **in-process LLM**(서버 내장, 추가 설치 불필요) 또는 **Claude IDE**
-(로컬 Claude Code + speckit 필요). "Claude IDE"를 골랐는데 로컬에 도구가 없으면, 생성 대신
-설치 안내가 표시됩니다.
+(로컬 Claude Code 사용). "Claude IDE"를 고르면 자동 생성 시 사용자 PC에 설치된 Claude를
+직접 구동해 후보를 만듭니다. 로컬에 Claude/speckit이 없으면 생성 대신 설치 안내가 표시되며,
+일시적으로 Claude 호출이 실패하면 자동으로 in-process 엔진으로 대체해 끊김 없이 동작합니다.
 
 ## 자주 묻는 질문
 
@@ -169,7 +173,9 @@ AI가 그 단위에 어울리는 User Story 후보를 자동으로 만들어 제
 | DDD 적합성·입도·정합성 검증 | PASS | 12 PNG |
 | Epic·Feature AI 제안 등록 | PASS | 14 PNG |
 | 설계 미반영 User Story 알림 | PASS | 15 PNG, 21_api_pending_design.txt |
+| 설계 자동 반영(Aggregate·Command·Event 생성) | PASS | design-trace 반영 확인 |
 | 생성 엔진 설치 점검(Claude IDE) | PASS | 20_api_local_tooling.txt |
+| Claude IDE 헤드리스 생성 | PASS | claude --print (6건 생성) |
 
 검증 백엔드 엔드포인트: `POST·PATCH /api/requirements/bounded-context`(Epic 생성·편집),
 `PATCH /api/requirements/feature`(Feature 편집), `POST /api/requirements/epic|feature/propose`(AI 제안),
@@ -179,9 +185,9 @@ AI가 그 단위에 어울리는 User Story 후보를 자동으로 만들어 제
 
 ## 향후 지원 예정
 
-아래 항목은 이번 범위에 포함되지 않았으며 후속 작업으로 제공될 예정입니다.
+핵심 기능은 모두 제공됩니다. 아래는 다듬는 단계로 후속에서 개선될 예정입니다.
 
-- **설계 자동 생성 실행**: 현재는 미반영 User Story를 식별해 안내하는 단계까지 제공합니다.
-  "예"를 눌렀을 때 Aggregate·Command 등 설계를 자동으로 생성하는 단계는 후속에서 제공됩니다.
-- **Claude IDE 엔진의 실제 생성**: 엔진 선택과 설치 점검·안내까지 제공합니다. 로컬 Claude를
-  직접 구동해 생성하는 단계는 후속에서 제공됩니다(현재는 in-process 엔진으로 생성).
+- **대량 설계 반영의 진행 표시**: 현재 설계 자동 반영은 응답성을 위해 한 번에 일부씩 처리합니다.
+  수백 개를 한 번에 반영할 때의 실시간 진행률·취소 표시는 후속에서 보강됩니다.
+- **데스크톱(Electron) 설정 동기화**: 생성 엔진 선택은 브라우저에 저장됩니다. 데스크톱 앱
+  설정 파일과의 동기화는 후속에서 제공됩니다.

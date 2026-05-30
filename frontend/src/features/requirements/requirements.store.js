@@ -258,8 +258,10 @@ export const useRequirementsStore = defineStore('requirements', () => {
   // ── 하위 User Story 자동 생성 (034 US5, in-process 엔진) ───────────────
 
   /** Generate (propose) child user stories for an Epic/Feature via the LLM. */
-  async function generateChildStories(scopeType, scopeId) {
-    const res = await fetch(`/api/requirements/generate-stories/${scopeType}/${scopeId}`, {
+  async function generateChildStories(scopeType, scopeId, engine = null) {
+    const eng = engine || generationEngine.value
+    const qs = new URLSearchParams({ engine: eng }).toString()
+    const res = await fetch(`/api/requirements/generate-stories/${scopeType}/${scopeId}?${qs}`, {
       method: 'POST',
     })
     if (!res.ok) throw await _httpError(res, 'generate stories failed')
@@ -287,6 +289,17 @@ export const useRequirementsStore = defineStore('requirements', () => {
     const res = await fetch(`/api/requirements/user-stories/pending-design?${qs}`)
     if (!res.ok) throw await _httpError(res, 'pending-design failed')
     return res.json() // { pending: [...] }
+  }
+
+  /** Generate + persist design (Aggregate→Command→Event) for the given US (US7). */
+  async function reflectDesign(userStoryIds) {
+    const res = await fetch('/api/requirements/design/reflect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userStoryIds }),
+    })
+    if (!res.ok) throw await _httpError(res, 'design reflect failed')
+    return res.json() // { reflected: [...] }
   }
 
   // ── DDD 적합성·정합성 검증 (034 US6) ──────────────────────────────────
@@ -660,6 +673,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     confirmChildStories,
     validateRequirement,
     fetchPendingDesign,
+    reflectDesign,
     deleteFeature,
     moveUserStory,
     deleteUserStory,

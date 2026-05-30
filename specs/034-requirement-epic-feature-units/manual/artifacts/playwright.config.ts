@@ -12,7 +12,9 @@ export default defineConfig({
   reporter: 'line',
   use: {
     baseURL: process.env.APP_URL || 'http://localhost:5199',
-    viewport: { width: 1400, height: 5000 },
+    // Normal laptop viewport so screenshots frame the actual content
+    // (the old 5000px-tall fullPage shots were mostly black).
+    viewport: { width: 1440, height: 900 },
     actionTimeout: 20_000,
     navigationTimeout: 30_000,
   },

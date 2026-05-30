@@ -11,8 +11,10 @@ module implements the in-process LLM engine, which needs no local install.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import subprocess
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -92,8 +94,60 @@ def _build_prompt(*, kind: str, name: str, description: str, parent: str | None,
     return "\n".join(lines)
 
 
-def _generate(name: str, description: str, kind: str, parent: str | None, existing: list[dict]) -> list[GeneratedStory]:
+def _parse_stories(raw: str) -> list[GeneratedStory]:
+    """Parse a JSON object {stories:[...]} possibly wrapped in code fences."""
+    txt = (raw or "").strip()
+    if txt.startswith("```"):
+        txt = txt.strip("`")
+        nl = txt.find("\n")
+        if nl != -1:
+            txt = txt[nl + 1 :]
+    data = json.loads(txt)
+    return [
+        GeneratedStory(role=s.get("role", ""), action=s.get("action", ""), benefit=s.get("benefit", ""))
+        for s in (data.get("stories") or [])
+        if (s.get("action") or "").strip()
+    ]
+
+
+def _generate_via_claude(prompt: str) -> list[GeneratedStory]:
+    """Run the user's local `claude` CLI headlessly (US5 — claude-ide engine)."""
+    full = (
+        _SYSTEM_PROMPT
+        + "\n\n"
+        + prompt
+        + '\n\nReturn ONLY a JSON object: {"stories":[{"role":"...","action":"...","benefit":"..."}]}. '
+        + "No prose, no code fences."
+    )
+    proc = subprocess.run(
+        ["claude", "--print", "--output-format", "json", full],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or "claude failed")[:200])
+    envelope = json.loads(proc.stdout)
+    return _parse_stories(envelope.get("result", ""))
+
+
+def _generate(
+    name: str, description: str, kind: str, parent: str | None, existing: list[dict], engine: str = "in-process"
+) -> list[GeneratedStory]:
     prompt = _build_prompt(kind=kind, name=name, description=description or "", parent=parent, existing=existing)
+    # claude-ide 엔진: 로컬 claude로 생성, 실패 시 in-process로 폴백.
+    if engine == "claude-ide":
+        try:
+            stories = _generate_via_claude(prompt)
+            if stories:
+                return stories
+        except Exception as exc:  # noqa: BLE001
+            SmartLogger.log(
+                "WARN",
+                "Claude IDE generation failed; falling back to in-process.",
+                category="requirements.user_story.generate_children",
+                params={"error": str(exc)},
+            )
     try:
         structured = get_llm().with_structured_output(_LLMStories)
         result: _LLMStories = structured.invoke(
@@ -143,9 +197,13 @@ async def local_tooling_status() -> LocalToolingStatus:
     response_model=GenerateChildStoriesResponse,
 )
 async def generate_child_stories(
-    scope_type: str, scope_id: str, request: Request
+    scope_type: str, scope_id: str, request: Request, engine: str = "in-process"
 ) -> GenerateChildStoriesResponse:
-    """Propose child User Stories for an Epic ('epic') or Feature ('feature')."""
+    """Propose child User Stories for an Epic ('epic') or Feature ('feature').
+
+    `engine`: 'in-process' (backend LLM) or 'claude-ide' (local claude CLI,
+    falls back to in-process on failure).
+    """
     if scope_type not in ("epic", "feature"):
         raise HTTPException(status_code=422, detail="scope_type must be 'epic' or 'feature'")
 
@@ -162,6 +220,7 @@ async def generate_child_stories(
             kind="Feature",
             parent=_bc_name(bc_id) if bc_id else None,
             existing=_existing_stories_for_feature(scope_id),
+            engine=engine,
         )
         out = GenerateChildStoriesResponse(
             scopeType="feature", scopeId=scope_id, boundedContextId=bc_id, featureId=scope_id, proposals=proposals
@@ -181,6 +240,7 @@ async def generate_child_stories(
             kind="Epic",
             parent=None,
             existing=existing,
+            engine=engine,
         )
         out = GenerateChildStoriesResponse(
             scopeType="epic", scopeId=scope_id, boundedContextId=scope_id, featureId=None, proposals=proposals
