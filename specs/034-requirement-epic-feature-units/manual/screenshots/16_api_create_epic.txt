@@ -1,0 +1,10 @@
+# POST /api/requirements/bounded-context
+{
+  "boundedContext": {
+    "id": "714cff8b-b02a-4098-876d-4779025256ad",
+    "key": "e2e-api-epic",
+    "name": "E2E-API 검증 Epic",
+    "displayName": "E2E-API 검증 Epic",
+    "description": "API 검증용"
+  }
+}

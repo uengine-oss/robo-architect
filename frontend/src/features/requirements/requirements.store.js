@@ -18,6 +18,9 @@ export const useRequirementsStore = defineStore('requirements', () => {
   const selectedUserStoryId = ref(null)
   const selectedUserStory = ref(null)
 
+  // Generalized tree selection (034 US2): which node kind is in the detail pane.
+  const selectedNode = ref({ type: null, id: null }) // type: 'epic'|'feature'|'userStory'
+
   const designTrace = ref({ nodes: [], relationships: [], empty: false })
   const designTraceLoading = ref(false)
 
@@ -56,10 +59,54 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return (tree.value.unassigned || []).find((us) => us.id === usId) || null
   }
 
+  function findEpic(id) {
+    return (tree.value.epics || []).find((e) => e.id === id) || null
+  }
+  function findFeature(id) {
+    for (const epic of tree.value.epics || []) {
+      const features = [...(epic.features || [])]
+      if (epic.unassignedFeature) features.push(epic.unassignedFeature)
+      const hit = features.find((f) => f.id === id)
+      if (hit) return hit
+    }
+    return null
+  }
+
+  // Computed so they re-resolve from the freshest tree after edits/refreshes.
+  const selectedEpic = computed(() =>
+    selectedNode.value.type === 'epic' ? findEpic(selectedNode.value.id) : null,
+  )
+  const selectedFeature = computed(() =>
+    selectedNode.value.type === 'feature' ? findFeature(selectedNode.value.id) : null,
+  )
+
+  function _clearUserStorySelection() {
+    selectedUserStoryId.value = null
+    selectedUserStory.value = null
+    designTrace.value = { nodes: [], relationships: [], empty: false }
+  }
+
   async function selectUserStory(usId) {
+    selectedNode.value = { type: 'userStory', id: usId }
     selectedUserStoryId.value = usId
     selectedUserStory.value = findUserStory(usId)
+    // Radar returns to project scope when viewing an individual story (US4).
+    fetchClarityScores('project', '*')
     await fetchDesignTrace(usId)
+  }
+
+  /** Select an Epic (BoundedContext) → shows EpicDetail + BC-scoped radar (034 US2/US4). */
+  function selectEpic(id) {
+    selectedNode.value = { type: 'epic', id }
+    _clearUserStorySelection()
+    fetchClarityScores('bounded_context', id)
+  }
+
+  /** Select a Feature → shows FeatureDetail + feature-scoped radar (034 US2/US4). */
+  function selectFeature(id) {
+    selectedNode.value = { type: 'feature', id }
+    _clearUserStorySelection()
+    fetchClarityScores('feature', id)
   }
 
   async function fetchDesignTrace(usId) {
@@ -108,6 +155,164 @@ export const useRequirementsStore = defineStore('requirements', () => {
     if (!res.ok) throw new Error(`create feature failed: ${res.status}`)
     await fetchTree()
     return res.json()
+  }
+
+  // ── Epic(BC) create + Epic/Feature edit (034) ─────────────────────────
+
+  /** Build a readable error from a failed response (surfaces 422/404 detail). */
+  async function _httpError(res, fallback) {
+    let detail = ''
+    try {
+      const body = await res.json()
+      detail = typeof body?.detail === 'string' ? body.detail : ''
+    } catch {
+      /* no JSON body */
+    }
+    return new Error(detail || `${fallback}: ${res.status}`)
+  }
+
+  /** Propose Epic candidates from a natural-language description (034 US1). */
+  async function proposeEpic(text) {
+    const res = await fetch('/api/requirements/epic/propose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+    if (!res.ok) throw await _httpError(res, 'propose epic failed')
+    return res.json() // { proposals: [{name, description}] }
+  }
+
+  /** Propose Feature candidates from a natural-language description (034 US1). */
+  async function proposeFeature(text, boundedContextId = null) {
+    const res = await fetch('/api/requirements/feature/propose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, boundedContextId }),
+    })
+    if (!res.ok) throw await _httpError(res, 'propose feature failed')
+    return res.json() // { proposals: [{name, description, boundedContextId}] }
+  }
+
+  /** Create an Epic — i.e. a BoundedContext (034 US1). */
+  async function createEpic(name, description = null) {
+    const res = await fetch('/api/requirements/bounded-context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description }),
+    })
+    if (!res.ok) throw await _httpError(res, 'create epic failed')
+    await fetchTree()
+    return res.json()
+  }
+
+  /** Rename / re-describe an Epic (034 US3). Relationships preserved server-side. */
+  async function updateEpic(boundedContextId, { name = null, description = null } = {}) {
+    const res = await fetch('/api/requirements/bounded-context', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boundedContextId, name, description }),
+    })
+    if (!res.ok) throw await _httpError(res, 'update epic failed')
+    await fetchTree()
+    return res.json()
+  }
+
+  /** Rename / re-describe a Feature (034 US3). Child user stories stay attached. */
+  async function updateFeature(featureId, { name = null, description = null } = {}) {
+    const res = await fetch('/api/requirements/feature', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ featureId, name, description }),
+    })
+    if (!res.ok) throw await _httpError(res, 'update feature failed')
+    await fetchTree()
+    return res.json()
+  }
+
+  // ── 생성 엔진 설정 (034 US5) ──────────────────────────────────────────
+  // 'in-process' (백엔드 LLM) | 'claude-ide' (로컬 Claude + speckit). 설정은
+  // 도구 환경 설정이므로 그래프가 아닌 localStorage에 저장한다.
+  const generationEngine = ref(
+    (() => {
+      try {
+        return localStorage.getItem('req_gen_engine') || 'in-process'
+      } catch {
+        return 'in-process'
+      }
+    })(),
+  )
+  function setGenerationEngine(v) {
+    generationEngine.value = v
+    try {
+      localStorage.setItem('req_gen_engine', v)
+    } catch {}
+  }
+
+  /** Check whether local Claude/speckit are installed (for the claude-ide engine). */
+  async function checkLocalTooling() {
+    const res = await fetch('/api/requirements/local-tooling/status')
+    if (!res.ok) throw await _httpError(res, 'tooling status failed')
+    return res.json() // { claudeInstalled, speckitInstalled, missing, installHint }
+  }
+
+  // ── 하위 User Story 자동 생성 (034 US5, in-process 엔진) ───────────────
+
+  /** Generate (propose) child user stories for an Epic/Feature via the LLM. */
+  async function generateChildStories(scopeType, scopeId, engine = null) {
+    const eng = engine || generationEngine.value
+    const qs = new URLSearchParams({ engine: eng }).toString()
+    const res = await fetch(`/api/requirements/generate-stories/${scopeType}/${scopeId}?${qs}`, {
+      method: 'POST',
+    })
+    if (!res.ok) throw await _httpError(res, 'generate stories failed')
+    return res.json() // { scopeType, scopeId, boundedContextId, featureId, proposals }
+  }
+
+  /** Persist the user-selected generated stories under their BC (+Feature). */
+  async function confirmChildStories({ boundedContextId, featureId = null, stories }) {
+    const res = await fetch('/api/requirements/child-stories/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boundedContextId, featureId, stories }),
+    })
+    if (!res.ok) throw await _httpError(res, 'confirm stories failed')
+    const data = await res.json()
+    await fetchTree()
+    return data
+  }
+
+  // ── 설계 미반영 User Story 식별 (034 US7) ─────────────────────────────
+
+  /** Fetch user stories that have no design yet (no IMPLEMENTS→Command). */
+  async function fetchPendingDesign(scopeType = 'project', scopeId = '*') {
+    const qs = new URLSearchParams({ scopeType, scopeId }).toString()
+    const res = await fetch(`/api/requirements/user-stories/pending-design?${qs}`)
+    if (!res.ok) throw await _httpError(res, 'pending-design failed')
+    return res.json() // { pending: [...] }
+  }
+
+  /** Generate + persist design (Aggregate→Command→Event) for the given US (US7). */
+  async function reflectDesign(userStoryIds) {
+    const res = await fetch('/api/requirements/design/reflect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userStoryIds }),
+    })
+    if (!res.ok) throw await _httpError(res, 'design reflect failed')
+    return res.json() // { reflected: [...] }
+  }
+
+  // ── DDD 적합성·정합성 검증 (034 US6) ──────────────────────────────────
+
+  /** Validate a requirement's BC placement / granularity / spec conflicts. */
+  async function validateRequirement(payload) {
+    const res = await fetch('/api/requirements/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) throw await _httpError(res, 'validate failed')
+    return res.json() // { ok, findings, source }
   }
 
   async function deleteFeature(featureId, userStoryDisposition = 'unassign') {
@@ -441,16 +646,34 @@ export const useRequirementsStore = defineStore('requirements', () => {
     error,
     selectedUserStoryId,
     selectedUserStory,
+    selectedNode,
+    selectedEpic,
+    selectedFeature,
     designTrace,
     designTraceLoading,
     impactReport,
     hasImpactFindings,
     fetchTree,
     selectUserStory,
+    selectEpic,
+    selectFeature,
     fetchDesignTrace,
     proposeUserStory,
     confirmUserStory,
     createFeature,
+    createEpic,
+    proposeEpic,
+    proposeFeature,
+    updateEpic,
+    updateFeature,
+    generationEngine,
+    setGenerationEngine,
+    checkLocalTooling,
+    generateChildStories,
+    confirmChildStories,
+    validateRequirement,
+    fetchPendingDesign,
+    reflectDesign,
     deleteFeature,
     moveUserStory,
     deleteUserStory,

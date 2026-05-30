@@ -13,6 +13,8 @@ from api.features.requirements.requirements_contracts import (
     FeatureDeleteRequest,
     FeatureDeleteResponse,
     FeatureNodeDTO,
+    FeatureUpdateRequest,
+    FeatureUpdateResponse,
 )
 from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
@@ -49,6 +51,35 @@ async def create_feature(req: FeatureCreateRequest, request: Request) -> Feature
         params={**http_context(request), "feature_id": feature["id"]},
     )
     return FeatureCreateResponse(
+        feature=FeatureNodeDTO(
+            id=feature["id"],
+            name=feature["name"],
+            description=feature.get("description"),
+            source=feature.get("source") or "manual",
+        )
+    )
+
+
+@router.patch("/feature", response_model=FeatureUpdateResponse)
+async def update_feature(req: FeatureUpdateRequest, request: Request) -> FeatureUpdateResponse:
+    """Rename / re-describe a Feature (034). Child user stories stay attached."""
+    name = req.name.strip() if req.name is not None else None
+    if req.name is not None and not name:
+        raise HTTPException(status_code=422, detail="name must not be empty")
+
+    feature = get_neo4j_client().update_feature(
+        req.featureId, name=name, description=req.description
+    )
+    if not feature:
+        raise HTTPException(status_code=404, detail=f"Feature {req.featureId} not found")
+
+    SmartLogger.log(
+        "INFO",
+        "Feature updated.",
+        category="requirements.feature.update",
+        params={**http_context(request), "feature_id": req.featureId},
+    )
+    return FeatureUpdateResponse(
         feature=FeatureNodeDTO(
             id=feature["id"],
             name=feature["name"],

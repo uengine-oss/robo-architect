@@ -72,6 +72,37 @@ class FeatureOps:
             ).single()
             return dict(rec["feature"]) if rec else None
 
+    def update_feature(
+        self,
+        feature_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Rename / re-describe a Feature by id (034 — PATCH /feature).
+
+        Sets only the given properties; the natural `key`, `boundedContextId`,
+        and the `HAS_FEATURE` / `HAS_USER_STORY` relationships are left
+        untouched so child user stories stay attached. Returns the updated
+        feature dict, or None if no Feature has that id.
+        """
+        sets = ["f.updatedAt = datetime()"]
+        params: dict[str, Any] = {"id": feature_id}
+        if name is not None:
+            sets.append("f.name = $name")
+            params["name"] = name
+        if description is not None:
+            sets.append("f.description = $description")
+            params["description"] = description
+        query = f"""
+        MATCH (f:Feature {{id: $id}})
+        SET {", ".join(sets)}
+        RETURN f {{.id, .key, .name, .description, .source, .boundedContextId}} AS feature
+        """
+        with self.session() as session:
+            rec = session.run(query, **params).single()
+            return dict(rec["feature"]) if rec else None
+
     def prune_orphan_features(self) -> int:
         """Delete Feature nodes not attached to any BoundedContext.
 

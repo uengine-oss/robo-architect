@@ -33,6 +33,7 @@ import FrameEditor from 'open-pencil-fed/FrameEditor.vue'
 const FramePreview = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
 const FullPageEditor = defineAsyncComponent(() => import('open-pencil-fed/FullPageEditor.vue'))
 const AIChatPanel = defineAsyncComponent(() => import('open-pencil-fed/AIChat.vue'))
+const FramePreviewChat = defineAsyncComponent(() => import('open-pencil-fed/FramePreviewChat.vue'))
 
 // 029 — read-only source viewer for ImplementationFile nodes drilled-down
 // from Aggregate/Command/Event/ReadModel in the navigator. Reuses the
@@ -1802,6 +1803,67 @@ const convertingToDesign = ref(false)
 const convertPrompt = ref('')
 const convertFailed = ref(false)
 
+// ── UI Preview: HTML | Figma mode toggle + HTML prompt-edit chat ──
+// Default to whichever representation has data (Figma if a real sceneGraph
+// exists, else HTML). The user can switch freely with the toggle.
+const previewMode = ref(hasRealSceneGraph.value ? 'figma' : 'html')
+const htmlChatInput = ref('')
+const htmlEditing = ref(false)
+const htmlEditError = ref(null)
+
+// Reset preview mode when switching to a different node.
+watch(() => props.nodeId, () => {
+  previewMode.value = hasRealSceneGraph.value ? 'figma' : 'html'
+  htmlChatInput.value = ''
+  htmlEditError.value = null
+})
+
+async function sendHtmlEdit() {
+  const instruction = htmlChatInput.value.trim()
+  if (!instruction || htmlEditing.value) return
+  await runHtmlGenerate(instruction)
+}
+
+async function generateHtmlFromPrompt() {
+  // Empty-state generation: no specific instruction, just generate from context.
+  await runHtmlGenerate('')
+}
+
+async function runHtmlGenerate(instruction) {
+  const n = node.value
+  if (!n?.id) return
+  htmlEditing.value = true
+  htmlEditError.value = null
+  try {
+    const resp = await fetch(`/api/ai-design/html-edit/${n.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction,
+        display_language: localStorage.getItem('app_display_language') || 'ko',
+      }),
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || `HTML 생성 실패 (${resp.status})`)
+    }
+    const result = await resp.json()
+    const tmpl = result.template
+    if (tmpl) {
+      if (n.data) n.data = { ...n.data, template: tmpl }
+      const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+      if (storeNode?.data) storeNode.data = { ...storeNode.data, template: tmpl }
+      emit('updated')
+    }
+    htmlChatInput.value = ''
+  } catch (e) {
+    htmlEditError.value = e?.message || 'HTML 생성에 실패했습니다.'
+    console.error('[HtmlEdit]', e)
+  } finally {
+    htmlEditing.value = false
+  }
+}
+
 // Reset converting state when switching to a different node
 watch(() => props.nodeId, () => {
   if (convertingToDesign.value) {
@@ -3423,127 +3485,156 @@ function updateVoFieldValue(fieldName, value) {
           </div>
 
           <div class="ui-preview-panel__content">
-            <!-- OpenPencil SceneGraph preview (has real design content) -->
-            <div v-if="hasRealSceneGraph && mainFrameId" class="ui-preview-frame">
-              <div class="ui-preview-frame__browser-bar">
-                <div class="browser-dots">
-                  <span></span><span></span><span></span>
+            <!-- Mode toggle: HTML | Figma (both always available) -->
+            <div class="preview-mode-toggle">
+              <button
+                type="button"
+                class="preview-mode-toggle__btn"
+                :class="{ active: previewMode === 'figma' }"
+                @click="previewMode = 'figma'"
+              >Figma</button>
+              <button
+                type="button"
+                class="preview-mode-toggle__btn"
+                :class="{ active: previewMode === 'html' }"
+                @click="previewMode = 'html'"
+              >HTML</button>
+            </div>
+
+            <!-- ===================== FIGMA MODE ===================== -->
+            <template v-if="previewMode === 'figma'">
+              <!-- Read-only OpenPencil preview + inline AI edit chat -->
+              <div v-if="hasRealSceneGraph && mainFrameId" class="ui-preview-figma">
+                <div class="ui-preview-frame__browser-bar">
+                  <div class="browser-dots">
+                    <span></span><span></span><span></span>
+                  </div>
+                  <div class="browser-url">preview://{{ node.data?.name }}</div>
+                  <button class="ui-preview-frame__open-editor" @click="openFullPageEditor" title="Open Full Editor">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                      <polyline points="15 3 21 3 21 9"/>
+                      <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                  </button>
                 </div>
-                <div class="browser-url">preview://{{ node.data?.name }}</div>
-                <button class="ui-preview-frame__open-editor" @click="openFullPageEditor" title="Open Full Editor">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                    <polyline points="15 3 21 3 21 9"/>
-                    <line x1="10" y1="14" x2="21" y2="3"/>
-                  </svg>
-                </button>
+                <div class="ui-preview-figma__stage">
+                  <Suspense>
+                    <FramePreviewChat
+                      :key="node?.id + '-fpc-' + mainFrameId"
+                      :scene-data="sceneGraphData"
+                      :frame-id="mainFrameId"
+                      @save="onDesignSave"
+                    />
+                    <template #fallback>
+                      <div class="ui-preview-frame__overlay">
+                        <div class="ui-preview-frame__spinner" />
+                        <div class="ui-preview-frame__overlay-text">Loading design engine...</div>
+                      </div>
+                    </template>
+                  </Suspense>
+                </div>
               </div>
-              <div class="ui-preview-frame__body">
-                <Suspense>
-                  <FramePreview
-                    :key="node?.id + '-preview-' + mainFrameId"
-                    :scene-data="sceneGraphData"
-                    :frame-id="mainFrameId"
-                    :width="400"
-                    :height="300"
+
+              <!-- Converting: AI generating design from HTML wireframe -->
+              <div v-else-if="convertingToDesign" class="inspector-design-ai-layout">
+                <div class="inspector-design-ai-layout__status">
+                  <div class="ui-preview-convert-panel__spinner" />
+                  <span>OpenPencil AI로 디자인 변환 중...</span>
+                  <button class="ui-preview-convert-panel__cancel" @click="cancelConvert">취소</button>
+                </div>
+                <div class="inspector-design-ai-layout__chat">
+                  <Suspense>
+                    <AIChatPanel
+                      :initial-prompt="convertPrompt"
+                      :on-update="onConvertUpdate"
+                      :on-complete="onConvertComplete"
+                    />
+                    <template #fallback>
+                      <div style="display:flex;align-items:center;justify-content:center;height:100px;color:#666;font-size:12px;">Loading AI...</div>
+                    </template>
+                  </Suspense>
+                </div>
+              </div>
+
+              <!-- No Figma design yet -->
+              <div v-else class="ui-preview-empty">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+                  <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                  <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+                </svg>
+                <p>아직 Figma 디자인이 없습니다</p>
+                <div class="ui-preview-empty__gen-group">
+                  <button
+                    v-if="node.data?.template"
+                    class="ui-preview-empty__btn"
+                    @click="startConvertToDesign"
+                  >HTML → Figma 변환</button>
+                  <button
+                    class="ui-preview-empty__btn"
+                    :disabled="componentGenLoading"
+                    @click="generateComponentWireframe"
+                  >{{ componentGenLoading ? '생성 중...' : 'Component로 생성' }}</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- ===================== HTML MODE ===================== -->
+            <template v-else>
+              <!-- Read-only HTML wireframe + inline edit chat at the bottom -->
+              <div v-if="node.data?.template" class="ui-preview-html">
+                <div class="ui-preview-frame__browser-bar">
+                  <div class="browser-dots">
+                    <span></span><span></span><span></span>
+                  </div>
+                  <div class="browser-url">preview://{{ node.data?.name }}</div>
+                </div>
+                <div class="ui-preview-html__render">
+                  <div v-if="htmlEditing || wireframeUploading" class="ui-preview-frame__overlay" aria-live="polite">
+                    <div class="ui-preview-frame__spinner" />
+                    <div class="ui-preview-frame__overlay-text">재생성 중…</div>
+                  </div>
+                  <div v-html="node.data?.template"></div>
+                </div>
+                <!-- Always-visible HTML edit chat bar -->
+                <div class="preview-chat-bar">
+                  <input
+                    v-model="htmlChatInput"
+                    type="text"
+                    class="preview-chat-bar__input"
+                    placeholder="수정 요청을 입력하세요 (예: 로그인 버튼을 더 크게)"
+                    :disabled="htmlEditing"
+                    @keyup.enter="sendHtmlEdit"
                   />
-                  <template #fallback>
-                    <div class="ui-preview-frame__overlay">
-                      <div class="ui-preview-frame__spinner" />
-                      <div class="ui-preview-frame__overlay-text">Loading design engine...</div>
-                    </div>
-                  </template>
-                </Suspense>
-              </div>
-            </div>
-
-            <!-- Converting: AI Chat generating design from HTML wireframe -->
-            <div v-else-if="convertingToDesign" class="inspector-design-ai-layout">
-              <div class="inspector-design-ai-layout__status">
-                <div class="ui-preview-convert-panel__spinner" />
-                <span>OpenPencil AI로 디자인 변환 중...</span>
-                <button class="ui-preview-convert-panel__cancel" @click="cancelConvert">취소</button>
-              </div>
-              <div class="inspector-design-ai-layout__chat">
-                <Suspense>
-                  <AIChatPanel
-                    :initial-prompt="convertPrompt"
-                    :on-update="onConvertUpdate"
-                    :on-complete="onConvertComplete"
-                  />
-                  <template #fallback>
-                    <div style="display:flex;align-items:center;justify-content:center;height:100px;color:#666;font-size:12px;">Loading AI...</div>
-                  </template>
-                </Suspense>
-              </div>
-            </div>
-
-            <!-- Legacy HTML template preview (fallback) + convert button -->
-            <div v-else-if="node.data?.template" class="ui-preview-frame">
-              <div class="ui-preview-frame__browser-bar">
-                <div class="browser-dots">
-                  <span></span><span></span><span></span>
+                  <button
+                    type="button"
+                    class="preview-chat-bar__send"
+                    :disabled="htmlEditing || !htmlChatInput.trim()"
+                    @click="sendHtmlEdit"
+                  >{{ htmlEditing ? '…' : '전송' }}</button>
                 </div>
-                <div class="browser-url">preview://{{ node.data?.name }}</div>
+                <div v-if="htmlEditError" class="inspector-alert error">{{ htmlEditError }}</div>
               </div>
-              <div class="ui-preview-frame__body">
-                <div v-if="wireframeUploading" class="ui-preview-frame__overlay" aria-live="polite">
-                  <div class="ui-preview-frame__spinner" />
-                  <div class="ui-preview-frame__overlay-text">재생성 중…</div>
-                </div>
-                <div v-html="node.data?.template"></div>
-              </div>
-              <div v-if="convertFailed" class="ui-preview-frame__convert-bar ui-preview-frame__convert-bar--failed">
-                <span style="color:#f59e0b;font-size:12px;">AI가 디자인을 생성하지 못했습니다.</span>
-                <button class="ui-preview-frame__convert-btn" @click="startConvertToDesign">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="23 4 23 10 17 10"/><path d="M1 20V14h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                  </svg>
-                  <span>재시도</span>
-                </button>
-              </div>
-              <div v-else class="ui-preview-frame__convert-bar">
-                <button
-                  class="ui-preview-frame__convert-btn"
-                  @click="startConvertToDesign"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                    <path d="M2 17l10 5 10-5"/>
-                    <path d="M2 12l10 5 10-5"/>
-                  </svg>
-                  <span>Figma 스타일 와이어프레임으로 변환</span>
-                </button>
-              </div>
-            </div>
 
-            <div v-else class="ui-preview-empty">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
-                <rect x="2" y="3" width="20" height="18" rx="2" />
-                <line x1="2" y1="7" x2="22" y2="7" />
-                <rect x="4" y="9" width="7" height="3" rx="0.5" stroke-dasharray="2 1" />
-                <rect x="4" y="14" width="16" height="2" rx="0.5" stroke-dasharray="2 1" />
-              </svg>
-              <p>No wireframe template yet</p>
-              <div class="ui-preview-empty__gen-group">
-                <button
-                  class="ui-preview-empty__btn"
-                  :disabled="componentGenLoading"
-                  @click="generateWithAI"
-                >
-                  {{ componentGenLoading ? 'Generating...' : 'Generate with AI' }}
-                </button>
-                <select
-                  class="ui-preview-empty__mode-select"
-                  :value="wireframeGenMode"
-                  @change="setWireframeGenMode($event.target.value)"
-                >
-                  <option value="html-classic">HTML (Classic)</option>
-                  <option value="open-pencil-ai">OpenPencil AI</option>
-                  <option value="component">Component (.fig)</option>
-                </select>
+              <!-- No HTML template yet -->
+              <div v-else class="ui-preview-empty">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+                  <rect x="2" y="3" width="20" height="18" rx="2" />
+                  <line x1="2" y1="7" x2="22" y2="7" />
+                  <rect x="4" y="9" width="7" height="3" rx="0.5" stroke-dasharray="2 1" />
+                  <rect x="4" y="14" width="16" height="2" rx="0.5" stroke-dasharray="2 1" />
+                </svg>
+                <p>아직 HTML 와이어프레임이 없습니다</p>
+                <div class="ui-preview-empty__gen-group">
+                  <button
+                    class="ui-preview-empty__btn"
+                    :disabled="htmlEditing"
+                    @click="generateHtmlFromPrompt"
+                  >{{ htmlEditing ? '생성 중...' : 'AI로 HTML 생성' }}</button>
+                </div>
+                <div v-if="htmlEditError" class="inspector-alert error" style="margin-top:8px;">{{ htmlEditError }}</div>
               </div>
-            </div>
+            </template>
           </div>
         </div>
 
@@ -6163,6 +6254,105 @@ function updateVoFieldValue(fieldName, value) {
   padding: var(--spacing-md);
 }
 
+/* HTML | Figma mode toggle */
+.preview-mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 10px;
+  background: var(--color-bg-subtle, #f1f1f4);
+  border-radius: 8px;
+}
+.preview-mode-toggle__btn {
+  padding: 4px 16px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted, #888);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.preview-mode-toggle__btn.active {
+  background: var(--color-surface, #fff);
+  color: var(--color-command, #4a8cff);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* Figma mode: read-only canvas stage + inline chat (fills available height) */
+.ui-preview-figma {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: calc(100vh - 260px);
+  background: #1e1e1e;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+.ui-preview-figma__stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* HTML mode: read-only render + bottom chat bar */
+.ui-preview-html {
+  background: #ffffff;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+}
+.ui-preview-html__render {
+  padding: 12px;
+  position: relative;
+  color: #212529;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.72rem;
+  max-height: calc(100vh - 360px);
+  overflow: auto;
+}
+
+/* Prompt-edit chat bar (HTML mode, always visible at the bottom) */
+.preview-chat-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid #e9ecef;
+  background: #f8f9fa;
+}
+.preview-chat-bar__input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #212529;
+  background: #fff;
+}
+.preview-chat-bar__input:focus {
+  outline: none;
+  border-color: var(--color-command, #4a8cff);
+}
+.preview-chat-bar__send {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-command, #4a8cff);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.preview-chat-bar__send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .ui-preview-frame {
   background: #ffffff;
   border-radius: var(--radius-md);
@@ -7902,7 +8092,7 @@ function updateVoFieldValue(fieldName, value) {
   z-index: 9999;
 }
 .figma-schema-modal {
-  background: var(--color-bg-primary, #fff);
+  background: var(--color-bg);
   border-radius: 12px;
   width: 480px;
   max-width: 90vw;
@@ -8360,7 +8550,7 @@ function updateVoFieldValue(fieldName, value) {
 .inspector-impl-file__header {
   padding: 10px 14px 8px;
   border-bottom: 1px solid var(--color-border, #2f3242);
-  background: var(--color-bg-secondary, #1a1b26);
+  background: var(--color-bg-secondary);
   display: flex;
   flex-direction: column;
   gap: 4px;

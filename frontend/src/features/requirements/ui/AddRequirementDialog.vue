@@ -14,9 +14,84 @@ const emit = defineEmits(['update:modelValue', 'added'])
 
 const store = useRequirementsStore()
 
-const mode = ref('nl') // 'nl' | 'manual'
+const unit = ref('userStory') // 'epic' | 'feature' | 'userStory' (034 US1)
+const mode = ref('nl') // 'nl' | 'manual' (User Story only)
 const busy = ref(false)
 const errorMsg = ref('')
+
+// Epic / Feature create state (034 US1) — manual form + AI 제안 sub-mode.
+const efMode = ref('manual') // 'manual' | 'ai' (for Epic/Feature units)
+const epicForm = ref({ name: '', description: '' })
+const featureForm = ref({ boundedContextId: '', name: '', description: '' })
+// AI 제안 state
+const efText = ref('')
+const efProposed = ref(false)
+const efProposals = ref([]) // [{name, description, boundedContextId?}]
+
+async function runProposeEpic() {
+  if (!efText.value.trim()) return
+  busy.value = true
+  errorMsg.value = ''
+  try {
+    const res = await store.proposeEpic(efText.value.trim())
+    efProposals.value = res.proposals || []
+    efProposed.value = true
+  } catch (e) {
+    errorMsg.value = String(e.message || e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function runProposeFeature() {
+  if (!efText.value.trim()) return
+  busy.value = true
+  errorMsg.value = ''
+  try {
+    const res = await store.proposeFeature(efText.value.trim(), featureForm.value.boundedContextId || null)
+    efProposals.value = res.proposals || []
+    efProposed.value = true
+  } catch (e) {
+    errorMsg.value = String(e.message || e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function addProposedEpic(p, i) {
+  busy.value = true
+  errorMsg.value = ''
+  try {
+    await store.createEpic(p.name, p.description || null)
+    efProposals.value.splice(i, 1)
+    emit('added')
+    if (!efProposals.value.length) close()
+  } catch (e) {
+    errorMsg.value = String(e.message || e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function addProposedFeature(p, i) {
+  const bcId = p.boundedContextId || featureForm.value.boundedContextId
+  if (!bcId) {
+    errorMsg.value = '소속 Epic을 선택하세요.'
+    return
+  }
+  busy.value = true
+  errorMsg.value = ''
+  try {
+    await store.createFeature(bcId, p.name, p.description || null)
+    efProposals.value.splice(i, 1)
+    emit('added')
+    if (!efProposals.value.length) close()
+  } catch (e) {
+    errorMsg.value = String(e.message || e)
+  } finally {
+    busy.value = false
+  }
+}
 
 // Natural-language state
 const nlText = ref('')
@@ -40,6 +115,7 @@ function close() {
   resetState()
 }
 function resetState() {
+  unit.value = 'userStory'
   mode.value = 'nl'
   nlText.value = ''
   proposals.value = []
@@ -47,6 +123,56 @@ function resetState() {
   proposed.value = false
   errorMsg.value = ''
   manual.value = { role: '', action: '', benefit: '', boundedContextId: '', featureId: '' }
+  epicForm.value = { name: '', description: '' }
+  featureForm.value = { boundedContextId: '', name: '', description: '' }
+  efMode.value = 'manual'
+  efText.value = ''
+  efProposed.value = false
+  efProposals.value = []
+}
+
+async function confirmEpic() {
+  if (!epicForm.value.name.trim()) {
+    errorMsg.value = 'Epic 이름은 필수입니다.'
+    return
+  }
+  busy.value = true
+  errorMsg.value = ''
+  try {
+    await store.createEpic(epicForm.value.name.trim(), epicForm.value.description || null)
+    emit('added')
+    close()
+  } catch (e) {
+    errorMsg.value = String(e.message || e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function confirmFeature() {
+  if (!featureForm.value.boundedContextId) {
+    errorMsg.value = '소속 Epic을 선택하세요.'
+    return
+  }
+  if (!featureForm.value.name.trim()) {
+    errorMsg.value = 'Feature 이름은 필수입니다.'
+    return
+  }
+  busy.value = true
+  errorMsg.value = ''
+  try {
+    await store.createFeature(
+      featureForm.value.boundedContextId,
+      featureForm.value.name.trim(),
+      featureForm.value.description || null,
+    )
+    emit('added')
+    close()
+  } catch (e) {
+    errorMsg.value = String(e.message || e)
+  } finally {
+    busy.value = false
+  }
 }
 
 async function runPropose() {
@@ -127,16 +253,94 @@ async function confirmManual() {
         <button class="dialog__close" @click="close">×</button>
       </div>
 
-      <div class="dialog__tabs">
+      <!-- Unit selector (034 US1): Epic / Feature / User Story -->
+      <div class="dialog__units">
+        <button :class="{ active: unit === 'epic' }" @click="unit = 'epic'">Epic</button>
+        <button :class="{ active: unit === 'feature' }" @click="unit = 'feature'">Feature</button>
+        <button :class="{ active: unit === 'userStory' }" @click="unit = 'userStory'">User Story</button>
+      </div>
+
+      <div v-if="unit === 'userStory'" class="dialog__tabs">
         <button :class="{ active: mode === 'nl' }" @click="mode = 'nl'">자연어 입력</button>
         <button :class="{ active: mode === 'manual' }" @click="mode = 'manual'">수동 입력</button>
+      </div>
+
+      <div v-if="unit === 'epic' || unit === 'feature'" class="dialog__tabs">
+        <button :class="{ active: efMode === 'ai' }" @click="efMode = 'ai'">AI 제안</button>
+        <button :class="{ active: efMode === 'manual' }" @click="efMode = 'manual'">수동 입력</button>
       </div>
 
       <div class="dialog__body">
         <p v-if="errorMsg" class="dialog__error">{{ errorMsg }}</p>
 
-        <!-- Natural-language mode -->
-        <template v-if="mode === 'nl'">
+        <!-- Epic — AI 제안 (034 US1) -->
+        <template v-if="unit === 'epic' && efMode === 'ai'">
+          <textarea v-model="efText" class="nl-input" rows="4"
+            placeholder="만들고 싶은 업무 영역(Epic)을 자연어로 설명하세요..." />
+          <button class="btn btn--primary" :disabled="busy || !efText.trim()" @click="runProposeEpic">
+            {{ busy ? '제안 중...' : '제안 받기' }}
+          </button>
+          <div v-if="efProposed && !efProposals.length" class="empty-hint">제안된 Epic이 없습니다. 수동 입력으로 추가하세요.</div>
+          <div v-for="(p, i) in efProposals" :key="i" class="proposal">
+            <label>이름 <input v-model="p.name" /></label>
+            <label>설명 <input v-model="p.description" /></label>
+            <button class="btn btn--primary" :disabled="busy" @click="addProposedEpic(p, i)">추가</button>
+          </div>
+        </template>
+
+        <!-- Epic — 수동 (034 US1) -->
+        <template v-else-if="unit === 'epic'">
+          <label>Epic 이름 <input v-model="epicForm.name" placeholder="예: 주문 관리" /></label>
+          <label>설명 (선택)
+            <textarea v-model="epicForm.description" rows="3" placeholder="이 Epic(Bounded Context)의 책임" />
+          </label>
+          <button class="btn btn--primary" :disabled="busy || !epicForm.name.trim()" @click="confirmEpic">
+            {{ busy ? '추가 중...' : 'Epic 추가' }}
+          </button>
+        </template>
+
+        <!-- Feature — AI 제안 (034 US1) -->
+        <template v-else-if="unit === 'feature' && efMode === 'ai'">
+          <label>소속 Epic
+            <select v-model="featureForm.boundedContextId">
+              <option value="">(선택)</option>
+              <option v-for="bc in bcOptions" :key="bc.id" :value="bc.id">{{ bc.name }}</option>
+            </select>
+          </label>
+          <textarea v-model="efText" class="nl-input" rows="4"
+            placeholder="추가하고 싶은 기능(Feature)을 자연어로 설명하세요..." />
+          <button class="btn btn--primary" :disabled="busy || !efText.trim()" @click="runProposeFeature">
+            {{ busy ? '제안 중...' : '제안 받기' }}
+          </button>
+          <div v-if="efProposed && !efProposals.length" class="empty-hint">제안된 Feature가 없습니다. 수동 입력으로 추가하세요.</div>
+          <div v-for="(p, i) in efProposals" :key="i" class="proposal">
+            <label>이름 <input v-model="p.name" /></label>
+            <label>설명 <input v-model="p.description" /></label>
+            <button class="btn btn--primary" :disabled="busy" @click="addProposedFeature(p, i)">추가</button>
+          </div>
+        </template>
+
+        <!-- Feature — 수동 (034 US1) -->
+        <template v-else-if="unit === 'feature'">
+          <label>소속 Epic
+            <select v-model="featureForm.boundedContextId">
+              <option value="">(선택)</option>
+              <option v-for="bc in bcOptions" :key="bc.id" :value="bc.id">{{ bc.name }}</option>
+            </select>
+          </label>
+          <label>Feature 이름 <input v-model="featureForm.name" placeholder="예: 주문 취소" /></label>
+          <label>설명 (선택)
+            <textarea v-model="featureForm.description" rows="3" placeholder="이 Feature가 묶는 기능" />
+          </label>
+          <button
+            class="btn btn--primary"
+            :disabled="busy || !featureForm.name.trim() || !featureForm.boundedContextId"
+            @click="confirmFeature"
+          >{{ busy ? '추가 중...' : 'Feature 추가' }}</button>
+        </template>
+
+        <!-- Natural-language mode (User Story) -->
+        <template v-if="unit === 'userStory' && mode === 'nl'">
           <textarea
             v-model="nlText"
             class="nl-input"
@@ -179,8 +383,8 @@ async function confirmManual() {
           </div>
         </template>
 
-        <!-- Manual mode -->
-        <template v-else>
+        <!-- Manual mode (User Story) -->
+        <template v-else-if="unit === 'userStory'">
           <label>역할 (As a) <input v-model="manual.role" placeholder="예: 고객" /></label>
           <label>행동 (I want) <input v-model="manual.action" placeholder="예: 주문을 취소한다" /></label>
           <label>효과 (so that) <input v-model="manual.benefit" placeholder="예: 환불을 받을 수 있다" /></label>
@@ -222,6 +426,17 @@ async function confirmManual() {
 .dialog__close {
   margin-left: auto; border: none; background: transparent; font-size: 1.2rem;
   cursor: pointer; color: var(--color-text-light);
+}
+.dialog__units {
+  display: flex; gap: 4px; padding: 10px 16px 0;
+}
+.dialog__units button {
+  flex: 1; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px;
+  cursor: pointer; background: var(--color-bg-tertiary); color: var(--color-text-light);
+  font-size: 0.76rem;
+}
+.dialog__units button.active {
+  background: var(--color-accent); color: #fff; border-color: transparent; font-weight: 600;
 }
 .dialog__tabs { display: flex; gap: 4px; padding: 8px 16px 0; }
 .dialog__tabs button {

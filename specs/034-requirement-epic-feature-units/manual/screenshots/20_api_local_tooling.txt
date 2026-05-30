@@ -1,0 +1,7 @@
+# GET /api/requirements/local-tooling/status (Claude IDE 엔진 설치 점검)
+{
+  "claudeInstalled": true,
+  "speckitInstalled": true,
+  "missing": [],
+  "installHint": ""
+}

@@ -100,6 +100,39 @@ class BoundedContextOps:
             result = session.run(query, key=key, name=name, display_name=display_name, description=description, owner=owner, domain_type=domain_type, user_story_ids=user_story_ids or [])
             return dict(result.single()["bounded_context"])
 
+    def update_bounded_context(
+        self,
+        bc_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Rename / re-describe a BoundedContext (Epic) by id (034 — PATCH).
+
+        Sets only the given properties; the merge `key` and all relationships
+        (HAS_FEATURE, IMPLEMENTS, …) are preserved so child Features and User
+        Stories stay attached. When `name` is given, `displayName` follows it
+        (matching `create_bounded_context`). Returns the updated BC dict, or
+        None if no BoundedContext has that id.
+        """
+        sets = ["bc.updatedAt = datetime()"]
+        params: dict[str, Any] = {"id": bc_id}
+        if name is not None:
+            sets.append("bc.name = $name")
+            sets.append("bc.displayName = $name")
+            params["name"] = name
+        if description is not None:
+            sets.append("bc.description = $description")
+            params["description"] = description
+        query = f"""
+        MATCH (bc:BoundedContext {{id: $id}})
+        SET {", ".join(sets)}
+        RETURN bc {{.id, .key, .name, .displayName, .description}} AS bounded_context
+        """
+        with self.session() as session:
+            rec = session.run(query, **params).single()
+            return dict(rec["bounded_context"]) if rec else None
+
     def bulk_create_bounded_contexts(
         self,
         rows: list[dict[str, Any]],

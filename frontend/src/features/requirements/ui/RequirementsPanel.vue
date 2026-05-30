@@ -4,8 +4,14 @@ import { useRequirementsStore } from '@/features/requirements/requirements.store
 import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
 import RequirementsTree from './RequirementsTree.vue'
 import UserStoryDetail from './UserStoryDetail.vue'
+import EpicDetail from './EpicDetail.vue'
+import FeatureDetail from './FeatureDetail.vue'
 import DesignTraceCanvas from './DesignTraceCanvas.vue'
 import AddRequirementDialog from './AddRequirementDialog.vue'
+import EpicEditForm from './EpicEditForm.vue'
+import FeatureEditForm from './FeatureEditForm.vue'
+import GeneratedStoriesReview from './GeneratedStoriesReview.vue'
+import ValidationFindings from './ValidationFindings.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
@@ -26,6 +32,20 @@ useDataRefresh(() => {
 
 const showAddDialog = ref(false)
 const showIngestionModal = ref(false)
+
+// Epic/Feature edit dialogs (034 US3)
+const editingEpic = ref(null)
+const editingFeature = ref(null)
+
+// 하위 US 자동 생성 (034 US5)
+const generating = ref(false)
+const genResult = ref(null) // GenerateChildStoriesResponse
+const genScopeName = ref('')
+
+// DDD 검증 (034 US6)
+const validating = ref(false)
+const valResult = ref(null) // ValidateResponse
+const valScopeName = ref('')
 
 // Node clicked on the design-trace canvas → opens the property inspector.
 const inspectedNode = ref(null)
@@ -72,6 +92,16 @@ onUnmounted(() => {
 
 function onSelect(usId) {
   store.selectUserStory(usId)
+  inspectedNode.value = null
+}
+
+function onSelectEpic(id) {
+  store.selectEpic(id)
+  inspectedNode.value = null
+}
+
+function onSelectFeature(id) {
+  store.selectFeature(id)
   inspectedNode.value = null
 }
 
@@ -136,6 +166,83 @@ async function onClarifyScope({ scopeType, scopeId }) {
     window.alert(`요구사항 명확화 시작 실패: ${e?.message || e}`)
   }
 }
+
+// ── Epic/Feature edit (034 US3) ────────────────────────────────────────
+function onEditEpic(epic) {
+  editingFeature.value = null
+  editingEpic.value = epic
+}
+function onEditFeature(feature) {
+  editingEpic.value = null
+  editingFeature.value = feature
+}
+
+// ── 하위 User Story 자동 생성 (034 US5) ────────────────────────────────
+async function onGenerateStories(scopeType) {
+  const node = store.selectedNode
+  if (!node || (node.type !== 'epic' && node.type !== 'feature')) return
+  genScopeName.value =
+    node.type === 'epic'
+      ? store.selectedEpic?.displayName || store.selectedEpic?.name || ''
+      : store.selectedFeature?.name || ''
+  // claude-ide 엔진 선택 시 로컬 도구 설치를 먼저 점검 (US5)
+  if (store.generationEngine === 'claude-ide') {
+    try {
+      const t = await store.checkLocalTooling()
+      if (t.missing && t.missing.length) {
+        window.alert(t.installHint || '로컬 Claude/speckit이 설치되어 있지 않습니다.')
+        return
+      }
+      // 설치되어 있으면 진행. (Claude IDE 헤드리스 생성은 준비 중 —
+      // 현재는 in-process 엔진으로 후보를 생성합니다.)
+    } catch {
+      /* 점검 실패 시 in-process로 폴백 */
+    }
+  }
+  generating.value = true
+  try {
+    genResult.value = await store.generateChildStories(node.type, node.id)
+  } catch (e) {
+    window.alert(`자동 생성 실패: ${e?.message || e}`)
+  } finally {
+    generating.value = false
+  }
+}
+
+// ── DDD 적합성 검증 (034 US6) ──────────────────────────────────────────
+async function onValidate(targetType) {
+  if (targetType === 'feature' && store.selectedFeature) {
+    const f = store.selectedFeature
+    valScopeName.value = f.name
+    await runValidate({
+      targetType: 'feature',
+      name: f.name,
+      description: f.description || '',
+      boundedContextId: f.boundedContextId || undefined,
+      featureId: f.id,
+    })
+  } else if (targetType === 'epic' && store.selectedEpic) {
+    const e = store.selectedEpic
+    valScopeName.value = e.displayName || e.name
+    await runValidate({
+      targetType: 'epic',
+      name: e.displayName || e.name,
+      description: e.description || '',
+      boundedContextId: e.id,
+    })
+  }
+}
+
+async function runValidate(payload) {
+  validating.value = true
+  try {
+    valResult.value = await store.validateRequirement(payload)
+  } catch (e) {
+    window.alert(`검증 실패: ${e?.message || e}`)
+  } finally {
+    validating.value = false
+  }
+}
 </script>
 
 <template>
@@ -159,14 +266,43 @@ async function onClarifyScope({ scopeType, scopeId }) {
           :tree="store.tree"
           :selected-id="store.selectedUserStoryId"
           @select="onSelect"
+          @select-epic="onSelectEpic"
+          @select-feature="onSelectFeature"
           @move="onMove"
           @delete-feature="onDeleteFeature"
           @delete-user-story="onDeleteUserStory"
           @clarify-scope="onClarifyScope"
+          @edit-epic="onEditEpic"
+          @edit-feature="onEditFeature"
         />
       </div>
 
-      <div class="req-detail-pane">
+      <!-- Epic detail (034 US2) -->
+      <div v-if="store.selectedNode.type === 'epic'" class="req-detail-pane">
+        <EpicDetail
+          v-if="store.selectedEpic"
+          :epic="store.selectedEpic"
+          @edit="onEditEpic"
+          @select-feature="onSelectFeature"
+          @generate-stories="onGenerateStories('epic')"
+          @validate="onValidate('epic')"
+        />
+      </div>
+
+      <!-- Feature detail (034 US2) -->
+      <div v-else-if="store.selectedNode.type === 'feature'" class="req-detail-pane">
+        <FeatureDetail
+          v-if="store.selectedFeature"
+          :feature="store.selectedFeature"
+          @edit="onEditFeature"
+          @select-user-story="onSelect"
+          @generate-stories="onGenerateStories('feature')"
+          @validate="onValidate('feature')"
+        />
+      </div>
+
+      <!-- User Story detail + design-trace canvas (default) -->
+      <div v-else class="req-detail-pane">
         <div class="req-detail-pane__top">
           <UserStoryDetail :user-story="store.selectedUserStory" />
         </div>
@@ -212,6 +348,42 @@ async function onClarifyScope({ scopeType, scopeId }) {
 
     <AddRequirementDialog v-model="showAddDialog" @added="store.fetchTree()" />
     <RequirementsIngestionModal v-model="showIngestionModal" @complete="onIngestionComplete" />
+
+    <EpicEditForm
+      v-if="editingEpic"
+      :epic="editingEpic"
+      @close="editingEpic = null"
+      @saved="editingEpic = null"
+    />
+    <FeatureEditForm
+      v-if="editingFeature"
+      :feature="editingFeature"
+      @close="editingFeature = null"
+      @saved="editingFeature = null"
+    />
+
+    <!-- 하위 US 자동 생성 (034 US5) -->
+    <div v-if="generating" class="gen-overlay">
+      <div class="gen-box">✨ AI가 하위 User Story를 생성하는 중입니다…</div>
+    </div>
+    <GeneratedStoriesReview
+      v-if="genResult"
+      :result="genResult"
+      :scope-name="genScopeName"
+      @close="genResult = null"
+      @confirmed="genResult = null"
+    />
+
+    <!-- DDD 적합성 검증 (034 US6) -->
+    <div v-if="validating" class="gen-overlay">
+      <div class="gen-box">🔎 DDD 적합성을 검증하는 중입니다…</div>
+    </div>
+    <ValidationFindings
+      v-if="valResult"
+      :result="valResult"
+      :scope-name="valScopeName"
+      @close="valResult = null"
+    />
   </div>
 </template>
 
@@ -258,5 +430,14 @@ async function onClarifyScope({ scopeType, scopeId }) {
 }
 .req-inspector-resizer:hover {
   background: rgba(34, 139, 230, 0.3);
+}
+.gen-overlay {
+  position: fixed; inset: 0; z-index: 1100; background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+.gen-box {
+  background: var(--color-bg-secondary); color: var(--color-text);
+  padding: 18px 26px; border-radius: 10px; font-size: 0.9rem;
+  border: 1px solid var(--color-border);
 }
 </style>
