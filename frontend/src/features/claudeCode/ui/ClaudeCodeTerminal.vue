@@ -4,6 +4,8 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import { useThemeStore } from '@/app/theme.store'
+import { XTERM_THEMES } from './xterm-themes.js'
 
 const props = defineProps({
   workdir: {
@@ -13,6 +15,12 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['workdir-picked'])
+
+const themeStore = useThemeStore()
+
+function xtermTheme() {
+  return XTERM_THEMES[themeStore.theme === 'light' ? 'light' : 'dark']
+}
 
 const terminalRef = ref(null)
 let terminal = null
@@ -144,29 +152,7 @@ function createTerminal() {
     cursorStyle: 'block',
     fontSize: 14,
     fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
-    theme: {
-      background: '#1a1b26',
-      foreground: '#c0caf5',
-      cursor: '#c0caf5',
-      cursorAccent: '#1a1b26',
-      selectionBackground: 'rgba(82, 139, 255, 0.3)',
-      black: '#15161e',
-      red: '#f7768e',
-      green: '#9ece6a',
-      yellow: '#e0af68',
-      blue: '#7aa2f7',
-      magenta: '#bb9af7',
-      cyan: '#7dcfff',
-      white: '#a9b1d6',
-      brightBlack: '#414868',
-      brightRed: '#f7768e',
-      brightGreen: '#9ece6a',
-      brightYellow: '#e0af68',
-      brightBlue: '#7aa2f7',
-      brightMagenta: '#bb9af7',
-      brightCyan: '#7dcfff',
-      brightWhite: '#c0caf5',
-    },
+    theme: xtermTheme(),
     allowProposedApi: true,
     scrollback: 5000,
   })
@@ -257,6 +243,11 @@ watch(() => props.workdir, (newWorkdir) => {
   if (newWorkdir && newWorkdir !== currentWorkdir) {
     openWithWorkdir(newWorkdir)
   }
+})
+
+// Swap the terminal palette live when the app theme toggles.
+watch(() => themeStore.theme, () => {
+  if (terminal) terminal.options.theme = xtermTheme()
 })
 
 onMounted(async () => {
@@ -430,7 +421,7 @@ onUnmounted(() => {
   flex-direction: column;
   height: 100%;
   width: 100%;
-  background: #1a1b26;
+  background: var(--ccw-bg);
   position: relative;
 }
 
@@ -439,8 +430,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px;
-  background: #16161e;
-  border-bottom: 1px solid #292e42;
+  background: var(--ccw-bg-elevated);
+  border-bottom: 1px solid var(--ccw-border);
   flex-shrink: 0;
 }
 
@@ -454,13 +445,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #c0caf5;
+  color: var(--ccw-text);
   font-size: 0.8rem;
   font-weight: 600;
 }
 
 .terminal-header__title svg {
-  color: #bb9af7;
+  color: var(--ccw-purple);
 }
 
 .terminal-header__workdir {
@@ -468,10 +459,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  background: rgba(122, 162, 247, 0.1);
-  border: 1px solid rgba(122, 162, 247, 0.2);
+  background: var(--ccw-hover);
+  border: 1px solid var(--ccw-active);
   border-radius: 4px;
-  color: #7aa2f7;
+  color: var(--ccw-accent);
   font-size: 0.65rem;
   font-family: 'JetBrains Mono', monospace;
   max-width: 400px;
@@ -483,8 +474,8 @@ onUnmounted(() => {
 }
 
 .terminal-header__workdir:hover {
-  background: rgba(122, 162, 247, 0.2);
-  border-color: rgba(122, 162, 247, 0.4);
+  background: var(--ccw-active);
+  border-color: var(--ccw-active);
 }
 
 .workdir-edit-icon {
@@ -507,21 +498,21 @@ onUnmounted(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #414868;
+  background: var(--ccw-text-dim);
 }
 
 .status-dot.is-connected {
-  background: #9ece6a;
+  background: var(--ccw-green);
   box-shadow: 0 0 6px rgba(158, 206, 106, 0.5);
 }
 
 .status-dot.is-connecting {
-  background: #e0af68;
+  background: var(--ccw-yellow);
   animation: pulse 1.5s infinite;
 }
 
 .status-dot.is-error {
-  background: #f7768e;
+  background: var(--ccw-red);
 }
 
 @keyframes pulse {
@@ -531,7 +522,7 @@ onUnmounted(() => {
 
 .status-text {
   font-size: 0.7rem;
-  color: #565f89;
+  color: var(--ccw-text-dim);
 }
 
 .terminal-header__right {
@@ -548,7 +539,7 @@ onUnmounted(() => {
   background: rgba(187, 154, 247, 0.15);
   border: 1px solid rgba(187, 154, 247, 0.3);
   border-radius: 4px;
-  color: #bb9af7;
+  color: var(--ccw-purple);
   font-size: 0.7rem;
   cursor: pointer;
   transition: all 0.15s;
@@ -556,7 +547,7 @@ onUnmounted(() => {
 
 .reconnect-btn:hover {
   background: rgba(187, 154, 247, 0.25);
-  border-color: #bb9af7;
+  border-color: var(--ccw-purple);
 }
 
 .terminal-error-overlay {
@@ -577,11 +568,11 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  color: #565f89;
+  color: var(--ccw-text-dim);
 }
 
 .terminal-error-content svg {
-  color: #f7768e;
+  color: var(--ccw-red);
 }
 
 .terminal-error-content p {
@@ -594,7 +585,7 @@ onUnmounted(() => {
   background: rgba(187, 154, 247, 0.2);
   border: 1px solid rgba(187, 154, 247, 0.4);
   border-radius: 6px;
-  color: #bb9af7;
+  color: var(--ccw-purple);
   font-size: 0.75rem;
   cursor: pointer;
   transition: all 0.15s;
@@ -636,8 +627,8 @@ onUnmounted(() => {
 }
 
 .tcc-folder-picker {
-  background: #1a1b26;
-  border: 1px solid #292e42;
+  background: var(--ccw-bg);
+  border: 1px solid var(--ccw-border);
   border-radius: 10px;
   width: 480px;
   max-height: 500px;
@@ -651,20 +642,20 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
-  border-bottom: 1px solid #292e42;
+  border-bottom: 1px solid var(--ccw-border);
 }
 
 .tcc-folder-picker__header h4 {
   margin: 0;
   font-size: 0.85rem;
   font-weight: 600;
-  color: #c0caf5;
+  color: var(--ccw-text);
 }
 
 .tcc-folder-picker__close {
   background: none;
   border: none;
-  color: #565f89;
+  color: var(--ccw-text-dim);
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -674,7 +665,7 @@ onUnmounted(() => {
 }
 
 .tcc-folder-picker__close:hover {
-  color: #c0caf5;
+  color: var(--ccw-text);
   background: rgba(255, 255, 255, 0.05);
 }
 
@@ -683,14 +674,14 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  border-bottom: 1px solid #292e42;
-  background: #16161e;
+  border-bottom: 1px solid var(--ccw-border);
+  background: var(--ccw-bg-elevated);
 }
 
 .tcc-folder-picker__up {
   background: none;
-  border: 1px solid #292e42;
-  color: #7aa2f7;
+  border: 1px solid var(--ccw-border);
+  color: var(--ccw-accent);
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 4px;
@@ -700,8 +691,8 @@ onUnmounted(() => {
 }
 
 .tcc-folder-picker__up:hover:not(:disabled) {
-  background: rgba(122, 162, 247, 0.15);
-  border-color: rgba(122, 162, 247, 0.3);
+  background: var(--ccw-hover);
+  border-color: var(--ccw-active);
 }
 
 .tcc-folder-picker__up:disabled {
@@ -712,7 +703,7 @@ onUnmounted(() => {
 .tcc-folder-picker__path {
   font-size: 0.7rem;
   font-family: 'JetBrains Mono', monospace;
-  color: #7aa2f7;
+  color: var(--ccw-accent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -730,7 +721,7 @@ onUnmounted(() => {
 .tcc-folder-picker__empty {
   text-align: center;
   padding: 24px;
-  color: #565f89;
+  color: var(--ccw-text-dim);
   font-size: 0.75rem;
 }
 
@@ -743,7 +734,7 @@ onUnmounted(() => {
   background: none;
   border: none;
   border-radius: 5px;
-  color: #a9b1d6;
+  color: var(--ccw-text-muted);
   font-size: 0.75rem;
   cursor: pointer;
   transition: all 0.1s;
@@ -751,12 +742,12 @@ onUnmounted(() => {
 }
 
 .tcc-folder-picker__item:hover {
-  background: rgba(122, 162, 247, 0.1);
-  color: #c0caf5;
+  background: var(--ccw-hover);
+  color: var(--ccw-text);
 }
 
 .tcc-folder-picker__item svg {
-  color: #e0af68;
+  color: var(--ccw-yellow);
   flex-shrink: 0;
 }
 
@@ -765,23 +756,23 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid #292e42;
+  border-top: 1px solid var(--ccw-border);
 }
 
 .tcc-btn-ghost {
   padding: 6px 14px;
   background: none;
-  border: 1px solid #292e42;
+  border: 1px solid var(--ccw-border);
   border-radius: 6px;
-  color: #565f89;
+  color: var(--ccw-text-dim);
   font-size: 0.72rem;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .tcc-btn-ghost:hover {
-  color: #c0caf5;
-  border-color: #414868;
+  color: var(--ccw-text);
+  border-color: var(--ccw-text-dim);
   background: rgba(255, 255, 255, 0.03);
 }
 
@@ -790,7 +781,7 @@ onUnmounted(() => {
   background: rgba(187, 154, 247, 0.2);
   border: 1px solid rgba(187, 154, 247, 0.4);
   border-radius: 6px;
-  color: #bb9af7;
+  color: var(--ccw-purple);
   font-size: 0.72rem;
   cursor: pointer;
   transition: all 0.15s;
@@ -799,6 +790,6 @@ onUnmounted(() => {
 
 .tcc-btn-accent:hover {
   background: rgba(187, 154, 247, 0.3);
-  border-color: #bb9af7;
+  border-color: var(--ccw-purple);
 }
 </style>

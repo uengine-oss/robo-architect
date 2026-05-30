@@ -1526,7 +1526,7 @@ function onCanvasDrop(e) {
 </template>
 
 <style scoped>
-.em-panel { display:flex; height:100%; background:var(--color-bg-primary,#1a1b26); overflow:hidden }
+.em-panel { display:flex; height:100%; background:var(--color-bg); overflow:hidden }
 .em-canvas-area { flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative }
 .em-live-badge { font-size:.55rem; font-weight:700; color:#e53935; background:rgba(229,57,53,.12); border:1px solid rgba(229,57,53,.3); border-radius:4px; padding:2px 8px; animation:pulse 1.5s infinite }
 .em-filter-btn { display:inline-flex; align-items:center; gap:3px; padding:4px 8px !important; min-width:auto; height:auto !important; min-height:36px }
@@ -1548,7 +1548,7 @@ function onCanvasDrop(e) {
 .em-state--droppable:hover, .em-state--droppable.dragover { border-color:var(--color-accent,#228be6) }
 .em-spinner { width:24px; height:24px; border:2px solid var(--color-border); border-top-color:var(--color-accent,#228be6); border-radius:50%; animation:spin .8s linear infinite }
 @keyframes spin { to { transform:rotate(360deg) } }
-.em-scroll { flex:1; overflow:auto; cursor:grab; position:relative }
+.em-scroll { flex:1; overflow:auto; cursor:grab; position:relative; background:var(--color-canvas-bg) }
 .em-scroll.is-panning { cursor:grabbing; user-select:none }
 .em-canvas { position:relative; min-width:100%; min-height:100% }
 .em-svg { position:absolute; top:0; left:0; pointer-events:none; z-index:5 }
@@ -1618,7 +1618,7 @@ function onCanvasDrop(e) {
 .chat-panel-wrapper, .inspector-wrapper { height:100%; overflow:hidden; display:flex; flex-direction:column }
 
 /* Right Sidebar (Design 탭과 동일) */
-.em-right-sidebar { display:flex; flex-direction:column; align-items:center; padding:8px 4px; gap:4px; border-left:1px solid var(--color-border); background:var(--color-bg-primary) }
+.em-right-sidebar { display:flex; flex-direction:column; align-items:center; padding:8px 4px; gap:4px; border-left:1px solid var(--color-border); background:var(--color-bg-secondary) }
 .em-right-sidebar__icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; background:transparent; border:none; border-radius:var(--radius-sm); color:var(--color-text-light); cursor:pointer; transition:all .15s }
 .em-right-sidebar__icon:hover { background:var(--color-bg-tertiary); color:var(--color-text) }
 .em-right-sidebar__icon.is-active { background:var(--color-accent); color:#fff }

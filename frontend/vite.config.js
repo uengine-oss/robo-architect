@@ -8,7 +8,11 @@ import { fileURLToPath, URL } from 'node:url'
 import { resolve } from 'path'
 import { copyFileSync, existsSync } from 'fs'
 
-const OP = resolve(__dirname, '../open-pencil')
+// Prefer the real open-pencil sibling repo if checked out alongside this repo.
+// Fall back to the in-tree stubs (used for CI / Playwright runs without open-pencil).
+const OP_REAL = resolve(__dirname, '../../../open-pencil')
+const OP_STUB = resolve(__dirname, '../open-pencil')
+const OP = existsSync(resolve(OP_REAL, 'src')) ? OP_REAL : OP_STUB
 const FRONTEND_SRC = fileURLToPath(new URL('./src', import.meta.url))
 
 export default defineConfig({

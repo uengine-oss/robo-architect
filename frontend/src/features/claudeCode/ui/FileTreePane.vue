@@ -446,7 +446,7 @@ function folderIcon(open) {
       height: 14,
       viewBox: '0 0 16 16',
       'aria-hidden': 'true',
-      style: { ...ICON_BOX_STYLE, color: '#7aa2f7' },
+      style: { ...ICON_BOX_STYLE, color: 'var(--ccw-accent)' },
     },
     [
       h('path', {
@@ -472,7 +472,7 @@ function fileIconFor(name) {
           ...ICON_BOX_STYLE,
           fontSize: '9px',
           fontWeight: 700,
-          color: '#7aa2f7',
+          color: 'var(--ccw-accent)',
           letterSpacing: '-0.5px',
           fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         },
@@ -496,7 +496,7 @@ function fileIconFor(name) {
     {
       class: ['tree-icon', 'tree-icon-generic'],
       'aria-hidden': 'true',
-      style: { ...ICON_BOX_STYLE, color: '#565f89', fontSize: '14px', lineHeight: 1 },
+      style: { ...ICON_BOX_STYLE, color: 'var(--ccw-text-dim)', fontSize: '14px', lineHeight: 1 },
     },
     '·',
   )
@@ -548,7 +548,7 @@ const TreeNodeView = defineComponent({
               width: '12px',
               minWidth: '12px',
               flexShrink: 0,
-              color: '#565f89',
+              color: 'var(--ccw-text-dim)',
             },
           },
           isDir ? [chevronIcon(open)] : [],
@@ -579,9 +579,9 @@ const TreeNodeView = defineComponent({
             style: {
               flex: 1,
               minWidth: 0,
-              background: '#0f1018',
-              color: '#c0caf5',
-              border: '1px solid #7aa2f7',
+              background: 'var(--ccw-bg-elevated)',
+              color: 'var(--ccw-text)',
+              border: '1px solid var(--ccw-accent)',
               borderRadius: '3px',
               padding: '1px 4px',
               fontSize: '13px',
@@ -614,7 +614,7 @@ const TreeNodeView = defineComponent({
               'span',
               {
                 class: 'tree-rename-error',
-                style: { fontSize: '11px', color: '#f7768e', marginLeft: '6px' },
+                style: { fontSize: '11px', color: 'var(--ccw-red)', marginLeft: '6px' },
               },
               props.renaming.error,
             ),
@@ -660,7 +660,7 @@ const TreeNodeView = defineComponent({
             userSelect: 'none',
             lineHeight: '1.5',
             opacity: isDragSource ? 0.5 : 1,
-            background: isDropTarget ? 'rgba(115, 218, 202, 0.18)' : undefined,
+            background: isDropTarget ? 'var(--ccw-active)' : undefined,
           },
           onClick: () => {
             if (isRenaming) return
@@ -746,8 +746,8 @@ export default {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #1a1b26;
-  color: #c0caf5;
+  background: var(--ccw-bg);
+  color: var(--ccw-text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   font-size: 13px;
   overflow: hidden;
@@ -759,13 +759,13 @@ export default {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid #2f3242;
-  background: #15161e;
+  border-bottom: 1px solid var(--ccw-border);
+  background: var(--ccw-bg-elevated);
   font-weight: 600;
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.5px;
-  color: #a9b1d6;
+  color: var(--ccw-text-muted);
 }
 
 .tree-title {
@@ -775,7 +775,7 @@ export default {
 .tree-refresh {
   background: transparent;
   border: none;
-  color: #7aa2f7;
+  color: var(--ccw-accent);
   cursor: pointer;
   padding: 2px;
   display: flex;
@@ -784,8 +784,8 @@ export default {
 }
 
 .tree-refresh:hover:not(:disabled) {
-  background: rgba(122, 162, 247, 0.12);
-  color: #c0caf5;
+  background: var(--ccw-hover);
+  color: var(--ccw-text);
 }
 
 .tree-refresh:disabled {
@@ -801,7 +801,7 @@ export default {
 }
 
 .tree-body.is-drop-root {
-  box-shadow: inset 0 0 0 2px #73daca;
+  box-shadow: inset 0 0 0 2px var(--ccw-teal);
 }
 
 .tree-list {
@@ -815,28 +815,28 @@ export default {
 }
 
 .tree-list :deep(.tree-row:hover) {
-  background: rgba(122, 162, 247, 0.10);
+  background: var(--ccw-hover);
 }
 
 .tree-list :deep(.tree-row.is-active) {
-  background: rgba(122, 162, 247, 0.22);
-  color: #ffffff;
+  background: var(--ccw-active);
+  color: var(--ccw-text);
 }
 
 .tree-list :deep(.tree-row.is-drop-target) {
-  outline: 1px dashed #73daca;
+  outline: 1px dashed var(--ccw-teal);
   outline-offset: -2px;
 }
 
 .tree-list :deep(.tree-status) {
   font-size: 12px;
-  color: #565f89;
+  color: var(--ccw-text-dim);
   font-style: italic;
   padding: 4px 10px;
 }
 
 .tree-list :deep(.tree-error) {
-  color: #f7768e;
+  color: var(--ccw-red);
 }
 
 .tree-list :deep(.tree-empty) {
@@ -846,8 +846,8 @@ export default {
 .tree-context-menu {
   position: fixed;
   z-index: 1000;
-  background: #1f2335;
-  border: 1px solid #2f3242;
+  background: var(--ccw-bg-elevated);
+  border: 1px solid var(--ccw-border);
   border-radius: 4px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   padding: 4px 0;
@@ -859,7 +859,7 @@ export default {
 .ctx-item {
   background: transparent;
   border: none;
-  color: #c0caf5;
+  color: var(--ccw-text);
   text-align: left;
   padding: 6px 12px;
   font-size: 12px;
@@ -868,11 +868,11 @@ export default {
 }
 
 .ctx-item:hover {
-  background: rgba(122, 162, 247, 0.18);
+  background: var(--ccw-active);
 }
 
 .ctx-item.ctx-danger {
-  color: #f7768e;
+  color: var(--ccw-red);
 }
 
 .ctx-item.ctx-danger:hover {

@@ -380,7 +380,7 @@ onBeforeUnmount(() => {
   flex-direction: row;
   width: 100%;
   height: 100%;
-  background: #1a1b26;
+  background: var(--ccw-bg);
   overflow: hidden;
 }
 
@@ -393,11 +393,11 @@ onBeforeUnmount(() => {
 }
 
 .ccw-tree {
-  border-right: 1px solid #2f3242;
+  border-right: 1px solid var(--ccw-border);
 }
 
 .ccw-editor {
-  border-right: 1px solid #2f3242;
+  border-right: 1px solid var(--ccw-border);
 }
 
 .ccw-terminal {
@@ -414,7 +414,7 @@ onBeforeUnmount(() => {
 }
 
 .ccw-resizer:hover {
-  background: #7aa2f7;
+  background: var(--ccw-accent);
 }
 
 .ccw-toggle {
@@ -423,17 +423,17 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #15161e;
+  background: var(--ccw-bg-elevated);
   border: none;
-  color: #565f89;
+  color: var(--ccw-text-dim);
   cursor: pointer;
   flex-shrink: 0;
-  border-right: 1px solid #2f3242;
+  border-right: 1px solid var(--ccw-border);
   padding: 0;
 }
 
 .ccw-toggle:hover {
-  background: rgba(122, 162, 247, 0.12);
-  color: #c0caf5;
+  background: var(--ccw-hover);
+  color: var(--ccw-text);
 }
 </style>

@@ -95,6 +95,27 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);
+
+  /* Claude Code workspace (Code tab) — Light */
+  --ccw-bg: #ffffff;
+  --ccw-bg-elevated: #f3f4f6;
+  --ccw-border: #dee2e6;
+  --ccw-text: #1f2328;
+  --ccw-text-muted: #4b5563;
+  --ccw-text-dim: #8a919b;
+  --ccw-accent: #2563eb;
+  --ccw-accent-strong: #1d4ed8;
+  --ccw-purple: #7c3aed;
+  --ccw-green: #1a7f37;
+  --ccw-red: #cf222e;
+  --ccw-yellow: #9a6700;
+  --ccw-cyan: #0c8599;
+  --ccw-teal: #0f766e;
+  --ccw-orange: #bc4c00;
+  --ccw-gutter: #aeb4be;
+  --ccw-hover: rgba(37, 99, 235, 0.10);
+  --ccw-active: rgba(37, 99, 235, 0.16);
+  --ccw-selection: rgba(37, 99, 235, 0.20);
 }
 
 /* Dark Theme (default) */
@@ -124,6 +145,27 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* Claude Code workspace (Code tab) — Dark (Tokyo Night) */
+  --ccw-bg: #1a1b26;
+  --ccw-bg-elevated: #15161e;
+  --ccw-border: #2f3242;
+  --ccw-text: #c0caf5;
+  --ccw-text-muted: #a9b1d6;
+  --ccw-text-dim: #565f89;
+  --ccw-accent: #7aa2f7;
+  --ccw-accent-strong: #9bb4f9;
+  --ccw-purple: #bb9af7;
+  --ccw-green: #9ece6a;
+  --ccw-red: #f7768e;
+  --ccw-yellow: #e0af68;
+  --ccw-cyan: #2ac3de;
+  --ccw-teal: #73daca;
+  --ccw-orange: #ff9e64;
+  --ccw-gutter: #3b4261;
+  --ccw-hover: rgba(122, 162, 247, 0.12);
+  --ccw-active: rgba(122, 162, 247, 0.22);
+  --ccw-selection: rgba(82, 139, 255, 0.30);
 }
 
 * {
