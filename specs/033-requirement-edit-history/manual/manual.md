@@ -1,285 +1,132 @@
-# 033 - Requirement Direct-Edit with Edit History
-## E2E Validation Manual
+# 요구사항 직접 편집 및 편집 이력 조회 사용 가이드
 
-**Feature**: 033-requirement-edit-history  
-**Date**: 2026-05-30  
-**Branch**: `033-requirement-edit-history`  
-**Spec**: [spec.md](../spec.md)  
-**Tester**: Claude Sonnet 4.6 (automated)
+**기능**: 033 — Requirement Direct-Edit with Edit History  
+**작성일**: 2026-05-30  
+**대상**: Robo Architect를 사용하는 분석가 및 팀 구성원
 
 ---
 
-## Purpose
+## 개요
 
-이 매뉴얼은 Feature 033의 **Phase 1 구현**을 검증합니다.
-
-검증 대상:
-- **PATCH `/api/requirements/user-story/{id}`** — UserStory 직접 편집 (actor 헤더 → EditHistory 노드 생성)
-- **GET `/api/requirements/user-story/{id}/history`** — 편집 이력 조회 (최신순)
-- **낙관적 동시성** — `baseUpdatedAt` 불일치 시 409 응답
-- **No-op 감지** — 변경 없이 저장 시 이력 미생성
-
-프론트엔드 UI(편집 탭, 이력 탭) 검증은 "What's deferred" 참조.
+이 기능을 사용하면 Requirements 패널에서 User Story를 선택한 뒤, **AI가 생성한 요구사항을 직접 수정**할 수 있습니다. 수정 내용은 자동으로 저장되고, 누가 언제 무엇을 바꿨는지 **편집 이력**으로 남아 팀이 변경 흐름을 추적할 수 있습니다.
 
 ---
 
-## Pre-flight
+## 시작하기 전에
 
-| 요구사항 | 확인 방법 | 용도 |
-|----------|-----------|------|
-| Python venv | `.venv/bin/python` 존재 | 백엔드 실행 |
-| uvicorn | `.venv/bin/uvicorn` | FastAPI 서버 |
-| curl | `which curl` | HTTP 요청 |
-| jq | `which jq` | JSON 파싱 |
-| pandoc | `which pandoc` | DOCX 변환 |
-| Google Chrome | `/Applications/Google Chrome.app` | Swagger UI 스크린샷 |
-| Neo4j | bolt://localhost:7687 | 그래프 DB (실제 편집 테스트) |
-| Port 8765 | `lsof -ti:8765` | E2E 전용 포트 |
+- 상단 네비게이션에서 **Requirements** 탭을 클릭하세요.
+- 왼쪽 트리에서 편집하려는 User Story를 선택하면 오른쪽 패널에 상세 화면이 열립니다.
 
 ---
 
-## Check 1/8 — Backend Startup (Worktree)
+## 주요 기능
 
-`033-requirement-edit-history` 브랜치 worktree에서 백엔드를 포트 8765로 기동.
+### 1. 개요 탭 — 현재 요구사항 확인
 
-```bash
-cd .claude/worktrees/033-requirement-edit-history
-PYTHONPATH=. .venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8765 --log-level warning &
-```
+User Story를 클릭하면 **개요** 탭이 기본으로 표시됩니다. 역할(As a), 목적(I want), 혜택(so that), 우선순위, 상태, 인수조건을 한눈에 확인할 수 있습니다.
 
-백엔드 준비 확인: `/openapi.json` 폴링 → 1회 시도 만에 응답.
+![요구사항 개요 화면](screenshots/01_overview.png){ width=100% }
 
-**Result: PASS** — 백엔드 정상 기동, `/openapi.json` 응답 확인.
+상단 탭 바에 **개요 · 편집 · 명확화 · 이력** 네 가지 탭이 있습니다.
 
 ---
 
-## Check 2/8 — OpenAPI Route Registration
+### 2. 편집 탭 — 요구사항 직접 수정
 
-```bash
-curl -s http://127.0.0.1:8765/openapi.json | \
-  jq '[.paths | to_entries[] | select(.key | test("/requirements/user-story/")) | {path: .key, methods: (.value | keys)}]'
-```
+**편집** 탭을 클릭하면 현재 저장된 값이 채워진 편집 폼이 나타납니다.
 
-Evidence: [screenshots/01_openapi_routes.txt](screenshots/01_openapi_routes.txt)
+![편집 탭 — 폼이 현재 값으로 채워진 상태](screenshots/02_edit_form.png){ width=100% }
 
-```json
-[
-  { "path": "/api/requirements/user-story/propose",         "methods": ["post"] },
-  { "path": "/api/requirements/user-story/confirm",         "methods": ["post"] },
-  { "path": "/api/requirements/user-story/move",            "methods": ["patch"] },
-  { "path": "/api/requirements/user-story/{user_story_id}", "methods": ["patch"] },
-  { "path": "/api/requirements/user-story/{user_story_id}/history", "methods": ["get"] },
-  { "path": "/api/requirements/user-story/{user_story_id}/design-trace", "methods": ["get"] }
-]
-```
+수정할 수 있는 항목:
 
-신규 엔드포인트 2개 모두 등록 확인:
-- `PATCH /api/requirements/user-story/{user_story_id}`
-- `GET  /api/requirements/user-story/{user_story_id}/history`
-
-**Result: PASS**
-
----
-
-## Check 3/8 — PATCH Unknown ID → 404
-
-```bash
-curl -s -w "%{http_code}" \
-  -X PATCH http://127.0.0.1:8765/api/requirements/user-story/nonexistent-id-000 \
-  -H "Content-Type: application/json" \
-  -H "X-User-Name: Test%20User" -H "X-User-Email: test@example.com" \
-  -d '{"action": "test action"}'
-```
-
-Evidence: [screenshots/02_patch_unknown.txt](screenshots/02_patch_unknown.txt)
-
-```
-HTTP 404
-{"detail": "User story nonexistent-id-000 not found"}
-```
-
-405(Method Not Allowed)가 아닌 404 응답 — 라우팅이 올바르게 등록됨.
-
-**Result: PASS**
-
----
-
-## Check 4/8 — GET History (No Data)
-
-```bash
-curl -s http://127.0.0.1:8765/api/requirements/user-story/nonexistent-id-000/history
-```
-
-Evidence: [screenshots/03_history_endpoint.txt](screenshots/03_history_endpoint.txt)
-
-```json
-{"items": []}
-```
-
-이력 없는 노드 → 빈 배열, 에러 없음.
-
-**Result: PASS**
-
----
-
-## Check 5/8 — Real PATCH with Identity Headers
-
-```bash
-curl -s -X PATCH \
-  "http://127.0.0.1:8765/api/requirements/user-story/US-2-006" \
-  -H "Content-Type: application/json" \
-  -H "X-User-Name: E2E%20Test%20User" \
-  -H "X-User-Email: e2e@test.com" \
-  -d '{"action":"E2E 테스트 편집 - 업무처리 동의를 검토하고 제출한다"}'
-```
-
-Evidence: [screenshots/04_patch_real.txt](screenshots/04_patch_real.txt)
-
-```json
-{
-  "userStory": {
-    "id": "US-2-006",
-    "role": "법정대리인",
-    "action": "E2E 테스트 편집 - 업무처리 동의를 검토하고 제출한다",
-    ...
-  },
-  "changed": true,
-  "updatedAt": "2026-05-30T09:06:26.489000000+00:00"
-}
-```
-
-- `action` 필드 갱신 확인
-- 인수조건(acceptanceCriteria) 보존 확인
-- `changed: true` 반환
-
-**Result: PASS**
-
----
-
-## Check 6/8 — EditHistory Node Created in Neo4j
-
-```bash
-curl -s "http://127.0.0.1:8765/api/requirements/user-story/US-2-006/history"
-```
-
-Evidence: [screenshots/05_history_real.txt](screenshots/05_history_real.txt)
-
-```json
-{
-  "items": [
-    {
-      "id": "8a35b42c-80c8-4769-b07e-256aee3f2ee2",
-      "timestamp": "2026-05-30T09:06:26.489000000+00:00",
-      "userName": "E2E Test User",
-      "userEmail": "e2e@test.com",
-      "changes": {
-        "action": {
-          "before": "업무처리 동의 또는 확인을 한다",
-          "after": "E2E 테스트 편집 - 업무처리 동의를 검토하고 제출한다"
-        }
-      }
-    }
-  ]
-}
-```
-
-- `userName`: "E2E Test User" (`X-User-Name` 헤더 디코딩 확인)
-- `userEmail`: "e2e@test.com"
-- `changes.action.before` / `changes.action.after` — field-level diff 정확히 기록
-- 변경되지 않은 필드(role, benefit, priority, status)는 changes에 포함 안 됨
-
-**Result: PASS**
-
----
-
-## Check 7/8 — 409 Conflict Detection
-
-```bash
-curl -s -w "%{http_code}" \
-  -X PATCH "http://127.0.0.1:8765/api/requirements/user-story/US-2-006" \
-  -H "Content-Type: application/json" \
-  -H "X-User-Name: Other%20User" -H "X-User-Email: other@test.com" \
-  -d '{"action":"충돌 테스트", "baseUpdatedAt":"2000-01-01T00:00:00Z"}'
-```
-
-Evidence: [screenshots/06_conflict_409.txt](screenshots/06_conflict_409.txt)
-
-```json
-{
-  "detail": {
-    "code": "EDIT_CONFLICT",
-    "latestUpdatedAt": "2026-05-30T09:06:26.489000000+00:00"
-  }
-}
-```
-
-HTTP 409 — 낙관적 동시성 충돌 감지, `EDIT_CONFLICT` 코드와 현재 `latestUpdatedAt` 반환.
-
-**Result: PASS**
-
----
-
-## Check 8/8 — No-op Edit (No History Created)
-
-```bash
-# 동일한 값으로 다시 PATCH
-curl -s -X PATCH "http://127.0.0.1:8765/api/requirements/user-story/US-2-006" \
-  -H "Content-Type: application/json" \
-  -H "X-User-Name: E2E%20Test%20User" -H "X-User-Email: e2e@test.com" \
-  -d '{"action":"E2E 테스트 편집 - 업무처리 동의를 검토하고 제출한다"}'
-```
-
-Evidence: [screenshots/07_noop_edit.txt](screenshots/07_noop_edit.txt)
-
-응답: `{"changed": false}`  
-이력 항목 수: **1** (no-op 전후 동일 — 새 EditHistory 노드 미생성)
-
-**Result: PASS**
-
----
-
-## Swagger UI Screenshot
-
-![Swagger UI — requirements routes](screenshots/08_swagger_ui.png){ width=100% }
-
----
-
-## Summary
-
-| # | 검사 항목 | 결과 | 증거 파일 |
-|---|----------|------|-----------|
-| 1 | Backend Startup (worktree) | **PASS** | artifacts/uvicorn.log |
-| 2 | OpenAPI route registration | **PASS** | screenshots/01_openapi_routes.txt |
-| 3 | PATCH unknown ID → 404 | **PASS** | screenshots/02_patch_unknown.txt |
-| 4 | GET history (no data) → `items:[]` | **PASS** | screenshots/03_history_endpoint.txt |
-| 5 | Real PATCH with identity headers | **PASS** | screenshots/04_patch_real.txt |
-| 6 | EditHistory node in Neo4j | **PASS** | screenshots/05_history_real.txt |
-| 7 | 409 conflict detection | **PASS** | screenshots/06_conflict_409.txt |
-| 8 | No-op edit → `changed:false`, no history | **PASS** | screenshots/07_noop_edit.txt |
-
-**Overall: PASS (8/8)**
-
----
-
-## Reproducing This Manual
-
-```bash
-cd /path/to/robo-architect
-bash specs/033-requirement-edit-history/manual/scripts/e2e_phase1.sh
-```
-
-단, 스크립트는 main worktree에서 실행 시 백엔드 경로를 `.claude/worktrees/033-requirement-edit-history`로 조정해야 합니다.
-
----
-
-## What's Deferred
-
-아래 항목은 이 매뉴얼의 범위 밖이며 후속 단계에서 검증합니다.
-
-| 항목 | 이유 |
+| 항목 | 설명 |
 |------|------|
-| 프론트엔드 편집 탭 UI (Playwright) | E2E 브라우저 자동화는 별도 Playwright spec 필요 |
-| 프론트엔드 이력 탭 타임라인 UI | 동일 — 실행 중인 Vite dev server 필요 |
-| 명확화(clarification) apply 경로의 EditHistory 기록 | 030 기능 연동 테스트는 통합 테스트로 분리 |
-| 다중 사용자 동시 편집 (실제 레이스 컨디션) | 수동 테스트 시나리오 (quickstart Q6 상당) |
-| Electron identity 헤더 자동 주입 검증 | 032 기능과 통합 후 검증 (quickstart Q1/Q3) |
+| 역할 (As a) | 이 요구사항의 주체 (예: 법정대리인) |
+| 목적 (I want) | 사용자가 하고자 하는 것 |
+| 혜택 (so that) | 이 기능이 제공하는 가치 |
+| 우선순위 | high / medium / low |
+| 상태 | draft / ready / done |
+
+> **안내**: 인수조건(Acceptance Criteria)은 이 탭에서 수정하지 않습니다. 인수조건은 **명확화** 탭에서 AI와 함께 다듬을 수 있습니다.
+
+원하는 내용을 입력한 후 우선순위와 상태를 선택합니다.
+
+![필드 수정 후 저장 버튼 클릭 전](screenshots/03_edit_filled.png){ width=100% }
+
+---
+
+### 3. 저장 완료 — 개요 탭으로 자동 이동
+
+**저장** 버튼을 클릭하면 변경 내용이 즉시 반영됩니다. 화면은 자동으로 **개요** 탭으로 이동하며, 수정된 내용을 바로 확인할 수 있습니다.
+
+![저장 완료 후 개요 탭 — 수정된 내용 반영](screenshots/04_save_success.png){ width=100% }
+
+위 예시에서 "업무처리 동의 또는 확인을 한다"가 "동의서를 검토하고 제출한다"로, 상태도 `draft` → `ready`로 변경된 것을 확인할 수 있습니다.
+
+**취소** 버튼을 누르면 변경 내용 없이 개요 탭으로 돌아갑니다.
+
+---
+
+### 4. 이력 탭 — 편집 이력 확인
+
+**이력** 탭을 클릭하면 이 User Story에 대한 모든 편집 기록을 최신순으로 볼 수 있습니다.
+
+편집 이력이 없을 때:
+
+![이력 없음 상태](screenshots/05_history_empty.png){ width=100% }
+
+편집 이력이 있을 때:
+
+![편집 이력 타임라인](screenshots/06_history_entries.png){ width=100% }
+
+각 이력 항목에는 다음 정보가 표시됩니다:
+
+- **편집자 이름**: 누가 수정했는지 (Electron 앱의 로그인 정보에서 자동 적용)
+- **편집 날짜·시각**: 언제 수정했는지
+- **변경 필드**: 어떤 항목이 바뀌었는지, 바뀌기 전(빨간색 취소선)과 바뀐 후(초록색) 값
+
+---
+
+### 5. 동시 편집 충돌 — 안내 메시지
+
+같은 User Story를 두 사람이 동시에 편집하는 경우, 먼저 저장한 사람의 변경이 우선 적용됩니다. 나중에 저장을 시도하면 아래와 같은 안내 메시지가 표시됩니다.
+
+![동시 편집 충돌 안내](screenshots/07_conflict_error.png){ width=100% }
+
+이 경우 페이지를 새로고침하면 최신 내용을 불러올 수 있으며, 그 후 다시 편집하면 됩니다.
+
+---
+
+## 자주 묻는 질문
+
+**Q. 편집자 이름이 자동으로 기록되지 않아요.**  
+A. Electron 데스크톱 앱에서는 git config의 사용자 정보(이름·이메일)가 자동으로 적용됩니다. 웹 브라우저로 직접 접근하면 "unknown" 사용자로 기록될 수 있습니다.
+
+**Q. 인수조건(Acceptance Criteria)은 여기서 수정할 수 없나요?**  
+A. 인수조건은 AI와 함께 단계별로 다듬는 **명확화** 탭에서 수정합니다.
+
+**Q. 이전 버전으로 되돌릴 수 있나요?**  
+A. 현재 버전에서는 이력 조회만 지원합니다. 되돌리기 기능은 이후 버전에서 추가될 예정입니다.
+
+---
+
+## 향후 지원 예정
+
+| 기능 | 예정 시기 |
+|------|-----------|
+| 편집 이력에서 이전 버전 복원 (rollback) | 034+ |
+| 인수조건 직접 편집 (편집 탭에서) | 검토 중 |
+| 다중 User Story 일괄 편집 | 검토 중 |
+
+---
+
+## 기술 검증 요약 (개발팀 참고)
+
+| 검증 항목 | 결과 | 증거 |
+|-----------|------|------|
+| PATCH 엔드포인트 라우트 등록 | PASS | screenshots/01_openapi_routes.txt |
+| 실제 편집 저장 + EditHistory 노드 생성 | PASS | screenshots/04_patch_real.txt |
+| 편집 이력 조회 (필드별 before/after) | PASS | screenshots/05_history_real.txt |
+| 409 충돌 감지 (baseUpdatedAt 불일치) | PASS | screenshots/06_conflict_409.txt |
+| No-op 저장 시 이력 미생성 | PASS | screenshots/07_noop_edit.txt |
+| Playwright UI 테스트 (6개 시나리오) | PASS (6/6) | frontend/tests/requirement-edit-history.spec.ts |
