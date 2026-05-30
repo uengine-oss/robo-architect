@@ -13,6 +13,12 @@ const props = defineProps({
   modelValue: {
     type: Boolean,
     default: false
+  },
+  // 034 US7 — 이미 생성된 ingestion 세션(예: 설계 갭 메우기)에 진행 UI를 그대로
+  // 붙인다. 값이 있으면 업로드 단계를 건너뛰고 바로 SSE 진행을 스트리밍한다.
+  attachSessionId: {
+    type: String,
+    default: ''
   }
 })
 
@@ -296,6 +302,21 @@ const isOpen = computed({
   get: () => props.modelValue,
   set: (val) => emit('update:modelValue', val)
 })
+
+// 034 US7 — 외부에서 만든 세션(설계 갭 메우기)이 주어지면, 업로드 없이 곧장
+// 기존 진행 UI + SSE 루프에 붙는다. (인제스천과 동일 로직·UI·순서 재사용)
+watch(
+  () => [props.modelValue, props.attachSessionId],
+  ([open, sid]) => {
+    if (open && sid && sessionId.value !== sid) {
+      sessionId.value = sid
+      isProcessing.value = true
+      error.value = null
+      connectToStream(sid)
+    }
+  },
+  { immediate: true },
+)
 
 const canSubmit = computed(() => {
   if (inputMode.value === 'file') {

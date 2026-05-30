@@ -162,24 +162,6 @@ class PendingDesignResponse(BaseModel):
     pending: list[PendingUS] = Field(default_factory=list)
 
 
-class DesignReflectRequest(BaseModel):
-    userStoryIds: list[str] = Field(default_factory=list)
-
-
-class ReflectedDesign(BaseModel):
-    userStoryId: str
-    boundedContextId: Optional[str] = None
-    aggregateName: Optional[str] = None
-    commandName: Optional[str] = None
-    eventName: Optional[str] = None
-    reusedAggregate: bool = False
-    ok: bool = True
-    message: Optional[str] = None
-
-
-class DesignReflectResponse(BaseModel):
-    reflected: list[ReflectedDesign] = Field(default_factory=list)
-
 
 # ── 설계 커버리지 검증·복구 (034 — 인제스천 사후 검증) ────────────────────
 # 인제스천이 US→Command/ReadModel IMPLEMENTS 링크를 일부 누락(특히 조회성 US는

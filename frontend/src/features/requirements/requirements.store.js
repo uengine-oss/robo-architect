@@ -291,15 +291,20 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return res.json() // { pending: [...] }
   }
 
-  /** Generate + persist design (Aggregate→Command→Event) for the given US (US7). */
-  async function reflectDesign(userStoryIds) {
-    const res = await fetch('/api/requirements/design/reflect', {
+  /**
+   * Fill the requirements→design gap for the given user stories by running the
+   * EXISTING ingestion design phases (events→aggregate→command→readmodel) on
+   * just those US — same loop, same progress UI, same order (034 US7).
+   * Returns { session_id } for the ingestion SSE stream.
+   */
+  async function requestDesignForUserStories(userStoryIds) {
+    const res = await fetch('/api/ingest/user-stories/design', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userStoryIds }),
     })
-    if (!res.ok) throw await _httpError(res, 'design reflect failed')
-    return res.json() // { reflected: [...] }
+    if (!res.ok) throw await _httpError(res, 'design request failed')
+    return res.json() // { session_id, userStoryCount }
   }
 
   // ── DDD 적합성·정합성 검증 (034 US6) ──────────────────────────────────
@@ -727,7 +732,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     confirmChildStories,
     validateRequirement,
     fetchPendingDesign,
-    reflectDesign,
+    requestDesignForUserStories,
     deleteFeature,
     moveUserStory,
     deleteUserStory,

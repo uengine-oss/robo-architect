@@ -21,6 +21,7 @@ import LauncherView from '@/features/desktop-launcher/LauncherView.vue'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 // 034 US7 — 설계 미반영 User Story 식별 + 반영 프롬프트.
 import DesignReflectPrompt from '@/features/requirements/ui/DesignReflectPrompt.vue'
+import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
 const navigatorStore = useNavigatorStore()
@@ -76,11 +77,12 @@ const currentComponent = computed(() => tabComponents[activeTab.value])
 const requirementsStore = useRequirementsStore()
 const designPending = ref(null) // PendingUS[] | null
 const suppressDesignPrompt = ref(false) // 이번 세션 동안 묻지 않기
-const designReflecting = ref(false) // 설계 생성 진행 중 오버레이
-const DESIGN_REFLECT_BATCH = 5 // 한 번에 반영할 최대 개수(응답성 위해 제한)
+// 034 US7 — 설계 갭 메우기를 기존 인제스천 진행 UI로 표시.
+const designIngestModalOpen = ref(false)
+const designIngestSessionId = ref('')
 watch(activeTab, async (tab) => {
   if (tab !== 'Event Modeling' && tab !== 'Design') return
-  if (suppressDesignPrompt.value || designPending.value || designReflecting.value) return
+  if (suppressDesignPrompt.value || designPending.value || designIngestModalOpen.value) return
   try {
     const res = await requirementsStore.fetchPendingDesign()
     if (res?.pending?.length) designPending.value = res.pending
@@ -89,23 +91,17 @@ watch(activeTab, async (tab) => {
   }
 })
 async function onDesignReflectConfirm() {
-  const batch = (designPending.value || []).slice(0, DESIGN_REFLECT_BATCH)
-  const total = (designPending.value || []).length
+  const ids = (designPending.value || []).map((p) => p.userStoryId)
   designPending.value = null
-  if (!batch.length) return
-  designReflecting.value = true
+  if (!ids.length) return
   try {
-    const res = await requirementsStore.reflectDesign(batch.map((p) => p.userStoryId))
-    const ok = (res.reflected || []).filter((r) => r.ok).length
-    const remaining = Math.max(0, total - ok)
-    window.alert(
-      `${ok}개 User Story의 설계를 생성했습니다.` +
-        (remaining > 0 ? `\n남은 ${remaining}개는 탭에 다시 진입하면 이어서 반영할 수 있습니다.` : ''),
-    )
+    // 기존 인제스천 설계 단계(events→aggregate→command→readmodel)를 이 US들에 실행.
+    const { session_id } = await requirementsStore.requestDesignForUserStories(ids)
+    // 기존 인제스천 진행 다이얼로그 + SSE 루프를 그대로 재사용해 진행 표시.
+    designIngestSessionId.value = session_id
+    designIngestModalOpen.value = true
   } catch (e) {
-    window.alert(`설계 반영 실패: ${e?.message || e}`)
-  } finally {
-    designReflecting.value = false
+    window.alert(`설계 반영 시작 실패: ${e?.message || e}`)
   }
 }
 function onDesignReflectDismiss() {
@@ -278,9 +274,12 @@ onUnmounted(() => {
       @dismiss="onDesignReflectDismiss"
       @dont-ask="onDesignReflectDontAsk"
     />
-    <div v-if="designReflecting" class="design-reflect-overlay">
-      <div class="design-reflect-box">🧩 미반영 User Story의 설계를 생성하는 중입니다…</div>
-    </div>
+    <!-- 설계 갭 메우기 진행 — 기존 인제스천 진행 다이얼로그/SSE 재사용 -->
+    <RequirementsIngestionModal
+      v-model="designIngestModalOpen"
+      :attach-session-id="designIngestSessionId"
+      @complete="designIngestSessionId = ''"
+    />
   </div>
 </template>
 
@@ -353,23 +352,6 @@ onUnmounted(() => {
   flex-direction: column;
   overflow: hidden;
   position: relative;
-}
-.design-reflect-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1250;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.design-reflect-box {
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-  padding: 18px 26px;
-  border-radius: 10px;
-  font-size: 0.9rem;
-  border: 1px solid var(--color-border);
 }
 </style>
 

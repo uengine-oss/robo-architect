@@ -13,16 +13,13 @@
 - **동작**: 범위 내 US 중 **어떤 설계객체(Aggregate/Command/Event/Policy/ReadModel)에도 `IMPLEMENTS`로 연결되지 않은** US만 반환. (Command 부재만 보면, 인제스천이 Aggregate엔 배치했지만 Command는 일부만 매핑한 US까지 과대 보고됨 — 특히 조회/알림성. 따라서 Aggregate 등 어떤 설계 연결이라도 있으면 "반영됨"으로 본다.)
 - **충족**: FR-030, US7-AC1/AC5
 
-### A2. 설계 반영(제안) — `POST /api/requirements/design/reflect` (SSE)
-- **Req**: `DesignReflectRequest { userStoryIds[] }` (사용자가 동의한 미반영 US)
-- **Res**: `text/event-stream` — `DesignReflectProgress { userStoryId, phase, percent, changeProposal?, done }`
-- **동작**: US별로 기존 `POST /api/change/plan`을 호출해 journey 추가/Aggregate 생성·변경안(`changeProposal`)을 만든다. 진행/부분결과 스트리밍, 취소 가능.
-- **부분 실패**: 일부 US 실패해도 나머지 진행, 실패분 표시·재시도(Edge Case).
-- **충족**: FR-032, FR-033(생성), Constitution III
-
-### A3. 설계 반영 확정 — 기존 `POST /api/change/apply` 재사용
-- **동작**: A2가 만든 `changeProposal`을 사용자 확인 후 그래프 반영(HITL). 기존 설계와의 충돌·영향 표시.
-- **충족**: FR-033, US7-AC4
+### A2. 설계 갭 메우기 — `POST /api/ingest/user-stories/design`  ⟶  기존 `/api/ingest/stream/{id}` (SSE)
+> **기존 인제스천 루프·UI·순서를 그대로 재사용한다.** 별도 reflect 엔드포인트(폐기)가 아니라, 인제스천 워크플로의 설계 단계를 선택된 US에 실행하는 incremental 모드.
+- **Req**: `{ userStoryIds[] }` → **Res**: `{ session_id, userStoryCount }`
+- **진행**: 클라이언트는 기존 `GET /api/ingest/stream/{session_id}` SSE를 구독(= 기존 `RequirementsIngestionModal` 진행 UI 재사용).
+- **동작**(`incremental_design_runner.run_design_for_user_stories`): 그래프에서 기존 US·BC·Aggregate를 hydrate(clear 안 함) → 대상 US와 그 BC만 남김 → 기존 phase를 정순 호출: `extract_events_from_user_stories → extract_aggregates → extract_commands → extract_readmodels` → 사후 `post_coverage`. 기존 BC/Aggregate는 MERGE 키로 재사용.
+- **순서**: 이벤트 도출 → Aggregate → Command → ReadModel (워크플로 정순). 조회성 US는 Command 없이 ReadModel로 귀결.
+- **충족**: FR-032, FR-033, Constitution III(스트리밍). 스트림 핸들러가 `session.workflow_mode=='design_for_us'`를 보고 incremental 러너로 분기.
 
 ## A'. 설계 커버리지 검증·복구 (인제스천 사후, US7 정확도 보강)
 
