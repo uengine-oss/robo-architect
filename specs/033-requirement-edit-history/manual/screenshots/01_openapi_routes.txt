@@ -1,0 +1,38 @@
+[
+  {
+    "path": "/api/requirements/user-story/propose",
+    "methods": [
+      "post"
+    ]
+  },
+  {
+    "path": "/api/requirements/user-story/confirm",
+    "methods": [
+      "post"
+    ]
+  },
+  {
+    "path": "/api/requirements/user-story/move",
+    "methods": [
+      "patch"
+    ]
+  },
+  {
+    "path": "/api/requirements/user-story/{user_story_id}",
+    "methods": [
+      "patch"
+    ]
+  },
+  {
+    "path": "/api/requirements/user-story/{user_story_id}/history",
+    "methods": [
+      "get"
+    ]
+  },
+  {
+    "path": "/api/requirements/user-story/{user_story_id}/design-trace",
+    "methods": [
+      "get"
+    ]
+  }
+]

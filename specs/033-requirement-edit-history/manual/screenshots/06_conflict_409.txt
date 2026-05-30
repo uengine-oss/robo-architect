@@ -1,0 +1,2 @@
+HTTP 409
+{"detail":{"code":"EDIT_CONFLICT","latestUpdatedAt":"2026-05-30T09:06:26.489000000+00:00"}}
