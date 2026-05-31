@@ -376,7 +376,7 @@ async function runValidate(payload) {
       <!-- User Story detail + design-trace canvas (default) -->
       <div v-else class="req-detail-pane">
         <div class="req-detail-pane__top">
-          <UserStoryDetail :user-story="store.selectedUserStory" />
+          <UserStoryDetail :user-story="store.selectedUserStory" @delete="onDeleteUserStory" />
         </div>
         <div class="req-detail-pane__canvas">
           <div class="canvas-label">

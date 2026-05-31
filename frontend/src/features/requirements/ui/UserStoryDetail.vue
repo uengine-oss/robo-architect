@@ -8,6 +8,7 @@ import EditHistoryPanel from './EditHistoryPanel.vue'
 const props = defineProps({
   userStory: { type: Object, default: null },
 })
+const emit = defineEmits(['delete'])
 
 const store = useRequirementsStore()
 
@@ -150,6 +151,7 @@ async function saveEdit() {
           </span>
         </button>
         <button class="us-tab" :class="{ 'is-active': activeTab === 'history' }" @click="onSelectTab('history')">이력</button>
+        <button class="us-tab us-tab--delete" title="User Story 삭제" @click="emit('delete', userStory)">🗑 삭제</button>
       </div>
 
       <!-- Overview tab ──────────────────────────────────────────── -->
@@ -285,6 +287,8 @@ async function saveEdit() {
   border-radius: 6px 6px 0 0;
 }
 .us-tab:hover { color: var(--color-text); }
+.us-tab--delete { margin-left: auto; color: #e03131; }
+.us-tab--delete:hover { color: #fff; background: #e03131; }
 .us-tab.is-active {
   color: var(--color-text);
   border-bottom-color: var(--color-accent, #228be6);
