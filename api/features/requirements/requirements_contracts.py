@@ -484,10 +484,57 @@ class EditHistoryItemDTO(BaseModel):
     userName: str
     userEmail: str
     changes: dict
+    # 035 — conversational edit attribution (optional; absent on legacy entries)
+    source: Optional[str] = None  # "form" | "chat" | "clarification"
+    feedback: Optional[str] = None  # the NL feedback that drove a chat edit
+    rationale: Optional[str] = None  # the agent's reasoning for the change
 
 
 class EditHistoryResponse(BaseModel):
     items: list[EditHistoryItemDTO] = Field(default_factory=list)
+
+
+# ── Conversational (chat) edit — 035 ─────────────────────────────────────
+# Per-requirement-item chat: NL feedback → LLM proposes a one-shot edit
+# (propose→confirm). The decision (feedback + rationale + diff + actor) is
+# saved to the collaborative edit History and a per-item conversation log.
+
+
+class ChatEditProposal(BaseModel):
+    summary: str = ""  # one-line description of the proposed change
+    rationale: str = ""  # why the agent proposes it
+    fields: dict = Field(default_factory=dict)  # full proposed field values
+    conflicts: list[str] = Field(default_factory=list)  # clashes w/ existing reqs
+
+
+class ChatEditApplyRequest(BaseModel):
+    fields: dict = Field(default_factory=dict)
+    feedback: str = ""
+    rationale: str = ""
+    summary: str = ""
+    baseUpdatedAt: Optional[str] = None
+
+
+class ChatEditApplyResponse(BaseModel):
+    changed: bool
+    updatedAt: Optional[str] = None
+    historyId: Optional[str] = None
+    changes: dict = Field(default_factory=dict)
+
+
+class ChatEditLogEntry(BaseModel):
+    at: str
+    userName: str = "unknown"
+    userEmail: str = "unknown"
+    feedback: str = ""
+    rationale: str = ""
+    summary: str = ""
+    applied: bool = True
+    changes: dict = Field(default_factory=dict)
+
+
+class ChatEditLogResponse(BaseModel):
+    entries: list[ChatEditLogEntry] = Field(default_factory=list)
 
 
 # ── Impact report ────────────────────────────────────────────────────────

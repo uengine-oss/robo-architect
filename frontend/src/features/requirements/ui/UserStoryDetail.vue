@@ -4,6 +4,7 @@ import { useRequirementsStore } from '@/features/requirements/requirements.store
 import ClarificationPanel from './ClarificationPanel.vue'
 import ClarityRadar from './ClarityRadar.vue'
 import EditHistoryPanel from './EditHistoryPanel.vue'
+import ChatEditPanel from './ChatEditPanel.vue'
 
 const props = defineProps({
   userStory: { type: Object, default: null },
@@ -16,6 +17,19 @@ const kindLabel = { given: 'Given', when: 'When', then: 'Then' }
 
 const hasStory = computed(() => !!props.userStory)
 const criteria = computed(() => props.userStory?.acceptanceCriteria || [])
+
+// Editable field snapshot for the conversational-edit panel (035).
+const chatCurrent = computed(() => {
+  const us = props.userStory || {}
+  return {
+    role: us.role || '',
+    action: us.action || '',
+    benefit: us.benefit || '',
+    priority: us.priority || 'medium',
+    status: us.status || 'draft',
+    acceptanceCriteria: (us.acceptanceCriteria || []).map((c) => c.name || c).filter(Boolean),
+  }
+})
 
 // ── Source business rules (hybrid US only — empty for rfp/figma) ─────
 const sourceRules = ref([])
@@ -144,6 +158,7 @@ async function saveEdit() {
       <div class="us-tabs">
         <button class="us-tab" :class="{ 'is-active': activeTab === 'overview' }" @click="onSelectTab('overview')">개요</button>
         <button class="us-tab" :class="{ 'is-active': activeTab === 'edit' }" @click="onSelectTab('edit')">편집</button>
+        <button class="us-tab" :class="{ 'is-active': activeTab === 'aiedit' }" @click="onSelectTab('aiedit')">✨ AI 편집</button>
         <button class="us-tab" :class="{ 'is-active': activeTab === 'clarification' }" @click="onSelectTab('clarification')">
           명확화
           <span v-if="ambiguityFlag" class="tab-badge" :title="ambiguityFlag.categories.join(', ')">
@@ -249,6 +264,17 @@ async function saveEdit() {
         </div>
       </div>
 
+      <!-- AI 편집 tab (035 — conversational edit) ───────────────── -->
+      <div v-else-if="activeTab === 'aiedit'" class="us-tab-body us-tab-body--chat">
+        <ChatEditPanel
+          :key="userStory.id"
+          scope="user-story"
+          :item-id="userStory.id"
+          :current="chatCurrent"
+          @applied="store.fetchHistory(userStory.id)"
+        />
+      </div>
+
       <!-- Clarification tab (spec 030) ─────────────────────────── -->
       <div v-else-if="activeTab === 'clarification'" class="us-tab-body us-tab-body--clarification">
         <ClarificationPanel embedded />
@@ -335,6 +361,9 @@ async function saveEdit() {
 }
 .us-tab-body--clarification {
   padding: 8px;
+}
+.us-tab-body--chat {
+  padding: 0; overflow: hidden; display: flex; flex-direction: column;
 }
 
 .us-detail__statement {

@@ -16,6 +16,7 @@ import FeatureGenStream from './FeatureGenStream.vue'
 import ValidationFindings from './ValidationFindings.vue'
 import DeleteConfirmDialog from './DeleteConfirmDialog.vue'
 import DeletionHistoryPanel from './DeletionHistoryPanel.vue'
+import ChatEditDialog from './ChatEditDialog.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
@@ -128,6 +129,31 @@ async function onMove({ userStoryId, targetFeatureId }) {
   } catch (e) {
     window.alert(`이동 실패: ${e}`)
   }
+}
+
+// ── Conversational (chat) edit for Epic/Feature (035) ──────────────────
+const chatEditTarget = ref(null) // { scope, itemId, itemName, current }
+function onAiEditEpic() {
+  const e = store.selectedEpic
+  if (!e) return
+  chatEditTarget.value = {
+    scope: 'epic', itemId: e.id, itemName: e.displayName || e.name,
+    current: { name: e.displayName || e.name || '', description: e.description || '' },
+  }
+}
+function onAiEditFeature() {
+  const f = store.selectedFeature
+  if (!f) return
+  chatEditTarget.value = {
+    scope: 'feature', itemId: f.id, itemName: f.name,
+    current: {
+      name: f.name || '', description: f.description || '',
+      edgeCases: f.edgeCases || [], assumptions: f.assumptions || [],
+    },
+  }
+}
+function onChatEditApplied() {
+  store.fetchTree()
 }
 
 // ── Recoverable delete (034) — confirm dialog + undo snackbar ───────────
@@ -356,6 +382,7 @@ async function runValidate(payload) {
           @validate="onValidate('epic')"
           @clarify="onClarifyScope({ scopeType: 'bounded_context', scopeId: store.selectedEpic.id })"
           @delete="onDeleteEpic(store.selectedEpic)"
+          @ai-edit="onAiEditEpic"
         />
       </div>
 
@@ -370,6 +397,7 @@ async function runValidate(payload) {
           @validate="onValidate('feature')"
           @clarify="onClarifyScope({ scopeType: 'feature', scopeId: store.selectedFeature.id })"
           @delete="onDeleteFeature(store.selectedFeature)"
+          @ai-edit="onAiEditFeature"
         />
       </div>
 
@@ -476,6 +504,17 @@ async function runValidate(payload) {
       :target="deleteTarget"
       @confirm="onConfirmDelete"
       @cancel="deleteTarget = null"
+    />
+
+    <!-- AI 편집 (035 — Epic/Feature 모달; US는 상세 탭) -->
+    <ChatEditDialog
+      v-if="chatEditTarget"
+      :scope="chatEditTarget.scope"
+      :item-id="chatEditTarget.itemId"
+      :item-name="chatEditTarget.itemName"
+      :current="chatEditTarget.current"
+      @applied="onChatEditApplied"
+      @close="chatEditTarget = null"
     />
 
     <!-- 삭제 이력 / 복구 -->

@@ -412,6 +412,45 @@ export const useRequirementsStore = defineStore('requirements', () => {
     await fetchDeletionRecords()
   }
 
+  // ── Conversational (chat) edit + collaborative history (035) ───────────
+  /** SSE URL for streaming a chat-edit proposal (consumed by ChatEditPanel). */
+  function chatEditStreamUrl(scope, id, feedback, history) {
+    const qs = new URLSearchParams({ feedback })
+    if (history && history.length) qs.set('history', JSON.stringify(history))
+    return `/api/requirements/chat-edit/${scope}/${id}/stream?${qs.toString()}`
+  }
+
+  async function chatEditApply(scope, id, payload) {
+    const res = await fetch(`/api/requirements/chat-edit/${scope}/${id}/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}))
+      const err = new Error('편집 충돌: 다른 사용자가 먼저 수정했습니다.')
+      err.conflict = body?.detail
+      throw err
+    }
+    if (!res.ok) throw await _httpError(res, 'chat edit apply failed')
+    const data = await res.json()
+    await fetchTree()
+    if (scope === 'user-story' && selectedUserStoryId.value === id) await selectUserStory(id)
+    return data
+  }
+
+  async function fetchChatEditLog(scope, id) {
+    const res = await fetch(`/api/requirements/chat-edit/${scope}/${id}/log`)
+    if (!res.ok) throw await _httpError(res, 'chat log failed')
+    return (await res.json()).entries || []
+  }
+
+  async function fetchItemHistory(scope, id) {
+    const res = await fetch(`/api/requirements/chat-edit/${scope}/${id}/history`)
+    if (!res.ok) throw await _httpError(res, 'history failed')
+    return (await res.json()).items || []
+  }
+
   async function moveUserStory(userStoryId, targetFeatureId) {
     const res = await fetch('/api/requirements/user-story/move', {
       method: 'PATCH',
@@ -824,6 +863,10 @@ export const useRequirementsStore = defineStore('requirements', () => {
     fetchDeletionRecords,
     restoreDeletion,
     purgeDeletion,
+    chatEditStreamUrl,
+    chatEditApply,
+    fetchChatEditLog,
+    fetchItemHistory,
     watchImpactReport,
     dismissImpactReport,
     clearAllData,

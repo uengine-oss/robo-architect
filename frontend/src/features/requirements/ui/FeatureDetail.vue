@@ -13,7 +13,7 @@ import ClarityRadar from './ClarityRadar.vue'
 const props = defineProps({
   feature: { type: Object, required: true }, // FeatureNodeDTO
 })
-const emit = defineEmits(['edit', 'select-user-story', 'generate-stories', 'validate', 'clarify', 'delete'])
+const emit = defineEmits(['edit', 'select-user-story', 'generate-stories', 'validate', 'clarify', 'delete', 'ai-edit'])
 
 const store = useRequirementsStore()
 const stories = computed(() => props.feature.userStories || [])
@@ -28,6 +28,7 @@ const stories = computed(() => props.feature.userStories || [])
       <button class="fd-gen" title="하위 User Story 자동 생성" @click="emit('generate-stories')">✨ 하위 US 자동생성</button>
       <button class="fd-validate" title="DDD 적합성 검증" @click="emit('validate')">🔎 DDD 검증</button>
       <button class="fd-validate" title="요구사항 명확화" @click="emit('clarify')">🔍 명확화</button>
+      <button class="fd-gen" title="채팅으로 한 번에 수정" @click="emit('ai-edit')">✨ AI 편집</button>
       <button class="fd-edit" title="편집" @click="emit('edit', feature)">✎ 편집</button>
       <button class="fd-delete" title="삭제" @click="emit('delete')">🗑 삭제</button>
     </div>
