@@ -26,6 +26,7 @@ const TITLE = { epic: 'Epic', feature: 'Feature' }
         <ChatEditPanel
           :scope="scope"
           :item-id="itemId"
+          :item-name="itemName"
           :current="current"
           @applied="emit('applied', $event)"
         />

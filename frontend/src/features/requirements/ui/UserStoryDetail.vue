@@ -270,6 +270,7 @@ async function saveEdit() {
           :key="userStory.id"
           scope="user-story"
           :item-id="userStory.id"
+          :item-name="`${userStory.role || ''}: ${userStory.action || ''}`"
           :current="chatCurrent"
           @applied="store.fetchHistory(userStory.id)"
         />
