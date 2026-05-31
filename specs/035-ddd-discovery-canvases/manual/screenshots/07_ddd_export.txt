@@ -1,0 +1,12 @@
+# 그래프 → .ddd 내보내기 검증
+
+생성된 파일: 15개
+  00-plan.md
+  02-event-storm.md
+  04-core-domain-chart.md
+  07-bounded-contexts/mileagemanagement.md
+  07-bounded-contexts/법정대리인-동의-관리.md
+  07-bounded-contexts/약관-및-본인인증-관리.md
+  07-bounded-contexts/회원-관리.md
+  08-aggregates/동의-기록.md
+  ... (외 7개)
