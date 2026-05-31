@@ -22,6 +22,7 @@ const rows = ref(
     description: f.description || '',
     edgeCases: f.edgeCases || [],
     assumptions: f.assumptions || [],
+    conflicts: f.conflicts || [],
     userStories: f.userStories || [],
     expanded: false,
   })),
@@ -45,6 +46,7 @@ async function confirm() {
         description: r.description,
         edgeCases: r.edgeCases,
         assumptions: r.assumptions,
+        conflicts: r.conflicts,
         userStories: r.userStories,
       })),
     })
@@ -88,8 +90,17 @@ async function confirm() {
             <div class="sec">
               <div class="sec__label">User Stories</div>
               <ul>
-                <li v-for="(us, j) in r.userStories" :key="j">{{ us.role }}: {{ us.action }}</li>
+                <li v-for="(us, j) in r.userStories" :key="j">
+                  {{ us.role }}: {{ us.action }}
+                  <ul v-if="(us.acceptanceCriteria || []).length" class="ac">
+                    <li v-for="(ac, k) in us.acceptanceCriteria" :key="k">{{ ac }}</li>
+                  </ul>
+                </li>
               </ul>
+            </div>
+            <div class="sec" v-if="r.conflicts.length">
+              <div class="sec__label sec__label--warn">⚠ 기존 요구사항과 충돌</div>
+              <ul><li v-for="(c, j) in r.conflicts" :key="j">{{ c }}</li></ul>
             </div>
             <div class="sec" v-if="r.edgeCases.length">
               <div class="sec__label">Edge Cases</div>
@@ -134,6 +145,9 @@ async function confirm() {
 .sec__label { font-size: 0.68rem; font-weight: 700; color: var(--color-text-light); text-transform: uppercase; margin-bottom: 2px; }
 .sec ul { margin: 0; padding-left: 16px; font-size: 0.78rem; color: var(--color-text); }
 .sec li { margin: 1px 0; }
+.sec ul.ac { padding-left: 14px; margin: 2px 0 4px; }
+.sec ul.ac li { font-size: 0.72rem; color: var(--color-text-light); }
+.sec__label--warn { color: #e8590c; }
 .dialog__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
 .btn { padding: 6px 14px; border: 1px solid var(--color-border); border-radius: 6px; cursor: pointer; font-size: 0.78rem; background: var(--color-bg-tertiary); color: var(--color-text); }
 .btn--primary { background: var(--color-accent); color: #fff; border-color: transparent; }

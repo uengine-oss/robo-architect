@@ -247,6 +247,7 @@ class GeneratedStory(BaseModel):
     role: str = ""
     action: str = ""
     benefit: str = ""
+    acceptanceCriteria: list[str] = Field(default_factory=list)
 
 
 # ── Epic → Feature(spec.md) 자동 생성 (034) ──────────────────────────────
@@ -260,6 +261,7 @@ class GeneratedFeature(BaseModel):
     description: str = ""
     edgeCases: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
     userStories: list[GeneratedStory] = Field(default_factory=list)
 
 

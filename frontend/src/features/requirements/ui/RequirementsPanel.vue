@@ -12,6 +12,7 @@ import EpicEditForm from './EpicEditForm.vue'
 import FeatureEditForm from './FeatureEditForm.vue'
 import GeneratedStoriesReview from './GeneratedStoriesReview.vue'
 import GeneratedFeaturesReview from './GeneratedFeaturesReview.vue'
+import FeatureGenStream from './FeatureGenStream.vue'
 import ValidationFindings from './ValidationFindings.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
@@ -44,8 +45,9 @@ const genResult = ref(null) // GenerateChildStoriesResponse
 const genScopeName = ref('')
 
 // Epic → Feature 자동 생성 (034 — spec.md 단위)
-const genFeatureResult = ref(null) // GenerateFeaturesResponse
+const genFeatureResult = ref(null) // GenerateFeaturesResponse (검토 모달)
 const genFeatureScopeName = ref('')
+const genFeatureStreaming = ref(null) // { boundedContextId } — 리즈닝 스트림 패널
 
 // DDD 검증 (034 US6)
 const validating = ref(false)
@@ -215,17 +217,20 @@ async function onGenerateStories(scopeType) {
 }
 
 // ── Epic → Feature 자동 생성 (034 — 각 Feature = spec.md) ──────────────
-async function onGenerateFeatures() {
+function onGenerateFeatures() {
   const e = store.selectedEpic
   if (!store.selectedNode || store.selectedNode.type !== 'epic' || !e) return
   genFeatureScopeName.value = e.displayName || e.name || ''
-  generating.value = true
-  try {
-    genFeatureResult.value = await store.generateFeatures(e.id)
-  } catch (err) {
-    window.alert(`Feature 생성 실패: ${err?.message || err}`)
-  } finally {
-    generating.value = false
+  // 리즈닝 스트림 패널을 띄운다(블로킹 오버레이 대신). 완료 시 검토 모달로.
+  genFeatureStreaming.value = { boundedContextId: e.id }
+}
+
+function onFeatureStreamDone({ boundedContextId, features }) {
+  genFeatureStreaming.value = null
+  if (features && features.length) {
+    genFeatureResult.value = { boundedContextId, features }
+  } else {
+    window.alert('생성된 Feature가 없습니다. 다시 시도하거나 수동으로 추가하세요.')
   }
 }
 
@@ -392,6 +397,13 @@ async function runValidate(payload) {
       :scope-name="genScopeName"
       @close="genResult = null"
       @confirmed="genResult = null"
+    />
+    <FeatureGenStream
+      v-if="genFeatureStreaming"
+      :bounded-context-id="genFeatureStreaming.boundedContextId"
+      :scope-name="genFeatureScopeName"
+      @done="onFeatureStreamDone"
+      @close="genFeatureStreaming = null"
     />
     <GeneratedFeaturesReview
       v-if="genFeatureResult"

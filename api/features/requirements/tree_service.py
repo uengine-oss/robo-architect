@@ -87,6 +87,15 @@ def _gwt_by_command() -> dict[str, list[AcceptanceCriterionDTO]]:
 def _user_story_dto(row: dict[str, Any], gwt: dict[str, list]) -> UserStoryNodeDTO:
     us = row["us"] or {}
     cmd_id = row.get("cmdId")
+    # 설계(Command+GWT)가 있으면 GWT 기반, 없으면 US 노드의 acceptanceCriteria(문자열
+    # 목록)를 then-절로 표시한다. (수동/생성된 US도 acceptance criteria가 보이도록.)
+    ac = gwt.get(cmd_id, []) if cmd_id else []
+    if not ac:
+        ac = [
+            AcceptanceCriterionDTO(kind="then", name=s)
+            for s in (us.get("acceptanceCriteria") or [])
+            if s
+        ]
     return UserStoryNodeDTO(
         id=us.get("id"),
         role=us.get("role") or "",
@@ -96,7 +105,7 @@ def _user_story_dto(row: dict[str, Any], gwt: dict[str, list]) -> UserStoryNodeD
         status=us.get("status") or "draft",
         commandId=cmd_id,
         commandName=row.get("cmdName"),
-        acceptanceCriteria=gwt.get(cmd_id, []) if cmd_id else [],
+        acceptanceCriteria=ac,
     )
 
 
@@ -105,7 +114,7 @@ def user_story_node_dto(user_story_id: str) -> UserStoryNodeDTO | None:
     query = """
     MATCH (us:UserStory {id: $id})
     OPTIONAL MATCH (us)-[:IMPLEMENTS]->(cmd:Command)
-    RETURN us {.id, .role, .action, .benefit, .priority, .status} AS us,
+    RETURN us {.id, .role, .action, .benefit, .priority, .status, .acceptanceCriteria} AS us,
            cmd.id AS cmdId, cmd.name AS cmdName
     """
     with get_session() as session:
@@ -145,7 +154,7 @@ def build_requirements_tree() -> RequirementsTreeDTO:
                 OPTIONAL MATCH (us)-[:IMPLEMENTS]->(bc:BoundedContext)
                 OPTIONAL MATCH (f:Feature)-[:HAS_USER_STORY]->(us)
                 OPTIONAL MATCH (us)-[:IMPLEMENTS]->(cmd:Command)
-                RETURN us {.id, .role, .action, .benefit, .priority, .status} AS us,
+                RETURN us {.id, .role, .action, .benefit, .priority, .status, .acceptanceCriteria} AS us,
                        bc.id AS bcId,
                        f.id AS featureId,
                        cmd.id AS cmdId, cmd.name AS cmdName
