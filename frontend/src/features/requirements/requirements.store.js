@@ -27,6 +27,10 @@ export const useRequirementsStore = defineStore('requirements', () => {
   const impactReport = ref(null)
   let impactPollTimer = null
 
+  // 034 — recoverable deletion history (option B snapshot)
+  const deletionRecords = ref([])
+  const lastDeletion = ref(null) // { restoreBatchId, scope, ... } of the most recent delete
+
   const hasImpactFindings = computed(
     () => !!impactReport.value && (impactReport.value.findings || []).length > 0,
   )
@@ -345,17 +349,67 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return res.json() // { ok, findings, source }
   }
 
-  async function deleteFeature(featureId, userStoryDisposition = 'unassign') {
+  async function deleteFeature(featureId, userStoryDisposition = 'unassign', removeDesign = false) {
     const res = await fetch('/api/requirements/feature', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId, userStoryDisposition }),
+      body: JSON.stringify({ featureId, userStoryDisposition, removeDesign }),
     })
-    if (!res.ok) throw new Error(`delete feature failed: ${res.status}`)
+    if (!res.ok) throw await _httpError(res, 'delete feature failed')
     const data = await res.json()
+    if (selectedNode.value.type === 'feature' && selectedNode.value.id === featureId) {
+      selectedNode.value = { type: null, id: null }
+      selectedFeature.value = null
+    }
     await fetchTree()
+    lastDeletion.value = { ...data, scope: 'feature' }
     if (data.impactReportId) watchImpactReport(data.impactReportId)
     return data
+  }
+
+  async function deleteEpic(boundedContextId, removeDesign = false) {
+    const res = await fetch('/api/requirements/bounded-context', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boundedContextId, removeDesign }),
+    })
+    if (!res.ok) throw await _httpError(res, 'delete epic failed')
+    const data = await res.json()
+    if (selectedNode.value.type === 'epic' && selectedNode.value.id === boundedContextId) {
+      selectedNode.value = { type: null, id: null }
+      selectedEpic.value = null
+    }
+    await fetchTree()
+    lastDeletion.value = { ...data, scope: 'epic' }
+    if (data.impactReportId) watchImpactReport(data.impactReportId)
+    return data
+  }
+
+  // ── Deletion history / recovery (034 — option B snapshot) ──────────────
+  async function fetchDeletionRecords() {
+    const res = await fetch('/api/requirements/deletion-records')
+    if (!res.ok) throw await _httpError(res, 'list deletion records failed')
+    const data = await res.json()
+    deletionRecords.value = data.records || []
+    return deletionRecords.value
+  }
+
+  async function restoreDeletion(batchId) {
+    const res = await fetch(`/api/requirements/deletion-records/${batchId}/restore`, {
+      method: 'POST',
+    })
+    if (!res.ok) throw await _httpError(res, 'restore failed')
+    const data = await res.json()
+    await Promise.all([fetchTree(), fetchDeletionRecords()])
+    return data
+  }
+
+  async function purgeDeletion(batchId) {
+    const res = await fetch(`/api/requirements/deletion-records/${batchId}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) throw await _httpError(res, 'purge failed')
+    await fetchDeletionRecords()
   }
 
   async function moveUserStory(userStoryId, targetFeatureId) {
@@ -371,14 +425,15 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return data
   }
 
-  async function deleteUserStory(userStoryId) {
+  async function deleteUserStory(userStoryId, removeDesign = false) {
     const res = await fetch('/api/requirements/user-story', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userStoryId }),
+      body: JSON.stringify({ userStoryId, removeDesign }),
     })
-    if (!res.ok) throw new Error(`delete user story failed: ${res.status}`)
+    if (!res.ok) throw await _httpError(res, 'delete user story failed')
     const data = await res.json()
+    lastDeletion.value = { ...data, scope: 'user_story' }
     if (selectedUserStoryId.value === userStoryId) {
       selectedUserStoryId.value = null
       selectedUserStory.value = null
@@ -761,8 +816,14 @@ export const useRequirementsStore = defineStore('requirements', () => {
     fetchPendingDesign,
     requestDesignForUserStories,
     deleteFeature,
+    deleteEpic,
     moveUserStory,
     deleteUserStory,
+    deletionRecords,
+    lastDeletion,
+    fetchDeletionRecords,
+    restoreDeletion,
+    purgeDeletion,
     watchImpactReport,
     dismissImpactReport,
     clearAllData,

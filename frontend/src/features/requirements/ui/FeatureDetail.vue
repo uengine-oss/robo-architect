@@ -13,7 +13,7 @@ import ClarityRadar from './ClarityRadar.vue'
 const props = defineProps({
   feature: { type: Object, required: true }, // FeatureNodeDTO
 })
-const emit = defineEmits(['edit', 'select-user-story', 'generate-stories', 'validate', 'clarify'])
+const emit = defineEmits(['edit', 'select-user-story', 'generate-stories', 'validate', 'clarify', 'delete'])
 
 const store = useRequirementsStore()
 const stories = computed(() => props.feature.userStories || [])
@@ -29,6 +29,7 @@ const stories = computed(() => props.feature.userStories || [])
       <button class="fd-validate" title="DDD 적합성 검증" @click="emit('validate')">🔎 DDD 검증</button>
       <button class="fd-validate" title="요구사항 명확화" @click="emit('clarify')">🔍 명확화</button>
       <button class="fd-edit" title="편집" @click="emit('edit', feature)">✎ 편집</button>
+      <button class="fd-delete" title="삭제" @click="emit('delete')">🗑 삭제</button>
     </div>
 
     <p v-if="feature.description" class="fd-desc">{{ feature.description }}</p>
@@ -100,6 +101,11 @@ const stories = computed(() => props.feature.userStories || [])
   border-radius: 6px; font-size: 0.72rem; padding: 3px 8px; cursor: pointer;
 }
 .fd-validate:hover { filter: brightness(1.1); }
+.fd-delete {
+  border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: #e03131;
+  border-radius: 6px; font-size: 0.72rem; padding: 3px 8px; cursor: pointer;
+}
+.fd-delete:hover { background: #e03131; color: #fff; border-color: #e03131; }
 .fd-desc { font-size: 0.82rem; color: var(--color-text); margin: 10px 0 4px; white-space: pre-wrap; }
 .fd-desc--empty { color: var(--color-text-light); font-style: italic; }
 .fd-section { margin-top: 14px; }

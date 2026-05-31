@@ -14,6 +14,8 @@ import GeneratedStoriesReview from './GeneratedStoriesReview.vue'
 import GeneratedFeaturesReview from './GeneratedFeaturesReview.vue'
 import FeatureGenStream from './FeatureGenStream.vue'
 import ValidationFindings from './ValidationFindings.vue'
+import DeleteConfirmDialog from './DeleteConfirmDialog.vue'
+import DeletionHistoryPanel from './DeletionHistoryPanel.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
@@ -128,24 +130,64 @@ async function onMove({ userStoryId, targetFeatureId }) {
   }
 }
 
-async function onDeleteFeature(feature) {
-  if (!window.confirm(`Feature '${feature.name}'를 삭제할까요?`)) return
-  const withChildren = window.confirm(
-    '하위 User Story도 함께 삭제할까요?\n확인 = 함께 삭제 / 취소 = 미분류로 이동',
-  )
+// ── Recoverable delete (034) — confirm dialog + undo snackbar ───────────
+const deleteTarget = ref(null) // { scope, id, name, hasChildren }
+const undoToast = ref(null) // { batchId, label }
+let undoTimer = null
+const showDeletionHistory = ref(false)
+
+function onDeleteFeature(feature) {
+  deleteTarget.value = {
+    scope: 'feature',
+    id: feature.id,
+    name: feature.name,
+    hasChildren: (feature.userStories || []).length > 0,
+  }
+}
+function onDeleteUserStory(us) {
+  deleteTarget.value = {
+    scope: 'user_story',
+    id: us.id,
+    name: `${us.role}: ${us.action}`,
+    hasChildren: false,
+  }
+}
+function onDeleteEpic(epic) {
+  deleteTarget.value = {
+    scope: 'epic',
+    id: epic.id,
+    name: epic.displayName || epic.name,
+    hasChildren: (epic.features || []).length > 0,
+  }
+}
+
+async function onConfirmDelete({ removeDesign, disposition }) {
+  const t = deleteTarget.value
+  deleteTarget.value = null
   try {
-    await store.deleteFeature(feature.id, withChildren ? 'delete' : 'unassign')
+    let data
+    if (t.scope === 'epic') data = await store.deleteEpic(t.id, removeDesign)
+    else if (t.scope === 'feature') data = await store.deleteFeature(t.id, disposition, removeDesign)
+    else data = await store.deleteUserStory(t.id, removeDesign)
+    if (data?.restoreBatchId) showUndo(data.restoreBatchId, t.name)
   } catch (e) {
     window.alert(`삭제 실패: ${e}`)
   }
 }
 
-async function onDeleteUserStory(us) {
-  if (!window.confirm(`User Story '${us.role}: ${us.action}'를 삭제할까요?`)) return
+function showUndo(batchId, label) {
+  undoToast.value = { batchId, label }
+  if (undoTimer) clearTimeout(undoTimer)
+  undoTimer = setTimeout(() => (undoToast.value = null), 8000)
+}
+async function onUndo() {
+  const t = undoToast.value
+  undoToast.value = null
+  if (undoTimer) clearTimeout(undoTimer)
   try {
-    await store.deleteUserStory(us.id)
+    await store.restoreDeletion(t.batchId)
   } catch (e) {
-    window.alert(`삭제 실패: ${e}`)
+    window.alert(`복구 실패: ${e}`)
   }
 }
 
@@ -280,6 +322,7 @@ async function runValidate(payload) {
         class="tb-btn"
         @click="onClarifyScope({ scopeType: 'project', scopeId: '*' })"
       >🔍 요구사항 명확화 (전체)</button>
+      <button class="tb-btn" @click="showDeletionHistory = true" title="삭제한 요구사항 복구">↩︎ 삭제 이력</button>
       <button class="tb-btn tb-btn--danger" @click="onClearData">데이터 삭제</button>
       <span v-if="store.loading" class="req-toolbar__status">불러오는 중...</span>
       <span v-else-if="store.error" class="req-toolbar__status error">{{ store.error }}</span>
@@ -312,6 +355,7 @@ async function runValidate(payload) {
           @generate-features="onGenerateFeatures"
           @validate="onValidate('epic')"
           @clarify="onClarifyScope({ scopeType: 'bounded_context', scopeId: store.selectedEpic.id })"
+          @delete="onDeleteEpic(store.selectedEpic)"
         />
       </div>
 
@@ -325,6 +369,7 @@ async function runValidate(payload) {
           @generate-stories="onGenerateStories('feature')"
           @validate="onValidate('feature')"
           @clarify="onClarifyScope({ scopeType: 'feature', scopeId: store.selectedFeature.id })"
+          @delete="onDeleteFeature(store.selectedFeature)"
         />
       </div>
 
@@ -425,6 +470,22 @@ async function runValidate(payload) {
       :scope-name="valScopeName"
       @close="valResult = null"
     />
+
+    <!-- 삭제 확인 (034 — recoverable) -->
+    <DeleteConfirmDialog
+      :target="deleteTarget"
+      @confirm="onConfirmDelete"
+      @cancel="deleteTarget = null"
+    />
+
+    <!-- 삭제 이력 / 복구 -->
+    <DeletionHistoryPanel v-if="showDeletionHistory" @close="showDeletionHistory = false" />
+
+    <!-- 실행취소 스낵바 -->
+    <div v-if="undoToast" class="undo-snackbar">
+      <span>🗑 <strong>{{ undoToast.label }}</strong> 삭제됨</span>
+      <button class="undo-btn" @click="onUndo">되돌리기</button>
+    </div>
   </div>
 </template>
 
@@ -438,6 +499,17 @@ async function runValidate(payload) {
   border-bottom: 1px solid var(--color-border); flex-shrink: 0;
 }
 .req-toolbar__title { font-weight: 700; font-size: 0.85rem; margin-right: 8px; }
+.undo-snackbar {
+  position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; z-index: 2100;
+  background: #2b2b2b; color: #fff; padding: 10px 16px; border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); font-size: 0.82rem;
+}
+.undo-btn {
+  border: none; background: transparent; color: #74c0fc; cursor: pointer;
+  font-weight: 700; font-size: 0.82rem;
+}
+.undo-btn:hover { text-decoration: underline; }
 .tb-btn {
   padding: 4px 10px; border: 1px solid var(--color-border); border-radius: 5px;
   background: var(--color-bg-tertiary); color: var(--color-text);

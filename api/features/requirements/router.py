@@ -15,6 +15,7 @@ from .routes.bounded_context_crud import router as bounded_context_crud_router
 from .routes.child_story_generation import router as child_story_generation_router
 from .routes.clarification import router as clarification_router
 from .routes.ddd_validation import router as ddd_validation_router
+from .routes.deletion_history import router as deletion_history_router
 from .routes.design_coverage import router as design_coverage_router
 from .routes.design_reflect import router as design_reflect_router
 from .routes.design_trace import router as design_trace_router
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/api/requirements", tags=["requirements"])
 
 router.include_router(requirements_tree_router)
 router.include_router(bounded_context_crud_router)
+router.include_router(deletion_history_router)
 router.include_router(child_story_generation_router)
 router.include_router(ddd_validation_router)
 router.include_router(epic_feature_propose_router)

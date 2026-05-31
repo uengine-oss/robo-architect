@@ -13,7 +13,7 @@ import ClarityRadar from './ClarityRadar.vue'
 const props = defineProps({
   epic: { type: Object, required: true }, // EpicNodeDTO
 })
-const emit = defineEmits(['edit', 'select-feature', 'generate-features', 'validate', 'clarify'])
+const emit = defineEmits(['edit', 'select-feature', 'generate-features', 'validate', 'clarify', 'delete'])
 
 const store = useRequirementsStore()
 const features = computed(() => props.epic.features || [])
@@ -31,6 +31,7 @@ function storyCount(f) {
       <button class="ed-validate" title="DDD 적합성 검증" @click="emit('validate')">🔎 DDD 검증</button>
       <button class="ed-validate" title="요구사항 명확화" @click="emit('clarify')">🔍 명확화</button>
       <button class="ed-edit" title="편집" @click="emit('edit', epic)">✎ 편집</button>
+      <button class="ed-delete" title="삭제" @click="emit('delete')">🗑 삭제</button>
     </div>
 
     <p v-if="epic.description" class="ed-desc">{{ epic.description }}</p>
@@ -86,6 +87,11 @@ function storyCount(f) {
   border-radius: 6px; font-size: 0.72rem; padding: 3px 8px; cursor: pointer;
 }
 .ed-validate:hover { filter: brightness(1.1); }
+.ed-delete {
+  border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: #e03131;
+  border-radius: 6px; font-size: 0.72rem; padding: 3px 8px; cursor: pointer;
+}
+.ed-delete:hover { background: #e03131; color: #fff; border-color: #e03131; }
 .ed-desc { font-size: 0.82rem; color: var(--color-text); margin: 10px 0 4px; white-space: pre-wrap; }
 .ed-desc--empty { color: var(--color-text-light); font-style: italic; }
 .ed-section { margin-top: 14px; }

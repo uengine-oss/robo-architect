@@ -30,7 +30,7 @@ const bpmnStore = useBpmnStore()
 const session = useSessionStore()
 
 // Tab state management
-const activeTab = ref('Design')
+const activeTab = ref('Requirements')
 
 // Claude Code workdir state — hydrated from localStorage so the inspector's
 // source viewer (feature 029) can resolve ImplementationFile paths even

@@ -91,12 +91,17 @@ class FeatureCreateResponse(BaseModel):
 class FeatureDeleteRequest(BaseModel):
     featureId: str
     userStoryDisposition: Literal["unassign", "delete"] = "unassign"
+    # 034 — when true, also remove design elements that *only* this requirement
+    # implements (proposed via the existing change-plan HITL flow). Default off.
+    removeDesign: bool = False
 
 
 class FeatureDeleteResponse(BaseModel):
     deleted: bool
     affectedUserStoryIds: list[str] = Field(default_factory=list)
     impactReportId: Optional[str] = None
+    # 034 — DeletionRecord batch id for later recovery (option B snapshot).
+    restoreBatchId: Optional[str] = None
 
 
 # ── Feature edit (034 — PATCH /feature) ──────────────────────────────────
@@ -397,11 +402,52 @@ class UserStoryMoveResponse(BaseModel):
 
 class UserStoryDeleteRequest(BaseModel):
     userStoryId: str
+    removeDesign: bool = False
 
 
 class UserStoryDeleteResponse(BaseModel):
     deleted: bool
     impactReportId: Optional[str] = None
+    restoreBatchId: Optional[str] = None
+
+
+# ── Epic (BoundedContext) delete + deletion history (034) ────────────────
+
+
+class BoundedContextDeleteRequest(BaseModel):
+    boundedContextId: str
+    removeDesign: bool = False
+
+
+class BoundedContextDeleteResponse(BaseModel):
+    deleted: bool
+    affectedFeatureIds: list[str] = Field(default_factory=list)
+    affectedUserStoryIds: list[str] = Field(default_factory=list)
+    impactReportId: Optional[str] = None
+    restoreBatchId: Optional[str] = None
+
+
+class DeletionRecordDTO(BaseModel):
+    batchId: str
+    scope: str  # "epic" | "feature" | "user_story"
+    rootLabel: str
+    rootName: Optional[str] = None
+    actor: Optional[str] = None
+    createdAt: str
+    restored: bool = False
+    nodeCount: int = 0
+    relCount: int = 0
+
+
+class DeletionRecordListResponse(BaseModel):
+    records: list[DeletionRecordDTO] = Field(default_factory=list)
+
+
+class RestoreResponse(BaseModel):
+    restored: bool
+    nodeCount: int = 0
+    relinked: int = 0
+    reason: Optional[str] = None
 
 
 # ── Design trace ─────────────────────────────────────────────────────────

@@ -7,17 +7,22 @@ BCs could previously only be created via the ingestion pipeline.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from starlette.requests import Request
 
 from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+from api.features.requirements import deletion_archive as da
+from api.features.requirements.impact_hook import create_report, run_impact_analysis
 from api.features.requirements.requirements_contracts import (
     BoundedContextCreateRequest,
     BoundedContextCreateResponse,
+    BoundedContextDeleteRequest,
+    BoundedContextDeleteResponse,
     BoundedContextDTO,
     BoundedContextUpdateRequest,
     BoundedContextUpdateResponse,
 )
+from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -78,3 +83,79 @@ async def update_bounded_context(
         params={**http_context(request), "bounded_context_id": req.boundedContextId},
     )
     return BoundedContextUpdateResponse(boundedContext=_to_dto(bc))
+
+
+@router.delete("/bounded-context", response_model=BoundedContextDeleteResponse)
+async def delete_bounded_context(
+    req: BoundedContextDeleteRequest, request: Request, background: BackgroundTasks
+) -> BoundedContextDeleteResponse:
+    """Delete an Epic (BoundedContext) with its Features and User Stories.
+
+    Recoverable: the whole subtree (+ optionally the design it exclusively
+    implements) is snapshotted into a :DeletionRecord before the live nodes
+    are removed (034 — option B). Restore later via /deletion-records.
+    """
+    with get_session() as session:
+        exists = session.run(
+            "MATCH (bc:BoundedContext {id: $id}) RETURN bc.name AS name",
+            id=req.boundedContextId,
+        ).single()
+        if not exists:
+            raise HTTPException(
+                status_code=404, detail=f"Bounded context {req.boundedContextId} not found"
+            )
+
+        ids = da.subtree_ids_for_epic(session, req.boundedContextId)
+        us_ids = [
+            r["id"]
+            for r in session.run(
+                """
+                MATCH (bc:BoundedContext {id: $id})-[:HAS_FEATURE]->(:Feature)
+                      -[:HAS_USER_STORY]->(us:UserStory)
+                RETURN DISTINCT us.id AS id
+                """,
+                id=req.boundedContextId,
+            )
+        ]
+        feat_ids = [
+            r["id"]
+            for r in session.run(
+                "MATCH (bc:BoundedContext {id: $id})-[:HAS_FEATURE]->(f:Feature) RETURN f.id AS id",
+                id=req.boundedContextId,
+            )
+        ]
+
+        if req.removeDesign:
+            ids = list(dict.fromkeys(ids + da.exclusive_design_ids(session, us_ids)))
+
+        batch_id = da.capture(
+            session,
+            ids,
+            scope="epic",
+            root_label="BoundedContext",
+            root_name=exists["name"],
+            actor=http_context(request).get("user"),
+        )
+        da.detach_delete(session, ids)
+
+    report_id = create_report("delete")
+    background.add_task(run_impact_analysis, report_id, trigger="delete")
+
+    SmartLogger.log(
+        "INFO",
+        "Bounded context (epic) deleted.",
+        category="requirements.epic.delete",
+        params={
+            **http_context(request),
+            "bounded_context_id": req.boundedContextId,
+            "remove_design": req.removeDesign,
+            "restore_batch": batch_id,
+        },
+    )
+    return BoundedContextDeleteResponse(
+        deleted=True,
+        affectedFeatureIds=feat_ids,
+        affectedUserStoryIds=us_ids,
+        impactReportId=report_id,
+        restoreBatchId=batch_id,
+    )
