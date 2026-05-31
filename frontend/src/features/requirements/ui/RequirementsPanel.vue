@@ -19,6 +19,7 @@ import ChatEditPanel from './ChatEditPanel.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
+import DddWizardPanel from './DddWizardPanel.vue'
 
 /**
  * Requirements tab root panel (026).
@@ -36,6 +37,7 @@ useDataRefresh(() => {
 
 const showAddDialog = ref(false)
 const showIngestionModal = ref(false)
+const showDddWizard = ref(false)
 
 // Epic/Feature edit dialogs (034 US3)
 const editingEpic = ref(null)
@@ -413,6 +415,7 @@ async function runValidate(payload) {
     <div class="req-toolbar">
       <span class="req-toolbar__title">Requirements</span>
       <button class="tb-btn tb-btn--primary" @click="showAddDialog = true">+ 요구사항 추가</button>
+      <button class="tb-btn" @click="showDddWizard = true">🧭 DDD 마법사</button>
       <button class="tb-btn" @click="showIngestionModal = true">문서 업로드</button>
       <button
         class="tb-btn"
@@ -614,6 +617,13 @@ async function runValidate(payload) {
       <span>🗑 <strong>{{ undoToast.label }}</strong> 삭제됨</span>
       <button class="undo-btn" @click="onUndo">되돌리기</button>
     </div>
+
+    <!-- 035 — DDD 발견 마법사 오버레이 -->
+    <div v-if="showDddWizard" class="dw-overlay" @click.self="showDddWizard = false">
+      <div class="dw-modal">
+        <DddWizardPanel scope="greenfield" @close="showDddWizard = false" @done="() => { showDddWizard = false; store.fetchTree() }" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -710,5 +720,14 @@ async function runValidate(payload) {
   background: var(--color-bg-secondary); color: var(--color-text);
   padding: 18px 26px; border-radius: 10px; font-size: 0.9rem;
   border: 1px solid var(--color-border);
+}
+.dw-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1200;
+  display: flex; align-items: center; justify-content: center;
+}
+.dw-modal {
+  width: min(560px, 92vw); max-height: 88vh; overflow-y: auto;
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
 }
 </style>
