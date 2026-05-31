@@ -56,18 +56,35 @@ def record_history(
     return row["id"] if row else None
 
 
-def fetch_history(session, node_id: str, limit: int = 50) -> list[EditHistoryItemDTO]:
+_LABEL_SCOPE = {"BoundedContext": "epic", "Feature": "feature", "UserStory": "user-story"}
+
+
+def fetch_history(session, node_ids: list[str], limit: int = 80) -> list[EditHistoryItemDTO]:
+    """Edit history (newest first) across the given nodes.
+
+    Pass a single id for one item, or a whole subtree (item + descendants) to
+    fold in child history — e.g. a Feature view that also shows its child User
+    Stories' edits. Each entry carries the owning item's id/name/scope.
+    """
+    ids = [i for i in dict.fromkeys(node_ids) if i]
+    if not ids:
+        return []
     rows = session.run(
         """
-        MATCH (n {id: $id})-[:HAS_HISTORY]->(h:EditHistory)
-        RETURN h.id AS id, h.timestamp AS timestamp,
+        MATCH (n)-[:HAS_HISTORY]->(h:EditHistory)
+        WHERE n.id IN $ids
+        RETURN n.id AS itemId, labels(n) AS labels,
+               CASE WHEN 'UserStory' IN labels(n)
+                    THEN coalesce(n.role, '') + ': ' + coalesce(n.action, '')
+                    ELSE coalesce(n.displayName, n.name) END AS itemName,
+               h.id AS id, h.timestamp AS timestamp,
                h.userName AS userName, h.userEmail AS userEmail,
                h.changes AS changes, h.source AS source,
                h.feedback AS feedback, h.rationale AS rationale
         ORDER BY h.timestamp DESC
         LIMIT $limit
         """,
-        id=node_id,
+        ids=ids,
         limit=limit,
     ).data()
     return [_to_dto(r) for r in rows]
@@ -123,6 +140,8 @@ def _to_dto(row: dict) -> EditHistoryItemDTO:
             changes = {}
     else:
         changes = changes_raw
+    labels = row.get("labels") or []
+    scope = next((_LABEL_SCOPE[l] for l in labels if l in _LABEL_SCOPE), None)
     return EditHistoryItemDTO(
         id=row.get("id") or "",
         timestamp=ts_str,
@@ -132,4 +151,7 @@ def _to_dto(row: dict) -> EditHistoryItemDTO:
         source=row.get("source"),
         feedback=row.get("feedback") or None,
         rationale=row.get("rationale") or None,
+        itemId=row.get("itemId"),
+        itemName=(row.get("itemName") or "").strip(": ") or None,
+        itemScope=scope,
     )

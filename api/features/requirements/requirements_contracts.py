@@ -488,6 +488,11 @@ class EditHistoryItemDTO(BaseModel):
     source: Optional[str] = None  # "form" | "chat" | "clarification"
     feedback: Optional[str] = None  # the NL feedback that drove a chat edit
     rationale: Optional[str] = None  # the agent's reasoning for the change
+    # 035 — which item this entry belongs to (set when aggregating a subtree's
+    # history, e.g. a Feature view that folds in its child User Stories).
+    itemId: Optional[str] = None
+    itemName: Optional[str] = None
+    itemScope: Optional[str] = None  # "epic" | "feature" | "user-story"
 
 
 class EditHistoryResponse(BaseModel):

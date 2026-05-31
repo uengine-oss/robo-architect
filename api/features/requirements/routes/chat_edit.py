@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
+from api.features.requirements import deletion_archive as da
 from api.features.requirements.chat_edit import history_service as hist
 from api.features.requirements.chat_edit import scope_io
 from api.features.requirements.chat_edit.chat_edit_agent import stream_chat_edit
@@ -184,8 +185,18 @@ async def chat_edit_log(scope: str, node_id: str) -> ChatEditLogResponse:
 
 @router.get("/chat-edit/{scope}/{node_id}/history", response_model=EditHistoryResponse)
 async def chat_edit_history(scope: str, node_id: str) -> EditHistoryResponse:
-    """Collaborative edit history (newest first) for any requirement item."""
+    """Collaborative edit history (newest first) for a requirement item.
+
+    Hierarchical: a Feature folds in its child User Stories' history; an Epic
+    folds in its Features + their User Stories. A User Story shows its own.
+    """
     _check_scope(scope)
     with get_session() as session:
-        items = hist.fetch_history(session, node_id, limit=50)
+        if scope == "epic":
+            ids = da.subtree_ids_for_epic(session, node_id)
+        elif scope == "feature":
+            ids = da.subtree_ids_for_feature(session, node_id, include_stories=True)
+        else:
+            ids = [node_id]
+        items = hist.fetch_history(session, ids, limit=80)
     return EditHistoryResponse(items=items)

@@ -532,6 +532,7 @@ async function runValidate(payload) {
         class="req-inspector-pane"
         :style="{ width: inspectorWidth + 'px' }"
       >
+        <button class="req-inspector-close" title="속성 편집기 닫기" @click="closeInspector">×</button>
         <InspectorPanel
           :key="inspectedNode.id"
           :node-id="inspectedNode.id"
@@ -685,9 +686,15 @@ async function runValidate(payload) {
 }
 .canvas-hint { font-weight: 400; opacity: 0.7; }
 .req-inspector-pane {
-  flex-shrink: 0; border-left: 1px solid var(--color-border);
+  position: relative; flex-shrink: 0; border-left: 1px solid var(--color-border);
   overflow: hidden; display: flex; flex-direction: column;
 }
+.req-inspector-close {
+  position: absolute; top: 10px; right: 12px; z-index: 6;
+  border: none; background: transparent; color: var(--color-text-light);
+  font-size: 1.2rem; line-height: 1; cursor: pointer;
+}
+.req-inspector-close:hover { color: var(--color-text); }
 .req-inspector-resizer {
   width: 4px; cursor: col-resize; background: transparent;
   flex-shrink: 0; transition: background 0.2s ease;

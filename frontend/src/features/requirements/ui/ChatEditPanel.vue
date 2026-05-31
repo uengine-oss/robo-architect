@@ -42,6 +42,12 @@ const SCOPE_META = {
   'user-story': { label: 'US', color: '#40c057' },
 }
 
+// A history entry comes from a descendant item (e.g. a Feature view showing a
+// child US's edit) when its owning item differs from the panel's item.
+function fromChild(h) {
+  return h.itemId && h.itemId !== props.itemId
+}
+
 onMounted(loadHistory)
 
 async function loadHistory() {
@@ -282,10 +288,19 @@ function when(iso) {
 
     <!-- collaborative decision history -->
     <div class="ce-history">
-      <div class="ce-history__head">🕘 결정 이력 (협업)</div>
+      <div class="ce-history__head">
+        🕘 결정 이력 (협업)
+        <span v-if="scope !== 'user-story'" class="ce-history__sub">— 하위 항목 수정 포함</span>
+      </div>
       <div v-if="!history.length" class="ce-history__empty">아직 편집 이력이 없습니다.</div>
       <ul v-else class="ce-history__list">
-        <li v-for="h in history" :key="h.id" class="ce-hist-item">
+        <li v-for="h in history" :key="h.id" class="ce-hist-item" :class="{ 'is-child': fromChild(h) }">
+          <div v-if="fromChild(h)" class="ce-hist-from">
+            <span class="ce-hist-from-badge" :style="{ background: (SCOPE_META[h.itemScope] || {}).color }">
+              {{ (SCOPE_META[h.itemScope] || {}).label || '항목' }}
+            </span>
+            <span class="ce-hist-from-name">{{ h.itemName }}</span>
+          </div>
           <div class="ce-hist-meta">
             <span class="ce-hist-who">{{ h.userName }}</span>
             <span v-if="h.source" class="ce-hist-src" :class="h.source">{{ h.source }}</span>
@@ -383,6 +398,11 @@ function when(iso) {
 .ce-history__empty { font-size: 0.76rem; color: var(--color-text-light); font-style: italic; }
 .ce-history__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .ce-hist-item { border-left: 2px solid var(--color-border); padding-left: 8px; }
+.ce-hist-item.is-child { border-left-color: var(--color-accent, #228be6); }
+.ce-history__sub { font-weight: 400; text-transform: none; opacity: 0.7; margin-left: 4px; }
+.ce-hist-from { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+.ce-hist-from-badge { font-size: 0.56rem; font-weight: 700; color: #fff; padding: 0 5px; border-radius: 3px; }
+.ce-hist-from-name { font-size: 0.72rem; color: var(--color-text-light); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ce-hist-meta { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
 .ce-hist-who { font-weight: 700; }
 .ce-hist-src { font-size: 0.6rem; padding: 0 4px; border-radius: 3px; background: var(--color-bg-tertiary); color: var(--color-text-light); text-transform: uppercase; }
