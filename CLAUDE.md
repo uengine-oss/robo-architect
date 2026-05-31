@@ -1,4 +1,10 @@
 <!-- SPECKIT START -->
+Active feature plan: [specs/035-ddd-discovery-canvases/plan.md](specs/035-ddd-discovery-canvases/plan.md)
+
+**035 DDD 발견 마법사 & 도메인 캔버스** (started 2026-05-31) — `ddd-starter`(8단계) 스킬 통합: (US1) 요구사항 탭 맨땅/에픽 양쪽에서 프로파일링→옵트인 DDD 마법사(030 clarification 세션 + 034 이원화 엔진 + SSE 재사용); (US2) `Event.pivotal`/`hotspot` 속성 추가 → 피보탈 경계 서브도메인 도출; (US3) **BC 상세 화면 신설**(EpicDetail 탭화 + Canvas 탭, 설계 캔버스 BC 클릭 진입; `ddd_spec` `bc_canvas`/`BoundedContextProjection` 재사용); (US5) `AggregateViewerInspector`에 Aggregate Canvas 탭(spec 027 불변조건/`aggregate_spec` 재사용); (US6) `contexts` classification에 **generic 추가**(현재 core/supporting만); (US7) 그래프→`.ddd` 내보내기(`ddd_spec` 렌더러 경로 매개변수화). **진실의 원천=그래프**, 캔버스=투영, `.ddd`=보조. 신규 노드 라벨/관계 0건(속성 추가만). Phase 0/1 ✅(plan/research/data-model/3 contracts/quickstart). Phase 2 ⏸ `/speckit-tasks`. Constitution PASS. 의존: spec 034(미커밋 상태 — `generation/`·`local_tooling`·엔진 토글), 030, 027/028, 029 robo-spec, 004 change plan/apply, 031 언어정책.
+
+---
+이전 피처(034) 참고:
 Active feature plan: [specs/034-requirement-epic-feature-units/plan.md](specs/034-requirement-epic-feature-units/plan.md)
 
 Read the plan for technologies, project structure, constitution gates, and architectural constraints relevant to current work. Companion artifacts in the same directory:
