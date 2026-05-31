@@ -118,6 +118,40 @@ def test_engine_fallback_no_subdomains_no_changes():
     assert changes == []
 
 
+def test_engine_normalizes_bc_change_name_from_alternate_keys(monkeypatch):
+    """LLM이 name 대신 displayName/title/label로 BC 이름을 줄 때 정규화되는지."""
+    import api.features.requirements.ddd_wizard.engine as eng
+
+    # _via_claude/get_llm를 타지 않도록 _parse가 직접 반환하게 가짜 LLM 경로를 막고
+    # generate_step의 in-process 분기를 우회: 직접 previews 정규화 로직만 검증.
+    def fake_parse(_raw):
+        return "art", [
+            {"action": "create", "targetType": "BoundedContext", "after": {"displayName": "주문관리"}},
+            {"action": "create", "targetType": "BoundedContext", "label": "BoundedContext '결제' 생성", "after": {}},
+            {"action": "create", "targetType": "BoundedContext", "after": {}, "label": "이름없음라벨"},
+        ]
+
+    monkeypatch.setattr(eng, "_parse", fake_parse)
+
+    # in-process LLM 호출이 fake_parse 결과를 쓰도록 get_llm을 가짜로.
+    class _FakeLLM:
+        def invoke(self, _msgs):
+            class _R:
+                content = "{}"
+            return _R()
+
+    import api.features.ingestion.ingestion_llm_runtime as rt
+    monkeypatch.setattr(rt, "get_llm", lambda: _FakeLLM())
+
+    proposal = eng.generate_step("decompose", {}, None, engine="in-process")
+    names = [c.after.get("name") for c in proposal.graphChanges]
+    # 1) displayName→name, 2) label 따옴표→name, 3) 따옴표없는 label→name(폴백)
+    assert "주문관리" in names
+    assert "결제" in names
+    # 빈 after + 라벨만 있으면 라벨 텍스트라도 이름으로 채워져 최소 3건 유지
+    assert all(n for n in names)
+
+
 def test_export_slug():
     assert _slug("Order Management") == "order-management"
     assert _slug("주문 관리") == "주문-관리"

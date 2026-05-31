@@ -25,7 +25,9 @@ _SYSTEM = (
     "domain events=Event, aggregates=Aggregate. Only propose changes that map to "
     "these existing node types — never invent node labels. Return ONLY JSON: "
     '{"artifact":"<markdown>","changes":[{"action":"create|update","targetType":'
-    '"BoundedContext|UserStory|Event|Aggregate","label":"...","after":{...}}]}.'
+    '"BoundedContext|UserStory|Event|Aggregate","label":"...","after":{...}}]}. '
+    "For a BoundedContext create, `after.name` MUST be the subdomain name (non-empty). "
+    "For a UserStory create, `after.action` MUST be filled."
 )
 
 
@@ -129,16 +131,33 @@ def generate_step(
             )
             artifact, changes = _fallback(step_key, answers, document)
 
-    previews = [
-        GraphChangePreview(
-            changeId=str(uuid.uuid4()),
-            action=(c.get("action") or "create"),
-            targetType=(c.get("targetType") or "BoundedContext"),
-            targetId=c.get("targetId"),
-            label=c.get("label") or "",
-            before=c.get("before") or {},
-            after=c.get("after") or {},
+    previews = []
+    for c in changes:
+        target_type = c.get("targetType") or "BoundedContext"
+        after = c.get("after") or {}
+        # LLM이 name을 다른 키(displayName/title/name 누락)로 줄 수 있어 정규화한다.
+        if target_type == "BoundedContext" and not (after.get("name") or "").strip():
+            derived = (after.get("displayName") or after.get("title")
+                       or after.get("boundedContext") or after.get("subdomain") or "").strip()
+            if not derived:
+                # label "… 'X' …" 또는 label 자체에서 이름을 추출(따옴표 안 우선).
+                label = c.get("label") or ""
+                import re as _re
+
+                m = _re.search(r"['\"“”]([^'\"“”]+)['\"“”]", label)
+                derived = (m.group(1).strip() if m else label.strip())
+            if not derived:
+                continue  # 이름을 끝내 못 얻으면 변경안에서 제외(빈 BC 생성 방지)
+            after = {**after, "name": derived}
+        previews.append(
+            GraphChangePreview(
+                changeId=str(uuid.uuid4()),
+                action=(c.get("action") or "create"),
+                targetType=target_type,
+                targetId=c.get("targetId"),
+                label=c.get("label") or "",
+                before=c.get("before") or {},
+                after=after,
+            )
         )
-        for c in changes
-    ]
     return WizardProposal(stepKey=step_key, artifactMarkdown=artifact, graphChanges=previews)
