@@ -1,12 +1,11 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
 import RequirementsTree from './RequirementsTree.vue'
 import UserStoryDetail from './UserStoryDetail.vue'
 import EpicDetail from './EpicDetail.vue'
 import FeatureDetail from './FeatureDetail.vue'
-import DesignTraceCanvas from './DesignTraceCanvas.vue'
 import AddRequirementDialog from './AddRequirementDialog.vue'
 import EpicEditForm from './EpicEditForm.vue'
 import FeatureEditForm from './FeatureEditForm.vue'
@@ -16,7 +15,7 @@ import FeatureGenStream from './FeatureGenStream.vue'
 import ValidationFindings from './ValidationFindings.vue'
 import DeleteConfirmDialog from './DeleteConfirmDialog.vue'
 import DeletionHistoryPanel from './DeletionHistoryPanel.vue'
-import ChatEditDialog from './ChatEditDialog.vue'
+import ChatEditPanel from './ChatEditPanel.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
@@ -60,6 +59,28 @@ const valScopeName = ref('')
 // Node clicked on the design-trace canvas → opens the property inspector.
 const inspectedNode = ref(null)
 
+// Resizable left tree pane (035 — draggable split).
+const treeWidth = ref(320)
+const isResizingTree = ref(false)
+function startResizeTree(e) {
+  isResizingTree.value = true
+  e.preventDefault()
+  document.addEventListener('mousemove', onResizeTree)
+  document.addEventListener('mouseup', stopResizeTree)
+}
+function onResizeTree(e) {
+  if (!isResizingTree.value) return
+  treeWidth.value = Math.max(200, Math.min(window.innerWidth - 360, Math.round(e.clientX)))
+  try {
+    localStorage.setItem('requirements_tree_width', String(treeWidth.value))
+  } catch {}
+}
+function stopResizeTree() {
+  isResizingTree.value = false
+  document.removeEventListener('mousemove', onResizeTree)
+  document.removeEventListener('mouseup', stopResizeTree)
+}
+
 // Resizable inspector pane — same drag behaviour as the Design tab panels.
 const inspectorWidth = ref(380)
 const isResizingInspector = ref(false)
@@ -93,11 +114,17 @@ onMounted(() => {
   try {
     const v = Number(localStorage.getItem('requirements_inspector_width'))
     if (Number.isFinite(v) && v >= 280) inspectorWidth.value = v
+    const cw = Number(localStorage.getItem('requirements_chat_width'))
+    if (Number.isFinite(cw) && cw >= 320) chatWidth.value = cw
+    const tw = Number(localStorage.getItem('requirements_tree_width'))
+    if (Number.isFinite(tw) && tw >= 200) treeWidth.value = tw
   } catch {}
 })
 
 onUnmounted(() => {
   stopResizeInspector()
+  stopResizeChat()
+  stopResizeTree()
 })
 
 function onSelect(usId) {
@@ -131,29 +158,72 @@ async function onMove({ userStoryId, targetFeatureId }) {
   }
 }
 
-// ── Conversational (chat) edit for Epic/Feature (035) ──────────────────
-const chatEditTarget = ref(null) // { scope, itemId, itemName, current }
-function onAiEditEpic() {
-  const e = store.selectedEpic
-  if (!e) return
-  chatEditTarget.value = {
-    scope: 'epic', itemId: e.id, itemName: e.displayName || e.name,
-    current: { name: e.displayName || e.name || '', description: e.description || '' },
+// ── Conversational (chat) edit — right-docked split panel (035) ────────
+// One Chat panel docked on the right, the same for Epic/Feature/User Story.
+// Its target follows the currently selected tree item.
+const chatOpen = ref(false)
+const chatWidth = ref(420)
+const isResizingChat = ref(false)
+
+const chatTarget = computed(() => {
+  const n = store.selectedNode
+  if (n.type === 'epic' && store.selectedEpic) {
+    const e = store.selectedEpic
+    return {
+      scope: 'epic', itemId: e.id, itemName: e.displayName || e.name,
+      current: { name: e.displayName || e.name || '', description: e.description || '' },
+    }
   }
-}
-function onAiEditFeature() {
-  const f = store.selectedFeature
-  if (!f) return
-  chatEditTarget.value = {
-    scope: 'feature', itemId: f.id, itemName: f.name,
-    current: {
-      name: f.name || '', description: f.description || '',
-      edgeCases: f.edgeCases || [], assumptions: f.assumptions || [],
-    },
+  if (n.type === 'feature' && store.selectedFeature) {
+    const f = store.selectedFeature
+    return {
+      scope: 'feature', itemId: f.id, itemName: f.name,
+      current: {
+        name: f.name || '', description: f.description || '',
+        edgeCases: f.edgeCases || [], assumptions: f.assumptions || [],
+      },
+    }
   }
+  if (store.selectedUserStory) {
+    const us = store.selectedUserStory
+    return {
+      scope: 'user-story', itemId: us.id,
+      itemName: `${us.role || ''}: ${us.action || ''}`,
+      current: {
+        role: us.role || '', action: us.action || '', benefit: us.benefit || '',
+        priority: us.priority || 'medium', status: us.status || 'draft',
+        acceptanceCriteria: (us.acceptanceCriteria || []).map((c) => c.name || c).filter(Boolean),
+      },
+    }
+  }
+  return null
+})
+
+function openChat() {
+  chatOpen.value = true
 }
 function onChatEditApplied() {
   store.fetchTree()
+}
+
+function startResizeChat(e) {
+  isResizingChat.value = true
+  e.preventDefault()
+  document.addEventListener('mousemove', onResizeChat)
+  document.addEventListener('mouseup', stopResizeChat)
+}
+function onResizeChat(e) {
+  if (!isResizingChat.value) return
+  const next = Math.round(window.innerWidth - e.clientX)
+  chatWidth.value = Math.max(320, Math.min(window.innerWidth - 240, next))
+  try {
+    localStorage.setItem('requirements_chat_width', String(chatWidth.value))
+  } catch {}
+}
+function stopResizeChat() {
+  isResizingChat.value = false
+  document.removeEventListener('mousemove', onResizeChat)
+  document.removeEventListener('mouseup', stopResizeChat)
 }
 
 // ── Recoverable delete (034) — confirm dialog + undo snackbar ───────────
@@ -348,6 +418,12 @@ async function runValidate(payload) {
         class="tb-btn"
         @click="onClarifyScope({ scopeType: 'project', scopeId: '*' })"
       >🔍 요구사항 명확화 (전체)</button>
+      <button
+        class="tb-btn"
+        :class="{ 'tb-btn--active': chatOpen }"
+        title="선택한 항목을 채팅으로 수정"
+        @click="chatOpen = !chatOpen"
+      >💬 Chat</button>
       <button class="tb-btn" @click="showDeletionHistory = true" title="삭제한 요구사항 복구">↩︎ 삭제 이력</button>
       <button class="tb-btn tb-btn--danger" @click="onClearData">데이터 삭제</button>
       <span v-if="store.loading" class="req-toolbar__status">불러오는 중...</span>
@@ -355,7 +431,7 @@ async function runValidate(payload) {
     </div>
 
     <div class="req-body">
-      <div class="req-tree-pane">
+      <div class="req-tree-pane" :style="{ width: treeWidth + 'px' }">
         <RequirementsTree
           :tree="store.tree"
           :selected-id="store.selectedUserStoryId"
@@ -371,6 +447,13 @@ async function runValidate(payload) {
         />
       </div>
 
+      <!-- draggable split between tree and detail (035) -->
+      <div
+        class="req-tree-resizer"
+        @mousedown="startResizeTree"
+        title="드래그하여 트리 너비 조절"
+      ></div>
+
       <!-- Epic detail (034 US2) -->
       <div v-if="store.selectedNode.type === 'epic'" class="req-detail-pane">
         <EpicDetail
@@ -382,7 +465,7 @@ async function runValidate(payload) {
           @validate="onValidate('epic')"
           @clarify="onClarifyScope({ scopeType: 'bounded_context', scopeId: store.selectedEpic.id })"
           @delete="onDeleteEpic(store.selectedEpic)"
-          @ai-edit="onAiEditEpic"
+          @ai-edit="openChat"
         />
       </div>
 
@@ -397,25 +480,41 @@ async function runValidate(payload) {
           @validate="onValidate('feature')"
           @clarify="onClarifyScope({ scopeType: 'feature', scopeId: store.selectedFeature.id })"
           @delete="onDeleteFeature(store.selectedFeature)"
-          @ai-edit="onAiEditFeature"
+          @ai-edit="openChat"
         />
       </div>
 
-      <!-- User Story detail + design-trace canvas (default) -->
+      <!-- User Story detail (default) — design-trace is a tab inside, not a
+           cramped bottom split (035). -->
       <div v-else class="req-detail-pane">
-        <div class="req-detail-pane__top">
-          <UserStoryDetail :user-story="store.selectedUserStory" @delete="onDeleteUserStory" />
-        </div>
-        <div class="req-detail-pane__canvas">
-          <div class="canvas-label">
-            설계 괘적
-            <span class="canvas-hint">— 노드를 클릭하면 우측에 속성 편집기가 열립니다</span>
-          </div>
-          <DesignTraceCanvas
-            :trace="store.designTrace"
-            :loading="store.designTraceLoading"
-            @node-click="onCanvasNodeClick"
-          />
+        <UserStoryDetail
+          :user-story="store.selectedUserStory"
+          :trace="store.designTrace"
+          :trace-loading="store.designTraceLoading"
+          @delete="onDeleteUserStory"
+          @ai-edit="openChat"
+          @canvas-node-click="onCanvasNodeClick"
+        />
+      </div>
+
+      <!-- Chat resizer / docked Chat panel (035) — right split, same for
+           Epic/Feature/User Story; target follows the selected item. -->
+      <div
+        v-if="chatOpen"
+        class="req-chat-resizer"
+        @mousedown="startResizeChat"
+        title="드래그하여 Chat 너비 조절"
+      ></div>
+      <div v-if="chatOpen" class="req-chat-pane" :style="{ width: chatWidth + 'px' }">
+        <button class="req-chat-close" title="Chat 닫기" @click="chatOpen = false">×</button>
+        <ChatEditPanel
+          v-if="chatTarget"
+          :key="chatTarget.scope + ':' + chatTarget.itemId"
+          v-bind="chatTarget"
+          @applied="onChatEditApplied"
+        />
+        <div v-else class="req-chat-empty">
+          왼쪽 트리에서 Epic · Feature · User Story를 선택하면<br />여기에서 채팅으로 수정할 수 있습니다.
         </div>
       </div>
 
@@ -506,17 +605,6 @@ async function runValidate(payload) {
       @cancel="deleteTarget = null"
     />
 
-    <!-- AI 편집 (035 — Epic/Feature 모달; US는 상세 탭) -->
-    <ChatEditDialog
-      v-if="chatEditTarget"
-      :scope="chatEditTarget.scope"
-      :item-id="chatEditTarget.itemId"
-      :item-name="chatEditTarget.itemName"
-      :current="chatEditTarget.current"
-      @applied="onChatEditApplied"
-      @close="chatEditTarget = null"
-    />
-
     <!-- 삭제 이력 / 복구 -->
     <DeletionHistoryPanel v-if="showDeletionHistory" @close="showDeletionHistory = false" />
 
@@ -556,17 +644,41 @@ async function runValidate(payload) {
 }
 .tb-btn--primary { background: var(--color-accent); color: #fff; border-color: transparent; }
 .tb-btn--danger { color: #e03131; }
+.tb-btn--active { background: var(--color-accent); color: #fff; border-color: transparent; }
 .tb-btn:hover { filter: brightness(1.1); }
 .req-toolbar__status { font-size: 0.72rem; color: var(--color-text-light); }
 .req-toolbar__status.error { color: #e03131; }
 .req-body { flex: 1; display: flex; overflow: hidden; }
 .req-tree-pane {
-  width: 320px; flex-shrink: 0; border-right: 1px solid var(--color-border);
+  flex-shrink: 0; border-right: 1px solid var(--color-border);
   overflow: hidden; display: flex; flex-direction: column;
 }
-.req-detail-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.req-tree-resizer {
+  width: 4px; cursor: col-resize; background: transparent; flex-shrink: 0; transition: background 0.2s ease;
+}
+.req-tree-resizer:hover { background: rgba(34, 139, 230, 0.3); }
+.req-detail-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 .req-detail-pane__top { flex: 0 0 45%; overflow-y: auto; border-bottom: 1px solid var(--color-border); }
 .req-detail-pane__canvas { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+/* Right-docked Chat split (035) */
+.req-chat-pane {
+  position: relative; flex-shrink: 0; border-left: 1px solid var(--color-border);
+  overflow: hidden; display: flex; flex-direction: column; background: var(--color-bg-secondary);
+}
+.req-chat-resizer {
+  width: 4px; cursor: col-resize; background: transparent; flex-shrink: 0; transition: background 0.2s ease;
+}
+.req-chat-resizer:hover { background: rgba(34, 139, 230, 0.3); }
+.req-chat-close {
+  position: absolute; top: 8px; right: 10px; z-index: 5;
+  border: none; background: transparent; color: var(--color-text-light);
+  font-size: 1.1rem; cursor: pointer; line-height: 1;
+}
+.req-chat-close:hover { color: var(--color-text); }
+.req-chat-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 20px; font-size: 0.82rem; color: var(--color-text-light); line-height: 1.6;
+}
 .canvas-label {
   font-size: 0.7rem; font-weight: 700; color: var(--color-text-light);
   padding: 4px 10px; background: var(--color-bg-tertiary);

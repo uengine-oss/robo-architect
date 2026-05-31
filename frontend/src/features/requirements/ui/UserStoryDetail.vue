@@ -4,12 +4,15 @@ import { useRequirementsStore } from '@/features/requirements/requirements.store
 import ClarificationPanel from './ClarificationPanel.vue'
 import ClarityRadar from './ClarityRadar.vue'
 import EditHistoryPanel from './EditHistoryPanel.vue'
-import ChatEditPanel from './ChatEditPanel.vue'
+import DesignTraceCanvas from './DesignTraceCanvas.vue'
 
 const props = defineProps({
   userStory: { type: Object, default: null },
+  // 035 — design-trace moved from a cramped bottom split into a tab here.
+  trace: { type: Object, default: () => ({ nodes: [], relationships: [], empty: false }) },
+  traceLoading: { type: Boolean, default: false },
 })
-const emit = defineEmits(['delete'])
+const emit = defineEmits(['delete', 'ai-edit', 'canvas-node-click'])
 
 const store = useRequirementsStore()
 
@@ -17,19 +20,6 @@ const kindLabel = { given: 'Given', when: 'When', then: 'Then' }
 
 const hasStory = computed(() => !!props.userStory)
 const criteria = computed(() => props.userStory?.acceptanceCriteria || [])
-
-// Editable field snapshot for the conversational-edit panel (035).
-const chatCurrent = computed(() => {
-  const us = props.userStory || {}
-  return {
-    role: us.role || '',
-    action: us.action || '',
-    benefit: us.benefit || '',
-    priority: us.priority || 'medium',
-    status: us.status || 'draft',
-    acceptanceCriteria: (us.acceptanceCriteria || []).map((c) => c.name || c).filter(Boolean),
-  }
-})
 
 // ── Source business rules (hybrid US only — empty for rfp/figma) ─────
 const sourceRules = ref([])
@@ -157,8 +147,8 @@ async function saveEdit() {
       <!-- Tab bar (spec 030 + 033) ──────────────────────────────────── -->
       <div class="us-tabs">
         <button class="us-tab" :class="{ 'is-active': activeTab === 'overview' }" @click="onSelectTab('overview')">개요</button>
+        <button class="us-tab" :class="{ 'is-active': activeTab === 'trace' }" @click="onSelectTab('trace')">설계 궤적</button>
         <button class="us-tab" :class="{ 'is-active': activeTab === 'edit' }" @click="onSelectTab('edit')">편집</button>
-        <button class="us-tab" :class="{ 'is-active': activeTab === 'aiedit' }" @click="onSelectTab('aiedit')">✨ AI 편집</button>
         <button class="us-tab" :class="{ 'is-active': activeTab === 'clarification' }" @click="onSelectTab('clarification')">
           명확화
           <span v-if="ambiguityFlag" class="tab-badge" :title="ambiguityFlag.categories.join(', ')">
@@ -166,6 +156,7 @@ async function saveEdit() {
           </span>
         </button>
         <button class="us-tab" :class="{ 'is-active': activeTab === 'history' }" @click="onSelectTab('history')">이력</button>
+        <button class="us-tab us-tab--ai" title="채팅으로 한 번에 수정" @click="emit('ai-edit')">✨ AI 편집</button>
         <button class="us-tab us-tab--delete" title="User Story 삭제" @click="emit('delete', userStory)">🗑 삭제</button>
       </div>
 
@@ -264,15 +255,13 @@ async function saveEdit() {
         </div>
       </div>
 
-      <!-- AI 편집 tab (035 — conversational edit) ───────────────── -->
-      <div v-else-if="activeTab === 'aiedit'" class="us-tab-body us-tab-body--chat">
-        <ChatEditPanel
-          :key="userStory.id"
-          scope="user-story"
-          :item-id="userStory.id"
-          :item-name="`${userStory.role || ''}: ${userStory.action || ''}`"
-          :current="chatCurrent"
-          @applied="store.fetchHistory(userStory.id)"
+      <!-- 설계 궤적 tab (035 — was a cramped bottom split, now a tab) ── -->
+      <div v-else-if="activeTab === 'trace'" class="us-tab-body us-tab-body--trace">
+        <div class="trace-hint">노드를 클릭하면 우측에 속성 편집기가 열립니다</div>
+        <DesignTraceCanvas
+          :trace="trace"
+          :loading="traceLoading"
+          @node-click="emit('canvas-node-click', $event)"
         />
       </div>
 
@@ -314,7 +303,9 @@ async function saveEdit() {
   border-radius: 6px 6px 0 0;
 }
 .us-tab:hover { color: var(--color-text); }
-.us-tab--delete { margin-left: auto; color: #e03131; }
+.us-tab--ai { margin-left: auto; color: var(--color-accent, #228be6); }
+.us-tab--ai:hover { color: #fff; background: var(--color-accent, #228be6); }
+.us-tab--delete { color: #e03131; }
 .us-tab--delete:hover { color: #fff; background: #e03131; }
 .us-tab.is-active {
   color: var(--color-text);
@@ -363,8 +354,12 @@ async function saveEdit() {
 .us-tab-body--clarification {
   padding: 8px;
 }
-.us-tab-body--chat {
+.us-tab-body--trace {
   padding: 0; overflow: hidden; display: flex; flex-direction: column;
+}
+.trace-hint {
+  font-size: 0.7rem; color: var(--color-text-light); padding: 4px 10px;
+  background: var(--color-bg-tertiary); flex-shrink: 0;
 }
 
 .us-detail__statement {
