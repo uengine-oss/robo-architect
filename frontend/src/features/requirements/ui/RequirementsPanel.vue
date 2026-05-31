@@ -311,6 +311,7 @@ async function runValidate(payload) {
           @select-feature="onSelectFeature"
           @generate-features="onGenerateFeatures"
           @validate="onValidate('epic')"
+          @clarify="onClarifyScope({ scopeType: 'bounded_context', scopeId: store.selectedEpic.id })"
         />
       </div>
 
@@ -323,6 +324,7 @@ async function runValidate(payload) {
           @select-user-story="onSelect"
           @generate-stories="onGenerateStories('feature')"
           @validate="onValidate('feature')"
+          @clarify="onClarifyScope({ scopeType: 'feature', scopeId: store.selectedFeature.id })"
         />
       </div>
 

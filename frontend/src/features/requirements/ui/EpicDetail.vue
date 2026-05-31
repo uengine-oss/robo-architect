@@ -13,7 +13,7 @@ import ClarityRadar from './ClarityRadar.vue'
 const props = defineProps({
   epic: { type: Object, required: true }, // EpicNodeDTO
 })
-const emit = defineEmits(['edit', 'select-feature', 'generate-features', 'validate'])
+const emit = defineEmits(['edit', 'select-feature', 'generate-features', 'validate', 'clarify'])
 
 const store = useRequirementsStore()
 const features = computed(() => props.epic.features || [])
@@ -29,6 +29,7 @@ function storyCount(f) {
       <h2 class="ed-title">{{ epic.displayName || epic.name }}</h2>
       <button class="ed-gen" title="Feature 자동 생성 (각 Feature = US·edge cases 포함)" @click="emit('generate-features')">✨ Feature 자동생성</button>
       <button class="ed-validate" title="DDD 적합성 검증" @click="emit('validate')">🔎 DDD 검증</button>
+      <button class="ed-validate" title="요구사항 명확화" @click="emit('clarify')">🔍 명확화</button>
       <button class="ed-edit" title="편집" @click="emit('edit', epic)">✎ 편집</button>
     </div>
 

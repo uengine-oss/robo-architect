@@ -76,16 +76,6 @@ function onDrop(evt, featureId) {
         <span class="caret" @click.stop="toggle(key('epic', epic.id))">{{ isOpen(key('epic', epic.id)) ? '▾' : '▸' }}</span>
         <span class="node-icon epic">EPIC</span>
         <span class="node-label">{{ epic.displayName || epic.name }}</span>
-        <button
-          class="edit-btn"
-          title="Epic 편집"
-          @click.stop="emit('edit-epic', epic)"
-        >✎</button>
-        <button
-          class="clarify-btn"
-          title="요구사항 명확화"
-          @click.stop="emit('clarify-scope', { scopeType: 'bounded_context', scopeId: epic.id, scopeName: epic.displayName || epic.name })"
-        >🔍</button>
       </div>
 
       <div v-if="isOpen(key('epic', epic.id))" class="tree-children">
@@ -109,18 +99,6 @@ function onDrop(evt, featureId) {
               <span class="caret" @click.stop="toggle(key('feature', feature.id))">{{ isOpen(key('feature', feature.id)) ? '▾' : '▸' }}</span>
               <span class="node-icon feature">FEAT</span>
               <span class="node-label">{{ feature.name }}</span>
-              <button
-                v-if="isRealFeature(feature.id)"
-                class="edit-btn"
-                title="Feature 편집"
-                @click.stop="emit('edit-feature', feature)"
-              >✎</button>
-              <button
-                v-if="isRealFeature(feature.id)"
-                class="clarify-btn"
-                title="요구사항 명확화"
-                @click.stop="emit('clarify-scope', { scopeType: 'feature', scopeId: feature.id, scopeName: feature.name })"
-              >🔍</button>
               <button
                 v-if="isRealFeature(feature.id)"
                 class="del-btn"
