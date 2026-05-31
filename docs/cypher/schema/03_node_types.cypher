@@ -690,3 +690,14 @@ ON CREATE SET impl.id = randomUUID(),
               impl.lastSeenAt = datetime()
 ON MATCH SET impl.lastSeenAt = datetime()
 MERGE (agg)-[:IMPLEMENTED_IN]->(impl);
+
+// ── 035 DDD discovery & canvases — NEW PROPERTIES ONLY (no new labels) ──
+// Event:          pivotal:boolean, hotspot:boolean            (US2 EventStorming)
+// BoundedContext: classification ∈ {core,supporting,generic}  (US6 — generic added)
+//                 purpose:string, domainRoles:string[],
+//                 ubiquitousLanguage:string[], businessDecisions:string[],
+//                 assumptions:string[], version:int            (US3 BC Canvas)
+// Aggregate:      description:string, stateTransitions:string (Mermaid/JSON),
+//                 correctivePolicies:string[], throughput:string,
+//                 invariants:string[], version:int             (US5 Aggregate Canvas)
+// All written via SET on existing nodes; relationships preserved. Schema diff = 0 labels/rels.

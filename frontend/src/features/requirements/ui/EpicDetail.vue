@@ -1,7 +1,8 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 import ClarityRadar from './ClarityRadar.vue'
+import BcCanvasTab from './BcCanvasTab.vue'
 
 /**
  * Epic (BoundedContext) detail view (034 — US2).
@@ -20,6 +21,9 @@ const features = computed(() => props.epic.features || [])
 function storyCount(f) {
   return (f.userStories || []).length
 }
+
+// 035 — BC 상세 탭(개요 | Canvas)
+const activeTab = ref('overview')
 </script>
 
 <template>
@@ -35,6 +39,16 @@ function storyCount(f) {
       <button class="ed-delete" title="삭제" @click="emit('delete')">🗑 삭제</button>
     </div>
 
+    <div class="ed-tabs">
+      <button class="ed-tab" :class="{ 'is-active': activeTab === 'overview' }" @click="activeTab = 'overview'">개요</button>
+      <button class="ed-tab" :class="{ 'is-active': activeTab === 'canvas' }" @click="activeTab = 'canvas'">Canvas</button>
+    </div>
+
+    <!-- Canvas 탭 (035 — US3) -->
+    <BcCanvasTab v-if="activeTab === 'canvas'" :bc-id="epic.id" />
+
+    <!-- 개요 탭 -->
+    <template v-else>
     <p v-if="epic.description" class="ed-desc">{{ epic.description }}</p>
     <p v-else class="ed-desc ed-desc--empty">설명이 없습니다.</p>
 
@@ -62,6 +76,7 @@ function storyCount(f) {
       <ClarityRadar v-if="store.clarityScores" :scores="store.clarityScores" />
       <div v-else class="ed-empty">명확도 데이터가 없습니다.</div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -93,6 +108,12 @@ function storyCount(f) {
   border-radius: 6px; font-size: 0.72rem; padding: 3px 8px; cursor: pointer;
 }
 .ed-delete:hover { background: #e03131; color: #fff; border-color: #e03131; }
+.ed-tabs { display: flex; gap: 4px; margin: 12px 0 10px; border-bottom: 1px solid var(--color-border); }
+.ed-tab {
+  border: none; background: transparent; color: var(--color-text-light);
+  font-size: 0.78rem; padding: 6px 10px; cursor: pointer; border-bottom: 2px solid transparent;
+}
+.ed-tab.is-active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 700; }
 .ed-desc { font-size: 0.82rem; color: var(--color-text); margin: 10px 0 4px; white-space: pre-wrap; }
 .ed-desc--empty { color: var(--color-text-light); font-style: italic; }
 .ed-section { margin-top: 14px; }

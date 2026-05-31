@@ -558,3 +558,168 @@ class ImpactReportDTO(BaseModel):
     trigger: Literal["add", "delete", "move", "edit"] = "add"
     findings: list[ImpactFinding] = Field(default_factory=list)
     createdAt: Optional[str] = None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 035 — DDD 발견 마법사 & 도메인 캔버스
+# 진실의 원천=그래프. 신규 노드 라벨/관계 0건(속성 추가만). 모든 변경 propose→confirm.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# ── 공용: 그래프 변경 미리보기 (propose→confirm) ─────────────────────────────
+class GraphChangePreview(BaseModel):
+    """마법사/캔버스가 제안하는 단일 그래프 변경. model_modifier DraftChange와 정합."""
+
+    changeId: str
+    action: Literal["create", "update", "connect"]
+    targetType: str  # BoundedContext | Aggregate | UserStory | Event | Feature
+    targetId: Optional[str] = None
+    label: str = ""  # 사람이 읽을 요약
+    before: dict = Field(default_factory=dict)
+    after: dict = Field(default_factory=dict)
+
+
+# ── US1/US4: DDD 마법사 ──────────────────────────────────────────────────
+class ProfileAnswer(BaseModel):
+    projectType: Literal["greenfield", "brownfield", "single_feature", "learning"] = "greenfield"
+    dddExperience: Literal["first_time", "heard", "practiced", "expert"] = "first_time"
+    teamSize: Literal["solo", "small", "multi_team", "large"] = "small"
+    existingArtifacts: list[str] = Field(default_factory=list)
+
+
+class WizardStepRef(BaseModel):
+    key: str  # understand | discover | decompose | strategize | connect | organise | define | code
+    title: str
+    optional: bool = True
+    recommended: bool = True
+
+
+class WizardStartRequest(BaseModel):
+    scope: Literal["greenfield", "epic"] = "greenfield"
+    epicId: Optional[str] = None
+    profile: ProfileAnswer
+    engine: Literal["in-process", "claude-ide"] = "in-process"
+
+
+class WizardStartResponse(BaseModel):
+    sessionId: str
+    recommendedPlan: list[WizardStepRef] = Field(default_factory=list)
+    profileSummary: str = ""
+
+
+class WizardAnswerRequest(BaseModel):
+    stepKey: str
+    answers: dict = Field(default_factory=dict)
+    pastedDocument: Optional[str] = None
+
+
+class WizardProposal(BaseModel):
+    stepKey: str
+    artifactMarkdown: str = ""
+    graphChanges: list[GraphChangePreview] = Field(default_factory=list)
+
+
+class WizardConfirmRequest(BaseModel):
+    stepKey: str
+    acceptedChangeIds: list[str] = Field(default_factory=list)
+
+
+class WizardConfirmResponse(BaseModel):
+    appliedChanges: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class WizardSessionDTO(BaseModel):
+    sessionId: str
+    scope: Literal["greenfield", "epic"]
+    epicId: Optional[str] = None
+    phase: str
+    plan: list[WizardStepRef] = Field(default_factory=list)
+    completedSteps: list[str] = Field(default_factory=list)
+    engine: str = "in-process"
+
+
+# ── US2: 피보탈 이벤트 / 서브도메인 ──────────────────────────────────────
+class PivotalToggleRequest(BaseModel):
+    eventId: str
+    pivotal: Optional[bool] = None
+    hotspot: Optional[bool] = None
+
+
+class PivotalToggleResponse(BaseModel):
+    eventId: str
+    pivotal: bool = False
+    hotspot: bool = False
+
+
+class SubdomainProposal(BaseModel):
+    name: str
+    responsibility: str = ""
+    eventIds: list[str] = Field(default_factory=list)
+    suggestedClassification: Literal["core", "supporting", "generic"] = "supporting"
+
+
+class SubdomainProposeResponse(BaseModel):
+    proposals: list[SubdomainProposal] = Field(default_factory=list)
+
+
+# ── US3: Bounded Context Canvas ──────────────────────────────────────────
+class BcMessageFlow(BaseModel):
+    otherBcName: str = ""
+    message: str = ""
+    channel: str = "Event bus"
+
+
+class BcCanvasDTO(BaseModel):
+    bcId: str
+    name: str = ""
+    purpose: Optional[str] = None
+    classification: Optional[str] = None  # core | supporting | generic
+    domainRoles: list[str] = Field(default_factory=list)
+    ubiquitousLanguage: list[str] = Field(default_factory=list)
+    businessDecisions: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    inbound: list[BcMessageFlow] = Field(default_factory=list)
+    outbound: list[BcMessageFlow] = Field(default_factory=list)
+    version: int = 0
+
+
+class BcCanvasPatchRequest(BaseModel):
+    purpose: Optional[str] = None
+    domainRoles: Optional[list[str]] = None
+    ubiquitousLanguage: Optional[list[str]] = None
+    businessDecisions: Optional[list[str]] = None
+    assumptions: Optional[list[str]] = None
+
+
+# ── US5: Aggregate Design Canvas ─────────────────────────────────────────
+class AggregateCanvasDTO(BaseModel):
+    aggregateId: str
+    name: str = ""
+    description: Optional[str] = None
+    stateTransitions: Optional[str] = None  # JSON 또는 Mermaid stateDiagram 소스
+    commands: list[str] = Field(default_factory=list)
+    events: list[str] = Field(default_factory=list)
+    invariants: list[str] = Field(default_factory=list)
+    correctivePolicies: list[str] = Field(default_factory=list)
+    throughput: Optional[str] = None
+    version: int = 0
+
+
+class AggregateCanvasPatchRequest(BaseModel):
+    description: Optional[str] = None
+    stateTransitions: Optional[str] = None
+    correctivePolicies: Optional[list[str]] = None
+    throughput: Optional[str] = None
+    invariants: Optional[list[str]] = None
+
+
+# ── US7: .ddd 내보내기 ───────────────────────────────────────────────────
+class DddExportRequest(BaseModel):
+    outputDir: str = ".ddd"
+    steps: Optional[list[str]] = None
+
+
+class DddExportResponse(BaseModel):
+    writtenFiles: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
