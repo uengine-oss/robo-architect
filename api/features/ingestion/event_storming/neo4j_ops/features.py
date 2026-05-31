@@ -32,6 +32,8 @@ class FeatureOps:
         source: str = "llm",
         sequence: int | None = None,
         session_id: str | None = None,
+        edge_cases: list[str] | None = None,
+        assumptions: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """MERGE a Feature node by its natural key and attach it to its BC.
 
@@ -43,9 +45,15 @@ class FeatureOps:
         Returns the feature dict, or None if the BC does not exist.
         """
         key = _feature_key(bc_key, name)
-        query = """
-        MATCH (bc:BoundedContext {id: $bc_id})
-        MERGE (f:Feature {key: $key})
+        # edge_cases/assumptions: None이면 기존 값 보존(덮어쓰지 않음).
+        set_extra = ""
+        if edge_cases is not None:
+            set_extra += ",\n            f.edgeCases = $edge_cases"
+        if assumptions is not None:
+            set_extra += ",\n            f.assumptions = $assumptions"
+        query = f"""
+        MATCH (bc:BoundedContext {{id: $bc_id}})
+        MERGE (f:Feature {{key: $key}})
           ON CREATE SET f.id = randomUUID(),
                         f.createdAt = datetime(),
                         f.source = $source,
@@ -54,10 +62,11 @@ class FeatureOps:
             f.description = $description,
             f.boundedContextId = bc.id,
             f.sequence = $sequence,
-            f.updatedAt = datetime()
+            f.updatedAt = datetime(){set_extra}
         MERGE (bc)-[hf:HAS_FEATURE]->(f)
           ON CREATE SET hf.createdAt = datetime()
-        RETURN f {.id, .key, .name, .description, .source, .boundedContextId} AS feature
+        RETURN f {{.id, .key, .name, .description, .source, .boundedContextId,
+                   .edgeCases, .assumptions}} AS feature
         """
         with self.session() as session:
             rec = session.run(
@@ -69,6 +78,8 @@ class FeatureOps:
                 source=source,
                 sequence=sequence,
                 session_id=session_id,
+                edge_cases=edge_cases,
+                assumptions=assumptions,
             ).single()
             return dict(rec["feature"]) if rec else None
 

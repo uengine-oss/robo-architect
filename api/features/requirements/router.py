@@ -21,6 +21,7 @@ from .routes.design_trace import router as design_trace_router
 from .routes.edit import router as edit_router
 from .routes.epic_feature_propose import router as epic_feature_propose_router
 from .routes.feature_crud import router as feature_crud_router
+from .routes.feature_generation import router as feature_generation_router
 from .routes.impact_report import router as impact_report_router
 from .routes.requirements_tree import router as requirements_tree_router
 from .routes.user_story_crud import router as user_story_crud_router
@@ -35,6 +36,7 @@ router.include_router(epic_feature_propose_router)
 router.include_router(design_coverage_router)
 router.include_router(design_reflect_router)
 router.include_router(feature_crud_router)
+router.include_router(feature_generation_router)
 router.include_router(user_story_crud_router)
 router.include_router(edit_router)
 router.include_router(design_trace_router)

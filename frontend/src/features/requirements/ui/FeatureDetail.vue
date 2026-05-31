@@ -51,6 +51,19 @@ const stories = computed(() => props.feature.userStories || [])
       </div>
     </div>
 
+    <div v-if="(feature.edgeCases || []).length" class="fd-section">
+      <div class="fd-section__label">Edge Cases</div>
+      <ul class="fd-speclist">
+        <li v-for="(e, i) in feature.edgeCases" :key="i">{{ e }}</li>
+      </ul>
+    </div>
+    <div v-if="(feature.assumptions || []).length" class="fd-section">
+      <div class="fd-section__label">가정 (Assumptions)</div>
+      <ul class="fd-speclist">
+        <li v-for="(a, i) in feature.assumptions" :key="i">{{ a }}</li>
+      </ul>
+    </div>
+
     <div class="fd-section">
       <div class="fd-section__label">명확도 (이 Feature 범위)</div>
       <ClarityRadar v-if="store.clarityScores" :scores="store.clarityScores" />
@@ -105,4 +118,6 @@ const stories = computed(() => props.feature.userStories || [])
 }
 .fd-item-name { flex: 1; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; }
 .fd-empty { font-size: 0.78rem; color: var(--color-text-light); font-style: italic; padding: 6px 0; }
+.fd-speclist { margin: 0; padding-left: 18px; font-size: 0.8rem; color: var(--color-text); }
+.fd-speclist li { margin: 2px 0; }
 </style>

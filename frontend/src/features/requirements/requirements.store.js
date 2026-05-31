@@ -257,6 +257,31 @@ export const useRequirementsStore = defineStore('requirements', () => {
 
   // ── 하위 User Story 자동 생성 (034 US5, in-process 엔진) ───────────────
 
+  /**
+   * Epic → Feature(spec.md) 자동 생성 (034). 각 Feature = US들 + edge cases + 가정.
+   * deepagents(speckit-specify 방법론). 제안만 반환(미확정).
+   */
+  async function generateFeatures(boundedContextId) {
+    const res = await fetch(`/api/requirements/epic/${boundedContextId}/generate-features`, {
+      method: 'POST',
+    })
+    if (!res.ok) throw await _httpError(res, 'generate features failed')
+    return res.json() // { boundedContextId, features: [{name, description, edgeCases, assumptions, userStories}] }
+  }
+
+  /** 선택된 Feature들(+US, edge cases)을 영속한다. */
+  async function confirmFeatures({ boundedContextId, features }) {
+    const res = await fetch('/api/requirements/features/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boundedContextId, features }),
+    })
+    if (!res.ok) throw await _httpError(res, 'confirm features failed')
+    const data = await res.json()
+    await fetchTree()
+    return data
+  }
+
   /** Generate (propose) child user stories for an Epic/Feature via the LLM. */
   async function generateChildStories(scopeType, scopeId, engine = null) {
     const eng = engine || generationEngine.value
@@ -728,6 +753,8 @@ export const useRequirementsStore = defineStore('requirements', () => {
     generationEngine,
     setGenerationEngine,
     checkLocalTooling,
+    generateFeatures,
+    confirmFeatures,
     generateChildStories,
     confirmChildStories,
     validateRequirement,

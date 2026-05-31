@@ -53,6 +53,9 @@ class FeatureNodeDTO(BaseModel):
     description: Optional[str] = None
     source: str = "llm"
     boundedContextId: Optional[str] = None
+    # 034 — Feature = 하나의 speckit spec.md. 부가 spec 정보를 노드에 보관.
+    edgeCases: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
     userStories: list[UserStoryNodeDTO] = Field(default_factory=list)
 
 
@@ -244,6 +247,34 @@ class GeneratedStory(BaseModel):
     role: str = ""
     action: str = ""
     benefit: str = ""
+
+
+# ── Epic → Feature(spec.md) 자동 생성 (034) ──────────────────────────────
+# Epic 아래는 US를 바로 만들지 않고 Feature부터 만든다. 각 Feature = 하나의
+# speckit spec.md(= US들 + edge cases + 핵심 가정). deepagents로 speckit-specify
+# 방법론을 실행해 생성한다(clarification과 동일 패턴).
+
+
+class GeneratedFeature(BaseModel):
+    name: str
+    description: str = ""
+    edgeCases: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    userStories: list[GeneratedStory] = Field(default_factory=list)
+
+
+class GenerateFeaturesResponse(BaseModel):
+    boundedContextId: str
+    features: list[GeneratedFeature] = Field(default_factory=list)
+
+
+class ConfirmFeaturesRequest(BaseModel):
+    boundedContextId: str
+    features: list[GeneratedFeature] = Field(default_factory=list)
+
+
+class ConfirmFeaturesResponse(BaseModel):
+    created: list[FeatureNodeDTO] = Field(default_factory=list)
 
 
 class GenerateChildStoriesResponse(BaseModel):

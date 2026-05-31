@@ -132,7 +132,8 @@ def build_requirements_tree() -> RequirementsTreeDTO:
                 """
                 MATCH (bc:BoundedContext)-[:HAS_FEATURE]->(f:Feature)
                 RETURN f.id AS id, f.name AS name, f.description AS description,
-                       f.source AS source, bc.id AS bcId, f.sequence AS sequence
+                       f.source AS source, bc.id AS bcId, f.sequence AS sequence,
+                       f.edgeCases AS edgeCases, f.assumptions AS assumptions
                 ORDER BY f.sequence, f.name
                 """
             )
@@ -163,6 +164,8 @@ def build_requirements_tree() -> RequirementsTreeDTO:
             description=fr.get("description"),
             source=fr.get("source") or "llm",
             boundedContextId=fr.get("bcId"),
+            edgeCases=[e for e in (fr.get("edgeCases") or []) if e],
+            assumptions=[a for a in (fr.get("assumptions") or []) if a],
         )
         features_by_bc.setdefault(fr["bcId"], []).append(fid)
 

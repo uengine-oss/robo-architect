@@ -11,6 +11,7 @@ import AddRequirementDialog from './AddRequirementDialog.vue'
 import EpicEditForm from './EpicEditForm.vue'
 import FeatureEditForm from './FeatureEditForm.vue'
 import GeneratedStoriesReview from './GeneratedStoriesReview.vue'
+import GeneratedFeaturesReview from './GeneratedFeaturesReview.vue'
 import ValidationFindings from './ValidationFindings.vue'
 import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
@@ -41,6 +42,10 @@ const editingFeature = ref(null)
 const generating = ref(false)
 const genResult = ref(null) // GenerateChildStoriesResponse
 const genScopeName = ref('')
+
+// Epic → Feature 자동 생성 (034 — spec.md 단위)
+const genFeatureResult = ref(null) // GenerateFeaturesResponse
+const genFeatureScopeName = ref('')
 
 // DDD 검증 (034 US6)
 const validating = ref(false)
@@ -209,6 +214,21 @@ async function onGenerateStories(scopeType) {
   }
 }
 
+// ── Epic → Feature 자동 생성 (034 — 각 Feature = spec.md) ──────────────
+async function onGenerateFeatures() {
+  const e = store.selectedEpic
+  if (!store.selectedNode || store.selectedNode.type !== 'epic' || !e) return
+  genFeatureScopeName.value = e.displayName || e.name || ''
+  generating.value = true
+  try {
+    genFeatureResult.value = await store.generateFeatures(e.id)
+  } catch (err) {
+    window.alert(`Feature 생성 실패: ${err?.message || err}`)
+  } finally {
+    generating.value = false
+  }
+}
+
 // ── DDD 적합성 검증 (034 US6) ──────────────────────────────────────────
 async function onValidate(targetType) {
   if (targetType === 'feature' && store.selectedFeature) {
@@ -284,7 +304,7 @@ async function runValidate(payload) {
           :epic="store.selectedEpic"
           @edit="onEditEpic"
           @select-feature="onSelectFeature"
-          @generate-stories="onGenerateStories('epic')"
+          @generate-features="onGenerateFeatures"
           @validate="onValidate('epic')"
         />
       </div>
@@ -362,9 +382,9 @@ async function runValidate(payload) {
       @saved="editingFeature = null"
     />
 
-    <!-- 하위 US 자동 생성 (034 US5) -->
+    <!-- 자동 생성 진행 (US5 하위 US / Epic→Feature) -->
     <div v-if="generating" class="gen-overlay">
-      <div class="gen-box">✨ AI가 하위 User Story를 생성하는 중입니다…</div>
+      <div class="gen-box">✨ AI가 생성하는 중입니다…</div>
     </div>
     <GeneratedStoriesReview
       v-if="genResult"
@@ -372,6 +392,13 @@ async function runValidate(payload) {
       :scope-name="genScopeName"
       @close="genResult = null"
       @confirmed="genResult = null"
+    />
+    <GeneratedFeaturesReview
+      v-if="genFeatureResult"
+      :result="genFeatureResult"
+      :scope-name="genFeatureScopeName"
+      @close="genFeatureResult = null"
+      @confirmed="genFeatureResult = null"
     />
 
     <!-- DDD 적합성 검증 (034 US6) -->

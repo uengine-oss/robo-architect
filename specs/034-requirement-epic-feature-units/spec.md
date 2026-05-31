@@ -189,6 +189,9 @@ Epic·Feature·User Story가 추가·변경된 뒤 사용자가 Requirements 탭
 - **FR-021**: 생성 엔진이 "Claude IDE"로 설정된 상태에서 로컬에 **Claude 또는 speckit이 설치되어 있지 않으면**, 시스템은 생성을 진행하지 않고 **설치를 안내(설치 방법·링크 또는 설치 트리거)**해야 한다.
 - **FR-022**: 자동 생성이 오래 걸릴 수 있으므로 시스템은 **진행 상태를 사용자에게 표시**하고, 진행 중 **취소**할 수 있어야 한다.
 - **FR-023**: 자동 생성 결과가 0건이거나 엔진이 실패하면 시스템은 이를 알리고 **수동 추가 경로로 폴백**할 수 있어야 한다.
+- **FR-023a**: **Epic 단위 자동 생성은 User Story를 바로 만들지 않고 Feature부터 생성**해야 한다. 각 Feature는 **하나의 speckit `spec.md`** 와 같은 단위로, 그 안에 **하위 User Story들 + edge cases + 핵심 가정**을 함께 포함해 제안한다. (Feature 단위 자동 생성은 그 Feature의 하위 User Story를 생성한다 — FR-018.)
+- **FR-023b**: 이 생성은 **deepagents로 speckit-specify 방법론을 실행**(clarification과 동일 패턴, provider-agnostic `get_llm`)해 수행한다.
+- **FR-023c**: Feature 노드는 spec.md의 부가 정보(**edge cases, 핵심 가정**)를 속성으로 보관하고, 뷰·트리에서 표시해야 한다.
 
 **DDD 적합성·입도·스펙 정합성 검증 (US6)**
 
