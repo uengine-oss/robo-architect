@@ -33,7 +33,10 @@ import FrameEditor from 'open-pencil-fed/FrameEditor.vue'
 const FramePreview = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
 const FullPageEditor = defineAsyncComponent(() => import('open-pencil-fed/FullPageEditor.vue'))
 const AIChatPanel = defineAsyncComponent(() => import('open-pencil-fed/AIChat.vue'))
-const FramePreviewChat = defineAsyncComponent(() => import('open-pencil-fed/FramePreviewChat.vue'))
+// FramePreviewChat is a spec-034 WIP component that hasn't landed in the
+// open-pencil submodule yet (`de030de chore(034): WIP`). Fall back to the
+// existing FramePreview until the upstream file is committed.
+const FramePreviewChat = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
 
 // 029 — read-only source viewer for ImplementationFile nodes drilled-down
 // from Aggregate/Command/Event/ReadModel in the navigator. Reuses the
@@ -312,22 +315,73 @@ async function onDesignSave(data) {
   const n = node.value
   if (!n) return
   try {
-    const sceneGraphStr = JSON.stringify(data)
+    // ── Diagnostic + roundtrip merge ─────────────────────────────────────
+    // Editor's serialize is lossy in some cases (DOCUMENT root collapsed
+    // to FRAME, leaf nodes dropped). Detect & merge to preserve rich data
+    // while still landing the user's edits.
+    const Counter = (nodes) => {
+      const c = {}
+      for (const nd of Object.values(nodes || {})) c[nd?.type] = (c[nd?.type] || 0) + 1
+      return c
+    }
+    const existing = (() => {
+      try { return JSON.parse(n.data?.sceneGraph || '{"nodes":{}}') } catch { return { nodes: {} } }
+    })()
+    const existingNodes = existing.nodes || {}
+    const newNodes = data?.nodes || {}
+    const existingTypes = Counter(existingNodes)
+    const newTypes = Counter(newNodes)
+    console.info('[InspectorPanel] onDesignSave',
+      '\n  existing:', existingTypes, `total=${Object.keys(existingNodes).length}`,
+      '\n  editor :', newTypes, `total=${Object.keys(newNodes).length}`,
+      '\n  rootId existing=', existing.rootId, 'editor=', data?.rootId,
+    )
+    const LEAF_TYPES = ['TEXT', 'RECTANGLE', 'VECTOR', 'INSTANCE', 'ELLIPSE', 'LINE', 'POLYGON', 'STAR']
+    const existingHas = (t) => existingTypes[t] > 0
+    const newHas = (t) => newTypes[t] > 0
+    const lostTypes = LEAF_TYPES.filter(t => existingHas(t) && !newHas(t))
+
+    let outGraph = data
+    if (lostTypes.length > 0) {
+      // Merge: editor's output is the authoritative version for ids it has
+      // (user's position/fill/text edits land), but ids the editor dropped
+      // are pulled from existing so the panel doesn't lose visible content.
+      const mergedNodes = { ...existingNodes }
+      for (const [id, nd] of Object.entries(newNodes)) {
+        mergedNodes[id] = nd  // editor's value wins for every id editor knows
+      }
+      outGraph = {
+        ...existing,
+        ...data,
+        nodes: mergedNodes,
+        rootId: existing.rootId || data.rootId,
+      }
+      console.warn('[InspectorPanel] editor dropped types: %s — merged %d existing + %d editor → %d nodes',
+        lostTypes.join(', '),
+        Object.keys(existingNodes).length,
+        Object.keys(newNodes).length,
+        Object.keys(mergedNodes).length,
+      )
+    } else {
+      console.info('[InspectorPanel] editor preserved leaf types → using editor output as-is')
+    }
+
+    const sceneGraphStr = JSON.stringify(outGraph)
     await fetch(`/api/graph/update-node/${n.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sceneGraph: sceneGraphStr })
     })
-    // Update local node data — ensure Vue reactivity triggers
-    if (n.data) {
-      n.data = { ...n.data, sceneGraph: sceneGraphStr }
-    }
-    // Also update in canvas store for reactivity
-    const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
-    if (storeNode?.data) {
-      storeNode.data = { ...storeNode.data, sceneGraph: sceneGraphStr }
-    }
-    emit('updated')
+    // ⚠️ Don't propagate sceneGraph back to n.data / canvasStore here.
+    // FrameEditor's setup() captured the initial editor store via
+    // provideEditor(); children inject that reference. If we update the
+    // sceneData prop, FrameEditor's watch rebuilds the store, but the
+    // child injections still point at the original — visual desync and
+    // the panel looks broken. The editor's internal store already
+    // contains the user's edits, so leaving the prop untouched keeps
+    // the UI consistent. Neo4j has been persisted (PUT above) and
+    // Figma is about to be pushed below; subsequent UI switches will
+    // refetch the saved sceneGraph.
 
     // Push to Figma via the 016 binding path. Backend reads the just-persisted
     // sceneGraph from Neo4j and queues UPDATE_FRAME_FROM_SCENE_GRAPH for the
@@ -3349,10 +3403,13 @@ function updateVoFieldValue(fieldName, value) {
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                 </svg>
               </button>
+              <!-- Only render when an HTML template exists. In figma /
+                   figma-with-components modes the template is never
+                   generated, so the disabled state was just visual noise. -->
               <button
+                v-if="node.data?.template"
                 class="ui-preview-panel__btn"
                 :class="{ 'ui-preview-panel__btn--copied': templateCopied }"
-                :disabled="!node.data?.template"
                 :title="templateCopied ? 'Copied!' : 'Copy wireframe code'"
                 @click="copyTemplateCode"
               >
@@ -3364,27 +3421,11 @@ function updateVoFieldValue(fieldName, value) {
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               </button>
-              <button
-                class="ui-preview-panel__btn ui-preview-panel__btn--figma"
-                :class="{ 'ui-preview-panel__btn--copied': figmaCopied }"
-                :disabled="!node.data?.template || figmaExporting"
-                :title="figmaCopied ? 'Copied! Paste in Figma (Ctrl+V)' : 'Export to Figma'"
-                @click="exportToFigma"
-              >
-                <svg v-if="figmaExporting" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
-                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
-                </svg>
-                <svg v-else-if="figmaCopied" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z" />
-                  <path d="M12 2h3.5a3.5 3.5 0 1 1 0 7H12V2z" />
-                  <path d="M12 12.5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 1 1-7 0z" />
-                  <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z" />
-                  <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
-                </svg>
-              </button>
+              <!-- Legacy template-based "Export to Figma" button removed
+                   (duplicate icon with the sceneGraph clipboard button below;
+                   the template flow predates the plugin path and is no longer
+                   needed now that bidirectional sync runs through the
+                   binding). -->
               <button
                 class="ui-preview-panel__btn ui-preview-panel__btn--figma"
                 :class="{ 'ui-preview-panel__btn--copied': figSceneCopied }"
@@ -6213,7 +6254,10 @@ function updateVoFieldValue(fieldName, value) {
 
 .ui-preview-panel__btn:disabled {
   opacity: 0.6;
-  cursor: wait;
+  /* `not-allowed` instead of `wait`: a disabled button is unavailable, not
+     loading. The previous `wait` (hourglass cursor) made every disabled
+     button look like it was mid-operation on hover. */
+  cursor: not-allowed;
 }
 
 .ui-preview-panel__btn--copied {
