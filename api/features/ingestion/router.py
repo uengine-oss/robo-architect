@@ -248,6 +248,37 @@ async def upload_figma_document(
     }
 
 
+class DesignForUserStoriesRequest(BaseModel):
+    userStoryIds: List[str]
+    display_language: str = "ko"
+
+
+@router.post("/user-stories/design")
+async def design_for_user_stories(request: Request, body: DesignForUserStoriesRequest) -> dict[str, Any]:
+    """선택된 User Story에 대해 기존 인제스천 설계 단계(events→aggregate→command→
+    readmodel)를 정순 실행한다. 진행은 기존 `/api/ingest/stream/{session_id}` SSE로 흐른다
+    (034 US7 — 기존 인제스천 루프·UI·순서 재사용)."""
+    ids = [i for i in (body.userStoryIds or []) if i]
+    if not ids:
+        raise HTTPException(status_code=400, detail="userStoryIds must not be empty")
+
+    session = create_session()
+    session.content = ""
+    session.display_language = (body.display_language or "ko").strip().lower() or "ko"
+    session.source_type = "rfp"
+    # 스트림 핸들러가 이 모드를 보고 incremental 러너로 분기한다.
+    session.workflow_mode = "design_for_us"
+    session.target_user_story_ids = ids
+
+    SmartLogger.log(
+        "INFO",
+        "Incremental design session created",
+        category="ingestion.api.design_for_us",
+        params={**http_context(request), "session_id": session.id, "us_count": len(ids)},
+    )
+    return {"session_id": session.id, "userStoryCount": len(ids)}
+
+
 @router.get("/session/{session_id}/status")
 async def get_ingestion_session_status(session_id: str) -> dict[str, Any]:
     """
@@ -318,8 +349,18 @@ async def stream_progress(session_id: str, request: Request, reconnect: bool = F
         session.is_workflow_running = True
 
         async def _run():
+            # 034 US7 — 'design_for_us' 모드면 incremental 설계 러너로 분기.
+            if getattr(session, "workflow_mode", None) == "design_for_us":
+                from api.features.ingestion.workflow.incremental_design_runner import (
+                    run_design_for_user_stories,
+                )
+                _workflow_gen = run_design_for_user_stories(
+                    session, getattr(session, "target_user_story_ids", []) or []
+                )
+            else:
+                _workflow_gen = run_ingestion_workflow(session, session.content)
             try:
-                async for event in run_ingestion_workflow(session, session.content):
+                async for event in _workflow_gen:
                     # Check cancellation before adding event
                     if getattr(session, "is_cancelled", False):
                         add_event(

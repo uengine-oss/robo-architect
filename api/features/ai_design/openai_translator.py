@@ -16,9 +16,10 @@ from langchain_core.messages import (
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
-    SystemMessage,
     ToolMessage,
 )
+
+from api.platform.llm_messages import build_system_message
 
 
 # ─── OpenAI request → LangChain ────────────────────────────────────────────
@@ -38,7 +39,7 @@ def openai_messages_to_langchain(messages: list[dict[str, Any]]) -> list[BaseMes
         content = m.get("content") or ""
 
         if role == "system":
-            out.append(SystemMessage(content=_content_to_text(content)))
+            out.append(build_system_message(_content_to_text(content)))
         elif role == "user":
             out.append(HumanMessage(content=_content_to_text(content)))
         elif role == "assistant":

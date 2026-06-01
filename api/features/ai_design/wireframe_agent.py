@@ -29,11 +29,11 @@ from fastapi import HTTPException
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
-    SystemMessage,
     ToolMessage,
 )
 
 from api.platform.llm import get_llm
+from api.platform.llm_messages import build_system_message
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform import open_pencil_client
@@ -336,7 +336,7 @@ async def run_render_agent(
         user_prompt += f"\n\n참고:\n{extra_context}"
 
     messages: list[Any] = [
-        SystemMessage(content=SYSTEM_PROMPT),
+        build_system_message(SYSTEM_PROMPT),
         HumanMessage(content=user_prompt),
     ]
 

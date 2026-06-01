@@ -6,7 +6,8 @@ import re
 import time
 from typing import AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.platform.env import (
     AI_AUDIT_LOG_ENABLED,
@@ -586,7 +587,7 @@ async def identify_bounded_contexts_phase(ctx: IngestionWorkflowContext) -> Asyn
                 bc_response = await asyncio.wait_for(
                     asyncio.to_thread(
                         structured_llm.invoke,
-                        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                        [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)]
                     ),
                     timeout=300.0,
                 )
@@ -747,7 +748,7 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
                 fix_response = await asyncio.wait_for(
                     asyncio.to_thread(
                         structured_llm.invoke,
-                        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=fix_prompt)]
+                        [build_system_message(SYSTEM_PROMPT), HumanMessage(content=fix_prompt)]
                     ),
                     timeout=300.0,
                 )
@@ -924,7 +925,7 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
         bc_response = await asyncio.wait_for(
             asyncio.to_thread(
                 structured_llm.invoke,
-                [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)]
             ),
             timeout=300.0,
         )
@@ -1018,7 +1019,7 @@ CRITICAL: Every User Story listed above MUST be assigned to exactly ONE BC. Retu
             consolidation_response = await asyncio.wait_for(
                 asyncio.to_thread(
                     consolidation_llm.invoke,
-                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=consolidation_prompt)]
+                    [build_system_message(SYSTEM_PROMPT), HumanMessage(content=consolidation_prompt)]
                 ),
                 timeout=120.0,
             )
@@ -1420,7 +1421,7 @@ IMPORTANT: Every User Story MUST be assigned to exactly ONE Bounded Context. Do 
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     llm.invoke,
-                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=assignment_prompt)]
+                    [build_system_message(SYSTEM_PROMPT), HumanMessage(content=assignment_prompt)]
                 ),
                 timeout=300.0,
             )

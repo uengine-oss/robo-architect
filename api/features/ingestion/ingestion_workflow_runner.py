@@ -455,6 +455,20 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 params={"session_id": session.id, "error": str(e)},
             )
 
+        # 사후 검증·복구 — 인제스천 단계가 누락한 US→Command/ReadModel IMPLEMENTS
+        # 링크를 기존 객체에 매핑해 보강(고아 US 검증 체크리스트). best-effort.
+        try:
+            from api.features.ingestion.workflow.post_coverage import reconcile_best_effort
+
+            reconcile_best_effort()
+        except Exception as e:  # noqa: BLE001 — best-effort, never break ingestion
+            SmartLogger.log(
+                "WARN",
+                f"Post-ingestion coverage step failed: {e}",
+                category="ingestion.post_coverage",
+                params={"session_id": session.id, "error": str(e)},
+            )
+
         # Complete — 실제 Neo4j에 생성된 Policy 수 카운트
         events_from_us_count = len(getattr(ctx, "events_from_us", []) or [])
         events_from_cmd_count = sum(len(evts) for evts in ctx.events_by_agg.values())

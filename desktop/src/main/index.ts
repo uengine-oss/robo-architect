@@ -15,7 +15,7 @@
  *   - Auto-update (US2 T031–T037)
  */
 
-import { app, BrowserWindow, net, protocol, shell } from "electron";
+import { app, BrowserWindow, nativeImage, net, protocol, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -174,11 +174,13 @@ function registerAppProtocol(): void {
 
 function createMainWindow(): BrowserWindow {
   const preloadPath = path.join(app.getAppPath(), "dist", "preload", "preload", "index.js");
+  const iconPath = path.resolve(app.getAppPath(), "resources", "icons", "icon_512x512.png");
 
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
     title: "Robo Architect",
+    icon: iconPath,
     show: false,
     webPreferences: {
       preload: preloadPath,
@@ -208,6 +210,11 @@ function createMainWindow(): BrowserWindow {
         log("warn", "window.navigate_blocked", { url });
       }
     }
+  });
+
+  // Prevent the SPA's <title> tag from overriding the window title.
+  window.on("page-title-updated", (event) => {
+    event.preventDefault();
   });
 
   void window.loadURL("app://app/");
@@ -313,6 +320,22 @@ async function bootstrap(): Promise<void> {
   initLogging();
   log("info", "app.ready", { appVersion: app.getVersion() });
 
+  // Set macOS Dock icon.
+  if (process.platform === "darwin" && app.dock) {
+    const iconPath = path.resolve(app.getAppPath(), "resources", "icons", "icon_512x512.png");
+    if (fs.existsSync(iconPath)) {
+      const img = nativeImage.createFromPath(iconPath);
+      if (!img.isEmpty()) {
+        app.dock.setIcon(img);
+        log("info", "app.dock_icon_set", { iconPath });
+      } else {
+        log("warn", "app.dock_icon_empty", { iconPath });
+      }
+    } else {
+      log("warn", "app.dock_icon_missing", { iconPath });
+    }
+  }
+
   registerAppProtocol();
   registerIpcHandlers();
 
@@ -337,6 +360,21 @@ async function bootstrap(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 if (gotLock) {
+  // Set the Dock icon as early as possible — before bootstrap() so it appears
+  // on first paint rather than being updated after the window is shown.
+  if (process.platform === "darwin") {
+    app.on("will-finish-launching", () => {
+      // Compiled file is at dist/main/index.js → ../../resources/
+      const iconPath = path.resolve(__dirname, "..", "..", "resources", "icons", "icon_512x512.png");
+      if (fs.existsSync(iconPath)) {
+        const img = nativeImage.createFromPath(iconPath);
+        if (!img.isEmpty() && app.dock) {
+          app.dock.setIcon(img);
+        }
+      }
+    });
+  }
+
   app.whenReady().then(() => {
     bootstrap().catch((err: unknown) => {
       log("error", "app.bootstrap.failed", {

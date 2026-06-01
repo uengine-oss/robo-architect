@@ -1,0 +1,10 @@
+{
+  "epics": [
+    "E2E-API 검증 Epic",
+    "E2E데모 결제관리",
+    "LegalConsentManagement",
+    "MembershipManagement",
+    "TermsAndAuthenticationManagement"
+  ],
+  "featureCount": 2
+}

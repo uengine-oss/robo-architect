@@ -5,6 +5,16 @@ export const useTerminologyStore = defineStore('terminology', () => {
   // Developer mode toggle
   const developerMode = ref(false)
 
+  function initDeveloperMode() {
+    try {
+      const saved = localStorage.getItem('app_developer_terms')
+      if (saved === '0' || saved === 'false') developerMode.value = false
+      if (saved === '1' || saved === 'true') developerMode.value = true
+    } catch (e) {
+      // keep default
+    }
+  }
+
   // Domain terminology (Ubiquitous Language): prefer displayName for labels
   const ubiquitousLanguageMode = ref(true)
 
@@ -60,6 +70,11 @@ export const useTerminologyStore = defineStore('terminology', () => {
   // Toggle developer mode
   function toggleDeveloperMode() {
     developerMode.value = !developerMode.value
+    try {
+      localStorage.setItem('app_developer_terms', developerMode.value ? '1' : '0')
+    } catch (e) {
+      // ignore
+    }
   }
 
   function toggleUbiquitousLanguageMode() {
@@ -73,6 +88,7 @@ export const useTerminologyStore = defineStore('terminology', () => {
 
   // Initialize on store creation
   initUbiquitousLanguageMode()
+  initDeveloperMode()
 
   return {
     developerMode,

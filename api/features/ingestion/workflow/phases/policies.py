@@ -4,7 +4,8 @@ import asyncio
 import time
 from typing import Any, AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.platform.env import (
     AI_AUDIT_LOG_ENABLED,
@@ -599,7 +600,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     pol_response = await asyncio.wait_for(
                         asyncio.to_thread(
                             structured_llm.invoke,
-                            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=chunk_prompt)]
+                            [build_system_message(SYSTEM_PROMPT), HumanMessage(content=chunk_prompt)]
                         ),
                         timeout=300.0  # 5분 타임아웃
                     )
@@ -774,7 +775,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     pol_response = await asyncio.wait_for(
                         asyncio.to_thread(
                             structured_llm.invoke,
-                            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                            [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)]
                         ),
                         timeout=300.0  # 5분 타임아웃
                     )

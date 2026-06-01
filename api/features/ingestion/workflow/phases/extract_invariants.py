@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
@@ -156,7 +157,7 @@ async def extract_invariants_phase(
                 asyncio.to_thread(
                     structured_llm.invoke,
                     [
-                        SystemMessage(content=_SYSTEM_PROMPT),
+                        build_system_message(_SYSTEM_PROMPT),
                         HumanMessage(content=_build_prompt(agg)),
                     ],
                 ),

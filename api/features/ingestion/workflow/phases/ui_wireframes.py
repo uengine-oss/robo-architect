@@ -5,7 +5,8 @@ import time
 from functools import partial
 from typing import AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.features.ingestion.figma_to_user_stories import _fuzzy_match_screen_name
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
@@ -162,7 +163,7 @@ async def _llm_invoke_to_html(ctx: IngestionWorkflowContext, prompt: str) -> str
         resp = await asyncio.wait_for(
             asyncio.to_thread(
                 ctx.llm.invoke,
-                [SystemMessage(content=_UI_WIREFRAME_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                [build_system_message(_UI_WIREFRAME_SYSTEM_PROMPT), HumanMessage(content=prompt)]
             ),
             timeout=300.0  # 5분 타임아웃
         )
@@ -243,7 +244,7 @@ async def _llm_invoke_to_component_json(
     resp = await asyncio.wait_for(
         asyncio.to_thread(
             ctx.llm.invoke,
-            [SystemMessage(content=system_prompt), HumanMessage(content=prompt)],
+            [build_system_message(system_prompt), HumanMessage(content=prompt)],
         ),
         timeout=300.0,
     )

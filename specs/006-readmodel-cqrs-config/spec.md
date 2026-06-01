@@ -108,3 +108,7 @@ Before deleting a `Property`, the system must warn the user about any `CQRSMappi
 - The provisioning type (CQRS / UI Mashup / GraphQL / SharedDB) is selected in the editor but persisted by the Inspector's generic node-update flow, not by CQRS endpoints.
 - `Event` and `Property` nodes already exist in the graph (created by upstream model-editing features); CQRS endpoints reference but never create them.
 - All CQRS endpoints assume single-tenant Neo4j access through `api.platform.neo4j.get_session()`; no per-user isolation is enforced at this layer.
+
+## Related
+
+- **ReadModel ↔ UserStory provenance** (`(UserStory)-[:IMPLEMENTS]->(ReadModel)`) is **separate** from the CQRS *projection* config defined here. Provenance answers "which (query) requirement gave rise to this ReadModel". The ingestion ReadModel phase was found to leave this link empty (0 US linked across all ReadModels) because the extraction LLM rarely populated `user_story_ids`. This is detected and repaired by the **post-ingestion design-coverage step** (spec 034, `api/features/ingestion/workflow/post_coverage.py` + `GET/POST /api/requirements/design-coverage*`), which maps orphan query user stories onto existing ReadModels (and action stories onto Commands). See `specs/034-requirement-epic-feature-units/contracts/design-reflect-contract.md` §A'.

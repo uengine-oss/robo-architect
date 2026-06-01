@@ -1,0 +1,6 @@
+# PATCH /feature  빈 이름 → 422
+HTTP 422
+# PATCH /feature  없는 id → 404
+HTTP 404
+# PATCH /bounded-context  빈 이름 → 422
+HTTP 422

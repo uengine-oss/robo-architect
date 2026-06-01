@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import time
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
+from api.platform.llm_messages import build_system_message
 from api.platform.env import (
     AI_AUDIT_LOG_ENABLED,
     AI_AUDIT_LOG_FULL_OUTPUT,
@@ -187,7 +188,7 @@ def extract_user_stories_from_text(text: str) -> list[GeneratedUserStory]:
         )
 
     t_llm0 = time.perf_counter()
-    response = structured_llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=prompt)])
+    response = structured_llm.invoke([build_system_message(system_prompt), HumanMessage(content=prompt)])
     llm_ms = int((time.perf_counter() - t_llm0) * 1000)
 
     if AI_AUDIT_LOG_ENABLED:
@@ -543,7 +544,7 @@ def consolidate_user_stories(stories: list[GeneratedUserStory], session_id: str 
         llm = get_llm(max_tokens=8192)
         structured_llm = llm.with_structured_output(ConsolidationResult)
         t0 = time.perf_counter()
-        response = structured_llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=prompt)])
+        response = structured_llm.invoke([build_system_message(system_prompt), HumanMessage(content=prompt)])
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
     except Exception as exc:  # noqa: BLE001
         SmartLogger.log(

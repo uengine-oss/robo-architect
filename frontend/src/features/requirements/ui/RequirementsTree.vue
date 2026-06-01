@@ -16,10 +16,14 @@ const props = defineProps({
 })
 const emit = defineEmits([
   'select',
+  'select-epic',
+  'select-feature',
   'move',
   'delete-feature',
   'delete-user-story',
   'clarify-scope',
+  'edit-epic',
+  'edit-feature',
 ])
 
 const store = useRequirementsStore()
@@ -64,15 +68,14 @@ function onDrop(evt, featureId) {
   <div class="req-tree">
     <!-- Epics (Bounded Contexts) -->
     <div v-for="epic in tree.epics" :key="epic.id" class="tree-node tree-node--epic">
-      <div class="tree-row" @click="toggle(key('epic', epic.id))">
-        <span class="caret">{{ isOpen(key('epic', epic.id)) ? '▾' : '▸' }}</span>
+      <div
+        class="tree-row"
+        :class="{ 'is-selected': store.selectedNode.type === 'epic' && store.selectedNode.id === epic.id }"
+        @click="emit('select-epic', epic.id)"
+      >
+        <span class="caret" @click.stop="toggle(key('epic', epic.id))">{{ isOpen(key('epic', epic.id)) ? '▾' : '▸' }}</span>
         <span class="node-icon epic">EPIC</span>
         <span class="node-label">{{ epic.displayName || epic.name }}</span>
-        <button
-          class="clarify-btn"
-          title="요구사항 명확화"
-          @click.stop="emit('clarify-scope', { scopeType: 'bounded_context', scopeId: epic.id, scopeName: epic.displayName || epic.name })"
-        >🔍</button>
       </div>
 
       <div v-if="isOpen(key('epic', epic.id))" class="tree-children">
@@ -88,16 +91,14 @@ function onDrop(evt, featureId) {
             @dragleave="dragOverFeature = null"
             @drop="onDrop($event, feature.id)"
           >
-            <div class="tree-row" @click="toggle(key('feature', feature.id))">
-              <span class="caret">{{ isOpen(key('feature', feature.id)) ? '▾' : '▸' }}</span>
+            <div
+              class="tree-row"
+              :class="{ 'is-selected': store.selectedNode.type === 'feature' && store.selectedNode.id === feature.id }"
+              @click="isRealFeature(feature.id) ? emit('select-feature', feature.id) : toggle(key('feature', feature.id))"
+            >
+              <span class="caret" @click.stop="toggle(key('feature', feature.id))">{{ isOpen(key('feature', feature.id)) ? '▾' : '▸' }}</span>
               <span class="node-icon feature">FEAT</span>
               <span class="node-label">{{ feature.name }}</span>
-              <button
-                v-if="isRealFeature(feature.id)"
-                class="clarify-btn"
-                title="요구사항 명확화"
-                @click.stop="emit('clarify-scope', { scopeType: 'feature', scopeId: feature.id, scopeName: feature.name })"
-              >🔍</button>
               <button
                 v-if="isRealFeature(feature.id)"
                 class="del-btn"
@@ -217,7 +218,7 @@ function onDrop(evt, featureId) {
 .node-icon.ac { background: var(--color-bg-tertiary); color: var(--color-text-light); text-transform: uppercase; }
 .node-label { overflow: hidden; text-overflow: ellipsis; }
 .ac-label { color: var(--color-text-light); }
-.us-row.is-selected { background: rgba(34, 139, 230, 0.18); }
+.us-row.is-selected, .tree-row.is-selected { background: rgba(34, 139, 230, 0.18); }
 .del-btn {
   margin-left: auto; border: none; background: transparent; cursor: pointer;
   color: var(--color-text-light); font-size: 0.9rem; padding: 0 4px;
@@ -229,6 +230,12 @@ function onDrop(evt, featureId) {
 }
 .clarify-btn:hover { color: var(--color-accent, #228be6); }
 .clarify-btn + .del-btn { margin-left: 0; }
+.edit-btn {
+  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  color: var(--color-text-light); font-size: 0.78rem; padding: 0 4px;
+}
+.edit-btn:hover { color: var(--color-accent, #228be6); }
+.edit-btn + .clarify-btn, .edit-btn + .del-btn { margin-left: 0; }
 .empty-row, .ac-row.empty { color: var(--color-text-light); font-style: italic; padding-left: 18px; }
 .tree-node--feature.drag-over { outline: 2px dashed var(--color-accent); border-radius: 4px; }
 .tree-node--us[draggable='true'] { cursor: grab; }

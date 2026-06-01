@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from starlette.requests import Request
 
 from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+from api.features.requirements import deletion_archive as da
 from api.features.requirements.impact_hook import create_report, run_impact_analysis
 from api.features.requirements.requirements_contracts import (
     FeatureCreateRequest,
@@ -13,6 +14,8 @@ from api.features.requirements.requirements_contracts import (
     FeatureDeleteRequest,
     FeatureDeleteResponse,
     FeatureNodeDTO,
+    FeatureUpdateRequest,
+    FeatureUpdateResponse,
 )
 from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
@@ -58,11 +61,65 @@ async def create_feature(req: FeatureCreateRequest, request: Request) -> Feature
     )
 
 
+@router.patch("/feature", response_model=FeatureUpdateResponse)
+async def update_feature(req: FeatureUpdateRequest, request: Request) -> FeatureUpdateResponse:
+    """Rename / re-describe a Feature (034). Child user stories stay attached."""
+    name = req.name.strip() if req.name is not None else None
+    if req.name is not None and not name:
+        raise HTTPException(status_code=422, detail="name must not be empty")
+
+    feature = get_neo4j_client().update_feature(
+        req.featureId, name=name, description=req.description
+    )
+    if not feature:
+        raise HTTPException(status_code=404, detail=f"Feature {req.featureId} not found")
+
+    SmartLogger.log(
+        "INFO",
+        "Feature updated.",
+        category="requirements.feature.update",
+        params={**http_context(request), "feature_id": req.featureId},
+    )
+    return FeatureUpdateResponse(
+        feature=FeatureNodeDTO(
+            id=feature["id"],
+            name=feature["name"],
+            description=feature.get("description"),
+            source=feature.get("source") or "manual",
+        )
+    )
+
+
 @router.delete("/feature", response_model=FeatureDeleteResponse)
 async def delete_feature(
     req: FeatureDeleteRequest, request: Request, background: BackgroundTasks
 ) -> FeatureDeleteResponse:
-    """Delete a Feature. Child user stories are unassigned or deleted."""
+    """Delete a Feature. Child user stories are unassigned or deleted.
+
+    Recoverable: the Feature (and its User Stories when disposition='delete',
+    plus design it exclusively implements when removeDesign) is snapshotted
+    into a :DeletionRecord before removal (034 — option B).
+    """
+    include_stories = req.userStoryDisposition == "delete"
+    with get_session() as session:
+        row = session.run(
+            "MATCH (f:Feature {id: $id}) RETURN f.name AS name", id=req.featureId
+        ).single()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Feature {req.featureId} not found")
+        snap_ids = da.subtree_ids_for_feature(session, req.featureId, include_stories)
+        design_ids: list[str] = []
+        if req.removeDesign and include_stories:
+            us_ids = [i for i in snap_ids if i != req.featureId]
+            design_ids = da.exclusive_design_ids(session, us_ids)
+        batch_id = da.capture(
+            session, list(dict.fromkeys(snap_ids + design_ids)),
+            scope="feature", root_label="Feature",
+            root_name=row["name"], actor=http_context(request).get("user"),
+        )
+        # Remove exclusive design here; feature + child US are removed by the op below.
+        da.detach_delete(session, design_ids)
+
     client = get_neo4j_client()
     deleted, affected = client.delete_feature(req.featureId, disposition=req.userStoryDisposition)
     if not deleted:
@@ -88,5 +145,6 @@ async def delete_feature(
         },
     )
     return FeatureDeleteResponse(
-        deleted=True, affectedUserStoryIds=affected, impactReportId=report_id
+        deleted=True, affectedUserStoryIds=affected, impactReportId=report_id,
+        restoreBatchId=batch_id,
     )

@@ -21,7 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.hybrid.contracts import (
@@ -184,7 +185,7 @@ async def arbitrate_rule_home(
     )
     structured = get_llm().with_structured_output(ArbitrationVerdict)
     verdict: ArbitrationVerdict = await structured.ainvoke([
-        SystemMessage(content=_SYSTEM_PROMPT),
+        build_system_message(_SYSTEM_PROMPT),
         HumanMessage(content=user),
     ])
 

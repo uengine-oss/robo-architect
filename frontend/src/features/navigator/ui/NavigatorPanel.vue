@@ -801,6 +801,17 @@ function handleProcessDragStart(event, item) {
         </div>
       </template>
       <template v-else>
+        <div class="legend-item legend-toggle">
+          <button
+            class="legend-switch"
+            :class="{ 'is-active': !terminologyStore.developerMode }"
+            @click="terminologyStore.toggleDeveloperMode()"
+            :title="terminologyStore.developerMode ? '개발자 용어 → 도메인 주도 설계 용어로 전환' : '도메인 주도 설계 용어 → 개발자 용어로 전환'"
+          >
+            <span class="legend-switch__knob"></span>
+          </button>
+          <span>{{ terminologyStore.developerMode ? '개발자 용어' : '도메인 주도 설계 용어' }}</span>
+        </div>
         <div class="legend-item">
           <span class="legend-color legend-color--userstory"></span>
           <span>UserStory</span>
@@ -1050,6 +1061,53 @@ function handleProcessDragStart(event, item) {
 .legend-color--aggregate { background: var(--color-aggregate); }
 .legend-color--readmodel { background: var(--color-readmodel); }
 .legend-color--ui { background: var(--color-ui-light); border: 1px solid var(--color-ui); }
+
+/* Terminology toggle inside the legend */
+.legend-toggle {
+  width: 100%;
+  gap: 6px;
+  padding-bottom: 2px;
+  margin-bottom: 2px;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.legend-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  padding: 0;
+}
+
+.legend-switch:hover {
+  border-color: var(--color-accent);
+}
+
+.legend-switch.is-active {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-color: #059669;
+}
+
+.legend-switch__knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.25s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.legend-switch.is-active .legend-switch__knob {
+  transform: translateX(12px);
+}
 
 /* BPMN Flow Items */
 .bpmn-flow-item {

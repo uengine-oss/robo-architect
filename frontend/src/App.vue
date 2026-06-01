@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref, computed, markRaw, provide } from 'vue'
+import { onMounted, onUnmounted, ref, computed, markRaw, provide, watch } from 'vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
@@ -19,6 +19,10 @@ import { createLogger, newOpId } from '@/app/logging/logger'
 // starts true) so this gate is transparent to the existing SPA deployment.
 import LauncherView from '@/features/desktop-launcher/LauncherView.vue'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
+// 034 US7 — 설계 미반영 User Story 식별 + 반영 프롬프트.
+import DesignReflectPrompt from '@/features/requirements/ui/DesignReflectPrompt.vue'
+import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
+import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
 const navigatorStore = useNavigatorStore()
 const themeStore = useThemeStore() // Initialize theme store
@@ -26,7 +30,7 @@ const bpmnStore = useBpmnStore()
 const session = useSessionStore()
 
 // Tab state management
-const activeTab = ref('Design')
+const activeTab = ref('Requirements')
 
 // Claude Code workdir state — hydrated from localStorage so the inspector's
 // source viewer (feature 029) can resolve ImplementationFile paths even
@@ -67,6 +71,46 @@ function _onSwitchTab(e) {
 }
 
 const currentComponent = computed(() => tabComponents[activeTab.value])
+
+// 034 US7 — Event Modeling / Design 탭 진입 시 설계 미반영 User Story를 감지해
+// "설계에 반영하시겠습니까?" 프롬프트를 띄운다. (생성 오케스트레이션은 후속.)
+const requirementsStore = useRequirementsStore()
+const designPending = ref(null) // PendingUS[] | null
+const suppressDesignPrompt = ref(false) // 이번 세션 동안 묻지 않기
+// 034 US7 — 설계 갭 메우기를 기존 인제스천 진행 UI로 표시.
+const designIngestModalOpen = ref(false)
+const designIngestSessionId = ref('')
+watch(activeTab, async (tab) => {
+  if (tab !== 'Event Modeling' && tab !== 'Design') return
+  if (suppressDesignPrompt.value || designPending.value || designIngestModalOpen.value) return
+  try {
+    const res = await requirementsStore.fetchPendingDesign()
+    if (res?.pending?.length) designPending.value = res.pending
+  } catch {
+    /* advisory only — never block tab navigation */
+  }
+})
+async function onDesignReflectConfirm() {
+  const ids = (designPending.value || []).map((p) => p.userStoryId)
+  designPending.value = null
+  if (!ids.length) return
+  try {
+    // 기존 인제스천 설계 단계(events→aggregate→command→readmodel)를 이 US들에 실행.
+    const { session_id } = await requirementsStore.requestDesignForUserStories(ids)
+    // 기존 인제스천 진행 다이얼로그 + SSE 루프를 그대로 재사용해 진행 표시.
+    designIngestSessionId.value = session_id
+    designIngestModalOpen.value = true
+  } catch (e) {
+    window.alert(`설계 반영 시작 실패: ${e?.message || e}`)
+  }
+}
+function onDesignReflectDismiss() {
+  designPending.value = null
+}
+function onDesignReflectDontAsk() {
+  suppressDesignPrompt.value = true
+  designPending.value = null
+}
 
 // Navigator panel resize state
 const navigatorWidth = ref(320)
@@ -221,6 +265,21 @@ onUnmounted(() => {
         </KeepAlive>
       </div>
     </div>
+
+    <!-- 034 US7 — 설계 미반영 User Story 반영 프롬프트 -->
+    <DesignReflectPrompt
+      v-if="designPending"
+      :pending="designPending"
+      @confirm="onDesignReflectConfirm"
+      @dismiss="onDesignReflectDismiss"
+      @dont-ask="onDesignReflectDontAsk"
+    />
+    <!-- 설계 갭 메우기 진행 — 기존 인제스천 진행 다이얼로그/SSE 재사용 -->
+    <RequirementsIngestionModal
+      v-model="designIngestModalOpen"
+      :attach-session-id="designIngestSessionId"
+      @complete="designIngestSessionId = ''"
+    />
   </div>
 </template>
 

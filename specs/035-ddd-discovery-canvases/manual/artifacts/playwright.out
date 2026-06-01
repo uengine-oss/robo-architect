@@ -1,0 +1,9 @@
+
+Running 4 tests using 1 worker
+
+[1A[2K[1/4] e2e_035_tmp.spec.cjs:23:1 › 01 — 요구사항 탭 전체 화면
+[1A[2K[2/4] e2e_035_tmp.spec.cjs:28:1 › 02 — DDD 마법사 버튼 클릭 → 프로파일링 화면
+[1A[2K[3/4] e2e_035_tmp.spec.cjs:38:1 › 03 — 추천 받기 클릭 → 단계 선택 화면
+[1A[2K[4/4] e2e_035_tmp.spec.cjs:49:1 › 04 — 시작 → 단계 진행 화면
+[1A[2K  4 passed (27.5s)
+

@@ -15,7 +15,8 @@ import base64
 from typing import Iterable
 
 import httpx
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.platform.env import env_str
 from api.platform.llm import get_llm
@@ -101,7 +102,7 @@ async def _describe_one(
             resp = await asyncio.wait_for(
                 asyncio.to_thread(
                     llm.invoke,
-                    [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=content)],
+                    [build_system_message(_SYSTEM_PROMPT), HumanMessage(content=content)],
                 ),
                 timeout=_PER_CALL_TIMEOUT_SEC,
             )

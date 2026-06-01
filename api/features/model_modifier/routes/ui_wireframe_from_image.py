@@ -14,7 +14,8 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.features.model_modifier.model_change_application import apply_confirmed_changes_atomic
 from api.platform.neo4j import get_session
@@ -167,7 +168,7 @@ async def _invoke_vision_llm(image_base64: str, mime_type: str, prompt: str) -> 
         asyncio.to_thread(
             llm.invoke,
             [
-                SystemMessage(content=_UI_WIREFRAME_SYSTEM_PROMPT),
+                build_system_message(_UI_WIREFRAME_SYSTEM_PROMPT),
                 HumanMessage(content=content),
             ],
         ),

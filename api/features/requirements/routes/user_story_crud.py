@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from starlette.requests import Request
 
 from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+from api.features.requirements import deletion_archive as da
 from api.features.requirements.feature_grouping_llm import decompose_requirement
 from api.features.requirements.impact_hook import create_report, run_impact_analysis
 from api.features.requirements.requirements_contracts import (
@@ -175,12 +176,13 @@ async def move_user_story(
 async def delete_user_story(
     req: UserStoryDeleteRequest, request: Request, background: BackgroundTasks
 ) -> UserStoryDeleteResponse:
-    """Delete a user story."""
+    """Delete a user story (recoverable — 034 option B snapshot)."""
     with get_session() as session:
-        exists = session.run(
-            "MATCH (us:UserStory {id: $id}) RETURN us.id AS id", id=req.userStoryId
+        row = session.run(
+            "MATCH (us:UserStory {id: $id}) RETURN coalesce(us.action, us.id) AS name",
+            id=req.userStoryId,
         ).single()
-        if not exists:
+        if not row:
             raise HTTPException(status_code=404, detail=f"User story {req.userStoryId} not found")
 
     report_id = create_report("delete")
@@ -188,12 +190,26 @@ async def delete_user_story(
     run_impact_analysis(report_id, trigger="delete", user_story_id=req.userStoryId)
 
     with get_session() as session:
-        session.run("MATCH (us:UserStory {id: $id}) DETACH DELETE us", id=req.userStoryId)
+        ids = [req.userStoryId]
+        if req.removeDesign:
+            ids += da.exclusive_design_ids(session, [req.userStoryId])
+        batch_id = da.capture(
+            session, ids, scope="user_story", root_label="UserStory",
+            root_name=row["name"], actor=http_context(request).get("user"),
+        )
+        da.detach_delete(session, ids)
 
     SmartLogger.log(
         "INFO",
         "User story deleted.",
         category="requirements.user_story.delete",
-        params={**http_context(request), "user_story_id": req.userStoryId},
+        params={
+            **http_context(request),
+            "user_story_id": req.userStoryId,
+            "remove_design": req.removeDesign,
+            "restore_batch": batch_id,
+        },
     )
-    return UserStoryDeleteResponse(deleted=True, impactReportId=report_id)
+    return UserStoryDeleteResponse(
+        deleted=True, impactReportId=report_id, restoreBatchId=batch_id
+    )

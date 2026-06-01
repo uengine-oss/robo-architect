@@ -18,11 +18,18 @@ export const useRequirementsStore = defineStore('requirements', () => {
   const selectedUserStoryId = ref(null)
   const selectedUserStory = ref(null)
 
+  // Generalized tree selection (034 US2): which node kind is in the detail pane.
+  const selectedNode = ref({ type: null, id: null }) // type: 'epic'|'feature'|'userStory'
+
   const designTrace = ref({ nodes: [], relationships: [], empty: false })
   const designTraceLoading = ref(false)
 
   const impactReport = ref(null)
   let impactPollTimer = null
+
+  // 034 — recoverable deletion history (option B snapshot)
+  const deletionRecords = ref([])
+  const lastDeletion = ref(null) // { restoreBatchId, scope, ... } of the most recent delete
 
   const hasImpactFindings = computed(
     () => !!impactReport.value && (impactReport.value.findings || []).length > 0,
@@ -56,10 +63,54 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return (tree.value.unassigned || []).find((us) => us.id === usId) || null
   }
 
+  function findEpic(id) {
+    return (tree.value.epics || []).find((e) => e.id === id) || null
+  }
+  function findFeature(id) {
+    for (const epic of tree.value.epics || []) {
+      const features = [...(epic.features || [])]
+      if (epic.unassignedFeature) features.push(epic.unassignedFeature)
+      const hit = features.find((f) => f.id === id)
+      if (hit) return hit
+    }
+    return null
+  }
+
+  // Computed so they re-resolve from the freshest tree after edits/refreshes.
+  const selectedEpic = computed(() =>
+    selectedNode.value.type === 'epic' ? findEpic(selectedNode.value.id) : null,
+  )
+  const selectedFeature = computed(() =>
+    selectedNode.value.type === 'feature' ? findFeature(selectedNode.value.id) : null,
+  )
+
+  function _clearUserStorySelection() {
+    selectedUserStoryId.value = null
+    selectedUserStory.value = null
+    designTrace.value = { nodes: [], relationships: [], empty: false }
+  }
+
   async function selectUserStory(usId) {
+    selectedNode.value = { type: 'userStory', id: usId }
     selectedUserStoryId.value = usId
     selectedUserStory.value = findUserStory(usId)
+    // Radar returns to project scope when viewing an individual story (US4).
+    fetchClarityScores('project', '*')
     await fetchDesignTrace(usId)
+  }
+
+  /** Select an Epic (BoundedContext) → shows EpicDetail + BC-scoped radar (034 US2/US4). */
+  function selectEpic(id) {
+    selectedNode.value = { type: 'epic', id }
+    _clearUserStorySelection()
+    fetchClarityScores('bounded_context', id)
+  }
+
+  /** Select a Feature → shows FeatureDetail + feature-scoped radar (034 US2/US4). */
+  function selectFeature(id) {
+    selectedNode.value = { type: 'feature', id }
+    _clearUserStorySelection()
+    fetchClarityScores('feature', id)
   }
 
   async function fetchDesignTrace(usId) {
@@ -110,17 +161,294 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return res.json()
   }
 
-  async function deleteFeature(featureId, userStoryDisposition = 'unassign') {
+  // ── Epic(BC) create + Epic/Feature edit (034) ─────────────────────────
+
+  /** Build a readable error from a failed response (surfaces 422/404 detail). */
+  async function _httpError(res, fallback) {
+    let detail = ''
+    try {
+      const body = await res.json()
+      detail = typeof body?.detail === 'string' ? body.detail : ''
+    } catch {
+      /* no JSON body */
+    }
+    return new Error(detail || `${fallback}: ${res.status}`)
+  }
+
+  /** Propose Epic candidates from a natural-language description (034 US1). */
+  async function proposeEpic(text) {
+    const res = await fetch('/api/requirements/epic/propose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+    if (!res.ok) throw await _httpError(res, 'propose epic failed')
+    return res.json() // { proposals: [{name, description}] }
+  }
+
+  /** Propose Feature candidates from a natural-language description (034 US1). */
+  async function proposeFeature(text, boundedContextId = null) {
+    const res = await fetch('/api/requirements/feature/propose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, boundedContextId }),
+    })
+    if (!res.ok) throw await _httpError(res, 'propose feature failed')
+    return res.json() // { proposals: [{name, description, boundedContextId}] }
+  }
+
+  /** Create an Epic — i.e. a BoundedContext (034 US1). */
+  async function createEpic(name, description = null) {
+    const res = await fetch('/api/requirements/bounded-context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description }),
+    })
+    if (!res.ok) throw await _httpError(res, 'create epic failed')
+    await fetchTree()
+    return res.json()
+  }
+
+  /** Rename / re-describe an Epic (034 US3). Relationships preserved server-side. */
+  async function updateEpic(boundedContextId, { name = null, description = null } = {}) {
+    const res = await fetch('/api/requirements/bounded-context', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boundedContextId, name, description }),
+    })
+    if (!res.ok) throw await _httpError(res, 'update epic failed')
+    await fetchTree()
+    return res.json()
+  }
+
+  /** Rename / re-describe a Feature (034 US3). Child user stories stay attached. */
+  async function updateFeature(featureId, { name = null, description = null } = {}) {
+    const res = await fetch('/api/requirements/feature', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ featureId, name, description }),
+    })
+    if (!res.ok) throw await _httpError(res, 'update feature failed')
+    await fetchTree()
+    return res.json()
+  }
+
+  // ── 생성 엔진 설정 (034 US5) ──────────────────────────────────────────
+  // 'in-process' (백엔드 LLM) | 'claude-ide' (로컬 Claude + speckit). 설정은
+  // 도구 환경 설정이므로 그래프가 아닌 localStorage에 저장한다.
+  const generationEngine = ref(
+    (() => {
+      try {
+        return localStorage.getItem('req_gen_engine') || 'in-process'
+      } catch {
+        return 'in-process'
+      }
+    })(),
+  )
+  function setGenerationEngine(v) {
+    generationEngine.value = v
+    try {
+      localStorage.setItem('req_gen_engine', v)
+    } catch {}
+  }
+
+  /** Check whether local Claude/speckit are installed (for the claude-ide engine). */
+  async function checkLocalTooling() {
+    const res = await fetch('/api/requirements/local-tooling/status')
+    if (!res.ok) throw await _httpError(res, 'tooling status failed')
+    return res.json() // { claudeInstalled, speckitInstalled, missing, installHint }
+  }
+
+  // ── 하위 User Story 자동 생성 (034 US5, in-process 엔진) ───────────────
+
+  /**
+   * Epic → Feature(spec.md) 자동 생성 (034). 각 Feature = US들 + edge cases + 가정.
+   * deepagents(speckit-specify 방법론). 제안만 반환(미확정).
+   */
+  async function generateFeatures(boundedContextId) {
+    const res = await fetch(`/api/requirements/epic/${boundedContextId}/generate-features`, {
+      method: 'POST',
+    })
+    if (!res.ok) throw await _httpError(res, 'generate features failed')
+    return res.json() // { boundedContextId, features: [{name, description, edgeCases, assumptions, userStories}] }
+  }
+
+  /** 선택된 Feature들(+US, edge cases)을 영속한다. */
+  async function confirmFeatures({ boundedContextId, features }) {
+    const res = await fetch('/api/requirements/features/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boundedContextId, features }),
+    })
+    if (!res.ok) throw await _httpError(res, 'confirm features failed')
+    const data = await res.json()
+    await fetchTree()
+    return data
+  }
+
+  /** Generate (propose) child user stories for an Epic/Feature via the LLM. */
+  async function generateChildStories(scopeType, scopeId, engine = null) {
+    const eng = engine || generationEngine.value
+    const qs = new URLSearchParams({ engine: eng }).toString()
+    const res = await fetch(`/api/requirements/generate-stories/${scopeType}/${scopeId}?${qs}`, {
+      method: 'POST',
+    })
+    if (!res.ok) throw await _httpError(res, 'generate stories failed')
+    return res.json() // { scopeType, scopeId, boundedContextId, featureId, proposals }
+  }
+
+  /** Persist the user-selected generated stories under their BC (+Feature). */
+  async function confirmChildStories({ boundedContextId, featureId = null, stories }) {
+    const res = await fetch('/api/requirements/child-stories/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boundedContextId, featureId, stories }),
+    })
+    if (!res.ok) throw await _httpError(res, 'confirm stories failed')
+    const data = await res.json()
+    await fetchTree()
+    return data
+  }
+
+  // ── 설계 미반영 User Story 식별 (034 US7) ─────────────────────────────
+
+  /** Fetch user stories that have no design yet (no IMPLEMENTS→Command). */
+  async function fetchPendingDesign(scopeType = 'project', scopeId = '*') {
+    const qs = new URLSearchParams({ scopeType, scopeId }).toString()
+    const res = await fetch(`/api/requirements/user-stories/pending-design?${qs}`)
+    if (!res.ok) throw await _httpError(res, 'pending-design failed')
+    return res.json() // { pending: [...] }
+  }
+
+  /**
+   * Fill the requirements→design gap for the given user stories by running the
+   * EXISTING ingestion design phases (events→aggregate→command→readmodel) on
+   * just those US — same loop, same progress UI, same order (034 US7).
+   * Returns { session_id } for the ingestion SSE stream.
+   */
+  async function requestDesignForUserStories(userStoryIds) {
+    const res = await fetch('/api/ingest/user-stories/design', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userStoryIds }),
+    })
+    if (!res.ok) throw await _httpError(res, 'design request failed')
+    return res.json() // { session_id, userStoryCount }
+  }
+
+  // ── DDD 적합성·정합성 검증 (034 US6) ──────────────────────────────────
+
+  /** Validate a requirement's BC placement / granularity / spec conflicts. */
+  async function validateRequirement(payload) {
+    const res = await fetch('/api/requirements/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) throw await _httpError(res, 'validate failed')
+    return res.json() // { ok, findings, source }
+  }
+
+  async function deleteFeature(featureId, userStoryDisposition = 'unassign', removeDesign = false) {
     const res = await fetch('/api/requirements/feature', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId, userStoryDisposition }),
+      body: JSON.stringify({ featureId, userStoryDisposition, removeDesign }),
     })
-    if (!res.ok) throw new Error(`delete feature failed: ${res.status}`)
+    if (!res.ok) throw await _httpError(res, 'delete feature failed')
     const data = await res.json()
+    if (selectedNode.value.type === 'feature' && selectedNode.value.id === featureId) {
+      selectedNode.value = { type: null, id: null }
+      selectedFeature.value = null
+    }
     await fetchTree()
+    lastDeletion.value = { ...data, scope: 'feature' }
     if (data.impactReportId) watchImpactReport(data.impactReportId)
     return data
+  }
+
+  async function deleteEpic(boundedContextId, removeDesign = false) {
+    const res = await fetch('/api/requirements/bounded-context', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boundedContextId, removeDesign }),
+    })
+    if (!res.ok) throw await _httpError(res, 'delete epic failed')
+    const data = await res.json()
+    if (selectedNode.value.type === 'epic' && selectedNode.value.id === boundedContextId) {
+      selectedNode.value = { type: null, id: null }
+      selectedEpic.value = null
+    }
+    await fetchTree()
+    lastDeletion.value = { ...data, scope: 'epic' }
+    if (data.impactReportId) watchImpactReport(data.impactReportId)
+    return data
+  }
+
+  // ── Deletion history / recovery (034 — option B snapshot) ──────────────
+  async function fetchDeletionRecords() {
+    const res = await fetch('/api/requirements/deletion-records')
+    if (!res.ok) throw await _httpError(res, 'list deletion records failed')
+    const data = await res.json()
+    deletionRecords.value = data.records || []
+    return deletionRecords.value
+  }
+
+  async function restoreDeletion(batchId) {
+    const res = await fetch(`/api/requirements/deletion-records/${batchId}/restore`, {
+      method: 'POST',
+    })
+    if (!res.ok) throw await _httpError(res, 'restore failed')
+    const data = await res.json()
+    await Promise.all([fetchTree(), fetchDeletionRecords()])
+    return data
+  }
+
+  async function purgeDeletion(batchId) {
+    const res = await fetch(`/api/requirements/deletion-records/${batchId}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) throw await _httpError(res, 'purge failed')
+    await fetchDeletionRecords()
+  }
+
+  // ── Conversational (chat) edit + collaborative history (035) ───────────
+  /** SSE URL for streaming a chat-edit proposal (consumed by ChatEditPanel). */
+  function chatEditStreamUrl(scope, id, feedback, history) {
+    const qs = new URLSearchParams({ feedback })
+    if (history && history.length) qs.set('history', JSON.stringify(history))
+    return `/api/requirements/chat-edit/${scope}/${id}/stream?${qs.toString()}`
+  }
+
+  async function chatEditApply(scope, id, payload) {
+    const res = await fetch(`/api/requirements/chat-edit/${scope}/${id}/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}))
+      const err = new Error('편집 충돌: 다른 사용자가 먼저 수정했습니다.')
+      err.conflict = body?.detail
+      throw err
+    }
+    if (!res.ok) throw await _httpError(res, 'chat edit apply failed')
+    const data = await res.json()
+    await fetchTree()
+    if (scope === 'user-story' && selectedUserStoryId.value === id) await selectUserStory(id)
+    return data
+  }
+
+  async function fetchChatEditLog(scope, id) {
+    const res = await fetch(`/api/requirements/chat-edit/${scope}/${id}/log`)
+    if (!res.ok) throw await _httpError(res, 'chat log failed')
+    return (await res.json()).entries || []
+  }
+
+  async function fetchItemHistory(scope, id) {
+    const res = await fetch(`/api/requirements/chat-edit/${scope}/${id}/history`)
+    if (!res.ok) throw await _httpError(res, 'history failed')
+    return (await res.json()).items || []
   }
 
   async function moveUserStory(userStoryId, targetFeatureId) {
@@ -136,14 +464,15 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return data
   }
 
-  async function deleteUserStory(userStoryId) {
+  async function deleteUserStory(userStoryId, removeDesign = false) {
     const res = await fetch('/api/requirements/user-story', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userStoryId }),
+      body: JSON.stringify({ userStoryId, removeDesign }),
     })
-    if (!res.ok) throw new Error(`delete user story failed: ${res.status}`)
+    if (!res.ok) throw await _httpError(res, 'delete user story failed')
     const data = await res.json()
+    lastDeletion.value = { ...data, scope: 'user_story' }
     if (selectedUserStoryId.value === userStoryId) {
       selectedUserStoryId.value = null
       selectedUserStory.value = null
@@ -422,6 +751,214 @@ export const useRequirementsStore = defineStore('requirements', () => {
     clarificationDisambiguation.value = null
   }
 
+  // ── Direct edit + history (spec 033) ────────────────────────────────────
+
+  const editHistory = ref([])
+  const editHistoryLoading = ref(false)
+  const editSaving = ref(false)
+  const editError = ref(null)
+
+  async function updateUserStory(userStoryId, fields, baseUpdatedAt = null) {
+    editSaving.value = true
+    editError.value = null
+    try {
+      const res = await fetch(`/api/requirements/user-story/${encodeURIComponent(userStoryId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...fields, baseUpdatedAt }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = data?.detail?.code === 'EDIT_CONFLICT'
+          ? '다른 사용자가 이미 수정했습니다. 새로고침 후 다시 시도하세요.'
+          : `저장 실패: ${res.status}`
+        throw new Error(msg)
+      }
+      // Refresh tree so the left panel reflects the new text
+      await fetchTree()
+      // Update selected story in memory
+      if (selectedUserStoryId.value === userStoryId) {
+        selectedUserStory.value = data.userStory
+      }
+      return data
+    } catch (e) {
+      editError.value = String(e.message || e)
+      log.error('us_update', 'User story update failed', { error: String(e) })
+      throw e
+    } finally {
+      editSaving.value = false
+    }
+  }
+
+  async function fetchHistory(userStoryId) {
+    editHistoryLoading.value = true
+    try {
+      const res = await fetch(`/api/requirements/user-story/${encodeURIComponent(userStoryId)}/history`)
+      if (!res.ok) throw new Error(`history fetch failed: ${res.status}`)
+      const data = await res.json()
+      editHistory.value = data.items || []
+    } catch (e) {
+      editHistory.value = []
+      log.warn('us_history', 'Edit history fetch failed', { error: String(e) })
+    } finally {
+      editHistoryLoading.value = false
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // 035 — DDD 발견 마법사 & 도메인 캔버스
+  // 진실의 원천=그래프. 캔버스=투영, 모든 변경 propose→confirm. 이원화 엔진 재사용.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /** 마법사 시작: 프로파일링 → 추천 단계 조합. engine 기본=현재 생성엔진 설정. */
+  async function startDddWizard({ scope = 'greenfield', epicId = null, profile, engine = null }) {
+    const res = await fetch('/api/requirements/ddd-wizard/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope, epicId, profile, engine: engine || generationEngine.value }),
+    })
+    if (!res.ok) throw await _httpError(res, 'wizard start failed')
+    return res.json() // { sessionId, recommendedPlan, profileSummary }
+  }
+
+  /** 한 단계 진행(SSE) — proposal 이벤트의 data를 콜백으로 전달. */
+  function streamDddWizardStep(sessionId, stepKey, { onReasoning, onProposal, onDone, onError } = {}) {
+    const es = new EventSource(
+      `/api/requirements/ddd-wizard/${sessionId}/step/${encodeURIComponent(stepKey)}/stream`,
+    )
+    es.addEventListener('reasoning', (ev) => {
+      try { onReasoning && onReasoning(JSON.parse(ev.data)) } catch {}
+    })
+    es.addEventListener('proposal', (ev) => {
+      try { onProposal && onProposal(JSON.parse(ev.data)) } catch {}
+    })
+    es.addEventListener('done', (ev) => {
+      try { onDone && onDone(JSON.parse(ev.data)) } catch {}
+      es.close()
+    })
+    es.addEventListener('error', (ev) => {
+      onError && onError(ev)
+      es.close()
+    })
+    return es
+  }
+
+  /** 답변/문서 제출 → 단계 산출물·그래프 변경안(동기). */
+  async function answerDddWizard(sessionId, { stepKey, answers = {}, pastedDocument = null }) {
+    const res = await fetch(`/api/requirements/ddd-wizard/${sessionId}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stepKey, answers, pastedDocument }),
+    })
+    if (!res.ok) throw await _httpError(res, 'wizard answer failed')
+    return res.json() // WizardProposal
+  }
+
+  /** 단계 확정 — 수락한 변경만 그래프 반영(빈 목록=무변경). */
+  async function confirmDddWizardStep(sessionId, stepKey, acceptedChangeIds) {
+    const res = await fetch(
+      `/api/requirements/ddd-wizard/${sessionId}/step/${encodeURIComponent(stepKey)}/confirm`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepKey, acceptedChangeIds }),
+      },
+    )
+    if (!res.ok) throw await _httpError(res, 'wizard confirm failed')
+    const data = await res.json()
+    await fetchTree()
+    return data
+  }
+
+  // ── 피보탈 이벤트 (US2) ────────────────────────────────────────────────
+  async function togglePivotal(eventId, { pivotal = null, hotspot = null } = {}) {
+    const res = await fetch('/api/requirements/pivotal-events/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId, pivotal, hotspot }),
+    })
+    if (!res.ok) throw await _httpError(res, 'pivotal toggle failed')
+    return res.json()
+  }
+
+  async function proposeSubdomains() {
+    const res = await fetch('/api/requirements/pivotal-events/subdomains/propose')
+    if (!res.ok) throw await _httpError(res, 'subdomain propose failed')
+    return res.json() // { proposals: [...] }
+  }
+
+  // ── BC / Aggregate Canvas (US3/US5) ────────────────────────────────────
+  async function fetchBcCanvas(bcId) {
+    const res = await fetch(`/api/requirements/bounded-context/${bcId}/canvas`)
+    if (!res.ok) throw await _httpError(res, 'bc canvas fetch failed')
+    return res.json()
+  }
+
+  async function patchBcCanvas(bcId, fields, ifMatch = null) {
+    const headers = { 'Content-Type': 'application/json' }
+    if (ifMatch != null) headers['If-Match'] = String(ifMatch)
+    const res = await fetch(`/api/requirements/bounded-context/${bcId}/canvas`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(fields),
+    })
+    if (!res.ok) throw await _httpError(res, 'bc canvas patch failed')
+    return res.json()
+  }
+
+  async function fetchAggregateCanvas(aggregateId) {
+    const res = await fetch(`/api/requirements/aggregate/${aggregateId}/canvas`)
+    if (!res.ok) throw await _httpError(res, 'aggregate canvas fetch failed')
+    return res.json()
+  }
+
+  async function patchAggregateCanvas(aggregateId, fields, ifMatch = null) {
+    const headers = { 'Content-Type': 'application/json' }
+    if (ifMatch != null) headers['If-Match'] = String(ifMatch)
+    const res = await fetch(`/api/requirements/aggregate/${aggregateId}/canvas`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(fields),
+    })
+    if (!res.ok) throw await _httpError(res, 'aggregate canvas patch failed')
+    return res.json()
+  }
+
+  /** BC 캔버스 자동생성 초안(기존 ddd-spec 렌더러 재사용). */
+  async function generateBcCanvas(bcId) {
+    const res = await fetch('/api/ddd-spec/generate-bounded-context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bounded_context_id: bcId }),
+    })
+    if (!res.ok) throw await _httpError(res, 'bc canvas generate failed')
+    return res.json()
+  }
+
+  // ── 전략 분류 (US6) ────────────────────────────────────────────────────
+  async function setBcClassification(bcId, classification, ifMatch = null) {
+    const headers = { 'Content-Type': 'application/json' }
+    if (ifMatch != null) headers['If-Match'] = String(ifMatch)
+    const res = await fetch(`/api/contexts/${bcId}/classification`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ classification }),
+    })
+    if (!res.ok) throw await _httpError(res, 'classification failed')
+    return res.json()
+  }
+
+  // ── .ddd 내보내기 (US7) ────────────────────────────────────────────────
+  async function exportDdd({ outputDir = '.ddd', steps = null } = {}) {
+    const res = await fetch('/api/requirements/ddd-export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outputDir, steps }),
+    })
+    if (!res.ok) throw await _httpError(res, 'ddd export failed')
+    return res.json() // { writtenFiles, skipped }
+  }
+
   /** Explicit data deletion (US6) — calls the existing clear-all endpoint. */
   async function clearAllData() {
     const res = await fetch('/api/ingest/clear-all', { method: 'DELETE' })
@@ -441,22 +978,59 @@ export const useRequirementsStore = defineStore('requirements', () => {
     error,
     selectedUserStoryId,
     selectedUserStory,
+    selectedNode,
+    selectedEpic,
+    selectedFeature,
     designTrace,
     designTraceLoading,
     impactReport,
     hasImpactFindings,
     fetchTree,
     selectUserStory,
+    selectEpic,
+    selectFeature,
     fetchDesignTrace,
     proposeUserStory,
     confirmUserStory,
     createFeature,
+    createEpic,
+    proposeEpic,
+    proposeFeature,
+    updateEpic,
+    updateFeature,
+    generationEngine,
+    setGenerationEngine,
+    checkLocalTooling,
+    generateFeatures,
+    confirmFeatures,
+    generateChildStories,
+    confirmChildStories,
+    validateRequirement,
+    fetchPendingDesign,
+    requestDesignForUserStories,
     deleteFeature,
+    deleteEpic,
     moveUserStory,
     deleteUserStory,
+    deletionRecords,
+    lastDeletion,
+    fetchDeletionRecords,
+    restoreDeletion,
+    purgeDeletion,
+    chatEditStreamUrl,
+    chatEditApply,
+    fetchChatEditLog,
+    fetchItemHistory,
     watchImpactReport,
     dismissImpactReport,
     clearAllData,
+    // ── Direct edit + history (033) ───────────────────────────────────
+    editHistory,
+    editHistoryLoading,
+    editSaving,
+    editError,
+    updateUserStory,
+    fetchHistory,
     // ── Clarification (030) ────────────────────────────────────────────
     clarificationSession,
     clarificationProposal,
@@ -479,5 +1053,19 @@ export const useRequirementsStore = defineStore('requirements', () => {
     fetchClarityScores,
     isUserStoryFlagged,
     closeClarification,
+    // ── DDD 마법사 & 캔버스 (035) ──────────────────────────────────────
+    startDddWizard,
+    streamDddWizardStep,
+    answerDddWizard,
+    confirmDddWizardStep,
+    togglePivotal,
+    proposeSubdomains,
+    fetchBcCanvas,
+    patchBcCanvas,
+    fetchAggregateCanvas,
+    patchAggregateCanvas,
+    generateBcCanvas,
+    setBcClassification,
+    exportDdd,
   }
 })

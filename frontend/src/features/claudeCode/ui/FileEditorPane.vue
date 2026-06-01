@@ -14,34 +14,34 @@ import { vue as vueLang } from '@codemirror/lang-vue'
 
 // Tokyo Night-aligned palette so the editor matches the Claude Code terminal.
 const tokyoNightHighlight = HighlightStyle.define([
-  { tag: t.keyword, color: '#bb9af7' },
-  { tag: [t.controlKeyword, t.moduleKeyword, t.operatorKeyword], color: '#bb9af7' },
-  { tag: [t.string, t.special(t.string)], color: '#9ece6a' },
-  { tag: t.regexp, color: '#b4f9f8' },
-  { tag: t.escape, color: '#2ac3de' },
-  { tag: t.number, color: '#ff9e64' },
-  { tag: t.bool, color: '#ff9e64' },
-  { tag: t.null, color: '#ff9e64' },
-  { tag: [t.comment, t.lineComment, t.blockComment], color: '#565f89', fontStyle: 'italic' },
-  { tag: t.atom, color: '#bb9af7' },
-  { tag: t.heading, color: '#7aa2f7', fontWeight: 'bold' },
-  { tag: t.strong, color: '#c0caf5', fontWeight: 'bold' },
-  { tag: t.emphasis, color: '#c0caf5', fontStyle: 'italic' },
-  { tag: t.link, color: '#73daca', textDecoration: 'underline' },
-  { tag: t.url, color: '#73daca', textDecoration: 'underline' },
-  { tag: t.list, color: '#7aa2f7' },
-  { tag: t.quote, color: '#9ece6a' },
-  { tag: [t.variableName, t.propertyName], color: '#c0caf5' },
-  { tag: t.function(t.variableName), color: '#7aa2f7' },
-  { tag: t.definition(t.variableName), color: '#c0caf5' },
-  { tag: [t.typeName, t.className], color: '#2ac3de' },
-  { tag: t.operator, color: '#89ddff' },
-  { tag: [t.bracket, t.punctuation, t.separator], color: '#a9b1d6' },
-  { tag: t.tagName, color: '#f7768e' },
-  { tag: t.attributeName, color: '#e0af68' },
-  { tag: t.attributeValue, color: '#9ece6a' },
-  { tag: t.meta, color: '#7aa2f7' },
-  { tag: t.invalid, color: '#ff5555' },
+  { tag: t.keyword, color: 'var(--ccw-purple)' },
+  { tag: [t.controlKeyword, t.moduleKeyword, t.operatorKeyword], color: 'var(--ccw-purple)' },
+  { tag: [t.string, t.special(t.string)], color: 'var(--ccw-green)' },
+  { tag: t.regexp, color: 'var(--ccw-cyan)' },
+  { tag: t.escape, color: 'var(--ccw-cyan)' },
+  { tag: t.number, color: 'var(--ccw-orange)' },
+  { tag: t.bool, color: 'var(--ccw-orange)' },
+  { tag: t.null, color: 'var(--ccw-orange)' },
+  { tag: [t.comment, t.lineComment, t.blockComment], color: 'var(--ccw-text-dim)', fontStyle: 'italic' },
+  { tag: t.atom, color: 'var(--ccw-purple)' },
+  { tag: t.heading, color: 'var(--ccw-accent)', fontWeight: 'bold' },
+  { tag: t.strong, color: 'var(--ccw-text)', fontWeight: 'bold' },
+  { tag: t.emphasis, color: 'var(--ccw-text)', fontStyle: 'italic' },
+  { tag: t.link, color: 'var(--ccw-teal)', textDecoration: 'underline' },
+  { tag: t.url, color: 'var(--ccw-teal)', textDecoration: 'underline' },
+  { tag: t.list, color: 'var(--ccw-accent)' },
+  { tag: t.quote, color: 'var(--ccw-green)' },
+  { tag: [t.variableName, t.propertyName], color: 'var(--ccw-text)' },
+  { tag: t.function(t.variableName), color: 'var(--ccw-accent)' },
+  { tag: t.definition(t.variableName), color: 'var(--ccw-text)' },
+  { tag: [t.typeName, t.className], color: 'var(--ccw-cyan)' },
+  { tag: t.operator, color: 'var(--ccw-cyan)' },
+  { tag: [t.bracket, t.punctuation, t.separator], color: 'var(--ccw-text-muted)' },
+  { tag: t.tagName, color: 'var(--ccw-red)' },
+  { tag: t.attributeName, color: 'var(--ccw-yellow)' },
+  { tag: t.attributeValue, color: 'var(--ccw-green)' },
+  { tag: t.meta, color: 'var(--ccw-accent)' },
+  { tag: t.invalid, color: 'var(--ccw-red)' },
 ])
 
 const tokyoNightEditorTheme = EditorView.theme(
@@ -49,37 +49,37 @@ const tokyoNightEditorTheme = EditorView.theme(
     '&': {
       height: '100%',
       fontSize: '13px',
-      color: '#c0caf5',
-      backgroundColor: '#1a1b26',
+      color: 'var(--ccw-text)',
+      backgroundColor: 'var(--ccw-bg)',
     },
     '.cm-content': {
-      caretColor: '#c0caf5',
+      caretColor: 'var(--ccw-text)',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     },
     '.cm-scroller': {
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#c0caf5' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ccw-text)' },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
-      backgroundColor: 'rgba(82, 139, 255, 0.30)',
+      backgroundColor: 'var(--ccw-selection)',
     },
-    '.cm-activeLine': { backgroundColor: 'rgba(122, 162, 247, 0.06)' },
+    '.cm-activeLine': { backgroundColor: 'var(--ccw-hover)' },
     '.cm-gutters': {
-      backgroundColor: '#1a1b26',
-      color: '#3b4261',
+      backgroundColor: 'var(--ccw-bg)',
+      color: 'var(--ccw-gutter)',
       border: 'none',
-      borderRight: '1px solid #2f3242',
+      borderRight: '1px solid var(--ccw-border)',
     },
     '.cm-lineNumbers .cm-gutterElement': {
-      color: '#3b4261',
+      color: 'var(--ccw-gutter)',
       padding: '0 12px 0 8px',
     },
     '.cm-activeLineGutter': {
-      backgroundColor: 'rgba(122, 162, 247, 0.06)',
-      color: '#7aa2f7',
+      backgroundColor: 'var(--ccw-hover)',
+      color: 'var(--ccw-accent)',
     },
     '.cm-matchingBracket, .cm-nonmatchingBracket': {
-      backgroundColor: 'rgba(187, 154, 247, 0.18)',
+      backgroundColor: 'var(--ccw-active)',
       color: 'inherit',
     },
   },
@@ -366,16 +366,16 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #1a1b26;
-  color: #c0caf5;
+  background: var(--ccw-bg);
+  color: var(--ccw-text);
   overflow: hidden;
 }
 
 .editor-tabbar {
   display: flex;
   align-items: center;
-  border-bottom: 1px solid #2f3242;
-  background: #15161e;
+  border-bottom: 1px solid var(--ccw-border);
+  background: var(--ccw-bg-elevated);
   padding-right: 8px;
   min-height: 30px;
 }
@@ -385,15 +385,15 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: #1a1b26;
-  border-right: 1px solid #2f3242;
+  background: var(--ccw-bg);
+  border-right: 1px solid var(--ccw-border);
   font-size: 12px;
   white-space: nowrap;
-  color: #c0caf5;
+  color: var(--ccw-text);
 }
 
 .editor-tab.is-active {
-  border-bottom: 2px solid #7aa2f7;
+  border-bottom: 2px solid var(--ccw-accent);
 }
 
 .editor-tab-empty {
@@ -408,11 +408,11 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
 .editor-tab-path {
   opacity: 0.55;
   font-size: 11px;
-  color: #a9b1d6;
+  color: var(--ccw-text-muted);
 }
 
 .dirty-dot {
-  color: #e0af68;
+  color: var(--ccw-yellow);
   font-size: 14px;
   line-height: 1;
 }
@@ -426,15 +426,15 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
 
 .editor-status {
   font-size: 11px;
-  color: #565f89;
+  color: var(--ccw-text-dim);
   font-style: italic;
 }
 
 .editor-save {
   font-size: 11px;
   padding: 3px 10px;
-  background: #7aa2f7;
-  color: #1a1b26;
+  background: var(--ccw-accent);
+  color: var(--ccw-bg);
   border: none;
   border-radius: 3px;
   cursor: pointer;
@@ -442,7 +442,7 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
 }
 
 .editor-save:hover:not(:disabled) {
-  background: #9bb4f9;
+  background: var(--ccw-accent-strong);
 }
 
 .editor-save:disabled {
@@ -505,14 +505,14 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #565f89;
+  color: var(--ccw-text-dim);
   font-style: italic;
   padding: 20px;
   text-align: center;
-  background: #1a1b26;
+  background: var(--ccw-bg);
 }
 
 .editor-error {
-  color: #f7768e;
+  color: var(--ccw-red);
 }
 </style>

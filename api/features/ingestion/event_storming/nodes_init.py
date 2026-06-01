@@ -13,7 +13,8 @@ from __future__ import annotations
 from typing import Any, Dict, List
 from datetime import datetime
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -26,7 +27,7 @@ def init_node(state: EventStormingState) -> Dict[str, Any]:
     """Initialize the workflow."""
     return {
         "phase": WorkflowPhase.LOAD_USER_STORIES,
-        "messages": [SystemMessage(content=SYSTEM_PROMPT)],
+        "messages": [build_system_message(SYSTEM_PROMPT)],
     }
 
 

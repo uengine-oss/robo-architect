@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "id": "8a35b42c-80c8-4769-b07e-256aee3f2ee2",
+      "timestamp": "2026-05-30T09:06:26.489000000+00:00",
+      "userName": "E2E Test User",
+      "userEmail": "e2e@test.com",
+      "changes": {
+        "action": {
+          "before": "업무처리 동의 또는 확인을 한다",
+          "after": "E2E 테스트 편집 - 업무처리 동의를 검토하고 제출한다"
+        }
+      }
+    }
+  ]
+}

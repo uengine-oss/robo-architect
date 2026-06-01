@@ -1,0 +1,4 @@
+HTTP 404
+{
+  "detail": "User story nonexistent-id-000 not found"
+}

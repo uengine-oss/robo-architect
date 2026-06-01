@@ -17,14 +17,23 @@ def slugify(value: str) -> str:
     Make a stable, URL-ish slug used for natural keys.
 
     - lower-case
-    - non [a-z0-9] => '-'
+    - keep Unicode letters/digits (incl. Korean/CJK); everything else => '-'
     - collapse duplicate '-'
     - strip leading/trailing '-'
+
+    Unicode-aware: ASCII input is unchanged (e.g. "Order Mgmt" → "order-mgmt"),
+    but non-ASCII names are preserved so they yield DISTINCT keys instead of all
+    collapsing to "unnamed" (e.g. "결제관리" → "결제관리", "주문관리" → "주문관리").
+    Previously every Korean name slugged to "unnamed", so manually-created
+    BoundedContexts/Features collided on one key and MERGE renamed the existing
+    node instead of creating a new one.
     """
     s = (value or "").strip().lower()
     if not s:
         return "unnamed"
-    s = _NON_ALNUM.sub("-", s)
+    # `str.isalnum()` is Unicode-aware (True for Korean/CJK/kana/accented letters
+    # and digits); non-alphanumeric chars (space, punctuation, …) become '-'.
+    s = "".join(ch if ch.isalnum() else "-" for ch in s)
     s = _MULTI_DASH.sub("-", s).strip("-")
     return s or "unnamed"
 

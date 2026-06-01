@@ -10,7 +10,8 @@ import json
 import time
 from typing import Any, Dict
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
@@ -108,7 +109,7 @@ Respond in this exact JSON format:
         )
 
     t_llm0 = time.perf_counter()
-    response = llm.invoke([SystemMessage(content=system_msg), HumanMessage(content=prompt)])
+    response = llm.invoke([build_system_message(system_msg), HumanMessage(content=prompt)])
     llm_ms = int((time.perf_counter() - t_llm0) * 1000)
 
     resp_text = getattr(response, "content", "") or ""

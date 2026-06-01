@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
@@ -177,7 +178,7 @@ async def link_commands_to_existing_events_phase(
                 out = await asyncio.wait_for(
                     asyncio.to_thread(
                         structured.invoke,
-                        [SystemMessage(content=SYSTEM), HumanMessage(content=prompt)],
+                        [build_system_message(SYSTEM), HumanMessage(content=prompt)],
                     ),
                     timeout=120.0,
                 )

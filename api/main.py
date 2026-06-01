@@ -28,6 +28,7 @@ from api.platform.observability.request_logging import (
     set_request_id,
 )
 from api.platform.observability.smart_logger import SmartLogger
+from api.platform.middleware.language_middleware import language_middleware
 from api.platform.neo4j import init_neo4j_driver, close_neo4j_driver
 
 # Neo4j 드라이버의 경고 로그 필터링
@@ -182,6 +183,12 @@ async def _request_id_middleware(request: Request, call_next):
 from api.platform.identity import IdentityMiddleware  # noqa: E402
 
 app.add_middleware(IdentityMiddleware)
+
+# Feature 031: capture per-request output-language from Accept-Language header.
+# Registered after the request_id middleware so the language tag is set
+# BEFORE the request_id middleware's start/end logs fire — http_context()
+# now includes the resolved language alongside request_id on every log line.
+app.middleware("http")(language_middleware)
 
 # Include ingestion router
 from api.features.ingestion.router import router as ingestion_router

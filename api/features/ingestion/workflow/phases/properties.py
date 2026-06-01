@@ -5,7 +5,8 @@ import re
 import time
 from typing import Any, AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
+from api.platform.llm_messages import build_system_message
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.event_storming.prompts import (
@@ -462,7 +463,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                         resp = await asyncio.wait_for(
                             asyncio.to_thread(
                                 structured_llm.invoke,
-                                [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=chunk_prompt)]
+                                [build_system_message(SYSTEM_PROMPT), HumanMessage(content=chunk_prompt)]
                             ),
                             timeout=300.0,
                         )
@@ -543,7 +544,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                     resp = await asyncio.wait_for(
                         asyncio.to_thread(
                             structured_llm.invoke,
-                            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                            [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)]
                         ),
                         timeout=300.0,
                     )
@@ -686,7 +687,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
             resp = await asyncio.wait_for(
                 asyncio.to_thread(
                     structured_llm.invoke,
-                    [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+                    [build_system_message(SYSTEM_PROMPT), HumanMessage(content=prompt)]
                 ),
                 timeout=300.0,
             )

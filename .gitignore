@@ -94,3 +94,5 @@ desktop/.playwright/
 # Production builds go through desktop/scripts/build-frontend.* (T016).
 frontend/dist
 frontend/dist/
+# Office temp/lock files
+~$*
