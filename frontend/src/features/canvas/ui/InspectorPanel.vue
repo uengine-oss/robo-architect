@@ -330,31 +330,29 @@ async function onDesignSave(data) {
 
     // Push to Figma via the 016 binding path. Backend reads the just-persisted
     // sceneGraph from Neo4j and queues UPDATE_FRAME_FROM_SCENE_GRAPH for the
-    // plugin — no API token, no SYNC_FRAME handshake. Only meaningful when the
-    // UI is already bound (figmaNodeId set by a prior push/scan).
-    if (n.data?.figmaNodeId) {
-      figmaPushStatus.value = 'pushing'
-      figmaPushMessage.value = 'Figma 동기화 중...'
-      try {
-        const resp = await fetch(`/api/figma-binding/update-frame/${encodeURIComponent(n.id)}`, {
-          method: 'POST',
-        })
-        if (!resp.ok) {
-          const errBody = await resp.json().catch(() => ({}))
-          throw new Error(errBody.detail || `Figma 동기화 실패 (${resp.status})`)
-        }
-        figmaPushStatus.value = 'success'
-        figmaPushMessage.value = 'Figma 동기화 완료'
-        setTimeout(() => { figmaPushStatus.value = null }, 3000)
-      } catch (pushErr) {
-        figmaPushStatus.value = 'error'
-        figmaPushMessage.value = 'Figma 동기화 실패: ' + (pushErr?.message || pushErr)
-        setTimeout(() => { figmaPushStatus.value = null }, 6000)
+    // plugin — no API token, no SYNC_FRAME handshake. We always attempt the
+    // call here and let the backend decide: it returns ok=false with an errorKo
+    // when figmaNodeId is missing or binding is inactive. The frontend's
+    // n.data.figmaNodeId is sometimes stale (canvas store cached pre-sync),
+    // so a client-side gate would skip valid pushes.
+    figmaPushStatus.value = 'pushing'
+    figmaPushMessage.value = 'Figma 동기화 중...'
+    try {
+      const resp = await fetch(`/api/figma-binding/update-frame/${encodeURIComponent(n.id)}`, {
+        method: 'POST',
+      })
+      const body = await resp.json().catch(() => ({}))
+      if (!resp.ok || body?.ok === false) {
+        // 200 with ok=false carries errorKo. Other statuses use detail.
+        throw new Error(body?.errorKo || body?.detail || `Figma 동기화 실패 (${resp.status})`)
       }
-    } else {
-      figmaPushStatus.value = 'saved'
-      figmaPushMessage.value = '저장 완료'
+      figmaPushStatus.value = 'success'
+      figmaPushMessage.value = `Figma 동기화 완료 (${body?.nodesCreated ?? '?'}개 노드)`
       setTimeout(() => { figmaPushStatus.value = null }, 3000)
+    } catch (pushErr) {
+      figmaPushStatus.value = 'error'
+      figmaPushMessage.value = 'Figma 동기화 실패: ' + (pushErr?.message || pushErr)
+      setTimeout(() => { figmaPushStatus.value = null }, 6000)
     }
   } catch (e) {
     figmaPushStatus.value = 'error'
@@ -1418,45 +1416,19 @@ async function copySceneGraphToFigma() {
   }
 }
 
-// ── Auto-sync: poll for Figma changes pushed by Plugin ──
-let figmaAutoSyncTimer = null
-
-function startFigmaAutoSync() {
-  if (figmaAutoSyncTimer) return
-  figmaAutoSyncTimer = setInterval(async () => {
-    const n = node.value
-    if (!n?.data?.figmaFileKey || activeTab.value !== 'design') return
-    const frameName = n.data?.displayName || n.data?.name || ''
-    if (!frameName) return
-
-    try {
-      const resp = await fetch(`/api/figma-plugin/get-result?file_key=${encodeURIComponent(n.data.figmaFileKey)}&frame_name=${encodeURIComponent(frameName)}`)
-      if (!resp.ok) return
-      const data = await resp.json()
-      if (data.result && data.result.sceneGraph) {
-        // Update local data
-        if (n.data) n.data = { ...n.data, sceneGraph: data.result.sceneGraph }
-        const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
-        if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: data.result.sceneGraph }
-        designEditorKey.value++
-        emit('updated')
-        figmaPushStatus.value = 'success'
-        figmaPushMessage.value = `Figma 변경 자동 반영됨`
-        setTimeout(() => { figmaPushStatus.value = null }, 3000)
-      }
-    } catch (_e) {}
-  }, 5000)
-}
-
-function stopFigmaAutoSync() {
-  if (figmaAutoSyncTimer) { clearInterval(figmaAutoSyncTimer); figmaAutoSyncTimer = null }
-}
-
-// Start/stop auto-sync based on active tab
-watch(activeTab, (tab) => {
-  if (tab === 'design') startFigmaAutoSync()
-  else stopFigmaAutoSync()
-}, { immediate: true })
+// ── Auto-sync removed ──
+// The previous frame_name-keyed polling against /api/figma-plugin/get-result
+// was a pre-016 path. It indiscriminately overwrote the FrameEditor's local
+// sceneGraph with whatever the plugin's last result happened to be — which
+// caused silent data loss: a poll could fire while the LLM-generated rich
+// sceneGraph was loaded, replace it with an empty plugin export, and the
+// next Save & Sync would persist that empty graph to Neo4j.
+//
+// Figma → RA pull is now exclusive to the explicit "Figma에서 가져오기"
+// button (pullFromFigmaToDesign → /api/figma-binding/pull-frame/{ui_id}),
+// which is keyed by ui_id and only runs on user request.
+function startFigmaAutoSync() { /* no-op */ }
+function stopFigmaAutoSync() { /* no-op */ }
 
 const hasFigmaConnection = computed(() => {
   // The REST-API-token path is being retired in favour of the Figma plugin,
@@ -4994,6 +4966,30 @@ function updateVoFieldValue(fieldName, value) {
         <div v-if="figmaError" class="inspector-alert error" style="margin-top:8px;">{{ figmaError }}</div>
       </div>
     </div>
+
+    <!-- Floating Figma sync toast — fixed to viewport so it's visible even
+         when FrameEditor takes the whole Design panel. -->
+    <Teleport to="body">
+      <Transition name="figma-toast">
+        <div
+          v-if="figmaPushStatus"
+          class="figma-sync-toast"
+          :class="`figma-sync-toast--${figmaPushStatus}`"
+          role="status"
+        >
+          <svg v-if="figmaPushStatus === 'pushing'" class="figma-sync-toast__spin" width="16" height="16" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="31.4 31.4" />
+          </svg>
+          <svg v-else-if="figmaPushStatus === 'success' || figmaPushStatus === 'saved'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          <svg v-else-if="figmaPushStatus === 'error'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <span>{{ figmaPushMessage }}</span>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -8441,6 +8437,49 @@ function updateVoFieldValue(fieldName, value) {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+</style>
+
+<style>
+/* Floating Figma sync toast — unscoped so the Teleport target (body) renders
+   correctly. Fixed to viewport, top-right, above everything else. */
+.figma-sync-toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  max-width: 420px;
+}
+.figma-sync-toast--pushing { background: #f59e0b; }
+.figma-sync-toast--success { background: #16a34a; }
+.figma-sync-toast--saved   { background: #16a34a; }
+.figma-sync-toast--error   { background: #dc2626; }
+
+.figma-sync-toast__spin {
+  animation: figma-toast-spin 0.9s linear infinite;
+}
+@keyframes figma-toast-spin {
+  to { transform: rotate(360deg); }
+}
+
+.figma-toast-enter-active,
+.figma-toast-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.figma-toast-enter-from,
+.figma-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-12px);
 }
 </style>
 
