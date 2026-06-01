@@ -328,13 +328,29 @@ async function onDesignSave(data) {
     }
     emit('updated')
 
-    // Push to Figma Plugin — use stored fileKey from Figma API creds
-    let fileKey = n.data?.figmaFileKey
-    if (!fileKey) {
-      try { fileKey = JSON.parse(localStorage.getItem('figma_api_creds') || '{}').fileKey } catch {}
-    }
-    if (fileKey) {
-      await pushToFigmaPlugin(fileKey, n.data?.figmaNodeId, n.data?.displayName || n.data?.name, data)
+    // Push to Figma via the 016 binding path. Backend reads the just-persisted
+    // sceneGraph from Neo4j and queues UPDATE_FRAME_FROM_SCENE_GRAPH for the
+    // plugin — no API token, no SYNC_FRAME handshake. Only meaningful when the
+    // UI is already bound (figmaNodeId set by a prior push/scan).
+    if (n.data?.figmaNodeId) {
+      figmaPushStatus.value = 'pushing'
+      figmaPushMessage.value = 'Figma 동기화 중...'
+      try {
+        const resp = await fetch(`/api/figma-binding/update-frame/${encodeURIComponent(n.id)}`, {
+          method: 'POST',
+        })
+        if (!resp.ok) {
+          const errBody = await resp.json().catch(() => ({}))
+          throw new Error(errBody.detail || `Figma 동기화 실패 (${resp.status})`)
+        }
+        figmaPushStatus.value = 'success'
+        figmaPushMessage.value = 'Figma 동기화 완료'
+        setTimeout(() => { figmaPushStatus.value = null }, 3000)
+      } catch (pushErr) {
+        figmaPushStatus.value = 'error'
+        figmaPushMessage.value = 'Figma 동기화 실패: ' + (pushErr?.message || pushErr)
+        setTimeout(() => { figmaPushStatus.value = null }, 6000)
+      }
     } else {
       figmaPushStatus.value = 'saved'
       figmaPushMessage.value = '저장 완료'
@@ -3400,18 +3416,17 @@ function updateVoFieldValue(fieldName, value) {
             <div v-if="node.data?.figmaNodeId" class="ui-preview-panel__attached" style="margin-top:4px;">
               <span class="label">Figma:</span>
               <span class="value" style="font-family:monospace;font-size:11px;">{{ node.data.figmaNodeId }}</span>
-              <!-- Pull from Figma uses REST API token (figma_api_creds.apiToken),
-                   which the new plugin-only flow no longer issues. The button
-                   is hidden until the plugin push path replaces it. -->
+              <!-- Pull from Figma → reload Design with the current Figma frame
+                   state. Routes through /api/figma-binding/pull-frame which
+                   asks the plugin (no API token needed). -->
               <button
-                v-if="false"
                 class="ui-preview-panel__btn"
                 style="margin-left:8px;width:24px;height:24px;"
-                :disabled="figmaSyncPulling"
-                :title="figmaSyncPulling ? 'Pulling...' : 'Pull from Figma'"
-                @click="pullFromFigma"
+                :disabled="figmaPushStatus === 'pushing'"
+                :title="figmaPushStatus === 'pushing' ? 'Pulling...' : 'Figma에서 가져오기'"
+                @click="pullFromFigmaToDesign"
               >
-                <svg v-if="figmaSyncPulling" width="12" height="12" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                <svg v-if="figmaPushStatus === 'pushing'" width="12" height="12" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
                   <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
                 </svg>
                 <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
