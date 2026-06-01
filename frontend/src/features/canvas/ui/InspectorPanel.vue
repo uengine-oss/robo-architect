@@ -372,16 +372,22 @@ async function onDesignSave(data) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sceneGraph: sceneGraphStr })
     })
-    // ⚠️ Don't propagate sceneGraph back to n.data / canvasStore here.
-    // FrameEditor's setup() captured the initial editor store via
-    // provideEditor(); children inject that reference. If we update the
-    // sceneData prop, FrameEditor's watch rebuilds the store, but the
-    // child injections still point at the original — visual desync and
-    // the panel looks broken. The editor's internal store already
-    // contains the user's edits, so leaving the prop untouched keeps
-    // the UI consistent. Neo4j has been persisted (PUT above) and
-    // Figma is about to be pushed below; subsequent UI switches will
-    // refetch the saved sceneGraph.
+    // Propagate to local state so Preview tab / tab-switch reflects the
+    // saved scene graph. FrameEditor's watch(sceneData) would rebuild a
+    // new store and leave the child inject() chain pointing at the old
+    // one (visual desync), so we ALSO bump designEditorKey — this is
+    // already wired into the FrameEditor's `:key`, forcing a full unmount
+    // + remount with the saved data. Setup() re-runs, provideEditor()
+    // refreshes, all children inject the new store cleanly.
+    if (n.data) {
+      n.data = { ...n.data, sceneGraph: sceneGraphStr }
+    }
+    const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+    if (storeNode?.data) {
+      storeNode.data = { ...storeNode.data, sceneGraph: sceneGraphStr }
+    }
+    designEditorKey.value++
+    emit('updated')
 
     // Push to Figma via the 016 binding path. Backend reads the just-persisted
     // sceneGraph from Neo4j and queues UPDATE_FRAME_FROM_SCENE_GRAPH for the
@@ -5098,31 +5104,31 @@ function updateVoFieldValue(fieldName, value) {
         <div v-if="figmaError" class="inspector-alert error" style="margin-top:8px;">{{ figmaError }}</div>
       </div>
     </div>
-
-    <!-- Floating Figma sync toast — fixed to viewport so it's visible even
-         when FrameEditor takes the whole Design panel. -->
-    <Teleport to="body">
-      <Transition name="figma-toast">
-        <div
-          v-if="figmaPushStatus"
-          class="figma-sync-toast"
-          :class="`figma-sync-toast--${figmaPushStatus}`"
-          role="status"
-        >
-          <svg v-if="figmaPushStatus === 'pushing'" class="figma-sync-toast__spin" width="16" height="16" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="31.4 31.4" />
-          </svg>
-          <svg v-else-if="figmaPushStatus === 'success' || figmaPushStatus === 'saved'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-          <svg v-else-if="figmaPushStatus === 'error'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <span>{{ figmaPushMessage }}</span>
-        </div>
-      </Transition>
-    </Teleport>
   </div>
+
+  <!-- Floating Figma sync toast — outside every v-if so it always renders.
+       Teleport to body so it sits above FrameEditor / modals / etc. -->
+  <Teleport to="body">
+    <Transition name="figma-toast">
+      <div
+        v-if="figmaPushStatus"
+        class="figma-sync-toast"
+        :class="`figma-sync-toast--${figmaPushStatus}`"
+        role="status"
+      >
+        <svg v-if="figmaPushStatus === 'pushing'" class="figma-sync-toast__spin" width="16" height="16" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="31.4 31.4" />
+        </svg>
+        <svg v-else-if="figmaPushStatus === 'success' || figmaPushStatus === 'saved'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+        <svg v-else-if="figmaPushStatus === 'error'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        <span>{{ figmaPushMessage }}</span>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>

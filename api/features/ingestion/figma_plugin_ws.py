@@ -641,7 +641,13 @@ def _figma_export_to_scene_graph(frame_data: dict) -> dict:
             "bottomRightRadius": figma_node.get("bottomRightRadius", 0) if isinstance(figma_node.get("bottomRightRadius"), (int, float)) else 0,
             "visible": figma_node.get("visible", True),
             "locked": False,
-            "clipsContent": figma_node.get("clipsContent", False),
+            # Disable clipping on every container — even with TEXT auto-grow,
+            # a parent FRAME with clipsContent=true will cut the rendered
+            # glyphs at its own boundary. Inside the inspector preview this
+            # produces the "text falls off" symptom regardless of TEXT's own
+            # auto-resize state. Wireframes don't need precise viewport
+            # clipping the way a deployed UI would.
+            "clipsContent": False,
             # Auto-layout
             "layoutMode": figma_node.get("layoutMode", "NONE"),
             "itemSpacing": figma_node.get("itemSpacing", 0),
@@ -668,7 +674,13 @@ def _figma_export_to_scene_graph(frame_data: dict) -> dict:
             "textAlignVertical": figma_node.get("textAlignVertical", "TOP"),
             "letterSpacing": figma_node.get("letterSpacing", 0) if isinstance(figma_node.get("letterSpacing"), (int, float)) else 0,
             "lineHeight": figma_node.get("lineHeight"),
-            "textAutoResize": figma_node.get("textAutoResize", "WIDTH_AND_HEIGHT") if node_type == "TEXT" else "NONE",
+            # Force WIDTH_AND_HEIGHT for every TEXT node — Figma's font metrics
+            # don't match open-pencil's CanvasKit metrics exactly, so a fixed
+            # `NONE` / `HEIGHT` box clips when the rendered glyphs come out
+            # wider than the Figma original. Letting the TEXT node grow
+            # avoids the visible truncation in the Preview/Design panels at
+            # the cost of small layout shifts vs Figma's pixel-perfect view.
+            "textAutoResize": "WIDTH_AND_HEIGHT" if node_type == "TEXT" else "NONE",
             "textCase": figma_node.get("textCase", "ORIGINAL"),
             "textDecoration": figma_node.get("textDecoration", "NONE"),
             "styleRuns": figma_node.get("styleRuns", []),
