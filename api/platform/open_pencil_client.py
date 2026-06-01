@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -113,6 +114,21 @@ def invalidate_catalog_cache() -> None:
 #  Render                                                              #
 # ------------------------------------------------------------------ #
 
+# JSX void/inline elements with no sceneGraph counterpart. The renderer's
+# TYPE_MAP doesn't know about these and throws `Unknown element: <X>`, which
+# fails the whole render. We strip them before sending — wireframes don't
+# need explicit line breaks or horizontal rules, and the surrounding text
+# layout already handles spacing.
+_UNSUPPORTED_JSX_TAG_RE = re.compile(
+    r"<\s*(br|hr|wbr)\b[^>]*/?\s*>",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_jsx_for_renderer(jsx: str) -> str:
+    return _UNSUPPORTED_JSX_TAG_RE.sub("", jsx)
+
+
 def render_wireframe(
     *,
     components: list[dict[str, Any]] | None = None,
@@ -130,7 +146,7 @@ def render_wireframe(
     """
     body: dict[str, Any] = {"name": name, "width": width, "height": height}
     if jsx:
-        body["jsx"] = jsx
+        body["jsx"] = _sanitize_jsx_for_renderer(jsx)
     elif components:
         body["components"] = components
     else:
