@@ -96,3 +96,8 @@ frontend/dist
 frontend/dist/
 # Office temp/lock files
 ~$*
+
+# Local tooling / agent config (not project deliverables)
+.codegraph/
+.cursor/
+.mcp.json
