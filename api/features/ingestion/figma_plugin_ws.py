@@ -279,7 +279,7 @@ async def poll_updates(file_key: str = "") -> dict[str, Any]:
     empty until the plugin happens to reconnect.
     """
     if not file_key:
-        return {"updates": []}
+        return {"updates": [], "bound": False}
 
     if file_key not in _plugin_metadata:
         _plugin_metadata[file_key] = {
@@ -293,10 +293,25 @@ async def poll_updates(file_key: str = "") -> dict[str, Any]:
             category="figma_plugin.support.inferred",
         )
 
+    # Binding self-heal signal (016 #9): tell the plugin whether RA still holds
+    # an active FigmaBinding for THIS file. The binding record can vanish out
+    # from under a still-polling plugin (re-ingestion graph wipe, backend
+    # reload) while the plugin's local `bindingRegistered` flag stays true — so
+    # it never re-registers. Surfacing `bound` lets the plugin re-POST /connect
+    # on the next poll instead of requiring a full plugin restart.
+    bound = False
+    try:
+        from api.features.figma_binding import repository as _fb_repo  # noqa: PLC0415
+
+        b = _fb_repo.get_active_binding()
+        bound = bool(b and b.get("figmaFileKey") == file_key)
+    except Exception:  # noqa: BLE001 — never fail a poll on binding lookup
+        bound = False
+
     async with _pending_lock:
         updates = _pending_updates.pop(file_key, [])
 
-    return {"updates": updates, "count": len(updates)}
+    return {"updates": updates, "count": len(updates), "bound": bound}
 
 
 # NOTE: The polling-mode REST ack endpoints live in
@@ -419,6 +434,23 @@ class ExportResultRequest(BaseModel):
     error: str = ""
 
 
+def _scene_graph_text_count(scene_graph: dict | None) -> int:
+    """Count TEXT nodes carrying non-empty text — used to detect a lossy
+    Figma→RA re-import that would drop visible content (see export-result guard)."""
+    if not scene_graph:
+        return 0
+    nodes = scene_graph.get("nodes")
+    if not isinstance(nodes, dict):
+        return 0
+    count = 0
+    for n in nodes.values():
+        if isinstance(n, dict) and n.get("type") == "TEXT":
+            t = n.get("text")
+            if isinstance(t, str) and t.strip():
+                count += 1
+    return count
+
+
 @router.post("/api/figma-plugin/export-result")
 async def receive_export_result(req: ExportResultRequest) -> dict[str, Any]:
     """
@@ -478,28 +510,67 @@ async def receive_export_result(req: ExportResultRequest) -> dict[str, Any]:
     if not scene_graph:
         return {"ok": False, "detail": "Failed to convert frame to SceneGraph"}
 
-    # Save to Neo4j — find by ui_node_id or by frame name
+    # Save to Neo4j — find by ui_node_id or by frame name.
+    #
+    # GUARD (#10): AUTO_EXPORT fires on `documentchange`, which includes RA's OWN
+    # push (Save & Sync edits the Figma frame → documentchange → AUTO_EXPORT →
+    # here). The conversion above re-extracts component instances and drops plain
+    # TEXT, so this would clobber the rich sceneGraph RA just persisted with a
+    # leaf-poorer re-import — exactly the "Figma→RA silently overwrites richer
+    # local data" hazard #7 called out. So: update figma metadata always, but
+    # only overwrite sceneGraph when the incoming graph does NOT lose text.
     import json as _json
     sg_str = _json.dumps(scene_graph, ensure_ascii=False)
+    new_text = _scene_graph_text_count(scene_graph)
+
+    def _existing_text(session, where: str, **params) -> int:
+        rec = session.run(
+            f"MATCH (ui:UI) WHERE {where} RETURN ui.sceneGraph AS sg LIMIT 1", **params
+        ).single()
+        if not rec or not rec["sg"]:
+            return 0
+        try:
+            return _scene_graph_text_count(_json.loads(rec["sg"]))
+        except Exception:
+            return 0
+
     with get_session() as session:
         if req.ui_node_id:
+            existing_text = _existing_text(session, "ui.id = $uid", uid=req.ui_node_id)
+            write_sg = new_text >= existing_text
             session.run(
                 """
                 MATCH (ui:UI {id: $uid})
-                SET ui.sceneGraph = $sg, ui.figmaNodeId = $fid,
-                    ui.figmaFileKey = $fk, ui.updatedAt = datetime()
+                SET ui.figmaNodeId = $fid, ui.figmaFileKey = $fk, ui.updatedAt = datetime(),
+                    ui.sceneGraph = CASE WHEN $write_sg THEN $sg ELSE ui.sceneGraph END
                 """,
-                uid=req.ui_node_id, sg=sg_str, fid=req.frame_id, fk=req.file_key,
+                uid=req.ui_node_id, sg=sg_str, fid=req.frame_id, fk=req.file_key, write_sg=write_sg,
             )
         elif req.frame_name:
+            existing_text = _existing_text(
+                session, "ui.displayName = $name OR ui.name = $name", name=req.frame_name
+            )
+            write_sg = new_text >= existing_text
             session.run(
                 """
                 MATCH (ui:UI)
                 WHERE ui.displayName = $name OR ui.name = $name
-                SET ui.sceneGraph = $sg, ui.figmaNodeId = $fid,
-                    ui.figmaFileKey = $fk, ui.updatedAt = datetime()
+                SET ui.figmaNodeId = $fid, ui.figmaFileKey = $fk, ui.updatedAt = datetime(),
+                    ui.sceneGraph = CASE WHEN $write_sg THEN $sg ELSE ui.sceneGraph END
                 """,
-                name=req.frame_name, sg=sg_str, fid=req.frame_id, fk=req.file_key,
+                name=req.frame_name, sg=sg_str, fid=req.frame_id, fk=req.file_key, write_sg=write_sg,
+            )
+        else:
+            write_sg = False
+            existing_text = 0
+        if not write_sg:
+            SmartLogger.log(
+                "WARN",
+                f"export-result SKIPPED sceneGraph overwrite (lossy): new_text={new_text} "
+                f"existing_text={existing_text} frame={req.frame_name!r} ui={req.ui_node_id!r}",
+                category="figma_plugin.export.guarded",
+                params={"new_text": new_text, "existing_text": existing_text,
+                        "frame_name": req.frame_name, "ui_node_id": req.ui_node_id},
             )
 
     # Queue result for frontend polling

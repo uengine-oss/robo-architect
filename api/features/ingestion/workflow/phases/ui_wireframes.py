@@ -159,13 +159,12 @@ async def _llm_invoke_to_html(ctx: IngestionWorkflowContext, prompt: str) -> str
     """
     Invoke the configured LLM and extract plain HTML text (async with timeout).
     """
+    from api.features.ai_design.wireframe_agent import invoke_sync_llm_with_backoff  # noqa: PLC0415
     try:
-        resp = await asyncio.wait_for(
-            asyncio.to_thread(
-                ctx.llm.invoke,
-                [build_system_message(_UI_WIREFRAME_SYSTEM_PROMPT), HumanMessage(content=prompt)]
-            ),
-            timeout=300.0  # 5분 타임아웃
+        resp = await invoke_sync_llm_with_backoff(
+            ctx.llm,
+            [build_system_message(_UI_WIREFRAME_SYSTEM_PROMPT), HumanMessage(content=prompt)],
+            timeout=300.0,  # 5분 타임아웃
         )
         if isinstance(resp, str):
             return resp
@@ -198,10 +197,6 @@ def _get_component_catalog_prompt() -> str:
     _component_catalog_prompt = open_pencil_client.get_component_catalog_for_prompt()
     return _component_catalog_prompt
 
-
-def _is_open_pencil_available() -> bool:
-    """Check once if the open-pencil wireframe service is available."""
-    return open_pencil_client.is_available()
 
 
 # Spec 024: bound-figma-file component catalog (refreshed every call so a
@@ -241,11 +236,10 @@ async def _llm_invoke_to_component_json(
 
     system_prompt = _UI_COMPONENT_SYSTEM_PROMPT_TEMPLATE.format(component_catalog=catalog)
 
-    resp = await asyncio.wait_for(
-        asyncio.to_thread(
-            ctx.llm.invoke,
-            [build_system_message(system_prompt), HumanMessage(content=prompt)],
-        ),
+    from api.features.ai_design.wireframe_agent import invoke_sync_llm_with_backoff  # noqa: PLC0415
+    resp = await invoke_sync_llm_with_backoff(
+        ctx.llm,
+        [build_system_message(system_prompt), HumanMessage(content=prompt)],
         timeout=300.0,
     )
     if isinstance(resp, str):
@@ -265,13 +259,14 @@ async def _generate_scene_graph(
     Try to generate a wireframe as a SerializedSceneGraph via the component
     pipeline.  Returns the scene graph dict, or None if unavailable / failed.
     """
-    if not _is_open_pencil_available():
+    if not await open_pencil_client.is_available_async():
         return None
 
     try:
         raw_json = await _llm_invoke_to_component_json(ctx, prompt)
-        scene_graph = await asyncio.to_thread(
-            open_pencil_client.parse_and_render_llm_output,
+        # Async render (not to_thread + sync httpx) so a shutdown mid-render is
+        # cancellable and doesn't leave a blocked worker thread (spec #5).
+        scene_graph = await open_pencil_client.parse_and_render_llm_output_async(
             raw_json,
             name=ui_name,
         )
@@ -314,7 +309,11 @@ async def _generate_jsx_scene_graph_for_figma_mode(
     almost always succeeds once the concurrency burst has passed.
     """
     # Local import to avoid widening this phase module's startup graph.
-    from api.features.ai_design.wireframe_agent import run_render_agent
+    from api.features.ai_design.wireframe_agent import (
+        run_render_agent,
+        scene_graph_has_visible_content,
+        scene_graph_text_node_count,
+    )
 
     MAX_ATTEMPTS = 3
     last_summary: str | None = None
@@ -338,30 +337,39 @@ async def _generate_jsx_scene_graph_for_figma_mode(
             )
             sg, summary = None, None
         last_summary = summary or last_summary
-        if sg:
+        # A truthy sceneGraph with zero Text nodes is the "empty frame" failure
+        # mode (abstract read-only screens). Treat it like an empty result and
+        # retry with a fresh agent loop instead of persisting a blank frame.
+        if sg and scene_graph_has_visible_content(sg):
             SmartLogger.log(
                 "INFO",
-                f"figma-mode wireframe generated: {ui_display_name} ({len(sg.get('nodes') or {})} nodes, attempt {attempt})",
+                f"figma-mode wireframe generated: {ui_display_name} ({len(sg.get('nodes') or {})} nodes, "
+                f"{scene_graph_text_node_count(sg)} text, attempt {attempt})",
                 category="ingestion.ui_wireframe.figma_mode.success",
                 params={
                     "session_id": ctx.session.id,
                     "ui_name": ui_display_name,
                     "node_count": len(sg.get("nodes") or {}),
+                    "text_node_count": scene_graph_text_node_count(sg),
                     "summary": summary,
                     "attempt": attempt,
                 },
             )
             return sg
         if attempt < MAX_ATTEMPTS:
+            reason = "empty_content" if sg else "no_scene_graph"
             SmartLogger.log(
                 "WARN",
-                f"figma-mode wireframe empty for {ui_display_name}, retrying (attempt {attempt}/{MAX_ATTEMPTS})",
+                f"figma-mode wireframe {reason} for {ui_display_name}, retrying (attempt {attempt}/{MAX_ATTEMPTS})",
                 category="ingestion.ui_wireframe.figma_mode.retry",
-                params={"session_id": ctx.session.id, "ui_name": ui_display_name, "attempt": attempt},
+                params={"session_id": ctx.session.id, "ui_name": ui_display_name, "attempt": attempt, "reason": reason},
             )
+    # Every attempt failed or came back as a blank frame. Return None so the UI
+    # node is created without a sceneGraph (regeneratable) rather than persisting
+    # an empty frame that would push a blank UI to Figma.
     SmartLogger.log(
         "WARN",
-        f"figma-mode wireframe agent returned no sceneGraph for {ui_display_name} after {MAX_ATTEMPTS} attempts",
+        f"figma-mode wireframe agent returned no usable sceneGraph for {ui_display_name} after {MAX_ATTEMPTS} attempts",
         category="ingestion.ui_wireframe.figma_mode.empty",
         params={"session_id": ctx.session.id, "ui_name": ui_display_name, "summary": last_summary},
     )

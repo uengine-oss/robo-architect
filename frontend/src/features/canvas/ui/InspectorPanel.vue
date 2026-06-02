@@ -33,10 +33,12 @@ import FrameEditor from 'open-pencil-fed/FrameEditor.vue'
 const FramePreview = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
 const FullPageEditor = defineAsyncComponent(() => import('open-pencil-fed/FullPageEditor.vue'))
 const AIChatPanel = defineAsyncComponent(() => import('open-pencil-fed/AIChat.vue'))
-// FramePreviewChat is a spec-034 WIP component that hasn't landed in the
-// open-pencil submodule yet (`de030de chore(034): WIP`). Fall back to the
-// existing FramePreview until the upstream file is committed.
-const FramePreviewChat = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
+// FramePreviewChat now resolves to a real federation component (a placeholder
+// that delegates to FramePreview until spec-034's chat/Claude-IDE variant lands
+// upstream). Previously this was aliased to FramePreview.vue because the file
+// was missing (`de030de chore(034): WIP` added the import but not the file),
+// which made the import path misleading and fragile.
+const FramePreviewChat = defineAsyncComponent(() => import('open-pencil-fed/FramePreviewChat.vue'))
 
 // 029 — read-only source viewer for ImplementationFile nodes drilled-down
 // from Aggregate/Command/Event/ReadModel in the navigator. Reuses the
@@ -341,6 +343,29 @@ async function onDesignSave(data) {
     const newHas = (t) => newTypes[t] > 0
     const lostTypes = LEAF_TYPES.filter(t => existingHas(t) && !newHas(t))
 
+    // ── Guard: never overwrite real content with a leaf-less graph ──────────
+    // The editor can momentarily serialize to a bare frame skeleton (DOCUMENT
+    // collapsed to FRAME, all leaf nodes dropped) during a store rebuild or a
+    // tab-switch remount race. The merge above rescues this ONLY when `existing`
+    // is readable — but if n.data.sceneGraph is transiently empty mid-churn,
+    // `existing` reads as {} and the merge no-ops, so an empty UI gets persisted
+    // over rich content. That is how "자동납부 신청 상세" lost its 21 text nodes
+    // and showed empty after reload. Refuse the save unless we can positively
+    // confirm the existing graph was already leaf-less (a genuinely empty UI).
+    const leafCount = (types) => LEAF_TYPES.reduce((sum, t) => sum + (types[t] || 0), 0)
+    const newLeafCount = leafCount(newTypes)
+    const existingReadable = typeof n.data?.sceneGraph === 'string' && n.data.sceneGraph.trim().length > 0
+    const existingLeafCount = leafCount(existingTypes)
+    if (newLeafCount === 0 && !(existingReadable && existingLeafCount === 0)) {
+      console.warn('[InspectorPanel] onDesignSave ABORTED — editor produced 0 leaf nodes ' +
+        `(existingReadable=${existingReadable}, existingLeaf=${existingLeafCount}). ` +
+        'Refusing to overwrite, would wipe content.')
+      figmaPushStatus.value = 'error'
+      figmaPushMessage.value = '저장 취소: 에디터가 빈 화면을 반환했습니다 (콘텐츠 보호). Design 탭을 다시 열고 시도하세요.'
+      setTimeout(() => { figmaPushStatus.value = null }, 6000)
+      return
+    }
+
     let outGraph = data
     if (lostTypes.length > 0) {
       // Merge: editor's output is the authoritative version for ids it has
@@ -372,13 +397,14 @@ async function onDesignSave(data) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sceneGraph: sceneGraphStr })
     })
-    // Propagate to local state so Preview tab / tab-switch reflects the
-    // saved scene graph. FrameEditor's watch(sceneData) would rebuild a
-    // new store and leave the child inject() chain pointing at the old
-    // one (visual desync), so we ALSO bump designEditorKey — this is
-    // already wired into the FrameEditor's `:key`, forcing a full unmount
-    // + remount with the saved data. Setup() re-runs, provideEditor()
-    // refreshes, all children inject the new store cleanly.
+    // Propagate to local state so Preview tab / tab-switch reflects the saved
+    // scene graph. Updating node.data.sceneGraph changes `sceneGraphData`,
+    // which re-triggers FrameEditor's watch(sceneData) → it swaps in a fresh
+    // store. FrameEditor now provides that store through a stable proxy
+    // (provideEditor(editorProxy)), so child inject() consumers follow the new
+    // store in place — no full remount/flash needed. (We used to bump
+    // designEditorKey here to force unmount+remount; removed now that the
+    // editor refreshes reactively.)
     if (n.data) {
       n.data = { ...n.data, sceneGraph: sceneGraphStr }
     }
@@ -386,7 +412,6 @@ async function onDesignSave(data) {
     if (storeNode?.data) {
       storeNode.data = { ...storeNode.data, sceneGraph: sceneGraphStr }
     }
-    designEditorKey.value++
     emit('updated')
 
     // Push to Figma via the 016 binding path. Backend reads the just-persisted

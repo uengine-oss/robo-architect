@@ -93,6 +93,18 @@ Type scale: Display 32–40, H1 24–28, H2 20–22, H3 17–18, Body 14–15, C
 
 If the screen description is in Korean, USE KOREAN labels in the wireframe. Do not translate to English.
 
+# Read-only / status / result screens (IMPORTANT)
+
+Many screens are not forms or commands — they only *display* a query result, a validation outcome, an eligibility/identification result, or a processing status (e.g. names containing 조회/검증/식별/확인/유효성/결과/상태/적격성/제한 여부/반환). These are the screens most often rendered as an empty frame. DO NOT do that. Such a screen MUST still show real content:
+
+- A title/header Text naming the screen.
+- One or more status/result cards: a labeled Frame with a status Text (e.g. "검증 통과", "적격", "조회 결과 없음", "처리 완료") plus 2–4 result rows of `label: value` Text pairs using realistic placeholder data from the domain.
+- Where it fits, a status chip (small rounded Frame + Text) and a short caption.
+
+# CRITICAL: never emit an empty frame
+
+EVERY wireframe MUST contain at least one visible `<Text>` node — ideally several. A frame with no Text is a failure. If the description is abstract or sparse, invent reasonable domain-appropriate placeholder labels and values rather than leaving the frame empty.
+
 # CRITICAL: produce ONE render call
 
 Do NOT make multiple render calls. Pack the entire screen into a single JSX root frame. The `replace_id`, `parent_id`, `insert_index`, `x`, `y` parameters are not needed for fresh generation — only `jsx` is.
@@ -160,6 +172,37 @@ def _safe_calc(expr: str) -> float:
     )
 
 
+# ─── SceneGraph content checks ───────────────────────────────────────────
+
+
+def scene_graph_text_node_count(scene_graph: dict[str, Any] | None) -> int:
+    """Count TEXT nodes carrying non-empty text in a SerializedSceneGraph.
+
+    The render service can succeed yet return only structural containers
+    (DOCUMENT / CANVAS / PAGE / FRAME / GROUP) with no visible content — the
+    classic "empty frame" failure for abstract read-only screens. Callers use
+    this to distinguish a truthy-but-empty graph from a real wireframe.
+    """
+    if not scene_graph:
+        return 0
+    nodes = scene_graph.get("nodes")
+    if not isinstance(nodes, dict):
+        return 0
+    count = 0
+    for node in nodes.values():
+        if isinstance(node, dict) and node.get("type") == "TEXT":
+            text = node.get("text")
+            if isinstance(text, str) and text.strip():
+                count += 1
+    return count
+
+
+def scene_graph_has_visible_content(scene_graph: dict[str, Any] | None) -> bool:
+    """True when the graph has at least one non-empty TEXT node — i.e. it is
+    not the structural-only "empty frame" result."""
+    return scene_graph_text_node_count(scene_graph) > 0
+
+
 # ─── Wireframe-service render helper ─────────────────────────────────────
 
 
@@ -184,6 +227,157 @@ def _render_sem() -> asyncio.Semaphore:
     return _RENDER_SEM
 
 
+# ─── LLM call concurrency + 429 backoff ──────────────────────────────────
+
+
+# The ingestion phase fans out UI generation in batches of 10 (BATCH_SIZE in
+# ui_wireframes.py), and each UI runs a multi-step agent loop — so a naive run
+# can have dozens of LLM requests in flight at once and trip the provider's
+# rate limit (429). A process-wide semaphore caps concurrent LLM calls across
+# the whole bulk run regardless of batch size. Mirrors user_stories.py's
+# MAX_CONCURRENT_CHUNKS=3 "429 위험 최소화" policy. Override with
+# WIREFRAME_LLM_CONCURRENCY.
+_LLM_SEM: asyncio.Semaphore | None = None
+
+
+def _llm_concurrency() -> int:
+    from api.platform.env import env_int  # noqa: PLC0415
+
+    n = env_int("WIREFRAME_LLM_CONCURRENCY", 4)
+    return n if n and n > 0 else 4
+
+
+def _llm_sem() -> asyncio.Semaphore:
+    global _LLM_SEM
+    if _LLM_SEM is None:
+        _LLM_SEM = asyncio.Semaphore(_llm_concurrency())
+    return _LLM_SEM
+
+
+def _is_rate_limit_error(e: Exception) -> bool:
+    """Best-effort, provider-agnostic 429 detection (OpenAI / Anthropic / Google
+    all surface rate limits differently through LangChain wrappers)."""
+    if getattr(e, "status_code", None) == 429:
+        return True
+    resp = getattr(e, "response", None)
+    if resp is not None and getattr(resp, "status_code", None) == 429:
+        return True
+    name = type(e).__name__.lower()
+    if "ratelimit" in name:
+        return True
+    msg = str(e).lower()
+    return "429" in msg or "rate limit" in msg or "too many requests" in msg
+
+
+def _retry_after_seconds(e: Exception) -> float | None:
+    """Honor a Retry-After header when the provider supplies one."""
+    resp = getattr(e, "response", None)
+    headers = getattr(resp, "headers", None)
+    if not headers:
+        return None
+    raw = None
+    try:
+        raw = headers.get("retry-after") or headers.get("Retry-After")
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _with_llm_backoff(
+    make_awaitable: callable,
+    *,
+    on_event: callable = None,
+    max_attempts: int = 5,
+) -> Any:
+    """Run an LLM call (produced fresh each attempt by ``make_awaitable``) under
+    the shared concurrency cap, retrying on 429 with exponential backoff
+    (honoring Retry-After). Non-rate-limit errors and a final exhausted 429
+    propagate to the caller. ``make_awaitable`` is a 0-arg callable returning the
+    awaitable to await — re-created per attempt so timeouts/streams are fresh."""
+    last_err: Exception | None = None
+    for attempt in range(max_attempts):
+        async with _llm_sem():
+            try:
+                return await make_awaitable()
+            except Exception as e:  # noqa: BLE001 — classify below
+                last_err = e
+                if not _is_rate_limit_error(e):
+                    raise
+        # Rate-limited: wait OUTSIDE the semaphore so we free a slot for others.
+        if attempt < max_attempts - 1:
+            delay = _retry_after_seconds(last_err) or min(30.0, 1.5 * (2 ** attempt))
+            if on_event:
+                on_event("llm_rate_limited", {"attempt": attempt + 1, "retryInSec": round(delay, 1)})
+            SmartLogger.log(
+                "WARN",
+                f"ai_design.wireframe.llm_rate_limited attempt={attempt + 1} delay={delay:.1f}s",
+                category="ai_design.wireframe.llm_rate_limited",
+                params={"attempt": attempt + 1, "delay": delay},
+            )
+            await asyncio.sleep(delay)
+    raise last_err if last_err else RuntimeError("LLM invoke failed")
+
+
+def _llm_call_timeout() -> float:
+    """Per-call LLM deadline (seconds). A hung endpoint (e.g. just-promoted model
+    holding the connection open) must not stall the whole ingestion batch — the
+    figma JSX agent previously had NO timeout, so one hung ainvoke froze the run
+    at 0% CPU. Override with WIREFRAME_LLM_TIMEOUT_SEC."""
+    from api.platform.env import env_int  # noqa: PLC0415
+
+    n = env_int("WIREFRAME_LLM_TIMEOUT_SEC", 300)
+    return float(n if n and n > 0 else 300)
+
+
+async def _ainvoke_with_backoff(
+    bound: Any,
+    messages: list[Any],
+    *,
+    on_event: callable = None,
+    max_attempts: int = 5,
+) -> Any:
+    """Async-native LLM invoke (bound.ainvoke) under the shared cap + 429 backoff.
+
+    Wrapped in a wait_for deadline so a non-responsive provider can't hang the
+    agent loop indefinitely — a timeout raises (not a 429), so the caller fails
+    this UI and the ingestion run continues instead of freezing."""
+    timeout = _llm_call_timeout()
+    return await _with_llm_backoff(
+        lambda: asyncio.wait_for(bound.ainvoke(messages), timeout=timeout),
+        on_event=on_event,
+        max_attempts=max_attempts,
+    )
+
+
+async def invoke_sync_llm_with_backoff(
+    llm: Any,
+    messages: list[Any],
+    *,
+    timeout: float = 300.0,
+    on_event: callable = None,
+    max_attempts: int = 5,
+) -> Any:
+    """Public: run an LLM call under the SAME process-wide LLM concurrency cap +
+    429 backoff used by the figma JSX agent, so all bulk wireframe-generation
+    paths (HTML, component-JSON) share one rate-limit budget instead of each
+    fanning out 10-wide. asyncio.TimeoutError is not retried (local deadline).
+
+    Prefers the model's native ``ainvoke`` so an in-flight request is cancelled
+    cleanly on shutdown; falls back to ``to_thread(llm.invoke)`` only for models
+    without an async path. The blocking-thread variant is what stalls process
+    exit on SIGTERM (spec #5), so the async path is strongly preferred."""
+    if hasattr(llm, "ainvoke"):
+        make = lambda: asyncio.wait_for(llm.ainvoke(messages), timeout=timeout)  # noqa: E731
+    else:
+        make = lambda: asyncio.wait_for(asyncio.to_thread(llm.invoke, messages), timeout=timeout)  # noqa: E731
+    return await _with_llm_backoff(make, on_event=on_event, max_attempts=max_attempts)
+
+
 async def _render_jsx(jsx: str, *, name: str, width: int = 375, height: int = 812) -> dict[str, Any] | None:
     """Forward JSX to the open-pencil wireframe service. Sync httpx wrapped
     in a thread to avoid blocking the event loop. Concurrency-limited and
@@ -196,8 +390,10 @@ async def _render_jsx(jsx: str, *, name: str, width: int = 375, height: int = 81
     for i in range(attempts):
         async with _render_sem():
             try:
-                result = await asyncio.to_thread(
-                    open_pencil_client.render_wireframe,
+                # Async httpx (not to_thread + sync httpx): an awaited request is
+                # cancelled cleanly on shutdown instead of leaving a blocked
+                # worker thread that stalls process exit (spec #5).
+                result = await open_pencil_client.render_wireframe_async(
                     jsx=jsx,
                     name=name,
                     width=width,
@@ -311,7 +507,7 @@ async def run_render_agent(
     `on_event` is an optional callback(event_name, data_dict) — the SSE wrapper
     uses this to forward per-step progress; the ingestion path passes None.
     """
-    if not await asyncio.to_thread(open_pencil_client.is_available):
+    if not await open_pencil_client.is_available_async():
         if on_event:
             on_event("error", {"message": "Wireframe service (open-pencil)가 실행 중이 아닙니다."})
         return None, None
@@ -342,6 +538,11 @@ async def run_render_agent(
 
     final_scene_graph: dict[str, Any] | None = None
     final_summary: str | None = None
+    # Best-effort fallback: the most recent successful render even if it had no
+    # visible content. We prefer a graph with real Text (final_scene_graph), but
+    # if every render comes back empty we still return this rather than None so
+    # the SSE/interactive path shows *something* the user can iterate on.
+    last_rendered_sg: dict[str, Any] | None = None
     # Cache the most recent JSX the LLM tried to render. If the loop ends
     # without a successful render (LLM tends to summarize after a tool error
     # instead of retrying), we use this to do one last direct render attempt
@@ -353,7 +554,7 @@ async def run_render_agent(
             on_event("llm_step", {"step": step + 1, "of": MAX_AGENT_STEPS})
 
         try:
-            ai_msg = await bound.ainvoke(messages)
+            ai_msg = await _ainvoke_with_backoff(bound, messages, on_event=on_event)
         except Exception as e:
             SmartLogger.log("ERROR", f"ai_design.wireframe.llm_error: {e}", category="ai_design.wireframe.llm_error")
             if on_event:
@@ -401,13 +602,29 @@ async def run_render_agent(
                     if on_event:
                         on_event("tool_result", {"name": tool_name, "ok": False, "error": err})
                     continue
-                final_scene_graph = sg
+                last_rendered_sg = sg
                 node_count = len(sg.get("nodes") or {})
-                summary = f"render 성공: {node_count}개 노드 생성됨."
-                messages.append(ToolMessage(content=summary, tool_call_id=tc_id))
-                if on_event:
-                    on_event("tool_result", {"name": tool_name, "ok": True, "nodeCount": node_count})
-                    on_event("render_progress", {"nodeCount": node_count})
+                text_count = scene_graph_text_node_count(sg)
+                if text_count > 0:
+                    final_scene_graph = sg
+                    summary = f"render 성공: {node_count}개 노드 생성됨 (Text {text_count}개)."
+                    messages.append(ToolMessage(content=summary, tool_call_id=tc_id))
+                    if on_event:
+                        on_event("tool_result", {"name": tool_name, "ok": True, "nodeCount": node_count})
+                        on_event("render_progress", {"nodeCount": node_count})
+                else:
+                    # Truthy but visually empty (structural nodes only). Don't
+                    # accept it — nudge the LLM to add real content and let the
+                    # loop run another step instead of summarizing a blank frame.
+                    err = (
+                        "render 는 성공했지만 화면에 보이는 Text 노드가 0개입니다 — 빈 frame 입니다. "
+                        "제목, 상태/결과 카드(라벨: 값 형태의 결과 행), 상태 칩 등 "
+                        "도메인에 맞는 placeholder 콘텐츠를 넣어 최소 1개 이상의 <Text> 를 포함해 "
+                        "다시 render 하세요."
+                    )
+                    messages.append(ToolMessage(content=err, tool_call_id=tc_id))
+                    if on_event:
+                        on_event("tool_result", {"name": tool_name, "ok": False, "error": "empty_content"})
             elif tool_name == "calc":
                 expr = tool_args.get("expr") or ""
                 try:
@@ -453,6 +670,19 @@ async def run_render_agent(
                 category="ai_design.wireframe.final_fallback_failed",
                 params={"name": name, "error": str(e)},
             )
+
+    # Last resort: every render the LLM produced was visually empty (no Text).
+    # Return the best-effort frame rather than None so callers that prefer
+    # "something" (the interactive SSE path) still get it. Bulk callers that
+    # would rather skip an empty frame can gate on scene_graph_has_visible_content.
+    if final_scene_graph is None and last_rendered_sg is not None:
+        SmartLogger.log(
+            "WARN",
+            f"ai_design.wireframe.empty_best_effort name={name}",
+            category="ai_design.wireframe.empty_best_effort",
+            params={"name": name},
+        )
+        final_scene_graph = last_rendered_sg
 
     return final_scene_graph, final_summary
 

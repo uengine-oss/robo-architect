@@ -207,11 +207,24 @@ def parse_and_render_llm_output(
 
     Returns SerializedSceneGraph dict, or None on failure.
     """
-    # Strip markdown fences if present
+    components = _parse_llm_components(raw_text)
+    if not components:
+        return None
+    return render_wireframe(
+        components=components,
+        name=name,
+        width=width,
+        height=height,
+    )
+
+
+def _parse_llm_components(raw_text: str) -> list | None:
+    """Extract the ``components`` array from an LLM JSON output (markdown-fence
+    tolerant). Returns None on parse failure / empty. Shared by the sync and
+    async render entry points."""
     text = raw_text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
-        # Remove first and last fence lines
         lines = [l for l in lines if not l.strip().startswith("```")]
         text = "\n".join(lines).strip()
 
@@ -234,10 +247,83 @@ def parse_and_render_llm_output(
             category="open_pencil.parse.error",
         )
         return None
+    return components
 
-    return render_wireframe(
-        components=components,
-        name=name,
-        width=width,
-        height=height,
+
+# ------------------------------------------------------------------ #
+#  Async twins (spec #5 — worker-freeze fix)                          #
+#                                                                     #
+#  Background/bulk paths must use these instead of wrapping the sync  #
+#  httpx calls in asyncio.to_thread. A sync httpx.post(timeout=120)   #
+#  inside a worker thread cannot be cancelled on shutdown, so SIGTERM #
+#  leaves the thread blocked and the process hangs until the request  #
+#  times out (the dev.sh SIGKILL workaround). An awaited AsyncClient  #
+#  request is cancelled cleanly when the event loop tears down.       #
+# ------------------------------------------------------------------ #
+
+
+async def is_available_async() -> bool:
+    """Async twin of is_available()."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{_base_url()}/health")
+            resp.raise_for_status()
+            return resp.json().get("status") == "ok"
+    except Exception:
+        return False
+
+
+async def render_wireframe_async(
+    *,
+    components: list[dict[str, Any]] | None = None,
+    jsx: str | None = None,
+    name: str = "Wireframe",
+    width: int = 375,
+    height: int = 812,
+) -> dict[str, Any] | None:
+    """Async twin of render_wireframe(). Same contract; cancellable on shutdown."""
+    body: dict[str, Any] = {"name": name, "width": width, "height": height}
+    if jsx:
+        body["jsx"] = _sanitize_jsx_for_renderer(jsx)
+    elif components:
+        body["components"] = components
+    else:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(f"{_base_url()}/render", json=body)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        SmartLogger.log(
+            "ERROR",
+            f"Wireframe render HTTP error: {e.response.status_code} {e.response.text[:500]}",
+            category="open_pencil.render.error",
+            params={"name": name, "status": e.response.status_code},
+        )
+        return None
+    except Exception as e:
+        SmartLogger.log(
+            "ERROR",
+            f"Wireframe render failed: {e}",
+            category="open_pencil.render.error",
+            params={"name": name, "error": str(e)},
+        )
+        return None
+
+
+async def parse_and_render_llm_output_async(
+    raw_text: str,
+    *,
+    name: str = "Wireframe",
+    width: int = 375,
+    height: int = 812,
+) -> dict[str, Any] | None:
+    """Async twin of parse_and_render_llm_output()."""
+    components = _parse_llm_components(raw_text)
+    if not components:
+        return None
+    return await render_wireframe_async(
+        components=components, name=name, width=width, height=height
     )

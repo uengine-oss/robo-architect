@@ -81,6 +81,9 @@
     // backend (POST /api/figma-binding/connect). Done once per "연결" click
     // so re-polls don't spam the binding endpoint.
     let bindingRegistered = false
+    // Guards re-registration so the 3s poll-driven self-heal doesn't fire a
+    // second POST /connect while the first is still in flight.
+    let bindingInFlight = false
     let scanInFlight = false
 
     // ── Plugin message handling ──
@@ -450,6 +453,16 @@
           return r.json()
         })
         .then(data => {
+          // Self-heal binding (#9): the server tells us whether it still holds
+          // an active binding for this file. If it doesn't (re-ingestion wipe,
+          // backend reload) re-register here instead of forcing a full plugin
+          // restart. `data.bound === false` is strict so older backends that
+          // omit the field don't trigger spurious re-registration.
+          if (fileKey && data.bound === false && !bindingInFlight) {
+            if (bindingRegistered) addLog('Server lost binding — re-registering...')
+            bindingRegistered = false
+            registerBinding(httpUrl)
+          }
           if (data.updates && data.updates.length > 0) {
             addLog(`Received ${data.updates.length} update(s)`)
             for (const update of data.updates) {
@@ -693,6 +706,8 @@
     // "이 파일을 robo로 sync" by clicking 연결, so there's nothing further
     // to confirm.
     function registerBinding(httpUrl) {
+      if (bindingInFlight) return
+      bindingInFlight = true
       const body = JSON.stringify({
         figmaFileKey: fileKey,
         figmaFileName: fileName || (document.getElementById('fileKeyInput').value.trim() || 'Untitled'),
@@ -732,6 +747,7 @@
           addLog(`Binding active: "${data.figmaFileName}" (${data.figmaFileKey})`, 'success')
         })
         .catch(e => addLog(`Binding registration failed: ${e.message || e}`, 'error'))
+        .finally(() => { bindingInFlight = false })
     }
 
     function extractError(body, status) {

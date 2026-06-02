@@ -1512,7 +1512,17 @@ figma.on('selectionchange', () => sendSelection())
 let changeTimer: number | null = null
 const CHANGE_DEBOUNCE_MS = 3000
 
+// DISABLED (#10): auto-exporting on every documentchange creates a destructive
+// feedback loop. RA's "Save & Sync" edits the Figma frame → documentchange fires
+// → AUTO_EXPORT → POST /export-result re-imports a lossy, component-extracted
+// version (plain TEXT dropped) → clobbers the rich sceneGraph RA just saved, so
+// the UI shows empty after reload. Per the architecture decision (#7), Figma→RA
+// must go through the explicit "가져오기"(pull) button, never an auto-sync. Flip
+// to true only if echo-suppression + non-lossy export is implemented first.
+const AUTO_EXPORT_TO_RA = false
+
 figma.on('documentchange', (event) => {
+  if (!AUTO_EXPORT_TO_RA) return
   // Collect unique frame IDs that were modified
   const modifiedFrameIds = new Set<string>()
   for (const change of event.documentChanges) {
