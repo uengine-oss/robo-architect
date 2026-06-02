@@ -20,8 +20,10 @@ const props = defineProps({
 const emit = defineEmits(['update:activeTab'])
 
 // 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 App.vue tabComponents 에 유지).
-// 'Process' 탭도 당분간 숨김 (컴포넌트는 App.vue tabComponents 에 유지).
-const tabs = ['Requirements', 'Event Modeling', 'Design', 'Aggregate', 'Code']
+// 'Process' 탭 — spec 034 WIP 커밋(de030de) 이 "당분간 숨김" 으로 빼뒀던 것 복원.
+// BPMN(Process) 캔버스는 Hybrid 인제션 → ES 승격 흐름의 핵심 진입점이라
+// 메뉴에서 빼면 사용자가 진입할 길이 사라짐.
+const tabs = ['Requirements', 'Process', 'Event Modeling', 'Design', 'Aggregate', 'Code']
 
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()

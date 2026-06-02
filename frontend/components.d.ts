@@ -33,6 +33,8 @@ declare module 'vue' {
     IconLucideChevronDown: typeof import('~icons/lucide/chevron-down')['default']
     IconLucideChevronRight: typeof import('~icons/lucide/chevron-right')['default']
     IconLucideClipboardCopy: typeof import('~icons/lucide/clipboard-copy')['default']
+    IconLucideCode: typeof import('~icons/lucide/code')['default']
+    IconLucideCopy: typeof import('~icons/lucide/copy')['default']
     IconLucideEye: typeof import('~icons/lucide/eye')['default']
     IconLucideEyeOff: typeof import('~icons/lucide/eye-off')['default']
     IconLucideFlipHorizontal2: typeof import('~icons/lucide/flip-horizontal2')['default']
