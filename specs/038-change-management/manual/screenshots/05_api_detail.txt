@@ -1,0 +1,1 @@
+{"id":"CHG-006","title":"결제 플로우 개선","originalPrompt":"결제 완료 후 영수증 이메일 자동 발송 기능을 추가해야 합니다","author":"unknown@uengineui-MacBookPro.local","createdAt":"2026-06-02T11:33:28.434915Z","status":"DRAFT","statusHistory":[],"sourceType":"PROMPT","changeSetId":null,"effects":[]}

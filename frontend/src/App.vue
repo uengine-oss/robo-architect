@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref, computed, markRaw, provide, watch } from 'vue'
+import { onMounted, onUnmounted, ref, computed, markRaw, provide, watch, nextTick } from 'vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
@@ -7,6 +7,7 @@ import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
 import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
 import EventModelingPanel from '@/features/eventModeling/ui/EventModelingPanel.vue'
 import RequirementsPanel from '@/features/requirements/ui/RequirementsPanel.vue'
+import ChangesRootPanel from '@/features/requirements/ui/ChangesRootPanel.vue'
 import ClaudeCodeWorkspace from '@/features/claudeCode/ui/ClaudeCodeWorkspace.vue'
 import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
@@ -30,7 +31,7 @@ const bpmnStore = useBpmnStore()
 const session = useSessionStore()
 
 // Tab state management
-const activeTab = ref('Requirements')
+const activeTab = ref('Stories')
 
 // Claude Code workdir state — hydrated from localStorage so the inspector's
 // source viewer (feature 029) can resolve ImplementationFile paths even
@@ -45,21 +46,33 @@ provide('activeTab', activeTab)
 // attached to design elements via [:IMPLEMENTED_IN]. Provide the ref so
 // the value stays reactive when the user picks a new project home.
 provide('claudeCodeWorkdir', claudeCodeWorkdir)
-provide('openClaudeCode', (workdir) => {
+provide('openClaudeCode', (workdir, command = null) => {
   claudeCodeWorkdir.value = workdir || ''
   activeTab.value = 'Code'
+  // Dispatch a custom event that ClaudeCodeWorkspace listens for.
+  // Using CustomEvent bypasses the KeepAlive/dynamic-component ref issue.
+  if (command) {
+    nextTick(() => {
+      window.dispatchEvent(new CustomEvent('claude-terminal-send', { detail: { command } }))
+    })
+  }
 })
 
 // Map tab names to components
 // 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 tabComponents 에 유지).
 const tabComponents = {
-  'Requirements': markRaw(RequirementsPanel),
+  'Changes': markRaw(ChangesRootPanel),
+  'Stories': markRaw(RequirementsPanel),
   'Process': markRaw(BpmnPanel),
-  'Event Modeling': markRaw(EventModelingPanel),
+  'Processes': markRaw(EventModelingPanel),
   'Big picture': markRaw(BigPicturePanel),
   'Design': markRaw(CanvasWorkspace),
+  'Data': markRaw(AggregatePanel),
+  'Code': markRaw(ClaudeCodeWorkspace),
+  // 하위 호환 (내부 이벤트가 구 이름을 dispatch하는 경우)
+  'Event Modeling': markRaw(EventModelingPanel),
+  'Requirements': markRaw(RequirementsPanel),
   'Aggregate': markRaw(AggregatePanel),
-  'Code': markRaw(ClaudeCodeWorkspace)
 }
 
 // Cross-component tab switching (HybridEventStormingPanel → Event Modeling)
@@ -81,7 +94,7 @@ const suppressDesignPrompt = ref(false) // 이번 세션 동안 묻지 않기
 const designIngestModalOpen = ref(false)
 const designIngestSessionId = ref('')
 watch(activeTab, async (tab) => {
-  if (tab !== 'Event Modeling' && tab !== 'Design') return
+  if (tab !== 'Processes' && tab !== 'Event Modeling' && tab !== 'Design') return
   if (suppressDesignPrompt.value || designPending.value || designIngestModalOpen.value) return
   try {
     const res = await requirementsStore.fetchPendingDesign()
@@ -224,7 +237,7 @@ onUnmounted(() => {
       @update:active-tab="activeTab = $event"
     />
     <div class="main-content">
-      <template v-if="activeTab !== 'Code' && activeTab !== 'Requirements'">
+      <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"

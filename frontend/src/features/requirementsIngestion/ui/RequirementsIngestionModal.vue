@@ -887,7 +887,7 @@ async function startIngestion() {
 function connectToStream(sid, isReconnect = false) {
   // Ingestion 시작 → Event Modeling 탭 전환 + live mode
   if (!isReconnect) {
-    activeTab.value = 'Event Modeling'
+    activeTab.value = 'Processes'
     eventModelingStore.startLiveMode()
   }
 

@@ -141,7 +141,7 @@ async function startPromotion({ displayLanguage, uiGenerationMode }) {
 
 function switchToEventModeling() {
   // Best-effort: nudge App.vue's activeTab via a custom event
-  window.dispatchEvent(new CustomEvent('robo:switch-tab', { detail: 'Event Modeling' }))
+  window.dispatchEvent(new CustomEvent('robo:switch-tab', { detail: 'Processes' }))
 }
 
 onMounted(() => { loadSnapshot() })

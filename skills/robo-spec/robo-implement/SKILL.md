@@ -6,6 +6,70 @@ requires-speckit: ">=0.8.13, <0.9.0"
 user-invocable: true
 ---
 
+## Override 0 — RequirementChange mode (CHG-NNN)
+
+**If the first argument starts with `CHG-`**, switch entirely to **RequirementChange implementation mode**. Skip all spec/plan/tasks.md logic. Instead:
+
+1. **Fetch change data** from the Robo Architect backend:
+   ```bash
+   curl -s http://localhost:8000/api/requirement-changes/<change_id>
+   ```
+   - Verify `status == "APPROVED"`. If not, report status and stop.
+   - Extract `originalPrompt` and `effects[]`.
+
+2. **Display summary** of what will be implemented:
+   ```
+   [<change_id>] <title>
+   ─────────────────────────────────────
+   원본 요구사항: <originalPrompt>
+
+   영향 노드 (<N>개):
+     HIGH   Aggregate    Mileage — <reason>
+     MEDIUM BoundedContext  MembershipManagement — <reason>
+     ...
+   ```
+
+3. **Implement each affected node** in impactLevel order (HIGH → MEDIUM → LOW):
+   - **UserStory/Feature**: 관련 요구사항 문서나 인수조건(acceptanceCriteria) 텍스트에 변경 반영
+   - **Aggregate**: 도메인 모델 파일을 검색·수정 (속성·규칙·메서드)
+   - **BoundedContext**: 서비스 경계·인터페이스·이벤트 계약 업데이트
+   - **Command/Event**: 스키마·핸들러 업데이트
+   
+   각 태스크마다 진행 상황을 명확히 출력하세요:
+   ```
+   [1/N] 📦 Aggregate: Mileage → 차등 적립 비율 로직 추가
+     → searching for Mileage implementation files...
+     → editing src/mileage/Mileage.ts
+     ✓ 완료
+   ```
+
+4. **Mark IMPLEMENTED** after all nodes are processed:
+   ```bash
+   curl -s -X POST http://localhost:8000/api/requirement-changes/<change_id>/approve \
+     -H "Content-Type: application/json" \
+     -d '{"comment": "robo-implement 완료"}'
+   ```
+   실제로는 `implement` 엔드포인트 대신 상태 전환:
+   ```bash
+   # status를 IMPLEMENTED로 직접 전환하는 내부 API가 없으므로
+   # /api/requirement-changes/<id>/implement 로 POST (SSE 응답 무시)
+   curl -s -X POST http://localhost:8000/api/requirement-changes/<change_id>/implement \
+     -H "Content-Type: application/json" \
+     -d '{"includePriorChangeIds": []}' --no-buffer &
+   sleep 2 && kill $!  # SSE는 백그라운드에서 처리, 상태만 전환
+   ```
+
+5. **최종 보고**:
+   ```
+   ✅ <change_id> 구현 완료
+   구현된 노드: N개
+   변경된 파일: <목록>
+   ```
+
+CHG-NNN 모드에서는 `plan.md`, `tasks.md`, `robo-project.json`을 읽지 않습니다.
+
+---
+
 ## Inheritance
 
 This skill inherits the workflow of `/speckit-implement`. Read

@@ -20,8 +20,7 @@ const props = defineProps({
 const emit = defineEmits(['update:activeTab'])
 
 // 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 App.vue tabComponents 에 유지).
-// 'Process' 탭도 당분간 숨김 (컴포넌트는 App.vue tabComponents 에 유지).
-const tabs = ['Requirements', 'Event Modeling', 'Design', 'Aggregate', 'Code']
+const tabs = ['Changes', 'Stories', 'Processes', 'Design', 'Data', 'Code']
 
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()
@@ -87,8 +86,8 @@ function selectTab(tab) {
         <span><strong>{{ bpmnStore.processFlows.length }}</strong> available</span>
       </div>
 
-      <!-- Event Modeling Panel Status -->
-      <div v-else-if="activeTab === 'Event Modeling'" class="top-bar__status">
+      <!-- Processes Panel Status -->
+      <div v-else-if="activeTab === 'Processes'" class="top-bar__status">
         <span><strong>{{ eventModelingStore.allActors.length }}</strong> Actors</span>
         <span class="top-bar__status-dot">•</span>
         <span><strong>{{ eventModelingStore.totalCommands }}</strong> Commands</span>
@@ -112,8 +111,8 @@ function selectTab(tab) {
         <!-- <span><strong>{{ bigPictureStore.crossBcConnections.length }}</strong> Cross-BC</span> -->
       </div>
       
-      <!-- Aggregate Panel Status -->
-      <div v-else-if="activeTab === 'Aggregate'" class="top-bar__status">
+      <!-- Data Panel Status -->
+      <div v-else-if="activeTab === 'Data'" class="top-bar__status">
         <span><strong>{{ aggregateViewerStore.filteredBoundedContexts.length }}</strong> BC</span>
         <span class="top-bar__status-dot">•</span>
         <span><strong>{{ aggregateViewerStore.filteredBoundedContexts.reduce((sum, bc) => sum + (bc.aggregates?.length || 0), 0) }}</strong> Aggregates</span>

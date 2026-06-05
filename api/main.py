@@ -85,6 +85,18 @@ async def lifespan(app: FastAPI):
     # of the app. Without this the streamable-HTTP handler raises
     # "Task group is not initialized" on the first request. Falls back to
     # a no-op when the MCP SDK is unavailable.
+    # 038: 기존 RequirementChange 노드 초기화 (RESET_CHANGE_DATA=true 시에만)
+    try:
+        from api.features.requirement_changes.services.migration import reset_change_data
+        reset_change_data()
+    except Exception as e:  # noqa: BLE001
+        SmartLogger.log(
+            "WARN",
+            f"requirement_changes migration skipped: {e}",
+            category="requirement_changes.migration.skipped",
+            params={"error": str(e)},
+        )
+
     from api.features.robo_spec.router import mcp_lifespan
     async with mcp_lifespan():
         yield
@@ -210,9 +222,13 @@ app.include_router(figma_api_router)
 app.include_router(figma_sync_router)
 app.include_router(figma_plugin_ws_router)
 
-# Include change management router
+# Include change management router (OLD — LangChain-based, grandfathered)
 from api.features.change_management.router import router as change_router
 app.include_router(change_router)
+
+# Include requirement changes router (038 — Skill-First, new)
+from api.features.requirement_changes.router import router as req_changes_router
+app.include_router(req_changes_router)
 
 # Include chat-based model modification router
 from api.features.model_modifier.router import router as chat_router

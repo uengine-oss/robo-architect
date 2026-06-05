@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch, inject } from 'vue'
+import { ref, onMounted, onBeforeUnmount, onActivated, watch, inject } from 'vue'
 import ClaudeCodeTerminal from './ClaudeCodeTerminal.vue'
 import FileTreePane from './FileTreePane.vue'
 import FileEditorPane from './FileEditorPane.vue'
@@ -164,6 +164,33 @@ function toggleEditor() {
 // ─── Unsaved-changes guard ───
 const editorRef = ref(null)
 const treeRef = ref(null)
+const terminalCompRef = ref(null)
+
+// Send a command to the Claude terminal as if the user typed it.
+function sendTerminalCommand(command) {
+  terminalCompRef.value?.sendInput(command + '\n')
+}
+
+defineExpose({ sendTerminalCommand })
+
+// Listen for cross-component command dispatch (from Changes → Code tab flow)
+function _onTerminalSend(e) {
+  const cmd = e.detail?.command
+  if (cmd) sendTerminalCommand(cmd)
+}
+
+onMounted(() => {
+  window.addEventListener('claude-terminal-send', _onTerminalSend)
+})
+
+onActivated(() => {
+  // KeepAlive: process any queued command when this tab is re-activated
+  // (the event may have fired before onActivated, so re-check is a no-op)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('claude-terminal-send', _onTerminalSend)
+})
 
 function isDirty() {
   // The defineExpose'd `dirty` is a ref; .value gets the boolean.
@@ -369,7 +396,7 @@ onBeforeUnmount(() => {
 
     <!-- Right: existing Claude Code terminal -->
     <div class="ccw-pane ccw-terminal">
-      <ClaudeCodeTerminal :workdir="activeRoot" @workdir-picked="onTerminalWorkdirPicked" />
+      <ClaudeCodeTerminal ref="terminalCompRef" :workdir="activeRoot" @workdir-picked="onTerminalWorkdirPicked" />
     </div>
   </div>
 </template>

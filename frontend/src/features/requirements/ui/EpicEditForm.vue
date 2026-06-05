@@ -30,6 +30,13 @@ async function save() {
       name: name.value.trim(),
       description: description.value,
     })
+    // 038: 직접 수정 Change 자동 생성 (fire-and-forget)
+    store.createChange({
+      title: `${name.value.trim()} Epic 직접 수정`,
+      originalPrompt: `사용자가 Epic(${props.epic.id})을 직접 수정함`,
+      sourceType: 'DIRECT_EDIT',
+      directAffectedNodeIds: [props.epic.id],
+    }).catch(() => {})
     emit('saved')
     emit('close')
   } catch (e) {

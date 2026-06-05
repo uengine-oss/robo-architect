@@ -34,8 +34,17 @@ class Actor:
     Attached to `request.state.actor` by `IdentityMiddleware` for every
     inbound request. Feature handlers that care about audit attribution
     read it; those that don't, ignore it.
+
+    roles: frozenset of role strings (e.g. {"ProductOwner"}).
+           Defaults to {"ProductOwner"} so every user has approval rights
+           until an explicit role management system is introduced.
+           ProductOwner role bypasses the self-approval restriction.
     """
 
     name: str
     email: str
     source: IdentitySource
+    roles: frozenset = frozenset({"ProductOwner"})
+
+    def has_role(self, role: str) -> bool:
+        return role in self.roles

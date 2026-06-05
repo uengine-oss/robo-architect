@@ -690,3 +690,79 @@ ON CREATE SET impl.id = randomUUID(),
               impl.lastSeenAt = datetime()
 ON MATCH SET impl.lastSeenAt = datetime()
 MERGE (agg)-[:IMPLEMENTED_IN]->(impl);
+
+
+// ############################################################
+// 100. RequirementChange (요구사항 변경 레코드 — 038)
+// ############################################################
+// 설명: 요구사항 변경 단위. 자연어 프롬프트·직접 수정·수동 입력 3가지
+//       진입점으로 생성되며, DRAFT→SUBMITTED→APPROVED→IMPLEMENTED 순으로
+//       상태가 전이된다. EFFECT 관계를 통해 영향받는 UserStory·
+//       BoundedContext·Aggregate에 연결된다.
+//
+// 관계:
+//   - (RequirementChange)-[:EFFECT]->(UserStory|BoundedContext|Aggregate)
+//   - (ChangeSet)-[:CONTAINS]->(RequirementChange)
+//
+// 필수 속성:
+//   - id: String ("CHG-NNN", 전역 고유)
+//   - title: String
+//   - originalPrompt: String (원본 자연어 프롬프트 또는 수정 요약)
+//   - author: String (생성자 ID / 이메일)
+//   - createdAt: DateTime
+//   - status: String (DRAFT|SUBMITTED|PLAN_APPROVED|DESIGN_APPLIED|APPROVED|REJECTED|IMPLEMENTED)
+//
+// 선택 속성:
+//   - statusHistory: String (JSON 직렬화 List<{fromStatus,toStatus,at,actor,comment}>)
+//   - sourceType: String (PROMPT|DIRECT_EDIT|MANUAL)
+//   - changeSetId: String|null (소속 ChangeSet ID)
+//
+// ⚠ 삭제된 속성 (038 phase-2):
+//   - designChanges: String — EFFECT 관계 속성(e.diff)으로 이전.
+//       RequirementChange 1:N Target 구조에서 각 Target별 diff를 관계에 보관함으로써
+//       선택적 undo와 충돌 감지가 가능해짐. SemanticDiff 포맷은 04_relationships.cypher 참고.
+// ############################################################
+
+CREATE (chg:RequirementChange {
+    id: "CHG-001",
+    title: "반품 기간 연장",
+    originalPrompt: "반품 기간을 7일에서 14일로 변경",
+    author: "user@example.com",
+    createdAt: datetime(),
+    status: "DRAFT",
+    statusHistory: "[]",
+    sourceType: "PROMPT",
+    changeSetId: null
+});
+
+CREATE CONSTRAINT req_change_id IF NOT EXISTS
+FOR (n:RequirementChange) REQUIRE n.id IS UNIQUE;
+
+
+// ############################################################
+// 101. ChangeSet (Change 묶음 — 038)
+// ############################################################
+// 설명: 관련된 여러 RequirementChange를 하나의 묶음으로 그룹화하는 노드.
+//       CONTAINS 관계로 Change를 포함하며, ChangeSet 단위로 승인·반영 가능.
+//
+// 관계:
+//   - (ChangeSet)-[:CONTAINS]->(RequirementChange)
+//
+// 필수 속성:
+//   - id: String ("CS-NNN")
+//   - title: String
+//   - author: String
+//   - createdAt: DateTime
+//   - status: String (DRAFT|SUBMITTED|APPROVED|REJECTED|IMPLEMENTED)
+// ############################################################
+
+CREATE (cs:ChangeSet {
+    id: "CS-001",
+    title: "Q3 정책 변경 묶음",
+    author: "user@example.com",
+    createdAt: datetime(),
+    status: "DRAFT"
+});
+
+CREATE CONSTRAINT changeset_id IF NOT EXISTS
+FOR (n:ChangeSet) REQUIRE n.id IS UNIQUE;

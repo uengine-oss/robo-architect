@@ -425,3 +425,83 @@ MATCH (impl:ImplementationFile {
     path: "src/order/domain/Order.ts"
 })
 MERGE (agg)-[:IMPLEMENTED_IN]->(impl);
+
+
+// ############################################################
+// EFFECT — 요구사항 변경 영향 관계 (038 requirement-change-management)
+// ############################################################
+// 방향: (:RequirementChange) → (:UserStory | :Feature | :BoundedContext | :Aggregate | :Command | :Event)
+// 의미: 해당 Change가 이 노드에 영향을 미치며, 설계 반영 시 diff가 이 관계에 저장된다.
+//
+// 생성 시 속성:
+//   - reason: String (영향 이유 자연어 설명)
+//   - impactLevel: String (HIGH | MEDIUM | LOW)
+//
+// apply-design 실행 후 추가 속성 (SemanticDiff):
+//   - diff: String (JSON — SemanticDiff 직렬화)
+//       {
+//         "v": 1,
+//         "nodeLabel": "Aggregate",
+//         "nodeTitle": "MemberAccount",
+//         "appliedAt": "2026-06-03T...",
+//         "ops": [
+//           {"field": "description",   "op": "replace",
+//            "from_val": "이전 텍스트", "to_val": "변경 후 텍스트"},
+//           {"field": "valueObjects",  "op": "obj_append",
+//            "obj_name": "MileageSuccession", "obj_data": {...}},
+//           {"field": "enumerations",  "op": "enum_add_items",
+//            "enum_name": "MemberStatus", "items": ["SUCCESSION_PENDING"]},
+//           {"field": "invariants",    "op": "list_append",
+//            "items": ["탈퇴 시 마일리지 승계 여부 검증 필요"]},
+//           {"field": "acceptanceCriteria", "op": "list_append",
+//            "items": ["마일리지 승계 대상 회원을 지정할 수 있다"]}
+//         ]
+//       }
+//       op 유형:
+//         replace          — 텍스트 필드 전체 교체 (description, acceptanceCriteria 전체)
+//         list_append      — 리스트 항목 추가 (acceptanceCriteria 항목, invariants)
+//         list_remove      — 리스트 항목 제거
+//         obj_append       — JSON 배열에 객체 추가 (valueObjects, enumerations 전체 추가)
+//         obj_remove       — JSON 배열에서 이름으로 객체 제거 (obj_data에 원본 보존)
+//         enum_add_items   — 기존 열거형에 값 추가
+//         enum_remove_items— 기존 열거형에서 값 제거
+//   - appliedAt: String (ISO-8601, diff 저장 시각)
+//
+// undo 처리:
+//   ops를 역순으로 반전 적용. replace는 AI가 충돌 시 CHG 기여분만 제거.
+//   obj_remove의 obj_data에 원본이 보존되어 복원에 사용된다.
+//
+// 라이프사이클:
+//   - 생성: Change 생성 시 DIRECT_EDIT → 즉시 생성,
+//           PROMPT → robo-change-specify 스킬 분석 완료 후 생성
+//   - diff 추가: POST /{id}/apply-design 완료 시
+//   - diff 제거: POST /{id}/undo-design 완료 시 (REMOVE e.diff, e.appliedAt)
+//   - 삭제: DETACH DELETE RequirementChange 시 함께 삭제
+// ############################################################
+
+MATCH (chg:RequirementChange {id: "CHG-001"})
+MATCH (us:UserStory {id: "US-001"})
+CREATE (chg)-[:EFFECT {
+    reason: "반품 기간 변경으로 인수조건 수정 필요",
+    impactLevel: "HIGH",
+    diff: null,
+    appliedAt: null
+}]->(us);
+
+
+// ############################################################
+// CONTAINS — ChangeSet ↔ RequirementChange 포함 관계 (038)
+// ############################################################
+// 방향: (:ChangeSet) → (:RequirementChange)
+// 의미: ChangeSet이 해당 Change를 포함함 (묶음 관리)
+//
+// 속성: 없음 (포함 여부만 표현)
+//
+// 라이프사이클:
+//   - 생성: ChangeSet 생성 시 또는 Change 추가 시
+//   - 삭제: Change를 ChangeSet에서 제거 시 (Change 노드는 유지, 관계만 삭제)
+// ############################################################
+
+MATCH (cs:ChangeSet {id: "CS-001"})
+MATCH (chg:RequirementChange {id: "CHG-001"})
+MERGE (cs)-[:CONTAINS]->(chg);

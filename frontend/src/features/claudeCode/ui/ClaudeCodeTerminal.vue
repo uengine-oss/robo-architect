@@ -33,6 +33,8 @@ const isConnected = ref(false)
 const isConnecting = ref(true)
 const connectionError = ref('')
 const workdirDisplay = ref('')
+let pendingInputCommand = null  // set before connect() — sent 6s after ws.onopen
+let queuedInput = null          // set after connect() if ws not yet open
 
 // In Electron, window.location.hostname resolves to 'app' (custom app:// protocol)
 // which is not a real network host. Fetch the actual backend port from the main
@@ -184,6 +186,19 @@ function connect(workdir) {
     // Send initial terminal size
     const dims = { cols: terminal.cols, rows: terminal.rows }
     ws.send(JSON.stringify({ type: 'resize', ...dims }))
+
+    // If a command was queued (e.g. /robo-implement CHG-009), send it after
+    // Claude's interactive session has had time to start and show a prompt.
+    const cmdToSend = pendingInputCommand || queuedInput
+    pendingInputCommand = null
+    queuedInput = null
+    if (cmdToSend) {
+      setTimeout(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'input', data: cmdToSend + '\n' }))
+        }
+      }, 6000)  // 6s: Claude CLI startup + prompt render
+    }
   }
 
   ws.onmessage = (event) => {
@@ -229,14 +244,27 @@ function reconnect() {
 }
 
 // Expose openWithWorkdir for parent to call
-function openWithWorkdir(workdir) {
+function openWithWorkdir(workdir, pendingCommand = null) {
   if (terminal) {
     terminal.clear()
+  }
+  if (pendingCommand) {
+    pendingInputCommand = pendingCommand
   }
   connect(workdir)
 }
 
-defineExpose({ openWithWorkdir })
+// Send raw input to the PTY session (as if user typed it).
+// If ws is not open yet, queue the text and send it once ws.onopen fires.
+function sendInput(text) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'input', data: text }))
+  } else {
+    queuedInput = text  // will be picked up in the next ws.onopen handler
+  }
+}
+
+defineExpose({ openWithWorkdir, sendInput })
 
 // Watch for workdir prop changes
 watch(() => props.workdir, (newWorkdir) => {
