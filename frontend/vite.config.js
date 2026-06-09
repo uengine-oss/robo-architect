@@ -128,6 +128,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Analysis 탭(robo-analyzer-frontend remote)의 백엔드 호출을 API Gateway(9000)로 라우팅.
+      // '/api' 의 더 구체적인 접두사이므로 먼저 매칭되도록 위에 둔다.
+      '/api/gateway': {
+        target: 'http://127.0.0.1:9000',
+        changeOrigin: true
+      },
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true
