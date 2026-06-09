@@ -465,8 +465,13 @@ async function renderJsxSceneGraphIntoFrame(
   const fontsToLoad = new Set<string>()
   for (const n of Object.values(nodes)) {
     if (n.type === 'TEXT') {
-      const family = n.fontFamily || 'Inter'
-      const style = sgWeightToStyle(n.fontWeight, n.italic)
+      let family = n.fontFamily || 'Inter'
+      let style = sgWeightToStyle(n.fontWeight, n.italic)
+      // Korean text can't be warmed with Inter (no Hangul glyphs).
+      if (hasHangul(n.text) && family === 'Inter') {
+        family = KOREAN_FONT_FAMILY
+        style = koreanStyleFor(style)
+      }
       fontsToLoad.add(family + '|' + style)
     }
   }
@@ -522,10 +527,9 @@ async function renderSceneNode(
     } else if (sn.type === 'TEXT') {
       const t = figma.createText()
       t.name = sn.name || 'Text'
-      const family = sn.fontFamily || 'Inter'
       const style = sgWeightToStyle(sn.fontWeight, sn.italic)
-      try { t.fontName = { family, style } }
-      catch (_e) { t.fontName = { family: 'Inter', style: 'Regular' } }
+      // Hangul-aware: load AND assign a font that can actually draw sn.text.
+      t.fontName = await loadFontForText(sn.text, sn.fontFamily, style)
       t.characters = sn.text || ''
       if (typeof sn.fontSize === 'number') t.fontSize = sn.fontSize
       if (sn.textAlignHorizontal) {
@@ -623,9 +627,8 @@ async function renderSceneNode(
           } catch (_e) {}
           // Tiny label so the architect can identify what should go there.
           try {
-            await figma.loadFontAsync({ family: 'Inter', style: 'Regular' })
             const label = figma.createText()
-            label.fontName = { family: 'Inter', style: 'Regular' }
+            label.fontName = await loadFontForText(sn.name, 'Inter', 'Regular')
             label.fontSize = 11
             label.characters = sn.name || 'INSTANCE'
             try { label.fills = [{ type: 'SOLID', color: { r: 0.35, g: 0.36, b: 0.42 }, opacity: 1 }] } catch (_e) {}
@@ -740,10 +743,10 @@ async function renderSceneNode(
             } catch (_e1: any) {
               /* fall through to Inter-Regular fallback */
             }
-            // (2) Inter-Regular fallback — force the font, then write.
+            // (2) Hangul-aware fallback — force a font that can draw `val`
+            //     (Inter would blank Korean), then write.
             try {
-              await figma.loadFontAsync({ family: 'Inter', style: 'Regular' })
-              ;(tn as any).fontName = { family: 'Inter', style: 'Regular' }
+              ;(tn as any).fontName = await loadFontForText(val, 'Inter', 'Regular')
               tn.characters = val
               return true
             } catch (e2: any) {
@@ -904,6 +907,55 @@ function toFigmaPaint(p: any): Paint | null {
   return null
 }
 
+// ── Korean (Hangul) font fallback ───────────────────────────────────────
+// Figma draws each TEXT node in ONE font. "Inter" — the default family here
+// and the historical last-resort fallback — has no Hangul glyphs, so Korean
+// text assigned to Inter renders blank (English is fine). We detect Hangul
+// and route it to "Noto Sans KR": a Figma-hosted family every user can load
+// that also covers Latin, so mixed Korean/English strings render correctly.
+const KOREAN_FONT_FAMILY = 'Noto Sans KR'
+
+const HANGUL_RE = /[ᄀ-ᇿ㄰-㆏ꥠ-꥿가-힣]/
+function hasHangul(text: string | undefined | null): boolean {
+  // Jamo, compatibility Jamo, extended Jamo, and Hangul syllables.
+  return !!text && HANGUL_RE.test(text)
+}
+
+// "Noto Sans KR" ships a limited weight set and has no italic — clamp to it.
+function koreanStyleFor(style: string): string {
+  const base = (style || 'Regular').replace(/\s*Italic$/i, '').trim()
+  const supported = ['Thin', 'Light', 'Regular', 'Medium', 'Bold', 'Black']
+  return supported.indexOf(base) >= 0 ? base : 'Regular'
+}
+
+// Load a font that can actually render `text`, and RETURN the FontName that
+// loaded so the caller assigns exactly what it loaded (avoids the classic
+// "loaded A but assigned B → Figma throws" trap). Degrades along:
+//   requested family → Noto Sans KR (when text is Korean) → Inter Regular.
+async function loadFontForText(
+  text: string | undefined | null,
+  family: string | undefined,
+  style: string,
+): Promise<FontName> {
+  const wantKorean = hasHangul(text)
+  const reqFamily = family || 'Inter'
+  // Korean text whose requested family is the non-Korean default → go Korean.
+  const primary = wantKorean && reqFamily === 'Inter' ? KOREAN_FONT_FAMILY : reqFamily
+  const candidates: FontName[] = [
+    { family: primary, style: primary === KOREAN_FONT_FAMILY ? koreanStyleFor(style) : style },
+    { family: primary, style: 'Regular' },
+  ]
+  if (wantKorean) {
+    candidates.push({ family: KOREAN_FONT_FAMILY, style: koreanStyleFor(style) })
+    candidates.push({ family: KOREAN_FONT_FAMILY, style: 'Regular' })
+  }
+  candidates.push({ family: 'Inter', style: 'Regular' })
+  for (const cand of candidates) {
+    try { await figma.loadFontAsync(cand); return cand } catch (_e) { /* try next */ }
+  }
+  return { family: 'Inter', style: 'Regular' }
+}
+
 function sgWeightToStyle(weight: number | undefined, italic: boolean | undefined): string {
   const w = weight || 400
   let base = 'Regular'
@@ -990,15 +1042,6 @@ async function handleSyncFrame(msg: {
   let failed = 0
   const errors: string[] = []
 
-  // Load Inter font once (for text nodes)
-  let fontLoaded = false
-  async function ensureFont() {
-    if (fontLoaded) return
-    await figma.loadFontAsync({ family: "Inter", style: "Regular" })
-    await figma.loadFontAsync({ family: "Inter", style: "Bold" }).catch(function() {})
-    fontLoaded = true
-  }
-
   // If sceneGraph with component info is provided, build from components
   const sceneNodes = msg.sceneGraph && msg.sceneGraph.nodes
   if (isNewFrame && sceneNodes) {
@@ -1023,16 +1066,15 @@ async function handleSyncFrame(msg: {
               tn.getRangeAllFontNames(0, tn.characters.length).map(figma.loadFontAsync)
             )
           } catch (_fontErr) {
-            // Font not available — replace with Inter so we can edit
-            await ensureFont()
-            tn.fontName = { family: "Inter", style: "Regular" }
+            // Font not available — switch to a Hangul-aware font so Korean
+            // text isn't blanked by Inter.
+            tn.fontName = await loadFontForText(tu.text, "Inter", "Regular")
           }
           tn.characters = tu.text
           updated++
         } else if (tu.text) {
-          await ensureFont()
           const newText = figma.createText()
-          newText.fontName = { family: "Inter", style: "Regular" }
+          newText.fontName = await loadFontForText(tu.text, "Inter", "Regular")
           newText.characters = tu.text
           newText.fontSize = (tu as any).fontSize || 14
           if ((tu as any).name) newText.name = (tu as any).name
@@ -1336,9 +1378,8 @@ async function applyTextOverridesFromSceneGraph(
           target.getRangeAllFontNames(0, target.characters.length).map(figma.loadFontAsync)
         )
       } catch (_fontErr) {
-        // Font not available — switch to Inter
-        await figma.loadFontAsync({ family: "Inter", style: "Regular" })
-        target.fontName = { family: "Inter", style: "Regular" }
+        // Font not available — switch to a Hangul-aware font (Inter blanks Korean).
+        target.fontName = await loadFontForText(st.text, "Inter", "Regular")
       }
       try {
         target.characters = st.text
@@ -1455,8 +1496,8 @@ async function handleTextUpdate(nodeId: string, text: string) {
       textNode.getRangeAllFontNames(0, textNode.characters.length).map(figma.loadFontAsync)
     )
   } catch (_fontErr) {
-    await figma.loadFontAsync({ family: "Inter", style: "Regular" })
-    textNode.fontName = { family: "Inter", style: "Regular" }
+    // Hangul-aware fallback (Inter blanks Korean).
+    textNode.fontName = await loadFontForText(text, "Inter", "Regular")
   }
   textNode.characters = text
   figma.ui.postMessage({ type: 'UPDATE_RESULT', updated: 1, failed: 0, total: 1 })
