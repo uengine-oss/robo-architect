@@ -23,7 +23,7 @@ const emit = defineEmits(['update:activeTab'])
 // 'Process' 탭 — spec 034 WIP 커밋(de030de) 이 "당분간 숨김" 으로 빼뒀던 것 복원.
 // BPMN(Process) 캔버스는 Hybrid 인제션 → ES 승격 흐름의 핵심 진입점이라
 // 메뉴에서 빼면 사용자가 진입할 길이 사라짐.
-const tabs = ['Requirements', 'Process', 'Event Modeling', 'Design', 'Aggregate', 'Code']
+const tabs = ['Analysis', 'Requirements', 'Process', 'Event Modeling', 'Design', 'Aggregate', 'Code']
 
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()

@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import Icons from 'unplugin-icons/vite'
 import IconsResolver from 'unplugin-icons/resolver'
 import Components from 'unplugin-vue-components/vite'
+import federation from '@originjs/vite-plugin-federation'
 import { fileURLToPath, URL } from 'node:url'
 import { resolve } from 'path'
 import { copyFileSync, existsSync } from 'fs'
@@ -66,7 +67,16 @@ export default defineConfig({
     tailwindcss(),
     Icons({ compiler: 'vue3' }),
     Components({ resolvers: [IconsResolver({ prefix: 'icon' })], dirs: [] }),
-    vue()
+    vue(),
+    // Module Federation host — "Analysis" 탭에서 robo-analyzer-frontend 를 끼운다.
+    // remote 는 build 후 5001 포트로 serve 되어야 한다(robo-data-frontend/vite.config.ts).
+    federation({
+      name: 'roboArchitectHost',
+      remotes: {
+        'robo-analyzer-frontend': 'http://localhost:5001/assets/remoteEntry.js',
+      },
+      shared: ['vue', 'pinia'],
+    })
   ],
   build: {
     target: 'esnext'

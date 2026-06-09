@@ -9,6 +9,8 @@ import EventModelingPanel from '@/features/eventModeling/ui/EventModelingPanel.v
 import RequirementsPanel from '@/features/requirements/ui/RequirementsPanel.vue'
 import ClaudeCodeWorkspace from '@/features/claudeCode/ui/ClaudeCodeWorkspace.vue'
 import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
+// Analysis 탭 — robo-analyzer-frontend 를 Module Federation 으로 끼우는 래퍼.
+import AnalysisPanel from '@/features/analysis/ui/AnalysisPanel.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useThemeStore } from '@/app/theme.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
@@ -53,6 +55,7 @@ provide('openClaudeCode', (workdir) => {
 // Map tab names to components
 // 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 tabComponents 에 유지).
 const tabComponents = {
+  'Analysis': markRaw(AnalysisPanel),
   'Requirements': markRaw(RequirementsPanel),
   'Process': markRaw(BpmnPanel),
   'Event Modeling': markRaw(EventModelingPanel),
@@ -224,7 +227,7 @@ onUnmounted(() => {
       @update:active-tab="activeTab = $event"
     />
     <div class="main-content">
-      <template v-if="activeTab !== 'Code' && activeTab !== 'Requirements'">
+      <template v-if="activeTab !== 'Code' && activeTab !== 'Requirements' && activeTab !== 'Analysis'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"
