@@ -16,6 +16,12 @@ const OP_STUB = resolve(__dirname, '../open-pencil')
 const OP = existsSync(resolve(OP_REAL, 'src')) ? OP_REAL : OP_STUB
 const FRONTEND_SRC = fileURLToPath(new URL('./src', import.meta.url))
 
+// Analysis 탭 remote(robo-analyzer-frontend) URL — 환경분기(모범사례: 하드코딩 금지).
+//   개발 : http://localhost:5001 (analyzer 를 build 후 preview 로 서빙)
+//   배포 : 빌드 스크립트가 ANALYZER_REMOTE_URL='analyzer/assets/remoteEntry.js' 주입
+//          → Electron 이 app://app/analyzer/ 로 co-locate 서빙(별도 5001 서버 불필요)
+const ANALYZER_REMOTE = process.env.ANALYZER_REMOTE_URL || 'http://localhost:5001/assets/remoteEntry.js'
+
 export default defineConfig({
   plugins: [
     // Copy canvaskit.wasm from node_modules to public/
@@ -78,9 +84,13 @@ export default defineConfig({
     federation({
       name: 'roboArchitectHost',
       remotes: {
-        'robo-analyzer-frontend': 'http://localhost:5001/assets/remoteEntry.js',
+        'robo-analyzer-frontend': ANALYZER_REMOTE,
       },
-      shared: ['vue', 'pinia'],
+      // 싱글톤: host·remote 가 같은 Vue/Pinia 인스턴스를 공유해야 반응성·provide/inject 안 깨짐.
+      shared: {
+        vue: { singleton: true },
+        pinia: { singleton: true },
+      },
     })
   ],
   build: {
