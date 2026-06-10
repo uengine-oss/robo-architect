@@ -59,9 +59,9 @@ def _max_recoveries_per_task() -> int:
     높은 것부터) 검증기에 추가한다. 0이면 회복 없음(정규화 무효), 큰 값이면 recall↑·비용↑.
     """
     try:
-        return max(0, int(os.getenv("HYBRID_GLOSSARY_MAX_RECOVERIES", "3")))
+        return max(0, int(os.getenv("HYBRID_GLOSSARY_MAX_RECOVERIES", "2")))
     except ValueError:
-        return 3
+        return 2
 from api.features.ingestion.hybrid.mapper.module_retriever import (
     MIN_MODULE_CONFIDENCE,
     ModuleCandidate,

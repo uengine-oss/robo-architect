@@ -63,7 +63,7 @@ async def run_agentic_retrieval(
 | 변수 | 기본 | 의미 |
 |---|---|---|
 | `HYBRID_GLOSSARY_NORMALIZE` | `"1"` | `"0"`이면 정규화 완전 비활성(기존 경로와 동일). A/B·회귀 안전망. |
-| `HYBRID_GLOSSARY_MAX_RECOVERIES` | `"3"` | task당 정규화 회복 후보 상한(인지부하·비용 제어 노브). `0`=회복 없음, ↑=recall↑·비용↑. |
+| `HYBRID_GLOSSARY_MAX_RECOVERIES` | `"2"` | task당 정규화 회복 후보 상한(인지부하·비용 제어 노브). `0`=회복 없음, ↑=recall↑·비용↑. 공유 어휘 多 도메인은 1~2 권장(과확산 억제). |
 
 ## C7. 실경로 배선 — explore_service (중요)
 
