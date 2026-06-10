@@ -20,6 +20,7 @@ Design notes:
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
@@ -30,6 +31,7 @@ from api.features.ingestion.hybrid.contracts import (
     BpmProcess,
     BpmSkeleton,
     BpmTaskDTO,
+    GlossaryTerm,
     RuleContext,
     RuleDTO,
 )
@@ -39,6 +41,27 @@ from api.features.ingestion.hybrid.mapper.agent_validator import (
     validate_candidates,
 )
 from api.features.ingestion.hybrid.mapper.embeddings import EmbeddingCache, cosine
+from api.features.ingestion.hybrid.mapper.term_normalizer import (
+    normalize_query,
+    normalize_rule_blob,
+)
+
+
+def _glossary_normalize_enabled() -> bool:
+    """env 토글 — `HYBRID_GLOSSARY_NORMALIZE=0`이면 정규화 완전 비활성(기존 경로와 동일)."""
+    return os.getenv("HYBRID_GLOSSARY_NORMALIZE", "1") != "0"
+
+
+def _max_recoveries_per_task() -> int:
+    """§036 — task당 정규화 회복 후보 상한. 검증기 부하·화면 노출·비용을 묶는 핵심 레버.
+
+    baseline 후보는 그대로 두고, 어휘갭으로 누락된 후보를 task당 이 수만큼만(가장 확신
+    높은 것부터) 검증기에 추가한다. 0이면 회복 없음(정규화 무효), 큰 값이면 recall↑·비용↑.
+    """
+    try:
+        return max(0, int(os.getenv("HYBRID_GLOSSARY_MAX_RECOVERIES", "3")))
+    except ValueError:
+        return 3
 from api.features.ingestion.hybrid.mapper.module_retriever import (
     MIN_MODULE_CONFIDENCE,
     ModuleCandidate,
@@ -113,6 +136,7 @@ def _candidates_for_task(
     top_k: int,
     cache: EmbeddingCache,
     actor_name_by_id: dict[str, str],
+    glossary: list[GlossaryTerm] | None = None,
 ) -> list[CandidateBL]:
     """Step 2 — filter rules to those inside the Step-1 modules, then use
     embedding similarity to pick the top-k for this task.
@@ -178,23 +202,52 @@ def _candidates_for_task(
         bits.append(f"THEN: {ctx.then}")
         return "\n".join(bits)
 
+    # ---- Baseline ranking (정규화 미적용) — 항상 먼저 계산 ----
     try:
-        qv = cache.embed(query)
-        rule_vecs = cache.embed_many([_rule_blob(ctx) for _, ctx in in_scope])
+        qv0 = cache.embed(query)
+        rule_vecs0 = cache.embed_many([_rule_blob(ctx) for _, ctx in in_scope])
     except Exception:
         # No embeddings available — degrade to "return everything in scope"
         # and let the LLM validator do all the filtering.
         return [CandidateBL(rule=r, context=ctx, score=0.0)
                 for r, ctx in in_scope][: top_k]
 
-    scored = [
-        (idx, cosine(qv, rv)) for idx, rv in enumerate(rule_vecs) if rv
-    ]
-    # Per-BL floor: drop rules obviously unrelated to the task before top-k.
-    # At scale this prevents long-tail noise from consuming validator tokens.
-    scored = [(i, s) for i, s in scored if s >= MIN_BL_INCLUSION]
-    scored.sort(key=lambda x: x[1], reverse=True)
-    picked = scored[: max(1, top_k)]
+    def _above_floor(qv, vecs) -> list[tuple[int, float]]:
+        out = [(i, cosine(qv, rv)) for i, rv in enumerate(vecs) if rv]
+        out = [(i, s) for i, s in out if s >= MIN_BL_INCLUSION]
+        out.sort(key=lambda x: x[1], reverse=True)
+        return out
+
+    base = _above_floor(qv0, rule_vecs0)
+
+    # §036 — glossary 용어 정규화(양방향) + union-under-cap.
+    # 핵심 원칙(인지부하·비용 최소화):
+    #   (1) baseline 후보는 항상 전부 보존  → 정규화로 인한 회귀 0건(구조적 보장).
+    #   (2) cap(top_k)에 여유가 있을 때만 정규화 회복분을 채움 → "후보가 적은 task"
+    #       (= 어휘갭으로 recall이 실제 위험한 경우)에만 효과. full-plate task는 무변경.
+    #   (3) 검증기에 가는 후보 수는 top_k 이내로 불변 → validator 부하·비용 상한 유지.
+    # env off / glossary 부재 시 baseline 그대로(기존 경로와 동일).
+    norm_on = bool(glossary) and _glossary_normalize_enabled()
+    if norm_on and len(base) < top_k:
+        qn, _ = normalize_query(query, glossary)
+        try:
+            qvn = cache.embed(qn)
+            rule_vecsn = cache.embed_many([
+                normalize_rule_blob(_rule_blob(ctx), r, ctx, glossary)[0]
+                for r, ctx in in_scope
+            ])
+            norm = _above_floor(qvn, rule_vecsn)
+        except Exception:
+            norm = []
+        base_ids = {i for i, _ in base}
+        # task당 회복 상한 + cap 여유 중 작은 값만큼만 추가(검증기 부하·노출·비용 억제).
+        room = min(top_k - len(base), _max_recoveries_per_task())
+        extras = [(i, s) for i, s in norm if i not in base_ids][: max(0, room)]
+        picked = base + extras
+    else:
+        # full-plate task 또는 정규화 off → baseline만(회귀·churn·추가비용 0).
+        picked = base[: max(1, top_k)]
+
     score_by_idx = {i: s for i, s in picked}
     return [
         CandidateBL(
@@ -235,6 +288,8 @@ async def run_agentic_retrieval(
     per_task_cap: int = 20,
     cache: Optional[EmbeddingCache] = None,
     event_sink: Optional[AgentEventSink] = None,
+    # §036 — 용어 정규화용 glossary. None/빈 목록이면 정규화 미적용(하위 호환).
+    glossary: Optional[list[GlossaryTerm]] = None,
 ) -> RetrievalResult:
     """Run Steps 1→2→3 for one Process. Returns accepted mappings + audit data."""
     sink = event_sink or _noop_sink
@@ -319,6 +374,7 @@ async def run_agentic_retrieval(
             task=task, process=process, rules=rules,
             contexts_by_rule=ctx_by_rule, module_fqns=module_fqns,
             top_k=bl_top_k, cache=cache, actor_name_by_id=actor_name_by_id,
+            glossary=glossary,
         )
         await sink({
             "type": "AgentStepBlSearch",
@@ -448,6 +504,21 @@ async def run_agentic_retrieval(
     # Note: `result.mappings` is kept populated by `activity_rule_mapper.map_tasks_to_rules`
     # (the caller), not here — it iterates `result.accepted` to build the full
     # ActivityRuleMapping list. We intentionally don't double-populate.
+
+    # §036 관찰성 — 정규화 활성 여부 + 후보 예산 상한(불변 확인). 후보가 늘어도
+    # bl_top_k/per_task_cap는 그대로이므로 검증기 부하·사용자 노출은 불변이다.
+    SmartLogger.log(
+        "INFO", "Agentic retrieval done (036 term normalization)",
+        category="ingestion.hybrid.agentic",
+        params={
+            "process_id": process.id,
+            "normalize_enabled": bool(glossary) and _glossary_normalize_enabled(),
+            "glossary_terms": len(glossary or []),
+            "bl_top_k": bl_top_k,
+            "per_task_cap": per_task_cap,
+            "accepted": len(result.accepted),
+        },
+    )
 
     await sink({
         "type": "AgentDone",
