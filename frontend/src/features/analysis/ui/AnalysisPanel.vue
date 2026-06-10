@@ -20,7 +20,12 @@ onMounted(async () => {
   try {
     // remote-app 의 공개 API 는 federation 규약상 default 로 노출된다.
     const remote = await import(/* @vite-ignore */ 'robo-analyzer-frontend/remote-app')
-    unmountRemote = remote.default.mount(hostEl.value)
+    // embedded: architect 탭 안에 끼워지므로 analyzer 자체 상단바를 숨긴다.
+    // projectRoot: Electron 데스크톱이 고른 로컬 폴더(Code 탭과 동일 키) → analyzer 가 업로드 없이
+    //              그 경로를 직접 분석(경로 모드). 없으면(브라우저) analyzer 는 업로드 모드로 동작.
+    let projectRoot
+    try { projectRoot = localStorage.getItem('claude_code_workspace_root') || undefined } catch { projectRoot = undefined }
+    unmountRemote = remote.default.mount(hostEl.value, { embedded: true, projectRoot })
   } catch (err) {
     loadError.value = err?.message || String(err)
   } finally {
