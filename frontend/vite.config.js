@@ -29,19 +29,24 @@ export default defineConfig({
         }
       }
     },
-    // Copy open-pencil bundled fonts to public/ so /Inter-Regular.ttf and
-    // /NotoNaskhArabic-Regular.ttf resolve. open-pencil's loadFont() falls back
-    // to these root-relative URLs when local-font access is denied and the
-    // Google Fonts API key is rate-limited; without them, CanvasKit gets the
-    // SPA index.html as the font payload and renders blank text.
+    // Copy open-pencil bundled public assets to public/ so the root-relative
+    // URLs they reference resolve at build time.
+    //  - Inter-Regular.ttf / NotoNaskhArabic-Regular.ttf: open-pencil's
+    //    loadFont() falls back to these root-relative URLs when local-font
+    //    access is denied and the Google Fonts API key is rate-limited;
+    //    without them, CanvasKit gets the SPA index.html as the font payload
+    //    and renders blank text.
+    //  - favicon-32.png: referenced as <img src="/favicon-32.png"> by
+    //    open-pencil's AppMenu.vue; without it Rollup fails to resolve the
+    //    asset and the production build aborts.
     // Pretendard-Regular.otf is committed under public/ directly (it lives in
     // robo-architect, not open-pencil) and is preloaded as the CJK fallback
     // by features/aiDesign/fonts.js.
     {
-      name: 'copy-open-pencil-fonts',
+      name: 'copy-open-pencil-assets',
       buildStart() {
-        const fonts = ['Inter-Regular.ttf', 'NotoNaskhArabic-Regular.ttf']
-        for (const f of fonts) {
+        const assets = ['Inter-Regular.ttf', 'NotoNaskhArabic-Regular.ttf', 'favicon-32.png']
+        for (const f of assets) {
           const src = resolve(OP, 'public', f)
           const dest = resolve(__dirname, 'public', f)
           if (existsSync(src) && !existsSync(dest)) {
