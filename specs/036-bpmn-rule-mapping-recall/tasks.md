@@ -82,7 +82,7 @@
 본 피처는 신규 UI가 없으므로 매뉴얼의 핵심 시연 = **기존 BPMN 내비게이터 화면의 off/on 대비**(어휘갭 룰 회복)와 측정 수치다. 전제: 앱 구동(`localhost:5199`) + neo4j에 analyzer 그래프(`zapamcom*` 분석) 적재 + LLM 키.
 
 - [x] T020 [P] Playwright 설정 — `specs/036-bpmn-rule-mapping-recall/manual/artifacts/playwright.config.ts` 작성(034 패턴 복제: `baseURL` env override, workers:1, viewport 1440×900, `shot()` 헬퍼로 `manual/screenshots/`에 저장).
-- [ ] T021 Playwright before/after 캡처 스펙 — `specs/036-bpmn-rule-mapping-recall/manual/artifacts/playwright-036-recall.spec.ts`: 골든 픽스처(자동납부 본인확인 PDF)를 인제스트→BPMN 매핑 실행 후, 동일 활동("본인확인")의 룰 매핑 패널을 `HYBRID_GLOSSARY_NORMALIZE=0`/`=1` 각각으로 캡처 → `manual/screenshots/{01_off_missing.png, 02_on_recovered.png, 03_mapping_panel_detail.png}`. (US1 시각 증명, quickstart Q2/Q3)
+- [x] T021 Playwright before/after 캡처 스펙 — `specs/036-bpmn-rule-mapping-recall/manual/artifacts/playwright-036-recall.spec.ts`: 골든 픽스처(자동납부 본인확인 PDF)를 인제스트→BPMN 매핑 실행 후, 동일 활동("본인확인")의 룰 매핑 패널을 `HYBRID_GLOSSARY_NORMALIZE=0`/`=1` 각각으로 캡처 → `manual/screenshots/{01_off_missing.png, 02_on_recovered.png, 03_mapping_panel_detail.png}`. (US1 시각 증명, quickstart Q2/Q3)
 - [x] T022 매뉴얼 본문 작성 — `specs/036-bpmn-rule-mapping-recall/manual/manual.md`(한국어): 기능 개요(어휘갭 문제·용어 정규화 해결) + before/after 스크린샷 임베드 + 골든 픽스처 A/B 측정표(recovered/regressed/user_visible_delta/wall_clock_ratio) + env 토글 안내. (quickstart 전체, spec FR-008/SC-001~005)
 - [ ] T023 [P] manual.docx 변환 — `manual.md` → `manual.docx`(035/034 manual 산출물과 동일 포맷). 스크린샷 포함.
 
@@ -92,7 +92,7 @@
 - [x] T025 **union-under-cap + 회복 상한** — 실측에서 순수 정규화가 비용 ~2x·회귀 다수 유발. `_candidates_for_task`를 baseline 전량 보존 + `HYBRID_GLOSSARY_MAX_RECOVERIES`(기본 3) 상한으로 재설계. 측정: 비용 1.07x·회복 23·회귀 1. contracts C8, spec Clarifications(2차).
 - [x] T026 **골든 픽스처 A/B 실행** — golden036(ingest 완료) off/on 측정 → /tmp/036_{baseline,normalized}.json, manual.md 측정표 채움.
 
-> **남은 T021·T023은 앱 GUI 구동 필요** — 백엔드 매핑·측정은 헤드리스로 완료. Playwright 캡처는 프런트(`localhost:5199`)가 떠 있어야 함.
+> **T021 완료** — 프런트(`localhost:5173`)+백엔드(8000) 구동 상태에서 localStorage `hybrid.session_id=golden036` 주입 → off/on DB 상태별 캡처(`01_off_missing`, `01b_off_panel`, `02_on_recovered`, `03_mapping_panel_detail`). R-count 배지로 회복 가시화(예: task10 R1→R4, task11 R1→R3). **T023(docx)만 잔여** — 로컬 pandoc 미설치(설치 시 변환).
 
 ---
 

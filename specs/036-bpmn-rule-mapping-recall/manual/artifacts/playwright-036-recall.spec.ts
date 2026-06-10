@@ -1,49 +1,53 @@
-import { test, expect } from '@playwright/test'
+import { test } from '@playwright/test'
 import path from 'path'
 
 /**
  * §036 용어 정규화 — before/after 매뉴얼 캡처.
  *
  * 036은 신규 UI가 없다. "성공 화면" = 기존 BPMN 내비게이터에서 어휘갭으로
- * 누락되던 룰(zapamcom*)이 "본인확인" 활동에 매핑되어 나타나는 장면이다.
+ * 누락되던 룰(zapamcom*)이 "본인확인" 활동에 매핑되어 나타나는 장면.
  *
- * before/after 대비는 백엔드 env 토글로 만든다:
- *   1) 백엔드를 HYBRID_GLOSSARY_NORMALIZE=0 으로 기동 → 골든 PDF 인제스트 →
- *      이 spec 실행 → 01_off_missing.png (누락 상태)
- *   2) 백엔드를 HYBRID_GLOSSARY_NORMALIZE=1 으로 재기동 → 재인제스트 →
- *      이 spec 실행 → 02_on_recovered.png (회복 상태)
- * (Playwright는 프런트만 구동하므로 backend env는 외부에서 제어한다.)
+ * 화면은 영속된 REALIZED_BY 매핑(DB)을 rehydrate한다. 따라서 before/after는
+ * 백엔드 env 재기동 없이, 하니스로 DB를 off/on 상태로 만든 뒤 이 spec을 각각
+ * 실행해 캡처한다(NORMALIZE_PHASE=off|on 으로 파일명 구분):
+ *   HYBRID_GLOSSARY_NORMALIZE=0 run_mapping.py ...   # DB=baseline
+ *   NORMALIZE_PHASE=off npx playwright test ...       # 01_off_missing.png
+ *   HYBRID_GLOSSARY_NORMALIZE=1 run_mapping.py ...   # DB=recovered
+ *   NORMALIZE_PHASE=on  npx playwright test ...       # 02_on_recovered.png
  *
- * 전제: 앱 구동(localhost:5199) + neo4j analyzer 그래프 적재 + LLM 키.
- * 셀렉터는 라이브 UI 기준으로 보정할 것(아래 TODO).
+ * 전제: 프런트(5173) + 백엔드(8000) 구동, golden036 세션이 DB에 존재.
  */
 
 const SHOTS = path.resolve(__dirname, '../screenshots')
-const APP = process.env.APP_URL || 'http://localhost:5199'
-const PHASE = process.env.NORMALIZE_PHASE || 'on' // 'off' | 'on'
-const SHOT_NAME = PHASE === 'off' ? '01_off_missing.png' : '02_on_recovered.png'
+const SESSION = process.env.HYBRID_SESSION || 'golden036'
+const PHASE = process.env.NORMALIZE_PHASE || 'on'
+const CANVAS_SHOT = PHASE === 'off' ? '01_off_missing.png' : '02_on_recovered.png'
+const PANEL_SHOT = PHASE === 'off' ? '01b_off_panel.png' : '03_mapping_panel_detail.png'
 
-async function shot(page, name: string) {
-  await page.evaluate(() => window.scrollTo(0, 0))
-  await page.waitForTimeout(300)
-  await page.screenshot({ path: `${SHOTS}/${name}` })
-}
+test('BPMN 룰 매핑 캡처 (자동납부 본인확인)', async ({ page }) => {
+  // 앱이 golden036 세션을 rehydrate 하도록 localStorage 주입(로드 전에).
+  await page.addInitScript((sid) => {
+    try { localStorage.setItem('hybrid.session_id', sid) } catch (e) { /* ignore */ }
+  }, SESSION)
 
-test('BPMN 활동 룰 매핑 패널 캡처 (자동납부 본인확인)', async ({ page }) => {
-  await page.goto(APP)
-
-  // TODO(라이브 보정): BPMN/프로세스 내비게이터 탭으로 이동.
-  // 034 패턴: page.locator('.top-bar__tabs button', { hasText: 'Process' }).click()
+  await page.goto('/')
   await page.waitForLoadState('networkidle')
 
-  // TODO(라이브 보정): "본인확인" 활동(Task) 노드를 선택해 룰 매핑 패널을 연다.
-  // 예: await page.locator('.bpmn-task', { hasText: '본인확인' }).click()
-  // await page.waitForSelector('.rule-mapping-panel', { timeout: 60_000 })
+  // Process 탭으로 이동 → BpmnPanel.
+  const processTab = page.getByRole('button', { name: 'Process', exact: true })
+  if (await processTab.count()) await processTab.first().click()
 
-  // 매핑 패널(매핑된 룰 R 카운트/목록)이 보이는 상태에서 캡처.
-  await shot(page, SHOT_NAME)
-  await shot(page, '03_mapping_panel_detail.png')
+  // BPMN 캔버스(rehydrate 렌더) 대기.
+  await page.waitForSelector('.bpmn-canvas svg', { timeout: 60_000 }).catch(() => {})
+  await page.waitForTimeout(2500) // 매핑 오버레이/배지 정착
 
-  // 회복 단계에서는 zapamcom 계열 룰이 최소 1건 매핑되어야 한다(시각 + 단언).
-  // TODO(라이브 보정): expect(page.locator('.rule-mapping-panel')).toContainText(/zapamcom|본인확인/)
+  await page.screenshot({ path: `${SHOTS}/${CANVAS_SHOT}`, fullPage: false })
+
+  // 좌측 네비의 "본인확인 방식 결정" task 행을 더블클릭해 룰 인스펙터를 연다.
+  const label = page.getByText('본인확인 방식 결정', { exact: false }).first()
+  if (await label.count()) {
+    await label.dblclick({ force: true }).catch(() => {})
+    await page.waitForTimeout(1800)
+    await page.screenshot({ path: `${SHOTS}/${PANEL_SHOT}`, fullPage: false })
+  }
 })

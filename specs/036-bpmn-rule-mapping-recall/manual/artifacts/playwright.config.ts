@@ -11,7 +11,7 @@ export default defineConfig({
   timeout: 180_000, // 매핑(LLM) 단계가 길어 034보다 넉넉히
   reporter: 'line',
   use: {
-    baseURL: process.env.APP_URL || 'http://localhost:5199',
+    baseURL: process.env.APP_URL || 'http://localhost:5173',
     viewport: { width: 1440, height: 900 },
     actionTimeout: 30_000,
     navigationTimeout: 60_000,
