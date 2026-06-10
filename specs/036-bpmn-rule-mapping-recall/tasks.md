@@ -84,7 +84,7 @@
 - [x] T020 [P] Playwright 설정 — `specs/036-bpmn-rule-mapping-recall/manual/artifacts/playwright.config.ts` 작성(034 패턴 복제: `baseURL` env override, workers:1, viewport 1440×900, `shot()` 헬퍼로 `manual/screenshots/`에 저장).
 - [x] T021 Playwright before/after 캡처 스펙 — `specs/036-bpmn-rule-mapping-recall/manual/artifacts/playwright-036-recall.spec.ts`: 골든 픽스처(자동납부 본인확인 PDF)를 인제스트→BPMN 매핑 실행 후, 동일 활동("본인확인")의 룰 매핑 패널을 `HYBRID_GLOSSARY_NORMALIZE=0`/`=1` 각각으로 캡처 → `manual/screenshots/{01_off_missing.png, 02_on_recovered.png, 03_mapping_panel_detail.png}`. (US1 시각 증명, quickstart Q2/Q3)
 - [x] T022 매뉴얼 본문 작성 — `specs/036-bpmn-rule-mapping-recall/manual/manual.md`(한국어): 기능 개요(어휘갭 문제·용어 정규화 해결) + before/after 스크린샷 임베드 + 골든 픽스처 A/B 측정표(recovered/regressed/user_visible_delta/wall_clock_ratio) + env 토글 안내. (quickstart 전체, spec FR-008/SC-001~005)
-- [ ] T023 [P] manual.docx 변환 — `manual.md` → `manual.docx`(035/034 manual 산출물과 동일 포맷). 스크린샷 포함.
+- [x] T023 [P] manual.docx 변환 — `manual.md` → `manual.docx`(035/034 manual 산출물과 동일 포맷). 스크린샷 포함.
 
 ### 구현 중 발견 → 추가 완료 (실측 기반)
 
