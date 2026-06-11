@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
+// 040 — 미리보기 중 Chat 수정 요청은 라이브가 아니라 제안 diff 에 반영.
+import { isPreviewFor, usePreviewSession } from '@/app/previewSession'
 
 /**
  * Store for managing chat-based model modification with ReAct pattern.
@@ -382,6 +384,28 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
           return rest
         }),
         approvedChangeIds: approved.map(d => d.changeId)
+      }
+
+      // 040 — 미리보기 중에는 라이브 그래프(/api/chat/confirm)가 아니라 제안 diff 로 라우팅.
+      if (isPreviewFor('data')) {
+        const ps = usePreviewSession()
+        const res = await fetch(`/api/proposals/${ps.proposalId}/preview/chat-confirm`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bcId: ps.bcId, ...payload }),
+        })
+        const tree = await safeJson(res)
+        if (!res.ok) throw new Error(tree?.detail || `API error: ${res.status}`)
+        // 갱신된 미리보기 트리를 뷰어에 반영(라이브 무변경).
+        window.dispatchEvent(new CustomEvent('robo:preview-updated', { detail: { tree } }))
+        const lockedDrafts = drafts.map(d => ({ ...d, approved: !!d.approved, isApplied: true }))
+        messages.value[idx] = { ...msg, drafts: lockedDrafts, isApplied: true }
+        messages.value = [...messages.value]
+        messages.value.push({
+          id: generateId(), type: 'system',
+          content: `제안(${ps.label || ps.proposalId}) diff 에 반영했습니다. (라이브 설계는 변경되지 않음)`,
+          timestamp: new Date().toISOString(),
+        })
+        return
       }
 
       const response = await fetch('/api/chat/confirm', {

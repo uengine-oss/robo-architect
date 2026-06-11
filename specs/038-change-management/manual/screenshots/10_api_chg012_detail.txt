@@ -1,0 +1,9 @@
+ID: CHG-012
+Status: DESIGN_APPLIED
+Author: unknown@uengineui-MacBookPro.local
+EFFECT 관계 수: 10
+  → UserStory / 고객: 회원 탈퇴 사유를 입력 또는 선택한다 [MEDIUM]
+  → Aggregate / Mileage [HIGH]
+  → BoundedContext / MembershipManagement [MEDIUM]
+  → Aggregate / MemberAccount [MEDIUM]
+  → BoundedContext / MileageManagement [HIGH]

@@ -131,6 +131,13 @@ async function saveEdit() {
     })
     editNotice.value = { type: 'success', text: '저장되었습니다.' }
     activeTab.value = 'overview'
+    // 038: 직접 수정 Change 자동 생성 (fire-and-forget)
+    store.createChange({
+      title: `${props.userStory.action || 'User Story'} 직접 수정`,
+      originalPrompt: `사용자가 UserStory(${props.userStory.id})를 직접 수정함`,
+      sourceType: 'DIRECT_EDIT',
+      directAffectedNodeIds: [props.userStory.id],
+    }).catch(() => { /* 저장 성공 여부에 영향 없음 */ })
   } catch (e) {
     editNotice.value = { type: 'error', text: e.message || '저장 실패' }
   }

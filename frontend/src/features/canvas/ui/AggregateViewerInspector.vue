@@ -466,7 +466,7 @@ async function saveAggregateProperties() {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #252836;
+  background: var(--color-bg-secondary);
   color: var(--color-text-bright);
 }
 
@@ -475,7 +475,7 @@ async function saveAggregateProperties() {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #373a40;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .inspector-title {
@@ -554,8 +554,8 @@ async function saveAggregateProperties() {
 
 .form-input {
   padding: 8px 12px;
-  background: #1e1e2e;
-  border: 1px solid #373a40;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   color: var(--color-text-bright);
   font-size: 0.9rem;
@@ -590,8 +590,8 @@ select.form-input {
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
-  background: #1e1e2e;
-  border: 1px solid #373a40;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
 }
 
@@ -688,8 +688,8 @@ select.form-input {
   align-items: flex-start;
   gap: 8px;
   padding: 8px;
-  background: #1e1e2e;
-  border: 1px solid #373a40;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   margin-bottom: 8px;
 }
@@ -735,6 +735,6 @@ select.form-input {
 .inspector-actions {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #373a40;
+  border-top: 1px solid var(--color-border);
 }
 </style>

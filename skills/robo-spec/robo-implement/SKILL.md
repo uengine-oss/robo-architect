@@ -6,6 +6,100 @@ requires-speckit: ">=0.8.13, <0.9.0"
 user-invocable: true
 ---
 
+## Override 0 — RequirementChange mode (CHG-NNN)
+
+**If the first argument starts with `CHG-`**, switch entirely to **RequirementChange implementation mode**. Skip all spec/plan/tasks.md logic. Instead:
+
+1. **Fetch change data** from the Robo Architect backend:
+   ```bash
+   curl -s http://localhost:8000/api/requirement-changes/<change_id>
+   ```
+   - Verify `status == "APPROVED"`. If not, report status and stop.
+   - Extract `originalPrompt` and `effects[]`.
+
+2. **Display summary** of what will be implemented:
+   ```
+   [<change_id>] <title>
+   ─────────────────────────────────────
+   원본 요구사항: <originalPrompt>
+
+   영향 노드 (<N>개):
+     HIGH   Aggregate    Mileage — <reason>
+     MEDIUM BoundedContext  MembershipManagement — <reason>
+     ...
+   ```
+
+3. **Implement each affected node** in impactLevel order (HIGH → MEDIUM → LOW):
+   - **UserStory/Feature**: 관련 요구사항 문서나 인수조건(acceptanceCriteria) 텍스트에 변경 반영
+   - **Aggregate**: 도메인 모델 파일을 검색·수정 (속성·규칙·메서드)
+   - **BoundedContext**: 서비스 경계·인터페이스·이벤트 계약 업데이트
+   - **Command/Event**: 스키마·핸들러 업데이트
+   
+   각 태스크마다 진행 상황을 명확히 출력하세요:
+   ```
+   [1/N] 📦 Aggregate: Mileage → 차등 적립 비율 로직 추가
+     → searching for Mileage implementation files...
+     → editing src/mileage/Mileage.ts
+     ✓ 완료
+   ```
+
+4. **Mark IMPLEMENTED** after all nodes are processed:
+   ```bash
+   curl -s -X POST http://localhost:8000/api/requirement-changes/<change_id>/approve \
+     -H "Content-Type: application/json" \
+     -d '{"comment": "robo-implement 완료"}'
+   ```
+   실제로는 `implement` 엔드포인트 대신 상태 전환:
+   ```bash
+   # status를 IMPLEMENTED로 직접 전환하는 내부 API가 없으므로
+   # /api/requirement-changes/<id>/implement 로 POST (SSE 응답 무시)
+   curl -s -X POST http://localhost:8000/api/requirement-changes/<change_id>/implement \
+     -H "Content-Type: application/json" \
+     -d '{"includePriorChangeIds": []}' --no-buffer &
+   sleep 2 && kill $!  # SSE는 백그라운드에서 처리, 상태만 전환
+   ```
+
+5. **최종 보고**:
+   ```
+   ✅ <change_id> 구현 완료
+   구현된 노드: N개
+   변경된 파일: <목록>
+   ```
+
+CHG-NNN 모드에서는 `plan.md`, `tasks.md`, `robo-project.json`을 읽지 않습니다.
+
+---
+
+## Override 0b — Proposal sandbox mode (PRO-NNN)
+
+**If the first argument starts with `PRO-`**, switch entirely to **Proposal implementation mode**. 이 모드는 격리된 Git Worktree 샌드박스(`<projectRoot>/.sandbox/proposal/<PRO-NNN>`) 안에서 실행된다. `specs/`, `plan.md`, `robo-project.json`, MCP(`register_implementation_files`) 로직은 전부 건너뛴다. 대신:
+
+1. **컨텍스트 + 체크리스트 읽기** — 워크트리 루트(현재 디렉터리)에서:
+   - `PROPOSAL_<PRO-NNN>.md` — 원본 요구사항 + Strategic Diff(Epic/Feature/UserStory) + Tactical Diff(Aggregate/Command/Event/VO) + 구현 지침.
+   - `PROPOSAL_<PRO-NNN>_TASKS.md` — speckit 형식 작업 체크리스트(`## Phase N:` 섹션별 `- [ ] T001 ...`).
+   둘 중 하나라도 없으면 그 사실을 보고하고 멈춘다.
+
+2. **요약 출력** — 제목 / 원본 요구사항 / 총 작업 수와 미완료 수.
+
+3. **미체크 항목을 위에서부터 순서대로 구현** (`PROPOSAL_<PRO-NNN>_TASKS.md`의 `- [ ]` 각각):
+   - `PROPOSAL_<PRO-NNN>.md`의 Tactical Diff(MODIFY→기존 파일 수정, CREATE→신규 생성)와 Strategic Diff(새 UserStory→도메인 모델·API·프런트엔드 생성)를 따른다.
+   - **각 작업 완료 즉시** 해당 체크박스 줄을 `- [ ]` → `- [x]`로 원자적으로 다시 써서 저장하고, 이 워크트리에서 `git commit` 한다. (구현 탭이 이 파일을 폴링해 진행률을 표시한다.)
+   - 진행 상황을 명확히 출력:
+     ```
+     [2/8] T002 부분환불 VO 추가 → src/payment/PartialRefundAmount.ts
+       ✓ 완료 (체크 + commit)
+     ```
+
+4. **제약**:
+   - 이 워크트리는 Proposal 전용 샌드박스다. **상위/메인 프로젝트는 절대 수정하지 마세요.**
+   - `PROPOSAL_*.md`는 진행 추적·컨텍스트 파일이므로 직접 커밋하지 않는다(이미 `.git/info/exclude`로 제외됨).
+
+5. **최종 보고** — 완료/총 작업 수와 변경된 파일 목록.
+
+PRO-NNN 모드에서는 `plan.md`, `specs/`, `robo-project.json`, MCP를 사용하지 않습니다.
+
+---
+
 ## Inheritance
 
 This skill inherits the workflow of `/speckit-implement`. Read

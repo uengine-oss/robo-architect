@@ -972,6 +972,209 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return res.json()
   }
 
+  // ── Requirement Changes (038) ────────────────────────────────────────────
+
+  const changes = ref([])
+  const changesLoading = ref(false)
+
+  async function fetchChanges(filters = {}) {
+    changesLoading.value = true
+    try {
+      const params = new URLSearchParams()
+      if (filters.status) params.set('status', filters.status)
+      if (filters.limit) params.set('limit', String(filters.limit))
+      const res = await fetch(`/api/requirement-changes/?${params}`)
+      if (!res.ok) throw new Error(`fetchChanges failed: ${res.status}`)
+      changes.value = await res.json()
+    } finally {
+      changesLoading.value = false
+    }
+  }
+
+  async function fetchChangeById(id) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}`)
+    if (!res.ok) throw new Error(`fetchChangeById failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function deleteChange(id) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) throw new Error(`deleteChange failed: ${res.status}`)
+    changes.value = changes.value.filter(c => c.id !== id)
+  }
+
+  async function createChange(payload) {
+    const res = await fetch('/api/requirement-changes/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) throw new Error(`createChange failed: ${res.status}`)
+    const created = await res.json()
+    changes.value = [created, ...changes.value]
+    return created
+  }
+
+  async function submitChange(id) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/submit`, {
+      method: 'POST',
+    })
+    if (!res.ok) throw new Error(`submitChange failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function approveChange(id, comment = null) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment }),
+    })
+    if (!res.ok) throw new Error(`approveChange failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function rejectChange(id, comment) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment }),
+    })
+    if (!res.ok) throw new Error(`rejectChange failed: ${res.status}`)
+    return res.json()
+  }
+
+  // 2차 승인: DESIGN_APPLIED → APPROVED
+  async function approveImpl(id, comment = null) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/approve-impl`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment }),
+    })
+    if (!res.ok) throw new Error(`approveImpl failed: ${res.status}`)
+    return res.json()
+  }
+
+  // 설계 반영 SSE 스트림: PLAN_APPROVED → DESIGN_APPLIED
+  function applyDesign(id, { onProgress, onDone, onError } = {}) {
+    const url = `/api/requirement-changes/${encodeURIComponent(id)}/apply-design`
+    let closed = false
+
+    fetch(url, { method: 'POST' }).then(async (res) => {
+      if (!res.ok) { onError?.(new Error(`applyDesign failed: ${res.status}`)); return }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (!closed) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n'); buf = lines.pop()
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              onProgress?.(data)
+              if (data.phase === 'done') onDone?.()
+            } catch { /* skip */ }
+          }
+        }
+      }
+    }).catch(e => onError?.(e))
+
+    return () => { closed = true }
+  }
+
+  async function fetchDesignChanges(id) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/design-changes`)
+    if (!res.ok) throw new Error(`fetchDesignChanges failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function undoDesign(id) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/undo-design`, { method: 'POST' })
+    if (!res.ok) throw new Error(`undoDesign failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function fetchImpact(id) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/impact`)
+    if (!res.ok) throw new Error(`fetchImpact failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function fetchRegression(id) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/regression`)
+    if (!res.ok) throw new Error(`fetchRegression failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function fetchPreflight(id) {
+    const res = await fetch(`/api/requirement-changes/${encodeURIComponent(id)}/preflight`)
+    if (!res.ok) throw new Error(`fetchPreflight failed: ${res.status}`)
+    return res.json()
+  }
+
+  /**
+   * 구현 시작 — SSE 스트림. onProgress(data) 콜백으로 진행 상황 전달.
+   * @returns {() => void} close 함수
+   */
+  function implementChange(id, { includePriorChangeIds = [], onProgress, onDone, onError } = {}) {
+    // POST + EventSource 조합: fetch로 POST 후 SSE 수신
+    const url = `/api/requirement-changes/${encodeURIComponent(id)}/implement`
+    let closed = false
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ includePriorChangeIds }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        onError?.(new Error(`implement failed: ${res.status}`))
+        return
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (!closed) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop()
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              onProgress?.(data)
+              if (data.phase === 'done') onDone?.()
+            } catch { /* skip malformed */ }
+          }
+        }
+      }
+    }).catch(e => onError?.(e))
+
+    return () => { closed = true }
+  }
+
+  async function createChangeSet(title, changeIds) {
+    const res = await fetch('/api/requirement-changes/changesets/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, changeIds }),
+    })
+    if (!res.ok) throw new Error(`createChangeSet failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function fetchChangeSet(id) {
+    const res = await fetch(`/api/requirement-changes/changesets/${encodeURIComponent(id)}`)
+    if (!res.ok) throw new Error(`fetchChangeSet failed: ${res.status}`)
+    return res.json()
+  }
+
   return {
     tree,
     loading,
@@ -1067,5 +1270,25 @@ export const useRequirementsStore = defineStore('requirements', () => {
     generateBcCanvas,
     setBcClassification,
     exportDdd,
+    // ── Requirement Changes (038) ──────────────────────────────────────
+    changes,
+    changesLoading,
+    fetchChanges,
+    fetchChangeById,
+    deleteChange,
+    createChange,
+    submitChange,
+    approveChange,
+    rejectChange,
+    approveImpl,
+    applyDesign,
+    fetchDesignChanges,
+    undoDesign,
+    fetchImpact,
+    fetchRegression,
+    implementChange,
+    fetchPreflight,
+    createChangeSet,
+    fetchChangeSet,
   }
 })

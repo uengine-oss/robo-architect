@@ -23,7 +23,8 @@ const emit = defineEmits(['update:activeTab'])
 // 'Process' 탭 — spec 034 WIP 커밋(de030de) 이 "당분간 숨김" 으로 빼뒀던 것 복원.
 // BPMN(Process) 캔버스는 Hybrid 인제션 → ES 승격 흐름의 핵심 진입점이라
 // 메뉴에서 빼면 사용자가 진입할 길이 사라짐.
-const tabs = ['Requirements', 'Analysis', 'Process', 'Event Modeling', 'Design', 'Aggregate', 'Code']
+// 'Big picture'·'Changes' 탭은 UI에서 숨김 (컴포넌트·기능은 App.vue tabComponents 에 유지).
+const tabs = ['Proposals', 'Analysis', 'Stories', 'Process', 'Processes', 'Event Modeling', 'Design', 'Data', 'Code']
 
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()
@@ -89,8 +90,8 @@ function selectTab(tab) {
         <span><strong>{{ bpmnStore.processFlows.length }}</strong> available</span>
       </div>
 
-      <!-- Event Modeling Panel Status -->
-      <div v-else-if="activeTab === 'Event Modeling'" class="top-bar__status">
+      <!-- Processes Panel Status -->
+      <div v-else-if="activeTab === 'Processes'" class="top-bar__status">
         <span><strong>{{ eventModelingStore.allActors.length }}</strong> Actors</span>
         <span class="top-bar__status-dot">•</span>
         <span><strong>{{ eventModelingStore.totalCommands }}</strong> Commands</span>
@@ -114,8 +115,8 @@ function selectTab(tab) {
         <!-- <span><strong>{{ bigPictureStore.crossBcConnections.length }}</strong> Cross-BC</span> -->
       </div>
       
-      <!-- Aggregate Panel Status -->
-      <div v-else-if="activeTab === 'Aggregate'" class="top-bar__status">
+      <!-- Data Panel Status -->
+      <div v-else-if="activeTab === 'Data'" class="top-bar__status">
         <span><strong>{{ aggregateViewerStore.filteredBoundedContexts.length }}</strong> BC</span>
         <span class="top-bar__status-dot">•</span>
         <span><strong>{{ aggregateViewerStore.filteredBoundedContexts.reduce((sum, bc) => sum + (bc.aggregates?.length || 0), 0) }}</strong> Aggregates</span>

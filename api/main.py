@@ -85,6 +85,45 @@ async def lifespan(app: FastAPI):
     # of the app. Without this the streamable-HTTP handler raises
     # "Task group is not initialized" on the first request. Falls back to
     # a no-op when the MCP SDK is unavailable.
+    # 038: 기존 RequirementChange 노드 초기화 (RESET_CHANGE_DATA=true 시에만)
+    try:
+        from api.features.requirement_changes.services.migration import reset_change_data
+        reset_change_data()
+    except Exception as e:  # noqa: BLE001
+        SmartLogger.log(
+            "WARN",
+            f"requirement_changes migration skipped: {e}",
+            category="requirement_changes.migration.skipped",
+            params={"error": str(e)},
+        )
+
+    # 039: Proposal Lifecycle — git worktree prune (고아 worktree 정리)
+    # Worktree는 robo-architect가 아니라 각 Proposal의 대상 프로젝트(projectRoot)
+    # 하위에 있으므로, 저장된 distinct projectRoot마다 prune한다.
+    try:
+        from api.features.proposal_lifecycle.services.sandbox_manager import SandboxManager
+        from api.platform.neo4j import get_session as _get_session
+        sm = SandboxManager()
+        with _get_session() as _session:
+            roots = [
+                r["root"] for r in _session.run(
+                    "MATCH (p:Proposal) WHERE p.projectRoot IS NOT NULL "
+                    "RETURN DISTINCT p.projectRoot AS root"
+                )
+            ]
+        for _root in roots:
+            try:
+                sm.prune_dead_worktrees(_root)
+            except Exception:  # noqa: BLE001 — 개별 프로젝트 prune 실패는 무시
+                pass
+    except Exception as e:  # noqa: BLE001
+        SmartLogger.log(
+            "WARN",
+            f"proposal_lifecycle worktree prune skipped: {e}",
+            category="proposal_lifecycle.sandbox.prune_skipped",
+            params={"error": str(e)},
+        )
+
     from api.features.robo_spec.router import mcp_lifespan
     async with mcp_lifespan():
         yield
@@ -210,9 +249,17 @@ app.include_router(figma_api_router)
 app.include_router(figma_sync_router)
 app.include_router(figma_plugin_ws_router)
 
-# Include change management router
+# Include change management router (OLD — LangChain-based, grandfathered)
 from api.features.change_management.router import router as change_router
 app.include_router(change_router)
+
+# Include requirement changes router (038 — Skill-First, new)
+from api.features.requirement_changes.router import router as req_changes_router
+app.include_router(req_changes_router)
+
+# Include proposal lifecycle router (039 — Proposal-based lifecycle)
+from api.features.proposal_lifecycle.router import router as proposal_router
+app.include_router(proposal_router)
 
 # Include chat-based model modification router
 from api.features.model_modifier.router import router as chat_router
@@ -281,8 +328,14 @@ if __name__ == "__main__":
     import uvicorn
 
     HOST = os.getenv("API_HOST", "0.0.0.0")
-    PORT = os.getenv("API_PORT", 8000)
+    PORT = int(os.getenv("API_PORT", 8000))
 
     SmartLogger.log("INFO", "Starting API", category="api.main", params={"host": HOST, "port": PORT})
-    uvicorn.run("api.main:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run(
+        "api.main:app",
+        host=HOST,
+        port=PORT,
+        reload=True,
+        reload_dirs=["api"],
+    )
 

@@ -20,7 +20,7 @@ useDataRefresh(() => handleRefresh())
 
 const activeTab = inject('activeTab', ref('Design'))
 const isBpmnMode = computed(() => activeTab.value === 'Process')
-const isEventModelingMode = computed(() => activeTab.value === 'Event Modeling')
+const isEventModelingMode = computed(() => activeTab.value === 'Processes' || activeTab.value === 'Event Modeling')
 const expandedProcesses = ref(new Set())
 // Hybrid Process tree expand/collapse — separate state from Event Modeling.
 // Default: expand everything so fresh-ingestion streams reveal tasks live.

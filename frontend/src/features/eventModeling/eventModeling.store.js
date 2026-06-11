@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+// 040 — Proposal 미리보기 중(Processes 뷰어)에는 그래프 mutation 을 차단(US2).
+import { blockIfPreview } from '@/app/previewSession'
 
 export const useEventModelingStore = defineStore('eventModeling', () => {
   const loading = ref(false)
@@ -477,6 +479,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
    * @param {number} targetSequence - 삽입 위치 시퀀스 (1-based)
    */
   async function moveEventToPosition(eventId, targetSequence) {
+    if (blockIfPreview('processes', 'moveEventToPosition')) return
     // 이동 대상 이벤트 찾기
     let movingEvt = null
     for (const lane of systemSwimlanes.value) {
@@ -678,6 +681,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
    * @param {string} targetBcId - 이동 대상 BC ID
    */
   async function moveEventToBC(eventId, targetBcId) {
+    if (blockIfPreview('processes', 'moveEventToBC')) return
     // 소스 찾기
     let srcLane = null, movingEvt = null
     for (const lane of systemSwimlanes.value) {
@@ -724,6 +728,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
    * @param {{ type: string, name: string, bcId?: string, sequence?: number, actor?: string, attachedToId?: string, attachedToType?: string }} payload
    */
   async function addNode(payload) {
+    if (blockIfPreview('processes', 'addNode')) return null
     try {
       const res = await fetch('/api/graph/event-modeling/nodes', {
         method: 'POST',
@@ -791,6 +796,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
    * @param {string} nodeType - 'event' | 'command' | 'readmodel' | 'ui'
    */
   async function deleteNode(nodeId, nodeType) {
+    if (blockIfPreview('processes', 'deleteNode')) return
     // 캔버스에서 즉시 제거
     if (nodeType === 'event') {
       for (const lane of systemSwimlanes.value) {
@@ -867,6 +873,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
    * 두 노드 간 관계 생성. Neo4j에 반영 + 캔버스 flow 추가.
    */
   async function createRelation(targetId, targetType) {
+    if (blockIfPreview('processes', 'createRelation')) return
     const src = connectingFrom.value
     if (!src) return
     connectingFrom.value = null

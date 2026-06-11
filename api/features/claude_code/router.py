@@ -14,6 +14,7 @@ import json
 import os
 import signal
 import struct
+import time
 import zipfile
 from typing import Any
 
@@ -608,11 +609,221 @@ def _set_pty_size(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
 
+# ─── PTY session registry (survives ws disconnect / browser refresh) ───
+# Each session keeps a `claude` PTY alive INDEPENDENT of any single WebSocket so a
+# page reload (or tab switch) can re-attach — replaying scrollback — instead of
+# killing claude. Sessions are keyed by a stable client-supplied session_id
+# (a proposal worktree path, 'main', or 'shell-<ts>'); the same id reconnecting
+# re-attaches to the same live claude process.
+
+_SESSION_TTL_SECONDS = 30 * 60      # reap sessions detached longer than this
+_SESSION_MAX = 16                   # hard cap on concurrent live sessions
+_RING_BYTES = 256 * 1024            # per-session scrollback replay buffer
+
+
+class _PtySession:
+    def __init__(self, session_id: str, pid: int, master_fd: int, cwd: str | None):
+        self.id = session_id
+        self.pid = pid
+        self.master_fd = master_fd
+        self.cwd = cwd
+        self.buffer = bytearray()       # bounded scrollback (raw bytes)
+        self.ws: WebSocket | None = None  # currently-attached WebSocket
+        self.lock = asyncio.Lock()
+        self.reader_task: asyncio.Task | None = None
+        self.alive = True
+        self.rows = 24
+        self.cols = 80
+        self.detached_at = time.monotonic()
+
+
+_sessions: dict[str, _PtySession] = {}
+
+
+def _append_ring(sess: _PtySession, data: bytes) -> None:
+    sess.buffer.extend(data)
+    if len(sess.buffer) > _RING_BYTES:
+        del sess.buffer[: len(sess.buffer) - _RING_BYTES]
+
+
+def _utf8_safe_split(combined: bytes) -> tuple[bytes, bytes]:
+    """Split off a trailing incomplete multibyte UTF-8 sequence → (emit, leftover)."""
+    end = len(combined)
+    for i in range(min(4, end)):
+        byte = combined[end - 1 - i]
+        if byte < 0x80:
+            break
+        if byte >= 0xC0:
+            expected = 2 if byte < 0xE0 else 3 if byte < 0xF0 else 4
+            if i + 1 < expected:
+                return combined[: end - (i + 1)], combined[end - (i + 1):]
+            break
+    return combined, b""
+
+
+def _kill_pty(sess: _PtySession) -> None:
+    try:
+        os.close(sess.master_fd)
+    except OSError:
+        pass
+    try:
+        os.kill(sess.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        os.waitpid(sess.pid, os.WNOHANG)
+    except ChildProcessError:
+        pass
+
+
+async def _destroy_session(session_id: str) -> bool:
+    """Explicitly terminate a session (× button / reap)."""
+    sess = _sessions.pop(session_id, None)
+    if not sess:
+        return False
+    sess.alive = False
+    if sess.reader_task and not sess.reader_task.done():
+        sess.reader_task.cancel()
+    _kill_pty(sess)
+    return True
+
+
+def _reap_stale_sessions() -> None:
+    now = time.monotonic()
+    for sid, sess in list(_sessions.items()):
+        if sess.ws is None and (now - sess.detached_at) > _SESSION_TTL_SECONDS:
+            asyncio.create_task(_destroy_session(sid))
+
+
+async def _session_reader(sess: _PtySession) -> None:
+    """Persistent PTY reader — runs for the session's whole lifetime (not a single
+    ws). Appends output to the scrollback ring and forwards live to the attached ws."""
+    leftover = b""
+    while sess.alive:
+        await asyncio.sleep(0.02)
+        chunks: list[bytes] = []
+        try:
+            while True:
+                try:
+                    data = os.read(sess.master_fd, 16384)
+                    if not data:
+                        sess.alive = False
+                        break
+                    chunks.append(data)
+                except BlockingIOError:
+                    break
+                except OSError as e:
+                    if e.errno == 5:  # EIO — child exited
+                        sess.alive = False
+                    break
+        except Exception:
+            pass
+
+        if chunks:
+            combined = leftover + b"".join(chunks)
+            emit, leftover = _utf8_safe_split(combined)
+            if emit:
+                async with sess.lock:
+                    _append_ring(sess, emit)
+                    ws = sess.ws
+                if ws is not None:
+                    try:
+                        await ws.send_text(emit.decode("utf-8", errors="replace"))
+                    except Exception:
+                        pass
+        if not sess.alive:
+            break
+
+    # claude exited — notify any attached ws and unregister (best-effort).
+    async with sess.lock:
+        ws = sess.ws
+    if ws is not None:
+        try:
+            await ws.send_text("\r\n\x1b[33m[세션 종료됨 — claude 프로세스가 끝났습니다]\x1b[0m\r\n")
+        except Exception:
+            pass
+    if _sessions.get(sess.id) is sess:
+        _sessions.pop(sess.id, None)
+    _kill_pty(sess)
+
+
+def _spawn_pty(cwd: str | None, permission_mode: str) -> tuple[int, int]:
+    """Fork a `claude` PTY. Returns (pid, master_fd) with master_fd non-blocking."""
+    master_fd, slave_fd = pty.openpty()
+
+    env = os.environ.copy()
+    env["TERM"] = "xterm-256color"
+    env["COLORTERM"] = "truecolor"
+
+    pid = os.fork()
+    if pid == 0:
+        # ─── Child ───
+        os.close(master_fd)
+        os.setsid()
+        if cwd:
+            try:
+                os.chdir(cwd)
+            except OSError:
+                pass
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+        os.dup2(slave_fd, 0)
+        os.dup2(slave_fd, 1)
+        os.dup2(slave_fd, 2)
+        if slave_fd > 2:
+            os.close(slave_fd)
+        ALLOWED_PERMISSION_MODES = {
+            "acceptEdits", "auto", "bypassPermissions",
+            "default", "dontAsk", "plan",
+        }
+        claude_argv = ["claude"]
+        if permission_mode in ALLOWED_PERMISSION_MODES:
+            claude_argv += ["--permission-mode", permission_mode]
+        try:
+            os.execvpe("claude", claude_argv, env)
+        except OSError:
+            shell = os.environ.get("SHELL", "/bin/zsh")
+            os.execvpe(shell, [shell], env)
+
+    # ─── Parent ───
+    os.close(slave_fd)
+    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    return pid, master_fd
+
+
+@router.delete("/terminal/session")
+async def close_terminal_session(session_id: str = Query(...)):
+    """Explicitly terminate a PTY session (frontend × close button)."""
+    closed = await _destroy_session(session_id)
+    return {"closed": closed}
+
+
+@router.get("/global-skills/status")
+async def global_skills_status():
+    """홈(``~/.claude/skills/``)에 이 저장소의 스킬이 설치돼 있는지 점검한다.
+
+    Code 탭 진입 시 프론트가 호출한다. 같은 서버 세션에서 이미 설치 확인/완료된
+    경우 ``verified=True`` 로 빠르게 응답해 재점검·재프롬프트를 막는다.
+    """
+    from api.platform import global_skills
+
+    return global_skills.status()
+
+
+@router.post("/global-skills/install")
+async def global_skills_install():
+    """이 저장소의 스킬을 ``~/.claude/skills/`` 에 평탄 구조로 설치한다."""
+    from api.platform import global_skills
+
+    return global_skills.install()
+
+
 @router.websocket("/terminal")
 async def terminal_ws(
     websocket: WebSocket,
     workdir: str = Query(default=""),
     permission_mode: str = Query(default=""),
+    session_id: str = Query(default=""),
 ):
     """
     WebSocket ↔ PTY bridge.
@@ -640,177 +851,90 @@ async def terminal_ws(
         return
 
     await websocket.accept()
+    _reap_stale_sessions()
 
-    # Resolve working directory
+    # Resolve working directory (only used when creating a fresh session).
     cwd = None
     if workdir:
-        resolved = os.path.expanduser(workdir)
-        resolved = os.path.abspath(resolved)
+        resolved = os.path.abspath(os.path.expanduser(workdir))
         if os.path.isdir(resolved):
             cwd = resolved
 
-    # Spawn PTY with claude CLI
-    master_fd, slave_fd = pty.openpty()
+    # Stable session key — survives reload so the same id re-attaches to the
+    # same live claude. Fall back to workdir, then an ephemeral per-socket id.
+    sid = session_id or workdir or f"ephemeral-{id(websocket)}"
 
-    env = os.environ.copy()
-    env["TERM"] = "xterm-256color"
-    env["COLORTERM"] = "truecolor"
-
-    pid = os.fork()
-    if pid == 0:
-        # ─── Child process ───
-        os.close(master_fd)
-        os.setsid()
-
-        # Change to requested working directory
-        if cwd:
-            os.chdir(cwd)
-
-        # Make the slave the controlling terminal
-        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-
-        os.dup2(slave_fd, 0)
-        os.dup2(slave_fd, 1)
-        os.dup2(slave_fd, 2)
-        if slave_fd > 2:
-            os.close(slave_fd)
-
-        # Build claude argv, optionally with --permission-mode.
-        # Allow-list is intentionally narrow to mirror claude's own
-        # supported values; an unknown value is silently ignored
-        # rather than failing the spawn.
-        ALLOWED_PERMISSION_MODES = {
-            "acceptEdits", "auto", "bypassPermissions",
-            "default", "dontAsk", "plan",
-        }
-        claude_argv = ["claude"]
-        if permission_mode in ALLOWED_PERMISSION_MODES:
-            claude_argv += ["--permission-mode", permission_mode]
-
-        try:
-            os.execvpe("claude", claude_argv, env)
-        except OSError:
-            # claude CLI not found — fallback to shell
-            shell = os.environ.get("SHELL", "/bin/zsh")
-            os.execvpe(shell, [shell], env)
-
-    # ─── Parent process ───
-    os.close(slave_fd)
-
-    # Make master_fd non-blocking for async reads
-    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-
-    async def _read_pty():
-        """Read PTY output and forward to WebSocket.
-
-        Buffers partial UTF-8 sequences and batches output to reduce
-        the number of WebSocket messages and xterm.js render cycles.
-        """
-        leftover = b""
-        try:
-            while True:
-                await asyncio.sleep(0.02)
+    sess = _sessions.get(sid)
+    if sess is not None and sess.alive:
+        # ── Re-attach: replay scrollback, then become the live sink ──
+        async with sess.lock:
+            old = sess.ws
+            sess.ws = None
+            snapshot = bytes(sess.buffer)
+        if old is not None:
+            try:
+                await old.close()
+            except Exception:
+                pass
+        async with sess.lock:
+            try:
+                if snapshot:
+                    await websocket.send_text(snapshot.decode("utf-8", errors="replace"))
+            except Exception:
+                pass
+            sess.ws = websocket
+            sess.detached_at = time.monotonic()
+    else:
+        # ── New session ──
+        if len(_sessions) >= _SESSION_MAX:
+            _reap_stale_sessions()
+            if len(_sessions) >= _SESSION_MAX:
                 try:
-                    chunks = []
-                    # Drain all available data from the PTY
-                    while True:
-                        try:
-                            data = os.read(master_fd, 16384)
-                            if not data:
-                                # EOF — send remaining and exit
-                                if leftover or chunks:
-                                    combined = leftover + b"".join(chunks)
-                                    await websocket.send_text(
-                                        combined.decode("utf-8", errors="replace")
-                                    )
-                                return
-                            chunks.append(data)
-                        except BlockingIOError:
-                            break
-                        except OSError as e:
-                            if e.errno == 5:  # EIO — child exited
-                                if leftover or chunks:
-                                    combined = leftover + b"".join(chunks)
-                                    await websocket.send_text(
-                                        combined.decode("utf-8", errors="replace")
-                                    )
-                                return
-                            raise
+                    await websocket.send_text(
+                        "\r\n\x1b[31m[세션 한도 초과 — 사용하지 않는 셀(×)을 닫고 다시 시도하세요]\x1b[0m\r\n"
+                    )
+                    await websocket.close(code=1011)
+                except Exception:
+                    pass
+                return
+        pid, master_fd = _spawn_pty(cwd, permission_mode)
+        sess = _PtySession(sid, pid, master_fd, cwd)
+        sess.ws = websocket
+        _sessions[sid] = sess
+        sess.reader_task = asyncio.create_task(_session_reader(sess))
 
-                    if not chunks:
-                        continue
-
-                    combined = leftover + b"".join(chunks)
-                    leftover = b""
-
-                    # Find the last valid UTF-8 boundary to avoid splitting
-                    # multi-byte characters (e.g. Korean, emoji, CJK).
-                    # Walk back from the end to find a safe cut point.
-                    end = len(combined)
-                    # Check up to 4 bytes back (max UTF-8 char length)
-                    for i in range(min(4, end)):
-                        byte = combined[end - 1 - i]
-                        if byte < 0x80:
-                            # ASCII — safe boundary right after this byte
-                            break
-                        elif byte >= 0xC0:
-                            # Start of a multi-byte sequence
-                            expected_len = (
-                                2 if byte < 0xE0 else 3 if byte < 0xF0 else 4
-                            )
-                            available = i + 1
-                            if available < expected_len:
-                                # Incomplete sequence — keep it for next round
-                                leftover = combined[end - available :]
-                                combined = combined[: end - available]
-                            break
-
-                    if combined:
-                        await websocket.send_text(
-                            combined.decode("utf-8", errors="replace")
-                        )
-
-                except OSError:
-                    await asyncio.sleep(0.05)
-                except WebSocketDisconnect:
-                    break
-        except Exception:
-            pass
-
-    read_task = asyncio.create_task(_read_pty())
-
+    # ── Input / resize loop (the reader task handles output) ──
     try:
         while True:
             raw = await websocket.receive_text()
             msg = json.loads(raw)
+            mtype = msg.get("type")
 
-            if msg.get("type") == "input":
-                data = msg.get("data", "")
-                os.write(master_fd, data.encode("utf-8"))
-
-            elif msg.get("type") == "resize":
-                cols = msg.get("cols", 80)
-                rows = msg.get("rows", 24)
-                _set_pty_size(master_fd, rows, cols)
+            if mtype == "input":
                 try:
-                    os.kill(pid, signal.SIGWINCH)
-                except ProcessLookupError:
+                    os.write(sess.master_fd, msg.get("data", "").encode("utf-8"))
+                except OSError:
                     pass
+
+            elif mtype == "resize":
+                sess.cols = msg.get("cols", 80)
+                sess.rows = msg.get("rows", 24)
+                try:
+                    _set_pty_size(sess.master_fd, sess.rows, sess.cols)
+                    os.kill(sess.pid, signal.SIGWINCH)
+                except (OSError, ProcessLookupError):
+                    pass
+
+            elif mtype == "close":
+                # Explicit terminate (× close button) — kill the PTY.
+                await _destroy_session(sid)
+                break
 
     except (WebSocketDisconnect, Exception):
         pass
     finally:
-        read_task.cancel()
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            os.waitpid(pid, os.WNOHANG)
-        except ChildProcessError:
-            pass
+        # Detach but KEEP the session alive so a reload/tab-switch can re-attach.
+        # (Explicit close already destroyed it above; reap handles stale ones.)
+        if sess is not None and sess.ws is websocket:
+            sess.ws = None
+            sess.detached_at = time.monotonic()
