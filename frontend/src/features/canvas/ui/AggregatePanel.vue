@@ -1279,6 +1279,16 @@ onMounted(async () => {
   }
 })
 
+// 040 — KeepAlive 상태(이미 마운트됨)에서도 새 포커스 인텐트에 반응한다.
+// Proposal 임팩트 '열기'는 탭 전환 후 store.focusAggregate 로 pendingFocus 를 세팅하므로,
+// onMounted 만으로는 포커스가 걸리지 않는다. pendingFocus 를 watch 해 재포커스한다.
+watch(() => store.pendingFocus, async (target) => {
+  if (target?.aggregateId) {
+    store.consumeFocus()
+    await focusOnAggregate(target.aggregateId, target.bcId)
+  }
+})
+
 // MiniMap node color
 function getNodeColor(node) {
   const colors = {

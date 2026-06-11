@@ -19,8 +19,8 @@ const props = defineProps({
 
 const emit = defineEmits(['update:activeTab'])
 
-// 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 App.vue tabComponents 에 유지).
-const tabs = ['Changes', 'Stories', 'Processes', 'Design', 'Data', 'Code']
+// 'Big picture'·'Changes' 탭은 UI에서 숨김 (컴포넌트·기능은 App.vue tabComponents 에 유지).
+const tabs = ['Proposals', 'Stories', 'Processes', 'Design', 'Data', 'Code']
 
 const canvasStore = useCanvasStore()
 const bigPictureStore = useBigPictureStore()

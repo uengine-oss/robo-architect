@@ -1,0 +1,5 @@
+{
+  "id": "PRO-001",
+  "status": "DRAFT",
+  "strategicDiff": "set"
+}

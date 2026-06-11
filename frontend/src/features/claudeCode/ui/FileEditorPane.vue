@@ -86,14 +86,14 @@ const tokyoNightEditorTheme = EditorView.theme(
   { dark: true },
 )
 
-import { fetchFile, saveFile, WorkspaceApiError } from '../workspace.api.js'
+import { fetchFile, saveFile, deleteEntry, WorkspaceApiError } from '../workspace.api.js'
 
 const props = defineProps({
   root: { type: String, required: true },
   path: { type: String, default: null },
 })
 
-const emit = defineEmits(['saved'])
+const emit = defineEmits(['saved', 'deleted'])
 
 const editorHost = ref(null)
 let view = null
@@ -107,6 +107,7 @@ const originalContent = ref('')
 const currentContent = ref('')
 const mtimeNs = ref(null)              // string
 const saving = ref(false)
+const deleting = ref(false)
 const lastSavedAt = ref(0)
 const pendingExternalReload = ref(null) // { newMtimeNs, newSize }
 const reloadInfo = ref(null)            // transient toast for clean-buffer auto-reload
@@ -261,6 +262,31 @@ async function reloadFromDisk() {
   if (props.path) await loadFile(props.path)
 }
 
+async function reloadCurrent() {
+  if (!props.path || loading.value) return
+  if (dirty.value) {
+    const ok = window.confirm('저장되지 않은 변경사항이 사라집니다. 디스크에서 다시 불러올까요?')
+    if (!ok) return
+  }
+  await reloadFromDisk()
+}
+
+async function deleteCurrent() {
+  if (!props.path || deleting.value) return
+  const ok = window.confirm(`이 파일을 삭제하시겠습니까?\n\n${props.path}`)
+  if (!ok) return
+  deleting.value = true
+  errorMessage.value = null
+  try {
+    const r = await deleteEntry({ root: props.root, path: props.path })
+    emit('deleted', { path: props.path, kind: r.deleted_type })
+  } catch (e) {
+    errorMessage.value = e.body?.detail || e.message || '삭제 실패'
+  } finally {
+    deleting.value = false
+  }
+}
+
 function keepMyChanges() {
   // Adopt the new mtime so the next save uses it; the buffer stays dirty.
   if (pendingExternalReload.value?.newMtimeNs) {
@@ -330,7 +356,33 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
       <div class="editor-actions">
         <span v-if="reloadInfo" class="editor-status">{{ reloadInfo }}</span>
         <span v-else-if="saving" class="editor-status">Saving…</span>
+        <span v-else-if="deleting" class="editor-status">Deleting…</span>
         <span v-else-if="lastSavedAt && Date.now() - lastSavedAt < 2000" class="editor-status">Saved</span>
+        <button
+          class="editor-icon-btn"
+          :disabled="!props.path || loading || deleting"
+          title="디스크에서 다시 불러오기"
+          @click="reloadCurrent"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+        <button
+          class="editor-icon-btn editor-icon-danger"
+          :disabled="!props.path || deleting"
+          title="파일 삭제"
+          @click="deleteCurrent"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            <line x1="10" y1="11" x2="10" y2="17"></line>
+            <line x1="14" y1="11" x2="14" y2="17"></line>
+          </svg>
+        </button>
         <button
           class="editor-save"
           :disabled="!props.path || isBinary || !!tooLarge || saving || (!dirty && !pendingExternalReload)"
@@ -428,6 +480,32 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
   font-size: 11px;
   color: var(--ccw-text-dim);
   font-style: italic;
+}
+
+.editor-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--ccw-text-muted);
+  cursor: pointer;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  border-radius: 3px;
+}
+
+.editor-icon-btn:hover:not(:disabled) {
+  background: var(--ccw-hover);
+  color: var(--ccw-text);
+}
+
+.editor-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.editor-icon-danger:hover:not(:disabled) {
+  background: rgba(247, 118, 142, 0.18);
+  color: var(--ccw-red);
 }
 
 .editor-save {

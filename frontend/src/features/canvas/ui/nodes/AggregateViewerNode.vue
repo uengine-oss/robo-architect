@@ -14,7 +14,10 @@ const terminologyStore = useTerminologyStore()
   <div class="aggregate-viewer-node">
     <div class="node-header">
       <span class="node-type-badge">Aggregate Root</span>
-      <!-- <span class="node-bc-name">{{ data.bcName }}</span> -->
+      <!-- 040 — Proposal 미리보기 오버레이 출처 배지(신규/수정/충돌) -->
+      <span v-if="data.badge" :class="['preview-badge', `preview-badge--${data.source || 'temporary'}`]">
+        {{ data.badge }}
+      </span>
     </div>
     <div class="node-name">{{ terminologyStore.ubiquitousLanguageMode ? (data.displayName || data.name) : data.name }}</div>
     <div v-if="data.rootEntity" class="node-root-entity">
@@ -51,6 +54,7 @@ const terminologyStore = useTerminologyStore()
         </span>
         <span class="field-name">{{ terminologyStore.ubiquitousLanguageMode ? (prop.displayName || prop.name) : prop.name }}</span>
         <span class="field-type">: {{ prop.type }}</span>
+        <span v-if="prop.badge" class="field-new-badge">{{ prop.badge }}</span>
       </div>
     </div>
 
@@ -69,6 +73,7 @@ const terminologyStore = useTerminologyStore()
       <div v-for="vo in data.valueObjects" :key="`vo-${vo.name}`" class="node-field">
         <span class="field-name">{{ terminologyStore.ubiquitousLanguageMode ? (vo.displayName || vo.name) : vo.name }}</span>
         <span class="field-type">: ValueObject</span>
+        <span v-if="vo.badge" class="field-new-badge">{{ vo.badge }}</span>
         <span v-if="vo.referencedAggregateName" class="field-ref">
           → {{ vo.referencedAggregateName }}
           <span v-if="vo.referencedAggregateField">.{{ vo.referencedAggregateField }}</span>
@@ -121,6 +126,34 @@ const terminologyStore = useTerminologyStore()
   font-size: 0.6rem;
   color: rgba(0, 0, 0, 0.6);
   font-weight: 500;
+}
+
+/* 040 — Proposal 미리보기 오버레이 배지 */
+.node-header { position: relative; }
+.preview-badge {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  border: 1.5px solid white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  letter-spacing: 0.3px;
+}
+.preview-badge--temporary { background: #2f9e44; color: #fff; }
+.preview-badge--live\+modified { background: #f08c00; color: #fff; }
+.preview-badge--conflict { background: #e03131; color: #fff; }
+
+.field-new-badge {
+  font-size: 0.58rem;
+  font-weight: 800;
+  color: #fff;
+  background: #2f9e44;
+  padding: 0 5px;
+  border-radius: 9999px;
+  margin-left: 4px;
 }
 
 .node-name {

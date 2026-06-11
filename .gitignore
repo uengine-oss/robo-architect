@@ -1,3 +1,6 @@
+# Git Worktree sandbox (proposal_lifecycle)
+.sandbox/
+
 # Environment variables
 .env
 .env.local

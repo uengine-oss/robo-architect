@@ -70,6 +70,36 @@ CHG-NNN 모드에서는 `plan.md`, `tasks.md`, `robo-project.json`을 읽지 않
 
 ---
 
+## Override 0b — Proposal sandbox mode (PRO-NNN)
+
+**If the first argument starts with `PRO-`**, switch entirely to **Proposal implementation mode**. 이 모드는 격리된 Git Worktree 샌드박스(`<projectRoot>/.sandbox/proposal/<PRO-NNN>`) 안에서 실행된다. `specs/`, `plan.md`, `robo-project.json`, MCP(`register_implementation_files`) 로직은 전부 건너뛴다. 대신:
+
+1. **컨텍스트 + 체크리스트 읽기** — 워크트리 루트(현재 디렉터리)에서:
+   - `PROPOSAL_<PRO-NNN>.md` — 원본 요구사항 + Strategic Diff(Epic/Feature/UserStory) + Tactical Diff(Aggregate/Command/Event/VO) + 구현 지침.
+   - `PROPOSAL_<PRO-NNN>_TASKS.md` — speckit 형식 작업 체크리스트(`## Phase N:` 섹션별 `- [ ] T001 ...`).
+   둘 중 하나라도 없으면 그 사실을 보고하고 멈춘다.
+
+2. **요약 출력** — 제목 / 원본 요구사항 / 총 작업 수와 미완료 수.
+
+3. **미체크 항목을 위에서부터 순서대로 구현** (`PROPOSAL_<PRO-NNN>_TASKS.md`의 `- [ ]` 각각):
+   - `PROPOSAL_<PRO-NNN>.md`의 Tactical Diff(MODIFY→기존 파일 수정, CREATE→신규 생성)와 Strategic Diff(새 UserStory→도메인 모델·API·프런트엔드 생성)를 따른다.
+   - **각 작업 완료 즉시** 해당 체크박스 줄을 `- [ ]` → `- [x]`로 원자적으로 다시 써서 저장하고, 이 워크트리에서 `git commit` 한다. (구현 탭이 이 파일을 폴링해 진행률을 표시한다.)
+   - 진행 상황을 명확히 출력:
+     ```
+     [2/8] T002 부분환불 VO 추가 → src/payment/PartialRefundAmount.ts
+       ✓ 완료 (체크 + commit)
+     ```
+
+4. **제약**:
+   - 이 워크트리는 Proposal 전용 샌드박스다. **상위/메인 프로젝트는 절대 수정하지 마세요.**
+   - `PROPOSAL_*.md`는 진행 추적·컨텍스트 파일이므로 직접 커밋하지 않는다(이미 `.git/info/exclude`로 제외됨).
+
+5. **최종 보고** — 완료/총 작업 수와 변경된 파일 목록.
+
+PRO-NNN 모드에서는 `plan.md`, `specs/`, `robo-project.json`, MCP를 사용하지 않습니다.
+
+---
+
 ## Inheritance
 
 This skill inherits the workflow of `/speckit-implement`. Read

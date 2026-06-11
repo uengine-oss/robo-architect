@@ -76,9 +76,12 @@ function snapshotPropsFromNode(n) {
   const result = []
   
   // Add regular properties (editable) - first
-  props.forEach(p => {
+  props.forEach((p, idx) => {
+    // 040 미리보기 오버레이의 신규 속성은 아직 Neo4j id 가 없다(id=null). 빈 id 는
+    // visibleRows 의 `r.id` truthy 필터에서 통째로 걸러지므로, 이름/인덱스 기반의
+    // 결정론적 fallback id 를 부여해 표에서 사라지지 않게 한다.
     result.push({
-    id: String(p?.id || ''),
+    id: String(p?.id || '') || `prop-noid-${idx}-${String(p?.name ?? '')}`,
     name: String(p?.name ?? ''),
     displayName: String(p?.displayName ?? ''),
     type: String(p?.type ?? ''),

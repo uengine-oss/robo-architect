@@ -505,3 +505,19 @@ CREATE (chg)-[:EFFECT {
 MATCH (cs:ChangeSet {id: "CS-001"})
 MATCH (chg:RequirementChange {id: "CHG-001"})
 MERGE (cs)-[:CONTAINS]->(chg);
+
+// ############################################################
+// 039 — Proposal → Domain Node EFFECT Relationship
+// ############################################################
+// 038의 (RequirementChange)-[:EFFECT]->(n) 관계와 동일 구조.
+// 레이블만 Proposal로 변경하여 재사용.
+//
+// (p:Proposal)-[:EFFECT {
+//   reason: String,
+//   impactLevel: "HIGH|MEDIUM|LOW",
+//   changeType: "MODIFY|CREATE",
+//   diff: String (TacticalDiff SemanticDiff JSON)
+// }]->(n)
+//
+// target: UserStory | Feature | BoundedContext | Aggregate | Command | Event
+// ############################################################

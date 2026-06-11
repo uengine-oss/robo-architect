@@ -11,6 +11,18 @@ const props = defineProps({
   workdir: {
     type: String,
     default: ''
+  },
+  // 멀티 세션: 이 터미널이 처음 연결될 때 1회 주입할 명령(예: 구현 지시).
+  // claude 기동 후(6초) 전송된다. 빈 값이면 아무 것도 보내지 않는다.
+  initialCommand: {
+    type: String,
+    default: ''
+  },
+  // 안정적 세션 식별자 — 백엔드 PTY 세션 레지스트리 키. 같은 id로 재연결하면
+  // (새로고침·탭 전환) 살아있는 claude 세션에 재어태치되고 스크롤백이 재생된다.
+  sessionId: {
+    type: String,
+    default: ''
   }
 })
 
@@ -134,6 +146,8 @@ function getWsUrl(workdir) {
   let url = `${protocol}//${host}:${port}/api/claude-code/terminal`
   const params = new URLSearchParams()
   if (workdir) params.set('workdir', workdir)
+  // 안정적 세션 키 — 재연결 시 백엔드가 같은 PTY에 재어태치한다.
+  if (props.sessionId) params.set('session_id', props.sessionId)
   // Pass-through for the e2e bypass path: the playwright spec opens the
   // SPA at /?permission_mode=bypassPermissions so the embedded `claude`
   // doesn't pause on per-tool permission prompts (which would deadlock
@@ -254,6 +268,15 @@ function openWithWorkdir(workdir, pendingCommand = null) {
   connect(workdir)
 }
 
+// Re-fit the terminal when it becomes visible again (v-show toggles
+// display:none → the container had 0 size while hidden). The parent calls
+// this after switching the active session.
+function refit() {
+  nextTick(() => {
+    handleResize()
+  })
+}
+
 // Send raw input to the PTY session (as if user typed it).
 // If ws is not open yet, queue the text and send it once ws.onopen fires.
 function sendInput(text) {
@@ -264,7 +287,7 @@ function sendInput(text) {
   }
 }
 
-defineExpose({ openWithWorkdir, sendInput })
+defineExpose({ openWithWorkdir, sendInput, refit })
 
 // Watch for workdir prop changes
 watch(() => props.workdir, (newWorkdir) => {
@@ -303,6 +326,12 @@ onMounted(async () => {
     handleResize()
   })
   resizeObserver.observe(terminalRef.value)
+
+  // Multi-session: a freshly-created session may carry an initial command
+  // (e.g. the proposal implement instruction) to run once claude is ready.
+  if (props.initialCommand) {
+    pendingInputCommand = props.initialCommand
+  }
 
   // Connect to backend
   connect(props.workdir)

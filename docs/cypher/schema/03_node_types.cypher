@@ -766,3 +766,27 @@ CREATE (cs:ChangeSet {
 
 CREATE CONSTRAINT changeset_id IF NOT EXISTS
 FOR (n:ChangeSet) REQUIRE n.id IS UNIQUE;
+
+
+// ############################################################
+// 039 — Proposal Lifecycle Management
+// ############################################################
+// Proposal 노드: PRO-NNN 고유 ID, 생애주기 상태 관리
+// 관계: (p:Proposal)-[:EFFECT]->(n) — 038 EFFECT 관계 재사용
+//
+// 선택 속성(인텐트 분해 관련):
+//   - strategicDiff / tacticalDiff: String (JSON) — 인텐트 분해 결과
+//   - clarificationLog: String (JSON List<{question,options,answer,at}>) — 명확화 Q&A
+//   - intentFeedbackLog: String (JSON List<{feedback,at}>) — 분석 결과 보정용
+//       자연어 피드백. 재분해 시 이전 diff와 함께 스킬 프롬프트에 실려 결과를
+//       다시 생성한다(DRAFT 한정). FR-002a.
+// ############################################################
+
+CREATE CONSTRAINT proposal_id_unique IF NOT EXISTS
+FOR (p:Proposal) REQUIRE p.id IS UNIQUE;
+
+CREATE INDEX proposal_status IF NOT EXISTS
+FOR (p:Proposal) ON (p.status);
+
+CREATE INDEX proposal_author IF NOT EXISTS
+FOR (p:Proposal) ON (p.author);

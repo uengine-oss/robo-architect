@@ -1,8 +1,9 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, onActivated, watch, inject } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, onActivated, watch, inject, nextTick } from 'vue'
 import ClaudeCodeTerminal from './ClaudeCodeTerminal.vue'
 import FileTreePane from './FileTreePane.vue'
 import FileEditorPane from './FileEditorPane.vue'
+import { closeTerminalSession, fetchGlobalSkillsStatus, installGlobalSkills } from '../workspace.api.js'
 
 const props = defineProps({
   workdir: { type: String, default: '' },
@@ -20,49 +21,205 @@ function readPersisted(key) {
   }
 }
 
-// Local working directory state. Mirrors the existing terminal: when no
-// workdir is supplied at mount, the terminal will surface its folder picker
-// and we react to its `pickedWorkdir` (workdir prop changes via the parent).
-// Restore the last project path so a refresh doesn't reset back to the picker.
-const activeRoot = ref(props.workdir || readPersisted(ROOT_KEY))
-const persistedActivePath = readPersisted(ACTIVE_PATH_KEY)
-const activePath = ref(activeRoot.value && persistedActivePath ? persistedActivePath : null)
+// ─── Multi-session model ───
+// Each session is an INDEPENDENT claude PTY terminal living on a worktree, all
+// kept alive concurrently (v-show switching, never unmounted) so multiple
+// proposals can implement in parallel without killing each other's session.
+//   kind 'main'     → the user's project (claude_code_workspace_root)
+//   kind 'proposal' → a proposal worktree (<projectRoot>/.sandbox/proposal/PRO)
+//   kind 'shell'    → an extra manual shell the user opened with '＋'
+const SESSIONS_KEY = 'claude_code_workspace_sessions'
+const ACTIVE_SESSION_KEY = 'claude_code_workspace_active_session'
 
-// 029 — share the active workspace path back up to App.vue's ref so other
-// features (e.g. InspectorPanel's source-viewer for ImplementationFile
-// nodes) can resolve relative paths even when the user reached this tab
-// without going through the wizard (cold reload, manual tab click, etc).
-const appWorkdirRef = inject('claudeCodeWorkdir', null)
-if (appWorkdirRef && activeRoot.value && appWorkdirRef.value !== activeRoot.value) {
-  appWorkdirRef.value = activeRoot.value
+function basename(p) {
+  if (!p) return '세션'
+  const parts = String(p).replace(/\/+$/, '').split('/')
+  return parts[parts.length - 1] || p
 }
 
-watch(
-  () => props.workdir,
-  (w) => {
-    if (w && w !== activeRoot.value) {
-      activeRoot.value = w
-      activePath.value = null
+// worktree 경로에서 Proposal id를 추출한다. 중첩(.../proposal/PRO-005/.sandbox/
+// proposal/PRO-032)이면 가장 안쪽(실제 Proposal)을 취한다.
+function deriveProposalId(workdir) {
+  if (!workdir) return null
+  const m = String(workdir).match(/\/proposal\/(PRO-\d+)/g)
+  if (!m || !m.length) return null
+  return m[m.length - 1].split('/').pop()
+}
+// 한 Proposal에는 worktree 경로가 바뀌어도 항상 하나의 세션만 — id를 proposalId로
+// 고정해 경로 변경(오염 경로 → 정상 경로)이 중복 탭/죽은 경로를 만들지 않게 한다.
+function proposalSid(pid) {
+  return `proposal:${pid}`
+}
+function sandboxDepth(p) {
+  return (String(p || '').match(/\.sandbox\//g) || []).length
+}
+// 같은 Proposal의 중복 세션을 하나로 접는다. worktree가 더 얕은(중첩 없는) 쪽을
+// 정상으로 보고 유지한다. 과거(경로 키) 세션도 proposalId 기준으로 흡수한다.
+function dedupeProposalSessions(list) {
+  const byPid = new Map()
+  const out = []
+  for (const s of list) {
+    if (s.kind !== 'proposal') { out.push(s); continue }
+    const pid = s.proposalId || deriveProposalId(s.workdir)
+    if (!pid) { out.push(s); continue }
+    const prev = byPid.get(pid)
+    if (!prev) {
+      const canon = { ...s, id: proposalSid(pid), proposalId: pid }
+      byPid.set(pid, canon)
+      out.push(canon)
+    } else if (sandboxDepth(s.workdir) < sandboxDepth(prev.workdir)) {
+      // 더 깨끗한(중첩 없는) 경로로 교체
+      prev.workdir = s.workdir
+      prev.epoch = Math.max(prev.epoch || 0, s.epoch || 0)
     }
-  },
-)
-
-watch(activeRoot, (v) => {
-  try {
-    if (v) localStorage.setItem(ROOT_KEY, v)
-    else localStorage.removeItem(ROOT_KEY)
-  } catch {}
-  if (appWorkdirRef && appWorkdirRef.value !== v) {
-    appWorkdirRef.value = v || ''
   }
+  return out
+}
+
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY)
+    const arr = raw ? JSON.parse(raw) : null
+    if (Array.isArray(arr)) {
+      // initialCommand is intentionally NOT restored — a reload must not re-run
+      // a proposal's implement instruction; restored sessions just reconnect.
+      // epoch IS restored so the backend session_id (id#epoch) matches the live
+      // PTY and a reload re-attaches to it instead of spawning a fresh claude.
+      const mapped = arr
+        .filter((s) => s && s.id)
+        .map((s) => ({ id: s.id, label: s.label || basename(s.workdir), workdir: s.workdir || '', kind: s.kind || 'shell', activePath: null, initialCommand: '', epoch: s.epoch || 0, proposalId: s.proposalId || (s.kind === 'proposal' ? deriveProposalId(s.workdir) : null) }))
+      return dedupeProposalSessions(mapped)
+    }
+  } catch {}
+  return []
+}
+
+const sessions = ref(loadSessions())
+const activeSessionId = ref(readPersisted(ACTIVE_SESSION_KEY) || null)
+
+// Ensure a 'main' session exists for the persisted/incoming project root.
+const _initialRoot = props.workdir || readPersisted(ROOT_KEY)
+;(function ensureMainSession() {
+  let main = sessions.value.find((s) => s.kind === 'main')
+  if (_initialRoot) {
+    if (!main) {
+      main = { id: 'main', label: '프로젝트', workdir: _initialRoot, kind: 'main', activePath: null, initialCommand: '', epoch: 0 }
+      sessions.value.unshift(main)
+    } else if (!main.workdir) {
+      main.workdir = _initialRoot
+    }
+  }
+  if (!activeSessionId.value || !sessions.value.find((s) => s.id === activeSessionId.value)) {
+    activeSessionId.value = (main && main.id) || sessions.value[0]?.id || null
+  }
+})()
+
+const activeSession = computed(() => sessions.value.find((s) => s.id === activeSessionId.value) || null)
+const mainSession = computed(() => sessions.value.find((s) => s.kind === 'main') || null)
+
+// activeRoot drives the file tree + editor → they follow the active session's worktree.
+const activeRoot = computed(() => activeSession.value?.workdir || '')
+
+// Per-session open file (proposal files are transient; main session's is persisted).
+const persistedActivePath = readPersisted(ACTIVE_PATH_KEY)
+if (mainSession.value && persistedActivePath && mainSession.value.workdir) {
+  mainSession.value.activePath = persistedActivePath
+}
+const activePath = computed({
+  get: () => activeSession.value?.activePath ?? null,
+  set: (v) => { if (activeSession.value) activeSession.value.activePath = v },
+})
+
+// 029 — appWorkdirRef (App.vue's claudeCodeWorkdir) tracks ONLY the MAIN session
+// workdir: it is the project root used for cross-feature path resolution
+// (InspectorPanel source viewer) and as the default projectRoot for new proposals.
+// Proposal worktree sessions must NOT overwrite it.
+const appWorkdirRef = inject('claudeCodeWorkdir', null)
+function syncMainRoot() {
+  const root = mainSession.value?.workdir || ''
+  try {
+    if (root) localStorage.setItem(ROOT_KEY, root)
+  } catch {}
+  if (appWorkdirRef && root && appWorkdirRef.value !== root) appWorkdirRef.value = root
+}
+syncMainRoot()
+
+function persistSessions() {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(
+      sessions.value.map((s) => ({ id: s.id, label: s.label, workdir: s.workdir, kind: s.kind, epoch: s.epoch || 0, proposalId: s.proposalId || null })),
+    ))
+    if (activeSessionId.value) localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId.value)
+  } catch {}
+}
+
+watch(sessions, persistSessions, { deep: true })
+watch(() => mainSession.value?.workdir, syncMainRoot)
+watch(activeSessionId, () => {
+  persistSessions()
+  // The newly-shown terminal had display:none (0px) while hidden — re-fit it.
+  nextTick(() => terminalRefs[activeSessionId.value]?.refit?.())
 })
 
 watch(activePath, (v) => {
+  if (activeSession.value?.kind !== 'main') return
   try {
     if (v) localStorage.setItem(ACTIVE_PATH_KEY, v)
     else localStorage.removeItem(ACTIVE_PATH_KEY)
   } catch {}
 })
+
+// React to App.vue's claudeCodeWorkdir prop (main project changes from wizard / cold load).
+watch(
+  () => props.workdir,
+  (w) => {
+    if (!w) return
+    let main = mainSession.value
+    if (!main) {
+      main = { id: 'main', label: '프로젝트', workdir: w, kind: 'main', activePath: null, initialCommand: '', epoch: 0 }
+      sessions.value.unshift(main)
+    } else if (main.workdir !== w) {
+      main.workdir = w
+      main.activePath = null
+    }
+    activeSessionId.value = main.id
+  },
+)
+
+// ─── Session controls ───
+const terminalRefs = {}
+function setTerminalRef(id, el) {
+  if (el) terminalRefs[id] = el
+  else delete terminalRefs[id]
+}
+function setActiveSession(id) {
+  if (sessions.value.find((s) => s.id === id)) activeSessionId.value = id
+}
+function closeSession(id) {
+  const idx = sessions.value.findIndex((s) => s.id === id)
+  if (idx < 0) return
+  const wasActive = activeSessionId.value === id
+  // ws 종료만으로는 백엔드 PTY가 살아있으므로(새로고침 재어태치용), 명시적으로 종료한다.
+  closeTerminalSession(backendId(sessions.value[idx]))
+  sessions.value.splice(idx, 1) // unmount → ws closes
+  delete terminalRefs[id]
+  if (wasActive) {
+    activeSessionId.value = mainSession.value?.id || sessions.value[0]?.id || null
+  }
+}
+function addShellSession() {
+  const base = mainSession.value?.workdir || ''
+  const id = `shell-${Date.now()}`
+  sessions.value.push({ id, label: base ? basename(base) : '셸', workdir: base, kind: 'shell', activePath: null, initialCommand: '', epoch: 0 })
+  activeSessionId.value = id
+}
+
+// 백엔드 PTY 세션 레지스트리 키 — 논리 id(worktree 경로 등) + epoch.
+// epoch는 "다시 구현하기"로 세션을 재시작할 때 증가시켜, 종료된 옛 세션과 충돌
+// 없이 새 PTY를 띄우게 한다(새로고침 재어태치를 위해 persist된다).
+function backendId(s) {
+  return `${s.id}#${s.epoch || 0}`
+}
 
 // ─── Layout state ───
 const TREE_KEY_WIDTH = 'claude_code_workspace_tree_width'
@@ -164,32 +321,127 @@ function toggleEditor() {
 // ─── Unsaved-changes guard ───
 const editorRef = ref(null)
 const treeRef = ref(null)
-const terminalCompRef = ref(null)
 
-// Send a command to the Claude terminal as if the user typed it.
+// Send a command into the ACTIVE session's terminal as if the user typed it.
 function sendTerminalCommand(command) {
-  terminalCompRef.value?.sendInput(command + '\n')
+  terminalRefs[activeSessionId.value]?.sendInput(command + '\n')
 }
 
 defineExpose({ sendTerminalCommand })
 
-// Listen for cross-component command dispatch (from Changes → Code tab flow)
+// Legacy cross-component dispatch (Changes → Code tab): send into the active session.
 function _onTerminalSend(e) {
   const cmd = e.detail?.command
   if (cmd) sendTerminalCommand(cmd)
 }
 
+// Open/activate a session for a workdir, optionally running a command.
+//   kind 'main'     → reuse the single main-project session (Changes/Inspector flow)
+//   kind 'proposal' → one persistent session per proposal worktree (039 multi-session)
+// A NEW proposal session passes the command as the terminal's initialCommand, which
+// runs ~6s after `claude` starts. An EXISTING session just gets the command typed in.
+function _onTerminalOpen(e) {
+  const { workdir, command, label, kind, restart } = e.detail || {}
+  const k = kind || 'proposal'
+
+  if (k === 'main') {
+    let main = mainSession.value
+    if (!main) {
+      main = { id: 'main', label: '프로젝트', workdir: workdir || '', kind: 'main', activePath: null, initialCommand: '', epoch: 0 }
+      sessions.value.unshift(main)
+    } else if (workdir && main.workdir !== workdir) {
+      main.workdir = workdir
+      main.activePath = null
+    }
+    activeSessionId.value = main.id
+    if (command) nextTick(() => terminalRefs[main.id]?.sendInput(command + '\n'))
+    return
+  }
+
+  // proposal session — keyed by Proposal id(경로가 아니라)so 경로가 바뀌어도(오염 →
+  // 정상) 중복 탭/죽은 경로가 생기지 않는다. 과거 경로-키 세션도 proposalId로 흡수.
+  if (!workdir) {
+    if (command) sendTerminalCommand(command)
+    return
+  }
+  const pid = e.detail?.proposalId || deriveProposalId(workdir)
+  const sid = pid ? proposalSid(pid) : workdir
+  const existing = sessions.value.find(
+    (s) => s.kind === 'proposal' && (s.id === sid || (pid && (s.proposalId || deriveProposalId(s.workdir)) === pid)),
+  )
+
+  // 재구현: 기존 세션을 종료(백엔드 PTY kill)한 뒤 epoch를 올려 새 셀로 재생성.
+  // worktree가 재생성되므로 이전 claude(삭제된 디렉터리 cwd)를 살려두면 안 된다.
+  // 새 backendId(id#epoch)라 종료 DELETE와 재연결 사이 레이스가 없다.
+  if (existing && restart) {
+    const nextEpoch = (existing.epoch || 0) + 1
+    closeSession(existing.id)
+    nextTick(() => {
+      sessions.value.push({ id: sid, label: label || pid || basename(workdir), workdir, kind: 'proposal', activePath: null, initialCommand: command || '', epoch: nextEpoch, proposalId: pid })
+      activeSessionId.value = sid
+    })
+    return
+  }
+
+  if (existing) {
+    // 경로가 정정되었으면(중첩 → 정상) 세션 id/workdir를 정규 값으로 갱신 →
+    // 파일 트리/에디터(activeRoot)가 살아있는 worktree를 따라간다.
+    existing.id = sid
+    existing.proposalId = pid
+    if (workdir && existing.workdir !== workdir) {
+      existing.workdir = workdir
+      existing.activePath = null
+    }
+    activeSessionId.value = sid
+    if (command) nextTick(() => terminalRefs[sid]?.sendInput(command + '\n'))
+  } else {
+    sessions.value.push({ id: sid, label: label || pid || basename(workdir), workdir, kind: 'proposal', activePath: null, initialCommand: command || '', epoch: 0, proposalId: pid })
+    activeSessionId.value = sid
+  }
+}
+
+// 홈(~/.claude/skills) 스킬 설치 점검 — Code 탭 진입(최초 mount + KeepAlive 재활성)
+// 시 1회. 서버가 같은 세션 동안 점검 결과를 기억하므로, 한 번 설치 확인/완료되면
+// 이후 진입에서는 즉시 통과한다. 이 in-flight 가드는 동시 호출만 막는다.
+let _globalSkillsChecking = false
+async function checkGlobalSkills() {
+  if (_globalSkillsChecking) return
+  _globalSkillsChecking = true
+  try {
+    const st = await fetchGlobalSkillsStatus()
+    if (!st || !st.needInstall) return // verified or nothing missing
+    const list = (st.missing || []).join(', ')
+    const ok = window.confirm(
+      `이 프로젝트의 Claude 스킬이 홈 폴더(~/.claude/skills)에 설치되어 있지 않습니다.\n` +
+      `인터랙티브 Claude Code 셀에서 robo 슬래시 커맨드를 쓰려면 설치가 필요합니다.\n\n` +
+      `누락된 스킬 ${st.missing?.length ?? 0}개: ${list}\n\n지금 설치하시겠습니까?`,
+    )
+    if (!ok) return
+    const res = await installGlobalSkills()
+    window.alert(`스킬 ${res.installed?.length ?? 0}개를 ~/.claude/skills 에 설치했습니다.`)
+  } catch (e) {
+    // 비치명적 — 점검/설치 실패해도 Code 탭 사용은 계속 가능.
+    console.warn('[claude-code] global skills check failed', e)
+  } finally {
+    _globalSkillsChecking = false
+  }
+}
+
 onMounted(() => {
   window.addEventListener('claude-terminal-send', _onTerminalSend)
+  window.addEventListener('claude-terminal-open', _onTerminalOpen)
+  checkGlobalSkills()
 })
 
 onActivated(() => {
   // KeepAlive: process any queued command when this tab is re-activated
   // (the event may have fired before onActivated, so re-check is a no-op)
+  checkGlobalSkills()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('claude-terminal-send', _onTerminalSend)
+  window.removeEventListener('claude-terminal-open', _onTerminalOpen)
 })
 
 function isDirty() {
@@ -266,10 +518,22 @@ function onTreeDeleted({ path }) {
   }
 }
 
-function onTerminalWorkdirPicked(path) {
-  if (path && path !== activeRoot.value) {
-    activeRoot.value = path
+function onEditorDeleted({ path }) {
+  // Editor-initiated delete: close the buffer and refresh the tree so the
+  // removed entry disappears from the left pane.
+  if (isUnderPath(activePath.value, path)) {
     activePath.value = null
+  }
+  treeRef.value?.refresh()
+}
+
+function onTerminalWorkdirPicked(path) {
+  // The folder picker lives in the active terminal — repoint THAT session.
+  const s = activeSession.value
+  if (path && s && s.workdir !== path) {
+    s.workdir = path
+    s.label = s.kind === 'main' ? '프로젝트' : basename(path)
+    s.activePath = null
   }
 }
 
@@ -374,6 +638,7 @@ onBeforeUnmount(() => {
         ref="editorRef"
         :root="activeRoot"
         :path="activePath"
+        @deleted="onEditorDeleted"
       />
     </div>
     <button
@@ -394,9 +659,42 @@ onBeforeUnmount(() => {
       title="너비 조절"
     ></div>
 
-    <!-- Right: existing Claude Code terminal -->
+    <!-- Right: Claude Code terminal(s) — one persistent session per worktree -->
     <div class="ccw-pane ccw-terminal">
-      <ClaudeCodeTerminal ref="terminalCompRef" :workdir="activeRoot" @workdir-picked="onTerminalWorkdirPicked" />
+      <div class="ccw-session-tabs">
+        <button
+          v-for="s in sessions"
+          :key="s.id"
+          class="ccw-session-tab"
+          :class="{ 'is-active': s.id === activeSessionId, [`is-${s.kind}`]: true }"
+          :title="s.workdir || '(작업 경로 미설정)'"
+          @click="setActiveSession(s.id)"
+        >
+          <span class="ccw-session-tab__dot" :class="`dot-${s.kind}`"></span>
+          <span class="ccw-session-tab__label">{{ s.label }}</span>
+          <span class="ccw-session-tab__close" title="세션 종료" @click.stop="closeSession(s.id)">×</span>
+        </button>
+        <button class="ccw-session-add" title="새 셸 세션" @click="addShellSession">＋</button>
+      </div>
+      <div class="ccw-terminals">
+        <div
+          v-for="s in sessions"
+          :key="s.id"
+          v-show="s.id === activeSessionId"
+          class="ccw-terminal-host"
+        >
+          <ClaudeCodeTerminal
+            :ref="(el) => setTerminalRef(s.id, el)"
+            :workdir="s.workdir"
+            :session-id="backendId(s)"
+            :initial-command="s.initialCommand"
+            @workdir-picked="onTerminalWorkdirPicked"
+          />
+        </div>
+        <div v-if="!sessions.length" class="ccw-no-session">
+          세션이 없습니다. <strong>＋</strong>로 새 셸을 열거나 Proposal에서 "구현 시작"을 누르세요.
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -430,6 +728,64 @@ onBeforeUnmount(() => {
 .ccw-terminal {
   flex: 1;
   min-width: 320px;
+}
+
+/* ─── Multi-session tabs ─── */
+.ccw-session-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 6px 0;
+  background: var(--ccw-bg-elevated);
+  border-bottom: 1px solid var(--ccw-border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.ccw-session-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 5px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: var(--ccw-text-dim);
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.ccw-session-tab:hover { background: var(--ccw-hover); color: var(--ccw-text); }
+.ccw-session-tab.is-active {
+  background: var(--ccw-bg);
+  border-color: var(--ccw-border);
+  color: var(--ccw-text);
+}
+.ccw-session-tab__label { overflow: hidden; text-overflow: ellipsis; }
+.ccw-session-tab__dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot-main { background: var(--ccw-purple, #bb9af7); }
+.dot-proposal { background: var(--ccw-green, #9ece6a); }
+.dot-shell { background: var(--ccw-text-dim, #888); }
+.ccw-session-tab__close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 3px; font-size: 0.95rem; line-height: 1;
+  color: var(--ccw-text-dim);
+}
+.ccw-session-tab__close:hover { background: var(--ccw-active); color: var(--ccw-text); }
+.ccw-session-add {
+  padding: 4px 9px; background: transparent; border: none;
+  color: var(--ccw-text-dim); font-size: 0.95rem; cursor: pointer; border-radius: 4px;
+  flex-shrink: 0;
+}
+.ccw-session-add:hover { background: var(--ccw-hover); color: var(--ccw-text); }
+.ccw-terminals { flex: 1; position: relative; overflow: hidden; }
+.ccw-terminal-host { width: 100%; height: 100%; }
+.ccw-no-session {
+  display: flex; align-items: center; justify-content: center; height: 100%;
+  color: var(--ccw-text-dim); font-size: 0.8rem; padding: 16px; text-align: center;
 }
 
 .ccw-resizer {

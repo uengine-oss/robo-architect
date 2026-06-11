@@ -45,7 +45,20 @@
   --color-text-bright: #ffffff;
   --color-border: #373a40;
   --color-accent: #228be6;
-  
+
+  /* Semantic status tints (Dark) — translucent bg + bright fg */
+  --status-neutral-bg: rgba(255, 255, 255, 0.08); --status-neutral-fg: #c1c2c5;
+  --status-blue-bg:   rgba(92, 124, 250, 0.18);   --status-blue-fg:   #91a7ff;
+  --status-amber-bg:  rgba(250, 176, 5, 0.18);    --status-amber-fg:  #ffd43b;
+  --status-orange-bg: rgba(253, 126, 20, 0.18);   --status-orange-fg: #ffa94d;
+  --status-purple-bg: rgba(177, 151, 252, 0.20);  --status-purple-fg: #d0bfff;
+  --status-green-bg:  rgba(32, 201, 151, 0.18);   --status-green-fg:  #63e6be;
+  --status-red-bg:    rgba(250, 82, 82, 0.18);    --status-red-fg:    #ff8787;
+  /* Semantic inline text (Dark) */
+  --color-success: #51cf66;
+  --color-danger:  #ff6b6b;
+  --color-warning: #fcc419;
+
   /* Fonts */
   --font-main: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -79,7 +92,20 @@
   --color-text-bright: #000000;
   --color-border: #dee2e6;
   --color-accent: #228be6;
-  
+
+  /* Semantic status tints (Light) — pale bg + dark fg */
+  --status-neutral-bg: #f3f4f6; --status-neutral-fg: #374151;
+  --status-blue-bg:   #dbeafe;  --status-blue-fg:   #1d4ed8;
+  --status-amber-bg:  #fef9c3;  --status-amber-fg:  #854d0e;
+  --status-orange-bg: #ffedd5;  --status-orange-fg: #c2410c;
+  --status-purple-bg: #f3e8ff;  --status-purple-fg: #7e22ce;
+  --status-green-bg:  #dcfce7;  --status-green-fg:  #15803d;
+  --status-red-bg:    #fee2e2;  --status-red-fg:    #b91c1c;
+  /* Semantic inline text (Light) */
+  --color-success: #16a34a;
+  --color-danger:  #dc2626;
+  --color-warning: #d97706;
+
   /* Canvas Colors - Light Mode */
   --color-canvas-bg: #ffffff;
   --color-canvas-pattern: #e9ecef;

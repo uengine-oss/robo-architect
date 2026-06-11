@@ -8,11 +8,18 @@ import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
 import EventModelingPanel from '@/features/eventModeling/ui/EventModelingPanel.vue'
 import RequirementsPanel from '@/features/requirements/ui/RequirementsPanel.vue'
 import ChangesRootPanel from '@/features/requirements/ui/ChangesRootPanel.vue'
+import ProposalsPanel from '@/features/proposals/ui/ProposalsPanel.vue'
 import ClaudeCodeWorkspace from '@/features/claudeCode/ui/ClaudeCodeWorkspace.vue'
 import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useThemeStore } from '@/app/theme.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
+// 040 — Proposal 임팩트 미리보기 오케스트레이션(앱 셸). 뷰어 스토어는 proposals 를
+// 모르고, App 이 robo:open-preview 를 수신해 탭 전환 + preview 진입 + 포커스를 조율한다.
+import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
+import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
+import { enterPreview, exitPreview } from '@/app/previewSession'
+import PreviewBanner from '@/app/ui/PreviewBanner.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 // 032: desktop launcher gate — when running inside Electron the launcher
 // view is shown until the user picks (Neo4j connection, project root) and
@@ -46,22 +53,38 @@ provide('activeTab', activeTab)
 // attached to design elements via [:IMPLEMENTED_IN]. Provide the ref so
 // the value stays reactive when the user picks a new project home.
 provide('claudeCodeWorkdir', claudeCodeWorkdir)
-provide('openClaudeCode', (workdir, command = null) => {
-  claudeCodeWorkdir.value = workdir || ''
+provide('openClaudeCode', (workdir, command = null, opts = {}) => {
+  // 멀티 세션(039): proposal worktree는 독립 세션으로 열고, claudeCodeWorkdir(메인
+  // 프로젝트 루트 = 새 proposal의 기본 projectRoot)는 건드리지 않는다.
+  // 메인 프로젝트 흐름(Changes/Inspector/마법사)만 claudeCodeWorkdir를 갱신한다.
+  const nextWorkdir = workdir || ''
+  const isProposal = !!opts.proposalId
+  if (!isProposal) {
+    claudeCodeWorkdir.value = nextWorkdir
+  }
   activeTab.value = 'Code'
   // Dispatch a custom event that ClaudeCodeWorkspace listens for.
   // Using CustomEvent bypasses the KeepAlive/dynamic-component ref issue.
-  if (command) {
-    nextTick(() => {
-      window.dispatchEvent(new CustomEvent('claude-terminal-send', { detail: { command } }))
-    })
-  }
+  nextTick(() => {
+    window.dispatchEvent(new CustomEvent('claude-terminal-open', {
+      detail: {
+        workdir: nextWorkdir,
+        command: command || null,
+        label: opts.label || opts.proposalId || null,
+        proposalId: opts.proposalId || null,
+        kind: isProposal ? 'proposal' : 'main',
+        // 재구현: 기존 세션을 종료하고 새 셀로 다시 시작.
+        restart: !!opts.restart,
+      },
+    }))
+  })
 })
 
 // Map tab names to components
 // 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 tabComponents 에 유지).
 const tabComponents = {
   'Changes': markRaw(ChangesRootPanel),
+  'Proposals': markRaw(ProposalsPanel),
   'Stories': markRaw(RequirementsPanel),
   'Process': markRaw(BpmnPanel),
   'Processes': markRaw(EventModelingPanel),
@@ -81,6 +104,71 @@ function _onSwitchTab(e) {
   if (typeof target === 'string' && tabComponents[target]) {
     activeTab.value = target
   }
+}
+
+// 040 — Proposal 임팩트 '열기' 오케스트레이션.
+const aggregateViewer = useAggregateViewerStore()
+const eventModeling = useEventModelingStore()
+const VIEWER_TO_TAB_LOCAL = { data: 'Data', design: 'Design', process: 'Process', processes: 'Processes' }
+
+// nodeLabel → eventModeling selectItem 타입.
+function _emTypeFromLabel(label) {
+  const map = { ReadModel: 'readmodel', Event: 'event', Command: 'command', UI: 'ui', Journey: 'event', EventModel: 'event' }
+  return map[label] || null
+}
+
+async function _onOpenPreview(e) {
+  const d = e?.detail
+  if (!d || !d.viewer) return
+  const tab = VIEWER_TO_TAB_LOCAL[d.viewer]
+  if (!tab) return
+
+  // 미리보기 세션 진입(앱 셸 상태) — 뷰어 스토어 fetch 가 preview 소스로 분기된다.
+  enterPreview({
+    proposalId: d.proposalId,
+    viewer: d.viewer,
+    baseUrl: `/api/proposals/${d.proposalId}/preview`,
+    label: d.label || d.proposalId,
+    title: d.title || '',
+    targetNodeId: d.targetNodeId || null,
+    bcId: d.bcId || null,
+  })
+
+  activeTab.value = tab
+  await nextTick()
+
+  if (d.viewer === 'data') {
+    // 라이브 상태 스냅샷 후 비우고(격리), preview 소스에서 오버레이 포커스 적재.
+    aggregateViewer.beginPreview()
+    aggregateViewer.focusAggregate(d.targetNodeId, d.bcId)
+  } else if (d.viewer === 'processes') {
+    // 라이브 이벤트모델을 읽기 전용으로 로드 후 대상 노드 포커스(US3-2).
+    try { await eventModeling.fetchEventModeling() } catch { /* best-effort */ }
+    try {
+      const t = _emTypeFromLabel(d.nodeLabel)
+      if (t && d.targetNodeId) await eventModeling.selectItem(d.targetNodeId, t)
+    } catch { /* best-effort focus */ }
+  }
+  // design/process: 라이브 뷰어를 읽기 전용 맥락으로 연다(인텐트가 신규 생성하는 일이
+  // 드물어 오버레이 없음 — research D5). 탭 전환 + 배너 + mutation 가드로 충분(US3-1/2).
+}
+
+function _onOpenPreviewFailed(e) {
+  const d = e?.detail
+  if (!d) return
+  window.alert(`열기 불가: ${d.reason || '미리보기로 표현할 수 없는 항목입니다.'}`)
+}
+
+// 배너 '닫기' → 미리보기 종료 시 뷰어 라이브 상태 복원(US2 잔존물 0).
+function _onPreviewExit(e) {
+  const viewer = e?.detail?.viewer
+  if (viewer === 'data') aggregateViewer.endPreview()
+}
+
+// 040 — Chat 편집(modelModifier)이 제안 diff 에 반영된 뒤 갱신 트리를 뷰어에 적용.
+function _onPreviewUpdated(e) {
+  const tree = e?.detail?.tree
+  if (tree) aggregateViewer.applyPreviewTree(tree)
 }
 
 const currentComponent = computed(() => tabComponents[activeTab.value])
@@ -207,6 +295,11 @@ onMounted(() => {
 
   // Listen for cross-component tab switch requests
   window.addEventListener('robo:switch-tab', _onSwitchTab)
+  // 040 — Proposal 임팩트 미리보기 열기/실패/종료
+  window.addEventListener('robo:open-preview', _onOpenPreview)
+  window.addEventListener('robo:open-preview-failed', _onOpenPreviewFailed)
+  window.addEventListener('robo:preview-exit', _onPreviewExit)
+  window.addEventListener('robo:preview-updated', _onPreviewUpdated)
 
   log.info('app_mounted', 'App mounted; core layout components are ready.', {
     appInstanceId,
@@ -222,6 +315,10 @@ onMounted(() => {
 onUnmounted(() => {
   stopResizeNavigator()
   window.removeEventListener('robo:switch-tab', _onSwitchTab)
+  window.removeEventListener('robo:open-preview', _onOpenPreview)
+  window.removeEventListener('robo:open-preview-failed', _onOpenPreviewFailed)
+  window.removeEventListener('robo:preview-exit', _onPreviewExit)
+  window.removeEventListener('robo:preview-updated', _onPreviewUpdated)
 })
 </script>
 
@@ -236,6 +333,8 @@ onUnmounted(() => {
       :active-tab="activeTab"
       @update:active-tab="activeTab = $event"
     />
+    <!-- 040 — Proposal 임팩트 미리보기 식별 배너(활성 시에만 표시, FR-007) -->
+    <PreviewBanner />
     <div class="main-content">
       <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
