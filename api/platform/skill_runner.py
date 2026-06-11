@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
 import re
 import shutil
+import subprocess
+import threading
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -16,10 +19,79 @@ from api.platform.observability.smart_logger import SmartLogger
 
 _PROJECT_ROOT = Path(__file__).parents[2]
 
+# _stream_process_chunks 내부 큐 종료/에러 신호용 센티넬.
+_STREAM_DONE = object()
+_STREAM_ERR = object()
+
 
 def skill_path(skill_root: str, skill_name: str) -> Path:
     """skills/{skill_root}/{skill_name}/SKILL.md 절대 경로를 반환한다."""
     return _PROJECT_ROOT / "skills" / skill_root / skill_name / "SKILL.md"
+
+
+def _run_process_sync(
+    cmd: list[str], cwd: str, timeout: int
+) -> subprocess.CompletedProcess:
+    """블로킹 subprocess.run. 워커 스레드에서 호출된다."""
+    return subprocess.run(cmd, capture_output=True, cwd=cwd, timeout=timeout)
+
+
+async def _stream_process_chunks(
+    cmd: list[str], cwd: str, timeout: int
+) -> AsyncGenerator[bytes, None]:
+    """
+    cmd 를 블로킹 subprocess 로 실행하고 stdout 바이트 청크를 도착하는 즉시 yield 한다.
+    스폰·읽기는 전용 워커 스레드에서 수행하므로 이벤트 루프 종류와 무관하게 동작한다.
+
+    - bufsize=0(언버퍼드): proc.stdout.read(n)가 데이터가 도착하는 즉시 반환 → 실시간 스트리밍 보존.
+    - stderr 는 별도 스레드에서 끝까지 비워 파이프 버퍼 풀(deadlock)을 방지한다.
+    - 소비자(async generator) 종료 시 finally 에서 서브프로세스를 확실히 kill 한다.
+    """
+    q: queue.Queue = queue.Queue(maxsize=256)
+    holder: dict = {}
+
+    def _reader() -> None:
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=cwd,
+                bufsize=0,
+            )
+            holder["proc"] = proc
+            # stderr 드레인 스레드: 읽지 않으면 stderr 파이프가 차서 child 가 멈출 수 있다.
+            threading.Thread(
+                target=lambda: proc.stderr.read() if proc.stderr else None,
+                daemon=True,
+            ).start()
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                q.put(chunk)
+        except Exception as e:  # noqa: BLE001 - 메인 코루틴으로 그대로 전달
+            q.put((_STREAM_ERR, e))
+        finally:
+            q.put(_STREAM_DONE)
+
+    threading.Thread(target=_reader, daemon=True).start()
+
+    try:
+        while True:
+            item = await asyncio.wait_for(asyncio.to_thread(q.get), timeout=timeout)
+            if item is _STREAM_DONE:
+                break
+            if isinstance(item, tuple) and item and item[0] is _STREAM_ERR:
+                raise item[1]
+            yield item
+    finally:
+        proc = holder.get("proc")
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 async def run_skill_once(
@@ -54,16 +126,13 @@ async def run_skill_once(
                     category="platform.skill_runner.start",
                     params={"skill": skill_name})
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(_PROJECT_ROOT),
+        # 루프-무관 블로킹 subprocess 를 워커 스레드에서 실행 (헤더 주석 참조).
+        completed = await asyncio.to_thread(
+            _run_process_sync, cmd, str(_PROJECT_ROOT), timeout
         )
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        raw = stdout_bytes.decode("utf-8", errors="replace").strip()
+        raw = completed.stdout.decode("utf-8", errors="replace").strip()
 
-        stderr_str = stderr_bytes.decode("utf-8", errors="replace").strip()
+        stderr_str = completed.stderr.decode("utf-8", errors="replace").strip()
         if stderr_str:
             SmartLogger.log("WARN", f"Skill {skill_name} stderr: {stderr_str[:200]}",
                             category="platform.skill_runner.stderr", params={"skill": skill_name})
@@ -72,7 +141,7 @@ async def run_skill_once(
                         category="platform.skill_runner.done", params={"skill": skill_name})
         return raw
 
-    except asyncio.TimeoutError:
+    except subprocess.TimeoutExpired:
         SmartLogger.log("ERROR", f"Skill {skill_name} timeout",
                         category="platform.skill_runner.timeout", params={"skill": skill_name})
     except Exception as e:
@@ -120,14 +189,12 @@ async def run_skill_lines(
                     category="platform.skill_runner.stream_start",
                     params={"skill": skill_name})
 
-    proc: asyncio.subprocess.Process | None = None
+    chunks: AsyncGenerator[bytes, None] | None = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd or str(_PROJECT_ROOT),
-        )
+        # 루프-무관 블로킹 subprocess + 워커 스레드 (헤더 주석 참조).
+        # create_subprocess_exec 를 쓰면 Windows --reload(SelectorEventLoop)에서
+        # NotImplementedError 로 즉사한다.
+        chunks = _stream_process_chunks(cmd, cwd or str(_PROJECT_ROOT), timeout=1800)
 
         text_buffer = ""
         raw_buf = b""
@@ -137,16 +204,15 @@ async def run_skill_lines(
 
         while True:
             try:
-                chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=1800)
+                chunk = await chunks.__anext__()
+            except StopAsyncIteration:
+                break
             except asyncio.TimeoutError:
                 SmartLogger.log("ERROR", f"Skill stream timeout (1800s): {skill_name}",
                                 category="platform.skill_runner.stream_timeout",
                                 params={"skill": skill_name})
                 yield "PHASE:error"
                 return
-
-            if not chunk:
-                break
 
             raw_buf += chunk
             while b"\n" in raw_buf:
@@ -234,23 +300,25 @@ async def run_skill_lines(
 
     except (GeneratorExit, asyncio.CancelledError):
         # 클라이언트(SSE) 연결 끊김 → generator가 닫힘. 서브프로세스를 정리하고 재-raise.
-        # finally에서 proc.kill()이 수행되므로 여기서는 로그만 남기고 전파.
+        # finally에서 chunks.aclose()(→ 서브프로세스 kill)가 수행되므로 여기서는 로그만.
         SmartLogger.log("WARN", f"Skill stream cancelled (client disconnect): {skill_name}",
                         category="platform.skill_runner.stream_cancelled",
                         params={"skill": skill_name})
         raise
     except Exception as e:
-        SmartLogger.log("ERROR", f"Skill stream error: {skill_name}: {e}",
+        # str(e)가 빈 예외(e.g. NotImplementedError)도 진단 가능하도록 타입까지 기록.
+        SmartLogger.log("ERROR", f"Skill stream error: {skill_name}: {type(e).__name__}: {e}",
                         category="platform.skill_runner.stream_error",
-                        params={"skill": skill_name, "error": str(e)})
+                        params={"skill": skill_name, "error": str(e),
+                                "errorType": type(e).__name__})
         yield "PHASE:error"
     finally:
         # 어떤 경로로 종료되든(완료/타임아웃/클라이언트 끊김/예외) 서브프로세스를 확실히 종료.
         # 이게 없으면 claude CLI 서브프로세스가 고아로 남아 누적 → 리소스 고갈.
-        if proc is not None and proc.returncode is None:
+        # chunks.aclose()가 _stream_process_chunks 의 finally(proc.kill())를 트리거한다.
+        if chunks is not None:
             try:
-                proc.kill()
-                await proc.wait()
+                await chunks.aclose()
             except Exception:
                 pass
 
