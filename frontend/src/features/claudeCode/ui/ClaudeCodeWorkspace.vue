@@ -486,6 +486,19 @@ function onTreeExternalCheck() {
   editorRef.value?.checkExternalModification()
 }
 
+// Backstop for the file tree's live SSE watch: when the active terminal's
+// output settles (claude likely finished writing), re-list the tree. Debounced
+// so the SSE-driven refresh and this don't pile up. Harmless if the SSE already
+// caught the change — it's just a cheap re-list of the loaded directories.
+let activityRefreshTimer = null
+function onTerminalActivity() {
+  if (activityRefreshTimer) clearTimeout(activityRefreshTimer)
+  activityRefreshTimer = setTimeout(() => {
+    activityRefreshTimer = null
+    treeRef.value?.refresh()
+  }, 300)
+}
+
 function isUnderPath(target, parent) {
   if (!target || !parent) return false
   return target === parent || target.startsWith(parent + '/')
@@ -587,6 +600,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopResize()
+  if (activityRefreshTimer) {
+    clearTimeout(activityRefreshTimer)
+    activityRefreshTimer = null
+  }
   window.removeEventListener('beforeunload', onBeforeUnload)
 })
 </script>
@@ -688,7 +705,9 @@ onBeforeUnmount(() => {
             :workdir="s.workdir"
             :session-id="backendId(s)"
             :initial-command="s.initialCommand"
+            :is-active="s.id === activeSessionId"
             @workdir-picked="onTerminalWorkdirPicked"
+            @activity="onTerminalActivity"
           />
         </div>
         <div v-if="!sessions.length" class="ccw-no-session">

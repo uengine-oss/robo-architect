@@ -18,7 +18,8 @@ from typing import Any
 
 import logging
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.features.claude_code.pty_backend import (
@@ -189,6 +190,122 @@ async def workspace_move_entry(req: MoveRequest):
         from_path=req.from_path,
         to_path=req.to_path,
         moved_type=moved_type,
+    )
+
+
+# ─── Live filesystem change stream (SSE) ───
+#
+# Pushes "these directories changed" hints to the IDE file tree so edits made by
+# the embedded `claude` CLI (or any external tool) appear without the manual
+# refresh button. Backed by watchfiles (Rust `notify` → inotify / FSEvents /
+# ReadDirectoryChangesW, with a polling fallback) so it works on Win/Mac/Linux
+# with no per-user setup. The frontend reloads only the directories it currently
+# has expanded, so the browser cost stays bounded regardless of repo size.
+
+
+def _build_workspace_watch_filter():
+    """A watchfiles filter that drops noise the tree never shows.
+
+    Extends ``DefaultFilter`` (already ignores ``.git`` / ``node_modules`` /
+    ``__pycache__`` / ``.venv`` / build caches …) with proposal worktrees and
+    common JS/Java build outputs, and skips the ``<base>.tmp.<rand>`` scratch
+    files our own atomic writer creates (see ``workspace_fs.write_text_file_atomic``).
+    """
+    from watchfiles import DefaultFilter
+
+    # NOTE: passing ignore_dirs= to Default.__init__ REPLACES the built-in set
+    # (it does not merge), so we must union our extras with DefaultFilter's
+    # defaults (.git / node_modules / __pycache__ / .venv / …) explicitly.
+    _EXTRA_IGNORE_DIRS = (
+        ".sandbox", "dist", "build", "out",
+        ".next", ".nuxt", ".output", "target", ".gradle",
+    )
+
+    class _WorkspaceFilter(DefaultFilter):
+        def __init__(self) -> None:
+            super().__init__(
+                ignore_dirs=(*DefaultFilter.ignore_dirs, *_EXTRA_IGNORE_DIRS)
+            )
+
+        def __call__(self, change, path: str) -> bool:  # noqa: D401
+            if not super().__call__(change, path):
+                return False
+            # Atomic-write scratch files churn on every save — never surface them.
+            return ".tmp." not in os.path.basename(path)
+
+    return _WorkspaceFilter()
+
+
+def _rel_parent_dir(real_root: str, path: str) -> str | None:
+    """Map a changed path to the workspace-relative directory whose *listing*
+    changes (i.e. the changed entry's parent), using ``/`` separators to match
+    the frontend tree's path keys. Returns ``""`` for top-level changes and
+    ``None`` for the root itself or anything outside it.
+    """
+    try:
+        rel = os.path.relpath(path, real_root)
+    except ValueError:
+        return None  # different drive on Windows
+    if rel == os.curdir or rel.startswith(".."):
+        return None
+    rel = rel.replace(os.sep, "/")
+    return rel.rsplit("/", 1)[0] if "/" in rel else ""
+
+
+@router.get("/fs-events")
+async def workspace_fs_events(root: str, request: Request):
+    """Server-Sent Events stream of directory-change hints under ``root``.
+
+    Each ``data:`` frame is ``{"dirs": ["", "specs/039", ...]}`` — the set of
+    workspace-relative directories whose contents changed since the last frame.
+    Comment frames (``: ping``) are heartbeats. The stream ends when the client
+    disconnects (Starlette cancels the generator).
+    """
+    from fastapi import HTTPException
+    from watchfiles import awatch
+
+    real_root = os.path.realpath(os.path.expanduser(root))
+    if not os.path.isdir(real_root):
+        raise HTTPException(status_code=400, detail="root is not a directory")
+
+    watch_filter = _build_workspace_watch_filter()
+
+    async def event_stream():
+        # Open the stream immediately so the browser's EventSource fires `open`.
+        yield ": connected\n\n"
+        try:
+            async for changes in awatch(
+                real_root,
+                watch_filter=watch_filter,
+                recursive=True,
+                yield_on_timeout=True,   # periodic empty batch → heartbeat
+                ignore_permission_denied=True,
+            ):
+                if await request.is_disconnected():
+                    break
+                if not changes:
+                    yield ": ping\n\n"
+                    continue
+                dirs = set()
+                for _change, path in changes:
+                    rel_dir = _rel_parent_dir(real_root, path)
+                    if rel_dir is not None:
+                        dirs.add(rel_dir)
+                if dirs:
+                    yield f"data: {json.dumps({'dirs': sorted(dirs)})}\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("claude_code.workspace.fs_events_error")
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # disable proxy buffering (nginx)
+        },
     )
 
 

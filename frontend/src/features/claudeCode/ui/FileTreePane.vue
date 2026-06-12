@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, reactive, onMounted, onBeforeUnmount } from 'vue'
-import { deleteEntry, fetchTree, moveEntry } from '../workspace.api.js'
+import { deleteEntry, fetchTree, fsEventsUrl, moveEntry } from '../workspace.api.js'
 
 const props = defineProps({
   root: { type: String, required: true },
@@ -26,34 +26,47 @@ const dragOverPath = ref(null)
 const dragOverRoot = ref(false)
 const draggingPath = ref(null)
 
-async function loadDir(path) {
+// `silent` (used by the live SSE watch / activity backstop) re-fetches in place
+// WITHOUT flipping the loading flags — so the tree never blanks to "Loading…"
+// on a background refresh. On a silent error we keep the last-good listing
+// visible instead of replacing it with an error/blank; the next event retries.
+async function loadDir(path, { silent = false } = {}) {
   if (!props.root) return
   if (path === '') {
-    loadingRoot.value = true
-    rootError.value = null
+    if (!silent) {
+      loadingRoot.value = true
+      rootError.value = null
+    }
     try {
       const r = await fetchTree(props.root, '')
       rootChildren.value = r.children
+      rootError.value = null
     } catch (e) {
-      rootError.value = e.body?.detail || e.message
-      rootChildren.value = []
+      if (!silent) {
+        rootError.value = e.body?.detail || e.message
+        rootChildren.value = []
+      }
     } finally {
-      loadingRoot.value = false
+      if (!silent) loadingRoot.value = false
     }
   } else {
     const slot = expanded.get(path) || { children: null, loading: false, error: null }
-    slot.loading = true
-    slot.error = null
-    expanded.set(path, slot)
+    if (!silent) {
+      slot.loading = true
+      slot.error = null
+      expanded.set(path, slot)
+    }
     try {
       const r = await fetchTree(props.root, path)
       slot.children = r.children
       slot.error = null
     } catch (e) {
-      slot.error = e.body?.detail || e.message
-      slot.children = []
+      if (!silent) {
+        slot.error = e.body?.detail || e.message
+        slot.children = []
+      }
     } finally {
-      slot.loading = false
+      if (!silent) slot.loading = false
       expanded.set(path, { ...slot })
     }
   }
@@ -80,12 +93,14 @@ function clickFile(path) {
   emit('open', path)
 }
 
-async function refresh() {
+// Silent by default so neither the header refresh button nor the activity
+// backstop blank the tree — the button still shows feedback via `refreshing`.
+async function refresh({ silent = true } = {}) {
   if (refreshing.value) return
   refreshing.value = true
   try {
     const expandedPaths = Array.from(expanded.keys())
-    await Promise.all([loadDir(''), ...expandedPaths.map((p) => loadDir(p))])
+    await Promise.all([loadDir('', { silent }), ...expandedPaths.map((p) => loadDir(p, { silent }))])
   } finally {
     refreshing.value = false
     emit('externalCheck')
@@ -301,6 +316,70 @@ function onDropRoot(event) {
   performDrop('')
 }
 
+// ─── Live filesystem watch (SSE) ───
+// The backend streams "these directories changed" hints so edits made by the
+// embedded claude CLI (or any external tool) reflect without the manual refresh
+// button. We reload ONLY directories that are currently visible — the root
+// (always loaded) and folders the user has expanded — so the browser cost is
+// bounded no matter how large the repo or how busy the watcher.
+
+let es = null
+let pendingDirs = new Set()
+let flushTimer = null
+
+function applyFsChanges() {
+  flushTimer = null
+  const dirs = pendingDirs
+  pendingDirs = new Set()
+  const toReload = []
+  for (const d of dirs) {
+    if (d === '') toReload.push('')          // root listing is always mounted
+    else if (expanded.has(d)) toReload.push(d) // skip collapsed/unloaded dirs
+  }
+  if (!toReload.length) return
+  Promise.all(toReload.map((p) => loadDir(p, { silent: true }))).then(() => emit('externalCheck'))
+}
+
+function onFsEvent(event) {
+  let data
+  try {
+    data = JSON.parse(event.data)
+  } catch {
+    return
+  }
+  if (!Array.isArray(data?.dirs)) return
+  for (const d of data.dirs) pendingDirs.add(d)
+  // Coalesce bursts (a single claude tool call can touch many files).
+  if (!flushTimer) flushTimer = setTimeout(applyFsChanges, 200)
+}
+
+function closeWatch() {
+  if (es) {
+    es.close()
+    es = null
+  }
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  pendingDirs = new Set()
+}
+
+async function openWatch(rootAtCall) {
+  closeWatch()
+  if (!rootAtCall) return
+  try {
+    const url = await fsEventsUrl(rootAtCall)
+    if (props.root !== rootAtCall) return  // root changed while resolving — stale
+    es = new EventSource(url)
+    es.onmessage = onFsEvent
+    // EventSource auto-reconnects on transient errors; nothing to do here.
+    es.onerror = () => {}
+  } catch {
+    // Non-fatal — the manual refresh button still works.
+  }
+}
+
 // Reload from scratch when the root changes.
 watch(
   () => props.root,
@@ -311,10 +390,15 @@ watch(
       cancelRename()
       closeMenu()
       loadDir('')
+      openWatch(r)
+    } else {
+      closeWatch()
     }
   },
   { immediate: true },
 )
+
+onBeforeUnmount(closeWatch)
 
 defineExpose({ refresh })
 </script>
