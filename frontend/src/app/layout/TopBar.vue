@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
-import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
+// 039 — 'Big picture' 뷰 비활성화: store import 제거.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
@@ -19,14 +19,14 @@ const props = defineProps({
 
 const emit = defineEmits(['update:activeTab'])
 
-// 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 App.vue tabComponents 에 유지).
+// 039 — 'Big picture' 뷰 비활성화(탭 목록에서 제외 상태 유지).
 // 'Process' 탭 — spec 034 WIP 커밋(de030de) 이 "당분간 숨김" 으로 빼뒀던 것 복원.
 // BPMN(Process) 캔버스는 Hybrid 인제션 → ES 승격 흐름의 핵심 진입점이라
 // 메뉴에서 빼면 사용자가 진입할 길이 사라짐.
-const tabs = ['Requirements', 'Process', 'Event Modeling', 'Design', 'Aggregate', 'Code']
+// 042 — 'Event Modeling'은 Process 탭 내부 토글로 흡수(독립 탭 제거).
+const tabs = ['Requirements', 'Process', 'Design', 'Aggregate', 'Code']
 
 const canvasStore = useCanvasStore()
-const bigPictureStore = useBigPictureStore()
 const aggregateViewerStore = useAggregateViewerStore()
 const bpmnStore = useBpmnStore()
 const eventModelingStore = useEventModelingStore()
@@ -72,12 +72,28 @@ function selectTab(tab) {
             v-for="tab in tabs"
             :key="tab"
             class="top-bar__tab"
-            :class="{ 'is-active': activeTab === tab }"
+            :class="{ 'is-active': activeTab === tab || (tab === 'Process' && activeTab === 'Event Modeling') }"
             @click="selectTab(tab)"
           >
             {{ tab }}
           </button>
         </nav>
+        <!-- 042 — Process 영역의 BPM⇄Event Modeling 서브토글. activeTab 자체를 바꿔
+             네비게이터·캔버스·상단바·ES버튼 등 activeTab 기준 동작이 함께 전환된다. -->
+        <div v-if="activeTab === 'Process' || activeTab === 'Event Modeling'" class="top-bar__subtoggle">
+          <button
+            class="top-bar__seg"
+            :class="{ 'is-active': activeTab === 'Process' }"
+            @click="selectTab('Process')"
+            title="사람-대면 업무 흐름(BPM)"
+          >BPM</button>
+          <button
+            class="top-bar__seg"
+            :class="{ 'is-active': activeTab === 'Event Modeling' }"
+            @click="selectTab('Event Modeling')"
+            title="UI + 시스템 내부 흐름(Event Modeling)"
+          >Event Modeling</button>
+        </div>
       </div>
     </div>
     
@@ -105,15 +121,8 @@ function selectTab(tab) {
         <span><strong>{{ canvasStore.edges.length }}</strong> connections</span>
       </div>
       
-      <!-- Big picture Panel Status -->
-      <div v-else-if="activeTab === 'Big picture'" class="top-bar__status">
-        <span><strong>{{ bigPictureStore.filteredSwimlanes.length }}</strong> BC</span>
-        <span class="top-bar__status-dot">•</span>
-        <span><strong>{{ bigPictureStore.totalEvents }}</strong> Events</span>
-        <!-- <span class="top-bar__status-dot">•</span> -->
-        <!-- <span><strong>{{ bigPictureStore.crossBcConnections.length }}</strong> Cross-BC</span> -->
-      </div>
-      
+      <!-- 039 — 'Big picture' Panel Status 제거(뷰 비활성화) -->
+
       <!-- Aggregate Panel Status -->
       <div v-else-if="activeTab === 'Aggregate'" class="top-bar__status">
         <span><strong>{{ aggregateViewerStore.filteredBoundedContexts.length }}</strong> BC</span>
@@ -233,6 +242,30 @@ function selectTab(tab) {
   font-weight: 700;
   box-shadow: 0 2px 8px rgba(34, 139, 230, 0.3);
 }
+
+/* 042 — Process 영역 BPM⇄Event Modeling 서브토글 */
+.top-bar__subtoggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--color-bg-tertiary);
+}
+.top-bar__seg {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-light);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.top-bar__seg:hover:not(.is-active) { color: var(--color-text); background: rgba(255,255,255,0.05); }
+.top-bar__seg.is-active { background: var(--color-accent); color: #fff; font-weight: 700; }
 
 .top-bar__center {
   flex: 1;

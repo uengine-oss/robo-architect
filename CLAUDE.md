@@ -1,4 +1,16 @@
 <!-- SPECKIT START -->
+Active feature plan: [specs/042-task-ui-unification/plan.md](specs/042-task-ui-unification/plan.md)
+
+**042 BPM·Event Modeling 단일 Process 탭 + task=UI 일관성** (started 2026-06-11) — spec-039 후속(읽기뷰어 → 구조통합). 실측상 두 뷰가 다른 앵커(BPM=`:BpmTask`, EM=`:BoundedContext`)·task↔UI 불일치(UI가 [ui_wireframes.py](api/features/ingestion/workflow/phases/ui_wireframes.py) "1 UI per Command/ReadModel"로 생성 → task당 0~2개). **UI를 공유 앵커로 task=UI 일관화**: (US1 P1) `Process`·`Event Modeling` 탭을 **단일 Process 탭+BPM⇄EM 토글**(신규 `ProcessPanel.vue`); (US2 P1) ES 승격 UI 생성을 **task당 1 트리거 UI**(Command를 `task_id`로 그룹→LLM이 사람-조작 Command 선택, entry 폴백; 기존 `:UI`/`ATTACHED_TO` 재사용=신규 라벨/관계 0); (US3 P2) ReadModel은 무조건 UI 제거→소비표시(`ATTACHED_TO {role:'display'}`)/조회화면이면 task-UI 승격(LLM); (US4 P2) task 포함요소를 **EM 형식 가로레인**(신규 `EventModelingLane.vue`, 039 trace 데이터 재사용; `DesignTraceCanvas`는 requirements 유지). Command/Event task귀속·A2A BPM **불변**. 인제스천 변경=**재인제스천 필요**. Phase 0/1 ✅. Phase 2 ⏸ `/speckit-tasks`. Constitution PASS(조건부 — ReadModel role 속성=라벨/관계 0, propose는 통합뷰 노출+수정).
+
+---
+이전 피처(039) 참고:
+Active feature plan: [specs/039-bpm-event-unification/plan.md](specs/039-bpm-event-unification/plan.md)
+
+**039 BPM↔Event Modeling 구조적 통합 (단일 그래프, 두 투영 뷰)** (started 2026-06-10) — BPM 뷰·Event Modeling 뷰를 **하나의 Neo4j 그래프의 두 투영**으로 통합. 그래프는 이미 그렇게 영속됨: 하이브리드(A2A→ES) 파이프라인이 `:BpmTask`를 척추로, ES 산출물을 `PROMOTED_FROM`으로, UI는 `(:UI)-[:ATTACHED_TO]->(:Command)-[:PROMOTED_FROM]->(:BpmTask)`로 연결([persistence.py](api/features/ingestion/hybrid/event_storming_bridge/persistence.py)·[design_trace.py](api/features/requirements/routes/design_trace.py)). **신규 스키마 0건의 읽기 전용 투영 + UI 정리**: (US2 P1) BPM task 인스펙터(`HybridTaskInspector.vue`)에 "포함 요소" 버튼→**모달**로 `(:BpmTask)<-[:PROMOTED_FROM]-(…)` 체인을 event-modeling 스티커로 표시; 백엔드는 `design_trace`를 일반화한 읽기 라우트 `GET /api/graph/bpm-task/{id}/design-trace`(frontier=task의 promoted Command), 프런트는 순수 컴포넌트 `DesignTraceCanvas.vue`(`trace` prop) **무수정 재사용**, **캔버스 불변**. BPM=A2A 단일 생성경로(011 process-flows는 생성원 아님). UI 없는 task="System". (US4 P2) "Big picture" 탭·패널·`bigpicture.store`·`/api/graph/bigpicture-timeline` 제거 + 비탭 소비자 정리(`TreeNode.vue` dead-branch, `ExportDocumentTemplate.vue` swimlanes 섹션). Phase 0/1 ✅(plan/research/data-model/contract/quickstart). Phase 2 ⏸ `/speckit-tasks`. Constitution PASS(신규 라벨/관계·LLM·SSE 0 → I·II·III·IV·VI 해당없음/충족).
+
+---
+이전 피처(036) 참고:
 Active feature plan: [specs/036-bpmn-rule-mapping-recall/plan.md](specs/036-bpmn-rule-mapping-recall/plan.md)
 
 **036 BPMN 룰 매핑 recall 개선 (용어 정규화)** (started 2026-06-04) — 평문 요구사항(한국어 GWT)↔레거시 코드 약어 어휘갭으로 임베딩 코사인이 0.45~0.55로 collapse → 매핑돼야 할 BL 룰이 retrieval floor(`agentic_retriever.MIN_BL_INCLUSION=0.45`)에서 LLM 검증기 도달 전 탈락(recall 손실). **해결**: 이미 추출되나 임베딩 단계 미사용인 glossary(`extract_glossary`)를 `run_agentic_retrieval`→`_candidates_for_task` 임베딩 입력에 **양방향 정규화** 주입(task query엔 code_candidates, rule blob엔 term/aliases append). **floor·후보예산(`bl_top_k`/`per_task_cap`) 불변** → 검증기 부하·사용자 화면 노출 불변(인지부하 최소화=최우선). 신규 모듈 `term_normalizer.py`(순수함수) + 배선 2곳. env `HYBRID_GLOSSARY_NORMALIZE`(기본1, 0=완전 무변경) A/B·회귀 안전망. 신규 노드/관계 0건. 측정=골든픽스처(input_resource 자동납부 본인확인 PDF 2종 + zapamcom 분석 그래프), 회귀0+회복≥1, 소요≤1.2x. Phase 0/1 ✅(plan/research/data-model/contract/quickstart). Phase 2 ⏸ `/speckit-tasks`. Constitution PASS(템플릿 미작성, 자체 게이트 통과).

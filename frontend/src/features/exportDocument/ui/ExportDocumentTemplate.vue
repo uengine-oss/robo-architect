@@ -3,11 +3,10 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import mermaid from 'mermaid'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
-import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
+// 039 — 'Big picture' 뷰 비활성화: store import 제거.
 
 const canvasStore = useCanvasStore()
 const navigatorStore = useNavigatorStore()
-const bigPictureStore = useBigPictureStore()
 
 const selectedSections = ref({
   userStories: true,
@@ -84,7 +83,8 @@ const allUserStories = computed(() => {
   return stories
 })
 
-const swimlanes = computed(() => bigPictureStore.swimlanes || [])
+// 039 — 'Big picture' 뷰 비활성화: swimlane(빅픽처) export 섹션 비활성화(빈 배열 → v-if 미렌더).
+const swimlanes = computed(() => [])
 
 function getEdgeRelationsForBC(bcId) {
   const ids = new Set(canvasStore.nodes.filter(n => n.parentNode === bcId).map(n => n.id))
