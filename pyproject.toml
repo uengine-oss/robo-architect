@@ -55,6 +55,13 @@ dependencies = [
     # for the Design-tab progress reflection channel.
     "mcp>=1.0.0",
     "watchfiles>=0.24.0",
+
+    # Claude Code terminal PTY backend on Windows (Code tab).
+    # POSIX hosts use the stdlib `pty`/`fcntl`/`termios` modules; Windows
+    # has no equivalent, so we drive ConPTY through pywinpty. The wheel is
+    # prebuilt (no compiler needed) and the marker keeps it off Linux/macOS
+    # installs entirely. See api/features/claude_code/pty_backend.py.
+    "pywinpty>=2.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

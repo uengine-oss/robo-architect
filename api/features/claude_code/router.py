@@ -12,8 +12,6 @@ import asyncio
 import io
 import json
 import os
-import signal
-import struct
 import time
 import zipfile
 from typing import Any
@@ -23,6 +21,12 @@ import logging
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from api.features.claude_code.pty_backend import (
+    PtyProcess,
+    pty_supported,
+    spawn_pty,
+    unsupported_reason,
+)
 from api.features.claude_code.workspace_fs import (
     delete_entry,
     list_directory,
@@ -49,13 +53,6 @@ from api.features.prd_generation.prd_api_contracts import PRDGenerationRequest
 router = APIRouter(prefix="/api/claude-code", tags=["claude-code"])
 
 logger = logging.getLogger(__name__)
-
-IS_UNIX_PTY_SUPPORTED = os.name == "posix"
-
-if IS_UNIX_PTY_SUPPORTED:
-    import fcntl
-    import pty
-    import termios
 
 
 # ─── Directory browsing ───
@@ -601,14 +598,6 @@ def _cleanup_deprecated_local_paths(project_path: str, bcs: list, config) -> lis
 # ─── PTY Terminal WebSocket ───
 
 
-def _set_pty_size(fd: int, rows: int, cols: int) -> None:
-    """Send TIOCSWINSZ ioctl to resize the PTY."""
-    if not IS_UNIX_PTY_SUPPORTED:
-        raise RuntimeError("PTY terminal is only supported on POSIX hosts.")
-    winsize = struct.pack("HHHH", rows, cols, 0, 0)
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
-
-
 # ─── PTY session registry (survives ws disconnect / browser refresh) ───
 # Each session keeps a `claude` PTY alive INDEPENDENT of any single WebSocket so a
 # page reload (or tab switch) can re-attach — replaying scrollback — instead of
@@ -622,10 +611,9 @@ _RING_BYTES = 256 * 1024            # per-session scrollback replay buffer
 
 
 class _PtySession:
-    def __init__(self, session_id: str, pid: int, master_fd: int, cwd: str | None):
+    def __init__(self, session_id: str, proc: PtyProcess, cwd: str | None):
         self.id = session_id
-        self.pid = pid
-        self.master_fd = master_fd
+        self.proc = proc
         self.cwd = cwd
         self.buffer = bytearray()       # bounded scrollback (raw bytes)
         self.ws: WebSocket | None = None  # currently-attached WebSocket
@@ -663,16 +651,8 @@ def _utf8_safe_split(combined: bytes) -> tuple[bytes, bytes]:
 
 def _kill_pty(sess: _PtySession) -> None:
     try:
-        os.close(sess.master_fd)
-    except OSError:
-        pass
-    try:
-        os.kill(sess.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    try:
-        os.waitpid(sess.pid, os.WNOHANG)
-    except ChildProcessError:
+        sess.proc.terminate()
+    except Exception:
         pass
 
 
@@ -702,20 +682,20 @@ async def _session_reader(sess: _PtySession) -> None:
     while sess.alive:
         await asyncio.sleep(0.02)
         chunks: list[bytes] = []
+        drained = 0  # bound work per tick so high-output sessions still yield
         try:
-            while True:
+            while drained < _RING_BYTES:
                 try:
-                    data = os.read(sess.master_fd, 16384)
-                    if not data:
-                        sess.alive = False
-                        break
-                    chunks.append(data)
-                except BlockingIOError:
+                    data = sess.proc.read_nonblocking(16384)
+                except EOFError:
+                    sess.alive = False
                     break
-                except OSError as e:
-                    if e.errno == 5:  # EIO — child exited
-                        sess.alive = False
+                except Exception:
                     break
+                if not data:
+                    break  # idle — nothing available right now
+                chunks.append(data)
+                drained += len(data)
         except Exception:
             pass
 
@@ -745,50 +725,6 @@ async def _session_reader(sess: _PtySession) -> None:
     if _sessions.get(sess.id) is sess:
         _sessions.pop(sess.id, None)
     _kill_pty(sess)
-
-
-def _spawn_pty(cwd: str | None, permission_mode: str) -> tuple[int, int]:
-    """Fork a `claude` PTY. Returns (pid, master_fd) with master_fd non-blocking."""
-    master_fd, slave_fd = pty.openpty()
-
-    env = os.environ.copy()
-    env["TERM"] = "xterm-256color"
-    env["COLORTERM"] = "truecolor"
-
-    pid = os.fork()
-    if pid == 0:
-        # ─── Child ───
-        os.close(master_fd)
-        os.setsid()
-        if cwd:
-            try:
-                os.chdir(cwd)
-            except OSError:
-                pass
-        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-        os.dup2(slave_fd, 0)
-        os.dup2(slave_fd, 1)
-        os.dup2(slave_fd, 2)
-        if slave_fd > 2:
-            os.close(slave_fd)
-        ALLOWED_PERMISSION_MODES = {
-            "acceptEdits", "auto", "bypassPermissions",
-            "default", "dontAsk", "plan",
-        }
-        claude_argv = ["claude"]
-        if permission_mode in ALLOWED_PERMISSION_MODES:
-            claude_argv += ["--permission-mode", permission_mode]
-        try:
-            os.execvpe("claude", claude_argv, env)
-        except OSError:
-            shell = os.environ.get("SHELL", "/bin/zsh")
-            os.execvpe(shell, [shell], env)
-
-    # ─── Parent ───
-    os.close(slave_fd)
-    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-    return pid, master_fd
 
 
 @router.delete("/terminal/session")
@@ -839,12 +775,12 @@ async def terminal_ws(
         prompt under each invocation; for human use the default is
         recommended.
     """
-    if not IS_UNIX_PTY_SUPPORTED:
+    if not pty_supported():
         await websocket.accept()
         await websocket.send_json(
             {
                 "type": "error",
-                "message": "Claude Code terminal is only supported on POSIX hosts.",
+                "message": unsupported_reason(),
             }
         )
         await websocket.close(code=1011)
@@ -897,8 +833,8 @@ async def terminal_ws(
                 except Exception:
                     pass
                 return
-        pid, master_fd = _spawn_pty(cwd, permission_mode)
-        sess = _PtySession(sid, pid, master_fd, cwd)
+        proc = spawn_pty(cwd, permission_mode)
+        sess = _PtySession(sid, proc, cwd)
         sess.ws = websocket
         _sessions[sid] = sess
         sess.reader_task = asyncio.create_task(_session_reader(sess))
@@ -912,17 +848,16 @@ async def terminal_ws(
 
             if mtype == "input":
                 try:
-                    os.write(sess.master_fd, msg.get("data", "").encode("utf-8"))
-                except OSError:
+                    sess.proc.write(msg.get("data", "").encode("utf-8"))
+                except Exception:
                     pass
 
             elif mtype == "resize":
                 sess.cols = msg.get("cols", 80)
                 sess.rows = msg.get("rows", 24)
                 try:
-                    _set_pty_size(sess.master_fd, sess.rows, sess.cols)
-                    os.kill(sess.pid, signal.SIGWINCH)
-                except (OSError, ProcessLookupError):
+                    sess.proc.set_size(sess.rows, sess.cols)
+                except Exception:
                     pass
 
             elif mtype == "close":
