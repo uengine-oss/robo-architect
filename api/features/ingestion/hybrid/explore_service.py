@@ -25,6 +25,7 @@ from api.features.ingestion.hybrid.contracts import (
     BpmProcess,
     BpmSkeleton,
     BpmTaskDTO,
+    GlossaryTerm,
     RuleDTO,
 )
 from api.features.ingestion.hybrid.mapper.agentic_retriever import run_agentic_retrieval
@@ -52,6 +53,39 @@ Sink = Callable[[dict], Awaitable[None]]
 # =============================================================================
 # Snapshot helpers — turn a session_id into the DTOs explore code expects
 # =============================================================================
+
+
+def _load_glossary(session_id: str) -> list[GlossaryTerm]:
+    """§036 — 세션에 저장된 glossary(GlossaryTerm 노드)를 로드. 없으면 빈 목록.
+
+    빈 목록이면 run_agentic_retrieval이 정규화를 미적용(기존 동작)하므로 안전.
+    """
+    from api.features.ingestion.hybrid.ontology.schema import L_GLOSSARY_TERM
+
+    out: list[GlossaryTerm] = []
+    try:
+        with get_session() as s:
+            for r in s.run(
+                f"MATCH (g:{L_GLOSSARY_TERM} {{session_id: $sid}}) RETURN g ORDER BY g.term",
+                sid=session_id,
+            ):
+                g = dict(r["g"])
+                term = (g.get("term") or "").strip()
+                if not term:
+                    continue
+                out.append(GlossaryTerm(
+                    term=term,
+                    aliases=list(g.get("aliases") or []),
+                    code_candidates=list(g.get("code_candidates") or []),
+                    source=g.get("source") or "llm",
+                ))
+    except Exception as e:  # noqa: BLE001 — glossary 부재/오류는 정규화 미적용으로 폴백
+        SmartLogger.log(
+            "WARN", "Glossary load failed (continuing without normalization)",
+            category="ingestion.hybrid.explore.glossary",
+            params={"session_id": session_id, "error": str(e)},
+        )
+    return out
 
 
 def _build_session_dtos(session_id: str) -> tuple[
@@ -175,6 +209,9 @@ async def explore_task(
     task_dto = task_dto_by_id.get(task_id)
     actors = process_actors.get(process.id, [])
     contexts = build_rule_contexts(rules)
+    # §036 — 이 세션 ingestion 때 추출·저장된 glossary를 retrieval 임베딩 정규화에 주입.
+    # 평문 활동↔개발자 약어 룰의 어휘갭을 메워 어휘갭으로 탈락하던 룰을 회복(floor·예산 불변).
+    glossary = _load_glossary(session_id)
 
     try:
         retrieval = await run_agentic_retrieval(
@@ -184,6 +221,7 @@ async def explore_task(
             # gate at ingestion time; re-evaluating from this single task's
             # module score would falsely reject legitimate tasks (§8 P1).
             skip_process_gate=True,
+            glossary=glossary,
         )
     except Exception as e:
         await sink({"type": "AgentError", "task_id": task_id, "error": str(e)})
