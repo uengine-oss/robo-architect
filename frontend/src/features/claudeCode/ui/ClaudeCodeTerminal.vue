@@ -23,10 +23,32 @@ const props = defineProps({
   sessionId: {
     type: String,
     default: ''
+  },
+  // Whether this terminal is the visible/active session. Only the active
+  // terminal emits `activity` (the file-tree refresh backstop) so hidden
+  // background sessions (other proposals) don't trigger refreshes.
+  isActive: {
+    type: Boolean,
+    default: true
   }
 })
 
-const emit = defineEmits(['workdir-picked'])
+const emit = defineEmits(['workdir-picked', 'activity'])
+
+// Filesystem-refresh backstop: when this (active) terminal's output goes quiet
+// after a burst, claude has likely just finished writing files. The SSE watcher
+// covers most cases; this debounced signal catches anything it missed (e.g. the
+// brief window before the stream connects). Resets on each chunk, so it fires
+// ~1s AFTER output settles, not during streaming.
+let activityTimer = null
+function notifyActivity() {
+  if (!props.isActive) return
+  if (activityTimer) clearTimeout(activityTimer)
+  activityTimer = setTimeout(() => {
+    activityTimer = null
+    emit('activity')
+  }, 1000)
+}
 
 const themeStore = useThemeStore()
 
@@ -218,6 +240,7 @@ function connect(workdir) {
   ws.onmessage = (event) => {
     if (terminal) {
       queueTerminalWrite(event.data)
+      notifyActivity()
     }
   }
 
@@ -338,6 +361,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (activityTimer) {
+    clearTimeout(activityTimer)
+    activityTimer = null
+  }
   if (writeRaf) {
     cancelAnimationFrame(writeRaf)
     writeRaf = null

@@ -330,8 +330,11 @@ function closeInspector() {
         </button>
       </div>
 
-      <!-- Event Storming promote — floating controller (BPMN tab only) -->
+      <!-- Event Storming promote — floating controller (BPMN tab only).
+           BPM(A2A 생성분)이 있을 때만 노출. ES 승격은 BPM tasks가 전제(promote-to-es는
+           BPM 없으면 400)이므로, 문서 업로드 BPM이 없으면 버튼을 숨긴다. -->
       <button
+        v-if="store.hybridActive || store.hybridProcessTrees.length > 0"
         class="es-promote-fab"
         :class="{ 'is-error': !!esError }"
         :disabled="esPromoting"

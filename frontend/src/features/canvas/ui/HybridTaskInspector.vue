@@ -2,12 +2,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useDebugMode } from '@/app/debug'
+import BpmTaskTraceModal from '@/features/canvas/ui/BpmTaskTraceModal.vue'
 
 const emit = defineEmits(['close'])
 const store = useBpmnStore()
 const { isDebug } = useDebugMode()
 
 const task = computed(() => store.selectedHybridTask)
+
+// 039 US2 — "포함 요소 / 설계 궤적" 모달. 읽기 전용 오버레이로, BPM 캔버스를 건드리지 않는다.
+const showTrace = ref(false)
 
 // ---------------------------------------------------------------------------
 // Agent Reasoning — all SSE state lives in the store (see bpmn.store.js).
@@ -252,6 +256,20 @@ function roleMeta(role) {
       <span class="hti-stat"><b>{{ conditions.length }}</b> Conditions</span>
       <span v-if="isDebug" class="hti-stat hti-stat--debug" title="?debug=1 활성화됨 — 편집 UI 표시 중">DEBUG</span>
     </div>
+
+    <!-- 039 US2 — 이 task에 귀속된 UI~Command~Event 체인을 모달로 열람(캔버스 불변) -->
+    <div class="hti-trace-cta">
+      <button class="hti-trace-btn" @click="showTrace = true" title="이 task에 포함된 UI·Command·Event 흐름 보기">
+        🔎 포함 요소 · 설계 궤적 보기
+      </button>
+    </div>
+
+    <BpmTaskTraceModal
+      :visible="showTrace"
+      :task-id="task?.id"
+      :task-name="task?.name"
+      @close="showTrace = false"
+    />
 
     <div class="hti-body">
       <!-- Agent Reasoning — live stream of the hierarchical retrieval -->
@@ -689,6 +707,22 @@ function roleMeta(role) {
   font-weight: 700;
   margin-right: 3px;
 }
+/* 039 US2 — 포함 요소 모달 진입 버튼 */
+.hti-trace-cta {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.06));
+}
+.hti-trace-btn {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border, rgba(255,255,255,0.12));
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  color: var(--color-text-bright);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+.hti-trace-btn:hover { background: rgba(255,255,255,0.08); }
 
 /* Body -------------------------------------------------- */
 .hti-body {

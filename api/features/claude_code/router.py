@@ -12,17 +12,22 @@ import asyncio
 import io
 import json
 import os
-import signal
-import struct
 import time
 import zipfile
 from typing import Any
 
 import logging
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from api.features.claude_code.pty_backend import (
+    PtyProcess,
+    pty_supported,
+    spawn_pty,
+    unsupported_reason,
+)
 from api.features.claude_code.workspace_fs import (
     delete_entry,
     list_directory,
@@ -49,13 +54,6 @@ from api.features.prd_generation.prd_api_contracts import PRDGenerationRequest
 router = APIRouter(prefix="/api/claude-code", tags=["claude-code"])
 
 logger = logging.getLogger(__name__)
-
-IS_UNIX_PTY_SUPPORTED = os.name == "posix"
-
-if IS_UNIX_PTY_SUPPORTED:
-    import fcntl
-    import pty
-    import termios
 
 
 # ─── Directory browsing ───
@@ -192,6 +190,122 @@ async def workspace_move_entry(req: MoveRequest):
         from_path=req.from_path,
         to_path=req.to_path,
         moved_type=moved_type,
+    )
+
+
+# ─── Live filesystem change stream (SSE) ───
+#
+# Pushes "these directories changed" hints to the IDE file tree so edits made by
+# the embedded `claude` CLI (or any external tool) appear without the manual
+# refresh button. Backed by watchfiles (Rust `notify` → inotify / FSEvents /
+# ReadDirectoryChangesW, with a polling fallback) so it works on Win/Mac/Linux
+# with no per-user setup. The frontend reloads only the directories it currently
+# has expanded, so the browser cost stays bounded regardless of repo size.
+
+
+def _build_workspace_watch_filter():
+    """A watchfiles filter that drops noise the tree never shows.
+
+    Extends ``DefaultFilter`` (already ignores ``.git`` / ``node_modules`` /
+    ``__pycache__`` / ``.venv`` / build caches …) with proposal worktrees and
+    common JS/Java build outputs, and skips the ``<base>.tmp.<rand>`` scratch
+    files our own atomic writer creates (see ``workspace_fs.write_text_file_atomic``).
+    """
+    from watchfiles import DefaultFilter
+
+    # NOTE: passing ignore_dirs= to Default.__init__ REPLACES the built-in set
+    # (it does not merge), so we must union our extras with DefaultFilter's
+    # defaults (.git / node_modules / __pycache__ / .venv / …) explicitly.
+    _EXTRA_IGNORE_DIRS = (
+        ".sandbox", "dist", "build", "out",
+        ".next", ".nuxt", ".output", "target", ".gradle",
+    )
+
+    class _WorkspaceFilter(DefaultFilter):
+        def __init__(self) -> None:
+            super().__init__(
+                ignore_dirs=(*DefaultFilter.ignore_dirs, *_EXTRA_IGNORE_DIRS)
+            )
+
+        def __call__(self, change, path: str) -> bool:  # noqa: D401
+            if not super().__call__(change, path):
+                return False
+            # Atomic-write scratch files churn on every save — never surface them.
+            return ".tmp." not in os.path.basename(path)
+
+    return _WorkspaceFilter()
+
+
+def _rel_parent_dir(real_root: str, path: str) -> str | None:
+    """Map a changed path to the workspace-relative directory whose *listing*
+    changes (i.e. the changed entry's parent), using ``/`` separators to match
+    the frontend tree's path keys. Returns ``""`` for top-level changes and
+    ``None`` for the root itself or anything outside it.
+    """
+    try:
+        rel = os.path.relpath(path, real_root)
+    except ValueError:
+        return None  # different drive on Windows
+    if rel == os.curdir or rel.startswith(".."):
+        return None
+    rel = rel.replace(os.sep, "/")
+    return rel.rsplit("/", 1)[0] if "/" in rel else ""
+
+
+@router.get("/fs-events")
+async def workspace_fs_events(root: str, request: Request):
+    """Server-Sent Events stream of directory-change hints under ``root``.
+
+    Each ``data:`` frame is ``{"dirs": ["", "specs/039", ...]}`` — the set of
+    workspace-relative directories whose contents changed since the last frame.
+    Comment frames (``: ping``) are heartbeats. The stream ends when the client
+    disconnects (Starlette cancels the generator).
+    """
+    from fastapi import HTTPException
+    from watchfiles import awatch
+
+    real_root = os.path.realpath(os.path.expanduser(root))
+    if not os.path.isdir(real_root):
+        raise HTTPException(status_code=400, detail="root is not a directory")
+
+    watch_filter = _build_workspace_watch_filter()
+
+    async def event_stream():
+        # Open the stream immediately so the browser's EventSource fires `open`.
+        yield ": connected\n\n"
+        try:
+            async for changes in awatch(
+                real_root,
+                watch_filter=watch_filter,
+                recursive=True,
+                yield_on_timeout=True,   # periodic empty batch → heartbeat
+                ignore_permission_denied=True,
+            ):
+                if await request.is_disconnected():
+                    break
+                if not changes:
+                    yield ": ping\n\n"
+                    continue
+                dirs = set()
+                for _change, path in changes:
+                    rel_dir = _rel_parent_dir(real_root, path)
+                    if rel_dir is not None:
+                        dirs.add(rel_dir)
+                if dirs:
+                    yield f"data: {json.dumps({'dirs': sorted(dirs)})}\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("claude_code.workspace.fs_events_error")
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # disable proxy buffering (nginx)
+        },
     )
 
 
@@ -601,14 +715,6 @@ def _cleanup_deprecated_local_paths(project_path: str, bcs: list, config) -> lis
 # ─── PTY Terminal WebSocket ───
 
 
-def _set_pty_size(fd: int, rows: int, cols: int) -> None:
-    """Send TIOCSWINSZ ioctl to resize the PTY."""
-    if not IS_UNIX_PTY_SUPPORTED:
-        raise RuntimeError("PTY terminal is only supported on POSIX hosts.")
-    winsize = struct.pack("HHHH", rows, cols, 0, 0)
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
-
-
 # ─── PTY session registry (survives ws disconnect / browser refresh) ───
 # Each session keeps a `claude` PTY alive INDEPENDENT of any single WebSocket so a
 # page reload (or tab switch) can re-attach — replaying scrollback — instead of
@@ -622,10 +728,9 @@ _RING_BYTES = 256 * 1024            # per-session scrollback replay buffer
 
 
 class _PtySession:
-    def __init__(self, session_id: str, pid: int, master_fd: int, cwd: str | None):
+    def __init__(self, session_id: str, proc: PtyProcess, cwd: str | None):
         self.id = session_id
-        self.pid = pid
-        self.master_fd = master_fd
+        self.proc = proc
         self.cwd = cwd
         self.buffer = bytearray()       # bounded scrollback (raw bytes)
         self.ws: WebSocket | None = None  # currently-attached WebSocket
@@ -663,16 +768,8 @@ def _utf8_safe_split(combined: bytes) -> tuple[bytes, bytes]:
 
 def _kill_pty(sess: _PtySession) -> None:
     try:
-        os.close(sess.master_fd)
-    except OSError:
-        pass
-    try:
-        os.kill(sess.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    try:
-        os.waitpid(sess.pid, os.WNOHANG)
-    except ChildProcessError:
+        sess.proc.terminate()
+    except Exception:
         pass
 
 
@@ -702,20 +799,20 @@ async def _session_reader(sess: _PtySession) -> None:
     while sess.alive:
         await asyncio.sleep(0.02)
         chunks: list[bytes] = []
+        drained = 0  # bound work per tick so high-output sessions still yield
         try:
-            while True:
+            while drained < _RING_BYTES:
                 try:
-                    data = os.read(sess.master_fd, 16384)
-                    if not data:
-                        sess.alive = False
-                        break
-                    chunks.append(data)
-                except BlockingIOError:
+                    data = sess.proc.read_nonblocking(16384)
+                except EOFError:
+                    sess.alive = False
                     break
-                except OSError as e:
-                    if e.errno == 5:  # EIO — child exited
-                        sess.alive = False
+                except Exception:
                     break
+                if not data:
+                    break  # idle — nothing available right now
+                chunks.append(data)
+                drained += len(data)
         except Exception:
             pass
 
@@ -745,50 +842,6 @@ async def _session_reader(sess: _PtySession) -> None:
     if _sessions.get(sess.id) is sess:
         _sessions.pop(sess.id, None)
     _kill_pty(sess)
-
-
-def _spawn_pty(cwd: str | None, permission_mode: str) -> tuple[int, int]:
-    """Fork a `claude` PTY. Returns (pid, master_fd) with master_fd non-blocking."""
-    master_fd, slave_fd = pty.openpty()
-
-    env = os.environ.copy()
-    env["TERM"] = "xterm-256color"
-    env["COLORTERM"] = "truecolor"
-
-    pid = os.fork()
-    if pid == 0:
-        # ─── Child ───
-        os.close(master_fd)
-        os.setsid()
-        if cwd:
-            try:
-                os.chdir(cwd)
-            except OSError:
-                pass
-        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-        os.dup2(slave_fd, 0)
-        os.dup2(slave_fd, 1)
-        os.dup2(slave_fd, 2)
-        if slave_fd > 2:
-            os.close(slave_fd)
-        ALLOWED_PERMISSION_MODES = {
-            "acceptEdits", "auto", "bypassPermissions",
-            "default", "dontAsk", "plan",
-        }
-        claude_argv = ["claude"]
-        if permission_mode in ALLOWED_PERMISSION_MODES:
-            claude_argv += ["--permission-mode", permission_mode]
-        try:
-            os.execvpe("claude", claude_argv, env)
-        except OSError:
-            shell = os.environ.get("SHELL", "/bin/zsh")
-            os.execvpe(shell, [shell], env)
-
-    # ─── Parent ───
-    os.close(slave_fd)
-    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-    return pid, master_fd
 
 
 @router.delete("/terminal/session")
@@ -839,12 +892,12 @@ async def terminal_ws(
         prompt under each invocation; for human use the default is
         recommended.
     """
-    if not IS_UNIX_PTY_SUPPORTED:
+    if not pty_supported():
         await websocket.accept()
         await websocket.send_json(
             {
                 "type": "error",
-                "message": "Claude Code terminal is only supported on POSIX hosts.",
+                "message": unsupported_reason(),
             }
         )
         await websocket.close(code=1011)
@@ -897,8 +950,8 @@ async def terminal_ws(
                 except Exception:
                     pass
                 return
-        pid, master_fd = _spawn_pty(cwd, permission_mode)
-        sess = _PtySession(sid, pid, master_fd, cwd)
+        proc = spawn_pty(cwd, permission_mode)
+        sess = _PtySession(sid, proc, cwd)
         sess.ws = websocket
         _sessions[sid] = sess
         sess.reader_task = asyncio.create_task(_session_reader(sess))
@@ -912,17 +965,16 @@ async def terminal_ws(
 
             if mtype == "input":
                 try:
-                    os.write(sess.master_fd, msg.get("data", "").encode("utf-8"))
-                except OSError:
+                    sess.proc.write(msg.get("data", "").encode("utf-8"))
+                except Exception:
                     pass
 
             elif mtype == "resize":
                 sess.cols = msg.get("cols", 80)
                 sess.rows = msg.get("rows", 24)
                 try:
-                    _set_pty_size(sess.master_fd, sess.rows, sess.cols)
-                    os.kill(sess.pid, signal.SIGWINCH)
-                except (OSError, ProcessLookupError):
+                    sess.proc.set_size(sess.rows, sess.cols)
+                except Exception:
                     pass
 
             elif mtype == "close":

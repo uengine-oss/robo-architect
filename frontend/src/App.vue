@@ -3,7 +3,8 @@ import { onMounted, onUnmounted, ref, computed, markRaw, provide, watch, nextTic
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
-import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
+// 043 — 'Big picture' 뷰 비활성화: import 제거(파일은 보존).
+// import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
 import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
 import EventModelingPanel from '@/features/eventModeling/ui/EventModelingPanel.vue'
 import RequirementsPanel from '@/features/requirements/ui/RequirementsPanel.vue'
@@ -83,7 +84,9 @@ provide('openClaudeCode', (workdir, command = null, opts = {}) => {
 })
 
 // Map tab names to components
-// 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 tabComponents 에 유지).
+// 043 — 'Big picture' 비활성화(탭 매핑 제거). 'Process'(BPM)·'Processes'(Event Modeling)는
+// 상단에선 하나의 'Process' 탭(서브토글)로 보이되 activeTab 값은 둘 유지 → 네비/캔버스/상단바
+// 등 activeTab 기준 동작이 그대로 전환된다(TopBar 서브토글이 'Process'⇄'Processes'로 바꿈).
 const tabComponents = {
   'Analysis': markRaw(AnalysisPanel),
   'Changes': markRaw(ChangesRootPanel),
@@ -91,7 +94,6 @@ const tabComponents = {
   'Stories': markRaw(RequirementsPanel),
   'Process': markRaw(BpmnPanel),
   'Processes': markRaw(EventModelingPanel),
-  'Big picture': markRaw(BigPicturePanel),
   'Design': markRaw(CanvasWorkspace),
   'Data': markRaw(AggregatePanel),
   'Code': markRaw(ClaudeCodeWorkspace),

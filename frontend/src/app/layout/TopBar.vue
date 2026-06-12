@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
-import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
+// 043 — 'Big picture' 뷰 비활성화: store import 제거.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
@@ -23,11 +23,12 @@ const emit = defineEmits(['update:activeTab'])
 // 'Process' 탭 — spec 034 WIP 커밋(de030de) 이 "당분간 숨김" 으로 빼뒀던 것 복원.
 // BPMN(Process) 캔버스는 Hybrid 인제션 → ES 승격 흐름의 핵심 진입점이라
 // 메뉴에서 빼면 사용자가 진입할 길이 사라짐.
-// 'Big picture'·'Changes' 탭은 UI에서 숨김 (컴포넌트·기능은 App.vue tabComponents 에 유지).
-const tabs = ['Proposals', 'Analysis', 'Stories', 'Process', 'Processes', 'Event Modeling', 'Design', 'Data', 'Code']
+// 043 — 'Process'(BPM)·'Processes'(Event Modeling)를 하나의 'Process' 탭(서브토글)로 통합,
+// 'Big picture' 제거. 'Changes' 탭은 UI에서 숨김(App.vue tabComponents 에 유지).
+const tabs = ['Proposals', 'Analysis', 'Stories', 'Process', 'Design', 'Data', 'Code']
 
 const canvasStore = useCanvasStore()
-const bigPictureStore = useBigPictureStore()
+// 043 — 'Big picture' 뷰 비활성화: store 사용 제거.
 const aggregateViewerStore = useAggregateViewerStore()
 const bpmnStore = useBpmnStore()
 const eventModelingStore = useEventModelingStore()
@@ -73,21 +74,41 @@ function selectTab(tab) {
             v-for="tab in tabs"
             :key="tab"
             class="top-bar__tab"
-            :class="{ 'is-active': activeTab === tab }"
+            :class="{ 'is-active': activeTab === tab || (tab === 'Process' && (activeTab === 'Processes' || activeTab === 'Event Modeling')) }"
             @click="selectTab(tab)"
           >
             {{ tab }}
           </button>
         </nav>
+        <!-- 043 — Process 영역의 BPM⇄Event Modeling 서브토글. activeTab을 'Process'(BPM)⇄
+             'Processes'(Event Modeling)로 바꿔 네비/캔버스/상단바가 함께 전환된다. -->
+        <div v-if="activeTab === 'Process' || activeTab === 'Processes' || activeTab === 'Event Modeling'" class="top-bar__subtoggle">
+          <button
+            class="top-bar__seg"
+            :class="{ 'is-active': activeTab === 'Process' }"
+            @click="selectTab('Process')"
+            title="사람-대면 업무 흐름(BPM)"
+          >BPM</button>
+          <button
+            class="top-bar__seg"
+            :class="{ 'is-active': activeTab === 'Processes' || activeTab === 'Event Modeling' }"
+            @click="selectTab('Processes')"
+            title="UI + 시스템 내부 흐름(Event Modeling)"
+          >Event Modeling</button>
+        </div>
       </div>
     </div>
     
     <div class="top-bar__center">
-      <!-- Process Panel Status -->
-      <div v-if="activeTab === 'Process'" class="top-bar__status">
-        <span><strong>{{ bpmnStore.renderedFlows.length }}</strong> flows</span>
+      <!-- Process(BPM) Panel Status — A2A BPM(hybrid) 기준. 011 process-flows 카운트 제거.
+           BPM이 없으면 상태 표시 안 함(빈 BPM 탭과 일관). -->
+      <div
+        v-if="activeTab === 'Process' && (bpmnStore.hybridActive || bpmnStore.hybridProcessTrees.length)"
+        class="top-bar__status"
+      >
+        <span><strong>{{ bpmnStore.hybridProcessTrees.length }}</strong> processes</span>
         <span class="top-bar__status-dot">•</span>
-        <span><strong>{{ bpmnStore.processFlows.length }}</strong> available</span>
+        <span><strong>{{ bpmnStore.hybridTasks.length }}</strong> tasks</span>
       </div>
 
       <!-- Processes Panel Status -->
@@ -106,15 +127,8 @@ function selectTab(tab) {
         <span><strong>{{ canvasStore.edges.length }}</strong> connections</span>
       </div>
       
-      <!-- Big picture Panel Status -->
-      <div v-else-if="activeTab === 'Big picture'" class="top-bar__status">
-        <span><strong>{{ bigPictureStore.filteredSwimlanes.length }}</strong> BC</span>
-        <span class="top-bar__status-dot">•</span>
-        <span><strong>{{ bigPictureStore.totalEvents }}</strong> Events</span>
-        <!-- <span class="top-bar__status-dot">•</span> -->
-        <!-- <span><strong>{{ bigPictureStore.crossBcConnections.length }}</strong> Cross-BC</span> -->
-      </div>
-      
+      <!-- 043 — 'Big picture' Panel Status 제거(뷰 비활성화) -->
+
       <!-- Data Panel Status -->
       <div v-else-if="activeTab === 'Data'" class="top-bar__status">
         <span><strong>{{ aggregateViewerStore.filteredBoundedContexts.length }}</strong> BC</span>
@@ -234,6 +248,30 @@ function selectTab(tab) {
   font-weight: 700;
   box-shadow: 0 2px 8px rgba(34, 139, 230, 0.3);
 }
+
+/* 043 — Process 영역 BPM⇄Event Modeling 서브토글 */
+.top-bar__subtoggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--color-bg-tertiary);
+}
+.top-bar__seg {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-light);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.top-bar__seg:hover:not(.is-active) { color: var(--color-text); background: rgba(255,255,255,0.05); }
+.top-bar__seg.is-active { background: var(--color-accent); color: #fff; font-weight: 700; }
 
 .top-bar__center {
   flex: 1;
