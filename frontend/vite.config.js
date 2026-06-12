@@ -94,7 +94,20 @@ export default defineConfig({
     })
   ],
   build: {
-    target: 'esnext'
+    target: 'esnext',
+    rollupOptions: {
+      output: {
+        // vue-stream-markdown 은 rolldown 으로 빌드돼 공통 런타임 헬퍼를 여러 조각이
+        // 공유한다. @originjs/vite-plugin-federation 이 onlyExplicitManualChunks 를
+        // 켜면서 그 헬퍼가 index 본체로 끌려가 `index → node-list → index` 순환 청크가
+        // 생기고, node-list 실행 시 헬퍼(j)가 아직 undefined → "j is not a function" 으로
+        // 앱 전체가 검은 화면이 된다(Electron/build 한정, dev 는 pre-bundle 로 무사).
+        // → 이 패키지 전체를 한 청크로 묶어 헬퍼를 동거시켜 순환을 끊는다.
+        manualChunks(id) {
+          if (id.includes('vue-stream-markdown')) return 'vue-stream-markdown'
+        }
+      }
+    }
   },
   resolve: {
     alias: {
