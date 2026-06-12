@@ -25,7 +25,17 @@ onMounted(async () => {
     //              그 경로를 직접 분석(경로 모드). 없으면(브라우저) analyzer 는 업로드 모드로 동작.
     let projectRoot
     try { projectRoot = localStorage.getItem('claude_code_workspace_root') || undefined } catch { projectRoot = undefined }
-    unmountRemote = remote.default.mount(hostEl.value, { embedded: true, projectRoot })
+
+    // neo4j: 런처에서 고른 활성 Neo4j 연결(키체인 비번 포함)을 mount 직전 1회 조회 →
+    //        analyzer 가 X-Neo4j-* 헤더로 백엔드(analyzer/catalog)에 override. 데스크톱 외(브라우저)
+    //        에선 bridge 부재 → undefined → 백엔드 env(ROBO_NEO4J_*) 폴백. 비번은 헤더로만 흘리고 저장 X.
+    let neo4j
+    try {
+      const r = await window.desktop?.connections?.resolveActiveForBackend?.()
+      if (r?.ok && r.data) neo4j = r.data
+    } catch { neo4j = undefined }
+
+    unmountRemote = remote.default.mount(hostEl.value, { embedded: true, projectRoot, neo4j })
   } catch (err) {
     loadError.value = err?.message || String(err)
   } finally {

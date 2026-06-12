@@ -38,6 +38,7 @@ import type {
 } from "../shared/ipc-contract";
 // 032: extend window.desktop with launcher channels.
 import type {
+  ActiveBackendConnection,
   ConnectionsDeleteInput,
   ConnectionsSaveInput,
   ConnectionsUpdateInput,
@@ -84,6 +85,8 @@ const launcherBridge: LauncherDesktopBridge = {
       invoke<SavedConnection>("connections:update", input),
     delete: (input: ConnectionsDeleteInput) =>
       invoke<{ ok: true }>("connections:delete", input),
+    resolveActiveForBackend: () =>
+      invoke<ActiveBackendConnection | null>("connections:resolveActiveForBackend"),
     discoverNeo4jDesktop: () =>
       invoke<DiscoveredConnection[]>("connections:discoverNeo4jDesktop"),
     probeStatus: (input: ProbeStatusInput) =>
