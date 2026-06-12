@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import path from 'path'
 
 /**
- * §039 US2 — BPM task "포함 요소 / 설계 궤적" 모달 캡처.
+ * §042 US2 — BPM task "포함 요소 / 설계 궤적" 모달 캡처.
  *
  * BPM 뷰에서 task를 선택 → 인스펙터의 "포함 요소" 버튼 → 모달에 그 task의
  * UI·Command·Event 체인이 event-modeling 스티커로 렌더되는 장면. 모달을 닫으면

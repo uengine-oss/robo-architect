@@ -1,12 +1,12 @@
 # Tasks: BPM·Event Modeling 단일 Process 탭 + task=UI 일관성
 
-**Feature**: `042-task-ui-unification` | **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
+**Feature**: `043-task-ui-unification` | **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 
 **Input**: research.md(D1~D6), data-model.md(스키마 0건), contracts/(2), quickstart.md(Q1~Q6)
 
 **Tests**: spec 요청 — pytest 계약/정합 + Playwright(탭 토글·EM 형식) + 매뉴얼(프로젝트 관행).
 
-**전제**: 프런트(5173)+백엔드(8000)+neo4j. 골든 픽스처(spec 036 input_resource) **재인제스천** 필요(인제스천 로직 변경). spec-039 산출물(bpm-task trace 라우트·Big picture 제거)을 **재사용·계승**.
+**전제**: 프런트(5173)+백엔드(8000)+neo4j. 골든 픽스처(spec 036 input_resource) **재인제스천** 필요(인제스천 로직 변경). spec-042 산출물(bpm-task trace 라우트·Big picture 제거)을 **재사용·계승**.
 
 **핵심 제약**: 신규 노드 라벨/관계 **0건**(`ATTACHED_TO.role` 속성만) · A2A BPM·Command/Event task귀속 **불변** · LLM 판정은 `get_llm`+propose(통합 뷰 노출) · 인제스천 변경=재인제스천.
 
@@ -14,8 +14,8 @@
 
 ## Phase 1: Setup
 
-- [X] T001 검증 환경 확인 — 골든 세션 적재 상태(`MATCH (t:BpmTask) RETURN count(t)`), 재인제스천 경로(`/api/ingest/hybrid`) 동작, `specs/042-task-ui-unification/manual/` 디렉터리 생성.
-- [X] T002 [P] 베이스라인 스냅샷 — 재인제스천 *전* 그래프 통계(task당 UI 수, ReadModel UI 수, Command/Event task_id 수)를 `specs/042-task-ui-unification/manual/baseline.json`으로 기록(SC-002/003/005 비교 기준).
+- [X] T001 검증 환경 확인 — 골든 세션 적재 상태(`MATCH (t:BpmTask) RETURN count(t)`), 재인제스천 경로(`/api/ingest/hybrid`) 동작, `specs/043-task-ui-unification/manual/` 디렉터리 생성.
+- [X] T002 [P] 베이스라인 스냅샷 — 재인제스천 *전* 그래프 통계(task당 UI 수, ReadModel UI 수, Command/Event task_id 수)를 `specs/043-task-ui-unification/manual/baseline.json`으로 기록(SC-002/003/005 비교 기준).
 
 ---
 
@@ -76,12 +76,12 @@
 
 ## Phase 6: User Story 4 — Event Modeling 형식 경량 렌더러 (Priority: P2)
 
-**Goal**: task 포함요소를 가로 레인(UI→Command→Event→ReadModel)으로. 039 trace 데이터 재사용.
+**Goal**: task 포함요소를 가로 레인(UI→Command→Event→ReadModel)으로. 042 trace 데이터 재사용.
 
 **Independent Test (Q5)**: Process 탭 task 포함요소 = 가로 레인 형식, requirements 설계-궤적은 기존 컬럼 형식 유지.
 
-- [X] T016 [US4] EventModelingLane 렌더러 — `frontend/src/features/canvas/ui/EventModelingLane.vue` 신규: spec-039 `GET /api/graph/bpm-task/{id}/design-trace`의 `{nodes, relationships}`를 입력받아 **가로 레인**(타입별 좌→우 UI/Command/Event/ReadModel) 레이아웃. 039 노드 컴포넌트 재사용.
-- [X] T017 [US4] Process 뷰/모달에 EM 형식 연결 — 039의 `BpmTaskTraceModal`(또는 ProcessPanel 내 포함요소 뷰)이 `DesignTraceCanvas` 대신 `EventModelingLane`을 쓰도록 전환. **requirements 탭 `DesignTraceCanvas`는 불변**.
+- [X] T016 [US4] EventModelingLane 렌더러 — `frontend/src/features/canvas/ui/EventModelingLane.vue` 신규: spec-042 `GET /api/graph/bpm-task/{id}/design-trace`의 `{nodes, relationships}`를 입력받아 **가로 레인**(타입별 좌→우 UI/Command/Event/ReadModel) 레이아웃. 042 노드 컴포넌트 재사용.
+- [X] T017 [US4] Process 뷰/모달에 EM 형식 연결 — 042의 `BpmTaskTraceModal`(또는 ProcessPanel 내 포함요소 뷰)이 `DesignTraceCanvas` 대신 `EventModelingLane`을 쓰도록 전환. **requirements 탭 `DesignTraceCanvas`는 불변**.
 - [X] T018 [P] [US4] 형식 회귀 확인 — requirements 설계-궤적 형식 회귀 0(FR-007), Process 포함요소만 레인 형식.
 
 **Checkpoint US4**: EM 형식 표현 완료.
@@ -92,10 +92,10 @@
 
 전제: 앱 구동 + 골든 재인제스천 세션.
 
-- [X] T019 [P] Playwright 설정 — `specs/042-task-ui-unification/manual/artifacts/playwright.config.ts`(039 패턴 복제: baseURL env, workers:1, 1440×900, testMatch `playwright-042-`).
+- [X] T019 [P] Playwright 설정 — `specs/043-task-ui-unification/manual/artifacts/playwright.config.ts`(042 패턴 복제: baseURL env, workers:1, 1440×900, testMatch `playwright-042-`).
 - [X] T020 Playwright 스펙(US1/US4) — `playwright-042-process-tab.spec.ts`: 상단 탭에 'Event Modeling' 부재 확인 → Process 탭 BPM⇄EM 토글 캡처(`01_no_em_tab`, `02_bpm`, `03_em_toggle`) → task 포함요소 EM 가로 레인 캡처(`04_em_lane`).
-- [X] T021 [P] 그래프 검증 스크립트 — `specs/042-task-ui-unification/manual/check_task_ui.py`: 재인제스천 후 task:UI 1:1, ReadModel role 분포, Command/Event task_id, 신규 라벨/관계 0(`db.labels()`/`db.relationshipTypes()` 전후 비교)을 JSON 출력(Q1·Q2·Q3·Q6).
-- [X] T022 매뉴얼 본문 — `specs/042-task-ui-unification/manual/manual.md`(한국어): task=UI 개요(왜·무엇) + 단일 Process 탭/토글 + EM 형식 + 재인제스천 안내 + Playwright 스크린샷 + before/after 통계표(baseline vs 재인제스천). (quickstart 전체)
+- [X] T021 [P] 그래프 검증 스크립트 — `specs/043-task-ui-unification/manual/check_task_ui.py`: 재인제스천 후 task:UI 1:1, ReadModel role 분포, Command/Event task_id, 신규 라벨/관계 0(`db.labels()`/`db.relationshipTypes()` 전후 비교)을 JSON 출력(Q1·Q2·Q3·Q6).
+- [X] T022 매뉴얼 본문 — `specs/043-task-ui-unification/manual/manual.md`(한국어): task=UI 개요(왜·무엇) + 단일 Process 탭/토글 + EM 형식 + 재인제스천 안내 + Playwright 스크린샷 + before/after 통계표(baseline vs 재인제스천). (quickstart 전체)
 - [X] T023 [P] manual.docx 변환 — `manual.md`→`manual.docx`(pandoc, 스크린샷 포함).
 - [ ] T024 quickstart 전수 — Q1~Q6 통과 기록 + Out-of-band(신규 스키마 0, propose 노출) 확인을 manual.md에 첨부.
 
@@ -109,11 +109,11 @@ Phase 1 (T001, T002∥)
         ├─> Phase 3 US2 (T006→T007→T008∥→T009)   🎯 인제스천 MVP
         └─> Phase 4 US3 (T010→T011→T012∥)          # US2 헬퍼 공유, US2 후
   ┌─> Phase 5 US1 (T013→T014→T015)                  # 프런트, 인제스천과 독립
-  └─> Phase 6 US4 (T016→T017→T018∥)                 # 039 trace 재사용, US1과 병렬 가능
+  └─> Phase 6 US4 (T016→T017→T018∥)                 # 042 trace 재사용, US1과 병렬 가능
 Phase 7 Polish (T019∥→T020, T021∥, T022→T023∥, T024)  # 전 US 후
 ```
 
-**Story 독립성**: US1(탭)·US4(렌더러)는 프런트로 인제스천(US2/US3)과 **독립 병렬**. US2→US3는 헬퍼 공유로 순차. US4는 039 trace 라우트(기존)에 의존하므로 인제스천 재실행 없이도 개발 가능.
+**Story 독립성**: US1(탭)·US4(렌더러)는 프런트로 인제스천(US2/US3)과 **독립 병렬**. US2→US3는 헬퍼 공유로 순차. US4는 042 trace 라우트(기존)에 의존하므로 인제스천 재실행 없이도 개발 가능.
 
 ## Parallel Opportunities
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""task=UI 검증 하니스 (spec 042 — T021/Q1·Q2·Q3·Q6).
+"""task=UI 검증 하니스 (spec 043 — T021/Q1·Q2·Q3·Q6).
 
 재인제스천 전/후 그래프에서 task=UI 불변식 충족도를 측정해 JSON 출력.
   python check_task_ui.py > before.json   # 042 배포 전(기존 Command당 UI)

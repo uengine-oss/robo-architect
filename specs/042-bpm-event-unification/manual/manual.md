@@ -1,4 +1,4 @@
-# BPM ↔ Event Modeling 통합 — 사용 매뉴얼 (spec 039)
+# BPM ↔ Event Modeling 통합 — 사용 매뉴얼 (spec 042)
 
 ## 1. 무엇이 바뀌었나
 
@@ -74,16 +74,16 @@ python -m pytest \
 
 ```bash
 # 재인제스천 전/후 스냅샷 비교로 멱등성(중복 0) 확인
-python specs/039-bpm-event-unification/manual/check_alignment.py > before.json
+python specs/042-bpm-event-unification/manual/check_alignment.py > before.json
 # ...동일 문서 재인제스천...
-python specs/039-bpm-event-unification/manual/check_alignment.py > after.json
+python specs/042-bpm-event-unification/manual/check_alignment.py > after.json
 diff before.json after.json   # task/체인 수 불변이어야 함
 ```
 
 ### Playwright 캡처
 
 ```bash
-cd specs/039-bpm-event-unification/manual/artifacts
+cd specs/042-bpm-event-unification/manual/artifacts
 HYBRID_SESSION=<세션id> npx playwright test --config playwright.config.ts
 # → manual/screenshots/*.png 생성
 ```

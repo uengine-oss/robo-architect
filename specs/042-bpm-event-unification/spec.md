@@ -1,6 +1,6 @@
 # Feature Specification: BPM ↔ Event Modeling 구조적 통합 (단일 그래프, 두 투영 뷰)
 
-**Feature Branch**: `039-bpm-event-unification`
+**Feature Branch**: `042-bpm-event-unification`
 
 **Created**: 2026-06-10
 

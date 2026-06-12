@@ -20,9 +20,9 @@
 | 항목 | 계약 |
 |---|---|
 | 컴포넌트 | 신규 `EventModelingLane.vue` |
-| 입력 | spec-039 `GET /api/graph/bpm-task/{id}/design-trace` 의 `{nodes, relationships}` |
+| 입력 | spec-042 `GET /api/graph/bpm-task/{id}/design-trace` 의 `{nodes, relationships}` |
 | 레이아웃 | **가로 레인**: 좌→우 `UI → Command → Event → ReadModel`(타입별 정렬). 설계-궤적 컬럼 그래프 아님 |
-| 노드 | spec-039 노드 컴포넌트(CommandNode/EventNode/UINode/ReadModel) 재사용 |
+| 노드 | spec-042 노드 컴포넌트(CommandNode/EventNode/UINode/ReadModel) 재사용 |
 | 불변 | requirements 탭 `DesignTraceCanvas`(컬럼 그래프) **형식 그대로 유지** |
 
 **불변 규칙**:

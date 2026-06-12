@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""US3 회귀 하니스 — A2A 척추 + task별 추출 정렬 통계 (spec 039 T013/T014).
+"""US3 회귀 하니스 — A2A 척추 + task별 추출 정렬 통계 (spec 042 T013/T014).
 
 골든 세션이 적재된 Neo4j에 연결해, 각 `:BpmTask` 아래로 `PROMOTED_FROM`된
 시스템 체인(Command/Event/UI/Policy/ReadModel) 귀속 통계와 빈 task 목록을

@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test'
 
-// §039 매뉴얼 캡처용 self-contained 설정 (036 패턴 복제).
+// §042 매뉴얼 캡처용 self-contained 설정 (036 패턴 복제).
 // Serial(workers:1) — neo4j 세션 상태를 공유한다.
 export default defineConfig({
   testDir: '.',

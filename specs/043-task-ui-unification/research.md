@@ -59,11 +59,11 @@
 
 ## D6. Event Modeling 형식 경량 렌더러 (US4)
 
-**결정**: 신규 `EventModelingLane.vue` — spec-039 `GET /api/graph/bpm-task/{id}/design-trace`의 `{nodes, relationships}`를 입력받아 **가로 레인(UI→Command→Event→ReadModel)** 으로 렌더. `DesignTraceCanvas`(컬럼 그래프)는 requirements용으로 유지.
+**결정**: 신규 `EventModelingLane.vue` — spec-042 `GET /api/graph/bpm-task/{id}/design-trace`의 `{nodes, relationships}`를 입력받아 **가로 레인(UI→Command→Event→ReadModel)** 으로 렌더. `DesignTraceCanvas`(컬럼 그래프)는 requirements용으로 유지.
 
 **근거**: [EventModelingPanel.vue](../../frontend/src/features/eventModeling/ui/EventModelingPanel.vue)는 `useEventModelingStore` 강결합 싱글톤(actor swimlane·sequence)이라 단일 task 스코프 재사용 곤란. trace 데이터는 이미 있으므로 레인 레이아웃만 신규(node 타입별 열 → 좌→우 UI/Command/Event/ReadModel 시퀀스).
 
-**재사용**: spec-039 trace 라우트·노드 컴포넌트(CommandNode/EventNode/UINode 등) 재사용, 레이아웃만 EM 스타일로.
+**재사용**: spec-042 trace 라우트·노드 컴포넌트(CommandNode/EventNode/UINode 등) 재사용, 레이아웃만 EM 스타일로.
 
 ---
 

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import path from 'path'
 
 /**
- * §042 US1/US4 — 단일 Process 탭 토글 + Event Modeling 형식 레인 캡처.
+ * §043 US1/US4 — 단일 Process 탭 토글 + Event Modeling 형식 레인 캡처.
  *
  * 전제: 프런트(5173)+백엔드(8000), 하이브리드 세션 DB 존재.
  *   HYBRID_SESSION=<sid> npx playwright test --config playwright.config.ts

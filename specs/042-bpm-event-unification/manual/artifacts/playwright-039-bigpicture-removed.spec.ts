@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import path from 'path'
 
 /**
- * §039 US4 — "Big picture" 뷰 비활성화 회귀 캡처.
+ * §042 US4 — "Big picture" 뷰 비활성화 회귀 캡처.
  *
  * 상단 탭 목록에 "Big picture" 진입점이 없고, 다른 뷰/네비게이터가 정상임을 확인.
  *

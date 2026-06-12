@@ -1,8 +1,8 @@
 # Implementation Plan: BPM·Event Modeling 단일 Process 탭 + task=UI 일관성
 
-**Branch**: `042-task-ui-unification` | **Date**: 2026-06-11 | **Spec**: [spec.md](spec.md)
+**Branch**: `043-task-ui-unification` | **Date**: 2026-06-11 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `specs/042-task-ui-unification/spec.md`
+**Input**: Feature specification from `specs/043-task-ui-unification/spec.md`
 
 ## Summary
 
@@ -10,7 +10,7 @@ BPM 뷰와 Event Modeling 뷰를 **UI를 공유 앵커로** 일관화한다. 세
 1. **US1(P1)** — 분리된 `Process`·`Event Modeling` 탭을 **단일 `Process` 탭 + BPM⇄EM 토글**로 통합(공유 UI 앵커, 접기/펼치기).
 2. **US2(P1)** — ES 승격의 UI 생성([ui_wireframes.py](api/features/ingestion/workflow/phases/ui_wireframes.py))을 **"Command당 1 UI" → "task당 1 트리거 UI"** 로. task의 Command 중 사람이 조작하는 것을 **LLM 휴리스틱**으로 골라 그 Command에 UI 부착(나머지 Command는 그 화면이 일으키는 시스템 흐름, UI 없음). Command/Event의 task 기반 귀속은 불변.
 3. **US3(P2)** — ReadModel은 "ReadModel당 무조건 UI" 제거. 소비만 하면 소비 task 화면에 **표시**로 부착, **검색/조회 화면**이면 자체 task-UI로 **승격**(LLM 판정).
-4. **US4(P2)** — task 포함요소를 **Event Modeling 형식(가로 레인 UI→Command→Event→ReadModel)** 경량 렌더러로(spec-039 trace 데이터 재사용). `DesignTraceCanvas`는 requirements용 유지.
+4. **US4(P2)** — task 포함요소를 **Event Modeling 형식(가로 레인 UI→Command→Event→ReadModel)** 경량 렌더러로(spec-042 trace 데이터 재사용). `DesignTraceCanvas`는 requirements용 유지.
 
 핵심 통찰: **task=UI(트리거)는 신규 스키마 없이 달성 가능** — Command당 N개 UI 만들던 것을 task당 1개로 *줄이는* 것이므로 기존 `:UI`/`ATTACHED_TO`만 사용. ReadModel "표시 vs 자체화면" 구분만 최소 표식이 필요할 수 있다(plan에서 결정).
 
@@ -52,7 +52,7 @@ BPM 뷰와 Event Modeling 뷰를 **UI를 공유 앵커로** 일관화한다. 세
 ### Documentation (this feature)
 
 ```text
-specs/042-task-ui-unification/
+specs/043-task-ui-unification/
 ├── plan.md · research.md · data-model.md · quickstart.md
 ├── contracts/
 │   ├── ingestion-task-ui-contract.md       # task당 1 트리거 UI + ReadModel 규칙
@@ -78,7 +78,7 @@ frontend/src/features/
 └── app/{App.vue, layout/TopBar.vue}         # [수정] 'Event Modeling' 탭 제거, 'Process' 통합
 ```
 
-**Structure Decision**: web(api+frontend). 백엔드 변경은 `ui_wireframes.py` 1개 phase에 집중(+ LLM 판정 헬퍼). 프런트는 ProcessPanel 래퍼(탭 토글) + EventModelingLane(EM 형식 렌더러) 신규, 나머지 재사용. spec-039의 bpm-task trace 라우트를 EM 형식 렌더러의 데이터 소스로 재사용.
+**Structure Decision**: web(api+frontend). 백엔드 변경은 `ui_wireframes.py` 1개 phase에 집중(+ LLM 판정 헬퍼). 프런트는 ProcessPanel 래퍼(탭 토글) + EventModelingLane(EM 형식 렌더러) 신규, 나머지 재사용. spec-042의 bpm-task trace 라우트를 EM 형식 렌더러의 데이터 소스로 재사용.
 
 ## Complexity Tracking
 

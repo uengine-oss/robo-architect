@@ -1,4 +1,4 @@
-# task=UI 통합 — 사용 매뉴얼 (spec 042)
+# task=UI 통합 — 사용 매뉴얼 (spec 043)
 
 BPM과 Event Modeling을 **UI를 공유 앵커**로 일관화한다. 검증 완료(라이브 재인제스천).
 
@@ -65,12 +65,12 @@ python -m pytest \
   api/features/requirements/tests/test_design_trace_refactor.py -q
 
 # 재인제스천 정합 (캐시 OFF로 ES 재생성 후)
-PYTHONPATH=. python specs/042-task-ui-unification/manual/check_task_ui.py > after.json
-diff specs/042-task-ui-unification/manual/baseline.json after.json
+PYTHONPATH=. python specs/043-task-ui-unification/manual/check_task_ui.py > after.json
+diff specs/043-task-ui-unification/manual/baseline.json after.json
 #  → task당 UI 1~N, ReadModel ui_screen↑, labels/relationship_types 불변(신규 0)
 
 # Playwright (탭 토글·EM 레인·캐시 토글)
-cd specs/042-task-ui-unification/manual/artifacts
+cd specs/043-task-ui-unification/manual/artifacts
 HYBRID_SESSION=<sid> npx playwright test --config playwright.config.ts
 ```
 

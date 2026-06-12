@@ -1,8 +1,8 @@
 # Implementation Plan: BPM ↔ Event Modeling 구조적 통합 (단일 그래프, 두 투영 뷰)
 
-**Branch**: `039-bpm-event-unification` | **Date**: 2026-06-10 | **Spec**: [spec.md](spec.md)
+**Branch**: `042-bpm-event-unification` | **Date**: 2026-06-10 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `specs/039-bpm-event-unification/spec.md`
+**Input**: Feature specification from `specs/042-bpm-event-unification/spec.md`
 
 ## Summary
 
@@ -53,7 +53,7 @@ BPM 뷰와 Event Modeling 뷰를 **단일 Neo4j 그래프의 두 투영**으로 
 ### Documentation (this feature)
 
 ```text
-specs/039-bpm-event-unification/
+specs/042-bpm-event-unification/
 ├── plan.md              # This file
 ├── research.md          # Phase 0 — 5개 결정(D1~D5)
 ├── data-model.md        # Phase 1 — 스키마 0건, 읽기 쿼리 + DTO

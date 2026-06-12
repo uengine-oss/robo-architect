@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ReadModel 3분류 + display 부착을 현재 세션에 재생(replay)해 검증 (spec 042 US3).
+"""ReadModel 3분류 + display 부착을 현재 세션에 재생(replay)해 검증 (spec 043 US3).
 
 전체 재인제스천 없이, 이미 생성된 ReadModel들을 실 LLM으로 분류하고(cache 상태 따름)
 'displayed'는 생산 command 화면에 role:'display'로 부착한다. ui_wireframes 단계의

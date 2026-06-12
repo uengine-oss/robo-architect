@@ -1,6 +1,6 @@
 # Tasks: BPM ↔ Event Modeling 구조적 통합 (단일 그래프, 두 투영 뷰)
 
-**Feature**: `039-bpm-event-unification` | **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
+**Feature**: `042-bpm-event-unification` | **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 
 **Input**: research.md(D1~D5), data-model.md(스키마 0건), contracts/bpm-task-trace-contract.md, quickstart.md(Q1~Q6)
 
@@ -14,7 +14,7 @@
 
 ## Phase 1: Setup
 
-- [X] T001 검증 환경 확인 — `specs/039-bpm-event-unification/manual/` 디렉터리 생성, 골든 픽스처 세션이 neo4j에 적재됐는지(`MATCH (t:BpmTask) RETURN count(t)` > 0) 확인하고 세션 id를 quickstart 전제로 기록.
+- [X] T001 검증 환경 확인 — `specs/042-bpm-event-unification/manual/` 디렉터리 생성, 골든 픽스처 세션이 neo4j에 적재됐는지(`MATCH (t:BpmTask) RETURN count(t)` > 0) 확인하고 세션 id를 quickstart 전제로 기록.
 
 ---
 
@@ -71,7 +71,7 @@
 
 **Independent Test (quickstart Q5)**: 골든 문서 인제스천 → 각 task 하위 체인 귀속, 재인제스천 중복 0.
 
-- [X] T013 [P] [US3] 회귀 하니스 — `specs/039-bpm-event-unification/manual/check_alignment.py`: 골든 세션에서 `(:BpmTask)<-[:PROMOTED_FROM]-(c:Command)`/`(c)-[:EMITS]->(:Event)` 귀속 통계와 빈 task(promoted 0) 목록을 JSON 출력(SC-004 기준선).
+- [X] T013 [P] [US3] 회귀 하니스 — `specs/042-bpm-event-unification/manual/check_alignment.py`: 골든 세션에서 `(:BpmTask)<-[:PROMOTED_FROM]-(c:Command)`/`(c)-[:EMITS]->(:Event)` 귀속 통계와 빈 task(promoted 0) 목록을 JSON 출력(SC-004 기준선).
 - [ ] T014 [US3] 멱등성 검증 — 동일 골든 문서 재인제스천 후 `check_alignment.py` 재실행 → task/체인 수 불변(중복 0). 불일치 시 경고 표면화 동작(FR-008) 확인.
 
 **Checkpoint US3**: 척추 정렬 회귀 0.
@@ -102,14 +102,14 @@
 
 ### Playwright e2e
 
-- [X] T022 [P] Playwright 설정 — `specs/039-bpm-event-unification/manual/artifacts/playwright.config.ts`(036 패턴 복제: `baseURL` env override 기본 `http://localhost:5173`, workers:1, viewport 1440×900, `shot()` 헬퍼로 `manual/screenshots/`에 저장).
-- [X] T023 Playwright 스펙(US2 시연) — `specs/039-bpm-event-unification/manual/artifacts/playwright-039-bpm-trace.spec.ts`: 골든 세션 주입(localStorage `hybrid.session_id`) → BPM 뷰 진입 → task 클릭 → 인스펙터 "포함 요소" 버튼 클릭 → 모달 캡처(`01_inspector_button.png`, `02_trace_modal.png`, `03_modal_stickers.png`) → 모달 닫고 캔버스 동일 캡처(`04_canvas_unchanged.png`). empty task 케이스(`05_empty_trace.png`). (quickstart Q1~Q3)
-- [X] T024 [P] Playwright 스펙(US4 회귀) — `specs/039-bpm-event-unification/manual/artifacts/playwright-039-bigpicture-removed.spec.ts`: 상단 탭 목록에 "Big picture" 부재 확인 + export 실행 정상 + navigator BC 클릭 정상 캡처(`06_no_bigpicture_tab.png`, `07_export_ok.png`). (quickstart Q6)
+- [X] T022 [P] Playwright 설정 — `specs/042-bpm-event-unification/manual/artifacts/playwright.config.ts`(036 패턴 복제: `baseURL` env override 기본 `http://localhost:5173`, workers:1, viewport 1440×900, `shot()` 헬퍼로 `manual/screenshots/`에 저장).
+- [X] T023 Playwright 스펙(US2 시연) — `specs/042-bpm-event-unification/manual/artifacts/playwright-039-bpm-trace.spec.ts`: 골든 세션 주입(localStorage `hybrid.session_id`) → BPM 뷰 진입 → task 클릭 → 인스펙터 "포함 요소" 버튼 클릭 → 모달 캡처(`01_inspector_button.png`, `02_trace_modal.png`, `03_modal_stickers.png`) → 모달 닫고 캔버스 동일 캡처(`04_canvas_unchanged.png`). empty task 케이스(`05_empty_trace.png`). (quickstart Q1~Q3)
+- [X] T024 [P] Playwright 스펙(US4 회귀) — `specs/042-bpm-event-unification/manual/artifacts/playwright-039-bigpicture-removed.spec.ts`: 상단 탭 목록에 "Big picture" 부재 확인 + export 실행 정상 + navigator BC 클릭 정상 캡처(`06_no_bigpicture_tab.png`, `07_export_ok.png`). (quickstart Q6)
 
 ### 매뉴얼
 
-- [X] T025 매뉴얼 본문 — `specs/039-bpm-event-unification/manual/manual.md`(한국어): 기능 개요(BPM↔Event Modeling 단일 그래프 두 투영, task 포함요소 모달) + Playwright 스크린샷 임베드 + "신규 스키마 0건/캔버스 불변/Big picture 제거" 요약표 + 사용 흐름(task 클릭→포함 요소 보기). (quickstart 전체, FR-001~011/SC-001~006)
-- [X] T026 [P] manual.docx 변환 — `manual.md` → `specs/039-bpm-event-unification/manual/manual.docx`(034/036 manual 포맷, 스크린샷 포함; pandoc 사용).
+- [X] T025 매뉴얼 본문 — `specs/042-bpm-event-unification/manual/manual.md`(한국어): 기능 개요(BPM↔Event Modeling 단일 그래프 두 투영, task 포함요소 모달) + Playwright 스크린샷 임베드 + "신규 스키마 0건/캔버스 불변/Big picture 제거" 요약표 + 사용 흐름(task 클릭→포함 요소 보기). (quickstart 전체, FR-001~011/SC-001~006)
+- [X] T026 [P] manual.docx 변환 — `manual.md` → `specs/042-bpm-event-unification/manual/manual.docx`(034/036 manual 포맷, 스크린샷 포함; pandoc 사용).
 
 ### 마무리 검증
 

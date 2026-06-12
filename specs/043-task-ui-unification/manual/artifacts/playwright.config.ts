@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test'
 
-// §042 매뉴얼 캡처 (039 패턴 복제).
+// §043 매뉴얼 캡처 (042 패턴 복제).
 export default defineConfig({
   testDir: '.',
   testMatch: /playwright-042-.*\.spec\.ts/,
