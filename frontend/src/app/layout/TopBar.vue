@@ -100,11 +100,15 @@ function selectTab(tab) {
     </div>
     
     <div class="top-bar__center">
-      <!-- Process Panel Status -->
-      <div v-if="activeTab === 'Process'" class="top-bar__status">
-        <span><strong>{{ bpmnStore.renderedFlows.length }}</strong> flows</span>
+      <!-- Process(BPM) Panel Status — A2A BPM(hybrid) 기준. 011 process-flows 카운트 제거.
+           BPM이 없으면 상태 표시 안 함(빈 BPM 탭과 일관). -->
+      <div
+        v-if="activeTab === 'Process' && (bpmnStore.hybridActive || bpmnStore.hybridProcessTrees.length)"
+        class="top-bar__status"
+      >
+        <span><strong>{{ bpmnStore.hybridProcessTrees.length }}</strong> processes</span>
         <span class="top-bar__status-dot">•</span>
-        <span><strong>{{ bpmnStore.processFlows.length }}</strong> available</span>
+        <span><strong>{{ bpmnStore.hybridTasks.length }}</strong> tasks</span>
       </div>
 
       <!-- Processes Panel Status -->
