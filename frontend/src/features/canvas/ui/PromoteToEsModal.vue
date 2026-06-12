@@ -29,6 +29,28 @@ const isFigmaWithComponentsEnabled = computed(() => {
   return !!(b && b.status === 'active' && (b.componentCount ?? 0) > 0)
 })
 
+// 042 — LLM 캐시 토글(전역). 캐시 ON이면 동일 입력에 캐시된 결과가 재사용돼 재생성해도
+// 같은 결과만 나온다. 코드 변경 후 재생성 검증 시 OFF로 두면 매번 새로 생성된다.
+// /api/ingest/cache/* 는 전역 LangChain 캐시(문서 업로드 모달과 동일 엔드포인트).
+const cacheEnabled = ref(false)
+const cacheBusy = ref(false)
+async function checkCacheStatus() {
+  try {
+    const r = await fetch('/api/ingest/cache/status')
+    if (r.ok) { const d = await r.json(); cacheEnabled.value = !!d.enabled }
+  } catch { /* ignore */ }
+}
+async function setCache(enabled) {
+  if (cacheBusy.value || cacheEnabled.value === enabled) return
+  cacheBusy.value = true
+  try {
+    const r = await fetch(`/api/ingest/cache/${enabled ? 'enable' : 'disable'}`, { method: 'POST' })
+    const d = await r.json().catch(() => ({}))
+    if (typeof d.enabled !== 'undefined') cacheEnabled.value = !!d.enabled
+    else if (r.ok) cacheEnabled.value = enabled
+  } catch { /* ignore */ } finally { cacheBusy.value = false }
+}
+
 watch(() => props.visible, (open) => {
   if (!open) return
   displayLanguage.value = localStorage.getItem(LANG_KEY) || 'ko'
@@ -37,6 +59,7 @@ watch(() => props.visible, (open) => {
     ? stored
     : 'figma'
   loadFigmaBindingInfo()
+  checkCacheStatus()
 })
 
 watch(isFigmaWithComponentsEnabled, (enabled) => {
@@ -92,6 +115,17 @@ function onSubmit() {
                   {{ figmaBindingInfo.componentCount }}
                 </span>
               </button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="row__label">LLM 캐시</span>
+            <div class="row__tabs">
+              <button :class="['tab-btn', 'tab-btn--small', { active: cacheEnabled }]"
+                      :disabled="cacheBusy" @click="setCache(true)"
+                      title="동일 입력은 캐시된 LLM 결과 재사용 (빠름·동일 결과)">켜짐</button>
+              <button :class="['tab-btn', 'tab-btn--small', { active: !cacheEnabled }]"
+                      :disabled="cacheBusy" @click="setCache(false)"
+                      title="캐시 무시하고 매번 새로 생성 (코드 변경·재생성 검증용)">꺼짐</button>
             </div>
           </div>
         </div>
@@ -176,6 +210,12 @@ function onSubmit() {
   display: flex;
   gap: var(--spacing-xs, 4px);
   flex-wrap: wrap;
+}
+.promote-modal__hint {
+  margin: 2px 0 0;
+  font-size: 0.72rem;
+  color: var(--color-text-light);
+  line-height: 1.4;
 }
 
 .tab-btn {
