@@ -547,64 +547,14 @@ function handleProcessDragStart(event, item) {
         <div v-else-if="bpmnStore.error" class="error-state">
           {{ bpmnStore.error }}
         </div>
+        <!-- 043 — BPM은 문서 업로드(A2A) 생성분(hybrid)만 표시. 011 Command-파생
+             process-flows를 BPM 프로세스로 늘어놓던 폴백은 제거(spec 042: 011은 BPM 생성원 아님). -->
         <div
-          v-else-if="bpmnStore.processFlows.length === 0 && !bpmnStore.hybridTasks.length"
+          v-else-if="!bpmnStore.hybridProcessTrees.length && !bpmnStore.hybridTasks.length"
           class="empty-state"
         >
-          No business processes found
+          BPM이 없습니다. 문서 업로드로 BPM을 생성하면 여기에 표시됩니다.
         </div>
-        <template v-else-if="!bpmnStore.hybridProcessTrees.length">
-          <div class="section-group">
-            <div class="section-header section-header--with-actions">
-              <div class="section-header__left">
-                <span class="section-title">Business Processes</span>
-                <span class="section-count">{{ bpmnStore.processFlows.length }}</span>
-              </div>
-              <div class="section-header__actions">
-                <button
-                  class="tree-action-btn"
-                  :class="{ 'is-spinning': bpmnStore.loading }"
-                  @click="bpmnStore.fetchProcessFlows()"
-                  title="Refresh"
-                  :disabled="bpmnStore.loading"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="23 4 23 10 17 10"></polyline>
-                    <polyline points="1 20 1 14 7 14"></polyline>
-                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div
-              v-for="flow in bpmnStore.processFlows"
-              :key="flow.id"
-              class="bpmn-flow-item"
-              :class="{ 'is-on-canvas': bpmnStore.renderedFlowIds.has(flow.id) }"
-              :draggable="true"
-              @dragstart="handleBpmnFlowDragStart($event, flow)"
-              @dblclick="handleBpmnFlowDblClick(flow)"
-              :title="`${flow.name}\nActors: ${flow.actors?.join(', ') || 'System'}\nBC: ${flow.bcName || '-'}`"
-            >
-              <span class="bpmn-flow-item__icon">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="5" cy="12" r="3" />
-                  <line x1="8" y1="12" x2="16" y2="12" />
-                  <circle cx="19" cy="12" r="3" />
-                </svg>
-              </span>
-              <div class="bpmn-flow-item__content">
-                <span class="bpmn-flow-item__name">{{ flow.startCommandName || flow.name }}</span>
-              </div>
-              <span v-if="flow.nodeCount > 0" class="bpmn-flow-item__chip">{{ flow.nodeCount }}</span>
-              <span v-if="bpmnStore.renderedFlowIds.has(flow.id)" class="bpmn-flow-item__check">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </span>
-            </div>
-          </div>
-        </template>
       </template>
 
       <!-- Event Modeling Mode: Process Flows Only -->
