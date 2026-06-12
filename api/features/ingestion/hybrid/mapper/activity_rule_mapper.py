@@ -146,6 +146,8 @@ async def map_tasks_to_rules(
             contexts=contexts,
             cache=cache,
             event_sink=event_sink,
+            # §036 — 이미 추출된 glossary를 retrieval 임베딩 정규화에 주입.
+            glossary=result.glossary,
         )
         for m in retrieval.accepted:
             all_accepted.append((process, m))
