@@ -109,4 +109,38 @@ export async function moveEntry({ root, fromPath, toPath }) {
   return res.json()
 }
 
+// Explicitly terminate a backend PTY session (× close). A ws disconnect only
+// DETACHES (keeps claude alive so a reload can re-attach), so closing a tab for
+// good must call this. Best-effort — failures are non-fatal.
+export async function closeTerminalSession(sessionId) {
+  if (!sessionId) return
+  try {
+    const base = await apiBase()
+    const url = new URL(`${base}/api/claude-code/terminal/session`)
+    url.searchParams.set('session_id', sessionId)
+    await fetch(url.toString(), { method: 'DELETE' })
+  } catch {
+    // ignore — session may already be gone / backend unreachable
+  }
+}
+
+// Global (~/.claude/skills) install status — checked when the Code tab opens so
+// the interactive claude cell can resolve the project's robo-* slash commands.
+// The backend remembers a successful check for the rest of the server session.
+export async function fetchGlobalSkillsStatus() {
+  const base = await apiBase()
+  const res = await fetch(`${base}/api/claude-code/global-skills/status`)
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function installGlobalSkills() {
+  const base = await apiBase()
+  const res = await fetch(`${base}/api/claude-code/global-skills/install`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
 export { WorkspaceApiError }

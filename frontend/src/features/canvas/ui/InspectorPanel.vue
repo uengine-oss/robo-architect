@@ -1613,9 +1613,23 @@ async function pullFromFigmaToDesign() {
   const n = node.value
   if (!n) return
 
+  // Fetch the active document binding once — it's both the source of truth
+  // for the plugin's file key and for 016 binding-path detection below.
+  let binding = null
+  try {
+    const bindingResp = await fetch('/api/figma-binding')
+    if (bindingResp.ok) binding = await bindingResp.json()
+  } catch (_e) { /* fall through */ }
+
+  // File key resolution: node data → localStorage (REST modal) → plugin binding.
+  // Plugin connections post the file key straight to the backend binding, so
+  // it lives there rather than in localStorage or the node's data.
   let fileKey = n.data?.figmaFileKey
   if (!fileKey) {
     try { fileKey = JSON.parse(localStorage.getItem('figma_api_creds') || '{}').fileKey } catch (_e) {}
+  }
+  if (!fileKey && binding?.status === 'active') {
+    fileKey = binding.figmaFileKey
   }
   if (!fileKey) {
     figmaPushStatus.value = 'error'
@@ -1630,16 +1644,9 @@ async function pullFromFigmaToDesign() {
   const frameName = n.data?.displayName || n.data?.name || ''
   const figmaNodeId = n.data?.figmaNodeId || null
 
-  // Detect 016 binding: server-side check is the source of truth, but a
-  // local check on figmaBindingId saves a round-trip in the common case.
-  let useBindingPath = false
-  try {
-    const bindingResp = await fetch('/api/figma-binding')
-    if (bindingResp.ok) {
-      const b = await bindingResp.json()
-      useBindingPath = b?.status === 'active' && !!figmaNodeId
-    }
-  } catch (_e) { /* fall through */ }
+  // Detect 016 binding from the binding fetched above. Requires an active
+  // binding plus a figmaNodeId on the node to route through the rich path.
+  const useBindingPath = binding?.status === 'active' && !!figmaNodeId
 
   try {
     if (useBindingPath) {

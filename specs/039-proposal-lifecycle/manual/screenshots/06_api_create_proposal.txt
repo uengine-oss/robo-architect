@@ -1,0 +1,19 @@
+{
+  "id": "PRO-001",
+  "title": "부분 환불 기능 추가",
+  "originalPrompt": "결제 시스템에 부분 환불 기능을 추가해줘. 고객이 주문 금액의 일부만 환불할 수 있어야 해.",
+  "author": "unknown@uengineui-MacBookPro.local",
+  "createdAt": "2026-06-05T08:39:18.297588000+00:00",
+  "status": "DRAFT",
+  "statusHistory": [],
+  "strategicDiff": null,
+  "tacticalDiff": null,
+  "impactMap": null,
+  "sandboxBranch": null,
+  "sandboxWorktreePath": null,
+  "sandboxStatus": null,
+  "clarificationLog": [],
+  "acceptedAt": null,
+  "destroyedAt": null,
+  "testResults": null
+}

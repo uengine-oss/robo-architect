@@ -1,11 +1,16 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+// 040 — 도메인 중립 미리보기 세션(앱 셸). 라이브↔미리보기 fetch 분기 + 편집 → 제안 diff 반영.
+import { previewUrl, isPreviewFor, usePreviewSession } from '@/app/previewSession'
 
 export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   // Data from API
   const boundedContexts = ref([])
   const loading = ref(false)
   const error = ref(null)
+
+  // 040 — 미리보기 진입 시 라이브 상태 스냅샷(닫을 때 복원, US2 격리).
+  const _liveSnapshot = ref(null)
 
   // Selected BC IDs (for filtering)
   const selectedBcIds = ref(new Set())
@@ -22,8 +27,9 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   const selectedNodeType = ref(null) // 'aggregate' | 'enum' | 'valueObject'
 
   // Load a BC's full tree into state without changing aggregate visibility.
+  // 040 — 미리보기 활성 시 fetch base 를 Proposal preview 로 분기(오버레이 투영).
   async function loadBcTree(bcId) {
-    const response = await fetch(`/api/contexts/${bcId}/full-tree`)
+    const response = await fetch(previewUrl('data', `/api/contexts/${bcId}/full-tree`))
     if (!response.ok) {
       throw new Error(`Failed to fetch aggregates: ${response.statusText}`)
     }
@@ -42,7 +48,10 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
         invariants: agg.invariants || [],
         enumerations: agg.enumerations || [],
         valueObjects: agg.valueObjects || [],
-        properties: agg.properties || []
+        properties: agg.properties || [],
+        // 040 — Proposal 미리보기 오버레이 출처/배지(신규/수정/충돌)를 노드까지 전달.
+        source: agg.source,
+        badge: agg.badge,
       }))
     }
 
@@ -58,7 +67,7 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
 
   // Resolve the owning BoundedContext id for an aggregate via the graph.
   async function resolveBcId(aggregateId) {
-    const response = await fetch(`/api/graph/expand-with-bc/${aggregateId}`)
+    const response = await fetch(previewUrl('data', `/api/graph/expand-with-bc/${aggregateId}`))
     if (!response.ok) {
       throw new Error(`Failed to resolve bounded context: ${response.statusText}`)
     }
@@ -145,6 +154,34 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     boundedContexts.value = []
   }
 
+  // 040 — 미리보기 진입: 라이브 상태를 스냅샷 후 비워, 이후 fetch 가 preview 소스에서
+  // 신선하게 적재되도록 한다(이미 적재된 라이브 BC 재사용 방지, US2 격리).
+  function beginPreview() {
+    _liveSnapshot.value = {
+      boundedContexts: boundedContexts.value,
+      selectedBcIds: new Set(selectedBcIds.value),
+      visibleAggregateIds: new Set(visibleAggregateIds.value),
+    }
+    boundedContexts.value = []
+    selectedBcIds.value = new Set()
+    visibleAggregateIds.value = new Set()
+    pendingFocus.value = null
+  }
+
+  // 040 — 미리보기 종료: 라이브 상태 복원. 미리보기 잔존물 0(US2/SC-003).
+  function endPreview() {
+    const snap = _liveSnapshot.value
+    _liveSnapshot.value = null
+    if (snap) {
+      boundedContexts.value = snap.boundedContexts
+      selectedBcIds.value = snap.selectedBcIds
+      visibleAggregateIds.value = snap.visibleAggregateIds
+    } else {
+      clearAllBCs()
+    }
+    pendingFocus.value = null
+  }
+
   // Get filtered bounded contexts (selected BCs, aggregates gated by visibility)
   const filteredBoundedContexts = computed(() => {
     if (selectedBcIds.value.size === 0) {
@@ -182,8 +219,47 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     }
   }
 
+  // 040 — 미리보기 편집을 Proposal.tacticalDiff 에 반영(라이브 그래프 무변경).
+  // 갱신된 미리보기 트리를 받아 로컬 상태를 그 트리로 교체 → 즉시 재렌더.
+  async function _savePreviewAggregateEdit(aggregateId, patch) {
+    const ps = usePreviewSession()
+    const res = await fetch(`/api/proposals/${ps.proposalId}/preview/aggregate/${aggregateId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bcId: ps.bcId, ...patch }),
+    })
+    if (!res.ok) throw new Error(`제안 diff 반영 실패: ${res.status}`)
+    const tree = await res.json()
+    applyPreviewTree(tree)
+    return tree
+  }
+
+  // 040 — preview/edit 응답(갱신된 full-tree)을 로컬 상태에 반영(즉시 재렌더).
+  // Chat 편집 경로(modelModifier)도 robo:preview-updated 이벤트로 이 메서드를 호출한다.
+  function applyPreviewTree(tree) {
+    if (!tree || !tree.id) return
+    const mapped = {
+      id: tree.id, name: tree.name, displayName: tree.displayName || tree.name, description: tree.description,
+      aggregates: (tree.aggregates || []).map(agg => ({
+        id: agg.id, name: agg.name, displayName: agg.displayName || agg.name, rootEntity: agg.rootEntity,
+        invariants: agg.invariants || [], enumerations: agg.enumerations || [],
+        valueObjects: agg.valueObjects || [], properties: agg.properties || [],
+        source: agg.source, badge: agg.badge,
+      })),
+    }
+    const i = boundedContexts.value.findIndex(b => b.id === tree.id)
+    if (i >= 0) boundedContexts.value[i] = mapped
+    else { boundedContexts.value.push(mapped); selectedBcIds.value.add(tree.id) }
+    mapped.aggregates.forEach(a => a.id && visibleAggregateIds.value.add(a.id))
+    visibleAggregateIds.value = new Set(visibleAggregateIds.value)
+  }
+
   // Update aggregate enumerations and value objects
   async function updateAggregateEnumVo(aggregateId, enumerations, valueObjects) {
+    // 040 — 미리보기 중에는 라이브가 아니라 제안 diff 에 반영.
+    if (isPreviewFor('data')) {
+      return _savePreviewAggregateEdit(aggregateId, { enumerations: enumerations || [], valueObjects: valueObjects || [] })
+    }
     try {
       const response = await fetch(`/api/contexts/aggregates/${aggregateId}/enumerations-valueobjects`, {
         method: 'PUT',
@@ -219,6 +295,10 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
 
   // Update aggregate properties
   async function updateAggregateProperties(aggregateId, properties) {
+    // 040 — 미리보기 중에는 라이브가 아니라 제안 diff 에 반영.
+    if (isPreviewFor('data')) {
+      return _savePreviewAggregateEdit(aggregateId, { properties: properties || [] })
+    }
     try {
       const response = await fetch(`/api/contexts/aggregates/${aggregateId}/properties`, {
         method: 'PUT',
@@ -317,6 +397,9 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     consumeFocus,
     removeBC,
     clearAllBCs,
+    beginPreview,
+    endPreview,
+    applyPreviewTree,
     updateAggregateEnumVo,
     updateAggregateProperties,
     getAggregateById,

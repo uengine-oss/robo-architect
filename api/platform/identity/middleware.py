@@ -38,22 +38,31 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next):
-        name_raw = request.headers.get("x-user-name", "").strip()
-        email = request.headers.get("x-user-email", "").strip()
+        name_raw   = request.headers.get("x-user-name", "").strip()
+        email      = request.headers.get("x-user-email", "").strip()
+        roles_raw  = request.headers.get("x-user-roles", "").strip()
+
+        # roles: comma-separated header value; absent/empty → ProductOwner by default.
+        # "ProductOwner" grants approval rights (including self-approval).
+        if roles_raw:
+            roles: frozenset = frozenset(
+                r.strip() for r in roles_raw.split(",") if r.strip()
+            )
+        else:
+            roles = frozenset({"ProductOwner"})
 
         if name_raw and email:
             try:
                 name = urllib.parse.unquote(name_raw)
             except Exception:
-                # Malformed percent-encoding → treat as raw bytes; we
-                # don't want to 500 on a header decode.
                 name = name_raw
-            actor = Actor(name=name, email=email, source="env")
+            actor = Actor(name=name, email=email, source="env", roles=roles)
         else:
             actor = Actor(
                 name="unknown user",
                 email=f"unknown@{_HOSTNAME}",
                 source="unknown-header-missing",
+                roles=roles,
             )
 
         request.state.actor = actor
@@ -63,11 +72,10 @@ class IdentityMiddleware(BaseHTTPMiddleware):
             "Request actor resolved.",
             category="api.identity.actor",
             params={
-                "actor_email": actor.email,
-                "actor_source": actor.source,
-                # Name length only — full name may be non-ASCII and is
-                # not needed for diagnostic purposes.
+                "actor_email":    actor.email,
+                "actor_source":   actor.source,
                 "actor_name_len": len(actor.name),
+                "actor_roles":    sorted(actor.roles),
             },
         )
         return await call_next(request)

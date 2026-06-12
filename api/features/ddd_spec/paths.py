@@ -8,13 +8,20 @@ before any file handle opens; anything outside is a hard error
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import os
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Iterator
+
+try:
+    import fcntl  # POSIX
+    _HAS_FCNTL = True
+except ImportError:  # Windows has no fcntl; fall back to msvcrt byte-range locks
+    fcntl = None  # type: ignore[assignment]
+    _HAS_FCNTL = False
+    import msvcrt
 
 from slugify import slugify
 
@@ -167,13 +174,33 @@ def ddd_spec_lock() -> Iterator[None]:
     """
     BC_ROOT.mkdir(parents=True, exist_ok=True)
     LOCK_PATH.touch(exist_ok=True)
-    with open(LOCK_PATH, "w") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        try:
-            yield
-        finally:
-            with contextlib.suppress(Exception):
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    if _HAS_FCNTL:
+        with open(LOCK_PATH, "w") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                yield
+            finally:
+                with contextlib.suppress(Exception):
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    else:
+        # Windows: emulate a non-blocking exclusive lock with msvcrt.
+        # msvcrt.locking needs at least one byte in the file to lock.
+        with open(LOCK_PATH, "a+b") as f:
+            if os.fstat(f.fileno()).st_size == 0:
+                f.write(b"\0")
+                f.flush()
+            f.seek(0)
+            try:
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as e:
+                # Match the POSIX LOCK_NB contract callers map to 409 lock_busy.
+                raise BlockingIOError(str(e)) from e
+            try:
+                yield
+            finally:
+                with contextlib.suppress(Exception):
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 # --- staging --------------------------------------------------------------

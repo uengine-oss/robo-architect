@@ -1,0 +1,8 @@
+{
+  "id": "PRO-001",
+  "title": "부분 환불 기능 추가",
+  "status": "DRAFT",
+  "author": "unknown@uengineui-MacBookPro.local",
+  "strategicDiff": null,
+  "clarificationLog": []
+}
