@@ -3,7 +3,7 @@ import { computed, ref, onMounted, inject } from 'vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
-import { useBigPictureStore } from '@/features/canvas/bigpicture.store'
+// 039 — 'Big picture' 뷰 비활성화: store import 제거.
 import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
@@ -30,7 +30,7 @@ const props = defineProps({
 const navigatorStore = useNavigatorStore()
 const canvasStore = useCanvasStore()
 const aggregateViewerStore = useAggregateViewerStore()
-const bigPictureStore = useBigPictureStore()
+// 039 — 'Big picture' 뷰 비활성화: store 사용 제거.
 const inspectorRequest = useInspectorRequestStore()
 const chatStore = useModelModifierStore()
 const ingestionStore = useIngestionStore()
@@ -431,13 +431,11 @@ const isOnCanvas = computed(() => {
     } else if (currentTab === 'Aggregate') {
       const selectedBcIdsArray = Array.from(aggregateViewerStore.selectedBcIds)
       return selectedBcIdsArray.includes(nodeId)
-    } else if (currentTab === 'Big picture') {
-      const swimlanes = bigPictureStore.swimlanes
-      return swimlanes.some(lane => lane.bcId === nodeId)
     }
+    // 039 — 'Big picture' 분기 제거(뷰 비활성화).
     return canvasStore.nodeIds.includes(nodeId)
   }
-  
+
   // For other node types, check Design Viewer (default behavior)
   if (currentTab === 'Design') {
     return canvasStore.nodeIds.includes(nodeId)
@@ -609,12 +607,10 @@ async function addToCanvas() {
     } else if (currentTab === 'Aggregate') {
       await aggregateViewerStore.fetchAggregatesForBC(props.node.id)
       return
-    } else if (currentTab === 'Big picture') {
-      await bigPictureStore.addBCWithOutboundFlow(props.node.id)
-      return
     }
+    // 039 — 'Big picture' 분기 제거(뷰 비활성화).
   }
-  
+
   // For other node types or BC when Design Viewer is active, add to Design Viewer
   try {
     // Use the new API that includes BC context
