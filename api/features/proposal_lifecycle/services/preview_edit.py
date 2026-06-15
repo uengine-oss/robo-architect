@@ -180,6 +180,35 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
                 tactical[ai] = item
                 touched_bc = touched_bc or item.get("boundedContextId")
                 applied += 1
+        # 미리보기 자식요소 삭제/수정/이름변경(Property/VO/Enum) — 부모 항목 컬렉션을 직접 변경.
+        # 부모는 parentId(=updates.parentId)/aggregateId 로 식별한다. 미리보기 오버레이 자식은
+        # Neo4j id 가 없어(prop-noid-*) targetId 매칭이 불가하므로 nodeId/id→name 순으로 찾는다.
+        # 부모가 제안에 없으면(라이브 전용 Aggregate) 매칭 0 → applied 미증가(layer-2 백로그).
+        elif d.get("action") in ("delete", "update", "rename") and ttype in _CHILD_COLLECTION:
+            coll = _CHILD_COLLECTION[ttype]
+            parent_id = _child_parent_id(d, after)
+            ai = by_id.get(parent_id)
+            if ai is not None:
+                item = dict(tactical[ai])
+                arr = list(item.get(coll) or [])
+                j = _match_child_index(arr, d, after)
+                if j is not None:
+                    if d.get("action") == "delete":
+                        arr.pop(j)
+                    elif d.get("action") == "rename":
+                        child = dict(arr[j])
+                        child["name"] = d.get("targetName") or after.get("name") or child.get("name")
+                        arr[j] = child
+                    else:  # update — 변경 필드 병합(라우팅 메타 제외)
+                        child = dict(arr[j])
+                        for k, v in after.items():
+                            if k not in ("parentType", "parentId"):
+                                child[k] = v
+                        arr[j] = _strip_meta([child])[0]
+                    item[coll] = arr
+                    tactical[ai] = item
+                    touched_bc = touched_bc or item.get("boundedContextId")
+                    applied += 1
         # I13: top-level 신규 요소(Command/Event/ReadModel/Policy) — 새 tactical 항목.
         elif d.get("action") == "create" and ttype in _TOPLEVEL_LABEL and target_id not in by_id:
             item = {
@@ -218,6 +247,29 @@ _TOPLEVEL_LABEL = {
     "readmodel": "ReadModel",
     "policy": "Policy",
 }
+
+
+def _child_parent_id(d: dict, after: dict) -> str:
+    """자식 draft 가 가리키는 부모(보통 Aggregate) id 를 해소한다."""
+    return str(d.get("aggregateId") or d.get("parentId") or after.get("parentId") or "")
+
+
+def _match_child_index(arr: list, d: dict, after: dict) -> Optional[int]:
+    """부모 컬렉션에서 대상 자식의 인덱스를 찾는다.
+
+    미리보기 오버레이 자식은 Neo4j id 가 없을 수 있어(prop-noid-*) targetId 매칭이 불가하므로
+    nodeId/id → name 순으로 찾는다(인텐트 포맷 속성은 name 만 보유)."""
+    target_id = str(d.get("targetId") or "")
+    name = d.get("targetName") or after.get("name")
+    if target_id:
+        for j, c in enumerate(arr):
+            if isinstance(c, dict) and str(c.get("nodeId") or c.get("id") or "") == target_id:
+                return j
+    if name:
+        for j, c in enumerate(arr):
+            if isinstance(c, dict) and c.get("name") == name:
+                return j
+    return None
 
 
 def _draft_after_to_edit(existing_item: dict, after: dict) -> dict:

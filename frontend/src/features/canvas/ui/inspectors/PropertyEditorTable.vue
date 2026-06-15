@@ -366,7 +366,11 @@ function buildDraftChanges() {
       targetId: id,
       targetType: 'Property',
       targetName: init.name,
-      updates: {}
+      // 040 미리보기: 백엔드 apply_chat_drafts 가 삭제 대상을 부모 Aggregate 의 properties
+      // 컬렉션에서 찾아 제거하려면 부모 식별자가 필요하다. 미리보기 오버레이 속성은 Neo4j id 가
+      // 없어(prop-noid-*) targetId 로는 매칭 불가하므로 name 으로 매칭한다. 라이브 경로는 이
+      // 추가 메타를 무시하므로(/api/chat/confirm 은 updates 만 참조) 회귀 없음.
+      updates: { name: init.name, parentType, parentId }
     })
   }
 
