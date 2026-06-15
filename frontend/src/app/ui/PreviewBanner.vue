@@ -4,6 +4,7 @@
     <span class="pb-text">
       <strong>{{ session.label }}</strong> 임팩트 미리보기 · <em>읽기 전용</em> — 라이브 설계가 아닙니다{{ session.viewer === 'data' ? ' (제안 변경 오버레이)' : '' }}
       <span v-if="session.title" class="pb-target">· {{ session.title }}</span>
+      <span v-if="session.notice" class="pb-notice">⚠ {{ session.notice }}</span>
     </span>
     <button class="pb-close" @click="onClose">닫기 ✕</button>
   </div>
@@ -32,6 +33,7 @@ function onClose() {
 .pb-icon { font-size: 13px; }
 .pb-text { flex: 1; }
 .pb-target { opacity: 0.8; }
+.pb-notice { margin-left: 8px; font-weight: 600; opacity: 0.95; }
 .pb-close {
   font-size: 11px; padding: 2px 8px; border-radius: 4px; cursor: pointer;
   border: 1px solid currentColor; background: transparent; color: inherit;

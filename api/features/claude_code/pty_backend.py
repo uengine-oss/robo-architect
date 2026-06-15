@@ -156,6 +156,16 @@ class _PosixPtyProcess:
             os.dup2(slave_fd, 2)
             if slave_fd > 2:
                 os.close(slave_fd)
+            # 부모(uvicorn)의 다른 상속 fd(특히 API 포트의 리스닝 소켓)를 자식 claude 가
+            # 물려받으면, 셀이 서버 포트를 붙잡아 reload/재시작 시 포트가 wedge 된다.
+            # exec 직전에 stdio(0/1/2) 외 모든 fd 를 닫는다. (I10)
+            try:
+                max_fd = os.sysconf("SC_OPEN_MAX")
+                if max_fd < 0:
+                    max_fd = 4096
+            except (AttributeError, ValueError, OSError):
+                max_fd = 4096
+            os.closerange(3, max_fd)
             try:
                 os.execvpe(argv[0], argv, env)
             except OSError:

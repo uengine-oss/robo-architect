@@ -1010,7 +1010,24 @@ function getNodeType(nodeId) {
   return 'unknown'
 }
 
-// 노드 선택 시 Inspector 모드이면 자동 반영
+// 이벤트모델링 캔버스에서 요소를 클릭(store.selectItem)하면 그 선택을 Chat(modelModifier)의
+// 선택 노드로도 전달한다. AggregatePanel 이 chatStore.setSelectedNodes 를 부르는 것과 동일 —
+// 이게 없어 Processes 탭에서 요소를 클릭해도 챗에 선택이 안 잡혔다.
+const _EM_TYPE_LABEL = { command: 'Command', event: 'Event', readmodel: 'ReadModel', ui: 'UI', gateway: 'Gateway' }
+function pushSelectionToChat() {
+  const id = store.selectedItemId
+  const type = store.selectedItemType
+  if (!id || !type) { chatStore.clearSelection(); return }
+  const item = selectedCommand.value || selectedReadModel.value || selectedEvent.value || null
+  chatStore.setSelectedNodes([{
+    id,
+    type: _EM_TYPE_LABEL[type] || type,
+    name: item?.name || item?.title || item?.label || id,
+    ...(item || {}),
+  }])
+}
+
+// 노드 선택 시 Inspector 모드이면 자동 반영 + Chat 선택 동기화
 watch(() => store.selectedItemId, (id) => {
   if (id) {
     inspectingNodeId.value = id
@@ -1018,6 +1035,7 @@ watch(() => store.selectedItemId, (id) => {
   } else {
     inspectingNodeId.value = null
   }
+  pushSelectionToChat()
 })
 
 // 더블클릭 → Inspector 강제 열기

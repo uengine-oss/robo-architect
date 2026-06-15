@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
 import re
 import shutil
@@ -18,6 +19,17 @@ from typing import AsyncGenerator
 from api.platform.observability.smart_logger import SmartLogger
 
 _PROJECT_ROOT = Path(__file__).parents[2]
+
+# claude CLI 스킬 호출은 로컬에 로그인된 Claude Code 세션(구독)을 써야 한다.
+# 그런데 .env(LLM provider용)에 들어있는 ANTHROPIC_API_KEY가 load_dotenv()로
+# 프로세스 환경에 올라가면, 상속받은 claude 서브프로세스가 로컬 로그인 대신
+# 그 키로 API 인증을 시도해 무효 키일 때 "Invalid API key"로 깨진다.
+# → 스킬 서브프로세스 환경에서 Anthropic 인증 변수를 제거해 항상 로컬 세션을 쓰게 한다.
+def _skill_env() -> dict:
+    env = dict(os.environ)
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        env.pop(k, None)
+    return env
 
 # _stream_process_chunks 내부 큐 종료/에러 신호용 센티넬.
 _STREAM_DONE = object()
@@ -33,7 +45,7 @@ def _run_process_sync(
     cmd: list[str], cwd: str, timeout: int
 ) -> subprocess.CompletedProcess:
     """블로킹 subprocess.run. 워커 스레드에서 호출된다."""
-    return subprocess.run(cmd, capture_output=True, cwd=cwd, timeout=timeout)
+    return subprocess.run(cmd, capture_output=True, cwd=cwd, timeout=timeout, env=_skill_env())
 
 
 async def _stream_process_chunks(
@@ -58,6 +70,7 @@ async def _stream_process_chunks(
                 stderr=subprocess.PIPE,
                 cwd=cwd,
                 bufsize=0,
+                env=_skill_env(),
             )
             holder["proc"] = proc
             # stderr 드레인 스레드: 읽지 않으면 stderr 파이프가 차서 child 가 멈출 수 있다.

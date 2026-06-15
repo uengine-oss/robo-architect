@@ -79,6 +79,18 @@ async def get_test_results(proposal_id: str, request: Request):
 
     try:
         data = json.loads(raw) if isinstance(raw, str) else raw
+        # I11: 요약 총계(totalScenarios/passed/failed/skipped)를 items 로부터 재계산해
+        # 항목 목록과 항상 일치시킨다(저장 시점 집계가 items 와 어긋나는 경우 방지).
+        items = data.get("items") or []
+        if items:
+            counts: dict[str, int] = {}
+            for it in items:
+                r = str((it or {}).get("result") or "").upper()
+                counts[r] = counts.get(r, 0) + 1
+            data["totalScenarios"] = len(items)
+            data["passed"] = counts.get("PASS", 0)
+            data["failed"] = counts.get("FAIL", 0)
+            data["skipped"] = counts.get("SKIP", 0) + counts.get("SKIPPED", 0)
         return TestRunResult(**data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse test results: {e}")

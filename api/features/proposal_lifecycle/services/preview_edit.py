@@ -123,12 +123,14 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
     tactical = _read_tactical(proposal_id)
     by_id = {str(it.get("nodeId") or ""): i for i, it in enumerate(tactical)}
     touched_bc = bc_id
+    applied = 0  # I13: 실제 반영 건수(0이면 프런트가 "반영 없음"으로 표시)
 
     for d in drafts or []:
         if approved and d.get("changeId") not in approved:
             continue
         target_id = str(d.get("targetId") or "")
         after = d.get("after") or d.get("updates") or {}
+        ttype = (d.get("targetType") or "").lower()
         if not target_id:
             continue
         # rename → nodeTitle / name
@@ -138,8 +140,9 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
         if i is not None:
             tactical[i] = _normalize_item_from_edit(tactical[i], _draft_after_to_edit(tactical[i], after), bc_id)
             touched_bc = touched_bc or tactical[i].get("boundedContextId")
+            applied += 1
         # 대상이 diff 에 없으면(라이브 Aggregate) MODIFY 신규
-        elif (d.get("targetType") or "").lower() == "aggregate":
+        elif ttype == "aggregate":
             item = _normalize_item_from_edit(
                 {"nodeId": target_id, "nodeLabel": "Aggregate", "nodeTitle": after.get("name") or target_id,
                  "changeType": "MODIFY", "impactLevel": "MEDIUM", "reason": "Chat 수정 요청 반영"},
@@ -147,9 +150,74 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
             )
             tactical.append(item)
             by_id[target_id] = len(tactical) - 1
+            applied += 1
+        # I13: 자식요소 신규 추가(Property/VO/Enum) — 부모(보통 Aggregate) 항목에 병합.
+        # 부모 식별자는 표현마다 다르다: 라이브 create 는 `aggregateId`, Property create 는
+        # `updates.parentId`(=after.parentId). (모델모디파이어는 ValueObject targetType 이
+        # 없어 "VO 추가"가 Property 로 변환되므로 parentId 경로가 실사용 케이스다.)
+        elif d.get("action") == "create" and ttype in _CHILD_COLLECTION:
+            coll = _CHILD_COLLECTION[ttype]
+            parent_id = str(d.get("aggregateId") or d.get("parentId") or after.get("parentId") or "")
+            ai = by_id.get(parent_id)
+            if ai is None and parent_id:
+                tactical.append({
+                    "nodeId": parent_id,
+                    "nodeLabel": after.get("parentType") or d.get("parentType") or "Aggregate",
+                    "nodeTitle": d.get("parentName") or parent_id,
+                    "changeType": "MODIFY", "impactLevel": "MEDIUM",
+                    "reason": "Chat 자식요소 추가", "boundedContextId": bc_id,
+                })
+                ai = by_id[parent_id] = len(tactical) - 1
+            if ai is not None:
+                item = dict(tactical[ai])
+                arr = list(item.get(coll) or [])
+                # 자식 entry — 라우팅 메타(parentType/parentId)는 제외.
+                child = {k: v for k, v in after.items() if k not in ("parentType", "parentId")}
+                child.setdefault("name", d.get("targetName") or after.get("name") or target_id)
+                child.setdefault("nodeId", target_id)
+                arr.append(_strip_meta([child])[0])
+                item[coll] = arr
+                tactical[ai] = item
+                touched_bc = touched_bc or item.get("boundedContextId")
+                applied += 1
+        # I13: top-level 신규 요소(Command/Event/ReadModel/Policy) — 새 tactical 항목.
+        elif d.get("action") == "create" and ttype in _TOPLEVEL_LABEL and target_id not in by_id:
+            item = {
+                "nodeId": target_id, "nodeLabel": _TOPLEVEL_LABEL[ttype],
+                "nodeTitle": d.get("targetName") or after.get("name") or target_id,
+                "changeType": "CREATE", "impactLevel": "MEDIUM",
+                "reason": "Chat 수정 요청 반영",
+                "boundedContextId": bc_id or str(d.get("aggregateId") or "") or None,
+            }
+            if after:
+                item["fields"] = {k: v for k, v in after.items() if k not in _META_KEYS}
+            tactical.append(item)
+            by_id[target_id] = len(tactical) - 1
+            applied += 1
 
     _write_tactical(proposal_id, tactical)
-    return build_data_preview(proposal_id, touched_bc) if touched_bc else {"_preview": {"saved": True}}
+    tree = build_data_preview(proposal_id, touched_bc) if touched_bc else {"_preview": {"saved": True}}
+    # 반영 건수를 메타로 실어 보내 프런트가 정직한 메시지를 띄우게 한다(I13).
+    if isinstance(tree, dict):
+        tree.setdefault("_preview", {})
+        if isinstance(tree["_preview"], dict):
+            tree["_preview"]["appliedCount"] = applied
+    return tree
+
+
+# I13: chat draft targetType → Aggregate 자식 컬렉션 / top-level 라벨 매핑.
+_CHILD_COLLECTION = {
+    "valueobject": "valueObjects",
+    "enumeration": "enumerations",
+    "enum": "enumerations",
+    "property": "properties",
+}
+_TOPLEVEL_LABEL = {
+    "command": "Command",
+    "event": "Event",
+    "readmodel": "ReadModel",
+    "policy": "Policy",
+}
 
 
 def _draft_after_to_edit(existing_item: dict, after: dict) -> dict:

@@ -137,6 +137,7 @@ async function _onOpenPreview(e) {
     title: d.title || '',
     targetNodeId: d.targetNodeId || null,
     bcId: d.bcId || null,
+    notice: d.notice || null,
   })
 
   activeTab.value = tab

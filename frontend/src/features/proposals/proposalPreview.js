@@ -10,7 +10,8 @@ const BASE = '/api/proposals'
 // nodeLabel → viewer 매핑(프런트 측 1차 추정). 백엔드 /resolve 가 최종 권위.
 export const LABEL_TO_VIEWER = {
   Aggregate: 'data', ValueObject: 'data', Enum: 'data', Enumeration: 'data',
-  Command: 'data', Event: 'data',
+  // Command/Event/ReadModel 은 Event Modeling 산출물 → processes(백엔드 resolve 와 일치, I18).
+  Command: 'processes', Event: 'processes',
   UI: 'design', Screen: 'design', UiFlow: 'design',
   Process: 'process', BpmnFlow: 'process',
   Journey: 'processes', EventModel: 'processes', ReadModel: 'processes',
@@ -50,6 +51,7 @@ export async function openPreview(proposalId, item) {
       nodeLabel: item?.nodeLabel || '',
       label: proposalId,
       title: item?.nodeTitle || item?.nodeId || '',
+      notice: resolved.notice || null,
     },
   }))
   return resolved

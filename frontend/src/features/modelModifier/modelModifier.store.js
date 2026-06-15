@@ -397,12 +397,17 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
         if (!res.ok) throw new Error(tree?.detail || `API error: ${res.status}`)
         // 갱신된 미리보기 트리를 뷰어에 반영(라이브 무변경).
         window.dispatchEvent(new CustomEvent('robo:preview-updated', { detail: { tree } }))
-        const lockedDrafts = drafts.map(d => ({ ...d, approved: !!d.approved, isApplied: true }))
-        messages.value[idx] = { ...msg, drafts: lockedDrafts, isApplied: true }
+        // I13: 백엔드가 실제 반영 건수를 돌려준다 — 0건이면 "반영 없음"으로 정직하게.
+        const appliedCount = tree?._preview?.appliedCount
+        const didApply = appliedCount == null || appliedCount > 0
+        const lockedDrafts = drafts.map(d => ({ ...d, approved: !!d.approved, isApplied: didApply }))
+        messages.value[idx] = { ...msg, drafts: lockedDrafts, isApplied: didApply }
         messages.value = [...messages.value]
         messages.value.push({
           id: generateId(), type: 'system',
-          content: `제안(${ps.label || ps.proposalId}) diff 에 반영했습니다. (라이브 설계는 변경되지 않음)`,
+          content: didApply
+            ? `제안(${ps.label || ps.proposalId}) diff 에 ${appliedCount != null ? appliedCount + '건 ' : ''}반영했습니다. (라이브 설계는 변경되지 않음)`
+            : '반영된 변경이 없습니다. (이 편집 유형은 아직 제안 diff 반영을 지원하지 않습니다)',
           timestamp: new Date().toISOString(),
         })
         return

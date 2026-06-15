@@ -232,8 +232,11 @@ class AnswerClarificationRequest(BaseModel):
 
 
 class UpdateDiffRequest(BaseModel):
+    # 항목 단위 구조 검증은 update_diff 의 _validate_diff_payload 에서 수행해
+    # 명확한 한국어 사유(422)를 돌려준다. 여기서 list[dict] 로 좁히면 FastAPI 가
+    # 핸들러 전에 배열형 detail 로 거부해 사유 표현이 나빠진다.
     strategicDiff: Optional[dict] = None
-    tacticalDiff: Optional[list[dict]] = None
+    tacticalDiff: Optional[list] = None
 
 
 class IntentFeedbackRequest(BaseModel):

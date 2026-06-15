@@ -11,6 +11,8 @@ Proposal 구현 준비 서비스.
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 from api.features.proposal_lifecycle.services.sandbox_manager import SandboxManager
 from api.features.proposal_lifecycle.proposal_contracts import append_status_history
@@ -18,6 +20,53 @@ from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 
 _sandbox = SandboxManager()
+
+
+def _ensure_worktree_mcp(worktree_path: Path) -> None:
+    """워크트리에 robo-spec MCP 가용성 + 사전 신뢰를 보장한다(I9).
+
+    첫 실행 시 claude 가 `.mcp.json` 신뢰 프롬프트("use this mcp server?")를 띄워
+    대기하면, 셀에 자동주입되는 `/robo-implement` 명령이 그 프롬프트에 먹혀 유실되고
+    구현이 시작되지 않는 레이스가 있었다. `.claude/settings.local.json` 에 서버를
+    **사전 신뢰**로 적어두면 프롬프트가 안 떠 레이스가 사라진다.
+
+    - `.mcp.json` 이 없으면 robo-spec(backend `/mcp/`)을 기록(있으면 건드리지 않음).
+    - settings.local.json 의 enabledMcpjsonServers 에 그 서버들을 병합(사전 신뢰).
+    실패는 best-effort(구현 진행은 계속).
+    """
+    try:
+        mcp_file = worktree_path / ".mcp.json"
+        if mcp_file.exists():
+            try:
+                server_names = list((json.loads(mcp_file.read_text(encoding="utf-8") or "{}").get("mcpServers") or {}).keys())
+            except ValueError:
+                server_names = []
+        else:
+            port = os.getenv("API_PORT", "8000")
+            mcp_file.write_text(
+                json.dumps({"mcpServers": {"robo-spec": {"type": "http", "url": f"http://localhost:{port}/mcp/"}}},
+                           indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            server_names = ["robo-spec"]
+        if not server_names:
+            return
+        claude_dir = worktree_path / ".claude"
+        claude_dir.mkdir(exist_ok=True)
+        settings = claude_dir / "settings.local.json"
+        cur = {}
+        if settings.exists():
+            try:
+                cur = json.loads(settings.read_text(encoding="utf-8") or "{}")
+            except ValueError:
+                cur = {}
+        enabled = set(cur.get("enabledMcpjsonServers") or [])
+        enabled.update(server_names)
+        cur["enabledMcpjsonServers"] = sorted(enabled)
+        settings.write_text(json.dumps(cur, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        SmartLogger.log("WARN", f"worktree mcp pretrust failed: {e}",
+                        category="proposal_lifecycle.implement.mcp_warn", params={})
 
 
 def _get_proposal_context(proposal_id: str) -> dict:
@@ -114,6 +163,9 @@ def prepare_implementation(proposal_id: str, project_root: str,
     worktree_str = str(worktree_path)
     # 저장은 정규화(de-nest)된 실제 루트로 — 오염된 입력이 다시 새지 않도록.
     resolved_root = str(_sandbox.resolve_root(project_root))
+
+    # I9: robo-spec MCP 가용성 + 사전 신뢰 → 첫 실행 MCP 신뢰 프롬프트와 자동주입 충돌 제거.
+    _ensure_worktree_mcp(worktree_path)
 
     # 미리 분해된 작업 목록(tasksJson)을 speckit 마크다운으로 렌더해 워크트리에 기록한다.
     # 셸이 만들지 않고, proposal 단계에서 헤드리스로 뽑아둔 체크리스트를 그대로 넣어준다.

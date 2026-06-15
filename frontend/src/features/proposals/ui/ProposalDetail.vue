@@ -127,7 +127,9 @@
           {{ submitting ? '제출 중...' : 'Proposal 제출 (SUBMIT)' }}
         </button>
       </template>
-      <template v-if="canImplement">
+      <!-- 이미 sandbox 서브탭이면 이 버튼은 no-op(무반응)이라 숨긴다.
+           실제 구현 시작은 sandbox 뷰 안의 "구현하기" 버튼이다. -->
+      <template v-if="canImplement && activeTab !== 'sandbox'">
         <button @click="activeTab = 'sandbox'" class="btn btn--primary">샌드박스 구현 열기</button>
       </template>
     </div>

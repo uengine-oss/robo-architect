@@ -24,8 +24,11 @@ LABEL_TO_VIEWER: dict[str, str] = {
     "ValueObject": "data",
     "Enum": "data",
     "Enumeration": "data",
-    "Command": "data",
-    "Event": "data",
+    # Command/Event/ReadModel 은 Event Modeling 산출물이므로 processes(이벤트모델링) 뷰어로
+    # 일관화한다(I18). 단 processes 뷰어는 오버레이가 없어 신규 요소는 플로우 맥락만 보이고,
+    # 기존/수정 요소는 정상 포커스된다. 신규 가시성은 후속(이벤트모델링 오버레이) 과제.
+    "Command": "processes",
+    "Event": "processes",
     "ReadModel": "processes",
     "UI": "design",
     "Screen": "design",
@@ -103,9 +106,47 @@ def resolve_open_target(proposal_id: str, node_id: Optional[str], node_label: Op
         if not bc_id:
             return {"renderable": False, "viewer": viewer, "targetNodeId": target_id,
                     "bcId": None, "reason": "대상의 BoundedContext 를 해소할 수 없습니다."}
+        # Data 뷰어는 Aggregate 를 포커스한다 — Command/Event/VO 등 비-Aggregate 노드를
+        # 그대로 포커스하면 "Aggregate not found" 가 난다. 소속 Aggregate 로 포커스를 돌린다.
+        if label != "Aggregate":
+            focus = _resolve_focus_aggregate(proposal, node_id)
+            if focus:
+                target_id = focus
+
+    # 신규(CREATE) 요소는 오버레이가 있는 data 뷰어에선 보이지만, 오버레이가 없는
+    # processes/design/process 뷰어에는 라이브 그래프에 없어 표시되지 않는다(I18-C 백로그).
+    # 그 경우 사용자가 "왜 안 보이지?" 하지 않도록 안내 문구를 함께 내려준다.
+    notice = None
+    if viewer != "data":
+        item = _find_tactical_item(proposal, node_id)
+        if item and (item.get("changeType") or "").upper() == "CREATE":
+            notice = "이 항목은 제안에만 있는 신규 요소라 이 뷰어 캔버스에는 아직 표시되지 않습니다. 내용은 제안 Diff에서 확인하세요."
 
     return {"renderable": True, "viewer": viewer, "targetNodeId": target_id,
-            "bcId": bc_id, "reason": None}
+            "bcId": bc_id, "reason": None, "notice": notice}
+
+
+def _resolve_focus_aggregate(proposal: ProposalResponse, node_id: Optional[str]) -> Optional[str]:
+    """비-Aggregate 노드(Command/Event/VO 등)를 소속 Aggregate id 로 해소한다.
+
+    - Command: 항목의 `aggregateId`.
+    - Event: 항목의 `commandId` → 그 Command 의 `aggregateId`.
+    - 폴백: 제안의 첫 Aggregate tactical 항목.
+    """
+    item = _find_tactical_item(proposal, node_id)
+    if item:
+        agg = item.get("aggregateId")
+        if agg:
+            return str(agg)
+        cmd_id = item.get("commandId")
+        if cmd_id:
+            cmd = _find_tactical_item(proposal, cmd_id)
+            if cmd and cmd.get("aggregateId"):
+                return str(cmd.get("aggregateId"))
+    for it in proposal.tacticalDiff or []:
+        if isinstance(it, dict) and it.get("nodeLabel") == "Aggregate" and it.get("nodeId"):
+            return str(it.get("nodeId"))
+    return None
 
 
 def _find_tactical_item(proposal: ProposalResponse, node_id: Optional[str]) -> Optional[dict]:
@@ -119,10 +160,19 @@ def _find_tactical_item(proposal: ProposalResponse, node_id: Optional[str]) -> O
 
 
 def _guess_bc_from_proposal(proposal: ProposalResponse) -> Optional[str]:
-    """impactMap 에서 BoundedContext 항목을 우선 추출. 없으면 None."""
+    """제안 전체에서 대표 BoundedContext 를 추정한다.
+
+    신규 Command/Event 항목은 자체 boundedContextId 가 없어 BC 해소에 실패하는데(I5),
+    같은 제안의 다른 tactical 항목(보통 부모 Aggregate)이 가진 boundedContextId 로 보완한다.
+    우선순위: ①impactMap 의 BoundedContext 항목 → ②tacticalDiff 항목의 boundedContextId.
+    """
     for entry in proposal.impactMap or []:
         if entry.nodeLabel == "BoundedContext" and entry.nodeId:
             return entry.nodeId
+    for item in proposal.tacticalDiff or []:
+        bc = item.get("boundedContextId") if isinstance(item, dict) else None
+        if bc:
+            return bc
     return None
 
 
