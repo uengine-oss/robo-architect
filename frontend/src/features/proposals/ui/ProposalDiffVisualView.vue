@@ -75,6 +75,29 @@ function opsToStructured(ops) {
   return { scalarChanges, valueObjectChanges, enumChanges, invariantChanges }
 }
 
+// tacticalDiff 항목의 VO/Enum 은 두 형태로 실린다: ① semanticDiff.ops(obj_append),
+// ② 편집/정규화로 최상위 valueObjects/enumerations 배열(ops 는 빈 채). 백엔드
+// overlay_apply._populate_from_deep_item 와 동일하게 둘 다 흡수하되, ops 로 이미
+// 잡힌 이름은 중복 추가하지 않는다.
+function mergeItemLevelObjects(struct, item) {
+  const seenVo = new Set((struct.valueObjectChanges || []).map(v => v.name))
+  for (const vo of (item.valueObjects || [])) {
+    if (!vo || !vo.name || seenVo.has(vo.name)) continue
+    seenVo.add(vo.name)
+    struct.valueObjectChanges.push({
+      type: 'ADDED', name: vo.name, field: 'valueObjects',
+      dataType: vo.type, fields: vo.fields || [],
+    })
+  }
+  const seenEnum = new Set((struct.enumChanges || []).map(e => e.enumName))
+  for (const en of (item.enumerations || [])) {
+    if (!en || !en.name || seenEnum.has(en.name)) continue
+    seenEnum.add(en.name)
+    struct.enumChanges.push({ enumName: en.name, addedItems: en.items || [] })
+  }
+  return struct
+}
+
 // ── strategic + tactical → 통합 노드 목록 ───────────────────────────────
 const nodes = computed(() => {
   const out = []
@@ -109,7 +132,7 @@ const nodes = computed(() => {
   }
   for (const item of (props.tacticalDiff || [])) {
     const ops = item.semanticDiff?.ops || []
-    const struct = opsToStructured(ops)
+    const struct = mergeItemLevelObjects(opsToStructured(ops), item)
     // fields(actor/category/inputSchema/version/payload) → 스칼라 필드로 합류
     const fieldChanges = Object.entries(item.fields || {}).map(([f, v]) => ({
       field: f, after: (v && typeof v === 'object') ? (v.after ?? v.value) : v,

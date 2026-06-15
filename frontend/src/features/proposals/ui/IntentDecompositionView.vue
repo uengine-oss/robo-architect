@@ -91,6 +91,14 @@
               <span class="op-value">{{ opValue(op) }}</span>
             </div>
           </div>
+          <!-- 편집/정규화로 최상위에 실린 VO/Enum(ops 가 빈 경우). ops 와 중복 이름은 제외. -->
+          <div v-if="itemLevelObjects(item).length" class="semantic-ops">
+            <div v-for="(op, oi) in itemLevelObjects(item)" :key="`il-${oi}`" class="semantic-op">
+              <code>{{ op.field }}</code>
+              <span class="op-type">obj_append</span>
+              <span class="op-value">{{ opValue(op) }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -156,6 +164,26 @@ function opValue(op) {
   if (op.obj_data) return JSON.stringify(op.obj_data)
   if (op.items) return JSON.stringify(op.items)
   return ''
+}
+
+// tacticalDiff 항목의 VO/Enum 은 ① semanticDiff.ops(obj_append) 또는 ② 편집/정규화로
+// 최상위 valueObjects/enumerations 배열(ops 빈 채)로 실린다. 백엔드 overlay_apply 와
+// 동일하게 ② 도 의사 obj_append op 로 변환해 렌더하되, ops 에 이미 있는 이름은 제외.
+function itemLevelObjects(item) {
+  const opNames = new Set(
+    (item.semanticDiff?.ops || [])
+      .filter(o => o.op === 'obj_append')
+      .map(o => o.obj_name || o.obj_data?.name)
+      .filter(Boolean),
+  )
+  const out = []
+  for (const vo of (item.valueObjects || [])) {
+    if (vo?.name && !opNames.has(vo.name)) out.push({ field: 'valueObjects', obj_data: vo })
+  }
+  for (const en of (item.enumerations || [])) {
+    if (en?.name && !opNames.has(en.name)) out.push({ field: 'enumerations', obj_data: en })
+  }
+  return out
 }
 </script>
 
