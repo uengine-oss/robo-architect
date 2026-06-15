@@ -24,7 +24,7 @@ const HOST_FRONTEND = resolve(ROOT, 'frontend')
 const ANALYZER = resolve(ROOT, 'robo-analyzer', 'robo-data-frontend')
 const DEST = resolve(HOST_FRONTEND, 'dist', 'analyzer')
 
-const REMOTE_URL = 'analyzer/assets/remoteEntry.js' // host 가 상대경로로 로드(app://app/analyzer/)
+const REMOTE_URL = '/analyzer/assets/remoteEntry.js' // host 가 절대경로로 로드(app://app/analyzer/). 앞의 '/' 없으면 브라우저가 bare module specifier 로 보고 거부('Failed to resolve module specifier')
 const ANALYZER_BASE = '/analyzer/'                  // analyzer 청크의 publicPath
 
 function run(cmd, cwd, extraEnv = {}) {
