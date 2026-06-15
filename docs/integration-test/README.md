@@ -5,6 +5,7 @@
 - 검증 단위: App.vue의 **탭**(사용자에게 보이는 View mode)
 - 각 탭 문서: `tabs/<tab>.md` — 그 탭이 보유한 기능, 관련 스펙, 검증 시나리오, 결과
 - 템플릿: [`_TEMPLATE.md`](_TEMPLATE.md)
+- **후속·미구현 정리**: [`FOLLOW-UPS.md`](FOLLOW-UPS.md) — 탭 범위를 넘거나 신규 feature·미구현이라 **이후 탭/세션에서 이어받을** 항목(대상 탭별 그룹핑)
 
 ## 탭 구조 (App.vue / TopBar.vue 기준)
 
