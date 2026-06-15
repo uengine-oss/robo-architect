@@ -88,7 +88,8 @@ def _context_note(status: str) -> Optional[str]:
     return None
 
 
-def resolve_open_target(proposal_id: str, node_id: Optional[str], node_label: Optional[str]) -> dict:
+def resolve_open_target(proposal_id: str, node_id: Optional[str], node_label: Optional[str],
+                        node_title: Optional[str] = None) -> dict:
     """임팩트/diff 항목 하나가 어떤 뷰어로 열리는지 + 열기 가능 여부를 판정한다.
 
     Returns: { renderable, viewer, targetNodeId, bcId, reason }
@@ -103,6 +104,16 @@ def resolve_open_target(proposal_id: str, node_id: Optional[str], node_label: Op
     if not viewer:
         return {"renderable": False, "viewer": None, "targetNodeId": node_id,
                 "bcId": None, "aggregateId": None, "reason": f"'{label}' 타입은 미리보기 뷰어 매핑이 없습니다."}
+
+    # 040/043-fix — impactMap(충돌 가능성 분석) 항목은 nodeId 가 null 일 수 있다: LLM
+    # (robo-proposal-context)이 신규 CREATE 노드를 라이브 그래프 id 로 묶지 못하면 SKILL 규칙상
+    # nodeId=null 로 둔다. 그러면 Tactical Diff '열기'와 달리 포커스 대상 id 가 없어 빈 캔버스/
+    # 'No aggregates selected' 가 된다. 같은 제안 tacticalDiff 에서 (label, title) 로 동일 논리
+    # 노드를 찾아 합성 nodeId 를 복원하면, 이후 전부 Tactical Diff '열기'와 동일 경로로 해소된다.
+    if not node_id:
+        recovered = _match_tactical_by_label_title(proposal, label, node_title)
+        if recovered:
+            node_id = recovered
 
     if viewer not in WIRED_VIEWERS:
         return {"renderable": False, "viewer": viewer, "targetNodeId": node_id,
@@ -164,6 +175,24 @@ def _find_tactical_item(proposal: ProposalResponse, node_id: Optional[str]) -> O
     for item in proposal.tacticalDiff or []:
         if str(item.get("nodeId") or "") == str(node_id):
             return item
+    return None
+
+
+def _match_tactical_by_label_title(proposal: ProposalResponse, node_label: str,
+                                   node_title: Optional[str]) -> Optional[str]:
+    """nodeId 가 없는 impactMap 항목을 (nodeLabel, nodeTitle)로 tacticalDiff 의 동일 논리
+    노드에 매칭해 그 합성 nodeId 를 복원한다. 한 제안 안에서 (label, title)은 사실상 유일하다.
+    매칭 실패 시 None."""
+    if not node_title:
+        return None
+    label = (node_label or "").strip()
+    title = str(node_title).strip()
+    for item in proposal.tacticalDiff or []:
+        if (str(item.get("nodeLabel") or "").strip() == label
+                and str(item.get("nodeTitle") or "").strip() == title):
+            nid = item.get("nodeId")
+            if nid:
+                return str(nid)
     return None
 
 

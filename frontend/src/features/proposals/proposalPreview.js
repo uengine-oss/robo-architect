@@ -23,10 +23,13 @@ export const VIEWER_TO_TAB = { data: 'Data', design: 'Design', process: 'Process
 
 // 백엔드에 열기 가능 여부 + 대상 뷰어/BC 를 질의한다.
 // returns { renderable, viewer, targetNodeId, bcId, reason }
-export async function resolveOpenTarget(proposalId, nodeId, nodeLabel) {
+// nodeTitle: impactMap(충돌 가능성 분석) 항목은 nodeId 가 null 일 수 있어, 백엔드가
+//   (nodeLabel, nodeTitle)로 tacticalDiff 의 동일 노드를 찾아 합성 nodeId 를 복원한다.
+export async function resolveOpenTarget(proposalId, nodeId, nodeLabel, nodeTitle) {
   const qs = new URLSearchParams()
   if (nodeId) qs.set('nodeId', nodeId)
   if (nodeLabel) qs.set('nodeLabel', nodeLabel)
+  if (nodeTitle) qs.set('nodeTitle', nodeTitle)
   const res = await fetch(`${BASE}/${proposalId}/preview/resolve?${qs.toString()}`)
   if (!res.ok) {
     return { renderable: false, viewer: null, targetNodeId: nodeId, bcId: null, reason: `resolve 실패(${res.status})` }
@@ -37,7 +40,7 @@ export async function resolveOpenTarget(proposalId, nodeId, nodeLabel) {
 // 임팩트/diff 항목 "열기": 백엔드 resolve → robo:open-preview emit.
 // item: { nodeId, nodeLabel, nodeTitle }
 export async function openPreview(proposalId, item) {
-  const resolved = await resolveOpenTarget(proposalId, item?.nodeId, item?.nodeLabel)
+  const resolved = await resolveOpenTarget(proposalId, item?.nodeId, item?.nodeLabel, item?.nodeTitle)
   if (!resolved.renderable) {
     window.dispatchEvent(new CustomEvent('robo:open-preview-failed', {
       detail: { proposalId, item, reason: resolved.reason },

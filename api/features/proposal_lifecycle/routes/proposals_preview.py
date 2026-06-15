@@ -35,10 +35,11 @@ async def preview_resolve(
     request: Request,
     nodeId: Optional[str] = Query(default=None),
     nodeLabel: Optional[str] = Query(default=None),
+    nodeTitle: Optional[str] = Query(default=None),
 ):
     """임팩트/diff 항목 하나가 어떤 뷰어로 열리는지 판정. renderable=false 면 프런트가
     '열기'를 비활성 + 사유 표시(FR-010)."""
-    result = resolve_open_target(proposal_id, nodeId, nodeLabel)
+    result = resolve_open_target(proposal_id, nodeId, nodeLabel, nodeTitle)
     SmartLogger.log(
         "INFO", "preview_resolve",
         category="proposal_lifecycle.preview.resolve",
