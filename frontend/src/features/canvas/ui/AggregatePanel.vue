@@ -413,7 +413,25 @@ const previousBcIds = ref(new Set())
 // Track visible aggregate IDs — aggregate-level visibility can change without
 // the BC set changing (e.g. drilling into one aggregate of an already-loaded BC).
 const previousAggIds = ref(new Set())
+// Track a content signature (properties/enum/vo) so that *in-place* edits — e.g.
+// adding a property via the inspector / preview edit — rebuild the affected nodes
+// even though the set of BC/aggregate ids is unchanged.
+const previousAggSignature = ref('')
 const isRebuilding = ref(false) // Flag to prevent position reset during rebuild
+
+// Build a stable content signature for the currently visible aggregates. Changes
+// here (a new property, a renamed field, an added enum item) trigger a node rebuild.
+function computeAggSignature(bcs) {
+  return JSON.stringify((bcs || []).map(bc => ({
+    id: bc.id,
+    aggs: (bc.aggregates || []).map(a => ({
+      id: a.id,
+      p: (a.properties || []).map(p => [p.name, p.type, p.isKey, p.isForeignKey, p.isRequired, p.displayName]),
+      e: (a.enumerations || []).map(e => [e.name, (e.items || []).length]),
+      v: (a.valueObjects || []).map(v => [v.name, (v.fields || []).length, v.referencedAggregateName]),
+    })),
+  })))
+}
 
 // Update nodes when store data changes - when BC OR aggregate structure changes
 watch(() => store.filteredBoundedContexts, (newBcs) => {
@@ -431,14 +449,21 @@ watch(() => store.filteredBoundedContexts, (newBcs) => {
   const aggRemoved = Array.from(previousAggIds.value).some(id => !newAggIds.has(id))
   const aggStructureChanged = aggAdded || aggRemoved
 
-  // If neither BC nor aggregate structure changed, don't rebuild
-  if (!bcStructureChanged && !aggStructureChanged && previousBcIds.value.size > 0) {
+  // Detect in-place content edits (property/enum/vo change) on the same set of
+  // aggregates — e.g. "Save Properties" in the inspector. Without this the canvas
+  // would not reflect the edit until the aggregate set itself changed.
+  const newAggSignature = computeAggSignature(newBcs)
+  const contentChanged = newAggSignature !== previousAggSignature.value
+
+  // If neither structure nor content changed, don't rebuild
+  if (!bcStructureChanged && !aggStructureChanged && !contentChanged && previousBcIds.value.size > 0) {
     return
   }
 
-  // Update previous BC / aggregate IDs
+  // Update previous BC / aggregate IDs + content signature
   previousBcIds.value = newBcIds
   previousAggIds.value = newAggIds
+  previousAggSignature.value = newAggSignature
   
   // Set rebuilding flag
   isRebuilding.value = true

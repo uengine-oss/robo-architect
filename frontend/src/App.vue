@@ -20,6 +20,7 @@ import { useBpmnStore } from '@/features/canvas/bpmn.store'
 // 040 — Proposal 임팩트 미리보기 오케스트레이션(앱 셸). 뷰어 스토어는 proposals 를
 // 모르고, App 이 robo:open-preview 를 수신해 탭 전환 + preview 진입 + 포커스를 조율한다.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
+import { useProposalsStore } from '@/features/proposals/proposals.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 // 043-fix — Command/Event 미리보기를 Design 캔버스에 투영(begin/endPreview) + 진입 요청 브리지.
 import { useCanvasStore } from '@/features/canvas/canvas.store'
@@ -116,6 +117,7 @@ function _onSwitchTab(e) {
 
 // 040 — Proposal 임팩트 '열기' 오케스트레이션.
 const aggregateViewer = useAggregateViewerStore()
+const proposalsStore = useProposalsStore()
 const eventModeling = useEventModelingStore()
 // 043-fix — Design 캔버스 미리보기.
 const canvasStore = useCanvasStore()
@@ -196,6 +198,15 @@ function _onPreviewExit(e) {
 function _onPreviewUpdated(e) {
   const tree = e?.detail?.tree
   if (tree) aggregateViewer.applyPreviewTree(tree)
+}
+
+// 040 — 미리보기 편집으로 Proposal.tacticalDiff 가 갱신되면, 열려 있는 Proposal 상세
+// (Impact Map·Diff)가 다시 클릭하지 않아도 최신화되도록 currentProposal 을 재적재한다.
+function _onProposalDiffChanged(e) {
+  const proposalId = e?.detail?.proposalId
+  if (proposalId && proposalsStore.currentProposal?.id === proposalId) {
+    proposalsStore.fetchProposal(proposalId)
+  }
 }
 
 const currentComponent = computed(() => tabComponents[activeTab.value])
@@ -327,6 +338,7 @@ onMounted(() => {
   window.addEventListener('robo:open-preview-failed', _onOpenPreviewFailed)
   window.addEventListener('robo:preview-exit', _onPreviewExit)
   window.addEventListener('robo:preview-updated', _onPreviewUpdated)
+  window.addEventListener('robo:proposal-diff-changed', _onProposalDiffChanged)
 
   log.info('app_mounted', 'App mounted; core layout components are ready.', {
     appInstanceId,
@@ -346,6 +358,7 @@ onUnmounted(() => {
   window.removeEventListener('robo:open-preview-failed', _onOpenPreviewFailed)
   window.removeEventListener('robo:preview-exit', _onPreviewExit)
   window.removeEventListener('robo:preview-updated', _onPreviewUpdated)
+  window.removeEventListener('robo:proposal-diff-changed', _onProposalDiffChanged)
 })
 </script>
 

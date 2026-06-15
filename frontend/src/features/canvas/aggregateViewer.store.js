@@ -265,6 +265,16 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
       mapped.aggregates.forEach(a => a.id && visibleAggregateIds.value.add(a.id))
       visibleAggregateIds.value = new Set(visibleAggregateIds.value)
     }
+
+    // 040 — 모든 미리보기 편집(Inspector 직접·Chat)은 이 메서드를 거치며, 그 시점에
+    // Proposal.tacticalDiff 가 이미 갱신돼 있다. Proposals 탭(Impact Map·Diff)이 항목을
+    // 다시 클릭하지 않아도 최신 상태를 보이도록 앱 레벨로 알린다(App.vue 가 currentProposal 재적재).
+    const ps = usePreviewSession()
+    if (ps.proposalId) {
+      window.dispatchEvent(new CustomEvent('robo:proposal-diff-changed', {
+        detail: { proposalId: ps.proposalId },
+      }))
+    }
   }
 
   // Update aggregate enumerations and value objects
