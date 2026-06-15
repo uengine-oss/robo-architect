@@ -21,6 +21,9 @@ import { useBpmnStore } from '@/features/canvas/bpmn.store'
 // 모르고, App 이 robo:open-preview 를 수신해 탭 전환 + preview 진입 + 포커스를 조율한다.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
+// 043-fix — Command/Event 미리보기를 Design 캔버스에 투영(begin/endPreview) + 진입 요청 브리지.
+import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useCanvasPreviewRequestStore } from '@/features/canvas/canvasPreviewRequest.store'
 import { enterPreview, exitPreview } from '@/app/previewSession'
 import PreviewBanner from '@/app/ui/PreviewBanner.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
@@ -114,6 +117,9 @@ function _onSwitchTab(e) {
 // 040 — Proposal 임팩트 '열기' 오케스트레이션.
 const aggregateViewer = useAggregateViewerStore()
 const eventModeling = useEventModelingStore()
+// 043-fix — Design 캔버스 미리보기.
+const canvasStore = useCanvasStore()
+const canvasPreviewRequest = useCanvasPreviewRequestStore()
 const VIEWER_TO_TAB_LOCAL = { data: 'Data', design: 'Design', process: 'Process', processes: 'Processes' }
 
 // nodeLabel → eventModeling selectItem 타입.
@@ -145,8 +151,11 @@ async function _onOpenPreview(e) {
 
   if (d.viewer === 'data') {
     // 라이브 상태 스냅샷 후 비우고(격리), preview 소스에서 오버레이 포커스 적재.
+    // Data 뷰어는 Aggregate 단위로 포커스한다. Command/Event/VO 대상이면 targetNodeId 는
+    // 자식 id 라 fetchAggregate 가 트리에서 못 찾으므로, 백엔드가 해소한 소유 Aggregate id 로
+    // 포커스한다(없으면 targetNodeId fallback — Aggregate 대상은 둘이 동일).
     aggregateViewer.beginPreview()
-    aggregateViewer.focusAggregate(d.targetNodeId, d.bcId)
+    aggregateViewer.focusAggregate(d.aggregateId || d.targetNodeId, d.bcId)
   } else if (d.viewer === 'processes') {
     // 라이브 이벤트모델을 읽기 전용으로 로드 후 대상 노드 포커스(US3-2).
     try { await eventModeling.fetchEventModeling() } catch { /* best-effort */ }
@@ -154,9 +163,19 @@ async function _onOpenPreview(e) {
       const t = _emTypeFromLabel(d.nodeLabel)
       if (t && d.targetNodeId) await eventModeling.selectItem(d.targetNodeId, t)
     } catch { /* best-effort focus */ }
+  } else if (d.viewer === 'design' && d.bcId && d.targetNodeId) {
+    // 043-fix — Command/Event 는 소속 BC 그래프를 Design 캔버스에 투영(오버레이)해 대상
+    // 노드 포커스 + 인스펙터를 연다. CanvasWorkspace 가 이 요청을 소비(fetch→begin/대체→포커스).
+    canvasPreviewRequest.request({
+      proposalId: d.proposalId,
+      bcId: d.bcId,
+      targetNodeId: d.targetNodeId,
+      nodeLabel: d.nodeLabel || '',
+      title: d.title || '',
+    })
   }
-  // design/process: 라이브 뷰어를 읽기 전용 맥락으로 연다(인텐트가 신규 생성하는 일이
-  // 드물어 오버레이 없음 — research D5). 탭 전환 + 배너 + mutation 가드로 충분(US3-1/2).
+  // 그 외 design/process(UI/Screen 등): 라이브 뷰어를 읽기 전용 맥락으로 연다(인텐트가 신규
+  // 생성하는 일이 드물어 오버레이 없음 — research D5). 탭 전환 + 배너 + mutation 가드로 충분.
 }
 
 function _onOpenPreviewFailed(e) {
@@ -169,6 +188,8 @@ function _onOpenPreviewFailed(e) {
 function _onPreviewExit(e) {
   const viewer = e?.detail?.viewer
   if (viewer === 'data') aggregateViewer.endPreview()
+  // 043-fix — Design 캔버스도 스냅샷 복원(잔존물 0).
+  else if (viewer === 'design') canvasStore.endPreview()
 }
 
 // 040 — Chat 편집(modelModifier)이 제안 diff 에 반영된 뒤 갱신 트리를 뷰어에 적용.

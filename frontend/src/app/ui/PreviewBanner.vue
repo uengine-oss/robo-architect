@@ -2,7 +2,7 @@
   <div v-if="session.active" class="preview-banner">
     <span class="pb-icon">🔍</span>
     <span class="pb-text">
-      <strong>{{ session.label }}</strong> 임팩트 미리보기 · <em>읽기 전용</em> — 라이브 설계가 아닙니다{{ session.viewer === 'data' ? ' (제안 변경 오버레이)' : '' }}
+      <strong>{{ session.label }}</strong> 임팩트 미리보기 · <em>읽기 전용</em> — 라이브 설계가 아닙니다{{ (session.viewer === 'data' || session.viewer === 'design') ? ' (제안 변경 오버레이)' : '' }}
       <span v-if="session.title" class="pb-target">· {{ session.title }}</span>
       <span v-if="session.notice" class="pb-notice">⚠ {{ session.notice }}</span>
     </span>

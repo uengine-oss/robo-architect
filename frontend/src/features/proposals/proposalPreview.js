@@ -10,11 +10,13 @@ const BASE = '/api/proposals'
 // nodeLabel → viewer 매핑(프런트 측 1차 추정). 백엔드 /resolve 가 최종 권위.
 export const LABEL_TO_VIEWER = {
   Aggregate: 'data', ValueObject: 'data', Enum: 'data', Enumeration: 'data',
-  // Command/Event/ReadModel 은 Event Modeling 산출물 → processes(백엔드 resolve 와 일치, I18).
-  Command: 'processes', Event: 'processes',
+  // 043-fix: Command/Event/ReadModel 은 Design(캔버스)에서 연다 — 소속 BC 그래프에 투영해
+  // 위치 파악(J1) + 인스펙터로 미리보기 정보 확인/수정(J2). Command/Event 는 소유 Aggregate
+  // 안에, ReadModel 은 BC 직속으로 배치(Aggregate 소유 관계 없음). (백엔드 /resolve 가 최종 권위.)
+  Command: 'design', Event: 'design', ReadModel: 'design',
   UI: 'design', Screen: 'design', UiFlow: 'design',
   Process: 'process', BpmnFlow: 'process',
-  Journey: 'processes', EventModel: 'processes', ReadModel: 'processes',
+  Journey: 'processes', EventModel: 'processes',
 }
 
 export const VIEWER_TO_TAB = { data: 'Data', design: 'Design', process: 'Process', processes: 'Processes' }
@@ -47,6 +49,9 @@ export async function openPreview(proposalId, item) {
       proposalId,
       viewer: resolved.viewer,
       targetNodeId: resolved.targetNodeId || item?.nodeId,
+      // 040 — Data 뷰어는 Aggregate 단위로 포커스하므로 백엔드가 해소한 소유 Aggregate id 를 전달.
+      // Command/Event/VO 대상이면 targetNodeId(자식 id) 가 아니라 이 값으로 포커스해야 한다.
+      aggregateId: resolved.aggregateId || null,
       bcId: resolved.bcId || null,
       nodeLabel: item?.nodeLabel || '',
       label: proposalId,
