@@ -248,10 +248,23 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
       })),
     }
     const i = boundedContexts.value.findIndex(b => b.id === tree.id)
-    if (i >= 0) boundedContexts.value[i] = mapped
-    else { boundedContexts.value.push(mapped); selectedBcIds.value.add(tree.id) }
-    mapped.aggregates.forEach(a => a.id && visibleAggregateIds.value.add(a.id))
-    visibleAggregateIds.value = new Set(visibleAggregateIds.value)
+    if (i >= 0) {
+      // BC 가 이미 로드된 상태에서의 미리보기 편집 갱신(단일 Aggregate 편집 후).
+      // 트리는 BC 전체를 담고 있으므로 전부 visible 로 만들면 편집하지 않은 형제
+      // Aggregate 까지 갑자기 로드된다. 기존에 보이던 집합을 그대로 유지하고,
+      // 트리에서 사라진 id 만 정리한다.
+      boundedContexts.value[i] = mapped
+      const present = new Set(mapped.aggregates.map(a => a.id).filter(Boolean))
+      visibleAggregateIds.value = new Set(
+        [...visibleAggregateIds.value].filter(id => present.has(id)),
+      )
+    } else {
+      // BC 최초 적재(편집 외 경로): 해당 BC 의 Aggregate 를 노출.
+      boundedContexts.value.push(mapped)
+      selectedBcIds.value.add(tree.id)
+      mapped.aggregates.forEach(a => a.id && visibleAggregateIds.value.add(a.id))
+      visibleAggregateIds.value = new Set(visibleAggregateIds.value)
+    }
   }
 
   // Update aggregate enumerations and value objects
