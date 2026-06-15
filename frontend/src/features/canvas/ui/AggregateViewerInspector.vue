@@ -2,6 +2,8 @@
 import { ref, computed, watch } from 'vue'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+// 040 — 미리보기 중 Property 저장은 라이브(/api/chat/confirm)가 아니라 제안 diff 로 라우팅.
+import { isPreviewFor, usePreviewSession } from '@/app/previewSession'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import EnumItemsTable from './inspectors/EnumItemsTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
@@ -241,8 +243,38 @@ async function saveAggregateProperties() {
   
   const drafts = propRes.drafts || []
   if (!drafts.length) return
-  
+
   try {
+    // 040 — 미리보기 중에는 라이브 그래프(/api/chat/confirm)가 아니라 제안 diff 로 라우팅.
+    // (modelModifier 챗 경로·store.updateAggregateProperties 와 동일한 규약.) 라이브 무변경.
+    if (isPreviewFor('data')) {
+      const ps = usePreviewSession()
+      const response = await fetch(`/api/proposals/${ps.proposalId}/preview/chat-confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bcId: ps.bcId,
+          drafts: drafts,
+          approvedChangeIds: drafts.map(c => c.changeId)
+        })
+      })
+      const tree = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(tree?.detail || `API error: ${response.status}`)
+      }
+      // 갱신된 미리보기 트리를 뷰어에 즉시 반영(Tactical Diff·Data 미리보기 동반 갱신).
+      store.applyPreviewTree(tree)
+      propertyEditorRef.value?.resetFromNode?.(aggregateNodeForPropertyEditor.value)
+      // I13: 백엔드가 실제 반영 건수를 돌려준다 — 0건이면 "반영 없음"으로 정직하게.
+      const appliedCount = tree?._preview?.appliedCount
+      if (appliedCount === 0) {
+        alert('제안에 반영할 대상을 찾지 못했습니다(변경 없음).')
+      } else {
+        alert('제안(Tactical Diff)에 반영되었습니다.')
+      }
+      return
+    }
+
     // Use model_modifier API (same as Design viewer)
     const response = await fetch('/api/chat/confirm', {
       method: 'POST',
@@ -252,26 +284,26 @@ async function saveAggregateProperties() {
         approvedChangeIds: drafts.map(c => c.changeId)
       })
     })
-    
+
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
       throw new Error(data?.detail || `API error: ${response.status}`)
     }
-    
+
     const data = await response.json()
     if (!data?.success) {
-      const reason = Array.isArray(data?.errors) && data.errors.length 
-        ? data.errors.join('\n') 
+      const reason = Array.isArray(data?.errors) && data.errors.length
+        ? data.errors.join('\n')
         : '알 수 없는 오류'
       throw new Error(reason)
     }
-    
+
     // Refresh aggregate data
     await store.fetchAllAggregates()
-    
+
     // Reset PropertyEditorTable state
     propertyEditorRef.value?.resetFromNode?.(aggregateNodeForPropertyEditor.value)
-    
+
     alert('저장되었습니다.')
   } catch (err) {
     console.error('Failed to save properties:', err)
