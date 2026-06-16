@@ -376,7 +376,7 @@ onUnmounted(() => {
     <!-- 040 — Proposal 임팩트 미리보기 식별 배너(활성 시에만 표시, FR-007) -->
     <PreviewBanner />
     <div class="main-content">
-      <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements'">
+      <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements' && activeTab !== 'Analysis'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"

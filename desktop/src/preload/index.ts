@@ -58,6 +58,17 @@ import type {
   SavedConnection,
   SessionUser,
 } from "../shared/launcher-contract";
+// 014: extend window.desktop with local FS browse channels.
+import type {
+  FsBrowserDesktopBridge,
+  FsEntry,
+  FsListInput,
+  FsMovePairInput,
+  FsPathInput,
+  FsReadInput,
+  FsReadResult,
+  FsWriteInput,
+} from "../shared/fs-browser-contract";
 
 function invoke<T>(channel: string, args?: unknown): Promise<IpcResult<T>> {
   return ipcRenderer.invoke(channel, args) as Promise<IpcResult<T>>;
@@ -118,7 +129,19 @@ const launcherBridge: LauncherDesktopBridge = {
 // augmentation in launcher-contract.ts). We compose it in two literals
 // and merge below — the `Omit` narrows the annotation to the 023 half so
 // TypeScript doesn't ask for launcher methods in the same literal.
-const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher"> = {
+const fsBridge: FsBrowserDesktopBridge = {
+  fs: {
+    listDir: (input: FsListInput) => invoke<FsEntry[]>("fs:listDir", input),
+    readFile: (input: FsReadInput) => invoke<FsReadResult>("fs:readFile", input),
+    rename: (input: FsMovePairInput) => invoke<{ ok: true }>("fs:rename", input),
+    copy: (input: FsMovePairInput) => invoke<{ ok: true }>("fs:copy", input),
+    trash: (input: FsPathInput) => invoke<{ ok: true }>("fs:trash", input),
+    mkdir: (input: FsPathInput) => invoke<{ ok: true }>("fs:mkdir", input),
+    writeFile: (input: FsWriteInput) => invoke<{ ok: true }>("fs:writeFile", input),
+  },
+};
+
+const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher" | "fs"> = {
   app: {
     getRuntimeState: () => invoke<RuntimeState>("app:getRuntimeState"),
     openExternal: (params: OpenExternalParams) =>
@@ -156,4 +179,4 @@ const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "
 
 // Merge 023 surface + 032 launcher surface into the single `window.desktop`
 // object. Spread is safe because the two halves share no top-level keys.
-contextBridge.exposeInMainWorld("desktop", { ...bridge, ...launcherBridge });
+contextBridge.exposeInMainWorld("desktop", { ...bridge, ...launcherBridge, ...fsBridge });
