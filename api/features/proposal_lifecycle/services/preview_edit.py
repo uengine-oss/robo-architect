@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from api.platform.neo4j import get_session
 from api.features.proposal_lifecycle.services.preview_projection import (
-    build_data_preview, _load_proposal,
+    build_data_preview, build_design_preview, _load_proposal,
 )
 
 # 저장 시 제거할 미리보기 전용 메타(출처/배지). 라이브 필드만 남긴다.
@@ -59,13 +59,18 @@ def _write_tactical(proposal_id: str, tactical: list[dict]) -> None:
 def _normalize_item_from_edit(item: dict, edited: dict, bc_id: Optional[str]) -> dict:
     """편집된 Aggregate(deep 뷰)를 tacticalDiff 항목으로 정규화해 덮어쓴다."""
     item = dict(item)
+    fields = dict(item.get("fields") or {})
     if edited.get("name"):
         item["nodeTitle"] = edited["name"]
-    fields = dict(item.get("fields") or {})
+        # MODIFY(라이브) Aggregate 는 nodeTitle 만으로는 캔버스/트리에 이름이 안 바뀐다
+        # (_populate_from_deep_item 는 fields 만 본다). fields.name 에도 실어 반영되게 한다.
+        fields["name"] = edited["name"]
     if "rootEntity" in edited and edited["rootEntity"] is not None:
         fields["rootEntity"] = edited["rootEntity"]
     if edited.get("displayName"):
         fields["displayName"] = edited["displayName"]
+    if "description" in edited and edited["description"] is not None:
+        fields["description"] = edited["description"]
     if fields:
         item["fields"] = fields
     if bc_id and not item.get("boundedContextId"):
@@ -258,9 +263,13 @@ def _match_child_index(arr: list, d: dict, after: dict) -> Optional[int]:
     """부모 컬렉션에서 대상 자식의 인덱스를 찾는다.
 
     미리보기 오버레이 자식은 Neo4j id 가 없을 수 있어(prop-noid-*) targetId 매칭이 불가하므로
-    nodeId/id → name 순으로 찾는다(인텐트 포맷 속성은 name 만 보유)."""
+    nodeId/id → name 순으로 찾는다(인텐트 포맷 속성은 name 만 보유).
+
+    rename 은 targetName 이 '새 이름'이라 저장된 '옛 이름' 자식과 일치하지 않는다. 프런트가
+    updates.oldName 에 '옛 이름'을 실어 보내므로(delete/update 와 달리 rename 전용), 매칭 시
+    oldName 을 최우선으로 사용한다(없으면 기존 targetName/name 순 — delete/update 무변경)."""
     target_id = str(d.get("targetId") or "")
-    name = d.get("targetName") or after.get("name")
+    name = after.get("oldName") or d.get("targetName") or after.get("name")
     if target_id:
         for j, c in enumerate(arr):
             if isinstance(c, dict) and str(c.get("nodeId") or c.get("id") or "") == target_id:
@@ -270,6 +279,167 @@ def _match_child_index(arr: list, d: dict, after: dict) -> Optional[int]:
             if isinstance(c, dict) and c.get("name") == name:
                 return j
     return None
+
+
+# ---------------------------------------------------------------------------
+# 043-fix — Design 캔버스 미리보기 Inspector 편집 → Proposal.tacticalDiff 반영.
+#
+# Command/Event/ReadModel/Aggregate 를 Design 캔버스 미리보기에서 인스펙터로 수정하면,
+# InspectorPanel 이 만든 draft(chat/confirm 포맷)를 라이브가 아니라 제안 diff 에 반영한다.
+# 캔버스 노드 id 는 라이브 노드면 실제 Neo4j id, CREATE 신규 노드면 build_design_preview 가
+# 부여한 temp id `PREVIEW:<pid>:<idx>`(idx = tacticalDiff 인덱스)다. 두 경우 모두 대상
+# tacticalDiff 항목으로 해소한다.
+# ---------------------------------------------------------------------------
+
+# 인스펙터 스키마 상의 기본 필드 키(이름은 nodeTitle 로 별도 처리). update draft 의
+# updates 에 담겨 오며, build_design_preview 가 _populate_from_deep_item 으로 노드에 반영한다.
+_DESIGN_FIELD_KEYS = (
+    "displayName", "description", "category", "actor", "version",
+    "rootEntity", "provisioningType", "isMultipleResult", "gwtSets",
+)
+
+
+def _resolve_tactical_index(proposal_id: str, tactical: list[dict], node_id: str) -> Optional[int]:
+    """캔버스 노드 id → tacticalDiff 항목 인덱스. temp id(PREVIEW:<pid>:<idx>)는 인덱스를
+    그대로 들고 있고, 라이브 노드는 nodeId 매칭으로 찾는다. 해소 불가 시 None."""
+    s = str(node_id or "")
+    if not s:
+        return None
+    prefix = f"PREVIEW:{proposal_id}:"
+    if s.startswith(prefix):
+        try:
+            idx = int(s[len(prefix):])
+        except ValueError:
+            idx = None
+        if idx is not None and 0 <= idx < len(tactical):
+            return idx
+    for i, it in enumerate(tactical):
+        if str(it.get("nodeId") or "") == s:
+            return i
+    return None
+
+
+def _ensure_modify_item(tactical: list[dict], node_id: str, label: str, name: str,
+                        bc_id: Optional[str]) -> int:
+    """라이브 노드를 처음 수정할 때 tacticalDiff 에 MODIFY 항목을 새로 만들고 인덱스를 반환."""
+    tactical.append({
+        "nodeId": node_id, "nodeLabel": label, "nodeTitle": name or node_id,
+        "changeType": "MODIFY", "impactLevel": "MEDIUM",
+        "reason": "미리보기에서 직접 수정", "boundedContextId": bc_id,
+    })
+    return len(tactical) - 1
+
+
+def _apply_property_draft(item: dict, d: dict, updates: dict) -> bool:
+    """Property create/update/delete/rename draft 를 부모 항목의 properties 컬렉션에 적용."""
+    arr = list(item.get("properties") or [])
+    action = d.get("action")
+    if action == "create":
+        child = {k: v for k, v in updates.items() if k not in ("parentType", "parentId")}
+        child.setdefault("name", d.get("targetName") or str(d.get("targetId") or ""))
+        arr.append(_strip_meta([child])[0])
+        item["properties"] = arr
+        return True
+    j = _match_child_index(arr, d, updates)
+    if j is None:
+        return False
+    if action == "delete":
+        arr.pop(j)
+    elif action == "rename":
+        child = dict(arr[j])
+        child["name"] = d.get("targetName") or updates.get("name") or child.get("name")
+        arr[j] = child
+    else:  # update — 변경 필드 병합(라우팅 메타 제외)
+        child = dict(arr[j])
+        for k, v in updates.items():
+            if k not in ("parentType", "parentId", "oldName"):
+                child[k] = v
+        arr[j] = _strip_meta([child])[0]
+    item["properties"] = arr
+    return True
+
+
+def reconcile_design_edit(proposal_id: str, bc_id: Optional[str], drafts: list[dict],
+                          approved_ids: list[str], gwt: Optional[dict] = None) -> dict:
+    """Design 캔버스 인스펙터 편집(draft[])을 tacticalDiff 에 반영하고 갱신된 Design 미리보기
+    그래프를 반환한다(즉시 재렌더). 라이브 디자인 그래프 무변경(Constitution I)."""
+    proposal = _load_proposal(proposal_id)
+    if proposal is None:
+        raise ValueError(f"Proposal {proposal_id} not found")
+
+    approved = set(approved_ids or [])
+    tactical = _read_tactical(proposal_id)
+    applied = 0
+
+    for d in drafts or []:
+        if approved and d.get("changeId") not in approved:
+            continue
+        ttype = (d.get("targetType") or "")
+        updates = dict(d.get("updates") or {})
+        target_id = str(d.get("targetId") or "")
+
+        if ttype == "Property":
+            parent_id = str(updates.get("parentId") or "")
+            pidx = _resolve_tactical_index(proposal_id, tactical, parent_id)
+            if pidx is None:
+                # 라이브 부모를 처음 수정 → 부모 MODIFY 항목 생성 후 자식 반영.
+                if parent_id:
+                    pidx = _ensure_modify_item(
+                        tactical, parent_id, updates.get("parentType") or "Aggregate",
+                        updates.get("parentType") or parent_id, bc_id)
+                else:
+                    continue
+            item = dict(tactical[pidx])
+            if _apply_property_draft(item, d, updates):
+                tactical[pidx] = item
+                applied += 1
+            continue
+
+        # 노드 레벨 rename / update (Command/Event/ReadModel/Aggregate).
+        idx = _resolve_tactical_index(proposal_id, tactical, target_id)
+        if idx is None:
+            # 라이브 노드를 처음 수정 → MODIFY 항목 생성.
+            idx = _ensure_modify_item(
+                tactical, target_id, ttype or "Aggregate",
+                d.get("targetName") or target_id, bc_id)
+        item = dict(tactical[idx])
+        if d.get("action") == "rename":
+            new_name = d.get("targetName")
+            if new_name:
+                item["nodeTitle"] = new_name
+                fields = dict(item.get("fields") or {})
+                fields["name"] = new_name
+                item["fields"] = fields
+                applied += 1
+        else:  # update
+            fields = dict(item.get("fields") or {})
+            for k, v in updates.items():
+                if k in _DESIGN_FIELD_KEYS:
+                    fields[k] = v
+            item["fields"] = fields
+            applied += 1
+        if bc_id and not item.get("boundedContextId"):
+            item["boundedContextId"] = bc_id
+        tactical[idx] = item
+
+    # GWT 번들(Command) — 노드 fields.gwtSets 로 저장(build_design_preview 가 그대로 환원).
+    if gwt and gwt.get("targetId"):
+        gidx = _resolve_tactical_index(proposal_id, tactical, str(gwt.get("targetId")))
+        if gidx is not None:
+            item = dict(tactical[gidx])
+            fields = dict(item.get("fields") or {})
+            fields["gwtSets"] = gwt.get("gwtSets") or []
+            item["fields"] = fields
+            tactical[gidx] = item
+            applied += 1
+
+    _write_tactical(proposal_id, tactical)
+    graph = build_design_preview(proposal_id, bc_id) if bc_id else {"_preview": {"saved": True}}
+    if isinstance(graph, dict):
+        graph.setdefault("_preview", {})
+        if isinstance(graph["_preview"], dict):
+            graph["_preview"]["appliedCount"] = applied
+    return graph
 
 
 def _draft_after_to_edit(existing_item: dict, after: dict) -> dict:

@@ -10,6 +10,8 @@ import VoFieldsTable from './inspectors/VoFieldsTable.vue'
 import GwtFieldInput from './GwtFieldInput.vue'
 import InvariantEditor from '@/features/invariants/ui/InvariantEditor.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
+// 043-fix — Design 캔버스 미리보기 중 저장은 라이브(/api/chat/confirm)가 아니라 제안 diff 로.
+import { isPreviewFor, usePreviewSession } from '@/app/previewSession'
 import {
   parseHtmlWireframe,
   elementsToFigmaClipboard,
@@ -1161,8 +1163,14 @@ const dirtyFields = computed(() => {
         dirty.push(field)
       }
     })
+    // 043-fix — given/when/then(0행)만으로는 시나리오 추가/삭제(gwtSets 길이/내용 변화)를
+    // 못 잡아 '저장'이 비활성화된다. 번들 전체를 비교해 새 GWT 시나리오 변경도 dirty 로 본다
+    // (shouldSaveGWTBundle 과 동일 기준).
+    if (JSON.stringify(form.value.gwtSets || []) !== JSON.stringify(initial.value.gwtSets || [])) {
+      dirty.push('gwtSets')
+    }
   }
-  
+
   return dirty
 })
 
@@ -1178,6 +1186,67 @@ async function safeJson(response) {
   } catch {
     return null
   }
+}
+
+// 043-fix — 미리보기(Design) 저장: draft[] + GWT 를 제안 diff 로 보내고, 응답으로 온
+// 갱신된 Design 미리보기 그래프로 캔버스를 재렌더한 뒤 인스펙터 폼을 동기화한다.
+async function savePreviewDesign(changes, shouldSaveGWTBundle, opId) {
+  const ps = usePreviewSession()
+  const body = {
+    bcId: ps.bcId,
+    drafts: changes,
+    approvedChangeIds: changes.map(c => c.changeId),
+  }
+  if (shouldSaveGWTBundle) {
+    body.gwt = { targetId: node.value.id, gwtSets: form.value.gwtSets || [] }
+  }
+  const resp = await fetch(`/api/proposals/${ps.proposalId}/preview/design/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const tree = await safeJson(resp)
+  if (!resp.ok) {
+    throw new Error(tree?.detail || `API error: ${resp.status}`)
+  }
+
+  // 갱신된 미리보기 그래프로 캔버스 재렌더(라이브 스냅샷은 beginPreview 가 보존 중).
+  const nodeId = node.value.id
+  if (Array.isArray(tree?.nodes)) {
+    canvasStore.clearCanvas()
+    canvasStore.addNodesWithLayout(tree.nodes, tree.relationships || [], tree.bcContext || null)
+    await nextTick()
+    if (canvasStore.isOnCanvas(nodeId)) canvasStore.selectNode(nodeId)
+  }
+
+  // 인스펙터 폼/initial 을 재렌더된 노드 기준으로 동기화(영속된 값 + dirty 해제).
+  const latest = canvasStore.nodes.find(n => n.id === nodeId) || null
+  if (latest) {
+    const snap = snapshotFromNode(latest)
+    form.value = { ...form.value, ...snap }
+    initial.value = { ...snap }
+    nextTick(() => {
+      if (showPropertyEditor.value) propertyEditorRef.value?.resetFromNode?.(latest)
+    })
+  } else {
+    initial.value = { ...form.value }
+  }
+
+  // Proposals 탭(Impact Map·Diff)이 다시 클릭하지 않아도 최신화되도록 알린다.
+  if (ps.proposalId) {
+    window.dispatchEvent(new CustomEvent('robo:proposal-diff-changed', {
+      detail: { proposalId: ps.proposalId },
+    }))
+  }
+
+  const appliedCount = tree?._preview?.appliedCount
+  successMsg.value = appliedCount === 0
+    ? '반영할 대상을 찾지 못했습니다(변경 없음).'
+    : '제안(Tactical Diff)에 반영되었습니다.'
+  log.info('inspector_preview_save_done', 'Inspector preview(design) save completed.', {
+    opId, nodeId, appliedCount,
+  })
+  emit('updated')
 }
 
 async function save() {
@@ -1242,6 +1311,14 @@ async function save() {
         targetType: nodeLabel.value,
         updates
       })
+    }
+
+    // 043-fix — Design 캔버스 미리보기 중에는 라이브 그래프(/api/chat/confirm·gwt/upsert)가
+    // 아니라 Proposal.tacticalDiff 에 반영한다(라이브 무변경, Constitution I). 갱신된 Design
+    // 미리보기 그래프를 받아 캔버스를 재렌더하고 인스펙터 폼을 동기화한다.
+    if (isPreviewFor('design')) {
+      await savePreviewDesign(changes, shouldSaveGWTBundle, opId)
+      return
     }
 
     // Save GWT bundle first (so UI doesn't lose decision-table edits)
@@ -2239,8 +2316,12 @@ function addGWTSet() {
     } : null)
   }
   
-  form.value.gwtSets.push(newRow)
-  
+  // 043-fix — push 대신 새 배열로 재할당한다. snapshotFromNode 가 form/initial 에 같은
+  // gwtSets 배열 참조를 공유시켜(얕은 {...snap} 전개), 제자리 push 는 initial 도 같이 바꿔
+  // dirtyFields 가 시나리오 추가를 감지하지 못한다(저장 버튼 비활성). 새 배열이면 참조가
+  // 갈라져 변경이 감지된다.
+  form.value.gwtSets = [...form.value.gwtSets, newRow]
+
   // Update backward compatibility fields (use first row)
   if (form.value.gwtSets.length === 1) {
     if (newRow.given) {
@@ -2257,8 +2338,10 @@ function addGWTSet() {
 
 function removeGWTSet(rowIndex) {
   if (rowIndex >= 0 && rowIndex < form.value.gwtSets.length) {
-    form.value.gwtSets.splice(rowIndex, 1)
-    
+    // 043-fix — splice 대신 새 배열로 재할당(addGWTSet 와 동일 이유: initial 과의 공유 참조
+    // 분리 → 시나리오 삭제가 dirty 로 감지됨).
+    form.value.gwtSets = form.value.gwtSets.filter((_, i) => i !== rowIndex)
+
     // Update backward compatibility fields
     if (form.value.gwtSets.length > 0) {
       const firstSet = form.value.gwtSets[0]

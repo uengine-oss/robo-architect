@@ -156,6 +156,50 @@ async function saveVoFields() {
   alert('저장되었습니다.')
 }
 
+// 043-fix — Aggregate 기본 속성 편집(이름/표시이름/설명/Root Entity).
+const basicForm = ref({ name: '', displayName: '', description: '', rootEntity: '' })
+const basicInitial = ref({ name: '', displayName: '', description: '', rootEntity: '' })
+const savingBasic = ref(false)
+
+watch(aggregateData, (agg) => {
+  if (agg) {
+    const snap = {
+      name: agg.name || '',
+      displayName: agg.displayName || '',
+      description: agg.description || '',
+      rootEntity: agg.rootEntity || '',
+    }
+    basicForm.value = { ...snap }
+    basicInitial.value = { ...snap }
+  }
+}, { immediate: true })
+
+const basicDirty = computed(() =>
+  ['name', 'displayName', 'description', 'rootEntity'].some(
+    k => String(basicForm.value[k] ?? '') !== String(basicInitial.value[k] ?? '')
+  )
+)
+
+async function saveAggregateBasic() {
+  if (!props.aggregateId || !basicDirty.value) return
+  savingBasic.value = true
+  try {
+    const tree = await store.updateAggregateBasic(props.aggregateId, { ...basicForm.value })
+    basicInitial.value = { ...basicForm.value }
+    const appliedCount = tree?._preview?.appliedCount
+    if (isPreviewFor('data')) {
+      alert(appliedCount === 0 ? '제안에 반영할 대상을 찾지 못했습니다(변경 없음).' : '제안(Tactical Diff)에 반영되었습니다.')
+    } else {
+      alert('저장되었습니다.')
+    }
+  } catch (err) {
+    console.error('Failed to save aggregate basic fields:', err)
+    alert(`저장 실패: ${err.message || String(err)}`)
+  } finally {
+    savingBasic.value = false
+  }
+}
+
 // Aggregate-level editing
 const editingEnumerations = ref([])
 const editingValueObjects = ref([])
@@ -435,6 +479,29 @@ async function saveAggregateProperties() {
         <div class="section-header">
           <h4>{{ terminologyStore.ubiquitousLanguageMode ? (aggregateData.displayName || aggregateData.name) : aggregateData.name }}</h4>
           <span class="section-subtitle">{{ aggregateData.rootEntity }}</span>
+        </div>
+
+        <!-- 043-fix — Aggregate 기본 속성 편집 -->
+        <div class="form-group">
+          <label>이름</label>
+          <input v-model="basicForm.name" type="text" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>표시 이름 (UI)</label>
+          <input v-model="basicForm.displayName" type="text" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>설명</label>
+          <textarea v-model="basicForm.description" rows="2" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>Root Entity</label>
+          <input v-model="basicForm.rootEntity" type="text" class="form-input" />
+        </div>
+        <div class="inspector-actions">
+          <button class="btn-save" @click="saveAggregateBasic" :disabled="!basicDirty || savingBasic">
+            {{ savingBasic ? '저장 중...' : 'Save Basic' }}
+          </button>
         </div>
 
         <!-- Properties Editor (using PropertyEditorTable) -->

@@ -20,8 +20,24 @@ const IconClipboard = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height
 
 const localItems = ref([])
 
+// props.items ↔ localItems 양방향 watcher 의 메아리 사이클 차단용 얕은 동등성.
+// (v-model:items 로 emit→부모→props 가 새 배열로 돌아오면 props watcher 가 localItems 를
+// 재설정하고, 그게 다시 emit 을 유발해 무한 재귀가 났다: "Maximum recursive updates exceeded".
+// 신규 item 추가 후 값 수정이 화면에 반영되지 않던 원인. 내용이 같으면 재설정을 건너뛴다.)
+function itemsEqual(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (String(a[i] ?? '') !== String(b[i] ?? '')) return false
+  }
+  return true
+}
+
 watch(() => props.items, (newItems) => {
-  localItems.value = [...(newItems || [])]
+  const mapped = [...(newItems || [])]
+  // 부모가 방금 emit 한 값을 그대로 되돌려준 경우(내용 동일) 재설정하지 않는다.
+  if (itemsEqual(mapped, localItems.value)) return
+  localItems.value = mapped
 }, { immediate: true, deep: true })
 
 watch(localItems, (newItems) => {

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from api.features.proposal_lifecycle.services.preview_edit import (
-    reconcile_aggregate_edit, apply_chat_drafts,
+    reconcile_aggregate_edit, apply_chat_drafts, reconcile_design_edit,
 )
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
@@ -26,6 +26,7 @@ class AggregateEditRequest(BaseModel):
     bcId: Optional[str] = None
     name: Optional[str] = None
     displayName: Optional[str] = None
+    description: Optional[str] = None
     rootEntity: Optional[str] = None
     properties: Optional[list[dict]] = None
     enumerations: Optional[list[dict]] = None
@@ -37,6 +38,13 @@ class ChatConfirmRequest(BaseModel):
     bcId: Optional[str] = None
     drafts: list[dict] = Field(default_factory=list)
     approvedChangeIds: list[str] = Field(default_factory=list)
+
+
+class DesignConfirmRequest(BaseModel):
+    bcId: Optional[str] = None
+    drafts: list[dict] = Field(default_factory=list)
+    approvedChangeIds: list[str] = Field(default_factory=list)
+    gwt: Optional[dict] = None
 
 
 @router.put("/{proposal_id}/preview/aggregate/{node_id}")
@@ -55,6 +63,25 @@ async def edit_preview_aggregate(proposal_id: str, node_id: str, body: Aggregate
                 "fields": list(edited.keys())},
     )
     return tree
+
+
+@router.post("/{proposal_id}/preview/design/confirm")
+async def confirm_preview_design(proposal_id: str, body: DesignConfirmRequest, request: Request):
+    """043-fix: Design 캔버스 미리보기 Inspector 편집(Command/Event/ReadModel/Aggregate)을
+    제안 diff 에 반영(라이브 무관). 갱신된 Design 미리보기 그래프를 반환(즉시 재렌더)."""
+    try:
+        graph = reconcile_design_edit(
+            proposal_id, body.bcId, body.drafts, body.approvedChangeIds, body.gwt)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    SmartLogger.log(
+        "INFO", "preview_edit_design_confirm",
+        category="proposal_lifecycle.preview.edit.design",
+        params={**http_context(request), "proposalId": proposal_id, "bcId": body.bcId,
+                "drafts": len(body.drafts), "hasGwt": bool(body.gwt),
+                "appliedCount": (graph.get("_preview") or {}).get("appliedCount")},
+    )
+    return graph
 
 
 @router.post("/{proposal_id}/preview/chat-confirm")

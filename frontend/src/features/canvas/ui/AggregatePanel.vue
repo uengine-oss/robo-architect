@@ -427,8 +427,13 @@ function computeAggSignature(bcs) {
     aggs: (bc.aggregates || []).map(a => ({
       id: a.id,
       p: (a.properties || []).map(p => [p.name, p.type, p.isKey, p.isForeignKey, p.isRequired, p.displayName]),
-      e: (a.enumerations || []).map(e => [e.name, (e.items || []).length]),
-      v: (a.valueObjects || []).map(v => [v.name, (v.fields || []).length, v.referencedAggregateName]),
+      // 항목 개수뿐 아니라 각 item 값 / field name·type 까지 포함해야 기존 요소의
+      // 이름·타입을 *수정*했을 때(개수 불변)도 시그니처가 바뀌어 캔버스가 재빌드된다.
+      e: (a.enumerations || []).map(e => [e.name, e.alias, ...(e.items || [])]),
+      v: (a.valueObjects || []).map(v => [
+        v.name, v.alias, v.referencedAggregateName, v.referencedAggregateField,
+        ...(v.fields || []).map(f => `${f?.name || ''}:${f?.type || ''}`),
+      ]),
     })),
   })))
 }

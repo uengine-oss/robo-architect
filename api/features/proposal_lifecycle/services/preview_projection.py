@@ -406,6 +406,17 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
     def rel(src: str, tgt: str, rtype: str) -> None:
         relationships.append({"source": str(src), "target": str(tgt), "type": rtype})
 
+    def overlay_live(node: dict, nid: str) -> str:
+        """라이브 자식 노드(Command/Event/ReadModel)에 같은 BC 의 MODIFY 항목을 얹는다.
+        미리보기 인스펙터로 라이브 노드를 수정하면 MODIFY 항목이 생기는데, 이때 변경 필드/
+        속성이 캔버스에도 반영되도록 한다(없으면 그대로 live)."""
+        it = by_id.get(nid)
+        if it and (it.get("changeType") or "MODIFY") == "MODIFY":
+            _apply_semantic_ops(node, it.get("semanticDiff") or {})
+            _populate_from_deep_item(node, it)
+            return SOURCE_MODIFIED
+        return SOURCE_LIVE
+
     # BC 컨테이너 노드.
     bc_name = bc_id
     if isinstance(live_tree, dict):
@@ -436,7 +447,7 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
                 if not cid:
                     continue
                 cmd_node = {**cmd, "id": cid, "type": "Command", "bcId": bc_id, "parentId": aid}
-                _tag(cmd_node, SOURCE_LIVE)
+                _tag(cmd_node, overlay_live(cmd_node, cid))
                 if push(cmd_node):
                     rel(aid, cid, "HAS_COMMAND")
                 for evt in cmd.get("events", []) or []:
@@ -444,7 +455,7 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
                     if not eid:
                         continue
                     evt_node = {**evt, "id": eid, "type": "Event", "bcId": bc_id}
-                    _tag(evt_node, SOURCE_LIVE)
+                    _tag(evt_node, overlay_live(evt_node, eid))
                     if push(evt_node):
                         rel(cid, eid, "EMITS")
         for rm in live_tree.get("readmodels", []) or []:
@@ -452,7 +463,7 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
             if not rid:
                 continue
             rm_node = {**rm, "id": rid, "type": "ReadModel", "bcId": bc_id}
-            _tag(rm_node, SOURCE_LIVE)
+            _tag(rm_node, overlay_live(rm_node, rid))
             if push(rm_node):
                 rel(bc_id, rid, "HAS_READMODEL")
         for ui in live_tree.get("uis", []) or []:

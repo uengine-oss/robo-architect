@@ -353,6 +353,47 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     }
   }
 
+  // 043-fix — Aggregate 기본 속성(이름/표시이름/설명/Root Entity) 수정.
+  // 미리보기 중에는 제안 diff(reconcile_aggregate_edit)로, 아니면 라이브 그래프(chat/confirm)로.
+  async function updateAggregateBasic(aggregateId, basic) {
+    // 변경된 필드만 전송한다(불변 필드를 다시 보내면 불필요한 nodeTitle 재기록이 일어난다).
+    const cur = getAggregateById(aggregateId)?.aggregate || {}
+    const patch = {}
+    for (const k of ['name', 'displayName', 'description', 'rootEntity']) {
+      if (basic[k] !== undefined && basic[k] !== null && String(basic[k]) !== String(cur[k] ?? '')) {
+        patch[k] = basic[k]
+      }
+    }
+    if (!Object.keys(patch).length) return
+    if (isPreviewFor('data')) {
+      return _savePreviewAggregateEdit(aggregateId, patch)
+    }
+    // 라이브: 이름은 rename, 나머지는 update draft 로 model_modifier 에 반영.
+    const drafts = []
+    if (patch.name && patch.name !== cur.name) {
+      drafts.push({ changeId: `rename-${aggregateId}-${Date.now()}`, action: 'rename',
+        targetId: aggregateId, targetName: patch.name, targetType: 'Aggregate', updates: {} })
+    }
+    const updates = {}
+    for (const k of ['displayName', 'description', 'rootEntity']) {
+      if (patch[k] !== undefined && String(patch[k] ?? '') !== String(cur[k] ?? '')) updates[k] = patch[k]
+    }
+    if (Object.keys(updates).length) {
+      drafts.push({ changeId: `update-${aggregateId}-${Date.now()}`, action: 'update',
+        targetId: aggregateId, targetName: patch.name || cur.name || '', targetType: 'Aggregate', updates })
+    }
+    if (!drafts.length) return
+    const response = await fetch('/api/chat/confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ drafts, approvedChangeIds: drafts.map(d => d.changeId) }),
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data?.detail || `Failed to update aggregate: ${response.status}`)
+    }
+    await fetchAllAggregates()
+  }
+
   // Get aggregate by ID
   function getAggregateById(aggregateId) {
     for (const bc of boundedContexts.value) {
@@ -425,6 +466,7 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     applyPreviewTree,
     updateAggregateEnumVo,
     updateAggregateProperties,
+    updateAggregateBasic,
     getAggregateById,
     selectNode,
     clearSelection,
