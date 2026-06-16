@@ -198,11 +198,11 @@ export const useRequirementsStore = defineStore('requirements', () => {
   }
 
   /** Create an Epic — i.e. a BoundedContext (034 US1). */
-  async function createEpic(name, description = null) {
+  async function createEpic(name, description = null, displayName = null) {
     const res = await fetch('/api/requirements/bounded-context', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description }),
+      body: JSON.stringify({ name, displayName, description }),
     })
     if (!res.ok) throw await _httpError(res, 'create epic failed')
     await fetchTree()
@@ -210,11 +210,14 @@ export const useRequirementsStore = defineStore('requirements', () => {
   }
 
   /** Rename / re-describe an Epic (034 US3). Relationships preserved server-side. */
-  async function updateEpic(boundedContextId, { name = null, description = null } = {}) {
+  async function updateEpic(
+    boundedContextId,
+    { name = null, displayName = null, description = null } = {},
+  ) {
     const res = await fetch('/api/requirements/bounded-context', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boundedContextId, name, description }),
+      body: JSON.stringify({ boundedContextId, name, displayName, description }),
     })
     if (!res.ok) throw await _httpError(res, 'update epic failed')
     await fetchTree()
@@ -551,7 +554,13 @@ export const useRequirementsStore = defineStore('requirements', () => {
           }
           fetchClarificationSession(sessionId)
         } else if (event.phase === 'edit_ready' && event.data) {
-          clarificationProposal.value = event.data.proposal
+          // apply 후 늦게 도착한 edit_ready가 이미 처리된(applied/skipped) 질문의
+          // 편집안을 되살리지 않도록 가드 — 현재 세션에서 그 질문이 처리됐으면 무시.
+          const pq = event.data.proposal?.questionId
+          const q = (clarificationSession.value?.questions || []).find((x) => x.questionId === pq)
+          if (!q || (q.status !== 'applied' && q.status !== 'skipped')) {
+            clarificationProposal.value = event.data.proposal
+          }
         }
         if (clarificationSession.value) {
           clarificationSession.value = {
@@ -627,7 +636,16 @@ export const useRequirementsStore = defineStore('requirements', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`answer failed: ${res.status}`)
+    if (!res.ok) {
+      // 409 = 이 질문이 더 이상 현재(pending) 질문이 아님(이미 처리됨/순서 어긋남).
+      // 던지지 말고 세션을 다시 동기화해 실제 현재 질문으로 UI를 복구한다(I8-후속).
+      if (res.status === 409) {
+        clarificationProposal.value = null
+        await fetchClarificationSession(sid)
+        return null
+      }
+      throw new Error(`answer failed: ${res.status}`)
+    }
     const proposal = await res.json()
     if (proposal.needsDisambiguation) {
       clarificationDisambiguation.value = proposal.disambiguationPrompt || '답변을 다시 입력해 주세요.'
@@ -650,7 +668,16 @@ export const useRequirementsStore = defineStore('requirements', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ questionId }),
     })
-    if (!res.ok) throw new Error(`apply failed: ${res.status}`)
+    if (!res.ok) {
+      // 409 = 이 질문이 이미 적용됨/answered 아님(stale proposal 재클릭 등).
+      // 던지지 말고 stale proposal을 비우고 세션을 재동기화한다.
+      if (res.status === 409) {
+        clarificationProposal.value = null
+        await fetchClarificationSession(sid)
+        return null
+      }
+      throw new Error(`apply failed: ${res.status}`)
+    }
     const data = await res.json()
     if (data.conflict) {
       clarificationError.value = data.conflict.message || '요구사항이 외부에서 변경되었습니다.'

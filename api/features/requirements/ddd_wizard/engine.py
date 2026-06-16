@@ -22,19 +22,57 @@ _SYSTEM = (
     "Given a step and the user's answers/document, produce (1) a concise Korean "
     "markdown artifact for that step, and (2) a list of proposed graph changes. "
     "Graph mapping: Epic=BoundedContext, Feature=Feature, UserStory=UserStory, "
-    "domain events=Event, aggregates=Aggregate. Only propose changes that map to "
-    "these existing node types — never invent node labels. Return ONLY JSON: "
-    '{"artifact":"<markdown>","changes":[{"action":"create|update","targetType":'
-    '"BoundedContext|UserStory|Event|Aggregate","label":"...","after":{...}}]}. '
-    "For a BoundedContext create, `after.name` MUST be the subdomain name (non-empty). "
-    "For a UserStory create, `after.action` MUST be filled."
+    "domain events=Event, aggregates=Aggregate, commands=Command. Only propose "
+    "changes that map to these node types — never invent node labels. Return ONLY "
+    'JSON: {"artifact":"<markdown>","changes":[{"action":"create|update",'
+    '"targetType":"BoundedContext|Feature|UserStory|Aggregate|Event","label":"...",'
+    '"after":{...}}]}.\n'
+    "Linking rules (use the [기존 BoundedContext] list given below to fill ids):\n"
+    "- BoundedContext create: after.name = subdomain name (non-empty).\n"
+    "- Feature create: after.name + after.boundedContextId (or after.boundedContextName).\n"
+    "- UserStory create: after.action filled + after.boundedContextId/Name.\n"
+    "- Aggregate create: after.name + after.boundedContextId/Name.\n"
+    "- Command create: after.name + after.boundedContextId/Name + after.aggregateName "
+    "(the aggregate that handles it).\n"
+    "- Event create: after.name + after.boundedContextId/Name + after.aggregateName "
+    "(the aggregate it belongs to); optional after.commandName. An Event is always "
+    "emitted by a Command of an Aggregate, so name that aggregate.\n"
+    "- Strategize step (Core/Supporting/Generic): for EACH bounded context you "
+    "classify you MUST emit a BoundedContext UPDATE change. Put the classification "
+    'in after.classification EXACTLY as one of "Core" | "Supporting" | "Generic" — '
+    "NOT only in the markdown artifact. Set targetId to the BC id from the [기존 "
+    "BoundedContext] list (or after.boundedContextName to its name) so it resolves. "
+    'Example: {"action":"update","targetType":"BoundedContext","targetId":"<bc-id>",'
+    '"label":"배달관리 → Core","after":{"classification":"Core"}}. Do NOT create a '
+    "new BoundedContext for classification.\n"
+    "Reference EXISTING bounded contexts by their real id when linking or updating."
 )
+
+
+def _existing_bcs() -> list[dict]:
+    """신규 요소를 실제 BC에 연결할 수 있도록 기존 BC(id,name)를 LLM에 제공."""
+    try:
+        from api.platform.neo4j import get_session
+
+        with get_session() as session:
+            return [
+                {"id": r["id"], "name": r["name"]}
+                for r in session.run(
+                    "MATCH (bc:BoundedContext) RETURN bc.id AS id, bc.name AS name"
+                )
+            ]
+    except Exception:  # noqa: BLE001 — context is best-effort
+        return []
 
 
 def _user_prompt(step_key: str, answers: dict, document: str | None) -> str:
     qs = STEP_QUESTIONS.get(step_key, [])
     lines = [f"단계: {step_key}", "질문:"]
     lines += [f"- {q}" for q in qs]
+    bcs = _existing_bcs()
+    if bcs:
+        lines.append("\n[기존 BoundedContext] (연결 시 이 id 사용)")
+        lines += [f"- id={b['id']} | {b['name']}" for b in bcs]
     if answers:
         lines.append("\n사용자 답변:")
         for k, v in answers.items():

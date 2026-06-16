@@ -38,24 +38,25 @@ class _StubClient:
             }
         }
 
-    def create_bounded_context(self, *, name, description=None, **_):
+    def create_bounded_context(self, *, name, display_name=None, description=None, **_):
         bc = {
             "id": "bc-new",
             "key": name.lower().replace(" ", "-"),
             "name": name,
-            "displayName": name,
+            "displayName": display_name or name,
             "description": description,
         }
         self.bcs[bc["id"]] = bc
         return bc
 
-    def update_bounded_context(self, bc_id, *, name=None, description=None):
+    def update_bounded_context(self, bc_id, *, name=None, display_name=None, description=None):
         bc = self.bcs.get(bc_id)
         if not bc:
             return None
         if name is not None:
             bc["name"] = name
-            bc["displayName"] = name
+        if display_name is not None:
+            bc["displayName"] = display_name
         if description is not None:
             bc["description"] = description
         return bc

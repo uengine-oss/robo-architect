@@ -31,6 +31,17 @@ const currentQuestion = computed(() => {
   return qs.find((q) => q.status === 'pending') || null
 })
 
+// 편집안(미적용)이 대기 중인지. 이때는 다음 질문으로 넘기지 않고 편집안 검토에 집중.
+const hasPendingProposal = computed(
+  () => !!(proposal.value && proposal.value.edits && proposal.value.edits.length),
+)
+// 편집안이 어느 질문에 대한 것인지(답변 직후 currentQuestion은 이미 다음으로 advance됨).
+const proposalQuestion = computed(() => {
+  const pid = proposal.value?.questionId
+  if (!pid) return null
+  return (session.value?.questions || []).find((q) => q.questionId === pid) || null
+})
+
 const progressLabel = computed(() => {
   if (!session.value) return ''
   const p = session.value.progress || {}
@@ -42,32 +53,51 @@ watch(currentQuestion, () => {
   freeTextDraft.value = ''
 })
 
+// 재진입(더블클릭) 방지 + 에러를 uncaught로 흘리지 않도록 가드.
+// encoding=true 동안엔 답변→편집안 LLM 인코딩 중 — SSE 타이밍에 의존하지 않고
+// 로컬 상태로 "인코딩 중" 인디케이터를 확실히 표시한다.
+const busy = ref(false)
+const encoding = ref(false)
+async function _run(fn, { isEncoding = false } = {}) {
+  if (busy.value) return
+  busy.value = true
+  if (isEncoding) encoding.value = true
+  try {
+    await fn()
+  } catch (e) {
+    store.clarificationError = `명확화 처리 실패: ${e?.message || e}`
+  } finally {
+    busy.value = false
+    encoding.value = false
+  }
+}
+
 async function chooseOption(optionKey) {
   if (!currentQuestion.value) return
-  await store.answerQuestion(currentQuestion.value.questionId, { mode: 'option', optionKey })
+  await _run(() => store.answerQuestion(currentQuestion.value.questionId, { mode: 'option', optionKey }), { isEncoding: true })
 }
 
 async function acceptRecommended() {
   if (!currentQuestion.value) return
-  await store.answerQuestion(currentQuestion.value.questionId, { mode: 'recommended' })
+  await _run(() => store.answerQuestion(currentQuestion.value.questionId, { mode: 'recommended' }), { isEncoding: true })
 }
 
 async function submitFreeText() {
   if (!currentQuestion.value || !freeTextDraft.value.trim()) return
-  await store.answerQuestion(currentQuestion.value.questionId, {
+  await _run(() => store.answerQuestion(currentQuestion.value.questionId, {
     mode: 'free_text',
     text: freeTextDraft.value.trim(),
-  })
+  }), { isEncoding: true })
 }
 
 async function skip() {
   if (!currentQuestion.value) return
-  await store.skipQuestion(currentQuestion.value.questionId)
+  await _run(() => store.skipQuestion(currentQuestion.value.questionId))
 }
 
 async function applyProposal() {
   if (!proposal.value) return
-  await store.applyEdit(proposal.value.questionId)
+  await _run(() => store.applyEdit(proposal.value.questionId))
 }
 
 async function endSession() {
@@ -115,8 +145,9 @@ function close() {
       </div>
     </div>
 
-    <!-- Awaiting answers — render the current question -->
-    <div v-else-if="currentQuestion" class="cp-section">
+    <!-- Awaiting answers — render the current question.
+         편집안(미적용)이 대기 중이면 질문을 숨기고 편집안 검토에 집중(질문 사라짐 혼동 방지). -->
+    <div v-else-if="currentQuestion && !hasPendingProposal && !encoding" class="cp-section">
       <div v-if="session.deferredNote" class="cp-deferred">⚠ {{ session.deferredNote }}</div>
 
       <div class="cp-question-meta">
@@ -143,6 +174,7 @@ function close() {
           v-for="opt in currentQuestion.options"
           :key="opt.key"
           class="cp-btn cp-btn--option"
+          :disabled="busy"
           @click="chooseOption(opt.key)"
         >{{ opt.label }}</button>
       </div>
@@ -154,17 +186,18 @@ function close() {
           placeholder="짧은 답변 (≤5단어)"
           @keyup.enter="submitFreeText"
         />
-        <button class="cp-btn" :disabled="!freeTextDraft.trim()" @click="submitFreeText">제출</button>
+        <button class="cp-btn" :disabled="busy || !freeTextDraft.trim()" @click="submitFreeText">제출</button>
       </div>
 
       <div class="cp-actions">
         <button
           v-if="currentQuestion.recommendedAnswer"
           class="cp-btn cp-btn--primary"
+          :disabled="busy"
           @click="acceptRecommended"
         >추천 답변 수락</button>
-        <button class="cp-btn cp-btn--ghost" @click="skip">건너뛰기</button>
-        <button class="cp-btn cp-btn--ghost" @click="endSession">세션 종료</button>
+        <button class="cp-btn cp-btn--ghost" :disabled="busy" @click="skip">건너뛰기</button>
+        <button class="cp-btn cp-btn--ghost" :disabled="busy" @click="endSession">세션 종료</button>
       </div>
 
       <div v-if="store.clarificationDisambiguation" class="cp-disambig">
@@ -172,11 +205,39 @@ function close() {
       </div>
     </div>
 
+    <!-- 모든 질문 처리 완료(남은 pending 없음)인데 아직 세션 종료/요약 전 — 빈 화면 방지 -->
+    <div
+      v-else-if="!currentQuestion && !hasPendingProposal && !encoding && !summary"
+      class="cp-section cp-clear"
+    >
+      <div class="cp-clear-icon">✓</div>
+      <div>모든 질문을 처리했습니다.</div>
+      <div class="cp-actions">
+        <button class="cp-btn cp-btn--primary" :disabled="busy" @click="endSession">세션 종료</button>
+        <button class="cp-btn cp-btn--ghost" @click="close">닫기</button>
+      </div>
+    </div>
+
+    <!-- 답변 → 편집안 인코딩 중 인디케이터 (LLM 지연) -->
+    <div v-if="encoding" class="cp-section cp-encoding">
+      <span class="cp-spinner">⏳</span> 답변 인코딩 중...
+    </div>
+
     <!-- Encoded proposal — before/after diff + apply -->
-    <div v-if="proposal && proposal.edits && proposal.edits.length" class="cp-section cp-proposal">
+    <div v-if="!encoding && hasPendingProposal" class="cp-section cp-proposal">
       <div class="cp-proposal-header">제안된 편집안</div>
+      <div v-if="proposalQuestion" class="cp-proposal-q">
+        <span class="cp-pill">{{ proposalQuestion.category }}</span>
+        {{ proposalQuestion.questionText }}
+      </div>
+      <div v-if="proposal.edits.length > 1" class="cp-edit-count">
+        이 답변은 영향받는 User Story {{ proposal.edits.length }}건에 적용됩니다.
+      </div>
       <div v-for="edit in proposal.edits" :key="edit.requirementId" class="cp-edit">
-        <div class="cp-edit-id"><code>{{ edit.requirementId }}</code> — {{ edit.fieldsSummary }}</div>
+        <div class="cp-edit-id">
+          <strong>{{ (edit.after || edit.before)?.role }}: {{ (edit.after || edit.before)?.action }}</strong>
+          <div class="cp-edit-fields">{{ edit.fieldsSummary }}</div>
+        </div>
         <div class="cp-diff-row">
           <div class="cp-diff-col">
             <div class="cp-diff-label">변경 전</div>
@@ -189,7 +250,7 @@ function close() {
         </div>
       </div>
       <div class="cp-actions">
-        <button class="cp-btn cp-btn--primary" @click="applyProposal">적용</button>
+        <button class="cp-btn cp-btn--primary" :disabled="busy" @click="applyProposal">적용</button>
       </div>
     </div>
 
@@ -232,6 +293,10 @@ function close() {
 .cp-spinner { font-size: 1.4rem; }
 .cp-clear-icon { font-size: 1.8rem; color: #40c057; }
 .cp-section { padding: 6px 0; }
+.cp-encoding { padding: 14px; text-align: center; color: var(--color-text-light); font-size: 0.85rem; }
+.cp-proposal-q { font-size: 0.82rem; color: var(--color-text); margin: 4px 0 8px; display: flex; gap: 6px; align-items: baseline; }
+.cp-edit-count { font-size: 0.76rem; color: var(--color-text-light); margin-bottom: 6px; }
+.cp-edit-fields { font-size: 0.74rem; color: var(--color-text-light); margin-top: 2px; }
 .cp-question-meta { display: flex; gap: 6px; align-items: center; font-size: 0.72rem; margin-bottom: 6px; }
 .cp-pill { background: var(--color-bg-tertiary, #f4f4f4); padding: 1px 6px; border-radius: 4px; }
 .cp-pill--priority { color: #5c7cfa; }

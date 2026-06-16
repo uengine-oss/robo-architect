@@ -134,7 +134,8 @@ class BoundedContextDTO(BaseModel):
 
 
 class BoundedContextCreateRequest(BaseModel):
-    name: str
+    name: str  # 기술명 (식별자/키 파생)
+    displayName: Optional[str] = None  # 표시명 (미지정 시 name으로 fallback)
     description: Optional[str] = None
 
 
@@ -144,7 +145,8 @@ class BoundedContextCreateResponse(BaseModel):
 
 class BoundedContextUpdateRequest(BaseModel):
     boundedContextId: str
-    name: Optional[str] = None
+    name: Optional[str] = None  # 기술명
+    displayName: Optional[str] = None  # 표시명
     description: Optional[str] = None
 
 
@@ -216,7 +218,8 @@ class ReconcileResponse(BaseModel):
 
 
 class EpicProposal(BaseModel):
-    name: str
+    name: str  # 기술명 (영문 PascalCase 식별자)
+    displayName: Optional[str] = None  # 표시명 (입력 언어)
     description: Optional[str] = None
 
 
@@ -341,6 +344,7 @@ class ValidateRequest(BaseModel):
     benefit: Optional[str] = None
     boundedContextId: Optional[str] = None
     featureId: Optional[str] = None
+    userStoryId: Optional[str] = None  # 기존 US 검증 시 자기 자신을 중복 후보에서 제외
 
 
 class ValidateResponse(BaseModel):
@@ -592,6 +596,7 @@ class WizardStepRef(BaseModel):
     title: str
     optional: bool = True
     recommended: bool = True
+    questions: list[str] = Field(default_factory=list)  # 이 단계의 인터뷰 질문(UI 표시)
 
 
 class WizardStartRequest(BaseModel):
@@ -627,6 +632,9 @@ class WizardConfirmRequest(BaseModel):
 class WizardConfirmResponse(BaseModel):
     appliedChanges: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    # 컨텍스트(BC/Aggregate)가 아직 없어 그래프 반영을 보류한 변경(=문서엔 남음).
+    # 에러가 아니라 방법론 순서상 정상(예: Discover 이벤트는 BC 정의 전).
+    deferred: list[str] = Field(default_factory=list)
 
 
 class WizardSessionDTO(BaseModel):

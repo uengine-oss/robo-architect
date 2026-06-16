@@ -40,9 +40,11 @@ class _LLMFeatures(BaseModel):
 _EPIC_SYSTEM = (
     "You are a DDD domain architect. From the user's natural-language "
     "description, propose 1–3 Bounded Contexts (Epics) — each a cohesive "
-    "business capability area with a short name and a one-line description. "
-    "Avoid duplicating the existing Bounded Contexts listed. Write name/"
-    "description in the SAME natural language as the user's input."
+    "business capability area. For each, return: `name` = a concise English "
+    "PascalCase technical identifier (no spaces, e.g. CustomerSupport), "
+    "`displayName` = a short human label in the SAME natural language as the "
+    "user's input (e.g. 고객센터), and `description` = a one-line summary in "
+    "that same language. Avoid duplicating the existing Bounded Contexts listed."
 )
 
 _FEATURE_SYSTEM = (

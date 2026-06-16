@@ -114,9 +114,45 @@ async def run_design_for_user_stories(
         except Exception:  # noqa: BLE001 — best-effort
             pass
 
+        # 완료 summary — 프런트 카운트 그리드가 읽는 snake_case 키로 실제 생성 수를
+        # 그래프에서 집계(대상 BC 기준). 기존엔 {"userStories": N}만 보내 모달이 전부
+        # 0으로 표시됐음.
+        summary = {
+            "user_stories": len(ctx.user_stories),
+            "bounded_contexts": len(target_bc_ids),
+            "aggregates": 0, "commands": 0, "events": 0, "read_models": 0,
+            # reflect 단계는 정책/UI를 생성하지 않으므로 0으로 명시(undefined→빈칸 방지).
+            "policies": 0, "uis": 0,
+        }
+        try:
+            from api.platform.neo4j import get_session as _neo4j_session
+
+            bcs = list(target_bc_ids)
+            if bcs:
+                with _neo4j_session() as _s:
+                    rec = _s.run(
+                        """
+                        MATCH (bc:BoundedContext) WHERE bc.id IN $bcs
+                        OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
+                        OPTIONAL MATCH (agg)-[:HAS_COMMAND]->(cmd:Command)
+                        OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
+                        OPTIONAL MATCH (bc)-[:HAS_READMODEL]->(rm:ReadModel)
+                        RETURN count(DISTINCT agg) AS aggs, count(DISTINCT cmd) AS cmds,
+                               count(DISTINCT evt) AS evts, count(DISTINCT rm) AS rms
+                        """,
+                        bcs=bcs,
+                    ).single()
+                    if rec:
+                        summary["aggregates"] = rec["aggs"]
+                        summary["commands"] = rec["cmds"]
+                        summary["events"] = rec["evts"]
+                        summary["read_models"] = rec["rms"]
+        except Exception:  # noqa: BLE001 — 카운트는 best-effort(표시용)
+            pass
+
         yield _augment_event(session, ProgressEvent(
             phase=IngestionPhase.COMPLETE, message="✅ 설계 반영 완료!", progress=100,
-            data={"summary": {"userStories": len(ctx.user_stories)}},
+            data={"summary": summary},
         ))
     except Exception as e:  # noqa: BLE001
         SmartLogger.log(

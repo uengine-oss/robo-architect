@@ -20,6 +20,8 @@ import ImpactReportPanel from './ImpactReportPanel.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import InspectorPanel from '@/features/canvas/ui/InspectorPanel.vue'
 import DddWizardPanel from './DddWizardPanel.vue'
+import ClarificationPanel from './ClarificationPanel.vue'
+import { useNavigatorStore } from '@/features/navigator/navigator.store'
 
 /**
  * Requirements tab root panel (026).
@@ -27,6 +29,24 @@ import DddWizardPanel from './DddWizardPanel.vue'
  * canvas, requirement authoring, and non-blocking impact report.
  */
 const store = useRequirementsStore()
+const navigatorStore = useNavigatorStore()
+
+// 035 — DDD 마법사 완료: 산출물(Aggregate/Command/Event)은 Design 탭에 있으므로
+// 그쪽으로 이동 + 네비게이터를 새로고침해 전체 펼침(robo:switch-tab은 App.vue가 수신).
+async function onWizardDone() {
+  showDddWizard.value = false
+  store.fetchTree()
+  window.dispatchEvent(new CustomEvent('robo:switch-tab', { detail: 'Design' }))
+  try { await navigatorStore.refreshAll?.() } catch (_) { /* best-effort */ }
+}
+
+// 030 — 명확화: US 스코프 세션은 UserStoryDetail 탭에 embedded로 렌더되고,
+// project(전체)/Epic/Feature 스코프 세션은 여기 오버레이로 standalone 렌더한다
+// (그렇지 않으면 비-US 스코프 세션은 답변 UI가 없어 고아 세션이 됨 — I8).
+const scopeClarificationActive = computed(() => {
+  const sess = store.clarificationSession
+  return !!(sess && sess.scope?.scopeType && sess.scope.scopeType !== 'user_story')
+})
 
 // Reload the requirements tree whenever an ingestion completes or data is cleared.
 useDataRefresh(() => {
@@ -395,6 +415,33 @@ async function onValidate(targetType) {
       description: e.description || '',
       boundedContextId: e.id,
     })
+  } else if (targetType === 'userStory' && store.selectedUserStory) {
+    const us = store.selectedUserStory
+    valScopeName.value = us.action || 'User Story'
+    // US 노드 DTO엔 BC/Feature id가 없으므로 트리에서 부모를 찾아 채운다
+    // (wrong_bc 검사에 배치 BC가 필요).
+    let bcId, featureId
+    for (const epic of store.tree.epics || []) {
+      const feats = [...(epic.features || [])]
+      if (epic.unassignedFeature) feats.push(epic.unassignedFeature)
+      for (const f of feats) {
+        if ((f.userStories || []).some((s) => s.id === us.id)) {
+          bcId = epic.id
+          featureId = f.id
+          break
+        }
+      }
+      if (bcId) break
+    }
+    await runValidate({
+      targetType: 'userStory',
+      role: us.role || '',
+      action: us.action || '',
+      benefit: us.benefit || '',
+      boundedContextId: bcId || undefined,
+      featureId: featureId || undefined,
+      userStoryId: us.id,
+    })
   }
 }
 
@@ -496,6 +543,7 @@ async function runValidate(payload) {
           :trace-loading="store.designTraceLoading"
           @delete="onDeleteUserStory"
           @ai-edit="openChat"
+          @validate="onValidate('userStory')"
           @canvas-node-click="onCanvasNodeClick"
         />
       </div>
@@ -618,10 +666,18 @@ async function runValidate(payload) {
       <button class="undo-btn" @click="onUndo">되돌리기</button>
     </div>
 
-    <!-- 035 — DDD 발견 마법사 오버레이 -->
-    <div v-if="showDddWizard" class="dw-overlay" @click.self="showDddWizard = false">
+    <!-- 035 — DDD 발견 마법사 오버레이. v-show로 두어 닫아도(숨김) 진행상황(세션·답변)
+         이 세션 동안 보존된다(새로고침 시엔 소실 — localStorage 재접속은 후속). -->
+    <div v-show="showDddWizard" class="dw-overlay" @click.self="showDddWizard = false">
       <div class="dw-modal">
-        <DddWizardPanel scope="greenfield" @close="showDddWizard = false" @done="() => { showDddWizard = false; store.fetchTree() }" />
+        <DddWizardPanel scope="greenfield" @close="showDddWizard = false" @done="onWizardDone" />
+      </div>
+    </div>
+
+    <!-- 030 — project/Epic/Feature 스코프 명확화 오버레이 (US 스코프는 UserStoryDetail embedded) (I8) -->
+    <div v-if="scopeClarificationActive" class="clarif-overlay" @click.self="store.closeClarification()">
+      <div class="clarif-modal">
+        <ClarificationPanel @close="store.closeClarification()" />
       </div>
     </div>
   </div>
@@ -727,6 +783,15 @@ async function runValidate(payload) {
 }
 .dw-modal {
   width: min(560px, 92vw); max-height: 88vh; overflow-y: auto;
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+.clarif-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1200;
+  display: flex; align-items: center; justify-content: center;
+}
+.clarif-modal {
+  width: min(620px, 94vw); max-height: 88vh; overflow-y: auto;
   background: var(--color-bg); border: 1px solid var(--color-border);
   border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
 }

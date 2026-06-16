@@ -1410,8 +1410,11 @@ function closeFloatingPanel() {
   tokensExpanded.value = false
   suspendState.value = 'running'
   clearSessionFromStorage()
-  
+
   emit('complete')
+  // 플로팅 패널을 닫으면 모달 전체도 닫는다 — 안 그러면 modelValue가 true로 남아
+  // 업로드 폼(문서 업로드)이 의도치 않게 다시 노출됨(특히 설계반영 재사용 흐름).
+  emit('update:modelValue', false)
 }
 
 function toggleMinimize() {
@@ -1673,7 +1676,7 @@ function useSample() {
   <!-- Upload Dialog (initial file selection) - Blocking Modal -->
   <Teleport to="body">
     <Transition name="modal">
-      <div v-if="isOpen && !isProcessing" class="modal-overlay" @click.self="closeModal">
+      <div v-if="isOpen && !isProcessing && !summary" class="modal-overlay" @click.self="closeModal">
         <div class="modal-container">
           <!-- Header -->
           <div class="modal-header">

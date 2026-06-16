@@ -87,7 +87,10 @@ def recommend_plan(profile: ProfileAnswer, *, scope: str) -> list[WizardStepRef]
     for key, title, required in STEP_META:
         is_recommended = required or key in recommended
         plan.append(
-            WizardStepRef(key=key, title=title, optional=not required, recommended=is_recommended)
+            WizardStepRef(
+                key=key, title=title, optional=not required, recommended=is_recommended,
+                questions=STEP_QUESTIONS.get(key, []),
+            )
         )
     return plan
 

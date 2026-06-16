@@ -95,10 +95,27 @@ def _build_prompt(req: ValidateRequest) -> str:
 
     if req.boundedContextId:
         feats, stories = _features_and_stories(req.boundedContextId)
+        # 기존 US를 검증할 때는 자기 자신을 목록에서 제외 — 안 그러면 LLM이
+        # 대상 US를 "이미 같은 US가 존재"로 보고 자기중복(spec_conflict) false positive.
+        if req.userStoryId:
+            stories = [s for s in stories if s.get("id") != req.userStoryId]
         lines.append("\n[대상 BC의 Feature]")
         lines += [f"- {f['name']}" for f in feats] or ["- (없음)"]
         lines.append("\n[대상 BC의 기존 User Story]")
-        lines += [f"- {s.get('role','')}: {s.get('action','')}" for s in stories] or ["- (없음)"]
+        lines += [
+            f"- id={s.get('id','')} | {s.get('role','')}: {s.get('action','')}" for s in stories
+        ] or ["- (없음)"]
+
+    # Epic/Feature를 검증할 때는 그 안에 담긴 각 User Story가 이 BC에 맞는지도
+    # 함께 본다(자식 US 오배치 누락 방지). 잘못된 US는 wrong_bc로 보고하고
+    # affected[]에 그 US id를 넣는다.
+    if req.targetType in ("epic", "feature"):
+        lines.append(
+            "\n위 [대상 BC의 기존 User Story] 각각에 대해서도 이 Bounded Context에 "
+            "적합한지 검토하세요. 다른 BC에 속해야 하는 User Story가 있으면 kind='wrong_bc' "
+            "finding으로 보고하고, affected[]에 해당 User Story의 id를, "
+            "suggestion.suggestedBoundedContextId에 더 적절한 BC id를 넣으세요."
+        )
 
     lines.append("\n부적합 항목만 findings로 보고하세요. 모두 적합하면 빈 목록을 반환하세요.")
     return "\n".join(lines)

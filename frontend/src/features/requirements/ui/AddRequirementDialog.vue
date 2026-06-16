@@ -21,7 +21,7 @@ const errorMsg = ref('')
 
 // Epic / Feature create state (034 US1) — manual form + AI 제안 sub-mode.
 const efMode = ref('manual') // 'manual' | 'ai' (for Epic/Feature units)
-const epicForm = ref({ name: '', description: '' })
+const epicForm = ref({ name: '', displayName: '', description: '' })
 const featureForm = ref({ boundedContextId: '', name: '', description: '' })
 // AI 제안 state
 const efText = ref('')
@@ -91,7 +91,7 @@ async function addProposedEpic(p, i) {
   busy.value = true
   errorMsg.value = ''
   try {
-    await store.createEpic(p.name, p.description || null)
+    await store.createEpic(p.name, p.description || null, (p.displayName || '').trim() || null)
     efProposals.value.splice(i, 1)
     emit('added')
     if (!efProposals.value.length) close()
@@ -152,7 +152,7 @@ function resetState() {
   proposed.value = false
   errorMsg.value = ''
   manual.value = { role: '', action: '', benefit: '', boundedContextId: '', featureId: '' }
-  epicForm.value = { name: '', description: '' }
+  epicForm.value = { name: '', displayName: '', description: '' }
   featureForm.value = { boundedContextId: '', name: '', description: '' }
   efMode.value = 'manual'
   efText.value = ''
@@ -168,7 +168,11 @@ async function confirmEpic() {
   busy.value = true
   errorMsg.value = ''
   try {
-    await store.createEpic(epicForm.value.name.trim(), epicForm.value.description || null)
+    await store.createEpic(
+      epicForm.value.name.trim(),
+      epicForm.value.description || null,
+      epicForm.value.displayName.trim() || null,
+    )
     emit('added')
     close()
   } catch (e) {
@@ -311,7 +315,8 @@ async function confirmManual() {
           </button>
           <div v-if="efProposed && !efProposals.length" class="empty-hint">제안된 Epic이 없습니다. 수동 입력으로 추가하세요.</div>
           <div v-for="(p, i) in efProposals" :key="i" class="proposal">
-            <label>이름 <input v-model="p.name" /></label>
+            <label>기술명 (영문 권장) <input v-model="p.name" placeholder="예: OrderManagement" /></label>
+            <label>표시명 (선택) <input v-model="p.displayName" placeholder="예: 주문 관리" /></label>
             <label>설명 <input v-model="p.description" /></label>
             <button class="btn btn--primary" :disabled="busy" @click="addProposedEpic(p, i)">추가</button>
           </div>
@@ -319,7 +324,8 @@ async function confirmManual() {
 
         <!-- Epic — 수동 (034 US1) -->
         <template v-else-if="unit === 'epic'">
-          <label>Epic 이름 <input v-model="epicForm.name" placeholder="예: 주문 관리" /></label>
+          <label>기술명 (영문 권장) <input v-model="epicForm.name" placeholder="예: OrderManagement" /></label>
+          <label>표시명 (선택) <input v-model="epicForm.displayName" placeholder="예: 주문 관리 — 비우면 기술명 사용" /></label>
           <label>설명 (선택)
             <textarea v-model="epicForm.description" rows="3" placeholder="이 Epic(Bounded Context)의 책임" />
           </label>
@@ -338,7 +344,12 @@ async function confirmManual() {
           </label>
           <textarea v-model="efText" class="nl-input" rows="4"
             placeholder="추가하고 싶은 기능(Feature)을 자연어로 설명하세요..." />
-          <button class="btn btn--primary" :disabled="busy || !efText.trim()" @click="runProposeFeature">
+          <p v-if="!featureForm.boundedContextId" class="empty-hint">소속 Epic을 먼저 선택하세요.</p>
+          <button
+            class="btn btn--primary"
+            :disabled="busy || !efText.trim() || !featureForm.boundedContextId"
+            @click="runProposeFeature"
+          >
             {{ busy ? '제안 중...' : '제안 받기' }}
           </button>
           <div v-if="efProposed && !efProposals.length" class="empty-hint">제안된 Feature가 없습니다. 수동 입력으로 추가하세요.</div>
@@ -479,6 +490,7 @@ async function confirmManual() {
   width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 0.8rem;
   background: var(--color-bg-tertiary); border: 1px solid var(--color-border);
   border-radius: 6px; color: var(--color-text);
+  flex-shrink: 0; /* flex column 본문에서 제안 카드 추가 시 입력란이 수축하지 않도록 */
 }
 label { display: flex; flex-direction: column; gap: 3px; font-size: 0.72rem; color: var(--color-text-light); }
 .btn {

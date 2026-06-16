@@ -78,7 +78,8 @@ def _attach_properties(session, nodes: dict[str, dict]) -> None:
 
 
 def _expand_trace(
-    session, root_command_ids: list[str], depth: int
+    session, root_command_ids: list[str], depth: int,
+    extra_rm_ids: list[str] | None = None,
 ) -> tuple[dict[str, dict], list[dict]]:
     """Expand the command→aggregate/ui/event/policy design trace.
 
@@ -108,6 +109,15 @@ def _expand_trace(
         ).single()
         if rec and rec["cmd"] and rec["cmd"].get("id"):
             nodes.setdefault(rec["cmd"]["id"], _node(rec["cmd"], "Command"))
+
+    # 조회성 US 등 command가 없는 경우, US가 IMPLEMENTS하는 ReadModel을 직접 시드해
+    # 결과 UI(아래 ATTACHED_TO 섹션)와 함께 궤적에 표시되게 한다(읽기측 설계 가시화).
+    for rid in extra_rm_ids or []:
+        rec = session.run(
+            "MATCH (rm:ReadModel {id: $id}) RETURN rm {.*} AS rm", id=rid
+        ).single()
+        if rec and rec["rm"] and rec["rm"].get("id"):
+            nodes.setdefault(rec["rm"]["id"], _node(rec["rm"], "ReadModel"))
 
     frontier: list[str] = [cid for cid in root_command_ids if cid in nodes]
     for _ in range(depth):
@@ -248,13 +258,35 @@ async def get_design_trace(
         ).single()
 
         if not root_cmd or not root_cmd["cmd"]:
-            SmartLogger.log(
-                "INFO",
-                "Design trace empty: user story has no implemented Command.",
-                category="requirements.design_trace.empty",
-                params={**http_context(request), "user_story_id": user_story_id},
+            # command가 없는 조회성(읽기측) US — US가 IMPLEMENTS하는 ReadModel을
+            # 루트로 궤적을 구성한다(CQRS 읽기측: …→Event→ReadModel→결과UI).
+            rm_rows = session.run(
+                """
+                MATCH (us:UserStory {id: $id})-[:IMPLEMENTS]->(rm:ReadModel)
+                OPTIONAL MATCH (rm)-[:HAS_CQRS]->(:CQRSConfig)
+                      -[:HAS_OPERATION]->(:CQRSOperation)-[:TRIGGERED_BY]->(:Event)<-[:EMITS]-(cmd:Command)
+                RETURN collect(DISTINCT rm.id) AS rm_ids, collect(DISTINCT cmd.id) AS cmd_ids
+                """,
+                id=user_story_id,
+            ).single()
+            rm_ids = [x for x in (rm_rows["rm_ids"] if rm_rows else []) if x]
+            feed_cmd_ids = [x for x in (rm_rows["cmd_ids"] if rm_rows else []) if x]
+            if not rm_ids:
+                SmartLogger.log(
+                    "INFO",
+                    "Design trace empty: user story has no implemented Command or ReadModel.",
+                    category="requirements.design_trace.empty",
+                    params={**http_context(request), "user_story_id": user_story_id},
+                )
+                return DesignTraceResponse(rootCommandId=None, nodes=[], relationships=[], empty=True)
+            # 먹이는 command가 있으면 그걸 루트로 전체 레인을, 없으면 ReadModel만 시드.
+            nodes, rels = _expand_trace(session, feed_cmd_ids, depth, extra_rm_ids=rm_ids)
+            return DesignTraceResponse(
+                rootCommandId=(feed_cmd_ids[0] if feed_cmd_ids else None),
+                nodes=list(nodes.values()),
+                relationships=rels,
+                empty=not nodes,
             )
-            return DesignTraceResponse(rootCommandId=None, nodes=[], relationships=[], empty=True)
 
         root_id = root_cmd["cmd"]["id"]
         nodes, rels = _expand_trace(session, [root_id], depth)

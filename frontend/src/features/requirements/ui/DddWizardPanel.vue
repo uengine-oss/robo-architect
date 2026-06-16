@@ -33,6 +33,7 @@ const profileSummary = ref('')
 const selectedSteps = ref(new Set())
 const errorMsg = ref('')
 const busy = ref(false)
+const deferredNotes = ref([]) // 이후 단계서 반영 보류된 항목(누적, 정보성)
 
 // 단계 진행 상태
 const currentStepIdx = ref(0)
@@ -71,6 +72,7 @@ function toggleStep(key, required) {
 
 function beginSteps() {
   currentStepIdx.value = 0
+  deferredNotes.value = [] // 새 실행 시작 — 이전 보류 누적 초기화(v-show로 컴포넌트 유지되므로)
   stage.value = 'running'
   runStep()
 }
@@ -113,9 +115,20 @@ async function confirmStep() {
   busy.value = true
   errorMsg.value = ''
   try {
-    await store.confirmDddWizardStep(
+    const res = await store.confirmDddWizardStep(
       sessionId.value, currentStep.value.key, Array.from(acceptedIds.value),
     )
+    // 보류(deferred)=방법론 순서상 정상 → 인라인 누적 안내(오류처럼 안 보이게).
+    if (res && Array.isArray(res.deferred) && res.deferred.length) {
+      deferredNotes.value = [...deferredNotes.value, ...res.deferred]
+    }
+    // 실패(errors)=진짜 문제 → 인라인 오류 표시 + 다음 단계로 넘어가지 않음
+    // (사용자가 확인/재시도하거나 '건너뛰기'로 진행하도록).
+    if (res && Array.isArray(res.errors) && res.errors.length) {
+      errorMsg.value = `일부 변경이 적용되지 않았습니다 (${res.errors.length}건): ` +
+        res.errors.join(' / ') + ' — 수정 후 다시 확정하거나 건너뛰세요.'
+      return
+    }
     // 다음 단계로
     if (currentStepIdx.value < orderedSteps.value.length - 1) {
       currentStepIdx.value += 1
@@ -152,6 +165,12 @@ function skipStep() {
     </div>
 
     <p v-if="errorMsg" class="dw-error">{{ errorMsg }}</p>
+
+    <!-- 보류 항목(정보성): 이후 단계서 반영될 것들 — 오류 아님. 접을 수 있음(기본 접힘) -->
+    <details v-if="deferredNotes.length" class="dw-deferred">
+      <summary class="dw-deferred-title">ℹ 이후 단계에서 반영될 항목 ({{ deferredNotes.length }})</summary>
+      <ul><li v-for="(n, i) in deferredNotes" :key="i">{{ n }}</li></ul>
+    </details>
 
     <!-- 1) 프로파일링 -->
     <section v-if="stage === 'profiling'" class="dw-stage">
@@ -192,10 +211,21 @@ function skipStep() {
       <div class="dw-progress">단계 {{ currentStepIdx + 1 }} / {{ orderedSteps.length }}</div>
       <h4 class="dw-step-name">{{ currentStep.title }}</h4>
 
-      <label class="dw-field"><span>답변 / 메모</span>
-        <textarea v-model="stepAnswers" rows="3" placeholder="질문에 답하거나 핵심을 적어주세요" /></label>
-      <label class="dw-field"><span>또는 기존 문서 붙여넣기</span>
-        <textarea v-model="pastedDoc" rows="3" placeholder="요구사항/도메인 설명을 붙여넣으면 분석합니다" /></label>
+      <div v-if="currentStep.questions && currentStep.questions.length" class="dw-questions">
+        <div class="dw-questions-title">이 단계에서 생각해볼 질문</div>
+        <ul>
+          <li v-for="(q, i) in currentStep.questions" :key="i">{{ q }}</li>
+        </ul>
+      </div>
+
+      <p class="dw-fields-help">
+        둘 중 편한 쪽(또는 둘 다) 사용 — <strong>①</strong> 위 질문에 직접 답하거나,
+        <strong>②</strong> 이미 있는 원본 문서를 붙여넣으면 LLM이 추출합니다.
+      </p>
+      <label class="dw-field"><span>① 질문에 대한 답변 (직접 입력)</span>
+        <textarea v-model="stepAnswers" rows="3" placeholder="위 질문들에 답하거나 이 단계의 핵심 결정을 적어주세요" /></label>
+      <label class="dw-field"><span>② 기존 문서 (선택 · 참고자료 붙여넣기)</span>
+        <textarea v-model="pastedDoc" rows="3" placeholder="기획서·RFP·회의록 등 원본을 붙여넣으면 분석에 활용 (최대 4000자)" /></label>
 
       <div class="dw-actions">
         <button class="dw-primary" :disabled="busy" @click="generateProposal">산출물 생성</button>
@@ -257,6 +287,16 @@ function skipStep() {
 .dw-field { display: block; margin-bottom: 8px; }
 .dw-field span { display: block; font-size: 0.7rem; color: var(--color-text-light); margin-bottom: 3px; }
 .dw-field textarea { width: 100%; box-sizing: border-box; font-size: 0.82rem; padding: 5px 7px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg); color: var(--color-text); resize: vertical; }
+.dw-fields-help { font-size: 0.72rem; color: var(--color-text-light); margin: 4px 0 6px; line-height: 1.4; }
+.dw-questions { background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: 6px; padding: 8px 10px; margin: 6px 0; }
+.dw-questions-title { font-size: 0.74rem; font-weight: 700; margin-bottom: 4px; }
+.dw-questions ul { margin: 0; padding-left: 16px; }
+.dw-questions li { font-size: 0.78rem; line-height: 1.5; color: var(--color-text); }
+.dw-deferred { background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: 6px; padding: 7px 10px; margin: 4px 0; }
+.dw-deferred-title { font-size: 0.72rem; font-weight: 700; color: var(--color-text-light); margin-bottom: 3px; cursor: pointer; user-select: none; }
+.dw-deferred[open] .dw-deferred-title { margin-bottom: 5px; }
+.dw-deferred ul { margin: 0; padding-left: 16px; }
+.dw-deferred li { font-size: 0.74rem; line-height: 1.45; color: var(--color-text-light); }
 .dw-actions { display: flex; gap: 8px; }
 .dw-reasoning { font-size: 0.78rem; color: var(--color-text-light); font-style: italic; }
 .dw-proposal { margin-top: 12px; border-top: 1px solid var(--color-border); padding-top: 10px; }

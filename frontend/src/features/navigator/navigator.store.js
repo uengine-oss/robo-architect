@@ -701,17 +701,21 @@ export const useNavigatorStore = defineStore('navigator', () => {
   }
   
   function expandAll() {
-    // Expand all context nodes
+    // 모든 트리 노드를 펼친다: 로드된 contextTrees를 재귀로 훑어 모든 `id`를 수집
+    // (없는 id가 섞여도 무해 — expandedNodes는 단순 멤버십 체크). TreeNode가
+    // 합성하는 그룹 래퍼(User Stories 그룹: `${bcId}::userstories`)도 함께 추가.
+    const ids = new Set(expandedNodes.value)
+    const walk = (obj) => {
+      if (!obj || typeof obj !== 'object') return
+      if (Array.isArray(obj)) { obj.forEach(walk); return }
+      if (obj.id) ids.add(obj.id)
+      Object.values(obj).forEach(walk)
+    }
     contexts.value.forEach(ctx => {
-      expandedNodes.value.add(ctx.id)
-      const tree = contextTrees.value[ctx.id]
-      if (tree) {
-        tree.aggregates?.forEach(agg => {
-          expandedNodes.value.add(agg.id)
-        })
-      }
+      if (ctx.id) { ids.add(ctx.id); ids.add(`${ctx.id}::userstories`) }
+      walk(contextTrees.value[ctx.id])
     })
-    expandedNodes.value = new Set(expandedNodes.value)
+    expandedNodes.value = ids
   }
   
   function collapseAll() {

@@ -44,9 +44,9 @@
 
 | 탭 | 문서 | 상태 | 비고 |
 |---|---|---|---|
-| Stories | [tabs/stories.md](tabs/stories.md) | 🟡 초안 | 인벤토리·시나리오 초안 작성(22기능, S1~S15). 다음 세션 라이브 검증 대기 |
-| Process (BPM) | [tabs/process-bpm.md](tabs/process-bpm.md) | ⬜ | |
-| Process (Event Modeling) | [tabs/process-event-modeling.md](tabs/process-event-modeling.md) | ⬜ | |
+| Stories | [tabs/stories.md](tabs/stories.md) | ✅ 완료 | S1~S15 전 시나리오 라이브 검증. 버그 **36건 수정**(I1~I36: 명확화 I8~I16·DDD마법사 I21~I31·삭제 I33·설계반영 I34/35·궤적 I36 등), 후속 3건(I7·I22·I32) |
+| Process (BPM) | [tabs/process-bpm.md](tabs/process-bpm.md) | 🟡 초안 | 인벤토리·시나리오(S1~S8) 작성. 하이브리드 A2A→BPM·Rule매핑·ES승격. 다음 세션 라이브 검증 |
+| Process (Event Modeling) | [tabs/process-event-modeling.md](tabs/process-event-modeling.md) | 🟡 초안 | 인벤토리·시나리오(S1~S9) 작성. swimlane·UI-flow·ReadModel 3분류·EventModelingLane. 다음 세션 라이브 검증 |
 | Design | [tabs/design.md](tabs/design.md) | ⬜ | |
 | Data | [tabs/data.md](tabs/data.md) | ⬜ | |
 | Code | [tabs/code.md](tabs/code.md) | ⬜ | |

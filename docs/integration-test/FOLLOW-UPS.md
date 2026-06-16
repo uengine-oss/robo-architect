@@ -2,7 +2,7 @@
 
 통합 검증 중 발견했지만 **해당 탭 범위를 넘어가거나(다른 탭/공유 모듈), 신규 feature 규모이거나, 미구현인** 항목을 모은다. 각 항목은 **어느 탭/세션이 이어받을지**로 그룹핑.
 
-> 출처 표기: `[I##]`는 [tabs/proposals.md](tabs/proposals.md) 이슈 원장 참조.
+> 출처 표기: `[I##]`는 [tabs/proposals.md](tabs/proposals.md), `[Stories I##]`는 [tabs/stories.md](tabs/stories.md) 이슈 원장 참조.
 > 상태: 🔴 미구현 · 🟠 보완필요(부분) · 🟡 경미/간헐 · 🔵 설계과제(신규 feature)
 
 ---
@@ -36,6 +36,19 @@
 | **[I4] impactMap 재생성 폴백** | 🟡 간헐 | 피드백 재생성 시 `robo-proposal-context`가 빈응답/timeout이면 `_fallback_impact_map`(빈약)으로 떨어짐. | 재현성 확인 → context 스킬 timeout 상향 또는 폴백 진입 로깅. 비결정적(LLM). |
 | **[I12] property 중복노드 / divergence** | 🟡 | force-accept-with-failures 시 그래프엔 설계 전부 반영·코드는 부분(설계상 OK) + `apply`가 동일 property 노드를 **중복 생성**. | property 중복은 proposal_apply dedup. divergence는 사용자 인지(검증 FAIL≠그래프 미반영). |
 | **[I2] 039 quickstart 스크립트 경로** | 🟡 확인 | quickstart가 `services/migration`, `schema_migrator --feature=039` 참조 — 실제 경로/동작 미확인. | 마이그레이션/스키마 스크립트 실재 확인. |
+
+## E-2. 인증·감사 추적 (cross-cutting — 무인증 환경)
+
+| 항목 | 상태 | 내용 | 비고 |
+|---|---|---|---|
+| **[Stories I7] 편집자 신원 미기록** | 🔵 | 편집 이력(033)에 `userName: "unknown user"`, `userEmail: "unknown@…MacBookPro.local"`(호스트명 fallback)로 기록됨 — 실제 사용자(`learning@uengine.org`) 반영 안 됨. **현재 로그인/인증 없는 환경**이라 신원 컨텍스트 부재. | 인증 도입 시 개선. 모든 편집/변경 이력(033·038·챗편집)에 동일 적용. 신규 feature(인증/사용자 컨텍스트) 규모. |
+
+## E-3. DDD 마법사 (035) — LLM 출력 신뢰성
+
+| 항목 | 상태 | 내용 | 비고 |
+|---|---|---|---|
+| **[Stories I32] Strategize 분류(classification) 영속 불안정** | 🟡 | 배선은 정상(`after.classification`→`bc.classification`+`bc.domainType` 둘 다 세팅, 이름해석·name오염방지 완료). 그러나 **LLM이 Strategize에서 구조화된 classification 변경을 안정적으로 발행 안 함** → 3회 시도 모두 domainType None. | 결정적 보강 필요: 엔진에서 step=strategize일 때 답변/artifact의 분류를 **결정적으로 파싱해 BC update 강제 생성**(LLM 의존 제거), 또는 분류 전용 경량 LLM 호출. 마법사 재방문 시. |
+| **[Stories I22] 마법사 BC가 영문 기술명 없이 한글 name=displayName** | 🟡 | 마법사 BC create가 영문명 자동파생 안 함(서브도메인명이 한글). I1(수동/AI제안)과 달리 입력칸 없음. | 영문명 자동파생 또는 인제스천 정합. |
 
 ## E. 횡단(cross-cutting) — 아직 미검증 입력/연동 (해당 탭에서)
 

@@ -1,9 +1,9 @@
 """Infrastructure/boilerplate filters for Phase 2 rule extraction.
 
-Mirrors the exclusion policy of `analyzer_graph/graph_to_user_stories.py`:
-only business-meaningful judgement logic (approval, eligibility, discount,
-exception handling, etc.) should become a Rule. EJB lifecycle callbacks,
-finder methods, CMP/BMP plumbing, getters/setters and logging are out.
+Exclusion policy: only business-meaningful judgement logic (approval,
+eligibility, discount, exception handling, etc.) should become a Rule. EJB
+lifecycle callbacks, finder methods, CMP/BMP plumbing, getters/setters and
+logging are out.
 """
 
 from __future__ import annotations

@@ -1,9 +1,10 @@
 """Hybrid BPM grouped context → User Stories (LLM call).
 
-Mirrors `analyzer_graph.graph_to_user_stories.extract_user_stories_from_analyzer_graph`
-so the existing `workflow/phases/user_stories.py` flow can call it identically.
-
-Called per BpmTask group from the user_stories phase via asyncio.to_thread().
+Shares the same shape as the other `*_to_user_stories` converters
+(`requirements_to_user_stories`, `figma_to_user_stories`) so the existing
+`workflow/phases/user_stories.py` flow can call it identically (source_type
+branch). Called per BpmTask group from the user_stories phase via
+asyncio.to_thread().
 """
 
 from __future__ import annotations
