@@ -74,7 +74,7 @@ export async function validateProjectRoot(p: string): Promise<ProjectRootValidat
   } catch {
     return { valid: false, reason: "unreadable" };
   }
-  return { valid: true };
+  return { valid: true, basename: path.basename(p), parent: path.dirname(p) };
 }
 
 export async function listRecentProjectRoots(): Promise<ProjectRootEntry[]> {

@@ -200,9 +200,9 @@ async function revalidateRoot() {
       rootBasename.value = ''
       rootParent.value = ''
     } else {
-      const parts = rootPath.value.split('/')
-      rootBasename.value = parts[parts.length - 1] || rootPath.value
-      rootParent.value = parts.slice(0, -1).join('/') || '/'
+      // basename/parent 는 백엔드(Node path)가 계산 — OS 구분자(\·/) 모두 정확. 프론트 문자열 분리 금지.
+      rootBasename.value = r.data.basename || rootPath.value
+      rootParent.value = r.data.parent || ''
       rootError.value = null
     }
   }

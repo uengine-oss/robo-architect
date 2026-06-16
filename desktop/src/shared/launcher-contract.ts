@@ -172,6 +172,9 @@ export interface ProjectRootValidateInput {
 export interface ProjectRootValidateResult {
   valid: boolean;
   reason?: "not-found" | "not-a-directory" | "unreadable";
+  // valid 일 때만 채워진다 — choose 와 동일하게 백엔드 Node path 로 계산(OS 구분자 무관).
+  basename?: string;
+  parent?: string;
 }
 
 export interface IdentityResolveInput {
