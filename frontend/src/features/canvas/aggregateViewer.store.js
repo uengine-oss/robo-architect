@@ -129,9 +129,11 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   }
 
   // Set / consume a one-shot cross-tab focus target.
-  function focusAggregate(aggregateId, bcId = null) {
+  // 043-fix — opts.openInspector: 포커스 후 해당 Aggregate 의 Inspector 를 자동으로 연다
+  // (Design 캔버스 인스펙터의 '어그리거트 디테일 보기' 진입 경로). 기본 false(기존 '열기' 무영향).
+  function focusAggregate(aggregateId, bcId = null, opts = {}) {
     if (!aggregateId) return
-    pendingFocus.value = { aggregateId, bcId: bcId || null }
+    pendingFocus.value = { aggregateId, bcId: bcId || null, openInspector: !!opts.openInspector }
   }
 
   function consumeFocus() {

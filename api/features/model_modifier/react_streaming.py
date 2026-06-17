@@ -43,6 +43,34 @@ def _sanitize_updates(change: dict[str, Any]) -> dict[str, Any]:
     return updates
 
 
+def compute_draft_display_fields(
+    action: str | None, before: dict[str, Any], after: dict[str, Any]
+) -> list[str]:
+    """확정 UI(diff)에서 before/after 를 비교 표시할 필드 키 목록을 계산한다.
+
+    프런트(ChatPanel)는 이 키들로 `before[key]`/`after[key]` 를 조회해 좌우로 보여준다.
+    따라서 키는 반드시 before/after 에 **실제로 존재하는** 키여야 한다. 과거에는
+    create→['create'], delete→['delete'] 처럼 존재하지 않는 리터럴 키를 돌려줘서
+    before/after 가 모두 '(empty)' 로 표시되는 버그가 있었다.
+
+    - create : after 키(=새로 설정되는 값들). before 는 비어 있음(신규).
+    - update : after 키(=변경되는 필드). before[키] 로 옛 값을 같이 보여줌.
+    - delete : after 가 비므로 before 키(=삭제되는 기존 값들).
+    - rename : ['name'] / connect : ['relationship'] (전용 표현).
+
+    update 에서 before(스냅샷 전체) ∪ after 의 합집합을 쓰면, 바뀌지 않은 스냅샷 전용
+    필드들이 after='(empty)' 로 줄줄이 표시돼 "이 필드들이 지워진다"는 오해를 준다.
+    따라서 '변경되는 쪽'(after, 없으면 before)의 키만 쓴다.
+    """
+    before = before if isinstance(before, dict) else {}
+    after = after if isinstance(after, dict) else {}
+    if action == "rename":
+        return ["name"]
+    if action == "connect":
+        return ["relationship"]
+    return list(after.keys()) or list(before.keys())
+
+
 def _selected_node_map(selected_nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for n in selected_nodes or []:
@@ -159,13 +187,28 @@ async def stream_react_response(
             # If check fails, continue without ingestion context
             pass
 
-        nodes_context = "\n".join(
-            [
-                f"- {node.get('type', 'Unknown')}: {node.get('name', node.get('id'))} "
+        def _format_selected_node(node: dict[str, Any]) -> str:
+            ntype = node.get("type", "Unknown")
+            line = (
+                f"- {ntype}: {node.get('name', node.get('id'))} "
                 f"(ID: {node.get('id')}, BC: {node.get('bcId', 'N/A')})"
-                for node in selected_nodes
-            ]
-        )
+            )
+            # ValueObject/Enum 은 자식(fields/items)을 인라인으로 노출해야 LLM 이 기존 이름을
+            # 알고 update/delete/rename 을 정확히 생성한다(선택 노드 data 에 함께 실려 온다).
+            t = str(ntype or "").lower()
+            if t in ("valueobject",):
+                fields = node.get("fields") or []
+                names = [f.get("name") for f in fields if isinstance(f, dict) and f.get("name")]
+                if names:
+                    line += f" [fields: {', '.join(str(n) for n in names)}]"
+            elif t in ("enum", "enumeration"):
+                items = node.get("items") or []
+                flat = [str(it.get("name") if isinstance(it, dict) else it) for it in items]
+                if flat:
+                    line += f" [items: {', '.join(flat)}]"
+            return line
+
+        nodes_context = "\n".join(_format_selected_node(node) for node in selected_nodes)
 
         # =============================================================================
         # Intent analysis (structured) + propagation reuse + injected context block
@@ -649,7 +692,7 @@ For each proposed change, also output a JSON block (DRAFT ONLY) in this format:
   "changeId": "chg-...",
   "action": "rename|update|create|delete|connect",
   "targetId": "...",
-  "targetType": "Command|Event|Policy|Aggregate|ReadModel|UI|BoundedContext|Property",
+  "targetType": "Command|Event|Policy|Aggregate|ReadModel|UI|BoundedContext|Property|ValueObject|Enumeration",
   "targetName": "...",
   "bcId": "<uuid>",
   "rationale": "why this change is necessary",
@@ -680,8 +723,21 @@ For "connect" actions, include:
 For Property actions:
 - targetType MUST be "Property"
 - updates MUST include: parentType, parentId
+- parentType MUST be one of: Aggregate, Command, Event, ReadModel, ValueObject
 - For create Property, updates MUST include: name, type, description, isKey, isForeignKey, isRequired, parentType, parentId
   - Note: Property id is server-assigned UUID; you may use a temporary targetId like "prop-temp-1" and the server will replace it in the applied response.
+
+For ValueObject field actions (adding/editing/removing a field of a ValueObject):
+- Treat the field as a Property whose parent is the ValueObject.
+- targetType MUST be "Property", updates.parentType MUST be "ValueObject",
+  updates.parentId MUST be the selected ValueObject node id (e.g. "vo-AGG-cart-0").
+- NEVER refuse: ValueObject is a valid Property parentType.
+
+For Enumeration (Enum) item actions (adding/editing/removing items of an Enum):
+- action MUST be "update", targetType MUST be "Enumeration".
+- targetId MUST be the selected Enumeration node id (e.g. "enum-AGG-order-0"); targetName = the Enum name.
+- In updates include one or more of: itemsToAdd (list), itemsToRemove (list), itemsRename (object {{old:new}}).
+- NEVER refuse: this is the supported mechanism for Enum item edits.
 """
         messages.append(HumanMessage(content=current_message))
 
@@ -858,6 +914,10 @@ For Property actions:
                         after[k] = v
                     change["before"] = before
                     change["after"] = after
+                    # 확정 UI 가 좌우 비교에 사용할 필드 키(before/after 에 실제 존재하는 키).
+                    change["displayFields"] = compute_draft_display_fields(
+                        change.get("action"), before, after
+                    )
 
                     draft_changes.append(change)
                     yield format_sse_event("draft_change", {"draft": change})

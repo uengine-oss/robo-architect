@@ -1269,13 +1269,22 @@ onMounted(() => {
 })
 
 // Ensure an aggregate is loaded and bring its grouping box into view.
-async function focusOnAggregate(aggregateId, bcId) {
+// 043-fix — openInspector: 포커스 후 해당 Aggregate 의 Inspector 를 자동으로 연다
+// (Design 캔버스 '어그리거트 디테일 보기' 진입 경로, AC 8). 더블클릭(onNodeDoubleClick)과 동일하게
+// inspecting* 상태를 세팅하고 panelMode 를 'inspector' 로 전환한다.
+async function focusOnAggregate(aggregateId, bcId, openInspector = false) {
   if (!aggregateId) return
   if (!store.visibleAggregateIds.has(aggregateId)) {
     await store.fetchAggregate(aggregateId, bcId || null)
   }
   // Wait for the canvas to (re)build nodes for the now-visible aggregate.
   await nextTick()
+  if (openInspector) {
+    inspectingAggregateId.value = aggregateId
+    inspectingEnumIndex.value = null
+    inspectingVoIndex.value = null
+    panelMode.value = 'inspector'
+  }
   setTimeout(() => {
     try {
       fitView({ nodes: [`agg-container-${aggregateId}`], padding: 0.3 })
@@ -1305,7 +1314,7 @@ onMounted(async () => {
     target = resolveCanvasSelectedAggregate()
   }
   if (target?.aggregateId) {
-    await focusOnAggregate(target.aggregateId, target.bcId)
+    await focusOnAggregate(target.aggregateId, target.bcId, !!target.openInspector)
   }
 })
 
@@ -1315,7 +1324,7 @@ onMounted(async () => {
 watch(() => store.pendingFocus, async (target) => {
   if (target?.aggregateId) {
     store.consumeFocus()
-    await focusOnAggregate(target.aggregateId, target.bcId)
+    await focusOnAggregate(target.aggregateId, target.bcId, !!target.openInspector)
   }
 })
 

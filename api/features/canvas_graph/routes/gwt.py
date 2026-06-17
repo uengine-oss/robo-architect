@@ -275,10 +275,109 @@ async def parse_gwt_nl(payload: ParseNLRequest, request: Request) -> dict[str, A
         value = parsed.get(key) if isinstance(parsed, dict) else None
         return value if isinstance(value, dict) else {}
 
+    given_fv = _section_values("givenFieldValues")
+    when_fv = _section_values("whenFieldValues")
+    then_fv = _section_values("thenFieldValues")
+
+    # 입력 문장이 모호해(구체 값 없음) 어떤 필드도 채워지지 않은 경우, 같은 속성 카탈로그를
+    # 근거로 **구체화된 추천 시나리오**(문장 + 그 시나리오의 필드 값)를 1회 더 생성해 함께
+    # 내려준다. 프런트는 추출이 비었을 때 이 추천 시나리오로 생성할지 사용자에게 묻는다.
+    suggestion: dict[str, Any] | None = None
+    if not (given_fv or when_fv or then_fv):
+        suggestion = await _suggest_concrete_scenario(catalog, text, request)
+
     return {
         "success": True,
-        "givenFieldValues": _section_values("givenFieldValues"),
-        "whenFieldValues": _section_values("whenFieldValues"),
-        "thenFieldValues": _section_values("thenFieldValues"),
+        "givenFieldValues": given_fv,
+        "whenFieldValues": when_fv,
+        "thenFieldValues": then_fv,
+        "suggestion": suggestion,
+    }
+
+
+_SUGGEST_SYSTEM_PROMPT = (
+    "You are helping author a concrete Given/When/Then test scenario for an event-storming "
+    "model. The user typed a scenario that was too vague to extract any field values from "
+    "(it stated no concrete numbers, ids, or enum values). Using ONLY the property catalog "
+    "provided, invent ONE concrete, plausible, fully-specified scenario that the catalog can "
+    "represent, staying faithful to the user's intent. Pick realistic concrete values "
+    "(numbers without quotes, valid enum items from the list, short ids/strings). "
+    "Return ONLY a JSON object of the form "
+    '{"scenario": "<one natural-language sentence>", '
+    '"givenFieldValues": {...}, "whenFieldValues": {...}, "thenFieldValues": {...}}. '
+    "Map values onto the EXACT physical property names. Omit a section (use {}) if nothing "
+    "applies. The scenario sentence MUST be consistent with the field values you return. "
+    "CRITICAL: write the `scenario` sentence in the SAME natural language as the user's input "
+    "below — if the user wrote Korean, the scenario MUST be Korean; if English, English. "
+    "Property names and id/enum values stay verbatim, but the surrounding prose follows the "
+    "user's language."
+)
+
+
+def _scenario_language_directive(user_text: str) -> str:
+    """입력 문장의 언어에 맞춰 추천 시나리오 언어를 강제하는 지시문.
+
+    한글 음절이 하나라도 있으면 한국어로, 아니면 입력과 동일 언어로 작성하도록 명시한다.
+    카탈로그의 영문 속성명 때문에 모델이 영어로 흘러가는 것을 막는 하드 가드.
+    """
+    has_hangul = any("가" <= ch <= "힣" for ch in user_text)
+    if has_hangul:
+        return "IMPORTANT: The user's input is Korean, so the `scenario` sentence MUST be written in Korean (한국어)."
+    return "IMPORTANT: Write the `scenario` sentence in the SAME language as the user's input above."
+
+
+async def _suggest_concrete_scenario(catalog: str, user_text: str, request: Request) -> dict[str, Any] | None:
+    """모호한 입력에 대해 카탈로그 기반의 **구체화된 추천 시나리오**(문장 + 필드 값)를 1회 생성.
+
+    실패(타임아웃/파싱오류/빈 결과)하면 None — 프런트는 추천 없이 안내만 표시하면 된다.
+    """
+    human_prompt = (
+        f"PROPERTY CATALOG:\n{catalog}\n\n"
+        f"USER'S VAGUE SCENARIO:\n{user_text}\n\n"
+        f"{_scenario_language_directive(user_text)}\n\n"
+        "Return the JSON object for ONE concrete scenario now."
+    )
+    try:
+        from langchain_core.messages import HumanMessage
+
+        from api.platform.llm import get_llm
+        from api.platform.llm_messages import build_system_message
+
+        llm = get_llm()
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                llm.invoke,
+                [build_system_message(_SUGGEST_SYSTEM_PROMPT), HumanMessage(content=human_prompt)],
+            ),
+            timeout=120.0,
+        )
+        content = response.content if hasattr(response, "content") else str(response)
+        parsed = json.loads(_strip_json_fence(content))
+    except Exception as exc:  # noqa: BLE001 - 추천은 부가 기능이라 실패해도 본 응답을 막지 않는다.
+        SmartLogger.log(
+            "WARNING",
+            "Suggest concrete GWT scenario failed (non-fatal).",
+            category="api.graph.gwt.parse_nl",
+            params={**http_context(request), "error": str(exc)},
+        )
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+    scenario = str(parsed.get("scenario") or "").strip()
+
+    def _sv(key: str) -> dict[str, Any]:
+        v = parsed.get(key)
+        return v if isinstance(v, dict) else {}
+
+    given_fv, when_fv, then_fv = _sv("givenFieldValues"), _sv("whenFieldValues"), _sv("thenFieldValues")
+    # 문장도 값도 못 만들었으면 추천 없음.
+    if not scenario or not (given_fv or when_fv or then_fv):
+        return None
+    return {
+        "scenario": scenario,
+        "givenFieldValues": given_fv,
+        "whenFieldValues": when_fv,
+        "thenFieldValues": then_fv,
     }
 

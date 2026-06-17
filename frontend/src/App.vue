@@ -157,7 +157,9 @@ async function _onOpenPreview(e) {
     // 자식 id 라 fetchAggregate 가 트리에서 못 찾으므로, 백엔드가 해소한 소유 Aggregate id 로
     // 포커스한다(없으면 targetNodeId fallback — Aggregate 대상은 둘이 동일).
     aggregateViewer.beginPreview()
-    aggregateViewer.focusAggregate(d.aggregateId || d.targetNodeId, d.bcId)
+    // 043-fix — Design 캔버스 인스펙터의 '어그리거트 디테일 보기' 진입은 포커스 후 Inspector 도
+    // 자동으로 연다(d.openInspector). 일반 '열기'(OpenInViewerLink)는 미설정 → 기존 동작 유지.
+    aggregateViewer.focusAggregate(d.aggregateId || d.targetNodeId, d.bcId, { openInspector: !!d.openInspector })
   } else if (d.viewer === 'processes') {
     // 라이브 이벤트모델을 읽기 전용으로 로드 후 대상 노드 포커스(US3-2).
     try { await eventModeling.fetchEventModeling() } catch { /* best-effort */ }

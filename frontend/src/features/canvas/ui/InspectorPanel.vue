@@ -92,11 +92,18 @@ const hasMultipleNodes = computed(() => selectedNodes.value.length > 1)
 // Fetched node data from API (for nodes not on canvas)
 const fetchedNodeData = ref(null)
 const isLoadingNode = ref(false)
+// 043-fix — 마지막으로 API fetch 를 시도한 nodeId(성공/실패 무관). node computed 가 Priority 4
+// 에서 fetchNodeFromAPI 를 부수효과로 호출하는데, 404(미존재 노드: 예 Proposal 미리보기에만 있는
+// CREATE 노드)면 fetchedNodeData 가 채워지지 않고 isLoadingNode 토글이 computed 를 재평가시켜
+// 동일 nodeId 를 무한 재요청한다 → 404 로그 폭주. 이미 시도한 id 는 다시 fetch 하지 않는다.
+const fetchAttemptedNodeId = ref(null)
 
 // Fetch node details from API if not found on canvas
 async function fetchNodeFromAPI(nodeId) {
   if (!nodeId || isLoadingNode.value) return null
-  
+  // 같은 nodeId 는 한 번만 시도한다(404 무한 재요청 방지). props.nodeId 가 바뀌면 watch 가 리셋.
+  fetchAttemptedNodeId.value = nodeId
+
   try {
     isLoadingNode.value = true
     const response = await fetch(`/api/graph/expand-with-bc/${nodeId}`)
@@ -171,7 +178,8 @@ const node = computed(() => {
     }
     
     // Priority 4: Fetch from API (async, will update when done)
-    if (!isLoadingNode.value) {
+    // 이미 시도한 id(특히 404)는 재요청하지 않는다 — isLoadingNode 토글로 인한 무한 루프 방지.
+    if (!isLoadingNode.value && fetchAttemptedNodeId.value !== props.nodeId) {
       fetchNodeFromAPI(props.nodeId)
     }
   }
@@ -740,6 +748,40 @@ function openAggregateDetail() {
   // bcId from the canvas node's parent BC, else the fetched bcId; otherwise
   // null — the store resolves it via expand-with-bc.
   const bcId = n.parentNode || n.data?.bcId || null
+
+  // 043-fix — Proposal 미리보기 중(예: Command/Event/ReadModel '열기'로 진입한 Design 캔버스)
+  // 에는 그냥 Data 탭으로 전환 + focusAggregate 하면 안 된다. 미리보기 세션 viewer 가 'design'
+  // 이라 Data 뷰어 fetch 가 미리보기가 아닌 라이브 엔드포인트로 빠지고, 신규(CREATE) Aggregate
+  // 는 라이브 그래프에 아직 없어 'Failed to fetch aggregates: Not Found'(404)가 난다.
+  // → Aggregate tactical '열기'와 동일하게 Data 뷰어 *미리보기* 로 다시 연다(앱 셸이
+  //    robo:open-preview 를 수신해 탭 전환 + preview 진입 + 포커스 오케스트레이션).
+  //    캔버스 노드는 build_design_preview 가 부여한 bcId 를 들고 있고, Data 오버레이는
+  //    동일한 temp id(PREVIEW:<pid>:<idx>)를 쓰므로 (aggregateId, bcId)로 정확히 포커스된다.
+  const ps = usePreviewSession()
+  if (ps.active && ps.proposalId) {
+    // 이 Design 인스펙터를 먼저 닫는다(panelMode='none'). 아래 endPreview 가 미리보기 전용
+    // 노드(예: AGG-cart)를 캔버스에서 걷어내면, 이 인스펙터가 KeepAlive 로 남아 그 노드를
+    // expand-with-bc 로 재요청(404)하게 되므로 미리 언마운트한다.
+    emit('close')
+    // 떠나는 Design 캔버스 미리보기는 라이브 스냅샷으로 복원(잔존물 0).
+    if (ps.viewer === 'design') canvasStore.endPreview()
+    window.dispatchEvent(new CustomEvent('robo:open-preview', {
+      detail: {
+        proposalId: ps.proposalId,
+        viewer: 'data',
+        targetNodeId: aggregateId,
+        aggregateId,
+        bcId,
+        nodeLabel: 'Aggregate',
+        label: ps.proposalId,
+        title: n.data?.displayName || n.data?.name || n.data?.label || '',
+        // 포커스 후 Data 뷰어 Inspector 를 자동으로 연다(AC 8).
+        openInspector: true,
+      },
+    }))
+    return
+  }
+
   aggregateViewerStore.focusAggregate(aggregateId, bcId)
   if (appActiveTab) appActiveTab.value = 'Aggregate'
 }
@@ -1003,6 +1045,18 @@ function redactForLog(value, depth = 0) {
   return value
 }
 
+// 깊은 복제 — gwtSets/given/when/then 같은 중첩 구조를 node.data·form·initial 이 공유 참조로
+// 두면, GWT 모달의 제자리 필드 수정이 initial 까지 함께 바꿔 dirtyFields 비교가 항상 같다고
+// 판정한다(저장 버튼 비활성). 스냅샷/initial 을 독립 복제해 참조를 끊는다.
+function deepClone(value) {
+  if (value === null || value === undefined) return value
+  try {
+    return structuredClone(value)
+  } catch {
+    return JSON.parse(JSON.stringify(value))
+  }
+}
+
 function snapshotFromNode(n) {
   const data = n?.data || {}
   return {
@@ -1022,15 +1076,17 @@ function snapshotFromNode(n) {
     enumerations: data.enumerations ?? [],
     valueObjects: data.valueObjects ?? [],
     // GWT fields (backward compatibility: use first row if gwtSets exists)
-    gwtSets: data.gwtSets || (data.given || data.when || data.then ? [{
+    // deepClone 으로 node.data 와 참조를 끊어, 모달의 제자리 필드 수정이 캔버스 노드 원본을
+    // 직접 건드리지 않고 form 에만 머물게 한다(저장 시 명시적으로 영속).
+    gwtSets: deepClone(data.gwtSets) || (data.given || data.when || data.then ? [{
       given: data.given ? { ...data.given, fieldValues: data.given.fieldValues || {} } : null,
       when: data.when ? { ...data.when, fieldValues: data.when.fieldValues || {} } : null,
       then: data.then ? { ...data.then, fieldValues: data.then.fieldValues || {} } : null
     }] : []),
     // For backward compatibility
-    given: data.given ? { ...data.given, fieldValues: data.given.fieldValues || {} } : null,
-    when: data.when ? { ...data.when, fieldValues: data.when.fieldValues || {} } : null,
-    then: data.then ? { ...data.then, fieldValues: data.then.fieldValues || {} } : null
+    given: data.given ? deepClone({ ...data.given, fieldValues: data.given.fieldValues || {} }) : null,
+    when: data.when ? deepClone({ ...data.when, fieldValues: data.when.fieldValues || {} }) : null,
+    then: data.then ? deepClone({ ...data.then, fieldValues: data.then.fieldValues || {} }) : null
   }
 }
 
@@ -1078,7 +1134,7 @@ function resetToNode() {
     snapshot: redactForLog(snap)
   })
   form.value = { ...form.value, ...snap }
-  initial.value = { ...snap }
+  initial.value = deepClone(snap)
   error.value = null
   successMsg.value = null
 
@@ -1116,6 +1172,10 @@ watch(
     // Reset fetched node data when nodeId changes
     if (props.nodeId && fetchedNodeData.value?.id !== props.nodeId) {
       fetchedNodeData.value = null
+    }
+    // nodeId 가 바뀌면 새 id 를 (한 번) 다시 fetch 할 수 있도록 시도 마커를 리셋.
+    if (fetchAttemptedNodeId.value !== props.nodeId) {
+      fetchAttemptedNodeId.value = null
     }
     
     // Reset viewing index when nodeId or nodeData changes (not from selected nodes)
@@ -1224,12 +1284,12 @@ async function savePreviewDesign(changes, shouldSaveGWTBundle, opId) {
   if (latest) {
     const snap = snapshotFromNode(latest)
     form.value = { ...form.value, ...snap }
-    initial.value = { ...snap }
+    initial.value = deepClone(snap)
     nextTick(() => {
       if (showPropertyEditor.value) propertyEditorRef.value?.resetFromNode?.(latest)
     })
   } else {
-    initial.value = { ...form.value }
+    initial.value = deepClone(form.value)
   }
 
   // Proposals 탭(Impact Map·Diff)이 다시 클릭하지 않아도 최신화되도록 알린다.
@@ -1373,7 +1433,7 @@ async function save() {
 
     if (!changes.length) {
       // Only GWT was saved
-      initial.value = { ...form.value }
+      initial.value = deepClone(form.value)
       successMsg.value = '저장되었습니다.'
       emit('updated')
       return
@@ -1450,7 +1510,7 @@ async function save() {
       if (latest) {
         const snap = snapshotFromNode(latest)
         form.value = { ...form.value, ...snap }
-        initial.value = { ...snap }
+        initial.value = deepClone(snap)
 
         // resync properties editor to store snapshot (keeps order stable while editing; sorts only after save)
         nextTick(() => {
@@ -1460,11 +1520,11 @@ async function save() {
         })
       } else {
         // fallback: do not lose user's edits
-        initial.value = { ...form.value }
+        initial.value = deepClone(form.value)
       }
     } else {
       // reset dirty state based on current form values (do not lose user's edits)
-      initial.value = { ...form.value }
+      initial.value = deepClone(form.value)
     }
 
     successMsg.value = '저장되었습니다.'
@@ -3008,6 +3068,11 @@ function toggleCardPicker(rowIndex, type) {
 const gwtNlText = ref({}) // rowIndex -> input string
 const gwtNlBusy = ref({}) // rowIndex -> bool
 const gwtNlError = ref({}) // rowIndex -> error string
+const gwtNlNotice = ref({}) // rowIndex -> success notice string ("N개 필드를 채웠어요.")
+// rowIndex -> { scenario, givenFieldValues, whenFieldValues, thenFieldValues }
+// 입력이 모호해 아무 필드도 못 채웠을 때, 백엔드가 제시한 구체화된 추천 시나리오.
+// 이 값이 있으면 카드에 "추천 시나리오로 생성할까요? 네/아니오" 확인 패널을 띄운다.
+const gwtNlSuggestion = ref({})
 
 function sectionPayloadForNL(gwtSet, type) {
   const gwt = gwtSet?.[type]
@@ -3023,12 +3088,25 @@ function sectionPayloadForNL(gwtSet, type) {
   }
 }
 
+// 파싱된 값들을 한 섹션의 fieldValues 에 병합하고 **적용한 필드 수**를 반환한다.
 function applyParsedValues(gwtSet, type, values) {
-  if (!values || typeof values !== 'object' || !gwtSet?.[type]) return
+  if (!values || typeof values !== 'object' || !gwtSet?.[type]) return 0
   if (!gwtSet[type].fieldValues) gwtSet[type].fieldValues = {}
+  let applied = 0
   for (const [key, value] of Object.entries(values)) {
     gwtSet[type].fieldValues[key] = value
+    applied += 1
   }
+  return applied
+}
+
+// 세 섹션에 결과를 적용하고 총 적용 필드 수를 돌려준다.
+function applyAllSections(gwtSet, data) {
+  return (
+    applyParsedValues(gwtSet, 'given', data?.givenFieldValues) +
+    applyParsedValues(gwtSet, 'when', data?.whenFieldValues) +
+    applyParsedValues(gwtSet, 'then', data?.thenFieldValues)
+  )
 }
 
 async function applyNLToCard(rowIndex) {
@@ -3038,6 +3116,8 @@ async function applyNLToCard(rowIndex) {
 
   gwtNlBusy.value = { ...gwtNlBusy.value, [rowIndex]: true }
   gwtNlError.value = { ...gwtNlError.value, [rowIndex]: '' }
+  gwtNlNotice.value = { ...gwtNlNotice.value, [rowIndex]: '' }
+  gwtNlSuggestion.value = { ...gwtNlSuggestion.value, [rowIndex]: null }
   try {
     const res = await fetch('/api/graph/gwt/parse-nl', {
       method: 'POST',
@@ -3053,15 +3133,45 @@ async function applyNLToCard(rowIndex) {
     if (!res.ok || !data?.success) {
       throw new Error(data?.detail || '자연어 해석 실패')
     }
-    applyParsedValues(gwtSet, 'given', data.givenFieldValues)
-    applyParsedValues(gwtSet, 'when', data.whenFieldValues)
-    applyParsedValues(gwtSet, 'then', data.thenFieldValues)
-    gwtNlText.value = { ...gwtNlText.value, [rowIndex]: '' }
+    const applied = applyAllSections(gwtSet, data)
+    if (applied > 0) {
+      // 구체적인 시나리오 → 필드를 채우고 입력창을 비운다(기존 정상 동작).
+      gwtNlText.value = { ...gwtNlText.value, [rowIndex]: '' }
+      gwtNlNotice.value = { ...gwtNlNotice.value, [rowIndex]: `${applied}개 필드를 채웠어요.` }
+    } else if (data.suggestion?.scenario) {
+      // 모호한 시나리오 → 구체화된 추천 시나리오로 생성할지 확인 패널을 띄운다(입력 보존).
+      gwtNlSuggestion.value = { ...gwtNlSuggestion.value, [rowIndex]: data.suggestion }
+    } else {
+      // 추천도 만들지 못함 → 입력 보존 + 안내.
+      gwtNlError.value = {
+        ...gwtNlError.value,
+        [rowIndex]: '입력된 시나리오가 구체적이지 않습니다. 수량·상품 등 구체적인 값을 포함해 다시 시도해 보세요.',
+      }
+    }
   } catch (err) {
     gwtNlError.value = { ...gwtNlError.value, [rowIndex]: err?.message || String(err) }
   } finally {
     gwtNlBusy.value = { ...gwtNlBusy.value, [rowIndex]: false }
   }
+}
+
+// 추천 시나리오 "네": 추천 값으로 Given/When/Then 을 채우고 입력창을 비운다.
+function acceptNlSuggestion(rowIndex) {
+  const gwtSet = form.value.gwtSets?.[rowIndex]
+  const suggestion = gwtNlSuggestion.value[rowIndex]
+  if (!gwtSet || !suggestion) return
+  const applied = applyAllSections(gwtSet, suggestion)
+  gwtNlSuggestion.value = { ...gwtNlSuggestion.value, [rowIndex]: null }
+  gwtNlText.value = { ...gwtNlText.value, [rowIndex]: '' }
+  gwtNlNotice.value = {
+    ...gwtNlNotice.value,
+    [rowIndex]: applied > 0 ? `추천 시나리오로 ${applied}개 필드를 채웠어요.` : '',
+  }
+}
+
+// 추천 시나리오 "아니오": 입력창을 그대로 보존한 채 확인 패널만 닫는다.
+function declineNlSuggestion(rowIndex) {
+  gwtNlSuggestion.value = { ...gwtNlSuggestion.value, [rowIndex]: null }
 }
 
 // ValueObject editor modal state
@@ -4957,6 +5067,35 @@ function updateVoFieldValue(fieldName, value) {
                 </div>
                 <div v-if="gwtNlError[rowIndex]" class="gwt-card__nl-error">
                   {{ gwtNlError[rowIndex] }}
+                </div>
+                <div v-if="gwtNlNotice[rowIndex]" class="gwt-card__nl-notice">
+                  {{ gwtNlNotice[rowIndex] }}
+                </div>
+
+                <!-- 모호한 입력 → 구체화된 추천 시나리오 확인 -->
+                <div v-if="gwtNlSuggestion[rowIndex]" class="gwt-card__nl-suggest">
+                  <p class="gwt-card__nl-suggest-msg">
+                    입력된 시나리오가 구체적이지 않습니다. 다음과 같은 추천 시나리오로 생성 하시겠습니까?
+                  </p>
+                  <p class="gwt-card__nl-suggest-scenario">
+                    “{{ gwtNlSuggestion[rowIndex].scenario }}”
+                  </p>
+                  <div class="gwt-card__nl-suggest-actions">
+                    <button
+                      class="gwt-card__nl-suggest-btn gwt-card__nl-suggest-btn--yes"
+                      :disabled="saving || gwtNlBusy[rowIndex]"
+                      @click="acceptNlSuggestion(rowIndex)"
+                    >
+                      네
+                    </button>
+                    <button
+                      class="gwt-card__nl-suggest-btn gwt-card__nl-suggest-btn--no"
+                      :disabled="saving || gwtNlBusy[rowIndex]"
+                      @click="declineNlSuggestion(rowIndex)"
+                    >
+                      아니오
+                    </button>
+                  </div>
                 </div>
 
                 <!-- Given / When / Then sections -->
@@ -7820,6 +7959,63 @@ function updateVoFieldValue(fieldName, value) {
   font-size: 0.72rem;
   color: #ff6b6b;
   margin-bottom: 8px;
+}
+
+.gwt-card__nl-notice {
+  font-size: 0.72rem;
+  color: var(--color-accent, #5b8cff);
+  margin-bottom: 8px;
+}
+
+.gwt-card__nl-suggest {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-accent, #5b8cff);
+  border-radius: var(--radius-sm);
+}
+
+.gwt-card__nl-suggest-msg {
+  margin: 0 0 6px;
+  font-size: 0.74rem;
+  color: var(--color-text-bright);
+}
+
+.gwt-card__nl-suggest-scenario {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-accent, #5b8cff);
+  line-height: 1.5;
+}
+
+.gwt-card__nl-suggest-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.gwt-card__nl-suggest-btn {
+  padding: 4px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.gwt-card__nl-suggest-btn--yes {
+  background: var(--color-accent, #5b8cff);
+  border: 1px solid var(--color-accent, #5b8cff);
+  color: #fff;
+}
+
+.gwt-card__nl-suggest-btn--no {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.gwt-card__nl-suggest-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .gwt-card__sections {

@@ -12,6 +12,7 @@ valueObjects/invariants/fields)을 tacticalDiff 항목에 그대로 저장 → �
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Optional
 
 from api.platform.neo4j import get_session
@@ -141,6 +142,39 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
         # rename → nodeTitle / name
         if d.get("action") == "rename" and after.get("name"):
             after = {**after, "name": after["name"]}
+
+        # 043-fix2 — VO 필드 편집: parent 가 ValueObject 인 Property. 부모 Aggregate 항목의
+        # 해당 VO obj_data.fields 를 직접 수정한다(별도 top-level 항목 생성 금지 — 그래야
+        # 캔버스의 기존 VO 에 즉시 반영된다).
+        parent_type = str(after.get("parentType") or d.get("parentType") or "").lower()
+        if ttype == "property" and parent_type == "valueobject":
+            vo_id = str(after.get("parentId") or d.get("parentId") or "")
+            agg_id, vo_idx = _parse_child_canvas_id(vo_id, "vo")
+            ai = by_id.get(agg_id) if agg_id else None
+            if ai is not None:
+                item = tactical[ai]
+                vo_obj = _resolve_child_obj(item, "valueObjects", vo_idx, None)
+                if vo_obj is not None and _apply_vo_field_edit(vo_obj, d, after):
+                    touched_bc = touched_bc or item.get("boundedContextId")
+                    applied += 1
+                # 부모 VO 를 찾았으면(또는 못 찾아도) 여기서 처리 종료 — 폴백 분기로 흘려보내
+                # 엉뚱한 top-level ValueObject 항목을 만들지 않는다.
+                continue
+
+        # 043-fix2 — Enum 항목 편집: targetType=Enumeration + itemsToAdd/Remove/Rename.
+        if ttype in ("enumeration", "enum") and any(
+            k in after for k in ("itemsToAdd", "itemsToRemove", "itemsRename")
+        ):
+            agg_id, enum_idx = _parse_child_canvas_id(target_id, "enum")
+            ai = by_id.get(agg_id) if agg_id else None
+            if ai is not None:
+                item = tactical[ai]
+                enum_obj = _resolve_child_obj(item, "enumerations", enum_idx, d.get("targetName"))
+                if enum_obj is not None and _apply_enum_items_edit(enum_obj, after):
+                    touched_bc = touched_bc or item.get("boundedContextId")
+                    applied += 1
+                continue
+
         i = by_id.get(target_id)
         if i is not None:
             tactical[i] = _normalize_item_from_edit(tactical[i], _draft_after_to_edit(tactical[i], after), bc_id)
@@ -257,6 +291,128 @@ _TOPLEVEL_LABEL = {
 def _child_parent_id(d: dict, after: dict) -> str:
     """자식 draft 가 가리키는 부모(보통 Aggregate) id 를 해소한다."""
     return str(d.get("aggregateId") or d.get("parentId") or after.get("parentId") or "")
+
+
+# ---------------------------------------------------------------------------
+# 043-fix2 — ValueObject 필드 / Enumeration 항목의 Chat 편집을 제안 diff 에 반영.
+#
+# 캔버스(AggregatePanel)는 Aggregate 의 N번째 VO/Enum 을 `vo-<aggId>-<idx>` /
+# `enum-<aggId>-<idx>` 합성 id 로 그린다. VO/Enum 은 별도 tacticalDiff 항목이 아니라 **부모
+# Aggregate 항목의 semanticDiff.ops(obj_append) 또는 item-level valueObjects/enumerations
+# 배열** 안에 산다. 따라서 VO 필드/Enum 항목 편집은 합성 id 를 (aggId, idx)로 파싱해 부모
+# Aggregate 항목을 찾고, 그 안의 해당 VO/Enum obj_data 를 직접 수정해야 한다.
+# ---------------------------------------------------------------------------
+_VO_ID_RX = re.compile(r"^vo-(?P<agg>.+)-(?P<idx>\d+)$")
+_ENUM_ID_RX = re.compile(r"^enum-(?P<agg>.+)-(?P<idx>\d+)$")
+
+
+def _parse_child_canvas_id(node_id: Any, kind: str) -> tuple[Optional[str], Optional[int]]:
+    """`vo-<aggId>-<idx>` / `enum-<aggId>-<idx>` 합성 id 를 (aggregateId, index)로 파싱."""
+    rx = _VO_ID_RX if kind == "vo" else _ENUM_ID_RX
+    m = rx.match(str(node_id or ""))
+    if not m:
+        return None, None
+    try:
+        return m.group("agg"), int(m.group("idx"))
+    except (ValueError, IndexError):
+        return m.group("agg"), None
+
+
+def _agg_child_obj_refs(item: dict, collection: str) -> list[dict]:
+    """Aggregate 항목 안의 VO/Enum obj_data 참조 목록을 **투영 순서**로 반환한다.
+
+    투영(apply_data_overlay)은 semanticDiff obj_append ops 를 먼저, 그 다음 item-level
+    배열을 append 하므로 캔버스 인덱스도 그 순서를 따른다. 같은 순서로 dict 참조를 모아
+    호출자가 제자리 수정할 수 있게 한다(반환 dict 은 item 내부 구조의 실제 참조)."""
+    refs: list[dict] = []
+    ops = ((item.get("semanticDiff") or {}).get("ops")) or []
+    for op in ops:
+        if op.get("op") == "obj_append" and op.get("field") == collection:
+            od = op.get("obj_data")
+            if not isinstance(od, dict):
+                od = {"name": op.get("obj_name")}
+                op["obj_data"] = od
+            refs.append(od)
+    for o in (item.get(collection) or []):
+        if isinstance(o, dict):
+            refs.append(o)
+    return refs
+
+
+def _resolve_child_obj(item: dict, collection: str, idx: Optional[int],
+                       name: Optional[str]) -> Optional[dict]:
+    """부모 Aggregate 항목에서 대상 VO/Enum obj_data 를 찾는다(인덱스 우선, 이름 폴백)."""
+    refs = _agg_child_obj_refs(item, collection)
+    if not refs:
+        return None
+    if idx is not None and 0 <= idx < len(refs):
+        return refs[idx]
+    if name:
+        for od in refs:
+            if str(od.get("name") or "") == str(name):
+                return od
+    return None
+
+
+def _apply_vo_field_edit(vo_obj: dict, d: dict, after: dict) -> bool:
+    """VO obj_data 의 `fields` 컬렉션에 필드 create/update/delete/rename 을 적용."""
+    fields = list(vo_obj.get("fields") or [])
+    action = d.get("action")
+    if action == "create":
+        fld = {k: v for k, v in after.items() if k not in ("parentType", "parentId", "oldName")}
+        fld.setdefault("name", d.get("targetName") or str(d.get("targetId") or ""))
+        fields.append(_strip_meta([fld])[0])
+        vo_obj["fields"] = fields
+        return True
+    selector = after.get("oldName") or d.get("targetName") or after.get("name")
+    j = next((k for k, f in enumerate(fields)
+              if isinstance(f, dict) and str(f.get("name") or "") == str(selector or "")), None)
+    if j is None:
+        return False
+    if action == "delete":
+        fields.pop(j)
+    elif action == "rename":
+        f = dict(fields[j])
+        f["name"] = d.get("targetName") or after.get("name") or f.get("name")
+        fields[j] = f
+    else:  # update — 변경 필드 병합(라우팅 메타 제외)
+        f = dict(fields[j])
+        for k, v in after.items():
+            if k not in ("parentType", "parentId", "oldName"):
+                f[k] = v
+        fields[j] = _strip_meta([f])[0]
+    vo_obj["fields"] = fields
+    return True
+
+
+def _apply_enum_items_edit(enum_obj: dict, after: dict) -> bool:
+    """Enum obj_data 의 `items` 컬렉션에 itemsToAdd/itemsToRemove/itemsRename 을 적용.
+
+    items 는 문자열 리스트다(드물게 {name} dict 가 섞일 수 있어 정규화)."""
+    items = [str(x.get("name")) if isinstance(x, dict) else str(x)
+             for x in (enum_obj.get("items") or [])]
+    changed = False
+    for it in (after.get("itemsToAdd") or []):
+        s = str(it.get("name") if isinstance(it, dict) else it)
+        if s and s not in items:
+            items.append(s)
+            changed = True
+    rem = {str(x.get("name") if isinstance(x, dict) else x) for x in (after.get("itemsToRemove") or [])}
+    if rem:
+        kept = [x for x in items if x not in rem]
+        if len(kept) != len(items):
+            items = kept
+            changed = True
+    ren = after.get("itemsRename")
+    if isinstance(ren, dict):
+        for old, new in ren.items():
+            for k, x in enumerate(items):
+                if x == str(old):
+                    items[k] = str(new)
+                    changed = True
+    if changed:
+        enum_obj["items"] = items
+    return changed
 
 
 def _match_child_index(arr: list, d: dict, after: dict) -> Optional[int]:
