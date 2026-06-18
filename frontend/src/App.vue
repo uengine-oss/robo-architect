@@ -25,7 +25,7 @@ import { useEventModelingStore } from '@/features/eventModeling/eventModeling.st
 // 043-fix — Command/Event 미리보기를 Design 캔버스에 투영(begin/endPreview) + 진입 요청 브리지.
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useCanvasPreviewRequestStore } from '@/features/canvas/canvasPreviewRequest.store'
-import { enterPreview, exitPreview } from '@/app/previewSession'
+import { enterPreview, exitPreview, usePreviewSession } from '@/app/previewSession'
 import PreviewBanner from '@/app/ui/PreviewBanner.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 // 032: desktop launcher gate — when running inside Electron the launcher
@@ -197,8 +197,27 @@ function _onPreviewExit(e) {
 }
 
 // 040 — Chat 편집(modelModifier)이 제안 diff 에 반영된 뒤 갱신 트리를 뷰어에 적용.
+// 043-fix — 뷰어별로 분기한다. Data 뷰어는 백엔드가 돌려준 갱신 트리를 그대로 적용하지만,
+// Design 뷰어는 그 트리가 Data 형태라 캔버스에 쓸 수 없다 → 같은 미리보기 요청을 재발행해
+// 갱신된 tacticalDiff 로부터 design-preview 그래프를 다시 가져와 캔버스를 즉시 재렌더한다.
 function _onPreviewUpdated(e) {
   const tree = e?.detail?.tree
+  const ps = usePreviewSession()
+  if (ps.viewer === 'design') {
+    if (ps.proposalId && ps.bcId && ps.targetNodeId) {
+      canvasPreviewRequest.request({
+        proposalId: ps.proposalId,
+        bcId: ps.bcId,
+        targetNodeId: ps.targetNodeId,
+        nodeLabel: '',
+        title: ps.title || '',
+        // 043-fix: 적용 후 갱신은 캔버스만 다시 그리고 인스펙터로 패널을 빼앗지 않는다 —
+        // 사용자가 Chat 패널에 그대로 머물러 "…반영했습니다" 메시지를 보게 한다.
+        keepPanel: true,
+      })
+    }
+    return
+  }
   if (tree) aggregateViewer.applyPreviewTree(tree)
 }
 

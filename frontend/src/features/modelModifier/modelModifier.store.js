@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 // 040 — 미리보기 중 Chat 수정 요청은 라이브가 아니라 제안 diff 에 반영.
-import { isPreviewFor, usePreviewSession } from '@/app/previewSession'
+import { usePreviewSession } from '@/app/previewSession'
 
 /**
  * Store for managing chat-based model modification with ReAct pattern.
@@ -387,7 +387,12 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
       }
 
       // 040 — 미리보기 중에는 라이브 그래프(/api/chat/confirm)가 아니라 제안 diff 로 라우팅.
-      if (isPreviewFor('data')) {
+      // 043-fix: 'data' 뷰어에 한정하지 않고 **활성 미리보기 전체**(data/design/process/
+      // processes)를 제안 경로로 보낸다. Command/Event/ReadModel 은 'design' 뷰어로 열리므로
+      // (proposalPreview.LABEL_TO_VIEWER), 'data' 만 검사하면 그 chat-confirm 이 라이브
+      // /api/chat/confirm 으로 새어나가 제안 전용(CREATE) 노드와 매칭되지 않아 "0개 반영"이
+      // 됐다. 미리보기 활성이면 항상 제안 diff(tacticalDiff)로 반영(라이브 무변경, Constitution I).
+      if (usePreviewSession().active) {
         const ps = usePreviewSession()
         const res = await fetch(`/api/proposals/${ps.proposalId}/preview/chat-confirm`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },

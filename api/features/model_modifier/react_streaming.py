@@ -68,7 +68,13 @@ def compute_draft_display_fields(
         return ["name"]
     if action == "connect":
         return ["relationship"]
-    return list(after.keys()) or list(before.keys())
+    # 043-fix: parentType/parentId 는 자식요소(Property 등) draft 의 **라우팅 메타**일 뿐
+    # 사용자에게 보여줄 변경 필드가 아니다(저장 시에도 제외됨). diff 표에서 빼서 UPDATE 가
+    # "type: int → Integer" 처럼 실제 바뀐 필드만 깔끔히 보이게 한다.
+    _ROUTING = {"parentType", "parentId", "oldName"}
+    keys = [k for k in after.keys() if k not in _ROUTING] or \
+           [k for k in before.keys() if k not in _ROUTING]
+    return keys
 
 
 def _selected_node_map(selected_nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -832,7 +838,28 @@ For Enumeration (Enum) item actions (adding/editing/removing items of an Enum):
                     before: dict[str, Any] = {}
                     after: dict[str, Any] = {}
                     target_id = change.get("targetId")
-                    if target_id:
+                    _updates0 = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+
+                    # 043-fix: Property draft 는 `before` 를 부모 노드의 properties 컬렉션에서
+                    # (이름으로) 해소한다. LLM 이 quantity 변경을 targetId=<부모 Command id> 로
+                    # 내보내면, 아래 selected_map[target_id] 경로가 **부모 노드 자체의 필드**(type=
+                    # "Command" 등)를 before 로 잡아 "type: Command → Integer" 같은 엉뚱한 diff 가
+                    # 됐다. 부모 노드 페이로드(미리보기/제안 요소 포함)는 properties 배열을 들고
+                    # 오므로, 거기서 대상 속성을 찾아 before(type=int 등)를 정확히 만든다.
+                    if change.get("targetType") == "Property":
+                        _pid = str(_updates0.get("parentId") or change.get("parentId") or target_id or "").strip()
+                        _sel = str(change.get("targetName") or _updates0.get("name") or "").strip()
+                        _parent_src = selected_map.get(_pid) or selected_map.get(str(target_id))
+                        if _parent_src and _sel:
+                            for _p in (_parent_src.get("properties") or []):
+                                if isinstance(_p, dict) and str(_p.get("name") or "") == _sel:
+                                    for k in ("name", "type", "description", "isKey",
+                                              "isForeignKey", "isRequired"):
+                                        if k in _p:
+                                            before[k] = _p.get(k)
+                                    break
+
+                    if not before and target_id:
                         # Prefer selected-nodes context for speed/consistency
                         src = selected_map.get(str(target_id))
                         if src:

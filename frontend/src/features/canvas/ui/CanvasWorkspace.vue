@@ -438,6 +438,10 @@ async function consumeCanvasPreviewRequest() {
     opId, proposalId: req.proposalId, bcId: req.bcId, targetNodeId: req.targetNodeId,
   })
   try {
+    // 043-fix3: 적용 후 갱신(keepPanel)은 현재 선택/뷰포트를 보존한다 — 캔버스만 다시 그리고
+    // 포커스를 옮기지 않는다(AI 채팅 변경 시 엉뚱한 노드로 포커스 점프 방지).
+    const prevSelection = req.keepPanel ? [...(canvasStore.selectedNodeIds || [])] : null
+
     const url = `/api/proposals/${encodeURIComponent(req.proposalId)}/preview/design/${encodeURIComponent(req.bcId)}/graph`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`design preview fetch failed (${res.status})`)
@@ -454,6 +458,14 @@ async function consumeCanvasPreviewRequest() {
     // 레이아웃/렌더가 안정된 뒤 대상 노드로 포커스 + 인스펙터.
     setTimeout(() => {
       try {
+        // 043-fix3: 적용 후 갱신은 포커스를 옮기지 않는다 — 직전 선택만 복원하고 뷰포트 유지.
+        // (fitView/selectNode(target) 를 호출하면 Chat 으로 막 편집한 사용자의 화면이 원래
+        // '열기' 대상 노드로 점프해 버린다.)
+        if (req.keepPanel) {
+          const sel = (prevSelection || []).filter((id) => canvasStore.isOnCanvas(id))
+          if (sel.length) canvasStore.selectNodes(sel)
+          return
+        }
         if (req.targetNodeId && canvasStore.isOnCanvas(req.targetNodeId)) {
           canvasStore.selectNode(req.targetNodeId)
           fitView({ nodes: [req.targetNodeId], padding: 0.6, duration: 400 })

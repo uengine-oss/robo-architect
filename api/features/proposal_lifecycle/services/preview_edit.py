@@ -24,6 +24,17 @@ from api.features.proposal_lifecycle.services.preview_projection import (
 _META_KEYS = ("source", "badge")
 
 
+def _norm_name(s: Any) -> str:
+    """속성/필드/Enum 항목 이름 매칭용 정규화(대소문자 무시 + 양끝 공백 제거).
+
+    Chat 수정 draft 는 LLM 이 사용자 프롬프트 표기를 그대로 따라 targetName 을 내보내는데,
+    실제 속성명과 케이스/공백이 어긋나면(예: 사용자가 'productID' 라 적었지만 실제 속성은
+    'productId') 정확 일치가 실패해 부모 컬렉션에서 대상 자식을 못 찾고 "0개 반영"이 됐다
+    (재현: PRO-001 Event '장바구니에담김' productId FK). 이름 기반 매칭은 모두 이 정규화를
+    거친다(targetId 매칭은 그대로 — id 는 케이스가 의미를 가짐)."""
+    return str(s or "").strip().lower()
+
+
 def _strip_meta(items: list) -> list:
     out = []
     for it in items or []:
@@ -57,6 +68,16 @@ def _write_tactical(proposal_id: str, tactical: list[dict]) -> None:
         )
 
 
+# 노드 레벨(Command/Event/ReadModel/Aggregate) 스칼라 설계 필드. name 은 nodeTitle 로 따로
+# 처리하므로 제외한다. Chat/Inspector 공통으로 tacticalDiff item.fields 에 실어
+# build_design_preview(_populate_from_deep_item)가 캔버스에 그대로 환원하게 한다. 아래
+# _DESIGN_FIELD_KEYS(Inspector 경로)와 동일 집합 — Chat 경로도 같은 필드를 보존해야 한다.
+_NODE_SCALAR_FIELDS = (
+    "displayName", "description", "category", "actor", "version",
+    "rootEntity", "provisioningType", "isMultipleResult", "gwtSets",
+)
+
+
 def _normalize_item_from_edit(item: dict, edited: dict, bc_id: Optional[str]) -> dict:
     """편집된 Aggregate(deep 뷰)를 tacticalDiff 항목으로 정규화해 덮어쓴다."""
     item = dict(item)
@@ -66,12 +87,15 @@ def _normalize_item_from_edit(item: dict, edited: dict, bc_id: Optional[str]) ->
         # MODIFY(라이브) Aggregate 는 nodeTitle 만으로는 캔버스/트리에 이름이 안 바뀐다
         # (_populate_from_deep_item 는 fields 만 본다). fields.name 에도 실어 반영되게 한다.
         fields["name"] = edited["name"]
-    if "rootEntity" in edited and edited["rootEntity"] is not None:
-        fields["rootEntity"] = edited["rootEntity"]
-    if edited.get("displayName"):
-        fields["displayName"] = edited["displayName"]
-    if "description" in edited and edited["description"] is not None:
-        fields["description"] = edited["description"]
+    # 043-fix4: name 외 모든 노드 레벨 설계 필드(version/category/actor/rootEntity/...)를
+    # fields 로 보존한다. 종전엔 rootEntity/displayName/description 만 처리해 Chat 경로의
+    # Event version, Command category/actor, ReadModel actor/isMultipleResult/provisioningType
+    # 변경이 "1건 반영" 카운트만 되고 실제론 떨어져 캔버스/Neo4j 에 반영되지 않았다(재현:
+    # PRO-001 Event '장바구니에담김' version 1.1.0). isMultipleResult=False 같은 falsy 값도
+    # 보존해야 하므로 `is not None` 으로 판정한다.
+    for k in _NODE_SCALAR_FIELDS:
+        if k in edited and edited[k] is not None:
+            fields[k] = edited[k]
     if fields:
         item["fields"] = fields
     if bc_id and not item.get("boundedContextId"):
@@ -131,13 +155,37 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
     touched_bc = bc_id
     applied = 0  # I13: 실제 반영 건수(0이면 프런트가 "반영 없음"으로 표시)
 
+    prefix = f"PREVIEW:{proposal_id}:"
+
+    def resolve_idx(node_id: Any) -> Optional[int]:
+        """캔버스 노드 id → tacticalDiff 인덱스. CREATE 신규 노드는 nodeId 가 null 일 수
+        있어 캔버스 id 가 temp id(PREVIEW:<pid>:<idx>)로 나오므로, 그 경우 인덱스로 환원하고
+        그 외에는 실 nodeId(by_id)로 찾는다. (build_data/design_preview 가 동일 규칙으로
+        id 를 부여하므로 draft 의 parent/target id 도 두 형태 중 하나다.)"""
+        s = str(node_id or "")
+        if not s:
+            return None
+        if s.startswith(prefix):
+            try:
+                idx = int(s[len(prefix):])
+            except ValueError:
+                return None
+            return idx if 0 <= idx < len(tactical) else None
+        return by_id.get(s)
+
     for d in drafts or []:
         if approved and d.get("changeId") not in approved:
             continue
         target_id = str(d.get("targetId") or "")
         after = d.get("after") or d.get("updates") or {}
         ttype = (d.get("targetType") or "").lower()
-        if not target_id:
+        # 043-fix3: Property/VO-field/Enum 의 update/delete/rename/create draft 는 targetId=null
+        # 로 오고(LLM 라우팅이 targetName + updates.parentId 기반), 부모(Aggregate/Command/Event/
+        # ReadModel) 컬렉션으로 반영된다. 기존 `if not target_id: continue` 가드가 이 draft 들을
+        # 통째로 떨궈 "0개 반영"(예: Event quantity Property 타입 변경)을 유발했다 — target 도
+        # parent 도 없을 때만 건너뛴다.
+        parent_ref = str(d.get("aggregateId") or d.get("parentId") or after.get("parentId") or "")
+        if not target_id and not parent_ref:
             continue
         # rename → nodeTitle / name
         if d.get("action") == "rename" and after.get("name"):
@@ -150,7 +198,7 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
         if ttype == "property" and parent_type == "valueobject":
             vo_id = str(after.get("parentId") or d.get("parentId") or "")
             agg_id, vo_idx = _parse_child_canvas_id(vo_id, "vo")
-            ai = by_id.get(agg_id) if agg_id else None
+            ai = resolve_idx(agg_id) if agg_id else None
             if ai is not None:
                 item = tactical[ai]
                 vo_obj = _resolve_child_obj(item, "valueObjects", vo_idx, None)
@@ -166,7 +214,7 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
             k in after for k in ("itemsToAdd", "itemsToRemove", "itemsRename")
         ):
             agg_id, enum_idx = _parse_child_canvas_id(target_id, "enum")
-            ai = by_id.get(agg_id) if agg_id else None
+            ai = resolve_idx(agg_id) if agg_id else None
             if ai is not None:
                 item = tactical[ai]
                 enum_obj = _resolve_child_obj(item, "enumerations", enum_idx, d.get("targetName"))
@@ -175,20 +223,31 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
                     applied += 1
                 continue
 
-        i = by_id.get(target_id)
-        if i is not None:
+        # 043-fix: 자식요소(Property/VO/Enum) draft 는 targetId 가 우연히 top-level 항목
+        # (부모 Command/Aggregate)의 nodeId 와 같아도 node-level 편집으로 처리하면 안 된다.
+        # LLM 이 Property 변경을 targetId=<부모 Command id> 로 내보내는 경우가 있는데(예:
+        # quantity 변경을 targetId=CMD-add-to-cart 로), 그러면 아래 node-level 분기가
+        # _draft_after_to_edit 로 흘러 type 같은 속성 변경을 떨궈버려 "1건 반영"인데 실제론
+        # 무변경이 된다. ttype 이 자식 컬렉션이면 아래 부모-컬렉션 라우팅으로 보낸다.
+        i = resolve_idx(target_id)
+        if i is not None and ttype not in _CHILD_COLLECTION:
             tactical[i] = _normalize_item_from_edit(tactical[i], _draft_after_to_edit(tactical[i], after), bc_id)
             touched_bc = touched_bc or tactical[i].get("boundedContextId")
             applied += 1
-        # 대상이 diff 에 없으면(라이브 Aggregate) MODIFY 신규
-        elif ttype == "aggregate":
+        # 대상이 diff 에 없으면(라이브 노드 첫 수정) MODIFY 신규 — Aggregate 뿐 아니라
+        # 노드 레벨 라벨(Command/Event/ReadModel/Policy) 전부. 종전엔 aggregate 만 처리해
+        # 라이브 Command/Event/ReadModel 을 Chat 으로 수정하면 매칭 0 → 무반영이었다(Inspector
+        # 경로 reconcile_design_edit._ensure_modify_item 과 동형으로 맞춘다).
+        elif target_id and ttype in _NODE_LEVEL_LABEL:
             item = _normalize_item_from_edit(
-                {"nodeId": target_id, "nodeLabel": "Aggregate", "nodeTitle": after.get("name") or target_id,
+                {"nodeId": target_id, "nodeLabel": _NODE_LEVEL_LABEL[ttype],
+                 "nodeTitle": after.get("name") or target_id,
                  "changeType": "MODIFY", "impactLevel": "MEDIUM", "reason": "Chat 수정 요청 반영"},
                 _draft_after_to_edit({}, after), bc_id,
             )
             tactical.append(item)
             by_id[target_id] = len(tactical) - 1
+            touched_bc = touched_bc or item.get("boundedContextId")
             applied += 1
         # I13: 자식요소 신규 추가(Property/VO/Enum) — 부모(보통 Aggregate) 항목에 병합.
         # 부모 식별자는 표현마다 다르다: 라이브 create 는 `aggregateId`, Property create 는
@@ -197,7 +256,7 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
         elif d.get("action") == "create" and ttype in _CHILD_COLLECTION:
             coll = _CHILD_COLLECTION[ttype]
             parent_id = str(d.get("aggregateId") or d.get("parentId") or after.get("parentId") or "")
-            ai = by_id.get(parent_id)
+            ai = resolve_idx(parent_id)
             if ai is None and parent_id:
                 tactical.append({
                     "nodeId": parent_id,
@@ -226,7 +285,7 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
         elif d.get("action") in ("delete", "update", "rename") and ttype in _CHILD_COLLECTION:
             coll = _CHILD_COLLECTION[ttype]
             parent_id = _child_parent_id(d, after)
-            ai = by_id.get(parent_id)
+            ai = resolve_idx(parent_id)
             if ai is not None:
                 item = dict(tactical[ai])
                 arr = list(item.get(coll) or [])
@@ -249,7 +308,7 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
                     touched_bc = touched_bc or item.get("boundedContextId")
                     applied += 1
         # I13: top-level 신규 요소(Command/Event/ReadModel/Policy) — 새 tactical 항목.
-        elif d.get("action") == "create" and ttype in _TOPLEVEL_LABEL and target_id not in by_id:
+        elif d.get("action") == "create" and ttype in _TOPLEVEL_LABEL and resolve_idx(target_id) is None:
             item = {
                 "nodeId": target_id, "nodeLabel": _TOPLEVEL_LABEL[ttype],
                 "nodeTitle": d.get("targetName") or after.get("name") or target_id,
@@ -286,6 +345,9 @@ _TOPLEVEL_LABEL = {
     "readmodel": "ReadModel",
     "policy": "Policy",
 }
+# 노드 레벨 라벨(라이브 노드 첫 수정 시 MODIFY 신규 생성용). Aggregate 포함 — _TOPLEVEL_LABEL
+# (CREATE 라우팅 전용)과 달리 Aggregate 도 노드 레벨 update 대상이다.
+_NODE_LEVEL_LABEL = {**_TOPLEVEL_LABEL, "aggregate": "Aggregate"}
 
 
 def _child_parent_id(d: dict, after: dict) -> str:
@@ -348,8 +410,9 @@ def _resolve_child_obj(item: dict, collection: str, idx: Optional[int],
     if idx is not None and 0 <= idx < len(refs):
         return refs[idx]
     if name:
+        target = _norm_name(name)
         for od in refs:
-            if str(od.get("name") or "") == str(name):
+            if _norm_name(od.get("name")) == target:
                 return od
     return None
 
@@ -364,9 +427,9 @@ def _apply_vo_field_edit(vo_obj: dict, d: dict, after: dict) -> bool:
         fields.append(_strip_meta([fld])[0])
         vo_obj["fields"] = fields
         return True
-    selector = after.get("oldName") or d.get("targetName") or after.get("name")
+    selector = _norm_name(after.get("oldName") or d.get("targetName") or after.get("name"))
     j = next((k for k, f in enumerate(fields)
-              if isinstance(f, dict) and str(f.get("name") or "") == str(selector or "")), None)
+              if isinstance(f, dict) and _norm_name(f.get("name")) == selector), None)
     if j is None:
         return False
     if action == "delete":
@@ -431,8 +494,9 @@ def _match_child_index(arr: list, d: dict, after: dict) -> Optional[int]:
             if isinstance(c, dict) and str(c.get("nodeId") or c.get("id") or "") == target_id:
                 return j
     if name:
+        target_name = _norm_name(name)
         for j, c in enumerate(arr):
-            if isinstance(c, dict) and c.get("name") == name:
+            if isinstance(c, dict) and _norm_name(c.get("name")) == target_name:
                 return j
     return None
 
@@ -601,10 +665,16 @@ def reconcile_design_edit(proposal_id: str, bc_id: Optional[str], drafts: list[d
 def _draft_after_to_edit(existing_item: dict, after: dict) -> dict:
     """draft.after(부분 상태)를 reconcile 가 기대하는 edited 형태로 변환.
 
-    after 가 properties/enumerations/valueObjects/invariants/name/rootEntity 를 부분적으로
-    담는다고 가정하고, 없는 필드는 기존 항목 값을 유지한다(부분 병합)."""
+    after 가 properties/enumerations/valueObjects/invariants/name + 노드 레벨 스칼라 필드를
+    부분적으로 담는다고 가정하고, 없는 필드는 기존 항목 값을 유지한다(부분 병합).
+
+    043-fix4: 종전엔 name/displayName/rootEntity 만 통과시켜 version/category/actor/
+    description/provisioningType/isMultipleResult 변경이 통째로 떨어졌다(Chat 경로 무반영).
+    name + _NODE_SCALAR_FIELDS 전부를 통과시킨다(falsy 보존 위해 `is not None`)."""
     edit: dict[str, Any] = {}
-    for k in ("name", "displayName", "rootEntity"):
+    if after.get("name") is not None:
+        edit["name"] = after["name"]
+    for k in _NODE_SCALAR_FIELDS:
         if after.get(k) is not None:
             edit[k] = after[k]
     for fld in ("properties", "enumerations", "valueObjects", "invariants"):
