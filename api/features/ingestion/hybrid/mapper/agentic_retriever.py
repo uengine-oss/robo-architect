@@ -57,11 +57,17 @@ def _max_recoveries_per_task() -> int:
 
     baseline 후보는 그대로 두고, 어휘갭으로 누락된 후보를 task당 이 수만큼만(가장 확신
     높은 것부터) 검증기에 추가한다. 0이면 회복 없음(정규화 무효), 큰 값이면 recall↑·비용↑.
+
+    기본 4 (B2): glossary 가 task 명/별칭/코드후보를 풍부히 담고 있어(예: '카드사 식별 및
+    정합성 검증' → code ['카드사','정합성']) 용어겹침이 분명한 rule 이 2-슬롯 cap 에서 다른
+    below-floor 후보에 밀려 누락되던 리콜 갭을 완화. 회복분 포함 검증기 후보 수는 여전히
+    top_k 이내로 캡되므로 비용·노출 상한은 불변(MIN_BL_INCLUSION floor 는 미변경 → 노이즈
+    회귀 없음). 더 보수/공격적으로는 env `HYBRID_GLOSSARY_MAX_RECOVERIES` 로 조정.
     """
     try:
-        return max(0, int(os.getenv("HYBRID_GLOSSARY_MAX_RECOVERIES", "2")))
+        return max(0, int(os.getenv("HYBRID_GLOSSARY_MAX_RECOVERIES", "4")))
     except ValueError:
-        return 2
+        return 4
 from api.features.ingestion.hybrid.mapper.module_retriever import (
     MIN_MODULE_CONFIDENCE,
     ModuleCandidate,

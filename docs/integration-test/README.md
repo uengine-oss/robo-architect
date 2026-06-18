@@ -45,14 +45,14 @@
 | 탭 | 문서 | 상태 | 비고 |
 |---|---|---|---|
 | Stories | [tabs/stories.md](tabs/stories.md) | ✅ 완료 | S1~S15 전 시나리오 라이브 검증. 버그 **36건 수정**(I1~I36: 명확화 I8~I16·DDD마법사 I21~I31·삭제 I33·설계반영 I34/35·궤적 I36 등), 후속 3건(I7·I22·I32) |
-| Process (BPM) | [tabs/process-bpm.md](tabs/process-bpm.md) | 🟡 초안 | 인벤토리·시나리오(S1~S8) 작성. 하이브리드 A2A→BPM·Rule매핑·ES승격. 다음 세션 라이브 검증 |
-| Process (Event Modeling) | [tabs/process-event-modeling.md](tabs/process-event-modeling.md) | 🟡 초안 | 인벤토리·시나리오(S1~S9) 작성. swimlane·UI-flow·ReadModel 3분류·EventModelingLane. 다음 세션 라이브 검증 |
+| Process (BPM) | [tabs/process-bpm.md](tabs/process-bpm.md) | 🟢 거의완료 | **S1·S2·S3·S5·S6·S7 ✅** 라이브(인제스천→렌더→PDF콘텐츠 19/19 정합·Inspector·Rule탐색SSE·move/unassign·전체탐색+arbitration·ES승격 BC3/Cmd21/Evt37/RM11/UI26/US19). **수정 9건**(B1·C1·C2·D1·B3·B4·B5·B6·E3), E1철회·E2정상. **B2/B2+ 미해결(보류 — 정밀도는 정확, 리콜갭은 미매핑풀서 수동보완 가능·손실없음)**. 남은 S4·S8=EM 교차 |
+| Process (Event Modeling) | [tabs/process-event-modeling.md](tabs/process-event-modeling.md) | ✅ 완료 | **S1~S9 ✅** + **수동 편집(자유좌표/연결) 심화**. **수정 18건**(EM1~EM9 + EM10 자유좌표저장·EM11 RM3분류 시각구분·EM12 UI연결 Ui≠UI/방향역전·EM13 Design부착 attachedToId·EM14 드롭열 off-by-one(round→floor)·EM15 연결 카디널리티 거부+알림·EM16 **재승격 idempotency**(clear후생성). loose X드래그·배너자동숨김·독립노드토스트 포함). 자유좌표=관계파생 레이아웃에 stored sequence 도입, 연결은 Connect모드 수동. |
 | Design | [tabs/design.md](tabs/design.md) | ⬜ | |
 | Data | [tabs/data.md](tabs/data.md) | ⬜ | |
 | Code | [tabs/code.md](tabs/code.md) | ⬜ | |
 | Proposals | [tabs/proposals.md](tabs/proposals.md) | ✅ 완료 | 생애주기 **S1~S10 전 시나리오 ✅**. 버그 **14건 수정**(I3·I5·I6·I7·I8·I9·I10·I11·I13·I17·I18A·I19+S9안내), 후속/백로그 6건(I4·I12·I14·I16·I18C·I20). 041 미구현 |
 | Analysis | [tabs/analysis.md](tabs/analysis.md) | ⬜ | |
-| Changes | [tabs/changes.md](tabs/changes.md) | ⬜ | |
+| Changes | [tabs/changes.md](tabs/changes.md) | 🟡 초안 | 인벤토리 완료(038 RequirementChange/CHG-NNN·EFFECT·ChangeSet·상태전이·구현PTY·회귀). **숨김 탭이라 접근경로(S0) 먼저 확정 필요**. 038→039(Proposal) 진화로 deprecated 경로 가능성 — 실제 동작 여부부터 확인 |
 
 ## 검증 방식
 

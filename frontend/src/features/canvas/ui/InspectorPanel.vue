@@ -7,6 +7,7 @@ import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './inspectors/nodeEditSchema'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
+import ReadModelCQRSConfigModal from './ReadModelCQRSConfigModal.vue'
 import GwtFieldInput from './GwtFieldInput.vue'
 import InvariantEditor from '@/features/invariants/ui/InvariantEditor.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
@@ -686,6 +687,8 @@ async function loadTraceability(nodeId) {
 }
 
 const activeTab = ref(normalizeInspectorTab(props.initialTab, nodeLabel.value))
+// EM1 — ReadModel CQRS 모달 (탭 바 우측 ⚡ CQRS 버튼에서 열림).
+const showCqrsModal = ref(false)
 // Monotonic counter to force FrameEditor re-creation when Design tab is re-opened
 // (CanvasKit WebGL resources are destroyed on unmount and cannot be reused)
 const designEditorKey = ref(0)
@@ -706,6 +709,15 @@ watch(
     if (v) activeTab.value = normalizeInspectorTab(v, nodeLabel.value)
   }
 )
+
+// Node label resolves asynchronously after a node switch, so the initialTab
+// watcher above can run with a stale label and fall back to 'properties' even
+// when 'preview' was requested for a UI node. Re-apply the requested tab once
+// the label is known. (Fires only when the label actually changes — a user's
+// manual tab switch on the same node is preserved.)
+watch(nodeLabel, (label) => {
+  if (props.initialTab) activeTab.value = normalizeInspectorTab(props.initialTab, label)
+})
 
 watch(activeTab, (tab) => {
   if (tab === 'traceability' && props.nodeId && !traceData.value) {
@@ -3578,6 +3590,16 @@ function updateVoFieldValue(fieldName, value) {
           >
             출처
           </button>
+          <!-- EM1 — ReadModel CQRS: 탭 버튼과 나란히 + 우측 정렬, 클릭 시 모달로 연산(Event→INSERT/UPDATE) 보기/편집.
+               provisioning=CQRS 일 때만 (API/GraphQL/SharedDB 는 CQRS 연산이 아님). -->
+          <button
+            v-if="nodeLabel === 'ReadModel' && form.provisioningType === 'CQRS'"
+            class="inspector-tab inspector-tab--cqrs"
+            @click="showCqrsModal = true"
+            title="CQRS — 이 ReadModel을 채우는 Event/연산"
+          >
+            CQRS
+          </button>
         </div>
 
         <div v-if="error" class="inspector-alert error">{{ error }}</div>
@@ -5383,6 +5405,15 @@ function updateVoFieldValue(fieldName, value) {
       </div>
     </Transition>
   </Teleport>
+
+  <!-- EM1 — ReadModel CQRS 보기/편집 모달 (탭 바 우측 ⚡ CQRS 버튼에서 열림) -->
+  <ReadModelCQRSConfigModal
+    :visible="showCqrsModal"
+    :read-model-id="props.nodeId || node?.id"
+    :read-model-data="node?.data"
+    @close="showCqrsModal = false"
+    @updated="emit('updated')"
+  />
 </template>
 
 <style scoped>
@@ -5446,7 +5477,16 @@ function updateVoFieldValue(fieldName, value) {
   box-shadow: 0 0 0 2px rgba(var(--color-accent-rgb), 0.2);
 }
 
+.inspector-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .inspector-panel__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--color-text-light);
@@ -5526,6 +5566,11 @@ function updateVoFieldValue(fieldName, value) {
 .inspector-tab.active {
   color: var(--color-text-bright);
   border-color: var(--color-accent);
+}
+
+/* EM1 — CQRS 버튼은 탭들과 나란히 두되 우측 정렬 */
+.inspector-tab--cqrs {
+  margin-left: auto;
 }
 
 /* Traceability Tab */

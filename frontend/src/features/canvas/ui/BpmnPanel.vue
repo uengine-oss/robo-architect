@@ -28,6 +28,14 @@ const esPromoting = ref(false)
 const esError = ref('')
 const showPromoteModal = ref(false)
 
+// B4 — toast log. Explore/arbitration fire a burst of toasts that overwrite
+// each other and vanish in 4s; the store keeps them in `toastHistory` so the
+// user can open this panel and review them.
+const showToastLog = ref(false)
+function fmtToastTime(ts) {
+  try { return new Date(ts).toLocaleTimeString() } catch { return '' }
+}
+
 function openPromoteModal() {
   const hsid = store.hybridSessionId
   if (!hsid) {
@@ -425,6 +433,28 @@ function closeInspector() {
         {{ store.toast.message }}
       </div>
     </Transition>
+
+    <!-- B4 — toast/알림 이력. Burst toasts (탐색 완료 → rule 이동들) overwrite each
+         other and vanish; this log lets the user expand and review them. -->
+    <div v-if="store.toastHistory.length" class="bpmn-log">
+      <button class="bpmn-log__btn" :title="showToastLog ? '알림 이력 접기' : '알림 이력 보기'"
+              @click="showToastLog = !showToastLog">
+        🔔 알림 <span class="bpmn-log__badge">{{ store.toastHistory.length }}</span>
+      </button>
+      <div v-if="showToastLog" class="bpmn-log__panel">
+        <header class="bpmn-log__head">
+          <span>알림 이력 ({{ store.toastHistory.length }})</span>
+          <button class="bpmn-log__clear" @click="store.clearToastHistory()">비우기</button>
+        </header>
+        <ul class="bpmn-log__list">
+          <li v-for="t in store.toastHistory" :key="t.id"
+              class="bpmn-log__item" :class="'bpmn-log__item--' + t.type">
+            <span class="bpmn-log__time">{{ fmtToastTime(t.ts) }}</span>
+            <span class="bpmn-log__msg">{{ t.message }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -762,4 +792,94 @@ function closeInspector() {
   opacity: 0;
   transform: translate(-50%, 8px);
 }
+
+/* B4 — toast/알림 이력 log (bottom-right) */
+.bpmn-log {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.bpmn-log__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  border: 1px solid var(--color-border, rgba(255,255,255,0.12));
+  border-radius: 18px;
+  background: var(--color-bg-elevated, #1b1f2a);
+  color: var(--color-text, #e6e6e6);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.bpmn-log__btn:hover { border-color: rgba(34,139,230,0.6); }
+.bpmn-log__badge {
+  min-width: 18px;
+  padding: 0 5px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-align: center;
+  border-radius: 9px;
+  background: rgba(34,139,230,0.9);
+  color: #fff;
+}
+.bpmn-log__panel {
+  width: 360px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border, rgba(255,255,255,0.12));
+  border-radius: 8px;
+  background: var(--color-bg-elevated, #1b1f2a);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  overflow: hidden;
+}
+.bpmn-log__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.08));
+  color: var(--color-text, #e6e6e6);
+}
+.bpmn-log__clear {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border, rgba(255,255,255,0.12));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-dim, #9aa0aa);
+  cursor: pointer;
+}
+.bpmn-log__list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+}
+.bpmn-log__item {
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  border-left: 3px solid transparent;
+}
+.bpmn-log__item--info { border-left-color: rgba(34,139,230,0.9); }
+.bpmn-log__item--warn { border-left-color: rgba(253,126,20,0.9); }
+.bpmn-log__time {
+  flex-shrink: 0;
+  color: var(--color-text-dim, #9aa0aa);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.66rem;
+  padding-top: 1px;
+}
+.bpmn-log__msg { color: var(--color-text, #e6e6e6); word-break: break-word; }
 </style>

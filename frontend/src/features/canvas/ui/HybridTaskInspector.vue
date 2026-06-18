@@ -171,6 +171,21 @@ const functions = computed(() => task.value?.functions || [])
 const passages = computed(() => task.value?.document_passages || [])
 const conditions = computed(() => task.value?.conditions || [])
 
+// PDF text extraction inserts a newline per *visual* line, so passage bodies
+// arrive broken every few words. Collapse those intra-sentence newlines into
+// spaces for readable reflow, but keep a real break before bullet markers so
+// list items stay on their own line. (Pairs with `white-space: pre-line`.)
+function cleanPassage(text) {
+  if (!text) return ''
+  return String(text)
+    .replace(/\r/g, '')
+    .replace(/\n(?=\s*[•·▪‣◦])/g, '@@BR@@')
+    .replace(/\n+/g, ' ')
+    .replace(/@@BR@@/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+}
+
 // Rejected BL candidates for the current task — surfaced from
 // AgentFinalMatches.rejects via the store. The backend now caps emitted
 // rejects to a small near-miss set (REJECT_NEAR_MISS_FLOOR=0.50,
@@ -397,7 +412,7 @@ function roleMeta(role) {
               <span v-if="p.page != null" class="hti-badge">p.{{ p.page }}</span>
               <span v-if="p.low_confidence" class="hti-badge hti-badge--warn">약한 근거</span>
             </header>
-            <p class="hti-passage__body">{{ p.text }}</p>
+            <p class="hti-passage__body">{{ cleanPassage(p.text) }}</p>
           </article>
         </div>
         <div v-else class="hti-empty">문서 근거가 아직 없음</div>
@@ -535,10 +550,10 @@ function roleMeta(role) {
                 >+ 이 매핑 추가</button>
               </header>
               <div v-if="entry.rule.title" class="hti-rule__title">{{ entry.rule.title }}</div>
-              <dl class="hti-rule__gwt" v-if="entry.rule.given || entry.rule.when || entry.rule.then">
-                <div v-if="entry.rule.given"><dt>GIVEN</dt><dd>{{ entry.rule.given }}</dd></div>
-                <div v-if="entry.rule.when"><dt>WHEN</dt><dd>{{ entry.rule.when }}</dd></div>
-                <div v-if="entry.rule.then"><dt>THEN</dt><dd>{{ entry.rule.then }}</dd></div>
+              <dl class="hti-gwt" v-if="entry.rule.given || entry.rule.when || entry.rule.then">
+                <div v-if="entry.rule.given" class="hti-gwt__row"><dt>GIVEN</dt><dd>{{ entry.rule.given }}</dd></div>
+                <div v-if="entry.rule.when" class="hti-gwt__row"><dt>WHEN</dt><dd>{{ entry.rule.when }}</dd></div>
+                <div v-if="entry.rule.then" class="hti-gwt__row"><dt>THEN</dt><dd>{{ entry.rule.then }}</dd></div>
               </dl>
               <div v-if="entry.rationale" class="hti-rejects__rationale">
                 <span class="hti-rejects__label">Agent 거부 사유:</span>
@@ -1089,8 +1104,9 @@ function roleMeta(role) {
   color: var(--color-text-dim);
 }
 .hti-rule__title {
-  font-size: 0.74rem;
-  color: var(--color-text);
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--color-text-bright);
   margin: 0 0 6px;
   line-height: 1.45;
   word-break: keep-all;
@@ -1135,7 +1151,7 @@ function roleMeta(role) {
   line-height: 1.55;
   color: var(--color-text);
   word-break: break-word;
-  white-space: pre-wrap;
+  white-space: pre-line;
 }
 
 /* Rule GWT --------------------------------------------- */
@@ -1167,9 +1183,9 @@ function roleMeta(role) {
 }
 .hti-rule__fn {
   font-family: 'SF Mono', Menlo, monospace;
-  font-size: 0.74rem;
-  color: var(--color-text-bright);
-  font-weight: 600;
+  font-size: 0.62rem;
+  color: var(--color-text-dim);
+  font-weight: 400;
 }
 .hti-rule__mod {
   font-family: 'SF Mono', Menlo, monospace;
@@ -1221,9 +1237,9 @@ function roleMeta(role) {
 }
 .hti-fn__name {
   font-family: 'SF Mono', Menlo, monospace;
-  font-size: 0.76rem;
-  color: var(--color-text-bright);
-  font-weight: 600;
+  font-size: 0.62rem;
+  color: var(--color-text-dim);
+  font-weight: 400;
 }
 .hti-fn__mod {
   font-family: 'SF Mono', Menlo, monospace;
@@ -1231,9 +1247,10 @@ function roleMeta(role) {
   color: var(--color-text-dim);
 }
 .hti-fn__summary {
-  margin: 6px 0 0;
-  font-size: 0.7rem;
-  color: var(--color-text-dim);
+  margin: 0 0 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
   line-height: 1.5;
 }
 

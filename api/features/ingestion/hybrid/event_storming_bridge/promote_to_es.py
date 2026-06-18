@@ -391,6 +391,11 @@ async def _create_cross_bc_policies(hybrid_session_id: str) -> list[dict]:
 
             s.run(
                 "MERGE (p:Policy {key: $key, session_id: $sid}) "
+                # Every ES node needs a stable `id` (UUID) — downstream readers
+                # like expand-with-bc index nodes by it. Cross-BC policies were
+                # missing it, which 500'd the Event inspector (KeyError). Set
+                # once on create so re-merges stay idempotent.
+                "ON CREATE SET p.id = randomUUID() "
                 "SET p.name = $name, p.displayName = $name, p.description = $desc, "
                 "    p.kind = 'cross_bc', p.bc_id = $bcid",
                 key=key, sid=hybrid_session_id, name=name, desc=desc, bcid=bca[0],

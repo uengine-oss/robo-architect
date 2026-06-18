@@ -8,7 +8,13 @@ const props = defineProps({
     default: true
   },
   readModelId: String,
-  readModelData: Object
+  readModelData: Object,
+  // 인스펙터에 인라인 임베드 시: provisioning 라디오는 인스펙터가 이미 가지므로
+  // 숨기고 CQRS 연산 UI만 노출 (중복 방지).
+  hideProvisioning: {
+    type: Boolean,
+    default: false
+  }
 })
 
 const emit = defineEmits(['updated'])
@@ -518,8 +524,8 @@ const groupedEvents = computed(() => {
     </div>
 
     <template v-else>
-      <!-- Provisioning Type Selection (display only) -->
-      <div class="section">
+      <!-- Provisioning Type Selection (display only) — 인라인 임베드 시 숨김(인스펙터가 가짐) -->
+      <div v-if="!hideProvisioning" class="section">
         <h4>데이터 프로비저닝 방식</h4>
         <div class="provisioning-options">
           <label

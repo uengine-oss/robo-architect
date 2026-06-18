@@ -432,6 +432,7 @@ def _harvest_bundle_from_pdf2bpmn_neo4j(
     labels stay free for the next A2A call.
     """
     from api.platform.neo4j import get_session
+    from api.features.ingestion.hybrid.ontology.schema import L_BPMN_PROCESS
 
     try:
         with get_session() as s:
@@ -448,6 +449,14 @@ def _harvest_bundle_from_pdf2bpmn_neo4j(
 
             skeletons: list[BpmSkeleton] = []
             actor_by_name: dict[str, BpmActor] = {}
+            # proc_ids actually harvested into this bundle. We relabel them to
+            # :BpmnProcess + stamp session_id below so a *subsequent* per-PDF
+            # harvest (this fn runs once per uploaded PDF, all sharing one
+            # default DB) does not re-match these still-`:Process` nodes via
+            # `session_id IS NULL` and re-stamp them with the wrong PDF's
+            # source_pdf_name. Without this, every process collapses to the
+            # last PDF's source_pdf_name.
+            harvested_proc_ids: list[str] = []
 
             for prow in proc_rows:
                 proc_id = prow["proc_id"]
@@ -523,6 +532,20 @@ def _harvest_bundle_from_pdf2bpmn_neo4j(
                     bpmn_xml=None,  # runner will generate via build_bpmn_xml
                     process=process_dto,
                 ))
+                harvested_proc_ids.append(proc_id)
+
+            # Isolate this PDF's harvest: relabel the consumed :Process nodes so
+            # the next PDF's harvest cannot re-pick them (see note above). Same
+            # operation the end-of-phase relabel_pdf2bpmn_nodes performs, scoped
+            # to exactly the proc_ids we just consumed.
+            if harvested_proc_ids:
+                s.run(
+                    f"MATCH (p:Process) "
+                    f"WHERE p.proc_id IN $pids AND p.session_id IS NULL "
+                    f"SET p:{L_BPMN_PROCESS}, p.session_id = $sid "
+                    f"REMOVE p:Process",
+                    pids=harvested_proc_ids, sid=session_id,
+                )
         return ProcessBundle(processes=skeletons)
     except Exception as e:
         SmartLogger.log(

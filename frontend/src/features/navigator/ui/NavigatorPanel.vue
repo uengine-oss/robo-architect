@@ -21,6 +21,8 @@ useDataRefresh(() => handleRefresh())
 const activeTab = inject('activeTab', ref('Design'))
 const isBpmnMode = computed(() => activeTab.value === 'Process')
 const isEventModelingMode = computed(() => activeTab.value === 'Processes' || activeTab.value === 'Event Modeling')
+// "User Journeys" 목록은 실제 프로세스(여정/명령체인)만 — loose(연결 없는 자유배치) 노드는 제외.
+const emJourneys = computed(() => emStore.journeyChains.filter(i => !i.loose))
 const expandedProcesses = ref(new Set())
 // Hybrid Process tree expand/collapse — separate state from Event Modeling.
 // Default: expand everything so fresh-ingestion streams reveal tasks live.
@@ -86,18 +88,19 @@ function reviewBc(item) {
   return rule?.context_cluster || null
 }
 
-// ---- Rules by BC (Phase 2.5 distribution summary) --------------------
-// Shows the cluster-level breakdown so the user can see at a glance
-// whether the BC tagging looks right before diving into a specific Task.
-const rulesByBc = computed(() => {
-  const counts = new Map()
-  for (const r of bpmnStore.hybridRules) {
-    const k = r.context_cluster || '미분류'
-    counts.set(k, (counts.get(k) || 0) + 1)
+// ---- Rules by Task (distribution summary) ----------------------------
+// BC (context_cluster) tagging was deprecated — every rule is now attributed
+// to a Task by the agent, so the old "Rules by Context" grouping collapsed
+// into a single 미분류 bucket (B5). Group by the Task each rule is mapped to
+// instead — the live attribution dimension. Unmapped rules are surfaced by
+// the separate "미매핑 / Review" section below, so they're omitted here.
+const rulesByTask = computed(() => {
+  const counts = new Map() // taskId -> { name, count, scope }
+  for (const t of bpmnStore.hybridTasks) {
+    const n = (t.rules || []).length
+    if (n) counts.set(t.id, { name: t.name || t.id, count: n, scope: t.id })
   }
-  return [...counts.entries()]
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
+  return [...counts.values()].sort((a, b) => b.count - a.count)
 })
 
 // ---- Unified "미매핑 / Review" pool -------------------------------------
@@ -151,6 +154,9 @@ const unifiedPool = computed(() => {
 
 // Drive a simple "attach to task" inline selector on each pool item.
 const poolAttachChoice = ref({}) // { [item.key]: taskIdSelected }
+
+// 미매핑 / Review 풀은 길어질 수 있어 접기/펼치기 (기본 펼침).
+const poolCollapsed = ref(false)
 
 async function attachPoolItem(item) {
   const toTaskId = poolAttachChoice.value[item.key]
@@ -459,23 +465,22 @@ function handleProcessDragStart(event, item) {
           </TransitionGroup>
         </div>
 
-        <!-- Hybrid: Rules by BC (Phase 2.5 distribution summary) — DEBUG ONLY -->
-        <div v-if="isDebug && rulesByBc.length" class="section-group">
+        <!-- Hybrid: Rules by Task (distribution summary) — DEBUG ONLY -->
+        <div v-if="isDebug && rulesByTask.length" class="section-group">
           <div class="section-header">
-            <span class="section-title">Rules by Context</span>
+            <span class="section-title">Rules by Task</span>
             <span class="section-count">{{ bpmnStore.hybridRules.length }}</span>
           </div>
           <div class="hybrid-bc-list">
             <div
-              v-for="bc in rulesByBc"
-              :key="bc.name"
+              v-for="grp in rulesByTask"
+              :key="grp.scope"
               class="hybrid-bc-item"
-              :class="{ 'is-unclassified': bc.name === '미분류' }"
-              :title="`클릭 → ${bc.name} 범주 Rule 관리 (${bc.count}개)`"
-              @click="bpmnStore.openBcRulesModal(bc.name)"
+              :title="`클릭 → ${grp.name} Task 의 Rule 관리 (${grp.count}개)`"
+              @click="bpmnStore.openBcRulesModal(grp.scope)"
             >
-              <span class="hybrid-bc-item__name">{{ bc.name }}</span>
-              <span class="hybrid-bc-item__count">{{ bc.count }}</span>
+              <span class="hybrid-bc-item__name">{{ grp.name }}</span>
+              <span class="hybrid-bc-item__count">{{ grp.count }}</span>
             </div>
           </div>
         </div>
@@ -483,11 +488,14 @@ function handleProcessDragStart(event, item) {
         <!-- Hybrid: Unified 미매핑 / Review pool — DEBUG ONLY (§2.D) -->
         <!-- review: pipeline's θ-band suggestion (has task_id). unassigned: no REALIZED_BY anywhere. -->
         <div v-if="isDebug && unifiedPool.length" class="section-group">
-          <div class="section-header">
+          <div class="section-header section-header--toggle"
+               :title="poolCollapsed ? '펼치기' : '접기'"
+               @click="poolCollapsed = !poolCollapsed">
+            <span class="section-chevron" :class="{ 'is-open': !poolCollapsed }">▸</span>
             <span class="section-title">미매핑 / Review</span>
             <span class="section-count">{{ unifiedPool.length }}</span>
           </div>
-          <div class="hybrid-pool">
+          <div v-if="!poolCollapsed" class="hybrid-pool">
             <div
               v-for="item in unifiedPool"
               :key="item.key"
@@ -563,7 +571,7 @@ function handleProcessDragStart(event, item) {
           <div class="section-header section-header--with-actions">
             <div class="section-header__left">
               <span class="section-title">User Journeys</span>
-              <span v-if="emStore.journeyChains.length" class="section-count">{{ emStore.journeyChains.length }}</span>
+              <span v-if="emJourneys.length" class="section-count">{{ emJourneys.length }}</span>
             </div>
             <div class="section-header__actions">
               <button class="tree-action-btn" @click="emStore.fetchEventModeling()" title="Load All" :disabled="emStore.loading">
@@ -586,11 +594,11 @@ function handleProcessDragStart(event, item) {
             <div class="loading-spinner"></div>
             <span>Loading...</span>
           </div>
-          <div v-else-if="emStore.journeyChains.length === 0" class="empty-state" style="padding:16px">
+          <div v-else-if="emJourneys.length === 0" class="empty-state" style="padding:16px">
             <span>프로세스 데이터가 없습니다.</span>
           </div>
           <template v-else>
-            <div v-for="item in emStore.journeyChains" :key="item.id"
+            <div v-for="item in emJourneys" :key="item.id"
                  class="em-process-item"
                  :class="{ 'is-on-canvas': journeyOnCanvas(item) }"
                  :draggable="true"
@@ -890,6 +898,29 @@ function handleProcessDragStart(event, item) {
 
 .section-header--with-actions {
   padding: 4px var(--spacing-xs);
+}
+
+/* Collapsible section header (미매핑 / Review) */
+.section-header--toggle {
+  cursor: pointer;
+  user-select: none;
+  gap: 4px;
+}
+.section-header--toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+.section-header--toggle .section-count {
+  margin-left: auto;
+}
+.section-chevron {
+  font-size: 0.6rem;
+  color: var(--color-text-dim, #9aa0aa);
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.section-chevron.is-open {
+  transform: rotate(90deg);
 }
 
 .section-header__left {
