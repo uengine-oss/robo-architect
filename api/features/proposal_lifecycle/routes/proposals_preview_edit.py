@@ -91,10 +91,12 @@ async def confirm_preview_chat(proposal_id: str, body: ChatConfirmRequest, reque
         tree = apply_chat_drafts(proposal_id, body.drafts, body.approvedChangeIds, body.bcId)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    _pv = (tree.get("_preview") or {}) if isinstance(tree, dict) else {}
     SmartLogger.log(
         "INFO", "preview_edit_chat_confirm",
         category="proposal_lifecycle.preview.edit.chat",
         params={**http_context(request), "proposalId": proposal_id,
-                "drafts": len(body.drafts), "approved": len(body.approvedChangeIds)},
+                "drafts": len(body.drafts), "approved": len(body.approvedChangeIds),
+                "appliedCount": _pv.get("appliedCount"), "unresolvedCount": _pv.get("unresolvedCount")},
     )
     return tree

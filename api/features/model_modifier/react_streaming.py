@@ -268,86 +268,104 @@ async def stream_react_response(
         propagation_rounds: int = 0
         propagation_stop_reason: str = ""
         
-        # 영향도 분석은 항상 선행되어야 함 (workflow에 필수)
-        # Intent의 need_propagation 값과 무관하게 항상 실행
-        SmartLogger.log(
-            "INFO",
-            "Model Modifier: Starting impact propagation (always executed before workflow).",
-            category="api.chat.propagation.start",
-            params={
-                "intent_need_propagation": getattr(intent, 'need_propagation', None),
-                "selectedNodes": selected_nodes,
-                "prompt": prompt[:200],  # 첫 200자만 로깅
-            },
-        )
-        
-        try:
-            from api.features.change_management.planning_agent.change_planning_contracts import (
-                ChangePlanningState,
-                ChangeScope,
+        # 영향도 전파는 intent.need_propagation 신호를 존중한다.
+        # LLM intent 분석이 "선택 노드 밖으로 확장 불필요"로 판정하면(주로 scope=local 의 단순
+        # 추가/삭제) 전파를 생략해 임계경로 레이턴시를 줄인다. 측정상 need_propagation=False 케이스는
+        # 전파 산출물이 비어 있어 드래프트/적용 결과가 불변이며, 삭제/수정 등 need_propagation=True
+        # 케이스는 cascade 안전성을 위해 기존대로 전파를 수행한다.
+        _run_propagation = bool(getattr(intent, "need_propagation", True))
+
+        if not _run_propagation:
+            SmartLogger.log(
+                "INFO",
+                "Model Modifier: Skipping impact propagation (intent.need_propagation=False).",
+                category="api.chat.propagation.skip",
+                params={
+                    "intent_need_propagation": getattr(intent, "need_propagation", None),
+                    "intent_scope": getattr(intent, "scope", None),
+                    "selectedNodes": selected_nodes,
+                    "prompt": prompt[:200],  # 첫 200자만 로깅
+                },
             )
-            from api.features.change_management.planning_agent.impact_propagation_engine import (
-                propagate_impacts_node,
+        else:
+            SmartLogger.log(
+                "INFO",
+                "Model Modifier: Starting impact propagation (intent.need_propagation=True).",
+                category="api.chat.propagation.start",
+                params={
+                    "intent_need_propagation": getattr(intent, 'need_propagation', None),
+                    "selectedNodes": selected_nodes,
+                    "prompt": prompt[:200],  # 첫 200자만 로깅
+                },
             )
 
-            scope_map = {
-                "local": ChangeScope.LOCAL,
-                "cross_bc": ChangeScope.CROSS_BC,
-                "new_capability": ChangeScope.NEW_CAPABILITY,
-            }
-            state = ChangePlanningState(
-                user_story_id="chat.model_modifier",
-                edited_user_story={"role": "user", "action": prompt, "benefit": ""},
-                change_description=prompt,
-                connected_objects=list(selected_nodes or []),
-                change_scope=scope_map.get(intent.scope, ChangeScope.LOCAL),
-            )
-            
-            SmartLogger.log(
-                "INFO",
-                "Model Modifier: Calling propagate_impacts_node.",
-                category="api.chat.propagation.call",
-                params={
-                    "state_user_story_id": state.user_story_id,
-                    "change_scope": str(state.change_scope),
-                    "connected_objects_count": len(state.connected_objects or []),
-                },
-            )
-            
-            result = propagate_impacts_node(state)
-            confirmed = result.get("propagation_confirmed") or []
-            review = result.get("propagation_review") or []
-            propagation_confirmed = [(c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in confirmed]
-            propagation_review = [(c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in review]
-            propagation_debug = result.get("propagation_debug") or {}
             try:
-                propagation_rounds = int(result.get("propagation_rounds") or 0)
-            except Exception:
-                propagation_rounds = 0
-            propagation_stop_reason = str(result.get("propagation_stop_reason") or "")
-            
-            SmartLogger.log(
-                "INFO",
-                "Model Modifier: Impact propagation completed.",
-                category="api.chat.propagation.complete",
-                params={
-                    "confirmed_count": len(propagation_confirmed),
-                    "review_count": len(propagation_review),
-                    "rounds": propagation_rounds,
-                    "stop_reason": propagation_stop_reason,
-                    "has_debug": bool(propagation_debug),
-                },
-            )
-        except Exception as e:
-            SmartLogger.log(
-                "ERROR",
-                "Model Modifier propagation failed; continuing with selected nodes only.",
-                category="api.chat.propagation.failed",
-                params={
-                    "error": {"type": type(e).__name__, "message": str(e)},
-                    "traceback": str(e.__traceback__) if hasattr(e, "__traceback__") else None,
-                },
-            )
+                from api.features.change_management.planning_agent.change_planning_contracts import (
+                    ChangePlanningState,
+                    ChangeScope,
+                )
+                from api.features.change_management.planning_agent.impact_propagation_engine import (
+                    propagate_impacts_node,
+                )
+
+                scope_map = {
+                    "local": ChangeScope.LOCAL,
+                    "cross_bc": ChangeScope.CROSS_BC,
+                    "new_capability": ChangeScope.NEW_CAPABILITY,
+                }
+                state = ChangePlanningState(
+                    user_story_id="chat.model_modifier",
+                    edited_user_story={"role": "user", "action": prompt, "benefit": ""},
+                    change_description=prompt,
+                    connected_objects=list(selected_nodes or []),
+                    change_scope=scope_map.get(intent.scope, ChangeScope.LOCAL),
+                )
+
+                SmartLogger.log(
+                    "INFO",
+                    "Model Modifier: Calling propagate_impacts_node.",
+                    category="api.chat.propagation.call",
+                    params={
+                        "state_user_story_id": state.user_story_id,
+                        "change_scope": str(state.change_scope),
+                        "connected_objects_count": len(state.connected_objects or []),
+                    },
+                )
+
+                result = propagate_impacts_node(state)
+                confirmed = result.get("propagation_confirmed") or []
+                review = result.get("propagation_review") or []
+                propagation_confirmed = [(c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in confirmed]
+                propagation_review = [(c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in review]
+                propagation_debug = result.get("propagation_debug") or {}
+                try:
+                    propagation_rounds = int(result.get("propagation_rounds") or 0)
+                except Exception:
+                    propagation_rounds = 0
+                propagation_stop_reason = str(result.get("propagation_stop_reason") or "")
+
+                SmartLogger.log(
+                    "INFO",
+                    "Model Modifier: Impact propagation completed.",
+                    category="api.chat.propagation.complete",
+                    params={
+                        "confirmed_count": len(propagation_confirmed),
+                        "review_count": len(propagation_review),
+                        "rounds": propagation_rounds,
+                        "stop_reason": propagation_stop_reason,
+                        "has_debug": bool(propagation_debug),
+                    },
+                )
+            except Exception as e:
+                SmartLogger.log(
+                    "ERROR",
+                    "Model Modifier propagation failed; continuing with selected nodes only.",
+                    category="api.chat.propagation.failed",
+                    params={
+                        "error": {"type": type(e).__name__, "message": str(e)},
+                        "traceback": str(e.__traceback__) if hasattr(e, "__traceback__") else None,
+                    },
+                )
 
         # =============================================================================
         # Emit impact summary (once) for frontend debugging UI

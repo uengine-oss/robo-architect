@@ -402,17 +402,20 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
         if (!res.ok) throw new Error(tree?.detail || `API error: ${res.status}`)
         // 갱신된 미리보기 트리를 뷰어에 반영(라이브 무변경).
         window.dispatchEvent(new CustomEvent('robo:preview-updated', { detail: { tree } }))
-        // I13: 백엔드가 실제 반영 건수를 돌려준다 — 0건이면 "반영 없음"으로 정직하게.
+        // I13/E-1: 백엔드가 실제 반영 건수 + 미해소 건수를 돌려준다 — 정직하게 표기한다.
         const appliedCount = tree?._preview?.appliedCount
+        const unresolvedCount = tree?._preview?.unresolvedCount
         const didApply = appliedCount == null || appliedCount > 0
         const lockedDrafts = drafts.map(d => ({ ...d, approved: !!d.approved, isApplied: didApply }))
         messages.value[idx] = { ...msg, drafts: lockedDrafts, isApplied: didApply }
         messages.value = [...messages.value]
+        // E-1: 미해소(미반영) 건수가 있으면 함께 알려, "N건 반영"이 전체 성공처럼 오인되지 않게 한다.
+        const unresolvedNote = unresolvedCount > 0 ? ` (미반영 ${unresolvedCount}건 — 대상 미해소)` : ''
         messages.value.push({
           id: generateId(), type: 'system',
           content: didApply
-            ? `제안(${ps.label || ps.proposalId}) diff 에 ${appliedCount != null ? appliedCount + '건 ' : ''}반영했습니다. (라이브 설계는 변경되지 않음)`
-            : '반영된 변경이 없습니다. (이 편집 유형은 아직 제안 diff 반영을 지원하지 않습니다)',
+            ? `제안(${ps.label || ps.proposalId}) diff 에 ${appliedCount != null ? appliedCount + '건 ' : ''}반영했습니다.${unresolvedNote} (라이브 설계는 변경되지 않음)`
+            : `반영된 변경이 없습니다.${unresolvedNote} (이 편집 유형은 아직 제안 diff 반영을 지원하지 않습니다)`,
           timestamp: new Date().toISOString(),
         })
         return

@@ -3,6 +3,22 @@ import { ref, computed } from 'vue'
 // 040 — 도메인 중립 미리보기 세션(앱 셸). 라이브↔미리보기 fetch 분기 + 편집 → 제안 diff 반영.
 import { previewUrl, isPreviewFor, usePreviewSession } from '@/app/previewSession'
 
+// 040/043-fix — Aggregate 매핑(라이브·미리보기 공통)을 단일 소스로 통일한다.
+// 과거 loadBcTree·applyPreviewTree 가 각자 들고 있던 화이트리스트가 서로 어긋나며 백엔드가
+// 내려준 `description` 등 일부 필드를 누락했다(미리보기 Inspector 설명 칸 빈칸 버그). 백엔드
+// 노드 키를 패스-스루(`...agg`)로 보존하고 배열/표시이름 기본값만 덮어, 같은 부류의 필드
+// 누락을 구조적으로 차단한다(향후 새 필드도 자동 보존).
+function mapPreviewAggregate(agg) {
+  return {
+    ...agg,
+    displayName: agg.displayName || agg.name,
+    invariants: agg.invariants || [],
+    enumerations: agg.enumerations || [],
+    valueObjects: agg.valueObjects || [],
+    properties: agg.properties || [],
+  }
+}
+
 export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   // Data from API
   const boundedContexts = ref([])
@@ -40,19 +56,8 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
       name: data.name,
       displayName: data.displayName || data.name,
       description: data.description,
-      aggregates: (data.aggregates || []).map(agg => ({
-        id: agg.id,
-        name: agg.name,
-        displayName: agg.displayName || agg.name,
-        rootEntity: agg.rootEntity,
-        invariants: agg.invariants || [],
-        enumerations: agg.enumerations || [],
-        valueObjects: agg.valueObjects || [],
-        properties: agg.properties || [],
-        // 040 — Proposal 미리보기 오버레이 출처/배지(신규/수정/충돌)를 노드까지 전달.
-        source: agg.source,
-        badge: agg.badge,
-      }))
+      // 040/043-fix — 공유 매퍼로 백엔드 노드 키(description·source·badge 등)를 누락 없이 보존.
+      aggregates: (data.aggregates || []).map(mapPreviewAggregate)
     }
 
     const existingIndex = boundedContexts.value.findIndex(b => b.id === bcId)
@@ -242,12 +247,8 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     if (!tree || !tree.id) return
     const mapped = {
       id: tree.id, name: tree.name, displayName: tree.displayName || tree.name, description: tree.description,
-      aggregates: (tree.aggregates || []).map(agg => ({
-        id: agg.id, name: agg.name, displayName: agg.displayName || agg.name, rootEntity: agg.rootEntity,
-        invariants: agg.invariants || [], enumerations: agg.enumerations || [],
-        valueObjects: agg.valueObjects || [], properties: agg.properties || [],
-        source: agg.source, badge: agg.badge,
-      })),
+      // 040/043-fix — 공유 매퍼로 백엔드 노드 키(description·source·badge 등)를 누락 없이 보존.
+      aggregates: (tree.aggregates || []).map(mapPreviewAggregate),
     }
     const i = boundedContexts.value.findIndex(b => b.id === tree.id)
     if (i >= 0) {

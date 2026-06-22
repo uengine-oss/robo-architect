@@ -66,7 +66,7 @@ def build_context_full_tree(context_id: str) -> dict[str, Any] | None:
     """
     agg_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)
-    RETURN agg {.id, .name, .displayName, .rootEntity, .invariants, .enumerations, .valueObjects, .exceptions} as aggregate
+    RETURN agg {.id, .name, .displayName, .description, .rootEntity, .invariants, .enumerations, .valueObjects, .exceptions} as aggregate
     ORDER BY agg.name
     """
     cmd_query = """

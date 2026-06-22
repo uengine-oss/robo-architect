@@ -16,6 +16,7 @@ import re
 from typing import Any, Optional
 
 from api.platform.neo4j import get_session
+from api.platform.observability.smart_logger import SmartLogger
 from api.features.proposal_lifecycle.services.preview_projection import (
     build_data_preview, build_design_preview, _load_proposal,
 )
@@ -81,6 +82,12 @@ _NODE_SCALAR_FIELDS = (
 def _normalize_item_from_edit(item: dict, edited: dict, bc_id: Optional[str]) -> dict:
     """편집된 Aggregate(deep 뷰)를 tacticalDiff 항목으로 정규화해 덮어쓴다."""
     item = dict(item)
+    # C-1(데이터 손실 방지): ops 를 비우기 전에 obj_append(원본 enum/VO 자식)를 item-level
+    #   배열로 흡수해 보존한다. 종전엔 semanticDiff.ops 를 통째로 비워, 원본 인텐트가 ops 에
+    #   싣던 자식(OrderStatus/OrderLine/ShippingAddress 등)이 Aggregate 의 사소한 필드 하나만
+    #   수정해도 영속 tacticalDiff 에서 영구 삭제됐다(데이터 손실). 흡수 후 비우면 "중복 렌더
+    #   방지" 목적은 유지하면서 원본 자식을 지킨다.
+    orig_ops = list(((item.get("semanticDiff") or {}).get("ops")) or [])
     fields = dict(item.get("fields") or {})
     if edited.get("name"):
         item["nodeTitle"] = edited["name"]
@@ -100,10 +107,25 @@ def _normalize_item_from_edit(item: dict, edited: dict, bc_id: Optional[str]) ->
         item["fields"] = fields
     if bc_id and not item.get("boundedContextId"):
         item["boundedContextId"] = bc_id
-    # deep 정규화: 모든 자식을 item-level 로. semanticDiff.ops 는 비워 중복 렌더 방지.
+    # deep 정규화: 모든 자식을 item-level 로. semanticDiff.ops 는 (흡수 후) 비워 중복 렌더 방지.
     for fld in ("properties", "invariants", "enumerations", "valueObjects"):
         if fld in edited:
             item[fld] = _strip_meta(edited.get(fld) or [])
+    # C-1: 원본 ops 자식을 item-level 배열에 합친다(중복 name 제외 → 이중 렌더 방지).
+    for fld in ("enumerations", "valueObjects"):
+        merged = list(item.get(fld) or [])
+        names = {_norm_name(x.get("name")) for x in merged if isinstance(x, dict)}
+        for op in orig_ops:
+            if op.get("op") != "obj_append" or op.get("field") != fld:
+                continue
+            obj = op.get("obj_data") if isinstance(op.get("obj_data"), dict) else (
+                {"name": op.get("obj_name")} if op.get("obj_name") else None)
+            if not obj or _norm_name(obj.get("name")) in names:
+                continue
+            merged.append(_strip_meta([dict(obj)])[0])
+            names.add(_norm_name(obj.get("name")))
+        if merged:
+            item[fld] = merged
     item["semanticDiff"] = {"v": 1, "ops": [], "changeType": item.get("changeType", "MODIFY")}
     return item
 
@@ -173,41 +195,73 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
             return idx if 0 <= idx < len(tactical) else None
         return by_id.get(s)
 
-    for d in drafts or []:
-        if approved and d.get("changeId") not in approved:
-            continue
+    # A-1: 같은 confirm 배치에서 막 만든 VO/Enum 노드를 그 필드/항목 draft 가 찾을 수 있도록,
+    #   temp child id → (kind, 부모 Aggregate 항목 index, 이름) 매핑을 적재한다.
+    new_child_locator: dict[str, tuple] = {}
+    # E-1: 실제 반영 못 한 draft 를 무음으로 흘리지 않고 사유와 함께 모은다.
+    unresolved: list[dict] = []
+
+    def agg_parent_idx(d: dict, after: dict, target_id: str, kind: str) -> Optional[int]:
+        """자식 draft 의 소유 Aggregate 항목 index 해소: parentId → 캔버스 id 역추적(원인 D) 순."""
+        pid = _child_parent_id(d, after)
+        ai = resolve_idx(pid) if pid else None
+        if ai is None:
+            apid = _parent_agg_from_canvas_id(tactical, target_id, kind)
+            ai = resolve_idx(apid) if apid else None
+        return ai
+
+    # A-1: 2패스 — 부모 노드 생성(VO/Enum/Aggregate/top-level)을 먼저 처리해 그 자식(필드/항목)
+    #   draft 가 같은 배치에서 부모를 해소할 수 있게 한다. 원래 상대순서는 보존(stable).
+    sel = [d for d in (drafts or []) if not approved or d.get("changeId") in approved]
+
+    def _rank(d: dict) -> int:
+        act = d.get("action")
+        tt = (d.get("targetType") or "").lower()
+        if act == "create" and (tt in ("valueobject", "enumeration", "enum", "aggregate") or tt in _TOPLEVEL_LABEL):
+            return 0
+        return 1
+
+    ordered = [d for _, d in sorted(enumerate(sel), key=lambda t: (_rank(t[1]), t[0]))]
+
+    for d in ordered:
         target_id = str(d.get("targetId") or "")
         after = d.get("after") or d.get("updates") or {}
         ttype = (d.get("targetType") or "").lower()
-        # 043-fix3: Property/VO-field/Enum 의 update/delete/rename/create draft 는 targetId=null
-        # 로 오고(LLM 라우팅이 targetName + updates.parentId 기반), 부모(Aggregate/Command/Event/
-        # ReadModel) 컬렉션으로 반영된다. 기존 `if not target_id: continue` 가드가 이 draft 들을
-        # 통째로 떨궈 "0개 반영"(예: Event quantity Property 타입 변경)을 유발했다 — target 도
-        # parent 도 없을 때만 건너뛴다.
+        action = d.get("action")
         parent_ref = str(d.get("aggregateId") or d.get("parentId") or after.get("parentId") or "")
-        if not target_id and not parent_ref:
+        if not target_id and not parent_ref and action != "create":
+            unresolved.append(_unresolved(d, "targetId/parent 모두 없음"))
             continue
         # rename → nodeTitle / name
-        if d.get("action") == "rename" and after.get("name"):
+        if action == "rename" and after.get("name"):
             after = {**after, "name": after["name"]}
 
         # 043-fix2 — VO 필드 편집: parent 가 ValueObject 인 Property. 부모 Aggregate 항목의
-        # 해당 VO obj_data.fields 를 직접 수정한다(별도 top-level 항목 생성 금지 — 그래야
-        # 캔버스의 기존 VO 에 즉시 반영된다).
+        # 해당 VO obj_data.fields 를 직접 수정한다(별도 top-level 항목 생성 금지).
         parent_type = str(after.get("parentType") or d.get("parentType") or "").lower()
         if ttype == "property" and parent_type == "valueobject":
             vo_id = str(after.get("parentId") or d.get("parentId") or "")
             agg_id, vo_idx = _parse_child_canvas_id(vo_id, "vo")
             ai = resolve_idx(agg_id) if agg_id else None
-            if ai is not None:
-                item = tactical[ai]
-                vo_obj = _resolve_child_obj(item, "valueObjects", vo_idx, None)
-                if vo_obj is not None and _apply_vo_field_edit(vo_obj, d, after):
-                    touched_bc = touched_bc or item.get("boundedContextId")
-                    applied += 1
-                # 부모 VO 를 찾았으면(또는 못 찾아도) 여기서 처리 종료 — 폴백 분기로 흘려보내
-                # 엉뚱한 top-level ValueObject 항목을 만들지 않는다.
-                continue
+            vo_obj = _resolve_child_obj(tactical[ai], "valueObjects", vo_idx, None) if ai is not None else None
+            # A-1: 같은 배치에서 막 만든 VO(temp id)면 locator 로 부모 agg + 이름 해소.
+            if vo_obj is None and vo_id in new_child_locator:
+                kind, nai, cname = new_child_locator[vo_id]
+                if kind == "vo":
+                    ai = nai
+                    vo_obj = _resolve_child_obj(tactical[ai], "valueObjects", None, cname)
+            # D-1: 슬러그 vo id → 부모 agg 역추적 + tail(이름)로 VO 해소.
+            if vo_obj is None:
+                apid = _parent_agg_from_canvas_id(tactical, vo_id, "vo")
+                ai = resolve_idx(apid) if apid else ai
+                if ai is not None:
+                    vo_obj = _resolve_child_obj(tactical[ai], "valueObjects", None, _slug_tail(vo_id, apid))
+            if vo_obj is not None and _apply_vo_field_edit(vo_obj, d, after):
+                touched_bc = touched_bc or tactical[ai].get("boundedContextId")
+                applied += 1
+            else:
+                unresolved.append(_unresolved(d, "VO 필드의 부모 ValueObject 미해소"))
+            continue
 
         # 043-fix2 — Enum 항목 편집: targetType=Enumeration + itemsToAdd/Remove/Rename.
         if ttype in ("enumeration", "enum") and any(
@@ -215,30 +269,28 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
         ):
             agg_id, enum_idx = _parse_child_canvas_id(target_id, "enum")
             ai = resolve_idx(agg_id) if agg_id else None
-            if ai is not None:
-                item = tactical[ai]
-                enum_obj = _resolve_child_obj(item, "enumerations", enum_idx, d.get("targetName"))
-                if enum_obj is not None and _apply_enum_items_edit(enum_obj, after):
-                    touched_bc = touched_bc or item.get("boundedContextId")
-                    applied += 1
-                continue
+            enum_obj = _resolve_child_obj(tactical[ai], "enumerations", enum_idx, d.get("targetName")) if ai is not None else None
+            # D-1: 슬러그 enum id(예: enum-AGG-order-OrderStatus) → 부모 agg 역추적 + 이름 해소.
+            if enum_obj is None:
+                ai = agg_parent_idx(d, after, target_id, "enum")
+                if ai is not None:
+                    name_hint = d.get("targetName") or _slug_tail(target_id, tactical[ai].get("nodeId"))
+                    enum_obj = _resolve_child_obj(tactical[ai], "enumerations", None, name_hint)
+            if enum_obj is not None and _apply_enum_items_edit(enum_obj, after):
+                touched_bc = touched_bc or tactical[ai].get("boundedContextId")
+                applied += 1
+            else:
+                unresolved.append(_unresolved(d, "대상 Enum 미해소"))
+            continue
 
-        # 043-fix: 자식요소(Property/VO/Enum) draft 는 targetId 가 우연히 top-level 항목
-        # (부모 Command/Aggregate)의 nodeId 와 같아도 node-level 편집으로 처리하면 안 된다.
-        # LLM 이 Property 변경을 targetId=<부모 Command id> 로 내보내는 경우가 있는데(예:
-        # quantity 변경을 targetId=CMD-add-to-cart 로), 그러면 아래 node-level 분기가
-        # _draft_after_to_edit 로 흘러 type 같은 속성 변경을 떨궈버려 "1건 반영"인데 실제론
-        # 무변경이 된다. ttype 이 자식 컬렉션이면 아래 부모-컬렉션 라우팅으로 보낸다.
+        # 노드 레벨 편집(Aggregate/Command/Event/ReadModel update·rename) — 자식 컬렉션 타입 제외.
         i = resolve_idx(target_id)
         if i is not None and ttype not in _CHILD_COLLECTION:
             tactical[i] = _normalize_item_from_edit(tactical[i], _draft_after_to_edit(tactical[i], after), bc_id)
             touched_bc = touched_bc or tactical[i].get("boundedContextId")
             applied += 1
-        # 대상이 diff 에 없으면(라이브 노드 첫 수정) MODIFY 신규 — Aggregate 뿐 아니라
-        # 노드 레벨 라벨(Command/Event/ReadModel/Policy) 전부. 종전엔 aggregate 만 처리해
-        # 라이브 Command/Event/ReadModel 을 Chat 으로 수정하면 매칭 0 → 무반영이었다(Inspector
-        # 경로 reconcile_design_edit._ensure_modify_item 과 동형으로 맞춘다).
-        elif target_id and ttype in _NODE_LEVEL_LABEL:
+            continue
+        if target_id and ttype in _NODE_LEVEL_LABEL and i is None:
             item = _normalize_item_from_edit(
                 {"nodeId": target_id, "nodeLabel": _NODE_LEVEL_LABEL[ttype],
                  "nodeTitle": after.get("name") or target_id,
@@ -249,66 +301,82 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
             by_id[target_id] = len(tactical) - 1
             touched_bc = touched_bc or item.get("boundedContextId")
             applied += 1
-        # I13: 자식요소 신규 추가(Property/VO/Enum) — 부모(보통 Aggregate) 항목에 병합.
-        # 부모 식별자는 표현마다 다르다: 라이브 create 는 `aggregateId`, Property create 는
-        # `updates.parentId`(=after.parentId). (모델모디파이어는 ValueObject targetType 이
-        # 없어 "VO 추가"가 Property 로 변환되므로 parentId 경로가 실사용 케이스다.)
-        elif d.get("action") == "create" and ttype in _CHILD_COLLECTION:
+            continue
+
+        # 자식요소 신규 생성(VO/Enum 노드, Aggregate property) — 부모 Aggregate 항목에 병합.
+        if action == "create" and ttype in _CHILD_COLLECTION:
             coll = _CHILD_COLLECTION[ttype]
-            parent_id = str(d.get("aggregateId") or d.get("parentId") or after.get("parentId") or "")
-            ai = resolve_idx(parent_id)
-            if ai is None and parent_id:
+            kind = "vo" if ttype == "valueobject" else ("enum" if ttype in ("enum", "enumeration") else "prop")
+            ai = resolve_idx(parent_ref) if parent_ref else None
+            if ai is None and parent_ref:
                 tactical.append({
-                    "nodeId": parent_id,
+                    "nodeId": parent_ref,
                     "nodeLabel": after.get("parentType") or d.get("parentType") or "Aggregate",
-                    "nodeTitle": d.get("parentName") or parent_id,
+                    "nodeTitle": d.get("parentName") or parent_ref,
                     "changeType": "MODIFY", "impactLevel": "MEDIUM",
                     "reason": "Chat 자식요소 추가", "boundedContextId": bc_id,
                 })
-                ai = by_id[parent_id] = len(tactical) - 1
+                ai = by_id[parent_ref] = len(tactical) - 1
+            if ai is None:  # D-1: 캔버스 id 로 부모 agg 역추적.
+                apid = _parent_agg_from_canvas_id(tactical, target_id, kind)
+                ai = resolve_idx(apid) if apid else None
             if ai is not None:
                 item = dict(tactical[ai])
                 arr = list(item.get(coll) or [])
-                # 자식 entry — 라우팅 메타(parentType/parentId)는 제외.
                 child = {k: v for k, v in after.items() if k not in ("parentType", "parentId")}
-                child.setdefault("name", d.get("targetName") or after.get("name") or target_id)
+                cname = d.get("targetName") or after.get("name") or target_id
+                child.setdefault("name", cname)
                 child.setdefault("nodeId", target_id)
                 arr.append(_strip_meta([child])[0])
                 item[coll] = arr
                 tactical[ai] = item
                 touched_bc = touched_bc or item.get("boundedContextId")
                 applied += 1
-        # 미리보기 자식요소 삭제/수정/이름변경(Property/VO/Enum) — 부모 항목 컬렉션을 직접 변경.
-        # 부모는 parentId(=updates.parentId)/aggregateId 로 식별한다. 미리보기 오버레이 자식은
-        # Neo4j id 가 없어(prop-noid-*) targetId 매칭이 불가하므로 nodeId/id→name 순으로 찾는다.
-        # 부모가 제안에 없으면(라이브 전용 Aggregate) 매칭 0 → applied 미증가(layer-2 백로그).
-        elif d.get("action") in ("delete", "update", "rename") and ttype in _CHILD_COLLECTION:
+                # A-1: VO/Enum 노드를 만들었으면 이후 필드/항목 draft 가 찾도록 locator 적재.
+                if ttype in ("valueobject", "enumeration", "enum") and target_id:
+                    new_child_locator[target_id] = (kind, ai, cname)
+            else:
+                unresolved.append(_unresolved(d, "신규 자식의 부모 Aggregate 미해소"))
+            continue
+
+        # 자식요소 삭제/수정/이름변경(Property/VO/Enum) — 원본(ops) 자식 포함(B-1).
+        if action in ("delete", "update", "rename") and ttype in _CHILD_COLLECTION:
             coll = _CHILD_COLLECTION[ttype]
-            parent_id = _child_parent_id(d, after)
-            ai = resolve_idx(parent_id)
+            kind = "vo" if ttype == "valueobject" else ("enum" if ttype in ("enum", "enumeration") else "prop")
+            ai = agg_parent_idx(d, after, target_id, kind)
             if ai is not None:
                 item = dict(tactical[ai])
+                # B-1: 원본 인텐트가 ops(obj_append)에 실은 자식을 item-level 배열로 이관해
+                #   삭제/이름변경/수정 매칭 대상이 되게 한다(종전엔 배열만 뒤져 ops 자식 미매칭).
+                _absorb_ops_children(item, coll)
                 arr = list(item.get(coll) or [])
-                j = _match_child_index(arr, d, after)
+                j = _match_child_index(arr, d, after, parent_id=item.get("nodeId"))
                 if j is not None:
-                    if d.get("action") == "delete":
+                    if action == "delete":
                         arr.pop(j)
-                    elif d.get("action") == "rename":
+                    elif action == "rename":
                         child = dict(arr[j])
                         child["name"] = d.get("targetName") or after.get("name") or child.get("name")
                         arr[j] = child
                     else:  # update — 변경 필드 병합(라우팅 메타 제외)
                         child = dict(arr[j])
                         for k, v in after.items():
-                            if k not in ("parentType", "parentId"):
+                            if k not in ("parentType", "parentId", "oldName"):
                                 child[k] = v
                         arr[j] = _strip_meta([child])[0]
                     item[coll] = arr
                     tactical[ai] = item
                     touched_bc = touched_bc or item.get("boundedContextId")
                     applied += 1
-        # I13: top-level 신규 요소(Command/Event/ReadModel/Policy) — 새 tactical 항목.
-        elif d.get("action") == "create" and ttype in _TOPLEVEL_LABEL and resolve_idx(target_id) is None:
+                else:
+                    tactical[ai] = item  # ops 흡수 결과(원본 자식 보존)는 기록.
+                    unresolved.append(_unresolved(d, "대상 자식요소 미해소"))
+            else:
+                unresolved.append(_unresolved(d, "자식요소의 부모 Aggregate 미해소"))
+            continue
+
+        # top-level 신규 요소(Command/Event/ReadModel/Policy) — 새 tactical 항목.
+        if action == "create" and ttype in _TOPLEVEL_LABEL and resolve_idx(target_id) is None:
             item = {
                 "nodeId": target_id, "nodeLabel": _TOPLEVEL_LABEL[ttype],
                 "nodeTitle": d.get("targetName") or after.get("name") or target_id,
@@ -321,14 +389,29 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
             tactical.append(item)
             by_id[target_id] = len(tactical) - 1
             applied += 1
+            continue
+
+        unresolved.append(_unresolved(d, f"지원하지 않는 편집 유형(action={action}, type={ttype})"))
 
     _write_tactical(proposal_id, tactical)
+
+    # E-2: 미해소(미반영) draft 를 경고 로그로 남긴다 — 무음 과대 카운트 방지.
+    if unresolved:
+        SmartLogger.log(
+            "WARNING",
+            "preview chat drafts: 일부 변경을 반영하지 못함(미해소).",
+            category="proposal_lifecycle.preview.edit.chat.unresolved",
+            params={"proposalId": proposal_id, "appliedCount": applied,
+                    "unresolvedCount": len(unresolved), "unresolved": unresolved},
+        )
+
     tree = build_data_preview(proposal_id, touched_bc) if touched_bc else {"_preview": {"saved": True}}
-    # 반영 건수를 메타로 실어 보내 프런트가 정직한 메시지를 띄우게 한다(I13).
+    # E-1: 반영/미반영 건수를 메타로 실어 프런트가 정직한 메시지를 띄우게 한다.
     if isinstance(tree, dict):
         tree.setdefault("_preview", {})
         if isinstance(tree["_preview"], dict):
             tree["_preview"]["appliedCount"] = applied
+            tree["_preview"]["unresolvedCount"] = len(unresolved)
     return tree
 
 
@@ -478,7 +561,7 @@ def _apply_enum_items_edit(enum_obj: dict, after: dict) -> bool:
     return changed
 
 
-def _match_child_index(arr: list, d: dict, after: dict) -> Optional[int]:
+def _match_child_index(arr: list, d: dict, after: dict, parent_id: Optional[str] = None) -> Optional[int]:
     """부모 컬렉션에서 대상 자식의 인덱스를 찾는다.
 
     미리보기 오버레이 자식은 Neo4j id 가 없을 수 있어(prop-noid-*) targetId 매칭이 불가하므로
@@ -486,19 +569,89 @@ def _match_child_index(arr: list, d: dict, after: dict) -> Optional[int]:
 
     rename 은 targetName 이 '새 이름'이라 저장된 '옛 이름' 자식과 일치하지 않는다. 프런트가
     updates.oldName 에 '옛 이름'을 실어 보내므로(delete/update 와 달리 rename 전용), 매칭 시
-    oldName 을 최우선으로 사용한다(없으면 기존 targetName/name 순 — delete/update 무변경)."""
+    oldName 을 최우선으로 사용한다.
+
+    D-1: LLM 이 비표준 슬러그 id(예: vo-AGG-order-ShippingAddress, enum-AGG-order-OrderStatus)를
+    만들면 nodeId 매칭이 실패한다. parent_id(소유 Aggregate id)가 주어지면 슬러그 꼬리(tail)를
+    떼어 이름 후보에 추가해 매칭한다(_norm_name 은 하이픈/대소문자를 무시하므로 'shipping-address'
+    ↔ 'ShippingAddress' 가 일치)."""
     target_id = str(d.get("targetId") or "")
-    name = after.get("oldName") or d.get("targetName") or after.get("name")
+    name_cands: list[str] = []
+    for cand in (after.get("oldName"), d.get("targetName"), after.get("name")):
+        if cand:
+            name_cands.append(_norm_name(cand))
+    tail = _slug_tail(target_id, parent_id)
+    if tail:
+        name_cands.append(_norm_name(tail))
     if target_id:
         for j, c in enumerate(arr):
             if isinstance(c, dict) and str(c.get("nodeId") or c.get("id") or "") == target_id:
                 return j
-    if name:
-        target_name = _norm_name(name)
+    if name_cands:
         for j, c in enumerate(arr):
-            if isinstance(c, dict) and _norm_name(c.get("name")) == target_name:
+            if isinstance(c, dict) and _norm_name(c.get("name")) in name_cands:
                 return j
     return None
+
+
+def _slug_tail(node_id: Any, parent_id: Optional[str]) -> Optional[str]:
+    """`<kind>-<aggId>-<tail>` 슬러그 자식 id 에서 tail(원본 이름 힌트)을 떼어낸다(원인 D).
+    parent_id(소유 Aggregate id)가 있어야 aggId 에 하이픈이 있어도 정확히 분리된다."""
+    s = str(node_id or "")
+    if parent_id:
+        for kind in ("vo", "enum", "prop"):
+            pfx = f"{kind}-{parent_id}-"
+            if s.startswith(pfx):
+                return s[len(pfx):]
+    return None
+
+
+def _parent_agg_from_canvas_id(tactical: list[dict], node_id: Any, kind: str) -> Optional[str]:
+    """자식 캔버스 id(`<kind>-<aggId>-...`, 인덱스/슬러그 모두)에서 소유 Aggregate id 를
+    역추적한다(원인 D). tacticalDiff 의 Aggregate nodeId 들과 prefix 매칭해 해소."""
+    s = str(node_id or "")
+    for it in tactical:
+        if (it.get("nodeLabel") or "") != "Aggregate":
+            continue
+        aid = str(it.get("nodeId") or "")
+        if aid and s.startswith(f"{kind}-{aid}-"):
+            return aid
+    return None
+
+
+def _absorb_ops_children(item: dict, coll: str) -> None:
+    """B-1: 해당 컬렉션의 obj_append ops(원본 인텐트 자식)를 item-level 배열로 이관하고 그 ops
+    를 제거한다. 이로써 원본 자식이 이후 item-level 매칭/삭제/수정/렌더 대상이 된다(이중 저장
+    해소). 중복 name 은 추가하지 않는다(이중 렌더 방지)."""
+    sd = item.get("semanticDiff") or {}
+    ops = list(sd.get("ops") or [])
+    if not ops:
+        return
+    arr = list(item.get(coll) or [])
+    names = {_norm_name(x.get("name")) for x in arr if isinstance(x, dict)}
+    kept: list[dict] = []
+    moved = False
+    for op in ops:
+        if op.get("op") == "obj_append" and op.get("field") == coll:
+            obj = op.get("obj_data") if isinstance(op.get("obj_data"), dict) else (
+                {"name": op.get("obj_name")} if op.get("obj_name") else None)
+            if obj:
+                if _norm_name(obj.get("name")) not in names:
+                    arr.append(_strip_meta([dict(obj)])[0])
+                    names.add(_norm_name(obj.get("name")))
+                moved = True
+                continue
+        kept.append(op)
+    if moved:
+        item[coll] = arr
+        item["semanticDiff"] = {**sd, "ops": kept}
+
+
+def _unresolved(d: dict, reason: str) -> dict:
+    """E-1: 미반영 draft 의 진단 레코드(프런트 메시지·로그용)."""
+    return {"changeId": d.get("changeId"), "action": d.get("action"),
+            "targetType": d.get("targetType"), "targetName": d.get("targetName"),
+            "targetId": d.get("targetId"), "reason": reason}
 
 
 # ---------------------------------------------------------------------------
