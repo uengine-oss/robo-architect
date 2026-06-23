@@ -283,20 +283,74 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
                 unresolved.append(_unresolved(d, "대상 Enum 미해소"))
             continue
 
+        # 043-fix5(RC-2) — top-level 노드(Command/Event/ReadModel/Aggregate/Policy) 삭제.
+        #   제안 전용(CREATE) 항목이면 tacticalDiff 에서 완전 제거, 라이브 항목이면
+        #   changeType=DELETE tombstone(build_design_preview 가 drop). 종전엔 삭제 분기가 없어
+        #   노드 레벨 merge 로 흡수돼 no-op + 과대보고였다. 자식 컬렉션 타입은 아래 전용 분기 사용.
+        if action == "delete" and ttype in _NODE_LEVEL_LABEL and ttype not in _CHILD_COLLECTION:
+            i = resolve_idx(target_id)
+            if i is not None and tactical[i] is not None:
+                it = tactical[i]
+                touched_bc = touched_bc or it.get("boundedContextId") or bc_id
+                if (it.get("changeType") or "") == "CREATE":
+                    tactical[i] = None  # 제안 전용 신규 → 완전 제거(말미 None 정리)
+                else:
+                    it["changeType"] = "DELETE"  # 라이브 → tombstone
+            else:
+                tactical.append({
+                    "nodeId": target_id, "nodeLabel": _NODE_LEVEL_LABEL[ttype],
+                    "nodeTitle": d.get("targetName") or target_id, "changeType": "DELETE",
+                    "impactLevel": "MEDIUM", "reason": "Chat 삭제 요청 반영", "boundedContextId": bc_id,
+                })
+                touched_bc = touched_bc or bc_id
+            applied += 1
+            continue
+
+        # connect — 반응 정책 레일(Event ─TRIGGERS→ Policy ─INVOKES→ Command)을 Policy 항목의
+        #   참조키로 반영한다. LLM 이 Policy 생성과 별개로 connect draft 를 함께 내는 경우가 있어
+        #   (create 가 이미 invokeCommandId 를 실으면 중복이지만) 여기서 멱등 반영해 "미반영"
+        #   오인을 막는다. INVOKES: source=Policy→invokeCommandId=target. TRIGGERS: source=Event,
+        #   target=Policy→triggerEventId=source.
+        if action == "connect":
+            ctype = str(d.get("connectionType") or "").upper()
+            src = str(d.get("sourceId") or "")
+            if ctype == "INVOKES":
+                pi = resolve_idx(src)
+                if pi is not None and tactical[pi] and tactical[pi].get("nodeLabel") == "Policy":
+                    tactical[pi]["invokeCommandId"] = target_id
+                    touched_bc = touched_bc or tactical[pi].get("boundedContextId")
+                    applied += 1
+                    continue
+            elif ctype == "TRIGGERS":
+                pi = resolve_idx(target_id)
+                if pi is not None and tactical[pi] and tactical[pi].get("nodeLabel") == "Policy":
+                    tactical[pi]["triggerEventId"] = src
+                    touched_bc = touched_bc or tactical[pi].get("boundedContextId")
+                    applied += 1
+                    continue
+            unresolved.append(_unresolved(d, f"connect 미해소(type={ctype or '?'})"))
+            continue
+
         # 노드 레벨 편집(Aggregate/Command/Event/ReadModel update·rename) — 자식 컬렉션 타입 제외.
+        # 043-fix5(RC-1): action 가드 추가 — create/delete/connect 가 이 MODIFY 분기에 가로채여
+        #   top-level 생성이 changeType=MODIFY 로 오저장되던 결함을 막는다. update/rename 만 처리.
         i = resolve_idx(target_id)
-        if i is not None and ttype not in _CHILD_COLLECTION:
+        if i is not None and ttype not in _CHILD_COLLECTION and action in ("update", "rename"):
             tactical[i] = _normalize_item_from_edit(tactical[i], _draft_after_to_edit(tactical[i], after), bc_id)
+            if (tactical[i].get("nodeLabel") or ttype) == "Policy":
+                _apply_policy_extras(tactical[i], after)
             touched_bc = touched_bc or tactical[i].get("boundedContextId")
             applied += 1
             continue
-        if target_id and ttype in _NODE_LEVEL_LABEL and i is None:
+        if target_id and ttype in _NODE_LEVEL_LABEL and i is None and action in ("update", "rename"):
             item = _normalize_item_from_edit(
                 {"nodeId": target_id, "nodeLabel": _NODE_LEVEL_LABEL[ttype],
                  "nodeTitle": after.get("name") or target_id,
                  "changeType": "MODIFY", "impactLevel": "MEDIUM", "reason": "Chat 수정 요청 반영"},
                 _draft_after_to_edit({}, after), bc_id,
             )
+            if _NODE_LEVEL_LABEL[ttype] == "Policy":
+                _apply_policy_extras(item, after)
             tactical.append(item)
             by_id[target_id] = len(tactical) - 1
             touched_bc = touched_bc or item.get("boundedContextId")
@@ -375,24 +429,39 @@ def apply_chat_drafts(proposal_id: str, drafts: list[dict], approved_ids: list[s
                 unresolved.append(_unresolved(d, "자식요소의 부모 Aggregate 미해소"))
             continue
 
-        # top-level 신규 요소(Command/Event/ReadModel/Policy) — 새 tactical 항목.
+        # top-level 신규 요소(Command/Event/ReadModel/Aggregate/Policy) — 새 tactical 항목.
+        # 043-fix5(RC-1): build_design_preview 가 렌더하려면 changeType=CREATE + 한글 제목 +
+        #   렌더 필수 참조키(Command:aggregateId, Event:commandId, ReadModel/Aggregate/Policy:
+        #   boundedContextId)가 필요하다. draft 에서 취하고, 없으면 bcId+기존 tacticalDiff 로
+        #   서버측 보강한다(LLM 이 참조키를 자주 누락하므로). fields 에는 참조키/메타를 제외한
+        #   설계 필드만 싣는다.
         if action == "create" and ttype in _TOPLEVEL_LABEL and resolve_idx(target_id) is None:
+            label = _TOPLEVEL_LABEL[ttype]
             item = {
-                "nodeId": target_id, "nodeLabel": _TOPLEVEL_LABEL[ttype],
+                "nodeId": target_id, "nodeLabel": label,
                 "nodeTitle": d.get("targetName") or after.get("name") or target_id,
                 "changeType": "CREATE", "impactLevel": "MEDIUM",
                 "reason": "Chat 수정 요청 반영",
-                "boundedContextId": bc_id or str(d.get("aggregateId") or "") or None,
             }
-            if after:
-                item["fields"] = {k: v for k, v in after.items() if k not in _META_KEYS}
+            item.update(_derive_create_refs(tactical, label, d, after, bc_id))
+            # invokeCommandId/triggerEventId 는 _derive_create_refs 가 top-level 로 올렸으므로
+            # fields 에서 제외한다(중복·오해소 방지). condition 등 도메인 필드는 fields 로 보존.
+            fld = {k: v for k, v in (after or {}).items()
+                   if k not in _META_KEYS
+                   and k not in ("aggregateId", "commandId", "parentId", "parentType", "name",
+                                 "invokeCommandId", "triggerEventId")}
+            if fld:
+                item["fields"] = fld
             tactical.append(item)
             by_id[target_id] = len(tactical) - 1
+            touched_bc = touched_bc or item.get("boundedContextId") or bc_id
             applied += 1
             continue
 
         unresolved.append(_unresolved(d, f"지원하지 않는 편집 유형(action={action}, type={ttype})"))
 
+    # 043-fix5: DELETE 로 제거 표시된(None) 항목을 실제로 떨어낸다.
+    tactical = [it for it in tactical if it is not None]
     _write_tactical(proposal_id, tactical)
 
     # E-2: 미해소(미반영) draft 를 경고 로그로 남긴다 — 무음 과대 카운트 방지.
@@ -427,10 +496,78 @@ _TOPLEVEL_LABEL = {
     "event": "Event",
     "readmodel": "ReadModel",
     "policy": "Policy",
+    # 043-fix5: Aggregate 도 top-level CREATE 라우팅 대상(종전 누락 → CREATE 가 MODIFY 로 오저장).
+    "aggregate": "Aggregate",
 }
-# 노드 레벨 라벨(라이브 노드 첫 수정 시 MODIFY 신규 생성용). Aggregate 포함 — _TOPLEVEL_LABEL
-# (CREATE 라우팅 전용)과 달리 Aggregate 도 노드 레벨 update 대상이다.
+# 노드 레벨 라벨(라이브 노드 첫 수정 시 MODIFY 신규 생성용). Aggregate 포함.
 _NODE_LEVEL_LABEL = {**_TOPLEVEL_LABEL, "aggregate": "Aggregate"}
+
+
+def _derive_create_refs(tactical: list[dict], label: str, d: dict, after: dict,
+                        bc_id: Optional[str]) -> dict:
+    """top-level CREATE 노드가 build_design_preview 에 렌더되도록 필수 참조키를 보강한다.
+
+    Command→aggregateId, Event→commandId, 그 외(ReadModel/Aggregate/Policy)→boundedContextId.
+    draft(after/d)에 있으면 그대로, 없으면 bc_id + 기존 tacticalDiff 로 서버측 추론한다
+    (LLM 이 참조키를 자주 누락하므로). 추론 실패 시 해당 키는 비운다(렌더 누락은 unresolved 가
+    아니라 best-effort — 적어도 changeType=CREATE 로는 저장됨)."""
+    refs: dict[str, Any] = {}
+    # 이 BC 에 속한 Aggregate id 집합(자식 Command/Event 의 BC 소속 판정용).
+    agg_in_bc = {str(it.get("nodeId")) for it in tactical
+                 if it and it.get("nodeLabel") == "Aggregate"
+                 and str(it.get("boundedContextId") or "") == str(bc_id or "")}
+    if label == "Command":
+        agg = d.get("aggregateId") or after.get("aggregateId") or after.get("parentId")
+        if not agg:
+            agg = next(iter(agg_in_bc), None)  # BC 의 (대표) Aggregate
+        if agg:
+            refs["aggregateId"] = str(agg)
+    elif label == "Event":
+        cmd = d.get("commandId") or after.get("commandId")
+        if not cmd:
+            agg = d.get("aggregateId") or after.get("aggregateId") or after.get("parentId")
+            # 같은 BC 의 Command 만 후보로(다른 BC 의 첫 Command 로 잘못 연결되는 것 방지).
+            cands = [str(it.get("nodeId")) for it in tactical
+                     if it and it.get("nodeLabel") == "Command"
+                     and str(it.get("aggregateId") or "") in agg_in_bc
+                     and (not agg or str(it.get("aggregateId") or "") == str(agg))]
+            # 같은 배치에서 막 만든 형제 Command(가장 최근 추가)를 우선 — 멀티-생성
+            # ("Command + 그 결과 Event")에서 Event 를 의도한 새 Command 에 연결한다.
+            cmd = cands[-1] if cands else None
+        if cmd:
+            refs["commandId"] = str(cmd)
+    else:  # ReadModel / Aggregate / Policy → BC 직속
+        refs["boundedContextId"] = bc_id or str(d.get("aggregateId") or "") or None
+        if label == "Policy":
+            # 반응 정책 레일 참조키(Event ─TRIGGERS→ Policy ─INVOKES→ Command). draft(updates/
+            # after 또는 d)에서 취해 **top-level** 로 올린다 — build_design_preview 가 이 키들로
+            # INVOKES/TRIGGERS 엣지를 긋고 Policy 를 호출 Command 왼쪽에 배치한다. fields 에만
+            # 있으면(아래 fld) 엣지/배치가 누락된다.
+            inv = d.get("invokeCommandId") or after.get("invokeCommandId")
+            trg = d.get("triggerEventId") or after.get("triggerEventId")
+            if inv:
+                refs["invokeCommandId"] = str(inv)
+            if trg:
+                refs["triggerEventId"] = str(trg)
+    return refs
+
+
+def _apply_policy_extras(item: dict, after: dict) -> bool:
+    """Policy 전용 필드를 항목에 반영(Chat update 경로). `condition` 은 fields(도메인 속성)로,
+    `invokeCommandId`/`triggerEventId` 는 top-level 참조키로 둔다 — build_design_preview 가
+    후자로 INVOKES/TRIGGERS 엣지와 좌측 배치를 결정하므로 fields 가 아니라 top-level 이어야 한다.
+    (_draft_after_to_edit 는 이 키들을 통과시키지 않아 별도 처리한다.)"""
+    changed = False
+    if after.get("condition") is not None:
+        f = dict(item.get("fields") or {})
+        f["condition"] = after["condition"]
+        item["fields"] = f
+        changed = True
+    for k in ("invokeCommandId", "triggerEventId"):
+        if after.get(k):
+            item[k] = str(after[k])
+            changed = True
+    return changed
 
 
 def _child_parent_id(d: dict, after: dict) -> str:

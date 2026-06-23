@@ -762,6 +762,19 @@ For Enumeration (Enum) item actions (adding/editing/removing items of an Enum):
 - targetId MUST be the selected Enumeration node id (e.g. "enum-AGG-order-0"); targetName = the Enum name.
 - In updates include one or more of: itemsToAdd (list), itemsToRemove (list), itemsRename (object {{old:new}}).
 - NEVER refuse: this is the supported mechanism for Enum item edits.
+
+For Policy actions (반응 정책 — Event ─TRIGGERS→ Policy ─INVOKES→ Command):
+- targetType MUST be "Policy".
+- create/update: put fields inside `updates`. Supported keys:
+  - "description": 정책 설명.
+  - "condition": 트리거 조건(자연어 문자열).
+  - "invokeCommandId": 이 정책이 실행(INVOKES)하는 Command 의 id.
+  - "triggerEventId": 이 정책을 트리거(TRIGGERS)하는 Event 의 id.
+- When the user asks to add/create a Policy ON or FOR a selected Command, set
+  updates.invokeCommandId to that Command's id, and bcId to that Command's bcId. Use the
+  Command's id from the Selected Nodes block. targetId may be a temporary id like "pol-temp-1".
+- For delete, action MUST be "delete", targetType "Policy", targetId the Policy's id.
+- NEVER refuse: Policy create / update / delete are all supported.
 """
         messages.append(HumanMessage(content=current_message))
 

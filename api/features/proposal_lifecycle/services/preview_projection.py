@@ -42,6 +42,9 @@ LABEL_TO_VIEWER: dict[str, str] = {
     "Command": "design",
     "Event": "design",
     "ReadModel": "design",
+    # Policy 는 BC 직속(HAS_POLICY) 반응 정책으로, Event→Policy→Command 레일에서 호출
+    # Command 왼쪽에 놓인다. Design 캔버스에 BC 그래프를 투영해 포커스 + 인스펙터를 연다.
+    "Policy": "design",
     "UI": "design",
     "Screen": "design",
     "UiFlow": "design",
@@ -58,7 +61,8 @@ VIEWER_TO_TAB = {"data": "Data", "design": "Design", "process": "Process", "proc
 # ReadModel 은 Aggregate 소유 관계가 없어 소속 BC 만 해소해 BC 직속으로 불러온다.
 # 다른 design 라벨(UI/Screen/UiFlow)은 기존처럼 라이브 뷰어를 읽기 전용 맥락으로만 연다
 # (캔버스 오버레이 로드 없음 — 회귀 방지).
-DESIGN_CANVAS_LABELS = {"Command", "Event", "ReadModel"}
+# Policy 는 Aggregate 소유가 없어 BC 직속이며, 호출 Command 왼쪽에 배치(invokeCommandId)된다.
+DESIGN_CANVAS_LABELS = {"Command", "Event", "ReadModel", "Policy"}
 
 # 프런트 오케스트레이션이 배선된 뷰어. data 는 오버레이 미리보기, design/process/processes 는
 # 라이브 읽기 전용 포커스(인텐트가 이 타입을 신규 생성하는 일이 드뭄 — research D5).
@@ -425,11 +429,18 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
 
     by_id = {str(it.get("nodeId")): it for it in tactical if it.get("nodeId")}
 
+    def _is_deleted(nid: str) -> bool:
+        """043-fix5: 라이브 노드에 대한 DELETE tombstone(tacticalDiff changeType=DELETE)이면
+        투영에서 제외(삭제 반영). 제안 전용 CREATE 항목 삭제는 apply 단계에서 항목 자체가
+        제거되므로 여기 도달하지 않는다."""
+        it = by_id.get(str(nid))
+        return bool(it and (it.get("changeType") or "").upper() == "DELETE")
+
     # --- 1) 라이브 Aggregate 와 자식(Command/Event/ReadModel/UI) ---
     if isinstance(live_tree, dict):
         for agg in live_tree.get("aggregates", []) or []:
             aid = str(agg.get("id") or "")
-            if not aid:
+            if not aid or _is_deleted(aid):
                 continue
             agg_node = {k: v for k, v in agg.items() if k not in ("commands", "events")}
             agg_node.update({"id": aid, "type": "Aggregate", "bcId": bc_id})
@@ -444,7 +455,7 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
                 rel(bc_id, aid, "HAS_AGGREGATE")
             for cmd in agg.get("commands", []) or []:
                 cid = str(cmd.get("id") or "")
-                if not cid:
+                if not cid or _is_deleted(cid):
                     continue
                 cmd_node = {**cmd, "id": cid, "type": "Command", "bcId": bc_id, "parentId": aid}
                 _tag(cmd_node, overlay_live(cmd_node, cid))
@@ -452,7 +463,7 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
                     rel(aid, cid, "HAS_COMMAND")
                 for evt in cmd.get("events", []) or []:
                     eid = str(evt.get("id") or "")
-                    if not eid:
+                    if not eid or _is_deleted(eid):
                         continue
                     evt_node = {**evt, "id": eid, "type": "Event", "bcId": bc_id}
                     _tag(evt_node, overlay_live(evt_node, eid))
@@ -460,7 +471,7 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
                         rel(cid, eid, "EMITS")
         for rm in live_tree.get("readmodels", []) or []:
             rid = str(rm.get("id") or "")
-            if not rid:
+            if not rid or _is_deleted(rid):
                 continue
             rm_node = {**rm, "id": rid, "type": "ReadModel", "bcId": bc_id}
             _tag(rm_node, overlay_live(rm_node, rid))
@@ -552,6 +563,42 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
         _tag(node, SOURCE_TEMPORARY)
         if push(node):
             rel(bc_id, uid, "HAS_UI")
+
+    # --- 7) Policy (라이브 + CREATE) — Event→Policy→Command 레일 ---
+    # Policy 는 Aggregate 소유가 없어 BC 직속이며, 호출 Command(invokeCommandId) 왼쪽에
+    # 배치된다(프런트 레이아웃이 invokeCommandId 로 위치 결정). INVOKES/TRIGGERS 엣지는
+    # 양끝이 캔버스에 있을 때만 건다 — 그래서 모든 Aggregate/Command/Event/ReadModel/UI 를
+    # push 한 **뒤** 마지막에 처리한다(예: 트리거 Event 가 cross-BC 라 이 캔버스에 없으면
+    # TRIGGERS 엣지를 생략). 라이브 Policy 는 MODIFY 오버레이를, CREATE 는 신규 태그를 단다.
+    pol_specs: list[tuple[str, dict, Any, Any]] = []  # (pid, node, triggerEventId, invokeCommandId)
+    if isinstance(live_tree, dict):
+        for pol in live_tree.get("policies", []) or []:
+            pid = str(pol.get("id") or "")
+            if not pid or _is_deleted(pid):
+                continue
+            node = {k: v for k, v in pol.items() if k not in ("triggerEventId", "invokeCommandId")}
+            node.update({"id": pid, "type": "Policy", "bcId": bc_id})
+            _tag(node, overlay_live(node, pid))
+            pol_specs.append((pid, node, pol.get("triggerEventId"), pol.get("invokeCommandId")))
+    for i, it in enumerate(tactical):
+        if (it.get("changeType") or "") != "CREATE" or it.get("nodeLabel") != "Policy":
+            continue
+        if str(it.get("boundedContextId") or "") != str(bc_id):
+            continue
+        pid = str(it.get("nodeId") or temp_id(proposal_id, i))
+        title = it.get("nodeTitle") or pid
+        node = {"id": pid, "name": title, "displayName": title, "type": "Policy", "bcId": bc_id}
+        _populate_from_deep_item(node, it)
+        _tag(node, SOURCE_TEMPORARY)
+        pol_specs.append((pid, node, it.get("triggerEventId"), it.get("invokeCommandId")))
+    for pid, node, trig_evt, inv_cmd in pol_specs:
+        if inv_cmd:
+            node["invokeCommandId"] = str(inv_cmd)
+        if push(node):
+            if trig_evt and str(trig_evt) in seen:
+                rel(str(trig_evt), pid, "TRIGGERS")
+            if inv_cmd and str(inv_cmd) in seen:
+                rel(pid, str(inv_cmd), "INVOKES")
 
     bc_ctx = {"id": bc_id, "name": bc_name, "displayName": bc_name}
     return {

@@ -14,6 +14,9 @@ export const LABEL_TO_VIEWER = {
   // 위치 파악(J1) + 인스펙터로 미리보기 정보 확인/수정(J2). Command/Event 는 소유 Aggregate
   // 안에, ReadModel 은 BC 직속으로 배치(Aggregate 소유 관계 없음). (백엔드 /resolve 가 최종 권위.)
   Command: 'design', Event: 'design', ReadModel: 'design',
+  // Policy 는 BC 직속 반응 정책(Event→Policy→Command). Design 캔버스에 BC 그래프를 투영해
+  // 호출 Command 왼쪽에 Policy 노드를 표시 + 인스펙터로 미리보기(백엔드 /resolve 가 최종 권위).
+  Policy: 'design',
   UI: 'design', Screen: 'design', UiFlow: 'design',
   Process: 'process', BpmnFlow: 'process',
   Journey: 'processes', EventModel: 'processes',
