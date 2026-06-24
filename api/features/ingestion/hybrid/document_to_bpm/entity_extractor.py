@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from api.features.ingestion.hybrid.contracts import (
     BpmActor,
+    BpmFlowDTO,
+    BpmGatewayDTO,
     BpmProcess,
     BpmSequenceDTO,
     BpmSkeleton,
@@ -46,14 +48,22 @@ SYSTEM_PROMPT = """당신은 업무 프로세스 분석가입니다.
    일반 기술 용어(API, DB, transaction) 는 제외.
    예: ["자동이체", "계좌 등록", "실시간 인증", "카드번호"]
 3) actors: 이 프로세스에서 업무를 수행하는 주체. 예: 신청자, 담당자, 승인자, 시스템.
-4) tasks: 한 Actor가 한 의미 단위로 수행하는 업무 단계 목록 (linear order).
+4) tasks: 한 Actor가 한 의미 단위로 수행하는 업무 단계 목록 (주 흐름 순서).
    - 코드의 단일 함수가 아니라 "하나의 업무 활동" 단위.
    - 예: "신청 접수", "자격 검토", "승인 처리", "결과 통보".
+5) gateways (분기점, 있을 때만): 업무 흐름이 **조건에 따라 갈라지는 지점**.
+   - 문서에 "~에 따라", "~인 경우", "~면 …, 아니면 …", "분기", "판단", "결정" 같은
+     표현이 있으면 그 분기점을 gateway 로 추출.
+   - 예: "결제수단 종류 판단" → 분기: "은행"→[은행 본인확인], "카드"→[카드 본인확인].
+   - 각 gateway: name(판단명) + after_task(이 판단 직전 Task 이름) +
+     branches(각 갈래의 condition 라벨 + to_task 대상 Task 이름).
+   - 분기가 없는 순수 선형 프로세스면 gateways 는 빈 배열로.
 
 규칙:
 - 기술 구현 상세(함수명, 라이브러리, SQL) 무시.
 - 각 Task에 수행 Actor 를 매핑. Task 이름은 동사구로 짧게.
-- 문서에 없는 내용은 만들어내지 마세요.
+- 문서에 없는 내용은 만들어내지 마세요. gateway 의 after_task/to_task 는 반드시
+  추출한 tasks 의 name 과 정확히 일치해야 합니다.
 - 문서가 단일 프로세스만 기술하면 processes 길이 1 로 반환.
 """
 
@@ -82,6 +92,23 @@ class _ExtractedTask(BaseModel):
     source_section: str = ""
 
 
+class _ExtractedBranch(BaseModel):
+    condition: str = Field(description="Branch label / guard, e.g. '은행 자동납부'")
+    to_task: str = Field(description="Target task name this branch leads to (must match a task name)")
+
+
+class _ExtractedGateway(BaseModel):
+    name: str = Field(description="Decision point name, e.g. '결제수단 종류 판단'")
+    gateway_type: str = Field(
+        default="exclusive",
+        description="exclusive (배타적 택1) | parallel (동시) | inclusive (다중)",
+    )
+    after_task: str = Field(description="Name of the task this decision immediately follows")
+    branches: list[_ExtractedBranch] = Field(
+        default_factory=list, description="2+ alternative paths out of this gateway",
+    )
+
+
 class _ExtractedProcess(BaseModel):
     name: str = Field(description="Human-readable Korean process name (noun phrase)")
     domain_keywords: list[str] = Field(
@@ -89,7 +116,11 @@ class _ExtractedProcess(BaseModel):
         description="3~8 domain terms for retrieval; exclude generic tech terms",
     )
     actors: list[_ExtractedActor]
-    tasks: list[_ExtractedTask] = Field(description="Ordered linearly as they appear in the flow")
+    tasks: list[_ExtractedTask] = Field(description="Ordered along the main flow as they appear")
+    gateways: list[_ExtractedGateway] = Field(
+        default_factory=list,
+        description="Decision/branch points; empty for a purely linear process",
+    )
 
 
 class _ExtractionResult(BaseModel):
@@ -153,9 +184,11 @@ async def extract_bpm_from_document(
 
         tasks: list[BpmTaskDTO] = []
         task_ids: list[str] = []
+        task_id_by_name: dict[str, str] = {}
         for idx, t in enumerate(proc.tasks):
             tid = f"task_{uuid.uuid4().hex[:8]}"
             task_ids.append(tid)
+            task_id_by_name[t.name.strip()] = tid
             actor_id = actor_id_by_name.get(t.actor)
             tasks.append(BpmTaskDTO(
                 id=tid,
@@ -165,6 +198,35 @@ async def extract_bpm_from_document(
                 actor_ids=[actor_id] if actor_id else [],
                 source_section=t.source_section or None,
             ))
+
+        # Gateways + branch flows. Resolve after_task/to_task names against the
+        # extracted tasks; skip a gateway whose anchor task can't be resolved
+        # (LLM hallucinated a name) so we never persist a dangling decision.
+        actor_of_task = {t.id: (t.actor_ids[0] if t.actor_ids else None) for t in tasks}
+        gateways: list[BpmGatewayDTO] = []
+        flows: list[BpmFlowDTO] = []
+        for g in (proc.gateways or []):
+            after_id = task_id_by_name.get((g.after_task or "").strip())
+            targets = [(b.condition, task_id_by_name.get((b.to_task or "").strip()))
+                       for b in (g.branches or [])]
+            targets = [(cond, tid) for cond, tid in targets if tid]
+            if not after_id or len(targets) < 2:
+                continue  # not a real, resolvable branch point
+            gw_id = f"gw_{uuid.uuid4().hex[:8]}"
+            gw_actor = actor_of_task.get(after_id)
+            gateways.append(BpmGatewayDTO(
+                id=gw_id, name=g.name,
+                gateway_type=(g.gateway_type or "exclusive").strip().lower(),
+                actor_ids=[gw_actor] if gw_actor else [],
+            ))
+            flows.append(BpmFlowDTO(
+                id=f"flow_{uuid.uuid4().hex[:8]}", source_id=after_id, target_id=gw_id,
+            ))
+            for cond, tid in targets:
+                flows.append(BpmFlowDTO(
+                    id=f"flow_{uuid.uuid4().hex[:8]}", source_id=gw_id, target_id=tid,
+                    name=(cond or "").strip(),
+                ))
 
         pid = _process_id(source_pdf_name or "", session_id, proc.name)
         process_dto = BpmProcess(
@@ -180,12 +242,17 @@ async def extract_bpm_from_document(
             a.process_id = pid
         for t in tasks:
             t.process_id = pid
+        for g in gateways:
+            g.process_id = pid
+        for f in flows:
+            f.process_id = pid
         sequence = BpmSequenceDTO(
             id=f"seq_{uuid.uuid4().hex[:8]}", name="Main",
             task_ids=task_ids, process_id=pid,
         )
         skeletons.append(BpmSkeleton(
             actors=actors, tasks=tasks, sequences=[sequence],
+            gateways=gateways, flows=flows,
             process=process_dto,
         ))
 

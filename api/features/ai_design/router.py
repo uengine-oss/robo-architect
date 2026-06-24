@@ -136,7 +136,9 @@ async def html_edit(ui_node_id: str, req: Request) -> dict[str, Any]:
 
     try:
         llm = get_llm()
-        resp = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        # async endpoint → must not call sync .invoke() (blocking httpx read on
+        # the event loop freezes the whole server if OpenAI stalls). Use ainvoke.
+        resp = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
         raw_html = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
         if not isinstance(raw_html, str):
             raw_html = str(raw_html)

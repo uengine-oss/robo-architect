@@ -126,7 +126,7 @@ async def validate_requirement(req: ValidateRequest, request: Request) -> Valida
     """요구사항의 DDD 적합성·입도·정합성을 검증하고 교정안을 제안(비차단)."""
     try:
         structured = get_llm().with_structured_output(_LLMFindings)
-        result: _LLMFindings = structured.invoke(
+        result: _LLMFindings = await structured.ainvoke(
             [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=_build_prompt(req))]
         )
         findings = result.findings or []

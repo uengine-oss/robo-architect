@@ -104,3 +104,6 @@ frontend/dist/
 .codegraph/
 .cursor/
 .mcp.json
+
+# pdf2bpmn real secrets (use deploy/secrets.example.yaml as template)
+deploy/secrets.yaml

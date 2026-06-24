@@ -192,7 +192,12 @@ Return the JSON object now."""
     provider, model = get_llm_provider_model()
     t0 = time.perf_counter()
     try:
-        response = ctx.llm.invoke(
+        # MUST be async (ainvoke): this runs inside an async-generator SSE phase,
+        # so a *sync* .invoke() does a blocking httpx read to OpenAI on the event
+        # loop — a stalled stream then freezes the entire server (every request,
+        # incl. the Figma plugin, times out). ainvoke uses AsyncOpenAI so a slow
+        # call only suspends this coroutine, not the loop.
+        response = await ctx.llm.ainvoke(
             [build_system_message(UI_FLOW_SYSTEM_PROMPT), HumanMessage(content=prompt)]
         )
         llm_ms = int((time.perf_counter() - t0) * 1000)

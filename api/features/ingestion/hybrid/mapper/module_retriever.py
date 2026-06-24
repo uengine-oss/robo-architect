@@ -16,6 +16,7 @@ side (see §B "MODULE 임베딩 캐싱").
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Optional
 
@@ -148,8 +149,11 @@ async def retrieve_top_modules(
         return []
 
     summaries = [r["summary"] for r in rows]
-    module_vecs = cache.embed_many(summaries)
-    query_vec = cache.embed(query)
+    # Off-loop: embed_many/embed make blocking OpenAI HTTPS calls; running them
+    # on the event loop (this is awaited from the async retrieval orchestrator)
+    # would freeze the whole server while OpenAI is slow.
+    module_vecs = await asyncio.to_thread(cache.embed_many, summaries)
+    query_vec = await asyncio.to_thread(cache.embed, query)
     if not query_vec:
         return []
 

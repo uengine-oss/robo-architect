@@ -460,7 +460,9 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         try:
             from api.features.ingestion.workflow.post_coverage import reconcile_best_effort
 
-            reconcile_best_effort()
+            # reconcile_bc does synchronous LLM .invoke() — run off the event
+            # loop so it can't freeze the server while OpenAI is slow.
+            await asyncio.to_thread(reconcile_best_effort)
         except Exception as e:  # noqa: BLE001 — best-effort, never break ingestion
             SmartLogger.log(
                 "WARN",

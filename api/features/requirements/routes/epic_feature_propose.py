@@ -83,7 +83,7 @@ async def propose_epic(req: EpicProposeRequest, request: Request) -> EpicPropose
     prompt = f"설명: {req.text}\n\n기존 Bounded Context: {', '.join(existing) or '(없음)'}"
     try:
         structured = get_llm().with_structured_output(_LLMEpics)
-        result: _LLMEpics = structured.invoke(
+        result: _LLMEpics = await structured.ainvoke(
             [SystemMessage(content=_EPIC_SYSTEM), HumanMessage(content=prompt)]
         )
         proposals = [p for p in (result.proposals or []) if (p.name or "").strip()]
@@ -111,7 +111,7 @@ async def propose_feature(req: FeatureProposeRequest, request: Request) -> Featu
     )
     try:
         structured = get_llm().with_structured_output(_LLMFeatures)
-        result: _LLMFeatures = structured.invoke(
+        result: _LLMFeatures = await structured.ainvoke(
             [SystemMessage(content=_FEATURE_SYSTEM), HumanMessage(content=prompt)]
         )
         proposals = []

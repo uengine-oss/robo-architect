@@ -408,7 +408,7 @@ Select appropriate components and arrange them top-to-bottom for a mobile screen
     # Call LLM
     llm = get_llm()
     try:
-        resp = llm.invoke([
+        resp = await llm.ainvoke([
             build_system_message(system_prompt),
             HumanMessage(content=user_prompt),
         ])

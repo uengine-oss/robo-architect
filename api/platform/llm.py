@@ -110,8 +110,31 @@ def get_llm(
             "Do not pass 'model' via MODEL_KWARGS/kwargs; use LLM_MODEL env var or get_llm(model=...)."
         )
 
+    # Network safety net (ALL providers): a half-dead streaming connection with
+    # NO deadline blocks the single uvicorn event loop forever (observed: the
+    # loop wedged on a blocking `socket.recv()` waiting for an OpenAI SSE chunk
+    # that never arrived, leaking CLOSE_WAIT sockets — every other request,
+    # incl. the Figma plugin websocket/poll, then timed out). A bounded
+    # per-request read timeout + a couple of retries turns "hang forever" into
+    # "raise after a bit". Callers can override via get_llm(timeout=...,
+    # max_retries=...) or MODEL_KWARGS.
+    from api.platform.env import env_int as _env_int_t
+
+    _read_to = float(_env_int_t("LLM_READ_TIMEOUT_S", 120))
+    effective_kwargs.setdefault("max_retries", 2)
+
     if resolved_provider == "openai":
         from langchain_openai import ChatOpenAI
+
+        # Granular httpx timeout: tight READ bound kills a stalled SSE stream,
+        # while connect/pool stay generous. ChatOpenAI forwards this to the
+        # underlying openai/httpx client.
+        if "timeout" not in effective_kwargs:
+            import httpx as _httpx
+
+            effective_kwargs["timeout"] = _httpx.Timeout(
+                connect=15.0, read=_read_to, write=60.0, pool=15.0
+            )
 
         # Allow pointing at any OpenAI-compatible server (e.g. self-hosted vLLM,
         # LocalAI, OpenRouter). Honor either `OPENAI_BASE_URL` (modern) or
@@ -125,6 +148,7 @@ def get_llm(
     if resolved_provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
+        effective_kwargs.setdefault("timeout", _read_to)
         return ChatAnthropic(model=resolved_model, **effective_kwargs)
 
     # resolved_provider == "google"
@@ -140,6 +164,7 @@ def get_llm(
 
     from langchain_google_genai import ChatGoogleGenerativeAI
 
+    effective_kwargs.setdefault("timeout", _read_to)
     return ChatGoogleGenerativeAI(model=resolved_model, **effective_kwargs)
 
 

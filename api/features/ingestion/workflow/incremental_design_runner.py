@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncGenerator
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
@@ -110,7 +111,8 @@ async def run_design_for_user_stories(
         try:
             from api.features.ingestion.workflow.post_coverage import reconcile_best_effort
 
-            reconcile_best_effort(list(target_bc_ids) or None)
+            # reconcile_bc does synchronous LLM .invoke() — run off the event loop.
+            await asyncio.to_thread(reconcile_best_effort, list(target_bc_ids) or None)
         except Exception:  # noqa: BLE001 — best-effort
             pass
 

@@ -20,6 +20,7 @@ Design notes:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass, field
@@ -376,7 +377,12 @@ async def run_agentic_retrieval(
     # ------ Step 2+3: per-task candidate filter + LLM validator ------
     for task in tasks:
         module_fqns = [c.fqn for c in per_task_modules.get(task.id, []) if c.fqn]
-        candidates = _candidates_for_task(
+        # _candidates_for_task does synchronous OpenAI embedding I/O (cache.embed);
+        # run it off the event loop so a slow embeddings call can't freeze the
+        # whole server (this is the document-upload-only mapping phase — the
+        # blocking embed here was the cause of the UI-generation hang).
+        candidates = await asyncio.to_thread(
+            _candidates_for_task,
             task=task, process=process, rules=rules,
             contexts_by_rule=ctx_by_rule, module_fqns=module_fqns,
             top_k=bl_top_k, cache=cache, actor_name_by_id=actor_name_by_id,
@@ -432,9 +438,11 @@ async def run_agentic_retrieval(
                 parts = [process.name, *(process.domain_keywords or []), task.name]
                 if task.description:
                     parts.append(task.description)
-                qv = cache.embed(" ".join(p for p in parts if p))
-                rv = cache.embed(
-                    f"{cand.context.given}\n{cand.context.when}\n{cand.context.then}"
+                # Off-loop: cache.embed makes a blocking OpenAI HTTPS call.
+                qv = await asyncio.to_thread(cache.embed, " ".join(p for p in parts if p))
+                rv = await asyncio.to_thread(
+                    cache.embed,
+                    f"{cand.context.given}\n{cand.context.when}\n{cand.context.then}",
                 )
                 score = max(0.0, cosine(qv, rv))
             accepted_this_task.append(AcceptedMapping(

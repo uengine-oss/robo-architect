@@ -2,6 +2,11 @@
 import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import BpmnViewer from 'bpmn-js/lib/NavigatedViewer'
+import { layoutProcess } from 'bpmn-auto-layout'
+// process-gpt's custom renderer (cream tasks, Korean text wrapping, colored
+// events/lanes). Same bpmn-js engine — this is the module that makes their
+// diagrams look the way they do; robo now renders identically.
+import customBpmnModule from '@/features/canvas/customBpmn'
 import BpmnInspectorPanel from './BpmnInspectorPanel.vue'
 import HybridTaskInspector from './HybridTaskInspector.vue'
 import HybridReviewModal from './HybridReviewModal.vue'
@@ -119,6 +124,66 @@ watch(() => store.activeBpmnXml, async (xml) => {
   await renderBpmn(xml)
 }, { immediate: true })
 
+// bpmn-auto-layout lays out the process nodes but discards the collaboration's
+// Pool/Lane DI, so the swimlane vanishes. Re-inject a Participant (+ Lane) shape
+// computed from the bounding box of the laid-out nodes. Best-effort: any failure
+// returns the input unchanged.
+function reAddLaneDI(layoutedXml) {
+  try {
+    const doc = new DOMParser().parseFromString(layoutedXml, 'application/xml')
+    if (doc.querySelector('parsererror')) return layoutedXml
+    const byLocal = (root, name) =>
+      [...root.getElementsByTagName('*')].filter(n => n.localName === name)
+    const plane = byLocal(doc, 'BPMNPlane')[0]
+    if (!plane) return layoutedXml
+    const shapes = byLocal(plane, 'BPMNShape')
+    if (!shapes.length) return layoutedXml
+    if (shapes.some(s => /participant|lane/i.test(s.getAttribute('bpmnElement') || '')))
+      return layoutedXml
+    const participant = byLocal(doc, 'participant')[0]
+    if (!participant) return layoutedXml // plain process, no swimlane to restore
+    const lane = byLocal(doc, 'lane')[0]
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const s of shapes) {
+      const b = byLocal(s, 'Bounds')[0]
+      if (!b) continue
+      const x = +b.getAttribute('x'), y = +b.getAttribute('y')
+      const w = +b.getAttribute('width'), h = +b.getAttribute('height')
+      minX = Math.min(minX, x); minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x + w); maxY = Math.max(maxY, y + h)
+    }
+    if (!isFinite(minX)) return layoutedXml
+    const headW = 30, padX = 40, padY = 30
+    const px = minX - padX - headW, py = minY - padY
+    const pw = (maxX - minX) + padX * 2 + headW, ph = (maxY - minY) + padY * 2
+
+    const DI_NS = shapes[0].namespaceURI
+    const DC_NS = byLocal(shapes[0], 'Bounds')[0].namespaceURI
+    const mkShape = (elId, x, y, w, h) => {
+      const sh = doc.createElementNS(DI_NS, 'bpmndi:BPMNShape')
+      sh.setAttribute('bpmnElement', elId)
+      sh.setAttribute('isHorizontal', 'true')
+      const bd = doc.createElementNS(DC_NS, 'dc:Bounds')
+      bd.setAttribute('x', x); bd.setAttribute('y', y)
+      bd.setAttribute('width', w); bd.setAttribute('height', h)
+      sh.appendChild(bd)
+      return sh
+    }
+    // Participant first so it renders behind the nodes; Lane just inside it.
+    const partShape = mkShape(participant.getAttribute('id'), px, py, pw, ph)
+    plane.insertBefore(partShape, plane.firstChild)
+    if (lane) {
+      const laneShape = mkShape(lane.getAttribute('id'), px + headW, py, pw - headW, ph)
+      plane.insertBefore(laneShape, partShape.nextSibling)
+    }
+    return new XMLSerializer().serializeToString(doc)
+  } catch (e) {
+    console.warn('[BpmnPanel] reAddLaneDI failed', e)
+    return layoutedXml
+  }
+}
+
 async function renderBpmn(xml) {
   if (!bpmnContainer.value) return
 
@@ -129,10 +194,25 @@ async function renderBpmn(xml) {
 
   viewer = new BpmnViewer({
     container: bpmnContainer.value,
+    additionalModules: [customBpmnModule],
   })
 
   try {
-    await viewer.importXML(xml)
+    // The BPMN comes from the pdf2bpm/facade generator, whose server-side DI
+    // (node coordinates) is a rough placeholder — nodes collide on the same x
+    // and edges cross. Regenerate a clean left-to-right layout with
+    // bpmn-auto-layout (element ids are preserved, so dblclick/highlight by id
+    // still works). Fall back to the original XML if layout fails.
+    let toRender = xml
+    try {
+      // bpmn-auto-layout drops the Pool/Lane DI (it only lays out the process),
+      // so re-wrap the laid-out nodes in their swimlane afterwards.
+      toRender = reAddLaneDI(await layoutProcess(xml))
+    } catch (layoutErr) {
+      console.warn('[BpmnPanel] auto-layout failed; rendering original DI', layoutErr)
+      toRender = xml
+    }
+    await viewer.importXML(toRender)
     const canvas = viewer.get('canvas')
     canvas.zoom('fit-viewport')
 
@@ -656,6 +736,9 @@ function closeInspector() {
 }
 
 /* bpmn-js overrides */
+/* Canvas backdrop follows robo's theme (dark in dark mode). The diagram elements
+   themselves (cream tasks, blue lanes) are drawn light by the renderer and stay
+   readable on the dark backdrop — no need to force the whole canvas white. */
 .bpmn-canvas :deep(.djs-container) {
   background: var(--color-bg) !important;
 }
@@ -676,12 +759,18 @@ function closeInspector() {
   stroke-dasharray: none !important;
 }
 
-.bpmn-canvas :deep(text) {
-  fill: #212121 !important;
-}
+/* Element colors (cream tasks, colored events, Korean text wrapping) are drawn
+   by CustomBpmnRenderer (ported from process-gpt) — NOT CSS. Do not re-add
+   task/event fill overrides here; they would fight the renderer.
 
-.bpmn-canvas :deep(.djs-label text) {
-  fill: #212121 !important;
+   EXCEPTION — pool/lane: bpmn-js draws lanes with a low fill-opacity (transparent
+   so the canvas shows through), so the renderer's #f4f8fc fill doesn't take and
+   the lane looks dark in dark mode (canvas bleeds through). Force it opaque +
+   fixed light so the lane background is identical in both themes. */
+.bpmn-canvas :deep(.djs-shape[data-element-id*="Participant"] .djs-visual > rect),
+.bpmn-canvas :deep(.djs-shape[data-element-id*="Lane"] .djs-visual > rect) {
+  fill: #f4f8fc !important;
+  fill-opacity: 1 !important;
 }
 
 /* Empty State */
