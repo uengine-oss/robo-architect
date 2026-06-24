@@ -10,6 +10,11 @@ from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
+# Reuse the canonical property/GWT attachment helpers used by the expand endpoints
+# so the event-triggers expansion returns the exact same node shape (properties,
+# gwtSets, given/when/then) instead of bare node dicts.
+from .canvas_expansion import _fetch_properties_by_parent_id, _parse_gwt_bundle
+
 router = APIRouter()
 
 
@@ -245,6 +250,60 @@ async def get_event_triggers(event_id: str, request: Request) -> dict[str, Any]:
                     nodes.append(rm)
                     seen_ids.add(rm["id"])
                     relationships.append({"source": bc_id, "target": rm["id"], "type": "HAS_READMODEL"})
+
+        # Attach properties (Property nodes are embedded into their parent node, not
+        # rendered separately on canvas). Without this, Commands/Events/ReadModels
+        # expanded via event-triggers load with no fields.
+        parent_ids = [
+            n.get("id")
+            for n in nodes
+            if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id")
+        ]
+        prop_map = _fetch_properties_by_parent_id(session, parent_ids)
+        for n in nodes:
+            if n.get("type") in ("Aggregate", "Command", "Event", "ReadModel") and n.get("id"):
+                n["properties"] = prop_map.get(n["id"], [])
+
+        # Attach GWT for Command and Policy nodes (single GWT bundle node per parent
+        # with testCases inside), so the Inspector's Given/When/Then loads correctly.
+        cmd_policy_ids = [
+            n.get("id") for n in nodes if n.get("type") in ("Command", "Policy") and n.get("id")
+        ]
+        if cmd_policy_ids:
+            gwt_query = """
+            UNWIND $node_ids as node_id
+            MATCH (parent {id: node_id})
+            OPTIONAL MATCH (parent)-[:HAS_GWT]->(gwt:GWT)
+            RETURN node_id,
+                   gwt {.id, .givenRef, .whenRef, .thenRef, .testCases} as gwt
+            """
+            gwt_result = session.run(gwt_query, node_ids=cmd_policy_ids)
+
+            gwt_map: dict[str, dict[str, Any]] = {}
+            for record in gwt_result:
+                nid = record.get("node_id")
+                gwt_val = record.get("gwt")
+                if nid and gwt_val and isinstance(gwt_val, dict) and gwt_val.get("id"):
+                    gwt_map[str(nid)] = _to_jsonable(dict(gwt_val))
+
+            for n in nodes:
+                if n.get("type") in ("Command", "Policy") and n.get("id"):
+                    nid = n["id"]
+                    if nid in gwt_map:
+                        parsed = _parse_gwt_bundle(gwt_map[nid])
+                        if not parsed:
+                            continue
+                        n["gwtId"] = parsed.get("gwtId")
+                        n["gwtSets"] = parsed.get("gwtSets") or []
+                        if n["gwtSets"]:
+                            first_set = n["gwtSets"][0]
+                            if isinstance(first_set, dict):
+                                if first_set.get("given"):
+                                    n["given"] = first_set["given"]
+                                if first_set.get("when"):
+                                    n["when"] = first_set["when"]
+                                if first_set.get("then"):
+                                    n["then"] = first_set["then"]
 
         return {"sourceEventId": event_id, "nodes": nodes, "relationships": _dedupe_relationships(relationships)}
 
