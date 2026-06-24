@@ -61,7 +61,8 @@ def _build_intent_prompt(
         f"현재 도메인 구성 요소 목록:\n{node_list or '(구성 요소 없음)'}"
         f"{clarify_section}"
         f"{feedback_section}\n\n"
-        "위 변경 내용을 Strategic Diff(Epic/Feature/UserStory/Process)와 Tactical Diff(Aggregate/Command/Event/VO)로 분해하여 JSON으로 출력하세요."
+        "위 변경 내용을 **Strategic Diff(Epic/Feature/UserStory/Process)만** 으로 분해하여 JSON으로 출력하세요. "
+        "Tactical Diff(Aggregate/Command/Event/VO)와 아키텍처는 이후 Plan 단계에서 다루므로 여기서는 산출하지 마세요."
     )
 
 
@@ -148,10 +149,20 @@ def _save_intent_result(proposal_id: str, data: dict) -> None:
         return
 
     # action == "done"
+    # 041: Intent 는 Strategic Diff 만 산출한다(FR-006). Tactical/Impact 는 Plan 단계로 이동.
     strategic_diff = data.get("strategicDiff", {})
-    tactical_diff = data.get("tacticalDiff", [])
     journeys = data.get("journeys", [])
-    impact_map = data.get("impactMap", [])
+
+    # Strategic Diff 재실행 시 version 을 올려, 기존 plan 을 stale 로 만든다(FR-018).
+    inputs = _load_intent_inputs(proposal_id)
+    prev_version = 1
+    if inputs and isinstance(inputs.get("prev_strategic"), dict):
+        prev_version = inputs["prev_strategic"].get("version", 1) or 1
+    if isinstance(strategic_diff, dict):
+        strategic_diff["version"] = max(prev_version, strategic_diff.get("version", 1) or 1)
+        # 이전에 Strategic Diff 가 있었고 내용이 바뀐 재실행이면 버전 증가.
+        if inputs and inputs.get("prev_strategic"):
+            strategic_diff["version"] = prev_version + 1
 
     # 제목 자동 추출 (첫 UserStory 제목 또는 originalPrompt 첫 문장)
     auto_title = None
@@ -163,18 +174,12 @@ def _save_intent_result(proposal_id: str, data: dict) -> None:
         params: dict = {
             "id": proposal_id,
             "strategicDiff": json.dumps(strategic_diff, ensure_ascii=False),
-            "tacticalDiff": json.dumps(tactical_diff, ensure_ascii=False),
             "journeys": json.dumps(journeys, ensure_ascii=False),
         }
-        if impact_map:
-            params["impactMap"] = json.dumps(impact_map, ensure_ascii=False)
         if auto_title:
             params["title"] = auto_title
 
-        set_parts = ["p.strategicDiff = $strategicDiff", "p.tacticalDiff = $tacticalDiff",
-                     "p.journeys = $journeys"]
-        if impact_map:
-            set_parts.append("p.impactMap = $impactMap")
+        set_parts = ["p.strategicDiff = $strategicDiff", "p.journeys = $journeys"]
         if auto_title:
             set_parts.append("p.title = $title")
 
@@ -254,21 +259,8 @@ async def stream_intent(proposal_id: str) -> AsyncGenerator[tuple[str, dict], No
 
     _save_intent_result(proposal_id, result_data)
 
+    # 041: Intent 는 Strategic Diff 만 스트리밍한다. Tactical/Impact 는 Plan 단계로 이동(FR-006).
     if result_data.get("strategicDiff"):
         yield "strategic_diff", {"strategicDiff": result_data["strategicDiff"]}
-    if result_data.get("tacticalDiff"):
-        yield "tactical_diff", {"tacticalDiff": result_data["tacticalDiff"]}
 
-    # Impact Map 생성
-    yield "phase", {"phase": "impact_map", "message": "Impact Map 생성 중..."}
-    try:
-        from api.features.proposal_lifecycle.services.impact_builder import build_impact_map
-        impact = await build_impact_map(proposal_id, result_data.get("tacticalDiff", []))
-        if impact:
-            yield "impact_map", {"impactMap": impact}
-    except Exception as e:
-        SmartLogger.log("WARN", f"Impact map build failed: {e}",
-                        category="proposal_lifecycle.impact.warn",
-                        params={"proposalId": proposal_id, "error": str(e)})
-
-    yield "done", {"proposalId": proposal_id, "status": "DRAFT"}
+    yield "done", {"proposalId": proposal_id, "status": "DRAFT", "nextStage": "plan"}

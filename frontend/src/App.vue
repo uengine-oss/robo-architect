@@ -31,6 +31,9 @@ import { useSessionStore } from '@/features/desktop-launcher/stores/session-stor
 import DesignReflectPrompt from '@/features/requirements/ui/DesignReflectPrompt.vue'
 import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/RequirementsIngestionModal.vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
+// 041 — Design 측 헌장(Constitution) 관리. CanvasWorkspace(프로젝트 헌장)와
+// BoundedContextNode(BC 헌장)가 robo:open-constitution 을 dispatch 하면 모달을 연다.
+import ConstitutionEditor from '@/features/constitution/ui/ConstitutionEditor.vue'
 
 const navigatorStore = useNavigatorStore()
 const themeStore = useThemeStore() // Initialize theme store
@@ -104,6 +107,20 @@ function _onSwitchTab(e) {
   if (typeof target === 'string' && tabComponents[target]) {
     activeTab.value = target
   }
+}
+
+// 041 — Design 측 헌장(Constitution) 편집기 오케스트레이션. { scope, bcId?, interview? }
+const constitutionEditor = ref(null) // null | { scope, bcId, interview }
+function _onOpenConstitution(e) {
+  const d = e?.detail || {}
+  if (d.scope === 'BOUNDED_CONTEXT' && !d.bcId) return
+  // interview:true → Plan 게이트가 곧장 인터뷰 화면으로 진입하도록 요청한 경우.
+  // proposalId → 인터뷰가 Claude Code 로 이 제안을 먼저 분석해 추천을 만든다.
+  constitutionEditor.value = { scope: d.scope || 'PROJECT', bcId: d.bcId || null, interview: !!d.interview, proposalId: d.proposalId || null }
+}
+// 헌장이 저장/생성되면 의존 화면(Proposal Plan 게이트 등)이 재시도할 수 있게 앱 이벤트로 알린다.
+function _onConstitutionSaved(payload) {
+  window.dispatchEvent(new CustomEvent('robo:constitution-saved', { detail: payload || {} }))
 }
 
 // 040 — Proposal 임팩트 '열기' 오케스트레이션.
@@ -300,6 +317,8 @@ onMounted(() => {
   window.addEventListener('robo:open-preview-failed', _onOpenPreviewFailed)
   window.addEventListener('robo:preview-exit', _onPreviewExit)
   window.addEventListener('robo:preview-updated', _onPreviewUpdated)
+  // 041 — Design 측 헌장 편집기 열기
+  window.addEventListener('robo:open-constitution', _onOpenConstitution)
 
   log.info('app_mounted', 'App mounted; core layout components are ready.', {
     appInstanceId,
@@ -319,6 +338,7 @@ onUnmounted(() => {
   window.removeEventListener('robo:open-preview-failed', _onOpenPreviewFailed)
   window.removeEventListener('robo:preview-exit', _onPreviewExit)
   window.removeEventListener('robo:preview-updated', _onPreviewUpdated)
+  window.removeEventListener('robo:open-constitution', _onOpenConstitution)
 })
 </script>
 
@@ -391,6 +411,17 @@ onUnmounted(() => {
       v-model="designIngestModalOpen"
       :attach-session-id="designIngestSessionId"
       @complete="designIngestSessionId = ''"
+    />
+
+    <!-- 041 — Design 측 헌장(Constitution) 편집기 (프로젝트 / BC) -->
+    <ConstitutionEditor
+      v-if="constitutionEditor"
+      :scope="constitutionEditor.scope"
+      :bcId="constitutionEditor.bcId"
+      :autoInterview="constitutionEditor.interview"
+      :proposalId="constitutionEditor.proposalId"
+      @saved="_onConstitutionSaved"
+      @close="constitutionEditor = null"
     />
   </div>
 </template>

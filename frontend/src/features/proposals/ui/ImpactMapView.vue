@@ -1,14 +1,14 @@
 <template>
   <div class="impact-map">
-    <div v-if="!impactMap?.length" class="impact-map__empty">Impact Map 데이터 없음</div>
+    <div v-if="!impactMap?.length" class="impact-map__empty">{{ t('proposals.impactMap.empty') }}</div>
     <table v-else class="impact-table">
       <thead>
         <tr>
-          <th>노드 ID</th>
-          <th>타입</th>
-          <th>이름</th>
-          <th>충돌 가능성</th>
-          <th>이유</th>
+          <th>{{ t('proposals.impactMap.colNodeId') }}</th>
+          <th>{{ t('proposals.impactMap.colType') }}</th>
+          <th>{{ t('proposals.impactMap.colName') }}</th>
+          <th>{{ t('proposals.impactMap.colConflict') }}</th>
+          <th>{{ t('proposals.impactMap.colReason') }}</th>
           <th v-if="proposalId"></th>
         </tr>
       </thead>
@@ -40,6 +40,9 @@
 <script setup>
 import { computed } from 'vue'
 import OpenInViewerLink from './OpenInViewerLink.vue'
+import { useI18n } from '../../../app/i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   impactMap: { type: Array, default: () => [] },

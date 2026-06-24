@@ -3,17 +3,20 @@
     class="open-in-viewer"
     :class="{ 'open-in-viewer--disabled': disabled }"
     :disabled="disabled || busy"
-    :title="disabled ? reason : `${viewerLabel} 뷰어에서 열기`"
+    :title="disabled ? reason : t('proposals.openViewer.openInViewer', { viewer: viewerLabel })"
     @click.stop="onClick"
   >
     <span class="oiv-icon">{{ busy ? '…' : '↗' }}</span>
-    <span class="oiv-text">{{ disabled ? '열기 불가' : '열기' }}</span>
+    <span class="oiv-text">{{ disabled ? t('proposals.openViewer.openDisabled') : t('proposals.openViewer.open') }}</span>
   </button>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
 import { openPreview, LABEL_TO_VIEWER, VIEWER_TO_TAB } from '../proposalPreview'
+import { useI18n } from '../../../app/i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   proposalId: { type: String, required: true },
@@ -30,7 +33,7 @@ const mappedViewer = computed(() => LABEL_TO_VIEWER[props.nodeLabel] || null)
 const disabled = computed(() => !mappedViewer.value || !!failedReason.value)
 const viewerLabel = computed(() => VIEWER_TO_TAB[mappedViewer.value] || '')
 const reason = computed(() =>
-  failedReason.value || (!mappedViewer.value ? `'${props.nodeLabel}' 타입은 뷰어 매핑이 없습니다.` : ''))
+  failedReason.value || (!mappedViewer.value ? t('proposals.openViewer.noMapping', { label: props.nodeLabel }) : ''))
 
 async function onClick() {
   if (disabled.value || busy.value) return
@@ -39,9 +42,9 @@ async function onClick() {
     const res = await openPreview(props.proposalId, {
       nodeId: props.nodeId, nodeLabel: props.nodeLabel, nodeTitle: props.nodeTitle,
     })
-    if (res && res.renderable === false) failedReason.value = res.reason || '미리보기 표현 불가'
+    if (res && res.renderable === false) failedReason.value = res.reason || t('proposals.openViewer.previewUnavailable')
   } catch (e) {
-    failedReason.value = e?.message || '열기 실패'
+    failedReason.value = e?.message || t('proposals.openViewer.openFailed')
   } finally {
     busy.value = false
   }

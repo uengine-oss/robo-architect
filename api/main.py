@@ -261,6 +261,10 @@ app.include_router(req_changes_router)
 from api.features.proposal_lifecycle.router import router as proposal_router
 app.include_router(proposal_router)
 
+# Include constitution router (041 — Neo4j-backed project + per-BC constitution, Design side)
+from api.features.constitution.router import router as constitution_router
+app.include_router(constitution_router)
+
 # Include chat-based model modification router
 from api.features.model_modifier.router import router as chat_router
 app.include_router(chat_router)

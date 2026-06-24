@@ -31,6 +31,14 @@ const canvasStore = useCanvasStore()
 const isDragOver = ref(false)
 const log = createLogger({ scope: 'CanvasWorkspace' })
 
+// 041 — 프로젝트 헌장(Constitution) 진입점. 앱 셸(App.vue)이 robo:open-constitution 을
+// 수신해 ConstitutionEditor 모달을 연다(Design 측 관리, 이벤트 드리븐 오케스트레이션).
+function openProjectConstitution() {
+  window.dispatchEvent(new CustomEvent('robo:open-constitution', {
+    detail: { scope: 'PROJECT' },
+  }))
+}
+
 // Right-side panel mode
 // - none: no side panel
 // - chat: Model Modifier chat
@@ -778,7 +786,15 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <div v-if="canvasStore.nodes.length > 0" class="canvas-toolbar">
+      <div class="canvas-toolbar">
+        <!-- 041 — 프로젝트 헌장(Constitution) 진입점. 앱 레벨에서 ConstitutionEditor 를 연다. -->
+        <button class="canvas-toolbar__btn" @click="openProjectConstitution" title="프로젝트 헌장 (Constitution)">
+          <span class="canvas-toolbar__emoji">📜</span>
+        </button>
+
+        <div class="canvas-toolbar__divider"></div>
+
+        <template v-if="canvasStore.nodes.length > 0">
         <button class="canvas-toolbar__btn" @click="zoomIn()" title="Zoom In">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="8"></circle>
@@ -820,6 +836,7 @@ onUnmounted(() => {
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
           </svg>
         </button>
+        </template>
       </div>
     </div>
 
@@ -932,6 +949,9 @@ onUnmounted(() => {
 @import '@vue-flow/core/dist/theme-default.css';
 @import '@vue-flow/controls/dist/style.css';
 @import '@vue-flow/minimap/dist/style.css';
+
+/* 041 — 헌장 진입점 이모지 */
+.canvas-toolbar__emoji { font-size: 16px; line-height: 1; }
 
 /* Container for canvas + chat */
 .right-panel-container {

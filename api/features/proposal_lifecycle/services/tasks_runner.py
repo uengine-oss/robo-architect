@@ -22,13 +22,21 @@ _SKILL_NAME = "robo-proposal-tasks"
 
 
 def _build_tasks_prompt(proposal_id: str, ctx: dict) -> str:
+    # 041: Constitution + ImplementationPlan 을 함께 제시해, 작업 분해가 선언된
+    # 아키텍처/원칙을 검토·준수하도록 한다(FR-015/FR-016).
+    constitution = ctx.get("constitution") or "(Constitution 없음)"
+    plan = ctx.get("implementationPlan") or "{}"
     return (
         f"Proposal ID: {proposal_id}\n"
         f"제목: {ctx.get('title') or proposal_id}\n"
         f"원본 프롬프트: {ctx.get('prompt') or ''}\n\n"
         f"Strategic Diff (JSON):\n{ctx.get('strategicDiff') or '{}'}\n\n"
         f"Tactical Diff (JSON):\n{ctx.get('tacticalDiff') or '[]'}\n\n"
-        "위 변경을 격리 워크트리에서 구현하기 위한 작업 목록(tasks)으로 분해해 JSON으로 출력하세요."
+        f"프로젝트 Constitution:\n{constitution}\n\n"
+        f"Implementation Plan (아키텍처 결정/연동/개발환경, JSON):\n{plan}\n\n"
+        "위 변경을 격리 워크트리에서 구현하기 위한 작업 목록(tasks)으로 분해해 JSON으로 출력하세요. "
+        "작업은 Implementation Plan 의 아키텍처(서비스 경계·레포 매핑·연동/채널·서비스별 개발환경)와 "
+        "일관되어야 하며, Constitution 결정과 충돌하는 작업이 있으면 명시적으로 표시하세요."
     )
 
 
@@ -38,17 +46,26 @@ def _get_context(proposal_id: str) -> dict | None:
             """
             MATCH (p:Proposal {id: $id})
             RETURN p.title AS title, p.originalPrompt AS prompt,
-                   p.strategicDiff AS strategicDiff, p.tacticalDiff AS tacticalDiff
+                   p.strategicDiff AS strategicDiff, p.tacticalDiff AS tacticalDiff,
+                   p.implementationPlan AS implementationPlan, p.projectRoot AS projectRoot
             """,
             id=proposal_id,
         ).single()
     if not record:
         return None
+    constitution = None
+    try:
+        from api.features.proposal_lifecycle.services.constitution_runner import read_constitution
+        constitution = read_constitution(record.get("projectRoot"))
+    except Exception:
+        constitution = None
     return {
         "title": record.get("title"),
         "prompt": record.get("prompt") or "",
         "strategicDiff": record.get("strategicDiff") or "{}",
         "tacticalDiff": record.get("tacticalDiff") or "[]",
+        "implementationPlan": record.get("implementationPlan") or "{}",
+        "constitution": constitution,
     }
 
 

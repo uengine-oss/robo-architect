@@ -29,6 +29,14 @@ function closeBC(event) {
   event.stopPropagation()
   canvasStore.removeBC(props.id)
 }
+
+// 041 — 이 BC 의 헌장 편집기를 연다(앱 셸이 오케스트레이션). 노드 id = BC id.
+function openConstitution(event) {
+  event.stopPropagation()
+  window.dispatchEvent(new CustomEvent('robo:open-constitution', {
+    detail: { scope: 'BOUNDED_CONTEXT', bcId: props.id, bcName: displayName.value },
+  }))
+}
 </script>
 
 <template>
@@ -39,6 +47,15 @@ function closeBC(event) {
       
       <!-- Header Actions -->
       <div class="bc-container__actions">
+        <!-- 041 — 이 BC 의 헌장(Constitution) 진입점. App.vue 가 robo:open-constitution 수신. -->
+        <button
+          class="bc-container__action-btn"
+          @click="openConstitution"
+          title="이 Bounded Context의 헌장 (Constitution)"
+        >
+          <span class="bc-container__emoji">📜</span>
+        </button>
+
         <!-- Collapse/Expand Button -->
         <button 
           class="bc-container__action-btn"
@@ -149,6 +166,11 @@ function closeBC(event) {
 .bc-container__action-btn--close:hover {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
+}
+
+.bc-container__emoji {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .bc-container__body {

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount, onActivated, watch, inject, 
 import ClaudeCodeTerminal from './ClaudeCodeTerminal.vue'
 import FileTreePane from './FileTreePane.vue'
 import FileEditorPane from './FileEditorPane.vue'
+import SessionManagerPopover from './SessionManagerPopover.vue'
 import { closeTerminalSession, fetchGlobalSkillsStatus, installGlobalSkills } from '../workspace.api.js'
 
 const props = defineProps({
@@ -212,6 +213,18 @@ function addShellSession() {
   const id = `shell-${Date.now()}`
   sessions.value.push({ id, label: base ? basename(base) : '셸', workdir: base, kind: 'shell', activePath: null, initialCommand: '', epoch: 0 })
   activeSessionId.value = id
+}
+
+// ─── Session manager (백엔드 권위 기반 프로세스 정리) ───
+const showSessionManager = ref(false)
+
+// 매니저가 백엔드 세션(backendId = id#epoch)을 종료하면, 그 세션을 가리키던 로컬 탭도
+// 함께 제거해 "죽은 탭"이 남지 않게 한다. payload 는 단일 id 또는 id 배열.
+function onManagerChanged(payload) {
+  const killed = new Set(Array.isArray(payload) ? payload : [payload])
+  for (const s of [...sessions.value]) {
+    if (killed.has(backendId(s))) closeSession(s.id)
+  }
 }
 
 // 백엔드 PTY 세션 레지스트리 키 — 논리 id(worktree 경로 등) + epoch.
@@ -675,6 +688,8 @@ onBeforeUnmount(() => {
           <span class="ccw-session-tab__close" title="세션 종료" @click.stop="closeSession(s.id)">×</span>
         </button>
         <button class="ccw-session-add" title="새 셸 세션" @click="addShellSession">＋</button>
+        <button class="ccw-session-manage" title="세션 매니저 — 실행 중인 claude 프로세스 정리"
+                @click="showSessionManager = true">⚙ 세션</button>
       </div>
       <div class="ccw-terminals">
         <div
@@ -696,6 +711,12 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <SessionManagerPopover
+      v-if="showSessionManager"
+      @close="showSessionManager = false"
+      @changed="onManagerChanged"
+    />
   </div>
 </template>
 
@@ -781,6 +802,12 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .ccw-session-add:hover { background: var(--ccw-hover); color: var(--ccw-text); }
+.ccw-session-manage {
+  margin-left: auto; padding: 4px 9px; background: transparent; border: none;
+  color: var(--ccw-text-dim); font-size: 0.78rem; cursor: pointer; border-radius: 4px;
+  flex-shrink: 0; white-space: nowrap;
+}
+.ccw-session-manage:hover { background: var(--ccw-hover); color: var(--ccw-text); }
 .ccw-terminals { flex: 1; position: relative; overflow: hidden; }
 .ccw-terminal-host { width: 100%; height: 100%; }
 .ccw-no-session {

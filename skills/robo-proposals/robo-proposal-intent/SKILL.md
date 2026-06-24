@@ -1,8 +1,13 @@
 # Skill: robo-proposal-intent
 
 ## Purpose
-자연어 요구사항을, ingestion 파이프라인 수준의 **깊고 완전히 연결된** 설계로 분해한다:
-**Strategic Diff**(BoundedContext(=Epic)/Feature/UserStory/Process) + **Tactical Diff**(Aggregate/Command/Event/ReadModel/Policy) — 각 설계 노드는 **속성(Property)·BDD(GWT)·추적성(UserStory↔Command/ReadModel)**까지 포함한다.
+자연어 요구사항을 **Strategic Diff(BoundedContext(=Epic)/Feature/UserStory/Process) 로만** 분해한다.
+각 UserStory 는 동작형(Command 기반) vs 조회형(ReadModel 기반)을 구분하고, 인수조건(GWT 요약) 수준의 의도를 담는다.
+
+> **041 분리(중요)**: Tactical Diff(Aggregate/Command/Event/ReadModel/Policy/VO)와 아키텍처 구현계획은
+> **이 스킬에서 산출하지 않는다.** 그것은 후속 **Plan 단계(`robo-proposal-plan`)** 가 Strategic Diff +
+> Constitution 을 입력으로 받아 수행한다(FR-006). 이 스킬은 *무엇을* 만들지(전략)만 확정한다.
+
 요구사항이 모호할 때는 최대 5개의 선택형 명확화 질문을 순차 제시한다.
 
 ## 레퍼런스를 먼저 읽어라 (필수)

@@ -54,6 +54,21 @@ async def implement_proposal(proposal_id: str, body: ImplementRequest, request: 
             detail=f"이 상태에서는 (재)구현할 수 없습니다 (current: {record['status']})",
         )
 
+    # 042 — Plan 게이트는 구현 단계로 이동: 확정된 비-stale ImplementationPlan 이 있어야 구현 가능.
+    # (제출은 Intent 완료로 끝나고, Plan 은 SUBMITTED 상태에서 수립·확정한다.)
+    if record["status"] == "SUBMITTED":
+        from api.features.proposal_lifecycle.routes.proposals_crud import _get_proposal_row
+        from api.features.proposal_lifecycle.proposal_contracts import ProposalResponse
+        _gate = ProposalResponse.from_neo4j(_get_proposal_row(proposal_id), [])
+        if _gate.implementationPlan is None:
+            raise HTTPException(status_code=400, detail={
+                "reason": "plan_required",
+                "message": "구현 전에 Plan(구현계획)을 확정해야 합니다."})
+        if _gate.planStale:
+            raise HTTPException(status_code=400, detail={
+                "reason": "plan_stale",
+                "message": "Constitution/Strategic Diff 변경으로 plan 이 오래되었습니다. Plan 을 다시 실행/확정하세요."})
+
     if not body.projectRoot or not body.projectRoot.strip():
         raise HTTPException(
             status_code=400,

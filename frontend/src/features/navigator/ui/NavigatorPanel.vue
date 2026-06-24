@@ -169,6 +169,11 @@ const isLoading = computed(() => localLoading.value || navigatorStore.loading)
 
 // Service name editing
 const serviceName = ref('My Service Name')
+
+// 041 — 프로젝트 루트 헌장 편집기를 연다(App.vue 가 robo:open-constitution 을 듣고 모달 표시).
+function openProjectConstitution() {
+  window.dispatchEvent(new CustomEvent('robo:open-constitution', { detail: { scope: 'PROJECT' } }))
+}
 const isEditingName = ref(false)
 const nameInput = ref(null)
 
@@ -297,6 +302,11 @@ function handleProcessDragStart(event, item) {
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
           </svg>
         </span>
+        <!-- 041 — 프로젝트 루트 헌장(Constitution) 진입점. Design 루트에 항상 노출. -->
+        <button class="constitution-root-btn" @click="openProjectConstitution" title="프로젝트 헌장 (Constitution)">
+          <span class="constitution-root-btn__emoji">📜</span>
+          <span class="constitution-root-btn__label">헌장</span>
+        </button>
       </div>
     </div>
     
@@ -852,6 +862,24 @@ function handleProcessDragStart(event, item) {
   align-items: center;
   width: 100%;
 }
+
+/* 041 — 프로젝트 루트 헌장 버튼(Design 루트, 항상 노출) */
+.constitution-root-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(255, 200, 0, 0.12);
+  border: 1px solid rgba(255, 200, 0, 0.35);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.constitution-root-btn:hover { background: rgba(255, 200, 0, 0.22); }
+.constitution-root-btn__emoji { font-size: 12px; line-height: 1; }
 
 .service-name-display {
   display: flex;

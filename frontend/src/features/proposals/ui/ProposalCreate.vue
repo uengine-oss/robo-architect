@@ -1,21 +1,35 @@
 <template>
   <div class="proposal-create">
     <div class="proposal-create__header">
-      <h3>새 Proposal 생성</h3>
-      <button @click="$emit('cancel')" class="btn-close" title="닫기">✕</button>
+      <h3>{{ t('proposals.create.title') }}</h3>
+      <button @click="$emit('cancel')" class="btn-close" :title="t('proposals.common.close')">✕</button>
     </div>
 
     <!-- Step 1: 자연어 입력 -->
     <div v-if="step === 'input'" class="proposal-create__input">
       <textarea
         v-model="promptText"
-        placeholder="요구사항을 자연어로 입력하세요. (예: 결제 시스템에 부분 환불 기능을 추가해줘)"
+        :placeholder="t('proposals.create.inputPlaceholder')"
         rows="4"
         class="proposal-create__textarea"
       />
+
+      <!-- 042 — 분해 모드 스위치 -->
+      <div class="mode-switch">
+        <label
+          v-for="opt in modeOptions"
+          :key="opt.value"
+          :class="['mode-switch__opt', mode === opt.value ? 'mode-switch__opt--on' : '']"
+        >
+          <input type="radio" :value="opt.value" v-model="mode" />
+          <span class="mode-switch__label">{{ t(opt.labelKey) }}</span>
+          <span class="mode-switch__desc">{{ t(opt.descKey) }}</span>
+        </label>
+      </div>
+
       <div class="proposal-create__actions">
         <button @click="submit" :disabled="!promptText.trim() || loading" class="btn btn--primary">
-          {{ loading ? '분석 중...' : 'AI 분석 시작' }}
+          {{ loading ? t('proposals.create.analyzing') : t('proposals.create.startAnalysis') }}
         </button>
       </div>
     </div>
@@ -24,8 +38,8 @@
     <div v-if="step === 'analyzing'" class="proposal-create__analyzing">
       <div class="analyzing-header">
         <span class="spinner" />
-        <span>{{ currentPhase || 'AI가 요구사항을 분석 중입니다...' }}</span>
-        <button @click="cancelAnalysis" class="btn-stop" title="분석 중단">■ 중단</button>
+        <span>{{ currentPhase || t('proposals.create.analyzingMsg') }}</span>
+        <button @click="cancelAnalysis" class="btn-stop" :title="t('proposals.create.stopAnalysis')">{{ t('proposals.create.stopAnalysis') }}</button>
       </div>
 
       <!-- Claude 실시간 스트림 로그 -->
@@ -36,14 +50,14 @@
           :class="['stream-log__line', logLineClass(line)]"
         >{{ line }}</div>
         <div v-if="!store.intentStream.logLines?.length" class="stream-log__waiting">
-          <span class="spinner spinner--sm" /> Claude가 분석을 시작하고 있습니다...
+          <span class="spinner spinner--sm" /> {{ t('proposals.create.waitingAnalysis') }}
         </div>
       </div>
     </div>
 
     <!-- Step 3: 명확화 질문 -->
     <div v-if="step === 'clarify'" class="proposal-create__clarify">
-      <h4>AI가 몇 가지 사항을 확인하고 싶습니다</h4>
+      <h4>{{ t('proposals.create.clarifyTitle') }}</h4>
       <div v-for="(q, qi) in clarifyQuestions" :key="qi" class="clarify-question">
         <p class="clarify-question__text">{{ q.text }}</p>
         <div class="clarify-question__options">
@@ -55,39 +69,47 @@
           >{{ opt }}</button>
           <input
             v-model="customAnswers[qi]"
-            placeholder="직접 입력..."
+            :placeholder="t('proposals.create.customAnswer')"
             class="clarify-question__custom"
           />
         </div>
       </div>
       <div class="proposal-create__actions">
         <button @click="submitAnswers" :disabled="!allAnswered" class="btn btn--primary">
-          답변 제출
+          {{ t('proposals.create.submitAnswers') }}
         </button>
-        <button @click="skipClarify" class="btn btn--secondary">현재 정보로 계속</button>
+        <button @click="skipClarify" class="btn btn--secondary">{{ t('proposals.create.skipClarify') }}</button>
       </div>
     </div>
 
     <!-- Step 4: 완료 -->
     <div v-if="step === 'done'" class="proposal-create__done">
       <div class="done-icon">✓</div>
-      <p>Proposal <strong>{{ createdId }}</strong> 초안이 생성되었습니다.</p>
-      <button @click="$emit('created', createdId)" class="btn btn--primary">Proposal 보기</button>
+      <p>{{ t('proposals.create.draftCreated', { id: createdId }) }}</p>
+      <button @click="$emit('created', createdId)" class="btn btn--primary">{{ t('proposals.create.viewProposal') }}</button>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
+import { useI18n } from '../../../app/i18n'
 import { useProposalsStore } from '../proposals.store'
 
 const emit = defineEmits(['created', 'cancel'])
+const { t } = useI18n()
 const store = useProposalsStore()
 
 const promptText = ref('')
 const loading = ref(false)
 const step = ref('input')
 const createdId = ref(null)
+// 042 — 분해 모드(기본 Simplified).
+const mode = ref('SIMPLIFIED')
+const modeOptions = [
+  { value: 'SIMPLIFIED', labelKey: 'proposals.create.modeSimplified', descKey: 'proposals.create.modeSimplifiedDesc' },
+  { value: 'DETAILED_DDD', labelKey: 'proposals.create.modeDetailed', descKey: 'proposals.create.modeDetailedDesc' },
+]
 const currentPhase = ref('')
 const clarifyQuestions = ref([])
 const answers = ref({})
@@ -101,13 +123,19 @@ const allAnswered = computed(() =>
 async function submit() {
   if (!promptText.value.trim()) return
   loading.value = true
-  step.value = 'analyzing'
 
-  const proposal = await store.createProposal(promptText.value.trim())
+  const proposal = await store.createProposal(promptText.value.trim(), null, mode.value)
   if (!proposal) { step.value = 'input'; loading.value = false; return }
-
   createdId.value = proposal.id
 
+  // 042 — Detailed DDD 모드: 인텐트 스트림 대신 상세 detail 뷰의 staged walkthrough 로 위임.
+  if (mode.value === 'DETAILED_DDD') {
+    loading.value = false
+    emit('created', proposal.id)
+    return
+  }
+
+  step.value = 'analyzing'
   const es = store.subscribeToIntent(proposal.id)
 
   // 로그 라인이 추가될 때 자동 스크롤
@@ -165,10 +193,10 @@ function skipClarify() {
 
 function eventSummary(evt) {
   if (evt.type === 'phase') return evt.data.message
-  if (evt.type === 'strategic_diff') return 'Strategic Diff 생성 완료'
-  if (evt.type === 'tactical_diff') return 'Tactical Diff 생성 완료'
+  if (evt.type === 'strategic_diff') return t('proposals.create.strategicDiffDone')
+  if (evt.type === 'tactical_diff') return t('proposals.create.tacticalDiffDone')
   if (evt.type === 'impact_map') return `Impact Map: ${evt.data.impactMap?.length || 0}개 영향 노드`
-  if (evt.type === 'done') return '분석 완료'
+  if (evt.type === 'done') return t('proposals.create.analysisDone')
   return evt.type
 }
 </script>
@@ -205,4 +233,10 @@ function eventSummary(evt) {
 .clarify-question__custom { border: 1px solid var(--color-border); border-radius: 4px; padding: 4px 8px; font-size: 13px; background: var(--color-bg-secondary); color: var(--color-text); }
 .done-icon { font-size: 32px; color: var(--color-success); margin-bottom: 8px; }
 .proposal-create__done { text-align: center; padding: 24px; }
+.mode-switch { display: flex; gap: 8px; margin-top: 10px; }
+.mode-switch__opt { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; cursor: pointer; }
+.mode-switch__opt--on { border-color: var(--color-accent); background: var(--status-blue-bg); }
+.mode-switch__opt input { display: none; }
+.mode-switch__label { font-size: 13px; font-weight: 600; color: var(--color-text-bright); }
+.mode-switch__desc { font-size: 11px; color: var(--color-text-light); }
 </style>

@@ -24,8 +24,14 @@ This feature introduces a **project Constitution** and a dedicated **Plan stage*
 
 ### Session 2026-06-11
 
-- Q: Where is the Constitution persisted and at what scope (one per target project vs. one per proposal)? → A: **One Constitution per target project, saved as a versioned file in the `projectRoot` repo** (e.g. a `constitution.md`). The file is the source of truth; it is surfaced and editable in the robo-architect UI and read directly by the sandbox at implementation time.
 - Q: Does the intent→plan split apply only to the Proposal lifecycle, or also to the primary ingestion/design pipeline? → A: **Proposal lifecycle only** (039/040). The primary ingestion/design pipeline is untouched by this feature.
+
+### Session 2026-06-11 (revised — Constitution storage, hierarchy & UI placement) — SUPERSEDES the earlier "repo file" decision
+
+- Q: Where is the Constitution persisted? → A: **In Neo4j nodes** (graph is the source of truth, Principle I), **not** as a file in the target repo. (Reverses the earlier `projectRoot` file decision.)
+- Q: What is the scope/hierarchy? → A: **A single project-root Constitution + one Constitution per Bounded Context (override).** A BC's *effective* Constitution = the project-root Constitution merged with that BC's overrides (BC field wins where set). There is **never** a per-Proposal Constitution.
+- Q: Where is the management UI? → A: **On the Design side.** A **"헌장 (Constitution)" entry point/icon lives at the Design root** (project-level Constitution) and **at each Bounded Context root** (that BC's Constitution), editable anytime by the architect. The **Proposals tab contains no Constitution view/edit UI.**
+- Q: What does the Proposal flow do about the Constitution? → A: **Only triggers the interview when no project-root Constitution exists yet** (a one-time gate before planning), which creates the **project-root** Constitution node. It does not display a persistent Constitution tab and does not create proposal-scoped constitutions.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -39,10 +45,13 @@ As an architect starting (or first time formalizing) a project, when I begin a P
 
 **Acceptance Scenarios**:
 
-1. **Given** a project with no existing constitution, **When** I start a Proposal, **Then** the system offers to run the constitution interview before proceeding to planning.
-2. **Given** I am in the interview, **When** I answer the design-principles, tech-stack, monolith/microservices, and repo-strategy questions, **Then** a Constitution artifact is saved capturing exactly those answers.
-3. **Given** a project that **already has** a constitution, **When** I start a new Proposal, **Then** the interview is **skipped** and the existing Constitution is reused, while still offering an explicit "amend constitution" entry point.
+1. **Given** a project with no **project-root** constitution, **When** I start a Proposal and reach planning, **Then** the system offers to run the constitution interview as a one-time gate (no persistent constitution tab in Proposals).
+2. **Given** I am in the interview, **When** I answer the design-principles, tech-stack, monolith/microservices, and repo-strategy questions, **Then** a **project-root Constitution node** is created in the graph capturing exactly those answers.
+3. **Given** a project that **already has** a project-root constitution, **When** I start a new Proposal, **Then** the interview is **skipped** and the existing Constitution is reused; the Proposals tab shows **no** constitution view/edit surface (amending is done on the Design side).
+3b. **Given** I am on the **Design side**, **When** I open the "헌장" entry point at the Design root or at a Bounded Context root, **Then** I can view and edit the project-root or that BC's Constitution at any time, and a BC's effective constitution reflects project-root + BC overrides.
 4. **Given** I choose "microservices" with "separate repository per service", **When** I complete the interview, **Then** the repo-strategy decision (split git vs. reuse existing repo) is recorded for later stages to honor.
+5. **Given** my Proposal's natural-language prompt already states technical preferences (e.g. a language, framework, "microservices", a deployment hint, or a frontend choice), **When** the interview starts, **Then** those preferences appear as **pre-filled/proposed** answers I can accept or override — they are not re-asked from scratch.
+6. **Given** the prompt does not pin down a required decision area, **When** the interview runs, **Then** the system **recommends a fit-for-purpose default** suited to the project's intent (with a one-line rationale) for me to confirm or change.
 
 ---
 
@@ -73,8 +82,9 @@ As an architect, the Plan stage's implementation plan must spell out concrete mi
 **Acceptance Scenarios**:
 
 1. **Given** a Constitution declaring microservices and a tech stack, **When** the Plan stage runs, **Then** the plan includes deployment environment, ingress, service mesh/framework, and frontend decisions consistent with the Constitution.
-2. **Given** a Constitution declaring a monolith, **When** the Plan stage runs, **Then** the plan reflects a single-deployable architecture and does not fabricate microservice infrastructure.
+2. **Given** a Constitution declaring a monolith, **When** the Plan stage runs, **Then** the plan reflects a single-deployable architecture and does not fabricate microservice infrastructure (no inter-context integration, messaging channel, or per-service dev environments).
 3. **Given** the Constitution is silent on a required architectural choice, **When** the plan is produced, **Then** the gap is explicitly surfaced (rather than silently assumed) for the architect to resolve.
+4. **Given** a microservices Constitution with two or more Bounded Contexts, **When** the Plan stage runs, **Then** the plan classifies each cross-context interaction (request/response vs. pub/sub, defaulting to event-driven pub/sub), names the messaging channel (e.g. Kafka), and defines a Docker-based, scope-limited developer environment per service for a future multi-repo split.
 
 ---
 
@@ -110,11 +120,16 @@ As an architect, when I generate the task list and then implement a Proposal, th
 
 #### Constitution
 
-- **FR-001**: The system MUST detect whether the project already has a saved Constitution at the start of a Proposal.
+- **FR-001**: The system MUST detect whether the project already has a **project-root Constitution** (a Neo4j node) at the start of a Proposal.
 - **FR-002**: When no Constitution exists, the system MUST offer a guided interview that captures, at minimum: (a) design principles, (b) technology stack, (c) monolith vs. microservices posture, and (d) repository strategy (mono-repo vs. repo-per-service; for separate repos, split-git vs. reuse-existing-repo).
-- **FR-003**: The system MUST persist the interview answers as a durable, human-readable Constitution **file in the target project repo (`projectRoot`)** — one Constitution per project — that later stages read as the source of truth.
-- **FR-004**: The system MUST allow viewing and amending the Constitution after it is created.
-- **FR-005**: When a Constitution already exists, the system MUST reuse it and skip the interview, while still exposing an explicit amend entry point.
+- **FR-002a**: The interview MUST seed itself from technical preferences already present in the Proposal's original natural-language prompt, presenting them as pre-filled/proposed answers (clearly marked, overridable) rather than re-asking them.
+- **FR-002b**: For any required decision area not pinned down by the prompt, the interview MUST recommend a fit-for-purpose default suited to the project's intent, with a short rationale, for the architect to confirm or change. (Where spec-kit's existing constitution skill already provides this "derive from input / recommend" behavior, it MUST be reused/extended rather than reimplemented.)
+- **FR-002c**: The interview MUST be **dependency-aware and minimal**: questions form a tree where a higher-level answer opens or closes downstream questions (choosing monolith MUST suppress gateway/ingress, service-mesh, deployment-target, and repo-per-service follow-ups; choosing microservices unlocks them; choosing a mono-repo suppresses the split-git/reuse-existing follow-up). The interview MUST ask the fewest questions needed for the complexity level the architect is actually heading toward, skipping anything already seeded or confidently recommended.
+- **FR-003**: The system MUST persist the interview answers as a **project-root Constitution Neo4j node** (the graph is the source of truth, Principle I) — **never** as a per-Proposal copy and **not** as a file in the target repo.
+- **FR-003a**: The system MUST support a **two-level Constitution hierarchy**: one **project-root** Constitution plus an optional **per-Bounded-Context** Constitution (override). The **effective** Constitution for a BC MUST be computed as the project-root Constitution merged with that BC's overrides (BC value wins where present); stages that need a BC-specific constitution MUST consume the effective (merged) result.
+- **FR-004**: The architect MUST be able to view and amend any Constitution (project-root and per-BC) **at any time from the Design side** — a "헌장" entry point at the Design root and at each Bounded Context root. Editing MUST NOT be located in the Proposals tab.
+- **FR-005**: When a project-root Constitution already exists, the Proposal flow MUST reuse it and skip the interview; it MUST NOT show a Constitution view/edit surface in the Proposals tab (amend happens on the Design side, FR-004).
+- **FR-005a**: The Proposal flow MUST trigger the Constitution interview **only** when no project-root Constitution exists, as a one-time gate before planning, and the interview MUST create the **project-root** Constitution node (not a proposal-scoped one).
 
 #### Stage Split (Intent ↔ Plan)
 
@@ -127,6 +142,9 @@ As an architect, when I generate the task list and then implement a Proposal, th
 #### Architecture Plan
 
 - **FR-011**: The implementation plan MUST include concrete microservice architecture decisions consistent with the Constitution, covering at minimum: deployment environment, ingress, service mesh / framework, frontend stack, and the mapping of services onto the repository strategy.
+- **FR-011a**: When the plan involves **two or more Bounded Contexts/services**, it MUST analyze the **inter-context integration intent** — classifying each cross-context interaction as request/response (Command/Query, synchronous) vs. publish/subscribe (Event, asynchronous), reusing the ddd-starter "Connect" decision guidance — and MUST default to an **event-driven pub/sub** style unless a synchronous interaction is genuinely required.
+- **FR-011b**: For any pub/sub integration, the plan MUST define the **messaging channel implementation** (defaulting to Kafka unless the Constitution's tech stack dictates another broker).
+- **FR-011c**: For a microservices architecture, the plan MUST define a **per-service developer environment** (Docker-based, with that service's scoped infrastructure dependencies, e.g. Kafka), such that a future multi-repo split lets each developer reflect/run only the slice relevant to their own microservice (an explicit scope note per service).
 - **FR-012**: When the Constitution declares a monolith, the plan MUST reflect a single-deployable architecture and MUST NOT fabricate microservice-only infrastructure.
 - **FR-013**: When the Constitution is silent on a required architectural decision, the plan MUST surface the gap explicitly for the architect rather than silently defaulting.
 - **FR-014**: Each architectural decision in the plan SHOULD be traceable to the Constitution decision that justifies it (or be flagged as a Constitution gap).
@@ -140,7 +158,7 @@ As an architect, when I generate the task list and then implement a Proposal, th
 
 ### Key Entities *(include if feature involves data)*
 
-- **Constitution**: The target project's durable engineering decisions — design principles, technology stack, monolith/microservices posture, repository strategy. Created once (via interview) and amendable; read by Plan, Tasks, and Implementation.
+- **Constitution**: The target project's durable engineering decisions — design principles, technology stack, monolith/microservices posture, repository strategy. Stored as **Neo4j node(s)**: one **project-root** Constitution + optional **per-Bounded-Context** Constitution overrides. The **effective** constitution for a BC = project-root merged with that BC's overrides. Created once via interview (project-root) and amendable anytime from the Design side; read by Plan, Tasks, and Implementation. Never per-Proposal.
 - **Strategic Diff**: The *what* of a Proposal — proposed Epics/Features/UserStories/Processes. Output of the Intent stage; input to the Plan stage. (Existing concept; this feature narrows the Intent stage to produce only this.)
 - **Implementation Plan**: The *how* of a Proposal — tactical/strategic refinement plus the constitution-grounded architecture decisions (deployment environment, ingress, mesh/framework, frontend, repository mapping). Output of the Plan stage; input to Tasks and Implementation.
 - **Impact Analysis**: The assessment of how the planned change affects the existing domain model, produced during the Plan stage.
@@ -159,11 +177,12 @@ As an architect, when I generate the task list and then implement a Proposal, th
 ## Assumptions
 
 - **Scope of "constitution.md"**: This refers to the **target project being designed via the Proposal lifecycle** (the `projectRoot` target project from feature 039), not robo-architect's own internal constitution. Robo-architect already maintains its own constitution at `.specify/memory/constitution.md`; this feature is about the *user's* project under design.
-- **Proposal-lifecycle scope**: The intent→plan split and the Constitution apply **only** to the 039/040 Proposal lifecycle. The primary ingestion/design pipeline is out of scope for this feature.
-- **Constitution persistence**: One Constitution per target project, stored as a versioned file in the `projectRoot` repo (the file is the source of truth), surfaced/editable in the robo-architect UI and read directly by the sandbox at implementation time.
+- **Proposal-lifecycle scope**: The intent→plan split applies **only** to the 039/040 Proposal lifecycle. Constitution **management** (view/edit/override) lives on the Design side and is shared by the whole product, not proposal-scoped.
+- **Constitution persistence**: Stored as **Neo4j node(s)** — a project-root Constitution + per-BC overrides — not a repo file and not per-Proposal. The graph is the source of truth (Principle I). Implementation reads the effective (merged) constitution from the graph; if a file copy is needed inside the sandbox at implement time, it is a *projection* of the node, regenerable.
 - **Reuse of existing flow**: This feature evolves the existing Proposal lifecycle skills (`robo-proposal-intent`, `robo-proposal-tasks`, `robo-proposal-implement`) and the proposal state machine (039) rather than introducing a parallel pipeline; the new Plan stage slots between Intent and task generation.
 - **New "Plan" stage naming**: The user proposed naming the new proposal-planning stage "robo-plan". A robo-plan skill already exists for the speckit/feature-graph flow; the proposal-lifecycle plan stage will be named to avoid collision (e.g., `robo-proposal-plan`) — exact naming is an implementation detail resolved in planning.
 - **Interview UX**: The constitution interview follows the existing clarification-question pattern (sequential, selectable answers) already used by intent/clarify flows.
+- **Reuse of spec-kit's constitution capability**: spec-kit already ships a `speckit-constitution` skill that derives constitution values from user input / repo context. This feature reuses/extends it for the seeding (FR-002a) and fit-for-purpose recommendation (FR-002b) behavior rather than building a new generator.
 - **Architecture vocabulary**: Terms like ingress, service mesh, and frontend stack are *captured as the project's declared choices*; this feature does not mandate any particular technology — it records and propagates whatever the architect declares.
 - **Human-in-the-loop preserved**: Constitution creation, plan, tasks, and implementation remain propose→review→confirm steps consistent with the product's existing mutation discipline.
 
@@ -172,3 +191,4 @@ As an architect, when I generate the task list and then implement a Proposal, th
 - Builds on the **039 Proposal Lifecycle** (Proposal/PRO-NNN state machine, sandbox worktree, `robo-proposals/` skills) and **040 Proposal Impact Preview**.
 - Reuses the existing impact/diff machinery (038 EFFECT / SemanticDiff) for the Plan stage's impact analysis.
 - Reuses the existing SSE streaming and clarification-question UX patterns.
+- Reuses the **ddd-starter** DDD modelling skill — Step 5 "Connect / Message Flow" (Event pub/sub vs Command vs Query classification + coupling checks) — for the Plan stage's inter-context integration analysis (FR-011a). Canonical source: https://github.com/jinyoung/ddd-starter-skill-korean.

@@ -10,6 +10,7 @@ from starlette.requests import Request
 
 from api.features.proposal_lifecycle.proposal_contracts import (
     CreateProposalRequest,
+    DeleteProposalRequest,
     ProposalResponse,
     SubmitProposalRequest,
     AnswerClarificationRequest,
@@ -75,7 +76,8 @@ async def create_proposal(body: CreateProposalRequest, request: Request):
                 createdAt: datetime($createdAt),
                 status: 'DRAFT',
                 statusHistory: '[]',
-                clarificationLog: '[]'
+                clarificationLog: '[]',
+                decompositionMode: $decompositionMode
             })
             """,
             id=proposal_id,
@@ -83,6 +85,7 @@ async def create_proposal(body: CreateProposalRequest, request: Request):
             originalPrompt=body.originalPrompt,
             author=actor,
             createdAt=created_at.isoformat(),
+            decompositionMode=body.decompositionMode.value,
         )
 
     SmartLogger.log("INFO", f"Proposal created: {proposal_id}",
@@ -161,6 +164,68 @@ async def get_proposal(proposal_id: str, request: Request):
         raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
 
     return ProposalResponse.from_neo4j(record["p"], _parse_effects(record["effects"]))
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/proposals/{id}  — Proposal 영구 삭제 (id 입력 확인 필요)
+# ---------------------------------------------------------------------------
+
+@router.delete("/{proposal_id}", status_code=204)
+async def delete_proposal(proposal_id: str, body: DeleteProposalRequest, request: Request):
+    """Proposal 을 그래프에서 영구 삭제한다(되돌릴 수 없음).
+
+    오삭제를 막기 위해 호출자는 삭제하려는 id 를 본문 `confirmId` 로 다시 입력해야 하며
+    path 의 id 와 일치해야 한다. ACCEPTED(머지 완료) Proposal 은 그래프에 반영됐으므로
+    영구 삭제 대신 revoke(수거)를 사용해야 한다.
+    """
+    if body.confirmId != proposal_id:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "reason": "id_mismatch",
+                "message": "삭제를 확정하려면 Proposal id 를 정확히 입력해야 합니다.",
+            },
+        )
+
+    row = _get_proposal_row(proposal_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
+
+    # 권한: 작성자 본인 또는 PO 만 삭제할 수 있다. 역할 시스템 미도입 상태에서는 actor 를
+    # 기본 PO 로 간주하므로(기본 PO 정책) 사실상 작성자는 항상 삭제 가능하다.
+    actor = getattr(getattr(request.state, "actor", None), "email", "anonymous")
+    role = getattr(getattr(request.state, "actor", None), "role", None) or "PO"
+    author = row.get("author")
+    if author and actor != author and role != "PO":
+        raise HTTPException(
+            status_code=403,
+            detail="삭제 권한이 없습니다. 작성자 본인 또는 PO만 삭제할 수 있습니다.",
+        )
+
+    if row.get("status") == "ACCEPTED":
+        raise HTTPException(
+            status_code=423,
+            detail="ACCEPTED Proposal 은 영구 삭제할 수 없습니다. 먼저 수거(revoke)하세요.",
+        )
+
+    # Worktree 정리 (destroy 와 동일 — 대상 프로젝트 projectRoot 기준)
+    if (row.get("sandboxWorktreePath") or row.get("sandboxBranch")) and row.get("projectRoot"):
+        try:
+            from api.features.proposal_lifecycle.services.sandbox_manager import SandboxManager
+            SandboxManager().remove_worktree(proposal_id, row.get("projectRoot"))
+        except Exception as e:
+            SmartLogger.log("WARN", f"Worktree cleanup failed for {proposal_id}: {e}",
+                            category="proposal_lifecycle.delete.worktree_cleanup_warn",
+                            params={"proposalId": proposal_id, "error": str(e)})
+
+    with get_session() as session:
+        session.run("MATCH (p:Proposal {id: $id}) DETACH DELETE p", id=proposal_id)
+
+    SmartLogger.log("INFO", f"Proposal deleted: {proposal_id}",
+                    category="proposal_lifecycle.delete.done",
+                    params={**http_context(request), "proposalId": proposal_id})
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -288,10 +353,13 @@ async def submit_proposal(proposal_id: str, body: SubmitProposalRequest, request
             detail=f"Proposal must be DRAFT to submit (current: {row.get('status')})",
         )
 
+    # 042 — 라이프사이클 재매핑: DRAFT=Intent, SUBMITTED=Plan.
+    # "제출" = Intent(전략 분해) 완료. strategicDiff 만 있으면 제출 가능하며, Plan(구현계획)은
+    # SUBMITTED 상태에서 수립한다. 확정 Plan 게이트는 구현(implement) 단계로 이동했다.
     if not row.get("strategicDiff") and not row.get("tacticalDiff"):
         raise HTTPException(
             status_code=400,
-            detail="strategicDiff or tacticalDiff must be set before submitting.",
+            detail={"reason": "intent_required", "message": "Intent(전략 분해)를 먼저 완료해야 Plan 단계로 제출할 수 있습니다."},
         )
 
     # 충돌 감지: 동일 그래프 노드를 수정하는 IMPLEMENTING 중인 Proposal

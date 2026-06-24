@@ -7,7 +7,7 @@
 ## 컨텍스트
 
 - 현재 작업 디렉터리는 Proposal 전용 샌드박스 Worktree(`<projectRoot>/.sandbox/proposal/<PRO-NNN>`)입니다. 원천은 robo-architect(설계 도구)가 아니라 Claude Code 탭에 설정된 대상 프로젝트입니다.
-- Worktree 루트에 `PROPOSAL_<PRO-NNN>.md` 파일이 있습니다. 거기에 원본 요구사항, Strategic Diff(Epic/Feature/UserStory), Tactical Diff(Aggregate/Command/Event/VO), 구현 지침이 들어 있습니다. **가장 먼저 이 파일을 읽으세요.**
+- Worktree 루트에 `PROPOSAL_<PRO-NNN>.md` 파일이 있습니다. 거기에 원본 요구사항, Strategic Diff(Epic/Feature/UserStory), Tactical Diff(Aggregate/Command/Event/VO), **프로젝트 Constitution**(설계원칙·기술스택·아키텍처 스타일·레포 전략), **Implementation Plan**(아키텍처 결정·컨텍스트 간 연동/메시징 채널·서비스별 개발환경), 구현 지침이 들어 있습니다. **가장 먼저 이 파일을 읽으세요.**
 
 ## 구현 절차
 
@@ -20,5 +20,6 @@
 ## 규칙
 
 - 모든 파일 생성/수정은 **이 Worktree 안에서만** 수행한다. 상위/메인 프로젝트는 절대 수정하지 않는다.
+- **Constitution/Plan 준수(041)** — 선언된 아키텍처 스타일(모놀리스/마이크로서비스), 기술스택, 레포 매핑, 컨텍스트 간 연동 방식(req/res vs pub/sub)과 메시징 채널(예: Kafka), 서비스별 Docker 개발환경을 그대로 따른다. repo-per-service 라면 각 서비스 범위에 한정해 구현하고, 그 서비스의 개발환경/의존만 셋업한다(멀티레포 대비). Plan 과 충돌하는 부분은 임의로 진행하지 말고 사용자에게 먼저 확인한다.
 - 막히거나 모호하면 사용자에게 질문하고 피드백을 받아 진행한다(인터랙티브 환경).
 - 구현이 끝나면 사용자에게 요약을 보고한다. 이후 사용자가 Proposal 화면에서 "구현 완료 → 테스트"를 눌러 자동 검증 단계로 넘어간다.
