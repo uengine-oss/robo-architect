@@ -543,11 +543,21 @@ function onEditorDeleted({ path }) {
 function onTerminalWorkdirPicked(path) {
   // The folder picker lives in the active terminal — repoint THAT session.
   const s = activeSession.value
-  if (path && s && s.workdir !== path) {
-    s.workdir = path
-    s.label = s.kind === 'main' ? '프로젝트' : basename(path)
-    s.activePath = null
-  }
+  if (!path || !s || s.workdir === path) return
+  // PTY는 셸이 아니라 claude를 직접 execvpe로 띄우므로 셸 `cd`로 옮길 수 없다 →
+  // 새 폴더에서 터미널을 다시 띄워야(respawn) 실제 cwd가 따라온다(C7/I16).
+  // 현재 claude 세션/스크롤백은 사라지므로 사용자 확인을 받는다.
+  const ok = window.confirm(
+    `터미널을 새 폴더로 다시 시작할까요?\n\n${path}\n\n현재 터미널 세션(대화·스크롤백)은 종료됩니다.`,
+  )
+  if (!ok) return
+  // 기존 PTY를 명시적으로 종료하고 epoch를 올려, key가 바뀐 ClaudeCodeTerminal이
+  // remount → 새 cwd + 새 backendId(id#epoch)로 fresh PTY를 띄운다.
+  closeTerminalSession(backendId(s))
+  s.epoch = (s.epoch || 0) + 1
+  s.workdir = path
+  s.label = s.kind === 'main' ? '프로젝트' : basename(path)
+  s.activePath = null
 }
 
 // Tab-switch-away guard via the injected activeTab ref.
@@ -696,7 +706,7 @@ onBeforeUnmount(() => {
       <div class="ccw-terminals">
         <div
           v-for="s in sessions"
-          :key="s.id"
+          :key="`${s.id}#${s.epoch || 0}`"
           v-show="s.id === activeSessionId"
           class="ccw-terminal-host"
         >

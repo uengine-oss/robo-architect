@@ -189,10 +189,14 @@ def build_mcp_server() -> Any | None:
                 rootEntity: agg.rootEntity,
                 version: coalesce(agg.version, 0)
             }) as aggregates,
-            [cmd IN apoc.coll.toSet(commands) WHERE cmd.id IS NOT NULL] as commands,
-            [evt IN apoc.coll.toSet(events)   WHERE evt.id IS NOT NULL] as events,
-            [rm  IN apoc.coll.toSet(readmodels) WHERE rm.id IS NOT NULL] as readmodels
+            [cmd IN commands   WHERE cmd.id IS NOT NULL] as commands,
+            [evt IN events     WHERE evt.id IS NOT NULL] as events,
+            [rm  IN readmodels WHERE rm.id  IS NOT NULL] as readmodels
         """
+        # NOTE: collect(DISTINCT {...}) 가 이미 중복을 제거하므로 apoc.coll.toSet 은
+        # 불필요했고, APOC 미설치 환경에서 이 함수 때문에 쿼리가 throw → 폴백이
+        # commands/events/readmodels 를 빈 배열로 떨궈 robo-spec /robo-plan 이 빈 설계를
+        # 받던 버그(D7)를 유발했다. APOC 의존 제거.
         # APOC may not be installed everywhere — fall back to a
         # non-APOC version when it's missing.
         with get_session() as s:
