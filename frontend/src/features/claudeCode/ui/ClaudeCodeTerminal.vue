@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, nextTick, watch, inject } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { useThemeStore } from '@/app/theme.store'
 import { XTERM_THEMES } from './xterm-themes.js'
@@ -333,6 +334,17 @@ onMounted(async () => {
 
   createTerminal()
   terminal.open(terminalRef.value)
+
+  // D9: GPU(WebGL) 렌더러로 교체 — 기본 DOM 렌더러는 대량 출력/긴 스크롤백(5000)에서
+  // 스크롤이 버벅인다. open() 이후(캔버스 준비됨)에 로드해야 한다. 컨텍스트 손실 시
+  // dispose 하여 xterm 기본 렌더러로 자동 폴백, WebGL 미지원 환경은 catch 로 폴백.
+  try {
+    const webgl = new WebglAddon()
+    webgl.onContextLoss(() => { webgl.dispose() })
+    terminal.loadAddon(webgl)
+  } catch {
+    /* WebGL 미지원 → 기본 렌더러 유지 */
+  }
 
   // Handle user input → send to backend
   terminal.onData((data) => {
