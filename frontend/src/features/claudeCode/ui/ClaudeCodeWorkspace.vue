@@ -347,12 +347,27 @@ function _onTerminalOpen(e) {
   if (k === 'main') {
     let main = mainSession.value
     if (!main) {
-      main = { id: 'main', label: '프로젝트', workdir: workdir || '', kind: 'main', activePath: null, initialCommand: '', epoch: 0 }
+      // 새 메인 세션: 명령을 initialCommand 로 실어 보낸다 → 터미널이 claude 부팅 후
+      // (~6s) 실행. nextTick sendInput 은 claude 준비 전이라 실행이 누락되던 콜드스타트
+      // 레이스(C6)를 피한다.
+      main = { id: 'main', label: '프로젝트', workdir: workdir || '', kind: 'main', activePath: null, initialCommand: command || '', epoch: 0 }
       sessions.value.unshift(main)
-    } else if (workdir && main.workdir !== workdir) {
+      activeSessionId.value = main.id
+      return
+    }
+    if (workdir && main.workdir !== workdir) {
+      // 다른 프로젝트로 핸드오프(PRD 열기·프로젝트 전환 등): PTY 는 claude 를 직접
+      // 실행하므로 셸 cd 로 못 옮긴다 → 기존 PTY 종료 + epoch++ 로 새 cwd 에서 respawn
+      // 해야 실제 터미널이 새 프로젝트로 간다(C7 핸드오프 경로). 명령은 initialCommand 로.
+      closeTerminalSession(backendId(main))
+      main.epoch = (main.epoch || 0) + 1
       main.workdir = workdir
       main.activePath = null
+      main.initialCommand = command || ''
+      activeSessionId.value = main.id
+      return
     }
+    // 같은 workdir 의 기존 세션: claude 가 이미 떠 있으므로 명령만 주입.
     activeSessionId.value = main.id
     if (command) nextTick(() => terminalRefs[main.id]?.sendInput(command + '\n'))
     return
