@@ -49,7 +49,7 @@
 | Process (Event Modeling) | [tabs/process-event-modeling.md](tabs/process-event-modeling.md) | ✅ 완료 | **S1~S9 ✅** + **수동 편집(자유좌표/연결) 심화**. **수정 18건**(EM1~EM9 + EM10 자유좌표저장·EM11 RM3분류 시각구분·EM12 UI연결 Ui≠UI/방향역전·EM13 Design부착 attachedToId·EM14 드롭열 off-by-one(round→floor)·EM15 연결 카디널리티 거부+알림·EM16 **재승격 idempotency**(clear후생성). loose X드래그·배너자동숨김·독립노드토스트 포함). 자유좌표=관계파생 레이아웃에 stored sequence 도입, 연결은 Connect모드 수동. |
 | Design | [tabs/design.md](tabs/design.md) | ⬜ | |
 | Data | [tabs/data.md](tabs/data.md) | ⬜ | |
-| Code | [tabs/code.md](tabs/code.md) | 🟡 진행중 | 인벤토리 작성(015 터미널·021 3-pane IDE·029 MCP/슬래시). S0~S6 설계. C11(pty_backend env)·C6/C7·I14/I16 이월 확인 대상 |
+| Code | [tabs/code.md](tabs/code.md) | ✅ 거의완료 | **S0~S5 ✅**(S4 robo-spec MCP end-to-end: plan→tasks→code→그래프 역등록). **버그 7건 수정**(D7🔴P0 MCP 빈설계·C7/I16 cwd·C6/S5 핸드오프·D1·D3·D5·D9). C11 정정(무해). S6=코드확인(I14는 Proposals 탭). 기록 D2/D4/D6/D8/D10 |
 | Proposals | [tabs/proposals.md](tabs/proposals.md) | ✅ 완료 | 생애주기 **S1~S10 전 시나리오 ✅**. 버그 **14건 수정**(I3·I5·I6·I7·I8·I9·I10·I11·I13·I17·I18A·I19+S9안내), 후속/백로그 6건(I4·I12·I14·I16·I18C·I20). 041 미구현 |
 | Analysis | [tabs/analysis.md](tabs/analysis.md) | ⬜ | |
 | Changes | [tabs/changes.md](tabs/changes.md) | 🟡 초안 | 인벤토리 완료(038 RequirementChange/CHG-NNN·EFFECT·ChangeSet·상태전이·구현PTY·회귀). **숨김 탭이라 접근경로(S0) 먼저 확정 필요**. 038→039(Proposal) 진화로 deprecated 경로 가능성 — 실제 동작 여부부터 확인 |
