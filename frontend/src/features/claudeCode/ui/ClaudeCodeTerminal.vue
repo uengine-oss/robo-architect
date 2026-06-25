@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, nextTick, watch, inject } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { useThemeStore } from '@/app/theme.store'
 import { XTERM_THEMES } from './xterm-themes.js'
@@ -23,10 +24,32 @@ const props = defineProps({
   sessionId: {
     type: String,
     default: ''
+  },
+  // Whether this terminal is the visible/active session. Only the active
+  // terminal emits `activity` (the file-tree refresh backstop) so hidden
+  // background sessions (other proposals) don't trigger refreshes.
+  isActive: {
+    type: Boolean,
+    default: true
   }
 })
 
-const emit = defineEmits(['workdir-picked'])
+const emit = defineEmits(['workdir-picked', 'activity'])
+
+// Filesystem-refresh backstop: when this (active) terminal's output goes quiet
+// after a burst, claude has likely just finished writing files. The SSE watcher
+// covers most cases; this debounced signal catches anything it missed (e.g. the
+// brief window before the stream connects). Resets on each chunk, so it fires
+// ~1s AFTER output settles, not during streaming.
+let activityTimer = null
+function notifyActivity() {
+  if (!props.isActive) return
+  if (activityTimer) clearTimeout(activityTimer)
+  activityTimer = setTimeout(() => {
+    activityTimer = null
+    emit('activity')
+  }, 1000)
+}
 
 const themeStore = useThemeStore()
 
@@ -218,6 +241,7 @@ function connect(workdir) {
   ws.onmessage = (event) => {
     if (terminal) {
       queueTerminalWrite(event.data)
+      notifyActivity()
     }
   }
 
@@ -311,6 +335,17 @@ onMounted(async () => {
   createTerminal()
   terminal.open(terminalRef.value)
 
+  // D9: GPU(WebGL) 렌더러로 교체 — 기본 DOM 렌더러는 대량 출력/긴 스크롤백(5000)에서
+  // 스크롤이 버벅인다. open() 이후(캔버스 준비됨)에 로드해야 한다. 컨텍스트 손실 시
+  // dispose 하여 xterm 기본 렌더러로 자동 폴백, WebGL 미지원 환경은 catch 로 폴백.
+  try {
+    const webgl = new WebglAddon()
+    webgl.onContextLoss(() => { webgl.dispose() })
+    terminal.loadAddon(webgl)
+  } catch {
+    /* WebGL 미지원 → 기본 렌더러 유지 */
+  }
+
   // Handle user input → send to backend
   terminal.onData((data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -338,6 +373,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (activityTimer) {
+    clearTimeout(activityTimer)
+    activityTimer = null
+  }
   if (writeRaf) {
     cancelAnimationFrame(writeRaf)
     writeRaf = null

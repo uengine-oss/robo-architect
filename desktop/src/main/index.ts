@@ -29,6 +29,7 @@ import {
 import { ensureDataDirs } from "./data-dir";
 import { initLogging, log, revealLogs } from "./logging";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
+import { copy, listDir, mkdir, readFile, rename, trash, writeFile } from "./fs-browser";
 import {
   getRuntimeBackend,
   onBackendStatusChange,
@@ -122,13 +123,22 @@ function registerAppProtocol(): void {
       pathname = "/index.html";
     }
 
-    // Proxy /api/** to the live backend.
+    // Proxy /api/** upstream. /api/gateway/** → analyzer API Gateway (9000);
+    // every other /api/** → the spawned architect backend. Mirrors the vite
+    // dev-server proxy (frontend/vite.config.js) for the app:// production path,
+    // where there is no vite to route the analyzer's gateway calls.
     if (pathname === "/api" || pathname.startsWith("/api/")) {
-      const port = getRuntimeBackend().port;
-      if (port === null) {
-        return new Response("Backend not ready", { status: 503 });
+      let upstreamBase: string;
+      if (pathname === "/api/gateway" || pathname.startsWith("/api/gateway/")) {
+        upstreamBase = process.env.ROBO_GATEWAY_URL ?? "http://127.0.0.1:9000";
+      } else {
+        const port = getRuntimeBackend().port;
+        if (port === null) {
+          return new Response("Backend not ready", { status: 503 });
+        }
+        upstreamBase = `http://127.0.0.1:${port}`;
       }
-      const upstream = `http://127.0.0.1:${port}${pathname}${url.search}`;
+      const upstream = `${upstreamBase}${pathname}${url.search}`;
       try {
         return await net.fetch(upstream, {
           method: request.method,
@@ -270,6 +280,15 @@ function registerIpcHandlers(): void {
     await shell.openExternal(url);
     return { ok: true as const };
   });
+
+  // 014 analysis-scope-browser: 경로 모드 트리/미리보기 + 파일 작업(root 하위 한정).
+  registerHandler("fs:listDir", listDir);
+  registerHandler("fs:readFile", readFile);
+  registerHandler("fs:rename", rename);
+  registerHandler("fs:copy", copy);
+  registerHandler("fs:trash", trash);
+  registerHandler("fs:mkdir", mkdir);
+  registerHandler("fs:writeFile", writeFile);
 
   // Bridge backend status changes to the renderer.
   onBackendStatusChange((status, detail) => {

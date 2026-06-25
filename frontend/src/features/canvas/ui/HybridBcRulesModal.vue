@@ -1,24 +1,30 @@
 <script setup>
 /**
- * BC(Bounded Context) 별 Rule 관리 모달.
+ * Task 별 Rule 관리 모달.
  *
- * Navigator 의 "Rules by Context" 행을 클릭하면 열리고, 해당 BC 에 속한 모든
+ * Navigator 의 "Rules by Task" 행을 클릭하면 열리고, 해당 Task 에 매핑된 모든
  * Rule 을 나열한다. 각 행에서 역할 변경·Task 재배치·Task 에서 제거 까지 수행
- * 가능해 BC 단위 일괄 정리에 쓰는 미니 Rule Manager 역할.
+ * 가능해 Task 단위 일괄 정리에 쓰는 미니 Rule Manager 역할.
+ * (B5 — 과거 BC `context_cluster` 그룹핑이 폐기로 무력화돼 Task 기준으로 전환.
+ *  `bcRulesModalCluster` 는 이제 taskId 스코프를 담는다.)
  */
 import { computed } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 
 const store = useBpmnStore()
 
-const cluster = computed(() => store.bcRulesModalCluster)
-const isOpen = computed(() => !!cluster.value)
+// scope = taskId (Navigator "Rules by Task" 행에서 전달).
+const scope = computed(() => store.bcRulesModalCluster)
+const isOpen = computed(() => !!scope.value)
+
+const scopeTask = computed(() =>
+  store.hybridTasks.find(t => t.id === scope.value) || null,
+)
+const cluster = computed(() => scopeTask.value?.name || scope.value || '')
 
 const rules = computed(() => {
-  if (!cluster.value) return []
-  return store.hybridRules.filter(
-    r => (r.context_cluster || '미분류') === cluster.value,
-  )
+  if (!scope.value) return []
+  return scopeTask.value?.rules || []
 })
 
 // For each rule, which tasks does it currently belong to?
@@ -91,7 +97,7 @@ function close() {
 
         <div class="bc-modal__body">
           <div v-if="rules.length === 0" class="bc-modal__empty">
-            이 범주에 속한 Rule 이 없습니다.
+            이 Task 에 매핑된 Rule 이 없습니다.
           </div>
 
           <article

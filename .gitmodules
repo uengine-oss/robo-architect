@@ -1,6 +1,17 @@
 [submodule "open-pencil"]
 	path = open-pencil
-	url = https://github.com/jinyoung/open-pencil
-[submodule "robo-analyzer/robo-data-analyzer"]
+	url = https://github.com/uengine-oss/open-pencil.git
+[submodule "analyzer/analyzer"]
 	path = robo-analyzer/robo-data-analyzer
-	url = https://github.com/uengine-oss/robo-data-analyzer
+	url = https://github.com/uengine-oss/robo-data-analyzer.git
+	branch = refactor
+[submodule "analyzer/frontend"]
+	path = robo-analyzer/robo-data-frontend
+	url = https://github.com/uengine-oss/robo-data-frontend.git
+	branch = main
+[submodule "analyzer/catalog"]
+	path = robo-analyzer/robo-data-catalog
+	url = https://github.com/uengine-oss/robo-data-catalog.git
+[submodule "robo-analyzer/robo-data-text2sql"]
+	path = robo-analyzer/robo-data-text2sql
+	url = https://github.com/uengine-oss/robo-data-text2sql.git

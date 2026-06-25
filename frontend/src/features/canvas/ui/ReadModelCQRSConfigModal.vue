@@ -32,6 +32,7 @@ function close() {
       <div class="modal-body">
         <ReadModelCQRSEditor
           :enabled="visible"
+          :hide-provisioning="true"
           :read-model-id="readModelId"
           :read-model-data="readModelData"
           @updated="$emit('updated')"

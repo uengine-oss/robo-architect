@@ -91,16 +91,38 @@ async def run_hybrid_workflow(
             pdf_artifacts=pdf_artifacts,
         )
         bundle: ProcessBundle = phase1.bundle
-        src_label = "외부 A2A 서비스" if phase1.source == "a2a" else "내장 추출기"
+        src_label = {
+            "facade": "외부 추출기(facade, 직접파싱)",
+            "a2a": "외부 A2A 서비스",
+            "native": "내장 추출기(폴백)",
+        }.get(phase1.source, "내장 추출기(폴백)")
+        gateway_total = sum(len(s.gateways) for s in bundle.processes)
+        # Explicit branch log: which Phase-1 engine produced the BPM + whether a
+        # fallback happened (phase1.error carries the upstream failure reason).
+        SmartLogger.log(
+            "INFO",
+            f"Phase 1 BPM source={phase1.source} processes={len(bundle.processes)} "
+            f"gateways={gateway_total}"
+            + (f" (fell back, reason: {phase1.error})" if phase1.error else ""),
+            category="ingestion.hybrid.document_bpm",
+            params={
+                "session_id": session_id,
+                "phase1_source": phase1.source,
+                "phase1_error": phase1.error,
+                "process_count": len(bundle.processes),
+                "gateway_total": gateway_total,
+            },
+        )
         yield _ev(
             HybridPhase.DOCUMENT_BPM,
-            f"🔌 Phase 1 소스: {src_label} · 프로세스 {len(bundle.processes)}개"
-            + (f" (fallback: {phase1.error})" if phase1.error else ""),
+            f"🔌 Phase 1 소스: {src_label} · 프로세스 {len(bundle.processes)}개 · 게이트웨이 {gateway_total}개"
+            + (f" (폴백 사유: {phase1.error})" if phase1.error else ""),
             12,
             {
                 "phase1_source": phase1.source,
                 "phase1_error": phase1.error,
                 "process_count": len(bundle.processes),
+                "gateway_total": gateway_total,
             },
         )
 

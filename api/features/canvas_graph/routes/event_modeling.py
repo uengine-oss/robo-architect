@@ -74,7 +74,7 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
     OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
     OPTIONAL MATCH (cmdUi:UI)-[:ATTACHED_TO]->(cmd)
     RETURN cmd.id AS cmdId, cmd.name AS cmdName, cmd.displayName AS cmdDisplayName,
-           cmd.actor AS cmdActor,
+           cmd.actor AS cmdActor, cmd.sequence AS cmdStoredSequence,
            agg.id AS aggId, agg.name AS aggName,
            bc.id AS bcId, bc.name AS bcName, bc.displayName AS bcDisplayName,
            evt.id AS evtId, evt.name AS evtName, evt.displayName AS evtDisplayName,
@@ -90,11 +90,20 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
     OPTIONAL MATCH (rm)-[:HAS_CQRS]->(:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(triggerEvt:Event)
     WITH rm, bc, rmUi, collect(DISTINCT triggerEvt.id) AS triggerEventIds
     RETURN rm.id AS rmId, rm.name AS rmName, rm.displayName AS rmDisplayName,
-           rm.actor AS rmActor,
+           rm.actor AS rmActor, rm.sequence AS rmStoredSequence,
            bc.id AS bcId, bc.name AS bcName,
            rmUi.id AS rmUiId, rmUi.name AS rmUiName,
            rmUi.displayName AS rmUiDisplayName, rmUi.template AS rmUiTemplate,
            triggerEventIds
+    """
+
+    # 자유좌표(EM10): ATTACHED_TO 없이 수동 배치된 UI(자유 노드) — stored sequence로 배치.
+    orphan_uis_query = """
+    MATCH (bc:BoundedContext)-[:HAS_UI]->(ui:UI)
+    WHERE NOT (ui)-[:ATTACHED_TO]->()
+    RETURN ui.id AS uiId, ui.name AS uiName, ui.displayName AS uiDisplayName,
+           ui.template AS uiTemplate, ui.actor AS uiActor, ui.sequence AS uiStoredSequence,
+           bc.id AS bcId
     """
 
     chains_query = """
@@ -133,6 +142,7 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
         orphan_event_records = [dict(r) for r in session.run(bc_events_query)]
         rm_records = [dict(r) for r in session.run(readmodels_query)]
         chain_records = [dict(r) for r in session.run(chains_query)]
+        orphan_ui_records = [dict(r) for r in session.run(orphan_uis_query)]
 
     # ── 2. 인덱스 구축 (bc_ids 필터 적용) ─────────────────────────
     commands = {}
@@ -157,6 +167,7 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
                 "actor": actor,
                 "aggregateName": r["aggName"],
                 "bcId": bc_id,
+                "storedSequence": r.get("cmdStoredSequence"),
             }
             cmd_to_events[cmd_id] = []
 
@@ -251,6 +262,7 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
                 "actor": r["rmActor"] or "user",
                 "bcId": bc_id,
                 "triggerEventIds": trigger_evt_ids,
+                "storedSequence": r.get("rmStoredSequence"),
             }
             bc_to_rms.setdefault(bc_id, [])
             if rm_id not in bc_to_rms[bc_id]:
@@ -305,10 +317,24 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
         if ss is not None:
             temp_max = max(temp_max, int(ss))
     unlinked_offset = temp_max + 1
+    # 자유좌표(EM10): EMITS 없는 수동 Command는 stored를 "표시열로 직접" 쓴다(압축 비대상).
+    # cmd_sequence는 None으로 둬 압축(used_seqs)에서 제외하고, 압축 후 stored를 그대로 대입.
+    loose_cmd_stored: dict[str, int] = {}
     for cmd_id in commands:
         if cmd_sequence.get(cmd_id) is None:
-            cmd_sequence[cmd_id] = unlinked_offset
-            unlinked_offset += 1
+            stored = commands[cmd_id].get("storedSequence")
+            sv = None
+            if stored is not None:
+                try:
+                    sv = int(stored)
+                except (TypeError, ValueError):
+                    sv = None
+            if sv is not None:
+                loose_cmd_stored[cmd_id] = sv  # 압축 후 표시열로 직접 사용
+            else:
+                # 레거시(저장값 없음): 끝열로 밀어 압축에서 재매핑.
+                cmd_sequence[cmd_id] = unlinked_offset
+                unlinked_offset += 1
 
     # ── 3a-2. 병렬 흐름: 같은 Command가 EMITS하는 이벤트 처리 ──
     # 각 이벤트는 자신의 고유 storedSequence를 유지한다.
@@ -316,6 +342,26 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
     #  하나의 Command가 여러 독립 검증 이벤트를 EMITS하는 경우
     #  전부 한 열에 쌓이는 문제가 있었음)
     # Command의 sequence만 연결된 이벤트 중 최소값으로 설정 (위에서 이미 처리됨).
+
+    # 자유좌표(EM10): orphan UI(ATTACHED_TO 없는 수동 UI)를 actor swimlane용으로 인덱싱.
+    orphan_uis = []
+    for r in orphan_ui_records:
+        bc_id_u = r.get("bcId")
+        if filter_bc_ids and bc_id_u not in filter_bc_ids:
+            continue
+        try:
+            uo_seq = int(r["uiStoredSequence"]) if r.get("uiStoredSequence") is not None else None
+        except (TypeError, ValueError):
+            uo_seq = None
+        orphan_uis.append({
+            "id": r["uiId"],
+            "name": r["uiName"],
+            "displayName": r["uiDisplayName"] or r["uiName"],
+            "template": r.get("uiTemplate"),
+            "actor": r.get("uiActor") or "User",
+            "bcId": bc_id_u,
+            "storedSequence": uo_seq,
+        })
 
     # ── 3b. Sequence 압축: 표시되는 sequence를 1부터 연속 번호로 재매핑
     # (BC 필터 시 중간이 빈 sequence 30→1, 31→2 등으로 압축)
@@ -327,7 +373,9 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
     for cid, seq in cmd_sequence.items():
         if seq is not None:
             used_seqs.add(seq)
+    # 주: loose 노드(연결 없는 Command/RM/UI)의 stored는 압축 대상에서 제외 — 표시열로 직접 사용.
 
+    seq_remap: dict[int, int] = {}
     if used_seqs:
         sorted_seqs = sorted(used_seqs)
         seq_remap = {old: new for new, old in enumerate(sorted_seqs, start=1)}
@@ -338,7 +386,7 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
             if ss is not None:
                 ev["storedSequence"] = seq_remap.get(int(ss), int(ss))
 
-        # 커맨드 재매핑
+        # 커맨드 재매핑(연결된 것만 — loose는 cmd_sequence가 None이라 영향 없음)
         for cid in list(cmd_sequence.keys()):
             old = cmd_sequence[cid]
             if old is not None:
@@ -347,6 +395,20 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
         max_sequence = max(seq_remap.values()) if seq_remap else 1
     else:
         max_sequence = 1
+
+    # 자유좌표(EM10): loose 노드 표시열 = stored sequence 직접(압축 비대상). max_sequence 확장.
+    for cmd_id_l, sv in loose_cmd_stored.items():
+        cmd_sequence[cmd_id_l] = sv
+        max_sequence = max(max_sequence, sv)
+    for rm in readmodels.values():
+        if not rm.get("triggerEventIds") and rm.get("storedSequence") is not None:
+            try:
+                max_sequence = max(max_sequence, int(rm["storedSequence"]))
+            except (TypeError, ValueError):
+                pass
+    for ou in orphan_uis:
+        if ou["storedSequence"] is not None:
+            max_sequence = max(max_sequence, ou["storedSequence"])
 
     # ── 4. Swimlane 구조 구성 ─────────────────────────────────────
 
@@ -390,6 +452,20 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
             "sequence": rm_seq,
         })
 
+    # 자유좌표(EM10): orphan UI(ATTACHED_TO 없는 수동 UI)를 저장 sequence로 actor swimlane에 배치.
+    for ou in orphan_uis:
+        ou_actor = ou["actor"]
+        if ou_actor not in actors_map:
+            actors_map[ou_actor] = {"actor": ou_actor, "uis": []}
+        actors_map[ou_actor]["uis"].append({
+            "id": ou["id"],
+            "name": ou["name"],
+            "displayName": ou["displayName"],
+            "template": ou.get("template"),
+            "actor": ou_actor,
+            "sequence": ou["storedSequence"] if ou["storedSequence"] is not None else 1,
+        })
+
     actor_swimlanes = []
     for actor in sorted(actors_map):
         data = actors_map[actor]
@@ -411,20 +487,23 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
     interaction_readmodels = []
     for rm_id, rm in readmodels.items():
         trigger_ids = rm.get("triggerEventIds", [])
-        # CQRS 관계 없는 ReadModel은 Interaction에 배치하지 않음
-        # (어떤 Event에서 프로비저닝되는지 모르면 적절한 X 배치 불가)
-        if not trigger_ids:
-            continue
-
         rm_ui = rm_uis.get(rm_id)
-        rm_seq = 1
-        for evt_id in trigger_ids:
-            trig = events.get(evt_id)
-            if trig and trig.get("storedSequence") is not None:
-                try:
-                    rm_seq = max(rm_seq, int(trig["storedSequence"]))
-                except (TypeError, ValueError):
-                    pass
+        if trigger_ids:
+            # CQRS trigger 기준 열 배치(기존 동작).
+            rm_seq = 1
+            for evt_id in trigger_ids:
+                trig = events.get(evt_id)
+                if trig and trig.get("storedSequence") is not None:
+                    try:
+                        rm_seq = max(rm_seq, int(trig["storedSequence"]))
+                    except (TypeError, ValueError):
+                        pass
+        else:
+            # 자유좌표(EM10): CQRS 관계 없는 수동 ReadModel은 저장 sequence를 표시열로 직접 사용(압축 비대상).
+            stored = rm.get("storedSequence")
+            if stored is None:
+                continue  # 레거시(저장값 없음)는 X배치 불가 → 제외(기존 동작 유지)
+            rm_seq = int(stored)
 
         interaction_readmodels.append({
             **rm,
@@ -443,14 +522,19 @@ async def get_event_modeling(request: Request, bc_ids: str | None = None) -> dic
         if bc_id not in bc_events_map:
             bc_events_map[bc_id] = []
         evt_cmd = event_to_cmd.get(evt_id)
-        # 표시 열: Command에 연결된 경우 Command의 sequence 사용 (병렬 그룹핑)
-        if evt_cmd and evt_cmd in cmd_sequence:
-            evt_col = cmd_sequence[evt_cmd]
-        elif evt.get("storedSequence") is not None:
+        # 표시 열: Event 가 timeline 기준(authoritative) — 자기 storedSequence 를
+        # 그대로 표시 열로 쓴다. Command/RM/UI 는 cmd_sequence = min(연결 Event seq)
+        # 로 Event 를 따라온다. (이전엔 여기서 evt_col 을 Command 의 sequence 로
+        # 되돌려, 같은 Command 의 이벤트가 한 열에 묶이고 수동 reorder/parallel 이
+        # 무시됐다 — Event→others 동기화 방향과 반대였음.) 같은 storedSequence 를
+        # 가진 이벤트끼리는 자연히 한 열에 스택(=사용자가 명시적으로 병렬한 경우).
+        if evt.get("storedSequence") is not None:
             try:
                 evt_col = int(evt["storedSequence"])
             except (TypeError, ValueError):
-                evt_col = 1
+                evt_col = cmd_sequence.get(evt_cmd, 1) if evt_cmd else 1
+        elif evt_cmd and evt_cmd in cmd_sequence:
+            evt_col = cmd_sequence[evt_cmd]
         else:
             evt_col = 1
         bc_events_map[bc_id].append({
@@ -612,6 +696,10 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
     bc_id = body.get("bcId")
     sequence = body.get("sequence", 1)
     actor = body.get("actor", "User")
+    # EM10: 프런트가 "현재 캔버스에 보이는 레인의 열-최근접 Event"를 앵커로 지정.
+    # 한 BC에 여러 프로세스가 열을 공유할 때, 그래프 전체 BC-최근접으로 고르면 사용자가
+    # 보고 있던 게 아닌 옆 프로세스에 붙는 문제를 막는다(없으면 BC-최근접 폴백).
+    anchor_override = body.get("anchorEventId") or None
 
     if node_type not in ("event", "command", "readmodel", "ui"):
         return {"error": f"Invalid node type: {node_type}"}
@@ -641,12 +729,20 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
                 sequence=int(sequence), actor=actor,
             ).single()
             if rec:
+                # 자유좌표(EM10): 자동 연결 없음 — 위치는 노드의 sequence로 영속.
                 result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "event", "bcId": bc_id, "sequence": sequence}
 
         elif node_type == "command":
+            # 자유좌표(EM10): 자동 EMITS 없음 — 위치는 sequence로 노드에 저장. 연결은 Connect 모드로.
+            # 단 Aggregate 귀속은 구조상 필수: 앵커 Event(프런트 지정)의 Aggregate > BC 첫 Aggregate.
             agg_id = body.get("aggregateId")
+            if not agg_id and anchor_override:
+                agg_rec = session.run(
+                    "MATCH (agg:Aggregate)-[:HAS_COMMAND]->(:Command)-[:EMITS]->(:Event {id: $e}) RETURN agg.id AS id LIMIT 1",
+                    e=anchor_override,
+                ).single()
+                agg_id = agg_rec["id"] if agg_rec else None
             if not agg_id:
-                # aggregateId 없으면 BC 내 첫 번째 Aggregate 사용
                 agg_rec = session.run(
                     "MATCH (bc:BoundedContext {id: $bcId})-[:HAS_AGGREGATE]->(agg:Aggregate) RETURN agg.id AS id LIMIT 1",
                     bcId=bc_id,
@@ -661,6 +757,7 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
                     id: randomUUID(),
                     name: $name,
                     displayName: $displayName,
+                    sequence: $sequence,
                     actor: $actor,
                     createdAt: datetime(),
                     updatedAt: datetime()
@@ -668,10 +765,10 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
                 MERGE (agg)-[:HAS_COMMAND]->(cmd)
                 RETURN cmd.id AS id, cmd.name AS name, cmd.displayName AS displayName
                 """,
-                aggId=agg_id, name=name, displayName=display_name, actor=actor,
+                aggId=agg_id, name=name, displayName=display_name, sequence=int(sequence), actor=actor,
             ).single()
             if rec:
-                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "command", "bcId": bc_id, "actor": actor}
+                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "command", "bcId": bc_id, "actor": actor, "aggregateId": agg_id, "sequence": sequence}
 
         elif node_type == "readmodel":
             if not bc_id:
@@ -683,6 +780,7 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
                     id: randomUUID(),
                     name: $name,
                     displayName: $displayName,
+                    sequence: $sequence,
                     actor: $actor,
                     createdAt: datetime(),
                     updatedAt: datetime()
@@ -690,10 +788,11 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
                 MERGE (bc)-[:HAS_READMODEL]->(rm)
                 RETURN rm.id AS id, rm.name AS name, rm.displayName AS displayName
                 """,
-                bcId=bc_id, name=name, displayName=display_name, actor=actor,
+                bcId=bc_id, name=name, displayName=display_name, sequence=int(sequence), actor=actor,
             ).single()
             if rec:
-                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "readmodel", "bcId": bc_id, "actor": actor}
+                # 자유좌표(EM10): 자동 FEEDS/CQRS 없음 — 위치는 sequence로 노드에 저장.
+                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "readmodel", "bcId": bc_id, "actor": actor, "sequence": sequence}
 
         elif node_type == "ui":
             attached_to_id = body.get("attachedToId")
@@ -704,6 +803,7 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
                     id: randomUUID(),
                     name: $name,
                     displayName: $displayName,
+                    sequence: $sequence,
                     actor: $actor,
                     attachedToId: $attachedToId,
                     attachedToType: $attachedToType,
@@ -712,11 +812,12 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
                 })
                 RETURN ui.id AS id, ui.name AS name, ui.displayName AS displayName
                 """,
-                name=name, displayName=display_name, actor=actor,
+                name=name, displayName=display_name, sequence=int(sequence), actor=actor,
                 attachedToId=attached_to_id or "", attachedToType=attached_to_type,
             ).single()
             if rec:
-                # ATTACHED_TO 관계 생성
+                # 자유좌표(EM10): 자동 ATTACHED_TO 없음. 명시적 타깃(attachedToId)이 있을 때만
+                # 연결(사용자 의도). 위치는 sequence로 노드에 저장. BC엔 항상 HAS_UI로 귀속.
                 if attached_to_id:
                     session.run(
                         """
@@ -725,13 +826,12 @@ async def add_event_modeling_node(request: Request) -> dict[str, Any]:
                         """,
                         uiId=rec["id"], targetId=attached_to_id,
                     )
-                # BC에도 연결
                 if bc_id:
                     session.run(
                         "MATCH (bc:BoundedContext {id: $bcId}), (ui:UI {id: $uiId}) MERGE (bc)-[:HAS_UI]->(ui)",
                         bcId=bc_id, uiId=rec["id"],
                     )
-                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "ui", "actor": actor}
+                result_data = {"id": rec["id"], "name": rec["name"], "displayName": rec["displayName"], "type": "ui", "actor": actor, "sequence": sequence}
 
     SmartLogger.log(
         "INFO",
@@ -771,6 +871,33 @@ async def delete_event_modeling_node(request: Request, node_type: str, node_id: 
     )
 
     return {"deleted": deleted}
+
+
+@router.put("/event-modeling/node-sequence")
+async def update_node_sequence(request: Request) -> dict[str, Any]:
+    """PUT /api/graph/event-modeling/node-sequence
+
+    자유좌표(EM10): loose(미연결) Command/ReadModel/UI를 X축으로 끌어 옮길 때 저장 sequence
+    갱신. Body: {type, id, sequence}. 연결된 노드는 읽기가 연결 Event 기준으로 위치를
+    재산출하므로 이 값이 무시되지만(슬라이스 정렬 유지), 호출 자체는 무해.
+    """
+    body = await request.json()
+    node_type = (body.get("type") or "").capitalize()
+    node_type = {"Readmodel": "ReadModel", "Ui": "UI"}.get(node_type, node_type)
+    node_id = body.get("id")
+    seq = body.get("sequence")
+    if node_type not in ("Command", "ReadModel", "UI", "Event") or not node_id or seq is None:
+        return {"error": "type, id, sequence are required"}
+    try:
+        seq_int = int(seq)
+    except (TypeError, ValueError):
+        return {"error": "sequence must be an integer"}
+    with get_session() as session:
+        session.run(
+            f"MATCH (n:{node_type} {{id: $id}}) SET n.sequence = $seq, n.updatedAt = datetime()",
+            id=node_id, seq=seq_int,
+        )
+    return {"updated": True, "id": node_id, "type": node_type, "sequence": seq_int}
 
 
 @router.put("/event-modeling/move-event")
@@ -823,6 +950,11 @@ _VALID_RELATIONS: dict[tuple[str, str], str] = {
     ("ReadModel", "UI"): "ATTACHED_TO",
 }
 
+# 그래프 저장 방향이 드래그 방향과 반대인 관계.
+# 결과 UI는 읽기에서 (UI)-[:ATTACHED_TO]->(ReadModel)로 찾으므로, ReadModel→UI 드래그는
+# (UI)-[:ATTACHED_TO]->(ReadModel)로 저장해야 한다(드래그 방향의 역).
+_REVERSED_RELATIONS: set[tuple[str, str]] = {("ReadModel", "UI")}
+
 
 @router.post("/event-modeling/relations")
 async def create_relation(request: Request) -> dict[str, Any]:
@@ -851,11 +983,12 @@ async def create_relation(request: Request) -> dict[str, Any]:
     source_type = (body.get("sourceType") or "").capitalize()
     target_type = (body.get("targetType") or "").capitalize()
 
-    # Readmodel → ReadModel 정규화
-    if source_type == "Readmodel":
-        source_type = "ReadModel"
-    if target_type == "Readmodel":
-        target_type = "ReadModel"
+    # 라벨 정규화: capitalize() 결과를 Neo4j 라벨 표기로 교정.
+    #   'readmodel'→'Readmodel'→'ReadModel', 'ui'→'Ui'→'UI'
+    # (이게 없으면 ('Ui','Command') 키가 _VALID_RELATIONS에 없어 UI ATTACHED_TO 연결이 전부 실패)
+    _LABEL_FIX = {"Readmodel": "ReadModel", "Ui": "UI"}
+    source_type = _LABEL_FIX.get(source_type, source_type)
+    target_type = _LABEL_FIX.get(target_type, target_type)
 
     if not source_id or not target_id:
         return {"error": "sourceId and targetId are required"}
@@ -872,6 +1005,34 @@ async def create_relation(request: Request) -> dict[str, Any]:
     result_data: dict[str, Any] = {"sourceId": source_id, "targetId": target_id, "relationType": rel_type}
 
     with get_session() as session:
+        # ── 카디널리티 거부 검사(EM 모델: 1 UI/Command·1 UI/ReadModel·1 UI당 1대상·1 발행Command/Event) ──
+        # 같은 쌍 재연결(idempotent)은 허용 — '다른' 노드가 이미 차지한 경우만 거부.
+        if rel_type == "ATTACHED_TO":
+            if (source_type, target_type) == ("UI", "Command"):
+                ui_id, host_id, host_label = source_id, target_id, "Command"
+            else:  # ReadModel → UI (reversed): UI는 target, host는 source
+                ui_id, host_id, host_label = target_id, source_id, "ReadModel"
+            rec = session.run(
+                "MATCH (u:UI {id: $u})-[:ATTACHED_TO]->(t) WHERE t.id <> $h RETURN labels(t)[0] AS lbl LIMIT 1",
+                u=ui_id, h=host_id,
+            ).single()
+            if rec:
+                lbl = "ReadModel" if rec["lbl"] == "ReadModel" else "Command"
+                return {"error": f"이 UI는 이미 다른 {lbl}에 연결되어 있습니다. 먼저 기존 연결을 해제하세요.", "reason": "cardinality"}
+            rec = session.run(
+                f"MATCH (u:UI)-[:ATTACHED_TO]->(h:{host_label} {{id: $h}}) WHERE u.id <> $u RETURN u.id AS id LIMIT 1",
+                h=host_id, u=ui_id,
+            ).single()
+            if rec:
+                return {"error": f"이 {host_label}에 이미 UI가 연결되어 있습니다. 먼저 기존 UI를 분리하세요.", "reason": "cardinality"}
+        elif rel_type == "EMITS":
+            rec = session.run(
+                "MATCH (c:Command)-[:EMITS]->(e:Event {id: $e}) WHERE c.id <> $c RETURN c.id AS id LIMIT 1",
+                e=target_id, c=source_id,
+            ).single()
+            if rec:
+                return {"error": "이 Event는 이미 다른 Command가 발행합니다. Event의 발행 Command는 하나입니다.", "reason": "cardinality"}
+
         if rel_type == "EVENT_TO_READMODEL":
             # Event → ReadModel: CQRSConfig + CQRSOperation + TRIGGERED_BY 자동 생성
             # 1. CQRSConfig 확인/생성
@@ -900,6 +1061,15 @@ async def create_relation(request: Request) -> dict[str, Any]:
                 cqrsId=cqrs_id, evtId=source_id, opId=op_id,
             )
             result_data["relationType"] = "TRIGGERED_BY (via CQRSOperation)"
+        elif (source_type, target_type) in _REVERSED_RELATIONS:
+            # 그래프 방향 반전: (tgt)-[rel]->(src) (예: ReadModel→UI 드래그 → (UI)-[:ATTACHED_TO]->(ReadModel))
+            session.run(
+                f"""
+                MATCH (src:{source_type} {{id: $srcId}}), (tgt:{target_type} {{id: $tgtId}})
+                MERGE (tgt)-[:{rel_type}]->(src)
+                """,
+                srcId=source_id, tgtId=target_id,
+            )
         else:
             # 일반 관계 MERGE
             session.run(
@@ -909,6 +1079,20 @@ async def create_relation(request: Request) -> dict[str, Any]:
                 """,
                 srcId=source_id, tgtId=target_id,
             )
+
+        # UI ATTACHED_TO: Design 탭은 UI의 attachedToId/attachedToType 속성으로 부착을 렌더하므로
+        # (그래프 관계만으로는 Design에 안 보임) Connect로 만든 부착도 속성에 반영.
+        if rel_type == "ATTACHED_TO":
+            ui_id = att_id = att_type = None
+            if (source_type, target_type) == ("UI", "Command"):
+                ui_id, att_id, att_type = source_id, target_id, "Command"
+            elif (source_type, target_type) == ("ReadModel", "UI"):
+                ui_id, att_id, att_type = target_id, source_id, "ReadModel"
+            if ui_id:
+                session.run(
+                    "MATCH (ui:UI {id: $uid}) SET ui.attachedToId = $aid, ui.attachedToType = $atype",
+                    uid=ui_id, aid=att_id, atype=att_type,
+                )
 
     SmartLogger.log(
         "INFO",
@@ -939,10 +1123,9 @@ async def delete_relation(request: Request) -> dict[str, Any]:
     source_type = (body.get("sourceType") or "").capitalize()
     target_type = (body.get("targetType") or "").capitalize()
 
-    if source_type == "Readmodel":
-        source_type = "ReadModel"
-    if target_type == "Readmodel":
-        target_type = "ReadModel"
+    _LABEL_FIX = {"Readmodel": "ReadModel", "Ui": "UI"}
+    source_type = _LABEL_FIX.get(source_type, source_type)
+    target_type = _LABEL_FIX.get(target_type, target_type)
 
     if not source_id or not target_id:
         return {"error": "sourceId and targetId are required"}
@@ -962,6 +1145,14 @@ async def delete_relation(request: Request) -> dict[str, Any]:
                 """,
                 evtId=source_id, cqrsId=f"CQRS-{target_id}",
             )
+        elif (source_type, target_type) in _REVERSED_RELATIONS:
+            session.run(
+                f"""
+                MATCH (tgt:{target_type} {{id: $tgtId}})-[r:{rel_type}]->(src:{source_type} {{id: $srcId}})
+                DELETE r
+                """,
+                srcId=source_id, tgtId=target_id,
+            )
         else:
             session.run(
                 f"""
@@ -970,6 +1161,16 @@ async def delete_relation(request: Request) -> dict[str, Any]:
                 """,
                 srcId=source_id, tgtId=target_id,
             )
+
+        # UI 부착 해제 시 속성도 비움(Design 탭 일관성)
+        if rel_type == "ATTACHED_TO":
+            ui_id = source_id if (source_type, target_type) == ("UI", "Command") else (
+                target_id if (source_type, target_type) == ("ReadModel", "UI") else None)
+            if ui_id:
+                session.run(
+                    "MATCH (ui:UI {id: $uid}) SET ui.attachedToId = '', ui.attachedToType = ''",
+                    uid=ui_id,
+                )
 
     SmartLogger.log(
         "INFO",

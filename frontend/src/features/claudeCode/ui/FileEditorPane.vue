@@ -442,6 +442,10 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
   font-size: 12px;
   white-space: nowrap;
   color: var(--ccw-text);
+  /* 긴 경로가 액션 버튼(저장/삭제/새로고침)을 밀어내지 않도록 축소 가능하게. */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .editor-tab.is-active {
@@ -455,12 +459,18 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
 
 .editor-tab-label {
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .editor-tab-path {
   opacity: 0.55;
   font-size: 11px;
   color: var(--ccw-text-muted);
+  /* 경로는 줄어들 때 …로 잘린다(파일명 라벨은 유지). */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dirty-dot {
@@ -474,6 +484,9 @@ defineExpose({ checkExternalModification, dirty, triggerSave })
   display: flex;
   align-items: center;
   gap: 8px;
+  /* 경로가 길어도 액션 버튼은 항상 보이도록 축소 금지. */
+  flex-shrink: 0;
+  padding-left: 8px;
 }
 
 .editor-status {

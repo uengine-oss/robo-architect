@@ -405,6 +405,11 @@ const progressState = computed(() => {
   if (p.total > 0 && p.done >= p.total) return { tone: 'done', label: t('proposals.sandbox.progressDone', { done: p.done, total: p.total }) }
   const since = p.secondsSinceUpdate
   if (since != null && since > STALE_SECONDS) {
+    // I17: 아직 셀에서 구현이 시작되지 않은 상태(0건 + 셀 세션 없음)를 "정체"로
+    // 오인하지 않도록 "시작 대기"로 구분 표기한다.
+    if (p.done === 0 && !hasShellSession()) {
+      return { tone: 'pending', label: '시작 대기 — "Claude Code 셀로 이동"으로 구현을 시작하세요' }
+    }
     const mins = Math.floor(since / 60)
     const time = mins >= 1 ? t('proposals.sandbox.staleMinutes', { n: mins }) : t('proposals.sandbox.staleSeconds', { n: Math.round(since) })
     return { tone: 'stale', label: t('proposals.sandbox.progressStale', { time }) }
@@ -429,7 +434,11 @@ function stopPolling() {
 
 watch(showProgress, (on) => { on ? startPolling() : stopPolling() }, { immediate: true })
 watch(() => props.proposalId, () => { progress.value = null; if (showProgress.value) startPolling() })
-onUnmounted(() => { stopPolling(); store.stopTasks() })
+// 진행 폴링(로컬 타이머)만 정리한다. 작업 분해 SSE 는 store 에서 계속 살려둬,
+// 분해 도중 detail 서브탭을 떠났다 와도(이 뷰는 v-if 로 언마운트됨) 진행이 끊겨
+// 목록이 초기화되지 않게 한다. 사용자가 명시적으로 "중지"를 누르면 stopTasks 로 끊긴다.
+// (SSE 는 done/error 에서 스스로 close 되므로 누수 없음.)
+onUnmounted(() => { stopPolling() })
 </script>
 
 <style scoped>

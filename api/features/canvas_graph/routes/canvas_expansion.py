@@ -408,7 +408,7 @@ Select appropriate components and arrange them top-to-bottom for a mobile screen
     # Call LLM
     llm = get_llm()
     try:
-        resp = llm.invoke([
+        resp = await llm.ainvoke([
             build_system_message(system_prompt),
             HumanMessage(content=user_prompt),
         ])
@@ -1022,18 +1022,22 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
             expand_result = session.run(expand_query, node_id=node_id)
 
             for record in expand_result:
-                pol_bc_id = record["polBc"]["id"] if record["polBc"] else bc_id
+                pol_bc_id = record["polBc"].get("id") if record["polBc"] else bc_id
 
-                if record["pol"] and record["pol"]["id"] not in seen_ids:
+                # Defensive: a malformed Policy missing its `id` would KeyError
+                # here (seen e.g. cross-BC policies persisted without an id).
+                # Skip it rather than 500 the whole node inspector.
+                pol_id = record["pol"].get("id") if record["pol"] else None
+                if pol_id and pol_id not in seen_ids:
                     pol = dict(record["pol"])
                     pol["type"] = "Policy"
                     pol["bcId"] = pol_bc_id
                     # Include invokeCommandId for frontend layout (place Policy left of Command)
                     if record["cmd"]:
-                        pol["invokeCommandId"] = record["cmd"]["id"]
+                        pol["invokeCommandId"] = record["cmd"].get("id")
                     nodes.append(pol)
-                    seen_ids.add(pol["id"])
-                    relationships.append({"source": node_id, "target": pol["id"], "type": "TRIGGERS"})
+                    seen_ids.add(pol_id)
+                    relationships.append({"source": node_id, "target": pol_id, "type": "TRIGGERS"})
 
                 if record["cmd"] and record["cmd"]["id"] not in seen_ids:
                     cmd = dict(record["cmd"])

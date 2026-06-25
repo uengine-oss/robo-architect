@@ -30,13 +30,14 @@ onMounted(load)
         영향받는 테스트: <strong>{{ data.regressionTests?.length || 0 }}</strong>개
       </div>
       <div v-if="data.regressionTests?.length" class="rt-list">
-        <div v-for="t in data.regressionTests" :key="t.testId" class="rt-item">
+        <div v-for="(t, i) in data.regressionTests" :key="t.testId || `${t.testType}-${t.affectedNodeId}-${i}`" class="rt-item">
           <div class="rt-item__top">
-            <span class="rt-id">{{ t.testId }}</span>
-            <span v-if="t.testName" class="rt-name">{{ t.testName }}</span>
+            <span v-if="t.testType" class="rt-type">{{ t.testType }}</span>
+            <span v-if="t.testId" class="rt-id">{{ t.testId }}</span>
+            <span class="rt-name">{{ t.description || t.testName || '(설명 없음)' }}</span>
           </div>
-          <div v-if="t.affectedNodeIds?.length" class="rt-affected">
-            통해: {{ t.affectedNodeIds.join(', ') }}
+          <div v-if="t.affectedNodeId" class="rt-affected">
+            대상: {{ t.affectedNodeLabel ? `${t.affectedNodeLabel} ` : '' }}{{ t.affectedNodeId }}
           </div>
         </div>
       </div>
@@ -59,6 +60,11 @@ onMounted(load)
   padding: 7px 10px;
 }
 .rt-item__top { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.rt-type {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--color-accent);
+  border: 1px solid var(--color-accent); border-radius: 3px; padding: 1px 5px;
+}
 .rt-id { font-family: monospace; font-size: 0.68rem; font-weight: 700; color: var(--color-text-light); }
 .rt-name { font-size: 0.72rem; color: var(--color-text); }
 .rt-affected { font-size: 0.65rem; color: var(--color-text-light); }

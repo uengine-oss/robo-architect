@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import uuid
@@ -349,17 +350,48 @@ def _fetch_effects_with_diff(change_id: str) -> list[dict]:
 
 # ── AI 호출 ────────────────────────────────────────────────────────────────
 
+def _claude_env() -> dict:
+    """헤드리스 claude 서브프로세스용 환경.
+
+    백엔드가 .env 의 (만료/무효일 수 있는) ANTHROPIC_API_KEY 를 os.environ 에 로드하면
+    헤드리스 claude 가 그 키로 인증을 시도해 'Invalid API key' 로 즉시 실패한다.
+    키를 제거하면 claude.ai 로그인(구독)으로 폴백한다.
+    """
+    env = dict(os.environ)
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        env.pop(k, None)
+    return env
+
+
+# claude CLI 가 인증/실행 실패 시 stdout 으로 흘리는 에러 문구. 정상 출력으로 오인해
+# 그래프에 적용되는 일을 막는 방어 가드.
+_CLAUDE_ERROR_MARKERS = (
+    "Invalid API key",
+    "Fix external API key",
+    "authentication_error",
+    "Credit balance is too low",
+)
+
+
 async def _call_claude(system: str, human: str, timeout: int = 90) -> str | None:
     claude_bin = shutil.which("claude") or "claude"
     cmd = [claude_bin, "-p", human, "--system-prompt", system,
            "--output-format", "text", "--dangerously-skip-permissions"]
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=_claude_env(),
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         result = stdout.decode("utf-8", errors="replace").strip()
-        return result if result else None
+        if not result:
+            return None
+        # 인증/실행 실패 문구가 그대로 적용되는 데이터 오염 방지.
+        if proc.returncode != 0 or any(m in result for m in _CLAUDE_ERROR_MARKERS):
+            SmartLogger.log("WARN", f"Claude call returned error output (rc={proc.returncode}): {result[:120]}",
+                            category="requirement_changes.design.ai_error", params={})
+            return None
+        return result
     except Exception as e:
         SmartLogger.log("WARN", f"Claude call failed: {e}",
                         category="requirement_changes.design.ai_error", params={})

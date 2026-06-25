@@ -286,10 +286,16 @@ export const useProposalsStore = defineStore('proposals', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ strategicDiff, tacticalDiff }),
       })
-      if (!res.ok) throw new Error(`Update diff failed: ${res.status}`)
+      if (!res.ok) {
+        // 422(스키마 검증 실패) 등은 백엔드의 한국어 사유를 그대로 노출한다.
+        const detail = await res.json().catch(() => ({}))
+        throw new Error(detail.detail || `Update diff failed: ${res.status}`)
+      }
       currentProposal.value = await res.json()
     } catch (e) {
+      // 호출자(saveDiff)가 사유를 표시하고 편집기를 열어둘 수 있도록 재던진다.
       error.value = e.message
+      throw e
     }
   }
 

@@ -11,6 +11,7 @@ L_BPM_PROCESS = "BpmProcess"  # top-level process identity (§2.A of 개선&재�
 L_BPM_TASK = "BpmTask"
 L_BPM_SEQUENCE = "BpmSequence"
 L_BPM_ACTOR = "BpmActor"  # separate from existing Actor to avoid polluting analyzer graph
+L_BPM_GATEWAY = "BpmGateway"  # branch/merge point parsed from the BPMN (robo's own model node)
 L_RULE = "Rule"
 L_ACTIVITY_MAPPING = "ActivityMapping"
 L_GLOSSARY_TERM = "GlossaryTerm"
@@ -35,6 +36,8 @@ R_PROMOTED_TO = "PROMOTED_TO"  # (BpmTask)-[:PROMOTED_TO]->(Command|Event|Policy
 R_SOURCED_FROM = "SOURCED_FROM"  # (BpmTask)-[:SOURCED_FROM {score, rank}]->(DocumentPassage)
 R_HAS_TASK = "HAS_TASK"  # (BpmProcess)-[:HAS_TASK]->(BpmTask)
 R_HAS_ACTOR = "HAS_ACTOR"  # (BpmProcess)-[:HAS_ACTOR]->(BpmActor)
+R_HAS_GATEWAY = "HAS_GATEWAY"  # (BpmProcess)-[:HAS_GATEWAY]->(BpmGateway)
+R_BPMN_FLOW = "BPMN_FLOW"  # (BpmTask|BpmGateway)-[:BPMN_FLOW {id, name, condition}]->(BpmTask|BpmGateway)
 R_IMPLEMENTED_BY = "IMPLEMENTED_BY"  # (BpmProcess)-[:IMPLEMENTED_BY {confidence, method}]->(MODULE)
 
 ALL_HYBRID_LABELS = [
@@ -42,6 +45,7 @@ ALL_HYBRID_LABELS = [
     L_BPM_TASK,
     L_BPM_SEQUENCE,
     L_BPM_ACTOR,
+    L_BPM_GATEWAY,
     L_RULE,
     L_ACTIVITY_MAPPING,
     L_GLOSSARY_TERM,

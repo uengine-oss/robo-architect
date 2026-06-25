@@ -1,0 +1,123 @@
+# pdf2bpmn-api — direct-parse REST API (no Memento) for robo to call, plus a
+# DEDICATED Neo4j so robo's processing is fully isolated from the platform's
+# production Aura graph (the scaledjob's graph).
+#
+# The deployed extractor image (…:8156f77) uses the Neo4j BOLT driver
+# (from neo4j import GraphDatabase) — NOT Apache AGE — so we give it
+# NEO4J_URI/USER/PASSWORD pointing at the dedicated Neo4j below.
+#
+# Robo uploads the PDF bytes directly: POST /api/upload → POST /api/process/{job}
+# → poll GET /api/jobs/{job} → GET /api/files/bpmn?process_id=… (gateway-rich
+# BPMN via BPMNGenerator). No Memento involved.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdf2bpmn-neo4j
+  namespace: default
+  labels: { app: pdf2bpmn-neo4j }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: pdf2bpmn-neo4j }
+  template:
+    metadata:
+      labels: { app: pdf2bpmn-neo4j }
+    spec:
+      containers:
+        - name: neo4j
+          image: neo4j:5.15.0
+          env:
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef: { name: pdf2bpmn-secrets, key: NEO4J_AUTH }
+            - name: NEO4J_server_memory_pagecache_size
+              value: "512m"
+            - name: NEO4J_server_memory_heap_max__size
+              value: "1g"
+          ports:
+            - { name: bolt, containerPort: 7687 }
+            - { name: http, containerPort: 7474 }
+          readinessProbe:
+            tcpSocket: { port: 7687 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 18
+          resources:
+            requests: { cpu: "200m", memory: "768Mi" }
+            limits: { cpu: "1", memory: "2Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pdf2bpmn-neo4j
+  namespace: default
+  labels: { app: pdf2bpmn-neo4j }
+spec:
+  selector: { app: pdf2bpmn-neo4j }
+  ports:
+    - { name: bolt, port: 7687, targetPort: 7687 }
+    - { name: http, port: 7474, targetPort: 7474 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdf2bpmn-api
+  namespace: default
+  labels: { app: pdf2bpmn-api }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: pdf2bpmn-api }
+  template:
+    metadata:
+      labels: { app: pdf2bpmn-api }
+    spec:
+      containers:
+        - name: pdf2bpmn-api
+          image: ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77
+          imagePullPolicy: IfNotPresent
+          # Run ONLY the FastAPI REST API (direct-parse). No a2a, no Memento.
+          command: ["python", "run.py", "api", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - containerPort: 8000
+          env:
+            # Dedicated Neo4j (bolt) — isolated from the platform's Aura.
+            - name: NEO4J_URI
+              value: "bolt://pdf2bpmn-neo4j.default.svc.cluster.local:7687"
+            - name: NEO4J_USER
+              value: "neo4j"
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: pdf2bpmn-secrets, key: NEO4J_PASSWORD }
+            # OpenAI (reuse existing secret)
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef: { name: openai-secret, key: OPENAI_API_KEY }
+            - name: OPENAI_MODEL
+              value: "gpt-4o"
+            - name: LLM_MODEL
+              value: "gpt-4o"
+            - name: EMBEDDING_MODEL
+              value: "text-embedding-3-small"
+          readinessProbe:
+            httpGet: { path: /api/health, port: 8000 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 18
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "2", memory: "4Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pdf2bpmn-api
+  namespace: default
+  labels: { app: pdf2bpmn-api }
+spec:
+  selector: { app: pdf2bpmn-api }
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

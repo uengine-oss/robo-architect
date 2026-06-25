@@ -42,6 +42,29 @@ def subtree_ids_for_epic(session, bc_id: str) -> list[str]:
     return list(rec["ids"]) if rec and rec["ids"] else []
 
 
+def bc_design_ids(session, bc_id: str) -> list[str]:
+    """BC에 직접 매달린 설계 서브그래프(Aggregate→Command→Event) id.
+
+    User Story를 거치지 않고 BoundedContext에 바로 붙은 설계요소(예: DDD 마법사
+    산출물)는 `exclusive_design_ids`(US 기준)로는 못 잡으므로, removeDesign 시
+    이 함수로 함께 수집해 orphan을 방지한다. Aggregate는 정의상 단일 BC 소유,
+    Command는 단일 Aggregate, Event는 단일 Command 소유라 모두 배타적이다.
+    """
+    rec = session.run(
+        """
+        MATCH (bc:BoundedContext {id: $id})
+        OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
+        OPTIONAL MATCH (agg)-[:HAS_COMMAND]->(cmd:Command)
+        OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
+        WITH collect(DISTINCT agg.id) + collect(DISTINCT cmd.id)
+           + collect(DISTINCT evt.id) AS ids
+        RETURN [x IN ids WHERE x IS NOT NULL] AS ids
+        """,
+        id=bc_id,
+    ).single()
+    return list(rec["ids"]) if rec and rec["ids"] else []
+
+
 def subtree_ids_for_feature(session, feature_id: str, include_stories: bool) -> list[str]:
     """Feature, plus its User Stories when they are being deleted too."""
     if include_stories:

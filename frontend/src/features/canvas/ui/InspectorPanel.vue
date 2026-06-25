@@ -7,9 +7,12 @@ import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { NodeEditSchemas, normalizeNodeLabel, ProvisioningTypeOptions } from './inspectors/nodeEditSchema'
 import PropertyEditorTable from './inspectors/PropertyEditorTable.vue'
 import VoFieldsTable from './inspectors/VoFieldsTable.vue'
+import ReadModelCQRSConfigModal from './ReadModelCQRSConfigModal.vue'
 import GwtFieldInput from './GwtFieldInput.vue'
 import InvariantEditor from '@/features/invariants/ui/InvariantEditor.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
+// 043-fix — Design 캔버스 미리보기 중 저장은 라이브(/api/chat/confirm)가 아니라 제안 diff 로.
+import { isPreviewFor, usePreviewSession } from '@/app/previewSession'
 import {
   parseHtmlWireframe,
   elementsToFigmaClipboard,
@@ -33,6 +36,11 @@ import FrameEditor from 'open-pencil-fed/FrameEditor.vue'
 const FramePreview = defineAsyncComponent(() => import('open-pencil-fed/FramePreview.vue'))
 const FullPageEditor = defineAsyncComponent(() => import('open-pencil-fed/FullPageEditor.vue'))
 const AIChatPanel = defineAsyncComponent(() => import('open-pencil-fed/AIChat.vue'))
+// FramePreviewChat now resolves to a real federation component (a placeholder
+// that delegates to FramePreview until spec-034's chat/Claude-IDE variant lands
+// upstream). Previously this was aliased to FramePreview.vue because the file
+// was missing (`de030de chore(034): WIP` added the import but not the file),
+// which made the import path misleading and fragile.
 const FramePreviewChat = defineAsyncComponent(() => import('open-pencil-fed/FramePreviewChat.vue'))
 
 // 029 — read-only source viewer for ImplementationFile nodes drilled-down
@@ -85,11 +93,18 @@ const hasMultipleNodes = computed(() => selectedNodes.value.length > 1)
 // Fetched node data from API (for nodes not on canvas)
 const fetchedNodeData = ref(null)
 const isLoadingNode = ref(false)
+// 043-fix — 마지막으로 API fetch 를 시도한 nodeId(성공/실패 무관). node computed 가 Priority 4
+// 에서 fetchNodeFromAPI 를 부수효과로 호출하는데, 404(미존재 노드: 예 Proposal 미리보기에만 있는
+// CREATE 노드)면 fetchedNodeData 가 채워지지 않고 isLoadingNode 토글이 computed 를 재평가시켜
+// 동일 nodeId 를 무한 재요청한다 → 404 로그 폭주. 이미 시도한 id 는 다시 fetch 하지 않는다.
+const fetchAttemptedNodeId = ref(null)
 
 // Fetch node details from API if not found on canvas
 async function fetchNodeFromAPI(nodeId) {
   if (!nodeId || isLoadingNode.value) return null
-  
+  // 같은 nodeId 는 한 번만 시도한다(404 무한 재요청 방지). props.nodeId 가 바뀌면 watch 가 리셋.
+  fetchAttemptedNodeId.value = nodeId
+
   try {
     isLoadingNode.value = true
     const response = await fetch(`/api/graph/expand-with-bc/${nodeId}`)
@@ -164,7 +179,8 @@ const node = computed(() => {
     }
     
     // Priority 4: Fetch from API (async, will update when done)
-    if (!isLoadingNode.value) {
+    // 이미 시도한 id(특히 404)는 재요청하지 않는다 — isLoadingNode 토글로 인한 무한 루프 방지.
+    if (!isLoadingNode.value && fetchAttemptedNodeId.value !== props.nodeId) {
       fetchNodeFromAPI(props.nodeId)
     }
   }
@@ -312,34 +328,128 @@ async function onDesignSave(data) {
   const n = node.value
   if (!n) return
   try {
-    const sceneGraphStr = JSON.stringify(data)
+    // ── Diagnostic + roundtrip merge ─────────────────────────────────────
+    // Editor's serialize is lossy in some cases (DOCUMENT root collapsed
+    // to FRAME, leaf nodes dropped). Detect & merge to preserve rich data
+    // while still landing the user's edits.
+    const Counter = (nodes) => {
+      const c = {}
+      for (const nd of Object.values(nodes || {})) c[nd?.type] = (c[nd?.type] || 0) + 1
+      return c
+    }
+    const existing = (() => {
+      try { return JSON.parse(n.data?.sceneGraph || '{"nodes":{}}') } catch { return { nodes: {} } }
+    })()
+    const existingNodes = existing.nodes || {}
+    const newNodes = data?.nodes || {}
+    const existingTypes = Counter(existingNodes)
+    const newTypes = Counter(newNodes)
+    console.info('[InspectorPanel] onDesignSave',
+      '\n  existing:', existingTypes, `total=${Object.keys(existingNodes).length}`,
+      '\n  editor :', newTypes, `total=${Object.keys(newNodes).length}`,
+      '\n  rootId existing=', existing.rootId, 'editor=', data?.rootId,
+    )
+    const LEAF_TYPES = ['TEXT', 'RECTANGLE', 'VECTOR', 'INSTANCE', 'ELLIPSE', 'LINE', 'POLYGON', 'STAR']
+    const existingHas = (t) => existingTypes[t] > 0
+    const newHas = (t) => newTypes[t] > 0
+    const lostTypes = LEAF_TYPES.filter(t => existingHas(t) && !newHas(t))
+
+    // ── Guard: never overwrite real content with a leaf-less graph ──────────
+    // The editor can momentarily serialize to a bare frame skeleton (DOCUMENT
+    // collapsed to FRAME, all leaf nodes dropped) during a store rebuild or a
+    // tab-switch remount race. The merge above rescues this ONLY when `existing`
+    // is readable — but if n.data.sceneGraph is transiently empty mid-churn,
+    // `existing` reads as {} and the merge no-ops, so an empty UI gets persisted
+    // over rich content. That is how "자동납부 신청 상세" lost its 21 text nodes
+    // and showed empty after reload. Refuse the save unless we can positively
+    // confirm the existing graph was already leaf-less (a genuinely empty UI).
+    const leafCount = (types) => LEAF_TYPES.reduce((sum, t) => sum + (types[t] || 0), 0)
+    const newLeafCount = leafCount(newTypes)
+    const existingReadable = typeof n.data?.sceneGraph === 'string' && n.data.sceneGraph.trim().length > 0
+    const existingLeafCount = leafCount(existingTypes)
+    if (newLeafCount === 0 && !(existingReadable && existingLeafCount === 0)) {
+      console.warn('[InspectorPanel] onDesignSave ABORTED — editor produced 0 leaf nodes ' +
+        `(existingReadable=${existingReadable}, existingLeaf=${existingLeafCount}). ` +
+        'Refusing to overwrite, would wipe content.')
+      figmaPushStatus.value = 'error'
+      figmaPushMessage.value = '저장 취소: 에디터가 빈 화면을 반환했습니다 (콘텐츠 보호). Design 탭을 다시 열고 시도하세요.'
+      setTimeout(() => { figmaPushStatus.value = null }, 6000)
+      return
+    }
+
+    let outGraph = data
+    if (lostTypes.length > 0) {
+      // Merge: editor's output is the authoritative version for ids it has
+      // (user's position/fill/text edits land), but ids the editor dropped
+      // are pulled from existing so the panel doesn't lose visible content.
+      const mergedNodes = { ...existingNodes }
+      for (const [id, nd] of Object.entries(newNodes)) {
+        mergedNodes[id] = nd  // editor's value wins for every id editor knows
+      }
+      outGraph = {
+        ...existing,
+        ...data,
+        nodes: mergedNodes,
+        rootId: existing.rootId || data.rootId,
+      }
+      console.warn('[InspectorPanel] editor dropped types: %s — merged %d existing + %d editor → %d nodes',
+        lostTypes.join(', '),
+        Object.keys(existingNodes).length,
+        Object.keys(newNodes).length,
+        Object.keys(mergedNodes).length,
+      )
+    } else {
+      console.info('[InspectorPanel] editor preserved leaf types → using editor output as-is')
+    }
+
+    const sceneGraphStr = JSON.stringify(outGraph)
     await fetch(`/api/graph/update-node/${n.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sceneGraph: sceneGraphStr })
     })
-    // Update local node data — ensure Vue reactivity triggers
+    // Propagate to local state so Preview tab / tab-switch reflects the saved
+    // scene graph. Updating node.data.sceneGraph changes `sceneGraphData`,
+    // which re-triggers FrameEditor's watch(sceneData) → it swaps in a fresh
+    // store. FrameEditor now provides that store through a stable proxy
+    // (provideEditor(editorProxy)), so child inject() consumers follow the new
+    // store in place — no full remount/flash needed. (We used to bump
+    // designEditorKey here to force unmount+remount; removed now that the
+    // editor refreshes reactively.)
     if (n.data) {
       n.data = { ...n.data, sceneGraph: sceneGraphStr }
     }
-    // Also update in canvas store for reactivity
     const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
     if (storeNode?.data) {
       storeNode.data = { ...storeNode.data, sceneGraph: sceneGraphStr }
     }
     emit('updated')
 
-    // Push to Figma Plugin — use stored fileKey from Figma API creds
-    let fileKey = n.data?.figmaFileKey
-    if (!fileKey) {
-      try { fileKey = JSON.parse(localStorage.getItem('figma_api_creds') || '{}').fileKey } catch {}
-    }
-    if (fileKey) {
-      await pushToFigmaPlugin(fileKey, n.data?.figmaNodeId, n.data?.displayName || n.data?.name, data)
-    } else {
-      figmaPushStatus.value = 'saved'
-      figmaPushMessage.value = '저장 완료'
+    // Push to Figma via the 016 binding path. Backend reads the just-persisted
+    // sceneGraph from Neo4j and queues UPDATE_FRAME_FROM_SCENE_GRAPH for the
+    // plugin — no API token, no SYNC_FRAME handshake. We always attempt the
+    // call here and let the backend decide: it returns ok=false with an errorKo
+    // when figmaNodeId is missing or binding is inactive. The frontend's
+    // n.data.figmaNodeId is sometimes stale (canvas store cached pre-sync),
+    // so a client-side gate would skip valid pushes.
+    figmaPushStatus.value = 'pushing'
+    figmaPushMessage.value = 'Figma 동기화 중...'
+    try {
+      const resp = await fetch(`/api/figma-binding/update-frame/${encodeURIComponent(n.id)}`, {
+        method: 'POST',
+      })
+      const body = await resp.json().catch(() => ({}))
+      if (!resp.ok || body?.ok === false) {
+        // 200 with ok=false carries errorKo. Other statuses use detail.
+        throw new Error(body?.errorKo || body?.detail || `Figma 동기화 실패 (${resp.status})`)
+      }
+      figmaPushStatus.value = 'success'
+      figmaPushMessage.value = `Figma 동기화 완료 (${body?.nodesCreated ?? '?'}개 노드)`
       setTimeout(() => { figmaPushStatus.value = null }, 3000)
+    } catch (pushErr) {
+      figmaPushStatus.value = 'error'
+      figmaPushMessage.value = 'Figma 동기화 실패: ' + (pushErr?.message || pushErr)
+      setTimeout(() => { figmaPushStatus.value = null }, 6000)
     }
   } catch (e) {
     figmaPushStatus.value = 'error'
@@ -577,6 +687,8 @@ async function loadTraceability(nodeId) {
 }
 
 const activeTab = ref(normalizeInspectorTab(props.initialTab, nodeLabel.value))
+// EM1 — ReadModel CQRS 모달 (탭 바 우측 ⚡ CQRS 버튼에서 열림).
+const showCqrsModal = ref(false)
 // Monotonic counter to force FrameEditor re-creation when Design tab is re-opened
 // (CanvasKit WebGL resources are destroyed on unmount and cannot be reused)
 const designEditorKey = ref(0)
@@ -597,6 +709,15 @@ watch(
     if (v) activeTab.value = normalizeInspectorTab(v, nodeLabel.value)
   }
 )
+
+// Node label resolves asynchronously after a node switch, so the initialTab
+// watcher above can run with a stale label and fall back to 'properties' even
+// when 'preview' was requested for a UI node. Re-apply the requested tab once
+// the label is known. (Fires only when the label actually changes — a user's
+// manual tab switch on the same node is preserved.)
+watch(nodeLabel, (label) => {
+  if (props.initialTab) activeTab.value = normalizeInspectorTab(props.initialTab, label)
+})
 
 watch(activeTab, (tab) => {
   if (tab === 'traceability' && props.nodeId && !traceData.value) {
@@ -639,6 +760,40 @@ function openAggregateDetail() {
   // bcId from the canvas node's parent BC, else the fetched bcId; otherwise
   // null — the store resolves it via expand-with-bc.
   const bcId = n.parentNode || n.data?.bcId || null
+
+  // 043-fix — Proposal 미리보기 중(예: Command/Event/ReadModel '열기'로 진입한 Design 캔버스)
+  // 에는 그냥 Data 탭으로 전환 + focusAggregate 하면 안 된다. 미리보기 세션 viewer 가 'design'
+  // 이라 Data 뷰어 fetch 가 미리보기가 아닌 라이브 엔드포인트로 빠지고, 신규(CREATE) Aggregate
+  // 는 라이브 그래프에 아직 없어 'Failed to fetch aggregates: Not Found'(404)가 난다.
+  // → Aggregate tactical '열기'와 동일하게 Data 뷰어 *미리보기* 로 다시 연다(앱 셸이
+  //    robo:open-preview 를 수신해 탭 전환 + preview 진입 + 포커스 오케스트레이션).
+  //    캔버스 노드는 build_design_preview 가 부여한 bcId 를 들고 있고, Data 오버레이는
+  //    동일한 temp id(PREVIEW:<pid>:<idx>)를 쓰므로 (aggregateId, bcId)로 정확히 포커스된다.
+  const ps = usePreviewSession()
+  if (ps.active && ps.proposalId) {
+    // 이 Design 인스펙터를 먼저 닫는다(panelMode='none'). 아래 endPreview 가 미리보기 전용
+    // 노드(예: AGG-cart)를 캔버스에서 걷어내면, 이 인스펙터가 KeepAlive 로 남아 그 노드를
+    // expand-with-bc 로 재요청(404)하게 되므로 미리 언마운트한다.
+    emit('close')
+    // 떠나는 Design 캔버스 미리보기는 라이브 스냅샷으로 복원(잔존물 0).
+    if (ps.viewer === 'design') canvasStore.endPreview()
+    window.dispatchEvent(new CustomEvent('robo:open-preview', {
+      detail: {
+        proposalId: ps.proposalId,
+        viewer: 'data',
+        targetNodeId: aggregateId,
+        aggregateId,
+        bcId,
+        nodeLabel: 'Aggregate',
+        label: ps.proposalId,
+        title: n.data?.displayName || n.data?.name || n.data?.label || '',
+        // 포커스 후 Data 뷰어 Inspector 를 자동으로 연다(AC 8).
+        openInspector: true,
+      },
+    }))
+    return
+  }
+
   aggregateViewerStore.focusAggregate(aggregateId, bcId)
   if (appActiveTab) appActiveTab.value = 'Aggregate'
 }
@@ -902,6 +1057,18 @@ function redactForLog(value, depth = 0) {
   return value
 }
 
+// 깊은 복제 — gwtSets/given/when/then 같은 중첩 구조를 node.data·form·initial 이 공유 참조로
+// 두면, GWT 모달의 제자리 필드 수정이 initial 까지 함께 바꿔 dirtyFields 비교가 항상 같다고
+// 판정한다(저장 버튼 비활성). 스냅샷/initial 을 독립 복제해 참조를 끊는다.
+function deepClone(value) {
+  if (value === null || value === undefined) return value
+  try {
+    return structuredClone(value)
+  } catch {
+    return JSON.parse(JSON.stringify(value))
+  }
+}
+
 function snapshotFromNode(n) {
   const data = n?.data || {}
   return {
@@ -921,15 +1088,17 @@ function snapshotFromNode(n) {
     enumerations: data.enumerations ?? [],
     valueObjects: data.valueObjects ?? [],
     // GWT fields (backward compatibility: use first row if gwtSets exists)
-    gwtSets: data.gwtSets || (data.given || data.when || data.then ? [{
+    // deepClone 으로 node.data 와 참조를 끊어, 모달의 제자리 필드 수정이 캔버스 노드 원본을
+    // 직접 건드리지 않고 form 에만 머물게 한다(저장 시 명시적으로 영속).
+    gwtSets: deepClone(data.gwtSets) || (data.given || data.when || data.then ? [{
       given: data.given ? { ...data.given, fieldValues: data.given.fieldValues || {} } : null,
       when: data.when ? { ...data.when, fieldValues: data.when.fieldValues || {} } : null,
       then: data.then ? { ...data.then, fieldValues: data.then.fieldValues || {} } : null
     }] : []),
     // For backward compatibility
-    given: data.given ? { ...data.given, fieldValues: data.given.fieldValues || {} } : null,
-    when: data.when ? { ...data.when, fieldValues: data.when.fieldValues || {} } : null,
-    then: data.then ? { ...data.then, fieldValues: data.then.fieldValues || {} } : null
+    given: data.given ? deepClone({ ...data.given, fieldValues: data.given.fieldValues || {} }) : null,
+    when: data.when ? deepClone({ ...data.when, fieldValues: data.when.fieldValues || {} }) : null,
+    then: data.then ? deepClone({ ...data.then, fieldValues: data.then.fieldValues || {} }) : null
   }
 }
 
@@ -977,7 +1146,7 @@ function resetToNode() {
     snapshot: redactForLog(snap)
   })
   form.value = { ...form.value, ...snap }
-  initial.value = { ...snap }
+  initial.value = deepClone(snap)
   error.value = null
   successMsg.value = null
 
@@ -1015,6 +1184,10 @@ watch(
     // Reset fetched node data when nodeId changes
     if (props.nodeId && fetchedNodeData.value?.id !== props.nodeId) {
       fetchedNodeData.value = null
+    }
+    // nodeId 가 바뀌면 새 id 를 (한 번) 다시 fetch 할 수 있도록 시도 마커를 리셋.
+    if (fetchAttemptedNodeId.value !== props.nodeId) {
+      fetchAttemptedNodeId.value = null
     }
     
     // Reset viewing index when nodeId or nodeData changes (not from selected nodes)
@@ -1062,8 +1235,14 @@ const dirtyFields = computed(() => {
         dirty.push(field)
       }
     })
+    // 043-fix — given/when/then(0행)만으로는 시나리오 추가/삭제(gwtSets 길이/내용 변화)를
+    // 못 잡아 '저장'이 비활성화된다. 번들 전체를 비교해 새 GWT 시나리오 변경도 dirty 로 본다
+    // (shouldSaveGWTBundle 과 동일 기준).
+    if (JSON.stringify(form.value.gwtSets || []) !== JSON.stringify(initial.value.gwtSets || [])) {
+      dirty.push('gwtSets')
+    }
   }
-  
+
   return dirty
 })
 
@@ -1079,6 +1258,67 @@ async function safeJson(response) {
   } catch {
     return null
   }
+}
+
+// 043-fix — 미리보기(Design) 저장: draft[] + GWT 를 제안 diff 로 보내고, 응답으로 온
+// 갱신된 Design 미리보기 그래프로 캔버스를 재렌더한 뒤 인스펙터 폼을 동기화한다.
+async function savePreviewDesign(changes, shouldSaveGWTBundle, opId) {
+  const ps = usePreviewSession()
+  const body = {
+    bcId: ps.bcId,
+    drafts: changes,
+    approvedChangeIds: changes.map(c => c.changeId),
+  }
+  if (shouldSaveGWTBundle) {
+    body.gwt = { targetId: node.value.id, gwtSets: form.value.gwtSets || [] }
+  }
+  const resp = await fetch(`/api/proposals/${ps.proposalId}/preview/design/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const tree = await safeJson(resp)
+  if (!resp.ok) {
+    throw new Error(tree?.detail || `API error: ${resp.status}`)
+  }
+
+  // 갱신된 미리보기 그래프로 캔버스 재렌더(라이브 스냅샷은 beginPreview 가 보존 중).
+  const nodeId = node.value.id
+  if (Array.isArray(tree?.nodes)) {
+    canvasStore.clearCanvas()
+    canvasStore.addNodesWithLayout(tree.nodes, tree.relationships || [], tree.bcContext || null)
+    await nextTick()
+    if (canvasStore.isOnCanvas(nodeId)) canvasStore.selectNode(nodeId)
+  }
+
+  // 인스펙터 폼/initial 을 재렌더된 노드 기준으로 동기화(영속된 값 + dirty 해제).
+  const latest = canvasStore.nodes.find(n => n.id === nodeId) || null
+  if (latest) {
+    const snap = snapshotFromNode(latest)
+    form.value = { ...form.value, ...snap }
+    initial.value = deepClone(snap)
+    nextTick(() => {
+      if (showPropertyEditor.value) propertyEditorRef.value?.resetFromNode?.(latest)
+    })
+  } else {
+    initial.value = deepClone(form.value)
+  }
+
+  // Proposals 탭(Impact Map·Diff)이 다시 클릭하지 않아도 최신화되도록 알린다.
+  if (ps.proposalId) {
+    window.dispatchEvent(new CustomEvent('robo:proposal-diff-changed', {
+      detail: { proposalId: ps.proposalId },
+    }))
+  }
+
+  const appliedCount = tree?._preview?.appliedCount
+  successMsg.value = appliedCount === 0
+    ? '반영할 대상을 찾지 못했습니다(변경 없음).'
+    : '제안(Tactical Diff)에 반영되었습니다.'
+  log.info('inspector_preview_save_done', 'Inspector preview(design) save completed.', {
+    opId, nodeId, appliedCount,
+  })
+  emit('updated')
 }
 
 async function save() {
@@ -1145,6 +1385,14 @@ async function save() {
       })
     }
 
+    // 043-fix — Design 캔버스 미리보기 중에는 라이브 그래프(/api/chat/confirm·gwt/upsert)가
+    // 아니라 Proposal.tacticalDiff 에 반영한다(라이브 무변경, Constitution I). 갱신된 Design
+    // 미리보기 그래프를 받아 캔버스를 재렌더하고 인스펙터 폼을 동기화한다.
+    if (isPreviewFor('design')) {
+      await savePreviewDesign(changes, shouldSaveGWTBundle, opId)
+      return
+    }
+
     // Save GWT bundle first (so UI doesn't lose decision-table edits)
     if (shouldSaveGWTBundle) {
       const first = (form.value.gwtSets || [])[0] || {}
@@ -1197,7 +1445,7 @@ async function save() {
 
     if (!changes.length) {
       // Only GWT was saved
-      initial.value = { ...form.value }
+      initial.value = deepClone(form.value)
       successMsg.value = '저장되었습니다.'
       emit('updated')
       return
@@ -1274,7 +1522,7 @@ async function save() {
       if (latest) {
         const snap = snapshotFromNode(latest)
         form.value = { ...form.value, ...snap }
-        initial.value = { ...snap }
+        initial.value = deepClone(snap)
 
         // resync properties editor to store snapshot (keeps order stable while editing; sorts only after save)
         nextTick(() => {
@@ -1284,11 +1532,11 @@ async function save() {
         })
       } else {
         // fallback: do not lose user's edits
-        initial.value = { ...form.value }
+        initial.value = deepClone(form.value)
       }
     } else {
       // reset dirty state based on current form values (do not lose user's edits)
-      initial.value = { ...form.value }
+      initial.value = deepClone(form.value)
     }
 
     successMsg.value = '저장되었습니다.'
@@ -1403,45 +1651,19 @@ async function copySceneGraphToFigma() {
   }
 }
 
-// ── Auto-sync: poll for Figma changes pushed by Plugin ──
-let figmaAutoSyncTimer = null
-
-function startFigmaAutoSync() {
-  if (figmaAutoSyncTimer) return
-  figmaAutoSyncTimer = setInterval(async () => {
-    const n = node.value
-    if (!n?.data?.figmaFileKey || activeTab.value !== 'design') return
-    const frameName = n.data?.displayName || n.data?.name || ''
-    if (!frameName) return
-
-    try {
-      const resp = await fetch(`/api/figma-plugin/get-result?file_key=${encodeURIComponent(n.data.figmaFileKey)}&frame_name=${encodeURIComponent(frameName)}`)
-      if (!resp.ok) return
-      const data = await resp.json()
-      if (data.result && data.result.sceneGraph) {
-        // Update local data
-        if (n.data) n.data = { ...n.data, sceneGraph: data.result.sceneGraph }
-        const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
-        if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: data.result.sceneGraph }
-        designEditorKey.value++
-        emit('updated')
-        figmaPushStatus.value = 'success'
-        figmaPushMessage.value = `Figma 변경 자동 반영됨`
-        setTimeout(() => { figmaPushStatus.value = null }, 3000)
-      }
-    } catch (_e) {}
-  }, 5000)
-}
-
-function stopFigmaAutoSync() {
-  if (figmaAutoSyncTimer) { clearInterval(figmaAutoSyncTimer); figmaAutoSyncTimer = null }
-}
-
-// Start/stop auto-sync based on active tab
-watch(activeTab, (tab) => {
-  if (tab === 'design') startFigmaAutoSync()
-  else stopFigmaAutoSync()
-}, { immediate: true })
+// ── Auto-sync removed ──
+// The previous frame_name-keyed polling against /api/figma-plugin/get-result
+// was a pre-016 path. It indiscriminately overwrote the FrameEditor's local
+// sceneGraph with whatever the plugin's last result happened to be — which
+// caused silent data loss: a poll could fire while the LLM-generated rich
+// sceneGraph was loaded, replace it with an empty plugin export, and the
+// next Save & Sync would persist that empty graph to Neo4j.
+//
+// Figma → RA pull is now exclusive to the explicit "Figma에서 가져오기"
+// button (pullFromFigmaToDesign → /api/figma-binding/pull-frame/{ui_id}),
+// which is keyed by ui_id and only runs on user request.
+function startFigmaAutoSync() { /* no-op */ }
+function stopFigmaAutoSync() { /* no-op */ }
 
 const hasFigmaConnection = computed(() => {
   // The REST-API-token path is being retired in favour of the Figma plugin,
@@ -1540,9 +1762,23 @@ async function pullFromFigmaToDesign() {
   const n = node.value
   if (!n) return
 
+  // Fetch the active document binding once — it's both the source of truth
+  // for the plugin's file key and for 016 binding-path detection below.
+  let binding = null
+  try {
+    const bindingResp = await fetch('/api/figma-binding')
+    if (bindingResp.ok) binding = await bindingResp.json()
+  } catch (_e) { /* fall through */ }
+
+  // File key resolution: node data → localStorage (REST modal) → plugin binding.
+  // Plugin connections post the file key straight to the backend binding, so
+  // it lives there rather than in localStorage or the node's data.
   let fileKey = n.data?.figmaFileKey
   if (!fileKey) {
     try { fileKey = JSON.parse(localStorage.getItem('figma_api_creds') || '{}').fileKey } catch (_e) {}
+  }
+  if (!fileKey && binding?.status === 'active') {
+    fileKey = binding.figmaFileKey
   }
   if (!fileKey) {
     figmaPushStatus.value = 'error'
@@ -1557,16 +1793,9 @@ async function pullFromFigmaToDesign() {
   const frameName = n.data?.displayName || n.data?.name || ''
   const figmaNodeId = n.data?.figmaNodeId || null
 
-  // Detect 016 binding: server-side check is the source of truth, but a
-  // local check on figmaBindingId saves a round-trip in the common case.
-  let useBindingPath = false
-  try {
-    const bindingResp = await fetch('/api/figma-binding')
-    if (bindingResp.ok) {
-      const b = await bindingResp.json()
-      useBindingPath = b?.status === 'active' && !!figmaNodeId
-    }
-  } catch (_e) { /* fall through */ }
+  // Detect 016 binding from the binding fetched above. Requires an active
+  // binding plus a figmaNodeId on the node to route through the rich path.
+  const useBindingPath = binding?.status === 'active' && !!figmaNodeId
 
   try {
     if (useBindingPath) {
@@ -2159,8 +2388,12 @@ function addGWTSet() {
     } : null)
   }
   
-  form.value.gwtSets.push(newRow)
-  
+  // 043-fix — push 대신 새 배열로 재할당한다. snapshotFromNode 가 form/initial 에 같은
+  // gwtSets 배열 참조를 공유시켜(얕은 {...snap} 전개), 제자리 push 는 initial 도 같이 바꿔
+  // dirtyFields 가 시나리오 추가를 감지하지 못한다(저장 버튼 비활성). 새 배열이면 참조가
+  // 갈라져 변경이 감지된다.
+  form.value.gwtSets = [...form.value.gwtSets, newRow]
+
   // Update backward compatibility fields (use first row)
   if (form.value.gwtSets.length === 1) {
     if (newRow.given) {
@@ -2177,8 +2410,10 @@ function addGWTSet() {
 
 function removeGWTSet(rowIndex) {
   if (rowIndex >= 0 && rowIndex < form.value.gwtSets.length) {
-    form.value.gwtSets.splice(rowIndex, 1)
-    
+    // 043-fix — splice 대신 새 배열로 재할당(addGWTSet 와 동일 이유: initial 과의 공유 참조
+    // 분리 → 시나리오 삭제가 dirty 로 감지됨).
+    form.value.gwtSets = form.value.gwtSets.filter((_, i) => i !== rowIndex)
+
     // Update backward compatibility fields
     if (form.value.gwtSets.length > 0) {
       const firstSet = form.value.gwtSets[0]
@@ -2845,6 +3080,11 @@ function toggleCardPicker(rowIndex, type) {
 const gwtNlText = ref({}) // rowIndex -> input string
 const gwtNlBusy = ref({}) // rowIndex -> bool
 const gwtNlError = ref({}) // rowIndex -> error string
+const gwtNlNotice = ref({}) // rowIndex -> success notice string ("N개 필드를 채웠어요.")
+// rowIndex -> { scenario, givenFieldValues, whenFieldValues, thenFieldValues }
+// 입력이 모호해 아무 필드도 못 채웠을 때, 백엔드가 제시한 구체화된 추천 시나리오.
+// 이 값이 있으면 카드에 "추천 시나리오로 생성할까요? 네/아니오" 확인 패널을 띄운다.
+const gwtNlSuggestion = ref({})
 
 function sectionPayloadForNL(gwtSet, type) {
   const gwt = gwtSet?.[type]
@@ -2860,12 +3100,25 @@ function sectionPayloadForNL(gwtSet, type) {
   }
 }
 
+// 파싱된 값들을 한 섹션의 fieldValues 에 병합하고 **적용한 필드 수**를 반환한다.
 function applyParsedValues(gwtSet, type, values) {
-  if (!values || typeof values !== 'object' || !gwtSet?.[type]) return
+  if (!values || typeof values !== 'object' || !gwtSet?.[type]) return 0
   if (!gwtSet[type].fieldValues) gwtSet[type].fieldValues = {}
+  let applied = 0
   for (const [key, value] of Object.entries(values)) {
     gwtSet[type].fieldValues[key] = value
+    applied += 1
   }
+  return applied
+}
+
+// 세 섹션에 결과를 적용하고 총 적용 필드 수를 돌려준다.
+function applyAllSections(gwtSet, data) {
+  return (
+    applyParsedValues(gwtSet, 'given', data?.givenFieldValues) +
+    applyParsedValues(gwtSet, 'when', data?.whenFieldValues) +
+    applyParsedValues(gwtSet, 'then', data?.thenFieldValues)
+  )
 }
 
 async function applyNLToCard(rowIndex) {
@@ -2875,6 +3128,8 @@ async function applyNLToCard(rowIndex) {
 
   gwtNlBusy.value = { ...gwtNlBusy.value, [rowIndex]: true }
   gwtNlError.value = { ...gwtNlError.value, [rowIndex]: '' }
+  gwtNlNotice.value = { ...gwtNlNotice.value, [rowIndex]: '' }
+  gwtNlSuggestion.value = { ...gwtNlSuggestion.value, [rowIndex]: null }
   try {
     const res = await fetch('/api/graph/gwt/parse-nl', {
       method: 'POST',
@@ -2890,15 +3145,45 @@ async function applyNLToCard(rowIndex) {
     if (!res.ok || !data?.success) {
       throw new Error(data?.detail || '자연어 해석 실패')
     }
-    applyParsedValues(gwtSet, 'given', data.givenFieldValues)
-    applyParsedValues(gwtSet, 'when', data.whenFieldValues)
-    applyParsedValues(gwtSet, 'then', data.thenFieldValues)
-    gwtNlText.value = { ...gwtNlText.value, [rowIndex]: '' }
+    const applied = applyAllSections(gwtSet, data)
+    if (applied > 0) {
+      // 구체적인 시나리오 → 필드를 채우고 입력창을 비운다(기존 정상 동작).
+      gwtNlText.value = { ...gwtNlText.value, [rowIndex]: '' }
+      gwtNlNotice.value = { ...gwtNlNotice.value, [rowIndex]: `${applied}개 필드를 채웠어요.` }
+    } else if (data.suggestion?.scenario) {
+      // 모호한 시나리오 → 구체화된 추천 시나리오로 생성할지 확인 패널을 띄운다(입력 보존).
+      gwtNlSuggestion.value = { ...gwtNlSuggestion.value, [rowIndex]: data.suggestion }
+    } else {
+      // 추천도 만들지 못함 → 입력 보존 + 안내.
+      gwtNlError.value = {
+        ...gwtNlError.value,
+        [rowIndex]: '입력된 시나리오가 구체적이지 않습니다. 수량·상품 등 구체적인 값을 포함해 다시 시도해 보세요.',
+      }
+    }
   } catch (err) {
     gwtNlError.value = { ...gwtNlError.value, [rowIndex]: err?.message || String(err) }
   } finally {
     gwtNlBusy.value = { ...gwtNlBusy.value, [rowIndex]: false }
   }
+}
+
+// 추천 시나리오 "네": 추천 값으로 Given/When/Then 을 채우고 입력창을 비운다.
+function acceptNlSuggestion(rowIndex) {
+  const gwtSet = form.value.gwtSets?.[rowIndex]
+  const suggestion = gwtNlSuggestion.value[rowIndex]
+  if (!gwtSet || !suggestion) return
+  const applied = applyAllSections(gwtSet, suggestion)
+  gwtNlSuggestion.value = { ...gwtNlSuggestion.value, [rowIndex]: null }
+  gwtNlText.value = { ...gwtNlText.value, [rowIndex]: '' }
+  gwtNlNotice.value = {
+    ...gwtNlNotice.value,
+    [rowIndex]: applied > 0 ? `추천 시나리오로 ${applied}개 필드를 채웠어요.` : '',
+  }
+}
+
+// 추천 시나리오 "아니오": 입력창을 그대로 보존한 채 확인 패널만 닫는다.
+function declineNlSuggestion(rowIndex) {
+  gwtNlSuggestion.value = { ...gwtNlSuggestion.value, [rowIndex]: null }
 }
 
 // ValueObject editor modal state
@@ -3305,6 +3590,16 @@ function updateVoFieldValue(fieldName, value) {
           >
             출처
           </button>
+          <!-- EM1 — ReadModel CQRS: 탭 버튼과 나란히 + 우측 정렬, 클릭 시 모달로 연산(Event→INSERT/UPDATE) 보기/편집.
+               provisioning=CQRS 일 때만 (API/GraphQL/SharedDB 는 CQRS 연산이 아님). -->
+          <button
+            v-if="nodeLabel === 'ReadModel' && form.provisioningType === 'CQRS'"
+            class="inspector-tab inspector-tab--cqrs"
+            @click="showCqrsModal = true"
+            title="CQRS — 이 ReadModel을 채우는 Event/연산"
+          >
+            CQRS
+          </button>
         </div>
 
         <div v-if="error" class="inspector-alert error">{{ error }}</div>
@@ -3361,10 +3656,13 @@ function updateVoFieldValue(fieldName, value) {
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                 </svg>
               </button>
+              <!-- Only render when an HTML template exists. In figma /
+                   figma-with-components modes the template is never
+                   generated, so the disabled state was just visual noise. -->
               <button
+                v-if="node.data?.template"
                 class="ui-preview-panel__btn"
                 :class="{ 'ui-preview-panel__btn--copied': templateCopied }"
-                :disabled="!node.data?.template"
                 :title="templateCopied ? 'Copied!' : 'Copy wireframe code'"
                 @click="copyTemplateCode"
               >
@@ -3376,27 +3674,11 @@ function updateVoFieldValue(fieldName, value) {
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               </button>
-              <button
-                class="ui-preview-panel__btn ui-preview-panel__btn--figma"
-                :class="{ 'ui-preview-panel__btn--copied': figmaCopied }"
-                :disabled="!node.data?.template || figmaExporting"
-                :title="figmaCopied ? 'Copied! Paste in Figma (Ctrl+V)' : 'Export to Figma'"
-                @click="exportToFigma"
-              >
-                <svg v-if="figmaExporting" width="16" height="16" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
-                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
-                </svg>
-                <svg v-else-if="figmaCopied" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z" />
-                  <path d="M12 2h3.5a3.5 3.5 0 1 1 0 7H12V2z" />
-                  <path d="M12 12.5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 1 1-7 0z" />
-                  <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z" />
-                  <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
-                </svg>
-              </button>
+              <!-- Legacy template-based "Export to Figma" button removed
+                   (duplicate icon with the sceneGraph clipboard button below;
+                   the template flow predates the plugin path and is no longer
+                   needed now that bidirectional sync runs through the
+                   binding). -->
               <button
                 class="ui-preview-panel__btn ui-preview-panel__btn--figma"
                 :class="{ 'ui-preview-panel__btn--copied': figSceneCopied }"
@@ -3462,18 +3744,17 @@ function updateVoFieldValue(fieldName, value) {
             <div v-if="node.data?.figmaNodeId" class="ui-preview-panel__attached" style="margin-top:4px;">
               <span class="label">Figma:</span>
               <span class="value" style="font-family:monospace;font-size:11px;">{{ node.data.figmaNodeId }}</span>
-              <!-- Pull from Figma uses REST API token (figma_api_creds.apiToken),
-                   which the new plugin-only flow no longer issues. The button
-                   is hidden until the plugin push path replaces it. -->
+              <!-- Pull from Figma → reload Design with the current Figma frame
+                   state. Routes through /api/figma-binding/pull-frame which
+                   asks the plugin (no API token needed). -->
               <button
-                v-if="false"
                 class="ui-preview-panel__btn"
                 style="margin-left:8px;width:24px;height:24px;"
-                :disabled="figmaSyncPulling"
-                :title="figmaSyncPulling ? 'Pulling...' : 'Pull from Figma'"
-                @click="pullFromFigma"
+                :disabled="figmaPushStatus === 'pushing'"
+                :title="figmaPushStatus === 'pushing' ? 'Pulling...' : 'Figma에서 가져오기'"
+                @click="pullFromFigmaToDesign"
               >
-                <svg v-if="figmaSyncPulling" width="12" height="12" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                <svg v-if="figmaPushStatus === 'pushing'" width="12" height="12" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
                   <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
                 </svg>
                 <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -4809,6 +5090,35 @@ function updateVoFieldValue(fieldName, value) {
                 <div v-if="gwtNlError[rowIndex]" class="gwt-card__nl-error">
                   {{ gwtNlError[rowIndex] }}
                 </div>
+                <div v-if="gwtNlNotice[rowIndex]" class="gwt-card__nl-notice">
+                  {{ gwtNlNotice[rowIndex] }}
+                </div>
+
+                <!-- 모호한 입력 → 구체화된 추천 시나리오 확인 -->
+                <div v-if="gwtNlSuggestion[rowIndex]" class="gwt-card__nl-suggest">
+                  <p class="gwt-card__nl-suggest-msg">
+                    입력된 시나리오가 구체적이지 않습니다. 다음과 같은 추천 시나리오로 생성 하시겠습니까?
+                  </p>
+                  <p class="gwt-card__nl-suggest-scenario">
+                    “{{ gwtNlSuggestion[rowIndex].scenario }}”
+                  </p>
+                  <div class="gwt-card__nl-suggest-actions">
+                    <button
+                      class="gwt-card__nl-suggest-btn gwt-card__nl-suggest-btn--yes"
+                      :disabled="saving || gwtNlBusy[rowIndex]"
+                      @click="acceptNlSuggestion(rowIndex)"
+                    >
+                      네
+                    </button>
+                    <button
+                      class="gwt-card__nl-suggest-btn gwt-card__nl-suggest-btn--no"
+                      :disabled="saving || gwtNlBusy[rowIndex]"
+                      @click="declineNlSuggestion(rowIndex)"
+                    >
+                      아니오
+                    </button>
+                  </div>
+                </div>
 
                 <!-- Given / When / Then sections -->
                 <div class="gwt-card__sections">
@@ -5071,6 +5381,39 @@ function updateVoFieldValue(fieldName, value) {
       </div>
     </div>
   </div>
+
+  <!-- Floating Figma sync toast — outside every v-if so it always renders.
+       Teleport to body so it sits above FrameEditor / modals / etc. -->
+  <Teleport to="body">
+    <Transition name="figma-toast">
+      <div
+        v-if="figmaPushStatus"
+        class="figma-sync-toast"
+        :class="`figma-sync-toast--${figmaPushStatus}`"
+        role="status"
+      >
+        <svg v-if="figmaPushStatus === 'pushing'" class="figma-sync-toast__spin" width="16" height="16" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="31.4 31.4" />
+        </svg>
+        <svg v-else-if="figmaPushStatus === 'success' || figmaPushStatus === 'saved'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+        <svg v-else-if="figmaPushStatus === 'error'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        <span>{{ figmaPushMessage }}</span>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- EM1 — ReadModel CQRS 보기/편집 모달 (탭 바 우측 ⚡ CQRS 버튼에서 열림) -->
+  <ReadModelCQRSConfigModal
+    :visible="showCqrsModal"
+    :read-model-id="props.nodeId || node?.id"
+    :read-model-data="node?.data"
+    @close="showCqrsModal = false"
+    @updated="emit('updated')"
+  />
 </template>
 
 <style scoped>
@@ -5134,7 +5477,16 @@ function updateVoFieldValue(fieldName, value) {
   box-shadow: 0 0 0 2px rgba(var(--color-accent-rgb), 0.2);
 }
 
+.inspector-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .inspector-panel__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--color-text-light);
@@ -5214,6 +5566,11 @@ function updateVoFieldValue(fieldName, value) {
 .inspector-tab.active {
   color: var(--color-text-bright);
   border-color: var(--color-accent);
+}
+
+/* EM1 — CQRS 버튼은 탭들과 나란히 두되 우측 정렬 */
+.inspector-tab--cqrs {
+  margin-left: auto;
 }
 
 /* Traceability Tab */
@@ -6202,7 +6559,10 @@ function updateVoFieldValue(fieldName, value) {
 
 .ui-preview-panel__btn:disabled {
   opacity: 0.6;
-  cursor: wait;
+  /* `not-allowed` instead of `wait`: a disabled button is unavailable, not
+     loading. The previous `wait` (hourglass cursor) made every disabled
+     button look like it was mid-operation on hover. */
+  cursor: not-allowed;
 }
 
 .ui-preview-panel__btn--copied {
@@ -7646,6 +8006,63 @@ function updateVoFieldValue(fieldName, value) {
   margin-bottom: 8px;
 }
 
+.gwt-card__nl-notice {
+  font-size: 0.72rem;
+  color: var(--color-accent, #5b8cff);
+  margin-bottom: 8px;
+}
+
+.gwt-card__nl-suggest {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-accent, #5b8cff);
+  border-radius: var(--radius-sm);
+}
+
+.gwt-card__nl-suggest-msg {
+  margin: 0 0 6px;
+  font-size: 0.74rem;
+  color: var(--color-text-bright);
+}
+
+.gwt-card__nl-suggest-scenario {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-accent, #5b8cff);
+  line-height: 1.5;
+}
+
+.gwt-card__nl-suggest-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.gwt-card__nl-suggest-btn {
+  padding: 4px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.gwt-card__nl-suggest-btn--yes {
+  background: var(--color-accent, #5b8cff);
+  border: 1px solid var(--color-accent, #5b8cff);
+  color: #fff;
+}
+
+.gwt-card__nl-suggest-btn--no {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.gwt-card__nl-suggest-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .gwt-card__sections {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -8616,6 +9033,49 @@ function updateVoFieldValue(fieldName, value) {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+</style>
+
+<style>
+/* Floating Figma sync toast — unscoped so the Teleport target (body) renders
+   correctly. Fixed to viewport, top-right, above everything else. */
+.figma-sync-toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  max-width: 420px;
+}
+.figma-sync-toast--pushing { background: #f59e0b; }
+.figma-sync-toast--success { background: #16a34a; }
+.figma-sync-toast--saved   { background: #16a34a; }
+.figma-sync-toast--error   { background: #dc2626; }
+
+.figma-sync-toast__spin {
+  animation: figma-toast-spin 0.9s linear infinite;
+}
+@keyframes figma-toast-spin {
+  to { transform: rotate(360deg); }
+}
+
+.figma-toast-enter-active,
+.figma-toast-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.figma-toast-enter-from,
+.figma-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-12px);
 }
 </style>
 

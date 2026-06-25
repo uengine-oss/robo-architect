@@ -109,6 +109,16 @@ export async function moveEntry({ root, fromPath, toPath }) {
   return res.json()
 }
 
+// Build the URL for the live filesystem-change SSE stream. Returned as a string
+// so the caller can hand it straight to `new EventSource(url)`. Resolves the
+// Electron backend port the same way every other workspace fetch does.
+export async function fsEventsUrl(root) {
+  const base = await apiBase()
+  const url = new URL(`${base}/api/claude-code/fs-events`)
+  url.searchParams.set('root', root)
+  return url.toString()
+}
+
 // Explicitly terminate a backend PTY session (× close). A ws disconnect only
 // DETACHES (keeps claude alive so a reload can re-attach), so closing a tab for
 // good must call this. Best-effort — failures are non-fatal.

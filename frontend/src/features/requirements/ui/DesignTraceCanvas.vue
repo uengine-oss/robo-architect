@@ -7,6 +7,7 @@ import EventNode from '@/features/canvas/ui/nodes/EventNode.vue'
 import PolicyNode from '@/features/canvas/ui/nodes/PolicyNode.vue'
 import AggregateNode from '@/features/canvas/ui/nodes/AggregateNode.vue'
 import UINode from '@/features/canvas/ui/nodes/UINode.vue'
+import ReadModelNode from '@/features/canvas/ui/nodes/ReadModelNode.vue'
 
 /**
  * Embedded design-trace canvas (026 — US2).
@@ -28,11 +29,12 @@ const nodeTypes = {
   policy: markRaw(PolicyNode),
   aggregate: markRaw(AggregateNode),
   ui: markRaw(UINode),
+  readmodel: markRaw(ReadModelNode),
 }
 
 // Type → column index — same left-to-right order as the Design tab:
-// UI → Command → Aggregate → Event (→ Policy).
-const COLUMN = { UI: 0, Command: 1, Aggregate: 2, Event: 3, Policy: 4 }
+// UI → Command → Aggregate → Event → ReadModel (읽기측) (→ Policy).
+const COLUMN = { UI: 0, Command: 1, Aggregate: 2, Event: 3, ReadModel: 4, Policy: 5 }
 const COL_W = 280
 const ROW_H = 240
 

@@ -12,7 +12,7 @@ const props = defineProps({
   trace: { type: Object, default: () => ({ nodes: [], relationships: [], empty: false }) },
   traceLoading: { type: Boolean, default: false },
 })
-const emit = defineEmits(['delete', 'ai-edit', 'canvas-node-click'])
+const emit = defineEmits(['delete', 'ai-edit', 'canvas-node-click', 'validate'])
 
 const store = useRequirementsStore()
 
@@ -53,6 +53,18 @@ const ambiguityFlag = computed(() => {
   return store.clarificationFlags[id] || null
 })
 
+// The clarification tab is "live" for the current user story even when no
+// session has started yet — selecting the tab fires a single-story session
+// the first time (or re-uses an existing one for this scope).
+// NOTE: declared before the immediate watch below, which can call
+// onSelectTab('clarification') during setup (flagged story) — that path reads
+// `isCurrentSession`, so it must be initialized first (TDZ guard).
+const isCurrentSession = computed(() => {
+  const sess = store.clarificationSession
+  const id = props.userStory?.id
+  return !!(sess && id && sess.scope?.scopeType === 'user_story' && sess.scope?.scopeId === id)
+})
+
 // When the user opens a new story, reset to overview unless the new story
 // is flagged — then jump straight to the clarification tab so the user
 // sees the "needs attention" surface immediately.
@@ -69,15 +81,6 @@ watch(() => props.userStory?.id, (id) => {
     activeTab.value = 'overview'
   }
 }, { immediate: true })
-
-// The clarification tab is "live" for the current user story even when no
-// session has started yet — selecting the tab fires a single-story session
-// the first time (or re-uses an existing one for this scope).
-const isCurrentSession = computed(() => {
-  const sess = store.clarificationSession
-  const id = props.userStory?.id
-  return !!(sess && id && sess.scope?.scopeType === 'user_story' && sess.scope?.scopeId === id)
-})
 
 async function startClarificationHere() {
   if (!props.userStory?.id) return
@@ -163,6 +166,7 @@ async function saveEdit() {
           </span>
         </button>
         <button class="us-tab" :class="{ 'is-active': activeTab === 'history' }" @click="onSelectTab('history')">이력</button>
+        <button class="us-tab" title="이 User Story의 DDD 적합성 검증(BC 배치·중복)" @click="emit('validate')">🔎 DDD 검증</button>
         <button class="us-tab us-tab--ai" title="채팅으로 한 번에 수정" @click="emit('ai-edit')">✨ AI 편집</button>
         <button class="us-tab us-tab--delete" title="User Story 삭제" @click="emit('delete', userStory)">🗑 삭제</button>
       </div>

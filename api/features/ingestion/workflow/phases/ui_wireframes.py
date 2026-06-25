@@ -159,13 +159,12 @@ async def _llm_invoke_to_html(ctx: IngestionWorkflowContext, prompt: str) -> str
     """
     Invoke the configured LLM and extract plain HTML text (async with timeout).
     """
+    from api.features.ai_design.wireframe_agent import invoke_sync_llm_with_backoff  # noqa: PLC0415
     try:
-        resp = await asyncio.wait_for(
-            asyncio.to_thread(
-                ctx.llm.invoke,
-                [build_system_message(_UI_WIREFRAME_SYSTEM_PROMPT), HumanMessage(content=prompt)]
-            ),
-            timeout=300.0  # 5분 타임아웃
+        resp = await invoke_sync_llm_with_backoff(
+            ctx.llm,
+            [build_system_message(_UI_WIREFRAME_SYSTEM_PROMPT), HumanMessage(content=prompt)],
+            timeout=300.0,  # 5분 타임아웃
         )
         if isinstance(resp, str):
             return resp
@@ -198,10 +197,6 @@ def _get_component_catalog_prompt() -> str:
     _component_catalog_prompt = open_pencil_client.get_component_catalog_for_prompt()
     return _component_catalog_prompt
 
-
-def _is_open_pencil_available() -> bool:
-    """Check once if the open-pencil wireframe service is available."""
-    return open_pencil_client.is_available()
 
 
 # Spec 024: bound-figma-file component catalog (refreshed every call so a
@@ -241,11 +236,10 @@ async def _llm_invoke_to_component_json(
 
     system_prompt = _UI_COMPONENT_SYSTEM_PROMPT_TEMPLATE.format(component_catalog=catalog)
 
-    resp = await asyncio.wait_for(
-        asyncio.to_thread(
-            ctx.llm.invoke,
-            [build_system_message(system_prompt), HumanMessage(content=prompt)],
-        ),
+    from api.features.ai_design.wireframe_agent import invoke_sync_llm_with_backoff  # noqa: PLC0415
+    resp = await invoke_sync_llm_with_backoff(
+        ctx.llm,
+        [build_system_message(system_prompt), HumanMessage(content=prompt)],
         timeout=300.0,
     )
     if isinstance(resp, str):
@@ -265,13 +259,14 @@ async def _generate_scene_graph(
     Try to generate a wireframe as a SerializedSceneGraph via the component
     pipeline.  Returns the scene graph dict, or None if unavailable / failed.
     """
-    if not _is_open_pencil_available():
+    if not await open_pencil_client.is_available_async():
         return None
 
     try:
         raw_json = await _llm_invoke_to_component_json(ctx, prompt)
-        scene_graph = await asyncio.to_thread(
-            open_pencil_client.parse_and_render_llm_output,
+        # Async render (not to_thread + sync httpx) so a shutdown mid-render is
+        # cancellable and doesn't leave a blocked worker thread (spec #5).
+        scene_graph = await open_pencil_client.parse_and_render_llm_output_async(
             raw_json,
             name=ui_name,
         )
@@ -314,7 +309,11 @@ async def _generate_jsx_scene_graph_for_figma_mode(
     almost always succeeds once the concurrency burst has passed.
     """
     # Local import to avoid widening this phase module's startup graph.
-    from api.features.ai_design.wireframe_agent import run_render_agent
+    from api.features.ai_design.wireframe_agent import (
+        run_render_agent,
+        scene_graph_has_visible_content,
+        scene_graph_text_node_count,
+    )
 
     MAX_ATTEMPTS = 3
     last_summary: str | None = None
@@ -338,30 +337,39 @@ async def _generate_jsx_scene_graph_for_figma_mode(
             )
             sg, summary = None, None
         last_summary = summary or last_summary
-        if sg:
+        # A truthy sceneGraph with zero Text nodes is the "empty frame" failure
+        # mode (abstract read-only screens). Treat it like an empty result and
+        # retry with a fresh agent loop instead of persisting a blank frame.
+        if sg and scene_graph_has_visible_content(sg):
             SmartLogger.log(
                 "INFO",
-                f"figma-mode wireframe generated: {ui_display_name} ({len(sg.get('nodes') or {})} nodes, attempt {attempt})",
+                f"figma-mode wireframe generated: {ui_display_name} ({len(sg.get('nodes') or {})} nodes, "
+                f"{scene_graph_text_node_count(sg)} text, attempt {attempt})",
                 category="ingestion.ui_wireframe.figma_mode.success",
                 params={
                     "session_id": ctx.session.id,
                     "ui_name": ui_display_name,
                     "node_count": len(sg.get("nodes") or {}),
+                    "text_node_count": scene_graph_text_node_count(sg),
                     "summary": summary,
                     "attempt": attempt,
                 },
             )
             return sg
         if attempt < MAX_ATTEMPTS:
+            reason = "empty_content" if sg else "no_scene_graph"
             SmartLogger.log(
                 "WARN",
-                f"figma-mode wireframe empty for {ui_display_name}, retrying (attempt {attempt}/{MAX_ATTEMPTS})",
+                f"figma-mode wireframe {reason} for {ui_display_name}, retrying (attempt {attempt}/{MAX_ATTEMPTS})",
                 category="ingestion.ui_wireframe.figma_mode.retry",
-                params={"session_id": ctx.session.id, "ui_name": ui_display_name, "attempt": attempt},
+                params={"session_id": ctx.session.id, "ui_name": ui_display_name, "attempt": attempt, "reason": reason},
             )
+    # Every attempt failed or came back as a blank frame. Return None so the UI
+    # node is created without a sceneGraph (regeneratable) rather than persisting
+    # an empty frame that would push a blank UI to Figma.
     SmartLogger.log(
         "WARN",
-        f"figma-mode wireframe agent returned no sceneGraph for {ui_display_name} after {MAX_ATTEMPTS} attempts",
+        f"figma-mode wireframe agent returned no usable sceneGraph for {ui_display_name} after {MAX_ATTEMPTS} attempts",
         category="ingestion.ui_wireframe.figma_mode.empty",
         params={"session_id": ctx.session.id, "ui_name": ui_display_name, "summary": last_summary},
     )
@@ -967,6 +975,16 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
             policy_invoked_command_names.add(invoke_cmd)
 
 
+    # 042 US3 — 하이브리드 인제스천: Command UI는 "사람-조작(=policy-invoked가 아닌) command마다"
+    # (기존 동작 유지 → task당 1~N UI 자연 허용). ReadModel만 3분류로 정리:
+    #   query_screen=자체 조회/검색 화면 / displayed=결과를 소비 화면에 표시 / system=화면 없음.
+    from api.features.ingestion.workflow.phases.task_ui_helpers import (
+        classify_readmodel,
+        attach_display_readmodels,
+    )
+    is_hybrid = getattr(ctx, "source_type", "") == "hybrid"
+    hybrid_display_rm_ids: list[str] = []  # 'displayed' ReadModel(소비 화면에 표시 부착)
+
     # Collect all UI creation tasks
     command_ui_tasks: list[callable] = []
     readmodel_ui_tasks: list[callable] = []
@@ -1002,7 +1020,8 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                 if not chosen_ui_desc:
                     continue
 
-                # Add task for parallel processing
+                # 사람-조작 command마다 UI 1개(policy-invoked는 위에서 이미 제외 = 시스템 단계).
+                # task당 사람 command가 여러 개면 화면도 여러 개(정상).
                 command_ui_tasks.append(
                     partial(
                         _create_command_ui,
@@ -1031,13 +1050,21 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
             if not chosen_ui_desc:
                 continue
 
-            # Add task for parallel processing
-            readmodel_ui_tasks.append(
-                partial(
-                    _create_readmodel_ui,
-                    ctx, bc, rm, chosen_us_id, chosen_ui_desc, user_story_ui
-                )
+            rm_partial = partial(
+                _create_readmodel_ui,
+                ctx, bc, rm, chosen_us_id, chosen_ui_desc, user_story_ui
             )
+            if is_hybrid:
+                # US3 3분류: screen(조회/검색 OR 결과 화면)→자체 UI 생성 / inline→소비 화면에
+                #            데이터 표시 부착(후속) / system→화면 없음(레인 FEEDS로만).
+                verdict = await classify_readmodel(rm)
+                if verdict.kind == "screen":
+                    readmodel_ui_tasks.append(rm_partial)
+                elif verdict.kind == "inline":
+                    hybrid_display_rm_ids.append(rm_id)
+                # system: 아무것도 안 함
+            else:
+                readmodel_ui_tasks.append(rm_partial)
             created_by_readmodel.add(rm_id)
 
     # Bulk-with-binding (FR-019b): if a :FigmaBinding is active, after each
@@ -1122,6 +1149,26 @@ async def generate_ui_wireframes_phase(ctx: IngestionWorkflowContext) -> AsyncGe
                     progress=89,
                     data={"figmaSync": {"event": name, **payload}},
                 )
+
+    # 042 US3 — UI 생성 후, 비-조회 ReadModel을 그 ReadModel을 생산하는 task의 트리거
+    # 화면에 role:'display'로 부착(신규 라벨/관계 0). 소비 화면을 못 찾으면 레인의 FEEDS로만 표시.
+    if is_hybrid and hybrid_display_rm_ids:
+        try:
+            with ctx.client.session() as _rm_sess:
+                _attached = attach_display_readmodels(_rm_sess, ctx.session.id, hybrid_display_rm_ids)
+            SmartLogger.log(
+                "INFO",
+                f"ReadModel display attach: {_attached}/{len(hybrid_display_rm_ids)}",
+                category="ingestion.ui_wireframe.rm_display",
+                params={"session_id": ctx.session.id},
+            )
+        except Exception as e:  # noqa: BLE001 — 표시 부착 실패가 인제스천을 막지 않음
+            SmartLogger.log(
+                "ERROR",
+                f"ReadModel display attach failed: {e}",
+                category="ingestion.ui_wireframe.rm_display.error",
+                params={"session_id": ctx.session.id, "error": str(e)},
+            )
 
     # 생성 결과 요약
     SmartLogger.log(

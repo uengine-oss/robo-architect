@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 // 040 — 미리보기 중 Chat 수정 요청은 라이브가 아니라 제안 diff 에 반영.
-import { isPreviewFor, usePreviewSession } from '@/app/previewSession'
+import { usePreviewSession } from '@/app/previewSession'
 
 /**
  * Store for managing chat-based model modification with ReAct pattern.
@@ -387,7 +387,12 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
       }
 
       // 040 — 미리보기 중에는 라이브 그래프(/api/chat/confirm)가 아니라 제안 diff 로 라우팅.
-      if (isPreviewFor('data')) {
+      // 043-fix: 'data' 뷰어에 한정하지 않고 **활성 미리보기 전체**(data/design/process/
+      // processes)를 제안 경로로 보낸다. Command/Event/ReadModel 은 'design' 뷰어로 열리므로
+      // (proposalPreview.LABEL_TO_VIEWER), 'data' 만 검사하면 그 chat-confirm 이 라이브
+      // /api/chat/confirm 으로 새어나가 제안 전용(CREATE) 노드와 매칭되지 않아 "0개 반영"이
+      // 됐다. 미리보기 활성이면 항상 제안 diff(tacticalDiff)로 반영(라이브 무변경, Constitution I).
+      if (usePreviewSession().active) {
         const ps = usePreviewSession()
         const res = await fetch(`/api/proposals/${ps.proposalId}/preview/chat-confirm`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -397,12 +402,20 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
         if (!res.ok) throw new Error(tree?.detail || `API error: ${res.status}`)
         // 갱신된 미리보기 트리를 뷰어에 반영(라이브 무변경).
         window.dispatchEvent(new CustomEvent('robo:preview-updated', { detail: { tree } }))
-        const lockedDrafts = drafts.map(d => ({ ...d, approved: !!d.approved, isApplied: true }))
-        messages.value[idx] = { ...msg, drafts: lockedDrafts, isApplied: true }
+        // I13/E-1: 백엔드가 실제 반영 건수 + 미해소 건수를 돌려준다 — 정직하게 표기한다.
+        const appliedCount = tree?._preview?.appliedCount
+        const unresolvedCount = tree?._preview?.unresolvedCount
+        const didApply = appliedCount == null || appliedCount > 0
+        const lockedDrafts = drafts.map(d => ({ ...d, approved: !!d.approved, isApplied: didApply }))
+        messages.value[idx] = { ...msg, drafts: lockedDrafts, isApplied: didApply }
         messages.value = [...messages.value]
+        // E-1: 미해소(미반영) 건수가 있으면 함께 알려, "N건 반영"이 전체 성공처럼 오인되지 않게 한다.
+        const unresolvedNote = unresolvedCount > 0 ? ` (미반영 ${unresolvedCount}건 — 대상 미해소)` : ''
         messages.value.push({
           id: generateId(), type: 'system',
-          content: `제안(${ps.label || ps.proposalId}) diff 에 반영했습니다. (라이브 설계는 변경되지 않음)`,
+          content: didApply
+            ? `제안(${ps.label || ps.proposalId}) diff 에 ${appliedCount != null ? appliedCount + '건 ' : ''}반영했습니다.${unresolvedNote} (라이브 설계는 변경되지 않음)`
+            : `반영된 변경이 없습니다.${unresolvedNote} (이 편집 유형은 아직 제안 diff 반영을 지원하지 않습니다)`,
           timestamp: new Date().toISOString(),
         })
         return

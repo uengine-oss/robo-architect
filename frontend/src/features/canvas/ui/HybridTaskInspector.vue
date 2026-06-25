@@ -2,12 +2,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useDebugMode } from '@/app/debug'
+import BpmTaskTraceModal from '@/features/canvas/ui/BpmTaskTraceModal.vue'
 
 const emit = defineEmits(['close'])
 const store = useBpmnStore()
 const { isDebug } = useDebugMode()
 
 const task = computed(() => store.selectedHybridTask)
+
+// 039 US2 — "포함 요소 / 설계 궤적" 모달. 읽기 전용 오버레이로, BPM 캔버스를 건드리지 않는다.
+const showTrace = ref(false)
 
 // ---------------------------------------------------------------------------
 // Agent Reasoning — all SSE state lives in the store (see bpmn.store.js).
@@ -167,6 +171,21 @@ const functions = computed(() => task.value?.functions || [])
 const passages = computed(() => task.value?.document_passages || [])
 const conditions = computed(() => task.value?.conditions || [])
 
+// PDF text extraction inserts a newline per *visual* line, so passage bodies
+// arrive broken every few words. Collapse those intra-sentence newlines into
+// spaces for readable reflow, but keep a real break before bullet markers so
+// list items stay on their own line. (Pairs with `white-space: pre-line`.)
+function cleanPassage(text) {
+  if (!text) return ''
+  return String(text)
+    .replace(/\r/g, '')
+    .replace(/\n(?=\s*[•·▪‣◦])/g, '@@BR@@')
+    .replace(/\n+/g, ' ')
+    .replace(/@@BR@@/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+}
+
 // Rejected BL candidates for the current task — surfaced from
 // AgentFinalMatches.rejects via the store. The backend now caps emitted
 // rejects to a small near-miss set (REJECT_NEAR_MISS_FLOOR=0.50,
@@ -252,6 +271,20 @@ function roleMeta(role) {
       <span class="hti-stat"><b>{{ conditions.length }}</b> Conditions</span>
       <span v-if="isDebug" class="hti-stat hti-stat--debug" title="?debug=1 활성화됨 — 편집 UI 표시 중">DEBUG</span>
     </div>
+
+    <!-- 039 US2 — 이 task에 귀속된 UI~Command~Event 체인을 모달로 열람(캔버스 불변) -->
+    <div class="hti-trace-cta">
+      <button class="hti-trace-btn" @click="showTrace = true" title="이 task에 포함된 UI·Command·Event 흐름 보기">
+        🔎 포함 요소 · 설계 궤적 보기
+      </button>
+    </div>
+
+    <BpmTaskTraceModal
+      :visible="showTrace"
+      :task-id="task?.id"
+      :task-name="task?.name"
+      @close="showTrace = false"
+    />
 
     <div class="hti-body">
       <!-- Agent Reasoning — live stream of the hierarchical retrieval -->
@@ -379,7 +412,7 @@ function roleMeta(role) {
               <span v-if="p.page != null" class="hti-badge">p.{{ p.page }}</span>
               <span v-if="p.low_confidence" class="hti-badge hti-badge--warn">약한 근거</span>
             </header>
-            <p class="hti-passage__body">{{ p.text }}</p>
+            <p class="hti-passage__body">{{ cleanPassage(p.text) }}</p>
           </article>
         </div>
         <div v-else class="hti-empty">문서 근거가 아직 없음</div>
@@ -517,10 +550,10 @@ function roleMeta(role) {
                 >+ 이 매핑 추가</button>
               </header>
               <div v-if="entry.rule.title" class="hti-rule__title">{{ entry.rule.title }}</div>
-              <dl class="hti-rule__gwt" v-if="entry.rule.given || entry.rule.when || entry.rule.then">
-                <div v-if="entry.rule.given"><dt>GIVEN</dt><dd>{{ entry.rule.given }}</dd></div>
-                <div v-if="entry.rule.when"><dt>WHEN</dt><dd>{{ entry.rule.when }}</dd></div>
-                <div v-if="entry.rule.then"><dt>THEN</dt><dd>{{ entry.rule.then }}</dd></div>
+              <dl class="hti-gwt" v-if="entry.rule.given || entry.rule.when || entry.rule.then">
+                <div v-if="entry.rule.given" class="hti-gwt__row"><dt>GIVEN</dt><dd>{{ entry.rule.given }}</dd></div>
+                <div v-if="entry.rule.when" class="hti-gwt__row"><dt>WHEN</dt><dd>{{ entry.rule.when }}</dd></div>
+                <div v-if="entry.rule.then" class="hti-gwt__row"><dt>THEN</dt><dd>{{ entry.rule.then }}</dd></div>
               </dl>
               <div v-if="entry.rationale" class="hti-rejects__rationale">
                 <span class="hti-rejects__label">Agent 거부 사유:</span>
@@ -689,6 +722,22 @@ function roleMeta(role) {
   font-weight: 700;
   margin-right: 3px;
 }
+/* 039 US2 — 포함 요소 모달 진입 버튼 */
+.hti-trace-cta {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.06));
+}
+.hti-trace-btn {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border, rgba(255,255,255,0.12));
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  color: var(--color-text-bright);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+.hti-trace-btn:hover { background: rgba(255,255,255,0.08); }
 
 /* Body -------------------------------------------------- */
 .hti-body {
@@ -1055,8 +1104,9 @@ function roleMeta(role) {
   color: var(--color-text-dim);
 }
 .hti-rule__title {
-  font-size: 0.74rem;
-  color: var(--color-text);
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--color-text-bright);
   margin: 0 0 6px;
   line-height: 1.45;
   word-break: keep-all;
@@ -1101,7 +1151,7 @@ function roleMeta(role) {
   line-height: 1.55;
   color: var(--color-text);
   word-break: break-word;
-  white-space: pre-wrap;
+  white-space: pre-line;
 }
 
 /* Rule GWT --------------------------------------------- */
@@ -1133,9 +1183,9 @@ function roleMeta(role) {
 }
 .hti-rule__fn {
   font-family: 'SF Mono', Menlo, monospace;
-  font-size: 0.74rem;
-  color: var(--color-text-bright);
-  font-weight: 600;
+  font-size: 0.62rem;
+  color: var(--color-text-dim);
+  font-weight: 400;
 }
 .hti-rule__mod {
   font-family: 'SF Mono', Menlo, monospace;
@@ -1187,9 +1237,9 @@ function roleMeta(role) {
 }
 .hti-fn__name {
   font-family: 'SF Mono', Menlo, monospace;
-  font-size: 0.76rem;
-  color: var(--color-text-bright);
-  font-weight: 600;
+  font-size: 0.62rem;
+  color: var(--color-text-dim);
+  font-weight: 400;
 }
 .hti-fn__mod {
   font-family: 'SF Mono', Menlo, monospace;
@@ -1197,9 +1247,10 @@ function roleMeta(role) {
   color: var(--color-text-dim);
 }
 .hti-fn__summary {
-  margin: 6px 0 0;
-  font-size: 0.7rem;
-  color: var(--color-text-dim);
+  margin: 0 0 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-bright);
   line-height: 1.5;
 }
 

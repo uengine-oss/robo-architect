@@ -141,8 +141,14 @@ def write_text_file_atomic(
       `os.stat().st_mtime_ns`; on mismatch raise HTTPException(409) with
       `{current_mtime_ns, current_size}` in the detail body.
 
-    Writes via `<basename>.tmp.<rand>` + fsync + atomic rename per
+    Writes via `<basename>.tmp.<rand>` + fsync + atomic replace per
     contracts/rest-api.md.
+
+    NOTE: the final step MUST be ``os.replace`` (not ``os.rename``). On POSIX
+    ``os.rename`` atomically overwrites an existing destination, but on Windows
+    it raises ``FileExistsError [WinError 183]`` when the destination already
+    exists — so every save over an existing file failed there (the IDE surfaced
+    it as "Failed to fetch"). ``os.replace`` overwrites atomically on both.
 
     Returns (new_size, new_mtime_ns).
     """
@@ -184,14 +190,19 @@ def write_text_file_atomic(
     tmp_name = f"{base}.tmp.{secrets.token_hex(6)}"
     tmp_path = os.path.join(parent, tmp_name)
 
+    # O_BINARY (Windows only; 0 elsewhere) is REQUIRED — without it Windows opens
+    # the fd in text mode and translates every '\n' in `payload` into '\r\n' on
+    # write, silently corrupting the editor's content (size grows, LF→CRLF) on
+    # each save. We already hold UTF-8-encoded bytes, so the write must be raw.
+    binary_flag = getattr(os, "O_BINARY", 0)
     try:
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | binary_flag, 0o644)
         try:
             os.write(fd, payload)
             os.fsync(fd)
         finally:
             os.close(fd)
-        os.rename(tmp_path, abs_path)
+        os.replace(tmp_path, abs_path)
     except PermissionError as e:
         try:
             os.unlink(tmp_path)

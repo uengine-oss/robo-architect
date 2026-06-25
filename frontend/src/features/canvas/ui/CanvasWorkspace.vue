@@ -6,6 +6,7 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
+import { useCanvasPreviewRequestStore } from '@/features/canvas/canvasPreviewRequest.store'
 import { createLogger, newOpId } from '@/app/logging/logger'
 
 // Custom Nodes
@@ -428,6 +429,74 @@ watch(
     openInspectorForNodeData(req)
     inspectorRequestStore.consume()
   }
+)
+
+// 043-fix — Proposal Design 미리보기 진입 요청 소비.
+// App.vue 가 robo:open-preview(viewer === 'design', Command/Event) 수신 후 이 스토어에
+// {proposalId, bcId, targetNodeId, ...} 를 push 한다. 여기서 BC 그래프를 읽기 전용으로
+// 가져와 캔버스를 스냅샷+대체하고, 대상 노드에 포커스 + 인스펙터를 연다.
+const canvasPreviewRequestStore = useCanvasPreviewRequestStore()
+
+async function consumeCanvasPreviewRequest() {
+  const req = canvasPreviewRequestStore.pendingRequest
+  if (!req) return
+  canvasPreviewRequestStore.consume()
+  const opId = newOpId('designPreview')
+  log.info('design_preview_request', 'Consuming Proposal Design preview request.', {
+    opId, proposalId: req.proposalId, bcId: req.bcId, targetNodeId: req.targetNodeId,
+  })
+  try {
+    // 043-fix3: 적용 후 갱신(keepPanel)은 현재 선택/뷰포트를 보존한다 — 캔버스만 다시 그리고
+    // 포커스를 옮기지 않는다(AI 채팅 변경 시 엉뚱한 노드로 포커스 점프 방지).
+    const prevSelection = req.keepPanel ? [...(canvasStore.selectedNodeIds || [])] : null
+
+    const url = `/api/proposals/${encodeURIComponent(req.proposalId)}/preview/design/${encodeURIComponent(req.bcId)}/graph`
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`design preview fetch failed (${res.status})`)
+    const graph = await res.json()
+
+    // 라이브 캔버스를 스냅샷한 뒤 미리보기 그래프로 대체(배너 '닫기' 시 복원).
+    // beginPreview 는 최초 1회만 라이브를 스냅샷한다 → 이미 미리보기 중이면(다른 노드 '열기')
+    // 직전 미리보기 그래프가 남으므로 clearCanvas 로 비우고 새로 적재한다.
+    canvasStore.beginPreview()
+    canvasStore.clearCanvas()
+    canvasStore.addNodesWithLayout(graph.nodes || [], graph.relationships || [], graph.bcContext || null)
+
+    await nextTick()
+    // 레이아웃/렌더가 안정된 뒤 대상 노드로 포커스 + 인스펙터.
+    setTimeout(() => {
+      try {
+        // 043-fix3: 적용 후 갱신은 포커스를 옮기지 않는다 — 직전 선택만 복원하고 뷰포트 유지.
+        // (fitView/selectNode(target) 를 호출하면 Chat 으로 막 편집한 사용자의 화면이 원래
+        // '열기' 대상 노드로 점프해 버린다.)
+        if (req.keepPanel) {
+          const sel = (prevSelection || []).filter((id) => canvasStore.isOnCanvas(id))
+          if (sel.length) canvasStore.selectNodes(sel)
+          return
+        }
+        if (req.targetNodeId && canvasStore.isOnCanvas(req.targetNodeId)) {
+          canvasStore.selectNode(req.targetNodeId)
+          fitView({ nodes: [req.targetNodeId], padding: 0.6, duration: 400 })
+          openInspectorForNode(req.targetNodeId)
+        } else {
+          // 대상이 그래프에 없으면(엣지 케이스) 전체 맞춤만.
+          fitView({ padding: 0.3 })
+        }
+      } catch (e) {
+        log.error('design_preview_focus_error', 'Failed to focus design preview target.', { opId, error: String(e) })
+      }
+    }, 200)
+  } catch (e) {
+    log.error('design_preview_error', 'Failed to load Proposal Design preview.', { opId, error: String(e) })
+    window.alert(`Design 미리보기를 불러오지 못했습니다: ${e?.message || e}`)
+  }
+}
+
+// KeepAlive 로 첫 활성화 시점이 요청보다 늦을 수 있으므로 immediate 로 마운트 시 즉시 검사.
+watch(
+  () => canvasPreviewRequestStore.requestId,
+  (id) => { if (id) consumeCanvasPreviewRequest() },
+  { immediate: true }
 )
 
 async function onNodeDoubleClick(event) {

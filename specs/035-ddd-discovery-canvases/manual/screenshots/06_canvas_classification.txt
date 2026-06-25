@@ -1,0 +1,9 @@
+# BC 캔버스 + 전략 분류(generic) 검증
+
+대상 BC: 법정대리인 동의 관리 (id: c49c694f-6c5d-463c-9a4f-bd9a63d10ff8)
+
+PATCH classification=generic → generic
+Canvas GET: name=법정대리인 동의 관리, classification=generic, version=22
+Canvas PATCH purpose: 'E2E 검증용 책임 설명', version=23
+
+※ 분류 복원: core

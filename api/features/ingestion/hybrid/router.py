@@ -530,6 +530,16 @@ async def promote_start(
             detail="BPM 가 아직 없습니다. Phase 1~4 (BPM 생성) 를 먼저 완료하세요.",
         )
 
+    # 재승격 idempotency: 이 세션의 기존 ES 산출물을 먼저 비운다. 안 하면 같은 세션을 다시
+    # 승격할 때 Command/Event/ReadModel/UI 등이 전부 중복 생성된다(BpmTask 척추는 미포함).
+    cleared = clear_promoted_nodes(session_id)
+    if cleared:
+        SmartLogger.log(
+            "INFO", "Re-promotion: cleared previous ES output before promoting",
+            category="ingestion.hybrid.es.promote.clear",
+            params={"session_id": session_id, "cleared": cleared},
+        )
+
     body = body or PromoteToEsRequest()
     resolved_lang = (body.display_language or "ko").strip().lower()
     if resolved_lang not in ("ko", "en"):

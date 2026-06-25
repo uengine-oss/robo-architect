@@ -43,6 +43,40 @@ def _sanitize_updates(change: dict[str, Any]) -> dict[str, Any]:
     return updates
 
 
+def compute_draft_display_fields(
+    action: str | None, before: dict[str, Any], after: dict[str, Any]
+) -> list[str]:
+    """확정 UI(diff)에서 before/after 를 비교 표시할 필드 키 목록을 계산한다.
+
+    프런트(ChatPanel)는 이 키들로 `before[key]`/`after[key]` 를 조회해 좌우로 보여준다.
+    따라서 키는 반드시 before/after 에 **실제로 존재하는** 키여야 한다. 과거에는
+    create→['create'], delete→['delete'] 처럼 존재하지 않는 리터럴 키를 돌려줘서
+    before/after 가 모두 '(empty)' 로 표시되는 버그가 있었다.
+
+    - create : after 키(=새로 설정되는 값들). before 는 비어 있음(신규).
+    - update : after 키(=변경되는 필드). before[키] 로 옛 값을 같이 보여줌.
+    - delete : after 가 비므로 before 키(=삭제되는 기존 값들).
+    - rename : ['name'] / connect : ['relationship'] (전용 표현).
+
+    update 에서 before(스냅샷 전체) ∪ after 의 합집합을 쓰면, 바뀌지 않은 스냅샷 전용
+    필드들이 after='(empty)' 로 줄줄이 표시돼 "이 필드들이 지워진다"는 오해를 준다.
+    따라서 '변경되는 쪽'(after, 없으면 before)의 키만 쓴다.
+    """
+    before = before if isinstance(before, dict) else {}
+    after = after if isinstance(after, dict) else {}
+    if action == "rename":
+        return ["name"]
+    if action == "connect":
+        return ["relationship"]
+    # 043-fix: parentType/parentId 는 자식요소(Property 등) draft 의 **라우팅 메타**일 뿐
+    # 사용자에게 보여줄 변경 필드가 아니다(저장 시에도 제외됨). diff 표에서 빼서 UPDATE 가
+    # "type: int → Integer" 처럼 실제 바뀐 필드만 깔끔히 보이게 한다.
+    _ROUTING = {"parentType", "parentId", "oldName"}
+    keys = [k for k in after.keys() if k not in _ROUTING] or \
+           [k for k in before.keys() if k not in _ROUTING]
+    return keys
+
+
 def _selected_node_map(selected_nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for n in selected_nodes or []:
@@ -159,13 +193,28 @@ async def stream_react_response(
             # If check fails, continue without ingestion context
             pass
 
-        nodes_context = "\n".join(
-            [
-                f"- {node.get('type', 'Unknown')}: {node.get('name', node.get('id'))} "
+        def _format_selected_node(node: dict[str, Any]) -> str:
+            ntype = node.get("type", "Unknown")
+            line = (
+                f"- {ntype}: {node.get('name', node.get('id'))} "
                 f"(ID: {node.get('id')}, BC: {node.get('bcId', 'N/A')})"
-                for node in selected_nodes
-            ]
-        )
+            )
+            # ValueObject/Enum 은 자식(fields/items)을 인라인으로 노출해야 LLM 이 기존 이름을
+            # 알고 update/delete/rename 을 정확히 생성한다(선택 노드 data 에 함께 실려 온다).
+            t = str(ntype or "").lower()
+            if t in ("valueobject",):
+                fields = node.get("fields") or []
+                names = [f.get("name") for f in fields if isinstance(f, dict) and f.get("name")]
+                if names:
+                    line += f" [fields: {', '.join(str(n) for n in names)}]"
+            elif t in ("enum", "enumeration"):
+                items = node.get("items") or []
+                flat = [str(it.get("name") if isinstance(it, dict) else it) for it in items]
+                if flat:
+                    line += f" [items: {', '.join(flat)}]"
+            return line
+
+        nodes_context = "\n".join(_format_selected_node(node) for node in selected_nodes)
 
         # =============================================================================
         # Intent analysis (structured) + propagation reuse + injected context block
@@ -219,86 +268,104 @@ async def stream_react_response(
         propagation_rounds: int = 0
         propagation_stop_reason: str = ""
         
-        # 영향도 분석은 항상 선행되어야 함 (workflow에 필수)
-        # Intent의 need_propagation 값과 무관하게 항상 실행
-        SmartLogger.log(
-            "INFO",
-            "Model Modifier: Starting impact propagation (always executed before workflow).",
-            category="api.chat.propagation.start",
-            params={
-                "intent_need_propagation": getattr(intent, 'need_propagation', None),
-                "selectedNodes": selected_nodes,
-                "prompt": prompt[:200],  # 첫 200자만 로깅
-            },
-        )
-        
-        try:
-            from api.features.change_management.planning_agent.change_planning_contracts import (
-                ChangePlanningState,
-                ChangeScope,
+        # 영향도 전파는 intent.need_propagation 신호를 존중한다.
+        # LLM intent 분석이 "선택 노드 밖으로 확장 불필요"로 판정하면(주로 scope=local 의 단순
+        # 추가/삭제) 전파를 생략해 임계경로 레이턴시를 줄인다. 측정상 need_propagation=False 케이스는
+        # 전파 산출물이 비어 있어 드래프트/적용 결과가 불변이며, 삭제/수정 등 need_propagation=True
+        # 케이스는 cascade 안전성을 위해 기존대로 전파를 수행한다.
+        _run_propagation = bool(getattr(intent, "need_propagation", True))
+
+        if not _run_propagation:
+            SmartLogger.log(
+                "INFO",
+                "Model Modifier: Skipping impact propagation (intent.need_propagation=False).",
+                category="api.chat.propagation.skip",
+                params={
+                    "intent_need_propagation": getattr(intent, "need_propagation", None),
+                    "intent_scope": getattr(intent, "scope", None),
+                    "selectedNodes": selected_nodes,
+                    "prompt": prompt[:200],  # 첫 200자만 로깅
+                },
             )
-            from api.features.change_management.planning_agent.impact_propagation_engine import (
-                propagate_impacts_node,
+        else:
+            SmartLogger.log(
+                "INFO",
+                "Model Modifier: Starting impact propagation (intent.need_propagation=True).",
+                category="api.chat.propagation.start",
+                params={
+                    "intent_need_propagation": getattr(intent, 'need_propagation', None),
+                    "selectedNodes": selected_nodes,
+                    "prompt": prompt[:200],  # 첫 200자만 로깅
+                },
             )
 
-            scope_map = {
-                "local": ChangeScope.LOCAL,
-                "cross_bc": ChangeScope.CROSS_BC,
-                "new_capability": ChangeScope.NEW_CAPABILITY,
-            }
-            state = ChangePlanningState(
-                user_story_id="chat.model_modifier",
-                edited_user_story={"role": "user", "action": prompt, "benefit": ""},
-                change_description=prompt,
-                connected_objects=list(selected_nodes or []),
-                change_scope=scope_map.get(intent.scope, ChangeScope.LOCAL),
-            )
-            
-            SmartLogger.log(
-                "INFO",
-                "Model Modifier: Calling propagate_impacts_node.",
-                category="api.chat.propagation.call",
-                params={
-                    "state_user_story_id": state.user_story_id,
-                    "change_scope": str(state.change_scope),
-                    "connected_objects_count": len(state.connected_objects or []),
-                },
-            )
-            
-            result = propagate_impacts_node(state)
-            confirmed = result.get("propagation_confirmed") or []
-            review = result.get("propagation_review") or []
-            propagation_confirmed = [(c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in confirmed]
-            propagation_review = [(c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in review]
-            propagation_debug = result.get("propagation_debug") or {}
             try:
-                propagation_rounds = int(result.get("propagation_rounds") or 0)
-            except Exception:
-                propagation_rounds = 0
-            propagation_stop_reason = str(result.get("propagation_stop_reason") or "")
-            
-            SmartLogger.log(
-                "INFO",
-                "Model Modifier: Impact propagation completed.",
-                category="api.chat.propagation.complete",
-                params={
-                    "confirmed_count": len(propagation_confirmed),
-                    "review_count": len(propagation_review),
-                    "rounds": propagation_rounds,
-                    "stop_reason": propagation_stop_reason,
-                    "has_debug": bool(propagation_debug),
-                },
-            )
-        except Exception as e:
-            SmartLogger.log(
-                "ERROR",
-                "Model Modifier propagation failed; continuing with selected nodes only.",
-                category="api.chat.propagation.failed",
-                params={
-                    "error": {"type": type(e).__name__, "message": str(e)},
-                    "traceback": str(e.__traceback__) if hasattr(e, "__traceback__") else None,
-                },
-            )
+                from api.features.change_management.planning_agent.change_planning_contracts import (
+                    ChangePlanningState,
+                    ChangeScope,
+                )
+                from api.features.change_management.planning_agent.impact_propagation_engine import (
+                    propagate_impacts_node,
+                )
+
+                scope_map = {
+                    "local": ChangeScope.LOCAL,
+                    "cross_bc": ChangeScope.CROSS_BC,
+                    "new_capability": ChangeScope.NEW_CAPABILITY,
+                }
+                state = ChangePlanningState(
+                    user_story_id="chat.model_modifier",
+                    edited_user_story={"role": "user", "action": prompt, "benefit": ""},
+                    change_description=prompt,
+                    connected_objects=list(selected_nodes or []),
+                    change_scope=scope_map.get(intent.scope, ChangeScope.LOCAL),
+                )
+
+                SmartLogger.log(
+                    "INFO",
+                    "Model Modifier: Calling propagate_impacts_node.",
+                    category="api.chat.propagation.call",
+                    params={
+                        "state_user_story_id": state.user_story_id,
+                        "change_scope": str(state.change_scope),
+                        "connected_objects_count": len(state.connected_objects or []),
+                    },
+                )
+
+                result = propagate_impacts_node(state)
+                confirmed = result.get("propagation_confirmed") or []
+                review = result.get("propagation_review") or []
+                propagation_confirmed = [(c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in confirmed]
+                propagation_review = [(c.model_dump() if hasattr(c, "model_dump") else dict(c)) for c in review]
+                propagation_debug = result.get("propagation_debug") or {}
+                try:
+                    propagation_rounds = int(result.get("propagation_rounds") or 0)
+                except Exception:
+                    propagation_rounds = 0
+                propagation_stop_reason = str(result.get("propagation_stop_reason") or "")
+
+                SmartLogger.log(
+                    "INFO",
+                    "Model Modifier: Impact propagation completed.",
+                    category="api.chat.propagation.complete",
+                    params={
+                        "confirmed_count": len(propagation_confirmed),
+                        "review_count": len(propagation_review),
+                        "rounds": propagation_rounds,
+                        "stop_reason": propagation_stop_reason,
+                        "has_debug": bool(propagation_debug),
+                    },
+                )
+            except Exception as e:
+                SmartLogger.log(
+                    "ERROR",
+                    "Model Modifier propagation failed; continuing with selected nodes only.",
+                    category="api.chat.propagation.failed",
+                    params={
+                        "error": {"type": type(e).__name__, "message": str(e)},
+                        "traceback": str(e.__traceback__) if hasattr(e, "__traceback__") else None,
+                    },
+                )
 
         # =============================================================================
         # Emit impact summary (once) for frontend debugging UI
@@ -649,7 +716,7 @@ For each proposed change, also output a JSON block (DRAFT ONLY) in this format:
   "changeId": "chg-...",
   "action": "rename|update|create|delete|connect",
   "targetId": "...",
-  "targetType": "Command|Event|Policy|Aggregate|ReadModel|UI|BoundedContext|Property",
+  "targetType": "Command|Event|Policy|Aggregate|ReadModel|UI|BoundedContext|Property|ValueObject|Enumeration",
   "targetName": "...",
   "bcId": "<uuid>",
   "rationale": "why this change is necessary",
@@ -680,8 +747,34 @@ For "connect" actions, include:
 For Property actions:
 - targetType MUST be "Property"
 - updates MUST include: parentType, parentId
+- parentType MUST be one of: Aggregate, Command, Event, ReadModel, ValueObject
 - For create Property, updates MUST include: name, type, description, isKey, isForeignKey, isRequired, parentType, parentId
   - Note: Property id is server-assigned UUID; you may use a temporary targetId like "prop-temp-1" and the server will replace it in the applied response.
+
+For ValueObject field actions (adding/editing/removing a field of a ValueObject):
+- Treat the field as a Property whose parent is the ValueObject.
+- targetType MUST be "Property", updates.parentType MUST be "ValueObject",
+  updates.parentId MUST be the selected ValueObject node id (e.g. "vo-AGG-cart-0").
+- NEVER refuse: ValueObject is a valid Property parentType.
+
+For Enumeration (Enum) item actions (adding/editing/removing items of an Enum):
+- action MUST be "update", targetType MUST be "Enumeration".
+- targetId MUST be the selected Enumeration node id (e.g. "enum-AGG-order-0"); targetName = the Enum name.
+- In updates include one or more of: itemsToAdd (list), itemsToRemove (list), itemsRename (object {{old:new}}).
+- NEVER refuse: this is the supported mechanism for Enum item edits.
+
+For Policy actions (반응 정책 — Event ─TRIGGERS→ Policy ─INVOKES→ Command):
+- targetType MUST be "Policy".
+- create/update: put fields inside `updates`. Supported keys:
+  - "description": 정책 설명.
+  - "condition": 트리거 조건(자연어 문자열).
+  - "invokeCommandId": 이 정책이 실행(INVOKES)하는 Command 의 id.
+  - "triggerEventId": 이 정책을 트리거(TRIGGERS)하는 Event 의 id.
+- When the user asks to add/create a Policy ON or FOR a selected Command, set
+  updates.invokeCommandId to that Command's id, and bcId to that Command's bcId. Use the
+  Command's id from the Selected Nodes block. targetId may be a temporary id like "pol-temp-1".
+- For delete, action MUST be "delete", targetType "Policy", targetId the Policy's id.
+- NEVER refuse: Policy create / update / delete are all supported.
 """
         messages.append(HumanMessage(content=current_message))
 
@@ -776,7 +869,28 @@ For Property actions:
                     before: dict[str, Any] = {}
                     after: dict[str, Any] = {}
                     target_id = change.get("targetId")
-                    if target_id:
+                    _updates0 = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+
+                    # 043-fix: Property draft 는 `before` 를 부모 노드의 properties 컬렉션에서
+                    # (이름으로) 해소한다. LLM 이 quantity 변경을 targetId=<부모 Command id> 로
+                    # 내보내면, 아래 selected_map[target_id] 경로가 **부모 노드 자체의 필드**(type=
+                    # "Command" 등)를 before 로 잡아 "type: Command → Integer" 같은 엉뚱한 diff 가
+                    # 됐다. 부모 노드 페이로드(미리보기/제안 요소 포함)는 properties 배열을 들고
+                    # 오므로, 거기서 대상 속성을 찾아 before(type=int 등)를 정확히 만든다.
+                    if change.get("targetType") == "Property":
+                        _pid = str(_updates0.get("parentId") or change.get("parentId") or target_id or "").strip()
+                        _sel = str(change.get("targetName") or _updates0.get("name") or "").strip()
+                        _parent_src = selected_map.get(_pid) or selected_map.get(str(target_id))
+                        if _parent_src and _sel:
+                            for _p in (_parent_src.get("properties") or []):
+                                if isinstance(_p, dict) and str(_p.get("name") or "") == _sel:
+                                    for k in ("name", "type", "description", "isKey",
+                                              "isForeignKey", "isRequired"):
+                                        if k in _p:
+                                            before[k] = _p.get(k)
+                                    break
+
+                    if not before and target_id:
                         # Prefer selected-nodes context for speed/consistency
                         src = selected_map.get(str(target_id))
                         if src:
@@ -858,6 +972,10 @@ For Property actions:
                         after[k] = v
                     change["before"] = before
                     change["after"] = after
+                    # 확정 UI 가 좌우 비교에 사용할 필드 키(before/after 에 실제 존재하는 키).
+                    change["displayFields"] = compute_draft_display_fields(
+                        change.get("action"), before, after
+                    )
 
                     draft_changes.append(change)
                     yield format_sse_event("draft_change", {"draft": change})

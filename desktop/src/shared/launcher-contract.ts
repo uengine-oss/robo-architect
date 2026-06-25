@@ -129,6 +129,20 @@ export interface ConnectionsDeleteInput {
   id: string;
 }
 
+// ---------------------------------------------------------------------------
+// ActiveBackendConnection — 임베드 백엔드(analyzer/catalog)가 사용할 활성 연결의
+// 전체 자격증명(키체인 비밀번호 포함). 렌더러가 analyzer mount({neo4j}) 로 전달 →
+// X-Neo4j-* 헤더로 백엔드에 override. SavedConnection 과 달리 password 를 포함하므로
+// 영속(settings.json) 대상이 아니라 mount 직전 1회 조회용 — 비번은 키체인에서 즉시 읽어 반환.
+// ---------------------------------------------------------------------------
+
+export interface ActiveBackendConnection {
+  uri: string;
+  user: string;
+  password: string;
+  database?: string;
+}
+
 export type ProbeStatusState =
   | "connected"
   | "unreachable"
@@ -158,6 +172,9 @@ export interface ProjectRootValidateInput {
 export interface ProjectRootValidateResult {
   valid: boolean;
   reason?: "not-found" | "not-a-directory" | "unreadable";
+  // valid 일 때만 채워진다 — choose 와 동일하게 백엔드 Node path 로 계산(OS 구분자 무관).
+  basename?: string;
+  parent?: string;
 }
 
 export interface IdentityResolveInput {
@@ -198,6 +215,7 @@ export interface LauncherIpcRequestMap {
   "connections:save": [ConnectionsSaveInput, SavedConnection];
   "connections:update": [ConnectionsUpdateInput, SavedConnection];
   "connections:delete": [ConnectionsDeleteInput, { ok: true }];
+  "connections:resolveActiveForBackend": [void, ActiveBackendConnection | null];
   "connections:discoverNeo4jDesktop": [void, DiscoveredConnection[]];
   "connections:probeStatus": [ProbeStatusInput, ProbeStatusResult];
   "connections:test": [TestNeo4jConnectionParams, TestNeo4jConnectionData];
@@ -223,6 +241,7 @@ export interface LauncherDesktopBridge {
     save(input: ConnectionsSaveInput): Promise<IpcResult<SavedConnection>>;
     update(input: ConnectionsUpdateInput): Promise<IpcResult<SavedConnection>>;
     delete(input: ConnectionsDeleteInput): Promise<IpcResult<{ ok: true }>>;
+    resolveActiveForBackend(): Promise<IpcResult<ActiveBackendConnection | null>>;
     discoverNeo4jDesktop(): Promise<IpcResult<DiscoveredConnection[]>>;
     probeStatus(input: ProbeStatusInput): Promise<IpcResult<ProbeStatusResult>>;
     test(input: TestNeo4jConnectionParams): Promise<IpcResult<TestNeo4jConnectionData>>;

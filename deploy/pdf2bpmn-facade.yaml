@@ -1,0 +1,361 @@
+# pdf2bpmn-facade — thin single-entrypoint facade robo talks to.
+# Reuses the extractor image's modules (BPMNGenerator, Neo4jClient) + the same
+# dedicated Neo4j. Proxies upload/process/jobs/processes to the main API, and
+# serves /api/files/bpmn itself WITHOUT the Korean-filename Content-Disposition
+# header that makes the upstream endpoint 500 (latin-1 UnicodeEncodeError).
+#
+# Secrets (NEO4J_AUTH/NEO4J_PASSWORD/FACADE_API_KEY) are NOT in this file — they
+# live in the `pdf2bpmn-secrets` Secret, created out-of-band from
+# deploy/secrets.example.yaml (real values are gitignored, never committed).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pdf2bpmn-facade-code
+  namespace: default
+data:
+  facade.py: |
+    import os, httpx, traceback, asyncio, json
+    from fastapi import FastAPI, UploadFile, File, Response, HTTPException, Request
+    from src.pdf2bpmn.graph.neo4j_client import Neo4jClient
+    from src.pdf2bpmn.generators.bpmn_generator import BPMNGenerator
+
+    # Reuse the SAME generation path process-gpt uses in production: the agent
+    # executor's process-definition LLM (`_generate_processgpt_definition_and_bpmn`)
+    # → ProcessGPTBPMNXmlGenerator. It rebuilds CONNECTED gateways/branches from the
+    # extracted tasks + condition-labeled flows (the on-demand BPMNGenerator path
+    # leaves gateways orphaned). No Memento needed — it runs on the extracted
+    # entities. Falls back to BPMNGenerator if the proc-def path errors.
+    _executor = None
+    def _get_executor():
+        global _executor
+        if _executor is None:
+            from pdf2bpmn_agent_executor import PDF2BPMNAgentExecutor
+            _executor = PDF2BPMNAgentExecutor()
+        return _executor
+
+    UP = os.getenv("UPSTREAM_API", "http://pdf2bpmn-api:8000").rstrip("/")
+    API_KEY = os.getenv("FACADE_API_KEY", "").strip()
+    app = FastAPI(title="pdf2bpmn-facade")
+
+    @app.middleware("http")
+    async def _auth(request: Request, call_next):
+        # Shared-secret gate (X-API-Key). /healthz stays open for probes.
+        if API_KEY and request.url.path != "/healthz":
+            if request.headers.get("x-api-key") != API_KEY:
+                return Response('{"detail":"unauthorized"}', status_code=401,
+                                media_type="application/json")
+        return await call_next(request)
+
+    async def _proxy(method, path, **kw):
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.request(method, UP + path, **kw)
+            return Response(r.content, r.status_code,
+                            media_type=r.headers.get("content-type", "application/json"))
+
+    @app.get("/healthz")
+    def healthz():
+        return {"ok": True, "upstream": UP}
+
+    @app.post("/api/upload")
+    async def upload(file: UploadFile = File(...)):
+        content = await file.read()
+        return await _proxy("POST", "/api/upload",
+                            files={"file": (file.filename, content, "application/pdf")})
+
+    @app.post("/api/process/{job_id}")
+    async def process(job_id: str):
+        return await _proxy("POST", f"/api/process/{job_id}")
+
+    @app.get("/api/jobs/{job_id}")
+    async def job(job_id: str):
+        return await _proxy("GET", f"/api/jobs/{job_id}")
+
+    @app.get("/api/processes")
+    async def processes():
+        return await _proxy("GET", "/api/processes")
+
+    async def _bpmn_via_procdef(n, pid):
+        # Mirror the executor's production flow exactly: get_process_with_details
+        # (dicts) + get_sequence_flows -> extracted_payload -> proc-def LLM.
+        detail = n.get_process_with_details(pid)
+        if not detail or not (detail.get("tasks")):
+            return None
+        detail["sequence_flows"] = n.get_sequence_flows(pid)
+        pname = (detail.get("process") or {}).get("name") or "Process"
+        extracted = {
+            "process": detail.get("process") or {},
+            "tasks": detail.get("tasks") or [],
+            "roles": detail.get("roles") or [],
+            "gateways": detail.get("gateways") or [],
+            "events": detail.get("events") or [],
+            "sequence_flows": detail.get("sequence_flows") or detail.get("flows") or [],
+        }
+        ex = _get_executor()
+        gen = await ex._generate_processgpt_definition_and_bpmn(
+            tenant_id="robo", process_name=pname, extracted=extracted, user_request="",
+        )
+        model = (gen or {}).get("elements_model")
+        if not model:
+            return None
+        return ex._generate_bpmn_xml_backend(model=model)
+
+    def _bpmn_via_generator(n, pid):
+        ent = n.get_process_entities_for_bpmn(pid)
+        if not ent:
+            raise HTTPException(404, f"Process {pid} not found")
+        sf = n.get_sequence_flows(pid)
+        return BPMNGenerator().generate(
+            process=ent["process"], tasks=ent["tasks"], roles=ent["roles"],
+            gateways=ent["gateways"], events=ent["events"],
+            task_role_map=ent["task_role_map"], neo4j_sequence_flows=sf,
+        )
+
+    # Vendored from process-gpt-bpmn-extractor main (consulting_to_extracted_messages.py);
+    # the deployed image 8156f77 predates this module. Pure prompt text — no deps.
+    _CONSULTING_SYS = (
+        "### (목표) 컨설팅 내용 → 추출 구조(extracted) 변환 전용\n"
+        "- 당신의 작업은 1가지: 제공된 컨설팅 내용을 분석해 하나의 업무 프로세스 추출 구조(JSON)를 만드는 것입니다.\n"
+        "- 이 결과는 곧바로 BPMN 프로세스 정의 생성의 입력(extracted)으로 사용됩니다.\n"
+        "- 창작이 아니라, 컨설팅으로 합의된 흐름을 구조화하는 작업입니다. 컨설팅에 없는 단계/역할/분기를 임의로 추가하지 마세요.\n"
+        "- 컨설팅 초안에 단계가 번호 목록으로 정리되어 있으면 그 순서를 그대로 tasks 의 순서로 사용하세요.\n"
+        "- 사용자의 추가 답변/의견이 있으면 그 내용을 반영해 단계/역할/분기를 보정하세요.\n"
+        "\n"
+        "### (필수) 출력 스키마 — 이 형태로 100% 출력\n"
+        "{\n"
+        '  "process": {"name": "<한글 프로세스명>", "description": "<한글 한 줄 설명>"},\n'
+        '  "tasks": [{"task_id": "task_1", "name": "<한글 단계명>", "instruction": "<수행 지침(한글)>",'
+        ' "description": "<한글 보조 설명>", "role": "<수행 역할명>", "task_order": 1}],\n'
+        '  "roles": [{"role_id": "role_1", "name": "<역할명>"}],\n'
+        '  "gateways": [{"gateway_id": "gw_1", "name": "<의사결정명>", "gateway_type": "ExclusiveGateway",'
+        ' "condition": "", "description": "<무엇을 판단하는지>", "role": "<역할명>"}],\n'
+        '  "events": [{"event_id": "start_event", "event_type": "StartEvent", "name": "프로세스 시작"},'
+        ' {"event_id": "end_event", "event_type": "EndEvent", "name": "프로세스 종료"}],\n'
+        '  "sequence_flows": [{"source": "start_event", "target": "task_1", "condition": ""},'
+        ' {"source": "task_1", "target": "task_2", "condition": ""}]\n'
+        "}\n"
+        "\n"
+        "### (tasks 규칙)\n"
+        "- tasks 는 1개 이상이어야 하며, 실제 업무 흐름 순서대로 task_order 를 1,2,3,... 으로 부여하세요.\n"
+        "- task_id 는 task_1,task_2,... 처럼 순서대로. name 은 짧은 한글 동작명. instruction 은 비우지 마세요.\n"
+        "- 종결 의미가 강한 단계(통보/완료/마감/결과 발송)는 첫 task 로 두지 말고 마지막 부근에 배치하세요.\n"
+        "- (중요) 분기/의사결정 단계는 task 가 아닙니다. 문서에 '~ 결정 / ~ 판정 / ~ 경로 결정 / ~ 여부 판단 / ~별 처리' 같은\n"
+        "  의사결정 단계가 번호 단계로 적혀 있어도 그것은 tasks 에 넣지 말고 gateways 로만 만드세요. tasks 에는 실제 '작업'만.\n"
+        "- (중요) tasks 의 name 과 gateways 의 name 이 같아서는 안 됩니다(같은 의사결정을 task 와 gateway 로 중복 생성 금지).\n"
+        "\n"
+        "### (roles 규칙)\n"
+        "- 컨설팅 내용에서 드러나는 역할/담당자를 roles 로 정리(최소 1개). 모든 task/gateway 의 role 은 roles[].name 과 정확히 일치.\n"
+        "\n"
+        "### (gateways / sequence_flows 규칙) — 분기 보존 핵심\n"
+        "- 컨설팅 내용에 분기(승인/반려, 조건 분기, '~인 경우/~면제/~별' 등)가 있으면 반드시 gateways 로 만들고, 없으면 빈 배열.\n"
+        "- gateway 를 만들면 그 gateway 에서 나가는 sequence_flows 가 2개 이상이어야 하며, 각 flow 의 condition 을 한글로 채우세요.\n"
+        "- (중요) 분기 갈래를 하나도 빠뜨리지 마세요. 예: '은행/카드/간편결제' 3갈래면 sequence_flows 도 3개를 모두 만드세요(2개로 줄이지 말 것).\n"
+        "- (중요) 단순 확인/조회/검증/저장/등록/작성/적재 작업은 분기가 아니므로 task 입니다. 그 결과로 흐름이 2갈래 이상 갈라지는 '판단'만 gateway 로 만드세요. 한 갈래뿐인 gateway 는 만들지 마세요.\n"
+        "- gateway name 은 자리표시자 금지. 의사결정 의미를 담은 이름을 쓰세요.\n"
+        "- 각 분기가 다시 합쳐지면(합류) 그 지점도 gateway 로 표현할 수 있으나, 같은 의사결정을 split/join 으로 중복하지는 마세요.\n"
+        "- sequence_flows 는 start_event → 첫 task → ... → 마지막 task → end_event 로 끊김 없이 연결. 분기 없는 흐름 condition 은 \"\".\n"
+        "- source/target 에는 task_id, gateway_id, event_id 만 사용하세요.\n"
+        "\n"
+        "### (events 규칙) events 에 StartEvent(start_event)/EndEvent(end_event) 각 1개 필수.\n"
+    )
+    _CONSULTING_FMT = (
+        "### (최우선) 출력 형식 강제\n"
+        "- 출력은 반드시 단 하나의 JSON 객체. 마크다운/설명문/코드블록/주석 금지. JSON 외 문자는 실패.\n"
+        "- 입력이 일부 불완전해도 컨설팅 내용 기반으로 최선의 추출 구조 JSON 을 반드시 생성. error 형태 응답 금지.\n"
+    )
+
+    async def _bpmn_via_consulting(ex, process_name, consulting_outline):
+        # process-gpt's production-quality path, run as PURE COMPUTE (no Memento,
+        # no Supabase, no AGE writes): the consulting->extracted LLM reconstructs
+        # gateways/branches from the document text, then the proc-def LLM builds
+        # the connected-gateway BPMN. Nothing is persisted — we call the methods
+        # directly and return XML, bypassing the agent's DB-saving flow.
+        if not getattr(ex, "openai_client", None):
+            raise HTTPException(503, "executor has no openai_client (OPENAI_API_KEY?)")
+        payload = {
+            "user_request": "", "consulting_outline": (consulting_outline or "").strip(),
+            "user_answer": "", "image_analysis": "",
+        }
+        user_prompt = (
+            "아래는 사용자와의 컨설팅 결과입니다. 이 내용을 토대로 추출 구조(extracted) JSON 을 생성하세요.\n\n"
+            + json.dumps(payload, ensure_ascii=False, indent=2)
+        )
+        messages = [
+            {"role": "system", "content": _CONSULTING_SYS},
+            {"role": "system", "content": _CONSULTING_FMT},
+            {"role": "user", "content": user_prompt},
+        ]
+        model = getattr(ex, "openai_model", None) or os.getenv("OPENAI_MODEL") or "gpt-4o"
+
+        def _run():
+            try:
+                return ex.openai_client.chat.completions.create(
+                    model=model, messages=messages, temperature=0, max_tokens=8000,
+                    response_format={"type": "json_object"})
+            except TypeError:
+                return ex.openai_client.chat.completions.create(
+                    model=model, messages=messages, temperature=0, max_tokens=8000)
+
+        resp = await asyncio.to_thread(_run)
+        content = (resp.choices[0].message.content or "").strip()
+        try:
+            extracted = json.loads(content)
+        except Exception:
+            c = content.strip().strip("`")
+            if c[:4].lower() == "json":
+                c = c[4:]
+            extracted = json.loads(c)
+        if not extracted or not (extracted.get("tasks") or extracted.get("activities")):
+            return None, extracted
+        # Deterministic cleanup: a gateway with < 2 outgoing flows is not a real
+        # branch — the LLM occasionally mislabels a check/verify step as a gateway.
+        # Demote it back to a task so the step survives as a normal box instead of
+        # a dead-end diamond. Flows reference ids, so keeping the id keeps wiring.
+        _flows = extracted.get("sequence_flows") or extracted.get("flows") or []
+        _out = {}
+        for _f in _flows:
+            _out[_f.get("source")] = _out.get(_f.get("source"), 0) + 1
+        _keep, _demote = [], []
+        for _g in (extracted.get("gateways") or []):
+            if _out.get(_g.get("gateway_id"), 0) >= 2:
+                _keep.append(_g)
+            else:
+                _demote.append({
+                    "task_id": _g.get("gateway_id"), "name": _g.get("name"),
+                    "instruction": _g.get("description") or _g.get("name") or "",
+                    "description": _g.get("description") or "", "role": _g.get("role"),
+                    "task_order": 999,
+                })
+        if _demote:
+            extracted["gateways"] = _keep
+            extracted["tasks"] = (extracted.get("tasks") or []) + _demote
+        gen = await ex._generate_processgpt_definition_and_bpmn(
+            tenant_id="robo-bpm", process_name=process_name or "Process",
+            extracted=extracted, user_request="")
+        emodel = (gen or {}).get("elements_model")
+        if not emodel:
+            return None, extracted
+        return ex._generate_bpmn_xml_backend(model=emodel), extracted
+
+    @app.post("/api/consulting-bpmn")
+    async def consulting_bpmn(req: Request):
+        body = await req.json()
+        name = (body.get("process_name") or "Process").strip()
+        outline = (body.get("consulting_outline") or "").strip()
+        if not outline:
+            raise HTTPException(400, "consulting_outline required")
+        debug = str(body.get("debug") or "").strip() in ("1", "true", "yes")
+        ex = _get_executor()
+        try:
+            xml, extracted = await _bpmn_via_consulting(ex, name, outline)
+        except Exception as e:
+            traceback.print_exc()
+            raise HTTPException(502, f"consulting extraction failed: {e!r}")
+        if debug:
+            # Inspect what the consulting LLM extracted (gateways + their outgoing flows)
+            gws = (extracted or {}).get("gateways") or []
+            flows = (extracted or {}).get("sequence_flows") or (extracted or {}).get("flows") or []
+            out_by_src = {}
+            for f in flows:
+                out_by_src[f.get("source")] = out_by_src.get(f.get("source"), 0) + 1
+            task_names = [t.get("name") for t in ((extracted or {}).get("tasks") or [])]
+            gw_names = [g.get("name") for g in gws]
+            dbg = {
+                "task_names": task_names,
+                "gateways": [{"id": g.get("gateway_id"), "name": g.get("name"),
+                              "outgoing": out_by_src.get(g.get("gateway_id"), 0)} for g in gws],
+                "task_gateway_name_collisions": sorted(set(task_names) & set(gw_names)),
+                "flow_count": len(flows),
+                "bpmn_produced": bool(xml and xml.strip().startswith("<")),
+            }
+            return Response(content=json.dumps(dbg, ensure_ascii=False),
+                            media_type="application/json")
+        if xml and xml.strip().startswith("<"):
+            gw = len((extracted or {}).get("gateways") or [])
+            return Response(content=xml, media_type="application/xml",
+                            headers={"X-Bpmn-Source": "consulting-llm",
+                                     "X-Gateway-Count": str(gw)})
+        raise HTTPException(502, "consulting extraction produced no BPMN")
+
+    @app.get("/api/files/bpmn")
+    async def bpmn(process_id: str):
+        n = Neo4jClient()
+        try:
+            try:
+                xml = await _bpmn_via_procdef(n, process_id)
+                if xml and xml.strip().startswith("<"):
+                    return Response(content=xml, media_type="application/xml",
+                                    headers={"X-Bpmn-Source": "procdef-llm"})
+                print("[BPMN] procdef returned empty — falling back to generator", flush=True)
+            except Exception as e:
+                print("[BPMN] procdef path failed, falling back:", repr(e), flush=True)
+                traceback.print_exc()
+            # Fallback: on-demand BPMNGenerator (valid but gateways may be orphaned).
+            xml = _bpmn_via_generator(n, process_id)
+            return Response(content=xml, media_type="application/xml",
+                            headers={"X-Bpmn-Source": "generator-fallback"})
+        finally:
+            n.close()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdf2bpmn-facade
+  namespace: default
+  labels: { app: pdf2bpmn-facade }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: pdf2bpmn-facade }
+  template:
+    metadata:
+      labels: { app: pdf2bpmn-facade }
+    spec:
+      containers:
+        - name: facade
+          image: ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "cd /app && PYTHONPATH=/app:/facade uvicorn facade:app --host 0.0.0.0 --port 8080"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: UPSTREAM_API
+              value: "http://pdf2bpmn-api.default.svc.cluster.local:8000"
+            - name: NEO4J_URI
+              value: "bolt://pdf2bpmn-neo4j.default.svc.cluster.local:7687"
+            - name: NEO4J_USER
+              value: "neo4j"
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: pdf2bpmn-secrets, key: NEO4J_PASSWORD }
+            - name: FACADE_API_KEY
+              valueFrom:
+                secretKeyRef: { name: pdf2bpmn-secrets, key: FACADE_API_KEY }
+            # Needed by the proc-def LLM path (executor.openai_client).
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef: { name: openai-secret, key: OPENAI_API_KEY }
+            - name: OPENAI_MODEL
+              value: "gpt-4o"
+            - name: LLM_MODEL
+              value: "gpt-4o"
+          volumeMounts:
+            - { name: code, mountPath: /facade }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12
+      volumes:
+        - name: code
+          configMap: { name: pdf2bpmn-facade-code }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pdf2bpmn-facade
+  namespace: default
+  labels: { app: pdf2bpmn-facade }
+spec:
+  selector: { app: pdf2bpmn-facade }
+  ports:
+    - { name: http, port: 8080, targetPort: 8080 }

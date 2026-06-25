@@ -136,7 +136,9 @@ class SandboxManager:
         try:
             exclude_file.parent.mkdir(parents=True, exist_ok=True)
             existing = exclude_file.read_text(encoding="utf-8") if exclude_file.exists() else ""
-            additions = [p for p in (".sandbox/", "PROPOSAL_*.md") if p not in existing]
+            # `.claude/settings.local.json`(I9 MCP 사전신뢰)은 머신 로컬 신뢰 설정이라
+            # 커밋/머지 대상에서 제외한다.
+            additions = [p for p in (".sandbox/", "PROPOSAL_*.md", ".claude/settings.local.json") if p not in existing]
             if additions:
                 with exclude_file.open("a", encoding="utf-8") as f:
                     if existing and not existing.endswith("\n"):

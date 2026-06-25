@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json as _json
 import os
+import re
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -31,6 +32,8 @@ from typing import Any, Optional
 
 from api.features.ingestion.hybrid.contracts import (
     BpmActor,
+    BpmFlowDTO,
+    BpmGatewayDTO,
     BpmProcess,
     BpmSequenceDTO,
     BpmSkeleton,
@@ -175,6 +178,10 @@ def adapt_a2a_result_to_skeleton(
                 t.process_id = pid
             for s in process_skel.sequences:
                 s.process_id = pid
+            for g in process_skel.gateways:
+                g.process_id = pid
+            for fl in process_skel.flows:
+                fl.process_id = pid
             skeletons.append(process_skel)
 
     # Produce a merged combined XML for single-canvas rendering backward compat.
@@ -274,14 +281,54 @@ def merge_process_bundles(bundles: list[ProcessBundle]) -> ProcessBundle:
     return ProcessBundle(processes=processes, bpmn_xml=combined)
 
 
+_TASK_TAGS = {
+    "task", "userTask", "serviceTask", "manualTask", "scriptTask",
+    "businessRuleTask", "sendTask", "receiveTask", "callActivity", "subProcess",
+}
+
+
+def _is_task_tag(tag: str) -> bool:
+    return tag.endswith("Task") or tag in _TASK_TAGS
+
+
+def _gateway_type_from_tag(tag: str) -> str:
+    """`exclusiveGateway` → `exclusive`, `parallelGateway` → `parallel`, …"""
+    if tag.endswith("Gateway"):
+        base = tag[: -len("Gateway")].strip()
+        return base.lower() or "exclusive"
+    return "exclusive"
+
+
+def _rewrite_ids_in_xml(xml_str: str, id_remap: dict[str, str]) -> str:
+    """Rewrite flow-node ids in a BPMN XML string to robo ids, preserving the
+    original formatting/namespaces/DI verbatim (string-level, no ET round-trip).
+
+    Ids appear (a) quoted in attributes (`id="…"`, `sourceRef="…"`,
+    `targetRef="…"`, `bpmnElement="…"`) and (b) as element text
+    (`<incoming>…</incoming>`, `<flowNodeRef>…</flowNodeRef>`). Both forms are
+    full-token, so quoted/boundary replacement is collision-safe. Longest ids
+    first so a shorter id can't clobber a longer one it's a prefix of.
+    """
+    for old, new in sorted(id_remap.items(), key=lambda kv: -len(kv[0])):
+        xml_str = xml_str.replace(f'"{old}"', f'"{new}"')
+        xml_str = re.sub(rf">\s*{re.escape(old)}\s*<", f">{new}<", xml_str)
+    return xml_str
+
+
 def parse_bpmn_xml_per_process(bpmn_xml: str) -> list[BpmSkeleton]:
     """Split a BPMN XML doc with N `<bpmn:process>` elements into N skeletons.
 
-    Each returned skeleton has its own Actor/Task/Sequence scoped to ONE
-    process. `.process` is set to a *preliminary* BpmProcess (id=empty,
-    name = the XML-level process name or id) — the caller stamps final ids
-    with session/pdf context. `.bpmn_xml` is set to a minimal per-process
-    wrapper so that canvas overlays can target one process independently.
+    Each returned skeleton carries this process's Actor/Task/**Gateway** graph
+    plus the full sequenceFlow topology (`flows`), so the extractor's branch
+    structure survives intact instead of being flattened to a linear chain.
+    `.process` is a *preliminary* BpmProcess (id="") that the caller stamps with
+    session/pdf context.
+
+    `.bpmn_xml` preserves the extractor's ORIGINAL per-process XML verbatim (its
+    own diagram/DI + gateways) for faithful canvas rendering. Flow-node ids are
+    rewritten to robo ids (`Task_<taskId>` / `Gateway_<gwId>`) so the canvas
+    element id resolves back to the persisted node (dblclick → inspector), and
+    so `flows`/nodes share one id space.
     """
     root = ET.fromstring(bpmn_xml)
     process_els: list[ET.Element] = list(root.findall("bpmn:process", _NS))
@@ -292,6 +339,8 @@ def parse_bpmn_xml_per_process(bpmn_xml: str) -> list[BpmSkeleton]:
     if not process_els:
         return []
 
+    single_process_doc = len(process_els) == 1
+
     # Collect all lanes once so cross-process actor names can dedupe (two
     # processes both referring to "담당자" should share one BpmActor).
     actor_by_name: dict[str, BpmActor] = {}
@@ -301,30 +350,43 @@ def parse_bpmn_xml_per_process(bpmn_xml: str) -> list[BpmSkeleton]:
         proc_name = (process_el.get("name") or process_el.get("id") or "").strip()
         task_el_by_id: dict[str, ET.Element] = {}
         task_order: list[str] = []
+        gw_el_by_id: dict[str, ET.Element] = {}
+        seq_flows: list[dict] = []  # {id, src, tgt, name, condition}
         next_map: dict[str, list[str]] = {}
         has_incoming: set[str] = set()
         for child in process_el.iter():
             tag = _strip_ns(child.tag)
-            if tag.endswith("Task") or tag in {
-                "task", "userTask", "serviceTask", "manualTask", "scriptTask",
-                "businessRuleTask", "sendTask", "receiveTask", "callActivity", "subProcess",
-            }:
+            if _is_task_tag(tag):
                 tid = child.get("id")
                 if not tid or tid in task_el_by_id:
                     continue
                 task_el_by_id[tid] = child
                 task_order.append(tid)
+            elif tag.endswith("Gateway"):
+                gid = child.get("id")
+                if gid and gid not in gw_el_by_id:
+                    gw_el_by_id[gid] = child
             elif tag == "sequenceFlow":
                 src = child.get("sourceRef")
                 tgt = child.get("targetRef")
                 if src and tgt:
                     next_map.setdefault(src, []).append(tgt)
                     has_incoming.add(tgt)
+                    cond = None
+                    for sub in child:
+                        if _strip_ns(sub.tag) == "conditionExpression":
+                            cond = (sub.text or "").strip() or None
+                    seq_flows.append({
+                        "id": child.get("id") or _new_id("flow"),
+                        "src": src, "tgt": tgt,
+                        "name": (child.get("name") or "").strip(),
+                        "condition": cond,
+                    })
 
         ordered_task_ids = _topological_task_order(task_order, next_map, has_incoming)
 
-        # Lanes for THIS process only
-        task_to_actor: dict[str, str] = {}
+        # Lanes for THIS process only — a flowNodeRef may point at a task OR a gateway.
+        node_to_actor: dict[str, str] = {}
         local_actors: list[BpmActor] = []
         for lane in process_el.iter():
             if _strip_ns(lane.tag) != "lane":
@@ -341,7 +403,7 @@ def parse_bpmn_xml_per_process(bpmn_xml: str) -> list[BpmSkeleton]:
                     continue
                 ref = (fr.text or "").strip()
                 if ref:
-                    task_to_actor[ref] = actor.id
+                    node_to_actor[ref] = actor.id
 
         if not local_actors:
             default_actor = actor_by_name.get("System") or BpmActor(id=_new_id("actor"), name="System")
@@ -351,17 +413,58 @@ def parse_bpmn_xml_per_process(bpmn_xml: str) -> list[BpmSkeleton]:
         else:
             default_actor_id = local_actors[0].id
 
+        # robo ids per flow node + XML-id rewrite map (Task_/Gateway_ prefixed so
+        # the canvas element id still resolves to the persisted node).
+        xmlid_to_roboid: dict[str, str] = {}
+        xml_rewrite: dict[str, str] = {}
+
         tasks: list[BpmTaskDTO] = []
         for idx, tid in enumerate(ordered_task_ids):
             el = task_el_by_id[tid]
             name = (el.get("name") or tid).strip()
-            actor_id = task_to_actor.get(tid, default_actor_id)
+            actor_id = node_to_actor.get(tid, default_actor_id)
+            robo_id = _new_id("task")
+            xmlid_to_roboid[tid] = robo_id
+            xml_rewrite[tid] = f"Task_{robo_id}"
             tasks.append(BpmTaskDTO(
-                id=_new_id("task"),
+                id=robo_id,
                 name=name,
                 sequence_index=idx,
                 actor_ids=[actor_id] if actor_id else [],
             ))
+
+        gateways: list[BpmGatewayDTO] = []
+        for gid, el in gw_el_by_id.items():
+            robo_id = _new_id("gw")
+            xmlid_to_roboid[gid] = robo_id
+            xml_rewrite[gid] = f"Gateway_{robo_id}"
+            actor_id = node_to_actor.get(gid)
+            gateways.append(BpmGatewayDTO(
+                id=robo_id,
+                name=(el.get("name") or "").strip(),
+                gateway_type=_gateway_type_from_tag(_strip_ns(el.tag)),
+                actor_ids=[actor_id] if actor_id else [],
+            ))
+
+        # Flows over the full topology. Endpoints that aren't persisted flow
+        # nodes (start/end/intermediate events) become `__boundary__*` so the
+        # persistence MATCH skips them rather than dangling.
+        flows: list[BpmFlowDTO] = []
+        for f in seq_flows:
+            src = xmlid_to_roboid.get(f["src"], f"__boundary__{f['src']}")
+            tgt = xmlid_to_roboid.get(f["tgt"], f"__boundary__{f['tgt']}")
+            flows.append(BpmFlowDTO(
+                id=f["id"], source_id=src, target_id=tgt,
+                name=f["name"], condition=f["condition"],
+            ))
+
+        # Preserve the extractor's faithful XML (diagram + gateways), with
+        # flow-node ids rewritten to robo ids.
+        if single_process_doc:
+            per_xml = _rewrite_ids_in_xml(bpmn_xml, xml_rewrite)
+        else:
+            per_xml = _rewrite_ids_in_xml(ET.tostring(process_el, encoding="unicode"), xml_rewrite)
+
         sequence = BpmSequenceDTO(
             id=_new_id("seq"),
             name=proc_name or "Main",
@@ -378,7 +481,9 @@ def parse_bpmn_xml_per_process(bpmn_xml: str) -> list[BpmSkeleton]:
             actors=list(local_actors),
             tasks=tasks,
             sequences=[sequence],
-            bpmn_xml=None,
+            gateways=gateways,
+            flows=flows,
+            bpmn_xml=per_xml,
             process=preliminary,
         )
         out.append(skeleton)
@@ -432,6 +537,7 @@ def _harvest_bundle_from_pdf2bpmn_neo4j(
     labels stay free for the next A2A call.
     """
     from api.platform.neo4j import get_session
+    from api.features.ingestion.hybrid.ontology.schema import L_BPMN_PROCESS
 
     try:
         with get_session() as s:
@@ -448,6 +554,14 @@ def _harvest_bundle_from_pdf2bpmn_neo4j(
 
             skeletons: list[BpmSkeleton] = []
             actor_by_name: dict[str, BpmActor] = {}
+            # proc_ids actually harvested into this bundle. We relabel them to
+            # :BpmnProcess + stamp session_id below so a *subsequent* per-PDF
+            # harvest (this fn runs once per uploaded PDF, all sharing one
+            # default DB) does not re-match these still-`:Process` nodes via
+            # `session_id IS NULL` and re-stamp them with the wrong PDF's
+            # source_pdf_name. Without this, every process collapses to the
+            # last PDF's source_pdf_name.
+            harvested_proc_ids: list[str] = []
 
             for prow in proc_rows:
                 proc_id = prow["proc_id"]
@@ -523,6 +637,20 @@ def _harvest_bundle_from_pdf2bpmn_neo4j(
                     bpmn_xml=None,  # runner will generate via build_bpmn_xml
                     process=process_dto,
                 ))
+                harvested_proc_ids.append(proc_id)
+
+            # Isolate this PDF's harvest: relabel the consumed :Process nodes so
+            # the next PDF's harvest cannot re-pick them (see note above). Same
+            # operation the end-of-phase relabel_pdf2bpmn_nodes performs, scoped
+            # to exactly the proc_ids we just consumed.
+            if harvested_proc_ids:
+                s.run(
+                    f"MATCH (p:Process) "
+                    f"WHERE p.proc_id IN $pids AND p.session_id IS NULL "
+                    f"SET p:{L_BPMN_PROCESS}, p.session_id = $sid "
+                    f"REMOVE p:Process",
+                    pids=harvested_proc_ids, sid=session_id,
+                )
         return ProcessBundle(processes=skeletons)
     except Exception as e:
         SmartLogger.log(

@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import Icons from 'unplugin-icons/vite'
 import IconsResolver from 'unplugin-icons/resolver'
 import Components from 'unplugin-vue-components/vite'
+import federation from '@originjs/vite-plugin-federation'
 import { fileURLToPath, URL } from 'node:url'
 import { resolve } from 'path'
 import { copyFileSync, existsSync } from 'fs'
@@ -14,6 +15,12 @@ const OP_REAL = resolve(__dirname, '../../../open-pencil')
 const OP_STUB = resolve(__dirname, '../open-pencil')
 const OP = existsSync(resolve(OP_REAL, 'src')) ? OP_REAL : OP_STUB
 const FRONTEND_SRC = fileURLToPath(new URL('./src', import.meta.url))
+
+// Analysis 탭 remote(robo-analyzer-frontend) URL — 환경분기(모범사례: 하드코딩 금지).
+//   개발 : http://localhost:5001 (analyzer 를 build 후 preview 로 서빙)
+//   배포 : 빌드 스크립트가 ANALYZER_REMOTE_URL='analyzer/assets/remoteEntry.js' 주입
+//          → Electron 이 app://app/analyzer/ 로 co-locate 서빙(별도 5001 서버 불필요)
+const ANALYZER_REMOTE = process.env.ANALYZER_REMOTE_URL || 'http://localhost:5001/assets/remoteEntry.js'
 
 export default defineConfig({
   plugins: [
@@ -28,19 +35,24 @@ export default defineConfig({
         }
       }
     },
-    // Copy open-pencil bundled fonts to public/ so /Inter-Regular.ttf and
-    // /NotoNaskhArabic-Regular.ttf resolve. open-pencil's loadFont() falls back
-    // to these root-relative URLs when local-font access is denied and the
-    // Google Fonts API key is rate-limited; without them, CanvasKit gets the
-    // SPA index.html as the font payload and renders blank text.
+    // Copy open-pencil bundled public assets to public/ so the root-relative
+    // URLs they reference resolve at build time.
+    //  - Inter-Regular.ttf / NotoNaskhArabic-Regular.ttf: open-pencil's
+    //    loadFont() falls back to these root-relative URLs when local-font
+    //    access is denied and the Google Fonts API key is rate-limited;
+    //    without them, CanvasKit gets the SPA index.html as the font payload
+    //    and renders blank text.
+    //  - favicon-32.png: referenced as <img src="/favicon-32.png"> by
+    //    open-pencil's AppMenu.vue; without it Rollup fails to resolve the
+    //    asset and the production build aborts.
     // Pretendard-Regular.otf is committed under public/ directly (it lives in
     // robo-architect, not open-pencil) and is preloaded as the CJK fallback
     // by features/aiDesign/fonts.js.
     {
-      name: 'copy-open-pencil-fonts',
+      name: 'copy-open-pencil-assets',
       buildStart() {
-        const fonts = ['Inter-Regular.ttf', 'NotoNaskhArabic-Regular.ttf']
-        for (const f of fonts) {
+        const assets = ['Inter-Regular.ttf', 'NotoNaskhArabic-Regular.ttf', 'favicon-32.png']
+        for (const f of assets) {
           const src = resolve(OP, 'public', f)
           const dest = resolve(__dirname, 'public', f)
           if (existsSync(src) && !existsSync(dest)) {
@@ -66,10 +78,36 @@ export default defineConfig({
     tailwindcss(),
     Icons({ compiler: 'vue3' }),
     Components({ resolvers: [IconsResolver({ prefix: 'icon' })], dirs: [] }),
-    vue()
+    vue(),
+    // Module Federation host — "Analysis" 탭에서 robo-analyzer-frontend 를 끼운다.
+    // remote 는 build 후 5001 포트로 serve 되어야 한다(robo-data-frontend/vite.config.ts).
+    federation({
+      name: 'roboArchitectHost',
+      remotes: {
+        'robo-analyzer-frontend': ANALYZER_REMOTE,
+      },
+      // 싱글톤: host·remote 가 같은 Vue/Pinia 인스턴스를 공유해야 반응성·provide/inject 안 깨짐.
+      shared: {
+        vue: { singleton: true },
+        pinia: { singleton: true },
+      },
+    })
   ],
   build: {
-    target: 'esnext'
+    target: 'esnext',
+    rollupOptions: {
+      output: {
+        // vue-stream-markdown 은 rolldown 으로 빌드돼 공통 런타임 헬퍼를 여러 조각이
+        // 공유한다. @originjs/vite-plugin-federation 이 onlyExplicitManualChunks 를
+        // 켜면서 그 헬퍼가 index 본체로 끌려가 `index → node-list → index` 순환 청크가
+        // 생기고, node-list 실행 시 헬퍼(j)가 아직 undefined → "j is not a function" 으로
+        // 앱 전체가 검은 화면이 된다(Electron/build 한정, dev 는 pre-bundle 로 무사).
+        // → 이 패키지 전체를 한 청크로 묶어 헬퍼를 동거시켜 순환을 끊는다.
+        manualChunks(id) {
+          if (id.includes('vue-stream-markdown')) return 'vue-stream-markdown'
+        }
+      }
+    }
   },
   resolve: {
     alias: {
@@ -118,6 +156,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Analysis 탭(robo-analyzer-frontend remote)의 백엔드 호출을 API Gateway(9000)로 라우팅.
+      // '/api' 의 더 구체적인 접두사이므로 먼저 매칭되도록 위에 둔다.
+      '/api/gateway': {
+        target: 'http://127.0.0.1:9000',
+        changeOrigin: true
+      },
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true

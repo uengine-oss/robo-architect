@@ -54,7 +54,16 @@ function getTypeColor(type) {
     ui: 'var(--color-ui)',
     UI: 'var(--color-ui)',
     readmodel: 'var(--color-readmodel)',
-    ReadModel: 'var(--color-readmodel)'
+    ReadModel: 'var(--color-readmodel)',
+    // ValueObject·Enum 은 Data(Aggregate) 캔버스에서 동일한 앰버(#fcc419)로 그려진다
+    // (ValueObjectViewerNode/EnumViewerNode). 칩도 캔버스와 같은 색을 쓰도록 명시 매핑한다.
+    valueobject: '#fcc419',
+    valueObject: '#fcc419',
+    ValueObject: '#fcc419',
+    enum: '#fcc419',
+    Enum: '#fcc419',
+    enumeration: '#fcc419',
+    Enumeration: '#fcc419'
   }
   return colors[type] || 'var(--color-text-light)'
 }
@@ -74,7 +83,14 @@ function getTypeIcon(type) {
     ui: 'UI',
     UI: 'UI',
     readmodel: 'RM',
-    ReadModel: 'RM'
+    ReadModel: 'RM',
+    valueobject: 'V',
+    valueObject: 'V',
+    ValueObject: 'V',
+    enum: 'E',
+    Enum: 'E',
+    enumeration: 'E',
+    Enumeration: 'E'
   }
   return icons[type] || '?'
 }
@@ -204,10 +220,19 @@ function formatTime(timestamp) {
 
 function getDraftFields(draft) {
   if (!draft) return []
+  // 백엔드가 before/after 에 실제 존재하는 키로 계산해 동봉(compute_draft_display_fields).
+  if (Array.isArray(draft.displayFields) && draft.displayFields.length) return draft.displayFields
+  // 폴백(displayFields 가 없는 구버전 draft): before/after 에 존재하는 키로 직접 계산.
+  // create→['create'], delete→['delete'] 같은 존재하지 않는 리터럴 키를 쓰면
+  // before/after 가 모두 '(empty)' 로 표시되므로 절대 사용하지 않는다.
   if (draft.action === 'rename') return ['name']
   if (draft.action === 'connect') return ['relationship']
-  if (draft.action === 'delete') return ['delete']
-  if (draft.action === 'create') return ['create']
+  // '변경되는 쪽'(after; 비면 before=delete)의 키만 — 합집합을 쓰면 update 에서
+  // 안 바뀐 스냅샷 필드가 after='(empty)' 로 줄줄이 떠 오해를 준다.
+  const before = draft.before && typeof draft.before === 'object' ? draft.before : {}
+  const after = draft.after && typeof draft.after === 'object' ? draft.after : {}
+  const keys = Object.keys(after).length ? Object.keys(after) : Object.keys(before)
+  if (keys.length) return keys
   const updates = draft.updates && typeof draft.updates === 'object' ? draft.updates : {}
   return Object.keys(updates)
 }

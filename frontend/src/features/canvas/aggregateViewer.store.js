@@ -3,6 +3,22 @@ import { ref, computed } from 'vue'
 // 040 — 도메인 중립 미리보기 세션(앱 셸). 라이브↔미리보기 fetch 분기 + 편집 → 제안 diff 반영.
 import { previewUrl, isPreviewFor, usePreviewSession } from '@/app/previewSession'
 
+// 040/043-fix — Aggregate 매핑(라이브·미리보기 공통)을 단일 소스로 통일한다.
+// 과거 loadBcTree·applyPreviewTree 가 각자 들고 있던 화이트리스트가 서로 어긋나며 백엔드가
+// 내려준 `description` 등 일부 필드를 누락했다(미리보기 Inspector 설명 칸 빈칸 버그). 백엔드
+// 노드 키를 패스-스루(`...agg`)로 보존하고 배열/표시이름 기본값만 덮어, 같은 부류의 필드
+// 누락을 구조적으로 차단한다(향후 새 필드도 자동 보존).
+function mapPreviewAggregate(agg) {
+  return {
+    ...agg,
+    displayName: agg.displayName || agg.name,
+    invariants: agg.invariants || [],
+    enumerations: agg.enumerations || [],
+    valueObjects: agg.valueObjects || [],
+    properties: agg.properties || [],
+  }
+}
+
 export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   // Data from API
   const boundedContexts = ref([])
@@ -40,19 +56,8 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
       name: data.name,
       displayName: data.displayName || data.name,
       description: data.description,
-      aggregates: (data.aggregates || []).map(agg => ({
-        id: agg.id,
-        name: agg.name,
-        displayName: agg.displayName || agg.name,
-        rootEntity: agg.rootEntity,
-        invariants: agg.invariants || [],
-        enumerations: agg.enumerations || [],
-        valueObjects: agg.valueObjects || [],
-        properties: agg.properties || [],
-        // 040 — Proposal 미리보기 오버레이 출처/배지(신규/수정/충돌)를 노드까지 전달.
-        source: agg.source,
-        badge: agg.badge,
-      }))
+      // 040/043-fix — 공유 매퍼로 백엔드 노드 키(description·source·badge 등)를 누락 없이 보존.
+      aggregates: (data.aggregates || []).map(mapPreviewAggregate)
     }
 
     const existingIndex = boundedContexts.value.findIndex(b => b.id === bcId)
@@ -129,9 +134,11 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   }
 
   // Set / consume a one-shot cross-tab focus target.
-  function focusAggregate(aggregateId, bcId = null) {
+  // 043-fix — opts.openInspector: 포커스 후 해당 Aggregate 의 Inspector 를 자동으로 연다
+  // (Design 캔버스 인스펙터의 '어그리거트 디테일 보기' 진입 경로). 기본 false(기존 '열기' 무영향).
+  function focusAggregate(aggregateId, bcId = null, opts = {}) {
     if (!aggregateId) return
-    pendingFocus.value = { aggregateId, bcId: bcId || null }
+    pendingFocus.value = { aggregateId, bcId: bcId || null, openInspector: !!opts.openInspector }
   }
 
   function consumeFocus() {
@@ -240,18 +247,37 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     if (!tree || !tree.id) return
     const mapped = {
       id: tree.id, name: tree.name, displayName: tree.displayName || tree.name, description: tree.description,
-      aggregates: (tree.aggregates || []).map(agg => ({
-        id: agg.id, name: agg.name, displayName: agg.displayName || agg.name, rootEntity: agg.rootEntity,
-        invariants: agg.invariants || [], enumerations: agg.enumerations || [],
-        valueObjects: agg.valueObjects || [], properties: agg.properties || [],
-        source: agg.source, badge: agg.badge,
-      })),
+      // 040/043-fix — 공유 매퍼로 백엔드 노드 키(description·source·badge 등)를 누락 없이 보존.
+      aggregates: (tree.aggregates || []).map(mapPreviewAggregate),
     }
     const i = boundedContexts.value.findIndex(b => b.id === tree.id)
-    if (i >= 0) boundedContexts.value[i] = mapped
-    else { boundedContexts.value.push(mapped); selectedBcIds.value.add(tree.id) }
-    mapped.aggregates.forEach(a => a.id && visibleAggregateIds.value.add(a.id))
-    visibleAggregateIds.value = new Set(visibleAggregateIds.value)
+    if (i >= 0) {
+      // BC 가 이미 로드된 상태에서의 미리보기 편집 갱신(단일 Aggregate 편집 후).
+      // 트리는 BC 전체를 담고 있으므로 전부 visible 로 만들면 편집하지 않은 형제
+      // Aggregate 까지 갑자기 로드된다. 기존에 보이던 집합을 그대로 유지하고,
+      // 트리에서 사라진 id 만 정리한다.
+      boundedContexts.value[i] = mapped
+      const present = new Set(mapped.aggregates.map(a => a.id).filter(Boolean))
+      visibleAggregateIds.value = new Set(
+        [...visibleAggregateIds.value].filter(id => present.has(id)),
+      )
+    } else {
+      // BC 최초 적재(편집 외 경로): 해당 BC 의 Aggregate 를 노출.
+      boundedContexts.value.push(mapped)
+      selectedBcIds.value.add(tree.id)
+      mapped.aggregates.forEach(a => a.id && visibleAggregateIds.value.add(a.id))
+      visibleAggregateIds.value = new Set(visibleAggregateIds.value)
+    }
+
+    // 040 — 모든 미리보기 편집(Inspector 직접·Chat)은 이 메서드를 거치며, 그 시점에
+    // Proposal.tacticalDiff 가 이미 갱신돼 있다. Proposals 탭(Impact Map·Diff)이 항목을
+    // 다시 클릭하지 않아도 최신 상태를 보이도록 앱 레벨로 알린다(App.vue 가 currentProposal 재적재).
+    const ps = usePreviewSession()
+    if (ps.proposalId) {
+      window.dispatchEvent(new CustomEvent('robo:proposal-diff-changed', {
+        detail: { proposalId: ps.proposalId },
+      }))
+    }
   }
 
   // Update aggregate enumerations and value objects
@@ -330,6 +356,47 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     }
   }
 
+  // 043-fix — Aggregate 기본 속성(이름/표시이름/설명/Root Entity) 수정.
+  // 미리보기 중에는 제안 diff(reconcile_aggregate_edit)로, 아니면 라이브 그래프(chat/confirm)로.
+  async function updateAggregateBasic(aggregateId, basic) {
+    // 변경된 필드만 전송한다(불변 필드를 다시 보내면 불필요한 nodeTitle 재기록이 일어난다).
+    const cur = getAggregateById(aggregateId)?.aggregate || {}
+    const patch = {}
+    for (const k of ['name', 'displayName', 'description', 'rootEntity']) {
+      if (basic[k] !== undefined && basic[k] !== null && String(basic[k]) !== String(cur[k] ?? '')) {
+        patch[k] = basic[k]
+      }
+    }
+    if (!Object.keys(patch).length) return
+    if (isPreviewFor('data')) {
+      return _savePreviewAggregateEdit(aggregateId, patch)
+    }
+    // 라이브: 이름은 rename, 나머지는 update draft 로 model_modifier 에 반영.
+    const drafts = []
+    if (patch.name && patch.name !== cur.name) {
+      drafts.push({ changeId: `rename-${aggregateId}-${Date.now()}`, action: 'rename',
+        targetId: aggregateId, targetName: patch.name, targetType: 'Aggregate', updates: {} })
+    }
+    const updates = {}
+    for (const k of ['displayName', 'description', 'rootEntity']) {
+      if (patch[k] !== undefined && String(patch[k] ?? '') !== String(cur[k] ?? '')) updates[k] = patch[k]
+    }
+    if (Object.keys(updates).length) {
+      drafts.push({ changeId: `update-${aggregateId}-${Date.now()}`, action: 'update',
+        targetId: aggregateId, targetName: patch.name || cur.name || '', targetType: 'Aggregate', updates })
+    }
+    if (!drafts.length) return
+    const response = await fetch('/api/chat/confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ drafts, approvedChangeIds: drafts.map(d => d.changeId) }),
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data?.detail || `Failed to update aggregate: ${response.status}`)
+    }
+    await fetchAllAggregates()
+  }
+
   // Get aggregate by ID
   function getAggregateById(aggregateId) {
     for (const bc of boundedContexts.value) {
@@ -402,6 +469,7 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
     applyPreviewTree,
     updateAggregateEnumVo,
     updateAggregateProperties,
+    updateAggregateBasic,
     getAggregateById,
     selectNode,
     clearSelection,

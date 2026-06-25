@@ -13,14 +13,15 @@ const props = defineProps({
 const emit = defineEmits(['close', 'saved'])
 
 const store = useRequirementsStore()
-const name = ref(props.epic.displayName || props.epic.name || '')
+const name = ref(props.epic.name || '')
+const displayName = ref(props.epic.displayName || '')
 const description = ref(props.epic.description || '')
 const busy = ref(false)
 const errorMsg = ref('')
 
 async function save() {
   if (!name.value.trim()) {
-    errorMsg.value = 'Epic 이름은 비울 수 없습니다.'
+    errorMsg.value = '기술명은 비울 수 없습니다.'
     return
   }
   busy.value = true
@@ -28,11 +29,12 @@ async function save() {
   try {
     await store.updateEpic(props.epic.id, {
       name: name.value.trim(),
+      displayName: displayName.value.trim() || name.value.trim(),
       description: description.value,
     })
     // 038: 직접 수정 Change 자동 생성 (fire-and-forget)
     store.createChange({
-      title: `${name.value.trim()} Epic 직접 수정`,
+      title: `${(displayName.value.trim() || name.value.trim())} Epic 직접 수정`,
       originalPrompt: `사용자가 Epic(${props.epic.id})을 직접 수정함`,
       sourceType: 'DIRECT_EDIT',
       directAffectedNodeIds: [props.epic.id],
@@ -56,7 +58,8 @@ async function save() {
       </div>
       <div class="dialog__body">
         <p v-if="errorMsg" class="dialog__error">{{ errorMsg }}</p>
-        <label>이름 <input v-model="name" /></label>
+        <label>기술명 (영문 권장) <input v-model="name" placeholder="예: OrderManagement" /></label>
+        <label>표시명 <input v-model="displayName" placeholder="예: 주문 관리 — 비우면 기술명 사용" /></label>
         <label>설명 <textarea v-model="description" rows="3" /></label>
         <div class="dialog__actions">
           <button class="btn" @click="emit('close')">취소</button>

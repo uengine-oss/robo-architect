@@ -197,6 +197,12 @@ async def start_clarification_session(
             scope, {sid: UserStorySnapshot(**s) for sid, s in snapshots.items()}
         )
     except ScopeSessionExistsError as exc:
+        # 스코프당 1세션 — 이미 존재하면 409 대신 기존 세션을 그대로 반환(resume).
+        # 콘솔 409 노이즈 제거 + start를 멱등하게. 스캔은 재실행하지 않는다.
+        existing = get_session(exc.existing_session_id)
+        if existing is not None:
+            return existing.to_dto()
+        # 희귀: id만 남고 세션 객체가 사라진 경우에만 409 폴백.
         raise HTTPException(
             status_code=409,
             detail={"code": "scope_session_exists", "sessionId": exc.existing_session_id},
@@ -546,13 +552,19 @@ async def apply_clarification(
                 )
             )
         except EditConflictError as exc:
+            # 충돌 = baseUpdatedAt 드리프트(보통 같은 세션의 선행 편집이 공유 US를
+            # 변경). 질문을 pending으로 되돌리고 stale proposal을 제거해 사용자가
+            # 현재 상태 기준으로 **재답변=재인코딩** 할 수 있게 한다(루프 방지).
+            question.status = QuestionStatus.pending
+            sess.proposals.pop(req.questionId, None)
+            sess.final_answers.pop(req.questionId, None)
             return ApplyResponse(
                 appliedRequirementIds=applied_ids,
                 impactReportIds=impact_ids,
                 conflict=EditConflict(
                     requirementId=exc.requirement_id,
                     latestUpdatedAt=exc.latest_updated_at,
-                    message="요구사항이 세션 중에 외부에서 변경되었습니다. 재인코딩이 필요합니다.",
+                    message="요구사항이 세션 중에 외부에서 변경되었습니다. 같은 질문에 다시 답변하면 최신 내용으로 재인코딩됩니다.",
                 ),
                 noOp=False,
             )

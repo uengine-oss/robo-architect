@@ -48,7 +48,10 @@ async def create_bounded_context(
     if not name:
         raise HTTPException(status_code=422, detail="name must not be empty")
 
-    bc = get_neo4j_client().create_bounded_context(name=name, description=req.description)
+    display_name = req.displayName.strip() if req.displayName else None
+    bc = get_neo4j_client().create_bounded_context(
+        name=name, display_name=display_name or None, description=req.description
+    )
 
     SmartLogger.log(
         "INFO",
@@ -67,9 +70,15 @@ async def update_bounded_context(
     name = req.name.strip() if req.name is not None else None
     if req.name is not None and not name:
         raise HTTPException(status_code=422, detail="name must not be empty")
+    display_name = req.displayName.strip() if req.displayName is not None else None
+    if req.displayName is not None and not display_name:
+        raise HTTPException(status_code=422, detail="displayName must not be empty")
 
     bc = get_neo4j_client().update_bounded_context(
-        req.boundedContextId, name=name, description=req.description
+        req.boundedContextId,
+        name=name,
+        display_name=display_name,
+        description=req.description,
     )
     if not bc:
         raise HTTPException(
@@ -126,7 +135,13 @@ async def delete_bounded_context(
         ]
 
         if req.removeDesign:
-            ids = list(dict.fromkeys(ids + da.exclusive_design_ids(session, us_ids)))
+            # US 배타 설계 + BC 직속 설계(Aggregate→Command→Event, 예: DDD 마법사
+            # 산출물 — US 없이 BC에 직접 붙음)를 함께 제거해 orphan 방지.
+            ids = list(dict.fromkeys(
+                ids
+                + da.exclusive_design_ids(session, us_ids)
+                + da.bc_design_ids(session, req.boundedContextId)
+            ))
 
         batch_id = da.capture(
             session,

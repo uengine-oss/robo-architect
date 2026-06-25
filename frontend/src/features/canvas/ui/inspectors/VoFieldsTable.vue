@@ -24,11 +24,28 @@ const TYPE_OPTIONS = ['Integer', 'String', 'Boolean', 'Float', 'Double', 'Long',
 
 const localFields = ref([])
 
+// name/type 만 비교하는 얕은 동등성 — props.fields ↔ localFields 양방향 watcher 의
+// 메아리 사이클을 끊기 위함. (v-model:fields 로 emit→부모→props 가 새 배열로 돌아오면
+// props watcher 가 localFields 를 재설정하고, 그게 다시 emit 을 유발해 무한 재귀가 났다:
+// "Maximum recursive updates exceeded". 내용이 같으면 재설정을 건너뛰어 사이클을 차단한다.)
+function fieldsEqual(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (String(a[i]?.name || '') !== String(b[i]?.name || '')) return false
+    if (String(a[i]?.type || '') !== String(b[i]?.type || '')) return false
+  }
+  return true
+}
+
 watch(() => props.fields, (newFields) => {
-  localFields.value = (newFields || []).map(f => ({
+  const mapped = (newFields || []).map(f => ({
     name: String(f?.name || ''),
     type: String(f?.type || '')
   }))
+  // 부모가 방금 emit 한 값을 그대로 되돌려준 경우(내용 동일) 재설정하지 않는다.
+  if (fieldsEqual(mapped, localFields.value)) return
+  localFields.value = mapped
 }, { immediate: true, deep: true })
 
 watch(localFields, (newFields) => {

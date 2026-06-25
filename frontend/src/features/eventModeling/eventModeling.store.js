@@ -171,6 +171,27 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
 
       chains.push({ id: entryCmd.id, name: entryCmd.displayName || entryCmd.name, actor: entryCmd.actor, steps: uniqueSteps, minSeq, maxSeq, stepCount: uniqueSteps.length })
     }
+
+    // 자유좌표(EM10): 어떤 체인에도 안 잡힌 loose 노드(연결 없는 event/readmodel/ui)를
+    // 각자 단일-노드 체인으로 추가 → 기존 렌더/선택 기구로 캔버스에 stored sequence 위치로
+    // 보이게 한다(loose command는 이미 entry-command 체인으로 잡힘).
+    const covered = new Set()
+    for (const ch of chains) for (const s of ch.steps) covered.add(s.id)
+    const pushLoose = (id, name, actor, type, sequence) => {
+      const seq = sequence || 1
+      // loose: true → Navigator "User Journeys" 목록엔 안 띄우고 캔버스 렌더용으로만 사용.
+      chains.push({ id, name, actor: actor || 'User', steps: [{ id, name, type, sequence: seq }], minSeq: seq, maxSeq: seq, stepCount: 1, loose: true })
+    }
+    sysLanes.forEach(lane => lane.events.forEach(e => {
+      if (!covered.has(e.id)) pushLoose(e.id, e.displayName || e.name, e.actor, 'event', e.sequence)
+    }))
+    rms.forEach(r => {
+      if (!covered.has(r.id)) pushLoose(r.id, r.displayName || r.name, r.actor, 'readmodel', r.sequence)
+    })
+    if (actorLanes) actorLanes.forEach(lane => lane.uis.forEach(u => {
+      if (!covered.has(u.id)) pushLoose(u.id, u.displayName || u.name, u.actor, 'ui', u.sequence)
+    }))
+
     chains.sort((a, b) => a.minSeq - b.minSeq)
     return chains
   }
@@ -272,6 +293,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
         steps: ch.steps,
         processIds: [ch.id],
         uiCount: ch.steps.filter(s => s.type === 'ui').length,
+        loose: ch.loose || false,
       })
     }
 
@@ -591,11 +613,15 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     _persistEventSequences(allEvts)
   }
 
-  /** display sequence 기준 정렬 후 고유한 Neo4j sequence를 부여하여 저장 */
+  /** display sequence 기준으로 Neo4j sequence를 부여하여 저장 */
   async function _persistEventSequences(allEvts) {
-    // 병렬 이벤트(같은 display seq)도 고유 값으로 펼쳐서 Neo4j에 저장
-    const sorted = [...allEvts].sort((a, b) => a.sequence - b.sequence || a.id.localeCompare(b.id))
-    const orders = sorted.map((e, i) => ({ eventId: e.id, sequence: i + 1 }))
+    // 병렬 이벤트(같은 display seq)는 **같은 값**으로 저장해야 새로고침 후에도
+    // 병렬(한 열 스택)이 유지된다. display seq 를 dense-rank 로 압축하되, 동일
+    // display seq → 동일 저장 seq. (이전엔 i+1 로 펼쳐 저장해 병렬이 풀렸다.)
+    const sortedSeqs = [...new Set(allEvts.map(e => e.sequence))].sort((a, b) => a - b)
+    const rank = {}
+    sortedSeqs.forEach((s, i) => { rank[s] = i + 1 })
+    const orders = allEvts.map(e => ({ eventId: e.id, sequence: rank[e.sequence] }))
     try {
       await fetch('/api/graph/event-modeling/reorder', {
         method: 'PUT',
@@ -740,54 +766,51 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
       const node = data.node
       if (!node || !node.id) return null
 
-      // 캔버스에 즉시 반영
-      const seq = payload.sequence || (maxSequence.value + 1)
-
-      if (node.type === 'event') {
-        const bcId = payload.bcId
-        let lane = systemSwimlanes.value.find(l => l.bcId === bcId)
-        if (!lane) {
-          lane = { bcId, bcName: bcId, bcDisplayName: bcId, events: [] }
-          systemSwimlanes.value.push(lane)
-        }
-        lane.events.push({
-          id: node.id, name: node.name, displayName: node.displayName,
-          commandName: '', actor: payload.actor || 'System', bcId,
-          sequence: seq,
-        })
-        lane.events.sort((a, b) => a.sequence - b.sequence)
-        if (seq > maxSequence.value) maxSequence.value = seq
-      } else if (node.type === 'command') {
-        interactionCommands.value.push({
-          id: node.id, name: node.name, displayName: node.displayName,
-          actor: payload.actor || 'User', aggregateName: '',
-          bcId: payload.bcId || '', sequence: seq,
-        })
-        interactionCommands.value.sort((a, b) => a.sequence - b.sequence)
-        if (seq > maxSequence.value) maxSequence.value = seq
-      } else if (node.type === 'readmodel') {
-        interactionReadModels.value.push({
-          id: node.id, name: node.name, displayName: node.displayName,
-          actor: payload.actor || 'User', bcId: payload.bcId || '', sequence: seq,
-        })
-        if (seq > maxSequence.value) maxSequence.value = seq
-      } else if (node.type === 'ui') {
-        const actor = payload.actor || 'User'
-        let lane = actorSwimlanes.value.find(a => a.actor === actor)
-        if (!lane) {
-          lane = { actor, uis: [] }
-          actorSwimlanes.value.push(lane)
-        }
-        lane.uis.push({
-          id: node.id, name: node.name, displayName: node.displayName,
-          actor, sequence: seq, isOutput: payload.isOutput || false,
-        })
-        lane.uis.sort((a, b) => a.sequence - b.sequence)
-        if (seq > maxSequence.value) maxSequence.value = seq
+      // EM10: 모든 타입(event 포함) 백엔드 자동 와이어링으로 체인에 편입되므로,
+      // refetch 후 그 노드가 속한 체인을 활성 선택(activeItemIds)에 등록한다.
+      // 그래야 이후 인스펙터 편집 저장(refreshKeepingSelection→_rebuildCanvas)에도
+      // 캔버스에서 사라지지 않는다(_rebuildCanvas는 활성 프로세스 체인만 렌더).
+      await fetchProcessList()
+      const containing = journeyChains.value
+        .filter(it => (it.steps || []).some(s => s.id === node.id))
+        .map(it => it.id)
+      if (containing.length) {
+        const next = new Set(activeItemIds.value)
+        containing.forEach(id => next.add(id))
+        activeItemIds.value = next
       }
+      _recomputeFromActiveItems()
 
       return node
     } catch (e) { return null }
+  }
+
+  /**
+   * 자유좌표(EM10): loose(미연결) Command/ReadModel/UI를 X축(열)으로 이동.
+   * 저장 sequence만 갱신(insert-shift 없음, 종속 없음). 연결된 노드는 읽기가 Event 기준으로
+   * 위치를 재산출하므로 호출해도 슬라이스 정렬이 유지된다(프런트에서 loose만 드래그 허용).
+   */
+  async function moveNodeToSequence(nodeId, type, sequence) {
+    if (blockIfPreview('processes', 'moveNode')) return
+    const seq = Math.max(1, Math.round(sequence))
+    try {
+      await fetch('/api/graph/event-modeling/node-sequence', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, id: nodeId, sequence: seq }),
+      })
+      // refetch → 갱신된 위치 반영 + 그 노드 체인을 활성 선택에 보장 등록(사라짐 방지).
+      await fetchProcessList()
+      const containing = journeyChains.value
+        .filter(it => (it.steps || []).some(s => s.id === nodeId))
+        .map(it => it.id)
+      if (containing.length) {
+        const next = new Set(activeItemIds.value)
+        containing.forEach(id => next.add(id))
+        activeItemIds.value = next
+      }
+      _recomputeFromActiveItems()
+    } catch (e) { /* silent */ }
   }
 
   /**
@@ -896,7 +919,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
 
     // Neo4j 반영
     try {
-      await fetch('/api/graph/event-modeling/relations', {
+      const res = await fetch('/api/graph/event-modeling/relations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -906,6 +929,26 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
           targetType: targetType,
         }),
       })
+      const data = await res.json().catch(() => ({}))
+      if (data && data.error) {
+        // 카디널리티 등으로 거부됨 → optimistic flow 제거 + 알림(기존 요소가 사라지는 일 없음).
+        flows.value = flows.value.filter(f => !(f.sourceId === src.id && f.targetId === targetId))
+        showToast(data.error, 'warn')
+        return
+      }
+      // 연결 후 refetch — 새 관계가 _allResponse에 반영돼야 이후 재구성에서 연결선이 유지된다.
+      // (안 하면 _rebuildCanvas가 stale data.flows로 flows를 다시 만들어 방금 만든 연결선이 사라짐)
+      await fetchProcessList()
+      const ids = [src.id, targetId]
+      const containing = journeyChains.value
+        .filter(it => (it.steps || []).some(s => ids.includes(s.id)))
+        .map(it => it.id)
+      if (containing.length) {
+        const next = new Set(activeItemIds.value)
+        containing.forEach(id => next.add(id))
+        activeItemIds.value = next
+      }
+      _recomputeFromActiveItems()
     } catch (e) { /* silent */ }
   }
 
@@ -1350,6 +1393,33 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     }
   }
 
+  /**
+   * 인스펙터 편집(InspectorPanel → 그래프 PUT) 후 호출. 데이터만 새로
+   * 받아오고 **현재 캔버스 선택(activeItemIds)은 보존**한 채 재구성한다.
+   * 편집한 노드(예: Command displayName)가 캔버스에 즉시 반영되게 한다.
+   * (fetchEventModeling 은 전체 선택으로 바꿔버리므로 편집-후 새로고침엔 부적합.)
+   */
+  async function refreshKeepingSelection() {
+    const keepId = selectedItemId.value  // 편집 중인 노드 — 재구성에서 탈락 방지
+    await fetchProcessList()
+    if (_allResponse.value) {
+      // EM10: 편집한 노드가 속한 체인을 활성 선택에 보장 등록한다. 그래야 추가 직후·
+      // 콜드로드 등 activeItemIds 상태와 무관하게 편집 저장 시 그 노드가 캔버스에서
+      // 사라지지 않는다(_rebuildCanvas는 활성 프로세스 체인만 렌더).
+      if (keepId) {
+        const containing = journeyChains.value
+          .filter(it => (it.steps || []).some(s => s.id === keepId))
+          .map(it => it.id)
+        if (containing.length) {
+          const next = new Set(activeItemIds.value)
+          containing.forEach(id => next.add(id))
+          activeItemIds.value = next
+        }
+      }
+      _recomputeFromActiveItems()
+    }
+  }
+
   function reset() {
     _allResponse.value = null; canvasProcessIds.value = new Set()
     actorSwimlanes.value = []; interactionCommands.value = []; interactionReadModels.value = []
@@ -1382,7 +1452,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     // Relation CRUD
     connectingFrom, connectingToPos,
     startConnecting, updateConnectingPos, cancelConnecting,
-    createRelation, deleteRelation,
+    createRelation, deleteRelation, moveNodeToSequence,
     // Live mode
     startLiveMode, stopLiveMode,
     addLiveEvent, assignEventToBC, addLiveCommand, addLiveReadModel, addLiveUI, addLiveBC,
@@ -1393,6 +1463,6 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     zoomIn, zoomOut, resetZoom, setZoom,
     addProcessToCanvas, removeProcessFromCanvas,
     showCanvasItem, toggleCanvasItem,
-    clearCanvas, fetchProcessList, fetchEventModeling, reset,
+    clearCanvas, fetchProcessList, fetchEventModeling, refreshKeepingSelection, reset,
   }
 })

@@ -24,7 +24,12 @@ import type { LauncherIpcChannel } from "../../shared/launcher-contract";
 import { IpcErrorCodes } from "../../shared/ipc-contract";
 import { IpcHandlerError, registerHandler } from "../ipc";
 
-import { listConnections, saveConnection, testConnection } from "./connections";
+import {
+  listConnections,
+  resolveActiveForBackend,
+  saveConnection,
+  testConnection,
+} from "./connections";
 import { handleLauncherEnter } from "./enter";
 import { resolveSessionUser, setGitConfigGlobal } from "./identity";
 import {
@@ -39,6 +44,7 @@ const STUB_BY_CHANNEL: Record<LauncherIpcChannel, string> = {
   "connections:save": "US2 T032",
   "connections:update": "US5 T059",
   "connections:delete": "US5 T060",
+  "connections:resolveActiveForBackend": "neo4j-electron-override",
   "connections:discoverNeo4jDesktop": "US4 T052",
   "connections:probeStatus": "US1 T023",
   "connections:test": "US2 T033",
@@ -56,6 +62,7 @@ const IMPLEMENTED_CHANNELS: ReadonlySet<LauncherIpcChannel> = new Set([
   "connections:list",
   "connections:save",
   "connections:test",
+  "connections:resolveActiveForBackend",
   "projectRoot:choose",
   "projectRoot:createNew",
   "projectRoot:validate",
@@ -75,6 +82,7 @@ export function registerLauncherIpcHandlers(): void {
   registerHandler("connections:list", listConnections);
   registerHandler("connections:save", saveConnection);
   registerHandler("connections:test", testConnection);
+  registerHandler("connections:resolveActiveForBackend", resolveActiveForBackend);
   registerHandler("projectRoot:choose", chooseProjectRoot);
   registerHandler("projectRoot:createNew", ({ path }) => createProjectRoot(path));
   registerHandler("projectRoot:validate", ({ path }) => validateProjectRoot(path));

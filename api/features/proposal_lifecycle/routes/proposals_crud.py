@@ -8,10 +8,13 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from starlette.requests import Request
 
+from pydantic import ValidationError
+
 from api.features.proposal_lifecycle.proposal_contracts import (
     CreateProposalRequest,
     DeleteProposalRequest,
     ProposalResponse,
+    StrategicDiff,
     SubmitProposalRequest,
     AnswerClarificationRequest,
     UpdateDiffRequest,
@@ -232,6 +235,29 @@ async def delete_proposal(proposal_id: str, body: DeleteProposalRequest, request
 # PUT /api/proposals/{id}/diff  — Diff 수정
 # ---------------------------------------------------------------------------
 
+def _validate_diff_payload(strategic: Optional[dict], tactical: Optional[list]) -> None:
+    """직접 수정(JSON 편집)으로 들어온 diff 구조를 저장 전에 검증한다.
+
+    깨진 strategicDiff 는 읽기 경로(ProposalResponse.from_neo4j)에서 조용히 None 으로
+    소실되고, 깨진 tacticalDiff 항목은 dual-merge(proposal_apply)의 item.get(...) 에서
+    크래시를 낸다. 둘 다 저장 자체를 422 로 막아 다운스트림을 보호한다.
+    (tacticalDiff 의 'list of object' 는 요청 모델에서 이미 강제되지만, 명확한
+    한국어 사유를 위해 항목 단위로도 한번 더 확인한다.)
+    """
+    if strategic is not None:
+        try:
+            StrategicDiff(**strategic)
+        except ValidationError as e:
+            err = e.errors()[0]
+            loc = ".".join(str(x) for x in err.get("loc", ()))
+            where = f" (위치: {loc})" if loc else ""
+            raise HTTPException(status_code=422, detail=f"strategicDiff 형식 오류: {err.get('msg')}{where}")
+    if tactical is not None:
+        for i, item in enumerate(tactical):
+            if not isinstance(item, dict):
+                raise HTTPException(status_code=422, detail=f"tacticalDiff[{i}] 는 객체(JSON object)여야 합니다.")
+
+
 @router.put("/{proposal_id}/diff", response_model=ProposalResponse)
 async def update_diff(proposal_id: str, body: UpdateDiffRequest, request: Request):
     """Strategic/Tactical Diff 수동 수정."""
@@ -240,6 +266,9 @@ async def update_diff(proposal_id: str, body: UpdateDiffRequest, request: Reques
         raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
     if row.get("status") == "ACCEPTED":
         raise HTTPException(status_code=423, detail="ACCEPTED proposals cannot be modified.")
+
+    # 깨진 구조가 저장돼 조용히 소실/크래시되는 것을 막는다(직접 수정 보완).
+    _validate_diff_payload(body.strategicDiff, body.tacticalDiff)
 
     updates = {}
     if body.strategicDiff is not None:

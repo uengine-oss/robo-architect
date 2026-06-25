@@ -17,6 +17,7 @@ const state = reactive({
   title: null,         // 대상 노드 제목(배너 보조)
   targetNodeId: null,
   bcId: null,
+  notice: null,        // 안내 문구(예: 신규 요소가 이 뷰어엔 표시 안 됨)
 })
 
 export function usePreviewSession() {
@@ -33,13 +34,14 @@ export function enterPreview(opts = {}) {
     title: opts.title || null,
     targetNodeId: opts.targetNodeId || null,
     bcId: opts.bcId || null,
+    notice: opts.notice || null,
   })
 }
 
 export function exitPreview() {
   Object.assign(state, {
     active: false, proposalId: null, viewer: null, baseUrl: null,
-    label: null, title: null, targetNodeId: null, bcId: null,
+    label: null, title: null, targetNodeId: null, bcId: null, notice: null,
   })
 }
 

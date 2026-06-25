@@ -21,6 +21,8 @@ useDataRefresh(() => handleRefresh())
 const activeTab = inject('activeTab', ref('Design'))
 const isBpmnMode = computed(() => activeTab.value === 'Process')
 const isEventModelingMode = computed(() => activeTab.value === 'Processes' || activeTab.value === 'Event Modeling')
+// "User Journeys" 목록은 실제 프로세스(여정/명령체인)만 — loose(연결 없는 자유배치) 노드는 제외.
+const emJourneys = computed(() => emStore.journeyChains.filter(i => !i.loose))
 const expandedProcesses = ref(new Set())
 // Hybrid Process tree expand/collapse — separate state from Event Modeling.
 // Default: expand everything so fresh-ingestion streams reveal tasks live.
@@ -86,18 +88,19 @@ function reviewBc(item) {
   return rule?.context_cluster || null
 }
 
-// ---- Rules by BC (Phase 2.5 distribution summary) --------------------
-// Shows the cluster-level breakdown so the user can see at a glance
-// whether the BC tagging looks right before diving into a specific Task.
-const rulesByBc = computed(() => {
-  const counts = new Map()
-  for (const r of bpmnStore.hybridRules) {
-    const k = r.context_cluster || '미분류'
-    counts.set(k, (counts.get(k) || 0) + 1)
+// ---- Rules by Task (distribution summary) ----------------------------
+// BC (context_cluster) tagging was deprecated — every rule is now attributed
+// to a Task by the agent, so the old "Rules by Context" grouping collapsed
+// into a single 미분류 bucket (B5). Group by the Task each rule is mapped to
+// instead — the live attribution dimension. Unmapped rules are surfaced by
+// the separate "미매핑 / Review" section below, so they're omitted here.
+const rulesByTask = computed(() => {
+  const counts = new Map() // taskId -> { name, count, scope }
+  for (const t of bpmnStore.hybridTasks) {
+    const n = (t.rules || []).length
+    if (n) counts.set(t.id, { name: t.name || t.id, count: n, scope: t.id })
   }
-  return [...counts.entries()]
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
+  return [...counts.values()].sort((a, b) => b.count - a.count)
 })
 
 // ---- Unified "미매핑 / Review" pool -------------------------------------
@@ -151,6 +154,9 @@ const unifiedPool = computed(() => {
 
 // Drive a simple "attach to task" inline selector on each pool item.
 const poolAttachChoice = ref({}) // { [item.key]: taskIdSelected }
+
+// 미매핑 / Review 풀은 길어질 수 있어 접기/펼치기 (기본 펼침).
+const poolCollapsed = ref(false)
 
 async function attachPoolItem(item) {
   const toTaskId = poolAttachChoice.value[item.key]
@@ -469,23 +475,22 @@ function handleProcessDragStart(event, item) {
           </TransitionGroup>
         </div>
 
-        <!-- Hybrid: Rules by BC (Phase 2.5 distribution summary) — DEBUG ONLY -->
-        <div v-if="isDebug && rulesByBc.length" class="section-group">
+        <!-- Hybrid: Rules by Task (distribution summary) — DEBUG ONLY -->
+        <div v-if="isDebug && rulesByTask.length" class="section-group">
           <div class="section-header">
-            <span class="section-title">Rules by Context</span>
+            <span class="section-title">Rules by Task</span>
             <span class="section-count">{{ bpmnStore.hybridRules.length }}</span>
           </div>
           <div class="hybrid-bc-list">
             <div
-              v-for="bc in rulesByBc"
-              :key="bc.name"
+              v-for="grp in rulesByTask"
+              :key="grp.scope"
               class="hybrid-bc-item"
-              :class="{ 'is-unclassified': bc.name === '미분류' }"
-              :title="`클릭 → ${bc.name} 범주 Rule 관리 (${bc.count}개)`"
-              @click="bpmnStore.openBcRulesModal(bc.name)"
+              :title="`클릭 → ${grp.name} Task 의 Rule 관리 (${grp.count}개)`"
+              @click="bpmnStore.openBcRulesModal(grp.scope)"
             >
-              <span class="hybrid-bc-item__name">{{ bc.name }}</span>
-              <span class="hybrid-bc-item__count">{{ bc.count }}</span>
+              <span class="hybrid-bc-item__name">{{ grp.name }}</span>
+              <span class="hybrid-bc-item__count">{{ grp.count }}</span>
             </div>
           </div>
         </div>
@@ -493,11 +498,14 @@ function handleProcessDragStart(event, item) {
         <!-- Hybrid: Unified 미매핑 / Review pool — DEBUG ONLY (§2.D) -->
         <!-- review: pipeline's θ-band suggestion (has task_id). unassigned: no REALIZED_BY anywhere. -->
         <div v-if="isDebug && unifiedPool.length" class="section-group">
-          <div class="section-header">
+          <div class="section-header section-header--toggle"
+               :title="poolCollapsed ? '펼치기' : '접기'"
+               @click="poolCollapsed = !poolCollapsed">
+            <span class="section-chevron" :class="{ 'is-open': !poolCollapsed }">▸</span>
             <span class="section-title">미매핑 / Review</span>
             <span class="section-count">{{ unifiedPool.length }}</span>
           </div>
-          <div class="hybrid-pool">
+          <div v-if="!poolCollapsed" class="hybrid-pool">
             <div
               v-for="item in unifiedPool"
               :key="item.key"
@@ -557,64 +565,14 @@ function handleProcessDragStart(event, item) {
         <div v-else-if="bpmnStore.error" class="error-state">
           {{ bpmnStore.error }}
         </div>
+        <!-- 043 — BPM은 문서 업로드(A2A) 생성분(hybrid)만 표시. 011 Command-파생
+             process-flows를 BPM 프로세스로 늘어놓던 폴백은 제거(spec 042: 011은 BPM 생성원 아님). -->
         <div
-          v-else-if="bpmnStore.processFlows.length === 0 && !bpmnStore.hybridTasks.length"
+          v-else-if="!bpmnStore.hybridProcessTrees.length && !bpmnStore.hybridTasks.length"
           class="empty-state"
         >
-          No business processes found
+          BPM이 없습니다. 문서 업로드로 BPM을 생성하면 여기에 표시됩니다.
         </div>
-        <template v-else-if="!bpmnStore.hybridProcessTrees.length">
-          <div class="section-group">
-            <div class="section-header section-header--with-actions">
-              <div class="section-header__left">
-                <span class="section-title">Business Processes</span>
-                <span class="section-count">{{ bpmnStore.processFlows.length }}</span>
-              </div>
-              <div class="section-header__actions">
-                <button
-                  class="tree-action-btn"
-                  :class="{ 'is-spinning': bpmnStore.loading }"
-                  @click="bpmnStore.fetchProcessFlows()"
-                  title="Refresh"
-                  :disabled="bpmnStore.loading"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="23 4 23 10 17 10"></polyline>
-                    <polyline points="1 20 1 14 7 14"></polyline>
-                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div
-              v-for="flow in bpmnStore.processFlows"
-              :key="flow.id"
-              class="bpmn-flow-item"
-              :class="{ 'is-on-canvas': bpmnStore.renderedFlowIds.has(flow.id) }"
-              :draggable="true"
-              @dragstart="handleBpmnFlowDragStart($event, flow)"
-              @dblclick="handleBpmnFlowDblClick(flow)"
-              :title="`${flow.name}\nActors: ${flow.actors?.join(', ') || 'System'}\nBC: ${flow.bcName || '-'}`"
-            >
-              <span class="bpmn-flow-item__icon">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="5" cy="12" r="3" />
-                  <line x1="8" y1="12" x2="16" y2="12" />
-                  <circle cx="19" cy="12" r="3" />
-                </svg>
-              </span>
-              <div class="bpmn-flow-item__content">
-                <span class="bpmn-flow-item__name">{{ flow.startCommandName || flow.name }}</span>
-              </div>
-              <span v-if="flow.nodeCount > 0" class="bpmn-flow-item__chip">{{ flow.nodeCount }}</span>
-              <span v-if="bpmnStore.renderedFlowIds.has(flow.id)" class="bpmn-flow-item__check">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </span>
-            </div>
-          </div>
-        </template>
       </template>
 
       <!-- Event Modeling Mode: Process Flows Only -->
@@ -623,7 +581,7 @@ function handleProcessDragStart(event, item) {
           <div class="section-header section-header--with-actions">
             <div class="section-header__left">
               <span class="section-title">User Journeys</span>
-              <span v-if="emStore.journeyChains.length" class="section-count">{{ emStore.journeyChains.length }}</span>
+              <span v-if="emJourneys.length" class="section-count">{{ emJourneys.length }}</span>
             </div>
             <div class="section-header__actions">
               <button class="tree-action-btn" @click="emStore.fetchEventModeling()" title="Load All" :disabled="emStore.loading">
@@ -646,11 +604,11 @@ function handleProcessDragStart(event, item) {
             <div class="loading-spinner"></div>
             <span>Loading...</span>
           </div>
-          <div v-else-if="emStore.journeyChains.length === 0" class="empty-state" style="padding:16px">
+          <div v-else-if="emJourneys.length === 0" class="empty-state" style="padding:16px">
             <span>프로세스 데이터가 없습니다.</span>
           </div>
           <template v-else>
-            <div v-for="item in emStore.journeyChains" :key="item.id"
+            <div v-for="item in emJourneys" :key="item.id"
                  class="em-process-item"
                  :class="{ 'is-on-canvas': journeyOnCanvas(item) }"
                  :draggable="true"
@@ -968,6 +926,29 @@ function handleProcessDragStart(event, item) {
 
 .section-header--with-actions {
   padding: 4px var(--spacing-xs);
+}
+
+/* Collapsible section header (미매핑 / Review) */
+.section-header--toggle {
+  cursor: pointer;
+  user-select: none;
+  gap: 4px;
+}
+.section-header--toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+.section-header--toggle .section-count {
+  margin-left: auto;
+}
+.section-chevron {
+  font-size: 0.6rem;
+  color: var(--color-text-dim, #9aa0aa);
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.section-chevron.is-open {
+  transform: rotate(90deg);
 }
 
 .section-header__left {

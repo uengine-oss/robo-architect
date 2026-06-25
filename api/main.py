@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.platform.observability.request_logging import (
@@ -203,7 +203,25 @@ async def _request_id_middleware(request: Request, call_next):
                 "duration_ms": timer.ms(),
             },
         )
-        raise
+        # Convert the unhandled exception into a real 500 *response* here rather
+        # than re-raising. A re-raised exception unwinds past CORSMiddleware (it
+        # only decorates responses it actually `send`s, not exceptions passing
+        # through) and is finally turned into a 500 by Starlette's outermost
+        # ServerErrorMiddleware — a 500 that never gets an
+        # `Access-Control-Allow-Origin` header. The browser then blocks that
+        # cross-origin response and the frontend sees an opaque
+        # `TypeError: Failed to fetch` instead of the actual status/body. By
+        # returning a JSONResponse with the CORS header attached, callers get a
+        # genuine 500 they can read and branch on. allow_origins is "*" with
+        # credentials disabled (see CORS config below), so "*" is the correct,
+        # safe value to echo here.
+        error_response = JSONResponse(
+            status_code=500,
+            content={"detail": "internal server error", "type": type(e).__name__},
+        )
+        error_response.headers["Access-Control-Allow-Origin"] = "*"
+        error_response.headers["X-Request-Id"] = rid
+        return error_response
     finally:
         # Avoid leaking request_id into unrelated async contexts.
         set_request_id(None)

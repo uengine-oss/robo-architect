@@ -360,12 +360,27 @@ function _onTerminalOpen(e) {
   if (k === 'main') {
     let main = mainSession.value
     if (!main) {
-      main = { id: 'main', label: '프로젝트', workdir: workdir || '', kind: 'main', activePath: null, initialCommand: '', epoch: 0 }
+      // 새 메인 세션: 명령을 initialCommand 로 실어 보낸다 → 터미널이 claude 부팅 후
+      // (~6s) 실행. nextTick sendInput 은 claude 준비 전이라 실행이 누락되던 콜드스타트
+      // 레이스(C6)를 피한다.
+      main = { id: 'main', label: '프로젝트', workdir: workdir || '', kind: 'main', activePath: null, initialCommand: command || '', epoch: 0 }
       sessions.value.unshift(main)
-    } else if (workdir && main.workdir !== workdir) {
+      activeSessionId.value = main.id
+      return
+    }
+    if (workdir && main.workdir !== workdir) {
+      // 다른 프로젝트로 핸드오프(PRD 열기·프로젝트 전환 등): PTY 는 claude 를 직접
+      // 실행하므로 셸 cd 로 못 옮긴다 → 기존 PTY 종료 + epoch++ 로 새 cwd 에서 respawn
+      // 해야 실제 터미널이 새 프로젝트로 간다(C7 핸드오프 경로). 명령은 initialCommand 로.
+      closeTerminalSession(backendId(main))
+      main.epoch = (main.epoch || 0) + 1
       main.workdir = workdir
       main.activePath = null
+      main.initialCommand = command || ''
+      activeSessionId.value = main.id
+      return
     }
+    // 같은 workdir 의 기존 세션: claude 가 이미 떠 있으므로 명령만 주입.
     activeSessionId.value = main.id
     if (command) nextTick(() => terminalRefs[main.id]?.sendInput(command + '\n'))
     return
@@ -499,6 +514,19 @@ function onTreeExternalCheck() {
   editorRef.value?.checkExternalModification()
 }
 
+// Backstop for the file tree's live SSE watch: when the active terminal's
+// output settles (claude likely finished writing), re-list the tree. Debounced
+// so the SSE-driven refresh and this don't pile up. Harmless if the SSE already
+// caught the change — it's just a cheap re-list of the loaded directories.
+let activityRefreshTimer = null
+function onTerminalActivity() {
+  if (activityRefreshTimer) clearTimeout(activityRefreshTimer)
+  activityRefreshTimer = setTimeout(() => {
+    activityRefreshTimer = null
+    treeRef.value?.refresh()
+  }, 300)
+}
+
 function isUnderPath(target, parent) {
   if (!target || !parent) return false
   return target === parent || target.startsWith(parent + '/')
@@ -543,11 +571,21 @@ function onEditorDeleted({ path }) {
 function onTerminalWorkdirPicked(path) {
   // The folder picker lives in the active terminal — repoint THAT session.
   const s = activeSession.value
-  if (path && s && s.workdir !== path) {
-    s.workdir = path
-    s.label = s.kind === 'main' ? '프로젝트' : basename(path)
-    s.activePath = null
-  }
+  if (!path || !s || s.workdir === path) return
+  // PTY는 셸이 아니라 claude를 직접 execvpe로 띄우므로 셸 `cd`로 옮길 수 없다 →
+  // 새 폴더에서 터미널을 다시 띄워야(respawn) 실제 cwd가 따라온다(C7/I16).
+  // 현재 claude 세션/스크롤백은 사라지므로 사용자 확인을 받는다.
+  const ok = window.confirm(
+    `터미널을 새 폴더로 다시 시작할까요?\n\n${path}\n\n현재 터미널 세션(대화·스크롤백)은 종료됩니다.`,
+  )
+  if (!ok) return
+  // 기존 PTY를 명시적으로 종료하고 epoch를 올려, key가 바뀐 ClaudeCodeTerminal이
+  // remount → 새 cwd + 새 backendId(id#epoch)로 fresh PTY를 띄운다.
+  closeTerminalSession(backendId(s))
+  s.epoch = (s.epoch || 0) + 1
+  s.workdir = path
+  s.label = s.kind === 'main' ? '프로젝트' : basename(path)
+  s.activePath = null
 }
 
 // Tab-switch-away guard via the injected activeTab ref.
@@ -600,6 +638,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopResize()
+  if (activityRefreshTimer) {
+    clearTimeout(activityRefreshTimer)
+    activityRefreshTimer = null
+  }
   window.removeEventListener('beforeunload', onBeforeUnload)
 })
 </script>
@@ -694,7 +736,7 @@ onBeforeUnmount(() => {
       <div class="ccw-terminals">
         <div
           v-for="s in sessions"
-          :key="s.id"
+          :key="`${s.id}#${s.epoch || 0}`"
           v-show="s.id === activeSessionId"
           class="ccw-terminal-host"
         >
@@ -703,7 +745,9 @@ onBeforeUnmount(() => {
             :workdir="s.workdir"
             :session-id="backendId(s)"
             :initial-command="s.initialCommand"
+            :is-active="s.id === activeSessionId"
             @workdir-picked="onTerminalWorkdirPicked"
+            @activity="onTerminalActivity"
           />
         </div>
         <div v-if="!sessions.length" class="ccw-no-session">

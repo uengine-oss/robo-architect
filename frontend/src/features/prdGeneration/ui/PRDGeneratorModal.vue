@@ -297,7 +297,10 @@ async function setupAndOpenClaudeCode() {
 
 function openInClaudeCode() {
   if (setupResult.value && openClaudeCode) {
-    openClaudeCode(setupResult.value.project_path)
+    // D5: robo-spec 프로젝트는 빈 터미널만 열면 시작점(=/robo-plan)을 알 수 없다 →
+    // 시작 슬래시 커맨드를 미리 넣어 발견성을 준다(robo-spec 모드 한정).
+    const startCmd = outputMode.value === 'robo-spec' ? '/robo-plan ' : null
+    openClaudeCode(setupResult.value.project_path, startCmd)
     closeModal()
   }
 }
@@ -382,8 +385,6 @@ function goBack() {
                  robo-spec skills on top. -->
             <div class="config-section">
               <h3>🎯 출력 모드</h3>
-              <div class="form-grid">
-                <div class="form-group">
                   <div class="radio-cards">
                     <label class="radio-card" :class="{ selected: outputMode === 'robo-spec' }">
                       <input type="radio" v-model="outputMode" value="robo-spec" />
@@ -391,10 +392,11 @@ function goBack() {
                         <span class="radio-icon">🤖</span>
                         <span class="radio-label">Robo-Spec Skills (권장)</span>
                         <span class="radio-desc">
-                          robo-* skill set + MCP only. plan / tasks / source는
-                          Claude Code 안에서 /robo-plan, /robo-tasks,
-                          /robo-implement 슬래시 커맨드로 생성합니다.
+                          <strong class="radio-tagline">그때그때 생성 · 항상 최신</strong>
+                          스킬과 MCP만 설치합니다. 슬래시 커맨드(<code>/robo-*</code>)로
+                          모델에서 바로 계획·코드를 만들고, 모델이 바뀌어도 자동 반영됩니다.
                         </span>
+                        <em class="radio-note">Claude Code 전용</em>
                       </div>
                     </label>
                     <label class="radio-card" :class="{ selected: outputMode === 'prd' }">
@@ -403,14 +405,14 @@ function goBack() {
                         <span class="radio-icon">📄</span>
                         <span class="radio-label">기존 PRD (Legacy)</span>
                         <span class="radio-desc">
-                          PRD.md / .cursor/rules / specs/ 까지 한 번에 추출 +
-                          robo-spec skill 도 함께 설치 (기존 029-이전 동작).
+                          <strong class="radio-tagline">지금 파일로 추출 · 한 번에</strong>
+                          PRD·규칙·BC별 스펙을 파일로 만들어 둡니다. 모델이 바뀌면
+                          수동 갱신이 필요합니다.
                         </span>
+                        <em class="radio-note">Cursor / Claude Code 선택</em>
                       </div>
                     </label>
                   </div>
-                </div>
-              </div>
             </div>
 
             <div class="config-section">
@@ -790,9 +792,21 @@ function goBack() {
             <p class="setup-path-result">
               <code>{{ setupResult.project_path }}</code>
             </p>
-            <p>{{ setupResult.files_extracted.length }}개 파일이 추출되었습니다.</p>
+            <p v-if="outputMode === 'robo-spec'">robo-* 스킬과 MCP 브릿지가 설치되었습니다.</p>
+            <p v-else>{{ setupResult.files_extracted.length }}개 파일이 추출되었습니다.</p>
 
-            <div class="extracted-files">
+            <!-- D5: robo-spec 모드는 정적 파일이 없으므로, 슬래시 커맨드 시작 흐름을 안내한다. -->
+            <div v-if="outputMode === 'robo-spec'" class="robo-next-steps">
+              <h4>다음 단계 — Claude Code 터미널에서</h4>
+              <ol>
+                <li><code>/robo-plan &lt;BoundedContext&gt;</code> — 모델에서 설계를 가져와 구현 계획 생성</li>
+                <li><code>/robo-tasks</code> — 계획을 작업 목록으로 분해</li>
+                <li><code>/robo-implement</code> — 작업대로 코드 구현</li>
+              </ol>
+              <p class="robo-hint">💡 터미널 입력창에 <code>/robo-plan</code> 을 미리 넣어뒀습니다 — 대상 BC명을 붙여 Enter 하세요.</p>
+            </div>
+
+            <div v-else class="extracted-files">
               <div v-for="file in setupResult.files_extracted" :key="file" class="file-item">
                 <span class="file-icon">
                   {{ file.endsWith('.md') ? '📄' : file.endsWith('.yml') || file.endsWith('.yaml') ? '⚙️' : '📋' }}
@@ -1015,24 +1029,32 @@ function goBack() {
 
 .form-hint { margin: 4px 0 0; font-size: 0.75rem; color: #787c99; line-height: 1.4; }
 
-.radio-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-.radio-card { position: relative; cursor: pointer; }
+.radio-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; align-items: stretch; }
+.radio-card { position: relative; cursor: pointer; display: flex; }
 .radio-card input { position: absolute; opacity: 0; }
 .radio-card-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 16px;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 18px 16px;
   background: #24283b;
   border: 2px solid #3d4154;
   border-radius: 12px;
-  transition: all 0.2s;
+  transition: border-color 0.2s, background 0.2s;
 }
+.radio-card:hover .radio-card-content { border-color: #565a73; }
 
 .radio-card.selected .radio-card-content { border-color: #7aa2f7; background: rgba(122, 162, 247, 0.1); }
 .radio-icon { font-size: 1.5rem; margin-bottom: 8px; }
 .radio-label { font-weight: 600; color: #c0caf5; margin-bottom: 4px; }
-.radio-desc { font-size: 0.75rem; color: #787c99; text-align: center; }
+.radio-desc { font-size: 0.75rem; color: #787c99; text-align: center; line-height: 1.6; }
+.radio-tagline { display: block; margin-bottom: 6px; font-size: 0.8rem; font-weight: 700; color: #9ece6a; }
+.radio-card.selected .radio-tagline { color: #7aa2f7; }
+.radio-desc code { font-family: ui-monospace, monospace; font-size: 0.72rem; color: #bb9af7; background: rgba(187,154,247,0.12); padding: 0 3px; border-radius: 3px; }
+.radio-note { margin-top: auto; padding-top: 10px; font-style: normal; font-size: 0.68rem; font-weight: 600; color: #565a73; letter-spacing: 0.02em; }
 
 .checkbox-group { display: flex; flex-direction: column; gap: 12px; }
 .checkbox-item { display: flex; align-items: center; gap: 12px; cursor: pointer; }
@@ -1062,6 +1084,13 @@ function goBack() {
 .next-steps ol { margin: 0; padding-left: 20px; color: #a9b1d6; }
 .next-steps li { margin-bottom: 8px; line-height: 1.5; }
 .next-steps code { background: #16161e; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; color: #7aa2f7; }
+
+.robo-next-steps { text-align: left; background: #24283b; padding: 20px 24px; border-radius: 12px; width: 100%; max-width: 520px; margin-top: 8px; }
+.robo-next-steps h4 { margin: 0 0 12px; color: #c0caf5; }
+.robo-next-steps ol { margin: 0; padding-left: 20px; color: #a9b1d6; }
+.robo-next-steps li { margin-bottom: 8px; line-height: 1.5; }
+.robo-next-steps code { background: #16161e; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; color: #9ece6a; }
+.robo-hint { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid #3d4154; color: #787c99; font-size: 0.82rem; }
 
 .modal-footer { display: flex; align-items: center; padding: 16px 24px; border-top: 1px solid #3d4154; background: #16161e; }
 .footer-spacer { flex: 1; }

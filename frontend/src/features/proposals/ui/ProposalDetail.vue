@@ -165,7 +165,9 @@
           {{ proceeding ? t('proposals.detail.submitting') : t('proposals.staged.proceedToPlan') }}
         </button>
       </template>
-      <template v-if="canImplement">
+      <!-- 이미 sandbox 서브탭이면 이 버튼은 no-op(무반응)이라 숨긴다.
+           실제 구현 시작은 sandbox 뷰 안의 "구현하기" 버튼이다. -->
+      <template v-if="canImplement && activeTab !== 'sandbox'">
         <button @click="activeTab = 'sandbox'" class="btn btn--primary">{{ t('proposals.detail.openSandbox') }}</button>
       </template>
       <span v-else-if="isSubmitted && implementBlockReason" class="detail-actions__hint" :title="implementBlockReason">⚠ {{ implementBlockReason }}</span>

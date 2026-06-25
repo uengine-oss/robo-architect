@@ -179,6 +179,47 @@ export const useBpmnStore = defineStore('bpmn', () => {
     } catch { /* quota or disabled — fine */ }
   }
 
+  // B3 — review candidates (rejectedRulesByTask) are derived only from explore
+  // SSE and were lost on refresh (snapshot doesn't carry them). Persist them to
+  // localStorage keyed by session id so a cold reload restores the same
+  // candidates without an LLM re-explore. Single key (active session only) to
+  // avoid unbounded growth; mismatched sid ⇒ ignored.
+  const HYBRID_REJECTS_KEY = 'hybrid.rejects'
+  function _saveRejects(sid, byTask) {
+    try {
+      if (sid && byTask && Object.keys(byTask).length)
+        localStorage.setItem(HYBRID_REJECTS_KEY, JSON.stringify({ sid, byTask }))
+      else localStorage.removeItem(HYBRID_REJECTS_KEY)
+    } catch { /* quota or disabled — fine */ }
+  }
+  function _loadRejects(sid) {
+    try {
+      const raw = localStorage.getItem(HYBRID_REJECTS_KEY)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      return (parsed && parsed.sid === sid && parsed.byTask) ? parsed.byTask : {}
+    } catch { return {} }
+  }
+
+  // Toast/알림 이력도 메모리뿐이라 새로고침 시 사라진다 — 세션 id 키로 localStorage에
+  // 영속해 콜드 리로드 후에도 펼쳐 볼 수 있게 한다 (B4 + B3 패턴).
+  const HYBRID_TOASTLOG_KEY = 'hybrid.toastlog'
+  function _saveToastLog(sid, history) {
+    try {
+      if (sid && Array.isArray(history) && history.length)
+        localStorage.setItem(HYBRID_TOASTLOG_KEY, JSON.stringify({ sid, history: history.slice(0, 100) }))
+      else localStorage.removeItem(HYBRID_TOASTLOG_KEY)
+    } catch { /* quota or disabled — fine */ }
+  }
+  function _loadToastLog(sid) {
+    try {
+      const raw = localStorage.getItem(HYBRID_TOASTLOG_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return (parsed && parsed.sid === sid && Array.isArray(parsed.history)) ? parsed.history : []
+    } catch { return [] }
+  }
+
   const hybridActive = ref(false)
   const hybridProcesses = ref([])  // [{id, name, domain_keywords, task_ids, actor_ids, source_pdf_name, bpmn_xml}]
   // Which process's BPMN XML is currently shown on the canvas (null = none rendered).
@@ -273,6 +314,7 @@ export const useBpmnStore = defineStore('bpmn', () => {
       ...rejectedRulesByTask.value,
       [taskId]: list,
     }
+    _saveRejects(hybridSessionId.value, rejectedRulesByTask.value)  // B3
   }
   function clearRejectedRulesForTask(taskId) {
     if (!taskId) return
@@ -280,6 +322,7 @@ export const useBpmnStore = defineStore('bpmn', () => {
     const next = { ...rejectedRulesByTask.value }
     delete next[taskId]
     rejectedRulesByTask.value = next
+    _saveRejects(hybridSessionId.value, rejectedRulesByTask.value)  // B3
   }
   /** Remove one rejected entry once user manually promotes it to an accept. */
   function consumeRejectedRule(taskId, ruleId) {
@@ -291,6 +334,7 @@ export const useBpmnStore = defineStore('bpmn', () => {
       ...rejectedRulesByTask.value,
       [taskId]: next,
     }
+    _saveRejects(hybridSessionId.value, rejectedRulesByTask.value)  // B3
   }
 
   // --- Agent Reasoning SSE lifecycle (§2.C) ---
@@ -312,12 +356,32 @@ export const useBpmnStore = defineStore('bpmn', () => {
 
   // Toast for arbitration moves — single ref, auto-dismisses after 4s.
   // Mirrors eventModeling.store.js pattern. Rendered by BpmnPanel.vue.
-  const toast = ref(null)              // { message, type: 'info'|'warn', id }
+  const toast = ref(null)              // { message, type: 'info'|'warn', id, ts }
+  // B4 — explore/arbitration fire a burst of toasts (완료 요약 → rule 이동들)
+  // that overwrite one another in the single `toast` slot and vanish in 4s,
+  // so the user can't review them. Keep every toast in a session log they can
+  // open and scroll. Newest-first, capped.
+  const toastHistory = ref([])
   let _toastTimer = null
+  let _toastSeq = 0
   function showToast(message, type = 'info') {
     clearTimeout(_toastTimer)
-    toast.value = { message, type, id: Date.now() }
+    const entry = { message, type, id: ++_toastSeq, ts: Date.now() }
+    toast.value = entry
+    toastHistory.value = [entry, ...toastHistory.value].slice(0, 100)
+    _saveToastLog(hybridSessionId.value, toastHistory.value)  // persist (survives refresh)
     _toastTimer = setTimeout(() => { toast.value = null }, 4000)
+  }
+  function clearToastHistory() {
+    toastHistory.value = []
+    _saveToastLog(hybridSessionId.value, [])
+  }
+  // Readable labels for manual-action toasts (assign/move/unassign).
+  function _ruleLabel(ruleId) {
+    return hybridRules.value.find(r => r.id === ruleId)?.title || ruleId
+  }
+  function _taskLabel(taskId) {
+    return hybridTasks.value.find(t => t.id === taskId)?.name || taskId
   }
 
   // Tasks whose rule is being yanked by arbitration — Inspector strikes through
@@ -470,6 +534,17 @@ export const useBpmnStore = defineStore('bpmn', () => {
         }
         if (t === 'ArbitrationEnd') {
           clearArbitrating()
+          // B6 — ProcessExploreEnd's "Rule 매핑 총 N건" is the PRE-arbitration
+          // claim sum: a rule provisionally claimed by multiple tasks/processes
+          // is counted each time. Arbitration then dedupes to one home per rule,
+          // so that number overcounts the real total. Rehydrate to the settled
+          // graph and report the true post-arbitration distinct mapping count.
+          rehydrateHybrid().then(() => {
+            const ids = new Set()
+            for (const tk of hybridTasks.value)
+              for (const r of (tk.rules || [])) ids.add(r.id)
+            showToast(`✅ 정리 완료 — 최종 Rule 매핑 ${ids.size}건`, 'info')
+          }).catch(() => {})
         }
       } catch { /* ignore malformed */ }
     })
@@ -553,7 +628,11 @@ export const useBpmnStore = defineStore('bpmn', () => {
     selectedFlowId.value = null
     activeBpmnXml.value = null
     activeStructured.value = null
+    rejectedRulesByTask.value = {}   // B3 — new session, drop stale candidates
+    toastHistory.value = []          // new session, drop stale 알림 이력
     _saveSessionId(null)
+    _saveRejects(null, null)         // B3 — clear persisted candidates
+    _saveToastLog(null, [])          // clear persisted 알림 이력
   }
 
   /** Switch the canvas to a specific process's XML. Called on drag/dblclick. */
@@ -615,6 +694,18 @@ export const useBpmnStore = defineStore('bpmn', () => {
       }
       hybridSessionId.value = sid
       _saveSessionId(sid)
+      // B3 — restore review candidates persisted for this session. Keep any
+      // live (SSE-populated) entries; fill the rest from localStorage.
+      const savedRejects = _loadRejects(sid)
+      if (Object.keys(savedRejects).length) {
+        rejectedRulesByTask.value = { ...savedRejects, ...rejectedRulesByTask.value }
+      }
+      // Restore the toast/알림 이력 for this session if the in-memory log is empty
+      // (cold reload). Live entries take precedence.
+      if (!toastHistory.value.length) {
+        const savedLog = _loadToastLog(sid)
+        if (savedLog.length) toastHistory.value = savedLog
+      }
       return { ok: true }
     } catch (e) {
       return { ok: false, reason: String(e) }
@@ -741,6 +832,7 @@ export const useBpmnStore = defineStore('bpmn', () => {
     if (!_ruleHasAnyTask(ruleId) && !hybridUnassignedRuleIds.value.includes(ruleId)) {
       hybridUnassignedRuleIds.value = [...hybridUnassignedRuleIds.value, ruleId]
     }
+    showToast(`🗑️ rule "${_ruleLabel(ruleId)}" 를 "${_taskLabel(taskId)}" 에서 제거`, 'warn')
     return await res.json()
   }
 
@@ -759,6 +851,7 @@ export const useBpmnStore = defineStore('bpmn', () => {
     }
     // Rule is now attached — strip from unassigned pool.
     hybridUnassignedRuleIds.value = hybridUnassignedRuleIds.value.filter(id => id !== ruleId)
+    showToast(`✅ rule "${_ruleLabel(ruleId)}" 를 "${_taskLabel(taskId)}" 에 추가`, 'info')
     return await res.json()
   }
 
@@ -778,6 +871,7 @@ export const useBpmnStore = defineStore('bpmn', () => {
           : [...rules, { ...rule, confidence: 1.0, match_method: 'manual', reviewed: true }],
       )
     }
+    showToast(`⚖️ rule "${_ruleLabel(ruleId)}" 를 "${_taskLabel(fromTaskId)}" → "${_taskLabel(toTaskId)}" 로 이동`, 'info')
     return await res.json()
   }
 
@@ -995,7 +1089,11 @@ export const useBpmnStore = defineStore('bpmn', () => {
     hybridUnassignedRuleIds.value = []
     hybridSessionId.value = null
     reviewModalItem.value = null
+    rejectedRulesByTask.value = {}   // B3
+    toastHistory.value = []
     _saveSessionId(null)
+    _saveRejects(null, null)         // B3
+    _saveToastLog(null, [])
   }
 
   return {
@@ -1061,6 +1159,8 @@ export const useBpmnStore = defineStore('bpmn', () => {
     isExploring,
     toast,
     showToast,
+    toastHistory,
+    clearToastHistory,
     isRuleRemoving,
     closeAgentStream,
     markAgentCached,

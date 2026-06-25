@@ -198,11 +198,11 @@ export const useRequirementsStore = defineStore('requirements', () => {
   }
 
   /** Create an Epic — i.e. a BoundedContext (034 US1). */
-  async function createEpic(name, description = null) {
+  async function createEpic(name, description = null, displayName = null) {
     const res = await fetch('/api/requirements/bounded-context', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description }),
+      body: JSON.stringify({ name, displayName, description }),
     })
     if (!res.ok) throw await _httpError(res, 'create epic failed')
     await fetchTree()
@@ -210,11 +210,14 @@ export const useRequirementsStore = defineStore('requirements', () => {
   }
 
   /** Rename / re-describe an Epic (034 US3). Relationships preserved server-side. */
-  async function updateEpic(boundedContextId, { name = null, description = null } = {}) {
+  async function updateEpic(
+    boundedContextId,
+    { name = null, displayName = null, description = null } = {},
+  ) {
     const res = await fetch('/api/requirements/bounded-context', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boundedContextId, name, description }),
+      body: JSON.stringify({ boundedContextId, name, displayName, description }),
     })
     if (!res.ok) throw await _httpError(res, 'update epic failed')
     await fetchTree()
@@ -551,7 +554,13 @@ export const useRequirementsStore = defineStore('requirements', () => {
           }
           fetchClarificationSession(sessionId)
         } else if (event.phase === 'edit_ready' && event.data) {
-          clarificationProposal.value = event.data.proposal
+          // apply 후 늦게 도착한 edit_ready가 이미 처리된(applied/skipped) 질문의
+          // 편집안을 되살리지 않도록 가드 — 현재 세션에서 그 질문이 처리됐으면 무시.
+          const pq = event.data.proposal?.questionId
+          const q = (clarificationSession.value?.questions || []).find((x) => x.questionId === pq)
+          if (!q || (q.status !== 'applied' && q.status !== 'skipped')) {
+            clarificationProposal.value = event.data.proposal
+          }
         }
         if (clarificationSession.value) {
           clarificationSession.value = {
@@ -627,7 +636,16 @@ export const useRequirementsStore = defineStore('requirements', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`answer failed: ${res.status}`)
+    if (!res.ok) {
+      // 409 = 이 질문이 더 이상 현재(pending) 질문이 아님(이미 처리됨/순서 어긋남).
+      // 던지지 말고 세션을 다시 동기화해 실제 현재 질문으로 UI를 복구한다(I8-후속).
+      if (res.status === 409) {
+        clarificationProposal.value = null
+        await fetchClarificationSession(sid)
+        return null
+      }
+      throw new Error(`answer failed: ${res.status}`)
+    }
     const proposal = await res.json()
     if (proposal.needsDisambiguation) {
       clarificationDisambiguation.value = proposal.disambiguationPrompt || '답변을 다시 입력해 주세요.'
@@ -650,7 +668,16 @@ export const useRequirementsStore = defineStore('requirements', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ questionId }),
     })
-    if (!res.ok) throw new Error(`apply failed: ${res.status}`)
+    if (!res.ok) {
+      // 409 = 이 질문이 이미 적용됨/answered 아님(stale proposal 재클릭 등).
+      // 던지지 말고 stale proposal을 비우고 세션을 재동기화한다.
+      if (res.status === 409) {
+        clarificationProposal.value = null
+        await fetchClarificationSession(sid)
+        return null
+      }
+      throw new Error(`apply failed: ${res.status}`)
+    }
     const data = await res.json()
     if (data.conflict) {
       clarificationError.value = data.conflict.message || '요구사항이 외부에서 변경되었습니다.'
@@ -803,6 +830,160 @@ export const useRequirementsStore = defineStore('requirements', () => {
     } finally {
       editHistoryLoading.value = false
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // 035 — DDD 발견 마법사 & 도메인 캔버스
+  // 진실의 원천=그래프. 캔버스=투영, 모든 변경 propose→confirm. 이원화 엔진 재사용.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /** 마법사 시작: 프로파일링 → 추천 단계 조합. engine 기본=현재 생성엔진 설정. */
+  async function startDddWizard({ scope = 'greenfield', epicId = null, profile, engine = null }) {
+    const res = await fetch('/api/requirements/ddd-wizard/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope, epicId, profile, engine: engine || generationEngine.value }),
+    })
+    if (!res.ok) throw await _httpError(res, 'wizard start failed')
+    return res.json() // { sessionId, recommendedPlan, profileSummary }
+  }
+
+  /** 한 단계 진행(SSE) — proposal 이벤트의 data를 콜백으로 전달. */
+  function streamDddWizardStep(sessionId, stepKey, { onReasoning, onProposal, onDone, onError } = {}) {
+    const es = new EventSource(
+      `/api/requirements/ddd-wizard/${sessionId}/step/${encodeURIComponent(stepKey)}/stream`,
+    )
+    es.addEventListener('reasoning', (ev) => {
+      try { onReasoning && onReasoning(JSON.parse(ev.data)) } catch {}
+    })
+    es.addEventListener('proposal', (ev) => {
+      try { onProposal && onProposal(JSON.parse(ev.data)) } catch {}
+    })
+    es.addEventListener('done', (ev) => {
+      try { onDone && onDone(JSON.parse(ev.data)) } catch {}
+      es.close()
+    })
+    es.addEventListener('error', (ev) => {
+      onError && onError(ev)
+      es.close()
+    })
+    return es
+  }
+
+  /** 답변/문서 제출 → 단계 산출물·그래프 변경안(동기). */
+  async function answerDddWizard(sessionId, { stepKey, answers = {}, pastedDocument = null }) {
+    const res = await fetch(`/api/requirements/ddd-wizard/${sessionId}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stepKey, answers, pastedDocument }),
+    })
+    if (!res.ok) throw await _httpError(res, 'wizard answer failed')
+    return res.json() // WizardProposal
+  }
+
+  /** 단계 확정 — 수락한 변경만 그래프 반영(빈 목록=무변경). */
+  async function confirmDddWizardStep(sessionId, stepKey, acceptedChangeIds) {
+    const res = await fetch(
+      `/api/requirements/ddd-wizard/${sessionId}/step/${encodeURIComponent(stepKey)}/confirm`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepKey, acceptedChangeIds }),
+      },
+    )
+    if (!res.ok) throw await _httpError(res, 'wizard confirm failed')
+    const data = await res.json()
+    await fetchTree()
+    return data
+  }
+
+  // ── 피보탈 이벤트 (US2) ────────────────────────────────────────────────
+  async function togglePivotal(eventId, { pivotal = null, hotspot = null } = {}) {
+    const res = await fetch('/api/requirements/pivotal-events/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId, pivotal, hotspot }),
+    })
+    if (!res.ok) throw await _httpError(res, 'pivotal toggle failed')
+    return res.json()
+  }
+
+  async function proposeSubdomains() {
+    const res = await fetch('/api/requirements/pivotal-events/subdomains/propose')
+    if (!res.ok) throw await _httpError(res, 'subdomain propose failed')
+    return res.json() // { proposals: [...] }
+  }
+
+  // ── BC / Aggregate Canvas (US3/US5) ────────────────────────────────────
+  async function fetchBcCanvas(bcId) {
+    const res = await fetch(`/api/requirements/bounded-context/${bcId}/canvas`)
+    if (!res.ok) throw await _httpError(res, 'bc canvas fetch failed')
+    return res.json()
+  }
+
+  async function patchBcCanvas(bcId, fields, ifMatch = null) {
+    const headers = { 'Content-Type': 'application/json' }
+    if (ifMatch != null) headers['If-Match'] = String(ifMatch)
+    const res = await fetch(`/api/requirements/bounded-context/${bcId}/canvas`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(fields),
+    })
+    if (!res.ok) throw await _httpError(res, 'bc canvas patch failed')
+    return res.json()
+  }
+
+  async function fetchAggregateCanvas(aggregateId) {
+    const res = await fetch(`/api/requirements/aggregate/${aggregateId}/canvas`)
+    if (!res.ok) throw await _httpError(res, 'aggregate canvas fetch failed')
+    return res.json()
+  }
+
+  async function patchAggregateCanvas(aggregateId, fields, ifMatch = null) {
+    const headers = { 'Content-Type': 'application/json' }
+    if (ifMatch != null) headers['If-Match'] = String(ifMatch)
+    const res = await fetch(`/api/requirements/aggregate/${aggregateId}/canvas`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(fields),
+    })
+    if (!res.ok) throw await _httpError(res, 'aggregate canvas patch failed')
+    return res.json()
+  }
+
+  /** BC 캔버스 자동생성 초안(기존 ddd-spec 렌더러 재사용). */
+  async function generateBcCanvas(bcId) {
+    const res = await fetch('/api/ddd-spec/generate-bounded-context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bounded_context_id: bcId }),
+    })
+    if (!res.ok) throw await _httpError(res, 'bc canvas generate failed')
+    return res.json()
+  }
+
+  // ── 전략 분류 (US6) ────────────────────────────────────────────────────
+  async function setBcClassification(bcId, classification, ifMatch = null) {
+    const headers = { 'Content-Type': 'application/json' }
+    if (ifMatch != null) headers['If-Match'] = String(ifMatch)
+    const res = await fetch(`/api/contexts/${bcId}/classification`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ classification }),
+    })
+    if (!res.ok) throw await _httpError(res, 'classification failed')
+    return res.json()
+  }
+
+  // ── .ddd 내보내기 (US7) ────────────────────────────────────────────────
+  async function exportDdd({ outputDir = '.ddd', steps = null } = {}) {
+    const res = await fetch('/api/requirements/ddd-export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outputDir, steps }),
+    })
+    if (!res.ok) throw await _httpError(res, 'ddd export failed')
+    return res.json() // { writtenFiles, skipped }
   }
 
   /** Explicit data deletion (US6) — calls the existing clear-all endpoint. */
@@ -1102,6 +1283,20 @@ export const useRequirementsStore = defineStore('requirements', () => {
     fetchClarityScores,
     isUserStoryFlagged,
     closeClarification,
+    // ── DDD 마법사 & 캔버스 (035) ──────────────────────────────────────
+    startDddWizard,
+    streamDddWizardStep,
+    answerDddWizard,
+    confirmDddWizardStep,
+    togglePivotal,
+    proposeSubdomains,
+    fetchBcCanvas,
+    patchBcCanvas,
+    fetchAggregateCanvas,
+    patchAggregateCanvas,
+    generateBcCanvas,
+    setBcClassification,
+    exportDdd,
     // ── Requirement Changes (038) ──────────────────────────────────────
     changes,
     changesLoading,

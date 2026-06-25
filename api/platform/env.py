@@ -102,7 +102,7 @@ def get_llm_provider(default: str = "openai") -> str:
     return env_str("LLM_PROVIDER", default) or default
 
 
-def get_llm_model(default: str = "gpt-4.1-2025-04-14") -> str:
+def get_llm_model(default: str = "gpt-5.5") -> str:
     """Get configured LLM model name."""
     return env_str("LLM_MODEL", default) or default
 

@@ -65,6 +65,45 @@ class BpmSequenceDTO(BaseModel):
     process_id: Optional[str] = None
 
 
+class BpmGatewayDTO(BaseModel):
+    """A BPMN gateway (branch/merge point) — first-class flow node.
+
+    Persisted as a `:BpmGateway` node so the BPM graph faithfully carries the
+    decision points the A2A extractor (or native fallback) detected, instead of
+    flattening them away. `incoming`/`outgoing` reference the *robo* flow-node
+    ids (BpmTask or BpmGateway) this gateway connects, mirroring the BPMN
+    sequenceFlow topology.
+    """
+
+    id: str                                                # gw_<hex>
+    name: str = ""                                         # decision label, e.g. "결제수단 종류"
+    gateway_type: str = "exclusive"                        # exclusive | parallel | inclusive | complex
+    description: Optional[str] = None
+    # Branch-decision form/field keys (extractor's `conditionData`) — what the
+    # gateway evaluates to pick a branch. Empty for native-derived gateways.
+    condition_data: list[str] = Field(default_factory=list)
+    actor_ids: list[str] = Field(default_factory=list)     # lane membership
+    process_id: Optional[str] = None
+    source_page: Optional[int] = None
+
+
+class BpmFlowDTO(BaseModel):
+    """A BPMN sequenceFlow edge between two flow nodes (task/gateway).
+
+    Persisted as a `(:BpmTask|:BpmGateway)-[:BPMN_FLOW]->(:BpmTask|:BpmGateway)`
+    edge. `name`/`condition` carry the branch label (e.g. "은행") and guard.
+    Boundary endpoints (start/end events) are dropped — robo has no event nodes,
+    and the linear BpmSequence/NEXT chain already marks the backbone.
+    """
+
+    id: str                                                # flow_<hex>
+    source_id: str                                         # robo id of source flow node
+    target_id: str                                         # robo id of target flow node
+    name: str = ""                                         # branch label / condition text
+    condition: Optional[str] = None                        # guard expression if any
+    process_id: Optional[str] = None
+
+
 class BpmSkeleton(BaseModel):
     """Phase 1 output for ONE process: Actor/Task/Sequence graph.
 
@@ -76,6 +115,13 @@ class BpmSkeleton(BaseModel):
     actors: list[BpmActor] = Field(default_factory=list)
     tasks: list[BpmTaskDTO] = Field(default_factory=list)
     sequences: list[BpmSequenceDTO] = Field(default_factory=list)
+    # Branch/merge points + the sequenceFlow topology connecting flow nodes.
+    # Empty for a purely linear process; populated when the A2A extractor (or
+    # native fallback) detects gateways. The linear `sequences`/NEXT chain is
+    # kept as the task backbone (rule mapping/trace rely on it); `gateways` +
+    # `flows` are the faithful branch graph.
+    gateways: list[BpmGatewayDTO] = Field(default_factory=list)
+    flows: list[BpmFlowDTO] = Field(default_factory=list)
     # Optional raw BPMN 2.0 XML if we emit one in Phase 1 (per-process XML)
     bpmn_xml: Optional[str] = None
     # The process this skeleton describes. Populated by the adapter/native
@@ -102,12 +148,17 @@ class ProcessBundle(BaseModel):
         actors: list[BpmActor] = []
         tasks: list[BpmTaskDTO] = []
         sequences: list[BpmSequenceDTO] = []
+        gateways: list[BpmGatewayDTO] = []
+        flows: list[BpmFlowDTO] = []
         for s in self.processes:
             actors.extend(s.actors)
             tasks.extend(s.tasks)
             sequences.extend(s.sequences)
+            gateways.extend(s.gateways)
+            flows.extend(s.flows)
         return BpmSkeleton(
-            actors=actors, tasks=tasks, sequences=sequences, bpmn_xml=self.bpmn_xml,
+            actors=actors, tasks=tasks, sequences=sequences,
+            gateways=gateways, flows=flows, bpmn_xml=self.bpmn_xml,
         )
 
 

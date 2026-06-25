@@ -20,6 +20,22 @@ def a2a_timeout_s() -> float:
         return 300.0
 
 
+def facade_url() -> str:
+    """Base URL of the pdf2bpmn-facade REST service (direct-parse, gateway-rich
+    BPMN, no Memento). When set, it is the PREFERRED Phase-1 path: robo uploads
+    the PDF bytes directly, so there is no Memento pre-ingestion or pdf_url
+    reachability requirement. Empty → disabled (fall back to A2A / native).
+    """
+    return os.getenv("PDF2BPMN_FACADE_URL", "").rstrip("/")
+
+
+def facade_timeout_s() -> float:
+    try:
+        return float(os.getenv("PDF2BPMN_FACADE_TIMEOUT_S", "600"))
+    except ValueError:
+        return 600.0
+
+
 def a2a_pdf_tmp_dir() -> str:
     """Directory where the uploaded PDF is written so the A2A service can read it.
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -10,6 +11,19 @@ from typing import AsyncGenerator
 from api.platform.observability.smart_logger import SmartLogger
 
 _PROJECT_ROOT = Path(__file__).parents[4]
+
+
+def _skill_env() -> dict:
+    """헤드리스 claude 서브프로세스용 환경.
+
+    백엔드가 .env 의 (만료/무효일 수 있는) ANTHROPIC_API_KEY 를 os.environ 에 로드하면
+    헤드리스 claude 가 그 키로 인증을 시도해 'Invalid API key' 로 즉시 실패한다.
+    키를 제거하면 claude.ai 로그인(구독)으로 폴백한다.
+    """
+    env = dict(os.environ)
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        env.pop(k, None)
+    return env
 
 
 def _skill_path(skill_name: str) -> Path:
@@ -66,6 +80,7 @@ async def run_specify_skill(change_id: str, original_prompt: str, domain_nodes: 
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(_PROJECT_ROOT),
+            env=_skill_env(),
         )
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             proc.communicate(), timeout=120
@@ -149,6 +164,7 @@ async def run_skill_lines(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(_PROJECT_ROOT),
+            env=_skill_env(),
         )
 
         buf = b""

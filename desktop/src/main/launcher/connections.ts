@@ -15,12 +15,13 @@ import neo4j, { auth, type Driver, type ServerInfo } from "neo4j-driver";
 
 import { IpcErrorCodes } from "../../shared/ipc-contract";
 import type {
+  ActiveBackendConnection,
   ConnectionsSaveInput,
   SavedConnection,
 } from "../../shared/launcher-contract";
 import { connectionPasswordSecretId } from "../../shared/launcher-contract";
 import { IpcHandlerError } from "../ipc";
-import { rekeySecret as rekey, setSecret } from "../secret-store";
+import { getSecret, rekeySecret as rekey, setSecret } from "../secret-store";
 import { loadSettings, saveSettings } from "../settings";
 
 const TEST_TIMEOUT_MS = 5000;
@@ -256,6 +257,37 @@ function mapDriverError(err: unknown): IpcHandlerError {
   }
   // Fallback
   return new IpcHandlerError(IpcErrorCodes.NEO4J_UNREACHABLE, message);
+}
+
+// ---------------------------------------------------------------------------
+// connections:resolveActiveForBackend — 임베드 백엔드용 활성 연결 자격증명 조회.
+//
+// lastProfile(마지막 Enter 한 연결)의 SavedConnection + 키체인 비밀번호를 합쳐
+// 전체 자격증명을 반환한다. 렌더러(AnalysisPanel)가 mount 직전 1회 호출 →
+// analyzer mount({neo4j}) → X-Neo4j-* 헤더로 백엔드 override.
+// 활성 프로필 또는 비번이 없으면 null → 백엔드는 자체 env(ROBO_NEO4J_*) 폴백.
+//
+// 비번은 키체인에서 즉시 읽어 반환만 하고 영속(settings.json)하지 않는다 —
+// 렌더러는 헤더로 흘려보낼 뿐 localStorage 에 저장하지 않는다(localhost 전용 전송).
+// ---------------------------------------------------------------------------
+
+export async function resolveActiveForBackend(): Promise<ActiveBackendConnection | null> {
+  const settings = await loadSettings();
+  const connectionId = settings.lastProfile?.connectionId;
+  if (!connectionId) return null;
+
+  const connection = settings.savedConnections.find((c) => c.id === connectionId);
+  if (!connection) return null;
+
+  const password = await getSecret(connectionPasswordSecretId(connection.id));
+  if (password === null) return null;
+
+  return {
+    uri: connection.uri,
+    user: connection.user,
+    password,
+    database: connection.database,
+  };
 }
 
 /** Internal helper used by launcher:enter to refresh the timestamp. */

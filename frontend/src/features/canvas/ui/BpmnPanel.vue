@@ -2,6 +2,11 @@
 import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import BpmnViewer from 'bpmn-js/lib/NavigatedViewer'
+import { layoutProcess } from 'bpmn-auto-layout'
+// process-gpt's custom renderer (cream tasks, Korean text wrapping, colored
+// events/lanes). Same bpmn-js engine — this is the module that makes their
+// diagrams look the way they do; robo now renders identically.
+import customBpmnModule from '@/features/canvas/customBpmn'
 import BpmnInspectorPanel from './BpmnInspectorPanel.vue'
 import HybridTaskInspector from './HybridTaskInspector.vue'
 import HybridReviewModal from './HybridReviewModal.vue'
@@ -27,6 +32,14 @@ const flowTabs = computed(() => store.renderedFlows)
 const esPromoting = ref(false)
 const esError = ref('')
 const showPromoteModal = ref(false)
+
+// B4 — toast log. Explore/arbitration fire a burst of toasts that overwrite
+// each other and vanish in 4s; the store keeps them in `toastHistory` so the
+// user can open this panel and review them.
+const showToastLog = ref(false)
+function fmtToastTime(ts) {
+  try { return new Date(ts).toLocaleTimeString() } catch { return '' }
+}
 
 function openPromoteModal() {
   const hsid = store.hybridSessionId
@@ -111,6 +124,66 @@ watch(() => store.activeBpmnXml, async (xml) => {
   await renderBpmn(xml)
 }, { immediate: true })
 
+// bpmn-auto-layout lays out the process nodes but discards the collaboration's
+// Pool/Lane DI, so the swimlane vanishes. Re-inject a Participant (+ Lane) shape
+// computed from the bounding box of the laid-out nodes. Best-effort: any failure
+// returns the input unchanged.
+function reAddLaneDI(layoutedXml) {
+  try {
+    const doc = new DOMParser().parseFromString(layoutedXml, 'application/xml')
+    if (doc.querySelector('parsererror')) return layoutedXml
+    const byLocal = (root, name) =>
+      [...root.getElementsByTagName('*')].filter(n => n.localName === name)
+    const plane = byLocal(doc, 'BPMNPlane')[0]
+    if (!plane) return layoutedXml
+    const shapes = byLocal(plane, 'BPMNShape')
+    if (!shapes.length) return layoutedXml
+    if (shapes.some(s => /participant|lane/i.test(s.getAttribute('bpmnElement') || '')))
+      return layoutedXml
+    const participant = byLocal(doc, 'participant')[0]
+    if (!participant) return layoutedXml // plain process, no swimlane to restore
+    const lane = byLocal(doc, 'lane')[0]
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const s of shapes) {
+      const b = byLocal(s, 'Bounds')[0]
+      if (!b) continue
+      const x = +b.getAttribute('x'), y = +b.getAttribute('y')
+      const w = +b.getAttribute('width'), h = +b.getAttribute('height')
+      minX = Math.min(minX, x); minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x + w); maxY = Math.max(maxY, y + h)
+    }
+    if (!isFinite(minX)) return layoutedXml
+    const headW = 30, padX = 40, padY = 30
+    const px = minX - padX - headW, py = minY - padY
+    const pw = (maxX - minX) + padX * 2 + headW, ph = (maxY - minY) + padY * 2
+
+    const DI_NS = shapes[0].namespaceURI
+    const DC_NS = byLocal(shapes[0], 'Bounds')[0].namespaceURI
+    const mkShape = (elId, x, y, w, h) => {
+      const sh = doc.createElementNS(DI_NS, 'bpmndi:BPMNShape')
+      sh.setAttribute('bpmnElement', elId)
+      sh.setAttribute('isHorizontal', 'true')
+      const bd = doc.createElementNS(DC_NS, 'dc:Bounds')
+      bd.setAttribute('x', x); bd.setAttribute('y', y)
+      bd.setAttribute('width', w); bd.setAttribute('height', h)
+      sh.appendChild(bd)
+      return sh
+    }
+    // Participant first so it renders behind the nodes; Lane just inside it.
+    const partShape = mkShape(participant.getAttribute('id'), px, py, pw, ph)
+    plane.insertBefore(partShape, plane.firstChild)
+    if (lane) {
+      const laneShape = mkShape(lane.getAttribute('id'), px + headW, py, pw - headW, ph)
+      plane.insertBefore(laneShape, partShape.nextSibling)
+    }
+    return new XMLSerializer().serializeToString(doc)
+  } catch (e) {
+    console.warn('[BpmnPanel] reAddLaneDI failed', e)
+    return layoutedXml
+  }
+}
+
 async function renderBpmn(xml) {
   if (!bpmnContainer.value) return
 
@@ -121,10 +194,25 @@ async function renderBpmn(xml) {
 
   viewer = new BpmnViewer({
     container: bpmnContainer.value,
+    additionalModules: [customBpmnModule],
   })
 
   try {
-    await viewer.importXML(xml)
+    // The BPMN comes from the pdf2bpm/facade generator, whose server-side DI
+    // (node coordinates) is a rough placeholder — nodes collide on the same x
+    // and edges cross. Regenerate a clean left-to-right layout with
+    // bpmn-auto-layout (element ids are preserved, so dblclick/highlight by id
+    // still works). Fall back to the original XML if layout fails.
+    let toRender = xml
+    try {
+      // bpmn-auto-layout drops the Pool/Lane DI (it only lays out the process),
+      // so re-wrap the laid-out nodes in their swimlane afterwards.
+      toRender = reAddLaneDI(await layoutProcess(xml))
+    } catch (layoutErr) {
+      console.warn('[BpmnPanel] auto-layout failed; rendering original DI', layoutErr)
+      toRender = xml
+    }
+    await viewer.importXML(toRender)
     const canvas = viewer.get('canvas')
     canvas.zoom('fit-viewport')
 
@@ -330,8 +418,11 @@ function closeInspector() {
         </button>
       </div>
 
-      <!-- Event Storming promote — floating controller (BPMN tab only) -->
+      <!-- Event Storming promote — floating controller (BPMN tab only).
+           BPM(A2A 생성분)이 있을 때만 노출. ES 승격은 BPM tasks가 전제(promote-to-es는
+           BPM 없으면 400)이므로, 문서 업로드 BPM이 없으면 버튼을 숨긴다. -->
       <button
+        v-if="store.hybridActive || store.hybridProcessTrees.length > 0"
         class="es-promote-fab"
         :class="{ 'is-error': !!esError }"
         :disabled="esPromoting"
@@ -422,6 +513,28 @@ function closeInspector() {
         {{ store.toast.message }}
       </div>
     </Transition>
+
+    <!-- B4 — toast/알림 이력. Burst toasts (탐색 완료 → rule 이동들) overwrite each
+         other and vanish; this log lets the user expand and review them. -->
+    <div v-if="store.toastHistory.length" class="bpmn-log">
+      <button class="bpmn-log__btn" :title="showToastLog ? '알림 이력 접기' : '알림 이력 보기'"
+              @click="showToastLog = !showToastLog">
+        🔔 알림 <span class="bpmn-log__badge">{{ store.toastHistory.length }}</span>
+      </button>
+      <div v-if="showToastLog" class="bpmn-log__panel">
+        <header class="bpmn-log__head">
+          <span>알림 이력 ({{ store.toastHistory.length }})</span>
+          <button class="bpmn-log__clear" @click="store.clearToastHistory()">비우기</button>
+        </header>
+        <ul class="bpmn-log__list">
+          <li v-for="t in store.toastHistory" :key="t.id"
+              class="bpmn-log__item" :class="'bpmn-log__item--' + t.type">
+            <span class="bpmn-log__time">{{ fmtToastTime(t.ts) }}</span>
+            <span class="bpmn-log__msg">{{ t.message }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -623,6 +736,9 @@ function closeInspector() {
 }
 
 /* bpmn-js overrides */
+/* Canvas backdrop follows robo's theme (dark in dark mode). The diagram elements
+   themselves (cream tasks, blue lanes) are drawn light by the renderer and stay
+   readable on the dark backdrop — no need to force the whole canvas white. */
 .bpmn-canvas :deep(.djs-container) {
   background: var(--color-bg) !important;
 }
@@ -643,12 +759,18 @@ function closeInspector() {
   stroke-dasharray: none !important;
 }
 
-.bpmn-canvas :deep(text) {
-  fill: #212121 !important;
-}
+/* Element colors (cream tasks, colored events, Korean text wrapping) are drawn
+   by CustomBpmnRenderer (ported from process-gpt) — NOT CSS. Do not re-add
+   task/event fill overrides here; they would fight the renderer.
 
-.bpmn-canvas :deep(.djs-label text) {
-  fill: #212121 !important;
+   EXCEPTION — pool/lane: bpmn-js draws lanes with a low fill-opacity (transparent
+   so the canvas shows through), so the renderer's #f4f8fc fill doesn't take and
+   the lane looks dark in dark mode (canvas bleeds through). Force it opaque +
+   fixed light so the lane background is identical in both themes. */
+.bpmn-canvas :deep(.djs-shape[data-element-id*="Participant"] .djs-visual > rect),
+.bpmn-canvas :deep(.djs-shape[data-element-id*="Lane"] .djs-visual > rect) {
+  fill: #f4f8fc !important;
+  fill-opacity: 1 !important;
 }
 
 /* Empty State */
@@ -759,4 +881,94 @@ function closeInspector() {
   opacity: 0;
   transform: translate(-50%, 8px);
 }
+
+/* B4 — toast/알림 이력 log (bottom-right) */
+.bpmn-log {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.bpmn-log__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  border: 1px solid var(--color-border, rgba(255,255,255,0.12));
+  border-radius: 18px;
+  background: var(--color-bg-elevated, #1b1f2a);
+  color: var(--color-text, #e6e6e6);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.bpmn-log__btn:hover { border-color: rgba(34,139,230,0.6); }
+.bpmn-log__badge {
+  min-width: 18px;
+  padding: 0 5px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-align: center;
+  border-radius: 9px;
+  background: rgba(34,139,230,0.9);
+  color: #fff;
+}
+.bpmn-log__panel {
+  width: 360px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border, rgba(255,255,255,0.12));
+  border-radius: 8px;
+  background: var(--color-bg-elevated, #1b1f2a);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  overflow: hidden;
+}
+.bpmn-log__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.08));
+  color: var(--color-text, #e6e6e6);
+}
+.bpmn-log__clear {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border, rgba(255,255,255,0.12));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-dim, #9aa0aa);
+  cursor: pointer;
+}
+.bpmn-log__list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+}
+.bpmn-log__item {
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  border-left: 3px solid transparent;
+}
+.bpmn-log__item--info { border-left-color: rgba(34,139,230,0.9); }
+.bpmn-log__item--warn { border-left-color: rgba(253,126,20,0.9); }
+.bpmn-log__time {
+  flex-shrink: 0;
+  color: var(--color-text-dim, #9aa0aa);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.66rem;
+  padding-top: 1px;
+}
+.bpmn-log__msg { color: var(--color-text, #e6e6e6); word-break: break-word; }
 </style>

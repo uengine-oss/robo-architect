@@ -18,6 +18,7 @@ from api.features.ingestion.hybrid.ontology.schema import (
     ALL_HYBRID_LABELS,
     L_ACTIVITY_MAPPING,
     L_BPM_ACTOR,
+    L_BPM_GATEWAY,
     L_BPM_PROCESS,
     L_BPM_SEQUENCE,
     L_BPM_TASK,
@@ -29,9 +30,11 @@ from api.features.ingestion.hybrid.ontology.schema import (
     L_GLOSSARY_TERM,
     L_BPM_SESSION,
     L_RULE,
+    R_BPMN_FLOW,
     R_CONTAINS,
     R_EVALUATES,
     R_HAS_ACTOR,
+    R_HAS_GATEWAY,
     R_HAS_TASK,
     R_IMPLEMENTED_BY,
     R_NEXT,
@@ -192,6 +195,48 @@ def save_bpm_skeleton(session_id: str, skeleton: BpmSkeleton) -> None:
                     f"MERGE (a)-[:{R_NEXT}]->(b)",
                     a=seq.task_ids[i], b=seq.task_ids[i + 1], sid=session_id,
                 )
+
+        # Gateways — branch/merge points parsed from the BPMN. First-class
+        # :BpmGateway nodes hung off the process, mirroring tasks.
+        for gw in skeleton.gateways:
+            s.run(
+                f"MERGE (g:{L_BPM_GATEWAY} {{id: $id, session_id: $sid}}) "
+                "SET g.name = $name, g.gateway_type = $gtype, "
+                "    g.description = $desc, g.condition_data = $cond, "
+                "    g.process_id = $pid",
+                id=gw.id, sid=session_id, name=gw.name, gtype=gw.gateway_type,
+                desc=gw.description, cond=list(gw.condition_data or []), pid=pid,
+            )
+            if pid:
+                s.run(
+                    f"MATCH (p:{L_BPM_PROCESS} {{id: $pid, session_id: $sid}}), "
+                    f"(g:{L_BPM_GATEWAY} {{id: $gid, session_id: $sid}}) "
+                    f"MERGE (p)-[:{R_HAS_GATEWAY}]->(g)",
+                    pid=pid, gid=gw.id, sid=session_id,
+                )
+            for actor_id in gw.actor_ids:
+                s.run(
+                    f"MATCH (a:{L_BPM_ACTOR} {{id: $aid, session_id: $sid}}), "
+                    f"(g:{L_BPM_GATEWAY} {{id: $gid, session_id: $sid}}) "
+                    f"MERGE (a)-[:{R_PERFORMS}]->(g)",
+                    aid=actor_id, gid=gw.id, sid=session_id,
+                )
+
+        # Sequence flows — the faithful branch topology connecting flow nodes
+        # (tasks/gateways). Endpoints are matched against either label; flows
+        # whose endpoints aren't persisted (e.g. start/end boundary events,
+        # which robo doesn't model) are skipped so the edge never dangles.
+        for fl in skeleton.flows:
+            s.run(
+                f"MATCH (src) WHERE (src:{L_BPM_TASK} OR src:{L_BPM_GATEWAY}) "
+                "  AND src.id = $src AND src.session_id = $sid "
+                f"MATCH (dst) WHERE (dst:{L_BPM_TASK} OR dst:{L_BPM_GATEWAY}) "
+                "  AND dst.id = $dst AND dst.session_id = $sid "
+                f"MERGE (src)-[r:{R_BPMN_FLOW} {{id: $fid}}]->(dst) "
+                "SET r.name = $name, r.condition = $cond",
+                src=fl.source_id, dst=fl.target_id, sid=session_id,
+                fid=fl.id, name=fl.name, cond=fl.condition,
+            )
 
 
 def link_process_module(

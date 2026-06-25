@@ -2,6 +2,8 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+// 043-fix — 미리보기(Data) 중에는 라이브 CQRS 참조 검사를 건너뛴다(제안 diff 대상).
+import { isAnyPreviewActive } from '@/app/previewSession'
 
 const log = createLogger({ scope: 'PropertyEditorTable' })
 const terminologyStore = useTerminologyStore()
@@ -366,7 +368,11 @@ function buildDraftChanges() {
       targetId: id,
       targetType: 'Property',
       targetName: init.name,
-      updates: {}
+      // 040 미리보기: 백엔드 apply_chat_drafts 가 삭제 대상을 부모 Aggregate 의 properties
+      // 컬렉션에서 찾아 제거하려면 부모 식별자가 필요하다. 미리보기 오버레이 속성은 Neo4j id 가
+      // 없어(prop-noid-*) targetId 로는 매칭 불가하므로 name 으로 매칭한다. 라이브 경로는 이
+      // 추가 메타를 무시하므로(/api/chat/confirm 은 updates 만 참조) 회귀 없음.
+      updates: { name: init.name, parentType, parentId }
     })
   }
 
@@ -422,8 +428,15 @@ function buildDraftChanges() {
         action: 'rename',
         targetId: r.id,
         targetType: 'Property',
+        // targetName 은 라이브 경로(/api/chat/confirm `_apply_rename_tx`)가 참조하는 **새 이름**.
+        // 라이브는 targetId(실제 Neo4j id)로 대상을 찾아 targetName 으로 rename 하므로 불변.
         targetName: name,
-        updates: {}
+        // 040 미리보기: 백엔드 apply_chat_drafts 가 rename 대상을 부모 Aggregate 의 properties
+        // 컬렉션에서 찾으려면 (1) 부모 식별자 (2) 매칭용 '옛 이름'이 필요하다. 미리보기 오버레이
+        // 속성은 Neo4j id 가 없어(prop-noid-*) targetId 매칭 불가하므로 updates.oldName(옛 이름)
+        // 으로 매칭하고, 새 이름은 targetName 으로 적용한다. delete/update 와 동일한 부모-동봉
+        // 규약(1db35e8). 라이브 rename 은 updates 를 참조하지 않으므로 회귀 없음.
+        updates: { parentType, parentId, oldName: normalizeName(init.name) }
       })
     }
 
@@ -442,7 +455,13 @@ function buildDraftChanges() {
         targetId: r.id,
         targetType: 'Property',
         targetName: name,
-        updates
+        // 040 미리보기: 백엔드 apply_chat_drafts 가 수정 대상을 부모 Aggregate 의 properties
+        // 컬렉션에서 찾아 병합하려면 부모 식별자가 필요하다(_child_parent_id). 미리보기 오버레이
+        // 속성은 Neo4j id 가 없어(prop-noid-*) targetId 로는 매칭 불가하므로 name 으로 매칭한다.
+        // 라이브 경로(/api/chat/confirm)도 Property update 시 parentType/parentId 를 셀렉터로
+        // 기대하며(_apply_update_tx 화이트리스트에서 제외되어 SET 되지 않음) 회귀 없음 — delete
+        // 초안과 동일 규약(1db35e8).
+        updates: { ...updates, parentType, parentId }
       })
     }
   }
@@ -551,6 +570,14 @@ async function openDeleteConfirm(row) {
   const isNew = String(row.id || '').startsWith('prop-temp-')
   if (isNew) {
     state.rows = state.rows.filter(r => r?.id !== row.id)
+    return
+  }
+
+  // 043-fix — 미리보기(Data/Design)에서는 삭제가 라이브가 아니라 제안 diff 로 가므로 라이브
+  // CQRS 참조 검사(/api/cqrs/...)는 무의미하다(미리보기 전용 속성은 라이브에 없어 404→모달로
+  // 막힌다). 바로 삭제 표시한다.
+  if (isAnyPreviewActive.value) {
+    state.deletedIds.add(row.id)
     return
   }
 

@@ -40,9 +40,11 @@ class _LLMFeatures(BaseModel):
 _EPIC_SYSTEM = (
     "You are a DDD domain architect. From the user's natural-language "
     "description, propose 1–3 Bounded Contexts (Epics) — each a cohesive "
-    "business capability area with a short name and a one-line description. "
-    "Avoid duplicating the existing Bounded Contexts listed. Write name/"
-    "description in the SAME natural language as the user's input."
+    "business capability area. For each, return: `name` = a concise English "
+    "PascalCase technical identifier (no spaces, e.g. CustomerSupport), "
+    "`displayName` = a short human label in the SAME natural language as the "
+    "user's input (e.g. 고객센터), and `description` = a one-line summary in "
+    "that same language. Avoid duplicating the existing Bounded Contexts listed."
 )
 
 _FEATURE_SYSTEM = (
@@ -81,7 +83,7 @@ async def propose_epic(req: EpicProposeRequest, request: Request) -> EpicPropose
     prompt = f"설명: {req.text}\n\n기존 Bounded Context: {', '.join(existing) or '(없음)'}"
     try:
         structured = get_llm().with_structured_output(_LLMEpics)
-        result: _LLMEpics = structured.invoke(
+        result: _LLMEpics = await structured.ainvoke(
             [SystemMessage(content=_EPIC_SYSTEM), HumanMessage(content=prompt)]
         )
         proposals = [p for p in (result.proposals or []) if (p.name or "").strip()]
@@ -109,7 +111,7 @@ async def propose_feature(req: FeatureProposeRequest, request: Request) -> Featu
     )
     try:
         structured = get_llm().with_structured_output(_LLMFeatures)
-        result: _LLMFeatures = structured.invoke(
+        result: _LLMFeatures = await structured.ainvoke(
             [SystemMessage(content=_FEATURE_SYSTEM), HumanMessage(content=prompt)]
         )
         proposals = []

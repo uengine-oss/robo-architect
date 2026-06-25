@@ -99,3 +99,14 @@ frontend/dist
 frontend/dist/
 # Office temp/lock files
 ~$*
+
+# Local tooling / agent config (not project deliverables)
+.codegraph/
+.cursor/
+.mcp.json
+
+# pdf2bpmn real secrets (use deploy/secrets.example.yaml as template)
+deploy/secrets.yaml
+
+# Runtime-generated proposal acceptance log (append-only; caused merge conflicts)
+specs/proposal-changes.md

@@ -1297,6 +1297,37 @@ export const useCanvasStore = defineStore('canvas', () => {
     selectedNodeIds.value = new Set()
     collapsedBCs.value = new Set()
   }
+
+  // 043-fix Proposal Design 미리보기 — 라이브 캔버스 상태를 스냅샷해 두고(begin) 미리보기로
+  // 대체했다가, 미리보기 배너 '닫기' 시 원상 복원(end). 잔존물 0(Constitution I / 040 US2).
+  const _previewSnapshot = ref(null)
+
+  function beginPreview() {
+    if (_previewSnapshot.value) return // 이미 미리보기 중이면 라이브 스냅샷 보존
+    _previewSnapshot.value = {
+      nodes: nodes.value,
+      edges: edges.value,
+      bcContainers: bcContainers.value,
+      selectedNodeIds: selectedNodeIds.value,
+      collapsedBCs: collapsedBCs.value,
+    }
+    nodes.value = []
+    edges.value = []
+    bcContainers.value = {}
+    selectedNodeIds.value = new Set()
+    collapsedBCs.value = new Set()
+  }
+
+  function endPreview() {
+    const snap = _previewSnapshot.value
+    if (!snap) return
+    nodes.value = snap.nodes
+    edges.value = snap.edges
+    bcContainers.value = snap.bcContainers
+    selectedNodeIds.value = snap.selectedNodeIds
+    collapsedBCs.value = snap.collapsedBCs
+    _previewSnapshot.value = null
+  }
   
   // Check if BC is collapsed
   function isBCCollapsed(bcId) {
@@ -2333,6 +2364,8 @@ export const useCanvasStore = defineStore('canvas', () => {
     removeNode,
     removeBC,
     clearCanvas,
+    beginPreview,
+    endPreview,
     patchNodeData,
     updateNodePosition,
     updateBCSize,

@@ -413,7 +413,30 @@ const previousBcIds = ref(new Set())
 // Track visible aggregate IDs — aggregate-level visibility can change without
 // the BC set changing (e.g. drilling into one aggregate of an already-loaded BC).
 const previousAggIds = ref(new Set())
+// Track a content signature (properties/enum/vo) so that *in-place* edits — e.g.
+// adding a property via the inspector / preview edit — rebuild the affected nodes
+// even though the set of BC/aggregate ids is unchanged.
+const previousAggSignature = ref('')
 const isRebuilding = ref(false) // Flag to prevent position reset during rebuild
+
+// Build a stable content signature for the currently visible aggregates. Changes
+// here (a new property, a renamed field, an added enum item) trigger a node rebuild.
+function computeAggSignature(bcs) {
+  return JSON.stringify((bcs || []).map(bc => ({
+    id: bc.id,
+    aggs: (bc.aggregates || []).map(a => ({
+      id: a.id,
+      p: (a.properties || []).map(p => [p.name, p.type, p.isKey, p.isForeignKey, p.isRequired, p.displayName]),
+      // 항목 개수뿐 아니라 각 item 값 / field name·type 까지 포함해야 기존 요소의
+      // 이름·타입을 *수정*했을 때(개수 불변)도 시그니처가 바뀌어 캔버스가 재빌드된다.
+      e: (a.enumerations || []).map(e => [e.name, e.alias, ...(e.items || [])]),
+      v: (a.valueObjects || []).map(v => [
+        v.name, v.alias, v.referencedAggregateName, v.referencedAggregateField,
+        ...(v.fields || []).map(f => `${f?.name || ''}:${f?.type || ''}`),
+      ]),
+    })),
+  })))
+}
 
 // Update nodes when store data changes - when BC OR aggregate structure changes
 watch(() => store.filteredBoundedContexts, (newBcs) => {
@@ -431,14 +454,21 @@ watch(() => store.filteredBoundedContexts, (newBcs) => {
   const aggRemoved = Array.from(previousAggIds.value).some(id => !newAggIds.has(id))
   const aggStructureChanged = aggAdded || aggRemoved
 
-  // If neither BC nor aggregate structure changed, don't rebuild
-  if (!bcStructureChanged && !aggStructureChanged && previousBcIds.value.size > 0) {
+  // Detect in-place content edits (property/enum/vo change) on the same set of
+  // aggregates — e.g. "Save Properties" in the inspector. Without this the canvas
+  // would not reflect the edit until the aggregate set itself changed.
+  const newAggSignature = computeAggSignature(newBcs)
+  const contentChanged = newAggSignature !== previousAggSignature.value
+
+  // If neither structure nor content changed, don't rebuild
+  if (!bcStructureChanged && !aggStructureChanged && !contentChanged && previousBcIds.value.size > 0) {
     return
   }
 
-  // Update previous BC / aggregate IDs
+  // Update previous BC / aggregate IDs + content signature
   previousBcIds.value = newBcIds
   previousAggIds.value = newAggIds
+  previousAggSignature.value = newAggSignature
   
   // Set rebuilding flag
   isRebuilding.value = true
@@ -1239,13 +1269,22 @@ onMounted(() => {
 })
 
 // Ensure an aggregate is loaded and bring its grouping box into view.
-async function focusOnAggregate(aggregateId, bcId) {
+// 043-fix — openInspector: 포커스 후 해당 Aggregate 의 Inspector 를 자동으로 연다
+// (Design 캔버스 '어그리거트 디테일 보기' 진입 경로, AC 8). 더블클릭(onNodeDoubleClick)과 동일하게
+// inspecting* 상태를 세팅하고 panelMode 를 'inspector' 로 전환한다.
+async function focusOnAggregate(aggregateId, bcId, openInspector = false) {
   if (!aggregateId) return
   if (!store.visibleAggregateIds.has(aggregateId)) {
     await store.fetchAggregate(aggregateId, bcId || null)
   }
   // Wait for the canvas to (re)build nodes for the now-visible aggregate.
   await nextTick()
+  if (openInspector) {
+    inspectingAggregateId.value = aggregateId
+    inspectingEnumIndex.value = null
+    inspectingVoIndex.value = null
+    panelMode.value = 'inspector'
+  }
   setTimeout(() => {
     try {
       fitView({ nodes: [`agg-container-${aggregateId}`], padding: 0.3 })
@@ -1275,7 +1314,7 @@ onMounted(async () => {
     target = resolveCanvasSelectedAggregate()
   }
   if (target?.aggregateId) {
-    await focusOnAggregate(target.aggregateId, target.bcId)
+    await focusOnAggregate(target.aggregateId, target.bcId, !!target.openInspector)
   }
 })
 
@@ -1285,7 +1324,7 @@ onMounted(async () => {
 watch(() => store.pendingFocus, async (target) => {
   if (target?.aggregateId) {
     store.consumeFocus()
-    await focusOnAggregate(target.aggregateId, target.bcId)
+    await focusOnAggregate(target.aggregateId, target.bcId, !!target.openInspector)
   }
 })
 

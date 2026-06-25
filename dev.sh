@@ -37,8 +37,20 @@ COMPONENT_LIBRARY_PATH="${COMPONENT_LIBRARY_PATH:-docs/components.fig}"
 [ -f "$ROOT/open-pencil/$COMPONENT_LIBRARY_PATH" ] || \
   warn "component library '$COMPONENT_LIBRARY_PATH' not found under open-pencil/ — wireframe service may start without components"
 
-# ── Shutdown: kill the whole process group on exit ───────────────────────────
-trap 'echo; echo "[dev] stopping all services..."; kill 0 2>/dev/null' EXIT
+# ── Shutdown: SIGTERM then SIGKILL the well-known ports' listeners ───────────
+# `kill 0` alone leaks uvicorn workers when async threads (httpx, asyncio) keep
+# the interpreter alive past SIGTERM. We follow up with SIGKILL on whoever is
+# still listening on our three ports, so a re-run of dev.sh doesn't fail with
+# "Address already in use".
+trap '
+  echo; echo "[dev] stopping all services...";
+  kill 0 2>/dev/null;
+  sleep 1;
+  for p in 8000 7610 5173; do
+    pids=$(lsof -ti :$p -sTCP:LISTEN 2>/dev/null);
+    [ -n "$pids" ] && kill -9 $pids 2>/dev/null;
+  done
+' EXIT
 
 echo "[dev] starting stack — Ctrl+C to stop all"
 echo "[dev]   backend   → http://localhost:8000"
@@ -49,7 +61,10 @@ echo
 # ── 1. backend ───────────────────────────────────────────────────────────────
 (
   cd "$ROOT"
-  uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload 2>&1 | sed -l 's/^/[backend ] /'
+  # --timeout-graceful-shutdown 3: workers stuck in Neo4j sessions / plugin
+  # poll loops get SIGKILL after 3 s, preventing zombie workers from piling
+  # up on port 8000 and stalling subsequent requests.
+  uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --timeout-graceful-shutdown 3 2>&1 | sed -l 's/^/[backend ] /'
 ) &
 
 # ── 2. open-pencil wireframe service ─────────────────────────────────────────

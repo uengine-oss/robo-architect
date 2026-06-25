@@ -3,7 +3,8 @@ import { onMounted, onUnmounted, ref, computed, markRaw, provide, watch, nextTic
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
-import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
+// 043 — 'Big picture' 뷰 비활성화: import 제거(파일은 보존).
+// import BigPicturePanel from '@/features/canvas/ui/BigPicturePanel.vue'
 import AggregatePanel from '@/features/canvas/ui/AggregatePanel.vue'
 import EventModelingPanel from '@/features/eventModeling/ui/EventModelingPanel.vue'
 import RequirementsPanel from '@/features/requirements/ui/RequirementsPanel.vue'
@@ -11,14 +12,20 @@ import ChangesRootPanel from '@/features/requirements/ui/ChangesRootPanel.vue'
 import ProposalsPanel from '@/features/proposals/ui/ProposalsPanel.vue'
 import ClaudeCodeWorkspace from '@/features/claudeCode/ui/ClaudeCodeWorkspace.vue'
 import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
+// Analysis 탭 — robo-analyzer-frontend 를 Module Federation 으로 끼우는 래퍼.
+import AnalysisPanel from '@/features/analysis/ui/AnalysisPanel.vue'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useThemeStore } from '@/app/theme.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 // 040 — Proposal 임팩트 미리보기 오케스트레이션(앱 셸). 뷰어 스토어는 proposals 를
 // 모르고, App 이 robo:open-preview 를 수신해 탭 전환 + preview 진입 + 포커스를 조율한다.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
+import { useProposalsStore } from '@/features/proposals/proposals.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
-import { enterPreview, exitPreview } from '@/app/previewSession'
+// 043-fix — Command/Event 미리보기를 Design 캔버스에 투영(begin/endPreview) + 진입 요청 브리지.
+import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useCanvasPreviewRequestStore } from '@/features/canvas/canvasPreviewRequest.store'
+import { enterPreview, exitPreview, usePreviewSession } from '@/app/previewSession'
 import PreviewBanner from '@/app/ui/PreviewBanner.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 // 032: desktop launcher gate — when running inside Electron the launcher
@@ -84,14 +91,16 @@ provide('openClaudeCode', (workdir, command = null, opts = {}) => {
 })
 
 // Map tab names to components
-// 'Big picture' 탭은 UI에서 숨김 (컴포넌트·기능은 tabComponents 에 유지).
+// 043 — 'Big picture' 비활성화(탭 매핑 제거). 'Process'(BPM)·'Processes'(Event Modeling)는
+// 상단에선 하나의 'Process' 탭(서브토글)로 보이되 activeTab 값은 둘 유지 → 네비/캔버스/상단바
+// 등 activeTab 기준 동작이 그대로 전환된다(TopBar 서브토글이 'Process'⇄'Processes'로 바꿈).
 const tabComponents = {
+  'Analysis': markRaw(AnalysisPanel),
   'Changes': markRaw(ChangesRootPanel),
   'Proposals': markRaw(ProposalsPanel),
   'Stories': markRaw(RequirementsPanel),
   'Process': markRaw(BpmnPanel),
   'Processes': markRaw(EventModelingPanel),
-  'Big picture': markRaw(BigPicturePanel),
   'Design': markRaw(CanvasWorkspace),
   'Data': markRaw(AggregatePanel),
   'Code': markRaw(ClaudeCodeWorkspace),
@@ -125,7 +134,11 @@ function _onConstitutionSaved(payload) {
 
 // 040 — Proposal 임팩트 '열기' 오케스트레이션.
 const aggregateViewer = useAggregateViewerStore()
+const proposalsStore = useProposalsStore()
 const eventModeling = useEventModelingStore()
+// 043-fix — Design 캔버스 미리보기.
+const canvasStore = useCanvasStore()
+const canvasPreviewRequest = useCanvasPreviewRequestStore()
 const VIEWER_TO_TAB_LOCAL = { data: 'Data', design: 'Design', process: 'Process', processes: 'Processes' }
 
 // nodeLabel → eventModeling selectItem 타입.
@@ -149,6 +162,7 @@ async function _onOpenPreview(e) {
     title: d.title || '',
     targetNodeId: d.targetNodeId || null,
     bcId: d.bcId || null,
+    notice: d.notice || null,
   })
 
   activeTab.value = tab
@@ -156,8 +170,13 @@ async function _onOpenPreview(e) {
 
   if (d.viewer === 'data') {
     // 라이브 상태 스냅샷 후 비우고(격리), preview 소스에서 오버레이 포커스 적재.
+    // Data 뷰어는 Aggregate 단위로 포커스한다. Command/Event/VO 대상이면 targetNodeId 는
+    // 자식 id 라 fetchAggregate 가 트리에서 못 찾으므로, 백엔드가 해소한 소유 Aggregate id 로
+    // 포커스한다(없으면 targetNodeId fallback — Aggregate 대상은 둘이 동일).
     aggregateViewer.beginPreview()
-    aggregateViewer.focusAggregate(d.targetNodeId, d.bcId)
+    // 043-fix — Design 캔버스 인스펙터의 '어그리거트 디테일 보기' 진입은 포커스 후 Inspector 도
+    // 자동으로 연다(d.openInspector). 일반 '열기'(OpenInViewerLink)는 미설정 → 기존 동작 유지.
+    aggregateViewer.focusAggregate(d.aggregateId || d.targetNodeId, d.bcId, { openInspector: !!d.openInspector })
   } else if (d.viewer === 'processes') {
     // 라이브 이벤트모델을 읽기 전용으로 로드 후 대상 노드 포커스(US3-2).
     try { await eventModeling.fetchEventModeling() } catch { /* best-effort */ }
@@ -165,9 +184,19 @@ async function _onOpenPreview(e) {
       const t = _emTypeFromLabel(d.nodeLabel)
       if (t && d.targetNodeId) await eventModeling.selectItem(d.targetNodeId, t)
     } catch { /* best-effort focus */ }
+  } else if (d.viewer === 'design' && d.bcId && d.targetNodeId) {
+    // 043-fix — Command/Event 는 소속 BC 그래프를 Design 캔버스에 투영(오버레이)해 대상
+    // 노드 포커스 + 인스펙터를 연다. CanvasWorkspace 가 이 요청을 소비(fetch→begin/대체→포커스).
+    canvasPreviewRequest.request({
+      proposalId: d.proposalId,
+      bcId: d.bcId,
+      targetNodeId: d.targetNodeId,
+      nodeLabel: d.nodeLabel || '',
+      title: d.title || '',
+    })
   }
-  // design/process: 라이브 뷰어를 읽기 전용 맥락으로 연다(인텐트가 신규 생성하는 일이
-  // 드물어 오버레이 없음 — research D5). 탭 전환 + 배너 + mutation 가드로 충분(US3-1/2).
+  // 그 외 design/process(UI/Screen 등): 라이브 뷰어를 읽기 전용 맥락으로 연다(인텐트가 신규
+  // 생성하는 일이 드물어 오버레이 없음 — research D5). 탭 전환 + 배너 + mutation 가드로 충분.
 }
 
 function _onOpenPreviewFailed(e) {
@@ -180,12 +209,42 @@ function _onOpenPreviewFailed(e) {
 function _onPreviewExit(e) {
   const viewer = e?.detail?.viewer
   if (viewer === 'data') aggregateViewer.endPreview()
+  // 043-fix — Design 캔버스도 스냅샷 복원(잔존물 0).
+  else if (viewer === 'design') canvasStore.endPreview()
 }
 
 // 040 — Chat 편집(modelModifier)이 제안 diff 에 반영된 뒤 갱신 트리를 뷰어에 적용.
+// 043-fix — 뷰어별로 분기한다. Data 뷰어는 백엔드가 돌려준 갱신 트리를 그대로 적용하지만,
+// Design 뷰어는 그 트리가 Data 형태라 캔버스에 쓸 수 없다 → 같은 미리보기 요청을 재발행해
+// 갱신된 tacticalDiff 로부터 design-preview 그래프를 다시 가져와 캔버스를 즉시 재렌더한다.
 function _onPreviewUpdated(e) {
   const tree = e?.detail?.tree
+  const ps = usePreviewSession()
+  if (ps.viewer === 'design') {
+    if (ps.proposalId && ps.bcId && ps.targetNodeId) {
+      canvasPreviewRequest.request({
+        proposalId: ps.proposalId,
+        bcId: ps.bcId,
+        targetNodeId: ps.targetNodeId,
+        nodeLabel: '',
+        title: ps.title || '',
+        // 043-fix: 적용 후 갱신은 캔버스만 다시 그리고 인스펙터로 패널을 빼앗지 않는다 —
+        // 사용자가 Chat 패널에 그대로 머물러 "…반영했습니다" 메시지를 보게 한다.
+        keepPanel: true,
+      })
+    }
+    return
+  }
   if (tree) aggregateViewer.applyPreviewTree(tree)
+}
+
+// 040 — 미리보기 편집으로 Proposal.tacticalDiff 가 갱신되면, 열려 있는 Proposal 상세
+// (Impact Map·Diff)가 다시 클릭하지 않아도 최신화되도록 currentProposal 을 재적재한다.
+function _onProposalDiffChanged(e) {
+  const proposalId = e?.detail?.proposalId
+  if (proposalId && proposalsStore.currentProposal?.id === proposalId) {
+    proposalsStore.fetchProposal(proposalId)
+  }
 }
 
 const currentComponent = computed(() => tabComponents[activeTab.value])
@@ -319,6 +378,7 @@ onMounted(() => {
   window.addEventListener('robo:preview-updated', _onPreviewUpdated)
   // 041 — Design 측 헌장 편집기 열기
   window.addEventListener('robo:open-constitution', _onOpenConstitution)
+  window.addEventListener('robo:proposal-diff-changed', _onProposalDiffChanged)
 
   log.info('app_mounted', 'App mounted; core layout components are ready.', {
     appInstanceId,
@@ -339,6 +399,7 @@ onUnmounted(() => {
   window.removeEventListener('robo:preview-exit', _onPreviewExit)
   window.removeEventListener('robo:preview-updated', _onPreviewUpdated)
   window.removeEventListener('robo:open-constitution', _onOpenConstitution)
+  window.removeEventListener('robo:proposal-diff-changed', _onProposalDiffChanged)
 })
 </script>
 
@@ -356,7 +417,7 @@ onUnmounted(() => {
     <!-- 040 — Proposal 임팩트 미리보기 식별 배너(활성 시에만 표시, FR-007) -->
     <PreviewBanner />
     <div class="main-content">
-      <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements'">
+      <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements' && activeTab !== 'Analysis'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"

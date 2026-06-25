@@ -1,0 +1,14 @@
+# 마법사 시작 응답
+
+세션 ID: 6a2c6f59-7ef8-4a9b-b43f-e647a7b36f35
+추천 단계:
+  ✓ understand: Understand — 비즈니스 컨텍스트 정렬
+  ✓ discover: Discover — Big Picture EventStorming
+  ✓ decompose: Decompose — 서브도메인 식별
+  ✓ strategize: Strategize — Core/Supporting/Generic 분류
+  ○ connect: Connect — Domain Message Flow
+  ○ organise: Organise — 팀 토폴로지
+  ✓ define: Define — Bounded Context Canvas
+  ✓ code: Code — Aggregate Design Canvas
+
+프로파일 요약: 신규(그린필드) · DDD 처음 · 4~10명 단일팀 · 맨땅에서 시작

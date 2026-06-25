@@ -27,7 +27,8 @@ router = APIRouter(prefix="/api/contexts", tags=["contexts"])
 #      specs/029-robo-spec-skills/data-model.md §1.1.
 
 
-Classification = Literal["core", "supporting"]
+# 035: Strategize 3분류 — generic 추가(core/supporting/generic). ddd-starter Step4.
+Classification = Literal["core", "supporting", "generic"]
 
 
 class ClassificationPayload(BaseModel):
@@ -61,7 +62,7 @@ async def patch_bc_classification(
     request: Request,
     if_match: Optional[str] = Header(default=None, alias="If-Match"),
 ) -> dict[str, Any]:
-    """Set the BC's classification to "core" or "supporting".
+    """Set the BC's classification to "core", "supporting", or "generic".
 
     Optional ``If-Match`` header carries the BC's last-known integer
     version (when available); a mismatch returns 412. Version tracking
@@ -71,10 +72,10 @@ async def patch_bc_classification(
     # Pydantic + Literal already validates `classification`; if it ever
     # widens beyond the enum, this guard catches drift between the
     # schema and the route.
-    if payload.classification not in ("core", "supporting"):
+    if payload.classification not in ("core", "supporting", "generic"):
         raise HTTPException(
             status_code=422,
-            detail="classification must be 'core' or 'supporting'",
+            detail="classification must be 'core', 'supporting', or 'generic'",
         )
 
     fetch_query = """
