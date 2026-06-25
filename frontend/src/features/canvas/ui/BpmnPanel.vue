@@ -3,6 +3,7 @@ import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import BpmnViewer from 'bpmn-js/lib/NavigatedViewer'
 import { layoutProcess } from 'bpmn-auto-layout'
+import ELK from 'elkjs/lib/elk.bundled.js'
 // process-gpt's custom renderer (cream tasks, Korean text wrapping, colored
 // events/lanes). Same bpmn-js engine — this is the module that makes their
 // diagrams look the way they do; robo now renders identically.
@@ -184,6 +185,167 @@ function reAddLaneDI(layoutedXml) {
   }
 }
 
+// True when the BPMN already carries a usable diagram: every flow node
+// (task/gateway/event) has a BPMNShape. The pdf2bpmn facade emits a full
+// Sugiyama DI (node positions + orthogonal edge waypoints + lane boundaries —
+// the same layout process-gpt renders in production), so we render it verbatim
+// instead of re-laying it out and losing it. Returns false for a DI-less
+// skeleton or a multi-process combined doc that only carries DI for its first
+// process — those still need synthesized layout.
+const _FLOW_NODE_TAGS = new Set([
+  'task', 'userTask', 'serviceTask', 'manualTask', 'scriptTask',
+  'businessRuleTask', 'sendTask', 'receiveTask', 'callActivity', 'subProcess',
+  'exclusiveGateway', 'parallelGateway', 'inclusiveGateway',
+  'eventBasedGateway', 'complexGateway',
+  'startEvent', 'endEvent',
+  'intermediateCatchEvent', 'intermediateThrowEvent', 'boundaryEvent',
+])
+function hasCompleteDI(xml) {
+  try {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml')
+    if (doc.querySelector('parsererror')) return false
+    const all = [...doc.getElementsByTagName('*')]
+    const shapeFor = new Set(
+      all
+        .filter(n => n.localName === 'BPMNShape')
+        .map(s => s.getAttribute('bpmnElement'))
+        .filter(Boolean)
+    )
+    if (!shapeFor.size) return false
+    const nodes = all.filter(n => _FLOW_NODE_TAGS.has(n.localName))
+    if (!nodes.length) return false
+    // A single flow node without a shape (e.g. a combined multi-process doc)
+    // forces a re-layout so nothing renders stacked at the origin.
+    return nodes.every(n => shapeFor.has(n.getAttribute('id')))
+  } catch {
+    return false
+  }
+}
+
+const elk = new ELK()
+
+const _NODE_SIZE = (tag) =>
+  tag.endsWith('Event') ? { w: 36, h: 36 }
+    : tag.endsWith('Gateway') ? { w: 50, h: 50 }
+      : { w: 100, h: 80 }
+
+function countLanes(xml) {
+  try {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml')
+    return [...doc.getElementsByTagName('*')].filter(n => n.localName === 'lane').length
+  } catch { return 0 }
+}
+
+// Lay a single-role (one-lane) or branchy process out with ELK's layered
+// algorithm. pdf2bpmn packs gateway branches into one row when the process has a
+// single role, so branch edges cut straight across the nodes between them. ELK
+// gives each branch its own row, keeps the end event last, and routes edges
+// orthogonally with no node crossings — the layout process-gpt shows. We rebuild
+// the diagram (DI) from ELK's coordinates and wrap the nodes in one pool/lane.
+// Returns the input unchanged on any failure.
+async function elkLayout(xml) {
+  try {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml')
+    if (doc.querySelector('parsererror')) return xml
+    const all = [...doc.getElementsByTagName('*')]
+    const nodeEls = all.filter(n => _FLOW_NODE_TAGS.has(n.localName))
+    if (!nodeEls.length) return xml
+    const sizeOf = new Map()
+    for (const n of nodeEls) sizeOf.set(n.getAttribute('id'), _NODE_SIZE(n.localName))
+    const flows = all
+      .filter(n => n.localName === 'sequenceFlow')
+      .map(f => ({ id: f.getAttribute('id'), s: f.getAttribute('sourceRef'), t: f.getAttribute('targetRef') }))
+      .filter(f => f.id && sizeOf.has(f.s) && sizeOf.has(f.t))
+
+    const res = await elk.layout({
+      id: 'root',
+      layoutOptions: {
+        'elk.algorithm': 'layered',
+        'elk.direction': 'RIGHT',
+        'elk.edgeRouting': 'ORTHOGONAL',
+        'elk.layered.spacing.nodeNodeBetweenLayers': '70',
+        'elk.spacing.nodeNode': '45',
+        'elk.layered.spacing.edgeNodeBetweenLayers': '25',
+      },
+      children: [...sizeOf].map(([id, s]) => ({ id, width: s.w, height: s.h })),
+      edges: flows.map(f => ({ id: f.id, sources: [f.s], targets: [f.t] })),
+    })
+
+    const pos = new Map()
+    for (const c of res.children || []) pos.set(c.id, { x: c.x, y: c.y, w: c.width, h: c.height })
+    const wp = new Map()
+    for (const e of res.edges || []) {
+      const sec = (e.sections || [])[0]
+      if (sec) wp.set(e.id, [sec.startPoint, ...(sec.bendPoints || []), sec.endPoint])
+    }
+    if (!pos.size) return xml
+
+    // Rebuild the BPMNPlane DI from ELK's coordinates.
+    const byLocal = (root, name) => [...root.getElementsByTagName('*')].filter(n => n.localName === name)
+    const plane = byLocal(doc, 'BPMNPlane')[0]
+    if (!plane) return xml
+    const exShape = byLocal(plane, 'BPMNShape')[0]
+    const DI_NS = exShape ? exShape.namespaceURI : 'http://www.omg.org/spec/BPMN/20100524/DI'
+    const DC_NS = 'http://www.omg.org/spec/DD/20100524/DC'
+    const DI2_NS = 'http://www.omg.org/spec/DD/20100524/DI'
+    while (plane.firstChild) plane.removeChild(plane.firstChild)
+
+    const mkBounds = (x, y, w, h) => {
+      const b = doc.createElementNS(DC_NS, 'dc:Bounds')
+      b.setAttribute('x', x); b.setAttribute('y', y)
+      b.setAttribute('width', w); b.setAttribute('height', h)
+      return b
+    }
+    // Pool + lane around the node bounding box.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const p of pos.values()) {
+      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y)
+      maxX = Math.max(maxX, p.x + p.w); maxY = Math.max(maxY, p.y + p.h)
+    }
+    const headW = 30, padX = 40, padY = 30
+    const px = minX - padX - headW, py = minY - padY
+    const pw = (maxX - minX) + padX * 2 + headW, ph = (maxY - minY) + padY * 2
+    const participant = byLocal(doc, 'participant')[0]
+    const lane = byLocal(doc, 'lane')[0]
+    if (participant) {
+      const ps = doc.createElementNS(DI_NS, 'bpmndi:BPMNShape')
+      ps.setAttribute('bpmnElement', participant.getAttribute('id'))
+      ps.setAttribute('isHorizontal', 'true')
+      ps.appendChild(mkBounds(px, py, pw, ph))
+      plane.appendChild(ps)
+      if (lane) {
+        const ls = doc.createElementNS(DI_NS, 'bpmndi:BPMNShape')
+        ls.setAttribute('bpmnElement', lane.getAttribute('id'))
+        ls.setAttribute('isHorizontal', 'true')
+        ls.appendChild(mkBounds(px + headW, py, pw - headW, ph))
+        plane.appendChild(ls)
+      }
+    }
+    for (const [id, p] of pos) {
+      const sh = doc.createElementNS(DI_NS, 'bpmndi:BPMNShape')
+      sh.setAttribute('bpmnElement', id)
+      sh.appendChild(mkBounds(p.x, p.y, p.w, p.h))
+      plane.appendChild(sh)
+    }
+    for (const f of flows) {
+      const pts = wp.get(f.id)
+      if (!pts || pts.length < 2) continue
+      const ed = doc.createElementNS(DI_NS, 'bpmndi:BPMNEdge')
+      ed.setAttribute('bpmnElement', f.id)
+      for (const pt of pts) {
+        const w = doc.createElementNS(DI2_NS, 'di:waypoint')
+        w.setAttribute('x', pt.x); w.setAttribute('y', pt.y)
+        ed.appendChild(w)
+      }
+      plane.appendChild(ed)
+    }
+    return new XMLSerializer().serializeToString(doc)
+  } catch (e) {
+    console.warn('[BpmnPanel] elkLayout failed', e)
+    return xml
+  }
+}
+
 async function renderBpmn(xml) {
   if (!bpmnContainer.value) return
 
@@ -198,19 +360,25 @@ async function renderBpmn(xml) {
   })
 
   try {
-    // The BPMN comes from the pdf2bpm/facade generator, whose server-side DI
-    // (node coordinates) is a rough placeholder — nodes collide on the same x
-    // and edges cross. Regenerate a clean left-to-right layout with
-    // bpmn-auto-layout (element ids are preserved, so dblclick/highlight by id
-    // still works). Fall back to the original XML if layout fails.
+    // Pick a layout. A multi-role process already separates its branches across
+    // lanes, so the facade's Sugiyama DI renders cleanly — keep it verbatim. A
+    // single-role (one-lane) process packs gateway branches into one row in the
+    // facade DI (edges cut across nodes), so re-lay it out with ELK, which gives
+    // each branch its own row. ELK also handles a DI-less skeleton. bpmn-auto-
+    // layout remains the last resort if ELK can't produce a diagram.
     let toRender = xml
-    try {
-      // bpmn-auto-layout drops the Pool/Lane DI (it only lays out the process),
-      // so re-wrap the laid-out nodes in their swimlane afterwards.
-      toRender = reAddLaneDI(await layoutProcess(xml))
-    } catch (layoutErr) {
-      console.warn('[BpmnPanel] auto-layout failed; rendering original DI', layoutErr)
-      toRender = xml
+    if (!(hasCompleteDI(xml) && countLanes(xml) >= 2)) {
+      const elked = await elkLayout(xml)
+      if (elked !== xml) {
+        toRender = elked
+      } else if (!hasCompleteDI(xml)) {
+        try {
+          toRender = reAddLaneDI(await layoutProcess(xml))
+        } catch (layoutErr) {
+          console.warn('[BpmnPanel] auto-layout failed; rendering original DI', layoutErr)
+          toRender = xml
+        }
+      }
     }
     await viewer.importXML(toRender)
     const canvas = viewer.get('canvas')

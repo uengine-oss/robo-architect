@@ -41,6 +41,7 @@
     "canvaskit-wasm": "^0.40.0",
     "culori": "^4.0.2",
     "docx": "^9.6.1",
+    "elkjs": "^0.9.3",
     "fflate": "^0.8.2",
     "file-saver": "^2.0.5",
     "fzstd": "^0.1.1",
