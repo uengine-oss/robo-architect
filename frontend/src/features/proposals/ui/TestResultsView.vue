@@ -3,27 +3,27 @@
     <!-- 검증 실행/재검증/중지 바 -->
     <div class="validate-bar">
       <template v-if="validating">
-        <span class="validating-badge"><span class="spinner spinner--xs" />검증 중…</span>
-        <button @click="stop" class="btn btn--outline btn--sm">중지</button>
+        <span class="validating-badge"><span class="spinner spinner--xs" />{{ t('proposals.tests.validating') }}</span>
+        <button @click="stop" class="btn btn--outline btn--sm">{{ t('proposals.common.stop') }}</button>
       </template>
-      <button v-else @click="rerun" class="btn btn--outline btn--sm">재검증</button>
-      <span class="validate-hint">구조 검증(robo-sync: 스펙↔구현체) + 인수 조건(GWT)을 runner로 실행하며 로그를 표시합니다.</span>
+      <button v-else @click="rerun" class="btn btn--outline btn--sm">{{ t('proposals.tests.rerun') }}</button>
+      <span class="validate-hint">{{ t('proposals.tests.validateHint') }}</span>
     </div>
 
     <!-- 실행 로그 (runner narration·tool 사용 실시간) -->
     <pre v-if="logText" class="validate-log">{{ logText }}</pre>
     <p v-if="validationError" class="error-msg">{{ validationError }}</p>
 
-    <div v-if="loading" class="test-loading">검증 결과 로딩 중...</div>
+    <div v-if="loading" class="test-loading">{{ t('proposals.tests.loadingResults') }}</div>
 
     <div v-else-if="validating && !store.testResults" class="test-running">
       <span class="spinner spinner--sm" />
-      검증을 실행 중입니다… robo-sync로 Aggregate/VO/Command를 구현체와 대조하고 GWT 인수 조건을 판정합니다.
-      <br><span class="muted">(runner 스트리밍 — 위 로그로 진행을 확인하세요. "중지"로 언제든 멈출 수 있습니다.)</span>
+      {{ t('proposals.tests.runningValidation') }}
+      <br><span class="muted">{{ t('proposals.tests.runningMuted') }}</span>
     </div>
 
     <div v-else-if="!store.testResults" class="test-empty">
-      <p>아직 검증 결과가 없습니다. <strong>"재검증"</strong>을 눌러 검증을 실행하세요.</p>
+      <p>{{ t('proposals.tests.noResults') }} <strong>"{{ t('proposals.tests.rerun') }}"</strong>{{ t('proposals.tests.noResultsPost') }}</p>
     </div>
 
     <div v-else>
@@ -31,7 +31,7 @@
       <div class="test-summary">
         <div class="summary-item summary-item--total">
           <span class="summary-num">{{ store.testResults.totalScenarios }}</span>
-          <span class="summary-label">전체</span>
+          <span class="summary-label">{{ t('proposals.tests.summaryTotal') }}</span>
         </div>
         <div class="summary-item summary-item--pass">
           <span class="summary-num">{{ store.testResults.passed }}</span>
@@ -45,7 +45,7 @@
           <span class="summary-num">{{ store.testResults.skipped }}</span>
           <span class="summary-label">SKIP</span>
         </div>
-        <div class="pass-rate">통과율: <strong>{{ passRate }}%</strong></div>
+        <div class="pass-rate">{{ t('proposals.tests.passRate') }}: <strong>{{ passRate }}%</strong></div>
       </div>
 
       <!-- Items -->
@@ -58,7 +58,7 @@
           <div class="test-item__header">
             <span :class="['result-badge', `result-badge--${item.result.toLowerCase()}`]">{{ item.result }}</span>
             <span v-if="item.category" :class="['cat-badge', `cat-badge--${item.category}`]">
-              {{ item.category === 'structural' ? '구조' : '인수조건' }}
+              {{ item.category === 'structural' ? t('proposals.tests.categoryStructural') : t('proposals.tests.categoryAcceptance') }}
             </span>
             <span class="test-item__story">{{ item.storyTitle }}</span>
             <span class="test-item__id">{{ item.scenarioId }}</span>
@@ -74,9 +74,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useProposalsStore } from '../proposals.store'
+import { useI18n } from '../../../app/i18n'
 
 const props = defineProps({ proposalId: { type: String, required: true } })
 const store = useProposalsStore()
+const { t } = useI18n()
 const loading = ref(false)
 
 // 검증 진행 상태·로그는 store.validationStream(싱글톤)에서 가져온다 → 탭을 전환해도

@@ -2,22 +2,21 @@
   <div class="dual-merge">
     <!-- 구현 완료 후 PO 최종 결정 (TESTING / PENDING_ACCEPTANCE) -->
     <div v-if="canDecide" class="pending-acceptance">
-      <h4>PO 최종 결정</h4>
+      <h4>{{ t('proposals.dualMerge.poDecisionTitle') }}</h4>
 
       <!-- 검증 미완료(TESTING) — 검증을 거치지 않고도 Accept/Destroy 가능하나 안내한다. -->
       <div v-if="proposal?.status === 'TESTING'" class="not-validated-note">
         <span class="info-icon">ℹ</span>
-        아직 검증이 완료되지 않았습니다. <strong>'검증'</strong> 탭에서 검증을 먼저 실행할 수 있으며,
-        구현이 완료되었다면 검증 없이도 아래에서 Accept/Destroy를 결정할 수 있습니다.
+        {{ t('proposals.dualMerge.notValidatedNote') }}
       </div>
 
       <div v-if="hasFailures" class="failure-warning">
         <span class="warning-icon">⚠</span>
-        <strong>{{ testFailed }}개의 테스트가 실패했습니다.</strong>
-        <p>Accept를 진행하려면 아래 확인란에 체크하세요.</p>
+        <strong>{{ t('proposals.dualMerge.testFailedCount', { n: testFailed }) }}</strong>
+        <p>{{ t('proposals.dualMerge.checkToAccept') }}</p>
         <label class="force-check">
           <input type="checkbox" v-model="forceAccept" />
-          실패 항목을 인지하고 Accept를 진행합니다
+          {{ t('proposals.dualMerge.forceAcceptLabel') }}
         </label>
       </div>
 
@@ -27,7 +26,7 @@
           :disabled="acceptDisabled || accepting"
           class="btn btn--accept"
         >
-          {{ accepting ? 'Accept 처리 중...' : '✓ Accept (Dual Merge)' }}
+          {{ accepting ? t('proposals.dualMerge.accepting') : '✓ Accept (Dual Merge)' }}
         </button>
         <button
           @click="showDestroyConfirm = true"
@@ -38,36 +37,36 @@
 
     <!-- MERGE_FAILED 상태 -->
     <div v-if="proposal?.status === 'MERGE_FAILED'" class="merge-failed">
-      <h4 class="merge-failed__title">⚠ Dual Merge 실패</h4>
+      <h4 class="merge-failed__title">⚠ {{ t('proposals.dualMerge.mergeFailed') }}</h4>
       <p class="merge-failed__detail">{{ lastFailureDetail }}</p>
       <button @click="retryMerge" :disabled="retrying" class="btn btn--retry">
-        {{ retrying ? '재시도 중...' : 'Dual Merge 재시도' }}
+        {{ retrying ? t('proposals.dualMerge.retrying') : t('proposals.dualMerge.retryMerge') }}
       </button>
     </div>
 
     <!-- ACCEPTED 상태 -->
     <div v-if="proposal?.status === 'ACCEPTED'" class="accepted">
       <div class="accepted__icon">✓</div>
-      <p>Dual Merge 완료 — {{ formatDate(proposal.acceptedAt) }}</p>
-      <p class="accepted__note">코드와 그래프 DB가 동기화되었습니다.</p>
-      <button @click="showRevokeConfirm = true" class="btn btn--revoke">↩ 수거 (되돌리기)</button>
+      <p>{{ t('proposals.dualMerge.acceptedAt', { date: formatDate(proposal.acceptedAt) }) }}</p>
+      <p class="accepted__note">{{ t('proposals.dualMerge.acceptedNote') }}</p>
+      <button @click="showRevokeConfirm = true" class="btn btn--revoke">{{ t('proposals.dualMerge.revokeBtn') }}</button>
     </div>
 
     <!-- DESTROYED 상태 -->
     <div v-if="proposal?.status === 'DESTROYED'" class="destroyed">
-      <p>이 Proposal은 폐기되었습니다 — {{ formatDate(proposal.destroyedAt) }}</p>
+      <p>{{ t('proposals.dualMerge.destroyed', { date: formatDate(proposal.destroyedAt) }) }}</p>
     </div>
 
     <!-- Destroy 확인 다이얼로그 -->
     <div v-if="showDestroyConfirm" class="overlay">
       <div class="dialog">
-        <h4>Proposal 폐기 확인</h4>
-        <p>폐기된 Proposal의 Diff 이력은 보관됩니다.</p>
-        <textarea v-model="destroyReason" placeholder="폐기 사유 (선택)" rows="3" class="dialog__textarea" />
+        <h4>{{ t('proposals.dualMerge.destroyConfirmTitle') }}</h4>
+        <p>{{ t('proposals.dualMerge.destroyConfirmNote') }}</p>
+        <textarea v-model="destroyReason" :placeholder="t('proposals.dualMerge.destroyReasonPlaceholder')" rows="3" class="dialog__textarea" />
         <div class="dialog__actions">
-          <button @click="showDestroyConfirm = false" class="btn btn--secondary">취소</button>
+          <button @click="showDestroyConfirm = false" class="btn btn--secondary">{{ t('proposals.common.cancel') }}</button>
           <button @click="destroy" :disabled="destroying" class="btn btn--destroy">
-            {{ destroying ? '폐기 중...' : '폐기 확정' }}
+            {{ destroying ? t('proposals.dualMerge.destroying') : t('proposals.dualMerge.destroyConfirm') }}
           </button>
         </div>
       </div>
@@ -76,22 +75,22 @@
     <!-- 수거(Revoke) 확인 다이얼로그 -->
     <div v-if="showRevokeConfirm" class="overlay">
       <div class="dialog">
-        <h4>↩ Proposal 수거 (되돌리기)</h4>
-        <p>Accept로 반영된 변경을 되돌립니다. 생성된 UserStory·Aggregate 등은 삭제되고, 수정분은 원래 값으로 복원됩니다. 상태는 다시 <strong>PENDING_ACCEPTANCE</strong>로 돌아가 재Accept할 수 있습니다.</p>
+        <h4>{{ t('proposals.dualMerge.revokeConfirmTitle') }}</h4>
+        <p>{{ t('proposals.dualMerge.revokeConfirmNote') }}</p>
         <div class="revoke-scope">
           <label class="revoke-radio">
             <input type="radio" value="graph" v-model="revokeScope" />
-            <span><strong>그래프만 되돌리기</strong> — Neo4j 변경만 복원. 코드는 main에 그대로 둠(별도 처리).</span>
+            <span><strong>{{ t('proposals.dualMerge.revokeGraphLabel') }}</strong> — {{ t('proposals.dualMerge.revokeGraphDesc') }}</span>
           </label>
           <label class="revoke-radio">
             <input type="radio" value="code" v-model="revokeScope" />
-            <span><strong>그래프 + 코드 되돌리기</strong> — 그래프 복원에 더해 Accept 머지 커밋을 <code>git revert</code>.</span>
+            <span><strong>{{ t('proposals.dualMerge.revokeCodeLabel') }}</strong> — {{ t('proposals.dualMerge.revokeCodeDesc') }}</span>
           </label>
         </div>
         <div class="dialog__actions">
-          <button @click="showRevokeConfirm = false" class="btn btn--secondary">취소</button>
+          <button @click="showRevokeConfirm = false" class="btn btn--secondary">{{ t('proposals.common.cancel') }}</button>
           <button @click="revoke" :disabled="revoking" class="btn btn--revoke">
-            {{ revoking ? '수거 중...' : '수거 확정' }}
+            {{ revoking ? t('proposals.dualMerge.revoking') : t('proposals.dualMerge.revokeConfirm') }}
           </button>
         </div>
       </div>
@@ -104,9 +103,11 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useProposalsStore } from '../proposals.store'
+import { useI18n } from '../../../app/i18n'
 
 const props = defineProps({ proposal: { type: Object, required: true } })
 const store = useProposalsStore()
+const { t } = useI18n()
 
 const forceAccept = ref(false)
 const showDestroyConfirm = ref(false)
@@ -139,7 +140,7 @@ const acceptDisabled = computed(() =>
 const lastFailureDetail = computed(() => {
   const history = props.proposal?.statusHistory || []
   const last = [...history].reverse().find(h => h.to_status === 'MERGE_FAILED')
-  return last?.comment || 'Dual Merge 실패. 로그를 확인하세요.'
+  return last?.comment || t('proposals.dualMerge.mergeFailedFallback')
 })
 
 async function accept() {

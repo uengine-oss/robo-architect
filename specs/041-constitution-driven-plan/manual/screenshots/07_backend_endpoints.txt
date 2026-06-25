@@ -1,0 +1,9 @@
+# 041 Constitution endpoints (Design-side mgmt + proposal interview gate)
+DELETE  /api/bounded-contexts/{bc_id}/constitution
+GET  /api/bounded-contexts/{bc_id}/constitution
+GET  /api/constitution
+GET  /api/proposals/{proposal_id}/constitution
+GET  /api/proposals/{proposal_id}/stream/constitution
+POST  /api/proposals/{proposal_id}/constitution/answer
+PUT  /api/bounded-contexts/{bc_id}/constitution
+PUT  /api/constitution

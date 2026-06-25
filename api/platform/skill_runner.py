@@ -138,6 +138,7 @@ async def run_skill_once(
     SmartLogger.log("INFO", f"Invoking skill: {skill_name}",
                     category="platform.skill_runner.start",
                     params={"skill": skill_name})
+    proc: asyncio.subprocess.Process | None = None
     try:
         # 루프-무관 블로킹 subprocess 를 워커 스레드에서 실행 (헤더 주석 참조).
         completed = await asyncio.to_thread(
@@ -161,6 +162,15 @@ async def run_skill_once(
         SmartLogger.log("ERROR", f"Skill {skill_name} error: {e}",
                         category="platform.skill_runner.error",
                         params={"skill": skill_name, "error": str(e)})
+    finally:
+        # On timeout/cancel/error the `claude` CLI keeps running unless we kill it.
+        # communicate() doesn't reap on TimeoutError → orphan accumulation + slowdown.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
     return None
 
 

@@ -691,7 +691,6 @@ ON CREATE SET impl.id = randomUUID(),
 ON MATCH SET impl.lastSeenAt = datetime()
 MERGE (agg)-[:IMPLEMENTED_IN]->(impl);
 
-<<<<<<< HEAD
 // ── 035 DDD discovery & canvases — NEW PROPERTIES ONLY (no new labels) ──
 // Event:          pivotal:boolean, hotspot:boolean            (US2 EventStorming)
 // BoundedContext: classification ∈ {core,supporting,generic}  (US6 — generic added)
@@ -702,7 +701,6 @@ MERGE (agg)-[:IMPLEMENTED_IN]->(impl);
 //                 correctivePolicies:string[], throughput:string,
 //                 invariants:string[], version:int             (US5 Aggregate Canvas)
 // All written via SET on existing nodes; relationships preserved. Schema diff = 0 labels/rels.
-=======
 
 // ############################################################
 // 100. RequirementChange (요구사항 변경 레코드 — 038)
@@ -802,4 +800,32 @@ FOR (p:Proposal) ON (p.status);
 
 CREATE INDEX proposal_author IF NOT EXISTS
 FOR (p:Proposal) ON (p.author);
->>>>>>> 041-constitution-driven-plan
+
+// ############################################################
+// 041 — Constitution 노드: 프로젝트 헌장(설계원칙·기술스택·아키텍처 스타일·레포 전략)
+//   - 그래프가 원천(Principle I). 레포 파일/프로포절 사본 아님.
+//   - scope: "PROJECT"(루트 싱글톤) | "BOUNDED_CONTEXT"(BC 오버라이드)
+//   - 속성: designPrinciples/techStack/architectureStyle/repoStrategy/repoMode/raw/updatedAt
+//   - 관계: (:BoundedContext)-[:HAS_CONSTITUTION]->(:Constitution {scope:"BOUNDED_CONTEXT"})
+//   - BC 유효(effective) 헌장 = 프로젝트 루트 + 해당 BC 오버라이드 병합(백엔드 계산)
+// ############################################################
+
+CREATE CONSTRAINT constitution_id_unique IF NOT EXISTS
+FOR (c:Constitution) REQUIRE c.id IS UNIQUE;
+
+CREATE INDEX constitution_scope IF NOT EXISTS
+FOR (c:Constitution) ON (c.scope);
+
+// ############################################################
+// 042 — 속성 확장(신규 라벨/관계 없음):
+//   Constitution.strategicMemory (JSON string) — 지속 DDD 전략 메모리.
+//     · scope:"PROJECT" 노드: differentiation(차별성/가치제안/페르소나) + couplingPosture(기본 pub/sub vs sync) 섹션
+//     · scope:"BOUNDED_CONTEXT" 노드: 해당 BC 의 contexts[bcKey] 섹션(분류/유비쿼터스 언어/비즈니스 결정)
+//     · BC 유효 전략메모리 = 루트 + BC 오버라이드(섹션별 병합) — effective_for_bc() 계산
+//     · constitution_hash 입력에 포함 → 수정 시 의존 Proposal plan staleness 유발(FR-021)
+//   Proposal.decompositionMode ("SIMPLIFIED"|"DETAILED_DDD", 기본 SIMPLIFIED) — 분해 모드(FR-002)
+//   Proposal.stagePlan (JSON string) — 스코프 인지 스테이지 플랜(applies/skip/reason, FR-009/FR-015)
+//   Proposal.stageArtifacts (JSON string) — 스테이지별 리뷰 산출물(Proposal-scoped, FR-026)
+//   Proposal.currentStage (string|null) — 확정 대기 중인 스테이지(재개용, FR-027)
+//   Proposal.memoryConflicts (JSON string) — 메모리 vs 로컬결정 미해결 충돌(FR-019)
+// ############################################################

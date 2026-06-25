@@ -107,3 +107,6 @@ frontend/dist/
 
 # pdf2bpmn real secrets (use deploy/secrets.example.yaml as template)
 deploy/secrets.yaml
+
+# Runtime-generated proposal acceptance log (append-only; caused merge conflicts)
+specs/proposal-changes.md

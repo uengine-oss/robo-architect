@@ -2,118 +2,112 @@
   <div class="intent-view">
     <!-- Strategic Diff -->
     <section class="diff-section">
-      <h4 class="diff-section__title">Strategic Diff <span class="badge badge--blue">전략적 변경</span></h4>
-      <div v-if="!hasSd" class="diff-section__empty">Strategic Diff 없음</div>
+      <h4 class="diff-section__title">{{ t('proposals.term.strategicDesign') }} <span class="badge badge--blue">{{ t('proposals.intent.strategicBadge') }}</span></h4>
+      <div v-if="!hasSd" class="diff-section__empty">{{ t('proposals.intent.noStrategic') }}</div>
       <div v-else>
-        <div v-if="sd.epics?.length" class="diff-group">
-          <h5>Epic</h5>
-          <div v-for="e in sd.epics" :key="e.entityId || e.entityTitle" class="diff-entry">
-            <span :class="opClass(e.op)">{{ e.op }}</span>
-            <span class="diff-entry__title">{{ e.entityTitle }}</span>
-            <template v-if="e.fields">
-              <div v-for="(v, k) in e.fields" :key="k" class="diff-entry__field">
-                <span class="field-key">{{ k }}:</span>
-                <span class="field-before">{{ v?.before ?? '—' }}</span>
-                <span class="arrow">→</span>
-                <span class="field-after">{{ v?.after ?? '—' }}</span>
-              </div>
-            </template>
-          </div>
-        </div>
-        <div v-if="sd.features?.length" class="diff-group">
-          <h5>Feature</h5>
-          <div v-for="f in sd.features" :key="f.entityId || f.entityTitle" class="diff-entry">
-            <span :class="opClass(f.op)">{{ f.op }}</span>
-            <span class="diff-entry__title">{{ f.entityTitle }}</span>
-          </div>
-        </div>
-        <div v-if="sd.userStories?.length" class="diff-group">
-          <h5>User Story</h5>
-          <div v-for="us in sd.userStories" :key="us.entityId || us.entityTitle" class="diff-entry">
-            <span :class="opClass(us.op)">{{ us.op }}</span>
-            <span class="diff-entry__title">{{ us.entityTitle }}</span>
-            <template v-if="us.acceptanceCriteria?.length">
-              <ul class="ac-list">
-                <li v-for="(ac, i) in us.acceptanceCriteria" :key="i">{{ ac }}</li>
-              </ul>
-            </template>
-            <template v-if="us.fields">
-              <div v-for="(v, k) in us.fields" :key="k" class="diff-entry__field">
-                <span class="field-key">{{ k }}:</span>
-                <span class="field-before">{{ v?.before ?? '—' }}</span>
-                <span class="arrow">→</span>
-                <span class="field-after">{{ v?.after ?? '—' }}</span>
-              </div>
-            </template>
-          </div>
-        </div>
+        <!-- 프로세스 — Event Storming 식 이벤트 흐름을 먼저 보여준다 -->
         <div v-if="sd.processes?.length" class="diff-group">
-          <h5>Process</h5>
-          <div v-for="pc in sd.processes" :key="pc.entityId || pc.entityTitle" class="diff-entry">
-            <StrategicEntry :entry="pc" :op-class="opClass" />
+          <h5>{{ t('proposals.term.process') }}</h5>
+          <div v-for="pc in sd.processes" :key="keyOf(pc)" class="diff-entry diff-entry--process">
+            <div class="entry-header">
+              <span class="entry-title">{{ pc.entityTitle }}</span>
+              <span :class="opClass(pc.op)">{{ pc.op }}</span>
+            </div>
+            <!-- 설명: 레이블 없이 이벤트 흐름 위에 본문으로 -->
+            <p v-if="descOf(pc)" class="entry-desc">{{ descOf(pc) }}</p>
+            <!-- Events: 각 이벤트를 오렌지 칩으로(→ 흐름) -->
+            <div v-if="eventsOf(pc).length" class="event-flow">
+              <template v-for="(ev, i) in eventsOf(pc)" :key="i">
+                <span class="event-chip">{{ ev }}</span>
+                <span v-if="i < eventsOf(pc).length - 1" class="event-arrow">→</span>
+              </template>
+            </div>
+            <!-- steps/events/description 외 다른 필드는 폴백 렌더 -->
+            <div v-for="[k, v] in otherProcessFields(pc)" :key="k" class="diff-entry__field">
+              <span class="field-key">{{ k }}:</span>
+              <span class="field-before">{{ v?.before ?? '—' }}</span>
+              <span class="arrow">→</span>
+              <span class="field-after">{{ v?.after ?? '—' }}</span>
+            </div>
           </div>
         </div>
+
+        <!-- BoundedContext → Feature → UserStory 계층 트리 (collapse 가능, 기본 열림) -->
+        <div v-if="tree.epicNodes.length" class="diff-group">
+          <h5>{{ t('proposals.term.boundedContext') }}</h5>
+          <div v-for="ep in tree.epicNodes" :key="keyOf(ep.node)" class="bc-block">
+            <div class="diff-entry diff-entry--bc">
+              <div
+                class="entry-header"
+                :class="{ 'entry-header--clickable': hasChildren(ep) }"
+                @click="hasChildren(ep) && toggle(keyOf(ep.node))"
+              >
+                <span v-if="hasChildren(ep)" class="caret" :class="{ 'caret--open': isOpen(keyOf(ep.node)) }">▶</span>
+                <span class="entry-title entry-title--bc">{{ ep.node.entityTitle }}</span>
+                <span v-if="classLabel(ep.node)" class="class-chip" :class="classChip(ep.node)">{{ classLabel(ep.node) }}</span>
+                <span :class="opClass(ep.node.op)">{{ ep.node.op }}</span>
+              </div>
+              <p v-if="descOf(ep.node)" class="entry-desc">{{ descOf(ep.node) }}</p>
+              <div v-for="[k, v] in otherFields(ep.node)" :key="k" class="diff-entry__field">
+                <span class="field-key">{{ k }}:</span>
+                <span class="field-before">{{ v?.before ?? '—' }}</span>
+                <span class="arrow">→</span>
+                <span class="field-after">{{ v?.after ?? '—' }}</span>
+              </div>
+            </div>
+            <div v-if="hasChildren(ep) && isOpen(keyOf(ep.node))" class="children">
+              <div v-for="ft in ep.features" :key="keyOf(ft.node)" class="feature-block">
+                <FeatureNode :feature="ft" :op-class="opClass" :is-open="isOpen" :toggle="toggle" :key-of="keyOf" />
+              </div>
+              <!-- BC 직속(매칭되는 Feature 없는) UserStory -->
+              <div v-for="us in ep.looseUserStories" :key="keyOf(us)" class="diff-entry diff-entry--us">
+                <StrategicEntry :entry="us" :op-class="opClass" :type-label="t('proposals.term.userStory')" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 부모 BC 를 못 찾은 Feature(고아) -->
+        <div v-if="tree.orphanFeatures.length" class="diff-group">
+          <h5>{{ t('proposals.term.feature') }}</h5>
+          <div v-for="ft in tree.orphanFeatures" :key="keyOf(ft.node)" class="feature-block">
+            <FeatureNode :feature="ft" :op-class="opClass" :is-open="isOpen" :toggle="toggle" :key-of="keyOf" />
+          </div>
+        </div>
+
+        <!-- 부모 Feature/BC 를 못 찾은 UserStory(고아) -->
+        <div v-if="tree.orphanUserStories.length" class="diff-group">
+          <h5>{{ t('proposals.term.userStory') }}</h5>
+          <div v-for="us in tree.orphanUserStories" :key="keyOf(us)" class="diff-entry diff-entry--us">
+            <StrategicEntry :entry="us" :op-class="opClass" :type-label="t('proposals.term.userStory')" />
+          </div>
+        </div>
+
         <!-- 미지의 전략 카테고리(프로젝트별 맞춤 키)를 제네릭하게 렌더 -->
         <div v-for="grp in extraGroups" :key="grp.key" class="diff-group">
           <h5>{{ grp.label }}</h5>
-          <div v-for="(en, i) in grp.entries" :key="en.entityId || en.entityTitle || i" class="diff-entry">
+          <div v-for="(en, i) in grp.entries" :key="keyOf(en) || i" class="diff-entry">
             <StrategicEntry :entry="en" :op-class="opClass" />
           </div>
         </div>
       </div>
     </section>
-
-    <!-- Tactical Diff -->
-    <section class="diff-section">
-      <h4 class="diff-section__title">Tactical Diff <span class="badge badge--orange">전술적 변경</span></h4>
-      <div v-if="!hasTd" class="diff-section__empty">Tactical Diff 없음</div>
-      <div v-else>
-        <div v-for="item in td" :key="item.nodeId || item.nodeTitle" class="diff-entry diff-entry--tactical">
-          <div class="diff-entry__header">
-            <span :class="opClass(item.changeType)">{{ item.changeType }}</span>
-            <span class="diff-entry__label">{{ item.nodeLabel }}</span>
-            <span class="diff-entry__title">{{ item.nodeTitle }}</span>
-            <span :class="['impact-badge', `impact-badge--${(item.impactLevel || 'LOW').toLowerCase()}`]">
-              {{ item.impactLevel }}
-            </span>
-            <OpenInViewerLink
-              v-if="proposalId"
-              :proposalId="proposalId"
-              :nodeId="item.nodeId"
-              :nodeLabel="item.nodeLabel"
-              :nodeTitle="item.nodeTitle"
-            />
-          </div>
-          <div v-if="item.semanticDiff?.ops?.length" class="semantic-ops">
-            <div v-for="(op, oi) in item.semanticDiff.ops" :key="oi" class="semantic-op">
-              <code>{{ op.field }}</code>
-              <span class="op-type">{{ op.op }}</span>
-              <span class="op-value">{{ opValue(op) }}</span>
-            </div>
-          </div>
-          <!-- 편집/정규화로 최상위에 실린 VO/Enum(ops 가 빈 경우). ops 와 중복 이름은 제외. -->
-          <div v-if="itemLevelObjects(item).length" class="semantic-ops">
-            <div v-for="(op, oi) in itemLevelObjects(item)" :key="`il-${oi}`" class="semantic-op">
-              <code>{{ op.field }}</code>
-              <span class="op-type">obj_append</span>
-              <span class="op-value">{{ opValue(op) }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
+    <!-- 041 — Intent 단계는 Strategic Diff 만 렌더한다(FR-006).
+         Tactical Diff/아키텍처는 Plan 단계(PlanView)로 이동했다. -->
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import StrategicEntry from './StrategicEntry.vue'
-import OpenInViewerLink from './OpenInViewerLink.vue'
+import FeatureNode from './FeatureNode.vue'
+import { useI18n } from '../../../app/i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   strategicDiff: { type: Object, default: null },
-  tacticalDiff: { type: Array, default: null },
-  // 040 — 있으면 Tactical 엔트리마다 '열기'(미리보기 뷰어) 진입점을 표시.
+  // 040 — preview 진입점 등에서 참조될 수 있어 유지(현재 Strategic 렌더에는 미사용).
   proposalId: { type: String, default: null },
 })
 
@@ -121,7 +115,121 @@ const props = defineProps({
 const FIRST_CLASS_KEYS = ['version', 'epics', 'features', 'userStories', 'processes']
 
 const sd = computed(() => props.strategicDiff || {})
-const td = computed(() => props.tacticalDiff || [])
+
+// 항목의 안정 키 — MODIFY 는 실제 entityId, CREATE 는 tempId, 없으면 제목.
+function keyOf(entry) {
+  return entry?.entityId || entry?.tempId || entry?.entityTitle
+}
+
+// Collapse 상태 — 닫힌 키만 보관(기본은 모두 열림).
+const collapsed = ref(new Set())
+function isOpen(key) {
+  return !collapsed.value.has(key)
+}
+function toggle(key) {
+  const next = new Set(collapsed.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsed.value = next
+}
+function hasChildren(ep) {
+  return ep.features.length > 0 || ep.looseUserStories.length > 0
+}
+
+// fields 에서 단일 값(after 우선, 없으면 before) 추출.
+function fieldVal(entry, key) {
+  const f = entry?.fields?.[key]
+  if (!f) return null
+  return f.after ?? f.before ?? null
+}
+function descOf(entry) {
+  return fieldVal(entry, 'description')
+}
+// classification → 칩 라벨/스타일. classification·description 외 필드는 폴백 렌더.
+function classLabel(entry) {
+  const v = fieldVal(entry, 'classification')
+  if (!v) return ''
+  return String(v).charAt(0).toUpperCase() + String(v).slice(1)
+}
+function classChip(entry) {
+  const k = String(fieldVal(entry, 'classification') || '').toLowerCase()
+  if (k === 'core') return 'class-chip--core'
+  if (k === 'supporting') return 'class-chip--supporting'
+  return 'class-chip--generic'
+}
+function otherFields(entry) {
+  const f = entry?.fields
+  if (!f) return []
+  return Object.entries(f).filter(([k]) => k !== 'classification' && k !== 'description')
+}
+
+// 프로세스의 steps/events 문자열 → 화살표 기준 개별 이벤트 배열.
+function eventsOf(entry) {
+  const raw = fieldVal(entry, 'steps') || fieldVal(entry, 'events')
+  if (!raw) return []
+  return String(raw)
+    .split(/→|->|=>/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+// 프로세스에서 events/steps/description 외 나머지 필드(폴백 렌더용).
+function otherProcessFields(entry) {
+  const f = entry?.fields
+  if (!f) return []
+  return Object.entries(f).filter(([k]) => !['steps', 'events', 'description'].includes(k))
+}
+
+// 부모 참조(ref)가 entry 의 실제 id(MODIFY) 또는 tempId(CREATE) 중 하나와 일치하는가.
+function matchesRef(entry, ref) {
+  return ref != null && (entry.entityId === ref || entry.tempId === ref)
+}
+
+// 평탄한 epics/features/userStories 를 BC → Feature → UserStory 계층으로 조립.
+// 부모를 못 찾은 항목은 고아(orphan)로 분리해 끝에 따로 렌더한다.
+const tree = computed(() => {
+  const epics = sd.value.epics || []
+  const features = sd.value.features || []
+  const userStories = sd.value.userStories || []
+
+  const usedFeature = new Set()
+  const usedUs = new Set()
+
+  // 아직 소비되지 않은 UserStory 중 parent[refField] 가 일치하는 것들을 수집.
+  function storiesFor(parent, refField) {
+    const out = []
+    userStories.forEach((us, ui) => {
+      if (!usedUs.has(ui) && matchesRef(parent, us[refField])) {
+        out.push(us)
+        usedUs.add(ui)
+      }
+    })
+    return out
+  }
+
+  const epicNodes = epics.map((e) => {
+    const featureNodes = []
+    features.forEach((f, fi) => {
+      if (matchesRef(e, f.epicId)) {
+        usedFeature.add(fi)
+        featureNodes.push({ node: f, userStories: storiesFor(f, 'featureId') })
+      }
+    })
+    // Feature 에 안 붙은 BC 직속 UserStory(boundedContextId 직접 참조)
+    const looseUserStories = storiesFor(e, 'boundedContextId')
+    return { node: e, features: featureNodes, looseUserStories }
+  })
+
+  const orphanFeatures = []
+  features.forEach((f, fi) => {
+    if (!usedFeature.has(fi)) {
+      orphanFeatures.push({ node: f, userStories: storiesFor(f, 'featureId') })
+    }
+  })
+
+  const orphanUserStories = userStories.filter((_, ui) => !usedUs.has(ui))
+
+  return { epicNodes, orphanFeatures, orphanUserStories }
+})
 
 // camelCase/snake_case 키 → 보기 좋은 제목 ("businessRules" → "Business Rules")
 function prettyLabel(key) {
@@ -152,38 +260,10 @@ const hasSd = computed(() =>
   sd.value.processes?.length ||
   extraGroups.value.length
 )
-const hasTd = computed(() => td.value.length > 0)
 
 function opClass(op) {
   const map = { CREATE: 'op-badge op-badge--create', MODIFY: 'op-badge op-badge--modify', DELETE: 'op-badge op-badge--delete' }
   return map[op] || 'op-badge'
-}
-
-function opValue(op) {
-  if (op.value != null) return JSON.stringify(op.value)
-  if (op.obj_data) return JSON.stringify(op.obj_data)
-  if (op.items) return JSON.stringify(op.items)
-  return ''
-}
-
-// tacticalDiff 항목의 VO/Enum 은 ① semanticDiff.ops(obj_append) 또는 ② 편집/정규화로
-// 최상위 valueObjects/enumerations 배열(ops 빈 채)로 실린다. 백엔드 overlay_apply 와
-// 동일하게 ② 도 의사 obj_append op 로 변환해 렌더하되, ops 에 이미 있는 이름은 제외.
-function itemLevelObjects(item) {
-  const opNames = new Set(
-    (item.semanticDiff?.ops || [])
-      .filter(o => o.op === 'obj_append')
-      .map(o => o.obj_name || o.obj_data?.name)
-      .filter(Boolean),
-  )
-  const out = []
-  for (const vo of (item.valueObjects || [])) {
-    if (vo?.name && !opNames.has(vo.name)) out.push({ field: 'valueObjects', obj_data: vo })
-  }
-  for (const en of (item.enumerations || [])) {
-    if (en?.name && !opNames.has(en.name)) out.push({ field: 'enumerations', obj_data: en })
-  }
-  return out
 }
 </script>
 
@@ -198,6 +278,33 @@ function itemLevelObjects(item) {
 .diff-group { margin-bottom: 12px; }
 .diff-group h5 { font-size: 12px; font-weight: 600; color: var(--color-text-light); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
 .diff-entry { background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; }
+/* BC → Feature → US 계층: 왼쪽 들여쓰기 + 가이드 라인으로 소속을 드러낸다 */
+.bc-block { margin-bottom: 14px; }
+.feature-block { margin-bottom: 6px; }
+.children { margin-left: 10px; padding-left: 12px; border-left: 2px solid var(--color-border); margin-top: 6px; }
+.diff-entry--bc { background: var(--color-bg-tertiary); border-color: var(--color-border); }
+.diff-entry--feature { background: var(--color-bg-secondary); }
+.diff-entry--us { background: var(--color-bg-secondary); }
+/* 펼침/접힘 헤더 */
+.entry-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.entry-header--clickable { cursor: pointer; user-select: none; }
+.caret { font-size: 9px; color: var(--color-text-light); display: inline-block; transition: transform 0.15s ease; }
+.caret--open { transform: rotate(90deg); }
+.entry-title { font-weight: 500; color: var(--color-text); }
+.entry-title--bc { font-weight: 600; font-size: 14px; color: var(--color-text-bright); }
+/* 설명부 — 레이블 없이 본문으로 더 잘 보이게 */
+.entry-desc { margin: 7px 0 0; color: var(--color-text); font-size: 12.5px; line-height: 1.55; }
+/* classification 칩 */
+.class-chip { font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 9999px; text-transform: capitalize; letter-spacing: 0.02em; }
+.class-chip--core { background: var(--status-blue-bg); color: var(--status-blue-fg); }
+.class-chip--supporting { background: var(--status-green-bg); color: var(--status-green-fg); }
+.class-chip--generic { background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
+/* 프로세스(Event Storming) — 이벤트를 오렌지 칩으로 */
+.diff-entry--process { background: var(--color-bg-tertiary); }
+.event-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+/* Design 탭 Event 노드와 동일한 컬러(--color-event) 재사용 */
+.event-chip { display: inline-block; background: var(--color-event); color: #fff; border: 1px solid var(--color-event-dark); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 4px; white-space: nowrap; }
+.event-arrow { color: var(--color-text-light); font-size: 12px; }
 .diff-entry__header { display: flex; align-items: center; gap: 6px; }
 .diff-entry--tactical .diff-entry__header { flex-wrap: wrap; }
 .diff-entry__label { font-size: 11px; color: var(--color-text-light); background: var(--color-bg-tertiary); padding: 1px 5px; border-radius: 3px; }

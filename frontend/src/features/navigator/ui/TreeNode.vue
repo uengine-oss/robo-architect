@@ -534,6 +534,13 @@ function addToChatSelection() {
 
 // Double click handler — UserStory opens in the unified InspectorPanel
 // (spec 019-userstory-properties-panel); other types add to canvas.
+// 041 — BC별 헌장 편집기를 연다(App.vue 가 robo:open-constitution 을 듣고 모달 표시).
+function openBcConstitution() {
+  window.dispatchEvent(new CustomEvent('robo:open-constitution', {
+    detail: { scope: 'BOUNDED_CONTEXT', bcId: props.node.id }
+  }))
+}
+
 async function handleDoubleClick() {
   if (props.node.type === 'UserStory') {
     if (activeTab && activeTab.value !== 'Design') {
@@ -711,6 +718,14 @@ async function addToCanvas() {
         </svg>
       </button>
       
+      <!-- 041 — BC별 헌장(Constitution) 진입점. Design 쪽에서 BC 헌장 오버라이드 편집. -->
+      <button
+        v-if="node.type === 'BoundedContext'"
+        class="tree-node__edit-btn tree-node__constitution-btn"
+        title="이 Bounded Context 의 헌장 (Constitution)"
+        @click.stop="openBcConstitution"
+      >📜</button>
+
       <!-- On canvas indicator -->
       <span v-if="isOnCanvas" class="tree-node__on-canvas">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -836,6 +851,15 @@ async function addToCanvas() {
   background: rgba(32, 201, 151, 0.2);
   color: #20c997;
 }
+
+/* 041 — BC 헌장 버튼은 항상 보이게(발견 가능성). 이모지라 색상 transition 불필요. */
+.tree-node__constitution-btn {
+  opacity: 0.85;
+  font-size: 12px;
+  line-height: 1;
+}
+.tree-node__header:hover .tree-node__constitution-btn { opacity: 1; }
+.tree-node__constitution-btn:hover { background: rgba(255, 200, 0, 0.18); }
 
 /* User story specific styling */
 .tree-node__header:has(.tree-node__icon--userstory) {

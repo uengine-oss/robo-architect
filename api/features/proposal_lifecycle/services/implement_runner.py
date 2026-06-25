@@ -77,18 +77,28 @@ def _get_proposal_context(proposal_id: str) -> dict:
             RETURN p.originalPrompt AS prompt,
                    p.title AS title,
                    p.strategicDiff AS strategicDiff,
-                   p.tacticalDiff AS tacticalDiff
+                   p.tacticalDiff AS tacticalDiff,
+                   p.implementationPlan AS implementationPlan,
+                   p.projectRoot AS projectRoot
             """,
             id=proposal_id,
         )
         record = result.single()
     if not record:
         return {}
+    constitution = None
+    try:
+        from api.features.proposal_lifecycle.services.constitution_runner import read_constitution
+        constitution = read_constitution(record.get("projectRoot"))
+    except Exception:
+        constitution = None
     return {
         "prompt": record["prompt"] or "",
         "title": record.get("title") or proposal_id,
         "strategicDiff": record.get("strategicDiff") or "{}",
         "tacticalDiff": record.get("tacticalDiff") or "[]",
+        "implementationPlan": record.get("implementationPlan") or "{}",
+        "constitution": constitution,
     }
 
 
@@ -129,9 +139,15 @@ def _context_doc(proposal_id: str, ctx: dict, has_tasks: bool) -> str:
         f"```json\n{ctx['strategicDiff']}\n```\n\n"
         f"## Tactical Diff (전술적 변경안: Aggregate/Command/Event/VO)\n"
         f"```json\n{ctx['tacticalDiff']}\n```\n\n"
+        f"## 프로젝트 Constitution (설계원칙·기술스택·아키텍처 스타일·레포 전략)\n"
+        f"{ctx.get('constitution') or '(Constitution 없음)'}\n\n"
+        f"## Implementation Plan (아키텍처 결정·연동·서비스별 개발환경, JSON)\n"
+        f"```json\n{ctx.get('implementationPlan') or '{}'}\n```\n\n"
         f"{procedure}"
         "## 구현 지침\n"
         "- 이 워크트리는 위 Proposal 구현 전용 샌드박스입니다. 상위/메인 프로젝트는 절대 수정하지 마세요.\n"
+        "- **Constitution/Plan 준수** — 선언된 아키텍처 스타일(모놀리스/마이크로서비스), 기술스택, 레포 매핑, "
+        "연동 방식(req/res vs pub/sub·채널), 서비스별 개발환경을 그대로 따르세요. 충돌이 있으면 구현 전에 표시하세요.\n"
         "- Tactical Diff: MODIFY → 기존 파일 수정, CREATE → 신규 파일 생성.\n"
         "- Strategic Diff: 새 UserStory → 도메인 모델·API·프런트엔드 파일 생성.\n"
         f"- 진행률이 정확히 표시되도록 `{tasks_file}`의 체크박스 상태를 항상 최신으로 유지하세요.\n"

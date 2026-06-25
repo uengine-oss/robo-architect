@@ -134,6 +134,24 @@ export async function closeTerminalSession(sessionId) {
   }
 }
 
+// List every live backend PTY session (authoritative). Surfaces orphans the
+// per-tab × can't see. → { sessions:[{sessionId,pid,cwd,attached,idleSeconds,alive}], count, max, ttlSeconds }
+export async function fetchTerminalSessions() {
+  const base = await apiBase()
+  const res = await fetch(`${base}/api/claude-code/terminal/sessions`)
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+// One-click cleanup: terminate every session with no attached browser tab.
+// On-screen cells keep their ws attached and are left untouched. → { killed:[], count }
+export async function reapDetachedSessions() {
+  const base = await apiBase()
+  const res = await fetch(`${base}/api/claude-code/terminal/sessions/reap-detached`, { method: 'POST' })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
 // Global (~/.claude/skills) install status — checked when the Code tab opens so
 // the interactive claude cell can resolve the project's robo-* slash commands.
 // The backend remembers a successful check for the rest of the server session.

@@ -2,12 +2,15 @@
 // 038 Change Management의 DesignChangesView(레이어별 구조화 diff) 시각화를 Proposal로 포팅.
 // 입력은 이미 계산된 strategicDiff + tacticalDiff. SSE 없이 정적 렌더링한다.
 import { computed, ref } from 'vue'
+import { useI18n } from '../../../app/i18n'
 
 const props = defineProps({
   strategicDiff: { type: Object, default: () => ({}) },
   tacticalDiff:  { type: Array,  default: () => [] },
   journeys:      { type: Array,  default: () => [] },
 })
+
+const { t } = useI18n()
 
 // ── Layer 정의 (038 동일 구조 + Epic/Process 확장) ───────────────────────
 const LAYERS = [
@@ -18,7 +21,11 @@ const LAYERS = [
 const IMPACT_COLORS = { HIGH:'#fa5252', MEDIUM:'#fd7e14', LOW:'#228be6' }
 const LABEL_ICONS   = { Epic:'🗂', UserStory:'👤', Feature:'✨', Process:'🔀', BoundedContext:'🏛', Aggregate:'📦', Command:'⚡', Event:'🔔', Policy:'📜', ReadModel:'🔍' }
 const CHANGE_TYPE_COLORS = { CREATE:'#40c057', MODIFY:'#fd7e14', DELETE:'#fa5252' }
-const CHANGE_TYPE_LABELS = { CREATE:'신규', MODIFY:'수정', DELETE:'삭제' }
+const CHANGE_TYPE_LABELS = computed(() => ({
+  CREATE: t('proposals.diffVisual.changeCreate'),
+  MODIFY: t('proposals.diffVisual.changeModify'),
+  DELETE: t('proposals.diffVisual.changeDelete'),
+}))
 
 const expandedId = ref(null)
 
@@ -184,7 +191,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
 <template>
   <div class="pdv-root">
-    <div v-if="!activeLayers.length" class="pdv-empty">아직 분해된 변경(diff)이 없습니다.</div>
+    <div v-if="!activeLayers.length" class="pdv-empty">{{ t('proposals.diffVisual.empty') }}</div>
 
     <div v-else class="pdv-tree">
       <template v-for="(layer, li) in activeLayers" :key="layer.key">
@@ -237,7 +244,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
                 <!-- 스칼라 필드 변경 -->
                 <div v-if="node.scalarChanges?.length" class="pdv-section">
-                  <div class="pdv-section__title">📋 필드</div>
+                  <div class="pdv-section__title">📋 {{ t('proposals.diffVisual.sectionFields') }}</div>
                   <div v-for="(sc, i) in node.scalarChanges" :key="i" class="pdv-row">
                     <span class="pdv-mono">{{ sc.field }}</span>
                     <span class="pdv-after">{{ sc.after }}</span>
@@ -246,12 +253,12 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
                 <!-- Value Object / Properties -->
                 <div v-if="node.valueObjectChanges?.length" class="pdv-section">
-                  <div class="pdv-section__title">🧩 Value Object · Properties</div>
+                  <div class="pdv-section__title">🧩 {{ t('proposals.diffVisual.sectionValueObjects') }}</div>
                   <div v-for="(vc, i) in node.valueObjectChanges" :key="i" class="pdv-vo-card"
                        :style="{'--ct': CHANGE_TYPE_COLORS[vc.type === 'ADDED' ? 'CREATE' : 'DELETE']}">
                     <div class="pdv-vo-head">
                       <span class="pdv-ct-badge" :style="{'--ct': CHANGE_TYPE_COLORS[vc.type === 'ADDED' ? 'CREATE' : 'DELETE']}">
-                        {{ vc.type === 'ADDED' ? '＋추가' : '－삭제' }}
+                        {{ vc.type === 'ADDED' ? t('proposals.diffVisual.voAdded') : t('proposals.diffVisual.voRemoved') }}
                       </span>
                       <span class="pdv-mono">{{ vc.name }}</span>
                       <span v-if="vc.dataType" class="pdv-type">: {{ vc.dataType }}</span>
@@ -264,7 +271,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
                 <!-- Enumeration -->
                 <div v-if="node.enumChanges?.length" class="pdv-section">
-                  <div class="pdv-section__title">🔢 Enumeration</div>
+                  <div class="pdv-section__title">🔢 {{ t('proposals.diffVisual.sectionEnumeration') }}</div>
                   <div v-for="(ec, i) in node.enumChanges" :key="i" class="pdv-enum-row">
                     <span class="pdv-mono">{{ ec.enumName }}</span>
                     <span v-for="it in (ec.addedItems||[])" :key="it" class="pdv-enum-added">＋{{ it }}</span>
@@ -274,27 +281,27 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
                 <!-- Invariants (ops 기반) -->
                 <div v-if="node.invariantChanges?.length" class="pdv-section">
-                  <div class="pdv-section__title">📏 불변식</div>
+                  <div class="pdv-section__title">📏 {{ t('proposals.diffVisual.sectionInvariants') }}</div>
                   <ul class="pdv-inv-list"><li v-for="(inv, i) in node.invariantChanges" :key="i">{{ inv }}</li></ul>
                 </div>
 
                 <!-- Properties (HAS_PROPERTY) -->
                 <div v-if="node.properties?.length" class="pdv-section">
-                  <div class="pdv-section__title">🏷 속성 (Properties)</div>
+                  <div class="pdv-section__title">🏷 {{ t('proposals.diffVisual.sectionProperties') }}</div>
                   <div class="pdv-prop-grid">
                     <div v-for="(p, i) in node.properties" :key="i" class="pdv-prop">
                       <span class="pdv-mono">{{ p.name }}</span>
                       <span class="pdv-type">: {{ p.type || 'String' }}</span>
                       <span v-if="p.isKey" class="pdv-tag pdv-tag--pk">PK</span>
                       <span v-if="p.isForeignKey" class="pdv-tag pdv-tag--fk">FK</span>
-                      <span v-if="p.isRequired" class="pdv-tag pdv-tag--req">필수</span>
+                      <span v-if="p.isRequired" class="pdv-tag pdv-tag--req">{{ t('proposals.diffVisual.tagRequired') }}</span>
                     </div>
                   </div>
                 </div>
 
                 <!-- GWT (Given/When/Then) -->
                 <div v-if="node.gwt?.length" class="pdv-section">
-                  <div class="pdv-section__title">🧪 인수 시나리오 (GWT)</div>
+                  <div class="pdv-section__title">🧪 {{ t('proposals.diffVisual.sectionGwt') }}</div>
                   <div v-for="(sc, i) in node.gwt" :key="i" class="pdv-gwt-card">
                     <div v-if="sc.scenario || sc.scenarioDescription" class="pdv-gwt-scenario">
                       {{ sc.scenario || sc.scenarioDescription }}
@@ -307,7 +314,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
                 <!-- Invariants (구조화 객체: 선언 + 검증 Command) -->
                 <div v-if="node.invariantObjects?.length" class="pdv-section">
-                  <div class="pdv-section__title">📏 불변식</div>
+                  <div class="pdv-section__title">📏 {{ t('proposals.diffVisual.sectionInvariants') }}</div>
                   <div v-for="(inv, i) in node.invariantObjects" :key="i" class="pdv-row">
                     <span class="pdv-bullet">•</span>{{ inv.declaration }}
                     <span v-if="(inv.verifyingCommandRefs||[]).length" class="pdv-verify">↪ {{ (inv.verifyingCommandRefs||[]).join(', ') }}</span>
@@ -316,14 +323,14 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
                 <!-- UI 화면 -->
                 <div v-if="node.ui" class="pdv-section">
-                  <div class="pdv-section__title">🖥 화면 (UI)</div>
+                  <div class="pdv-section__title">🖥 {{ t('proposals.diffVisual.sectionUi') }}</div>
                   <div class="pdv-row"><span class="pdv-mono">{{ node.ui.name || node.ui.title }}</span>
                     <span v-if="node.ui.description" class="pdv-type">— {{ node.ui.description }}</span></div>
                 </div>
 
                 <!-- 추적성: 구현 UserStory -->
                 <div v-if="node.userStoryRefs?.length" class="pdv-section">
-                  <div class="pdv-section__title">🔗 구현 User Story</div>
+                  <div class="pdv-section__title">🔗 {{ t('proposals.diffVisual.sectionUserStoryRefs') }}</div>
                   <div class="pdv-chips">
                     <span v-for="(u, i) in node.userStoryRefs" :key="i" class="pdv-chip">{{ u }}</span>
                   </div>
@@ -331,7 +338,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
                 <!-- Policy 연결 -->
                 <div v-if="node.policyLinks" class="pdv-section">
-                  <div class="pdv-section__title">📜 반응 정책</div>
+                  <div class="pdv-section__title">📜 {{ t('proposals.diffVisual.sectionPolicy') }}</div>
                   <div class="pdv-row">
                     <span v-if="node.policyLinks.trigger" class="pdv-chip">⟳ {{ node.policyLinks.trigger }}</span>
                     <span v-if="node.policyLinks.invoke" class="pdv-chip">→ {{ node.policyLinks.invoke }}</span>
@@ -346,7 +353,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
     <!-- 사용자 여정 (화면 흐름) -->
     <div v-if="journeyList.length" class="pdv-journeys">
-      <div class="pdv-journeys__head"><span>🧭</span><span>사용자 여정</span><span class="pdv-layer__badge">{{ journeyList.length }}</span></div>
+      <div class="pdv-journeys__head"><span>🧭</span><span>{{ t('proposals.diffVisual.journeysTitle') }}</span><span class="pdv-layer__badge">{{ journeyList.length }}</span></div>
       <div v-for="(j, ji) in journeyList" :key="ji" class="pdv-journey">
         <div class="pdv-journey__name">{{ j.name || j.title }}</div>
         <div class="pdv-flow">

@@ -851,6 +851,54 @@ async def close_terminal_session(session_id: str = Query(...)):
     return {"closed": closed}
 
 
+@router.get("/terminal/sessions")
+async def list_terminal_sessions():
+    """List every live `claude` PTY session the backend is holding.
+
+    Authoritative source of truth for the session manager UI — surfaces
+    processes the per-tab × can't see (orphans from a closed tab, a prior
+    frontend instance, or cleared localStorage). Reaps stale ones first so
+    the count reflects reality.
+    """
+    _reap_stale_sessions()
+    now = time.monotonic()
+    items = []
+    for sid, sess in _sessions.items():
+        attached = sess.ws is not None
+        items.append({
+            "sessionId": sid,
+            "pid": sess.pid,
+            "cwd": sess.cwd,
+            "alive": sess.alive,
+            "attached": attached,
+            # Seconds since the last ws detached (only meaningful when not attached).
+            "idleSeconds": None if attached else round(now - sess.detached_at),
+        })
+    # Stable order: attached first, then longest-idle first.
+    items.sort(key=lambda x: (x["attached"] is False, -(x["idleSeconds"] or 0)))
+    return {
+        "sessions": items,
+        "count": len(items),
+        "max": _SESSION_MAX,
+        "ttlSeconds": _SESSION_TTL_SECONDS,
+    }
+
+
+@router.post("/terminal/sessions/reap-detached")
+async def reap_detached_sessions():
+    """Terminate every session with no attached WebSocket (one-click cleanup).
+
+    Detached = no browser tab is currently viewing it. Safe to kill: a live,
+    on-screen cell keeps its ws attached and is left untouched.
+    """
+    killed = []
+    for sid, sess in list(_sessions.items()):
+        if sess.ws is None:
+            if await _destroy_session(sid):
+                killed.append(sid)
+    return {"killed": killed, "count": len(killed)}
+
+
 @router.get("/global-skills/status")
 async def global_skills_status():
     """홈(``~/.claude/skills/``)에 이 저장소의 스킬이 설치돼 있는지 점검한다.

@@ -2,9 +2,9 @@
   <div class="sandbox-view">
     <!-- Sandbox metadata -->
     <div class="sandbox-meta" v-if="proposal?.sandboxBranch">
-      <span class="meta-label">브랜치:</span>
+      <span class="meta-label">{{ t('proposals.sandbox.branchLabel') }}</span>
       <code>{{ proposal.sandboxBranch }}</code>
-      <span class="meta-label">경로:</span>
+      <span class="meta-label">{{ t('proposals.sandbox.pathLabel') }}</span>
       <code>{{ proposal.sandboxWorktreePath }}</code>
       <span :class="['sandbox-status', `sandbox-status--${(proposal.sandboxStatus || '').toLowerCase()}`]">
         {{ proposal.sandboxStatus }}
@@ -13,27 +13,27 @@
 
     <!-- 대상 프로젝트(Claude Code 탭) 경로 안내 -->
     <div class="project-root-line">
-      <span class="meta-label">대상 프로젝트:</span>
+      <span class="meta-label">{{ t('proposals.sandbox.targetProjectLabel') }}</span>
       <code v-if="projectRoot">{{ projectRoot }}</code>
       <span v-else class="project-root-missing">
-        ⚠ Claude Code 탭에서 대상 프로젝트 경로를 먼저 설정하세요.
+        ⚠ {{ t('proposals.sandbox.projectRootMissing') }}
       </span>
     </div>
 
     <!-- 시작 전 안내 (SUBMITTED) -->
     <p v-if="proposal?.status === 'SUBMITTED'" class="sandbox-empty">
-      먼저 <strong>작업 목록</strong>을 생성해 어떤 작업이 진행될지 확인한 뒤 "구현 시작"을 누르면,
-      대상 프로젝트에 <code>{{ branchPreview }}</code> Worktree가 생성되고 그 목록을 따라 구현이 진행됩니다.
+      {{ t('proposals.sandbox.submittedGuidePre') }} <strong>{{ t('proposals.sandbox.submittedGuideTaskList') }}</strong>{{ t('proposals.sandbox.submittedGuideMid') }}
+      <code>{{ branchPreview }}</code>{{ t('proposals.sandbox.submittedGuidePost') }}
     </p>
 
     <!-- 작업 분해 — 셸이 아니라 proposal 쪽에서 미리 작업을 뽑아 보여준다.
          SUBMITTED 미리보기 + "구현하기"가 작업 목록을 즉석 생성하는 과정도 노출. -->
     <section v-if="proposal?.status === 'SUBMITTED' || tasksStream.active" class="tasks-block">
       <header class="progress-head">
-        <span class="progress-title">구현 작업 목록</span>
-        <span v-if="tasks.length" class="progress-badge progress-badge--done">{{ tasks.length }}개 작업</span>
+        <span class="progress-title">{{ t('proposals.sandbox.taskListTitle') }}</span>
+        <span v-if="tasks.length" class="progress-badge progress-badge--done">{{ t('proposals.sandbox.taskCountBadge', { n: tasks.length }) }}</span>
         <span v-else-if="tasksStream.active" class="progress-badge progress-badge--running">
-          <span class="spinner spinner--xs" /> 분해 중
+          <span class="spinner spinner--xs" /> {{ t('proposals.sandbox.decomposing') }}
         </span>
       </header>
 
@@ -60,15 +60,15 @@
 
       <div class="tasks-actions">
         <button v-if="!tasksStream.active && !tasks.length" @click="genTasks" class="btn btn--primary">
-          작업 목록 생성
+          {{ t('proposals.sandbox.generateTasks') }}
         </button>
         <button v-else-if="!tasksStream.active" @click="regenTasks" class="btn btn--outline">
-          작업 목록 재생성
+          {{ t('proposals.sandbox.regenerateTasks') }}
         </button>
-        <button v-if="tasksStream.active" @click="store.stopTasks()" class="btn btn--outline btn--sm">중지</button>
+        <button v-if="tasksStream.active" @click="store.stopTasks()" class="btn btn--outline btn--sm">{{ t('proposals.common.stop') }}</button>
       </div>
       <p v-if="tasks.length && !tasksStream.active" class="tasks-hint">
-        ※ "작업 목록 재생성"은 현재 {{ tasks.length }}개 작업을 버리고 Diff로부터 다시 분해합니다.
+        {{ t('proposals.sandbox.regenHint', { n: tasks.length }) }}
       </p>
       <p v-if="tasksStream.error" class="error-msg">{{ tasksStream.error }}</p>
     </section>
@@ -79,14 +79,14 @@
       <span v-if="!pendingLaunch && progressState.tone === 'running'" class="spinner spinner--sm running-note__icon" />
       <span v-else class="running-note__icon">ℹ️</span>
       <p class="running-note__text">
-        구현은 <strong>Code 탭의 Claude Code 셀</strong>에서 진행됩니다. 그 셀에서 실시간 로그를 보고, 중지(Ctrl+C/Esc)하거나 추가 지시를 입력할 수 있습니다.<template v-if="pendingLaunch"> 아래 <strong>“Claude Code 셀로 이동”</strong>을 누르면 그 셀에서 <code>/robo-implement {{ proposalId }}</code> 명령으로 구현이 시작됩니다.</template>
+        {{ t('proposals.sandbox.implementingNote') }}<template v-if="pendingLaunch"> {{ t('proposals.sandbox.implementingNotePending') }} <strong>"{{ t('proposals.sandbox.goToShell') }}"</strong>{{ t('proposals.sandbox.implementingNotePendingPost') }} <code>/robo-implement {{ proposalId }}</code> {{ t('proposals.sandbox.implementingNoteCommand') }}</template>
       </p>
     </div>
 
     <!-- 구현 진행 상황 — 워크트리 tasks.md 모니터링 (IMPLEMENTING/TESTING) -->
     <section v-if="showProgress" class="progress-block">
       <header class="progress-head">
-        <span class="progress-title">구현 진행 상황</span>
+        <span class="progress-title">{{ t('proposals.sandbox.progressTitle') }}</span>
         <span :class="['progress-badge', `progress-badge--${progressState.tone}`]">
           <span v-if="progressState.tone === 'running'" class="spinner spinner--xs" />
           {{ progressState.label }}
@@ -116,14 +116,14 @@
         </div>
       </template>
       <p v-else class="progress-empty">
-        셀이 <code>{{ progress?.file || 'tasks.md' }}</code> 체크리스트를 생성하면 진행률이 여기에 표시됩니다…
+        {{ t('proposals.sandbox.progressEmptyPre') }}<code>{{ progress?.file || 'tasks.md' }}</code>{{ t('proposals.sandbox.progressEmptyPost') }}
       </p>
     </section>
 
     <!-- 준비 완료(pendingLaunch) — 자동 이동 안 함. 안내 멘트에 연결된 이 버튼을
          눌러야 셀로 진입하며 /robo-implement 명령으로 구현이 시작된다. -->
     <div class="sandbox-actions" v-if="pendingLaunch">
-      <button @click="goToShell" class="btn btn--primary">Claude Code 셀로 이동</button>
+      <button @click="goToShell" class="btn btn--primary">{{ t('proposals.sandbox.goToShell') }}</button>
     </div>
 
     <!-- 액션 버튼들 — tasks.md 진행 상태로 결정:
@@ -134,7 +134,7 @@
         @click="startImplement(false)"
         class="btn btn--primary"
         :disabled="!projectRoot || starting"
-      >{{ starting ? '준비 중...' : '구현하기' }}</button>
+      >{{ starting ? t('proposals.sandbox.preparing') : t('proposals.sandbox.startImplement') }}</button>
 
       <button
         v-else-if="actionMode === 'complete'"
@@ -142,25 +142,25 @@
         class="btn btn--primary"
         :disabled="completing"
         :title="tasksAllDone
-          ? '구현 결과를 검증(robo-sync 구조 검증 + 인수 조건)한 뒤 Accept/Destroy 단계로 넘어갑니다.'
-          : '미구현 작업이 남아 있어도 여기까지의 결과로 검증 단계로 넘어갑니다.'"
-      >{{ completing ? '전환 중...' : (tasksAllDone ? '구현 완료 → 검증' : '미구현부분 완료하기') }}</button>
+          ? t('proposals.sandbox.tooltipCompleteAllDone')
+          : t('proposals.sandbox.tooltipCompletePartial')"
+      >{{ completing ? t('proposals.sandbox.completing') : (tasksAllDone ? t('proposals.sandbox.completeToVerify') : t('proposals.sandbox.completePartial')) }}</button>
 
       <!-- 구현 완료(TESTING 이후) — 검증은 언제든 추가로 다시 돌릴 수 있다. -->
       <button
         v-if="actionMode === 'reimplement'"
         @click="emit('validate')"
         class="btn btn--primary"
-        title="검증(robo-sync 구조 검증 + 인수 조건)을 실행/재실행합니다."
-      >검증하기</button>
+        :title="t('proposals.sandbox.tooltipVerify')"
+      >{{ t('proposals.sandbox.verify') }}</button>
 
       <button
         v-if="actionMode === 'reimplement'"
         @click="startImplement(true)"
         class="btn btn--outline"
         :disabled="!projectRoot || starting"
-        title="구현을 초기화하고 처음부터 다시 구현합니다."
-      >{{ starting ? '준비 중...' : '다시 구현하기' }}</button>
+        :title="t('proposals.sandbox.tooltipReimplementFromDone')"
+      >{{ starting ? t('proposals.sandbox.preparing') : t('proposals.sandbox.reimplement') }}</button>
 
       <!-- IMPLEMENTING 보조: 다시 구현하기 (검증으로 넘어가지 않고 처음부터) -->
       <button
@@ -168,24 +168,23 @@
         @click="startImplement(true)"
         class="btn btn--outline"
         :disabled="!projectRoot || starting"
-        title="현재 샌드박스를 초기화하고 처음부터 다시 구현합니다."
-      >다시 구현하기</button>
+        :title="t('proposals.sandbox.tooltipReimplementFromImplementing')"
+      >{{ t('proposals.sandbox.reimplement') }}</button>
 
       <button
         v-if="proposal?.sandboxWorktreePath"
         @click="goToShell"
         class="btn btn--outline"
-      >Claude Code 셀로 이동</button>
+      >{{ t('proposals.sandbox.goToShell') }}</button>
     </div>
 
     <p v-if="actionMode === 'complete' && tasksAllDone" class="reimplement-hint">
-      ✅ 모든 작업이 완료되었습니다. <strong>"구현 완료 → 검증"</strong>을 누르면 구현 결과가
-      검증되고(robo-sync 구조 검증 + 인수 조건), 통과 후 Accept/Destroy 단계로 넘어갑니다.
+      ✅ {{ t('proposals.sandbox.allDoneHintPre') }} <strong>"{{ t('proposals.sandbox.completeToVerify') }}"</strong>{{ t('proposals.sandbox.allDoneHintPost') }}
     </p>
     <p v-else-if="actionMode === 'reimplement'" class="reimplement-hint">
-      ✅ 구현이 완료되었습니다. <strong>"검증하기"</strong>로 언제든 검증을 다시 실행할 수 있고,
-      <strong>"다시 구현하기"</strong>는 현재 샌드박스(Worktree·셀 세션)를 초기화하고 처음부터 다시 시작합니다.
-      승인은 위 <strong>검증 / Accept·Destroy</strong> 탭에서 진행합니다.
+      ✅ {{ t('proposals.sandbox.reimplementHintPre') }} <strong>"{{ t('proposals.sandbox.verify') }}"</strong>{{ t('proposals.sandbox.reimplementHintMid') }}
+      <strong>"{{ t('proposals.sandbox.reimplement') }}"</strong>{{ t('proposals.sandbox.reimplementHintPost') }}
+      {{ t('proposals.sandbox.reimplementHintAccept') }}
     </p>
 
     <p v-if="store.sandboxStream.error" class="error-msg">{{ store.sandboxStream.error }}</p>
@@ -195,10 +194,12 @@
 <script setup>
 import { computed, ref, inject, watch, onUnmounted } from 'vue'
 import { useProposalsStore } from '../proposals.store'
+import { useI18n } from '../../../app/i18n'
 
 const props = defineProps({ proposalId: { type: String, required: true } })
 const emit = defineEmits(['validate'])  // 검증(TESTING)으로 전환됨 → 부모가 탭 전환
 const store = useProposalsStore()
+const { t } = useI18n()
 
 // Claude Code 탭 경로 = Worktree 원천(projectRoot). App.vue가 provide.
 const claudeCodeWorkdir = inject('claudeCodeWorkdir', null)
@@ -252,9 +253,7 @@ function genTasks() {
 
 // 이미 작업 목록이 있는 상태에서 재생성 — 기존 목록을 버리므로 확인을 받는다.
 function regenTasks() {
-  const ok = window.confirm(
-    `현재 작업 목록(${tasks.value.length}개)을 버리고 Diff로부터 다시 분해합니다. 계속할까요?`
-  )
+  const ok = window.confirm(t('proposals.sandbox.confirmRegen', { n: tasks.value.length }))
   if (!ok) return
   store.subscribeToTasks(props.proposalId).catch(() => {})
 }
@@ -297,14 +296,12 @@ watch(
 async function startImplement(restart = false) {
   const root = projectRoot.value
   if (!root) {
-    window.alert('Claude Code 탭에서 대상 프로젝트 경로를 먼저 설정하세요.')
+    window.alert(t('proposals.sandbox.alertNoProjectRoot'))
     return
   }
   // 재구현(restart)은 기존 샌드박스를 초기화하므로 확인을 받는다.
   if (restart) {
-    const ok = window.confirm(
-      `완료된 구현(${props.proposalId})의 샌드박스(Worktree와 Claude Code 셀 세션)를 초기화하고 처음부터 다시 구현합니다. 계속할까요?`
-    )
+    const ok = window.confirm(t('proposals.sandbox.confirmRestart', { id: props.proposalId }))
     if (!ok) return
   }
   starting.value = true
@@ -324,7 +321,7 @@ async function startImplement(restart = false) {
     }
     await runImplement(root, restart, false)
   } catch (e) {
-    window.alert(`구현 시작 실패: ${e?.message || e}`)
+    window.alert(t('proposals.sandbox.errorStartFailed', { msg: e?.message || e }))
   } finally {
     starting.value = false
   }
@@ -342,9 +339,7 @@ async function runImplement(root, restart, initGit) {
     }
   } catch (e) {
     if (e?.code === 'NOT_A_GIT_REPO' && !initGit) {
-      const ok = window.confirm(
-        `${e.message}\n\n(대상 프로젝트에 Git 저장소가 생성되고 초기 커밋이 만들어집니다.)`
-      )
+      const ok = window.confirm(`${e.message}\n\n${t('proposals.sandbox.gitInitNote')}`)
       if (!ok) return
       await runImplement(root, restart, true)
       return
@@ -381,7 +376,7 @@ async function completeImplement() {
     await store.completeImplementation(props.proposalId)
     emit('validate')  // TESTING 전환 완료 → 부모가 '검증' 탭으로 이동
   } catch (e) {
-    window.alert(`구현 완료 전환 실패: ${e?.message || e}`)
+    window.alert(t('proposals.sandbox.errorCompleteFailed', { msg: e?.message || e }))
   } finally {
     completing.value = false
   }
@@ -406,8 +401,8 @@ function itemsOf(sectionTitle) {
 // 상태 배지: 완료 / 진행 중 / 정체(멈춤 가능) / 준비 중.
 const progressState = computed(() => {
   const p = progress.value
-  if (!p || !p.exists) return { tone: 'pending', label: '체크리스트 준비 중' }
-  if (p.total > 0 && p.done >= p.total) return { tone: 'done', label: `구현 완료 ${p.done}/${p.total}` }
+  if (!p || !p.exists) return { tone: 'pending', label: t('proposals.sandbox.checklistPending') }
+  if (p.total > 0 && p.done >= p.total) return { tone: 'done', label: t('proposals.sandbox.progressDone', { done: p.done, total: p.total }) }
   const since = p.secondsSinceUpdate
   if (since != null && since > STALE_SECONDS) {
     // I17: 아직 셀에서 구현이 시작되지 않은 상태(0건 + 셀 세션 없음)를 "정체"로
@@ -416,9 +411,10 @@ const progressState = computed(() => {
       return { tone: 'pending', label: '시작 대기 — "Claude Code 셀로 이동"으로 구현을 시작하세요' }
     }
     const mins = Math.floor(since / 60)
-    return { tone: 'stale', label: `정체 — ${mins >= 1 ? mins + '분' : Math.round(since) + '초'} 업데이트 없음` }
+    const time = mins >= 1 ? t('proposals.sandbox.staleMinutes', { n: mins }) : t('proposals.sandbox.staleSeconds', { n: Math.round(since) })
+    return { tone: 'stale', label: t('proposals.sandbox.progressStale', { time }) }
   }
-  return { tone: 'running', label: `진행 중 ${p.done}/${p.total}` }
+  return { tone: 'running', label: t('proposals.sandbox.progressRunning', { done: p.done, total: p.total }) }
 })
 
 async function pollProgress() {

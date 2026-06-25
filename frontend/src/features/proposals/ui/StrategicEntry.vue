@@ -1,6 +1,9 @@
 <template>
-  <span :class="opClass(entry.op)">{{ entry.op }}</span>
-  <span class="diff-entry__title">{{ entry.entityTitle }}</span>
+  <div class="se-header">
+    <span class="diff-entry__title">{{ entry.entityTitle }}</span>
+    <span v-if="typeLabel" class="type-chip">{{ typeLabel }}</span>
+    <span :class="opClass(entry.op)">{{ entry.op }}</span>
+  </div>
   <template v-if="entry.acceptanceCriteria?.length">
     <ul class="ac-list">
       <li v-for="(ac, i) in entry.acceptanceCriteria" :key="i">{{ ac }}</li>
@@ -22,11 +25,15 @@
 defineProps({
   entry: { type: Object, required: true },
   opClass: { type: Function, required: true },
+  // 제목 뒤에 붙는 타입 칩 라벨(예: "User Story"). 없으면 칩 미표시.
+  typeLabel: { type: String, default: '' },
 })
 </script>
 
 <style scoped>
+.se-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .diff-entry__title { font-weight: 500; color: var(--color-text); }
+.type-chip { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 9999px; border: 1px solid var(--color-border); color: var(--color-text-light); background: transparent; white-space: nowrap; }
 .diff-entry__field { font-size: 12px; color: var(--color-text-light); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
 .field-key { font-weight: 600; color: var(--color-text); }
 .field-before { color: var(--color-danger); text-decoration: line-through; }
