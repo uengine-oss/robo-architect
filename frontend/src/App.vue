@@ -47,8 +47,8 @@ const themeStore = useThemeStore() // Initialize theme store
 const bpmnStore = useBpmnStore()
 const session = useSessionStore()
 
-// Tab state management
-const activeTab = ref('Stories')
+// Tab state management — 시작 탭 = Proposals (사용자 기본 진입점)
+const activeTab = ref('Proposals')
 
 // Claude Code workdir state — hydrated from localStorage so the inspector's
 // source viewer (feature 029) can resolve ImplementationFile paths even
