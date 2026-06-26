@@ -13,6 +13,7 @@ const emit = defineEmits(['close'])
 
 const canvasStore = useCanvasStore()
 const openClaudeCode = inject('openClaudeCode', null)
+const claudeCodeWorkdir = inject('claudeCodeWorkdir', null)
 
 // Tech stack options (fetched from API)
 const techStackOptions = ref({
@@ -112,6 +113,31 @@ function createAndSelect() {
   // Use current browsed path + project name
   projectPath.value = folderPickerData.value.current_path + '/' + config.value.project_name
   showFolderPicker.value = false
+}
+
+function resolvedProjectPath() {
+  return projectPath.value.endsWith('/')
+    ? projectPath.value + config.value.project_name
+    : projectPath.value
+}
+
+function persistProjectRoot(path) {
+  if (!path) return
+  try {
+    let sessions = []
+    try {
+      const parsed = JSON.parse(localStorage.getItem('claude_code_workspace_sessions') || '[]')
+      sessions = Array.isArray(parsed) ? parsed : []
+    } catch {}
+    const main = { id: 'main', label: '프로젝트', workdir: path, kind: 'main', epoch: 0, proposalId: null }
+    const idx = sessions.findIndex(s => s?.id === 'main' || s?.kind === 'main')
+    if (idx >= 0) sessions[idx] = { ...sessions[idx], ...main }
+    else sessions.unshift(main)
+    localStorage.setItem('claude_code_workspace_root', path)
+    localStorage.setItem('claude_code_workspace_active_session', 'main')
+    localStorage.setItem('claude_code_workspace_sessions', JSON.stringify(sessions))
+  } catch {}
+  if (claudeCodeWorkdir) claudeCodeWorkdir.value = path
 }
 
 const availableFrameworks = computed(() => {
@@ -258,9 +284,7 @@ function proceedFromConfig() {
 }
 
 async function setupAndOpenClaudeCode() {
-  const fullPath = projectPath.value.endsWith('/')
-    ? projectPath.value + config.value.project_name
-    : projectPath.value
+  const fullPath = resolvedProjectPath()
 
   try {
     isSettingUp.value = true
@@ -287,6 +311,7 @@ async function setupAndOpenClaudeCode() {
     }
 
     setupResult.value = await response.json()
+    persistProjectRoot(setupResult.value.project_path || fullPath)
     step.value = 4
   } catch (e) {
     error.value = e.message
@@ -300,12 +325,14 @@ function openInClaudeCode() {
     // D5: robo-spec 프로젝트는 빈 터미널만 열면 시작점(=/robo-plan)을 알 수 없다 →
     // 시작 슬래시 커맨드를 미리 넣어 발견성을 준다(robo-spec 모드 한정).
     const startCmd = outputMode.value === 'robo-spec' ? '/robo-plan ' : null
+    persistProjectRoot(setupResult.value.project_path)
     openClaudeCode(setupResult.value.project_path, startCmd)
     closeModal()
   }
 }
 
 function closeModal() {
+  if (step.value === 3) persistProjectRoot(resolvedProjectPath())
   step.value = 1
   previewData.value = null
   setupResult.value = null

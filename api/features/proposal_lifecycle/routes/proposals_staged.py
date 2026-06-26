@@ -167,6 +167,23 @@ async def confirm_stage(proposal_id: str, stage: str, body: StageConfirmRequest)
     return _load_proposal_response(proposal_id)
 
 
+@router.put("/{proposal_id}/stage/{stage}/draft", response_model=ProposalResponse)
+async def save_stage_draft(proposal_id: str, stage: str, body: StageConfirmRequest):
+    """미확정 stage artifact 를 draft 로 저장한다.
+
+    Confirm 전 새로고침/재진입 시 같은 stage 스킬을 다시 실행하지 않고 draft 를
+    복원하기 위한 저장 지점이다. conflictResolutions 는 draft 저장에는 사용하지 않는다.
+    """
+    stage = stage.upper()
+    if stage not in _STAGE_RUNNERS:
+        raise HTTPException(status_code=404, detail=f"Unknown stage {stage}")
+    if staged_runner.load_state(proposal_id) is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    staged_runner.save_stage_draft_artifact(proposal_id, stage, body.artifact)
+    staged_runner.log_stage(proposal_id, stage, "draft")
+    return _load_proposal_response(proposal_id)
+
+
 @router.post("/{proposal_id}/stage/{stage}/skip", response_model=ProposalResponse)
 async def skip_stage(proposal_id: str, stage: str, body: StageSkipRequest):
     """스테이지 생략(Discover 불가, FR-014)."""

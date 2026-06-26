@@ -228,6 +228,7 @@ export const messages = {
 
   // ── PlanView strings ─────────────────────────────────────────────────
   'proposals.plan.headerTitle': { ko: 'Plan 단계', en: 'Plan Stage' },
+  'proposals.plan.stageChip': { ko: 'Plan Stage', en: 'Plan Stage' },
   'proposals.plan.headerBadge': { ko: '전술 · 임팩트 · 아키텍처', en: 'Tactical · Impact · Architecture' },
   'proposals.plan.btnGenerate': { ko: 'Plan 생성', en: 'Generate Plan' },
   'proposals.plan.btnRegenerate': { ko: 'Plan 다시 생성', en: 'Regenerate Plan' },

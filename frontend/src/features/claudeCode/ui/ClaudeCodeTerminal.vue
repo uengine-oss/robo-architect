@@ -232,7 +232,7 @@ function connect(workdir) {
     if (cmdToSend) {
       setTimeout(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data: cmdToSend + '\n' }))
+          ws.send(JSON.stringify({ type: 'input', data: cmdToSend + '\r' }))
         }
       }, 6000)  // 6s: Claude CLI startup + prompt render
     }

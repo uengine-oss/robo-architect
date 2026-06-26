@@ -2,58 +2,65 @@
   <div class="dfviz">
     <p class="dfviz__hint">Bounded Context Canvas (ddd-crew v5) — 각 영향 BC 의 책임·분류·통신·언어·결정.</p>
 
-    <div v-for="(c, i) in contexts" :key="i" class="bcc">
-      <!-- Name -->
+    <div v-if="contexts.length > 1" class="dfviz__tabs">
+      <button
+        v-for="(c, i) in contexts"
+        :key="c.name || i"
+        type="button"
+        :class="['dfviz__tab', { 'is-active': i === activeContextIndex }]"
+        @click="activeContextIndex = i"
+      >
+        {{ c.name || `BC ${i + 1}` }}
+      </button>
+    </div>
+
+    <div v-if="currentContext" class="bcc">
       <div class="bcc__name">
         <span class="bcc__label">Name</span>
-        <input class="bcc__name-in" v-model="c.name" placeholder="컨텍스트 이름" />
+        <input class="bcc__name-in" v-model="currentContext.name" placeholder="컨텍스트 이름" />
         <span class="bcc__src">github.com/ddd-crew/bounded-context-canvas · V5</span>
       </div>
 
-      <!-- Purpose -->
       <section class="bcc__cell bcc__purpose">
         <h5>Purpose</h5>
-        <textarea v-model="c.purpose" rows="3" placeholder="비즈니스 관점의 책임/제공 가치" />
+        <textarea v-model="currentContext.purpose" rows="3" placeholder="비즈니스 관점의 책임/제공 가치" />
       </section>
 
-      <!-- Strategic Classification -->
       <section class="bcc__cell bcc__strat">
         <h5>Strategic Classification</h5>
         <div class="bcc__strat-cols">
           <div>
             <span class="bcc__sub">Domain</span>
             <label v-for="d in DOMAINS" :key="d" class="bcc__opt">
-              <input type="radio" :name="`dom${i}`" :value="d" :checked="c.classification === d" @change="c.classification = d" /> {{ d.toLowerCase() }}
+              <input type="radio" :name="`dom${activeContextIndex}`" :value="d" :checked="currentContext.classification === d" @change="currentContext.classification = d" /> {{ d.toLowerCase() }}
             </label>
           </div>
           <div>
             <span class="bcc__sub">Business Model</span>
             <label v-for="b in BIZ" :key="b" class="bcc__opt">
-              <input type="checkbox" :checked="(c.businessModel||[]).includes(b)" @change="toggle(c, 'businessModel', b)" /> {{ b.replace('_',' ') }}
+              <input type="checkbox" :checked="(currentContext.businessModel || []).includes(b)" @change="toggle(currentContext, 'businessModel', b)" /> {{ b.replace('_',' ') }}
             </label>
           </div>
           <div>
             <span class="bcc__sub">Evolution</span>
             <label v-for="e in EVO" :key="e" class="bcc__opt">
-              <input type="radio" :name="`evo${i}`" :value="e" :checked="c.evolution === e" @change="c.evolution = e" /> {{ e.replace('_',' ') }}
+              <input type="radio" :name="`evo${activeContextIndex}`" :value="e" :checked="currentContext.evolution === e" @change="currentContext.evolution = e" /> {{ e.replace('_',' ') }}
             </label>
           </div>
         </div>
       </section>
 
-      <!-- Domain Roles -->
       <section class="bcc__cell bcc__roles">
         <h5>Domain Roles</h5>
         <label v-for="r in ROLES" :key="r" class="bcc__opt">
-          <input type="checkbox" :checked="(c.domainRoles||[]).includes(r)" @change="toggle(c, 'domainRoles', r)" /> {{ r }} context
+          <input type="checkbox" :checked="(currentContext.domainRoles || []).includes(r)" @change="toggle(currentContext, 'domainRoles', r)" /> {{ r }} context
         </label>
       </section>
 
-      <!-- Inbound -->
       <section class="bcc__cell bcc__inbound">
         <h5>Inbound Communication</h5>
         <div class="bcc__msg-head"><span>Collaborator</span><span>Message</span></div>
-        <div v-for="(m, mi) in (c.inbound || [])" :key="mi" class="bcc__msg">
+        <div v-for="(m, mi) in (currentContext.inbound || [])" :key="mi" class="bcc__msg">
           <input class="bcc__msg-col" :value="m.collaborator || m.from" @input="m.collaborator = $event.target.value" placeholder="collaborator" />
           <input class="bcc__msg-name" v-model="m.message" placeholder="message" />
           <select class="bcc__msg-type" :class="typeClass(m.type)" v-model="m.type">
@@ -63,31 +70,29 @@
         <span class="bcc__arrow">→</span>
       </section>
 
-      <!-- Center: Ubiquitous Language + Business Decisions -->
       <section class="bcc__cell bcc__center">
         <h5>Ubiquitous Language</h5>
         <div class="bcc__sub2">Context-specific domain terminology</div>
-        <div v-for="(u, ui) in (c.ubiquitousLanguage || [])" :key="ui" class="bcc__term">
+        <div v-for="(u, ui) in (currentContext.ubiquitousLanguage || [])" :key="ui" class="bcc__term">
           <input class="bcc__term-t" v-model="u.term" placeholder="Domain Term" />
           <input class="bcc__term-d" v-model="u.definition" placeholder="definition" />
         </div>
-        <span v-if="(c.ubiquitousLanguage||[]).length < 5" class="bcc__warn">용어 5개 이상 권장</span>
+        <span v-if="(currentContext.ubiquitousLanguage || []).length < 5" class="bcc__warn">용어 5개 이상 권장</span>
 
         <h5 class="bcc__mt">Business Decisions</h5>
         <div class="bcc__sub2">Key business rules, policies, and decisions</div>
-        <textarea :value="(c.businessDecisions||[]).join('\n')" @input="c.businessDecisions = lines($event)" rows="3" placeholder="한 줄에 하나" />
+        <textarea :value="(currentContext.businessDecisions || []).join('\n')" @input="currentContext.businessDecisions = lines($event)" rows="3" placeholder="한 줄에 하나" />
 
-        <template v-if="c.languageClashes?.length">
+        <template v-if="currentContext.languageClashes?.length">
           <h5 class="bcc__mt bcc__clash">⚠️ Language Clashes</h5>
-          <ul><li v-for="(l, li) in c.languageClashes" :key="li">{{ l }}</li></ul>
+          <ul><li v-for="(l, li) in currentContext.languageClashes" :key="li">{{ l }}</li></ul>
         </template>
       </section>
 
-      <!-- Outbound -->
       <section class="bcc__cell bcc__outbound">
         <h5>Outbound Communication</h5>
         <div class="bcc__msg-head"><span>Message</span><span>Collaborator</span></div>
-        <div v-for="(m, mi) in (c.outbound || [])" :key="mi" class="bcc__msg">
+        <div v-for="(m, mi) in (currentContext.outbound || [])" :key="mi" class="bcc__msg">
           <input class="bcc__msg-name" v-model="m.message" placeholder="message" />
           <select class="bcc__msg-type" :class="typeClass(m.type)" v-model="m.type">
             <option>Query</option><option>Command</option><option>Event</option>
@@ -97,31 +102,35 @@
         <span class="bcc__arrow">→</span>
       </section>
 
-      <!-- Assumptions -->
       <section class="bcc__cell bcc__assume">
         <h5>Assumptions</h5>
-        <textarea :value="(c.assumptions||[]).join('\n')" @input="c.assumptions = lines($event)" rows="3" placeholder="검증되지 않은 설계 가정 (한 줄에 하나)" />
+        <textarea :value="(currentContext.assumptions || []).join('\n')" @input="currentContext.assumptions = lines($event)" rows="3" placeholder="검증되지 않은 설계 가정 (한 줄에 하나)" />
       </section>
 
-      <!-- Verification Metrics -->
       <section class="bcc__cell bcc__metrics">
         <h5>Verification Metrics</h5>
-        <textarea :value="(c.verificationMetrics||[]).join('\n')" @input="c.verificationMetrics = lines($event)" rows="3" placeholder="구조를 (in)validate 할 지표 (한 줄에 하나)" />
+        <textarea :value="(currentContext.verificationMetrics || []).join('\n')" @input="currentContext.verificationMetrics = lines($event)" rows="3" placeholder="구조를 (in)validate 할 지표 (한 줄에 하나)" />
       </section>
 
-      <!-- Open Questions -->
       <section class="bcc__cell bcc__questions">
         <h5>Open Questions</h5>
-        <textarea :value="(c.openQuestions||[]).join('\n')" @input="c.openQuestions = lines($event)" rows="3" placeholder="미해결 질문 (한 줄에 하나)" />
+        <textarea :value="(currentContext.openQuestions || []).join('\n')" @input="currentContext.openQuestions = lines($event)" rows="3" placeholder="미해결 질문 (한 줄에 하나)" />
       </section>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+
 const model = defineModel({ type: Object, required: true })
+const activeContextIndex = ref(0)
 const contexts = computed(() => model.value.contexts || (model.value.contexts = []))
+const currentContext = computed(() => contexts.value[activeContextIndex.value] || contexts.value[0] || null)
+
+watch(() => contexts.value.length, (len) => {
+  if (activeContextIndex.value >= len) activeContextIndex.value = Math.max(0, len - 1)
+})
 
 const DOMAINS = ['CORE', 'SUPPORTING', 'GENERIC', 'OTHER']
 const BIZ = ['revenue', 'engagement', 'compliance', 'cost_reduction']
@@ -139,6 +148,9 @@ function typeClass(t) { return 'is-' + (t || '').toLowerCase() }
 
 <style scoped>
 .dfviz__hint { font-size: 11px; color: var(--color-text-light); margin: 0 0 8px; }
+.dfviz__tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.dfviz__tab { border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-bg-secondary); color: var(--color-text); font-size: 12px; padding: 4px 12px; cursor: pointer; }
+.dfviz__tab.is-active { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
 .bcc { border: 2px solid var(--color-text); border-radius: 4px; margin-bottom: 16px; overflow: hidden;
   display: grid; grid-template-columns: 1.05fr 1.25fr 1fr;
   grid-template-areas:

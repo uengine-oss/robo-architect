@@ -337,7 +337,7 @@ const treeRef = ref(null)
 
 // Send a command into the ACTIVE session's terminal as if the user typed it.
 function sendTerminalCommand(command) {
-  terminalRefs[activeSessionId.value]?.sendInput(command + '\n')
+  terminalRefs[activeSessionId.value]?.sendInput(command + '\r')
 }
 
 defineExpose({ sendTerminalCommand })
@@ -382,7 +382,7 @@ function _onTerminalOpen(e) {
     }
     // 같은 workdir 의 기존 세션: claude 가 이미 떠 있으므로 명령만 주입.
     activeSessionId.value = main.id
-    if (command) nextTick(() => terminalRefs[main.id]?.sendInput(command + '\n'))
+    if (command) nextTick(() => terminalRefs[main.id]?.sendInput(command + '\r'))
     return
   }
 
@@ -421,7 +421,7 @@ function _onTerminalOpen(e) {
       existing.activePath = null
     }
     activeSessionId.value = sid
-    if (command) nextTick(() => terminalRefs[sid]?.sendInput(command + '\n'))
+    if (command) nextTick(() => terminalRefs[sid]?.sendInput(command + '\r'))
   } else {
     sessions.value.push({ id: sid, label: label || pid || basename(workdir), workdir, kind: 'proposal', activePath: null, initialCommand: command || '', epoch: 0, proposalId: pid })
     activeSessionId.value = sid

@@ -147,6 +147,9 @@ def _apply_diffs_and_accept(proposal_id: str, actor: str, comment: str | None) -
         # Journey 적용: 화면 흐름(UI 생성 이후이므로 마지막)
         j_count = apply_journeys(session, proposal_id, journeys, ref_map)
 
+        _validate_applied_counts(strategic_diff, tactical_diff, s_count, t_count)
+        _validate_live_projection(session, proposal_id, strategic_diff, tactical_diff)
+
         SmartLogger.log("INFO", f"diffs applied {proposal_id}: strategic={s_count}, tactical={t_count}, journeys={j_count}",
                         category="proposal_lifecycle.merge.diffs_applied",
                         params={"proposalId": proposal_id, "strategic": s_count, "tactical": t_count, "journeys": j_count})
@@ -164,6 +167,60 @@ def _apply_diffs_and_accept(proposal_id: str, actor: str, comment: str | None) -
             at=now,
             history=new_history,
         )
+
+
+def _count_items(strategic_diff: dict, key: str) -> int:
+    items = strategic_diff.get(key) if isinstance(strategic_diff, dict) else []
+    return len(items) if isinstance(items, list) else 0
+
+
+def _validate_applied_counts(strategic_diff: dict, tactical_diff: list,
+                             strategic_count: int, tactical_count: int) -> None:
+    expected_strategic = sum(_count_items(strategic_diff, k)
+                             for k in ("epics", "boundedContexts", "features", "userStories", "processes"))
+    expected_tactical = len(tactical_diff) if isinstance(tactical_diff, list) else 0
+    if expected_strategic and strategic_count <= 0:
+        raise RuntimeError("Strategic diff produced no live graph changes")
+    if expected_tactical and tactical_count <= 0:
+        raise RuntimeError("Tactical diff produced no live graph changes")
+
+
+def _validate_live_projection(session, proposal_id: str, strategic_diff: dict, tactical_diff: list) -> None:
+    """Accept 전 live graph에 핵심 노드/관계가 실제로 생겼는지 검증한다."""
+    expected_features = _count_items(strategic_diff, "features")
+    expected_user_stories = _count_items(strategic_diff, "userStories")
+    expected_processes = _count_items(strategic_diff, "processes")
+    expected_aggregates = sum(1 for item in (tactical_diff or [])
+                              if isinstance(item, dict)
+                              and (item.get("nodeLabel") or item.get("entityType")) == "Aggregate")
+
+    checks = [
+        ("Feature", expected_features),
+        ("UserStory", expected_user_stories),
+        ("Process", expected_processes),
+        ("Aggregate", expected_aggregates),
+    ]
+    for label, expected in checks:
+        if expected <= 0:
+            continue
+        row = session.run(
+            f"MATCH (n:{label} {{proposalSource: $pid}}) RETURN count(n) AS c",
+            pid=proposal_id,
+        ).single()
+        actual = row["c"] if row else 0
+        if actual <= 0:
+            raise RuntimeError(f"{label} live projection is empty after applying diff")
+
+    if expected_aggregates > 0:
+        row = session.run(
+            """
+            MATCH (:BoundedContext {proposalSource: $pid})-[:HAS_AGGREGATE]->(:Aggregate {proposalSource: $pid})
+            RETURN count(*) AS c
+            """,
+            pid=proposal_id,
+        ).single()
+        if (row["c"] if row else 0) <= 0:
+            raise RuntimeError("Aggregate live projection is not linked to BoundedContext")
 
 
 async def execute_revoke(proposal_id: str, actor: str, revert_code: bool, comment: str | None = None) -> dict:

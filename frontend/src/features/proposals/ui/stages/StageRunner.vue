@@ -114,7 +114,9 @@ watch(() => store.stagedStream.logLines?.length, async () => {
 })
 
 // 산출물 편집을 스토어 초안으로 보존(탭 전환·언마운트에도 유지).
-watch(artifact, (v) => { if (v) store.setStageDraft(props.proposalId, props.stage, v) }, { deep: true })
+watch(artifact, (v) => {
+  if (v) store.setStageDraft(props.proposalId, props.stage, v, { persist: true })
+}, { deep: true })
 
 onMounted(() => {
   // 1) 이미 생성된 초안이 있으면 스킬 재실행 없이 복원(탭 전환·검토 중 보존).

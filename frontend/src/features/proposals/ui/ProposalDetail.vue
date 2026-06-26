@@ -42,6 +42,21 @@
           :proposalId="proposal.id"
           @goto-plan="proceedToPlan"
         />
+        <StageArtifactTabs
+          v-else-if="showStrategicHistoryTabs"
+          v-model="intentStageTab"
+          base-key="STRATEGIC_DESIGN"
+          :base-label="t('proposals.term.strategicDesign')"
+          :stages="strategicHistoryStages"
+          :artifacts="proposal.stageArtifacts"
+        >
+          <template #base>
+            <IntentDecompositionView
+              :strategicDiff="proposal.strategicDiff"
+              :proposalId="proposal.id"
+            />
+          </template>
+        </StageArtifactTabs>
         <template v-else>
         <IntentDecompositionView
           :strategicDiff="proposal.strategicDiff"
@@ -129,6 +144,21 @@
           :proposalId="proposal.id"
           @consolidated="onStagedConsolidated"
         />
+        <StageArtifactTabs
+          v-else-if="showPlanHistoryTabs"
+          v-model="planStageTab"
+          base-key="PLAN_STAGE"
+          :base-label="t('proposals.plan.stageChip')"
+          :stages="tacticalHistoryStages"
+          :artifacts="proposal.stageArtifacts"
+        >
+          <template #base>
+            <PlanView
+              :proposalId="proposal.id"
+              @confirmed="onPlanConfirmed"
+            />
+          </template>
+        </StageArtifactTabs>
         <PlanView
           v-else
           :proposalId="proposal.id"
@@ -191,6 +221,7 @@ import DualMergeView from './DualMergeView.vue'
 import PlanView from './PlanView.vue'
 import StrategicStages from './StrategicStages.vue'
 import PlanStages from './PlanStages.vue'
+import StageArtifactTabs from './StageArtifactTabs.vue'
 
 const props = defineProps({ proposalId: { type: String, required: true } })
 const { t } = useI18n()
@@ -207,6 +238,8 @@ const feedbackText = ref('')
 const feedbackError = ref('')
 const regenerating = ref(false)
 const hasRegenerated = ref(false)
+const intentStageTab = ref('STRATEGIC_DESIGN')
+const planStageTab = ref('PLAN_STAGE')
 
 const proposal = computed(() => store.currentProposal)
 // 042 — 상태 표시 라벨(코드 유지, 표시만 단계명): DRAFT=Intent, SUBMITTED=Plan, TESTING=Validating.
@@ -229,6 +262,7 @@ const _hasStrategic = computed(() => {
 })
 const _hasTactical = computed(() => !!proposal.value?.tacticalDiff?.length)
 const STRATEGIC_STAGES = ['DISCOVER', 'DECOMPOSE', 'STRATEGIZE']
+const TACTICAL_STAGES = ['CONNECT', 'DEFINE', 'TACTICAL']
 // 전략(Intent) 단계가 모두 끝났는가 — Detailed 한정(stagePlan 의 비생략 전략 단계 산출물 존재).
 const strategicStagesDone = computed(() => {
   const plan = proposal.value?.stagePlan
@@ -246,6 +280,21 @@ const planLocked = computed(() => isDraft.value)
 const showPlanStages = computed(() =>
   isDetailed.value && isSubmitted.value && !_hasTactical.value && !!proposal.value?.stagePlan)
 const showPlanView = computed(() => !isDraft.value && !showPlanStages.value)
+
+const stageArtifacts = computed(() => proposal.value?.stageArtifacts || {})
+function completedStagesInOrder(stageOrder) {
+  const planned = proposal.value?.stagePlan?.stages
+    ?.filter(s => !s.skipped && stageOrder.includes(s.stage))
+    .map(s => s.stage) || []
+  const source = planned.length ? planned : stageOrder
+  return source.filter(s => stageArtifacts.value[s])
+}
+const strategicHistoryStages = computed(() => completedStagesInOrder(STRATEGIC_STAGES))
+const tacticalHistoryStages = computed(() => completedStagesInOrder(TACTICAL_STAGES))
+const showStrategicHistoryTabs = computed(() =>
+  isDetailed.value && !showStrategicStages.value && strategicHistoryStages.value.length > 0)
+const showPlanHistoryTabs = computed(() =>
+  isDetailed.value && !planLocked.value && !showPlanStages.value && tacticalHistoryStages.value.length > 0)
 
 const canUpgradeToDetailed = computed(() =>
   proposal.value?.decompositionMode === 'SIMPLIFIED' && isDraft.value &&
@@ -370,6 +419,17 @@ watch(() => store.intentStream.active, (active, was) => {
   if (proposal.value) {
     editStrategicJson.value = JSON.stringify(proposal.value.strategicDiff || {}, null, 2)
   }
+})
+
+watch(() => props.proposalId, () => {
+  intentStageTab.value = 'STRATEGIC_DESIGN'
+  planStageTab.value = 'PLAN_STAGE'
+})
+watch(showStrategicHistoryTabs, (visible) => {
+  if (visible) intentStageTab.value = 'STRATEGIC_DESIGN'
+})
+watch(showPlanHistoryTabs, (visible) => {
+  if (visible) planStageTab.value = 'PLAN_STAGE'
 })
 
 function logLineClass(line) {

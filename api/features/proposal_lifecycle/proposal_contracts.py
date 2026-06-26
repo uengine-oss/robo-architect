@@ -327,6 +327,7 @@ class ProposalResponse(BaseModel):
     decompositionMode: DecompositionMode = DecompositionMode.SIMPLIFIED
     stagePlan: Optional[StagePlan] = None
     stageArtifacts: Optional[dict] = None       # {stage → artifact}
+    stageDraftArtifacts: Optional[dict] = None  # {stage → unconfirmed artifact}
     currentStage: Optional[str] = None
     memoryConflicts: Optional[list[MemoryConflict]] = None
 
@@ -424,6 +425,7 @@ class ProposalResponse(BaseModel):
             except Exception:
                 stage_plan = None
         stage_artifacts = _parse_json(node.get("stageArtifacts"), None)
+        stage_draft_artifacts = _parse_json(node.get("stageDraftArtifacts"), None)
         raw_conflicts = _parse_json(node.get("memoryConflicts"), None)
         mem_conflicts = None
         if raw_conflicts:
@@ -465,6 +467,7 @@ class ProposalResponse(BaseModel):
             decompositionMode=mode,
             stagePlan=stage_plan,
             stageArtifacts=stage_artifacts,
+            stageDraftArtifacts=stage_draft_artifacts,
             currentStage=node.get("currentStage"),
             memoryConflicts=mem_conflicts,
         )

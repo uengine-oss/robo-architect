@@ -28,7 +28,7 @@ def load_state(proposal_id: str) -> Optional[dict]:
             "MATCH (p:Proposal {id:$id}) RETURN "
             "p.decompositionMode AS mode, p.originalPrompt AS prompt, "
             "p.strategicDiff AS sd, p.stagePlan AS plan, "
-            "p.stageArtifacts AS arts, p.currentStage AS cur, "
+            "p.stageArtifacts AS arts, p.stageDraftArtifacts AS draftArts, p.currentStage AS cur, "
             "p.projectRoot AS projectRoot",
             id=proposal_id,
         ).single()
@@ -47,6 +47,7 @@ def load_state(proposal_id: str) -> Optional[dict]:
         "strategic": _p(rec.get("sd"), {}),
         "stagePlan": _p(rec.get("plan"), None),
         "stageArtifacts": _p(rec.get("arts"), {}) or {},
+        "stageDraftArtifacts": _p(rec.get("draftArts"), {}) or {},
         "currentStage": rec.get("cur"),
         "projectRoot": rec.get("projectRoot"),
     }
@@ -65,29 +66,72 @@ def save_stage_artifact(proposal_id: str, stage: str, artifact: dict) -> Optiona
     """확정된 스테이지 산출물을 저장하고 다음 스테이지로 currentStage 를 전진."""
     state = load_state(proposal_id)
     arts = (state or {}).get("stageArtifacts") or {}
+    draft_arts = (state or {}).get("stageDraftArtifacts") or {}
     arts[stage] = artifact
+    draft_arts.pop(stage, None)
     plan = (state or {}).get("stagePlan")
     nxt = next_stage_after(plan, stage)
     with get_session() as session:
         session.run(
-            "MATCH (p:Proposal {id:$id}) SET p.stageArtifacts=$arts, p.currentStage=$cur",
-            id=proposal_id, arts=json.dumps(arts, ensure_ascii=False), cur=nxt,
+            "MATCH (p:Proposal {id:$id}) "
+            "SET p.stageArtifacts=$arts, p.stageDraftArtifacts=$draftArts, p.currentStage=$cur",
+            id=proposal_id,
+            arts=json.dumps(arts, ensure_ascii=False),
+            draftArts=json.dumps(draft_arts, ensure_ascii=False),
+            cur=nxt,
         )
     return nxt
+
+
+def save_stage_draft_artifact(proposal_id: str, stage: str, artifact: dict) -> None:
+    """미확정 스테이지 산출물을 저장해 새로고침 후 재실행을 막는다."""
+    state = load_state(proposal_id)
+    if state is None:
+        return
+    draft_arts = state.get("stageDraftArtifacts") or {}
+    draft_arts[stage] = artifact
+    with get_session() as session:
+        session.run(
+            "MATCH (p:Proposal {id:$id}) SET p.stageDraftArtifacts=$draftArts",
+            id=proposal_id,
+            draftArts=json.dumps(draft_arts, ensure_ascii=False),
+        )
+
+
+def clear_stage_draft_artifact(proposal_id: str, stage: str) -> None:
+    state = load_state(proposal_id)
+    if state is None:
+        return
+    draft_arts = state.get("stageDraftArtifacts") or {}
+    if stage not in draft_arts:
+        return
+    draft_arts.pop(stage, None)
+    with get_session() as session:
+        session.run(
+            "MATCH (p:Proposal {id:$id}) SET p.stageDraftArtifacts=$draftArts",
+            id=proposal_id,
+            draftArts=json.dumps(draft_arts, ensure_ascii=False),
+        )
 
 
 def mark_stage_skipped(proposal_id: str, stage: str) -> Optional[str]:
     """플랜에서 해당 스테이지를 skipped 로 표시하고 currentStage 를 전진."""
     state = load_state(proposal_id) or {}
     plan = state.get("stagePlan") or {"stages": []}
+    draft_arts = state.get("stageDraftArtifacts") or {}
+    draft_arts.pop(stage, None)
     for item in plan.get("stages", []):
         if item.get("stage") == stage:
             item["skipped"] = True
     nxt = next_stage_after(plan, stage)
     with get_session() as session:
         session.run(
-            "MATCH (p:Proposal {id:$id}) SET p.stagePlan=$plan, p.currentStage=$cur",
-            id=proposal_id, plan=json.dumps(plan, ensure_ascii=False), cur=nxt,
+            "MATCH (p:Proposal {id:$id}) "
+            "SET p.stagePlan=$plan, p.stageDraftArtifacts=$draftArts, p.currentStage=$cur",
+            id=proposal_id,
+            plan=json.dumps(plan, ensure_ascii=False),
+            draftArts=json.dumps(draft_arts, ensure_ascii=False),
+            cur=nxt,
         )
     return nxt
 

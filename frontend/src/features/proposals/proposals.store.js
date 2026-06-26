@@ -34,6 +34,7 @@ export const useProposalsStore = defineStore('proposals', () => {
   // 042 — 미확정 스테이지 산출물 초안(탭 전환·언마운트에도 보존; 키 `${pid}:${stage}`).
   // 컴포넌트 로컬에만 두면 탭 이동 시 unmount → 스킬 재실행으로 작업이 사라지는 문제를 막는다.
   const stageDrafts = ref({})
+  const _stageDraftTimers = {}
   let _intentEs = null
   let _tasksEs = null
   let _validateEs = null
@@ -75,6 +76,7 @@ export const useProposalsStore = defineStore('proposals', () => {
       const res = await fetch(`${BASE}/${id}`)
       if (!res.ok) throw new Error(`Fetch proposal ${id} failed: ${res.status}`)
       currentProposal.value = await res.json()
+      hydrateStageDrafts(currentProposal.value)
     } catch (e) {
       error.value = e.message
     } finally {
@@ -785,7 +787,7 @@ export const useProposalsStore = defineStore('proposals', () => {
         phase: () => {},
         log_line: (d) => { stagedStream.value.logLines.push(d.text); if (stagedStream.value.logLines.length > 200) stagedStream.value.logLines.shift() },
         // 산출물 도착 즉시 초안으로 보존 → 검토 중 탭 이동/재마운트에도 사라지지 않음.
-        artifact: (d) => { stagedStream.value.artifact = d.artifact; setStageDraft(proposalId, stage, d.artifact) },
+        artifact: (d) => { stagedStream.value.artifact = d.artifact; setStageDraft(proposalId, stage, d.artifact, { persist: true }) },
         conflicts: (d) => { stagedStream.value.conflicts = d.conflicts || [] },
         done: (d) => { stagedStream.value.active = false; stagedStream.value.done = true; stagedStream.value.nextStage = d.nextStage; finish(resolve, { artifact: stagedStream.value.artifact, conflicts: stagedStream.value.conflicts, nextStage: d.nextStage }) },
         error: (d) => { stagedStream.value.active = false; stagedStream.value.error = d.message; finish(reject, new Error(d.message || 'stage failed')) },
@@ -838,9 +840,45 @@ export const useProposalsStore = defineStore('proposals', () => {
 
   // 미확정 스테이지 초안 보존/복원/삭제.
   function _draftKey(pid, stage) { return `${pid}:${stage}` }
-  function getStageDraft(pid, stage) { return stageDrafts.value[_draftKey(pid, stage)] || null }
-  function setStageDraft(pid, stage, artifact) {
+  function hydrateStageDrafts(proposal) {
+    const pid = proposal?.id
+    const drafts = proposal?.stageDraftArtifacts || {}
+    if (!pid || !drafts || typeof drafts !== 'object') return
+    Object.entries(drafts).forEach(([stage, artifact]) => {
+      if (artifact) stageDrafts.value[_draftKey(pid, stage)] = artifact
+    })
+  }
+  function getStageDraft(pid, stage) {
+    return stageDrafts.value[_draftKey(pid, stage)]
+      || currentProposal.value?.stageDraftArtifacts?.[stage]
+      || null
+  }
+  function setStageDraft(pid, stage, artifact, { persist = false } = {}) {
     if (artifact) stageDrafts.value[_draftKey(pid, stage)] = artifact
+    if (persist && artifact) scheduleStageDraftSave(pid, stage, artifact)
+  }
+  function scheduleStageDraftSave(pid, stage, artifact) {
+    const key = _draftKey(pid, stage)
+    if (_stageDraftTimers[key]) clearTimeout(_stageDraftTimers[key])
+    _stageDraftTimers[key] = setTimeout(() => {
+      delete _stageDraftTimers[key]
+      saveStageDraft(pid, stage, artifact).catch(() => {})
+    }, 400)
+  }
+  async function saveStageDraft(pid, stage, artifact) {
+    const res = await fetch(`${BASE}/${pid}/stage/${stage.toLowerCase()}/draft`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ artifact, conflictResolutions: [] }),
+    })
+    if (!res.ok) return null
+    const updated = await res.json()
+    if (currentProposal.value?.id === pid) {
+      currentProposal.value = updated
+      hydrateStageDrafts(updated)
+      _syncListItem(pid)
+    }
+    return updated
   }
   function clearStageDraft(pid, stage) { delete stageDrafts.value[_draftKey(pid, stage)] }
 
@@ -865,7 +903,7 @@ export const useProposalsStore = defineStore('proposals', () => {
     proposals, currentProposal, loading, error,
     intentStream, sandboxStream, tasksStream, validationStream, testResults,
     constitution, plan, planStream, stagedStream, stageDrafts,
-    getStageDraft, setStageDraft, clearStageDraft,
+    getStageDraft, setStageDraft, clearStageDraft, saveStageDraft,
     fetchProposals, fetchProposal, createProposal, deleteProposal,
     subscribeToIntent, stopIntent, answerClarification, submitIntentFeedback,
     subscribeToTasks, stopTasks, fetchTasks,

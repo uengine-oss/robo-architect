@@ -31,6 +31,8 @@ RoboArchitect 안에 **임베디드 Claude Code IDE**. (015) 백엔드가 PTY를
 | 11 | 글로벌 스킬 설치/상태 | 029 | `ClaudeCodeWorkspace` | `GET /global-skills/status`, `POST /global-skills/install` |
 | 12 | 슬래시 커맨드(/robo-plan·tasks·implement·sync) | 029 | (claude 셀 내부) | MCP `robo_spec/mcp_server.py` |
 | 13 | 외부 호출 핸드오프(`openClaudeCode`) | 038/039 | `App.vue`→이벤트 | `claude-terminal-open` 이벤트 |
+| 14 | Proposal worktree 구현 handoff | 039/042 | `SandboxProgressView`→`openClaudeCode`→`ClaudeCodeWorkspace` | `POST /api/proposals/{id}/implement` |
+| 15 | Code project root/session persistence | 039/042 | `PRDGeneratorModal`, `ClaudeCodeWorkspace` | `localStorage: claude_code_workspace_root/sessions` |
 
 > store↔라우트 1:1, WS 프로토콜(input/resize/output), 세션 수명주기, MCP 슬래시 동작은 라이브에서 확정.
 
@@ -60,6 +62,56 @@ RoboArchitect 안에 **임베디드 Claude Code IDE**. (015) 백엔드가 PTY를
 - **I14 코드 재확인**: proposal `destroy`([proposals.store.js:466](../../../frontend/src/features/proposals/proposals.store.js#L466))에 Code 세션 prune **없음** + FileTreePane이 죽은 root를 fs-event마다 재요청 → 400 반복(무해·노이즈). 풀 재현은 proposal 워크트리 필요(Proposals 탭에서). I16=C7로 수정완료. 세션 close(×)→`closeSession`이 PTY kill(`DELETE /terminal/session`) 정상.
 - **D10(라이브 관찰)**: 백엔드 재시작 시 PTY 세션 전멸 — 인메모리 레지스트리(router.py:718). 재어태치는 브라우저 새로고침은 견디나 백엔드 재시작은 못 견딤(검증 중 D7 백엔드 편집→리로드로 세션 초기화 실측).
 
+### S7. Proposals → Code 탭 구현 handoff — ✅ (2026-06-26 Detailed DDD fix)
+
+#### S7-1. Code project root 저장
+
+- 재현:
+  1. `localStorage['claude_code_workspace_root']`, `claude_code_workspace_sessions`, `claude_code_workspace_active_session` 초기화
+  2. Code 탭 프로젝트 홈 생성 마법사 진입
+  3. 경로 입력 후 Step 3 `Done`
+  4. localStorage 확인
+- 기대:
+  - `claude_code_workspace_root`가 입력한 project root로 저장
+  - `claude_code_workspace_sessions`에 `main` 세션 저장
+  - `claude_code_workspace_active_session = main`
+- 결과: ✅
+- 관련 수정:
+  - [`PRDGeneratorModal.vue`](../../../frontend/src/features/prdGeneration/ui/PRDGeneratorModal.vue): Step 3 `Done`에서도 root/session을 저장하도록 `persistProjectRoot()` 추가.
+
+#### S7-2. Proposal 구현 버튼 활성화 조건
+
+- Proposals 탭 `SandboxProgressView`는 project root를 다음 순서로 읽는다.
+  1. `provide('claudeCodeWorkdir')`
+  2. `localStorage['claude_code_workspace_root']`
+  3. Proposal에 저장된 `projectRoot`
+- Code root 저장이 되면 `구현하기` 버튼이 활성화된다.
+- 구현 요청은 `POST /api/proposals/{id}/implement`로 worktree를 만들고, 응답으로 `{ worktreePath, branch, command }`를 받는다.
+
+#### S7-3. Claude Code 셀 이동 및 command 실행
+
+- 재현:
+  1. Proposal Sandbox에서 `구현하기`
+  2. `Claude Code 셀로 이동`
+  3. Code 탭 proposal session 확인
+  4. initial command가 terminal ready 후 실행되는지 확인
+- 기대:
+  - Code 탭에 proposal worktree 세션이 열린다.
+  - `/robo-implement <PRO-ID>` 같은 command가 입력만 되고 멈추지 않고 실행된다.
+- 결과: ✅
+- 관련 수정:
+  - [`ClaudeCodeTerminal.vue`](../../../frontend/src/features/claudeCode/ui/ClaudeCodeTerminal.vue): initial command 전송 시 `cmd + '\r'` 사용.
+  - [`ClaudeCodeWorkspace.vue`](../../../frontend/src/features/claudeCode/ui/ClaudeCodeWorkspace.vue): 기존 세션 command 주입도 `\r` 사용.
+
+#### S7-4. Proposal 구현 worktree
+
+- `POST /implement` 이후:
+  - Proposal 상태: `IMPLEMENTING`
+  - `sandboxBranch`: `proposal/<PRO-ID>`
+  - `sandboxWorktreePath`: 대상 project root 아래 `.sandbox/proposal/<PRO-ID>`
+  - worktree에는 `PROPOSAL_<PRO-ID>.md`, `PROPOSAL_<PRO-ID>_TASKS.md`, `.mcp.json`, `.claude/settings.local.json` 등이 생성된다.
+- 이번 Detailed DDD 검증에서는 실제 구현 checklist 16/16 완료 및 커밋 생성까지 확인했다.
+
 ## 4. 발견 이슈
 
 | # | 심각도 | 증상 | 원인(추정) | 후속 |
@@ -78,6 +130,8 @@ RoboArchitect 안에 **임베디드 Claude Code IDE**. (015) 백엔드가 PTY를
 | D6 | 🟡 **(중복)** | **슬래시 커맨드 `/robo-plan`(외 robo-*)이 자동완성에 2개씩 뜸**. 사용자 지적. | robo 스킬이 **두 스코프에 이중 설치**: ① 글로벌 `~/.claude/skills/robo-plan`(Code 탭 global-skills install) ② 프로젝트 `<proj>/.claude/skills/robo-plan`(`setup-project`/`_install_robo_spec`). Claude Code가 user+project 스킬을 합쳐 보여줘 중복. 기능 무해(동일 스킬). | **후속**: 정책 정리 — robo 프로젝트는 항상 로컬 설치되므로 (a) `setup-project`가 글로벌 존재 시 로컬 스킬 복사 생략 or (b) robo 프로젝트에선 글로벌 robo 스킬 미설치/숨김. 설계 결정 필요(글로벌은 비-robo-project 워크디렉터리용). |
 | I14 | 🟡 **(코드확인)** | 종료된 proposal Code 세션 잔존(tree 400 반복) | proposal destroy에 세션 prune 없음 + FileTreePane이 죽은 root 재요청 | proposal destroy→해당 Code 세션 prune. **Proposals 탭에서 풀 재현/수정.** |
 | D10 | 🟡 **(한계·관찰)** | **백엔드 재시작 시 모든 터미널 세션 소실** — 재어태치가 브라우저 새로고침은 견디나 백엔드 재시작은 못 견딤. 검증 중 실측. | PTY 세션 레지스트리가 **인메모리**(router.py:718 `_sessions`). uvicorn reload/crash 시 전멸. | 설계 한계. 개선=PTY 외부화/재생성 정책(큰 작업) 또는 "백엔드 재연결 실패 시 세션 정리+안내" UX. |
+| P-Code1 | 🟢 **수정·검증완료** | Code 탭 프로젝트 홈 생성 `Done` 후 root/session이 저장되지 않아 Proposal `구현하기` 버튼 비활성 | Step 3 `Done`이 `closeModal`만 호출하고 `claude_code_workspace_root`/main session을 저장하지 않음 | `persistProjectRoot()` 추가. 증거: `001-proposals-ddd-fix/api/code-root-persist-localstorage.json` |
+| P-Code2 | 🟢 **수정·검증완료** | `Claude Code 셀로 이동` 후 `/robo-implement`가 입력줄에 남고 실행되지 않음 | xterm/PTY 입력에서 `\n`만 전송되어 Enter 실행이 안정적이지 않음 | command 주입을 `\r`로 변경. 증거: `code-terminal-command-ready-exec.png` |
 
 ## 5. 결론 (라이브 검증 2026-06-25)
 
@@ -92,6 +146,7 @@ RoboArchitect 안에 **임베디드 Claude Code IDE**. (015) 백엔드가 PTY를
 - **C7/I16 🔴(수정)** — 폴더피커 변경 시 터미널 cwd 미추종(칩 거짓말). 확인 후 respawn.
 - **C6/S5 🟢(수정)** — 외부 핸드오프 콜드스타트 명령 누락 + 다른 프로젝트 핸드오프 cwd 미추종. respawn+initialCommand.
 - **D1·D3·D5·D9 🟢(수정)** — 에디터 헤더 버튼 가림 / PRD 모달 출력모드 UX·발견성 / xterm WebGL 성능.
+- **P-Code1/P-Code2 🟢(수정)** — Proposals→Code handoff에서 project root 저장 및 command 실행 안정화.
 - **C11 ✅정정(무해)** — 인터랙티브 터미널은 로컬 로그인 사용(헤드리스만 env키 영향).
 
 **기록(후속)**: D2(모델→PRD 진입점 없음)·D4(PRD Step3 Done 무동작)·D6(슬래시 커맨드 중복)·D8(.specify 버전마커 부재)·I14(proposal 세션 prune)·D10(백엔드 재시작=세션 소실).

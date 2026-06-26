@@ -105,7 +105,7 @@
           <span class="diff-entry__title">{{ item.nodeTitle || item.entityTitle }}</span>
           <span v-if="item.impactLevel" :class="['impact-badge', `impact-badge--${(item.impactLevel || 'LOW').toLowerCase()}`]">{{ item.impactLevel }}</span>
           <OpenInViewerLink
-            v-if="proposalId && item.nodeId"
+            v-if="proposalId && canOpenLive(item.nodeId)"
             :proposalId="proposalId"
             :nodeId="item.nodeId"
             :nodeLabel="item.nodeLabel || item.entityType"
@@ -196,6 +196,10 @@ const messagingChannel = computed(() => plan.value?.messagingChannel || '')
 const devEnvs = computed(() => plan.value?.serviceDevEnvironments || [])
 const KIND_KEYS = { EVENT: 'proposals.plan.kindEvent', COMMAND: 'proposals.plan.kindCommand', QUERY: 'proposals.plan.kindQuery' }
 function kindLabel(k) { return KIND_KEYS[k] ? t(KIND_KEYS[k]) : (k || t('proposals.plan.kindEvent')) }
+function canOpenLive(nodeId) {
+  const id = String(nodeId || '')
+  return !!id && !id.includes(':') && id !== '—'
+}
 const hasPlan = computed(() => !!plan.value && (architecture.value.length || (tactical.value && tactical.value.length)))
 const canConfirm = computed(() => architecture.value.length > 0 || (tactical.value && tactical.value.length > 0))
 
