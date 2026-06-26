@@ -147,6 +147,11 @@ export async function startBackend(): Promise<{ port: number }> {
     "uv",
     [
       "run",
+      // Windows 앱 제어 정책(WDAC/Smart App Control)이 `uvicorn.exe` 콘솔
+      // 스크립트 셔임 실행을 차단(os error 4551)하는 환경이 있어, python.exe 를
+      // 직접 호출하는 `python -m uvicorn` 으로 spawn 한다(동등·이식성↑).
+      "python",
+      "-m",
       "uvicorn",
       "api.main:app",
       "--host",
