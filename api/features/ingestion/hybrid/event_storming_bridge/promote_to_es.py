@@ -226,11 +226,13 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
         # We touch any analyzer Question (no session_id); this is a one-way
         # link from immutable analyzer data into the hybrid session.
         rec = s.run(
-            "MATCH (q:Question) WHERE q.session_id IS NULL "
-            "OPTIONAL MATCH (f:FUNCTION)-[:HAS_QUESTION]->(q) "
+            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
+            "OPTIONAL MATCH (f)-[:HAS_QUESTION]->(q) "
             "OPTIONAL MATCH (t:BpmTask {session_id: $sid})-[:REALIZED_BY]->"
             "          (sh:Rule {session_id: $sid}) "
-            "          WHERE sh.source_function = coalesce(f.procedure_name, f.name) "
+            "          WHERE EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(f) "
+            "                 WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) "
+            "                   AND _rt.name = sh.source_function } "
             "OPTIONAL MATCH (us:UserStory {session_id: $sid}) "
             "          WHERE us.sourceUnitId = t.id "
             "OPTIONAL MATCH (us)-[:IMPLEMENTS]->(bc:BoundedContext {session_id: $sid}) "
@@ -247,11 +249,11 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
         # IMPORTANT: `LIMIT 1` must apply to BC selection only, not to the
         # question stream. Otherwise only one orphan question gets attached.
         rec = s.run(
-            "MATCH (q:Question) WHERE q.session_id IS NULL "
+            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
             "  AND NOT (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
             "MATCH (bc:BoundedContext {session_id: $sid}) "
             "WITH bc ORDER BY bc.key LIMIT 1 "
-            "MATCH (q:Question) WHERE q.session_id IS NULL "
+            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
             "  AND NOT (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
             "MERGE (q)-[rel:ATTACHED_TO]->(bc) "
             "RETURN count(rel) AS c",

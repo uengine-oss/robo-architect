@@ -262,29 +262,30 @@ def fetch_hybrid_us_rules(
         return out
 
     pairs = [{"us_id": us_id, "task_id": task_id} for us_id, task_id in us_to_task]
+    # 오퍼레이션 단위(루틴) 기준 조인 — dbms 룰 오너=자식구문 → PARENT_OF*0.. 로 루틴 rtn 복원.
+    # guard/branch 는 생산자가 속성 폐기 → NEXT/BRANCH 엣지에서 도출(spec 044 C3/C4).
+    # EXAMPLE 에 is_boundary 없음 → 대표예시=첫 EXAMPLE(C2/R4).
     cypher = """
     UNWIND $pairs AS pair
     MATCH (t:BpmTask {id: pair.task_id, session_id: $sid})
           -[:REALIZED_BY]->(sh:Rule {session_id: $sid})
-    OPTIONAL MATCH (f:FUNCTION)-[hr:HAS_RULE]->(an:Rule)
+    OPTIONAL MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(an:RULE)
       WHERE an.session_id IS NULL
-        AND coalesce(f.procedure_name, f.name) = sh.source_function
+        AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
+        AND rtn.name = sh.source_function
         AND an.statement = sh.title
-    WITH pair, sh, hr, an,
-         // canonical Example (non-boundary preferred) — for given/when_/then_
-         head([(an)-[:HAS_EXAMPLE]->(e:Example)
-               WHERE NOT coalesce(e.is_boundary, false) | e]) AS canonical_ex,
-         // full Example list with writes (table + op) — drives Aggregate root /
-         // Event PastParticiple / Acceptance test in downstream phases
-         [(an)-[:HAS_EXAMPLE]->(e:Example) | {
-            example_id: e.example_id,
+    WITH pair, sh, hr, an, f,
+         head([(an)-[:HAS_EXAMPLE]->(e:EXAMPLE) | e]) AS canonical_ex,
+         [(an)-[:HAS_EXAMPLE]->(e:EXAMPLE) | {
+            example_id: e.id,
             given: e.given,
             when_: e.when_,
             then_: e.then_,
-            is_boundary: coalesce(e.is_boundary, false),
-            writes: [(e)-[at:AFFECTS_TABLE]->(tbl:Table)
+            writes: [(e)-[at:AFFECTS_TABLE]->(tbl:TABLE)
                      | {table: tbl.name, op: at.op}]
-         }] AS examples
+         }] AS examples,
+         head([(f)-[hrp:HAS_RULE]->(prev:RULE)-[:NEXT]->(an)  | hrp.local_rule_id]) AS guard_derived,
+         head([(f)-[hrb:HAS_RULE]->(par:RULE)-[:BRANCH]->(an) | hrb.local_rule_id]) AS branch_derived
     RETURN pair.us_id AS us_id,
            sh.id AS rule_id,
            sh.title AS statement,
@@ -292,11 +293,11 @@ def fetch_hybrid_us_rules(
            coalesce(canonical_ex.given,  sh.given) AS given,
            coalesce(canonical_ex.when_,  sh.when)  AS when_,
            coalesce(canonical_ex.then_,  sh.then)  AS then_,
-           coalesce(canonical_ex.is_boundary, false) AS is_boundary,
-           coalesce(hr.local_id,        '')  AS local_id,
+           false AS is_boundary,
+           coalesce(hr.local_rule_id,   '')  AS local_id,
            coalesce(hr.flow_id,         '')  AS flow_id,
-           coalesce(hr.guard_rule_id,   '')  AS guard_rule_id,
-           coalesce(hr.branch_from,     '')  AS branch_from,
+           coalesce(guard_derived,      '')  AS guard_rule_id,
+           coalesce(branch_derived,     '')  AS branch_from,
            coalesce(hr.coupled_domains, []) AS coupled_domains,
            examples
     """

@@ -86,13 +86,14 @@ def _collect_code_tokens() -> list[str]:
     try:
         with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
             for rec in s.run(
-                "MATCH (f) WHERE f.procedure_name IS NOT NULL OR f.name IS NOT NULL "
-                "RETURN coalesce(f.procedure_name, f.name) AS fn, f.summary AS summary"
+                "MATCH (f) WHERE (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER) "
+                "  AND f.name IS NOT NULL AND f.name <> '' "
+                "RETURN f.name AS fn, f.summary AS summary"
             ):
                 for tok in _split_identifier(rec["fn"] or ""):
                     tokens[tok] += 1
             for rec in s.run(
-                "MATCH (f:FUNCTION)-[hr:HAS_RULE]->(r:Rule) "
+                "MATCH (f)-[hr:HAS_RULE]->(r:RULE) "
                 "RETURN r.statement AS statement, coalesce(hr.coupled_domains, []) AS domains"
             ):
                 for tok in _split_identifier(rec["statement"] or ""):
@@ -101,7 +102,7 @@ def _collect_code_tokens() -> list[str]:
                     d = (d or "").strip()
                     if d:
                         ko_domains[d] += 1
-            for rec in s.run("MATCH (t:Table) RETURN t.name AS name"):
+            for rec in s.run("MATCH (t:TABLE) RETURN t.name AS name"):
                 for tok in _split_identifier(rec["name"] or ""):
                     tokens[tok] += 1
     except Exception as e:

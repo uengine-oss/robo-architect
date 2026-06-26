@@ -2106,20 +2106,21 @@ function useSample() {
                       <span class="analyzer-card__value">{{ analyzerStats.counts.FUNCTION }}</span>
                       <span class="analyzer-card__label">함수</span>
                     </div>
-                    <div v-if="analyzerStats.counts.Rule" class="analyzer-card analyzer-card--accent">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.Rule }}</span>
+                    <!-- 생산자(analyzer) 라벨 = UPPER_SNAKE (spec 044 C1) — 옛 PascalCase Rule/Example/Question/Table 는 0표시되어 정정 -->
+                    <div v-if="analyzerStats.counts.RULE" class="analyzer-card analyzer-card--accent">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.RULE }}</span>
                       <span class="analyzer-card__label">Rule</span>
                     </div>
-                    <div v-if="analyzerStats.counts.Example" class="analyzer-card">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.Example }}</span>
+                    <div v-if="analyzerStats.counts.EXAMPLE" class="analyzer-card">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.EXAMPLE }}</span>
                       <span class="analyzer-card__label">Example</span>
                     </div>
-                    <div v-if="analyzerStats.counts.Question" class="analyzer-card">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.Question }}</span>
+                    <div v-if="analyzerStats.counts.QUESTION" class="analyzer-card">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.QUESTION }}</span>
                       <span class="analyzer-card__label">Question</span>
                     </div>
-                    <div v-if="analyzerStats.counts.Table" class="analyzer-card">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.Table }}</span>
+                    <div v-if="analyzerStats.counts.TABLE" class="analyzer-card">
+                      <span class="analyzer-card__value">{{ analyzerStats.counts.TABLE }}</span>
                       <span class="analyzer-card__label">테이블</span>
                     </div>
                   </div>

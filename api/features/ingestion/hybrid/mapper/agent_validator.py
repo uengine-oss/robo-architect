@@ -127,13 +127,13 @@ def _fetch_parent_chains(fn_names: list[str]) -> dict[str, dict]:
                 """
                 UNWIND $fn_names AS fn
                 MATCH (f)
-                WHERE coalesce(f.procedure_name, f.name) = fn
+                WHERE f.name = fn AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
                 OPTIONAL MATCH (caller)-[:CALLS]->(f)
-                OPTIONAL MATCH (mod)-[:HAS_FUNCTION]->(f)
-                OPTIONAL MATCH (mod)-[:BELONGS_TO_PACKAGE]->(pkg:PACKAGE)
+                OPTIONAL MATCH (mod)-[:HAS_MEMBER]->(f)
+                OPTIONAL MATCH (mod)-[:BELONGS_TO]->(pkg:PACKAGE)
                 WITH fn, f,
-                     collect(DISTINCT coalesce(caller.procedure_name, caller.name)) AS callers,
-                     collect(DISTINCT coalesce(mod.name, mod.procedure_name)) AS mods,
+                     collect(DISTINCT caller.name) AS callers,
+                     collect(DISTINCT mod.name) AS mods,
                      collect(DISTINCT pkg.name) AS pkgs
                 RETURN fn,
                        f.summary AS summary,

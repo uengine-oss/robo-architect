@@ -367,7 +367,7 @@ def save_named_session(
         session.run(
             """
             MATCH (a:Aggregate {key: $ak, session_id: $sid})
-            MATCH (t:Table {name: $tname})
+            MATCH (t:TABLE {name: $tname})
             WHERE t.session_id IS NULL
             MERGE (a)-[:GROUNDED_IN]->(t)
             """,
@@ -489,7 +489,7 @@ def save_named_session(
             session.run(
                 """
                 MATCH (e:Event {key: $ek, session_id: $sid})
-                MATCH (ex:Example {example_id: $exid})
+                MATCH (ex:EXAMPLE {id: $exid})
                 WHERE ex.session_id IS NULL
                 MERGE (e)-[:DERIVED_FROM]->(ex)
                 """,
@@ -588,7 +588,7 @@ def save_named_session(
         session.run(
             """
             MATCH (bc:BoundedContext {key: $bk, session_id: $sid})
-            MATCH (q:Question {question_id: $qid})
+            MATCH (q:QUESTION {id: $qid})
             WHERE q.session_id IS NULL
             MERGE (q)-[:ATTACHED_TO]->(bc)
             """,
@@ -597,9 +597,9 @@ def save_named_session(
         counts["edge_attached_to"] += 1
         session.run(
             """
-            MATCH (q:Question {question_id: $qid})
+            MATCH (q:QUESTION {id: $qid})
             MATCH (f)
-            WHERE coalesce(f.procedure_name, f.name) = $fn
+            WHERE f.name = $fn AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
             MERGE (q)-[:RAISED_IN]->(f)
             """,
             qid=q.question_id, fn=q.host_function,

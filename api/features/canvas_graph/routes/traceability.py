@@ -185,32 +185,34 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
         # signal Aggregate primary-source emphasis depends on.
         bl_rows = _query("""
             MATCH (us:UserStory {id: $usid})-[:SOURCED_FROM]->(sr:Rule)
-            MATCH (f:FUNCTION)-[hr:HAS_RULE]->(ar:Rule)
+            // 오퍼레이션 단위(루틴) 기준 조인 — dbms 는 룰 오너가 자식 구문이라
+            // PARENT_OF*0.. 로 루틴 rtn 복원(framework 는 rtn=f). spec 044 C4.
+            MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
               WHERE ar.session_id IS NULL
-                AND coalesce(f.procedure_name, f.name) = sr.source_function
+                AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
+                AND rtn.name = sr.source_function
                 AND ar.statement = sr.title
-            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(e:Example {is_boundary: false})
-            WITH sr, ar, hr, f,
+            // 생산자 EXAMPLE 에 is_boundary 없음 → 대표예시는 첫 EXAMPLE(spec 044 C2/R4).
+            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(e:EXAMPLE)
+            WITH sr, ar, hr, rtn,
                  head(collect(DISTINCT e)) AS canonical_e
-            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(allEx:Example)
-            WITH sr, ar, hr, f, canonical_e,
+            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(allEx:EXAMPLE)
+            WITH sr, ar, hr, rtn, canonical_e,
                  collect(DISTINCT allEx) AS examples
-            // Per-Rule write ops: collect AFFECTS_TABLE edges from all Examples
-            // (boundary + nominal) to know which DB tables this Rule actually
-            // mutates and how (INSERT/UPDATE/DELETE).
-            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(wEx:Example)-[at:AFFECTS_TABLE]->(wt:Table)
-            WITH sr, ar, hr, f, canonical_e, examples,
+            // Per-Rule write ops: collect AFFECTS_TABLE edges from all Examples.
+            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(wEx:EXAMPLE)-[at:AFFECTS_TABLE]->(wt:TABLE)
+            WITH sr, ar, hr, rtn, canonical_e, examples,
                  collect(DISTINCT { table: wt.name, op: at.op }) AS writes
-            RETURN hr.local_id AS seq,
+            RETURN hr.local_rule_id AS seq,
                    ar.statement AS title,
                    coalesce(hr.coupled_domains[0], '') AS coupled_domain,
                    canonical_e.given AS given,
                    canonical_e.when_ AS wh,
                    canonical_e.then_ AS th,
-                   coalesce(f.function_id, f.procedure_name, f.name) AS function_id,
-                   [x IN examples WHERE x.is_boundary | x.example_id] AS boundary_ids,
+                   rtn.id AS function_id,
+                   [] AS boundary_ids,
                    [w IN writes WHERE w.table IS NOT NULL AND w.op IS NOT NULL] AS writes
-            ORDER BY hr.local_id
+            ORDER BY rtn.name, hr.local_rule_id
         """, {"usid": usid})
 
         # Legacy fallback for rfp/figma US's that don't have SOURCED_FROM
@@ -219,7 +221,7 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
             if src:
                 bl_rows = _query("""
                     MATCH (f)-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic)
-                    WHERE f.function_id = $fid
+                    WHERE f.id = $fid
                     RETURN bl.sequence AS seq, bl.title AS title,
                            bl.coupled_domain AS coupled_domain,
                            bl.given AS given, bl.when AS wh, bl.then AS th,
@@ -252,11 +254,11 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
         functions = []
         for fid in function_ids:
             func_rows = _query("""
-                MATCH (f:FUNCTION)
-                WHERE f.function_id = $fid OR f.procedure_name = $fid OR f.name = $fid
-                RETURN f.function_id AS id, f.name AS name, f.summary AS summary,
+                MATCH (f)
+                WHERE f.id = $fid OR f.name = $fid
+                RETURN f.id AS id, f.name AS name, f.summary AS summary,
                        f.start_line AS start_line, f.end_line AS end_line,
-                       f.file_path AS file_path, f.file_name AS file_name,
+                       f.file_path AS file_path,
                        f.code_text AS code_text
                 LIMIT 1
             """, {"fid": fid})
@@ -264,9 +266,10 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
                 continue
             f = func_rows[0]
             real_fid = f["id"] or fid
+            # dbms: READS/WRITES 는 자식 구문에 붙으므로 PARENT_OF*0.. 하향수집(spec 044 C5).
             rw_rows = _query("""
-                MATCH (f:FUNCTION {function_id: $fid})-[r:READS|WRITES]->(t:Table)
-                OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:Column)
+                MATCH (op {id: $fid})-[:PARENT_OF*0..]->(_n)-[r:READS|WRITES]->(t:TABLE)
+                OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:COLUMN)
                 WITH t, type(r) AS access,
                      collect(DISTINCT {name: c.name, dtype: c.dtype, pk: c.is_primary_key}) AS columns
                 RETURN access, t.name AS table_name, columns
@@ -287,7 +290,7 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
             for t in tables.values():
                 t["access"] = sorted(set(t["access"]))
 
-            file_name = f.get("file_name") or ""
+            file_name = f.get("file_path") or ""
             location = file_name
             if f.get("start_line"):
                 location += f":{f['start_line']}"
@@ -342,14 +345,16 @@ async def get_userstory_source_rules(request: Request, us_id: str) -> dict[str, 
     """
     rows = _query("""
         MATCH (us:UserStory {id: $usid})-[:SOURCED_FROM]->(r:Rule)
-        OPTIONAL MATCH (f:FUNCTION)-[hr:HAS_RULE]->(ar:Rule)
+        // 오퍼레이션 단위(루틴) 기준 조인 — dbms 룰 오너=자식구문 → PARENT_OF*0.. 로 루틴 복원.
+        OPTIONAL MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
           WHERE ar.session_id IS NULL
-            AND coalesce(f.procedure_name, f.name) = r.source_function
+            AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
+            AND rtn.name = r.source_function
             AND ar.statement = r.title
         RETURN r.id AS rule_id,
                r.title AS statement,
                r.source_function AS source_function,
-               coalesce(hr.local_id, '') AS local_id
+               coalesce(hr.local_rule_id, '') AS local_id
         ORDER BY local_id, statement
     """, {"usid": us_id})
 

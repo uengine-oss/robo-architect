@@ -11,32 +11,33 @@ from typing import Iterable
 from api.features.ingestion.hybrid.contracts import RuleContext, RuleDTO
 from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
 
+# source_function = 오퍼레이션 단위(루틴) 이름 (rule_extractor/dbms 선형화가 루틴명으로 세팅).
+# 그래서 오너는 루틴 노드. 테이블 R/W 는 framework=루틴 자신 / dbms=자식 구문에 붙으므로
+# PARENT_OF*0.. 로 하향수집(spec 044 C5/FR-014). 옛 :Actor/:ROLE 는 생산자에 없어 제거.
 _FN_LOOKUP_QUERY = """
 UNWIND $fn_names AS fn
 MATCH (f)
-WHERE coalesce(f.procedure_name, f.name) = fn
-// Tables the function touches directly
-OPTIONAL MATCH (a:Actor)-[:ROLE]->(f)
-OPTIONAL MATCH (f)-[:READS]->(rt:Table)
-OPTIONAL MATCH (f)-[:WRITES]->(wt:Table)
+WHERE f.name = fn AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
+// Tables the operation touches — framework: on f; dbms: on descendant statements.
+OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE)
+OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE)
 // Parent traversal — callers (one hop up the CALLS chain) + callees
 // (one hop down, used for orchestrator detection)
 OPTIONAL MATCH (caller)-[:CALLS]->(f)
 OPTIONAL MATCH (f)-[:CALLS]->(callee)
-// Module/file containment and its package
-OPTIONAL MATCH (mod)-[:HAS_FUNCTION]->(f)
-OPTIONAL MATCH (mod)-[:BELONGS_TO_PACKAGE]->(pkg:PACKAGE)
+// Container membership and its package
+OPTIONAL MATCH (mod)-[:HAS_MEMBER]->(f)
+OPTIONAL MATCH (mod)-[:BELONGS_TO]->(pkg:PACKAGE)
 WITH fn, f,
-     collect(DISTINCT a.name) AS actors,
      collect(DISTINCT rt.name) AS reads,
      collect(DISTINCT wt.name) AS writes,
-     collect(DISTINCT coalesce(caller.procedure_name, caller.name)) AS callers,
-     collect(DISTINCT coalesce(callee.procedure_name, callee.name)) AS callees,
-     collect(DISTINCT coalesce(mod.name, mod.procedure_name)) AS mod_names,
+     collect(DISTINCT caller.name) AS callers,
+     collect(DISTINCT callee.name) AS callees,
+     collect(DISTINCT mod.name) AS mod_names,
      collect(DISTINCT pkg.name) AS pkg_names
 RETURN fn,
        f.summary AS summary,
-       [a IN actors WHERE a IS NOT NULL] AS actors,
+       [] AS actors,
        [r IN reads  WHERE r IS NOT NULL] AS reads_tables,
        [w IN writes WHERE w IS NOT NULL] AS writes_tables,
        [c IN callers WHERE c IS NOT NULL] AS callers,

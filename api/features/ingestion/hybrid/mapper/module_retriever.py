@@ -43,20 +43,22 @@ def _module_rows() -> list[dict]:
     with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
         rows = list(s.run(
             """
-            MATCH (m:MODULE)
-            WHERE m.summary IS NOT NULL AND m.summary <> ''
-            RETURN m.fqn AS fqn, m.name AS name,
-                   m.summary AS summary, m.moduleStereotype AS stereotype
+            MATCH (m)
+            WHERE (m:FILE OR m:CLASS OR m:INTERFACE OR m:RECORD)
+              AND m.summary IS NOT NULL AND m.summary <> ''
+            RETURN m.id AS fqn, m.name AS name,
+                   m.summary AS summary, m.stereotype AS stereotype
             """,
         ))
         if not rows:
             # Fallback: some test fixtures store the same data under :FILE.
+            # 식별=id(옛 fqn 폐기), 종류=stereotype(옛 moduleStereotype 폐기) — spec 044 C1.
             rows = list(s.run(
                 """
                 MATCH (f:FILE)
                 WHERE f.summary IS NOT NULL AND f.summary <> ''
-                RETURN f.fqn AS fqn, f.name AS name,
-                       f.summary AS summary, f.moduleStereotype AS stereotype
+                RETURN f.id AS fqn, f.name AS name,
+                       f.summary AS summary, f.stereotype AS stereotype
                 """,
             ))
     return [

@@ -46,4 +46,4 @@ def test_attach_analyzer_traceability_counts_include_fallback(monkeypatch):
     assert counts["attached_to"] == 4
     fallback_query = sess.queries[2]
     assert "WITH bc ORDER BY bc.key LIMIT 1" in fallback_query
-    assert "MATCH (q:Question)" in fallback_query
+    assert "MATCH (q:QUESTION)" in fallback_query

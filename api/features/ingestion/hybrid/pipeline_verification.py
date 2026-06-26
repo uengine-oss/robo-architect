@@ -67,7 +67,7 @@ def verify_pipeline_status(session_id: str) -> dict:
 
         question = s.run(
             """
-            MATCH (q:Question) WHERE q.session_id IS NULL
+            MATCH (q:QUESTION) WHERE q.session_id IS NULL
             OPTIONAL MATCH (q)-[:ATTACHED_TO]->(bc:BoundedContext {session_id: $sid})
             RETURN count(DISTINCT q) AS total_questions,
                    count(DISTINCT CASE WHEN bc IS NOT NULL THEN q END) AS attached_questions

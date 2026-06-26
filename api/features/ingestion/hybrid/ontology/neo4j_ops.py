@@ -63,9 +63,10 @@ def clear_all_hybrid_workspace() -> dict[str, int]:
     """Wipe every hybrid-owned node across all sessions. Analyzer/event-storming labels are
     NOT touched — safe to call even when analyzer and hybrid share the same Neo4j database.
 
-    The `session_id IS NOT NULL` guard is load-bearing: the new analyzer schema reuses
-    the `:Rule` label (and could reuse others later) on nodes that have no session_id.
-    Without this guard a hybrid reset would also wipe authoritative analyzer data.
+    The `session_id IS NOT NULL` guard is load-bearing: analyzer-owned nodes carry no
+    session_id. (Analyzer now uses UPPER_SNAKE labels such as `:RULE`/`:EXAMPLE`, distinct
+    from the hybrid PascalCase `:Rule`; the guard stays as defense-in-depth so a hybrid
+    reset never wipes authoritative analyzer data even if a label were ever shared.)
     """
     counts: dict[str, int] = {}
     with get_session() as s:
@@ -846,7 +847,8 @@ def fetch_session_snapshot(session_id: str) -> dict:
                         # Take the first non-null summary per name.
                         """
                         UNWIND $fn_names AS fn
-                        OPTIONAL MATCH (f) WHERE coalesce(f.procedure_name, f.name) = fn
+                        OPTIONAL MATCH (f)
+                          WHERE f.name = fn AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
                         WITH fn, collect(f.summary) AS summaries
                         RETURN fn,
                                head([s IN summaries WHERE s IS NOT NULL AND s <> '']) AS summary
