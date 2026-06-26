@@ -25,7 +25,8 @@ const emit = defineEmits(['update:activeTab'])
 // 메뉴에서 빼면 사용자가 진입할 길이 사라짐.
 // 043 — 'Process'(BPM)·'Processes'(Event Modeling)를 하나의 'Process' 탭(서브토글)로 통합,
 // 'Big picture' 제거. 'Changes' 탭은 UI에서 숨김(App.vue tabComponents 에 유지).
-const tabs = ['Proposals', 'Analysis', 'Stories', 'Process', 'Design', 'Data', 'Code']
+// 'Analysis'(분석기 임베드) → 'Legacy' 로 라벨 변경 + 맨 앞으로 이동(Proposals 앞).
+const tabs = ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code']
 
 const canvasStore = useCanvasStore()
 // 043 — 'Big picture' 뷰 비활성화: store 사용 제거.

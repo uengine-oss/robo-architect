@@ -95,7 +95,7 @@ provide('openClaudeCode', (workdir, command = null, opts = {}) => {
 // 상단에선 하나의 'Process' 탭(서브토글)로 보이되 activeTab 값은 둘 유지 → 네비/캔버스/상단바
 // 등 activeTab 기준 동작이 그대로 전환된다(TopBar 서브토글이 'Process'⇄'Processes'로 바꿈).
 const tabComponents = {
-  'Analysis': markRaw(AnalysisPanel),
+  'Legacy': markRaw(AnalysisPanel),
   'Changes': markRaw(ChangesRootPanel),
   'Proposals': markRaw(ProposalsPanel),
   'Stories': markRaw(RequirementsPanel),
@@ -417,7 +417,7 @@ onUnmounted(() => {
     <!-- 040 — Proposal 임팩트 미리보기 식별 배너(활성 시에만 표시, FR-007) -->
     <PreviewBanner />
     <div class="main-content">
-      <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements' && activeTab !== 'Analysis'">
+      <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements' && activeTab !== 'Legacy'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"
