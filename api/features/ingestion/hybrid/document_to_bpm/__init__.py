@@ -264,6 +264,26 @@ async def _run_via_facade(
                     fl.process_id = pid
                 skeletons.append(skel)
 
+        # domain_keywords backfill — the facade BPMN XML only carries structural
+        # task/process names, so processes arrive with empty domain_keywords. The
+        # A2A path backfills these (see `_run_via_a2a`); without it Phase 3's
+        # agentic retrieval query (process.name + domain_keywords + task.name)
+        # loses its strongest signal — whole processes trip the module-confidence
+        # gate (0 rule mappings) and the Navigator's per-process glossary match
+        # (keyed on domain_keywords) shows nothing. Seed keywords from the
+        # consulting outline (real document text), not just the bare process name.
+        from api.features.ingestion.hybrid.document_to_bpm.a2a_adapter import (
+            _backfill_domain_keywords,
+        )
+
+        for skel in skeletons:
+            if not skel.process or skel.process.domain_keywords:
+                continue
+            skel.process.domain_keywords = await _backfill_domain_keywords(
+                name=skel.process.name,
+                description=outline[:4000],
+            )
+
         SmartLogger.log(
             "INFO", "facade extraction produced bundle",
             category="ingestion.hybrid.document_bpm",
@@ -271,6 +291,9 @@ async def _run_via_facade(
                 "session_id": session_id, "source_pdf_name": source_pdf_name,
                 "process_count": len(skeletons),
                 "gateway_total": sum(len(s.gateways) for s in skeletons),
+                "domain_keywords_total": sum(
+                    len(s.process.domain_keywords or []) for s in skeletons if s.process
+                ),
             },
         )
         return ProcessBundle(processes=skeletons)
