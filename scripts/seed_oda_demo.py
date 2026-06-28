@@ -84,3 +84,88 @@ with get_session() as s:
         arts=json.dumps(artifacts, ensure_ascii=False),
     )
 print(f"seeded {PID}")
+
+
+# --- SUBMITTED(=Plan 단계) ODA Proposal — Plan 탭/Impact 탭 결정적 캡처용 ----
+PID2 = "PRO-ODA-PLAN"
+
+# 게이트는 면제(WAIVED)되어 plan/submit 통과한 상태.
+conformance2 = dict(conformance)
+conformance2["gateResult"] = "WAIVED"
+conformance2["waiver"] = {"reason": "표준 위반은 차기 릴리스에서 해소 — 리스크 수용",
+                          "at": datetime.now(timezone.utc).isoformat()}
+
+# ODA 산출물이 수렴한 표준 tacticalDiff(Impact 탭 시각화).
+tactical = [
+    {"nodeId": "agg-ProductOrder", "entityTitle": "ProductOrder", "label": "Aggregate",
+     "impactLevel": "HIGH", "changeType": "MODIFY"},
+    {"nodeId": "cmd-ExpediteOrder", "entityTitle": "ExpediteOrder", "label": "Command",
+     "impactLevel": "MEDIUM", "changeType": "CREATE"},
+    {"nodeId": "evt-ProductOrderExpedited", "entityTitle": "ProductOrderExpedited",
+     "label": "Event", "impactLevel": "LOW", "changeType": "CREATE"},
+]
+impact_map = [
+    {"nodeId": "agg-ProductOrder", "nodeLabel": "Aggregate", "nodeTitle": "ProductOrder",
+     "conflictLevel": "LOW", "reason": "expediteFee 특성 추가(추가형)"},
+]
+
+# 041 Constitution 기반 구현계획(ODA 모드도 무분기로 동일 PlanView 사용).
+impl_plan = {
+    "version": 1,
+    "tacticalSummary": "ProductOrder 애그리거트에 우선처리(expedite) 명령/이벤트와 수수료 특성을 추가.",
+    "architectureDecisions": [
+        {"aspect": "DEPLOYMENT_ENV", "decision": "Kubernetes + ODA Canvas",
+         "rationale": "ODA Component CRD(oda.tmforum.org/v1) 배포", "constitutionRef": "PROJECT"},
+        {"aspect": "INGRESS", "decision": "Istio API Gateway",
+         "rationale": "Canvas 표준 게이트웨이", "constitutionRef": "PROJECT"},
+        {"aspect": "SERVICE_MESH_FRAMEWORK", "decision": "Istio",
+         "rationale": "Canvas 서비스 메시", "constitutionRef": "PROJECT"},
+        {"aspect": "FRONTEND", "decision": "변경 없음", "rationale": "백엔드 API 확장만",
+         "constitutionRef": "PROJECT"},
+        {"aspect": "REPO_MAPPING", "decision": "product-ordering 서비스 레포",
+         "rationale": "단일 BC", "constitutionRef": "PROJECT"},
+    ],
+    "constitutionGaps": [],
+    "interContextIntegrations": [
+        {"fromContext": "ProductOrdering", "toContext": "Customer", "message": "GetCustomerCredit",
+         "kind": "QUERY", "sync": True, "rationale": "수수료 부과 전 신용 확인(동기)"},
+        {"fromContext": "ProductOrdering", "toContext": "Billing", "message": "ProductOrderExpedited",
+         "kind": "EVENT", "sync": False, "rationale": "수수료 청구는 이벤트 pub/sub"},
+    ],
+    "messagingChannel": "Kafka",
+    "serviceDevEnvironments": [
+        {"service": "product-ordering", "runtime": "JDK 21 / Spring Boot 3",
+         "dockerBaseImage": "eclipse-temurin:21-jre", "dependencies": ["kafka", "postgres"],
+         "composeServices": ["kafka", "postgres"],
+         "scopeNote": "product-ordering 레포만 클론해 docker compose up 으로 로컬 구동"},
+    ],
+    "constitutionHash": "demo-hash", "strategicVersion": 1,
+}
+history2 = json.dumps([{"from": "DRAFT", "to": "SUBMITTED", "by": "manual-demo",
+                        "at": datetime.now(timezone.utc).isoformat()}], ensure_ascii=False)
+
+with get_session() as s:
+    s.run("MATCH (p:Proposal {id:$id}) DETACH DELETE p", id=PID2)
+    s.run(
+        """
+        CREATE (p:Proposal {
+            id:$id, title:$title, originalPrompt:$prompt, author:'manual-demo',
+            createdAt: datetime($createdAt), status:'SUBMITTED', statusHistory:$hist,
+            clarificationLog:'[]', decompositionMode:'ODA_STANDARD',
+            strategicDiff:$sd, tacticalDiff:$td, impactMap:$im,
+            implementationPlan:$plan, constitutionHash:'demo-hash',
+            odaAlignment:$align, odaConformance:$conf, odaArtifacts:$arts
+        })
+        """,
+        id=PID2, title="주문 우선처리 — Plan 단계 (ODA 표준 데모)",
+        prompt="고객이 주문을 우선처리(expedite)하고 수수료를 부과한다",
+        createdAt=datetime.now(timezone.utc).isoformat(), hist=history2,
+        sd=json.dumps(strategic, ensure_ascii=False),
+        td=json.dumps(tactical, ensure_ascii=False),
+        im=json.dumps(impact_map, ensure_ascii=False),
+        plan=json.dumps(impl_plan, ensure_ascii=False),
+        align=json.dumps(alignment, ensure_ascii=False),
+        conf=json.dumps(conformance2, ensure_ascii=False),
+        arts=json.dumps(artifacts, ensure_ascii=False),
+    )
+print(f"seeded {PID2}")

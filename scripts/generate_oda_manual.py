@@ -117,7 +117,16 @@ STEPS = [
     ("STEP 8. 표준 설계 산출물", "demo-08-oda-artifacts.png",
      "③ 표준 산출물에서 SID 데이터 모델 · TMF 계약 · ODA 아키텍처 · BDD .feature 네 가지 산출물을 "
      "생성·확인합니다. 결과는 표준 tacticalDiff 로 수렴되어 이후 단계가 분기 없이 진행됩니다.",
-     "이후 Plan → Impact → Tasks → 구현 → 검증은 기존 Proposal 생애주기와 동일합니다."),
+     "‘Plan 단계로 진행’을 누르면 제출(DRAFT→SUBMITTED)되며, 게이트가 차단 상태면 이때도 막힙니다."),
+    ("STEP 9. Plan 단계 (Constitution 기반 구현계획)", "demo-09-oda-plan-stage.png",
+     "제출 후 Plan 탭에서는 041 Constitution 기반 구현계획이 그대로 표시됩니다 — 배포 환경"
+     "(Kubernetes + ODA Canvas), Ingress(Istio Gateway), Service Mesh, 프론트엔드, 레포 매핑, "
+     "컨텍스트 간 연동(QUERY/EVENT)과 메시징 채널(Kafka). ODA 모드 전용 분기는 없습니다.",
+     "ODA 산출물이 표준 diff 로 수렴했기에 기존 Plan 화면이 무분기로 동작합니다(FR-013)."),
+    ("STEP 10. Impact Map — 수렴된 전술 설계", "demo-10-oda-impact-converged.png",
+     "Impact Map 탭은 표준 tacticalDiff 로 수렴된 전술 설계(ProductOrder 애그리거트·ExpediteOrder "
+     "명령·ProductOrderExpedited 이벤트)와 영향도를 보여줍니다. 하단 ‘샌드박스 구현 열기’가 구현 진입점입니다.",
+     "여기까지가 ODA 표준 모드가 더하는 앞단이며, 이후는 기존 생애주기와 동일합니다."),
 ]
 
 for h_title, img, body, note in STEPS:
@@ -126,6 +135,21 @@ for h_title, img, body, note in STEPS:
     add_screenshot(doc, img, h_title)
     if note:
         add_note(doc, note)
+
+# 구현(Implement) 단계 — 설명 (신규 화면 없음, 기존 생애주기 재사용)
+h(doc, "STEP 11. 구현(Implement) 단계", level=2)
+doc.add_paragraph(
+    "구현 단계는 ODA 표준 모드 전용 화면이 없습니다. Impact Map 의 ‘샌드박스 구현 열기’를 누르면 "
+    "기존 Proposal 생애주기를 그대로 사용합니다 — 대상 프로젝트의 git worktree 샌드박스에서 "
+    "Code 탭의 Claude Code 셀로 구현하고, 완료 후 Dual Merge(코드 머지 + 그래프 업데이트)로 반영합니다."
+)
+for b in [
+    "표준 tacticalDiff 수렴 덕분에 샌드박스·구현·검증·수락이 분기 없이 동작합니다(SC-008).",
+    "적합성 게이트는 제출 시 강제되므로, FAIL+미면제 상태면 구현까지 진행되지 않습니다.",
+    "BDD .feature 산출물은 검증 계약으로 활용되며, 실제 배포·BDD 실행은 oda-componentize 영역입니다.",
+]:
+    doc.add_paragraph(b, style="List Bullet")
+add_note(doc, "구현·검증·수락 화면은 모드와 무관하게 동일하므로 본 매뉴얼에서는 진입점까지만 다룹니다.")
 
 # FAQ
 h(doc, "자주 묻는 질문 (FAQ)")
