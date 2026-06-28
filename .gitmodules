@@ -4,7 +4,7 @@
 [submodule "analyzer/analyzer"]
 	path = robo-analyzer/robo-data-analyzer
 	url = https://github.com/uengine-oss/robo-data-analyzer.git
-	branch = refactor
+	branch = main
 [submodule "analyzer/frontend"]
 	path = robo-analyzer/robo-data-frontend
 	url = https://github.com/uengine-oss/robo-data-frontend.git
