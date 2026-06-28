@@ -222,6 +222,7 @@ class ImplementationPlan(BaseModel):
 class DecompositionMode(str, Enum):
     SIMPLIFIED = "SIMPLIFIED"       # 현행 Intent→Plan
     DETAILED_DDD = "DETAILED_DDD"   # ddd-starter 6단계 walkthrough
+    ODA_STANDARD = "ODA_STANDARD"   # 043 — TM Forum ODA 표준 근거 분해/설계
 
 
 class DddStage(str, Enum):
@@ -299,6 +300,49 @@ class StrategicMemory(BaseModel):
     contexts: dict[str, ContextStrategy] = {}  # bcKey → ContextStrategy                          (BC)
 
 
+# --- 043: ODA 표준 모드 모델 ------------------------------------------------
+# 스킬(robo-proposal-oda)이 형태를 채우므로 모두 extra="allow" — 백엔드는 게이트/파싱만.
+
+class OdaAlignment(BaseModel):
+    """표준 정합성 매핑(FR-003): 요청 → UC/SID/TMF/Component 블록."""
+    model_config = ConfigDict(extra="allow")
+    useCases: list[dict] = []        # [{id:"UC003", intent, source}]
+    sidEntities: list[dict] = []     # [{name, domain, source}]
+    tmfApis: list[dict] = []         # [{id:"TMF622", name, version}]
+    componentBlock: Optional[str] = None  # coreFunction|managementFunction|securityFunction
+    notes: Optional[str] = None
+
+
+class OdaConformanceItem(BaseModel):
+    """요소별 REUSE/EXTEND/NEW 분류(FR-004)."""
+    model_config = ConfigDict(extra="allow")
+    element: str                     # 엔티티/속성/오퍼레이션 식별자
+    kind: Optional[str] = None       # entity|attribute|operation
+    classification: str = ""         # REUSE | EXTEND | NEW
+    mechanism: Optional[str] = None  # characteristic | @type | additive-enum | ...
+    justification: Optional[str] = None
+    source: Optional[str] = None     # SID/TMF 출처 인용
+
+
+class OdaConformanceReport(BaseModel):
+    """적합성 리포트 + 차단형 게이트(FR-005/006/007/008)."""
+    model_config = ConfigDict(extra="allow")
+    baseline: Optional[str] = None
+    items: list[OdaConformanceItem] = []
+    violations: list[dict] = []      # [{rule, element, detail}] — 하드 규칙 위반
+    gateResult: str = "PENDING"      # PASS | FAIL | WAIVED | PENDING
+    waiver: Optional[dict] = None    # {reason, at}
+
+
+class OdaArtifacts(BaseModel):
+    """plan 단계 표준 산출물(FR-009-012)."""
+    model_config = ConfigDict(extra="allow")
+    dataModel: Optional[dict] = None      # SID 파생 데이터 모델
+    contracts: list[dict] = []            # TMF Open API 계약
+    architecture: Optional[dict] = None   # ODA Component/Canvas 아키텍처
+    featureFiles: list[dict] = []         # [{filename, content}] BDD .feature
+
+
 class ProposalResponse(BaseModel):
     id: str
     title: str
@@ -329,6 +373,10 @@ class ProposalResponse(BaseModel):
     stageArtifacts: Optional[dict] = None       # {stage → artifact}
     currentStage: Optional[str] = None
     memoryConflicts: Optional[list[MemoryConflict]] = None
+    # 043 — ODA 표준 모드 산출물.
+    odaAlignment: Optional[OdaAlignment] = None
+    odaConformance: Optional[OdaConformanceReport] = None
+    odaArtifacts: Optional[OdaArtifacts] = None
 
     @staticmethod
     def from_neo4j(node: dict, effects: list[EffectItem]) -> "ProposalResponse":
@@ -438,6 +486,19 @@ class ProposalResponse(BaseModel):
         except Exception:
             mode = DecompositionMode.SIMPLIFIED
 
+        # 043 — ODA 표준 산출물(과거 데이터 None 안전).
+        def _model(cls, raw):
+            data = _parse_json(raw, None)
+            if not isinstance(data, dict):
+                return None
+            try:
+                return cls(**data)
+            except Exception:
+                return None
+        oda_alignment = _model(OdaAlignment, node.get("odaAlignment"))
+        oda_conformance = _model(OdaConformanceReport, node.get("odaConformance"))
+        oda_artifacts = _model(OdaArtifacts, node.get("odaArtifacts"))
+
         return ProposalResponse(
             id=node["id"],
             title=node.get("title", ""),
@@ -467,6 +528,9 @@ class ProposalResponse(BaseModel):
             stageArtifacts=stage_artifacts,
             currentStage=node.get("currentStage"),
             memoryConflicts=mem_conflicts,
+            odaAlignment=oda_alignment,
+            odaConformance=oda_conformance,
+            odaArtifacts=oda_artifacts,
         )
 
 
@@ -524,6 +588,13 @@ class UpdateDiffRequest(BaseModel):
 
 class ModeUpgradeRequest(BaseModel):
     decompositionMode: DecompositionMode = DecompositionMode.DETAILED_DDD
+
+
+# --- 043: ODA 적합성 게이트 면제 --------------------------------------------
+
+class WaiveConformanceRequest(BaseModel):
+    # FAIL 게이트를 명시적으로 면제(FR-008). 사유 필수.
+    reason: str
 
 
 class StagePlanItemDecision(BaseModel):
