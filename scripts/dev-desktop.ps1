@@ -48,6 +48,12 @@ function Info($m){ Write-Host "[dev] $m" -ForegroundColor Cyan }
 function Ok($m)  { Write-Host "[dev] OK  $m" -ForegroundColor Green }
 function Warn($m){ Write-Host "[dev] !   $m" -ForegroundColor Yellow }
 function Die($m) { Write-Host "[dev] X   $m" -ForegroundColor Red; exit 1 }
+function Banner($lines){
+  $bar = '=' * 74
+  Write-Host ''; Write-Host $bar -ForegroundColor Magenta
+  foreach($l in $lines){ Write-Host ("  " + $l) -ForegroundColor Magenta }
+  Write-Host $bar -ForegroundColor Magenta; Write-Host ''
+}
 
 # ── 스택 정리 (포트 점유 프로세스 + electron) ──────────────────────────────────
 function Stop-Stack {
@@ -87,6 +93,13 @@ function Start-Backend([string]$Name, [string]$Cwd, [string]$File, [string[]]$Ar
     -RedirectStandardOutput $out -RedirectStandardError $err `
     -NoNewWindow -PassThru
 }
+
+Banner @(
+  'ROBO ARCHITECT 데스크톱 원샷 기동  (scripts\dev-desktop.ps1)',
+  '빌드 -> 백엔드 4종(analyzer 5502 / catalog 5503 / antlr 8081 / gateway 9000) -> Electron',
+  '옵션: -SkipBuild(빌드생략)  -NoElectron(백엔드만)  -Stop(스택 정리)',
+  '종료: 데스크톱 창을 닫으면 백엔드 4종까지 자동 정리'
+)
 
 # ── 0) 전제 점검 ──────────────────────────────────────────────────────────────
 Info '0) 전제 점검'
@@ -155,6 +168,11 @@ if ($NoElectron) {
   exit 0
 }
 
+Banner @(
+  '백엔드 4종 준비 완료 -> 데스크톱(Electron) 기동',
+  'gateway http://127.0.0.1:9000  (프론트/분석 단일 입구)',
+  '데스크톱 창을 닫으면 백엔드까지 자동 종료'
+)
 Info '4) Electron 데스크톱 기동 (창 닫으면 백엔드 자동 종료)'
 $env:ROBO_BACKEND_DIR = $Arch
 $env:ROBO_GATEWAY_URL = 'http://127.0.0.1:9000'

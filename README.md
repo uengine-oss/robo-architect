@@ -27,6 +27,20 @@
 
 ## 빠른 시작
 
+> ### 🚀 데스크톱 앱은 스크립트 한 방이면 끝 (권장)
+>
+> 백엔드 4종 + Electron 데스크톱을 **한 번에** 띄웁니다:
+>
+> ```powershell
+> pwsh -File scripts\dev-desktop.ps1            # 빌드 후 풀스택 + 데스크톱
+> pwsh -File scripts\dev-desktop.ps1 -SkipBuild # 빌드 생략(빠른 재기동)
+> pwsh -File scripts\dev-desktop.ps1 -Stop      # 떠 있는 스택 정리
+> ```
+>
+> 빌드 → analyzer 5502 · catalog 5503 · antlr 8081 · gateway 9000 → Electron 까지 자동.
+> **창을 닫으면 백엔드도 자동 정리.** 전제: Neo4j(7687) 실행 + `robo-architect/.env`.
+> (개별 서비스를 따로 띄우려면 아래 수동 절차. 함정·픽스 상세는 스크립트 헤더 주석.)
+
 ### 사전 요구사항
 
 - **Python**: 3.11+
