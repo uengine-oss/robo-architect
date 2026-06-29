@@ -109,6 +109,7 @@ const mode = ref('SIMPLIFIED')
 const modeOptions = [
   { value: 'SIMPLIFIED', labelKey: 'proposals.create.modeSimplified', descKey: 'proposals.create.modeSimplifiedDesc' },
   { value: 'DETAILED_DDD', labelKey: 'proposals.create.modeDetailed', descKey: 'proposals.create.modeDetailedDesc' },
+  { value: 'ODA_STANDARD', labelKey: 'proposals.create.modeOda', descKey: 'proposals.create.modeOdaDesc' },
 ]
 const currentPhase = ref('')
 const clarifyQuestions = ref([])
@@ -129,7 +130,8 @@ async function submit() {
   createdId.value = proposal.id
 
   // 042 — Detailed DDD 모드: 인텐트 스트림 대신 상세 detail 뷰의 staged walkthrough 로 위임.
-  if (mode.value === 'DETAILED_DDD') {
+  // 043 — ODA 표준 모드도 동일하게 상세 detail 뷰의 ODA 트랙으로 위임.
+  if (mode.value === 'DETAILED_DDD' || mode.value === 'ODA_STANDARD') {
     loading.value = false
     emit('created', proposal.id)
     return

@@ -60,6 +60,12 @@ async def stream_plan_sse(proposal_id: str):
     if err and err.get("code") in ("constitution_required", "strategic_required"):
         raise HTTPException(status_code=409, detail={"reason": err["code"], "message": err["message"]})
 
+    # 043 — ODA 모드면 적합성 게이트가 차단 상태일 때 plan 진행 불가(FR-007).
+    from api.features.proposal_lifecycle.services import oda_conformance
+    oda_err = oda_conformance.ensure_can_proceed(proposal_id)
+    if oda_err and oda_err.get("reason") == "oda_conformance_failed":
+        raise HTTPException(status_code=409, detail=oda_err)
+
     async def event_stream():
         async for event_type, data in stream_plan(proposal_id):
             payload = json.dumps(data, ensure_ascii=False)
