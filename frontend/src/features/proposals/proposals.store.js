@@ -35,6 +35,9 @@ export const useProposalsStore = defineStore('proposals', () => {
   // 컴포넌트 로컬에만 두면 탭 이동 시 unmount → 스킬 재실행으로 작업이 사라지는 문제를 막는다.
   const stageDrafts = ref({})
   const _stageDraftTimers = {}
+  // 043 — ODA 표준 모드 스트림(intent/plan 공용). 표준 정합성·적합성 게이트·산출물.
+  const odaStream = ref({ active: false, phase: null, logLines: [], alignment: null, conformance: null, gate: null, done: false, error: null })
+  let _odaEs = null
   let _intentEs = null
   let _tasksEs = null
   let _validateEs = null
@@ -899,10 +902,53 @@ export const useProposalsStore = defineStore('proposals', () => {
     return currentProposal.value
   }
 
+  // ---------------------------------------------------------------------------
+  // 043 — ODA 표준 모드: intent/plan SSE + 적합성 게이트 면제
+  // ---------------------------------------------------------------------------
+
+  // phase = 'intent' | 'plan'. 표준 정합성·적합성·산출물을 스트리밍한다(FR-003/013).
+  function subscribeToOda(proposalId, phase) {
+    odaStream.value = { active: true, phase, logLines: [], alignment: null, conformance: null, gate: null, done: false, error: null }
+    return new Promise((resolve, reject) => {
+      const es = new EventSource(`${BASE}/${proposalId}/stream/oda/${phase}`)
+      let settled = false
+      const finish = (fn, arg) => { if (settled) return; settled = true; es.close(); _odaEs = null; fn(arg) }
+      const handlers = {
+        phase: () => {},
+        log_line: (d) => { odaStream.value.logLines.push(d.text); if (odaStream.value.logLines.length > 200) odaStream.value.logLines.shift() },
+        oda_intent: (d) => { odaStream.value.alignment = d.alignment; odaStream.value.conformance = d.conformance; odaStream.value.gate = d.gate },
+        oda_plan: (d) => { odaStream.value.conformance = d.conformance; odaStream.value.gate = d.gate },
+        done: (d) => { odaStream.value.active = false; odaStream.value.done = true; fetchProposal(proposalId); finish(resolve, d) },
+        error: (d) => { odaStream.value.active = false; odaStream.value.error = d.message; finish(reject, new Error(d.message || 'ODA failed')) },
+      }
+      Object.entries(handlers).forEach(([evt, h]) => es.addEventListener(evt, (e) => { try { h(JSON.parse(e.data)) } catch {} }))
+      es.onerror = () => { if (settled) return; odaStream.value.active = false; finish(reject, new Error('ODA connection dropped')) }
+      _odaEs = es
+    })
+  }
+
+  function stopOda() {
+    if (_odaEs) { _odaEs.close(); _odaEs = null }
+    odaStream.value.active = false
+  }
+
+  // FAIL 적합성 게이트를 명시 면제(FR-008). 사유 필수.
+  async function waiveConformance(proposalId, reason) {
+    const res = await fetch(`${BASE}/${proposalId}/oda/waive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    })
+    if (!res.ok) throw new Error(await _extractError(res, 'Waive failed'))
+    currentProposal.value = await res.json()
+    _syncListItem(proposalId)
+    return currentProposal.value
+  }
+
   return {
     proposals, currentProposal, loading, error,
     intentStream, sandboxStream, tasksStream, validationStream, testResults,
-    constitution, plan, planStream, stagedStream, stageDrafts,
+    constitution, plan, planStream, stagedStream, stageDrafts, odaStream,
     getStageDraft, setStageDraft, clearStageDraft, saveStageDraft,
     fetchProposals, fetchProposal, createProposal, deleteProposal,
     subscribeToIntent, stopIntent, answerClarification, submitIntentFeedback,
@@ -912,6 +958,7 @@ export const useProposalsStore = defineStore('proposals', () => {
     getPlan, runPlan, stopPlan, confirmPlan,
     upgradeMode, subscribeToScope, confirmStagePlan, subscribeToStage,
     stopStaged, confirmStage, skipStage, consolidateStaged, proceedToPlan,
+    subscribeToOda, stopOda, waiveConformance,
     implementProposal, completeImplementation, fetchProgress,
     fetchTestResults, runValidation, subscribeToValidation, stopValidation,
     acceptProposal, destroyProposal, revokeProposal, retryMerge,

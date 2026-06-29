@@ -391,6 +391,12 @@ async def submit_proposal(proposal_id: str, body: SubmitProposalRequest, request
             detail={"reason": "intent_required", "message": "Intent(전략 분해)를 먼저 완료해야 Plan 단계로 제출할 수 있습니다."},
         )
 
+    # 043 — ODA 모드면 적합성 게이트가 차단 상태일 때 제출 불가(FR-007).
+    from api.features.proposal_lifecycle.services import oda_conformance
+    oda_err = oda_conformance.ensure_can_proceed(proposal_id)
+    if oda_err and oda_err.get("reason") == "oda_conformance_failed":
+        raise HTTPException(status_code=409, detail=oda_err)
+
     # 충돌 감지: 동일 그래프 노드를 수정하는 IMPLEMENTING 중인 Proposal
     conflict_check = _check_concurrent_conflicts(proposal_id)
     if conflict_check:

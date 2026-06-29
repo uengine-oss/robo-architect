@@ -36,9 +36,14 @@
     <div class="detail-content">
       <!-- Intent — Strategic Diff 만 (FR-006) -->
       <template v-if="activeTab === 'diff'">
+        <!-- 043 — ODA 표준: Intent 탭에 ODA 트랙(정합성·적합성 게이트·산출물) 융합 -->
+        <OdaStandardTrack
+          v-if="isOda"
+          :proposalId="proposal.id"
+        />
         <!-- 042 — Detailed DDD: Intent 탭에 전략 단계(Discover·Decompose·Strategize) 융합 -->
         <StrategicStages
-          v-if="showStrategicStages"
+          v-else-if="showStrategicStages"
           :proposalId="proposal.id"
           @goto-plan="proceedToPlan"
         />
@@ -222,6 +227,7 @@ import PlanView from './PlanView.vue'
 import StrategicStages from './StrategicStages.vue'
 import PlanStages from './PlanStages.vue'
 import StageArtifactTabs from './StageArtifactTabs.vue'
+import OdaStandardTrack from './OdaStandardTrack.vue'
 
 const props = defineProps({ proposalId: { type: String, required: true } })
 const { t } = useI18n()
@@ -256,6 +262,8 @@ const isDraft = computed(() => proposal.value?.status === 'DRAFT')
 const isSubmitted = computed(() => proposal.value?.status === 'SUBMITTED')
 // 042 — 라이프사이클: DRAFT=Intent 단계, SUBMITTED=Plan 단계, IMPLEMENTING~ 유지.
 const isDetailed = computed(() => proposal.value?.decompositionMode === 'DETAILED_DDD')
+// 043 — ODA 표준 모드: Intent 탭에 ODA 트랙(정합성·게이트·산출물) 융합.
+const isOda = computed(() => proposal.value?.decompositionMode === 'ODA_STANDARD')
 const _hasStrategic = computed(() => {
   const sd = proposal.value?.strategicDiff
   return !!(sd && (sd.epics?.length || sd.userStories?.length || sd.features?.length))
