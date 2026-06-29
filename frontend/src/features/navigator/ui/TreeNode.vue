@@ -856,13 +856,14 @@ async function addToCanvas() {
   color: #20c997;
 }
 
-/* 041 — BC 헌장 버튼은 항상 보이게(발견 가능성). 이모지라 색상 transition 불필요. */
+/* 041/헌장 — BC(마이크로서비스)별 헌장은 optional → 반투명으로 약하게 표시(발견은 가능). */
 .tree-node__constitution-btn {
-  opacity: 0.85;
+  opacity: 0.4;
   font-size: 12px;
   line-height: 1;
 }
 .tree-node__header:hover .tree-node__constitution-btn { opacity: 1; }
+.tree-node__constitution-btn:hover { opacity: 1; }
 .tree-node__constitution-btn:hover { background: rgba(255, 200, 0, 0.18); }
 
 /* User story specific styling */

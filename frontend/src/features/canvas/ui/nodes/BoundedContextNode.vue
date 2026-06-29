@@ -49,9 +49,9 @@ function openConstitution(event) {
       <div class="bc-container__actions">
         <!-- 041 — 이 BC 의 헌장(Constitution) 진입점. App.vue 가 robo:open-constitution 수신. -->
         <button
-          class="bc-container__action-btn"
+          class="bc-container__action-btn bc-container__action-btn--constitution"
           @click="openConstitution"
-          title="이 Bounded Context의 헌장 (Constitution)"
+          title="이 Bounded Context의 헌장 (Constitution) — 선택(optional)"
         >
           <span class="bc-container__emoji">📜</span>
         </button>
@@ -167,6 +167,10 @@ function openConstitution(event) {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
 }
+
+/* 헌장 — BC(마이크로서비스)별 헌장은 optional → 반투명으로 약하게 표시 */
+.bc-container__action-btn--constitution { opacity: 0.4; }
+.bc-container__action-btn--constitution:hover { opacity: 1; }
 
 .bc-container__emoji {
   font-size: 14px;

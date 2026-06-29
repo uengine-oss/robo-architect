@@ -33,6 +33,7 @@ import RequirementsIngestionModal from '@/features/requirementsIngestion/ui/Requ
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 // 041 — Design 측 헌장(Constitution) 관리. CanvasWorkspace(프로젝트 헌장)와
 // BoundedContextNode(BC 헌장)가 robo:open-constitution 을 dispatch 하면 모달을 연다.
+import DesignImportModal from '@/features/canvas/ui/DesignImportModal.vue'
 import ConstitutionEditor from '@/features/constitution/ui/ConstitutionEditor.vue'
 
 const navigatorStore = useNavigatorStore()
@@ -121,6 +122,14 @@ function _onOpenConstitution(e) {
 // 헌장이 저장/생성되면 의존 화면(Proposal Plan 게이트 등)이 재시도할 수 있게 앱 이벤트로 알린다.
 function _onConstitutionSaved(payload) {
   window.dispatchEvent(new CustomEvent('robo:constitution-saved', { detail: payload || {} }))
+}
+
+// 044 — 완성 설계 가져오기(Design Import) 모달. 네비게이터(헌장 우측) 버튼이 robo:open-design-import 를 dispatch.
+const designImportOpen = ref(false)
+function _onOpenDesignImport() { designImportOpen.value = true }
+function _onDesignImported() {
+  // 다중 스토어(canvas/bigpicture/navigator) 캐시를 가장 확실히 갱신하는 방법 = 적재 후 새로고침.
+  setTimeout(() => window.location.reload(), 600)
 }
 
 // 040 — Proposal 임팩트 '열기' 오케스트레이션.
@@ -319,6 +328,8 @@ onMounted(() => {
   window.addEventListener('robo:preview-updated', _onPreviewUpdated)
   // 041 — Design 측 헌장 편집기 열기
   window.addEventListener('robo:open-constitution', _onOpenConstitution)
+  // 044 — 완성 설계 가져오기 모달 열기
+  window.addEventListener('robo:open-design-import', _onOpenDesignImport)
 
   log.info('app_mounted', 'App mounted; core layout components are ready.', {
     appInstanceId,
@@ -339,6 +350,7 @@ onUnmounted(() => {
   window.removeEventListener('robo:preview-exit', _onPreviewExit)
   window.removeEventListener('robo:preview-updated', _onPreviewUpdated)
   window.removeEventListener('robo:open-constitution', _onOpenConstitution)
+  window.removeEventListener('robo:open-design-import', _onOpenDesignImport)
 })
 </script>
 
@@ -423,6 +435,9 @@ onUnmounted(() => {
       @saved="_onConstitutionSaved"
       @close="constitutionEditor = null"
     />
+
+    <!-- 044 — 완성 설계 가져오기(Design Import) 모달 (전역; 네비게이터 헌장 우측 버튼이 연다) -->
+    <DesignImportModal :open="designImportOpen" @close="designImportOpen = false" @imported="_onDesignImported" />
   </div>
 </template>
 

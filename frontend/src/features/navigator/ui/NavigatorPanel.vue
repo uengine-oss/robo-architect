@@ -6,6 +6,7 @@ import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import { useDebugMode } from '@/app/debug'
 import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
+import { useConstitutionStore } from '@/features/constitution/constitution.store'
 import TreeNode from './TreeNode.vue'
 
 const { isDebug } = useDebugMode()
@@ -14,6 +15,9 @@ const navigatorStore = useNavigatorStore()
 const terminologyStore = useTerminologyStore()
 const bpmnStore = useBpmnStore()
 const emStore = useEventModelingStore()
+const constitutionStore = useConstitutionStore()
+// 044/헌장 — 전체(프로젝트) 헌장은 필수. 설정 여부로 붉은 점 표시를 제어한다.
+const hasProjectConstitution = computed(() => constitutionStore.project?.exists === true)
 
 // Reload the navigator tree whenever an ingestion completes or data is cleared.
 useDataRefresh(() => handleRefresh())
@@ -174,6 +178,11 @@ const serviceName = ref('My Service Name')
 function openProjectConstitution() {
   window.dispatchEvent(new CustomEvent('robo:open-constitution', { detail: { scope: 'PROJECT' } }))
 }
+
+// 044 — 완성 설계 가져오기(Design Import). App.vue 가 robo:open-design-import 를 듣고 모달을 연다.
+function openDesignImport() {
+  window.dispatchEvent(new CustomEvent('robo:open-design-import'))
+}
 const isEditingName = ref(false)
 const nameInput = ref(null)
 
@@ -202,6 +211,8 @@ function handleNameKeydown(event) {
 
 onMounted(async () => {
   await loadData()
+  // 헌장 설정 여부를 알아야 붉은 점/상태를 표시할 수 있다(실패해도 무시).
+  try { await constitutionStore.getProjectConstitution() } catch (e) { /* noop */ }
 })
 
 async function loadData() {
@@ -302,10 +313,22 @@ function handleProcessDragStart(event, item) {
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
           </svg>
         </span>
-        <!-- 041 — 프로젝트 루트 헌장(Constitution) 진입점. Design 루트에 항상 노출. -->
-        <button class="constitution-root-btn" @click="openProjectConstitution" title="프로젝트 헌장 (Constitution)">
+        <!-- 041 — 프로젝트 루트 헌장(Constitution) 진입점. Design 루트에 항상 노출.
+             전체 헌장은 필수: 미설정 시 붉은 점으로 강하게 설정을 유도(044/헌장 정책). -->
+        <button
+          class="constitution-root-btn"
+          :class="{ 'constitution-root-btn--unset': !hasProjectConstitution }"
+          @click="openProjectConstitution"
+          :title="hasProjectConstitution ? '프로젝트 헌장 (Constitution)' : '프로젝트 헌장이 아직 설정되지 않았습니다 — 설정이 필요합니다'"
+        >
           <span class="constitution-root-btn__emoji">📜</span>
           <span class="constitution-root-btn__label">헌장</span>
+          <span v-if="!hasProjectConstitution" class="constitution-root-btn__dot" aria-label="헌장 미설정"></span>
+        </button>
+
+        <!-- 044 — 완성 설계 가져오기(Design Import). 헌장 우측에 노출. -->
+        <button class="design-import-btn" @click="openDesignImport" title="완성 설계 가져오기 (Design Import)">
+          <span class="design-import-btn__emoji">📥</span>
         </button>
       </div>
     </div>
@@ -865,7 +888,9 @@ function handleProcessDragStart(event, item) {
 
 /* 041 — 프로젝트 루트 헌장 버튼(Design 루트, 항상 노출) */
 .constitution-root-btn {
+  position: relative;
   margin-left: auto;
+  flex-shrink: 0;               /* 좁아져도 버튼이 줄지 않게 */
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -877,9 +902,46 @@ function handleProcessDragStart(event, item) {
   cursor: pointer;
   font-size: 0.7rem;
   font-weight: 600;
+  white-space: nowrap;          /* '헌장' 글자가 헌-장으로 줄바꿈되지 않도록 */
 }
 .constitution-root-btn:hover { background: rgba(255, 200, 0, 0.22); }
 .constitution-root-btn__emoji { font-size: 12px; line-height: 1; }
+.constitution-root-btn__label { white-space: nowrap; }
+
+/* 전체 헌장 미설정 — 필수임을 강하게 알리는 붉은 점 + 강조 테두리 */
+.constitution-root-btn--unset {
+  background: rgba(229, 57, 53, 0.10);
+  border-color: rgba(229, 57, 53, 0.55);
+}
+.constitution-root-btn--unset:hover { background: rgba(229, 57, 53, 0.18); }
+.constitution-root-btn__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e53935;
+  box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.25);
+  animation: constitution-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes constitution-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* 044 — 완성 설계 가져오기 버튼(헌장 우측) */
+.design-import-btn {
+  flex-shrink: 0;
+  margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  background: rgba(37, 99, 235, 0.10);
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.design-import-btn:hover { background: rgba(37, 99, 235, 0.20); }
+.design-import-btn__emoji { font-size: 12px; line-height: 1; }
 
 .service-name-display {
   display: flex;

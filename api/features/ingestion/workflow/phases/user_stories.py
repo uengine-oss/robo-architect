@@ -34,11 +34,18 @@ from api.features.ingestion.workflow.utils.user_story_normalize import (
 from api.platform.observability.smart_logger import SmartLogger
 
 
-def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> list[Any]:
+def normalize_and_dedup_user_stories(
+    stories: list[Any], session_id: str, is_analyzer: bool = False
+) -> list[Any]:
     """
     User Story 목록을 정규화하고 중복을 제거합니다.
     청킹 여부와 무관하게 항상 적용되어야 합니다.
+
+    `is_analyzer` 는 호출부(analyzer_graph source)가 전달하는 플래그로, 현재는
+    정규화/중복 제거 로직을 동일하게 적용한다(문서화된 "항상 적용" 정책). 시그니처
+    누락으로 표준 업로드 인제스천 전체가 TypeError 로 깨지던 회귀를 복구한다.
     """
+    _ = is_analyzer
     seen = set()
     out = []
 
