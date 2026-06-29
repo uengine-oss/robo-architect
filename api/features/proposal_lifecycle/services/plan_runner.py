@@ -8,6 +8,7 @@ Intent 단계(전략 분해)와 분리된 Plan 단계. Constitution 없으면 �
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 
 from api.platform.neo4j import get_session
@@ -25,7 +26,7 @@ def _load_plan_inputs(proposal_id: str) -> Optional[dict]:
     with get_session() as session:
         rec = session.run(
             "MATCH (p:Proposal {id: $id}) RETURN p.strategicDiff AS sd, "
-            "p.projectRoot AS projectRoot, p.implementationPlan AS plan, "
+            "p.projectRoot AS projectRoot, p.implementationPlan AS plan, p.planDraft AS planDraft, "
             "p.tacticalDiff AS td, p.decompositionMode AS mode",
             id=proposal_id,
         ).single()
@@ -42,9 +43,148 @@ def _load_plan_inputs(proposal_id: str) -> Optional[dict]:
         "strategic": _parse(rec.get("sd"), {}),
         "projectRoot": rec.get("projectRoot"),
         "prev_plan": _parse(rec.get("plan"), None),
+        "plan_draft": _parse(rec.get("planDraft"), None),
         "tactical": _parse(rec.get("td"), []),
         "mode": rec.get("mode") or "SIMPLIFIED",
     }
+
+
+_TACTICAL_COLLECTION_LABELS = {
+    "aggregates": "Aggregate",
+    "commands": "Command",
+    "events": "Event",
+    "readModels": "ReadModel",
+    "readmodels": "ReadModel",
+    "policies": "Policy",
+    "invariants": "Invariant",
+    "uis": "UI",
+    "ui": "UI",
+    "screens": "UI",
+}
+
+
+def _pascal_label(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "Aggregate"
+    lowered = text.lower()
+    aliases = {
+        "aggregate": "Aggregate",
+        "command": "Command",
+        "event": "Event",
+        "readmodel": "ReadModel",
+        "read_model": "ReadModel",
+        "policy": "Policy",
+        "invariant": "Invariant",
+        "ui": "UI",
+        "screen": "UI",
+        "valueobject": "ValueObject",
+        "value_object": "ValueObject",
+    }
+    if lowered in aliases:
+        return aliases[lowered]
+    return text[:1].upper() + text[1:]
+
+
+def _title_from_item(item: dict, label: str) -> str:
+    for key in (
+        "nodeTitle", "entityTitle", "title", "displayName", "name",
+        "aggregateName", "commandName", "eventName", "readModelName", "policyName",
+    ):
+        value = item.get(key)
+        if value:
+            return str(value)
+    fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+    for key in ("name", "title", "rootEntity"):
+        value = fields.get(key)
+        if value:
+            return str(value)
+    return label
+
+
+def _node_id_from_item(item: dict, label: str, title: str, index: int) -> str:
+    for key in ("nodeId", "tempId", "entityId", "id"):
+        value = item.get(key)
+        if value:
+            return str(value)
+    slug = "".join(ch if ch.isalnum() else "-" for ch in title).strip("-") or str(index + 1)
+    return f"{label.upper()}-{slug}"
+
+
+def _coerce_tactical_items(raw: object) -> list[dict]:
+    """Accept the canonical list and common LLM variants, then return item dicts."""
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    if not isinstance(raw, dict):
+        return []
+    if isinstance(raw.get("items"), list):
+        return [item for item in raw["items"] if isinstance(item, dict)]
+
+    items: list[dict] = []
+    for key, label in _TACTICAL_COLLECTION_LABELS.items():
+        values = raw.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, dict):
+                item = dict(value)
+                item.setdefault("nodeLabel", label)
+                items.append(item)
+    return items
+
+
+def normalize_tactical_diff(raw: object) -> list[dict]:
+    """Normalize generated tactical diff into the canonical UI/backend contract.
+
+    The proposal skill contract requires nodeId/nodeLabel/nodeTitle, but LLM output can
+    drift. We recover those fields conservatively here so UI rendering and downstream
+    proposal tooling never see `undefined:undefined`.
+    """
+    normalized: list[dict] = []
+    for index, item in enumerate(_coerce_tactical_items(raw)):
+        label = _pascal_label(item.get("nodeLabel") or item.get("entityType") or item.get("type") or item.get("label"))
+        title = _title_from_item(item, label)
+        node_id = _node_id_from_item(item, label, title, index)
+        change_type = str(item.get("changeType") or item.get("op") or "CREATE").upper()
+        if change_type not in {"CREATE", "MODIFY", "DELETE"}:
+            change_type = "MODIFY"
+        impact_level = str(item.get("impactLevel") or "MEDIUM").upper()
+        if impact_level not in {"HIGH", "MEDIUM", "LOW", "NONE"}:
+            impact_level = "MEDIUM"
+
+        canonical = dict(item)
+        canonical["nodeId"] = node_id
+        canonical["nodeLabel"] = label
+        canonical["nodeTitle"] = title
+        canonical["changeType"] = change_type
+        canonical["impactLevel"] = impact_level
+        canonical.setdefault("reason", item.get("reason") or f"Plan generated {label}")
+        normalized.append(canonical)
+    return normalized
+
+
+def _save_plan_draft(proposal_id: str, implementation_plan: dict,
+                     tactical_diff: list[dict], impact_map: list[dict]) -> dict:
+    """Persist generated-but-unconfirmed Plan artifacts for refresh recovery."""
+    draft = {
+        "implementationPlan": implementation_plan or {},
+        "tacticalDiff": tactical_diff or [],
+        "impactMap": impact_map or [],
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "confirmed": False,
+    }
+    with get_session() as session:
+        session.run(
+            "MATCH (p:Proposal {id: $id}) SET p.planDraft = $draft",
+            id=proposal_id,
+            draft=json.dumps(draft, ensure_ascii=False),
+        )
+    SmartLogger.log("INFO", f"plan_draft_saved: {proposal_id}",
+                    category="proposal_lifecycle.plan.draft_saved",
+                    params={"proposalId": proposal_id,
+                            "tacticalCount": len(tactical_diff or []),
+                            "impactCount": len(impact_map or [])})
+    return draft
 
 
 def _count_contexts(strategic: dict) -> int:
@@ -133,7 +273,7 @@ def confirm_plan(proposal_id: str, implementation_plan: dict,
     implementation_plan["constitutionHash"] = c_hash
     implementation_plan["strategicVersion"] = (strategic or {}).get("version", 1)
 
-    set_parts = ["p.implementationPlan = $plan"]
+    set_parts = ["p.implementationPlan = $plan", "p.planDraft = null"]
     params: dict = {"id": proposal_id, "plan": json.dumps(implementation_plan, ensure_ascii=False)}
     if c_hash:
         set_parts.append("p.constitutionHash = $chash")
@@ -200,7 +340,7 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
         return
 
     # architecture_only 면 스킬이 tacticalDiff 를 내지 않는다 → 기존(확정) 전술을 그대로 사용.
-    tactical = data.get("tacticalDiff") or existing_tactical
+    tactical = normalize_tactical_diff(data.get("tacticalDiff") or existing_tactical)
     plan = data.get("implementationPlan", {})
     if tactical:
         yield "tactical", {"tacticalDiff": tactical}
@@ -219,6 +359,8 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
         SmartLogger.log("WARN", f"plan impact build failed: {e}",
                         category="proposal_lifecycle.plan.impact_warn",
                         params={"proposalId": proposal_id, "error": str(e)})
+
+    _save_plan_draft(proposal_id, plan, tactical, impact)
 
     yield "done", {
         "proposalId": proposal_id,

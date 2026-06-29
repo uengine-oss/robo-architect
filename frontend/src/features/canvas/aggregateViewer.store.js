@@ -8,14 +8,28 @@ import { previewUrl, isPreviewFor, usePreviewSession } from '@/app/previewSessio
 // 내려준 `description` 등 일부 필드를 누락했다(미리보기 Inspector 설명 칸 빈칸 버그). 백엔드
 // 노드 키를 패스-스루(`...agg`)로 보존하고 배열/표시이름 기본값만 덮어, 같은 부류의 필드
 // 누락을 구조적으로 차단한다(향후 새 필드도 자동 보존).
+function normalizeArrayField(value) {
+  if (Array.isArray(value)) return value
+  if (Array.isArray(value?.after)) return value.after
+  return []
+}
+
+function normalizeProperties(value) {
+  return normalizeArrayField(value).map((property) =>
+    property && typeof property === 'object'
+      ? property
+      : { name: String(property || ''), type: 'String' }
+  )
+}
+
 function mapPreviewAggregate(agg) {
   return {
     ...agg,
     displayName: agg.displayName || agg.name,
-    invariants: agg.invariants || [],
-    enumerations: agg.enumerations || [],
-    valueObjects: agg.valueObjects || [],
-    properties: agg.properties || [],
+    invariants: normalizeArrayField(agg.invariants),
+    enumerations: normalizeArrayField(agg.enumerations),
+    valueObjects: normalizeArrayField(agg.valueObjects),
+    properties: normalizeProperties(agg.properties),
   }
 }
 
@@ -67,6 +81,10 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
       boundedContexts.value.push(bc)
     }
     selectedBcIds.value.add(bcId)
+    selectedBcIds.value = new Set(selectedBcIds.value)
+    // Preview focus can be interrupted by KeepAlive/HMR timing after the tree is already
+    // applied. Once the tree is in state, do not let a stale loading flag hide the canvas.
+    loading.value = false
     return bc
   }
 
@@ -138,6 +156,8 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
   // (Design 캔버스 인스펙터의 '어그리거트 디테일 보기' 진입 경로). 기본 false(기존 '열기' 무영향).
   function focusAggregate(aggregateId, bcId = null, opts = {}) {
     if (!aggregateId) return
+    visibleAggregateIds.value.add(aggregateId)
+    visibleAggregateIds.value = new Set(visibleAggregateIds.value)
     pendingFocus.value = { aggregateId, bcId: bcId || null, openInspector: !!opts.openInspector }
   }
 
@@ -191,14 +211,18 @@ export const useAggregateViewerStore = defineStore('aggregateViewer', () => {
 
   // Get filtered bounded contexts (selected BCs, aggregates gated by visibility)
   const filteredBoundedContexts = computed(() => {
-    if (selectedBcIds.value.size === 0) {
+    const selected = selectedBcIds.value
+    const visible = visibleAggregateIds.value
+    if (selected.size === 0 && visible.size === 0) {
       return []
     }
     return boundedContexts.value
-      .filter(bc => selectedBcIds.value.has(bc.id))
+      .filter(bc => selected.size > 0
+        ? selected.has(bc.id)
+        : (bc.aggregates || []).some(agg => visible.has(agg.id)))
       .map(bc => ({
         ...bc,
-        aggregates: (bc.aggregates || []).filter(agg => visibleAggregateIds.value.has(agg.id))
+        aggregates: (bc.aggregates || []).filter(agg => visible.has(agg.id))
       }))
       .filter(bc => bc.aggregates.length > 0)
   })

@@ -49,6 +49,36 @@ function parseRoleAction(title) {
   return { role: '', action: title || '' }
 }
 
+function normalizeTacticalLabel(item) {
+  const raw = item.nodeLabel || item.entityType || item.type || item.label || 'Aggregate'
+  const lower = String(raw).toLowerCase()
+  const aliases = {
+    aggregate: 'Aggregate',
+    command: 'Command',
+    event: 'Event',
+    readmodel: 'ReadModel',
+    read_model: 'ReadModel',
+    policy: 'Policy',
+    invariant: 'Invariant',
+    ui: 'UI',
+  }
+  return aliases[lower] || pascal(String(raw))
+}
+
+function normalizeTacticalTitle(item, label) {
+  const fields = item.fields && typeof item.fields === 'object' ? item.fields : {}
+  return item.nodeTitle || item.entityTitle || item.title || item.displayName || item.name ||
+    item.aggregateName || item.commandName || item.eventName || item.readModelName ||
+    item.policyName || fields.name || fields.title || fields.rootEntity || label
+}
+
+function normalizeTacticalId(item, label, title, index) {
+  const existing = item.nodeId || item.tempId || item.entityId || item.id
+  if (existing) return existing
+  const slug = String(title || label).replace(/[^\w가-힣]+/g, '-').replace(/^-+|-+$/g, '') || String(index + 1)
+  return `${label}:${slug}`
+}
+
 // ── TacticalDiff ops → 구조화 표시 ──────────────────────────────────────
 function opsToStructured(ops) {
   const scalarChanges = []
@@ -137,7 +167,10 @@ const nodes = computed(() => {
       out.push(node)
     }
   }
-  for (const item of (props.tacticalDiff || [])) {
+  const tacticalItems = Array.isArray(props.tacticalDiff) ? props.tacticalDiff : []
+  for (const [i, item] of tacticalItems.entries()) {
+    const label = normalizeTacticalLabel(item)
+    const title = normalizeTacticalTitle(item, label)
     const ops = item.semanticDiff?.ops || []
     const struct = mergeItemLevelObjects(opsToStructured(ops), item)
     // fields(actor/category/inputSchema/version/payload) → 스칼라 필드로 합류
@@ -145,10 +178,10 @@ const nodes = computed(() => {
       field: f, after: (v && typeof v === 'object') ? (v.after ?? v.value) : v,
     }))
     out.push({
-      nodeId: item.nodeId || `${item.nodeLabel}:${item.nodeTitle}`,
-      nodeLabel: item.nodeLabel || 'Aggregate',
-      nodeTitle: item.nodeTitle || '',
-      changeType: (item.changeType || 'MODIFY').toUpperCase(),
+      nodeId: normalizeTacticalId(item, label, title, i),
+      nodeLabel: label,
+      nodeTitle: title,
+      changeType: (item.changeType || item.op || 'MODIFY').toUpperCase(),
       impactLevel: item.impactLevel || 'MEDIUM',
       ...struct,
       scalarChanges: [...(struct.scalarChanges || []), ...fieldChanges],

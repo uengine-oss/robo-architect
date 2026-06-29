@@ -97,3 +97,31 @@ def test_plan_stale_when_strategic_version_advances():
     )
     resp = ProposalResponse.from_neo4j(node, [])
     assert resp.planStale is True
+
+
+def test_plan_draft_is_preserved_without_becoming_confirmed_plan():
+    draft = {
+        "implementationPlan": json.loads(_plan_with(REQUIRED_ARCHITECTURE_ASPECTS).model_dump_json()),
+        "tacticalDiff": [{"nodeId": "AGG-cart", "nodeLabel": "Aggregate", "nodeTitle": "Cart"}],
+        "impactMap": [],
+        "confirmed": False,
+    }
+    resp = ProposalResponse.from_neo4j(_node(planDraft=json.dumps(draft)), [])
+    assert resp.implementationPlan is None
+    assert resp.planDraft["tacticalDiff"][0]["nodeTitle"] == "Cart"
+
+
+def test_plan_tactical_normalization_recovers_required_display_fields():
+    from api.features.proposal_lifecycle.services.plan_runner import normalize_tactical_diff
+
+    raw = [
+        {"type": "aggregate", "name": "Cart"},
+        {"entityType": "command", "entityTitle": "AddItemToCart", "op": "CREATE"},
+        {"label": "event", "title": "ItemAddedToCart", "impactLevel": "none"},
+    ]
+
+    normalized = normalize_tactical_diff(raw)
+
+    assert [item["nodeLabel"] for item in normalized] == ["Aggregate", "Command", "Event"]
+    assert [item["nodeTitle"] for item in normalized] == ["Cart", "AddItemToCart", "ItemAddedToCart"]
+    assert all(item["nodeId"] and item["nodeId"] != "undefined:undefined" for item in normalized)

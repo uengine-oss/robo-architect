@@ -8,6 +8,7 @@ import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { isPreviewFor } from '@/app/previewSession'
 import AggregateViewerNode from './nodes/AggregateViewerNode.vue'
 import EnumViewerNode from './nodes/EnumViewerNode.vue'
 import ValueObjectViewerNode from './nodes/ValueObjectViewerNode.vue'
@@ -419,27 +420,54 @@ const previousAggIds = ref(new Set())
 const previousAggSignature = ref('')
 const isRebuilding = ref(false) // Flag to prevent position reset during rebuild
 
+function rebuildNodesFromStore(preserveExistingPositions = true) {
+  const bcs = store.filteredBoundedContexts
+  if (!bcs.length) return false
+  previousBcIds.value = new Set(bcs.map(bc => bc.id))
+  previousAggIds.value = new Set(bcs.flatMap(bc => (bc.aggregates || []).map(a => a.id)))
+  previousAggSignature.value = computeAggSignature(bcs)
+  nodes.value = buildNodes(preserveExistingPositions)
+  nodes.value.forEach(node => {
+    nodePositions.value.set(node.id, {
+      x: node.position.x,
+      y: node.position.y,
+      parentNode: node.parentNode
+    })
+  })
+  return nodes.value.length > 0
+}
+
 // Build a stable content signature for the currently visible aggregates. Changes
 // here (a new property, a renamed field, an added enum item) trigger a node rebuild.
 function computeAggSignature(bcs) {
+  const asArray = (value) => Array.isArray(value) ? value : (Array.isArray(value?.after) ? value.after : [])
   return JSON.stringify((bcs || []).map(bc => ({
     id: bc.id,
     aggs: (bc.aggregates || []).map(a => ({
       id: a.id,
-      p: (a.properties || []).map(p => [p.name, p.type, p.isKey, p.isForeignKey, p.isRequired, p.displayName]),
+      p: asArray(a.properties).map(p => [p.name, p.type, p.isKey, p.isForeignKey, p.isRequired, p.displayName]),
       // 항목 개수뿐 아니라 각 item 값 / field name·type 까지 포함해야 기존 요소의
       // 이름·타입을 *수정*했을 때(개수 불변)도 시그니처가 바뀌어 캔버스가 재빌드된다.
-      e: (a.enumerations || []).map(e => [e.name, e.alias, ...(e.items || [])]),
-      v: (a.valueObjects || []).map(v => [
+      e: asArray(a.enumerations).map(e => [e.name, e.alias, ...(e.items || [])]),
+      v: asArray(a.valueObjects).map(v => [
         v.name, v.alias, v.referencedAggregateName, v.referencedAggregateField,
-        ...(v.fields || []).map(f => `${f?.name || ''}:${f?.type || ''}`),
+        ...asArray(v.fields).map(f => `${f?.name || ''}:${f?.type || ''}`),
       ]),
     })),
   })))
 }
 
 // Update nodes when store data changes - when BC OR aggregate structure changes
-watch(() => store.filteredBoundedContexts, (newBcs) => {
+watch(() => JSON.stringify({
+  b: store.boundedContexts.map(bc => ({
+    id: bc.id,
+    aggs: (bc.aggregates || []).map(agg => agg.id)
+  })),
+  s: [...store.selectedBcIds],
+  v: [...store.visibleAggregateIds],
+  sig: computeAggSignature(store.filteredBoundedContexts)
+}), () => {
+  const newBcs = store.filteredBoundedContexts
   // Extract BC IDs from new data
   const newBcIds = new Set(newBcs.map(bc => bc.id))
 
@@ -1274,11 +1302,17 @@ onMounted(() => {
 // inspecting* 상태를 세팅하고 panelMode 를 'inspector' 로 전환한다.
 async function focusOnAggregate(aggregateId, bcId, openInspector = false) {
   if (!aggregateId) return
-  if (!store.visibleAggregateIds.has(aggregateId)) {
+  const alreadyLoaded = store.filteredBoundedContexts
+    .some(bc => (bc.aggregates || []).some(agg => agg.id === aggregateId))
+  if (!alreadyLoaded) {
     await store.fetchAggregate(aggregateId, bcId || null)
   }
   // Wait for the canvas to (re)build nodes for the now-visible aggregate.
   await nextTick()
+  if (nodes.value.length === 0) rebuildNodesFromStore(false)
+  setTimeout(() => {
+    if (nodes.value.length === 0) rebuildNodesFromStore(false)
+  }, 250)
   if (openInspector) {
     inspectingAggregateId.value = aggregateId
     inspectingEnumIndex.value = null
@@ -1345,13 +1379,14 @@ const canvasPatternColor = computed(() => {
   const isLight = root.classList.contains('theme-light')
   return isLight ? '#e9ecef' : '#2a2a3a'
 })
+
 </script>
 
 <template>
   <div class="aggregate-viewer">
     <div class="aggregate-main-content">
       <!-- Loading state -->
-      <div v-if="store.loading" class="aggregate-viewer__loading">
+      <div v-if="store.loading && store.totalAggregates === 0 && !isPreviewFor('data')" class="aggregate-viewer__loading">
         <div class="loading-spinner"></div>
         <div class="loading-text">Loading aggregates...</div>
       </div>

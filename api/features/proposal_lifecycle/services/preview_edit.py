@@ -49,12 +49,24 @@ def _strip_meta(items: list) -> list:
 def _read_tactical(proposal_id: str) -> list[dict]:
     with get_session() as session:
         rec = session.run(
-            "MATCH (p:Proposal {id: $id}) RETURN p.tacticalDiff AS td", id=proposal_id
+            "MATCH (p:Proposal {id: $id}) RETURN p.tacticalDiff AS td, p.planDraft AS draft",
+            id=proposal_id,
         ).single()
-    if not rec or not rec.get("td"):
+    if not rec:
+        return []
+    raw = rec.get("td")
+    if not raw and rec.get("draft"):
+        try:
+            draft = json.loads(rec["draft"]) or {}
+            tactical = draft.get("tacticalDiff")
+            if isinstance(tactical, list):
+                return tactical
+        except Exception:
+            pass
+    if not raw:
         return []
     try:
-        return json.loads(rec["td"]) or []
+        return json.loads(raw) or []
     except Exception:
         return []
 

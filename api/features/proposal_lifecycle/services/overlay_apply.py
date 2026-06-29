@@ -61,6 +61,15 @@ def _populate_from_deep_item(node: dict, item: dict) -> list[str]:
     changed: list[str] = []
     fields = item.get("fields") or {}
     for k, v in fields.items():
+        if isinstance(v, dict) and "after" in v:
+            v = v.get("after")
+        if k in {"properties", "invariants", "enumerations", "valueObjects"} and not isinstance(v, list):
+            v = []
+        if k == "properties":
+            v = [
+                p if isinstance(p, dict) else {"name": str(p), "type": "String"}
+                for p in v
+            ]
         node[k] = v
         changed.append(k)
     props = item.get("properties") or []

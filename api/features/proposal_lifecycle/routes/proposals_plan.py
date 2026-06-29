@@ -43,11 +43,21 @@ def _load_proposal_response(proposal_id: str) -> ProposalResponse:
 
 @router.get("/{proposal_id}/plan")
 async def get_plan(proposal_id: str):
-    """저장된 ImplementationPlan 을 반환한다(없으면 null)."""
+    """저장된 Plan 을 반환한다.
+
+    확정된 implementationPlan 이 없으면, Generate Plan 이 만든 미확정 draft 를
+    반환해 새로고침 후에도 리뷰/확정 전 상태를 복원한다.
+    """
     inputs = _load_plan_inputs(proposal_id)
     if inputs is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
-    return {"implementationPlan": inputs.get("prev_plan")}
+    confirmed_plan = inputs.get("prev_plan")
+    draft = inputs.get("plan_draft") if isinstance(inputs.get("plan_draft"), dict) else None
+    return {
+        "implementationPlan": confirmed_plan or (draft or {}).get("implementationPlan"),
+        "confirmed": bool(confirmed_plan),
+        "planDraft": draft,
+    }
 
 
 @router.get("/{proposal_id}/stream/plan")

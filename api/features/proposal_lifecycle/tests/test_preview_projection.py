@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -115,6 +116,123 @@ def test_no_write_cypher_in_preview_modules():
             if clause.search(line):
                 offenders.append((f.name, ln, line.strip()[:70]))
     assert not offenders, f"write Cypher found in preview modules: {offenders}"
+
+
+def test_load_proposal_falls_back_to_plan_draft_tactical(monkeypatch):
+    from api.features.proposal_lifecycle.services import preview_projection as pp
+
+    class _FakeRecord(dict):
+        pass
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def run(self, *_args, **_kwargs):
+            return self
+
+        def single(self):
+            return _FakeRecord({"p": {"id": "PRO-001"}})
+
+    proposal = SimpleNamespace(
+        tacticalDiff=None,
+        impactMap=None,
+        planDraft={
+            "tacticalDiff": [{"nodeId": "AGG-cart", "nodeLabel": "Aggregate", "nodeTitle": "Cart"}],
+            "impactMap": [{"nodeId": "AGG-cart", "nodeLabel": "Aggregate", "nodeTitle": "Cart"}],
+        },
+    )
+
+    monkeypatch.setattr(pp, "get_session", lambda: _FakeSession())
+    monkeypatch.setattr(pp.ProposalResponse, "from_neo4j", lambda *_: proposal)
+
+    loaded = pp._load_proposal("PRO-001")
+
+    assert loaded.tacticalDiff[0]["nodeId"] == "AGG-cart"
+    assert loaded.impactMap[0]["nodeTitle"] == "Cart"
+
+
+def test_resolve_open_target_uses_draft_tactical_bc(monkeypatch):
+    from api.features.proposal_lifecycle.services import preview_projection as pp
+
+    proposal = SimpleNamespace(
+        tacticalDiff=[
+            {
+                "nodeId": "AGG-cart",
+                "nodeLabel": "Aggregate",
+                "nodeTitle": "Cart",
+                "changeType": "CREATE",
+                "boundedContextId": "EP-cart",
+            }
+        ],
+        impactMap=[],
+        status=None,
+    )
+    monkeypatch.setattr(pp, "_load_proposal", lambda _proposal_id: proposal)
+    monkeypatch.setattr(pp, "resolve_bc_id_for_node", lambda _node_id: None)
+
+    resolved = pp.resolve_open_target("PRO-001", None, "Aggregate", "Cart")
+
+    assert resolved["renderable"] is True
+    assert resolved["viewer"] == "data"
+    assert resolved["targetNodeId"] == "AGG-cart"
+    assert resolved["bcId"] == "EP-cart"
+    assert resolved["aggregateId"] == "AGG-cart"
+
+
+def test_design_preview_supports_simplified_refs_and_ui_attachment(monkeypatch):
+    from api.features.proposal_lifecycle.services import preview_projection as pp
+
+    proposal = SimpleNamespace(
+        tacticalDiff=[
+            {
+                "nodeId": "AGG-cart",
+                "nodeLabel": "Aggregate",
+                "nodeTitle": "Cart",
+                "changeType": "CREATE",
+                "boundedContextId": "EP-cart",
+            },
+            {
+                "nodeId": "CMD-add-item",
+                "nodeLabel": "Command",
+                "nodeTitle": "AddItemToCart",
+                "changeType": "CREATE",
+                "boundedContextId": "EP-cart",
+                "aggregateId": "AGG-cart",
+            },
+            {
+                "nodeId": "EVT-item-added",
+                "nodeLabel": "Event",
+                "nodeTitle": "ItemAddedToCart",
+                "changeType": "CREATE",
+                "boundedContextId": "EP-cart",
+                "emittedBy": "CMD-add-item",
+            },
+            {
+                "nodeId": "UI-add-item",
+                "nodeLabel": "UI",
+                "nodeTitle": "Add item action",
+                "changeType": "CREATE",
+                "boundedContextId": "EP-cart",
+                "fields": {"triggersCommand": {"after": "CMD-add-item"}},
+            },
+        ],
+        impactMap=[],
+        status=None,
+    )
+    monkeypatch.setattr(pp, "_load_proposal", lambda _proposal_id: proposal)
+    monkeypatch.setattr(pp, "build_context_full_tree", lambda _bc_id: None)
+
+    graph = pp.build_design_preview("PRO-001", "EP-cart")
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    rels = {(rel["source"], rel["target"], rel["type"]) for rel in graph["relationships"]}
+
+    assert nodes["UI-add-item"]["attachedToId"] == "CMD-add-item"
+    assert ("CMD-add-item", "EVT-item-added", "EMITS") in rels
+    assert ("UI-add-item", "CMD-add-item", "ATTACHED_TO") in rels
 
 
 @pytest.mark.neo4j

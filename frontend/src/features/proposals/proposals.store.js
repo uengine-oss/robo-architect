@@ -586,9 +586,19 @@ export const useProposalsStore = defineStore('proposals', () => {
       if (res.status === 404) { plan.value = null; return null }
       if (!res.ok) throw new Error(translate('proposals.store.planFetchFailed', { status: res.status }))
       const data = await res.json()
-      // 응답은 {implementationPlan: {...}|null} 형태로 감싸여 온다. 항상 ImplementationPlan
-      // 본체로 정규화해, 라이브 스트림(done)과 새로고침 후가 동일한 모양이 되도록 한다.
-      plan.value = data?.implementationPlan ?? null
+      const draft = data?.planDraft || null
+      // 응답은 확정본이 있으면 confirmed=true, 없으면 Generate Plan draft 를 담는다.
+      // 항상 ImplementationPlan 본체로 정규화해 라이브 스트림(done)과 새로고침 후를 맞춘다.
+      plan.value = data?.implementationPlan ?? draft?.implementationPlan ?? null
+      if (currentProposal.value?.id === proposalId && draft) {
+        currentProposal.value = {
+          ...currentProposal.value,
+          planDraft: draft,
+          tacticalDiff: currentProposal.value.tacticalDiff ?? draft.tacticalDiff ?? null,
+          impactMap: draft.impactMap ?? currentProposal.value.impactMap,
+        }
+        _syncListItem(proposalId)
+      }
       return plan.value
     } catch (e) {
       error.value = e.message
@@ -647,6 +657,18 @@ export const useProposalsStore = defineStore('proposals', () => {
           planStream.value.active = false
           planStream.value.done = true
           if (d?.implementationPlan) plan.value = d.implementationPlan
+          if (currentProposal.value?.id === proposalId) {
+            currentProposal.value = {
+              ...currentProposal.value,
+              planDraft: {
+                implementationPlan: d?.implementationPlan || null,
+                tacticalDiff: d?.tacticalDiff || planStream.value.tactical,
+                impactMap: d?.impactMap || planStream.value.impact,
+                confirmed: false,
+              },
+            }
+            _syncListItem(proposalId)
+          }
           if (d?.implementationPlan?.constitutionGaps) planStream.value.constitutionGaps = d.implementationPlan.constitutionGaps
           if (d?.implementationPlan?.architectureDecisions) planStream.value.architecture = d.implementationPlan.architectureDecisions
           finish(resolve, d)
@@ -694,10 +716,13 @@ export const useProposalsStore = defineStore('proposals', () => {
   // 빈 바디면 백엔드가 implementationPlan 누락(422)로 거절한다. tactical/impact 를 함께
   // 영속화해 새로고침 후에도 Plan 결과가 유지되게 한다.
   async function confirmPlan(proposalId) {
-    const ip = (plan.value && typeof plan.value === 'object') ? plan.value : {}
+    const draft = currentProposal.value?.planDraft || null
+    const ip = (plan.value && typeof plan.value === 'object')
+      ? plan.value
+      : ((draft?.implementationPlan && typeof draft.implementationPlan === 'object') ? draft.implementationPlan : {})
     const tacticalDiff = planStream.value.tactical
-      ?? currentProposal.value?.tacticalDiff ?? null
-    const impactRaw = planStream.value.impact ?? currentProposal.value?.impactMap ?? null
+      ?? currentProposal.value?.tacticalDiff ?? draft?.tacticalDiff ?? null
+    const impactRaw = planStream.value.impact ?? currentProposal.value?.impactMap ?? draft?.impactMap ?? null
     const impactMap = Array.isArray(impactRaw) ? impactRaw : (impactRaw?.items ?? null)
 
     const res = await fetch(`${BASE}/${proposalId}/plan/confirm`, {

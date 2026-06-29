@@ -354,6 +354,8 @@ class ProposalResponse(BaseModel):
     strategicDiff: Optional[StrategicDiff] = None
     tacticalDiff: Optional[list[dict]] = None
     implementationPlan: Optional[ImplementationPlan] = None
+    # Generate Plan 이 만든 미확정 draft. 구현/머지 게이트는 implementationPlan(확정본)만 사용한다.
+    planDraft: Optional[dict] = None
     constitutionHash: Optional[str] = None
     planStale: bool = False
     journeys: Optional[list[dict]] = None
@@ -448,6 +450,7 @@ class ProposalResponse(BaseModel):
                 impl_plan = ImplementationPlan(**raw_plan)
             except Exception:
                 impl_plan = None
+        raw_plan_draft = _parse_json(node.get("planDraft"), None)
 
         constitution_hash = node.get("constitutionHash")
         # planStale 은 파생값: plan 이 만들어진 뒤 Constitution 또는 Strategic Diff 가
@@ -512,6 +515,7 @@ class ProposalResponse(BaseModel):
             strategicDiff=strategic,
             tacticalDiff=raw_tactical,
             implementationPlan=impl_plan,
+            planDraft=raw_plan_draft if isinstance(raw_plan_draft, dict) else None,
             constitutionHash=constitution_hash,
             planStale=plan_stale,
             journeys=raw_journeys,

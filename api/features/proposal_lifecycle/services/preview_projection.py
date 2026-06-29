@@ -59,10 +59,9 @@ VIEWER_TO_TAB = {"data": "Data", "design": "Design", "process": "Process", "proc
 # 043-fix: Design 캔버스에 BC 그래프(Aggregate→Command→Event→ReadModel→UI)로 투영해
 # 포커스 + 인스펙터를 여는 라벨. Command/Event 는 소유 Aggregate 까지 해소해 그 안에 배치하고,
 # ReadModel 은 Aggregate 소유 관계가 없어 소속 BC 만 해소해 BC 직속으로 불러온다.
-# 다른 design 라벨(UI/Screen/UiFlow)은 기존처럼 라이브 뷰어를 읽기 전용 맥락으로만 연다
-# (캔버스 오버레이 로드 없음 — 회귀 방지).
+# UI/Screen/UiFlow 도 제안 전용 신규 노드가 흔하므로 Design 오버레이 그래프에 포함한다.
 # Policy 는 Aggregate 소유가 없어 BC 직속이며, 호출 Command 왼쪽에 배치(invokeCommandId)된다.
-DESIGN_CANVAS_LABELS = {"Command", "Event", "ReadModel", "Policy"}
+DESIGN_CANVAS_LABELS = {"Command", "Event", "ReadModel", "Policy", "UI", "Screen", "UiFlow"}
 
 # 프런트 오케스트레이션이 배선된 뷰어. data 는 오버레이 미리보기, design/process/processes 는
 # 라이브 읽기 전용 포커스(인텐트가 이 타입을 신규 생성하는 일이 드뭄 — research D5).
@@ -81,7 +80,18 @@ def _load_proposal(proposal_id: str) -> Optional[ProposalResponse]:
         ).single()
     if not rec:
         return None
-    return ProposalResponse.from_neo4j(rec["p"], [])
+    proposal = ProposalResponse.from_neo4j(rec["p"], [])
+    # Generate Plan 은 확정 전 산출물을 planDraft 에 보관한다. 미리보기는 확정본이
+    # 없어도 방금 생성된 draft 전술 설계를 열고 편집할 수 있어야 한다.
+    if not proposal.tacticalDiff:
+        draft_tactical = (proposal.planDraft or {}).get("tacticalDiff")
+        if isinstance(draft_tactical, list):
+            proposal.tacticalDiff = draft_tactical
+    if not proposal.impactMap:
+        draft_impact = (proposal.planDraft or {}).get("impactMap")
+        if isinstance(draft_impact, list):
+            proposal.impactMap = draft_impact
+    return proposal
 
 
 def _context_note(status: str) -> Optional[str]:
@@ -197,11 +207,51 @@ def _match_tactical_by_label_title(proposal: ProposalResponse, node_label: str,
             nid = item.get("nodeId")
             if nid:
                 return str(nid)
+    # Impact Map titles may be localized or truncated differently from tacticalDiff.
+    # If a design label appears only once in this proposal, use that unique target.
+    matches = [
+        item for item in proposal.tacticalDiff or []
+        if str(item.get("nodeLabel") or "").strip() == label and item.get("nodeId")
+    ]
+    if len(matches) == 1:
+        return str(matches[0]["nodeId"])
+    return None
+
+
+def _field_value(value: Any) -> Any:
+    """Plan tactical fields may store scalar edits as {after: value}."""
+    if isinstance(value, dict) and "after" in value:
+        return value.get("after")
+    return value
+
+
+def _item_field(item: dict, key: str) -> Any:
+    fields = item.get("fields") if isinstance(item, dict) else None
+    if isinstance(fields, dict) and key in fields:
+        return _field_value(fields.get(key))
+    return None
+
+
+def _item_ref(item: dict, *keys: str) -> Optional[str]:
+    """Return the first relationship reference from top-level or fields aliases."""
+    if not isinstance(item, dict):
+        return None
+    for key in keys:
+        value = item.get(key)
+        if value is None:
+            value = _item_field(item, key)
+        value = _field_value(value)
+        if value:
+            return str(value)
     return None
 
 
 # 자식 항목이 부모를 가리키는 참조 키. 우선순위 순(Aggregate 가 BC 를 직접 보유).
-_PARENT_REF_KEYS = ("aggregateId", "commandId")
+_PARENT_REF_KEYS = (
+    "aggregateId", "commandId", "emittedBy",
+    "triggersCommand", "attachedToId", "displaysReadModel",
+    "invokeCommandId", "thenCommand",
+)
 
 
 def _resolve_bc_via_parent(proposal: ProposalResponse, item: dict,
@@ -217,10 +267,9 @@ def _resolve_bc_via_parent(proposal: ProposalResponse, item: dict,
     """
     _seen = _seen if _seen is not None else set()
     for ref_key in _PARENT_REF_KEYS:
-        ref = item.get(ref_key)
+        ref = _item_ref(item, ref_key)
         if not ref:
             continue
-        ref = str(ref)
         if ref in _seen:
             continue
         _seen.add(ref)
@@ -243,7 +292,7 @@ def _resolve_bc_via_parent(proposal: ProposalResponse, item: dict,
 
 # Command 는 aggregateId 를, Event 는 commandId(→Command→aggregateId)를 든다.
 # 부모 체인을 따라 소유 Aggregate 에 도달하기 위한 참조 키(우선순위 순).
-_AGG_PARENT_REF_KEYS = ("aggregateId", "commandId")
+_AGG_PARENT_REF_KEYS = ("aggregateId", "commandId", "emittedBy", "triggersCommand", "attachedToId")
 
 
 def _resolve_owning_aggregate(proposal: ProposalResponse, node_id: Optional[str],
@@ -268,16 +317,17 @@ def _resolve_owning_aggregate(proposal: ProposalResponse, node_id: Optional[str]
 
     # 1) 항목이 직접 aggregateId 를 들면(=Command, 또는 라이브 Aggregate 에 붙는 신규 자식)
     #    그게 소유 Aggregate.
-    if item and item.get("aggregateId"):
-        return str(item["aggregateId"])
+    if item:
+        aggregate_ref = _item_ref(item, "aggregateId")
+        if aggregate_ref:
+            return aggregate_ref
 
     # 2) 부모 참조 체인(Event--commandId-->Command--aggregateId-->Agg)을 추적.
     if item:
         for ref_key in _AGG_PARENT_REF_KEYS:
-            ref = item.get(ref_key)
+            ref = _item_ref(item, ref_key)
             if not ref:
                 continue
-            ref = str(ref)
             if ref in _seen:
                 continue
             _seen.add(ref)
@@ -430,7 +480,7 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
     by_id = {str(it.get("nodeId")): it for it in tactical if it.get("nodeId")}
 
     def _is_deleted(nid: str) -> bool:
-        """043-fix5: 라이브 노드에 대한 DELETE tombstone(tacticalDiff changeType=DELETE)이면
+        """043-fix5: 라이브 노드에 대한 deletion tombstone(tacticalDiff changeType 삭제)이면
         투영에서 제외(삭제 반영). 제안 전용 CREATE 항목 삭제는 apply 단계에서 항목 자체가
         제거되므로 여기 도달하지 않는다."""
         it = by_id.get(str(nid))
@@ -518,11 +568,11 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
         if push(node):
             rel(aid, cid, "HAS_COMMAND")
 
-    # --- 4) 신규(CREATE) Event — 소유 Command(commandId)가 캔버스에 있을 때 ---
+    # --- 4) 신규(CREATE) Event — 소유 Command(commandId/emittedBy)가 캔버스에 있을 때 ---
     for i, it in enumerate(tactical):
         if (it.get("changeType") or "") != "CREATE" or it.get("nodeLabel") != "Event":
             continue
-        cid = str(it.get("commandId") or "")
+        cid = _item_ref(it, "commandId", "emittedBy") or ""
         if not cid or cid not in seen:
             continue
         eid = str(it.get("nodeId") or temp_id(proposal_id, i))
@@ -560,9 +610,18 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
         node = {"id": uid, "name": title, "displayName": title, "type": "UI",
                 "bcId": bc_id, "properties": []}
         _populate_from_deep_item(node, it)
+        attached = _item_ref(
+            it,
+            "attachedToId", "triggersCommand", "displaysReadModel",
+            "commandId", "readModelId",
+        )
+        if attached:
+            node["attachedToId"] = attached
         _tag(node, SOURCE_TEMPORARY)
         if push(node):
             rel(bc_id, uid, "HAS_UI")
+            if attached and attached in seen:
+                rel(uid, attached, "ATTACHED_TO")
 
     # --- 7) Policy (라이브 + CREATE) — Event→Policy→Command 레일 ---
     # Policy 는 Aggregate 소유가 없어 BC 직속이며, 호출 Command(invokeCommandId) 왼쪽에
@@ -590,7 +649,12 @@ def build_design_preview(proposal_id: str, bc_id: str) -> dict:
         node = {"id": pid, "name": title, "displayName": title, "type": "Policy", "bcId": bc_id}
         _populate_from_deep_item(node, it)
         _tag(node, SOURCE_TEMPORARY)
-        pol_specs.append((pid, node, it.get("triggerEventId"), it.get("invokeCommandId")))
+        pol_specs.append((
+            pid,
+            node,
+            _item_ref(it, "triggerEventId", "whenEvent"),
+            _item_ref(it, "invokeCommandId", "thenCommand", "triggersCommand"),
+        ))
     for pid, node, trig_evt, inv_cmd in pol_specs:
         if inv_cmd:
             node["invokeCommandId"] = str(inv_cmd)

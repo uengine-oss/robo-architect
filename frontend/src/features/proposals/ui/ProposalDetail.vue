@@ -127,7 +127,7 @@
       <template v-if="activeTab === 'impact'">
         <ProposalDiffVisualView
           :strategicDiff="proposal.strategicDiff"
-          :tacticalDiff="proposal.tacticalDiff"
+          :tacticalDiff="proposal.tacticalDiff || proposal.planDraft?.tacticalDiff"
           :journeys="proposal.journeys"
         />
         <details v-if="proposal.impactMap?.length" class="impact-conflict">
