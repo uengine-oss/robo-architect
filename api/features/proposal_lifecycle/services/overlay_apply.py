@@ -102,6 +102,16 @@ def _populate_from_deep_item(node: dict, item: dict) -> list[str]:
                 entry["badge"] = "신규"
                 bucket.append(entry)
             changed.append(fld)
+    gwt = item.get("gwt")
+    if isinstance(gwt, list):
+        node["gwt"] = gwt
+        node["gwtSets"] = gwt
+        if gwt:
+            first = gwt[0] if isinstance(gwt[0], dict) else {}
+            node["given"] = first.get("given")
+            node["when"] = first.get("when")
+            node["then"] = first.get("then")
+        changed.append("gwt")
     return changed
 
 

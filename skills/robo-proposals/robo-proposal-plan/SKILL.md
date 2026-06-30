@@ -82,6 +82,147 @@ Constitution(fields + raw): <architectureStyle, repoStrategy, repoMode, techStac
 ```
 모놀리스/단일 컨텍스트이면 `interContextIntegrations`/`serviceDevEnvironments` 는 `[]`, `messagingChannel` 은 null.
 
+## Tactical Diff Canonical Contract (절대 준수)
+아래 필드명만 사용한다. legacy alias 는 **금지**다.
+
+금지 alias → canonical:
+- `aggregate` → `aggregateId`
+- `boundedContext` → `boundedContextId`
+- `emittedBy` → `commandId`
+- `trigger` → `triggerEventId`
+- `invokes` → `invokeCommandId`
+- `traces` → `userStoryRefs`
+- `fields.parameters` 문자열 → `fields.inputSchema` 객체 + `properties`
+- `fields.payload` 문자열 → `fields.payload` 객체 + `properties`
+
+모든 property 이름은 영어 camelCase 여야 한다. `items[] (productId, quantity)` 또는
+`items[productId,quantity]` 같은 문자열 속성명은 금지한다. 복합 값은 `ValueObject` 로 정의하고,
+Aggregate 에서는 `semanticDiff.ops` 로 `valueObjects`/`enumerations` 를 추가한다.
+
+Canonical 예시(쇼핑몰 주문 도메인):
+```json
+{
+  "tacticalDiff": [
+    {
+      "nodeId": "AGG-order",
+      "nodeLabel": "Aggregate",
+      "nodeTitle": "Order",
+      "changeType": "CREATE",
+      "impactLevel": "MEDIUM",
+      "boundedContextId": "EP-order",
+      "fields": { "rootEntity": "Order", "description": "주문 Aggregate" },
+      "properties": [
+        { "name": "orderId", "type": "UUID", "isKey": true, "isRequired": true },
+        { "name": "customerId", "type": "UUID", "isRequired": true },
+        { "name": "status", "type": "OrderStatus", "isRequired": true },
+        { "name": "items", "type": "List<OrderLine>", "isRequired": true },
+        { "name": "totalAmount", "type": "Money", "isRequired": true },
+        { "name": "placedAt", "type": "LocalDateTime", "isRequired": true }
+      ],
+      "semanticDiff": { "v": 1, "ops": [
+        { "field": "valueObjects", "op": "obj_append", "obj_name": "Money",
+          "obj_data": { "name": "Money", "fields": [
+            { "name": "amount", "type": "BigDecimal" },
+            { "name": "currency", "type": "String" }
+          ] } },
+        { "field": "valueObjects", "op": "obj_append", "obj_name": "OrderLine",
+          "obj_data": { "name": "OrderLine", "fields": [
+            { "name": "productId", "type": "UUID" },
+            { "name": "quantity", "type": "int" },
+            { "name": "unitPrice", "type": "Money" },
+            { "name": "subtotal", "type": "Money" }
+          ] } },
+        { "field": "enumerations", "op": "obj_append", "obj_name": "OrderStatus",
+          "obj_data": { "name": "OrderStatus", "items": ["PLACED", "PAID", "SHIPPED", "CANCELLED"] } }
+      ] },
+      "invariants": [
+        { "name": "NonEmptyOrder", "declaration": "주문은 하나 이상의 항목을 가져야 한다", "verifyingCommandRefs": ["CMD-place-order"] }
+      ]
+    },
+    {
+      "nodeId": "CMD-place-order",
+      "nodeLabel": "Command",
+      "nodeTitle": "PlaceOrder",
+      "changeType": "CREATE",
+      "impactLevel": "MEDIUM",
+      "aggregateId": "AGG-order",
+      "fields": {
+        "actor": "customer",
+        "category": "Create",
+        "inputSchema": { "customerId": "UUID", "items": "List<OrderLine>" },
+        "description": "장바구니 항목으로 주문을 생성한다"
+      },
+      "properties": [
+        { "name": "customerId", "type": "UUID", "isRequired": true },
+        { "name": "items", "type": "List<OrderLine>", "isRequired": true }
+      ],
+      "userStoryRefs": ["US-place-order"],
+      "gwt": [
+        {
+          "scenario": "정상 주문 생성",
+          "given": { "name": "Aggregate: Order", "fieldValues": { "status": "NONE" } },
+          "when": { "name": "Command: PlaceOrder", "fieldValues": { "customerId": "customer-1" } },
+          "then": { "name": "Event: OrderPlaced", "fieldValues": { "status": "PLACED" } }
+        }
+      ]
+    },
+    {
+      "nodeId": "EVT-order-placed",
+      "nodeLabel": "Event",
+      "nodeTitle": "OrderPlaced",
+      "changeType": "CREATE",
+      "impactLevel": "MEDIUM",
+      "commandId": "CMD-place-order",
+      "fields": {
+        "version": "1.0.0",
+        "payload": { "orderId": "UUID", "customerId": "UUID", "status": "OrderStatus", "totalAmount": "Money" }
+      },
+      "properties": [
+        { "name": "orderId", "type": "UUID", "isKey": true, "isRequired": true },
+        { "name": "customerId", "type": "UUID", "isRequired": true },
+        { "name": "status", "type": "OrderStatus", "isRequired": true },
+        { "name": "totalAmount", "type": "Money", "isRequired": true }
+      ]
+    },
+    {
+      "nodeId": "RM-order-status",
+      "nodeLabel": "ReadModel",
+      "nodeTitle": "OrderStatusView",
+      "changeType": "CREATE",
+      "impactLevel": "LOW",
+      "boundedContextId": "EP-order",
+      "fields": { "actor": "customer", "isMultipleResult": false, "description": "주문 상태 조회 결과" },
+      "properties": [
+        { "name": "orderId", "type": "UUID", "isKey": true, "isRequired": true },
+        { "name": "status", "type": "OrderStatus", "isRequired": true },
+        { "name": "placedAt", "type": "LocalDateTime", "isRequired": true }
+      ],
+      "userStoryRefs": ["US-track-order"],
+      "ui": { "name": "OrderStatusScreen", "description": "주문 상태를 표시한다" }
+    },
+    {
+      "nodeId": "POL-order-status-projection",
+      "nodeLabel": "Policy",
+      "nodeTitle": "주문 생성 시 주문 상태 조회 모델을 갱신한다",
+      "changeType": "CREATE",
+      "impactLevel": "LOW",
+      "boundedContextId": "EP-order",
+      "triggerEventId": "EVT-order-placed",
+      "invokeCommandId": "CMD-refresh-order-status",
+      "fields": { "description": "OrderPlaced 이벤트를 조회 모델 갱신으로 연결한다", "condition": "OrderPlaced 발생 시" }
+    }
+  ]
+}
+```
+
+최종 JSON 출력 직전 self-check:
+- 모든 Aggregate/ReadModel/Policy/UI 에 `boundedContextId` 가 있는가?
+- 모든 Command 에 `aggregateId`, `fields.inputSchema`, `properties`, `userStoryRefs`, `gwt` 가 있는가?
+- 모든 Event 에 `commandId`, `fields.payload`, `properties` 가 있는가?
+- 모든 property name 과 schema key 가 영어 camelCase 인가?
+- Aggregate 에 도메인에 맞는 `semanticDiff.ops` 의 `valueObjects`/`enumerations` 가 있는가?
+- legacy alias 가 하나도 없는가?
+
 ## Rules
 1. **코드를 작성하지 말 것** — 전술 분해 + 계획만 산출한다.
 2. **5개 필수 항목**은 `architectureDecisions` 또는 `constitutionGaps` 에 반드시 등장(조용한 누락은 계약 위반, SC-003).

@@ -55,7 +55,7 @@ def _read_tactical(proposal_id: str) -> list[dict]:
     if not rec:
         return []
     raw = rec.get("td")
-    if not raw and rec.get("draft"):
+    if rec.get("draft"):
         try:
             draft = json.loads(rec["draft"]) or {}
             tactical = draft.get("tacticalDiff")
@@ -72,13 +72,95 @@ def _read_tactical(proposal_id: str) -> list[dict]:
 
 
 def _write_tactical(proposal_id: str, tactical: list[dict]) -> None:
-    """Proposal 노드의 tacticalDiff 속성만 갱신(제안 자기 데이터). 라이브 디자인 그래프 무관."""
-    td_json = json.dumps(tactical, ensure_ascii=False)
+    """Persist preview tactical edits on the active draft without touching live graph."""
+    tactical = _normalize_tactical_for_persistence(tactical)
     with get_session() as session:
-        session.run(
-            "MATCH (p:Proposal {id: $id}) SET p.tacticalDiff = $td",
-            id=proposal_id, td=td_json,
-        )
+        rec = session.run(
+            "MATCH (p:Proposal {id: $id}) RETURN p.planDraft AS draft, p.tacticalDiff AS td",
+            id=proposal_id,
+        ).single()
+        if not rec:
+            return
+        td_json = json.dumps(tactical, ensure_ascii=False)
+        raw_draft = rec.get("draft")
+        draft = None
+        if raw_draft:
+            try:
+                draft = json.loads(raw_draft) if isinstance(raw_draft, str) else dict(raw_draft)
+            except Exception:
+                draft = None
+        if isinstance(draft, dict):
+            draft["tacticalDiff"] = tactical
+            draft_json = json.dumps(draft, ensure_ascii=False)
+            if rec.get("td"):
+                session.run(
+                    "MATCH (p:Proposal {id: $id}) SET p.planDraft = $draft, p.tacticalDiff = $td",
+                    id=proposal_id, draft=draft_json, td=td_json,
+                )
+            else:
+                session.run(
+                    "MATCH (p:Proposal {id: $id}) SET p.planDraft = $draft",
+                    id=proposal_id, draft=draft_json,
+                )
+        else:
+            session.run(
+                "MATCH (p:Proposal {id: $id}) SET p.tacticalDiff = $td",
+                id=proposal_id, td=td_json,
+            )
+
+
+def _normalize_tactical_for_persistence(tactical: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for item in tactical or []:
+        if not isinstance(item, dict):
+            continue
+        it = dict(item)
+        for legacy in ("aggregate", "boundedContext", "emittedBy", "trigger", "invokes", "traces"):
+            it.pop(legacy, None)
+        _sync_schema_from_properties(it)
+        _sync_gwt_from_sets(it)
+        out.append(it)
+    return out
+
+
+def _sync_schema_from_properties(item: dict) -> None:
+    props = item.get("properties")
+    if not isinstance(props, list):
+        return
+    schema = {
+        str(p.get("name")): str(p.get("type") or "String")
+        for p in props
+        if isinstance(p, dict) and p.get("name")
+    }
+    if not schema:
+        return
+    fields = dict(item.get("fields") or {})
+    if item.get("nodeLabel") == "Command":
+        fields["inputSchema"] = schema
+    elif item.get("nodeLabel") == "Event":
+        fields["payload"] = schema
+    else:
+        return
+    item["fields"] = fields
+
+
+def _sync_gwt_from_sets(item: dict) -> None:
+    if item.get("nodeLabel") != "Command":
+        return
+    fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+    gwt_sets = fields.get("gwtSets")
+    if not isinstance(gwt_sets, list):
+        return
+    item["gwt"] = [
+        {
+            "scenario": row.get("scenario") or row.get("scenarioDescription") or f"Scenario {idx + 1}",
+            "given": row.get("given") or {},
+            "when": row.get("when") or {},
+            "then": row.get("then") or {},
+        }
+        for idx, row in enumerate(gwt_sets)
+        if isinstance(row, dict)
+    ]
 
 
 # 노드 레벨(Command/Event/ReadModel/Aggregate) 스칼라 설계 필드. name 은 nodeTitle 로 따로

@@ -17,6 +17,10 @@ from api.platform.observability.smart_logger import SmartLogger
 from api.platform.skill_runner import run_skill_lines, extract_json
 from api.features.proposal_lifecycle.proposal_contracts import constitution_hash
 from api.features.proposal_lifecycle.services.constitution_runner import read_constitution
+from api.features.proposal_lifecycle.services.tactical_contract import (
+    format_tactical_contract_feedback,
+    validate_tactical_diff_contract,
+)
 
 _SKILL_ROOT = "robo-proposals"
 _SKILL_NAME = "robo-proposal-plan"
@@ -196,7 +200,8 @@ def _count_contexts(strategic: dict) -> int:
 
 def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
                        domain_nodes: list[dict], architecture_only: bool = False,
-                       tactical: Optional[list] = None) -> str:
+                       tactical: Optional[list] = None,
+                       validation_feedback: Optional[str] = None) -> str:
     node_list = "\n".join(
         f"- id: {n['id']}, type: {n.get('label', '')}, name: {n.get('name', '')}"
         for n in (domain_nodes or [])
@@ -228,6 +233,13 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
             '출력은 {"implementationPlan": {...}} 형태로, tacticalDiff 는 출력하지 마라.'
         )
 
+    feedback_block = (
+        "\n\n이전 Plan 산출물이 backend tacticalDiff 계약 검증에 실패했다. "
+        "아래 항목을 모두 수정해서 **canonical tacticalDiff만** 다시 출력하라.\n"
+        f"{validation_feedback}\n"
+        if validation_feedback else ""
+    )
+
     return (
         f"Proposal ID: {proposal_id}\n"
         f"승인된 Strategic Diff(JSON):\n```json\n{json.dumps(strategic, ensure_ascii=False)}\n```\n\n"
@@ -236,8 +248,82 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         f"현재 도메인 구성 요소 목록:\n{node_list or '(없음)'}\n\n"
         "위 Strategic Diff 와 Constitution 을 바탕으로 Tactical Diff 와 "
         "Constitution 기반 구현계획(architectureDecisions + 다수 컨텍스트면 "
-        "interContextIntegrations/messagingChannel/serviceDevEnvironments)을 JSON 으로 출력하라."
+        "interContextIntegrations/messagingChannel/serviceDevEnvironments)을 JSON 으로 출력하라.\n\n"
+        "중요: tacticalDiff 는 반드시 canonical 계약을 따른다. legacy alias "
+        "`aggregate`, `boundedContext`, `emittedBy`, `trigger`, `invokes`, `traces` 를 쓰지 말고 "
+        "각각 `aggregateId`, `boundedContextId`, `commandId`, `triggerEventId`, "
+        "`invokeCommandId`, `userStoryRefs` 를 사용하라. "
+        "Aggregate/Command/Event/ReadModel 은 `properties` 배열을 가져야 하며, "
+        "속성명은 영어 camelCase 여야 한다. Command 는 `fields.inputSchema`, "
+        "`userStoryRefs`, `gwt` 를 반드시 포함하고, Event 는 `fields.payload` 객체와 "
+        "`properties` 를 반드시 포함한다. Aggregate 는 도메인에 적합한 ValueObject/Enum 을 "
+        "`semanticDiff.ops` 로 정의하라."
+        f"{feedback_block}"
     )
+
+
+async def _run_plan_skill_with_contract(
+    proposal_id: str,
+    strategic: dict,
+    constitution_raw: str,
+    domain_nodes: list[dict],
+    architecture_only: bool,
+    existing_tactical: list,
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """Run plan skill, retrying once with contract feedback before persisting."""
+    validation_feedback = None
+    max_attempts = 1 if architecture_only else 2
+
+    for attempt in range(max_attempts):
+        human_prompt = _build_plan_prompt(
+            proposal_id, strategic, constitution_raw, domain_nodes,
+            architecture_only, existing_tactical, validation_feedback,
+        )
+
+        output_lines: list[str] = []
+        suppress_log = False
+        async for line in run_skill_lines(_SKILL_ROOT, _SKILL_NAME, human_prompt):
+            if line.startswith("TOOL:"):
+                continue
+            output_lines.append(line)
+            stripped = line.strip()
+            if stripped.startswith("```") or (not suppress_log and stripped in ("{", "[")):
+                suppress_log = True
+                continue
+            if not suppress_log:
+                yield "log_line", {"text": line}
+
+        raw = "\n".join(output_lines)
+        data = extract_json(raw)
+        if not data or not isinstance(data, dict):
+            yield "error", {"code": "PLAN_PARSE_FAILED", "message": "구현계획 결과 파싱 실패"}
+            return
+
+        tactical = normalize_tactical_diff(data.get("tacticalDiff") or existing_tactical)
+        plan = data.get("implementationPlan", {})
+        violations = [] if architecture_only else validate_tactical_diff_contract(tactical)
+        if not violations:
+            yield "result", {"tactical": tactical, "plan": plan}
+            return
+
+        feedback = format_tactical_contract_feedback(violations)
+        SmartLogger.log(
+            "WARN",
+            f"plan tactical contract invalid: {proposal_id}",
+            category="proposal_lifecycle.plan.contract_invalid",
+            params={"proposalId": proposal_id, "attempt": attempt + 1, "errors": violations[:30]},
+        )
+        validation_feedback = feedback
+        if attempt + 1 < max_attempts:
+            yield "log_line", {"text": "[검증] tacticalDiff 계약 위반 감지 — validator feedback으로 재생성합니다."}
+            continue
+
+        yield "error", {
+            "code": "PLAN_CONTRACT_INVALID",
+            "message": "생성된 Tactical Diff 가 표준 계약을 만족하지 않아 저장하지 않았습니다.",
+            "violations": violations,
+        }
+        return
 
 
 def precheck(proposal_id: str) -> Optional[dict]:
@@ -313,35 +399,25 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
 
     constitution_raw = read_constitution(inputs.get("projectRoot")) or ""
     domain_nodes = load_domain_nodes()
-    human_prompt = _build_plan_prompt(proposal_id, strategic, constitution_raw, domain_nodes,
-                                      architecture_only, existing_tactical)
 
     SmartLogger.log("INFO", f"plan_start: {proposal_id}",
                     category="proposal_lifecycle.plan.start",
                     params={"proposalId": proposal_id})
 
-    output_lines: list[str] = []
-    suppress_log = False
-    async for line in run_skill_lines(_SKILL_ROOT, _SKILL_NAME, human_prompt):
-        if line.startswith("TOOL:"):
-            continue
-        output_lines.append(line)
-        stripped = line.strip()
-        if stripped.startswith("```") or (not suppress_log and stripped in ("{", "[")):
-            suppress_log = True
-            continue
-        if not suppress_log:
-            yield "log_line", {"text": line}
+    tactical: list[dict] = []
+    plan: dict = {}
+    async for event_type, data in _run_plan_skill_with_contract(
+        proposal_id, strategic, constitution_raw, domain_nodes,
+        architecture_only, existing_tactical,
+    ):
+        if event_type == "result":
+            tactical = data["tactical"]
+            plan = data["plan"]
+            break
+        yield event_type, data
+        if event_type == "error":
+            return
 
-    raw = "\n".join(output_lines)
-    data = extract_json(raw)
-    if not data or not isinstance(data, dict):
-        yield "error", {"code": "PLAN_PARSE_FAILED", "message": "구현계획 결과 파싱 실패"}
-        return
-
-    # architecture_only 면 스킬이 tacticalDiff 를 내지 않는다 → 기존(확정) 전술을 그대로 사용.
-    tactical = normalize_tactical_diff(data.get("tacticalDiff") or existing_tactical)
-    plan = data.get("implementationPlan", {})
     if tactical:
         yield "tactical", {"tacticalDiff": tactical}
     if plan:
