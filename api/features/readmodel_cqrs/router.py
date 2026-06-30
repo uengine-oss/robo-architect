@@ -184,7 +184,8 @@ async def get_cqrs_config(readmodel_id: str, request: Request) -> dict[str, Any]
     query = """
     MATCH (rm:ReadModel {id: $readmodel_id})
     OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)
-    OPTIONAL MATCH (cqrs)-[:HAS_OPERATION]->(op:CQRSOperation)
+    WITH rm, collect(DISTINCT cqrs) AS cqrs_nodes
+    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)
     OPTIONAL MATCH (op)-[:TRIGGERED_BY]->(evt:Event)
     OPTIONAL MATCH (op)-[:HAS_MAPPING]->(m:CQRSMapping)
     OPTIONAL MATCH (m)-[:SOURCE]->(srcProp:Property)
@@ -192,7 +193,7 @@ async def get_cqrs_config(readmodel_id: str, request: Request) -> dict[str, Any]
     OPTIONAL MATCH (op)-[:HAS_WHERE]->(w:CQRSWhere)
     OPTIONAL MATCH (w)-[:TARGET]->(whereTgtProp:Property)
     OPTIONAL MATCH (w)-[:SOURCE_EVENT_FIELD]->(whereSrcProp:Property)
-    WITH cqrs, op, evt,
+    WITH rm, cqrs_nodes, op, evt,
          collect(DISTINCT {
              id: m.id,
              sourceType: m.sourceType,
@@ -210,7 +211,7 @@ async def get_cqrs_config(readmodel_id: str, request: Request) -> dict[str, Any]
              sourceEventFieldId: whereSrcProp.id,
              sourceEventFieldName: whereSrcProp.name
          }) as whereConditions
-    WITH cqrs, collect(DISTINCT {
+    WITH rm, cqrs_nodes, collect(DISTINCT {
         id: op.id,
         operationType: op.operationType,
         triggerEventId: evt.id,
@@ -219,8 +220,9 @@ async def get_cqrs_config(readmodel_id: str, request: Request) -> dict[str, Any]
         whereConditions: whereConditions
     }) as operations
     RETURN {
-        id: cqrs.id,
-        readmodelId: coalesce(cqrs.readmodelId, $readmodel_id),
+        id: coalesce(head([cqrs IN cqrs_nodes WHERE cqrs IS NOT NULL | cqrs.id]), null),
+        readmodelId: coalesce(head([cqrs IN cqrs_nodes WHERE cqrs IS NOT NULL | cqrs.readmodelId]), $readmodel_id),
+        configNodeCount: size([cqrs IN cqrs_nodes WHERE cqrs IS NOT NULL]),
         operations: operations
     } as config
     """
@@ -247,7 +249,25 @@ async def get_cqrs_config(readmodel_id: str, request: Request) -> dict[str, Any]
         for op in ops:
             op["mappings"] = [m for m in (op.get("mappings") or []) if m and m.get("id") is not None]
             op["whereConditions"] = [w for w in (op.get("whereConditions") or []) if w and w.get("id") is not None]
+        ops.sort(
+            key=lambda op: (
+                str(op.get("operationType") or ""),
+                str(op.get("triggerEventName") or ""),
+                str(op.get("id") or ""),
+            )
+        )
         config["operations"] = ops
+        SmartLogger.log(
+            "INFO",
+            "CQRS config resolved.",
+            category="api.readmodel.cqrs.get.done",
+            params={
+                **http_context(request),
+                "inputs": {"readmodel_id": readmodel_id},
+                "configNodeCount": config.get("configNodeCount"),
+                "operationCount": len(ops),
+            },
+        )
         return config
 
 
@@ -260,7 +280,9 @@ async def create_cqrs_config(readmodel_id: str, request: Request) -> dict[str, A
     MERGE (cqrs:CQRSConfig {id: $cqrs_id})
     SET cqrs.readmodelId = $readmodel_id
     MERGE (rm)-[:HAS_CQRS]->(cqrs)
+    WITH DISTINCT cqrs
     RETURN cqrs {.id, .readmodelId} as config
+    LIMIT 1
     """
     SmartLogger.log(
         "INFO",
@@ -374,7 +396,9 @@ async def create_cqrs_operation(readmodel_id: str, operation: CQRSOperationCreat
         op.triggerEventId = $trigger_event_id
     MERGE (cqrs)-[:HAS_OPERATION]->(op)
     MERGE (op)-[:TRIGGERED_BY]->(evt)
+    WITH DISTINCT op
     RETURN op {.id, .operationType, .cqrsConfigId, .triggerEventId} as operation
+    LIMIT 1
     """
     with get_session() as session:
         record = session.run(

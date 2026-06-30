@@ -739,6 +739,12 @@ const successMsg = ref(null)
 const propertyEditorRef = ref(null)
 const propIsDirty = ref(false)
 const propHasBlockingErrors = ref(false)
+const cqrsIsDirty = ref(false)
+
+function onCqrsUpdated() {
+  cqrsIsDirty.value = true
+  emit('updated')
+}
 
 const showPropertyEditor = computed(() => {
   return ['Aggregate', 'Command', 'Event', 'ReadModel'].includes(nodeLabel.value)
@@ -1110,6 +1116,7 @@ function resetToNode() {
       initialTab: props.initialTab
     })
     initial.value = null
+    cqrsIsDirty.value = false
     form.value = {
       name: '',
       displayName: '',
@@ -1147,6 +1154,7 @@ function resetToNode() {
   })
   form.value = { ...form.value, ...snap }
   initial.value = deepClone(snap)
+  cqrsIsDirty.value = false
   error.value = null
   successMsg.value = null
 
@@ -1323,7 +1331,7 @@ async function savePreviewDesign(changes, shouldSaveGWTBundle, opId) {
 
 async function save() {
   if (!node.value || !initial.value) return
-  if (!isDirty.value && !propIsDirty.value) return
+  if (!isDirty.value && !propIsDirty.value && !cqrsIsDirty.value) return
   if (propHasBlockingErrors.value) {
     error.value = 'Property 입력 오류를 수정한 뒤 저장하세요.'
     return
@@ -1385,6 +1393,18 @@ async function save() {
       })
     }
 
+    if (cqrsIsDirty.value && !changes.length && !shouldSaveGWTBundle) {
+      initial.value = deepClone(form.value)
+      cqrsIsDirty.value = false
+      successMsg.value = '저장되었습니다.'
+      log.info('inspector_cqrs_save_ack', 'CQRS editor changes acknowledged by Inspector save.', {
+        opId,
+        nodeId: node.value.id,
+      })
+      emit('updated')
+      return
+    }
+
     // 043-fix — Design 캔버스 미리보기 중에는 라이브 그래프(/api/chat/confirm·gwt/upsert)가
     // 아니라 Proposal.tacticalDiff 에 반영한다(라이브 무변경, Constitution I). 갱신된 Design
     // 미리보기 그래프를 받아 캔버스를 재렌더하고 인스펙터 폼을 동기화한다.
@@ -1444,8 +1464,10 @@ async function save() {
     }
 
     if (!changes.length) {
-      // Only GWT was saved
+      // CQRS edits are persisted by the CQRS endpoints as they happen; this
+      // acknowledges them in the Inspector save flow and clears the dirty flag.
       initial.value = deepClone(form.value)
+      cqrsIsDirty.value = false
       successMsg.value = '저장되었습니다.'
       emit('updated')
       return
@@ -1539,6 +1561,7 @@ async function save() {
       initial.value = deepClone(form.value)
     }
 
+    cqrsIsDirty.value = false
     successMsg.value = '저장되었습니다.'
     log.info('inspector_save_done', 'Inspector save completed.', { opId, nodeId: node.value.id })
     console.info('[RAW][InspectorPanel][inspector_save_done]', { opId, nodeId: node.value.id })
@@ -3500,7 +3523,7 @@ function updateVoFieldValue(fieldName, value) {
           class="inspector-panel__btn primary"
           @click="save"
           title="Save"
-          :disabled="saving || !node || (!isDirty && !propIsDirty) || propHasBlockingErrors"
+          :disabled="saving || !node || (!isDirty && !propIsDirty && !cqrsIsDirty) || propHasBlockingErrors"
         >
           <span v-if="saving">저장 중...</span>
           <span v-else>저장</span>
@@ -5412,7 +5435,7 @@ function updateVoFieldValue(fieldName, value) {
     :read-model-id="props.nodeId || node?.id"
     :read-model-data="node?.data"
     @close="showCqrsModal = false"
-    @updated="emit('updated')"
+    @updated="onCqrsUpdated"
   />
 </template>
 
