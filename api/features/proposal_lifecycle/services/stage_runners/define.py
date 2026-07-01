@@ -1,4 +1,4 @@
-"""042 US2 — Define 스테이지(robo-proposal-define, extends ddd-starter 07)."""
+"""042 US2 — Define 스테이지(robo-proposal-tactical-ddd)."""
 
 from __future__ import annotations
 
@@ -9,13 +9,14 @@ from api.features.constitution.services import constitution_store as cstore
 from api.features.proposal_lifecycle.services import staged_runner
 from api.features.proposal_lifecycle.services.stage_runners.base import execute_stage
 
-_SKILL = "robo-proposal-define"
+_SKILL = "robo-proposal-tactical-ddd"
 
 
 def _build_prompt(state: dict) -> str:
     arts = state.get("stageArtifacts") or {}
     memory = cstore.get_project_strategic_memory() or {}
     return (
+        "stage: DEFINE\n"
         f"원본 프롬프트: {state.get('prompt','')}\n\n"
         f"Strategize/Connect 산출물(JSON):\n"
         f"{json.dumps({'STRATEGIZE': arts.get('STRATEGIZE'), 'CONNECT': arts.get('CONNECT')}, ensure_ascii=False)}\n\n"

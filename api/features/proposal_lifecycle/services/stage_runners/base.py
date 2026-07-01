@@ -7,11 +7,14 @@ plan_runner.stream_plan 의 스트리밍/파싱 패턴을 재사용한다(Princi
 
 from __future__ import annotations
 
-import json
 from typing import AsyncGenerator, Callable, Optional
 
+from api.features.proposal_lifecycle.services.proposal_ai_validation import (
+    validate_stage_artifact,
+    violation_summary,
+)
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import run_skill_lines, extract_json
+from api.platform.skill_runner import extract_json, run_skill_lines
 
 _SKILL_ROOT = "robo-proposals"
 
@@ -114,6 +117,29 @@ async def execute_stage(
 
     artifact["stage"] = stage
     warnings = []
+    validation = validate_stage_artifact(stage, artifact)
+    if validation.violations:
+        SmartLogger.log(
+            "WARN",
+            f"stage artifact contract invalid: {stage}",
+            category="proposal_lifecycle.staged.artifact_invalid",
+            params={
+                "proposalId": proposal_id,
+                "stage": stage,
+                "skillName": skill_name,
+                "violationSummary": violation_summary(validation.violations),
+                "violations": validation.violations,
+            },
+            max_inline_chars=0,
+        )
+        yield "error", {
+            "code": f"{stage}_ARTIFACT_INVALID",
+            "message": f"{stage} 산출물이 필수 계약을 만족하지 않아 저장하지 않았습니다.",
+            "violationSummary": violation_summary(validation.violations),
+            "violations": validation.violations[:8],
+        }
+        return
+    warnings.extend(v.get("message", v.get("code", "")) for v in validation.warnings)
     for check, msg in (validators or []):
         try:
             if not check(artifact):

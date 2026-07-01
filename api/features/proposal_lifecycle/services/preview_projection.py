@@ -142,12 +142,12 @@ def resolve_open_target(proposal_id: str, node_id: Optional[str], node_label: Op
     # 추가로 소유 Aggregate)를 해소해야 해당 BC 그래프를 그려 대상 노드를 포커스할 수 있다.
     needs_bc = viewer == "data" or (viewer == "design" and label in DESIGN_CANVAS_LABELS)
     if needs_bc:
-        # 1) tacticalDiff 항목이 명시한 대상 BC(깊은 인텐트 포맷 boundedContextId) 우선.
+        # 1) tacticalDiff 항목이 명시한 대상 BC(깊은 Diff 포맷 boundedContextId) 우선.
         item = _find_tactical_item(proposal, node_id)
         if item:
             bc_id = item.get("boundedContextId")
         # 1b) 자식(Command/Event/VO) 항목은 boundedContextId 를 직접 들지 않고 부모를
-        #     aggregateId/commandId 로 가리킨다(robo-proposal-intent 실제 출력). 부모
+        #     aggregateId/commandId 로 가리킨다. 부모
         #     체인(Event→Command→Aggregate)을 따라 BC 를 해소한다 — 각 홉에서 라이브면
         #     그래프에서, 아니면 같은 tacticalDiff 의 부모 항목 boundedContextId 에서.
         if not bc_id and item:
@@ -258,7 +258,7 @@ def _resolve_bc_via_parent(proposal: ProposalResponse, item: dict,
                            _seen: Optional[set] = None) -> Optional[str]:
     """자식 항목의 부모 참조(aggregateId/commandId)를 따라 BC 를 해소한다.
 
-    robo-proposal-intent 출력은 boundedContextId 를 Aggregate 레벨에만 싣고, 자식은
+    Proposal Diff 출력은 boundedContextId 를 Aggregate 레벨에만 싣고, 자식은
     부모를 참조로만 가리킨다:
       Event --commandId--> Command --aggregateId--> Aggregate(boundedContextId)
     각 홉에서 (1) 부모가 라이브면 그래프에서 BC 를, (2) 아니면 같은 tacticalDiff 의
@@ -300,7 +300,7 @@ def _resolve_owning_aggregate(proposal: ProposalResponse, node_id: Optional[str]
     """data 뷰어 focus 대상이 될 **소유 Aggregate id** 를 해소한다.
 
     Data 뷰어(AggregatePanel)는 Aggregate 단위로만 포커스/렌더하므로, Command/Event/VO/Enum
-    대상은 소유 Aggregate 로 환원해야 한다. robo-proposal-intent 출력 참조 형태는
+    대상은 소유 Aggregate 로 환원해야 한다. Proposal Diff 출력 참조 형태는
         Aggregate(자기 자신) / Command --aggregateId--> Aggregate
         Event --commandId--> Command(--aggregateId--> Aggregate)
     라, _resolve_bc_via_parent 와 동형으로 부모 체인을 따라 Aggregate 를 찾는다.

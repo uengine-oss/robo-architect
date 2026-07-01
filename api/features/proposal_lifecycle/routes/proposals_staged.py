@@ -11,23 +11,43 @@ import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from api.platform.neo4j import get_session
-from api.platform.observability.smart_logger import SmartLogger
 from api.features.proposal_lifecycle.proposal_contracts import (
-    ProposalResponse, ModeUpgradeRequest, ConfirmStagePlanRequest,
-    StageConfirmRequest, StageSkipRequest, DddStage, DecompositionMode,
+    ConfirmStagePlanRequest,
+    DddStage,
+    ModeUpgradeRequest,
+    ProposalResponse,
+    StageConfirmRequest,
+    StageSkipRequest,
 )
 from api.features.proposal_lifecycle.routes.proposals_crud import _parse_effects
 from api.features.proposal_lifecycle.services import staged_runner
+from api.features.proposal_lifecycle.services.proposal_ai_validation import (
+    validate_stage_artifact,
+    violation_summary,
+)
+from api.features.proposal_lifecycle.services.stage_runners import (
+    connect as connect_runner,
+)
+from api.features.proposal_lifecycle.services.stage_runners import (
+    decompose as decompose_runner,
+)
+from api.features.proposal_lifecycle.services.stage_runners import (
+    define as define_runner,
+)
+from api.features.proposal_lifecycle.services.stage_runners import (
+    discover as discover_runner,
+)
 from api.features.proposal_lifecycle.services.stage_runners import (
     scope as scope_runner,
-    discover as discover_runner,
-    decompose as decompose_runner,
+)
+from api.features.proposal_lifecycle.services.stage_runners import (
     strategize as strategize_runner,
-    connect as connect_runner,
-    define as define_runner,
+)
+from api.features.proposal_lifecycle.services.stage_runners import (
     tactical as tactical_runner,
 )
+from api.platform.neo4j import get_session
+from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter()
 
@@ -154,6 +174,20 @@ async def confirm_stage(proposal_id: str, stage: str, body: StageConfirmRequest)
     stage = stage.upper()
     if stage not in _STAGE_RUNNERS:
         raise HTTPException(status_code=404, detail=f"Unknown stage {stage}")
+    validation = validate_stage_artifact(stage, body.artifact)
+    if validation.violations:
+        SmartLogger.log("WARN", f"stage confirm blocked: {proposal_id}/{stage}",
+                        category="proposal_lifecycle.staged.confirm_invalid",
+                        params={"proposalId": proposal_id, "stage": stage,
+                                "violationSummary": violation_summary(validation.violations),
+                                "violations": validation.violations},
+                        max_inline_chars=0)
+        raise HTTPException(status_code=422, detail={
+            "reason": "stage_artifact_invalid",
+            "message": f"{stage} 산출물이 필수 계약을 만족하지 않아 저장하지 않았습니다.",
+            "violationSummary": violation_summary(validation.violations),
+            "violations": validation.violations[:8],
+        })
     # 충돌 해소 + 메모리 승격은 strategic_memory 가 담당(US4).
     from api.features.proposal_lifecycle.services import strategic_memory
     err = strategic_memory.apply_stage_confirmation(
@@ -179,6 +213,20 @@ async def save_stage_draft(proposal_id: str, stage: str, body: StageConfirmReque
         raise HTTPException(status_code=404, detail=f"Unknown stage {stage}")
     if staged_runner.load_state(proposal_id) is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
+    validation = validate_stage_artifact(stage, body.artifact)
+    if validation.violations:
+        SmartLogger.log("WARN", f"stage draft blocked: {proposal_id}/{stage}",
+                        category="proposal_lifecycle.staged.draft_invalid",
+                        params={"proposalId": proposal_id, "stage": stage,
+                                "violationSummary": violation_summary(validation.violations),
+                                "violations": validation.violations},
+                        max_inline_chars=0)
+        raise HTTPException(status_code=422, detail={
+            "reason": "stage_artifact_invalid",
+            "message": f"{stage} 산출물이 필수 계약을 만족하지 않아 저장하지 않았습니다.",
+            "violationSummary": violation_summary(validation.violations),
+            "violations": validation.violations[:8],
+        })
     staged_runner.save_stage_draft_artifact(proposal_id, stage, body.artifact)
     staged_runner.log_stage(proposal_id, stage, "draft")
     return _load_proposal_response(proposal_id)
@@ -204,7 +252,7 @@ async def skip_stage(proposal_id: str, stage: str, body: StageSkipRequest):
 async def consolidate(proposal_id: str):
     """스테이지 산출물을 표준 Strategic/Tactical Diff 로 수렴(FR-007/FR-023)."""
     from api.features.proposal_lifecycle.services import staged_consolidate
-    err = staged_consolidate.consolidate(proposal_id)
+    err = await staged_consolidate.consolidate(proposal_id)
     if err:
         raise HTTPException(status_code=400, detail=err)
     return _load_proposal_response(proposal_id)

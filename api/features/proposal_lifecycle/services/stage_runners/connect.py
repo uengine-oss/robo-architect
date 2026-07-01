@@ -1,4 +1,4 @@
-"""042 US2 — Connect 스테이지(robo-proposal-connect, extends ddd-starter 05)."""
+"""042 US2 — Connect 스테이지(robo-proposal-tactical-ddd)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from api.features.constitution.services import constitution_store as cstore
 from api.features.proposal_lifecycle.services import staged_runner
 from api.features.proposal_lifecycle.services.stage_runners.base import execute_stage
 
-_SKILL = "robo-proposal-connect"
+_SKILL = "robo-proposal-tactical-ddd"
 
 
 def _build_prompt(state: dict) -> str:
@@ -17,6 +17,7 @@ def _build_prompt(state: dict) -> str:
     memory = cstore.get_project_strategic_memory() or {}
     posture = (memory.get("couplingPosture") or {}).get("default", "PUBSUB")
     return (
+        "stage: CONNECT\n"
         f"원본 프롬프트: {state.get('prompt','')}\n\n"
         f"Decompose/Strategize 산출물(JSON):\n"
         f"{json.dumps({'DECOMPOSE': arts.get('DECOMPOSE'), 'STRATEGIZE': arts.get('STRATEGIZE')}, ensure_ascii=False)}\n\n"

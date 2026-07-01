@@ -1,5 +1,5 @@
 """
-robo-proposal-plan 스킬 호출 서비스.
+Proposal Tactical Diff/Plan skill invocation service.
 승인된 Strategic Diff + Constitution → Tactical Diff + 아키텍처 구현계획 + 임팩트.
 
 Intent 단계(전략 분해)와 분리된 Plan 단계. Constitution 없으면 진행 불가(409).
@@ -11,19 +11,19 @@ import json
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 
+from api.features.proposal_lifecycle.services.constitution_runner import read_constitution
+from api.features.proposal_lifecycle.services.proposal_ai_runner import stream_validated_skill_json
+from api.features.proposal_lifecycle.services.proposal_ai_validation import (
+    SkillScenario,
+    retry_count_for_scenario,
+    validate_plan_output,
+)
 from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import run_skill_lines, extract_json
-from api.features.proposal_lifecycle.proposal_contracts import constitution_hash
-from api.features.proposal_lifecycle.services.constitution_runner import read_constitution
-from api.features.proposal_lifecycle.services.tactical_contract import (
-    format_tactical_contract_feedback,
-    validate_tactical_diff_contract,
-)
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-proposal-plan"
+_SKILL_NAME = "robo-proposal-diff"
 
 
 def _load_plan_inputs(proposal_id: str) -> Optional[dict]:
@@ -220,6 +220,7 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         # 다시 만들지 말고, 그 위에서 Constitution 기반 '구현계획(아키텍처)'만 산출한다.
         return (
             f"Proposal ID: {proposal_id}\n"
+            f"scenario: {SkillScenario.SIMPLIFIED_TACTICAL.value}\n"
             f"승인된 Strategic Diff(JSON):\n```json\n{json.dumps(strategic, ensure_ascii=False)}\n```\n\n"
             f"이미 확정된 Tactical Diff(JSON, DDD 단계 산출 — 재생성 금지):\n```json\n"
             f"{json.dumps(tactical or [], ensure_ascii=False)}\n```\n\n"
@@ -242,6 +243,7 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
 
     return (
         f"Proposal ID: {proposal_id}\n"
+        f"scenario: {SkillScenario.SIMPLIFIED_TACTICAL.value}\n"
         f"승인된 Strategic Diff(JSON):\n```json\n{json.dumps(strategic, ensure_ascii=False)}\n```\n\n"
         f"Constitution(raw):\n```\n{constitution_raw}\n```\n\n"
         f"{memory_block}"
@@ -270,60 +272,38 @@ async def _run_plan_skill_with_contract(
     architecture_only: bool,
     existing_tactical: list,
 ) -> AsyncGenerator[tuple[str, dict], None]:
-    """Run plan skill, retrying once with contract feedback before persisting."""
-    validation_feedback = None
-    max_attempts = 1 if architecture_only else 2
+    """Run diff skill, retrying with validator feedback before persisting."""
+    scenario = SkillScenario.SIMPLIFIED_TACTICAL
 
-    for attempt in range(max_attempts):
-        human_prompt = _build_plan_prompt(
+    def _prompt(feedback: str | None) -> str:
+        return _build_plan_prompt(
             proposal_id, strategic, constitution_raw, domain_nodes,
-            architecture_only, existing_tactical, validation_feedback,
+            architecture_only, existing_tactical, feedback,
         )
 
-        output_lines: list[str] = []
-        suppress_log = False
-        async for line in run_skill_lines(_SKILL_ROOT, _SKILL_NAME, human_prompt):
-            if line.startswith("TOOL:"):
-                continue
-            output_lines.append(line)
-            stripped = line.strip()
-            if stripped.startswith("```") or (not suppress_log and stripped in ("{", "[")):
-                suppress_log = True
-                continue
-            if not suppress_log:
-                yield "log_line", {"text": line}
-
-        raw = "\n".join(output_lines)
-        data = extract_json(raw)
-        if not data or not isinstance(data, dict):
-            yield "error", {"code": "PLAN_PARSE_FAILED", "message": "구현계획 결과 파싱 실패"}
+    async for event_type, data in stream_validated_skill_json(
+        skill_name=_SKILL_NAME,
+        prompt_builder=_prompt,
+        validator=lambda raw: validate_plan_output(
+            raw,
+            existing_tactical=existing_tactical,
+            architecture_only=architecture_only,
+        ),
+        proposal_id=proposal_id,
+        scenario=scenario.value,
+        max_retries=retry_count_for_scenario(scenario),
+        parse_error_code="PLAN_PARSE_FAILED",
+        validation_error_code="PLAN_CONTRACT_INVALID",
+    ):
+        if event_type == "result":
+            yield "result", {
+                "tactical": data.get("tacticalDiff", []),
+                "plan": data.get("implementationPlan", {}),
+            }
             return
-
-        tactical = normalize_tactical_diff(data.get("tacticalDiff") or existing_tactical)
-        plan = data.get("implementationPlan", {})
-        violations = [] if architecture_only else validate_tactical_diff_contract(tactical)
-        if not violations:
-            yield "result", {"tactical": tactical, "plan": plan}
+        yield event_type, data
+        if event_type == "error":
             return
-
-        feedback = format_tactical_contract_feedback(violations)
-        SmartLogger.log(
-            "WARN",
-            f"plan tactical contract invalid: {proposal_id}",
-            category="proposal_lifecycle.plan.contract_invalid",
-            params={"proposalId": proposal_id, "attempt": attempt + 1, "errors": violations[:30]},
-        )
-        validation_feedback = feedback
-        if attempt + 1 < max_attempts:
-            yield "log_line", {"text": "[검증] tacticalDiff 계약 위반 감지 — validator feedback으로 재생성합니다."}
-            continue
-
-        yield "error", {
-            "code": "PLAN_CONTRACT_INVALID",
-            "message": "생성된 Tactical Diff 가 표준 계약을 만족하지 않아 저장하지 않았습니다.",
-            "violations": violations,
-        }
-        return
 
 
 def precheck(proposal_id: str) -> Optional[dict]:
@@ -347,7 +327,6 @@ def confirm_plan(proposal_id: str, implementation_plan: dict,
                  impact_map: Optional[list] = None) -> dict:
     """검토 완료된 plan 을 Proposal 노드에 확정 저장한다(Principle IV)."""
     inputs = _load_plan_inputs(proposal_id)
-    project_root = inputs.get("projectRoot") if inputs else None
     strategic = inputs.get("strategic") if inputs else {}
     # 042 — staleness 해시는 헌장 본문 + 전략 메모리 결합(constitution_store 와 동일)을 쓴다.
     # 전략 메모리만 바뀌어도 plan 이 stale 되도록(FR-021) 일관된 원천을 사용.

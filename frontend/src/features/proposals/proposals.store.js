@@ -12,6 +12,16 @@ function stripSandbox(p) {
   return i >= 0 ? p.slice(0, i) : p
 }
 
+function formatViolationError(data, fallback) {
+  const msg = data?.message || fallback
+  const summary = data?.violationSummary
+  const violations = Array.isArray(data?.violations) ? data.violations : []
+  const shown = violations.slice(0, 5)
+    .map((v) => `${v.path || 'output'}: ${v.message || v.code}`)
+    .join('; ')
+  return [msg, summary || shown].filter(Boolean).join(' | ')
+}
+
 export const useProposalsStore = defineStore('proposals', () => {
   const proposals = ref([])
   const currentProposal = ref(null)
@@ -174,7 +184,7 @@ export const useProposalsStore = defineStore('proposals', () => {
       },
       error: (data) => {
         intentStream.value.active = false
-        intentStream.value.error = data.message
+        intentStream.value.error = formatViolationError(data, data.message)
         es.close()
       },
     }
@@ -614,7 +624,7 @@ export const useProposalsStore = defineStore('proposals', () => {
     const d = body?.detail ?? body
     if (typeof d === 'string') return d
     if (Array.isArray(d)) return d.map((e) => e?.msg || e?.message || JSON.stringify(e)).join('; ')
-    if (d && typeof d === 'object') return d.message || d.msg || JSON.stringify(d)
+    if (d && typeof d === 'object') return formatViolationError(d, d.msg || fallback)
     return `${fallback}: ${res.status}`
   }
 
@@ -675,8 +685,8 @@ export const useProposalsStore = defineStore('proposals', () => {
         },
         error: (d) => {
           planStream.value.active = false
-          planStream.value.error = d?.message || translate('proposals.store.planGenerateFailed')
-          finish(reject, new Error(d?.message || translate('proposals.store.planGenerateFailed')))
+          planStream.value.error = formatViolationError(d, translate('proposals.store.planGenerateFailed'))
+          finish(reject, new Error(planStream.value.error))
         },
       }
       Object.entries(handlers).forEach(([evt, h]) => {
@@ -772,7 +782,7 @@ export const useProposalsStore = defineStore('proposals', () => {
         phase: () => {},
         log_line: (d) => { stagedStream.value.logLines.push(d.text); if (stagedStream.value.logLines.length > 200) stagedStream.value.logLines.shift() },
         stage_plan: (d) => { stagedStream.value.stagePlan = d.stagePlan; stagedStream.value.active = false; finish(resolve, d.stagePlan) },
-        error: (d) => { stagedStream.value.active = false; stagedStream.value.error = d.message; finish(reject, new Error(d.message || 'scope failed')) },
+        error: (d) => { stagedStream.value.active = false; stagedStream.value.error = formatViolationError(d, 'scope failed'); finish(reject, new Error(stagedStream.value.error)) },
       }
       Object.entries(handlers).forEach(([evt, h]) => es.addEventListener(evt, (e) => { try { h(JSON.parse(e.data)) } catch {} }))
       es.onerror = () => { if (settled) return; stagedStream.value.active = false; finish(reject, new Error('scope connection dropped')) }
@@ -818,7 +828,7 @@ export const useProposalsStore = defineStore('proposals', () => {
         artifact: (d) => { stagedStream.value.artifact = d.artifact; setStageDraft(proposalId, stage, d.artifact, { persist: true }) },
         conflicts: (d) => { stagedStream.value.conflicts = d.conflicts || [] },
         done: (d) => { stagedStream.value.active = false; stagedStream.value.done = true; stagedStream.value.nextStage = d.nextStage; finish(resolve, { artifact: stagedStream.value.artifact, conflicts: stagedStream.value.conflicts, nextStage: d.nextStage }) },
-        error: (d) => { stagedStream.value.active = false; stagedStream.value.error = d.message; finish(reject, new Error(d.message || 'stage failed')) },
+        error: (d) => { stagedStream.value.active = false; stagedStream.value.error = formatViolationError(d, 'stage failed'); finish(reject, new Error(stagedStream.value.error)) },
       }
       Object.entries(handlers).forEach(([evt, h]) => es.addEventListener(evt, (e) => { try { h(JSON.parse(e.data)) } catch {} }))
       es.onerror = () => { if (settled || stagedStream.value.done) return; stagedStream.value.active = false; finish(reject, new Error('stage connection dropped')) }

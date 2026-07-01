@@ -1,4 +1,4 @@
-"""042 US2 — Discover 스테이지(robo-proposal-discover, extends ddd-starter 02)."""
+"""042 US2 — Discover 스테이지(robo-proposal-strategic-ddd)."""
 
 from __future__ import annotations
 
@@ -10,11 +10,12 @@ from api.features.proposal_lifecycle.services.stage_runners.base import (
     execute_stage, domain_node_lines,
 )
 
-_SKILL = "robo-proposal-discover"
+_SKILL = "robo-proposal-strategic-ddd"
 
 
 def _build_prompt(state: dict) -> str:
     return (
+        "stage: DISCOVER\n"
         f"원본 프롬프트: {state.get('prompt','')}\n\n"
         f"현재 도메인 노드:\n{domain_node_lines()}\n\n"
         "이 변경이 도입/영향을 주는 도메인 이벤트(과거형)를 시간 순으로 펼치고, "

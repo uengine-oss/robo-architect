@@ -1,21 +1,28 @@
 """
-robo-proposal-intent 스킬 호출 서비스.
-자연어 → Strategic Diff + Tactical Diff 분해 + 명확화 질문.
+Proposal Strategic Diff skill invocation service.
+자연어 → Strategic Diff + 명확화 질문.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import AsyncGenerator
 
+from api.features.proposal_lifecycle.services.proposal_ai_runner import (
+    run_validated_skill_once,
+    stream_validated_skill_json,
+)
+from api.features.proposal_lifecycle.services.proposal_ai_validation import (
+    SkillScenario,
+    retry_count_for_scenario,
+    validate_strategic_output,
+)
 from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import run_skill_once, run_skill_lines, extract_json
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-proposal-intent"
+_SKILL_NAME = "robo-proposal-diff"
 
 
 def _build_intent_prompt(
@@ -57,6 +64,7 @@ def _build_intent_prompt(
 
     return (
         f"Proposal ID: {proposal_id}\n"
+        f"scenario: {SkillScenario.SIMPLIFIED_STRATEGIC.value}\n"
         f"원본 프롬프트: {original_prompt}\n\n"
         f"현재 도메인 구성 요소 목록:\n{node_list or '(구성 요소 없음)'}"
         f"{clarify_section}"
@@ -97,7 +105,7 @@ def _load_intent_inputs(proposal_id: str) -> dict | None:
 
 async def run_intent(proposal_id: str) -> None:
     """
-    robo-proposal-intent 스킬을 실행하고 결과를 Neo4j에 저장한다.
+    Strategic Diff 스킬을 실행하고 결과를 Neo4j에 저장한다.
     백그라운드 태스크로 호출.
     """
     SmartLogger.log("INFO", f"intent_start: {proposal_id}",
@@ -114,19 +122,25 @@ async def run_intent(proposal_id: str) -> None:
         inputs["clog"], inputs["flog"], inputs["prev_strategic"], inputs["prev_tactical"],
     )
 
-    raw = await run_skill_once(_SKILL_ROOT, _SKILL_NAME, human_prompt, timeout=300)
-    if not raw:
-        SmartLogger.log("WARN", f"intent skill returned nothing for {proposal_id}",
-                        category="proposal_lifecycle.intent.empty", params={"proposalId": proposal_id})
+    result = await run_validated_skill_once(
+        skill_name=_SKILL_NAME,
+        prompt_builder=lambda feedback: _with_validation_feedback(human_prompt, feedback),
+        validator=lambda data: validate_strategic_output(data, allow_clarify=True),
+        proposal_id=proposal_id,
+        scenario=SkillScenario.SIMPLIFIED_STRATEGIC.value,
+        max_retries=retry_count_for_scenario(SkillScenario.SIMPLIFIED_STRATEGIC),
+        parse_error_code="INTENT_PARSE_FAILED",
+        validation_error_code="INTENT_CONTRACT_INVALID",
+        timeout=300,
+    )
+    if not result.valid:
+        SmartLogger.log("WARN", f"intent contract invalid for {proposal_id}",
+                        category="proposal_lifecycle.intent.contract_invalid",
+                        params={"proposalId": proposal_id, "violations": result.violations},
+                        max_inline_chars=0)
         return
 
-    result_data = extract_json(raw)
-    if not result_data or not isinstance(result_data, dict):
-        SmartLogger.log("WARN", f"intent skill no JSON for {proposal_id}",
-                        category="proposal_lifecycle.intent.no_json", params={"proposalId": proposal_id})
-        return
-
-    _save_intent_result(proposal_id, result_data)
+    _save_intent_result(proposal_id, result.normalized_output)
 
 
 def _save_intent_result(proposal_id: str, data: dict) -> None:
@@ -216,36 +230,26 @@ async def stream_intent(proposal_id: str) -> AsyncGenerator[tuple[str, dict], No
         inputs["clog"], inputs["flog"], inputs["prev_strategic"], inputs["prev_tactical"],
     )
 
-    output_lines: list[str] = []
-    # narration(분석 서술)만 사용자에게 보여주고, raw JSON 블록은 파싱용으로만 수집.
-    # SKILL.md가 narration 뒤 ```json 펜스로 JSON을 출력하므로 펜스/여는 중괄호를
-    # 만나는 순간부터 log_line 방출을 멈춘다.
-    suppress_log = False
-    async for line in run_skill_lines(_SKILL_ROOT, _SKILL_NAME, human_prompt):
-        if line.startswith("TOOL:"):
-            parts = line[5:].split(":", 1)
-            yield "tool_use", {"tool": parts[0].strip(), "path": parts[1].strip() if len(parts) > 1 else ""}
-            yield "log_line", {"text": f"[tool] {parts[0].strip()} {parts[1].strip() if len(parts) > 1 else ''}"}
-            continue
+    result_data = None
+    async for event_type, data in stream_validated_skill_json(
+        skill_name=_SKILL_NAME,
+        prompt_builder=lambda feedback: _with_validation_feedback(human_prompt, feedback),
+        validator=lambda raw: validate_strategic_output(raw, allow_clarify=True),
+        proposal_id=proposal_id,
+        scenario=SkillScenario.SIMPLIFIED_STRATEGIC.value,
+        max_retries=retry_count_for_scenario(SkillScenario.SIMPLIFIED_STRATEGIC),
+        parse_error_code="INTENT_PARSE_FAILED",
+        validation_error_code="INTENT_CONTRACT_INVALID",
+    ):
+        if event_type == "result":
+            result_data = data
+            break
+        yield event_type, data
+        if event_type == "error":
+            return
 
-        output_lines.append(line)  # 파싱용으로는 항상 수집
-
-        stripped = line.strip()
-        # ```json 펜스 또는 최상위 여는 중괄호/대괄호 → 이후는 JSON 페이로드
-        if stripped.startswith("```") or (not suppress_log and stripped in ("{", "[")):
-            suppress_log = True
-            continue
-        if not suppress_log:
-            yield "log_line", {"text": line}
-
-    raw = "\n".join(output_lines)
-    if not raw.strip():
+    if not isinstance(result_data, dict):
         yield "error", {"code": "INTENT_FAILED", "message": "인텐트 분해 실패"}
-        return
-
-    result_data = extract_json(raw)
-    if not result_data or not isinstance(result_data, dict):
-        yield "error", {"code": "INTENT_PARSE_FAILED", "message": "인텐트 분해 결과 파싱 실패"}
         return
 
     action = result_data.get("action", "done")
@@ -264,3 +268,14 @@ async def stream_intent(proposal_id: str) -> AsyncGenerator[tuple[str, dict], No
         yield "strategic_diff", {"strategicDiff": result_data["strategicDiff"]}
 
     yield "done", {"proposalId": proposal_id, "status": "DRAFT", "nextStage": "plan"}
+
+
+def _with_validation_feedback(prompt: str, feedback: str | None) -> str:
+    if not feedback:
+        return prompt
+    return (
+        f"{prompt}\n\n"
+        "이전 산출물이 backend validator 계약 검증에 실패했습니다. "
+        "아래 violation을 모두 수정해 같은 JSON 계약으로 다시 출력하세요.\n"
+        f"{feedback}"
+    )

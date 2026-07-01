@@ -10,9 +10,19 @@ import json
 import re
 from typing import Optional
 
+from api.features.proposal_lifecycle.services import staged_runner
+from api.features.proposal_lifecycle.services.proposal_ai_runner import (
+    error_payload_from_result,
+    run_validated_skill_once,
+)
+from api.features.proposal_lifecycle.services.proposal_ai_validation import (
+    SkillScenario,
+    retry_count_for_scenario,
+    validate_strategic_output,
+    validate_tactical_output,
+)
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
-from api.features.proposal_lifecycle.services import staged_runner
 
 
 def _slug(text: str, fallback: str = "item") -> str:
@@ -310,7 +320,53 @@ def _validate_tactical(items: list[dict]) -> None:
             raise ValueError(f"tacticalDiff[{idx}] missing required fields: {', '.join(missing)}")
 
 
-def consolidate(proposal_id: str) -> Optional[dict]:
+def _has_any(arts: dict, stages: tuple[str, ...]) -> bool:
+    return any(isinstance(arts.get(stage), dict) and arts.get(stage) for stage in stages)
+
+
+def _strategic_prompt(proposal_id: str, state: dict, arts: dict, feedback: str | None = None) -> str:
+    selected = {stage: arts.get(stage) for stage in ("DISCOVER", "DECOMPOSE", "STRATEGIZE")}
+    feedback_block = (
+        "\n\n이전 Strategic Diff 산출물이 backend validator 계약 검증에 실패했습니다. "
+        "아래 violation을 모두 수정해 같은 JSON 계약으로 다시 출력하세요.\n"
+        f"{feedback}"
+        if feedback else ""
+    )
+    return (
+        f"Proposal ID: {proposal_id}\n"
+        f"scenario: {SkillScenario.DETAILED_STRATEGIC_FROM_DDD.value}\n"
+        f"원본 프롬프트:\n{state.get('prompt') or ''}\n\n"
+        f"확정된 앞 3단계 DDD 산출물(JSON):\n```json\n{json.dumps(selected, ensure_ascii=False)}\n```\n\n"
+        f"기존 Strategic Diff(JSON, 있으면 보존/보강):\n```json\n{json.dumps(state.get('strategic') or {}, ensure_ascii=False)}\n```\n\n"
+        "Discover/Decompose/Strategize 산출물을 근거로 Strategic Diff를 생성하세요. "
+        "최종 JSON은 {\"action\":\"done\",\"strategicDiff\":{...},\"journeys\":[...]} 형태여야 합니다. "
+        "BoundedContext(=epics), Feature, UserStory, Process는 tempId와 부모 참조를 포함해야 합니다."
+        f"{feedback_block}"
+    )
+
+
+def _tactical_prompt(proposal_id: str, state: dict, arts: dict, feedback: str | None = None) -> str:
+    selected = {stage: arts.get(stage) for stage in ("CONNECT", "DEFINE", "TACTICAL")}
+    feedback_block = (
+        "\n\n이전 Tactical Diff 산출물이 backend validator 계약 검증에 실패했습니다. "
+        "아래 violation을 모두 수정해 canonical tacticalDiff로 다시 출력하세요.\n"
+        f"{feedback}"
+        if feedback else ""
+    )
+    return (
+        f"Proposal ID: {proposal_id}\n"
+        f"scenario: {SkillScenario.DETAILED_TACTICAL_FROM_DDD.value}\n"
+        f"원본 프롬프트:\n{state.get('prompt') or ''}\n\n"
+        f"승인된 Strategic Diff(JSON):\n```json\n{json.dumps(state.get('strategic') or {}, ensure_ascii=False)}\n```\n\n"
+        f"확정된 뒤 3단계 DDD 산출물(JSON):\n```json\n{json.dumps(selected, ensure_ascii=False)}\n```\n\n"
+        "Connect/Define/Tactical 산출물의 메시지 흐름, Bounded Context Canvas, Aggregate 후보, "
+        "이벤트, 정책, 속성 단서를 근거로 빈 노드 없는 Tactical Diff를 보강 생성하세요. "
+        "최종 JSON은 {\"tacticalDiff\":[...]} 형태여야 하며 canonical field만 사용합니다."
+        f"{feedback_block}"
+    )
+
+
+async def consolidate(proposal_id: str) -> Optional[dict]:
     state = staged_runner.load_state(proposal_id)
     if not state:
         return {"reason": "not_found", "message": "Proposal not found"}
@@ -319,31 +375,74 @@ def consolidate(proposal_id: str) -> Optional[dict]:
     if not arts:
         return None
 
-    try:
-        strategic = _build_strategic(state, arts)
-        tactical = _build_tactical(arts)
-    except ValueError as e:
-        return {"reason": "invalid_staged_diff", "message": str(e)}
+    updates: dict[str, str] = {}
+    strategic = state.get("strategic") or {}
+    if _has_any(arts, ("DISCOVER", "DECOMPOSE", "STRATEGIZE")):
+        scenario = SkillScenario.DETAILED_STRATEGIC_FROM_DDD
+        SmartLogger.log("INFO", f"staged strategic diff generation: {proposal_id}",
+                        category="proposal_lifecycle.staged.consolidate.strategic_start",
+                        params={"proposalId": proposal_id, "skillName": "robo-proposal-diff",
+                                "scenario": scenario.value,
+                                "artifactStages": [s for s in ("DISCOVER", "DECOMPOSE", "STRATEGIZE") if arts.get(s)]})
+        result = await run_validated_skill_once(
+            skill_name="robo-proposal-diff",
+            prompt_builder=lambda feedback: _strategic_prompt(proposal_id, state, arts, feedback),
+            validator=lambda raw: validate_strategic_output(raw, allow_clarify=False),
+            proposal_id=proposal_id,
+            scenario=scenario.value,
+            max_retries=retry_count_for_scenario(scenario),
+            parse_error_code="DETAILED_STRATEGIC_PARSE_FAILED",
+            validation_error_code="DETAILED_STRATEGIC_CONTRACT_INVALID",
+            timeout=900,
+        )
+        if not result.valid:
+            return {
+                "reason": "detailed_strategic_contract_invalid",
+                **error_payload_from_result("DETAILED_STRATEGIC_CONTRACT_INVALID", result),
+            }
+        strategic = result.normalized_output.get("strategicDiff") or {}
+        updates["strategicDiff"] = json.dumps(strategic, ensure_ascii=False)
+
+    if _has_any(arts, ("CONNECT", "DEFINE", "TACTICAL")):
+        scenario = SkillScenario.DETAILED_TACTICAL_FROM_DDD
+        state_for_tactical = dict(state)
+        state_for_tactical["strategic"] = strategic
+        SmartLogger.log("INFO", f"staged tactical diff generation: {proposal_id}",
+                        category="proposal_lifecycle.staged.consolidate.tactical_start",
+                        params={"proposalId": proposal_id, "skillName": "robo-proposal-diff",
+                                "scenario": scenario.value,
+                                "artifactStages": [s for s in ("CONNECT", "DEFINE", "TACTICAL") if arts.get(s)]})
+        result = await run_validated_skill_once(
+            skill_name="robo-proposal-diff",
+            prompt_builder=lambda feedback: _tactical_prompt(proposal_id, state_for_tactical, arts, feedback),
+            validator=validate_tactical_output,
+            proposal_id=proposal_id,
+            scenario=scenario.value,
+            max_retries=retry_count_for_scenario(scenario),
+            parse_error_code="DETAILED_TACTICAL_PARSE_FAILED",
+            validation_error_code="DETAILED_TACTICAL_CONTRACT_INVALID",
+            timeout=900,
+        )
+        if not result.valid:
+            return {
+                "reason": "detailed_tactical_contract_invalid",
+                **error_payload_from_result("DETAILED_TACTICAL_CONTRACT_INVALID", result),
+            }
+        updates["tacticalDiff"] = json.dumps(result.normalized_output.get("tacticalDiff") or [], ensure_ascii=False)
+
+    if not updates:
+        return None
 
     with get_session() as session:
-        session.run(
-            """
-            MATCH (p:Proposal {id:$id})
-            SET p.strategicDiff=$sd,
-                p.tacticalDiff=$td
-            """,
-            id=proposal_id,
-            sd=json.dumps(strategic, ensure_ascii=False),
-            td=json.dumps(tactical, ensure_ascii=False),
-        )
+        set_clause = ", ".join(f"p.{key}=${key}" for key in updates)
+        session.run(f"MATCH (p:Proposal {{id:$id}}) SET {set_clause}", id=proposal_id, **updates)
     SmartLogger.log("INFO", f"staged consolidated: {proposal_id}",
                     category="proposal_lifecycle.staged.consolidate",
                     params={
                         "proposalId": proposal_id,
-                        "epics": len(strategic["epics"]),
-                        "features": len(strategic["features"]),
-                        "userStories": len(strategic["userStories"]),
-                        "processes": len(strategic["processes"]),
-                        "tactical": len(tactical),
+                        "skillName": "robo-proposal-diff",
+                        "updatedFields": list(updates.keys()),
+                        "strategicArtifactStages": [s for s in ("DISCOVER", "DECOMPOSE", "STRATEGIZE") if arts.get(s)],
+                        "tacticalArtifactStages": [s for s in ("CONNECT", "DEFINE", "TACTICAL") if arts.get(s)],
                     })
     return None

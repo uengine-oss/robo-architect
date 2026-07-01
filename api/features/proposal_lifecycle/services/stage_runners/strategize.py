@@ -1,4 +1,4 @@
-"""042 US2 — Strategize 스테이지(robo-proposal-strategize, extends ddd-starter 04).
+"""042 US2 — Strategize 스테이지(robo-proposal-strategic-ddd).
 
 기존 전략 메모리(Core/Supporting/Generic)를 주입해 재질문 대신 confirm/amend 로 진행(FR-018),
 로컬 분류가 메모리와 어긋나면 conflicts SSE(FR-019).
@@ -13,13 +13,14 @@ from api.features.constitution.services import constitution_store as cstore
 from api.features.proposal_lifecycle.services import staged_runner
 from api.features.proposal_lifecycle.services.stage_runners.base import execute_stage
 
-_SKILL = "robo-proposal-strategize"
+_SKILL = "robo-proposal-strategic-ddd"
 
 
 def _build_prompt(state: dict) -> str:
     decompose = (state.get("stageArtifacts") or {}).get("DECOMPOSE", {})
     memory = cstore.get_project_strategic_memory() or {}
     return (
+        "stage: STRATEGIZE\n"
         f"원본 프롬프트: {state.get('prompt','')}\n\n"
         f"Decompose 산출물(JSON):\n{json.dumps(decompose, ensure_ascii=False)}\n\n"
         f"기존 전략 메모리(JSON, 이미 분류된 BC 는 재질문 말고 그대로 사용):\n"

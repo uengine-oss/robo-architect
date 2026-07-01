@@ -1,4 +1,4 @@
-"""042 US2 — Tactical 스테이지(robo-proposal-tactical, extends ddd-starter 08 + plan 전술)."""
+"""042 US2 — Tactical 스테이지(robo-proposal-tactical-ddd)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,13 @@ from typing import AsyncGenerator
 from api.features.proposal_lifecycle.services import staged_runner
 from api.features.proposal_lifecycle.services.stage_runners.base import execute_stage
 
-_SKILL = "robo-proposal-tactical"
+_SKILL = "robo-proposal-tactical-ddd"
 
 
 def _build_prompt(state: dict) -> str:
     define = (state.get("stageArtifacts") or {}).get("DEFINE", {})
     return (
+        "stage: TACTICAL\n"
         f"원본 프롬프트: {state.get('prompt','')}\n\n"
         f"Define(BCC) 산출물(JSON):\n{json.dumps(define, ensure_ascii=False)}\n\n"
         "각 Aggregate 에 대해 ddd-crew Aggregate Design Canvas(v1) 전 항목을 도출하라:\n"

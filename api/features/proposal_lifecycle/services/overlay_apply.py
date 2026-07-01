@@ -55,7 +55,7 @@ def _tactical_index(tactical_diff: list[dict] | None) -> dict[str, dict]:
 def _populate_from_deep_item(node: dict, item: dict) -> list[str]:
     """깊은 인텐트 포맷(`fields`/`properties`/`invariants`)을 노드 dict 에 반영.
 
-    robo-proposal-intent 가 semanticDiff.ops 외에 항목 최상위에 직접 싣는 구조를 처리한다
+    Proposal Diff 스킬이 semanticDiff.ops 외에 항목 최상위에 직접 싣는 구조를 처리한다
     (data-model 의 SemanticDiff 예시와 실제 스킬 출력 둘 다 지원). 모두 임시(신규) 태그.
     """
     changed: list[str] = []
