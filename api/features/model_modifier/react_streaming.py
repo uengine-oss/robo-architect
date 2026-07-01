@@ -33,11 +33,34 @@ def _sanitize_updates(change: dict[str, Any]) -> dict[str, Any]:
     This keeps the system tolerant while we transition prompt formats.
     """
     updates = change.get("updates")
-    if isinstance(updates, dict):
-        return updates
-
-    updates = {}
-    for k in ["description", "template", "attachedToId", "attachedToType", "attachedToName"]:
+    updates = dict(updates) if isinstance(updates, dict) else {}
+    for k in [
+        "name",
+        "displayName",
+        "description",
+        "actor",
+        "version",
+        "rootEntity",
+        "provisioningType",
+        "isMultipleResult",
+        "type",
+        "isKey",
+        "isForeignKey",
+        "isRequired",
+        "parentType",
+        "parentId",
+        "aggregateId",
+        "alias",
+        "fields",
+        "items",
+        "itemsToAdd",
+        "itemsToRemove",
+        "itemsRename",
+        "template",
+        "attachedToId",
+        "attachedToType",
+        "attachedToName",
+    ]:
         if k in change:
             updates[k] = change.get(k)
     return updates
@@ -84,6 +107,79 @@ def _selected_node_map(selected_nodes: list[dict[str, Any]]) -> dict[str, dict[s
         if node_id:
             out[str(node_id)] = n
     return out
+
+
+def _first_selected(selected_nodes: list[dict[str, Any]], *types: str) -> dict[str, Any] | None:
+    wanted = {t.lower() for t in types}
+    for node in selected_nodes or []:
+        if str(node.get("type") or "").lower() in wanted:
+            return node
+    return None
+
+
+def _backtick_names(text: str) -> list[str]:
+    return [m.group(1).strip() for m in re.finditer(r"`([^`]+)`", text or "") if m.group(1).strip()]
+
+
+def _draft_with_display(change: dict[str, Any], before: dict[str, Any] | None = None, after: dict[str, Any] | None = None) -> dict[str, Any]:
+    change["before"] = before or {}
+    change["after"] = after or {}
+    change["displayFields"] = compute_draft_display_fields(change.get("action"), change["before"], change["after"])
+    return change
+
+
+def _fallback_drafts(prompt: str, selected_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    text = prompt or ""
+    lowered = text.lower()
+    drafts: list[dict[str, Any]] = []
+    if "삭제" in text or "delete" in lowered:
+        for node in selected_nodes or []:
+            ntype = str(node.get("type") or "")
+            if ntype in {"UI", "Policy", "Event"}:
+                drafts.append(
+                    _draft_with_display(
+                        {
+                            "changeId": _gen_change_id(),
+                            "action": "delete",
+                            "targetId": str(node.get("id") or ""),
+                            "targetName": node.get("name"),
+                            "targetType": ntype,
+                            "bcId": node.get("bcId"),
+                            "rationale": "선택된 노드에 대한 명시적 삭제 요청입니다.",
+                        },
+                        before={k: node.get(k) for k in ("name", "description") if k in node},
+                        after={},
+                    )
+                )
+    if ("ui" in lowered or "화면" in text) and ("새로" in text or "만들" in text or "create" in lowered):
+        command = _first_selected(selected_nodes, "Command")
+        names = _backtick_names(text)
+        ui_name = next((name for name in names if "page" in name.lower() or "ui" in name.lower()), names[0] if names else "NewPage")
+        if command:
+            after = {
+                "name": ui_name,
+                "description": f"{command.get('name') or 'Command'} 실행 화면",
+                "attachedToId": command.get("id"),
+                "attachedToType": "Command",
+                "attachedToName": command.get("name"),
+            }
+            drafts.append(
+                _draft_with_display(
+                    {
+                        "changeId": _gen_change_id(),
+                        "action": "create",
+                        "targetId": f"ui-chat-{int(time.time() * 1000)}",
+                        "targetName": ui_name,
+                        "targetType": "UI",
+                        "bcId": command.get("bcId"),
+                        "rationale": "선택된 Command를 실행하는 UI 생성 요청입니다.",
+                        "updates": after,
+                    },
+                    before={},
+                    after=after,
+                )
+            )
+    return drafts
 
 
 def _type_priority(type_name: str | None) -> int:
@@ -864,6 +960,20 @@ For Policy actions (반응 정책 — Event ─TRIGGERS→ Policy ─INVOKES→ 
                     action = change.get("action")
                     if action in ("update", "create"):
                         change["updates"] = _sanitize_updates(change)
+                    updates_for_parent = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+                    target_type_norm = str(change.get("targetType") or "").lower()
+                    if action == "create" and target_type_norm in ("enumeration", "enum", "valueobject"):
+                        if not (change.get("aggregateId") or updates_for_parent.get("aggregateId")):
+                            agg = _first_selected(selected_nodes, "Aggregate")
+                            if agg and agg.get("id"):
+                                change["aggregateId"] = agg.get("id")
+                                updates_for_parent["aggregateId"] = agg.get("id")
+                                change["updates"] = updates_for_parent
+                    if target_type_norm in ("enumeration", "enum"):
+                        agg_id = change.get("aggregateId") or updates_for_parent.get("aggregateId")
+                        if not agg_id and isinstance(change.get("targetId"), str) and change["targetId"].startswith("enum-"):
+                            # Keep targetId as the canonical enum-<aggregateId>-<index> selector.
+                            pass
 
                     # Best-effort before/after for confirm UI
                     before: dict[str, Any] = {}
@@ -896,7 +1006,16 @@ For Policy actions (반응 정책 — Event ─TRIGGERS→ Policy ─INVOKES→ 
                         if src:
                             for k in [
                                 "name",
+                                "displayName",
                                 "description",
+                                "actor",
+                                "version",
+                                "rootEntity",
+                                "provisioningType",
+                                "isMultipleResult",
+                                "alias",
+                                "fields",
+                                "items",
                                 "template",
                                 "attachedToId",
                                 "attachedToType",
@@ -916,7 +1035,16 @@ For Policy actions (반응 정책 — Event ─TRIGGERS→ Policy ─INVOKES→ 
                             if snap:
                                 for k in [
                                     "name",
+                                    "displayName",
                                     "description",
+                                    "actor",
+                                    "version",
+                                    "rootEntity",
+                                    "provisioningType",
+                                    "isMultipleResult",
+                                    "alias",
+                                    "fields",
+                                    "items",
                                     "template",
                                     "attachedToId",
                                     "attachedToType",
@@ -1012,6 +1140,18 @@ For Policy actions (반응 정책 — Event ─TRIGGERS→ Policy ─INVOKES→ 
                     "raw_output": raw_output,
                 }
             )
+
+        if not draft_changes:
+            for fallback in _fallback_drafts(prompt, selected_nodes):
+                draft_changes.append(fallback)
+                yield format_sse_event("draft_change", {"draft": fallback})
+                if AI_AUDIT_LOG_ENABLED:
+                    SmartLogger.log(
+                        "INFO",
+                        "Chat modify: fallback draft generated from selected context.",
+                        category="api.chat.draft.fallback",
+                        params={"change": fallback},
+                    )
 
         summary_section = extract_section(raw_output, "SUMMARY")
         final_summary = (

@@ -48,6 +48,9 @@ async def confirm_changes(payload: ConfirmRequest, request: Request) -> ConfirmR
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    if not errors and not applied and approved:
+        errors = ["승인된 draft가 있었지만 실제 반영된 변경이 없습니다."]
+
     success = len(errors) == 0
     if not success:
         SmartLogger.log(

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 // 040 — 미리보기 중 Chat 수정 요청은 라이브가 아니라 제안 diff 에 반영.
 import { usePreviewSession } from '@/app/previewSession'
@@ -16,6 +17,7 @@ import { usePreviewSession } from '@/app/previewSession'
  */
 export const useModelModifierStore = defineStore('modelModifier', () => {
   const canvasStore = useCanvasStore()
+  const aggregateViewerStore = useAggregateViewerStore()
   const ingestionStore = useIngestionStore()
 
   // Message history
@@ -127,17 +129,20 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
     // Require node selection (even during ingestion pause, to avoid context size issues)
     const nodeContext = Array.isArray(selectedNodes) && selectedNodes.length > 0
       ? selectedNodes.map(n => {
-          // bcId from parentNode (VueFlow grouping) or data.bcId
-          const bcId = n.parentNode || n.data?.bcId
+          const nodeData = n.data || n
+          // bcId from parentNode (VueFlow grouping), nested data, or plain Data-viewer payload.
+          const bcId = n.parentNode || nodeData?.bcId || n.bcId
           return {
-            id: n.id,
-            name: n.data?.name || n.data?.label,
-            type: n.data?.type || n.type,
-            description: n.data?.description,
+            id: n.id || nodeData.id,
+            name: nodeData?.name || nodeData?.label || n.name || n.id || nodeData.id,
+            type: nodeData?.type || n.type,
+            description: nodeData?.description,
             bcId,
-            bcName: n.data?.bcName,
-            aggregateId: n.data?.aggregateId,
-            ...n.data
+            bcName: nodeData?.bcName || n.bcName,
+            aggregateId: nodeData?.aggregateId || n.aggregateId,
+            aggregateName: nodeData?.aggregateName || n.aggregateName,
+            index: nodeData?.index ?? n.index,
+            ...nodeData
           }
         })
       : []
@@ -437,8 +442,19 @@ export const useModelModifierStore = defineStore('modelModifier', () => {
       }
 
       const applied = data?.appliedChanges || []
+      if (applied.length === 0) {
+        const reason = Array.isArray(data?.errors) && data.errors.length
+          ? data.errors.join('\n')
+          : '승인된 draft가 있었지만 실제 반영된 변경이 없습니다.'
+        throw new Error(reason)
+      }
       if (applied.length) {
         canvasStore.syncAfterChanges(applied)
+        try {
+          await aggregateViewerStore.fetchAllAggregates()
+        } catch (refreshError) {
+          console.warn('Failed to refresh aggregate viewer after chat confirm:', refreshError)
+        }
         applied.forEach(c => appliedChanges.value.push(c))
       }
 

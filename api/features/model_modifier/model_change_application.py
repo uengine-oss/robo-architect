@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict
 
@@ -334,7 +335,7 @@ _ALLOWED_UPDATE_FIELDS_BY_LABEL: dict[str, set[str]] = {
     "Event": {"description", "displayName", "version"},
     "Policy": {"description", "displayName"},
     "Aggregate": {"description", "displayName", "rootEntity"},
-    "ReadModel": {"description", "displayName", "provisioningType"},
+    "ReadModel": {"description", "displayName", "provisioningType", "actor", "isMultipleResult"},
     "BoundedContext": {"description", "displayName"},
     # UI: displayName (label) + wireframe + attachment metadata
     "UI": {"description", "displayName", "template", "sceneGraph", "attachedToId", "attachedToType", "attachedToName"},
@@ -390,6 +391,283 @@ def _primary_label(labels: list[str]) -> str | None:
         if k in labels:
             return k
     return labels[0] if labels else None
+
+
+_ENUM_ID_RX = re.compile(r"^enum-(?P<agg>.+)-(?P<idx>\d+)$")
+_VO_ID_RX = re.compile(r"^vo-(?P<agg>.+)-(?P<idx>\d+)$")
+
+
+def _loads_list(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+    return []
+
+
+def _dumps_list(value: list[dict[str, Any]]) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _parse_child_id(child_id: str, kind: str) -> tuple[str | None, int | None]:
+    rx = _ENUM_ID_RX if kind == "enum" else _VO_ID_RX
+    match = rx.match(str(child_id or ""))
+    if not match:
+        return None, None
+    return match.group("agg"), int(match.group("idx"))
+
+
+def _child_name(child: dict[str, Any]) -> str:
+    return str(child.get("name") or child.get("alias") or child.get("displayName") or "").strip()
+
+
+def _find_child(children: list[dict[str, Any]], idx: int | None, name: str | None) -> dict[str, Any] | None:
+    if idx is not None and 0 <= idx < len(children):
+        return children[idx]
+    needle = str(name or "").strip().lower()
+    if not needle:
+        return None
+    for child in children:
+        if _child_name(child).lower() == needle:
+            return child
+    return None
+
+
+def _aggregate_child_state_tx(tx: Any, aggregate_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    rec = tx.run(
+        """
+        MATCH (agg:Aggregate {id: $id})
+        RETURN agg.enumerations AS enumerations, agg.valueObjects AS valueObjects
+        """,
+        id=aggregate_id,
+    ).single()
+    if not rec:
+        raise ValueError(f"Aggregate not found: {aggregate_id}")
+    return _loads_list(rec.get("enumerations")), _loads_list(rec.get("valueObjects"))
+
+
+def _save_aggregate_child_state_tx(
+    tx: Any,
+    aggregate_id: str,
+    enumerations: list[dict[str, Any]],
+    value_objects: list[dict[str, Any]],
+) -> None:
+    tx.run(
+        """
+        MATCH (agg:Aggregate {id: $id})
+        SET agg.enumerations = $enumerations,
+            agg.valueObjects = $value_objects,
+            agg.updatedAt = datetime()
+        """,
+        id=aggregate_id,
+        enumerations=_dumps_list(enumerations),
+        value_objects=_dumps_list(value_objects),
+    )
+
+
+def _json_backed_change(change: dict[str, Any]) -> bool:
+    target_type = str(change.get("targetType") or "").lower()
+    updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+    parent_type = str(updates.get("parentType") or change.get("parentType") or "").lower()
+    return target_type in {"enumeration", "enum", "valueobject"} or (
+        target_type == "property" and parent_type == "valueobject"
+    )
+
+
+def _resolve_aggregate_for_child(change: dict[str, Any], kind: str) -> tuple[str | None, int | None]:
+    updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+    for key in ("aggregateId", "parentAggregateId"):
+        value = updates.get(key) or change.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip(), None
+    parsed_agg, parsed_idx = _parse_child_id(str(change.get("targetId") or updates.get("parentId") or ""), kind)
+    if parsed_agg:
+        return parsed_agg, parsed_idx
+    parent_id = str(updates.get("parentId") or change.get("parentId") or "").strip()
+    parsed_agg, parsed_idx = _parse_child_id(parent_id, kind)
+    if parsed_agg:
+        return parsed_agg, parsed_idx
+    return None, None
+
+
+def _apply_enum_items(enum_obj: dict[str, Any], updates: dict[str, Any]) -> bool:
+    items = [
+        str(item.get("name") if isinstance(item, dict) else item)
+        for item in (enum_obj.get("items") or [])
+    ]
+    changed = False
+    renames = updates.get("itemsRename") if isinstance(updates.get("itemsRename"), dict) else {}
+    if renames:
+        items = [str(renames.get(item, item)) for item in items]
+        changed = True
+    remove = {
+        str(item.get("name") if isinstance(item, dict) else item)
+        for item in (updates.get("itemsToRemove") or [])
+    }
+    if remove:
+        next_items = [item for item in items if item not in remove]
+        changed = changed or len(next_items) != len(items)
+        items = next_items
+    for item in updates.get("itemsToAdd") or []:
+        value = str(item.get("name") if isinstance(item, dict) else item).strip()
+        if value and value not in items:
+            items.append(value)
+            changed = True
+    if "items" in updates and isinstance(updates.get("items"), list):
+        next_items = [str(item.get("name") if isinstance(item, dict) else item) for item in updates["items"]]
+        changed = changed or next_items != items
+        items = next_items
+    if changed:
+        enum_obj["items"] = items
+    return changed
+
+
+def _apply_value_object_field(vo_obj: dict[str, Any], change: dict[str, Any]) -> bool:
+    updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+    fields = [dict(field) for field in (vo_obj.get("fields") or []) if isinstance(field, dict)]
+    action = change.get("action")
+    selector = str(change.get("targetName") or updates.get("oldName") or updates.get("name") or "").strip()
+    idx = next((i for i, field in enumerate(fields) if str(field.get("name") or "") == selector), -1)
+    if action == "create":
+        name = str(updates.get("name") or change.get("targetName") or "").strip()
+        if not name:
+            raise ValueError("ValueObject field create requires updates.name")
+        next_field = {
+            "name": name,
+            "type": str(updates.get("type") or "String"),
+            "description": str(updates.get("description") or ""),
+            "isKey": bool(updates.get("isKey", False)),
+            "isForeignKey": bool(updates.get("isForeignKey", False)),
+            "isRequired": bool(updates.get("isRequired", False)),
+        }
+        if idx >= 0:
+            fields[idx] = {**fields[idx], **next_field}
+        else:
+            fields.append(next_field)
+    elif action == "update":
+        if idx < 0:
+            raise ValueError(f"ValueObject field not found: {selector}")
+        for key in ("name", "type", "description", "isKey", "isForeignKey", "isRequired"):
+            if key in updates:
+                fields[idx][key] = updates.get(key)
+    elif action == "delete":
+        if idx < 0:
+            raise ValueError(f"ValueObject field not found: {selector}")
+        fields.pop(idx)
+    else:
+        return False
+    vo_obj["fields"] = fields
+    return True
+
+
+def _apply_json_backed_change_tx(tx: Any, change: dict[str, Any]) -> bool:
+    target_type = str(change.get("targetType") or "").lower()
+    updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+    action = str(change.get("action") or "")
+
+    if target_type in {"enumeration", "enum"}:
+        aggregate_id, idx = _resolve_aggregate_for_child(change, "enum")
+        if not aggregate_id:
+            raise ValueError("Enumeration change requires aggregateId or enum-<aggregateId>-<index> targetId")
+        enumerations, value_objects = _aggregate_child_state_tx(tx, aggregate_id)
+        if action == "create":
+            name = str(change.get("targetName") or updates.get("name") or "").strip()
+            if not name:
+                raise ValueError("Enumeration create requires targetName or updates.name")
+            enum_obj = {"name": name, "items": []}
+            _apply_enum_items(enum_obj, updates)
+            if not enum_obj["items"] and isinstance(updates.get("items"), list):
+                enum_obj["items"] = updates["items"]
+            existing = _find_child(enumerations, None, name)
+            if existing is not None:
+                existing.update(enum_obj)
+            else:
+                enumerations.append(enum_obj)
+            change["targetId"] = f"enum-{aggregate_id}-{len(enumerations) - 1}"
+        elif action == "update":
+            enum_obj = _find_child(enumerations, idx, change.get("targetName") or updates.get("name"))
+            if enum_obj is None:
+                raise ValueError(f"Enumeration not found: {change.get('targetId') or change.get('targetName')}")
+            if "name" in updates:
+                enum_obj["name"] = updates["name"]
+            if not _apply_enum_items(enum_obj, updates) and not any(k in updates for k in ("name", "items")):
+                raise ValueError("Enumeration update requires itemsToAdd/itemsToRemove/itemsRename/items/name")
+        elif action == "delete":
+            enum_obj = _find_child(enumerations, idx, change.get("targetName"))
+            if enum_obj is None:
+                raise ValueError(f"Enumeration not found: {change.get('targetId') or change.get('targetName')}")
+            enumerations.remove(enum_obj)
+        else:
+            return False
+        _save_aggregate_child_state_tx(tx, aggregate_id, enumerations, value_objects)
+        change["targetType"] = "Enumeration"
+        change["aggregateId"] = aggregate_id
+        return True
+
+    if target_type == "valueobject":
+        aggregate_id, idx = _resolve_aggregate_for_child(change, "vo")
+        if not aggregate_id:
+            raise ValueError("ValueObject change requires aggregateId or vo-<aggregateId>-<index> targetId")
+        enumerations, value_objects = _aggregate_child_state_tx(tx, aggregate_id)
+        if action == "create":
+            name = str(change.get("targetName") or updates.get("name") or "").strip()
+            if not name:
+                raise ValueError("ValueObject create requires targetName or updates.name")
+            vo_obj = {
+                "name": name,
+                "alias": updates.get("alias") or updates.get("displayName") or name,
+                "fields": updates.get("fields") if isinstance(updates.get("fields"), list) else [],
+            }
+            existing = _find_child(value_objects, None, name)
+            if existing is not None:
+                existing.update(vo_obj)
+            else:
+                value_objects.append(vo_obj)
+            change["targetId"] = f"vo-{aggregate_id}-{len(value_objects) - 1}"
+        elif action == "update":
+            vo_obj = _find_child(value_objects, idx, change.get("targetName") or updates.get("name") or updates.get("alias"))
+            if vo_obj is None:
+                raise ValueError(f"ValueObject not found: {change.get('targetId') or change.get('targetName')}")
+            for key in ("name", "alias", "displayName"):
+                if key in updates:
+                    vo_obj[key] = updates.get(key)
+            if isinstance(updates.get("fields"), list):
+                vo_obj["fields"] = updates["fields"]
+        elif action == "delete":
+            vo_obj = _find_child(value_objects, idx, change.get("targetName"))
+            if vo_obj is None:
+                raise ValueError(f"ValueObject not found: {change.get('targetId') or change.get('targetName')}")
+            value_objects.remove(vo_obj)
+        else:
+            return False
+        _save_aggregate_child_state_tx(tx, aggregate_id, enumerations, value_objects)
+        change["targetType"] = "ValueObject"
+        change["aggregateId"] = aggregate_id
+        return True
+
+    if target_type == "property" and str(updates.get("parentType") or "").lower() == "valueobject":
+        parent_id = str(updates.get("parentId") or "").strip()
+        aggregate_id, idx = _parse_child_id(parent_id, "vo")
+        if not aggregate_id:
+            raise ValueError("ValueObject field change requires updates.parentId as vo-<aggregateId>-<index>")
+        enumerations, value_objects = _aggregate_child_state_tx(tx, aggregate_id)
+        vo_obj = _find_child(value_objects, idx, None)
+        if vo_obj is None:
+            raise ValueError(f"ValueObject not found: {parent_id}")
+        _apply_value_object_field(vo_obj, change)
+        _save_aggregate_child_state_tx(tx, aggregate_id, enumerations, value_objects)
+        change["targetType"] = "Property"
+        change["aggregateId"] = aggregate_id
+        change["parentType"] = "ValueObject"
+        change["parentId"] = parent_id
+        return True
+
+    return False
 
 
 def _validate_common(change: dict[str, Any]) -> list[str]:
@@ -758,6 +1036,7 @@ def _apply_update_tx(tx: Any, change: dict[str, Any]) -> None:
         "version",
         "rootEntity",
         "provisioningType",
+        "isMultipleResult",
         # Property fields
         "type",
         "isKey",
@@ -1618,6 +1897,10 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                 action = change.get("action")
                 target_id = str(change.get("targetId") or "").strip()
                 target_type = str(change.get("targetType") or "").strip()
+                if _json_backed_change(change):
+                    # Aggregate Data-viewer children (Enum/ValueObject/VO fields) are stored
+                    # inside Aggregate JSON properties, not as standalone Neo4j nodes.
+                    continue
                 # ---------------------------------------------------------------------
                 # Fallback targetId resolution (accuracy-first; ambiguous => hard error)
                 # ---------------------------------------------------------------------
@@ -1835,7 +2118,18 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                 if change.get("_skip"):
                     continue
                 action = change.get("action")
-                if action == "rename":
+                if _json_backed_change(change):
+                    old_target_id = str(change.get("targetId") or "")
+                    _apply_json_backed_change_tx(tx, change)
+                    new_target_id = str(change.get("targetId") or "")
+                    if old_target_id and new_target_id and old_target_id != new_target_id:
+                        for other_change in approved_changes:
+                            other_updates = other_change.get("updates")
+                            if isinstance(other_updates, dict) and other_updates.get("parentId") == old_target_id:
+                                other_updates["parentId"] = new_target_id
+                                if isinstance(other_change.get("after"), dict):
+                                    other_change["after"]["parentId"] = new_target_id
+                elif action == "rename":
                     _apply_rename_tx(tx, change)
                 elif action == "update":
                     _apply_update_tx(tx, change)

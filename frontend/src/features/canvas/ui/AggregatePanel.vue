@@ -1077,7 +1077,19 @@ function onNodeClick(event) {
     rootEntity: nodeData.rootEntity,
     ...nodeData
   }
-  chatStore.setSelectedNodes([selectedNode])
+  const mouseEvent = event.event || event
+  const isMultiSelect = !!(mouseEvent?.ctrlKey || mouseEvent?.metaKey || mouseEvent?.shiftKey)
+  if (isMultiSelect) {
+    const current = Array.isArray(chatStore.selectedNodes) ? chatStore.selectedNodes : []
+    const exists = current.some(item => (item.id || item.data?.id) === selectedNode.id)
+    chatStore.setSelectedNodes(
+      exists
+        ? current.filter(item => (item.id || item.data?.id) !== selectedNode.id)
+        : [...current, selectedNode]
+    )
+  } else {
+    chatStore.setSelectedNodes([selectedNode])
+  }
   // Single click does nothing - use double click to open inspector
 }
 
