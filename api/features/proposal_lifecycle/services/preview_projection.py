@@ -120,7 +120,7 @@ def resolve_open_target(proposal_id: str, node_id: Optional[str], node_label: Op
                 "bcId": None, "aggregateId": None, "reason": f"'{label}' 타입은 미리보기 뷰어 매핑이 없습니다."}
 
     # 040/043-fix — impactMap(충돌 가능성 분석) 항목은 nodeId 가 null 일 수 있다: LLM
-    # (robo-proposal-context)이 신규 CREATE 노드를 라이브 그래프 id 로 묶지 못하면 SKILL 규칙상
+    # (robo-proposal CONTEXT phase)이 신규 CREATE 노드를 라이브 그래프 id 로 묶지 못하면 SKILL 규칙상
     # nodeId=null 로 둔다. 그러면 Tactical Diff '열기'와 달리 포커스 대상 id 가 없어 빈 캔버스/
     # 'No aggregates selected' 가 된다. 같은 제안 tacticalDiff 에서 (label, title) 로 동일 논리
     # 노드를 찾아 합성 nodeId 를 복원하면, 이후 전부 Tactical Diff '열기'와 동일 경로로 해소된다.

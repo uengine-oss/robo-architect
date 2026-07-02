@@ -21,6 +21,7 @@ from api.features.proposal_lifecycle.proposal_contracts import (
 )
 from api.features.proposal_lifecycle.routes.proposals_crud import _parse_effects
 from api.features.proposal_lifecycle.services import staged_runner
+from api.features.proposal_lifecycle.services import proposal_state_service
 from api.features.proposal_lifecycle.services.proposal_ai_validation import (
     validate_stage_artifact,
     violation_summary,
@@ -77,7 +78,10 @@ def _load_proposal_response(proposal_id: str) -> ProposalResponse:
         record = session.run(_PROPOSAL_WITH_EFFECTS, id=proposal_id).single()
     if not record:
         raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
-    return ProposalResponse.from_neo4j(record["p"], _parse_effects(record["effects"]))
+    return ProposalResponse.from_neo4j(
+        proposal_state_service.hydrate_for_response(record["p"]),
+        _parse_effects(record["effects"]),
+    )
 
 
 def _sse(gen):
@@ -119,7 +123,7 @@ async def upgrade_mode(proposal_id: str, body: ModeUpgradeRequest):
 
 @router.get("/{proposal_id}/stream/scope")
 async def stream_scope(proposal_id: str):
-    """robo-proposal-scope 실행 → stage_plan SSE(FR-009)."""
+    """robo-proposal SCOPE phase 실행 → stage_plan SSE(FR-009)."""
     if staged_runner.load_state(proposal_id) is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     return _sse(scope_runner.stream_scope(proposal_id))
@@ -174,6 +178,9 @@ async def confirm_stage(proposal_id: str, stage: str, body: StageConfirmRequest)
     stage = stage.upper()
     if stage not in _STAGE_RUNNERS:
         raise HTTPException(status_code=404, detail=f"Unknown stage {stage}")
+    if staged_runner.prior_stage_incomplete(proposal_id, stage):
+        raise HTTPException(status_code=409, detail={"reason": "prior_stage_incomplete",
+                            "message": "직전 단계 산출물이 없습니다."})
     validation = validate_stage_artifact(stage, body.artifact)
     if validation.violations:
         SmartLogger.log("WARN", f"stage confirm blocked: {proposal_id}/{stage}",
@@ -238,9 +245,11 @@ async def skip_stage(proposal_id: str, stage: str, body: StageSkipRequest):
     stage = stage.upper()
     if stage not in _STAGE_RUNNERS:
         raise HTTPException(status_code=404, detail=f"Unknown stage {stage}")
-    err = staged_runner.validate_stage_plan([{"stage": stage, "skipped": True}])
-    if err:
-        raise HTTPException(status_code=422, detail=err)
+    if stage == "DISCOVER":
+        raise HTTPException(status_code=422, detail={
+            "reason": "discover_not_skippable",
+            "message": "Discover 단계는 행위 변경 Proposal 에서 완전 생략할 수 없습니다.",
+        })
     staged_runner.mark_stage_skipped(proposal_id, stage)
     staged_runner.log_stage(proposal_id, stage, "skip")
     return _load_proposal_response(proposal_id)

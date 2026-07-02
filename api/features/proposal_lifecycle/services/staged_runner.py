@@ -18,6 +18,7 @@ from api.platform.observability.smart_logger import SmartLogger
 from api.features.proposal_lifecycle.proposal_contracts import (
     DDD_STAGE_ORDER, NON_OMITTABLE_STAGES, StagePlan,
 )
+from api.features.proposal_lifecycle.services import proposal_interactions, proposal_state_service
 
 
 # --- 상태 로드/저장 ---------------------------------------------------------
@@ -28,7 +29,7 @@ def load_state(proposal_id: str) -> Optional[dict]:
             "MATCH (p:Proposal {id:$id}) RETURN "
             "p.decompositionMode AS mode, p.originalPrompt AS prompt, "
             "p.strategicDiff AS sd, p.stagePlan AS plan, "
-            "p.stageArtifacts AS arts, p.stageDraftArtifacts AS draftArts, p.currentStage AS cur, "
+            "p.stageArtifacts AS arts, p.currentStage AS cur, "
             "p.projectRoot AS projectRoot",
             id=proposal_id,
         ).single()
@@ -47,79 +48,61 @@ def load_state(proposal_id: str) -> Optional[dict]:
         "strategic": _p(rec.get("sd"), {}),
         "stagePlan": _p(rec.get("plan"), None),
         "stageArtifacts": _p(rec.get("arts"), {}) or {},
-        "stageDraftArtifacts": _p(rec.get("draftArts"), {}) or {},
+        "stageDraftArtifacts": proposal_interactions.pending_drafts(proposal_id),
         "currentStage": rec.get("cur"),
         "projectRoot": rec.get("projectRoot"),
     }
 
 
 def save_stage_plan(proposal_id: str, plan: dict) -> None:
-    first = _first_active_stage(plan)
-    with get_session() as session:
-        session.run(
-            "MATCH (p:Proposal {id:$id}) SET p.stagePlan=$plan, p.currentStage=$cur",
-            id=proposal_id, plan=json.dumps(plan, ensure_ascii=False), cur=first,
-        )
+    proposal_state_service.save_stage_plan(proposal_id, plan)
 
 
 def save_stage_artifact(proposal_id: str, stage: str, artifact: dict) -> Optional[str]:
     """확정된 스테이지 산출물을 저장하고 다음 스테이지로 currentStage 를 전진."""
     state = load_state(proposal_id)
     arts = (state or {}).get("stageArtifacts") or {}
-    draft_arts = (state or {}).get("stageDraftArtifacts") or {}
     arts[stage] = artifact
-    draft_arts.pop(stage, None)
     plan = (state or {}).get("stagePlan")
     nxt = next_stage_after(plan, stage)
+    cur_phase = "STRATEGIC_DDD" if nxt in DDD_STAGE_ORDER[:3] else "TACTICAL_DDD"
+    if nxt is None:
+        cur_phase = "STRATEGIC_DIFF" if stage in DDD_STAGE_ORDER[:3] else "TACTICAL_DIFF"
+    draft_ref = None
+    node = proposal_state_service.get_node(proposal_id) or {}
+    if node.get("pendingDraftId"):
+        draft_ref = node["pendingDraftId"]
     with get_session() as session:
         session.run(
             "MATCH (p:Proposal {id:$id}) "
-            "SET p.stageArtifacts=$arts, p.stageDraftArtifacts=$draftArts, p.currentStage=$cur",
+            "SET p.stageArtifacts=$arts, p.currentStage=$cur, "
+            "p.currentPhase=$phase, p.pendingDraftId=null, p.lifecycleStatus='ACTIVE'",
             id=proposal_id,
             arts=json.dumps(arts, ensure_ascii=False),
-            draftArts=json.dumps(draft_arts, ensure_ascii=False),
             cur=nxt,
+            phase=cur_phase,
         )
+    if draft_ref:
+        proposal_interactions.confirm_draft(proposal_id, draft_ref)
     return nxt
 
 
 def save_stage_draft_artifact(proposal_id: str, stage: str, artifact: dict) -> None:
     """미확정 스테이지 산출물을 저장해 새로고침 후 재실행을 막는다."""
-    state = load_state(proposal_id)
-    if state is None:
-        return
-    draft_arts = state.get("stageDraftArtifacts") or {}
-    draft_arts[stage] = artifact
-    with get_session() as session:
-        session.run(
-            "MATCH (p:Proposal {id:$id}) SET p.stageDraftArtifacts=$draftArts",
-            id=proposal_id,
-            draftArts=json.dumps(draft_arts, ensure_ascii=False),
-        )
+    proposal_interactions.save_draft(proposal_id, stage, artifact)
 
 
 def clear_stage_draft_artifact(proposal_id: str, stage: str) -> None:
-    state = load_state(proposal_id)
-    if state is None:
-        return
-    draft_arts = state.get("stageDraftArtifacts") or {}
-    if stage not in draft_arts:
-        return
-    draft_arts.pop(stage, None)
-    with get_session() as session:
-        session.run(
-            "MATCH (p:Proposal {id:$id}) SET p.stageDraftArtifacts=$draftArts",
-            id=proposal_id,
-            draftArts=json.dumps(draft_arts, ensure_ascii=False),
-        )
+    state = proposal_state_service.get_node(proposal_id) or {}
+    draft_id = state.get("pendingDraftId")
+    if draft_id:
+        proposal_interactions.reject_draft(proposal_id, draft_id, "stage draft cleared")
 
 
 def mark_stage_skipped(proposal_id: str, stage: str) -> Optional[str]:
     """플랜에서 해당 스테이지를 skipped 로 표시하고 currentStage 를 전진."""
     state = load_state(proposal_id) or {}
     plan = state.get("stagePlan") or {"stages": []}
-    draft_arts = state.get("stageDraftArtifacts") or {}
-    draft_arts.pop(stage, None)
     for item in plan.get("stages", []):
         if item.get("stage") == stage:
             item["skipped"] = True
@@ -127,10 +110,9 @@ def mark_stage_skipped(proposal_id: str, stage: str) -> Optional[str]:
     with get_session() as session:
         session.run(
             "MATCH (p:Proposal {id:$id}) "
-            "SET p.stagePlan=$plan, p.stageDraftArtifacts=$draftArts, p.currentStage=$cur",
+            "SET p.stagePlan=$plan, p.currentStage=$cur, p.lifecycleStatus='ACTIVE'",
             id=proposal_id,
             plan=json.dumps(plan, ensure_ascii=False),
-            draftArts=json.dumps(draft_arts, ensure_ascii=False),
             cur=nxt,
         )
     return nxt
@@ -192,6 +174,14 @@ def validate_stage_plan(stages: list[dict]) -> Optional[dict]:
         if item.get("stage") in NON_OMITTABLE_STAGES and item.get("skipped"):
             return {"reason": "discover_not_skippable",
                     "message": "Discover 단계는 행위 변경 Proposal 에서 완전 생략할 수 없습니다."}
+    stage_set = {item.get("stage") for item in stages}
+    missing = [stage for stage in DDD_STAGE_ORDER if stage not in stage_set]
+    if len(stages) > 1 and missing:
+        return {
+            "reason": "stage_plan_incomplete",
+            "message": "stagePlan은 6개 DDD stage를 모두 포함해야 합니다.",
+            "missing": missing,
+        }
     return None
 
 

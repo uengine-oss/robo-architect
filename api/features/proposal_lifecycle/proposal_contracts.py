@@ -20,6 +20,33 @@ class ProposalStatus(str, Enum):
     MERGE_FAILED = "MERGE_FAILED"
 
 
+class ProposalLifecycleStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    WAITING_USER = "WAITING_USER"
+    READY_FOR_CONFIRM = "READY_FOR_CONFIRM"
+    BLOCKED = "BLOCKED"
+    DONE = "DONE"
+    REJECTED = "REJECTED"
+
+
+class ProposalInteractionKind(str, Enum):
+    QUESTION = "QUESTION"
+    ANSWER = "ANSWER"
+    DRAFT = "DRAFT"
+    APPROVAL = "APPROVAL"
+    REJECTION = "REJECTION"
+    VALIDATOR_ERROR = "VALIDATOR_ERROR"
+    SYSTEM_NOTE = "SYSTEM_NOTE"
+
+
+class ProposalInteractionStatus(str, Enum):
+    PENDING = "PENDING"
+    RESOLVED = "RESOLVED"
+    CONFIRMED = "CONFIRMED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+
+
 class ImpactLevel(str, Enum):
     HIGH = "HIGH"
     MEDIUM = "MEDIUM"
@@ -371,10 +398,19 @@ class ProposalResponse(BaseModel):
     testResults: Optional[dict] = None
     # 042 — Staged DDD decomposition mode.
     decompositionMode: DecompositionMode = DecompositionMode.SIMPLIFIED
+    lifecycleStatus: ProposalLifecycleStatus = ProposalLifecycleStatus.ACTIVE
+    currentPhase: Optional[str] = None
     stagePlan: Optional[StagePlan] = None
     stageArtifacts: Optional[dict] = None       # {stage → artifact}
-    stageDraftArtifacts: Optional[dict] = None  # {stage → unconfirmed artifact}
+    stageDraftArtifacts: Optional[dict] = None  # response-only compatibility, sourced from ProposalInteraction drafts
+    draftArtifacts: Optional[dict] = None
     currentStage: Optional[str] = None
+    pendingQuestionId: Optional[str] = None
+    pendingDraftId: Optional[str] = None
+    resumeToken: Optional[str] = None
+    skillVersion: Optional[str] = None
+    schemaVersion: Optional[int] = None
+    interactions: Optional[list[dict]] = None
     memoryConflicts: Optional[list[MemoryConflict]] = None
     # 043 — ODA 표준 모드 산출물.
     odaAlignment: Optional[OdaAlignment] = None
@@ -476,7 +512,10 @@ class ProposalResponse(BaseModel):
             except Exception:
                 stage_plan = None
         stage_artifacts = _parse_json(node.get("stageArtifacts"), None)
-        stage_draft_artifacts = _parse_json(node.get("stageDraftArtifacts"), None)
+        # `stageDraftArtifacts` is no longer stored on Proposal. During migration-free
+        # development we expose a response-only projection from pending DRAFT interactions.
+        draft_artifacts = _parse_json(node.get("draftArtifacts"), None)
+        stage_draft_artifacts = draft_artifacts
         raw_conflicts = _parse_json(node.get("memoryConflicts"), None)
         mem_conflicts = None
         if raw_conflicts:
@@ -530,10 +569,19 @@ class ProposalResponse(BaseModel):
             destroyedAt=_dt(destroyed_at) if destroyed_at else None,
             testResults=raw_test_results,
             decompositionMode=mode,
+            lifecycleStatus=ProposalLifecycleStatus(node.get("lifecycleStatus") or "ACTIVE"),
+            currentPhase=node.get("currentPhase"),
             stagePlan=stage_plan,
             stageArtifacts=stage_artifacts,
             stageDraftArtifacts=stage_draft_artifacts,
+            draftArtifacts=draft_artifacts,
             currentStage=node.get("currentStage"),
+            pendingQuestionId=node.get("pendingQuestionId"),
+            pendingDraftId=node.get("pendingDraftId"),
+            resumeToken=node.get("resumeToken"),
+            skillVersion=node.get("skillVersion"),
+            schemaVersion=int(node.get("schemaVersion") or 1),
+            interactions=_parse_json(node.get("interactions"), None),
             memoryConflicts=mem_conflicts,
             odaAlignment=oda_alignment,
             odaConformance=oda_conformance,

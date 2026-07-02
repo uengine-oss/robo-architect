@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -72,7 +72,7 @@ async def post_connect(req: ConnectRequest, request: Request) -> dict[str, Any]:
     )
 
 
-@router.delete("", status_code=204)
+@router.delete("", status_code=204, response_class=Response, response_model=None)
 async def delete_binding(request: Request) -> None:
     actor = _actor_from_request(request)
     service.disconnect_binding(actor=actor)
@@ -171,7 +171,7 @@ async def get_components_scan_stream(request: Request) -> StreamingResponse:
     )
 
 
-@router.delete("/components", status_code=204)
+@router.delete("/components", status_code=204, response_class=Response, response_model=None)
 async def delete_components(request: Request) -> None:
     from . import component_library  # noqa: PLC0415
 

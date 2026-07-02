@@ -23,6 +23,7 @@ from api.features.proposal_lifecycle.proposal_contracts import (
     extract_title_from_prompt,
 )
 from api.features.proposal_lifecycle.services.proposal_id_generator import next_proposal_id
+from api.features.proposal_lifecycle.services import proposal_interactions, proposal_state_service
 from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
@@ -37,7 +38,7 @@ def _get_proposal_row(proposal_id: str) -> dict | None:
             id=proposal_id,
         )
         record = result.single()
-    return record["p"] if record else None
+    return proposal_state_service.hydrate_for_response(record["p"]) if record else None
 
 
 def _parse_effects(raw_effects: list) -> list:
@@ -78,6 +79,13 @@ async def create_proposal(body: CreateProposalRequest, request: Request):
                 author: $author,
                 createdAt: datetime($createdAt),
                 status: 'DRAFT',
+                lifecycleStatus: 'ACTIVE',
+                currentPhase: 'START_OR_RESUME',
+                pendingQuestionId: null,
+                pendingDraftId: null,
+                resumeToken: $resumeToken,
+                skillVersion: $skillVersion,
+                schemaVersion: $schemaVersion,
                 statusHistory: '[]',
                 clarificationLog: '[]',
                 decompositionMode: $decompositionMode
@@ -89,6 +97,9 @@ async def create_proposal(body: CreateProposalRequest, request: Request):
             author=actor,
             createdAt=created_at.isoformat(),
             decompositionMode=body.decompositionMode.value,
+            resumeToken=f"{proposal_id}:start",
+            skillVersion=proposal_interactions.SKILL_VERSION,
+            schemaVersion=proposal_interactions.SCHEMA_VERSION,
         )
 
     SmartLogger.log("INFO", f"Proposal created: {proposal_id}",
@@ -134,7 +145,7 @@ async def list_proposals(
 
     with get_session() as session:
         result = session.run(query, **params)
-        rows = [r["p"] for r in result.data()]
+        rows = [proposal_state_service.hydrate_for_response(r["p"]) for r in result.data()]
 
     return [ProposalResponse.from_neo4j(r, []) for r in rows]
 
@@ -166,7 +177,10 @@ async def get_proposal(proposal_id: str, request: Request):
     if not record:
         raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
 
-    return ProposalResponse.from_neo4j(record["p"], _parse_effects(record["effects"]))
+    return ProposalResponse.from_neo4j(
+        proposal_state_service.hydrate_for_response(record["p"]),
+        _parse_effects(record["effects"]),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +236,14 @@ async def delete_proposal(proposal_id: str, body: DeleteProposalRequest, request
                             params={"proposalId": proposal_id, "error": str(e)})
 
     with get_session() as session:
-        session.run("MATCH (p:Proposal {id: $id}) DETACH DELETE p", id=proposal_id)
+        session.run(
+            """
+            MATCH (p:Proposal {id: $id})
+            OPTIONAL MATCH (p)-[:HAS_INTERACTION]->(i:ProposalInteraction)
+            DETACH DELETE p, i
+            """,
+            id=proposal_id,
+        )
 
     SmartLogger.log("INFO", f"Proposal deleted: {proposal_id}",
                     category="proposal_lifecycle.delete.done",
@@ -313,6 +334,16 @@ async def answer_clarification(proposal_id: str, body: AnswerClarificationReques
             "MATCH (p:Proposal {id: $id}) SET p.clarificationLog = $clog",
             id=proposal_id, clog=clog_str,
         )
+    for ans in body.answers:
+        if row.get("pendingQuestionId"):
+            try:
+                proposal_interactions.answer_question(
+                    proposal_id,
+                    row["pendingQuestionId"],
+                    {"questionIndex": ans.questionIndex, "answer": ans.answer},
+                )
+            except ValueError:
+                pass
 
     # 백그라운드로 intent 재실행
     from api.features.proposal_lifecycle.services.intent_runner import run_intent_with_clarification
@@ -412,7 +443,9 @@ async def submit_proposal(proposal_id: str, body: SubmitProposalRequest, request
 
     with get_session() as session:
         session.run(
-            "MATCH (p:Proposal {id: $id}) SET p.status = 'SUBMITTED', p.statusHistory = $history",
+            "MATCH (p:Proposal {id: $id}) "
+            "SET p.status = 'SUBMITTED', p.statusHistory = $history, "
+            "p.currentPhase = 'CONSTITUTION', p.lifecycleStatus = 'ACTIVE'",
             id=proposal_id, history=new_history,
         )
 

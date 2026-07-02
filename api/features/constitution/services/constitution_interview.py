@@ -3,7 +3,7 @@
 
 핵심 게이팅 질문은 **백엔드가 결정적으로** 묻는다(LLM 에 맡기면 한두 개만 묻고 자동
 확정해버리는 문제 회피). 질문은 즉시(스킬 호출 없이) 흐른다. 모든 게이팅 결정이
-확정되면 그때 한 번 **robo-project-constitution 스킬**로 헌장 Markdown 을 합성하고
+확정되면 그때 한 번 **robo-proposal 스킬의 Constitution phase**로 헌장 Markdown 을 합성하고
 프로젝트 루트 Constitution 노드를 만든다. (Claude Code 호출, LLM 키 불필요.)
 """
 
@@ -17,7 +17,7 @@ from api.platform.skill_runner import run_skill_lines, extract_json
 from api.features.constitution.services import constitution_store as store
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-project-constitution"
+_SKILL_NAME = "robo-proposal"
 
 # field -> answer (게이팅 결정 누적). 단일 프로젝트 인터뷰라 모듈 전역.
 _answers: dict[str, str] = {}
@@ -205,6 +205,7 @@ def _analysis_prompt() -> str:
     ctx = _proposal_ctx or {}
     bcs = _bc_names()
     return (
+        "phase: CONSTITUTION\n"
         f"Proposal ID: {ctx.get('id','')}\n"
         f"원본 프롬프트(자연어 요구사항): {ctx.get('prompt','')}\n\n"
         f"제안이 도입할 BoundedContext({len(bcs)}개): {', '.join(bcs) or '(아직 없음)'}\n\n"
@@ -284,6 +285,7 @@ def _synthesis_prompt() -> str:
             f"원본 프롬프트: {ctx.get('prompt','')}\n"
         )
     return (
+        "phase: CONSTITUTION\n"
         "프로젝트 루트 헌장(Constitution)을 작성한다. **아래 결정은 사용자가 인터뷰로 확정한 값**이므로 "
         "추가 질문 없이 그대로 반영하라(질문 금지).\n\n"
         f"확정된 결정:\n{decided}\n\n"

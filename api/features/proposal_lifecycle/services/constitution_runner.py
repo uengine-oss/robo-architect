@@ -1,5 +1,5 @@
 """
-robo-project-constitution 스킬 호출 (인터뷰 게이트 전용).
+robo-proposal 스킬의 Constitution phase 호출 (인터뷰 게이트 전용).
 
 041 개정: Constitution 은 타깃 레포 파일이 아니라 **Neo4j 노드**(프로젝트 루트 싱글톤)에
 저장된다. 이 러너는 *프로젝트 루트 헌장이 없을 때만* 인터뷰를 1회 수행해 루트 노드를 만든다.
@@ -18,7 +18,7 @@ from api.platform.skill_runner import run_skill_lines, extract_json
 from api.features.constitution.services import constitution_store as store
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-project-constitution"
+_SKILL_NAME = "robo-proposal"
 
 
 # --- 호환 헬퍼: 다른 러너(plan/tasks/implement)가 호출한다. project_root 인자는 무시. ---
@@ -64,6 +64,7 @@ def _build_interview_prompt(proposal_id: str, ctx: dict) -> str:
                     titles.append(t)
     intent_summary = ", ".join(titles[:12]) or "(아직 없음)"
     return (
+        "phase: CONSTITUTION\n"
         f"Proposal ID: {proposal_id}\n"
         f"원본 프롬프트(자연어 요구사항): {ctx.get('prompt','')}\n\n"
         f"프로젝트 의도 요약: {intent_summary}\n\n"

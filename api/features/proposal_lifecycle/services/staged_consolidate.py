@@ -381,11 +381,11 @@ async def consolidate(proposal_id: str) -> Optional[dict]:
         scenario = SkillScenario.DETAILED_STRATEGIC_FROM_DDD
         SmartLogger.log("INFO", f"staged strategic diff generation: {proposal_id}",
                         category="proposal_lifecycle.staged.consolidate.strategic_start",
-                        params={"proposalId": proposal_id, "skillName": "robo-proposal-diff",
+                        params={"proposalId": proposal_id, "skillName": "robo-proposal",
                                 "scenario": scenario.value,
                                 "artifactStages": [s for s in ("DISCOVER", "DECOMPOSE", "STRATEGIZE") if arts.get(s)]})
         result = await run_validated_skill_once(
-            skill_name="robo-proposal-diff",
+            skill_name="robo-proposal",
             prompt_builder=lambda feedback: _strategic_prompt(proposal_id, state, arts, feedback),
             validator=lambda raw: validate_strategic_output(raw, allow_clarify=False),
             proposal_id=proposal_id,
@@ -409,11 +409,11 @@ async def consolidate(proposal_id: str) -> Optional[dict]:
         state_for_tactical["strategic"] = strategic
         SmartLogger.log("INFO", f"staged tactical diff generation: {proposal_id}",
                         category="proposal_lifecycle.staged.consolidate.tactical_start",
-                        params={"proposalId": proposal_id, "skillName": "robo-proposal-diff",
+                        params={"proposalId": proposal_id, "skillName": "robo-proposal",
                                 "scenario": scenario.value,
                                 "artifactStages": [s for s in ("CONNECT", "DEFINE", "TACTICAL") if arts.get(s)]})
         result = await run_validated_skill_once(
-            skill_name="robo-proposal-diff",
+            skill_name="robo-proposal",
             prompt_builder=lambda feedback: _tactical_prompt(proposal_id, state_for_tactical, arts, feedback),
             validator=validate_tactical_output,
             proposal_id=proposal_id,
@@ -440,7 +440,7 @@ async def consolidate(proposal_id: str) -> Optional[dict]:
                     category="proposal_lifecycle.staged.consolidate",
                     params={
                         "proposalId": proposal_id,
-                        "skillName": "robo-proposal-diff",
+                        "skillName": "robo-proposal",
                         "updatedFields": list(updates.keys()),
                         "strategicArtifactStages": [s for s in ("DISCOVER", "DECOMPOSE", "STRATEGIZE") if arts.get(s)],
                         "tacticalArtifactStages": [s for s in ("CONNECT", "DEFINE", "TACTICAL") if arts.get(s)],

@@ -1,0 +1,497 @@
+"""MCP server for Proposal lifecycle state and run-state operations."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from typing import Any
+
+from pydantic import ValidationError
+
+from api.features.proposal_lifecycle.proposal_contracts import (
+    DDD_STAGE_ORDER,
+    DecompositionMode,
+    ProposalResponse,
+    StrategicDiff,
+    TestRunResult,
+    append_status_history,
+    extract_title_from_prompt,
+)
+from api.features.proposal_lifecycle.services import (
+    proposal_interactions,
+    proposal_state_service,
+    staged_runner,
+)
+from api.features.proposal_lifecycle.services.proposal_ai_validation import (
+    validate_stage_artifact,
+    validate_implementation_plan,
+    validate_tactical_output,
+    validate_strategic_output,
+    violation_summary,
+)
+from api.features.proposal_lifecycle.services.proposal_id_generator import next_proposal_id
+from api.platform.neo4j import get_session
+from api.platform.observability.smart_logger import SmartLogger
+
+
+def build_mcp_server() -> Any | None:
+    try:
+        from mcp.server.fastmcp import FastMCP  # type: ignore
+    except ImportError as e:
+        SmartLogger.log(
+            "WARN",
+            "mcp SDK not importable — /mcp/proposals transport disabled.",
+            category="proposal_lifecycle.mcp.sdk_missing",
+            params={"error": str(e)},
+        )
+        return None
+
+    server = FastMCP("robo-proposal", streamable_http_path="/")
+
+    @server.tool(name="proposal_create", description="Create a new Proposal lifecycle node.")
+    def proposal_create(
+        originalPrompt: str,  # noqa: N803
+        title: str | None = None,
+        mode: str = "SIMPLIFIED",
+        author: str = "mcp",
+    ) -> dict[str, Any]:
+        proposal_id = next_proposal_id()
+        created_at = datetime.now(timezone.utc)
+        normalized_mode = _normalize_mode(mode)
+        auto_title = title or extract_title_from_prompt(originalPrompt)
+        with get_session() as session:
+            session.run(
+                """
+                CREATE (p:Proposal {
+                  id:$id,
+                  title:$title,
+                  originalPrompt:$originalPrompt,
+                  author:$author,
+                  createdAt: datetime($createdAt),
+                  status:'DRAFT',
+                  lifecycleStatus:'ACTIVE',
+                  currentPhase:'START_OR_RESUME',
+                  statusHistory:'[]',
+                  clarificationLog:'[]',
+                  decompositionMode:$decompositionMode,
+                  pendingQuestionId:null,
+                  pendingDraftId:null,
+                  resumeToken:$resumeToken,
+                  skillVersion:$skillVersion,
+                  schemaVersion:$schemaVersion
+                })
+                """,
+                id=proposal_id,
+                title=auto_title,
+                originalPrompt=originalPrompt,
+                author=author,
+                createdAt=created_at.isoformat(),
+                decompositionMode=normalized_mode,
+                resumeToken=f"{proposal_id}:start",
+                skillVersion=proposal_interactions.SKILL_VERSION,
+                schemaVersion=proposal_interactions.SCHEMA_VERSION,
+            )
+        _log("proposal_create", proposal_id)
+        return _state(proposal_id)
+
+    @server.tool(name="proposal_get", description="Return full Proposal lifecycle state.")
+    def proposal_get(proposalId: str) -> dict[str, Any]:  # noqa: N803
+        return _state(proposalId)
+
+    @server.tool(name="proposal_list", description="List resumable Proposal summaries.")
+    def proposal_list(status: str | None = None, limit: int = 50) -> dict[str, Any]:
+        where = "WHERE p.status = $status" if status else ""
+        params: dict[str, Any] = {"limit": limit}
+        if status:
+            params["status"] = status
+        with get_session() as session:
+            rows = session.run(
+                f"""
+                MATCH (p:Proposal)
+                {where}
+                RETURN p {{.*}} AS p
+                ORDER BY p.createdAt DESC
+                LIMIT $limit
+                """,
+                **params,
+            )
+            proposals = [_state_from_node(r["p"], include_interactions=False) for r in rows]
+        return {"proposals": proposals, "count": len(proposals)}
+
+    @server.tool(name="proposal_next_step", description="Calculate next safe Proposal lifecycle step.")
+    def proposal_next_step(
+        proposalId: str,  # noqa: N803
+        mode: str | None = None,
+        phase: str | None = None,
+    ) -> dict[str, Any]:
+        result = proposal_state_service.next_step(proposalId, mode=mode, phase=phase)
+        _log("proposal_next_step", proposalId, result=result.get("status"))
+        return result
+
+    @server.tool(name="proposal_save_stage_plan", description="Persist a confirmed Detailed DDD stagePlan.")
+    def proposal_save_stage_plan(proposalId: str, stagePlan: dict) -> dict[str, Any]:  # noqa: N803
+        err = staged_runner.validate_stage_plan(stagePlan.get("stages", []))
+        if err:
+            return {"status": "invalid", "error": err}
+        proposal_state_service.save_stage_plan(proposalId, stagePlan)
+        proposal_interactions.record_interaction(
+            proposalId,
+            phase="SCOPE",
+            kind="SYSTEM_NOTE",
+            status="RESOLVED",
+            payload={"event": "stagePlanSaved", "stagePlan": stagePlan},
+        )
+        _log("proposal_save_stage_plan", proposalId)
+        return _state(proposalId)
+
+    @server.tool(name="proposal_skip_stage", description="Mark a Detailed DDD stage as skipped.")
+    def proposal_skip_stage(proposalId: str, stage: str, reason: str | None = None) -> dict[str, Any]:  # noqa: N803
+        if stage.upper() == "DISCOVER":
+            return {
+                "status": "invalid",
+                "error": {
+                    "reason": "discover_not_skippable",
+                    "message": "Discover stage cannot be fully skipped for behavior-changing Proposals.",
+                },
+            }
+        next_stage = staged_runner.mark_stage_skipped(proposalId, stage.upper())
+        proposal_interactions.record_interaction(
+            proposalId,
+            phase="SCOPE",
+            kind="SYSTEM_NOTE",
+            status="RESOLVED",
+            payload={"event": "stageSkipped", "stage": stage.upper(), "reason": reason, "nextStage": next_stage},
+        )
+        _log("proposal_skip_stage", proposalId, stage=stage.upper())
+        return {"status": "ok", "nextStep": proposal_state_service.next_step(proposalId).get("nextStep"), "proposal": _state(proposalId)}
+
+    @server.tool(name="proposal_save_draft", description="Save a pending draft artifact in ProposalInteraction.")
+    def proposal_save_draft(proposalId: str, phase: str, artifact: dict) -> dict[str, Any]:  # noqa: N803
+        draft = proposal_interactions.save_draft(proposalId, phase.upper(), artifact)
+        _log("proposal_save_draft", proposalId, draftId=draft["id"])
+        return {"status": "ok", "draftRef": draft["id"], "draft": draft}
+
+    @server.tool(name="proposal_confirm_draft", description="Confirm a draft and promote it to a canonical artifact when possible.")
+    def proposal_confirm_draft(proposalId: str, draftRef: str) -> dict[str, Any]:  # noqa: N803
+        draft = proposal_interactions.get_interaction(draftRef)
+        if not draft:
+            return {"status": "not-found", "draftRef": draftRef}
+        payload = draft.get("payload") or {}
+        artifact = payload.get("artifact") if isinstance(payload, dict) else None
+        phase = (draft.get("phase") or "").upper()
+        if isinstance(artifact, dict):
+            validation = _validate_artifact_for_phase(proposalId, phase, artifact)
+            if validation:
+                proposal_interactions.record_interaction(
+                    proposalId,
+                    phase=phase or "UNKNOWN",
+                    kind="VALIDATOR_ERROR",
+                    status="RESOLVED",
+                    payload=validation,
+                )
+                return validation
+            draft = proposal_interactions.confirm_draft(proposalId, draftRef)
+            _promote_confirmed(proposalId, phase, artifact)
+        proposal_state_service.set_lifecycle(
+            proposalId,
+            lifecycle_status="ACTIVE",
+            current_phase=_phase_after_confirm(phase),
+            clear_pending_draft=True,
+        )
+        _log("proposal_confirm_draft", proposalId, draftId=draftRef)
+        return {"status": "ok", "confirmed": draft, "proposal": _state(proposalId)}
+
+    @server.tool(name="proposal_reject_draft", description="Reject a pending draft artifact.")
+    def proposal_reject_draft(proposalId: str, draftRef: str, reason: str | None = None) -> dict[str, Any]:  # noqa: N803
+        rejected = proposal_interactions.reject_draft(proposalId, draftRef, reason)
+        _log("proposal_reject_draft", proposalId, draftId=draftRef)
+        return {"status": "ok" if rejected else "not-found", "draft": rejected}
+
+    @server.tool(name="proposal_save_stage_artifact", description="Validate and save a confirmed DDD stage artifact.")
+    def proposal_save_stage_artifact(proposalId: str, stage: str, artifact: dict) -> dict[str, Any]:  # noqa: N803
+        normalized_stage = stage.upper()
+        if staged_runner.prior_stage_incomplete(proposalId, normalized_stage):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_stage_incomplete",
+                "message": "Previous active stage artifact is required before saving this stage.",
+            }
+        validation = validate_stage_artifact(normalized_stage, artifact)
+        if validation.violations:
+            proposal_interactions.record_interaction(
+                proposalId,
+                phase=normalized_stage,
+                kind="VALIDATOR_ERROR",
+                status="RESOLVED",
+                payload={"violations": validation.violations},
+            )
+            return _validation_error("stage_artifact_invalid", validation.violations)
+        next_stage = staged_runner.save_stage_artifact(proposalId, normalized_stage, artifact)
+        _log("proposal_save_stage_artifact", proposalId, stage=normalized_stage)
+        return {"status": "ok", "nextStage": next_stage, "proposal": _state(proposalId)}
+
+    @server.tool(name="proposal_save_diff", description="Validate and save strategic or tactical diff.")
+    def proposal_save_diff(proposalId: str, diffType: str, payload: Any) -> dict[str, Any]:  # noqa: N803
+        validation = _validate_diff(diffType, payload)
+        if validation:
+            proposal_interactions.record_interaction(
+                proposalId,
+                phase="TACTICAL_DIFF" if diffType == "tactical" else "STRATEGIC_DIFF",
+                kind="VALIDATOR_ERROR",
+                status="RESOLVED",
+                payload=validation,
+            )
+            return validation
+        proposal_state_service.save_diff(proposalId, diffType.lower(), payload)
+        _log("proposal_save_diff", proposalId, diffType=diffType)
+        return {"status": "ok", "proposal": _state(proposalId)}
+
+    @server.tool(name="proposal_record_question", description="Store a single pending HITL question.")
+    def proposal_record_question(
+        proposalId: str,  # noqa: N803
+        phase: str,
+        question: str,
+        options: list[Any] | None = None,
+    ) -> dict[str, Any]:
+        interaction = proposal_interactions.record_question(proposalId, phase.upper(), question, options or [])
+        _log("proposal_record_question", proposalId, questionId=interaction["id"])
+        return {"status": "ok", "questionId": interaction["id"], "question": interaction}
+
+    @server.tool(name="proposal_answer_question", description="Store a user's answer and resume the Proposal.")
+    def proposal_answer_question(proposalId: str, questionId: str, answer: Any) -> dict[str, Any]:  # noqa: N803
+        try:
+            result = proposal_interactions.answer_question(proposalId, questionId, answer)
+        except ValueError as e:
+            return {"status": "not-found", "message": str(e)}
+        _log("proposal_answer_question", proposalId, questionId=questionId)
+        return {"status": "ok", **result, "nextStep": proposal_state_service.next_step(proposalId).get("nextStep")}
+
+    @server.tool(name="proposal_resume", description="Restore pending question/draft and recent interaction window.")
+    def proposal_resume(proposalId: str) -> dict[str, Any]:  # noqa: N803
+        try:
+            context = proposal_interactions.resume_context(proposalId)
+        except ValueError as e:
+            return {"status": "not-found", "message": str(e)}
+        return {"status": "ok", "resumeContext": context, "nextStep": proposal_state_service.next_step(proposalId).get("nextStep")}
+
+    @server.tool(name="proposal_generate_tasks", description="Persist generated implementation tasks.")
+    def proposal_generate_tasks(proposalId: str, tasks: list[dict]) -> dict[str, Any]:  # noqa: N803
+        proposal_state_service.save_tasks(proposalId, tasks)
+        proposal_interactions.record_interaction(
+            proposalId,
+            phase="TASKS",
+            kind="SYSTEM_NOTE",
+            status="RESOLVED",
+            payload={"event": "tasksSaved", "count": len(tasks or [])},
+        )
+        _log("proposal_generate_tasks", proposalId, count=len(tasks or []))
+        return {"status": "ok", "proposal": _state(proposalId)}
+
+    @server.tool(name="proposal_update_implementation_status", description="Update implementation/sandbox status.")
+    def proposal_update_implementation_status(proposalId: str, status: str) -> dict[str, Any]:  # noqa: N803
+        proposal = proposal_state_service.update_implementation_status(proposalId, status.upper())
+        _log("proposal_update_implementation_status", proposalId, status=status.upper())
+        return {"status": "ok", "proposal": _state_from_node(proposal)}
+
+    @server.tool(name="proposal_save_test_result", description="Validate and save TestRunResult.")
+    def proposal_save_test_result(proposalId: str, testRunResult: dict) -> dict[str, Any]:  # noqa: N803
+        try:
+            result = TestRunResult(**{**testRunResult, "proposalId": proposalId}).model_dump(mode="json")
+        except ValidationError as e:
+            return {"status": "invalid", "violations": e.errors()}
+        proposal_state_service.save_test_result(proposalId, result)
+        _log("proposal_save_test_result", proposalId)
+        return {"status": "ok", "proposal": _state(proposalId)}
+
+    @server.tool(name="proposal_submit", description="Transition Proposal to submitted Plan state.")
+    def proposal_submit(proposalId: str) -> dict[str, Any]:  # noqa: N803
+        node = proposal_state_service.get_node(proposalId)
+        if not node:
+            return {"status": "not-found", "proposalId": proposalId}
+        if node.get("status") != "DRAFT":
+            return {"status": "invalid-transition", "message": f"current status is {node.get('status')}"}
+        history = append_status_history(node.get("statusHistory") or "[]", "DRAFT", "SUBMITTED", "mcp")
+        with get_session() as session:
+            session.run(
+                """
+                MATCH (p:Proposal {id:$id})
+                SET p.status='SUBMITTED',
+                    p.statusHistory=$history,
+                    p.currentPhase='CONSTITUTION',
+                    p.lifecycleStatus='ACTIVE'
+                """,
+                id=proposalId,
+                history=history,
+            )
+        _log("proposal_submit", proposalId)
+        return {"status": "ok", "proposal": _state(proposalId)}
+
+    @server.tool(name="proposal_accept", description="Mark Proposal as accepted/done.")
+    def proposal_accept(proposalId: str) -> dict[str, Any]:  # noqa: N803
+        node = proposal_state_service.get_node(proposalId)
+        if node:
+            history = append_status_history(
+                node.get("statusHistory") or "[]",
+                node.get("status") or "",
+                "ACCEPTED",
+                "mcp",
+                "accepted via proposal MCP",
+            )
+            with get_session() as session:
+                session.run(
+                    "MATCH (p:Proposal {id:$id}) SET p.statusHistory=$history",
+                    id=proposalId,
+                    history=history,
+                )
+        proposal = proposal_state_service.mark_terminal(proposalId, "DONE", "ACCEPTED")
+        _log("proposal_accept", proposalId)
+        return {"status": "ok", "proposal": _state_from_node(proposal)}
+
+    SmartLogger.log(
+        "INFO",
+        "Proposal MCP server constructed.",
+        category="proposal_lifecycle.mcp.constructed",
+        params={"tools": [
+            "proposal_create", "proposal_get", "proposal_list", "proposal_next_step",
+            "proposal_save_stage_plan", "proposal_skip_stage", "proposal_save_draft",
+            "proposal_confirm_draft", "proposal_reject_draft", "proposal_save_stage_artifact",
+            "proposal_save_diff", "proposal_record_question", "proposal_answer_question",
+            "proposal_resume", "proposal_generate_tasks", "proposal_update_implementation_status",
+            "proposal_save_test_result", "proposal_submit", "proposal_accept",
+        ]},
+    )
+    return server
+
+
+def _normalize_mode(mode: str) -> str:
+    normalized = (mode or "SIMPLIFIED").strip().upper()
+    if normalized == "DETAILED":
+        normalized = "DETAILED_DDD"
+    try:
+        return DecompositionMode(normalized).value
+    except Exception:
+        return DecompositionMode.SIMPLIFIED.value
+
+
+def _state(proposal_id: str) -> dict[str, Any]:
+    node = proposal_state_service.get_node(proposal_id)
+    if node is None:
+        return {"status": "not-found", "proposalId": proposal_id}
+    return _state_from_node(node)
+
+
+def _state_from_node(node: dict, *, include_interactions: bool = True) -> dict[str, Any]:
+    hydrated = proposal_state_service.hydrate_for_response(node) if include_interactions else dict(node)
+    try:
+        return ProposalResponse.from_neo4j(hydrated, []).model_dump(mode="json")
+    except Exception:
+        return _json_safe(hydrated)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
+
+
+def _validate_diff(diff_type: str, payload: Any) -> dict | None:
+    normalized = diff_type.lower()
+    if normalized == "strategic":
+        result = validate_strategic_output({"action": "done", "strategicDiff": payload}, allow_clarify=False)
+        if result.valid:
+            return None
+        return _validation_error("strategic_contract_invalid", result.violations)
+    if normalized == "tactical":
+        result = validate_tactical_output({"tacticalDiff": payload})
+        if result.valid:
+            return None
+        return _validation_error("tactical_contract_invalid", result.violations)
+    return {"status": "invalid", "reason": "unknown_diff_type", "message": "diffType must be strategic or tactical"}
+
+
+def _validate_artifact_for_phase(proposal_id: str, phase: str, artifact: dict) -> dict | None:
+    if phase in set(DDD_STAGE_ORDER):
+        if staged_runner.prior_stage_incomplete(proposal_id, phase):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_stage_incomplete",
+                "message": "Previous active stage artifact is required before confirming this draft.",
+            }
+        result = validate_stage_artifact(phase, artifact)
+        if result.violations:
+            return _validation_error("stage_artifact_invalid", result.violations)
+        return None
+    if phase == "STRATEGIC_DIFF":
+        return _validate_diff("strategic", artifact.get("strategicDiff", artifact))
+    if phase == "TACTICAL_DIFF":
+        return _validate_diff("tactical", artifact.get("tacticalDiff", artifact))
+    if phase == "CONSTITUTION":
+        plan = artifact.get("implementationPlan")
+        if not isinstance(plan, dict):
+            return {"status": "invalid", "reason": "plan_draft_invalid", "message": "CONSTITUTION draft must include implementationPlan."}
+        violations = validate_implementation_plan(plan)
+        if violations:
+            return _validation_error("implementation_plan_invalid", violations)
+        if artifact.get("tacticalDiff") is not None:
+            tactical_validation = _validate_diff("tactical", artifact.get("tacticalDiff"))
+            if tactical_validation:
+                return tactical_validation
+        return None
+    if phase == "TASKS" and not isinstance(artifact.get("tasks"), list):
+        return {"status": "invalid", "reason": "tasks_invalid", "message": "TASKS draft must include tasks list."}
+    return None
+
+
+def _validation_error(reason: str, violations: list[dict]) -> dict:
+    return {
+        "status": "invalid",
+        "reason": reason,
+        "violationSummary": violation_summary(violations),
+        "violations": violations[:8],
+    }
+
+
+def _promote_confirmed(proposal_id: str, phase: str, artifact: dict) -> None:
+    if phase in set(DDD_STAGE_ORDER):
+        staged_runner.save_stage_artifact(proposal_id, phase, artifact)
+    elif phase == "STRATEGIC_DIFF":
+        proposal_state_service.save_diff(proposal_id, "strategic", artifact.get("strategicDiff", artifact))
+    elif phase in ("TACTICAL_DIFF", "CONSTITUTION"):
+        if artifact.get("implementationPlan"):
+            from api.features.proposal_lifecycle.services import plan_runner
+            plan_runner.confirm_plan(
+                proposal_id,
+                artifact.get("implementationPlan") or {},
+                artifact.get("tacticalDiff"),
+                artifact.get("impactMap"),
+            )
+        elif artifact.get("tacticalDiff") is not None:
+            proposal_state_service.save_diff(proposal_id, "tactical", artifact["tacticalDiff"])
+    elif phase == "TASKS":
+        proposal_state_service.save_tasks(proposal_id, artifact.get("tasks") or [])
+
+
+def _phase_after_confirm(phase: str) -> str:
+    mapping = {
+        "STRATEGIC_DIFF": "SUBMIT",
+        "TACTICAL_DIFF": "CONSTITUTION",
+        "CONSTITUTION": "TASKS",
+        "TASKS": "IMPLEMENT",
+        "TEST": "ACCEPT",
+    }
+    return mapping.get(phase, phase or "START_OR_RESUME")
+
+
+def _log(tool: str, proposal_id: str, **params: Any) -> None:
+    SmartLogger.log(
+        "INFO",
+        f"Proposal MCP tool called: {tool}",
+        category=f"proposal_lifecycle.mcp.{tool}",
+        params={"proposalId": proposal_id, **params},
+    )

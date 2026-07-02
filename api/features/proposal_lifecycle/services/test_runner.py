@@ -1,5 +1,5 @@
 """
-robo-proposal-test 스킬 호출 서비스.
+robo-proposal TEST phase 호출 서비스.
 UserStory GWT 인수 조건 LLM-as-judge + robo-sync 구조 검증.
 
 검증은 **runner(스트리밍)** 로 실행하여 실행 로그(narration·tool 사용)를 실시간으로
@@ -15,9 +15,10 @@ from typing import AsyncGenerator
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.skill_runner import run_skill_lines, run_skill_once, extract_json
+from api.features.proposal_lifecycle.services import proposal_state_service
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-proposal-test"
+_SKILL_NAME = "robo-proposal"
 
 
 def _fetch_acceptance_criteria(proposal_id: str) -> list[dict]:
@@ -253,3 +254,8 @@ def _save_results(proposal_id: str, test_result: dict, history_json: str) -> Non
             testResults=json.dumps(test_result, ensure_ascii=False),
             history=new_history,
         )
+    proposal_state_service.set_lifecycle(
+        proposal_id,
+        lifecycle_status="ACTIVE",
+        current_phase="ACCEPT",
+    )

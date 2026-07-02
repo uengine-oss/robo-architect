@@ -1,5 +1,5 @@
 """
-robo-proposal-context 스킬 호출 서비스.
+robo-proposal CONTEXT phase 호출 서비스.
 그래프 탐색으로 Impact Map(영향 노드 목록 + conflictLevel) 생성.
 """
 
@@ -13,12 +13,12 @@ from api.platform.observability.smart_logger import SmartLogger
 from api.platform.skill_runner import run_skill_once, extract_json
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-proposal-context"
+_SKILL_NAME = "robo-proposal"
 
 
 async def build_impact_map(proposal_id: str, tactical_diff: list[dict]) -> list[dict]:
     """
-    robo-proposal-context 스킬을 호출하여 ImpactMap을 생성하고 Neo4j에 저장한다.
+    robo-proposal CONTEXT phase를 호출하여 ImpactMap을 생성하고 Neo4j에 저장한다.
     Returns: ImpactMapEntry 목록 (dict 형태)
     """
     SmartLogger.log("INFO", f"impact_map_start: {proposal_id}",
@@ -34,6 +34,7 @@ async def build_impact_map(proposal_id: str, tactical_diff: list[dict]) -> list[
     tactical_str = json.dumps(tactical_diff, ensure_ascii=False, indent=2)
 
     human_prompt = (
+        "phase: CONTEXT\n"
         f"Proposal ID: {proposal_id}\n\n"
         f"Tactical Diff (변경 예정 도메인 요소):\n{tactical_str}\n\n"
         f"현재 시스템 구성 요소:\n{node_list or '(구성 요소 없음)'}\n\n"

@@ -1,4 +1,4 @@
-"""042 US2 — Decompose 스테이지(robo-proposal-strategic-ddd)."""
+"""042 US2 — Decompose 스테이지(robo-proposal)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,14 @@ from typing import AsyncGenerator
 from api.features.proposal_lifecycle.services import staged_runner
 from api.features.proposal_lifecycle.services.stage_runners.base import execute_stage
 
-_SKILL = "robo-proposal-strategic-ddd"
+_SKILL = "robo-proposal"
 
 
 def _build_prompt(state: dict) -> str:
     discover = (state.get("stageArtifacts") or {}).get("DISCOVER", {})
     return (
+        "mode: DETAILED_DDD\n"
+        "phase: STRATEGIC_DDD\n"
         "stage: DECOMPOSE\n"
         f"원본 프롬프트: {state.get('prompt','')}\n\n"
         f"Discover 산출물(JSON):\n{json.dumps(discover, ensure_ascii=False)}\n\n"

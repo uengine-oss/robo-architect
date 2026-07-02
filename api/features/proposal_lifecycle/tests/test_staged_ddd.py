@@ -49,6 +49,15 @@ def test_validate_stage_plan_allows_other_skips():
     assert staged_runner.validate_stage_plan([{"stage": "CONNECT", "skipped": True}]) is None
 
 
+def test_validate_stage_plan_requires_all_stages_when_confirming_plan():
+    err = staged_runner.validate_stage_plan([
+        {"stage": "DISCOVER", "skipped": False},
+        {"stage": "DECOMPOSE", "skipped": False},
+    ])
+    assert err and err["reason"] == "stage_plan_incomplete"
+    assert "STRATEGIZE" in err["missing"]
+
+
 def test_active_stages_respects_skip_and_order():
     plan = {"stages": [
         {"stage": "DISCOVER", "applies": True, "skipped": False},

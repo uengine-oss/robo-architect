@@ -79,7 +79,7 @@
       <span v-if="!pendingLaunch && progressState.tone === 'running'" class="spinner spinner--sm running-note__icon" />
       <span v-else class="running-note__icon">ℹ️</span>
       <p class="running-note__text">
-        {{ t('proposals.sandbox.implementingNote') }}<template v-if="pendingLaunch"> {{ t('proposals.sandbox.implementingNotePending') }} <strong>"{{ t('proposals.sandbox.goToShell') }}"</strong>{{ t('proposals.sandbox.implementingNotePendingPost') }} <code>/robo-implement {{ proposalId }}</code> {{ t('proposals.sandbox.implementingNoteCommand') }}</template>
+        {{ t('proposals.sandbox.implementingNote') }}<template v-if="pendingLaunch"> {{ t('proposals.sandbox.implementingNotePending') }} <strong>"{{ t('proposals.sandbox.goToShell') }}"</strong>{{ t('proposals.sandbox.implementingNotePendingPost') }} <code>/robo-proposal phase:IMPLEMENT {{ proposalId }}</code> {{ t('proposals.sandbox.implementingNoteCommand') }}</template>
       </p>
     </div>
 
@@ -121,7 +121,7 @@
     </section>
 
     <!-- 준비 완료(pendingLaunch) — 자동 이동 안 함. 안내 멘트에 연결된 이 버튼을
-         눌러야 셀로 진입하며 /robo-implement 명령으로 구현이 시작된다. -->
+         눌러야 셀로 진입하며 /robo-proposal Implement phase 명령으로 구현이 시작된다. -->
     <div class="sandbox-actions" v-if="pendingLaunch">
       <button @click="goToShell" class="btn btn--primary">{{ t('proposals.sandbox.goToShell') }}</button>
     </div>
@@ -330,7 +330,7 @@ async function startImplement(restart = false) {
 // 실제 구현 요청. 대상이 Git 저장소가 아니면(NOT_A_GIT_REPO) 다이얼로그로 git init
 // 동의를 받아 initGit=true 로 1회 재시도한다. (FR-006)
 // 준비만 하고 **자동으로 Code 탭으로 이동하지 않는다** — 'Claude Code 셀로 이동'
-// 버튼을 눌렀을 때 그 셀로 진입하며 /robo-implement 명령을 주입한다.
+// 버튼을 눌렀을 때 그 셀로 진입하며 /robo-proposal Implement phase 명령을 주입한다.
 async function runImplement(root, restart, initGit) {
   try {
     const data = await store.implementProposal(props.proposalId, root, initGit)
@@ -361,10 +361,10 @@ function hasShellSession() {
 function goToShell() {
   const path = pendingLaunch.value?.worktreePath || proposal.value?.sandboxWorktreePath
   if (!openClaudeCode || !path) return
-  // 최초 진입(준비 직후 또는 셀 세션 없음)이면 /robo-implement 명령을 주입해 구현을
+  // 최초 진입(준비 직후 또는 셀 세션 없음)이면 /robo-proposal Implement phase 명령을 주입해 구현을
   // 시작한다. 이미 세션이 있으면(이어보기) 명령 없이 그 셀로만 전환한다.
   const firstEntry = !!pendingLaunch.value || !hasShellSession()
-  const command = firstEntry ? (pendingLaunch.value?.command || `/robo-implement ${props.proposalId}`) : null
+  const command = firstEntry ? (pendingLaunch.value?.command || `/robo-proposal phase:IMPLEMENT ${props.proposalId}`) : null
   const restart = pendingLaunch.value?.restart || false
   openClaudeCode(path, command, { proposalId: props.proposalId, restart })
   pendingLaunch.value = null

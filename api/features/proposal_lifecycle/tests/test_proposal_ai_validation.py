@@ -166,7 +166,7 @@ async def test_runner_retries_with_validator_feedback(monkeypatch):
     monkeypatch.setattr(proposal_ai_runner, "run_skill_once", fake_run_skill_once)
 
     result = await proposal_ai_runner.run_validated_skill_once(
-        skill_name="robo-proposal-diff",
+        skill_name="robo-proposal",
         prompt_builder=lambda feedback: f"prompt\n{feedback or ''}",
         validator=validator,
         proposal_id="PRO-test",

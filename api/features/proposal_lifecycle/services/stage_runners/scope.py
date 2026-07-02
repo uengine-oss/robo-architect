@@ -1,4 +1,4 @@
-"""042 US3 — 스코프 분류 → 스테이지 플랜(robo-proposal-scope).
+"""042 US3 — 스코프 분류 → 스테이지 플랜(robo-proposal).
 
 원본 프롬프트 + 현재 도메인 노드 + 기존 전략 메모리를 입력으로,
 어떤 DDD 스테이지가 적용/생략되는지(applies/recommendSkip/reason) 제안한다(FR-009).
@@ -15,7 +15,7 @@ from api.features.proposal_lifecycle.proposal_contracts import DDD_STAGE_ORDER
 from api.features.proposal_lifecycle.services import staged_runner
 from api.features.proposal_lifecycle.services.stage_runners.base import stream_skill_json
 
-_SKILL = "robo-proposal-scope"
+_SKILL = "robo-proposal"
 
 
 def _build_prompt(state: dict, domain_nodes: list[dict]) -> str:
@@ -25,6 +25,8 @@ def _build_prompt(state: dict, domain_nodes: list[dict]) -> str:
     )
     memory = cstore.get_project_strategic_memory() or {}
     return (
+        "mode: DETAILED_DDD\n"
+        "phase: SCOPE\n"
         f"원본 프롬프트(자연어 요구사항): {state.get('prompt','')}\n\n"
         f"현재 도메인 구성 요소 목록:\n{node_list or '(없음)'}\n\n"
         f"기존 전략 메모리(JSON):\n{json.dumps(memory, ensure_ascii=False)}\n\n"

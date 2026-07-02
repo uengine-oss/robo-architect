@@ -14,6 +14,26 @@
         <span>{{ t('proposals.detail.author') }} {{ proposal.author }}</span>
         <span>{{ t('proposals.detail.createdAt') }} {{ formatDate(proposal.createdAt) }}</span>
       </div>
+      <div v-if="showRunState" class="runstate-panel">
+        <div class="runstate-panel__row">
+          <span class="runstate-chip">{{ proposal.lifecycleStatus || 'ACTIVE' }}</span>
+          <span v-if="proposal.currentPhase">phase: {{ proposal.currentPhase }}</span>
+          <span v-if="proposal.currentStage">stage: {{ proposal.currentStage }}</span>
+        </div>
+        <div v-if="proposal.pendingQuestionId" class="runstate-panel__pending">
+          pending question: {{ proposal.pendingQuestionId }}
+        </div>
+        <div v-if="proposal.pendingDraftId" class="runstate-panel__pending">
+          pending draft: {{ proposal.pendingDraftId }}
+        </div>
+        <div v-if="draftEntries.length" class="runstate-panel__drafts">
+          draft artifacts:
+          <span v-for="[phase] in draftEntries" :key="phase" class="runstate-chip runstate-chip--draft">{{ phase }}</span>
+        </div>
+        <div v-if="recentInteractions.length" class="runstate-panel__history">
+          interactions: {{ recentInteractions.map(i => `${i.kind}:${i.status}`).join(' · ') }}
+        </div>
+      </div>
     </div>
 
     <!-- 041 — Plan stale 배너: Constitution/Strategic 변경 후 재계획 전까지 제출 차단(FR-018) -->
@@ -248,6 +268,12 @@ const intentStageTab = ref('STRATEGIC_DESIGN')
 const planStageTab = ref('PLAN_STAGE')
 
 const proposal = computed(() => store.currentProposal)
+const draftEntries = computed(() => Object.entries(proposal.value?.draftArtifacts || proposal.value?.stageDraftArtifacts || {}))
+const recentInteractions = computed(() => (proposal.value?.interactions || []).slice(-5))
+const showRunState = computed(() =>
+  !!(proposal.value?.lifecycleStatus || proposal.value?.currentPhase ||
+    proposal.value?.pendingQuestionId || proposal.value?.pendingDraftId ||
+    draftEntries.value.length || recentInteractions.value.length))
 // 042 — 상태 표시 라벨(코드 유지, 표시만 단계명): DRAFT=Intent, SUBMITTED=Plan, TESTING=Validating.
 function statusLabel(status) {
   return {
@@ -478,6 +504,11 @@ function formatDate(dt) {
 .detail-header__title { font-size: 18px; font-weight: 600; margin: 0 0 4px; color: var(--color-text-bright); }
 .detail-header__prompt { font-size: 13px; color: var(--color-text-light); margin: 0 0 8px; }
 .detail-header__info { display: flex; gap: 16px; font-size: 12px; color: var(--color-text-light); }
+.runstate-panel { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg-secondary); font-size: 12px; color: var(--color-text-light); }
+.runstate-panel__row, .runstate-panel__drafts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.runstate-panel__pending, .runstate-panel__history { margin-top: 4px; font-family: monospace; font-size: 11px; }
+.runstate-chip { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; background: var(--color-bg-tertiary); color: var(--color-text); font-weight: 600; }
+.runstate-chip--draft { color: var(--status-purple-fg); background: var(--status-purple-bg); }
 .status-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 9999px; text-transform: uppercase; }
 .status-badge--draft { background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
 .status-badge--submitted { background: var(--status-blue-bg); color: var(--status-blue-fg); }

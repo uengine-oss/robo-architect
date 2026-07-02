@@ -23,10 +23,10 @@ _sandbox = SandboxManager()
 
 
 def _ensure_worktree_mcp(worktree_path: Path) -> None:
-    """워크트리에 robo-spec MCP 가용성 + 사전 신뢰를 보장한다(I9).
+    """워크트리에 robo-spec/robo-proposal MCP 가용성 + 사전 신뢰를 보장한다(I9).
 
     첫 실행 시 claude 가 `.mcp.json` 신뢰 프롬프트("use this mcp server?")를 띄워
-    대기하면, 셀에 자동주입되는 `/robo-implement` 명령이 그 프롬프트에 먹혀 유실되고
+    대기하면, 셀에 자동주입되는 구현 명령이 그 프롬프트에 먹혀 유실되고
     구현이 시작되지 않는 레이스가 있었다. `.claude/settings.local.json` 에 서버를
     **사전 신뢰**로 적어두면 프롬프트가 안 떠 레이스가 사라진다.
 
@@ -36,19 +36,31 @@ def _ensure_worktree_mcp(worktree_path: Path) -> None:
     """
     try:
         mcp_file = worktree_path / ".mcp.json"
+        port = os.getenv("API_PORT", "8000")
+        desired_servers = {
+            "robo-spec": {"type": "http", "url": f"http://localhost:{port}/mcp/"},
+            "robo-proposal": {"type": "http", "url": f"http://localhost:{port}/mcp/proposals/"},
+        }
         if mcp_file.exists():
             try:
-                server_names = list((json.loads(mcp_file.read_text(encoding="utf-8") or "{}").get("mcpServers") or {}).keys())
+                current = json.loads(mcp_file.read_text(encoding="utf-8") or "{}")
             except ValueError:
-                server_names = []
+                current = {}
+            servers = current.setdefault("mcpServers", {})
+            changed = False
+            for name, config in desired_servers.items():
+                if name not in servers:
+                    servers[name] = config
+                    changed = True
+            if changed:
+                mcp_file.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
+            server_names = list(servers.keys())
         else:
-            port = os.getenv("API_PORT", "8000")
             mcp_file.write_text(
-                json.dumps({"mcpServers": {"robo-spec": {"type": "http", "url": f"http://localhost:{port}/mcp/"}}},
-                           indent=2, ensure_ascii=False),
+                json.dumps({"mcpServers": desired_servers}, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
-            server_names = ["robo-spec"]
+            server_names = ["robo-spec", "robo-proposal"]
         if not server_names:
             return
         claude_dir = worktree_path / ".claude"
@@ -157,12 +169,12 @@ def _context_doc(proposal_id: str, ctx: dict, has_tasks: bool) -> str:
 def _build_command(proposal_id: str, doc_filename: str, has_tasks: bool) -> str:
     """Code 탭 셀(claude 세션)에 자동 입력할 구현 시작 명령.
 
-    구현은 robo-implement 스킬의 PRO 모드(`/robo-implement <PRO-NNN>`)로 시작한다.
+    구현은 통합 robo-proposal 스킬의 Implement phase(`/robo-proposal phase:IMPLEMENT <PRO-NNN>`)로 시작한다.
     이 모드는 워크트리의 `PROPOSAL_<id>.md`(컨텍스트)와 `PROPOSAL_<id>_TASKS.md`
     (체크리스트)를 읽어 미체크 작업을 구현하며 `- [x]`로 체크·커밋한다.
     셀의 'Claude Code 셀로 이동' 버튼을 누르면 프런트엔드가 이 명령을 셀에 주입한다.
     """
-    return f"/robo-implement {proposal_id}"
+    return f"/robo-proposal phase:IMPLEMENT {proposal_id}"
 
 
 def prepare_implementation(proposal_id: str, project_root: str,
@@ -251,6 +263,11 @@ def _transition_status(proposal_id: str, from_status: str, to_status: str,
             record.get("history") or "[]", from_status, to_status, actor, comment
         )
         session.run(
-            "MATCH (p:Proposal {id: $id}) SET p.status = $status, p.statusHistory = $history",
-            id=proposal_id, status=to_status, history=new_history,
+            "MATCH (p:Proposal {id: $id}) "
+            "SET p.status = $status, p.statusHistory = $history, "
+            "p.currentPhase = $phase, p.lifecycleStatus = 'ACTIVE'",
+            id=proposal_id,
+            status=to_status,
+            history=new_history,
+            phase="IMPLEMENT" if to_status == "IMPLEMENTING" else "START_OR_RESUME",
         )

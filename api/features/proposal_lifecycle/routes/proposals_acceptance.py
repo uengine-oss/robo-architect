@@ -14,6 +14,7 @@ from api.features.proposal_lifecycle.proposal_contracts import (
     append_status_history,
 )
 from api.features.proposal_lifecycle.services.dual_merge import execute_dual_merge, execute_revoke
+from api.features.proposal_lifecycle.services import proposal_state_service
 from api.features.proposal_lifecycle.services.sandbox_manager import SandboxManager
 from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
@@ -39,7 +40,7 @@ def _get_proposal_row(proposal_id: str) -> dict | None:
             id=proposal_id,
         )
         record = result.single()
-    return record["p"] if record else None
+    return proposal_state_service.hydrate_for_response(record["p"]) if record else None
 
 
 @router.post("/{proposal_id}/accept", response_model=ProposalResponse)
@@ -91,6 +92,7 @@ async def accept_proposal(proposal_id: str, body: AcceptProposalRequest, request
                         category="proposal_lifecycle.merge.failed",
                         params={"proposalId": proposal_id, "error": str(e)})
         raise HTTPException(status_code=500, detail=f"Dual merge failed: {e}")
+    proposal_state_service.mark_terminal(proposal_id, "DONE", "ACCEPTED")
 
     updated = _get_proposal_row(proposal_id)
     return ProposalResponse.from_neo4j(updated, [])
@@ -134,7 +136,9 @@ async def destroy_proposal(proposal_id: str, body: DestroyProposalRequest, reque
             SET p.status = 'DESTROYED',
                 p.destroyedAt = datetime($at),
                 p.statusHistory = $history,
-                p.sandboxStatus = 'DESTROYED'
+                p.sandboxStatus = 'DESTROYED',
+                p.lifecycleStatus = 'REJECTED',
+                p.currentPhase = 'ACCEPT'
             """,
             id=proposal_id,
             at=now,
@@ -178,6 +182,11 @@ async def revoke_proposal(proposal_id: str, body: RevokeProposalRequest, request
                         category="proposal_lifecycle.revoke.failed",
                         params={"proposalId": proposal_id, "error": str(e)})
         raise HTTPException(status_code=500, detail=f"Revoke failed: {e}")
+    proposal_state_service.set_lifecycle(
+        proposal_id,
+        lifecycle_status="ACTIVE",
+        current_phase="ACCEPT",
+    )
 
     updated = _get_proposal_row(proposal_id)
     return ProposalResponse.from_neo4j(updated, [])

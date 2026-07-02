@@ -21,9 +21,10 @@ from api.features.proposal_lifecycle.services.proposal_ai_validation import (
 from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
+from api.features.proposal_lifecycle.services import proposal_interactions, proposal_state_service
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-proposal-diff"
+_SKILL_NAME = "robo-proposal"
 
 
 def _load_plan_inputs(proposal_id: str) -> Optional[dict]:
@@ -183,6 +184,7 @@ def _save_plan_draft(proposal_id: str, implementation_plan: dict,
             id=proposal_id,
             draft=json.dumps(draft, ensure_ascii=False),
         )
+    proposal_interactions.save_draft(proposal_id, "CONSTITUTION", draft)
     SmartLogger.log("INFO", f"plan_draft_saved: {proposal_id}",
                     category="proposal_lifecycle.plan.draft_saved",
                     params={"proposalId": proposal_id,
@@ -349,9 +351,25 @@ def confirm_plan(proposal_id: str, implementation_plan: dict,
     if impact_map is not None:
         set_parts.append("p.impactMap = $im")
         params["im"] = json.dumps(impact_map, ensure_ascii=False)
+    if inputs and inputs.get("plan_draft") is not None:
+        draft_id = None
+        with get_session() as session:
+            draft_rec = session.run(
+                "MATCH (p:Proposal {id:$id}) RETURN p.pendingDraftId AS pendingDraftId",
+                id=proposal_id,
+            ).single()
+            draft_id = draft_rec.get("pendingDraftId") if draft_rec else None
+        if draft_id:
+            proposal_interactions.confirm_draft(proposal_id, draft_id)
 
     with get_session() as session:
         session.run(f"MATCH (p:Proposal {{id: $id}}) SET {', '.join(set_parts)}", **params)
+    proposal_state_service.set_lifecycle(
+        proposal_id,
+        lifecycle_status="ACTIVE",
+        current_phase="TASKS",
+        clear_pending_draft=True,
+    )
 
     SmartLogger.log("INFO", f"plan_confirmed: {proposal_id}",
                     category="proposal_lifecycle.plan.confirm",

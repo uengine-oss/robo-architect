@@ -20,9 +20,10 @@ from api.features.proposal_lifecycle.services.proposal_ai_validation import (
 from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
+from api.features.proposal_lifecycle.services import proposal_interactions, proposal_state_service
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-proposal-diff"
+_SKILL_NAME = "robo-proposal"
 
 
 def _build_intent_prompt(
@@ -148,8 +149,9 @@ def _save_intent_result(proposal_id: str, data: dict) -> None:
 
     if action == "clarify":
         questions = data.get("questions", [])
+        first_question = questions[0] if questions else {}
         try:
-            clog_entry = json.dumps([{"question": q.get("text", ""), "options": q.get("options", [])} for q in questions], ensure_ascii=False)
+            clog_entry = json.dumps([{"question": first_question.get("text", ""), "options": first_question.get("options", [])}], ensure_ascii=False)
         except Exception:
             clog_entry = "[]"
         with get_session() as session:
@@ -157,9 +159,16 @@ def _save_intent_result(proposal_id: str, data: dict) -> None:
                 "MATCH (p:Proposal {id: $id}) SET p.clarificationLog = $clog",
                 id=proposal_id, clog=clog_entry,
             )
+        if first_question:
+            proposal_interactions.record_question(
+                proposal_id,
+                "STRATEGIC_DIFF",
+                first_question.get("text", ""),
+                first_question.get("options", []),
+            )
         SmartLogger.log("INFO", f"Clarification questions saved for {proposal_id}",
                         category="proposal_lifecycle.intent.clarify",
-                        params={"proposalId": proposal_id, "questionCount": len(questions)})
+                        params={"proposalId": proposal_id, "questionCount": 1 if first_question else 0})
         return
 
     # action == "done"
@@ -201,6 +210,12 @@ def _save_intent_result(proposal_id: str, data: dict) -> None:
             f"MATCH (p:Proposal {{id: $id}}) SET {', '.join(set_parts)}",
             **params,
         )
+    proposal_state_service.set_lifecycle(
+        proposal_id,
+        lifecycle_status="ACTIVE",
+        current_phase="SUBMIT",
+        clear_pending_question=True,
+    )
 
     SmartLogger.log("INFO", f"Intent done: {proposal_id}",
                     category="proposal_lifecycle.intent.done",

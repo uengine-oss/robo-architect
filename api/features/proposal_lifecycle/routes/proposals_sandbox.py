@@ -87,7 +87,8 @@ async def implement_proposal(proposal_id: str, body: ImplementRequest, request: 
         with get_session() as session:
             session.run(
                 "MATCH (p:Proposal {id: $id}) SET p.status = 'SUBMITTED', p.sandboxStatus = null, "
-                "p.sandboxBranch = null, p.sandboxWorktreePath = null, p.testResults = null",
+                "p.sandboxBranch = null, p.sandboxWorktreePath = null, p.testResults = null, "
+                "p.currentPhase = 'IMPLEMENT', p.lifecycleStatus = 'ACTIVE'",
                 id=proposal_id,
             )
         SmartLogger.log("INFO", f"{record['status']} → SUBMITTED reset for re-implement: {proposal_id}",
@@ -185,7 +186,9 @@ async def complete_implementation(proposal_id: str, request: Request):
     _transition_status(proposal_id, "IMPLEMENTING", "TESTING", "system")
     with get_session() as session:
         session.run(
-            "MATCH (p:Proposal {id: $id}) SET p.sandboxStatus = 'DONE', p.testResults = null",
+            "MATCH (p:Proposal {id: $id}) "
+            "SET p.sandboxStatus = 'DONE', p.testResults = null, "
+            "p.currentPhase = 'TEST', p.lifecycleStatus = 'ACTIVE'",
             id=proposal_id,
         )
 
@@ -211,7 +214,16 @@ def _transition_status(proposal_id: str, from_status: str, to_status: str,
         new_history = append_status_history(
             record.get("history") or "[]", from_status, to_status, actor, comment
         )
-        session.run(
-            "MATCH (p:Proposal {id: $id}) SET p.status = $status, p.statusHistory = $history",
-            id=proposal_id, status=to_status, history=new_history,
-        )
+        phase = "IMPLEMENT" if to_status == "IMPLEMENTING" else ("TEST" if to_status == "TESTING" else None)
+        if phase:
+            session.run(
+                "MATCH (p:Proposal {id: $id}) "
+                "SET p.status = $status, p.statusHistory = $history, "
+                "p.currentPhase = $phase, p.lifecycleStatus = 'ACTIVE'",
+                id=proposal_id, status=to_status, history=new_history, phase=phase,
+            )
+        else:
+            session.run(
+                "MATCH (p:Proposal {id: $id}) SET p.status = $status, p.statusHistory = $history",
+                id=proposal_id, status=to_status, history=new_history,
+            )

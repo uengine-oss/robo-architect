@@ -1,5 +1,5 @@
 """
-robo-proposal-tasks 스킬 호출 서비스.
+robo-proposal TASKS phase 호출 서비스.
 
 Proposal의 Strategic/Tactical Diff → 구현 작업 목록(tasks)으로 분해한다.
 구현(Claude Code 셀)이 아니라 **proposal 쪽에서 미리** 헤드리스 서브프로세스로
@@ -16,9 +16,10 @@ from typing import AsyncGenerator
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.skill_runner import run_skill_lines, extract_json
+from api.features.proposal_lifecycle.services import proposal_state_service
 
 _SKILL_ROOT = "robo-proposals"
-_SKILL_NAME = "robo-proposal-tasks"
+_SKILL_NAME = "robo-proposal"
 
 
 def _build_tasks_prompt(proposal_id: str, ctx: dict) -> str:
@@ -89,11 +90,7 @@ def _normalize_tasks(raw_tasks: list) -> list[dict]:
 
 
 def _save_tasks(proposal_id: str, tasks: list[dict]) -> None:
-    with get_session() as session:
-        session.run(
-            "MATCH (p:Proposal {id: $id}) SET p.tasksJson = $tasks",
-            id=proposal_id, tasks=json.dumps(tasks, ensure_ascii=False),
-        )
+    proposal_state_service.save_tasks(proposal_id, tasks)
 
 
 def render_tasks_markdown(proposal_id: str, title: str | None, tasks: list[dict]) -> str:

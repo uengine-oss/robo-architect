@@ -14,7 +14,7 @@ load_dotenv()
 
 import os
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 from starlette.requests import Request
@@ -124,8 +124,11 @@ async def lifespan(app: FastAPI):
             params={"error": str(e)},
         )
 
-    from api.features.robo_spec.router import mcp_lifespan
-    async with mcp_lifespan():
+    from api.features.robo_spec.router import mcp_lifespan as robo_spec_mcp_lifespan
+    from api.features.proposal_lifecycle.mcp_router import mcp_lifespan as proposal_mcp_lifespan
+    async with AsyncExitStack() as stack:
+        await stack.enter_async_context(robo_spec_mcp_lifespan())
+        await stack.enter_async_context(proposal_mcp_lifespan())
         yield
     close_neo4j_driver(log=True)
     SmartLogger.log("INFO", "API stopped", category="api.lifespan")
@@ -343,6 +346,8 @@ app.include_router(invariants_router)
 # Robo Spec — Claude Code skill MCP bridge (feature 029)
 from api.features.robo_spec.router import router as robo_spec_router, mount_mcp as _mount_robo_spec_mcp
 app.include_router(robo_spec_router)
+from api.features.proposal_lifecycle.mcp_router import mount_mcp as _mount_proposal_mcp
+_mount_proposal_mcp(app)
 _mount_robo_spec_mcp(app)
 
 

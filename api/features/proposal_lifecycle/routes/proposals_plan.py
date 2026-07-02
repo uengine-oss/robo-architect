@@ -10,6 +10,7 @@ from api.features.proposal_lifecycle.services.plan_runner import (
 )
 from api.features.proposal_lifecycle.proposal_contracts import ConfirmPlanRequest, ProposalResponse
 from api.features.proposal_lifecycle.routes.proposals_crud import _parse_effects
+from api.features.proposal_lifecycle.services import proposal_state_service
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -38,7 +39,10 @@ def _load_proposal_response(proposal_id: str) -> ProposalResponse:
         record = session.run(_PROPOSAL_WITH_EFFECTS, id=proposal_id).single()
     if not record:
         raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
-    return ProposalResponse.from_neo4j(record["p"], _parse_effects(record["effects"]))
+    return ProposalResponse.from_neo4j(
+        proposal_state_service.hydrate_for_response(record["p"]),
+        _parse_effects(record["effects"]),
+    )
 
 
 @router.get("/{proposal_id}/plan")
