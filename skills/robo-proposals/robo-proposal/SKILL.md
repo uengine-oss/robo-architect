@@ -14,8 +14,9 @@ This is the single Proposal lifecycle skill. It replaces the previous Proposal l
 1. If the prompt contains explicit `mode`, `phase`, `stage`, or `scenario`, honor that input before reading Neo4j state.
 2. If explicit input conflicts with pending state, stop with one question or a validator-style error. Do not continue silently.
 3. If no explicit routing input exists, use the `robo-proposal` MCP tools to list/select/resume a Proposal and call `proposal_next_step`.
-4. Ask at most one core question at a time. Store the question with `proposal_record_question` before waiting for an answer.
-5. Store draft artifacts with `proposal_save_draft`; only confirmed artifacts may be promoted to canonical fields.
+4. **Mode-selection gate (new Proposal only):** Before calling `proposal_create` for a brand-new Proposal, decide the decomposition mode per `references/phases/mode-selection.md`. If the user did **not** explicitly name a mode, you MUST ask which mode to use (with a short description of each) and wait — do not create the Proposal or generate any Diff yet. If the user gave an explicit mode, skip the question and create immediately with that mode. This gate does not apply when resuming an existing Proposal.
+5. Ask at most one core question at a time. Store the question with `proposal_record_question` before waiting for an answer. (The mode-selection question in rule 4 is asked before the Proposal exists, so it is a plain conversational question and is not recorded via `proposal_record_question`.)
+6. Store draft artifacts with `proposal_save_draft`; only confirmed artifacts may be promoted to canonical fields.
 
 Always read:
 
@@ -28,6 +29,7 @@ Always read:
 
 | Situation | Read |
 |---|---|
+| new Proposal / mode choice | `references/phases/mode-selection.md` |
 | start/resume | `references/common/state-model.md`, `references/common/interaction-runstate.md`, `references/phases/start-or-resume.md` |
 | scope/stagePlan | `references/phases/scope.md`, `references/contracts/stage-artifacts.md` |
 | Detailed DDD stage | `references/phases/detailed-ddd.md`, `references/contracts/stage-artifacts.md` |

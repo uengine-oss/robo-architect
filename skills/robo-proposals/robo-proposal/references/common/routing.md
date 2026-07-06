@@ -9,3 +9,5 @@ Use explicit input first:
 - `scenario:` may be `SIMPLIFIED_STRATEGIC`, `SIMPLIFIED_TACTICAL`, `DETAILED_STRATEGIC_FROM_DDD`, or `DETAILED_TACTICAL_FROM_DDD`.
 
 When explicit routing is absent, call `proposal_list` or `proposal_get`, then `proposal_next_step`. If the returned step requires a pending question or draft decision, restore that context before generating anything new.
+
+For a **new** Proposal with no explicit `mode`, do not assume `SIMPLIFIED`. Apply the mode-selection gate in `references/phases/mode-selection.md` first: ask the user which mode and wait, defaulting to `SIMPLIFIED` only if they decline to choose.
