@@ -18,6 +18,7 @@ from api.features.proposal_lifecycle.proposal_contracts import (
     extract_title_from_prompt,
 )
 from api.features.proposal_lifecycle.services import (
+    lifecycle_steps,
     proposal_interactions,
     proposal_state_service,
     staged_runner,
@@ -165,13 +166,36 @@ def build_mcp_server() -> Any | None:
         _log("proposal_skip_stage", proposalId, stage=stage.upper())
         return {"status": "ok", "nextStep": proposal_state_service.next_step(proposalId).get("nextStep"), "proposal": _state(proposalId)}
 
-    @server.tool(name="proposal_save_draft", description="Save a pending draft artifact in ProposalInteraction.")
+    @server.tool(name="proposal_save_draft", description="Validate then save a pending draft artifact. Invalid drafts are rejected (not stored).")
     def proposal_save_draft(proposalId: str, phase: str, artifact: dict) -> dict[str, Any]:  # noqa: N803
-        draft = proposal_interactions.save_draft(proposalId, phase.upper(), artifact)
+        normalized_phase = phase.upper()
+        node = proposal_state_service.get_node(proposalId)
+        if node is None:
+            return {"status": "not-found", "proposalId": proposalId}
+        # FR-7: 하드 전이 가드 — 직전 필수 스텝 미완료면 초안 생성 차단.
+        stage_hint = normalized_phase if normalized_phase in set(DDD_STAGE_ORDER) else node.get("currentStage")
+        if lifecycle_steps.prior_requirement_unmet(node, _phase_of(normalized_phase), stage_hint):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_requirement_unmet",
+                "message": f"Prior required steps for {normalized_phase} are incomplete; cannot draft yet.",
+            }
+        # FR-1 (P1): 저장 **전** 검증. 실패 시 초안 미저장 + 위반 반환 → 스킬 재생성 루프.
+        validation = _validate_artifact_for_phase(proposalId, normalized_phase, artifact)
+        if validation:
+            proposal_interactions.record_interaction(
+                proposalId,
+                phase=normalized_phase or "UNKNOWN",
+                kind="VALIDATOR_ERROR",
+                status="RESOLVED",
+                payload=validation,
+            )
+            return validation
+        draft = proposal_interactions.save_draft(proposalId, normalized_phase, artifact)
         _log("proposal_save_draft", proposalId, draftId=draft["id"])
         return {"status": "ok", "draftRef": draft["id"], "draft": draft}
 
-    @server.tool(name="proposal_confirm_draft", description="Confirm a draft and promote it to a canonical artifact when possible.")
+    @server.tool(name="proposal_confirm_draft", description="Confirm an already-validated draft and promote it to a canonical artifact (promotion only).")
     def proposal_confirm_draft(proposalId: str, draftRef: str) -> dict[str, Any]:  # noqa: N803
         draft = proposal_interactions.get_interaction(draftRef)
         if not draft:
@@ -180,24 +204,21 @@ def build_mcp_server() -> Any | None:
         artifact = payload.get("artifact") if isinstance(payload, dict) else None
         phase = (draft.get("phase") or "").upper()
         if isinstance(artifact, dict):
-            validation = _validate_artifact_for_phase(proposalId, phase, artifact)
-            if validation:
-                proposal_interactions.record_interaction(
-                    proposalId,
-                    phase=phase or "UNKNOWN",
-                    kind="VALIDATOR_ERROR",
-                    status="RESOLVED",
-                    payload=validation,
-                )
-                return validation
+            # FR-2: 초안은 save_draft 에서 이미 검증됨 → 여기서는 승격만.
+            # 방어적 전이 가드만 유지(직전 필수 스텝 미완료 시 승격 거부).
+            node = proposal_state_service.get_node(proposalId) or {}
+            stage_hint = phase if phase in set(DDD_STAGE_ORDER) else node.get("currentStage")
+            if lifecycle_steps.prior_requirement_unmet(node, _phase_of(phase), stage_hint):
+                return {
+                    "status": "invalid-transition",
+                    "reason": "prior_requirement_unmet",
+                    "message": f"Prior required steps for {phase} are incomplete; cannot promote.",
+                }
             draft = proposal_interactions.confirm_draft(proposalId, draftRef)
             _promote_confirmed(proposalId, phase, artifact)
-        proposal_state_service.set_lifecycle(
-            proposalId,
-            lifecycle_status="ACTIVE",
-            current_phase=_phase_after_confirm(phase),
-            clear_pending_draft=True,
-        )
+        # 확정 후 다음 phase 는 스텝 테이블에서 파생(FR-5) — _phase_after_confirm 제거.
+        proposal_state_service.set_lifecycle(proposalId, lifecycle_status="ACTIVE", clear_pending_draft=True)
+        proposal_state_service.refresh_current_phase(proposalId)
         _log("proposal_confirm_draft", proposalId, draftId=draftRef)
         return {"status": "ok", "confirmed": draft, "proposal": _state(proposalId)}
 
@@ -230,8 +251,19 @@ def build_mcp_server() -> Any | None:
         _log("proposal_save_stage_artifact", proposalId, stage=normalized_stage)
         return {"status": "ok", "nextStage": next_stage, "proposal": _state(proposalId)}
 
-    @server.tool(name="proposal_save_diff", description="Validate and save strategic or tactical diff.")
+    @server.tool(name="proposal_save_diff", description="Validate and save strategic or tactical diff (guarded).")
     def proposal_save_diff(proposalId: str, diffType: str, payload: Any) -> dict[str, Any]:  # noqa: N803
+        node = proposal_state_service.get_node(proposalId)
+        if node is None:
+            return {"status": "not-found", "proposalId": proposalId}
+        target_phase = "TACTICAL_DIFF" if diffType.lower() == "tactical" else "STRATEGIC_DIFF"
+        # FR-7: 하드 전이 가드 — 전략 Diff 없이 전술 Diff 저장 등 앞으로 건너뛰기 차단.
+        if lifecycle_steps.prior_requirement_unmet(node, target_phase, None):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_requirement_unmet",
+                "message": f"Prior required steps for {target_phase} are incomplete.",
+            }
         validation = _validate_diff(diffType, payload)
         if validation:
             proposal_interactions.record_interaction(
@@ -317,12 +349,13 @@ def build_mcp_server() -> Any | None:
                 MATCH (p:Proposal {id:$id})
                 SET p.status='SUBMITTED',
                     p.statusHistory=$history,
-                    p.currentPhase='CONSTITUTION',
                     p.lifecycleStatus='ACTIVE'
                 """,
                 id=proposalId,
                 history=history,
             )
+        # submit 후 다음 phase(SIMPLIFIED=TACTICAL_DIFF, DETAILED=다음 전술 스테이지)는 테이블 파생.
+        proposal_state_service.refresh_current_phase(proposalId)
         _log("proposal_submit", proposalId)
         return {"status": "ok", "proposal": _state(proposalId)}
 
@@ -347,6 +380,14 @@ def build_mcp_server() -> Any | None:
         _log("proposal_accept", proposalId)
         return {"status": "ok", "proposal": _state_from_node(proposal)}
 
+    @server.tool(name="proposal_rollback", description="User-explicit rollback to an earlier completed step; invalidates downstream artifacts (FR-7b).")
+    def proposal_rollback(proposalId: str, targetPhase: str, targetStage: str | None = None) -> dict[str, Any]:  # noqa: N803
+        result = proposal_state_service.rollback(proposalId, targetPhase, targetStage)
+        _log("proposal_rollback", proposalId, target=targetPhase, status=result.get("status"))
+        if result.get("status") != "ok":
+            return result
+        return {"status": "ok", "rollback": result, "proposal": _state(proposalId)}
+
     SmartLogger.log(
         "INFO",
         "Proposal MCP server constructed.",
@@ -358,6 +399,7 @@ def build_mcp_server() -> Any | None:
             "proposal_save_diff", "proposal_record_question", "proposal_answer_question",
             "proposal_resume", "proposal_generate_tasks", "proposal_update_implementation_status",
             "proposal_save_test_result", "proposal_submit", "proposal_accept",
+            "proposal_rollback",
         ]},
     )
     return server
@@ -477,15 +519,14 @@ def _promote_confirmed(proposal_id: str, phase: str, artifact: dict) -> None:
         proposal_state_service.save_tasks(proposal_id, artifact.get("tasks") or [])
 
 
-def _phase_after_confirm(phase: str) -> str:
-    mapping = {
-        "STRATEGIC_DIFF": "SUBMIT",
-        "TACTICAL_DIFF": "CONSTITUTION",
-        "CONSTITUTION": "TASKS",
-        "TASKS": "IMPLEMENT",
-        "TEST": "ACCEPT",
-    }
-    return mapping.get(phase, phase or "START_OR_RESUME")
+def _phase_of(phase: str) -> str:
+    """DDD 스테이지명을 스텝 테이블의 phase(STRATEGIC_DDD/TACTICAL_DDD)로 매핑."""
+    normalized = (phase or "").upper()
+    if normalized in set(DDD_STAGE_ORDER[:3]):
+        return "STRATEGIC_DDD"
+    if normalized in set(DDD_STAGE_ORDER[3:]):
+        return "TACTICAL_DDD"
+    return normalized
 
 
 def _log(tool: str, proposal_id: str, **params: Any) -> None:

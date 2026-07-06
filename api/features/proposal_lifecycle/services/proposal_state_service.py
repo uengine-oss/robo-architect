@@ -4,8 +4,11 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from api.features.proposal_lifecycle.proposal_contracts import DDD_STAGE_ORDER
-from api.features.proposal_lifecycle.services import proposal_interactions
+from api.features.proposal_lifecycle.proposal_contracts import (
+    DDD_STAGE_ORDER,
+    append_status_history,
+)
+from api.features.proposal_lifecycle.services import lifecycle_steps, proposal_interactions
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -121,11 +124,84 @@ def set_lifecycle(
     )
 
 
+_STEP_REASONS = {
+    "SCOPE": "Detailed DDD requires a confirmed stagePlan",
+    "STRATEGIC_DDD": "next active strategic DDD stage",
+    "STRATEGIC_DIFF": "Strategic Diff must be generated, validated, and approved",
+    "SUBMIT": "Strategic intent is complete; submit to Plan (internal transition)",
+    "TACTICAL_DDD": "next active tactical DDD stage",
+    "TACTICAL_DIFF": "Tactical Diff needs independent approval before Constitution",
+    "CONSTITUTION": "Constitution interview and implementation plan are required",
+    "TASKS": "Implementation tasks must be generated and approved",
+    "IMPLEMENT": "Approved tasks are ready for implementation",
+    "TEST": "Implementation is complete; run the review/test step",
+    "ACCEPT": "Test results are ready; finalize to the live graph",
+}
+
+
+def _reason_for(step: lifecycle_steps.StepDef) -> str:
+    return _STEP_REASONS.get(step.phase, "next lifecycle step")
+
+
+def _retry_context(proposal_id: str, phase: str | None) -> dict | None:
+    """현재 phase 의 연속 검증 실패(재생성 루프) 상태(FR-1b/AC-2)."""
+    if not phase:
+        return None
+    try:
+        interactions = proposal_interactions.list_interactions(proposal_id)
+    except Exception:
+        return None
+    attempts = 0
+    last_violations: list = []
+    for item in reversed(interactions):
+        kind = item.get("kind")
+        item_phase = (item.get("phase") or "").upper()
+        if kind == "VALIDATOR_ERROR" and item_phase == phase.upper():
+            attempts += 1
+            if not last_violations:
+                payload = item.get("payload") or {}
+                last_violations = payload.get("violations") or []
+        elif kind in ("DRAFT", "SYSTEM_NOTE") and item_phase == phase.upper():
+            break
+        elif kind in ("DRAFT",):
+            break
+    if attempts == 0:
+        return None
+    return {
+        "attempts": attempts,
+        "maxAttempts": lifecycle_steps.MAX_DRAFT_RETRIES,
+        "exhausted": attempts >= lifecycle_steps.MAX_DRAFT_RETRIES,
+        "lastViolations": last_violations[:8],
+    }
+
+
+def _build_next_step(
+    proposal_id: str,
+    node: dict,
+    step: lifecycle_steps.StepDef,
+    *,
+    action: str | None = None,
+    reason: str | None = None,
+) -> dict:
+    return {
+        "phase": step.phase,
+        "stage": step.stage,
+        "action": action or step.action,
+        "requiresUserApproval": step.requires_user_approval,
+        "validationRef": step.validation_ref,
+        "reason": reason or _reason_for(step),
+        "allowedUserOverrides": lifecycle_steps.rollback_targets(node),
+        "retryContext": _retry_context(proposal_id, step.phase),
+        "staleArtifacts": _parse(node.get("staleArtifacts"), []) or [],
+    }
+
+
 def next_step(proposal_id: str, *, mode: str | None = None, phase: str | None = None) -> dict:
     node = get_node(proposal_id)
     if node is None:
         return {"status": "not-found", "proposalId": proposal_id}
 
+    # --- 사용자 명시 phase override (FR-8): 전이 가드 하에서만 허용 ------------
     explicit_phase = _normalize_phase(phase)
     if phase and explicit_phase is None:
         return {
@@ -137,53 +213,191 @@ def next_step(proposal_id: str, *, mode: str | None = None, phase: str | None = 
         conflict = _explicit_phase_conflict(node, explicit_phase)
         if conflict:
             return {"status": "blocked", "nextStep": None, "reason": conflict}
+        if lifecycle_steps.prior_requirement_unmet(node, explicit_phase, node.get("currentStage")):
+            return {
+                "status": "blocked",
+                "nextStep": None,
+                "reason": {
+                    "reason": "invalid-transition",
+                    "message": f"Cannot jump forward to {explicit_phase}; prior required steps are incomplete.",
+                },
+            }
+        step = lifecycle_steps.step_for(mode or node.get("decompositionMode"), explicit_phase, node.get("currentStage"))
+        if step is None:
+            return {
+                "status": "blocked",
+                "nextStep": None,
+                "reason": {"reason": "unknown_phase", "message": f"Phase {explicit_phase} not in step table for this mode"},
+            }
         return {
             "status": "ok",
-            "nextStep": {"phase": explicit_phase, "stage": node.get("currentStage")},
-            "reason": "explicit phase takes precedence over persisted state",
+            "nextStep": _build_next_step(proposal_id, node, step, reason="explicit user-requested phase (guarded)"),
+            "reason": "explicit phase accepted under transition guard",
         }
 
+    # --- pending 우선 처리 ---------------------------------------------------
     if node.get("pendingQuestionId"):
+        step = lifecycle_steps.next_incomplete_step(node) or lifecycle_steps.step_for(
+            node.get("decompositionMode"), node.get("currentPhase") or "STRATEGIC_DIFF"
+        )
+        if step is None:
+            step = lifecycle_steps.StepDef(node.get("currentPhase") or "CONSTITUTION", None, lifecycle_steps.ASK_QUESTION, True, None)
         return {
             "status": "ok",
-            "nextStep": {"phase": node.get("currentPhase") or "START_OR_RESUME", "action": "answer_question"},
-            "reason": "pending question must be answered before continuing",
+            "nextStep": _build_next_step(
+                proposal_id, node, step,
+                action=lifecycle_steps.ASK_QUESTION,
+                reason="a pending question must be answered before continuing",
+            ),
+            "reason": "pending question awaiting answer",
         }
     if node.get("pendingDraftId"):
+        step = lifecycle_steps.next_incomplete_step(node) or lifecycle_steps.step_for(
+            node.get("decompositionMode"), node.get("currentPhase") or "STRATEGIC_DIFF"
+        )
+        if step is None:
+            step = lifecycle_steps.StepDef(node.get("currentPhase") or "STRATEGIC_DIFF", None, lifecycle_steps.AWAIT_APPROVAL, True, None)
         return {
             "status": "ok",
-            "nextStep": {"phase": node.get("currentPhase") or "START_OR_RESUME", "action": "confirm_or_reject_draft"},
-            "reason": "pending draft must be confirmed or rejected before final artifact promotion",
+            "nextStep": _build_next_step(
+                proposal_id, node, step,
+                action=lifecycle_steps.AWAIT_APPROVAL,
+                reason="a validated draft is awaiting user approval",
+            ),
+            "reason": "validated draft awaiting approval",
         }
 
-    decomposition_mode = mode or node.get("decompositionMode") or "SIMPLIFIED"
-    if decomposition_mode in ("DETAILED", "DETAILED_DDD"):
-        stage = _next_stage(node)
-        if not node.get("stagePlan"):
-            return {"status": "ok", "nextStep": {"phase": "SCOPE", "stage": None}, "reason": "Detailed DDD requires stagePlan"}
-        if stage:
-            phase_name = "STRATEGIC_DDD" if stage in DDD_STAGE_ORDER[:3] else "TACTICAL_DDD"
-            return {"status": "ok", "nextStep": {"phase": phase_name, "stage": stage}, "reason": "next active DDD stage"}
-        if not node.get("strategicDiff"):
-            return {"status": "ok", "nextStep": {"phase": "STRATEGIC_DIFF"}, "reason": "DDD strategic artifacts need consolidation"}
-        if not node.get("tacticalDiff"):
-            return {"status": "ok", "nextStep": {"phase": "TACTICAL_DIFF"}, "reason": "DDD tactical artifacts need consolidation"}
+    # --- 스텝 테이블 파생(단일 원천, FR-3/FR-4) ------------------------------
+    step = lifecycle_steps.next_incomplete_step(node)
+    if step is None:
+        return {
+            "status": "ok",
+            "nextStep": {
+                "phase": "ACCEPT", "stage": None, "action": lifecycle_steps.FINALIZE,
+                "requiresUserApproval": False, "validationRef": None,
+                "reason": "lifecycle complete", "allowedUserOverrides": [],
+                "retryContext": None, "staleArtifacts": [],
+            },
+            "reason": "no blocking lifecycle action detected",
+        }
+    return {"status": "ok", "nextStep": _build_next_step(proposal_id, node, step), "reason": _reason_for(step)}
 
-    if not node.get("strategicDiff"):
-        return {"status": "ok", "nextStep": {"phase": "STRATEGIC_DIFF"}, "reason": "Strategic Diff is missing"}
-    if node.get("status") == "DRAFT":
-        return {"status": "ok", "nextStep": {"phase": "SUBMIT"}, "reason": "Intent is ready to submit to Plan"}
-    if not node.get("implementationPlan"):
-        return {"status": "ok", "nextStep": {"phase": "CONSTITUTION"}, "reason": "Plan requires Constitution and implementation plan"}
-    if not node.get("tasksJson"):
-        return {"status": "ok", "nextStep": {"phase": "TASKS"}, "reason": "Implementation tasks are missing"}
-    if node.get("status") == "SUBMITTED":
-        return {"status": "ok", "nextStep": {"phase": "IMPLEMENT"}, "reason": "Proposal is ready for implementation"}
-    if node.get("status") == "TESTING":
-        return {"status": "ok", "nextStep": {"phase": "TEST"}, "reason": "Implementation completed; tests are pending"}
-    if node.get("status") == "PENDING_ACCEPTANCE":
-        return {"status": "ok", "nextStep": {"phase": "ACCEPT"}, "reason": "Test results are ready for acceptance"}
-    return {"status": "ok", "nextStep": {"phase": "START_OR_RESUME"}, "reason": "No blocking lifecycle action detected"}
+
+def refresh_current_phase(proposal_id: str) -> dict | None:
+    """canonical 저장/전이 후 currentPhase/currentStage 를 스텝 테이블에서 재파생(FR-5)."""
+    node = get_node(proposal_id)
+    if not node:
+        return None
+    step = lifecycle_steps.next_incomplete_step(node)
+    if step is None:
+        set_lifecycle(proposal_id, current_phase="ACCEPT", current_stage=None)
+        return {"phase": "ACCEPT", "stage": None}
+    set_lifecycle(proposal_id, current_phase=step.phase, current_stage=step.stage)
+    return {"phase": step.phase, "stage": step.stage}
+
+
+def auto_submit_if_ready(proposal_id: str) -> bool:
+    """전략 Diff 확정 후 DRAFT→SUBMITTED 내부 자동 전이(FR-6, 042 라이프사이클)."""
+    node = get_node(proposal_id)
+    if not node or (node.get("status") or "DRAFT") != "DRAFT":
+        return False
+    if not lifecycle_steps._truthy(node.get("strategicDiff")):
+        return False
+    history = append_status_history(node.get("statusHistory") or "[]", "DRAFT", "SUBMITTED", "mcp-auto")
+    with get_session() as session:
+        session.run(
+            """
+            MATCH (p:Proposal {id:$id})
+            SET p.status='SUBMITTED', p.statusHistory=$history, p.lifecycleStatus='ACTIVE'
+            """,
+            id=proposal_id,
+            history=history,
+        )
+    SmartLogger.log(
+        "INFO",
+        f"proposal auto-submitted on strategic completion: {proposal_id}",
+        category="proposal_lifecycle.state.updated",
+        params={"proposalId": proposal_id, "transition": "DRAFT->SUBMITTED", "trigger": "strategic_diff_confirmed"},
+    )
+    return True
+
+
+def rollback(proposal_id: str, target_phase: str, target_stage: str | None = None) -> dict:
+    """사용자 명시 되돌리기(FR-7b): 대상 이후 하류 canonical 산출물을 무효화하고 stale 표식."""
+    node = get_node(proposal_id)
+    if not node:
+        return {"status": "not-found", "proposalId": proposal_id}
+    target_phase = (target_phase or "").strip().upper()
+    target_stage = target_stage.strip().upper() if target_stage else None
+    allowed = lifecycle_steps.rollback_targets(node)
+    if not any(t["phase"] == target_phase and (t["stage"] or None) == target_stage for t in allowed):
+        return {
+            "status": "invalid-transition",
+            "reason": "rollback_not_allowed",
+            "message": f"{target_phase}/{target_stage} is not an allowed rollback target.",
+            "allowedUserOverrides": allowed,
+        }
+
+    downstream = lifecycle_steps.downstream_of(node, target_phase, target_stage)
+    stale: list[str] = []
+    sets: list[str] = []
+    params: dict[str, Any] = {"id": proposal_id}
+    remove_stages: list[str] = []
+    revert_to_draft = False
+    for step in downstream:
+        field = step.canonical_field
+        if step.phase == "SUBMIT":
+            revert_to_draft = True
+            continue
+        if not field:
+            continue
+        if field == "stageArtifacts":
+            if step.stage:
+                remove_stages.append(step.stage)
+                stale.append(f"stage:{step.stage}")
+            continue
+        sets.append(f"p.{field}=null")
+        stale.append(field)
+        if field == "implementationPlan":
+            sets.append("p.planStale=true")
+
+    arts = _parse(node.get("stageArtifacts"), {}) or {}
+    for s in remove_stages:
+        arts.pop(s, None)
+    if remove_stages:
+        sets.append("p.stageArtifacts=$arts")
+        params["arts"] = _json(arts)
+
+    if revert_to_draft:
+        sets.append("p.status='DRAFT'")
+
+    sets.append("p.staleArtifacts=$stale")
+    params["stale"] = _json(stale)
+    sets.append("p.currentPhase=$phase")
+    params["phase"] = target_phase
+    sets.append("p.currentStage=$stage")
+    params["stage"] = target_stage
+    sets.append("p.pendingDraftId=null")
+    sets.append("p.pendingQuestionId=null")
+    sets.append("p.lifecycleStatus='ACTIVE'")
+
+    with get_session() as session:
+        session.run(f"MATCH (p:Proposal {{id:$id}}) SET {', '.join(sets)}", **params)
+
+    proposal_interactions.record_interaction(
+        proposal_id,
+        phase=target_phase,
+        kind="SYSTEM_NOTE",
+        status="RESOLVED",
+        payload={"event": "rollback", "target": {"phase": target_phase, "stage": target_stage}, "staleArtifacts": stale},
+    )
+    SmartLogger.log(
+        "INFO",
+        f"proposal rolled back: {proposal_id} -> {target_phase}",
+        category="proposal_lifecycle.state.updated",
+        params={"proposalId": proposal_id, "rollbackTarget": target_phase, "staleArtifacts": stale},
+    )
+    return {"status": "ok", "target": {"phase": target_phase, "stage": target_stage}, "staleArtifacts": stale}
 
 
 def save_stage_plan(proposal_id: str, stage_plan: dict) -> dict:
@@ -237,54 +451,55 @@ def save_stage_artifact(proposal_id: str, stage: str, artifact: dict, draft_ref:
 
 def save_diff(proposal_id: str, diff_type: str, payload: Any) -> dict:
     field = "strategicDiff" if diff_type == "strategic" else "tacticalDiff"
-    phase = "TACTICAL_DIFF" if field == "strategicDiff" else "CONSTITUTION"
     with get_session() as session:
-        rec = session.run(
+        session.run(
             f"""
             MATCH (p:Proposal {{id:$id}})
             SET p.{field}=$payload,
-                p.currentPhase=$phase,
                 p.lifecycleStatus='ACTIVE'
-            RETURN p {{.*}} AS p
             """,
             id=proposal_id,
             payload=_json(payload),
-            phase=phase,
-        ).single()
-    return hydrate_for_response(dict(rec["p"])) if rec else {}
+        )
+    # 전략 Diff 확정 시 DRAFT→SUBMITTED 내부 자동 전이(FR-6) → 이후 phase 재파생.
+    if field == "strategicDiff":
+        auto_submit_if_ready(proposal_id)
+    refresh_current_phase(proposal_id)
+    node = get_node(proposal_id)
+    return hydrate_for_response(node) if node else {}
 
 
 def save_tasks(proposal_id: str, tasks: list[dict]) -> dict:
     with get_session() as session:
-        rec = session.run(
+        session.run(
             """
             MATCH (p:Proposal {id:$id})
             SET p.tasksJson=$tasks,
-                p.currentPhase='IMPLEMENT',
                 p.lifecycleStatus='ACTIVE'
-            RETURN p {.*} AS p
             """,
             id=proposal_id,
             tasks=json.dumps(tasks or [], ensure_ascii=False),
-        ).single()
-    return hydrate_for_response(dict(rec["p"])) if rec else {}
+        )
+    refresh_current_phase(proposal_id)
+    node = get_node(proposal_id)
+    return hydrate_for_response(node) if node else {}
 
 
 def save_test_result(proposal_id: str, test_result: dict) -> dict:
     with get_session() as session:
-        rec = session.run(
+        session.run(
             """
             MATCH (p:Proposal {id:$id})
             SET p.testResults=$testResults,
-                p.currentPhase='ACCEPT',
                 p.lifecycleStatus='ACTIVE',
                 p.status=CASE WHEN p.status = 'TESTING' THEN 'PENDING_ACCEPTANCE' ELSE p.status END
-            RETURN p {.*} AS p
             """,
             id=proposal_id,
             testResults=_json(test_result),
-        ).single()
-    return hydrate_for_response(dict(rec["p"])) if rec else {}
+        )
+    refresh_current_phase(proposal_id)
+    node = get_node(proposal_id)
+    return hydrate_for_response(node) if node else {}
 
 
 def update_implementation_status(proposal_id: str, status: str) -> dict:

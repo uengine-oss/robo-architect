@@ -9,14 +9,16 @@ description: Proposal lifecycle을 시작, 재개, DDD 단계 진행, diff 수�
 
 This is the single Proposal lifecycle skill. It replaces the previous Proposal lifecycle skills except `robo-proposal-oda`, which remains a separate standard-mode skill.
 
-## 1. Routing Rules
+## 1. Routing Rules — The server is the single authority for ordering
 
-1. If the prompt contains explicit `mode`, `phase`, `stage`, or `scenario`, honor that input before reading Neo4j state.
-2. If explicit input conflicts with pending state, stop with one question or a validator-style error. Do not continue silently.
-3. If no explicit routing input exists, use the `robo-proposal` MCP tools to list/select/resume a Proposal and call `proposal_next_step`.
-4. **Mode-selection gate (new Proposal only):** Before calling `proposal_create` for a brand-new Proposal, decide the decomposition mode per `references/phases/mode-selection.md`. If the user did **not** explicitly name a mode, you MUST ask which mode to use (with a short description of each) and wait — do not create the Proposal or generate any Diff yet. If the user gave an explicit mode, skip the question and create immediately with that mode. This gate does not apply when resuming an existing Proposal.
+**You are a thin renderer.** The `robo-proposal` MCP server owns lifecycle order, gates, and validation. Do **not** infer "the next phase/stage" yourself. Every turn (except the mode-selection gate in rule 4), call `proposal_next_step` and perform **only** the `action` it returns, for exactly the `phase`/`stage` it names. See `references/common/routing.md` for the action-dispatch table.
+
+1. **No LLM self-override.** You may never choose a `phase`/`stage` to jump to on your own. Order comes from `proposal_next_step` only.
+2. **User-explicit override only, guarded.** If (and only if) the *user* explicitly asks to move to a specific step, you may pass `phase:` to `proposal_next_step`. The server enforces the transition guard: a forward jump returns `blocked`/`invalid-transition` (obey it, do not proceed); a backward move to a step listed in `allowedUserOverrides` is a rollback — call `proposal_rollback`. If explicit input conflicts with a pending question/draft, the server returns `blocked` — surface it and stop.
+3. If no explicit routing input exists, use the MCP tools to list/select/resume a Proposal, then drive via `proposal_next_step`.
+4. **Mode-selection gate (new Proposal only):** Before calling `proposal_create` for a brand-new Proposal, decide the decomposition mode per `references/phases/mode-selection.md`. If the user did **not** explicitly name a mode, you MUST ask which mode to use (with a short description of each) and wait — do not create the Proposal or generate any Diff yet. If the user gave an explicit mode, skip the question and create immediately with that mode. This gate does not apply when resuming an existing Proposal. **This is the only place you decide flow; after the Proposal exists, the server decides.**
 5. Ask at most one core question at a time. Store the question with `proposal_record_question` before waiting for an answer. (The mode-selection question in rule 4 is asked before the Proposal exists, so it is a plain conversational question and is not recorded via `proposal_record_question`.)
-6. Store draft artifacts with `proposal_save_draft`; only confirmed artifacts may be promoted to canonical fields.
+6. **Validate-before-present (P1).** Store draft artifacts with `proposal_save_draft`, which **validates before storing**. If it returns `status:"invalid"` (or `invalid-transition`), the draft was **not** saved — fix the listed violations and call `proposal_save_draft` again (regeneration loop). Retry at most **3 times** (`retryContext.maxAttempts`); if still failing, surface the violations to the user, ask for help, and **do not advance**. Only a draft that `proposal_save_draft` accepted may be presented to the user and later promoted with `proposal_confirm_draft`.
 
 Always read:
 

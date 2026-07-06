@@ -59,15 +59,12 @@ def save_stage_plan(proposal_id: str, plan: dict) -> None:
 
 
 def save_stage_artifact(proposal_id: str, stage: str, artifact: dict) -> Optional[str]:
-    """확정된 스테이지 산출물을 저장하고 다음 스테이지로 currentStage 를 전진."""
+    """확정된 스테이지 산출물을 저장하고 currentPhase/currentStage 를 스텝 테이블에서 재파생."""
     state = load_state(proposal_id)
     arts = (state or {}).get("stageArtifacts") or {}
     arts[stage] = artifact
     plan = (state or {}).get("stagePlan")
     nxt = next_stage_after(plan, stage)
-    cur_phase = "STRATEGIC_DDD" if nxt in DDD_STAGE_ORDER[:3] else "TACTICAL_DDD"
-    if nxt is None:
-        cur_phase = "STRATEGIC_DIFF" if stage in DDD_STAGE_ORDER[:3] else "TACTICAL_DIFF"
     draft_ref = None
     node = proposal_state_service.get_node(proposal_id) or {}
     if node.get("pendingDraftId"):
@@ -75,15 +72,24 @@ def save_stage_artifact(proposal_id: str, stage: str, artifact: dict) -> Optiona
     with get_session() as session:
         session.run(
             "MATCH (p:Proposal {id:$id}) "
-            "SET p.stageArtifacts=$arts, p.currentStage=$cur, "
-            "p.currentPhase=$phase, p.pendingDraftId=null, p.lifecycleStatus='ACTIVE'",
+            "SET p.stageArtifacts=$arts, p.pendingDraftId=null, p.lifecycleStatus='ACTIVE'",
             id=proposal_id,
             arts=json.dumps(arts, ensure_ascii=False),
-            cur=nxt,
-            phase=cur_phase,
         )
     if draft_ref:
         proposal_interactions.confirm_draft(proposal_id, draft_ref)
+    # 042 FR-016~018 — 지속 전략 결정(STRATEGIZE/CONNECT/DEFINE)을 Constitution.strategicMemory
+    # 로 승격(서버 강제 흐름에서도 반드시 발화하도록 스테이지 저장 지점에 배선).
+    if stage in ("STRATEGIZE", "CONNECT", "DEFINE"):
+        try:
+            from api.features.proposal_lifecycle.services import strategic_memory
+            strategic_memory.promote(stage, artifact)
+        except Exception as e:  # noqa: BLE001 — 승격 실패가 라이프사이클을 막지 않도록.
+            SmartLogger.log("WARN", f"strategic memory promote skipped: {proposal_id}/{stage}: {e}",
+                            category="proposal_lifecycle.staged.memory_promote_skip",
+                            params={"proposalId": proposal_id, "stage": stage, "error": str(e)})
+    # 순서 권위는 스텝 테이블(단일 원천). 저장 후 phase/stage 를 재파생(FR-5).
+    proposal_state_service.refresh_current_phase(proposal_id)
     return nxt
 
 
@@ -110,11 +116,11 @@ def mark_stage_skipped(proposal_id: str, stage: str) -> Optional[str]:
     with get_session() as session:
         session.run(
             "MATCH (p:Proposal {id:$id}) "
-            "SET p.stagePlan=$plan, p.currentStage=$cur, p.lifecycleStatus='ACTIVE'",
+            "SET p.stagePlan=$plan, p.lifecycleStatus='ACTIVE'",
             id=proposal_id,
             plan=json.dumps(plan, ensure_ascii=False),
-            cur=nxt,
         )
+    proposal_state_service.refresh_current_phase(proposal_id)
     return nxt
 
 

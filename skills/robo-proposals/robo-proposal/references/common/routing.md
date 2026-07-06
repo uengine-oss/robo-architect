@@ -1,13 +1,41 @@
-# Routing
+# Routing — server-driven, thin renderer
 
-Use explicit input first:
+The server owns ordering. You do **not** compute "the next phase." While a Proposal is in progress, every turn:
 
-- `mode: SIMPLIFIED` routes to Strategic Diff, Plan, Tasks, Implement, Test.
-- `mode: DETAILED_DDD` routes to Scope, DDD stages, Diff consolidation, Plan, Tasks, Implement, Test.
-- `phase:` may be `START_OR_RESUME`, `SCOPE`, `STRATEGIC_DDD`, `STRATEGIC_DIFF`, `TACTICAL_DDD`, `TACTICAL_DIFF`, `CONSTITUTION`, `CONTEXT`, `TASKS`, `IMPLEMENT`, `TEST`, `SUBMIT`, or `ACCEPT`.
-- `stage:` may be `DISCOVER`, `DECOMPOSE`, `STRATEGIZE`, `CONNECT`, `DEFINE`, or `TACTICAL`.
-- `scenario:` may be `SIMPLIFIED_STRATEGIC`, `SIMPLIFIED_TACTICAL`, `DETAILED_STRATEGIC_FROM_DDD`, or `DETAILED_TACTICAL_FROM_DDD`.
+1. Call `proposal_next_step(proposalId)`.
+2. Read `nextStep` and perform **only** its `action` for its `phase`/`stage`. Do not substitute your own step.
 
-When explicit routing is absent, call `proposal_list` or `proposal_get`, then `proposal_next_step`. If the returned step requires a pending question or draft decision, restore that context before generating anything new.
+## Action dispatch (`nextStep.action`)
 
-For a **new** Proposal with no explicit `mode`, do not assume `SIMPLIFIED`. Apply the mode-selection gate in `references/phases/mode-selection.md` first: ask the user which mode and wait, defaulting to `SIMPLIFIED` only if they decline to choose.
+`proposal_next_step` returns an extended, imperative action:
+
+```json
+{
+  "phase": "TACTICAL_DIFF", "stage": null, "action": "generate_draft",
+  "requiresUserApproval": true, "validationRef": "tactical", "reason": "...",
+  "allowedUserOverrides": [{"phase":"STRATEGIC_DIFF","stage":null}],
+  "retryContext": null, "staleArtifacts": []
+}
+```
+
+| `action` | Do exactly this |
+|---|---|
+| `generate_draft` | Generate the artifact for `phase`/`stage` in canonical shape, call `proposal_save_draft`. If it returns `invalid`, run the regeneration loop (see interaction-runstate.md). On success, present the validated draft and — because `requiresUserApproval` is true — wait for the user, then `proposal_confirm_draft`. |
+| `await_approval` | A validated draft is already pending. Present it and wait for the user's approve/reject, then `proposal_confirm_draft` / `proposal_reject_draft`. |
+| `ask_question` | A question is pending (or must be asked). Record with `proposal_record_question`, wait, then `proposal_answer_question`. |
+| `confirm` | An internal, no-approval transition (e.g. `SUBMIT`). Execute the corresponding tool (`proposal_submit`) without asking the user, then call `proposal_next_step` again. |
+| `run_implement` | Proceed to implementation for the approved tasks (Implement phase). |
+| `run_test` | Proceed to the review/test step. |
+| `finalize` | All checks done; finalize (accept / live-DB reflection) — `proposal_accept`. |
+
+`requiresUserApproval: true` means you MUST wait for the user before the promoting tool call. Never auto-confirm an approval gate.
+
+## Stop conditions — never auto-advance past a server signal
+
+If any tool returns `blocked`, `invalid-transition`, or `invalid` (validation), surface the server's message verbatim and **stop**. Do not pick another phase, do not retry a different step, do not "work around" it. Re-call `proposal_next_step` only after the blocking condition is resolved (question answered, draft fixed/confirmed, or user-requested rollback).
+
+## Explicit routing input
+
+- `mode: SIMPLIFIED | DETAILED_DDD` applies only at the mode-selection gate for a brand-new Proposal.
+- A **user-explicit** `phase:` may be passed to `proposal_next_step`. The server guards it: forward jumps return `blocked`; a `phase` in `allowedUserOverrides` is a legal rollback (call `proposal_rollback`). You never originate a `phase` yourself — only relay the user's explicit request.
+- For a **new** Proposal with no explicit `mode`, do not assume `SIMPLIFIED`. Apply the mode-selection gate in `references/phases/mode-selection.md` first.
