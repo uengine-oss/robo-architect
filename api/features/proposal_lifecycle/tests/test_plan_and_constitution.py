@@ -173,6 +173,46 @@ def test_tactical_contract_rejects_legacy_plan_shape():
     assert ".emittedBy" in paths
 
 
+def test_tactical_gwt_wrong_type_reports_shape_not_required():
+    """ISSUE-06: a present-but-wrong-typed GWT block must report shape + received
+    type with code invalid_type, not a misleading `required`."""
+    from api.features.proposal_lifecycle.services.tactical_contract import (
+        validate_tactical_diff_contract,
+    )
+
+    tactical = [
+        {
+            "nodeId": "AGG-cart", "nodeLabel": "Aggregate", "nodeTitle": "Cart",
+            "boundedContextId": "BC-order", "fields": {"rootEntity": "Cart"},
+            "properties": [{"name": "cartId", "type": "UUID"}],
+        },
+        {
+            "nodeId": "CMD-add", "nodeLabel": "Command", "nodeTitle": "AddToCart",
+            "aggregateId": "AGG-cart", "userStoryRefs": ["US-add"],
+            "properties": [{"name": "productId", "type": "UUID"}],
+            "fields": {"inputSchema": {"productId": "UUID"}},
+            # given is a plain string (wrong type); when.fieldValues is a list (wrong type)
+            "gwt": [{
+                "given": "장바구니가 존재한다",
+                "when": {"fieldValues": ["productId"]},
+                "then": {"fieldValues": {"productId": "p-1"}},
+            }],
+        },
+    ]
+
+    violations = validate_tactical_diff_contract(tactical)
+    by_path = {v["path"].split("gwt[0].")[-1]: v for v in violations if "gwt[0]" in v["path"]}
+
+    given = by_path["given"]
+    assert given["code"] == "invalid_type"
+    assert "fieldValues" in given["message"]
+    assert "str" in given["message"]  # echoes the received type
+
+    when_fv = by_path["when.fieldValues"]
+    assert when_fv["code"] == "invalid_type"
+    assert "list" in when_fv["message"]
+
+
 def test_tactical_contract_accepts_canonical_order_preview_shape():
     from api.features.proposal_lifecycle.services.tactical_contract import (
         validate_tactical_diff_contract,

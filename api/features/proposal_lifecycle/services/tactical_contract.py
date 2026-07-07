@@ -246,15 +246,43 @@ def _validate_gwt(
             continue
         for part in ("given", "when", "then"):
             block = scenario.get(part)
+            if block is None:
+                violations.append({
+                    "path": f"{spath}.{part}",
+                    "code": "required",
+                    "message": (
+                        f"{part} block is required — expected an object like "
+                        '{"fieldValues": {"propertyName": value}}'
+                    ),
+                })
+                continue
             if not isinstance(block, dict):
-                violations.append({"path": f"{spath}.{part}", "code": "required", "message": f"{part} block is required"})
+                violations.append({
+                    "path": f"{spath}.{part}",
+                    "code": "invalid_type",
+                    "message": (
+                        f"{part} must be an object like "
+                        '{"fieldValues": {"propertyName": value}} — got '
+                        f"{type(block).__name__}"
+                    ),
+                })
                 continue
             field_values = block.get("fieldValues")
-            if not isinstance(field_values, dict):
+            if field_values is None:
                 violations.append({
                     "path": f"{spath}.{part}.fieldValues",
                     "code": "required",
-                    "message": f"{part}.fieldValues must be an object",
+                    "message": f"{part}.fieldValues object is required (keys must match related property names)",
+                })
+                continue
+            if not isinstance(field_values, dict):
+                violations.append({
+                    "path": f"{spath}.{part}.fieldValues",
+                    "code": "invalid_type",
+                    "message": (
+                        f"{part}.fieldValues must be an object mapping property names to "
+                        f"values — got {type(field_values).__name__}"
+                    ),
                 })
                 continue
             allowed = aggregate_props if part == "given" else command_props if part == "when" else emitted_event_props

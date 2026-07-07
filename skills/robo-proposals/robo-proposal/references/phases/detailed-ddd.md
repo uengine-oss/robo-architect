@@ -23,4 +23,9 @@ Output top-level key:
 - `DefineArtifact`
 - `TacticalArtifact`
 
+For the **full element shapes, required arrays, and enums** of each artifact (e.g.
+`STRATEGIZE.classifications[].kind ∈ {CORE, SUPPORTING, GENERIC}`), see
+`references/contracts/stage-artifacts.md`. Build each artifact from that contract before
+saving, so you don't discover the shape through retries.
+
 Do not output final Strategic or Tactical Diff from these stages. Consolidation happens in the diff phase.

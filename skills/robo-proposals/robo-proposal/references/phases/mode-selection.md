@@ -42,4 +42,6 @@ Proposal does not exist). This is a pre-creation conversational question, so it 
   `mode: SIMPLIFIED` (default), and state in the reply that SIMPLIFIED was used.
 
 After the mode is fixed, call `proposal_create` and follow the normal routing
-(`references/common/routing.md`).
+(`references/common/routing.md`). Always pass the user's raw requirement text as the
+required `originalPrompt` argument together with `mode` (see
+`references/common/mcp-tools.md` → `proposal_create`).

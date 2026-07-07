@@ -10,6 +10,17 @@ Use the `robo-proposal` MCP server for lifecycle state:
 - `proposal_generate_tasks`, `proposal_update_implementation_status`, `proposal_save_test_result`
 - `proposal_submit`, `proposal_accept`, `proposal_rollback`
 
+### `proposal_create` — required arguments
+
+Signature: `proposal_create(originalPrompt, title?, mode?, author?)`.
+
+- `originalPrompt` **(required)** — the user's raw natural-language requirement text. Omitting it fails with pydantic `originalPrompt Field required`.
+- `title` (optional) — auto-derived from `originalPrompt` if omitted.
+- `mode` (optional, default `SIMPLIFIED`) — `SIMPLIFIED` or `DETAILED_DDD`. Pass the mode fixed by `mode-selection.md`.
+- `author` (optional, default `mcp`).
+
+Always pass at least `originalPrompt` and `mode`.
+
 ### `proposal_next_step` — the ordering authority
 
 Returns `nextStep` with the extended imperative schema. Perform only its `action`:
