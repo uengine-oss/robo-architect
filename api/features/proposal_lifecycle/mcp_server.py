@@ -12,7 +12,6 @@ from api.features.proposal_lifecycle.proposal_contracts import (
     DDD_STAGE_ORDER,
     DecompositionMode,
     ProposalResponse,
-    StrategicDiff,
     TestRunResult,
     append_status_history,
     extract_title_from_prompt,
@@ -21,13 +20,14 @@ from api.features.proposal_lifecycle.services import (
     lifecycle_steps,
     proposal_interactions,
     proposal_state_service,
+    report_render,
     staged_runner,
 )
 from api.features.proposal_lifecycle.services.proposal_ai_validation import (
-    validate_stage_artifact,
     validate_implementation_plan,
-    validate_tactical_output,
+    validate_stage_artifact,
     validate_strategic_output,
+    validate_tactical_output,
     violation_summary,
 )
 from api.features.proposal_lifecycle.services.proposal_id_generator import next_proposal_id
@@ -97,7 +97,10 @@ def build_mcp_server() -> Any | None:
 
     @server.tool(name="proposal_get", description="Return full Proposal lifecycle state.")
     def proposal_get(proposalId: str) -> dict[str, Any]:  # noqa: N803
-        return _state(proposalId)
+        result = _state(proposalId)
+        if result.get("status") != "not-found":
+            result["reportMarkdown"] = _overview_report(proposalId)
+        return result
 
     @server.tool(name="proposal_list", description="List resumable Proposal summaries.")
     def proposal_list(status: str | None = None, limit: int = 50) -> dict[str, Any]:
@@ -190,10 +193,13 @@ def build_mcp_server() -> Any | None:
                 status="RESOLVED",
                 payload=validation,
             )
-            return validation
+            return _with_report(validation, "VIOLATIONS", validation)
         draft = proposal_interactions.save_draft(proposalId, normalized_phase, artifact)
         _log("proposal_save_draft", proposalId, draftId=draft["id"])
-        return {"status": "ok", "draftRef": draft["id"], "draft": draft}
+        return _with_report(
+            {"status": "ok", "draftRef": draft["id"], "draft": draft},
+            normalized_phase, artifact,
+        )
 
     @server.tool(name="proposal_confirm_draft", description="Confirm an already-validated draft and promote it to a canonical artifact (promotion only).")
     def proposal_confirm_draft(proposalId: str, draftRef: str) -> dict[str, Any]:  # noqa: N803
@@ -220,7 +226,10 @@ def build_mcp_server() -> Any | None:
         proposal_state_service.set_lifecycle(proposalId, lifecycle_status="ACTIVE", clear_pending_draft=True)
         proposal_state_service.refresh_current_phase(proposalId)
         _log("proposal_confirm_draft", proposalId, draftId=draftRef)
-        return {"status": "ok", "confirmed": draft, "proposal": _state(proposalId)}
+        return _with_report(
+            {"status": "ok", "confirmed": draft, "proposal": _state(proposalId)},
+            phase, artifact if isinstance(artifact, dict) else {},
+        )
 
     @server.tool(name="proposal_reject_draft", description="Reject a pending draft artifact.")
     def proposal_reject_draft(proposalId: str, draftRef: str, reason: str | None = None) -> dict[str, Any]:  # noqa: N803
@@ -246,10 +255,14 @@ def build_mcp_server() -> Any | None:
                 status="RESOLVED",
                 payload={"violations": validation.violations},
             )
-            return _validation_error("stage_artifact_invalid", validation.violations)
+            err = _validation_error("stage_artifact_invalid", validation.violations)
+            return _with_report(err, "VIOLATIONS", err)
         next_stage = staged_runner.save_stage_artifact(proposalId, normalized_stage, artifact)
         _log("proposal_save_stage_artifact", proposalId, stage=normalized_stage)
-        return {"status": "ok", "nextStage": next_stage, "proposal": _state(proposalId)}
+        return _with_report(
+            {"status": "ok", "nextStage": next_stage, "proposal": _state(proposalId)},
+            normalized_stage, artifact,
+        )
 
     @server.tool(name="proposal_save_diff", description="Validate and save strategic or tactical diff (guarded).")
     def proposal_save_diff(proposalId: str, diffType: str, payload: Any) -> dict[str, Any]:  # noqa: N803
@@ -273,10 +286,17 @@ def build_mcp_server() -> Any | None:
                 status="RESOLVED",
                 payload=validation,
             )
-            return validation
+            return _with_report(validation, "VIOLATIONS", validation)
         proposal_state_service.save_diff(proposalId, diffType.lower(), payload)
         _log("proposal_save_diff", proposalId, diffType=diffType)
-        return {"status": "ok", "proposal": _state(proposalId)}
+        if diffType.lower() == "tactical":
+            report_phase, report_artifact = "TACTICAL_DIFF", {"tacticalDiff": payload}
+        else:
+            report_phase, report_artifact = "STRATEGIC_DIFF", {"strategicDiff": payload}
+        return _with_report(
+            {"status": "ok", "proposal": _state(proposalId)},
+            report_phase, report_artifact,
+        )
 
     @server.tool(name="proposal_record_question", description="Store a single pending HITL question.")
     def proposal_record_question(
@@ -287,7 +307,10 @@ def build_mcp_server() -> Any | None:
     ) -> dict[str, Any]:
         interaction = proposal_interactions.record_question(proposalId, phase.upper(), question, options or [])
         _log("proposal_record_question", proposalId, questionId=interaction["id"])
-        return {"status": "ok", "questionId": interaction["id"], "question": interaction}
+        return _with_report(
+            {"status": "ok", "questionId": interaction["id"], "question": interaction},
+            "QUESTION", {"question": question, "options": options or []},
+        )
 
     @server.tool(name="proposal_answer_question", description="Store a user's answer and resume the Proposal.")
     def proposal_answer_question(proposalId: str, questionId: str, answer: Any) -> dict[str, Any]:  # noqa: N803
@@ -304,7 +327,13 @@ def build_mcp_server() -> Any | None:
             context = proposal_interactions.resume_context(proposalId)
         except ValueError as e:
             return {"status": "not-found", "message": str(e)}
-        return {"status": "ok", "resumeContext": context, "nextStep": proposal_state_service.next_step(proposalId).get("nextStep")}
+        # resume 는 확정 산출물 개요를 렌더(FR-3, S2 재열람).
+        return {
+            "status": "ok",
+            "resumeContext": context,
+            "nextStep": proposal_state_service.next_step(proposalId).get("nextStep"),
+            "reportMarkdown": _overview_report(proposalId),
+        }
 
     @server.tool(name="proposal_generate_tasks", description="Persist generated implementation tasks.")
     def proposal_generate_tasks(proposalId: str, tasks: list[dict]) -> dict[str, Any]:  # noqa: N803
@@ -317,7 +346,10 @@ def build_mcp_server() -> Any | None:
             payload={"event": "tasksSaved", "count": len(tasks or [])},
         )
         _log("proposal_generate_tasks", proposalId, count=len(tasks or []))
-        return {"status": "ok", "proposal": _state(proposalId)}
+        return _with_report(
+            {"status": "ok", "proposal": _state(proposalId)},
+            "TASKS", {"tasks": tasks or []},
+        )
 
     @server.tool(name="proposal_update_implementation_status", description="Update implementation/sandbox status.")
     def proposal_update_implementation_status(proposalId: str, status: str) -> dict[str, Any]:  # noqa: N803
@@ -330,10 +362,14 @@ def build_mcp_server() -> Any | None:
         try:
             result = TestRunResult(**{**testRunResult, "proposalId": proposalId}).model_dump(mode="json")
         except ValidationError as e:
-            return {"status": "invalid", "violations": e.errors()}
+            err = {"status": "invalid", "violations": e.errors()}
+            return _with_report(err, "VIOLATIONS", err)
         proposal_state_service.save_test_result(proposalId, result)
         _log("proposal_save_test_result", proposalId)
-        return {"status": "ok", "proposal": _state(proposalId)}
+        return _with_report(
+            {"status": "ok", "proposal": _state(proposalId)},
+            "TEST", result,
+        )
 
     @server.tool(name="proposal_submit", description="Transition Proposal to submitted Plan state.")
     def proposal_submit(proposalId: str) -> dict[str, Any]:  # noqa: N803
@@ -527,6 +563,67 @@ def _phase_of(phase: str) -> str:
     if normalized in set(DDD_STAGE_ORDER[3:]):
         return "TACTICAL_DDD"
     return normalized
+
+
+# --- 013-report-mcda: reportMarkdown 주입 헬퍼(FR-2/3) ----------------------
+
+
+def _with_report(result: dict, phase: str, artifact: Any) -> dict:
+    """대상 도구 응답에 서버 렌더 reportMarkdown 주입(기존 필드 불변, 추가만)."""
+    try:
+        result["reportMarkdown"] = report_render.render_report(phase, artifact)
+    except Exception as e:  # 렌더 실패는 흐름을 막지 않음(표시 계층 전용).
+        SmartLogger.log(
+            "WARN",
+            "reportMarkdown render failed; response returned without it.",
+            category="proposal_lifecycle.mcp.report_render_failed",
+            params={"phase": phase, "error": str(e)},
+        )
+    return result
+
+
+def _overview_report(proposal_id: str) -> str:
+    """proposal_get/resume 용 — Neo4j 저장 canonical artifact 를 합성 렌더."""
+    node = proposal_state_service.get_node(proposal_id)
+    if not node:
+        return ""
+    parts: list[str] = []
+    strategic = _parse_stored(node.get("strategicDiff"))
+    if strategic:
+        parts.append(report_render.render_report("STRATEGIC_DIFF", {"strategicDiff": strategic}))
+    tactical = _parse_stored(node.get("tacticalDiff"))
+    plan = _parse_stored(node.get("implementationPlan"))
+    if tactical or plan:
+        payload: dict[str, Any] = {}
+        if tactical:
+            payload["tacticalDiff"] = tactical
+        if plan:
+            payload["implementationPlan"] = plan
+        parts.append(report_render.render_report("TACTICAL_DIFF", payload))
+    stages = _parse_stored(node.get("stageArtifacts"))
+    if isinstance(stages, dict):
+        for stage, art in stages.items():
+            parts.append(report_render.render_report(stage, art))
+    tasks = _parse_stored(node.get("tasksJson"))
+    if tasks:
+        parts.append(report_render.render_report("TASKS", {"tasks": tasks}))
+    test = _parse_stored(node.get("testResults"))
+    if test:
+        parts.append(report_render.render_report("TEST", test))
+    if not parts:
+        return f"## 📄 제안 개요\n\n_아직 확정된 산출물이 없습니다 (현재 단계: {node.get('currentPhase')})_"
+    return "\n\n---\n\n".join(parts)
+
+
+def _parse_stored(raw: Any) -> Any:
+    if raw is None:
+        return None
+    if isinstance(raw, (dict, list)):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
 
 
 def _log(tool: str, proposal_id: str, **params: Any) -> None:

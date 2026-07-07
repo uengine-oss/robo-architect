@@ -13,7 +13,7 @@ The server validates on **save**, not on confirm. So a saved draft is already va
 
 1. Generate the artifact in canonical shape.
 2. Call `proposal_save_draft`.
-   - **On `status:"ok"`** → the draft passed validation and is stored. Return an `action:"draft"` envelope with `draftRef` and present it. Because the step's `requiresUserApproval` is true, wait for the user.
+   - **On `status:"ok"`** → the draft passed validation and is stored. Present it by rendering the response's `reportMarkdown` verbatim + the `progressMeta` header (see `references/common/report-contract.md`), then — because the step's `requiresUserApproval` is true — wait for the user.
    - **On `status:"invalid"`** → the draft was **rejected and not stored**. Read `violations`, fix them, and call `proposal_save_draft` again. This is the **regeneration loop**.
    - **On `status:"invalid-transition"`** → a prior required step is incomplete. Surface the message and stop; do not draft this phase yet.
 3. Promote only after the user approves, via `proposal_confirm_draft` (promotion only — it does not re-validate).

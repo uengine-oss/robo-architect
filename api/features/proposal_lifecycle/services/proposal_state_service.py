@@ -9,6 +9,7 @@ from api.features.proposal_lifecycle.proposal_contracts import (
     append_status_history,
 )
 from api.features.proposal_lifecycle.services import lifecycle_steps, proposal_interactions
+from api.features.proposal_lifecycle.services import report_contract_data as rc
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -183,6 +184,8 @@ def _build_next_step(
     action: str | None = None,
     reason: str | None = None,
 ) -> dict:
+    overrides = lifecycle_steps.rollback_targets(node)
+    stale = _parse(node.get("staleArtifacts"), []) or []
     return {
         "phase": step.phase,
         "stage": step.stage,
@@ -190,10 +193,125 @@ def _build_next_step(
         "requiresUserApproval": step.requires_user_approval,
         "validationRef": step.validation_ref,
         "reason": reason or _reason_for(step),
-        "allowedUserOverrides": lifecycle_steps.rollback_targets(node),
+        "allowedUserOverrides": overrides,
         "retryContext": _retry_context(proposal_id, step.phase),
-        "staleArtifacts": _parse(node.get("staleArtifacts"), []) or [],
+        "staleArtifacts": stale,
+        # 013-report-mcda(FR-6/7): 진행 헤더 파생 필드(서버 SSOT).
+        "progressMeta": _progress_meta(node, step, action or step.action, overrides, stale),
     }
+
+
+# --- 013-report-mcda: progressMeta 파생(FR-6/7, plan Step 4) -----------------
+
+
+def _step_position(node: dict, step: lifecycle_steps.StepDef) -> tuple[int, int]:
+    """(stepIndex 1-based, stepTotal). 모드별 동적 = 이 노드의 active_steps 길이."""
+    steps = lifecycle_steps.active_steps(node)
+    total = len(steps)
+    for i, s in enumerate(steps):
+        if s.key() == step.key():
+            return i + 1, total
+    # 범위 밖(pending/terminal): 진행률 하한/상한 폴백.
+    return (total, total) if step.phase == "ACCEPT" else (1, max(total, 1))
+
+
+def _next_step_label(node: dict, step: lifecycle_steps.StepDef) -> str | None:
+    """현재 step 바로 다음 스텝의 한글 라벨(없으면 None = 마지막 단계)."""
+    steps = lifecycle_steps.active_steps(node)
+    for i, s in enumerate(steps):
+        if s.key() == step.key():
+            nxt = steps[i + 1] if i + 1 < len(steps) else None
+            if nxt is None:
+                return None
+            label = rc.phase_label(nxt.phase)
+            if nxt.stage:
+                label += f" · {rc.stage_label(nxt.stage)}"
+            return label
+    return None
+
+
+def _derive_choices(
+    step: lifecycle_steps.StepDef,
+    overrides: list[dict],
+    stale: list,
+) -> list[dict]:
+    """상태 기반 결정론 choices. 순서 고정: approve→amend→skip→rollback."""
+    choices: list[dict] = []
+    if step.requires_user_approval and step.action in (
+        lifecycle_steps.GENERATE_DRAFT,
+        lifecycle_steps.AWAIT_APPROVAL,
+    ):
+        choices.append({"id": "approve", "label": f"{rc.EMOJI_APPROVE} 승인",
+                        "hint": "현재 단계 산출물을 확정합니다", "kind": "approve"})
+        choices.append({"id": "amend", "label": f"{rc.EMOJI_AMEND} 수정",
+                        "hint": "피드백을 반영해 다시 생성합니다", "kind": "amend"})
+    if step.stage and step.stage.upper() != "DISCOVER":
+        choices.append({"id": f"skip:{step.stage}", "label": f"{rc.EMOJI_SKIP} 건너뛰기",
+                        "hint": f"{rc.stage_label(step.stage)} 단계를 생략합니다", "kind": "skip"})
+    stale_note = f" {rc.EMOJI_WARN} 무효화 대상 있음" if stale else ""
+    for target in overrides:
+        tphase = target.get("phase")
+        tstage = target.get("stage")
+        label_target = rc.phase_label(tphase)
+        if tstage:
+            label_target += f" · {rc.stage_label(tstage)}"
+        choices.append({
+            "id": f"rollback:{tphase}" + (f":{tstage}" if tstage else ""),
+            "label": f"{rc.EMOJI_ROLLBACK} 되돌리기 → {label_target}",
+            "hint": f"{label_target}(으)로 롤백{stale_note}",
+            "kind": "rollback",
+        })
+    return choices
+
+
+def _progress_meta(
+    node: dict,
+    step: lifecycle_steps.StepDef,
+    action: str,
+    overrides: list[dict],
+    stale: list,
+) -> dict:
+    step_index, step_total = _step_position(node, step)
+    phase_label = rc.phase_label(step.phase)
+    stage_label = rc.stage_label(step.stage) if step.stage else None
+    next_label = _next_step_label(node, step)
+    choices = _derive_choices(step, overrides, stale)
+    header = _render_progress_header(step_index, step_total, phase_label, stage_label, next_label, choices, stale)
+    return {
+        "stepIndex": step_index,
+        "stepTotal": step_total,
+        "phaseLabel": phase_label,
+        "stageLabel": stage_label,
+        "nextLabel": next_label,
+        "choices": choices,
+        "headerMarkdown": header,
+    }
+
+
+def _render_progress_header(
+    step_index: int,
+    step_total: int,
+    phase_label: str,
+    stage_label: str | None,
+    next_label: str | None,
+    choices: list[dict],
+    stale: list,
+) -> str:
+    """서버 SSOT 진행 헤더(이모지 + (N/M) + 현재/다음/선택지, FR-10)."""
+    current = phase_label + (f" · {stage_label}" if stage_label else "")
+    next_txt = next_label if next_label else "마지막 단계"
+    lines = [f"{rc.EMOJI_PROGRESS} **진행 ({step_index}/{step_total})** — 현재 단계: **{current}** · 다음 단계: {next_txt}"]
+    if stale:
+        lines.append(f"{rc.EMOJI_WARN} 무효화 대상: {', '.join(str(s) for s in stale)}")
+    if choices:
+        lines.append("")
+        lines.append("**가능한 선택지**")
+        lines.append("")
+        lines.append("| 선택 | 설명 |")
+        lines.append("| --- | --- |")
+        for c in choices:
+            lines.append(f"| {c['label']} | {c['hint']} |")
+    return "\n".join(lines)
 
 
 def next_step(proposal_id: str, *, mode: str | None = None, phase: str | None = None) -> dict:
@@ -270,6 +388,7 @@ def next_step(proposal_id: str, *, mode: str | None = None, phase: str | None = 
     # --- 스텝 테이블 파생(단일 원천, FR-3/FR-4) ------------------------------
     step = lifecycle_steps.next_incomplete_step(node)
     if step is None:
+        complete_step = lifecycle_steps.StepDef("ACCEPT", None, lifecycle_steps.FINALIZE, False, None)
         return {
             "status": "ok",
             "nextStep": {
@@ -277,6 +396,7 @@ def next_step(proposal_id: str, *, mode: str | None = None, phase: str | None = 
                 "requiresUserApproval": False, "validationRef": None,
                 "reason": "lifecycle complete", "allowedUserOverrides": [],
                 "retryContext": None, "staleArtifacts": [],
+                "progressMeta": _progress_meta(node, complete_step, lifecycle_steps.FINALIZE, [], []),
             },
             "reason": "no blocking lifecycle action detected",
         }

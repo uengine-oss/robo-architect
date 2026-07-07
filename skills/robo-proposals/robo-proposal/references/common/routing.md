@@ -30,6 +30,16 @@ The server owns ordering. You do **not** compute "the next phase." While a Propo
 
 `requiresUserApproval: true` means you MUST wait for the user before the promoting tool call. Never auto-confirm an approval gate.
 
+## Present step — render, don't re-summarize (013-report-mcda)
+
+Whenever you present an artifact/question/validation error to the user, follow
+`references/common/report-contract.md`:
+
+1. Output the tool response's `reportMarkdown` **verbatim** (server SSOT body).
+2. Render the `nextStep.progressMeta` header (`headerMarkdown`, i.e. `📍 (N/M)` + 현재/다음 + choices).
+3. If `reportMarkdown` is absent, use the lightweight fallback (all top-level keys as a table),
+   never stop the flow.
+
 ## Stop conditions — never auto-advance past a server signal
 
 If any tool returns `blocked`, `invalid-transition`, or `invalid` (validation), surface the server's message verbatim and **stop**. Do not pick another phase, do not retry a different step, do not "work around" it. Re-call `proposal_next_step` only after the blocking condition is resolved (question answered, draft fixed/confirmed, or user-requested rollback).

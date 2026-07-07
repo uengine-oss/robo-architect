@@ -26,6 +26,12 @@ Always read:
 - `references/common/mcp-tools.md`
 - `references/common/output-contracts.md`
 - `references/common/validator-rules.md`
+- `references/common/report-contract.md`
+
+**Present/output rule (013-report-mcda):** whenever you show a step artifact, question, or
+validation error, follow `references/common/report-contract.md` — output the server's
+`reportMarkdown` verbatim and render the `nextStep.progressMeta` header; only fall back to
+the lightweight key table when `reportMarkdown` is absent.
 
 ## 2. Reference Loading Table
 
