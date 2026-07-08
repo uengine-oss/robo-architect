@@ -18,6 +18,9 @@ export const useProposalsStore = defineStore('proposals', () => {
   const loading = ref(false)
   const error = ref(null)
   const intentStream = ref({ active: false, events: [] })
+  // 047 — 역추출(Reverse Intent) SSE 상태.
+  const reverseStream = ref({ active: false, phase: '', groups: [], logLines: [], done: false, error: null })
+  let _reverseEs = null
   const sandboxStream = ref({ active: false, tasks: [], logs: [] })
   // 작업 분해(헤드리스) 스트림 — narration + 분해된 작업 목록.
   const tasksStream = ref({ active: false, logLines: [], tasks: [], error: null })
@@ -201,6 +204,87 @@ export const useProposalsStore = defineStore('proposals', () => {
       _intentEs = null
     }
     intentStream.value.active = false
+  }
+
+  // ---------------------------------------------------------------------------
+  // 047 — Reverse Intent (코드 그래프 → 요구사항)
+  // ---------------------------------------------------------------------------
+
+  async function fetchReverseSources() {
+    const res = await fetch(`${BASE}/reverse/sources`)
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.sources || []
+  }
+
+  async function createReverseProposal(db, title = null) {
+    loading.value = true
+    error.value = null
+    try {
+      const res = await fetch(`${BASE}/reverse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ db, title }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d?.detail?.message || `Create reverse failed: ${res.status}`)
+      }
+      const proposal = await res.json()
+      proposals.value.unshift(proposal)
+      currentProposal.value = proposal
+      return proposal
+    } catch (e) {
+      error.value = e.message
+      return null
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function subscribeToReverseIntent(proposalId) {
+    reverseStream.value = { active: true, phase: '', groups: [], logLines: [], done: false, error: null }
+    const es = new EventSource(`${BASE}/${proposalId}/stream/reverse`)
+    const handlers = {
+      phase: (d) => { reverseStream.value.phase = d.message || '' },
+      groups: (d) => { reverseStream.value.groups = d.groups || [] },
+      log_line: (d) => {
+        reverseStream.value.logLines.push(d.text)
+        if (reverseStream.value.logLines.length > 200) reverseStream.value.logLines.shift()
+      },
+      brief_result: (d) => {
+        reverseStream.value.logLines.push(`· ${d.table} (${d.part}/${d.total}) 완료`)
+      },
+      strategic_diff: (d) => {
+        if (currentProposal.value?.id === proposalId) {
+          currentProposal.value = { ...currentProposal.value, strategicDiff: d.strategicDiff }
+        }
+      },
+      done: () => {
+        reverseStream.value.active = false
+        reverseStream.value.done = true
+        es.close()
+        _reverseEs = null
+        fetchProposal(proposalId)
+      },
+      error: (d) => {
+        reverseStream.value.active = false
+        reverseStream.value.error = d.message
+        es.close()
+        _reverseEs = null
+      },
+    }
+    Object.entries(handlers).forEach(([evt, h]) => {
+      es.addEventListener(evt, (e) => { try { h(JSON.parse(e.data)) } catch {} })
+    })
+    es.onerror = () => { reverseStream.value.active = false; es.close(); _reverseEs = null }
+    _reverseEs = es
+    return es
+  }
+
+  function stopReverse() {
+    if (_reverseEs) { _reverseEs.close(); _reverseEs = null }
+    reverseStream.value.active = false
   }
 
   // ---------------------------------------------------------------------------
@@ -973,6 +1057,7 @@ export const useProposalsStore = defineStore('proposals', () => {
   return {
     proposals, currentProposal, loading, error,
     intentStream, sandboxStream, tasksStream, validationStream, testResults,
+    reverseStream, fetchReverseSources, createReverseProposal, subscribeToReverseIntent, stopReverse,
     constitution, plan, planStream, stagedStream, stageDrafts, odaStream,
     getStageDraft, setStageDraft, clearStageDraft, saveStageDraft,
     fetchProposals, fetchProposal, createProposal, deleteProposal,

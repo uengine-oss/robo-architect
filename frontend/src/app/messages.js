@@ -186,6 +186,16 @@ export const messages = {
   'proposals.create.modeDetailedDesc': { ko: 'DDD 단계별 분해(Discover→…→Tactical)', en: 'Staged DDD (Discover→…→Tactical)' },
   'proposals.create.modeOda': { ko: 'ODA 표준', en: 'ODA Standard' },
   'proposals.create.modeOdaDesc': { ko: 'TM Forum ODA 표준 근거 설계·검증', en: 'TM Forum ODA standards-grounded design' },
+  // 047 — 코드에서 역추출
+  'proposals.create.modeReverse': { ko: '코드에서 역추출', en: 'Reverse from Code' },
+  'proposals.create.modeReverseDesc': { ko: '분석된 코드 그래프에서 요구사항 도출', en: 'Derive requirements from analyzed code graph' },
+  'proposals.create.reverseSourceLabel': { ko: '분석된 그래프 선택', en: 'Select analyzed graph' },
+  'proposals.create.reverseSourceEmpty': { ko: '분석된 그래프가 없습니다. 먼저 코드를 분석하세요.', en: 'No analyzed graph. Analyze code first.' },
+  'proposals.create.reverseStart': { ko: '역추출 시작', en: 'Start reverse' },
+  'proposals.reverse.title': { ko: '코드에서 요구사항 역추출', en: 'Reverse Intent' },
+  'proposals.reverse.run': { ko: '역추출 실행', en: 'Run reverse' },
+  'proposals.reverse.running': { ko: '역추출 중...', en: 'Running...' },
+  'proposals.reverse.groups': { ko: '데이터 그룹', en: 'Data groups' },
   // 043 — ODA 표준 트랙
   'proposals.oda.title': { ko: 'ODA 표준 분해/설계', en: 'ODA Standard Decomposition' },
   'proposals.oda.runIntent': { ko: '표준 정합성 분해 실행', en: 'Run Standards Alignment' },
