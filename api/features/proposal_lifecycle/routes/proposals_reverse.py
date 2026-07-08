@@ -92,8 +92,8 @@ def _save_strategic(proposal_id: str, strategic: dict) -> None:
             s.run("MATCH (p:Proposal {id:$id}) SET p.strategicDiff=$sd", id=proposal_id, sd=sd)
 
 
-@router.get("/{proposal_id}/stream/reverse")
-async def stream_reverse(proposal_id: str):
+def _proposal_db(proposal_id: str) -> str:
+    """Proposal 의 reverseScope.db 를 반환(없으면 404/400)."""
     with get_session() as s:
         rec = s.run("MATCH (p:Proposal {id:$id}) RETURN p.reverseScope AS scope",
                     id=proposal_id).single()
@@ -106,9 +106,30 @@ async def stream_reverse(proposal_id: str):
     db = scope.get("db")
     if not db:
         raise HTTPException(status_code=400, detail="reverseScope.db 가 없습니다")
+    return db
+
+
+@router.get("/{proposal_id}/reverse/groups")
+async def reverse_groups(proposal_id: str):
+    """선택용 그룹 카드 미리보기(LLM 없이, FR-004)."""
+    db = _proposal_db(proposal_id)
+    try:
+        return {"groups": pipeline.preview_groups(db)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"그룹 미리보기 실패: {e}")
+
+
+@router.get("/{proposal_id}/stream/reverse")
+async def stream_reverse(proposal_id: str, groups: str | None = None):
+    db = _proposal_db(proposal_id)
+    # groups = 쉼표로 이은 선택 그룹 table 키(URL 인코딩). 없으면 전체(FR-005).
+    selected = None
+    if groups:
+        from urllib.parse import unquote
+        selected = [unquote(g) for g in groups.split(",") if g.strip()]
 
     async def event_stream():
-        async for ev, data in pipeline.stream_reverse(db):
+        async for ev, data in pipeline.stream_reverse(db, selected):
             if ev == "strategic_diff":
                 _save_strategic(proposal_id, data.get("strategicDiff") or {})
                 yield f"event: strategic_diff\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"

@@ -6,6 +6,9 @@
 경로 접두어 생략형 = `api/features/proposal_lifecycle/` (백엔드), `frontend/src/features/proposals/` (프론트).
 PoC 원천 = `project/reverse-intent-poc/reverse_intent/`.
 
+## ★개정 구현 (2026-07-08, 부분 선택)
+- 스펙 개정(전체자동→부분선택) 반영 완료: 백엔드 `preview_groups`+`GET /{id}/reverse/groups`(LLM 없이 카드) · 스트림 `?groups=` 선택 필터(`stream_reverse(db, selected)`) · store `fetchReverseGroups`+`subscribeToReverseIntent(id, selectedKeys)` · `ReverseIntentTrack.vue` 선택 체크박스 카드(기본 전체·전체선택/해제·0개 실행불가) — UI 지침(그리드 고정정렬 지그재그0·테마토큰색·focus-visible·reduced-motion) 준수. import·build OK, preview_groups(test)=5그룹 실측.
+
 ## 진행 현황 (2026-07-08)
 - **구현 완료**: T001~T014(백엔드 전부 + 프론트 배선) · T016~T019(라벨·그룹카드). 백엔드 import 스모크 OK, 프론트 vite build OK.
 - **실환경 검증 완료(결정론)**: 소스목록(neo4j/skill/test 자동식별) · 그룹핑(test DB 커버리지100%·중복0·인프라필터) · 읽는 카드(논리명·성격 한국어). = T009·T004·T016·T021 근거.

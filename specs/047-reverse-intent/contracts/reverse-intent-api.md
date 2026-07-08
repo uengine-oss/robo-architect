@@ -14,8 +14,14 @@
 - **201**: `ProposalResponse`(기존 스키마).
 - **400**: db 미제공 또는 해당 db에 오퍼레이션 0(명시적 에러, 헌법 IV).
 
+## GET /api/proposals/{id}/reverse/groups
+선택용 그룹 카드 미리보기(LLM 없이·읽기 전용, FR-004).
+- **200**: `{ "groups": [ { "table","title","kind","kindLabel","opCount","dominantStereotype","stereotypeLabel","ops":[{"logicalName"}] }, ... ] }`
+- 제목 폴백: logical_name → description(DDL) → table명.
+
 ## GET /api/proposals/{id}/stream/reverse
 역추출 실행 SSE. 기존 intent 스트림과 형태 호환(프론트 로그/결과 렌더 재사용).
+- **쿼리** `?groups=<enc1,enc2,...>` — 선택된 그룹 table 키(URL 인코딩, 쉼표 구분). 생략 시 전체(FR-005).
 - **이벤트**:
   - `phase` `{phase, message}` — "그룹핑 중"/"요구사항 도출 중(3/8)" 등
   - `groups` `{groups:[{table, tableLogicalName, kind, opCount, dominantStereotype, ops:[{logicalName}]}]}` — 그룹 카드용(1회, US2)

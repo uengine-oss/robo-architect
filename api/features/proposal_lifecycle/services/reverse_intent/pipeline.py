@@ -27,8 +27,17 @@ def build_groups(db: str) -> tuple[list[grouping.AggregateGroup], dict]:
     return groups, table_info
 
 
-async def stream_reverse(db: str) -> AsyncGenerator[tuple[str, object], None]:
-    """역추출 실행. yield: phase / groups / log_line / brief_result / strategic_diff / error.
+def preview_groups(db: str) -> list[dict]:
+    """요구사항 도출 전, 선택용 그룹 카드 목록(LLM 없이·읽기 전용, FR-004)."""
+    groups, table_info = build_groups(db)
+    return [labels.group_card(g, table_info) for g in groups]
+
+
+async def stream_reverse(
+    db: str, selected: list[str] | None = None,
+) -> AsyncGenerator[tuple[str, object], None]:
+    """역추출 실행. selected(그룹 table 키 목록)가 주어지면 그 그룹만(FR-005/009).
+    yield: phase / groups / log_line / brief_result / strategic_diff / error.
     최종 strategic_diff 저장은 호출 라우트가 담당(analyzer 그래프는 읽기 전용)."""
     yield "phase", {"phase": "grouping", "message": "코드 그래프를 데이터 단위로 그룹핑 중..."}
     try:
@@ -36,9 +45,12 @@ async def stream_reverse(db: str) -> AsyncGenerator[tuple[str, object], None]:
     except Exception as e:
         yield "error", {"code": "GRAPH_READ_FAILED", "message": f"그래프 읽기 실패: {e}"}
         return
+    if selected:
+        sel = set(selected)
+        groups = [g for g in groups if g.table in sel]
     if not groups:
-        yield "error", {"code": "NO_OPERATIONS",
-                        "message": f"'{db}' 에 분석된 오퍼레이션이 없습니다."}
+        yield "error", {"code": "NO_GROUPS",
+                        "message": "선택된 데이터 그룹이 없습니다."}
         return
 
     yield "groups", {"groups": [labels.group_card(g, table_info) for g in groups]}

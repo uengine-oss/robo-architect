@@ -242,9 +242,23 @@ export const useProposalsStore = defineStore('proposals', () => {
     }
   }
 
-  function subscribeToReverseIntent(proposalId) {
+  // 선택용 그룹 카드 미리보기(LLM 없이).
+  async function fetchReverseGroups(proposalId) {
+    const res = await fetch(`${BASE}/${proposalId}/reverse/groups`)
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.groups || []
+  }
+
+  // selectedKeys: 선택된 그룹 table 키 배열. 비거나 null이면 전체.
+  function subscribeToReverseIntent(proposalId, selectedKeys = null) {
     reverseStream.value = { active: true, phase: '', groups: [], logLines: [], done: false, error: null }
-    const es = new EventSource(`${BASE}/${proposalId}/stream/reverse`)
+    let url = `${BASE}/${proposalId}/stream/reverse`
+    if (selectedKeys && selectedKeys.length) {
+      const q = selectedKeys.map(encodeURIComponent).join(',')
+      url += `?groups=${q}`
+    }
+    const es = new EventSource(url)
     const handlers = {
       phase: (d) => { reverseStream.value.phase = d.message || '' },
       groups: (d) => { reverseStream.value.groups = d.groups || [] },
@@ -1057,7 +1071,7 @@ export const useProposalsStore = defineStore('proposals', () => {
   return {
     proposals, currentProposal, loading, error,
     intentStream, sandboxStream, tasksStream, validationStream, testResults,
-    reverseStream, fetchReverseSources, createReverseProposal, subscribeToReverseIntent, stopReverse,
+    reverseStream, fetchReverseSources, createReverseProposal, fetchReverseGroups, subscribeToReverseIntent, stopReverse,
     constitution, plan, planStream, stagedStream, stageDrafts, odaStream,
     getStageDraft, setStageDraft, clearStageDraft, saveStageDraft,
     fetchProposals, fetchProposal, createProposal, deleteProposal,
