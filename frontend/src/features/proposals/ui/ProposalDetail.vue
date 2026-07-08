@@ -10,7 +10,8 @@
       </div>
       <h2 class="detail-header__title">{{ proposal.title }}</h2>
       <p class="detail-header__prompt">{{ proposal.originalPrompt }}</p>
-      <div class="detail-header__info">
+      <!-- 역추출은 코드 그래프에서 뽑는 것이라 작성자/생성일이 무의미 → 숨김(047) -->
+      <div class="detail-header__info" v-if="!isReverse">
         <span>{{ t('proposals.detail.author') }} {{ proposal.author }}</span>
         <span>{{ t('proposals.detail.createdAt') }} {{ formatDate(proposal.createdAt) }}</span>
       </div>

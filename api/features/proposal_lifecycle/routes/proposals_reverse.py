@@ -53,7 +53,15 @@ async def create_reverse_proposal(body: CreateReverseProposalRequest, request: R
     proposal_id = next_proposal_id()
     actor = getattr(getattr(request.state, "actor", None), "email", "anonymous")
     created_at = datetime.now(timezone.utc)
-    title = body.title or f"[역추출] {body.db}"
+    # 제목 = DB명(실행 후 첫 UserStory 제목으로 교체). 부제 = 실제 데이터 수(사실).
+    title = body.title or body.db
+    try:
+        cards = pipeline.preview_groups(body.db)
+        summary = (f"데이터 그룹 {len(cards)}개 · "
+                   f"작업 {sum(c.get('opCount', 0) for c in cards)}개 · "
+                   f"규칙 {sum(c.get('ruleCount', 0) for c in cards)}개")
+    except Exception:
+        summary = f"{body.db}"
 
     with get_session() as s:
         s.run(
@@ -65,7 +73,7 @@ async def create_reverse_proposal(body: CreateReverseProposalRequest, request: R
                 decompositionMode: 'REVERSE_INTENT', reverseScope: $scope
             })
             """,
-            id=proposal_id, title=title, prompt=f"역방향 도출: {body.db}",
+            id=proposal_id, title=title, prompt=summary,
             author=actor, createdAt=created_at.isoformat(),
             scope=json.dumps({"db": body.db}, ensure_ascii=False),
         )

@@ -11,7 +11,8 @@ from api.features.proposal_lifecycle.services.reverse_intent.grouping import (
     AggregateGroup, LOGIC_GROUP,
 )
 
-KIND_LABEL = {"write": "핵심 데이터", "read": "조회", "logic": "로직"}
+# 사실 기반 라벨(코드의 실제 READS/WRITES에서 파생). "핵심 데이터" 같은 해석 배지는 폐기.
+KIND_LABEL = {"write": "쓰기", "read": "조회", "logic": "로직"}
 
 # stereotype(영문 enum) → 한국어. 미지값은 원문, 빈값은 "기타".
 STEREOTYPE_KO = {
@@ -57,7 +58,7 @@ def group_card(g: AggregateGroup, table_info: dict | None = None) -> dict:
     table_info = table_info or {}
     ti = table_info.get(g.table, {})
     if g.table == LOGIC_GROUP:
-        title = "공통 로직·검증"
+        title = "기타 (테이블 연결 없음)"
     else:
         title = ti.get("logical_name") or ti.get("description") or g.table
     stereos = [o.stereotype for o in g.ops if o.stereotype]
