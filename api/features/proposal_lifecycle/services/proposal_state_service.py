@@ -264,6 +264,14 @@ def _derive_choices(
     return choices
 
 
+def _bold_label(label: str) -> str:
+    """선택지 라벨 텍스트를 볼드로(이모지는 앞의 시각 액센트로 유지, C1)."""
+    parts = label.split(" ", 1)
+    if len(parts) == 2:
+        return f"{parts[0]} **{parts[1]}**"
+    return f"**{label}**"
+
+
 def _progress_meta(
     node: dict,
     step: lifecycle_steps.StepDef,
@@ -276,7 +284,9 @@ def _progress_meta(
     stage_label = rc.stage_label(step.stage) if step.stage else None
     next_label = _next_step_label(node, step)
     choices = _derive_choices(step, overrides, stale)
-    header = _render_progress_header(step_index, step_total, phase_label, stage_label, next_label, choices, stale)
+    is_stage = bool(step.stage)
+    header = _render_progress_header(step_index, step_total, phase_label, stage_label, next_label, stale)
+    footer = _render_choices_footer(step_index, step_total, phase_label, stage_label, next_label, choices, is_stage)
     return {
         "stepIndex": step_index,
         "stepTotal": step_total,
@@ -284,7 +294,9 @@ def _progress_meta(
         "stageLabel": stage_label,
         "nextLabel": next_label,
         "choices": choices,
+        # 014-report-design: 진행(상단 얇은 한 줄) / 선택지(하단 푸터)로 분리(D1 layout).
         "headerMarkdown": header,
+        "footerMarkdown": footer,
     }
 
 
@@ -294,23 +306,46 @@ def _render_progress_header(
     phase_label: str,
     stage_label: str | None,
     next_label: str | None,
-    choices: list[dict],
     stale: list,
 ) -> str:
-    """서버 SSOT 진행 헤더(이모지 + (N/M) + 현재/다음/선택지, FR-10)."""
-    current = phase_label + (f" · {stage_label}" if stage_label else "")
+    """상단 얇은 진행 한 줄(+조건부 무효화 인용) — target-ui-progress(D2)."""
+    current = f"**{phase_label}**" + (f"({stage_label})" if stage_label else "")
     next_txt = next_label if next_label else "마지막 단계"
-    lines = [f"{rc.EMOJI_PROGRESS} **진행 ({step_index}/{step_total})** — 현재 단계: **{current}** · 다음 단계: {next_txt}"]
+    line = f"{rc.EMOJI_PROGRESS} **진행 {step_index}/{step_total}** · 현재: {current} → 다음: {next_txt}"
     if stale:
-        lines.append(f"{rc.EMOJI_WARN} 무효화 대상: {', '.join(str(s) for s in stale)}")
-    if choices:
+        line += (f"\n\n> {rc.EMOJI_WARN} **무효화 대상**: {', '.join(str(s) for s in stale)}"
+                 " — 앞 단계 확정으로 재생성이 필요합니다.")
+    return line
+
+
+def _render_choices_footer(
+    step_index: int,
+    step_total: int,
+    phase_label: str,
+    stage_label: str | None,
+    next_label: str | None,
+    choices: list[dict],
+    is_stage: bool,
+) -> str:
+    """본문 하단 푸터 — 진행 재요약 + 액션 목록형 선택지(target-ui-choices/layout, D1)."""
+    if not choices:
+        return ""
+    current = phase_label + (f"({stage_label})" if stage_label else "")
+    next_txt = next_label if next_label else "마지막 단계"
+    lines = ["---", "",
+             f"{rc.EMOJI_PROGRESS} **진행 {step_index}/{step_total}** · 현재: **{current}** → 다음: **{next_txt}**",
+             "", "## 다음 행동 선택", ""]
+    for idx, c in enumerate(choices, start=1):
+        lines.append(f"{idx}. {_bold_label(c['label'])} — {c['hint']}")
+    # skip(스테이지 한정)이 있을 때만 조건 인용을 붙인다(target-ui-choices: 비-스테이지 예시는 인용 없음).
+    has_skip = is_stage and any(c["kind"] == "skip" for c in choices)
+    has_rollback = any(c["kind"] == "rollback" for c in choices)
+    if has_skip:
+        note = f"{rc.EMOJI_SKIP} 건너뛰기는 스테이지 단계에서만 제공되며"
+        if has_rollback:
+            note += f", {rc.EMOJI_ROLLBACK} 되돌리기의 롤백 대상은 현재 단계에 따라 달라집니다"
         lines.append("")
-        lines.append("**가능한 선택지**")
-        lines.append("")
-        lines.append("| 선택 | 설명 |")
-        lines.append("| --- | --- |")
-        for c in choices:
-            lines.append(f"| {c['label']} | {c['hint']} |")
+        lines.append(f"> {note}.")
     return "\n".join(lines)
 
 

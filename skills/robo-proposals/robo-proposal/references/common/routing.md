@@ -35,9 +35,11 @@ The server owns ordering. You do **not** compute "the next phase." While a Propo
 Whenever you present an artifact/question/validation error to the user, follow
 `references/common/report-contract.md`:
 
-1. Output the tool response's `reportMarkdown` **verbatim** (server SSOT body).
-2. Render the `nextStep.progressMeta` header (`headerMarkdown`, i.e. `📍 (N/M)` + 현재/다음 + choices).
-3. If `reportMarkdown` is absent, use the lightweight fallback (all top-level keys as a table),
+1. Output `nextStep.progressMeta.headerMarkdown` first (thin `📍 진행 N/M · 현재 → 다음` line).
+2. Output the tool response's `reportMarkdown` **verbatim** (server SSOT body).
+3. Output `nextStep.progressMeta.footerMarkdown` last (진행 재요약 + `## 다음 행동 선택` 액션 목록).
+   Order = **header → reportMarkdown → footer** (진행 상단 → 본문 → 선택지 하단, D1).
+4. If `reportMarkdown` is absent, use the lightweight fallback (all top-level keys as a table),
    never stop the flow.
 
 ## Stop conditions — never auto-advance past a server signal

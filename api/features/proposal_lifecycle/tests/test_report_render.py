@@ -33,11 +33,21 @@ STRATEGIC = {
 TACTICAL = {
     "tacticalDiff": [
         {"nodeId": "AGG-cart", "nodeLabel": "Aggregate", "nodeTitle": "장바구니",
-         "changeType": "CREATE", "impactLevel": "HIGH"},
+         "changeType": "CREATE", "impactLevel": "HIGH", "boundedContextId": "BC-order",
+         "properties": [{"name": "cartId", "type": "UUID"}, {"name": "items", "type": "List"}],
+         "fields": {"rootEntity": "Cart"}},
         {"nodeId": "CMD-add", "nodeLabel": "Command", "nodeTitle": "장바구니에 담기",
-         "changeType": "CREATE", "impactLevel": "HIGH"},
+         "changeType": "CREATE", "impactLevel": "HIGH", "aggregateId": "AGG-cart",
+         "userStoryRefs": ["US-add-to-cart"],
+         "properties": [{"name": "productId", "type": "UUID"}, {"name": "quantity", "type": "Integer"}],
+         "fields": {"inputSchema": {"productId": "UUID", "quantity": "Integer"}},
+         "gwt": [{"given": {"fieldValues": {"cartId": "cart-1"}},
+                  "when": {"fieldValues": {"productId": "prod-1", "quantity": 2}},
+                  "then": {"fieldValues": {"productId": "prod-1", "quantity": 2}}}]},
         {"nodeId": "EVT-added", "nodeLabel": "Event", "nodeTitle": "상품 담김",
-         "changeType": "CREATE", "impactLevel": "MEDIUM"},
+         "changeType": "CREATE", "impactLevel": "MEDIUM", "commandId": "CMD-add",
+         "properties": [{"name": "productId", "type": "UUID"}],
+         "fields": {"payload": {"productId": "UUID"}}},
     ],
     "implementationPlan": {
         "version": 1,
@@ -69,11 +79,27 @@ STAGES = {
         "messagingChannel": "Kafka",
     }},
     "DEFINE": {"DefineArtifact": {
-        "contexts": [{"name": "주문 컨텍스트", "purpose": "주문 관리", "classification": "CORE"}],
+        "contexts": [{"name": "주문 컨텍스트", "purpose": "주문 관리", "classification": "CORE",
+                      "businessModel": ["핵심 매출"], "evolution": "custom_built", "domainRoles": ["execution"],
+                      "inbound": [{"collaborator": "장바구니", "message": "주문하기", "type": "Command"}],
+                      "outbound": [{"collaborator": "결제", "message": "OrderPlaced", "type": "Event"}],
+                      "ubiquitousLanguage": [{"term": "주문", "definition": "구매 요청 단위"},
+                                             {"term": "상태", "definition": "DRAFT→PAID"}],
+                      "businessDecisions": ["게스트 미지원"], "assumptions": ["외부 PG"],
+                      "verificationMetrics": ["성공률99"], "openQuestions": ["롤백?"],
+                      "languageClashes": ["취소 혼용"]}],
     }},
     "TACTICAL": {"TacticalArtifact": {
         "aggregates": [{"name": "Cart", "description": "장바구니", "boundaryRationale": "일관성 경계",
-                        "invariants": ["수량>0", "상품 존재"]}],
+                        "handledCommands": ["AddToCart"], "createdEvents": ["ItemAdded"],
+                        "invariants": ["수량>0", "상품 존재"], "correctivePolicies": ["재고부족 보류"],
+                        "stateTransitions": [{"from": "EMPTY", "to": "ACTIVE", "trigger": "AddToCart"}],
+                        "throughput": {"commandHandlingRate": {"avg": "50/s", "max": "500/s"},
+                                       "totalClients": {"avg": "1k", "max": "20k"},
+                                       "concurrencyConflictChance": {"avg": "낮음", "max": "중간"}},
+                        "size": {"eventGrowthRate": {"avg": "3", "max": "8"},
+                                 "lifetime": {"avg": "30일", "max": "1년"},
+                                 "eventsPersisted": {"avg": "3", "max": "20"}}}],
     }},
 }
 
@@ -122,6 +148,12 @@ def test_tactical_completeness():
     _assert_all_elements("TACTICAL_DIFF", TACTICAL, out)
     for nm in ["장바구니", "장바구니에 담기", "상품 담김", "DEPLOYMENT_ENV", "관측성 미정의"]:
         assert nm in out
+    # target-02: properties(name:type) · fields · gwt fieldValues · ref 전부 표현(A2/B7).
+    for token in ["cartId", "UUID", "items", "rootEntity", "Cart",
+                  "inputSchema", "productId", "quantity", "payload",
+                  "aggregateId", "AGG-cart", "userStoryRefs", "US-add-to-cart",
+                  "given.fieldValues", "when.fieldValues", "then.fieldValues", "cart-1", "prod-1"]:
+        assert token in out, f"전술 하위 필드 누락: {token}"
     assert "⚠️ 누락 보정" not in out
 
 
@@ -137,12 +169,34 @@ def test_tasks_and_test_completeness():
     out_t = R.render_report("TASKS", TASKS)
     _assert_all_elements("TASKS", TASKS, out_t)
     assert "T001" in out_t and "T002" in out_t
+    # target-04: phase 그룹 + 병렬 배지 + 집계 헤더.
+    assert "⚡ 병렬" in out_t and "순차" in out_t
+    assert "실행 순서:" in out_t and "구현 태스크" in out_t
     out_test = R.render_report("TEST", TEST)
     _assert_all_elements("TEST", TEST, out_test)
     assert "SC-001" in out_test and "SC-002" in out_test
-    # 스칼라 top-level 키(개수)도 반영.
-    for k in ["totalScenarios", "passed", "failed", "skipped"]:
-        assert k in out_test
+    # target-05: KPI 헤더(스칼라 값) + FAIL 우선 + reason 보존.
+    assert "총 3" in out_test and "PASS 2" in out_test and "FAIL 1" in out_test
+    assert "404" in out_test  # FAIL reason 절대 생략 금지
+    # FAIL 이 PASS 보다 앞(주의-우선 정렬).
+    assert out_test.index("SC-002") < out_test.index("SC-001")
+
+
+def test_define_canvas_completeness():
+    out = R.render_report("DEFINE", STAGES["DEFINE"])
+    for token in ["핵심 매출", "custom_built", "execution", "장바구니", "OrderPlaced",
+                  "주문하기", "게스트 미지원", "외부 PG", "성공률99", "롤백?", "취소 혼용",
+                  "유비쿼터스 언어", "구매 요청 단위", "수신", "발신"]:
+        assert token in out, f"BC 캔버스 필드 누락: {token}"
+    assert "⚠️ 누락 보정" not in out
+
+
+def test_tactical_stage_canvas_completeness():
+    out = R.render_report("TACTICAL", STAGES["TACTICAL"])
+    for token in ["AddToCart", "ItemAdded", "수량>0", "상품 존재", "재고부족 보류",
+                  "상태 전이", "EMPTY", "ACTIVE", "특성", "50/s", "500/s", "1k", "30일"]:
+        assert token in out, f"Aggregate 캔버스 필드 누락: {token}"
+    assert "⚠️ 누락 보정" not in out
 
 
 def test_guard_forces_missing_keys():
@@ -187,19 +241,55 @@ def test_determinism_all_phases():
 
 
 def test_snapshot_strategic():
-    """대표 phase 최소 골든 스냅샷 — 구조 불변식(헤더/표 헤더 행)."""
+    """대표 phase 최소 골든 스냅샷 — 구조 불변식(요약 헤더/트리 표/US 카드)."""
     out = R.render_report("STRATEGIC_DIFF", STRATEGIC)
     assert out.startswith("## 📄 전략 Diff 보고서")
-    assert "### Epic (1건)" in out
-    assert "| 작업 | 제목 | ID |" in out
-    assert "### User Story (2건)" in out
+    assert "**요약** — Epic 1 · Feature 1 · UserStory 2" in out
+    assert "| 계층 · 항목 | tempId | 상위/BC | op |" in out
+    assert "### UserStory 상세" in out
+    # UserStory role/action/benefit 3요소 완전(target-01 핵심).
+    assert "**역할(role)**: 고객" in out
+    assert "**행동(action)**: 담는다" in out
+    assert "**가치(benefit)**: 모아 주문" in out
+    # 트리 계층 D1 전각 공백 들여쓰기.
+    assert "　└" in out
 
 
 def test_snapshot_discover():
     out = R.render_report("DISCOVER", STAGES["DISCOVER"])
     assert out.startswith("## 📄 Discover · 이벤트 발굴 보고서")
-    assert "events (2건)" in out
+    assert "이벤트 스파인" in out
     assert "OrderPlaced" in out and "PaymentCompleted" in out
+    # actor / 내부·외부 완전(target-06).
+    assert "🌐 외부" in out and "🏠 내부" in out
+    assert "⭐ 피벗" in out
+
+
+def test_snapshot_tactical_tree_and_cards():
+    out = R.render_report("TACTICAL_DIFF", TACTICAL)
+    assert "| 계층 · 노드 | 변경 · 임팩트 | 참조(ref) |" in out
+    assert "**상세 카드**" in out
+    assert "| name | type |" in out
+    assert "| 시나리오 | given.fieldValues | when.fieldValues | then.fieldValues |" in out
+
+
+def test_constitution_sections_render():
+    art = {"implementationPlan": {"version": 2,
+           "architectureDecisions": [{"aspect": "배포 환경", "decision": "Kubernetes", "rationale": "확장"}],
+           "constitutionGaps": ["서비스 메시 미결정"]}}
+    out = R.render_report("CONSTITUTION", art)
+    assert "구현계획 (Constitution) · v2" in out
+    assert "결정 1건" in out and "미결 1건" in out
+    assert "**결정**: Kubernetes" in out and "**근거**: 확장" in out
+    assert "서비스 메시 미결정" in out
+
+
+def test_constitution_no_gaps():
+    art = {"implementationPlan": {"version": 1,
+           "architectureDecisions": [{"aspect": "프론트엔드", "decision": "Vue 3", "rationale": "정합"}],
+           "constitutionGaps": []}}
+    out = R.render_report("CONSTITUTION", art)
+    assert "미결 없음" in out
 
 
 # --- 다형 렌더(clarify/violations) ------------------------------------------
