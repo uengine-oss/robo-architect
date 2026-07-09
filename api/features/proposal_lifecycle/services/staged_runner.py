@@ -18,7 +18,11 @@ from api.platform.observability.smart_logger import SmartLogger
 from api.features.proposal_lifecycle.proposal_contracts import (
     DDD_STAGE_ORDER, NON_OMITTABLE_STAGES, StagePlan,
 )
-from api.features.proposal_lifecycle.services import proposal_interactions, proposal_state_service
+from api.features.proposal_lifecycle.services import (
+    proposal_interactions,
+    proposal_state_service,
+    report_contract_data,
+)
 
 
 # --- 상태 로드/저장 ---------------------------------------------------------
@@ -62,7 +66,8 @@ def save_stage_artifact(proposal_id: str, stage: str, artifact: dict) -> Optiona
     """확정된 스테이지 산출물을 저장하고 currentPhase/currentStage 를 스텝 테이블에서 재파생."""
     state = load_state(proposal_id)
     arts = (state or {}).get("stageArtifacts") or {}
-    arts[stage] = artifact
+    # 015-report-issue: 봉투로 들어와도 언랩해 저장(소비자·테스트는 언랩 형태를 기대).
+    arts[stage] = report_contract_data.unwrap_stage_artifact(stage, artifact)
     plan = (state or {}).get("stagePlan")
     nxt = next_stage_after(plan, stage)
     draft_ref = None

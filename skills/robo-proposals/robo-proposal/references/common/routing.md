@@ -20,7 +20,7 @@ The server owns ordering. You do **not** compute "the next phase." While a Propo
 
 | `action` | Do exactly this |
 |---|---|
-| `generate_draft` | Generate the artifact for `phase`/`stage` in canonical shape, call `proposal_save_draft`. If it returns `invalid`, run the regeneration loop (see interaction-runstate.md). On success, present the validated draft and — because `requiresUserApproval` is true — wait for the user, then `proposal_confirm_draft`. |
+| `generate_draft` | Generate the artifact for `phase`/`stage` in canonical shape, call `proposal_save_draft`. **When `stage` is non-null (a DDD stage), pass that stage name as the `phase` argument** (e.g. `proposal_save_draft(phase="DISCOVER", …)`), not the umbrella `STRATEGIC_DDD`/`TACTICAL_DDD` — the server keys validation, promotion, and report rendering on the stage name; passing the umbrella phase silently degrades the report to a key/value table and skips stage validation. If it returns `invalid`, run the regeneration loop (see interaction-runstate.md). On success, present the validated draft and — because `requiresUserApproval` is true — wait for the user, then `proposal_confirm_draft`. |
 | `await_approval` | A validated draft is already pending. Present it and wait for the user's approve/reject, then `proposal_confirm_draft` / `proposal_reject_draft`. |
 | `ask_question` | A question is pending (or must be asked). Record with `proposal_record_question`, wait, then `proposal_answer_question`. |
 | `confirm` | An internal, no-approval transition (e.g. `SUBMIT`). Execute the corresponding tool (`proposal_submit`) without asking the user, then call `proposal_next_step` again. |

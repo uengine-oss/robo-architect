@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from api.features.proposal_lifecycle.services import report_contract_data as rc
 from api.features.proposal_lifecycle.services.tactical_contract import (
     format_tactical_contract_feedback,
     validate_tactical_diff_contract,
@@ -214,6 +215,8 @@ def validate_stage_artifact(stage: str, artifact: object) -> ValidationResult:
     stage = stage.upper()
     if not isinstance(artifact, dict):
         return _invalid("artifact", "not_object", f"{stage} artifact must be an object")
+    # 015-report-issue: 봉투({DiscoverArtifact:{...}})로 들어와도 언랩해 검증(렌더와 동일 규약).
+    artifact = rc.unwrap_stage_artifact(stage, artifact)
 
     required_arrays = {
         "DISCOVER": "events",

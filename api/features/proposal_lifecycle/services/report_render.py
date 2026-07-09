@@ -1108,6 +1108,13 @@ def render_report(phase: str, artifact: Any, *, progress_header: str | None = No
     elif norm_phase == "VIOLATIONS":
         body = _render_violations(artifact if isinstance(artifact, dict) else {})
     else:
+        # 015-report-issue: DDD 스테이지 초안이 상위 phase(STRATEGIC_DDD/TACTICAL_DDD)로
+        # 들어오면 어느 렌더러에도 매칭되지 않아 폴백(키-값 테이블)으로 강등된다. artifact
+        # 봉투 키(DiscoverArtifact→DISCOVER)로 유효 스테이지를 복원해 렌더러를 선택한다.
+        if norm_phase not in _ARTIFACT_RENDERERS and norm_phase not in _STAGE_RENDERERS:
+            inferred_stage = rc.stage_from_envelope(artifact)
+            if inferred_stage:
+                norm_phase = inferred_stage
         work = _normalize_artifact(norm_phase, artifact if isinstance(artifact, dict) else {"value": artifact})
         renderer = _ARTIFACT_RENDERERS.get(norm_phase) or _STAGE_RENDERERS.get(norm_phase)
         if renderer is not None:

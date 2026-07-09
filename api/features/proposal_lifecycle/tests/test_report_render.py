@@ -199,6 +199,36 @@ def test_tactical_stage_canvas_completeness():
     assert "⚠️ 누락 보정" not in out
 
 
+# --- 015-report-issue: 상위 phase 로 온 DDD 스테이지 초안도 리치 렌더 --------------
+
+# 스테이지 → 상위 라이프사이클 phase(전략 3 / 전술 3).
+_STAGE_UMBRELLA = {
+    "DISCOVER": "STRATEGIC_DDD", "DECOMPOSE": "STRATEGIC_DDD", "STRATEGIZE": "STRATEGIC_DDD",
+    "CONNECT": "TACTICAL_DDD", "DEFINE": "TACTICAL_DDD", "TACTICAL": "TACTICAL_DDD",
+}
+# 스테이지별 리치 렌더 시그니처(폴백엔 없는 헤더 토큰).
+_STAGE_RICH_SIGNATURE = {
+    "DISCOVER": "DDD Discover", "DECOMPOSE": "DDD Decompose", "STRATEGIZE": "DDD Strategize",
+    "CONNECT": "DDD Connect", "DEFINE": "DDD Define", "TACTICAL": "DDD Tactical",
+}
+
+
+def test_umbrella_phase_stage_draft_renders_rich():
+    """회귀 방지(015-report-issue): 스킬이 DDD 스테이지 초안을 상위 phase
+    (STRATEGIC_DDD/TACTICAL_DDD)로 저장해도, 서버는 artifact 봉투 키에서 스테이지를
+    복원해 **리치 렌더**를 내야 한다(키-값 폴백 테이블로 강등 금지).
+    """
+    for stage, envelope in STAGES.items():
+        umbrella = _STAGE_UMBRELLA[stage]
+        out = R.render_report(umbrella, envelope)
+        # 리치 렌더 시그니처 존재 + 폴백 테이블 부재.
+        assert _STAGE_RICH_SIGNATURE[stage] in out, (
+            f"{umbrella}+{stage}: 리치 렌더 실패(폴백 강등) — {out[:120]}")
+        assert "| 키 | 값 |" not in out, f"{umbrella}+{stage}: 폴백 키-값 테이블 강등"
+        # stage 이름을 직접 넘긴 결과와 본문이 동일해야 함(경로 무관 동일 산출).
+        assert out == R.render_report(stage, envelope)
+
+
 def test_guard_forces_missing_keys():
     """렌더러가 놓친 키/원소를 가드가 강제 append(누락 0 보장)."""
     # 미등록 phase → 폴백 경로. 여기에 임의 키를 넣어 가드 동작을 직접 확인.

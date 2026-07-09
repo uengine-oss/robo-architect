@@ -192,6 +192,40 @@ STAGE_ARTIFACT_KEYS: dict[str, str] = {
     "TACTICAL": "TacticalArtifact",
 }
 
+# 봉투 키 → 스테이지 이름(STAGE_ARTIFACT_KEYS 역맵). 015-report-issue:
+# DDD 스테이지 초안이 상위 phase(STRATEGIC_DDD/TACTICAL_DDD)로 들어와도 봉투 키로
+# 유효 스테이지를 복원해 렌더러/검증/승격이 폴백으로 강등되지 않게 한다.
+STAGE_ARTIFACT_ENVELOPE_TO_STAGE: dict[str, str] = {v: k for k, v in STAGE_ARTIFACT_KEYS.items()}
+
+
+def stage_from_envelope(artifact: Any) -> str | None:
+    """artifact 가 단일 DDD 스테이지 봉투({DiscoverArtifact:{...}})면 그 스테이지 이름 반환.
+
+    봉투 키가 없으면 None. 렌더/검증/승격 진입에서 상위 phase → 스테이지 복원에 공용.
+    """
+    if not isinstance(artifact, dict):
+        return None
+    for key in artifact:
+        stage = STAGE_ARTIFACT_ENVELOPE_TO_STAGE.get(key)
+        if stage:
+            return stage
+    return None
+
+
+def unwrap_stage_artifact(stage: str, artifact: Any) -> Any:
+    """스테이지 봉투({DiscoverArtifact:{...}})면 내부 dict 로 언랩, 아니면 그대로 반환.
+
+    015-report-issue: 스킬 계약(output-contracts)은 봉투 형태를, 검증기·저장소·소비자는
+    언랩 형태({events:...})를 쓰는 이중 규약이 있었다. 검증·저장·렌더가 두 형태를 모두
+    일관되게 받도록 하는 공용 정규화(SSOT). 봉투 키가 없으면 no-op(언랩 형태 무변경).
+    """
+    if not isinstance(artifact, dict):
+        return artifact
+    key = STAGE_ARTIFACT_KEYS.get((stage or "").upper())
+    if key and isinstance(artifact.get(key), dict):
+        return artifact[key]
+    return artifact
+
 # progressMeta 등에서 "artifact" 다형 kind 로 취급되는 실제 phase 집합.
 ARTIFACT_PHASES = set(REPORT_CONTRACT.keys())
 

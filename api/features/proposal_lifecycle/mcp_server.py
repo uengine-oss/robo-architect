@@ -20,6 +20,7 @@ from api.features.proposal_lifecycle.services import (
     lifecycle_steps,
     proposal_interactions,
     proposal_state_service,
+    report_contract_data,
     report_render,
     staged_runner,
 )
@@ -172,6 +173,12 @@ def build_mcp_server() -> Any | None:
     @server.tool(name="proposal_save_draft", description="Validate then save a pending draft artifact. Invalid drafts are rejected (not stored).")
     def proposal_save_draft(proposalId: str, phase: str, artifact: dict) -> dict[str, Any]:  # noqa: N803
         normalized_phase = phase.upper()
+        # 015-report-issue: DDD 스테이지 초안이 상위 phase(STRATEGIC_DDD/TACTICAL_DDD)로 들어오면
+        # 봉투 키로 스테이지 이름을 복원해 정규화한다. 이래야 검증·저장·승격·렌더가 일관되게
+        # 스테이지 기준으로 동작(상위 phase 면 검증/렌더가 조용히 건너뛰어짐).
+        inferred_stage = report_contract_data.stage_from_envelope(artifact)
+        if inferred_stage and normalized_phase not in set(DDD_STAGE_ORDER):
+            normalized_phase = inferred_stage
         node = proposal_state_service.get_node(proposalId)
         if node is None:
             return {"status": "not-found", "proposalId": proposalId}
@@ -209,6 +216,11 @@ def build_mcp_server() -> Any | None:
         payload = draft.get("payload") or {}
         artifact = payload.get("artifact") if isinstance(payload, dict) else None
         phase = (draft.get("phase") or "").upper()
+        # 015-report-issue: 방어적 정규화 — 상위 phase 로 저장된 스테이지 초안도 승격·렌더가
+        # 스테이지 기준으로 동작하도록 봉투 키에서 스테이지를 복원.
+        inferred_stage = report_contract_data.stage_from_envelope(artifact)
+        if inferred_stage and phase not in set(DDD_STAGE_ORDER):
+            phase = inferred_stage
         if isinstance(artifact, dict):
             # FR-2: 초안은 save_draft 에서 이미 검증됨 → 여기서는 승격만.
             # 방어적 전이 가드만 유지(직전 필수 스텝 미완료 시 승격 거부).
