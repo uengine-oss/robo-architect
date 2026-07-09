@@ -126,6 +126,9 @@ def _normalize_artifact(phase: str, artifact: dict) -> dict:
             if k != "action":
                 merged.setdefault(k, v)
         return merged
+    # SCOPE 스테이지 플랜 봉투({stagePlan:{...}}) 언랩(015 scope-design).
+    if phase == "SCOPE" and isinstance(work.get("stagePlan"), dict):
+        return dict(work["stagePlan"])
     stage_key = rc.STAGE_ARTIFACT_KEYS.get(phase)
     if stage_key and isinstance(work.get(stage_key), dict):
         return dict(work[stage_key])
@@ -596,6 +599,76 @@ def _render_test(work: dict) -> str:
     return "\n\n".join(parts)
 
 
+# --- SCOPE 스테이지 플랜 (015 scope-design, 스타일 B: 전략/전술 2단 트리) --------
+
+# 파이프라인 2단 그룹(전략 DDD 3 / 전술 DDD 3) + 그룹 설명. 실행 순서 고정.
+_SCOPE_GROUPS = [
+    ("전략 DDD", ["DISCOVER", "DECOMPOSE", "STRATEGIZE"], "도메인 발견·분해·전략 분류"),
+    ("전술 DDD", ["CONNECT", "DEFINE", "TACTICAL"], "연동·컨텍스트·애그리거트 설계"),
+]
+# 스테이지 보조 아이콘(C1 — 라벨 정본, 아이콘 보조).
+_STAGE_ICON = {
+    "DISCOVER": "📣", "DECOMPOSE": "🧩", "STRATEGIZE": "⭐",
+    "CONNECT": "🔗", "DEFINE": "📦", "TACTICAL": "🧱",
+}
+
+
+def _scope_status(stage: dict) -> str:
+    """스테이지 상태 라벨(정본) — 확정 생략 > 미적용 > 적용."""
+    if stage.get("skipped"):
+        return "⛔ 생략확정"
+    if stage.get("applies", True) is False:
+        return "⏸ 미적용"
+    return "▶ 적용"
+
+
+def _render_scope(work: dict) -> str:
+    """SCOPE 스테이지 플랜 — 전략/전술 2단 그룹 트리(D1 들여쓰기). scope-design.md 스타일 B."""
+    version = work.get("version")
+    reach = work.get("classifiedReach")
+    stages = work.get("stages") if isinstance(work.get("stages"), list) else []
+    by_stage: dict[str, dict] = {}
+    for s in stages:
+        if isinstance(s, dict) and s.get("stage"):
+            by_stage[str(s["stage"]).upper()] = s
+
+    n_apply = sum(1 for s in stages if isinstance(s, dict) and s.get("applies", True) and not s.get("skipped"))
+    n_reco = sum(1 for s in stages if isinstance(s, dict) and s.get("recommendSkip"))
+    n_skip = sum(1 for s in stages if isinstance(s, dict) and s.get("skipped"))
+    ver_txt = f" · 버전 v{version}" if version is not None else ""
+    header = (f"**🗺️ 스테이지 플랜 · {len(stages)} 스테이지 · ▶ 적용 {n_apply}"
+              f" · ⏭️ 생략권장 {n_reco} · ⛔ 생략확정 {n_skip} · 전략 3 / 전술 3{ver_txt}**")
+    parts = [header]
+    if reach:
+        parts.append(f"**스코프 분류(classifiedReach):** {_cell(reach)}")
+
+    rows: list[list[str]] = []
+    for group_label, group_stages, group_desc in _SCOPE_GROUPS:
+        present = [st for st in group_stages if st in by_stage]
+        rows.append([f"**{group_label}** ({len(present)})", DASH, DASH, group_desc])
+        for st in group_stages:
+            s = by_stage.get(st)
+            if not s:
+                continue
+            icon = _STAGE_ICON.get(st, "")
+            reco = "⏭️ 권장" if s.get("recommendSkip") else DASH
+            rows.append([f"{_INDENT[1]}{icon} {rc.stage_label(st)}".rstrip(),
+                         _scope_status(s), reco, _val(s.get("reason"))])
+    # 계약 외 stage 방어(누락 0) — 최상위로 추가.
+    known = {st for _, gs, _ in _SCOPE_GROUPS for st in gs}
+    for st, s in by_stage.items():
+        if st not in known:
+            reco = "⏭️ 권장" if s.get("recommendSkip") else DASH
+            rows.append([f"{_val(st)}", _scope_status(s), reco, _val(s.get("reason"))])
+
+    parts.append(_table(["계층 · 스테이지", "상태", "생략 권장", "사유(reason)"], rows,
+                        aligns=["---", "---", ":---:", "---"]))
+    parts.append("> 첫 열 전각 공백 들여쓰기(`　└`)로 전략 DDD → 전술 DDD 2단 구조를 드러냅니다. "
+                 "전각 공백 트리밍 시 비공백 커넥터(`└─`)로 무손실 폴백. 실행 순서는 고정(재정렬 없음). "
+                 "⏭️ 생략 권장 = 스킬 제안(미확정) · ⛔ 생략확정 = 아키텍트 확정.")
+    return "\n\n".join(parts)
+
+
 # --- DDD Discover (target-06) ------------------------------------------------
 
 
@@ -1032,6 +1105,7 @@ def _render_violations(payload: dict) -> str:
 
 
 _ARTIFACT_RENDERERS = {
+    "SCOPE": _render_scope,
     "STRATEGIC_DIFF": _render_strategic,
     "TACTICAL_DIFF": _render_tactical,
     "CONSTITUTION": _render_constitution,

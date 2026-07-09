@@ -229,6 +229,50 @@ def test_umbrella_phase_stage_draft_renders_rich():
         assert out == R.render_report(stage, envelope)
 
 
+# --- 015 scope-design: SCOPE 스테이지 플랜 스타일 B(전략/전술 2단 트리) ----------
+
+SCOPE = {"stagePlan": {
+    "version": 1,
+    "classifiedReach": "신규 도메인 설계 — 온라인 쇼핑몰 주문 관리",
+    "stages": [
+        {"stage": "DISCOVER", "applies": True, "recommendSkip": False, "reason": "이벤트 스토밍 발굴"},
+        {"stage": "DECOMPOSE", "applies": True, "recommendSkip": False, "reason": "서브도메인 분해"},
+        {"stage": "STRATEGIZE", "applies": True, "recommendSkip": False, "reason": "Core/Supporting/Generic"},
+        {"stage": "CONNECT", "applies": True, "recommendSkip": True, "reason": "단일 BC면 생략 가능"},
+        {"stage": "DEFINE", "applies": True, "recommendSkip": False, "reason": "BC 캔버스"},
+        {"stage": "TACTICAL", "applies": True, "recommendSkip": False, "reason": "Aggregate 설계", "skipped": True},
+    ],
+}}
+
+
+def test_scope_stage_plan_style_b():
+    out = R.render_report("SCOPE", SCOPE)
+    # 제목 + 집계 헤더 + classifiedReach 인트로.
+    assert out.startswith("## 📄 스코프(스테이지 플랜) 보고서")
+    assert "🗺️ 스테이지 플랜 · 6 스테이지" in out
+    assert "스코프 분류(classifiedReach):" in out and "온라인 쇼핑몰 주문 관리" in out
+    # 전략/전술 2단 그룹 헤더 + D1 전각 공백 트리 들여쓰기.
+    assert "**전략 DDD** (3)" in out and "**전술 DDD** (3)" in out
+    assert "　└" in out
+    # 6개 스테이지 라벨 전부 표현(누락 0).
+    for label in ["Discover", "Decompose", "Strategize", "Connect", "Define", "Tactical"]:
+        assert label in out, f"스테이지 누락: {label}"
+    # 상태·생략권장·확정 구분(E1) + 사유 보존.
+    assert "▶ 적용" in out
+    assert "⏭️ 권장" in out                 # recommendSkip=True (CONNECT)
+    assert "⛔ 생략확정" in out              # skipped=True (TACTICAL)
+    assert "단일 BC면 생략 가능" in out       # reason 보존
+    # 폴백 강등 금지 + 가드 오탐 없음.
+    assert "| 키 | 값 |" not in out
+    assert "⚠️ 누락 보정" not in out
+
+
+def test_scope_envelope_and_bare_equivalent():
+    """봉투({stagePlan:{...}})와 언랩({version,...}) 입력이 동일 렌더."""
+    bare = SCOPE["stagePlan"]
+    assert R.render_report("SCOPE", SCOPE) == R.render_report("SCOPE", bare)
+
+
 def test_guard_forces_missing_keys():
     """렌더러가 놓친 키/원소를 가드가 강제 append(누락 0 보장)."""
     # 미등록 phase → 폴백 경로. 여기에 임의 키를 넣어 가드 동작을 직접 확인.
