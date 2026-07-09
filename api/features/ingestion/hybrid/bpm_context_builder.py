@@ -263,8 +263,7 @@ def fetch_hybrid_us_rules(
 
     pairs = [{"us_id": us_id, "task_id": task_id} for us_id, task_id in us_to_task]
     # 오퍼레이션 단위(루틴) 기준 조인 — dbms 룰 오너=자식구문 → PARENT_OF*0.. 로 루틴 rtn 복원.
-    # guard/branch 는 생산자가 속성 폐기 → NEXT/BRANCH 엣지에서 도출(spec 044 C3/C4).
-    # EXAMPLE 에 is_boundary 없음 → 대표예시=첫 EXAMPLE(C2/R4).
+    # EXAMPLE 에 is_boundary 없음 → 대표예시=첫 EXAMPLE(C2).
     cypher = """
     UNWIND $pairs AS pair
     MATCH (t:BpmTask {id: pair.task_id, session_id: $sid})
@@ -274,7 +273,7 @@ def fetch_hybrid_us_rules(
         AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
         AND rtn.name = sh.source_function
         AND an.statement = sh.title
-    WITH pair, sh, hr, an, f,
+    WITH pair, sh, hr, an,
          head([(an)-[:HAS_EXAMPLE]->(e:EXAMPLE) | e]) AS canonical_ex,
          [(an)-[:HAS_EXAMPLE]->(e:EXAMPLE) | {
             example_id: e.id,
@@ -283,9 +282,7 @@ def fetch_hybrid_us_rules(
             then_: e.then_,
             writes: [(e)-[at:AFFECTS_TABLE]->(tbl:TABLE)
                      | {table: tbl.name, op: at.op}]
-         }] AS examples,
-         head([(f)-[hrp:HAS_RULE]->(prev:RULE)-[:NEXT]->(an)  | hrp.local_rule_id]) AS guard_derived,
-         head([(f)-[hrb:HAS_RULE]->(par:RULE)-[:BRANCH]->(an) | hrb.local_rule_id]) AS branch_derived
+         }] AS examples
     RETURN pair.us_id AS us_id,
            sh.id AS rule_id,
            sh.title AS statement,
@@ -294,10 +291,6 @@ def fetch_hybrid_us_rules(
            coalesce(canonical_ex.when_,  sh.when)  AS when_,
            coalesce(canonical_ex.then_,  sh.then)  AS then_,
            false AS is_boundary,
-           coalesce(hr.local_rule_id,   '')  AS local_id,
-           coalesce(hr.flow_id,         '')  AS flow_id,
-           coalesce(guard_derived,      '')  AS guard_rule_id,
-           coalesce(branch_derived,     '')  AS branch_from,
            coalesce(hr.coupled_domains, []) AS coupled_domains,
            examples
     """
@@ -315,10 +308,6 @@ def fetch_hybrid_us_rules(
                 "when_":           r["when_"] or "",
                 "then_":           r["then_"] or "",
                 "is_boundary":     bool(r["is_boundary"]),
-                "local_id":        r["local_id"] or None,
-                "flow_id":         r["flow_id"] or None,
-                "guard_rule_id":   r["guard_rule_id"] or None,
-                "branch_from":     r["branch_from"] or None,
                 "coupled_domains": list(r["coupled_domains"] or []),
                 "examples":        [e for e in (r["examples"] or []) if e and e.get("example_id")],
             })
@@ -345,7 +334,6 @@ def render_hybrid_bl_block(
         - R1 [b000_main_proc] "rule statement"
           - writes: [INSERT zpay_ap_rltm_auth_hst]
           - coupled_domains: ["order"]
-          - guard_rule_id: R0  (precondition chain)
           - example: GIVEN ... / WHEN ... / THEN ... (boundary)
 
     The LLM uses this to ground Aggregate root_table, Command preconditions,
@@ -368,17 +356,16 @@ def render_hybrid_bl_block(
     lines.append(
         "_아래는 각 UserStory 가 출처로 삼은 분석기 코드의 BL 정보 — Rule.statement, "
         "AFFECTS_TABLE writes (INSERT/UPDATE/DELETE), coupled_domains (cross-BC 신호), "
-        "guard_rule_id chain (precondition), 그리고 canonical Example GWT 입니다. "
+        "그리고 canonical Example GWT 입니다. "
         "Aggregate root, Command precondition, Event 이름 등 추론 시 이 정보를 "
         "최우선 근거로 활용하세요._\n"
     )
     for us_id, bls in relevant:
         lines.append(f"- US `{us_id}`:")
-        for bl in bls[:max_rules_per_us]:
-            tag = bl.get("local_id") or "R?"
+        for i, bl in enumerate(bls[:max_rules_per_us], start=1):
             fn = bl.get("source_function") or "?"
             stmt = (bl.get("statement") or "").replace("\n", " ").strip()
-            lines.append(f"  - **{tag}** [`{fn}`] \"{stmt}\"")
+            lines.append(f"  - **R{i}** [`{fn}`] \"{stmt}\"")
 
             # Aggregate writes across all examples (drives Aggregate root_table /
             # Event PastParticiple / Command emit).
@@ -395,10 +382,6 @@ def render_hybrid_bl_block(
 
             if bl.get("coupled_domains"):
                 lines.append(f"    - coupled_domains: {bl['coupled_domains']}")
-            if bl.get("guard_rule_id"):
-                lines.append(f"    - guard_rule_id: {bl['guard_rule_id']}  (선행 조건)")
-            if bl.get("branch_from"):
-                lines.append(f"    - branch_from: {bl['branch_from']}  (분기 부모)")
 
             # Canonical example GWT
             given = (bl.get("given") or "").replace("\n", " ").strip()

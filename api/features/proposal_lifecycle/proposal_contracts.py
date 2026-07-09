@@ -223,6 +223,7 @@ class DecompositionMode(str, Enum):
     SIMPLIFIED = "SIMPLIFIED"       # 현행 Intent→Plan
     DETAILED_DDD = "DETAILED_DDD"   # ddd-starter 6단계 walkthrough
     ODA_STANDARD = "ODA_STANDARD"   # 043 — TM Forum ODA 표준 근거 분해/설계
+    REVERSE_INTENT = "REVERSE_INTENT"  # 047 — 코드 분석 그래프에서 요구사항 역추출
 
 
 class DddStage(str, Enum):
@@ -550,6 +551,12 @@ class CreateProposalRequest(BaseModel):
     title: Optional[str] = None
     # 042 — 분해 모드(다이얼로그 스위치). 기본은 현행 빠른 경로.
     decompositionMode: DecompositionMode = DecompositionMode.SIMPLIFIED
+
+
+class CreateReverseProposalRequest(BaseModel):
+    # 047 — 자연어 대신 분석 그래프(db)를 받아 요구사항을 역추출한다.
+    db: str
+    title: Optional[str] = None
 
 
 class SubmitProposalRequest(BaseModel):

@@ -199,7 +199,6 @@ async function saveEdit() {
           </div>
           <ul class="source-rules__list">
             <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item">
-              <span v-if="rule.local_id" class="source-rule-seq">{{ rule.local_id }}</span>
               <span class="source-rule-stmt">{{ rule.statement }}</span>
               <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>
             </li>
@@ -401,13 +400,6 @@ async function saveEdit() {
 }
 .source-rules__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .source-rule-item { display: flex; align-items: baseline; gap: 6px; font-size: 0.85rem; line-height: 1.4; flex-wrap: wrap; }
-.source-rule-seq {
-  flex-shrink: 0;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-  font-size: 0.75rem; font-weight: 600;
-  color: #4338ca; background: rgba(99, 102, 241, 0.15);
-  padding: 1px 6px; border-radius: 4px; min-width: 28px; text-align: center;
-}
 .source-rule-stmt { flex: 1 1 auto; color: var(--color-text); word-break: keep-all; }
 .source-rule-fn {
   flex-shrink: 0;

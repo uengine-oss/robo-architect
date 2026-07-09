@@ -66,6 +66,25 @@ def _build_intent_prompt(
     )
 
 
+def _build_reverse_prompt(brief_text: str) -> str:
+    """047 — 레거시 코드분석 브리프 → 요구사항 도출(역방향). _build_intent_prompt 대응·수정.
+
+    입력이 "변경 요청(자연어)"이 아니라 "테이블 앵커 브리프(코드분석 무손실)"이며,
+    지시를 "변경 분해"에서 "코드분석 → 요구사항 도출"로 바꾼다. 출력 형식은 동일한
+    Strategic Diff 라 하류(plan/tasks/implement)를 그대로 재사용한다.
+    """
+    return (
+        "다음은 레거시 시스템의 코드 분석 결과다 — 하나의 데이터(Aggregate 후보 테이블)를 중심으로,\n"
+        "그 테이블을 변경하는 오퍼레이션들의 비즈니스 규칙과 시나리오(GWT)를 코드 그래프에서 무손실 추출한 것이다.\n\n"
+        f"--- 코드 분석 결과 ---\n{brief_text}\n--- 끝 ---\n\n"
+        "현재 도메인 구성 요소 목록:\n(없음 — 신규 도출)\n\n"
+        "위 분석 결과로부터 이 시스템이 '무엇을 하는지' 사용자/업무 관점의 요구사항을 도출하라. "
+        "코드 구현 세부가 아니라 요구사항으로 재구성하고, 각 규칙·시나리오가 UserStory/GWT 에 반영되게 하라. "
+        "위 내용을 Strategic Diff(BoundedContext/Feature/UserStory/Process)로 분해하여 JSON 으로 출력하세요. "
+        "Tactical Diff/아키텍처는 산출하지 마세요."
+    )
+
+
 def _load_intent_inputs(proposal_id: str) -> dict | None:
     """프롬프트 구성에 필요한 Proposal 필드(원본/명확화/피드백/이전 diff)를 한 번에 로드한다."""
     with get_session() as session:

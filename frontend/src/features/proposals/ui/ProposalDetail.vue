@@ -10,7 +10,8 @@
       </div>
       <h2 class="detail-header__title">{{ proposal.title }}</h2>
       <p class="detail-header__prompt">{{ proposal.originalPrompt }}</p>
-      <div class="detail-header__info">
+      <!-- 역추출은 코드 그래프에서 뽑는 것이라 작성자/생성일이 무의미 → 숨김(047) -->
+      <div class="detail-header__info" v-if="!isReverse">
         <span>{{ t('proposals.detail.author') }} {{ proposal.author }}</span>
         <span>{{ t('proposals.detail.createdAt') }} {{ formatDate(proposal.createdAt) }}</span>
       </div>
@@ -39,6 +40,11 @@
         <!-- 043 — ODA 표준: Intent 탭에 ODA 트랙(정합성·적합성 게이트·산출물) 융합 -->
         <OdaStandardTrack
           v-if="isOda"
+          :proposalId="proposal.id"
+        />
+        <!-- 047 — 코드에서 역추출: 결과 나오기 전엔 역추출 트랙, 나오면 아래 IntentDecompositionView -->
+        <ReverseIntentTrack
+          v-else-if="isReverse && !proposal.strategicDiff"
           :proposalId="proposal.id"
         />
         <!-- 042 — Detailed DDD: Intent 탭에 전략 단계(Discover·Decompose·Strategize) 융합 -->
@@ -228,6 +234,7 @@ import StrategicStages from './StrategicStages.vue'
 import PlanStages from './PlanStages.vue'
 import StageArtifactTabs from './StageArtifactTabs.vue'
 import OdaStandardTrack from './OdaStandardTrack.vue'
+import ReverseIntentTrack from './ReverseIntentTrack.vue'
 
 const props = defineProps({ proposalId: { type: String, required: true } })
 const { t } = useI18n()
@@ -264,6 +271,7 @@ const isSubmitted = computed(() => proposal.value?.status === 'SUBMITTED')
 const isDetailed = computed(() => proposal.value?.decompositionMode === 'DETAILED_DDD')
 // 043 — ODA 표준 모드: Intent 탭에 ODA 트랙(정합성·게이트·산출물) 융합.
 const isOda = computed(() => proposal.value?.decompositionMode === 'ODA_STANDARD')
+const isReverse = computed(() => proposal.value?.decompositionMode === 'REVERSE_INTENT')
 const _hasStrategic = computed(() => {
   const sd = proposal.value?.strategicDiff
   return !!(sd && (sd.epics?.length || sd.userStories?.length || sd.features?.length))

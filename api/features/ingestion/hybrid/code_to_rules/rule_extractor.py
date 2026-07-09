@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
 
 from api.features.ingestion.hybrid.code_to_rules.rule_filters import (
     is_infra,
@@ -28,13 +27,8 @@ from api.platform.observability.smart_logger import SmartLogger
 
 # One row per (function, rule) pair. Examples are collected as a list so a single
 # rule with N examples (boundary + nominal) stays one RuleDTO. `coupled_domains`
-# lives on the HAS_RULE relationship per the new schema.
-#
-# Per-Example AFFECTS_TABLE writes are gathered with a sub-pattern collect inside
-# the example map so we don't fan out the (function, rule) row. NEXT/BRANCH are
-# function-scoped: we cross back through HAS_RULE on the same function `f` to
-# resolve the target rule's local_id, since (function, local_id) is the
-# downstream consumers' addressing scheme.
+# lives on the HAS_RULE relationship; per-Example AFFECTS_TABLE writes are gathered
+# with a sub-pattern collect inside the example map so we don't fan out the row.
 _QUERY = """
 MATCH (f)-[hr:HAS_RULE]->(r:RULE)
 WITH f, hr, r,
@@ -44,36 +38,22 @@ WITH f, hr, r,
           given:       e.given,
           when_:       e.when_,
           then_:       e.then_,
-          description: e.description,
           writes:      [(e)-[at:AFFECTS_TABLE]->(tbl:TABLE) | {table: tbl.name, op: at.op}]
         }
-     ] AS examples,
-     // NEXT/BRANCH 끝점은 같은 오너(f)의 HAS_RULE.local_rule_id 로 식별 (spec 044 C3).
-     [(r)-[:NEXT]->(rn:RULE)<-[hrn:HAS_RULE]-(f) | hrn.local_rule_id]   AS next_rule_local_ids_raw,
-     [(r)-[:BRANCH]->(rb:RULE)<-[hrb:HAS_RULE]-(f) | hrb.local_rule_id] AS branch_rule_local_ids_raw,
-     // guard(선행조건)=들어오는 NEXT 직전 룰, branch_from(분기부모)=들어오는 BRANCH 부모 룰.
-     // 생산자가 속성 폐기 → NEXT/BRANCH 엣지에서 도출(spec 044 D3/R2). 같은 오너 f 한정.
-     head([(f)-[hrp:HAS_RULE]->(prev:RULE)-[:NEXT]->(r)  | hrp.local_rule_id]) AS guard_rule_id,
-     head([(f)-[hrb2:HAS_RULE]->(par:RULE)-[:BRANCH]->(r) | hrb2.local_rule_id]) AS branch_from
+     ] AS examples
 RETURN
     coalesce(f.id, f.name)            AS function_id,
     coalesce(f.name, '')              AS function_name,
     f.summary                         AS function_summary,
     r.statement                       AS statement,
-    hr.local_rule_id                  AS local_id,
-    hr.flow_id                        AS flow_id,
-    guard_rule_id                     AS guard_rule_id,
-    branch_from                       AS branch_from,
     coalesce(hr.coupled_domains, [])  AS coupled_domains,
-    examples                          AS examples,
-    [x IN next_rule_local_ids_raw   WHERE x IS NOT NULL] AS next_rule_local_ids,
-    [x IN branch_rule_local_ids_raw WHERE x IS NOT NULL] AS branch_rule_local_ids
-ORDER BY function_name, hr.local_rule_id
+    examples                          AS examples
+ORDER BY function_name, r.statement
 """
 
 
-def _rule_id(function_id: str, local_id: Any, statement: str) -> str:
-    raw = f"{function_id}|{local_id}|{statement or ''}"
+def _rule_id(function_id: str, statement: str) -> str:
+    raw = f"{function_id}|{statement or ''}"
     return "rule_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -190,10 +170,8 @@ async def extract_rules_from_analyzer_graph(
 
     try:
         with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
-            # framework: 룰이 루틴(FUNCTION)에 직접 → flow_id/룰NEXT/BRANCH 가 그 위에 있어
-            #            기존 _QUERY 로 그대로 소비(무회귀).
-            # dbms: 룰이 자식 구문 노드에 흩어짐 → 구문트리를 framework 모양으로 선형화
-            #       (spec 044 D9/D10, neo4j 실데이터 검증). 동일 레코드 키 반환.
+            # framework: 룰이 루틴(FUNCTION)에 직접 붙음 → 기존 _QUERY 로 소비.
+            # dbms: 룰이 자식 구문 노드에 흩어짐 → 상위 루틴 오너로 귀속(044 C4). 동일 레코드 키.
             if is_dbms_graph(s):
                 records = linearize_dbms_rules(s)
             else:
@@ -220,7 +198,7 @@ async def extract_rules_from_analyzer_graph(
             continue
 
         fid = rec.get("function_id") or fn_name or "unknown"
-        rid = _rule_id(fid, rec.get("local_id"), statement or "")
+        rid = _rule_id(fid, statement or "")
         if rid in seen:
             continue
         seen.add(rid)
@@ -232,7 +210,6 @@ async def extract_rules_from_analyzer_graph(
                 when_=(e.get("when_") or "").strip(),
                 then_=_humanize(e.get("then_")),
                 is_boundary=bool(e.get("is_boundary")),
-                description=e.get("description") or None,
                 # Union of analyzer-edge writes (AFFECTS_TABLE) and JSON-embedded
                 # writes[] in the raw then_ — either alone is incomplete in some
                 # function fixtures, so we merge both for robust §3.1 classification.
@@ -257,12 +234,6 @@ async def extract_rules_from_analyzer_graph(
                 title=(statement or None),
                 examples=examples,
                 coupled_domains=list(rec.get("coupled_domains") or []),
-                local_id=rec.get("local_id"),
-                flow_id=rec.get("flow_id"),
-                guard_rule_id=rec.get("guard_rule_id"),
-                branch_from=rec.get("branch_from"),
-                next_rule_local_ids=list(rec.get("next_rule_local_ids") or []),
-                branch_rule_local_ids=list(rec.get("branch_rule_local_ids") or []),
             )
         )
 
