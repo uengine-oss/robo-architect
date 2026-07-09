@@ -10,15 +10,17 @@
 - 소비자 자체 세션노드(`:Rule/:Command/:Event/:Aggregate/:Policy {session_id}`)는 PascalCase 유지 = **본 계약 비대상**. 생산자 노드는 `session_id IS NULL`로 구분.
 
 ## C2. 비즈니스로직 (framework·dbms 동일)
-- `:RULE {id, statement}` / `:EXAMPLE {id, given, when_, then_, description}` / `:QUESTION {id, text, reason}`.
+> ⚠️ **부분 supersede by 046-rules-slim-consumer** (analyzer spec 039). `EXAMPLE.description`·`HAS_RULE.flow_id`·`HAS_RULE.local_rule_id`는 소멸 → 아래 취소선 항목은 무효. 현행 = 046 `contracts/slim-rule-consumer-delta.md`.
+- `:RULE {id, statement}` / ~~`:EXAMPLE {id, given, when_, then_, description}`~~ → `:EXAMPLE {id, given, when_, then_}` / `:QUESTION {id, text, reason}`.
 - `:EXAMPLE`에 **`is_boundary` 없음** — 인라인 `{is_boundary:false}` 매칭 금지. 대표예시는 `example_id` 정렬 폴백.
-- `HAS_RULE` rel 속성 = **`local_rule_id`, `flow_id`, `coupled_domains`** 뿐. `local_id/guard_rule_id/branch_from` **없음**.
+- ~~`HAS_RULE` rel 속성 = `local_rule_id`, `flow_id`, `coupled_domains`~~ → `HAS_RULE` rel 속성 = **`coupled_domains`뿐**(046). `local_rule_id`·`flow_id` 소멸.
 
-## C3. 룰 흐름 (도출)
-- `local_id` ≔ `HAS_RULE.local_rule_id`.
-- 분기부모 `branch_from(r)` ≔ `(parent)-[:BRANCH]->(r)` 의 parent `local_rule_id`.
-- 선행조건 `guard_rule_id(r)` ≔ `(prev)-[:NEXT]->(r)` 의 prev `local_rule_id`.
-- NEXT/BRANCH(rule)는 `owner_id`로 qualify, 끝점은 같은 오너의 HAS_RULE `local_rule_id`로 식별.
+## C3. 룰 흐름 (도출) — ❌ 전체 supersede by 046 (폐기)
+> ⚠️ **전체 supersede by 046-rules-slim-consumer.** 룰→룰 `NEXT`/`BRANCH` 엣지 및 `flow_id`/`local_rule_id` 소멸(`BRANCH` rel 타입 자체 폐기). 소비자는 룰 레벨 흐름을 **소비·도출하지 않는다**. 아래 조항 전부 무효. (구문 `NEXT`=StatementNext·`BpmTask.NEXT`는 별개 — 유지.)
+- ~~`local_id` ≔ `HAS_RULE.local_rule_id`.~~
+- ~~분기부모 `branch_from(r)` ≔ `(parent)-[:BRANCH]->(r)` 의 parent `local_rule_id`.~~
+- ~~선행조건 `guard_rule_id(r)` ≔ `(prev)-[:NEXT]->(r)` 의 prev `local_rule_id`.~~
+- ~~NEXT/BRANCH(rule)는 `owner_id`로 qualify, 끝점은 같은 오너의 HAS_RULE `local_rule_id`로 식별.~~
 
 ## C4. 오퍼레이션 단위 (framework·dbms 통일 규칙) ★
 - **정의**: 룰/예시/질문의 논리적 오너 = "그것을 감싸는 가장 가까운 **루틴**(라벨 ∈ `{FUNCTION,PROCEDURE,METHOD,TRIGGER}`)".
