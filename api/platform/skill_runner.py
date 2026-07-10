@@ -13,28 +13,12 @@ import re
 import shutil
 import subprocess
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator
 
 from api.platform.observability.smart_logger import SmartLogger
 
 _PROJECT_ROOT = Path(__file__).parents[2]
-
-
-# 스킬 스폰(claude CLI)의 원본 stdout/stderr 를 파일로 그대로 tee 한다.
-# 스트리밍 파서는 인식 못한 이벤트·stderr 를 버리므로, nested claude 가 왜 죽는지
-# (unsafe-agent 거부·MCP 연결 실패·인증 등)가 어디에도 안 남는 맹점이 있었다.
-# → 원본 바이트를 <trace>.out / <trace>.err 두 파일에 남겨 사후 추적을 보장한다.
-# 기본 켬(ROBO_SKILL_TRACE=0 로 끔). 경로는 SmartLogger 로 함께 남긴다.
-def _skill_trace_path(skill_name: str) -> Path | None:
-    if os.environ.get("ROBO_SKILL_TRACE", "1") != "1":
-        return None
-    base = os.environ.get("ROBO_SKILL_TRACE_DIR") or str(_PROJECT_ROOT / "logs" / "skill_trace")
-    d = Path(base)
-    d.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return d / f"{skill_name}-{ts}-{os.getpid()}"
 
 # claude CLI 스킬 호출은 로컬에 로그인된 Claude Code 세션(구독)을 써야 한다.
 # 그런데 .env(LLM provider용)에 들어있는 ANTHROPIC_API_KEY가 load_dotenv()로
@@ -77,23 +61,20 @@ def _run_process_sync(
 
 
 async def _stream_process_chunks(
-    cmd: list[str], cwd: str, timeout: int, trace_path: Path | None = None
+    cmd: list[str], cwd: str, timeout: int
 ) -> AsyncGenerator[bytes, None]:
     """
     cmd 를 블로킹 subprocess 로 실행하고 stdout 바이트 청크를 도착하는 즉시 yield 한다.
     스폰·읽기는 전용 워커 스레드에서 수행하므로 이벤트 루프 종류와 무관하게 동작한다.
 
     - bufsize=0(언버퍼드): proc.stdout.read(n)가 데이터가 도착하는 즉시 반환 → 실시간 스트리밍 보존.
-    - stderr 는 별도 스레드에서 끝까지 비워 파이프 버퍼 풀(deadlock)을 방지한다(+trace 파일에 tee).
-    - trace_path 지정 시 원본 stdout→`.out`·stderr→`.err` 로 그대로 남긴다(사후 추적).
+    - stderr 는 별도 스레드에서 끝까지 비워 파이프 버퍼 풀(deadlock)을 방지한다.
     - 소비자(async generator) 종료 시 finally 에서 서브프로세스를 확실히 kill 한다.
     """
     q: queue.Queue = queue.Queue(maxsize=256)
     holder: dict = {}
 
     def _reader() -> None:
-        out_f = open(str(trace_path) + ".out", "ab") if trace_path else None
-        err_f = open(str(trace_path) + ".err", "ab") if trace_path else None
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -104,37 +85,19 @@ async def _stream_process_chunks(
                 env=_skill_env(),
             )
             holder["proc"] = proc
-
             # stderr 드레인 스레드: 읽지 않으면 stderr 파이프가 차서 child 가 멈출 수 있다.
-            # 버리지 말고 trace 파일에 남겨 실패 원인을 보존한다.
-            def _drain_err() -> None:
-                try:
-                    while proc.stderr:
-                        b = proc.stderr.read(4096)
-                        if not b:
-                            break
-                        if err_f:
-                            err_f.write(b)
-                            err_f.flush()
-                except Exception:
-                    pass
-
-            threading.Thread(target=_drain_err, daemon=True).start()
+            threading.Thread(
+                target=lambda: proc.stderr.read() if proc.stderr else None,
+                daemon=True,
+            ).start()
             while True:
                 chunk = proc.stdout.read(4096)
                 if not chunk:
                     break
-                if out_f:
-                    out_f.write(chunk)
-                    out_f.flush()
                 q.put(chunk)
         except Exception as e:  # noqa: BLE001 - 메인 코루틴으로 그대로 전달
             q.put((_STREAM_ERR, e))
         finally:
-            if out_f:
-                out_f.close()
-            if err_f:
-                err_f.close()
             q.put(_STREAM_DONE)
 
     threading.Thread(target=_reader, daemon=True).start()
@@ -185,10 +148,9 @@ async def run_skill_once(
     for d in (add_dirs or []):
         cmd += ["--add-dir", d]
 
-    trace_path = _skill_trace_path(skill_name)
     SmartLogger.log("INFO", f"Invoking skill: {skill_name}",
                     category="platform.skill_runner.start",
-                    params={"skill": skill_name, "trace": str(trace_path) if trace_path else None})
+                    params={"skill": skill_name})
     proc: asyncio.subprocess.Process | None = None
     try:
         # 루프-무관 블로킹 subprocess 를 워커 스레드에서 실행 (헤더 주석 참조).
@@ -198,12 +160,6 @@ async def run_skill_once(
         raw = completed.stdout.decode("utf-8", errors="replace").strip()
 
         stderr_str = completed.stderr.decode("utf-8", errors="replace").strip()
-        if trace_path:
-            try:
-                Path(str(trace_path) + ".out").write_bytes(completed.stdout or b"")
-                Path(str(trace_path) + ".err").write_bytes(completed.stderr or b"")
-            except Exception:
-                pass
         if stderr_str:
             SmartLogger.log("WARN", f"Skill {skill_name} stderr: {stderr_str[:200]}",
                             category="platform.skill_runner.stderr", params={"skill": skill_name})
@@ -266,18 +222,16 @@ async def run_skill_lines(
     for d in (add_dirs or []):
         cmd += ["--add-dir", d]
 
-    trace_path = _skill_trace_path(skill_name)
     SmartLogger.log("INFO", f"Streaming skill (stream-json): {skill_name}",
                     category="platform.skill_runner.stream_start",
-                    params={"skill": skill_name, "trace": str(trace_path) if trace_path else None})
+                    params={"skill": skill_name})
 
     chunks: AsyncGenerator[bytes, None] | None = None
     try:
         # 루프-무관 블로킹 subprocess + 워커 스레드 (헤더 주석 참조).
         # create_subprocess_exec 를 쓰면 Windows --reload(SelectorEventLoop)에서
         # NotImplementedError 로 즉사한다.
-        chunks = _stream_process_chunks(cmd, cwd or str(_PROJECT_ROOT), timeout=1800,
-                                        trace_path=trace_path)
+        chunks = _stream_process_chunks(cmd, cwd or str(_PROJECT_ROOT), timeout=1800)
 
         text_buffer = ""
         raw_buf = b""
