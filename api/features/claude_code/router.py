@@ -579,12 +579,19 @@ def _install_robo_spec(project_path: str) -> dict[str, Any]:
         mcp_endpoint if mcp_endpoint.endswith("/") else mcp_endpoint + "/"
     )
     mcp_json_path = os.path.join(project_path, ".mcp.json")
+    # robo-cluster (spec 044): 레거시 코드 의미검색 MCP. DDD 생성 중 그래프를 통째
+    # 들고오는 대신 자연어 질의로 관련 코드 뭉치만 참조한다(analyzer /robo/mcp).
+    cluster_mcp_url = os.getenv("ROBO_CLUSTER_MCP_URL", "http://127.0.0.1:5502/robo/mcp/")
     mcp_json_doc = {
         "mcpServers": {
             "robo-spec": {
                 "type": "http",
                 "url": mcp_endpoint_with_slash,
-            }
+            },
+            "robo-cluster": {
+                "type": "http",
+                "url": cluster_mcp_url,
+            },
         }
     }
     with open(mcp_json_path, "w", encoding="utf-8") as f:
