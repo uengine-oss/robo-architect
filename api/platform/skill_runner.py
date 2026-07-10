@@ -31,6 +31,18 @@ def _skill_env() -> dict:
         env.pop(k, None)
     return env
 
+
+# robo-cluster(spec 044): 레거시 코드 의미검색 MCP. 스킬 cwd(저장소 루트)에는 .mcp.json 이
+# 없어 프로젝트 스코프 발견이 안 되므로 --mcp-config 로 명시 주입한다.
+# analyzer 가 내려가 있으면 도구만 안 보일 뿐 스킬 실행은 정상 진행된다.
+def cluster_mcp_url() -> str:
+    return os.getenv("ROBO_CLUSTER_MCP_URL", "http://127.0.0.1:5502/robo/mcp/")
+
+
+def _mcp_args() -> list[str]:
+    config = {"mcpServers": {"robo-cluster": {"type": "http", "url": cluster_mcp_url()}}}
+    return ["--mcp-config", json.dumps(config)]
+
 # _stream_process_chunks 내부 큐 종료/에러 신호용 센티넬.
 _STREAM_DONE = object()
 _STREAM_ERR = object()
@@ -131,6 +143,7 @@ async def run_skill_once(
         "--system-prompt-file", str(sf),
         "--output-format", "text",
         "--dangerously-skip-permissions",
+        *_mcp_args(),
     ]
     for d in (add_dirs or []):
         cmd += ["--add-dir", d]
@@ -204,6 +217,7 @@ async def run_skill_lines(
         # 전체 텍스트(narration+JSON)가 한 번에 도착해 "한꺼번에 덤프"되어 보인다.
         "--include-partial-messages",
         "--dangerously-skip-permissions",
+        *_mcp_args(),
     ]
     for d in (add_dirs or []):
         cmd += ["--add-dir", d]
