@@ -32,6 +32,20 @@ def _skill_env() -> dict:
     return env
 
 
+# ★Windows hang 근본수정: `claude` 는 npm 글로벌 shim `claude.CMD` 로 잡힌다
+# (cmd.exe 경유 → claude.exe %*). 이 cmd.exe 중간 계층이 스트리밍 stdout 파이프를
+# 자식에게 안 이어줘서 subprocess 가 출력을 영영 못 받고 hang 한다(--version 등
+# 즉시종료는 되고 -p 스트리밍만 막힘 — 실측 확정). 실제 claude.exe 를 직접 스폰해 우회.
+def _resolve_claude_bin() -> str:
+    found = shutil.which("claude")
+    if found and found.lower().endswith((".cmd", ".bat", ".ps1")):
+        exe = (Path(found).parent / "node_modules" / "@anthropic-ai"
+               / "claude-code" / "bin" / "claude.exe")
+        if exe.exists():
+            return str(exe)
+    return found or "claude"
+
+
 # robo-cluster(spec 044): 레거시 코드 의미검색 MCP. 스킬 cwd(저장소 루트)에는 .mcp.json 이
 # 없어 프로젝트 스코프 발견이 안 되므로 --mcp-config 로 명시 주입한다.
 # analyzer 가 내려가 있으면 도구만 안 보일 뿐 스킬 실행은 정상 진행된다.
@@ -57,7 +71,9 @@ def _run_process_sync(
     cmd: list[str], cwd: str, timeout: int
 ) -> subprocess.CompletedProcess:
     """블로킹 subprocess.run. 워커 스레드에서 호출된다."""
-    return subprocess.run(cmd, capture_output=True, cwd=cwd, timeout=timeout, env=_skill_env())
+    # stdin=DEVNULL: 무인 스폰이므로 stdin 을 명시적으로 닫는다(상속된 터미널 입력 대기 방지).
+    return subprocess.run(cmd, capture_output=True, cwd=cwd, timeout=timeout,
+                          env=_skill_env(), stdin=subprocess.DEVNULL)
 
 
 async def _stream_process_chunks(
@@ -80,6 +96,7 @@ async def _stream_process_chunks(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,  # 무인 스폰: stdin 을 닫아 상속된 터미널 입력 대기(hang) 방지
                 cwd=cwd,
                 bufsize=0,
                 env=_skill_env(),
@@ -130,7 +147,7 @@ async def run_skill_once(
     스킬을 단회 실행하고 stdout 전체를 문자열로 반환한다.
     JSON 블록 추출이 필요한 경우 호출자가 직접 파싱.
     """
-    claude_bin = shutil.which("claude") or "claude"
+    claude_bin = _resolve_claude_bin()
     sf = skill_path(skill_root, skill_name)
 
     if not sf.exists():
@@ -199,7 +216,7 @@ async def run_skill_lines(
     --output-format stream-json 으로 실시간 tool-use 이벤트를 포함해 스트리밍.
     protocol lines (TASK_START:, TASK_DONE:, PHASE:) + TOOL:ToolName:path 형식으로 yield.
     """
-    claude_bin = shutil.which("claude") or "claude"
+    claude_bin = _resolve_claude_bin()
     sf = skill_path(skill_root, skill_name)
 
     if not sf.exists():
