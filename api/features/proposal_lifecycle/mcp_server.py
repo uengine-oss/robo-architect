@@ -351,6 +351,16 @@ def build_mcp_server() -> Any | None:
 
     @server.tool(name="proposal_generate_tasks", description="Persist generated implementation tasks.")
     def proposal_generate_tasks(proposalId: str, tasks: list[dict]) -> dict[str, Any]:  # noqa: N803
+        # 015-issue3: 헌장/구현계획 게이트를 우회해 태스크를 저장하지 못하도록 전이 가드(FR-7).
+        node = proposal_state_service.get_node(proposalId)
+        if node is None:
+            return {"status": "not-found", "proposalId": proposalId}
+        if lifecycle_steps.prior_requirement_unmet(node, "TASKS", None):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_requirement_unmet",
+                "message": "Prior required steps for TASKS are incomplete (Constitution node and implementation plan are required).",
+            }
         proposal_state_service.save_tasks(proposalId, tasks)
         proposal_interactions.record_interaction(
             proposalId,
@@ -367,12 +377,32 @@ def build_mcp_server() -> Any | None:
 
     @server.tool(name="proposal_update_implementation_status", description="Update implementation/sandbox status.")
     def proposal_update_implementation_status(proposalId: str, status: str) -> dict[str, Any]:  # noqa: N803
+        # 015: IMPLEMENT 완료 플래그를 앞 단계(태스크 확정) 없이 선점하지 못하게 가드.
+        node = proposal_state_service.get_node(proposalId)
+        if node is None:
+            return {"status": "not-found", "proposalId": proposalId}
+        if lifecycle_steps.prior_requirement_unmet(node, "IMPLEMENT", None):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_requirement_unmet",
+                "message": "Prior required steps for IMPLEMENT are incomplete (approved tasks are required).",
+            }
         proposal = proposal_state_service.update_implementation_status(proposalId, status.upper())
         _log("proposal_update_implementation_status", proposalId, status=status.upper())
         return {"status": "ok", "proposal": _state_from_node(proposal)}
 
     @server.tool(name="proposal_save_test_result", description="Validate and save TestRunResult.")
     def proposal_save_test_result(proposalId: str, testRunResult: dict) -> dict[str, Any]:  # noqa: N803
+        # 015: TEST 결과를 구현 완료(IMPLEMENT) 전에 선점 저장하지 못하게 가드.
+        node = proposal_state_service.get_node(proposalId)
+        if node is None:
+            return {"status": "not-found", "proposalId": proposalId}
+        if lifecycle_steps.prior_requirement_unmet(node, "TEST", None):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_requirement_unmet",
+                "message": "Prior required steps for TEST are incomplete (implementation must be finished first).",
+            }
         try:
             result = TestRunResult(**{**testRunResult, "proposalId": proposalId}).model_dump(mode="json")
         except ValidationError as e:

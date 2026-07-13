@@ -392,13 +392,32 @@ def test_violations_render():
 # --- 015-issue1: 전각 공백 안내 문구 제거(모든 유형) --------------------------
 
 def test_no_fullwidth_space_note_in_any_report():
-    """요약 테이블 아래의 '전각 공백' 렌더 내부사정 안내는 어떤 보고서에도 나오지 않는다."""
-    samples = [("STRATEGIC_DIFF", STRATEGIC), ("TACTICAL_DIFF", TACTICAL),
-               ("TASKS", TASKS), ("TEST", TEST), ("SCOPE", SCOPE)] + list(STAGES.items())
+    """'전각 공백' 렌더 내부사정 안내는 **등록된 모든 렌더러**의 출력에 나오지 않는다.
+
+    커버리지 = artifact 렌더러 전체 + 스테이지 렌더러 전체 + 다형 렌더(QUESTION/VIOLATIONS) + 폴백.
+    """
+    constitution_art = {"constitution": {"raw": "# 헌장\n\n원칙\n", "fields": {"architectureStyle": "MONOLITH"}}}
+    impl_plan_art = {"implementationPlan": {"version": 1,
+                                            "architectureDecisions": [{"aspect": "FRONTEND", "decision": "Vue"}],
+                                            "constitutionGaps": []}}
+    samples = [
+        ("STRATEGIC_DIFF", STRATEGIC), ("TACTICAL_DIFF", TACTICAL),
+        ("PROJECT_CONSTITUTION", constitution_art), ("CONSTITUTION", impl_plan_art),
+        ("TASKS", TASKS), ("TEST", TEST), ("SCOPE", SCOPE),
+        ("QUESTION", {"question": "무엇을?", "options": ["A", "B"]}),
+        ("VIOLATIONS", {"violationSummary": "x", "violations": [{"path": "p", "message": "m"}]}),
+    ] + list(STAGES.items())
+    # 등록된 렌더러가 하나도 빠지지 않았는지(신규 phase 추가 시 이 테스트가 강제로 갱신되게).
+    covered = {phase for phase, _ in samples}
+    registered = set(R._ARTIFACT_RENDERERS) | set(R._STAGE_RENDERERS) | {"QUESTION", "VIOLATIONS"}
+    assert registered <= covered, f"커버되지 않은 보고서 유형: {sorted(registered - covered)}"
+
     for phase, art in samples:
         out = R.render_report(phase, art)
         assert "전각" not in out, f"{phase} 보고서에 전각 공백 안내 문구가 남아 있음"
         assert "무손실 폴백" not in out, f"{phase} 보고서에 렌더 폴백 안내가 남아 있음"
+        fallback = R.render_fallback(phase, art)
+        assert "전각" not in fallback, f"{phase} 폴백에 전각 공백 안내 문구가 남아 있음"
 
 
 # --- 015-issue2: 전술 보고서의 ValueObject/Enumeration -----------------------

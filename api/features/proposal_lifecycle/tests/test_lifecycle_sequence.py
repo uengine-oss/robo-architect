@@ -276,3 +276,49 @@ def test_save_stage_artifact_does_not_promote_non_strategic_stages(monkeypatch):
         runner, calls = _patch_stage_save(monkeypatch, stage)
         runner.save_stage_artifact("PRO-mem", stage, {"any": True})
         assert calls == [], f"{stage} must NOT promote to strategicMemory"
+
+
+# --- 015-issue3: TASKS 는 헌장/구현계획 게이트를 우회할 수 없다 -----------------
+
+def test_tasks_blocked_until_project_constitution_and_plan():
+    """헌장 노드(PROJECT_CONSTITUTION) 미확정 상태에서 TASKS 로 건너뛰기는 하드 차단된다."""
+    node = {"decompositionMode": "SIMPLIFIED", "status": "SUBMITTED",
+            "strategicDiff": {"epics": [{"op": "CREATE"}]},
+            "tacticalDiff": [{"nodeId": "A-1"}]}
+    # 전술 Diff 까지 끝났지만 헌장·구현계획이 없음 → TASKS 차단.
+    assert ls.prior_requirement_unmet(node, "TASKS") is True
+    assert ls.next_incomplete_step(node).phase == "PROJECT_CONSTITUTION"
+
+    # 헌장만 확정 → 구현계획이 아직 없으므로 여전히 차단.
+    node["constitutionConfirmed"] = True
+    assert ls.prior_requirement_unmet(node, "TASKS") is True
+    assert ls.next_incomplete_step(node).phase == "CONSTITUTION"
+
+    # 구현계획까지 확정 → TASKS 허용.
+    node["implementationPlan"] = {"architectureDecisions": [{"aspect": "FRONTEND"}]}
+    assert ls.prior_requirement_unmet(node, "TASKS") is False
+    assert ls.next_incomplete_step(node).phase == "TASKS"
+
+
+def test_implement_and_test_flags_cannot_be_preempted():
+    """015: 구현/테스트 완료 플래그를 앞 단계 없이 선점하지 못한다(ACCEPT 게이트 무력화 방지)."""
+    node = {"decompositionMode": "SIMPLIFIED", "status": "DRAFT"}
+    # 아무 산출물도 없는 상태 → IMPLEMENT(완료 표시)·TEST(결과 저장) 모두 차단.
+    assert ls.prior_requirement_unmet(node, "IMPLEMENT") is True
+    assert ls.prior_requirement_unmet(node, "TEST") is True
+    assert ls.prior_requirement_unmet(node, "ACCEPT") is True
+
+    # 태스크 확정까지 마치면 IMPLEMENT 는 허용되지만 TEST 는 여전히 구현 완료를 요구.
+    node.update({
+        "status": "SUBMITTED",
+        "strategicDiff": {"epics": [{"op": "CREATE"}]},
+        "tacticalDiff": [{"nodeId": "A-1"}],
+        "constitutionConfirmed": True,
+        "implementationPlan": {"architectureDecisions": [{"aspect": "FRONTEND"}]},
+        "tasksJson": [{"id": "T1"}],
+    })
+    assert ls.prior_requirement_unmet(node, "IMPLEMENT") is False
+    assert ls.prior_requirement_unmet(node, "TEST") is True
+
+    node["implementationStatus"] = "DONE"
+    assert ls.prior_requirement_unmet(node, "TEST") is False
