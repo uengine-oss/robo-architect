@@ -39,6 +39,7 @@ STRATEGIC_TYPE_ICON: dict[str, str] = {
 TACTICAL_LABEL_ICON: dict[str, str] = {
     "Aggregate": "🧩", "Command": "⚡", "Event": "📣", "ReadModel": "🔎",
     "Policy": "🛡️", "UI": "🖥️", "Invariant": "📏",
+    "ValueObject": "🧱", "Enumeration": "🔢",
 }
 # 전략 분류(Core/Supporting/Generic).
 CLASSIFICATION_ICON: dict[str, str] = {"CORE": "⭐", "SUPPORTING": "🧩", "GENERIC": "⚙️"}
@@ -83,6 +84,7 @@ PHASE_LABELS: dict[str, str] = {
     "STRATEGIC_DIFF": "전략 Diff",
     "TACTICAL_DDD": "전술 DDD",
     "TACTICAL_DIFF": "전술 Diff",
+    "PROJECT_CONSTITUTION": "프로젝트 헌장(Constitution)",
     "CONSTITUTION": "구현 계획(Constitution)",
     "CONTEXT": "임팩트 분석",
     "TASKS": "구현 태스크",
@@ -146,6 +148,11 @@ REPORT_CONTRACT: dict[str, dict[str, Any]] = {
         "identity": {
             "tacticalDiff": "nodeTitle",
         },
+    },
+    # 015-issue3: 프로젝트 루트 헌장(Constitution 노드) 인터뷰 산출물.
+    "PROJECT_CONSTITUTION": {
+        "keys": ["constitution"],
+        "identity": {},
     },
     # DDD 스테이지 아티팩트(각 stage 의 top-level 키 = 필수 배열).
     "DISCOVER": {

@@ -48,6 +48,13 @@ TACTICAL = {
          "changeType": "CREATE", "impactLevel": "MEDIUM", "commandId": "CMD-add",
          "properties": [{"name": "productId", "type": "UUID"}],
          "fields": {"payload": {"productId": "UUID"}}},
+        {"nodeId": "VO-money", "nodeLabel": "ValueObject", "nodeTitle": "금액",
+         "changeType": "CREATE", "impactLevel": "LOW", "aggregateId": "AGG-cart",
+         "properties": [{"name": "amount", "type": "BigDecimal"}],
+         "fields": {"typeName": "Money"}},
+        {"nodeId": "ENUM-cart-status", "nodeLabel": "Enumeration", "nodeTitle": "장바구니 상태",
+         "changeType": "CREATE", "impactLevel": "LOW", "aggregateId": "AGG-cart",
+         "fields": {"typeName": "CartStatus", "items": ["ACTIVE", "ORDERED"]}},
     ],
     "implementationPlan": {
         "version": 1,
@@ -318,7 +325,8 @@ def test_snapshot_strategic():
     """대표 phase 최소 골든 스냅샷 — 구조 불변식(요약 헤더/트리 표/US 카드)."""
     out = R.render_report("STRATEGIC_DIFF", STRATEGIC)
     assert out.startswith("## 📄 전략 Diff 보고서")
-    assert "**요약** — Epic 1 · Feature 1 · UserStory 2" in out
+    # 015-issue1: 요약의 유형 라벨에 보조 아이콘(전술/스테이지 보고서와 동일 규칙).
+    assert "**요약** — 🎯 Epic 1 · 🧩 Feature 1 · 👤 UserStory 2 · 🔀 Process 1 · 🗺️ Journey 0" in out
     assert "| 계층 · 항목 | tempId | 상위/BC | op |" in out
     assert "### UserStory 상세" in out
     # UserStory role/action/benefit 3요소 완전(target-01 핵심).
@@ -379,6 +387,49 @@ def test_violations_render():
                                          "violations": [{"path": "userStories[0].role", "message": "required"}]})
     assert "role required" in out
     assert "userStories[0].role" in out
+
+
+# --- 015-issue1: 전각 공백 안내 문구 제거(모든 유형) --------------------------
+
+def test_no_fullwidth_space_note_in_any_report():
+    """요약 테이블 아래의 '전각 공백' 렌더 내부사정 안내는 어떤 보고서에도 나오지 않는다."""
+    samples = [("STRATEGIC_DIFF", STRATEGIC), ("TACTICAL_DIFF", TACTICAL),
+               ("TASKS", TASKS), ("TEST", TEST), ("SCOPE", SCOPE)] + list(STAGES.items())
+    for phase, art in samples:
+        out = R.render_report(phase, art)
+        assert "전각" not in out, f"{phase} 보고서에 전각 공백 안내 문구가 남아 있음"
+        assert "무손실 폴백" not in out, f"{phase} 보고서에 렌더 폴백 안내가 남아 있음"
+
+
+# --- 015-issue2: 전술 보고서의 ValueObject/Enumeration -----------------------
+
+def test_tactical_report_includes_value_object_and_enumeration():
+    out = R.render_report("TACTICAL_DIFF", TACTICAL)
+    # 집계(요약)에 유형별 건수 포함.
+    assert "🧱 ValueObject 1" in out
+    assert "🔢 Enumeration 1" in out
+    # 요약 테이블에 Aggregate 자식으로 등장.
+    assert "🧱 ValueObject · 금액" in out
+    assert "🔢 Enumeration · 장바구니 상태" in out
+    # 상세: typeName(속성 타입으로 참조되는 이름) + Enum 값.
+    assert "fields.typeName: `Money`" in out
+    assert "fields.typeName: `CartStatus`" in out
+    assert "ACTIVE · ORDERED" in out
+
+
+# --- 015-issue3: 프로젝트 헌장(Constitution 노드) 보고서 ----------------------
+
+def test_project_constitution_report():
+    art = {"constitution": {
+        "raw": "# 프로젝트 헌장\n\n## 원칙\n- 단순함을 우선한다\n",
+        "fields": {"architectureStyle": "MONOLITH", "repoStrategy": "MONOREPO", "repoMode": None,
+                   "techStack": "TypeScript · Node.js", "designPrinciples": "단순함 우선"},
+    }}
+    out = R.render_report("PROJECT_CONSTITUTION", art)
+    assert out.startswith("## 📄 프로젝트 헌장(Constitution) 보고서")
+    assert "MONOLITH" in out and "MONOREPO" in out
+    assert "TypeScript · Node.js" in out
+    assert "헌장 본문(raw)" in out
 
 
 # --- 폴백 참조 구현(FR-5/AC-6) ----------------------------------------------

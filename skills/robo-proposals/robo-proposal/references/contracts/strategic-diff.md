@@ -36,6 +36,18 @@ Per collection, additional **top-level** requirements:
 > As-a/I-want/So-that narrative under `fields` (e.g. `fields.asA`) fails validation with
 > `role/action/benefit = required`. `fields` is optional and only for extra detail.
 
+## Epic ≡ BoundedContext — `boundedContextId` must resolve
+
+There is **no separate BoundedContext entity to invent**: in this model an **Epic is the
+BoundedContext** (the requirements tree is BoundedContext(Epic) → Feature → UserStory, and
+Aggregates hang off it). So `userStories[].boundedContextId` — and later every
+`boundedContextId` in the tacticalDiff — must be **an Epic `tempId` declared in this same
+strategicDiff** (or the id of a BoundedContext that already exists in the graph).
+
+Writing `boundedContextId: "BC-order"` while the Epic is `EPIC-order` is rejected with
+`unresolved_bounded_context`: that id matches nothing, so on Accept the story and its
+Aggregates would be written outside every BoundedContext and vanish from the live views.
+
 ## Valid User Story example
 
 ```json
@@ -45,7 +57,7 @@ Per collection, additional **top-level** requirements:
   "tempId": "US-add-to-cart",
   "entityTitle": "장바구니에 상품 담기",
   "featureId": "FEA-cart",
-  "boundedContextId": "BC-order",
+  "boundedContextId": "EPIC-order",
   "role": "고객",
   "action": "상품을 장바구니에 담는다",
   "benefit": "원하는 상품을 모아 한 번에 주문할 수 있다"

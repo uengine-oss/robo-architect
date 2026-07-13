@@ -166,10 +166,13 @@ def _render_strategic(work: dict) -> str:
             op_counts[key] = op_counts.get(key, 0) + 1
     op_summary = " · ".join(f"{rc.OP_ICON.get(k, '')} {k} {v}".strip() for k, v in sorted(op_counts.items())) or DASH
     ver_txt = f" · 버전 v{version}" if version is not None else ""
-    summary = (
-        f"**요약** — Epic {len(epics)} · Feature {len(features)} · UserStory {len(stories)}"
-        f" · Process {len(processes)} · Journey {len(journeys)} (총 {total}개, {op_summary}){ver_txt}"
+    # 015-issue1: 유형 라벨에 보조 아이콘(C1 — 라벨 정본, 아이콘 보조). 전술/스테이지 보고서와 동일한 시각 규칙.
+    counts = (("Epic", len(epics)), ("Feature", len(features)), ("UserStory", len(stories)),
+              ("Process", len(processes)), ("Journey", len(journeys)))
+    type_summary = " · ".join(
+        f"{rc.STRATEGIC_TYPE_ICON.get(label, '')} {label} {n}".strip() for label, n in counts
     )
+    summary = f"**요약** — {type_summary} (총 {total}개, {op_summary}){ver_txt}"
 
     # 요약 테이블(트리 계층: Epic→Feature→UserStory).
     rows: list[list[Any]] = []
@@ -232,9 +235,6 @@ def _render_strategic(work: dict) -> str:
     parts = [summary]
     if rows:
         parts.append(_table(["계층 · 항목", "tempId", "상위/BC", "op"], rows))
-        parts.append("> 첫 열 전각 공백 들여쓰기(`　└`)로 Epic→Feature→UserStory 계층을 드러냅니다. "
-                     "전각 공백이 트리밍되면 비공백 커넥터(`└─`)로 무손실 폴백. "
-                     "UserStory→Feature 링크가 없으면 배치는 `~추정`.")
 
     # UserStory 상세 카드(다치 엔티티만 카드 — B2).
     if stories:
@@ -301,18 +301,26 @@ def _refs_summary_cell(node: dict) -> str:
     return " · ".join(short) if short else DASH
 
 
+# Aggregate 아래에 매다는 자식 라벨(모델 요소 → 커맨드 흐름 순).
+_AGG_CHILD_LABELS = ("ValueObject", "Enumeration", "Invariant")
+
+
 def _tactical_order(nodes: list[dict]) -> list[dict]:
-    """트리 순회 순서(Aggregate→Command→Event), 나머지는 저장 순서."""
-    by_id = {n.get("nodeId"): n for n in nodes if isinstance(n, dict)}
+    """트리 순회 순서(Aggregate→[VO/Enum/Invariant]·Command→Event), 나머지는 저장 순서."""
     commands_by_agg: dict[Any, list[dict]] = {}
     events_by_cmd: dict[Any, list[dict]] = {}
+    # 015-issue2: ValueObject/Enumeration/Invariant 는 aggregateId 로 Aggregate 에 매단다.
+    children_by_agg: dict[Any, list[dict]] = {}
     for n in nodes:
         if not isinstance(n, dict):
             continue
-        if n.get("nodeLabel") == "Command" and n.get("aggregateId"):
+        label = n.get("nodeLabel")
+        if label == "Command" and n.get("aggregateId"):
             commands_by_agg.setdefault(n["aggregateId"], []).append(n)
-        elif n.get("nodeLabel") == "Event" and n.get("commandId"):
+        elif label == "Event" and n.get("commandId"):
             events_by_cmd.setdefault(n["commandId"], []).append(n)
+        elif label in _AGG_CHILD_LABELS and n.get("aggregateId"):
+            children_by_agg.setdefault(n["aggregateId"], []).append(n)
     ordered: list[dict] = []
     seen: set[int] = set()
 
@@ -326,14 +334,21 @@ def _tactical_order(nodes: list[dict]) -> list[dict]:
             continue
         if n.get("nodeLabel") == "Aggregate":
             emit(n, 0)
-            for cmd in commands_by_agg.get(n.get("nodeId"), []):
+            agg_id = n.get("nodeId")
+            for child in sorted(
+                children_by_agg.get(agg_id, []),
+                key=lambda c: _AGG_CHILD_LABELS.index(str(c.get("nodeLabel"))),
+            ):
+                if id(child) not in seen:
+                    emit(child, 1)
+            for cmd in commands_by_agg.get(agg_id, []):
                 if id(cmd) in seen:
                     continue
                 emit(cmd, 1)
                 for evt in events_by_cmd.get(cmd.get("nodeId"), []):
                     if id(evt) not in seen:
                         emit(evt, 2)
-    # 트리에 안 걸린 노드(ReadModel/Policy/UI/Invariant/고아).
+    # 트리에 안 걸린 노드(ReadModel/Policy/UI/고아).
     for n in nodes:
         if isinstance(n, dict) and id(n) not in seen:
             emit(n, 0)
@@ -355,7 +370,8 @@ def _render_tactical_nodes(nodes: list[dict], *, version: Any = None) -> str:
             il = str(n["impactLevel"]).upper()
             impact_counts[il] = impact_counts.get(il, 0) + 1
 
-    label_order = ["Aggregate", "Command", "Event", "ReadModel", "Policy", "UI", "Invariant"]
+    label_order = ["Aggregate", "ValueObject", "Enumeration", "Command", "Event",
+                   "ReadModel", "Policy", "UI", "Invariant"]
     agg_bits = []
     for lbl in label_order:
         if label_counts.get(lbl):
@@ -377,8 +393,6 @@ def _render_tactical_nodes(nodes: list[dict], *, version: Any = None) -> str:
         change_impact = f"{_op_display(n.get('changeType'))} · {_impact_display(n.get('impactLevel'))}"
         rows.append([first.rstrip(), change_impact, _refs_summary_cell(n)])
     parts.append(_table(["계층 · 노드", "변경 · 임팩트", "참조(ref)"], rows))
-    parts.append("> 첫 열 전각 공백 들여쓰기(`　└`)로 Aggregate→Command→Event 트리를 드러냅니다. "
-                 "전각 공백 트리밍 시 비공백 커넥터(`└─`)로 무손실 폴백. ReadModel 은 BC 직속 최상위.")
 
     # 상세 카드.
     parts.append("**상세 카드**")
@@ -400,6 +414,12 @@ def _render_tactical_nodes(nodes: list[dict], *, version: Any = None) -> str:
                 lines.append(f"- fields.inputSchema: {_obj_inline(fields.get('inputSchema'))}")
             elif label == "Event" and "payload" in fields:
                 lines.append(f"- fields.payload: {_obj_inline(fields.get('payload'))}")
+            elif label == "ValueObject":
+                # 015-issue2: VO 는 속성 타입으로 참조되는 typeName 이 식별의 핵심.
+                lines.append(f"- fields.typeName: {_code(fields.get('typeName'))}")
+            elif label == "Enumeration":
+                lines.append(f"- fields.typeName: {_code(fields.get('typeName'))}"
+                             f" · fields.items: {_join_list(fields.get('items'))}")
             else:
                 lines.append(f"- fields: {_obj_inline(fields)}")
         props = n.get("properties")
@@ -479,6 +499,29 @@ def _render_constitution(work: dict) -> str:
     return "\n\n".join(parts) if parts else "_구현 계획 항목 없음_"
 
 
+def _render_project_constitution(work: dict) -> str:
+    """015-issue3: 프로젝트 루트 헌장(Constitution 노드) 인터뷰 산출물 — 결정 표 + 본문."""
+    con = work.get("constitution") if isinstance(work.get("constitution"), dict) else work
+    fields = con.get("fields") if isinstance(con.get("fields"), dict) else {}
+    raw = con.get("raw") or ""
+    labels = [
+        ("architectureStyle", "🏛️ 아키텍처 스타일"),
+        ("repoStrategy", "📦 레포 전략"),
+        ("repoMode", "🔀 레포 모드"),
+        ("techStack", "🧰 기술 스택"),
+        ("designPrinciples", "📐 설계 원칙"),
+    ]
+    rows = [[label, _val(fields.get(key))] for key, label in labels]
+    decided = sum(1 for key, _ in labels if fields.get(key))
+    header = (f"**📜 프로젝트 헌장 (Constitution) · 결정 {decided}/{len(labels)}**\n\n"
+              "이 헌장은 **프로젝트 루트 싱글톤 노드**(`:Constitution {scope:'PROJECT'}`)로 그래프에 저장되며, "
+              "이후 모든 Proposal 의 구현계획이 이 결정을 따릅니다.")
+    parts = [header, _table(["항목", "결정"], rows)]
+    if raw:
+        parts.append("**헌장 본문(raw)**\n\n" + str(raw))
+    return "\n\n".join(parts)
+
+
 def _render_impl_plan_sections(plan: dict) -> str:
     version = plan.get("version")
     ad = plan.get("architectureDecisions") if isinstance(plan.get("architectureDecisions"), list) else []
@@ -551,8 +594,7 @@ def _render_tasks(work: dict) -> str:
             rows.append([f"{_INDENT[1]}{_code(t.get('id'))}", par, _val(t.get("text"))])
 
     table = _table(["계층 · id", "병렬", "태스크(text)"], rows, aligns=["---", ":---:", "---"])
-    note = ("> ⚡ 병렬 = 같은 단계 내 다른 태스크와 병렬 실행 가능 · 순차 = 단독 진행\n"
-            "> 들여쓰기 전각 공백(`　└`)이 트리밍되면 비공백 커넥터(`└─`)로 무손실 폴백")
+    note = "> ⚡ 병렬 = 같은 단계 내 다른 태스크와 병렬 실행 가능 · 순차 = 단독 진행"
     return "\n\n".join([header, order_line, table, note])
 
 
@@ -663,8 +705,7 @@ def _render_scope(work: dict) -> str:
 
     parts.append(_table(["계층 · 스테이지", "상태", "생략 권장", "사유(reason)"], rows,
                         aligns=["---", "---", ":---:", "---"]))
-    parts.append("> 첫 열 전각 공백 들여쓰기(`　└`)로 전략 DDD → 전술 DDD 2단 구조를 드러냅니다. "
-                 "전각 공백 트리밍 시 비공백 커넥터(`└─`)로 무손실 폴백. 실행 순서는 고정(재정렬 없음). "
+    parts.append("> 실행 순서는 고정(재정렬 없음). "
                  "⏭️ 생략 권장 = 스킬 제안(미확정) · ⛔ 생략확정 = 아키텍트 확정.")
     return "\n\n".join(parts)
 
@@ -814,8 +855,6 @@ def _render_decompose(work: dict) -> str:
             if n not in visited:
                 walk(n, 0)
         parts.append(_table(["의존 흐름 · 서브도메인", "책임(responsibility)", "이 엣지의 결합"], rows))
-        parts.append("> 첫 열 전각 공백 들여쓰기(`　└`)로 의존 흐름을 진입점부터 폅니다. "
-                     "전각 공백 트리밍 시 비공백 커넥터(`└─`)로 무손실 폴백.")
         return "\n\n".join(parts)
 
     # 폴백: E3 엣지 리스트(순환·다부모).
@@ -930,8 +969,7 @@ def _render_connect(work: dict) -> str:
                 rows.append([f"{_INDENT[2]}{msg}", _kind_display(i.get("kind")), f"→ 📦 {_val(i.get('to'))}"])
 
     parts = [header, _table(["from · 결합 · 메시지", "종류", "→ to"], rows),
-             "> 첫 열 전각 공백 들여쓰기(`　└`)로 from→결합→메시지 2단 그룹을 폅니다. "
-             "⚠️ 는 경고가 걸린 엣지에 인라인 표식."]
+             "> ⚠️ 는 경고가 걸린 엣지에 인라인 표식."]
     if warnings:
         warn_lines = [f"**{rc.EMOJI_WARN} 결합 경고(couplingWarnings)**"]
         warn_lines.extend(f"- {_cell(w)}" for w in warnings)
@@ -1108,6 +1146,7 @@ _ARTIFACT_RENDERERS = {
     "SCOPE": _render_scope,
     "STRATEGIC_DIFF": _render_strategic,
     "TACTICAL_DIFF": _render_tactical,
+    "PROJECT_CONSTITUTION": _render_project_constitution,
     "CONSTITUTION": _render_constitution,
     "TASKS": _render_tasks,
     "TEST": _render_test,

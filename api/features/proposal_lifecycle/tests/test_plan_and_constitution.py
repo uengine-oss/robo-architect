@@ -241,6 +241,27 @@ def test_tactical_contract_accepts_canonical_order_preview_shape():
                  "obj_data": {"name": "OrderStatus", "items": ["PLACED", "CANCELLED"]}},
             ]},
         },
+        # 015-issue2: 속성 타입으로 쓰인 Money/OrderStatus 는 1급 VO/Enum 노드로 선언돼야 한다.
+        {
+            "nodeId": "VO-money",
+            "nodeLabel": "ValueObject",
+            "nodeTitle": "금액",
+            "changeType": "CREATE",
+            "impactLevel": "LOW",
+            "aggregateId": "AGG-order",
+            "fields": {"typeName": "Money"},
+            "properties": [{"name": "amount", "type": "BigDecimal"},
+                           {"name": "currency", "type": "String"}],
+        },
+        {
+            "nodeId": "ENUM-order-status",
+            "nodeLabel": "Enumeration",
+            "nodeTitle": "주문 상태",
+            "changeType": "CREATE",
+            "impactLevel": "LOW",
+            "aggregateId": "AGG-order",
+            "fields": {"typeName": "OrderStatus", "items": ["PLACED", "CANCELLED"]},
+        },
         {
             "nodeId": "CMD-place-order",
             "nodeLabel": "Command",
@@ -303,3 +324,106 @@ def test_tactical_contract_accepts_canonical_order_preview_shape():
     ]
 
     assert validate_tactical_diff_contract(tactical) == []
+
+
+# --- 015-issue2: ValueObject / Enumeration 계약 ------------------------------
+
+def _minimal_tactical() -> list[dict]:
+    """VO/Enum 을 포함한 최소 유효 tacticalDiff."""
+    return [
+        {"nodeId": "AGG-order", "nodeLabel": "Aggregate", "nodeTitle": "주문",
+         "changeType": "CREATE", "impactLevel": "HIGH", "boundedContextId": "EPIC-order",
+         "fields": {"rootEntity": "Order"},
+         "properties": [{"name": "orderId", "type": "UUID"},
+                        {"name": "status", "type": "OrderStatus"},
+                        {"name": "totalAmount", "type": "Money"}]},
+        {"nodeId": "VO-money", "nodeLabel": "ValueObject", "nodeTitle": "금액",
+         "changeType": "CREATE", "impactLevel": "LOW", "aggregateId": "AGG-order",
+         "fields": {"typeName": "Money"},
+         "properties": [{"name": "amount", "type": "BigDecimal"}]},
+        {"nodeId": "ENUM-status", "nodeLabel": "Enumeration", "nodeTitle": "주문 상태",
+         "changeType": "CREATE", "impactLevel": "LOW", "aggregateId": "AGG-order",
+         "fields": {"typeName": "OrderStatus", "items": ["PLACED", "PAID"]}},
+    ]
+
+
+def test_tactical_contract_accepts_value_object_and_enumeration():
+    from api.features.proposal_lifecycle.services.tactical_contract import validate_tactical_diff_contract
+
+    assert validate_tactical_diff_contract(_minimal_tactical()) == []
+
+
+def test_tactical_contract_requires_value_object_and_enumeration_when_aggregate_exists():
+    from api.features.proposal_lifecycle.services.tactical_contract import validate_tactical_diff_contract
+
+    tactical = [item for item in _minimal_tactical() if item["nodeLabel"] == "Aggregate"]
+    codes = {v["code"] for v in validate_tactical_diff_contract(tactical)}
+    assert "required" in codes
+    paths = {v["path"] for v in validate_tactical_diff_contract(tactical)}
+    assert "tacticalDiff.valueObject" in paths
+    assert "tacticalDiff.enumeration" in paths
+
+
+def test_tactical_contract_rejects_unused_declared_type():
+    """선언한 VO/Enum 이 어떤 속성 타입으로도 쓰이지 않으면 위반(AC: 속성으로 활용)."""
+    from api.features.proposal_lifecycle.services.tactical_contract import validate_tactical_diff_contract
+
+    tactical = _minimal_tactical()
+    tactical[0]["properties"] = [{"name": "orderId", "type": "UUID"}]  # Money/OrderStatus 미사용
+    violations = validate_tactical_diff_contract(tactical)
+    assert {v["code"] for v in violations} == {"unused_type"}
+    assert len(violations) == 2
+
+
+def test_tactical_contract_accepts_container_type_usage():
+    from api.features.proposal_lifecycle.services.tactical_contract import validate_tactical_diff_contract
+
+    tactical = _minimal_tactical()
+    tactical[0]["properties"] = [{"name": "orderId", "type": "UUID"},
+                                 {"name": "status", "type": "OrderStatus"},
+                                 {"name": "amounts", "type": "List<Money>"}]
+    assert validate_tactical_diff_contract(tactical) == []
+
+
+# --- 015-issue6: boundedContextId 는 실재하는 BC 만 참조 ----------------------
+
+def test_tactical_contract_rejects_phantom_bounded_context():
+    from api.features.proposal_lifecycle.services.tactical_contract import validate_tactical_diff_contract
+
+    tactical = _minimal_tactical()
+    tactical[0]["boundedContextId"] = "BC-order"  # strategicDiff 에 없는 유령 참조
+    violations = validate_tactical_diff_contract(tactical, known_bc_ids={"EPIC-order"})
+    assert [v["code"] for v in violations] == ["unresolved_bounded_context"]
+
+
+def test_tactical_contract_accepts_known_bounded_context():
+    from api.features.proposal_lifecycle.services.tactical_contract import validate_tactical_diff_contract
+
+    assert validate_tactical_diff_contract(_minimal_tactical(), known_bc_ids={"EPIC-order"}) == []
+
+
+def test_strategic_contract_rejects_phantom_bounded_context():
+    from api.features.proposal_lifecycle.services.proposal_ai_validation import validate_strategic_output
+
+    result = validate_strategic_output({"action": "done", "strategicDiff": {
+        "epics": [{"op": "CREATE", "entityType": "Epic", "tempId": "EPIC-order", "entityTitle": "주문 관리"}],
+        "features": [{"op": "CREATE", "entityType": "Feature", "tempId": "FEA-cart",
+                      "entityTitle": "장바구니", "epicId": "EPIC-order"}],
+        "userStories": [{"op": "CREATE", "entityType": "UserStory", "tempId": "US-add",
+                         "entityTitle": "담기", "featureId": "FEA-cart",
+                         "boundedContextId": "BC-order",  # 유령 BC
+                         "role": "고객", "action": "담는다", "benefit": "모아 산다"}],
+    }})
+    assert result.valid is False
+    assert any(v["code"] == "unresolved_bounded_context" for v in result.violations)
+    # Epic tempId 를 쓰면 통과한다(Epic ≡ BoundedContext).
+    ok = validate_strategic_output({"action": "done", "strategicDiff": {
+        "epics": [{"op": "CREATE", "entityType": "Epic", "tempId": "EPIC-order", "entityTitle": "주문 관리"}],
+        "features": [{"op": "CREATE", "entityType": "Feature", "tempId": "FEA-cart",
+                      "entityTitle": "장바구니", "epicId": "EPIC-order"}],
+        "userStories": [{"op": "CREATE", "entityType": "UserStory", "tempId": "US-add",
+                         "entityTitle": "담기", "featureId": "FEA-cart",
+                         "boundedContextId": "EPIC-order",
+                         "role": "고객", "action": "담는다", "benefit": "모아 산다"}],
+    }})
+    assert ok.valid is True

@@ -98,7 +98,32 @@ def test_tactical_validator_accepts_canonical_minimum():
                 "impactLevel": "MEDIUM",
                 "boundedContextId": "EP-order",
                 "fields": {"rootEntity": "Order"},
-                "properties": [{"name": "orderId", "type": "UUID"}],
+                "properties": [
+                    {"name": "orderId", "type": "UUID"},
+                    {"name": "totalAmount", "type": "Money"},
+                    {"name": "status", "type": "OrderStatus"},
+                ],
+            },
+            # 015-issue2: Aggregate 가 있으면 VO/Enum 노드가 필수이며, 선언 타입은 속성으로 쓰여야 한다.
+            {
+                "nodeId": "VO-money",
+                "nodeLabel": "ValueObject",
+                "nodeTitle": "금액",
+                "changeType": "CREATE",
+                "impactLevel": "LOW",
+                "aggregateId": "AGG-order",
+                "fields": {"typeName": "Money"},
+                "properties": [{"name": "amount", "type": "BigDecimal"},
+                               {"name": "currency", "type": "String"}],
+            },
+            {
+                "nodeId": "ENUM-order-status",
+                "nodeLabel": "Enumeration",
+                "nodeTitle": "주문 상태",
+                "changeType": "CREATE",
+                "impactLevel": "LOW",
+                "aggregateId": "AGG-order",
+                "fields": {"typeName": "OrderStatus", "items": ["PLACED", "CANCELLED"]},
             },
             {
                 "nodeId": "CMD-place-order",

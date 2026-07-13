@@ -99,7 +99,12 @@ def normalize_tactical_diff(raw: object) -> list[dict]:
     return normalized
 
 
-def validate_strategic_output(data: object, *, allow_clarify: bool = False) -> ValidationResult:
+def validate_strategic_output(
+    data: object,
+    *,
+    allow_clarify: bool = False,
+    known_bc_ids: set[str] | None = None,
+) -> ValidationResult:
     output = _unwrap_output(data)
     if not isinstance(output, dict):
         return _invalid("result", "not_object", "AI output must be a JSON object")
@@ -120,6 +125,10 @@ def validate_strategic_output(data: object, *, allow_clarify: bool = False) -> V
 
     if not any(strategic.get(k) for k in ("epics", "features", "userStories", "processes")):
         violations.append(_v("strategicDiff", "empty", "strategicDiff must contain design intent items"))
+
+    # 015-issue6: Epic ≡ BoundedContext 컨테이너. userStories/tacticalDiff 의 boundedContextId 는
+    # 이 집합 안에서만 해소된다(유령 BC 참조 → Accept 시 라이브 반영 실패 방지).
+    declared_bc = declared_bc_ids(strategic) | set(known_bc_ids or set())
 
     for key in ("epics", "features", "userStories", "processes"):
         items = strategic.get(key, [])
@@ -147,6 +156,15 @@ def validate_strategic_output(data: object, *, allow_clarify: bool = False) -> V
                 for field_name in ("featureId", "boundedContextId", "role", "action", "benefit"):
                     if not item.get(field_name):
                         violations.append(_v(f"{path}.{field_name}", "required", f"{field_name} is required"))
+                bc_ref = str(item.get("boundedContextId") or "")
+                if bc_ref and declared_bc and bc_ref not in declared_bc:
+                    known = ", ".join(sorted(declared_bc)[:8])
+                    violations.append(_v(
+                        f"{path}.boundedContextId",
+                        "unresolved_bounded_context",
+                        f"boundedContextId '{bc_ref}' does not exist. Epic ≡ BoundedContext — use an Epic "
+                        f"tempId from this strategicDiff (or an existing BoundedContext id). Known: {known}",
+                    ))
 
     normalized = {
         "action": "done",
@@ -156,7 +174,29 @@ def validate_strategic_output(data: object, *, allow_clarify: bool = False) -> V
     return ValidationResult(not violations, violations=violations, normalized_output=normalized)
 
 
-def validate_plan_output(data: object, *, existing_tactical: list | None = None, architecture_only: bool = False) -> ValidationResult:
+def declared_bc_ids(strategic: object) -> set[str]:
+    """전략 Diff 가 선언한 BoundedContext 식별자(Epic tempId ≡ BC, + 명시 boundedContexts)."""
+    out: set[str] = set()
+    if not isinstance(strategic, dict):
+        return out
+    for key in ("epics", "boundedContexts"):
+        for item in strategic.get(key) or []:
+            if not isinstance(item, dict):
+                continue
+            for id_key in ("tempId", "entityId"):
+                value = item.get(id_key)
+                if value:
+                    out.add(str(value))
+    return out
+
+
+def validate_plan_output(
+    data: object,
+    *,
+    existing_tactical: list | None = None,
+    architecture_only: bool = False,
+    known_bc_ids: set[str] | None = None,
+) -> ValidationResult:
     output = _unwrap_output(data)
     if not isinstance(output, dict):
         return _invalid("result", "not_object", "AI output must be a JSON object")
@@ -171,7 +211,7 @@ def validate_plan_output(data: object, *, existing_tactical: list | None = None,
     tactical = list(existing_tactical or [])
     if not architecture_only:
         tactical = normalize_tactical_diff(output.get("tacticalDiff"))
-        violations.extend(validate_tactical_diff_contract(tactical))
+        violations.extend(validate_tactical_diff_contract(tactical, known_bc_ids=known_bc_ids))
 
     normalized = {
         "tacticalDiff": tactical,
@@ -181,12 +221,12 @@ def validate_plan_output(data: object, *, existing_tactical: list | None = None,
     return ValidationResult(not violations, violations=violations, normalized_output=normalized)
 
 
-def validate_tactical_output(data: object) -> ValidationResult:
+def validate_tactical_output(data: object, *, known_bc_ids: set[str] | None = None) -> ValidationResult:
     output = _unwrap_output(data)
     if not isinstance(output, dict):
         return _invalid("result", "not_object", "AI output must be a JSON object")
     tactical = normalize_tactical_diff(output.get("tacticalDiff"))
-    violations = validate_tactical_diff_contract(tactical)
+    violations = validate_tactical_diff_contract(tactical, known_bc_ids=known_bc_ids)
     return ValidationResult(not violations, violations=violations, normalized_output={"tacticalDiff": tactical})
 
 
@@ -265,6 +305,10 @@ _TACTICAL_COLLECTION_LABELS = {
     "uis": "UI",
     "ui": "UI",
     "screens": "UI",
+    "valueObjects": "ValueObject",
+    "valueobjects": "ValueObject",
+    "enumerations": "Enumeration",
+    "enums": "Enumeration",
 }
 
 
@@ -303,6 +347,9 @@ def _pascal_label(value: object) -> str:
         "screen": "UI",
         "valueobject": "ValueObject",
         "value_object": "ValueObject",
+        "vo": "ValueObject",
+        "enum": "Enumeration",
+        "enumeration": "Enumeration",
     }
     return aliases.get(text.lower(), text[:1].upper() + text[1:] if text else "Aggregate")
 

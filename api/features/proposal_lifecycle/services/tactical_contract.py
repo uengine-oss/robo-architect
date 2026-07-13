@@ -7,7 +7,17 @@ from typing import Any
 
 
 _CAMEL_CASE = re.compile(r"^[a-z][A-Za-z0-9]*$")
-_VALID_LABELS = {"Aggregate", "Command", "Event", "ReadModel", "Policy", "UI", "Invariant"}
+# VO/Enum 의 타입명(속성 `type` 으로 참조되는 이름)은 영어 PascalCase.
+_PASCAL_CASE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
+# `List<Money>` / `Set<OrderStatus>` / `Optional<Address>` 같은 컨테이너 표기에서 원소 타입 추출.
+_TYPE_WRAPPER = re.compile(r"^[A-Za-z]+\s*<\s*([A-Za-z0-9]+)\s*>$")
+_VALID_LABELS = {
+    "Aggregate", "Command", "Event", "ReadModel", "Policy", "UI", "Invariant",
+    # 015-issue2: 전술 설계의 모델 요소 — Aggregate 에 종속되며 속성 타입으로 참조된다.
+    "ValueObject", "Enumeration",
+}
+# 속성 `type` 이 VO/Enum 타입을 참조할 수 있는(=활용처가 되는) 라벨.
+_TYPE_CONSUMER_LABELS = {"Aggregate", "Command", "Event", "ReadModel"}
 _LEGACY_REF_KEYS = {
     "aggregate": "aggregateId",
     "boundedContext": "boundedContextId",
@@ -18,12 +28,21 @@ _LEGACY_REF_KEYS = {
 }
 
 
-def validate_tactical_diff_contract(tactical_diff: list[dict] | None) -> list[dict]:
+def validate_tactical_diff_contract(
+    tactical_diff: list[dict] | None,
+    *,
+    known_bc_ids: set[str] | None = None,
+) -> list[dict]:
     """Return contract violations for generated tacticalDiff.
 
     This intentionally validates the persisted preview contract, not just display
     fields. Broken drafts must not reach Neo4j because preview projection and
     apply logic both depend on these refs and structured properties.
+
+    `known_bc_ids` (optional): BoundedContext ids the graph can actually resolve —
+    the strategic Diff's Epic/BoundedContext tempIds plus live BoundedContext ids.
+    When provided, `boundedContextId` must be one of them; otherwise Accept would
+    create Aggregates dangling outside any BoundedContext.
     """
     if not isinstance(tactical_diff, list) or not tactical_diff:
         return [{"path": "tacticalDiff", "code": "empty", "message": "tacticalDiff must be a non-empty list"}]
@@ -36,18 +55,30 @@ def validate_tactical_diff_contract(tactical_diff: list[dict] | None) -> list[di
     }
     event_props_by_command: dict[str, set[str]] = {}
     aggregate_props_by_id: dict[str, set[str]] = {}
+    # 015-issue2: 선언된 VO/Enum 타입명 → 정의 경로(활용 검증용) / 소비된 타입명 집합.
+    declared_types: dict[str, str] = {}
+    consumed_types: set[str] = set()
+    label_counts: dict[str, int] = {}
 
     for index, item in enumerate(tactical_diff):
         if not isinstance(item, dict):
             violations.append(_violation(index, "item", "not_object", "tacticalDiff item must be an object"))
             continue
         label = item.get("nodeLabel")
+        label_counts[str(label)] = label_counts.get(str(label), 0) + 1
         if label == "Aggregate":
             aggregate_props_by_id[str(item.get("nodeId") or "")] = _property_names(item.get("properties"))
         if label == "Event":
             command_id = _text(item.get("commandId"))
             if command_id:
                 event_props_by_command.setdefault(command_id, set()).update(_property_names(item.get("properties")))
+        if label in {"ValueObject", "Enumeration"}:
+            fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+            type_name = _text(fields.get("typeName"))
+            if type_name:
+                declared_types[type_name] = f"tacticalDiff[{index}]({label}:{_text(item.get('nodeTitle')) or '?'})"
+        if label in _TYPE_CONSUMER_LABELS:
+            consumed_types.update(_property_types(item.get("properties")))
 
     for index, item in enumerate(tactical_diff):
         if not isinstance(item, dict):
@@ -72,7 +103,7 @@ def validate_tactical_diff_contract(tactical_diff: list[dict] | None) -> list[di
             violations.append({"path": f"{path}.nodeTitle", "code": "required", "message": "nodeTitle is required"})
 
         if label in {"Aggregate", "ReadModel", "Policy", "UI"}:
-            _require_ref(violations, path, item, "boundedContextId", by_id, allow_external=True)
+            _require_bc_ref(violations, path, item, by_id, known_bc_ids)
         if label == "Command":
             _require_ref(violations, path, item, "aggregateId", by_id)
         if label == "Event":
@@ -80,8 +111,11 @@ def validate_tactical_diff_contract(tactical_diff: list[dict] | None) -> list[di
         if label == "Policy":
             _require_ref(violations, path, item, "triggerEventId", by_id)
             _require_ref(violations, path, item, "invokeCommandId", by_id)
+        # 015-issue2/6: VO/Enum/Invariant 는 Aggregate 종속 — 이 참조로 그래프에 매달린다.
+        if label in {"ValueObject", "Enumeration", "Invariant"}:
+            _require_ref(violations, path, item, "aggregateId", by_id)
 
-        if label in {"Aggregate", "Command", "Event", "ReadModel"}:
+        if label in {"Aggregate", "Command", "Event", "ReadModel", "ValueObject"}:
             violations.extend(_validate_properties(path, item.get("properties")))
 
         fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
@@ -126,7 +160,66 @@ def validate_tactical_diff_contract(tactical_diff: list[dict] | None) -> list[di
                     "code": "required",
                     "message": "ReadModel userStoryRefs is required",
                 })
+        elif label in {"ValueObject", "Enumeration"}:
+            violations.extend(_validate_model_type(path, label, fields))
 
+    violations.extend(_validate_type_coverage(label_counts, declared_types, consumed_types))
+    return violations
+
+
+def _validate_model_type(path: str, label: str, fields: dict) -> list[dict]:
+    """015-issue2: ValueObject/Enumeration 의 typeName(+ Enum items) 검증."""
+    violations: list[dict] = []
+    type_name = _text(fields.get("typeName"))
+    if not type_name or not _PASCAL_CASE.match(type_name):
+        violations.append({
+            "path": f"{path}.fields.typeName",
+            "code": "invalid_type_name",
+            "message": (
+                f"{label} fields.typeName is required and must be English PascalCase "
+                "(it is the name other nodes reference in properties[].type)"
+            ),
+        })
+    if label == "Enumeration":
+        items = fields.get("items")
+        if not _non_empty_list(items) or not all(_text(i) for i in items):
+            violations.append({
+                "path": f"{path}.fields.items",
+                "code": "required",
+                "message": 'Enumeration fields.items must be a non-empty list of literal names (e.g. ["PENDING","PAID"])',
+            })
+    return violations
+
+
+def _validate_type_coverage(
+    label_counts: dict[str, int],
+    declared_types: dict[str, str],
+    consumed_types: set[str],
+) -> list[dict]:
+    """015-issue2: Aggregate 가 있으면 VO/Enum 을 반드시 설계하고, 선언한 타입은 속성으로 활용한다."""
+    violations: list[dict] = []
+    if not label_counts.get("Aggregate"):
+        return violations
+    for label, key in (("ValueObject", "valueObject"), ("Enumeration", "enumeration")):
+        if not label_counts.get(label):
+            violations.append({
+                "path": f"tacticalDiff.{key}",
+                "code": "required",
+                "message": (
+                    f"tacticalDiff must contain at least one {label} node when Aggregates exist "
+                    f"(model the domain's {label}s and reference them from properties[].type)"
+                ),
+            })
+    for type_name, defined_at in sorted(declared_types.items()):
+        if type_name not in consumed_types:
+            violations.append({
+                "path": f"{defined_at}.fields.typeName",
+                "code": "unused_type",
+                "message": (
+                    f"Declared type '{type_name}' is never used — some Aggregate/Command/Event/ReadModel "
+                    f"property must have type '{type_name}' (or a container like 'List<{type_name}>')"
+                ),
+            })
     return violations
 
 
@@ -172,6 +265,61 @@ def _require_ref(
             "code": "unresolved_ref",
             "message": f"{key} must reference another tacticalDiff nodeId",
         })
+
+
+def _require_bc_ref(
+    violations: list[dict],
+    path: str,
+    item: dict,
+    by_id: dict[str, dict],
+    known_bc_ids: set[str] | None,
+) -> None:
+    """boundedContextId 검증. 015-issue6: 그래프가 해소 가능한 BC 만 허용한다.
+
+    Accept 시 `BC-order` 같은 유령 참조는 어떤 BoundedContext 에도 매칭되지 않아
+    Aggregate 가 BC 밖에 떠 버린다(라이브 반영 실패). 전략 Diff 의 Epic tempId
+    (Epic ≡ BoundedContext 컨테이너) 또는 실재 BC id 만 허용한다.
+    """
+    value = _text(item.get("boundedContextId"))
+    if not value:
+        violations.append({
+            "path": f"{path}.boundedContextId",
+            "code": "required",
+            "message": "boundedContextId is required",
+        })
+        return
+    if value in by_id:
+        return
+    if known_bc_ids is None:
+        return
+    if value not in known_bc_ids:
+        known = ", ".join(sorted(known_bc_ids)[:8]) or "(none)"
+        violations.append({
+            "path": f"{path}.boundedContextId",
+            "code": "unresolved_bounded_context",
+            "message": (
+                f"boundedContextId '{value}' does not exist. Use an Epic tempId from this proposal's "
+                f"strategicDiff (Epic ≡ BoundedContext) or a live BoundedContext id. Known: {known}"
+            ),
+        })
+
+
+def _property_types(props: Any) -> set[str]:
+    """properties[].type 에서 참조된 타입명 집합(컨테이너 표기 원소 타입 포함)."""
+    out: set[str] = set()
+    if not isinstance(props, list):
+        return out
+    for prop in props:
+        if not isinstance(prop, dict):
+            continue
+        raw = _text(prop.get("type"))
+        if not raw:
+            continue
+        out.add(raw)
+        wrapped = _TYPE_WRAPPER.match(raw)
+        if wrapped:
+            out.add(wrapped.group(1))
+    return out
 
 
 def _validate_properties(path: str, props: Any) -> list[dict]:

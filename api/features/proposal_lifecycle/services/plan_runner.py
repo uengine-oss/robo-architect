@@ -15,6 +15,7 @@ from api.features.proposal_lifecycle.services.constitution_runner import read_co
 from api.features.proposal_lifecycle.services.proposal_ai_runner import stream_validated_skill_json
 from api.features.proposal_lifecycle.services.proposal_ai_validation import (
     SkillScenario,
+    declared_bc_ids,
     retry_count_for_scenario,
     validate_plan_output,
 )
@@ -65,6 +66,10 @@ _TACTICAL_COLLECTION_LABELS = {
     "uis": "UI",
     "ui": "UI",
     "screens": "UI",
+    "valueObjects": "ValueObject",
+    "valueobjects": "ValueObject",
+    "enumerations": "Enumeration",
+    "enums": "Enumeration",
 }
 
 
@@ -85,6 +90,9 @@ def _pascal_label(value: object) -> str:
         "screen": "UI",
         "valueobject": "ValueObject",
         "value_object": "ValueObject",
+        "vo": "ValueObject",
+        "enum": "Enumeration",
+        "enumeration": "Enumeration",
     }
     if lowered in aliases:
         return aliases[lowered]
@@ -260,8 +268,14 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         "Aggregate/Command/Event/ReadModel 은 `properties` 배열을 가져야 하며, "
         "속성명은 영어 camelCase 여야 한다. Command 는 `fields.inputSchema`, "
         "`userStoryRefs`, `gwt` 를 반드시 포함하고, Event 는 `fields.payload` 객체와 "
-        "`properties` 를 반드시 포함한다. Aggregate 는 도메인에 적합한 ValueObject/Enum 을 "
-        "`semanticDiff.ops` 로 정의하라."
+        "`properties` 를 반드시 포함한다.\n"
+        "`boundedContextId` 는 위 Strategic Diff 의 Epic `tempId`(Epic ≡ BoundedContext) 또는 "
+        "실재 BoundedContext id 만 사용하라(없는 id 를 지어내지 말 것).\n"
+        "Aggregate 가 있으면 도메인에 적합한 `ValueObject` 와 `Enumeration` 노드를 "
+        "tacticalDiff 항목으로 **반드시** 포함하라: 각각 `aggregateId` 와 "
+        "`fields.typeName`(영어 PascalCase)을 가지며, Enumeration 은 `fields.items` 배열을 갖는다. "
+        "선언한 typeName 은 Aggregate/Command/Event/ReadModel 의 `properties[].type` 에서 "
+        "(`Money` 또는 `List<Money>` 형태로) 실제로 사용해야 한다."
         f"{feedback_block}"
     )
 
@@ -276,6 +290,8 @@ async def _run_plan_skill_with_contract(
 ) -> AsyncGenerator[tuple[str, dict], None]:
     """Run diff skill, retrying with validator feedback before persisting."""
     scenario = SkillScenario.SIMPLIFIED_TACTICAL
+    # 015-issue6: boundedContextId 는 전략 Diff 의 Epic tempId(≡BC) 나 실재 BC 로만 해소돼야 한다.
+    known_bc = declared_bc_ids(strategic) | proposal_state_service.live_bounded_context_ids()
 
     def _prompt(feedback: str | None) -> str:
         return _build_plan_prompt(
@@ -290,6 +306,7 @@ async def _run_plan_skill_with_contract(
             raw,
             existing_tactical=existing_tactical,
             architecture_only=architecture_only,
+            known_bc_ids=known_bc,
         ),
         proposal_id=proposal_id,
         scenario=scenario.value,
