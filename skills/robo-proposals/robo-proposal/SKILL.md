@@ -16,8 +16,8 @@ This is the single Proposal lifecycle skill. It replaces the previous Proposal l
 1. **No LLM self-override.** You may never choose a `phase`/`stage` to jump to on your own. Order comes from `proposal_next_step` only.
 2. **User-explicit override only, guarded.** If (and only if) the *user* explicitly asks to move to a specific step, you may pass `phase:` to `proposal_next_step`. The server enforces the transition guard: a forward jump returns `blocked`/`invalid-transition` (obey it, do not proceed); a backward move to a step listed in `allowedUserOverrides` is a rollback — call `proposal_rollback`. If explicit input conflicts with a pending question/draft, the server returns `blocked` — surface it and stop.
 3. If no explicit routing input exists, use the MCP tools to list/select/resume a Proposal, then drive via `proposal_next_step`.
-4. **Mode-selection gate (new Proposal only):** Before calling `proposal_create` for a brand-new Proposal, decide the decomposition mode per `references/phases/mode-selection.md`. If the user did **not** explicitly name a mode, you MUST ask which mode to use (with a short description of each) and wait — do not create the Proposal or generate any Diff yet. If the user gave an explicit mode, skip the question and create immediately with that mode. This gate does not apply when resuming an existing Proposal. **This is the only place you decide flow; after the Proposal exists, the server decides.**
-5. Ask at most one core question at a time. Store the question with `proposal_record_question` before waiting for an answer. (The mode-selection question in rule 4 is asked before the Proposal exists, so it is a plain conversational question and is not recorded via `proposal_record_question`.)
+4. **Mode-selection gate (new Proposal only):** Before calling `proposal_create` for a brand-new Proposal, decide the decomposition mode per `references/phases/mode-selection.md`. If the user did **not** explicitly name a mode, first invoke the host's structured question tool (`AskUserQuestion` in Claude Code; `AskQuestion` where that is the exposed equivalent) with both mode choices and wait. Invoke the question tool directly; do not search for it first. If the tool is unavailable (for example, Claude Code `-p`/print mode), fall back to one concise plain-text question containing the same two choices and wait. In either path, do not return a JSON envelope, create the Proposal, or generate any Diff yet, and never choose a mode automatically. If the user gave an explicit mode, skip the question and create immediately with that mode. This gate does not apply when resuming an existing Proposal. **This is the only place you decide flow; after the Proposal exists, the server decides.**
+5. Ask at most one core question at a time. Store lifecycle questions with `proposal_record_question` before waiting for an answer. (The mode-selection question in rule 4 occurs before a Proposal exists: use the structured question tool or its plain-text fallback and do not call `proposal_record_question`.)
 6. **Validate-before-present (P1).** Store draft artifacts with `proposal_save_draft`, which **validates before storing**. If it returns `status:"invalid"` (or `invalid-transition`), the draft was **not** saved — fix the listed violations and call `proposal_save_draft` again (regeneration loop). Retry at most **3 times** (`retryContext.maxAttempts`); if still failing, surface the violations to the user, ask for help, and **do not advance**. Only a draft that `proposal_save_draft` accepted may be presented to the user and later promoted with `proposal_confirm_draft`.
 
 Always read:
@@ -57,11 +57,14 @@ Final artifacts keep the existing canonical contracts:
 - Stage artifacts: top-level key matching the stage artifact name.
 - Tasks/Test: contracts in `references/contracts/task-test-results.md`.
 
-Intermediate states use an envelope:
+Intermediate Proposal lifecycle states use an envelope **only after a Proposal exists**:
 
 ```json
 { "action": "clarify | interrupt | draft | error | nextStep", "proposalId": "PRO-NNN", "phase": "SCOPE", "artifact": {}, "questions": [], "draftRef": null, "nextStep": null, "validation": null }
 ```
+
+The pre-creation mode-selection gate is not a lifecycle state and MUST NOT emit this
+envelope; it uses the structured question tool or plain-text fallback described in rule 4.
 
 ## 4. Error And Validator Rules
 

@@ -1,11 +1,15 @@
 # Interaction RunState
 
-## User decision (question)
+## User decision (question after Proposal creation)
 
 1. Produce one question only.
 2. Call `proposal_record_question`.
 3. Return an `action:"clarify"` envelope and stop.
 4. On answer, use `proposal_answer_question`, then `proposal_resume`.
+
+This lifecycle flow excludes the pre-creation decomposition-mode gate. For that
+gate, follow `references/phases/mode-selection.md`: invoke the host's structured
+question tool and return no JSON envelope.
 
 ## Draft — validate before presenting (P1)
 

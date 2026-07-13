@@ -16,23 +16,32 @@ immediately, and continue the normal flow. Do not ask.
 
 ## 2. Ask when no mode is given
 
-If the user requests a new Proposal without naming a mode, **ask first and wait**.
-Do not call `proposal_create`, do not produce a Strategic Diff draft yet.
+If the user requests a new Proposal without naming a mode, **prefer the host's
+structured question tool and wait**:
 
-Present both options with a one-line description each, for example:
+- Claude Code: `AskUserQuestion`
+- Hosts exposing the equivalent as `AskQuestion`: use `AskQuestion`
 
-> 어떤 모드로 진행할까요?
-> - **SIMPLIFIED (간소화)** — 자연어 요구사항에서 바로 Strategic Diff(Epic·Feature·User Story)
->   초안을 만들고 Tactical Diff·구현계획으로 빠르게 진행합니다. 대부분의 변경/소규모에 적합합니다.
-> - **DETAILED DDD (상세 DDD)** — ddd-starter 6단계(Discover→Decompose→Strategize→Connect→
->   Define→Tactical)를 거치며 이벤트 스토밍·서브도메인 분류·바운디드 컨텍스트·애그리거트 설계까지
->   심층 분해합니다. 복잡하거나 새로운 도메인을 설계할 때 적합합니다.
->
-> 그냥 진행하라고 하시면 **SIMPLIFIED** 모드로 진행합니다.
+Do **not** return an `action:"clarify"` JSON envelope. Do not call
+`proposal_create` or produce a Strategic Diff draft yet. The lifecycle envelope
+contract applies only after a Proposal exists.
+Invoke the structured question tool directly; do not use tool discovery/search for
+this built-in. If the tool call is unavailable or rejected (notably in Claude Code
+`-p`/print mode), fall back to a concise plain-text question that presents the same
+two options and asks the user to reply with one. Then wait. Never emit JSON or
+assume a default merely because the tool is unavailable.
 
-Return an `action:"clarify"` envelope for this question (no `proposalId` yet — the
-Proposal does not exist). This is a pre-creation conversational question, so it is
-**not** recorded via `proposal_record_question`.
+Submit one single-select question (`multiSelect: false`) with these two options:
+
+- Label: `SIMPLIFIED (간소화)`
+  Description: `자연어 요구사항에서 바로 Strategic Diff와 구현계획으로 빠르게 진행합니다. 대부분의 변경/소규모에 적합합니다.`
+- Label: `DETAILED DDD (상세 DDD)`
+  Description: `6단계 DDD 분해를 거쳐 이벤트 스토밍, 컨텍스트, 애그리거트까지 심층 설계합니다. 복잡하거나 새로운 도메인에 적합합니다.`
+
+Use the question `어떤 분해 모드로 Proposal을 생성할까요?` and a short header
+such as `분해 모드`. For the plain-text fallback, render the same question,
+labels, and descriptions as a short list. This pre-creation question is **not** recorded via
+`proposal_record_question`.
 
 ## 3. Resolve the answer
 
