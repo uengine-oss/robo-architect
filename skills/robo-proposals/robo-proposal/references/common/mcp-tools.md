@@ -8,7 +8,35 @@ Use the `robo-proposal` MCP server for lifecycle state:
 - `proposal_save_diff`
 - `proposal_record_question`, `proposal_answer_question`, `proposal_resume`
 - `proposal_generate_tasks`, `proposal_update_implementation_status`, `proposal_save_test_result`
+- `proposal_prepare_sandbox`, `proposal_get_constitution`
 - `proposal_submit`, `proposal_accept`, `proposal_rollback`
+
+### `proposal_prepare_sandbox` — the worktree location is not a question
+
+`proposal_prepare_sandbox(proposalId, projectRoot)` creates the git worktree at
+`<projectRoot>/.sandbox/proposal/<PRO-NNN>` on branch `proposal/<PRO-NNN>` and records
+`projectRoot` on the Proposal (Accept needs it). Call it once when `action = run_implement`, and
+implement only inside the returned `worktreePath`. Never ask the user to choose a location and
+never create a sibling directory like `<projectRoot>-PRO-NNN`.
+
+### `proposal_update_implementation_status` — closes the IMPLEMENT step
+
+Call `proposal_update_implementation_status(proposalId, "DONE")` when the implementation is
+finished and committed. Without it the Proposal never leaves `IMPLEMENT`.
+
+### `proposal_get_constitution` — is there a project Constitution node?
+
+Returns `{exists, constitution}` for the project-root `:Constitution` node. When
+`nextStep.phase = PROJECT_CONSTITUTION` the node does not exist yet: interview the architect,
+then create it (see `references/phases/constitution.md`).
+
+### `proposal_accept` — Accept writes the design to the live graph
+
+`proposal_accept(proposalId)` is not a status flip: it merges the worktree branch and applies the
+strategic + tactical Diff to the **live Neo4j graph** (BoundedContext / Feature / UserStory /
+Aggregate / ValueObject / Enumeration / Command / Event / …), then sets `ACCEPTED`. It returns
+`applied` and `liveGraph` (node counts per label) — report those. On `status:"failed"` the graph
+was **not** written; surface the reason instead of reporting success.
 
 ### `proposal_create` — required arguments
 

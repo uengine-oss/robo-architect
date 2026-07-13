@@ -25,6 +25,7 @@ from api.features.proposal_lifecycle.services import (
     staged_runner,
 )
 from api.features.proposal_lifecycle.services.proposal_ai_validation import (
+    declared_bc_ids,
     validate_implementation_plan,
     validate_stage_artifact,
     validate_strategic_output,
@@ -289,7 +290,8 @@ def build_mcp_server() -> Any | None:
                 "reason": "prior_requirement_unmet",
                 "message": f"Prior required steps for {target_phase} are incomplete.",
             }
-        validation = _validate_diff(diffType, payload)
+        known_bc = _known_bc_ids(proposalId) if diffType.lower() == "tactical" else _live_bc_ids()
+        validation = _validate_diff(diffType, payload, known_bc_ids=known_bc)
         if validation:
             proposal_interactions.record_interaction(
                 proposalId,
@@ -407,26 +409,105 @@ def build_mcp_server() -> Any | None:
         _log("proposal_submit", proposalId)
         return {"status": "ok", "proposal": _state(proposalId)}
 
-    @server.tool(name="proposal_accept", description="Mark Proposal as accepted/done.")
-    def proposal_accept(proposalId: str) -> dict[str, Any]:  # noqa: N803
+    @server.tool(
+        name="proposal_prepare_sandbox",
+        description=(
+            "Create the Proposal git worktree inside the target project "
+            "(<projectRoot>/.sandbox/proposal/<PRO-NNN>, branch proposal/<PRO-NNN>) and return its path. "
+            "Call this at the start of the IMPLEMENT phase — never ask the user where to put the worktree."
+        ),
+    )
+    def proposal_prepare_sandbox(proposalId: str, projectRoot: str) -> dict[str, Any]:  # noqa: N803
+        """015-issue4: 워크트리 위치는 서버가 정한다(질문 금지). 구현은 이 경로 안에서만."""
         node = proposal_state_service.get_node(proposalId)
-        if node:
-            history = append_status_history(
-                node.get("statusHistory") or "[]",
-                node.get("status") or "",
-                "ACCEPTED",
-                "mcp",
-                "accepted via proposal MCP",
+        if node is None:
+            return {"status": "not-found", "proposalId": proposalId}
+        if lifecycle_steps.prior_requirement_unmet(node, "IMPLEMENT", None):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_requirement_unmet",
+                "message": "Approved tasks are required before implementation can start.",
+            }
+        from api.features.proposal_lifecycle.services.sandbox_manager import SandboxManager
+
+        manager = SandboxManager()
+        try:
+            root = manager.resolve_root(projectRoot)
+            worktree = manager.create_worktree(proposalId, str(root), allow_init=True)
+        except Exception as e:
+            return {"status": "error", "reason": "sandbox_failed", "message": str(e)}
+
+        with get_session() as session:
+            session.run(
+                """
+                MATCH (p:Proposal {id:$id})
+                SET p.projectRoot=$root, p.worktreePath=$worktree, p.sandboxBranch=$branch
+                """,
+                id=proposalId, root=str(root), worktree=str(worktree),
+                branch=manager.branch_name(proposalId),
             )
-            with get_session() as session:
-                session.run(
-                    "MATCH (p:Proposal {id:$id}) SET p.statusHistory=$history",
-                    id=proposalId,
-                    history=history,
-                )
-        proposal = proposal_state_service.mark_terminal(proposalId, "DONE", "ACCEPTED")
-        _log("proposal_accept", proposalId)
-        return {"status": "ok", "proposal": _state_from_node(proposal)}
+        proposal_state_service.update_implementation_status(proposalId, "IN_PROGRESS")
+        _log("proposal_prepare_sandbox", proposalId, worktree=str(worktree))
+        return {
+            "status": "ok",
+            "projectRoot": str(root),
+            "worktreePath": str(worktree),
+            "branch": manager.branch_name(proposalId),
+            "proposal": _state(proposalId),
+        }
+
+    @server.tool(
+        name="proposal_accept",
+        description=(
+            "Finalize the Proposal: merge the worktree branch and apply the strategic + tactical Diff "
+            "to the live Neo4j graph (Aggregate/Command/Event/ValueObject/Enumeration/... nodes), then ACCEPTED."
+        ),
+    )
+    def proposal_accept(proposalId: str) -> dict[str, Any]:  # noqa: N803
+        """015-issue6: Accept 는 '상태만 바꾸기'가 아니라 **라이브 그래프 반영**이다."""
+        node = proposal_state_service.get_node(proposalId)
+        if node is None:
+            return {"status": "not-found", "proposalId": proposalId}
+        if lifecycle_steps.prior_requirement_unmet(node, "ACCEPT", None):
+            return {
+                "status": "invalid-transition",
+                "reason": "prior_requirement_unmet",
+                "message": "Implementation and test results are required before accepting.",
+            }
+        from api.features.proposal_lifecycle.services import dual_merge
+
+        try:
+            applied = dual_merge.execute_dual_merge_sync(proposalId, "mcp", "accepted via proposal MCP")
+        except dual_merge.DualMergeFailed as e:
+            SmartLogger.log(
+                "ERROR",
+                f"proposal accept failed at {e.step}: {proposalId}",
+                category="proposal_lifecycle.mcp.accept_failed",
+                params={"proposalId": proposalId, "step": e.step, "detail": e.detail},
+            )
+            return {
+                "status": "failed",
+                "reason": f"dual_merge_{e.step}",
+                "message": e.detail,
+                "proposal": _state(proposalId),
+            }
+        _log("proposal_accept", proposalId, **{k: v for k, v in applied.items() if k != "liveCounts"})
+        return {
+            "status": "ok",
+            "applied": applied,
+            "liveGraph": applied.get("liveCounts", {}),
+            "proposal": _state(proposalId),
+        }
+
+    @server.tool(
+        name="proposal_get_constitution",
+        description="Return the target project's root Constitution node (exists / fields / raw).",
+    )
+    def proposal_get_constitution() -> dict[str, Any]:
+        from api.features.constitution.services import constitution_store as store
+
+        constitution = store.get_project_constitution()
+        return {"status": "ok", "exists": bool(constitution), "constitution": constitution}
 
     @server.tool(name="proposal_rollback", description="User-explicit rollback to an earlier completed step; invalidates downstream artifacts (FR-7b).")
     def proposal_rollback(proposalId: str, targetPhase: str, targetStage: str | None = None) -> dict[str, Any]:  # noqa: N803
@@ -446,8 +527,8 @@ def build_mcp_server() -> Any | None:
             "proposal_confirm_draft", "proposal_reject_draft", "proposal_save_stage_artifact",
             "proposal_save_diff", "proposal_record_question", "proposal_answer_question",
             "proposal_resume", "proposal_generate_tasks", "proposal_update_implementation_status",
-            "proposal_save_test_result", "proposal_submit", "proposal_accept",
-            "proposal_rollback",
+            "proposal_save_test_result", "proposal_submit", "proposal_prepare_sandbox",
+            "proposal_accept", "proposal_get_constitution", "proposal_rollback",
         ]},
     )
     return server
@@ -490,19 +571,103 @@ def _json_safe(value: Any) -> Any:
         return str(value)
 
 
-def _validate_diff(diff_type: str, payload: Any) -> dict | None:
+def _live_bc_ids() -> set[str]:
+    try:
+        return proposal_state_service.live_bounded_context_ids()
+    except Exception:  # 그래프 조회 실패 시 검증을 막지 않고 관대 모드로.
+        return set()
+
+
+def _known_bc_ids(proposal_id: str) -> set[str]:
+    """015-issue6: tacticalDiff 의 boundedContextId 가 해소 가능한 BC 집합.
+
+    확정된 전략 Diff 의 Epic tempId(Epic ≡ BoundedContext) + 실재 BoundedContext.
+    """
+    node = proposal_state_service.get_node(proposal_id) or {}
+    strategic = _parse_stored(node.get("strategicDiff")) or {}
+    return declared_bc_ids(strategic) | _live_bc_ids()
+
+
+def _validate_diff(diff_type: str, payload: Any, *, known_bc_ids: set[str] | None = None) -> dict | None:
     normalized = diff_type.lower()
     if normalized == "strategic":
-        result = validate_strategic_output({"action": "done", "strategicDiff": payload}, allow_clarify=False)
+        result = validate_strategic_output(
+            {"action": "done", "strategicDiff": payload},
+            allow_clarify=False,
+            known_bc_ids=known_bc_ids,
+        )
         if result.valid:
             return None
         return _validation_error("strategic_contract_invalid", result.violations)
     if normalized == "tactical":
-        result = validate_tactical_output({"tacticalDiff": payload})
+        result = validate_tactical_output({"tacticalDiff": payload}, known_bc_ids=known_bc_ids)
         if result.valid:
             return None
         return _validation_error("tactical_contract_invalid", result.violations)
     return {"status": "invalid", "reason": "unknown_diff_type", "message": "diffType must be strategic or tactical"}
+
+
+# --- 015-issue3: 프로젝트 헌장(Constitution 노드) 게이트 ----------------------
+
+_CONSTITUTION_ENUMS = {
+    "architectureStyle": {"MONOLITH", "MICROSERVICES"},
+    "repoStrategy": {"MONOREPO", "REPO_PER_SERVICE"},
+}
+
+
+def _constitution_interview_done(proposal_id: str) -> bool:
+    """헌장 인터뷰가 실제로 수행됐는지(응답 완료된 질문이 1건 이상) 확인."""
+    try:
+        interactions = proposal_interactions.list_interactions(proposal_id)
+    except Exception:
+        return False
+    return any(
+        item.get("kind") == "QUESTION"
+        and (item.get("phase") or "").upper() == "PROJECT_CONSTITUTION"
+        and (item.get("status") or "").upper() == "RESOLVED"
+        for item in interactions
+    )
+
+
+def _validate_project_constitution(proposal_id: str, artifact: dict) -> dict | None:
+    con = artifact.get("constitution")
+    if not isinstance(con, dict):
+        return {
+            "status": "invalid",
+            "reason": "project_constitution_invalid",
+            "message": "PROJECT_CONSTITUTION draft must be {\"constitution\": {\"raw\": ..., \"fields\": {...}}}.",
+        }
+    violations: list[dict] = []
+    raw = str(con.get("raw") or "").strip()
+    if len(raw) < 40:
+        violations.append({
+            "path": "constitution.raw",
+            "code": "required",
+            "message": "constitution.raw must be the Constitution document body (markdown, non-trivial).",
+        })
+    fields = con.get("fields") if isinstance(con.get("fields"), dict) else {}
+    for key in ("designPrinciples", "techStack"):
+        if not str(fields.get(key) or "").strip():
+            violations.append({"path": f"constitution.fields.{key}", "code": "required",
+                               "message": f"{key} is required (decide it in the interview)."})
+    for key, allowed in _CONSTITUTION_ENUMS.items():
+        value = str(fields.get(key) or "").strip().upper()
+        if value not in allowed:
+            violations.append({"path": f"constitution.fields.{key}", "code": "invalid",
+                               "message": f"{key} must be one of {sorted(allowed)}."})
+    if not _constitution_interview_done(proposal_id):
+        violations.append({
+            "path": "constitution.interview",
+            "code": "interview_required",
+            "message": (
+                "Interview the architect first: ask the Constitution questions with "
+                "proposal_record_question(phase='PROJECT_CONSTITUTION') and record the answers with "
+                "proposal_answer_question before saving the Constitution."
+            ),
+        })
+    if violations:
+        return _validation_error("project_constitution_invalid", violations)
+    return None
 
 
 def _validate_artifact_for_phase(proposal_id: str, phase: str, artifact: dict) -> dict | None:
@@ -518,9 +683,13 @@ def _validate_artifact_for_phase(proposal_id: str, phase: str, artifact: dict) -
             return _validation_error("stage_artifact_invalid", result.violations)
         return None
     if phase == "STRATEGIC_DIFF":
-        return _validate_diff("strategic", artifact.get("strategicDiff", artifact))
+        return _validate_diff("strategic", artifact.get("strategicDiff", artifact),
+                              known_bc_ids=_live_bc_ids())
     if phase == "TACTICAL_DIFF":
-        return _validate_diff("tactical", artifact.get("tacticalDiff", artifact))
+        return _validate_diff("tactical", artifact.get("tacticalDiff", artifact),
+                              known_bc_ids=_known_bc_ids(proposal_id))
+    if phase == "PROJECT_CONSTITUTION":
+        return _validate_project_constitution(proposal_id, artifact)
     if phase == "CONSTITUTION":
         plan = artifact.get("implementationPlan")
         if not isinstance(plan, dict):
@@ -529,7 +698,8 @@ def _validate_artifact_for_phase(proposal_id: str, phase: str, artifact: dict) -
         if violations:
             return _validation_error("implementation_plan_invalid", violations)
         if artifact.get("tacticalDiff") is not None:
-            tactical_validation = _validate_diff("tactical", artifact.get("tacticalDiff"))
+            tactical_validation = _validate_diff("tactical", artifact.get("tacticalDiff"),
+                                                 known_bc_ids=_known_bc_ids(proposal_id))
             if tactical_validation:
                 return tactical_validation
         return None
@@ -550,6 +720,25 @@ def _validation_error(reason: str, violations: list[dict]) -> dict:
 def _promote_confirmed(proposal_id: str, phase: str, artifact: dict) -> None:
     if phase in set(DDD_STAGE_ORDER):
         staged_runner.save_stage_artifact(proposal_id, phase, artifact)
+    elif phase == "PROJECT_CONSTITUTION":
+        # 015-issue3: 승인된 헌장을 **프로젝트 루트 :Constitution 노드**로 그래프에 생성한다.
+        from api.features.constitution.services import constitution_store as store
+        con = artifact.get("constitution") or {}
+        fields = con.get("fields") if isinstance(con.get("fields"), dict) else {}
+        chash = store.upsert_project_constitution(str(con.get("raw") or ""), fields)
+        with get_session() as session:
+            session.run(
+                "MATCH (p:Proposal {id:$id}) SET p.constitutionConfirmed = true, p.constitutionHash = $h",
+                id=proposal_id, h=chash,
+            )
+        SmartLogger.log(
+            "INFO",
+            f"project constitution node created from proposal: {proposal_id}",
+            category="proposal_lifecycle.mcp.constitution_created",
+            params={"proposalId": proposal_id, "hash": (chash or "")[:8],
+                    "architectureStyle": fields.get("architectureStyle"),
+                    "repoStrategy": fields.get("repoStrategy")},
+        )
     elif phase == "STRATEGIC_DIFF":
         proposal_state_service.save_diff(proposal_id, "strategic", artifact.get("strategicDiff", artifact))
     elif phase in ("TACTICAL_DIFF", "CONSTITUTION"):

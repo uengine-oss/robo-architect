@@ -20,6 +20,7 @@ PHASE_ORDER = [
     "STRATEGIC_DIFF",
     "TACTICAL_DDD",
     "TACTICAL_DIFF",
+    "PROJECT_CONSTITUTION",
     "CONSTITUTION",
     "CONTEXT",
     "TASKS",
@@ -51,7 +52,48 @@ def get_node(proposal_id: str) -> dict | None:
             "MATCH (p:Proposal {id:$id}) RETURN p {.*} AS p",
             id=proposal_id,
         ).single()
-    return dict(rec["p"]) if rec else None
+    if not rec:
+        return None
+    return _sync_constitution_gate(dict(rec["p"]))
+
+
+def live_bounded_context_ids() -> set[str]:
+    """015-issue6: 그래프에 실재하는 BoundedContext 식별자(id/key/name)."""
+    with get_session() as session:
+        rows = session.run(
+            "MATCH (bc:BoundedContext) RETURN bc.id AS id, bc.key AS key, bc.name AS name"
+        ).data()
+    out: set[str] = set()
+    for row in rows:
+        for value in (row.get("id"), row.get("key"), row.get("name")):
+            if value:
+                out.add(str(value))
+    return out
+
+
+def _sync_constitution_gate(node: dict) -> dict:
+    """015-issue3: 프로젝트 루트 헌장이 이미 있으면 PROJECT_CONSTITUTION 게이트를 통과 표시.
+
+    lifecycle_steps 는 순수 함수(Neo4j 접근 없음)이므로, 헌장 노드 존재 여부를
+    Proposal 속성(`constitutionConfirmed`)으로 투영해 스텝 완료 판정에 쓴다.
+    """
+    if node.get("constitutionConfirmed"):
+        return node
+    try:
+        from api.features.constitution.services import constitution_store as store
+        existing = store.get_project_constitution()
+    except Exception:  # 헌장 조회 실패가 라이프사이클을 막지 않는다.
+        return node
+    if not existing or not existing.get("raw"):
+        return node
+    node["constitutionConfirmed"] = True
+    node["constitutionHash"] = existing.get("constitutionHash")
+    with get_session() as session:
+        session.run(
+            "MATCH (p:Proposal {id:$id}) SET p.constitutionConfirmed = true, p.constitutionHash = $h",
+            id=node.get("id"), h=existing.get("constitutionHash"),
+        )
+    return node
 
 
 def hydrate_for_response(node: dict) -> dict:
@@ -132,6 +174,10 @@ _STEP_REASONS = {
     "SUBMIT": "Strategic intent is complete; submit to Plan (internal transition)",
     "TACTICAL_DDD": "next active tactical DDD stage",
     "TACTICAL_DIFF": "Tactical Diff needs independent approval before Constitution",
+    "PROJECT_CONSTITUTION": (
+        "The target project has no Constitution node yet — interview the architect, then save it "
+        "(proposal_save_draft(phase='PROJECT_CONSTITUTION') → approval → proposal_confirm_draft)"
+    ),
     "CONSTITUTION": "Constitution interview and implementation plan are required",
     "TASKS": "Implementation tasks must be generated and approved",
     "IMPLEMENT": "Approved tasks are ready for implementation",
@@ -658,7 +704,19 @@ def save_test_result(proposal_id: str, test_result: dict) -> dict:
 
 
 def update_implementation_status(proposal_id: str, status: str) -> dict:
+    """구현 진행 상태 갱신. 015-issue5: Proposal.status 도 함께 전이시킨다.
+
+    DONE 이면 IMPLEMENT 스텝이 완료로 판정되고 status=TESTING 이 되어야 이후
+    `save_test_result` 가 PENDING_ACCEPTANCE 로 넘길 수 있다(그 전에는 SUBMITTED 에
+    머물러 TEST→ACCEPT 사슬이 끊긴다).
+    """
     phase = "TEST" if status in ("DONE", "TESTING") else "IMPLEMENT"
+    if status == "DONE":
+        proposal_status = "TESTING"
+    elif status in ("IN_PROGRESS", "RUNNING", "IMPLEMENTING"):
+        proposal_status = "IMPLEMENTING"
+    else:
+        proposal_status = None
     with get_session() as session:
         rec = session.run(
             """
@@ -666,14 +724,23 @@ def update_implementation_status(proposal_id: str, status: str) -> dict:
             SET p.implementationStatus=$implementationStatus,
                 p.sandboxStatus=$implementationStatus,
                 p.currentPhase=$phase,
-                p.lifecycleStatus='ACTIVE'
+                p.lifecycleStatus='ACTIVE',
+                p.status = CASE
+                    WHEN $proposalStatus IS NULL THEN p.status
+                    WHEN p.status IN ['ACCEPTED','DESTROYED'] THEN p.status
+                    ELSE $proposalStatus END
             RETURN p {.*} AS p
             """,
             id=proposal_id,
             implementationStatus=status,
             phase=phase,
+            proposalStatus=proposal_status,
         ).single()
-    return hydrate_for_response(dict(rec["p"])) if rec else {}
+    if not rec:
+        return {}
+    refresh_current_phase(proposal_id)
+    node = get_node(proposal_id)
+    return hydrate_for_response(node) if node else {}
 
 
 def mark_terminal(proposal_id: str, lifecycle_status: str, proposal_status: str | None = None) -> dict:

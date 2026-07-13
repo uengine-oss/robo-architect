@@ -24,9 +24,15 @@ The server owns ordering. You do **not** compute "the next phase." While a Propo
 | `await_approval` | A validated draft is already pending. Present it and wait for the user's approve/reject, then `proposal_confirm_draft` / `proposal_reject_draft`. |
 | `ask_question` | A question is pending (or must be asked). Record with `proposal_record_question`, wait, then `proposal_answer_question`. |
 | `confirm` | An internal, no-approval transition (e.g. `SUBMIT`). Execute the corresponding tool (`proposal_submit`) without asking the user, then call `proposal_next_step` again. |
-| `run_implement` | Proceed to implementation for the approved tasks (Implement phase). |
-| `run_test` | Proceed to the review/test step. |
-| `finalize` | All checks done; finalize (accept / live-DB reflection) — `proposal_accept`. |
+| `run_implement` | Implement the approved tasks. First call `proposal_prepare_sandbox(proposalId, projectRoot=…)` — the server creates the worktree at `<projectRoot>/.sandbox/proposal/<PRO-NNN>`; **never ask the user where to put it**. Implement only inside the returned `worktreePath`, then call `proposal_update_implementation_status(proposalId, "DONE")` to close the phase. See `references/phases/implement.md`. |
+| `run_test` | Run the review/test step and save the result with `proposal_save_test_result`. |
+| `finalize` | All checks done; call `proposal_accept` — it merges the worktree branch **and applies the strategic + tactical Diff to the live Neo4j graph**. Report the returned `liveGraph` node counts. If it returns `status:"failed"`, surface the reason and stop — do not claim the design was saved. |
+
+Two lifecycle steps are easy to skip by accident; the server will not let you:
+
+- `PROJECT_CONSTITUTION` — the project's `:Constitution` node must be created through a real
+  interview before `TASKS`. See `references/phases/constitution.md`.
+- `IMPLEMENT` — completes only when you call `proposal_update_implementation_status(…, "DONE")`.
 
 `requiresUserApproval: true` means you MUST wait for the user before the promoting tool call. Never auto-confirm an approval gate.
 

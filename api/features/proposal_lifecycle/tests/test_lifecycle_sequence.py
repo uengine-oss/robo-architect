@@ -30,6 +30,8 @@ def _complete(node: dict, step: ls.StepDef) -> None:
         node["status"] = "SUBMITTED"
     elif phase == "TACTICAL_DIFF":
         node["tacticalDiff"] = [{"nodeId": "A-1"}]
+    elif phase == "PROJECT_CONSTITUTION":
+        node["constitutionConfirmed"] = True
     elif phase == "CONSTITUTION":
         node["implementationPlan"] = {"architectureDecisions": [{"aspect": "DEPLOYMENT_ENV"}]}
     elif phase == "TASKS":
@@ -64,6 +66,7 @@ def test_simplified_sequence_snapshot():
         ("STRATEGIC_DIFF", None),
         ("SUBMIT", None),
         ("TACTICAL_DIFF", None),
+        ("PROJECT_CONSTITUTION", None),
         ("CONSTITUTION", None),
         ("TASKS", None),
         ("IMPLEMENT", None),
@@ -79,6 +82,9 @@ def test_simplified_tactical_gate_before_constitution():
     assert seq.index("TACTICAL_DIFF") < seq.index("CONSTITUTION")
     # submit 직후 첫 게이트가 전술 Diff.
     assert seq[seq.index("SUBMIT") + 1] == "TACTICAL_DIFF"
+    # 015-issue3: 전술 Diff 확정 후 구현계획 전에 **프로젝트 헌장 노드** 게이트를 지난다.
+    assert seq[seq.index("TACTICAL_DIFF") + 1] == "PROJECT_CONSTITUTION"
+    assert seq.index("PROJECT_CONSTITUTION") < seq.index("TASKS")
 
 
 # --- AC-6: DETAILED_DDD 스냅샷 ----------------------------------------------
@@ -95,6 +101,7 @@ def test_detailed_sequence_snapshot():
         ("TACTICAL_DDD", "DEFINE"),
         ("TACTICAL_DDD", "TACTICAL"),
         ("TACTICAL_DIFF", None),
+        ("PROJECT_CONSTITUTION", None),
         ("CONSTITUTION", None),
         ("TASKS", None),
         ("IMPLEMENT", None),

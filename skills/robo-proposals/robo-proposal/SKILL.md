@@ -42,7 +42,7 @@ the lightweight key table when `reportMarkdown` is absent.
 | scope/stagePlan | `references/phases/scope.md`, `references/contracts/stage-artifacts.md` |
 | Detailed DDD stage | `references/phases/detailed-ddd.md`, `references/contracts/stage-artifacts.md` |
 | Strategic/Tactical Diff | `references/phases/diff.md`, `references/contracts/strategic-diff.md`, `references/contracts/tactical-diff.md` |
-| Constitution | `references/phases/constitution.md` |
+| Project Constitution (`PROJECT_CONSTITUTION`) / Implementation plan (`CONSTITUTION`) | `references/phases/constitution.md` |
 | Context impact | `references/phases/context.md` |
 | Tasks | `references/phases/tasks.md`, `references/contracts/task-test-results.md` |
 | Test | `references/phases/test.md`, `references/contracts/task-test-results.md` |

@@ -58,6 +58,10 @@ _ID_PREFIX = {
     "Feature": "feature",
     "Epic": "epic",
     "UserStory": "us",
+    "UI": "ui",
+    "Invariant": "inv",
+    "ValueObject": "vo",
+    "Enumeration": "enum",
 }
 
 # obj 배열(JSON 문자열로 저장)로 다루는 필드
@@ -565,10 +569,11 @@ def _create_generic_strategic(session, proposal_id: str, label: str, entry: dict
 
 # ── Tactical 적용 ───────────────────────────────────────────────────────────
 
-# 생성 순서(부모 먼저): BC → Aggregate/ReadModel → Command → Event → Policy → 기타
-# (Policy는 Event TRIGGERS·Command INVOKES를 참조하므로 가장 뒤)
+# 생성 순서(부모 먼저): BC → Aggregate/ReadModel → VO/Enum/Invariant → Command → Event → Policy → UI
+# (Policy는 Event TRIGGERS·Command INVOKES를 참조하므로 뒤, UI는 Command/ReadModel에 붙으므로 가장 뒤)
 _TACTICAL_ORDER = {"BoundedContext": 0, "Aggregate": 1, "ReadModel": 1,
-                   "Command": 2, "Event": 3, "Policy": 4}
+                   "ValueObject": 2, "Enumeration": 2, "Invariant": 2,
+                   "Command": 3, "Event": 4, "Policy": 5, "UI": 6}
 
 
 def apply_tactical_diff(session, proposal_id: str, tactical_diff: list, ref_map: dict | None = None) -> int:
@@ -600,7 +605,96 @@ def apply_tactical_diff(session, proposal_id: str, tactical_diff: list, ref_map:
                 )
     # 후처리: FK Property ─REFERENCES→ PK Property (모든 Property 생성 후)
     _resolve_fk_references(session, proposal_id)
+    # 후처리: VO/Enum 노드를 Aggregate 의 라이브 JSON 속성(valueObjects/enumerations)으로도 투영.
+    # Data 탭(AggregatePanel)이 읽는 형태 — 노드(그래프 질의)와 JSON(뷰어)을 함께 만족시킨다.
+    _sync_aggregate_model_json(session, proposal_id, items, ref_map)
     return count
+
+
+# ── ValueObject / Enumeration (015-issue2) ─────────────────────────────────
+
+def _vo_fields(item: dict) -> list[dict]:
+    """VO 필드 = tacticalDiff properties[{name,type}]."""
+    props = item.get("properties")
+    out: list[dict] = []
+    if isinstance(props, list):
+        for p in props:
+            if isinstance(p, dict) and p.get("name"):
+                out.append({"name": str(p["name"]), "type": str(p.get("type") or "String")})
+    return out
+
+
+def _type_name(item: dict) -> str:
+    fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+    return str(fields.get("typeName") or item.get("nodeTitle") or "")
+
+
+def _sync_aggregate_model_json(session, proposal_id: str, items: list, ref_map: dict) -> None:
+    """Aggregate 노드에 valueObjects/enumerations JSON 배열을 세팅(라이브 뷰어 스키마)."""
+    vos_by_agg: dict[str, list[dict]] = {}
+    enums_by_agg: dict[str, list[dict]] = {}
+    for item in items:
+        label = _safe_label(item.get("nodeLabel", ""))
+        if label not in ("ValueObject", "Enumeration"):
+            continue
+        agg_id = _resolve_ref(session, ref_map, item.get("aggregateId"), "Aggregate")
+        if not agg_id:
+            continue
+        type_name = _type_name(item)
+        if not type_name:
+            continue
+        if label == "ValueObject":
+            vos_by_agg.setdefault(agg_id, []).append({
+                "name": type_name,
+                "displayName": item.get("nodeTitle") or type_name,
+                "alias": item.get("nodeTitle"),
+                "referencedAggregateName": None,
+                "referencedAggregateField": None,
+                "fields": _vo_fields(item),
+            })
+        else:
+            fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+            enums_by_agg.setdefault(agg_id, []).append({
+                "name": type_name,
+                "displayName": item.get("nodeTitle") or type_name,
+                "alias": item.get("nodeTitle"),
+                "items": [str(i) for i in (fields.get("items") or [])],
+            })
+    for agg_id in set(vos_by_agg) | set(enums_by_agg):
+        session.run(
+            "MATCH (agg:Aggregate {id: $id}) SET agg.valueObjects = $vos, agg.enumerations = $enums",
+            id=agg_id,
+            vos=json.dumps(vos_by_agg.get(agg_id, []), ensure_ascii=False),
+            enums=json.dumps(enums_by_agg.get(agg_id, []), ensure_ascii=False),
+        )
+
+
+def _ensure_bounded_context(session, ref_map: dict, ref: str | None, proposal_id: str) -> str | None:
+    """BC 참조를 해소한다. 해소 불가면 그 이름으로 BoundedContext를 만들어 준다.
+
+    015-issue6 안전망: 계약 검증을 우회한 유령 BC 참조가 들어와도 Aggregate가
+    BC 밖에 뜨지 않게 한다(라이브 반영 검증 실패 방지).
+    """
+    if not ref:
+        return None
+    bc_id = _resolve_ref(session, ref_map, ref, "BoundedContext")
+    if bc_id:
+        return bc_id
+    bc_id = _gen_node_id("BoundedContext", str(ref), proposal_id)
+    session.run(
+        """
+        CREATE (bc:BoundedContext {
+            id: $id, name: $name, title: $name, displayName: $name, key: $key,
+            description: '', proposalSource: $pid, createdAt: datetime(), updatedAt: datetime()
+        })
+        """,
+        id=bc_id, name=str(ref), key=_slug(str(ref), bc_id), pid=proposal_id,
+    )
+    ref_map[str(ref)] = {"label": "BoundedContext", "id": bc_id, "bc": bc_id}
+    SmartLogger.log("WARN", f"unresolved boundedContextId '{ref}' — created BoundedContext",
+                    category="proposal_lifecycle.apply.bc_autocreated",
+                    params={"proposalId": proposal_id, "ref": str(ref), "nodeId": bc_id})
+    return bc_id
 
 
 def _resolve_fk_references(session, proposal_id: str) -> int:
@@ -832,10 +926,10 @@ def _apply_tactical_item(session, proposal_id: str, item: dict, ref_map: dict, d
         if not _get_field(session, label, real_id, "name") and title:
             _set_scalar(session, label, real_id, "name", title)
         # tempId(nodeId) → 실제 id 등록(다른 tactical item이 이 노드를 가리킬 수 있게)
-        bc = real_id if label == "BoundedContext" else _resolve_ref(
-            session, ref_map, item.get("boundedContextId") or item.get("bcId"), "BoundedContext")
+        bc = real_id if label == "BoundedContext" else _ensure_bounded_context(
+            session, ref_map, item.get("boundedContextId") or item.get("bcId"), proposal_id)
         _register_ref(ref_map, item, label, real_id, bc=bc)
-        _link_tactical(session, label, real_id, item, ref_map)
+        _link_tactical(session, label, real_id, item, ref_map, proposal_id)
         # Property(HAS_PROPERTY) + Command GWT(HAS_GIVEN/WHEN/THEN) + Invariant + UI
         _create_properties(session, label, real_id, item.get("properties"), proposal_id)
         if label == "Aggregate":
@@ -858,7 +952,7 @@ def _apply_tactical_item(session, proposal_id: str, item: dict, ref_map: dict, d
         return False
     applied = _apply_ops(session, label, node_id, ops)
     _create_properties(session, label, node_id, item.get("properties"), proposal_id)
-    _link_tactical(session, label, node_id, item, ref_map)
+    _link_tactical(session, label, node_id, item, ref_map, proposal_id)
     if label == "Aggregate":
         _create_invariants(session, node_id, item.get("invariants"), proposal_id, deferred)
     if label == "Command":
@@ -891,21 +985,70 @@ def _link_user_stories(session, ref_map: dict, design_label: str, design_id: str
             )
 
 
-def _link_tactical(session, label: str, node_id: str, item: dict, ref_map: dict) -> None:
+def _link_tactical(session, label: str, node_id: str, item: dict, ref_map: dict,
+                   proposal_id: str = "") -> None:
     """Tactical 노드를 상위 구조에 연결한다(ref_map으로 tempId 해소)."""
     bc_ref = item.get("boundedContextId") or item.get("bcId")
     agg_ref = item.get("aggregateId")
     cmd_ref = item.get("commandId")
     us_refs = item.get("userStoryRefs") or item.get("userStoryIds")
 
+    # 015-issue2/6: VO/Enum/Invariant 는 Aggregate 자식으로 매단다.
+    if label in ("ValueObject", "Enumeration", "Invariant"):
+        agg_id = _resolve_ref(session, ref_map, agg_ref, "Aggregate")
+        if not agg_id:
+            return
+        rel = {"ValueObject": "HAS_VALUE_OBJECT", "Enumeration": "HAS_ENUMERATION",
+               "Invariant": "HAS_INVARIANT"}[label]
+        session.run(
+            f"MATCH (agg:Aggregate {{id: $aid}}), (n:{_safe_label(label)} {{id: $nid}}) "
+            f"MERGE (agg)-[r:{rel}]->(n) ON CREATE SET r.createdAt = datetime()",
+            aid=agg_id, nid=node_id,
+        )
+        # 라이브 스키마 보정: Invariant.declaration, VO/Enum.typeName·aggregateId.
+        sets = {"aggregateId": agg_id}
+        if label == "Invariant":
+            sets["declaration"] = str(item.get("nodeTitle") or "")
+        else:
+            sets["typeName"] = _type_name(item)
+        for field, value in sets.items():
+            _set_scalar(session, label, node_id, field, value)
+        if label == "Enumeration":
+            fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+            _set_array(session, label, node_id, "items", [str(i) for i in (fields.get("items") or [])])
+        return
+
     if label == "Aggregate" and bc_ref:
-        bc_id = _resolve_ref(session, ref_map, bc_ref, "BoundedContext")
+        bc_id = _ensure_bounded_context(session, ref_map, bc_ref, proposal_id)
         if bc_id:
             session.run(
                 "MATCH (bc:BoundedContext {id: $bid}), (agg:Aggregate {id: $aid}) "
                 "MERGE (bc)-[r:HAS_AGGREGATE]->(agg) ON CREATE SET r.createdAt = datetime()",
                 bid=bc_id, aid=node_id,
             )
+    elif label == "UI":
+        # 015-issue6: 최상위 UI 항목도 BC 에 매달고, 지정된 설계요소에 ATTACHED_TO.
+        bc_id = _ensure_bounded_context(session, ref_map, bc_ref, proposal_id)
+        if bc_id:
+            session.run(
+                "MATCH (bc:BoundedContext {id: $bid}), (ui:UI {id: $uid}) "
+                "MERGE (bc)-[r:HAS_UI]->(ui) ON CREATE SET r.createdAt = datetime()",
+                bid=bc_id, uid=node_id,
+            )
+        for ref_key, target_label in (("commandId", "Command"), ("readModelId", "ReadModel"),
+                                      ("attachedToId", None)):
+            ref = item.get(ref_key)
+            if not ref:
+                continue
+            target_id = _resolve_ref(session, ref_map, ref, target_label or "Command") if target_label \
+                else (ref_map.get(ref) or {}).get("id")
+            if target_id:
+                session.run(
+                    "MATCH (ui:UI {id: $uid}), (d {id: $did}) MERGE (ui)-[:ATTACHED_TO]->(d)",
+                    uid=node_id, did=target_id,
+                )
+                break
+        _link_user_stories(session, ref_map, "UI", node_id, us_refs)
     elif label == "Command":
         if agg_ref:
             agg_id = _resolve_ref(session, ref_map, agg_ref, "Aggregate")
@@ -927,7 +1070,7 @@ def _link_tactical(session, label: str, node_id: str, item: dict, ref_map: dict)
             )
     elif label == "ReadModel":
         if bc_ref:
-            bc_id = _resolve_ref(session, ref_map, bc_ref, "BoundedContext")
+            bc_id = _ensure_bounded_context(session, ref_map, bc_ref, proposal_id)
             if bc_id:
                 session.run(
                     "MATCH (bc:BoundedContext {id: $bid}), (rm:ReadModel {id: $rid}) "
@@ -937,7 +1080,7 @@ def _link_tactical(session, label: str, node_id: str, item: dict, ref_map: dict)
         _link_user_stories(session, ref_map, "ReadModel", node_id, us_refs)
     elif label == "Policy":
         if bc_ref:
-            bc_id = _resolve_ref(session, ref_map, bc_ref, "BoundedContext")
+            bc_id = _ensure_bounded_context(session, ref_map, bc_ref, proposal_id)
             if bc_id:
                 session.run(
                     "MATCH (bc:BoundedContext {id: $bid}), (pol:Policy {id: $pid}) "
@@ -1089,7 +1232,8 @@ def revoke_accepted_proposal(session, proposal_id: str) -> dict:
                 session.run(
                     f"""
                     MATCH (n:{_safe_label(label)} {{id: $id}})
-                    OPTIONAL MATCH (n)-[:HAS_PROPERTY|HAS_GIVEN|HAS_WHEN|HAS_THEN|HAS_INVARIANT]->(child)
+                    OPTIONAL MATCH (n)-[:HAS_PROPERTY|HAS_GIVEN|HAS_WHEN|HAS_THEN|HAS_INVARIANT
+                                       |HAS_VALUE_OBJECT|HAS_ENUMERATION]->(child)
                     DETACH DELETE child, n
                     """,
                     id=created,
@@ -1106,7 +1250,7 @@ def revoke_accepted_proposal(session, proposal_id: str) -> dict:
         """
         MATCH (c {proposalSource: $pid})
         WHERE c:Property OR c:Given OR c:When OR c:Then OR c:UI OR c:Invariant
-           OR c:Journey OR c:JourneyStep
+           OR c:Journey OR c:JourneyStep OR c:ValueObject OR c:Enumeration
         DETACH DELETE c
         """,
         pid=proposal_id,

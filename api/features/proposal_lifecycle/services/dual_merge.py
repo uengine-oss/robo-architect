@@ -31,12 +31,15 @@ class DualMergeFailed(RuntimeError):
         self.detail = detail
 
 
-async def execute_dual_merge(proposal_id: str, actor: str, comment: str | None = None) -> None:
+def execute_dual_merge_sync(proposal_id: str, actor: str, comment: str | None = None) -> dict:
     """
-    Dual Merge 실행. plan.md 구현 순서:
+    Dual Merge 실행(동기 본체). plan.md 구현 순서:
     1. Git merge → 실패 시 MERGE_FAILED
     2. Neo4j TX (apply_strategic + apply_tactical + ACCEPTED) → 실패 시 git reset + MERGE_FAILED
     3. Cleanup worktree
+
+    반환: 라이브 반영 결과 요약({"strategic": n, "tactical": n, "journeys": n, "liveCounts": {...}}).
+    MCP `proposal_accept` 와 HTTP accept 라우트가 공용으로 쓰는 단일 경로(SSOT).
     """
     SmartLogger.log("INFO", f"merge_start: {proposal_id}",
                     category="proposal_lifecycle.merge.start",
@@ -56,7 +59,7 @@ async def execute_dual_merge(proposal_id: str, actor: str, comment: str | None =
 
     # Step 2: Neo4j TX
     try:
-        _apply_diffs_and_accept(proposal_id, actor, comment)
+        applied = _apply_diffs_and_accept(proposal_id, actor, comment)
     except Exception as e:
         _sandbox.reset_merge(proposal_id, project_root)
         _set_merge_failed(proposal_id, actor, str(e))
@@ -80,7 +83,12 @@ async def execute_dual_merge(proposal_id: str, actor: str, comment: str | None =
 
     SmartLogger.log("INFO", f"merge_done: {proposal_id}",
                     category="proposal_lifecycle.merge.done",
-                    params={"proposalId": proposal_id})
+                    params={"proposalId": proposal_id, **applied})
+    return applied
+
+
+async def execute_dual_merge(proposal_id: str, actor: str, comment: str | None = None) -> None:
+    execute_dual_merge_sync(proposal_id, actor, comment)
 
 
 def _get_project_root(proposal_id: str) -> str | None:
@@ -92,8 +100,8 @@ def _get_project_root(proposal_id: str) -> str | None:
     return record.get("root") if record else None
 
 
-def _apply_diffs_and_accept(proposal_id: str, actor: str, comment: str | None) -> None:
-    """Neo4j TX: Strategic + Tactical Diff 반영 + ACCEPTED 상태 전환."""
+def _apply_diffs_and_accept(proposal_id: str, actor: str, comment: str | None) -> dict:
+    """Neo4j TX: Strategic + Tactical Diff 반영 + ACCEPTED 상태 전환. 반환: 반영 요약."""
     with get_session() as session:
         result = session.run(
             """
@@ -149,10 +157,12 @@ def _apply_diffs_and_accept(proposal_id: str, actor: str, comment: str | None) -
 
         _validate_applied_counts(strategic_diff, tactical_diff, s_count, t_count)
         _validate_live_projection(session, proposal_id, strategic_diff, tactical_diff)
+        live_counts = _live_counts(session, proposal_id)
 
         SmartLogger.log("INFO", f"diffs applied {proposal_id}: strategic={s_count}, tactical={t_count}, journeys={j_count}",
                         category="proposal_lifecycle.merge.diffs_applied",
-                        params={"proposalId": proposal_id, "strategic": s_count, "tactical": t_count, "journeys": j_count})
+                        params={"proposalId": proposal_id, "strategic": s_count, "tactical": t_count,
+                                "journeys": j_count, "liveCounts": live_counts})
 
         # Proposal 상태 ACCEPTED 전환
         session.run(
@@ -167,6 +177,29 @@ def _apply_diffs_and_accept(proposal_id: str, actor: str, comment: str | None) -
             at=now,
             history=new_history,
         )
+    return {"strategic": s_count, "tactical": t_count, "journeys": j_count, "liveCounts": live_counts}
+
+
+# 라이브 반영 증거로 노출하는 라벨(Accept 응답·로그).
+_LIVE_COUNT_LABELS = [
+    "BoundedContext", "Feature", "UserStory", "Process",
+    "Aggregate", "Command", "Event", "ReadModel", "Policy", "UI",
+    "Invariant", "ValueObject", "Enumeration", "Property",
+]
+
+
+def _live_counts(session, proposal_id: str) -> dict:
+    """이 Proposal 이 라이브 그래프에 만든 노드 수(라벨별)."""
+    counts: dict = {}
+    for label in _LIVE_COUNT_LABELS:
+        row = session.run(
+            f"MATCH (n:{label} {{proposalSource: $pid}}) RETURN count(n) AS c",
+            pid=proposal_id,
+        ).single()
+        value = row["c"] if row else 0
+        if value:
+            counts[label] = value
+    return counts
 
 
 def _count_items(strategic_diff: dict, key: str) -> int:
@@ -185,20 +218,29 @@ def _validate_applied_counts(strategic_diff: dict, tactical_diff: list,
         raise RuntimeError("Tactical diff produced no live graph changes")
 
 
+def _tactical_label_count(tactical_diff: list, label: str) -> int:
+    return sum(1 for item in (tactical_diff or [])
+               if isinstance(item, dict)
+               and (item.get("nodeLabel") or item.get("entityType")) == label)
+
+
 def _validate_live_projection(session, proposal_id: str, strategic_diff: dict, tactical_diff: list) -> None:
-    """Accept 전 live graph에 핵심 노드/관계가 실제로 생겼는지 검증한다."""
-    expected_features = _count_items(strategic_diff, "features")
-    expected_user_stories = _count_items(strategic_diff, "userStories")
-    expected_processes = _count_items(strategic_diff, "processes")
-    expected_aggregates = sum(1 for item in (tactical_diff or [])
-                              if isinstance(item, dict)
-                              and (item.get("nodeLabel") or item.get("entityType")) == "Aggregate")
+    """Accept 전 live graph에 핵심 노드/관계가 실제로 생겼는지 검증한다.
+
+    015-issue6: '반영했다'고 보고했지만 그래프가 비어 있던 회귀를 막는 하드 게이트.
+    diff 에 있던 라벨은 라이브에도 반드시 있어야 한다(전술 전 라벨 커버).
+    """
+    expected_aggregates = _tactical_label_count(tactical_diff, "Aggregate")
 
     checks = [
-        ("Feature", expected_features),
-        ("UserStory", expected_user_stories),
-        ("Process", expected_processes),
-        ("Aggregate", expected_aggregates),
+        ("Feature", _count_items(strategic_diff, "features")),
+        ("UserStory", _count_items(strategic_diff, "userStories")),
+        ("Process", _count_items(strategic_diff, "processes")),
+    ]
+    checks += [
+        (label, _tactical_label_count(tactical_diff, label))
+        for label in ("Aggregate", "Command", "Event", "ReadModel", "Policy",
+                      "UI", "Invariant", "ValueObject", "Enumeration")
     ]
     for label, expected in checks:
         if expected <= 0:

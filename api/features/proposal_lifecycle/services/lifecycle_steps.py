@@ -68,6 +68,9 @@ SIMPLIFIED_STEPS: list[StepDef] = [
     StepDef("SUBMIT", None, CONFIRM, False, None),
     StepDef("TACTICAL_DIFF", None, GENERATE_DRAFT, True, "tactical",
             rollback_target=True, canonical_field="tacticalDiff"),
+    # 015-issue3: 구현계획(implementationPlan) 앞에 **프로젝트 헌장 노드** 게이트.
+    # 헌장이 없으면 인터뷰 → :Constitution 노드 생성 → 승인까지 마쳐야 다음으로 간다.
+    StepDef("PROJECT_CONSTITUTION", None, GENERATE_DRAFT, True, "project_constitution"),
     StepDef("CONSTITUTION", None, GENERATE_DRAFT, True, "implementation_plan",
             rollback_target=True, canonical_field="implementationPlan"),
     StepDef("TASKS", None, GENERATE_DRAFT, True, "tasks",
@@ -98,6 +101,7 @@ DETAILED_STEPS: list[StepDef] = [
             rollback_target=True, canonical_field="stageArtifacts"),
     StepDef("TACTICAL_DIFF", None, GENERATE_DRAFT, True, "tactical",
             rollback_target=True, canonical_field="tacticalDiff"),
+    StepDef("PROJECT_CONSTITUTION", None, GENERATE_DRAFT, True, "project_constitution"),
     StepDef("CONSTITUTION", None, GENERATE_DRAFT, True, "implementation_plan",
             rollback_target=True, canonical_field="implementationPlan"),
     StepDef("TASKS", None, GENERATE_DRAFT, True, "tasks",
@@ -122,6 +126,9 @@ def _parse(raw: Any, default: Any) -> Any:
 
 
 def _truthy(raw: Any) -> bool:
+    # 불리언/숫자는 JSON 파싱 대상이 아니다(json.loads(True) 는 TypeError → 오탐 False).
+    if isinstance(raw, bool):
+        return raw
     value = _parse(raw, None)
     if isinstance(value, (dict, list)):
         return len(value) > 0
@@ -190,6 +197,9 @@ def is_complete(node: dict, step: StepDef) -> bool:
         return (node.get("status") or STATUS_DRAFT) != STATUS_DRAFT
     if phase == "TACTICAL_DIFF":
         return _truthy(node.get("tacticalDiff"))
+    if phase == "PROJECT_CONSTITUTION":
+        # 프로젝트 루트 :Constitution 노드 존재 여부의 투영(proposal_state_service 가 동기화).
+        return _truthy(node.get("constitutionConfirmed"))
     if phase == "CONSTITUTION":
         return _truthy(node.get("implementationPlan"))
     if phase == "TASKS":
