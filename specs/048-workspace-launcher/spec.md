@@ -15,4 +15,9 @@ delegating multi-repository orchestration to the shared `robo-workspace` engine.
 - Build the Analyzer remote from `ROBO_ANALYZER_FRONTEND_DIR` when supplied.
 - Preserve `-SkipBuild`, `-NoElectron`, `-Stop`, `-Installer`, and
   `-SkipFrontend` compatibility with explicit mappings.
-
+- Package `frontend/dist` as an external Electron resource so the unpacked app
+  does not open to a missing page.
+- Resolve the development backend from `ROBO_BACKEND_DIR` or a verified
+  `api/main.py` ancestor, never a machine-specific absolute path.
+- Keep Windows development packages unsigned until a real signing certificate
+  is configured; do not download a signing toolchain and pretend to sign.

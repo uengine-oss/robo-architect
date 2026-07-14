@@ -30,6 +30,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { RuntimeStatus } from "../shared/ipc-contract";
@@ -37,14 +38,33 @@ import type { RuntimeStatus } from "../shared/ipc-contract";
 import { pickFreePort } from "./ports";
 import { log } from "./logging";
 
-const DEFAULT_BACKEND_CWD_CANDIDATES = [
-  process.env.ROBO_BACKEND_DIR,
-  // Dev convenience: the main checkout sits two levels up from the worktree.
-  // `<repo>/.claude/worktrees/023-electron-desktop/` → walk back to `<repo>`
-  // doesn't help (worktree is a separate checkout). Prefer the env var or
-  // the well-known main location below.
-  "/Users/uengine/main-robo-arch/robo-architect",
-].filter((v): v is string => typeof v === "string" && v.length > 0);
+/** 백엔드 루트임을 확정하는 표식 — 후보가 진짜 api/ 프로젝트인지 검증. */
+const BACKEND_MARKER = join("api", "main.py");
+
+/**
+ * 백엔드 루트 후보. 앞에서부터 표식(`api/main.py`)이 있는 첫 후보를 쓴다.
+ *
+ * 1. `ROBO_BACKEND_DIR` — 명시 지정(최우선)
+ * 2. **이 파일 위치 기준 상대경로** — `desktop/dist/main/` → `desktop/` → `robo-architect/`.
+ *    개발·패키징 모두 여기서 해소되므로 env 없이 동작한다(옛 하드코딩 Mac 경로 제거).
+ */
+function backendCwdCandidates(): string[] {
+  // 이 파일 위치에서 위로 올라가며 표식을 찾는다 — 빌드 출력 깊이(dist/main/main …)나
+  // 패키징 레이아웃이 바뀌어도 안 깨진다(층수 하드코딩 금지).
+  // 패키징 시 __dirname 은 asar 안이라 레포 루트까지 깊다:
+  //   <repo>/desktop/out/dist/win-unpacked/resources/app.asar/dist/main/main  → 10단계 위
+  // 개발 시는 3단계. 표식으로 검증하므로 넉넉히 훑어도 오탐이 없다.
+  const ancestors: string[] = [];
+  let dir = __dirname;
+  for (let i = 0; i < 12; i += 1) {
+    ancestors.push(dir);
+    const parent = resolve(dir, "..");
+    if (parent === dir) break;   // 루트 도달
+    dir = parent;
+  }
+  return [process.env.ROBO_BACKEND_DIR, ...ancestors]
+    .filter((v): v is string => typeof v === "string" && v.length > 0);
+}
 
 const READINESS_TIMEOUT_MS = 60_000;
 const READINESS_INITIAL_BACKOFF_MS = 200;
@@ -90,11 +110,12 @@ function setStatus(next: RuntimeStatus, detail?: string): void {
 }
 
 export function resolveBackendCwd(): string {
-  for (const candidate of DEFAULT_BACKEND_CWD_CANDIDATES) {
-    if (existsSync(candidate)) return candidate;
+  const candidates = backendCwdCandidates();
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, BACKEND_MARKER))) return candidate;
   }
   throw new Error(
-    `backend.cwd_not_found: tried ${DEFAULT_BACKEND_CWD_CANDIDATES.join(", ")}; ` +
+    `backend.cwd_not_found: tried ${candidates.join(", ")} (looking for ${BACKEND_MARKER}); ` +
       `set ROBO_BACKEND_DIR to the api/ project root`,
   );
 }

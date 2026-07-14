@@ -12,6 +12,16 @@ files:
   - "!**/*.map"
   - "!**/__tests__/**"
 
+# 프런트 정적 산출물 — 앱은 `app.getAppPath()/../frontend/dist` 에서 찾는다
+# (index.ts resolveFrontendDist). asar 안에 넣으면 그 경로가 아니므로 resources/ 로 뺀다:
+#   packaged: <win-unpacked>/resources/frontend/dist   ← app.asar 의 ".." 가 resources
+#   dev     : <repo>/frontend/dist                     ← desktop 의 ".."
+# 이게 없으면 앱이 "Not Found" 만 띄운다(실측).
+extraResources:
+  - from: ../frontend/dist
+    to: frontend/dist
+    filter: ["**/*"]
+
 # Bundled runtimes that must NOT live inside the asar archive
 # (the Python interpreter and the Neo4j server are launched as child processes).
 asarUnpack:
@@ -24,6 +34,11 @@ win:
       arch: [x64]
   icon: resources/icons/icon.ico
   artifactName: ${productName}-${version}-win-${arch}.${ext}
+  # 코드 서명 인증서가 없다(내부 배포). 이 단계가 켜져 있으면 electron-builder 가
+  # winCodeSign 툴체인을 받아 exe 리소스를 편집·서명하는데, 그 아카이브에 심볼릭 링크가 있어
+  # Windows 에서 압축 해제가 실패한다(Sub items Errors). 서명을 안 할 거면 켤 이유가 없다.
+  # 서명 도입 시(US1/T029) 이 줄을 지우고 인증서를 지정한다.
+  signAndEditExecutable: false
 
 nsis:
   perMachine: false        # per-user install — no admin elevation required
