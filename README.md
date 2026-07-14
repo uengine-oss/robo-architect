@@ -29,18 +29,32 @@
 
 > ### 🚀 데스크톱 앱은 스크립트 한 방이면 끝 (권장)
 >
-> 백엔드 4종 + Electron 데스크톱을 **한 번에** 띄웁니다:
+> **📖 스크립트 전체 가이드 → [`scripts/README.md`](scripts/README.md)**
 >
-> ```powershell
-> pwsh -File scripts\dev-desktop.ps1            # 빌드 후 풀스택 + 데스크톱
-> pwsh -File scripts\dev-desktop.ps1 -SkipBuild # 빌드 생략(빠른 재기동)
-> pwsh -File scripts\dev-desktop.ps1 -Stop      # 떠 있는 스택 정리
+> 독립 저장소의 공통 백엔드 5종 + Electron 데스크톱을 **한 번에** 띄웁니다 (Windows — `.cmd` 를 쓰세요.
+> `.ps1` 직접 실행은 PowerShell 실행정책에 막히고 `pwsh` 가 없는 PC 도 있습니다):
+>
+> ```cmd
+> scripts\dev-desktop.cmd               :: 빌드 후 풀스택 + 데스크톱
+> scripts\dev-desktop.cmd -SkipBuild    :: 빌드 생략(빠른 재기동)
+> scripts\dev-desktop.cmd -NoElectron   :: 백엔드 5종만
+> scripts\dev-desktop.cmd -Stop         :: 떠 있는 스택 정리
 > ```
 >
-> 빌드 → analyzer 5502 · catalog 5503 · antlr 8081 · gateway 9000 → Electron 까지 자동.
-> **창을 닫으면 백엔드도 자동 정리.** 전제: Neo4j(7687) 실행 + `robo-architect/.env`.
-> (개별 서비스를 따로 띄우려면 아래 수동 절차. 함정·픽스 상세는 스크립트 헤더 주석.)
-
+> **앱을 빌드·패키징**하려면:
+>
+> ```cmd
+> scripts\build-desktop-app.cmd              :: 언팩 (바로 실행 가능)
+> scripts\build-desktop-app.cmd -Installer   :: NSIS 설치본
+> ```
+>
+> 빌드 → analyzer 5502 · catalog 5503 · data-fabric 8404 · antlr 8401 · gateway 9000 → Electron 까지 자동.
+> 종료는 `scripts\dev-desktop.cmd -Stop`으로 이 실행기가 소유한 프로세스만 정리합니다. 전제: Neo4j(7687) 실행.
+> (개별 서비스를 따로 띄우려면 아래 수동 절차. 함정·픽스 상세는 [`scripts/README.md`](scripts/README.md).)
+>
+> **data-fabric(8404)은 선택이 아니라 필수**입니다 — catalog 가 테이블 샘플 행과 FK 추론 SQL 을
+> 이 서비스를 거쳐 대상 DB 로 보냅니다. 없으면 분석 시 실제 DB 데이터가 LLM 컨텍스트에 들어가지 않습니다.
+> 대상 DB 는 UI "데이터 소스" 탭에서 등록하며, 등록 정보는 data-fabric 이 Neo4j·MindsDB 에 보관합니다.
 ### 사전 요구사항
 
 - **Python**: 3.11+

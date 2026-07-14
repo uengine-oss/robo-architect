@@ -163,7 +163,7 @@ export default defineConfig({
         changeOrigin: true
       },
       '/api': {
-        target: 'http://127.0.0.1:8001',
+        target: process.env.ARCHITECT_API_URL || 'http://127.0.0.1:8001',
         changeOrigin: true
       }
     }

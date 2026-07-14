@@ -1,9 +1,8 @@
-<# Windows compatibility wrapper for the shared Robo workspace launcher. #>
+<# Windows compatibility wrapper for the shared Electron build pipeline. #>
 [CmdletBinding()]
 param(
-  [switch]$SkipBuild,
-  [switch]$NoElectron,
-  [switch]$Stop
+  [switch]$Installer,
+  [switch]$SkipFrontend
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,9 +18,6 @@ if (-not (Test-Path $Runner)) {
   throw "robo-workspace launcher not found: $Runner. Set ROBO_WORKSPACE_DIR to the cloned robo-workspace directory."
 }
 
+$variant = if ($Installer) { 'installer' } else { 'unpacked' }
 Write-Host "[architect] workspace: $WorkspaceRoot" -ForegroundColor Cyan
-if ($Stop) {
-  & $Runner down architect-electron
-} else {
-  & $Runner up architect-electron -SkipBuild:$SkipBuild -NoElectron:$NoElectron
-}
+& $Runner build architect-electron $variant -SkipFrontend:$SkipFrontend
