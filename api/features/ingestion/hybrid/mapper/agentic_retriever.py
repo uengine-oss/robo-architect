@@ -148,26 +148,29 @@ def _candidates_for_task(
     """Step 2 — filter rules to those inside the Step-1 modules, then use
     embedding similarity to pick the top-k for this task.
 
-    Module match is best-effort: a rule's `source_module` may be a bare name
-    while `module_fqns` are fully-qualified; we compare on the trailing
-    segment too. Rules with no module info fall through to embedding-only.
-    """
-    module_tails = {fqn.split(".")[-1] for fqn in module_fqns if fqn}
-    module_set = set(module_fqns) | module_tails
+    Module match is **exact**: both sides are the analyzer's module id.
+      - `module_fqns` = `m.id` (module_retriever query)
+      - `source_module` = `f.owner_id` — the analyzer now stores the owning module
+        as a node property (analyzer spec 047 FR-007).
 
-    # Prefilter — keep rules whose source_module matches OR rules with no
-    # module info (can't prove exclusion).
+    The old code compared "trailing segments" because `source_module` used to be
+    *guessed by slicing the function id*, which could
+    produce a bare name that never matched a fully-qualified one. That slicing is
+    gone — **an id is an opaque key, not an address to parse**. Rules with no
+    module info still fall through to embedding-only (can't prove exclusion).
+    """
+    module_set = {fqn for fqn in module_fqns if fqn}
+
     in_scope: list[tuple[RuleDTO, RuleContext]] = []
     for r in rules:
         ctx = contexts_by_rule.get(r.id)
         if not ctx:
             continue
         sm = (r.source_module or ctx.source_module or "").strip()
-        sm_tail = sm.split(".")[-1] if sm else ""
         if not sm:
             in_scope.append((r, ctx))
             continue
-        if sm in module_set or sm_tail in module_tails:
+        if sm in module_set:
             in_scope.append((r, ctx))
 
     if not in_scope:

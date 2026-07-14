@@ -19,6 +19,7 @@ from typing import Optional
 from neo4j import GraphDatabase
 from neo4j import Driver
 
+from api.platform.neo4j_context import get_override
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.env import (
     get_analyzer_neo4j_database,
@@ -88,15 +89,39 @@ def get_driver() -> Driver:
     return init_neo4j_driver(log=False)
 
 
+# Electron override 용 드라이버 캐시 — 연결(uri/user/password)별 1개.
+_override_drivers: dict[tuple[str, str, str], Driver] = {}
+
+
+def _driver_for(uri: str, user: str, password: str) -> Driver:
+    key = (uri, user, password)
+    driver = _override_drivers.get(key)
+    if driver is None:
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        _override_drivers[key] = driver
+    return driver
+
+
 def get_session(database: str | None = None):
     """Get a Neo4j session.
 
+    연결 출처: 요청에 Neo4j override(Electron ``X-Neo4j-*`` 헤더)가 있으면 그 연결을,
+    없으면 ``.env`` 를 쓴다 — analyzer / catalog / data-fabric 과 동일 계약.
+
     Args:
-        database: 지정 시 해당 DB로 연결. None이면 NEO4J_DATABASE 환경변수 사용.
+        database: 지정 시 해당 DB. None이면 NEO4J_DATABASE. override 가 DB 를 지정하면
+            그쪽이 우선 — Electron 이 고른 DB 하나에 설계·분석 그래프가 함께 있기 때문.
     """
-    db = database or NEO4J_DATABASE
+    override = get_override()
+    if override is not None:
+        db = override.database or database or NEO4J_DATABASE
+        driver = _driver_for(override.uri, override.user, override.password)
+    else:
+        db = database or NEO4J_DATABASE
+        driver = get_driver()
+
     if db:
-        return get_driver().session(database=db)
-    return get_driver().session()
+        return driver.session(database=db)
+    return driver.session()
 
 

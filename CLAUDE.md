@@ -1,4 +1,8 @@
 <!-- SPECKIT START -->
+Active feature plan: [specs/049-electron-neo4j-routing/plan.md](specs/049-electron-neo4j-routing/plan.md)
+
+**049 Electron 선택 Neo4j 연결 전파** (started 2026-07-14) — 런처 활성 연결을 동일 출처 요청의 `X-Neo4j-*` 헤더로 전달하고 Architect API가 요청별 ContextVar로 소비한다. 헤더가 없으면 `.env` 폴백, driver는 연결별 캐시, 비밀번호 로그 금지. Analyzer graph의 함수 소속은 id 파싱 대신 `owner_id`를 사용하며 Text2SQL submodule은 Data Fabric으로 교체한다.
+
 Active feature plan: [specs/046-rules-slim-consumer/plan.md](specs/046-rules-slim-consumer/plan.md)
 
 **046 룰 슬림 계약 소비자 정합** (started 2026-07-01) — analyzer spec 039(code_rules_examples 응답 최소화)로 그래프 계약에서 소멸한 요소(**HAS_RULE.flow_id/local_rule_id·룰→룰 NEXT/BRANCH 엣지(BRANCH rel 폐기; 구문 NEXT=StatementNext는 유지)·EXAMPLE.description**)에 대한 architect 하이브리드 코드-인제스천 소비자 의존을 걷어냄. 영향 국소(전수확인): `api/features/ingestion/hybrid/`만, `save_rules`가 이 필드 미영속→되읽기 의존0. 핵심: ① `rule_extractor._rule_id` 식별자를 `function_id|statement`로 단순화. ② `dbms_rule_linearizer` flow 재구성 트리워크 통째 삭제, 루틴오너 복원(044 C4)만 남겨 대폭 축소(근본수정=코드감소). ③ **데드 ES 결정론 클러스터 4파일 삭제**(rule_classifier·decomposer·naming·persistence — LIVE promote_to_es 미참조 확정, §4 영향0 데드=폐기). ④ bpm_context_builder Cypher/dict/render 정합. ⑤ contracts DTO 6필드+ExampleDTO.description 제거. ⑥ frontend UserStoryDetail local_id 배지 제거. **044 계약 C2(부분)/C3 supersede, C4/C5 불변.** Constitution PASS(신규 LLM/스키마/관계 0). Phase 0/1 ✅(research/data-model/contract/quickstart).

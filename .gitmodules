@@ -12,6 +12,6 @@
 [submodule "analyzer/catalog"]
 	path = robo-analyzer/robo-data-catalog
 	url = https://github.com/uengine-oss/robo-data-catalog.git
-[submodule "robo-analyzer/robo-data-text2sql"]
-	path = robo-analyzer/robo-data-text2sql
-	url = https://github.com/uengine-oss/robo-data-text2sql.git
+[submodule "analyzer/fabric"]
+	path = robo-analyzer/robo-data-fabric
+	url = https://github.com/uengine-oss/robo-data-fabric.git

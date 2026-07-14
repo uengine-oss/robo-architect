@@ -241,6 +241,23 @@ from api.platform.identity import IdentityMiddleware  # noqa: E402
 
 app.add_middleware(IdentityMiddleware)
 
+# -----------------------------------------------------------------------------
+# Neo4j connection override (Electron)
+# -----------------------------------------------------------------------------
+# 데스크톱이 고른 연결이 `X-Neo4j-*` 헤더로 들어오면 그 요청은 그 DB를 쓴다.
+# 헤더가 없으면(브라우저/로컬 테스트/CLI) `.env` 폴백 — analyzer / catalog /
+# data-fabric 과 동일한 계약. contextvar 라 요청별 격리.
+from api.platform.neo4j_context import Neo4jOverride, set_override  # noqa: E402
+
+
+@app.middleware("http")
+async def neo4j_override_middleware(request: Request, call_next):
+    set_override(Neo4jOverride.from_headers(request.headers))
+    try:
+        return await call_next(request)
+    finally:
+        set_override(None)
+
 # Feature 031: capture per-request output-language from Accept-Language header.
 # Registered after the request_id middleware so the language tag is set
 # BEFORE the request_id middleware's start/end logs fire — http_context()

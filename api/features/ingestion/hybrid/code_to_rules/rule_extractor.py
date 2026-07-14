@@ -44,12 +44,17 @@ WITH f, hr, r,
 RETURN
     coalesce(f.id, f.name)            AS function_id,
     coalesce(f.name, '')              AS function_name,
+    f.owner_id                        AS module_id,
     f.summary                         AS function_summary,
     r.statement                       AS statement,
     coalesce(hr.coupled_domains, [])  AS coupled_domains,
     examples                          AS examples
 ORDER BY function_name, r.statement
 """
+# ★ `f.owner_id` = 소속 모듈 id — analyzer 가 노드 속성으로 준다 (analyzer spec 047 FR-007).
+#   종전엔 이 속성이 없어서 `function_id` 문자열을 잘라 모듈을 추측했다.
+#   그 파싱이 analyzer 의 id 규칙을 붙들어 매서, 서로 다른 노드가 같은 id 를 갖는 버그를
+#   못 고치게 만들었다. **id 는 불투명한 열쇠다 — 뜯지 않는다.**
 
 
 def _rule_id(function_id: str, statement: str) -> str:
@@ -57,13 +62,9 @@ def _rule_id(function_id: str, statement: str) -> str:
     return "rule_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def _module_of(function_id: str | None) -> str | None:
-    fid = function_id or ""
-    if "." in fid:
-        return fid.rsplit(".", 1)[0]
-    if "::" in fid:
-        return fid.rsplit("::", 1)[0]
-    return None
+# (옛 `_module_of(function_id)` 삭제 — id 문자열을 잘라 모듈을 추측하던 함수.
+#  이제 analyzer 가 `owner_id` 노드 속성으로 소속 모듈을 알려준다(analyzer spec 047 FR-007)
+#  → 쿼리에서 `f.owner_id AS module_id` 로 그냥 읽는다. id 는 뜯지 않는다.)
 
 
 def _humanize(value: str | None) -> str:
@@ -229,7 +230,8 @@ async def extract_rules_from_analyzer_graph(
                 when=when_h,
                 then=then_h,
                 source_function=fn_name,
-                source_module=_module_of(fid),
+                # 소속 모듈 = analyzer 가 준 `owner_id` 속성 (id 를 뜯지 않는다).
+                source_module=rec.get("module_id") or None,
                 confidence=1.0,
                 title=(statement or None),
                 examples=examples,

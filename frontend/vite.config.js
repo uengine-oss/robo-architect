@@ -155,6 +155,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // components.d.ts 는 unplugin-vue-components 가 매 스캔마다 다시 쓰는 생성물이다.
+    // 감시하면 "변경 → full reload → 재스캔 → 재작성" 이 무한 반복된다.
+    watch: { ignored: ['**/components.d.ts'] },
     proxy: {
       // Analysis 탭(robo-analyzer-frontend remote)의 백엔드 호출을 API Gateway(9000)로 라우팅.
       // '/api' 의 더 구체적인 접두사이므로 먼저 매칭되도록 위에 둔다.

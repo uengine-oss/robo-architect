@@ -9,17 +9,16 @@ import './open-pencil-theme.css'
 
 import { bootstrapAIDesign } from './features/aiDesign/bootstrap'
 import { preloadKoreanFont } from './features/aiDesign/fonts'
-// 032: identity-header interceptor — installed before any data fetch so
-// every backend request carries X-User-Name/X-User-Email once the launcher
-// has populated the session store. In web mode the interceptor stays
-// installed but is a no-op (session.user is null).
-import { installIdentityInterceptor } from './app/http.js'
+// 백엔드 요청 헤더 인터셉터 — 어떤 데이터 fetch 보다 먼저 설치한다. 런처가 채워지면
+// 모든 백엔드 요청이 신원(X-User-*)과 **Electron 이 고른 Neo4j 연결(X-Neo4j-*)** 을 함께 싣는다.
+// 웹 모드에선 설치돼 있어도 no-op (세션·데스크톱 bridge 부재 → 백엔드 .env 폴백).
+import { installBackendHeaderInterceptor } from './app/http.js'
 import { useLanguageStore } from './app/language.store'
 import { installLanguageFetchInterceptor } from './app/httpInterceptor'
 
 const app = createApp(App)
 app.use(createPinia())
-installIdentityInterceptor()
+installBackendHeaderInterceptor()
 
 // Feature 031: install the global window.fetch patch that attaches
 // Accept-Language to every outbound request. Must run AFTER Pinia is

@@ -140,7 +140,12 @@ async function onSave() {
   saving.value = true
   try {
     const r = await desktop.connections.save({
-      label: formLabel.value || `${formUser.value}@${formUri.value}`,
+      // 자동 라벨엔 **DB 명까지** 넣는다 — 연결의 정체성은 (uri, user, database) 셋이다
+      // (백엔드 detectDuplicate 의 튜플 검사도 그렇게 본다). DB 만 다른 두 연결이
+      // 같은 라벨로 생성돼 "duplicate" 로 튕기던 문제.
+      label:
+        formLabel.value ||
+        `${formUser.value}@${formUri.value}${formDatabase.value ? `/${formDatabase.value}` : ''}`,
       uri: formUri.value,
       user: formUser.value,
       database: formDatabase.value || undefined,

@@ -139,6 +139,12 @@ function registerAppProtocol(): void {
         upstreamBase = `http://127.0.0.1:${port}`;
       }
       const upstream = `${upstreamBase}${pathname}${url.search}`;
+      // 진단: 렌더러가 Neo4j override 헤더를 실었는지 (여기서 끊기면 프록시 문제).
+      log("info", "protocol.api_proxy.headers", {
+        pathname,
+        neo4jUri: request.headers.get("x-neo4j-uri") ?? "(none)",
+        neo4jDb: request.headers.get("x-neo4j-database") ?? "(none)",
+      });
       try {
         return await net.fetch(upstream, {
           method: request.method,
