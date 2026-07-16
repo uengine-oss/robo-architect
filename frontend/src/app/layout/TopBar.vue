@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 // 043 — 'Big picture' 뷰 비활성화: store import 제거.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
@@ -56,6 +56,15 @@ function selectTab(tab) {
   }
   emit('update:activeTab', tab)
 }
+
+// Code 워크스페이스(터미널)에서 "PRD zip 다시 받기"를 누르면 이 이벤트로 모달을 재오픈한다.
+// PRD zip 은 그래프에서 매번 새로 빌드되는 stateless 산출물이라, 모달을 다시 열어
+// 기술스택 선택 → 다운로드하면 언제든 재다운로드된다.
+function openPrdGenerator() {
+  showPRDModal.value = true
+}
+onMounted(() => window.addEventListener('robo:open-prd-generator', openPrdGenerator))
+onBeforeUnmount(() => window.removeEventListener('robo:open-prd-generator', openPrdGenerator))
 
 </script>
 

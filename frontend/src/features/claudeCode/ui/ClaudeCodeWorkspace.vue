@@ -208,6 +208,13 @@ function closeSession(id) {
     activeSessionId.value = mainSession.value?.id || sessions.value[0]?.id || null
   }
 }
+// PRD zip 다시 받기 — 터미널에 들어온 뒤에도 재다운로드할 수 있게 TopBar 의 PRD
+// Generator 모달을 재오픈한다(앱 레벨 이벤트). zip 은 그래프에서 매번 새로 빌드되는
+// stateless 산출물이라 모달에서 기술스택 선택 → 다운로드로 언제든 다시 받을 수 있다.
+function openPrdGenerator() {
+  window.dispatchEvent(new CustomEvent('robo:open-prd-generator'))
+}
+
 function addShellSession() {
   const base = mainSession.value?.workdir || ''
   const id = `shell-${Date.now()}`
@@ -730,6 +737,8 @@ onBeforeUnmount(() => {
           <span class="ccw-session-tab__close" title="세션 종료" @click.stop="closeSession(s.id)">×</span>
         </button>
         <button class="ccw-session-add" title="새 셸 세션" @click="addShellSession">＋</button>
+        <button class="ccw-session-prd" title="PRD zip 다시 받기 — PRD 생성 모달을 열어 다운로드"
+                @click="openPrdGenerator">PRD zip</button>
         <button class="ccw-session-manage" title="세션 매니저 — 실행 중인 claude 프로세스 정리"
                 @click="showSessionManager = true">⚙ 세션</button>
       </div>
@@ -846,6 +855,12 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .ccw-session-add:hover { background: var(--ccw-hover); color: var(--ccw-text); }
+.ccw-session-prd {
+  padding: 4px 9px; background: transparent; border: none;
+  color: var(--ccw-text-dim); font-size: 0.72rem; cursor: pointer; border-radius: 4px;
+  flex-shrink: 0; white-space: nowrap; font-family: 'JetBrains Mono', monospace;
+}
+.ccw-session-prd:hover { background: var(--ccw-hover); color: var(--ccw-text); }
 .ccw-session-manage {
   margin-left: auto; padding: 4px 9px; background: transparent; border: none;
   color: var(--ccw-text-dim); font-size: 0.78rem; cursor: pointer; border-radius: 4px;

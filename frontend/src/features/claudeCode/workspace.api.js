@@ -24,9 +24,17 @@ async function apiBase() {
           }
         } catch {}
       }
-      const host = import.meta.env.VITE_API_HOST || window.location.hostname
-      const port = import.meta.env.VITE_API_PORT || '8000'
-      return `http://${host}:${port}`
+      // Explicit override (rarely used): honor VITE_API_HOST/PORT verbatim.
+      if (import.meta.env.VITE_API_HOST || import.meta.env.VITE_API_PORT) {
+        const host = import.meta.env.VITE_API_HOST || window.location.hostname
+        const port = import.meta.env.VITE_API_PORT || '8000'
+        return `${window.location.protocol}//${host}:${port}`
+      }
+      // Web (non-Electron): same-origin. Behind a dev/prod reverse proxy the
+      // `/api` path is forwarded to the backend, so using the page origin here
+      // avoids the mixed-content block that an explicit `http://host:8000`
+      // triggers when the page is served over HTTPS (e.g. a Cloudflare tunnel).
+      return window.location.origin
     })()
   }
   return _apiBasePromise

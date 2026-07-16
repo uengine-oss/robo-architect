@@ -86,15 +86,22 @@ async function initElectronBackendPort() {
   } catch {}
 }
 
-function resolveBackendCoords() {
-  if (electronBackendPort.value) {
-    return { protocol: 'ws:', host: '127.0.0.1', port: String(electronBackendPort.value) }
-  }
-  return {
-    protocol: window.location.protocol === 'https:' ? 'wss:' : 'ws:',
-    host: import.meta.env.VITE_API_HOST || window.location.hostname,
-    port: import.meta.env.VITE_API_PORT || '8000',
-  }
+// Same-origin base for HTTP fetches (browse-directory). In Electron the SPA
+// runs on app:// so it must target the loopback backend port explicitly; on the
+// web we use the page origin so requests flow through the reverse proxy and
+// never trip the HTTPS mixed-content block that `http://host:8000` would.
+function httpBase() {
+  if (electronBackendPort.value) return `http://127.0.0.1:${electronBackendPort.value}`
+  return window.location.origin
+}
+
+// Same-origin base for the terminal WebSocket. Same rationale as httpBase():
+// derive wss/ws + host:port from the page so it upgrades through the proxy
+// instead of pointing at a hardcoded :8000 the tunnel doesn't expose.
+function wsBase() {
+  if (electronBackendPort.value) return `ws://127.0.0.1:${electronBackendPort.value}`
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}`
 }
 
 // Write batching — collect incoming data and flush via requestAnimationFrame
@@ -125,9 +132,7 @@ const isBrowsing = ref(false)
 async function browseDirectory(path) {
   try {
     isBrowsing.value = true
-    const { host, port } = resolveBackendCoords()
-    const httpProto = electronBackendPort.value ? 'http:' : (window.location.protocol === 'https:' ? 'https:' : 'http:')
-    const response = await fetch(`${httpProto}//${host}:${port}/api/claude-code/browse-directory?path=${encodeURIComponent(path || '~')}`)
+    const response = await fetch(`${httpBase()}/api/claude-code/browse-directory?path=${encodeURIComponent(path || '~')}`)
     if (response.ok) {
       folderPickerData.value = await response.json()
     }
@@ -165,8 +170,7 @@ function confirmFolderSelection() {
 }
 
 function getWsUrl(workdir) {
-  const { protocol, host, port } = resolveBackendCoords()
-  let url = `${protocol}//${host}:${port}/api/claude-code/terminal`
+  let url = `${wsBase()}/api/claude-code/terminal`
   const params = new URLSearchParams()
   if (workdir) params.set('workdir', workdir)
   // 안정적 세션 키 — 재연결 시 백엔드가 같은 PTY에 재어태치한다.
