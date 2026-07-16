@@ -159,6 +159,12 @@ async def stream_tasks(proposal_id: str) -> AsyncGenerator[tuple[str, dict], Non
     output_lines: list[str] = []
     suppress_log = False
     async for line in run_skill_lines(_SKILL_ROOT, _SKILL_NAME, human_prompt):
+        if line == "PHASE:error":
+            yield "error", {
+                "code": "TASKS_FAILED",
+                "message": "작업 분해 실행 실패 — 서버 로그에서 Claude 실행 오류를 확인하세요.",
+            }
+            return
         if line.startswith("TOOL:"):
             parts = line[5:].split(":", 1)
             yield "log_line", {"text": f"[tool] {parts[0].strip()} {parts[1].strip() if len(parts) > 1 else ''}"}

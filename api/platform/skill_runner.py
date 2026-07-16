@@ -29,6 +29,10 @@ def _skill_env() -> dict:
     env = dict(os.environ)
     for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
         env.pop(k, None)
+    # spec 052 실측: MCP 결과가 CLI 기본 토큰 한도를 넘으면 스킬이 내용 대신 에러 문장만
+    # 받는다(레거시 근거 조용한 미수신). 1차 방어는 analyzer 의 summary 축약이고,
+    # 이 상향은 여유분(대형 코퍼스)의 보조 방어다.
+    env.setdefault("MAX_MCP_OUTPUT_TOKENS", "60000")
     return env
 
 
@@ -68,12 +72,12 @@ def skill_path(skill_root: str, skill_name: str) -> Path:
 
 
 def _run_process_sync(
-    cmd: list[str], cwd: str, timeout: int
+    cmd: list[str], cwd: str, timeout: int, stdin_data: bytes | None = None
 ) -> subprocess.CompletedProcess:
     """블로킹 subprocess.run. 워커 스레드에서 호출된다."""
     # stdin=DEVNULL: 무인 스폰이므로 stdin 을 명시적으로 닫는다(상속된 터미널 입력 대기 방지).
     return subprocess.run(cmd, capture_output=True, cwd=cwd, timeout=timeout,
-                          env=_skill_env(), stdin=subprocess.DEVNULL)
+                          env=_skill_env(), input=stdin_data)
 
 
 async def _stream_process_chunks(
@@ -136,6 +140,74 @@ async def _stream_process_chunks(
                 pass
 
 
+async def _stream_process_chunks_with_stdin(
+    cmd: list[str], cwd: str, timeout: int, stdin_data: bytes
+) -> AsyncGenerator[bytes, None]:
+    """Stream stdout while forwarding the complete prompt through stdin.
+
+    Keeping the prompt out of ``cmd`` avoids the Windows CreateProcess command
+    line limit.  A dedicated writer prevents a large stdin payload from
+    blocking stdout/stderr drainage.
+    """
+    q: queue.Queue = queue.Queue(maxsize=256)
+    holder: dict = {}
+
+    def _reader() -> None:
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                cwd=cwd,
+                bufsize=0,
+                env=_skill_env(),
+            )
+            holder["proc"] = proc
+
+            def _write_stdin() -> None:
+                try:
+                    assert proc.stdin is not None
+                    proc.stdin.write(stdin_data)
+                    proc.stdin.flush()
+                finally:
+                    if proc.stdin is not None:
+                        proc.stdin.close()
+
+            threading.Thread(target=_write_stdin, daemon=True).start()
+            threading.Thread(
+                target=lambda: proc.stderr.read() if proc.stderr else None,
+                daemon=True,
+            ).start()
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                q.put(chunk)
+        except Exception as e:  # noqa: BLE001
+            q.put((_STREAM_ERR, e))
+        finally:
+            q.put(_STREAM_DONE)
+
+    threading.Thread(target=_reader, daemon=True).start()
+
+    try:
+        while True:
+            item = await asyncio.wait_for(asyncio.to_thread(q.get), timeout=timeout)
+            if item is _STREAM_DONE:
+                break
+            if isinstance(item, tuple) and item and item[0] is _STREAM_ERR:
+                raise item[1]
+            yield item
+    finally:
+        proc = holder.get("proc")
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
 async def run_skill_once(
     skill_root: str,
     skill_name: str,
@@ -156,7 +228,7 @@ async def run_skill_once(
         return None
 
     cmd = [
-        claude_bin, "-p", human_prompt,
+        claude_bin, "-p",
         "--system-prompt-file", str(sf),
         "--output-format", "text",
         "--dangerously-skip-permissions",
@@ -172,7 +244,8 @@ async def run_skill_once(
     try:
         # 루프-무관 블로킹 subprocess 를 워커 스레드에서 실행 (헤더 주석 참조).
         completed = await asyncio.to_thread(
-            _run_process_sync, cmd, str(_PROJECT_ROOT), timeout
+            _run_process_sync, cmd, str(_PROJECT_ROOT), timeout,
+            human_prompt.encode("utf-8"),
         )
         raw = completed.stdout.decode("utf-8", errors="replace").strip()
 
@@ -226,7 +299,7 @@ async def run_skill_lines(
         return
 
     cmd = [
-        claude_bin, "-p", human_prompt,
+        claude_bin, "-p",
         "--system-prompt-file", str(sf),
         "--output-format", "stream-json",
         "--verbose",
@@ -248,13 +321,20 @@ async def run_skill_lines(
         # 루프-무관 블로킹 subprocess + 워커 스레드 (헤더 주석 참조).
         # create_subprocess_exec 를 쓰면 Windows --reload(SelectorEventLoop)에서
         # NotImplementedError 로 즉사한다.
-        chunks = _stream_process_chunks(cmd, cwd or str(_PROJECT_ROOT), timeout=1800)
+        chunks = _stream_process_chunks_with_stdin(
+            cmd,
+            cwd or str(_PROJECT_ROOT),
+            timeout=1800,
+            stdin_data=human_prompt.encode("utf-8"),
+        )
 
         text_buffer = ""
         raw_buf = b""
         # 토큰 델타로 텍스트를 이미 스트리밍했는지 추적.
         # True면 뒤따라오는 assistant/result 이벤트의 텍스트는 중복이므로 무시.
         streamed_text = False
+        # spec 052: robo-cluster tool_use id → 이름 매핑(해당 tool_result 만 마커로 표면화).
+        _legacy_tool_ids: dict[str, str] = {}
 
         while True:
             try:
@@ -327,6 +407,36 @@ async def run_skill_lines(
                                 or ""
                             )
                             yield f"TOOL:{tool_name}:{file_path}"
+                            # spec 052 프로버넌스: robo-cluster 검색만 query 를 별도 마커로 —
+                            # 기존 TOOL 라인은 file_path 전용이라 query 가 소실된다.
+                            if tool_name.endswith("cluster_retrieve"):
+                                _legacy_tool_ids[block.get("id", "")] = tool_name
+                                yield "LEGACYQ::" + json.dumps(
+                                    dict(tool_input), ensure_ascii=False, default=str,
+                                )
+
+                # 2-b) user 이벤트(spec 052): tool_result 는 여기로 온다 — robo-cluster 결과만
+                #     마커로 표면화(그 외 도구 결과는 종전대로 무시). 소비자는 proposal_lifecycle
+                #     의 legacy_provenance 가 유일하다.
+                elif evt_type == "user":
+                    content = event.get("message", {}).get("content", [])
+                    for block in content:
+                        if not isinstance(block, dict) or block.get("type") != "tool_result":
+                            continue
+                        if block.get("tool_use_id", "") not in _legacy_tool_ids:
+                            continue
+                        parts = block.get("content", [])
+                        if isinstance(parts, str):
+                            text = parts
+                        else:
+                            text = "".join(
+                                p.get("text", "") for p in parts
+                                if isinstance(p, dict) and p.get("type") == "text"
+                            )
+                        if text:
+                            # 결과가 pretty JSON(다중 라인)이어도 마커는 한 줄이어야 한다 —
+                            # JSON 토큰 사이 공백 제거는 무손상이므로 라인 결합으로 평탄화.
+                            yield "LEGACYREF::" + "".join(text.splitlines())[:200_000]
 
                 # 3) result 이벤트: 델타 스트리밍이 없었던 경우에만 fallback 출력.
                 elif evt_type == "result":

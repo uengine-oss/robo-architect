@@ -1,5 +1,5 @@
 <template>
-  <div class="smp-backdrop" @click.self="$emit('close')">
+  <div class="smp-backdrop" @keydown.esc.window="$emit('close')">
     <div class="smp" role="dialog" aria-label="Claude Code 세션 매니저">
       <header class="smp__head">
         <div class="smp__title">

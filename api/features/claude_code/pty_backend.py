@@ -50,9 +50,19 @@ if IS_POSIX:
 
 
 def build_claude_argv(permission_mode: str) -> list[str]:
-    """The argv used to launch the interactive ``claude`` CLI session."""
+    """The argv used to launch the interactive ``claude`` CLI session.
+
+    ``bypassPermissions`` is the "완전 무인(no-prompt)" mode the UI defaults to:
+    it maps to ``--dangerously-skip-permissions`` — the SAME flag the headless
+    skill runner uses successfully — because interactive
+    ``--permission-mode bypassPermissions`` can still surface a one-time
+    confirmation and stall an unattended run. Other explicit modes
+    (acceptEdits / plan / …) pass through as ``--permission-mode``.
+    """
     argv = ["claude"]
-    if permission_mode in ALLOWED_PERMISSION_MODES:
+    if permission_mode == "bypassPermissions":
+        argv.append("--dangerously-skip-permissions")
+    elif permission_mode in ALLOWED_PERMISSION_MODES:
         argv += ["--permission-mode", permission_mode]
     return argv
 

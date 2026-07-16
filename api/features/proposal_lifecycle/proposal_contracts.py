@@ -204,6 +204,32 @@ class ImplementationPlan(BaseModel):
     constitutionHash: Optional[str] = None
     strategicVersion: int = 1
 
+    @field_validator("constitutionGaps", mode="before")
+    @classmethod
+    def normalize_constitution_gaps(cls, value):
+        """Accept the structured gap form occasionally emitted by the planner.
+
+        The persisted/API contract remains ``list[str]`` because completeness and
+        the UI use the architecture aspect as the stable identity.  A planner may
+        enrich a gap as ``{"aspect": "...", "note": "..."}``; retaining the
+        aspect prevents one enriched item from invalidating the entire confirmed
+        plan when ProposalResponse is reconstructed.
+        """
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return value
+
+        normalized = []
+        for item in value:
+            if isinstance(item, str):
+                normalized.append(item)
+            elif isinstance(item, dict):
+                aspect = item.get("aspect")
+                if aspect:
+                    normalized.append(str(aspect))
+        return normalized
+
     def is_complete(self, architecture_style: Optional[str] = None,
                     context_count: int = 1) -> bool:
         """필수 아키텍처 항목이 모두 결정되었거나 gap 으로 명시되었는가(SC-003).
@@ -374,6 +400,7 @@ class ProposalResponse(BaseModel):
     decompositionMode: DecompositionMode = DecompositionMode.SIMPLIFIED
     stagePlan: Optional[StagePlan] = None
     stageArtifacts: Optional[dict] = None       # {stage → artifact}
+    legacyReferences: Optional[list[dict]] = None  # spec 052 — [{stage, retrieves:[{query,nodes,at}]}]
     stageDraftArtifacts: Optional[dict] = None  # {stage → unconfirmed artifact}
     currentStage: Optional[str] = None
     memoryConflicts: Optional[list[MemoryConflict]] = None
@@ -477,6 +504,7 @@ class ProposalResponse(BaseModel):
             except Exception:
                 stage_plan = None
         stage_artifacts = _parse_json(node.get("stageArtifacts"), None)
+        legacy_refs = _parse_json(node.get("legacyReferences"), None)   # spec 052
         stage_draft_artifacts = _parse_json(node.get("stageDraftArtifacts"), None)
         raw_conflicts = _parse_json(node.get("memoryConflicts"), None)
         mem_conflicts = None
@@ -533,6 +561,7 @@ class ProposalResponse(BaseModel):
             decompositionMode=mode,
             stagePlan=stage_plan,
             stageArtifacts=stage_artifacts,
+            legacyReferences=legacy_refs,
             stageDraftArtifacts=stage_draft_artifacts,
             currentStage=node.get("currentStage"),
             memoryConflicts=mem_conflicts,

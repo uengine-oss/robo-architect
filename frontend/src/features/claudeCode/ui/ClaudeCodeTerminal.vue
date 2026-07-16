@@ -175,16 +175,15 @@ function getWsUrl(workdir) {
   if (workdir) params.set('workdir', workdir)
   // 안정적 세션 키 — 재연결 시 백엔드가 같은 PTY에 재어태치한다.
   if (props.sessionId) params.set('session_id', props.sessionId)
-  // Pass-through for the e2e bypass path: the playwright spec opens the
-  // SPA at /?permission_mode=bypassPermissions so the embedded `claude`
-  // doesn't pause on per-tool permission prompts (which would deadlock
-  // the headless test). Default behavior — interactive prompts — is
-  // unchanged for human users who don't add the query param.
+  // 상시 오토모드(완전 무인): 기본 permission_mode = bypassPermissions →
+  // 백엔드가 `--dangerously-skip-permissions`로 매핑해 승인 프롬프트 없이 진행한다
+  // (자는 동안 무인 실행). URL `?permission_mode=` 로 override 가능(테스트/특수 케이스).
+  let pm = 'bypassPermissions'
   try {
-    const pageParams = new URLSearchParams(window.location.search)
-    const pm = pageParams.get('permission_mode')
-    if (pm) params.set('permission_mode', pm)
+    const override = new URLSearchParams(window.location.search).get('permission_mode')
+    if (override) pm = override
   } catch {}
+  params.set('permission_mode', pm)
   const qs = params.toString()
   return qs ? `${url}?${qs}` : url
 }
@@ -432,6 +431,7 @@ onUnmounted(() => {
             {{ isConnecting ? '연결 중...' : isConnected ? '연결됨' : '연결 끊김' }}
           </span>
         </div>
+        <span class="auto-badge" title="자동 승인(완전 무인) — 권한 프롬프트 없이 진행합니다">오토 모드</span>
       </div>
       <div class="terminal-header__right">
         <button
@@ -467,7 +467,7 @@ onUnmounted(() => {
 
     <!-- Folder picker overlay -->
     <Teleport to="body">
-      <div v-if="showFolderPicker" class="tcc-folder-overlay" @click.self="showFolderPicker = false">
+      <div v-if="showFolderPicker" class="tcc-folder-overlay" @keydown.esc.window="showFolderPicker = false">
         <div class="tcc-folder-picker">
           <div class="tcc-folder-picker__header">
             <h4>작업 경로 변경</h4>
@@ -623,6 +623,18 @@ onUnmounted(() => {
 .status-text {
   font-size: 0.7rem;
   color: var(--ccw-text-dim);
+}
+
+.auto-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ccw-green);
+  background: rgba(158, 206, 106, 0.14);
+  border: 1px solid rgba(158, 206, 106, 0.3);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 .terminal-header__right {

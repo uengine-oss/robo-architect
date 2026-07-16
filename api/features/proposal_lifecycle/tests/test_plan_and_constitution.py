@@ -51,6 +51,27 @@ def test_gap_counts_as_covered():
     assert plan.is_complete("MONOLITH", 1) is True
 
 
+def test_structured_constitution_gap_is_normalized_without_dropping_plan():
+    plan = ImplementationPlan.model_validate({
+        "architectureDecisions": [],
+        "constitutionGaps": [
+            {"aspect": "INGRESS", "note": "Ingress product is not selected yet"},
+            "FRONTEND",
+            {"note": "Malformed gap without a stable aspect"},
+        ],
+    })
+
+    assert plan.constitutionGaps == ["INGRESS", "FRONTEND"]
+
+    node = _node(implementationPlan=json.dumps({
+        "architectureDecisions": [],
+        "constitutionGaps": [{"aspect": "INGRESS", "note": "not selected"}],
+    }))
+    response = ProposalResponse.from_neo4j(node, [])
+    assert response.implementationPlan is not None
+    assert response.implementationPlan.constitutionGaps == ["INGRESS"]
+
+
 def _node(**over):
     base = {
         "id": "PRO-001", "title": "t", "originalPrompt": "p", "author": "a",

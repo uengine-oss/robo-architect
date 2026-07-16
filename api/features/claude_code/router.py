@@ -748,6 +748,15 @@ class _PtySession:
         self.cols = 80
         self.detached_at = time.monotonic()
 
+    @property
+    def pid(self) -> int:
+        """Live child PID — delegates to the PTY process (single source of truth).
+
+        The session-manager list endpoint reports this; there is no separate
+        pid field on the session, so expose the proc's pid here.
+        """
+        return self.proc.pid
+
 
 _sessions: dict[str, _PtySession] = {}
 

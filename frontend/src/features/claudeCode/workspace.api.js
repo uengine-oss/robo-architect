@@ -27,8 +27,8 @@ async function apiBase() {
       // Explicit override (rarely used): honor VITE_API_HOST/PORT verbatim.
       if (import.meta.env.VITE_API_HOST || import.meta.env.VITE_API_PORT) {
         const host = import.meta.env.VITE_API_HOST || window.location.hostname
-        const port = import.meta.env.VITE_API_PORT || '8000'
-        return `${window.location.protocol}//${host}:${port}`
+        const port = import.meta.env.VITE_API_PORT || window.location.port
+        return `${window.location.protocol}//${host}${port ? `:${port}` : ''}`
       }
       // Web (non-Electron): same-origin. Behind a dev/prod reverse proxy the
       // `/api` path is forwarded to the backend, so using the page origin here

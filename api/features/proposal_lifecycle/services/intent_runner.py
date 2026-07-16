@@ -13,6 +13,11 @@ from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.skill_runner import run_skill_once, run_skill_lines, extract_json
+from api.features.proposal_lifecycle.services.legacy_provenance import (
+    MARK_QUERY,
+    ProvenanceCollector,
+    is_marker as is_provenance_marker,
+)
 
 _SKILL_ROOT = "robo-proposals"
 _SKILL_NAME = "robo-proposal-intent"
@@ -240,7 +245,22 @@ async def stream_intent(proposal_id: str) -> AsyncGenerator[tuple[str, dict], No
     # SKILL.md가 narration 뒤 ```json 펜스로 JSON을 출력하므로 펜스/여는 중괄호를
     # 만나는 순간부터 log_line 방출을 멈춘다.
     suppress_log = False
+    provenance = ProvenanceCollector()   # spec 052 — 이 스테이지의 레거시 참조 결정론 기록
     async for line in run_skill_lines(_SKILL_ROOT, _SKILL_NAME, human_prompt):
+        if is_provenance_marker(line):
+            entry = provenance.feed(line)
+            if line.startswith(MARK_QUERY):
+                try:
+                    q = str(json.loads(line[len(MARK_QUERY):]).get("query", "")).strip()
+                except ValueError:
+                    q = ""
+                if q:
+                    yield "log_line", {"text": f"🔍 레거시 그래프 검색: \"{q}\""}
+            if entry is not None:
+                yield "legacy_ref", entry
+                yield "log_line", {"text": f"   → 레거시 함수 {len(entry['nodes'])}개 · "
+                                           f"규칙 {sum(n['rulesCount'] for n in entry['nodes'])}개 참조됨 ⛓"}
+            continue
         if line.startswith("TOOL:"):
             parts = line[5:].split(":", 1)
             yield "tool_use", {"tool": parts[0].strip(), "path": parts[1].strip() if len(parts) > 1 else ""}
@@ -272,11 +292,13 @@ async def stream_intent(proposal_id: str) -> AsyncGenerator[tuple[str, dict], No
     if action == "clarify":
         questions = result_data.get("questions", [])
         _save_intent_result(proposal_id, result_data)
+        provenance.save(proposal_id, "INTENT")   # spec 052 — clarify 여도 검색 기록은 보존
         yield "clarification_needed", {"questions": questions}
         yield "done", {"proposalId": proposal_id, "status": "DRAFT"}
         return
 
     _save_intent_result(proposal_id, result_data)
+    provenance.save(proposal_id, "INTENT")       # spec 052
 
     # 041: Intent 는 Strategic Diff 만 스트리밍한다. Tactical/Impact 는 Plan 단계로 이동(FR-006).
     if result_data.get("strategicDiff"):

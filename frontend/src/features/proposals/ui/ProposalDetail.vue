@@ -7,6 +7,8 @@
         <span :class="['status-badge', `status-badge--${proposal.status.toLowerCase()}`]">
           {{ statusLabel(proposal.status) }}
         </span>
+        <!-- spec 052: 이 제안이 실제 참조한 레거시 분석 근거(결정론 기록) -->
+        <LegacyRefChip :refs="proposal.legacyReferences || []" />
       </div>
       <h2 class="detail-header__title">{{ proposal.title }}</h2>
       <p class="detail-header__prompt">{{ proposal.originalPrompt }}</p>
@@ -222,6 +224,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from '../../../app/i18n'
+import LegacyRefChip from './LegacyRefChip.vue'
 import { useProposalsStore } from '../proposals.store'
 import IntentDecompositionView from './IntentDecompositionView.vue'
 import ImpactMapView from './ImpactMapView.vue'
