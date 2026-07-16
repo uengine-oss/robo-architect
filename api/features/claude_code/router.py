@@ -676,6 +676,10 @@ def _cleanup_deprecated_local_paths(project_path: str, bcs: list, config) -> lis
 
     removed: list[str] = []
 
+    def relative_api_path(path: str) -> str:
+        """Return a platform-independent path for the JSON response contract."""
+        return os.path.relpath(path, project_path).replace(os.sep, "/")
+
     # Per-BC agent files — only delete those whose slug matches a BC
     # currently in the graph (a hand-renamed agent file stays put).
     if config.ai_assistant == AIAssistant.CLAUDE:
@@ -689,7 +693,7 @@ def _cleanup_deprecated_local_paths(project_path: str, bcs: list, config) -> lis
                 if os.path.isfile(stale):
                     try:
                         os.remove(stale)
-                        removed.append(os.path.relpath(stale, project_path))
+                        removed.append(relative_api_path(stale))
                     except OSError:
                         pass
 
@@ -712,7 +716,7 @@ def _cleanup_deprecated_local_paths(project_path: str, bcs: list, config) -> lis
                     p = os.path.join(root, fname)
                     try:
                         os.remove(p)
-                        removed.append(os.path.relpath(p, project_path))
+                        removed.append(relative_api_path(p))
                     except OSError:
                         pass
 
