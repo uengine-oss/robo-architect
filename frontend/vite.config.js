@@ -175,5 +175,26 @@ export default defineConfig({
         ws: true
       }
     }
+  },
+  // Production-build serving (`vite preview`) for reverse-proxy / tunnel deploys.
+  // Vite dev ships hundreds of unbundled ESM/CSS requests which choke over an
+  // HTTP/3 (QUIC) tunnel (styles drop, ERR_QUIC_PROTOCOL_ERROR). Serving the
+  // built bundle is robust. Mirrors the dev proxy so /api + WS still reach the
+  // backend, and allowedHosts so the tunnel hostname is accepted.
+  preview: {
+    port: 5173,
+    host: true,
+    allowedHosts: ['ex-ai.tail9fa342.ts.net', '.process-gpt.io', '.dream-flow.com', 'localhost'],
+    proxy: {
+      '/api/gateway': {
+        target: 'http://127.0.0.1:9000',
+        changeOrigin: true
+      },
+      '/api': {
+        target: process.env.ARCHITECT_API_URL || 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        ws: true
+      }
+    }
   }
 })
