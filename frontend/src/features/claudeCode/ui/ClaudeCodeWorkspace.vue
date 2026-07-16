@@ -208,12 +208,15 @@ function closeSession(id) {
     activeSessionId.value = mainSession.value?.id || sessions.value[0]?.id || null
   }
 }
-// PRD zip 다시 받기 — 터미널에 들어온 뒤에도 재다운로드할 수 있게 TopBar 의 PRD
-// Generator 모달을 재오픈한다(앱 레벨 이벤트). zip 은 그래프에서 매번 새로 빌드되는
-// stateless 산출물이라 모달에서 기술스택 선택 → 다운로드로 언제든 다시 받을 수 있다.
-function openPrdGenerator() {
-  window.dispatchEvent(new CustomEvent('robo:open-prd-generator'))
-}
+// 배포(원격 서버) 웹에서는 임베디드 터미널을 끈다. 터미널은 백엔드가 도는 호스트에서
+// `claude` PTY 를 띄우므로, 서버 배포에선 "사용자의 로컬 PC" 가 아니라 서버(ungine@ai-server)
+// 셸이 된다 → 로컬 구현 용도로 부적합하고, 공개 URL 에선 서버 셸 노출이라 위험하다.
+// 정식 동선은 상단 "PRD zip 다운로드" 로 받아 로컬(데스크톱/local claude)에서 구현하는 것.
+// 데스크톱(Electron)·로컬 dev 빌드는 이 플래그를 세우지 않으므로 터미널이 그대로 로컬을 본다.
+// 서버 배포 빌드에서만 `VITE_DISABLE_CLAUDE_TERMINAL=1 npm run build` 로 켠다.
+const CLAUDE_TERMINAL_DISABLED = ['1', 'true'].includes(
+  String(import.meta.env.VITE_DISABLE_CLAUDE_TERMINAL),
+)
 
 function addShellSession() {
   const base = mainSession.value?.workdir || ''
@@ -440,6 +443,9 @@ function _onTerminalOpen(e) {
 // 이후 진입에서는 즉시 통과한다. 이 in-flight 가드는 동시 호출만 막는다.
 let _globalSkillsChecking = false
 async function checkGlobalSkills() {
+  // 터미널이 꺼진 배포 빌드에선 ~/.claude/skills 설치 프롬프트도 띄우지 않는다
+  // (스킬은 임베디드 claude 셀 전용).
+  if (CLAUDE_TERMINAL_DISABLED) return
   if (_globalSkillsChecking) return
   _globalSkillsChecking = true
   try {
@@ -721,9 +727,25 @@ onBeforeUnmount(() => {
       title="너비 조절"
     ></div>
 
-    <!-- Right: Claude Code terminal(s) — one persistent session per worktree -->
+    <!-- Right: Claude Code terminal(s) — one persistent session per worktree.
+         배포(원격 서버) 빌드에서는 CLAUDE_TERMINAL_DISABLED 로 꺼진다: 터미널이 서버 셸이
+         되어 로컬 구현에 부적합/위험하기 때문. 대신 상단 "PRD zip 다운로드" 로 받아 로컬에서
+         구현한다. 파일 트리/에디터는 그대로 두고 터미널만 비활성화한다. -->
     <div class="ccw-pane ccw-terminal">
-      <div class="ccw-session-tabs">
+      <div v-if="CLAUDE_TERMINAL_DISABLED" class="ccw-terminal-disabled">
+        <div class="ccw-terminal-disabled__title">임베디드 터미널 비활성화</div>
+        <p class="ccw-terminal-disabled__desc">
+          이 배포에서는 임베디드 Claude 터미널이 꺼져 있습니다. 터미널은 서버에서
+          실행되어 <strong>여러분의 로컬 PC가 아니라 서버</strong>를 대상으로 동작하기
+          때문입니다.
+        </p>
+        <p class="ccw-terminal-disabled__desc">
+          구현은 상단 <strong>“PRD zip 다운로드”</strong>로 PRD를 받아
+          <strong>본인 로컬 환경(데스크톱 앱 / 로컬 <code>claude</code>)</strong>에서
+          진행하세요.
+        </p>
+      </div>
+      <div v-else class="ccw-session-tabs">
         <button
           v-for="s in sessions"
           :key="s.id"
@@ -737,12 +759,12 @@ onBeforeUnmount(() => {
           <span class="ccw-session-tab__close" title="세션 종료" @click.stop="closeSession(s.id)">×</span>
         </button>
         <button class="ccw-session-add" title="새 셸 세션" @click="addShellSession">＋</button>
-        <button class="ccw-session-prd" title="PRD zip 다시 받기 — PRD 생성 모달을 열어 다운로드"
-                @click="openPrdGenerator">PRD zip</button>
         <button class="ccw-session-manage" title="세션 매니저 — 실행 중인 claude 프로세스 정리"
                 @click="showSessionManager = true">⚙ 세션</button>
       </div>
-      <div class="ccw-terminals">
+      <!-- 터미널 비활성 배포에선 ClaudeCodeTerminal 을 아예 마운트하지 않는다 →
+           WS 연결/서버 claude 스폰 자체가 발생하지 않음. -->
+      <div v-if="!CLAUDE_TERMINAL_DISABLED" class="ccw-terminals">
         <div
           v-for="s in sessions"
           :key="`${s.id}#${s.epoch || 0}`"
@@ -855,12 +877,6 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .ccw-session-add:hover { background: var(--ccw-hover); color: var(--ccw-text); }
-.ccw-session-prd {
-  padding: 4px 9px; background: transparent; border: none;
-  color: var(--ccw-text-dim); font-size: 0.72rem; cursor: pointer; border-radius: 4px;
-  flex-shrink: 0; white-space: nowrap; font-family: 'JetBrains Mono', monospace;
-}
-.ccw-session-prd:hover { background: var(--ccw-hover); color: var(--ccw-text); }
 .ccw-session-manage {
   margin-left: auto; padding: 4px 9px; background: transparent; border: none;
   color: var(--ccw-text-dim); font-size: 0.78rem; cursor: pointer; border-radius: 4px;
@@ -872,6 +888,22 @@ onBeforeUnmount(() => {
 .ccw-no-session {
   display: flex; align-items: center; justify-content: center; height: 100%;
   color: var(--ccw-text-dim); font-size: 0.8rem; padding: 16px; text-align: center;
+}
+
+/* 배포 빌드: 임베디드 터미널 비활성화 안내 */
+.ccw-terminal-disabled {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; height: 100%; padding: 32px; text-align: center;
+}
+.ccw-terminal-disabled__title {
+  color: var(--ccw-text); font-size: 0.95rem; font-weight: 600;
+}
+.ccw-terminal-disabled__desc {
+  color: var(--ccw-text-dim); font-size: 0.82rem; line-height: 1.6; max-width: 440px; margin: 0;
+}
+.ccw-terminal-disabled__desc code {
+  font-family: 'JetBrains Mono', monospace; font-size: 0.78rem;
+  background: var(--ccw-bg-elevated); padding: 1px 5px; border-radius: 4px;
 }
 
 .ccw-resizer {

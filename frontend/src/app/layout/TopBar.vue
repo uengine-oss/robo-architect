@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 // 043 — 'Big picture' 뷰 비활성화: store import 제거.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
@@ -56,15 +56,6 @@ function selectTab(tab) {
   }
   emit('update:activeTab', tab)
 }
-
-// Code 워크스페이스(터미널)에서 "PRD zip 다시 받기"를 누르면 이 이벤트로 모달을 재오픈한다.
-// PRD zip 은 그래프에서 매번 새로 빌드되는 stateless 산출물이라, 모달을 다시 열어
-// 기술스택 선택 → 다운로드하면 언제든 재다운로드된다.
-function openPrdGenerator() {
-  showPRDModal.value = true
-}
-onMounted(() => window.addEventListener('robo:open-prd-generator', openPrdGenerator))
-onBeforeUnmount(() => window.removeEventListener('robo:open-prd-generator', openPrdGenerator))
 
 </script>
 
@@ -148,6 +139,17 @@ onBeforeUnmount(() => window.removeEventListener('robo:open-prd-generator', open
     </div>
 
     <div class="top-bar__right">
+      <!-- PRD zip 다운로드 — Code 탭에서만 노출. 배포 웹에선 임베디드 터미널 대신
+           이 zip을 받아 로컬(데스크톱 / local claude)에서 구현하는 것이 정식 동선이라,
+           Code 탭 상단에 상시 진입점을 둔다. zip 은 그래프에서 매번 새로 빌드되는
+           stateless 산출물이라 언제든 다시 받을 수 있다. -->
+      <button
+        v-if="activeTab === 'Code'"
+        class="prd-zip-btn"
+        @click="showPRDModal = true"
+        title="PRD zip 다운로드 — PRD 생성 모달 열기"
+      >PRD zip 다운로드</button>
+
       <!-- Figma Binding Button (feature 016) -->
       <FigmaButton v-model="showFigmaBindingModal" />
 
@@ -352,6 +354,33 @@ onBeforeUnmount(() => window.removeEventListener('robo:open-prd-generator', open
 
 .settings-btn:active {
   transform: scale(0.95);
+}
+
+/* PRD zip download (Code 탭 전용) */
+.prd-zip-btn {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.prd-zip-btn:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.prd-zip-btn:active {
+  transform: scale(0.97);
 }
 
 </style>
