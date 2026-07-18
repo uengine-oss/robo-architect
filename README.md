@@ -48,7 +48,7 @@
 > scripts\build-desktop-app.cmd -Installer   :: NSIS 설치본
 > ```
 >
-> 빌드 → analyzer 5502 · catalog 5503 · data-fabric 8404 · antlr 8401 · gateway 9000 → Electron 까지 자동.
+> 빌드 → analyzer 15502 · catalog 15503 · data-fabric 8404 · antlr 8401 · gateway 9000 → Electron 까지 자동.
 > 종료는 `scripts\dev-desktop.cmd -Stop`으로 이 실행기가 소유한 프로세스만 정리합니다. 전제: Neo4j(7687) 실행.
 > (개별 서비스를 따로 띄우려면 아래 수동 절차. 함정·픽스 상세는 [`scripts/README.md`](scripts/README.md).)
 >
