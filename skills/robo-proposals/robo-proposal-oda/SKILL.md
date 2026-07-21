@@ -108,6 +108,10 @@ Proposal 에 저장되어 있다고 가정한다.
 ```
 
 ## 절대 규칙
+- **모든 diff 요소는 `legacyRefs` 배열을 가진다** — `robo-proposal-intent` 의
+  `references/legacy-reference.md`·`output-schema.md` "요소별 레거시 근거 불변식"과
+  "내용 단위 인용" 절을 그대로 적용(실제 검색·검토한 nodeId 만, 없으면 `[]`,
+  규칙 유래는 `rule:"<본 문장 그대로>"`).
 - 표준이 커버하는 것을 새로 발명하지 마라(REUSE 우선).
 - 표준 계약을 깨지 마라 — 확장은 추가형(additive)·인가 메커니즘만.
 - 깨지는 변경이 불가피하면 숨기지 말고 `violations` 로 보고하라(백엔드가 차단/면제 처리).

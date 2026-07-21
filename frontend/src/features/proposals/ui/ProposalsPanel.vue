@@ -48,6 +48,9 @@
             <span>{{ p.author }}</span>
             <span>{{ formatDate(p.createdAt) }}</span>
             <span v-if="p.impactMap">{{ t('proposals.panel.impactCount', { n: p.impactMap.length || 0 }) }}</span>
+            <span v-if="legacyReferenceCount(p.legacyReferences)" class="proposal-item__legacy">
+              ⛓{{ legacyReferenceCount(p.legacyReferences) }}
+            </span>
             <span
               v-if="activityById[p.id]"
               :class="['active-indicator', `active-indicator--${activityById[p.id].tone}`]"
@@ -107,6 +110,7 @@ import { useProposalsStore } from '../proposals.store'
 import { useI18n } from '../../../app/i18n'
 import ProposalDetail from './ProposalDetail.vue'
 import ProposalCreate from './ProposalCreate.vue'
+import { legacyReferenceCount } from '../legacy-reference'
 
 const { t } = useI18n()
 
@@ -270,6 +274,7 @@ onUnmounted(() => { if (_pollTimer) clearInterval(_pollTimer) })
 .proposal-item__id { font-family: monospace; font-size: 11px; color: var(--color-text-light); }
 .proposal-item__title { font-weight: 500; font-size: 12px; color: var(--color-text-bright); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .proposal-item__meta { display: flex; gap: 8px; font-size: 11px; color: var(--color-text-light); flex-wrap: wrap; }
+.proposal-item__legacy { color: #7d8bf5; font-weight: 700; }
 .status-badge { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 9999px; }
 .status-badge--draft { background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
 .status-badge--submitted { background: var(--status-blue-bg); color: var(--status-blue-fg); }

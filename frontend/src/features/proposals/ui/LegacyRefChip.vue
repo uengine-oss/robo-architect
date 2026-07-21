@@ -4,24 +4,46 @@
     <button
       class="lref-chip"
       :class="{ open }"
-      :title="`이 제안은 레거시 분석 그래프에서 함수 ${totalNodes}개를 참조해 생성됨`"
+      :title="`이 제안은 레거시 분석 그래프에서 노드 ${totalNodes}개를 검색·검토함`"
+      :aria-expanded="open"
       @click.stop="open = !open"
     >
       ⛓ 레거시 근거 <b>{{ totalNodes }}</b>
     </button>
     <div v-if="open" class="lref-pop" @click.stop>
-      <div v-for="(st, i) in refs" :key="i" class="lref-stage">
+      <div v-for="(st, i) in normalizedRefs" :key="i" class="lref-stage">
         <div v-for="(r, j) in st.retrieves" :key="j" class="lref-retrieve">
-          <div class="lref-q">
-            <span class="lref-stagename">{{ st.stage }}</span>
-            검색: <code>“{{ r.query || '(질의 미기록)' }}”</code>
-            <span class="lref-at">{{ shortAt(r.at) }}</span>
-          </div>
-          <div v-for="n in r.nodes" :key="n.id" class="lref-node">
-            <span class="lref-fn">{{ n.name }}<i v-if="n.label === 'TABLE'"> TABLE</i></span>
-            <span class="lref-sum">{{ n.summary }}</span>
-            <span v-if="n.rulesCount" class="lref-rules">규칙 {{ n.rulesCount }}</span>
-          </div>
+          <details class="lref-details">
+            <summary class="lref-q">
+              <span class="lref-stagename">{{ st.stage }}</span>
+              검색: <code>“{{ r.query || '(질의 미기록)' }}”</code>
+              <span class="lref-at">{{ shortAt(r.at) }}</span>
+              <span class="lref-count">후보 {{ r.searchedNodes.length }} · 검토 {{ r.inspections.length }}</span>
+            </summary>
+            <div
+              v-for="n in r.searchedNodes"
+              :key="n.id"
+              class="lref-node"
+              :class="{ 'lref-node--search-only': !isInspected(r, n.id) }"
+            >
+              <span class="lref-state">{{ isInspected(r, n.id) ? '검토함' : '검색됨' }}</span>
+              <span class="lref-fn">{{ n.name }}<i v-if="n.label === 'TABLE'"> TABLE</i></span>
+              <span class="lref-sum">{{ n.summary }}</span>
+              <span v-if="n.rulesCount" class="lref-rules">규칙 {{ n.rulesCount }}</span>
+            </div>
+            <div v-for="inspection in r.inspections" :key="`detail:${inspection.nodeId}`" class="lref-inspection">
+              <span :class="['lref-state', inspection.ok ? '' : 'lref-state--error']">
+                {{ inspection.ok ? '상세' : '실패' }}
+              </span>
+              <code>{{ inspection.name || inspection.nodeId }}</code>
+              <span v-if="inspection.ok && inspection.source?.available" class="lref-source">
+                {{ inspection.source.file_path }}:{{ inspection.source.start_line }}~{{ inspection.source.end_line }}
+              </span>
+              <span v-else-if="!inspection.ok" class="lref-source lref-source--error">
+                {{ inspection.error?.code }}
+              </span>
+            </div>
+          </details>
         </div>
       </div>
     </div>
@@ -30,16 +52,20 @@
 
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { legacyReferenceCount, normalizeLegacyReferences } from '../legacy-reference'
 
 const props = defineProps({
-  /** proposal.legacyReferences — [{stage, retrieves:[{query, nodes:[{id,name,label,summary,relevance,rulesCount}], at}]}] */
+  /** proposal.legacyReferences v1/v2 — selector가 searched/inspected 계약으로 정규화한다. */
   refs: { type: Array, default: () => [] },
 })
 
 const open = ref(false)
-const totalNodes = computed(() =>
-  (props.refs || []).reduce(
-    (a, st) => a + (st.retrieves || []).reduce((b, r) => b + (r.nodes || []).length, 0), 0))
+const normalizedRefs = computed(() => normalizeLegacyReferences(props.refs))
+const totalNodes = computed(() => legacyReferenceCount(props.refs))
+
+function isInspected(retrieve, nodeId) {
+  return (retrieve.inspections || []).some((inspection) => inspection.nodeId === nodeId && inspection.ok)
+}
 
 function shortAt(at) {
   if (!at) return ''
@@ -69,16 +95,25 @@ onBeforeUnmount(() => document.removeEventListener('click', closeOnOutside))
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5); padding: 10px 12px; text-align: left;
 }
 .lref-q { color: #8b93a7; font-size: 12px; margin: 6px 0 4px; }
+.lref-details > summary { cursor: pointer; list-style-position: outside; }
 .lref-q code { color: #cdd4f7; background: #171a22; padding: 1px 6px; border-radius: 4px; }
 .lref-stagename {
   font-size: 10px; letter-spacing: 1px; color: #7d8bf5; border: 1px solid #3a4468;
   border-radius: 4px; padding: 0 5px; margin-right: 6px;
 }
 .lref-at { float: right; color: #5b6274; font-size: 11px; }
+.lref-count { margin-left: 7px; color: #6e7790; font-size: 11px; }
 .lref-node { display: flex; align-items: baseline; gap: 8px; padding: 5px 6px; border-radius: 6px; }
 .lref-node:hover { background: #262c3a; }
+.lref-node--search-only { opacity: 0.55; }
+.lref-state { color: #3ecf8e; font-size: 10px; min-width: 34px; }
+.lref-state--error { color: #fa7070; }
 .lref-fn { font-family: Consolas, monospace; color: #cdd4f7; font-size: 12.5px; white-space: nowrap; }
 .lref-fn i { color: #6e7790; font-size: 10px; font-style: normal; }
 .lref-sum { color: #8b93a7; font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lref-rules { color: #7d8bf5; font-size: 11px; white-space: nowrap; }
+.lref-inspection { display: flex; align-items: baseline; gap: 8px; padding: 4px 6px; font-size: 11px; }
+.lref-inspection code { color: #cdd4f7; }
+.lref-source { flex: 1; color: #7d8bf5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lref-source--error { color: #fa7070; }
 </style>

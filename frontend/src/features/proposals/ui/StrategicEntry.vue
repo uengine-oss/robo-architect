@@ -3,6 +3,7 @@
     <span class="diff-entry__title">{{ entry.entityTitle }}</span>
     <span v-if="typeLabel" class="type-chip">{{ typeLabel }}</span>
     <span :class="opClass(entry.op)">{{ entry.op }}</span>
+    <LegacyTag :element="entry" />
   </div>
   <template v-if="entry.acceptanceCriteria?.length">
     <ul class="ac-list">
@@ -22,6 +23,8 @@
 <script setup>
 // Strategic Diff 항목 하나를 op/title/acceptanceCriteria/fields 기준으로
 // 제네릭하게 렌더한다. Process(1급) 및 프로젝트별 미지 카테고리에서 공용 사용.
+import LegacyTag from './LegacyTag.vue'
+
 defineProps({
   entry: { type: Object, required: true },
   opClass: { type: Function, required: true },

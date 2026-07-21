@@ -270,6 +270,11 @@ async def update_diff(proposal_id: str, body: UpdateDiffRequest, request: Reques
     # 깨진 구조가 저장돼 조용히 소실/크래시되는 것을 막는다(직접 수정 보완).
     _validate_diff_payload(body.strategicDiff, body.tacticalDiff)
 
+    # evlink: 수동 편집으로도 provenance 밖 레거시 근거를 저장할 수 없다(N1).
+    from api.features.proposal_lifecycle.services.legacy_element_refs import enforce_proposal_refs
+    enforce_proposal_refs(proposal_id, strategic_diff=body.strategicDiff,
+                          tactical_diff=body.tacticalDiff)
+
     updates = {}
     if body.strategicDiff is not None:
         updates["strategicDiff"] = json.dumps(body.strategicDiff, ensure_ascii=False)

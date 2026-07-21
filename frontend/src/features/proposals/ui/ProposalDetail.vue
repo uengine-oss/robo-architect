@@ -9,14 +9,31 @@
         </span>
         <!-- spec 052: 이 제안이 실제 참조한 레거시 분석 근거(결정론 기록) -->
         <LegacyRefChip :refs="proposal.legacyReferences || []" />
+        <!-- evlink L0 — 커버리지 스트립: 열기 전에 전체 그림("근거 연결 10/12 · 신규 2") -->
+        <span v-if="evidenceCoverage" class="evidence-coverage">
+          {{ t('proposals.legacyTag.coverage',
+              { linked: evidenceCoverage.linked, total: evidenceCoverage.total }) }}
+          <i v-if="evidenceCoverage.fresh"> · {{ t('proposals.legacyTag.coverageNew', { n: evidenceCoverage.fresh }) }}</i>
+        </span>
+        <!-- evlink — 근거 검증 모드: 모든 요소 판정 칩 + 연결선 전체 노출(감사/시연용) -->
+        <button
+          class="evidence-toggle"
+          :class="{ 'evidence-toggle--on': evidenceMode }"
+          :title="t('proposals.legacyTag.toggleTitle')"
+          @click="evidenceMode = !evidenceMode"
+        >{{ t('proposals.legacyTag.toggle') }}</button>
       </div>
       <h2 class="detail-header__title">{{ proposal.title }}</h2>
       <p class="detail-header__prompt">{{ proposal.originalPrompt }}</p>
-      <!-- 역추출은 코드 그래프에서 뽑는 것이라 작성자/생성일이 무의미 → 숨김(047) -->
-      <div class="detail-header__info" v-if="!isReverse">
+      <div class="detail-header__info">
         <span>{{ t('proposals.detail.author') }} {{ proposal.author }}</span>
         <span>{{ t('proposals.detail.createdAt') }} {{ formatDate(proposal.createdAt) }}</span>
       </div>
+    </div>
+
+    <!-- evlink — 구버전 제안: 요소 단위 "미기록" 칩 도배 대신 배너 1개로 정직 고지 -->
+    <div v-if="isLegacyEraProposal" class="legacy-era-banner">
+      <span>ⓘ {{ t('proposals.legacyTag.banner') }}</span>
     </div>
 
     <!-- 041 — Plan stale 배너: Constitution/Strategic 변경 후 재계획 전까지 제출 차단(FR-018) -->
@@ -42,11 +59,6 @@
         <!-- 043 — ODA 표준: Intent 탭에 ODA 트랙(정합성·적합성 게이트·산출물) 융합 -->
         <OdaStandardTrack
           v-if="isOda"
-          :proposalId="proposal.id"
-        />
-        <!-- 047 — 코드에서 역추출: 결과 나오기 전엔 역추출 트랙, 나오면 아래 IntentDecompositionView -->
-        <ReverseIntentTrack
-          v-else-if="isReverse && !proposal.strategicDiff"
           :proposalId="proposal.id"
         />
         <!-- 042 — Detailed DDD: Intent 탭에 전략 단계(Discover·Decompose·Strategize) 융합 -->
@@ -137,6 +149,7 @@
           :strategicDiff="proposal.strategicDiff"
           :tacticalDiff="proposal.tacticalDiff || proposal.planDraft?.tacticalDiff"
           :journeys="proposal.journeys"
+          :legacyReferences="proposal.legacyReferences || []"
         />
         <details v-if="proposal.impactMap?.length" class="impact-conflict">
           <summary>충돌 가능성 분석 (Impact Map)</summary>
@@ -217,14 +230,24 @@
     </div>
 
     <p v-if="actionError" class="error-msg">{{ actionError }}</p>
+
+    <!-- evlink — 근거 인스펙터(우측 고정, 단일 인스턴스). hover preview 는 내용만 교체 -->
+    <LegacyEvidencePanel
+      v-if="evidenceSelection"
+      :element="evidenceSelection"
+      :previewing="!!evidencePreview && evidencePreview !== evidencePinned"
+      @close="closeEvidence"
+    />
   </div>
   <div v-else class="detail-loading">{{ t('proposals.detail.loading') }}</div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, provide } from 'vue'
 import { useI18n } from '../../../app/i18n'
 import LegacyRefChip from './LegacyRefChip.vue'
+import LegacyEvidencePanel from './LegacyEvidencePanel.vue'
+import { provenanceIndex } from '../legacy-reference'
 import { useProposalsStore } from '../proposals.store'
 import IntentDecompositionView from './IntentDecompositionView.vue'
 import ImpactMapView from './ImpactMapView.vue'
@@ -237,7 +260,6 @@ import StrategicStages from './StrategicStages.vue'
 import PlanStages from './PlanStages.vue'
 import StageArtifactTabs from './StageArtifactTabs.vue'
 import OdaStandardTrack from './OdaStandardTrack.vue'
-import ReverseIntentTrack from './ReverseIntentTrack.vue'
 
 const props = defineProps({ proposalId: { type: String, required: true } })
 const { t } = useI18n()
@@ -258,6 +280,87 @@ const intentStageTab = ref('STRATEGIC_DESIGN')
 const planStageTab = ref('PLAN_STAGE')
 
 const proposal = computed(() => store.currentProposal)
+
+// evlink — 요소별 LegacyTag 가 어느 깊이에서든 근거 노드 상세(name/source line)를
+// 조회할 수 있도록 provenance 인덱스를 provide 한다(prop drilling 방지).
+provide('evlinkLegacyProvenance',
+  computed(() => provenanceIndex(proposal.value?.legacyReferences || [])))
+
+// evlink — 근거 검증 모드(기본 OFF: 절제형). ON 이면 모든 판정 칩·연결선을 펼친다.
+const evidenceMode = ref(false)
+provide('evlinkEvidenceMode', evidenceMode)
+
+// evlink — 근거 인스펙터: 클릭=고정(pin), 패널이 열려 있는 동안 다른 태그 hover=
+// 내용 즉시 교체(preview). 시선은 패널에 고정한 채 요소들을 스윕으로 훑는다(L1).
+const evidencePinned = ref(null)
+const evidencePreview = ref(null)
+const evidenceSelection = computed(() => evidencePreview.value || evidencePinned.value)
+provide('evlinkEvidenceSelection', evidenceSelection)
+provide('evlinkOpenEvidence', (element) => {
+  evidencePreview.value = null
+  evidencePinned.value = evidencePinned.value === element ? null : element
+})
+provide('evlinkPreviewEvidence', (element) => {
+  // 패널이 닫혀 있으면 hover 로 출몰시키지 않는다(산만함 방지) — 열려 있을 때만 교체.
+  if (!evidencePinned.value) return
+  evidencePreview.value = element
+})
+function closeEvidence() { evidencePinned.value = null; evidencePreview.value = null }
+// 제안·탭 전환 시 이전 선택이 남지 않게 정리
+watch(() => props.proposalId, closeEvidence)
+watch(activeTab, closeEvidence)
+
+// evlink — 역방향 서사: 근거 nodeId → 그 근거를 인용한 설계 요소 목록(L2 카드에 표시).
+function allElements() {
+  const sd = proposal.value?.strategicDiff
+  const out = []
+  if (sd && typeof sd === 'object') {
+    for (const [key, entries] of Object.entries(sd)) {
+      if (key.startsWith('_') || !Array.isArray(entries)) continue
+      out.push(...entries.filter((e) => e && typeof e === 'object'))
+    }
+  }
+  const td = proposal.value?.tacticalDiff || proposal.value?.planDraft?.tacticalDiff
+  if (Array.isArray(td)) out.push(...td.filter((e) => e && typeof e === 'object'))
+  return out
+}
+provide('evlinkCitedBy', computed(() => {
+  const map = new Map()
+  for (const element of allElements()) {
+    if (!Array.isArray(element.legacyRefs)) continue
+    for (const ref of element.legacyRefs) {
+      const nid = ref && typeof ref === 'object' ? ref.nodeId : null
+      if (!nid) continue
+      if (!map.has(nid)) map.set(nid, [])
+      map.get(nid).push({
+        title: element.nodeTitle || element.entityTitle || element.tempId || '',
+        label: element.nodeLabel || element.entityType || '',
+        element,
+      })
+    }
+  }
+  return map
+}))
+
+// evlink — L0 커버리지: 열기 전에 전체 그림 먼저("근거 연결 10/12 · 신규 2").
+const evidenceCoverage = computed(() => {
+  const elements = allElements()
+  const judged = elements.filter((e) => Array.isArray(e.legacyRefs))
+  if (!judged.length) return null
+  const linked = judged.filter((e) => e.legacyRefs.length > 0).length
+  return { total: judged.length, linked, fresh: judged.length - linked }
+})
+
+// 구버전(요소별 근거 기록 이전) 판정: 요소는 있는데 legacyRefs 키를 가진 요소가 0.
+const isLegacyEraProposal = computed(() => {
+  const sd = proposal.value?.strategicDiff
+  if (!sd || typeof sd !== 'object') return false
+  const elements = Object.entries(sd)
+    .filter(([key, value]) => !key.startsWith('_') && Array.isArray(value))
+    .flatMap(([, value]) => value)
+    .filter((element) => element && typeof element === 'object')
+  return elements.length > 0 && elements.every((element) => !Array.isArray(element.legacyRefs))
+})
 // 042 — 상태 표시 라벨(코드 유지, 표시만 단계명): DRAFT=Intent, SUBMITTED=Plan, TESTING=Validating.
 function statusLabel(status) {
   return {
@@ -274,7 +377,6 @@ const isSubmitted = computed(() => proposal.value?.status === 'SUBMITTED')
 const isDetailed = computed(() => proposal.value?.decompositionMode === 'DETAILED_DDD')
 // 043 — ODA 표준 모드: Intent 탭에 ODA 트랙(정합성·게이트·산출물) 융합.
 const isOda = computed(() => proposal.value?.decompositionMode === 'ODA_STANDARD')
-const isReverse = computed(() => proposal.value?.decompositionMode === 'REVERSE_INTENT')
 const _hasStrategic = computed(() => {
   const sd = proposal.value?.strategicDiff
   return !!(sd && (sd.epics?.length || sd.userStories?.length || sd.features?.length))
@@ -528,6 +630,24 @@ function formatDate(dt) {
 .btn--secondary { background: var(--color-bg-tertiary); color: var(--color-text); }
 .error-msg { color: var(--color-danger); font-size: 12px; margin-top: 6px; }
 .plan-stale-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; padding: 8px 12px; border-radius: 6px; font-size: 12px; background: var(--status-amber-bg); color: var(--status-amber-fg); }
+
+/* evlink — 근거 검증 토글 + 구버전 배너 */
+.evidence-toggle {
+  font-size: 11px; font-weight: 600; line-height: 1.6; cursor: pointer;
+  padding: 1px 10px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid var(--color-border); background: transparent; color: var(--color-text-light);
+}
+.evidence-toggle:hover { border-color: #7d8bf5; color: #aab4f0; }
+.evidence-coverage { font-size: 11px; color: var(--color-text-light); white-space: nowrap; }
+.evidence-coverage i { font-style: normal; opacity: 0.8; }
+.evidence-toggle--on {
+  border-color: #7d8bf5; background: rgba(125, 139, 245, 0.14); color: #7d8bf5;
+}
+.legacy-era-banner {
+  margin-bottom: 14px; padding: 8px 12px; border-radius: 6px; font-size: 12px;
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-light); background: var(--color-bg-secondary);
+}
 .impact-conflict { margin-top: 14px; border-top: 1px solid var(--color-border); padding-top: 10px; }
 .impact-conflict summary { font-size: 12px; font-weight: 600; color: var(--color-text-light); cursor: pointer; }
 </style>

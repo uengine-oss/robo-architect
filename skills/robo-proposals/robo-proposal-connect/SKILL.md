@@ -30,8 +30,11 @@ narration(`[연동]`/`[분류]`/`[결합경고]`) 후 빈 줄, 그 다음:
 {
   "ConnectArtifact": {
     "interactions": [
-      {"from": "주문", "to": "결제", "message": "ChargePayment", "kind": "COMMAND", "sync": true, "rationale": "외부 PG 동기 호출"},
-      {"from": "결제", "to": "주문", "message": "PaymentConfirmed", "kind": "EVENT", "sync": false, "rationale": "비동기 pub/sub"}
+      {"from": "주문", "to": "결제", "message": "ChargePayment", "kind": "COMMAND", "sync": true,
+       "rationale": "외부 PG 동기 호출",
+       "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>", "role": "derived-from"}]},
+      {"from": "결제", "to": "주문", "message": "PaymentConfirmed", "kind": "EVENT", "sync": false,
+       "rationale": "비동기 pub/sub", "legacyRefs": []}
     ],
     "couplingWarnings": ["주문→결제→배송 동기 체인 주의"],
     "messagingChannel": "Kafka"
@@ -40,6 +43,8 @@ narration(`[연동]`/`[분류]`/`[결합경고]`) 후 빈 줄, 그 다음:
 ```
 
 ## Rules
+0. **모든 interaction 은 `legacyRefs` 배열을 가진다** — 현행 호출/이벤트 구현이 근거면 그
+   nodeId 를 승계하고, 신규 연동은 `[]`. 새 nodeId 를 지어내지 않는다.
 1. 특별한 동기 요구가 없으면 **EVENT(pub/sub)** 가 기본. 입력의 프로젝트 결합 posture 를 존중한다.
 2. 메시징 채널 기본은 Kafka(Constitution 기술스택이 다른 브로커를 지정하면 그걸 따른다).
 3. 결합 위반은 숨기지 말고 couplingWarnings 에 명시.

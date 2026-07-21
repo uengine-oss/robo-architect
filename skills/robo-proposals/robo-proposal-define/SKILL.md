@@ -11,6 +11,11 @@ ddd-starter Step 7(Define)을 적용한다. 영향 BC 마다 **Bounded Context C
 
 ## 먼저 읽어라
 - `~/.claude/skills/ddd-starter/references/07-define.md`
+- `skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md`
+
+**`legacy-reference.md` 는 Read 도구로 반드시 직접 읽고 그 호출 완료 게이트를 통과하라.**
+도구가 주입된 실행에서 `cluster_retrieve` 시도 없이 최종 JSON 을 출력하지 않는다. 각 BC 의
+책임·언어·비즈니스 결정을 현행 구현으로 검증할 ID 를 골라 `node_detail` 로 확인한다.
 
 ## BCC v5 구성 (ddd-crew/bounded-context-canvas 전 항목)
 1. **Purpose** — 비즈니스 관점의 책임/제공 가치.
@@ -31,6 +36,8 @@ narration(`[BCC]`/`[언어]`/`[결정]`) 후 빈 줄, 그 다음:
   "DefineArtifact": {
     "contexts": [{
       "name": "주문", "purpose": "주문 접수·확정·취소를 책임진다", "classification": "SUPPORTING",
+      "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>", "role": "derived-from",
+                      "evidence": "주문 접수·확정 트랜잭션의 현행 구현"}],
       "businessModel": ["revenue"], "evolution": "custom_built",
       "domainRoles": ["execution"],
       "inbound": [{"collaborator": "User", "message": "PlaceOrder", "type": "Command"}],
@@ -53,6 +60,9 @@ narration(`[BCC]`/`[언어]`/`[결정]`) 후 빈 줄, 그 다음:
 ```
 
 ## Rules
+0. **모든 context 는 `legacyRefs` 배열을 가진다** — 이 실행/이전 스테이지에서 실제 검색·검토한
+   nodeId 만, 대응 없는 신규 BC 는 `[]`. 규칙 유래면 `rule:"<본 문장 그대로>"` 인용
+   (형상: `robo-proposal-intent/references/output-schema.md` "내용 단위 인용" 절).
 1. 각 BC 의 ubiquitousLanguage 는 **5개 이상**.
 2. Inbound/Outbound 는 Connect 의 메시지 흐름과 일치(type: Query|Command|Event).
 3. Business Decisions 가 전부 "다른 컨텍스트가 결정" 이면 책임이 빈약한 신호 — 재검토.

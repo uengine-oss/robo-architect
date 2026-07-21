@@ -12,12 +12,8 @@ from typing import AsyncGenerator
 from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import run_skill_once, run_skill_lines, extract_json
-from api.features.proposal_lifecycle.services.legacy_provenance import (
-    MARK_QUERY,
-    ProvenanceCollector,
-    is_marker as is_provenance_marker,
-)
+from api.platform.skill_runner import run_skill_once, extract_json
+from api.features.proposal_lifecycle.services.legacy_stage_capture import stream_stage_skill_lines
 
 _SKILL_ROOT = "robo-proposals"
 _SKILL_NAME = "robo-proposal-intent"
@@ -68,25 +64,6 @@ def _build_intent_prompt(
         f"{feedback_section}\n\n"
         "위 변경 내용을 **Strategic Diff(Epic/Feature/UserStory/Process)만** 으로 분해하여 JSON으로 출력하세요. "
         "Tactical Diff(Aggregate/Command/Event/VO)와 아키텍처는 이후 Plan 단계에서 다루므로 여기서는 산출하지 마세요."
-    )
-
-
-def _build_reverse_prompt(brief_text: str) -> str:
-    """047 — 레거시 코드분석 브리프 → 요구사항 도출(역방향). _build_intent_prompt 대응·수정.
-
-    입력이 "변경 요청(자연어)"이 아니라 "테이블 앵커 브리프(코드분석 무손실)"이며,
-    지시를 "변경 분해"에서 "코드분석 → 요구사항 도출"로 바꾼다. 출력 형식은 동일한
-    Strategic Diff 라 하류(plan/tasks/implement)를 그대로 재사용한다.
-    """
-    return (
-        "다음은 레거시 시스템의 코드 분석 결과다 — 하나의 데이터(Aggregate 후보 테이블)를 중심으로,\n"
-        "그 테이블을 변경하는 오퍼레이션들의 비즈니스 규칙과 시나리오(GWT)를 코드 그래프에서 무손실 추출한 것이다.\n\n"
-        f"--- 코드 분석 결과 ---\n{brief_text}\n--- 끝 ---\n\n"
-        "현재 도메인 구성 요소 목록:\n(없음 — 신규 도출)\n\n"
-        "위 분석 결과로부터 이 시스템이 '무엇을 하는지' 사용자/업무 관점의 요구사항을 도출하라. "
-        "코드 구현 세부가 아니라 요구사항으로 재구성하고, 각 규칙·시나리오가 UserStory/GWT 에 반영되게 하라. "
-        "위 내용을 Strategic Diff(BoundedContext/Feature/UserStory/Process)로 분해하여 JSON 으로 출력하세요. "
-        "Tactical Diff/아키텍처는 산출하지 마세요."
     )
 
 
@@ -188,6 +165,11 @@ def _save_intent_result(proposal_id: str, data: dict) -> None:
         if inputs and inputs.get("prev_strategic"):
             strategic_diff["version"] = prev_version + 1
 
+    # evlink: 요소별 legacyRefs 는 이 Proposal 의 실제 검색·검토 기록(provenance)의
+    # 부분집합만 저장한다. 스트림 종료 시 collector.save 가 먼저 실행되므로 여기서 유효하다.
+    from api.features.proposal_lifecycle.services.legacy_element_refs import enforce_proposal_refs
+    enforce_proposal_refs(proposal_id, strategic_diff=strategic_diff)
+
     # 제목 자동 추출 (첫 UserStory 제목 또는 originalPrompt 첫 문장)
     auto_title = None
     us_list = strategic_diff.get("userStories", []) if isinstance(strategic_diff, dict) else []
@@ -245,22 +227,13 @@ async def stream_intent(proposal_id: str) -> AsyncGenerator[tuple[str, dict], No
     # SKILL.md가 narration 뒤 ```json 펜스로 JSON을 출력하므로 펜스/여는 중괄호를
     # 만나는 순간부터 log_line 방출을 멈춘다.
     suppress_log = False
-    provenance = ProvenanceCollector()   # spec 052 — 이 스테이지의 레거시 참조 결정론 기록
-    async for line in run_skill_lines(_SKILL_ROOT, _SKILL_NAME, human_prompt):
-        if is_provenance_marker(line):
-            entry = provenance.feed(line)
-            if line.startswith(MARK_QUERY):
-                try:
-                    q = str(json.loads(line[len(MARK_QUERY):]).get("query", "")).strip()
-                except ValueError:
-                    q = ""
-                if q:
-                    yield "log_line", {"text": f"🔍 레거시 그래프 검색: \"{q}\""}
-            if entry is not None:
-                yield "legacy_ref", entry
-                yield "log_line", {"text": f"   → 레거시 함수 {len(entry['nodes'])}개 · "
-                                           f"규칙 {sum(n['rulesCount'] for n in entry['nodes'])}개 참조됨 ⛓"}
+    async for event, payload in stream_stage_skill_lines(
+        proposal_id, "INTENT", _SKILL_ROOT, _SKILL_NAME, human_prompt,
+    ):
+        if event != "line":
+            yield event, payload
             continue
+        line = payload
         if line.startswith("TOOL:"):
             parts = line[5:].split(":", 1)
             yield "tool_use", {"tool": parts[0].strip(), "path": parts[1].strip() if len(parts) > 1 else ""}
@@ -292,14 +265,11 @@ async def stream_intent(proposal_id: str) -> AsyncGenerator[tuple[str, dict], No
     if action == "clarify":
         questions = result_data.get("questions", [])
         _save_intent_result(proposal_id, result_data)
-        provenance.save(proposal_id, "INTENT")   # spec 052 — clarify 여도 검색 기록은 보존
         yield "clarification_needed", {"questions": questions}
         yield "done", {"proposalId": proposal_id, "status": "DRAFT"}
         return
 
     _save_intent_result(proposal_id, result_data)
-    provenance.save(proposal_id, "INTENT")       # spec 052
-
     # 041: Intent 는 Strategic Diff 만 스트리밍한다. Tactical/Impact 는 Plan 단계로 이동(FR-006).
     if result_data.get("strategicDiff"):
         yield "strategic_diff", {"strategicDiff": result_data["strategicDiff"]}

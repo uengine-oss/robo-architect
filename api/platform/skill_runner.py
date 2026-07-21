@@ -333,8 +333,9 @@ async def run_skill_lines(
         # 토큰 델타로 텍스트를 이미 스트리밍했는지 추적.
         # True면 뒤따라오는 assistant/result 이벤트의 텍스트는 중복이므로 무시.
         streamed_text = False
-        # spec 052: robo-cluster tool_use id → 이름 매핑(해당 tool_result 만 마커로 표면화).
-        _legacy_tool_ids: dict[str, str] = {}
+        # spec 053: robo-cluster 검색/상세 tool_use id → typed 요청. 결과를 정확히 짝짓는다.
+        from api.platform.legacy_tool_events import encode_event, tool_kind
+        _legacy_tools: dict[str, dict] = {}
 
         while True:
             try:
@@ -407,12 +408,18 @@ async def run_skill_lines(
                                 or ""
                             )
                             yield f"TOOL:{tool_name}:{file_path}"
-                            # spec 052 프로버넌스: robo-cluster 검색만 query 를 별도 마커로 —
-                            # 기존 TOOL 라인은 file_path 전용이라 query 가 소실된다.
-                            if tool_name.endswith("cluster_retrieve"):
-                                _legacy_tool_ids[block.get("id", "")] = tool_name
-                                yield "LEGACYQ::" + json.dumps(
-                                    dict(tool_input), ensure_ascii=False, default=str,
+                            kind = tool_kind(tool_name)
+                            tool_use_id = block.get("id", "")
+                            if kind and tool_use_id:
+                                tracked = {
+                                    "kind": kind,
+                                    "tool_name": tool_name,
+                                    "input": dict(tool_input),
+                                }
+                                _legacy_tools[tool_use_id] = tracked
+                                yield encode_event(
+                                    phase="request", kind=kind, tool_use_id=tool_use_id,
+                                    tool_name=tool_name, tool_input=tracked["input"],
                                 )
 
                 # 2-b) user 이벤트(spec 052): tool_result 는 여기로 온다 — robo-cluster 결과만
@@ -423,7 +430,9 @@ async def run_skill_lines(
                     for block in content:
                         if not isinstance(block, dict) or block.get("type") != "tool_result":
                             continue
-                        if block.get("tool_use_id", "") not in _legacy_tool_ids:
+                        tool_use_id = block.get("tool_use_id", "")
+                        tracked = _legacy_tools.pop(tool_use_id, None)
+                        if tracked is None:
                             continue
                         parts = block.get("content", [])
                         if isinstance(parts, str):
@@ -434,9 +443,11 @@ async def run_skill_lines(
                                 if isinstance(p, dict) and p.get("type") == "text"
                             )
                         if text:
-                            # 결과가 pretty JSON(다중 라인)이어도 마커는 한 줄이어야 한다 —
-                            # JSON 토큰 사이 공백 제거는 무손상이므로 라인 결합으로 평탄화.
-                            yield "LEGACYREF::" + "".join(text.splitlines())[:200_000]
+                            yield encode_event(
+                                phase="result", kind=tracked["kind"],
+                                tool_use_id=tool_use_id, tool_name=tracked["tool_name"],
+                                content=text[:200_000],
+                            )
 
                 # 3) result 이벤트: 델타 스트리밍이 없었던 경우에만 fallback 출력.
                 elif evt_type == "result":

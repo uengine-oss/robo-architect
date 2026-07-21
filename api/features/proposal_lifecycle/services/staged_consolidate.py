@@ -41,6 +41,29 @@ def _entry(op, entity_type, title, *, temp_id=None, fields=None, acceptance=None
     return e
 
 
+def _refs(*sources) -> list[dict] | None:
+    """스테이지 산출물 요소들이 실어온 legacyRefs 를 nodeId 기준 dedupe 해 합친다.
+
+    수렴이 요소를 재구성하며 근거를 떨어뜨리지 않기 위한 운반 헬퍼(evlink SPEC2 T2-1).
+    근거가 하나도 없으면 None — 키를 생략해 저장 관문(enforce)의 REFS_MISSING 폴백에
+    맡긴다(스킬 계약 미확장 산출물과의 호환).
+    """
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for source in sources:
+        refs = source.get("legacyRefs") if isinstance(source, dict) else None
+        if not isinstance(refs, list):
+            continue
+        for ref in refs:
+            if isinstance(ref, str):
+                ref = {"nodeId": ref}
+            node_id = ref.get("nodeId") if isinstance(ref, dict) else None
+            if node_id and node_id not in seen:
+                seen.add(node_id)
+                merged.append(ref)
+    return merged or None
+
+
 def _stage_arts(state: dict) -> dict:
     arts = state.get("stageArtifacts") or {}
     # 사용자가 아직 confirm 하지 않은 마지막 실행 결과도 수렴 미리보기에서 사용할 수 있게 한다.
@@ -131,6 +154,7 @@ def _build_strategic(state: dict, arts: dict) -> dict:
         if not name:
             continue
         bc_temp = _temp("bc", name)
+        bc_refs = _refs(bc, bc.get("source"))
         if name not in seen_epics:
             seen_epics.add(name)
             strategic["epics"].append(_entry(
@@ -142,6 +166,7 @@ def _build_strategic(state: dict, arts: dict) -> dict:
                     "purpose": bc.get("purpose"),
                     "classification": bc.get("classification"),
                 },
+                legacyRefs=bc_refs,
             ))
 
         feature_title = f"{name} 관리"
@@ -156,6 +181,7 @@ def _build_strategic(state: dict, arts: dict) -> dict:
                 epicId=bc_temp,
                 boundedContextId=bc_temp,
                 fields={"description": bc.get("purpose") or feature_title},
+                legacyRefs=bc_refs,
             ))
 
     for story in _parse_prompt_user_stories(state.get("prompt") or "", contexts):
@@ -189,7 +215,8 @@ def _build_strategic(state: dict, arts: dict) -> dict:
         ))
 
     discover = arts.get("DISCOVER") or {}
-    events = [e.get("name") for e in (discover.get("events") or []) if e.get("name")]
+    discover_events = [e for e in (discover.get("events") or []) if isinstance(e, dict) and e.get("name")]
+    events = [e.get("name") for e in discover_events]
     if events:
         proc_title = "주문 관리 프로세스"
         if proc_title not in seen_processes:
@@ -199,6 +226,7 @@ def _build_strategic(state: dict, arts: dict) -> dict:
                 proc_title,
                 temp_id=_temp("process", proc_title),
                 fields={"description": " → ".join(events[:8])},
+                legacyRefs=_refs(*discover_events),
             ))
 
     return strategic
@@ -210,12 +238,19 @@ def _build_tactical(arts: dict) -> list[dict]:
     aggregate_to_bc = _aggregate_context_map(tactical_art, contexts)
     out: list[dict] = []
 
+    def _named(value):
+        """스킬 산출물의 Command/Event 는 이름 문자열 또는 {name, legacyRefs} 객체 양쪽을 수용."""
+        if isinstance(value, dict):
+            return value.get("name"), value
+        return value, None
+
     for agg in tactical_art.get("aggregates", []) or []:
         name = agg.get("name")
         if not name:
             continue
         bc_name = aggregate_to_bc.get(name)
         agg_ref = _temp("agg", name)
+        agg_refs = _refs(agg)
         out.append(_tactical_item(
             "Aggregate",
             name,
@@ -227,26 +262,35 @@ def _build_tactical(arts: dict) -> list[dict]:
             },
             invariants=agg.get("invariants", []),
             reason=f"{bc_name or '미지정 BC'}의 Aggregate 생성",
+            legacy_refs=agg_refs,
         ))
 
         for cmd in agg.get("handledCommands", []) or []:
+            cmd_name, cmd_src = _named(cmd)
+            if not cmd_name:
+                continue
             out.append(_tactical_item(
                 "Command",
-                cmd,
+                cmd_name,
                 bounded_context=bc_name,
                 aggregate_id=agg_ref,
-                temp_id=_temp("cmd", cmd),
+                temp_id=_temp("cmd", cmd_name),
                 reason=f"{name} Aggregate가 처리하는 Command",
+                legacy_refs=_refs(cmd_src) if cmd_src else None,
             ))
-        first_cmd = (agg.get("handledCommands") or [None])[0]
+        first_cmd, _ = _named((agg.get("handledCommands") or [None])[0])
         for evt in agg.get("createdEvents", []) or []:
+            evt_name, evt_src = _named(evt)
+            if not evt_name:
+                continue
             out.append(_tactical_item(
                 "Event",
-                evt,
+                evt_name,
                 bounded_context=bc_name,
                 command_id=_temp("cmd", first_cmd) if first_cmd else None,
-                temp_id=_temp("evt", evt),
+                temp_id=_temp("evt", evt_name),
                 reason=f"{name} Aggregate에서 발행되는 Event",
+                legacy_refs=_refs(evt_src) if evt_src else None,
             ))
 
     _validate_tactical(out)
@@ -274,7 +318,8 @@ def _aggregate_context_map(tactical_art: dict, contexts: list[dict]) -> dict[str
 
 
 def _tactical_item(label: str, title: str, *, bounded_context=None, aggregate_id=None,
-                   command_id=None, temp_id=None, fields=None, invariants=None, reason="") -> dict:
+                   command_id=None, temp_id=None, fields=None, invariants=None, reason="",
+                   legacy_refs=None) -> dict:
     item = {
         "changeType": "CREATE",
         "nodeLabel": label,
@@ -299,6 +344,8 @@ def _tactical_item(label: str, title: str, *, bounded_context=None, aggregate_id
             for inv in invariants
             if inv
         ]
+    if legacy_refs:
+        item["legacyRefs"] = legacy_refs
     return item
 
 
@@ -324,6 +371,10 @@ def consolidate(proposal_id: str) -> Optional[dict]:
         tactical = _build_tactical(arts)
     except ValueError as e:
         return {"reason": "invalid_staged_diff", "message": str(e)}
+
+    # evlink: Detailed DDD 수렴 저장도 legacyRefs 관문을 지난다.
+    from api.features.proposal_lifecycle.services.legacy_element_refs import enforce_proposal_refs
+    enforce_proposal_refs(proposal_id, strategic_diff=strategic, tactical_diff=tactical)
 
     with get_session() as session:
         session.run(

@@ -73,6 +73,9 @@ def _read_tactical(proposal_id: str) -> list[dict]:
 
 def _write_tactical(proposal_id: str, tactical: list[dict]) -> None:
     """Proposal 노드의 tacticalDiff 속성만 갱신(제안 자기 데이터). 라이브 디자인 그래프 무관."""
+    # evlink: 편집 경로도 legacyRefs 관문을 지난다 — 수동 편집으로도 근거를 지어낼 수 없다.
+    from api.features.proposal_lifecycle.services.legacy_element_refs import enforce_proposal_refs
+    enforce_proposal_refs(proposal_id, tactical_diff=tactical)
     td_json = json.dumps(tactical, ensure_ascii=False)
     with get_session() as session:
         session.run(

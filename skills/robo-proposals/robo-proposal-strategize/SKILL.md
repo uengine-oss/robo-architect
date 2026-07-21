@@ -24,8 +24,10 @@ narration(`[분류]`/`[차별성]`/`[build-vs-buy]`) 후 빈 줄, 그 다음:
 {
   "StrategizeArtifact": {
     "classifications": [
-      {"subDomain": "추천", "kind": "CORE", "rationale": "체류시간 좌우, 경쟁 차별점", "buildVsBuy": null},
-      {"subDomain": "결제", "kind": "GENERIC", "rationale": "표준 PG로 충분", "buildVsBuy": "Toss Payments"}
+      {"subDomain": "추천", "kind": "CORE", "rationale": "체류시간 좌우, 경쟁 차별점", "buildVsBuy": null,
+       "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>", "role": "derived-from"}]},
+      {"subDomain": "결제", "kind": "GENERIC", "rationale": "표준 PG로 충분", "buildVsBuy": "Toss Payments",
+       "legacyRefs": []}
     ],
     "differentiation": {"valueProposition": "...", "differentiator": "추천 정확도", "personas": ["..."]}
   }
@@ -34,6 +36,8 @@ narration(`[분류]`/`[차별성]`/`[build-vs-buy]`) 후 빈 줄, 그 다음:
 `differentiation` 은 프로젝트 차별성이 새로 드러났을 때만 포함(없으면 생략 — 기존 메모리 유지).
 
 ## Rules
+0. **모든 classification 은 `legacyRefs` 배열을 가진다** — 입력(Decompose 서브도메인)의 근거를
+   승계하고, 대응 없으면 `[]`. 새 nodeId 를 지어내지 않는다.
 1. 모든 영향 서브도메인은 CORE/SUPPORTING/GENERIC 중 하나로 분류(빈 분류 금지).
 2. 전부 Core 거나 전부 Generic 이면 의심하고 재검토.
 3. 메모리에 이미 있는 분류와 **다르게** 판단하면 그 사유를 rationale 에 분명히 적는다(백엔드가 충돌로 surface 한다).

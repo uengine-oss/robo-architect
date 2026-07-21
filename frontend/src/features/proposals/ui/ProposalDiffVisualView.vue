@@ -1,13 +1,16 @@
 <script setup>
 // 038 Change Management의 DesignChangesView(레이어별 구조화 diff) 시각화를 Proposal로 포팅.
 // 입력은 이미 계산된 strategicDiff + tacticalDiff. SSE 없이 정적 렌더링한다.
-import { computed, ref } from 'vue'
+import { computed, inject, ref, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from '../../../app/i18n'
+import { legacyReferenceItems, elementLegacyBasis, shortSourcePath } from '../legacy-reference'
+import LegacyTag from './LegacyTag.vue'
 
 const props = defineProps({
   strategicDiff: { type: Object, default: () => ({}) },
   tacticalDiff:  { type: Array,  default: () => [] },
   journeys:      { type: Array,  default: () => [] },
+  legacyReferences: { type: Array, default: () => [] },
 })
 
 const { t } = useI18n()
@@ -140,7 +143,8 @@ const nodes = computed(() => {
   const out = []
   const sd = props.strategicDiff || {}
   for (const [key, entries] of Object.entries(sd)) {
-    if (key === 'version' || !Array.isArray(entries)) continue
+    // '_' 접두 키(_legacyRefWarnings 등)는 요소가 아니라 메타데이터다.
+    if (key === 'version' || key.startsWith('_') || !Array.isArray(entries)) continue
     for (const e of entries) {
       const label = labelForCategory(e, key)
       const title = e.entityTitle || e.storyTitle || e.featureTitle || ''
@@ -151,6 +155,8 @@ const nodes = computed(() => {
         changeType: (e.op || 'MODIFY').toUpperCase(),
         impactLevel: e.impactLevel || 'MEDIUM',
         acceptanceCriteria: e.acceptanceCriteria || [],
+        // evlink — 요소 소유 레거시 근거를 그대로 운반(결정론 태그·연결선의 단일 진실).
+        legacyRefs: e.legacyRefs,
       }
       if (label === 'UserStory') {
         const { role, action } = parseRoleAction(title)
@@ -183,6 +189,7 @@ const nodes = computed(() => {
       nodeTitle: title,
       changeType: (item.changeType || item.op || 'MODIFY').toUpperCase(),
       impactLevel: item.impactLevel || 'MEDIUM',
+      legacyRefs: item.legacyRefs,
       ...struct,
       scalarChanges: [...(struct.scalarChanges || []), ...fieldChanges],
       properties: Array.isArray(item.properties) ? item.properties : [],
@@ -216,6 +223,84 @@ const hasDetail = (n) =>
   n.properties?.length || n.gwt?.length || n.userStoryRefs?.length ||
   n.invariantObjects?.length || n.ui
 
+// evlink — 연결의 단일 진실은 요소가 소유한 legacyRefs(생성 시점 기록, 백엔드 검증).
+// 과거 문자열 substring 매칭은 누락·오탐 원인이라 제거했다.
+const legacyItems = computed(() => legacyReferenceItems(props.legacyReferences))
+const basisByNode = computed(() => new Map(nodes.value.map((node) => [
+  node.nodeId, elementLegacyBasis(node),
+])))
+function basisForNode(node) {
+  return basisByNode.value.get(node.nodeId) || { state: 'unknown', refs: [] }
+}
+const linkedReferenceIds = computed(() => new Set(
+  nodes.value.flatMap((node) => basisForNode(node).refs.map((ref) => ref.nodeId))))
+
+// 레일 정보 위계: 인용된 근거가 주인공, 검색만 된 후보는 아코디언으로 접는다.
+const citedItems = computed(() => legacyItems.value.filter((item) => linkedReferenceIds.value.has(item.id)))
+const searchedOnlyItems = computed(() => legacyItems.value.filter((item) => !linkedReferenceIds.value.has(item.id)))
+
+// 근거 검증 모드(제안 헤더 토글): ON=모든 판정·연결선 전개, OFF=hover 포커스만.
+const evidenceMode = inject('evlinkEvidenceMode', ref(false))
+const hoverNodeId = ref(null)
+const hoverRefId = ref(null)
+
+// hover 포커스 집합 — 요소↔근거 양방향 하이라이트.
+const focusRefIds = computed(() => {
+  if (!hoverNodeId.value) return new Set()
+  const basis = basisByNode.value.get(hoverNodeId.value)
+  return new Set((basis?.refs || []).map((ref) => ref.nodeId))
+})
+const focusNodeIds = computed(() => {
+  if (!hoverRefId.value) return new Set()
+  return new Set(nodes.value
+    .filter((node) => basisForNode(node).refs.some((ref) => ref.nodeId === hoverRefId.value))
+    .map((node) => node.nodeId))
+})
+
+const evidenceRoot = ref(null)
+const wirePaths = ref([])
+async function rebuildWires() {
+  await nextTick()
+  const root = evidenceRoot.value
+  if (!root) { wirePaths.value = []; return }
+  const rootRect = root.getBoundingClientRect()
+  const refs = new Map([...root.querySelectorAll('[data-evidence-ref]')]
+    .map((element) => [element.dataset.evidenceRef, element]))
+  const paths = []
+  for (const nodeElement of root.querySelectorAll('[data-evidence-node]')) {
+    const nodeId = nodeElement.dataset.evidenceNode
+    const basis = basisByNode.value.get(nodeId)
+    for (const item of (basis?.refs || [])) {
+      const refElement = refs.get(item.nodeId)
+      if (!refElement) continue
+      const from = refElement.getBoundingClientRect()
+      const to = nodeElement.getBoundingClientRect()
+      const x1 = from.left - rootRect.left
+      const y1 = from.top - rootRect.top + from.height / 2
+      const x2 = to.right - rootRect.left
+      const y2 = to.top - rootRect.top + to.height / 2
+      paths.push({
+        key: `${nodeId}:${item.nodeId}`,
+        nodeId,
+        refId: item.nodeId,
+        d: `M ${x1} ${y1} C ${x1 - 45} ${y1}, ${x2 + 45} ${y2}, ${x2} ${y2}`,
+      })
+    }
+  }
+  wirePaths.value = paths
+}
+watch([nodes, legacyItems, expandedId, evidenceMode], rebuildWires, { deep: true })
+
+// 상시 스파게티 방지: 검증 모드에서만 전체, 평소엔 hover 대상의 선만 그린다.
+const visibleWirePaths = computed(() => {
+  if (evidenceMode.value) return wirePaths.value
+  if (hoverNodeId.value) return wirePaths.value.filter((path) => path.nodeId === hoverNodeId.value)
+  if (hoverRefId.value) return wirePaths.value.filter((path) => path.refId === hoverRefId.value)
+  return []
+})
+onMounted(() => { rebuildWires(); window.addEventListener('resize', rebuildWires) })
+onBeforeUnmount(() => window.removeEventListener('resize', rebuildWires))
+
 // ── Journeys (사용자 화면 흐름) ──────────────────────────────────────────
 const journeyList = computed(() =>
   (props.journeys || []).filter(j => j && (j.name || j.title)))
@@ -226,7 +311,8 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
   <div class="pdv-root">
     <div v-if="!activeLayers.length" class="pdv-empty">{{ t('proposals.diffVisual.empty') }}</div>
 
-    <div v-else class="pdv-tree">
+    <div v-else ref="evidenceRoot" class="pdv-evidence-layout">
+    <div class="pdv-tree">
       <template v-for="(layer, li) in activeLayers" :key="layer.key">
         <div v-if="li > 0" class="pdv-arrow">
           <div class="pdv-arrow__line" /><div class="pdv-arrow__head" />
@@ -244,7 +330,13 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
           <div class="pdv-nodes">
             <div v-for="node in layeredNodes[layer.key]" :key="node.nodeId"
-                 class="pdv-node" :style="{'--ic': IMPACT_COLORS[node.impactLevel]}">
+                 class="pdv-node"
+                 :class="{
+                   'pdv-node--evidence': basisForNode(node).state === 'linked',
+                   'pdv-node--focus': focusNodeIds.has(node.nodeId),
+                 }"
+                 :data-evidence-node="node.nodeId" :style="{'--ic': IMPACT_COLORS[node.impactLevel]}"
+                 @mouseenter="hoverNodeId = node.nodeId" @mouseleave="hoverNodeId = null">
               <div class="pdv-node__row">
                 <span class="pdv-node__type-icon">{{ LABEL_ICONS[node.nodeLabel] || '🔷' }}</span>
                 <div class="pdv-node__info">
@@ -255,6 +347,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
                   {{ CHANGE_TYPE_LABELS[node.changeType] || node.changeType }}
                 </span>
                 <span class="pdv-impact-badge">{{ node.impactLevel }}</span>
+                <LegacyTag :element="node" />
                 <button v-if="hasDetail(node)" class="pdv-expand-btn"
                         @click="expandedId = expandedId === node.nodeId ? null : node.nodeId">
                   {{ expandedId === node.nodeId ? '▲' : '▼' }}
@@ -383,6 +476,41 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
         </div>
       </template>
     </div>
+    <aside v-if="legacyItems.length" class="pdv-legacy-rail" aria-label="레거시 근거">
+      <div class="pdv-legacy-rail__title">
+        레거시 근거
+        <span class="pdv-legacy-rail__legend">인용 {{ citedItems.length }} · 검색 {{ searchedOnlyItems.length }}</span>
+      </div>
+      <div
+        v-for="item in citedItems"
+        :key="item.id"
+        :data-evidence-ref="item.id"
+        class="pdv-legacy-item"
+        :class="{ 'pdv-legacy-item--focus': focusRefIds.has(item.id) }"
+        @mouseenter="hoverRefId = item.id" @mouseleave="hoverRefId = null"
+      >
+        <div class="pdv-legacy-item__name">{{ item.logicalName || item.name || item.id }}</div>
+        <div class="pdv-legacy-item__meta">
+          <span v-if="item.label" class="pdv-legacy-item__label">{{ item.label }}</span>
+          <span v-if="item.inspected && item.source?.available" class="pdv-legacy-item__src">
+            {{ shortSourcePath(item.source.file_path) }}:{{ item.source.start_line }}~{{ item.source.end_line }}
+          </span>
+          <span v-else>{{ item.inspected ? '원문 검토' : '검색 확인' }}</span>
+        </div>
+      </div>
+      <details v-if="searchedOnlyItems.length" class="pdv-rail-more" :open="evidenceMode"
+               @toggle="rebuildWires">
+        <summary>검색됨 · 인용 없음 {{ searchedOnlyItems.length }}</summary>
+        <div v-for="item in searchedOnlyItems" :key="item.id"
+             class="pdv-legacy-item pdv-legacy-item--search-only">
+          <div class="pdv-legacy-item__name">{{ item.name || item.id }}</div>
+        </div>
+      </details>
+    </aside>
+    <svg v-if="visibleWirePaths.length" class="pdv-evidence-wires" aria-hidden="true">
+      <path v-for="path in visibleWirePaths" :key="path.key" :d="path.d" />
+    </svg>
+    </div>
 
     <!-- 사용자 여정 (화면 흐름) -->
     <div v-if="journeyList.length" class="pdv-journeys">
@@ -403,7 +531,8 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 <style scoped>
 .pdv-root { display: flex; flex-direction: column; gap: 10px; }
 .pdv-empty { padding: 24px; text-align: center; font-size: 0.78rem; color: var(--color-text-light); }
-.pdv-tree { display: flex; flex-direction: column; }
+.pdv-evidence-layout { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 18px; }
+.pdv-tree { display: flex; flex-direction: column; min-width: 0; }
 .pdv-arrow { display: flex; flex-direction: column; align-items: center; padding: 2px 0; }
 .pdv-arrow__line { width: 2px; height: 14px; background: var(--color-border); }
 .pdv-arrow__head { width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-top:7px solid var(--color-border); }
@@ -417,6 +546,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
 .pdv-nodes { display: flex; flex-direction: column; }
 .pdv-node { border-bottom: 1px solid var(--color-border); padding: 7px 10px; }
+.pdv-node--evidence { box-shadow: inset -2px 0 #7d8bf5; }
 .pdv-node:last-child { border-bottom: none; }
 .pdv-node__row { display: flex; align-items: center; gap: 7px; }
 .pdv-node__type-icon { font-size: 0.85rem; flex-shrink: 0; }
@@ -426,6 +556,31 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 .pdv-ct-badge { flex-shrink: 0; font-size: 0.58rem; font-weight: 700; color: var(--ct, #888); background: color-mix(in srgb, var(--ct, #888) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ct, #888) 30%, transparent); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
 .pdv-impact-badge { flex-shrink: 0; font-size: 0.58rem; font-weight: 700; color: var(--ic); background: color-mix(in srgb, var(--ic) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ic) 30%, transparent); padding: 1px 5px; border-radius: 3px; }
 .pdv-expand-btn { font-size: 0.55rem; color: var(--color-text-light); background: none; border: none; cursor: pointer; flex-shrink: 0; padding: 2px 4px; }
+
+.pdv-legacy-rail { position: relative; z-index: 2; border-left: 1px dashed var(--color-border); padding-left: 12px; }
+.pdv-legacy-rail__title {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
+  margin-bottom: 7px; color: #aab4f0; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em;
+}
+.pdv-legacy-rail__legend { color: #8b93a7; font-size: 0.6rem; font-weight: 400; }
+.pdv-legacy-item { margin: 6px 0; padding: 7px 9px; border: 1px solid #3a4468; border-radius: 7px; background: #232a45; cursor: default; }
+.pdv-legacy-item--focus { border-color: #7d8bf5; background: #2a3358; }
+.pdv-legacy-item--search-only { opacity: 0.55; background: var(--color-bg-secondary); border-color: var(--color-border); padding: 4px 9px; }
+.pdv-legacy-item__name { overflow: hidden; color: #cdd4f7; font-size: 0.68rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.pdv-legacy-item--search-only .pdv-legacy-item__name { font-family: Consolas, monospace; font-weight: 400; }
+.pdv-legacy-item__meta { display: flex; align-items: baseline; gap: 5px; margin-top: 2px; color: #8b93a7; font-size: 0.59rem; }
+.pdv-legacy-item__label { flex-shrink: 0; border: 1px solid var(--color-border); border-radius: 3px; padding: 0 3px; font-size: 0.52rem; }
+.pdv-legacy-item__src { overflow: hidden; font-family: Consolas, monospace; color: #7d8bf5; text-overflow: ellipsis; white-space: nowrap; }
+.pdv-rail-more > summary { margin-top: 8px; color: #6e7790; font-size: 0.6rem; cursor: pointer; user-select: none; }
+.pdv-node--focus { background: #262c3a; box-shadow: inset -2px 0 #7d8bf5; }
+.pdv-evidence-wires { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.pdv-evidence-wires path { fill: none; stroke: #7d8bf5; stroke-width: 1.5; opacity: 0.82; }
+
+@media (max-width: 900px) {
+  .pdv-evidence-layout { grid-template-columns: 1fr; }
+  .pdv-legacy-rail { border-top: 1px dashed var(--color-border); border-left: 0; padding-top: 8px; padding-left: 0; }
+  .pdv-evidence-wires { display: none; }
+}
 
 .pdv-detail { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--color-border); display: flex; flex-direction: column; gap: 10px; }
 .pdv-summary { background: rgba(64,192,87,.05); border: 1px solid rgba(64,192,87,.2); border-radius: 4px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }

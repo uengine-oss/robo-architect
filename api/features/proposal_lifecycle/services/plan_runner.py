@@ -14,9 +14,10 @@ from typing import AsyncGenerator, Optional
 from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import run_skill_lines, extract_json
+from api.platform.skill_runner import extract_json
 from api.features.proposal_lifecycle.proposal_contracts import constitution_hash
 from api.features.proposal_lifecycle.services.constitution_runner import read_constitution
+from api.features.proposal_lifecycle.services.legacy_stage_capture import stream_stage_skill_lines
 
 _SKILL_ROOT = "robo-proposals"
 _SKILL_NAME = "robo-proposal-plan"
@@ -279,6 +280,9 @@ def confirm_plan(proposal_id: str, implementation_plan: dict,
         set_parts.append("p.constitutionHash = $chash")
         params["chash"] = c_hash
     if tactical_diff is not None:
+        # evlink: 확정 저장 전 요소별 legacyRefs 를 provenance 부분집합으로 강제한다.
+        from api.features.proposal_lifecycle.services.legacy_element_refs import enforce_proposal_refs
+        enforce_proposal_refs(proposal_id, tactical_diff=tactical_diff)
         set_parts.append("p.tacticalDiff = $td")
         params["td"] = json.dumps(tactical_diff, ensure_ascii=False)
     if impact_map is not None:
@@ -322,7 +326,13 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
 
     output_lines: list[str] = []
     suppress_log = False
-    async for line in run_skill_lines(_SKILL_ROOT, _SKILL_NAME, human_prompt):
+    async for event, payload in stream_stage_skill_lines(
+        proposal_id, "PLAN", _SKILL_ROOT, _SKILL_NAME, human_prompt,
+    ):
+        if event != "line":
+            yield event, payload
+            continue
+        line = payload
         if line.startswith("TOOL:"):
             continue
         output_lines.append(line)

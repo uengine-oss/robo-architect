@@ -14,7 +14,6 @@ from api.features.proposal_lifecycle.routes.proposals_preview import router as p
 from api.features.proposal_lifecycle.routes.proposals_preview_edit import router as preview_edit_router
 from api.features.proposal_lifecycle.routes.proposals_staged import router as staged_router
 from api.features.proposal_lifecycle.routes.proposals_oda import router as oda_router
-from api.features.proposal_lifecycle.routes.proposals_reverse import router as reverse_router
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
 
@@ -30,4 +29,3 @@ router.include_router(preview_router)
 router.include_router(preview_edit_router)
 router.include_router(staged_router)
 router.include_router(oda_router)
-router.include_router(reverse_router)

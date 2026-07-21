@@ -7,18 +7,7 @@
 
     <!-- Step 1: 자연어 입력 -->
     <div v-if="step === 'input'" class="proposal-create__input">
-      <!-- 047 — 역추출 모드: 자연어 대신 분석 그래프 선택 -->
-      <div v-if="isReverse" class="reverse-source">
-        <label class="reverse-source__label">{{ t('proposals.create.reverseSourceLabel') }}</label>
-        <select v-model="reverseDb" class="reverse-source__select" :disabled="!reverseSources.length">
-          <option v-for="s in reverseSources" :key="s.db" :value="s.db">
-            {{ s.label }} ({{ s.operationCount }})
-          </option>
-        </select>
-        <p v-if="!reverseSources.length" class="reverse-source__empty">{{ t('proposals.create.reverseSourceEmpty') }}</p>
-      </div>
       <textarea
-        v-else
         v-model="promptText"
         :placeholder="t('proposals.create.inputPlaceholder')"
         rows="4"
@@ -121,25 +110,10 @@ const modeOptions = [
   { value: 'SIMPLIFIED', labelKey: 'proposals.create.modeSimplified', descKey: 'proposals.create.modeSimplifiedDesc' },
   { value: 'DETAILED_DDD', labelKey: 'proposals.create.modeDetailed', descKey: 'proposals.create.modeDetailedDesc' },
   { value: 'ODA_STANDARD', labelKey: 'proposals.create.modeOda', descKey: 'proposals.create.modeOdaDesc' },
-  { value: 'REVERSE_INTENT', labelKey: 'proposals.create.modeReverse', descKey: 'proposals.create.modeReverseDesc' },
 ]
-// 047 — 역추출 모드: 분석 그래프 소스 선택.
-const isReverse = computed(() => mode.value === 'REVERSE_INTENT')
-const reverseSources = ref([])
-const reverseDb = ref('')
-watch(mode, async (m) => {
-  if (m === 'REVERSE_INTENT' && !reverseSources.value.length) {
-    reverseSources.value = await store.fetchReverseSources()
-    if (reverseSources.value.length && !reverseDb.value) reverseDb.value = reverseSources.value[0].db
-  }
-})
-const submitDisabled = computed(() =>
-  loading.value || (isReverse.value ? !reverseDb.value : !promptText.value.trim())
-)
-const submitLabel = computed(() => {
-  if (loading.value) return t('proposals.create.analyzing')
-  return isReverse.value ? t('proposals.create.reverseStart') : t('proposals.create.startAnalysis')
-})
+const submitDisabled = computed(() => loading.value || !promptText.value.trim())
+const submitLabel = computed(() =>
+  loading.value ? t('proposals.create.analyzing') : t('proposals.create.startAnalysis'))
 const currentPhase = ref('')
 const clarifyQuestions = ref([])
 const answers = ref({})
@@ -152,17 +126,6 @@ const allAnswered = computed(() =>
 
 async function submit() {
   loading.value = true
-
-  // 047 — 역추출 모드: 자연어 없이 분석 그래프로 생성 → 상세 뷰의 역추출 트랙으로 위임.
-  if (isReverse.value) {
-    if (!reverseDb.value) { loading.value = false; return }
-    const proposal = await store.createReverseProposal(reverseDb.value)
-    loading.value = false
-    if (!proposal) { step.value = 'input'; return }
-    emit('created', proposal.id)
-    return
-  }
-
   if (!promptText.value.trim()) { loading.value = false; return }
 
   const proposal = await store.createProposal(promptText.value.trim(), null, mode.value)

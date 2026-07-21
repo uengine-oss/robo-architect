@@ -12,6 +12,7 @@
             <div class="entry-header">
               <span class="entry-title">{{ pc.entityTitle }}</span>
               <span :class="opClass(pc.op)">{{ pc.op }}</span>
+              <LegacyTag :element="pc" />
             </div>
             <!-- 설명: 레이블 없이 이벤트 흐름 위에 본문으로 -->
             <p v-if="descOf(pc)" class="entry-desc">{{ descOf(pc) }}</p>
@@ -46,6 +47,7 @@
                 <span class="entry-title entry-title--bc">{{ ep.node.entityTitle }}</span>
                 <span v-if="classLabel(ep.node)" class="class-chip" :class="classChip(ep.node)">{{ classLabel(ep.node) }}</span>
                 <span :class="opClass(ep.node.op)">{{ ep.node.op }}</span>
+                <LegacyTag :element="ep.node" />
               </div>
               <p v-if="descOf(ep.node)" class="entry-desc">{{ descOf(ep.node) }}</p>
               <div v-for="[k, v] in otherFields(ep.node)" :key="k" class="diff-entry__field">
@@ -101,6 +103,7 @@
 import { computed, ref } from 'vue'
 import StrategicEntry from './StrategicEntry.vue'
 import FeatureNode from './FeatureNode.vue'
+import LegacyTag from './LegacyTag.vue'
 import { useI18n } from '../../../app/i18n'
 
 const { t } = useI18n()
@@ -245,7 +248,8 @@ function prettyLabel(key) {
 const extraGroups = computed(() => {
   const out = []
   for (const [key, value] of Object.entries(sd.value)) {
-    if (FIRST_CLASS_KEYS.includes(key)) continue
+    // '_' 접두 키(_legacyRefWarnings 등)는 요소 카테고리가 아니라 메타데이터.
+    if (FIRST_CLASS_KEYS.includes(key) || key.startsWith('_')) continue
     if (Array.isArray(value) && value.length) {
       out.push({ key, label: prettyLabel(key), entries: value })
     }

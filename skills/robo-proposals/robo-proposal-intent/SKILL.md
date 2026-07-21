@@ -1,114 +1,80 @@
 # Skill: robo-proposal-intent
 
 ## Purpose
-자연어 요구사항을 **Strategic Diff(BoundedContext(=Epic)/Feature/UserStory/Process) 로만** 분해한다.
-각 UserStory 는 동작형(Command 기반) vs 조회형(ReadModel 기반)을 구분하고, 인수조건(GWT 요약) 수준의 의도를 담는다.
 
-> **041 분리(중요)**: Tactical Diff(Aggregate/Command/Event/ReadModel/Policy/VO)와 아키텍처 구현계획은
-> **이 스킬에서 산출하지 않는다.** 그것은 후속 **Plan 단계(`robo-proposal-plan`)** 가 Strategic Diff +
-> Constitution 을 입력으로 받아 수행한다(FR-006). 이 스킬은 *무엇을* 만들지(전략)만 확정한다.
+자연어 요구사항을 **Strategic Diff(BoundedContext(=Epic)/Feature/UserStory/Process)만**으로 분해한다.
+이 단계는 무엇을 만들지 확정한다. 전술 설계와 아키텍처 구현 계획은 후속 PLAN 단계가 담당한다.
+요구사항이 모호할 때는 최대 5개의 선택형 명확화 질문을 제시한다.
 
-요구사항이 모호할 때는 최대 5개의 선택형 명확화 질문을 순차 제시한다.
+## 완료 전에 반드시 읽고 실행할 계약
 
-## 레퍼런스를 먼저 읽어라 (필수)
-출력 전, 아래 파일들을 Read 도구로 읽고 그 규칙을 적용하라. (cwd = 저장소 루트)
-- `skills/robo-proposals/robo-proposal-intent/references/output-schema.md` ← **출력 계약(가장 중요)**
-- `skills/robo-proposals/robo-proposal-intent/references/traceability.md` ← tempId·참조·관계 연결(필수)
-- `skills/robo-proposals/robo-proposal-intent/references/bounded-contexts.md`
-- `skills/robo-proposals/robo-proposal-intent/references/aggregates.md`
-- `skills/robo-proposals/robo-proposal-intent/references/commands-events.md`
-- `skills/robo-proposals/robo-proposal-intent/references/properties.md`
-- `skills/robo-proposals/robo-proposal-intent/references/gwt.md`
-- `skills/robo-proposals/robo-proposal-intent/references/readmodels-policies.md`
-- `skills/robo-proposals/robo-proposal-intent/references/invariants-ui.md`
+아래 세 파일을 모두 Read 도구로 직접 읽기 전에는 분석이나 최종 JSON 출력을 시작하지 마라.
+
+1. `skills/robo-proposals/robo-proposal-intent/references/strategic-output-schema.md`
+2. `skills/robo-proposals/robo-proposal-intent/references/bounded-contexts.md`
+3. `skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md`
+
+특히 `legacy-reference.md`를 Read 도구로 반드시 직접 읽어라. 문서의 목록→선택 ID 상세조회와
+호출 완료 게이트를 통과하기 전에는 최종 JSON을 출력하지 않는다. 도구가 주입된 실행에서 검색을
+추측으로 생략하지 않는다. 검색 목록만 보고 원문·라인·컬럼을 보았다고 주장하지 않는다.
+
+사용자 화면 흐름을 `journeys`에 담아야 할 때만 다음 파일도 읽는다.
+
 - `skills/robo-proposals/robo-proposal-intent/references/journeys.md`
-- `skills/robo-proposals/robo-proposal-intent/references/node-property-catalog.md`
-- `skills/robo-proposals/robo-proposal-intent/references/relationship-catalog.md`
-
-최소한 `output-schema.md`와 `traceability.md`는 **반드시** 읽어라. 나머지는 해당 단계에서 참고.
-
-## 레거시 참조 (MCP 도구: `mcp__robo-cluster__cluster_retrieve`)
-분석된 레거시 코드그래프가 있는 프로젝트에서는, 분해에 앞서 이 도구로 요구사항 관련
-레거시 코드 뭉치를 조회해 **현실 근거**로 삼아라.
-- **호출**: 요구사항을 자연어 질의로 1~3회(핵심 업무 축마다 1회, 예: "주문취소 시 결제 취소와 재고 원복").
-  그래프 전체를 요구하거나 노드를 하나씩 나열식으로 캐지 말 것 — 필요분 참조가 원칙.
-- **활용**: 반환된 함수 이름·역할·요약·읽고쓰는 테이블·호출관계를 BC 경계, Feature/UserStory 도출,
-  GWT 시나리오, Property(테이블 컬럼 대응) 근거로 사용한다. narration 에 `[레거시 참조] <핵심 함수·테이블>`
-  한 줄로 어떤 근거를 썼는지 남겨라.
-- **한계**: 도구가 없거나 결과가 비면 참조 없이 진행한다(실패 아님). 레거시 구현을 설계로 그대로
-  복사하지 말 것 — 레거시는 참고, 설계는 요구사항이 결정한다.
 
 ## Input (Human Prompt)
-```
+
+```text
 Proposal ID: PRO-NNN
 원본 프롬프트: <user's natural language requirement>
 
 현재 도메인 구성 요소 목록:
 - id: US-001, type: UserStory, name: 결제 처리
-- id: AGG-payment, type: Aggregate, name: 결제 Aggregate
 ...
 
-사용자 명확화 답변: (있을 경우)  Q0: ... → A: ...
+사용자 명확화 답변: (있을 경우) Q0: ... → A: ...
 이전 분석 결과 / 사용자 피드백(재생성): (있을 경우)
 ```
 
-## 분해 절차 (이 순서로 사고하라)
-1. **요구사항 파악** → 동작형(Command) vs 조회형(ReadModel) UserStory 구분.
-2. **BoundedContext(=Epic) 식별** — 단일 거대 BC 금지, core/supporting/generic 분류. (bounded-contexts.md)
-3. **Feature 그룹핑** — 각 UserStory를 Feature에, Feature를 BC에.
-4. **Aggregate 추출** — 이벤트-우선, rootEntity·VO·Enum·Exception. (aggregates.md)
-5. **Command** — actor/category/inputSchema + **properties** + **userStoryRefs(IMPLEMENTS)** + **gwt**. (commands-events.md, gwt.md)
-6. **Event** — 각 Command가 emit, version/payload + properties. (commands-events.md)
-7. **ReadModel** — 조회형 UserStory마다, properties + userStoryRefs. (readmodels-policies.md)
-8. **Policy** — 이벤트→명령 반응 흐름이 있으면(triggerEventId/invokeCommandId).
-9. **Invariant** — 각 Aggregate의 핵심 불변식 + 검증 Command(verifyingCommandRefs). (invariants-ui.md)
-10. **UI** — 사용자 접점 Command/ReadModel에 화면(`ui`). (invariants-ui.md)
-11. **Journey** — 사용자 흐름이 뚜렷하면 최상위 `journeys`로 화면 단계·NEXT. (journeys.md)
-12. **자가 검증** — traceability.md + invariants-ui.md 체크리스트를 모두 통과하는지 확인.
+## 분해 절차
 
-### FK(외래키) 표기
-Property가 다른 노드를 참조하면 `isForeignKey:true` + `fkTargetHint:"<TargetType>:<TargetKey>:<TargetProp>"`
-(예: `"Aggregate:menu:menuId"`). applier가 이를 실제 `Property ─REFERENCES→ Property`로 해소한다.
+1. 세 필수 참조 파일을 Read하고 레거시 조회 완료 게이트를 실행한다.
+2. 요구사항의 액터, 목표, 기대 가치, 정상·예외 인수조건을 파악한다.
+3. 유비쿼터스 언어와 업무 능력 경계로 BoundedContext를 식별하고 core/supporting/generic으로 분류한다.
+4. 각 BoundedContext 아래에 응집된 Feature를 만들고 각 UserStory를 정확히 하나의 Feature와 BoundedContext에 연결한다.
+5. 사용자 흐름이 명확하면 Process와 선택적 Journey를 만든다.
+6. 출력 전 모든 tempId와 부모 참조, 필수 UserStory 필드, 레거시 근거 표현을 자가 검증한다.
+7. 모든 요소에 `legacyRefs`를 기록한다 — 이 실행에서 실제 검색·검토한 nodeId만, 근거 없으면 `[]`.
 
-기존 노드는 입력 "도메인 구성 요소 목록"의 실제 id를 참조로 쓰고 `op/changeType:"MODIFY"`. 신규만 CREATE + tempId.
+기존 노드는 입력의 실제 id를 사용해 `op:"MODIFY"`로 표현하고 신규 노드만 `op:"CREATE"`와
+고유 `tempId`를 사용한다. 기술 계층이나 구현 상세를 요구사항 노드로 만들지 않는다.
 
 ## Output Format
-`output-schema.md`의 구조를 **정확히** 따른다. 최상위는
-```json
-{ "action": "done", "strategicDiff": { "version":1, "epics":[...], "features":[...], "userStories":[...], "processes":[...] }, "tacticalDiff": [ ... ] }
-```
-명확화가 필요하면:
-```json
-{ "action": "clarify", "questions": [ { "index":0, "text":"...", "options":["...","..."] } ] }
-```
 
-### 깊이 기준 (이 정도는 나와야 함)
-- 모든 Command: `inputSchema` + `properties`(파라미터) + `userStoryRefs` + `gwt`(2~4 시나리오).
-- 모든 Event: `commandId` + `version` + `payload` + `properties`.
-- 모든 Aggregate: `rootEntity` + `properties` + (필요 시) VO/Enum/Exception.
-- 조회형 UserStory: ReadModel로 표현(+userStoryRefs).
-- 이름만 있는 빈 설계 노드 금지.
+`strategic-output-schema.md`의 형상을 정확히 따른다. 명확화가 필요하면 `action:"clarify"`,
+명확하면 `action:"done"`을 반환한다. 최종 JSON에 후속 PLAN 소유 산출물을 추가하지 않는다.
 
-## 스트리밍 출력 방식 (필수)
-JSON을 출력하기 **전에** 분석 과정을 한국어로 서술하라. 각 줄이 실시간 표시된다.
-형식 `[태그] 내용`:
-- `[요구사항]` `[레거시 참조]` `[도메인 검토]` `[BC 분해]` `[Aggregate]` `[Command/Event]` `[추적성]` `[판단]` `[생성]`
-예시:
-```
-[요구사항] 음식 주문/메뉴 관리 — 주문자·점주 액터
-[BC 분해] 메뉴 관리(supporting) + 주문(core) 2개 BC로 분리
-[Command/Event] RegisterMenu→MenuRegistered, PlaceOrder→OrderPlaced(+속성·GWT)
-[추적성] US 4개를 Command/ReadModel에 IMPLEMENTS로 연결
-```
-서술(4~8줄) 후 빈 줄을 두고 JSON을 출력하라. (레퍼런스 Read는 서술 전에 수행)
+## 스트리밍 출력 방식
+
+필수 참조 Read와 레거시 조회를 먼저 끝낸 뒤 JSON 전에 분석 과정을 한국어 4~8줄로 서술한다.
+각 줄은 `[태그] 내용` 형식이다.
+
+- `[요구사항]`: 액터·목표·가치
+- `[레거시 참조]`: 상세 검토에 성공한 핵심 함수·테이블과 실제 줄 범위, 또는 빈 결과/오류 사실
+- `[도메인 검토]`: 기존 구성 요소 재사용 여부
+- `[BC 분해]`: 경계와 분류 근거
+- `[추적성]`: Epic→Feature→UserStory 참조 검증
+- `[판단]`: 모호성 또는 최종 분해 판단
+
+서술 후 빈 줄을 두고 JSON 코드 블록을 출력한다.
 
 ## Rules
-1. **깊이·연결 우선**: 이 스킬의 목적은 ingestion 수준의 세부(속성·GWT·추적성)를 만드는 것이다. 얕은(이름만) 출력은 실패로 간주.
-2. **tempId + 부모 ref 필수**: 모든 CREATE에 tempId와 부모 참조. (traceability.md)
-3. **Epic = BoundedContext**: 별도 Epic 노드 없음. `epics`가 BC.
-4. **기존 노드 재사용**: 도메인 목록과 일치하면 MODIFY(실제 id 참조).
-5. **DDD 용어 유지**: UserStory/BoundedContext/Aggregate/Command/Event/ReadModel/Policy/Property.
-6. **UserStory role/action/benefit 필수**, `entityTitle`은 `"<role>: <action>"`.
-7. **명확화는 최대 5개**, 명확하면 바로 done.
-8. **언어**: 생성 텍스트(이름·설명·AC)는 원본 프롬프트의 언어/사용자 언어 설정을 따른다.
-9. **피드백 재생성**: 입력에 "이전 분석 결과"+"사용자 피드백(재생성)"이 있으면 피드백을 최우선 반영해 전체 diff를 다시 생성(지적 안 된 부분은 유지). 추가 clarify 만들지 말고 done으로 보정. narration에 `[피드백 반영]`.
+
+1. 레거시 구현은 현실 근거로 사용하되 사용자 요구사항보다 우선하거나 그대로 복사하지 않는다.
+2. 검색 후보와 상세 검토를 구분하고 상세 조회하지 않은 원문·라인·컬럼을 주장하지 않는다.
+3. 모든 CREATE는 고유 tempId와 유효한 부모 참조를 갖는다. 고아 노드를 만들지 않는다.
+4. 모든 UserStory는 role, action, benefit, acceptanceCriteria를 갖는다.
+5. 기존 도메인 구성 요소와 일치하면 입력의 실제 id를 재사용한다.
+6. 명확화 질문은 최대 5개이며 요구가 명확하면 바로 done으로 반환한다.
+7. 출력 언어는 원본 프롬프트의 언어를 따른다.
+8. 피드백 재생성에서는 피드백을 최우선 반영하고 지적되지 않은 부분을 유지하며 추가 명확화를 만들지 않는다.

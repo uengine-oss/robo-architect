@@ -9,6 +9,7 @@
       <span class="entry-title">{{ feature.node.entityTitle }}</span>
       <span class="type-chip">{{ t('proposals.term.feature') }}</span>
       <span :class="opClass(feature.node.op)">{{ feature.node.op }}</span>
+      <LegacyTag :element="feature.node" />
     </div>
   </div>
   <div v-if="hasUS && isOpen(keyOf(feature.node))" class="children">
@@ -21,6 +22,7 @@
 <script setup>
 import { computed } from 'vue'
 import StrategicEntry from './StrategicEntry.vue'
+import LegacyTag from './LegacyTag.vue'
 import { useI18n } from '../../../app/i18n'
 
 const { t } = useI18n()

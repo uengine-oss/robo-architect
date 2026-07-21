@@ -11,12 +11,15 @@ import json
 from typing import AsyncGenerator, Callable, Optional
 
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import run_skill_lines, extract_json
+from api.platform.skill_runner import extract_json
+from api.features.proposal_lifecycle.services.legacy_stage_capture import stream_stage_skill_lines
 
 _SKILL_ROOT = "robo-proposals"
 
 
 async def stream_skill_json(
+    proposal_id: str,
+    stage: str,
     skill_name: str,
     human_prompt: str,
     parse_error_code: str,
@@ -32,7 +35,13 @@ async def stream_skill_json(
     suppress_log = False
     saw_error = False
 
-    async for line in run_skill_lines(_SKILL_ROOT, skill_name, human_prompt):
+    async for event, payload in stream_stage_skill_lines(
+        proposal_id, stage, _SKILL_ROOT, skill_name, human_prompt,
+    ):
+        if event != "line":
+            yield event, payload
+            continue
+        line = payload
         if line == "PHASE:error":
             saw_error = True
             continue
@@ -99,7 +108,9 @@ async def execute_stage(
     staged_runner.log_stage(proposal_id, stage, "start")
 
     artifact = None
-    async for ev, data in stream_skill_json(skill_name, prompt, parse_error_code):
+    async for ev, data in stream_skill_json(
+        proposal_id, stage, skill_name, prompt, parse_error_code,
+    ):
         if ev == "json":
             artifact = data.get(artifact_key, data) if isinstance(data, dict) else data
         elif ev == "error":

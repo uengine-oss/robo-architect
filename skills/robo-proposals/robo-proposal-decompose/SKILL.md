@@ -22,7 +22,10 @@ narration(`[분해]`/`[책임]`/`[결합]`) 후 빈 줄, 그 다음:
 ```json
 {
   "DecomposeArtifact": {
-    "subDomains": [{"name": "구독", "responsibility": "구독 생애주기 관리", "eventRefs": ["구독이 갱신됐다"]}],
+    "subDomains": [{
+      "name": "구독", "responsibility": "구독 생애주기 관리", "eventRefs": ["구독이 갱신됐다"],
+      "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>", "role": "derived-from"}]
+    }],
     "adjacency": [{"from": "구독", "to": "결제"}],
     "couplingNotes": ["구독↔결제는 이벤트로 느슨히 결합 가능"]
   }
@@ -31,6 +34,8 @@ narration(`[분해]`/`[책임]`/`[결합]`) 후 빈 줄, 그 다음:
 
 ## Rules
 1. 서브도메인 이름은 **도메인 용어**("REST 서비스"·"Kafka 컨슈머" 금지).
+1-b. **모든 subDomain 은 `legacyRefs` 배열을 가진다** — 소속 이벤트들(Discover)의 근거를
+   합쳐 승계하고, 레거시에 대응 없는 신규 묶음은 `[]`. 새 nodeId 를 지어내지 않는다.
 2. 모든 주요 이벤트가 어떤 서브도메인엔가 속해야 한다(외톨이 금지).
 3. 단일 BC 한정 변경이면 서브도메인 1개로 끝낼 수 있다 — *왜 1개인지* couplingNotes 에 적는다.
 4. 언어는 사용자/프롬프트 언어를 따른다.

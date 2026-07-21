@@ -57,7 +57,9 @@ async def stream_scope(proposal_id: str) -> AsyncGenerator[tuple[str, object], N
 
     prompt = _build_prompt(state, load_domain_nodes())
     plan = None
-    async for ev, data in stream_skill_json(_SKILL, prompt, "SCOPE_PARSE_FAILED"):
+    async for ev, data in stream_skill_json(
+        proposal_id, "SCOPE", _SKILL, prompt, "SCOPE_PARSE_FAILED",
+    ):
         if ev == "json":
             plan = data.get("stagePlan") if isinstance(data, dict) else None
         elif ev == "error":

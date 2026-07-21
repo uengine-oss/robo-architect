@@ -95,6 +95,9 @@ def _save_intent(proposal_id: str, parsed: dict) -> None:
     sd = parsed["strategicDiff"]
     if isinstance(sd, dict):
         sd["version"] = sd.get("version", 1) or 1
+    # evlink SPEC2 T3-1: ODA 저장도 요소별 legacyRefs 관문을 지난다.
+    from api.features.proposal_lifecycle.services.legacy_element_refs import enforce_proposal_refs
+    enforce_proposal_refs(proposal_id, strategic_diff=sd)
     auto_title = None
     us = sd.get("userStories", []) if isinstance(sd, dict) else []
     if us:
@@ -116,6 +119,9 @@ def _save_intent(proposal_id: str, parsed: dict) -> None:
 
 
 def _save_plan(proposal_id: str, parsed: dict) -> None:
+    # evlink SPEC2 T3-1: tactical 확정도 legacyRefs 관문을 지난다.
+    from api.features.proposal_lifecycle.services.legacy_element_refs import enforce_proposal_refs
+    enforce_proposal_refs(proposal_id, tactical_diff=parsed.get("tacticalDiff"))
     with get_session() as session:
         session.run(
             "MATCH (p:Proposal {id:$id}) SET p.tacticalDiff=$td, "

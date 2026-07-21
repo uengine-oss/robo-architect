@@ -17,6 +17,7 @@
 - `skills/robo-proposals/robo-proposal-intent/references/gwt.md`
 - `skills/robo-proposals/robo-proposal-intent/references/readmodels-policies.md`
 - `skills/robo-proposals/robo-proposal-intent/references/invariants-ui.md`
+- `skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md`
 
 그리고 이 스킬 고유:
 - `skills/robo-proposals/robo-proposal-plan/references/architecture-plan.md` ← **아키텍처 계획 계약**
@@ -41,8 +42,12 @@ Constitution(fields + raw): <architectureStyle, repoStrategy, repoMode, techStac
 3. **아키텍처 계획 단계 추가** — `architecture-plan.md` 계약대로 `ArchitectureDecision[]` 생성. 5개 필수 항목은 각각 결정되거나 `constitutionGaps` 에 명시되어야 한다.
 
 ## 분해 절차
-1. **Strategic Diff 흡수** — 주어진 UserStory/Feature 를 전술 도출의 입력으로 삼는다.
+1. **Strategic Diff·레거시 근거 흡수** — 주어진 UserStory/Feature를 입력으로 삼고,
+   `legacy-reference.md`의 목록→선택 ID 상세조회로 전술 판단에 필요한 실제 구현만 확인한다.
+   공통 계약의 호출 완료 게이트를 통과하기 전에는 최종 JSON을 출력하지 않는다.
 2. **Tactical 도출** — 이벤트-우선, Aggregate→Command→Event→ReadModel→Policy→Invariant→UI.
+   모든 tactical 항목에 `legacyRefs`를 기록한다(`output-schema.md` 불변식) — 이 실행에서
+   실제 검색·검토한 nodeId만, 근거 없으면 `[]`. 서버가 관찰집합 밖 ID를 제거한다.
 3. **아키텍처 계획** — Constitution 의 `architectureStyle`/`repoStrategy`/`techStack` 에 일관되게 5개 항목 결정. 각 결정은 가능하면 Constitution 섹션으로 **추적 가능**(`constitutionRef`)해야 한다. 침묵 영역은 `constitutionGaps` 로.
 4. **컨텍스트 간 연동(다수 BC)** — `architectureStyle == MICROSERVICES` 이고 BoundedContext≥2 이면 `inter-context-integration.md` 대로: ① 연동 의도 분석(request/response vs pub/sub) → `interContextIntegrations[]`(EVENT/COMMAND/QUERY 분류, **기본 이벤트 드리븐 pub/sub**), ② 메시징 채널(`messagingChannel`, **기본 Kafka**), ③ 서비스별 Docker 개발환경(`serviceDevEnvironments[]` — 멀티레포에서 각 개발자가 자기 서비스 범위만 가져가도록 `scopeNote`/`dependencies`/`composeServices` 제한).
 5. **모놀리스 규칙** — `architectureStyle == MONOLITH` 이면 단일 배포로 반영하고, ingress/mesh/연동/서비스별환경 같은 마이크로서비스 전용 항목을 **지어내지 말 것**(해당 항목은 "N/A (monolith)" 로 표기 가능, 위 배열은 비움).

@@ -104,6 +104,7 @@
           <span class="diff-entry__label">{{ item.nodeLabel || item.entityType }}</span>
           <span class="diff-entry__title">{{ item.nodeTitle || item.entityTitle }}</span>
           <span v-if="item.impactLevel" :class="['impact-badge', `impact-badge--${(item.impactLevel || 'LOW').toLowerCase()}`]">{{ item.impactLevel }}</span>
+          <LegacyTag :element="item" />
           <OpenInViewerLink
             v-if="proposalId && canOpenCandidate(item)"
             :proposalId="proposalId"
@@ -143,6 +144,7 @@ import { useI18n } from '../../../app/i18n'
 import { useProposalsStore } from '../proposals.store'
 import OpenInViewerLink from './OpenInViewerLink.vue'
 import ImpactMapView from './ImpactMapView.vue'
+import LegacyTag from './LegacyTag.vue'
 
 const { t } = useI18n()
 
