@@ -243,6 +243,8 @@ const searchedOnlyItems = computed(() => legacyItems.value.filter((item) => !lin
 const evidenceMode = inject('evlinkEvidenceMode', ref(false))
 const hoverNodeId = ref(null)
 const hoverRefId = ref(null)
+// 근거가 많은 제안에서 레일이 설계 트리를 압도하지 않도록 접을 수 있게 한다.
+const railCollapsed = ref(false)
 
 // hover 포커스 집합 — 요소↔근거 양방향 하이라이트.
 const focusRefIds = computed(() => {
@@ -291,9 +293,11 @@ async function rebuildWires() {
 }
 watch([nodes, legacyItems, expandedId, evidenceMode], rebuildWires, { deep: true })
 
-// 상시 스파게티 방지: 검증 모드에서만 전체, 평소엔 hover 대상의 선만 그린다.
+// 연결선은 "전체 지도"가 아니라 "지금 보고 있는 것의 관계"를 보여주는 도구다.
+// 근거가 수십 개인 제안에서 전부 그리면 서로 교차해 아무것도 읽히지 않으므로
+// (실측: 26개 인용에서 판독 불가), 검증 모드에서도 전체를 그리지 않는다.
+// 검증 모드의 목적인 "빠짐없이 판정됐다"는 판정 칩과 커버리지 숫자가 담당한다.
 const visibleWirePaths = computed(() => {
-  if (evidenceMode.value) return wirePaths.value
   if (hoverNodeId.value) return wirePaths.value.filter((path) => path.nodeId === hoverNodeId.value)
   if (hoverRefId.value) return wirePaths.value.filter((path) => path.refId === hoverRefId.value)
   return []
@@ -476,11 +480,16 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
         </div>
       </template>
     </div>
-    <aside v-if="legacyItems.length" class="pdv-legacy-rail" aria-label="레거시 근거">
-      <div class="pdv-legacy-rail__title">
+    <aside v-if="legacyItems.length" class="pdv-legacy-rail"
+           :class="{ 'pdv-legacy-rail--collapsed': railCollapsed }" aria-label="레거시 근거">
+      <button class="pdv-legacy-rail__title" :aria-expanded="!railCollapsed"
+              @click="railCollapsed = !railCollapsed">
+        <span class="pdv-legacy-rail__caret" :class="{ open: !railCollapsed }">▸</span>
         레거시 근거
         <span class="pdv-legacy-rail__legend">인용 {{ citedItems.length }} · 검색 {{ searchedOnlyItems.length }}</span>
-      </div>
+      </button>
+      <div v-show="!railCollapsed" class="pdv-legacy-rail__body">
+      <p class="pdv-legacy-rail__hint">요소나 근거에 마우스를 올리면 연결선이 표시됩니다.</p>
       <div
         v-for="item in citedItems"
         :key="item.id"
@@ -506,6 +515,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
           <div class="pdv-legacy-item__name">{{ item.name || item.id }}</div>
         </div>
       </details>
+      </div>
     </aside>
     <svg v-if="visibleWirePaths.length" class="pdv-evidence-wires" aria-hidden="true">
       <path v-for="path in visibleWirePaths" :key="path.key" :d="path.d" />
@@ -559,10 +569,18 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 
 .pdv-legacy-rail { position: relative; z-index: 2; border-left: 1px dashed var(--color-border); padding-left: 12px; }
 .pdv-legacy-rail__title {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
-  margin-bottom: 7px; color: #aab4f0; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em;
+  display: flex; align-items: baseline; gap: 6px; width: 100%;
+  margin-bottom: 7px; padding: 0; border: none; background: none; cursor: pointer;
+  color: #aab4f0; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-align: left;
 }
-.pdv-legacy-rail__legend { color: #8b93a7; font-size: 0.6rem; font-weight: 400; }
+.pdv-legacy-rail__title:hover { color: #c7cdf7; }
+.pdv-legacy-rail__caret { display: inline-block; transition: transform 0.15s ease; font-size: 0.6rem; }
+.pdv-legacy-rail__caret.open { transform: rotate(90deg); }
+.pdv-legacy-rail__legend { margin-left: auto; color: #8b93a7; font-size: 0.6rem; font-weight: 400; }
+/* 근거가 많아도 설계 트리 높이를 넘지 않도록 레일 안에서만 스크롤한다 */
+.pdv-legacy-rail__body { max-height: 78vh; overflow-y: auto; padding-right: 2px; }
+.pdv-legacy-rail__hint { margin: 0 0 6px; color: #6e7790; font-size: 0.56rem; line-height: 1.5; }
+.pdv-legacy-rail--collapsed { align-self: start; }
 .pdv-legacy-item { margin: 6px 0; padding: 7px 9px; border: 1px solid #3a4468; border-radius: 7px; background: #232a45; cursor: default; }
 .pdv-legacy-item--focus { border-color: #7d8bf5; background: #2a3358; }
 .pdv-legacy-item--search-only { opacity: 0.55; background: var(--color-bg-secondary); border-color: var(--color-border); padding: 4px 9px; }
@@ -574,7 +592,11 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 .pdv-rail-more > summary { margin-top: 8px; color: #6e7790; font-size: 0.6rem; cursor: pointer; user-select: none; }
 .pdv-node--focus { background: #262c3a; box-shadow: inset -2px 0 #7d8bf5; }
 .pdv-evidence-wires { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.pdv-evidence-wires path { fill: none; stroke: #7d8bf5; stroke-width: 1.5; opacity: 0.82; }
+/* 선은 hover 대상만 그려지므로(최대 몇 개) 확실히 보이게 굵고 밝게 */
+.pdv-evidence-wires path {
+  fill: none; stroke: #8b98ff; stroke-width: 2; opacity: 0.95;
+  filter: drop-shadow(0 0 3px rgba(125, 139, 245, 0.55));
+}
 
 @media (max-width: 900px) {
   .pdv-evidence-layout { grid-template-columns: 1fr; }
