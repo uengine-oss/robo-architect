@@ -44,7 +44,11 @@ Proposal ID: PRO-NNN
 4. 각 BoundedContext 아래에 응집된 Feature를 만들고 각 UserStory를 정확히 하나의 Feature와 BoundedContext에 연결한다.
 5. 사용자 흐름이 명확하면 Process와 선택적 Journey를 만든다.
 6. 출력 전 모든 tempId와 부모 참조, 필수 UserStory 필드, 레거시 근거 표현을 자가 검증한다.
-7. 모든 요소에 `legacyRefs`를 기록한다 — 이 실행에서 실제 검색·검토한 nodeId만, 근거 없으면 `[]`.
+7. 모든 요소에 `legacyRefs`를 기록한다 — 이 실행에서 실제 검색·검토한 nodeId만.
+8. **S3 배분(필수)**: 요소 초안을 만든 뒤 검색 후보 목록을 다시 훑으며 **후보 → 요소** 방향으로
+   근거를 배분한다(추가 호출 없음). 이름이 아니라 요약으로 판단한다. 그래도 빈 요소만 S4 로
+   1회 재검색한다. narration 에 `[근거 커버리지]` 를 남기고, 이 단계 없이 최종 JSON 을
+   출력하지 않는다(`references/legacy-reference.md` S3/S4).
 
 기존 노드는 입력의 실제 id를 사용해 `op:"MODIFY"`로 표현하고 신규 노드만 `op:"CREATE"`와
 고유 `tempId`를 사용한다. 기술 계층이나 구현 상세를 요구사항 노드로 만들지 않는다.

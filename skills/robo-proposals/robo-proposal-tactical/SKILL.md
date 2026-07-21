@@ -59,6 +59,12 @@ narration(`[Aggregate]`/`[경계]`/`[불변식]`) 후 빈 줄, 그 다음:
 0. **모든 aggregate/handledCommand/createdEvent 는 `legacyRefs` 배열을 가진다** — 이 실행에서
    실제 검색·검토한 nodeId 만, 대응 없으면 `[]`. Command/Event 는 `{name, legacyRefs}` 객체로
    낸다. 규칙 유래면 `rule:"<본 문장 그대로>"` 인용(형상: intent `output-schema.md`).
+0-b. **Command/Event 를 다 만든 뒤 S3 배분을 반드시 수행하라**(`legacy-reference.md` S3).
+   검색 후보를 하나씩 보며 "이 후보가 뒷받침하는 Command/Event 가 있나"를 묻는다 —
+   요소에서 출발하면 잊고 넘어간다. **이름이 아니라 요약으로 판단**하라: `settlement_close`
+   의 요약이 "정산 건을 마감 처리한다"면 그것이 `CloseSettlement`·`SettlementClosed` 의
+   근거다(실측 누락 사례). Aggregate 에만 붙이고 하위 요소를 비워두지 않는다.
+   배분 후에도 빈 요소만 S4 로 1회 재검색한다.
 1. 각 Aggregate 의 invariant 은 **2개 이상**.
 2. Value Object(Money, Address)는 Aggregate 가 아니다.
 3. Commands/Events 는 Define 의 Inbound/Outbound 와 일치.
