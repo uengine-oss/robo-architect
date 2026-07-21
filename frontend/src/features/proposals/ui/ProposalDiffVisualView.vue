@@ -495,7 +495,10 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
         :key="item.id"
         :data-evidence-ref="item.id"
         class="pdv-legacy-item"
-        :class="{ 'pdv-legacy-item--focus': focusRefIds.has(item.id) }"
+        :class="{
+          'pdv-legacy-item--focus': focusRefIds.has(item.id),
+          'pdv-legacy-item--dim': hoverNodeId && !focusRefIds.has(item.id),
+        }"
         @mouseenter="hoverRefId = item.id" @mouseleave="hoverRefId = null"
       >
         <div class="pdv-legacy-item__name">{{ item.logicalName || item.name || item.id }}</div>
@@ -583,6 +586,10 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 .pdv-legacy-rail--collapsed { align-self: start; }
 .pdv-legacy-item { margin: 6px 0; padding: 7px 9px; border: 1px solid #3a4468; border-radius: 7px; background: #232a45; cursor: default; }
 .pdv-legacy-item--focus { border-color: #7d8bf5; background: #2a3358; }
+/* 요소를 hover 하면 그 요소의 근거만 남기고 나머지는 물러나게 한다.
+   먼 거리 연결은 선만으로 추적하기 어려워 대비를 함께 준다. */
+.pdv-legacy-item--dim { opacity: 0.28; }
+.pdv-legacy-item { transition: opacity 0.12s ease, border-color 0.12s ease, background 0.12s ease; }
 .pdv-legacy-item--search-only { opacity: 0.55; background: var(--color-bg-secondary); border-color: var(--color-border); padding: 4px 9px; }
 .pdv-legacy-item__name { overflow: hidden; color: #cdd4f7; font-size: 0.68rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .pdv-legacy-item--search-only .pdv-legacy-item__name { font-family: Consolas, monospace; font-weight: 400; }
