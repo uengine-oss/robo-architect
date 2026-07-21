@@ -242,7 +242,13 @@ const searchedOnlyItems = computed(() => legacyItems.value.filter((item) => !lin
 // 근거 검증 모드(제안 헤더 토글): ON=모든 판정·연결선 전개, OFF=hover 포커스만.
 const evidenceMode = inject('evlinkEvidenceMode', ref(false))
 const hoverNodeId = ref(null)
-const hoverRefId = ref(null)
+const hoverRefIdRaw = ref(null)
+// 레일 근거를 클릭하면 그 관계를 고정한다 — hover 는 마우스를 떼면 사라져 천천히 볼 수 없다.
+const pinnedRefId = ref(null)
+const hoverRefId = computed(() => hoverRefIdRaw.value || pinnedRefId.value)
+function toggleRefPin(id) {
+  pinnedRefId.value = pinnedRefId.value === id ? null : id
+}
 // 근거가 많은 제안에서 레일이 설계 트리를 압도하지 않도록 접을 수 있게 한다.
 const railCollapsed = ref(false)
 
@@ -338,6 +344,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
                  :class="{
                    'pdv-node--evidence': basisForNode(node).state === 'linked',
                    'pdv-node--focus': focusNodeIds.has(node.nodeId),
+                   'pdv-node--dim': hoverRefId && !focusNodeIds.has(node.nodeId),
                  }"
                  :data-evidence-node="node.nodeId" :style="{'--ic': IMPACT_COLORS[node.impactLevel]}"
                  @mouseenter="hoverNodeId = node.nodeId" @mouseleave="hoverNodeId = null">
@@ -489,7 +496,9 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
         <span class="pdv-legacy-rail__legend">인용 {{ citedItems.length }} · 검색 {{ searchedOnlyItems.length }}</span>
       </button>
       <div v-show="!railCollapsed" class="pdv-legacy-rail__body">
-      <p class="pdv-legacy-rail__hint">요소나 근거에 마우스를 올리면 연결선이 표시됩니다.</p>
+      <p class="pdv-legacy-rail__hint">
+        마우스를 올리면 연결선이 보이고, <b>근거를 클릭하면 그 근거를 쓴 요소가 고정</b>됩니다.
+      </p>
       <div
         v-for="item in citedItems"
         :key="item.id"
@@ -498,8 +507,11 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
         :class="{
           'pdv-legacy-item--focus': focusRefIds.has(item.id),
           'pdv-legacy-item--dim': hoverNodeId && !focusRefIds.has(item.id),
+          'pdv-legacy-item--pinned': pinnedRefId === item.id,
         }"
-        @mouseenter="hoverRefId = item.id" @mouseleave="hoverRefId = null"
+        :title="pinnedRefId === item.id ? '클릭해서 고정 해제' : '클릭하면 이 근거를 쓴 요소가 고정됩니다'"
+        @mouseenter="hoverRefIdRaw = item.id" @mouseleave="hoverRefIdRaw = null"
+        @click="toggleRefPin(item.id)"
       >
         <div class="pdv-legacy-item__name">{{ item.logicalName || item.name || item.id }}</div>
         <div class="pdv-legacy-item__meta">
@@ -584,7 +596,8 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 .pdv-legacy-rail__body { max-height: 78vh; overflow-y: auto; padding-right: 2px; }
 .pdv-legacy-rail__hint { margin: 0 0 6px; color: #6e7790; font-size: 0.56rem; line-height: 1.5; }
 .pdv-legacy-rail--collapsed { align-self: start; }
-.pdv-legacy-item { margin: 6px 0; padding: 7px 9px; border: 1px solid #3a4468; border-radius: 7px; background: #232a45; cursor: default; }
+.pdv-legacy-item { margin: 6px 0; padding: 7px 9px; border: 1px solid #3a4468; border-radius: 7px; background: #232a45; cursor: pointer; }
+.pdv-legacy-item--pinned { border-color: #8b98ff; background: #2f3a63; box-shadow: 0 0 0 1px rgba(139, 152, 255, 0.45); }
 .pdv-legacy-item--focus { border-color: #7d8bf5; background: #2a3358; }
 /* 요소를 hover 하면 그 요소의 근거만 남기고 나머지는 물러나게 한다.
    먼 거리 연결은 선만으로 추적하기 어려워 대비를 함께 준다. */
@@ -598,6 +611,9 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
 .pdv-legacy-item__src { overflow: hidden; font-family: Consolas, monospace; color: #7d8bf5; text-overflow: ellipsis; white-space: nowrap; }
 .pdv-rail-more > summary { margin-top: 8px; color: #6e7790; font-size: 0.6rem; cursor: pointer; user-select: none; }
 .pdv-node--focus { background: #262c3a; box-shadow: inset -2px 0 #7d8bf5; }
+/* 근거 쪽에서 볼 때도 대칭으로: 그 근거를 쓰지 않은 요소는 물러난다 */
+.pdv-node--dim { opacity: 0.3; }
+.pdv-node { transition: opacity 0.12s ease, background 0.12s ease; }
 .pdv-evidence-wires { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 /* 선은 hover 대상만 그려지므로(최대 몇 개) 확실히 보이게 굵고 밝게 */
 .pdv-evidence-wires path {
