@@ -246,8 +246,29 @@ const hoverRefIdRaw = ref(null)
 // 레일 근거를 클릭하면 그 관계를 고정한다 — hover 는 마우스를 떼면 사라져 천천히 볼 수 없다.
 const pinnedRefId = ref(null)
 const hoverRefId = computed(() => hoverRefIdRaw.value || pinnedRefId.value)
-function toggleRefPin(id) {
-  pinnedRefId.value = pinnedRefId.value === id ? null : id
+const openEvidence = inject('evlinkOpenEvidence', null)
+// 근거 패널은 화면 오른쪽에 고정되어 이 레일을 덮는다. 패널이 열려 있는 동안에는
+// 레일을 접어 가려진 카드를 클릭하려다 막히는 상황을 없앤다(닫으면 되돌린다).
+const evidenceSelection = inject('evlinkEvidenceSelection', ref(null))
+watch(evidenceSelection, (sel, prev) => {
+  if (sel && !prev) railCollapsed.value = true
+  else if (!sel && prev) railCollapsed.value = false
+})
+
+// 어느 카드를 누르든 같은 패널이 열리도록 통일한다(예측 가능성).
+// 요소 꼬리표는 "그 요소의 근거들"을, 근거 카드는 "그 근거 하나"를 패널에 싣는다.
+// 패널은 element 형태를 받으므로 근거 1건짜리 가상 요소로 감싸 재사용한다.
+function selectRef(item) {
+  const pinning = pinnedRefId.value !== item.id
+  pinnedRefId.value = pinning ? item.id : null
+  if (!openEvidence) return
+  openEvidence(pinning
+    ? {
+      nodeTitle: item.logicalName || item.name || item.id,
+      nodeLabel: item.label || 'LEGACY',
+      legacyRefs: [{ nodeId: item.id }],
+    }
+    : null)
 }
 // 근거가 많은 제안에서 레일이 설계 트리를 압도하지 않도록 접을 수 있게 한다.
 const railCollapsed = ref(false)
@@ -497,7 +518,7 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
       </button>
       <div v-show="!railCollapsed" class="pdv-legacy-rail__body">
       <p class="pdv-legacy-rail__hint">
-        마우스를 올리면 연결선이 보이고, <b>근거를 클릭하면 그 근거를 쓴 요소가 고정</b>됩니다.
+        마우스를 올리면 연결선이 보이고, <b>클릭하면 원문과 이 근거를 인용한 요소</b>를 봅니다.
       </p>
       <div
         v-for="item in citedItems"
@@ -509,9 +530,9 @@ function stepLabel(st) { return st.name || st.title || st.ref || 'step' }
           'pdv-legacy-item--dim': hoverNodeId && !focusRefIds.has(item.id),
           'pdv-legacy-item--pinned': pinnedRefId === item.id,
         }"
-        :title="pinnedRefId === item.id ? '클릭해서 고정 해제' : '클릭하면 이 근거를 쓴 요소가 고정됩니다'"
+        :title="pinnedRefId === item.id ? '클릭해서 닫기' : '클릭하면 원문과 인용 요소를 봅니다'"
         @mouseenter="hoverRefIdRaw = item.id" @mouseleave="hoverRefIdRaw = null"
-        @click="toggleRefPin(item.id)"
+        @click="selectRef(item)"
       >
         <div class="pdv-legacy-item__name">{{ item.logicalName || item.name || item.id }}</div>
         <div class="pdv-legacy-item__meta">
