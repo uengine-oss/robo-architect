@@ -9,8 +9,8 @@
 
 const BASE = '/api/figma-binding'
 
-async function asJsonOr404(resp) {
-  if (resp.status === 404) return null
+async function asJsonOrAbsent(resp) {
+  if (resp.status === 204 || resp.status === 404) return null
   if (!resp.ok) {
     let detail = ''
     try {
@@ -28,7 +28,7 @@ async function asJsonOr404(resp) {
 
 export async function getBinding() {
   const r = await fetch(BASE)
-  return asJsonOr404(r)
+  return asJsonOrAbsent(r)
 }
 
 export async function disconnect() {
@@ -40,13 +40,13 @@ export async function disconnect() {
 
 export async function getHistory(limit = 50) {
   const r = await fetch(`${BASE}/history?limit=${encodeURIComponent(limit)}`)
-  const data = await asJsonOr404(r)
+  const data = await asJsonOrAbsent(r)
   return data?.items || []
 }
 
 export async function listStoryboards() {
   const r = await fetch(`${BASE}/storyboards`)
-  return (await asJsonOr404(r)) || []
+  return (await asJsonOrAbsent(r)) || []
 }
 
 // ─── 020: Retroactive full-sync ──────────────────────────────────────────
@@ -71,7 +71,7 @@ export async function startFullSync() {
       streamUrl: detail.streamUrl,
     }
   }
-  return asJsonOr404(r)
+  return asJsonOrAbsent(r)
 }
 
 export async function cancelFullSync(runId) {
@@ -114,12 +114,12 @@ export function subscribeFullSyncStream(runId, { onEvent, onClose, onError } = {
 export async function listSyncRuns(limit = 20, includePreviousBinding = true) {
   const url = `${BASE}/sync-runs?limit=${encodeURIComponent(limit)}&includePreviousBinding=${includePreviousBinding ? 'true' : 'false'}`
   const r = await fetch(url)
-  return (await asJsonOr404(r)) || { currentBindingFileKey: null, runs: [] }
+  return (await asJsonOrAbsent(r)) || { currentBindingFileKey: null, runs: [] }
 }
 
 export async function listProjectFailures() {
   const r = await fetch(`${BASE}/failures`)
-  return (await asJsonOr404(r)) || {
+  return (await asJsonOrAbsent(r)) || {
     currentBindingFileKey: null, retryable: [], nonRetryable: [], inFlight: [],
   }
 }
@@ -136,7 +136,7 @@ export async function retrySync(uiIds = null) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ uiIds: uiIds && uiIds.length ? uiIds : null }),
   })
-  return asJsonOr404(r)
+  return asJsonOrAbsent(r)
 }
 
 // ─── 024: Bound-file component library ───────────────────────────────────
@@ -157,12 +157,12 @@ export async function scanComponents(components) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ components: components || [] }),
   })
-  return asJsonOr404(r)
+  return asJsonOrAbsent(r)
 }
 
 export async function listComponents() {
   const r = await fetch(`${BASE}/components`)
-  return (await asJsonOr404(r)) || { components: [], componentCount: 0 }
+  return (await asJsonOrAbsent(r)) || { components: [], componentCount: 0 }
 }
 
 export async function clearComponents() {

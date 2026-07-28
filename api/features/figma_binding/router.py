@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from api.platform.observability.smart_logger import SmartLogger
@@ -54,11 +54,11 @@ def _actor_from_request(req: Request) -> str:
 # ─── Lifecycle ───────────────────────────────────────────────────────────
 
 
-@router.get("", response_model=FigmaBindingResponse)
-async def get_binding() -> dict[str, Any]:
+@router.get("", response_model=FigmaBindingResponse, responses={204: {"description": "No active binding"}})
+async def get_binding() -> dict[str, Any] | Response:
     b = service.get_active_binding_response()
     if not b:
-        raise HTTPException(status_code=404, detail="바인딩된 Figma 다큐먼트가 없습니다.")
+        return Response(status_code=204)
     return b
 
 
