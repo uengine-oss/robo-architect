@@ -137,7 +137,7 @@ services:
     volumes:
       - shared_data:/data
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/actuator/health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/"]
       interval: 5s
       timeout: 5s
       retries: 30
