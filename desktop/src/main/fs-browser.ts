@@ -21,12 +21,47 @@ import type {
   FsPathInput,
   FsReadInput,
   FsReadResult,
+  FsStageProjectInput,
+  FsStageProjectResult,
   FsWriteInput,
 } from "../shared/fs-browser-contract";
 import { IpcHandlerError } from "./ipc";
 
 /** 텍스트 미리보기 상한 — 초과 파일은 렌더하지 않고 안내. */
 const MAX_PREVIEW_BYTES = 512 * 1024;
+const MAX_PROJECT_FILES = 20_000;
+const MAX_PROJECT_BYTES = 256 * 1024 * 1024;
+const MAX_SINGLE_FILE_BYTES = 100 * 1024 * 1024;
+const EXCLUDED_INGRESS_DIRECTORIES = new Set([
+  ".git",
+  ".idea",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".robo",
+  ".ruff_cache",
+  ".svn",
+  ".venv",
+  ".vscode",
+  "__pycache__",
+  "build",
+  "dist",
+  "node_modules",
+  "out",
+  "target",
+  "venv",
+]);
+
+interface ProjectIngressFile {
+  absolutePath: string;
+  relativePath: string;
+  size: number;
+}
+
+interface ParserUploadSummary {
+  files?: unknown[];
+  ddlFiles?: unknown[];
+  nontargetFiles?: unknown[];
+}
 
 /** path 가 root 자신이거나 그 하위인지 검증 — 위반 시 throw. 정규화된 절대경로 반환. */
 function resolveWithinRoot(root: string, target: string): string {
@@ -108,6 +143,116 @@ export async function readFile({ root, path: file }: FsReadInput): Promise<FsRea
     return { kind: "binary" };
   }
   return { kind: "text", content: buf.toString("utf8") };
+}
+
+async function collectProjectIngressFiles(
+  root: string,
+): Promise<{ files: ProjectIngressFile[]; skippedEntryCount: number; totalBytes: number }> {
+  const resolvedRoot = resolveWithinRoot(root, root);
+  const rootStat = await fs.promises.stat(resolvedRoot).catch(() => null);
+  if (!rootStat?.isDirectory()) {
+    throw new IpcHandlerError(IpcErrorCodes.VALIDATION, "analysis root is not a readable directory");
+  }
+
+  const files: ProjectIngressFile[] = [];
+  let skippedEntryCount = 0;
+  let totalBytes = 0;
+  const pending = [resolvedRoot];
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    for (const entry of entries) {
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (EXCLUDED_INGRESS_DIRECTORIES.has(entry.name.toLowerCase())) {
+          skippedEntryCount += 1;
+        } else {
+          pending.push(absolutePath);
+        }
+        continue;
+      }
+      if (!entry.isFile()) {
+        skippedEntryCount += 1;
+        continue;
+      }
+      const stat = await fs.promises.stat(absolutePath);
+      if (stat.size > MAX_SINGLE_FILE_BYTES) {
+        throw new IpcHandlerError(
+          IpcErrorCodes.VALIDATION,
+          `project file exceeds ${MAX_SINGLE_FILE_BYTES} bytes: ${entry.name}`,
+        );
+      }
+      const relativePath = path.relative(resolvedRoot, absolutePath).split(path.sep).join("/");
+      totalBytes += stat.size;
+      files.push({ absolutePath, relativePath, size: stat.size });
+      if (files.length > MAX_PROJECT_FILES || totalBytes > MAX_PROJECT_BYTES) {
+        throw new IpcHandlerError(
+          IpcErrorCodes.VALIDATION,
+          `project ingress limit exceeded: files=${files.length} bytes=${totalBytes}`,
+        );
+      }
+    }
+  }
+  if (files.length === 0) {
+    throw new IpcHandlerError(IpcErrorCodes.VALIDATION, "analysis root contains no files");
+  }
+  files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  return { files, skippedEntryCount, totalBytes };
+}
+
+/**
+ * Windows host 폴더를 Parser의 canonical upload ingress로 반입한다.
+ *
+ * Linux container가 Windows 절대경로를 직접 읽게 하지 않는다. Electron main만 host
+ * filesystem을 읽고 상대경로를 보존한 multipart를 app-owned Gateway로 보낸다.
+ * DDL/source 판정은 Parser의 content classifier가 계속 단일 진실이다.
+ */
+export async function stageProject({
+  root,
+}: FsStageProjectInput): Promise<FsStageProjectResult> {
+  const gateway = process.env.ROBO_GATEWAY_URL;
+  if (!gateway) {
+    throw new IpcHandlerError(IpcErrorCodes.INTERNAL, "Gateway is not ready");
+  }
+  let gatewayUrl: URL;
+  try {
+    gatewayUrl = new URL(gateway);
+  } catch {
+    throw new IpcHandlerError(IpcErrorCodes.INTERNAL, "Gateway URL is invalid");
+  }
+  if (
+    gatewayUrl.protocol !== "http:" ||
+    !["127.0.0.1", "localhost", "::1", "[::1]"].includes(gatewayUrl.hostname)
+  ) {
+    throw new IpcHandlerError(IpcErrorCodes.INTERNAL, "Gateway must be loopback-only");
+  }
+
+  const collected = await collectProjectIngressFiles(root);
+  const form = new FormData();
+  for (const file of collected.files) {
+    const bytes = await fs.promises.readFile(file.absolutePath);
+    form.append("files", new Blob([bytes]), file.relativePath);
+  }
+
+  const endpoint = new URL("/antlr/fileUpload", gatewayUrl);
+  const response = await fetch(endpoint, { method: "POST", body: form });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 2_000);
+    throw new IpcHandlerError(
+      IpcErrorCodes.INTERNAL,
+      `Parser project ingress failed: HTTP ${response.status}: ${detail}`,
+    );
+  }
+  const summary = (await response.json()) as ParserUploadSummary;
+  return {
+    fileCount: collected.files.length,
+    sourceCount: Array.isArray(summary.files) ? summary.files.length : 0,
+    ddlCount: Array.isArray(summary.ddlFiles) ? summary.ddlFiles.length : 0,
+    nontargetCount: Array.isArray(summary.nontargetFiles) ? summary.nontargetFiles.length : 0,
+    skippedEntryCount: collected.skippedEntryCount,
+    totalBytes: collected.totalBytes,
+  };
 }
 
 // ---------------------------------------------------------------------------

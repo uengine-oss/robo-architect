@@ -61,6 +61,20 @@ export interface FsWriteInput {
   content: string;
 }
 
+/** Windows host project를 app-owned Parser ingress로 반입. */
+export interface FsStageProjectInput {
+  root: string;
+}
+
+export interface FsStageProjectResult {
+  fileCount: number;
+  sourceCount: number;
+  ddlCount: number;
+  nontargetCount: number;
+  skippedEntryCount: number;
+  totalBytes: number;
+}
+
 /** 미리보기 결과 — 텍스트만 내용 반환, 바이너리/초대형은 렌더 안 함(spec FR-004·Edge). */
 export type FsReadResult =
   | { kind: "text"; content: string }
@@ -81,6 +95,7 @@ export interface FsBrowserIpcRequestMap {
   "fs:trash": [FsPathInput, { ok: true }];
   "fs:mkdir": [FsPathInput, { ok: true }];
   "fs:writeFile": [FsWriteInput, { ok: true }];
+  "fs:stageProject": [FsStageProjectInput, FsStageProjectResult];
 }
 
 export type FsBrowserIpcChannel = keyof FsBrowserIpcRequestMap;
@@ -98,6 +113,7 @@ export interface FsBrowserDesktopBridge {
     trash(input: FsPathInput): Promise<IpcResult<{ ok: true }>>;
     mkdir(input: FsPathInput): Promise<IpcResult<{ ok: true }>>;
     writeFile(input: FsWriteInput): Promise<IpcResult<{ ok: true }>>;
+    stageProject(input: FsStageProjectInput): Promise<IpcResult<FsStageProjectResult>>;
   };
 }
 

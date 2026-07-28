@@ -27,6 +27,25 @@
 
 ## 빠른 시작
 
+### 다른 사용자에게 전달하는 설치본
+
+배포판은 이 저장소에서 개별 스크립트를 조합하지 않고
+[`robo-workspace`](https://github.com/uengine-oss/robo-workspace)에서 한 명령으로 만듭니다.
+
+```cmd
+robo.cmd release architect-electron
+```
+
+결과물은 Windows NSIS 설치 파일 하나이며, 대상 PC에는 Docker Desktop만 필요합니다.
+Neo4j·Analyzer·Catalog·Data Fabric·MindsDB·Parser·Gateway는 앱 전용 Docker Compose로
+관리되고 Architect API와 Vue/Electron은 설치본에 포함됩니다.
+
+Electron에서 프로젝트 폴더를 고르면 Windows 절대경로를 Linux 컨테이너에 직접
+넘기지 않습니다. Electron main이 상대경로를 보존한 채 Gateway로 반입하고 Parser가
+파일 내용으로 자동 분류합니다. 일반 코드와 프로시저/함수 SQL은 source,
+`CREATE TABLE/VIEW/INDEX/SEQUENCE` SQL은 DDL이므로 사용자가 DDL 폴더를 따로
+지정할 필요가 없습니다.
+
 > ### 🚀 데스크톱 앱은 스크립트 한 방이면 끝 (권장)
 >
 > **📖 스크립트 전체 가이드 → [`scripts/README.md`](scripts/README.md)**

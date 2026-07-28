@@ -67,6 +67,8 @@ import type {
   FsPathInput,
   FsReadInput,
   FsReadResult,
+  FsStageProjectInput,
+  FsStageProjectResult,
   FsWriteInput,
 } from "../shared/fs-browser-contract";
 
@@ -138,6 +140,8 @@ const fsBridge: FsBrowserDesktopBridge = {
     trash: (input: FsPathInput) => invoke<{ ok: true }>("fs:trash", input),
     mkdir: (input: FsPathInput) => invoke<{ ok: true }>("fs:mkdir", input),
     writeFile: (input: FsWriteInput) => invoke<{ ok: true }>("fs:writeFile", input),
+    stageProject: (input: FsStageProjectInput) =>
+      invoke<FsStageProjectResult>("fs:stageProject", input),
   },
 };
 

@@ -29,7 +29,16 @@ import {
 import { ensureDataDirs } from "./data-dir";
 import { initLogging, log, revealLogs } from "./logging";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
-import { copy, listDir, mkdir, readFile, rename, trash, writeFile } from "./fs-browser";
+import {
+  copy,
+  listDir,
+  mkdir,
+  readFile,
+  rename,
+  stageProject,
+  trash,
+  writeFile,
+} from "./fs-browser";
 import {
   getRuntimeBackend,
   onBackendStatusChange,
@@ -295,6 +304,7 @@ function registerIpcHandlers(): void {
   registerHandler("fs:trash", trash);
   registerHandler("fs:mkdir", mkdir);
   registerHandler("fs:writeFile", writeFile);
+  registerHandler("fs:stageProject", stageProject);
 
   // Bridge backend status changes to the renderer.
   onBackendStatusChange((status, detail) => {

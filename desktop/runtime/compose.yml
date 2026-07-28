@@ -24,8 +24,30 @@ services:
       retries: 30
       start_period: 20s
 
+  mindsdb:
+    image: ${ROBO_IMAGE_MINDSDB}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: mindsdb
+    environment:
+      MINDSDB_APIS: http
+      MINDSDB_DOCKER_ENV: "True"
+      MINDSDB_STORAGE_DIR: /mindsdb/var
+      SENTRY_IO_DSN: ""
+    volumes:
+      - mindsdb_data:/mindsdb/var
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:47334/api/util/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
   fabric:
     image: ${ROBO_IMAGE_FABRIC}
+    env_file:
+      - ./config/fabric.env
     restart: unless-stopped
     labels:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
@@ -36,8 +58,12 @@ services:
       NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
       NEO4J_DATABASE: neo4j
       DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
+      MINDSDB_URL: http://mindsdb:47334
+      MINDSDB_REPLACE_LOCALHOST: host.docker.internal
     depends_on:
       neo4j:
+        condition: service_healthy
+      mindsdb:
         condition: service_healthy
     healthcheck:
       test:
@@ -54,6 +80,8 @@ services:
 
   catalog:
     image: ${ROBO_IMAGE_CATALOG}
+    env_file:
+      - ./config/catalog.env
     restart: unless-stopped
     labels:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
@@ -85,6 +113,8 @@ services:
 
   analyzer:
     image: ${ROBO_IMAGE_ANALYZER}
+    env_file:
+      - ./config/analyzer.env
     restart: unless-stopped
     labels:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
@@ -102,9 +132,6 @@ services:
       NEO4J_DATABASE: neo4j
       ROBO_CATALOG_BASE_URL: http://catalog:5503/robo
       ROBO_DATA_DIR: /data
-      ROBO_LLM_API_KEY: ${ROBO_LLM_API_KEY:-}
-      ROBO_LLM_API_BASE: ${ROBO_LLM_API_BASE:-}
-      ROBO_LLM_MODEL: ${ROBO_LLM_MODEL:-}
     volumes:
       - shared_data:/data
     depends_on:
@@ -127,6 +154,8 @@ services:
 
   parser:
     image: ${ROBO_IMAGE_PARSER}
+    env_file:
+      - ./config/parser.env
     restart: unless-stopped
     labels:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
@@ -145,6 +174,8 @@ services:
 
   gateway:
     image: ${ROBO_IMAGE_GATEWAY}
+    env_file:
+      - ./config/gateway.env
     restart: unless-stopped
     labels:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
@@ -177,4 +208,5 @@ services:
 volumes:
   neo4j_data:
   neo4j_logs:
+  mindsdb_data:
   shared_data:

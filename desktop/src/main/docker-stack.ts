@@ -24,7 +24,7 @@ import { getSecret, setSecret } from "./secret-store";
 
 const MANIFEST_NAME = "runtime-manifest.json";
 const STATE_SCHEMA_VERSION = 1;
-const MANIFEST_SCHEMA_VERSION = 1;
+const MANIFEST_SCHEMA_VERSION = 3;
 const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
 const NEO4J_PASSWORD_SECRET_ID = "runtime.docker.neo4j.password";
 const DOCKER_COMMAND_TIMEOUT_MS = 10 * 60_000;
@@ -37,6 +37,7 @@ export interface RuntimeManifest {
   imageArchiveSha256: string;
   images: {
     neo4j: string;
+    mindsdb: string;
     analyzer: string;
     catalog: string;
     fabric: string;
@@ -49,6 +50,10 @@ export interface RuntimeManifest {
     app: string;
     entrypoint: string;
   };
+  environment: Record<
+    "analyzer" | "catalog" | "fabric" | "parser" | "gateway" | "architect",
+    { file: string; sha256: string }
+  >;
   source: Record<string, string>;
 }
 
@@ -130,7 +135,15 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
       throw new Error(`runtime.manifest_invalid: images.${name}`);
     }
   }
-  for (const required of ["neo4j", "analyzer", "catalog", "fabric", "parser", "gateway"]) {
+  for (const required of [
+    "neo4j",
+    "mindsdb",
+    "analyzer",
+    "catalog",
+    "fabric",
+    "parser",
+    "gateway",
+  ]) {
     if (!manifest.images?.[required as keyof RuntimeManifest["images"]]) {
       throw new Error(`runtime.manifest_invalid: missing image ${required}`);
     }
@@ -160,6 +173,13 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
   ensureRuntimeChild(root, manifest.architect.app, "architect.app");
   if (!/^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/.test(manifest.architect.entrypoint)) {
     throw new Error("runtime.manifest_invalid: architect.entrypoint");
+  }
+  for (const required of ["analyzer", "catalog", "fabric", "parser", "gateway", "architect"]) {
+    const snapshot = manifest.environment?.[required as keyof RuntimeManifest["environment"]];
+    if (!snapshot || !/^[a-f0-9]{64}$/.test(snapshot.sha256 ?? "")) {
+      throw new Error(`runtime.manifest_invalid: environment.${required}.sha256`);
+    }
+    ensureRuntimeChild(root, snapshot.file, `environment.${required}.file`);
   }
   return manifest;
 }
@@ -218,6 +238,28 @@ async function sha256File(filePath: string): Promise<string> {
     stream.on("end", resolve);
   });
   return hash.digest("hex");
+}
+
+async function ensureEnvironmentSnapshots(
+  root: string,
+  manifest: RuntimeManifest,
+): Promise<void> {
+  for (const [name, snapshot] of Object.entries(manifest.environment)) {
+    const file = ensureRuntimeChild(root, snapshot.file, `environment.${name}.file`);
+    if (!fs.existsSync(file)) {
+      throw new Error(`runtime.environment_missing: ${name}`);
+    }
+    const actualSha = await sha256File(file);
+    if (actualSha !== snapshot.sha256) {
+      throw new Error(
+        `runtime.environment_checksum_mismatch: name=${name} expected=${snapshot.sha256} actual=${actualSha}`,
+      );
+    }
+  }
+  log("info", "runtime.environment.verified", {
+    releaseId: manifest.releaseId,
+    count: Object.keys(manifest.environment).length,
+  });
 }
 
 async function inspectImageId(image: string): Promise<string | null> {
@@ -336,6 +378,7 @@ function composeEnvironment(
     COMPOSE_PROJECT_NAME,
     ROBO_RELEASE_ID: manifest.releaseId,
     ROBO_IMAGE_NEO4J: manifest.images.neo4j,
+    ROBO_IMAGE_MINDSDB: manifest.images.mindsdb,
     ROBO_IMAGE_ANALYZER: manifest.images.analyzer,
     ROBO_IMAGE_CATALOG: manifest.images.catalog,
     ROBO_IMAGE_FABRIC: manifest.images.fabric,
@@ -346,9 +389,6 @@ function composeEnvironment(
     ROBO_ANALYZER_PORT: String(state.ports.analyzer),
     ROBO_GATEWAY_PORT: String(state.ports.gateway),
     ROBO_ARCHITECT_API_PORT: String(state.ports.architect),
-    ROBO_LLM_API_KEY: process.env.ROBO_LLM_API_KEY ?? "",
-    ROBO_LLM_API_BASE: process.env.ROBO_LLM_API_BASE ?? "",
-    ROBO_LLM_MODEL: process.env.ROBO_LLM_MODEL ?? "",
   };
 }
 
@@ -361,6 +401,7 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   if (current) return current;
   const root = runtimeDirectory();
   const manifest = readManifest(root);
+  await ensureEnvironmentSnapshots(root, manifest);
   await ensureDockerDaemon();
   await ensureImages(root, manifest);
 
@@ -435,6 +476,12 @@ export function getDockerStackRuntime(): DockerStackRuntime | null {
           images: { ...current.manifest.images },
           imageIds: { ...current.manifest.imageIds },
           architect: { ...current.manifest.architect },
+          environment: Object.fromEntries(
+            Object.entries(current.manifest.environment).map(([name, value]) => [
+              name,
+              { ...value },
+            ]),
+          ) as RuntimeManifest["environment"],
           source: { ...current.manifest.source },
         },
       }

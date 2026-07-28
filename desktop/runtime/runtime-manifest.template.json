@@ -1,11 +1,12 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "releaseId": "RELEASE_ID",
   "composeFile": "compose.yml",
   "imageArchive": "robo-images.tar",
   "imageArchiveSha256": "IMAGE_ARCHIVE_SHA256",
   "images": {
     "neo4j": "neo4j:5.26.0",
+    "mindsdb": "mindsdb/mindsdb:v26.1.0",
     "analyzer": "uengine/robo-analyzer:RELEASE_ID",
     "catalog": "uengine/robo-data-catalog:RELEASE_ID",
     "fabric": "uengine/robo-data-fabric:RELEASE_ID",
@@ -14,6 +15,7 @@
   },
   "imageIds": {
     "neo4j": "sha256:IMAGE_ID_NEO4J",
+    "mindsdb": "sha256:IMAGE_ID_MINDSDB",
     "analyzer": "sha256:IMAGE_ID_ANALYZER",
     "catalog": "sha256:IMAGE_ID_CATALOG",
     "fabric": "sha256:IMAGE_ID_FABRIC",
@@ -24,6 +26,32 @@
     "python": "architect/python/python.exe",
     "app": "architect/app",
     "entrypoint": "api.main:app"
+  },
+  "environment": {
+    "analyzer": {
+      "file": "config/analyzer.env",
+      "sha256": "ENV_SHA256_ANALYZER"
+    },
+    "catalog": {
+      "file": "config/catalog.env",
+      "sha256": "ENV_SHA256_CATALOG"
+    },
+    "fabric": {
+      "file": "config/fabric.env",
+      "sha256": "ENV_SHA256_FABRIC"
+    },
+    "parser": {
+      "file": "config/parser.env",
+      "sha256": "ENV_SHA256_PARSER"
+    },
+    "gateway": {
+      "file": "config/gateway.env",
+      "sha256": "ENV_SHA256_GATEWAY"
+    },
+    "architect": {
+      "file": "architect/app/.env",
+      "sha256": "ENV_SHA256_ARCHITECT"
+    }
   },
   "source": {
     "workspace": "WORKSPACE_COMMIT",
