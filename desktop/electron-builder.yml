@@ -43,6 +43,9 @@ nsis:
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
   artifactName: ${productName}-Setup-${version}.${ext}
+  # Build the uninstaller inside the final installer. This avoids executing an
+  # intermediate unsigned EXE, which enterprise App Control can block.
+  script: installer.nsi
 
 mac:
   target:
