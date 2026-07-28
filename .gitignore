@@ -89,6 +89,8 @@ desktop/dist/
 desktop/out/
 desktop/resources/python/
 desktop/resources/neo4j/
+desktop/resources/runtime/*
+!desktop/resources/runtime/.gitkeep
 desktop/playwright-report/
 desktop/test-results/
 desktop/.playwright/

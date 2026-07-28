@@ -17,8 +17,9 @@ scripts\dev-desktop.cmd -Stop
 - `-NoElectron`: 공통 백엔드만 실행
 - `-Stop`: 이 프로필이 기록한 프로세스 트리만 종료
 
-기존 스크립트와 달리 중첩 `robo-analyzer` 체크아웃을 실행하지 않고, 독립된
-형제 저장소를 사용합니다. data-fabric/parser의 로컬 포트는 Windows 예약 포트
+Architect 프로필은 이 저장소가 commit으로 고정한 중첩 `robo-analyzer` 서브모듈을
+실행합니다. Analyzer 본진 개발용 형제 저장소는 `robo-workspace`의 `analyzer`
+프로필에서만 사용합니다. data-fabric/parser의 로컬 포트는 Windows 예약 포트
 충돌을 피하기 위해 8404/8401이며 Gateway에 실제 URL이 전달됩니다.
 
 ## Electron 패키징

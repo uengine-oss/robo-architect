@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "RELEASE_ID",
+  "composeFile": "compose.yml",
+  "imageArchive": "robo-images.tar",
+  "imageArchiveSha256": "IMAGE_ARCHIVE_SHA256",
+  "images": {
+    "neo4j": "neo4j:5.26.0",
+    "analyzer": "uengine/robo-analyzer:RELEASE_ID",
+    "catalog": "uengine/robo-data-catalog:RELEASE_ID",
+    "fabric": "uengine/robo-data-fabric:RELEASE_ID",
+    "parser": "uengine/robo-antlr-parser:RELEASE_ID",
+    "gateway": "uengine/robo-api-gateway:RELEASE_ID"
+  },
+  "imageIds": {
+    "neo4j": "sha256:IMAGE_ID_NEO4J",
+    "analyzer": "sha256:IMAGE_ID_ANALYZER",
+    "catalog": "sha256:IMAGE_ID_CATALOG",
+    "fabric": "sha256:IMAGE_ID_FABRIC",
+    "parser": "sha256:IMAGE_ID_PARSER",
+    "gateway": "sha256:IMAGE_ID_GATEWAY"
+  },
+  "architect": {
+    "python": "architect/python/python.exe",
+    "app": "architect/app",
+    "entrypoint": "api.main:app"
+  },
+  "source": {
+    "workspace": "WORKSPACE_COMMIT",
+    "architect": "ARCHITECT_COMMIT",
+    "openPencil": "OPEN_PENCIL_COMMIT",
+    "analyzer": "ANALYZER_COMMIT",
+    "catalog": "CATALOG_COMMIT",
+    "fabric": "FABRIC_COMMIT",
+    "frontend": "FRONTEND_COMMIT",
+    "parser": "PARSER_COMMIT",
+    "gateway": "GATEWAY_COMMIT"
+  }
+}

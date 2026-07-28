@@ -21,12 +21,9 @@ extraResources:
   - from: ../frontend/dist
     to: frontend/dist
     filter: ["**/*"]
-
-# Bundled runtimes that must NOT live inside the asar archive
-# (the Python interpreter and the Neo4j server are launched as child processes).
-asarUnpack:
-  - resources/python/**
-  - resources/neo4j/**
+  - from: resources/runtime
+    to: runtime
+    filter: ["**/*"]
 
 win:
   target:

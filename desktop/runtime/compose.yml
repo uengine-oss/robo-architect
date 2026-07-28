@@ -1,0 +1,180 @@
+services:
+  neo4j:
+    image: ${ROBO_IMAGE_NEO4J}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: neo4j
+    ports:
+      - "127.0.0.1:${ROBO_NEO4J_PORT}:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${ROBO_NEO4J_PASSWORD}
+      ROBO_NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -a bolt://127.0.0.1:7687 -u neo4j -p \"$$ROBO_NEO4J_PASSWORD\" \"RETURN 1\" >/dev/null 2>&1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  fabric:
+    image: ${ROBO_IMAGE_FABRIC}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: fabric
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      NEO4J_DATABASE: neo4j
+      DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8404/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  catalog:
+    image: ${ROBO_IMAGE_CATALOG}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: catalog
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      NEO4J_DATABASE: neo4j
+      DATA_FABRIC_URL: http://fabric:8404
+      CATALOG_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      fabric:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5503/robo/check-data/', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  analyzer:
+    image: ${ROBO_IMAGE_ANALYZER}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: analyzer
+    ports:
+      - "127.0.0.1:${ROBO_ANALYZER_PORT}:5502"
+    environment:
+      ROBO_NEO4J_URI: bolt://neo4j:7687
+      ROBO_NEO4J_USER: neo4j
+      ROBO_NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      ROBO_NEO4J_DATABASE: neo4j
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      NEO4J_DATABASE: neo4j
+      ROBO_CATALOG_BASE_URL: http://catalog:5503/robo
+      ROBO_DATA_DIR: /data
+      ROBO_LLM_API_KEY: ${ROBO_LLM_API_KEY:-}
+      ROBO_LLM_API_BASE: ${ROBO_LLM_API_BASE:-}
+      ROBO_LLM_MODEL: ${ROBO_LLM_MODEL:-}
+    volumes:
+      - shared_data:/data
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      catalog:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5502/', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+  parser:
+    image: ${ROBO_IMAGE_PARSER}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: parser
+    environment:
+      SERVER_PORT: "8081"
+      ROBO_DATA_DIR: /data
+    volumes:
+      - shared_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/actuator/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  gateway:
+    image: ${ROBO_IMAGE_GATEWAY}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: gateway
+    ports:
+      - "127.0.0.1:${ROBO_GATEWAY_PORT}:9000"
+    environment:
+      SERVER_PORT: "9000"
+      ROBO_ANTLR_URL: http://parser:8081
+      ROBO_ANALYZER_URL: http://analyzer:5502
+      ROBO_CATALOG_URL: http://catalog:5503
+      ROBO_DATA_FABRIC_URL: http://fabric:8404
+      ROBO_ARCHITECT_URL: http://host.docker.internal:${ROBO_ARCHITECT_API_PORT}
+    depends_on:
+      analyzer:
+        condition: service_healthy
+      catalog:
+        condition: service_healthy
+      fabric:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/actuator/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  shared_data:

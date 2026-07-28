@@ -7,10 +7,11 @@
  *   `ROBO_BACKEND_DIR` overrides). The Python interpreter, deps, and
  *   `.env` come from that checkout exactly as they do today.
  *
- * Production-mode (NOT YET WIRED — lands in T018 + a switch here):
- *   Spawns `<resources>/python/<os-arch>/python -m uvicorn api.main:app …`
- *   from the asar-unpacked bundle. The CLI invocation, env-var contract,
- *   and readiness probe are identical, so only the spawn target changes.
+ * Packaged mode:
+ *   Starts/reuses the app-owned Docker stack, then spawns the bundled
+ *   relocatable Python interpreter for the host Architect API. Keeping this
+ *   API on the host preserves Windows project paths and local Claude/PTY
+ *   integration; Neo4j and Analyzer services stay isolated in Compose.
  *
  * What this module owns:
  *   - resolveBackendCwd()   — where to spawn from (env override → fallback)
@@ -21,13 +22,14 @@
  *   - getRuntimeBackend()   — { port, pid, status } snapshot.
  *   - onBackendStatusChange — subscription for the renderer push channel.
  *
- * What this module does NOT do (deferred):
- *   - Bundled-Python resolution (T018)
- *   - Neo4j start/stop (T023)
+ * What this module does NOT do:
+ *   - Build runtime artifacts (the Workspace release command owns that)
+ *   - Stop the warm Docker stack on ordinary window close
  *   - Auto-restart loop with backoff after crash (T020 full)
  *   - Status-cycle pushes integrated with electron-updater (T031)
  */
 
+import { app } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -35,6 +37,10 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { RuntimeStatus } from "../shared/ipc-contract";
 
+import {
+  resolveBundledArchitectRuntime,
+  startDockerStack,
+} from "./docker-stack";
 import { pickFreePort } from "./ports";
 import { log } from "./logging";
 
@@ -120,6 +126,12 @@ export function resolveBackendCwd(): string {
   );
 }
 
+function usePackagedRuntime(): boolean {
+  if (process.env.ROBO_RUNTIME_MODE === "docker") return true;
+  if (process.env.ROBO_RUNTIME_MODE === "development") return false;
+  return app.isPackaged && !process.env.ROBO_BACKEND_DIR;
+}
+
 async function probeHealth(port: number, signal: AbortSignal): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal });
@@ -146,31 +158,42 @@ async function waitForReady(port: number): Promise<void> {
   throw new Error(`backend.readiness_timeout: ${READINESS_TIMEOUT_MS}ms`);
 }
 
-export async function startBackend(): Promise<{ port: number }> {
+async function startBackendInternal(): Promise<{ port: number }> {
   if (child && child.exitCode === null) {
     throw new Error("backend.already_running");
   }
-  setStatus("starting-backend");
+  const packaged = usePackagedRuntime();
+  let cwd: string;
+  let port: number;
+  let executable: string;
+  let args: string[];
 
-  const cwd = resolveBackendCwd();
-  const port = await pickFreePort();
-  log("info", "backend.spawn", { cwd, port });
-
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    // The backend already reads NEO4J_* / LLM_* / *_API_KEY from its own
-    // .env via python-dotenv; we don't override them here. Production-mode
-    // injection from DesktopSettings / OS secure store lands in T040.
-    PYTHONUNBUFFERED: "1",
-  };
-
-  const spawned = spawn(
-    "uv",
-    [
+  if (packaged) {
+    setStatus("starting-db");
+    const stack = await startDockerStack();
+    const bundled = resolveBundledArchitectRuntime(stack);
+    cwd = bundled.app;
+    port = stack.ports.architect;
+    executable = bundled.python;
+    args = [
+      "-m",
+      "uvicorn",
+      bundled.entrypoint,
+      "--host",
+      "0.0.0.0",
+      "--port",
+      String(port),
+      "--log-level",
+      "info",
+    ];
+  } else {
+    cwd = resolveBackendCwd();
+    port = await pickFreePort();
+    executable = "uv";
+    args = [
       "run",
       // Windows 앱 제어 정책(WDAC/Smart App Control)이 `uvicorn.exe` 콘솔
-      // 스크립트 셔임 실행을 차단(os error 4551)하는 환경이 있어, python.exe 를
-      // 직접 호출하는 `python -m uvicorn` 으로 spawn 한다(동등·이식성↑).
+      // 스크립트 셔임 실행을 차단할 수 있어 python module로 실행한다.
       "python",
       "-m",
       "uvicorn",
@@ -181,9 +204,31 @@ export async function startBackend(): Promise<{ port: number }> {
       String(port),
       "--log-level",
       "info",
-    ],
-    { cwd, env, stdio: ["ignore", "pipe", "pipe"] },
-  );
+    ];
+  }
+
+  setStatus("starting-backend");
+  log("info", "backend.spawn", { cwd, port, mode: packaged ? "packaged" : "development" });
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PYTHONUNBUFFERED: "1",
+    API_PORT: String(port),
+    ROBO_SPEC_BACKEND_URL: `http://127.0.0.1:${port}`,
+    NEO4J_URI: process.env.ROBO_NEO4J_URI ?? process.env.NEO4J_URI,
+    NEO4J_USER: process.env.ROBO_NEO4J_USER ?? process.env.NEO4J_USER,
+    NEO4J_PASSWORD: process.env.ROBO_NEO4J_PASSWORD ?? process.env.NEO4J_PASSWORD,
+    NEO4J_DATABASE: process.env.ROBO_NEO4J_DATABASE ?? process.env.NEO4J_DATABASE,
+    ANALYZER_NEO4J_DATABASE:
+      process.env.ROBO_NEO4J_DATABASE ?? process.env.ANALYZER_NEO4J_DATABASE,
+  };
+
+  const spawned = spawn(executable, args, {
+    cwd,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
   child = spawned;
   runtime = { ...runtime, port, pid: spawned.pid ?? null };
 
@@ -215,6 +260,22 @@ export async function startBackend(): Promise<{ port: number }> {
 
   setStatus("ready");
   return { port };
+}
+
+/**
+ * Public startup boundary. Preparation failures (Docker unavailable, corrupt
+ * archive, invalid manifest, bundled Python missing) happen before the child
+ * readiness loop, so they must be mapped to the same fatal runtime state.
+ */
+export async function startBackend(): Promise<{ port: number }> {
+  try {
+    return await startBackendInternal();
+  } catch (err) {
+    if (getRuntimeBackend().status !== "fatal") {
+      setStatus("fatal", err instanceof Error ? err.message : String(err));
+    }
+    throw err;
+  }
 }
 
 export async function retryBackend(): Promise<{ port: number }> {

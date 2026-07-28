@@ -25,6 +25,7 @@ import { getSecret, rekeySecret as rekey, setSecret } from "../secret-store";
 import { loadSettings, saveSettings } from "../settings";
 
 const TEST_TIMEOUT_MS = 5000;
+const BUNDLED_CONNECTION_LABEL = "Robo Architect (Bundled)";
 
 // ---------------------------------------------------------------------------
 // Re-key helper (T009) — used by migration; predates the rest of CRUD.
@@ -157,6 +158,54 @@ export async function saveConnection(input: ConnectionsSaveInput): Promise<Saved
   return sc;
 }
 
+/**
+ * Upsert the app-managed Neo4j instance in the startup picker.
+ *
+ * The host port may change after a runtime repair or upgrade. Keying this
+ * record by `source: "bundled"` lets us refresh the URI without accumulating
+ * duplicate connections. The generated password stays in the OS credential
+ * store and is never written to settings.json.
+ */
+export async function ensureBundledConnection(input: {
+  uri: string;
+  user: string;
+  password: string;
+  database: string;
+}): Promise<SavedConnection> {
+  const uri = validateUri(input.uri);
+  const user = validateUser(input.user);
+  const database = validateDatabase(input.database);
+  const settings = await loadSettings();
+  const existing = settings.savedConnections.find((connection) => connection.source === "bundled");
+
+  const bundled: SavedConnection = existing
+    ? {
+        ...existing,
+        label: BUNDLED_CONNECTION_LABEL,
+        uri,
+        user,
+        database,
+      }
+    : {
+        id: randomUUID(),
+        label: BUNDLED_CONNECTION_LABEL,
+        uri,
+        user,
+        database,
+        source: "bundled",
+        lastConnectedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+
+  await setSecret(connectionPasswordSecretId(bundled.id), input.password);
+  settings.savedConnections = [
+    bundled,
+    ...settings.savedConnections.filter((connection) => connection.id !== bundled.id),
+  ];
+  await saveSettings(settings);
+  return bundled;
+}
+
 // ---------------------------------------------------------------------------
 // connections:test (T033) — Neo4j handshake without persisting
 // ---------------------------------------------------------------------------
@@ -278,6 +327,10 @@ export async function resolveActiveForBackend(): Promise<ActiveBackendConnection
 
   const connection = settings.savedConnections.find((c) => c.id === connectionId);
   if (!connection) return null;
+  // Container services already receive the internal `bolt://neo4j:7687`
+  // address from Compose. The bundled host URI is unreachable from inside a
+  // container and therefore must not be forwarded as an override header.
+  if (connection.source === "bundled") return null;
 
   const password = await getSecret(connectionPasswordSecretId(connection.id));
   if (password === null) return null;

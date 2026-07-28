@@ -21,6 +21,7 @@ const FRONTEND_SRC = fileURLToPath(new URL('./src', import.meta.url))
 //   배포 : 빌드 스크립트가 ANALYZER_REMOTE_URL='analyzer/assets/remoteEntry.js' 주입
 //          → Electron 이 app://app/analyzer/ 로 co-locate 서빙(별도 5001 서버 불필요)
 const ANALYZER_REMOTE = process.env.ANALYZER_REMOTE_URL || 'http://localhost:5001/assets/remoteEntry.js'
+const ROBO_GATEWAY = process.env.ROBO_GATEWAY_URL || 'http://127.0.0.1:9000'
 
 export default defineConfig({
   plugins: [
@@ -165,7 +166,7 @@ export default defineConfig({
       // Analysis 탭(robo-analyzer-frontend remote)의 백엔드 호출을 API Gateway(9000)로 라우팅.
       // '/api' 의 더 구체적인 접두사이므로 먼저 매칭되도록 위에 둔다.
       '/api/gateway': {
-        target: 'http://127.0.0.1:9000',
+        target: ROBO_GATEWAY,
         changeOrigin: true
       },
       '/api': {
@@ -187,7 +188,7 @@ export default defineConfig({
     allowedHosts: ['ex-ai.tail9fa342.ts.net', '.process-gpt.io', '.dream-flow.com', 'localhost'],
     proxy: {
       '/api/gateway': {
-        target: 'http://127.0.0.1:9000',
+        target: ROBO_GATEWAY,
         changeOrigin: true
       },
       '/api': {
