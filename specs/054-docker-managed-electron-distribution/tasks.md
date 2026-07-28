@@ -13,6 +13,6 @@
 - [x] T011 Documentation and release handoff
 - [x] T012 Service-scoped packaged environment files
 - [x] T013 GPU LLM effective-config and live-call verification
-- [ ] T014 Rebuilt installer and final repository synchronization
+- [x] T014 Rebuilt installer and final repository synchronization
 - [x] T015 Electron Windows project ingress bridge and shop_mall DDL/source verification
 - [ ] T016 Packaged PostgreSQL datasource integration and Neo4j registry persistence verification
