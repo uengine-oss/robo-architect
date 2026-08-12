@@ -32,6 +32,7 @@ def _arts():
                     "userStoryRefs": ["us:배송상태변경"],
                     "gwt": [{
                         "scenario": "배송 상태 정상 변경",
+                        "evidenceRefs": ["code:x.c:fa::R-1"],
                         "given": {"name": "Aggregate: 배송", "fieldValues": {"status": "READY"}},
                         "when": {"name": "Command: 배송상태변경", "fieldValues": {"status": "SHIPPED"}},
                         "then": {"name": "Event: 배송상태변경됨", "fieldValues": {"status": "SHIPPED"}},
@@ -71,6 +72,7 @@ def test_tactical_carries_refs_including_dict_commands():
     assert command["properties"] == [{"name": "status", "type": "String"}]
     assert command["userStoryRefs"] == ["us:배송상태변경"]
     assert command["gwt"][0]["then"]["fieldValues"] == {"status": "SHIPPED"}
+    assert command["gwt"][0]["evidenceRefs"] == ["code:x.c:fa::R-1"]
     assert by_title["배송상태변경됨"]["fields"]["payload"] == {"status": "String"}
 
 

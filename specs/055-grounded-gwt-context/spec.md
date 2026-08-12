@@ -1,52 +1,71 @@
-# Feature Specification: Grounded GWT Context
+# Feature Specification: Semantic-Frame-Grounded GWT Context
+
+현재 교차 서비스 규칙·폐기 결정·실행 순서의 단일 진실은 Analyzer
+`D:\work\robo\project\robo-data-analyzer\specs\131-cross-node-semantic-grounding\HANDOFF.md`다.
 
 **Feature Branch**: `main`  
 **Created**: 2026-08-10  
-**Status**: In Progress
+**Reframed**: 2026-08-12
+**Status**: Complete — semantic-frame Simplified/Detailed actual replay verified
 
 ## Problem
 
-Analyzer의 RULE 계약이 `statement`에서 `anchor_line/cond/then/nl`로 바뀌었지만
-Proposal 스킬의 조회 계약은 옛 형상을 전제로 한다. 또한 Detailed DDD의 Tactical 산출물과
-수렴기는 Command GWT를 운반하지 않아 Detailed 결과는 GWT가 0개가 된다.
+이전 Architect 계약은 Analyzer 결과가 충분히 구조화되지 않았다는 문제를 함수 complete source/hash를
+GWT packet에 추가해 Architect가 다시 검증하는 방식으로 보정하려 했다. 이는 Analyzer 분석의 의미를
+약화하고 중복·토큰·혼동을 늘리므로 폐기됐다. Architect는 Analyzer가 소유한 canonical semantic frame과
+parser 구조 사실을 목적별로 중복 제거해 소비해야 한다.
 
 ## User Scenarios
 
-### US1 — Simplified가 좌표 있는 근거로 GWT를 만든다 (P1)
+### US1 — Simplified가 semantic claims로 GWT를 만든다
 
-Claude가 레거시 후보를 검색하고 GWT용 상세을 읽으면 RULE 파일행, 직접 호출/RW,
-테이블·컬럼·실제 샘플을 근거로 UserStory acceptanceCriteria와 Command GWT를 만든다.
+Simplified Plan은 target responsibility, input/result roles, ordered flow, RULE/CALL/SYMBOL/TABLE claims,
+sufficiency와 source coordinates를 읽고 Given/When/Then을 만든다. scenario는 실제 사용한 evidence ID를
+남기며 원문 body를 정상 generation input으로 받지 않는다.
 
-### US2 — Detailed DDD도 같은 근거와 같은 GWT 계약을 쓴다 (P1)
+### US2 — Detailed DDD도 같은 packet과 refs를 보존한다
 
-Tactical 단계가 Aggregate/Command/Event와 함께 Command별 정상·경계·실패 GWT를 내고,
-수렴기가 이를 표준 tacticalDiff에 손실 없이 보존한다.
+Define/Tactical/consolidation은 같은 semantic-frame projection을 사용하고 Command별 GWT와 evidence refs를
+손실 없이 표준 tacticalDiff에 보존한다. 별도 의미 생성기나 두 번째 영속화 경로를 만들지 않는다.
 
-### US3 — 근거가 부족하면 창작 대신 한계를 남긴다 (P1)
+### US3 — 근거가 부족하면 원문 재분석 대신 한계를 남긴다
 
-RULE·표본에 없는 필드값이나 상태를 만들지 않으며, 소스 전문이 꼭 필요한 예외만 기존
-full detail로 재조회한다.
+`partial|insufficient` claim이나 missing context가 있으면 확인된 부분만 사용하고 필요한 evidence kind를
+명시한다. 같은 원문을 Architect가 다시 읽어 의미를 보충하거나 이름·표본에 없는 값을 만들지 않는다.
 
 ## Requirements
 
-- FR-001 공용 `legacy-reference.md`는 Analyzer 현행 RULE `line/text/tables`와
-  `node_detail(view="gwt")`를 명시하며 Simplified/Detailed가 함께 사용한다.
-- FR-002 GWT의 각 Given/When/Then은 사용한 함수·RULE 행·테이블/샘플 근거로 역추적된다.
-- FR-003 동일 RULE/소스 전문을 검색과 상세 양쪽에서 중복 주입하지 않는다.
-- FR-004 TacticalArtifact의 handledCommand는 `name`, `legacyRefs`, `userStoryRefs`,
-  `gwt`를 운반할 수 있다.
-- FR-005 staged consolidator는 Command의 `gwt`, `userStoryRefs`, 입력 필드/properties를
-  표준 tacticalDiff로 복사하며 새 GWT 생성기를 만들지 않는다.
-- FR-006 기존 Simplified Plan output schema와 proposal applier GWT 경로를 재사용한다.
-- FR-007 데이터 조회는 read-only Analyzer MCP만 사용하고 Architect가 DB에 직접 쓰지 않는다.
+- FR-001 Analyzer `semantic-frame/v1` projection은 target, claims, callees, data objects를 stable ID로 한 번씩
+  제공하고 owner/order/coordinate/status/missing context를 보존한다.
+- FR-002 complete source body와 새 source excerpt는 정상 GWT packet과 stage prompt에서 제외한다.
+  source 조회는 사람의 감사·결함 추적을 위한 별도 read-only 경로다.
+- FR-003 각 GWT scenario는 실제 사용한 RULE 및 필요한 CALL/SYMBOL/TABLE/COLUMN `evidenceRefs`를 남긴다.
+- FR-004 Given은 입력·선행 상태, When은 Command/호출·처리, Then은 반환/Event/상태 변화 claim에 근거한다.
+- FR-005 동일 claim/callee/data object는 packet에 한 번만 싣고 ID로 참조한다.
+- FR-006 TacticalArtifact와 staged consolidator는 Command `gwt`, `evidenceRefs`, `userStoryRefs`, 입력
+  field/property를 손실 없이 표준 tacticalDiff에 보존한다.
+- FR-007 기존 Simplified Plan output schema와 proposal applier `_create_gwt` 경로를 재사용한다.
+- FR-008 데이터 조회는 read-only Analyzer MCP만 사용하고 Architect가 Analyzer DB에 쓰지 않는다.
+- FR-009 운영자가 지정한 Analyzer DB 이름을 모든 MCP 호출에 그대로 전달하고 프로젝트명으로 추측하지 않는다.
+- FR-010 incomplete/unknown/cross-owner evidence와 구조 사실 변조는 fail-closed하며, Analyzer narrative를
+  parser fact보다 우선해 사실을 바꾸지 않는다.
+
+## 폐기된 계약
+
+- `gwt-evidence/v2` complete source/hash 필수 계약
+- `source.code_text`를 Architect prompt의 최상위 authority로 두는 계약
+- 구조화 의미가 모호하면 같은 함수 원문을 Architect가 재독해해 보충하는 계약
+
+안정적 evidence ID, RULE condition/effects/flow, symbol definition, outbound callee, direct table/column,
+scenario evidence refs, 운영자 DB 전달과 stage 보존 로직은 새 계약에 맞게 적응할 수 있다.
 
 ## Success Criteria
 
-- shopmall 동일 요구에서 Simplified와 Detailed 모두 Command당 정상 1개와 경계/실패
-  1개 이상을 생성한다.
-- 봉인된 `calc_discount`, `load_target_orders`, `get_code_name` 표본의 값·분기·R/W 금지
-  주장을 위반하지 않는다.
-- GWT 생성용 MCP 입력 바이트가 현행 검색+full detail 대비 70% 이상 감소한다.
-- Detailed 수렴 전후 Command의 GWT 개수와 내용이 동일하다.
-- 적용기 기존 `_create_gwt` 외의 두 번째 영속화 경로는 0개다.
-
+- Analyzer 합격 전에는 실제 Architect 재실행을 시작하지 않는다.
+- normal GWT packet의 complete source body와 새 excerpt가 0개다.
+- 동일 claim/callee/data object 중복이 0이고 모든 scenario ref가 packet의 정확한 owner/evidence에 resolve된다.
+- Simplified/Detailed가 같은 requirement·target·semantic packet에서 정상·경계·실패 GWT를 만들고 수렴
+  전후 내용과 refs가 동일하다.
+- source 직접 대조에서 fabrication 0, contradiction 0이며 omission과 needs_context를 별도 보고한다.
+- 이전 21/21은 과거 기준선으로만 사용하고 새 semantic-frame 결과로 재주장하지 않는다.
+- `accept/apply` 호출 0, 신규 GWT 영속화 경로 0이다.

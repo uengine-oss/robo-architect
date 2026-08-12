@@ -3,9 +3,27 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
+from api.platform.env import get_analyzer_neo4j_database
 from api.platform.legacy_tool_events import decode_event, is_event
 from api.platform.skill_runner import run_skill_lines
 from api.features.proposal_lifecycle.services.legacy_provenance import ProvenanceCollector
+
+
+def _database_scoped_prompt(human_prompt: str) -> str:
+    """Expose the operator-selected Analyzer DB to the tool-using model."""
+    database = get_analyzer_neo4j_database()
+    if not database:
+        return human_prompt
+    return (
+        "ANALYZER NEO4J DATABASE (operator-authoritative): "
+        f"{database}\n"
+        "Every robo-cluster cluster_retrieve/node_detail call MUST pass exactly "
+        f'database="{database}". A project or corpus name is not a database name; '
+        "never infer or substitute one. Normal generation MUST call node_detail with "
+        'view="frame"; view="full" is explicit audit only and MUST NOT be used to '
+        "supplement missing semantic meaning.\n\n"
+        + human_prompt
+    )
 
 
 def _result_events(result: dict) -> list[tuple[str, object]]:
@@ -19,11 +37,12 @@ def _result_events(result: dict) -> list[tuple[str, object]]:
         ]
     inspection = result["inspection"]
     if inspection["ok"]:
-        source = inspection.get("source") or {}
-        lines = ""
-        if source.get("available"):
-            lines = f" ({source.get('start_line')}~{source.get('end_line')}줄)"
-        message = f"   → {inspection.get('name') or inspection['nodeId']} 상세 검토됨{lines}"
+        frame = inspection.get("semanticFrame") or {}
+        slot_count = len(frame.get("slots") or {})
+        message = (
+            f"   → {inspection.get('name') or inspection['nodeId']} "
+            f"의미 프레임 검토됨 ({slot_count} slots)"
+        )
     else:
         message = (
             f"   → {inspection['nodeId']} 상세 조회 실패: "
@@ -44,7 +63,7 @@ async def stream_stage_skill_lines(
     collector = ProvenanceCollector()
     try:
         async for line in run_skill_lines(
-            skill_root, skill_name, human_prompt, **runner_kwargs,
+            skill_root, skill_name, _database_scoped_prompt(human_prompt), **runner_kwargs,
         ):
             if not is_event(line):
                 yield "line", line

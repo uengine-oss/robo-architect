@@ -8,6 +8,7 @@
 ```json
 {
   "scenario": "정상 주문 생성",
+  "evidenceRefs": ["<exact RULE evidence_id>", "<used TABLE evidence_id>"],
   "given": { "name": "Aggregate: 주문", "description": "메뉴가 등록된 상태",
              "fieldValues": { "status": "NONE" } },
   "when":  { "name": "Command: 음식주문", "description": "메뉴 선택·수량 입력",
@@ -18,13 +19,16 @@
 ```
 - `given` = 사전 Aggregate 상태, `when` = Command 실행(파라미터 값), `then` = 결과 Event(페이로드 값).
 - `fieldValues`는 속성명→테스트값 맵(문자열). properties/inputSchema/payload의 필드명과 일치시킨다.
+- `evidenceRefs`는 이 시나리오 판단에 실제 사용한 packet `evidence_id`만 담는다. 최소 한 개는
+  RULE이어야 하며 값·호출·sample을 썼다면 대응 SYMBOL/CALL/TABLE evidence도 함께 담는다.
 
 ## 규칙
 - Command마다 **2~4개** 시나리오: 정상 경로 1개 + 경계/실패 1개 이상(예: 가격 0 이하 거부, 품절 거부).
 - name은 `"Aggregate: X" / "Command: Y" / "Event: Z"` 형식(참조 대상 명시).
 - UserStory.acceptanceCriteria와 의미가 일치해야 한다(US의 Given/When/Then을 명령 단위로 구체화).
-- `cluster_retrieve` RULE의 `line/text/tables`를 먼저 시나리오에 배분하고, 선택한 함수의
-  `node_detail(view="gwt")`에서 CALLS와 직접 R/W 테이블·컬럼·샘플을 확인한다.
+- `node_detail(view="frame")`의 semantic slots와 profile RULE `condition/effects`를 시나리오에 배분하고,
+  CALLS와 직접 R/W 테이블·컬럼·샘플 claim을 확인한다. complete source를 정상 생성 입력으로 요구하거나
+  Analyzer의 부족 의미를 원문 재독해로 보충하지 않는다.
 - `fieldValues`는 컬럼/속성 또는 RULE에 실제로 나타난 필드만 사용한다. 테스트값은 RULE의
   상수나 샘플에 있는 값이면 그대로 쓰고, 근거가 없으면 빈 맵으로 둔다.
 - 범위/미정의 분기를 구체화하려고 대표 숫자나 미매핑 코드를 새로 선택하지 않는다. 실제 sample이나
@@ -38,5 +42,5 @@
 - RULE의 조건/결과를 뒤집거나, READ를 WRITE로, CALLS가 없는 모듈을 호출 관계로 만들지 않는다.
 - `then`은 선택 분기의 중간 대입값이 아니라 그 뒤의 공통 후처리·clamp·rollback/commit까지
   적용한 최종 반환/상태다. 범위 조건만 보고 특정 상수가 항상 최종 반환된다고 일반화하지 않는다.
-- 각 시나리오의 근거 함수와 RULE 행은 Command `legacyRefs`에 `nodeId`와 RULE `text` 원문으로
-  남긴다. 여러 RULE을 한 문장으로 합쳐 인용하지 않는다.
+- 각 시나리오는 exact `evidenceRefs`로 직접 역추적한다. Command `legacyRefs`에도 근거 함수
+  `nodeId`와 RULE의 `evidenceId`·`ruleId`·`text`를 보존한다. 여러 RULE을 한 문장으로 합치지 않는다.

@@ -4,6 +4,7 @@ from api.features.proposal_lifecycle.services.plan_runner import (
     normalize_tactical_diff,
     tactical_contract_errors,
 )
+from api.features.proposal_lifecycle.services.stage_runners.tactical import _has_complete_commands
 
 
 def _strategic():
@@ -44,6 +45,16 @@ def test_all_strategic_refs_carried_once_or_more_passes():
     assert missing_plan_legacy_refs(_strategic(), tactical) == []
 
 
+def test_resolved_rule_child_counts_as_its_inspected_parent_function_for_coverage():
+    strategic = {"userStories": [{"legacyRefs": [{
+        "nodeId": "code:shop/calc::R-12", "parentId": "code:shop/calc",
+        "role": "rule", "evidenceId": "code:shop/calc::R-12",
+    }]}]}
+    tactical = [{"nodeLabel": "Command", "legacyRefs": [{"nodeId": "code:shop/calc"}]}]
+
+    assert missing_plan_legacy_refs(strategic, tactical) == []
+
+
 def test_plan_prompt_contains_machine_countable_required_manifest(monkeypatch):
     from api.features.constitution.services import constitution_store
     monkeypatch.setattr(constitution_store, "get_project_strategic_memory", lambda: {})
@@ -58,10 +69,12 @@ def test_plan_prompt_explains_evidence_input_and_does_not_require_duplicate_look
     from api.features.constitution.services import constitution_store
     monkeypatch.setattr(constitution_store, "get_project_strategic_memory", lambda: {})
     packet = [{
-        "nodeId": "code:shop/calc_discount", "ok": True, "view": "gwt",
-        "source": {"start_line": 10, "end_line": 20},
-        "rules": [{"line": 12, "text": "쿠폰 코드가 비면 0을 반환한다"}],
-        "calls": [], "tables": [],
+        "nodeId": "code:shop/calc_discount", "ok": True, "view": "frame",
+        "schemaVersion": "semantic-frame-packet/v1",
+        "semanticFrame": {"schema": "semantic-frame/v1", "slots": {
+            "SL:discount": {"meaning": "쿠폰 코드가 비면 0을 반환한다"},
+        }},
+        "linkedContext": {"callees": [], "symbols": [], "data_objects": []},
     }]
 
     prompt = _build_plan_prompt("PRO-X", _strategic(), "constitution", [], evidence_packet=packet)
@@ -70,6 +83,8 @@ def test_plan_prompt_explains_evidence_input_and_does_not_require_duplicate_look
     assert "code:shop/calc_discount" in prompt
     assert "packet에 있는 nodeId는 재조회하지 말고" in prompt
     assert "예시 스키마의 이름·상태·숫자를 복사하지 않는다" in prompt
+    assert "slot meaning은" in prompt
+    assert '"evidenceRefs"' in prompt
 
 
 def test_tactical_contract_requires_command_story_refs_and_structured_gwt():
@@ -82,11 +97,13 @@ def test_tactical_contract_requires_command_story_refs_and_structured_gwt():
     assert tactical_contract_errors([{
         "nodeLabel": "Command", "nodeTitle": "Calculate", "userStoryRefs": ["us:calc"],
         "gwt": [{
-            "scenario": "empty input", "given": {"name": "input", "fieldValues": {}},
+            "scenario": "empty input", "evidenceRefs": ["code:x::R-1"],
+            "given": {"name": "input", "fieldValues": {}},
             "when": {"name": "calculate", "fieldValues": {}},
             "then": {"name": "return", "fieldValues": {"value": 0}},
         }, {
-            "scenario": "valid input", "given": {"name": "input", "fieldValues": {}},
+            "scenario": "valid input", "evidenceRefs": ["code:x::R-2"],
+            "given": {"name": "input", "fieldValues": {}},
             "when": {"name": "calculate", "fieldValues": {}},
             "then": {"name": "return", "fieldValues": {}},
         }],
@@ -95,12 +112,12 @@ def test_tactical_contract_requires_command_story_refs_and_structured_gwt():
 
 def test_normalize_tactical_diff_lifts_transport_fields_without_duplication():
     scenarios = [{
-        "scenario": "empty input",
+        "scenario": "empty input", "evidenceRefs": ["code:x::R-1"],
         "given": {"name": "input", "fieldValues": {}},
         "when": {"name": "calculate", "fieldValues": {}},
         "then": {"name": "return", "fieldValues": {}},
     }, {
-        "scenario": "valid input",
+        "scenario": "valid input", "evidenceRefs": ["code:x::R-2"],
         "given": {"name": "input", "fieldValues": {}},
         "when": {"name": "calculate", "fieldValues": {}},
         "then": {"name": "return", "fieldValues": {}},
@@ -122,3 +139,19 @@ def test_normalize_tactical_diff_lifts_transport_fields_without_duplication():
     assert command["userStoryRefs"] == ["us:calc"]
     assert command["gwt"] == scenarios
     assert command["legacyRefs"] == [{"nodeId": "code:x.c:calc"}]
+
+
+def test_detailed_tactical_contract_requires_scenario_evidence_refs():
+    artifact = {"aggregates": [{"handledCommands": [{
+        "name": "Calculate", "userStoryRefs": ["us:calc"],
+        "gwt": [{
+            "scenario": name, "evidenceRefs": [f"code:x::{name}"],
+            "given": {"name": "input", "fieldValues": {}},
+            "when": {"name": "calculate", "fieldValues": {}},
+            "then": {"name": "return", "fieldValues": {}},
+        } for name in ("normal", "boundary")],
+    }]}]}
+
+    assert _has_complete_commands(artifact, {"us:calc"}) is True
+    artifact["aggregates"][0]["handledCommands"][0]["gwt"][0].pop("evidenceRefs")
+    assert _has_complete_commands(artifact, {"us:calc"}) is False

@@ -128,26 +128,21 @@ def _compact_inspection(node_id: str, data: dict, raw_head: str) -> dict:
             "error": {"code": "RESULT_PARSE_FAILED", "message": "node detail payload missing node"},
             "rawHead": raw_head,
         }
-    # Analyzer ``node_detail(view="gwt")`` deliberately has a different, bounded shape
-    # from the full view: logical_name/summary/rules/calls/tables are direct node fields.
-    # Persist those arrays verbatim so Proposal provenance does not discard the evidence
-    # the Architect actually inspected.
-    if "properties" not in node and any(key in node for key in ("rules", "calls", "tables")):
+    # Architect's normal detail path persists Analyzer's validated source-free frame packet
+    # verbatim.  No complete source, source excerpt or hash crosses this boundary.
+    if (data.get("schema_version") == "semantic-frame-packet/v1"
+            and isinstance(node.get("semantic_frame"), dict)):
         labels = list(node.get("labels") or [])
         return {
             "nodeId": node_id,
             "ok": True,
-            "view": "gwt",
+            "view": "frame",
+            "schemaVersion": str(data.get("schema_version") or ""),
             "name": node.get("name", ""),
             "label": next((label for label in labels if label != "EMBEDDED"), ""),
-            "logicalName": node.get("logical_name", ""),
-            "summary": node.get("summary", ""),
-            "summaryEvidenceStatus": node.get("summary_evidence_status", ""),
-            "summaryMissingContext": list(node.get("summary_missing_context") or []),
-            "source": _compact_source(node.get("source")),
-            "rules": list(node.get("rules") or []),
-            "calls": list(node.get("calls") or []),
-            "tables": list(node.get("tables") or []),
+            "semanticFrame": dict(node.get("semantic_frame") or {}),
+            "ruleExamples": list(node.get("rule_examples") or []),
+            "linkedContext": dict(node.get("linked_context") or {}),
         }
     properties = node.get("properties") or {}
     columns = node.get("columns") or []

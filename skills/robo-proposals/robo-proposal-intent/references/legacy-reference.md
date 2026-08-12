@@ -3,8 +3,13 @@
 새 근거를 찾는 실행에서 `robo-cluster` 도구가 주입되면 **탐색 → 심층 → 배분 → 갭마감**
 4단계를 수행한다. 그래프 존재 여부를 추측으로 생략하지 말고 `cluster_retrieve` 실제 결과로
 판정한다. 단, Human Prompt의 `INSPECTED LEGACY EVIDENCE`/`Legacy evidence packet`은 같은
-Proposal의 이전 단계가 실제 `node_detail(view="gwt")` 성공 응답을 저장한 권위 근거다. packet의
+Proposal의 이전 단계가 실제 `node_detail(view="frame")` 성공 응답을 저장한 재사용 근거다. packet의
 같은 nodeId는 다시 조회하지 않고 S3 배분에 재사용하며, 필요한 근거가 없을 때만 S1/S2/S4를 수행한다.
+
+Human Prompt에 `ANALYZER NEO4J DATABASE (operator-authoritative)`가 있으면 모든
+`cluster_retrieve`/`node_detail` 호출의 `database`에 그 값을 **그대로** 쓴다. 프로젝트명·코퍼스명
+·소스 디렉터리명으로 DB 이름을 추측하거나 바꾸지 않는다. 이 지정이 없을 때만 `database`를 생략해
+Analyzer 서버 기본 DB를 사용한다.
 
 > **이 계약의 핵심은 검색량이 아니라 배분이다.** 실측 결과 근거 누락의 93%는 "검색을 안 해서"가
 > 아니라 **"이미 검색해 놓고 요소에 붙이지 않아서"** 발생했다(후보 122개를 확보한 실행에서
@@ -43,17 +48,22 @@ RULE 형상은 `{"line": 소스행, "text": 업무 규칙, "tables": [...]}`다.
 ## S2. 심층 — summary 를 읽고 고른다
 
 S1 후보의 **요약과 RULE 목록을 실제로 읽고**, 아래에 해당하는 것만
-`mcp__robo-cluster__node_detail(node_id, view="gwt")` 로 조회한다. 전부 기계적으로
+`mcp__robo-cluster__node_detail(node_id, view="frame")` 로 조회한다. 전부 기계적으로
 조회하지 않는다.
 
 - 이 변경이 **바꾸거나 대체할** 현행 구현
 - 불변식·상태 전이·검증 규칙의 원천이 될 요약을 가진 것(RULE 보유 노드 우선)
 - 트랜잭션 경계 판단에 필요한 것(무엇과 무엇이 한 커밋인지)
 
-GWT 상세은 파일·시작/끝 줄, 실제 CALLS, 직접 READ/WRITE TABLE, 컬럼과 **분석 당시 최대
-5행 샘플**을 준다. 샘플은 가능한 값의 증거이지 전체 분포나 제약조건의 증거가 아니다.
-원문 전문이 정말 필요한 판단만 같은 도구를 `view="full"`로 한 번 더 조회한다. 상세 오류가
-나면 그 ID를 근거로 확정하지 않는다. 목록의 RULE을 상세에서 다시 찾지 않는다.
+GWT 상세 `semantic-frame/v1` projection은 target responsibility/input/result roles, 순서 있는 flow,
+구조화 RULE condition/effects와 의미 slots, symbol 정의, 실제 outbound CALLS, 직접/effective
+READ/WRITE 범위, TABLE/COLUMN 의미와 분석 당시 bounded sample을 ID로 중복 없이 준다. 각 의미는
+owner/evidence refs/coordinate/sufficiency/missing context에 연결된다. complete source와 새로 자른
+source excerpt는 정상 생성 packet에 넣지 않으며 `view="full"`로 다시 받아 의미를 보충하지 않는다.
+parser 구조 사실은 물리 사실의 권위이고 semantic slot은 Analyzer가 원문을 읽어 만든 의미 정본이다.
+두 값이 충돌하거나 status가 부족하면 확인된 부분만 사용하고 필요한 evidence kind를 남긴다. 샘플은
+가능한 값의 증거이지 전체 분포나 제약의 증거가 아니다. 상세 오류나 frame/owner/ref 계약이
+불완전하면 그 ID를 근거로 확정하지 않는다.
 
 ## S3. 배분 — 후보를 요소에 붙인다 (이 계약에서 가장 중요)
 
@@ -93,7 +103,8 @@ S3 후에도 `legacyRefs` 가 빈 요소가 남으면, **그 요소에 한해** 
 
 - 선행 evidence packet이 없는 도구 주입 실행은 `cluster_retrieve` 시도 1회 이상이 없으면 완료가 아니다.
 - 이 실행의 검색 결과에 후보 ID가 하나라도 있으면 `node_detail` 성공 1회 이상이 있어야 한다.
-- 선행 packet을 쓴 실행은 각 항목의 `ok:true`, `view:"gwt"`, nodeId와 source/RULE을 실제로 읽고
+- 선행 packet을 쓴 실행은 각 항목의 `ok:true`, `view:"frame"`, `schemaVersion:"semantic-frame-packet/v1"`,
+  nodeId와 target/slots/flow/RULE/status를 실제로 읽고
   배분해야 한다. packet에 없는 ID나 실패 상세을 본 것으로 간주하지 않는다.
 - **S3 배분을 수행하지 않았으면 완료가 아니다.**
 - 후보가 없거나 모든 상세가 실패한 경우에만 그 사실을 명시하고 진행한다.

@@ -49,17 +49,41 @@ def _mcp_envelope(payload: str) -> str:
 
 
 def _gwt_detail_payload(node_id: str = "code:x.c:fn0") -> str:
-    return json.dumps({"node": {
+    evidence_id = f"{node_id}::R-12"
+    target = {"id": node_id, "type": "FUNCTION", "owner_id": "", "file": "x.c",
+              "start_line": 10, "end_line": 20}
+    target_ref = f"{node_id}::TARGET"
+    return json.dumps({"schema_version": "semantic-frame-packet/v1", "node": {
         "id": node_id, "name": "fn0", "labels": ["FUNCTION", "EMBEDDED"],
-        "logical_name": "주문 검증", "summary": "주문을 검증한다",
-        "summary_evidence_status": "partial",
-        "summary_missing_context": ["외부 주문 정책"],
-        "source": {"file_path": "x.c", "start_line": 10, "end_line": 20},
-        "rules": [{"line": 12, "text": "금액 부족 시 거절", "tables": []}],
-        "calls": [{"direction": "out", "id": "code:x.c:limit", "name": "limit"}],
-        "tables": [{"id": "db:shop.orders", "name": "orders", "access": ["READ"],
+        "semantic_frame": {
+            "schema": "semantic-frame/v1", "profile_schema": "structural-profile/v1",
+            "target": target,
+            "profile": {"schema": "structural-profile/v1", "target": target,
+                        "evidence": {
+                            target_ref: {"id": target_ref, "kind": "TARGET", "owner_id": node_id,
+                                         "attributes": {"type": "FUNCTION"}},
+                            evidence_id: {"id": evidence_id, "kind": "RULE", "owner_id": node_id,
+                                          "file": "x.c", "start_line": 12, "end_line": 12,
+                                          "attributes": {"anchor_line": 12,
+                                                         "condition": "amount < limit",
+                                                         "effects": ["reject()"]}},
+                        }},
+            "slots": {f"{node_id}::SLOT": {"slot_id": f"{node_id}::SLOT",
+                      "family": "DECISION", "role": "ROLE", "target_ref": target_ref,
+                      "evidence_refs": [target_ref, evidence_id], "meaning": "금액 부족 시 거절",
+                      "status": "partial", "missing_context": ["외부 주문 정책"]}},
+        },
+        "rule_examples": [{"anchor_line": 12, "examples": [{"kind": "satisfy"}]}],
+        "linked_context": {
+            "callees": [{"evidence_id": f"{node_id}::call::out::code:x.c:limit",
+                   "direction": "out", "id": "code:x.c:limit", "name": "limit"}],
+            "symbols": [{"evidence_id": f"{node_id}::symbol::code:x.c:LIMIT::12",
+                     "id": "code:x.c:LIMIT", "definition": {"value": "100"}}],
+            "data_objects": [{"evidence_id": f"{node_id}::table::db:shop.orders",
+                    "id": "db:shop.orders", "name": "orders", "access": ["READ"],
                     "sample": {"columns": [{"name": "status"}],
                                "sample_rows": [{"status": "PAID"}]}}],
+        },
     }}, ensure_ascii=False)
 
 
@@ -97,20 +121,20 @@ def test_inline_mcp_result_envelope_is_unwrapped_for_search_and_detail():
     assert detail["inspection"]["source"]["start_line"] == 10
 
 
-def test_gwt_detail_preserves_rules_calls_tables_and_samples_in_provenance():
+def test_frame_detail_preserves_semantic_frame_and_linked_context_in_provenance():
     collector = ProvenanceCollector()
     collector.feed(_request("d1", "detail", {
-        "node_id": "code:x.c:fn0", "view": "gwt",
+        "node_id": "code:x.c:fn0", "view": "frame",
     }))
     inspection = collector.feed(_result("d1", "detail", _gwt_detail_payload()))["inspection"]
 
-    assert inspection["view"] == "gwt"
-    assert inspection["rules"][0]["line"] == 12
-    assert inspection["summaryEvidenceStatus"] == "partial"
-    assert inspection["summaryMissingContext"] == ["외부 주문 정책"]
-    assert inspection["calls"][0]["id"] == "code:x.c:limit"
-    assert inspection["tables"][0]["access"] == ["READ"]
-    assert inspection["tables"][0]["sample"]["sample_rows"] == [{"status": "PAID"}]
+    assert inspection["view"] == "frame"
+    assert inspection["schemaVersion"] == "semantic-frame-packet/v1"
+    assert inspection["semanticFrame"]["profile"]["evidence"]["code:x.c:fn0::R-12"]["start_line"] == 12
+    assert next(iter(inspection["semanticFrame"]["slots"].values()))["status"] == "partial"
+    assert inspection["linkedContext"]["callees"][0]["id"] == "code:x.c:limit"
+    assert inspection["linkedContext"]["symbols"][0]["definition"]["value"] == "100"
+    assert inspection["linkedContext"]["data_objects"][0]["access"] == ["READ"]
 
 
 def test_double_wrapped_mcp_envelope_is_unwrapped_to_fixpoint():
@@ -205,6 +229,16 @@ def test_oversized_code_text_is_truncated_with_marker():
     assert inspection["source"]["code_text_truncated"] is True
     assert len(inspection["source"]["code_text"]) < 21_000
     assert inspection["source"]["code_text"].endswith("(truncated)")
+
+
+def test_frame_packet_never_persists_source_body_or_hash():
+    payload = json.loads(_gwt_detail_payload())
+    collector = ProvenanceCollector()
+    collector.feed(_request("d", "detail", {"node_id": "code:x.c:fn0", "view": "frame"}))
+    inspection = collector.feed(_result("d", "detail", json.dumps(payload)))['inspection']
+
+    assert "source" not in inspection
+    assert "content_hash" not in json.dumps(inspection)
 
 
 def test_save_skips_when_no_entries():

@@ -145,6 +145,19 @@ def test_distinct_rule_coordinates_on_same_function_are_not_deduped():
     ]
 
 
+def test_exact_rule_evidence_ids_are_preserved_and_deduplicated_independently():
+    diff = _diff([{"tempId": "EP-1", "legacyRefs": [
+        {"nodeId": "code:a", "evidenceId": "code:a::R-1", "ruleId": "R-1"},
+        {"nodeId": "code:a", "evidenceId": "code:a::R-2", "ruleId": "R-2"},
+        {"nodeId": "code:a", "evidenceId": "code:a::R-1", "ruleId": "R-1"},
+    ]}])
+
+    assert validate_strategic_refs(diff, {"code:a"}) == []
+    assert [ref["evidenceId"] for ref in diff["epics"][0]["legacyRefs"]] == [
+        "code:a::R-1", "code:a::R-2",
+    ]
+
+
 def test_evidence_truncated_and_unknown_role_dropped():
     diff = _diff([{"tempId": "EP-1", "legacyRefs": [
         {"nodeId": "code:a", "evidence": "가" * 500, "role": "invented-role", "field": "status"},
@@ -207,6 +220,7 @@ _CHILDREN = {
     "code:f1": {
         "rules": [
             {"id": "code:f1::rule::1",
+             "evidenceId": "code:f1::R-1", "ruleId": "R-1",
              "statement": "주문 상태가 '90'(취소) 이면 배송 상태 변경을 거부한다.",
              "examples": [{"id": "code:f1::rule::1::ex::1",
                            "given": "취소된 주문", "when": "상태 변경 시도", "then": "거부"}]},
@@ -232,6 +246,18 @@ def test_rule_statement_resolves_to_rule_node():
     assert ref["parentId"] == "code:f1"
     assert "'90'" in ref["statement"]
     assert ref["examples"][0]["when"] == "상태 변경 시도"
+
+
+def test_rule_evidence_id_resolves_without_relying_on_narrative_text():
+    diff = _diff([{"tempId": "EP-1", "legacyRefs": [
+        {"nodeId": "code:f1", "evidenceId": "code:f1::R-1", "ruleId": "R-1"},
+    ]}])
+
+    assert resolve_content_refs(diff, None, _fetch) == []
+    ref = diff["epics"][0]["legacyRefs"][0]
+    assert ref["nodeId"] == "code:f1::rule::1"
+    assert ref["evidenceId"] == "code:f1::R-1"
+    assert ref["ruleId"] == "R-1"
 
 
 def test_rule_resolves_to_persisted_analyzer_source_coordinate():

@@ -73,7 +73,7 @@
   // Command 전용 — 추적성 & BDD:
   "userStoryRefs": ["US-order-place"],   // UserStory ─IMPLEMENTS→ Command
   "gwt": [
-    { "scenario": "정상 주문",
+    { "scenario": "정상 주문", "evidenceRefs": ["<exact RULE evidence_id>"],
       "given": { "name": "Aggregate: 주문", "description": "메뉴 등록 상태", "fieldValues": { "status": "NONE" } },
       "when":  { "name": "Command: 음식주문", "fieldValues": { "menuId": "m-1", "qty": "2" } },
       "then":  { "name": "Event: 음식주문됨", "fieldValues": { "totalPrice": "20000" } } }
@@ -127,7 +127,8 @@
 응답에 **내장되어 온**(별도 id 가 없는) 업무 규칙·사례·테이블이 근거라면, 함수 `nodeId` 에
 본 내용을 그대로 첨부하라. 서버가 그래프에서 실제 노드로 해석해 꼬리표를 그 단위로 찍는다.
 
-- 규칙: `{"nodeId": "<그 규칙을 본 함수 id>", "rule": "<응답에서 본 규칙 문장 그대로>"}`
+- 규칙: `{"nodeId": "<그 규칙을 본 함수 id>", "evidenceId": "<exact evidence_id>",
+  "ruleId": "<exact rule_id>", "rule": "<응답에서 본 narrative text 그대로>"}`
 - 사례: `{"nodeId": "<함수 id>", "example": {"given": "...", "when": "...", "then": "..."}}`
   (응답에서 본 사례의 given/when/then 을 그대로 — 일부 키만 있어도 된다)
 - 테이블: `{"nodeId": "<그 테이블 참조를 본 함수 id>", "table": "<테이블명>", "role": "reads|writes"}`
@@ -136,7 +137,8 @@
 문장·내용을 바꿔 쓰지 말고 **본 그대로** 옮겨라 — 서버 대조에 실패하면 그 인용은 기각되고
 경고가 남는다. 요소가 특정 규칙에서 유래했으면 함수 id 만 쓰지 말고 규칙 인용을 우선하라.
 
-**`rule` 값은 응답에 있던 규칙 문장을 복사한다.** 요약하거나, 코드 조건식으로 바꾸거나,
+**`evidenceId`/`ruleId`를 우선 정확히 복사하고 `rule` 값도 응답에 있던 narrative 문장을 복사한다.**
+요약하거나, 코드 조건식으로 바꾸거나,
 여러 규칙을 합치지 마라. 서버는 문장을 그래프의 RULE 노드와 대조하므로 아래는 전부 기각된다.
 
 ```

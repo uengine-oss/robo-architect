@@ -53,6 +53,19 @@ def allowed_ref_ids(legacy_references: Any) -> set[str]:
                 node_id = inspection.get("nodeId")
                 if isinstance(node_id, str) and node_id:
                     allowed.add(node_id)
+                linked = inspection.get("linkedContext")
+                if not isinstance(linked, dict):
+                    continue
+                for table in linked.get("data_objects") or []:
+                    if not isinstance(table, dict):
+                        continue
+                    table_id = table.get("id")
+                    if isinstance(table_id, str) and table_id:
+                        allowed.add(table_id)
+                    for column in table.get("columns") or []:
+                        column_id = column.get("id") if isinstance(column, dict) else None
+                        if isinstance(column_id, str) and column_id:
+                            allowed.add(column_id)
     return allowed
 
 
@@ -80,6 +93,12 @@ def _normalize_one(ref: Any) -> dict | None:
     rule = ref.get("rule")
     if isinstance(rule, str) and rule.strip():
         out["rule"] = rule.strip()[:_STATEMENT_MAX]
+    evidence_id = ref.get("evidenceId")
+    if isinstance(evidence_id, str) and evidence_id.strip():
+        out["evidenceId"] = evidence_id.strip()
+    rule_id = ref.get("ruleId")
+    if isinstance(rule_id, str) and rule_id.strip():
+        out["ruleId"] = rule_id.strip()
     example = ref.get("example")
     if isinstance(example, str) and example.strip():
         out["example"] = example.strip()[:_STATEMENT_MAX]
@@ -136,7 +155,10 @@ def _validate_element(element: dict, allowed: set[str], key: str, warnings: list
                              "detail": json.dumps(ref, ensure_ascii=False, default=str)[:120]})
             continue
         node_id = normalized["nodeId"]
-        content_identity = normalized.get("rule") or normalized.get("table") or normalized.get("example")
+        content_identity = (
+            normalized.get("evidenceId") or normalized.get("ruleId")
+            or normalized.get("rule") or normalized.get("table") or normalized.get("example")
+        )
         if isinstance(content_identity, dict):
             content_identity = json.dumps(content_identity, ensure_ascii=False, sort_keys=True)
         dedupe_key = (node_id, str(content_identity or ""))
@@ -203,7 +225,13 @@ def _iter_elements(strategic_diff: Any, tactical_diff: Any):
                 yield _element_key(element, "tactical", i), element
 
 
-def _match_rule(rules: list[dict], text: str) -> dict | None:
+def _match_rule(
+    rules: list[dict], text: str = "", *, evidence_id: str = "", rule_id: str = "",
+) -> dict | None:
+    if evidence_id:
+        return next((r for r in rules if r.get("evidenceId") == evidence_id), None)
+    if rule_id:
+        return next((r for r in rules if r.get("ruleId") == rule_id), None)
     wanted = _norm_statement(text)
     if not wanted:
         return None
@@ -245,6 +273,13 @@ def _match_table(tables: list[dict], name: str) -> dict | None:
     )
 
 
+def _inspection_rule_text(rule: dict) -> str:
+    narrative = rule.get("narrative")
+    if isinstance(narrative, dict):
+        return str(narrative.get("text") or "")
+    return str(rule.get("text") or "")
+
+
 def resolve_content_refs(strategic_diff: Any, tactical_diff: Any, fetch_children) -> list[dict]:
     """내용 인용(rule 문장·example G/W/T·table 이름)을 실제 노드 꼬리표로 결정론 승격한다.
 
@@ -266,11 +301,13 @@ def resolve_content_refs(strategic_diff: Any, tactical_diff: Any, fetch_children
             if not isinstance(ref, dict):
                 continue
             rule_text = ref.pop("rule", None)
+            rule_evidence_id = ref.pop("evidenceId", None)
+            rule_id = ref.pop("ruleId", None)
             example_req = ref.pop("example", None)
             table_name = ref.pop("table", None)
             parent_id = ref.get("parentId") or ref.get("nodeId", "")
 
-            if rule_text or example_req:
+            if rule_text or rule_evidence_id or rule_id or example_req:
                 children = fetch_children(parent_id) or {}
                 rules = children.get("rules") or []
                 if example_req:
@@ -288,17 +325,25 @@ def resolve_content_refs(strategic_diff: Any, tactical_diff: Any, fetch_children
                         })
                         if not ref.get("evidence"):
                             ref["evidence"] = str(example.get("when") or example.get("given") or "")[:_EVIDENCE_MAX]
-                elif rule_text:
-                    matched = _match_rule(rules, rule_text)
+                else:
+                    matched = _match_rule(
+                        rules, str(rule_text or ""),
+                        evidence_id=str(rule_evidence_id or ""), rule_id=str(rule_id or ""),
+                    )
                     if matched is None:
                         warnings.append({"element": key, "code": "RULE_NOT_MATCHED",
-                                         "nodeId": parent_id, "detail": str(rule_text)[:80]})
+                                         "nodeId": parent_id,
+                                         "detail": str(rule_evidence_id or rule_id or rule_text)[:80]})
                     else:
                         statement = str(matched.get("statement") or "")
                         ref.update({
                             "parentId": parent_id, "nodeId": matched["id"], "role": "rule",
                             "statement": statement[:_STATEMENT_MAX],
                         })
+                        if matched.get("evidenceId"):
+                            ref["evidenceId"] = matched["evidenceId"]
+                        if matched.get("ruleId"):
+                            ref["ruleId"] = matched["ruleId"]
                         for attr in ("coordinateOnly", "line", "source"):
                             if attr in matched:
                                 ref[attr] = matched[attr]
@@ -381,38 +426,68 @@ def enforce_proposal_refs(
         # nodes to exist in the Architect database.
         from api.features.proposal_lifecycle.services.legacy_evidence import build_evidence_packet
         provenance_children: dict[str, dict] = {}
+        evidence_owners: dict[str, str] = {}
         for inspection in build_evidence_packet(persisted_refs):
             parent_id = inspection.get("nodeId")
             if not parent_id:
                 continue
-            source = inspection.get("source") if isinstance(inspection.get("source"), dict) else {}
+            frame = inspection.get("semanticFrame") or {}
+            profile = frame.get("profile") or {}
+            target = frame.get("target") or {}
+            evidence = profile.get("evidence") or {}
+            slots = frame.get("slots") or {}
+            examples_by_line = {
+                item.get("anchor_line"): list(item.get("examples") or [])
+                for item in inspection.get("ruleExamples") or []
+                if isinstance(item, dict) and isinstance(item.get("anchor_line"), int)
+            }
             rules = []
-            for rule in inspection.get("rules") or []:
-                if not isinstance(rule, dict) or not rule.get("text"):
+            for evidence_id, rule in evidence.items():
+                evidence_owners[evidence_id] = parent_id
+                if not isinstance(rule, dict) or rule.get("kind") != "RULE":
                     continue
-                line = rule.get("line")
-                suffix = f"L{line}" if isinstance(line, int) else hashlib.sha256(
-                    str(rule["text"]).encode("utf-8")
-                ).hexdigest()[:12]
+                attrs = rule.get("attributes") or {}
+                line = attrs.get("anchor_line")
+                meanings = [
+                    str(slot.get("meaning") or "")
+                    for slot in slots.values()
+                    if isinstance(slot, dict) and evidence_id in (slot.get("evidence_refs") or [])
+                    and str(slot.get("meaning") or "").strip()
+                ]
+                rule_text = " / ".join(dict.fromkeys(meanings)) or str(attrs.get("condition") or "")
                 rules.append({
-                    "id": f"{parent_id}::RULE::{suffix}",
-                    "statement": rule["text"],
+                    "id": evidence_id,
+                    "evidenceId": evidence_id,
+                    "ruleId": "",
+                    "statement": rule_text,
                     "line": line,
                     "coordinateOnly": True,
                     "source": {
-                        "file_path": source.get("file_path", ""),
-                        "start_line": source.get("start_line"),
-                        "end_line": source.get("end_line"),
+                        "file_path": rule.get("file") or target.get("file", ""),
+                        "start_line": target.get("start_line"),
+                        "end_line": target.get("end_line"),
                         "rule_line": line,
                     },
-                    "examples": rule.get("examples") or [],
+                    "examples": examples_by_line.get(line, []),
                 })
             tables = [
                 {"id": table.get("id"), "name": table.get("name")}
-                for table in inspection.get("tables") or []
+                for table in (inspection.get("linkedContext") or {}).get("data_objects") or []
                 if isinstance(table, dict) and table.get("id")
             ]
             provenance_children[parent_id] = {"rules": rules, "tables": tables}
+
+        # Exact evidence ids are globally unique within the sealed packet.  If a
+        # model pairs one with an aggregate/root nodeId, restore the authoritative
+        # frame owner before content resolution.  This is coordinate normalization,
+        # not semantic inference.
+        for _key, element in _iter_elements(strategic_diff, tactical_diff):
+            for ref in element.get("legacyRefs") or []:
+                if not isinstance(ref, dict):
+                    continue
+                owner = evidence_owners.get(ref.get("evidenceId"))
+                if owner:
+                    ref["nodeId"] = owner
 
         def fetch_children(parent_id: str) -> dict:
             if parent_id not in rule_cache:

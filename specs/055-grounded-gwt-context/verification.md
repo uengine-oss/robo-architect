@@ -1,8 +1,12 @@
-# Verification: Analyzer-grounded Architect Strategy B
+# Verification: Analyzer-grounded Architect Strategy B — 과거 계약 기준선
+
+> 이 문서는 2026-08-12 이전 Strategy B 실행의 역사적 검증 증거다. 현재 계약은 Analyzer spec131
+> HANDOFF와 이 spec의 `spec.md`가 소유한다. 아래 21/21 결과는 새 `semantic-frame/v1`이나 폐기된
+> complete-source WIP의 합격 증거가 아니다.
 
 검증일: 2026-08-12
 
-현재 판정: **Strategy B의 Simplified/Detailed 의미 생성 계약 완료**
+당시 판정: **과거 Strategy B의 Simplified/Detailed 표본 의미 생성 계약 완료**
 
 범위: `calc_discount`, `load_target_orders`, `get_code_name` 세 함수 표본. 이 결과를 RULE
 1,609개 전체나 다른 언어로 일반화하지 않는다.
@@ -20,7 +24,7 @@
 
 ## 최종 입력 계약
 
-Intent/이전 상세 단계가 실제 성공 저장한 `node_detail(view="gwt")` inspection 중 nodeId별 가장
+Intent/이전 상세 단계가 실제 성공 저장한 `node_detail(view="frame")` inspection 중 nodeId별 가장
 풍부한 한 건을 결정론적으로 선택한다. 이후 Plan/Define/Tactical에는 이를 하나의 구조화 packet으로
 전달하며 같은 nodeId를 다시 조회하지 않는다. 결정론 코드는 업무 의미를 만들지 않고 다음만 한다.
 
@@ -103,3 +107,35 @@ consolidate 저장 결과에는 위 `parentId/source/rule_line/statement`가 실
 현재 표본에서 Analyzer 입력은 의미 판단에 충분했고, 남은 결함은 Architect 소비 계약·검증·좌표
 운반이었다. 공통 생산자와 Simplified/Detailed 소비자를 함께 수리했으며 Strategy B를 기준 경로로
 유지한다. 추가 Architect 재실행은 새 공통 결함이나 표본 확대 요구가 있기 전에는 필요하지 않다.
+
+## semantic-frame/v1 전환 최종 검증
+
+검증일: 2026-08-12
+
+Analyzer spec131 합격 후 `semframearch20260812` 격리 DB와 포트 `18501`에서 새 계약을 실제로
+재생했다. Analyzer는 `semframedbfinal20260812`, 격리 MCP 포트 `16502`를 사용했다. 기본 서비스와
+기존 DB는 변경하지 않았고 `accept/apply`는 0회였다.
+
+| 경로 | Proposal | 최종 단계 | 결과 | packet | Command/GWT |
+|---|---|---:|---|---:|---:|
+| Simplified | `PRO-002` | Plan 283.560초 | 성공, `planDraft` 저장 | frame 4, 중복 0 | 1 / 3 |
+| Detailed | `PRO-003` | Tactical 237.088초 | 성공, consolidate 완료 | frame 4, 중복 0 | 1 / 3 |
+
+FUNCTION, SELECT, IF, EXCEPTION frame의 target/profile/slots를 재사용했다. 최종 산출물에 계약 검사를
+다시 적용한 결과는 다음과 같다.
+
+- `gwt_evidence_ref_errors`: 0
+- `ungrounded_gwt_values`: 0
+- `tactical_evidence_ref_errors`: 0
+- source body/hash/excerpt 금지 필드: 0
+- unknown, duplicate, cross-owner evidence ref: 0
+
+두 경로의 GWT는 조회 상태 그대로 반환, `CANCELLED → STOPPED`, `NO_DATA_FOUND → UNKNOWN` 및 예외
+비전파를 정확한 RULE/STATEMENT/SYMBOL/DATA_OBJECT ID로 인용했다. 실제 실행에서 content ref가
+RULE ID로 해석된 뒤 source frame owner가 `parentId`에 남는 경계 결함을 발견했다. evidence ID의
+권위 owner로 좌표를 정규화하고 `nodeId/parentId`를 함께 검증하도록 수정했다. 이 과정은 업무 의미나
+값을 생성하지 않는다.
+
+전체 회귀는 **1,375 passed, 2 skipped, 3 warnings**다. Analyzer 쪽 실행·의미 판정과 재현 경로는
+`robo-data-analyzer/specs/131-cross-node-semantic-grounding/evidence/actual-validation-20260812.md`가
+소유한다. 이 새 결과가 위의 과거 complete-source Strategy B 기준선을 대체한다.

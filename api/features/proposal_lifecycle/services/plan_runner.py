@@ -20,6 +20,7 @@ from api.features.proposal_lifecycle.services.constitution_runner import read_co
 from api.features.proposal_lifecycle.services.legacy_stage_capture import stream_stage_skill_lines
 from api.features.proposal_lifecycle.services.legacy_evidence import (
     evidence_prompt_block,
+    gwt_evidence_ref_errors,
     load_evidence_packet,
     tactical_evidence_ref_errors,
     ungrounded_gwt_values,
@@ -200,6 +201,8 @@ def tactical_contract_errors(tactical: list[dict]) -> list[str]:
             if not isinstance(scenario, dict) or not scenario.get("scenario"):
                 errors.append(f"Command {title} gwt[{index}] requires scenario")
                 continue
+            if not isinstance(scenario.get("evidenceRefs"), list) or not scenario["evidenceRefs"]:
+                errors.append(f"Command {title} gwt[{index}] requires non-empty evidenceRefs")
             for phase in ("given", "when", "then"):
                 value = scenario.get(phase)
                 if not isinstance(value, dict) or not value.get("name"):
@@ -250,7 +253,14 @@ def _legacy_ref_ids(value: object) -> set[str]:
                 if isinstance(ref, str) and ref.strip():
                     found.add(ref.strip())
                 elif isinstance(ref, dict):
-                    node_id = ref.get("nodeId") or ref.get("node_id") or ref.get("id")
+                    # Resolved RULE/EXAMPLE refs use a synthetic child nodeId plus the
+                    # actually inspected function in parentId.  Plan source coverage is
+                    # function/table coverage, not a requirement to repeat every chosen
+                    # strategic scenario as a tactical element ID.
+                    node_id = (
+                        ref.get("parentId") or ref.get("nodeId")
+                        or ref.get("node_id") or ref.get("id")
+                    )
                     if isinstance(node_id, str) and node_id.strip():
                         found.add(node_id.strip())
         for key, child in value.items():
@@ -319,8 +329,8 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         "승인된 요구를 구현할 Tactical Diff와 Constitution 기반 구현계획을 생성한다.\n\n"
         "[INPUT MEANING]\n"
         "- Strategic Diff: 무엇을 구현하며 각 UserStory ID와 인수조건이 무엇인지 정의한다.\n"
-        "- Legacy evidence packet: 이전 단계가 MCP node_detail(view=gwt)로 실제 확인한 함수의 "
-        "원문 좌표·코드·RULE·CALL·TABLE/COLUMN/sample이다. 같은 nodeId는 중복 제거됐다.\n"
+        "- Legacy evidence packet: 이전 단계가 MCP node_detail(view=frame)로 실제 확인한 target의 "
+        "semantic frame과 구조화 RULE·symbol·CALL·TABLE/COLUMN/sample이다. 같은 nodeId는 중복 제거됐다.\n"
         "- Constitution: 설계가 준수할 프로젝트 제약이다.\n\n"
         f"Proposal ID: {proposal_id}\n"
         f"Strategic Diff(JSON):\n```json\n{json.dumps(strategic, ensure_ascii=False)}\n```\n\n"
@@ -332,10 +342,13 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         f"{coverage_block}"
         f"현재 도메인 구성 요소 목록:\n{node_list or '(없음)'}\n\n"
         "[DECISION RULES]\n"
-        "1. 코드를 입력→검증→분기→CALL/RW→반환/상태변화→transaction 순서로 이해한 뒤 설계한다.\n"
+        "1. packet의 ordered_flow와 RULE condition/effects를 먼저 연결해 입력→검증→분기→CALL/RW→"
+        "반환/상태변화→transaction 순서로 이해한다. semantic frame의 slot/profile evidence가 최종 의미 근거이며 "
+        "구조가 모호할 때 해당 절대 줄 좌표와 missing_context를 노출한다. slot meaning은 "
+        "Analyzer가 검증한 해석이며 profile 구조 사실을 덮어쓰지 않는다.\n"
         "   Then은 분기 중간 대입값이 아니라 이후 공통 후처리·clamp·rollback/commit을 모두 적용한 "
         "최종 반환/상태여야 한다. 범위 조건만으로 최종 상수 반환을 일반화하지 않는다.\n"
-        "2. GWT의 값·상태·호출·읽기/쓰기는 packet RULE/원문/sample에 있는 것만 확정한다. "
+        "2. GWT의 값·상태·호출·읽기/쓰기는 packet slot/profile RULE/sample에 있는 것만 확정한다. "
         "샘플 한 행을 전체 제약으로 일반화하지 않는다. 근거가 없으면 fieldValues를 비운다.\n"
         "   범위 조건을 테스트하려고 임의의 대표 숫자·코드를 계산하거나 선택하지 않는다. 실제 sample이나 "
         "RULE 상수가 없으면 조건은 scenario/name에 기호로 쓰고 해당 입력·결과 fieldValues는 비운다.\n"
@@ -348,19 +361,24 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         "4. 모든 Command는 fields.inputSchema, properties, 비어 있지 않은 userStoryRefs, "
         "정상+근거 있는 경계/실패 gwt, legacyRefs를 갖는다. userStoryRefs는 Strategic Diff의 "
         "실제 UserStory tempId/entityId만 사용한다.\n"
-        "5. legacyRefs.rule은 packet의 RULE text를 한 글자도 바꾸지 않고 인용할 때만 넣는다.\n\n"
-        "   각 Command는 근거 함수 nodeId와 그 함수에서 실제 사용한 RULE text 1개 이상을 정확히 인용하고, "
+        "5. 각 GWT scenario.evidenceRefs는 그 시나리오 판단에 실제 사용한 packet evidence_id만 넣는다. "
+        "RULE evidence_id를 최소 1개 포함하고, 값·호출·TABLE sample을 사용했다면 대응 SYMBOL/CALL/TABLE "
+        "evidence_id도 함께 넣는다. 다른 분기의 값이나 같은 함수 전체 원문을 포괄 근거로 인용하지 않는다.\n"
+        "6. legacyRefs의 RULE 근거는 evidenceId·ruleId와 packet narrative text를 정확히 보존한다.\n\n"
+        "   각 Command는 근거 함수 nodeId와 그 함수에서 실제 사용한 RULE 1개 이상을 정확히 인용하고, "
         "packet.tables의 직접 TABLE id를 access에 따라 reads/writes role로 모두 붙인다. TABLE 이름을 바꾸지 않는다.\n\n"
         "[OUTPUT]\n"
         "robo-proposal-plan 스킬의 단일 JSON 계약대로 tacticalDiff와 implementationPlan을 출력한다.\n"
         "Command.gwt는 반드시 아래와 같은 JSON 배열이다. normal/boundary/failure 키로 감싼 객체나 "
         "Given/When/Then 문자열은 허용하지 않는다.\n"
-        '"gwt":[{"scenario":"...","given":{"name":"...","fieldValues":{}},'
+        '"gwt":[{"scenario":"...","evidenceRefs":["<exact RULE evidence_id>"],'
+        '"given":{"name":"...","fieldValues":{}},'
         '"when":{"name":"...","fieldValues":{}},"then":{"name":"...","fieldValues":{}}}]\n'
         "Command마다 2~4개만 쓴다: 근거 있는 정상 1개와 가장 중요한 경계/실패 1개 이상. "
         "분기 전체 목록은 invariant/description에 보존하고 GWT 수를 늘려 복제하지 않는다.\n\n"
         "[FINAL CHECK]\n"
-        "각 Command에 userStoryRefs와 구조화 GWT가 있는지, 모든 fieldValue가 packet으로 입증되는지, "
+        "각 Command에 userStoryRefs와 구조화 GWT가 있는지, 각 scenario가 정확한 evidenceRefs를 갖고 "
+        "모든 fieldValue가 그 인용 근거로 입증되는지, "
         "세 입력 함수가 의미상 대응 요소에 배분됐는지 자체 점검한 뒤 출력한다. 각 scalar fieldValue는 "
         "서버가 evidence/Strategic 입력의 실제 등장 여부를 검사하며 파생·추정값은 거부한다."
     )
@@ -480,6 +498,7 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
     plan = data.get("implementationPlan", {})
     if not architecture_only:
         contract_errors = tactical_contract_errors(tactical)
+        contract_errors.extend(gwt_evidence_ref_errors(tactical, evidence_packet))
         contract_errors.extend(ungrounded_gwt_values(tactical, evidence_packet, strategic))
         contract_errors.extend(tactical_evidence_ref_errors(tactical, evidence_packet))
         if contract_errors:

@@ -70,6 +70,32 @@ def test_shared_stage_adapter_streams_search_detail_and_saves(monkeypatch):
     assert saved[0][2][0]["inspections"][0]["source"]["start_line"] == 3
 
 
+def test_shared_stage_adapter_pins_operator_analyzer_database(monkeypatch):
+    prompts = []
+
+    async def fake_run(_root, _skill, prompt, **_kwargs):
+        prompts.append(prompt)
+        if False:
+            yield ""
+
+    monkeypatch.setattr(legacy_stage_capture, "run_skill_lines", fake_run)
+    monkeypatch.setattr(
+        legacy_stage_capture, "get_analyzer_neo4j_database",
+        lambda: "spec131fw1520260812",
+    )
+    monkeypatch.setattr(
+        legacy_stage_capture.ProvenanceCollector, "save", lambda *_args: None,
+    )
+
+    _collect(legacy_stage_capture.stream_stage_skill_lines(
+        "PRO-DB", "INTENT", "skills", "proposal-intent", "원래 요구사항",
+    ))
+
+    assert 'database="spec131fw1520260812"' in prompts[0]
+    assert "project or corpus name is not a database name" in prompts[0]
+    assert prompts[0].endswith("원래 요구사항")
+
+
 def test_shared_stage_adapter_saves_on_runner_failure(monkeypatch):
     async def failing_run(*_args, **_kwargs):
         yield _event("request", "search", "s1", tool_input={"query": "주문"})
