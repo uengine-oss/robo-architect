@@ -91,10 +91,11 @@ consolidate 저장 결과에는 위 `parentId/source/rule_line/statement`가 실
 ## 회귀·산출물
 
 - Architect 전체: **1,362 passed, 2 skipped, 3 warnings**.
-- 최종 산출물:
-  - `D:\work\robo\_runs\spec055-strategy-b-20260812\architect\B-final15-simplified-final6`
-  - `D:\work\robo\_runs\spec055-strategy-b-20260812\architect\B-final15-detailed-tactical-final4`
-- 실패 시도도 별도 output root에 보존했으며 기존 logs/DB를 덮어쓰지 않았다.
+- 최종 최소 보존 산출물:
+  - `D:\work\robo\docs\작업보고내용\2026-08-12-evidence\architect\simplified-proposal-final.json`
+  - `D:\work\robo\docs\작업보고내용\2026-08-12-evidence\architect\detailed-proposal-final.json`
+  - 같은 폴더의 실행 manifest 2개
+- 중간·실패 output과 logs는 최종 검증 및 보고 자료 작성 후 정리했다. 기존 DB는 덮어쓰지 않았다.
 - Python 의미식 A는 KEEP이며 수정·재실험하지 않았다.
 
 ## 종료 판정
