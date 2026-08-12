@@ -15,10 +15,10 @@ ddd-starter Step 8(Code)의 Aggregate Design 을 적용한다. Define(BCC)을 �
 - `skills/robo-proposals/robo-proposal-intent/references/properties.md`, `gwt.md`, `output-schema.md`
 - `skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md`
 
-**`legacy-reference.md` 는 Read 도구로 반드시 직접 읽고 그 호출 완료 게이트를 통과하라.**
-도구가 주입된 실행에서 `cluster_retrieve` 시도 없이 최종 JSON 을 출력하지 않는다. Aggregate
-경계·불변식은 현행 트랜잭션 경계와 검증 로직이 근거이므로, 해당 함수를 `node_detail` 로
-확인하고 그 규칙 문장을 `rule` 로 인용한다.
+**`legacy-reference.md` 는 Read 도구로 반드시 직접 읽어라.** Human Prompt에
+`INSPECTED LEGACY EVIDENCE` packet이 있으면 그 내용은 이전 단계가 이미 실제 MCP로 검토한
+권위 근거다. packet의 같은 nodeId를 다시 검색/상세조회하지 않고, 필요한 함수가 없거나
+근거 상태가 부족할 때만 MCP로 갭을 닫는다. 규칙 문장을 인용할 때는 packet의 `text`를 그대로 쓴다.
 
 ## Aggregate 경계 결정 (이 단계의 핵심)
 - **함께 변해야 하는가? / 한 트랜잭션에서 일관성이 필요한가?** → Yes 면 한 Aggregate.
@@ -36,19 +36,19 @@ narration(`[Aggregate]`/`[경계]`/`[불변식]`) 후 빈 줄, 그 다음:
       "name": "Order", "description": "한 회원의 한 번 결제 상품 묶음", "boundaryRationale": "Order+OrderLine 은 한 트랜잭션 일관성 필요",
       "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>", "role": "derived-from",
                       "evidence": "주문 확정 트랜잭션 경계가 이 Aggregate 로 이동"}],
-      "stateTransitions": [{"from": "Pending", "to": "Confirmed", "trigger": "ConfirmOrder"}],
-      "invariants": ["totalAmount = Σ(line.price×qty)", "Confirmed 이후 라인 변경 불가"],
-      "correctivePolicies": ["결제 실패 60초 → 자동 Canceled"],
+      "stateTransitions": [],
+      "invariants": ["<입력 근거의 불변식 1>", "<입력 근거의 불변식 2>"],
+      "correctivePolicies": [],
       "handledCommands": [
-        {"name": "PlaceOrder", "fields": {"inputSchema": {"orderId": "UUID"}},
-         "properties": [{"name": "orderId", "type": "UUID", "isRequired": true}],
-         "userStoryRefs": [],
+        {"name": "PlaceOrder", "fields": {"inputSchema": {}},
+         "properties": [],
+         "userStoryRefs": ["<Define의 실제 userStory.id>"],
          "gwt": [{"scenario": "정상 주문", "given": {"name": "Aggregate: Order", "fieldValues": {}},
-                  "when": {"name": "Command: PlaceOrder", "fieldValues": {"orderId": "sample-order"}},
+                  "when": {"name": "Command: PlaceOrder", "fieldValues": {}},
                   "then": {"name": "Event: OrderPlaced", "fieldValues": {}}}],
          "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>"}]},
         {"name": "ConfirmOrder", "fields": {"inputSchema": {}}, "properties": [],
-         "userStoryRefs": [], "gwt": [], "legacyRefs": []}
+         "userStoryRefs": ["<Define의 실제 userStory.id>"], "gwt": [], "legacyRefs": []}
       ],
       "createdEvents": [
         {"name": "OrderPlaced", "fields": {"payload": {}}, "properties": [], "legacyRefs": []},
@@ -75,7 +75,15 @@ narration(`[Aggregate]`/`[경계]`/`[불변식]`) 후 빈 줄, 그 다음:
 2. Value Object(Money, Address)는 Aggregate 가 아니다.
 3. Commands/Events 는 Define 의 Inbound/Outbound 와 일치.
 3-b. 모든 Command는 `{name, fields.inputSchema, properties, userStoryRefs, gwt, legacyRefs}`
-   객체이며 GWT는 정상 1개와 근거 있는 경계/실패 1개 이상이다. `gwt.md`의 RULE 좌표·테이블
+   객체이며 `userStoryRefs`는 Define의 허용 ID를 1개 이상 사용하고, GWT는 정상 1개와 근거 있는
+   경계/실패 1개 이상이다. `gwt.md`의 RULE 좌표·테이블
    샘플 계약을 따른다. 모든 Event는 `{name, fields.payload, properties, legacyRefs}` 객체다.
+3-c. 출력 예시는 JSON 형상만 설명한다. 예시의 상태·숫자·ID는 근거가 아니며 절대 재사용하지 않는다.
+   `fieldValues`는 packet의 원문/RULE/sample로 입증되는 값만 넣고, 없으면 `{}`로 둔다.
+   실제 필드 하나의 여러 값은 별도 시나리오로 나누고 suffix 합성 필드를 만들지 않는다.
+   함수 반환 sentinel을 `cnt`/`status` 같은 다른 데이터 필드 값으로 쓰지 않는다.
+   범위/미정의 분기의 대표 테스트값은 만들지 않으며, 실측값이 없으면 조건만 name에 남긴다.
+   Then은 분기 중간 대입이 아니라 이후 공통 후처리·clamp·transaction까지 반영한 최종 결과다.
+   각 Command legacyRefs에 근거 함수·정확한 RULE text 1개 이상·직접 TABLE id 전부를 남긴다.
 4. 코드를 작성하지 말 것 — 전술 설계 산출물만.
 5. 언어는 사용자/프롬프트 언어를 따른다.

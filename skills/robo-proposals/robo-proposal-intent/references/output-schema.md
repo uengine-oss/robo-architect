@@ -41,6 +41,9 @@
 
 ## tacticalDiff (설계 계층: Aggregate → Command → Event, +ReadModel/Policy)
 배열. 각 항목:
+
+> 아래 JSON은 **형상 예시**다. 메뉴명·상태·수량·금액·ID는 업무 근거가 아니며 실제 출력에
+> 복사하지 않는다. 실제 `fieldValues`는 전달된 RULE/원문/sample로 입증될 때만 채운다.
 ```json
 {
   "nodeId": "<tempId>",            // 배치 내 고유. 다른 항목이 이걸로 참조
@@ -115,7 +118,7 @@
 - `nodeId`는 **이 실행에서 `cluster_retrieve` 검색 결과 또는 `node_detail` 성공 응답으로 실제
   확인한 ID만** 사용한다. 기억·추측으로 ID를 만들지 않는다. 서버가 관찰집합 밖 ID를 제거하고
   경고를 남긴다.
-- 항목 형상: `{"nodeId": "<확인된 id>", "role"?: "derived-from|refines|reads|writes",
+- 항목 형상: `{"nodeId": "<확인된 id>", "role"?: "derived-from|refines|calls|reads|writes",
   "evidence"?: "<이 노드가 근거인 이유 한 줄>", "field"?: "<특정 필드 근거일 때만>"}`.
 - 같은 요소에 같은 `nodeId`를 중복하지 않는다. 요소당 근거는 판단에 실제 사용한 것만(보통 1~4개).
 

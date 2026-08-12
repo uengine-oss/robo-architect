@@ -29,7 +29,7 @@ def load_state(proposal_id: str) -> Optional[dict]:
             "p.decompositionMode AS mode, p.originalPrompt AS prompt, "
             "p.strategicDiff AS sd, p.stagePlan AS plan, "
             "p.stageArtifacts AS arts, p.stageDraftArtifacts AS draftArts, p.currentStage AS cur, "
-            "p.projectRoot AS projectRoot",
+            "p.projectRoot AS projectRoot, p.legacyReferences AS legacyRefs",
             id=proposal_id,
         ).single()
     if not rec:
@@ -50,6 +50,7 @@ def load_state(proposal_id: str) -> Optional[dict]:
         "stageDraftArtifacts": _p(rec.get("draftArts"), {}) or {},
         "currentStage": rec.get("cur"),
         "projectRoot": rec.get("projectRoot"),
+        "legacyReferences": _p(rec.get("legacyRefs"), []) or [],
     }
 
 

@@ -100,8 +100,9 @@ def test_shared_stage_adapter_saves_on_runner_failure(monkeypatch):
 def test_intent_plan_and_discover_require_shared_list_detail_completion_gate():
     reference = (ROOT / "skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md")
     contract = reference.read_text(encoding="utf-8")
-    assert "cluster_retrieve` 시도 1회 이상이 없으면 완료가 아니다" in contract
+    assert "선행 evidence packet이 없는 도구 주입 실행은 `cluster_retrieve` 시도 1회 이상이 없으면 완료가 아니다" in contract
     assert "`node_detail` 성공 1회 이상" in contract
+    assert "packet의\n같은 nodeId는 다시 조회하지 않고" in contract
 
     for skill in (
         "robo-proposal-intent",

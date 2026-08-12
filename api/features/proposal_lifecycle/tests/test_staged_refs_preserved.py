@@ -36,8 +36,7 @@ def _arts():
                         "when": {"name": "Command: 배송상태변경", "fieldValues": {"status": "SHIPPED"}},
                         "then": {"name": "Event: 배송상태변경됨", "fieldValues": {"status": "SHIPPED"}},
                     }],
-                },  # 객체형 command
-                "배송취소",  # 문자열형 command(구 산출물 호환)
+                },
             ],
             "createdEvents": [{
                 "name": "배송상태변경됨", "legacyRefs": [REF_A],
@@ -66,7 +65,6 @@ def test_tactical_carries_refs_including_dict_commands():
     by_title = {t["nodeTitle"]: t for t in tactical}
     assert by_title["배송"]["legacyRefs"] == [REF_A]
     assert by_title["배송상태변경"]["legacyRefs"] == [REF_B]
-    assert "legacyRefs" not in by_title["배송취소"]  # 문자열형 — 근거 자리 없음, 생략
     assert by_title["배송상태변경됨"]["legacyRefs"] == [REF_A]
     command = by_title["배송상태변경"]
     assert command["fields"]["inputSchema"] == {"status": "String"}
@@ -74,17 +72,55 @@ def test_tactical_carries_refs_including_dict_commands():
     assert command["userStoryRefs"] == ["us:배송상태변경"]
     assert command["gwt"][0]["then"]["fieldValues"] == {"status": "SHIPPED"}
     assert by_title["배송상태변경됨"]["fields"]["payload"] == {"status": "String"}
-    # 문자열/객체 혼용에도 명칭·참조 구조는 온전
-    assert by_title["배송취소"]["aggregateId"] == by_title["배송상태변경"]["aggregateId"]
 
 
 def test_no_refs_anywhere_is_safe():
     arts = {
         "DEFINE": {"contexts": [{"name": "주문", "purpose": "p"}]},
-        "TACTICAL": {"aggregates": [{"name": "주문", "handledCommands": ["주문접수"],
+        "TACTICAL": {"aggregates": [{"name": "주문", "handledCommands": [{
+                                         "name": "주문접수", "userStoryRefs": ["us:order"],
+                                         "gwt": [{
+                                             "scenario": "접수", "given": {"name": "입력", "fieldValues": {}},
+                                             "when": {"name": "접수", "fieldValues": {}},
+                                             "then": {"name": "완료", "fieldValues": {}},
+                                         }],
+                                     }],
                                      "createdEvents": ["주문접수됨"]}]},
     }
     strategic = _build_strategic({"strategic": {}, "prompt": ""}, arts)
     tactical = _build_tactical(arts)
     assert all("legacyRefs" not in e for e in strategic["epics"] + strategic["features"])
     assert all("legacyRefs" not in t for t in tactical)
+
+
+def test_define_user_stories_become_strategic_ids_used_by_commands():
+    arts = {
+        "DEFINE": {"contexts": [{
+            "name": "쿠폰 할인", "purpose": "할인을 계산한다",
+            "userStories": [{
+                "id": "us:calculate-discount", "role": "주문자", "action": "할인을 계산한다",
+                "benefit": "결제 금액을 안다", "acceptanceCriteria": ["빈 쿠폰이면 0"],
+                "legacyRefs": [{"nodeId": "code:x.c:calc"}],
+            }],
+        }]},
+        "TACTICAL": {"aggregates": [{
+            "name": "Discount", "bcName": "쿠폰 할인", "invariants": ["a", "b"],
+            "handledCommands": [{
+                "name": "Calculate", "userStoryRefs": ["us:calculate-discount"],
+                "gwt": [{
+                    "scenario": "empty", "given": {"name": "input", "fieldValues": {}},
+                    "when": {"name": "calculate", "fieldValues": {}},
+                    "then": {"name": "return", "fieldValues": {"value": 0}},
+                }], "legacyRefs": [{"nodeId": "code:x.c:calc"}],
+            }], "createdEvents": [],
+        }]},
+    }
+    state = {"strategic": {}, "prompt": "", "stageArtifacts": arts}
+
+    strategic = _build_strategic(state, arts)
+    tactical = _build_tactical(arts)
+
+    assert strategic["userStories"][0]["tempId"] == "us:calculate-discount"
+    assert strategic["userStories"][0]["acceptanceCriteria"] == ["빈 쿠폰이면 0"]
+    command = next(item for item in tactical if item["nodeLabel"] == "Command")
+    assert command["userStoryRefs"] == ["us:calculate-discount"]

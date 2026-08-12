@@ -28,6 +28,8 @@ ddd-starter Step 7(Define)을 적용한다. 영향 BC 마다 **Bounded Context C
 8. **Verification Metrics** — 이 BC 구조를 (in)validate 할 지표.
 9. **Open Questions** — 미해결 질문.
 10. **languageClashes** — 같은 단어가 다른 컨텍스트에서 다른 의미면 표기.
+11. **User Stories** — 이 BC가 구현할 목표. 각 항목은 고유 `id`, `role`, `action`, `benefit`,
+    근거 기반 `acceptanceCriteria`, `legacyRefs`를 가진다. 이 ID를 Tactical Command가 그대로 참조한다.
 
 ## 출력 (최종 JSON)
 narration(`[BCC]`/`[언어]`/`[결정]`) 후 빈 줄, 그 다음:
@@ -53,7 +55,12 @@ narration(`[BCC]`/`[언어]`/`[결정]`) 후 빈 줄, 그 다음:
       "assumptions": ["Catalog 가 주문 시점 가격을 신선하게 제공"],
       "verificationMetrics": ["주문 확정 실패율 < 0.1%"],
       "openQuestions": ["부분 취소의 환불 정책 미확정"],
-      "languageClashes": ["'Customer' 가 회원 컨텍스트와 의미 다름"]
+      "languageClashes": ["'Customer' 가 회원 컨텍스트와 의미 다름"],
+      "userStories": [{
+        "id": "us:place-order", "role": "주문자", "action": "주문을 접수한다",
+        "benefit": "구매 요청을 기록한다", "acceptanceCriteria": ["근거 기반 GWT 문장"],
+        "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>"}]
+      }]
     }]
   }
 }
@@ -67,3 +74,5 @@ narration(`[BCC]`/`[언어]`/`[결정]`) 후 빈 줄, 그 다음:
 2. Inbound/Outbound 는 Connect 의 메시지 흐름과 일치(type: Query|Command|Event).
 3. Business Decisions 가 전부 "다른 컨텍스트가 결정" 이면 책임이 빈약한 신호 — 재검토.
 4. 언어는 사용자/프롬프트 언어를 따른다.
+5. 모든 context에 `userStories`가 1개 이상 있어야 한다. 예시 문구를 복사하지 않고 입력 요구와
+   실제 레거시 근거로 작성한다. 값·상태·반환은 RULE/원문/sample에 있을 때만 확정한다.

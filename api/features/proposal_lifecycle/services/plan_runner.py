@@ -18,6 +18,12 @@ from api.platform.skill_runner import extract_json
 from api.features.proposal_lifecycle.proposal_contracts import constitution_hash
 from api.features.proposal_lifecycle.services.constitution_runner import read_constitution
 from api.features.proposal_lifecycle.services.legacy_stage_capture import stream_stage_skill_lines
+from api.features.proposal_lifecycle.services.legacy_evidence import (
+    evidence_prompt_block,
+    load_evidence_packet,
+    tactical_evidence_ref_errors,
+    ungrounded_gwt_values,
+)
 
 _SKILL_ROOT = "robo-proposals"
 _SKILL_NAME = "robo-proposal-plan"
@@ -154,6 +160,16 @@ def normalize_tactical_diff(raw: object) -> list[dict]:
             impact_level = "MEDIUM"
 
         canonical = dict(item)
+        # A model may place canonical node-level transport fields inside
+        # ``fields``. Move those exact values without interpreting or creating
+        # domain meaning, and keep only actual domain fields in ``fields``.
+        nested_fields = canonical.get("fields")
+        if isinstance(nested_fields, dict):
+            nested_fields = dict(nested_fields)
+            for key in ("properties", "userStoryRefs", "gwt", "legacyRefs"):
+                if key not in canonical and key in nested_fields:
+                    canonical[key] = nested_fields.pop(key)
+            canonical["fields"] = nested_fields
         canonical["nodeId"] = node_id
         canonical["nodeLabel"] = label
         canonical["nodeTitle"] = title
@@ -162,6 +178,35 @@ def normalize_tactical_diff(raw: object) -> list[dict]:
         canonical.setdefault("reason", item.get("reason") or f"Plan generated {label}")
         normalized.append(canonical)
     return normalized
+
+
+def tactical_contract_errors(tactical: list[dict]) -> list[str]:
+    """Validate required semantic output shape without inventing missing meaning."""
+    errors: list[str] = []
+    commands = [item for item in tactical if item.get("nodeLabel") == "Command"]
+    if not commands:
+        return ["tacticalDiff contains no Command"]
+    for command in commands:
+        title = command.get("nodeTitle") or "<unnamed>"
+        if not isinstance(command.get("userStoryRefs"), list) or not command["userStoryRefs"]:
+            errors.append(f"Command {title} requires non-empty userStoryRefs")
+        scenarios = command.get("gwt")
+        if not isinstance(scenarios, list) or not scenarios:
+            errors.append(f"Command {title} requires non-empty gwt")
+            continue
+        if not 2 <= len(scenarios) <= 4:
+            errors.append(f"Command {title} requires 2 to 4 gwt scenarios")
+        for index, scenario in enumerate(scenarios):
+            if not isinstance(scenario, dict) or not scenario.get("scenario"):
+                errors.append(f"Command {title} gwt[{index}] requires scenario")
+                continue
+            for phase in ("given", "when", "then"):
+                value = scenario.get(phase)
+                if not isinstance(value, dict) or not value.get("name"):
+                    errors.append(f"Command {title} gwt[{index}].{phase} requires name")
+                elif not isinstance(value.get("fieldValues"), dict):
+                    errors.append(f"Command {title} gwt[{index}].{phase}.fieldValues must be an object")
+    return errors
 
 
 def _save_plan_draft(proposal_id: str, implementation_plan: dict,
@@ -226,7 +271,8 @@ def missing_plan_legacy_refs(strategic: dict, tactical: list[dict]) -> list[str]
 
 def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
                        domain_nodes: list[dict], architecture_only: bool = False,
-                       tactical: Optional[list] = None) -> str:
+                       tactical: Optional[list] = None,
+                       evidence_packet: Optional[list[dict]] = None) -> str:
     node_list = "\n".join(
         f"- id: {n['id']}, type: {n.get('label', '')}, name: {n.get('name', '')}"
         for n in (domain_nodes or [])
@@ -247,6 +293,7 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         "각 ID를 의미상 대응하는 tactical 요소의 legacyRefs에 최소 1회 그대로 보존하라. "
         "대응을 판단할 근거가 없으면 창작하지 말고 결과를 완성하지 말라.\n\n"
     )
+    evidence_block = evidence_prompt_block(evidence_packet or [])
 
     if architecture_only:
         # 042 — Detailed DDD: 전술 분해(Aggregate/Command/Event)는 DDD 단계에서 이미 확정됐다.
@@ -268,15 +315,54 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         )
 
     return (
+        "[TASK]\n"
+        "승인된 요구를 구현할 Tactical Diff와 Constitution 기반 구현계획을 생성한다.\n\n"
+        "[INPUT MEANING]\n"
+        "- Strategic Diff: 무엇을 구현하며 각 UserStory ID와 인수조건이 무엇인지 정의한다.\n"
+        "- Legacy evidence packet: 이전 단계가 MCP node_detail(view=gwt)로 실제 확인한 함수의 "
+        "원문 좌표·코드·RULE·CALL·TABLE/COLUMN/sample이다. 같은 nodeId는 중복 제거됐다.\n"
+        "- Constitution: 설계가 준수할 프로젝트 제약이다.\n\n"
         f"Proposal ID: {proposal_id}\n"
-        f"승인된 Strategic Diff(JSON):\n```json\n{json.dumps(strategic, ensure_ascii=False)}\n```\n\n"
+        f"Strategic Diff(JSON):\n```json\n{json.dumps(strategic, ensure_ascii=False)}\n```\n\n"
+        f"Legacy evidence packet(JSON):\n```json\n{evidence_block}\n```\n"
+        "packet에 있는 nodeId는 재조회하지 말고 그대로 사용한다. 필요한 nodeId가 packet에 없거나 "
+        "근거 상태가 insufficient/needs_context일 때만 MCP로 갭을 조회한다.\n\n"
         f"Constitution(raw):\n```\n{constitution_raw}\n```\n\n"
         f"{memory_block}"
         f"{coverage_block}"
         f"현재 도메인 구성 요소 목록:\n{node_list or '(없음)'}\n\n"
-        "위 Strategic Diff 와 Constitution 을 바탕으로 Tactical Diff 와 "
-        "Constitution 기반 구현계획(architectureDecisions + 다수 컨텍스트면 "
-        "interContextIntegrations/messagingChannel/serviceDevEnvironments)을 JSON 으로 출력하라."
+        "[DECISION RULES]\n"
+        "1. 코드를 입력→검증→분기→CALL/RW→반환/상태변화→transaction 순서로 이해한 뒤 설계한다.\n"
+        "   Then은 분기 중간 대입값이 아니라 이후 공통 후처리·clamp·rollback/commit을 모두 적용한 "
+        "최종 반환/상태여야 한다. 범위 조건만으로 최종 상수 반환을 일반화하지 않는다.\n"
+        "2. GWT의 값·상태·호출·읽기/쓰기는 packet RULE/원문/sample에 있는 것만 확정한다. "
+        "샘플 한 행을 전체 제약으로 일반화하지 않는다. 근거가 없으면 fieldValues를 비운다.\n"
+        "   범위 조건을 테스트하려고 임의의 대표 숫자·코드를 계산하거나 선택하지 않는다. 실제 sample이나 "
+        "RULE 상수가 없으면 조건은 scenario/name에 기호로 쓰고 해당 입력·결과 fieldValues는 비운다.\n"
+        "3. 예시 스키마의 이름·상태·숫자를 복사하지 않는다. TABLE/COLUMN 이름을 번역하지 않는다.\n"
+        "   실제 필드 하나의 여러 값은 필드명에 suffix를 붙여 쪼개지 말고 시나리오를 나눈다. "
+        "예: pay_result_cd=90과 99는 별도 시나리오이며 pay_result_cd_cancel 같은 새 필드는 금지한다. "
+        "이름 없는 함수 반환값에 ret/result 같은 합성 필드도 만들지 말고 then.name으로 표현한다.\n"
+        "   RET_INVALID/RET_FAIL 같은 함수 반환 sentinel을 cnt/status 등 다른 데이터 필드의 값으로 넣지 않는다. "
+        "소스가 동일 필드에 그 값을 직접 대입한 근거가 없으면 then.name으로만 반환을 표현한다.\n"
+        "4. 모든 Command는 fields.inputSchema, properties, 비어 있지 않은 userStoryRefs, "
+        "정상+근거 있는 경계/실패 gwt, legacyRefs를 갖는다. userStoryRefs는 Strategic Diff의 "
+        "실제 UserStory tempId/entityId만 사용한다.\n"
+        "5. legacyRefs.rule은 packet의 RULE text를 한 글자도 바꾸지 않고 인용할 때만 넣는다.\n\n"
+        "   각 Command는 근거 함수 nodeId와 그 함수에서 실제 사용한 RULE text 1개 이상을 정확히 인용하고, "
+        "packet.tables의 직접 TABLE id를 access에 따라 reads/writes role로 모두 붙인다. TABLE 이름을 바꾸지 않는다.\n\n"
+        "[OUTPUT]\n"
+        "robo-proposal-plan 스킬의 단일 JSON 계약대로 tacticalDiff와 implementationPlan을 출력한다.\n"
+        "Command.gwt는 반드시 아래와 같은 JSON 배열이다. normal/boundary/failure 키로 감싼 객체나 "
+        "Given/When/Then 문자열은 허용하지 않는다.\n"
+        '"gwt":[{"scenario":"...","given":{"name":"...","fieldValues":{}},'
+        '"when":{"name":"...","fieldValues":{}},"then":{"name":"...","fieldValues":{}}}]\n'
+        "Command마다 2~4개만 쓴다: 근거 있는 정상 1개와 가장 중요한 경계/실패 1개 이상. "
+        "분기 전체 목록은 invariant/description에 보존하고 GWT 수를 늘려 복제하지 않는다.\n\n"
+        "[FINAL CHECK]\n"
+        "각 Command에 userStoryRefs와 구조화 GWT가 있는지, 모든 fieldValue가 packet으로 입증되는지, "
+        "세 입력 함수가 의미상 대응 요소에 배분됐는지 자체 점검한 뒤 출력한다. 각 scalar fieldValue는 "
+        "서버가 evidence/Strategic 입력의 실제 등장 여부를 검사하며 파생·추정값은 거부한다."
     )
 
 
@@ -356,8 +442,9 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
 
     constitution_raw = read_constitution(inputs.get("projectRoot")) or ""
     domain_nodes = load_domain_nodes()
+    evidence_packet = load_evidence_packet(proposal_id)
     human_prompt = _build_plan_prompt(proposal_id, strategic, constitution_raw, domain_nodes,
-                                      architecture_only, existing_tactical)
+                                      architecture_only, existing_tactical, evidence_packet)
 
     SmartLogger.log("INFO", f"plan_start: {proposal_id}",
                     category="proposal_lifecycle.plan.start",
@@ -392,6 +479,16 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
     tactical = normalize_tactical_diff(data.get("tacticalDiff") or existing_tactical)
     plan = data.get("implementationPlan", {})
     if not architecture_only:
+        contract_errors = tactical_contract_errors(tactical)
+        contract_errors.extend(ungrounded_gwt_values(tactical, evidence_packet, strategic))
+        contract_errors.extend(tactical_evidence_ref_errors(tactical, evidence_packet))
+        if contract_errors:
+            yield "error", {
+                "code": "PLAN_TACTICAL_CONTRACT_FAILED",
+                "message": "Plan tactical diff is incomplete.",
+                "errors": contract_errors,
+            }
+            return
         missing_refs = missing_plan_legacy_refs(strategic, tactical)
         if missing_refs:
             SmartLogger.log(

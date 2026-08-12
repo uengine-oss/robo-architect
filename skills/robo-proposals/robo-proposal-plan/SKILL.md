@@ -43,14 +43,29 @@ Constitution(fields + raw): <architectureStyle, repoStrategy, repoMode, techStac
 
 ## 분해 절차
 1. **Strategic Diff·레거시 근거 흡수** — 주어진 UserStory/Feature를 입력으로 삼고,
-   `legacy-reference.md`의 목록→선택 ID 상세조회로 전술 판단에 필요한 실제 구현만 확인한다.
-   공통 계약의 호출 완료 게이트를 통과하기 전에는 최종 JSON을 출력하지 않는다.
+   Human Prompt의 `Legacy evidence packet`은 이전 단계가 이미 실제 MCP로 확인한 GWT 상세다.
+   packet의 같은 nodeId는 재조회하지 않고, 누락/근거부족인 ID만 `legacy-reference.md` 절차로 확인한다.
+   이것이 공용 **호출 완료 게이트**다: packet이 없으면 실제 search→detail, packet이 있으면 저장된
+   성공 상세를 읽고 배분한 뒤 부족한 근거만 실제 호출한다.
 2. **Tactical 도출** — 이벤트-우선, Aggregate→Command→Event→ReadModel→Policy→Invariant→UI.
    모든 tactical 항목에 `legacyRefs`를 기록한다(`output-schema.md` 불변식) — 이 실행에서
    실제 검색·검토한 nodeId만, 근거 없으면 `[]`. 서버가 관찰집합 밖 ID를 제거한다.
 3. **아키텍처 계획** — Constitution 의 `architectureStyle`/`repoStrategy`/`techStack` 에 일관되게 5개 항목 결정. 각 결정은 가능하면 Constitution 섹션으로 **추적 가능**(`constitutionRef`)해야 한다. 침묵 영역은 `constitutionGaps` 로.
 4. **컨텍스트 간 연동(다수 BC)** — `architectureStyle == MICROSERVICES` 이고 BoundedContext≥2 이면 `inter-context-integration.md` 대로: ① 연동 의도 분석(request/response vs pub/sub) → `interContextIntegrations[]`(EVENT/COMMAND/QUERY 분류, **기본 이벤트 드리븐 pub/sub**), ② 메시징 채널(`messagingChannel`, **기본 Kafka**), ③ 서비스별 Docker 개발환경(`serviceDevEnvironments[]` — 멀티레포에서 각 개발자가 자기 서비스 범위만 가져가도록 `scopeNote`/`dependencies`/`composeServices` 제한).
 5. **모놀리스 규칙** — `architectureStyle == MONOLITH` 이면 단일 배포로 반영하고, ingress/mesh/연동/서비스별환경 같은 마이크로서비스 전용 항목을 **지어내지 말 것**(해당 항목은 "N/A (monolith)" 로 표기 가능, 위 배열은 비움).
+6. **출력 완결성** — 모든 Command는 비어 있지 않은 `userStoryRefs`와 구조화 `gwt`를 가진다.
+   예시의 값/상태를 복사하지 않고 packet의 RULE·원문·sample로 입증되는 fieldValue만 사용한다.
+   `gwt`는 `[{scenario,given:{name,fieldValues},when:{name,fieldValues},then:{name,fieldValues}}]`
+   배열 형상만 허용한다. `normal/boundary/failure` 카테고리 객체나 Given/When/Then 문자열로
+   바꾸지 않는다.
+   하나의 실제 필드가 여러 값을 가지면 별도 시나리오로 나누며 suffix 합성 필드를 만들지 않는다.
+   이름 없는 반환값도 `ret`/`result` 필드로 만들지 않는다.
+   함수 반환 sentinel을 `cnt`/`status` 같은 다른 데이터 필드 값으로 쓰지 않는다.
+   Command당 2~4개만 쓰고, 범위/미정의 분기의 대표 테스트값을 새로 만들지 않는다. 실제 sample이나
+   RULE 상수가 없으면 조건을 name에 남기고 fieldValues를 비운다.
+   Then은 분기 중간 대입이 아니라 공통 후처리·clamp·transaction 결과까지 반영한 최종값이다.
+   각 Command의 `legacyRefs`에는 근거 함수, 그 함수의 정확한 RULE text 1개 이상, 직접 사용한
+   TABLE id 전부를 access에 맞는 reads/writes role로 기록한다.
 6. **자가 검증** — traceability + 완전성: 항상 5개 항목 + (마이크로서비스 & 다수 컨텍스트면) `INTER_CONTEXT_INTEGRATION`·`MESSAGING_CHANNEL`·`DEV_ENVIRONMENT` 까지 결정 or gap 통과 확인.
 
 ## 스트리밍 출력 (필수)

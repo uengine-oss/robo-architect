@@ -14,11 +14,12 @@ UI/감사가 스킬 계약 위반을 볼 수 있다.
 from __future__ import annotations
 
 import json
+import hashlib
 from typing import Any
 
 _EVIDENCE_MAX = 200
 _STATEMENT_MAX = 300
-_ROLE_VALUES = {"derived-from", "refines", "reads", "writes", "rule", "example"}
+_ROLE_VALUES = {"derived-from", "refines", "calls", "reads", "writes", "rule", "example"}
 
 
 def allowed_ref_ids(legacy_references: Any) -> set[str]:
@@ -98,6 +99,18 @@ def _normalize_one(ref: Any) -> dict | None:
     examples = ref.get("examples")
     if isinstance(examples, list):
         out["examples"] = examples[:3]
+    if ref.get("coordinateOnly") is True:
+        out["coordinateOnly"] = True
+    line = ref.get("line")
+    if isinstance(line, int) and not isinstance(line, bool):
+        out["line"] = line
+    source = ref.get("source")
+    if isinstance(source, dict):
+        out["source"] = {
+            key: source[key]
+            for key in ("file_path", "start_line", "end_line", "rule_line")
+            if isinstance(source.get(key), (str, int)) and not isinstance(source.get(key), bool)
+        }
     return out
 
 
@@ -115,7 +128,7 @@ def _validate_element(element: dict, allowed: set[str], key: str, warnings: list
         element["legacyRefs"] = []
         return
     cleaned: list[dict] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for ref in raw:
         normalized = _normalize_one(ref)
         if normalized is None:
@@ -123,7 +136,11 @@ def _validate_element(element: dict, allowed: set[str], key: str, warnings: list
                              "detail": json.dumps(ref, ensure_ascii=False, default=str)[:120]})
             continue
         node_id = normalized["nodeId"]
-        if node_id in seen:
+        content_identity = normalized.get("rule") or normalized.get("table") or normalized.get("example")
+        if isinstance(content_identity, dict):
+            content_identity = json.dumps(content_identity, ensure_ascii=False, sort_keys=True)
+        dedupe_key = (node_id, str(content_identity or ""))
+        if dedupe_key in seen:
             continue
         # 해석된 내용 ref(rule/example/table)는 nodeId 가 내장 노드 id — 부모가 관찰집합에
         # 있으면 통과시키고, 소속 진위는 resolve_content_refs 가 그래프로 재검증한다.
@@ -131,7 +148,7 @@ def _validate_element(element: dict, allowed: set[str], key: str, warnings: list
         if node_id not in allowed and not is_resolved_content:
             warnings.append({"element": key, "code": "REF_NOT_OBSERVED", "nodeId": node_id})
             continue
-        seen.add(node_id)
+        seen.add(dedupe_key)
         cleaned.append(normalized)
     element["legacyRefs"] = cleaned
 
@@ -282,6 +299,9 @@ def resolve_content_refs(strategic_diff: Any, tactical_diff: Any, fetch_children
                             "parentId": parent_id, "nodeId": matched["id"], "role": "rule",
                             "statement": statement[:_STATEMENT_MAX],
                         })
+                        for attr in ("coordinateOnly", "line", "source"):
+                            if attr in matched:
+                                ref[attr] = matched[attr]
                         if not ref.get("evidence"):
                             ref["evidence"] = statement[:_EVIDENCE_MAX]
                         if matched.get("examples"):
@@ -352,10 +372,53 @@ def enforce_proposal_refs(
             "MATCH (p:Proposal {id: $id}) RETURN p.legacyReferences AS refs",
             id=proposal_id,
         ).single()
-        allowed = allowed_ref_ids((row or {}).get("refs"))
+        persisted_refs = (row or {}).get("refs")
+        allowed = allowed_ref_ids(persisted_refs)
+
+        # Analyzer and Architect commonly use separate databases.  The persisted
+        # successful node_detail response is therefore the authoritative bridge for
+        # RULE source coordinates and direct TABLE ids; do not require Analyzer child
+        # nodes to exist in the Architect database.
+        from api.features.proposal_lifecycle.services.legacy_evidence import build_evidence_packet
+        provenance_children: dict[str, dict] = {}
+        for inspection in build_evidence_packet(persisted_refs):
+            parent_id = inspection.get("nodeId")
+            if not parent_id:
+                continue
+            source = inspection.get("source") if isinstance(inspection.get("source"), dict) else {}
+            rules = []
+            for rule in inspection.get("rules") or []:
+                if not isinstance(rule, dict) or not rule.get("text"):
+                    continue
+                line = rule.get("line")
+                suffix = f"L{line}" if isinstance(line, int) else hashlib.sha256(
+                    str(rule["text"]).encode("utf-8")
+                ).hexdigest()[:12]
+                rules.append({
+                    "id": f"{parent_id}::RULE::{suffix}",
+                    "statement": rule["text"],
+                    "line": line,
+                    "coordinateOnly": True,
+                    "source": {
+                        "file_path": source.get("file_path", ""),
+                        "start_line": source.get("start_line"),
+                        "end_line": source.get("end_line"),
+                        "rule_line": line,
+                    },
+                    "examples": rule.get("examples") or [],
+                })
+            tables = [
+                {"id": table.get("id"), "name": table.get("name")}
+                for table in inspection.get("tables") or []
+                if isinstance(table, dict) and table.get("id")
+            ]
+            provenance_children[parent_id] = {"rules": rules, "tables": tables}
 
         def fetch_children(parent_id: str) -> dict:
             if parent_id not in rule_cache:
+                if parent_id in provenance_children:
+                    rule_cache[parent_id] = provenance_children[parent_id]
+                    return rule_cache[parent_id]
                 rules = [dict(r) for r in session.run(
                     "MATCH (x {id: $id})-[:HAS_RULE]->(r:RULE) "
                     "OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:EXAMPLE) "

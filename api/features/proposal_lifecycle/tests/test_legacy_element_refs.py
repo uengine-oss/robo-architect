@@ -74,6 +74,17 @@ def test_valid_refs_kept_and_normalized():
     assert "_legacyRefWarnings" not in diff
 
 
+def test_calls_role_is_preserved_for_observed_callee():
+    diff = _diff([{"tempId": "EP-1", "legacyRefs": [
+        {"nodeId": "code:a.c:callee", "role": "calls", "evidence": "직접 호출"},
+    ]}])
+
+    assert validate_strategic_refs(diff, {"code:a.c:callee"}) == []
+    assert diff["epics"][0]["legacyRefs"] == [
+        {"nodeId": "code:a.c:callee", "role": "calls", "evidence": "직접 호출"},
+    ]
+
+
 def test_unobserved_node_id_is_dropped_with_warning():
     diff = _diff([{"tempId": "EP-1", "legacyRefs": [{"nodeId": "code:hallucinated"}]}])
     warnings = validate_strategic_refs(diff, {"code:real"})
@@ -118,6 +129,20 @@ def test_duplicates_deduped_first_wins():
     ]}])
     assert validate_strategic_refs(diff, {"code:a"}) == []
     assert diff["epics"][0]["legacyRefs"] == [{"nodeId": "code:a", "evidence": "첫째"}]
+
+
+def test_distinct_rule_coordinates_on_same_function_are_not_deduped():
+    diff = _diff([{"tempId": "EP-1", "legacyRefs": [
+        {"nodeId": "code:a", "rule": "첫 번째 규칙"},
+        {"nodeId": "code:a", "rule": "두 번째 규칙"},
+        {"nodeId": "code:a", "rule": "첫 번째 규칙"},
+    ]}])
+
+    assert validate_strategic_refs(diff, {"code:a"}) == []
+    assert diff["epics"][0]["legacyRefs"] == [
+        {"nodeId": "code:a", "rule": "첫 번째 규칙"},
+        {"nodeId": "code:a", "rule": "두 번째 규칙"},
+    ]
 
 
 def test_evidence_truncated_and_unknown_role_dropped():
@@ -207,6 +232,32 @@ def test_rule_statement_resolves_to_rule_node():
     assert ref["parentId"] == "code:f1"
     assert "'90'" in ref["statement"]
     assert ref["examples"][0]["when"] == "상태 변경 시도"
+
+
+def test_rule_resolves_to_persisted_analyzer_source_coordinate():
+    children = {"code:f1": {"rules": [{
+        "id": "code:f1::RULE::L77",
+        "statement": "입력이 비면 0을 반환한다.",
+        "line": 77,
+        "coordinateOnly": True,
+        "source": {
+            "file_path": "src/calc.c", "start_line": 70,
+            "end_line": 90, "rule_line": 77,
+        },
+        "examples": [],
+    }], "tables": []}}
+    diff = _diff([{"tempId": "EP-1", "legacyRefs": [
+        {"nodeId": "code:f1", "rule": "입력이 비면 0을 반환한다."},
+    ]}])
+
+    assert resolve_content_refs(diff, None, children.get) == []
+    ref = diff["epics"][0]["legacyRefs"][0]
+    assert ref["nodeId"] == "code:f1::RULE::L77"
+    assert ref["parentId"] == "code:f1"
+    assert ref["role"] == "rule"
+    assert ref["line"] == 77
+    assert ref["coordinateOnly"] is True
+    assert ref["source"]["file_path"] == "src/calc.c"
 
 
 def test_unmatched_rule_keeps_function_ref_with_warning():

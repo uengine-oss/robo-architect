@@ -184,26 +184,37 @@ def _build_strategic(state: dict, arts: dict) -> dict:
                 legacyRefs=bc_refs,
             ))
 
-    for story in _parse_prompt_user_stories(state.get("prompt") or "", contexts):
+    defined_stories = []
+    for context in contexts:
+        source = context.get("source") if isinstance(context.get("source"), dict) else {}
+        for story in source.get("userStories") or []:
+            if isinstance(story, dict):
+                defined_stories.append({**story, "bcName": context.get("name")})
+
+    story_sources = defined_stories or _parse_prompt_user_stories(
+        state.get("prompt") or "", contexts,
+    )
+    for story in story_sources:
         bc_name = story.get("bcName")
         if not bc_name:
             continue
         feature_title = f"{bc_name} 관리"
-        title = f"{story['role']}: {story['action']}"
+        title = story.get("title") or f"{story['role']}: {story['action']}"
         if title in seen_stories:
             continue
         seen_stories.add(title)
+        story_id = story.get("id") or _temp("us", title)
         strategic["userStories"].append(_entry(
             "CREATE",
             "UserStory",
             title,
-            temp_id=_temp("us", title),
+            temp_id=story_id,
             featureId=_temp("feature", feature_title),
             boundedContextId=_temp("bc", bc_name),
             role=story["role"],
             action=story["action"],
             benefit=story["benefit"],
-            acceptance=[
+            acceptance=story.get("acceptanceCriteria") or [
                 f"{story['action']} 시나리오가 성공한다",
                 "실패/예외 상황은 사용자에게 명확히 전달된다",
             ],
@@ -212,6 +223,7 @@ def _build_strategic(state: dict, arts: dict) -> dict:
                 "action": story["action"],
                 "benefit": story["benefit"],
             },
+            legacyRefs=_refs(story),
         ))
 
     discover = arts.get("DISCOVER") or {}
@@ -375,6 +387,11 @@ def _validate_tactical(items: list[dict]) -> None:
         missing = [k for k in required if not item.get(k)]
         if missing:
             raise ValueError(f"tacticalDiff[{idx}] missing required fields: {', '.join(missing)}")
+        if item.get("nodeLabel") == "Command":
+            if not item.get("userStoryRefs"):
+                raise ValueError(f"tacticalDiff[{idx}] Command missing userStoryRefs")
+            if not item.get("gwt"):
+                raise ValueError(f"tacticalDiff[{idx}] Command missing gwt")
 
 
 def consolidate(proposal_id: str) -> Optional[dict]:

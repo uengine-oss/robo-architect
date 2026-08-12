@@ -94,6 +94,7 @@ async def execute_stage(
     artifact_key: str,
     parse_error_code: str,
     validators: Optional[list[tuple[Callable[[dict], bool], str]]] = None,
+    blocking_validators: Optional[list[tuple[Callable[[dict], bool], str]]] = None,
     detect_conflicts: bool = False,
 ) -> AsyncGenerator[tuple[str, object], None]:
     """스테이지 1개를 실행하는 공통 루틴.
@@ -133,6 +134,21 @@ async def execute_stage(
             warnings.append(msg)
     if warnings:
         artifact["_warnings"] = warnings
+
+    blocking_errors = []
+    for check, msg in (blocking_validators or []):
+        try:
+            if not check(artifact):
+                blocking_errors.append(msg)
+        except Exception:
+            blocking_errors.append(msg)
+    if blocking_errors:
+        yield "error", {
+            "code": f"{stage}_CONTRACT_FAILED",
+            "message": f"{stage} 산출물이 필수 계약을 충족하지 않습니다.",
+            "errors": blocking_errors,
+        }
+        return
 
     if detect_conflicts:
         from api.features.proposal_lifecycle.services import strategic_memory

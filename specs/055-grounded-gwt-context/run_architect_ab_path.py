@@ -29,18 +29,20 @@ def _sessions() -> dict[str, dict]:
     return result
 
 
-def _request(client: httpx.Client, method: str, path: str, body: dict | None = None) -> dict:
-    response = client.request(method, API + path, json=body)
+def _request(
+    client: httpx.Client, api: str, method: str, path: str, body: dict | None = None,
+) -> dict:
+    response = client.request(method, api + path, json=body)
     if response.status_code >= 400:
         raise RuntimeError(f"{method} {path}: {response.status_code} {response.text}")
     return response.json() if response.content else {}
 
 
-def _stream(client: httpx.Client, path: str) -> tuple[list[dict], float]:
+def _stream(client: httpx.Client, api: str, path: str) -> tuple[list[dict], float]:
     events: list[dict] = []
     event_type = "message"
     started = time.perf_counter()
-    with client.stream("GET", API + path) as response:
+    with client.stream("GET", api + path) as response:
         if response.status_code >= 400:
             raise RuntimeError(f"GET {path}: {response.status_code} {response.read().decode('utf-8', 'replace')}")
         for raw in response.iter_lines():
@@ -91,10 +93,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--label", required=True)
     parser.add_argument("--mode", choices=["SIMPLIFIED", "DETAILED_DDD"], required=True)
+    parser.add_argument("--api", default=API)
+    parser.add_argument("--contract", type=Path, default=CONTRACT)
+    parser.add_argument("--out-root", type=Path, default=OUT_ROOT)
     args = parser.parse_args()
 
-    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-    out_dir = OUT_ROOT / args.label
+    contract = json.loads(args.contract.read_text(encoding="utf-8"))
+    out_dir = args.out_root / args.label
     out_dir.mkdir(parents=True, exist_ok=False)
     started_at = datetime.now(timezone.utc).isoformat()
     wall_started = time.perf_counter()
@@ -102,22 +107,22 @@ def main() -> None:
     session_before = _sessions()
 
     with httpx.Client(timeout=httpx.Timeout(1800.0, connect=10.0)) as client:
-        if args.mode == "DETAILED_DDD":
-            # Stage confirmation promotes strategic memory.  Reset the same frozen baseline
-            # before each A/B detailed path so the first run cannot condition the second.
-            _request(client, "PUT", "/api/constitution", {
-                "raw": "# Shopmall GWT 검증 헌장\n\n"
-                       "- 봉인된 레거시 근거의 값, 분기, 호출, 읽기/쓰기를 보존한다.\n"
-                       "- 근거 없는 업무 의미를 만들지 않는다.\n"
-                       "- 모든 GWT와 변경 항목은 legacyRefs로 원본 노드와 좌표에 역추적 가능해야 한다.\n"
-                       "- 이 세션은 설계 초안 비교만 수행하며 accept/apply하지 않는다.",
-                "fields": {"language": "ko", "evidencePolicy": "sealed-legacy-only"},
-                "strategicMemory": {
-                    "domain": "주문 정산 지원",
-                    "constraints": ["legacy-grounded", "no-accept-apply"],
-                },
-            })
-        created = _request(client, "POST", "/api/proposals/", {
+        # Both paths require the same Constitution.  The old preserved experiment DB already
+        # contained one, which hid this preflight requirement from the Simplified driver.
+        # Reset it before every isolated run so neither path inherits ambient DB state.
+        _request(client, args.api, "PUT", "/api/constitution", {
+            "raw": "# Shopmall GWT 검증 헌장\n\n"
+                   "- 봉인된 레거시 근거의 값, 분기, 호출, 읽기/쓰기를 보존한다.\n"
+                   "- 근거 없는 업무 의미를 만들지 않는다.\n"
+                   "- 모든 GWT와 변경 항목은 legacyRefs로 원본 노드와 좌표에 역추적 가능해야 한다.\n"
+                   "- 이 세션은 설계 초안 비교만 수행하며 accept/apply하지 않는다.",
+            "fields": {"language": "ko", "evidencePolicy": "sealed-legacy-only"},
+            "strategicMemory": {
+                "domain": "주문 정산 지원",
+                "constraints": ["legacy-grounded", "no-accept-apply"],
+            },
+        })
+        created = _request(client, args.api, "POST", "/api/proposals/", {
             "originalPrompt": contract["proposal_prompt"],
             "title": f"GWT A/B {args.label}",
             "decompositionMode": args.mode,
@@ -126,39 +131,39 @@ def main() -> None:
         (out_dir / "created.json").write_text(json.dumps(created, ensure_ascii=False, indent=2), encoding="utf-8")
 
         if args.mode == "SIMPLIFIED":
-            events, seconds = _stream(client, f"/api/proposals/stream/{proposal_id}/intent")
+            events, seconds = _stream(client, args.api, f"/api/proposals/stream/{proposal_id}/intent")
             step_metrics.append({"step": "intent", "seconds": round(seconds, 3)})
             (out_dir / "intent.events.json").write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
-            submitted = _request(client, "POST", f"/api/proposals/{proposal_id}/submit", {})
+            submitted = _request(client, args.api, "POST", f"/api/proposals/{proposal_id}/submit", {})
             (out_dir / "submitted.json").write_text(json.dumps(submitted, ensure_ascii=False, indent=2), encoding="utf-8")
-            events, seconds = _stream(client, f"/api/proposals/{proposal_id}/stream/plan")
+            events, seconds = _stream(client, args.api, f"/api/proposals/{proposal_id}/stream/plan")
             step_metrics.append({"step": "plan", "seconds": round(seconds, 3)})
             (out_dir / "plan.events.json").write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
         else:
-            events, seconds = _stream(client, f"/api/proposals/{proposal_id}/stream/scope")
+            events, seconds = _stream(client, args.api, f"/api/proposals/{proposal_id}/stream/scope")
             step_metrics.append({"step": "scope", "seconds": round(seconds, 3)})
             (out_dir / "scope.events.json").write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
             stage_plan = _artifact(events, "stage_plan", "stagePlan")
             decisions = [{"stage": stage, "skipped": False} for stage in STAGES]
-            confirmed_plan = _request(client, "POST", f"/api/proposals/{proposal_id}/stage-plan/confirm", {"stages": decisions})
+            confirmed_plan = _request(client, args.api, "POST", f"/api/proposals/{proposal_id}/stage-plan/confirm", {"stages": decisions})
             (out_dir / "stage-plan-confirmed.json").write_text(json.dumps(confirmed_plan, ensure_ascii=False, indent=2), encoding="utf-8")
             (out_dir / "stage-plan-generated.json").write_text(json.dumps(stage_plan, ensure_ascii=False, indent=2), encoding="utf-8")
 
             for stage in STAGES:
-                events, seconds = _stream(client, f"/api/proposals/{proposal_id}/stream/stage/{stage}")
+                events, seconds = _stream(client, args.api, f"/api/proposals/{proposal_id}/stream/stage/{stage}")
                 step_metrics.append({"step": stage, "seconds": round(seconds, 3)})
                 (out_dir / f"{stage.lower()}.events.json").write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
                 artifact = _artifact(events, "artifact", "artifact")
                 body = {"artifact": artifact, "conflictResolutions": _conflict_resolutions(events)}
-                draft = _request(client, "PUT", f"/api/proposals/{proposal_id}/stage/{stage}/draft", body)
+                draft = _request(client, args.api, "PUT", f"/api/proposals/{proposal_id}/stage/{stage}/draft", body)
                 (out_dir / f"{stage.lower()}.draft.json").write_text(json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
-                confirmed = _request(client, "POST", f"/api/proposals/{proposal_id}/stage/{stage}/confirm", body)
+                confirmed = _request(client, args.api, "POST", f"/api/proposals/{proposal_id}/stage/{stage}/confirm", body)
                 (out_dir / f"{stage.lower()}.confirmed.json").write_text(json.dumps(confirmed, ensure_ascii=False, indent=2), encoding="utf-8")
 
-            consolidated = _request(client, "POST", f"/api/proposals/{proposal_id}/staged/consolidate")
+            consolidated = _request(client, args.api, "POST", f"/api/proposals/{proposal_id}/staged/consolidate")
             (out_dir / "consolidated.json").write_text(json.dumps(consolidated, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        final = _request(client, "GET", f"/api/proposals/{proposal_id}")
+        final = _request(client, args.api, "GET", f"/api/proposals/{proposal_id}")
         (out_dir / "proposal-final.json").write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8")
 
     session_after = _sessions()
@@ -169,6 +174,9 @@ def main() -> None:
     manifest = {
         "label": args.label,
         "mode": args.mode,
+        "api": args.api,
+        "contract": str(args.contract.resolve()),
+        "output_root": str(args.out_root.resolve()),
         "proposal_id": proposal_id,
         "started_at": started_at,
         "completed_at": datetime.now(timezone.utc).isoformat(),
