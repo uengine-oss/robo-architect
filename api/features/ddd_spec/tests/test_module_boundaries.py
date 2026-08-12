@@ -26,7 +26,7 @@ def _python_files():
 
 
 def _imports(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     out: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

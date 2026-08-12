@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
@@ -23,6 +23,7 @@ from api.features.requirements.requirements_contracts import (
 )
 from api.features.ingestion.ingestion_llm_runtime import get_llm
 from api.platform.neo4j import get_session
+from api.platform.llm_messages import build_system_message
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -84,7 +85,7 @@ async def propose_epic(req: EpicProposeRequest, request: Request) -> EpicPropose
     try:
         structured = get_llm().with_structured_output(_LLMEpics)
         result: _LLMEpics = await structured.ainvoke(
-            [SystemMessage(content=_EPIC_SYSTEM), HumanMessage(content=prompt)]
+            [build_system_message(_EPIC_SYSTEM), HumanMessage(content=prompt)]
         )
         proposals = [p for p in (result.proposals or []) if (p.name or "").strip()]
     except Exception as exc:  # noqa: BLE001 — fall back to manual entry
@@ -112,7 +113,7 @@ async def propose_feature(req: FeatureProposeRequest, request: Request) -> Featu
     try:
         structured = get_llm().with_structured_output(_LLMFeatures)
         result: _LLMFeatures = await structured.ainvoke(
-            [SystemMessage(content=_FEATURE_SYSTEM), HumanMessage(content=prompt)]
+            [build_system_message(_FEATURE_SYSTEM), HumanMessage(content=prompt)]
         )
         proposals = []
         for p in result.proposals or []:

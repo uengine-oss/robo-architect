@@ -22,6 +22,7 @@ from api.features.ingestion.hybrid.code_to_rules.dbms_rule_linearizer import (
     linearize_dbms_rules,
 )
 from api.features.ingestion.hybrid.contracts import ExampleDTO, RuleDTO
+from api.features.ingestion.hybrid.effect_provenance import merge_write_effects
 from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -38,7 +39,8 @@ WITH f, hr, r,
           given:       e.given,
           when_:       e.when_,
           then_:       e.then_,
-          writes:      [(e)-[at:AFFECTS_TABLE]->(tbl:TABLE) | {table: tbl.name, op: at.op}]
+          writes:      [(e)-[at:AFFECTS_TABLE]->(tbl:TABLE) |
+                        {table: tbl.name, access: at.access, op: at.op, op_source: at.op_source}]
         }
      ] AS examples
 RETURN
@@ -132,28 +134,18 @@ def _writes_from_then_json(then_value: str | None) -> list[dict]:
         tbl = w.get("table")
         op = w.get("op")
         if isinstance(tbl, str) and isinstance(op, str):
-            out.append({"table": tbl, "op": op.upper()})
+            out.append({
+                "table": tbl,
+                "access": "WRITE",
+                "op": op.upper(),
+                "op_source": "LEGACY",
+            })
     return out
 
 
 def _merge_writes(*sources: list[dict]) -> list[dict]:
-    """Union writes lists into a stable, deduplicated list of {table, op} dicts."""
-    seen: set[tuple[str, str]] = set()
-    out: list[dict] = []
-    for src in sources:
-        for w in src or []:
-            if not isinstance(w, dict):
-                continue
-            tbl = w.get("table")
-            op = w.get("op")
-            if not (isinstance(tbl, str) and isinstance(op, str)):
-                continue
-            key = (tbl, op.upper())
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append({"table": tbl, "op": op.upper()})
-    return out
+    """Compatibility wrapper around the shared AFFECTS_TABLE v2 normalizer."""
+    return merge_write_effects(*sources)
 
 
 async def extract_rules_from_analyzer_graph(

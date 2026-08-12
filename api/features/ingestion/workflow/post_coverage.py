@@ -16,12 +16,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
 from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
 from api.features.ingestion.ingestion_llm_runtime import get_llm
 from api.platform.neo4j import get_session
+from api.platform.llm_messages import build_system_message
 from api.platform.observability.smart_logger import SmartLogger
 
 # 어떤 behavioral 설계객체에도 IMPLEMENTS로 안 붙은 US = "고아"(설계 누락).
@@ -129,7 +130,7 @@ def reconcile_bc(bc_id: str, name: str = "", *, dry_run: bool = False) -> dict:
     try:
         mappings = (
             get_llm().with_structured_output(_MappingList)
-            .invoke([SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)])
+            .invoke([build_system_message(_SYSTEM), HumanMessage(content=prompt)])
             .mappings
             or []
         )

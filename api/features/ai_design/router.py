@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
+from api.platform.llm_messages import build_system_message
 
 from . import service, wireframe_agent
 
@@ -56,7 +57,7 @@ async def html_edit(ui_node_id: str, req: Request) -> dict[str, Any]:
     fragment, persists `ui.template`, and returns the new template.
     """
     from fastapi import HTTPException
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage
 
     from api.platform.neo4j import get_session
     from api.platform.llm import get_llm
@@ -138,7 +139,7 @@ async def html_edit(ui_node_id: str, req: Request) -> dict[str, Any]:
         llm = get_llm()
         # async endpoint → must not call sync .invoke() (blocking httpx read on
         # the event loop freezes the whole server if OpenAI stalls). Use ainvoke.
-        resp = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        resp = await llm.ainvoke([build_system_message(system_prompt), HumanMessage(content=user_prompt)])
         raw_html = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
         if not isinstance(raw_html, str):
             raw_html = str(raw_html)

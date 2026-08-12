@@ -183,8 +183,8 @@ async def extract_events_from_user_stories_phase(
             prompt += "\n\nFor each Event, output displayName as a short English label (e.g. 'Order Placed')."
 
         # ─── Hybrid input boost — append BL info per US to LLM input ────────
-        # Each Rule's writes.op (INSERT/UPDATE/DELETE) directly drives the
-        # Event's PastParticiple choice (Recorded/Updated/Removed). The
+        # Scanner-proven writes.op can drive the Event's PastParticiple choice.
+        # LLM_INFERRED is a weak hint; UNKNOWN must not manufacture a verb. The
         # canonical Example GWT becomes the Event's acceptance test seed.
         # See Phase5_EventStorming_Promotion_PRD §12 (v3 input boost).
         if getattr(ctx, "source_type", "") == "hybrid" and getattr(ctx, "hybrid_us_rules", None):
@@ -196,9 +196,11 @@ async def extract_events_from_user_stories_phase(
                 if _bl_block:
                     prompt += _bl_block
                     prompt += (
-                        "\n\nINSTRUCTION: BL.writes.op 를 보고 Event 이름을 결정하세요. "
-                        "INSERT → ...Recorded/Created, UPDATE → ...Updated/Adjusted, "
-                        "DELETE → ...Removed/Cancelled. 각 Rule 의 statement 가 한 Event 의 "
+                        "\n\nINSTRUCTION: BL.writes 중 op_source=SCANNER인 정확한 op는 "
+                        "Event 동사의 강한 근거입니다(INSERT→Recorded/Created, "
+                        "UPDATE→Updated/Adjusted, DELETE→Removed/Cancelled). "
+                        "LLM_INFERRED는 Rule.statement/GWT와 일치할 때만 약한 힌트로 쓰고, "
+                        "UNKNOWN 또는 op unresolved에서는 동사를 만들지 마세요. 각 Rule의 statement가 한 Event의 "
                         "도메인 의도, AFFECTS_TABLE 의 table 명이 Aggregate 이름의 근거입니다."
                     )
             except Exception:

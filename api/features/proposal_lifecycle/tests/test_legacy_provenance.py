@@ -48,6 +48,21 @@ def _mcp_envelope(payload: str) -> str:
     return json.dumps({"result": payload}, ensure_ascii=False, separators=(",", ":"))
 
 
+def _gwt_detail_payload(node_id: str = "code:x.c:fn0") -> str:
+    return json.dumps({"node": {
+        "id": node_id, "name": "fn0", "labels": ["FUNCTION", "EMBEDDED"],
+        "logical_name": "주문 검증", "summary": "주문을 검증한다",
+        "summary_evidence_status": "partial",
+        "summary_missing_context": ["외부 주문 정책"],
+        "source": {"file_path": "x.c", "start_line": 10, "end_line": 20},
+        "rules": [{"line": 12, "text": "금액 부족 시 거절", "tables": []}],
+        "calls": [{"direction": "out", "id": "code:x.c:limit", "name": "limit"}],
+        "tables": [{"id": "db:shop.orders", "name": "orders", "access": ["READ"],
+                    "sample": {"columns": [{"name": "status"}],
+                               "sample_rows": [{"status": "PAID"}]}}],
+    }}, ensure_ascii=False)
+
+
 def test_typed_search_and_detail_roundtrip():
     collector = ProvenanceCollector()
     request = _request("s1", "search", {"query": "배송 조회", "database": "neo4j"})
@@ -80,6 +95,22 @@ def test_inline_mcp_result_envelope_is_unwrapped_for_search_and_detail():
     detail = collector.feed(_result("d1", "detail", _mcp_envelope(_detail_payload())))
     assert detail["inspection"]["ok"] is True
     assert detail["inspection"]["source"]["start_line"] == 10
+
+
+def test_gwt_detail_preserves_rules_calls_tables_and_samples_in_provenance():
+    collector = ProvenanceCollector()
+    collector.feed(_request("d1", "detail", {
+        "node_id": "code:x.c:fn0", "view": "gwt",
+    }))
+    inspection = collector.feed(_result("d1", "detail", _gwt_detail_payload()))["inspection"]
+
+    assert inspection["view"] == "gwt"
+    assert inspection["rules"][0]["line"] == 12
+    assert inspection["summaryEvidenceStatus"] == "partial"
+    assert inspection["summaryMissingContext"] == ["외부 주문 정책"]
+    assert inspection["calls"][0]["id"] == "code:x.c:limit"
+    assert inspection["tables"][0]["access"] == ["READ"]
+    assert inspection["tables"][0]["sample"]["sample_rows"] == [{"status": "PAID"}]
 
 
 def test_double_wrapped_mcp_envelope_is_unwrapped_to_fixpoint():

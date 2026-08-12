@@ -56,7 +56,7 @@ def test_atomic_write_text_round_trip(tmp_path, monkeypatch):
     target = tmp_path / "specs" / "hello.md"
     wrote = paths_mod.atomic_write_text(target, "hello", overwrite=False)
     assert wrote
-    assert target.read_text() == "hello"
+    assert target.read_text(encoding="utf-8") == "hello"
 
 
 def test_atomic_write_text_respects_overwrite(tmp_path, monkeypatch):
@@ -66,10 +66,10 @@ def test_atomic_write_text_respects_overwrite(tmp_path, monkeypatch):
     target.write_text("old")
     wrote = paths_mod.atomic_write_text(target, "new", overwrite=False)
     assert not wrote
-    assert target.read_text() == "old"
+    assert target.read_text(encoding="utf-8") == "old"
     wrote = paths_mod.atomic_write_text(target, "new", overwrite=True)
     assert wrote
-    assert target.read_text() == "new"
+    assert target.read_text(encoding="utf-8") == "new"
 
 
 def test_detect_stale_assets(tmp_path, monkeypatch):

@@ -199,10 +199,12 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
             OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(allEx:EXAMPLE)
             WITH sr, ar, hr, rtn, canonical_e,
                  collect(DISTINCT allEx) AS examples
-            // Per-Rule write ops: collect AFFECTS_TABLE edges from all Examples.
+            // Per-Rule write effects: v2 access filters reads; legacy op-only remains additive.
             OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(wEx:EXAMPLE)-[at:AFFECTS_TABLE]->(wt:TABLE)
             WITH sr, ar, hr, rtn, canonical_e, examples,
-                 collect(DISTINCT { table: wt.name, op: at.op }) AS writes
+                 collect(DISTINCT {
+                     table: wt.name, access: at.access, op: at.op, op_source: at.op_source
+                 }) AS writes
             RETURN hr.local_rule_id AS seq,
                    ar.statement AS title,
                    coalesce(hr.coupled_domains[0], '') AS coupled_domain,
@@ -211,7 +213,11 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
                    canonical_e.then_ AS th,
                    rtn.id AS function_id,
                    [] AS boundary_ids,
-                   [w IN writes WHERE w.table IS NOT NULL AND w.op IS NOT NULL] AS writes
+                   [w IN writes WHERE w.table IS NOT NULL
+                     AND (
+                       w.access IN ['WRITE', 'READ_WRITE']
+                       OR (w.access IS NULL AND coalesce(w.op, '') <> 'READ')
+                     )] AS writes
             ORDER BY rtn.name, hr.local_rule_id
         """, {"usid": usid})
 
@@ -241,7 +247,7 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
                 "then": r.get("th") or "",
                 "boundary_example_ids": r.get("boundary_ids") or [],
                 "function_id": r.get("function_id") or "",
-                # writes: list of {table, op} from Example.AFFECTS_TABLE — used
+                # writes: v2 table/access/op/op_source from Example.AFFECTS_TABLE — used
                 # by Aggregate primary-source view to surface DB grounding.
                 "writes": r.get("writes") or [],
             })

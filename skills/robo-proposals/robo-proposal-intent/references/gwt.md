@@ -23,3 +23,11 @@
 - Command마다 **2~4개** 시나리오: 정상 경로 1개 + 경계/실패 1개 이상(예: 가격 0 이하 거부, 품절 거부).
 - name은 `"Aggregate: X" / "Command: Y" / "Event: Z"` 형식(참조 대상 명시).
 - UserStory.acceptanceCriteria와 의미가 일치해야 한다(US의 Given/When/Then을 명령 단위로 구체화).
+- `cluster_retrieve` RULE의 `line/text/tables`를 먼저 시나리오에 배분하고, 선택한 함수의
+  `node_detail(view="gwt")`에서 CALLS와 직접 R/W 테이블·컬럼·샘플을 확인한다.
+- `fieldValues`는 컬럼/속성 또는 RULE에 실제로 나타난 필드만 사용한다. 테스트값은 RULE의
+  상수나 샘플에 있는 값이면 그대로 쓰고, 근거가 없으면 빈 맵으로 둔다.
+- 샘플 한 행을 유일한 정상값·전체 분포·필수 제약으로 일반화하지 않는다.
+- RULE의 조건/결과를 뒤집거나, READ를 WRITE로, CALLS가 없는 모듈을 호출 관계로 만들지 않는다.
+- 각 시나리오의 근거 함수와 RULE 행은 Command `legacyRefs`에 `nodeId`와 RULE `text` 원문으로
+  남긴다. 여러 RULE을 한 문장으로 합쳐 인용하지 않는다.

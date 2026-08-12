@@ -135,7 +135,7 @@ def _find_forbidden_skip_kwarg(tree: ast.AST) -> list[tuple[int, str]]:
 @pytest.mark.parametrize("path", _python_files_under_features(), ids=lambda p: str(p.relative_to(_API_ROOT)))
 def test_no_direct_system_message_construction(path: Path):
     """Per-file gate: zero direct SystemMessage construction in api/features/."""
-    source = path.read_text()
+    source = path.read_text(encoding="utf-8")
     try:
         tree = ast.parse(source, filename=str(path))
     except SyntaxError as e:
@@ -159,7 +159,7 @@ def test_no_direct_system_message_construction(path: Path):
 @pytest.mark.parametrize("path", _python_files_under_features(), ids=lambda p: str(p.relative_to(_API_ROOT)))
 def test_no_forbidden_skip_kwarg(path: Path):
     """The _skip_language_directive escape hatch is forbidden in api/features/."""
-    source = path.read_text()
+    source = path.read_text(encoding="utf-8")
     try:
         tree = ast.parse(source, filename=str(path))
     except SyntaxError:
@@ -197,7 +197,7 @@ def test_meta_detector_flags_a_synthetic_violation(tmp_path):
         "\n"
         "msg = SystemMessage(content='this should be flagged')\n"
     )
-    tree = ast.parse(synthetic.read_text())
+    tree = ast.parse(synthetic.read_text(encoding="utf-8"))
     offenses = _find_offending_calls(tree)
     assert offenses, "Detector failed to flag a deliberate violation — the gate is broken"
     assert offenses[0][0] == 3  # line number of the offending call

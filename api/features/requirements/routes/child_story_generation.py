@@ -18,7 +18,7 @@ import subprocess
 import uuid
 
 from fastapi import APIRouter, HTTPException
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
@@ -33,6 +33,7 @@ from api.features.requirements.requirements_contracts import (
 )
 from api.features.requirements.tree_service import user_story_node_dto
 from api.platform.neo4j import get_session
+from api.platform.llm_messages import build_system_message
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -151,7 +152,7 @@ def _generate(
     try:
         structured = get_llm().with_structured_output(_LLMStories)
         result: _LLMStories = structured.invoke(
-            [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+            [build_system_message(_SYSTEM_PROMPT), HumanMessage(content=prompt)]
         )
         return [s for s in (result.stories or []) if (s.action or "").strip()]
     except Exception as exc:  # noqa: BLE001 — degrade gracefully to manual fallback

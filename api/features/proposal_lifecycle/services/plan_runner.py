@@ -195,6 +195,35 @@ def _count_contexts(strategic: dict) -> int:
     return max(1, len(strategic.get("epics", []) or []))
 
 
+def _legacy_ref_ids(value: object) -> set[str]:
+    """Collect explicit source node ids without inferring semantic ownership."""
+    found: set[str] = set()
+    if isinstance(value, dict):
+        refs = value.get("legacyRefs")
+        if isinstance(refs, list):
+            for ref in refs:
+                if isinstance(ref, str) and ref.strip():
+                    found.add(ref.strip())
+                elif isinstance(ref, dict):
+                    node_id = ref.get("nodeId") or ref.get("node_id") or ref.get("id")
+                    if isinstance(node_id, str) and node_id.strip():
+                        found.add(node_id.strip())
+        for key, child in value.items():
+            if key != "legacyRefs":
+                found.update(_legacy_ref_ids(child))
+    elif isinstance(value, list):
+        for child in value:
+            found.update(_legacy_ref_ids(child))
+    return found
+
+
+def missing_plan_legacy_refs(strategic: dict, tactical: list[dict]) -> list[str]:
+    """Fail closed when Simplified decomposition silently drops inspected source functions."""
+    required = _legacy_ref_ids(strategic)
+    carried = _legacy_ref_ids(tactical)
+    return sorted(required - carried)
+
+
 def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
                        domain_nodes: list[dict], architecture_only: bool = False,
                        tactical: Optional[list] = None) -> str:
@@ -211,6 +240,14 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         if memory else ""
     )
 
+    required_refs = sorted(_legacy_ref_ids(strategic))
+    coverage_block = (
+        "Strategic legacyRefs 보존 필수 목록(JSON):\n"
+        f"```json\n{json.dumps(required_refs, ensure_ascii=False)}\n```\n"
+        "각 ID를 의미상 대응하는 tactical 요소의 legacyRefs에 최소 1회 그대로 보존하라. "
+        "대응을 판단할 근거가 없으면 창작하지 말고 결과를 완성하지 말라.\n\n"
+    )
+
     if architecture_only:
         # 042 — Detailed DDD: 전술 분해(Aggregate/Command/Event)는 DDD 단계에서 이미 확정됐다.
         # 다시 만들지 말고, 그 위에서 Constitution 기반 '구현계획(아키텍처)'만 산출한다.
@@ -221,6 +258,7 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
             f"{json.dumps(tactical or [], ensure_ascii=False)}\n```\n\n"
             f"Constitution(raw):\n```\n{constitution_raw}\n```\n\n"
             f"{memory_block}"
+            f"{coverage_block}"
             f"현재 도메인 구성 요소 목록:\n{node_list or '(없음)'}\n\n"
             "전술 분해는 위에 **이미 확정**되어 있다. **다시 도출하지 말 것.** "
             "이 전술 설계와 Constitution 위에서 **구현계획(implementationPlan)만** JSON 으로 산출하라: "
@@ -234,6 +272,7 @@ def _build_plan_prompt(proposal_id: str, strategic: dict, constitution_raw: str,
         f"승인된 Strategic Diff(JSON):\n```json\n{json.dumps(strategic, ensure_ascii=False)}\n```\n\n"
         f"Constitution(raw):\n```\n{constitution_raw}\n```\n\n"
         f"{memory_block}"
+        f"{coverage_block}"
         f"현재 도메인 구성 요소 목록:\n{node_list or '(없음)'}\n\n"
         "위 Strategic Diff 와 Constitution 을 바탕으로 Tactical Diff 와 "
         "Constitution 기반 구현계획(architectureDecisions + 다수 컨텍스트면 "
@@ -352,6 +391,20 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
     # architecture_only 면 스킬이 tacticalDiff 를 내지 않는다 → 기존(확정) 전술을 그대로 사용.
     tactical = normalize_tactical_diff(data.get("tacticalDiff") or existing_tactical)
     plan = data.get("implementationPlan", {})
+    if not architecture_only:
+        missing_refs = missing_plan_legacy_refs(strategic, tactical)
+        if missing_refs:
+            SmartLogger.log(
+                "WARN", f"plan source coverage failed: {proposal_id}",
+                category="proposal_lifecycle.plan.source_coverage_failed",
+                params={"proposalId": proposal_id, "missing": missing_refs},
+            )
+            yield "error", {
+                "code": "PLAN_EVIDENCE_COVERAGE_FAILED",
+                "message": "Plan tactical diff omitted inspected legacy source references.",
+                "missingLegacyRefs": missing_refs,
+            }
+            return
     if tactical:
         yield "tactical", {"tacticalDiff": tactical}
     if plan:

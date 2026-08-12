@@ -361,7 +361,7 @@ def enforce_proposal_refs(
                     "OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:EXAMPLE) "
                     "WITH r, collect(CASE WHEN e IS NULL THEN NULL "
                     "  ELSE {id: e.id, given: e.given, when: e.when_, then: e.then_} END) AS exs "
-                    "RETURN r.id AS id, r.statement AS statement, "
+                    "RETURN r.id AS id, coalesce(r.nl, r.statement, '') AS statement, "
                     "  [x IN exs WHERE x IS NOT NULL] AS examples",
                     id=parent_id,
                 )]
@@ -369,7 +369,7 @@ def enforce_proposal_refs(
                 tables = [dict(r) for r in session.run(
                     "MATCH (x {id: $id}) "
                     "OPTIONAL MATCH (x)-[]->(t1:TABLE) "
-                    "OPTIONAL MATCH (x)-[:HAS_RULE]->()-[:HAS_EXAMPLE]->()-[:AFFECTS_TABLE]->(t2:TABLE) "
+                    "OPTIONAL MATCH (x)-[:HAS_RULE]->(:RULE)-[:AFFECTS_TABLE]->(t2:TABLE) "
                     "WITH collect(DISTINCT t1) + collect(DISTINCT t2) AS ts "
                     "UNWIND ts AS t WITH DISTINCT t WHERE t IS NOT NULL "
                     "RETURN t.id AS id, t.name AS name",

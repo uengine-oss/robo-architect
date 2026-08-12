@@ -25,10 +25,25 @@ def _arts():
             "name": "배송",
             "legacyRefs": [REF_A],
             "handledCommands": [
-                {"name": "배송상태변경", "legacyRefs": [REF_B]},  # 객체형 command
+                {
+                    "name": "배송상태변경", "legacyRefs": [REF_B],
+                    "fields": {"inputSchema": {"status": "String"}},
+                    "properties": [{"name": "status", "type": "String"}],
+                    "userStoryRefs": ["us:배송상태변경"],
+                    "gwt": [{
+                        "scenario": "배송 상태 정상 변경",
+                        "given": {"name": "Aggregate: 배송", "fieldValues": {"status": "READY"}},
+                        "when": {"name": "Command: 배송상태변경", "fieldValues": {"status": "SHIPPED"}},
+                        "then": {"name": "Event: 배송상태변경됨", "fieldValues": {"status": "SHIPPED"}},
+                    }],
+                },  # 객체형 command
                 "배송취소",  # 문자열형 command(구 산출물 호환)
             ],
-            "createdEvents": [{"name": "배송상태변경됨", "legacyRefs": [REF_A]}],
+            "createdEvents": [{
+                "name": "배송상태변경됨", "legacyRefs": [REF_A],
+                "fields": {"payload": {"status": "String"}},
+                "properties": [{"name": "status", "type": "String"}],
+            }],
             "invariants": ["전이 규칙 준수"],
         }]},
     }
@@ -53,6 +68,12 @@ def test_tactical_carries_refs_including_dict_commands():
     assert by_title["배송상태변경"]["legacyRefs"] == [REF_B]
     assert "legacyRefs" not in by_title["배송취소"]  # 문자열형 — 근거 자리 없음, 생략
     assert by_title["배송상태변경됨"]["legacyRefs"] == [REF_A]
+    command = by_title["배송상태변경"]
+    assert command["fields"]["inputSchema"] == {"status": "String"}
+    assert command["properties"] == [{"name": "status", "type": "String"}]
+    assert command["userStoryRefs"] == ["us:배송상태변경"]
+    assert command["gwt"][0]["then"]["fieldValues"] == {"status": "SHIPPED"}
+    assert by_title["배송상태변경됨"]["fields"]["payload"] == {"status": "String"}
     # 문자열/객체 혼용에도 명칭·참조 구조는 온전
     assert by_title["배송취소"]["aggregateId"] == by_title["배송상태변경"]["aggregateId"]
 

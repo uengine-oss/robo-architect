@@ -269,6 +269,9 @@ def _build_tactical(arts: dict) -> list[dict]:
             cmd_name, cmd_src = _named(cmd)
             if not cmd_name:
                 continue
+            cmd_fields = dict((cmd_src or {}).get("fields") or {})
+            if cmd_src and "inputSchema" in cmd_src and "inputSchema" not in cmd_fields:
+                cmd_fields["inputSchema"] = cmd_src.get("inputSchema")
             out.append(_tactical_item(
                 "Command",
                 cmd_name,
@@ -277,12 +280,19 @@ def _build_tactical(arts: dict) -> list[dict]:
                 temp_id=_temp("cmd", cmd_name),
                 reason=f"{name} Aggregate가 처리하는 Command",
                 legacy_refs=_refs(cmd_src) if cmd_src else None,
+                fields=cmd_fields or None,
+                properties=(cmd_src or {}).get("properties") if cmd_src else None,
+                user_story_refs=(cmd_src or {}).get("userStoryRefs") if cmd_src else None,
+                gwt=(cmd_src or {}).get("gwt") if cmd_src else None,
             ))
         first_cmd, _ = _named((agg.get("handledCommands") or [None])[0])
         for evt in agg.get("createdEvents", []) or []:
             evt_name, evt_src = _named(evt)
             if not evt_name:
                 continue
+            evt_fields = dict((evt_src or {}).get("fields") or {})
+            if evt_src and "payload" in evt_src and "payload" not in evt_fields:
+                evt_fields["payload"] = evt_src.get("payload")
             out.append(_tactical_item(
                 "Event",
                 evt_name,
@@ -291,6 +301,8 @@ def _build_tactical(arts: dict) -> list[dict]:
                 temp_id=_temp("evt", evt_name),
                 reason=f"{name} Aggregate에서 발행되는 Event",
                 legacy_refs=_refs(evt_src) if evt_src else None,
+                fields=evt_fields or None,
+                properties=(evt_src or {}).get("properties") if evt_src else None,
             ))
 
     _validate_tactical(out)
@@ -319,7 +331,7 @@ def _aggregate_context_map(tactical_art: dict, contexts: list[dict]) -> dict[str
 
 def _tactical_item(label: str, title: str, *, bounded_context=None, aggregate_id=None,
                    command_id=None, temp_id=None, fields=None, invariants=None, reason="",
-                   legacy_refs=None) -> dict:
+                   legacy_refs=None, properties=None, user_story_refs=None, gwt=None) -> dict:
     item = {
         "changeType": "CREATE",
         "nodeLabel": label,
@@ -338,6 +350,14 @@ def _tactical_item(label: str, title: str, *, bounded_context=None, aggregate_id
         item["commandId"] = command_id
     if fields:
         item["fields"] = {k: v for k, v in fields.items() if v is not None}
+    if properties is not None:
+        item["properties"] = properties if isinstance(properties, list) else []
+    if user_story_refs is not None:
+        item["userStoryRefs"] = (
+            user_story_refs if isinstance(user_story_refs, list) else []
+        )
+    if gwt is not None:
+        item["gwt"] = gwt if isinstance(gwt, list) else []
     if invariants:
         item["invariants"] = [
             inv if isinstance(inv, dict) else {"declaration": str(inv)}

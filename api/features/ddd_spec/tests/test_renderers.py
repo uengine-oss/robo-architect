@@ -124,7 +124,7 @@ def test_bc_canvas_warns_on_missing_purpose_and_classification(specs_root, bc):
     ctx = _Ctx()
     info = bc_canvas.render(ctx, jinja_env(), bc, generated_at="2026-01-01T00:00:00Z")
     assert info is not None
-    body = Path(specs_root / info.path).read_text()
+    body = Path(specs_root / info.path).read_text(encoding="utf-8")
     assert "Purpose" in body and "_(not modeled — confirm)_" in body
     assert "Strategic Classification" in body and "_(not classified — confirm)_" in body
     assert "bc_purpose_missing" in ctx.warnings
@@ -144,7 +144,7 @@ def test_aggregate_spec_has_all_sections_and_flags_gwt_less_command(specs_root, 
         overwrite=True,
     )
     assert info is not None
-    body = Path(specs_root / info.path).read_text()
+    body = Path(specs_root / info.path).read_text(encoding="utf-8")
     for section in (
         "## Description",
         "## Aggregate Root",
@@ -170,7 +170,7 @@ def test_domain_terms_has_term_blocks(specs_root, bc):
     req = GenerateBoundedContextRequest(bounded_context_id="bc-1", aliases_to_avoid="omit")
     info = domain_terms.render(ctx, jinja_env(), bc, req, "2026-01-01T00:00:00Z")
     assert info is not None
-    body = Path(specs_root / info.path).read_text()
+    body = Path(specs_root / info.path).read_text(encoding="utf-8")
     assert "## Term: `Order`" in body
     assert "## Term: `Confirm`" in body
     assert "## Term: `OrderConfirmed`" in body
@@ -181,7 +181,7 @@ def test_requirements_md_renders_ears_acceptance(specs_root, bc):
     req = GenerateBoundedContextRequest(bounded_context_id="bc-1", render_svg=False)
     info = requirements_md.render(ctx, jinja_env(), bc, req, generated_at="2026-01-01T00:00:00Z")
     assert info is not None
-    body = Path(specs_root / info.path).read_text()
+    body = Path(specs_root / info.path).read_text(encoding="utf-8")
     assert "## Aggregate: Order" in body
     assert "### Confirm order" in body
     assert "WHEN customer confirms IF cart not empty THEN system SHALL order is created" in body

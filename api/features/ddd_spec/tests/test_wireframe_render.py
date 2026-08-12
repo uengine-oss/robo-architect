@@ -216,7 +216,7 @@ def test_render_svg_to_file_writes_local_render(tmp_path, monkeypatch):
     )
     assert wrote is True
     assert err is None
-    body = target.read_text()
+    body = target.read_text(encoding="utf-8")
     assert "<svg" in body and "Welcome" in body
 
 
@@ -250,4 +250,4 @@ def test_render_svg_to_file_service_variant_falls_back_to_local(tmp_path, monkey
     )
     assert wrote is True
     assert err is None
-    assert "Welcome" in target.read_text()
+    assert "Welcome" in target.read_text(encoding="utf-8")

@@ -12,7 +12,7 @@ robo-spec 스킬(`robo-validate`) 기반의 claude-ide 경로는 후속 — 여�
 from __future__ import annotations
 
 from fastapi import APIRouter
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
@@ -24,6 +24,7 @@ from api.features.requirements.requirements_contracts import (
     ValidationFinding,
 )
 from api.platform.neo4j import get_session
+from api.platform.llm_messages import build_system_message
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -127,7 +128,7 @@ async def validate_requirement(req: ValidateRequest, request: Request) -> Valida
     try:
         structured = get_llm().with_structured_output(_LLMFindings)
         result: _LLMFindings = await structured.ainvoke(
-            [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=_build_prompt(req))]
+            [build_system_message(_SYSTEM_PROMPT), HumanMessage(content=_build_prompt(req))]
         )
         findings = result.findings or []
     except Exception as exc:  # noqa: BLE001 — degrade to "no findings" (non-blocking)

@@ -16,6 +16,7 @@ from api.features.requirements.requirements_contracts import (
     WizardProposal,
 )
 from api.platform.observability.smart_logger import SmartLogger
+from api.platform.llm_messages import build_system_message
 
 _SYSTEM = (
     "You are a DDD facilitator running the ddd-crew 8-step modelling process. "
@@ -152,12 +153,12 @@ def generate_step(
             )
     if not artifact:
         try:
-            from langchain_core.messages import HumanMessage, SystemMessage
+            from langchain_core.messages import HumanMessage
 
             from api.features.ingestion.ingestion_llm_runtime import get_llm
 
             resp = get_llm().invoke(
-                [SystemMessage(content=_SYSTEM),
+                [build_system_message(_SYSTEM),
                  HumanMessage(content=_user_prompt(step_key, answers, document))]
             )
             artifact, changes = _parse(getattr(resp, "content", "") or "")

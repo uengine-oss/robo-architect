@@ -175,10 +175,9 @@ class ExampleDTO(BaseModel):
     when_: str = ""
     then_: str = ""
     is_boundary: bool = False
-    # Phase 5 §3.1 — table-write side effects driving Aggregate event classification.
-    # Union of (Example)-[:AFFECTS_TABLE {op}]->(Table) edges and the writes[] array
-    # parsed from the JSON-encoded `then_` field. Each entry: {"table": str,
-    # "op": "INSERT"|"UPDATE"|"DELETE"}. Deduplicated on (table, op).
+    # Table-write effects driving Aggregate grounding and qualified event hints.
+    # Each v2 entry carries table/access/op/op_source. Legacy {table, op} payloads
+    # are retained additively as op_source=LEGACY, never upgraded to scanner facts.
     writes: list[dict] = Field(default_factory=list)
 
 

@@ -21,13 +21,18 @@ def _build_prompt(state: dict) -> str:
         "- stateTransitions: [{from,to,trigger}]\n"
         "- invariants: Enforced Invariants(2개 이상)\n"
         "- correctivePolicies: 규칙 위반 시 보정 정책\n"
-        "- handledCommands / createdEvents\n"
+        "- handledCommands: 각 Command의 fields.inputSchema/properties/userStoryRefs/GWT(정상+경계·실패)\n"
+        "- createdEvents: 각 Event의 fields.payload/properties\n"
         "- throughput: {commandHandlingRate:{avg,max}, totalClients:{avg,max}, concurrencyConflictChance:{avg,max}}\n"
         "- size: {eventGrowthRate:{avg,max}, lifetime:{avg,max}, eventsPersisted:{avg,max}}\n"
         "Aggregate 는 작게 유지하고 Value Object 는 Aggregate 로 모델링하지 마라.\n"
         '출력: {"TacticalArtifact": {"aggregates":[{"name":"...","description":"...","boundaryRationale":"...",'
         '"stateTransitions":[{"from":"...","to":"...","trigger":"..."}],"invariants":["...","..."],'
-        '"correctivePolicies":["..."],"handledCommands":["..."],"createdEvents":["..."],'
+        '"correctivePolicies":["..."],"handledCommands":[{"name":"...","fields":{"inputSchema":{}},'
+        '"properties":[],"userStoryRefs":[],"gwt":[{"scenario":"...","given":{"name":"Aggregate: ...",'
+        '"fieldValues":{}},"when":{"name":"Command: ...","fieldValues":{}},"then":{"name":"Event: ...",'
+        '"fieldValues":{}}}],"legacyRefs":[]}],"createdEvents":[{"name":"...","fields":{"payload":{}},'
+        '"properties":[],"legacyRefs":[]}],'
         '"throughput":{"commandHandlingRate":{"avg":"","max":""},"totalClients":{"avg":"","max":""},'
         '"concurrencyConflictChance":{"avg":"","max":""}},'
         '"size":{"eventGrowthRate":{"avg":"","max":""},"lifetime":{"avg":"","max":""},'

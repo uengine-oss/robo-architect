@@ -107,12 +107,12 @@ def test_two_runs_with_smooth_ears_false_are_byte_identical(specs_root):
     with patch.object(repository, "load_bounded_context", return_value=bc):
         service.generate_bounded_context(req)
         snapshot_1 = {
-            p.relative_to(specs_root).as_posix(): _strip_timestamp(p.read_text())
+            p.relative_to(specs_root).as_posix(): _strip_timestamp(p.read_text(encoding="utf-8"))
             for p in (specs_root / "specs" / "bounded-contexts").rglob("*.md")
         }
         service.generate_bounded_context(req)
         snapshot_2 = {
-            p.relative_to(specs_root).as_posix(): _strip_timestamp(p.read_text())
+            p.relative_to(specs_root).as_posix(): _strip_timestamp(p.read_text(encoding="utf-8"))
             for p in (specs_root / "specs" / "bounded-contexts").rglob("*.md")
         }
     assert snapshot_1 == snapshot_2

@@ -19,6 +19,10 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 
+from api.features.ingestion.hybrid.effect_provenance import (
+    merge_write_effects,
+    render_write_effect,
+)
 from api.platform.neo4j import get_session
 
 
@@ -281,7 +285,7 @@ def fetch_hybrid_us_rules(
             when_: e.when_,
             then_: e.then_,
             writes: [(e)-[at:AFFECTS_TABLE]->(tbl:TABLE)
-                     | {table: tbl.name, op: at.op}]
+                     | {table: tbl.name, access: at.access, op: at.op, op_source: at.op_source}]
          }] AS examples
     RETURN pair.us_id AS us_id,
            sh.id AS rule_id,
@@ -309,7 +313,14 @@ def fetch_hybrid_us_rules(
                 "then_":           r["then_"] or "",
                 "is_boundary":     bool(r["is_boundary"]),
                 "coupled_domains": list(r["coupled_domains"] or []),
-                "examples":        [e for e in (r["examples"] or []) if e and e.get("example_id")],
+                "examples":        [
+                    {
+                        **dict(e),
+                        "writes": merge_write_effects(e.get("writes") or []),
+                    }
+                    for e in (r["examples"] or [])
+                    if e and e.get("example_id")
+                ],
             })
     return out
 
@@ -355,10 +366,10 @@ def render_hybrid_bl_block(
     lines.append("\n\n## Code-grounded Business Logic (analyzer-extracted)")
     lines.append(
         "_아래는 각 UserStory 가 출처로 삼은 분석기 코드의 BL 정보 — Rule.statement, "
-        "AFFECTS_TABLE writes (INSERT/UPDATE/DELETE), coupled_domains (cross-BC 신호), "
+        "AFFECTS_TABLE write effects와 근거 등급, coupled_domains (cross-BC 신호), "
         "그리고 canonical Example GWT 입니다. "
-        "Aggregate root, Command precondition, Event 이름 등 추론 시 이 정보를 "
-        "최우선 근거로 활용하세요._\n"
+        "Aggregate root에는 WRITE/READ_WRITE를 사용하세요. Event 동사는 SCANNER 연산만 "
+        "강한 근거, LLM_INFERRED는 약한 힌트이며 op unresolved는 동사 근거가 아닙니다._\n"
     )
     for us_id, bls in relevant:
         lines.append(f"- US `{us_id}`:")
@@ -369,15 +380,25 @@ def render_hybrid_bl_block(
 
             # Aggregate writes across all examples (drives Aggregate root_table /
             # Event PastParticiple / Command emit).
-            seen_writes: set[tuple[str, str]] = set()
+            seen_writes: dict[tuple[str, str, str, str], dict[str, str]] = {}
             for ex in bl.get("examples") or []:
-                for w in ex.get("writes") or []:
-                    tbl = w.get("table") or ""
-                    op = (w.get("op") or "").upper()
-                    if tbl and op:
-                        seen_writes.add((tbl, op))
+                for effect in merge_write_effects(ex.get("writes") or []):
+                    key = (
+                        effect["table"],
+                        effect["access"],
+                        effect["op"],
+                        effect["op_source"],
+                    )
+                    seen_writes[key] = effect
             if seen_writes:
-                writes_str = ", ".join(f"{op} `{tbl}`" for tbl, op in sorted(seen_writes))
+                writes_str = ", ".join(
+                    rendered
+                    for rendered in (
+                        render_write_effect(seen_writes[key])
+                        for key in sorted(seen_writes)
+                    )
+                    if rendered
+                )
                 lines.append(f"    - writes: {writes_str}")
 
             if bl.get("coupled_domains"):

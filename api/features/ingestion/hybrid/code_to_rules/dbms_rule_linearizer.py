@@ -26,7 +26,8 @@ RETURN root.id                        AS function_id,
        coalesce(hr.coupled_domains, []) AS coupled_domains,
        [(r)-[:HAS_EXAMPLE]->(e:EXAMPLE) |
           {example_id: e.id, given: e.given, when_: e.when_, then_: e.then_,
-           writes: [(e)-[at:AFFECTS_TABLE]->(t:TABLE) | {table: t.name, op: at.op}]}
+           writes: [(e)-[at:AFFECTS_TABLE]->(t:TABLE) |
+                    {table: t.name, access: at.access, op: at.op, op_source: at.op_source}]}
        ] AS examples
 """
 

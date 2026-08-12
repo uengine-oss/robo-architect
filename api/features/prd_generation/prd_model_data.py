@@ -166,7 +166,8 @@ def fetch_bc_data(bc_id: str, session_id: str | None = None) -> dict | None:
                               { example_id: ex.id,
                                 given: ex.given, when_: ex.when_, then_: ex.then_,
                                 boundary: false,
-                                table: tbl.name, op: at.op }
+                                table: tbl.name, access: at.access,
+                                op: at.op, op_source: at.op_source }
                               ELSE NULL END) AS rawExs
     WITH bc, aggData, rmData, polData, uiData, gwtData,
          collect(DISTINCT CASE WHEN us IS NOT NULL THEN {
@@ -313,7 +314,8 @@ def _attach_per_node_source_rules(bc_id: str, bc_data: dict, session_id: str | N
                               { example_id: ex.id,
                                 given: ex.given, when_: ex.when_, then_: ex.then_,
                                 boundary: false,
-                                table: tbl.name, op: at.op }
+                                table: tbl.name, access: at.access,
+                                op: at.op, op_source: at.op_source }
                               ELSE NULL END) AS evtExamples
     WITH aggRollup, cmdRollup,
          collect({ id: evt.id,

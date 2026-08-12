@@ -615,8 +615,15 @@ const primaryRootTables = computed(() => {
     const usid = src.us?.id || ''
     for (const rule of (src.rules || [])) {
       for (const w of (rule.writes || [])) {
-        if (!w.table || !w.op) continue
-        upsert(w.table, w.op, null, usid, 1)
+        if (!w.table) continue
+        const access = (w.access || '').toUpperCase()
+        const op = (w.op || '').toUpperCase()
+        // v2 filters READ explicitly. Legacy op-only entries retain old behavior.
+        if (access === 'READ' || (!access && op === 'READ')) continue
+        const displayOp = op && op !== 'UNKNOWN'
+          ? op
+          : (access === 'READ_WRITE' ? 'READ_WRITE' : 'WRITES')
+        upsert(w.table, displayOp, null, usid, 1)
       }
     }
   }

@@ -12,6 +12,7 @@ ddd-starter Step 8(Code)의 Aggregate Design 을 적용한다. Define(BCC)을 �
 ## 먼저 읽어라
 - `~/.claude/skills/ddd-starter/references/08-code.md`
 - `skills/robo-proposals/robo-proposal-intent/references/aggregates.md`, `commands-events.md`, `invariants-ui.md`
+- `skills/robo-proposals/robo-proposal-intent/references/properties.md`, `gwt.md`, `output-schema.md`
 - `skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md`
 
 **`legacy-reference.md` 는 Read 도구로 반드시 직접 읽고 그 호출 완료 게이트를 통과하라.**
@@ -39,14 +40,19 @@ narration(`[Aggregate]`/`[경계]`/`[불변식]`) 후 빈 줄, 그 다음:
       "invariants": ["totalAmount = Σ(line.price×qty)", "Confirmed 이후 라인 변경 불가"],
       "correctivePolicies": ["결제 실패 60초 → 자동 Canceled"],
       "handledCommands": [
-        {"name": "PlaceOrder", "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>"}]},
-        {"name": "ConfirmOrder", "legacyRefs": []},
-        {"name": "CancelOrder", "legacyRefs": []}
+        {"name": "PlaceOrder", "fields": {"inputSchema": {"orderId": "UUID"}},
+         "properties": [{"name": "orderId", "type": "UUID", "isRequired": true}],
+         "userStoryRefs": [],
+         "gwt": [{"scenario": "정상 주문", "given": {"name": "Aggregate: Order", "fieldValues": {}},
+                  "when": {"name": "Command: PlaceOrder", "fieldValues": {"orderId": "sample-order"}},
+                  "then": {"name": "Event: OrderPlaced", "fieldValues": {}}}],
+         "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>"}]},
+        {"name": "ConfirmOrder", "fields": {"inputSchema": {}}, "properties": [],
+         "userStoryRefs": [], "gwt": [], "legacyRefs": []}
       ],
       "createdEvents": [
-        {"name": "OrderPlaced", "legacyRefs": []},
-        {"name": "OrderConfirmed", "legacyRefs": []},
-        {"name": "OrderCanceled", "legacyRefs": []}
+        {"name": "OrderPlaced", "fields": {"payload": {}}, "properties": [], "legacyRefs": []},
+        {"name": "OrderConfirmed", "fields": {"payload": {}}, "properties": [], "legacyRefs": []}
       ],
       "throughput": {"commandHandlingRate": {"avg": "50/s", "max": "100/s"}, "totalClients": {"avg": "1k", "max": "5k"}, "concurrencyConflictChance": {"avg": "low", "max": "med"}},
       "size": {"eventGrowthRate": {"avg": "5/order", "max": "20/order"}, "lifetime": {"avg": "7d", "max": "90d"}, "eventsPersisted": {"avg": "12", "max": "60"}}
@@ -68,5 +74,8 @@ narration(`[Aggregate]`/`[경계]`/`[불변식]`) 후 빈 줄, 그 다음:
 1. 각 Aggregate 의 invariant 은 **2개 이상**.
 2. Value Object(Money, Address)는 Aggregate 가 아니다.
 3. Commands/Events 는 Define 의 Inbound/Outbound 와 일치.
+3-b. 모든 Command는 `{name, fields.inputSchema, properties, userStoryRefs, gwt, legacyRefs}`
+   객체이며 GWT는 정상 1개와 근거 있는 경계/실패 1개 이상이다. `gwt.md`의 RULE 좌표·테이블
+   샘플 계약을 따른다. 모든 Event는 `{name, fields.payload, properties, legacyRefs}` 객체다.
 4. 코드를 작성하지 말 것 — 전술 설계 산출물만.
 5. 언어는 사용자/프롬프트 언어를 따른다.
