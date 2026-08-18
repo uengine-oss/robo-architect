@@ -123,10 +123,11 @@ def test_shared_stage_adapter_saves_on_runner_failure(monkeypatch):
     assert saved == [("PRO-2", "DDD", [])]
 
 
-def test_intent_plan_and_discover_require_shared_list_detail_completion_gate():
+def test_legacy_contract_is_optional_but_gates_evidence_that_was_used():
     reference = (ROOT / "skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md")
     contract = reference.read_text(encoding="utf-8")
-    assert "선행 evidence packet이 없는 도구 주입 실행은 `cluster_retrieve` 시도 1회 이상이 없으면 완료가 아니다" in contract
+    assert "레거시 근거는 Architect의 기본 설계에 필요한 입력이 아니라 선택적 보강 도구" in contract
+    assert "packet이 없거나 도구를 호출하지 않은 기본 실행은 이 게이트의 적용 대상이 아니며 정상 진행" in contract
     assert "`node_detail` 성공 1회 이상" in contract
     assert "packet의\n같은 nodeId는 다시 조회하지 않고" in contract
 
@@ -136,7 +137,7 @@ def test_intent_plan_and_discover_require_shared_list_detail_completion_gate():
         "robo-proposal-discover",
     ):
         text = (ROOT / f"skills/robo-proposals/{skill}/SKILL.md").read_text(encoding="utf-8")
-        assert "호출 완료 게이트" in text, skill
+        assert "선택적 보강" in text, skill
 
 
 def test_intent_contract_requires_legacy_read_and_is_strategic_only():

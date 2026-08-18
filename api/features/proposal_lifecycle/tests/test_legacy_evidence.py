@@ -4,9 +4,21 @@ from api.features.proposal_lifecycle.services.legacy_evidence import (
     build_evidence_packet,
     evidence_prompt_block,
     gwt_evidence_ref_errors,
+    optional_legacy_refs_instruction,
     tactical_evidence_ref_errors,
     ungrounded_gwt_values,
 )
+
+
+def test_legacy_refs_instruction_has_one_non_conflicting_mode():
+    absent = optional_legacy_refs_instruction([])
+    present = optional_legacy_refs_instruction([{"nodeId": "code:x.c:f"}])
+
+    assert "legacyRefs는 빈 배열" in absent
+    assert "실제 RULE" not in absent
+    assert "1개 이상" not in absent
+    assert "실제 RULE" in present
+    assert "빈 배열" not in present
 
 
 def _rule(node_id: str, rule_id: str, text: str, *, condition: str = "", effects=None) -> dict:
@@ -340,6 +352,17 @@ def test_gwt_source_membership_accepts_resolved_rule_parent():
     }
 
     assert gwt_evidence_ref_errors([command], packet) == []
+
+
+def test_legacy_evidence_gates_are_noops_without_analyzer_packet():
+    command = {
+        "nodeLabel": "Command", "nodeTitle": "Standalone",
+        "gwt": [{"scenario": "normal", "evidenceRefs": []}],
+        "legacyRefs": [],
+    }
+
+    assert gwt_evidence_ref_errors([command], []) == []
+    assert tactical_evidence_ref_errors([command], []) == []
 
 
 def test_exact_evidence_id_authoritatively_corrects_a_wrong_root_ref():

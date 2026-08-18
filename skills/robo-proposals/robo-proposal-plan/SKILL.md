@@ -48,8 +48,8 @@ Constitution(fields + raw): <architectureStyle, repoStrategy, repoMode, techStac
    packet의 semantic slots, 구조화 flow/RULE condition·effects, sufficiency를 읽는다. complete
    source를 정상 생성 입력으로 요구하거나 다시 조회해 Analyzer의 부족 의미를 보충하지 않는다.
    parser 구조 사실은 Analyzer 의미보다 물리 사실에 대한 권위가 높지만, 업무 의미를 새로 만들지 않는다.
-   이것이 공용 **호출 완료 게이트**다: packet이 없으면 실제 search→detail, packet이 있으면 저장된
-   성공 상세를 읽고 배분한 뒤 부족한 근거만 실제 호출한다.
+   레거시 근거는 선택적 보강 입력이다. packet이 있으면 저장된 성공 상세를 읽고 배분하며, packet이
+   없거나 도구가 없으면 추가 호출을 완료 조건으로 삼지 않고 Strategic Diff와 Constitution으로 계속한다.
 2. **Tactical 도출** — 이벤트-우선, Aggregate→Command→Event→ReadModel→Policy→Invariant→UI.
    모든 tactical 항목에 `legacyRefs`를 기록한다(`output-schema.md` 불변식) — 이 실행에서
    실제 검색·검토한 nodeId만, 근거 없으면 `[]`. 서버가 관찰집합 밖 ID를 제거한다.
@@ -64,11 +64,14 @@ Constitution(fields + raw): <architectureStyle, repoStrategy, repoMode, techStac
    하나의 실제 필드가 여러 값을 가지면 별도 시나리오로 나누며 suffix 합성 필드를 만들지 않는다.
    이름 없는 반환값도 `ret`/`result` 필드로 만들지 않는다.
    함수 반환 sentinel을 `cnt`/`status` 같은 다른 데이터 필드 값으로 쓰지 않는다.
-   Command당 2~4개만 쓰고, 범위/미정의 분기의 대표 테스트값을 새로 만들지 않는다. 실제 sample이나
+   Command당 1~4개만 쓰고, 정상 경로는 1개 이상 작성한다. 경계/실패는 요구사항 또는 packet에
+   직접 근거가 있을 때만 추가하며, 개수를 맞추려고 정책이나 중복 시나리오를 만들지 않는다.
+   범위/미정의 분기의 대표 테스트값을 새로 만들지 않는다. 실제 sample이나
    RULE 상수가 없으면 조건을 name에 남기고 fieldValues를 비운다.
    Then은 분기 중간 대입이 아니라 공통 후처리·clamp·transaction 결과까지 반영한 최종값이다.
-   각 scenario는 RULE evidence_id를 최소 1개 인용하고, 실제 사용한 SYMBOL/CALL/TABLE evidence_id도
-   함께 인용한다. 각 Command의 `legacyRefs`에는 근거 함수, 그 함수의 정확한 RULE
+   evidence packet을 실제 사용한 경우에만 각 scenario는 RULE evidence_id를 최소 1개 인용하고,
+   실제 사용한 SYMBOL/CALL/TABLE evidence_id도 함께 인용한다. packet이 없으면 `evidenceRefs: []`,
+   `legacyRefs: []`로 둔다. 근거를 사용한 각 Command의 `legacyRefs`에는 근거 함수, 그 함수의 정확한 RULE
    evidenceId·ruleId·text 1개 이상, 직접 사용한
    TABLE id 전부를 access에 맞는 reads/writes role로 기록한다.
 6. **자가 검증** — traceability + 완전성: 항상 5개 항목 + (마이크로서비스 & 다수 컨텍스트면) `INTER_CONTEXT_INTEGRATION`·`MESSAGING_CHANNEL`·`DEV_ENVIRONMENT` 까지 결정 or gap 통과 확인.

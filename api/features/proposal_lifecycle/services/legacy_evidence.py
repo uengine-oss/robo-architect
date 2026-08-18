@@ -166,6 +166,40 @@ def evidence_prompt_block(packet: list[dict]) -> str:
     }, ensure_ascii=False, separators=(",", ":"))
 
 
+def has_grounded_legacy_evidence(packet: object) -> bool:
+    """One policy boundary: Analyzer evidence enriches Architect but never starts it."""
+    return isinstance(packet, list) and bool(packet)
+
+
+def optional_legacy_evidence_instruction(packet: object) -> str:
+    """Return the shared Plan/Tactical instruction for the current optional mode."""
+    if has_grounded_legacy_evidence(packet):
+        return (
+            "Analyzer evidence packet이 있으므로 각 GWT scenario.evidenceRefs에는 실제 사용한 "
+            "packet evidence_id를 넣고 RULE evidence_id를 최소 1개 포함한다. legacyRefs에도 "
+            "실제로 확인한 근거만 보존한다."
+        )
+    return (
+        "Analyzer/legacy evidence는 선택 도구이며 현재 packet이 없다. Architect의 기본 GWT "
+        "생성을 계속하고 각 scenario.evidenceRefs와 legacyRefs는 빈 배열로 둔다. 존재하지 "
+        "않는 evidence_id를 만들거나 추가 조회 결과를 필수 입력처럼 취급하지 않는다."
+    )
+
+
+def optional_legacy_refs_instruction(packet: object) -> str:
+    """Keep Command legacyRefs rules consistent with the optional packet policy."""
+    if has_grounded_legacy_evidence(packet):
+        return (
+            "각 Command.legacyRefs에 근거 함수 nodeId, 그 함수의 실제 RULE "
+            "evidenceId·ruleId·text 1개 이상, packet.tables의 직접 TABLE id 전부를 "
+            "access에 맞는 reads/writes role로 붙인다. TABLE 이름을 바꾸지 않는다."
+        )
+    return (
+        "현재 packet이 없으므로 각 Command.legacyRefs는 빈 배열로 둔다. Analyzer 조회나 "
+        "레거시 근거를 완료 조건으로 만들지 않고, 존재하지 않는 nodeId·RULE·TABLE을 만들지 않는다."
+    )
+
+
 def _index_frame(index: dict[str, dict], frame: dict, node_id: str) -> None:
     """Add a validated code/table/column frame without changing its exact IDs."""
     profile = frame.get("profile") or {}
@@ -249,7 +283,7 @@ def ungrounded_gwt_values(
     is correct or repair anything.  It only rejects a value the model could not have read
     from the persisted GWT detail or the approved strategic input.
     """
-    if not evidence_packet:
+    if not has_grounded_legacy_evidence(evidence_packet):
         return []
     evidence_by_id = _evidence_index(evidence_packet)
     errors: list[str] = []
@@ -284,6 +318,8 @@ def ungrounded_gwt_values(
 
 def gwt_evidence_ref_errors(tactical: list[dict], evidence_packet: list[dict]) -> list[str]:
     """Require every scenario to cite exact, source-owned evidence IDs."""
+    if not has_grounded_legacy_evidence(evidence_packet):
+        return []
     evidence_by_id = _evidence_index(evidence_packet)
     errors: list[str] = []
     for command in tactical:
@@ -338,6 +374,8 @@ def tactical_evidence_ref_errors(
     tactical: list[dict], evidence_packet: list[dict],
 ) -> list[str]:
     """Require each grounded Command to expose exact frame facts and direct tables."""
+    if not has_grounded_legacy_evidence(evidence_packet):
+        return []
     by_id = {item.get("nodeId"): item for item in evidence_packet if item.get("nodeId")}
     evidence_index = _evidence_index(evidence_packet)
     errors: list[str] = []
@@ -398,5 +436,7 @@ def tactical_evidence_ref_errors(
 
 __all__ = [
     "build_evidence_packet", "load_evidence_packet", "evidence_prompt_block",
+    "has_grounded_legacy_evidence", "optional_legacy_evidence_instruction",
+    "optional_legacy_refs_instruction",
     "gwt_evidence_ref_errors", "ungrounded_gwt_values", "tactical_evidence_ref_errors",
 ]

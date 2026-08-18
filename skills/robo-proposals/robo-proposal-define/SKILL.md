@@ -13,9 +13,9 @@ ddd-starter Step 7(Define)을 적용한다. 영향 BC 마다 **Bounded Context C
 - `~/.claude/skills/ddd-starter/references/07-define.md`
 - `skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md`
 
-**`legacy-reference.md` 는 Read 도구로 반드시 직접 읽고 그 호출 완료 게이트를 통과하라.**
-도구가 주입된 실행에서 `cluster_retrieve` 시도 없이 최종 JSON 을 출력하지 않는다. 각 BC 의
-책임·언어·비즈니스 결정을 현행 구현으로 검증할 ID 를 골라 `node_detail` 로 확인한다.
+**`legacy-reference.md` 는 Read 도구로 반드시 직접 읽어라.** Analyzer/레거시는 선택적 보강
+도구이므로 packet이 없거나 조회하지 않은 실행도 기본 BCC를 정상 생성한다. 실제로 근거를 사용한
+경우에만 각 BC의 책임·언어·비즈니스 결정을 검증할 ID를 골라 `node_detail`로 확인하고 배분한다.
 
 ## BCC v5 구성 (ddd-crew/bounded-context-canvas 전 항목)
 1. **Purpose** — 비즈니스 관점의 책임/제공 가치.

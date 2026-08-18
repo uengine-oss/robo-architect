@@ -1,8 +1,9 @@
 # 레거시 근거 조회 계약
 
-새 근거를 찾는 실행에서 `robo-cluster` 도구가 주입되면 **탐색 → 심층 → 배분 → 갭마감**
-4단계를 수행한다. 그래프 존재 여부를 추측으로 생략하지 말고 `cluster_retrieve` 실제 결과로
-판정한다. 단, Human Prompt의 `INSPECTED LEGACY EVIDENCE`/`Legacy evidence packet`은 같은
+레거시 근거는 Architect의 기본 설계에 필요한 입력이 아니라 선택적 보강 도구다. 저장된 packet이
+없거나 `robo-cluster`가 주입되지 않아도 요구사항·Constitution·앞 단계 산출물만으로 설계를 계속한다.
+도구가 있고 이번 설계에 레거시 근거를 사용하기로 한 경우에만 **탐색 → 심층 → 배분 → 갭마감**
+4단계를 수행한다. Human Prompt의 `INSPECTED LEGACY EVIDENCE`/`Legacy evidence packet`은 같은
 Proposal의 이전 단계가 실제 `node_detail(view="frame")` 성공 응답을 저장한 재사용 근거다. packet의
 같은 nodeId는 다시 조회하지 않고 S3 배분에 재사용하며, 필요한 근거가 없을 때만 S1/S2/S4를 수행한다.
 
@@ -88,8 +89,8 @@ S3 후에도 `legacyRefs` 가 빈 요소가 남으면, **그 요소에 한해** 
 `cluster_retrieve` 를 1회 더 호출한다(예: `ExpirePoints` → "포인트 소멸 만료").
 새 후보가 나오면 배분하고, 없으면 그때 `[]` 로 확정한다.
 
-**빈 배열에는 입증 책임이 있다.** `legacyRefs: []` 는 "안 찾아봤다"가 아니라
-"S3 배분과 S4 재검색을 거쳤는데 없다"를 뜻한다.
+`legacyRefs: []` 는 정상 결과다. packet이 없거나 도구를 사용하지 않은 기본 Architect 실행에서는
+빈 배열을 그대로 둔다. 선택적으로 탐색을 수행한 실행에서는 S3 배분 뒤에도 대응 근거가 없음을 뜻한다.
 
 ---
 
@@ -99,15 +100,15 @@ S3 후에도 `legacyRefs` 가 빈 요소가 남으면, **그 요소에 한해** 
 결과가 비면 그 사실을 narration 에 남기고 진행할 수 있지만, 레거시 구현을 요구사항보다
 우선하거나 그대로 복사해서는 안 된다.
 
-## 완료 게이트
+## 선택적 근거를 사용한 경우의 완료 게이트
 
-- 선행 evidence packet이 없는 도구 주입 실행은 `cluster_retrieve` 시도 1회 이상이 없으면 완료가 아니다.
 - 이 실행의 검색 결과에 후보 ID가 하나라도 있으면 `node_detail` 성공 1회 이상이 있어야 한다.
 - 선행 packet을 쓴 실행은 각 항목의 `ok:true`, `view:"frame"`, `schemaVersion:"semantic-frame-packet/v1"`,
   nodeId와 target/slots/flow/RULE/status를 실제로 읽고
   배분해야 한다. packet에 없는 ID나 실패 상세을 본 것으로 간주하지 않는다.
 - **S3 배분을 수행하지 않았으면 완료가 아니다.**
-- 후보가 없거나 모든 상세가 실패한 경우에만 그 사실을 명시하고 진행한다.
+- packet이 없거나 도구를 호출하지 않은 기본 실행은 이 게이트의 적용 대상이 아니며 정상 진행한다.
+- 후보가 없거나 모든 상세가 실패해도 레거시는 부가 근거이므로 그 사실을 명시하고 기본 설계를 진행한다.
 
 ## narration 보고 (필수 2줄)
 

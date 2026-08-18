@@ -14,9 +14,10 @@
 2. `skills/robo-proposals/robo-proposal-intent/references/bounded-contexts.md`
 3. `skills/robo-proposals/robo-proposal-intent/references/legacy-reference.md`
 
-특히 `legacy-reference.md`를 Read 도구로 반드시 직접 읽어라. 문서의 목록→선택 ID 상세조회와
-호출 완료 게이트를 통과하기 전에는 최종 JSON을 출력하지 않는다. 도구가 주입된 실행에서 검색을
-추측으로 생략하지 않는다. 검색 목록만 보고 원문·라인·컬럼을 보았다고 주장하지 않는다.
+특히 `legacy-reference.md`를 Read 도구로 반드시 직접 읽어라. Analyzer/레거시는 선택적 보강
+도구이므로 packet이 없거나 도구를 사용하지 않아도 기본 Strategic Diff 생성을 계속한다. 실제로
+도구를 사용한 경우에만 목록→선택 ID 상세조회와 배분 게이트를 적용한다. 검색 목록만 보고
+원문·라인·컬럼을 보았다고 주장하지 않는다.
 
 사용자 화면 흐름을 `journeys`에 담아야 할 때만 다음 파일도 읽는다.
 

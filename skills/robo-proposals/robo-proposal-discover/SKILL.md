@@ -20,7 +20,8 @@ ddd-starter Step 2(Discover)를 Proposal 맥락에 적용한다. 이 변경이 �
 - "다들 다르게 이해하거나 규칙이 모호한 지점(Hotspot)은? 지금 풀까(resolve-now) 미룰까(defer)?"
 - "우리 시스템 밖에서 오는 이벤트(외부 시스템)는?"
 
-`legacy-reference.md`의 호출 완료 게이트를 통과하기 전에는 최종 JSON을 출력하지 않는다.
+Analyzer/레거시는 선택적 보강 도구다. packet이 없거나 도구를 사용하지 않은 실행도 정상 완료하며,
+실제로 근거를 조회한 경우에만 `legacy-reference.md`의 상세조회·배분 게이트를 적용한다.
 
 ## 출력 (최종 JSON)
 narration(`[요구사항]`/`[이벤트]`/`[Pivotal]`/`[Hotspot]`) 후 빈 줄, 그 다음:

@@ -19,11 +19,14 @@
 ```
 - `given` = 사전 Aggregate 상태, `when` = Command 실행(파라미터 값), `then` = 결과 Event(페이로드 값).
 - `fieldValues`는 속성명→테스트값 맵(문자열). properties/inputSchema/payload의 필드명과 일치시킨다.
-- `evidenceRefs`는 이 시나리오 판단에 실제 사용한 packet `evidence_id`만 담는다. 최소 한 개는
-  RULE이어야 하며 값·호출·sample을 썼다면 대응 SYMBOL/CALL/TABLE evidence도 함께 담는다.
+- `evidenceRefs`는 선택적 Analyzer packet을 실제 사용한 경우에만 그 `evidence_id`를 담는다. 이때
+  최소 한 개는 RULE이어야 하며 값·호출·sample을 썼다면 대응 SYMBOL/CALL/TABLE evidence도 함께
+  담는다. packet이 없으면 빈 배열이며 GWT 생성 자체는 계속한다.
 
 ## 규칙
-- Command마다 **2~4개** 시나리오: 정상 경로 1개 + 경계/실패 1개 이상(예: 가격 0 이하 거부, 품절 거부).
+- Command마다 **1~4개** 시나리오: 정상 경로 1개 이상. 경계/실패는 UserStory.acceptanceCriteria
+  또는 Analyzer packet에 직접 근거가 있을 때만 추가한다. 개수를 맞추려고 요구사항에 없는
+  중복·상태·권한 등의 정책을 만들거나 같은 의미의 시나리오를 복제하지 않는다.
 - name은 `"Aggregate: X" / "Command: Y" / "Event: Z"` 형식(참조 대상 명시).
 - UserStory.acceptanceCriteria와 의미가 일치해야 한다(US의 Given/When/Then을 명령 단위로 구체화).
 - `node_detail(view="frame")`의 semantic slots와 profile RULE `condition/effects`를 시나리오에 배분하고,
@@ -42,5 +45,6 @@
 - RULE의 조건/결과를 뒤집거나, READ를 WRITE로, CALLS가 없는 모듈을 호출 관계로 만들지 않는다.
 - `then`은 선택 분기의 중간 대입값이 아니라 그 뒤의 공통 후처리·clamp·rollback/commit까지
   적용한 최종 반환/상태다. 범위 조건만 보고 특정 상수가 항상 최종 반환된다고 일반화하지 않는다.
-- 각 시나리오는 exact `evidenceRefs`로 직접 역추적한다. Command `legacyRefs`에도 근거 함수
+- packet을 사용한 각 시나리오는 exact `evidenceRefs`로 직접 역추적한다. packet이 없으면 두 배열은
+  비워 둔다. 근거를 사용한 Command `legacyRefs`에도 근거 함수
   `nodeId`와 RULE의 `evidenceId`·`ruleId`·`text`를 보존한다. 여러 RULE을 한 문장으로 합치지 않는다.
