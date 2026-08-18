@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from api.features.proposal_lifecycle.services.legacy_element_refs import (
+    _structural_rule_statement,
     allowed_ref_ids,
     resolve_content_refs,
     validate_strategic_refs,
@@ -232,6 +233,19 @@ _CHILDREN = {
 
 def _fetch(parent_id):
     return _CHILDREN.get(parent_id)
+
+
+def test_rule_statement_renders_condition_and_all_effects_without_narrative():
+    assert _structural_rule_statement({
+        "condition": 'F("status") == "PAID"',
+        "effects": ['set(F("state"), "READY")', 'call("notify")'],
+    }) == (
+        '조건: F("status") == "PAID" → 효과: '
+        'set(F("state"), "READY"); call("notify")'
+    )
+    assert _structural_rule_statement({"condition": "", "effects": []}) == (
+        "구조: 직접 조건·효과 없음"
+    )
 
 
 def test_rule_statement_resolves_to_rule_node():

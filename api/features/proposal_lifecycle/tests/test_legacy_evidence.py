@@ -52,13 +52,6 @@ def _gwt_item(node_id: str, code_text: str, *, rules=None, calls=None, tables=No
             "attributes": {"anchor_line": rule["line"], "condition": rule["condition"],
                            "effects": rule["effects"]},
         }
-        slot_key = f"{node_id}::SLOT::{rule['rule_id']}"
-        slots[slot_key] = {
-            "slot_id": slot_key, "family": "RULE", "role": "BUSINESS_MEANING",
-            "target_ref": target_id, "evidence_refs": [target_id, evidence_id],
-            "meaning": rule["narrative"]["text"], "status": "sufficient",
-            "missing_context": [],
-        }
     return {
         "nodeId": node_id, "ok": True, "view": "frame",
         "schemaVersion": "semantic-frame-packet/v1", "label": "FUNCTION",
@@ -134,7 +127,7 @@ def test_packet_deduplicates_by_node_id_and_keeps_richest_gwt_detail():
     packet = build_evidence_packet(refs)
 
     assert [item["nodeId"] for item in packet] == ["code:x.c:f"]
-    assert len(packet[0]["semanticFrame"]["slots"]) == 2
+    assert len(packet[0]["semanticFrame"]["slots"]) == 1
     assert "source" not in packet[0]
 
 
@@ -194,7 +187,8 @@ def test_prompt_block_explains_authority_and_structured_first_usage():
     block = json.loads(evidence_prompt_block([item]))
 
     assert block["contract"] == "semantic-frame-packet/v1"
-    assert block["authorityOrder"][0].startswith("semanticFrame.slots")
+    assert block["authorityOrder"][0].startswith("semanticFrame.profile.evidence")
+    assert "do not expect or invent a RULE narrative slot" in block["usage"]
     assert "Do not request" in block["usage"]
 
 

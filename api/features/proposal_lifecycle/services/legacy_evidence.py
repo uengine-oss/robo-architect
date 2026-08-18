@@ -153,12 +153,15 @@ def evidence_prompt_block(packet: list[dict]) -> str:
     return json.dumps({
         "contract": "semantic-frame-packet/v1",
         "authorityOrder": [
-            "semanticFrame.slots with status and evidence_refs",
             "semanticFrame.profile.evidence structural facts and coordinates",
+            "semanticFrame.slots with status and evidence_refs",
+            "ruleExamples derived from accepted RULE condition/effects",
             "linkedContext deduplicated callee/symbol/data-object frames",
         ],
         "usage": (
             "Do not request or reconstruct source in the normal generation path. "
+            "RULE meaning is its exact profile.evidence condition/effects plus ruleExamples; "
+            "do not expect or invent a RULE narrative slot. "
             "Cite exact slot_id or evidence fact IDs in each GWT scenario.evidenceRefs; "
             "surface partial/insufficient missing_context instead of inventing facts."
         ),
@@ -191,7 +194,8 @@ def optional_legacy_refs_instruction(packet: object) -> str:
     if has_grounded_legacy_evidence(packet):
         return (
             "각 Command.legacyRefs에 근거 함수 nodeId, 그 함수의 실제 RULE "
-            "evidenceId·ruleId·text 1개 이상, packet.tables의 직접 TABLE id 전부를 "
+            "evidenceId와 condition/effects 구조 표시 1개 이상, linkedContext.data_objects의 "
+            "직접 TABLE id 전부를 "
             "access에 맞는 reads/writes role로 붙인다. TABLE 이름을 바꾸지 않는다."
         )
     return (

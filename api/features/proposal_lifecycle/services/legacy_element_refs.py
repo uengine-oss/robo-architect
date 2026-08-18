@@ -273,11 +273,22 @@ def _match_table(tables: list[dict], name: str) -> dict | None:
     )
 
 
-def _inspection_rule_text(rule: dict) -> str:
-    narrative = rule.get("narrative")
-    if isinstance(narrative, dict):
-        return str(narrative.get("text") or "")
-    return str(rule.get("text") or "")
+def _structural_rule_statement(attributes: dict) -> str:
+    """Render exact RULE facts without adding business interpretation."""
+    condition = " ".join(str(attributes.get("condition") or "").split())
+    raw_effects = attributes.get("effects")
+    effects = [
+        " ".join(str(effect).split())
+        for effect in (raw_effects if isinstance(raw_effects, list) else [])
+        if str(effect).strip()
+    ]
+    if condition and effects:
+        return f"조건: {condition} → 효과: {'; '.join(effects)}"
+    if condition:
+        return f"조건: {condition}"
+    if effects:
+        return f"효과: {'; '.join(effects)}"
+    return "구조: 직접 조건·효과 없음"
 
 
 def resolve_content_refs(strategic_diff: Any, tactical_diff: Any, fetch_children) -> list[dict]:
@@ -435,7 +446,6 @@ def enforce_proposal_refs(
             profile = frame.get("profile") or {}
             target = frame.get("target") or {}
             evidence = profile.get("evidence") or {}
-            slots = frame.get("slots") or {}
             examples_by_line = {
                 item.get("anchor_line"): list(item.get("examples") or [])
                 for item in inspection.get("ruleExamples") or []
@@ -448,13 +458,7 @@ def enforce_proposal_refs(
                     continue
                 attrs = rule.get("attributes") or {}
                 line = attrs.get("anchor_line")
-                meanings = [
-                    str(slot.get("meaning") or "")
-                    for slot in slots.values()
-                    if isinstance(slot, dict) and evidence_id in (slot.get("evidence_refs") or [])
-                    and str(slot.get("meaning") or "").strip()
-                ]
-                rule_text = " / ".join(dict.fromkeys(meanings)) or str(attrs.get("condition") or "")
+                rule_text = _structural_rule_statement(attrs)
                 rules.append({
                     "id": evidence_id,
                     "evidenceId": evidence_id,
@@ -499,10 +503,13 @@ def enforce_proposal_refs(
                     "OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:EXAMPLE) "
                     "WITH r, collect(CASE WHEN e IS NULL THEN NULL "
                     "  ELSE {id: e.id, given: e.given, when: e.when_, then: e.then_} END) AS exs "
-                    "RETURN r.id AS id, coalesce(r.nl, r.statement, '') AS statement, "
+                    "RETURN r.id AS id, coalesce(r.cond, '') AS condition, "
+                    "  coalesce(r.then, []) AS effects, "
                     "  [x IN exs WHERE x IS NOT NULL] AS examples",
                     id=parent_id,
                 )]
+                for rule in rules:
+                    rule["statement"] = _structural_rule_statement(rule)
                 # 부모가 직접 참조하는 TABLE + 규칙 사례가 영향(AFFECTS_TABLE)하는 TABLE
                 tables = [dict(r) for r in session.run(
                     "MATCH (x {id: $id}) "
