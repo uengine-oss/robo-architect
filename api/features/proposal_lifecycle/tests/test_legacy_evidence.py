@@ -54,7 +54,7 @@ def _gwt_item(node_id: str, code_text: str, *, rules=None, calls=None, tables=No
         }
         slot_key = f"{node_id}::SLOT::{rule['rule_id']}"
         slots[slot_key] = {
-            "slot_id": slot_key, "family": "DECISION", "role": "ROLE",
+            "slot_id": slot_key, "family": "RULE", "role": "BUSINESS_MEANING",
             "target_ref": target_id, "evidence_refs": [target_id, evidence_id],
             "meaning": rule["narrative"]["text"], "status": "sufficient",
             "missing_context": [],
