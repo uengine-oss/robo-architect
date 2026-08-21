@@ -7,12 +7,15 @@ const props = defineProps({
   activePath: { type: String, default: null },
 })
 
-const emit = defineEmits(['open', 'externalCheck', 'renamed', 'moved', 'deleted'])
+const emit = defineEmits(['open', 'externalCheck', 'renamed', 'moved', 'deleted', 'rootMissing'])
 
 const rootChildren = ref([])
 const expanded = reactive(new Map())   // path -> { children, loading, error }
 const loadingRoot = ref(false)
 const rootError = ref(null)
+// 루트 디렉터리가 사라졌다(복구 불가) — 재조회·재연결을 멈춘다.
+const rootGone = ref(false)
+watch(() => props.root, () => { rootGone.value = false })
 const refreshing = ref(false)
 
 // Context menu state — single popup at a time, keyed by anchor path.
@@ -42,8 +45,17 @@ async function loadDir(path, { silent = false } = {}) {
       rootChildren.value = r.children
       rootError.value = null
     } catch (e) {
+      // 루트 자체가 사라진 경우(예: Proposal accept/destroy 로 샌드박스 워크트리가
+      // 정리됨)는 일시적 오류가 아니다. 상위에 알려 세션을 정리할 수 있게 하고
+      // fs-events 재연결도 멈춰, 없는 경로에 대한 400 이 계속 쌓이지 않게 한다.
+      const detail = e.body?.detail || e.message || ''
+      if (/not a directory|does not exist|not found/i.test(String(detail))) {
+        rootGone.value = true
+        stopFsEvents()
+        emit('rootMissing', { root: props.root, detail: String(detail) })
+      }
       if (!silent) {
-        rootError.value = e.body?.detail || e.message
+        rootError.value = detail
         rootChildren.value = []
       }
     } finally {
@@ -365,9 +377,14 @@ function closeWatch() {
   pendingDirs = new Set()
 }
 
+// 루트가 사라진 뒤에는 재연결하지 않는다.
+function stopFsEvents() {
+  closeWatch()
+}
+
 async function openWatch(rootAtCall) {
   closeWatch()
-  if (!rootAtCall) return
+  if (!rootAtCall || rootGone.value) return
   try {
     const url = await fsEventsUrl(rootAtCall)
     if (props.root !== rootAtCall) return  // root changed while resolving — stale

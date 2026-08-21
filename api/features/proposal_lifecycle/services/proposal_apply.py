@@ -659,14 +659,40 @@ def _fields_to_ops(fields) -> list[dict]:
     return ops
 
 
+def _normalize_property(p):
+    """스킬이 내는 property 항목을 저장 가능한 dict 로 환원한다.
+
+    스킬/모델은 `["orderId"]` 같은 **문자열 배열**을 내기도 하고
+    `[{"name": ..., "type": ..., "isKey": ...}]` 객체 배열을 내기도 한다.
+    문자열을 그냥 버리면 Property 가 통째로 유실되어 그래프에 필드가 남지 않고,
+    이후 MCP `get_bc_design` 이 빈 properties 를 반환해 `/robo-implement` 가
+    빈 스텁만 스캐폴드한다(mcp_server 의 경고 참조).
+
+    이름만 있는 경우 **타입·isKey 는 추론하지 않는다** — 없는 의미를 만들지
+    않는다는 근거 계약과 같은 원칙이다. 기본값으로 저장하고 호출자가 경고한다.
+    """
+    if isinstance(p, str):
+        name = p.strip()
+        return {"name": name} if name else None
+    if isinstance(p, dict) and p.get("name"):
+        return p
+    return None
+
+
 def _create_properties(session, parent_label: str, parent_id: str, props, proposal_id: str) -> int:
     """설계 노드(Aggregate/Command/Event/ReadModel)에 Property 자식 + HAS_PROPERTY 생성."""
     if not isinstance(props, list):
         return 0
     n = 0
-    for p in props:
-        if not isinstance(p, dict) or not p.get("name"):
+    untyped = 0
+    dropped = 0
+    for raw in props:
+        p = _normalize_property(raw)
+        if p is None:
+            dropped += 1
             continue
+        if not p.get("type"):
+            untyped += 1
         prop_id = f"prop-{_slug(p.get('name'))}-{_short_uuid()}"
         session.run(
             """
@@ -686,6 +712,16 @@ def _create_properties(session, parent_label: str, parent_id: str, props, propos
             fkHint=p.get("fkTargetHint"), ptype=parent_label, pid=proposal_id,
         )
         n += 1
+    if dropped or untyped:
+        SmartLogger.log(
+            "WARN",
+            f"property normalization: {parent_label} {parent_id} "
+            f"(created={n}, untyped={untyped}, dropped={dropped})",
+            category="proposal_lifecycle.apply.property_normalize",
+            params={"proposalId": proposal_id, "parentType": parent_label,
+                    "parentId": parent_id, "created": n,
+                    "untyped": untyped, "dropped": dropped},
+        )
     return n
 
 

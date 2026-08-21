@@ -71,7 +71,8 @@
   ],
 
   // Command 전용 — 추적성 & BDD:
-  "userStoryRefs": ["US-order-place"],   // UserStory ─IMPLEMENTS→ Command
+  "userStoryRefs": ["US-order-place"],   // UserStory ─IMPLEMENTS→ Command / ReadModel
+                                        // (ReadModel 도 필수 — 조회 스토리의 유일한 추적 경로)
   "gwt": [
     { "scenario": "정상 주문", "evidenceRefs": ["<exact RULE evidence_id>"],
       "given": { "name": "Aggregate: 주문", "description": "메뉴 등록 상태", "fieldValues": { "status": "NONE" } },
@@ -156,13 +157,18 @@
 | Aggregate | boundedContextId | rootEntity, description | 엔티티 속성 전부 | semanticDiff로 VO/Enum/Exception, **invariants** |
 | Command | aggregateId | actor, category, inputSchema | 명령 파라미터 | **userStoryRefs**, **gwt** 필수, **ui** |
 | Event | commandId | version, payload | 이벤트 페이로드 | past-tense 이름 |
-| ReadModel | boundedContextId | actor, isMultipleResult, description | 조회 필드 | userStoryRefs, **ui** |
+| ReadModel | boundedContextId | actor, isMultipleResult, description | 조회 필드 | **userStoryRefs 필수**, **ui** |
 | Policy | boundedContextId | description, condition | — | triggerEventId, invokeCommandId |
 
 ## 절대 규칙
 0. 모든 항목은 `legacyRefs` 배열을 가진다(위 불변식) — 근거 없으면 `[]`.
 1. 모든 CREATE는 `tempId`/`nodeId` + 부모 ref를 채운다 — 안 그러면 그래프에서 고아가 된다.
 2. **Command는 반드시** `inputSchema`+`properties`(파라미터), `userStoryRefs`(어느 US를 구현하는지), `gwt`(최소 1개 시나리오)를 채운다.
+2-b. **ReadModel도 반드시 `userStoryRefs`를 채운다.** 조회·추적성 스토리(search/view/track/
+   export)는 Command 없이 ReadModel+UI 로 충족하는 것이 정상 설계인데, 그 연결을 밝히지
+   않으면 해당 UserStory 는 어떤 설계 요소와도 `IMPLEMENTS` 로 이어지지 못해 영구히
+   "설계 미반영" 으로 남는다. **Command 로 커버되지 않는 조회 스토리는 그것을 충족하는
+   ReadModel 의 `userStoryRefs` 에 반드시 등장해야 한다.**
 3. Event는 발행 Command(`commandId`)와 `payload` 속성을 갖는다. 각 Command는 최소 1개 Event를 emit.
 4. 모든 Aggregate/Command/Event/ReadModel은 `properties`로 도메인 속성을 갖는다(이름만 있는 빈 노드 금지).
 5. 기존 노드는 입력 "도메인 구성 요소 목록"의 실제 id를 ref로 사용하고 `op/changeType:"MODIFY"`.

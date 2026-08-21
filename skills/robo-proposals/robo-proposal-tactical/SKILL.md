@@ -43,21 +43,40 @@ narration(`[Aggregate]`/`[경계]`/`[불변식]`) 후 빈 줄, 그 다음:
       "stateTransitions": [],
       "invariants": ["<입력 근거의 불변식 1>", "<입력 근거의 불변식 2>"],
       "correctivePolicies": [],
+      "properties": [
+        {"name": "orderId", "type": "UUID", "isKey": true, "isRequired": true, "description": "주문 식별자"},
+        {"name": "memberId", "type": "UUID", "isForeignKey": true, "fkTargetHint": "Aggregate:member:memberId"},
+        {"name": "status", "type": "String", "isRequired": true, "description": "주문 상태"},
+        {"name": "totalPrice", "type": "Long", "isRequired": true}
+      ],
       "handledCommands": [
-        {"name": "PlaceOrder", "fields": {"inputSchema": {}},
-         "properties": [],
+        {"name": "PlaceOrder",
+         "fields": {"inputSchema": {"menuId": "UUID", "qty": "int"}},
+         "properties": [
+           {"name": "menuId", "type": "UUID", "isForeignKey": true, "fkTargetHint": "Aggregate:menu:menuId"},
+           {"name": "qty", "type": "int", "isRequired": true}
+         ],
          "userStoryRefs": ["<Define의 실제 userStory.id>"],
          "gwt": [{"scenario": "정상 주문", "evidenceRefs": ["<exact RULE evidence_id>"],
-                  "given": {"name": "Aggregate: Order", "fieldValues": {}},
-                  "when": {"name": "Command: PlaceOrder", "fieldValues": {}},
-                  "then": {"name": "Event: OrderPlaced", "fieldValues": {}}}],
+                  "given": {"name": "Aggregate: Order", "fieldValues": {"status": "NONE"}},
+                  "when": {"name": "Command: PlaceOrder", "fieldValues": {"menuId": "m-1", "qty": "2"}},
+                  "then": {"name": "Event: OrderPlaced", "fieldValues": {"totalPrice": "20000"}}}],
          "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>"}]},
-        {"name": "ConfirmOrder", "fields": {"inputSchema": {}}, "properties": [],
+        {"name": "ConfirmOrder",
+         "fields": {"inputSchema": {"orderId": "UUID"}},
+         "properties": [{"name": "orderId", "type": "UUID", "isRequired": true}],
          "userStoryRefs": ["<Define의 실제 userStory.id>"], "gwt": [], "legacyRefs": []}
       ],
       "createdEvents": [
-        {"name": "OrderPlaced", "fields": {"payload": {}}, "properties": [], "legacyRefs": []},
-        {"name": "OrderConfirmed", "fields": {"payload": {}}, "properties": [], "legacyRefs": []}
+        {"name": "OrderPlaced",
+         "fields": {"payload": {"orderId": "UUID", "totalPrice": "Long"}},
+         "properties": [
+           {"name": "orderId", "type": "UUID", "isKey": true},
+           {"name": "totalPrice", "type": "Long"}
+         ], "legacyRefs": []},
+        {"name": "OrderConfirmed",
+         "fields": {"payload": {"orderId": "UUID"}},
+         "properties": [{"name": "orderId", "type": "UUID", "isKey": true}], "legacyRefs": []}
       ],
       "throughput": {"commandHandlingRate": {"avg": "50/s", "max": "100/s"}, "totalClients": {"avg": "1k", "max": "5k"}, "concurrencyConflictChance": {"avg": "low", "max": "med"}},
       "size": {"eventGrowthRate": {"avg": "5/order", "max": "20/order"}, "lifetime": {"avg": "7d", "max": "90d"}, "eventsPersisted": {"avg": "12", "max": "60"}}

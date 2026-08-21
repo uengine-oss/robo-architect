@@ -589,7 +589,18 @@ function formatDate(dt) {
 .detail-header__meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .proposal-id { font-family: monospace; font-size: 12px; color: var(--color-text-light); background: var(--color-bg-tertiary); padding: 2px 6px; border-radius: 3px; }
 .detail-header__title { font-size: 18px; font-weight: 600; margin: 0 0 4px; color: var(--color-text-bright); }
-.detail-header__prompt { font-size: 13px; color: var(--color-text-light); margin: 0 0 8px; }
+/* 원본 요구사항은 길이가 제각각이다 — 한 문장짜리도 있고 RFP 전문(수천 자)도 있다.
+   자르지 않고 전부 뿌리면 헤더가 화면을 밀어내 상세의 본론(diff·impact·plan)이
+   스크롤 아래로 내려간다. 내용은 잃지 않되 헤더가 차지하는 높이를 묶는다. */
+.detail-header__prompt {
+  font-size: 13px;
+  color: var(--color-text-light);
+  margin: 0 0 8px;
+  max-height: 15em;   /* 약 10줄 */
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overscroll-behavior: contain;
+}
 .detail-header__info { display: flex; gap: 16px; font-size: 12px; color: var(--color-text-light); }
 .status-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 9999px; text-transform: uppercase; }
 .status-badge--draft { background: var(--status-neutral-bg); color: var(--status-neutral-fg); }

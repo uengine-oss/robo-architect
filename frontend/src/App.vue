@@ -247,6 +247,31 @@ function _onProposalDiffChanged(e) {
   }
 }
 
+// Accept/Revoke/RetryMerge 는 그래프를 대량으로 바꾼다(accept 실측: 2 → 530 노드).
+// 이때 설계 스토어를 재조회하지 않으면 사용자가 새로고침하기 전까지 Data/Process 탭이
+// 변경 전 상태(빈 화면 또는 삭제된 노드)를 계속 보여준다. revoke 는 더 위험하다 —
+// 이미 지워진 노드가 화면에 남아 클릭 시 오류가 난다.
+async function _onGraphInvalidated(e) {
+  const reason = e?.detail?.reason || 'unknown'
+  try {
+    await Promise.allSettled([
+      aggregateViewer.fetchAllAggregates(),
+      eventModeling.refreshKeepingSelection(),
+      // 좌측 Navigator 는 Proposal·Design 탭이 공유하는 패널이다. 이걸 빼면
+      // accept 로 BC/Aggregate 가 늘어도 좌측 트리는 그대로 남는다.
+      navigatorStore.refreshAll({ trigger: `graph-invalidated:${reason}` }),
+    ])
+    log.info('graph_invalidated', 'Design stores refetched after a graph-wide change.', {
+      reason, proposalId: e?.detail?.proposalId || null,
+    })
+  } catch (err) {
+    // 재조회 실패가 accept/revoke 자체를 되돌리지는 않는다 — 로그만 남긴다.
+    log.warn('graph_invalidate_failed', 'Design store refetch failed after a graph change.', {
+      reason, error: String(err),
+    })
+  }
+}
+
 const currentComponent = computed(() => tabComponents[activeTab.value])
 
 // 034 US7 — Event Modeling / Design 탭 진입 시 설계 미반영 User Story를 감지해
@@ -379,6 +404,8 @@ onMounted(() => {
   // 041 — Design 측 헌장 편집기 열기
   window.addEventListener('robo:open-constitution', _onOpenConstitution)
   window.addEventListener('robo:proposal-diff-changed', _onProposalDiffChanged)
+  // Accept/Revoke/RetryMerge → 설계 스토어 재조회
+  window.addEventListener('robo:graph-invalidated', _onGraphInvalidated)
 
   log.info('app_mounted', 'App mounted; core layout components are ready.', {
     appInstanceId,
@@ -400,6 +427,7 @@ onUnmounted(() => {
   window.removeEventListener('robo:preview-updated', _onPreviewUpdated)
   window.removeEventListener('robo:open-constitution', _onOpenConstitution)
   window.removeEventListener('robo:proposal-diff-changed', _onProposalDiffChanged)
+  window.removeEventListener('robo:graph-invalidated', _onGraphInvalidated)
 })
 </script>
 

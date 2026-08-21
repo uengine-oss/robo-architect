@@ -187,6 +187,17 @@ watch(
   },
 )
 
+// 사라진 작업 폴더(예: Accept/Destroy 로 정리된 Proposal 워크트리)를 기억한다.
+// 세션은 localStorage 에 남아 복원되므로, 알려주지 않으면 없는 경로에 대한
+// 400 만 계속 쌓이고 화면은 "아무것도 안 되는" 상태로 보인다.
+const missingRoots = ref(new Set())
+function onRootMissing({ root }) {
+  if (!root || missingRoots.value.has(root)) return
+  const next = new Set(missingRoots.value)
+  next.add(root)
+  missingRoots.value = next
+}
+
 // ─── Session controls ───
 const terminalRefs = {}
 function setTerminalRef(id, el) {
@@ -667,6 +678,14 @@ onBeforeUnmount(() => {
       class="ccw-pane ccw-tree"
       :style="{ width: treeWidth + 'px' }"
     >
+      <div v-if="missingRoots.has(activeRoot)" class="root-missing">
+        <div class="root-missing__msg">
+          <strong>이 작업 폴더가 더 이상 존재하지 않습니다.</strong>
+          <span v-if="activeSession?.kind === 'proposal'">Proposal 을 Accept/Destroy 하면 샌드박스 워크트리가 정리됩니다.</span>
+        </div>
+        <code class="root-missing__path">{{ activeRoot }}</code>
+        <button class="root-missing__btn" @click="closeSession(activeSessionId)">세션 닫기</button>
+      </div>
       <FileTreePane
         ref="treeRef"
         :root="activeRoot"
@@ -676,6 +695,7 @@ onBeforeUnmount(() => {
         @renamed="onTreeRenamed"
         @moved="onTreeMoved"
         @deleted="onTreeDeleted"
+        @root-missing="onRootMissing"
       />
     </div>
     <button
@@ -937,4 +957,11 @@ onBeforeUnmount(() => {
   background: var(--ccw-hover);
   color: var(--ccw-text);
 }
+
+/* 사라진 작업 폴더 안내 */
+.root-missing { padding: 10px 12px; margin: 8px; border: 1px solid var(--color-border); border-left: 3px solid var(--color-warning, #e8912d); border-radius: 6px; background: var(--color-bg-tertiary); font-size: 12px; }
+.root-missing__msg { display: flex; flex-direction: column; gap: 2px; }
+.root-missing__path { display: block; margin: 6px 0; font-size: 11px; color: var(--color-text-light); word-break: break-all; }
+.root-missing__btn { padding: 4px 10px; font-size: 12px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-bg); color: var(--color-text); cursor: pointer; }
+.root-missing__btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
 </style>

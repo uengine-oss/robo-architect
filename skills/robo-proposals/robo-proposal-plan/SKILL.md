@@ -85,7 +85,42 @@ Constitution(fields + raw): <architectureStyle, repoStrategy, repoMode, techStac
 ## Output Format (최종 JSON)
 ```json
 {
-  "tacticalDiff": [ /* robo-proposal-intent 의 tacticalDiff 와 동일 형태 */ ],
+  "tacticalDiff": [
+    { "op": "CREATE", "entityType": "aggregate", "entityId": null, "tempId": "AGG-order",
+      "entityTitle": "Order", "boundedContextId": "<기존 BC id 또는 tempId>",
+      "fields": { "description": { "after": "주문 수명주기" } },
+      "properties": [
+        { "name": "orderId", "type": "UUID", "isKey": true, "isRequired": true },
+        { "name": "status",  "type": "String", "isRequired": true }
+      ], "legacyRefs": [] },
+    { "op": "CREATE", "entityType": "command", "entityId": null, "tempId": "CMD-place-order",
+      "entityTitle": "PlaceOrder", "aggregateId": "AGG-order", "boundedContextId": "<BC>",
+      "fields": { "inputSchema": { "menuId": "UUID", "qty": "int" } },
+      "properties": [
+        { "name": "menuId", "type": "UUID", "isForeignKey": true, "fkTargetHint": "Aggregate:menu:menuId" },
+        { "name": "qty",    "type": "int",  "isRequired": true }
+      ],
+      "userStoryRefs": ["<Strategic Diff 의 실제 userStory id>"],
+      "gwt": [ { "scenario": "정상 주문",
+                 "given": { "name": "Aggregate: Order", "fieldValues": { "status": "NONE" } },
+                 "when":  { "name": "Command: PlaceOrder", "fieldValues": { "qty": "2" } },
+                 "then":  { "name": "Event: OrderPlaced", "fieldValues": { "status": "PLACED" } } } ],
+      "legacyRefs": [] },
+    { "op": "UPDATE", "entityType": "aggregate", "entityId": "<기존 노드의 실제 id>",
+      "entityTitle": "Payment", "boundedContextId": "<BC>",
+      "fields": { "description": { "after": "부분 환불 반영" } }, "legacyRefs": [] },
+    { "op": "CREATE", "entityType": "readModel", "entityId": null, "tempId": "RM-order-search",
+      "entityTitle": "OrderSearchView", "boundedContextId": "<BC>",
+      "fields": { "actor": "Operations manager", "isMultipleResult": true,
+                  "description": "상태·기간으로 주문을 조회한다" },
+      "properties": [
+        { "name": "orderId", "type": "UUID", "isKey": true },
+        { "name": "status",  "type": "String" },
+        { "name": "placedAt", "type": "DateTime" }
+      ],
+      "userStoryRefs": ["<조회 스토리의 실제 userStory id>"],
+      "legacyRefs": [] }
+  ],
   "implementationPlan": {
     "version": 1,
     "architectureDecisions": [
@@ -111,6 +146,18 @@ Constitution(fields + raw): <architectureStyle, repoStrategy, repoMode, techStac
 모놀리스/단일 컨텍스트이면 `interContextIntegrations`/`serviceDevEnvironments` 는 `[]`, `messagingChannel` 은 null.
 
 ## Rules
+0. **`tacticalDiff` 는 필수이며 비울 수 없다** — 최소 1개의 `command` 를 포함해야 한다.
+   이미 그래프에 있는 요소만 관련되더라도 **생략하지 말고** `op:"UPDATE"` + 실제
+   `entityId` 로 낸다. 신규는 `op:"CREATE"` + `tempId`. `implementationPlan` 만 내고
+   `tacticalDiff` 를 빠뜨리면 저장이 거부된다(`tacticalDiff contains no Command`).
+   최종 JSON 은 반드시 `{"tacticalDiff": [...], "implementationPlan": {...}}` **봉투 형태**다 —
+   `implementationPlan` 본문만 최상위로 내지 않는다.
+0-b. **조회 스토리는 ReadModel 의 `userStoryRefs` 로 잇는다** — search/view/track/export 계열
+   UserStory 는 Command 없이 ReadModel+UI 로 충족하는 것이 정상이다. 그때 그 ReadModel 의
+   `userStoryRefs` 에 해당 UserStory 를 **반드시** 넣어야 한다. 넣지 않으면 그 스토리는
+   어떤 설계 요소와도 `IMPLEMENTS` 로 이어지지 못해 영구히 "설계 미반영" 으로 남는다.
+   **Strategic Diff 의 모든 UserStory 는 Command 또는 ReadModel 중 최소 한 곳의
+   `userStoryRefs` 에 등장해야 한다.**
 1. **코드를 작성하지 말 것** — 전술 분해 + 계획만 산출한다.
 2. **5개 필수 항목**은 `architectureDecisions` 또는 `constitutionGaps` 에 반드시 등장(조용한 누락은 계약 위반, SC-003).
 3. **REPO_MAPPING** 은 `repoStrategy`/`repoMode` 를 존중(mono-repo vs split-git vs reuse-existing).

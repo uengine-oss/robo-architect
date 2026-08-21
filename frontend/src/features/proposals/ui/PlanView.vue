@@ -22,8 +22,16 @@
       </div>
     </div>
 
-    <div v-if="stream.active && !stream.tactical" class="plan-waiting">
-      {{ t('proposals.plan.waitingTactical') }}
+    <div v-if="stream.active" class="plan-running">
+      <div class="plan-running__head">
+        <span class="spinner spinner--sm" />
+        <strong>{{ t('proposals.plan.waitingTactical') }}</strong>
+      </div>
+      <div class="plan-running__meta">
+        {{ elapsedText }} 경과<template v-if="sinceLogText"> · 마지막 갱신 {{ sinceLogText }} 전</template>
+      </div>
+      <div class="plan-running__hint">보통 5~12분 걸립니다.</div>
+      <div class="plan-running__warn">⚠ 새로고침하거나 탭을 옮기면 처음부터 다시 시작됩니다.</div>
     </div>
 
     <!-- 진행 로그 (Intent 단계와 동일한 실시간 narration) -->
@@ -133,13 +141,27 @@
       <span v-if="confirmed" class="plan-confirmed">{{ t('proposals.plan.confirmedMsg') }}</span>
     </div>
 
-    <p v-if="stream.error" class="error-msg">{{ stream.error }}</p>
+    <div v-if="stream.error" class="plan-error">
+      <p class="error-msg">{{ stream.error }}<span v-if="stream.errorCode" class="plan-error__code">({{ stream.errorCode }})</span></p>
+      <!-- 계약 위반 항목: 백엔드가 errors[] 로 보내는데 그동안 버려지고 있었다. -->
+      <details v-if="stream.errorItems?.length" class="plan-error__details" open>
+        <summary>위반 항목 {{ stream.errorItems.length }}건</summary>
+        <ul class="plan-error__list">
+          <li v-for="(item, i) in stream.errorItems.slice(0, 50)" :key="i">{{ item }}</li>
+        </ul>
+        <p v-if="stream.errorItems.length > 50" class="plan-error__more">… 외 {{ stream.errorItems.length - 50 }}건</p>
+      </details>
+      <details v-if="stream.diagnostics" class="plan-error__details">
+        <summary>진단 정보</summary>
+        <pre class="plan-error__diag">{{ JSON.stringify(stream.diagnostics, null, 2) }}</pre>
+      </details>
+    </div>
     <p v-if="confirmError" class="error-msg">{{ confirmError }}</p>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
 import { useI18n } from '../../../app/i18n'
 import { useProposalsStore } from '../proposals.store'
 import OpenInViewerLink from './OpenInViewerLink.vue'
@@ -162,6 +184,36 @@ const confirmError = ref('')
 
 const stream = computed(() => store.planStream)
 const plan = computed(() => store.plan)
+
+// Plan 생성은 실측 5~12분이 걸리는데 화면에는 정적 문구와 정적 로그뿐이라
+// 정지 화면과 구별되지 않았다. 그래서 사용자가 새로고침하고, 새로고침은
+// SSE 를 끊어 실행 중인 스킬을 죽인다(처음부터 다시). 살아 있다는 신호를 준다.
+const startedAt = ref(0)
+const lastLogAt = ref(0)
+const nowTs = ref(Date.now())
+let _ticker = null
+
+function _fmtDuration(ms) {
+  const sec = Math.max(0, Math.floor(ms / 1000))
+  const m = Math.floor(sec / 60)
+  return m > 0 ? `${m}분 ${sec % 60}초` : `${sec}초`
+}
+const elapsedText = computed(() => startedAt.value ? _fmtDuration(nowTs.value - startedAt.value) : '')
+const sinceLogText = computed(() => lastLogAt.value ? _fmtDuration(nowTs.value - lastLogAt.value) : '')
+
+watch(() => stream.value.active, (active) => {
+  if (active) {
+    startedAt.value = Date.now()
+    lastLogAt.value = Date.now()
+    nowTs.value = Date.now()
+    if (!_ticker) _ticker = setInterval(() => { nowTs.value = Date.now() }, 1000)
+  } else if (_ticker) {
+    clearInterval(_ticker)
+    _ticker = null
+  }
+})
+watch(() => stream.value.logLines?.length, () => { lastLogAt.value = Date.now() })
+onUnmounted(() => { if (_ticker) clearInterval(_ticker) })
 
 // 다섯 가지 필수 아키텍처 영역 라벨.
 const ASPECT_KEYS = {
@@ -342,4 +394,24 @@ function logLineClass(line) {
 .btn--primary:disabled { opacity: 0.5; cursor: default; }
 .btn--secondary { background: var(--color-bg-tertiary); color: var(--color-text); }
 .error-msg { color: var(--color-danger); font-size: 12px; margin-top: 6px; }
+
+/* 진행 표시 — 정적 화면과 구별되게(스피너·경과·마지막갱신·새로고침 경고) */
+.plan-running { border: 1px solid var(--color-border); border-radius: 8px; padding: 12px 14px; margin: 10px 0; background: var(--color-bg-tertiary); }
+.plan-running__head { display: flex; align-items: center; gap: 8px; }
+.plan-running__meta { margin-top: 6px; font-size: 0.8rem; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.plan-running__hint { margin-top: 2px; font-size: 0.75rem; color: var(--color-text-light); }
+.plan-running__warn { margin-top: 6px; font-size: 0.75rem; color: var(--color-warning, #e8912d); }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
+.spinner--sm { width: 12px; height: 12px; vertical-align: middle; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 실패 상세 — errors[]/diagnostics 를 접이식으로 노출 */
+.plan-error { margin: 10px 0; }
+.plan-error__code { margin-left: 6px; font-size: 0.75rem; opacity: 0.7; }
+.plan-error__details { margin-top: 6px; font-size: 0.8rem; }
+.plan-error__details summary { cursor: pointer; color: var(--color-text-light); }
+.plan-error__list { margin: 6px 0 0; padding-left: 18px; max-height: 260px; overflow-y: auto; }
+.plan-error__list li { margin: 2px 0; line-height: 1.4; }
+.plan-error__more { margin: 4px 0 0; color: var(--color-text-light); }
+.plan-error__diag { margin: 6px 0 0; padding: 8px; background: var(--color-bg); border-radius: 6px; max-height: 240px; overflow: auto; font-size: 0.72rem; white-space: pre-wrap; word-break: break-all; }
 </style>

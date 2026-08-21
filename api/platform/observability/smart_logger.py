@@ -252,7 +252,9 @@ class SmartLogger:
         
         if self.console_output:
             category_str = f"[{category}]" if category else ""
+            # flush=True: ./dev.sh 처럼 stdout 이 파이프면 블록 버퍼링에 걸려
+            # 로그가 터미널에 늦게(또는 프로세스 종료까지 아예) 안 나온다.
             if self._should_include_all(level):
-                print(f"[{level}]{category_str} {message} {params}")
+                print(f"[{level}]{category_str} {message} {params}", flush=True)
             else :
-                print(f"[{level}]{category_str} {message}")
+                print(f"[{level}]{category_str} {message}", flush=True)

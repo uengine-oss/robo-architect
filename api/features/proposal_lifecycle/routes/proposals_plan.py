@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, HTTPException
@@ -77,9 +78,21 @@ async def stream_plan_sse(proposal_id: str):
         raise HTTPException(status_code=409, detail=oda_err)
 
     async def event_stream():
-        async for event_type, data in stream_plan(proposal_id):
-            payload = json.dumps(data, ensure_ascii=False)
-            yield f"event: {event_type}\ndata: {payload}\n\n"
+        # 예외를 그대로 전파시키면 SSE 연결만 끊겨 프런트는 error 이벤트를 못 받고
+        # "작성 중..." 문구에 영원히 머문다. 반드시 error 이벤트로 환원해서 내보낸다.
+        try:
+            async for event_type, data in stream_plan(proposal_id):
+                payload = json.dumps(data, ensure_ascii=False)
+                yield f"event: {event_type}\ndata: {payload}\n\n"
+        except asyncio.CancelledError:
+            raise  # 클라이언트 연결 종료 — 정상 취소이므로 삼키지 않는다.
+        except Exception as exc:  # noqa: BLE001
+            SmartLogger.log("ERROR", f"plan stream failed: {proposal_id}: {exc}",
+                            category="proposal_lifecycle.plan.stream_error",
+                            params={"proposalId": proposal_id, "error": str(exc)})
+            payload = json.dumps(
+                {"code": "PLAN_STREAM_FAILED", "message": str(exc)}, ensure_ascii=False)
+            yield f"event: error\ndata: {payload}\n\n"
 
     SmartLogger.log("INFO", f"SSE plan stream started: {proposal_id}",
                     category="proposal_lifecycle.plan.stream_start",
