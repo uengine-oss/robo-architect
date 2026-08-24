@@ -44,9 +44,9 @@ DecomposeArtifact  { subDomains:[{name, responsibility, eventRefs:[str]}], adjac
 StrategizeArtifact { classifications:[{subDomain, kind: CORE|SUPPORTING|GENERIC, rationale, buildVsBuy?}] }
 ConnectArtifact    { interactions:[{from,to,message,kind: EVENT|COMMAND|QUERY, sync:bool, rationale?}], couplingWarnings:[str], messagingChannel?:str }
 DefineArtifact     { contexts:[{ name, purpose, classification, domainRoles:[str], inbound:[{from,message,type}], outbound:[{to,message,type}], ubiquitousLanguage:[{term,definition}], businessDecisions:[str], assumptions:[str], languageClashes:[str] }] }
-TacticalArtifact   { aggregates:[{ name, boundaryRationale, stateTransitions:[{from,to,trigger}], invariants:[str], correctivePolicies:[str], handledCommands:[str], createdEvents:[str], throughput? }] }
+TacticalArtifact   { aggregates:[{ name, boundedContextName, boundaryRationale, stateTransitions:[{from,to,trigger}], invariants:[str], correctivePolicies:[str], handledCommands:[str], createdEvents:[str], throughput? }] }
 ```
-Validation highlights: `StrategizeArtifact.classifications[*].kind` required; `DefineArtifact.contexts[*].ubiquitousLanguage` length ≥ 5; `TacticalArtifact.aggregates[*].invariants` length ≥ 2 (mirrors ddd-starter checklists; surfaced as warnings, not hard failures, so a thin change isn't blocked).
+Validation highlights: `StrategizeArtifact.classifications[*].kind` required; `DefineArtifact.contexts[*].ubiquitousLanguage` length ≥ 5; `TacticalArtifact.aggregates[*].invariants` length ≥ 2. Every Tactical Aggregate MUST explicitly set `boundedContextName` to an existing Define `contexts[*].name`; missing/unknown assignments are blocking errors and consolidation never falls back to the first BC. Each Aggregate also owns a non-empty typed `properties` array with at least one `isKey=true` identity; missing/empty/untyped Aggregate state is blocking.
 
 ### MemoryConflict
 ```

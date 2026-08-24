@@ -219,6 +219,19 @@ Web app (Principle V): backend `api/features/<feature>/`, frontend `frontend/src
 
 ---
 
+## Phase 10: Tactical BC ownership correction
+
+- [X] T071 [US2] Require every Tactical Aggregate to emit a Define-backed `boundedContextName` in the skill prompt and output contract (FR-007a)
+- [X] T072 [US2] Remove first-BC fallback during staged consolidation and reject missing/unknown BC assignments (FR-007a)
+- [X] T073 [P] [US2] Add regression tests for explicit, missing, and unknown Aggregate→BC assignments
+- [X] T074 [US2] Repair PRO-001 Tactical Diff using the T002 Aggregate→BC map and verify all 104 Aggregate/Command/Event nodes across 13 BCs with zero ownership-reference errors
+- [X] T075 [US2] Require non-empty typed Aggregate properties with an `isKey=true` identity in Tactical generation, consolidation, and Plan contract validation (FR-007b)
+- [X] T076 [US2] Backfill the 14 accepted PRO-001 Aggregates from implementation-backed domain fields and verify Aggregate Property visibility after Accept
+- [X] T075 [US6] Load pre-Accept acceptance scenarios deterministically from Proposal `tacticalDiff` Command GWT before graph `EFFECT` fallback
+- [X] T076 [P] [US6] Add regression tests for Tactical GWT, empty-GWT filtering, Strategic UserStory fallback, and exact scenario counting
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

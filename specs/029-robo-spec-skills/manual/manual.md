@@ -15,7 +15,7 @@ This manual documents the end-to-end smoke test for the **Phase 1 + Phase 2 + Ph
 - Classification HTTP surface E2 / E3 (T011)
 - `BoundedContext.classification` exposed on the `/tree` response (T012)
 - Verbatim install of the `robo-spec/` skill tree by `POST /api/claude-code/setup-project` (T013, E1)
-- Skeleton `SKILL.md` files for `robo-plan`, `robo-tasks`, `robo-implement`, `robo-sync` + extractor stubs (T014..T018)
+- Skeleton `SKILL.md` files for `robo-plan`, `robo-tasks`, `robo-implement`, `robo-sync` + initial extractor stubs (T014..T018). **Current extension**: Java/Avro extractors were added in T056..T059; this phase-1 manual otherwise preserves the original smoke-test chronology.
 - Install-integrity check script (T019)
 
 The five user-story phases (US1 through US5 — `/robo-plan` through `/robo-sync`) are deferred to follow-on sessions; their acceptance criteria are intentionally **out of scope** for this manual.
@@ -112,6 +112,8 @@ Resulting workspace tree:
 .claude/skills/robo-sync/SKILL.md
 .claude/skills/robo-sync/extractors
 .claude/skills/robo-sync/extractors/package.json
+.claude/skills/robo-sync/extractors/avro_extract.py
+.claude/skills/robo-sync/extractors/java_extract.py
 .claude/skills/robo-sync/extractors/python_extract.py
 .claude/skills/robo-sync/extractors/ts_extract.mjs
 .claude/skills/robo-tasks

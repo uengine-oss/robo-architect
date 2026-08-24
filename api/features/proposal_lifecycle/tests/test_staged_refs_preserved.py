@@ -22,7 +22,8 @@ def _arts():
             {"name": "알림발송됨", "legacyRefs": [{"nodeId": "code:x.c:fa"}]},  # 중복 nodeId
         ]},
         "TACTICAL": {"aggregates": [{
-            "name": "배송",
+            "name": "배송", "boundedContextName": "배송",
+            "properties": [{"name": "deliveryId", "type": "UUID", "isKey": True}],
             "legacyRefs": [REF_A],
             "handledCommands": [
                 {
@@ -65,6 +66,9 @@ def test_tactical_carries_refs_including_dict_commands():
     tactical = _build_tactical(_arts())
     by_title = {t["nodeTitle"]: t for t in tactical}
     assert by_title["배송"]["legacyRefs"] == [REF_A]
+    assert by_title["배송"]["properties"] == [
+        {"name": "deliveryId", "type": "UUID", "isKey": True}
+    ]
     assert by_title["배송상태변경"]["legacyRefs"] == [REF_B]
     assert by_title["배송상태변경됨"]["legacyRefs"] == [REF_A]
     command = by_title["배송상태변경"]
@@ -79,7 +83,9 @@ def test_tactical_carries_refs_including_dict_commands():
 def test_no_refs_anywhere_is_safe():
     arts = {
         "DEFINE": {"contexts": [{"name": "주문", "purpose": "p"}]},
-        "TACTICAL": {"aggregates": [{"name": "주문", "handledCommands": [{
+        "TACTICAL": {"aggregates": [{"name": "주문", "boundedContextName": "주문",
+                                     "properties": [{"name": "orderId", "type": "UUID", "isKey": True}],
+                                     "handledCommands": [{
                                          "name": "주문접수", "userStoryRefs": ["us:order"],
                                          "gwt": [{
                                              "scenario": "접수", "given": {"name": "입력", "fieldValues": {}},
@@ -107,6 +113,7 @@ def test_define_user_stories_become_strategic_ids_used_by_commands():
         }]},
         "TACTICAL": {"aggregates": [{
             "name": "Discount", "bcName": "쿠폰 할인", "invariants": ["a", "b"],
+            "properties": [{"name": "discountId", "type": "UUID", "isKey": True}],
             "handledCommands": [{
                 "name": "Calculate", "userStoryRefs": ["us:calculate-discount"],
                 "gwt": [{

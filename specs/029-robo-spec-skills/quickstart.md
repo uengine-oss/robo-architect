@@ -81,6 +81,23 @@
    ```
 2. Run `/robo-sync`.
 3. The skill runs the TS AST extractor over the linked file, normalizes the extract, and calls `propose_sync`. It prints a proposal showing the added field. No `requiresConfirmation` entries appear (additions are non-destructive).
+
+### Java/Avro Proposal validation extension
+
+For Proposal-generated Java/Spring services, run the Java extractor against a
+domain class and its application service, then the Avro extractor against the
+corresponding `.avsc` contract:
+
+```bash
+python <EXTRACTOR_ROOT>/java_extract.py <SANDBOX>/svc-payment/src/main/java/domain/Payment.java
+python <EXTRACTOR_ROOT>/java_extract.py <SANDBOX>/svc-payment/src/main/java/application/PaymentCommandService.java
+python <EXTRACTOR_ROOT>/avro_extract.py <SANDBOX>/contracts-registry/avro/payment/PaymentApproved.avsc
+```
+
+Expected: Aggregate fields appear in `fields`; Command names and parameters in
+`methods`; published events in `emittedEvents`; Avro payload fields include
+`required` and `hasDefault`. A supported Java/Avro file that cannot be parsed is
+reported as `SKIPPED` with the parser reason, never as PASS.
 4. Confirm the apply step.
 5. In Robo Architect's UI, the aggregate now shows `loyaltyTier` as a property.
 

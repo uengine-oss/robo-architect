@@ -37,27 +37,46 @@ narration(`[Aggregate]`/`[경계]`/`[불변식]`) 후 빈 줄, 그 다음:
 {
   "TacticalArtifact": {
     "aggregates": [{
-      "name": "Order", "description": "한 회원의 한 번 결제 상품 묶음", "boundaryRationale": "Order+OrderLine 은 한 트랜잭션 일관성 필요",
+      "name": "Order", "boundedContextName": "주문", "description": "한 회원의 한 번 결제 상품 묶음", "boundaryRationale": "Order+OrderLine 은 한 트랜잭션 일관성 필요",
       "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>", "role": "derived-from",
                       "evidence": "주문 확정 트랜잭션 경계가 이 Aggregate 로 이동"}],
       "stateTransitions": [],
       "invariants": ["<입력 근거의 불변식 1>", "<입력 근거의 불변식 2>"],
       "correctivePolicies": [],
+      "properties": [
+        {"name": "orderId", "type": "UUID", "isKey": true, "isRequired": true, "description": "주문 식별자"},
+        {"name": "memberId", "type": "UUID", "isForeignKey": true, "fkTargetHint": "Aggregate:member:memberId"},
+        {"name": "status", "type": "String", "isRequired": true, "description": "주문 상태"},
+        {"name": "totalPrice", "type": "Long", "isRequired": true}
+      ],
       "handledCommands": [
-        {"name": "PlaceOrder", "fields": {"inputSchema": {}},
-         "properties": [],
+        {"name": "PlaceOrder",
+         "fields": {"inputSchema": {"menuId": "UUID", "qty": "int"}},
+         "properties": [
+           {"name": "menuId", "type": "UUID", "isForeignKey": true, "fkTargetHint": "Aggregate:menu:menuId"},
+           {"name": "qty", "type": "int", "isRequired": true}
+         ],
          "userStoryRefs": ["<Define의 실제 userStory.id>"],
          "gwt": [{"scenario": "정상 주문", "evidenceRefs": ["<exact RULE evidence_id>"],
-                  "given": {"name": "Aggregate: Order", "fieldValues": {}},
-                  "when": {"name": "Command: PlaceOrder", "fieldValues": {}},
-                  "then": {"name": "Event: OrderPlaced", "fieldValues": {}}}],
+                  "given": {"name": "Aggregate: Order", "fieldValues": {"status": "NONE"}},
+                  "when": {"name": "Command: PlaceOrder", "fieldValues": {"menuId": "m-1", "qty": "2"}},
+                  "then": {"name": "Event: OrderPlaced", "fieldValues": {"totalPrice": "20000"}}}],
          "legacyRefs": [{"nodeId": "code:<project>/<file>:<function>"}]},
-        {"name": "ConfirmOrder", "fields": {"inputSchema": {}}, "properties": [],
+        {"name": "ConfirmOrder",
+         "fields": {"inputSchema": {"orderId": "UUID"}},
+         "properties": [{"name": "orderId", "type": "UUID", "isRequired": true}],
          "userStoryRefs": ["<Define의 실제 userStory.id>"], "gwt": [], "legacyRefs": []}
       ],
       "createdEvents": [
-        {"name": "OrderPlaced", "fields": {"payload": {}}, "properties": [], "legacyRefs": []},
-        {"name": "OrderConfirmed", "fields": {"payload": {}}, "properties": [], "legacyRefs": []}
+        {"name": "OrderPlaced",
+         "fields": {"payload": {"orderId": "UUID", "totalPrice": "Long"}},
+         "properties": [
+           {"name": "orderId", "type": "UUID", "isKey": true},
+           {"name": "totalPrice", "type": "Long"}
+         ], "legacyRefs": []},
+        {"name": "OrderConfirmed",
+         "fields": {"payload": {"orderId": "UUID"}},
+         "properties": [{"name": "orderId", "type": "UUID", "isKey": true}], "legacyRefs": []}
       ],
       "throughput": {"commandHandlingRate": {"avg": "50/s", "max": "100/s"}, "totalClients": {"avg": "1k", "max": "5k"}, "concurrencyConflictChance": {"avg": "low", "max": "med"}},
       "size": {"eventGrowthRate": {"avg": "5/order", "max": "20/order"}, "lifetime": {"avg": "7d", "max": "90d"}, "eventsPersisted": {"avg": "12", "max": "60"}}
@@ -77,6 +96,13 @@ narration(`[Aggregate]`/`[경계]`/`[불변식]`) 후 빈 줄, 그 다음:
    근거다(실측 누락 사례). Aggregate 에만 붙이고 하위 요소를 비워두지 않는다.
    배분 후에도 빈 요소만 S4 로 1회 재검색한다.
 1. 각 Aggregate 의 invariant 은 **2개 이상**.
+1-a. 각 Aggregate의 `properties`는 **비어 있지 않은 객체 배열**이며 모든 항목에 `name`과
+   `type`을 기록한다. Aggregate 식별자 필드를 최소 1개 포함하고 그 필드에는
+   `isKey: true`, `isRequired: true`를 명시한다. Command/Event 필드만 만들고 Aggregate
+   상태를 비워두면 Tactical 완료 실패다.
+1-b. 각 Aggregate의 `boundedContextName`은 **필수**이며 Define `contexts[].name` 중
+   정확히 하나를 그대로 사용한다. 영문 Aggregate 이름으로 BC를 추측하거나 첫 BC에
+   fallback하지 않는다. 누락·미등록 BC는 Tactical 완료 실패다.
 2. Value Object(Money, Address)는 Aggregate 가 아니다.
 3. Commands/Events 는 Define 의 Inbound/Outbound 와 일치.
 3-b. 모든 Command는 `{name, fields.inputSchema, properties, userStoryRefs, gwt, legacyRefs}`

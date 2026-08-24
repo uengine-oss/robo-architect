@@ -14,7 +14,7 @@ from typing import AsyncGenerator, Optional
 from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import extract_json
+from api.platform.skill_runner import extract_json, extract_json_candidates
 from api.features.proposal_lifecycle.proposal_contracts import constitution_hash
 from api.features.proposal_lifecycle.services.constitution_runner import read_constitution
 from api.features.proposal_lifecycle.services.legacy_stage_capture import stream_stage_skill_lines
@@ -184,11 +184,77 @@ def normalize_tactical_diff(raw: object) -> list[dict]:
     return normalized
 
 
+# 설계 요소 라벨 중 도메인 속성을 갖는 것들. output-schema.md 는 이들에 대해
+# "이름만 있는 빈 노드 금지"를 요구한다.
+_PROPERTY_BEARING_LABELS = ("Aggregate", "Command", "Event", "ReadModel")
+
+
+def property_shape_warnings(tactical: list[dict]) -> list[str]:
+    """properties 원소가 계약 형태(dict)인지 점검한다 — 실패가 아니라 경고다.
+
+    계약(output-schema.md)은 `[{"name","type","isKey",...}]` 객체 배열을 요구하지만
+    모델이 `["orderId"]` 문자열 배열을 내는 경우가 실측됐다. 저장 측
+    (`proposal_apply._normalize_property`)이 이름만이라도 살리므로 Plan 을 막지는
+    않는다. 다만 타입·isKey 가 없으면 MCP `get_bc_design` 이 얇은 properties 를
+    돌려주고 `/robo-implement` 가 빈 스텁을 스캐폴드하므로, 조용히 지나가지 않는다.
+    """
+    warnings: list[str] = []
+    for item in tactical:
+        label = item.get("nodeLabel")
+        if label not in _PROPERTY_BEARING_LABELS:
+            continue
+        title = item.get("nodeTitle") or "<unnamed>"
+        props = item.get("properties")
+        if not isinstance(props, list) or not props:
+            warnings.append(f"{label} {title}: properties 가 비어 있음(이름만 있는 빈 노드)")
+            continue
+        untyped = [x for x in props if not (isinstance(x, dict) and x.get("type"))]
+        if untyped:
+            warnings.append(
+                f"{label} {title}: properties {len(untyped)}/{len(props)} 개에 type 이 없음 "
+                f"(계약은 {{name,type,isKey,...}} 객체 배열)"
+            )
+    return warnings
+
+
+def readmodel_traceability_errors(tactical: list[dict]) -> list[str]:
+    """ReadModel 도 어느 UserStory 를 충족하는지 밝혀야 한다.
+
+    조회·추적성 스토리(search/view/track/export)는 Command 없이 ReadModel + UI 로
+    충족되는 것이 정상 설계다. 그런데 계약이 `userStoryRefs` 를 **Command 에만**
+    요구해 왔기 때문에, 그런 스토리는 어떤 설계 요소와도 `IMPLEMENTS` 로 연결되지
+    못하고 영구히 "설계 미반영" 으로 남았다(실측: 미반영 28건 중 25건이 조회성).
+
+    저장 측(`proposal_apply._link_user_stories`)은 라벨을 가리지 않고 연결할 수
+    있으므로, 데이터만 채워지면 된다.
+    """
+    errors: list[str] = []
+    for item in tactical:
+        if item.get("nodeLabel") != "ReadModel":
+            continue
+        refs = item.get("userStoryRefs")
+        if not isinstance(refs, list) or not refs:
+            title = item.get("nodeTitle") or "<unnamed>"
+            errors.append(f"ReadModel {title} requires non-empty userStoryRefs")
+    return errors
+
+
 def tactical_contract_errors(
     tactical: list[dict], *, require_evidence_refs: bool = False,
 ) -> list[str]:
     """Validate required semantic output shape without inventing missing meaning."""
     errors: list[str] = []
+    aggregates = [item for item in tactical if item.get("nodeLabel") == "Aggregate"]
+    for aggregate in aggregates:
+        title = aggregate.get("nodeTitle") or "<unnamed>"
+        props = aggregate.get("properties")
+        if not isinstance(props, list) or not props:
+            errors.append(f"Aggregate {title} requires non-empty properties")
+            continue
+        if not all(isinstance(prop, dict) and prop.get("name") and prop.get("type") for prop in props):
+            errors.append(f"Aggregate {title} requires typed property objects")
+        if not any(isinstance(prop, dict) and prop.get("isKey") is True for prop in props):
+            errors.append(f"Aggregate {title} requires an isKey property")
     commands = [item for item in tactical if item.get("nodeLabel") == "Command"]
     if not commands:
         return ["tacticalDiff contains no Command"]
@@ -466,6 +532,53 @@ def confirm_plan(proposal_id: str, implementation_plan: dict,
     return {"constitutionHash": c_hash}
 
 
+# 스킬은 산출물을 한 덩어리로 낼 때도 있고 tacticalDiff / implementationPlan 을
+# 별도 ```json 블록으로 나눠 낼 때도 있다(실측: rawItemCount=0 인데 파싱은 성공).
+# 가장 큰 후보 하나만 취하면 나머지가 통째로 버려지므로, 빠진 최상위 키만 다른
+# 후보에서 채운다. 값을 만들어내지 않고 **있는 것을 잃지 않게** 하는 보정이다.
+_PLAN_PAYLOAD_KEYS = ("tacticalDiff", "implementationPlan")
+
+
+def _looks_like_plan_body(obj: dict) -> bool:
+    """봉투 없이 implementationPlan 본문만 온 것인지 형태로 판별한다."""
+    markers = ("architectureDecisions", "messagingChannel", "serviceDevEnvironments",
+               "interContextIntegrations", "constitutionGaps")
+    return sum(1 for m in markers if m in obj) >= 2
+
+
+def _merge_plan_payload(raw: str):
+    """Plan 산출물을 추출한다. 여러 블록에 흩어져 있으면 최상위 키를 합친다."""
+    candidates = [c for c in extract_json_candidates(raw) if isinstance(c, dict)]
+    if not candidates:
+        return None
+    # base 는 크기가 아니라 **기대 키를 몇 개 갖고 있는지**로 고른다. 크기만 보면
+    # 완전한 산출물보다 더 큰 부분 블록(예: tacticalDiff 만 든 거대한 블록)이 이겨,
+    # 이미 채워진 값을 부분 블록의 값이 밀어낸다.
+    base = max(candidates,
+               key=lambda c: sum(1 for k in _PLAN_PAYLOAD_KEYS if c.get(k)))
+    merged = dict(base)
+    # 봉투 미착용 방어: 모델이 implementationPlan 본문만 최상위로 내는 경우가 실측됐다
+    # (dataKeys = architectureDecisions/messagingChannel/... ). 그대로 두면 계획까지
+    # 함께 버려져 진단이 흐려지므로, 형태를 보고 봉투를 씌운다. 값은 만들지 않는다.
+    if not any(merged.get(k) for k in _PLAN_PAYLOAD_KEYS) and _looks_like_plan_body(merged):
+        merged = {"implementationPlan": dict(base)}
+    for key in _PLAN_PAYLOAD_KEYS:
+        if merged.get(key):
+            continue
+        for cand in candidates:
+            if isinstance(cand, dict) and cand.get(key):
+                merged[key] = cand[key]
+                break
+    # 계획이 봉투 없이 **별도 블록**으로 온 경우(tacticalDiff 는 제 블록에, 계획 본문은
+    # 봉투 없이 다른 블록에). 위 루프는 `implementationPlan` 키를 찾으므로 못 잡는다.
+    if not merged.get("implementationPlan"):
+        for cand in candidates:
+            if cand is not base and _looks_like_plan_body(cand):
+                merged["implementationPlan"] = cand
+                break
+    return merged
+
+
 async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None]:
     """Plan 단계 진행을 SSE 이벤트로 yield 한다."""
     err = precheck(proposal_id)
@@ -513,9 +626,24 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
             yield "log_line", {"text": line}
 
     raw = "\n".join(output_lines)
-    data = extract_json(raw)
+    data = _merge_plan_payload(raw)
     if not data or not isinstance(data, dict):
-        yield "error", {"code": "PLAN_PARSE_FAILED", "message": "구현계획 결과 파싱 실패"}
+        # 파싱 실패는 수 분~십수 분짜리 생성 결과를 통째로 버린다. 원인(잘림·중첩 펜스·
+        # 산출물 부재)을 사후에 가릴 수 있도록 raw 의 규모와 앞뒤 끝을 남긴다.
+        head, tail = raw[:800], raw[-800:]
+        SmartLogger.log(
+            "ERROR", f"plan parse failed: {proposal_id} (raw {len(raw)} chars)",
+            category="proposal_lifecycle.plan.parse_failed",
+            params={"proposalId": proposal_id, "rawLength": len(raw),
+                    "fenceCount": raw.count("```"), "backtickCount": raw.count("`"),
+                    "rawHead": head, "rawTail": tail},
+        )
+        yield "error", {
+            "code": "PLAN_PARSE_FAILED",
+            "message": "구현계획 결과 파싱 실패",
+            "diagnostics": {"rawLength": len(raw), "fenceCount": raw.count("```"),
+                            "rawTail": tail[-300:]},
+        }
         return
 
     # architecture_only 면 스킬이 tacticalDiff 를 내지 않는다 → 기존(확정) 전술을 그대로 사용.
@@ -526,16 +654,63 @@ async def stream_plan(proposal_id: str) -> AsyncGenerator[tuple[str, dict], None
             tactical,
             require_evidence_refs=has_grounded_legacy_evidence(evidence_packet),
         )
+        contract_errors.extend(readmodel_traceability_errors(tactical))
         contract_errors.extend(gwt_evidence_ref_errors(tactical, evidence_packet))
         contract_errors.extend(ungrounded_gwt_values(tactical, evidence_packet, strategic))
         contract_errors.extend(tactical_evidence_ref_errors(tactical, evidence_packet))
         if contract_errors:
+            # 십수 분짜리 생성이 계약 위반으로 폐기된다. 어떤 항목이 왜 걸렸는지를
+            # 터미널에도 남긴다(프런트가 errors 를 못 보여주던 이력이 있다).
+            # "contains no Command" 처럼 형태 자체가 어긋난 실패는 위반 문구만으로는
+            # 진단이 안 된다. 스킬이 실제로 무엇을 냈는지(정규화 전후 분포와 표본)를 남긴다.
+            import collections as _c
+            raw_items = data.get("tacticalDiff") or []
+            raw_kinds = _c.Counter(
+                (x.get("entityType") or x.get("nodeLabel") or x.get("type") or "<없음>")
+                for x in raw_items if isinstance(x, dict)
+            )
+            sample = next((x for x in raw_items if isinstance(x, dict)), None)
+            SmartLogger.log(
+                "ERROR",
+                f"plan contract failed: {proposal_id} ({len(contract_errors)} violations)",
+                category="proposal_lifecycle.plan.contract_failed",
+                params={"proposalId": proposal_id, "count": len(contract_errors),
+                        "errors": contract_errors[:20],
+                        # 파싱된 JSON 의 최상위 키 — tacticalDiff 가 다른 이름으로
+                        # 왔는지, extract_json 이 엉뚱한 객체를 골랐는지 구분한다.
+                        "dataKeys": sorted(data.keys()),
+                        "dataPreview": json.dumps(data, ensure_ascii=False)[:600],
+                        "rawItemCount": len(raw_items),
+                        "rawKinds": dict(raw_kinds),
+                        "normalizedLabels": dict(_c.Counter(
+                            x.get("nodeLabel") for x in tactical if isinstance(x, dict))),
+                        "sampleKeys": sorted(sample.keys()) if sample else None,
+                        "sampleItem": json.dumps(sample, ensure_ascii=False)[:500] if sample else None},
+            )
             yield "error", {
                 "code": "PLAN_TACTICAL_CONTRACT_FAILED",
                 "message": "Plan tactical diff is incomplete.",
                 "errors": contract_errors,
             }
             return
+        # 계약 위반은 아니지만 하류(MCP 스캐폴딩)를 얇게 만드는 형태 문제는 알린다.
+        shape_warnings = property_shape_warnings(tactical)
+        if shape_warnings:
+            SmartLogger.log(
+                "WARN", f"plan property shape warnings: {proposal_id}",
+                category="proposal_lifecycle.plan.property_shape",
+                params={"proposalId": proposal_id, "count": len(shape_warnings),
+                        "samples": shape_warnings[:5]},
+            )
+            yield "log_line", {"text": (
+                f"⚠️ properties 형태 경고 {len(shape_warnings)}건 — "
+                "type/isKey 가 없으면 구현 스캐폴딩이 빈 스텁이 됩니다."
+            )}
+            for w in shape_warnings[:5]:
+                yield "log_line", {"text": f"   · {w}"}
+            if len(shape_warnings) > 5:
+                yield "log_line", {"text": f"   · … 외 {len(shape_warnings) - 5}건"}
+
         missing_refs = (
             missing_plan_legacy_refs(strategic, tactical)
             if has_grounded_legacy_evidence(evidence_packet) else []

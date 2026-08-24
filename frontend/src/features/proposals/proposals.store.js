@@ -478,6 +478,17 @@ export const useProposalsStore = defineStore('proposals', () => {
     validationStream.value.active = false
   }
 
+  // Accept/Revoke/RetryMerge 는 그래프를 대량으로 바꾼다(예: accept 1회에 500+ 노드).
+  // proposals 는 캔버스 스토어를 직접 임포트하지 않는다(Principle V) — App 이 수신해
+  // 설계 스토어 재조회를 조율하도록 앱 레벨 이벤트만 던진다.
+  function _notifyGraphChanged(reason, proposalId) {
+    try {
+      window.dispatchEvent(new CustomEvent('robo:graph-invalidated', {
+        detail: { reason, proposalId },
+      }))
+    } catch { /* 이벤트 실패가 본 동작을 막지 않는다 */ }
+  }
+
   async function acceptProposal(proposalId, { comment = null, forceAcceptWithFailures = false } = {}) {
     try {
       const res = await fetch(`${BASE}/${proposalId}/accept`, {
@@ -491,6 +502,7 @@ export const useProposalsStore = defineStore('proposals', () => {
       }
       currentProposal.value = await res.json()
       _syncListItem(proposalId)
+      _notifyGraphChanged('accept', proposalId)
     } catch (e) {
       error.value = e.message
       throw e
@@ -529,6 +541,7 @@ export const useProposalsStore = defineStore('proposals', () => {
       }
       currentProposal.value = await res.json()
       _syncListItem(proposalId)
+      _notifyGraphChanged('revoke', proposalId)
     } catch (e) {
       error.value = e.message
       throw e
@@ -545,7 +558,7 @@ export const useProposalsStore = defineStore('proposals', () => {
       let buffer = ''
       function read() {
         reader.read().then(({ done, value }) => {
-          if (done) { sandboxStream.value.active = false; fetchProposal(proposalId); return }
+          if (done) { sandboxStream.value.active = false; fetchProposal(proposalId); _notifyGraphChanged('retry-merge', proposalId); return }
           buffer += decoder.decode(value, { stream: true })
           read()
         })
@@ -622,7 +635,7 @@ export const useProposalsStore = defineStore('proposals', () => {
   // Constitution 이 없으면 409 {reason:"constitution_required"} → constitutionRequired 플래그를
   // 세워 컴포넌트가 인터뷰로 라우팅한다(FR-010).
   async function runPlan(proposalId) {
-    planStream.value = { active: true, tactical: null, impact: null, architecture: [], constitutionGaps: [], logLines: [], done: false, error: null, constitutionRequired: false }
+    planStream.value = { active: true, tactical: null, impact: null, architecture: [], constitutionGaps: [], logLines: [], done: false, error: null, errorCode: null, errorItems: [], diagnostics: null, constitutionRequired: false }
     // SSE 는 GET 이라 409 본문을 미리 확인할 수 없다 → EventSource 연결 직후 즉시 종료되면
     // (onerror, done 미수신) 사전조건 미충족으로 간주하고 /plan 으로 사유를 조회한다.
     return new Promise((resolve, reject) => {
@@ -676,6 +689,12 @@ export const useProposalsStore = defineStore('proposals', () => {
         error: (d) => {
           planStream.value.active = false
           planStream.value.error = d?.message || translate('proposals.store.planGenerateFailed')
+          // 백엔드는 어떤 항목이 왜 걸렸는지를 errors[] 로, 파싱 실패 원인을
+          // diagnostics 로 실어 보낸다. message 만 꺼내 쓰면 사용자는 십수 분을
+          // 기다린 끝에 "불완전합니다" 한 줄만 보게 된다.
+          planStream.value.errorCode = d?.code || null
+          planStream.value.errorItems = Array.isArray(d?.errors) ? d.errors : []
+          planStream.value.diagnostics = d?.diagnostics || null
           finish(reject, new Error(d?.message || translate('proposals.store.planGenerateFailed')))
         },
       }

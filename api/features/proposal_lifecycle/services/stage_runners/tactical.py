@@ -66,9 +66,12 @@ def _build_prompt(state: dict) -> str:
         f"- {optional_legacy_evidence_instruction(packet)}\n"
         f"- {optional_legacy_refs_instruction(packet)}\n\n"
         "각 Aggregate 에 대해 ddd-crew Aggregate Design Canvas(v1) 전 항목을 도출하라:\n"
-        "- name, description(한 줄 책임), boundaryRationale(함께 변하는가/한 트랜잭션 일관성)\n"
+        "- name, boundedContextName(DEFINE contexts의 실제 name 중 정확히 하나), "
+        "description(한 줄 책임), boundaryRationale(함께 변하는가/한 트랜잭션 일관성)\n"
         "- stateTransitions: [{from,to,trigger}]\n"
         "- invariants: Enforced Invariants(2개 이상)\n"
+        "- properties: Aggregate 식별자(isKey=true) 1개 이상을 포함한 비어 있지 않은 "
+        "[{name,type,isKey,isRequired,isForeignKey,fkTargetHint}] 배열\n"
         "- correctivePolicies: 규칙 위반 시 보정 정책\n"
         "- handledCommands: 각 Command의 fields.inputSchema(JSON object, 배열 금지)/"
         "properties(JSON array)/userStoryRefs/근거 있는 GWT\n"
@@ -76,9 +79,10 @@ def _build_prompt(state: dict) -> str:
         "- throughput: {commandHandlingRate:{avg,max}, totalClients:{avg,max}, concurrencyConflictChance:{avg,max}}\n"
         "- size: {eventGrowthRate:{avg,max}, lifetime:{avg,max}, eventsPersisted:{avg,max}}\n"
         "Aggregate 는 작게 유지하고 Value Object 는 Aggregate 로 모델링하지 마라.\n"
-        '출력: {"TacticalArtifact": {"aggregates":[{"name":"...","description":"...","boundaryRationale":"...",'
+        '출력: {"TacticalArtifact": {"aggregates":[{"name":"...","boundedContextName":"<DEFINE context name>","description":"...","boundaryRationale":"...",'
         '"stateTransitions":[{"from":"...","to":"...","trigger":"..."}],"invariants":["...","..."],'
-        '"correctivePolicies":["..."],"handledCommands":[{"name":"...","fields":{"inputSchema":{}},'
+        '"correctivePolicies":["..."],"properties":[{"name":"aggregateId","type":"UUID",'
+        '"isKey":true,"isRequired":true}],"handledCommands":[{"name":"...","fields":{"inputSchema":{}},'
         '"properties":[],"userStoryRefs":["us:<allowed-id>"],"gwt":[{"scenario":"...",'
         f'"evidenceRefs":{evidence_ref_example},"given":{{"name":"Aggregate: ...",'
         '"fieldValues":{}},"when":{"name":"Command: ...","fieldValues":{}},"then":{"name":"Event: ...",'
@@ -95,6 +99,38 @@ def _build_prompt(state: dict) -> str:
 def _has_min_invariants(a: dict) -> bool:
     aggs = a.get("aggregates") or []
     return bool(aggs) and all(len(g.get("invariants") or []) >= 2 for g in aggs)
+
+
+def _has_valid_bc_assignments(artifact: dict, allowed_context_names: set[str]) -> bool:
+    """Every Aggregate must explicitly name one of Define's Bounded Contexts."""
+    aggregates = artifact.get("aggregates") or []
+    if not aggregates or not allowed_context_names:
+        return False
+    return all(
+        isinstance(aggregate, dict)
+        and (aggregate.get("boundedContextName") or aggregate.get("bcName"))
+            in allowed_context_names
+        for aggregate in aggregates
+    )
+
+
+def _has_complete_aggregate_properties(artifact: dict) -> bool:
+    """Every Aggregate owns typed state and an explicit identity field."""
+    aggregates = artifact.get("aggregates") or []
+    if not aggregates:
+        return False
+    for aggregate in aggregates:
+        props = aggregate.get("properties") if isinstance(aggregate, dict) else None
+        if not isinstance(props, list) or not props:
+            return False
+        if not all(
+            isinstance(prop, dict) and prop.get("name") and prop.get("type")
+            for prop in props
+        ):
+            return False
+        if not any(prop.get("isKey") is True for prop in props):
+            return False
+    return True
 
 
 def _has_complete_commands(
@@ -148,6 +184,11 @@ async def stream(proposal_id: str, feedback: str = None) -> AsyncGenerator[tuple
         for story in context.get("userStories") or []
         if isinstance(story, dict) and story.get("id")
     }
+    allowed_context_names = {
+        context.get("name")
+        for context in ((state.get("stageArtifacts") or {}).get("DEFINE", {}).get("contexts") or [])
+        if isinstance(context, dict) and context.get("name")
+    }
     evidence_packet = build_evidence_packet(state.get("legacyReferences"))
     if feedback:
         prompt += f"\n\n사용자 피드백(재생성, 최우선 반영): {feedback}"
@@ -156,6 +197,12 @@ async def stream(proposal_id: str, feedback: str = None) -> AsyncGenerator[tuple
         artifact_key="TacticalArtifact", parse_error_code="TACTICAL_PARSE_FAILED",
         validators=[(_has_min_invariants, "invariant 이 2개 미만인 Aggregate 가 있습니다")],
         blocking_validators=[(
+            lambda artifact: _has_valid_bc_assignments(artifact, allowed_context_names),
+            "모든 Aggregate에 Define의 실제 boundedContextName을 하나씩 명시해야 합니다",
+        ), (
+            _has_complete_aggregate_properties,
+            "모든 Aggregate에 타입이 있는 properties와 isKey=true 식별자 필드가 필요합니다",
+        ), (
             lambda artifact: _has_complete_commands(
                 artifact, allowed_story_ids,
                 require_evidence_refs=has_grounded_legacy_evidence(evidence_packet),

@@ -229,7 +229,7 @@ visible in earlier in-flight frames as "Called robo-spec 2 times".
 │       ├── robo-tasks/SKILL.md        │ verbatim from <repo>/skills/robo-spec/
 │       ├── robo-implement/SKILL.md    │
 │       ├── robo-sync/SKILL.md         │
-│       │   └── extractors/{python_extract.py, ts_extract.mjs, package.json}
+│       │   └── extractors/{python_extract.py, ts_extract.mjs, java_extract.py, avro_extract.py, package.json}
 │       ├── speckit-plan/SKILL.md      ┐
 │       ├── speckit-tasks/SKILL.md     │ inheritance chain
 │       └── speckit-implement/SKILL.md ┘
@@ -338,4 +338,4 @@ pandoc manual_ui_playwright.md -o manual_ui_playwright.docx \
 | US2 (Design-tab badges) | Watchfiles backend + SSE + ProgressBadge component | Backend watcher (T028) + frontend component (T033) not yet implemented. |
 | US3 (click-to-open implementation file) | MCP T7 + frontend wiring (T039–T041) | Not yet implemented. |
 | US3 (classification visible in navigator) | Frontend wiring to render the new `classification` field next to BC names | Not yet implemented; the navigator currently shows the pre-existing `domainType`. |
-| US5 (`/robo-sync`) | AST extractors + propose/apply MCP tools (T6 / T6a) | Extractor stubs return exit 1; T6 / T6a not yet implemented. |
+| US5 (`/robo-sync`) | Structural extractors + propose/apply MCP tools (T6 / T6a) | Historical note: extractors were stubs when this manual was captured. TypeScript, Java, and Avro extraction are now available; Python remains an explicit skeleton. See T056–T059. |

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
 
@@ -75,7 +75,10 @@ async def get_test_results(proposal_id: str, request: Request):
 
     raw = record.get("testResults")
     if not raw:
-        raise HTTPException(status_code=404, detail=f"No test results for {proposal_id} yet")
+        # "아직 없음" 은 오류가 아니라 정상 대기 상태다. 404 로 표현하면 프런트가
+        # 검증이 끝날 때까지 폴링하는 동안 콘솔에 오류가 쌓여 실패처럼 보인다.
+        # 204(No Content)로 응답해 "요청은 유효하고 결과가 아직 없다"를 구분한다.
+        return Response(status_code=204)
 
     try:
         data = json.loads(raw) if isinstance(raw, str) else raw

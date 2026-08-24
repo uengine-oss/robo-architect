@@ -44,8 +44,11 @@
           </div>
 
           <template v-else>
+            <!-- 인터뷰는 적응형(앞선 답변이 뒤 질문 유무를 결정) 이라 총 개수가 미리 정해지지 않는다.
+                 분모를 붙이면 iv.steps.length 가 곧 iv.idx + 1 이라 "5 / 5" 처럼 같이 늘어나
+                 진행률을 잘못 알린다. 백엔드가 질문마다 실어 보내는 index 만 표시한다. -->
             <div class="cse__iv-status">
-              질문 {{ iv.idx + 1 }} / {{ iv.steps.length }}<span v-if="!iv.complete"> (진행 중)</span>
+              질문 {{ cur?.question?.index ?? iv.idx + 1 }}<span v-if="!iv.complete"> (진행 중)</span>
             </div>
 
             <!-- 현재 질문 -->

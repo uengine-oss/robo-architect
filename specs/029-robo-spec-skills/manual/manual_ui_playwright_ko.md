@@ -221,7 +221,7 @@ bash `mkdir -p`로 feature 디렉토리 생성 → `plan.md` 작성. Override 6
 │       ├── robo-tasks/SKILL.md        │ <repo>/skills/robo-spec/에서 verbatim 복사
 │       ├── robo-implement/SKILL.md    │
 │       ├── robo-sync/SKILL.md         │
-│       │   └── extractors/{python_extract.py, ts_extract.mjs, package.json}
+│       │   └── extractors/{python_extract.py, ts_extract.mjs, java_extract.py, avro_extract.py, package.json}
 │       ├── speckit-plan/SKILL.md      ┐
 │       ├── speckit-tasks/SKILL.md     │ 상속 체인
 │       └── speckit-implement/SKILL.md ┘
@@ -319,4 +319,4 @@ pandoc manual_ui_playwright_ko.md -o manual_ui_playwright_ko.docx \
 | US2 (Design 탭 뱃지) | watchfiles 백엔드 + SSE + ProgressBadge 컴포넌트 | 백엔드 watcher (T028) + 프론트엔드 컴포넌트 (T033) 미구현 |
 | US3 (구현 파일 클릭으로 열기) | MCP T7 + 프론트엔드 와이어링 (T039–T041) | 미구현 |
 | US3 (네비게이터에서 classification 표시) | 새 `classification` 필드를 BC 이름 옆에 렌더링하는 프론트엔드 와이어링 | 미구현; 네비게이터는 현재 기존 `domainType`만 표시 |
-| US5 (`/robo-sync`) | AST 추출기 + propose/apply MCP 도구 (T6 / T6a) | 추출기 stub은 exit 1; T6 / T6a 미구현 |
+| US5 (`/robo-sync`) | 구조 추출기 + propose/apply MCP 도구 (T6 / T6a) | 이 매뉴얼 실행 당시에는 stub이었음. 현재 TypeScript·Java·Avro 추출 가능, Python은 명시적 스켈레톤. Java/Avro Proposal 검증은 T056~T059 참조 |

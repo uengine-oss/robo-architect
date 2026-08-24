@@ -187,6 +187,8 @@ As an architect, whichever mode I used, the downstream stages — Impact Preview
 - **FR-005g**: Each stage artifact MUST be presentable in **two interchangeable renderings** — the rich **card/visual** form (default) and an equivalent plain **Markdown** form of the same data — switchable via an inline card ↔ Markdown toggle. The selected rendering MUST be a view-only preference that never mutates the artifact, MUST persist across stages and tab switches, and MUST also apply when re-viewing a completed stage read-only.
 - **FR-006**: A stage's confirmed/corrected output MUST be carried forward as input to subsequent stages.
 - **FR-007**: The staged flow MUST consolidate its accumulated decisions into a **Strategic Diff** and (when the tactical stage ran) a **Tactical Diff** equivalent in shape to Simplified-mode output.
+- **FR-007a**: Every Tactical Aggregate MUST explicitly identify one Bounded Context from the Define artifact. Consolidation MUST reject missing or unknown assignments and MUST NOT infer ownership by falling back to the first Bounded Context. Commands and Events inherit the owning Aggregate's validated BC.
+- **FR-007b**: Every Tactical Aggregate MUST define a non-empty `properties` array. Every property MUST have `name` and `type`, and at least one Aggregate identity property MUST set `isKey=true`. Tactical completion and consolidation MUST reject an Aggregate with missing, empty, or untyped state fields.
 - **FR-008**: The Constitution gate and interview (041) MUST run in Detailed DDD mode exactly as in Simplified mode — reused, not duplicated or bypassed.
 
 #### Scope-aware stage planning

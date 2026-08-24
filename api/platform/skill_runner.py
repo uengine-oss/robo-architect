@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from api.platform.observability.smart_logger import SmartLogger
+from api.platform.skill_execution_strategy import (
+    OpenAICompatibleSkillStrategy,
+    skill_runner_provider,
+)
 
 _PROJECT_ROOT = Path(__file__).parents[2]
 
@@ -175,15 +179,40 @@ async def _stream_process_chunks_with_stdin(
                         proc.stdin.close()
 
             threading.Thread(target=_write_stdin, daemon=True).start()
-            threading.Thread(
-                target=lambda: proc.stderr.read() if proc.stderr else None,
-                daemon=True,
-            ).start()
+
+            # stderr 는 버리지 않고 모은다. 스킬(claude)이 인증 실패·토큰 초과·크래시로
+            # 죽으면 원인은 stderr 로만 나오는데, 이걸 버리면 "출력 0줄로 정상 종료"와
+            # 구분이 안 돼 상위에서 PARSE_FAILED 로만 보이고 진짜 원인이 사라진다.
+            err_chunks: list[bytes] = []
+
+            def _drain_stderr() -> None:
+                try:
+                    if proc.stderr is not None:
+                        err_chunks.append(proc.stderr.read())
+                except Exception:  # noqa: BLE001
+                    pass
+
+            err_thread = threading.Thread(target=_drain_stderr, daemon=True)
+            err_thread.start()
+
             while True:
                 chunk = proc.stdout.read(4096)
                 if not chunk:
                     break
                 q.put(chunk)
+
+            rc = proc.wait()
+            err_thread.join(timeout=5)
+            err_text = b"".join(err_chunks).decode("utf-8", errors="replace").strip()
+            if err_text:
+                SmartLogger.log("ERROR", f"skill stderr ({cmd[0]}): {err_text[-4000:]}",
+                                category="platform.skill_runner.stderr",
+                                params={"returncode": rc})
+            # -9/-15 는 소비자 쪽 취소(SSE 끊김 → finally 의 proc.kill())라 실패가 아니다.
+            if rc not in (0, -9, -15):
+                q.put((_STREAM_ERR, RuntimeError(
+                    f"스킬 프로세스가 코드 {rc} 로 종료했습니다: "
+                    f"{err_text[-2000:] or '(stderr 없음)'}")))
         except Exception as e:  # noqa: BLE001
             q.put((_STREAM_ERR, e))
         finally:
@@ -219,13 +248,34 @@ async def run_skill_once(
     스킬을 단회 실행하고 stdout 전체를 문자열로 반환한다.
     JSON 블록 추출이 필요한 경우 호출자가 직접 파싱.
     """
-    claude_bin = _resolve_claude_bin()
     sf = skill_path(skill_root, skill_name)
 
     if not sf.exists():
         SmartLogger.log("ERROR", f"Skill not found: {sf}",
                         category="platform.skill_runner.not_found", params={"skill": skill_name})
         return None
+
+    if skill_runner_provider() == "openai_compatible":
+        strategy = OpenAICompatibleSkillStrategy(
+            project_root=_PROJECT_ROOT,
+            cwd=_PROJECT_ROOT,
+            add_dirs=add_dirs,
+        )
+        SmartLogger.log("INFO", f"Invoking OpenAI-compatible skill: {skill_name}",
+                        category="platform.skill_runner.start",
+                        params={"skill": skill_name, "provider": "openai_compatible"})
+        try:
+            return (await strategy.run(
+                sf.read_text(encoding="utf-8"), human_prompt
+            )).strip()
+        except Exception as e:
+            SmartLogger.log("ERROR", f"Skill {skill_name} error: {e}",
+                            category="platform.skill_runner.error",
+                            params={"skill": skill_name, "error": str(e),
+                                    "provider": "openai_compatible"})
+            return None
+
+    claude_bin = _resolve_claude_bin()
 
     cmd = [
         claude_bin, "-p",
@@ -289,7 +339,6 @@ async def run_skill_lines(
     --output-format stream-json 으로 실시간 tool-use 이벤트를 포함해 스트리밍.
     protocol lines (TASK_START:, TASK_DONE:, PHASE:) + TOOL:ToolName:path 형식으로 yield.
     """
-    claude_bin = _resolve_claude_bin()
     sf = skill_path(skill_root, skill_name)
 
     if not sf.exists():
@@ -297,6 +346,33 @@ async def run_skill_lines(
                         category="platform.skill_runner.not_found", params={"skill": skill_name})
         yield "PHASE:error"
         return
+
+    if skill_runner_provider() == "openai_compatible":
+        strategy = OpenAICompatibleSkillStrategy(
+            project_root=_PROJECT_ROOT,
+            cwd=Path(cwd).resolve() if cwd else _PROJECT_ROOT,
+            add_dirs=add_dirs,
+        )
+        SmartLogger.log("INFO", f"Streaming OpenAI-compatible skill: {skill_name}",
+                        category="platform.skill_runner.stream_start",
+                        params={"skill": skill_name, "provider": "openai_compatible"})
+        try:
+            async for line in strategy.lines(
+                sf.read_text(encoding="utf-8"), human_prompt
+            ):
+                yield line
+        except (GeneratorExit, asyncio.CancelledError):
+            raise
+        except Exception as e:
+            SmartLogger.log("ERROR", f"Skill stream error: {skill_name}: {type(e).__name__}: {e}",
+                            category="platform.skill_runner.stream_error",
+                            params={"skill": skill_name, "error": str(e),
+                                    "errorType": type(e).__name__,
+                                    "provider": "openai_compatible"})
+            yield "PHASE:error"
+        return
+
+    claude_bin = _resolve_claude_bin()
 
     cmd = [
         claude_bin, "-p",
@@ -498,34 +574,65 @@ async def run_skill_lines(
                 pass
 
 
-def extract_json(raw: str) -> dict | list | None:
-    """stdout에서 JSON 블록을 추출한다.
-    ```json ... ``` 코드블록을 우선 시도하고, 없으면 첫 번째 {...} 또는 [...] 블록을 파싱.
+def _json_candidates(raw: str):
+    """`raw` 안에서 실제로 파싱되는 JSON 값들을 (시작위치, 값, 길이)로 산출한다.
+
+    표준 `JSONDecoder.raw_decode` 를 각 `{`/`[` 위치에서 시도한다. 앞에 어떤
+    narration 이 있든 무관하고, 문자열·이스케이프 처리는 파이썬 파서가 정확히 한다.
+
+    직접 만든 균형 스캐너로는 안 된다(실측 PRO-002): 문서 전체를 훑으며 `"` 로
+    문자열 안팎을 토글하면, **JSON 앞 narration 의 따옴표 개수가 홀수일 때**
+    JSON 시작 시점을 "문자열 내부"로 오인해 중괄호를 전부 무시한다. narration 은
+    JSON 이 아니므로 문서 전체를 JSON 문법으로 훑는다는 전제 자체가 틀렸다.
     """
-    # 1) ```json ... ``` 코드블록 우선
-    code_match = re.search(r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```', raw, re.DOTALL)
-    if code_match:
-        try:
-            return json.loads(code_match.group(1))
-        except Exception:
-            pass
-
-    # 2) 마지막 {...} 블록 (narration에 {} 포함 가능 → 마지막 블록이 실제 JSON일 가능성 높음)
-    matches = list(re.finditer(r'(\{[^`]*\})', raw, re.DOTALL))
-    for m in reversed(matches):
-        try:
-            result = json.loads(m.group())
-            if isinstance(result, dict) and result:
-                return result
-        except Exception:
+    decoder = json.JSONDecoder()
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if ch not in "{[":
+            i += 1
             continue
-
-    # 3) 첫 번째 [...] 블록
-    arr_match = re.search(r'(\[.*?\])', raw, re.DOTALL)
-    if arr_match:
         try:
-            return json.loads(arr_match.group())
-        except Exception:
-            pass
+            value, end = decoder.raw_decode(raw, i)
+        except ValueError:
+            i += 1
+            continue
+        yield i, value, end - i
+        # 성공한 구간은 통째로 건너뛴다 — 내부 조각을 다시 후보로 삼지 않는다.
+        i = end
 
-    return None
+
+def extract_json_candidates(raw: str) -> list:
+    """파싱에 성공한 JSON 값들을 **큰 것부터** 돌려준다.
+
+    `extract_json` 은 가장 큰 하나만 고르는데, 모델이 산출물을 여러 블록으로
+    나눠 내면(예: tacticalDiff 와 implementationPlan 을 별도 ```json 블록으로)
+    나머지가 통째로 버려진다. 호출자가 "내가 필요한 키를 가진 후보"를 직접
+    고를 수 있도록 후보 전체를 노출한다.
+    """
+    if not raw:
+        return []
+    found = [(length, value) for _s, value, length in _json_candidates(raw)
+             if isinstance(value, (dict, list)) and value]
+    found.sort(key=lambda t: t[0], reverse=True)
+    return [v for _l, v in found]
+
+
+def extract_json(raw: str) -> dict | list | None:
+    """스킬 stdout 에서 최종 JSON 산출물을 추출한다.
+
+    출력은 narration + 최종 JSON(+ 뒤따르는 요약 문단) 형태다. narration 에도
+    중괄호·따옴표·백틱·코드펜스가 섞이므로, 파싱에 성공한 후보 중 **가장 큰 것**을
+    고른다. 최종 산출물이 대개 가장 크고, 조각을 정답으로 오인하지 않는다.
+    """
+    if not raw:
+        return None
+    best = None
+    best_len = 0
+    for _start, value, length in _json_candidates(raw):
+        if not isinstance(value, (dict, list)) or not value:
+            continue
+        if length > best_len:
+            best, best_len = value, length
+    return best

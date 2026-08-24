@@ -169,6 +169,13 @@ This is a multi-component project (backend `api/`, frontend `frontend/`, plus th
 - [ ] T049 [US5] Implement MCP tool `T6a apply_proposal` in `mcp_server.py`: look up the pending proposal; re-check `version` on every targeted element; if any version has been bumped since the proposal, return `status: "conflict"` and apply **nothing**; otherwise apply through Robo Architect's existing mutation pathway, bump versions, return `applied` / `rejected` arrays per contract T6a
 - [ ] T050 [US5] Replace the TODO in [skills/robo-spec/robo-sync/SKILL.md](skills/robo-spec/robo-sync/SKILL.md) body with the end-to-end flow: (a) read `<workspace>/.claude/robo-project.json` for `projectId`; (b) call `T2 get_bc_design` to learn which files back which elements; (c) for each file, run the right extractor via Bash (`python extractors/python_extract.py <file>` or `node extractors/ts_extract.mjs <file>`); (d) call `T6 propose_sync` with the aggregated extracts; (e) render the diff to the developer, prompting explicitly for every entry in `requiresConfirmation`; (f) call `T6a apply_proposal` with the confirmed subset; (g) on `CONFLICT`, re-fetch via T2 and re-propose **once** before giving up
 
+### Phase 9: Post-v1 Java/Avro validation gap correction
+
+- [x] T056 Implement dependency-free `java_extract.py`: top-level type, fields, methods/parameters, emitted event names, record components, and enum values
+- [x] T057 Implement deterministic `avro_extract.py`: record name/namespace, field types, nullability, and default presence
+- [x] T058 Update `/robo-sync` and `robo-proposal-test` contracts so Java Commands compare against `methods`, Events against `emittedEvents`, and Avro contracts against `fields`; supported Java/Avro files must not be skipped solely for language
+- [x] T059 Pass the repository extractor directory to Proposal validation as `EXTRACTOR_ROOT`, document limitations, and add Java/Avro regression tests using generated-project shapes
+
 **Checkpoint**: `/robo-sync` round-trips additive changes (quickstart S9), forces confirmation on renames (S10), and is a true no-op when nothing changed (S11).
 
 ---

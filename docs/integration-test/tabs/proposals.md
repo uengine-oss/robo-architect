@@ -109,7 +109,14 @@ Proposals 탭은 기존 라이브 모델을 직접 수정하기 전에 변경 �
 ### S8. 검증/Accept/라이브 반영
 
 - 구현 checklist 완료 후 `구현 완료 → 검증`.
-- 검증 통과 후 `Accept`.
+- 검증이 완료되어 `PENDING_ACCEPTANCE`로 전환되면 하단 주 액션
+  `Accept / Destroy로 이동`으로 다음 탭을 연다. `샌드박스 구현 열기`는
+  결함 교정을 위한 보조 액션으로 남는다.
+- Accept / Destroy 탭에서 결과를 검토한 후 `Accept`. 이동 버튼은 Accept를
+  자동 실행하지 않는다.
+- Accept 전 인수조건의 기준은 Proposal `tacticalDiff`에 확정된 Command GWT다.
+  아직 라이브 그래프에 `EFFECT → UserStory`가 없어도 이 GWT를 결정론적으로
+  로드해야 하며, 실행마다 acceptance 총계가 달라져서는 안 된다.
 - 기대:
   - Proposal 상태가 `ACCEPTED`.
   - Requirements tree에 BoundedContext/Feature/UserStory가 표시된다.

@@ -64,14 +64,19 @@ Tactical Diff의 각 요소가 샌드박스 구현체에 의도대로 반영됐�
 2. 찾은 파일의 **실제 구조**를 robo-sync 추출기로 추출(절대 경로 사용 — 현재 작업 경로가 샌드박스가 아니므로):
    - TypeScript: `node <SANDBOX>/.claude/skills/robo-sync/extractors/ts_extract.mjs <SANDBOX>/<file>`
    - Python: `python <SANDBOX>/.claude/skills/robo-sync/extractors/python_extract.py <SANDBOX>/<file>`
-   추출기는 `{kind, name, fields}` JSON을 stdout으로 출력한다.
+   - Java: `python <EXTRACTOR_ROOT>/java_extract.py <SANDBOX>/<file>`
+   - Avro: `python <EXTRACTOR_ROOT>/avro_extract.py <SANDBOX>/<file>`
+   `EXTRACTOR_ROOT`는 Human Prompt에 제공된다. 추출기는 최소
+   `{kind, name, fields}` JSON을 stdout으로 출력한다. Java Command는 `methods`,
+   Event 발행은 `emittedEvents`, Avro 계약은 `fields`를 함께 비교한다.
 3. `semanticDiff.ops`의 의도(예: `obj_append` VO 추가, 필드 추가/수정/삭제, Command/Event 파라미터)가 추출된 실제 구조에 반영됐는지 비교:
    - 의도된 VO/필드/커맨드가 구현체에 존재·일치 → **PASS**.
    - 누락 또는 타입 불일치 → **FAIL** (reason에 무엇이 어떻게 다른지 명시).
    - 파일을 못 찾거나 추출 실패 → **SKIPPED** (reason: 사유).
 4. 각 항목을 `items`에 `category: "structural"`, `storyId`=요소 id, `storyTitle`=요소명(nodeTitle), `scenario`=검증한 의도로 추가.
 
-추출기가 없거나(다른 언어 등) Tactical Diff가 비어 있으면 구조 검증은 생략하고 인수 조건만 판정한다.
+지원하지 않는 언어이거나 Tactical Diff가 비어 있으면 해당 구조 검증만 생략하고 인수 조건은 계속 판정한다.
+Java/Avro는 지원 언어이므로 파일을 찾은 뒤 추출기 실행 없이 `SKIPPED`로 처리하면 안 된다.
 
 ## Rules
 - LLM 판단이므로 100% 정확성 보장 없음. FAIL 시 반드시 `reason`에 근거 제시.
