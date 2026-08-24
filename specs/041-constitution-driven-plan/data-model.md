@@ -103,6 +103,11 @@ DRAFT ──submit [requires confirmed plan]──▶ SUBMITTED
 SUBMITTED → IMPLEMENTING → TESTING → PENDING_ACCEPTANCE → ACCEPTED / DESTROYED  (unchanged; 039)
 ```
 
+**UI transition contract**: when the proposal reaches `PENDING_ACCEPTANCE`, the
+primary footer action opens the `Accept / Destroy` tab. Reopening Sandbox remains
+a secondary recovery action. Navigation never performs Accept automatically;
+the final decision and failure acknowledgement remain inside the acceptance view.
+
 **Submit gate (extends existing rule in `proposals_crud.py`)**: requires `strategicDiff` present **and** `implementationPlan` present **and** `planStale = false`.
 
 ## Staleness rule (FR-018)

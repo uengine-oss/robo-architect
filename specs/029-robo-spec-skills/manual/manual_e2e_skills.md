@@ -228,7 +228,7 @@ and the propose-then-apply discipline are all honoured.
 |---|---|---|
 | US2 (Design-tab badges) | `/robo-tasks` + SSE | requires the watchfiles backend (T028) + frontend ProgressBadge component (T033) — neither implemented |
 | US3 (click-to-open) | `T7 open_file_in_workspace` | tool not registered yet |
-| US5 (`/robo-sync`) | AST extractors + propose/apply | extractor stubs return exit 1 |
+| US5 (`/robo-sync`) | Structural extractors + propose/apply | Historical run used stubs. Current support: TypeScript, Java, Avro; Python remains an explicit skeleton. Java/Avro validation is covered by T056–T059. |
 | US1 drift detection | `T4 compute_drift` | tool not registered yet |
 
 These are the natural next chunks for follow-on `/speckit-implement`

@@ -56,8 +56,23 @@ with the graph as the design oracle.
    python .claude/skills/robo-sync/extractors/python_extract.py <abs-path>
    ```
 
-   Each extractor emits a single JSON document with `{kind, name, fields}`
-   on stdout. Collect one entry per element.
+   ```bash
+   # Java file — fields, methods, emitted event names, nested enum values
+   python .claude/skills/robo-sync/extractors/java_extract.py <abs-path>
+   ```
+
+   ```bash
+   # Avro schema — record/event fields including nullability and defaults
+   python .claude/skills/robo-sync/extractors/avro_extract.py <abs-path>
+   ```
+
+   Each extractor emits a single JSON document with at least
+   `{kind, name, fields}` on stdout. Java additionally emits `methods`,
+   `emittedEvents`, and `enums`; Avro additionally emits `namespace`,
+   `required`, and `hasDefault`. Collect one entry per element. For Java
+   Command/Event verification, compare Tactical names against `methods` and
+   `emittedEvents` rather than treating the containing service class name as
+   the element name.
 
 5. **Call MCP `propose_sync(projectId, bcId, extracts)`.** The
    response carries:

@@ -188,6 +188,7 @@ export const messages = {
   'proposals.detail.submitting': { ko: '제출 중...', en: 'Submitting…' },
   'proposals.detail.submitBtn': { ko: 'Proposal 제출 (SUBMIT)', en: 'Submit Proposal (SUBMIT)' },
   'proposals.detail.openSandbox': { ko: '샌드박스 구현 열기', en: 'Open Sandbox Implementation' },
+  'proposals.detail.openAcceptance': { ko: 'Accept / Destroy로 이동', en: 'Continue to Accept / Destroy' },
   'proposals.detail.loading': { ko: 'Proposal을 불러오는 중...', en: 'Loading Proposal…' },
   'proposals.detail.draftSaveFailed': { ko: 'Diff 저장 실패: {msg}', en: 'Failed to save diff: {msg}' },
   'proposals.detail.noStrategicDesign': { ko: 'Strategic Design 이 없습니다 (Intent 먼저 실행).', en: 'No Strategic Design yet — run Intent first.' },

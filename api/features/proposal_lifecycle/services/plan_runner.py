@@ -244,6 +244,17 @@ def tactical_contract_errors(
 ) -> list[str]:
     """Validate required semantic output shape without inventing missing meaning."""
     errors: list[str] = []
+    aggregates = [item for item in tactical if item.get("nodeLabel") == "Aggregate"]
+    for aggregate in aggregates:
+        title = aggregate.get("nodeTitle") or "<unnamed>"
+        props = aggregate.get("properties")
+        if not isinstance(props, list) or not props:
+            errors.append(f"Aggregate {title} requires non-empty properties")
+            continue
+        if not all(isinstance(prop, dict) and prop.get("name") and prop.get("type") for prop in props):
+            errors.append(f"Aggregate {title} requires typed property objects")
+        if not any(isinstance(prop, dict) and prop.get("isKey") is True for prop in props):
+            errors.append(f"Aggregate {title} requires an isKey property")
     commands = [item for item in tactical if item.get("nodeLabel") == "Command"]
     if not commands:
         return ["tacticalDiff contains no Command"]

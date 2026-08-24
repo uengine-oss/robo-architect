@@ -136,7 +136,7 @@ When the developer clicks a node in the Design tab, the frontend calls a new end
 
 ## R7. `/robo-sync` diff strategy
 
-**Decision**: `/robo-sync` uses **full AST extraction** of the files reached via `[:IMPLEMENTED_IN]` (R5), with **no marker comments** written into source at codegen time. v1 supports two languages — **Python (stdlib `ast`)** and **TypeScript (`@typescript-eslint/typescript-estree` driven by a small Node helper)** — chosen to match the project's own stacks and to keep the v1 parser surface small. The AST extractors are shipped verbatim under `skills/robo-spec/robo-sync/extractors/` and run locally inside the developer's workspace via Claude Code's Bash tool — they do not ship in the backend, so adding a new language later does not require a backend release.
+**Decision**: `/robo-sync` extracts the files reached via `[:IMPLEMENTED_IN]` (R5), with **no marker comments** written into source at codegen time. v1 specified **Python (stdlib `ast`)** and **TypeScript (`@typescript-eslint/typescript-estree` driven by a small Node helper)**. Proposal validation later exposed that generated REPO_PER_SERVICE projects use Java/Spring and Avro, making all Tactical structure checks skip. The supported surface therefore adds a dependency-free conservative **Java source extractor** (fields, methods/parameters, emitted event names, enums) and an **Avro JSON extractor** (record fields, nullability, defaults). Java extraction is deliberately documented as structural source parsing rather than compiler-grade full AST analysis. Extractors live under `skills/robo-spec/robo-sync/extractors/`; Proposal validation passes that directory as `EXTRACTOR_ROOT` so existing sandboxes use the current extractor set.
 
 The flow:
 
@@ -285,4 +285,4 @@ as the default workflow. Apply the **Overrides** in the next section on top.
 
 ## Unresolved items
 
-None. All NEEDS CLARIFICATION markers from the Technical Context have been resolved above. Items deliberately deferred to `/speckit-tasks` (not to research): exact override anchor phrases for each upstream speckit version supported; whether to support a third language (Java) in v1.5 for `/robo-sync`'s AST extraction.
+None. All NEEDS CLARIFICATION markers from the Technical Context have been resolved above. Exact override anchor phrases remain task-level work. The formerly deferred Java question is now resolved by the post-v1 Java/Avro structural extractor extension (T056–T059); compiler-grade Java AST analysis remains a documented future enhancement rather than a prerequisite for Proposal validation.

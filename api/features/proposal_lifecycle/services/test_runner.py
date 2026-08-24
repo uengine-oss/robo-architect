@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import AsyncGenerator
 
 from api.platform.neo4j import get_session
@@ -18,20 +19,95 @@ from api.platform.skill_runner import run_skill_lines, run_skill_once, extract_j
 
 _SKILL_ROOT = "robo-proposals"
 _SKILL_NAME = "robo-proposal-test"
+_EXTRACTOR_ROOT = (Path(__file__).parents[4] / "skills" / "robo-spec" / "robo-sync" / "extractors").resolve()
+
+
+def _json_value(raw, fallback):
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return fallback
+    return raw if raw is not None else fallback
+
+
+def _criteria_from_tactical_diff(raw) -> list[dict]:
+    """Use the Proposal-owned Command GWT as the pre-Accept source of truth."""
+    tactical = _json_value(raw, [])
+    if not isinstance(tactical, list):
+        return []
+    stories = []
+    for item in tactical:
+        if not isinstance(item, dict) or item.get("nodeLabel") != "Command":
+            continue
+        criteria = item.get("gwt")
+        if not isinstance(criteria, list) or not criteria:
+            continue
+        stories.append({
+            "storyId": item.get("nodeId") or item.get("tempId") or item.get("nodeTitle"),
+            "storyTitle": item.get("nodeTitle") or item.get("entityTitle") or "",
+            "criteria": criteria,
+        })
+    return stories
+
+
+def _criteria_from_strategic_diff(raw) -> list[dict]:
+    strategic = _json_value(raw, {})
+    if not isinstance(strategic, dict):
+        return []
+    stories = []
+    for item in strategic.get("userStories") or []:
+        if not isinstance(item, dict):
+            continue
+        criteria = item.get("acceptanceCriteria")
+        if not isinstance(criteria, list) or not criteria:
+            continue
+        stories.append({
+            "storyId": item.get("tempId") or item.get("entityId") or item.get("entityTitle"),
+            "storyTitle": item.get("entityTitle") or "",
+            "criteria": criteria,
+        })
+    return stories
 
 
 def _fetch_acceptance_criteria(proposal_id: str) -> list[dict]:
-    """Proposal의 EFFECT 관계에서 UserStory GWT 인수 조건을 조회한다."""
-    query = """
-    MATCH (p:Proposal {id: $id})-[:EFFECT]->(us:UserStory)
-    WHERE us.acceptanceCriteria IS NOT NULL
-    RETURN us.id AS storyId,
-           COALESCE(us.title, us.name, '') AS storyTitle,
-           us.acceptanceCriteria AS criteria
+    """Load acceptance criteria deterministically before the Proposal is accepted.
+
+    Detailed/Simplified proposals own their pending Command GWT in tacticalDiff.
+    EFFECT relationships may not exist until graph application, so they are only a
+    fallback, followed by Strategic UserStory criteria for non-tactical changes.
     """
     with get_session() as session:
-        result = session.run(query, id=proposal_id)
-        return result.data()
+        proposal = session.run(
+            "MATCH (p:Proposal {id: $id}) "
+            "RETURN p.tacticalDiff AS tacticalDiff, p.strategicDiff AS strategicDiff",
+            id=proposal_id,
+        ).single()
+        if not proposal:
+            return []
+
+        tactical = _criteria_from_tactical_diff(proposal.get("tacticalDiff"))
+        if tactical:
+            return tactical
+
+        graph = session.run(
+            "MATCH (p:Proposal {id: $id})-[:EFFECT]->(us:UserStory) "
+            "WHERE us.acceptanceCriteria IS NOT NULL "
+            "RETURN us.id AS storyId, COALESCE(us.title, us.name, '') AS storyTitle, "
+            "us.acceptanceCriteria AS criteria",
+            id=proposal_id,
+        ).data()
+        if graph:
+            return graph
+        return _criteria_from_strategic_diff(proposal.get("strategicDiff"))
+
+
+def _acceptance_scenario_count(stories: list[dict]) -> int:
+    total = 0
+    for story in stories:
+        criteria = _json_value(story.get("criteria"), [])
+        total += len(criteria) if isinstance(criteria, list) else 1
+    return total
 
 
 def _build_test_prompt(proposal_id: str, stories: list[dict],
@@ -54,6 +130,9 @@ def _build_test_prompt(proposal_id: str, stories: list[dict],
     return (
         f"Proposal ID: {proposal_id}\n"
         f"샌드박스 경로: {worktree_path or '(없음)'}\n\n"
+        f"robo-sync 추출기 경로(EXTRACTOR_ROOT): {_EXTRACTOR_ROOT}\n"
+        "지원 추출기: TypeScript(ts_extract.mjs), Python(python_extract.py), "
+        "Java(java_extract.py), Avro(avro_extract.py)\n\n"
         f"검증할 인수 조건(GWT):\n{json.dumps(scenarios, ensure_ascii=False, indent=2)}\n\n"
         f"Tactical Diff (구조 검증용 — Aggregate/Command/Event/VO 의도된 변경):\n"
         f"{tactical_diff or '[]'}\n\n"
@@ -142,7 +221,7 @@ async def stream_validation(proposal_id: str) -> AsyncGenerator[tuple[str, dict]
         yield "done", {"proposalId": proposal_id, "status": "PENDING_ACCEPTANCE"}
         return
 
-    yield "log_line", {"text": f"인수 조건 {len(stories)}건 + 구조 검증 대상 로드. robo-sync 추출기로 대조합니다…"}
+    yield "log_line", {"text": f"인수 조건 {_acceptance_scenario_count(stories)}건 + 구조 검증 대상 로드. robo-sync 추출기로 대조합니다…"}
 
     human_prompt = _build_test_prompt(proposal_id, stories, worktree_path, tactical_diff)
 

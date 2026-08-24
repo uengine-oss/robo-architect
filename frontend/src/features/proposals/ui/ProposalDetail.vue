@@ -221,10 +221,20 @@
           {{ proceeding ? t('proposals.detail.submitting') : t('proposals.staged.proceedToPlan') }}
         </button>
       </template>
+      <!-- 검증 완료 후의 다음 라이프사이클 단계는 Accept/Destroy다. 탭은 이미
+           노출되어 있었지만 하단 액션이 재구현만 가리켜 이전 단계로 회귀해 보였다. -->
+      <template v-if="canProceedToAcceptance && activeTab !== 'acceptance'">
+        <button @click="activeTab = 'acceptance'" class="btn btn--primary">
+          {{ t('proposals.detail.openAcceptance') }}
+        </button>
+      </template>
       <!-- 이미 sandbox 서브탭이면 이 버튼은 no-op(무반응)이라 숨긴다.
            실제 구현 시작은 sandbox 뷰 안의 "구현하기" 버튼이다. -->
       <template v-if="canImplement && activeTab !== 'sandbox'">
-        <button @click="activeTab = 'sandbox'" class="btn btn--primary">{{ t('proposals.detail.openSandbox') }}</button>
+        <button
+          @click="activeTab = 'sandbox'"
+          :class="['btn', canProceedToAcceptance ? 'btn--secondary' : 'btn--primary']"
+        >{{ t('proposals.detail.openSandbox') }}</button>
       </template>
       <span v-else-if="isSubmitted && implementBlockReason" class="detail-actions__hint" :title="implementBlockReason">⚠ {{ implementBlockReason }}</span>
     </div>
@@ -454,6 +464,10 @@ const canImplement = computed(() => {
   if (proposal.value?.status === 'SUBMITTED') return hasConfirmedPlan.value && !planStale.value
   return true   // IMPLEMENTING/TESTING/… 재구현은 이미 plan 있음
 })
+// 검증 결과 저장이 끝난 상태의 명시적 다음 단계. 이동만 수행하며 Accept 자체는
+// DualMergeView에서 실패 인지 확인과 함께 별도로 실행한다.
+const canProceedToAcceptance = computed(() =>
+  proposal.value?.status === 'PENDING_ACCEPTANCE')
 const implementBlockReason = computed(() => {
   if (proposal.value?.status === 'SUBMITTED' && !hasConfirmedPlan.value) return t('proposals.detail.noPlan')
   if (proposal.value?.status === 'SUBMITTED' && planStale.value) return t('proposals.detail.stalePlan')

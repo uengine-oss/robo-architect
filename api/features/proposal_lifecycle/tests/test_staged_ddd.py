@@ -192,3 +192,57 @@ def test_tactical_min_invariants():
     from api.features.proposal_lifecycle.services.stage_runners.tactical import _has_min_invariants
     assert _has_min_invariants({"aggregates": [{"invariants": ["a", "b"]}]}) is True
     assert _has_min_invariants({"aggregates": [{"invariants": ["a"]}]}) is False
+
+
+def test_tactical_bc_assignment_requires_explicit_define_context():
+    from api.features.proposal_lifecycle.services.stage_runners.tactical import (
+        _has_valid_bc_assignments,
+    )
+    allowed = {"승인", "주문"}
+    assert _has_valid_bc_assignments(
+        {"aggregates": [{"name": "Order", "boundedContextName": "주문"}]}, allowed
+    ) is True
+    assert _has_valid_bc_assignments({"aggregates": [{"name": "Order"}]}, allowed) is False
+    assert _has_valid_bc_assignments(
+        {"aggregates": [{"name": "Order", "boundedContextName": "미등록"}]}, allowed
+    ) is False
+
+
+def test_tactical_aggregate_properties_require_typed_identity():
+    from api.features.proposal_lifecycle.services.stage_runners.tactical import (
+        _has_complete_aggregate_properties,
+    )
+    valid = {"aggregates": [{"properties": [
+        {"name": "orderId", "type": "UUID", "isKey": True},
+        {"name": "status", "type": "String"},
+    ]}]}
+    assert _has_complete_aggregate_properties(valid) is True
+    assert _has_complete_aggregate_properties({"aggregates": [{"properties": []}]}) is False
+    assert _has_complete_aggregate_properties({"aggregates": [{"properties": [
+        {"name": "orderId", "type": "UUID"},
+    ]}]}) is False
+    assert _has_complete_aggregate_properties({"aggregates": [{"properties": [
+        {"name": "orderId", "isKey": True},
+    ]}]}) is False
+
+
+def test_staged_consolidation_never_falls_back_to_first_bc():
+    from api.features.proposal_lifecycle.services.staged_consolidate import _build_tactical
+
+    arts = {
+        "DEFINE": {"contexts": [{"name": "승인"}, {"name": "주문"}]},
+        "TACTICAL": {"aggregates": [{"name": "Order"}]},
+    }
+    with pytest.raises(ValueError, match="missing boundedContextName"):
+        _build_tactical(arts)
+
+
+def test_staged_consolidation_rejects_unknown_explicit_bc():
+    from api.features.proposal_lifecycle.services.staged_consolidate import _build_tactical
+
+    arts = {
+        "DEFINE": {"contexts": [{"name": "승인"}, {"name": "주문"}]},
+        "TACTICAL": {"aggregates": [{"name": "Order", "boundedContextName": "결제"}]},
+    }
+    with pytest.raises(ValueError, match="unknown Bounded Context"):
+        _build_tactical(arts)

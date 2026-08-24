@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from api.platform.observability.smart_logger import SmartLogger
+from api.platform.skill_execution_strategy import (
+    OpenAICompatibleSkillStrategy,
+    skill_runner_provider,
+)
 
 _PROJECT_ROOT = Path(__file__).parents[2]
 
@@ -244,13 +248,34 @@ async def run_skill_once(
     스킬을 단회 실행하고 stdout 전체를 문자열로 반환한다.
     JSON 블록 추출이 필요한 경우 호출자가 직접 파싱.
     """
-    claude_bin = _resolve_claude_bin()
     sf = skill_path(skill_root, skill_name)
 
     if not sf.exists():
         SmartLogger.log("ERROR", f"Skill not found: {sf}",
                         category="platform.skill_runner.not_found", params={"skill": skill_name})
         return None
+
+    if skill_runner_provider() == "openai_compatible":
+        strategy = OpenAICompatibleSkillStrategy(
+            project_root=_PROJECT_ROOT,
+            cwd=_PROJECT_ROOT,
+            add_dirs=add_dirs,
+        )
+        SmartLogger.log("INFO", f"Invoking OpenAI-compatible skill: {skill_name}",
+                        category="platform.skill_runner.start",
+                        params={"skill": skill_name, "provider": "openai_compatible"})
+        try:
+            return (await strategy.run(
+                sf.read_text(encoding="utf-8"), human_prompt
+            )).strip()
+        except Exception as e:
+            SmartLogger.log("ERROR", f"Skill {skill_name} error: {e}",
+                            category="platform.skill_runner.error",
+                            params={"skill": skill_name, "error": str(e),
+                                    "provider": "openai_compatible"})
+            return None
+
+    claude_bin = _resolve_claude_bin()
 
     cmd = [
         claude_bin, "-p",
@@ -314,7 +339,6 @@ async def run_skill_lines(
     --output-format stream-json 으로 실시간 tool-use 이벤트를 포함해 스트리밍.
     protocol lines (TASK_START:, TASK_DONE:, PHASE:) + TOOL:ToolName:path 형식으로 yield.
     """
-    claude_bin = _resolve_claude_bin()
     sf = skill_path(skill_root, skill_name)
 
     if not sf.exists():
@@ -322,6 +346,33 @@ async def run_skill_lines(
                         category="platform.skill_runner.not_found", params={"skill": skill_name})
         yield "PHASE:error"
         return
+
+    if skill_runner_provider() == "openai_compatible":
+        strategy = OpenAICompatibleSkillStrategy(
+            project_root=_PROJECT_ROOT,
+            cwd=Path(cwd).resolve() if cwd else _PROJECT_ROOT,
+            add_dirs=add_dirs,
+        )
+        SmartLogger.log("INFO", f"Streaming OpenAI-compatible skill: {skill_name}",
+                        category="platform.skill_runner.stream_start",
+                        params={"skill": skill_name, "provider": "openai_compatible"})
+        try:
+            async for line in strategy.lines(
+                sf.read_text(encoding="utf-8"), human_prompt
+            ):
+                yield line
+        except (GeneratorExit, asyncio.CancelledError):
+            raise
+        except Exception as e:
+            SmartLogger.log("ERROR", f"Skill stream error: {skill_name}: {type(e).__name__}: {e}",
+                            category="platform.skill_runner.stream_error",
+                            params={"skill": skill_name, "error": str(e),
+                                    "errorType": type(e).__name__,
+                                    "provider": "openai_compatible"})
+            yield "PHASE:error"
+        return
+
+    claude_bin = _resolve_claude_bin()
 
     cmd = [
         claude_bin, "-p",

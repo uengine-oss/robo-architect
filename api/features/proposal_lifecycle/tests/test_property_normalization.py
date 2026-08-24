@@ -120,7 +120,10 @@ def test_non_list_input_is_a_noop():
 
 # ── property_shape_warnings — 계약 형태 경고(실패 아님) ─────────────────
 
-from api.features.proposal_lifecycle.services.plan_runner import property_shape_warnings
+from api.features.proposal_lifecycle.services.plan_runner import (
+    property_shape_warnings,
+    tactical_contract_errors,
+)
 
 
 def _cmd(title, props):
@@ -171,3 +174,17 @@ def test_labels_without_domain_properties_are_ignored():
 def test_warnings_do_not_raise_on_odd_input():
     assert property_shape_warnings([]) == []
     assert len(property_shape_warnings([_cmd("X", None)])) == 1
+
+
+def test_plan_contract_blocks_empty_aggregate_properties():
+    errors = tactical_contract_errors([
+        {"nodeLabel": "Aggregate", "nodeTitle": "Order", "properties": []},
+        {
+            "nodeLabel": "Command", "nodeTitle": "PlaceOrder",
+            "fields": {"inputSchema": {}}, "properties": [], "userStoryRefs": ["US-1"],
+            "gwt": [{"scenario": "ok", "given": {"name": "g", "fieldValues": {}},
+                     "when": {"name": "w", "fieldValues": {}},
+                     "then": {"name": "t", "fieldValues": {}}}],
+        },
+    ])
+    assert "Aggregate Order requires non-empty properties" in errors

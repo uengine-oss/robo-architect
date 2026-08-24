@@ -131,7 +131,9 @@ def _match_context(text: str, contexts: list[dict]) -> str | None:
     for name in names:
         if name and ("주문" in text and "주문" in name):
             return name
-    return names[0] if names else None
+    # Never guess the first BC. A wrong guess silently places an entire
+    # tactical model under whichever Define context happens to be first.
+    return None
 
 
 def _build_strategic(state: dict, arts: dict) -> dict:
@@ -275,6 +277,7 @@ def _build_tactical(arts: dict) -> list[dict]:
             invariants=agg.get("invariants", []),
             reason=f"{bc_name or '미지정 BC'}의 Aggregate 생성",
             legacy_refs=agg_refs,
+            properties=agg.get("properties"),
         ))
 
         for cmd in agg.get("handledCommands", []) or []:
@@ -323,21 +326,23 @@ def _build_tactical(arts: dict) -> list[dict]:
 
 def _aggregate_context_map(tactical_art: dict, contexts: list[dict]) -> dict[str, str]:
     by_name = {}
-    context_names = [c.get("name") for c in contexts if c.get("name")]
+    context_names = {c.get("name") for c in contexts if c.get("name")}
     for agg in tactical_art.get("aggregates", []) or []:
         name = agg.get("name")
         if not name:
             continue
         explicit = agg.get("boundedContextName") or agg.get("bcName") or agg.get("boundedContext") or agg.get("contextName")
         if explicit:
+            if explicit not in context_names:
+                raise ValueError(
+                    f"Tactical Aggregate {name!r} references unknown Bounded Context {explicit!r}"
+                )
             by_name[name] = explicit
             agg.setdefault("bcName", explicit)
             continue
-        matched = _match_context(name, contexts)
-        if not matched and len(context_names) == 1:
-            matched = context_names[0]
-        by_name[name] = matched or "미지정 BC"
-        agg.setdefault("bcName", by_name[name])
+        raise ValueError(
+            f"Tactical Aggregate {name!r} is missing boundedContextName/bcName"
+        )
     return by_name
 
 
@@ -392,6 +397,14 @@ def _validate_tactical(items: list[dict]) -> None:
                 raise ValueError(f"tacticalDiff[{idx}] Command missing userStoryRefs")
             if not item.get("gwt"):
                 raise ValueError(f"tacticalDiff[{idx}] Command missing gwt")
+        if item.get("nodeLabel") == "Aggregate":
+            props = item.get("properties")
+            if not isinstance(props, list) or not props:
+                raise ValueError(f"tacticalDiff[{idx}] Aggregate missing properties")
+            if not all(isinstance(p, dict) and p.get("name") and p.get("type") for p in props):
+                raise ValueError(f"tacticalDiff[{idx}] Aggregate has untyped properties")
+            if not any(p.get("isKey") is True for p in props):
+                raise ValueError(f"tacticalDiff[{idx}] Aggregate missing isKey property")
 
 
 def consolidate(proposal_id: str) -> Optional[dict]:
