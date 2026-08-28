@@ -8,17 +8,16 @@ and good enough for 한↔영 short-span matching.
 from __future__ import annotations
 
 import math
-import os
 from typing import Iterable
 
-_DEFAULT_MODEL = "text-embedding-3-small"
+from api.platform.embeddings import get_embeddings
 
 
 def _make_embedder():
-    from langchain_openai import OpenAIEmbeddings
-
-    model = os.getenv("HYBRID_EMBEDDING_MODEL", _DEFAULT_MODEL)
-    return OpenAIEmbeddings(model=model)
+    # 임베딩 endpoint/key 는 Chat 라우팅과 분리해서 해석한다 —
+    # 사내 게이트웨이가 임베딩을 제공하지 않는 경우가 있다.
+    # (모델명은 EMBEDDING_MODEL / HYBRID_EMBEDDING_MODEL 로 지정)
+    return get_embeddings()
 
 
 class EmbeddingCache:

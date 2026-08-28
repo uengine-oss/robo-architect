@@ -316,6 +316,10 @@ app.include_router(user_story_router)
 from api.features.deliverables.router import router as deliverables_router
 app.include_router(deliverables_router)
 
+# Include enterprise auth (SSO) router
+from api.features.auth.router import router as auth_router
+app.include_router(auth_router)
+
 
 """
 Feature routers (business capabilities)

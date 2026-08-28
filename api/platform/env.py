@@ -39,6 +39,14 @@ def env_first(keys: Iterable[str], default: str | None = None, *, strip: bool = 
     return default
 
 
+def env_list(key: str, default: list[str] | None = None, *, sep: str = ",") -> list[str]:
+    """Read a separator-delimited environment variable as a list of non-empty strings."""
+    raw = env_str(key, default=None)
+    if raw is None:
+        return list(default or [])
+    return [item.strip() for item in raw.split(sep) if item.strip()]
+
+
 def env_flag(key: str, default: bool = False) -> bool:
     """Read an environment variable as a boolean flag."""
     val = (os.getenv(key) or "").strip().lower()

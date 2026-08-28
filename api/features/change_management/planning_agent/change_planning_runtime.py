@@ -24,10 +24,14 @@ def get_llm():
 
 
 def get_embeddings():
-    """Get the embeddings model."""
-    from langchain_openai import OpenAIEmbeddings
+    """Get the embeddings model.
 
-    return OpenAIEmbeddings(model="text-embedding-3-small")
+    임베딩 endpoint/key 는 Chat 라우팅과 분리해서 해석한다 — 사내 게이트웨이가
+    임베딩을 제공하지 않는 경우가 있다.
+    """
+    from api.platform.embeddings import get_embeddings as _platform_get_embeddings
+
+    return _platform_get_embeddings()
 
 
 def get_neo4j_driver():
