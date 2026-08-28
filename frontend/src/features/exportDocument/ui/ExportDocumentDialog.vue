@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import ExportDocumentTemplate from './ExportDocumentTemplate.vue'
 
 const emit = defineEmits(['close'])
@@ -9,6 +9,11 @@ const isExporting = ref(false)
 const exportStatus = ref('')
 const documentTemplateRef = ref(null)
 const showExportMenu = ref(false)
+
+// Session 스냅샷이 있을 때만 Aggregate JSON 내보내기를 노출한다.
+const hasAggregateExport = computed(
+  () => !!documentTemplateRef.value?.aggregateExport?.aggregates?.length
+)
 
 function show() {
   isOpen.value = true
@@ -49,6 +54,8 @@ function buildPagesHtml(scrollArea) {
 }
 
 // Common print/export CSS for all formats
+// [기업 납품 설정] PDF(인쇄) 경로 전용 스타일. 해당 경로를 비활성화하는 동안 사용처가
+// 없지만, 복구를 위해 삭제하지 않고 남겨 둔다.
 const EXPORT_CSS = `
   * { box-sizing: border-box; }
   body { background: #fff; margin: 0; padding: 0; font-family: 'Pretendard', 'Malgun Gothic', -apple-system, sans-serif; color: #1a1a2e; line-height: 1.6; }
@@ -171,37 +178,38 @@ const EXPORT_CSS = `
   @page { size: A4; margin: 16mm 14mm; }
 `
 
-// ── PDF: browser print dialog ──
-async function exportToPDF() {
-  if (isExporting.value) return
-  isExporting.value = true
-  exportStatus.value = 'PDF 생성 중...'
-  showExportMenu.value = false
-
-  try {
-    const scrollArea = getScrollArea()
-    if (!scrollArea) throw new Error('내용을 찾을 수 없습니다.')
-
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) throw new Error('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.')
-
-    const pagesHtml = buildPagesHtml(scrollArea)
-
-    printWindow.document.write(`<!DOCTYPE html>
-<html><head><title>설계 산출물</title><style>${EXPORT_CSS}</style></head>
-<body>${pagesHtml}</body></html>`)
-    printWindow.document.close()
-    printWindow.onload = () => {
-      setTimeout(() => { printWindow.print(); printWindow.close() }, 800)
-    }
-    showSnackbar('인쇄 대화 상자에서 PDF로 저장하세요.', 'success')
-  } catch (error) {
-    showSnackbar('PDF 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
-  } finally {
-    isExporting.value = false
-    exportStatus.value = ''
-  }
-}
+// [기업 납품 설정] 산출물 내보내기는 DOCX 만 사용한다. 아래 경로는 삭제하지 않고 비활성화해 둔다.
+// // ── PDF: browser print dialog ──
+// async function exportToPDF() {
+//   if (isExporting.value) return
+//   isExporting.value = true
+//   exportStatus.value = 'PDF 생성 중...'
+//   showExportMenu.value = false
+//
+//   try {
+//     const scrollArea = getScrollArea()
+//     if (!scrollArea) throw new Error('내용을 찾을 수 없습니다.')
+//
+//     const printWindow = window.open('', '_blank')
+//     if (!printWindow) throw new Error('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.')
+//
+//     const pagesHtml = buildPagesHtml(scrollArea)
+//
+//     printWindow.document.write(`<!DOCTYPE html>
+// <html><head><title>설계 산출물</title><style>${EXPORT_CSS}</style></head>
+// <body>${pagesHtml}</body></html>`)
+//     printWindow.document.close()
+//     printWindow.onload = () => {
+//       setTimeout(() => { printWindow.print(); printWindow.close() }, 800)
+//     }
+//     showSnackbar('인쇄 대화 상자에서 PDF로 저장하세요.', 'success')
+//   } catch (error) {
+//     showSnackbar('PDF 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
+//   } finally {
+//     isExporting.value = false
+//     exportStatus.value = ''
+//   }
+// }
 
 // ── 템플릿 데이터 + 컨테이너 수집 ──
 function getExportPayload() {
@@ -216,14 +224,70 @@ function getExportPayload() {
       crossBCPolicies: tmpl.crossBCPolicies || [],
       sectionNumbers: tmpl.sectionNumbers || {},
       selectedSections: tmpl.selectedSections || {},
+      // Session 스냅샷 기반 섹션 (Value Stream / 추적성 / 원문 근거).
+      // 세션을 특정할 수 없으면 빈 값 → 해당 섹션은 문서에서 생략된다.
+      valueStreamProcesses: tmpl.valueStreamProcesses || [],
+      glossaryTerms: tmpl.glossaryTerms || [],
+      traceGroups: tmpl.traceGroups || [],
+      traceInferred: tmpl.traceInferred || [],
+      traceUnmapped: tmpl.traceUnmapped || [],
+      traceSummary: tmpl.traceSummary || null,
+      apiSummary: tmpl.apiSummary || null,
+      apiConvention: tmpl.apiConvention || '',
       helpers: {
         bcName: tmpl.bcName, bcTree: tmpl.bcTree,
         getCommandsFromTree: tmpl.getCommandsFromTree, getReadModelsFromTree: tmpl.getReadModelsFromTree,
         allCmdsForCtx: tmpl.allCmdsForCtx, allEvtsForCtx: tmpl.allEvtsForCtx,
         resolveNodeName: tmpl.resolveNodeName, parseJsonFields: tmpl.parseJsonFields,
+        traceTypeLabel: tmpl.traceTypeLabel, storySources: tmpl.storySources,
+        storySourceTask: tmpl.storySourceTask, apiForCtx: tmpl.apiForCtx,
       },
     },
     container: document.querySelector('.export-doc-scroll-area'),
+  }
+}
+
+// ── DOCX 정본화 (ECM 등록 호환) ──
+// 브라우저에서 만든 docx 는 [Content_Types].xml 이 첫 엔트리가 아니고 디렉토리
+// 엔트리가 있어, 엄격한 콘텐츠 검출기가 application/zip 으로 판정한다. ECM 은 이걸
+// "Word 문서가 아니다"라며 등록을 거부한다. 백엔드에서 LibreOffice 로 다시 저장하면
+// Office 표준 패키지가 된다.
+//
+// 정본화에 실패해도 다운로드 자체는 되게 한다 — 원본으로 폴백하고, ECM 등록이
+// 거부될 수 있다는 것을 사용자에게 알린다.
+async function normalizeAndSaveDocx(blob, ext, baseName) {
+  const fileName = `${baseName}-${new Date().toISOString().split('T')[0]}.${ext}`
+  try {
+    exportStatus.value = '문서 정본화 중...'
+    const form = new FormData()
+    form.append('file', blob, fileName)
+    form.append('filename', fileName)
+
+    const res = await fetch('/api/deliverables/docx-normalization/normalize', { method: 'POST', body: form })
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try { detail = (await res.json())?.detail || detail } catch (_) {}
+      throw new Error(detail)
+    }
+
+    const normalized = await res.blob()
+    if (!normalized || normalized.size === 0) throw new Error('정본화 결과가 비어 있습니다.')
+
+    downloadBlob(normalized, ext, baseName)
+
+    // 변환 중 표·이미지·본문이 유실됐는지 백엔드가 비교해 헤더로 알려준다.
+    if (res.headers.get('X-Docx-Lossless') === 'false') {
+      const losses = res.headers.get('X-Docx-Losses') || ''
+      showSnackbar(`정본화 중 내용 변화가 감지됐습니다: ${losses}`, 'error')
+    } else {
+      showSnackbar('문서가 생성되었습니다. (ECM 등록용 정본화 완료)', 'success')
+    }
+    return true
+  } catch (error) {
+    console.warn('[ExportDoc] docx 정본화 실패 — 원본으로 폴백:', error)
+    downloadBlob(blob, ext, baseName)
+    showSnackbar('정본화를 건너뛰고 원본으로 저장했습니다. ECM 등록이 거부될 수 있습니다.', 'error')
+    return false
   }
 }
 
@@ -237,10 +301,10 @@ async function exportToWord() {
   try {
     const { data, container } = getExportPayload()
     const { exportToWord: doExport } = await import('./exporters/captureExporter')
-    await doExport(data, container, (done, total) => {
+    const blob = await doExport(data, container, (done, total) => {
       exportStatus.value = `Word 생성 중... (${Math.round(done / total * 100)}%)`
     })
-    showSnackbar('Word 문서가 생성되었습니다.', 'success')
+    await normalizeAndSaveDocx(blob, 'docx', '설계산출물')
   } catch (error) {
     console.error('[ExportDoc] Word error:', error)
     showSnackbar('Word 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
@@ -250,65 +314,103 @@ async function exportToWord() {
   }
 }
 
-// ── PowerPoint (.pptx) — 네이티브 pptx (수정 가능) + 다이어그램만 이미지 ──
-async function exportToPPT() {
-  if (isExporting.value) return
-  isExporting.value = true
-  exportStatus.value = 'PowerPoint 생성 중...'
-  showExportMenu.value = false
+// [기업 납품 설정] 산출물 내보내기는 DOCX 만 사용한다. 아래 경로는 삭제하지 않고 비활성화해 둔다.
+// // ── PowerPoint (.pptx) — 네이티브 pptx (수정 가능) + 다이어그램만 이미지 ──
+// async function exportToPPT() {
+//   if (isExporting.value) return
+//   isExporting.value = true
+//   exportStatus.value = 'PowerPoint 생성 중...'
+//   showExportMenu.value = false
+//
+//   try {
+//     const { data, container } = getExportPayload()
+//     const { exportToPPT: doExport } = await import('./exporters/captureExporter')
+//     await doExport(data, container, (done, total) => {
+//       exportStatus.value = `PPT 생성 중... (${Math.round(done / total * 100)}%)`
+//     })
+//     showSnackbar('PowerPoint가 생성되었습니다.', 'success')
+//   } catch (error) {
+//     console.error('[ExportDoc] PPT error:', error)
+//     showSnackbar('PowerPoint 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
+//   } finally {
+//     isExporting.value = false
+//     exportStatus.value = ''
+//   }
+// }
 
-  try {
-    const { data, container } = getExportPayload()
-    const { exportToPPT: doExport } = await import('./exporters/captureExporter')
-    await doExport(data, container, (done, total) => {
-      exportStatus.value = `PPT 생성 중... (${Math.round(done / total * 100)}%)`
-    })
-    showSnackbar('PowerPoint가 생성되었습니다.', 'success')
-  } catch (error) {
-    console.error('[ExportDoc] PPT error:', error)
-    showSnackbar('PowerPoint 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
-  } finally {
-    isExporting.value = false
-    exportStatus.value = ''
+// [기업 납품 설정] 산출물 내보내기는 DOCX 만 사용한다. 아래 경로는 삭제하지 않고 비활성화해 둔다.
+// // ── HTML 정책서 (Feature 023): self-contained policy-doc HTML from backend ──
+// async function exportToHTMLPolicy() {
+//   if (isExporting.value) return
+//   isExporting.value = true
+//   exportStatus.value = '정책서(HTML) 생성 중...'
+//   showExportMenu.value = false
+//
+//   try {
+//     const response = await fetch('/api/prd/html-policy', {
+//       method: 'POST',
+//       headers: { 'Content-Type': 'application/json' },
+//       body: JSON.stringify({ template_id: 'policy-doc-full' }),
+//     })
+//     if (!response.ok) {
+//       let msg = `HTTP ${response.status}`
+//       try {
+//         const errBody = await response.json()
+//         if (errBody?.detail?.message) msg = errBody.detail.message
+//         else if (errBody?.detail?.code) msg = errBody.detail.code
+//       } catch (_) {}
+//       throw new Error(msg)
+//     }
+//     const htmlText = await response.text()
+//     const blob = new Blob([htmlText], { type: 'text/html;charset=utf-8' })
+//     const url = URL.createObjectURL(blob)
+//     const win = window.open(url, '_blank')
+//     if (!win) {
+//       downloadBlob(blob, 'html')
+//       showSnackbar('팝업이 차단되어 파일로 저장했습니다.', 'success')
+//     } else {
+//       setTimeout(() => URL.revokeObjectURL(url), 60_000)
+//       showSnackbar('정책서(HTML)가 새 탭에서 열렸습니다.', 'success')
+//     }
+//   } catch (error) {
+//     console.error('[ExportDoc] HTML policy error:', error)
+//     showSnackbar('정책서 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
+//   } finally {
+//     isExporting.value = false
+//     exportStatus.value = ''
+//   }
+// }
+
+// ── Aggregate 내보내기 (기준: local-msaez CodeGenerator "Export Aggregates") ──
+// 기준 구현과 동일하게 Aggregate JSON 을 DOCX 본문에 텍스트로만 담는다.
+// 서식 없이 한 줄 = 한 문단, 고정폭 글꼴이라 들여쓰기가 그대로 유지된다.
+async function exportAggregateDocx() {
+  if (isExporting.value) return
+  const tmpl = documentTemplateRef.value
+  const aggregates = tmpl?.aggregateExport?.aggregates
+  if (!aggregates?.length) {
+    showSnackbar('내보낼 Aggregate가 없습니다. 세션이 선택된 상태인지 확인하세요.', 'error')
+    return
   }
-}
 
-// ── HTML 정책서 (Feature 023): self-contained policy-doc HTML from backend ──
-async function exportToHTMLPolicy() {
-  if (isExporting.value) return
   isExporting.value = true
-  exportStatus.value = '정책서(HTML) 생성 중...'
+  exportStatus.value = 'Aggregate 문서 생성 중...'
   showExportMenu.value = false
 
   try {
-    const response = await fetch('/api/prd/html-policy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_id: 'policy-doc-full' }),
-    })
-    if (!response.ok) {
-      let msg = `HTTP ${response.status}`
-      try {
-        const errBody = await response.json()
-        if (errBody?.detail?.message) msg = errBody.detail.message
-        else if (errBody?.detail?.code) msg = errBody.detail.code
-      } catch (_) {}
-      throw new Error(msg)
-    }
-    const htmlText = await response.text()
-    const blob = new Blob([htmlText], { type: 'text/html;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const win = window.open(url, '_blank')
-    if (!win) {
-      downloadBlob(blob, 'html')
-      showSnackbar('팝업이 차단되어 파일로 저장했습니다.', 'success')
-    } else {
-      setTimeout(() => URL.revokeObjectURL(url), 60_000)
-      showSnackbar('정책서(HTML)가 새 탭에서 열렸습니다.', 'success')
-    }
+    const { Document, Packer, Paragraph, TextRun } = await import('docx')
+    const jsonString = JSON.stringify(aggregates, null, 2)
+    const paragraphs = jsonString.split('\n').map(line => new Paragraph({
+      children: [new TextRun({ text: line, font: 'Courier New', size: 16 })],
+      spacing: { after: 0 },
+    }))
+
+    const doc = new Document({ sections: [{ properties: {}, children: paragraphs }] })
+    const blob = await Packer.toBlob(doc)
+    await normalizeAndSaveDocx(blob, 'docx', 'Aggregate정의서')
   } catch (error) {
-    console.error('[ExportDoc] HTML policy error:', error)
-    showSnackbar('정책서 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
+    console.error('[ExportDoc] Aggregate docx error:', error)
+    showSnackbar('Aggregate 문서 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
   } finally {
     isExporting.value = false
     exportStatus.value = ''
@@ -316,12 +418,12 @@ async function exportToHTMLPolicy() {
 }
 
 // ── Download helper ──
-function downloadBlob(blob, ext) {
+function downloadBlob(blob, ext, baseName = '설계산출물') {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
   const timestamp = new Date().toISOString().split('T')[0]
-  a.download = `설계산출물-${timestamp}.${ext}`
+  a.download = `${baseName}-${timestamp}.${ext}`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -376,13 +478,11 @@ defineExpose({ show })
               </svg>
             </button>
             <div v-if="showExportMenu" class="export-dropdown__menu">
+              <!-- [기업 납품 설정] 산출물 내보내기는 DOCX 만 사용한다. 삭제하지 않고 비활성화해 둔다.
               <button class="export-dropdown__item" @click="exportToPDF">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                  <polyline points="14 2 14 8 20 8"></polyline>
-                </svg>
                 PDF로 내보내기
               </button>
+              -->
               <button class="export-dropdown__item" @click="exportToWord">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -392,21 +492,25 @@ defineExpose({ show })
                 </svg>
                 Word (.docx) 로 내보내기
               </button>
+              <!-- [기업 납품 설정] 비활성화 — DOCX 만 사용
               <button class="export-dropdown__item" @click="exportToPPT">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                  <line x1="8" y1="21" x2="16" y2="21"></line>
-                  <line x1="12" y1="17" x2="12" y2="21"></line>
-                </svg>
                 PowerPoint (.pptx) 로 내보내기
               </button>
-              <button class="export-dropdown__item" @click="exportToHTMLPolicy">
+              -->
+              <button v-if="hasAggregateExport" class="export-dropdown__item" @click="exportAggregateDocx">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="16 18 22 12 16 6"></polyline>
-                  <polyline points="8 6 2 12 8 18"></polyline>
+                  <polyline points="8 3 4 7 8 11"></polyline>
+                  <polyline points="16 13 20 17 16 21"></polyline>
+                  <line x1="4" y1="7" x2="20" y2="7"></line>
+                  <line x1="4" y1="17" x2="20" y2="17"></line>
                 </svg>
+                Aggregate (.docx) 로 내보내기
+              </button>
+              <!-- [기업 납품 설정] 비활성화 — DOCX 만 사용
+              <button class="export-dropdown__item" @click="exportToHTMLPolicy">
                 정책서 (.html) 로 내보내기
               </button>
+              -->
             </div>
           </div>
         </header>

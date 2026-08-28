@@ -71,7 +71,7 @@ def build_context_full_tree(context_id: str) -> dict[str, Any] | None:
     """
     cmd_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
-    RETURN agg.id as aggregateId, cmd {.id, .name, .displayName, .actor, .category, .inputSchema} as command
+    RETURN agg.id as aggregateId, cmd {.id, .name, .displayName, .description, .actor, .category, .inputSchema} as command
     ORDER BY cmd.name
     """
     evt_query = """

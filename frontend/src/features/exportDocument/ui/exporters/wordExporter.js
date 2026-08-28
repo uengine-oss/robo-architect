@@ -102,8 +102,8 @@ function domainTag(type) {
 // ════════════════════════════════════════
 //  MAIN EXPORT
 // ════════════════════════════════════════
-export async function exportToWord({ allContexts, fullTrees, sortedContexts, allUserStories, crossBCPolicies, sectionNumbers, selectedSections, helpers }) {
-  const { bcName, bcTree, getCommandsFromTree, getReadModelsFromTree, allCmdsForCtx, allEvtsForCtx, resolveNodeName } = helpers
+export async function exportToWord({ allContexts, fullTrees, sortedContexts, allUserStories, crossBCPolicies, sectionNumbers, selectedSections, helpers, valueStreamProcesses = [], glossaryTerms = [], traceGroups = [], traceInferred = [], traceUnmapped = [], traceSummary = null }) {
+  const { bcName, bcTree, getCommandsFromTree, getReadModelsFromTree, allCmdsForCtx, allEvtsForCtx, resolveNodeName, traceTypeLabel, storySources, storySourceTask } = helpers
   const children = []
   const sn = sectionNumbers // shorthand
 
@@ -119,6 +119,10 @@ export async function exportToWord({ allContexts, fullTrees, sortedContexts, all
   children.push(sectionTitle('목 차'))
   const toc = []
   if (selectedSections.userStories) toc.push(`${sn.userStories}. 사용자 스토리 종합`)
+  if (selectedSections.valueStream && valueStreamProcesses.length) {
+    toc.push(`${sn.valueStream}. 밸류 스트림 분석`)
+    valueStreamProcesses.forEach((proc, i) => toc.push(`  ${sn.valueStream}-${i + 1}. ${proc.name}`))
+  }
   if (selectedSections.boundedContext) {
     toc.push(`${sn.boundedContext}. Bounded Context 정의`)
     sortedContexts.forEach((ctx, i) => toc.push(`  ${sn.boundedContext}-${i + 1}. ${bcName(ctx)}`))
@@ -127,6 +131,7 @@ export async function exportToWord({ allContexts, fullTrees, sortedContexts, all
   if (selectedSections.modelOverview) toc.push(`${sn.modelOverview}. 이벤트 스토밍 모델 전반 정보`)
   if (selectedSections.apiSpecification) toc.push(`${sn.apiSpecification}. API 명세`)
   if (selectedSections.aggregateDetail) toc.push(`${sn.aggregateDetail}. Aggregate 상세`)
+  if (selectedSections.traceabilityMatrix && traceSummary) toc.push(`${sn.traceabilityMatrix}. 추적성 매트릭스`)
   toc.forEach(item => children.push(p(item, { size: 20, bold: !item.startsWith(' '), after: 40, indent: item.startsWith(' ') ? { left: 400 } : undefined })))
   children.push(pageBreak())
 
@@ -144,7 +149,67 @@ export async function exportToWord({ allContexts, fullTrees, sortedContexts, all
     } else {
       children.push(desc('등록된 사용자 스토리가 없습니다.'))
     }
+
+    // 원문 근거 — 정규화된 스토리가 문서 어디에서 나왔는지 제시한다.
+    const sourceRows = []
+    for (const st of allUserStories) {
+      const sources = storySources ? storySources(st.id) : []
+      const task = storySourceTask ? storySourceTask(st.id) : null
+      sources.forEach((src, i) => sourceRows.push([
+        i === 0 ? st.id : '',
+        i === 0 ? (task?.name || '-') : '',
+        [src.page ? `p.${src.page}` : '', src.heading || ''].filter(Boolean).join(' / ') || '-',
+        src.text || '-',
+      ]))
+    }
+    if (sourceRows.length) {
+      children.push(pageBreak())
+      children.push(sectionTitle(`${sn.userStories}-1. 사용자 스토리 원문 근거`))
+      children.push(desc('각 사용자 스토리가 업로드 문서의 어느 부분에서 도출됐는지 보여줍니다.'))
+      children.push(table(['US ID', '업무 Task', '문서 위치', '원문 근거'], sourceRows, [900, 1900, 1500, 4700]))
+    }
     children.push(pageBreak())
+  }
+
+  // ══ 밸류 스트림 분석 ══
+  if (selectedSections.valueStream && valueStreamProcesses.length) {
+    children.push(...sectionCover(sn.valueStream, '밸류 스트림 분석', '업로드 문서에서 도출한 업무 프로세스를 Actor 흐름으로 정리하고, 각 단계가 어떤 사용자 스토리로 승격됐는지 연결합니다.'))
+
+    valueStreamProcesses.forEach((proc, pi) => {
+      children.push(sectionTitle(`${sn.valueStream}-${pi + 1}. ${proc.name}`))
+      if (proc.description) children.push(desc(proc.description))
+      if (proc.actors?.length) children.push(desc(`참여 Actor · ${proc.actors.join(', ')}`))
+
+      const path = proc.linearPaths?.[0] || []
+      if (path.length) {
+        children.push(p(
+          path.map(step => `${step.displayName}${step.actor ? ` (${step.actor})` : ''}`).join(' → '),
+          { size: 18, color: COLOR.gray, after: 120 }
+        ))
+        children.push(table(
+          ['순서', 'Task', 'Actor', '설명', '승격된 User Story'],
+          path.map((step, si) => [
+            si + 1,
+            step.displayName || '-',
+            step.actor || '-',
+            [step.description, step.sourceSection].filter(Boolean).join('\n') || '-',
+            step.promotedTo?.length ? step.promotedTo.map(us => us.id).join(', ') : '미승격',
+          ]),
+          [700, 2100, 1400, 3400, 1400]
+        ))
+      }
+      children.push(pageBreak())
+    })
+
+    if (glossaryTerms.length) {
+      children.push(sectionTitle(`${sn.valueStream}-${valueStreamProcesses.length + 1}. 도메인 용어집`))
+      children.push(table(
+        ['용어', '설명'],
+        glossaryTerms.map(g => [g.term || g.name || '-', g.definition || g.description || '-']),
+        [2200, 6800]
+      ))
+      children.push(pageBreak())
+    }
   }
 
   // ══ 2. Bounded Context ══
@@ -346,6 +411,68 @@ export async function exportToWord({ allContexts, fullTrees, sortedContexts, all
         children.push(pageBreak())
       })
     })
+  }
+
+  // ══ 추적성 매트릭스 ══
+  if (selectedSections.traceabilityMatrix && traceSummary) {
+    children.push(...sectionCover(sn.traceabilityMatrix, '추적성 매트릭스', '사용자 스토리별로 매핑된 이벤트 스토밍 요소를 보여줍니다.'))
+
+    children.push(sectionTitle(`${sn.traceabilityMatrix}. 추적성 요약`))
+    children.push(table(
+      ['전체 요소', '직접 매핑', '추론 매핑', '미매핑', '매핑된 US', '직접 매핑률'],
+      [[
+        traceSummary.elements, traceSummary.directElements, traceSummary.inferredElements,
+        traceSummary.unmappedElements, traceSummary.mappedUserStories,
+        `${(traceSummary.directRatio * 100).toFixed(1)}%`,
+      ]],
+      [1500, 1500, 1500, 1500, 1500, 1500]
+    ))
+    children.push(pageBreak())
+
+    // US 별 그룹 — 좁은 3 컬럼. 12 컬럼 매트릭스는 문서 폭에서 잘린다.
+    traceGroups.forEach(g => {
+      children.push(sectionTitle(`${g.us.id}`))
+      children.push(desc(g.us.name))
+      children.push(table(
+        ['유형', '이름', 'ID'],
+        g.rows.map(r => [
+          traceTypeLabel ? traceTypeLabel(r.type) : r.type,
+          [r.name || '-', r.technical && r.technical !== r.name ? `(${r.technical})` : '', r.parent ? `↳ ${r.parent}` : ''].filter(Boolean).join('\n'),
+          r.id || '-',
+        ]),
+        [1300, 5000, 2700]
+      ))
+    })
+
+    if (traceInferred.length) {
+      children.push(pageBreak())
+      children.push(sectionTitle(`추론 매핑 (${traceInferred.length})`))
+      children.push(desc('직접 근거 없이 상위 Aggregate 의 매핑을 상속한 요소입니다.'))
+      children.push(table(
+        ['유형', '이름', '추론된 User Story'],
+        traceInferred.map(r => [
+          traceTypeLabel ? traceTypeLabel(r.type) : r.type,
+          [r.name || '-', r.parent ? `↳ ${r.parent}` : ''].filter(Boolean).join('\n'),
+          r.inferredUs || '-',
+        ]),
+        [1300, 5000, 2700]
+      ))
+    }
+
+    if (traceUnmapped.length) {
+      children.push(pageBreak())
+      children.push(sectionTitle(`미매핑 요소 (${traceUnmapped.length})`))
+      children.push(desc('어느 사용자 스토리와도 연결되지 않은 요소입니다.'))
+      children.push(table(
+        ['유형', '이름', 'ID'],
+        traceUnmapped.map(r => [
+          traceTypeLabel ? traceTypeLabel(r.type) : r.type,
+          [r.name || '-', r.parent ? `↳ ${r.parent}` : ''].filter(Boolean).join('\n'),
+          r.id || '-',
+        ]),
+        [1300, 5000, 2700]
+      ))
+    }
   }
 
   // ── Generate ──

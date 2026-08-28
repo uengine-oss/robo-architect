@@ -10,7 +10,6 @@ import {
   HeadingLevel, AlignmentType, ImageRun, WidthType,
 } from 'docx'
 import PptxGenJS from 'pptxgenjs'
-import { saveAs } from 'file-saver'
 
 // ── Constants ──
 const FONT = '맑은 고딕'
@@ -73,8 +72,14 @@ function wordSectionCover(num, title, desc) {
 //  WORD (.docx)
 // ════════════════════════════════════════
 export async function exportToWord(data, container, onProgress) {
-  const { allContexts, fullTrees, sortedContexts, allUserStories, crossBCPolicies, sectionNumbers: sn, selectedSections, helpers } = data
-  const { bcName, bcTree, getCommandsFromTree, getReadModelsFromTree, allCmdsForCtx, allEvtsForCtx, resolveNodeName } = helpers
+  const {
+    allContexts, fullTrees, sortedContexts, allUserStories, crossBCPolicies,
+    sectionNumbers: sn, selectedSections, helpers,
+    valueStreamProcesses = [], glossaryTerms = [],
+    traceGroups = [], traceInferred = [], traceUnmapped = [], traceSummary = null,
+    apiSummary = null, apiConvention = '',
+  } = data
+  const { bcName, bcTree, getCommandsFromTree, getReadModelsFromTree, allCmdsForCtx, allEvtsForCtx, resolveNodeName, traceTypeLabel, storySources, storySourceTask, apiForCtx } = helpers
   const sections = []
   const aggTotal = Object.values(fullTrees).reduce((s, t) => s + (t.aggregates?.length || 0), 0)
 
@@ -93,6 +98,10 @@ export async function exportToWord(data, container, onProgress) {
   const toc = []
   function tocAdd(t, indent) { toc.push(para(t, { size: indent ? 20 : 22, bold: !indent, after: indent ? 60 : 100, indent: indent ? { left: 720 } : undefined })) }
   if (selectedSections.userStories) tocAdd(`${sn.userStories}. 사용자 스토리 종합`)
+  if (selectedSections.valueStream && valueStreamProcesses.length) {
+    tocAdd(`${sn.valueStream}. 밸류 스트림 분석`)
+    valueStreamProcesses.forEach((proc, i) => tocAdd(`${sn.valueStream}-${i + 1}. ${proc.name}`, true))
+  }
   if (selectedSections.boundedContext) {
     tocAdd(`${sn.boundedContext}. Bounded Context 정의`)
     sortedContexts.forEach((c, i) => tocAdd(`${sn.boundedContext}-${i + 1}. ${bcName(c)}`, true))
@@ -109,6 +118,7 @@ export async function exportToWord(data, container, onProgress) {
     tocAdd(`${sn.aggregateDetail}. Aggregate 상세`)
     sortedContexts.forEach((c, ci) => (bcTree(c)?.aggregates || []).forEach((a, ai) => tocAdd(`${sn.aggregateDetail}-${ci + 1}-${ai + 1}. ${bcName(c)} / ${a.displayName || a.name}`, true)))
   }
+  if (selectedSections.traceabilityMatrix && traceSummary) tocAdd(`${sn.traceabilityMatrix}. 추적성 매트릭스`)
   sections.push(sec([h2('목 차'), ...toc]))
 
   // ── 1. 사용자 스토리 ──
@@ -122,6 +132,56 @@ export async function exportToWord(data, container, onProgress) {
             [1400, 1000, 2500, 2500, 700, 700])
         : para('등록된 사용자 스토리가 없습니다.', { italic: true, color: '999999' })
     ]))
+
+    // 원문 근거 — 정규화된 스토리가 업로드 문서 어디에서 나왔는지 제시한다.
+    const sourceRows = []
+    for (const st of allUserStories) {
+      const srcs = storySources ? storySources(st.id) : []
+      const task = storySourceTask ? storySourceTask(st.id) : null
+      srcs.forEach((src, i) => sourceRows.push([
+        i === 0 ? st.id : '',
+        i === 0 ? (task?.name || '-') : '',
+        [src.page ? `p.${src.page}` : '', src.heading || ''].filter(Boolean).join(' / ') || '-',
+        src.text || '-',
+      ]))
+    }
+    if (sourceRows.length) {
+      sections.push(sec([
+        h2(`${sn.userStories}-1. 사용자 스토리 원문 근거`),
+        para('각 사용자 스토리가 업로드 문서의 어느 부분에서 도출됐는지 보여줍니다.', { size: 20, color: '666666', after: 60 }),
+        tbl(['US ID', '업무 Task', '문서 위치', '원문 근거'], sourceRows, [900, 1900, 1500, 4700]),
+      ]))
+    }
+  }
+
+  // ── 밸류 스트림 분석 ──
+  if (selectedSections.valueStream && valueStreamProcesses.length) {
+    sections.push(wordSectionCover(sn.valueStream, '밸류 스트림 분석', '업로드 문서에서 도출한 업무 프로세스를 Actor 흐름으로 정리하고, 각 단계가 어떤 사용자 스토리로 승격됐는지 연결합니다.'))
+    valueStreamProcesses.forEach((proc, pi) => {
+      const path = proc.linearPaths?.[0] || []
+      const ch = [h2(`${sn.valueStream}-${pi + 1}. ${proc.name}`)]
+      if (proc.description) ch.push(para(proc.description, { size: 20, color: '666666', after: 60 }))
+      if (proc.actors?.length) ch.push(para(`참여 Actor · ${proc.actors.join(', ')}`, { size: 20, color: '666666', after: 60 }))
+      if (path.length) {
+        ch.push(para(path.map(st => `${st.displayName}${st.actor ? ` (${st.actor})` : ''}`).join(' → '), { size: 20, color: '666666', after: 100 }))
+        ch.push(tbl(
+          ['순서', 'Task', 'Actor', '설명', '승격된 User Story'],
+          path.map((st, si) => [
+            si + 1, st.displayName || '-', st.actor || '-',
+            [st.description, st.sourceSection].filter(Boolean).join(' / ') || '-',
+            st.promotedTo?.length ? st.promotedTo.map(u => u.id).join(', ') : '미승격',
+          ]),
+          [700, 2100, 1400, 3400, 1400]
+        ))
+      }
+      sections.push(sec(ch))
+    })
+    if (glossaryTerms.length) {
+      sections.push(sec([
+        h2(`${sn.valueStream}-${valueStreamProcesses.length + 1}. 도메인 용어집`),
+        tbl(['용어', '설명'], glossaryTerms.map(g => [g.term || g.name || '-', g.definition || g.description || '-']), [2200, 6800]),
+      ]))
+    }
   }
 
   // ── 2. Bounded Context (요약 + 모든 BC 상세를 한 section에) ──
@@ -214,6 +274,45 @@ export async function exportToWord(data, container, onProgress) {
   // ── 4. API 명세 (한 BC = 한 section) ──
   if (selectedSections.apiSpecification) {
     sections.push(wordSectionCover(sn.apiSpecification, 'API 명세', 'Command 및 Read Model 상세 정보입니다.'))
+
+    // 도출된 Endpoint 계약 — 경로/메서드/Command/설명/파라미터.
+    // Command 의 category 와 Aggregate 이름으로 규칙 도출하므로 재실행해도 동일하다.
+    if (apiSummary && apiForCtx) {
+      sections.push(sec([
+        h2(`${sn.apiSpecification}. Endpoint 계약 요약`),
+        para(apiConvention, { size: 20, color: '666666', after: 80 }),
+        tbl(['Command', '제공 API', '외부 연동', '조회 API', '파라미터 없음', '경로 충돌 조정'],
+          [[apiSummary.commands, apiSummary.inboundCommands, apiSummary.outboundCommands,
+            apiSummary.queries, apiSummary.commandsWithoutParameters, apiSummary.pathCollisionsResolved]],
+          [1500, 1500, 1500, 1500, 1500, 1500]),
+      ]))
+
+      sortedContexts.forEach(ctx => {
+        const api = apiForCtx(ctx)
+        if (!api) return
+        const ch = []
+        if (api.commandEndpoints?.length) {
+          ch.push(h3(`${bcName(ctx)} - Command API`))
+          ch.push(tbl(['API 경로', '메서드', 'Command', '설명', '요청 파라미터'],
+            api.commandEndpoints.map(e => [
+              e.direction === 'inbound' ? e.path : '제공 API 아님 (외부 연동 호출)',
+              e.method || '-',
+              `${e.commandDisplayName} [${e.category}]`,
+              e.description || '-',
+              e.parameters.map(prm => `${prm.name}(${prm.type})${prm.required ? '*' : ''}`).join(', ') || '-',
+            ]),
+            [2600, 800, 1900, 2200, 1500]))
+        }
+        if (api.queryEndpoints?.length) {
+          ch.push(h3(`${bcName(ctx)} - Query API`))
+          ch.push(tbl(['API 경로', '메서드', 'Read Model', '설명', '결과'],
+            api.queryEndpoints.map(q => [q.path, q.method, q.readModelDisplayName, q.description || '-', q.resultType]),
+            [2600, 800, 1900, 2700, 1000]))
+        }
+        if (ch.length) sections.push(sec(ch))
+      })
+    }
+
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return
       const ch = [h2(`${sn.apiSpecification}-${ci + 1}. ${bcName(ctx)} - API 명세`)]
@@ -282,9 +381,64 @@ export async function exportToWord(data, container, onProgress) {
     })
   }
 
+  // ── 추적성 매트릭스 ──
+  if (selectedSections.traceabilityMatrix && traceSummary) {
+    sections.push(wordSectionCover(sn.traceabilityMatrix, '추적성 매트릭스', '사용자 스토리별로 매핑된 이벤트 스토밍 요소를 보여줍니다.'))
+    const label = (type) => (traceTypeLabel ? traceTypeLabel(type) : type)
+
+    sections.push(sec([
+      h2(`${sn.traceabilityMatrix}. 추적성 요약`),
+      tbl(
+        ['전체 요소', '직접 매핑', '추론 매핑', '미매핑', '매핑된 US', '직접 매핑률'],
+        [[traceSummary.elements, traceSummary.directElements, traceSummary.inferredElements,
+          traceSummary.unmappedElements, traceSummary.mappedUserStories,
+          `${(traceSummary.directRatio * 100).toFixed(1)}%`]],
+        [1500, 1500, 1500, 1500, 1500, 1500]
+      ),
+    ]))
+
+    // US 별 그룹 — 좁은 3 컬럼. 12 컬럼 매트릭스는 문서 폭에서 잘린다.
+    if (traceGroups.length) {
+      const ch = [h2(`${sn.traceabilityMatrix}-1. 사용자 스토리별 매핑`)]
+      traceGroups.forEach(g => {
+        ch.push(h3(`${g.us.id}`))
+        ch.push(para(g.us.name, { size: 20, color: '666666', after: 60 }))
+        ch.push(tbl(['유형', '이름', 'ID'],
+          g.rows.map(r => [
+            label(r.type),
+            [r.name || '-', r.technical && r.technical !== r.name ? `(${r.technical})` : '', r.parent ? `↳ ${r.parent}` : ''].filter(Boolean).join(' '),
+            r.id || '-',
+          ]),
+          [1300, 5000, 2700]))
+      })
+      sections.push(sec(ch))
+    }
+
+    if (traceInferred.length) {
+      sections.push(sec([
+        h2(`${sn.traceabilityMatrix}-2. 추론 매핑 (${traceInferred.length})`),
+        para('직접 근거 없이 상위 Aggregate 의 매핑을 상속한 요소입니다.', { size: 20, color: '666666', after: 60 }),
+        tbl(['유형', '이름', '추론된 User Story'],
+          traceInferred.map(r => [label(r.type), [r.name || '-', r.parent ? `↳ ${r.parent}` : ''].filter(Boolean).join(' '), r.inferredUs || '-']),
+          [1300, 5000, 2700]),
+      ]))
+    }
+
+    if (traceUnmapped.length) {
+      sections.push(sec([
+        h2(`${sn.traceabilityMatrix}-3. 미매핑 요소 (${traceUnmapped.length})`),
+        para('어느 사용자 스토리와도 연결되지 않은 요소입니다.', { size: 20, color: '666666', after: 60 }),
+        tbl(['유형', '이름', 'ID'],
+          traceUnmapped.map(r => [label(r.type), [r.name || '-', r.parent ? `↳ ${r.parent}` : ''].filter(Boolean).join(' '), r.id || '-']),
+          [1300, 5000, 2700]),
+      ]))
+    }
+  }
+
   const doc = new Document({ sections, styles: { default: { document: { run: { font: FONT, size: 22 } } } } })
-  const blob = await Packer.toBlob(doc)
-  saveAs(blob, `설계산출물-${new Date().toISOString().split('T')[0]}.docx`)
+  // 저장은 호출부가 한다 — 저장 직전에 백엔드 정본화(LibreOffice 재직렬화)를
+  // 끼워 넣어야 ECM 이 Word 문서로 인식하는 패키지가 된다.
+  return await Packer.toBlob(doc)
 }
 
 // ════════════════════════════════════════

@@ -34,6 +34,21 @@ from api.features.ingestion.workflow.utils.user_story_normalize import (
 from api.platform.observability.smart_logger import SmartLogger
 
 
+def _is_non_retryable_llm_error(e: Exception) -> bool:
+    """
+    인증/권한 오류(401, invalid api key 등)는 청크를 아무리 잘게 쪼개도 성공하지 않는다.
+    재귀 분할 재시도를 건너뛰고 즉시 실패시켜 원인이 로그에 드러나게 한다.
+    """
+    name = type(e).__name__.lower()
+    if "authentication" in name or "permissiondenied" in name:
+        return True
+    status = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+    if status in (401, 403):
+        return True
+    msg = str(e).lower()
+    return ("401" in msg and "unauthorized" in msg) or "invalid_api_key" in msg
+
+
 def normalize_and_dedup_user_stories(stories: list[Any], session_id: str) -> list[Any]:
     """
     User Story 목록을 정규화하고 중복을 제거합니다.
@@ -280,6 +295,21 @@ async def _process_chunk_with_retry(
             
             return stories, depth
         except Exception as e:
+            if _is_non_retryable_llm_error(e):
+                SmartLogger.log(
+                    "ERROR",
+                    f"Chunk {chunk_idx + 1} aborted: non-retryable LLM error ({type(e).__name__})",
+                    category="ingestion.user_stories.chunk.non_retryable",
+                    params={
+                        "chunk_idx": chunk_idx + 1,
+                        "total_chunks": total_chunks,
+                        "depth": depth,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
+                )
+                raise
+
             # 실패 시 반으로 분할하여 양쪽 모두 처리
             text_length = len(text)
             
@@ -794,7 +824,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
         # US-002 식으로 재명명했으나, 그러면 frontend 트리에서 ID 정체성이
         # 깨짐 — chunk 단계에서 emit 했던 노드를 식별 못 함.)
         pre_dedup_ids = [getattr(s, "id", None) for s in all_stories if getattr(s, "id", None)]
-        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id, is_analyzer=ctx.source_type == "analyzer_graph")
+        deduplicated_by_content = normalize_and_dedup_user_stories(all_stories, ctx.session.id)
         post_dedup_ids = {getattr(s, "id", None) for s in deduplicated_by_content if getattr(s, "id", None)}
         dedup_dropped_ids = [sid for sid in pre_dedup_ids if sid not in post_dedup_ids]
 

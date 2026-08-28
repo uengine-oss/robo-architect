@@ -3,36 +3,98 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import mermaid from 'mermaid'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
+import { useBpmnStore } from '@/features/canvas/bpmn.store'
 // 039 — 'Big picture' 뷰 비활성화: store import 제거.
+// 039 후속 — Value Stream 은 BPM Session 스냅샷(Deliverable API)으로 복원한다.
 
 const canvasStore = useCanvasStore()
 const navigatorStore = useNavigatorStore()
+const bpmnStore = useBpmnStore()
 
+// 섹션 구성은 기준 템플릿(local-msaez DocumentTemplate.vue)의 순서를 따른다.
+// userScenario / valueStream / boundedContext / eventStorming /
+// apiSpecification / aggregateDetail / traceabilityMatrix
 const selectedSections = ref({
   userStories: true,
+  valueStream: true,
   boundedContext: true,
   modelOverview: true,
   apiSpecification: true,
   aggregateDetail: true,
+  traceabilityMatrix: true,
 })
+
+const SECTION_LABELS = {
+  userStories: '사용자 스토리',
+  valueStream: '밸류 스트림 분석',
+  boundedContext: 'Bounded Context',
+  modelOverview: '모델 전반 정보',
+  apiSpecification: 'API 명세',
+  aggregateDetail: 'Aggregate 상세',
+  traceabilityMatrix: '추적성 매트릭스',
+}
 
 const isLoading = ref(true)
 const fullTrees = ref({})
 const allContexts = ref([])
+// Session 단위 산출물 스냅샷. null 이면 세션을 특정할 수 없어 전역 조회로
+// 대체한 상태(= 이전 동작).
+const deliverable = ref(null)
+
+const sessionScoped = computed(() => !!deliverable.value)
+
+/**
+ * Session 범위로 고정된 산출물을 읽는다.
+ *
+ * 전역 `/api/contexts` 조회는 같은 Neo4j 에 여러 분석 결과가 있으면 서로 다른
+ * 세션의 BC 가 한 문서에 섞인다. 납품 문서는 재현 가능해야 하므로 활성 Hybrid
+ * Session 이 있으면 그 범위만 읽는다. 세션이 없거나(예: 수동 설계) 조회에
+ * 실패하면 기존 전역 조회로 되돌아간다.
+ */
+async function loadFromSession(sessionId) {
+  const resp = await fetch(`/api/deliverables/architecture-document?sessionId=${encodeURIComponent(sessionId)}`)
+  if (!resp.ok) return false
+  const doc = await resp.json()
+  const trees = {}
+  for (const tree of (doc.eventStorming?.contexts || [])) trees[tree.id] = tree
+  // 목록 API 와 같은 필드(userStoryCount 등)를 쓰는 곳이 있어 트리에서 보강한다.
+  allContexts.value = (doc.boundedContexts || []).map(bc => ({
+    ...bc,
+    description: trees[bc.id]?.description || '',
+    userStoryCount: trees[bc.id]?.userStories?.length || 0,
+  }))
+  fullTrees.value = trees
+  deliverable.value = doc
+  return true
+}
+
+async function loadAllContexts() {
+  const ctxResp = await fetch('/api/contexts')
+  if (ctxResp.ok) allContexts.value = await ctxResp.json()
+  const trees = {}
+  await Promise.all(allContexts.value.map(async (ctx) => {
+    try {
+      const resp = await fetch(`/api/contexts/${ctx.id}/full-tree`)
+      if (resp.ok) trees[ctx.id] = await resp.json()
+    } catch (e) { /* skip */ }
+  }))
+  fullTrees.value = trees
+}
 
 async function loadAllData() {
   isLoading.value = true
+  deliverable.value = null
   try {
-    const ctxResp = await fetch('/api/contexts')
-    if (ctxResp.ok) allContexts.value = await ctxResp.json()
-    const trees = {}
-    await Promise.all(allContexts.value.map(async (ctx) => {
+    const sid = bpmnStore.hybridSessionId
+    if (sid) {
       try {
-        const resp = await fetch(`/api/contexts/${ctx.id}/full-tree`)
-        if (resp.ok) trees[ctx.id] = await resp.json()
-      } catch (e) { /* skip */ }
-    }))
-    fullTrees.value = trees
+        if (await loadFromSession(sid)) return
+        console.warn('[ExportDocument] session snapshot unavailable, falling back to all contexts')
+      } catch (e) {
+        console.warn('[ExportDocument] session snapshot failed, falling back:', e)
+      }
+    }
+    await loadAllContexts()
   } catch (e) {
     console.error('[ExportDocument] load error:', e)
   } finally {
@@ -50,19 +112,34 @@ defineExpose({
   get allUserStories() { return allUserStories.value },
   get crossBCPolicies() { return crossBCPolicies.value },
   get sectionNumbers() { return sectionNumbers.value },
+  get deliverable() { return deliverable.value },
+  get sessionScoped() { return sessionScoped.value },
+  get valueStreamProcesses() { return valueStreamProcesses.value },
+  get glossaryTerms() { return glossaryTerms.value },
+  get traceGroups() { return traceGroups.value },
+  get traceInferred() { return traceInferred.value },
+  get traceUnmapped() { return traceUnmapped.value },
+  get traceSummary() { return traceSummary.value },
+  get apiSpec() { return apiSpec.value },
+  get apiSummary() { return apiSummary.value },
+  get apiConvention() { return apiConvention.value },
+  get aggregateExport() { return aggregateExport.value },
   // Helpers
   bcName, bcTree, getCommandsFromTree, getReadModelsFromTree,
   allCmdsForCtx, allEvtsForCtx, resolveNodeName, parseJsonFields,
+  traceTypeLabel, storySources, storySourceTask, apiForCtx,
 })
 
 // ── Helpers ──
 const sectionNumbers = computed(() => {
   let n = 0; const nums = {}
   if (selectedSections.value.userStories) nums.userStories = ++n
+  if (selectedSections.value.valueStream) nums.valueStream = ++n
   if (selectedSections.value.boundedContext) nums.boundedContext = ++n
   if (selectedSections.value.modelOverview) nums.modelOverview = ++n
   if (selectedSections.value.apiSpecification) nums.apiSpecification = ++n
   if (selectedSections.value.aggregateDetail) nums.aggregateDetail = ++n
+  if (selectedSections.value.traceabilityMatrix) nums.traceabilityMatrix = ++n
   return nums
 })
 
@@ -77,9 +154,13 @@ const allUserStories = computed(() => {
     const bn = tree.displayName || tree.name
     ;(tree.userStories || []).forEach(s => stories.push({ ...s, bcName: bn }))
   }
-  ;(navigatorStore.userStories || []).forEach(s => {
-    if (!stories.find(x => x.id === s.id)) stories.push({ ...s, bcName: '미배정' })
-  })
+  // Session 범위로 고정된 경우 Navigator 의 전역 목록을 섞지 않는다. 다른 세션의
+  // User Story 가 '미배정' 으로 딸려 들어와 문서 범위가 깨지기 때문.
+  if (!sessionScoped.value) {
+    ;(navigatorStore.userStories || []).forEach(s => {
+      if (!stories.find(x => x.id === s.id)) stories.push({ ...s, bcName: '미배정' })
+    })
+  }
   return stories
 })
 
@@ -117,6 +198,45 @@ const crossBCPolicies = computed(() => {
   }
   return result
 })
+
+// ── Value Stream / 추적성 (Session 스냅샷 전용) ──
+// 기준 템플릿의 `getValueStreamLinearPages` 와 `traceabilityMatrixGroups` 에
+// 대응한다. Session 스냅샷이 없으면 빈 값 → 섹션 자체가 렌더링되지 않는다.
+const valueStreamProcesses = computed(() => deliverable.value?.valueStream?.processes || [])
+const glossaryTerms = computed(() => deliverable.value?.valueStream?.glossary || [])
+const apiSpec = computed(() => deliverable.value?.apiSpecification || null)
+// 기준 기능(local-msaez CodeGenerator "Export Aggregates") 대응 데이터.
+const aggregateExport = computed(() => deliverable.value?.aggregateExport || null)
+const apiSummary = computed(() => apiSpec.value?.summary || null)
+const apiConvention = computed(() => apiSpec.value?.convention || '')
+// BC id → 도출된 엔드포인트 계약
+const apiByBc = computed(() => {
+  const map = {}
+  for (const c of (apiSpec.value?.contexts || [])) map[c.bcId] = c
+  return map
+})
+function apiForCtx(ctx) { return apiByBc.value[ctx.id] || null }
+
+const traceGroups = computed(() => deliverable.value?.traceabilityMatrix?.groups || [])
+const traceInferred = computed(() => deliverable.value?.traceabilityMatrix?.inferred || [])
+const traceUnmapped = computed(() => deliverable.value?.traceabilityMatrix?.unmapped || [])
+const traceSummary = computed(() => deliverable.value?.traceabilityMatrix?.summary || null)
+
+const TRACE_TYPE_LABELS = {
+  service: 'Service', aggregate: 'Aggregate', command: 'Command',
+  event: 'Event', policy: 'Policy', readModel: 'Read Model',
+}
+function traceTypeLabel(type) { return TRACE_TYPE_LABELS[type] || type }
+
+// User Story ID → 원문 근거(문서 페이지·소제목·인용문). 사용자 시나리오 섹션에서
+// "이 스토리가 문서 어디서 나왔는지" 를 보여주는 데 쓴다.
+const storySourceById = computed(() => {
+  const map = {}
+  for (const st of (deliverable.value?.userScenario?.stories || [])) map[st.id] = st
+  return map
+})
+function storySources(usId) { return storySourceById.value[usId]?.sources || [] }
+function storySourceTask(usId) { return storySourceById.value[usId]?.sourceTask || null }
 
 // ── Context Map (Mermaid) ──
 mermaid.initialize({ startOnLoad: false, theme: 'base',
@@ -196,7 +316,7 @@ function resolveNodeName(nodeId) {
       <div class="section-selector no-print">
         <label v-for="(v,k) in selectedSections" :key="k" class="chk">
           <input type="checkbox" v-model="selectedSections[k]"/>
-          <span>{{ {userStories:'사용자 스토리',boundedContext:'Bounded Context',modelOverview:'모델 전반 정보',apiSpecification:'API 명세',aggregateDetail:'Aggregate 상세'}[k] }}</span>
+          <span>{{ SECTION_LABELS[k] }}</span>
         </label>
       </div>
 
@@ -219,6 +339,9 @@ function resolveNodeName(nodeId) {
         <h2 class="toc-heading">목 차</h2>
         <ol class="toc-list">
           <li v-if="selectedSections.userStories">{{ sectionNumbers.userStories }}. 사용자 스토리 종합</li>
+          <li v-if="selectedSections.valueStream && valueStreamProcesses.length">{{ sectionNumbers.valueStream }}. 밸류 스트림 분석
+            <ul><li v-for="p in valueStreamProcesses" :key="'toc-vs-'+p.id">{{ p.name }} <span class="toc-dim">[Task {{ p.taskCount }}]</span></li></ul>
+          </li>
           <li v-if="selectedSections.boundedContext">{{ sectionNumbers.boundedContext }}. Bounded Context 정의
             <ul><li v-for="ctx in sortedContexts" :key="'toc-bc-'+ctx.id">{{ bcName(ctx) }} <span class="toc-dim">[{{ ctx.domainType }}]</span></li>
             <li v-if="crossBCPolicies.length">컨텍스트 간 연관 관계</li></ul>
@@ -228,6 +351,7 @@ function resolveNodeName(nodeId) {
           </li>
           <li v-if="selectedSections.apiSpecification">{{ sectionNumbers.apiSpecification }}. API 명세 (Command / Read Model)</li>
           <li v-if="selectedSections.aggregateDetail">{{ sectionNumbers.aggregateDetail }}. Aggregate 상세</li>
+          <li v-if="selectedSections.traceabilityMatrix && traceSummary">{{ sectionNumbers.traceabilityMatrix }}. 추적성 매트릭스</li>
         </ol>
       </div>
 
@@ -241,6 +365,74 @@ function resolveNodeName(nodeId) {
           <table v-if="allUserStories.length" class="tbl">
             <thead><tr><th style="width:120px">Bounded Context</th><th style="width:90px">As a</th><th>I want to</th><th>So that</th><th style="width:55px">우선순위</th><th style="width:50px">상태</th></tr></thead>
             <tbody><tr v-for="s in allUserStories" :key="s.id"><td>{{ s.bcName }}</td><td>{{ s.role||'-' }}</td><td>{{ s.action||s.name||'-' }}</td><td>{{ s.benefit||'-' }}</td><td class="c">{{ s.priority||'-' }}</td><td class="c">{{ s.status||'-' }}</td></tr></tbody>
+          </table>
+        </div>
+
+        <!-- 원문 근거 — 정규화된 User Story 가 문서 어디에서 나왔는지 제시한다.
+             (Session 스냅샷이 있을 때만) -->
+        <div v-if="sessionScoped && allUserStories.some(s => storySources(s.id).length)" class="block">
+          <h3>{{ sectionNumbers.userStories }}-1. 사용자 스토리 원문 근거</h3>
+          <p class="desc">각 사용자 스토리가 업로드 문서의 어느 부분에서 도출됐는지 보여줍니다.</p>
+          <table class="tbl">
+            <thead><tr><th style="width:80px">US ID</th><th style="width:150px">업무 Task</th><th style="width:110px">문서 위치</th><th>원문 근거</th></tr></thead>
+            <tbody>
+              <template v-for="s in allUserStories" :key="'src-'+s.id">
+                <tr v-for="(src,si) in storySources(s.id)" :key="'src-'+s.id+'-'+si">
+                  <td class="b">{{ si === 0 ? s.id : '' }}</td>
+                  <td>{{ si === 0 ? (storySourceTask(s.id)?.name || '-') : '' }}</td>
+                  <td>
+                    <span v-if="src.page">p.{{ src.page }}</span>
+                    <div v-if="src.heading" class="toc-dim">{{ src.heading }}</div>
+                    <div v-if="si === 0 && storySourceTask(s.id)?.sourceSection" class="toc-dim">{{ storySourceTask(s.id).sourceSection }}</div>
+                  </td>
+                  <td class="desc-cell">{{ src.text }}</td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <!-- ═══════ 밸류 스트림 분석 ═══════ -->
+      <template v-if="selectedSections.valueStream && valueStreamProcesses.length">
+        <div class="page page--section-cover"><div class="sc__num">{{ sectionNumbers.valueStream }}</div><div class="sc__title">밸류 스트림 분석</div><div class="sc__desc">업로드 문서에서 도출한 업무 프로세스를 Actor 흐름으로 정리하고, 각 단계가 어떤 사용자 스토리로 승격됐는지 연결합니다.</div></div>
+
+        <div v-for="(proc,pi) in valueStreamProcesses" :key="'vs-'+proc.id" class="block">
+          <h3>{{ sectionNumbers.valueStream }}-{{ pi+1 }}. {{ proc.name }}</h3>
+          <p v-if="proc.description" class="desc">{{ proc.description }}</p>
+          <p v-if="proc.actors.length" class="desc"><strong>참여 Actor</strong> · {{ proc.actors.join(', ') }}</p>
+
+          <!-- 선형 흐름 요약 (기준 템플릿의 value-stream-flow-card 대응) -->
+          <div v-for="(path,idx) in proc.linearPaths" :key="'vsp-'+idx" class="vs-flow">
+            <span v-for="(step,si) in path" :key="step.name">
+              {{ step.displayName }}<span v-if="step.actor"> ({{ step.actor }})</span><span v-if="si < path.length-1"> → </span>
+            </span>
+          </div>
+
+          <table class="tbl">
+            <thead><tr><th class="c" style="width:40px">순서</th><th style="width:150px">Task</th><th style="width:110px">Actor</th><th>설명</th><th style="width:130px">승격된 User Story</th></tr></thead>
+            <tbody>
+              <tr v-for="(step,si) in (proc.linearPaths[0]||[])" :key="'vst-'+step.name">
+                <td class="c">{{ si+1 }}</td>
+                <td class="b">{{ step.displayName }}</td>
+                <td>{{ step.actor||'-' }}</td>
+                <td class="desc-cell">{{ step.description||'-' }}
+                  <div v-if="step.sourceSection" class="toc-dim">{{ step.sourceSection }}</div>
+                </td>
+                <td>
+                  <span v-if="!step.promotedTo.length" class="toc-dim">미승격</span>
+                  <div v-for="us in step.promotedTo" :key="us.id"><span class="tag tag--cmd">{{ us.id }}</span></div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="glossaryTerms.length" class="block">
+          <h3>{{ sectionNumbers.valueStream }}-{{ valueStreamProcesses.length+1 }}. 도메인 용어집</h3>
+          <table class="tbl">
+            <thead><tr><th style="width:160px">용어</th><th>설명</th></tr></thead>
+            <tbody><tr v-for="(g,gi) in glossaryTerms" :key="'gl-'+gi"><td class="b">{{ g.term||g.name||'-' }}</td><td class="desc-cell">{{ g.definition||g.description||'-' }}</td></tr></tbody>
           </table>
         </div>
       </template>
@@ -372,6 +564,66 @@ function resolveNodeName(nodeId) {
       <template v-if="selectedSections.apiSpecification">
         <div class="page page--section-cover"><div class="sc__num">{{ sectionNumbers.apiSpecification }}</div><div class="sc__title">API 명세</div><div class="sc__desc">이벤트 스토밍 모델에서 도출된 Command 및 Read Model의 상세 정보입니다.</div></div>
 
+        <!-- 도출된 Endpoint 계약 — 기준 템플릿의 API 명세 열(경로/메서드/Command/설명/파라미터)을 채운다.
+             Command 의 category 와 Aggregate 이름으로 규칙 도출하므로 재실행해도 같은 결과가 나온다. -->
+        <template v-if="apiSummary">
+          <div class="block">
+            <h3>{{ sectionNumbers.apiSpecification }}. Endpoint 계약 요약</h3>
+            <p class="desc">{{ apiConvention }}</p>
+            <table class="tbl">
+              <thead><tr><th>Command</th><th>제공 API</th><th>외부 연동</th><th>조회 API</th><th>파라미터 없음</th><th>경로 충돌 조정</th></tr></thead>
+              <tbody><tr>
+                <td class="c">{{ apiSummary.commands }}</td>
+                <td class="c">{{ apiSummary.inboundCommands }}</td>
+                <td class="c">{{ apiSummary.outboundCommands }}</td>
+                <td class="c">{{ apiSummary.queries }}</td>
+                <td class="c">{{ apiSummary.commandsWithoutParameters }}</td>
+                <td class="c">{{ apiSummary.pathCollisionsResolved }}</td>
+              </tr></tbody>
+            </table>
+          </div>
+
+          <template v-for="ctx in sortedContexts" :key="'ep-'+ctx.id">
+            <div v-if="apiForCtx(ctx)?.commandEndpoints?.length" class="block">
+              <h3>{{ bcName(ctx) }} - Command API</h3>
+              <table class="tbl">
+                <thead><tr><th style="width:200px">API 경로</th><th style="width:60px">메서드</th><th style="width:130px">Command</th><th>설명</th><th style="width:170px">요청 파라미터</th></tr></thead>
+                <tbody><tr v-for="e in apiForCtx(ctx).commandEndpoints" :key="e.commandId">
+                  <td class="prop-line">
+                    <span v-if="e.direction === 'inbound'">{{ e.path }}</span>
+                    <span v-else class="toc-dim">제공 API 아님 (외부 연동 호출)</span>
+                  </td>
+                  <td class="c"><span v-if="e.method" class="tag tag--cmd">{{ e.method }}</span><span v-else>-</span></td>
+                  <td class="b">{{ e.commandDisplayName }}<div class="prop-type">{{ e.category }}</div></td>
+                  <td class="desc-cell">{{ e.description||'-' }}
+                    <div v-if="e.emits.length" class="toc-dim">→ {{ e.emits.join(', ') }}</div>
+                  </td>
+                  <td>
+                    <div v-for="prm in e.parameters" :key="prm.name" class="prop-line">
+                      {{ prm.name }} <span class="prop-type">{{ prm.type }}</span><span v-if="prm.required" class="req">*</span>
+                    </div>
+                    <span v-if="!e.parameters.length">-</span>
+                  </td>
+                </tr></tbody>
+              </table>
+            </div>
+
+            <div v-if="apiForCtx(ctx)?.queryEndpoints?.length" class="block">
+              <h3>{{ bcName(ctx) }} - Query API</h3>
+              <table class="tbl">
+                <thead><tr><th style="width:200px">API 경로</th><th style="width:60px">메서드</th><th style="width:130px">Read Model</th><th>설명</th><th style="width:60px">결과</th></tr></thead>
+                <tbody><tr v-for="q in apiForCtx(ctx).queryEndpoints" :key="q.readModelId">
+                  <td class="prop-line">{{ q.path }}</td>
+                  <td class="c"><span class="tag tag--rm">{{ q.method }}</span></td>
+                  <td class="b">{{ q.readModelDisplayName }}</td>
+                  <td class="desc-cell">{{ q.description||'-' }}</td>
+                  <td class="c">{{ q.resultType }}</td>
+                </tr></tbody>
+              </table>
+            </div>
+          </template>
+        </template>
+
         <template v-for="(ctx,ci) in sortedContexts" :key="'api-'+ctx.id">
           <template v-if="bcTree(ctx)">
             <!-- Commands -->
@@ -448,6 +700,71 @@ function resolveNodeName(nodeId) {
             </div>
           </template>
         </template>
+      </template>
+
+      <!-- ═══════ 추적성 매트릭스 ═══════ -->
+      <template v-if="selectedSections.traceabilityMatrix && traceSummary">
+        <div class="page page--section-cover"><div class="sc__num">{{ sectionNumbers.traceabilityMatrix }}</div><div class="sc__title">추적성 매트릭스</div><div class="sc__desc">사용자 스토리별로 매핑된 이벤트 스토밍 요소(Service / Aggregate / Command / Event / Policy / Read Model)를 보여줍니다.</div></div>
+
+        <div class="block">
+          <h3>{{ sectionNumbers.traceabilityMatrix }}. 추적성 요약</h3>
+          <table class="tbl">
+            <thead><tr><th>전체 요소</th><th>직접 매핑</th><th>추론 매핑</th><th>미매핑</th><th>매핑된 User Story</th><th>직접 매핑률</th></tr></thead>
+            <tbody><tr>
+              <td class="c">{{ traceSummary.elements }}</td>
+              <td class="c">{{ traceSummary.directElements }}</td>
+              <td class="c">{{ traceSummary.inferredElements }}</td>
+              <td class="c">{{ traceSummary.unmappedElements }}</td>
+              <td class="c">{{ traceSummary.mappedUserStories }}</td>
+              <td class="c">{{ (traceSummary.directRatio * 100).toFixed(1) }}%</td>
+            </tr></tbody>
+          </table>
+        </div>
+
+        <!-- US 별 그룹: 기준 템플릿과 동일하게 좁은 3 컬럼(유형/이름/ID) 표로 나눈다.
+             12 컬럼 매트릭스는 문서 폭에서 잘리기 때문. -->
+        <div v-for="g in traceGroups" :key="'tg-'+g.us.id" class="block">
+          <h3>{{ g.us.id }} <span class="trace-us-name">{{ g.us.name }}</span></h3>
+          <table class="tbl tbl--sm">
+            <thead><tr><th style="width:90px">유형</th><th>이름</th><th style="width:30%">ID</th></tr></thead>
+            <tbody><tr v-for="(r,i) in g.rows" :key="'tr-'+g.us.id+'-'+i">
+              <td><span class="badge" :class="'badge--'+r.type.toLowerCase()">{{ traceTypeLabel(r.type) }}</span></td>
+              <td>
+                <div class="b">{{ r.name||'-' }}</div>
+                <div v-if="r.technical && r.technical !== r.name" class="prop-type">{{ r.technical }}</div>
+                <div v-if="r.parent" class="toc-dim">↳ {{ r.parent }}</div>
+              </td>
+              <td class="prop-type">{{ r.id||'-' }}</td>
+            </tr></tbody>
+          </table>
+        </div>
+
+        <!-- 추론 매핑: 직접 근거 없이 상위 Aggregate 매핑을 상속한 요소.
+             직접 매핑과 섞으면 한 요소가 BC 의 모든 스토리에 붙은 것처럼 보이므로 분리한다. -->
+        <div v-if="traceInferred.length" class="block">
+          <h3>추론 매핑 <span class="toc-dim">({{ traceInferred.length }}) — 직접 근거 없이 상위 Aggregate 의 매핑을 상속한 요소</span></h3>
+          <table class="tbl tbl--sm">
+            <thead><tr><th style="width:90px">유형</th><th>이름</th><th style="width:28%">추론된 User Story</th></tr></thead>
+            <tbody><tr v-for="(r,i) in traceInferred" :key="'ti-'+i">
+              <td><span class="badge" :class="'badge--'+r.type.toLowerCase()">{{ traceTypeLabel(r.type) }}</span></td>
+              <td><div class="b">{{ r.name||'-' }}</div><div v-if="r.parent" class="toc-dim">↳ {{ r.parent }}</div></td>
+              <td class="prop-type">{{ r.inferredUs||'-' }}</td>
+            </tr></tbody>
+          </table>
+        </div>
+
+        <!-- 미매핑: 근거를 찾지 못한 요소는 임의로 붙이지 않고 그대로 남긴다. -->
+        <div v-if="traceUnmapped.length" class="block">
+          <h3>미매핑 요소 <span class="toc-dim">({{ traceUnmapped.length }}) — 어느 사용자 스토리와도 연결되지 않은 요소</span></h3>
+          <table class="tbl tbl--sm">
+            <thead><tr><th style="width:90px">유형</th><th>이름</th><th style="width:30%">ID</th></tr></thead>
+            <tbody><tr v-for="(r,i) in traceUnmapped" :key="'tu-'+i">
+              <td><span class="badge" :class="'badge--'+r.type.toLowerCase()">{{ traceTypeLabel(r.type) }}</span></td>
+              <td><div class="b">{{ r.name||'-' }}</div><div v-if="r.parent" class="toc-dim">↳ {{ r.parent }}</div></td>
+              <td class="prop-type">{{ r.id||'-' }}</td>
+            </tr></tbody>
+          </table>
+        </div>
       </template>
 
     </template>
@@ -550,6 +867,12 @@ function resolveNodeName(nodeId) {
 .tag--event { background:#fff3bf; color:#e67700; }
 .tag--cmd { background:#dbe4ff; color:#364fc7; }
 .tag--rm { background:#d3f9d8; color:#2b8a3e; }
+.vs-flow { background:#f8f9fa; border:1px solid #dee2e6; border-radius:6px; padding:10px 12px; margin:8px 0 12px; font-size:12.5px; line-height:1.9; }
+.trace-us-name { font-size:13px; font-weight:400; color:#6c757d; margin-left:6px; }
+.badge--service { background:#e7f5ff; color:#1971c2; }
+.badge--command { background:#dbe4ff; color:#364fc7; }
+.badge--readmodel { background:#d3f9d8; color:#2b8a3e; }
+.req { color:#e03131; font-weight:700; margin-left:2px; }
 .prop-line { line-height:1.6; }
 .prop-type { color:#868e96; font-size:11px; margin-left:2px; }
 .prop-type::before { content:'('; }

@@ -312,6 +312,10 @@ app.include_router(prd_router)
 from api.features.user_stories.authoring_router import router as user_story_router
 app.include_router(user_story_router)
 
+# Include session-scoped deliverable router
+from api.features.deliverables.router import router as deliverables_router
+app.include_router(deliverables_router)
+
 
 """
 Feature routers (business capabilities)
