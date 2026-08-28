@@ -28,11 +28,30 @@ from api.features.deliverables.docx_normalize import (
 from api.features.deliverables.architecture_document import (
     build_architecture_document,
     fetch_session_trees,
+    list_sessions,
 )
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter(prefix="/api/deliverables", tags=["deliverables"])
+
+
+@router.get("/sessions")
+async def get_sessions(request: Request) -> dict:
+    """산출물을 뽑을 수 있는 Ingestion 세션 목록.
+
+    내보내기 화면이 세션을 고를 수 있게 한다. 이 목록이 없으면 브라우저
+    localStorage 에 남은 세션 하나에만 접근할 수 있어, 지난 세션의 산출물을 다시
+    뽑을 수 없다(Electron 은 origin 이 달라 그 값조차 공유되지 않는다).
+    """
+    sessions = list_sessions()
+    SmartLogger.log(
+        "INFO",
+        "Deliverable sessions listed.",
+        category="deliverables.sessions.listed",
+        params={**http_context(request), "count": len(sessions)},
+    )
+    return {"sessions": sessions}
 
 
 @router.get("/architecture-document")

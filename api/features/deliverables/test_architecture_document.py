@@ -135,3 +135,80 @@ def test_section_keys_match_reference_template():
         "aggregateDetail",
         "traceabilityMatrix",
     ]
+
+
+# ---------------------------------------------------------------------------
+# 세션 목록
+# ---------------------------------------------------------------------------
+
+
+class _Rec(dict):
+    pass
+
+
+class _Session:
+    """Cypher 본문으로 어떤 질의인지 구분하는 최소 스텁."""
+
+    def __init__(self, rows, name="주문 처리"):
+        self.rows = rows
+        self.name = name
+
+    def run(self, query, **params):
+        if "BpmProcess {session_id: $sid}" in query and "RETURN p.name" in query:
+            return _Result(single=_Rec({"name": self.name}))
+        return _Result(rows=[_Rec(r) for r in self.rows])
+
+
+class _Result:
+    def __init__(self, rows=None, single=None):
+        self._rows = rows or []
+        self._single = single
+
+    def __iter__(self):
+        return iter(self._rows)
+
+    def single(self):
+        return self._single
+
+
+class _Ctx:
+    def __init__(self, s):
+        self.s = s
+
+    def __enter__(self):
+        return self.s
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_list_sessions_marks_exportable(monkeypatch):
+    """ES 승격이 끝나 BC 가 있는 세션만 산출물을 만들 수 있다."""
+    rows = [
+        {"id": "sess-a", "updatedAt": "2026-08-27T04:17:06Z", "processes": 2,
+         "tasks": 19, "boundedContexts": 3, "userStories": 19},
+        {"id": "sess-b", "updatedAt": "2026-08-26T00:00:00Z", "processes": 1,
+         "tasks": 5, "boundedContexts": 0, "userStories": 0},
+    ]
+    monkeypatch.setattr(ad, "get_session", lambda: _Ctx(_Session(rows)))
+    out = ad.list_sessions()
+
+    assert [s["id"] for s in out] == ["sess-a", "sess-b"]
+    assert out[0]["exportable"] is True
+    assert out[1]["exportable"] is False   # BC 0 → 산출물 불가
+
+
+def test_list_sessions_falls_back_to_id_when_unnamed(monkeypatch):
+    """프로세스 이름이 없으면 세션 id 를 이름으로 쓴다 — 빈 라벨을 만들지 않는다."""
+    rows = [{"id": "sess-a", "updatedAt": None, "processes": 0,
+             "tasks": 0, "boundedContexts": 1, "userStories": 2}]
+    monkeypatch.setattr(ad, "get_session", lambda: _Ctx(_Session(rows, name=None)))
+    out = ad.list_sessions()
+
+    assert out[0]["name"] == "sess-a"
+
+
+def test_list_sessions_empty(monkeypatch):
+    monkeypatch.setattr(ad, "get_session", lambda: _Ctx(_Session([])))
+
+    assert ad.list_sessions() == []

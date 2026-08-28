@@ -43,6 +43,12 @@ const deliverable = ref(null)
 
 const sessionScoped = computed(() => !!deliverable.value)
 
+// 산출물을 뽑을 수 있는 세션 목록. 사용자가 고를 수 있어야 지난 세션 문서를
+// 다시 뽑을 수 있다 — localStorage 하나에만 의존하면 Electron(app:// origin)
+// 처럼 저장소가 분리된 환경에서 아예 접근할 수 없다.
+const sessions = ref([])
+const selectedSessionId = ref(null)
+
 /**
  * Session 범위로 고정된 산출물을 읽는다.
  *
@@ -81,25 +87,68 @@ async function loadAllContexts() {
   fullTrees.value = trees
 }
 
+/** 산출물을 만들 수 있는(ES 승격이 끝난) 세션만 고를 수 있게 한다. */
+async function loadSessions() {
+  try {
+    const resp = await fetch('/api/deliverables/sessions')
+    if (!resp.ok) return []
+    const body = await resp.json()
+    sessions.value = (body.sessions || []).filter(s => s.exportable)
+    return sessions.value
+  } catch (e) {
+    console.warn('[ExportDocument] session list failed:', e)
+    return []
+  }
+}
+
+/**
+ * 초기 세션 결정.
+ *
+ * 1) 사용자가 화면에서 고른 세션
+ * 2) 진행 중인 Hybrid 세션(localStorage) — 목록에 실제로 있을 때만
+ * 3) 가장 최근 세션
+ *
+ * 2번을 목록과 대조하는 이유: 다른 DB 로 갈아탄 뒤에도 옛 세션 id 가 남아 있어,
+ * 그대로 쓰면 404 가 나고 조용히 전역 조회로 떨어진다.
+ */
+function resolveSessionId(list) {
+  if (selectedSessionId.value) return selectedSessionId.value
+  const active = bpmnStore.hybridSessionId
+  if (active && list.some(s => s.id === active)) return active
+  return list.length ? list[0].id : null
+}
+
 async function loadAllData() {
   isLoading.value = true
   deliverable.value = null
   try {
-    const sid = bpmnStore.hybridSessionId
+    const list = await loadSessions()
+    const sid = resolveSessionId(list)
     if (sid) {
       try {
-        if (await loadFromSession(sid)) return
+        if (await loadFromSession(sid)) {
+          selectedSessionId.value = sid
+          return
+        }
         console.warn('[ExportDocument] session snapshot unavailable, falling back to all contexts')
       } catch (e) {
         console.warn('[ExportDocument] session snapshot failed, falling back:', e)
       }
     }
+    selectedSessionId.value = null
     await loadAllContexts()
   } catch (e) {
     console.error('[ExportDocument] load error:', e)
   } finally {
     isLoading.value = false
   }
+}
+
+/** 세션을 바꾸면 스냅샷 전체를 다시 읽는다. */
+async function selectSession(id) {
+  if (id === selectedSessionId.value) return
+  selectedSessionId.value = id || null
+  await loadAllData()
 }
 
 onMounted(loadAllData)
@@ -113,6 +162,9 @@ defineExpose({
   get crossBCPolicies() { return crossBCPolicies.value },
   get sectionNumbers() { return sectionNumbers.value },
   get deliverable() { return deliverable.value },
+  get sessions() { return sessions.value },
+  get selectedSessionId() { return selectedSessionId.value },
+  selectSession,
   get sessionScoped() { return sessionScoped.value },
   get valueStreamProcesses() { return valueStreamProcesses.value },
   get glossaryTerms() { return glossaryTerms.value },
@@ -312,6 +364,21 @@ function resolveNodeName(nodeId) {
     <div v-if="isLoading" class="loading-box"><div class="spinner-sm"></div><span>데이터를 불러오는 중...</span></div>
 
     <template v-if="!isLoading">
+      <!-- 산출물 범위 — 어느 세션의 결과인지 고른다 -->
+      <div v-if="sessions.length" class="session-picker no-print">
+        <label class="session-picker__label">산출물 범위</label>
+        <select class="session-picker__select" :value="selectedSessionId || ''" @change="selectSession($event.target.value)">
+          <option v-for="s in sessions" :key="s.id" :value="s.id">
+            {{ s.name }} — BC {{ s.boundedContexts }} · US {{ s.userStories }} · Process {{ s.processes }}
+          </option>
+        </select>
+        <span class="session-picker__meta">{{ selectedSessionId }}</span>
+      </div>
+      <div v-else-if="!isLoading" class="session-picker session-picker--empty no-print">
+        산출물을 만들 수 있는 세션이 없습니다. 문서 업로드 후 이벤트 스토밍 승격을 완료하면 여기에 나타납니다.
+        <span class="session-picker__meta">(현재는 전체 Context 를 읽어 표시합니다)</span>
+      </div>
+
       <!-- Section selector -->
       <div class="section-selector no-print">
         <label v-for="(v,k) in selectedSections" :key="k" class="chk">
@@ -777,6 +844,11 @@ function resolveNodeName(nodeId) {
 .spinner-sm { width:20px; height:20px; border:2px solid #dee2e6; border-top-color:#228be6; border-radius:50%; animation:spin .7s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
+.session-picker { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 20px; background:#e7f5ff; border:1px solid #a5d8ff; border-radius:8px; margin-bottom:10px; font-size:13px; color:#1971c2; }
+.session-picker--empty { background:#fff9db; border-color:#ffe066; color:#e67700; }
+.session-picker__label { font-weight:600; }
+.session-picker__select { flex:1; min-width:260px; padding:6px 10px; border:1px solid #a5d8ff; border-radius:6px; background:#fff; font-size:13px; color:#1a1a2e; }
+.session-picker__meta { color:#868e96; font-size:11.5px; font-family:ui-monospace,monospace; }
 .section-selector { display:flex; flex-wrap:wrap; gap:16px; padding:14px 20px; background:#f8f9fa; border:1px solid #dee2e6; border-radius:8px; margin-bottom:20px; }
 .chk { display:flex; align-items:center; gap:6px; font-size:13px; color:#495057; cursor:pointer; user-select:none; }
 .chk input[type="checkbox"] { accent-color:#228be6; }

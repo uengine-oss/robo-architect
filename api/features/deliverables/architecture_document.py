@@ -441,6 +441,55 @@ def _fetch_promoted_map(session_id: str) -> tuple[dict[str, list[dict]], dict[st
     return by_task, bc_by_us
 
 
+def list_sessions() -> list[dict[str, Any]]:
+    """산출물을 뽑을 수 있는 Ingestion 세션 목록.
+
+    `BpmSession` 을 기준으로 하고, 세션별 규모(프로세스·Task·BC·User Story)를 함께
+    센다. 내보내기 화면이 "어느 세션의 산출물인지" 고를 수 있어야 하기 때문이다 —
+    산출물을 세션 단위로 고정해 놓고 세션을 고를 수단이 없으면, 지난 세션의 문서를
+    다시 뽑을 방법이 없다.
+
+    `updated_at` 내림차순. 값이 없는 세션은 뒤로 보낸다.
+    """
+    query = """
+    MATCH (s:BpmSession)
+    // 집계 뒤에는 `s` 에 접근할 수 없으므로 정렬 키를 미리 꺼내 둔다.
+    WITH coalesce(s.id, s.session_id) AS sid, s.updated_at AS updatedAt
+    WHERE sid IS NOT NULL
+    OPTIONAL MATCH (p:BpmProcess {session_id: sid})
+    WITH sid, updatedAt, count(DISTINCT p) AS processes
+    OPTIONAL MATCH (t:BpmTask {session_id: sid})
+    WITH sid, updatedAt, processes, count(DISTINCT t) AS tasks
+    OPTIONAL MATCH (bc:BoundedContext {session_id: sid})
+    WITH sid, updatedAt, processes, tasks, count(DISTINCT bc) AS bounded_contexts
+    OPTIONAL MATCH (us:UserStory {session_id: sid})
+    WITH sid, updatedAt, processes, tasks, bounded_contexts,
+         count(DISTINCT us) AS user_stories
+    RETURN sid AS id,
+           toString(updatedAt) AS updatedAt,
+           processes, tasks,
+           bounded_contexts AS boundedContexts,
+           user_stories AS userStories
+    ORDER BY updatedAt DESC
+    """
+    with get_session() as s:
+        rows = [dict(rec) for rec in s.run(query)]
+
+    # 이름 후보: 첫 프로세스 이름. 세션 id 만으로는 사람이 고를 수 없다.
+    name_query = """
+    MATCH (p:BpmProcess {session_id: $sid})
+    RETURN p.name AS name ORDER BY p.name LIMIT 1
+    """
+    with get_session() as s:
+        for row in rows:
+            rec = s.run(name_query, sid=row["id"]).single()
+            row["name"] = (rec["name"] if rec else None) or row["id"]
+            # ES 승격이 끝난 세션만 산출물을 만들 수 있다.
+            row["exportable"] = row["boundedContexts"] > 0
+
+    return rows
+
+
 def fetch_session_trees(session_id: str) -> list[dict]:
     """세션에 속한 BC 들의 full-tree 를 도메인 유형 순으로 반환한다.
 
