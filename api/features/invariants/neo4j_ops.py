@@ -210,9 +210,13 @@ def list_reference_candidates(invariant_id: str) -> list[dict[str, Any]] | None:
             MATCH (agg:Aggregate)-[:HAS_INVARIANT]->(inv:Invariant {id: $id})
             MATCH (agg)-[:HAS_COMMAND]->(cmd:Command)
             OPTIONAL MATCH (cmd)-[:HAS_GWT]->(g:GWT)
+            // EXISTS 서브쿼리 대신 OPTIONAL MATCH + 건수 —
+            // (cmd, g) 행 수는 그대로 두고 VERIFIED_BY 만 접는다.
+            OPTIONAL MATCH (inv)-[vb:VERIFIED_BY]->(cmd)
+            WITH cmd, g, count(vb) AS refs
             RETURN cmd.id AS commandId, cmd.name AS commandName,
                    (g IS NOT NULL) AS hasGwt,
-                   EXISTS { (inv)-[:VERIFIED_BY]->(cmd) } AS alreadyReferenced
+                   (refs > 0) AS alreadyReferenced
             ORDER BY cmd.name
             """,
             id=invariant_id,
@@ -231,12 +235,15 @@ def add_reference(invariant_id: str, command_id: str) -> str:
             OPTIONAL MATCH (inv:Invariant {id: $iid})
             OPTIONAL MATCH (cmd:Command {id: $cid})
             OPTIONAL MATCH (agg:Aggregate)-[:HAS_INVARIANT]->(inv)
+            OPTIONAL MATCH (agg)-[ha:HAS_COMMAND]->(cmd)
+            OPTIONAL MATCH (inv)-[vb:VERIFIED_BY]->(cmd)
+            WITH inv, cmd, count(ha) AS aggLinks, count(vb) AS refs
             RETURN inv IS NOT NULL AS invExists,
                    cmd IS NOT NULL AS cmdExists,
                    (inv IS NOT NULL AND cmd IS NOT NULL
-                      AND EXISTS { (agg)-[:HAS_COMMAND]->(cmd) }) AS sameAgg,
+                      AND aggLinks > 0) AS sameAgg,
                    (inv IS NOT NULL AND cmd IS NOT NULL
-                      AND EXISTS { (inv)-[:VERIFIED_BY]->(cmd) }) AS already
+                      AND refs > 0) AS already
             """,
             iid=invariant_id,
             cid=command_id,

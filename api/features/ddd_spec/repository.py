@@ -304,10 +304,11 @@ def _load_user_stories(session, bc_id: str) -> list[UserStoryProjection]:
     rows = session.run(
         """
         MATCH (us:UserStory)-[:IMPLEMENTS]->(target)
+        // EXISTS 서브쿼리 대신 OPTIONAL MATCH + 건수 판정.
+        OPTIONAL MATCH (target)<-[ownsAgg:HAS_AGGREGATE]-(:BoundedContext {id: $id})
+        WITH us, target, count(ownsAgg) AS ownedByBc
         WHERE (target:BoundedContext AND target.id = $id)
-           OR (target:Aggregate AND EXISTS {
-                   MATCH (bc:BoundedContext {id: $id})-[:HAS_AGGREGATE]->(target)
-               })
+           OR (target:Aggregate AND ownedByBc > 0)
         OPTIONAL MATCH (us)-[:IMPLEMENTS]->(agg:Aggregate)
         RETURN DISTINCT us.id AS id, us.role AS role, us.action AS action,
                us.benefit AS benefit, us.priority AS priority,

@@ -679,8 +679,12 @@ def fetch_classifier_view(ui_ids: list[str]) -> dict[str, Any]:
         archived_rows = session.run(
             """
             UNWIND $ids AS uid
-            OPTIONAL MATCH (u:UI {id: uid})<-[*1..30]-(c:Command)
-            WHERE c IS NOT NULL AND NOT EXISTS { (:Policy)-[:INVOKES]->(c) }
+            OPTIONAL MATCH (u:UI {id: uid})<-[*1..30]-(c0:Command)
+            OPTIONAL MATCH (c0)<-[pinv:INVOKES]-(:Policy)
+            WITH uid, c0, count(pinv) AS invoked
+            // OPTIONAL MATCH 의 WHERE 는 행을 버리지 않고 null 을 남긴다 —
+            // 그 의미를 유지하려고 필터가 아니라 CASE 로 접는다.
+            WITH uid, CASE WHEN c0 IS NOT NULL AND invoked = 0 THEN c0 ELSE null END AS c
             WITH uid, c LIMIT 1
             OPTIONAL MATCH (m:StoryboardPageMapping {commandId: c.id})
             RETURN uid AS id,

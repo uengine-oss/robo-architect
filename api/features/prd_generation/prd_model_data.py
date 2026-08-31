@@ -138,9 +138,12 @@ def fetch_bc_data(bc_id: str, session_id: str | None = None) -> dict | None:
     UNWIND (CASE WHEN size(usList) = 0 THEN [null] ELSE usList END) AS us
     // -- per-US rules --
     OPTIONAL MATCH (us)-[:SOURCED_FROM]->(sr:Rule)
-    OPTIONAL MATCH (af)-[ahr:HAS_RULE]->(ar:RULE)
+    // EXISTS 서브쿼리를 패턴으로 인라인 — 아래 collect(DISTINCT …) 가
+    // 조상 경로 중복을 접으므로 결과는 동일하다.
+    OPTIONAL MATCH (_rt_af)-[:PARENT_OF*0..]->(af)-[ahr:HAS_RULE]->(ar:RULE)
       WHERE ar.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr.source_function }
+        AND (_rt_af:FUNCTION OR _rt_af:PROCEDURE OR _rt_af:METHOD OR _rt_af:TRIGGER)
+        AND _rt_af.name = sr.source_function
         AND ar.statement = sr.title
     WITH bc, aggData, rmData, polData, uiData, gwtData, us,
          collect(DISTINCT CASE WHEN sr IS NOT NULL THEN
@@ -155,9 +158,12 @@ def fetch_bc_data(bc_id: str, session_id: str | None = None) -> dict | None:
                               ELSE NULL END) AS rawRules
     // -- per-US examples (via sourced rules → analyzer rule → HAS_EXAMPLE) --
     OPTIONAL MATCH (us)-[:SOURCED_FROM]->(sr2:Rule)
-    OPTIONAL MATCH (af2)-[:HAS_RULE]->(ar2:RULE)
+    // EXISTS 서브쿼리를 패턴으로 인라인 — 아래 collect(DISTINCT …) 가
+    // 조상 경로 중복을 접으므로 결과는 동일하다.
+    OPTIONAL MATCH (_rt_af2)-[:PARENT_OF*0..]->(af2)-[:HAS_RULE]->(ar2:RULE)
       WHERE ar2.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af2) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr2.source_function }
+        AND (_rt_af2:FUNCTION OR _rt_af2:PROCEDURE OR _rt_af2:METHOD OR _rt_af2:TRIGGER)
+        AND _rt_af2.name = sr2.source_function
         AND ar2.statement = sr2.title
     OPTIONAL MATCH (ar2)-[:HAS_EXAMPLE]->(ex:EXAMPLE)
     OPTIONAL MATCH (ex)-[at:AFFECTS_TABLE]->(tbl:TABLE)
@@ -262,9 +268,12 @@ def _attach_per_node_source_rules(bc_id: str, bc_data: dict, session_id: str | N
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
     OPTIONAL MATCH (us:UserStory)-[:IMPLEMENTS]->(agg)
     OPTIONAL MATCH (us)-[:SOURCED_FROM]->(sr:Rule)
-    OPTIONAL MATCH (af)-[ahr:HAS_RULE]->(ar:RULE)
+    // EXISTS 서브쿼리를 패턴으로 인라인 — 아래 collect(DISTINCT …) 가
+    // 조상 경로 중복을 접으므로 결과는 동일하다.
+    OPTIONAL MATCH (_rt_af)-[:PARENT_OF*0..]->(af)-[ahr:HAS_RULE]->(ar:RULE)
       WHERE ar.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr.source_function }
+        AND (_rt_af:FUNCTION OR _rt_af:PROCEDURE OR _rt_af:METHOD OR _rt_af:TRIGGER)
+        AND _rt_af.name = sr.source_function
         AND ar.statement = sr.title
     WITH bc, agg,
          collect(DISTINCT CASE WHEN sr IS NOT NULL THEN
@@ -279,9 +288,12 @@ def _attach_per_node_source_rules(bc_id: str, bc_data: dict, session_id: str | N
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
     OPTIONAL MATCH (us2:UserStory)-[:IMPLEMENTS]->(cmd)
     OPTIONAL MATCH (us2)-[:SOURCED_FROM]->(sr2:Rule)
-    OPTIONAL MATCH (af2)-[ahr2:HAS_RULE]->(ar2:RULE)
+    // EXISTS 서브쿼리를 패턴으로 인라인 — 아래 collect(DISTINCT …) 가
+    // 조상 경로 중복을 접으므로 결과는 동일하다.
+    OPTIONAL MATCH (_rt_af2)-[:PARENT_OF*0..]->(af2)-[ahr2:HAS_RULE]->(ar2:RULE)
       WHERE ar2.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af2) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr2.source_function }
+        AND (_rt_af2:FUNCTION OR _rt_af2:PROCEDURE OR _rt_af2:METHOD OR _rt_af2:TRIGGER)
+        AND _rt_af2.name = sr2.source_function
         AND ar2.statement = sr2.title
     WITH bc, aggRollup, cmd,
          collect(DISTINCT CASE WHEN sr2 IS NOT NULL THEN
@@ -297,9 +309,12 @@ def _attach_per_node_source_rules(bc_id: str, bc_data: dict, session_id: str | N
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(cmd3:Command)-[:EMITS]->(evt:Event)
     OPTIONAL MATCH (us3:UserStory)-[:IMPLEMENTS]->(cmd3)
     OPTIONAL MATCH (us3)-[:SOURCED_FROM]->(sr3:Rule)
-    OPTIONAL MATCH (af3)-[ahr3:HAS_RULE]->(ar3:RULE)
+    // EXISTS 서브쿼리를 패턴으로 인라인 — 아래 collect(DISTINCT …) 가
+    // 조상 경로 중복을 접으므로 결과는 동일하다.
+    OPTIONAL MATCH (_rt_af3)-[:PARENT_OF*0..]->(af3)-[ahr3:HAS_RULE]->(ar3:RULE)
       WHERE ar3.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af3) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr3.source_function }
+        AND (_rt_af3:FUNCTION OR _rt_af3:PROCEDURE OR _rt_af3:METHOD OR _rt_af3:TRIGGER)
+        AND _rt_af3.name = sr3.source_function
         AND ar3.statement = sr3.title
     OPTIONAL MATCH (ar3)-[:HAS_EXAMPLE]->(ex:EXAMPLE)
     OPTIONAL MATCH (ex)-[at:AFFECTS_TABLE]->(tbl:TABLE)

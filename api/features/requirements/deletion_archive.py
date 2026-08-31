@@ -94,10 +94,11 @@ def exclusive_design_ids(session, us_ids: list[str]) -> list[str]:
         MATCH (us:UserStory)-[:IMPLEMENTS]->(d)
         WHERE us.id IN $ids AND d.id IS NOT NULL
         WITH DISTINCT d
-        WHERE NOT EXISTS {
-            MATCH (o:UserStory)-[:IMPLEMENTS]->(d)
-            WHERE NOT o.id IN $ids
-        }
+        // 삭제 대상 밖의 UserStory 가 하나라도 이 노드를 참조하면 제외한다.
+        OPTIONAL MATCH (d)<-[:IMPLEMENTS]-(o:UserStory)
+        WHERE NOT o.id IN $ids
+        WITH d, count(o) AS otherOwners
+        WHERE otherOwners = 0
         RETURN collect(d.id) AS ids
         """,
         ids=ids,
@@ -127,7 +128,7 @@ def capture(
     nodes = session.run(
         """
         MATCH (n) WHERE n.id IN $ids
-        RETURN collect({labels: labels(n), props: properties(n)}) AS nodes
+        RETURN collect({labels: labels(n), props: n {.*}}) AS nodes
         """,
         ids=ids,
     ).single()["nodes"]
@@ -142,7 +143,7 @@ def capture(
         WHERE a.id IN $ids AND startNode(r).id IS NOT NULL AND endNode(r).id IS NOT NULL
         WITH DISTINCT r, startNode(r) AS s, endNode(r) AS e
         RETURN collect({
-            type: type(r), props: properties(r),
+            type: type(r), props: r {.*},
             startId: s.id, endId: e.id,
             startLabels: labels(s), endLabels: labels(e)
         }) AS rels

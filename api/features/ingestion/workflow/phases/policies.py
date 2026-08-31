@@ -1125,13 +1125,13 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             with ctx.client.session() as _iso_sess:
                 _isolated = _iso_sess.run(
                     """
+                    // EXISTS 서브쿼리 대신 OPTIONAL MATCH + 건수 판정 —
+                    // 의미는 같고 Cypher 방언 의존이 없다.
                     MATCH (bc:BoundedContext)
-                    WHERE NOT EXISTS {
-                        MATCH (bc)-[:HAS_EVENT]->(e:Event)-[:TRIGGERS]->(:Policy)
-                    }
-                    AND EXISTS {
-                        MATCH (bc)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(:Command)
-                    }
+                    OPTIONAL MATCH (bc)-[:HAS_EVENT]->(:Event)-[:TRIGGERS]->(pol:Policy)
+                    OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
+                    WITH bc, count(DISTINCT pol) AS outgoing, count(DISTINCT cmd) AS commands
+                    WHERE outgoing = 0 AND commands > 0
                     RETURN bc.name AS bcName, bc.id AS bcId
                     """
                 )

@@ -34,7 +34,9 @@ def list_entry_commands() -> list[dict[str, Any]]:
         records = session.run(
             """
             MATCH (c:Command)
-            WHERE NOT EXISTS { (:Policy)-[:INVOKES]->(c) }
+            OPTIONAL MATCH (c)<-[pinv:INVOKES]-(:Policy)
+            WITH c, count(pinv) AS invoked
+            WHERE invoked = 0
             RETURN c.id AS id,
                    coalesce(c.displayName, c.name) AS displayName,
                    c.name AS name
@@ -56,10 +58,12 @@ def resolve_storyboard_for_ui(ui_node_id: str) -> str | None:
     cypher = f"""
         MATCH (u:UI {{id: $uid}})
         MATCH (c:Command)
-        WHERE NOT EXISTS {{ (:Policy)-[:INVOKES]->(c) }}
-          AND EXISTS {{
-              MATCH (c)-[:{_REL_TYPES}*1..{MAX_BFS_HOPS}]-(u)
-          }}
+        OPTIONAL MATCH (c)<-[pinv:INVOKES]-(:Policy)
+        WITH u, c, count(pinv) AS invoked
+        WHERE invoked = 0
+        // 도달 가능성은 존재 판정이므로 MATCH 후 DISTINCT 로 접는다.
+        MATCH (c)-[:{_REL_TYPES}*1..{MAX_BFS_HOPS}]-(u)
+        WITH DISTINCT c
         RETURN c.id AS id
         ORDER BY coalesce(c.displayName, c.name), c.id
         LIMIT 1

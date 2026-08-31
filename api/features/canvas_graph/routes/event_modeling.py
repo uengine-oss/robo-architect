@@ -1210,9 +1210,9 @@ async def get_connectable_targets(request: Request, node_type: str, node_id: str
                 records = session.run(
                     """
                     MATCH (tgt:ReadModel)
-                    WHERE NOT EXISTS {
-                        MATCH (tgt)-[:HAS_CQRS]->(:CQRSConfig)-[:HAS_OPERATION]->(:CQRSOperation)-[:TRIGGERED_BY]->(:Event {id: $srcId})
-                    }
+                    OPTIONAL MATCH (tgt)-[:HAS_CQRS]->(:CQRSConfig)-[:HAS_OPERATION]->(:CQRSOperation)-[:TRIGGERED_BY]->(ev:Event {id: $srcId})
+                    WITH tgt, count(ev) AS linked
+                    WHERE linked = 0
                     RETURN tgt.id AS id, tgt.name AS name, tgt.displayName AS displayName
                     """,
                     srcId=node_id,
@@ -1221,9 +1221,9 @@ async def get_connectable_targets(request: Request, node_type: str, node_id: str
                 records = session.run(
                     f"""
                     MATCH (tgt:{target_label})
-                    WHERE NOT EXISTS {{
-                        MATCH (:{source_label} {{id: $srcId}})-[:{actual_rel}]->(tgt)
-                    }}
+                    OPTIONAL MATCH (tgt)<-[:{actual_rel}]-(src:{source_label} {{id: $srcId}})
+                    WITH tgt, count(src) AS linked
+                    WHERE linked = 0
                     RETURN tgt.id AS id, tgt.name AS name, tgt.displayName AS displayName
                     """,
                     srcId=node_id,
