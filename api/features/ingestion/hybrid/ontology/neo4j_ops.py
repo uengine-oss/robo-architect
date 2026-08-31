@@ -50,12 +50,17 @@ def clear_hybrid_nodes(session_id: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     with get_session() as s:
         for label in ALL_HYBRID_LABELS:
+            # 집계 WITH 를 쓰기 앞에 두지 않는다 — 세고 지우는 두 문장으로 나눈다.
             r = s.run(
-                f"MATCH (n:{label} {{session_id: $sid}}) WITH n, count(n) AS c DETACH DELETE n RETURN c",
+                f"MATCH (n:{label} {{session_id: $sid}}) RETURN count(n) AS c",
                 sid=session_id,
             ).single()
             if r and r["c"]:
                 counts[label] = r["c"]
+                s.run(
+                    f"MATCH (n:{label} {{session_id: $sid}}) DETACH DELETE n",
+                    sid=session_id,
+                )
     return counts
 
 
@@ -71,12 +76,14 @@ def clear_all_hybrid_workspace() -> dict[str, int]:
     counts: dict[str, int] = {}
     with get_session() as s:
         for label in ALL_HYBRID_LABELS:
+            # 집계 WITH 를 쓰기 앞에 두지 않는다 — 세어보고 지우는 두 문장으로
+            # 나눈다. 의미는 같고 Cypher 방언 의존이 없다.
             r = s.run(
-                f"MATCH (n:{label}) WHERE n.session_id IS NOT NULL "
-                "WITH n, count(n) AS c DETACH DELETE n RETURN c"
+                f"MATCH (n:{label}) WHERE n.session_id IS NOT NULL RETURN count(n) AS c"
             ).single()
             if r and r["c"]:
                 counts[label] = r["c"]
+                s.run(f"MATCH (n:{label}) WHERE n.session_id IS NOT NULL DETACH DELETE n")
     return counts
 
 
@@ -121,16 +128,23 @@ def save_bpm_skeleton(session_id: str, skeleton: BpmSkeleton) -> None:
             # Without this the snapshot ORDER BY would default to alphabetical (or
             # internal node id), causing the Navigator to reshuffle processes
             # mid-explore as rehydrate fires.
+            # next_idx 는 읽기로 먼저 구한다. 쓰기 앞의 WITH 가 집계를 담으면
+            # 백엔드에 따라 거부된다.
+            _idx = s.run(
+                f"MATCH (existing:{L_BPM_PROCESS} {{session_id: $sid}}) "
+                "RETURN count(existing) AS n",
+                sid=session_id,
+            ).single()
+            next_idx = int(_idx["n"]) if _idx and _idx["n"] is not None else 0
             s.run(
-                f"OPTIONAL MATCH (existing:{L_BPM_PROCESS} {{session_id: $sid}}) "
-                "WITH count(existing) AS next_idx "
                 f"MERGE (p:{L_BPM_PROCESS} {{id: $id, session_id: $sid}}) "
-                "ON CREATE SET p.process_index = next_idx "
+                "ON CREATE SET p.process_index = $next_idx "
                 "SET p.name = $name, p.description = $desc, "
                 "    p.domain_keywords = $keywords, "
                 "    p.source_pdf_name = $pdf_name, p.bpmn_xml = $xml, "
                 "    p.updated_at = datetime()",
                 id=process.id, sid=session_id, name=process.name,
+                next_idx=next_idx,
                 desc=process.description,
                 keywords=list(process.domain_keywords or []),
                 pdf_name=process.source_pdf_name,
@@ -965,7 +979,10 @@ def fetch_session_snapshot(session_id: str) -> dict:
             f"""
             MATCH (am:{L_ACTIVITY_MAPPING} {{session_id: $sid}})
             OPTIONAL MATCH (t:{L_BPM_TASK} {{id: am.task_id, session_id: $sid}})-[r:{R_REALIZED_BY}]->(:{L_RULE} {{id: am.rule_id, session_id: $sid}})
-            WITH am WHERE r IS NULL
+            // r 을 WITH 로 함께 넘긴다 — 투영에서 떨어뜨린 변수는
+            // 뒤따르는 WHERE 에서 볼 수 없다.
+            WITH am, r
+            WHERE r IS NULL
             RETURN am
             """,
             sid=session_id,

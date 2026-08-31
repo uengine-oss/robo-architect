@@ -469,11 +469,11 @@ async def reset_hybrid_workspace() -> dict[str, Any]:
     with _gs() as s:
         for label in ALL_CLEARED_LABELS:
             r = s.run(
-                f"MATCH (n:{label}) WHERE n.session_id IS NOT NULL "
-                "WITH n, count(n) AS c DETACH DELETE n RETURN c"
+                f"MATCH (n:{label}) WHERE n.session_id IS NOT NULL RETURN count(n) AS c"
             ).single()
             if r and r["c"]:
                 promoted_deleted[label] = int(r["c"])
+                s.run(f"MATCH (n:{label}) WHERE n.session_id IS NOT NULL DETACH DELETE n")
     return {"success": True, "deleted": deleted, "promoted_deleted": promoted_deleted}
 
 

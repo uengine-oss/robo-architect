@@ -129,14 +129,21 @@ def clear_promoted_nodes(hybrid_session_id: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     with get_session() as s:
         for label in ALL_CLEARED_LABELS:
+            # 집계 WITH 를 쓰기 앞에 두지 않는다 — 세어보고 지우는 두 문장으로 나눈다.
             r = s.run(
                 f"MATCH (n:{label} {{session_id: $sid}}) "
                 "WHERE size(labels(n)) = 1 "
-                "WITH n, count(n) AS c DETACH DELETE n RETURN c",
+                "RETURN count(n) AS c",
                 sid=hybrid_session_id,
             ).single()
             if r and r["c"]:
                 counts[label] = int(r["c"])
+                s.run(
+                    f"MATCH (n:{label} {{session_id: $sid}}) "
+                    "WHERE size(labels(n)) = 1 "
+                    "DETACH DELETE n",
+                    sid=hybrid_session_id,
+                )
     return counts
 
 
@@ -175,7 +182,8 @@ def _attach_orphan_us_to_first_bc(hybrid_session_id: str) -> int:
         r = s.run(
             "MATCH (us:UserStory {session_id: $sid}) "
             "WHERE NOT (us)-[:IMPLEMENTS]->(:BoundedContext) "
-            "WITH us "
+            # WITH 는 쓰기 앞의 마지막 읽기 절이어야 한다. 여기서는 아무것도
+            # 바꾸지 않으므로 빼는 편이 안전하고 의미도 같다.
             "MATCH (b:BoundedContext {session_id: $sid, id: $bid}) "
             "MERGE (us)-[rel:IMPLEMENTS]->(b) RETURN count(rel) AS c",
             sid=hybrid_session_id, bid=first_bc["id"],
@@ -228,17 +236,19 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
         rec = s.run(
             "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
             "OPTIONAL MATCH (f)-[:HAS_QUESTION]->(q) "
+            # EXISTS 서브쿼리를 앞선 OPTIONAL MATCH 로 분리한다. 조상 _rt 만큼
+            # 행이 늘지만 아래 collect(DISTINCT bc) 가 접으므로 결과는 같다.
+            "OPTIONAL MATCH (f)<-[:PARENT_OF*0..]-(_rt) "
+            "          WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) "
             "OPTIONAL MATCH (t:BpmTask {session_id: $sid})-[:REALIZED_BY]->"
             "          (sh:Rule {session_id: $sid}) "
-            "          WHERE EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(f) "
-            "                 WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) "
-            "                   AND _rt.name = sh.source_function } "
+            "          WHERE _rt.name = sh.source_function "
             "OPTIONAL MATCH (us:UserStory {session_id: $sid}) "
             "          WHERE us.sourceUnitId = t.id "
-            "OPTIONAL MATCH (us)-[:IMPLEMENTS]->(bc:BoundedContext {session_id: $sid}) "
-            "WITH q, collect(DISTINCT bc) AS bcs "
-            "WHERE size(bcs) > 0 "
-            "UNWIND bcs AS bc "
+            # collect 로 모았다가 UNWIND 로 되푸는 왕복을 없앤다. 마지막
+            # MATCH 를 필수로 두면 bc 가 없는 행은 그대로 사라지므로
+            # `size(bcs) > 0` 가드와 의미가 같고, MERGE 가 중복을 흡수한다.
+            "MATCH (us)-[:IMPLEMENTS]->(bc:BoundedContext {session_id: $sid}) "
             "MERGE (q)-[rel:ATTACHED_TO]->(bc) "
             "RETURN count(rel) AS c",
             sid=hybrid_session_id,
@@ -248,18 +258,24 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
         # Fallback: any Question still unattached → first BC of the session.
         # IMPORTANT: `LIMIT 1` must apply to BC selection only, not to the
         # question stream. Otherwise only one orphan question gets attached.
-        rec = s.run(
-            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
-            "  AND NOT (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
+        # 첫 BC 는 읽기로 먼저 고른다. `WITH … LIMIT 1` 뒤에 다시 MATCH 를 두면
+        # 쓰기 앞의 마지막 읽기 절이 WITH 가 아니게 된다. 파라미터로 넘기면
+        # LIMIT 이 BC 선택에만 걸린다는 원래 의도도 그대로다.
+        first_bc = s.run(
             "MATCH (bc:BoundedContext {session_id: $sid}) "
-            "WITH bc ORDER BY bc.key LIMIT 1 "
-            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
-            "  AND NOT (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
-            "MERGE (q)-[rel:ATTACHED_TO]->(bc) "
-            "RETURN count(rel) AS c",
+            "RETURN bc.id AS id ORDER BY bc.key LIMIT 1",
             sid=hybrid_session_id,
         ).single()
-        counts["attached_to"] += int(rec["c"]) if rec else 0
+        if first_bc and first_bc.get("id"):
+            rec = s.run(
+                "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
+                "  AND NOT (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
+                "MATCH (bc:BoundedContext {id: $bid, session_id: $sid}) "
+                "MERGE (q)-[rel:ATTACHED_TO]->(bc) "
+                "RETURN count(rel) AS c",
+                sid=hybrid_session_id, bid=first_bc["id"],
+            ).single()
+            counts["attached_to"] += int(rec["c"]) if rec else 0
     return counts
 
 

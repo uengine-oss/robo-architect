@@ -61,48 +61,76 @@ class ReferenceOps:
                 "skipped_not_key": 0,
             }
 
-        query = """
-        UNWIND $items as it
-        MATCH (src:Property {id: it.srcId})
-        WITH src, it
-        CALL {
-          WITH it
-          OPTIONAL MATCH (pAgg:Aggregate {key: it.tgtKey}) WHERE it.tgtType = 'Aggregate'
-          OPTIONAL MATCH (pCmd:Command {key: it.tgtKey}) WHERE it.tgtType = 'Command'
-          OPTIONAL MATCH (pEvt:Event {key: it.tgtKey}) WHERE it.tgtType = 'Event'
-          OPTIONAL MATCH (pRm:ReadModel {key: it.tgtKey}) WHERE it.tgtType = 'ReadModel'
-          RETURN coalesce(pAgg, pCmd, pEvt, pRm) as parent
+        # `CALL { … }` 서브쿼리와 조건부 `FOREACH` 쓰기는 백엔드 의존이 크다.
+        # tgtType 이 대상 라벨을 정해주므로 타입별로 읽어 판정한 뒤,
+        # 자격을 갖춘 것만 한 번에 쓴다.
+        _TGT_LABELS = ("Aggregate", "Command", "Event", "ReadModel")
+
+        stats = {
+            "scanned": 0,
+            "parentFound": 0,
+            "tgtFound": 0,
+            "created": 0,
+            "skipped_parent_missing": 0,
+            "skipped_target_missing": 0,
+            "skipped_not_key": 0,
         }
-        WITH src, it, parent
-        OPTIONAL MATCH (tgt:Property {parentType: it.tgtType, parentId: parent.id, name: it.tgtProp})
-        WITH src, it, parent, tgt,
-             (parent IS NOT NULL) as parentFound,
-             (tgt IS NOT NULL) as tgtFound,
-             (coalesce(tgt.isKey, false) = true) as tgtIsKey
-        FOREACH (_ IN CASE WHEN parentFound AND tgtFound AND tgtIsKey THEN [1] ELSE [] END |
-          SET src.isForeignKey = true
-          MERGE (src)-[:REFERENCES]->(tgt)
-        )
-        RETURN
-          count(*) as scanned,
-          sum(CASE WHEN parentFound THEN 1 ELSE 0 END) as parentFound,
-          sum(CASE WHEN tgtFound THEN 1 ELSE 0 END) as tgtFound,
-          sum(CASE WHEN parentFound AND tgtFound AND tgtIsKey THEN 1 ELSE 0 END) as created,
-          sum(CASE WHEN NOT parentFound THEN 1 ELSE 0 END) as skipped_parent_missing,
-          sum(CASE WHEN parentFound AND NOT tgtFound THEN 1 ELSE 0 END) as skipped_target_missing,
-          sum(CASE WHEN parentFound AND tgtFound AND NOT tgtIsKey THEN 1 ELSE 0 END) as skipped_not_key
-        """
+        to_link: list[dict[str, Any]] = []
 
         with self.session() as session:
-            rec = session.run(query, items=items).single() or {}
-            return {
-                "scanned": int(rec.get("scanned") or 0),
-                "parentFound": int(rec.get("parentFound") or 0),
-                "tgtFound": int(rec.get("tgtFound") or 0),
-                "created": int(rec.get("created") or 0),
-                "skipped_parent_missing": int(rec.get("skipped_parent_missing") or 0),
-                "skipped_target_missing": int(rec.get("skipped_target_missing") or 0),
-                "skipped_not_key": int(rec.get("skipped_not_key") or 0),
-            }
+            for label in _TGT_LABELS:
+                subset = [it for it in items if it.get("tgtType") == label]
+                if not subset:
+                    continue
+                rows = session.run(
+                    f"""
+                    UNWIND $items AS it
+                    MATCH (src:Property {{id: it.srcId}})
+                    OPTIONAL MATCH (parent:{label} {{key: it.tgtKey}})
+                    OPTIONAL MATCH (tgt:Property {{parentType: it.tgtType,
+                                                   parentId: parent.id,
+                                                   name: it.tgtProp}})
+                    RETURN it.srcId AS srcId, parent.id AS parentId,
+                           tgt.id AS tgtId, coalesce(tgt.isKey, false) AS tgtIsKey
+                    """,
+                    items=subset,
+                )
+                for row in rows:
+                    stats["scanned"] += 1
+                    parent_found = row["parentId"] is not None
+                    tgt_found = row["tgtId"] is not None
+                    if parent_found:
+                        stats["parentFound"] += 1
+                    if tgt_found:
+                        stats["tgtFound"] += 1
+                    if not parent_found:
+                        stats["skipped_parent_missing"] += 1
+                    elif not tgt_found:
+                        stats["skipped_target_missing"] += 1
+                    elif not bool(row["tgtIsKey"]):
+                        stats["skipped_not_key"] += 1
+                    else:
+                        stats["created"] += 1
+                        to_link.append({"srcId": row["srcId"], "tgtId": row["tgtId"]})
+
+            # 대상 라벨이 넷 중 하나가 아니면 부모를 찾을 수 없다 — 원래 질의와
+            # 같게 scanned 에 넣고 parent 미발견으로 센다.
+            other = [it for it in items if it.get("tgtType") not in _TGT_LABELS]
+            stats["scanned"] += len(other)
+            stats["skipped_parent_missing"] += len(other)
+
+            if to_link:
+                session.run(
+                    """
+                    UNWIND $rows AS row
+                    MATCH (src:Property {id: row.srcId})
+                    MATCH (tgt:Property {id: row.tgtId})
+                    SET src.isForeignKey = true
+                    MERGE (src)-[:REFERENCES]->(tgt)
+                    """,
+                    rows=to_link,
+                )
+
+        return stats
 
 

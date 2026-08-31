@@ -14,17 +14,18 @@ from api.platform.observability.smart_logger import SmartLogger
 def reset_change_data() -> dict:
     """RequirementChange 및 ChangeSet 노드를 모두 삭제하고 삭제 건수를 반환한다."""
     with get_session() as session:
-        chg_result = session.run(
-            "MATCH (n:RequirementChange) WITH count(n) AS cnt DETACH DELETE (n) RETURN cnt"
-        )
-        chg_count = chg_result.single()
+        # 집계 WITH 를 쓰기 앞에 두지 않는다 — 세고 지우는 두 문장으로 나눈다.
+        chg_count = session.run(
+            "MATCH (n:RequirementChange) RETURN count(n) AS cnt"
+        ).single()
         chg_deleted = chg_count["cnt"] if chg_count else 0
+        if chg_deleted:
+            session.run("MATCH (n:RequirementChange) DETACH DELETE n")
 
-        cs_result = session.run(
-            "MATCH (n:ChangeSet) WITH count(n) AS cnt DETACH DELETE (n) RETURN cnt"
-        )
-        cs_count = cs_result.single()
+        cs_count = session.run("MATCH (n:ChangeSet) RETURN count(n) AS cnt").single()
         cs_deleted = cs_count["cnt"] if cs_count else 0
+        if cs_deleted:
+            session.run("MATCH (n:ChangeSet) DETACH DELETE n")
 
     SmartLogger.log(
         "INFO",

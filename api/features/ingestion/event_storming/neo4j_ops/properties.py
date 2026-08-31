@@ -24,13 +24,26 @@ class PropertyOps:
         if not rows:
             return {"upserted": 0}
 
-        query = """
+        # 부모 라벨을 붙이지 않는 `MATCH (parent {id: …})` 와
+        # `row.parentType IN labels(parent)` 는 백엔드 의존이 크다.
+        # parentType 을 이미 알고 있으므로 타입별로 나눠 라벨을 명시한다.
+        _PARENT_LABELS = ("Aggregate", "Command", "Event", "ReadModel")
+
+        def _valid(r: dict[str, Any]) -> bool:
+            if r.get("parentType") not in _PARENT_LABELS:
+                return False
+            for k in ("parentId", "name", "type"):
+                v = r.get(k)
+                if v is None or not str(v).strip():
+                    return False
+            return True
+
+        valid_rows = [r for r in rows if _valid(r)]
+        if not valid_rows:
+            return {"upserted": 0}
+
+        upsert_query = """
         UNWIND $rows as row
-        WITH row
-        WHERE row.parentType IN ['Aggregate','Command','Event','ReadModel']
-          AND row.parentId IS NOT NULL AND trim(toString(row.parentId)) <> ''
-          AND row.name IS NOT NULL AND trim(toString(row.name)) <> ''
-          AND row.type IS NOT NULL AND trim(toString(row.type)) <> ''
         MERGE (p:Property {parentType: row.parentType, parentId: row.parentId, name: row.name})
         ON CREATE SET p.id = randomUUID(),
                       p.createdAt = datetime()
@@ -44,15 +57,27 @@ class PropertyOps:
             p.parentId = row.parentId,
             p.fkTargetHint = row.fkTargetHint,
             p.updatedAt = datetime()
-        WITH row, p
-        MATCH (parent {id: row.parentId})
-        WHERE row.parentType IN labels(parent)
-        MERGE (parent)-[:HAS_PROPERTY]->(p)
         RETURN count(p) as upserted
         """
 
         with self.session() as session:
-            rec = session.run(query, rows=rows).single()
-            return {"upserted": int((rec or {}).get("upserted") or 0)}
+            rec = session.run(upsert_query, rows=valid_rows).single()
+            upserted = int((rec or {}).get("upserted") or 0)
+
+            for label in _PARENT_LABELS:
+                subset = [r for r in valid_rows if r.get("parentType") == label]
+                if not subset:
+                    continue
+                session.run(
+                    f"""
+                    UNWIND $rows as row
+                    MATCH (parent:{label} {{id: row.parentId}})
+                    MATCH (p:Property {{parentType: row.parentType,
+                                        parentId: row.parentId, name: row.name}})
+                    MERGE (parent)-[:HAS_PROPERTY]->(p)
+                    """,
+                    rows=subset,
+                )
+            return {"upserted": upserted}
 
 
