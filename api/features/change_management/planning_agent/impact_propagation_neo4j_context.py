@@ -81,13 +81,13 @@ def fetch_2hop_subgraph(session, node_id: str, rel_types: List[str]) -> Dict[str
         type: labels(n)[0],
         name: coalesce(n.name, ''),
         description: coalesce(n.description, ''),
-        properties: properties(n)
+        properties: n {{.*}}
       }}] as nodes,
       [r in rels | {{
         source: startNode(r).id,
         target: endNode(r).id,
         type: type(r),
-        properties: properties(r)
+        properties: r {{.*}}
       }}] as relationships
     """
 

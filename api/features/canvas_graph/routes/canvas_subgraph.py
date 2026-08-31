@@ -41,7 +41,7 @@ async def get_subgraph(
         source: n1.id,
         target: n2.id,
         type: type(r),
-        properties: properties(r)
+        properties: r {.*}
     }) as relationships
 
     UNWIND nodes as n
@@ -49,7 +49,7 @@ async def get_subgraph(
         id: n.id,
         name: n.name,
         type: labels(n)[0],
-        properties: properties(n)
+        properties: n {.*}
     }) as nodes, relationships
 
     RETURN nodes, [r IN relationships WHERE r.source IS NOT NULL] as relationships

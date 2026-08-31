@@ -831,7 +831,7 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     MATCH (a:Aggregate {id: $agg_id})-[:HAS_COMMAND]->(:Command)-[:EMITS]->(e:Event)
                     WITH DISTINCT e
                     RETURN e {.id, .key, .name, .displayName, .version, .schema, .payload, .description, .sequence} AS evt
-                    ORDER BY evt.name
+                    ORDER BY e.name
                     """,
                     agg_id=agg_id,
                 ).data()
