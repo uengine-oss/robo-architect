@@ -792,8 +792,10 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
     This ensures nodes are always displayed within their BC container.
     """
     context_query = """
+    // `WITH n, …` 을 두면 n 이 노드 바인딩에서 값으로 바뀌고, 뒤따르는
+    // OPTIONAL MATCH 가 그 값을 다시 열면서 매치 실패 시 n 을 통째로
+    // 비워버리는 백엔드가 있다. n 을 끝까지 노드로 두면 그럴 일이 없다.
     MATCH (n {id: $node_id})
-    WITH n, labels(n)[0] as nodeType
 
     // Find parent BC based on node type
     OPTIONAL MATCH (bc1:BoundedContext {id: $node_id})
@@ -804,8 +806,8 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
     OPTIONAL MATCH (bc6:BoundedContext)-[:HAS_UI]->(n)
     OPTIONAL MATCH (bc7:BoundedContext)-[:HAS_READMODEL]->(n)
 
-    WITH n, nodeType, coalesce(bc1, bc2, bc3, bc4, bc5, bc6, bc7) as bc
-    RETURN n, nodeType, bc
+    RETURN n, labels(n)[0] as nodeType,
+           coalesce(bc1, bc2, bc3, bc4, bc5, bc6, bc7) as bc
     """
 
     with get_session() as session:

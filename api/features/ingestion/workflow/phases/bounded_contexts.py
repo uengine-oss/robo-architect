@@ -160,7 +160,9 @@ async def _create_bc_with_links(
         bulk_results: dict[str, dict[str, Any]] = getattr(ctx, "_bulk_bc_results", None) or {}
         created_bc = bulk_results.get(bc_name)
         if not created_bc or not created_bc.get("id"):
-            return None, f"bulk_create_bounded_contexts returned empty result for {bc_name}"
+            # 호출부는 (data, events, error) 3-튜플을 푼다. 여기만 2개를 돌려주면
+            # 진짜 원인이 ValueError 로 덮여 로그에 남지 않는다.
+            return None, [], f"bulk_create_bounded_contexts returned empty result for {bc_name}"
         
         # Overwrite LLM-proposed id with UUID from DB (canonical) - only if bc is an object, not dict
         try:
