@@ -112,3 +112,8 @@ deploy/secrets.yaml
 
 # Runtime-generated proposal acceptance log (append-only; caused merge conflicts)
 specs/proposal-changes.md
+
+# 파서와 analyzer 가 파일을 주고받는 작업 폴더 (robo-stack.sh 의 ROBO_DATA_DIR).
+# 소스 사본과 파싱된 AST JSON 이라 산출물이지 소스가 아니다 — 한 프로젝트만
+# 분석해도 수 MB 다.
+robo-analyzer/data/
