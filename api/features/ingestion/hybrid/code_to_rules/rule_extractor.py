@@ -35,7 +35,7 @@ MATCH (f)-[hr:HAS_RULE]->(r:RULE)
 WITH f, hr, r,
      [(r)-[:HAS_EXAMPLE]->(e:EXAMPLE) |
         {
-          example_id:  e.id,
+          example_id:  coalesce(e.example_id, e.id),
           given:       e.given,
           when_:       e.when_,
           then_:       e.then_,
@@ -44,16 +44,17 @@ WITH f, hr, r,
         }
      ] AS examples
 RETURN
-    coalesce(f.id, f.name)            AS function_id,
+    coalesce(f.function_id, f.id, f.name) AS function_id,
     coalesce(f.name, '')              AS function_name,
-    f.owner_id                        AS module_id,
+    coalesce(f.module_id, f.owner_id) AS module_id,
     f.summary                         AS function_summary,
     r.statement                       AS statement,
     coalesce(hr.coupled_domains, [])  AS coupled_domains,
     examples                          AS examples
 ORDER BY function_name, r.statement
 """
-# ★ `f.owner_id` = 소속 모듈 id — analyzer 가 노드 속성으로 준다 (analyzer spec 047 FR-007).
+# ★ 소속 모듈 id — analyzer 는 `module_id` 로 준다. `owner_id` 는 spec 047 FR-007 이
+#   가정한 이름인데 생산자에 없다(전수 확인) — 옛 그래프 대비로만 남긴다.
 #   종전엔 이 속성이 없어서 `function_id` 문자열을 잘라 모듈을 추측했다.
 #   그 파싱이 analyzer 의 id 규칙을 붙들어 매서, 서로 다른 노드가 같은 id 를 갖는 버그를
 #   못 고치게 만들었다. **id 는 불투명한 열쇠다 — 뜯지 않는다.**

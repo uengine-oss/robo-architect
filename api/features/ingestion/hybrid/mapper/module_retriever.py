@@ -23,6 +23,7 @@ from typing import Optional
 from api.features.ingestion.hybrid.contracts import BpmProcess, BpmTaskDTO
 from api.features.ingestion.hybrid.mapper.embeddings import EmbeddingCache, cosine
 from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
+from api.platform.observability.smart_logger import SmartLogger
 
 
 @dataclass
@@ -39,28 +40,54 @@ def _module_rows() -> list[dict]:
 
     Returns rows with {fqn, name, summary, stereotype}. `summary` is the
     primary vector target — §B in the doc confirms it's populated in Korean.
+
+    `:MODULE` has to be in the label list, and it is the whole reason a PL/SQL
+    analysis mapped nothing. The analyzer labels a module `:MODULE:<sub-label>`
+    where the sub-label is the ANTLR node type — but only for Framework
+    languages. DBMS carries no sub-label at all (`antlr_json_reader`), so every
+    PL/SQL module is a bare `:MODULE` and matched none of the sub-labels this
+    query used to list. Step 1 then returned nothing, and the process-level gate
+    in `agentic_retriever` skipped the whole process as "no analyzer module
+    exceeds threshold" — a sentence that reads like a finding rather than a
+    schema mismatch, which is why this stayed invisible.
+
+    The id is read as `coalesce(module_id, id)`: the analyzer's key is
+    `module_id`, and `id` is kept for graphs written by an older version.
     """
     with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
         rows = list(s.run(
             """
             MATCH (m)
-            WHERE (m:FILE OR m:CLASS OR m:INTERFACE OR m:RECORD)
+            WHERE (m:MODULE OR m:FILE OR m:CLASS OR m:INTERFACE OR m:RECORD)
               AND m.summary IS NOT NULL AND m.summary <> ''
-            RETURN m.id AS fqn, m.name AS name,
+            RETURN coalesce(m.module_id, m.id) AS fqn, m.name AS name,
                    m.summary AS summary, m.stereotype AS stereotype
             """,
         ))
         if not rows:
             # Fallback: some test fixtures store the same data under :FILE.
-            # 식별=id(옛 fqn 폐기), 종류=stereotype(옛 moduleStereotype 폐기) — spec 044 C1.
             rows = list(s.run(
                 """
                 MATCH (f:FILE)
                 WHERE f.summary IS NOT NULL AND f.summary <> ''
-                RETURN f.id AS fqn, f.name AS name,
+                RETURN coalesce(f.module_id, f.id) AS fqn, f.name AS name,
                        f.summary AS summary, f.stereotype AS stereotype
                 """,
             ))
+    if not rows:
+        # Downstream this is not an error. `agentic_retriever` sees a top module
+        # score of 0.0, falls under the process gate, and skips the process with
+        # "no analyzer module exceeds threshold" — which reads as a finding about
+        # the code, not as an empty lookup. Say so here, once, where the reason
+        # is still known.
+        SmartLogger.log(
+            "WARNING",
+            "Analyzer DB returned no modules with a summary — every process will "
+            "be skipped by the module gate",
+            category="ingestion.hybrid.mapper",
+            params={"database": ANALYZER_NEO4J_DATABASE or "(default)"},
+        )
+
     return [
         {
             "fqn": r["fqn"] or r["name"],

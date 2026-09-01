@@ -25,9 +25,14 @@ OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE)
 // (one hop down, used for orchestrator detection)
 OPTIONAL MATCH (caller)-[:CALLS]->(f)
 OPTIONAL MATCH (f)-[:CALLS]->(callee)
-// Container membership and its package
-OPTIONAL MATCH (mod)-[:HAS_MEMBER]->(f)
-OPTIONAL MATCH (mod)-[:BELONGS_TO]->(pkg:PACKAGE)
+// Container membership and its package.
+// HAS_MEMBER is DataType -> Variable and BELONGS_TO is Table -> Schema in the
+// analyzer (shared/neo4j/rel_types.py); a module reaches its functions through
+// HAS_FUNCTION and its package through BELONGS_TO_PACKAGE. Naming the wrong two
+// cost nothing loudly — both clauses are OPTIONAL, so parent_module and
+// parent_package simply came back empty for every rule.
+OPTIONAL MATCH (mod)-[:HAS_FUNCTION]->(f)
+OPTIONAL MATCH (mod)-[:BELONGS_TO_PACKAGE]->(pkg:PACKAGE)
 WITH fn, f,
      collect(DISTINCT rt.name) AS reads,
      collect(DISTINCT wt.name) AS writes,
