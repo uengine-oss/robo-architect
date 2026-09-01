@@ -61,9 +61,16 @@ async function mountRemote() {
     } catch { neo4j = undefined }
 
     // embedded: architect 탭 안에 끼워지므로 analyzer 자체 상단바를 숨긴다.
-    unmountRemote = remote.default.mount(hostEl.value, { embedded: true, projectRoot, neo4j })
+    // onProjectRootChange: analyzer 화면에서 폴더를 바꾸면 host 가 저장한다.
+    // 저장하지 않으면 다음 마운트에 예전 값으로 조용히 돌아간다. Code 탭·런처와
+    // 같은 키를 쓰므로 화면 간에 어긋나지도 않는다.
+    unmountRemote = remote.default.mount(hostEl.value, {
+      embedded: true,
+      projectRoot,
+      neo4j,
+      onProjectRootChange: persistRoot,
+    })
     mountedRoot = projectRoot
-    currentRoot.value = projectRoot
   } catch (err) {
     loadError.value = err?.message || String(err)
   } finally {
@@ -71,41 +78,14 @@ async function mountRemote() {
   }
 }
 
-// ── 분석 폴더 직접 고르기 ─────────────────────────────────────────────────
-// remote 는 이 경로를 표시만 하고 바꾸지 못한다. 유일한 입구가 Code 탭의
-// 터미널 폴더 버튼인데, 그건 활성 터미널 세션을 옮기는 것이고 프로젝트
-// 루트로 승격되는 것은 main 세션일 때뿐이라, "바꿨는데 분석 대상은 그대로"
-// 가 조용히 일어난다. 분석 대상을 정하는 자리는 분석 화면이어야 한다.
-const showPicker = ref(false)
-const pickerData = ref({ current_path: '', parent_path: null, directories: [] })
-const isBrowsing = ref(false)
-const currentRoot = ref(undefined)
-
-async function browseDirectory(path) {
-  // 상대 경로면 양쪽에서 다 닿는다 — 브라우저는 Vite 프록시가, Electron 은
-  // app:// 프로토콜 핸들러가 /api/** 를 백엔드로 넘긴다. 포트를 알 필요가 없다.
-  isBrowsing.value = true
-  try {
-    const r = await fetch(`/api/claude-code/browse-directory?path=${encodeURIComponent(path || '~')}`)
-    if (r.ok) pickerData.value = await r.json()
-  } catch { /* 목록만 못 받은 것 — 열린 채로 둔다 */ }
-  finally { isBrowsing.value = false }
-}
-
-function openPicker() {
-  showPicker.value = true
-  browseDirectory(currentRoot.value || '~')
-}
-
-async function applyRoot(path) {
-  showPicker.value = false
-  if (!path || path === mountedRoot) return
-  // 두 출처를 함께 갱신한다 — Code 탭·런처와 같은 키를 쓰므로 화면 간에 어긋나지 않는다.
-  try { localStorage.setItem(ROOT_KEY, path) } catch { /* 저장 실패해도 이번 마운트는 진행 */ }
+// analyzer 가 고른 폴더를 host 의 두 출처에 함께 쓴다. mountedRoot 도 같이
+// 올려 둔다 — 안 그러면 watch/onActivated 가 "바뀌었다"고 보고 방금 마운트한
+// remote 를 곧바로 다시 마운트한다.
+function persistRoot(path) {
+  if (!path) return
+  try { localStorage.setItem(ROOT_KEY, path) } catch { /* 저장 실패해도 이번 세션은 진행 */ }
   if (appWorkdir) appWorkdir.value = path
-  currentRoot.value = path
-  teardown()
-  await mountRemote()
+  mountedRoot = path
 }
 
 function teardown() {
@@ -152,46 +132,9 @@ onBeforeUnmount(teardown)
       <span>Analyzer 로드 중…</span>
     </div>
 
-    <!-- 분석 대상 폴더. remote 안의 경로는 표시 전용이라 여기서 바꾼다. -->
-    <div v-if="!loadError" class="analysis-root-bar">
-      <span class="root-label">분석 폴더</span>
-      <span class="root-path" :title="currentRoot || ''">{{ currentRoot || '선택 안 됨 (업로드 모드)' }}</span>
-      <button class="root-change" @click="openPicker">변경</button>
-    </div>
-
     <!-- analyzer 앱이 이 컨테이너 안에 격리 마운트된다 -->
     <div ref="hostEl" class="analysis-host"></div>
 
-    <div v-if="showPicker" class="root-picker-overlay" @keydown.esc.window="showPicker = false">
-      <div class="root-picker">
-        <div class="root-picker__head">
-          <span>분석할 폴더 선택</span>
-          <button class="root-picker__close" @click="showPicker = false">✕</button>
-        </div>
-        <div class="root-picker__path">{{ pickerData.current_path || '…' }}</div>
-        <div class="root-picker__list">
-          <div v-if="isBrowsing" class="root-picker__empty">읽는 중…</div>
-          <template v-else>
-            <button
-              v-if="pickerData.parent_path"
-              class="root-picker__item"
-              @click="browseDirectory(pickerData.parent_path)"
-            >../</button>
-            <button
-              v-for="d in pickerData.directories"
-              :key="d"
-              class="root-picker__item"
-              @click="browseDirectory(pickerData.current_path + '/' + d)"
-            >{{ d }}/</button>
-            <div v-if="!pickerData.directories.length" class="root-picker__empty">하위 폴더 없음</div>
-          </template>
-        </div>
-        <div class="root-picker__foot">
-          <button class="root-picker__cancel" @click="showPicker = false">취소</button>
-          <button class="root-picker__ok" @click="applyRoot(pickerData.current_path)">이 폴더로</button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -261,68 +204,4 @@ onBeforeUnmount(teardown)
 }
 
 
-.analysis-root-bar {
-  position: absolute; top: 0; left: 0; right: 0; z-index: 5;
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px; font-size: 12px;
-  background: var(--surface-2, #f6f7f9);
-  border-bottom: 1px solid var(--border, #e3e5e8);
-}
-.root-label { color: var(--text-muted, #6b7280); flex: none; }
-.root-path {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--text, #111827);
-}
-.root-change {
-  flex: none; padding: 3px 10px; font-size: 12px; cursor: pointer;
-  border: 1px solid var(--border, #d1d5db); border-radius: 4px;
-  background: var(--surface, #fff); color: inherit;
-}
-.root-change:hover { background: var(--surface-3, #eef0f3); }
-
-/* 경로 바가 차지한 만큼 remote 를 밀어 내린다 — 겹치면 analyzer 상단이 가려진다. */
-.analysis-root-bar ~ .analysis-host { height: calc(100% - 33px); margin-top: 33px; }
-
-.root-picker-overlay {
-  position: absolute; inset: 0; z-index: 20;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, 0.35);
-}
-.root-picker {
-  width: min(560px, 90%); max-height: 70%;
-  display: flex; flex-direction: column;
-  background: var(--surface, #fff); border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
-}
-.root-picker__head {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 14px; border-bottom: 1px solid var(--border, #e3e5e8); font-weight: 600;
-}
-.root-picker__close { border: 0; background: none; cursor: pointer; font-size: 14px; color: inherit; }
-.root-picker__path {
-  padding: 8px 14px; font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--text-muted, #6b7280);
-  border-bottom: 1px solid var(--border, #e3e5e8);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.root-picker__list { flex: 1; overflow: auto; padding: 6px 0; }
-.root-picker__item {
-  display: block; width: 100%; text-align: left;
-  padding: 6px 14px; border: 0; background: none; cursor: pointer;
-  font-size: 13px; color: inherit;
-}
-.root-picker__item:hover { background: var(--surface-3, #eef0f3); }
-.root-picker__empty { padding: 10px 14px; font-size: 12px; color: var(--text-muted, #6b7280); }
-.root-picker__foot {
-  display: flex; justify-content: flex-end; gap: 8px;
-  padding: 10px 14px; border-top: 1px solid var(--border, #e3e5e8);
-}
-.root-picker__cancel, .root-picker__ok {
-  padding: 5px 14px; font-size: 13px; cursor: pointer;
-  border: 1px solid var(--border, #d1d5db); border-radius: 4px;
-  background: var(--surface, #fff); color: inherit;
-}
-.root-picker__ok { background: var(--primary, #2563eb); border-color: var(--primary, #2563eb); color: #fff; }
 </style>
