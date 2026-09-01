@@ -124,6 +124,69 @@ Return a JSON array with multiple test cases:
 Each test case should represent a different scenario with different field values. If properties are not available or empty, use empty fieldValues {{}}.
 """
 
+# GWT 저장은 세 문장이다 — 한 문장에 읽기 → 쓰기 → 읽기 를 섞지 않는다.
+#
+# 원래는 MERGE 로 GWT 를 만든 뒤 같은 문장에서 `WITH gwt … MATCH (n …)` 으로
+# 참조 대상을 찾아 이어 붙였다. 쓰기 절 뒤의 읽기 절은 첫 스코프 기준으로
+# 컴파일돼 변수를 잃고, 그러면 MERGE 가 그 변수를 새 노드로 만들려다
+# "CREATE requires a label per new node" 로 죽는다. 문장을 나누면 각 문장이
+# 읽고 나서 쓰기만 하므로 그 경계를 넘지 않는다.
+_GWT_UPSERT = """
+MATCH (parent {id: $parent_id})
+WHERE $parent_type IN labels(parent)
+MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id})
+ON CREATE SET gwt.id = randomUUID(),
+              gwt.createdAt = datetime()
+SET gwt.updatedAt = datetime(),
+    gwt.givenRef = $given_ref_json,
+    gwt.whenRef = $when_ref_json,
+    gwt.thenRef = $then_ref_json,
+    gwt.testCases = $test_cases_json
+MERGE (parent)-[:HAS_GWT]->(gwt)
+RETURN gwt.id AS id
+"""
+
+_GWT_CLEAR_REFS = """
+MATCH (gwt:GWT {id: $gwt_id})-[r:REFERENCES]->()
+DELETE r
+"""
+
+_GWT_LINK_REFS = """
+UNWIND $refs AS ref
+MATCH (gwt:GWT {id: $gwt_id})
+MATCH (n {id: ref.id})
+WHERE ref.type IN labels(n)
+MERGE (gwt)-[:REFERENCES]->(n)
+"""
+
+
+def _save_gwt(session, *, parent_type: str, parent_id: str,
+              given_ref_json, when_ref_json, then_ref_json,
+              test_cases_json, refs: list) -> None:
+    """GWT 를 저장하고 참조를 다시 잇는다 — 세 문장으로 나눠서.
+
+    한 문장에 읽기 → 쓰기 → 읽기 를 섞지 않는 것이 요점이다. 자세한 이유는
+    `_GWT_UPSERT` 위 주석에 있다.
+    """
+    rec = session.run(
+        _GWT_UPSERT,
+        parent_type=parent_type,
+        parent_id=parent_id,
+        given_ref_json=given_ref_json,
+        when_ref_json=when_ref_json,
+        then_ref_json=then_ref_json,
+        test_cases_json=test_cases_json,
+    ).single()
+    gwt_id = rec["id"] if rec else None
+    if not gwt_id:
+        # 부모를 못 찾았다 — 이어 붙일 곳이 없으므로 조용히 끝낸다.
+        return
+    session.run(_GWT_CLEAR_REFS, gwt_id=gwt_id)
+    if refs:
+        session.run(_GWT_LINK_REFS, gwt_id=gwt_id, refs=refs)
+
+
+
 async def _generate_gwt_for_command(
     task: dict[str, Any],
     llm: Any,
@@ -584,30 +647,6 @@ If no properties are available, only then use empty fieldValues {{}}."""
             "name": f"Event: {evt_name}",
         } if evt_id else None
         
-        query = """
-        MATCH (parent {id: $parent_id})
-        WHERE $parent_type IN labels(parent)
-        MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id})
-        ON CREATE SET gwt.id = randomUUID(),
-                      gwt.createdAt = datetime()
-        SET gwt.updatedAt = datetime(),
-            gwt.givenRef = $given_ref_json,
-            gwt.whenRef = $when_ref_json,
-            gwt.thenRef = $then_ref_json,
-            gwt.testCases = $test_cases_json
-        MERGE (parent)-[:HAS_GWT]->(gwt)
-        WITH gwt
-        OPTIONAL MATCH (gwt)-[r:REFERENCES]->()
-        DELETE r
-        WITH gwt, $refs as refs
-        UNWIND refs as ref
-        WITH gwt, ref
-        WHERE ref.id IS NOT NULL AND ref.type IS NOT NULL
-        MATCH (n {id: ref.id})
-        WHERE ref.type IN labels(n)
-        MERGE (gwt)-[:REFERENCES]->(n)
-        RETURN gwt.id as id
-        """
         given_ref_json = json.dumps(given_ref) if given_ref else None
         when_ref_json = json.dumps(when_ref) if when_ref else None
         then_ref_json = json.dumps(then_ref) if then_ref else None
@@ -619,8 +658,8 @@ If no properties are available, only then use empty fieldValues {{}}."""
                 refs.append({"id": ref["referencedNodeId"], "type": ref["referencedNodeType"]})
         
         with client.session() as session:
-            session.run(
-                query,
+            _save_gwt(
+                session,
                 parent_type="Command",
                 parent_id=cmd_id,
                 given_ref_json=given_ref_json,
@@ -665,30 +704,6 @@ If no properties are available, only then use empty fieldValues {{}}."""
                 "name": f"Event: {evt_name}",
             } if evt_id else None
             
-            fallback_query = """
-            MATCH (parent {id: $parent_id})
-            WHERE $parent_type IN labels(parent)
-            MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id})
-            ON CREATE SET gwt.id = randomUUID(),
-                          gwt.createdAt = datetime()
-            SET gwt.updatedAt = datetime(),
-                gwt.givenRef = $given_ref_json,
-                gwt.whenRef = $when_ref_json,
-                gwt.thenRef = $then_ref_json,
-                gwt.testCases = $test_cases_json
-            MERGE (parent)-[:HAS_GWT]->(gwt)
-            WITH gwt
-            OPTIONAL MATCH (gwt)-[r:REFERENCES]->()
-            DELETE r
-            WITH gwt, $refs as refs
-            UNWIND refs as ref
-            WITH gwt, ref
-            WHERE ref.id IS NOT NULL AND ref.type IS NOT NULL
-            MATCH (n {id: ref.id})
-            WHERE ref.type IN labels(n)
-            MERGE (gwt)-[:REFERENCES]->(n)
-            RETURN gwt.id as id
-            """
             fallback_given_ref_json = json.dumps(fallback_given_ref) if fallback_given_ref else None
             fallback_when_ref_json = json.dumps(fallback_when_ref) if fallback_when_ref else None
             fallback_then_ref_json = json.dumps(fallback_then_ref) if fallback_then_ref else None
@@ -705,8 +720,8 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     fallback_refs.append({"id": ref["referencedNodeId"], "type": ref["referencedNodeType"]})
             
             with client.session() as session:
-                session.run(
-                    fallback_query,
+                _save_gwt(
+                    session,
                     parent_type="Command",
                     parent_id=cmd_id,
                     given_ref_json=fallback_given_ref_json,
@@ -836,30 +851,6 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
         Persist a single (GWT) node per parent and store test cases inside it.
         Also updates (gwt)-[:REFERENCES]->(ref) edges for mapped objects.
         """
-        query = """
-        MATCH (parent {id: $parent_id})
-        WHERE $parent_type IN labels(parent)
-        MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id})
-        ON CREATE SET gwt.id = randomUUID(),
-                      gwt.createdAt = datetime()
-        SET gwt.updatedAt = datetime(),
-            gwt.givenRef = $given_ref_json,
-            gwt.whenRef = $when_ref_json,
-            gwt.thenRef = $then_ref_json,
-            gwt.testCases = $test_cases_json
-        MERGE (parent)-[:HAS_GWT]->(gwt)
-        WITH gwt
-        OPTIONAL MATCH (gwt)-[r:REFERENCES]->()
-        DELETE r
-        WITH gwt, $refs as refs
-        UNWIND refs as ref
-        WITH gwt, ref
-        WHERE ref.id IS NOT NULL AND ref.type IS NOT NULL
-        MATCH (n {id: ref.id})
-        WHERE ref.type IN labels(n)
-        MERGE (gwt)-[:REFERENCES]->(n)
-        RETURN gwt.id as id
-        """
         given_ref_json = json.dumps(given_ref) if given_ref else None
         when_ref_json = json.dumps(when_ref) if when_ref else None
         then_ref_json = json.dumps(then_ref) if then_ref else None
@@ -871,8 +862,8 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
                 refs.append({"id": ref["referencedNodeId"], "type": ref["referencedNodeType"]})
 
         with client.session() as session:
-            session.run(
-                query,
+            _save_gwt(
+                session,
                 parent_type=parent_type,
                 parent_id=parent_id,
                 given_ref_json=given_ref_json,
