@@ -74,7 +74,7 @@ class IngestionWorkflowContext:
     #     "then_":           str,
     #     "is_boundary":     bool,
     #     "writes":          [{"table": str, "op": "INSERT"|"UPDATE"|"DELETE"}, ...],
-    #     "coupled_domains": [str, ...], # cross-BC signal
+    #     "writes": [dict, ...],         # direct Analyzer Rule.WRITES facts
     #     "guard_rule_id":   str | None, # precondition local_id chain
     #     "branch_from":     str | None, # else-leg parent local_id
     #     "local_id":        str | None, # "R1".."R8" within source_function

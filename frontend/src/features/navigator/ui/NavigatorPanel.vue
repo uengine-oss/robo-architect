@@ -397,7 +397,7 @@ function handleProcessDragStart(event, item) {
                 <div
                   v-if="isDebug && proc.domain_keywords && proc.domain_keywords.length"
                   class="hybrid-process-kw"
-                  title="Phase 3 Agent가 analyzer MODULE 검색에 사용하는 쿼리 용어"
+                  title="Phase 3 Agent가 Analyzer 코드 컨테이너를 찾을 때 사용하는 검색어"
                 >
                   <span
                     v-for="kw in proc.domain_keywords"

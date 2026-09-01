@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from api.features.ingestion.hybrid.contracts import (
     ActivityRuleMapping,
     BpmActor,
@@ -36,7 +38,6 @@ from api.features.ingestion.hybrid.ontology.schema import (
     R_HAS_ACTOR,
     R_HAS_GATEWAY,
     R_HAS_TASK,
-    R_IMPLEMENTED_BY,
     R_NEXT,
     R_PERFORMS,
     R_REALIZED_BY,
@@ -64,7 +65,7 @@ def clear_all_hybrid_workspace() -> dict[str, int]:
     NOT touched — safe to call even when analyzer and hybrid share the same Neo4j database.
 
     The `session_id IS NOT NULL` guard is load-bearing: analyzer-owned nodes carry no
-    session_id. (Analyzer now uses UPPER_SNAKE labels such as `:RULE`/`:EXAMPLE`, distinct
+    session_id. (Analyzer uses an uppercase `:RULE` product label, distinct
     from the hybrid PascalCase `:Rule`; the guard stays as defense-in-depth so a hybrid
     reset never wipes authoritative analyzer data even if a label were ever shared.)
     """
@@ -240,66 +241,6 @@ def save_bpm_skeleton(session_id: str, skeleton: BpmSkeleton) -> None:
             )
 
 
-def link_process_module(
-    session_id: str, process_id: str, module_fqn: str,
-    confidence: float = 1.0, method: str = "agent_step1",
-) -> None:
-    """Persist §2.F — (BpmProcess)-[:IMPLEMENTED_BY]->(MODULE) across DBs.
-
-    MODULE lives in the analyzer DB, so we can't create a real Neo4j edge.
-    Instead we append to three parallel lists on BpmProcess:
-      `implemented_by` (fqn), `implemented_by_confidence`, `implemented_by_method`.
-    `replace_process_modules` below atomically rewrites all three from scratch —
-    use that when recomputing Step 1 for a process.
-    """
-    if not (process_id and module_fqn):
-        return
-    with get_session() as s:
-        # Dedup by fqn — if already present, overwrite its parallel entries.
-        s.run(
-            f"""
-            MATCH (p:{L_BPM_PROCESS} {{id: $pid, session_id: $sid}})
-            WITH p,
-                 coalesce(p.implemented_by, []) AS fqns,
-                 coalesce(p.implemented_by_confidence, []) AS confs,
-                 coalesce(p.implemented_by_method, []) AS methods
-            WITH p, fqns, confs, methods,
-                 [i IN range(0, size(fqns) - 1) WHERE fqns[i] <> $fqn] AS keep_idx
-            WITH p,
-                 [i IN keep_idx | fqns[i]]    AS fqns_filtered,
-                 [i IN keep_idx | confs[i]]   AS confs_filtered,
-                 [i IN keep_idx | methods[i]] AS methods_filtered
-            SET p.implemented_by            = fqns_filtered + [$fqn],
-                p.implemented_by_confidence = confs_filtered + [$conf],
-                p.implemented_by_method     = methods_filtered + [$method]
-            """,
-            pid=process_id, sid=session_id, fqn=module_fqn,
-            conf=float(confidence), method=method,
-        )
-
-
-def replace_process_modules(
-    session_id: str, process_id: str,
-    entries: list[tuple[str, float, str]],
-) -> None:
-    """Atomically rewrite the IMPLEMENTED_BY list on a process. Each entry is
-    (module_fqn, confidence, method). Use when Step 1 recomputes from scratch."""
-    if not process_id:
-        return
-    fqns = [e[0] for e in entries]
-    confs = [float(e[1]) for e in entries]
-    methods = [e[2] for e in entries]
-    with get_session() as s:
-        s.run(
-            f"MATCH (p:{L_BPM_PROCESS} {{id: $pid, session_id: $sid}}) "
-            "SET p.implemented_by = $fqns, "
-            "    p.implemented_by_confidence = $confs, "
-            "    p.implemented_by_method = $methods",
-            pid=process_id, sid=session_id,
-            fqns=fqns, confs=confs, methods=methods,
-        )
-
-
 def fetch_processes_for_session(session_id: str) -> list[dict]:
     """Return every BpmProcess for a session with its task/actor ids."""
     with get_session() as s:
@@ -332,12 +273,15 @@ def save_rules(session_id: str, rules: list[RuleDTO]) -> None:
             s.run(
                 f"MERGE (r:{L_RULE} {{id: $id, session_id: $sid}}) "
                 "SET r.given = $given, r.`when` = $when, r.`then` = $then, "
-                "    r.source_function = $sf, r.source_module = $sm, r.confidence = $conf, "
-                "    r.title = $title, r.context_cluster = $ctx, "
+                "    r.source_function = $sf, r.source_container = $sc, r.confidence = $conf, "
+                "    r.source_function_id = $sfid, r.source_rule_id = $srid, "
+                "    r.title = $title, r.write_effects_json = $writes, r.context_cluster = $ctx, "
                 "    r.es_role = $es_role, r.es_role_confidence = $es_role_conf",
                 id=rule.id, sid=session_id,
                 given=rule.given, when=rule.when, then=rule.then,
-                sf=rule.source_function, sm=rule.source_module, conf=rule.confidence,
+                sf=rule.source_function, sc=rule.source_container, conf=rule.confidence,
+                sfid=rule.source_function_id, srid=rule.source_rule_id,
+                writes=json.dumps(rule.writes, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
                 title=rule.title, ctx=rule.context_cluster,
                 es_role=rule.es_role, es_role_conf=rule.es_role_confidence,
             )
@@ -823,12 +767,12 @@ def fetch_session_snapshot(session_id: str) -> dict:
             }
             rules_by_task.setdefault(row["task_id"], []).append(entry)
             if rdto.get("source_function"):
-                key = f"{rdto.get('source_module') or ''}.{rdto['source_function']}"
+                key = f"{rdto.get('source_container') or ''}.{rdto['source_function']}"
                 fns = functions_by_task.setdefault(row["task_id"], {})
                 fns.setdefault(key, {
                     "id": key,
                     "name": rdto["source_function"],
-                    "module": rdto.get("source_module"),
+                    "container": rdto.get("source_container"),
                     "confidence": row["confidence"],
                 })
                 referenced_fn_names.add(rdto["source_function"])

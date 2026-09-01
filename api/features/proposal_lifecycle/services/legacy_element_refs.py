@@ -499,25 +499,26 @@ def enforce_proposal_refs(
                     rule_cache[parent_id] = provenance_children[parent_id]
                     return rule_cache[parent_id]
                 rules = [dict(r) for r in session.run(
-                    "MATCH (x {id: $id})-[:HAS_RULE]->(r:RULE) "
-                    "OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:EXAMPLE) "
-                    "WITH r, collect(CASE WHEN e IS NULL THEN NULL "
-                    "  ELSE {id: e.id, given: e.given, when: e.when_, then: e.then_} END) AS exs "
-                    "RETURN r.id AS id, coalesce(r.cond, '') AS condition, "
-                    "  coalesce(r.then, []) AS effects, "
-                    "  [x IN exs WHERE x IS NOT NULL] AS examples",
+                    "MATCH (x {_id: $id, _owner: 'analyzer'})-[:HAS_RULE]->"
+                    "      (r:RULE {_owner: 'analyzer'}) "
+                    "RETURN r._id AS id, coalesce(r.condition_description, r.condition, '') AS condition, "
+                    "  coalesce(r.effect_descriptions, r.effects, []) AS effects, "
+                    "  [{id: r._id, given: coalesce(x.summary, ''), "
+                    "    when: coalesce(r.condition_description, r.condition, ''), "
+                    "    then: reduce(text = '', effect IN coalesce(r.effect_descriptions, r.effects, []) | "
+                    "      text + CASE WHEN text = '' THEN '' ELSE '\\n' END + effect)}] AS examples",
                     id=parent_id,
                 )]
                 for rule in rules:
                     rule["statement"] = _structural_rule_statement(rule)
-                # 부모가 직접 참조하는 TABLE + 규칙 사례가 영향(AFFECTS_TABLE)하는 TABLE
+                # Parent/rule direct table access.
                 tables = [dict(r) for r in session.run(
-                    "MATCH (x {id: $id}) "
-                    "OPTIONAL MATCH (x)-[]->(t1:TABLE) "
-                    "OPTIONAL MATCH (x)-[:HAS_RULE]->(:RULE)-[:AFFECTS_TABLE]->(t2:TABLE) "
+                    "MATCH (x {_id: $id, _owner: 'analyzer'}) "
+                    "OPTIONAL MATCH (x)-[:READS|WRITES]->(t1:TABLE) "
+                    "OPTIONAL MATCH (x)-[:HAS_RULE]->(:RULE)-[:READS|WRITES]->(t2:TABLE) "
                     "WITH collect(DISTINCT t1) + collect(DISTINCT t2) AS ts "
                     "UNWIND ts AS t WITH DISTINCT t WHERE t IS NOT NULL "
-                    "RETURN t.id AS id, t.name AS name",
+                    "RETURN t._id AS id, t.name AS name",
                     id=parent_id,
                 )]
                 rule_cache[parent_id] = {"rules": rules, "tables": tables}

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-# Substrings on function / Rule.statement — case-insensitive match.
+# Substrings on routine / Rule title — case-insensitive match.
 INFRA_KEYWORDS: tuple[str, ...] = (
     # EJB lifecycle
     "ejbcreate", "ejbremove", "ejbactivate", "ejbpassivate", "ejbstore", "ejbload",

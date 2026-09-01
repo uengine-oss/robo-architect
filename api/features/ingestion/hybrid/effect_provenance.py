@@ -1,4 +1,4 @@
-"""AFFECTS_TABLE v2 normalization shared by all hybrid consumers."""
+"""Normalize Analyzer WRITES operations for Architect consumers."""
 from __future__ import annotations
 
 from typing import Iterable
@@ -6,11 +6,11 @@ from typing import Iterable
 
 _EXACT_OPS = {"READ", "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE"}
 _WRITE_ACCESS = {"WRITE", "READ_WRITE"}
-_SOURCES = {"SCANNER", "LLM_INFERRED", "UNRESOLVED", "LEGACY"}
+_SOURCES = {"SCANNER", "LLM_INFERRED", "UNRESOLVED"}
 
 
 def normalize_write_effect(effect: object) -> dict[str, str] | None:
-    """Normalize one v2 or legacy edge and return only write-capable effects."""
+    """Normalize one direct table-write fact and discard reads."""
     if not isinstance(effect, dict):
         return None
     table = effect.get("table")
@@ -26,15 +26,14 @@ def normalize_write_effect(effect: object) -> dict[str, str] | None:
     raw_access = effect.get("access")
     access = raw_access.strip().upper() if isinstance(raw_access, str) else ""
     if not access:
-        # Additive legacy fallback: old edges had op only. Never relabel them SCANNER.
         access = "READ" if op == "READ" else "WRITE"
     if access not in {"READ", *_WRITE_ACCESS} or access == "READ":
         return None
 
     raw_source = effect.get("op_source")
-    source = raw_source.strip().upper() if isinstance(raw_source, str) else "LEGACY"
+    source = raw_source.strip().upper() if isinstance(raw_source, str) else "UNRESOLVED"
     if source not in _SOURCES:
-        source = "LEGACY"
+        source = "UNRESOLVED"
     if source == "UNRESOLVED":
         op = "UNKNOWN"
     elif op == "UNKNOWN" and source in {"SCANNER", "LLM_INFERRED"}:

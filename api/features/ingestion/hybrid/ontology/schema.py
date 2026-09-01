@@ -38,7 +38,6 @@ R_HAS_TASK = "HAS_TASK"  # (BpmProcess)-[:HAS_TASK]->(BpmTask)
 R_HAS_ACTOR = "HAS_ACTOR"  # (BpmProcess)-[:HAS_ACTOR]->(BpmActor)
 R_HAS_GATEWAY = "HAS_GATEWAY"  # (BpmProcess)-[:HAS_GATEWAY]->(BpmGateway)
 R_BPMN_FLOW = "BPMN_FLOW"  # (BpmTask|BpmGateway)-[:BPMN_FLOW {id, name, condition}]->(BpmTask|BpmGateway)
-R_IMPLEMENTED_BY = "IMPLEMENTED_BY"  # (BpmProcess)-[:IMPLEMENTED_BY {confidence, method}]->(MODULE)
 
 ALL_HYBRID_LABELS = [
     L_BPM_PROCESS,

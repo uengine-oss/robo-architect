@@ -65,16 +65,6 @@ def verify_pipeline_status(session_id: str) -> dict:
             sid=session_id,
         ).single()
 
-        question = s.run(
-            """
-            MATCH (q:QUESTION) WHERE q.session_id IS NULL
-            OPTIONAL MATCH (q)-[:ATTACHED_TO]->(bc:BoundedContext {session_id: $sid})
-            RETURN count(DISTINCT q) AS total_questions,
-                   count(DISTINCT CASE WHEN bc IS NOT NULL THEN q END) AS attached_questions
-            """,
-            sid=session_id,
-        ).single()
-
     bpm_ok = bool(bpm and bpm["processes"] > 0 and bpm["tasks"] > 0)
     mapping_ok = bool(mapping and mapping["mapped_tasks"] > 0)
     es_ok = bool(es and es["user_stories"] > 0 and es["bounded_contexts"] > 0 and es["aggregates"] > 0 and es["commands"] > 0)
@@ -94,7 +84,6 @@ def verify_pipeline_status(session_id: str) -> dict:
             "mapping": dict(mapping) if mapping else {},
             "es": dict(es) if es else {},
             "traceability_edges": dict(edges) if edges else {},
-            "question_attach": dict(question) if question else {},
         },
         "notes": [
             "BPM: BpmProcess/BpmTask 존재 여부",

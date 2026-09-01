@@ -1,8 +1,4 @@
-"""Enrich Phase 2 RuleDTOs with analyzer-graph context for Phase 3 matching.
-
-Cross-DB: we query the analyzer DB (`ANALYZER_NEO4J_DATABASE`) separately and
-join in Python. The hybrid DB stays clean; we don't shadow analyzer nodes.
-"""
+"""Enrich converted Analyzer rules with nearby code and table context."""
 
 from __future__ import annotations
 
@@ -11,82 +7,90 @@ from typing import Iterable
 from api.features.ingestion.hybrid.contracts import RuleContext, RuleDTO
 from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
 
-# source_function = 오퍼레이션 단위(루틴) 이름 (rule_extractor/dbms 선형화가 루틴명으로 세팅).
-# 그래서 오너는 루틴 노드. 테이블 R/W 는 framework=루틴 자신 / dbms=자식 구문에 붙으므로
-# PARENT_OF*0.. 로 하향수집(spec 044 C5/FR-014). 옛 :Actor/:ROLE 는 생산자에 없어 제거.
-_FN_LOOKUP_QUERY = """
-UNWIND $fn_names AS fn
-MATCH (f)
-WHERE f.name = fn AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
-// Tables the operation touches — framework: on f; dbms: on descendant statements.
-OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE)
-OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE)
-// Parent traversal — callers (one hop up the CALLS chain) + callees
-// (one hop down, used for orchestrator detection)
-OPTIONAL MATCH (caller)-[:CALLS]->(f)
-OPTIONAL MATCH (f)-[:CALLS]->(callee)
-// Container membership and its package
-OPTIONAL MATCH (mod)-[:HAS_MEMBER]->(f)
-OPTIONAL MATCH (mod)-[:BELONGS_TO]->(pkg:PACKAGE)
-WITH fn, f,
-     collect(DISTINCT rt.name) AS reads,
-     collect(DISTINCT wt.name) AS writes,
+
+_FUNCTION_QUERY = """
+UNWIND $functions AS requested
+MATCH (routine {_owner: 'analyzer'})
+WHERE (routine:FUNCTION OR routine:PROCEDURE OR routine:METHOD OR routine:TRIGGER)
+  AND ((requested.id IS NOT NULL AND routine._id = requested.id)
+       OR (requested.id IS NULL AND routine.name = requested.name))
+OPTIONAL MATCH (routine)-[:PARENT_OF*0..]->(_read)-[:READS]->(read_table:TABLE)
+OPTIONAL MATCH (routine)-[:PARENT_OF*0..]->(_write)-[:WRITES]->(write_table:TABLE)
+OPTIONAL MATCH (caller)-[:CALLS]->(routine)
+OPTIONAL MATCH (routine)-[:CALLS]->(callee)
+OPTIONAL MATCH (container)-[:PARENT_OF]->(routine)
+OPTIONAL MATCH (parent)-[:PARENT_OF]->(container)
+WITH requested, routine,
+     collect(DISTINCT read_table.name) AS reads,
+     collect(DISTINCT write_table.name) AS writes,
      collect(DISTINCT caller.name) AS callers,
      collect(DISTINCT callee.name) AS callees,
-     collect(DISTINCT mod.name) AS mod_names,
-     collect(DISTINCT pkg.name) AS pkg_names
-RETURN fn,
-       f.summary AS summary,
-       [] AS actors,
-       [r IN reads  WHERE r IS NOT NULL] AS reads_tables,
-       [w IN writes WHERE w IS NOT NULL] AS writes_tables,
-       [c IN callers WHERE c IS NOT NULL] AS callers,
-       [c IN callees WHERE c IS NOT NULL] AS callees,
-       head([m IN mod_names WHERE m IS NOT NULL]) AS parent_module,
-       head([p IN pkg_names WHERE p IS NOT NULL]) AS parent_package
+     collect(DISTINCT container.name) AS containers,
+     collect(DISTINCT parent.name) AS parents
+RETURN requested.id AS requested_id,
+       requested.name AS requested_name,
+       routine.summary AS summary,
+       [value IN reads WHERE value IS NOT NULL] AS reads_tables,
+       [value IN writes WHERE value IS NOT NULL] AS writes_tables,
+       [value IN callers WHERE value IS NOT NULL] AS callers,
+       [value IN callees WHERE value IS NOT NULL] AS callees,
+       head([value IN containers WHERE value IS NOT NULL]) AS parent_container,
+       head([value IN parents WHERE value IS NOT NULL]) AS container_parent
 """
 
 
 def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
-    """For each rule, look up its function in the analyzer graph and attach summary/actors/tables."""
+    """Return one matching context for every input rule."""
     rules = list(rules)
-    fn_names = sorted({r.source_function for r in rules if r.source_function})
+    requested = {
+        (rule.source_function_id or "", rule.source_function or "")
+        for rule in rules
+        if rule.source_function_id or rule.source_function
+    }
+    functions = [
+        {"id": function_id or None, "name": name or None}
+        for function_id, name in sorted(requested)
+    ]
     lookup: dict[str, dict] = {}
-    if fn_names:
+    if functions:
         try:
-            with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
-                for rec in s.run(_FN_LOOKUP_QUERY, fn_names=fn_names):
-                    lookup[rec["fn"]] = {
-                        "summary": rec.get("summary"),
-                        "actors": rec.get("actors") or [],
-                        "reads_tables": rec.get("reads_tables") or [],
-                        "writes_tables": rec.get("writes_tables") or [],
-                        "callers": rec.get("callers") or [],
-                        "callees": rec.get("callees") or [],
-                        "parent_module": rec.get("parent_module"),
-                        "parent_package": rec.get("parent_package"),
+            with get_session(database=ANALYZER_NEO4J_DATABASE) as session:
+                for record in session.run(_FUNCTION_QUERY, functions=functions):
+                    key = record.get("requested_id") or record.get("requested_name")
+                    if not key:
+                        continue
+                    lookup[key] = {
+                        "summary": record.get("summary"),
+                        "reads_tables": record.get("reads_tables") or [],
+                        "writes_tables": record.get("writes_tables") or [],
+                        "callers": record.get("callers") or [],
+                        "callees": record.get("callees") or [],
+                        "parent_container": record.get("parent_container"),
+                        "container_parent": record.get("container_parent"),
                     }
         except Exception:
             lookup = {}
 
     contexts: list[RuleContext] = []
-    for r in rules:
-        extra = lookup.get(r.source_function or "", {})
-        contexts.append(RuleContext(
-            rule_id=r.id,
-            given=r.given,
-            when=r.when,
-            then=r.then,
-            source_function=r.source_function,
-            source_module=r.source_module,
-            function_summary=extra.get("summary"),
-            actors=extra.get("actors", []),
-            reads_tables=extra.get("reads_tables", []),
-            writes_tables=extra.get("writes_tables", []),
-            context_cluster=r.context_cluster,
-            callers=extra.get("callers", []),
-            callees=extra.get("callees", []),
-            parent_module=extra.get("parent_module"),
-            parent_package=extra.get("parent_package"),
-        ))
+    for rule in rules:
+        key = rule.source_function_id or rule.source_function or ""
+        extra = lookup.get(key, {})
+        contexts.append(
+            RuleContext(
+                rule_id=rule.id,
+                given=rule.given,
+                when=rule.when,
+                then=rule.then,
+                source_function=rule.source_function,
+                source_container=rule.source_container,
+                function_summary=extra.get("summary"),
+                reads_tables=extra.get("reads_tables", []),
+                writes_tables=extra.get("writes_tables", []),
+                context_cluster=rule.context_cluster,
+                callers=extra.get("callers", []),
+                callees=extra.get("callees", []),
+                parent_container=extra.get("parent_container"),
+                container_parent=extra.get("container_parent"),
+            )
+        )
     return contexts

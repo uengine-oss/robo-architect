@@ -32,7 +32,6 @@ def test_verify_pipeline_status_ready(monkeypatch):
                     }
                 ),
                 _Rec({"promoted_to": 3, "sourced_from": 2, "implements_bc": 3}),
-                _Rec({"total_questions": 4, "attached_questions": 4}),
             ]
 
         def run(self, query, **params):
@@ -86,7 +85,6 @@ def test_verify_pipeline_status_not_ready(monkeypatch):
                     }
                 ),
                 _Rec({"promoted_to": 0, "sourced_from": 0, "implements_bc": 0}),
-                _Rec({"total_questions": 4, "attached_questions": 0}),
             ]
 
         def run(self, query, **params):

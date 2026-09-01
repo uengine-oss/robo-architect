@@ -331,7 +331,7 @@ def _legacy_ref_ids(value: object) -> set[str]:
                 if isinstance(ref, str) and ref.strip():
                     found.add(ref.strip())
                 elif isinstance(ref, dict):
-                    # Resolved RULE/EXAMPLE refs use a synthetic child nodeId plus the
+                    # Resolved Rule scenario refs use a synthetic child nodeId plus the
                     # actually inspected function in parentId.  Plan source coverage is
                     # function/table coverage, not a requirement to repeat every chosen
                     # strategic scenario as a tactical element ID.

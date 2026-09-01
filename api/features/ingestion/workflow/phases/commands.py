@@ -347,7 +347,7 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
 
             # ─── Hybrid input boost — append BL info per US to LLM input ────
             # BL.guard_rule_id chain (preconditions) / branch_from (split commands) /
-            # AFFECTS_TABLE writes drive Command name + preconditions + emits.
+            # Direct Analyzer Rule.WRITES facts drive Command name, preconditions, and emits.
             # See Phase5_EventStorming_Promotion_PRD §12 (v3 input boost).
             if getattr(ctx, "source_type", "") == "hybrid" and getattr(ctx, "hybrid_us_rules", None):
                 try:

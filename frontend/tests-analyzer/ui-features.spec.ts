@@ -70,7 +70,7 @@ test('그래프 탭 — 기능 전수', async ({ page }) => {
       await page.screenshot({ path: G('05-상수카드-값표시'), fullPage: true })
     }
 
-    // 변수(MEMBER) — var_type 표시 확인 (045 FR-009)
+    // 변수(MEMBER) — data_type 표시 확인
     await search.fill('')
     await search.fill('reg_id')
     await page.waitForTimeout(1500)

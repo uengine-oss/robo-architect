@@ -436,7 +436,7 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
                 task=tdto,
                 rationale=c.get("rationale") or "",
                 score=float(c.get("score") or 0.0),
-                module_confidence=1.0,  # post-hoc arbitration: trust persisted score
+                container_confidence=1.0,  # post-hoc arbitration: trust persisted score
             ))
         if len(claim_entries) < 2:
             continue

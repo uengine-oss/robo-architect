@@ -2,8 +2,7 @@
 
 Inputs combined:
 - Document: raw text + BpmTask names/descriptions + BpmActor names.
-- Analyzer graph: FUNCTION identifiers, Rule statements, HAS_RULE.coupled_domains
-  (often Korean, so a direct ko↔en hint), Table names.
+- Analyzer graph: routine identifiers, Rule condition/effect descriptions, and table names.
 
 The glossary feeds the lexical matcher (3.1) by expanding a Korean task name
 into plausible English identifiers to look for in rule/function names.
@@ -80,29 +79,28 @@ def _split_identifier(name: str) -> list[str]:
 
 
 def _collect_code_tokens() -> list[str]:
-    """Pull identifier tokens + Korean coupled_domain labels from the analyzer graph."""
+    """Pull useful identifiers and natural-language Rule terms from Analyzer."""
     tokens: Counter[str] = Counter()
-    ko_domains: Counter[str] = Counter()
     try:
         with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
             for rec in s.run(
-                "MATCH (f) WHERE (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER) "
+                "MATCH (f {_owner: 'analyzer'}) WHERE (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER) "
                 "  AND f.name IS NOT NULL AND f.name <> '' "
                 "RETURN f.name AS fn, f.summary AS summary"
             ):
                 for tok in _split_identifier(rec["fn"] or ""):
                     tokens[tok] += 1
             for rec in s.run(
-                "MATCH (f)-[hr:HAS_RULE]->(r:RULE) "
-                "RETURN r.statement AS statement, coalesce(hr.coupled_domains, []) AS domains"
+                "MATCH (f {_owner: 'analyzer'})-[:HAS_RULE]->(r:RULE {_owner: 'analyzer'}) "
+                "RETURN r.condition_description AS condition, "
+                "coalesce(r.effect_descriptions, []) AS effects"
             ):
-                for tok in _split_identifier(rec["statement"] or ""):
+                for tok in _split_identifier(rec["condition"] or ""):
                     tokens[tok] += 1
-                for d in (rec["domains"] or []):
-                    d = (d or "").strip()
-                    if d:
-                        ko_domains[d] += 1
-            for rec in s.run("MATCH (t:TABLE) RETURN t.name AS name"):
+                for effect in rec["effects"] or []:
+                    for tok in _split_identifier(effect or ""):
+                        tokens[tok] += 1
+            for rec in s.run("MATCH (t:TABLE {_owner: 'analyzer'}) RETURN t.name AS name"):
                 for tok in _split_identifier(rec["name"] or ""):
                     tokens[tok] += 1
     except Exception as e:
@@ -118,9 +116,7 @@ def _collect_code_tokens() -> list[str]:
         "home", "bean", "dao", "util", "helper", "factory", "find", "finder",
     }
     top = [t for t, _ in tokens.most_common(200) if len(t) > 2 and t not in drop]
-    # Tack Korean coupled_domain labels at the front — they bridge the ko↔en gap.
-    ko = [d for d, _ in ko_domains.most_common(40)]
-    return ko + top
+    return top
 
 
 def _task_side_corpus(skeleton: BpmSkeleton) -> list[str]:
@@ -143,7 +139,7 @@ async def extract_glossary(document_text: str, skeleton: BpmSkeleton) -> list[Gl
     user = (
         "### 문서 발췌\n" + doc +
         "\n\n### 업무 용어 후보 (문서/Task)\n" + ", ".join(task_seeds[:200]) +
-        "\n\n### 코드 식별자 토큰 (영문 위주, 뒤쪽은 한글 coupled_domain)\n" + ", ".join(code_tokens[:200]) +
+        "\n\n### 코드 식별자·업무 의미 토큰\n" + ", ".join(code_tokens[:200]) +
         "\n\n위 자료를 바탕으로 용어집을 JSON으로 작성하세요."
     )
 

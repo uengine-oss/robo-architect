@@ -335,7 +335,7 @@ def gwt_evidence_ref_errors(tactical: list[dict], evidence_packet: list[dict]) -
             if isinstance(ref, str) and ref:
                 legacy_node_ids.add(ref)
             elif isinstance(ref, dict):
-                # Content-ref resolution replaces nodeId with the RULE/EXAMPLE
+                # Content-ref resolution replaces nodeId with the Rule scenario
                 # evidence id and preserves the inspected frame owner in parentId.
                 # Either coordinate proves that the source frame is represented.
                 for key in ("parentId", "nodeId"):

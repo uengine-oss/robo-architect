@@ -532,8 +532,8 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             # ─── Hybrid input boost — prefetch BL info per UserStory ─────────
             # Downstream legacy ES phases (aggregates/commands/events_from_us/
             # gwt/bcs/readmodels/policies) read `ctx.hybrid_us_rules` to weave
-            # analyzer Rule.statement / Example GWT / writes.op /
-            # coupled_domains / guard_rule_id chain into their LLM prompts.
+            # Analyzer Rule condition/effect descriptions and WRITES operations /
+            # converted Rule conditions/effects and writes into their LLM prompts.
             # See Phase5_EventStorming_Promotion_PRD §12 (v3 input boost) for the rationale.
             try:
                 from api.features.ingestion.hybrid.bpm_context_builder import (

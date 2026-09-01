@@ -561,7 +561,7 @@ const expandedBLs = ref(new Set())
 // Single sources list — no grounded/ungrounded split. Each US is shown the
 // same; expanding reveals BL+function detail if present, or a "매핑된 BL 없음"
 // note if not (verification §3.8: ungrounded US's source-of-truth ends at BPM
-// Task description, no Rule/Example chain to surface).
+// Task description, with no Analyzer Rule chain to surface).
 const allSources = computed(() => traceData.value?.sources || [])
 // Count for caption — how many of the listed US's actually carry BL grounding.
 const groundedCount = computed(() =>
@@ -571,7 +571,7 @@ const groundedCount = computed(() =>
 // Per-node-type primary-source emphasis (verification §3.8 + node intent):
 //   Aggregate → Root Table(s): the DB table this Aggregate is grounded in.
 //                Extracted from WRITES tables across all source functions.
-//   Command   → Input contract GWT: the canonical Example given/when as the
+//   Command   → Input contract GWT: the converted Rule given/when as the
 //                command's input contract (then is emit territory).
 //   Event     → Acceptance test GWT: full given/when/then + writes as the
 //                event's output contract.
@@ -580,7 +580,7 @@ const nodeType = computed(() => traceData.value?.node?.type || '')
 // Returns [{ name, ops, columns, sources }] — Aggregate's grounding tables.
 //
 // Signal priority:
-//   1. Example.AFFECTS_TABLE writes (best — operation-level Rule grounding)
+//   1. Rule.WRITES operations (operation-level Rule grounding)
 //   2. FUNCTION.WRITES (next — function-level write target)
 //   3. FUNCTION.READS (fallback — at least the source schema this Aggregate sees)
 //
@@ -610,7 +610,7 @@ const primaryRootTables = computed(() => {
   }
   const groundedOnly = allSources.value.filter(s => (s.rules || []).length > 0)
 
-  // Tier 1: rule.writes from Example.AFFECTS_TABLE
+  // Tier 1: direct Rule.WRITES operations
   for (const src of groundedOnly) {
     const usid = src.us?.id || ''
     for (const rule of (src.rules || [])) {
@@ -618,7 +618,7 @@ const primaryRootTables = computed(() => {
         if (!w.table) continue
         const access = (w.access || '').toUpperCase()
         const op = (w.op || '').toUpperCase()
-        // v2 filters READ explicitly. Legacy op-only entries retain old behavior.
+        // Read-only facts do not ground an Aggregate root.
         if (access === 'READ' || (!access && op === 'READ')) continue
         const displayOp = op && op !== 'UNKNOWN'
           ? op

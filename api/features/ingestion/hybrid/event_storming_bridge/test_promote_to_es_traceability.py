@@ -3,7 +3,7 @@ from __future__ import annotations
 from api.features.ingestion.hybrid.event_storming_bridge import promote_to_es
 
 
-def test_attach_analyzer_traceability_counts_include_fallback(monkeypatch):
+def test_attach_analyzer_traceability_creates_source_links(monkeypatch):
     class _Rec:
         def __init__(self, c: int):
             self._c = c
@@ -19,13 +19,7 @@ def test_attach_analyzer_traceability_counts_include_fallback(monkeypatch):
 
         def run(self, query, **params):
             self.queries.append(query)
-            # 1st run: sourced_from, 2nd run: direct question attach, 3rd run: fallback
-            idx = len(self.queries)
-            if idx == 1:
-                return type("_R", (), {"single": lambda _s: _Rec(50)})()
-            if idx == 2:
-                return type("_R", (), {"single": lambda _s: _Rec(1)})()
-            return type("_R", (), {"single": lambda _s: _Rec(3)})()
+            return type("_R", (), {"single": lambda _s: _Rec(50)})()
 
     class _Ctx:
         def __init__(self, s):
@@ -42,8 +36,6 @@ def test_attach_analyzer_traceability_counts_include_fallback(monkeypatch):
 
     counts = promote_to_es._attach_analyzer_traceability("sid-1")
 
-    assert counts["sourced_from"] == 50
-    assert counts["attached_to"] == 4
-    fallback_query = sess.queries[2]
-    assert "WITH bc ORDER BY bc.key LIMIT 1" in fallback_query
-    assert "MATCH (q:QUESTION)" in fallback_query
+    assert counts == {"sourced_from": 50}
+    assert len(sess.queries) == 1
+    assert "SOURCED_FROM" in sess.queries[0]

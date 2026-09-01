@@ -12,11 +12,8 @@ sole responsibilities are:
      and the ES canvas share a navigable lineage edge.
   3. Backfill `(UserStory)-[:IMPLEMENTS]->(BoundedContext)` for stories the
      LLM forgot to assign — the navigator's BC tree relies on this.
-  4. Attach analyzer-side traceability edges that the legacy phases never
-     produced — `(UserStory)-[:SOURCED_FROM]->(Rule)` and
-     `(Question)-[:ATTACHED_TO]->(BoundedContext)`. These are the ones that
-     let downstream PRD generation (Phase 6) pull Rule.statement / Example
-     GWT / source_function into the markdown.
+  4. Attach `(UserStory)-[:SOURCED_FROM]->(Rule)` so downstream output can
+     trace each generated story to its converted Analyzer rule.
   5. Detect cross-BC Policy candidates from `BpmTask.NEXT` pairs that span
      different BCs and persist them with an LLM-assigned name.
 
@@ -101,12 +98,8 @@ def _ev(message: str, progress: int, data: dict | None = None) -> ProgressEvent:
 def _tag_es_nodes_with_session_id(hybrid_session_id: str) -> dict[str, int]:
     """Tag any ES node that lacks a session_id with the current hybrid session id.
 
-    CRITICAL — single-label only. The analyzer applies stereotype labels
-    (Command / Query / Validation / Handler) directly on its FUNCTION nodes
-    as multi-labels: a function classified as a Command carries
-    `[FUNCTION, Command]`. Without the `size(labels(n)) = 1` guard, this tag
-    pass would mark those analyzer FUNCTIONs with our session_id, and a later
-    /reset wipe would delete them — destroying HAS_RULE / AFFECTS_TABLE chains.
+    Only Architect nodes with one product label are eligible. The guard keeps
+    nodes owned by another service outside this session's reset boundary.
     """
     counts: dict[str, int] = {}
     with get_session() as s:
@@ -184,34 +177,14 @@ def _attach_orphan_us_to_first_bc(hybrid_session_id: str) -> int:
 
 
 # =============================================================================
-# 3) Analyzer-side traceability edges — the new value this module adds on top
-#    of the legacy phases. Without these, downstream PRD generation has no
-#    way to surface Rule.statement / Example GWT / source_function as code
-#    grounding for each ES node.
+# 3) Rule traceability for generated UserStories
 # =============================================================================
 
 
 def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
-    """Attach analyzer→ES edges. Two main edges:
-
-      (UserStory)-[:SOURCED_FROM]->(Rule)
-        For each BpmTask realized by shadow Rules, fan out the same
-        SOURCED_FROM relation to every UserStory that points back at the
-        task via sourceUnitId. Lets PRD generation pull every rule
-        statement that contributed to a story.
-
-      (Question)-[:ATTACHED_TO]->(BoundedContext)
-        Analyzer Questions live on FUNCTION nodes. We follow the function
-        to its REALIZED_BY task → IMPLEMENTS BC chain so the question
-        surfaces in the right BC's "Open Decisions" section. When a
-        question's host fn maps to no task (rare), it attaches to the
-        first BC by key as a fallback so it isn't lost.
-    """
-    counts = {"sourced_from": 0, "attached_to": 0}
+    """Attach each UserStory to the converted rules that grounded it."""
+    counts = {"sourced_from": 0}
     with get_session() as s:
-        # (US)-[:SOURCED_FROM]->(Rule) via shadow Rule reached through BpmTask.
-        # Shadow Rule has session_id (created during BPM phase); we follow that
-        # so PRD generation can retrieve title/given/when/then directly.
         rec = s.run(
             "MATCH (t:BpmTask {session_id: $sid})-[:REALIZED_BY]->(r:Rule {session_id: $sid}) "
             "MATCH (us:UserStory {session_id: $sid}) "
@@ -221,45 +194,6 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
             sid=hybrid_session_id,
         ).single()
         counts["sourced_from"] = int(rec["c"]) if rec else 0
-
-        # (Question)-[:ATTACHED_TO]->(BC) via FUNCTION → task → IMPLEMENTS BC.
-        # We touch any analyzer Question (no session_id); this is a one-way
-        # link from immutable analyzer data into the hybrid session.
-        rec = s.run(
-            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
-            "OPTIONAL MATCH (f)-[:HAS_QUESTION]->(q) "
-            "OPTIONAL MATCH (t:BpmTask {session_id: $sid})-[:REALIZED_BY]->"
-            "          (sh:Rule {session_id: $sid}) "
-            "          WHERE EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(f) "
-            "                 WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) "
-            "                   AND _rt.name = sh.source_function } "
-            "OPTIONAL MATCH (us:UserStory {session_id: $sid}) "
-            "          WHERE us.sourceUnitId = t.id "
-            "OPTIONAL MATCH (us)-[:IMPLEMENTS]->(bc:BoundedContext {session_id: $sid}) "
-            "WITH q, collect(DISTINCT bc) AS bcs "
-            "WHERE size(bcs) > 0 "
-            "UNWIND bcs AS bc "
-            "MERGE (q)-[rel:ATTACHED_TO]->(bc) "
-            "RETURN count(rel) AS c",
-            sid=hybrid_session_id,
-        ).single()
-        counts["attached_to"] = int(rec["c"]) if rec else 0
-
-        # Fallback: any Question still unattached → first BC of the session.
-        # IMPORTANT: `LIMIT 1` must apply to BC selection only, not to the
-        # question stream. Otherwise only one orphan question gets attached.
-        rec = s.run(
-            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
-            "  AND NOT (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
-            "MATCH (bc:BoundedContext {session_id: $sid}) "
-            "WITH bc ORDER BY bc.key LIMIT 1 "
-            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
-            "  AND NOT (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
-            "MERGE (q)-[rel:ATTACHED_TO]->(bc) "
-            "RETURN count(rel) AS c",
-            sid=hybrid_session_id,
-        ).single()
-        counts["attached_to"] += int(rec["c"]) if rec else 0
     return counts
 
 
@@ -452,12 +386,11 @@ async def hybrid_post_workflow_hook(
             {"type": "HybridOrphanUsBackfilled", "edge_count": orphans},
         )
 
-    yield _ev("🧬 분석기 traceability 엣지 부착 중 (US→Rule, Question→BC)...", 98,
+    yield _ev("🧬 분석기 traceability 엣지 부착 중 (US→Rule)...", 98,
               {"type": "HybridTraceabilityStart"})
     trace_counts = _attach_analyzer_traceability(hybrid_session_id)
     yield _ev(
-        f"🧬 traceability 부착: SOURCED_FROM {trace_counts['sourced_from']} / "
-        f"ATTACHED_TO {trace_counts['attached_to']}",
+        f"🧬 traceability 부착: SOURCED_FROM {trace_counts['sourced_from']}",
         98,
         {"type": "HybridTraceabilityAttached", "counts": trace_counts},
     )

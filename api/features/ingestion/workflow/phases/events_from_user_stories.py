@@ -199,9 +199,9 @@ async def extract_events_from_user_stories_phase(
                         "\n\nINSTRUCTION: BL.writes 중 op_source=SCANNER인 정확한 op는 "
                         "Event 동사의 강한 근거입니다(INSERT→Recorded/Created, "
                         "UPDATE→Updated/Adjusted, DELETE→Removed/Cancelled). "
-                        "LLM_INFERRED는 Rule.statement/GWT와 일치할 때만 약한 힌트로 쓰고, "
+                        "LLM_INFERRED는 Rule 조건·효과와 일치할 때만 약한 힌트로 쓰고, "
                         "UNKNOWN 또는 op unresolved에서는 동사를 만들지 마세요. 각 Rule의 statement가 한 Event의 "
-                        "도메인 의도, AFFECTS_TABLE 의 table 명이 Aggregate 이름의 근거입니다."
+                        "도메인 의도와 Rule.WRITES의 table명이 Aggregate 이름의 근거입니다."
                     )
             except Exception:
                 pass  # fall back to US-text-only prompt

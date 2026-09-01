@@ -162,53 +162,20 @@ class ProcessBundle(BaseModel):
         )
 
 
-class ExampleDTO(BaseModel):
-    """One concrete test scenario attached to a Rule (analyzer Example node).
-
-    Examples carry the actual GWT triplet — `given`/`then_` may be JSON strings
-    when the analyzer wants structured data (writes[], inputs, exceptions); the
-    `narrative` field inside is the human-readable summary used elsewhere.
-    """
-
-    example_id: str
-    given: str = ""
-    when_: str = ""
-    then_: str = ""
-    is_boundary: bool = False
-    # Table-write effects driving Aggregate grounding and qualified event hints.
-    # Each v2 entry carries table/access/op/op_source. Legacy {table, op} payloads
-    # are retained additively as op_source=LEGACY, never upgraded to scanner facts.
-    writes: list[dict] = Field(default_factory=list)
-
-
 class RuleDTO(BaseModel):
-    """Phase 2 output: a business rule + its examples extracted from analyzer code graph.
-
-    The canonical `given`/`when`/`then` fields hold the human-readable narrative of
-    a chosen representative Example (non-boundary preferred). `examples` carries the
-    full set so retrieval/UI can surface boundary cases when needed.
-    """
+    """Phase 2 output derived from one Analyzer RULE node."""
 
     id: str
     given: str
     when: str
     then: str
     source_function: Optional[str] = None
-    source_module: Optional[str] = None
+    source_function_id: Optional[str] = None
+    source_rule_id: Optional[str] = None
+    source_container: Optional[str] = None
     confidence: float = 1.0
-    # Rule.statement — the one-line business intent of this rule. Preferred over
-    # given/when/then for classification since GWT values often carry concrete
-    # test inputs or side-effect details, while statement is pure semantics.
     title: Optional[str] = None
-    # Examples bound to this rule via (Rule)-[:HAS_EXAMPLE]->(Example).
-    # Always at least one element; canonical given/when/then mirror examples[0]
-    # (after sorting non-boundary first).
-    examples: list[ExampleDTO] = Field(default_factory=list)
-    # HAS_RULE.coupled_domains — domains this rule touches outside its host
-    # function's primary domain (e.g., a payment fn that mutates order state
-    # carries ["order"]).
-    coupled_domains: list[str] = Field(default_factory=list)
-    # Legacy Phase 2.5/2.6 fields — kept for schema compatibility, no longer populated.
+    writes: list[dict] = Field(default_factory=list)
     context_cluster: Optional[str] = None
     es_role: Optional[str] = None
     es_role_confidence: float = 0.0
@@ -269,7 +236,7 @@ class RuleContext(BaseModel):
     when: str
     then: str
     source_function: Optional[str] = None
-    source_module: Optional[str] = None
+    source_container: Optional[str] = None
     function_summary: Optional[str] = None
     actors: list[str] = Field(default_factory=list)
     reads_tables: list[str] = Field(default_factory=list)
@@ -278,8 +245,8 @@ class RuleContext(BaseModel):
     # Parent-node context from analyzer graph (multi-module codebases)
     callers: list[str] = Field(default_factory=list)   # direct callers of source_function
     callees: list[str] = Field(default_factory=list)   # direct callees — orchestrator detection signal
-    parent_module: Optional[str] = None                 # MODULE/FILE containing source_function
-    parent_package: Optional[str] = None                # PACKAGE the module belongs to
+    parent_container: Optional[str] = None
+    container_parent: Optional[str] = None
 
 
 # =============================================================================

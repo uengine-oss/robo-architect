@@ -79,9 +79,9 @@ def test_query_skips_token_already_present():
 
 # ------------------------------------------------------------ normalize_rule_blob
 
-def test_blob_appends_terms_on_code_match_in_source_module():
+def test_blob_appends_terms_on_code_match_in_source_container():
     gloss = [GlossaryTerm(term="본인확인", aliases=["실명확인"], code_candidates=["zapamcom"])]
-    rule = _rule(source_module="zapamcom10060", title="WD master update")
+    rule = _rule(source_container="zapamcom10060", title="WD master update")
     out, applied = normalize_rule_blob("GIVEN x\nWHEN y\nTHEN z", rule, None, gloss)
     assert applied is True
     assert "본인확인" in out and "실명확인" in out
@@ -90,7 +90,7 @@ def test_blob_appends_terms_on_code_match_in_source_module():
 
 def test_blob_matches_on_title():
     gloss = [GlossaryTerm(term="자동납부", aliases=[], code_candidates=["autopay"])]
-    rule = _rule(title="autoPay batch", source_module="batch01")
+    rule = _rule(title="autoPay batch", source_container="batch01")
     out, applied = normalize_rule_blob("blob", rule, None, gloss)
     assert applied is True
     assert "자동납부" in out
@@ -98,14 +98,14 @@ def test_blob_matches_on_title():
 
 def test_blob_no_code_match_returns_original():
     gloss = [GlossaryTerm(term="배송", aliases=[], code_candidates=["ship"])]
-    rule = _rule(source_module="zapamcom10060", title="WD master")
+    rule = _rule(source_container="zapamcom10060", title="WD master")
     out, applied = normalize_rule_blob("blob", rule, None, gloss)
     assert applied is False
     assert out == "blob"
 
 
 def test_blob_empty_glossary_returns_original():
-    rule = _rule(source_module="zapamcom10060")
+    rule = _rule(source_container="zapamcom10060")
     assert normalize_rule_blob("blob", rule, None, []) == ("blob", False)
     assert normalize_rule_blob("blob", rule, None, None) == ("blob", False)
 
@@ -114,7 +114,7 @@ def test_blob_respects_terms_cap():
     gloss = [GlossaryTerm(
         term="t0", aliases=[f"a{i}" for i in range(10)], code_candidates=["zapamcom"],
     )]
-    rule = _rule(source_module="zapamcom10060")
+    rule = _rule(source_container="zapamcom10060")
     out, applied = normalize_rule_blob("blob", rule, None, gloss, max_terms_per_candidate=2)
     assert applied is True
     appended = out.split("[업무용어:")[1]

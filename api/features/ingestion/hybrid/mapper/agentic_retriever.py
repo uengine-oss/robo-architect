@@ -2,8 +2,8 @@
 
 Ties the 3-step pipeline together:
 
-  Step 1 — module_retriever.retrieve_top_modules:    Process → top-k MODULE fqns
-  Step 2 — BL filter within those modules + embedding fallback
+  Step 1 — container_retriever.retrieve_top_containers: Process → top code containers
+  Step 2 — Rule filter within those containers + embedding fallback
   Step 3 — agent_validator.validate_candidates:      LLM + Cypher per Task
 
 Result: for each Task of each Process, an AcceptedMapping list with 1-3
@@ -12,7 +12,7 @@ old lexical + embedding + structural booster + merge/dedup pipeline.
 
 Design notes:
 - One LLM call per Task (all candidates batched).
-- Step 1 modules are cached per Process (all its Tasks share the same
+- Step 1 containers are cached per Process (all its Tasks share the same
   analyzer sub-graph cone).
 - Optional SSE event sink so the Inspector (§2.C) can surface
   "retrieving → validating → done" progress in real time.
@@ -69,11 +69,11 @@ def _max_recoveries_per_task() -> int:
         return max(0, int(os.getenv("HYBRID_GLOSSARY_MAX_RECOVERIES", "4")))
     except ValueError:
         return 4
-from api.features.ingestion.hybrid.mapper.module_retriever import (
-    MIN_MODULE_CONFIDENCE,
-    ModuleCandidate,
-    fetch_all_modules,
-    retrieve_top_modules,
+from api.features.ingestion.hybrid.mapper.container_retriever import (
+    MIN_CONTAINER_CONFIDENCE,
+    ContainerCandidate,
+    fetch_all_containers,
+    retrieve_top_containers,
 )
 
 
@@ -122,8 +122,7 @@ class AcceptedMapping:
 @dataclass
 class RetrievalResult:
     accepted: list[AcceptedMapping] = field(default_factory=list)
-    # Process → list[MODULE.fqn] (Step 1 result, for §2.F persistence)
-    process_modules: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+    process_containers: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     # Mirrors accepted entries in the ActivityRuleMapping shape the rest of
     # Phase 3 expects (save_mappings takes this list).
     mappings: list[ActivityRuleMapping] = field(default_factory=list)
@@ -138,39 +137,31 @@ def _candidates_for_task(
     process: BpmProcess,
     rules: list[RuleDTO],
     contexts_by_rule: dict[str, RuleContext],
-    module_fqns: list[str],
+    container_ids: list[str],
     *,
     top_k: int,
     cache: EmbeddingCache,
     actor_name_by_id: dict[str, str],
     glossary: list[GlossaryTerm] | None = None,
 ) -> list[CandidateBL]:
-    """Step 2 — filter rules to those inside the Step-1 modules, then use
+    """Step 2 — filter rules to those inside the Step-1 containers, then use
     embedding similarity to pick the top-k for this task.
 
-    Module match is **exact**: both sides are the analyzer's module id.
-      - `module_fqns` = `m.id` (module_retriever query)
-      - `source_module` = `f.owner_id` — the analyzer now stores the owning module
-        as a node property (analyzer spec 047 FR-007).
-
-    The old code compared "trailing segments" because `source_module` used to be
-    *guessed by slicing the function id*, which could
-    produce a bare name that never matched a fully-qualified one. That slicing is
-    gone — **an id is an opaque key, not an address to parse**. Rules with no
-    module info still fall through to embedding-only (can't prove exclusion).
+    Container identity is exact. Rules without container information remain in
+    scope because exclusion cannot be proven.
     """
-    module_set = {fqn for fqn in module_fqns if fqn}
+    container_set = {container_id for container_id in container_ids if container_id}
 
     in_scope: list[tuple[RuleDTO, RuleContext]] = []
     for r in rules:
         ctx = contexts_by_rule.get(r.id)
         if not ctx:
             continue
-        sm = (r.source_module or ctx.source_module or "").strip()
+        sm = (r.source_container or ctx.source_container or "").strip()
         if not sm:
             in_scope.append((r, ctx))
             continue
-        if sm in module_set:
+        if sm in container_set:
             in_scope.append((r, ctx))
 
     if not in_scope:
@@ -186,8 +177,8 @@ def _candidates_for_task(
     query = " ".join(p for p in parts if p)
 
     # LEAN BLOB — title + GWT only.
-    # Why drop function_summary / parent_module / callers from the embedding:
-    # all rules in a single legacy module share the SAME function_summary
+    # Why drop function_summary / parent_container / callers from the embedding:
+    # all rules in a single code container share the same function_summary
     # vocabulary ("자동납부", "인증", "결과반영" …). When we include it, every
     # cosine collapses into a tight 0.45~0.55 band — even rules that are
     # clearly stage-mismatched (an INSERT rule vs a 조회 task) score above
@@ -276,16 +267,15 @@ async def run_agentic_retrieval(
     rules: list[RuleDTO],
     contexts: list[RuleContext],
     *,
-    # 한 프로세스가 실제로 쓰는 모듈은 보통 1~15 개 범위. 대형 시스템(1000+ 모듈)
-    # 기준 safety margin 을 잡아 20. 낮게 잡아도 process-level gate + per-module
+    # 한 프로세스가 실제로 쓰는 코드 컨테이너는 보통 1~15개 범위다.
+    # 대형 시스템 기준 여유를 둔 20이며 process-level gate와 per-container
     # inclusion floor(0.45) 가 걸러주므로 과도한 노이즈는 나오지 않음.
-    module_top_k: int = 20,
-    # §2.B P1 — Step 1 코사인이 이 값 미만이면 "이 프로세스는 이 모듈을 구현하지
-    # 않는다" 로 판단. 0.55 미만의 모듈로 Step 2 를 돌리면 노이즈 매칭이 발생.
+    container_top_k: int = 20,
+    # §2.B P1 — Step 1 코사인이 이 값 미만이면 구현 컨테이너가 없다고 판단한다.
     # NOTE: process-level gate 는 배치 실행(≥2 tasks) 전제로 설계됨. SSE 로 단일
-    # task 를 재탐색할 때는 seen_fqns 가 그 한 task 점수만 갖게 되어 정당한 task
+    # task 를 재탐색할 때는 seen_ids가 그 한 task 점수만 갖게 되어 정당한 task
     # 도 gate 에 걸림 — 그런 경우는 호출자가 `skip_process_gate=True` 로 우회.
-    min_module_score: float = MIN_MODULE_CONFIDENCE,
+    min_container_score: float = MIN_CONTAINER_CONFIDENCE,
     skip_process_gate: bool = False,
     # 후보 cap — lean blob + 0.45 floor 적용 후 의미 있는 후보가 task 당
     # 평균 10~15 개로 수렴 (실측). 20 으로 설정하면 lean 분포의 자연 상한을
@@ -319,67 +309,67 @@ async def run_agentic_retrieval(
         "task_count": len(tasks),
     })
 
-    # ------ Step 1: module retrieval (per Task, but share the module corpus) ------
-    module_rows = fetch_all_modules()
-    per_task_modules: dict[str, list[ModuleCandidate]] = {}
+    # ------ Step 1: container retrieval (per Task, shared corpus) ------
+    container_rows = fetch_all_containers()
+    per_task_containers: dict[str, list[ContainerCandidate]] = {}
     for task in tasks:
-        cands = await retrieve_top_modules(
-            process, task, top_k=module_top_k,
-            cache=cache, module_rows=module_rows,
+        cands = await retrieve_top_containers(
+            process, task, top_k=container_top_k,
+            cache=cache, container_rows=container_rows,
         )
-        per_task_modules[task.id] = cands
+        per_task_containers[task.id] = cands
         await sink({
-            "type": "AgentStepModuleSearch",
+            "type": "AgentStepContainerSearch",
             "process_id": process.id,
             "task_id": task.id,
             "query": f"{process.name} | {', '.join(process.domain_keywords or [])} | {task.name}",
             "candidates": [
-                {"name": c.name, "fqn": c.fqn, "score": round(c.score, 4), "summary": c.summary[:200]}
+                {"name": c.name, "id": c.id, "score": round(c.score, 4), "summary": c.summary[:200]}
                 for c in cands
             ],
         })
 
-    # Union of every module the agent considers relevant for this process
+    # Union of every container the agent considers relevant for this process
     # — persisted as Process.IMPLEMENTED_BY (§2.F).
-    seen_fqns: dict[str, float] = {}
-    for cands in per_task_modules.values():
+    seen_ids: dict[str, float] = {}
+    for cands in per_task_containers.values():
         for c in cands:
-            if c.fqn and (c.fqn not in seen_fqns or c.score > seen_fqns[c.fqn]):
-                seen_fqns[c.fqn] = float(c.score)
-    result.process_modules[process.id] = sorted(
-        seen_fqns.items(), key=lambda x: x[1], reverse=True,
+            if c.id and (c.id not in seen_ids or c.score > seen_ids[c.id]):
+                seen_ids[c.id] = float(c.score)
+    result.process_containers[process.id] = sorted(
+        seen_ids.items(), key=lambda x: x[1], reverse=True,
     )
 
     # §2.B P1 — process-level gate. The "does this process have code
-    # implementing it" decision uses the MAX task-level module cosine (i.e.,
+    # implementing it" decision uses the MAX task-level container cosine (i.e.,
     # the strongest signal across all tasks). Task-level scores dip below
-    # the threshold even for legitimate tasks because module summaries are
+    # the threshold even for legitimate tasks because container summaries are
     # coarse-grained — so we gate per-process, not per-task.
-    process_max_score = max(seen_fqns.values(), default=0.0)
-    if not skip_process_gate and process_max_score < min_module_score:
+    process_max_score = max(seen_ids.values(), default=0.0)
+    if not skip_process_gate and process_max_score < min_container_score:
         await sink({
             "type": "AgentDone",
             "process_id": process.id,
             "accepted": 0,
             "total_ms": int((time.perf_counter() - started) * 1000),
             "skipped": True,
-            "reason": f"process_max_module_score={process_max_score:.3f} < {min_module_score}",
+            "reason": f"process_max_container_score={process_max_score:.3f} < {min_container_score}",
         })
         SmartLogger.log(
-            "INFO", "Process skipped — no analyzer module exceeds threshold",
+            "INFO", "Process skipped — no Analyzer container exceeds threshold",
             category="ingestion.hybrid.agentic",
             params={
                 "process_id": process.id,
                 "process_name": process.name,
-                "max_module_score": round(process_max_score, 4),
-                "threshold": min_module_score,
+                "max_container_score": round(process_max_score, 4),
+                "threshold": min_container_score,
             },
         )
         return result
 
     # ------ Step 2+3: per-task candidate filter + LLM validator ------
     for task in tasks:
-        module_fqns = [c.fqn for c in per_task_modules.get(task.id, []) if c.fqn]
+        container_ids = [c.id for c in per_task_containers.get(task.id, []) if c.id]
         # _candidates_for_task does synchronous OpenAI embedding I/O (cache.embed);
         # run it off the event loop so a slow embeddings call can't freeze the
         # whole server (this is the document-upload-only mapping phase — the
@@ -387,7 +377,7 @@ async def run_agentic_retrieval(
         candidates = await asyncio.to_thread(
             _candidates_for_task,
             task=task, process=process, rules=rules,
-            contexts_by_rule=ctx_by_rule, module_fqns=module_fqns,
+            contexts_by_rule=ctx_by_rule, container_ids=container_ids,
             top_k=bl_top_k, cache=cache, actor_name_by_id=actor_name_by_id,
             glossary=glossary,
         )
@@ -395,13 +385,13 @@ async def run_agentic_retrieval(
             "type": "AgentStepBlSearch",
             "process_id": process.id,
             "task_id": task.id,
-            "modules": module_fqns,
+            "containers": container_ids,
             "candidates": [
                 {
                     "rule_id": c.rule.id,
                     "title": c.rule.title or "",
                     "source_function": c.rule.source_function,
-                    "source_module": c.rule.source_module,
+                    "source_container": c.rule.source_container,
                 } for c in candidates
             ],
         })
@@ -452,7 +442,7 @@ async def run_agentic_retrieval(
                 task_id=task.id, rule_id=v.rule_id,
                 score=float(score), rationale=v.rationale,
                 evidence_refs=v.evidence_refs,
-                evidence_path=module_fqns,
+                evidence_path=container_ids,
             ))
 
         # AgentFinalMatches now carries enough info that the runner can

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime
 
@@ -20,85 +21,63 @@ def _slug(name: str | None) -> str:
 # ============================================================================
 # Source-of-truth render helpers (verification report §3.8)
 #
-# These surface the analyzer-grounded chain — Rule.statement / Example GWT /
-# Open Decisions / UserStory index — into the spec markdown so Cursor/Claude
+# These surface converted Analyzer Rule facts and the UserStory index into the
+# spec markdown so Cursor/Claude
 # receive code-grounded acceptance criteria rather than abstract descriptions.
 # Each helper returns "" when the input is empty so the section is silently
 # skipped from the spec instead of leaving an empty heading.
 # ============================================================================
 
 def render_source_rules_table(source_rules: list[dict]) -> str:
-    """Per-US Source Business Rules — analyzer Rule.statement + source_function.
-
-    Surfaces the *real source* of meaning (verification §3.8, source 1). The
-    function tag is back-tickable so Cursor can jump to the file.
-    """
-    rules = [r for r in (source_rules or []) if r and r.get("statement")]
+    """Render the Analyzer conditions that ground one UserStory."""
+    rules = [r for r in (source_rules or []) if r and r.get("title")]
     if not rules:
         return ""
     out = "\n  - **Source Business Rules** (analyzer-grounded):\n\n"
-    out += "    | seq | statement | host fn |\n"
-    out += "    |---|---|---|\n"
+    out += "    | condition | host routine |\n"
+    out += "    |---|---|\n"
     for r in rules:
-        seq = (r.get("local_id") or "—").strip() or "—"
-        stmt = (r.get("statement") or "").replace("|", "\\|")[:100]
+        title = (r.get("title") or "").replace("|", "\\|")[:100]
         fn = (r.get("source_function") or "").strip()
         fn_md = f"`{fn}`" if fn else "—"
-        out += f"    | {seq} | {stmt} | {fn_md} |\n"
+        out += f"    | {title} | {fn_md} |\n"
     return out
 
 
-def render_acceptance_tests(canonical_examples: list[dict]) -> str:
-    """Per-US Acceptance Tests — Example.given/when_/then_ + AFFECTS_TABLE writes.
-
-    Surfaces the schema-bound source (verification §3.8, source 2). Cursor/Claude
-    use these as BDD-style acceptance criteria when writing tests.
-    """
-    exs = [e for e in (canonical_examples or []) if e and e.get("example_id")]
-    if not exs:
+def _write_summary(rule: dict) -> str:
+    try:
+        writes = json.loads(rule.get("write_effects_json") or "[]")
+    except (TypeError, ValueError):
         return ""
-    out = "\n  - **Acceptance Tests** (from analyzer Examples):\n\n"
-    for ex in exs[:5]:  # cap at 5 to keep spec readable; full list lives in Inspector
-        eid = (ex.get("example_id") or "")[-40:]  # tail of long example_id
-        boundary = " (boundary)" if ex.get("boundary") else ""
-        given = (ex.get("given") or "").replace("\n", " ")[:120]
-        when_ = (ex.get("when_") or "").replace("\n", " ")[:120]
-        then_ = (ex.get("then_") or "").replace("\n", " ")[:120]
-        write_hint = ""
-        if ex.get("table") and ex.get("op"):
-            write_hint = f" — *{ex['op']} on `{ex['table']}`*"
-        out += f"    - **{eid}**{boundary}{write_hint}\n"
+    values = [
+        f"{item.get('op', 'WRITE')} `{item.get('table')}`"
+        for item in writes
+        if isinstance(item, dict) and item.get("table")
+    ]
+    return ", ".join(values)
+
+
+def render_acceptance_tests(source_rules: list[dict]) -> str:
+    """Render one acceptance scenario derived from each Analyzer Rule."""
+    rules = [r for r in (source_rules or []) if r]
+    if not rules:
+        return ""
+    out = "\n  - **Acceptance Tests** (derived from Analyzer Rules):\n\n"
+    for index, rule in enumerate(rules[:5], start=1):
+        given = (rule.get("given") or "").replace("\n", " ")[:120]
+        when_ = (rule.get("when_") or "").replace("\n", " ")[:120]
+        then_ = (rule.get("then") or "").replace("\n", " ")[:120]
+        writes = _write_summary(rule)
+        write_hint = f" — *{writes}*" if writes else ""
+        out += f"    - **Rule {index}**{write_hint}\n"
         if given:
             out += f"      - **Given**: {given}\n"
         if when_:
             out += f"      - **When**: {when_}\n"
         if then_:
             out += f"      - **Then**: {then_}\n"
-    if len(exs) > 5:
-        out += f"    - *(+{len(exs) - 5} more — see Inspector)*\n"
-    return out
-
-
-def render_open_decisions(questions: list[dict]) -> str:
-    """BC-level Open Decisions — analyzer Question nodes ATTACHED_TO this BC.
-
-    Each Question represents a policy/correctness decision the analyzer flagged
-    as ambiguous in the source code. Cursor/Claude should not silently resolve
-    these — they need user confirmation.
-    """
-    qs = [q for q in (questions or []) if q and q.get("text")]
-    if not qs:
-        return ""
-    out = "\n## Open Decisions (정책 검토 필요)\n\n"
-    out += "> ⚠️ The analyzer flagged these as ambiguous in the source code. **Confirm with the user before resolving in implementation.**\n\n"
-    for q in qs:
-        text = (q.get("text") or "").strip()
-        reason = (q.get("reason") or "").strip()
-        host_fn = (q.get("host_function") or "").strip()
-        host_md = f" (host fn: `{host_fn}`)" if host_fn else ""
-        out += f"- **Q**{host_md}: {text}\n"
-        if reason:
-            out += f"  - *Reason*: {reason}\n"
+    if len(rules) > 5:
+        out += f"    - *(+{len(rules) - 5} more — see Inspector)*\n"
     return out
 
 
@@ -109,47 +88,18 @@ def render_node_source_rules(source_rules: list[dict], indent: str = "  ") -> st
     Cursor/Claude can see which UserStory's grounding produced this rule
     (multiple US's may IMPLEMENT the same Aggregate/Command).
     """
-    rules = [r for r in (source_rules or []) if r and r.get("statement")]
+    rules = [r for r in (source_rules or []) if r and r.get("title")]
     if not rules:
         return ""
     out = f"\n{indent}- **Source Business Rules** ({len(rules)} via grounded US):\n\n"
-    out += f"{indent}  | seq | statement | host fn | via US |\n"
-    out += f"{indent}  |---|---|---|---|\n"
+    out += f"{indent}  | condition | host routine | via US |\n"
+    out += f"{indent}  |---|---|---|\n"
     for r in rules:
-        seq = (r.get("local_id") or "—").strip() or "—"
-        stmt = (r.get("statement") or "").replace("|", "\\|").replace("\n", " ")[:90]
+        title = (r.get("title") or "").replace("|", "\\|").replace("\n", " ")[:90]
         fn = (r.get("source_function") or "").strip()
         fn_md = f"`{fn}`" if fn else "—"
         via = (r.get("via_us") or "—")
-        out += f"{indent}  | {seq} | {stmt} | {fn_md} | {via} |\n"
-    return out
-
-
-def render_node_source_examples(source_examples: list[dict], indent: str = "    ") -> str:
-    """Per-Event Acceptance Tests from Example nodes (boundary cases included).
-
-    Cap at 3 to keep the per-Event subsection scannable; the full list lives
-    in the per-US section earlier in the spec.
-    """
-    exs = [e for e in (source_examples or []) if e and e.get("example_id")]
-    if not exs:
-        return ""
-    out = f"\n{indent}- **Acceptance source** (from Example):\n"
-    for ex in exs[:3]:
-        eid = (ex.get("example_id") or "")[-30:]
-        boundary = " (boundary)" if ex.get("boundary") else ""
-        write = ""
-        if ex.get("table") and ex.get("op"):
-            write = f" — *{ex['op']} on `{ex['table']}`*"
-        given = (ex.get("given") or "").replace("\n", " ")[:90]
-        when_ = (ex.get("when_") or "").replace("\n", " ")[:90]
-        then_ = (ex.get("then_") or "").replace("\n", " ")[:90]
-        out += f"{indent}  - **{eid}**{boundary}{write}\n"
-        if given: out += f"{indent}    - **Given**: {given}\n"
-        if when_: out += f"{indent}    - **When**: {when_}\n"
-        if then_: out += f"{indent}    - **Then**: {then_}\n"
-    if len(exs) > 3:
-        out += f"{indent}  - *(+{len(exs) - 3} more)*\n"
+        out += f"{indent}  | {title} | {fn_md} | {via} |\n"
     return out
 
 
@@ -342,9 +292,7 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
 **UI text**: Use `displayName` for all UI labels, button text, and form field labels in this BC (see each node and property below).
 """
 
-    # Open Decisions + UserStory index — surface analyzer-grounded source-of-truth
-    # at BC top so Cursor/Claude see grounding map before implementation guidance.
-    spec += render_open_decisions(bc.get("questions", []))
+    # Surface the Analyzer grounding map before implementation guidance.
     spec += render_user_story_index(bc.get("userStories", []))
 
     # Per-US Source Rules + Acceptance Tests — verification §3.8 source 1+2
@@ -352,7 +300,7 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
     grounded_us = [u for u in user_stories if u.get("sourceRules")]
     if grounded_us:
         spec += "\n## User Stories — analyzer-grounded detail\n"
-        spec += "\n> Each US below has **code-grounded source rules** (Rule.statement) and **acceptance tests** (Example GWT). Treat these as the implementation contract — the action text is narrative, the rules + examples are the source-of-truth.\n"
+        spec += "\n> Each US below has code-grounded Analyzer conditions and derived acceptance tests. Treat the converted Rule facts as the implementation contract.\n"
         for us in grounded_us:
             sid = us.get("id", "")
             role = (us.get("role") or "").strip()
@@ -366,7 +314,7 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
                 if benefit: spec += f", *so that* {benefit}"
                 spec += "\n"
             spec += render_source_rules_table(us.get("sourceRules", []))
-            spec += render_acceptance_tests(us.get("canonicalExamples", []))
+            spec += render_acceptance_tests(us.get("sourceRules", []))
 
     spec += """
 ## Aggregates
@@ -477,8 +425,6 @@ def generate_bc_spec(bc: dict, config: TechStackConfig) -> str:
                                 spec += f"      - `{prop.get('name', '')}` (UI: {prop_display}): {prop_type}\n"
                     # Per-Event Source Rules (reached via emitting Command's US)
                     spec += render_node_source_rules(evt.get("sourceRules", []), indent="    ")
-                    # Per-Event Acceptance source — Example given/when_/then_ + write op
-                    spec += render_node_source_examples(evt.get("sourceExamples", []), indent="    ")
 
     # ReadModels
     if bc.get("readmodels"):
@@ -735,7 +681,6 @@ def _split_bc_spec_by_aggregate(bc: dict, config: TechStackConfig) -> dict[str, 
             "policies": [],
             "uis": agg_uis,
             "gwts": [],
-            "questions": [],
             "userStories": [],
         }
         files[f"specs/{bc_slug}/{agg_slug}.md"] = generate_bc_spec(sub_bc, config)
@@ -812,7 +757,6 @@ def _split_bc_spec_by_command(bc: dict, config: TechStackConfig) -> dict[str, st
             "policies": [],
             "uis": cmd_uis,
             "gwts": [],
-            "questions": [],
             "userStories": [],
         }
         files[f"specs/{bc_slug}/{agg_slug}/cmds/{cmd_slug}.md"] = generate_bc_spec(

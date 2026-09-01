@@ -112,7 +112,7 @@ class CandidateBL:
 
 def _fetch_parent_chains(fn_names: list[str]) -> dict[str, dict]:
     """Cypher pre-fetch: for each source function, look up one-hop callers,
-    owning module, and owning package — enough for the LLM to gauge whether
+    owning container and its parent — enough for the LLM to gauge whether
     a rule belongs to the Process in question.
 
     Same query shape as `rule_context.build_rule_contexts` but scoped tight
@@ -126,28 +126,28 @@ def _fetch_parent_chains(fn_names: list[str]) -> dict[str, dict]:
             for rec in s.run(
                 """
                 UNWIND $fn_names AS fn
-                MATCH (f)
+                MATCH (f {_owner: 'analyzer'})
                 WHERE f.name = fn AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
                 OPTIONAL MATCH (caller)-[:CALLS]->(f)
-                OPTIONAL MATCH (mod)-[:HAS_MEMBER]->(f)
-                OPTIONAL MATCH (mod)-[:BELONGS_TO]->(pkg:PACKAGE)
+                OPTIONAL MATCH (container)-[:PARENT_OF]->(f)
+                OPTIONAL MATCH (parent)-[:PARENT_OF]->(container)
                 WITH fn, f,
                      collect(DISTINCT caller.name) AS callers,
-                     collect(DISTINCT mod.name) AS mods,
-                     collect(DISTINCT pkg.name) AS pkgs
+                     collect(DISTINCT container.name) AS containers,
+                     collect(DISTINCT parent.name) AS parents
                 RETURN fn,
                        f.summary AS summary,
                        [c IN callers WHERE c IS NOT NULL] AS callers,
-                       head([m IN mods WHERE m IS NOT NULL]) AS module,
-                       head([p IN pkgs WHERE p IS NOT NULL]) AS package
+                       head([m IN containers WHERE m IS NOT NULL]) AS container,
+                       head([p IN parents WHERE p IS NOT NULL]) AS parent
                 """,
                 fn_names=fn_names,
             ):
                 out[rec["fn"]] = {
                     "summary": rec.get("summary"),
                     "callers": rec.get("callers") or [],
-                    "module": rec.get("module"),
-                    "package": rec.get("package"),
+                    "container": rec.get("container"),
+                    "parent": rec.get("parent"),
                 }
     except Exception:
         return out
@@ -166,7 +166,7 @@ def _format_candidate_for_prompt(
         f"    when:  {r.when}",
         f"    then:  {r.then}",
         f"    source_function: {r.source_function or '(없음)'}",
-        f"    source_module:   {r.source_module or '(없음)'}",
+        f"    source_container: {r.source_container or '(없음)'}",
     ]
     summary = (chain or {}).get("summary") or ctx.function_summary
     if summary:
@@ -177,12 +177,12 @@ def _format_candidate_for_prompt(
     callees = ctx.callees
     if callees:
         lines.append(f"    callees: {', '.join(callees[:8])}")
-    module = (chain or {}).get("module") or ctx.parent_module
-    package = (chain or {}).get("package") or ctx.parent_package
-    if module:
-        lines.append(f"    parent_module: {module}")
-    if package:
-        lines.append(f"    parent_package: {package}")
+    container = (chain or {}).get("container") or ctx.parent_container
+    parent = (chain or {}).get("parent") or ctx.container_parent
+    if container:
+        lines.append(f"    parent_container: {container}")
+    if parent:
+        lines.append(f"    container_parent: {parent}")
     if ctx.context_cluster:
         lines.append(f"    context_cluster: {ctx.context_cluster}")
     return "\n".join(lines)

@@ -191,11 +191,10 @@ test('E2E-02 그래프 탭 — 노드 상세 카드 (045 FR-009/010/011/019)', a
   //    열리지도 않았다. 그래서 아래는 값까지 단정해 엉뚱한 카드면 반드시 실패하게 한다.)
 
   // FR-009 — 변수/멤버 카드에 **타입 값**이 실제로 뜬다.
-  //   `reg_id` = MEMBER, var_type='char' (Neo4j 실측).
-  //   옛 프론트는 `variable_type` 을 읽어 이 행이 **영구 공백**이었다.
+  //   `reg_id` = MEMBER, data_type='char'.
   const varText = await openNode('reg_id')
   await page.screenshot(SHOT('08-variable-card'))
-  expect(varText, 'FR-009 var_type 값이 화면에 뜬다').toMatch(/char/)
+  expect(varText, 'FR-009 data_type 값이 화면에 뜬다').toMatch(/char/)
 
   // FR-010 — 상수 카드에 **값**이 뜬다. `CART_MOD` = DEFINE, value='"CART"'.
   const constText = await openNode('CART_MOD')

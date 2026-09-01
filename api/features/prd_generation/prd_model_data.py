@@ -124,51 +124,24 @@ def fetch_bc_data(bc_id: str, session_id: str | None = None) -> dict | None:
     WITH bc, aggData, rmData, polData, uiData, gwtData1, collect(DISTINCT gwt2 {.id, .parentType, .parentId, .givenRef, .whenRef, .thenRef, .testCases}) as gwtData2
     WITH bc, aggData, rmData, polData, uiData, gwtData1 + gwtData2 as gwtData
 
-    // Step 9: UserStories implementing this BC + their analyzer-grounded source
-    // chain. The verification report §3.8 establishes that the *real source* of
-    // every ES node sits at Rule + Example level — US is the traversal gateway.
-    //
-    // Aggregation strategy: collect rules (per-US) and examples (per-US-rule)
-    // via two separate sub-queries to avoid the cartesian explosion that comes
-    // from joining `(us)-SOURCED_FROM-sr` × `(sr)-HAS_EXAMPLE-ex` in one path
-    // (each US would otherwise multiply by rule×example count).
+    // Step 9: UserStories and their converted Analyzer rules.
     OPTIONAL MATCH (us:UserStory)-[:IMPLEMENTS]->(bc)
     WITH bc, aggData, rmData, polData, uiData, gwtData,
          collect(DISTINCT us) AS usList
     UNWIND (CASE WHEN size(usList) = 0 THEN [null] ELSE usList END) AS us
-    // -- per-US rules --
     OPTIONAL MATCH (us)-[:SOURCED_FROM]->(sr:Rule)
-    OPTIONAL MATCH (af)-[ahr:HAS_RULE]->(ar:RULE)
-      WHERE ar.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr.source_function }
-        AND ar.statement = sr.title
     WITH bc, aggData, rmData, polData, uiData, gwtData, us,
          collect(DISTINCT CASE WHEN sr IS NOT NULL THEN
                               { rule_id: sr.id,
-                                statement: sr.title,
+                                title: sr.title,
                                 source_function: sr.source_function,
-                                local_id: coalesce(ahr.local_rule_id, ''),
-                                analyzer_rule_id: ar.id,
+                                source_function_id: sr.source_function_id,
+                                source_rule_id: sr.source_rule_id,
                                 given: coalesce(sr.given, ''),
-                                when_: coalesce(sr.when, ''),
-                                then: coalesce(sr.then, '') }
+                                when_: coalesce(sr.`when`, ''),
+                                then: coalesce(sr.`then`, ''),
+                                write_effects_json: coalesce(sr.write_effects_json, '[]') }
                               ELSE NULL END) AS rawRules
-    // -- per-US examples (via sourced rules → analyzer rule → HAS_EXAMPLE) --
-    OPTIONAL MATCH (us)-[:SOURCED_FROM]->(sr2:Rule)
-    OPTIONAL MATCH (af2)-[:HAS_RULE]->(ar2:RULE)
-      WHERE ar2.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af2) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr2.source_function }
-        AND ar2.statement = sr2.title
-    OPTIONAL MATCH (ar2)-[:HAS_EXAMPLE]->(ex:EXAMPLE)
-    OPTIONAL MATCH (ex)-[at:AFFECTS_TABLE]->(tbl:TABLE)
-    WITH bc, aggData, rmData, polData, uiData, gwtData, us, rawRules,
-         collect(DISTINCT CASE WHEN ex IS NOT NULL THEN
-                              { example_id: ex.id,
-                                given: ex.given, when_: ex.when_, then_: ex.then_,
-                                boundary: false,
-                                table: tbl.name, access: at.access,
-                                op: at.op, op_source: at.op_source }
-                              ELSE NULL END) AS rawExs
     WITH bc, aggData, rmData, polData, uiData, gwtData,
          collect(DISTINCT CASE WHEN us IS NOT NULL THEN {
              id: us.id,
@@ -177,23 +150,10 @@ def fetch_bc_data(bc_id: str, session_id: str | None = None) -> dict | None:
              benefit: us.benefit,
              displayName: us.displayName,
              sourceUnitId: us.sourceUnitId,
-             sourceRules: [r IN rawRules WHERE r IS NOT NULL],
-             canonicalExamples: [e IN rawExs WHERE e IS NOT NULL AND e.boundary = false],
-             allExamples: [e IN rawExs WHERE e IS NOT NULL]
+             sourceRules: [r IN rawRules WHERE r IS NOT NULL]
          } ELSE NULL END) AS rawUsList
     WITH bc, aggData, rmData, polData, uiData, gwtData,
          [u IN rawUsList WHERE u IS NOT NULL] AS userStoryData
-
-    // Step 10: Open Decisions (Question nodes attached to this BC)
-    OPTIONAL MATCH (q:QUESTION)-[:ATTACHED_TO]->(bc)
-    OPTIONAL MATCH (qf)-[:HAS_QUESTION]->(q)
-    WITH bc, aggData, rmData, polData, uiData, gwtData, userStoryData,
-         collect(DISTINCT {
-             id: q.id,
-             text: q.text,
-             reason: q.reason,
-             host_function: head([(qrt)-[:PARENT_OF*0..]->(qf) WHERE qrt:FUNCTION OR qrt:PROCEDURE OR qrt:METHOD OR qrt:TRIGGER | qrt.name])
-         }) AS questionData
 
     RETURN {
         id: bc.id,
@@ -205,8 +165,7 @@ def fetch_bc_data(bc_id: str, session_id: str | None = None) -> dict | None:
         policies: [p IN polData WHERE p.id IS NOT NULL],
         uis: [u IN uiData WHERE u.id IS NOT NULL],
         gwts: [g IN gwtData WHERE g.id IS NOT NULL],
-        userStories: [u IN userStoryData WHERE u.id IS NOT NULL],
-        questions: [q IN questionData WHERE q.id IS NOT NULL]
+        userStories: [u IN userStoryData WHERE u.id IS NOT NULL]
     } as bc_data
     """
 
@@ -215,10 +174,7 @@ def fetch_bc_data(bc_id: str, session_id: str | None = None) -> dict | None:
         record = result.single()
         if record:
             bc_data = dict(record["bc_data"])
-            # Per-node source rule rollup — verification §3.8: every ES node's
-            # source-of-truth lives at Rule level; here we surface that per
-            # Aggregate/Command/Event so the spec markdown can show *which Rules
-            # ground this node* directly under each node, not only at US level.
+            # Surface the same converted Rule facts under each generated node.
             _attach_per_node_source_rules(bc_id, bc_data, session_id=session_id)
             SmartLogger.log(
                 "INFO",
@@ -262,15 +218,15 @@ def _attach_per_node_source_rules(bc_id: str, bc_data: dict, session_id: str | N
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
     OPTIONAL MATCH (us:UserStory)-[:IMPLEMENTS]->(agg)
     OPTIONAL MATCH (us)-[:SOURCED_FROM]->(sr:Rule)
-    OPTIONAL MATCH (af)-[ahr:HAS_RULE]->(ar:RULE)
-      WHERE ar.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr.source_function }
-        AND ar.statement = sr.title
     WITH bc, agg,
          collect(DISTINCT CASE WHEN sr IS NOT NULL THEN
-                              { rule_id: sr.id, statement: sr.title,
+                              { rule_id: sr.id, title: sr.title,
                                 source_function: sr.source_function,
-                                local_id: coalesce(ahr.local_rule_id, ''),
+                                source_rule_id: sr.source_rule_id,
+                                given: coalesce(sr.given, ''),
+                                when_: coalesce(sr.`when`, ''),
+                                then: coalesce(sr.`then`, ''),
+                                write_effects_json: coalesce(sr.write_effects_json, '[]'),
                                 via_us: us.id }
                               ELSE NULL END) AS aggRules
     WITH bc, collect({ id: agg.id, rules: [r IN aggRules WHERE r IS NOT NULL] }) AS aggRollup
@@ -279,15 +235,15 @@ def _attach_per_node_source_rules(bc_id: str, bc_data: dict, session_id: str | N
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
     OPTIONAL MATCH (us2:UserStory)-[:IMPLEMENTS]->(cmd)
     OPTIONAL MATCH (us2)-[:SOURCED_FROM]->(sr2:Rule)
-    OPTIONAL MATCH (af2)-[ahr2:HAS_RULE]->(ar2:RULE)
-      WHERE ar2.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af2) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr2.source_function }
-        AND ar2.statement = sr2.title
     WITH bc, aggRollup, cmd,
          collect(DISTINCT CASE WHEN sr2 IS NOT NULL THEN
-                              { rule_id: sr2.id, statement: sr2.title,
+                              { rule_id: sr2.id, title: sr2.title,
                                 source_function: sr2.source_function,
-                                local_id: coalesce(ahr2.local_rule_id, ''),
+                                source_rule_id: sr2.source_rule_id,
+                                given: coalesce(sr2.given, ''),
+                                when_: coalesce(sr2.`when`, ''),
+                                then: coalesce(sr2.`then`, ''),
+                                write_effects_json: coalesce(sr2.write_effects_json, '[]'),
                                 via_us: us2.id }
                               ELSE NULL END) AS cmdRules
     WITH bc, aggRollup,
@@ -297,30 +253,20 @@ def _attach_per_node_source_rules(bc_id: str, bc_data: dict, session_id: str | N
     OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(cmd3:Command)-[:EMITS]->(evt:Event)
     OPTIONAL MATCH (us3:UserStory)-[:IMPLEMENTS]->(cmd3)
     OPTIONAL MATCH (us3)-[:SOURCED_FROM]->(sr3:Rule)
-    OPTIONAL MATCH (af3)-[ahr3:HAS_RULE]->(ar3:RULE)
-      WHERE ar3.session_id IS NULL
-        AND EXISTS { MATCH (_rt)-[:PARENT_OF*0..]->(af3) WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) AND _rt.name = sr3.source_function }
-        AND ar3.statement = sr3.title
-    OPTIONAL MATCH (ar3)-[:HAS_EXAMPLE]->(ex:EXAMPLE)
-    OPTIONAL MATCH (ex)-[at:AFFECTS_TABLE]->(tbl:TABLE)
     WITH bc, aggRollup, cmdRollup, evt,
          collect(DISTINCT CASE WHEN sr3 IS NOT NULL THEN
-                              { rule_id: sr3.id, statement: sr3.title,
+                              { rule_id: sr3.id, title: sr3.title,
                                 source_function: sr3.source_function,
-                                local_id: coalesce(ahr3.local_rule_id, ''),
+                                source_rule_id: sr3.source_rule_id,
+                                given: coalesce(sr3.given, ''),
+                                when_: coalesce(sr3.`when`, ''),
+                                then: coalesce(sr3.`then`, ''),
+                                write_effects_json: coalesce(sr3.write_effects_json, '[]'),
                                 via_us: us3.id }
-                              ELSE NULL END) AS evtRules,
-         collect(DISTINCT CASE WHEN ex IS NOT NULL THEN
-                              { example_id: ex.id,
-                                given: ex.given, when_: ex.when_, then_: ex.then_,
-                                boundary: false,
-                                table: tbl.name, access: at.access,
-                                op: at.op, op_source: at.op_source }
-                              ELSE NULL END) AS evtExamples
+                              ELSE NULL END) AS evtRules
     WITH aggRollup, cmdRollup,
          collect({ id: evt.id,
-                   rules: [r IN evtRules WHERE r IS NOT NULL],
-                   examples: [e IN evtExamples WHERE e IS NOT NULL] }) AS evtRollup
+                   rules: [r IN evtRules WHERE r IS NOT NULL] }) AS evtRollup
 
     RETURN aggRollup, cmdRollup, evtRollup
     """
@@ -339,7 +285,6 @@ def _attach_per_node_source_rules(bc_id: str, bc_data: dict, session_id: str | N
         for evt in agg.get("events", []) or []:
             evt_entry = evt_map.get(evt.get("id"), {})
             evt["sourceRules"] = evt_entry.get("rules", [])
-            evt["sourceExamples"] = evt_entry.get("examples", [])
 
 
 def get_bcs_from_nodes(node_ids: list[str] | None = None, session_id: str | None = None) -> list[dict]:

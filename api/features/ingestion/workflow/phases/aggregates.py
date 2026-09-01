@@ -406,8 +406,7 @@ async def extract_aggregates_phase(ctx: IngestionWorkflowContext) -> AsyncGenera
         breakdowns_text = _user_story_breakdown_lines(ctx, us_id_set)
 
         # ─── Hybrid input boost — append BL info per US to LLM input ────────
-        # See Phase5_EventStorming_Promotion_PRD §12 (v3 input boost). Adds rule statements + AFFECTS_TABLE
-        # writes + coupled_domains + guard chain + Example GWT into the prompt
+        # Adds converted Analyzer Rule conditions/effects and direct WRITES facts.
         # so Aggregate root_table / invariants / valueObjects reflect actual
         # code intent rather than US text alone.
         if getattr(ctx, "source_type", "") == "hybrid" and getattr(ctx, "hybrid_us_rules", None):

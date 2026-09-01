@@ -199,7 +199,7 @@ async function saveEdit() {
           </div>
           <ul class="source-rules__list">
             <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item">
-              <span class="source-rule-stmt">{{ rule.statement }}</span>
+              <span class="source-rule-stmt">{{ rule.title }}</span>
               <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>
             </li>
           </ul>
