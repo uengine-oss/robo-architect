@@ -1,14 +1,31 @@
 #!/usr/bin/env bash
 #
-# dev.sh — start the full robo-architect dev stack in one terminal.
+# dev.sh — start everything the app needs, in one terminal.
 #
-#   1. backend          FastAPI / uvicorn        http://localhost:8000
-#   2. wireframe service open-pencil (Bun)        http://localhost:7610
-#   3. frontend         Vue / Vite               http://localhost:5173
+#   graph store   Ontological (Docker)     bolt 28687 / postgres 28816
+#   analyzer      remote · analyzer · catalog · fabric · parser · gateway
+#                                          5001 5502 5503 8404 8081 9000
+#   1. backend    FastAPI / uvicorn        http://localhost:8000
+#   2. wireframe  open-pencil (Bun)        http://localhost:7610
+#   3. frontend   Vue / Vite               http://localhost:5173
 #
-# Logs from all three are prefixed and interleaved. Ctrl+C stops everything.
+# The three numbered services run as children here — their logs are prefixed and
+# interleaved, and Ctrl+C stops them. The graph store and the analyzer stack are
+# background services with their own lifecycle (../robo-stack.sh, Docker); this
+# script starts them if they are down and reports what it found.
+#
+# Why they belong in one script: the Analyzer tab is a Module Federation remote
+# on 5001 and every one of its calls goes through the gateway on 9000, so a
+# frontend without that stack renders the tab and fails every request in it. And
+# all of them read the same graph — the analyzer writes what the mapper later
+# reads, so a missing DB is not a degraded mode, it is no mode at all.
 #
 # Usage:   ./dev.sh
+#
+#   WITH_DB=0        skip the graph store (already running elsewhere, or Neo4j)
+#   WITH_ANALYZER=0  skip the analyzer stack (backend/frontend work only)
+#   STOP_ALL=1       on exit, also stop the analyzer stack (default: leave up)
+#
 # Override the open-pencil component library:
 #          COMPONENT_LIBRARY_PATH=docs/components.fig ./dev.sh
 #
@@ -33,6 +50,77 @@ command -v npm >/dev/null 2>&1 || fail "'npm' not found on PATH (nvm: 'nvm use 2
 [ -d "$ROOT/open-pencil/node_modules" ] || warn "open-pencil/node_modules missing — run: (cd open-pencil && bun install)"
 [ -d "$ROOT/frontend/node_modules" ]    || warn "frontend/node_modules missing — run: (cd frontend && npm install)"
 
+WITH_DB="${WITH_DB:-1}"
+WITH_ANALYZER="${WITH_ANALYZER:-1}"
+STOP_ALL="${STOP_ALL:-0}"
+
+STACK="$(cd "$ROOT/.." && pwd)/robo-stack.sh"
+OG_CONTAINER="${OG_CONTAINER:-ontological-dev}"
+
+listening() { lsof -ti :"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+
+# ── graph store ──────────────────────────────────────────────────────────────
+# Data lives in the container filesystem, not a volume, so this only ever starts
+# and stops it — never removes it. See og-verify/OPERATIONS.md §0.
+start_graph_store() {
+  if listening 28687; then echo "[dev] graph store already up (bolt 28687)"; return; fi
+  if ! command -v docker >/dev/null 2>&1; then
+    warn "docker not found — skipping the graph store (WITH_DB=0 to silence)"; return
+  fi
+  if ! docker inspect "$OG_CONTAINER" >/dev/null 2>&1; then
+    warn "container '$OG_CONTAINER' not found — skipping the graph store"; return
+  fi
+  echo "[dev] starting graph store ($OG_CONTAINER)..."
+  docker start "$OG_CONTAINER" >/dev/null 2>&1
+  docker exec "$OG_CONTAINER" bash -lc 'cd /work/engine && cargo pgrx start pg16' >/dev/null 2>&1
+  docker exec -d "$OG_CONTAINER" bash -lc \
+    'pgrep -f ontological-bolt >/dev/null || OG_BOLT_PGPORT=28816 OG_BOLT_PGDATABASE=og \
+     OG_BOLT_LISTEN=0.0.0.0:7687 /work/bolt/target/release/ontological-bolt \
+     > /tmp/ontological-bolt.log 2>&1' >/dev/null 2>&1
+  for _ in $(seq 1 30); do listening 28687 && break; sleep 1; done
+  if listening 28687; then
+    echo "[dev]   bolt 28687 ready"
+    ensure_graphs
+  else
+    warn "graph store did not come up — see og-verify/OPERATIONS.md §7"
+  fi
+}
+
+# Graphs are not created on first use — `og_create_graph` is an explicit act, and
+# a query against a name that does not exist fails with DatabaseNotFound. That
+# reads like a connection problem and it is not, so create the ones .env names
+# rather than leaving it to be diagnosed later. Already-existing names are left
+# alone; og_create_graph is only called for what is missing.
+ensure_graphs() {
+  local names
+  names="$(grep -hE '^(NEO4J_DATABASE|ROBO_NEO4J_DATABASE|ANALYZER_NEO4J_DATABASE)=' "$ROOT/.env" 2>/dev/null \
+           | cut -d= -f2- | tr -d '"'"'"' ' | sort -u)"
+  [ -n "$names" ] || return 0
+  for g in $names; do
+    [ -n "$g" ] || continue
+    local exists
+    exists="$(docker exec "$OG_CONTAINER" bash -lc \
+      "psql -h localhost -p 28816 -d og -Atc \"SELECT 1 FROM og_catalog.graph WHERE name = '\$g'\"" 2>/dev/null)"
+    if [ "$exists" != "1" ]; then
+      echo "[dev]   creating graph '$g'"
+      docker exec "$OG_CONTAINER" bash -lc \
+        "psql -h localhost -p 28816 -d og -Atc \"SELECT og_create_graph('\$g')\"" >/dev/null 2>&1 \
+        || warn "could not create graph '$g'"
+    fi
+  done
+}
+
+# ── analyzer stack ───────────────────────────────────────────────────────────
+# robo-stack.sh owns these: it reads .env for the graph target and the LLM
+# config, and passes both NEO4J_* and ROBO_NEO4J_* because the services disagree
+# on the prefix.
+start_analyzer_stack() {
+  [ -x "$STACK" ] || { warn "robo-stack.sh not found at $STACK — skipping analyzer stack"; return; }
+  if listening 9000 && listening 5001; then echo "[dev] analyzer stack already up"; return; fi
+  echo "[dev] starting analyzer stack (first run builds Java — this takes a while)..."
+  "$STACK" up 2>&1 | sed -l 's/^/[analyzer] /'
+}
+
 COMPONENT_LIBRARY_PATH="${COMPONENT_LIBRARY_PATH:-docs/components.fig}"
 [ -f "$ROOT/open-pencil/$COMPONENT_LIBRARY_PATH" ] || \
   warn "component library '$COMPONENT_LIBRARY_PATH' not found under open-pencil/ — wireframe service may start without components"
@@ -42,20 +130,55 @@ COMPONENT_LIBRARY_PATH="${COMPONENT_LIBRARY_PATH:-docs/components.fig}"
 # the interpreter alive past SIGTERM. We follow up with SIGKILL on whoever is
 # still listening on our three ports, so a re-run of dev.sh doesn't fail with
 # "Address already in use".
+# The analyzer stack and the graph store are deliberately left running: they are
+# slow to start (Java build, Postgres) and nothing about them is per-session.
+# STOP_ALL=1 takes the analyzer stack down too. The graph store is never stopped
+# here — that is a deliberate act, not a side effect of quitting a dev server.
 trap '
-  echo; echo "[dev] stopping all services...";
+  echo; echo "[dev] stopping backend / wireframe / frontend...";
   kill 0 2>/dev/null;
   sleep 1;
   for p in 8000 7610 5173; do
     pids=$(lsof -ti :$p -sTCP:LISTEN 2>/dev/null);
     [ -n "$pids" ] && kill -9 $pids 2>/dev/null;
   done
+  if [ "$STOP_ALL" = "1" ] && [ -x "$STACK" ]; then
+    echo "[dev] stopping analyzer stack...";
+    "$STACK" down >/dev/null 2>&1;
+  fi
 ' EXIT
 
-echo "[dev] starting stack — Ctrl+C to stop all"
+# ── Preflight: free our own three ports ──────────────────────────────────────
+# The exit trap already SIGKILLs whatever listens on 8000 / 7610 / 5173, so this
+# script treats them as its own. What it did not do was check them on the way
+# in — so a previous run killed mid-flight, or a uvicorn started by hand, left a
+# listener behind and the backend died with "Address already in use" while Vite
+# quietly moved to 5174. Both failures scroll past in an interleaved log and the
+# app looks up until something calls the API.
+for port in 8000 7610 5173; do
+  pids="$(lsof -ti :$port -sTCP:LISTEN 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    echo "[dev] port $port already taken (pid $(echo $pids | tr '\n' ' ')) — reclaiming"
+    kill $pids 2>/dev/null
+    sleep 1
+    pids="$(lsof -ti :$port -sTCP:LISTEN 2>/dev/null || true)"
+    [ -n "$pids" ] && kill -9 $pids 2>/dev/null
+  fi
+done
+
+# ── 0. shared services ───────────────────────────────────────────────────────
+# Started before the app so the backend does not spend its first requests
+# retrying a database that is not there yet.
+[ "$WITH_DB" = "1" ]       && start_graph_store
+[ "$WITH_ANALYZER" = "1" ] && start_analyzer_stack
+
+echo
+echo "[dev] starting app — Ctrl+C to stop backend / wireframe / frontend"
 echo "[dev]   backend   → http://localhost:8000"
 echo "[dev]   wireframe → http://localhost:7610"
 echo "[dev]   frontend  → http://localhost:5173"
+[ "$WITH_ANALYZER" = "1" ] && echo "[dev]   analyzer  → gateway 9000, remote 5001 (stays up after Ctrl+C)"
+[ "$WITH_DB" = "1" ]       && echo "[dev]   graph     → bolt 28687 (stays up)"
 echo
 
 # ── 1. backend ───────────────────────────────────────────────────────────────
