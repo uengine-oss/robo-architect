@@ -20,7 +20,7 @@ MATCH (root)
 WHERE root:FUNCTION OR root:PROCEDURE OR root:METHOD OR root:TRIGGER
 MATCH (root)-[:PARENT_OF*0..]->(o)-[hr:HAS_RULE]->(r:RULE)
 RETURN coalesce(root.function_id, root.id) AS function_id,
-       coalesce(root.name, '')        AS function_name,
+       coalesce(root.name, root.function_id, root.id, '') AS function_name,
        root.summary                   AS function_summary,
        r.statement                    AS statement,
        coalesce(hr.coupled_domains, []) AS coupled_domains,

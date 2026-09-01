@@ -45,7 +45,7 @@ WITH f, hr, r,
      ] AS examples
 RETURN
     coalesce(f.function_id, f.id, f.name) AS function_id,
-    coalesce(f.name, '')              AS function_name,
+    coalesce(f.name, f.function_id, f.id, '') AS function_name,
     coalesce(f.module_id, f.owner_id) AS module_id,
     f.summary                         AS function_summary,
     r.statement                       AS statement,
@@ -58,6 +58,11 @@ ORDER BY function_name, r.statement
 #   종전엔 이 속성이 없어서 `function_id` 문자열을 잘라 모듈을 추측했다.
 #   그 파싱이 analyzer 의 id 규칙을 붙들어 매서, 서로 다른 노드가 같은 id 를 갖는 버그를
 #   못 고치게 만들었다. **id 는 불투명한 열쇠다 — 뜯지 않는다.**
+#
+# ★ `f.name` 은 FUNCTION 에 없다. analyzer 의 Function 에는 name 필드 자체가 없고
+#   (`function_id` 가 "module_id.name" 이고 표시형은 `signature`), 그래서 이 값이
+#   전건 빈 문자열이었다. 빈 이름은 rule_context 의 조회 키라 그쪽도 전부 빗나갔다.
+#   id 를 뜯지 않고 그대로 이름 자리에 쓴다 — 사람이 읽을 수 있고 조회에도 맞는다.
 
 
 def _rule_id(function_id: str, statement: str) -> str:

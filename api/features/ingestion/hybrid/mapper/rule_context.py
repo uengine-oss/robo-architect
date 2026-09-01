@@ -17,7 +17,11 @@ from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
 _FN_LOOKUP_QUERY = """
 UNWIND $fn_names AS fn
 MATCH (f)
-WHERE f.name = fn AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
+// 이름은 `f.name` 이 있으면 그것, 없으면 `function_id` 다. analyzer 의 FUNCTION 에는
+// name 필드가 없어서(`function_id` 가 "module_id.name"), 이름으로만 찾으면 한 건도
+// 맞지 않는다 — 조회가 통째로 비어 function_summary 와 parent_module 이 매 룰마다
+// 빈 값이 됐다. rule_extractor 가 같은 규칙으로 이름을 만든다.
+WHERE (f.name = fn OR f.function_id = fn) AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
 // Tables the operation touches — framework: on f; dbms: on descendant statements.
 OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE)
 OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE)
