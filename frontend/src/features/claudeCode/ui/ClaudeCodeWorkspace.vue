@@ -599,8 +599,20 @@ function onTerminalWorkdirPicked(path) {
   // PTY는 셸이 아니라 claude를 직접 execvpe로 띄우므로 셸 `cd`로 옮길 수 없다 →
   // 새 폴더에서 터미널을 다시 띄워야(respawn) 실제 cwd가 따라온다(C7/I16).
   // 현재 claude 세션/스크롤백은 사라지므로 사용자 확인을 받는다.
+  // 이 선택이 프로젝트 루트까지 옮기는지는 세션 종류에 달려 있다. main 세션의
+  // workdir 만 claude_code_workspace_root 로 승격되고(watch → syncMainRoot),
+  // 그 키가 Analysis 탭의 분석 대상 폴더다. proposal 워크트리는 승격되지
+  // 않는다 — 그래야 워크트리가 프로젝트 루트를 덮어쓰지 않는다.
+  //
+  // 그 차이를 말하지 않으면, 다른 셸에서 폴더를 바꾼 사용자는 분석 대상이
+  // 따라올 것이라 기대하고 바뀌지 않은 이유도 알 수 없다.
+  const movesRoot = s.kind === 'main'
   const ok = window.confirm(
-    `터미널을 새 폴더로 다시 시작할까요?\n\n${path}\n\n현재 터미널 세션(대화·스크롤백)은 종료됩니다.`,
+    `터미널을 새 폴더로 다시 시작할까요?\n\n${path}\n\n` +
+    (movesRoot
+      ? '프로젝트 루트도 이 폴더로 바뀝니다 (Analysis 탭의 분석 대상).\n'
+      : `이 터미널만 옮깁니다. 프로젝트 루트는 그대로입니다 — 분석 대상을 바꾸려면 '프로젝트' 세션에서 바꾸세요.\n`) +
+    '현재 터미널 세션(대화·스크롤백)은 종료됩니다.',
   )
   if (!ok) return
   // 기존 PTY를 명시적으로 종료하고 epoch를 올려, key가 바뀐 ClaudeCodeTerminal이
