@@ -663,12 +663,20 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
 
 @router.get("/stats")
 async def get_data_stats(request: Request) -> dict[str, Any]:
-    """
-    Get current data statistics from Neo4j.
-    """
-    from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+    """Count what the analyzer put in the graph — the code-analysis mode's gate.
 
-    client = get_neo4j_client()
+    This reads the **analyzer** graph, not the design one. Its only caller is the
+    ingestion modal's code-analysis tab, which shows "분석 데이터가 없습니다" when the
+    count is zero. It used to go through the event-storming client, whose database
+    is the design graph, so it counted the wrong side: the analysis finished, the
+    nodes were there, and the screen still said there was nothing. Every sibling
+    that reads analyzer output (`module_retriever`, `rule_context`,
+    `glossary_extractor`) already uses `ANALYZER_NEO4J_DATABASE`.
+
+    Where the two are one database — the packaged compose gives both services the
+    same one — this changes nothing.
+    """
+    from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
 
     try:
         SmartLogger.log(
@@ -677,7 +685,7 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
             category="ingestion.api.stats.request",
             params=http_context(request),
         )
-        with client.session() as session:
+        with get_session(database=ANALYZER_NEO4J_DATABASE) as session:
             query = """
             MATCH (n)
             WITH labels(n)[0] as label, count(n) as count
