@@ -1699,3 +1699,10 @@ figma.ui.postMessage({
   // payload so the architect modal can show "Connected to <fileName>".
   fileName: (figma.root && figma.root.name) || '',
 })
+
+// 이 파일에는 import 도 export 도 없다. 그러면 bun 이 CommonJS 모듈로 보고
+// `__commonJS(() => { … })` 로 감싸는데, IIFE 번들에는 그걸 호출하는 코드가
+// 없어서 **본문이 통째로 죽는다.** figma.showUI 가 불리지 않아 Figma 에는
+// "실행중" 만 뜨고 창이 열리지 않는다. 빈 export 하나면 ES 모듈로 취급돼
+// 본문이 최상위에 그대로 나온다.
+export {}
