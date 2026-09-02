@@ -83,13 +83,17 @@ async function copy() {
 
 <style scoped>
 .gv { display: flex; flex-direction: column; min-height: 0; height: 100%;
-  border: 1px solid rgba(128,128,128,.25); border-radius: 4px; overflow: hidden; }
-.gv__head { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
-  border-bottom: 1px solid rgba(128,128,128,.2); font-size: 12px; }
-.gv__path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
-.gv__meta { margin-left: auto; opacity: .5; white-space: nowrap; }
-.gv__copy { border: 1px solid rgba(128,128,128,.3); background: none; color: inherit;
-  border-radius: 3px; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+  background: var(--ccw-bg); overflow: hidden; }
+.gv__head { display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+  background: var(--ccw-bg-elevated); border-bottom: 1px solid var(--ccw-border);
+  font-size: 12px; color: var(--ccw-text); }
+.gv__path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.gv__meta { margin-left: auto; color: var(--ccw-text-dim); white-space: nowrap; font-size: 11px; }
+.gv__copy { border: 1px solid var(--ccw-border); background: var(--ccw-bg);
+  color: var(--ccw-text); border-radius: 4px; font-size: 11px; padding: 3px 9px;
+  cursor: pointer; font-family: inherit; }
+.gv__copy:hover { background: var(--ccw-hover); }
 .gv__editor { flex: 1; min-height: 0; overflow: hidden; }
-.gv__empty { padding: 16px; opacity: .55; font-size: 13px; }
+.gv__empty { padding: 16px; color: var(--ccw-text-dim); font-size: 13px; }
 </style>
