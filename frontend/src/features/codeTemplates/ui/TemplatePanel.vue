@@ -12,6 +12,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import JSZip from 'jszip'
 import { getContext, listFiles, listSessions, listSets } from '../api.js'
 import { renderAll } from '../renderer.js'
+import { buildTree, collapseChains, firstFile } from '../tree.js'
+import GeneratedTree from './GeneratedTree.vue'
+import GeneratedViewer from './GeneratedViewer.vue'
 
 const sets = ref([])
 const setName = ref('')
@@ -27,7 +30,7 @@ const serviceIdEdited = ref(false)
 const loading = ref(false)
 const error = ref(null)
 const result = ref(null)
-const selectedPath = ref('')
+const selected = ref(null)
 
 const currentSession = computed(() => sessions.value.find((s) => s.id === sessionId.value))
 
@@ -59,7 +62,7 @@ onMounted(async () => {
 async function generate() {
   error.value = null
   result.value = null
-  selectedPath.value = ''
+  selected.value = null
   if (!setName.value || !sessionId.value || !serviceId.value) {
     error.value = '템플릿 묶음·세션·Service ID 를 모두 지정하세요.'
     return
@@ -71,7 +74,7 @@ async function generate() {
       getContext(sessionId.value, serviceId.value),
     ])
     result.value = renderAll(templates, ctx)
-    if (result.value.files.length) selectedPath.value = result.value.files[0].path
+    selected.value = firstFile(collapseChains(buildTree(result.value.files)))
   } catch (e) {
     error.value = e.message
   } finally {
@@ -79,20 +82,6 @@ async function generate() {
   }
 }
 
-const selectedFile = computed(
-  () => (result.value?.files || []).find((f) => f.path === selectedPath.value) || null,
-)
-
-/** 파일 목록을 최상위 디렉터리(=BC)별로 묶어 보여 준다. */
-const grouped = computed(() => {
-  const out = new Map()
-  for (const f of result.value?.files || []) {
-    const key = f.path.split('/')[0]
-    if (!out.has(key)) out.set(key, [])
-    out.get(key).push(f)
-  }
-  return [...out.entries()].map(([name, files]) => ({ name, files }))
-})
 
 async function download() {
   if (!result.value?.files?.length) return
@@ -158,29 +147,13 @@ async function download() {
 
     <div v-if="result" class="tpl__body">
       <nav class="tpl__tree">
-        <div v-for="g in grouped" :key="g.name" class="tpl__group">
-          <div class="tpl__group-name">{{ g.name }} <em>{{ g.files.length }}</em></div>
-          <button
-            v-for="f in g.files"
-            :key="f.path"
-            class="tpl__file"
-            :class="{ 'is-active': f.path === selectedPath }"
-            :title="f.path"
-            @click="selectedPath = f.path"
-          >
-            {{ f.path.slice(g.name.length + 1) }}
-          </button>
-        </div>
+        <GeneratedTree
+          :files="result.files"
+          :active-path="selected?.path || ''"
+          @open="selected = $event"
+        />
       </nav>
-
-      <section class="tpl__preview">
-        <div v-if="selectedFile" class="tpl__preview-head">
-          <code>{{ selectedFile.path }}</code>
-          <span class="tpl__dim">{{ selectedFile.template }} · forEach {{ selectedFile.forEach }}</span>
-        </div>
-        <pre v-if="selectedFile"><code>{{ selectedFile.content }}</code></pre>
-        <p v-else class="tpl__dim">왼쪽에서 파일을 고르세요.</p>
-      </section>
+      <GeneratedViewer :file="selected" />
     </div>
   </div>
 </template>
@@ -200,18 +173,4 @@ async function download() {
 .tpl__dim { opacity: .55; font-size: 12px; }
 .tpl__body { display: grid; grid-template-columns: 340px 1fr; gap: 12px; flex: 1; min-height: 0; }
 .tpl__tree { overflow: auto; border: 1px solid rgba(128,128,128,.25); border-radius: 4px; padding: 6px; }
-.tpl__group { margin-bottom: 8px; }
-.tpl__group-name { font-size: 12px; font-weight: 600; padding: 3px 4px; opacity: .8; }
-.tpl__group-name em { opacity: .5; font-style: normal; font-weight: 400; }
-.tpl__file { display: block; width: 100%; text-align: left; border: 0; background: none;
-  font-size: 11px; padding: 2px 6px; cursor: pointer; color: inherit;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tpl__file:hover { background: rgba(128,128,128,.12); }
-.tpl__file.is-active { background: rgba(66,133,244,.18); }
-.tpl__preview { display: flex; flex-direction: column; min-height: 0;
-  border: 1px solid rgba(128,128,128,.25); border-radius: 4px; }
-.tpl__preview-head { display: flex; justify-content: space-between; gap: 12px;
-  padding: 6px 10px; border-bottom: 1px solid rgba(128,128,128,.2); font-size: 12px; }
-.tpl__preview pre { margin: 0; padding: 10px; overflow: auto; flex: 1;
-  font-size: 12px; line-height: 1.45; }
 </style>

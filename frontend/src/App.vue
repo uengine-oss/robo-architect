@@ -448,7 +448,9 @@ onUnmounted(() => {
     <!-- 040 — Proposal 임팩트 미리보기 식별 배너(활성 시에만 표시, FR-007) -->
     <PreviewBanner />
     <div class="main-content">
-      <template v-if="activeTab !== 'Code' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements' && activeTab !== 'Legacy'">
+      <!-- 'Template' 도 제외 — 생성 결과 탐색기가 자기 트리를 갖는다.
+           설계 네비게이터는 여기서 볼 것이 없다. -->
+      <template v-if="activeTab !== 'Code' && activeTab !== 'Template' && activeTab !== 'Stories' && activeTab !== 'Changes' && activeTab !== 'Requirements' && activeTab !== 'Legacy'">
         <div class="navigator-wrapper" :style="{ width: isNavigatorCollapsed ? '0' : navigatorWidth + 'px' }">
           <NavigatorPanel
             v-show="!isNavigatorCollapsed"
