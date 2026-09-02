@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from starlette.requests import Request
 
-from api.platform.neo4j import get_session
+from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -21,9 +21,61 @@ router = APIRouter()
 
 
 def _query(query: str, params: dict | None = None) -> list[dict]:
-    """Neo4j 조회."""
+    """설계 그래프 조회 — UserStory·BC·shadow Rule 이 여기 있다."""
     with get_session() as session:
         return [dict(r) for r in session.run(query, **(params or {}))]
+
+
+def _analyzer_query(query: str, params: dict | None = None) -> list[dict]:
+    """레거시 분석 그래프 조회 — FUNCTION·RULE·EXAMPLE·TABLE 이 여기 있다.
+
+    설계와 분석은 **서로 다른 graph** 다. 라벨 이름이 겹치면서 뜻이 다르기
+    때문이다 — 설계의 `Command` 는 Aggregate 의 하위이고 분석의 `Command` 는
+    FUNCTION 의 역할이라, 한 graph 에 두면 ES 의 모든 Command 가 FUNCTION 이
+    된다. 그래서 출처 체인은 두 그래프를 오가며 재구성해야 한다.
+    """
+    with get_session(database=ANALYZER_NEO4J_DATABASE) as session:
+        return [dict(r) for r in session.run(query, **(params or {}))]
+
+
+# 분석 그래프에서 (루틴, 룰) 쌍을 GWT·쓰기효과와 함께 꺼낸다.
+#
+# 조인 키는 `function_id` 다. analyzer 의 FUNCTION 에는 `name` 이 없고
+# (`function_id` 가 "module_id.name" 이고 표시형은 `signature`), 설계 쪽
+# shadow Rule 의 `source_function` 이 그 `function_id` 를 담는다. `name` 으로
+# 맞추던 종전 코드는 양쪽 다 NULL 이라 전건이 빗나갔다 — 오류 없이 0건이다.
+#
+# dbms 는 룰 오너가 자식 구문이라 `PARENT_OF*0..` 로 루틴을 복원한다
+# (framework 는 rtn=f). spec 044 C4.
+_ANALYZER_RULES = """
+MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
+  WHERE ar.session_id IS NULL
+    AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
+    AND coalesce(rtn.function_id, rtn.name) IN $fns
+// 생산자 EXAMPLE 에 is_boundary 없음 → 대표예시는 첫 EXAMPLE(spec 044 C2/R4).
+OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(e:EXAMPLE)
+WITH rtn, hr, ar, head(collect(DISTINCT e)) AS canonical_e
+// Per-Rule write effects: v2 access filters reads; legacy op-only remains additive.
+OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(wEx:EXAMPLE)-[at:AFFECTS_TABLE]->(wt:TABLE)
+WITH rtn, hr, ar, canonical_e,
+     collect(DISTINCT {
+         table: wt.name, access: at.access, op: at.op, op_source: at.op_source
+     }) AS writes
+RETURN coalesce(rtn.function_id, rtn.name) AS fn,
+       hr.local_rule_id             AS seq,
+       ar.statement                 AS title,
+       coalesce(hr.coupled_domains[0], '') AS coupled_domain,
+       canonical_e.given            AS given,
+       canonical_e.when_            AS wh,
+       canonical_e.then_            AS th,
+       [] AS boundary_ids,
+       [w IN writes WHERE w.table IS NOT NULL
+         AND (
+           w.access IN ['WRITE', 'READ_WRITE']
+           OR (w.access IS NULL AND coalesce(w.op, '') <> 'READ')
+         )] AS writes
+ORDER BY fn, seq
+"""
 
 
 # Per-type UserStory traversal. Phase 5 promotes every ES node with an
@@ -183,43 +235,21 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
         # statement). Then pull canonical/boundary Examples for GWT and
         # AFFECTS_TABLE write ops (INSERT/UPDATE/DELETE) — the latter is the
         # signal Aggregate primary-source emphasis depends on.
-        bl_rows = _query("""
+        # 설계 그래프의 shadow Rule — 어느 루틴의 어느 룰에서 왔는지만 담는다.
+        shadow = _query("""
             MATCH (us:UserStory {id: $usid})-[:SOURCED_FROM]->(sr:Rule)
-            // 오퍼레이션 단위(루틴) 기준 조인 — dbms 는 룰 오너가 자식 구문이라
-            // PARENT_OF*0.. 로 루틴 rtn 복원(framework 는 rtn=f). spec 044 C4.
-            MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
-              WHERE ar.session_id IS NULL
-                AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
-                AND rtn.name = sr.source_function
-                AND ar.statement = sr.title
-            // 생산자 EXAMPLE 에 is_boundary 없음 → 대표예시는 첫 EXAMPLE(spec 044 C2/R4).
-            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(e:EXAMPLE)
-            WITH sr, ar, hr, rtn,
-                 head(collect(DISTINCT e)) AS canonical_e
-            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(allEx:EXAMPLE)
-            WITH sr, ar, hr, rtn, canonical_e,
-                 collect(DISTINCT allEx) AS examples
-            // Per-Rule write effects: v2 access filters reads; legacy op-only remains additive.
-            OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(wEx:EXAMPLE)-[at:AFFECTS_TABLE]->(wt:TABLE)
-            WITH sr, ar, hr, rtn, canonical_e, examples,
-                 collect(DISTINCT {
-                     table: wt.name, access: at.access, op: at.op, op_source: at.op_source
-                 }) AS writes
-            RETURN hr.local_rule_id AS seq,
-                   ar.statement AS title,
-                   coalesce(hr.coupled_domains[0], '') AS coupled_domain,
-                   canonical_e.given AS given,
-                   canonical_e.when_ AS wh,
-                   canonical_e.then_ AS th,
-                   rtn.id AS function_id,
-                   [] AS boundary_ids,
-                   [w IN writes WHERE w.table IS NOT NULL
-                     AND (
-                       w.access IN ['WRITE', 'READ_WRITE']
-                       OR (w.access IS NULL AND coalesce(w.op, '') <> 'READ')
-                     )] AS writes
-            ORDER BY rtn.name, hr.local_rule_id
+            RETURN DISTINCT sr.source_function AS fn, sr.title AS title
         """, {"usid": usid})
+
+        # 분석 그래프에서 그 쌍에 해당하는 룰을 GWT·쓰기효과와 함께 가져온다.
+        # 루틴 단위로 한 번에 받고 제목은 파이썬에서 맞춘다 — UNWIND 로 쌍을
+        # 넘기면 값이 jsonb 가 되어 text 속성과 비교가 어긋난다.
+        wanted = {(r.get("fn"), r.get("title")) for r in shadow if r.get("fn")}
+        fns = sorted({fn for fn, _ in wanted})
+        bl_rows = [
+            r for r in (_analyzer_query(_ANALYZER_RULES, {"fns": fns}) if fns else [])
+            if (r.get("fn"), r.get("title")) in wanted
+        ]
 
         # Legacy fallback for rfp/figma US's that don't have SOURCED_FROM
         if not bl_rows:
@@ -246,12 +276,12 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
                 "when": r.get("wh") or "",
                 "then": r.get("th") or "",
                 "boundary_example_ids": r.get("boundary_ids") or [],
-                "function_id": r.get("function_id") or "",
+                "function_id": r.get("fn") or r.get("function_id") or "",
                 # writes: v2 table/access/op/op_source from Example.AFFECTS_TABLE — used
                 # by Aggregate primary-source view to surface DB grounding.
                 "writes": r.get("writes") or [],
             })
-            fid = r.get("function_id")
+            fid = r.get("fn") or r.get("function_id")
             if fid and fid not in function_ids:
                 function_ids.append(fid)
 
@@ -259,10 +289,12 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
         # share a function — collect once per function, attach READS/WRITES.
         functions = []
         for fid in function_ids:
-            func_rows = _query("""
+            func_rows = _analyzer_query("""
                 MATCH (f)
-                WHERE f.id = $fid OR f.name = $fid
-                RETURN f.id AS id, f.name AS name, f.summary AS summary,
+                WHERE f.function_id = $fid OR f.id = $fid OR f.name = $fid
+                RETURN coalesce(f.function_id, f.id) AS id,
+                       coalesce(f.name, f.signature, f.function_id) AS name,
+                       f.summary AS summary,
                        f.start_line AS start_line, f.end_line AS end_line,
                        f.file_path AS file_path,
                        f.code_text AS code_text
@@ -273,8 +305,9 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
             f = func_rows[0]
             real_fid = f["id"] or fid
             # dbms: READS/WRITES 는 자식 구문에 붙으므로 PARENT_OF*0.. 하향수집(spec 044 C5).
-            rw_rows = _query("""
-                MATCH (op {id: $fid})-[:PARENT_OF*0..]->(_n)-[r:READS|WRITES]->(t:TABLE)
+            rw_rows = _analyzer_query("""
+                MATCH (op)-[:PARENT_OF*0..]->(_n)-[r:READS|WRITES]->(t:TABLE)
+                WHERE coalesce(op.function_id, op.id) = $fid
                 OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:COLUMN)
                 WITH t, type(r) AS access,
                      collect(DISTINCT {name: c.name, dtype: c.dtype, pk: c.is_primary_key}) AS columns
