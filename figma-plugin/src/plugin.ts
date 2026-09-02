@@ -1684,6 +1684,14 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin)
 }
 
+// `figma.fileKey` is undefined here, and there is no manifest permission that
+// changes that — `"fileKey"` is rejected outright ("Invalid permission
+// specified: fileKey"). Figma exposes the key only to plugins published
+// privately to an organization; a plugin loaded from a local manifest never
+// gets it. So the UI's File Key field is the real path, not a fallback: it
+// takes the file URL and pulls the key out of it. Keep reading the property
+// anyway — it costs nothing and starts working the day this ships as an org
+// plugin.
 figma.ui.postMessage({
   type: 'PLUGIN_READY',
   fileKey: figma.fileKey,

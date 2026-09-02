@@ -13,7 +13,6 @@
     "reasoning": "Connects to local RoboArchitect backend via WebSocket for real-time design sync"
   },
   "permissions": [
-    "currentuser",
-    "fileKey"
+    "currentuser"
   ]
 }
