@@ -26,7 +26,9 @@ const emit = defineEmits(['update:activeTab'])
 // 043 — 'Process'(BPM)·'Processes'(Event Modeling)를 하나의 'Process' 탭(서브토글)로 통합,
 // 'Big picture' 제거. 'Changes' 탭은 UI에서 숨김(App.vue tabComponents 에 유지).
 // 'Analysis'(분석기 임베드) → 'Legacy' 로 라벨 변경 + 맨 앞으로 이동(Proposals 앞).
-const tabs = ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code']
+// 'Template' — 템플릿 기반 코드 생성(ENT-GEN-001). 'Code'(Claude Code TUI)와
+// 나란히 둔다. 나중에 이 브랜치에서만 'Code' 를 빼고 대체할 수 있다.
+const tabs = ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code', 'Template']
 
 const canvasStore = useCanvasStore()
 // 043 — 'Big picture' 뷰 비활성화: store 사용 제거.

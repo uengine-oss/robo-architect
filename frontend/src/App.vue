@@ -11,6 +11,7 @@ import RequirementsPanel from '@/features/requirements/ui/RequirementsPanel.vue'
 import ChangesRootPanel from '@/features/requirements/ui/ChangesRootPanel.vue'
 import ProposalsPanel from '@/features/proposals/ui/ProposalsPanel.vue'
 import ClaudeCodeWorkspace from '@/features/claudeCode/ui/ClaudeCodeWorkspace.vue'
+import TemplatePanel from '@/features/codeTemplates/ui/TemplatePanel.vue'
 import BpmnPanel from '@/features/canvas/ui/BpmnPanel.vue'
 // Analysis 탭 — robo-analyzer-frontend 를 Module Federation 으로 끼우는 래퍼.
 import AnalysisPanel from '@/features/analysis/ui/AnalysisPanel.vue'
@@ -104,6 +105,8 @@ const tabComponents = {
   'Design': markRaw(CanvasWorkspace),
   'Data': markRaw(AggregatePanel),
   'Code': markRaw(ClaudeCodeWorkspace),
+  // Template — 템플릿 기반 코드 생성. Code 탭(Claude Code TUI)과 별개다.
+  'Template': markRaw(TemplatePanel),
   // 하위 호환 (내부 이벤트가 구 이름을 dispatch하는 경우)
   'Event Modeling': markRaw(EventModelingPanel),
   'Requirements': markRaw(RequirementsPanel),
