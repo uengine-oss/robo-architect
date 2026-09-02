@@ -347,7 +347,13 @@
       if (!baseUrl) return
       const manualFileKey = extractFileKey(document.getElementById('fileKeyInput').value)
       // 붙여넣은 URL 은 키로 바꿔 되돌려 놓는다 — 다음 실행에 그대로 저장된다.
-      if (manualFileKey) document.getElementById('fileKeyInput').value = manualFileKey
+      if (manualFileKey) {
+        document.getElementById('fileKeyInput').value = manualFileKey
+        // 여기서 바로 잡아 둔다. 종전에는 입력란에 되돌려 쓴 값을 연결 성공
+        // 뒤에 다시 읽는 데 기댔는데, 사용자가 넣은 값이 그 사이 어디서
+        // 덮이면 키 없이 연결돼 아무것도 등록되지 않는다.
+        fileKey = manualFileKey
+      }
 
       setStatus('connecting')
 
