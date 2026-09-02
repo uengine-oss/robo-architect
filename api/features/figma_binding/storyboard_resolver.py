@@ -46,34 +46,44 @@ def list_entry_commands() -> list[dict[str, Any]]:
     return [dict(r) for r in records]
 
 
-def resolve_storyboard_for_ui(ui_node_id: str) -> str | None:
+def resolve_storyboard_for_ui(
+    ui_node_id: str, entry_commands: list[dict[str, Any]] | None = None
+) -> str | None:
     """Return the entry Command's id whose storyboard contains the given UI,
     or None if no entry command reaches it.
 
     Tie-breaker (multiple reachable entry commands): canonical ordering above.
+
+    `entry_commands` lets a caller resolving many UIs fetch the entry list once;
+    omitted, it is fetched per call.
+
+    Two statements, and that is the whole performance story. The original
+    narrowed to entry commands with `WITH u, c, count(pinv) …` and *then*
+    matched the variable-length path against `c` and `u`. Values that pass a
+    `WITH` become jsonb, so re-opening them as pattern targets makes the
+    expansion enumerate paths instead of walking the adjacency: measured 3.3s at
+    depth 10, 19.3s at 12, and at the configured 30 it exhausted the server's
+    temp space and died. Anchored on the UI alone the same reachability is
+    immeasurable (0.00s) at depth 30, so the narrowing happens here instead.
     """
     if not ui_node_id:
         return None
 
-    cypher = f"""
-        MATCH (u:UI {{id: $uid}})
-        MATCH (c:Command)
-        OPTIONAL MATCH (c)<-[pinv:INVOKES]-(:Policy)
-        WITH u, c, count(pinv) AS invoked
-        WHERE invoked = 0
-        // 도달 가능성은 존재 판정이므로 MATCH 후 DISTINCT 로 접는다.
-        MATCH (c)-[:{_REL_TYPES}*1..{MAX_BFS_HOPS}]-(u)
-        WITH DISTINCT c
-        RETURN c.id AS id
-        ORDER BY coalesce(c.displayName, c.name), c.id
-        LIMIT 1
+    reachable_q = f"""
+        MATCH (u:UI {{id: $uid}})-[:{_REL_TYPES}*1..{MAX_BFS_HOPS}]-(c:Command)
+        RETURN DISTINCT c.id AS id
     """
-
     with get_session() as session:
-        rec = session.run(cypher, uid=ui_node_id).single()
-    if not rec:
+        reachable = {r["id"] for r in session.run(reachable_q, uid=ui_node_id) if r["id"]}
+    if not reachable:
         return None
-    return rec["id"]
+
+    # `list_entry_commands` already returns the canonical order, so the first
+    # match is the same one the old `ORDER BY … LIMIT 1` picked.
+    for c in entry_commands if entry_commands is not None else list_entry_commands():
+        if c["id"] in reachable:
+            return c["id"]
+    return None
 
 
 def get_command_display_name(command_id: str) -> str | None:

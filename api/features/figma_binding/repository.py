@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from api.platform.neo4j import get_session
@@ -145,6 +145,12 @@ def upsert_storyboard_mapping(
     """
     now = _now_iso()
     with get_session() as session:
+        # 두 문장이다 — 한 문장에 읽기 → 쓰기 → 읽기 를 섞지 않는다.
+        #
+        # 종전에는 MERGE 뒤에 `WITH m … OPTIONAL MATCH (c:Command …) FOREACH (…)`
+        # 로 Command 를 이어 붙였다. 조건부 FOREACH 는 지원되지 않아 이 질의가
+        # 통째로 구문 오류였고, 그래서 스토리보드↔Figma 페이지 매핑이 하나도
+        # 저장되지 않았다.
         rec = session.run(
             """
             MATCH (b:FigmaBinding {id: $bid})
@@ -155,11 +161,6 @@ def upsert_storyboard_mapping(
                 m.figmaPageName = $page_name,
                 m.status = 'active'
             MERGE (b)-[:MAPS_STORYBOARD]->(m)
-            WITH m
-            OPTIONAL MATCH (c:Command {id: $cid})
-            FOREACH (cc IN CASE WHEN c IS NULL THEN [] ELSE [c] END |
-                MERGE (m)-[:MAPS]->(cc)
-            )
             RETURN m
             """,
             bid=SINGLETON_ID,
@@ -168,6 +169,16 @@ def upsert_storyboard_mapping(
             page_id=figma_page_id,
             page_name=figma_page_name,
         ).single()
+        # Command 가 없으면 MATCH 가 0행이라 아무 일도 일어나지 않는다 —
+        # 조건부 FOREACH 가 하던 일이 그대로 문장의 의미가 된다.
+        session.run(
+            """
+            MATCH (m:StoryboardPageMapping {commandId: $cid})
+            MATCH (c:Command {id: $cid})
+            MERGE (m)-[:MAPS]->(c)
+            """,
+            cid=command_id,
+        )
     return _mapping_node_to_dict(rec["m"])
 
 
@@ -601,24 +612,36 @@ def release_stale_locks(older_than_minutes: int = 30) -> int:
     """Recovery hook: any :SyncRun stuck in 'running' for > N minutes plus its
     associated binding lock are released. Returns count of runs reset.
     """
+    # 경계 시각은 파이썬에서 만든다 — `duration()` 은 엔진에 없다.
+    # `startedAt` 은 `_now_iso()` 가 쓰는 고정 폭 UTC ISO 문자열이라
+    # 문자열 비교가 그대로 시간 순서다.
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(minutes=int(older_than_minutes))).strftime("%Y-%m-%dT%H:%M:%SZ")
     with get_session() as session:
         rec = session.run(
             """
             MATCH (r:SyncRun {status:'running'})
-            WHERE datetime(r.startedAt) < datetime() - duration({minutes: $m})
-            WITH r
-            OPTIONAL MATCH (b:FigmaBinding {currentRunId: r.id})
+            WHERE r.startedAt < $cutoff
             SET r.status = 'aborted-binding-unreachable',
                 r.finishedAt = datetime(),
                 r.summary = coalesce(r.summary, '{}')
-            FOREACH (bb IN CASE WHEN b IS NULL THEN [] ELSE [b] END |
-                SET bb.currentRunId = null, bb.currentRunHolder = null
-            )
-            RETURN count(r) AS n
+            RETURN collect(r.id) AS ids
             """,
-            m=int(older_than_minutes),
+            cutoff=cutoff,
         ).single()
-    return int(rec["n"]) if rec else 0
+        stale_ids = list(rec["ids"]) if rec and rec.get("ids") else []
+        # 붙어 있던 lock 을 푼다. 해당 run 을 들고 있지 않으면 MATCH 가 0행이라
+        # 아무 일도 없다 — 조건부 FOREACH 가 하던 일과 같다.
+        if stale_ids:
+            session.run(
+                """
+                UNWIND $ids AS rid
+                MATCH (b:FigmaBinding {currentRunId: rid})
+                SET b.currentRunId = null, b.currentRunHolder = null
+                """,
+                ids=stale_ids,
+            )
+    return len(stale_ids)
 
 
 # ─── 020: Failures (extension of 016 v1.2 store) ──────────────────────────

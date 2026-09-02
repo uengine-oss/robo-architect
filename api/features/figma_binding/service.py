@@ -488,8 +488,12 @@ async def sync_storyboards_for_ids(
 
     # Step 1: resolve each UI's owning storyboard (entry command id).
     ui_to_command: dict[str, str | None] = {}
+    # 진입 Command 목록은 UI 마다 같다 — 한 번만 구해 넘긴다.
+    entry_commands = storyboard_resolver.list_entry_commands()
     for uid in ui_ids:
-        ui_to_command[uid] = storyboard_resolver.resolve_storyboard_for_ui(uid)
+        ui_to_command[uid] = storyboard_resolver.resolve_storyboard_for_ui(
+            uid, entry_commands=entry_commands
+        )
     orphan_uis = [uid for uid, cid in ui_to_command.items() if cid is None]
     needed_command_ids = {cid for cid in ui_to_command.values() if cid}
 

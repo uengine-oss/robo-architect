@@ -160,6 +160,38 @@ MERGE (gwt)-[:REFERENCES]->(n)
 """
 
 
+# analyzer Example 에서 만드는 GWT 는 룰 단위라 키에 ruleId 가 더 붙고,
+# 출처 Rule 로 DERIVED_FROM 을 잇는다. 나머지는 위와 같은 이유로 두 문장이다 —
+# 종전에는 `WITH gwt … OPTIONAL MATCH (r:Rule …) FOREACH (…)` 한 문장이었고,
+# 조건부 FOREACH 는 지원되지 않아 **전 건이 구문 오류로 죽고 있었다.**
+# 호출부가 예외를 WARN 으로 삼켜서 요약만 정상으로 찍혔다(HAS_GWT 0건).
+_GWT_RULE_UPSERT = """
+MATCH (parent {id: $parent_id})
+WHERE $parent_type IN labels(parent)
+MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id, ruleId: $rule_id})
+ON CREATE SET gwt.id = randomUUID(),
+              gwt.createdAt = datetime()
+SET gwt.updatedAt = datetime(),
+    gwt.givenRef = $given_ref_json,
+    gwt.whenRef = $when_ref_json,
+    gwt.thenRef = $then_ref_json,
+    gwt.testCases = $test_cases_json,
+    gwt.source = 'analyzer_example',
+    gwt.derivedFromRuleId = $rule_id,
+    gwt.derivedFromFunction = $source_function
+MERGE (parent)-[:HAS_GWT]->(gwt)
+RETURN gwt.id AS id
+"""
+
+# 출처 Rule 이 없으면 MATCH 가 0행이라 아무 일도 일어나지 않는다 — 조건부
+# FOREACH 가 하던 일이 그대로 문장의 의미가 된다.
+_GWT_LINK_RULE = """
+MATCH (gwt:GWT {id: $gwt_id})
+MATCH (r:Rule {id: $rule_id})
+MERGE (gwt)-[:DERIVED_FROM]->(r)
+"""
+
+
 def _save_gwt(session, *, parent_type: str, parent_id: str,
               given_ref_json, when_ref_json, then_ref_json,
               test_cases_json, refs: list) -> None:
@@ -1645,31 +1677,9 @@ async def _generate_gwt_from_analyzer_examples(
                 "writes": ex.get("writes") or [],  # [{table, op}, ...]
             })
 
-        cypher = """
-        MATCH (parent {id: $parent_id})
-        WHERE $parent_type IN labels(parent)
-        MERGE (gwt:GWT {parentType: $parent_type, parentId: $parent_id, ruleId: $rule_id})
-        ON CREATE SET gwt.id = randomUUID(), gwt.createdAt = datetime()
-        SET gwt.updatedAt = datetime(),
-            gwt.givenRef = $given_ref_json,
-            gwt.whenRef  = $when_ref_json,
-            gwt.thenRef  = $then_ref_json,
-            gwt.testCases = $test_cases_json,
-            gwt.source = 'analyzer_example',
-            gwt.derivedFromRuleId = $rule_id,
-            gwt.derivedFromFunction = $source_function
-        MERGE (parent)-[:HAS_GWT]->(gwt)
-        WITH gwt
-        // DERIVED_FROM Rule edge — Phase 6 PRD §5 traceability
-        OPTIONAL MATCH (r:Rule {id: $rule_id})
-        FOREACH (_ IN CASE WHEN r IS NOT NULL THEN [1] ELSE [] END |
-            MERGE (gwt)-[:DERIVED_FROM]->(r)
-        )
-        RETURN gwt.id AS id
-        """
         with client.session() as s:
-            s.run(
-                cypher,
+            rec = s.run(
+                _GWT_RULE_UPSERT,
                 parent_id=parent_id,
                 parent_type=parent_type,
                 rule_id=bl.get("rule_id"),
@@ -1678,7 +1688,13 @@ async def _generate_gwt_from_analyzer_examples(
                 when_ref_json=json.dumps(when_ref),
                 then_ref_json=json.dumps(then_ref),
                 test_cases_json=json.dumps(test_cases),
-            )
+            ).single()
+            gwt_id = rec["id"] if rec else None
+            if not gwt_id:
+                # 부모를 못 찾았다 — 이어 붙일 곳이 없다.
+                return
+            if bl.get("rule_id"):
+                s.run(_GWT_LINK_RULE, gwt_id=gwt_id, rule_id=bl.get("rule_id"))
 
     for us_id, bl_list in ctx.hybrid_us_rules.items():
         if not bl_list:
