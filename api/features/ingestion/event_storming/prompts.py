@@ -157,9 +157,17 @@ User Stories:
 <rule id="10">**Legacy System Source Structure:** In legacy systems, different service components (Session Beans, EJBs) often implement the same business domain. Group BCs by BUSINESS DOMAIN, not by source service/component structure. Multiple services operating on the same domain entity belong to the same BC.</rule>
 </section>
 
+<section id="naming_the_context">
+<title>Naming the Context</title>
+<rule id="1">**Name the domain, not the record it keeps.** A Bounded Context is named after the business capability it owns. Names ending in "...History", "...Log", "...Trail", "...Audit", "...Record" name an artefact the work leaves behind, not the work. A context that verifies identity is "IdentityVerification" — never "IdentityVerificationHistory", even when the legacy program it came from does nothing but append rows to a history table. **What a legacy program writes is not what the domain is about.**</rule>
+<rule id="2">**Prefer the entity or capability over the activity.** "...Management", "...Processing", "...Handling" are acceptable when they genuinely name a capability the business talks about, but the shorter noun is better whenever it reads naturally: prefer "AutoDebitApplication" over "AutoDebitApplicationProcessing", "Billing" over "BillingManagement".</rule>
+<rule id="3">**The name flows downstream.** Aggregates are extracted per Bounded Context and take their cue from its name, so a context named after an activity or a log produces aggregates named the same way — and an aggregate must be a thing with identity and a lifecycle. Choosing the context name badly propagates the mistake into the tactical model.</rule>
+<rule id="4">**Test it out loud.** Could a business person say "a new one was created today" about this context's subject? "A new identity verification was created" works; "a new identity verification history was created" is talking about a log entry, which means the domain concept is the verification, not the history.</rule>
+</section>
+
 <section id="output_requirements">
 <title>Output Requirements</title>
-<requirement id="1">**Bounded Context Name:** Must be in English PascalCase (e.g., "OrderManagement", "PaymentProcessing")</requirement>
+<requirement id="1">**Bounded Context Name:** English PascalCase naming the domain — see "Naming the Context" above (e.g., "Order", "Payment", "IdentityVerification"; not "IdentityVerificationHistory")</requirement>
 <requirement id="2">**Description:** Clear explanation of what this BC is responsible for</requirement>
 <requirement id="3">**Rationale:** Detailed explanation of why this should be a separate BC, considering cohesion, coupling, and domain boundaries</requirement>
 <requirement id="4">**User Story Assignment:** List ALL user story IDs that belong to this BC. CRITICAL: The union of all user_story_ids across all BCs MUST equal the complete set of user story IDs provided in the input. Every user story must appear in exactly one BC's user_story_ids list.</requirement>
@@ -212,7 +220,7 @@ Target BC count (approximate guideline, not a hard limit): {target_bc_count}
 
 Your task:
 1. Identify groups of BCs that represent the SAME or very similar business domain concept
-2. For each group, decide which BC name to KEEP (the most descriptive one) and which to ABSORB
+2. For each group, decide which BC name to KEEP and which to ABSORB. Keep the one that names the **domain**, not the longest one. A name ending in "...History", "...Log", "...Trail", "...Audit", "...Record" names an artefact the work leaves behind, so it loses to the plain domain name: between "IdentityVerification" and "IdentityVerificationHistory", keep "IdentityVerification". Between two capability names, keep the shorter one that still reads naturally to the business.
 3. BCs with different suffixes but the same core concept should be merged (e.g., "LoanApplicationManagement" and "LoanApplicationProcessing" are the same domain)
 4. Only merge BCs that are genuinely semantically similar — do NOT merge unrelated BCs just to hit the target count
 
@@ -311,6 +319,7 @@ If no events are listed, derive aggregates from user story breakdowns only.
 <rule id="1">**Identity and lifecycle test — apply this before naming anything:** Can you point at one instance of it, give it an identifier, and change its state over time? If not, it is not an Aggregate. A concept that only ever *happens* — something computed, decided, validated, processed, or recorded — has no identity to hold and no invariant to protect.</rule>
 <rule id="2">**Reject nominalized process steps:** A name formed by turning a verb into a noun is a step in a flow, not a consistency boundary — "...Decision", "...Determination", "...Processing", "...Validation", "...Calculation", "...Handling", "...Execution", "...Assignment". Model the step's *outcome as state on the entity it acts upon*, and the rule that produced that outcome as an Invariant or a Policy.</rule>
 <rule id="3">**Reject history, log, and audit Aggregates:** "...History", "...Log", "...Trail", "...Audit", "...Snapshot" are read-side projections. An append-only trail enforces no invariant, so it cannot be a consistency boundary. These belong to ReadModels; the write side does not own them.</rule>
+<rule id="3a">**When every story is about recording, name the subject — not the record.** Legacy-derived stories often read "record the verification history", "update the history row", "append the result" — because that is what the old program did. The recording is the mechanism; the domain concept is **what is being recorded**. Name the Aggregate after that subject and let the write be one of its state transitions: a set of stories about writing verification history describes an `IdentityVerificationAttempt` (or `...Request`) that succeeds or fails, not an `IdentityVerificationHistory`. A giveaway that you have named the record instead of the subject: every command starts with Record/Register/Update/Store, and every "invariant" is a duplicate-prevention rule — those are storage constraints (idempotency, unique keys), not business rules.</rule>
 <rule id="4">**Reject status and view Aggregates:** "...Status", "...State", "...View", "...Summary", "...Report", "...List" name a way of looking at an entity, not the entity. These are ReadModels.</rule>
 <rule id="5">**Duplicate-property test:** If a candidate's properties are largely copies of another Aggregate's fields plus a reference back to it, it is not a separate boundary — it is a *phase* in that Aggregate's lifecycle. Fold it in and express the phase with an Enumeration on the root, not with a second Aggregate.</rule>
 <rule id="6">**One entity, not one Aggregate per verb:** A business entity moving through request → decision → completion → history is ONE Aggregate with a state Enumeration, not four. Aggregates produced by splitting on verbs end up sharing the same identifying fields — a reliable sign the split is wrong. When that happens, no event clearly belongs to any one of them, and the event partition becomes arbitrary.</rule>
