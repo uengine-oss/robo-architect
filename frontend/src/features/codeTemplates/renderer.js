@@ -13,6 +13,32 @@
 
 import Handlebars from 'handlebars'
 
+/**
+ * Aggregate 안의 열거형·값 객체.
+ *
+ * 우리 컨텍스트는 `enumerations`/`valueObjects` 로 따로 담고, 기준 구현의
+ * 모델은 `aggregateRoot.entities` 한 곳에 담고 `isEnum`/`isVO` 로 구분한다.
+ * 둘 다 받는다 — 그러지 않으면 기준 모델을 넣었을 때 이 두 종류만 조용히
+ * 빠진다(실측 10개).
+ */
+function entitiesOf(agg, kind) {
+  const own = kind === 'enum' ? agg.enumerations : agg.valueObjects
+  if (own && own.length) return own
+
+  // 기준 모델은 `aggregateRoot.entities` 가 `{ elements, relations }` 컨테이너다.
+  // 표식도 다르다 — 값 객체는 `isVO: true`, 열거형은 `_type` 이
+  // `org.uengine.uml.model.enum` 이다(`isEnum` 은 없다). 실측으로 확인했다.
+  const container = (agg.aggregateRoot && agg.aggregateRoot.entities) || agg.entities
+  if (!container) return []
+  const raw = container.elements || container
+  const list = (Array.isArray(raw) ? raw : Object.values(raw || {})).filter(Boolean)
+  return list.filter((e) =>
+    kind === 'enum'
+      ? e.isEnum === true || (e._type || '').endsWith('.enum')
+      : e.isVO === true || (e._type || '').endsWith('.vo.Class'),
+  )
+}
+
 /** `forEach` 대상별 반복 목록. 템플릿이 고르는 여섯 가지다. */
 export function itemsFor(forEach, ctx) {
   const bcs = ctx.boundedContexts || []
@@ -24,8 +50,8 @@ export function itemsFor(forEach, ctx) {
     case 'BoundedContext': return bcs
     case 'Aggregate': return aggs
     case 'Command': return aggs.flatMap((a) => withOwner(a.commands, a))
-    case 'Enumeration': return aggs.flatMap((a) => withOwner(a.enumerations, a))
-    case 'ValueObject': return aggs.flatMap((a) => withOwner(a.valueObjects, a))
+    case 'Enumeration': return aggs.flatMap((a) => withOwner(entitiesOf(a, 'enum'), a))
+    case 'ValueObject': return aggs.flatMap((a) => withOwner(entitiesOf(a, 'vo'), a))
     case 'View': return bcs.flatMap((b) => b.views || [])
     default: return []
   }
