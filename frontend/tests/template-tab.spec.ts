@@ -18,6 +18,9 @@ test('Template 탭 — 코드 생성이 트리와 뷰어를 그린다', async ({
   await page.goto('/')
   await page.getByRole('button', { name: 'Template', exact: true }).click()
 
+  // 옵션 항목은 템플릿의 `_template/configuration.html` 이 선언한다.
+  // 화면이 지어내면 안 되므로 그 파일의 label 이 그대로 보이는지 본다.
+  await expect(page.locator('.tpl__field label', { hasText: '서비스 ID' })).toBeVisible()
   const serviceId = page.locator('.tpl__field input')
   await expect(serviceId).toBeVisible()
   await serviceId.fill('sample')
@@ -47,6 +50,10 @@ test('Template 탭 — 코드 생성이 트리와 뷰어를 그린다', async ({
   // 뷰어에 코드가 보인다.
   await expect(page.locator('.gv .cm-content')).toBeVisible()
   await expect(page.locator('.gv__path')).not.toBeEmpty()
+
+  // 설정 파일은 생성물이 아니다 — 결과 트리에 섞이면 안 된다.
+  await expect(page.locator('.tpl__tree button', { hasText: '_template' })).toHaveCount(0)
+  await expect(page.locator('.tpl__tree button', { hasText: 'configuration.html' })).toHaveCount(0)
 
   // 확장자별 구분이 실제로 먹는지 본다. 최상위에 있는 두 파일로 확인한다 —
   // 깊이 파고들면 트리 접힘 상태에 기대게 되어 잘 깨진다.

@@ -27,9 +27,14 @@ const setsHint = ref(null)
 
 const sessions = ref([])
 const sessionId = ref('')
-const serviceId = ref('')
-// 사용자가 손대기 전까지는 세션을 따라간다. 한 번 고치면 그 값을 지킨다.
-const serviceIdEdited = ref(false)
+
+// 생성 옵션은 템플릿이 정한다 — `_template/configuration.html` 이
+// `<text-field :value.sync="value.serviceId" label="서비스 ID">` 처럼 선언한다.
+// 기준 구현도 그 파일로 폼을 만든다. 여기서 항목을 지어내지 않는다.
+const optionFields = ref([])
+const options = ref({})
+// 사용자가 손댄 항목은 세션을 바꿔도 지킨다.
+const editedKeys = ref(new Set())
 
 const loading = ref(false)
 const error = ref(null)
@@ -39,6 +44,7 @@ const selected = ref(null)
 const hasChoice = computed(() => sets.value.length > 1)
 const currentSession = computed(() => sessions.value.find((s) => s.id === sessionId.value))
 const fileCount = computed(() => result.value?.files?.length || 0)
+const serviceId = computed(() => options.value.serviceId || '')
 
 /** 세션 이름에서 자바 패키지 한 마디로 쓸 만한 기본값을 만든다. */
 function suggestServiceId(name) {
@@ -46,10 +52,21 @@ function suggestServiceId(name) {
   return ascii ? ascii.charAt(0).toLowerCase() + ascii.slice(1) : ''
 }
 
-watch(sessionId, () => {
-  if (serviceIdEdited.value) return
-  serviceId.value = suggestServiceId(currentSession.value?.name) || sessionId.value
+// 세션 이름에서 만든 값을 채워 두되, 사용자가 고친 항목은 건드리지 않는다.
+watch([sessionId, optionFields], () => {
+  const suggested = suggestServiceId(currentSession.value?.name) || sessionId.value
+  const next = { ...options.value }
+  for (const f of optionFields.value) {
+    if (editedKeys.value.has(f.key)) continue
+    next[f.key] = f.key === 'serviceId' ? suggested : (next[f.key] ?? '')
+  }
+  options.value = next
 })
+
+function editOption(key, value) {
+  options.value = { ...options.value, [key]: value }
+  editedKeys.value = new Set(editedKeys.value).add(key)
+}
 
 onMounted(async () => {
   try {
@@ -62,24 +79,39 @@ onMounted(async () => {
     setName.value = names.includes(DEFAULT_SET) ? DEFAULT_SET : names[0] || ''
     sessions.value = d.sessions || []
     if (sessions.value.length) sessionId.value = sessions.value[0].id
+    if (setName.value) await loadOptions()
   } catch (e) {
     error.value = e.message
   }
+})
+
+/** 묶음이 요구하는 옵션 목록을 읽어 온다. 묶음을 바꾸면 다시 읽는다. */
+async function loadOptions() {
+  const { options: fields } = await listFiles(setName.value)
+  optionFields.value = fields || []
+}
+
+watch(setName, async (name) => {
+  if (!name) return
+  try { await loadOptions() } catch (e) { error.value = e.message }
 })
 
 async function generate() {
   error.value = null
   result.value = null
   selected.value = null
-  if (!setName.value || !sessionId.value || !serviceId.value) {
-    error.value = '세션과 Service ID 를 지정하세요.'
+  const missing = optionFields.value.filter((f) => !String(options.value[f.key] || '').trim())
+  if (!setName.value || !sessionId.value || missing.length) {
+    error.value = missing.length
+      ? `${missing.map((f) => f.label).join(', ')} 를 입력하세요.`
+      : '세션을 지정하세요.'
     return
   }
   loading.value = true
   try {
     const [{ files: templates }, ctx] = await Promise.all([
       listFiles(setName.value),
-      getContext(sessionId.value, serviceId.value),
+      getContext(sessionId.value, options.value.serviceId || ''),
     ])
     result.value = renderAll(templates, ctx)
     selected.value = firstFile(collapseChains(buildTree(result.value.files)))
@@ -116,9 +148,14 @@ async function download() {
         </select>
       </div>
 
-      <div class="tpl__field">
-        <label>Service ID</label>
-        <input v-model="serviceId" placeholder="sample" @input="serviceIdEdited = true" />
+      <!-- 템플릿이 선언한 항목만 그린다. 화면이 옵션을 정하지 않는다. -->
+      <div v-for="f in optionFields" :key="f.key" class="tpl__field">
+        <label>{{ f.label }}</label>
+        <input
+          :value="options[f.key] || ''"
+          :placeholder="f.key"
+          @input="editOption(f.key, $event.target.value)"
+        />
       </div>
 
       <div v-if="hasChoice" class="tpl__field">

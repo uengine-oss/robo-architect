@@ -129,7 +129,9 @@ export function renderAll(templates, ctx, { dataProjection = 'cqrs' } = {}) {
   const errors = [...helperFailures.map((f) => ({ template: '<function>', ...f }))]
 
   for (const t of templates || []) {
-    if (!t.forEach) continue
+    // `_template/` 아래는 생성기 설정이다 — 옵션 입력 폼을 만드는 데 쓰이고
+    // 납품할 소스가 아니다. 결과 트리에 넣으면 안 된다.
+    if (!t.forEach || t.isConfiguration) continue
     for (const item of itemsFor(t.forEach, ctx)) {
       const model = withAmbient(
         { ...item, ...scope.contexts },

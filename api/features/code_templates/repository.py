@@ -32,6 +32,21 @@ _SKIP_NAMES = {".gitkeep", ".gitignore", ".DS_Store"}
 _FRONT_MATTER_KEYS = ("forEach", "path", "fileName")
 _FUNCTION_BLOCK = re.compile(r"<function>(.*?)</function>", re.DOTALL)
 
+# `_template/` 아래의 파일은 생성물이 아니라 **생성기 설정**이다.
+# 기준 구현이 이 파일을 읽어 템플릿의 옵션 입력 폼을 만든다
+# (`CodeGenerator.configurationTemplate`). 그래서 결과 트리에 넣으면 안 된다 —
+# 납품할 소스가 아니다.
+_CONFIG_DIR = "_template"
+
+# 설정 파일이 선언하는 입력 항목.
+#   <text-field :value.sync="value.serviceId" label="서비스 ID"></text-field>
+_CONFIG_FIELD = re.compile(
+    r"<(?P<tag>[\w-]+)[^>]*?:value\.sync\s*=\s*[\"\']value\.(?P<key>\w+)[\"\']"
+    r"(?P<rest>[^>]*)>",
+    re.IGNORECASE,
+)
+_CONFIG_LABEL = re.compile(r"label\s*=\s*[\"\'](?P<label>[^\"\']*)[\"\']", re.IGNORECASE)
+
 
 @dataclass
 class TemplateFile:
@@ -44,6 +59,11 @@ class TemplateFile:
     body: str
     functions: list[str] = field(default_factory=list)
 
+    @property
+    def is_configuration(self) -> bool:
+        """생성기 설정 파일인가 — `_template/` 아래에 있으면 그렇다."""
+        return _CONFIG_DIR in Path(self.relative_path).parts
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "relativePath": self.relative_path,
@@ -52,6 +72,7 @@ class TemplateFile:
             "fileName": self.out_file_name,
             "body": self.body,
             "functions": self.functions,
+            "isConfiguration": self.is_configuration,
         }
 
 
@@ -150,3 +171,35 @@ def load_templates(name: str) -> list[TemplateFile]:
             continue
         out.append(parse_template(text, str(p.relative_to(root))))
     return out
+
+
+def parse_config_fields(body: str) -> list[dict[str, str]]:
+    """설정 파일이 선언한 입력 항목을 읽는다.
+
+    기준 구현은 이 마크업을 Vue 컴포넌트로 렌더링해 폼을 만든다. 우리는
+    필요한 것만 읽는다 — 어떤 키를 어떤 이름표로 받을 것인가.
+    """
+    out: list[dict[str, str]] = []
+    for m in _CONFIG_FIELD.finditer(body or ""):
+        label = _CONFIG_LABEL.search(m.group("rest") or "")
+        out.append({
+            "key": m.group("key"),
+            "label": label.group("label") if label else m.group("key"),
+            "type": m.group("tag").lower(),
+        })
+    return out
+
+
+def config_fields_for(name: str) -> list[dict[str, str]]:
+    """묶음 하나가 요구하는 옵션 목록. 설정 파일이 없으면 빈 목록이다."""
+    fields: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for t in load_templates(name):
+        if not t.is_configuration:
+            continue
+        for f in parse_config_fields(t.body):
+            if f["key"] in seen:
+                continue
+            seen.add(f["key"])
+            fields.append(f)
+    return fields

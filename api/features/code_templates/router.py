@@ -42,7 +42,8 @@ async def list_files(request: Request, set_name: str) -> dict:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
     files = [t.to_dict() for t in templates]
-    renderable = [f for f in files if f["forEach"]]
+    # 설정 파일은 생성물이 아니다 — 렌더 대상에서 뺀다.
+    renderable = [f for f in files if f["forEach"] and not f["isConfiguration"]]
     SmartLogger.log(
         "INFO",
         f"Template set loaded: {set_name}",
@@ -53,9 +54,12 @@ async def list_files(request: Request, set_name: str) -> dict:
     return {
         "set": set_name,
         "files": files,
+        # 이 묶음이 요구하는 생성 옵션. `_template/` 의 설정 파일이 선언한다.
+        "options": repository.config_fields_for(set_name),
         "summary": {
             "files": len(files),
             "renderable": len(renderable),
+            "configuration": sum(1 for f in files if f["isConfiguration"]),
             "withHelpers": sum(1 for f in files if f["functions"]),
         },
     }

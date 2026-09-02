@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from api.features.code_templates.context import camel_case, java_type, pascal_case, pluralize
-from api.features.code_templates.repository import parse_template, resolve_set
+from api.features.code_templates.repository import (
+    parse_config_fields,
+    parse_template,
+    resolve_set,
+)
 
 
 class TestParseTemplate:
@@ -90,3 +94,41 @@ class TestJavaType:
     )
     def test_mapping(self, raw, expected):
         assert java_type(raw) == expected
+
+
+class TestConfiguration:
+    """`_template/` 아래는 생성물이 아니라 생성기 설정이다."""
+
+    def test_template_dir_marks_configuration(self):
+        t = parse_template("forEach: BoundedContext\npath: p\n---\nx\n",
+                           "_template/configuration.html")
+        assert t.is_configuration is True
+
+    def test_ordinary_template_is_not_configuration(self):
+        t = parse_template("forEach: Aggregate\npath: p\n---\nx\n",
+                           "msaez0-store/src/main/java/X.java")
+        assert t.is_configuration is False
+
+    def test_nested_template_dir_also_counts(self):
+        t = parse_template("forEach: BoundedContext\npath: p\n---\nx\n",
+                           "for-model/_template/configuration.html")
+        assert t.is_configuration is True
+
+    def test_reads_declared_option_fields(self):
+        """옵션은 템플릿이 정한다 — 화면이 항목을 지어내면 안 된다."""
+        fields = parse_config_fields(
+            '<text-field :value.sync="value.serviceId" label="서비스 ID"></text-field>\n'
+            '<text-field :value.sync="value.groupId" label="그룹 ID"></text-field>'
+        )
+        assert fields == [
+            {"key": "serviceId", "label": "서비스 ID", "type": "text-field"},
+            {"key": "groupId", "label": "그룹 ID", "type": "text-field"},
+        ]
+
+    def test_label_is_optional(self):
+        fields = parse_config_fields('<text-field :value.sync="value.port"></text-field>')
+        assert fields == [{"key": "port", "label": "port", "type": "text-field"}]
+
+    def test_no_fields_when_nothing_declared(self):
+        assert parse_config_fields("<p>설명만 있는 파일</p>") == []
+        assert parse_config_fields("") == []
