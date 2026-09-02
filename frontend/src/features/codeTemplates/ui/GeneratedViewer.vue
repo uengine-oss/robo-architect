@@ -15,6 +15,7 @@ import { json } from '@codemirror/lang-json'
 import { yaml } from '@codemirror/lang-yaml'
 import { markdown } from '@codemirror/lang-markdown'
 import { tokyoNightEditorTheme, tokyoNightHighlight } from '@/shared/editor/theme.js'
+import FileIcon from '@/shared/ui/FileIcon.vue'
 
 const props = defineProps({
   file: { type: Object, default: null },  // { path, content, template, forEach }
@@ -72,6 +73,7 @@ async function copy() {
 <template>
   <section class="gv">
     <header v-if="file" class="gv__head">
+      <FileIcon :name="file.path" />
       <code class="gv__path">{{ file.path }}</code>
       <span class="gv__meta">{{ file.template }} · forEach {{ file.forEach }}</span>
       <button class="gv__copy" title="내용 복사" @click="copy">복사</button>

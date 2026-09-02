@@ -39,9 +39,23 @@ test('Template 탭 — 코드 생성이 트리와 뷰어를 그린다', async ({
   await rows.first().click()          // 다시 펼치기
   expect(await rows.count()).toBe(before)
 
+  // 파일·폴더 아이콘이 붙는다. 폴더는 SVG, 파일은 확장자 배지다.
+  await expect(page.locator('.tpl__tree svg.fi--folder').first()).toBeVisible()
+  const badges = page.locator('.tpl__tree span.fi--badge')
+  expect(await badges.count()).toBeGreaterThan(0)
+
   // 뷰어에 코드가 보인다.
   await expect(page.locator('.gv .cm-content')).toBeVisible()
   await expect(page.locator('.gv__path')).not.toBeEmpty()
+
+  // 확장자별 구분이 실제로 먹는지 본다. 최상위에 있는 두 파일로 확인한다 —
+  // 깊이 파고들면 트리 접힘 상태에 기대게 되어 잘 깨진다.
+  //
+  // `if (count)` 로 감싸지 않는다. 감싸면 대상이 없을 때 조용히 지나가고
+  // 검사가 공회전한다 — 실제로 한 번 그렇게 썼다가 놓쳤다.
+  const rowByText = (t: string) => page.locator('.tpl__tree button', { hasText: t }).first()
+  await expect(rowByText('pom.xml').locator('span.fi--badge')).toHaveText('X')
+  await expect(rowByText('README.md').locator('span.fi--badge')).toHaveText('MD')
 
   // ZIP 버튼이 살아난다.
   await expect(page.getByRole('button', { name: /ZIP 내려받기/ })).toBeEnabled()

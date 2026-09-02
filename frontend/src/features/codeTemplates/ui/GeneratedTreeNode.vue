@@ -8,6 +8,8 @@
  * 빌드는 통과하므로 실행해 보기 전까지 드러나지 않는다. SFC 로 두면
  * 컴파일 시점에 처리되고 파일 이름으로 자기 참조가 된다.
  */
+import FileIcon from '@/shared/ui/FileIcon.vue'
+
 defineOptions({ name: 'GeneratedTreeNode' })
 
 defineProps({
@@ -30,6 +32,7 @@ defineEmits(['toggle', 'open'])
       @click="node.dir ? $emit('toggle', node) : $emit('open', node.file)"
     >
       <span class="gtn__caret">{{ node.dir ? (isOpen(node) ? '▾' : '▸') : '' }}</span>
+      <FileIcon :name="node.name" :dir="node.dir" :open="isOpen(node)" />
       <span class="gtn__name">{{ node.name }}</span>
       <span v-if="node.dir" class="gtn__count">{{ node.children.length }}</span>
     </button>
