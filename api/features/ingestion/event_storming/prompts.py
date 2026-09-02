@@ -246,7 +246,12 @@ Bounded Context: {bc_name}
 Analyze this user story and identify:
 1. Sub-tasks: What specific steps are needed to fulfill this story?
 2. Domain Concepts: What key entities/concepts are involved?
-3. Potential Aggregates: What consistency boundaries exist?
+3. Potential Aggregates: What consistency boundaries exist? Name the **entity** whose
+   state this story changes, never the step itself. One story is one step in some
+   entity's life, so an answer like "CreditGradeDecision" or "PaymentValidation" is
+   naming the step; the entity is "LoanApplication" or "Payment". Several
+   stories legitimately point at the same entity — that is the expected outcome, not a
+   gap to fill with more aggregates.
 4. Potential Commands: What actions can users take?
 
 Be specific and domain-focused. Think about:
@@ -301,6 +306,16 @@ If no events are listed, derive aggregates from user story breakdowns only.
 <rule id="5">**Reference by ID:** Other aggregates (even in other BCs) are referenced by ID only, not by direct object references.</rule>
 </section>
 
+<section id="not_an_aggregate">
+<title>What Is Not an Aggregate</title>
+<rule id="1">**Identity and lifecycle test — apply this before naming anything:** Can you point at one instance of it, give it an identifier, and change its state over time? If not, it is not an Aggregate. A concept that only ever *happens* — something computed, decided, validated, processed, or recorded — has no identity to hold and no invariant to protect.</rule>
+<rule id="2">**Reject nominalized process steps:** A name formed by turning a verb into a noun is a step in a flow, not a consistency boundary — "...Decision", "...Determination", "...Processing", "...Validation", "...Calculation", "...Handling", "...Execution", "...Assignment". Model the step's *outcome as state on the entity it acts upon*, and the rule that produced that outcome as an Invariant or a Policy.</rule>
+<rule id="3">**Reject history, log, and audit Aggregates:** "...History", "...Log", "...Trail", "...Audit", "...Snapshot" are read-side projections. An append-only trail enforces no invariant, so it cannot be a consistency boundary. These belong to ReadModels; the write side does not own them.</rule>
+<rule id="4">**Reject status and view Aggregates:** "...Status", "...State", "...View", "...Summary", "...Report", "...List" name a way of looking at an entity, not the entity. These are ReadModels.</rule>
+<rule id="5">**Duplicate-property test:** If a candidate's properties are largely copies of another Aggregate's fields plus a reference back to it, it is not a separate boundary — it is a *phase* in that Aggregate's lifecycle. Fold it in and express the phase with an Enumeration on the root, not with a second Aggregate.</rule>
+<rule id="6">**One entity, not one Aggregate per verb:** A business entity moving through request → decision → completion → history is ONE Aggregate with a state Enumeration, not four. Aggregates produced by splitting on verbs end up sharing the same identifying fields — a reliable sign the split is wrong. When that happens, no event clearly belongs to any one of them, and the event partition becomes arbitrary.</rule>
+</section>
+
 <section id="aggregate_structure">
 <title>Aggregate Structure Requirements</title>
 <rule id="1">**Enumerations:** When storing state or similar information, always use Enumerations. Ensure that all Enumerations are directly associated with the Aggregate.</rule>
@@ -317,6 +332,7 @@ If no events are listed, derive aggregates from user story breakdowns only.
 <rule id="2">**No Type Information:** Do not include type information in names or aliases (e.g., use "Book" instead of "BookAggregate").</rule>
 <rule id="3">**Uniqueness:** Within a single Bounded Context, each Aggregate name must be unique.</rule>
 <rule id="4">**PascalCase:** Use PascalCase for all names (e.g., "ShoppingCart", "OrderStatus", "PaymentReference").</rule>
+<rule id="5">**A noun the business can point at:** An Aggregate name must name a thing that has identity — not an activity, an outcome, or a view of one. A candidate that fails the "What Is Not an Aggregate" rules must be **reworked**, not merely renamed: fold it into the entity it describes, or move it to a ReadModel, Invariant, or Policy. Renaming "CreditGradeDecision" to "CreditGrade" leaves the same wrong boundary behind a better word.</rule>
 </section>
 
 <section id="query_only_bc">
@@ -341,7 +357,7 @@ Consider the following when identifying Aggregates:
 3. **Transactional Boundaries:** What data must be changed together in a single transaction?
 4. **Domain Concepts:** What key entities/concepts are mentioned in the User Story breakdowns?
 5. **Consistency Requirements:** What data needs to be kept consistent together?
-6. **Potential Aggregates:** Review the "Potential Aggregates" listed in the breakdowns as starting points
+6. **Potential Aggregates:** Review the "Potential Aggregates" listed in the breakdowns as starting points — they are candidates, not decisions. Each was proposed while reading a *single* story, so a step name can survive into that list. Put every one of them through the "What Is Not an Aggregate" rules before you adopt it, and expect several candidates to collapse into one Aggregate.
 
 Think about:
 - Which domain objects naturally belong together?
@@ -419,6 +435,32 @@ Example for Inventory BC:
   - covered_event_names: ["StockReserved", "StockReplenished"]
   - Enumerations: []
   - Value Objects: []
+
+Counter-example — a split that looks reasonable and is wrong (Loan Application BC):
+
+  REJECTED output — three Aggregates:
+    LoanApplication, CreditGradeDecision, LoanReviewHistory
+  Why it is wrong:
+    - "CreditGradeDecision" is a step's outcome, not a thing with identity. Its
+      properties turned out to be the application's own fields copied over, plus a
+      reference back to the application — the duplicate-property test.
+    - "LoanReviewHistory" is an append-only trail. It enforces no invariant, and the
+      read side already projects it.
+    - All three carried applicantId, requestedAmount and creditGrade: one entity split
+      by verb. Because no event genuinely belonged to any one of them, the event
+      partition came out scrambled — the review events landed on the "Decision"
+      Aggregate and the grading events on the "History" one. A scrambled partition is
+      the symptom; the wrong boundary is the cause.
+  CORRECT output — one Aggregate:
+    - Aggregate: LoanApplication
+      - Root Entity: LoanApplication
+      - Invariants: ["Credit grade must be assigned before approval",
+                     "Approved amount cannot exceed the requested amount"]
+      - Description: Loan application through its full lifecycle
+      - Enumerations: [CreditGrade, ApplicationStatus]
+      - covered_event_names: every event in the BC, since they all change this root
+    The grading rule becomes an Invariant on the application; the trail stays a
+    ReadModel. Nothing is lost — the phases live in the status Enumeration.
 </examples>
 
 Output should be a list of AggregateCandidate objects with clear boundaries, proper structure, and complete traceability."""
