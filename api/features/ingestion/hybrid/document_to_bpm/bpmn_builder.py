@@ -262,11 +262,51 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
     adj: dict[str, list[str]] = {}
     for s, t, _ in edges:
         adj.setdefault(s, []).append(t)
+
+    # Back edges must not carry a column forward. A business flow loops all the
+    # time — 반려하면 다시 신청하고, 마감을 해제하면 다시 집계한다 — and a loop
+    # makes the relaxation below push its members one column further on every
+    # pass. The old cap (len(edges) + 2 passes) bounded the runaway but not
+    # usefully: three processes with a few loops came out **32,350 px wide**,
+    # 161 columns for 40 nodes. Drop back edges first and lay out the DAG that
+    # remains; the loop still draws as an arrow, it just doesn't push columns.
+    back_edges: set[tuple[str, str]] = set()
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict[str, int] = {}
+
+    def _mark_back_edges(root: str) -> None:
+        # Iterative DFS — a deep chain would blow the recursion limit.
+        stack: list[tuple[str, int]] = [(root, 0)]
+        color[root] = GRAY
+        while stack:
+            node, i = stack.pop()
+            children = adj.get(node, [])
+            if i < len(children):
+                stack.append((node, i + 1))
+                nxt = children[i]
+                c = color.get(nxt, WHITE)
+                if c == GRAY:
+                    back_edges.add((node, nxt))   # 되돌아가는 간선
+                elif c == WHITE:
+                    color[nxt] = GRAY
+                    stack.append((nxt, 0))
+            else:
+                color[node] = BLACK
+
+    _mark_back_edges(start_id)
+    # Nodes unreachable from start still need their own traversal, or their
+    # internal loops stay invisible to the check above.
+    for nid in list(adj):
+        if color.get(nid, WHITE) == WHITE:
+            color[nid] = GRAY
+            _mark_back_edges(nid)
+
+    forward = [(s, t) for s, t, _ in edges if (s, t) not in back_edges]
+
     col: dict[str, int] = {start_id: 0}
-    # Relax in a few passes (DAG-ish; cycles tolerated, just capped).
-    for _ in range(len(edges) + 2):
+    for _ in range(len(forward) + 2):
         changed = False
-        for s, t, _ in edges:
+        for s, t in forward:
             if s in col and col.get(t, -1) < col[s] + 1:
                 col[t] = col[s] + 1
                 changed = True
