@@ -18,7 +18,8 @@
  * font is always available no matter when the editor is created.
  */
 
-import { markFontLoaded, setCJKFallbackFamily } from '@open-pencil/core'
+// open-pencil ≥ 0.14: font registry is the `fontManager` singleton (FontManager class).
+import { fontManager } from '@open-pencil/core'
 
 const KOREAN_FONT_FAMILY = 'Pretendard'
 const KOREAN_FONT_URL = '/Pretendard-Regular.otf'
@@ -38,11 +39,11 @@ export function preloadKoreanFont() {
       // Cache in open-pencil's font registry. When a FrameEditor's
       // SkiaRenderer later calls initFontService(), it re-registers every
       // entry in this cache into the fresh TypefaceFontProvider.
-      markFontLoaded(KOREAN_FONT_FAMILY, 'Regular', buffer)
+      fontManager.markLoaded(KOREAN_FONT_FAMILY, 'Regular', buffer, 'bundled')
       // Promote it to CJK fallback so glyphs missing from Inter (Hangul, etc.)
       // route to Pretendard instead of triggering the network-dependent
       // ensureCJKFallback() probe chain.
-      setCJKFallbackFamily(KOREAN_FONT_FAMILY)
+      fontManager.setCJKFallbackFamily(KOREAN_FONT_FAMILY)
     } catch (err) {
       console.warn('[fonts] Korean font preload failed:', err)
     }

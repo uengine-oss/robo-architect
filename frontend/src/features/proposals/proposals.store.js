@@ -901,8 +901,42 @@ export const useProposalsStore = defineStore('proposals', () => {
     return currentProposal.value
   }
 
+  // ── 056 — 초안 스토리보드(open-pencil 와이어프레임) ──────────────────────
+  const storyboard = ref(null)          // { status, total, done, journeys[] } (sceneGraph 포함)
+  const storyboardLoading = ref(false)
+
+  async function fetchStoryboard(proposalId, { scenes = true } = {}) {
+    storyboardLoading.value = true
+    try {
+      const res = await fetch(`${BASE}/${proposalId}/storyboard?scenes=${scenes ? 1 : 0}`)
+      if (!res.ok) throw new Error(`storyboard fetch failed: ${res.status}`)
+      const data = await res.json()
+      storyboard.value = data
+      return data
+    } finally {
+      storyboardLoading.value = false
+    }
+  }
+
+  async function generateStoryboard(proposalId, { force = false } = {}) {
+    const res = await fetch(`${BASE}/${proposalId}/storyboard?force=${force ? 1 : 0}`, { method: 'POST' })
+    if (!res.ok) throw new Error(`storyboard generate failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function updateStoryboardStep(proposalId, stepId, sceneGraph) {
+    const res = await fetch(`${BASE}/${proposalId}/storyboard/steps/${encodeURIComponent(stepId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sceneGraph }),
+    })
+    if (!res.ok) throw new Error(`storyboard step update failed: ${res.status}`)
+    return res.json()
+  }
+
   return {
     proposals, currentProposal, loading, error,
+    storyboard, storyboardLoading, fetchStoryboard, generateStoryboard, updateStoryboardStep,
     intentStream, sandboxStream, tasksStream, validationStream, testResults,
     constitution, plan, planStream, stagedStream, stageDrafts, odaStream,
     getStageDraft, setStageDraft, clearStageDraft,

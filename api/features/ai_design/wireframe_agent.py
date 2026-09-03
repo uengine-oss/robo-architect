@@ -462,6 +462,24 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+def native_component_context() -> str:
+    """056 — 렌더 그래프(wireframe-service 라이브러리)에 있는 컴포넌트를 네이티브
+    `<Instance>` 로 쓰도록 하는 프롬프트 컨텍스트. 서비스가 없으면 빈 문자열."""
+    try:
+        from api.features.figma_binding import component_library
+
+        if not open_pencil_client.is_available():
+            return ""
+        catalog = open_pencil_client.get_component_catalog_for_prompt()
+        if not catalog:
+            return ""
+        return component_library.build_jsx_agent_extra_context(catalog, native_instances=True)
+    except Exception as e:  # noqa: BLE001
+        SmartLogger.log("WARN", f"native component context unavailable: {e}",
+                        category="ai_design.wireframe.catalog_unavailable")
+        return ""
+
+
 async def stream_generate_wireframe(
     ui_node_id: str,
 ) -> AsyncGenerator[str, None]:
@@ -499,6 +517,7 @@ async def stream_generate_wireframe(
         description=ui_node.get("description") or "",
         bc_name=ui_node.get("bcName") or "",
         bc_description=ui_node.get("bcDescription") or "",
+        extra_context=await asyncio.to_thread(native_component_context),
         on_event=_capture,
     )
 

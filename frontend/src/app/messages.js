@@ -144,6 +144,22 @@ export const messages = {
   'proposals.common.retry': { ko: '재시도', en: 'Retry' },
   'proposals.common.later': { ko: '나중에', en: 'Later' },
 
+  // ── 056 ProposalStoryboard strings ────────────────────────────────────
+  'proposals.storyboard.title':        { ko: '초안 스토리보드', en: 'Draft storyboard' },
+  'proposals.storyboard.subtitle':     { ko: '저니의 각 화면을 open-pencil 와이어프레임으로 바로 그려 봅니다 — 설계·디자인 정합 전 초안입니다.', en: 'Each journey step rendered as an open-pencil wireframe — a draft, before design alignment.' },
+  'proposals.storyboard.generate':     { ko: '스토리보드 생성', en: 'Generate storyboard' },
+  'proposals.storyboard.regenerate':   { ko: '다시 생성', en: 'Regenerate' },
+  'proposals.storyboard.generating':   { ko: '화면을 그리는 중…', en: 'Rendering screens…' },
+  'proposals.storyboard.progress':     { ko: '{done}/{total} 화면', en: '{done}/{total} screens' },
+  'proposals.storyboard.empty':        { ko: '아직 저니(사용자 흐름)나 유저스토리가 없어 스토리보드를 만들 수 없습니다.', en: 'No journeys or user stories yet — nothing to storyboard.' },
+  'proposals.storyboard.waitingIntent':{ ko: 'Intent 분해가 끝나면 스토리보드가 자동으로 생성됩니다.', en: 'The storyboard is generated automatically once intent decomposition finishes.' },
+  'proposals.storyboard.failed':       { ko: '렌더 실패', en: 'Render failed' },
+  'proposals.storyboard.pending':      { ko: '대기 중', en: 'Pending' },
+  'proposals.storyboard.gateway':      { ko: '분기', en: 'Gateway' },
+  'proposals.storyboard.edit':         { ko: '편집', en: 'Edit' },
+  'proposals.storyboard.editTitle':    { ko: '화면 편집 — {name}', en: 'Edit screen — {name}' },
+  'proposals.storyboard.saved':        { ko: '저장됨', en: 'Saved' },
+  'proposals.storyboard.close':        { ko: '닫기', en: 'Close' },
   // ── ProposalDetail strings ────────────────────────────────────────────
   'proposals.detail.author': { ko: '작성자:', en: 'Author:' },
   'proposals.detail.createdAt': { ko: '생성일:', en: 'Created:' },

@@ -30,6 +30,9 @@ const PLACEHOLDER_API_KEY = 'proxy'
 const PLACEHOLDER_MODEL_ID = 'backend-managed'
 
 const STORAGE = {
+  // open-pencil ≥ 0.14 keeps model profiles here; it migrates from the legacy
+  // keys below only when this key is absent, so we clear it when (re)wiring.
+  modelSettings: 'open-pencil:ai-model-settings',
   provider: 'open-pencil:ai-provider',
   apiType: 'open-pencil:ai-api-type',
   baseUrl: 'open-pencil:ai-base-url',
@@ -54,6 +57,7 @@ export function bootstrapAIDesign({ force = false } = {}) {
     return { ok: true, source: 'cached' }
   }
 
+  localStorage.removeItem(STORAGE.modelSettings)
   localStorage.setItem(STORAGE.provider, PROVIDER_ID)
   localStorage.setItem(STORAGE.baseUrl, backendBaseUrl())
   localStorage.setItem(STORAGE.apiType, 'completions')

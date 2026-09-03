@@ -387,14 +387,53 @@ def build_name_to_node_index() -> dict[str, dict[str, Any]]:
 INSTANCE_MARKER_PREFIX = "$INSTANCE:"
 
 
-def build_jsx_agent_extra_context(catalog_for_prompt: str | None = None) -> str:
+def build_native_instance_context(catalog_for_prompt: str) -> str:
+    """056 — open-pencil ≥ 0.14 renders `<Instance>` natively (by name / id /
+    COMPONENT_SET + variant props, with `overrides={{ 'child:text': … }}`).
+    Used when the render graph itself contains the components (wireframe-service
+    library mode), so no marker/retype round-trip is needed.
+    """
+    return (
+        "## Design-system components available in the render library\n\n"
+        f"{catalog_for_prompt}\n"
+        "## How to USE a catalog component in your JSX\n\n"
+        "Emit the native `<Instance>` element (a LEAF — no children) with the exact catalog name:\n\n"
+        "```\n"
+        '<Instance component="input-search" w="fill" overrides={{ "placeholder:text": "상품을 검색하세요" }} />\n'
+        '<Instance component="btn-main-task" w="fill" overrides={{ "label:text": "장바구니에 추가" }} />\n'
+        '<Instance component="header-main-ios" variant={{ "Property 1": "Default" }} w="fill" />\n'
+        "```\n\n"
+        "Rules:\n"
+        "- `component` must be the exact catalog name. Unknown names fail the render — fall back to plain Frames instead.\n"
+        "- Pick a variant with its property as a prop (`Size=\"lg\"`) or, when the property name has spaces, "
+        "with `variant={{ \"Property 1\": \"Default\" }}`.\n"
+        "- Override child text with `overrides` keyed by `<child name>:text` using the names listed under "
+        "\"Overridable text children\". Loose keys (`text`, `label`, `title`, `placeholder`) are mapped to the first text child.\n"
+        "- Do NOT set w/h from the catalog's COMPONENT_SET bbox; instances keep their real size. Use `w=\"fill\"` "
+        "for bars/inputs/buttons and let height hug.\n"
+        "- Use Korean values when the screen is Korean.\n"
+        "- For UI with NO suitable catalog entry, use regular <Frame>/<Text>/<Rectangle>/<Icon> elements.\n"
+    )
+
+
+def build_jsx_agent_extra_context(
+    catalog_for_prompt: str | None = None,
+    *,
+    native_instances: bool = False,
+) -> str:
     """Build the `extra_context` blob to pass to ai_design.run_render_agent
     so the LLM knows which components it may instantiate and the marker
     convention (a leaf <Frame name="$INSTANCE:Name|k=v|..." w={w} h={h} />).
+
+    `native_instances=True` switches to the upstream `<Instance>` syntax
+    (056); keep the default marker convention for the Figma-binding mode,
+    where the components live in Figma, not in the render graph.
     """
     catalog = catalog_for_prompt if catalog_for_prompt is not None else get_catalog_for_prompt()
     if not catalog:
         return ""
+    if native_instances:
+        return build_native_instance_context(catalog)
     return (
         "## Bound Figma design-system components (use these when one clearly fits)\n\n"
         f"{catalog}\n"

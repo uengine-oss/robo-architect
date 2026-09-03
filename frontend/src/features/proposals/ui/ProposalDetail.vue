@@ -36,6 +36,12 @@
     <div class="detail-content">
       <!-- Intent — Strategic Diff 만 (FR-006) -->
       <template v-if="activeTab === 'diff'">
+        <!-- 056 — 초안이 나오는 즉시 저니를 open-pencil 스토리보드로 보여 준다 -->
+        <ProposalStoryboard
+          :proposalId="proposal.id"
+          :hasIntent="_hasStrategic || !!proposal.journeys?.length"
+          :intentPending="store.intentStream?.active"
+        />
         <!-- 043 — ODA 표준: Intent 탭에 ODA 트랙(정합성·적합성 게이트·산출물) 융합 -->
         <OdaStandardTrack
           v-if="isOda"
@@ -195,6 +201,7 @@ import PlanView from './PlanView.vue'
 import StrategicStages from './StrategicStages.vue'
 import PlanStages from './PlanStages.vue'
 import OdaStandardTrack from './OdaStandardTrack.vue'
+import ProposalStoryboard from './ProposalStoryboard.vue'
 
 const props = defineProps({ proposalId: { type: String, required: true } })
 const { t } = useI18n()

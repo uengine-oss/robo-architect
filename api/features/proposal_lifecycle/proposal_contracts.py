@@ -357,6 +357,8 @@ class ProposalResponse(BaseModel):
     constitutionHash: Optional[str] = None
     planStale: bool = False
     journeys: Optional[list[dict]] = None
+    # 056 — 초안 스토리보드(경량: sceneGraph 제외). 전체는 GET /storyboard.
+    storyboard: Optional[dict] = None
     impactMap: Optional[list[ImpactMapEntry]] = None
     projectRoot: Optional[str] = None
     sandboxBranch: Optional[str] = None
@@ -414,6 +416,10 @@ class ProposalResponse(BaseModel):
 
         raw_tactical = _parse_json(node.get("tacticalDiff"), None)
         raw_journeys = _parse_json(node.get("journeys"), None)
+        raw_storyboard = _parse_json(node.get("storyboard"), None)
+        if isinstance(raw_storyboard, dict):
+            from api.features.proposal_lifecycle.services.storyboard_runner import strip_scenes
+            raw_storyboard = strip_scenes(raw_storyboard)
 
         raw_impact = _parse_json(node.get("impactMap"), None)
         impact = None
@@ -513,6 +519,7 @@ class ProposalResponse(BaseModel):
             constitutionHash=constitution_hash,
             planStale=plan_stale,
             journeys=raw_journeys,
+            storyboard=raw_storyboard,
             impactMap=impact,
             projectRoot=node.get("projectRoot"),
             sandboxBranch=node.get("sandboxBranch"),

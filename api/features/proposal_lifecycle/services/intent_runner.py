@@ -192,6 +192,14 @@ def _save_intent_result(proposal_id: str, data: dict) -> None:
                     category="proposal_lifecycle.intent.done",
                     params={"proposalId": proposal_id})
 
+    # 056 — 초안이 나오는 즉시 저니 스토리보드(open-pencil 와이어프레임) 생성.
+    try:
+        from api.features.proposal_lifecycle.services.storyboard_runner import schedule_storyboard
+        schedule_storyboard(proposal_id, force=True)
+    except Exception as e:  # noqa: BLE001
+        SmartLogger.log("WARN", f"storyboard schedule failed {proposal_id}: {e}",
+                        category="proposal_lifecycle.storyboard.schedule_failed")
+
 
 async def run_intent_with_clarification(proposal_id: str, answers) -> None:
     """명확화 답변 후 intent 스킬 재실행."""
