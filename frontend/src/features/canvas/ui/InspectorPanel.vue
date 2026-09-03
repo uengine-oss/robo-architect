@@ -1765,6 +1765,41 @@ async function pollForPluginResult(fileKey, frameName, maxWait = 15000) {
  * legacy 009 component-extraction flow which is still useful for files
  * built from a Figma component library.
  */
+/**
+ * 저장된 sceneGraph 를 Figma 로 내보낸다 — 가져오기의 짝.
+ *
+ * 지금까지 내보내기는 Design 탭에서 **저장할 때 딸려 나가기만 했다**
+ * (`onDesignSave` 안의 update-frame 호출). 가져오기만 버튼이 있어서
+ * 한쪽만 되는 것처럼 보였다. 같은 엔드포인트를 눌러서 부를 수 있게 한다.
+ *
+ * 백엔드가 그래프에 저장된 sceneGraph 를 읽어 플러그인 큐에 넣으므로,
+ * 여기서 따로 저장하지 않는다 — **마지막으로 저장된 상태가 나간다.**
+ */
+async function pushToFigmaFromInspector() {
+  const n = node.value
+  if (!n) return
+
+  figmaPushStatus.value = 'pushing'
+  figmaPushMessage.value = 'Figma로 내보내는 중...'
+  try {
+    const resp = await fetch(`/api/figma-binding/update-frame/${encodeURIComponent(n.id)}`, {
+      method: 'POST',
+    })
+    const body = await resp.json().catch(() => ({}))
+    if (!resp.ok || body?.ok === false) {
+      throw new Error(body?.errorKo || body?.detail || `Figma 내보내기 실패 (${resp.status})`)
+    }
+    figmaPushStatus.value = 'success'
+    figmaPushMessage.value = `Figma로 내보냄 (${body?.nodesCreated ?? '?'}개 노드)`
+    setTimeout(() => { figmaPushStatus.value = null }, 3000)
+  } catch (e) {
+    figmaPushStatus.value = 'error'
+    figmaPushMessage.value = 'Figma 내보내기 실패: ' + (e?.message || e)
+    setTimeout(() => { figmaPushStatus.value = null }, 6000)
+    console.error('[FigmaPush]', e)
+  }
+}
+
 async function pullFromFigmaToDesign() {
   const n = node.value
   if (!n) return
@@ -3754,6 +3789,22 @@ function updateVoFieldValue(fieldName, value) {
               <!-- Pull from Figma → reload Design with the current Figma frame
                    state. Routes through /api/figma-binding/pull-frame which
                    asks the plugin (no API token needed). -->
+              <!-- 내보내기 — 가져오기와 같은 줄에 짝으로 둔다. 저장할 때
+                   딸려 나가는 경로(onDesignSave)와 같은 엔드포인트다. -->
+              <button
+                class="ui-preview-panel__btn"
+                style="margin-left:8px;width:24px;height:24px;"
+                :disabled="figmaPushStatus === 'pushing'"
+                :title="figmaPushStatus === 'pushing' ? '동기화 중...' : 'Figma로 내보내기'"
+                @click="pushToFigmaFromInspector"
+              >
+                <svg v-if="figmaPushStatus === 'pushing'" width="12" height="12" viewBox="0 0 24 24" class="ui-preview-panel__btn-spin">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4 31.4" />
+                </svg>
+                <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                </svg>
+              </button>
               <button
                 class="ui-preview-panel__btn"
                 style="margin-left:8px;width:24px;height:24px;"
@@ -8480,18 +8531,17 @@ function updateVoFieldValue(fieldName, value) {
   cursor: not-allowed;
 }
 
-/* ── Figma Export Button ── */
-.ui-preview-panel__btn--figma {
+/* ── Figma Export Button ──
+   같은 줄의 다른 아이콘 버튼들은 평소 배경이 없고 hover 에서만 칠해진다.
+   여기만 `background: #1e1e1e` 로 항상 칠해져 있어서, 손을 올리지도 않았는데
+   혼자 눌린 것처럼 보였다. 쉴 때는 형제들과 같게 두고 **hover 에서만**
+   Figma 색을 쓴다. `border-color` 는 base 가 `border: none` 이라 무의미했다. */
+.ui-preview-panel__btn--figma:hover:not(:disabled) {
   background: #1e1e1e;
   color: #fff;
-  border-color: #333;
-}
-.ui-preview-panel__btn--figma:hover:not(:disabled) {
-  background: #333;
 }
 .ui-preview-panel__btn--figma.ui-preview-panel__btn--copied {
   background: #0d9;
-  border-color: #0d9;
   color: #fff;
 }
 .ui-preview-panel__btn--figma:disabled {
