@@ -344,10 +344,16 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
     ORDER BY rm.name
     """
 
-    # Get UI wireframes for this BC
+    # Get UI wireframes for this BC.
+    #
+    # figma 필드를 함께 준다. 인스펙터의 "Figma 에서 가져오기" 버튼이
+    # `node.data.figmaNodeId` 로 켜지는데, 이 투영이 그 필드를 빼는 바람에
+    # 그래프에 값이 있어도(27개 중 25개) 버튼이 한 번도 보이지 않았다.
+    # `sceneGraph` 는 크므로 여기 넣지 않는다 — 선택할 때 따로 읽는다.
     ui_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_UI]->(ui:UI)
-    RETURN ui {.id, .name, .displayName, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId} as ui
+    RETURN ui {.id, .name, .displayName, .description, .template, .attachedToId, .attachedToType, .attachedToName, .userStoryId,
+               .figmaNodeId, .figmaPageId, .figmaFileKey, .figmaSyncStatus} as ui
     ORDER BY ui.name
     """
 
