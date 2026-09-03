@@ -35,7 +35,11 @@ _JAVA_TYPES = {
     "uuid": "String",
     "date": "Date", "datetime": "Date", "localdate": "Date",
     "localdatetime": "Date", "timestamp": "Date",
-    "bigdecimal": "BigDecimal", "decimal": "BigDecimal", "number": "Double",
+    # BigDecimal 도 UUID 와 같은 이유로 내보낸다 — 자바 표준 타입이지만
+    # 템플릿의 원시 목록에 없어서, 그대로 두면 값 객체로 취급돼
+    # `import ….store.domain.vo.BigDecimal;` 이라는 없는 클래스를 부른다.
+    # 정밀도는 잃지만 컴파일되지 않는 코드보다는 낫다.
+    "bigdecimal": "Double", "decimal": "Double", "number": "Double",
 }
 
 
