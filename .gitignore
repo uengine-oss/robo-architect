@@ -112,3 +112,7 @@ deploy/secrets.yaml
 
 # Runtime-generated proposal acceptance log (append-only; caused merge conflicts)
 specs/proposal-changes.md
+
+# analyzer stack runtime state (scripts/analyzer-stack.sh)
+.robo-logs/
+.robo-pids/
