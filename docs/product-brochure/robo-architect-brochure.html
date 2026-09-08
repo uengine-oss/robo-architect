@@ -273,7 +273,7 @@
     <a><span class="tn">13</span><span class="tt">사용 흐름 (실제 화면)</span><span class="tp">16-17</span></a>
     <a><span class="tn">06</span><span class="tt">특장점 ①② 그래프 · 영향 분석</span><span class="tp">8-9</span></a>
     <a><span class="tn">14</span><span class="tt">보안 · 거버넌스 · 납품</span><span class="tp">18-19</span></a>
-    <a><span class="tn">07</span><span class="tt">특장점 ③ 제안 하나가 코드까지</span><span class="tp">10</span></a>
+    <a><span class="tn">07</span><span class="tt">특장점 ③ 제안부터 병합까지</span><span class="tp">10</span></a>
     <a><span class="tn">15</span><span class="tt">검증 체계</span><span class="tp">20</span></a>
     <a><span class="tn">08</span><span class="tt">특장점 ④ 방법론이 제품 안에</span><span class="tp">11</span></a>
     <a><span class="tn">16</span><span class="tt">도입 실적 · 도입 절차</span><span class="tp">21-22</span></a>
@@ -281,14 +281,14 @@
 
   <h2 class="sub">한 장 요약</h2>
   <div class="quote">
-    설계 문서는 만든 순간부터 낡습니다. Robo Architect는 설계를 <b>문서가 아니라 그래프</b>로 두고,
-    요구사항 변경이 연결된 설계 요소에 미치는 영향 범위를 분석해 보여준 뒤, 승인된 변경 사항을 코드와 그래프에 함께 반영합니다.
+    요구사항과 코드가 바뀔 때마다 설계 문서도 함께 갱신해야 합니다. Robo Architect는 설계를 <b>문서가 아니라 그래프</b>로
+    관리해, 요구사항이 바뀌면 영향 범위를 분석해 보여주고 승인된 변경 사항을 코드와 그래프에 함께 반영합니다.
   </div>
 
   <div class="grid g3" style="margin-top:4mm">
     <div class="stat-card">
-      <b>그래프가 원천</b>
-      <div class="d">요구사항 · 설계 · 화면 · 코드 위치가 한 그래프 위에 있습니다</div>
+      <b>그래프가 기준</b>
+      <div class="d">요구사항, 설계 요소, 화면, 소스 파일의 연결 관계를 하나의 그래프로 관리합니다</div>
     </div>
     <div class="stat-card">
       <b>한 흐름</b>
@@ -302,9 +302,9 @@
 
   <div class="note" style="margin-top:5mm">
     <div class="t">핵심 차이</div>
-    설계 도구도, 코드 생성기도 아닙니다. <b>둘 사이의 끊긴 고리</b>를 잇는 제품입니다.
-    AI가 코드를 작성하기 전에 <b>무엇을 만들지</b>를 도메인 언어로 정리하고, 코드가 만들어진 뒤에는
-    생성된 소스와 설계 요소의 연결 관계를 그래프에 기록해 다음 변경의 기준으로 남깁니다.
+    설계 도구나 코드 생성기와 달리, <b>설계와 코드 구현을 연결하고 변경 이후에도 둘의 관계를 추적</b>할 수 있도록
+    지원합니다. AI가 코드를 작성하기 전에 무엇을 만들지 도메인 언어로 정리하고, 코드가 만들어진 뒤에는
+    생성된 소스와 설계 요소의 연결 관계를 그래프에 기록합니다.
   </div>
 
   <h2 class="sub">이 문서가 다루는 것</h2>
@@ -319,7 +319,7 @@
     </div>
     <div class="card" style="padding:3.5mm 4mm">
       <div class="t" style="font-size:9.6pt">사용 절차</div>
-      <p style="font-size:8.8pt">16–17쪽<br>구동 인스턴스 캡처 · 6단계</p>
+      <p style="font-size:8.8pt">16–17쪽<br>실행 중인 제품 화면 · 6단계</p>
     </div>
     <div class="card" style="padding:3.5mm 4mm">
       <div class="t" style="font-size:9.6pt">도입 안내</div>
@@ -337,33 +337,33 @@
   <div class="rule"></div>
 
   <p class="lead">
-    AI가 코드를 대신 써 주기 시작하면서, 병목은 코딩에서 <b>무엇을 만들지 정리하는 일</b>로 옮겨갔습니다.
-    하지만 결과물은 여전히 문서에 머물러 있어, 이후 변경 사항을 지속적으로 반영하기 어렵습니다.
+    AI가 코드 작성을 지원하면서, <b>무엇을 만들고 어떻게 설계할지 결정하는 일</b>이 더욱 중요해졌습니다.
+    하지만 그 결정은 여전히 문서에 머물러 있어, 이후 변경 사항을 지속적으로 반영하기 어렵습니다.
   </p>
 
   <div class="grid g2">
     <div class="card">
       <div class="kicker">문제 1</div>
       <div class="t">설계 문서가 코드의 변경을 따라가지 못한다</div>
-      <p>이벤트스토밍 결과를 워드로 정리하고 나면, 그 다음 변경부터는 아무도 문서를 고치지 않습니다.
-        반년 뒤 그 문서는 "그때 그랬다"는 기록일 뿐 현재의 시스템이 아닙니다.</p>
+      <p>이벤트스토밍 결과를 문서로 정리하고 나면, 이후 변경은 문서에 반영되지 않는 경우가 많습니다.
+        시간이 지나면 문서는 과거의 설계만 담게 되어, 현재 시스템의 구조를 파악하기 어려워집니다.</p>
     </div>
     <div class="card">
       <div class="kicker">문제 2</div>
-      <div class="t">"이거 바꾸면 어디가 깨지나요"</div>
-      <p>가장 자주 나오고 가장 답하기 어려운 질문입니다. 답은 사람의 기억과 전수조사에 의존하고,
-        놓친 한 곳이 배포 후에 드러납니다.</p>
+      <div class="t">"이 기능을 바꾸면 어디에 영향이 있나요"</div>
+      <p>가장 자주 나오고 가장 답하기 어려운 질문입니다. 담당자의 기억에 의존하거나 관련 코드를
+        일일이 확인해야 하며, 영향 범위를 놓치면 배포 후 오류로 이어질 수 있습니다.</p>
     </div>
     <div class="card">
       <div class="kicker">문제 3</div>
-      <div class="t">AI에게 줄 맥락을 매번 다시 만든다</div>
-      <p>코딩 에이전트는 시킨 일은 잘합니다. 문제는 "우리 도메인에서 이 변경이 무엇을 뜻하는지"를
-        매 대화마다 사람이 다시 설명해야 한다는 것입니다.</p>
+      <div class="t">AI에게 전달할 맥락을 매번 다시 정리해야 한다</div>
+      <p>코딩 에이전트는 지시한 작업을 정확히 수행합니다. 다만 이 변경이 우리 도메인에서 어떤 의미인지는
+        대화할 때마다 사람이 다시 설명해야 합니다.</p>
     </div>
     <div class="card">
       <div class="kicker">문제 4</div>
-      <div class="t">방법론은 배웠지만 실무에 안 남는다</div>
-      <p>DDD·이벤트스토밍 교육은 받았는데, 정작 프로젝트에서는 화이트보드 사진 몇 장으로 끝납니다.
+      <div class="t">방법론이 실무에 정착하지 않는다</div>
+      <p>DDD · 이벤트스토밍 교육을 받아도, 프로젝트에서는 화이트보드 사진 몇 장으로 끝나는 경우가 많습니다.
         방법론을 지원하는 도구가 없으면 다음 프로젝트에서도 일관되게 적용하기 어렵습니다.</p>
     </div>
   </div>
@@ -375,9 +375,9 @@
   </div>
 
   <div class="callout">
-    <b>다만 기업 환경이라는 조건이 붙습니다.</b> 소스와 설계 데이터가 외부로 나갈 수 없는 폐쇄망,
-    기존에 쓰던 Figma·Jira·Confluence·Git과의 연결, 그리고 "AI가 만든 설계를 믿을 수 있는가"라는
-    검증 문제까지 함께 풀어야 합니다. Robo Architect는 이 세 가지를 전제로 설계됐습니다.
+    <b>기업에서 사용하려면 세 가지를 함께 고려해야 합니다.</b> 소스와 설계 데이터가 외부로 나갈 수 없는
+    폐쇄망 환경, 기존에 쓰던 Figma · Jira · Confluence · Git과의 연동, 그리고 AI가 만든 산출물의 검증입니다.
+    Robo Architect는 이 세 가지를 전제로 설계했습니다.
   </div>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>3</span></div>
@@ -399,13 +399,13 @@
     <div class="card tinted">
       <div class="kicker">입력</div>
       <div class="t">요구사항</div>
-      <p>기획 문서(PDF·텍스트), Confluence 페이지, Figma 화면, 또는 그냥 한 문단의 자연어.</p>
+      <p>기획 문서(PDF · 텍스트), Confluence 페이지, Figma 화면을 올리거나, 구현할 기능을 글로 직접 입력합니다.</p>
     </div>
     <div class="card tinted">
       <div class="kicker">처리</div>
       <div class="t">도메인 그래프로 구조화</div>
-      <p>Bounded Context · Aggregate · Command · Event · Policy · ReadModel · 화면까지
-        DDD 어휘 그대로 Neo4j에 적재합니다.</p>
+      <p>요구사항을 Bounded Context · Aggregate · Command · Event · Policy · 화면 등 DDD 설계 요소와
+        그 관계로 구조화해 그래프 데이터베이스에 저장합니다.</p>
     </div>
     <div class="card tinted">
       <div class="kicker">출력</div>
@@ -419,10 +419,10 @@
     <tr><th style="width:26%"></th><th style="width:37%">기존 설계 도구 · 문서</th><th>Robo Architect</th></tr>
     <tr><td>설계의 형태</td><td>다이어그램 이미지와 문서</td><td>질의 가능한 그래프(노드 22종 · 관계 32종)</td></tr>
     <tr><td>변경 영향</td><td>사람이 전수조사</td><td>그래프 탐색으로 영향 노드 산출</td></tr>
-    <tr><td>화면</td><td>별도 도구에서 따로 관리</td><td>같은 그래프의 UI 노드 — 초안 단계부터 렌더</td></tr>
-    <tr><td>코드</td><td>설계와 단절</td><td>구현 파일이 설계 요소에 연결(<code>IMPLEMENTED_IN</code>)</td></tr>
+    <tr><td>화면</td><td>별도 도구에서 따로 관리</td><td>같은 그래프의 UI 노드 — 초안 단계부터 생성</td></tr>
+    <tr><td>코드</td><td>설계와 단절</td><td>구현 파일과 설계 요소의 연결 관계를 기록</td></tr>
     <tr><td>방법론</td><td>교육 자료</td><td>단계별 절차로 제품에 내장(DDD 6단계 · ODA 표준)</td></tr>
-    <tr><td>AI의 역할</td><td>코드 자동완성</td><td>분해 · 계획 · 구현 · 검증의 각 단계를 사람 승인 아래 수행</td></tr>
+    <tr><td>AI의 역할</td><td>코드 자동완성</td><td>구체화 · 계획 · 구현 · 검증을 사용자 승인 아래 수행</td></tr>
   </table>
 
   <h2 class="sub">한눈에 보는 흐름</h2>
@@ -439,7 +439,7 @@
   </div>
 
   <div class="callout">
-    각 단계는 사람의 확정을 받고 다음으로 넘어가며, <b>승인된 변경 사항만</b> 코드와 설계 그래프에 반영됩니다.
+    사용자가 단계별 결과를 확정하면 다음 단계로 진행하며, <b>승인된 변경 사항만</b> 반영됩니다.
   </div>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>4</span></div>
@@ -452,8 +452,8 @@
   <div class="rule"></div>
 
   <p class="lead">
-    요구사항 문서를 업로드하면 <b>21단계 처리 과정</b>을 거쳐 요구사항을 도메인 어휘로 분해하고 그래프에 적재합니다.
-    진행 상황은 단계별로 실시간 표시되며, 중간에 멈춰 검토한 뒤 이어서 진행할 수 있습니다.
+    요구사항 문서를 업로드하면 <b>21단계 처리 과정</b>을 거쳐 요구사항에서 도메인 개념과 관계를 추출하고
+    그래프에 저장합니다. 진행 상황은 단계별로 표시되며, 중간에 멈춰 검토한 뒤 이어서 진행할 수 있습니다.
   </p>
 
   <div class="pipe">
@@ -486,12 +486,12 @@
   <div class="callout">
     <b>왜 그래프여야 하는가.</b> "이 이벤트를 발행하는 명령은?", "이 유저스토리를 구현하는 파일은?",
     "이 Aggregate를 바꾸면 영향받는 화면은?" — 이런 질문에 답하려면 관계를 따라가야 합니다.
-    문서로는 못 하고, 관계형 테이블로는 조인이 깊어집니다. 그래서 그래프 데이터베이스를 원천으로 삼았습니다.
+    그래프를 사용하면 설계 요소 간 관계를 따라 변경의 영향 범위와 구현 위치를 확인할 수 있습니다.
   </div>
 
   <div class="note">
     <div class="t">설계 정보의 단일 기준</div>
-    제품 헌장 제1원칙은 "그래프가 유일한 기준"입니다. 화면에 보이는 내용과 내보내는 문서는 모두
+    제품 개발 원칙의 첫 항목은 "그래프가 유일한 기준"입니다. 화면에 보이는 내용과 내보내는 문서는 모두
     그래프에서 <b>다시 생성할 수 있는 산출물</b>이며, 별도의 기준 데이터를 만들지 않습니다.
   </div>
 
@@ -511,7 +511,7 @@
 
   <figure class="crop" style="--h:55mm">
     <img src="assets/03-storyboard-complete.png" alt="초안 스토리보드">
-    <figcaption><b>그림 2.</b> 제안 초안 단계에서 자동 생성된 스토리보드 — 유저 저니의 각 화면을
+    <figcaption><b>그림 2.</b> 제안 초안 단계에서 자동 생성된 스토리보드 — 사용자 흐름의 각 화면을
       와이어프레임으로 그려 흐름 순서대로 배치합니다. 마름모는 조건 분기입니다.
       <i>데모 데이터 기준입니다.</i></figcaption>
   </figure>
@@ -520,12 +520,12 @@
     <div class="card">
       <div class="t">화면 — 그림이 아니라 편집 가능한 구조</div>
       <p>와이어프레임은 이미지가 아니라 요소 트리입니다. 그래서 그 자리에서 편집기를 열어 고치고,
-        Figma로 내보내 디자이너가 이어받을 수 있습니다. 디자인 시스템 컴포넌트를 실제 인스턴스로 배치합니다.</p>
+        Figma로 내보내 디자이너가 이어받을 수 있습니다. 사내 디자인 시스템의 컴포넌트를 그대로 배치합니다.</p>
     </div>
     <div class="card">
-      <div class="t">코드 — 격리된 샌드박스에서</div>
-      <p>구현은 대상 프로젝트의 <b>git worktree 샌드박스</b>에서 진행됩니다. 원본 브랜치를 건드리지 않고,
-        승인 시점에 병합합니다. 중간에 멈추고 피드백을 주며 다시 시킬 수 있습니다.</p>
+      <div class="t">코드 — 격리된 작업 공간에서</div>
+      <p>구현은 대상 프로젝트의 <b>격리된 작업 공간</b>(git worktree)에서 진행되며, 원본 브랜치는 승인 시점에만
+        병합합니다. 구현 도중 작업을 중단하고 수정 지시를 전달한 뒤 다시 진행할 수 있습니다.</p>
     </div>
   </div>
 
@@ -554,7 +554,7 @@
   <div class="rule"></div>
 
   <p class="lead">
-    같은 그래프를 <b>역할에 맞는 네 개의 창</b>으로 봅니다. 아래는 모두 실제 구동 중인 인스턴스에서
+    같은 그래프를 <b>역할에 맞는 네 개의 창</b>으로 봅니다. 아래는 모두 실행 중인 제품에서
     캡처한 화면입니다.
   </p>
 
@@ -597,7 +597,7 @@
 
   <p class="lead">
     대부분의 설계 도구는 그림을 그립니다. Robo Architect는 <b>관계를 저장</b>합니다.
-    화면에 보이는 다이어그램은 그 관계를 그때그때 그린 결과일 뿐이고, 원천은 언제나 그래프입니다.
+    화면에 보이는 다이어그램은 그 관계를 그려 낸 결과이며, 설계 정보의 기준은 언제나 그래프입니다.
   </p>
 
   <h2 class="sub">그래서 가능해지는 것</h2>
@@ -621,7 +621,7 @@
     <div class="card">
       <div class="kicker">아키텍트</div>
       <div class="t">이벤트스토밍 캔버스</div>
-      <p>Bounded Context 경계, Aggregate, 명령·이벤트·정책. 노드를 클릭하면 속성과 불변식을 편집합니다.</p>
+      <p>Bounded Context 경계, Aggregate, 명령 · 이벤트 · 정책을 한 화면에서 봅니다. 노드를 선택해 속성과 불변식을 확인하고 수정할 수 있습니다.</p>
     </div>
     <div class="card">
       <div class="kicker">개발</div>
@@ -631,13 +631,13 @@
     <div class="card">
       <div class="kicker">디자이너</div>
       <div class="t">화면 흐름 · Figma 연동</div>
-      <p>유저 저니와 화면을 보고, Figma 문서와 양방향으로 동기화합니다.</p>
+      <p>사용자 흐름과 화면을 확인하고, Figma 문서와 양방향으로 동기화합니다.</p>
     </div>
   </div>
 
   <div class="note">
     <div class="t">도메인 언어를 일관되게 사용합니다</div>
-    제품 헌장 제2원칙은 "이벤트스토밍 어휘를 쓴다"입니다. 화면·API·데이터 모델 어디에서도
+    제품 개발 원칙의 두 번째 항목은 "이벤트스토밍 어휘를 쓴다"입니다. 화면·API·데이터 모델 어디에서도
     <code>create/update/delete</code> 같은 CRUD 어휘 대신 <b>명령과 이벤트의 도메인 이름</b>을 사용합니다.
     용어가 일관되지 않으면 그래프의 연결도 어긋나기 때문입니다.
   </div>
@@ -669,14 +669,14 @@
   <h2 class="sub">영향 분석이 내놓는 것</h2>
   <table class="free">
     <tr><th style="width:28%">항목</th><th>내용</th></tr>
-    <tr><td>영향 노드 목록</td><td>변경이 닿는 설계 요소를 계층별로 — 확신도(높음·중간·낮음)와 근거를 함께</td></tr>
-    <tr><td>충돌 가능성</td><td>같은 요소를 건드리는 다른 진행 중 변경이 있으면 표시</td></tr>
-    <tr><td>회귀 테스트 범위</td><td>영향 경로에 걸린 인수조건(GWT)을 모아 재검증 대상으로 제시</td></tr>
+    <tr><td>영향 요소 목록</td><td>변경의 영향을 받는 설계 요소를 계층별로 제시하고, 확신도(높음 · 중간 · 낮음)와 판단 근거를 함께 표시합니다</td></tr>
+    <tr><td>충돌 가능성</td><td>동일한 설계 요소에 영향을 주는 다른 변경 요청이 있으면 함께 표시합니다</td></tr>
+    <tr><td>회귀 테스트 범위</td><td>영향 경로에 포함된 인수조건(GWT)을 모아 재검증 대상으로 제시합니다</td></tr>
   </table>
 
   <div class="callout">
-    <b>미리보기는 실제 그래프를 건드리지 않습니다.</b> 변경이 적용된 가상의 그래프를 기존 뷰어로 열어 봅니다. 실제 그래프를 읽고 변경안을 메모리에서 겹쳐 투영합니다.
-    그래서 검토 중에 원본이 오염될 여지가 없고, 검토를 중단해도 정리할 것이 남지 않습니다.
+    <b>미리보기는 원본 그래프를 수정하지 않고 변경 후의 구조를 보여줍니다.</b> 기존 뷰어를 그대로 사용하므로
+    별도의 화면을 익힐 필요가 없고, 검토를 중단해도 정리할 작업이 남지 않습니다.
   </div>
 
   <h2 class="sub">분석 결과는 이렇게 나옵니다</h2>
@@ -689,11 +689,12 @@
     <tr><td>구현</td><td>해당 설계 요소에 연결된 소스 파일</td></tr>
   </table>
 
-  <h2 class="sub">변경은 기록으로 남습니다</h2>
+  <h2 class="sub">변경 이력</h2>
   <p>
-    각 변경은 고유 번호(<code>CHG-NNN</code>)를 가진 노드가 되고, 영향 관계(<code>EFFECT</code>)로
-    설계 요소에 연결됩니다. 상태는 <b>초안 → 제출 → 승인 → 구현 완료</b>로 전이하며,
-    변경 요청자는 본인이 제출한 요청을 승인할 수 없으며, 이후 설계 근거는 그래프의 변경 이력으로 추적합니다.
+    변경 요청마다 고유 번호를 부여하고, 영향을 받는 설계 요소와 연결해 기록합니다.
+    요청은 <b>초안 → 제출 → 승인 → 구현 완료</b> 순서로 진행됩니다.
+    요청자는 본인이 제출한 변경을 직접 승인할 수 없습니다.
+    변경 이력을 통해 설계가 언제, 어떤 이유로 수정되었는지 확인할 수 있습니다.
   </p>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>9</span></div>
@@ -702,20 +703,21 @@
 <!-- ══════════════════ 9. 특장점 ③ ══════════════════ -->
 <section class="page">
   <div class="badge">06 · 특장점</div>
-  <h1 class="sec"><span class="num">③</span> 제안 하나가 코드까지 갑니다</h1>
+  <h1 class="sec"><span class="num">③</span> 변경 제안부터 구현 · 검증 · 병합까지</h1>
   <div class="rule"></div>
 
   <p class="lead">
-    "이 기능 추가해 주세요" 한 문단이 <b>제안(Proposal)</b>이 되고, 분해 · 계획 · 구현 · 검증 · 병합의
-    한 흐름을 끝까지 따라갑니다. 각 단계는 사람의 확정을 받고 다음으로 넘어갑니다.
+    추가하거나 변경할 기능을 글로 입력하면 AI가 요구사항을 세분화하고 구현 계획을 제시합니다.
+    사용자는 단계별 결과를 검토하고, 승인한 계획에 따라 구현과 검증을 진행합니다.
+    최종 승인 후에는 구현 코드를 병합하고 설계 그래프에도 변경 사항을 반영합니다.
   </p>
 
   <div class="flow">
-    <div class="step"><b>Intent</b><span>전략 분해</span></div>
+    <div class="step"><b>Intent</b><span>요구사항 구체화</span></div>
     <div class="arw">→</div>
     <div class="step"><b>Plan</b><span>전술 · 아키텍처</span></div>
     <div class="arw">→</div>
-    <div class="step"><b>Implement</b><span>샌드박스 구현</span></div>
+    <div class="step"><b>Implement</b><span>격리 환경 구현</span></div>
     <div class="arw">→</div>
     <div class="step"><b>Test</b><span>인수조건 검증</span></div>
     <div class="arw">→</div>
@@ -724,25 +726,25 @@
 
   <table class="free">
     <tr><th style="width:20%">단계</th><th>하는 일</th></tr>
-    <tr><td>Intent</td><td>자연어 → Epic · Feature · UserStory · 유저 저니. 모호하면 최대 5개의 선택형 질문으로 되묻습니다</td></tr>
-    <tr><td>Plan</td><td>승인된 전략 분해 + <b>프로젝트 헌장</b>(기술 스택 · 모놀리스/마이크로서비스 · 저장소 구성 전략)을 근거로
-      Aggregate · 명령 · 이벤트와 배포·연동 계획을 산출</td></tr>
-    <tr><td>Implement</td><td>대상 프로젝트에 <code>proposal/PRO-NNN</code> 브랜치의 worktree 샌드박스를 만들고,
-      Code 탭에서 실행 중인 Claude Code 세션에서 구현. 중지 · 피드백 · 재시도 가능</td></tr>
-    <tr><td>Test</td><td>인수조건(GWT)을 기준으로 결과를 검증하고 구조 검사를 함께 수행</td></tr>
-    <tr><td>Accept</td><td><b>Dual Merge</b> — 코드 병합과 그래프 반영을 한 트랜잭션처럼 수행. 한쪽이 실패하면 양쪽을 되돌립니다</td></tr>
+    <tr><td>Intent</td><td>입력한 글을 Epic · Feature · UserStory · 사용자 흐름으로 구체화합니다. 내용이 모호하면 최대 5개의 선택형 질문으로 확인합니다</td></tr>
+    <tr><td>Plan</td><td>확정된 요구사항과 <b>프로젝트 설계 원칙</b>(기술 스택 · 모놀리스/마이크로서비스 · 저장소 구성 전략)을
+      근거로 Aggregate · 명령 · 이벤트와 배포 · 연동 계획을 산출합니다</td></tr>
+    <tr><td>Implement</td><td>대상 프로젝트에 전용 브랜치의 격리된 작업 공간을 만들고, Code 탭에서 Claude Code가
+      구현을 수행합니다. 중지 · 수정 지시 · 재시도가 가능합니다</td></tr>
+    <tr><td>Test</td><td>인수조건(GWT)을 기준으로 결과를 검증하고 구조 검사를 함께 수행합니다</td></tr>
+    <tr><td>Accept</td><td>코드 병합과 설계 그래프 반영을 함께 수행합니다. 한쪽이 실패하면 양쪽을 되돌립니다</td></tr>
   </table>
 
   <div class="note">
-    <div class="t">Dual Merge — 코드와 설계가 같이 움직입니다</div>
-    승인 시 ① git 병합과 ② 그래프 반영(전략·전술 분해와 저니 적용)이 함께 일어납니다.
-    어느 한쪽이 실패하면 보상 트랜잭션으로 되돌리고 상태를 <code>MERGE_FAILED</code>로 남겨
-    재시도할 수 있게 합니다. <b>"코드만 병합되고 설계에는 변경 사항이 반영되지 않은" 상태를 방지하는 것</b>이 목적입니다.
+    <div class="t">코드와 설계를 함께 반영합니다</div>
+    승인하면 코드 병합과 설계 그래프 반영이 함께 진행됩니다. 어느 한쪽이 실패하면 양쪽을 되돌리고
+    실패 상태로 표시해 재시도할 수 있습니다. <b>코드만 병합되고 설계에는 변경 사항이 반영되지 않는 상황</b>을
+    방지하기 위한 구조입니다.
   </div>
 
   <div class="callout">
-    승인을 취소(revoke)하면 코드 되돌림 여부를 선택할 수 있고, 그래프 반영도 함께 취소됩니다.
-    제안은 폐기(destroy)로 끝낼 수도 있으며, 이 경우 샌드박스 worktree가 정리됩니다.
+    승인을 취소하면 설계 그래프의 반영을 되돌리며, 코드 되돌림 여부는 선택할 수 있습니다.
+    제안을 폐기하면 격리된 작업 공간도 함께 정리됩니다.
   </div>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>10</span></div>
@@ -763,7 +765,7 @@
   <div class="grid g3">
     <div class="card">
       <div class="t">간편(Simplified)</div>
-      <p>전략 분해 → 계획 두 단계. 국소적이고 빠른 변경에 적합합니다.</p>
+      <p>요구사항 구체화와 계획 두 단계로 진행합니다. 영향 범위가 작고 신속한 처리가 필요한 변경에 적합합니다.</p>
     </div>
     <div class="card">
       <div class="t">DDD 상세(Detailed)</div>
@@ -791,10 +793,10 @@
   </div>
 
   <p>
-    각 단계는 그 단계 고유의 <b>의사결정 질문</b>을 제시합니다 — 이 서브도메인이 우리의 차별성인가,
-    이 결합은 이벤트인가 동기 호출인가, 이 Aggregate의 불변식은 무엇인가. 답은 객관식으로 고르고,
-    필요하면 되돌아가 다시 생성합니다. 먼저 <b>변경 범위를 분석</b>해 필요한 단계를
-    제안하므로, 작은 변경에 6단계를 모두 적용하지 않습니다.
+    단계마다 <b>설계 결정에 필요한 질문</b>을 제시합니다. "이 서브도메인이 사업의 핵심 경쟁력을 담당하는가?",
+    "서비스 간 연동에 이벤트 방식을 사용할 것인가, 동기 호출을 사용할 것인가?", "이 Aggregate가 지켜야 할
+    불변식은 무엇인가?" 같은 질문에 선택형으로 답하고, 필요하면 이전 단계로 돌아가 다시 생성합니다.
+    먼저 <b>변경 범위를 분석</b>해 필요한 단계를 제안하므로, 작은 변경에 6단계를 모두 적용하지 않습니다.
   </p>
 
   <div class="callout">
@@ -820,23 +822,23 @@
 
   <p class="lead">
     설계 검토에서 가장 어려운 순간은 "이게 실제로 어떤 화면이 되는지"를 상상해야 할 때입니다.
-    Robo Architect는 <b>전략 분해가 끝나는 즉시</b> 유저 저니의 각 화면을 와이어프레임으로 그려 보여줍니다.
+    Robo Architect는 <b>요구사항을 기능과 사용자 흐름으로 구체화하는 단계가 끝나는 즉시</b> 각 화면을 와이어프레임으로 그려 보여줍니다.
   </p>
 
   <figure class="crop" style="--h:58mm">
     <img src="assets/05-storyboard-flow.png" alt="스토리보드 흐름">
-    <figcaption><b>그림 7.</b> 저니의 화면이 흐름 순서대로 놓이고, 조건 분기는 마름모로 표시됩니다.
+    <figcaption><b>그림 7.</b> 사용자 흐름의 화면이 순서대로 놓이고, 조건 분기는 마름모로 표시됩니다.
       화면 카드는 그림이 아니라 편집 가능한 요소 트리입니다. <i>데모 데이터 기준입니다.</i></figcaption>
   </figure>
 
   <div class="grid g2">
     <div class="card">
-      <div class="t">기다리지 않습니다</div>
-      <p>전에는 설계(Aggregate·명령·이벤트)와 디자인(Figma 바인딩)이 모두 끝난 뒤에야 화면을 볼 수 있었습니다.
-        이제는 제안 초안 단계에서 바로 봅니다.</p>
+      <div class="t">초안 단계에서 화면 확인</div>
+      <p>이전에는 설계와 디자인이 모두 끝난 뒤에야 화면을 확인할 수 있었습니다.
+        이제 제안 초안 단계에서 바로 확인합니다.</p>
     </div>
     <div class="card">
-      <div class="t">그 자리에서 고칩니다</div>
+      <div class="t">화면에서 바로 수정</div>
       <p>카드의 편집 아이콘을 누르면 디자인 편집기가 열립니다. 요소를 옮기거나 크기를 바꾼 뒤 저장하면
         해당 단계의 화면에 수정 사항이 반영됩니다.</p>
     </div>
@@ -849,9 +851,8 @@
   </figure>
 
   <div class="callout">
-    <b>디자인 시스템을 씁니다.</b> 사내 <code>.fig</code> 컴포넌트 라이브러리를 연결하면
-    버튼·헤더·카드 같은 기존 컴포넌트를 <b>실제 인스턴스로</b> 배치하고 변형(variant)과 텍스트를
-    오버라이드해 그립니다. 임의로 그린 박스가 아니라 우리 디자인 시스템의 화면이 나옵니다.
+    <b>사내 디자인 시스템을 적용할 수 있습니다.</b> Figma 컴포넌트 라이브러리를 연결하면 기존 버튼 · 헤더 · 카드 등을
+    활용해 화면을 구성합니다. 컴포넌트의 유형과 문구를 화면에 맞게 설정하고, 내장 편집기에서 직접 수정할 수 있습니다.
   </div>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>12</span></div>
@@ -864,7 +865,7 @@
   <div class="rule"></div>
 
   <p class="lead">
-    AI가 설계를 고치는 제품에서 가장 중요한 것은 <b>무엇이 언제 바뀌는지</b>가 예측 가능해야 한다는 점입니다.
+    사용자는 AI가 제안한 변경이 <b>언제, 어디에 반영되는지</b> 미리 확인할 수 있어야 합니다.
     Robo Architect는 모든 변경을 <b>제안 → 확인 → 적용</b> 세 단계로 나눕니다.
   </p>
 
@@ -880,15 +881,15 @@
     <li><b>분석은 아무것도 바꾸지 않습니다.</b> 영향 분석·미리보기·스토리보드는 모두 읽기 전용입니다.</li>
     <li><b>편집 제안과 적용이 분리돼 있습니다.</b> 요구사항 명확화도 답변 → 편집안 제시 → 적용 승인 순서를 따릅니다.</li>
     <li><b>동시 편집으로 인한 덮어쓰기를 방지합니다.</b> 다른 사람이 먼저 수정했다면 충돌로 알리고 덮어쓰지 않습니다.</li>
-    <li><b>되돌릴 수 있습니다.</b> 변경마다 이력이 남고, 승인 취소로 코드와 그래프를 함께 되돌립니다.</li>
+    <li><b>되돌릴 수 있습니다.</b> 변경마다 이력이 남으며, 승인을 취소하면 설계 그래프의 반영을 되돌리고 코드 되돌림 여부는 선택합니다.</li>
   </ul>
 
   <h2 class="sub">무엇이 언제 반영되는가</h2>
   <table class="free">
-    <tr><th style="width:34%">작업</th><th style="width:24%">코드 · 그래프 반영</th><th>설명</th></tr>
+    <tr><th style="width:34%">작업</th><th style="width:26%">대상 브랜치 · 설계 그래프에 최종 반영</th><th>설명</th></tr>
     <tr><td>영향 분석 · 미리보기 · 스토리보드</td><td>없음</td><td>모두 읽기 전용입니다</td></tr>
     <tr><td>제안 내부의 초안 편집</td><td>없음</td><td>제안에만 저장되며 운영 모델은 그대로입니다</td></tr>
-    <tr><td>샌드박스 구현</td><td>없음</td><td>격리된 작업 공간에서만 파일이 바뀝니다</td></tr>
+    <tr><td>격리 환경에서의 구현</td><td>없음</td><td>격리된 작업 공간의 파일만 바뀌며, 대상 브랜치는 그대로입니다</td></tr>
     <tr><td>계획(Plan) 확정</td><td>없음</td><td>구현 계획만 확정합니다</td></tr>
     <tr><td>최종 승인(Accept)</td><td><b>있음</b></td><td>코드 병합과 그래프 반영이 함께 일어납니다</td></tr>
   </table>
@@ -931,9 +932,9 @@
     <div class="tb solid"><b>FastAPI 서버 — 오케스트레이터</b><span>문서 수집·분석 · 영향 분석 · 제안 생애주기 · 스킬 실행 · 스트리밍</span></div>
     <div class="tdown"></div>
     <div class="trow">
-      <div class="tb"><b>Neo4j</b><span>도메인 그래프 (원천)</span></div>
+      <div class="tb"><b>Neo4j</b><span>도메인 그래프 (설계 기준)</span></div>
       <div class="tb"><b>컨테이너 런타임</b><span>Podman · rootless</span></div>
-      <div class="tb"><b>대상 프로젝트</b><span>git worktree 샌드박스</span></div>
+      <div class="tb"><b>대상 프로젝트</b><span>격리된 작업 공간</span></div>
     </div>
   </div>
 
@@ -954,7 +955,7 @@
       화면에 실시간으로 전달합니다.</li>
     <li><b>결과는 그래프로</b> — 산출된 분해 · 설계는 Neo4j에 적재됩니다. 파일로 흩어지지 않습니다.</li>
     <li><b>화면이 필요하면 렌더 엔진</b> — JSX를 받아 레이아웃을 계산하고 화면 트리를 돌려줍니다.</li>
-    <li><b>코드가 필요하면 샌드박스</b> — 대상 프로젝트의 worktree에서 작업하고, 승인 시 병합합니다.</li>
+    <li><b>코드는 격리된 작업 공간에서</b> — 대상 프로젝트의 별도 작업 공간에서 구현하고, 승인 시 병합합니다.</li>
   </ol>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>14</span></div>
@@ -989,7 +990,7 @@
   <div class="grid g3">
     <div class="card">
       <div class="t">공급자 중립</div>
-      <p>LLM 공급자와 모델은 환경 설정으로 바꿉니다. 특정 벤더 API가 코드에 박혀 있지 않습니다.</p>
+      <p>LLM 공급자와 모델은 환경 설정으로 바꿉니다. 특정 공급자에 종속되지 않도록 연동을 구성했습니다.</p>
     </div>
     <div class="card">
       <div class="t">기능별 모듈</div>
@@ -1017,7 +1018,7 @@
   <h1 class="sec">사용 절차 — 여섯 단계</h1>
   <div class="rule"></div>
 
-  <p class="lead">아래 화면은 모두 <b>실제로 구동 중인 인스턴스에서 캡처</b>한 것입니다. 설명을 위한 목업이 아닙니다.</p>
+  <p class="lead">아래 화면은 모두 <b>실행 중인 제품에서 캡처</b>한 것입니다. 설명을 위한 목업이 아닙니다.</p>
 
   <div class="pipe">
     <div class="n">1</div><div class="l"></div><div class="n">2</div><div class="l"></div>
@@ -1025,7 +1026,7 @@
     <div class="n">5</div><div class="l"></div><div class="n">6</div>
   </div>
   <div class="pipe-labels">
-    <div>요구사항 적재</div><div>제안 작성</div><div>전략 분해</div><div>화면 확인</div><div>계획 · 구현</div><div>승인 · 병합</div>
+    <div>요구사항 적재</div><div>제안 작성</div><div>요구사항 구체화</div><div>화면 확인</div><div>계획 · 구현</div><div>승인 · 병합</div>
   </div>
 
   <h2 class="sub">1단계 · 요구사항을 그래프로 올린다</h2>
@@ -1048,10 +1049,10 @@
       승인 대기 · Accepted · Destroyed)로 진행 중인 변경을 한눈에 봅니다. <i>데모 데이터 기준입니다.</i></figcaption>
   </figure>
 
-  <h2 class="sub">3단계 · 전략 분해를 검토한다</h2>
+  <h2 class="sub">3단계 · 요구사항 구체화 결과 검토</h2>
   <p>
-    AI가 요구사항을 Epic · Feature · UserStory · 유저 저니로 분해합니다. 모호한 부분은 객관식 질문으로
-    되묻습니다. 결과가 마음에 들지 않으면 피드백을 적어 다시 생성하고, 직접 고칠 수도 있습니다.
+    AI가 입력한 요구사항을 Epic · Feature · UserStory · 사용자 흐름으로 구체화합니다. 내용이 모호하면
+    선택형 질문으로 확인합니다. 검토 결과 수정이 필요하면 의견을 적어 다시 생성하거나 직접 수정할 수 있습니다.
   </p>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>16</span></div>
@@ -1065,7 +1066,7 @@
 
   <h2 class="sub">4단계 · 화면으로 확인한다</h2>
   <p>
-    전략 분해가 끝나면 <b>스토리보드가 자동으로 생성</b>됩니다. 저니의 화면들이 흐름 순서대로 그려지므로,
+    요구사항 구체화가 끝나면 <b>스토리보드가 자동으로 생성</b>됩니다. 사용자 흐름의 화면들이 순서대로 그려지므로,
     이해관계자는 텍스트가 아니라 화면을 보고 초안을 판단합니다.
   </p>
 
@@ -1079,12 +1080,12 @@
   <div class="grid g2">
     <div class="card">
       <div class="t">Plan</div>
-      <p>승인된 전략 분해와 프로젝트 헌장을 근거로 전술 설계(Aggregate · 명령 · 이벤트)와
+      <p>확정된 요구사항과 프로젝트 설계 원칙을 근거로 전술 설계(Aggregate · 명령 · 이벤트)와
         배포 · 연동 · 저장소 구성 계획이 나옵니다.</p>
     </div>
     <div class="card">
       <div class="t">Implement</div>
-      <p>대상 프로젝트에 격리된 샌드박스가 만들어지고, Code 탭의 Claude Code 세션이 구현합니다.
+      <p>대상 프로젝트에 격리된 작업 공간이 만들어지고, Code 탭에서 Claude Code가 구현을 수행합니다.
         진행 로그를 보며 중지하거나 방향을 바꿀 수 있습니다.</p>
     </div>
   </div>
@@ -1137,16 +1138,16 @@
     <tr><td>승인 게이트</td><td>AI가 산출한 어떤 것도 사람의 명시적 확정 없이 그래프나 코드에 반영되지 않습니다</td></tr>
     <tr><td>자기 승인 금지</td><td>변경을 제출한 사람이 그 변경을 승인할 수 없습니다</td></tr>
     <tr><td>동시 편집 보호</td><td>버전 불일치 시 덮어쓰지 않고 충돌로 알립니다</td></tr>
-    <tr><td>코드 격리</td><td>구현은 <code>proposal/PRO-NNN</code> worktree에서만. 원본 브랜치는 병합 전까지 불변</td></tr>
-    <tr><td>되돌리기</td><td>승인 취소 시 코드 되돌림 여부를 선택하고 그래프 반영도 함께 취소</td></tr>
+    <tr><td>코드 격리</td><td>구현은 전용 브랜치의 격리된 작업 공간에서만 수행하며, 원본 브랜치는 병합 전까지 변경되지 않습니다</td></tr>
+    <tr><td>되돌리기</td><td>승인 취소 시 설계 그래프의 반영을 되돌리며, 코드 되돌림 여부는 선택</td></tr>
     <tr><td>감사 로그</td><td>요청별 상관관계 ID와 구조화 로그. 상태 전이 이력이 노드에 남습니다</td></tr>
   </table>
 
-  <h2 class="sub">스킬로 조직 정책을 강제</h2>
+  <h2 class="sub">조직의 설계 기준을 작업 절차에 반영</h2>
   <p>
-    분해·계획·구현·검증의 절차가 스킬 파일에 있으므로, 조직의 설계 규칙(명명 규칙, 필수 산출물,
-    금지 패턴)을 스킬에 넣어 <b>모든 제안이 같은 기준을 통과하도록</b> 만들 수 있습니다.
-    프로젝트 헌장에는 기술 스택·아키텍처 스타일·저장소 구성 전략 같은 결정이 저장되어 모든 계획에 적용됩니다.
+    구체화 · 계획 · 구현 · 검증 절차가 스킬 파일에 정의돼 있으므로, 조직의 설계 규칙(명명 규칙, 필수 산출물,
+    금지 패턴)을 스킬에 반영하면 <b>모든 제안이 같은 기준을 거치도록</b> 할 수 있습니다.
+    프로젝트 설계 원칙에는 기술 스택 · 아키텍처 스타일 · 저장소 구성 전략이 저장되어 모든 계획에 적용됩니다.
   </p>
 
   <div class="callout">
@@ -1195,7 +1196,7 @@
     </div>
     <div class="card">
       <div class="t">외부 DB 연결</div>
-      <p>그래프 데이터베이스를 동봉하지 않고 사내 인스턴스에 연결하는 구성도 지원합니다.</p>
+      <p>그래프 데이터베이스를 별도로 설치하는 대신, 사내에서 운영 중인 데이터베이스에 연결할 수도 있습니다.</p>
     </div>
   </div>
 
@@ -1206,8 +1207,8 @@
   </div>
 
   <div class="callout">
-    <b>고객이 소유하는 자산으로 남습니다.</b> 설계 그래프는 표준 Cypher로 내보낼 수 있고,
-    생성된 코드는 고객 저장소에 그대로 남습니다. 도구를 걷어내도 산출물이 사라지지 않습니다.
+    <b>산출물은 고객 자산으로 남습니다.</b> 설계 그래프는 표준 Cypher로 내보낼 수 있고 생성된 코드는
+    고객 저장소에 그대로 남으므로, 제품 사용을 종료한 뒤에도 설계 데이터와 코드를 보유하고 활용할 수 있습니다.
   </div>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>19</span></div>
@@ -1231,31 +1232,30 @@
     결정했는지가 기록돼 있습니다.
   </p>
 
-  <h2 class="sub">제품 헌장 — 타협하지 않는 규칙</h2>
+  <h2 class="sub">제품 개발 원칙 — 타협하지 않는 규칙</h2>
   <table class="free">
     <tr><th style="width:34%">원칙</th><th>내용</th></tr>
-    <tr><td>I. 그래프가 기준</td><td>모든 상태는 그래프에 저장. 별도의 기준 데이터 금지 <b>(타협 불가)</b></td></tr>
+    <tr><td>I. 그래프가 기준</td><td>모든 설계 정보는 그래프에 저장하고 별도의 기준 데이터를 두지 않는다 <b>(타협 불가)</b></td></tr>
     <tr><td>II. 도메인 언어</td><td>CRUD 어휘 금지, 이벤트스토밍 어휘 사용</td></tr>
     <tr><td>III. 스트리밍 우선</td><td>수 초 이상 걸리는 작업은 진행률 스트리밍 필수</td></tr>
     <tr><td>IV. 사람이 승인</td><td>계획과 적용을 분리. 자동 적용 금지</td></tr>
-    <tr><td>V. 피처 모듈</td><td>백엔드·프런트 피처 1:1 대응, 형제 피처 직접 참조 금지</td></tr>
+    <tr><td>V. 기능별 모듈</td><td>백엔드와 프런트엔드의 기능 모듈을 1:1로 대응, 기능 간 직접 참조 금지</td></tr>
     <tr><td>VI. 공급자 중립</td><td>LLM 공급자·모델은 설정으로. 하드코딩 금지</td></tr>
     <tr><td>VII. 관측 가능</td><td>상관관계 ID + 구조화 로그를 기본으로</td></tr>
     <tr><td>VIII. 화면 생성 경로</td><td>화면은 반드시 렌더 엔진을 거친다 <b>(타협 불가)</b></td></tr>
     <tr><td>IX. 플러그인 규율</td><td>Figma 플러그인과 백엔드 간 개발 루프 규칙</td></tr>
-    <tr><td>X. 스킬 우선</td><td>절차와 방법론은 스킬로. 제품 코드에 절차를 박지 않는다</td></tr>
+    <tr><td>X. 스킬 우선</td><td>절차와 방법론은 스킬 파일로 관리하고 제품 코드에 포함하지 않는다</td></tr>
   </table>
 
   <h2 class="sub">자동 검증</h2>
   <div class="grid g3">
-    <div class="stat-card"><b>49</b><div class="l">단위 테스트 모듈</div><div class="d">피처별 pytest</div></div>
+    <div class="stat-card"><b>49</b><div class="l">단위 테스트 모듈</div><div class="d">기능별 pytest</div></div>
     <div class="stat-card"><b>70</b><div class="l">E2E 시나리오</div><div class="d">Playwright — 실제 브라우저</div></div>
     <div class="stat-card"><b>정적 분석</b><div class="l">전 코드</div><div class="d">ruff · 타입 검사</div></div>
   </div>
 
   <div class="callout">
-    <b>본 소개서의 모든 화면은 상시 가동 중인 인스턴스에서 캡처했습니다.</b>
-    제품이 문서상이 아니라 실제로 설치되고 동작하는 상태임을 보여줍니다.
+    <b>본 소개서에는 실제 제품 실행 화면을 수록했습니다.</b> 모든 화면은 상시 가동 중인 환경에서 캡처했습니다.
   </div>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>20</span></div>
@@ -1282,8 +1282,8 @@
   <h2 class="sub">① 산업 현장 — 포스코DX</h2>
   <p>
     포스코DX에서 <b>애플리케이션 및 마이크로서비스의 설계와 소스코드 생성 도구</b>로 사용되고 있습니다.
-    대규모 제조·산업 IT 조직의 실제 개발 과정에 투입되어, 이벤트스토밍으로 도출한 설계 모델에서
-    마이크로서비스 코드를 생성하는 흐름이 반복 수행됐습니다.
+    대규모 제조 · 산업 IT 조직의 실제 개발 과정에서, 이벤트스토밍으로 도출한 설계 모델을 기반으로
+    마이크로서비스 코드를 생성하는 데 활용됐습니다.
   </p>
 
   <h2 class="sub">② 공공 — DPG 통합테스트베드</h2>
@@ -1311,7 +1311,7 @@
   <div class="callout">
     <b>Robo Architect가 이어받은 것과 새로 더한 것.</b> 이벤트스토밍 설계와 코드 생성이라는 검증된 축은
     그대로 잇고, 여기에 <b>변경 영향 전파 · 제안 생애주기 · 초안 스토리보드 · 코딩 에이전트 통합 · 폐쇄망 설치형</b>을
-    더했습니다. 설계 <b>한 번</b>이 아니라 설계가 <b>계속 바뀌는 상황</b>을 다루는 것이 이 제품의 과제입니다.
+    더했습니다. Robo Architect는 <b>초기 설계부터 이후 변경 관리까지</b> 지원합니다.
     <br><span style="font-size:8.4pt; color:var(--muted)">※ 수치는 MSA School 공개 집계 기준이며, 상세 구축 범위와 도입 효과는 담당 영업 채널을 통해 개별 안내드립니다.</span>
   </div>
 
@@ -1340,7 +1340,7 @@
       <div class="track"><div class="bar" style="left:22%; width:30%"></div></div>
     </div>
     <div class="row">
-      <div class="lbl"><b>3. 검증 · 교육</b><span>보안 검토 · 아키텍트 교육 · 조직 헌장 수립</span></div>
+      <div class="lbl"><b>3. 검증 · 교육</b><span>보안 검토 · 아키텍트 교육 · 조직 공통 설계 기준 수립</span></div>
       <div class="track"><div class="bar" style="left:48%; width:28%"></div></div>
     </div>
     <div class="row">
@@ -1349,13 +1349,13 @@
     </div>
   </div>
 
-  <h2 class="sub">PoC에서 확인하시길 권합니다</h2>
+  <h2 class="sub">PoC 주요 검증 항목</h2>
   <ul class="dot">
-    <li>우리 시스템의 실제 요구사항 문서가 <b>쓸 만한 도메인 그래프</b>로 세워지는가</li>
-    <li>실제로 있었던 변경 요청 하나를 넣었을 때 <b>영향 범위가 맞게 나오는가</b></li>
-    <li>초안 단계에서 나온 화면이 <b>이해관계자 설명에 쓸 수 있는 수준인가</b></li>
-    <li>구현 단계가 우리 저장소·브랜치 전략과 <b>충돌 없이 붙는가</b></li>
-    <li>폐쇄망 설치와 사내 LLM 연동이 <b>보안 정책을 준수하는가</b></li>
+    <li>실제 요구사항 문서의 주요 개념과 관계가 <b>도메인 그래프에 적절히 반영되는지</b></li>
+    <li>실제 변경 사례에 대해 <b>관련 설계 요소와 소스 파일을 식별하는지</b></li>
+    <li>생성된 화면 초안으로 <b>이해관계자가 기능과 사용 흐름을 이해할 수 있는지</b></li>
+    <li>기존 저장소 구성과 브랜치 운영 방식에 맞춰 <b>구현 · 병합을 진행할 수 있는지</b></li>
+    <li>폐쇄망 설치와 사내 LLM 연동이 <b>고객사의 보안 정책을 준수하는지</b></li>
   </ul>
 
   <h2 class="sub">도입 단계에서 함께 정할 것</h2>
@@ -1366,10 +1366,10 @@
     </div>
     <div class="card">
       <div class="t">대상 저장소 · 브랜치 전략</div>
-      <p style="font-size:8.8pt">샌드박스를 어느 저장소에 만들고 어느 브랜치로 병합할지.</p>
+      <p style="font-size:8.8pt">격리된 작업 공간을 어느 저장소에 만들고 어느 브랜치로 병합할지.</p>
     </div>
     <div class="card">
-      <div class="t">조직 헌장</div>
+      <div class="t">조직 공통 설계 기준</div>
       <p style="font-size:8.8pt">기술 스택 · 아키텍처 스타일 · 저장소 구성 전략을 한 번 수립.</p>
     </div>
     <div class="card">
@@ -1380,7 +1380,7 @@
 
   <div class="note">
     <div class="t">다음 단계 — 30분 데모 · PoC 환경 협의</div>
-    실제 인스턴스에서 <b>"요구사항 한 문단 → 설계 그래프 → 화면"</b>까지 직접 보시는 것이 가장 빠릅니다.
+    실행 중인 제품에서 <b>"요구사항 한 문단 → 설계 그래프 → 화면"</b>까지 직접 보시는 것이 가장 빠릅니다.
     고객사 도메인 문서 일부를 미리 주시면 <b>귀사 데이터로</b> 시연해 드립니다.
   </div>
 
@@ -1398,7 +1398,7 @@
   </div>
 
   <div class="cover-eyebrow">도입 문의</div>
-  <h1 class="cover-title">설계가 살아 있는<br>개발을 시작하세요.</h1>
+  <h1 class="cover-title">요구사항부터 구현까지,<br>변경을 함께 관리하세요.</h1>
   <p class="cover-lead">
     도입 상담 · 데모 요청 · 견적 문의 — 무엇이든 남겨주세요.
     담당 전문가가 영업일 기준 1일 이내에 답변드리며, 원하시면 실제 제품을 활용한
@@ -1441,7 +1441,7 @@
       </div>
       <div style="flex:1; background:rgba(255,255,255,.13); border:1px solid rgba(255,255,255,.28); border-radius:8px; padding:4mm">
         <div style="font-size:10.5pt; font-weight:800; color:#fff">코드</div>
-        <div style="font-size:8.4pt; color:#c3d8f5; margin-top:3px">샌드박스 구현 · 병합</div>
+        <div style="font-size:8.4pt; color:#c3d8f5; margin-top:3px">격리 환경 구현 · 병합</div>
       </div>
     </div>
   </div>
