@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import mermaid from 'mermaid'
+import { buildBcOverviewDef, buildContextMapDef, buildAggregateModelDef } from '../diagrams'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
@@ -11,13 +12,19 @@ const canvasStore = useCanvasStore()
 const navigatorStore = useNavigatorStore()
 const bpmnStore = useBpmnStore()
 
-// 섹션 구성은 기준 템플릿(local-msaez DocumentTemplate.vue)의 순서를 따른다.
-// userScenario / valueStream / boundedContext / eventStorming /
-// apiSpecification / aggregateDetail / traceabilityMatrix
+// 섹션 구성은 기준 템플릿(local-msaez DocumentTemplate.vue)의 순서를 그대로 따른다.
+// userScenario / valueStream / boundedContext / aggregateDesign /
+// eventStorming / apiSpecification / aggregateDetail / traceabilityMatrix
+//
+// 기준은 aggregateDesign 에서 LLM 이 낸 Aggregate '초안 옵션'들을 나란히 비교하지만
+// 우리 파이프라인은 초안을 남기지 않고 확정 모델 하나만 갖는다. 그래서 같은 자리에
+// 확정 모델의 구조도와 그 구성 근거(불변식·커맨드)를 싣는다 — 섹션 번호와 목적은 같고
+// 내용만 우리 데이터에 맞춘다.
 const selectedSections = ref({
   userStories: true,
   valueStream: true,
   boundedContext: true,
+  aggregateDesign: true,
   modelOverview: true,
   apiSpecification: true,
   aggregateDetail: true,
@@ -28,6 +35,7 @@ const SECTION_LABELS = {
   userStories: '사용자 스토리',
   valueStream: '밸류 스트림 분석',
   boundedContext: 'Bounded Context',
+  aggregateDesign: 'Aggregate 설계',
   modelOverview: '모델 전반 정보',
   apiSpecification: 'API 명세',
   aggregateDetail: 'Aggregate 상세',
@@ -167,7 +175,6 @@ defineExpose({
   selectSession,
   get sessionScoped() { return sessionScoped.value },
   get valueStreamProcesses() { return valueStreamProcesses.value },
-  get glossaryTerms() { return glossaryTerms.value },
   get traceGroups() { return traceGroups.value },
   get traceInferred() { return traceInferred.value },
   get traceUnmapped() { return traceUnmapped.value },
@@ -188,6 +195,7 @@ const sectionNumbers = computed(() => {
   if (selectedSections.value.userStories) nums.userStories = ++n
   if (selectedSections.value.valueStream) nums.valueStream = ++n
   if (selectedSections.value.boundedContext) nums.boundedContext = ++n
+  if (selectedSections.value.aggregateDesign) nums.aggregateDesign = ++n
   if (selectedSections.value.modelOverview) nums.modelOverview = ++n
   if (selectedSections.value.apiSpecification) nums.apiSpecification = ++n
   if (selectedSections.value.aggregateDetail) nums.aggregateDetail = ++n
@@ -255,7 +263,6 @@ const crossBCPolicies = computed(() => {
 // 기준 템플릿의 `getValueStreamLinearPages` 와 `traceabilityMatrixGroups` 에
 // 대응한다. Session 스냅샷이 없으면 빈 값 → 섹션 자체가 렌더링되지 않는다.
 const valueStreamProcesses = computed(() => deliverable.value?.valueStream?.processes || [])
-const glossaryTerms = computed(() => deliverable.value?.valueStream?.glossary || [])
 const apiSpec = computed(() => deliverable.value?.apiSpecification || null)
 // 기준 기능(local-msaez CodeGenerator "Export Aggregates") 대응 데이터.
 const aggregateExport = computed(() => deliverable.value?.aggregateExport || null)
@@ -290,47 +297,79 @@ const storySourceById = computed(() => {
 function storySources(usId) { return storySourceById.value[usId]?.sources || [] }
 function storySourceTask(usId) { return storySourceById.value[usId]?.sourceTask || null }
 
-// ── Context Map (Mermaid) ──
+// ── 다이어그램 (Mermaid) ──
+//
+// 기준 템플릿(local-msaez)은 BC 분해 결과와 Aggregate 구조를 머메이드로 싣는다.
+// 여기서도 같은 자리에 같은 종류의 그림을 둔다. 렌더는 한 곳에서 돌린다 —
+// 템플릿이 `data-mmd` 에 정의를 실어 두면 아래 renderAllMermaid 가 화면에 있는
+// 것을 전부 찾아 그린다. 그림이 늘어도 watch 를 새로 달 필요가 없다.
 mermaid.initialize({ startOnLoad: false, theme: 'base',
   themeVariables: { primaryColor:'#dbe4ff', primaryBorderColor:'#4c6ef5', primaryTextColor:'#1a1a2e', lineColor:'#868e96', fontSize:'13px', fontFamily:'Pretendard, sans-serif' },
   flowchart: { htmlLabels:true, curve:'basis', rankSpacing:60, nodeSpacing:40, padding:12 }, securityLevel:'loose' })
 
-const contextMapRef = ref(null)
-const contextMapDef = computed(() => {
-  const bcs = sortedContexts.value
-  if (!bcs.length || !crossBCPolicies.value.length) return ''
-  const idMap = {}; bcs.forEach((bc, i) => { idMap[bcName(bc)] = `BC${i}` })
-  let def = 'graph LR\n'
-  def += '  classDef core fill:#dbe4ff,stroke:#4c6ef5,stroke-width:2px,color:#1a1a2e\n'
-  def += '  classDef supporting fill:#fff3bf,stroke:#f08c00,stroke-width:2px,color:#1a1a2e\n'
-  def += '  classDef generic fill:#f1f3f5,stroke:#adb5bd,stroke-width:2px,color:#1a1a2e\n'
-  bcs.forEach(bc => {
-    const name = bcName(bc), id = idMap[name], domain = bc.domainType||''
-    def += `  ${id}["${name}<br/><small>${domain}</small>"]\n`
-    def += `  class ${id} ${domain.includes('Core')?'core':domain.includes('Supporting')?'supporting':'generic'}\n`
-  })
-  const edgeMap = new Map()
-  crossBCPolicies.value.forEach(rel => {
-    const fid = idMap[rel.fromBC], tid = idMap[rel.toBC]; if (!fid||!tid) return
-    const key = `${fid}-->${tid}`
-    edgeMap.has(key) ? edgeMap.get(key).push(rel.policy) : edgeMap.set(key, [rel.policy])
-  })
-  edgeMap.forEach((labels, key) => {
-    const [fid] = key.split('-->'), tid = key.split('-->')[1]
-    def += `  ${fid} -->|"${labels.join('<br/>')}"| ${tid}\n`
-  })
-  return def
-})
+/** BC 도식에 넘길 최소 형태로 바꾼다. */
+const bcSummaries = computed(() => sortedContexts.value.map(bc => ({
+  name: bcName(bc),
+  domainType: bc.domainType || '',
+  aggregateCount: bcTree(bc)?.aggregates?.length || 0,
+})))
 
-async function renderMermaid() {
-  if (!contextMapDef.value) return
+/** BC 분해 결과 — 관계가 없어도 BC 노드는 그린다. */
+const bcOverviewDef = computed(() => buildBcOverviewDef(bcSummaries.value, crossBCPolicies.value))
+/** 컨텍스트 간 연관 관계 — Policy 를 간선에 붙인 상세 도식. */
+const contextMapRef = ref(null)
+const contextMapDef = computed(() => buildContextMapDef(bcSummaries.value, crossBCPolicies.value))
+/** BC 하나의 Aggregate 구조도. */
+function aggregateModelDef(ctx) { return buildAggregateModelDef(bcTree(ctx)?.aggregates) }
+
+/** Aggregate 설계 섹션에 실을 BC — Aggregate 가 하나라도 있는 것만. */
+const aggregateDesignContexts = computed(() => sortedContexts.value.filter(ctx => (bcTree(ctx)?.aggregates || []).length))
+
+const docRoot = ref(null)
+let mmdSeq = 0
+/**
+ * 화면에 있는 `data-mmd` 정의를 전부 찾아 그린다.
+ *
+ * 이미 같은 정의로 그린 것은 건너뛰므로 섹션을 껐다 켜도 다시 그리지 않는다.
+ * 실패하면 자리를 비우지 않고 실패했다고 적는다 — 빈 자리는 그림이 없는 것과
+ * 구별되지 않아 조용히 빠진 것처럼 보인다.
+ */
+async function renderAllMermaid() {
   await nextTick()
-  const el = contextMapRef.value; if (!el) return
-  try { const { svg } = await mermaid.render('ctx-map-' + Date.now(), contextMapDef.value); el.innerHTML = svg }
-  catch (e) { console.error('[ExportDocument] mermaid error:', e) }
+  const root = docRoot.value
+  if (!root) return
+  for (const el of root.querySelectorAll('[data-mmd]')) {
+    const def = el.getAttribute('data-mmd')
+    if (!def || el.dataset.mmdDone === def) continue
+    try {
+      const { svg } = await mermaid.render('mmd-' + (++mmdSeq), def)
+      el.innerHTML = svg
+    } catch (e) {
+      console.error('[ExportDocument] mermaid error:', e)
+      el.innerHTML = '<p class="mmd-fail">다이어그램을 그리지 못했습니다.</p>'
+    }
+    el.dataset.mmdDone = def
+  }
 }
-watch(contextMapDef, renderMermaid, { immediate: false })
-watch(isLoading, (v) => { if (!v) renderMermaid() })
+watch(isLoading, (v) => { if (!v) renderAllMermaid() })
+watch([bcOverviewDef, contextMapDef], renderAllMermaid)
+watch(selectedSections, renderAllMermaid, { deep: true })
+
+/**
+ * 긴 표를 페이지 단위로 자른다.
+ *
+ * `break-inside: avoid` 는 내용이 한 장을 넘으면 브라우저가 지킬 수 없어 임의
+ * 위치에서 잘린다. 기준 템플릿이 `splitTableRows` 로 10행씩 나눠 담는 것과 같은
+ * 이유이며, 잘린 조각마다 머리글이 다시 나오므로 이어지는 장도 읽을 수 있다.
+ */
+const ROWS_PER_PAGE = 12
+function chunkRows(rows, size = ROWS_PER_PAGE) {
+  const list = rows || []
+  if (list.length <= size) return [list]
+  const out = []
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
+  return out
+}
 
 // ── Data helpers ──
 function parseJsonFields(json) {
@@ -360,7 +399,7 @@ function resolveNodeName(nodeId) {
 </script>
 
 <template>
-  <div class="doc">
+  <div class="doc" ref="docRoot">
     <div v-if="isLoading" class="loading-box"><div class="spinner-sm"></div><span>데이터를 불러오는 중...</span></div>
 
     <template v-if="!isLoading">
@@ -410,8 +449,12 @@ function resolveNodeName(nodeId) {
             <ul><li v-for="p in valueStreamProcesses" :key="'toc-vs-'+p.id">{{ p.name }} <span class="toc-dim">[Task {{ p.taskCount }}]</span></li></ul>
           </li>
           <li v-if="selectedSections.boundedContext">{{ sectionNumbers.boundedContext }}. Bounded Context 정의
-            <ul><li v-for="ctx in sortedContexts" :key="'toc-bc-'+ctx.id">{{ bcName(ctx) }} <span class="toc-dim">[{{ ctx.domainType }}]</span></li>
+            <ul><li v-if="bcOverviewDef">분해 결과</li>
+            <li v-for="ctx in sortedContexts" :key="'toc-bc-'+ctx.id">{{ bcName(ctx) }} <span class="toc-dim">[{{ ctx.domainType }}]</span></li>
             <li v-if="crossBCPolicies.length">컨텍스트 간 연관 관계</li></ul>
+          </li>
+          <li v-if="selectedSections.aggregateDesign && aggregateDesignContexts.length">{{ sectionNumbers.aggregateDesign }}. Aggregate 설계
+            <ul><li v-for="ctx in aggregateDesignContexts" :key="'toc-ag-'+ctx.id">{{ bcName(ctx) }}</li></ul>
           </li>
           <li v-if="selectedSections.modelOverview">{{ sectionNumbers.modelOverview }}. 이벤트 스토밍 모델 전반 정보
             <ul><li v-for="ctx in sortedContexts" :key="'toc-m-'+ctx.id">{{ bcName(ctx) }}</li></ul>
@@ -495,22 +538,22 @@ function resolveNodeName(nodeId) {
           </table>
         </div>
 
-        <div v-if="glossaryTerms.length" class="block">
-          <h3>{{ sectionNumbers.valueStream }}-{{ valueStreamProcesses.length+1 }}. 도메인 용어집</h3>
-          <table class="tbl">
-            <thead><tr><th style="width:160px">용어</th><th>설명</th></tr></thead>
-            <tbody><tr v-for="(g,gi) in glossaryTerms" :key="'gl-'+gi"><td class="b">{{ g.term||g.name||'-' }}</td><td class="desc-cell">{{ g.definition||g.description||'-' }}</td></tr></tbody>
-          </table>
-        </div>
       </template>
 
       <!-- ═══════ 2. Bounded Context ═══════ -->
       <template v-if="selectedSections.boundedContext">
         <div class="page page--section-cover"><div class="sc__num">{{ sectionNumbers.boundedContext }}</div><div class="sc__title">Bounded Context 정의</div><div class="sc__desc">도메인을 구성하는 Bounded Context의 역할, 구성 요소, 상호 관계를 정의합니다.</div></div>
 
+        <!-- 분해 결과 — 기준 템플릿 3-2 -->
+        <div v-if="bcOverviewDef" class="block">
+          <h3>{{ sectionNumbers.boundedContext }}-1. 분해 결과</h3>
+          <p class="desc">도출된 Bounded Context 와 그 사이의 이벤트 연계를 도식화합니다. 색은 도메인 유형(Core / Supporting / Generic)을 나타냅니다.</p>
+          <div class="mmd-wrap" data-mmd-id="bc-overview" :data-mmd="bcOverviewDef"></div>
+        </div>
+
         <!-- 요약 -->
         <div class="block">
-          <h3>{{ sectionNumbers.boundedContext }}. Bounded Context 요약</h3>
+          <h3>{{ sectionNumbers.boundedContext }}-2. Bounded Context 요약</h3>
           <table class="tbl">
             <thead><tr><th>Bounded Context</th><th>도메인 유형</th><th>설명</th><th class="c" style="width:50px">Agg</th><th class="c" style="width:50px">Cmd</th><th class="c" style="width:50px">Evt</th><th class="c" style="width:50px">RM</th><th class="c" style="width:40px">US</th></tr></thead>
             <tbody><tr v-for="ctx in sortedContexts" :key="ctx.id">
@@ -528,7 +571,7 @@ function resolveNodeName(nodeId) {
 
         <!-- BC 상세 -->
         <div v-for="(ctx,ci) in sortedContexts" :key="'bcd-'+ctx.id" class="block">
-          <h3>{{ sectionNumbers.boundedContext }}-{{ ci+1 }}. {{ bcName(ctx) }}
+          <h3>{{ sectionNumbers.boundedContext }}-{{ ci+3 }}. {{ bcName(ctx) }}
             <span class="dom dom--inline" :class="'dom--'+((ctx.domainType||'').replace(/\s/g,''))">{{ ctx.domainType }}</span>
           </h3>
           <p v-if="ctx.description||bcTree(ctx)?.description" class="desc">{{ ctx.description||bcTree(ctx)?.description }}</p>
@@ -543,14 +586,55 @@ function resolveNodeName(nodeId) {
         <!-- Cross-BC Policy -->
         <template v-if="crossBCPolicies.length">
           <div v-if="contextMapDef" class="block">
-            <h3>{{ sectionNumbers.boundedContext }}-{{ sortedContexts.length+1 }}. 컨텍스트 간 연관 관계</h3>
+            <h3>{{ sectionNumbers.boundedContext }}-{{ sortedContexts.length+3 }}. 컨텍스트 간 연관 관계</h3>
             <p class="desc">서로 다른 Bounded Context 간 이벤트-Policy-커맨드 연결을 도식화합니다.</p>
-            <div ref="contextMapRef" class="ctx-map-wrap"></div>
+            <div ref="contextMapRef" class="mmd-wrap ctx-map-wrap" data-mmd-id="ctx-map" :data-mmd="contextMapDef"></div>
           </div>
           <div class="block">
             <h3>컨텍스트 간 연관 관계 상세</h3>
             <table class="tbl"><thead><tr><th>발행 BC</th><th>Event</th><th>Policy</th><th>수신 BC</th><th>Command</th></tr></thead>
               <tbody><tr v-for="(r,i) in crossBCPolicies" :key="i"><td class="b">{{ r.fromBC }}</td><td><span class="tag tag--event">{{ r.fromEvent }}</span></td><td>{{ r.policy }}</td><td class="b">{{ r.toBC }}</td><td><span class="tag tag--cmd">{{ r.toCommand }}</span></td></tr></tbody>
+            </table>
+          </div>
+        </template>
+      </template>
+
+      <!-- ═══════ 4. Aggregate 설계 ═══════ -->
+      <!--
+        기준 템플릿(local-msaez)의 '애그리거트 설계' 자리다. 기준은 LLM 이 낸 초안
+        옵션들을 장단점과 함께 비교하지만, 우리 파이프라인은 초안을 남기지 않고 확정
+        모델만 갖는다. 그래서 -1 에는 확정 모델의 구조도를, -2 에는 그 구성의 근거가
+        되는 업무 불변식과 주요 커맨드를 싣는다.
+      -->
+      <template v-if="selectedSections.aggregateDesign && aggregateDesignContexts.length">
+        <div class="page page--section-cover"><div class="sc__num">{{ sectionNumbers.aggregateDesign }}</div><div class="sc__title">Aggregate 설계</div><div class="sc__desc">각 Bounded Context 안에서 Aggregate 를 정의해 업무 불변성과 상태 일관성을 보장합니다.<br>트랜잭션 경계를 중심으로 모델을 구조화하고, 핵심 커맨드와 값 객체를 식별합니다.</div></div>
+
+        <template v-for="(ctx,ci) in aggregateDesignContexts" :key="'agd-'+ctx.id">
+          <!-- 4-1. 모델 -->
+          <div class="block">
+            <h3>{{ sectionNumbers.aggregateDesign }}-1. Aggregate 모델: {{ bcName(ctx) }}</h3>
+            <p class="desc">Aggregate 와 그에 속한 Enumeration · Value Object 의 구조입니다. 점선은 다른 Aggregate 를 참조하는 Value Object 입니다.</p>
+            <div class="mmd-wrap" :data-mmd-id="'agg-'+ctx.id" :data-mmd="aggregateModelDef(ctx)"></div>
+          </div>
+
+          <!-- 4-2. 구성 근거 -->
+          <div v-for="(part,pi) in chunkRows(bcTree(ctx).aggregates, 6)" :key="'agd-a-'+ctx.id+'-'+pi" class="block">
+            <h3>{{ sectionNumbers.aggregateDesign }}-2. Aggregate 분석: {{ bcName(ctx) }}<span v-if="pi" class="cont-mark">(계속)</span></h3>
+            <table class="tbl">
+              <thead><tr><th style="width:150px">Aggregate</th><th>업무 불변식</th><th style="width:230px">주요 커맨드</th></tr></thead>
+              <tbody>
+                <tr v-for="a in part" :key="'agd-r-'+a.id">
+                  <td class="b">{{ a.displayName||a.name }}<div class="cell-sub" v-if="a.rootEntity">Root: {{ a.rootEntity }}</div></td>
+                  <td>
+                    <ul v-if="a.invariants?.length" class="cell-list"><li v-for="(iv,ii) in a.invariants" :key="ii">{{ typeof iv === 'string' ? iv : (iv.description||iv.name||iv.expression||'-') }}</li></ul>
+                    <span v-else class="muted">명시된 불변식이 없습니다.</span>
+                  </td>
+                  <td>
+                    <span v-if="a.commands?.length">{{ a.commands.map(c=>c.displayName||c.name).join(', ') }}</span>
+                    <span v-else class="muted">-</span>
+                  </td>
+                </tr>
+              </tbody>
             </table>
           </div>
         </template>
@@ -905,8 +989,14 @@ function resolveNodeName(nodeId) {
 .bc-el span { color:#343a40; }
 
 /* Mermaid */
-.ctx-map-wrap { overflow-x:auto; margin:16px 0; text-align:center; }
-.ctx-map-wrap :deep(svg) { max-width:100%; height:auto; }
+.mmd-wrap, .ctx-map-wrap { overflow-x:auto; margin:16px 0; text-align:center; }
+.mmd-wrap :deep(svg), .ctx-map-wrap :deep(svg) { max-width:100%; height:auto; }
+.mmd-fail { color:#c92a2a; font-size:12.5px; margin:8px 0; }
+.cont-mark { font-size:12px; font-weight:400; color:#868e96; margin-left:6px; }
+.cell-sub { font-size:11.5px; color:#868e96; font-weight:400; margin-top:2px; }
+.cell-list { margin:0; padding-left:16px; }
+.cell-list li { padding:1px 0; line-height:1.5; }
+.muted { color:#adb5bd; }
 
 /* Domain */
 .dom { display:inline-block; font-size:11px; padding:2px 8px; border-radius:4px; font-weight:500; }
@@ -973,7 +1063,21 @@ function resolveNodeName(nodeId) {
   /* Covers & TOC: forced full page */
   .page { border:none !important; box-shadow:none !important; border-radius:0 !important; margin:0; padding:20px 28px; page-break-after:always; break-after:page; }
   .page:last-child { page-break-after:auto; break-after:auto; }
-  /* Content blocks: flow naturally, avoid internal breaks only */
-  .block { border:none !important; box-shadow:none !important; border-radius:0 !important; margin:0; padding:16px 28px; page-break-inside:avoid; break-inside:avoid; }
+  /*
+    본문 블록은 넘겨서 이어지게 둔다.
+
+    종전에는 블록마다 `break-inside: avoid` 를 걸었는데, 내용이 한 장을 넘으면
+    브라우저가 그 요청을 지킬 수 없어 임의 위치에서 잘렸다. 표 하나가 수백 행인
+    곳이 있어(속성·규칙) 사실상 항상 그랬다. 대신 아래 셋으로 읽을 수 있게 만든다.
+      · 표 머리글을 장마다 되풀이한다 (table-header-group)
+      · 행은 가운데서 자르지 않는다
+      · 제목 뒤에서 바로 끊기지 않게 한다
+  */
+  .block { border:none !important; box-shadow:none !important; border-radius:0 !important; margin:0; padding:16px 28px; break-inside:auto; }
+  .tbl thead { display:table-header-group; }
+  .tbl tfoot { display:table-footer-group; }
+  .tbl tr { page-break-inside:avoid; break-inside:avoid; }
+  h3, h4 { page-break-after:avoid; break-after:avoid; }
+  .mmd-wrap, .ctx-map-wrap { page-break-inside:avoid; break-inside:avoid; }
 }
 </style>

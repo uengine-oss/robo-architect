@@ -7,22 +7,27 @@
 import * as htmlToImage from 'html-to-image'
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  HeadingLevel, AlignmentType, ImageRun, WidthType,
+  HeadingLevel, AlignmentType, ImageRun, WidthType, BorderStyle, ShadingType,
 } from 'docx'
 import PptxGenJS from 'pptxgenjs'
+import { xmlSafe, isValidPng, fitPng } from '../../docxSafety'
 
 // ── Constants ──
 const FONT = '맑은 고딕'
 const PAGE_W = 9026
 const MARGIN = { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+// style 을 빼면 docx 가 선을 아예 그리지 않는다 — 표가 테두리 없이 나온다.
+const BD = { style: BorderStyle.SINGLE, size: 1, color: '999999' }
 const BORDERS = {
-  top: { size: 1, color: '999999' }, bottom: { size: 1, color: '999999' },
-  left: { size: 1, color: '999999' }, right: { size: 1, color: '999999' },
-  insideHorizontal: { size: 1, color: '999999' }, insideVertical: { size: 1, color: '999999' },
+  top: BD, bottom: BD, left: BD, right: BD, insideHorizontal: BD, insideVertical: BD,
 }
+// type 을 빼면 `<w:shd w:fill=.../>` 처럼 w:val 없는 태그가 나가고, Word 가 표 속성이
+// 손상됐다고 보아 복구를 묻는다. 색만 지정해도 문서가 만들어지므로 드러나지 않는다.
+const HEADER_SHADING = { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F3F5' }
+
 
 // ── Word primitives ──
-function txt(s, o = {}) { return new TextRun({ text: s || '-', font: FONT, size: o.size || 22, bold: o.bold, italic: o.italic, color: o.color }) }
+function txt(s, o = {}) { return new TextRun({ text: xmlSafe(s || '-'), font: FONT, size: o.size || 22, bold: o.bold, italic: o.italic, color: o.color }) }
 function para(t, o = {}) { return new Paragraph({ children: typeof t === 'string' ? [txt(t, o)] : t, spacing: { after: o.after ?? 120, before: o.before ?? 0 }, alignment: o.align, indent: o.indent, heading: o.heading }) }
 function h2(t) { return para(t, { heading: HeadingLevel.HEADING_2, size: 28, bold: true, after: 200 }) }
 function h3(t) { return para(t, { heading: HeadingLevel.HEADING_3, size: 24, bold: true, after: 120 }) }
@@ -33,9 +38,13 @@ function sec(children) { return { properties: { page: { margin: MARGIN } }, chil
 function tbl(headers, rows, widths) {
   const ws = widths || headers.map(() => Math.floor(PAGE_W / headers.length))
   return new Table({
+    // tableHeader: 표가 다음 장으로 넘어가면 Word 가 머리글을 다시 그린다.
+    // cantSplit: 행 하나가 장 경계에서 반으로 잘리지 않게 한다.
+    // 둘 다 없으면 긴 표가 머리글 없이 이어지고 행이 중간에서 끊긴다.
     rows: [
-      new TableRow({ children: headers.map((h, i) => new TableCell({ children: [new Paragraph({ children: [txt(h, { bold: true, size: 20 })], alignment: AlignmentType.CENTER })], shading: { fill: 'F1F3F5' }, width: { size: ws[i], type: WidthType.DXA } })) }),
-      ...rows.map(row => new TableRow({ children: row.map((c, i) => new TableCell({ children: [new Paragraph({ children: [txt(String(c ?? '-'), { size: 20 })] })], width: { size: ws[i], type: WidthType.DXA } })) }))
+      new TableRow({ tableHeader: true, cantSplit: true, children: headers.map((h, i) => new TableCell({ children: [new Paragraph({ children: [txt(h, { bold: true, size: 20 })], alignment: AlignmentType.CENTER })], shading: HEADER_SHADING, width: { size: ws[i], type: WidthType.DXA } })) }),
+      // 줄바꿈이 든 셀은 문단을 나눈다 — 한 TextRun 안의 \n 은 Word 에서 사라진다.
+      ...rows.map(row => new TableRow({ cantSplit: true, children: row.map((c, i) => new TableCell({ children: String(c ?? '-').split('\n').map(line => new Paragraph({ children: [txt(line, { size: 20 })] })), width: { size: ws[i], type: WidthType.DXA } })) }))
     ],
     width: { size: PAGE_W, type: WidthType.DXA }, columnWidths: ws, borders: BORDERS,
   })
@@ -58,6 +67,20 @@ async function captureSvg(container, selector) {
   } catch { return null }
 }
 
+/**
+ * 미리보기에 그려진 머메이드 도식을 그림 문단으로 만든다.
+ *
+ * 화면에서 `data-mmd-id` 로 찾는다 — 클래스 이름으로 찾으면 스타일을 바꿀 때
+ * 조용히 끊긴다. 못 찾으면 빈 배열이라 문서에서 그 자리만 빠진다.
+ */
+async function mmdImage(container, id, maxWidth = 550, maxHeight = 700) {
+  const img = await captureSvg(container, `[data-mmd-id="${id}"]`)
+  if (!isValidPng(img)) return []
+  const { width, height } = fitPng(img, maxWidth, maxHeight)
+  return [new Paragraph({ children: [new ImageRun({ data: img, transformation: { width, height }, type: 'png' })], alignment: AlignmentType.CENTER, spacing: { after: 200 } })]
+}
+
+
 // ── Word 섹션 커버 페이지 ──
 function wordSectionCover(num, title, desc) {
   return sec([
@@ -75,13 +98,15 @@ export async function exportToWord(data, container, onProgress) {
   const {
     allContexts, fullTrees, sortedContexts, allUserStories, crossBCPolicies,
     sectionNumbers: sn, selectedSections, helpers,
-    valueStreamProcesses = [], glossaryTerms = [],
+    valueStreamProcesses = [],
     traceGroups = [], traceInferred = [], traceUnmapped = [], traceSummary = null,
     apiSummary = null, apiConvention = '',
   } = data
   const { bcName, bcTree, getCommandsFromTree, getReadModelsFromTree, allCmdsForCtx, allEvtsForCtx, resolveNodeName, traceTypeLabel, storySources, storySourceTask, apiForCtx } = helpers
   const sections = []
   const aggTotal = Object.values(fullTrees).reduce((s, t) => s + (t.aggregates?.length || 0), 0)
+  // Aggregate 설계 섹션에 실을 BC — 미리보기의 aggregateDesignContexts 와 같은 조건.
+  const aggDesignContexts = sortedContexts.filter(ctx => (bcTree(ctx)?.aggregates || []).length)
 
   // ── 표지 ──
   sections.push(sec([
@@ -104,7 +129,12 @@ export async function exportToWord(data, container, onProgress) {
   }
   if (selectedSections.boundedContext) {
     tocAdd(`${sn.boundedContext}. Bounded Context 정의`)
-    sortedContexts.forEach((c, i) => tocAdd(`${sn.boundedContext}-${i + 1}. ${bcName(c)}`, true))
+    tocAdd(`${sn.boundedContext}-1. 분해 결과`, true)
+    sortedContexts.forEach((c, i) => tocAdd(`${sn.boundedContext}-${i + 3}. ${bcName(c)}`, true))
+  }
+  if (selectedSections.aggregateDesign && aggDesignContexts.length) {
+    tocAdd(`${sn.aggregateDesign}. Aggregate 설계`)
+    aggDesignContexts.forEach(c => tocAdd(`${bcName(c)}`, true))
   }
   if (selectedSections.modelOverview) {
     tocAdd(`${sn.modelOverview}. 이벤트 스토밍 모델 전반 정보`)
@@ -176,12 +206,6 @@ export async function exportToWord(data, container, onProgress) {
       }
       sections.push(sec(ch))
     })
-    if (glossaryTerms.length) {
-      sections.push(sec([
-        h2(`${sn.valueStream}-${valueStreamProcesses.length + 1}. 도메인 용어집`),
-        tbl(['용어', '설명'], glossaryTerms.map(g => [g.term || g.name || '-', g.definition || g.description || '-']), [2200, 6800]),
-      ]))
-    }
   }
 
   // ── 2. Bounded Context (요약 + 모든 BC 상세를 한 section에) ──
@@ -189,6 +213,9 @@ export async function exportToWord(data, container, onProgress) {
     sections.push(wordSectionCover(sn.boundedContext, 'Bounded Context 정의', '도메인을 구성하는 Bounded Context의 역할, 구성 요소, 상호 관계를 정의합니다.'))
     const ch = [
       h2(`${sn.boundedContext}. Bounded Context 정의`),
+      h3(`${sn.boundedContext}-1. 분해 결과`),
+      ...(await mmdImage(container, 'bc-overview')),
+      h3(`${sn.boundedContext}-2. Bounded Context 요약`),
       tbl(['BC', '도메인 유형', '설명', 'Agg', 'Cmd', 'Evt', 'RM', 'US'],
         sortedContexts.map(c => { const t = bcTree(c); return [bcName(c), c.domainType || '-', (c.description || t?.description || '-').slice(0, 80), t?.aggregates?.length || 0, t?.aggregates?.reduce((s, a) => s + (a.commands?.length || 0), 0) || 0, t?.aggregates?.reduce((s, a) => s + (a.events?.length || 0), 0) || 0, t?.readmodels?.length || 0, t?.userStories?.length || 0] }),
         [1400, 1100, 2800, 600, 600, 600, 600, 600]),
@@ -197,7 +224,7 @@ export async function exportToWord(data, container, onProgress) {
     // BC 상세를 같은 section에 이어 붙임
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx)
-      ch.push(h3(`${sn.boundedContext}-${ci + 1}. ${bcName(ctx)} [${ctx.domainType || ''}]`))
+      ch.push(h3(`${sn.boundedContext}-${ci + 3}. ${bcName(ctx)} [${ctx.domainType || ''}]`))
       if (ctx.description || t?.description) ch.push(para(ctx.description || t?.description, { size: 20, color: '666666', after: 60 }))
       // 구성요소를 테이블로
       const elements = []
@@ -211,14 +238,37 @@ export async function exportToWord(data, container, onProgress) {
 
     // Cross-BC Policy
     if (crossBCPolicies.length) {
-      ch.push(h3(`${sn.boundedContext}-${sortedContexts.length + 1}. 컨텍스트 간 연관 관계`))
-      const img = await captureSvg(container, '.ctx-map-wrap')
-      if (img) {
-        ch.push(new Paragraph({ children: [new ImageRun({ data: img, transformation: { width: 550, height: 350 }, type: 'png' })], alignment: AlignmentType.CENTER, spacing: { after: 200 } }))
-      }
+      ch.push(h3(`${sn.boundedContext}-${sortedContexts.length + 3}. 컨텍스트 간 연관 관계`))
+      ch.push(...(await mmdImage(container, 'ctx-map')))
       ch.push(tbl(['발행 BC', 'Event', 'Policy', '수신 BC', 'Command'], crossBCPolicies.map(r => [r.fromBC, r.fromEvent, r.policy, r.toBC, r.toCommand]), [1600, 1800, 2200, 1600, 1800]))
     }
     sections.push(sec(ch))
+  }
+
+  // ── Aggregate 설계 ──
+  //
+  // 기준 템플릿(local-msaez)의 '애그리거트 설계' 자리다. 기준은 초안 옵션들을 장단점과
+  // 함께 비교하지만 우리는 확정 모델만 갖는다. -1 에 확정 모델의 구조도를, -2 에 그
+  // 구성의 근거가 되는 업무 불변식과 주요 커맨드를 싣는다 — 미리보기와 같은 내용이다.
+  if (selectedSections.aggregateDesign && aggDesignContexts.length) {
+    sections.push(wordSectionCover(sn.aggregateDesign, 'Aggregate 설계', '각 Bounded Context 안에서 Aggregate 를 정의해 업무 불변성과 상태 일관성을 보장합니다. 트랜잭션 경계를 중심으로 모델을 구조화하고, 핵심 커맨드와 값 객체를 식별합니다.'))
+    for (const ctx of aggDesignContexts) {
+      const t = bcTree(ctx)
+      const ch = [
+        h2(`${sn.aggregateDesign}-1. Aggregate 모델: ${bcName(ctx)}`),
+        ...(await mmdImage(container, `agg-${ctx.id}`)),
+        h3(`${sn.aggregateDesign}-2. Aggregate 분석: ${bcName(ctx)}`),
+        tbl(['Aggregate', '업무 불변식', '주요 커맨드'],
+          (t?.aggregates || []).map(a => [
+            (a.displayName || a.name) + (a.rootEntity ? `\n(Root: ${a.rootEntity})` : ''),
+            (a.invariants || []).map(iv => (typeof iv === 'string' ? iv : (iv.description || iv.name || iv.expression || ''))).filter(Boolean).join('\n') || '명시된 불변식이 없습니다.',
+            (a.commands || []).map(c => c.displayName || c.name).join(', ') || '-',
+          ]),
+          [1800, 4600, 2600]),
+        empty(),
+      ]
+      sections.push(sec(ch))
+    }
   }
 
   // ── 3. 모델 전반 (한 BC = 한 section, 내부 소분류 합침) ──

@@ -102,7 +102,7 @@ function domainTag(type) {
 // ════════════════════════════════════════
 //  MAIN EXPORT
 // ════════════════════════════════════════
-export async function exportToWord({ allContexts, fullTrees, sortedContexts, allUserStories, crossBCPolicies, sectionNumbers, selectedSections, helpers, valueStreamProcesses = [], glossaryTerms = [], traceGroups = [], traceInferred = [], traceUnmapped = [], traceSummary = null }) {
+export async function exportToWord({ allContexts, fullTrees, sortedContexts, allUserStories, crossBCPolicies, sectionNumbers, selectedSections, helpers, valueStreamProcesses = [], traceGroups = [], traceInferred = [], traceUnmapped = [], traceSummary = null }) {
   const { bcName, bcTree, getCommandsFromTree, getReadModelsFromTree, allCmdsForCtx, allEvtsForCtx, resolveNodeName, traceTypeLabel, storySources, storySourceTask } = helpers
   const children = []
   const sn = sectionNumbers // shorthand
@@ -201,15 +201,6 @@ export async function exportToWord({ allContexts, fullTrees, sortedContexts, all
       children.push(pageBreak())
     })
 
-    if (glossaryTerms.length) {
-      children.push(sectionTitle(`${sn.valueStream}-${valueStreamProcesses.length + 1}. 도메인 용어집`))
-      children.push(table(
-        ['용어', '설명'],
-        glossaryTerms.map(g => [g.term || g.name || '-', g.definition || g.description || '-']),
-        [2200, 6800]
-      ))
-      children.push(pageBreak())
-    }
   }
 
   // ══ 2. Bounded Context ══
