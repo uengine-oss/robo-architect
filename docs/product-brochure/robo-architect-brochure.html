@@ -233,7 +233,7 @@
   <div class="cover-eyebrow">제품 소개 및 도입 제안서</div>
   <h1 class="cover-title">요구사항이 바뀌면,<br>설계도 함께 움직입니다.</h1>
   <p class="cover-lead">
-    요구사항을 도메인 그래프로 구조화하고, 변경에 따른 영향 범위를 분석하며,
+    AI에게 전달할 맥락을 명세 · 시나리오 · 도메인 경계로 구조화하고, 변경에 따른 영향 범위를 분석하며,
     화면과 코드까지 하나의 흐름으로 연결하는 <b>AI 아키텍처 워크벤치</b>입니다.
   </p>
 
@@ -261,131 +261,250 @@
   <div class="rule"></div>
 
   <div class="toc">
-    <a><span class="tn">01</span><span class="tt">왜 지금인가 — 설계의 문제</span><span class="tp">3</span></a>
-    <a><span class="tn">09</span><span class="tt">특장점 ⑤ 초안에서 이미 화면이 보인다</span><span class="tp">12</span></a>
-    <a><span class="tn">02</span><span class="tt">Robo Architect 소개</span><span class="tp">4</span></a>
-    <a><span class="tn">10</span><span class="tt">특장점 ⑥ 승인 후 반영되는 변경</span><span class="tp">13</span></a>
-    <a><span class="tn">03</span><span class="tt">주요 산출물 ① 도메인 그래프</span><span class="tp">5</span></a>
-    <a><span class="tn">11</span><span class="tt">아키텍처 — 시스템 구성과 실행 환경</span><span class="tp">14</span></a>
-    <a><span class="tn">04</span><span class="tt">주요 산출물 ② 화면과 코드</span><span class="tp">6</span></a>
-    <a><span class="tn">12</span><span class="tt">기술 스택</span><span class="tp">15</span></a>
-    <a><span class="tn">05</span><span class="tt">제품 화면 한눈에 보기</span><span class="tp">7</span></a>
-    <a><span class="tn">13</span><span class="tt">사용 흐름 (실제 화면)</span><span class="tp">16-17</span></a>
-    <a><span class="tn">06</span><span class="tt">특장점 ①② 그래프 · 영향 분석</span><span class="tp">8-9</span></a>
-    <a><span class="tn">14</span><span class="tt">보안 · 거버넌스 · 납품</span><span class="tp">18-19</span></a>
-    <a><span class="tn">07</span><span class="tt">특장점 ③ 제안부터 병합까지</span><span class="tp">10</span></a>
-    <a><span class="tn">15</span><span class="tt">검증 체계</span><span class="tp">20</span></a>
-    <a><span class="tn">08</span><span class="tt">특장점 ④ 방법론이 제품 안에</span><span class="tp">11</span></a>
-    <a><span class="tn">16</span><span class="tt">도입 실적 · 도입 절차</span><span class="tp">21-22</span></a>
+    <a><span class="tn">01</span><span class="tt">AI 코딩의 역설</span><span class="tp">3</span></a>
+    <a><span class="tn">10</span><span class="tt">특장점 ④ 방법론이 제품 안에</span><span class="tp">13</span></a>
+    <a><span class="tn">02</span><span class="tt">해법의 방향 — 명세 · 행동 · 도메인</span><span class="tp">4</span></a>
+    <a><span class="tn">11</span><span class="tt">특장점 ⑤ 초안에서 화면 확인</span><span class="tp">14</span></a>
+    <a><span class="tn">03</span><span class="tt">파일 명세가 조직에서 깨지는 지점</span><span class="tp">5</span></a>
+    <a><span class="tn">12</span><span class="tt">특장점 ⑥ 승인 후 반영되는 변경</span><span class="tp">15</span></a>
+    <a><span class="tn">04</span><span class="tt">Robo Architect 소개</span><span class="tp">6</span></a>
+    <a><span class="tn">13</span><span class="tt">시스템 구성과 실행 환경</span><span class="tp">16</span></a>
+    <a><span class="tn">05</span><span class="tt">주요 산출물 ① 도메인 그래프</span><span class="tp">7</span></a>
+    <a><span class="tn">14</span><span class="tt">기술 스택</span><span class="tp">17</span></a>
+    <a><span class="tn">06</span><span class="tt">주요 산출물 ② 화면과 코드</span><span class="tp">8</span></a>
+    <a><span class="tn">15</span><span class="tt">사용 절차 (실제 화면)</span><span class="tp">18-19</span></a>
+    <a><span class="tn">07</span><span class="tt">제품 화면 한눈에 보기</span><span class="tp">9</span></a>
+    <a><span class="tn">16</span><span class="tt">보안 · 거버넌스 · 납품</span><span class="tp">20-21</span></a>
+    <a><span class="tn">08</span><span class="tt">특장점 ①② 그래프 · 영향 분석</span><span class="tp">10-11</span></a>
+    <a><span class="tn">17</span><span class="tt">검증 체계</span><span class="tp">22</span></a>
+    <a><span class="tn">09</span><span class="tt">특장점 ③ 제안부터 병합까지</span><span class="tp">12</span></a>
+    <a><span class="tn">18</span><span class="tt">도입 실적 · 도입 절차</span><span class="tp">23-24</span></a>
   </div>
 
   <h2 class="sub">한 장 요약</h2>
   <div class="quote">
-    요구사항과 코드가 바뀔 때마다 설계 문서도 함께 갱신해야 합니다. Robo Architect는 설계를 <b>문서가 아니라 그래프</b>로
-    관리해, 요구사항이 바뀌면 영향 범위를 분석해 보여주고 승인된 변경 사항을 코드와 그래프에 함께 반영합니다.
+    AI가 코드를 대신 작성하면서, 이제 병목은 <b>무엇을 어떻게 만들지 정의하는 일</b>로 옮겨 갔습니다.
+    Robo Architect는 그 정의를 명세 · 시나리오 · 도메인 경계로 세우고, 파일이 아니라
+    <b>조직의 그래프</b>에 담아 이후 변경까지 함께 관리합니다.
   </div>
 
   <div class="grid g3" style="margin-top:4mm">
     <div class="stat-card">
+      <b>SDD · BDD · DDD</b>
+      <div class="d">명세로 고정하고, 합격 기준을 구체적인 값으로 적고, 맥락을 도메인으로 나눕니다</div>
+    </div>
+    <div class="stat-card">
       <b>그래프가 기준</b>
-      <div class="d">요구사항, 설계 요소, 화면, 소스 파일의 연결 관계를 하나의 그래프로 관리합니다</div>
+      <div class="d">요구사항 · 설계 요소 · 화면 · 소스 파일의 연결 관계를 하나의 그래프로 관리합니다</div>
     </div>
     <div class="stat-card">
-      <b>한 흐름</b>
-      <div class="d">제안 → 분해 → 계획 → 구현 → 검증 → 병합이 끊기지 않습니다</div>
-    </div>
-    <div class="stat-card">
-      <b>폐쇄망</b>
-      <div class="d">데스크톱 설치본으로 납품되며 사내 LLM 게이트웨이를 씁니다</div>
+      <b>설치형</b>
+      <div class="d">폐쇄망에 설치되며 사내 LLM 게이트웨이를 사용할 수 있습니다</div>
     </div>
   </div>
 
   <div class="note" style="margin-top:5mm">
     <div class="t">핵심 차이</div>
-    설계 도구나 코드 생성기와 달리, <b>설계와 코드 구현을 연결하고 변경 이후에도 둘의 관계를 추적</b>할 수 있도록
-    지원합니다. AI가 코드를 작성하기 전에 무엇을 만들지 도메인 언어로 정리하고, 코드가 만들어진 뒤에는
-    생성된 소스와 설계 요소의 연결 관계를 그래프에 기록합니다.
+    명세 주도 개발은 저장소 하나에서는 잘 작동하지만, 수십 개 팀으로 넘어가면 명세가 흩어지고 용어가 갈라집니다.
+    Robo Architect는 명세를 <b>파일이 아니라 조직의 그래프</b>로 두어, 설계와 코드 구현을 연결하고
+    변경 이후에도 둘의 관계를 추적할 수 있도록 지원합니다.
   </div>
 
   <h2 class="sub">이 문서가 다루는 것</h2>
   <div class="grid g4">
     <div class="card" style="padding:3.5mm 4mm">
       <div class="t" style="font-size:9.6pt">제품 개요</div>
-      <p style="font-size:8.8pt">3–13쪽<br>문제 · 정의 · 산출물 · 특장점</p>
+      <p style="font-size:8.8pt">3–15쪽<br>배경 · 정의 · 산출물 · 특장점</p>
     </div>
     <div class="card" style="padding:3.5mm 4mm">
       <div class="t" style="font-size:9.6pt">시스템 구성</div>
-      <p style="font-size:8.8pt">14–15쪽<br>토폴로지 · 기술 스택</p>
+      <p style="font-size:8.8pt">16–17쪽<br>시스템 구성 · 기술 스택</p>
     </div>
     <div class="card" style="padding:3.5mm 4mm">
       <div class="t" style="font-size:9.6pt">사용 절차</div>
-      <p style="font-size:8.8pt">16–17쪽<br>실행 중인 제품 화면 · 6단계</p>
+      <p style="font-size:8.8pt">18–19쪽<br>실행 중인 제품 화면 · 6단계</p>
     </div>
     <div class="card" style="padding:3.5mm 4mm">
       <div class="t" style="font-size:9.6pt">도입 안내</div>
-      <p style="font-size:8.8pt">18–22쪽<br>보안 · 납품 · 레퍼런스 · 일정</p>
+      <p style="font-size:8.8pt">20–24쪽<br>보안 · 납품 · 실적 · 일정</p>
     </div>
   </div>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>2</span></div>
 </section>
 
-<!-- ══════════════════ 3. 배경 ══════════════════ -->
+<!-- ══════════════════ 3. 배경 ① ══════════════════ -->
 <section class="page">
   <div class="badge">01 · 배경</div>
-  <h1 class="sec">왜 지금인가 — 설계의 문제</h1>
+  <h1 class="sec">AI 코딩의 역설</h1>
   <div class="rule"></div>
 
   <p class="lead">
-    AI가 코드 작성을 지원하면서, <b>무엇을 만들고 어떻게 설계할지 결정하는 일</b>이 더욱 중요해졌습니다.
-    하지만 그 결정은 여전히 문서에 머물러 있어, 이후 변경 사항을 지속적으로 반영하기 어렵습니다.
+    AI가 코드를 대신 작성하면서 구현 비용은 빠르게 낮아졌습니다. 그런데 <b>구조 없이 AI를 도입한 팀은
+    오히려 느려졌습니다.</b> 문제는 모델의 성능이 아니라, AI에게 전달할 맥락이 정리돼 있지 않다는 데 있습니다.
   </p>
 
-  <div class="grid g2">
-    <div class="card">
-      <div class="kicker">문제 1</div>
-      <div class="t">설계 문서가 코드의 변경을 따라가지 못한다</div>
-      <p>이벤트스토밍 결과를 문서로 정리하고 나면, 이후 변경은 문서에 반영되지 않는 경우가 많습니다.
-        시간이 지나면 문서는 과거의 설계만 담게 되어, 현재 시스템의 구조를 파악하기 어려워집니다.</p>
+  <div class="grid g3">
+    <div class="stat-card">
+      <b>+24%</b>
+      <div class="l">개발자가 예상한 속도 향상</div>
+      <div class="d">AI 도구 도입 전 숙련 개발자의 기대치</div>
     </div>
-    <div class="card">
-      <div class="kicker">문제 2</div>
-      <div class="t">"이 기능을 바꾸면 어디에 영향이 있나요"</div>
-      <p>가장 자주 나오고 가장 답하기 어려운 질문입니다. 담당자의 기억에 의존하거나 관련 코드를
-        일일이 확인해야 하며, 영향 범위를 놓치면 배포 후 오류로 이어질 수 있습니다.</p>
+    <div class="stat-card" style="border-left-color:#c0392b">
+      <b style="color:#c0392b">−19%</b>
+      <div class="l">실제 측정된 결과</div>
+      <div class="d">작업 시간이 오히려 늘어났습니다</div>
     </div>
-    <div class="card">
-      <div class="kicker">문제 3</div>
-      <div class="t">AI에게 전달할 맥락을 매번 다시 정리해야 한다</div>
-      <p>코딩 에이전트는 지시한 작업을 정확히 수행합니다. 다만 이 변경이 우리 도메인에서 어떤 의미인지는
-        대화할 때마다 사람이 다시 설명해야 합니다.</p>
-    </div>
-    <div class="card">
-      <div class="kicker">문제 4</div>
-      <div class="t">방법론이 실무에 정착하지 않는다</div>
-      <p>DDD · 이벤트스토밍 교육을 받아도, 프로젝트에서는 화이트보드 사진 몇 장으로 끝나는 경우가 많습니다.
-        방법론을 지원하는 도구가 없으면 다음 프로젝트에서도 일관되게 적용하기 어렵습니다.</p>
+    <div class="stat-card">
+      <b>3~4회</b>
+      <div class="l">티켓당 재작업 횟수</div>
+      <div class="d">요구사항이 모호할 때 발생</div>
     </div>
   </div>
+  <p style="font-size:8.4pt; color:var(--muted); margin-top:2mm">
+    출처: 2025년 METR 무작위 대조 실험(RCT) — 숙련 개발자가 구조 없이 AI 도구를 사용한 경우
+  </p>
 
-  <h2 class="sub">그래서 필요한 것</h2>
-  <div class="quote">
-    설계를 <b>지속적으로 갱신되는 그래프</b>로 관리하고, 요구사항이 바뀔 때 영향 범위를 분석해 보여주며,
-    승인된 변경 사항만 코드와 그래프에 <b>함께</b> 반영하는 도구.
+  <h2 class="sub">왜 느려지는가</h2>
+  <div class="grid g2">
+    <div class="card">
+      <div class="kicker">원인 1</div>
+      <div class="t">AI는 우리 도메인을 모른다</div>
+      <p>모델은 일반적인 코드 패턴은 알지만, 우리 조직의 업무 규칙과 용어는 모릅니다.
+        담당자가 대화할 때마다 맥락을 다시 설명해야 하고, 설명이 빠진 부분은 AI가 추측으로 메웁니다.</p>
+    </div>
+    <div class="card">
+      <div class="kicker">원인 2</div>
+      <div class="t">검토 비용이 작성 비용을 넘어선다</div>
+      <p>코드는 빠르게 나오지만, 그 코드가 의도와 맞는지 확인하고 고치는 데 더 많은 시간이 듭니다.
+        결과를 판단할 기준이 없으면 검토는 감에 의존하게 됩니다.</p>
+    </div>
+    <div class="card">
+      <div class="kicker">원인 3</div>
+      <div class="t">요구사항이 모호할수록 품질이 급락한다</div>
+      <p>시니어 개발자는 도메인 지식으로 기획서의 빈틈을 메웠습니다. 조직의 기억이 없는 AI는
+        그 빈틈을 창의적으로 추측해 채웁니다. 모호함은 그대로 재작업 비용이 됩니다.</p>
+    </div>
+    <div class="card">
+      <div class="kicker">원인 4</div>
+      <div class="t">맥락이 대화 로그와 사람의 머릿속에 남는다</div>
+      <p>결정의 근거가 채팅 기록에만 남으면 다음 작업에서 다시 사라집니다.
+        담당자가 바뀌면 조직은 같은 분석을 처음부터 반복합니다.</p>
+    </div>
   </div>
 
   <div class="callout">
-    <b>기업에서 사용하려면 세 가지를 함께 고려해야 합니다.</b> 소스와 설계 데이터가 외부로 나갈 수 없는
-    폐쇄망 환경, 기존에 쓰던 Figma · Jira · Confluence · Git과의 연동, 그리고 AI가 만든 산출물의 검증입니다.
-    Robo Architect는 이 세 가지를 전제로 설계했습니다.
+    <b>AI는 마법사가 아니라, 명확한 지시가 필요한 유능한 신입입니다.</b>
+    승부처는 이미 "어떻게 짜느냐"에서 <b>"무엇을 짜느냐"</b>로 옮겨 갔습니다.
   </div>
 
   <div class="foot"><span>Robo Architect 제품 소개서</span><span>3</span></div>
 </section>
 
+<!-- ══════════════════ 배경 ② — SDD·BDD·DDD ══════════════════ -->
+<section class="page">
+  <div class="badge">02 · 배경</div>
+  <h1 class="sec">해법의 방향 — 명세 · 행동 · 도메인</h1>
+  <div class="rule"></div>
+
+  <p class="lead">
+    AI에게 맥락을 제대로 주려면 세 가지가 함께 필요합니다.
+    <b>무엇을 만들지 명세로 고정</b>하고(SDD), <b>합격 기준을 구체적인 값으로</b> 적고(BDD),
+    <b>맥락의 경계를 도메인으로</b> 나눕니다(DDD).
+  </p>
+
+  <div class="grid g3">
+    <div class="card tinted">
+      <div class="kicker">SDD · 명세 주도 개발</div>
+      <div class="t">무엇을 만들지 먼저 고정한다</div>
+      <p>대화 로그가 아니라 명세 문서로 소통합니다. 기획(What &amp; Why) → 계획(How) → 작업(실행) 순서로
+        진행해 AI가 중간에 목표를 잃지 않게 합니다.</p>
+    </div>
+    <div class="card tinted">
+      <div class="kicker">BDD · 행동 주도 개발</div>
+      <div class="t">합격 기준을 구체적인 값으로 적는다</div>
+      <p>"안전하게 인출한다"가 아니라 "잔액 100, 20 인출 요청, 잔액 80"처럼 씁니다.
+        구체적인 값은 AI가 가장 정확하게 이해하는 형식입니다.</p>
+    </div>
+    <div class="card tinted">
+      <div class="kicker">DDD · 도메인 주도 설계</div>
+      <div class="t">맥락을 도메인 단위로 나눈다</div>
+      <p>컨텍스트를 폴더 크기가 아니라 도메인 경계로 자릅니다. 그래야 AI에게 줄 맥락과
+        담당 조직, 용어, 배포 단위가 한 선에 정렬됩니다.</p>
+    </div>
+  </div>
+
+  <h2 class="sub">같은 요구사항을 어떻게 적는가</h2>
+  <table class="free">
+    <tr><th style="width:22%">작성 방식</th><th style="width:40%">예시 — ATM 현금 인출</th><th>AI가 이해하는 정도</th></tr>
+    <tr><td>유저스토리</td><td>"고객이 잔액을 안전하게 인출할 수 있어야 한다"</td>
+        <td>잔액과 금액의 정의가 없어, 예외 상황을 AI가 임의로 상상합니다</td></tr>
+    <tr><td>요구사항 명세서</td><td>"시스템은 인증된 사용자에게 안전한 인출 기능을 제공한다"</td>
+        <td>업무 부서는 읽을 수 있지만 구체적인 값이 없습니다</td></tr>
+    <tr><td>상세 설계서</td><td><code>if balance &gt;= amount: balance -= amount</code></td>
+        <td>정밀하지만 기획자와 고객이 검토할 수 없습니다</td></tr>
+    <tr><td><b>BDD 시나리오</b></td><td><b>Given</b> 잔액 100 · <b>When</b> 20 인출 요청 · <b>Then</b> 20 지불, 잔액 80</td>
+        <td><b>기획자도 읽고 AI도 실행합니다</b> — 번역 과정이 없습니다</td></tr>
+  </table>
+
+  <div class="callout">
+    <b>BDD 시나리오는 사람과 AI가 함께 읽는 하나의 계약입니다.</b> 기획자 · 고객은 이야기로 읽어
+    업무 규칙을 검증하고, AI는 같은 문서를 실행 가능한 검증 조건으로 해석합니다.
+    Robo Architect는 이 시나리오를 설계 요소에 연결해 그래프에 저장합니다.
+  </div>
+
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>4</span></div>
+</section>
+
+<!-- ══════════════════ 배경 ③ — 파일 vs 그래프 ══════════════════ -->
+<section class="page">
+  <div class="badge">03 · 배경</div>
+  <h1 class="sec">명세를 파일로 두면 조직 규모에서 깨집니다</h1>
+  <div class="rule"></div>
+
+  <p class="lead">
+    명세 주도 개발은 <b>개인과 한 팀의 문제</b>를 풀었습니다. 저장소 하나에서는 충분하지만,
+    수십 개 팀과 수백 개 저장소로 넘어가면 명세를 파일로 두는 방식이 네 곳에서 깨집니다.
+  </p>
+
+  <table class="free">
+    <tr><th style="width:22%">깨지는 지점</th><th style="width:34%">왜 생기는가</th><th>조직이 치르는 비용</th></tr>
+    <tr><td>명세의 고립</td><td>명세 파일이 각 저장소 안에만 존재합니다</td>
+        <td>부서 간 중복 개발, 같은 기능의 서로 다른 두 구현</td></tr>
+    <tr><td>용어의 분열</td><td>저장소마다 도메인 용어를 각자 정의합니다</td>
+        <td>「수용가」와 「고객」이 같은 개념인지 시스템이 알지 못합니다</td></tr>
+    <tr><td>변경 영향 불가시</td><td>요구 · 설계 · 코드의 연결이 문서 링크 수준입니다</td>
+        <td>규정 1건 개정에 영향 범위를 사람이 전수조사합니다</td></tr>
+    <tr><td>조직 기억의 소멸</td><td>맥락이 담당자의 머리와 대화 로그에 남습니다</td>
+        <td>핵심 인력이 떠나면 도메인 지식이 사라지고 재분석을 반복합니다</td></tr>
+  </table>
+
+  <div class="quote">
+    그래서 명세를 <b>파일이 아니라 그래프</b>로 둡니다. 요구사항 · 도메인 모델 · 화면 · 코드를
+    하나의 그래프에 연결하면, 어느 하나를 고쳐도 나머지와의 관계가 즉시 드러납니다.
+  </div>
+
+  <h2 class="sub">파일 기반과 그래프 기반의 차이</h2>
+  <table class="free">
+    <tr><th style="width:20%">비교 축</th><th style="width:36%">파일 기반 명세</th><th>그래프 기반 명세</th></tr>
+    <tr><td>명세의 위치</td><td>저장소 안의 마크다운 파일</td><td>전사 도메인 그래프 — 조직의 자산</td></tr>
+    <tr><td>경계의 기준</td><td>저장소 · 폴더 — 우연히 정해진 경계</td><td>Bounded Context — 도메인과 담당 조직의 경계</td></tr>
+    <tr><td>용어 일관성</td><td>저장소마다 각자 기술</td><td>하나의 용어 체계를 그래프가 유지</td></tr>
+    <tr><td>변경 영향 분석</td><td>검색하고 회의로 확인</td><td>중복 · 충돌 · 설계 영향을 자동 산출</td></tr>
+    <tr><td>지식의 수명</td><td>프로젝트 종료와 함께 흩어짐</td><td>조직 기억으로 축적</td></tr>
+  </table>
+
+  <div class="callout">
+    <b>두 방식은 대체 관계가 아닙니다.</b> 팀은 파일 기반 도구로 빠르게 달리고, 조직은 그래프로 기억합니다.
+    Robo Architect는 조직 단위의 그래프를 담당합니다.
+  </div>
+
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>5</span></div>
+</section>
+
 <!-- ══════════════════ 4. 소개 ══════════════════ -->
 <section class="page">
-  <div class="badge">02 · 소개</div>
+  <div class="badge">04 · 소개</div>
   <h1 class="sec">Robo Architect 소개</h1>
   <div class="rule"></div>
 
@@ -442,12 +561,12 @@
     사용자가 단계별 결과를 확정하면 다음 단계로 진행하며, <b>승인된 변경 사항만</b> 반영됩니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>4</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>6</span></div>
 </section>
 
 <!-- ══════════════════ 5. 산출물 ① ══════════════════ -->
 <section class="page">
-  <div class="badge">03 · 산출물</div>
+  <div class="badge">05 · 산출물</div>
   <h1 class="sec">주요 산출물 ① — 도메인 그래프</h1>
   <div class="rule"></div>
 
@@ -495,12 +614,12 @@
     그래프에서 <b>다시 생성할 수 있는 산출물</b>이며, 별도의 기준 데이터를 만들지 않습니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>5</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>7</span></div>
 </section>
 
 <!-- ══════════════════ 6. 산출물 ② ══════════════════ -->
 <section class="page">
-  <div class="badge">03 · 산출물</div>
+  <div class="badge">05 · 산출물</div>
   <h1 class="sec">주요 산출물 ② — 화면과 코드</h1>
   <div class="rule"></div>
 
@@ -511,7 +630,7 @@
 
   <figure class="crop" style="--h:55mm">
     <img src="assets/03-storyboard-complete.png" alt="초안 스토리보드">
-    <figcaption><b>그림 2.</b> 제안 초안 단계에서 자동 생성된 스토리보드 — 사용자 흐름의 각 화면을
+    <figcaption><b>그림 1.</b> 제안 초안 단계에서 자동 생성된 스토리보드 — 사용자 흐름의 각 화면을
       와이어프레임으로 그려 흐름 순서대로 배치합니다. 마름모는 조건 분기입니다.
       <i>데모 데이터 기준입니다.</i></figcaption>
   </figure>
@@ -544,12 +663,12 @@
     그래프를 수정하고 문서를 다시 생성하므로, 설계와 문서 간 불일치를 줄일 수 있습니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>6</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>8</span></div>
 </section>
 
 <!-- ══════════════════ 화면 한눈에 ══════════════════ -->
 <section class="page">
-  <div class="badge">03 · 산출물</div>
+  <div class="badge">05 · 산출물</div>
   <h1 class="sec">제품 화면 한눈에 보기</h1>
   <div class="rule"></div>
 
@@ -561,22 +680,22 @@
   <div class="grid g2 gallery">
     <figure style="margin:0">
       <img src="assets/tab-stories.png" alt="요구사항 트리">
-      <figcaption><b>그림 3.</b> <b>Stories</b> — Epic → Feature → UserStory → 인수조건 트리.
+      <figcaption><b>그림 2.</b> <b>Stories</b> — Epic → Feature → UserStory → 인수조건 트리.
         모호한 요구사항은 AI가 되묻고 답을 반영합니다.</figcaption>
     </figure>
     <figure style="margin:0">
       <img src="assets/tab-design.png" alt="이벤트스토밍 캔버스">
-      <figcaption><b>그림 4.</b> <b>Design</b> — 이벤트스토밍 캔버스. 명령(파랑) · Aggregate(주황) ·
+      <figcaption><b>그림 3.</b> <b>Design</b> — 이벤트스토밍 캔버스. 명령(파랑) · Aggregate(주황) ·
         이벤트 · 정책 · 읽기모델이 컨텍스트 경계 안에 배치됩니다.</figcaption>
     </figure>
     <figure style="margin:0">
       <img src="assets/tab-processes.png" alt="이벤트 모델링">
-      <figcaption><b>그림 5.</b> <b>Processes</b> — 이벤트 모델링 스윔레인. 액터 · 화면 · 명령 · 이벤트가
+      <figcaption><b>그림 4.</b> <b>Processes</b> — 이벤트 모델링 스윔레인. 액터 · 화면 · 명령 · 이벤트가
         시간 순으로 흐르고, 조건 분기는 마름모로 표시됩니다.</figcaption>
     </figure>
     <figure style="margin:0">
       <img src="assets/tab-data.png" alt="Aggregate 상세">
-      <figcaption><b>그림 6.</b> <b>Data</b> — Aggregate의 속성 · 불변식 · 읽기 모델(CQRS)을
+      <figcaption><b>그림 5.</b> <b>Data</b> — Aggregate의 속성 · 불변식 · 읽기 모델(CQRS)을
         상세히 검토해 구현 단위를 확정합니다.</figcaption>
     </figure>
   </div>
@@ -586,12 +705,12 @@
     한 곳에서 이름을 바꾸면 나머지 세 곳에 즉시 반영됩니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>7</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>9</span></div>
 </section>
 
 <!-- ══════════════════ 7. 특장점 ① ══════════════════ -->
 <section class="page">
-  <div class="badge">04 · 특장점</div>
+  <div class="badge">06 · 특장점</div>
   <h1 class="sec"><span class="num">①</span> 설계가 문서가 아니라 그래프입니다</h1>
   <div class="rule"></div>
 
@@ -642,12 +761,12 @@
     용어가 일관되지 않으면 그래프의 연결도 어긋나기 때문입니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>8</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>10</span></div>
 </section>
 
 <!-- ══════════════════ 8. 특장점 ② ══════════════════ -->
 <section class="page">
-  <div class="badge">05 · 특장점</div>
+  <div class="badge">07 · 특장점</div>
   <h1 class="sec"><span class="num">②</span> 변경에 따른 영향 범위를 자동으로 분석합니다</h1>
   <div class="rule"></div>
 
@@ -697,12 +816,12 @@
     변경 이력을 통해 설계가 언제, 어떤 이유로 수정되었는지 확인할 수 있습니다.
   </p>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>9</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>11</span></div>
 </section>
 
 <!-- ══════════════════ 9. 특장점 ③ ══════════════════ -->
 <section class="page">
-  <div class="badge">06 · 특장점</div>
+  <div class="badge">08 · 특장점</div>
   <h1 class="sec"><span class="num">③</span> 변경 제안부터 구현 · 검증 · 병합까지</h1>
   <div class="rule"></div>
 
@@ -747,12 +866,12 @@
     제안을 폐기하면 격리된 작업 공간도 함께 정리됩니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>10</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>12</span></div>
 </section>
 
 <!-- ══════════════════ 10. 특장점 ④ ══════════════════ -->
 <section class="page">
-  <div class="badge">07 · 특장점</div>
+  <div class="badge">09 · 특장점</div>
   <h1 class="sec"><span class="num">④</span> 방법론이 제품 안에 있습니다</h1>
   <div class="rule"></div>
 
@@ -811,12 +930,12 @@
     방법론이 바뀌거나 조직 고유의 절차를 추가할 때는 스킬만 수정하면 되며, 제품 코드를 고칠 필요가 없습니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>11</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>13</span></div>
 </section>
 
 <!-- ══════════════════ 11. 특장점 ⑤ ══════════════════ -->
 <section class="page">
-  <div class="badge">08 · 특장점</div>
+  <div class="badge">10 · 특장점</div>
   <h1 class="sec"><span class="num">⑤</span> 초안에서 이미 화면이 보입니다</h1>
   <div class="rule"></div>
 
@@ -827,7 +946,7 @@
 
   <figure class="crop" style="--h:58mm">
     <img src="assets/05-storyboard-flow.png" alt="스토리보드 흐름">
-    <figcaption><b>그림 7.</b> 사용자 흐름의 화면이 순서대로 놓이고, 조건 분기는 마름모로 표시됩니다.
+    <figcaption><b>그림 6.</b> 사용자 흐름의 화면이 순서대로 놓이고, 조건 분기는 마름모로 표시됩니다.
       화면 카드는 그림이 아니라 편집 가능한 요소 트리입니다. <i>데모 데이터 기준입니다.</i></figcaption>
   </figure>
 
@@ -846,7 +965,7 @@
 
   <figure class="crop" style="--h:66mm">
     <img src="assets/06-frame-editor.png" alt="화면 편집기">
-    <figcaption><b>그림 8.</b> 내장 디자인 편집기 — 캔버스 · 도구 모음 · 속성 패널.
+    <figcaption><b>그림 7.</b> 내장 디자인 편집기 — 캔버스 · 도구 모음 · 속성 패널.
       좌표·정렬·오토레이아웃·색을 직접 조정할 수 있습니다.</figcaption>
   </figure>
 
@@ -855,12 +974,12 @@
     활용해 화면을 구성합니다. 컴포넌트의 유형과 문구를 화면에 맞게 설정하고, 내장 편집기에서 직접 수정할 수 있습니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>12</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>14</span></div>
 </section>
 
 <!-- ══════════════════ 12. 특장점 ⑥ ══════════════════ -->
 <section class="page">
-  <div class="badge">09 · 특장점</div>
+  <div class="badge">11 · 특장점</div>
   <h1 class="sec"><span class="num">⑥</span> 최종 변경 사항은 승인 후 반영됩니다</h1>
   <div class="rule"></div>
 
@@ -907,12 +1026,12 @@
     무엇이 실패했는지 로그로 되짚을 수 있습니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>13</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>15</span></div>
 </section>
 
 <!-- ══════════════════ 13. 아키텍처 ══════════════════ -->
 <section class="page">
-  <div class="badge">10 · 아키텍처</div>
+  <div class="badge">12 · 아키텍처</div>
   <h1 class="sec">시스템 구성과 실행 환경</h1>
   <div class="rule"></div>
 
@@ -958,12 +1077,12 @@
     <li><b>코드는 격리된 작업 공간에서</b> — 대상 프로젝트의 별도 작업 공간에서 구현하고, 승인 시 병합합니다.</li>
   </ol>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>14</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>16</span></div>
 </section>
 
 <!-- ══════════════════ 14. 기술 스택 ══════════════════ -->
 <section class="page">
-  <div class="badge">11 · 아키텍처</div>
+  <div class="badge">13 · 아키텍처</div>
   <h1 class="sec">기술 스택</h1>
   <div class="rule"></div>
 
@@ -1009,12 +1128,12 @@
     표준 <code>.fig</code> 구조를 따릅니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>15</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>17</span></div>
 </section>
 
 <!-- ══════════════════ 15. 사용 흐름 1 ══════════════════ -->
 <section class="page">
-  <div class="badge">12 · 사용 흐름</div>
+  <div class="badge">14 · 사용 흐름</div>
   <h1 class="sec">사용 절차 — 여섯 단계</h1>
   <div class="rule"></div>
 
@@ -1045,7 +1164,7 @@
 
   <figure class="crop" style="--h:94mm">
     <img src="assets/01-proposals-list.png" alt="제안 목록과 상태">
-    <figcaption><b>그림 9.</b> 제안 목록 — 상태별 필터(Intent · Plan · Implementing · Validating ·
+    <figcaption><b>그림 8.</b> 제안 목록 — 상태별 필터(Intent · Plan · Implementing · Validating ·
       승인 대기 · Accepted · Destroyed)로 진행 중인 변경을 한눈에 봅니다. <i>데모 데이터 기준입니다.</i></figcaption>
   </figure>
 
@@ -1055,12 +1174,12 @@
     선택형 질문으로 확인합니다. 검토 결과 수정이 필요하면 의견을 적어 다시 생성하거나 직접 수정할 수 있습니다.
   </p>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>16</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>18</span></div>
 </section>
 
 <!-- ══════════════════ 16. 사용 흐름 2 ══════════════════ -->
 <section class="page">
-  <div class="badge">12 · 사용 흐름</div>
+  <div class="badge">14 · 사용 흐름</div>
   <h1 class="sec">4–6단계 · 화면 확인 · 구현 · 병합</h1>
   <div class="rule"></div>
 
@@ -1072,7 +1191,7 @@
 
   <figure class="crop" style="--h:62mm">
     <img src="assets/03b-intent-tab-full.png" alt="제안 상세 화면의 초안 스토리보드">
-    <figcaption><b>그림 10.</b> 제안 상세 — 상단 탭(Intent · Plan · Impact Map)과 초안 스토리보드.
+    <figcaption><b>그림 9.</b> 제안 상세 — 상단 탭(Intent · Plan · Impact Map)과 초안 스토리보드.
       화면 카드를 클릭하면 편집기가 열립니다. <i>데모 데이터 기준입니다.</i></figcaption>
   </figure>
 
@@ -1107,12 +1226,12 @@
     화면을 나갔다 와도 이어서 진행됩니다. 페이지를 새로고침한 뒤에도 기존 구현 세션에 다시 연결할 수 있습니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>17</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>19</span></div>
 </section>
 
 <!-- ══════════════════ 17. 보안 ══════════════════ -->
 <section class="page">
-  <div class="badge">13 · 보안</div>
+  <div class="badge">15 · 보안</div>
   <h1 class="sec">보안 · 거버넌스</h1>
   <div class="rule"></div>
 
@@ -1156,12 +1275,12 @@
     함께 확정합니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>18</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>20</span></div>
 </section>
 
 <!-- ══════════════════ 18. 납품 ══════════════════ -->
 <section class="page">
-  <div class="badge">13 · 납품</div>
+  <div class="badge">16 · 납품</div>
   <h1 class="sec">배포 · 납품 모델</h1>
   <div class="rule"></div>
 
@@ -1211,12 +1330,12 @@
     고객 저장소에 그대로 남으므로, 제품 사용을 종료한 뒤에도 설계 데이터와 코드를 보유하고 활용할 수 있습니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>19</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>21</span></div>
 </section>
 
 <!-- ══════════════════ 19. 검증 ══════════════════ -->
 <section class="page">
-  <div class="badge">14 · 검증</div>
+  <div class="badge">17 · 검증</div>
   <h1 class="sec">제품이 스스로를 검증하는 방식</h1>
   <div class="rule"></div>
 
@@ -1258,12 +1377,12 @@
     <b>본 소개서에는 실제 제품 실행 화면을 수록했습니다.</b> 모든 화면은 상시 가동 중인 환경에서 캡처했습니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>20</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>22</span></div>
 </section>
 
 <!-- ══════════════════ 레퍼런스 ══════════════════ -->
 <section class="page">
-  <div class="badge">15 · 레퍼런스</div>
+  <div class="badge">18 · 레퍼런스</div>
   <h1 class="sec">기반 제품의 도입 실적과 확장</h1>
   <div class="rule"></div>
 
@@ -1315,12 +1434,12 @@
     <br><span style="font-size:8.4pt; color:var(--muted)">※ 수치는 MSA School 공개 집계 기준이며, 상세 구축 범위와 도입 효과는 담당 영업 채널을 통해 개별 안내드립니다.</span>
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>21</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>23</span></div>
 </section>
 
 <!-- ══════════════════ 20. 도입 ══════════════════ -->
 <section class="page">
-  <div class="badge">16 · 도입</div>
+  <div class="badge">19 · 도입</div>
   <h1 class="sec">도입 절차 및 일정</h1>
   <div class="rule"></div>
 
@@ -1384,7 +1503,7 @@
     고객사 도메인 문서 일부를 미리 주시면 <b>귀사 데이터로</b> 시연해 드립니다.
   </div>
 
-  <div class="foot"><span>Robo Architect 제품 소개서</span><span>22</span></div>
+  <div class="foot"><span>Robo Architect 제품 소개서</span><span>24</span></div>
 </section>
 
 <!-- ══════════════════ 21. 배표지 ══════════════════ -->
