@@ -1,5 +1,6 @@
 <script setup>
 import ProjectPicker from '@/features/projects/ui/ProjectPicker.vue'
+import UserMenu from '@/features/auth/ui/UserMenu.vue'
 import { ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 // 043 — 'Big picture' 뷰 비활성화: store import 제거.
@@ -159,6 +160,10 @@ function selectTab(tab) {
 
       <!-- Figma Binding Button (feature 016) -->
       <FigmaButton v-model="showFigmaBindingModal" />
+
+      <!-- 지금 누구로 들어와 있는지와 로그아웃. 로그아웃만 두면 계정을 착각한 채
+           작업하는 일이 생긴다 — 프로젝트마다 권한이 다르고 개발용 우회도 있다. -->
+      <UserMenu />
 
       <!-- Settings Button -->
         <button 
