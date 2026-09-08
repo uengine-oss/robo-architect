@@ -12,6 +12,10 @@ authors = [
 dependencies = [
     # Neo4j Driver
     "neo4j>=5.0.0",
+
+    # Postgres 직결 — 권한(og_grant)과 사용자·승인은 SQL 이라 Bolt(Cypher)로 못 간다.
+    # 그래프 읽기·쓰기는 여전히 neo4j 드라이버가 맡는다.
+    "psycopg[binary]>=3.1",
     
     # LangChain & LangGraph
     "langchain>=0.3.0",

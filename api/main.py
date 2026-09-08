@@ -59,6 +59,36 @@ async def lifespan(app: FastAPI):
         },
     )
     init_neo4j_driver(log=True)
+
+    # 인증 상태를 기동 때 한 번 남긴다. 우회로가 열린 채로 배포되는 것이 이
+    # 기능의 유일한 실패 방식이라, 로그를 훑기만 해도 보이게 한다.
+    try:
+        from api.features.auth.dev_login import dev_login_enabled
+        from api.features.auth.tokens import jwt_secret_configured
+        from api.platform.identity.auth_guard import auth_enforced as _enforced
+        if dev_login_enabled():
+            SmartLogger.log(
+                "WARN",
+                "개발용 우회 로그인이 켜져 있다 (AUTH_DEV_LOGIN_ENABLED). "
+                "사내 배포본에서는 반드시 꺼야 한다.",
+                category="auth.dev_login.enabled_at_startup",
+            )
+        if _enforced() and not jwt_secret_configured():
+            SmartLogger.log(
+                "WARN",
+                "인증을 강제하는데 AUTH_JWT_SECRET 이 없다. 재시작마다 세션이 끊긴다.",
+                category="auth.jwt.secret_missing",
+            )
+        SmartLogger.log(
+            "INFO", "인증 설정 확인.",
+            category="auth.startup",
+            params={"enforce": _enforced(), "dev_login": dev_login_enabled()},
+        )
+    except Exception as e:  # noqa: BLE001 — 진단이므로 기동을 막지 않는다
+        SmartLogger.log(
+            "WARN", f"인증 설정을 확인하지 못했다: {e}",
+            category="auth.startup.failed", params={"error": str(e)},
+        )
     # Apply ingestion cache default (on by default; override INGESTION_CACHE_DEFAULT=0).
     try:
         from api.features.ingestion.langchain_cache import ensure_default_cache_state
@@ -241,6 +271,13 @@ from api.platform.identity import IdentityMiddleware  # noqa: E402
 
 app.add_middleware(IdentityMiddleware)
 
+# 기업 모드에서만 문을 잠근다. `AUTH_ENFORCE` 가 꺼져 있으면 아무 일도 하지
+# 않으므로 지금까지의 동작이 그대로다. Starlette 은 나중에 등록한 미들웨어가
+# 바깥에 서므로, 여기 두면 인증 판정이 actor 해석보다 먼저 일어난다.
+from api.platform.identity.auth_guard import AuthGuardMiddleware, auth_enforced  # noqa: E402
+
+app.add_middleware(AuthGuardMiddleware)
+
 # -----------------------------------------------------------------------------
 # Neo4j connection override (Electron)
 # -----------------------------------------------------------------------------
@@ -250,9 +287,25 @@ app.add_middleware(IdentityMiddleware)
 from api.platform.neo4j_context import Neo4jOverride, set_override  # noqa: E402
 
 
+# 세션이 있으면 그 사람의 role 자격으로 붙는다. 브라우저 경로가 `.env` 소유자로
+# 붙던 구멍을 여기서 막는다 — `connection_binding` 의 설명 참고. 기본은 꺼짐.
+from api.platform.identity.connection_binding import (  # noqa: E402
+    BindingDenied, binding_enabled, resolve_for_request,
+)
+
+
 @app.middleware("http")
 async def neo4j_override_middleware(request: Request, call_next):
-    set_override(Neo4jOverride.from_headers(request.headers))
+    bound = None
+    if binding_enabled():
+        try:
+            bound = resolve_for_request(request.headers, os.environ.get("NEO4J_DATABASE"))
+        except BindingDenied as exc:
+            return JSONResponse(
+                {"detail": str(exc), "code": "PROJECT_FORBIDDEN"}, status_code=403,
+            )
+    # 세션으로 자격이 정해졌으면 클라이언트가 보낸 헤더는 쓰지 않는다.
+    set_override(bound or Neo4jOverride.from_headers(request.headers))
     try:
         return await call_next(request)
     finally:
@@ -323,6 +376,10 @@ app.include_router(code_templates_router)
 # Include enterprise auth (SSO) router
 from api.features.auth.router import router as auth_router
 app.include_router(auth_router)
+
+# 프로젝트 = graph. 만들기·목록·공유는 전부 신원을 요구한다.
+from api.features.projects.router import router as projects_router  # noqa: E402
+app.include_router(projects_router)
 
 
 """
