@@ -1842,6 +1842,9 @@ async function pullFromFigmaToDesign() {
   try {
     if (useBindingPath) {
       // 016 path — direct sceneGraph conversion via plugin EXPORT_FRAME_BY_ID.
+      const before = typeof n.data?.sceneGraph === 'string'
+        ? n.data.sceneGraph
+        : JSON.stringify(n.data?.sceneGraph ?? null)
       const resp = await fetch(`/api/figma-binding/pull-frame/${encodeURIComponent(n.id)}`, {
         method: 'POST',
       })
@@ -1850,16 +1853,34 @@ async function pullFromFigmaToDesign() {
         throw new Error(data.detail || `Pull 실패 (${resp.status})`)
       }
       const result = await resp.json()
+      let changed = false
       if (result.sceneGraph) {
-        if (n.data) n.data = { ...n.data, sceneGraph: result.sceneGraph }
-        const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
-        if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph }
+        // 가져온 것이 지금 것과 같은지 본다. 늘 "가져옴" 이라고만 하면
+        // **정상적으로 같은 것**과 **아무 일도 안 일어난 것**을 구별할 수 없다.
+        //
+        // `before` 는 **요청을 보내기 전에** 떠 둔 값이다. 백엔드가 pull 하면서
+        // 그래프에 바로 쓰기 때문에, 응답을 받은 뒤에 읽으면 이미 새 값이라
+        // 무엇을 비교해도 "같다"가 나온다.
+        const after = typeof result.sceneGraph === 'string'
+          ? result.sceneGraph
+          : JSON.stringify(result.sceneGraph)
+        changed = before !== after
+
+        if (changed) {
+          // 저장은 백엔드가 pull 처리 안에서 이미 했다(`SET u.sceneGraph`).
+          // 여기서는 화면 상태만 맞춘다.
+          if (n.data) n.data = { ...n.data, sceneGraph: result.sceneGraph }
+          const storeNode = canvasStore.nodes.find(sn => sn.id === n.id)
+          if (storeNode?.data) storeNode.data = { ...storeNode.data, sceneGraph: result.sceneGraph }
+          designEditorKey.value++
+          emit('updated')
+        }
       }
-      designEditorKey.value++
-      emit('updated')
       figmaPushStatus.value = 'success'
-      figmaPushMessage.value = `Figma에서 가져옴 (${result.nodeCount || 0}개 노드)`
-      setTimeout(() => { figmaPushStatus.value = null }, 4000)
+      figmaPushMessage.value = changed
+        ? `Figma에서 가져옴 (${result.nodeCount || 0}개 노드)`
+        : `Figma와 이미 같습니다 (${result.nodeCount || 0}개 노드) — 바뀐 것이 없습니다`
+      setTimeout(() => { figmaPushStatus.value = null }, 5000)
       return
     }
 
