@@ -39,6 +39,8 @@ from api.features.accounts import store as accounts  # noqa: E402
 from api.features.auth.tokens import issue_token  # noqa: E402
 from api.features.projects import roles, store  # noqa: E402
 from api.platform.identity import connection_binding as binding  # noqa: E402
+from api.platform import neo4j as neo4j_platform  # noqa: E402
+from api.platform.neo4j_context import set_override  # noqa: E402
 
 USER_PREFIX = "ZZBIND"
 GRAPH_PREFIX = "prj_"
@@ -150,6 +152,20 @@ def password_auth_required() -> bool:
     return bool(rows) and all(r["auth_method"] != "trust" for r in rows)
 
 
+def _raises(fn, *args, expect: type = Exception, message: str = "") -> bool:
+    """예상한 종류의 오류가, 예상한 말과 함께 나는가.
+
+    아무 오류나 통과시키면 저장소가 대신 죽어 준 것을 우리 검증으로 착각한다.
+    """
+    try:
+        fn(*args)
+        return False
+    except expect as exc:
+        return message in str(exc) if message else True
+    except Exception:
+        return False
+
+
 def bolt_read(user: str, password: str, graph: str) -> str:
     """그 자격으로 직접 붙어 읽어 본다. 거부되면 사유를 돌려준다."""
     try:
@@ -248,6 +264,31 @@ def main() -> int:
           other.startswith("거부"), other)
     real = bolt_read(role_a, pw_a, "robo")
     check("설계 graph 도 안 보인다", real.startswith("거부"), real)
+
+    print("\n설계와 분석은 한 세트다")
+    # 설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘을 따로 고르면 추적성이 다른
+    # 분석을 가리킨다. 화면에는 결과가 나오므로 오류로 드러나지 않는다.
+    store.set_analyzer_graph(pa["graph"], pb["graph"])
+    ovp = binding.resolve_for_request({**hdr_a, "x-project-graph": pa["graph"]}, None)
+    check("프로젝트가 정한 분석 graph 가 연결에 실린다",
+          ovp.analyzer_database == pb["graph"], str(ovp.analyzer_database))
+
+    set_override(ovp)
+    try:
+        check("분석 graph 조회가 그 값을 따른다 — 모듈 상수를 쓰면 프로세스마다 하나다",
+              neo4j_platform.analyzer_database() == pb["graph"],
+              str(neo4j_platform.analyzer_database()))
+    finally:
+        set_override(None)
+    check("요청 밖에서는 .env 값으로 돌아온다",
+          neo4j_platform.analyzer_database() == neo4j_platform.ANALYZER_NEO4J_DATABASE)
+
+    store.set_analyzer_graph(pa["graph"], None)
+    ovn = binding.resolve_for_request({**hdr_a, "x-project-graph": pa["graph"]}, None)
+    check("짝을 지우면 연결에서도 빠진다", ovn.analyzer_database is None)
+    check("없는 graph 를 짝으로 걸 수 없다",
+          _raises(store.set_analyzer_graph, pa["graph"], "prj_nope",
+                  expect=ValueError, message="그런 graph 가 없다"))
 
     print("\n남은 전제조건 — 저장소 층에서 아직 안 되는 것")
     # 통과/실패로 세지 않는다. 앱 코드로 고칠 수 있는 것이 아니고, 무엇이 막혀

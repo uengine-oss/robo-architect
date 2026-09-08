@@ -28,7 +28,7 @@ from api.features.ingestion.hybrid.contracts import (
     RuleDTO,
 )
 from api.features.ingestion.ingestion_llm_runtime import get_llm
-from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
+from api.platform.neo4j import analyzer_database, get_session
 
 
 _SYSTEM_PROMPT = """당신은 레거시 코드의 Business Logic 과 업무 프로세스 Task 를 정확히 매핑하는 분석가입니다.
@@ -122,7 +122,7 @@ def _fetch_parent_chains(fn_names: list[str]) -> dict[str, dict]:
         return {}
     out: dict[str, dict] = {}
     try:
-        with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
+        with get_session(database=analyzer_database()) as s:
             for rec in s.run(
                 """
                 UNWIND $fn_names AS fn

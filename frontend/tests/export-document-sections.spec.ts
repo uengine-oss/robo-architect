@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { writeFileSync } from 'fs'
+import { apiHeaders } from './api-auth'
 
 /**
  * 산출물 문서 — 기준 템플릿(local-msaez DocumentTemplate.vue)과의 정합.
@@ -34,7 +35,12 @@ test.describe('산출물 문서', () => {
   test('섹션 구성 · 도식 · 인쇄 페이지네이션', async ({ page, request }) => {
     const diag: any = {}
 
-    const contexts = await (await request.get('http://localhost:8000/api/contexts')).json()
+    // 인증 강제가 켜져 있으면 직접 호출도 자격이 필요하다. 없으면 401 이 오고
+    // `contexts.length` 가 undefined 가 돼, 원인이 인증이라는 것이 안 드러난다.
+    const headers = await apiHeaders(request)
+    const contexts = await (
+      await request.get('http://localhost:8000/api/contexts', { headers })
+    ).json()
     diag.bcCount = contexts.length
 
     await openDoc(page)

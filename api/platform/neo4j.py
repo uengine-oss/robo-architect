@@ -36,6 +36,19 @@ NEO4J_PASSWORD = get_neo4j_password()
 NEO4J_DATABASE = get_neo4j_database()
 ANALYZER_NEO4J_DATABASE = get_analyzer_neo4j_database()
 
+
+def analyzer_database() -> Optional[str]:
+    """이 요청이 읽어야 할 분석 graph.
+
+    프로젝트가 정한 값이 있으면 그것을, 없으면 `.env` 를 쓴다. 모듈 상수를 그대로
+    쓰면 **프로세스가 뜰 때 정해진 하나**라, 프로젝트를 바꿔도 분석 결과는 안
+    바뀐다 — 설계는 다른 프로젝트인데 추적성만 이전 분석을 가리키게 된다.
+    """
+    override = get_override()
+    if override is not None and override.analyzer_database:
+        return override.analyzer_database
+    return ANALYZER_NEO4J_DATABASE
+
 _driver: Optional[Driver] = None
 
 

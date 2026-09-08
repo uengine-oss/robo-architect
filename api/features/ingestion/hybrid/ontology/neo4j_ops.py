@@ -42,7 +42,7 @@ from api.features.ingestion.hybrid.ontology.schema import (
     R_REALIZED_BY,
     R_SOURCED_FROM,
 )
-from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
+from api.platform.neo4j import analyzer_database, get_session
 
 
 def clear_hybrid_nodes(session_id: str) -> dict[str, int]:
@@ -854,7 +854,7 @@ def fetch_session_snapshot(session_id: str) -> dict:
         summary_by_fn: dict[str, str | None] = {}
         if referenced_fn_names:
             try:
-                with get_session(database=ANALYZER_NEO4J_DATABASE) as asess:
+                with get_session(database=analyzer_database()) as asess:
                     for arec in asess.run(
                         # De-dup per fn name at the Cypher level — a fn may have
                         # multiple matching nodes (e.g. also labelled :Query).

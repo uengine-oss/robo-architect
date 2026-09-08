@@ -126,7 +126,17 @@ watch(() => auth.token, (t) => { if (t) refresh() })
           <li v-for="p in store.projects" :key="p.graph">
             <button class="pp__item" :class="{ 'pp__item--on': p.graph === auth.projectGraph }"
                     @click="store.select(p.graph)">
-              <span class="pp__itemname">{{ p.displayName || p.graph }}</span>
+              <span class="pp__itemname">
+                {{ p.displayName || p.graph }}
+                <!-- 설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘은 한 세트다.
+                     짝이 없으면 추적성이 .env 의 분석을 본다 — 보여 줘야 한다. -->
+                <span v-if="p.analyzerGraph" class="pp__pair" title="함께 보는 분석 결과">
+                  ⇄ {{ p.analyzerGraph }}
+                </span>
+                <span v-else class="pp__pair pp__pair--none" title="추적성이 .env 의 분석을 본다">
+                  분석 미지정
+                </span>
+              </span>
               <span class="pp__level">{{ LEVEL_LABEL[p.level] || p.level }}</span>
             </button>
           </li>
@@ -185,48 +195,70 @@ watch(() => auth.token, (t) => { if (t) refresh() })
 </template>
 
 <style scoped>
-.pp { position:relative; }
-.pp__btn { display:flex; align-items:center; gap:7px; padding:5px 10px; border:1px solid #dee2e6;
-  border-radius:6px; background:#fff; cursor:pointer; font-size:12.5px; color:#343a40; }
-.pp__btn--none { border-style:dashed; color:#868e96; }
-.pp__label { font-size:10.5px; color:#adb5bd; text-transform:uppercase; letter-spacing:.5px; }
+/* 상단 막대의 다른 요소와 같은 토큰을 쓴다 — 색을 직접 박으면 테마를 바꿨을 때
+   이 조각만 남는다. */
+.pp { position:relative; font-family:var(--font-main); }
+.pp__btn { display:flex; align-items:center; gap:7px; padding:5px 10px;
+  border:1px solid var(--color-border); border-radius:var(--radius-sm);
+  background:var(--color-bg-tertiary); color:var(--color-text); font-family:inherit;
+  font-size:0.75rem; cursor:pointer; transition:all .2s ease; }
+.pp__btn:hover { border-color:var(--color-accent); color:var(--color-text-bright); }
+.pp__btn--none { border-style:dashed; color:var(--color-text-light); }
+.pp__label { font-size:0.62rem; color:var(--color-text-light); text-transform:uppercase;
+  letter-spacing:.5px; }
 .pp__name { font-weight:600; max-width:180px; overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap; }
 .pp__backdrop { position:fixed; inset:0; z-index:900; }
 .pp__menu { position:absolute; top:calc(100% + 6px); left:0; z-index:901; width:320px;
-  background:#fff; border:1px solid #dee2e6; border-radius:8px; padding:12px;
-  box-shadow:0 4px 20px rgba(0,0,0,.10); }
-.pp__head { display:flex; align-items:center; justify-content:space-between; font-size:12px;
-  font-weight:700; color:#495057; margin-bottom:8px; }
-.pp__list, .pp__members { list-style:none; margin:0; padding:0; max-height:240px; overflow-y:auto; }
+  background:var(--color-bg-secondary); border:1px solid var(--color-border);
+  border-radius:var(--radius-md); padding:12px; box-shadow:0 6px 24px rgba(0,0,0,.4); }
+.pp__head { display:flex; align-items:center; justify-content:space-between; font-size:0.72rem;
+  font-weight:700; color:var(--color-text); margin-bottom:var(--spacing-sm); }
+.pp__list, .pp__members { list-style:none; margin:0; padding:0; max-height:240px;
+  overflow-y:auto; }
 .pp__item { display:flex; align-items:center; justify-content:space-between; width:100%;
-  padding:7px 9px; border:none; border-radius:6px; background:none; cursor:pointer;
-  font-size:12.5px; color:#343a40; text-align:left; }
-.pp__item:hover { background:#f1f3f5; }
-.pp__item--on { background:#e7f5ff; font-weight:600; }
+  padding:7px 9px; border:none; border-radius:var(--radius-sm); background:none;
+  color:var(--color-text); font-family:inherit; font-size:0.76rem; text-align:left;
+  cursor:pointer; transition:background .15s ease; }
+.pp__item:hover { background:var(--color-bg-tertiary); }
+.pp__item--on { background:var(--status-blue-bg); color:var(--color-text-bright);
+  font-weight:600; }
 .pp__itemname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.pp__level { font-size:10.5px; color:#868e96; background:#f1f3f5; border-radius:9px;
-  padding:1px 7px; margin-left:8px; flex-shrink:0; }
-.pp__foot { display:flex; justify-content:space-between; margin-top:10px; padding-top:9px;
-  border-top:1px solid #f1f3f5; }
-.pp__link { border:none; background:none; color:#228be6; font-size:12px; cursor:pointer; }
-.pp__link:disabled { color:#adb5bd; cursor:default; }
-.pp__note { font-size:12px; color:#868e96; line-height:1.6; margin:6px 2px 10px; }
-.pp__err { font-size:12px; color:#c92a2a; margin:8px 2px 0; }
-.pp__input { width:100%; padding:7px 9px; border:1px solid #ced4da; border-radius:6px;
-  font-size:12.5px; box-sizing:border-box; }
-.pp__select { padding:7px; border:1px solid #ced4da; border-radius:6px; font-size:12.5px; }
-.pp__actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
-.pp__primary { padding:6px 12px; border:none; border-radius:6px; background:#228be6; color:#fff;
-  font-size:12.5px; cursor:pointer; }
-.pp__primary:disabled { opacity:.5; cursor:default; }
-.pp__members li { display:flex; align-items:center; gap:8px; padding:6px 2px;
-  border-bottom:1px solid #f1f3f5; font-size:12.5px; }
-.pp__m-uid { font-weight:600; }
-.pp__m-name { color:#868e96; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.pp__revoke { border:1px solid #ffc9c9; border-radius:5px; background:#fff; color:#c92a2a;
-  font-size:11px; padding:2px 7px; cursor:pointer; }
-.pp__owner { font-size:11px; color:#adb5bd; }
-.pp__invite { display:flex; gap:6px; margin-top:10px; }
+.pp__pair { display:block; font-size:0.62rem; font-weight:400; color:var(--color-text-light);
+  font-family:var(--font-mono); margin-top:2px; }
+.pp__pair--none { color:var(--status-amber-fg); font-family:var(--font-main); }
+.pp__level { font-size:0.62rem; color:var(--status-neutral-fg); background:var(--status-neutral-bg);
+  border-radius:9px; padding:1px 7px; margin-left:var(--spacing-sm); flex-shrink:0; }
+.pp__foot { display:flex; justify-content:space-between; margin-top:var(--spacing-sm);
+  padding-top:9px; border-top:1px solid var(--color-border); }
+.pp__link { border:none; background:none; color:var(--color-accent); font-size:0.72rem;
+  font-family:inherit; cursor:pointer; }
+.pp__link:disabled { color:var(--color-text-light); cursor:default; }
+.pp__note { font-size:0.72rem; color:var(--color-text-light); line-height:1.6;
+  margin:6px 2px var(--spacing-sm); }
+.pp__err { font-size:0.72rem; color:var(--color-danger); margin:var(--spacing-sm) 2px 0; }
+.pp__input { width:100%; padding:7px 9px; border:1px solid var(--color-border);
+  border-radius:var(--radius-sm); background:var(--color-bg); color:var(--color-text);
+  font-size:0.76rem; font-family:inherit; box-sizing:border-box; }
+.pp__input:focus { outline:none; border-color:var(--color-accent); }
+.pp__select { padding:7px; border:1px solid var(--color-border); border-radius:var(--radius-sm);
+  background:var(--color-bg); color:var(--color-text); font-size:0.76rem; font-family:inherit; }
+.pp__actions { display:flex; justify-content:flex-end; gap:var(--spacing-sm);
+  margin-top:var(--spacing-sm); }
+.pp__primary { padding:6px 12px; border:none; border-radius:var(--radius-sm);
+  background:var(--color-accent); color:#fff; font-size:0.76rem; font-family:inherit;
+  cursor:pointer; transition:opacity .2s ease; }
+.pp__primary:hover:not(:disabled) { opacity:.88; }
+.pp__primary:disabled { opacity:.45; cursor:default; }
+.pp__members li { display:flex; align-items:center; gap:var(--spacing-sm); padding:6px 2px;
+  border-bottom:1px solid var(--color-border); font-size:0.76rem; color:var(--color-text); }
+.pp__m-uid { font-weight:600; font-family:var(--font-mono); font-size:0.72rem; }
+.pp__m-name { color:var(--color-text-light); flex:1; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; }
+.pp__revoke { border:1px solid var(--color-border); border-radius:var(--radius-sm);
+  background:var(--status-red-bg); color:var(--status-red-fg); font-size:0.68rem;
+  font-family:inherit; padding:2px 7px; cursor:pointer; }
+.pp__owner { font-size:0.68rem; color:var(--color-text-light); }
+.pp__invite { display:flex; gap:6px; margin-top:var(--spacing-sm); }
 .pp__invite .pp__input { flex:1; }
 </style>

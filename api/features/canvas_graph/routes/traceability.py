@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from starlette.requests import Request
 
-from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
+from api.platform.neo4j import analyzer_database, get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -34,7 +34,7 @@ def _analyzer_query(query: str, params: dict | None = None) -> list[dict]:
     FUNCTION 의 역할이라, 한 graph 에 두면 ES 의 모든 Command 가 FUNCTION 이
     된다. 그래서 출처 체인은 두 그래프를 오가며 재구성해야 한다.
     """
-    with get_session(database=ANALYZER_NEO4J_DATABASE) as session:
+    with get_session(database=analyzer_database()) as session:
         return [dict(r) for r in session.run(query, **(params or {}))]
 
 

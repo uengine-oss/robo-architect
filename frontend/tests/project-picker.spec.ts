@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test'
 
+// 공통 로그인 상태를 쓰지 않는다 — 선택기의 초기 상태를 직접 만든다. 미리 로그인된 채로 들어가면
+// 이 파일이 확인하려는 것이 통째로 가려진다.
+test.use({ storageState: { cookies: [], origins: [] } })
+
 /**
  * 프로젝트 선택기.
  *

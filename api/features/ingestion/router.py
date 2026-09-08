@@ -671,12 +671,12 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
     is the design graph, so it counted the wrong side: the analysis finished, the
     nodes were there, and the screen still said there was nothing. Every sibling
     that reads analyzer output (`module_retriever`, `rule_context`,
-    `glossary_extractor`) already uses `ANALYZER_NEO4J_DATABASE`.
+    `glossary_extractor`) already uses `analyzer_database`.
 
     Where the two are one database — the packaged compose gives both services the
     same one — this changes nothing.
     """
-    from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
+    from api.platform.neo4j import analyzer_database, get_session
 
     try:
         SmartLogger.log(
@@ -685,7 +685,7 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
             category="ingestion.api.stats.request",
             params=http_context(request),
         )
-        with get_session(database=ANALYZER_NEO4J_DATABASE) as session:
+        with get_session(database=analyzer_database()) as session:
             query = """
             MATCH (n)
             WITH labels(n)[0] as label, count(n) as count

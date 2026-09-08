@@ -91,13 +91,33 @@ async def adopt(request: Request, body: dict = Body(...)) -> dict:
     uid = _uid(request)
     store.ensure_schema()
     payload = body or {}
-    project = _guard(store.adopt_graph, payload.get("graph", ""), payload.get("name", ""), uid)
+    project = _guard(store.adopt_graph, payload.get("graph", ""), payload.get("name", ""), uid,
+                     payload.get("analyzerGraph") or None)
     SmartLogger.log(
         "INFO", "기존 graph 를 프로젝트로 등록했다.",
         category="projects.adopted",
         params={**http_context(request), "graph": project["graph"], "owner": uid},
     )
     return project
+
+
+@router.post("/{graph}/analyzer")
+async def set_analyzer(request: Request, graph: str, body: dict = Body(...)) -> dict:
+    """이 프로젝트가 함께 볼 분석 graph 를 정한다.
+
+    설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘은 한 세트다. 따로 고르면 추적성이
+    다른 분석을 가리키는데, 화면에는 결과가 나오므로 오류로 드러나지 않는다.
+    """
+    uid = _uid(request)
+    _require_admin(uid, graph)
+    result = _guard(store.set_analyzer_graph, graph, (body or {}).get("analyzerGraph") or None)
+    SmartLogger.log(
+        "INFO", "프로젝트의 분석 graph 를 정했다.",
+        category="projects.analyzer_set",
+        params={**http_context(request), "graph": graph, "by": uid,
+                "analyzer": result.get("analyzerGraph")},
+    )
+    return result
 
 
 @router.get("/{graph}/members")

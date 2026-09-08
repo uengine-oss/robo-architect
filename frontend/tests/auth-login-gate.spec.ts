@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test'
 
+// 공통 로그인 상태를 쓰지 않는다 — 로그인 화면 자체를 본다. 미리 로그인된 채로 들어가면
+// 이 파일이 확인하려는 것이 통째로 가려진다.
+test.use({ storageState: { cookies: [], origins: [] } })
+
 /**
  * 로그인 게이트 · 개발용 로그인 · 관리자 화면.
  *

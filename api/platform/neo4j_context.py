@@ -20,6 +20,9 @@ class Neo4jOverride:
     user: str
     password: str
     database: Optional[str] = None
+    # 분석 graph. 프로젝트는 설계와 분석이 **한 쌍**이다 — 설계는 분석에서 뽑은
+    # 룰을 승격시킨 것이라, 둘을 따로 고르면 추적성이 엉뚱한 곳을 가리킨다.
+    analyzer_database: Optional[str] = None
 
     @classmethod
     def from_headers(cls, headers: Mapping[str, str]) -> Optional["Neo4jOverride"]:
@@ -32,6 +35,7 @@ class Neo4jOverride:
             user=headers.get("x-neo4j-user", "neo4j"),
             password=headers.get("x-neo4j-password", ""),
             database=headers.get("x-neo4j-database") or None,
+            analyzer_database=headers.get("x-analyzer-database") or None,
         )
 
 

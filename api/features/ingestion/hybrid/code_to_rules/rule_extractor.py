@@ -23,7 +23,7 @@ from api.features.ingestion.hybrid.code_to_rules.dbms_rule_linearizer import (
 )
 from api.features.ingestion.hybrid.contracts import ExampleDTO, RuleDTO
 from api.features.ingestion.hybrid.effect_provenance import merge_write_effects
-from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
+from api.platform.neo4j import analyzer_database, get_session
 from api.platform.observability.smart_logger import SmartLogger
 
 # One row per (function, rule) pair. Examples are collected as a list so a single
@@ -168,7 +168,7 @@ async def extract_rules_from_analyzer_graph(
     seen: set[str] = set()
 
     try:
-        with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
+        with get_session(database=analyzer_database()) as s:
             # framework: 룰이 루틴(FUNCTION)에 직접 붙음 → 기존 _QUERY 로 소비.
             # dbms: 룰이 자식 구문 노드에 흩어짐 → 상위 루틴 오너로 귀속(044 C4). 동일 레코드 키.
             if is_dbms_graph(s):

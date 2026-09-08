@@ -57,7 +57,7 @@ import time
 from typing import Optional
 
 from api.features.auth.tokens import TokenError, verify_token
-from api.features.projects import roles
+from api.features.projects import roles, store as projects
 from api.platform import pg
 from api.platform.neo4j_context import Neo4jOverride
 from api.platform.observability.smart_logger import SmartLogger
@@ -157,11 +157,14 @@ def resolve_for_request(headers, fallback_database: Optional[str]) -> Optional[N
         raise BindingDenied(graph)
 
     uri = os.environ.get("NEO4J_URI", "bolt://localhost:28687")
+    # 설계와 분석은 한 세트다. 프로젝트가 정한 분석 graph 를 함께 실어야
+    # 추적성이 이 프로젝트의 분석을 본다.
+    analyzer = (projects.get_project(graph) or {}).get("analyzerGraph")
     if level == "read":
         # 읽기만 하는 사람은 그 사람 role 로 붙는다 — graph 격리와 읽기 전용을
         # Postgres 가 강제한다. 앱에 결함이 있어도 남의 데이터가 나오지 않는다.
         return Neo4jOverride(uri=uri, user=role, password=roles.role_password(uid),
-                             database=graph)
+                             database=graph, analyzer_database=analyzer)
 
     # 쓰는 사람은 소유자 자격으로 붙는다. 범위 지정 role 로는 라벨을 못 만들어
     # 인제스천이 통째로 막히기 때문이다. graph 는 여기서 고정하므로 클라이언트가
@@ -171,4 +174,5 @@ def resolve_for_request(headers, fallback_database: Optional[str]) -> Optional[N
         user=os.environ.get("NEO4J_USER", "dev"),
         password=os.environ.get("NEO4J_PASSWORD", ""),
         database=graph,
+        analyzer_database=analyzer,
     )

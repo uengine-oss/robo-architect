@@ -22,7 +22,7 @@ from typing import Optional
 
 from api.features.ingestion.hybrid.contracts import BpmProcess, BpmTaskDTO
 from api.features.ingestion.hybrid.mapper.embeddings import EmbeddingCache, cosine
-from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
+from api.platform.neo4j import analyzer_database, get_session
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -54,7 +54,7 @@ def _module_rows() -> list[dict]:
     The id is read as `coalesce(module_id, id)`: the analyzer's key is
     `module_id`, and `id` is kept for graphs written by an older version.
     """
-    with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
+    with get_session(database=analyzer_database()) as s:
         rows = list(s.run(
             """
             MATCH (m)
@@ -85,7 +85,7 @@ def _module_rows() -> list[dict]:
             "Analyzer DB returned no modules with a summary — every process will "
             "be skipped by the module gate",
             category="ingestion.hybrid.mapper",
-            params={"database": ANALYZER_NEO4J_DATABASE or "(default)"},
+            params={"database": analyzer_database() or "(default)"},
         )
 
     return [

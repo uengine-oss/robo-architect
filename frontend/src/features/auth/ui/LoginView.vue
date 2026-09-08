@@ -108,30 +108,47 @@ async function submitSso() {
 </template>
 
 <style scoped>
+/* 앱의 디자인 토큰을 쓴다 — 색을 직접 박으면 테마를 바꿨을 때 이 화면만 남는다. */
 .login { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
-  background:#f8f9fa; z-index:9999; }
-.login__card { width:380px; background:#fff; border:1px solid #dee2e6; border-radius:12px;
-  padding:40px 36px; text-align:center; box-shadow:0 2px 16px rgba(0,0,0,.06); }
-.login__brand { font-size:13px; font-weight:700; letter-spacing:3px; text-transform:uppercase;
-  color:#228be6; }
-.login__line { width:44px; height:3px; background:#228be6; margin:14px auto 28px; }
-.login__title { font-size:19px; font-weight:700; color:#1a1a2e; margin:0 0 10px; }
-.login__desc { font-size:13.5px; color:#6c757d; line-height:1.7; margin:0 0 22px; }
-.login__who { font-size:13px; color:#495057; background:#f1f3f5; border-radius:6px;
-  padding:8px 12px; margin-bottom:18px; }
-.login__primary { width:100%; padding:11px; border:none; border-radius:6px; background:#228be6;
-  color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
-.login__primary:disabled { opacity:.6; cursor:default; }
-.login__secondary { width:100%; padding:9px; border:1px solid #ced4da; border-radius:6px;
-  background:#fff; color:#343a40; font-size:13.5px; cursor:pointer; }
-.login__ghost { border:none; background:none; color:#868e96; font-size:12.5px; cursor:pointer;
-  text-decoration:underline; }
-.login__note { font-size:12.5px; color:#adb5bd; }
-.login__note code { background:#f1f3f5; padding:1px 5px; border-radius:4px; }
-.login__dev { margin-top:26px; padding-top:20px; border-top:1px dashed #dee2e6; text-align:left; }
-.login__devhead { font-size:12px; font-weight:600; color:#495057; margin-bottom:10px; }
-.login__devwarn { display:block; font-weight:400; color:#e8590c; margin-top:3px; }
-.login__input { width:100%; padding:8px 10px; margin-bottom:8px; border:1px solid #ced4da;
-  border-radius:6px; font-size:13.5px; box-sizing:border-box; }
-.login__error { margin-top:14px; font-size:12.5px; color:#c92a2a; }
+  background:var(--color-bg); font-family:var(--font-main); z-index:9999; }
+.login__card { width:380px; background:var(--color-bg-secondary);
+  border:1px solid var(--color-border); border-radius:var(--radius-md);
+  padding:var(--spacing-xl) 36px; text-align:center; }
+.login__brand { font-size:0.7rem; font-weight:700; letter-spacing:3px; text-transform:uppercase;
+  color:var(--color-accent); }
+.login__line { width:44px; height:2px; background:var(--color-accent);
+  margin:var(--spacing-md) auto var(--spacing-lg); }
+.login__title { font-size:1.15rem; font-weight:600; color:var(--color-text-bright);
+  margin:0 0 var(--spacing-sm); }
+.login__desc { font-size:0.8rem; color:var(--color-text-light); line-height:1.7;
+  margin:0 0 var(--spacing-lg); }
+.login__who { font-size:0.78rem; color:var(--color-text); background:var(--color-bg-tertiary);
+  border-radius:var(--radius-sm); padding:var(--spacing-sm) 12px; margin-bottom:var(--spacing-md); }
+.login__primary { width:100%; padding:10px; border:none; border-radius:var(--radius-sm);
+  background:var(--color-accent); color:#fff; font-size:0.82rem; font-weight:600;
+  font-family:inherit; cursor:pointer; transition:opacity .2s ease; }
+.login__primary:hover:not(:disabled) { opacity:.88; }
+.login__primary:disabled { opacity:.5; cursor:default; }
+.login__secondary { width:100%; padding:8px; border:1px solid var(--color-border);
+  border-radius:var(--radius-sm); background:var(--color-bg-tertiary); color:var(--color-text);
+  font-size:0.8rem; font-family:inherit; cursor:pointer; transition:all .2s ease; }
+.login__secondary:hover:not(:disabled) { border-color:var(--color-accent);
+  color:var(--color-text-bright); }
+.login__ghost { border:none; background:none; color:var(--color-text-light); font-size:0.74rem;
+  font-family:inherit; cursor:pointer; text-decoration:underline; }
+.login__ghost:hover { color:var(--color-text); }
+.login__note { font-size:0.74rem; color:var(--color-text-light); }
+.login__note code { background:var(--color-bg-tertiary); padding:1px 5px;
+  border-radius:var(--radius-sm); font-family:var(--font-mono); }
+.login__dev { margin-top:var(--spacing-lg); padding-top:var(--spacing-md);
+  border-top:1px dashed var(--color-border); text-align:left; }
+.login__devhead { font-size:0.72rem; font-weight:600; color:var(--color-text);
+  margin-bottom:var(--spacing-sm); }
+.login__devwarn { display:block; font-weight:400; color:var(--color-warning); margin-top:3px; }
+.login__input { width:100%; padding:8px 10px; margin-bottom:var(--spacing-sm);
+  border:1px solid var(--color-border); border-radius:var(--radius-sm);
+  background:var(--color-bg); color:var(--color-text); font-size:0.8rem;
+  font-family:inherit; box-sizing:border-box; }
+.login__input:focus { outline:none; border-color:var(--color-accent); }
+.login__error { margin-top:var(--spacing-md); font-size:0.74rem; color:var(--color-danger); }
 </style>

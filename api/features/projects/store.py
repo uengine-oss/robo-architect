@@ -30,7 +30,8 @@ from api.platform import pg
 
 __all__ = [
     "ensure_schema", "create_project", "adopt_graph", "list_projects",
-    "get_project", "share", "unshare", "members", "graph_exists",
+    "get_project", "share", "unshare", "members", "graph_exists", "prune_orphan_grants",
+    "set_analyzer_graph",
     "LEVELS", "LEVEL_BY_ROLE_NAME",
 ]
 
@@ -120,7 +121,32 @@ def create_project(name: str, owner_uid: str) -> dict[str, Any]:
     return {"graph": graph, **value, "level": "admin"}
 
 
-def adopt_graph(graph: str, name: str, owner_uid: str) -> dict[str, Any]:
+def set_analyzer_graph(graph: str, analyzer_graph: str | None) -> dict[str, Any]:
+    """이 프로젝트가 함께 볼 분석 graph 를 정한다.
+
+    **설계와 분석은 한 세트다.** 설계는 분석에서 뽑은 룰을 승격시킨 것이라, 둘을
+    따로 고르면 추적성이 다른 분석을 가리킨다 — 화면에는 결과가 나오므로 오류로
+    드러나지 않는다.
+    """
+    project = get_project(graph)
+    if not project:
+        raise ValueError(f"그런 프로젝트가 없다: {graph}")
+    if analyzer_graph and not graph_exists(analyzer_graph):
+        raise ValueError(f"그런 graph 가 없다: {analyzer_graph}")
+    value = {k: v for k, v in project.items() if k not in ("graph", "level")}
+    if analyzer_graph:
+        value["analyzerGraph"] = analyzer_graph
+    else:
+        value.pop("analyzerGraph", None)
+    pg.execute(
+        "UPDATE public.app_projects SET value = %s::jsonb, updated_at = now() WHERE graph = %s",
+        (json.dumps(value, ensure_ascii=False), graph),
+    )
+    return {"graph": graph, **value}
+
+
+def adopt_graph(graph: str, name: str, owner_uid: str,
+                analyzer_graph: str | None = None) -> dict[str, Any]:
     """이미 있는 graph 를 프로젝트로 등록한다.
 
     전환 전부터 쓰던 `robo` 같은 graph 를 목록에 올리기 위한 길이다. **graph 를
@@ -132,8 +158,12 @@ def adopt_graph(graph: str, name: str, owner_uid: str) -> dict[str, Any]:
     if not graph_exists(graph):
         raise ValueError(f"그런 graph 가 없다: {graph}")
     role = roles.ensure_role(owner_uid)
+    if analyzer_graph and not graph_exists(analyzer_graph):
+        raise ValueError(f"그런 graph 가 없다: {analyzer_graph}")
     value = {"displayName": (name or graph).strip(), "ownerUid": owner_uid,
              "created": _now(), "adopted": True}
+    if analyzer_graph:
+        value["analyzerGraph"] = analyzer_graph
     with pg.connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", graph))
@@ -246,8 +276,42 @@ def drop_project(graph: str) -> None:
     """프로젝트를 지운다 — **graph 안의 데이터가 함께 사라진다.**
 
     라우터에서 직접 부르지 않는다. 지금은 검사 정리용으로만 쓴다.
+
+    **권한을 먼저 회수한다.** `og_drop_graph` 는 `og_catalog.grantee` 를 건드리지
+    않아, 지운 graph 를 가리키는 권한 행이 그대로 남는다. 같은 이름의 graph 가
+    나중에 다시 생기면 그 권한이 조용히 되살아난다.
     """
     with pg.connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT role FROM og_catalog.grantee WHERE graph = %s", (graph,))
+            roles_here = [r["role"] for r in cur.fetchall()]
+            for role in roles_here:
+                cur.execute("SELECT og_revoke(%s, %s)", (role, graph))
             cur.execute("DELETE FROM public.app_projects WHERE graph = %s", (graph,))
             cur.execute("SELECT og_drop_graph(%s)", (graph,))
+    for role in roles_here:
+        _invalidate_binding(role, graph)
+
+
+def prune_orphan_grants() -> list[dict[str, str]]:
+    """없는 graph 를 가리키는 권한 행을 걷어낸다.
+
+    지운 graph 의 권한이 남아 있으면, 같은 이름이 다시 생겼을 때 예전 사람이 그대로
+    들어온다. 조회로는 드러나지 않는다 — 목록은 `app_projects` 와 조인하므로
+    화면에 보이지 않는다.
+    """
+    rows = pg.query(
+        "SELECT role, graph FROM og_catalog.grantee g "
+        "WHERE NOT EXISTS (SELECT 1 FROM og_catalog.graph x WHERE x.name = g.graph)"
+    )
+    for r in rows:
+        try:
+            pg.query("SELECT og_revoke(%s, %s)", (r["role"], r["graph"]))
+        except Exception:
+            # 권한 객체가 이미 사라진 경우 og_revoke 가 죽을 수 있다. 표에서만 지운다.
+            pg.execute(
+                "DELETE FROM og_catalog.grantee WHERE role = %s AND graph = %s",
+                (r["role"], r["graph"]),
+            )
+        _invalidate_binding(r["role"], r["graph"])
+    return [dict(r) for r in rows]

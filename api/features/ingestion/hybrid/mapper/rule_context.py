@@ -1,6 +1,6 @@
 """Enrich Phase 2 RuleDTOs with analyzer-graph context for Phase 3 matching.
 
-Cross-DB: we query the analyzer DB (`ANALYZER_NEO4J_DATABASE`) separately and
+Cross-DB: we query the analyzer DB (`analyzer_database`) separately and
 join in Python. The hybrid DB stays clean; we don't shadow analyzer nodes.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from api.features.ingestion.hybrid.contracts import RuleContext, RuleDTO
-from api.platform.neo4j import ANALYZER_NEO4J_DATABASE, get_session
+from api.platform.neo4j import analyzer_database, get_session
 
 # source_function = 오퍼레이션 단위(루틴) 이름 (rule_extractor/dbms 선형화가 루틴명으로 세팅).
 # 그래서 오너는 루틴 노드. 테이블 R/W 는 framework=루틴 자신 / dbms=자식 구문에 붙으므로
@@ -63,7 +63,7 @@ def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
     lookup: dict[str, dict] = {}
     if fn_names:
         try:
-            with get_session(database=ANALYZER_NEO4J_DATABASE) as s:
+            with get_session(database=analyzer_database()) as s:
                 for rec in s.run(_FN_LOOKUP_QUERY, fn_names=fn_names):
                     lookup[rec["fn"]] = {
                         "summary": rec.get("summary"),
