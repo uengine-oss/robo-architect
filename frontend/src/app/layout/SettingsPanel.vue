@@ -35,6 +35,92 @@ function handleBackdropClick(e) {
     emit('close')
   }
 }
+
+// ── 생성 데이터 초기화 ──
+//
+// 워크플로우(문서 업로드 → BPM → 룰 매핑 → 이벤트 스토밍 → 화면)가 만든
+// 설계 데이터를 지운다. 되돌릴 수 없으므로 **무엇이 지워지고 무엇이 남는지를
+// 실제 건수로 보여준 뒤** 한 번 더 확인받는다.
+//
+// 백엔드(`DELETE /api/ingest/clear-all`)가 보존하는 라벨은 지워지는 수에서 뺀다.
+// 그 수를 그대로 보여주면 Figma 연결까지 지우는 것처럼 읽힌다.
+const PRESERVED_LABELS = ['FigmaBinding', 'StoryboardPageMapping', 'BindingHistoryEvent', 'FigmaComponent']
+
+// 화면에 이름으로 보여줄 것들. 여기 없는 라벨도 지워지지만, 목록을 다 늘어놓으면
+// 무엇이 사라지는지가 오히려 안 보인다. 사용자가 화면에서 본 것들만 짚는다.
+const CLEAR_SUMMARY = [
+  ['BpmProcess', '업무 프로세스'],
+  ['UserStory', '사용자 스토리'],
+  ['BoundedContext', '바운디드 컨텍스트'],
+  ['Aggregate', '애그리거트'],
+  ['Command', '커맨드'],
+  ['Event', '이벤트'],
+  ['UI', '화면'],
+  ['Rule', '업무 규칙'],
+]
+
+const clearState = ref('idle')   // idle | confirming | clearing | done | error
+const clearStats = ref(null)
+const clearMessage = ref('')
+
+const clearableCount = computed(() => {
+  const by = clearStats.value?.by_type
+  if (!by) return null
+  return Object.entries(by)
+    .filter(([label]) => !PRESERVED_LABELS.includes(label))
+    .reduce((sum, [, n]) => sum + n, 0)
+})
+
+const clearBreakdown = computed(() => {
+  const by = clearStats.value?.by_type || {}
+  return CLEAR_SUMMARY
+    .map(([label, ko]) => ({ ko, n: by[label] || 0 }))
+    .filter((x) => x.n > 0)
+})
+
+async function loadClearStats() {
+  try {
+    const resp = await fetch('/api/graph/stats')
+    clearStats.value = resp.ok ? await resp.json() : null
+  } catch (_e) {
+    clearStats.value = null
+  }
+}
+
+function askToClear() {
+  clearMessage.value = ''
+  clearState.value = 'confirming'
+  loadClearStats()
+}
+
+function cancelClear() {
+  clearState.value = 'idle'
+}
+
+async function confirmClear() {
+  clearState.value = 'clearing'
+  try {
+    const resp = await fetch('/api/ingest/clear-all', { method: 'DELETE' })
+    const body = await resp.json().catch(() => ({}))
+    if (!resp.ok || body?.success === false) {
+      throw new Error(body?.message || `삭제 실패 (${resp.status})`)
+    }
+    const total = Object.entries(body?.deleted || {})
+      .filter(([label]) => !PRESERVED_LABELS.includes(label))
+      .reduce((sum, [, n]) => sum + n, 0)
+    clearState.value = 'done'
+    clearMessage.value = `${total}개를 지웠습니다.`
+  } catch (e) {
+    clearState.value = 'error'
+    clearMessage.value = e?.message || '삭제하지 못했습니다.'
+  }
+}
+
+// 지운 뒤 화면을 새로 연다. 캔버스와 트리는 지우기 전 데이터를 들고 있어서,
+// 그대로 두면 없는 노드를 눌러 보게 된다 — 조용히 어긋나는 자리다.
+function reloadAfterClear() {
+  window.location.reload()
+}
 </script>
 
 <template>
@@ -202,6 +288,84 @@ function handleBackdropClick(e) {
               </div>
             </div>
           </div>
+
+          <!-- 생성 데이터 초기화 — 되돌릴 수 없다. 두 번 확인받는다. -->
+          <div class="settings-section settings-section--danger">
+            <div class="settings-section__header">
+              <h3 class="settings-section__title">생성 데이터 초기화</h3>
+              <span class="settings-section__description">
+                문서 업로드부터 프로세스·룰 매핑·이벤트 스토밍·화면까지,
+                워크플로우가 만든 설계 데이터를 모두 지웁니다.
+              </span>
+            </div>
+
+            <div class="settings-section__control settings-section__control--stack">
+              <template v-if="clearState === 'idle'">
+                <button class="danger-button" @click="askToClear">생성 데이터 지우기</button>
+              </template>
+
+              <template v-else-if="clearState === 'confirming'">
+                <div class="danger-warning">
+                  <div class="danger-warning__head">되돌릴 수 없습니다.</div>
+
+                  <div class="danger-warning__row">
+                    <span class="danger-warning__label">지워지는 것</span>
+                    <span class="danger-warning__value">
+                      <template v-if="clearableCount === null">세는 중…</template>
+                      <template v-else-if="clearableCount === 0">지울 것이 없습니다</template>
+                      <template v-else>
+                        <b>{{ clearableCount }}개</b>
+                        <span v-if="clearBreakdown.length" class="danger-warning__detail">
+                          — {{ clearBreakdown.map(b => `${b.ko} ${b.n}`).join(' · ') }}
+                        </span>
+                      </template>
+                    </span>
+                  </div>
+
+                  <div class="danger-warning__row">
+                    <span class="danger-warning__label">남는 것</span>
+                    <span class="danger-warning__value">
+                      Figma 연결과 스캔한 컴포넌트, 그리고 레거시 분석 결과(별도 저장소)
+                    </span>
+                  </div>
+
+                  <p class="danger-warning__note">
+                    다시 만들려면 문서 업로드부터 전 과정을 다시 돌려야 합니다.
+                    레거시 분석은 10분 넘게 걸립니다.
+                  </p>
+                </div>
+                <div class="danger-actions">
+                  <button class="danger-cancel" @click="cancelClear">취소</button>
+                  <button
+                    class="danger-button danger-button--confirm"
+                    :disabled="clearableCount === 0"
+                    @click="confirmClear"
+                  >
+                    {{ clearableCount === null ? '지웁니다' : `${clearableCount}개를 지웁니다` }}
+                  </button>
+                </div>
+              </template>
+
+              <template v-else-if="clearState === 'clearing'">
+                <div class="danger-status">지우는 중…</div>
+              </template>
+
+              <template v-else-if="clearState === 'done'">
+                <div class="danger-status danger-status--done">{{ clearMessage }}</div>
+                <p class="danger-warning__note">
+                  화면은 아직 지우기 전 데이터를 들고 있습니다. 새로 열어야 맞습니다.
+                </p>
+                <button class="danger-button danger-button--confirm" @click="reloadAfterClear">
+                  화면 새로 열기
+                </button>
+              </template>
+
+              <template v-else>
+                <div class="danger-status danger-status--error">{{ clearMessage }}</div>
+                <button class="danger-cancel" @click="cancelClear">닫기</button>
+              </template>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -209,6 +373,105 @@ function handleBackdropClick(e) {
 </template>
 
 <style scoped>
+/* ── 생성 데이터 초기화 ── */
+.settings-section--danger {
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
+  margin-top: 4px;
+}
+.settings-section--danger .settings-section__title {
+  color: #dc2626;
+}
+.danger-button {
+  align-self: flex-start;
+  padding: 6px 12px;
+  border: 1px solid #dc2626;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: #dc2626;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.danger-button:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+.danger-button--confirm {
+  background: #dc2626;
+  color: #fff;
+}
+.danger-button--confirm:hover:not(:disabled) {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+.danger-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.danger-cancel {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.danger-cancel:hover {
+  background: var(--color-bg);
+}
+.danger-warning {
+  border: 1px solid #dc2626;
+  border-radius: var(--radius-sm);
+  background: rgba(220, 38, 38, 0.06);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.danger-warning__head {
+  font-weight: 600;
+  color: #dc2626;
+  margin-bottom: 6px;
+}
+.danger-warning__row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.danger-warning__label {
+  flex: 0 0 62px;
+  color: var(--color-text-light);
+}
+.danger-warning__value {
+  flex: 1;
+  min-width: 0;
+  word-break: keep-all;
+}
+.danger-warning__detail {
+  color: var(--color-text-light);
+}
+.danger-warning__note {
+  margin: 8px 0 0;
+  color: var(--color-text-light);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.danger-actions {
+  display: flex;
+  gap: 8px;
+}
+.danger-status {
+  font-size: 12px;
+  color: var(--color-text-light);
+}
+.danger-status--done {
+  color: #16a34a;
+}
+.danger-status--error {
+  color: #dc2626;
+}
+
 .settings-panel-backdrop {
   position: fixed;
   inset: 0;
