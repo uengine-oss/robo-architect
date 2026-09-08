@@ -1,9 +1,13 @@
 /**
  * 데스크톱 → 백엔드 요청 헤더 인터셉터 (spec 032 T019 + Neo4j override).
  *
- * `window.fetch` 를 1회 몽키패치해 **동일 출처** 요청에 두 가지를 싣는다:
+ * `window.fetch` 를 1회 몽키패치해 **동일 출처** 요청에 실어 보낸다:
  *   1. 신원 — `X-User-Name`(UTF-8 percent-encoded) / `X-User-Email` (런처 세션 스토어)
  *   2. Neo4j 연결 — `X-Neo4j-*` (런처에서 고른 활성 연결, 키체인 비번 포함)
+ *   3. 세션 — `Authorization: Bearer` 와 `X-Project-Graph`
+ *
+ * 3번을 여기 두는 이유는 호출부가 수백 곳이기 때문이다. 로그인 상태를 각 화면이
+ * 챙기게 하면 한 곳만 빠져도 그 경로가 조용히 인증 없이 나간다.
  *
  * 프론트 코드는 native `fetch` 를 그대로 쓴다 — 호출부(수백 곳) 수정 불필요.
  *
@@ -23,6 +27,7 @@
  */
 
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
+import { useAuthStore } from '@/features/auth/auth.store.js'
 
 let installed = false
 
@@ -94,6 +99,18 @@ export function installBackendHeaderInterceptor() {
         const neo4j = await resolveNeo4jHeaders()
         if (neo4j) {
           for (const [key, value] of Object.entries(neo4j)) headers.set(key, value)
+          touched = true
+        }
+
+        // 세션. 이미 Authorization 을 실은 요청은 건드리지 않는다 — 호출부가
+        // 일부러 다른 자격을 쓰는 경우가 있을 수 있다.
+        const auth = useAuthStore()
+        if (auth.token && !headers.has('Authorization')) {
+          headers.set('Authorization', `Bearer ${auth.token}`)
+          touched = true
+        }
+        if (auth.projectGraph && !headers.has('X-Project-Graph')) {
+          headers.set('X-Project-Graph', auth.projectGraph)
           touched = true
         }
 

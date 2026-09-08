@@ -31,6 +31,8 @@ from api.features.auth.tokens import (
     TokenError, issue_token, jwt_secret_configured, token_ttl_seconds, verify_token,
 )
 from api.features.accounts import store as accounts
+from api.platform.identity.auth_guard import auth_enforced
+from api.platform.identity.connection_binding import binding_enabled
 from api.platform.embeddings import describe as describe_embeddings
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
@@ -66,6 +68,10 @@ async def get_provider() -> dict:
         "approvalRequired": accounts.approval_enabled(),
         "jwtSecretConfigured": jwt_secret_configured(),
         "sessionTtlSeconds": token_ttl_seconds(),
+        # 화면이 로그인 게이트를 걸지 말지 정하는 값. 서버가 강제하지 않는데
+        # 화면만 막으면 쓰던 사람이 갑자기 못 들어온다.
+        "enforce": auth_enforced(),
+        "bindConnection": binding_enabled(),
     }
 
     if provider is AuthProvider.SWP:

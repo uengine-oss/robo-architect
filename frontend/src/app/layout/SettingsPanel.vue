@@ -5,6 +5,10 @@ import { useThemeStore } from '@/app/theme.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 import { useLanguageStore } from '@/app/language.store'
+import { useAuthStore } from '@/features/auth/auth.store.js'
+import UserAdminSection from '@/features/auth/ui/UserAdminSection.vue'
+
+const auth = useAuthStore()
 
 const props = defineProps({
   visible: {
@@ -138,6 +142,10 @@ function reloadAfterClear() {
         </div>
 
         <div class="settings-panel__content">
+          <!-- 사용자 관리 — 관리자에게만. 서버도 403 으로 막으므로 여기는 자리를
+               감추는 것뿐이다. -->
+          <UserAdminSection v-if="auth.isAdmin" />
+
           <!-- Domain Terminology (Ubiquitous Language) Setting -->
           <div class="settings-section">
             <div class="settings-section__header">

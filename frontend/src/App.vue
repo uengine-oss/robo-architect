@@ -34,6 +34,8 @@ import { createLogger, newOpId } from '@/app/logging/logger'
 // the session identity is established. Web mode bypasses (session.entered
 // starts true) so this gate is transparent to the existing SPA deployment.
 import LauncherView from '@/features/desktop-launcher/LauncherView.vue'
+import LoginView from '@/features/auth/ui/LoginView.vue'
+import { useAuthStore } from '@/features/auth/auth.store.js'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 // 034 US7 — 설계 미반영 User Story 식별 + 반영 프롬프트.
 import DesignReflectPrompt from '@/features/requirements/ui/DesignReflectPrompt.vue'
@@ -47,6 +49,14 @@ const navigatorStore = useNavigatorStore()
 const themeStore = useThemeStore() // Initialize theme store
 const bpmnStore = useBpmnStore()
 const session = useSessionStore()
+const auth = useAuthStore()
+
+// 인증을 강제할 때만 문을 잠근다. 꺼져 있으면 지금까지처럼 바로 들어간다.
+// `checking` 동안에는 아무 판정도 하지 않는다 — 저장된 토큰을 확인하기 전에
+// 로그인 화면을 띄우면 새로고침마다 화면이 한 번 깜빡인다.
+const authGateBlocked = computed(
+  () => auth.enforced && !auth.checking && auth.status !== 'unknown' && !auth.authenticated,
+)
 
 // Tab state management — 시작 탭 = Proposals (사용자 기본 진입점)
 const activeTab = ref('Proposals')
@@ -376,7 +386,11 @@ function getNavigatorSnapshot() {
 }
 
 
-onMounted(() => {
+onMounted(async () => {
+  // 인증 설정을 먼저 읽고, 저장된 토큰이 아직 쓸 만한지 확인한다.
+  // 실패해도 앱은 뜬다 — 강제가 꺼져 있으면 로그인 없이 쓰던 대로 쓴다.
+  auth.loadProvider().then(() => auth.refresh())
+
   // Load saved navigator width and collapsed state
   try {
     const v = Number(localStorage.getItem('navigator_panel_width'))
@@ -439,7 +453,10 @@ onUnmounted(() => {
        the user has completed the launcher hand-off (connection + project
        root + identity). In web mode session.entered is true from the start,
        so the entire branch is unreachable and the existing SPA renders as-is. -->
-  <LauncherView v-if="session.isDesktop && !session.entered" />
+  <!-- 인증 게이트. `AUTH_ENFORCE` 가 켜졌을 때만 걸린다. 런처보다 앞에 둔다 —
+       누구인지 모르는 채로 연결을 고르게 할 이유가 없다. -->
+  <LoginView v-if="authGateBlocked" />
+  <LauncherView v-else-if="session.isDesktop && !session.entered" />
   <div v-else class="app-container">
     <TopBar
       :active-tab="activeTab"

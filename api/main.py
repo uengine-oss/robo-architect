@@ -381,6 +381,10 @@ app.include_router(auth_router)
 from api.features.projects.router import router as projects_router  # noqa: E402
 app.include_router(projects_router)
 
+# 사용자 관리 — 관리자만. 승인 대기 목록이 여기서 나온다.
+from api.features.accounts.router import router as accounts_router  # noqa: E402
+app.include_router(accounts_router)
+
 
 """
 Feature routers (business capabilities)

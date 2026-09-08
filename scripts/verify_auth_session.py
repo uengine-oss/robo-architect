@@ -39,6 +39,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from api.platform import pg  # noqa: E402
 from api.features.accounts import store as accounts  # noqa: E402
 from api.features.auth import tokens  # noqa: E402
+from api.features.accounts.router import router as accounts_router  # noqa: E402
 from api.features.auth.router import router as auth_router  # noqa: E402
 from api.platform.identity.auth_guard import AuthGuardMiddleware  # noqa: E402
 
@@ -66,6 +67,7 @@ def build_app() -> FastAPI:
     app = FastAPI()
     app.add_middleware(AuthGuardMiddleware)
     app.include_router(auth_router)
+    app.include_router(accounts_router)
 
     @app.get("/api/contexts")
     async def _protected():           # noqa: ANN202
@@ -166,7 +168,71 @@ def main() -> int:
                      headers={"Authorization": f"Bearer {short}"}).status_code == 401)
     os.environ.pop("AUTH_SESSION_TTL_SECONDS")
 
-    print("\n정리")
+    print("\n관리자만 사용자 관리를 할 수 있다")
+
+    def login_as(empno: str) -> dict:
+        os.environ["AUTH_DEV_LOGIN_EMPNO"] = empno
+        return client.post("/api/auth/dev-login",
+                           data={"loginId": "test", "password": "test"}).json()
+
+    ah = {"Authorization": f"Bearer {login_as(PREFIX + '-ADMIN')['accessToken']}"}
+    # 승인제가 켜져 있어 일반 사용자는 대기로 들어온다. 승인해야 토큰이 생기고,
+    # 토큰이 있어야 "권한이 없어 막힌다"를 확인할 수 있다 — 대기 상태로 재면
+    # 401(토큰 없음)이라 403(권한 없음)과 구별되지 않는다.
+    login_as(PREFIX + "-MEMBER")
+    client.post(f"/api/accounts/{PREFIX}-MEMBER/status", json={"status": "approved"}, headers=ah)
+    mtok = login_as(PREFIX + "-MEMBER").get("accessToken")
+    check("승인된 일반 사용자는 토큰을 받는다", bool(mtok))
+    check("그래도 목록은 못 본다 — 401 이 아니라 403 이다",
+          client.get("/api/accounts",
+                     headers={"Authorization": f"Bearer {mtok}"}).status_code == 403)
+    check("토큰이 없으면 401", client.get("/api/accounts").status_code == 401)
+    os.environ["AUTH_DEV_LOGIN_EMPNO"] = PREFIX + "-ADMIN"
+    check("관리자는 목록을 본다", client.get("/api/accounts", headers=ah).status_code == 200)
+    listing = client.get("/api/accounts", headers=ah).json()
+    check("대기 인원수를 함께 준다", "counts" in listing and "pending" in listing["counts"])
+
+    r = client.post(f"/api/accounts/{PREFIX}-MEMBER/status",
+                    json={"status": "rejected"}, headers=ah)
+    check("관리자는 거절할 수 있다", r.status_code == 200, r.text[:100])
+    os.environ["AUTH_DEV_LOGIN_EMPNO"] = PREFIX + "-MEMBER"
+    after_reject = client.post("/api/auth/dev-login",
+                               data={"loginId": "test", "password": "test"}).json()
+    check("거절되면 다시 로그인해도 토큰이 없다", "accessToken" not in after_reject)
+    check("거절 상태를 알려 준다", after_reject.get("status") == "rejected",
+          str(after_reject)[:100])
+    os.environ["AUTH_DEV_LOGIN_EMPNO"] = PREFIX + "-ADMIN"
+
+    check("자기 상태는 못 바꾼다 — 마지막 관리자가 스스로를 잠글 수 있다",
+          client.post(f"/api/accounts/{PREFIX}-ADMIN/status",
+                      json={"status": "rejected"}, headers=ah).status_code == 403)
+    check("자기 역할도 못 바꾼다 — 자기 승격과 자기 강등을 함께 막는다",
+          client.post(f"/api/accounts/{PREFIX}-ADMIN/role",
+                      json={"role": "member"}, headers=ah).status_code == 403)
+    check("없는 사용자는 404",
+          client.post(f"/api/accounts/{PREFIX}-NOPE/status",
+                      json={"status": "approved"}, headers=ah).status_code == 404)
+    check("알 수 없는 상태는 400",
+          client.post(f"/api/accounts/{PREFIX}-MEMBER/status",
+                      json={"status": "superuser"}, headers=ah).status_code == 400)
+    check("관리자로 올릴 수 있다",
+          client.post(f"/api/accounts/{PREFIX}-MEMBER/role",
+                      json={"role": "admin"}, headers=ah).status_code == 200)
+
+    print("\n강등되면 들고 있던 토큰이 통하지 않는다")
+    # 역할은 토큰 클레임에도 실린다. 클레임만 보면 강등된 사람이 만료 전까지
+    # 관리자로 남는다 — 저장된 값을 다시 읽어야 한다.
+    client.post(f"/api/accounts/{PREFIX}-MEMBER/status", json={"status": "approved"}, headers=ah)
+    promoted = login_as(PREFIX + "-MEMBER").get("accessToken")
+    ph = {"Authorization": f"Bearer {promoted}"}
+    check("올려 준 사람은 목록을 본다", client.get("/api/accounts", headers=ph).status_code == 200)
+    check("그 토큰의 클레임은 admin 이다",
+          tokens.verify_token(promoted).get("role") == "admin")
+    client.post(f"/api/accounts/{PREFIX}-MEMBER/role", json={"role": "member"}, headers=ah)
+    check("강등 뒤에는 같은 토큰으로 막힌다 — 클레임을 믿지 않는다",
+          client.get("/api/accounts", headers=ph).status_code == 403)
+    os.environ["AUTH_DEV_LOGIN_EMPNO"] = PREFIX + "-ADMIN"
+
     removed = cleanup()
     check("시험 행을 전부 지웠다",
           accounts.get_user(PREFIX + "-DEV") is None
