@@ -38,6 +38,83 @@ def _analyzer_query(query: str, params: dict | None = None) -> list[dict]:
         return [dict(r) for r in session.run(query, **(params or {}))]
 
 
+def _analyzer_has_nested_rules() -> bool:
+    """이 분석 그래프가 `PARENT_OF` 를 쓰는가 — dbms 인가.
+
+    한 번만 보고 기억한다. framework 그래프에는 이 관계가 아예 없어서
+    되돌림 경로를 시도할 이유가 없다.
+    """
+    global _NESTED_RULES_CACHE
+    if _NESTED_RULES_CACHE is None:
+        rows = _analyzer_query("MATCH ()-[r:PARENT_OF]->() RETURN count(r) AS c")
+        _NESTED_RULES_CACHE = bool(rows and (rows[0].get("c") or 0) > 0)
+    return _NESTED_RULES_CACHE
+
+
+_NESTED_RULES_CACHE: bool | None = None
+
+
+def _analyzer_function(fid: str) -> list[dict]:
+    """루틴 하나를 읽는다. 라벨을 붙인 쪽을 먼저 본다.
+
+    라벨 없는 `MATCH (f)` 는 `og_node` 를 통째로 읽고 속성을 `og_node_json()`
+    으로 행마다 푼다 — 0.11초. 라벨을 붙이면 타입 뷰의 실제 컬럼을 타서
+    0.005초다. dbms 의 PROCEDURE/TRIGGER 는 FUNCTION 하위가 아닐 수 있으므로
+    빈손이면 원래 형태로 되돌아간다.
+    """
+    body = """
+        RETURN coalesce(f.function_id, f.id) AS id,
+               coalesce(f.name, f.signature, f.function_id) AS name,
+               f.summary AS summary,
+               f.start_line AS start_line, f.end_line AS end_line,
+               f.file_path AS file_path,
+               f.code_text AS code_text
+        LIMIT 1
+    """
+    rows = _analyzer_query(
+        "MATCH (f:FUNCTION) WHERE f.function_id = $fid OR f.id = $fid OR f.name = $fid" + body,
+        {"fid": fid},
+    )
+    if rows:
+        return rows
+    return _analyzer_query(
+        "MATCH (f) WHERE f.function_id = $fid OR f.id = $fid OR f.name = $fid" + body,
+        {"fid": fid},
+    )
+
+
+def _analyzer_table_access(fid: str) -> list[dict]:
+    """루틴이 읽고 쓰는 표. dbms 는 READS/WRITES 가 자식 구문에 붙는다(spec 044 C5).
+
+    `_analyzer_rules` 와 같은 이유로 가변길이를 기본 경로에서 뺀다.
+    """
+    body = """
+        WHERE coalesce(op.function_id, op.id) = $fid
+        OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:COLUMN)
+        WITH t, type(r) AS access,
+             collect(DISTINCT {name: c.name, dtype: c.dtype, pk: c.is_primary_key}) AS columns
+        RETURN access, t.name AS table_name, columns
+        ORDER BY t.name
+    """
+    rows = _analyzer_query("MATCH (op)-[r:READS|WRITES]->(t:TABLE)" + body, {"fid": fid})
+    if rows or not _analyzer_has_nested_rules():
+        return rows
+    return _analyzer_query(
+        "MATCH (op)-[:PARENT_OF*0..]->(_n)-[r:READS|WRITES]->(t:TABLE)" + body, {"fid": fid})
+
+
+def _analyzer_rules(fns: list[str]) -> list[dict]:
+    """루틴 목록에 걸린 룰을 GWT·쓰기효과와 함께 가져온다.
+
+    빠른 쪽을 먼저 본다. 결과가 없고 그래프가 `PARENT_OF` 를 쓸 때만
+    가변길이 경로로 되돌아간다.
+    """
+    rows = _analyzer_query(_ANALYZER_RULES_DIRECT, {"fns": fns})
+    if rows or not _analyzer_has_nested_rules():
+        return rows
+    return _analyzer_query(_ANALYZER_RULES_NESTED, {"fns": fns})
+
+
 # 분석 그래프에서 (루틴, 룰) 쌍을 GWT·쓰기효과와 함께 꺼낸다.
 #
 # 조인 키는 `function_id` 다. analyzer 의 FUNCTION 에는 `name` 이 없고
@@ -47,7 +124,48 @@ def _analyzer_query(query: str, params: dict | None = None) -> list[dict]:
 #
 # dbms 는 룰 오너가 자식 구문이라 `PARENT_OF*0..` 로 루틴을 복원한다
 # (framework 는 rtn=f). spec 044 C4.
-_ANALYZER_RULES = """
+#
+# **그 가변길이 구간이 출처 조회를 통째로 느리게 만든다.** 같은 패턴 안에서
+# 관계 변수(`hr`)를 함께 묶으면 컴파일된 SQL 이 노드 테이블을 CROSS JOIN 하고
+# 라벨 없는 `rtn` 의 속성을 `og_node_json()` 으로 행마다 푼다 — 실측 9.7초.
+# `hr` 을 안 묶으면 0.08초, 가변길이를 빼면 0.01초다. 한 번 호출이 아니라
+# UserStory 마다 도는 자리라 Aggregate 하나가 180초를 넘겼다.
+#
+# 그래서 두 벌로 나눈다. framework(java/c/python)는 룰 오너가 곧 루틴이므로
+# 가변길이가 필요 없다 — 아래 DIRECT 로 끝난다. dbms 만 NESTED 로 되돌아간다.
+_ANALYZER_RULES_DIRECT = """
+MATCH (rtn)-[hr:HAS_RULE]->(ar:RULE)
+  WHERE ar.session_id IS NULL
+    AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
+    AND coalesce(rtn.function_id, rtn.name) IN $fns
+// 생산자 EXAMPLE 에 is_boundary 없음 → 대표예시는 첫 EXAMPLE(spec 044 C2/R4).
+OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(e:EXAMPLE)
+WITH rtn, hr, ar, head(collect(DISTINCT e)) AS canonical_e
+// Per-Rule write effects: v2 access filters reads; legacy op-only remains additive.
+OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(wEx:EXAMPLE)-[at:AFFECTS_TABLE]->(wt:TABLE)
+WITH rtn, hr, ar, canonical_e,
+     collect(DISTINCT {
+         table: wt.name, access: at.access, op: at.op, op_source: at.op_source
+     }) AS writes
+RETURN coalesce(rtn.function_id, rtn.name) AS fn,
+       hr.local_rule_id             AS seq,
+       ar.statement                 AS title,
+       coalesce(hr.coupled_domains[0], '') AS coupled_domain,
+       canonical_e.given            AS given,
+       canonical_e.when_            AS wh,
+       canonical_e.then_            AS th,
+       [] AS boundary_ids,
+       [w IN writes WHERE w.table IS NOT NULL
+         AND (
+           w.access IN ['WRITE', 'READ_WRITE']
+           OR (w.access IS NULL AND coalesce(w.op, '') <> 'READ')
+         )] AS writes
+ORDER BY fn, seq
+"""
+
+
+# dbms 전용 되돌림 경로 — 룰 오너가 루틴의 자식 구문일 때만 쓴다.
+_ANALYZER_RULES_NESTED = """
 MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
   WHERE ar.session_id IS NULL
     AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
@@ -224,6 +342,9 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
     #    organizational context, not its source.
     sources: list[dict] = []
     seen_us = set()  # dedup by us.id (one US can appear via multiple paths)
+    # 같은 루틴이 여러 UserStory 아래 다시 나온다. 요청 하나 안에서는 한 번만
+    # 읽는다 — Aggregate 하나에 출처가 열일곱이면 같은 함수를 열일곱 번 읽었다.
+    func_cache: dict[str, dict | None] = {}
     for us in us_rows:
         usid = us.get("id")
         if not usid or usid in seen_us:
@@ -247,7 +368,7 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
         wanted = {(r.get("fn"), r.get("title")) for r in shadow if r.get("fn")}
         fns = sorted({fn for fn, _ in wanted})
         bl_rows = [
-            r for r in (_analyzer_query(_ANALYZER_RULES, {"fns": fns}) if fns else [])
+            r for r in (_analyzer_rules(fns) if fns else [])
             if (r.get("fn"), r.get("title")) in wanted
         ]
 
@@ -289,31 +410,17 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
         # share a function — collect once per function, attach READS/WRITES.
         functions = []
         for fid in function_ids:
-            func_rows = _analyzer_query("""
-                MATCH (f)
-                WHERE f.function_id = $fid OR f.id = $fid OR f.name = $fid
-                RETURN coalesce(f.function_id, f.id) AS id,
-                       coalesce(f.name, f.signature, f.function_id) AS name,
-                       f.summary AS summary,
-                       f.start_line AS start_line, f.end_line AS end_line,
-                       f.file_path AS file_path,
-                       f.code_text AS code_text
-                LIMIT 1
-            """, {"fid": fid})
+            if fid in func_cache:
+                if func_cache[fid] is not None:
+                    functions.append(func_cache[fid])
+                continue
+            func_rows = _analyzer_function(fid)
             if not func_rows:
+                func_cache[fid] = None
                 continue
             f = func_rows[0]
             real_fid = f["id"] or fid
-            # dbms: READS/WRITES 는 자식 구문에 붙으므로 PARENT_OF*0.. 하향수집(spec 044 C5).
-            rw_rows = _analyzer_query("""
-                MATCH (op)-[:PARENT_OF*0..]->(_n)-[r:READS|WRITES]->(t:TABLE)
-                WHERE coalesce(op.function_id, op.id) = $fid
-                OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:COLUMN)
-                WITH t, type(r) AS access,
-                     collect(DISTINCT {name: c.name, dtype: c.dtype, pk: c.is_primary_key}) AS columns
-                RETURN access, t.name AS table_name, columns
-                ORDER BY t.name
-            """, {"fid": real_fid})
+            rw_rows = _analyzer_table_access(real_fid)
             tables: dict[str, dict] = {}
             for r in rw_rows:
                 tname = r["table_name"]
@@ -336,14 +443,16 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
                 if f.get("end_line"):
                     location += f"-{f['end_line']}"
 
-            functions.append({
+            entry = {
                 "id": real_fid,
                 "name": f.get("name", ""),
                 "summary": f.get("summary", ""),
                 "location": location,
                 "code": f.get("code_text") or "",
                 "tables": list(tables.values()),
-            })
+            }
+            func_cache[fid] = entry
+            functions.append(entry)
 
         sources.append({
             "us": {
