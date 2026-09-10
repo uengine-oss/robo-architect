@@ -89,11 +89,24 @@ _CACHE: dict[tuple[str, str], tuple[float, Optional[str]]] = {}
 
 
 class BindingDenied(Exception):
-    """이 사용자는 이 graph 에 권한이 없다."""
+    """이 사용자는 이 graph 에 권한이 없다.
 
-    def __init__(self, graph: str) -> None:
-        super().__init__(f"이 프로젝트에 접근할 권한이 없습니다: {graph}")
+    **"고르지 않았다"와 "권한이 없다"를 가른다.** 둘을 같은 오류로 내보내면 화면이
+    구별할 수 없고, 실제로 프로젝트를 안 고른 사용자에게 "서버 연결 실패"라고
+    보여 줬다 — 백엔드가 멀쩡한데 죽은 것처럼 보인다.
+    """
+
+    def __init__(self, graph: str, *, selected: bool = True) -> None:
+        if selected:
+            super().__init__(f"이 프로젝트에 접근할 권한이 없습니다: {graph}")
+        else:
+            super().__init__("프로젝트를 먼저 고르세요.")
         self.graph = graph
+        self.selected = selected
+
+    @property
+    def code(self) -> str:
+        return "PROJECT_FORBIDDEN" if self.selected else "PROJECT_NOT_SELECTED"
 
 
 def binding_enabled() -> bool:
@@ -157,18 +170,24 @@ def resolve_for_request(headers, fallback_database: Optional[str]) -> Optional[N
     if not uid:
         return None
 
-    graph = (
-        headers.get("x-project-graph")
-        or headers.get("x-neo4j-database")
-        or fallback_database
-        or ""
-    ).strip()
+    # 요청이 정한 것과 `.env` 폴백을 갈라 둔다 — 아래에서 오류 종류가 갈린다.
+    asked = (headers.get("x-project-graph") or headers.get("x-neo4j-database") or "").strip()
+    graph = asked or (fallback_database or "").strip()
     if not graph:
-        raise BindingDenied("(프로젝트 없음)")
+        raise BindingDenied("(프로젝트 없음)", selected=False)
 
     role = roles.role_name(uid)
     level = _level(role, graph)
     if level is None:
+        if not asked:
+            # 고르지 않아서 `.env` 로 떨어진 것뿐이다. 이 사람이 그 graph 에 권한이
+            # 없는 건 당연하고, 잘못은 "권한"이 아니라 "아직 안 골랐다"에 있다.
+            SmartLogger.log(
+                "INFO", "프로젝트를 고르지 않은 요청.",
+                category="auth.binding.unselected",
+                params={"uid": uid, "fallback": graph},
+            )
+            raise BindingDenied(graph, selected=False)
         SmartLogger.log(
             "WARN", "권한 없는 graph 접근을 막았다.",
             category="auth.binding.denied",

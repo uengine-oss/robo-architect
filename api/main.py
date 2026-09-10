@@ -305,7 +305,7 @@ async def neo4j_override_middleware(request: Request, call_next):
             bound = resolve_for_request(request.headers, os.environ.get("NEO4J_DATABASE"))
         except BindingDenied as exc:
             return JSONResponse(
-                {"detail": str(exc), "code": "PROJECT_FORBIDDEN"}, status_code=403,
+                {"detail": str(exc), "code": exc.code}, status_code=403,
             )
     # 세션으로 자격이 정해졌으면 클라이언트가 보낸 헤더는 쓰지 않는다.
     set_override(bound or Neo4jOverride.from_headers(request.headers))

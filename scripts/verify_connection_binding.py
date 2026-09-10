@@ -277,6 +277,42 @@ def main() -> int:
     check("미들웨어가 그 판정을 실제로 쓴다",
           "binding_enabled() and needs_graph(request.url.path)" in main_src)
 
+    print("\n고르지 않았다와 권한이 없다를 가른다")
+    # 둘을 같은 오류로 내보내면 화면이 구별할 수 없다. 실제로 프로젝트를 안 고른
+    # 사용자에게 "서버 연결 실패"라고 보여 줬다 — 백엔드가 멀쩡한데 죽은 것처럼
+    # 보인다. 시크릿 창으로 두 번째 계정에 들어가자마자 이 자리에 걸렸다.
+    try:
+        binding.resolve_for_request(hdr_a, "robo")   # 헤더 없이 = 안 고른 상태
+        check("안 고르면 거부한다", False, "통과해 버렸다")
+    except binding.BindingDenied as exc:
+        check("안 고르면 거부한다", True)
+        check("코드가 '안 골랐다'다", exc.code == "PROJECT_NOT_SELECTED", exc.code)
+        check("문구가 권한 얘기를 하지 않는다", "권한" not in str(exc), str(exc))
+    try:
+        binding.resolve_for_request({**hdr_a, "x-project-graph": pb["graph"]}, None)
+        check("남의 graph 를 지정하면 거부한다", False, "통과해 버렸다")
+    except binding.BindingDenied as exc:
+        check("남의 graph 를 지정하면 거부한다", True)
+        check("코드가 '권한 없음'이다", exc.code == "PROJECT_FORBIDDEN", exc.code)
+    # 자기 것을 고르면 통과해야 한다 — 위 둘만 보면 "전부 거부"도 초록이 된다.
+    check("자기 것을 고르면 통과한다",
+          binding.resolve_for_request({**hdr_a, "x-project-graph": pa["graph"]}, None) is not None)
+
+    # 여기부터는 **판정이 실제로 쓰이는지**를 본다. 판정 함수만 맞고 호출부가
+    # 옛날 그대로면 위의 여섯 줄이 전부 통과하면서 사용자는 그대로 막힌다 —
+    # 결함을 심어 보니 정확히 그렇게 됐다.
+    main_src = (ROOT / "api/main.py").read_text(encoding="utf-8")
+    check("미들웨어가 오류 코드를 그대로 내보낸다",
+          '"code": exc.code' in main_src)
+
+    store_src = (ROOT / "frontend/src/features/projects/projects.store.js").read_text(encoding="utf-8")
+    check("화면이 안 고른 상태를 첫 프로젝트로 채운다",
+          "auth.setProject(projects.value[0].graph)" in store_src)
+
+    nav_src = (ROOT / "frontend/src/features/navigator/navigator.store.js").read_text(encoding="utf-8")
+    check("화면이 403 을 서버 장애로 옮기지 않는다",
+          "err.projectError" in nav_src and "if (e?.projectError)" in nav_src)
+
     print("\n저장소 층 — 여기가 본체다")
     role_a, pw_a = roles.role_name(alice), roles.role_password(alice)
     own = bolt_read(role_a, pw_a, pa["graph"])

@@ -53,6 +53,18 @@ export const useProjectsStore = defineStore('projects', () => {
       if (auth.projectGraph && !projects.value.some(p => p.graph === auth.projectGraph)) {
         auth.setProject(null)
       }
+      // 아무것도 안 골랐으면 첫 번째를 고른다.
+      //
+      // **안 고르면 서버가 `.env` 의 graph 로 떨어진다.** 그 graph 에 권한이 없는
+      // 사람에게는 모든 요청이 403 이 되고, 화면은 그걸 "서버 연결 실패"로 옮겨
+      // 놓는다 — 백엔드가 멀쩡한데 죽은 것처럼 보인다. 시크릿 창으로 두 번째
+      // 계정에 들어가자마자 이 자리에 걸렸다.
+      //
+      // 새로고침하지 않는다. 첫 진입이라 아직 아무 데이터도 안 읽었고, 여기서
+      // 새로고침하면 로그인 직후 화면이 한 번 더 깜빡인다.
+      if (!auth.projectGraph && projects.value.length) {
+        auth.setProject(projects.value[0].graph)
+      }
     } catch (e) {
       error.value = e.message
     } finally {

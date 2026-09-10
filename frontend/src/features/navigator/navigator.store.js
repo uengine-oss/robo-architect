@@ -34,6 +34,9 @@ export const useNavigatorStore = defineStore('navigator', () => {
       }
       userStories.value = await response.json()
     } catch (e) {
+      // 403 은 서버가 살아 있다는 증거다 — "백엔드가 안 떴다"로 옮기면 사람이
+      // 엉뚱한 데를 본다. 프로젝트를 안 골랐을 때 실제로 그렇게 나왔다.
+      if (e?.projectError) { error.value = e.message; return }
       const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
                              e?.message?.includes('ECONNRESET') ||
                              e?.message?.includes('Failed to fetch') ||
@@ -63,6 +66,13 @@ export const useNavigatorStore = defineStore('navigator', () => {
     try {
       const response = await fetch('/api/contexts')
       if (!response.ok) {
+        // 프로젝트를 안 골랐거나 권한이 없는 것은 **서버 장애가 아니다.**
+        if (response.status === 403) {
+          const body = await response.json().catch(() => ({}))
+          const err = new Error(body.detail || '이 프로젝트를 볼 수 없습니다.')
+          err.projectError = body.code || 'PROJECT_FORBIDDEN'
+          throw err
+        }
         const errorMsg = `Failed to fetch contexts (HTTP ${response.status})`
         log.error(
           'navigator_fetch_contexts_failed',
@@ -73,6 +83,9 @@ export const useNavigatorStore = defineStore('navigator', () => {
       }
       contexts.value = await response.json()
     } catch (e) {
+      // 403 은 서버가 살아 있다는 증거다 — "백엔드가 안 떴다"로 옮기면 사람이
+      // 엉뚱한 데를 본다. 프로젝트를 안 골랐을 때 실제로 그렇게 나왔다.
+      if (e?.projectError) { error.value = e.message; return }
       const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
                              e?.message?.includes('ECONNRESET') ||
                              e?.message?.includes('Failed to fetch') ||
@@ -121,6 +134,9 @@ export const useNavigatorStore = defineStore('navigator', () => {
       contextTrees.value[contextId] = tree
       return tree
     } catch (e) {
+      // 403 은 서버가 살아 있다는 증거다 — "백엔드가 안 떴다"로 옮기면 사람이
+      // 엉뚱한 데를 본다. 프로젝트를 안 골랐을 때 실제로 그렇게 나왔다.
+      if (e?.projectError) { error.value = e.message; return }
       const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
                              e?.message?.includes('ECONNRESET') ||
                              e?.message?.includes('Failed to fetch') ||
@@ -662,6 +678,9 @@ export const useNavigatorStore = defineStore('navigator', () => {
 
       expandAll()
     } catch (e) {
+      // 403 은 서버가 살아 있다는 증거다 — "백엔드가 안 떴다"로 옮기면 사람이
+      // 엉뚱한 데를 본다. 프로젝트를 안 골랐을 때 실제로 그렇게 나왔다.
+      if (e?.projectError) { error.value = e.message; return }
       const isNetworkError = e?.message?.includes('ECONNREFUSED') ||
                              e?.message?.includes('ECONNRESET') ||
                              e?.message?.includes('Failed to fetch') ||
