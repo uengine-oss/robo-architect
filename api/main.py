@@ -290,14 +290,17 @@ from api.platform.neo4j_context import Neo4jOverride, set_override  # noqa: E402
 # 세션이 있으면 그 사람의 role 자격으로 붙는다. 브라우저 경로가 `.env` 소유자로
 # 붙던 구멍을 여기서 막는다 — `connection_binding` 의 설명 참고. 기본은 꺼짐.
 from api.platform.identity.connection_binding import (  # noqa: E402
-    BindingDenied, binding_enabled, resolve_for_request,
+    BindingDenied, binding_enabled, needs_graph, resolve_for_request,
 )
 
 
 @app.middleware("http")
 async def neo4j_override_middleware(request: Request, call_next):
     bound = None
-    if binding_enabled():
+    # 프로젝트·계정·로그인 API 는 graph 를 안 쓴다(Postgres 직결). 여기까지 바인딩을
+    # 걸면 **프로젝트가 없는 새 사용자가 첫 프로젝트를 만들러 갈 수 없다** —
+    # 보낼 graph 가 없어 `.env` 로 떨어지고, 거기 권한이 없어 403 이 난다.
+    if binding_enabled() and needs_graph(request.url.path):
         try:
             bound = resolve_for_request(request.headers, os.environ.get("NEO4J_DATABASE"))
         except BindingDenied as exc:

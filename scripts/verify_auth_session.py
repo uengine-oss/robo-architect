@@ -105,6 +105,59 @@ def main() -> int:
         check("토큰에도 꼬리표가 남는다 — 감사에서 구분된다", claims.get("src") == "dev")
         check("만료가 들어 있다", claims.get("exp", 0) > time.time())
 
+    print("\n계정이 여럿일 때")
+    # 프로젝트 격리와 공유는 사람이 둘 이상이어야 확인된다. 계정이 늘면 조용히
+    # 틀리는 자리가 셋 생긴다 — 아무 계정이나 통과, 아이디와 사번이 어긋남,
+    # 추가 목록이 기본 계정을 덮어씀.
+    os.environ["AUTH_DEV_LOGIN_ACCOUNTS"] = (
+        f"zzalice:pw-alice:{PREFIX}-ALICE:앨리스:설계1팀,"
+        f"zzbob:pw-bob:{PREFIX}-BOB:밥:설계2팀,"
+        # 아이디만 있고 비밀번호가 없는 반쪽 항목 — 계정이 되면 안 된다.
+        "zzghost::"
+        f",test:빼앗기:{PREFIX}-STEAL"      # 기본 계정 아이디를 노린 항목
+    )
+    r = client.post("/api/auth/dev-login", data={"loginId": "zzalice", "password": "pw-alice"})
+    check("추가 계정으로 들어간다", r.status_code == 200, r.text[:120])
+    who = (r.json().get("user") or {}) if r.status_code == 200 else {}
+    check("그 계정의 사번이 실린다", who.get("uid") == f"{PREFIX}-ALICE", str(who.get("uid")))
+    check("이름·부서가 따라온다",
+          who.get("displayName") == "앨리스" and who.get("department") == "설계1팀",
+          f"{who.get('displayName')}·{who.get('department')}")
+
+    r2 = client.post("/api/auth/dev-login", data={"loginId": "zzbob", "password": "pw-bob"})
+    check("두 번째 추가 계정도 들어간다", r2.status_code == 200, r2.text[:120])
+    check("서로 다른 사번이다",
+          ((r2.json().get("user") or {}).get("uid") if r2.status_code == 200 else None)
+          == f"{PREFIX}-BOB")
+
+    # 아이디는 맞고 비밀번호만 남의 것 — 계정끼리 섞이면 안 된다.
+    check("남의 비밀번호로는 못 들어간다",
+          client.post("/api/auth/dev-login",
+                      data={"loginId": "zzalice", "password": "pw-bob"}).status_code == 401)
+    # 반쪽 항목(`zzghost::`)이 계정이 됐는지는 **로그인으로 못 잰다** — 비밀번호가
+    # 비어 있어 어차피 401 이고, 빈 문자열은 FastAPI 가 422 로 먼저 막는다. 결함을
+    # 심어 보니 그 단언은 한 번도 실패하지 않았다. 아래 목록 대조가 그 일을 한다.
+    # 뒤에서 덮어쓰게 두면 추가 목록의 오타 하나로 기본 계정 비밀번호가 바뀐다.
+    check("추가 목록이 기본 계정을 못 덮는다",
+          client.post("/api/auth/dev-login",
+                      data={"loginId": "test", "password": "빼앗기"}).status_code == 401)
+    check("기본 계정은 그대로 test/test",
+          client.post("/api/auth/dev-login",
+                      data={"loginId": "test", "password": "test"}).status_code == 200)
+
+    # 화면이 계정을 고를 수 있으려면 목록이 나와야 한다. 비밀번호는 나오면 안 된다.
+    prov = client.get("/api/auth/provider").json().get("devLogin") or {}
+    listed = prov.get("accounts") or []
+    # 셋이다 — `zzghost::` 는 비밀번호가 없어 계정이 아니고, `test:빼앗기:…` 는
+    # 아이디가 겹쳐 안 들어간다(앞의 것이 이긴다). 이 한 줄이 둘 다 잰다.
+    check("provider 가 계정 목록을 알려준다",
+          [a.get("loginId") for a in listed] == ["test", "zzalice", "zzbob"],
+          str([a.get("loginId") for a in listed]))
+    check("비밀번호는 안 알려준다",
+          all("password" not in a for a in listed))
+
+    os.environ.pop("AUTH_DEV_LOGIN_ACCOUNTS", None)
+
     print("\n자격이 틀리면 막는다")
     check("비밀번호가 다르면 401",
           client.post("/api/auth/dev-login",

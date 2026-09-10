@@ -255,6 +255,28 @@ def main() -> int:
           binding.resolve_for_request({**hdr_a, "x-project-graph": pa["graph"]}, None) is None)
     os.environ["AUTH_BIND_CONNECTION"] = "true"
 
+    print("\n프로젝트가 없는 사람도 시작할 수 있다")
+    # 프로젝트가 하나도 없으면 `X-Project-Graph` 를 보낼 수 없고, 그러면 바인딩이
+    # `.env` 의 graph 로 떨어져 **403 이 난다** — 첫 프로젝트를 만들러 가는 길
+    # 자체가 막힌다. 두 번째 계정을 만들자마자 실제로 이 막다른 길에 걸렸다.
+    #
+    # 그래서 graph 를 안 쓰는 경로(전부 Postgres 직결)는 바인딩을 건너뛴다.
+    for path in ("/api/projects", "/api/projects/prj_x/members",
+                 "/api/accounts", "/api/auth/dev-login"):
+        check(f"{path} 는 graph 를 요구하지 않는다", not binding.needs_graph(path))
+    for path in ("/api/contexts", "/api/graph/stats", "/api/ingest/upload"):
+        check(f"{path} 는 graph 가 필요하다", binding.needs_graph(path))
+    # 접두사만 보면 `/api/projectsomething` 같은 남의 경로까지 열린다.
+    check("접두사가 비슷한 남의 경로는 열지 않는다",
+          binding.needs_graph("/api/graph/projects"))
+
+    # **판정 함수가 맞아도 미들웨어가 안 쓰면 소용없다.** 결함을 심어 보니 위의
+    # 여덟 줄이 전부 통과하면서 실제 요청은 그대로 막혔다 — 이 저장소가 반복해
+    # 밟은 죽은 배선이 정확히 그 모양이다.
+    main_src = (ROOT / "api/main.py").read_text(encoding="utf-8")
+    check("미들웨어가 그 판정을 실제로 쓴다",
+          "binding_enabled() and needs_graph(request.url.path)" in main_src)
+
     print("\n저장소 층 — 여기가 본체다")
     role_a, pw_a = roles.role_name(alice), roles.role_password(alice)
     own = bolt_read(role_a, pw_a, pa["graph"])
@@ -331,7 +353,11 @@ def main() -> int:
     for name in sorted(PROTECTED & set(before)):
         check(f"{name} 노드 수가 그대로", before.get(name) == after.get(name),
               f"{before.get(name)} → {after.get(name)}")
-    check("시험 graph 가 남지 않았다", not [g for g in after if g.startswith(GRAPH_PREFIX)])
+    # **이 run 이 새로 남긴 것**만 잔재다. "prj_ 로 시작하는 graph 가 없어야
+    # 한다"로 재면 앱에서 만든 **진짜 프로젝트**를 잔재로 오인한다 — 실제로
+    # alice 계정으로 프로젝트를 하나 만들자마자 이 검사가 틀린 실패를 냈다.
+    leaked = [g for g in set(after) - set(before) if g.startswith(GRAPH_PREFIX)]
+    check("이 run 이 남긴 graph 가 없다", not leaked, str(leaked))
 
     print("\n전부 통과\n" if failed == 0 else f"\n{failed}건 실패\n")
     return 0 if failed == 0 else 1

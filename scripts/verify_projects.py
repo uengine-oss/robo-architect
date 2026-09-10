@@ -184,9 +184,10 @@ def main() -> int:
     for name in sorted(PROTECTED & set(before)):
         check(f"{name} 노드 수가 그대로", before.get(name) == after.get(name),
               f"{before.get(name)} → {after.get(name)}")
-    check("시험 graph 가 남지 않았다",
-          not [g for g in after if g.startswith(GRAPH_PREFIX)],
-          str([g for g in after if g.startswith(GRAPH_PREFIX)]))
+    # **이 run 이 새로 남긴 것**만 잔재다. "prj_ 로 시작하는 graph 가 없어야 한다"로
+    # 재면 앱에서 만든 진짜 프로젝트를 잔재로 오인한다.
+    leaked = [g for g in set(after) - set(before) if g.startswith(GRAPH_PREFIX)]
+    check("이 run 이 남긴 graph 가 없다", not leaked, str(leaked))
 
     print("\n전부 통과\n" if failed == 0 else f"\n{failed}건 실패\n")
     return 0 if failed == 0 else 1

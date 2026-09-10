@@ -18,6 +18,13 @@ const error = ref('')
 const busy = ref(false)
 
 const devLogin = computed(() => (auth.provider || {}).devLogin || {})
+const devAccounts = computed(() => devLogin.value.accounts || [])
+
+/** 계정을 고르면 아이디만 채운다. 비밀번호는 서버가 알려 주지 않는다. */
+function pick(account) {
+  loginId.value = account.loginId
+  password.value = ''
+}
 const ssoAvailable = computed(() => (auth.provider || {}).provider === 'swp')
 
 onMounted(async () => {
@@ -95,6 +102,16 @@ async function submitSso() {
             개발용 로그인
             <span class="login__devwarn">사내 배포본에서는 꺼져 있어야 합니다</span>
           </div>
+          <!-- 계정이 여럿이면 골라 넣는다. 아이디를 외우게 하면 시크릿 창에서
+               다른 사람으로 들어가 보는 일 자체를 안 하게 된다. -->
+          <div v-if="devAccounts.length > 1" class="login__accounts">
+            <button v-for="a in devAccounts" :key="a.loginId" type="button"
+                    class="login__account" :class="{ 'login__account--on': loginId === a.loginId }"
+                    @click="pick(a)">
+              {{ a.name || a.loginId }}
+              <span class="login__accountid">{{ a.loginId }}</span>
+            </button>
+          </div>
           <input v-model="loginId" class="login__input" placeholder="아이디" autocomplete="username" />
           <input v-model="password" type="password" class="login__input" placeholder="비밀번호"
                  autocomplete="current-password" />
@@ -145,6 +162,15 @@ async function submitSso() {
 .login__devhead { font-size:0.72rem; font-weight:600; color:var(--color-text);
   margin-bottom:var(--spacing-sm); }
 .login__devwarn { display:block; font-weight:400; color:var(--color-warning); margin-top:3px; }
+.login__accounts { display:flex; gap:6px; margin-bottom:var(--spacing-sm); flex-wrap:wrap; }
+.login__account { flex:1 1 auto; padding:6px 8px; border:1px solid var(--color-border);
+  border-radius:var(--radius-sm); background:var(--color-bg); color:var(--color-text);
+  font-size:0.72rem; font-family:inherit; cursor:pointer; text-align:left;
+  transition:all .15s ease; }
+.login__account:hover { border-color:var(--color-accent); }
+.login__account--on { border-color:var(--color-accent); color:var(--color-text-bright); }
+.login__accountid { display:block; font-size:0.66rem; color:var(--color-text-light);
+  font-family:var(--font-mono); margin-top:2px; }
 .login__input { width:100%; padding:8px 10px; margin-bottom:var(--spacing-sm);
   border:1px solid var(--color-border); border-radius:var(--radius-sm);
   background:var(--color-bg); color:var(--color-text); font-size:0.8rem;

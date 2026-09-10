@@ -62,7 +62,27 @@ from api.platform import pg
 from api.platform.neo4j_context import Neo4jOverride
 from api.platform.observability.smart_logger import SmartLogger
 
-__all__ = ["binding_enabled", "resolve_for_request", "BindingDenied", "invalidate"]
+__all__ = ["binding_enabled", "resolve_for_request", "BindingDenied", "invalidate",
+           "needs_graph", "NO_GRAPH_PREFIXES"]
+
+# graph 를 안 쓰는 경로. 이것들은 Postgres 로만 간다.
+#
+# **여기 없으면 새 사용자가 아무것도 시작할 수 없다.** 프로젝트가 하나도 없는
+# 사람은 `X-Project-Graph` 를 보낼 수 없고, 그러면 바인딩이 `.env` 의 graph 로
+# 떨어져 403 이 난다 — 첫 프로젝트를 만들러 가는 길 자체가 막힌다. 실제로
+# 두 번째 계정을 만들자마자 이 막다른 길에 걸렸다.
+NO_GRAPH_PREFIXES = (
+    "/api/auth",       # 로그인·세션
+    "/api/accounts",   # 사용자 관리
+    "/api/projects",   # 프로젝트 목록·생성·공유 — 전부 Postgres 다
+    "/api/health",
+    "/docs", "/openapi.json", "/redoc",
+)
+
+
+def needs_graph(path: str) -> bool:
+    """이 경로가 graph 연결을 필요로 하는가."""
+    return not str(path or "").startswith(NO_GRAPH_PREFIXES)
 
 _TRUE = ("1", "true", "yes", "on")
 _CACHE: dict[tuple[str, str], tuple[float, Optional[str]]] = {}

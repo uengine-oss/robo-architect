@@ -226,7 +226,9 @@ async def dev_login(
         )
         raise HTTPException(status_code=403, detail="개발용 로그인은 같은 기계에서만 됩니다.")
 
-    if not settings.matches(loginId, password):
+    # 계정은 여럿일 수 있다 — 프로젝트 격리와 공유는 사람이 둘 이상이어야 확인된다.
+    account = settings.find(loginId, password)
+    if account is None:
         SmartLogger.log(
             "WARN", "개발용 로그인 자격이 맞지 않는다.",
             category="auth.dev_login.rejected",
@@ -237,9 +239,9 @@ async def dev_login(
     SmartLogger.log(
         "WARN", "개발용 우회 로그인이 사용됐다. 사내 배포본에서는 꺼져 있어야 한다.",
         category="auth.dev_login.used",
-        params={**http_context(request), "employee_no": settings.employee_no},
+        params={**http_context(request), "employee_no": account.employee_no},
     )
-    return _sign_in(request, settings.identity(), source="dev")
+    return _sign_in(request, account.identity(), source="dev")
 
 
 @router.get("/me")
