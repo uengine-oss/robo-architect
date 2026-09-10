@@ -259,11 +259,25 @@ def test_hook_order() -> None:
     pairs = [
         # 정의가 아니라 **호출**을 찾아야 한다. 처음 이 needle 이 함수 정의에
         # 걸려 멀쩡한 코드를 실패로 보고했다.
+        # 화면의 `ES 승격` 은 지우기부터 한다. 그 자리에 보관이 없어 robo 의 설계
+        # 243개가 실제로 날아갔다 — 지우는 자리는 **전부** 여기 들어 있어야 한다.
+        ("api/features/ingestion/hybrid/router.py", "clear_promoted_nodes(session_id)"),
         ("api/features/ingestion/ingestion_workflow_runner.py",
          "clear_event_storming_nodes(client, session.id)"),
         ("api/features/ingestion/hybrid/hybrid_workflow_runner.py", "clear_all_hybrid_workspace()"),
         ("api/features/ingestion/router.py", "delete_query"),
     ]
+    # 지우는 자리를 새로 만들고 보관을 안 붙이는 것이 이 기능의 유일한 실패 방식이다.
+    # 그래서 **개수**로도 잰다 — 목록에 없는 자리가 생기면 여기서 걸린다.
+    WIPE_SITES = {
+        "api/features/ingestion/hybrid/router.py": 2,          # 재승격 · 승격 초기화
+        "api/features/ingestion/ingestion_workflow_runner.py": 1,
+        "api/features/ingestion/hybrid/hybrid_workflow_runner.py": 1,
+        "api/features/ingestion/router.py": 1,                 # clear-all
+    }
+    for rel, want in WIPE_SITES.items():
+        got = (ROOT / rel).read_text(encoding="utf-8").count("capture_before_replace(reason=")
+        check(f"{rel.rsplit('/', 1)[-1]} — 지우는 자리마다 보관", got, want)
     for rel, wipe in pairs:
         text = (ROOT / rel).read_text(encoding="utf-8")
         cap = text.find("capture_before_replace(reason=")

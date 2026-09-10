@@ -56,6 +56,7 @@ from api.features.ingestion.ingestion_sessions import (
     unsubscribe,
 )
 from api.features.ingestion.requirements_document_text import extract_text_from_pdf
+from api.features.ingestion.replacement import capture_before_replace
 from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter(prefix="/api/ingest/hybrid", tags=["ingestion-hybrid"])
@@ -532,6 +533,11 @@ async def promote_start(
 
     # 재승격 idempotency: 이 세션의 기존 ES 산출물을 먼저 비운다. 안 하면 같은 세션을 다시
     # 승격할 때 Command/Event/ReadModel/UI 등이 전부 중복 생성된다(BpmTask 척추는 미포함).
+    #
+    # **지우기 전에 보관한다.** 이 경로는 "먼저 지우고 다시 만든다"인데, 다시 만드는
+    # 단계가 실패하면 앞판이 그냥 사라진다. 실제로 그렇게 robo 의 설계 243개가
+    # 날아갔고, 그때 보관이 없어 되돌릴 방법이 없었다.
+    capture_before_replace(reason="promote-to-es")
     cleared = clear_promoted_nodes(session_id)
     if cleared:
         SmartLogger.log(
@@ -578,6 +584,11 @@ async def promote_start(
 
 @router.delete("/{session_id}/promote-to-es")
 async def reset_promotion(session_id: str) -> dict[str, Any]:
-    """Wipe Phase 5 promotion artifacts (UserStory/Event/BC/... with this session_id)."""
+    """Wipe Phase 5 promotion artifacts (UserStory/Event/BC/... with this session_id).
+
+    화면의 `ES 승격` 은 **이걸 먼저 부르고** 승격을 시작한다. 그래서 승격이 실패하면
+    앞판만 사라진다 — 지우기 전에 보관한다.
+    """
+    capture_before_replace(reason="promote-reset")
     deleted = clear_promoted_nodes(session_id)
     return {"success": True, "deleted": deleted}
