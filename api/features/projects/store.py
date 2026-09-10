@@ -20,6 +20,7 @@ graph 이름은 **사람이 지은 이름과 분리한다.** 프로젝트 이름
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 from datetime import datetime, timezone
@@ -32,7 +33,7 @@ from api.platform.observability.smart_logger import SmartLogger
 __all__ = [
     "ensure_schema", "create_project", "adopt_graph", "list_projects",
     "get_project", "share", "unshare", "members", "graph_exists", "prune_orphan_grants",
-    "set_analyzer_graph",
+    "set_analyzer_graph", "analyzer_options",
     "LEVELS", "LEVEL_BY_ROLE_NAME",
 ]
 
@@ -241,6 +242,60 @@ def list_projects(uid: str) -> list[dict[str, Any]]:
         (role,),
     )
     return [_row_to_project(r) for r in rows]
+
+
+def analyzer_options(uid: str, graph: str) -> list[dict[str, Any]]:
+    """이 프로젝트가 고를 수 있는 **분석 결과** 목록.
+
+    사용자에게 graph 이름을 타이핑시키면 안 된다 — `prj_cf33c40fca_a` 는 내부
+    식별자다. 오타 하나로 남의 분석을 가리키거나, 없는 이름을 넣어 거부당한다.
+
+    범위를 좁힌다. 모든 graph 를 열면 **남의 프로젝트 이름이 샌다.**
+
+    ```
+    이 프로젝트의 짝      prj_x_a — 만들 때 함께 생긴 것. 기본값이다
+    내가 접근 가능한 것   내 다른 프로젝트의 분석. 전환 전 데이터를 함께 볼 때 쓴다
+    공용(.env)            analyzer_run 같은 전환 전 분석
+    ```
+    """
+    role = roles.role_name(uid)
+    mine = {r["graph"] for r in pg.query(
+        "SELECT graph FROM og_catalog.grantee WHERE role = %s", (role,))}
+    names = {r["name"] for r in pg.query("SELECT name FROM og_catalog.graph")}
+    project = get_project(graph) or {}
+    current = project.get("analyzerGraph")
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(name: str | None, label: str, kind: str) -> None:
+        if not name or name in seen or name not in names:
+            return
+        seen.add(name)
+        out.append({"graph": name, "label": label, "kind": kind,
+                    "current": name == current})
+
+    add(f"{graph}_a", "이 프로젝트의 분석", "own")
+
+    # 내 다른 프로젝트의 분석. 사람이 지은 이름으로 보여 준다.
+    for row in pg.query(
+        "SELECT p.graph, p.value FROM public.app_projects p "
+        "JOIN og_catalog.grantee g ON g.graph = p.graph WHERE g.role = %s", (role,)
+    ):
+        if row["graph"] == graph:
+            continue
+        other = (row["value"] or {}).get("analyzerGraph")
+        name = (row["value"] or {}).get("displayName") or row["graph"]
+        add(other, f"{name} 의 분석", "other")
+
+    env_graph = os.environ.get("ANALYZER_NEO4J_DATABASE")
+    if env_graph in mine or env_graph == current:
+        add(env_graph, "전환 전 공용 분석", "legacy")
+
+    # 지금 가리키는 것이 위 어디에도 없으면(수동 지정) 목록에 남겨 둔다 —
+    # 안 그러면 화면에 안 보이는 값이 조용히 선택돼 있다.
+    add(current, "지금 지정된 분석", "current")
+    return out
 
 
 def get_project(graph: str) -> Optional[dict[str, Any]]:

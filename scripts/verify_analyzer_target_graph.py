@@ -130,6 +130,40 @@ def test_pair_not_stolen() -> None:
 # 4~6. 분석기·catalog·프런트 — 소스로 잰다 (다른 저장소라 기동 없이)
 # ---------------------------------------------------------------------------
 
+def test_options() -> None:
+    """고를 수 있는 분석 목록 — 사람 말로, 그리고 **내 것만**."""
+    print("\n[3-1] 분석 결과 목록")
+    a = store.create_project("옵션 검사 A", OWNER, with_analyzer=True)
+    b = store.create_project("옵션 검사 B", GUEST, with_analyzer=True)
+    assert a["graph"] not in PROTECTED and b["graph"] not in PROTECTED
+    try:
+        opts = store.analyzer_options(OWNER, a["graph"])
+        by_graph = {o["graph"]: o for o in opts}
+
+        check_true("자기 짝이 목록에 있다", a["analyzerGraph"] in by_graph)
+        check("자기 짝이 '이 프로젝트의 분석'",
+              by_graph.get(a["analyzerGraph"], {}).get("label"), "이 프로젝트의 분석")
+        check("자기 짝이 지금 선택됨",
+              by_graph.get(a["analyzerGraph"], {}).get("current"), True)
+
+        # 남의 프로젝트 분석이 보이면 이름과 존재가 함께 샌다.
+        check("남의 프로젝트 분석은 안 보인다", b["analyzerGraph"] in by_graph, False)
+
+        # 라벨이 graph 이름 그대로면 고를 수 없다 — 그게 이 화면을 고친 이유다.
+        check_true("라벨이 내부 식별자가 아니다",
+                   all(o["label"] != o["graph"] for o in opts))
+
+        # 공유받으면 보여야 한다 — 전환 전 데이터를 함께 볼 때 쓰는 길이다.
+        store.share(b["graph"], OWNER, "read")
+        opts2 = {o["graph"]: o for o in store.analyzer_options(OWNER, a["graph"])}
+        check_true("공유받은 프로젝트의 분석은 보인다", b["analyzerGraph"] in opts2)
+        check_true("그 라벨에 사람이 지은 이름이 실린다",
+                   "옵션 검사 B" in (opts2.get(b["analyzerGraph"], {}).get("label") or ""))
+    finally:
+        store.drop_project(a["graph"])
+        store.drop_project(b["graph"])
+
+
 def _src(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -258,6 +292,7 @@ def main() -> int:
     try:
         test_pairing()
         test_pair_not_stolen()
+        test_options()
         test_analyzer_backend()
         test_analyzer_router_precedence()
         test_catalog()

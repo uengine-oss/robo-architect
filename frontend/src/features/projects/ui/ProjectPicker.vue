@@ -85,25 +85,37 @@ async function submitInvite() {
 }
 
 /**
- * 분석 짝을 정한다.
+ * 이 프로젝트가 함께 볼 **분석 결과**를 고른다.
  *
- * API 는 처음부터 있었는데 화면에 거는 자리가 없었다 — 새 프로젝트를 만들고
- * 분석을 돌리면 짝을 맺을 방법이 없어 추적성이 계속 비어 있었다.
+ * 처음에는 graph 이름을 타이핑하게 만들었는데, `prj_cf33c40fca_a` 는 내부
+ * 식별자다 — 사람에게 시킬 것이 아니다. 오타 하나로 남의 분석을 가리키거나
+ * 없는 이름으로 거부당한다. 서버가 고를 수 있는 것만 사람 말로 준다.
  */
-const pairFor = ref('')      // 어느 프로젝트의 짝을 고치는 중인가
-const pairValue = ref('')
+const pairFor = ref('')        // 어느 프로젝트를 고치는 중인가
+const pairValue = ref('')      // 고른 graph ('' = 쓰지 않음)
+const pairOptions = ref([])
+const pairLoading = ref(false)
 
-function openPair(p) {
+async function openPair(p) {
   pairFor.value = p.graph
   pairValue.value = p.analyzerGraph || ''
   message.value = ''
+  pairOptions.value = []
+  pairLoading.value = true
+  try {
+    pairOptions.value = await store.analyzerOptions(p.graph)
+  } catch (e) {
+    message.value = e.message
+  } finally {
+    pairLoading.value = false
+  }
 }
 
 async function submitPair() {
   busy.value = true
   message.value = ''
   try {
-    await store.setAnalyzer(pairFor.value, pairValue.value.trim())
+    await store.setAnalyzer(pairFor.value, pairValue.value)
     pairFor.value = ''
   } catch (e) {
     message.value = e.message
@@ -170,14 +182,28 @@ watch(() => auth.token, (t) => { if (t) refresh() })
               <span class="pp__level">{{ LEVEL_LABEL[p.level] || p.level }}</span>
             </button>
             <button v-if="p.level === 'admin'" class="pp__pairbtn" @click.stop="openPair(p)"
-                    title="이 프로젝트가 함께 볼 분석 graph 를 정합니다">
-              분석 짝
+                    title="추적성이 어떤 분석 결과를 근거로 삼을지 고릅니다">
+              분석 결과 바꾸기
             </button>
             <form v-if="pairFor === p.graph" class="pp__pairform" @submit.prevent="submitPair">
-              <input v-model="pairValue" class="pp__input" placeholder="분석 graph 이름 (비우면 해제)" />
+              <p class="pp__hint">
+                이 프로젝트의 <b>추적성</b>이 근거로 삼을 분석 결과입니다.
+                레거시 분석을 돌리면 여기 고른 곳에 쌓입니다.
+              </p>
+              <p v-if="pairLoading" class="pp__note">불러오는 중…</p>
+              <select v-else v-model="pairValue" class="pp__input">
+                <option value="">쓰지 않음 (추적성이 비어 나옵니다)</option>
+                <option v-for="o in pairOptions" :key="o.graph" :value="o.graph">
+                  {{ o.label }}{{ o.kind === 'own' ? ' — 권장' : '' }}
+                </option>
+              </select>
+              <p v-if="pairValue && pairValue !== p.graph + '_a'" class="pp__warnline">
+                ⚠ 다른 프로젝트와 나눠 쓰는 분석입니다. 여기서 분석을 다시 돌리면
+                그쪽 결과도 함께 사라집니다.
+              </p>
               <div class="pp__actions">
                 <button type="button" class="pp__link" @click="pairFor = ''">취소</button>
-                <button type="submit" class="pp__primary" :disabled="busy">저장</button>
+                <button type="submit" class="pp__primary" :disabled="busy || pairLoading">저장</button>
               </div>
             </form>
           </li>
@@ -280,6 +306,10 @@ watch(() => auth.token, (t) => { if (t) refresh() })
   border-radius: var(--radius-sm); }
 .pp__pairbtn:hover { color: var(--color-text-bright); border-color: var(--color-accent); }
 .pp__pairform { padding: 6px 10px 2px; }
+.pp__hint { font-size: 0.7rem; line-height: 1.6; color: var(--color-text-light);
+  margin: 0 0 6px; }
+.pp__warnline { font-size: 0.68rem; line-height: 1.5; color: var(--status-amber-fg);
+  margin: 4px 0 0; }
 
 .pp__warn { font-size:0.68rem; line-height:1.6; color:var(--status-amber-fg);
   background:var(--status-amber-bg); border-radius:var(--radius-sm); padding:6px 9px;

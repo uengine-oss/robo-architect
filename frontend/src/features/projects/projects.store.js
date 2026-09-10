@@ -130,6 +130,14 @@ export const useProjectsStore = defineStore('projects', () => {
    * 추적성이 비어 나오고(예전에는 `.env` 의 남의 분석을 봤다), 잘못 정하면
    * 다른 프로젝트의 분석을 자기 것처럼 읽는다. 둘 다 오류로는 안 드러난다.
    */
+  /** 이 프로젝트가 고를 수 있는 분석 결과. graph 이름을 사람이 칠 일이 없게 한다. */
+  async function analyzerOptions(graph) {
+    const r = await fetch(`/api/projects/${encodeURIComponent(graph)}/analyzer-options`)
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(body.detail || `목록을 불러오지 못했습니다 (${r.status})`)
+    return body.options || []
+  }
+
   async function setAnalyzer(graph, analyzerGraph) {
     const r = await fetch(`/api/projects/${encodeURIComponent(graph)}/analyzer`, {
       method: 'POST',
@@ -157,6 +165,6 @@ export const useProjectsStore = defineStore('projects', () => {
 
   return {
     projects, loading, error, current, currentName, canManage, currentAnalyzerGraph,
-    load, create, adopt, members, share, unshare, select, setAnalyzer,
+    load, create, adopt, members, share, unshare, select, setAnalyzer, analyzerOptions,
   }
 })

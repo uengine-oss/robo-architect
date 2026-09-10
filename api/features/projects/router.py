@@ -101,6 +101,19 @@ async def adopt(request: Request, body: dict = Body(...)) -> dict:
     return project
 
 
+@router.get("/{graph}/analyzer-options")
+async def get_analyzer_options(request: Request, graph: str) -> dict:
+    """이 프로젝트가 고를 수 있는 분석 결과 목록.
+
+    화면이 graph 이름을 타이핑시키지 않게 하려는 것이다. 목록은 **내가 접근할 수
+    있는 것**으로 좁힌다 — 전체를 열면 남의 프로젝트 이름이 샌다.
+    """
+    uid = _uid(request)
+    if store.level_of(uid, graph) is None:
+        raise HTTPException(status_code=403, detail="이 프로젝트에 접근할 수 없습니다.")
+    return {"options": _guard(store.analyzer_options, uid, graph)}
+
+
 @router.post("/{graph}/analyzer")
 async def set_analyzer(request: Request, graph: str, body: dict = Body(...)) -> dict:
     """이 프로젝트가 함께 볼 분석 graph 를 정한다.
