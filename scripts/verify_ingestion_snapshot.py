@@ -320,9 +320,11 @@ def test_analyzer_not_pinned() -> None:
     set_override(None)
     check("프로젝트가 없으면 .env 를 쓴다", analyzer_database(), ANALYZER_NEO4J_DATABASE)
 
-    # Electron 헤더 경로 — 프로젝트의 결정이 아니므로 .env 폴백이 맞다.
+    # Electron 헤더 경로 — 런처가 고른 **DB 하나에 설계·분석이 함께** 있다.
+    # 예전에는 여기서 `.env` 로 떨어뜨렸는데, 그러면 런처가 고른 것과 다른 곳을
+    # 읽는다. 그 하나를 그대로 쓴다.
     set_override(Neo4jOverride(uri=BOLT, user=USER, password=PASSWORD, database=TMP))
-    check("Electron 경로는 그대로 .env", analyzer_database(), ANALYZER_NEO4J_DATABASE)
+    check("Electron 은 런처가 고른 DB 를 쓴다", analyzer_database(), TMP)
 
     # 프로젝트가 정했는데 짝이 비어 있다 — 여기서 .env 를 보면 안 된다.
     set_override(Neo4jOverride(uri=BOLT, user=USER, password=PASSWORD, database=TMP,

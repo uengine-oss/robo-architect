@@ -111,6 +111,24 @@ async function openPair(p) {
   }
 }
 
+/**
+ * 선택지 한 줄.
+ *
+ * **비어 있는 짝을 "이 프로젝트의 분석"이라 부르면 없는 것을 가리키는 말이 된다.**
+ * 새 프로젝트는 아직 분석을 안 했으니 그 자리는 "여기에 새로 분석한다"는 뜻이다.
+ * 이미 결과가 있으면 규모를 함께 보여 준다 — 빈 것을 골랐는지 사람이 알아야 한다.
+ */
+function optionLabel(o) {
+  const empty = o.nodes === 0
+  if (o.kind === 'own') {
+    return empty
+      ? '이 프로젝트에 새로 분석 — 권장 (아직 분석 없음)'
+      : `이 프로젝트의 분석 — 권장 (노드 ${o.nodes})`
+  }
+  if (empty) return `${o.label} (비어 있음)`
+  return o.nodes == null ? o.label : `${o.label} (노드 ${o.nodes})`
+}
+
 async function submitPair() {
   busy.value = true
   message.value = ''
@@ -187,14 +205,14 @@ watch(() => auth.token, (t) => { if (t) refresh() })
             </button>
             <form v-if="pairFor === p.graph" class="pp__pairform" @submit.prevent="submitPair">
               <p class="pp__hint">
-                이 프로젝트의 <b>추적성</b>이 근거로 삼을 분석 결과입니다.
-                레거시 분석을 돌리면 여기 고른 곳에 쌓입니다.
+                레거시 분석을 <b>어디에 쌓고 어디서 읽을지</b> 정합니다.
+                기본은 이 프로젝트 전용 자리이고, 대개 그대로 두면 됩니다.
               </p>
               <p v-if="pairLoading" class="pp__note">불러오는 중…</p>
               <select v-else v-model="pairValue" class="pp__input">
                 <option value="">쓰지 않음 (추적성이 비어 나옵니다)</option>
                 <option v-for="o in pairOptions" :key="o.graph" :value="o.graph">
-                  {{ o.label }}{{ o.kind === 'own' ? ' — 권장' : '' }}
+                  {{ optionLabel(o) }}
                 </option>
               </select>
               <p v-if="pairValue && pairValue !== p.graph + '_a'" class="pp__warnline">

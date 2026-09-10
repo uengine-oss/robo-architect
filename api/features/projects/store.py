@@ -244,6 +244,29 @@ def list_projects(uid: str) -> list[dict[str, Any]]:
     return [_row_to_project(r) for r in rows]
 
 
+def _node_count(graph: str) -> Optional[int]:
+    """graph 안의 노드 수. 못 세면 None — 목록이 뜨는 것을 막지 않는다.
+
+    **`get_session` 을 쓰지 않는다.** 그쪽은 요청 override 를 보므로 여기서 부르면
+    지금 보고 있는 프로젝트를 세게 된다 — 세려던 graph 가 아니다.
+    """
+    try:
+        from neo4j import GraphDatabase
+
+        drv = GraphDatabase.driver(
+            os.environ.get("NEO4J_URI", "bolt://localhost:28687"),
+            auth=(os.environ.get("NEO4J_USER", "dev"), os.environ.get("NEO4J_PASSWORD", "")),
+        )
+        try:
+            with drv.session(database=graph) as s:
+                rec = s.run("MATCH (n) RETURN count(n) AS c").single()
+                return int(rec["c"]) if rec else 0
+        finally:
+            drv.close()
+    except Exception:
+        return None
+
+
 def analyzer_options(uid: str, graph: str) -> list[dict[str, Any]]:
     """이 프로젝트가 고를 수 있는 **분석 결과** 목록.
 
@@ -257,6 +280,10 @@ def analyzer_options(uid: str, graph: str) -> list[dict[str, Any]]:
     내가 접근 가능한 것   내 다른 프로젝트의 분석. 전환 전 데이터를 함께 볼 때 쓴다
     공용(.env)            analyzer_run 같은 전환 전 분석
     ```
+
+    **`nodes` 를 함께 준다.** 비어 있는 graph 를 "이 프로젝트의 분석"이라 부르면
+    없는 것을 가리키는 말이 된다 — 새 프로젝트는 아직 분석을 안 했으므로 그 자리는
+    "여기에 새로 분석한다"는 뜻이다. 화면이 그 둘을 다르게 말할 수 있어야 한다.
     """
     role = roles.role_name(uid)
     mine = {r["graph"] for r in pg.query(
@@ -273,7 +300,7 @@ def analyzer_options(uid: str, graph: str) -> list[dict[str, Any]]:
             return
         seen.add(name)
         out.append({"graph": name, "label": label, "kind": kind,
-                    "current": name == current})
+                    "current": name == current, "nodes": _node_count(name)})
 
     add(f"{graph}_a", "이 프로젝트의 분석", "own")
 

@@ -48,6 +48,11 @@ def analyzer_database() -> Optional[str]:
     if override is not None:
         if override.analyzer_database:
             return override.analyzer_database
+        if not override.analyzer_pinned:
+            # Electron 이 고른 연결이다. 그쪽은 **DB 하나에 설계·분석이 함께** 있어
+            # 분석 graph 를 따로 보내지 않는다. 그 하나를 그대로 쓴다 — 여기서
+            # `.env` 로 떨어지면 런처가 고른 것과 다른 곳을 읽는다.
+            return override.database or ANALYZER_NEO4J_DATABASE
         if override.analyzer_pinned:
             # 프로젝트가 분석 짝을 정하지 않았다. **`.env` 로 떨어뜨리지 않는다** —
             # 분석 없이 문서만 올린 프로젝트가 정상 상태이고, 거기서 `.env` 를
@@ -153,12 +158,19 @@ def get_session(database: str | None = None):
     없으면 ``.env`` 를 쓴다 — analyzer / catalog / data-fabric 과 동일 계약.
 
     Args:
-        database: 지정 시 해당 DB. None이면 NEO4J_DATABASE. override 가 DB 를 지정하면
-            그쪽이 우선 — Electron 이 고른 DB 하나에 설계·분석 그래프가 함께 있기 때문.
+        database: 지정 시 **그 DB 가 이긴다.** None 이면 override 의 DB, 그것도
+            없으면 `NEO4J_DATABASE`.
     """
     override = get_override()
     if override is not None:
-        db = override.database or database or NEO4J_DATABASE
+        # **명시한 graph 가 이긴다.** 예전에는 override 가 이겼는데, 프로젝트마다
+        # 설계·분석 graph 가 갈리면서 그 우선순위가 조용한 오답을 만들었다 —
+        # `get_session(database="analyzer_run")` 이 설계 graph 를 열어, 분석
+        # 174건이 한 번도 안 읽히고 0건으로 나왔다. 오류는 나지 않는다.
+        #
+        # Electron 경로는 `analyzer_database()` 가 override 의 graph 를 돌려주므로
+        # 명시 값과 override 가 같아져 동작이 바뀌지 않는다.
+        db = database or override.database or NEO4J_DATABASE
         driver = _driver_for(override.uri, override.user, override.password)
     else:
         db = database or NEO4J_DATABASE

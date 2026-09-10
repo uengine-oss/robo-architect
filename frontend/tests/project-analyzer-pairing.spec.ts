@@ -33,8 +33,8 @@ const READER = { ...ADMIN, graph: 'prj_b2', displayName: '남의 프로젝트', 
  * 오타 하나로 남의 분석을 가리키거나 없는 이름으로 거부당한다.
  */
 const OPTIONS = [
-  { graph: 'prj_a1_a', label: '이 프로젝트의 분석', kind: 'own', current: false },
-  { graph: 'analyzer_run', label: '전환 전 공용 분석', kind: 'legacy', current: false },
+  { graph: 'prj_a1_a', label: '이 프로젝트의 분석', kind: 'own', current: false, nodes: 0 },
+  { graph: 'analyzer_run', label: '전환 전 공용 분석', kind: 'legacy', current: false, nodes: 696 },
 ]
 
 test('고르는 목록이 뜨고, 고른 값이 서버로 나간다', async ({ page }) => {
@@ -60,8 +60,13 @@ test('고르는 목록이 뜨고, 고른 값이 서버로 나간다', async ({ p
   const select = page.locator('.pp__pairform select')
   await expect(select).toBeVisible()
   // 사람 말이 보여야 한다. graph 이름만 보이면 고를 수 없다.
-  await expect(select).toContainText('이 프로젝트의 분석')
   await expect(select).toContainText('전환 전 공용 분석')
+  // **비어 있는 짝을 "이 프로젝트의 분석"이라 부르면 없는 것을 가리키는 말이 된다.**
+  // 새 프로젝트는 아직 분석을 안 했으니 "여기에 새로 분석한다"여야 한다.
+  await expect(select).toContainText('새로 분석')
+  await expect(select).toContainText('아직 분석 없음')
+  // 규모가 보여야 빈 것을 골랐는지 안다.
+  await expect(select).toContainText('노드 696')
   // 안 쓰는 선택지도 있어야 한다 — 해제할 길이 없으면 되돌릴 수 없다.
   await expect(select).toContainText('쓰지 않음')
 
@@ -101,6 +106,24 @@ test('읽기 등급에게는 짝 버튼이 없다', async ({ page }) => {
     .locator('.pp__pairbtn')).toHaveCount(1)
   await expect(page.locator('.pp__list li', { hasText: '남의 프로젝트' })
     .locator('.pp__pairbtn')).toHaveCount(0)
+})
+
+test('이미 분석이 있으면 규모를 보여준다', async ({ page }) => {
+  await page.route(LIST, projects([ADMIN, READER]))
+  await page.route('**/api/projects/prj_a1/analyzer-options', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ options: [
+      { graph: 'prj_a1_a', label: '이 프로젝트의 분석', kind: 'own', current: true, nodes: 174 },
+    ] }),
+  }))
+  await page.goto('/', { waitUntil: 'networkidle' })
+  await page.locator('.pp__btn').click()
+  await page.locator('.pp__list li', { hasText: '새 프로젝트' }).locator('.pp__pairbtn').click()
+  const select = page.locator('.pp__pairform select')
+  await expect(select).toContainText('이 프로젝트의 분석')
+  await expect(select).toContainText('노드 174')
+  // 있는데 "새로 분석"이라고 하면 덮어쓰는 줄 모르고 고른다.
+  await expect(select).not.toContainText('아직 분석 없음')
 })
 
 test('짝이 없으면 목록이 그렇게 말한다', async ({ page }) => {

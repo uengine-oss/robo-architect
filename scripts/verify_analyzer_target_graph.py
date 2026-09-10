@@ -164,6 +164,67 @@ def test_options() -> None:
         store.drop_project(b["graph"])
 
 
+def test_session_precedence() -> None:
+    """`get_session(database=X)` 가 **실제로 X 를 연다.**
+
+    예전에는 요청 override 의 graph 가 명시 인자를 이겼다. 프로젝트마다 설계·분석
+    graph 가 갈리면서 그 우선순위가 조용한 오답을 만들었다 — 바인딩을 켠 뒤로
+    분석 조회가 전부 **설계 graph** 로 갔고, FUNCTION 이 거기 없으니 0건이 나오고
+    오류는 안 났다. `analyzer_run` 의 174건은 한 번도 안 읽혔다.
+
+    어느 graph 가 열렸는지는 감사 로그가 말해 준다 — 함수 반환값이 아니라 **실제
+    질의가 간 곳**을 봐야 한다.
+    """
+    print("\n[3-2] 세션이 실제로 어느 graph 를 여는가")
+    from api.platform.neo4j import analyzer_database, get_session
+    from api.platform.neo4j_context import Neo4jOverride, set_override
+
+    base = dict(uri=os.environ.get("NEO4J_URI", "bolt://localhost:28687"),
+                user=os.environ.get("NEO4J_USER", "dev"),
+                password=os.environ.get("NEO4J_PASSWORD", ""))
+    design, analysis = "zz_prec_design", "zz_prec_analysis"
+    for g in (design, analysis):
+        assert g not in PROTECTED
+        try:
+            pg.execute("SELECT og_drop_graph(%s)", (g,))
+        except Exception:
+            pass
+        pg.execute("SELECT og_create_graph(%s)", (g,))
+
+    def opened(tag: str) -> str:
+        rows = pg.query("SELECT left(query, 40) AS q FROM og_data.og_audit "
+                        "WHERE query LIKE %s ORDER BY audit_id DESC LIMIT 1", (f"%{tag}%",))
+        return rows[0]["q"] if rows else "?"
+
+    try:
+        # ① 프로젝트 바인딩 — 설계와 분석이 갈려 있다
+        set_override(Neo4jOverride(**base, database=design,
+                                   analyzer_database=analysis, analyzer_pinned=True))
+        check("분석 graph 를 고른다", analyzer_database(), analysis)
+        with get_session(database=analyzer_database()) as s:
+            s.run("MATCH (n) RETURN count(n) AS zzp1").single()
+        check_true("분석 질의가 분석 graph 로 간다", opened("zzp1").startswith(f"[{analysis}]"))
+
+        # 인자를 안 주면 설계 graph 다 — 이쪽까지 바뀌면 전 화면이 깨진다
+        with get_session() as s:
+            s.run("MATCH (n) RETURN count(n) AS zzp2").single()
+        check_true("인자가 없으면 설계 graph 로 간다", opened("zzp2").startswith(f"[{design}]"))
+
+        # ② Electron 경로 — DB 하나에 설계·분석이 함께 있다
+        set_override(Neo4jOverride(**base, database=design))
+        check("Electron 은 그 하나를 쓴다", analyzer_database(), design)
+        with get_session(database=analyzer_database()) as s:
+            s.run("MATCH (n) RETURN count(n) AS zzp3").single()
+        check_true("Electron 경로가 안 바뀐다", opened("zzp3").startswith(f"[{design}]"))
+    finally:
+        set_override(None)
+        for g in (design, analysis):
+            try:
+                pg.execute("SELECT og_drop_graph(%s)", (g,))
+            except Exception:
+                pass
+
+
 def _src(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -293,6 +354,7 @@ def main() -> int:
         test_pairing()
         test_pair_not_stolen()
         test_options()
+        test_session_precedence()
         test_analyzer_backend()
         test_analyzer_router_precedence()
         test_catalog()
