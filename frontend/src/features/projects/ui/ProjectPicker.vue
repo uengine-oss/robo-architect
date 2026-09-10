@@ -84,6 +84,34 @@ async function submitInvite() {
   }
 }
 
+/**
+ * 분석 짝을 정한다.
+ *
+ * API 는 처음부터 있었는데 화면에 거는 자리가 없었다 — 새 프로젝트를 만들고
+ * 분석을 돌리면 짝을 맺을 방법이 없어 추적성이 계속 비어 있었다.
+ */
+const pairFor = ref('')      // 어느 프로젝트의 짝을 고치는 중인가
+const pairValue = ref('')
+
+function openPair(p) {
+  pairFor.value = p.graph
+  pairValue.value = p.analyzerGraph || ''
+  message.value = ''
+}
+
+async function submitPair() {
+  busy.value = true
+  message.value = ''
+  try {
+    await store.setAnalyzer(pairFor.value, pairValue.value.trim())
+    pairFor.value = ''
+  } catch (e) {
+    message.value = e.message
+  } finally {
+    busy.value = false
+  }
+}
+
 async function revoke(uid) {
   message.value = ''
   try {
@@ -141,6 +169,17 @@ watch(() => auth.token, (t) => { if (t) refresh() })
               </span>
               <span class="pp__level">{{ LEVEL_LABEL[p.level] || p.level }}</span>
             </button>
+            <button v-if="p.level === 'admin'" class="pp__pairbtn" @click.stop="openPair(p)"
+                    title="이 프로젝트가 함께 볼 분석 graph 를 정합니다">
+              분석 짝
+            </button>
+            <form v-if="pairFor === p.graph" class="pp__pairform" @submit.prevent="submitPair">
+              <input v-model="pairValue" class="pp__input" placeholder="분석 graph 이름 (비우면 해제)" />
+              <div class="pp__actions">
+                <button type="button" class="pp__link" @click="pairFor = ''">취소</button>
+                <button type="submit" class="pp__primary" :disabled="busy">저장</button>
+              </div>
+            </form>
           </li>
         </ul>
         <p class="pp__warn" v-if="store.projects.length">
@@ -235,6 +274,13 @@ watch(() => auth.token, (t) => { if (t) refresh() })
 .pp__pair--none { color:var(--status-amber-fg); font-family:var(--font-main); }
 .pp__level { font-size:0.62rem; color:var(--status-neutral-fg); background:var(--status-neutral-bg);
   border-radius:9px; padding:1px 7px; margin-left:var(--spacing-sm); flex-shrink:0; }
+.pp__pairbtn { margin: 2px 0 0 10px; padding: 2px 8px; font-size: 0.68rem;
+  font-family: inherit; cursor: pointer; color: var(--color-text-light);
+  background: var(--color-bg-tertiary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); }
+.pp__pairbtn:hover { color: var(--color-text-bright); border-color: var(--color-accent); }
+.pp__pairform { padding: 6px 10px 2px; }
+
 .pp__warn { font-size:0.68rem; line-height:1.6; color:var(--status-amber-fg);
   background:var(--status-amber-bg); border-radius:var(--radius-sm); padding:6px 9px;
   margin:var(--spacing-sm) 0 0; }

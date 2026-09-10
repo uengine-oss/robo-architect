@@ -104,6 +104,25 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   /**
+   * 이 프로젝트가 함께 볼 분석 graph 를 정한다.
+   *
+   * 설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘은 한 세트다. 짝을 안 정하면
+   * 추적성이 비어 나오고(예전에는 `.env` 의 남의 분석을 봤다), 잘못 정하면
+   * 다른 프로젝트의 분석을 자기 것처럼 읽는다. 둘 다 오류로는 안 드러난다.
+   */
+  async function setAnalyzer(graph, analyzerGraph) {
+    const r = await fetch(`/api/projects/${encodeURIComponent(graph)}/analyzer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analyzerGraph: analyzerGraph || null }),
+    })
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(body.detail || `분석 짝을 정하지 못했습니다 (${r.status})`)
+    await load()
+    return body
+  }
+
+  /**
    * 프로젝트를 바꾼다.
    *
    * 같은 프로젝트를 다시 고르면 아무 일도 하지 않는다 — 새로고침이 따라오므로
@@ -118,6 +137,6 @@ export const useProjectsStore = defineStore('projects', () => {
 
   return {
     projects, loading, error, current, currentName, canManage,
-    load, create, adopt, members, share, unshare, select,
+    load, create, adopt, members, share, unshare, select, setAnalyzer,
   }
 })
