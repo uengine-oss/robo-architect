@@ -27,6 +27,7 @@ from typing import Any, Optional
 
 from api.features.projects import roles
 from api.platform import pg
+from api.platform.observability.smart_logger import SmartLogger
 
 __all__ = [
     "ensure_schema", "create_project", "adopt_graph", "list_projects",
@@ -121,18 +122,51 @@ def create_project(name: str, owner_uid: str) -> dict[str, Any]:
     return {"graph": graph, **value, "level": "admin"}
 
 
+def _warn_if_shared(graph: str, analyzer_graph: str) -> None:
+    """분석 graph 를 여러 프로젝트가 나눠 쓰면 남긴다.
+
+    막지는 않는다 — 전환 전 데이터처럼 일부러 나눠 쓰는 경우가 있다. 다만 조용히
+    지나가면 분석 한 번에 남의 결과가 사라진다.
+    """
+    shared = [
+        r["graph"] for r in pg.query(
+            "SELECT graph FROM public.app_projects "
+            "WHERE graph <> %s AND value->>'analyzerGraph' = %s",
+            (graph, analyzer_graph),
+        )
+    ]
+    if shared:
+        SmartLogger.log(
+            "WARN",
+            "분석 graph 를 여러 프로젝트가 나눠 쓴다. 분석을 다시 돌리면 다른 "
+            "프로젝트의 결과가 사라진다.",
+            category="projects.analyzer_shared",
+            params={"graph": graph, "analyzer": analyzer_graph, "also_used_by": shared},
+        )
+
+
 def set_analyzer_graph(graph: str, analyzer_graph: str | None) -> dict[str, Any]:
     """이 프로젝트가 함께 볼 분석 graph 를 정한다.
 
     **설계와 분석은 한 세트다.** 설계는 분석에서 뽑은 룰을 승격시킨 것이라, 둘을
     따로 고르면 추적성이 다른 분석을 가리킨다 — 화면에는 결과가 나오므로 오류로
     드러나지 않는다.
+
+    > **분석 graph 는 프로젝트끼리 나눠 쓰면 안 된다.** 레거시 분석기는 매 run 마다
+    > 대상 graph 를 통째로 비운다(`executor.py` 의 `wipe_graph`, 조건 없음). 두
+    > 프로젝트가 같은 분석 graph 를 짝으로 두면, 한쪽에서 분석을 다시 돌리는 순간
+    > 다른 쪽 결과가 사라진다. 오류는 나지 않는다.
+    >
+    > 지금은 경고만 둔다. 근본 해결은 프로젝트마다 분석 graph 를 따로 만들어 wipe
+    > 범위를 프로젝트 안으로 가두는 것이다 — `STATUS.md` §4.2.
     """
     project = get_project(graph)
     if not project:
         raise ValueError(f"그런 프로젝트가 없다: {graph}")
     if analyzer_graph and not graph_exists(analyzer_graph):
         raise ValueError(f"그런 graph 가 없다: {analyzer_graph}")
+    if analyzer_graph:
+        _warn_if_shared(graph, analyzer_graph)
     value = {k: v for k, v in project.items() if k not in ("graph", "level")}
     if analyzer_graph:
         value["analyzerGraph"] = analyzer_graph
@@ -160,6 +194,8 @@ def adopt_graph(graph: str, name: str, owner_uid: str,
     role = roles.ensure_role(owner_uid)
     if analyzer_graph and not graph_exists(analyzer_graph):
         raise ValueError(f"그런 graph 가 없다: {analyzer_graph}")
+    if analyzer_graph:
+        _warn_if_shared(graph, analyzer_graph)
     value = {"displayName": (name or graph).strip(), "ownerUid": owner_uid,
              "created": _now(), "adopted": True}
     if analyzer_graph:

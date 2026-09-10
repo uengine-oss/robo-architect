@@ -130,10 +130,12 @@ watch(() => auth.token, (t) => { if (t) refresh() })
                 {{ p.displayName || p.graph }}
                 <!-- 설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘은 한 세트다.
                      짝이 없으면 추적성이 .env 의 분석을 본다 — 보여 줘야 한다. -->
-                <span v-if="p.analyzerGraph" class="pp__pair" title="함께 보는 분석 결과">
+                <span v-if="p.analyzerGraph" class="pp__pair"
+                      title="함께 보는 분석 결과. 이 graph 로 분석을 다시 돌리면 지금 결과는 통째로 교체된다.">
                   ⇄ {{ p.analyzerGraph }}
                 </span>
-                <span v-else class="pp__pair pp__pair--none" title="추적성이 .env 의 분석을 본다">
+                <span v-else class="pp__pair pp__pair--none"
+                      title="짝이 없으면 추적성이 .env 의 분석 graph 를 본다 — 다른 프로젝트의 분석일 수 있다">
                   분석 미지정
                 </span>
               </span>
@@ -141,6 +143,10 @@ watch(() => auth.token, (t) => { if (t) refresh() })
             </button>
           </li>
         </ul>
+        <p class="pp__warn" v-if="store.projects.length">
+          ⚠ 레거시 분석은 <b>대상 graph 를 통째로 비우고</b> 다시 씁니다.
+          같은 분석 graph 를 쓰는 다른 프로젝트가 있으면 그쪽 결과가 사라집니다.
+        </p>
         <div class="pp__foot">
           <button class="pp__link" @click="mode = 'create'">＋ 새 프로젝트</button>
           <button v-if="store.canManage" class="pp__link" @click="openShare">공유 관리</button>
@@ -229,6 +235,10 @@ watch(() => auth.token, (t) => { if (t) refresh() })
 .pp__pair--none { color:var(--status-amber-fg); font-family:var(--font-main); }
 .pp__level { font-size:0.62rem; color:var(--status-neutral-fg); background:var(--status-neutral-bg);
   border-radius:9px; padding:1px 7px; margin-left:var(--spacing-sm); flex-shrink:0; }
+.pp__warn { font-size:0.68rem; line-height:1.6; color:var(--status-amber-fg);
+  background:var(--status-amber-bg); border-radius:var(--radius-sm); padding:6px 9px;
+  margin:var(--spacing-sm) 0 0; }
+.pp__warn b { font-weight:700; }
 .pp__foot { display:flex; justify-content:space-between; margin-top:var(--spacing-sm);
   padding-top:9px; border-top:1px solid var(--color-border); }
 .pp__link { border:none; background:none; color:var(--color-accent); font-size:0.72rem;
