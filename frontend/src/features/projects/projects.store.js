@@ -27,6 +27,14 @@ export const useProjectsStore = defineStore('projects', () => {
     () => (current.value && current.value.displayName) || auth.projectGraph || null,
   )
   const canManage = computed(() => (current.value || {}).level === 'admin')
+  /**
+   * 지금 프로젝트의 분석 graph.
+   *
+   * Analysis 탭이 이 값을 분석기에 넘긴다. 분석은 **대상 graph 를 통째로 비우고**
+   * 시작하므로, 안 넘기면 분석기가 자기 env 의 graph 하나를 비운다 — 다른
+   * 프로젝트의 분석 결과가 사라지고 오류는 안 난다.
+   */
+  const currentAnalyzerGraph = computed(() => (current.value || {}).analyzerGraph || null)
 
   async function load() {
     loading.value = true
@@ -136,7 +144,7 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   return {
-    projects, loading, error, current, currentName, canManage,
+    projects, loading, error, current, currentName, canManage, currentAnalyzerGraph,
     load, create, adopt, members, share, unshare, select, setAnalyzer,
   }
 })

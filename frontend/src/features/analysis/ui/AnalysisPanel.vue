@@ -17,6 +17,7 @@
  * 루트를 다시 읽고, 달라졌을 때만 remote 를 다시 마운트한다.
  */
 import { ref, inject, watch, onMounted, onBeforeUnmount, onActivated } from 'vue'
+import { useProjectsStore } from '@/features/projects/projects.store.js'
 
 const ROOT_KEY = 'claude_code_workspace_root'
 
@@ -26,6 +27,23 @@ const isLoading = ref(true)
 let unmountRemote = null
 // 지금 마운트된 remote 가 받은 루트. 재마운트 여부는 이 값과의 비교로만 정한다.
 let mountedRoot
+// 같은 이유로 분석 graph 도 기억한다. 프로젝트를 바꾸면 앱이 통째로 새로고침되지만,
+// 짝만 고치는 길(선택기의 `분석 짝`)은 새로고침 없이 값이 바뀐다.
+let mountedDatabase
+
+const projectsStore = useProjectsStore()
+
+/** 이 프로젝트의 분석 graph. 목록이 아직 없으면 한 번 읽어 온다. */
+async function loadAnalyzerGraph() {
+  if (!projectsStore.projects.length) {
+    try { await projectsStore.load() } catch { /* 목록이 없어도 분석기는 떠야 한다 */ }
+  }
+  return projectsStore.currentAnalyzerGraph || undefined
+}
+
+function readAnalyzerGraph() {
+  return projectsStore.currentAnalyzerGraph || undefined
+}
 
 // App 이 provide 하는 메인 세션 workdir. Code 탭에서 폴더를 바꾸면
 // syncMainRoot 가 이 ref 와 localStorage 를 함께 갱신한다. ref 를 감시하면
@@ -64,13 +82,20 @@ async function mountRemote() {
     // onProjectRootChange: analyzer 화면에서 폴더를 바꾸면 host 가 저장한다.
     // 저장하지 않으면 다음 마운트에 예전 값으로 조용히 돌아간다. Code 탭·런처와
     // 같은 키를 쓰므로 화면 간에 어긋나지도 않는다.
+    // 이 프로젝트의 분석 graph. 분석은 **대상 graph 를 통째로 비우고** 시작하므로,
+    // 이 값을 안 넘기면 분석기가 자기 env 에 고정된 graph 하나를 비운다 — 다른
+    // 프로젝트에서 분석을 한 번 돌리면 여기 결과가 사라진다. 오류는 안 난다.
+    const neo4jDatabase = await loadAnalyzerGraph()
+
     unmountRemote = remote.default.mount(hostEl.value, {
       embedded: true,
       projectRoot,
       neo4j,
+      neo4jDatabase,
       onProjectRootChange: persistRoot,
     })
     mountedRoot = projectRoot
+    mountedDatabase = neo4jDatabase
   } catch (err) {
     loadError.value = err?.message || String(err)
   } finally {
@@ -101,7 +126,7 @@ onMounted(mountRemote)
 async function remountIfRootChanged() {
   // 아직 마운트 전이거나 마운트 중이면 할 일이 없다 — mountRemote 가 최신 값을 읽는다.
   if (!unmountRemote) return
-  if (readRoot() === mountedRoot) return
+  if (readRoot() === mountedRoot && readAnalyzerGraph() === mountedDatabase) return
   teardown()
   await mountRemote()
 }
@@ -112,6 +137,10 @@ if (appWorkdir) watch(appWorkdir, remountIfRootChanged)
 // 2차 — ref 를 거치지 않고 localStorage 만 바뀌는 경로(런처·PRD 모달)를 위해
 // 탭이 다시 보일 때 한 번 더 대조한다. 같으면 아무것도 하지 않는다.
 onActivated(remountIfRootChanged)
+
+// 3차 — 선택기에서 분석 짝을 고치면 새로고침 없이 값만 바뀐다. 그대로 두면
+// 분석기가 옛 graph 를 계속 쓰고, 거기서 분석을 돌리면 그 graph 가 비워진다.
+watch(() => projectsStore.currentAnalyzerGraph, remountIfRootChanged)
 
 onBeforeUnmount(teardown)
 </script>

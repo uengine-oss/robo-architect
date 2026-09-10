@@ -287,9 +287,15 @@ def main() -> int:  # noqa: C901 — 전 구간을 한 흐름으로 읽히게 �
         owner_removable = False
     check("소유자는 회수할 수 없다", not owner_removable)
 
-    # 새 프로젝트는 분석 짝이 비어 있다 — 이게 어디를 보는지가 중요하다.
-    check("새 프로젝트에는 분석 짝이 없다", not p.get("analyzerGraph"), str(p.get("analyzerGraph")))
-    note("짝이 없으면 추적성이 .env 의 분석 graph 를 본다 — 남의 분석이다.")
+    # 새 프로젝트는 분석 graph 를 짝으로 함께 갖는다.
+    #
+    # 예전에는 비어 있었고, 그 상태의 추적성은 `.env` 의 분석 graph — **남의
+    # 분석**을 봤다. 게다가 거기서 분석을 돌리면 그 graph 를 통째로 비워 다른
+    # 프로젝트의 결과가 사라졌다. 짝을 함께 만들어 wipe 를 프로젝트 안에 가둔다.
+    check("새 프로젝트에 분석 짝이 함께 생긴다", p.get("analyzerGraph"), f"{p['graph']}_a")
+    check("분석 graph 에도 소유자 권한이 간다",
+          projects.level_of(owner, p["analyzerGraph"]), "admin")
+    note("짝이 있어야 분석 wipe 가 이 프로젝트 안에서만 일어난다.")
 
     # ── 정리 ─────────────────────────────────────────────────────────
     head("정리")

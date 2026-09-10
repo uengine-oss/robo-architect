@@ -92,11 +92,17 @@ def _row_to_project(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def create_project(name: str, owner_uid: str) -> dict[str, Any]:
-    """graph 를 만들고 소유자에게 admin 을 준다.
+def create_project(name: str, owner_uid: str, *, with_analyzer: bool = True) -> dict[str, Any]:
+    """graph 를 만들고 소유자에게 admin 을 준다. **분석 graph 도 짝으로 만든다.**
 
-    셋이 함께 되거나 함께 안 돼야 한다 — graph 만 생기고 권한이 없으면 아무도
+    넷이 함께 되거나 함께 안 돼야 한다 — graph 만 생기고 권한이 없으면 아무도
     못 쓰는 graph 가 남고, 권한만 있고 graph 가 없으면 목록에 유령이 뜬다.
+
+    **분석 짝을 여기서 만드는 이유가 이 함수에서 가장 중요하다.** 레거시 분석은
+    대상 graph 를 통째로 비우고 시작한다. 짝이 없으면 그 대상이 `.env` 의 공용
+    graph 가 되어, 새 프로젝트에서 분석을 한 번 돌리면 **다른 프로젝트의 분석이
+    사라진다.** 오류는 나지 않는다. 짝을 미리 만들어 두면 wipe 가 이 프로젝트
+    안에 갇힌다.
     """
     label = (name or "").strip()
     if not label:
@@ -106,15 +112,23 @@ def create_project(name: str, owner_uid: str) -> dict[str, Any]:
 
     role = roles.ensure_role(owner_uid)
     graph = _new_graph_name()
+    analyzer_graph = f"{graph}_a" if with_analyzer else None
     value = {
         "displayName": label,
         "ownerUid": owner_uid,
         "created": _now(),
     }
+    if analyzer_graph:
+        value["analyzerGraph"] = analyzer_graph
     with pg.connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT og_create_graph(%s)", (graph,))
             cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", graph))
+            if analyzer_graph:
+                # 분석 graph 에도 같은 권한을 준다 — 추적성이 두 graph 를 오가며
+                # 읽으므로, 한쪽만 열어 두면 설계는 보이는데 출처만 막힌다.
+                cur.execute("SELECT og_create_graph(%s)", (analyzer_graph,))
+                cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", analyzer_graph))
             cur.execute(
                 "INSERT INTO public.app_projects (graph, value) VALUES (%s, %s::jsonb)",
                 (graph, json.dumps(value, ensure_ascii=False)),
@@ -258,15 +272,33 @@ def _invalidate_binding(role: str, graph: str) -> None:
 
 # ── 공유 ─────────────────────────────────────────────────────────────
 
+def _paired_graphs(project: dict[str, Any]) -> list[str]:
+    """이 프로젝트가 들고 있는 graph 들 — 설계와 분석.
+
+    권한은 **둘 다** 따라가야 한다. 추적성이 두 graph 를 오가며 읽으므로, 설계만
+    열어 주면 화면은 뜨는데 출처만 비어 나온다 — 오류가 아니라 "근거가 없다"로
+    보인다.
+
+    남과 나눠 쓰는 분석 graph 는 건드리지 않는다. 그건 이 프로젝트의 것이 아니다.
+    """
+    graphs = [project["graph"]]
+    analyzer = project.get("analyzerGraph")
+    if analyzer and analyzer.startswith(project["graph"]):
+        graphs.append(analyzer)
+    return graphs
+
+
 def share(graph: str, uid: str, level: str) -> dict[str, Any]:
     """초대 — 호출 한 줄이다. 별도 멤버십 표가 필요 없는 것이 이 구조의 이점이다."""
     if level not in LEVELS:
         raise ValueError(f"알 수 없는 등급: {level}")
-    if not get_project(graph):
+    project = get_project(graph)
+    if not project:
         raise ValueError(f"그런 프로젝트가 없다: {graph}")
     role = roles.ensure_role(uid)
-    pg.query("SELECT og_grant(%s, %s, %s)", (role, level, graph))
-    _invalidate_binding(role, graph)
+    for g in _paired_graphs(project):
+        pg.query("SELECT og_grant(%s, %s, %s)", (role, level, g))
+        _invalidate_binding(role, g)
     return {"graph": graph, "uid": uid, "role": role, "level": level}
 
 
@@ -278,8 +310,9 @@ def unshare(graph: str, uid: str) -> dict[str, Any]:
     if project.get("ownerUid") == uid:
         raise ValueError("소유자의 권한은 회수할 수 없다")
     role = roles.role_name(uid)
-    pg.query("SELECT og_revoke(%s, %s)", (role, graph))
-    _invalidate_binding(role, graph)
+    for g in _paired_graphs(project):
+        pg.query("SELECT og_revoke(%s, %s)", (role, g))
+        _invalidate_binding(role, g)
     return {"graph": graph, "uid": uid, "role": role}
 
 
@@ -317,16 +350,36 @@ def drop_project(graph: str) -> None:
     않아, 지운 graph 를 가리키는 권한 행이 그대로 남는다. 같은 이름의 graph 가
     나중에 다시 생기면 그 권한이 조용히 되살아난다.
     """
+    project = get_project(graph)
+    # 짝으로 만든 분석 graph 도 함께 지운다. 남기면 아무도 못 여는 graph 가
+    # 떠돌고, 같은 이름이 다시 생기면 옛 데이터가 새 프로젝트에 섞인다.
+    targets = _paired_graphs(project) if project else [graph]
+
+    # 표에만 기대지 않는다. 짝은 **이름 규칙**으로도 찾을 수 있고, 표가 비었거나
+    # 재등록으로 짝 기록이 날아간 경우가 실제로 있었다 — 그때 분석 graph 가
+    # 조용히 고아로 남았다. 다른 프로젝트가 쓰고 있으면 손대지 않는다.
+    conventional = f"{graph}_a"
+    if conventional not in targets and graph_exists(conventional):
+        claimed = pg.query(
+            "SELECT graph FROM public.app_projects "
+            "WHERE graph <> %s AND value->>'analyzerGraph' = %s",
+            (graph, conventional),
+        )
+        if not claimed:
+            targets.append(conventional)
+    touched: list[tuple[str, str]] = []
     with pg.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT role FROM og_catalog.grantee WHERE graph = %s", (graph,))
-            roles_here = [r["role"] for r in cur.fetchall()]
-            for role in roles_here:
-                cur.execute("SELECT og_revoke(%s, %s)", (role, graph))
+            for g in targets:
+                cur.execute("SELECT role FROM og_catalog.grantee WHERE graph = %s", (g,))
+                for row in cur.fetchall():
+                    cur.execute("SELECT og_revoke(%s, %s)", (row["role"], g))
+                    touched.append((row["role"], g))
             cur.execute("DELETE FROM public.app_projects WHERE graph = %s", (graph,))
-            cur.execute("SELECT og_drop_graph(%s)", (graph,))
-    for role in roles_here:
-        _invalidate_binding(role, graph)
+            for g in targets:
+                cur.execute("SELECT og_drop_graph(%s)", (g,))
+    for role, g in touched:
+        _invalidate_binding(role, g)
 
 
 def prune_orphan_grants() -> list[dict[str, str]]:
