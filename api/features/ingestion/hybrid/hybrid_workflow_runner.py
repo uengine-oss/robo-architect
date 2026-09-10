@@ -41,6 +41,7 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.ingestion_workflow_runner import clear_event_storming_nodes
 from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+from api.features.ingestion.replacement import capture_before_replace
 from api.platform.observability.smart_logger import SmartLogger
 
 # Small delay between incremental emits so the UI sees a smooth reveal.
@@ -74,6 +75,9 @@ async def run_hybrid_workflow(
         # generated artifact (all BPM workspaces + all event-storming nodes)
         # so re-ingestion is a clean rebuild. The analyzer code-analysis
         # graph is preserved (single-label / session_id guards).
+        # 지우기 직전에 현재 판을 보관한다 — 이 wipe 가 프로젝트의 설계를
+        # 통째로 갈아엎으므로, 여기가 되찾을 수 있는 마지막 자리다.
+        capture_before_replace(reason="ingest-hybrid")
         clear_all_hybrid_workspace()
         try:
             clear_event_storming_nodes(get_neo4j_client(), session_id)

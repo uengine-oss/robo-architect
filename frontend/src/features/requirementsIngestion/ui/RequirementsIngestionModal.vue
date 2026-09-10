@@ -293,6 +293,10 @@ async function startFigmaApiIngestion() {
 
 // Data clearing state
 const showClearConfirm = ref(false)
+// 인제스천은 **교체**다 — 시작하자마자 이 프로젝트의 생성물을 통째로 지운다.
+// 서버가 무엇이 사라지는지 세어 주고, 지우기 직전에 이전 판을 보관한다.
+const replacePreview = ref(null)
+const isCheckingReplace = ref(false)
 const existingDataStats = ref(null)
 const isLoadingStats = ref(false)
 const isClearing = ref(false)
@@ -604,18 +608,42 @@ async function clearExistingData() {
   }
 }
 
-// Handle start button click
-// 026 requirements-tab: 업로드는 항상 증분 upsert. 기존 데이터를 자동
-// 삭제하지 않는다. 전체 삭제는 Requirements 탭의 별도 "데이터 삭제"
-// 버튼(=/api/ingest/clear-all)으로만 수행한다.
-function handleStartClick() {
+// 인제스천은 **교체**다. 표준 경로도 하이브리드도 시작하자마자 이 프로젝트의
+// 생성물을 통째로 지우고 새로 쓴다(`clear_event_storming_nodes` /
+// `clear_all_hybrid_workspace`). 오래도록 이 자리는 "증분 upsert" 라고 적혀
+// 있었지만 사실이 아니었고, 그래서 두 번째 업로드가 앞판을 말없이 지웠다.
+//
+// 지금은 시작 전에 무엇이 사라지는지 묻는다. 지울 것이 없으면(첫 인제스천)
+// 묻지 않는다 — 확인만 늘리면 사람은 읽지 않고 누르게 된다.
+async function handleStartClick() {
+  isCheckingReplace.value = true
+  try {
+    const res = await fetch('/api/ingest/replacement-preview')
+    if (res.ok) {
+      const data = await res.json()
+      if ((data.total || 0) > 0) {
+        replacePreview.value = data
+        showClearConfirm.value = true
+        return
+      }
+    }
+  } catch (e) {
+    // 미리보기를 못 읽어도 인제스천을 막지 않는다. 다만 확인 없이 지나가므로
+    // 화면에 그 사실이 남는다.
+    console.warn('교체 미리보기를 읽지 못했습니다:', e)
+  } finally {
+    isCheckingReplace.value = false
+  }
+  await beginIngestion()
+}
+
+function beginIngestion() {
   if (inputMode.value === 'analyzer') {
     // 코드 분석 모드는 항상 Hybrid 파이프라인으로 진입 — 첨부된 업무 문서가 분석된
     // 코드 그래프와 매핑된다. canSubmit이 analyzerDocFiles 비어 있지 않음을 보장.
-    startHybridIngestion()
-  } else {
-    startIngestion()
+    return startHybridIngestion()
   }
+  return startIngestion()
 }
 
 // Hybrid (Document + Code → BPM-first) dev test button.
@@ -791,13 +819,12 @@ function connectToHybridStream(sid) {
   })
 }
 
-// User chose to clear existing data and proceed
+// 확인을 받았다. **따로 지우지 않는다** — 인제스천 자체가 지우고 시작하며,
+// 그 직전에 서버가 이전 판을 보관한다. 여기서 한 번 더 지우면 보관 대상이
+// 먼저 사라져 스냅샷이 빈 채로 남는다.
 async function confirmClearAndStart() {
   showClearConfirm.value = false
-  const cleared = await clearExistingData()
-  if (cleared) {
-    await startIngestion()
-  }
+  await beginIngestion()
 }
 
 // User chose to cancel
@@ -1707,8 +1734,8 @@ function useSample() {
                 <line x1="12" y1="16" x2="12.01" y2="16"></line>
               </svg>
               <span>
-                기존 데이터가 있습니다: 
-                <strong>{{ existingDataStats.total }}개</strong> 노드
+                기존 설계가 있습니다: <strong>{{ existingDataStats.total }}개</strong> 노드.
+                인제스천을 시작하면 <strong>교체</strong>되며, 지금 판은 보관됩니다.
               </span>
             </div>
             
@@ -1721,35 +1748,29 @@ function useSample() {
                   <line x1="12" y1="17" x2="12.01" y2="17"></line>
                 </svg>
               </div>
-              <h3 class="clear-confirm-title">기존 데이터 삭제 확인</h3>
+              <h3 class="clear-confirm-title">지금 설계를 교체합니다</h3>
               <p class="clear-confirm-message">
-                새로운 요구사항을 분석하기 전에 기존 데이터를 모두 삭제해야 합니다.
+                인제스천은 이 프로젝트의 설계를 <strong>통째로 새로 씁니다.</strong>
+                아래 <strong>{{ replacePreview?.total || 0 }}개</strong> 노드가 사라지고
+                문서에서 다시 만들어집니다.
               </p>
               <div class="clear-confirm-stats">
-                <div v-for="(count, type) in existingDataStats.by_type" :key="type" class="stat-chip">
+                <div v-for="(count, type) in (replacePreview?.counts || {})" :key="type" class="stat-chip">
                   <span class="stat-chip-label">{{ type }}</span>
                   <span class="stat-chip-value">{{ count }}</span>
                 </div>
               </div>
-              <p class="clear-confirm-warning">
-                ⚠️ 이 작업은 되돌릴 수 없습니다.
+              <p class="clear-confirm-keep">
+                지금 판은 지우기 직전에 <strong>산출물로 보관</strong>됩니다 —
+                내보내기 화면의 <em>지난 판</em>에서 다시 꺼낼 수 있습니다.
+                Figma 연결은 그대로 남습니다.
               </p>
               <div class="clear-confirm-actions">
-                <button class="btn btn--secondary" @click="cancelClear" :disabled="isClearing">
+                <button class="btn btn--secondary" @click="cancelClear">
                   취소
                 </button>
-                <button class="btn btn--danger" @click="confirmClearAndStart" :disabled="isClearing">
-                  <template v-if="isClearing">
-                    <span class="spinner"></span>
-                    삭제 중...
-                  </template>
-                  <template v-else>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="3 6 5 6 21 6"></polyline>
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    </svg>
-                    삭제하고 계속
-                  </template>
+                <button class="btn btn--danger" @click="confirmClearAndStart">
+                  교체하고 계속
                 </button>
               </div>
             </div>
@@ -2357,7 +2378,7 @@ function useSample() {
             </button>
             <button
               class="btn btn--primary"
-              :disabled="!canSubmit || isUploading || isLoadingPageContent"
+              :disabled="!canSubmit || isUploading || isLoadingPageContent || isCheckingReplace"
               @click="handleStartClick"
             >
               <template v-if="isUploading || isLoadingPageContent">
@@ -2722,6 +2743,17 @@ function useSample() {
 .stat-chip-value {
   color: var(--color-text-bright);
   font-weight: 600;
+}
+
+.clear-confirm-keep {
+  font-size: 0.78rem;
+  line-height: 1.7;
+  color: var(--color-text-light);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 12px 0 0;
+  text-align: left;
 }
 
 .clear-confirm-warning {

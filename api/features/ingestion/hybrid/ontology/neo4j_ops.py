@@ -42,7 +42,7 @@ from api.features.ingestion.hybrid.ontology.schema import (
     R_REALIZED_BY,
     R_SOURCED_FROM,
 )
-from api.platform.neo4j import analyzer_database, get_session
+from api.platform.neo4j import analyzer_database, analyzer_session, get_session
 
 
 def clear_hybrid_nodes(session_id: str) -> dict[str, int]:
@@ -498,7 +498,13 @@ def save_mappings(
                 agent_verdict=m.agent_verdict,
             )
             amid = f"am_{m.task_id}_{m.rule_id}"
+            # **Task 를 먼저 MATCH 한다.** 없으면 0행이라 아무 일도 일어나지 않는다.
+            # 위의 REALIZED_BY 는 원래 이 확인을 하고 있었는데 감사 노드만 빠져
+            # 있어서, 옛 session_id 를 들고 온 요청이 **가리킬 Task 가 없는 매핑**을
+            # 남겼다. 실측으로 robo 에 2건이 그렇게 남아 있었다(REALIZED_BY 56 대
+            # ActivityMapping 58). 조회는 성공하므로 오류로 드러나지 않는다.
             s.run(
+                f"MATCH (t:{L_BPM_TASK} {{id: $tid, session_id: $sid}}) "
                 f"MERGE (am:{L_ACTIVITY_MAPPING} {{id: $id, session_id: $sid}}) "
                 "SET am.task_id = $tid, am.rule_id = $rid, am.score = $score, "
                 "    am.method = $method, am.reviewed = $reviewed, "
@@ -512,7 +518,9 @@ def save_mappings(
         # router expects. Without this, the accept endpoint returns 404.
         for m in review_mappings or []:
             amid = f"am_{m.task_id}_{m.rule_id}"
+            # 검토 대기도 같다 — 가리킬 Task 가 없으면 만들지 않는다.
             s.run(
+                f"MATCH (t:{L_BPM_TASK} {{id: $tid, session_id: $sid}}) "
                 f"MERGE (am:{L_ACTIVITY_MAPPING} {{id: $id, session_id: $sid}}) "
                 "SET am.task_id = $tid, am.rule_id = $rid, am.score = $score, "
                 "    am.method = $method, am.reviewed = false",
@@ -852,9 +860,11 @@ def fetch_session_snapshot(session_id: str) -> dict:
         # at ingestion time. Without this, refresh hydration drops summary and
         # functions render as name-only.
         summary_by_fn: dict[str, str | None] = {}
-        if referenced_fn_names:
+        # 분석 짝이 없으면 summary 를 못 붙인다 — 이름만 나오는 기존 폴백과 같다.
+        asess_cm = analyzer_session() if referenced_fn_names else None
+        if asess_cm is not None:
             try:
-                with get_session(database=analyzer_database()) as asess:
+                with asess_cm as asess:
                     for arec in asess.run(
                         # De-dup per fn name at the Cypher level — a fn may have
                         # multiple matching nodes (e.g. also labelled :Query).

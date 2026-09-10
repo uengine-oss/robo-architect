@@ -30,6 +30,8 @@ from api.features.deliverables.architecture_document import (
     fetch_session_trees,
     list_sessions,
 )
+from api.features.projects import snapshots as snapshot_store
+from api.platform.neo4j import design_database
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -52,6 +54,54 @@ async def get_sessions(request: Request) -> dict:
         params={**http_context(request), "count": len(sessions)},
     )
     return {"sessions": sessions}
+
+
+@router.get("/snapshots")
+async def get_snapshots(request: Request) -> dict:
+    """이 프로젝트에 보관된 **지난 판** 목록.
+
+    인제스천은 교체다 — 새로 넣으면 앞판이 그래프에서 사라진다. 사라지기 직전에
+    산출물로 조립해 둔 것이 여기 쌓인다. 살아 있는 세션 목록(`/sessions`)과 짝을
+    이룬다: 하나는 지금 판, 하나는 지난 판이다.
+    """
+    graph = design_database()
+    try:
+        items = snapshot_store.list_snapshots(graph) if graph else []
+    except Exception as exc:  # noqa: BLE001 — 저장소가 없어도 화면은 떠야 한다
+        SmartLogger.log(
+            "WARN", f"스냅샷 목록을 읽지 못했다: {exc}",
+            category="deliverables.snapshots.error",
+            params={**http_context(request), "graph": graph, "error": str(exc)},
+        )
+        return {"snapshots": [], "available": False}
+    return {"snapshots": items, "available": True, "graph": graph}
+
+
+@router.get("/snapshots/{snapshot_key}")
+async def get_snapshot(request: Request, snapshot_key: str) -> dict:
+    """보관된 판의 산출물. `architecture-document` 와 **같은 모양**이다.
+
+    같은 모양이어야 내보내기 화면이 지금 판과 지난 판을 구분 없이 그린다.
+    """
+    graph = design_database()
+    doc = snapshot_store.get(graph, snapshot_key) if graph else None
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"보관된 판이 없습니다: {snapshot_key}")
+    return doc
+
+
+@router.delete("/snapshots/{snapshot_key}")
+async def delete_snapshot(request: Request, snapshot_key: str) -> dict:
+    graph = design_database()
+    removed = snapshot_store.delete(graph, snapshot_key) if graph else False
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"보관된 판이 없습니다: {snapshot_key}")
+    SmartLogger.log(
+        "INFO", f"보관된 판을 지웠다: {snapshot_key}",
+        category="deliverables.snapshots.deleted",
+        params={**http_context(request), "graph": graph, "key": snapshot_key},
+    )
+    return {"deleted": snapshot_key}
 
 
 @router.get("/architecture-document")

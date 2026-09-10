@@ -56,6 +56,10 @@ const sessionScoped = computed(() => !!deliverable.value)
 // 처럼 저장소가 분리된 환경에서 아예 접근할 수 없다.
 const sessions = ref([])
 const selectedSessionId = ref(null)
+// 인제스천은 교체다 — 새로 넣으면 앞판이 그래프에서 사라진다. 사라지기 직전에
+// 산출물로 조립해 둔 것이 **지난 판**이고, 여기서만 다시 꺼낼 수 있다.
+const snapshots = ref([])
+const SNAP = "snap:"
 
 /**
  * Session 범위로 고정된 산출물을 읽는다.
@@ -66,7 +70,12 @@ const selectedSessionId = ref(null)
  * 실패하면 기존 전역 조회로 되돌아간다.
  */
 async function loadFromSession(sessionId) {
-  const resp = await fetch(`/api/deliverables/architecture-document?sessionId=${encodeURIComponent(sessionId)}`)
+  // 지난 판은 그래프에 없다 — 보관된 산출물을 그대로 읽는다. **같은 모양**이라
+  // 아래 조립 코드가 갈라지지 않는다.
+  const url = sessionId.startsWith(SNAP)
+    ? `/api/deliverables/snapshots/${encodeURIComponent(sessionId.slice(SNAP.length))}`
+    : `/api/deliverables/architecture-document?sessionId=${encodeURIComponent(sessionId)}`
+  const resp = await fetch(url)
   if (!resp.ok) return false
   const doc = await resp.json()
   const trees = {}
@@ -109,6 +118,19 @@ async function loadSessions() {
   }
 }
 
+/** 보관된 지난 판 목록. 저장소가 없으면 조용히 비운다 — 화면은 떠야 한다. */
+async function loadSnapshots() {
+  try {
+    const resp = await fetch('/api/deliverables/snapshots')
+    if (!resp.ok) { snapshots.value = []; return }
+    const body = await resp.json()
+    snapshots.value = body.snapshots || []
+  } catch (e) {
+    console.warn('[ExportDocument] snapshot list failed:', e)
+    snapshots.value = []
+  }
+}
+
 /**
  * 초기 세션 결정.
  *
@@ -130,7 +152,7 @@ async function loadAllData() {
   isLoading.value = true
   deliverable.value = null
   try {
-    const list = await loadSessions()
+    const [list] = await Promise.all([loadSessions(), loadSnapshots()])
     const sid = resolveSessionId(list)
     if (sid) {
       try {
@@ -171,6 +193,7 @@ defineExpose({
   get sectionNumbers() { return sectionNumbers.value },
   get deliverable() { return deliverable.value },
   get sessions() { return sessions.value },
+  get snapshots() { return snapshots.value },
   get selectedSessionId() { return selectedSessionId.value },
   selectSession,
   get sessionScoped() { return sessionScoped.value },
@@ -404,14 +427,26 @@ function resolveNodeName(nodeId) {
 
     <template v-if="!isLoading">
       <!-- 산출물 범위 — 어느 세션의 결과인지 고른다 -->
-      <div v-if="sessions.length" class="session-picker no-print">
+      <div v-if="sessions.length || snapshots.length" class="session-picker no-print">
         <label class="session-picker__label">산출물 범위</label>
         <select class="session-picker__select" :value="selectedSessionId || ''" @change="selectSession($event.target.value)">
-          <option v-for="s in sessions" :key="s.id" :value="s.id">
-            {{ s.name }} — BC {{ s.boundedContexts }} · US {{ s.userStories }} · Process {{ s.processes }}
-          </option>
+          <!-- 지금 판과 지난 판을 갈라 둔다. 한 줄에 섞으면 어느 쪽을 뽑고 있는지
+               모른 채 옛 문서를 납품하게 된다. -->
+          <optgroup v-if="sessions.length" label="지금 판">
+            <option v-for="s in sessions" :key="s.id" :value="s.id">
+              {{ s.name }} — BC {{ s.boundedContexts }} · US {{ s.userStories }} · Process {{ s.processes }}
+            </option>
+          </optgroup>
+          <optgroup v-if="snapshots.length" label="지난 판 (보관됨)">
+            <option v-for="p in snapshots" :key="p.snapshotKey" :value="'snap:' + p.snapshotKey">
+              {{ p.name }} — BC {{ p.boundedContexts }} · {{ (p.capturedAt || '').slice(0, 16).replace('T', ' ') }}
+            </option>
+          </optgroup>
         </select>
         <span class="session-picker__meta">{{ selectedSessionId }}</span>
+        <span v-if="String(selectedSessionId || '').startsWith('snap:')" class="session-picker__past">
+          보관된 지난 판입니다 — 지금 설계와 다릅니다
+        </span>
       </div>
       <div v-else-if="!isLoading" class="session-picker session-picker--empty no-print">
         산출물을 만들 수 있는 세션이 없습니다. 문서 업로드 후 이벤트 스토밍 승격을 완료하면 여기에 나타납니다.
@@ -929,6 +964,7 @@ function resolveNodeName(nodeId) {
 @keyframes spin { to { transform:rotate(360deg); } }
 
 .session-picker { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 20px; background:#e7f5ff; border:1px solid #a5d8ff; border-radius:8px; margin-bottom:10px; font-size:13px; color:#1971c2; }
+.session-picker__past { color:#e67700; font-weight:600; }
 .session-picker--empty { background:#fff9db; border-color:#ffe066; color:#e67700; }
 .session-picker__label { font-weight:600; }
 .session-picker__select { flex:1; min-width:260px; padding:6px 10px; border:1px solid #a5d8ff; border-radius:6px; background:#fff; font-size:13px; color:#1a1a2e; }

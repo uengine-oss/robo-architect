@@ -602,6 +602,28 @@ async def list_sessions(request: Request) -> list[dict[str, Any]]:
     ]
 
 
+@router.get("/replacement-preview")
+async def replacement_preview(request: Request) -> dict[str, Any]:
+    """다시 인제스천하면 무엇이 사라지는가.
+
+    인제스천은 **교체**다 — 시작하자마자 이 프로젝트의 생성물을 통째로 지운다.
+    지금까지는 그것을 묻지도 알리지도 않았다. 화면이 시작 전에 이걸 불러 사용자에게
+    보여주고 확인을 받는다.
+
+    `total` 이 0 이면 첫 인제스천이라 확인할 것이 없다.
+    """
+    from api.features.ingestion.replacement import preview
+
+    data = preview()
+    SmartLogger.log(
+        "INFO", "인제스천 교체 미리보기",
+        category="ingestion.replace.preview",
+        params={**http_context(request), "graph": data.get("graph"),
+                "total": data.get("total"), "sessions": data.get("sessions")},
+    )
+    return data
+
+
 @router.delete("/clear-all")
 async def clear_all_data(request: Request) -> dict[str, Any]:
     """
@@ -609,9 +631,13 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
     """
     from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
 
+    from api.features.ingestion.replacement import capture_before_replace
+
     client = get_neo4j_client()
 
     try:
+        # 사용자가 명시로 부른 파괴 동작이지만, 되돌릴 자리는 남겨 둔다.
+        capture_before_replace(reason="clear-all")
         SmartLogger.log(
             "WARNING",
             "Clear-all requested: deleting all nodes/relationships from Neo4j (destructive).",
@@ -676,7 +702,7 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
     Where the two are one database — the packaged compose gives both services the
     same one — this changes nothing.
     """
-    from api.platform.neo4j import analyzer_database, get_session
+    from api.platform.neo4j import analyzer_database, analyzer_session, get_session
 
     try:
         SmartLogger.log(
@@ -685,7 +711,10 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
             category="ingestion.api.stats.request",
             params=http_context(request),
         )
-        with get_session(database=analyzer_database()) as session:
+        sess = analyzer_session()
+        if sess is None:
+            return {"success": True, "counts": {}, "analyzerGraph": None}
+        with sess as session:
             query = """
             MATCH (n)
             WITH labels(n)[0] as label, count(n) as count

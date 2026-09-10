@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from api.features.ingestion.hybrid.contracts import BpmSkeleton, GlossaryTerm
 from api.features.ingestion.ingestion_llm_runtime import get_llm
-from api.platform.neo4j import analyzer_database, get_session
+from api.platform.neo4j import analyzer_database, analyzer_session, get_session
 from api.platform.observability.smart_logger import SmartLogger
 
 _DOC_CHAR_LIMIT = 12000  # keep prompt size bounded
@@ -84,7 +84,10 @@ def _collect_code_tokens() -> list[str]:
     tokens: Counter[str] = Counter()
     ko_domains: Counter[str] = Counter()
     try:
-        with get_session(database=analyzer_database()) as s:
+        sess = analyzer_session()
+        if sess is None:
+            return []
+        with sess as s:
             for rec in s.run(
                 "MATCH (f) WHERE (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER) "
                 "  AND f.name IS NOT NULL AND f.name <> '' "

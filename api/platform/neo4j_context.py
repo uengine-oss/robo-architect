@@ -23,6 +23,10 @@ class Neo4jOverride:
     # 분석 graph. 프로젝트는 설계와 분석이 **한 쌍**이다 — 설계는 분석에서 뽑은
     # 룰을 승격시킨 것이라, 둘을 따로 고르면 추적성이 엉뚱한 곳을 가리킨다.
     analyzer_database: Optional[str] = None
+    # 프로젝트가 분석 짝을 **결정했는가**. 값이 비어 있는 것과 "정하지 않았다"를
+    # 가르는 자리다. 이게 없으면 분석 없는 프로젝트가 `.env` 의 분석 graph 로
+    # 조용히 떨어져 **남의 분석**을 자기 추적성으로 보게 된다.
+    analyzer_pinned: bool = False
 
     @classmethod
     def from_headers(cls, headers: Mapping[str, str]) -> Optional["Neo4jOverride"]:
@@ -36,6 +40,8 @@ class Neo4jOverride:
             password=headers.get("x-neo4j-password", ""),
             database=headers.get("x-neo4j-database") or None,
             analyzer_database=headers.get("x-analyzer-database") or None,
+            # Electron 헤더는 프로젝트의 결정이 아니다 — 없으면 `.env` 가 맞다.
+            analyzer_pinned=False,
         )
 
 

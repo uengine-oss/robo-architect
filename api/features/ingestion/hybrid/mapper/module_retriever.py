@@ -22,7 +22,7 @@ from typing import Optional
 
 from api.features.ingestion.hybrid.contracts import BpmProcess, BpmTaskDTO
 from api.features.ingestion.hybrid.mapper.embeddings import EmbeddingCache, cosine
-from api.platform.neo4j import analyzer_database, get_session
+from api.platform.neo4j import analyzer_database, analyzer_session, get_session
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -54,7 +54,10 @@ def _module_rows() -> list[dict]:
     The id is read as `coalesce(module_id, id)`: the analyzer's key is
     `module_id`, and `id` is kept for graphs written by an older version.
     """
-    with get_session(database=analyzer_database()) as s:
+    sess = analyzer_session()
+    if sess is None:
+        return []
+    with sess as s:
         rows = list(s.run(
             """
             MATCH (m)

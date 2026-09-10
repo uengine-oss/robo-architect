@@ -45,9 +45,40 @@ def analyzer_database() -> Optional[str]:
     바뀐다 — 설계는 다른 프로젝트인데 추적성만 이전 분석을 가리키게 된다.
     """
     override = get_override()
-    if override is not None and override.analyzer_database:
-        return override.analyzer_database
+    if override is not None:
+        if override.analyzer_database:
+            return override.analyzer_database
+        if override.analyzer_pinned:
+            # 프로젝트가 분석 짝을 정하지 않았다. **`.env` 로 떨어뜨리지 않는다** —
+            # 분석 없이 문서만 올린 프로젝트가 정상 상태이고, 거기서 `.env` 를
+            # 보면 남의 프로젝트 분석이 이 프로젝트의 추적성으로 나온다.
+            return None
     return ANALYZER_NEO4J_DATABASE
+
+
+def analyzer_session():
+    """분석 graph 세션. **분석 짝이 없으면 None** 을 돌려준다.
+
+    `get_session(database=None)` 은 설계 graph 로 떨어지므로 그대로 쓸 수 없다.
+    호출부가 "분석 없음"을 명시로 다루게 강제하는 것이 이 함수의 목적이다.
+    """
+    db = analyzer_database()
+    if not db:
+        return None
+    return get_session(database=db)
+
+
+def design_database() -> Optional[str]:
+    """이 요청이 보고 있는 설계 graph — 곧 **프로젝트의 식별자**다.
+
+    `get_session()` 이 안에서 같은 계산을 하지만 그건 세션을 열어야 알 수 있다.
+    스냅샷은 그래프가 아니라 Postgres 에 쌓이므로 이름만 따로 필요하다.
+    """
+    override = get_override()
+    if override is not None and override.database:
+        return override.database
+    return NEO4J_DATABASE
+
 
 _driver: Optional[Driver] = None
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from api.features.ingestion.hybrid.contracts import RuleContext, RuleDTO
-from api.platform.neo4j import analyzer_database, get_session
+from api.platform.neo4j import analyzer_database, analyzer_session, get_session
 
 # source_function = 오퍼레이션 단위(루틴) 이름 (rule_extractor/dbms 선형화가 루틴명으로 세팅).
 # 그래서 오너는 루틴 노드. 테이블 R/W 는 framework=루틴 자신 / dbms=자식 구문에 붙으므로
@@ -61,9 +61,11 @@ def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
     rules = list(rules)
     fn_names = sorted({r.source_function for r in rules if r.source_function})
     lookup: dict[str, dict] = {}
-    if fn_names:
+    # 분석 짝이 없으면 아예 붙지 않는다 — 룰 문맥이 비는 것이 정상이다.
+    sess = analyzer_session() if fn_names else None
+    if sess is not None:
         try:
-            with get_session(database=analyzer_database()) as s:
+            with sess as s:
                 for rec in s.run(_FN_LOOKUP_QUERY, fn_names=fn_names):
                     lookup[rec["fn"]] = {
                         "summary": rec.get("summary"),
