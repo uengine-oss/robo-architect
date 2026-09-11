@@ -16,8 +16,9 @@
  * 새로고침해야만 반영되는데 그걸 알 방법이 없다. 그래서 활성화될 때마다
  * 루트를 다시 읽고, 달라졌을 때만 remote 를 다시 마운트한다.
  */
-import { ref, inject, watch, onMounted, onBeforeUnmount, onActivated } from 'vue'
+import { ref, computed, inject, watch, onMounted, onBeforeUnmount, onActivated } from 'vue'
 import { useProjectsStore } from '@/features/projects/projects.store.js'
+import { useAuthStore } from '@/features/auth/auth.store.js'
 
 const ROOT_KEY = 'claude_code_workspace_root'
 
@@ -32,6 +33,24 @@ let mountedRoot
 let mountedDatabase
 
 const projectsStore = useProjectsStore()
+const auth = useAuthStore()
+
+/**
+ * 프로젝트가 정해지지 않았으면 분석기를 띄우지 않는다.
+ *
+ * **설계와 달리 분석은 우리 백엔드를 지나지 않는다.** 별도 서비스라 403 이
+ * 걸리지 않고, 대상 graph 를 안 넘기면 자기 `.env` 의 공용 graph 로 간다.
+ * 그리고 분석은 시작할 때 **대상 graph 를 통째로 비운다** — 프로젝트 없이 한 번
+ * 돌리면 공용 graph 에 쌓이고, 그 graph 를 짝으로 쓰는 프로젝트가 있으면 그
+ * 결과가 사라진다. 오류는 안 난다.
+ *
+ * 연결 바인딩이 꺼진 구성(Electron 런처)은 프로젝트 개념 자체가 없으므로
+ * 지금까지처럼 그냥 띄운다.
+ */
+const bound = computed(() => !!(auth.provider || {}).bindConnection)
+const blocked = ref(false)
+/** 프로젝트는 골랐는데 분석 짝이 없는 경우. 할 일이 다르므로 갈라서 안내한다. */
+const noPair = computed(() => blocked.value && !!auth.projectGraph)
 
 /** 이 프로젝트의 분석 graph. 목록이 아직 없으면 한 번 읽어 온다. */
 async function loadAnalyzerGraph() {
@@ -62,6 +81,19 @@ async function mountRemote() {
   isLoading.value = true
   loadError.value = ''
   try {
+    // 이 프로젝트의 분석 graph. 분석은 **대상 graph 를 통째로 비우고** 시작하므로,
+    // 이 값이 없으면 분석기가 자기 env 에 고정된 graph 하나를 비운다 — 다른
+    // 프로젝트에서 분석을 한 번 돌리면 여기 결과가 사라진다. 오류는 안 난다.
+    //
+    // **내려받기 전에 막는다.** 받아 놓고 마운트만 안 하면, 다음에 이 코드를
+    // 고치는 사람이 "이미 있으니 띄우자"로 되돌리기 쉽다.
+    const neo4jDatabase = await loadAnalyzerGraph()
+    if (bound.value && !neo4jDatabase) {
+      blocked.value = true
+      return
+    }
+    blocked.value = false
+
     // remote-app 의 공개 API 는 federation 규약상 default 로 노출된다.
     const remote = await import(/* @vite-ignore */ 'robo-analyzer-frontend/remote-app')
 
@@ -82,11 +114,6 @@ async function mountRemote() {
     // onProjectRootChange: analyzer 화면에서 폴더를 바꾸면 host 가 저장한다.
     // 저장하지 않으면 다음 마운트에 예전 값으로 조용히 돌아간다. Code 탭·런처와
     // 같은 키를 쓰므로 화면 간에 어긋나지도 않는다.
-    // 이 프로젝트의 분석 graph. 분석은 **대상 graph 를 통째로 비우고** 시작하므로,
-    // 이 값을 안 넘기면 분석기가 자기 env 에 고정된 graph 하나를 비운다 — 다른
-    // 프로젝트에서 분석을 한 번 돌리면 여기 결과가 사라진다. 오류는 안 난다.
-    const neo4jDatabase = await loadAnalyzerGraph()
-
     unmountRemote = remote.default.mount(hostEl.value, {
       embedded: true,
       projectRoot,
@@ -125,8 +152,10 @@ onMounted(mountRemote)
 
 async function remountIfRootChanged() {
   // 아직 마운트 전이거나 마운트 중이면 할 일이 없다 — mountRemote 가 최신 값을 읽는다.
-  if (!unmountRemote) return
-  if (readRoot() === mountedRoot && readAnalyzerGraph() === mountedDatabase) return
+  // 막혀 있던 경우에도 다시 본다 — 프로젝트를 고르면 그때 띄워야 한다.
+  if (!unmountRemote && !blocked.value) return
+  if (!blocked.value
+      && readRoot() === mountedRoot && readAnalyzerGraph() === mountedDatabase) return
   teardown()
   await mountRemote()
 }
@@ -156,7 +185,19 @@ onBeforeUnmount(teardown)
       </div>
     </div>
 
-    <div v-show="isLoading && !loadError" class="analysis-loading">
+    <div v-if="blocked && !loadError" class="analysis-error">
+      <div class="error-icon">○</div>
+      <div class="error-text">
+        <p v-if="noPair">이 프로젝트에는 분석을 담을 곳이 지정되어 있지 않습니다.</p>
+        <p v-else>먼저 프로젝트를 선택해 주세요.</p>
+        <p class="hint" v-if="noPair">위쪽 프로젝트 메뉴의 <b>분석 결과 바꾸기</b>에서
+          이 프로젝트의 분석을 고르면 시작할 수 있습니다.</p>
+        <p class="hint" v-else>분석 결과는 프로젝트마다 따로 보관됩니다.
+          프로젝트를 정하지 않으면 결과를 어디에 담을지 알 수 없습니다.</p>
+      </div>
+    </div>
+
+    <div v-show="isLoading && !loadError && !blocked" class="analysis-loading">
       <div class="spinner"></div>
       <span>Analyzer 로드 중…</span>
     </div>

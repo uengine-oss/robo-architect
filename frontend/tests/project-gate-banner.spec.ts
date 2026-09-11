@@ -46,9 +46,12 @@ test('프로젝트를 안 골랐으면 그렇게 말한다', async ({ page }) =>
 
   const banner = page.locator('.pgate')
   await expect(banner).toBeVisible()
-  await expect(banner).toContainText('프로젝트를 먼저 고르세요')
-  // **서버가 죽지 않았다는 말이 같이 있어야 한다.** 그게 이 배너의 존재 이유다.
-  await expect(banner).toContainText('서버는 정상')
+  await expect(banner).toContainText('프로젝트를 선택해 주세요')
+  // 할 일이 같이 있어야 한다 — "안 된다"만 말하는 안내는 사람을 세워 둔다.
+  await expect(banner).toContainText('새로 만들 수 있습니다')
+  // 개발자 말(상태 코드·서버 사정)은 화면에 나오지 않는다.
+  await expect(banner).not.toContainText('403')
+  await expect(banner).not.toContainText('권한 응답')
 })
 
 test('403 을 서버 장애로 옮기지 않는다', async ({ page }) => {
@@ -117,8 +120,10 @@ test('권한이 없는 것과 안 고른 것을 구별한다', async ({ page }) 
 
   const banner = page.locator('.pgate')
   await expect(banner).toBeVisible()
-  await expect(banner).toContainText('권한이 없습니다')
+  await expect(banner).toContainText('볼 수 없습니다')
   // 둘을 같은 문구로 내보내면 사용자가 할 일을 알 수 없다 —
   // 하나는 "만들어라", 하나는 "요청해라"다.
-  await expect(banner).not.toContainText('프로젝트를 먼저 고르세요')
+  await expect(banner).toContainText('공유를 요청')
+  // 머리글로 가른다 — 안내문에는 "프로젝트를 선택" 이 양쪽에 다 나온다.
+  await expect(page.locator('.pgate__text')).toHaveText('이 프로젝트를 볼 수 없습니다.')
 })

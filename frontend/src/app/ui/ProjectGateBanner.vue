@@ -18,18 +18,24 @@ const auth = useAuthStore()
 const notSelected = computed(() => auth.projectError === 'PROJECT_NOT_SELECTED')
 const show = computed(() => !!auth.projectError)
 
+// 사람에게는 **지금 할 일**만 말한다. 상태 코드도, 서버 사정도 화면의 몫이 아니다.
 const text = computed(() =>
   notSelected.value
-    ? '프로젝트를 먼저 고르세요. 아직 하나도 없으면 상단 선택기에서 새로 만들면 됩니다.'
-    : '이 프로젝트를 볼 권한이 없습니다. 소유자에게 공유를 요청하거나 다른 프로젝트를 고르세요.',
+    ? '프로젝트를 선택해 주세요.'
+    : '이 프로젝트를 볼 수 없습니다.',
 )
+const how = computed(() =>
+  notSelected.value
+    ? '위쪽 프로젝트 메뉴에서 고르거나 새로 만들 수 있습니다.'
+    : '담당자에게 공유를 요청하거나 다른 프로젝트를 선택해 주세요.',
+)
+
 </script>
 
 <template>
   <div v-if="show" class="pgate">
-    <span class="pgate__mark">{{ notSelected ? '○' : '✕' }}</span>
     <span class="pgate__text">{{ text }}</span>
-    <span class="pgate__hint">서버는 정상입니다 — 권한 응답입니다.</span>
+    <span class="pgate__how">{{ how }}</span>
   </div>
 </template>
 
@@ -44,7 +50,6 @@ const text = computed(() =>
   color: #6d4c00;
   font-size: 12px;
 }
-.pgate__mark { font-weight: 700; }
-.pgate__text { flex: 1; }
-.pgate__hint { opacity: 0.65; }
+.pgate__text { font-weight: 600; }
+.pgate__how { opacity: 0.8; }
 </style>
