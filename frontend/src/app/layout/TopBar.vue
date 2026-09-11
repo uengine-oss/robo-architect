@@ -1,5 +1,6 @@
 <script setup>
 import ProjectPicker from '@/features/projects/ui/ProjectPicker.vue'
+import ViewerChips from '@/features/collab/ui/ViewerChips.vue'
 import UserMenu from '@/features/auth/ui/UserMenu.vue'
 import { ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
@@ -74,6 +75,9 @@ function selectTab(tab) {
       <!-- 어느 프로젝트를 보고 있는지가 늘 보여야 한다. 모르고 남의 프로젝트를
            고친 것을 나중에 알면 되돌릴 방법이 없다. -->
       <ProjectPicker />
+
+      <!-- 누가 같이 보고 있는지. 나 혼자면 아무것도 안 그린다. -->
+      <ViewerChips />
       
       <!-- Tab Menu -->
       <div class="top-bar__view-mode">

@@ -292,6 +292,7 @@ from api.platform.neo4j_context import Neo4jOverride, set_override  # noqa: E402
 from api.platform.identity.connection_binding import (  # noqa: E402
     BindingDenied, binding_enabled, needs_graph, resolve_for_request,
 )
+from api.features.collab import notify as collab_notify  # noqa: E402
 
 
 @app.middleware("http")
@@ -308,9 +309,23 @@ async def neo4j_override_middleware(request: Request, call_next):
                 {"detail": str(exc), "code": exc.code}, status_code=403,
             )
     # 세션으로 자격이 정해졌으면 클라이언트가 보낸 헤더는 쓰지 않는다.
-    set_override(bound or Neo4jOverride.from_headers(request.headers))
+    effective = bound or Neo4jOverride.from_headers(request.headers)
+    set_override(effective)
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        # 같은 프로젝트를 보는 다른 창이 **새로고침 없이** 알아챌 수 있게 판을
+        # 올린다. 쓰기 코드마다 호출을 심으면 반드시 하나를 빠뜨리고, 빠뜨린
+        # 것은 조용하다 — 그래서 목은 여기 하나다.
+        try:
+            collab_notify.after_request(
+                request.headers, effective, request.method,
+                request.url.path, response.status_code,
+                # 누가 바꿨는지. 받는 쪽이 자기 변경은 건너뛴다.
+                actor_uid=(getattr(request.state, "auth_claims", None) or {}).get("sub"),
+            )
+        except Exception:
+            pass
+        return response
     finally:
         set_override(None)
 
@@ -383,6 +398,10 @@ app.include_router(auth_router)
 # 프로젝트 = graph. 만들기·목록·공유는 전부 신원을 요구한다.
 from api.features.projects.router import router as projects_router  # noqa: E402
 app.include_router(projects_router)
+
+# 같은 프로젝트를 여럿이 볼 때 — 변경 알림·접속자.
+from api.features.collab.router import router as collab_router  # noqa: E402
+app.include_router(collab_router)
 
 # 사용자 관리 — 관리자만. 승인 대기 목록이 여기서 나온다.
 from api.features.accounts.router import router as accounts_router  # noqa: E402

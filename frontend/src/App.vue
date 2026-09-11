@@ -37,6 +37,7 @@ import { createLogger, newOpId } from '@/app/logging/logger'
 import LauncherView from '@/features/desktop-launcher/LauncherView.vue'
 import LoginView from '@/features/auth/ui/LoginView.vue'
 import { useAuthStore } from '@/features/auth/auth.store.js'
+import { useCollabStore } from '@/features/collab/collab.store.js'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 // 034 US7 — 설계 미반영 User Story 식별 + 반영 프롬프트.
 import DesignReflectPrompt from '@/features/requirements/ui/DesignReflectPrompt.vue'
@@ -386,6 +387,23 @@ function getNavigatorSnapshot() {
   }
 }
 
+
+// 같은 프로젝트를 보는 다른 창의 변경을 받아 `robo:data-changed` 에 얹는다.
+// 프로젝트를 바꾸면 보는 대상도 바뀐다 — 안 바꾸면 남의 프로젝트 알림에
+// 내 화면이 반응한다.
+const collab = useCollabStore()
+// **신원을 알기 전에는 열지 않는다.** 스트림이 먼저 열리면, 내가 쓴 변경이
+// 돌아왔을 때 그게 내 것인지 몰라서 내 화면을 스스로 다시 그린다 — 편집
+// 중이던 선택과 펼침이 접힌다.
+//
+// 기다리는 값이 `checking` 이 아니라 `status` 인 이유: `checking` 은 확인이
+// **시작되기 전에도** false 다. 그걸로 막으면 아무것도 안 막힌다.
+watch(
+  () => (auth.status !== 'unknown' && (auth.authenticated || !auth.enforced)) && auth.projectGraph,
+  (graph) => { if (graph) collab.watch(graph); else collab.close() },
+  { immediate: true },
+)
+onUnmounted(() => collab.close())
 
 onMounted(async () => {
   // 인증 설정을 먼저 읽고, 저장된 토큰이 아직 쓸 만한지 확인한다.
