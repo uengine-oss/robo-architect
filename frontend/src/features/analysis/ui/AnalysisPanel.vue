@@ -19,6 +19,7 @@
 import { ref, computed, inject, watch, onMounted, onBeforeUnmount, onActivated } from 'vue'
 import { useProjectsStore } from '@/features/projects/projects.store.js'
 import { useAuthStore } from '@/features/auth/auth.store.js'
+import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 
 const ROOT_KEY = 'claude_code_workspace_root'
 
@@ -34,6 +35,7 @@ let mountedDatabase
 
 const projectsStore = useProjectsStore()
 const auth = useAuthStore()
+const session = useSessionStore()
 
 /**
  * 프로젝트가 정해지지 않았으면 분석기를 띄우지 않는다.
@@ -72,6 +74,17 @@ const appWorkdir = inject('claudeCodeWorkdir', null)
 // localStorage 는 폴백이자 두 번째 출처다. 런처(Electron)와 PRD 생성 모달은
 // 이 키만 쓰고 ref 는 건드리지 않는다.
 function readRoot() {
+  // **브라우저에서는 경로 모드를 쓰지 않는다.**
+  //
+  // `projectRoot` 를 넘기면 분석기가 "로컬 폴더 분석"으로 열리고, 없으면
+  // "파일을 올려 분석"으로 열린다. 그런데 그 값의 출처가 이 브라우저의
+  // localStorage 라, 같은 서버에 붙어도 **창마다 화면이 다르다** — 한쪽은
+  // 폴더를 고르라 하고 다른 쪽은 드래그하라 한다. 실제로 그렇게 갈렸다.
+  //
+  // 게다가 사내망 서버에 올린 Architect 에서 "로컬 폴더"는 사용자 PC 가
+  // 아니라 **서버의 폴더**다. 경로 모드가 말이 되는 것은 런처(Electron)가
+  // 그 PC 에서 직접 고른 경우뿐이다.
+  if (!session.isDesktop) return undefined
   const fromRef = appWorkdir?.value
   if (fromRef) return fromRef
   try { return localStorage.getItem(ROOT_KEY) || undefined } catch { return undefined }
