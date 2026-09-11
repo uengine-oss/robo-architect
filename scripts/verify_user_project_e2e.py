@@ -285,6 +285,19 @@ def main() -> int:  # noqa: C901 — 전 구간을 한 흐름으로 읽히게 �
     check("거부했으면 권한도 안 남는다",
           not pg.query("SELECT 1 FROM og_catalog.grantee WHERE role = %s", (ghost_role,)))
 
+    # **자기 자신을 초대하면 자기 등급이 내려간다.** 소유자는 admin 인데 read 를
+    # 주면 덮어써지고, 그러면 `공유 관리` 버튼이 사라져(관리 등급 전용) 스스로
+    # 되돌릴 수 없다. 회수 쪽은 소유자를 지키는데 초대 쪽에 같은 문이 없었다.
+    self_rejected = False
+    try:
+        projects.share(p["graph"], owner, "read")
+    except ValueError:
+        self_rejected = True
+    check("소유자 자신은 초대할 수 없다", self_rejected)
+    # 예외만 보면 "막았다고 말하고 실제로는 낮췄다"를 못 잡는다.
+    check("막았으면 등급도 그대로다", projects.level_of(owner, p["graph"]) == "admin",
+          str(projects.level_of(owner, p["graph"])))
+
     projects.share(p["graph"], guest, "read")
     check("초대하면 목록에 뜬다",
           p["graph"] in [x["graph"] for x in projects.list_projects(guest)])

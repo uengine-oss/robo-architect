@@ -395,6 +395,12 @@ def share(graph: str, uid: str, level: str) -> dict[str, Any]:
             f"그런 사번의 사용자가 없습니다: {uid}. "
             "한 번이라도 로그인한 사람만 초대할 수 있습니다."
         )
+    # **소유자를 초대하면 자기 등급을 낮추게 된다.** 소유자는 만들 때부터 admin
+    # 이고, 여기서 read 를 주면 그 값이 덮어써진다. 그러면 화면의 `공유 관리`
+    # 버튼이 사라지고(관리 등급에서만 보인다) **스스로 되돌릴 길이 없다.**
+    # 회수 쪽은 이미 소유자를 지키고 있었는데 초대 쪽에 같은 문이 없었다.
+    if project.get("ownerUid") == uid:
+        raise ValueError("소유자는 이미 관리 권한을 갖고 있습니다. 초대할 수 없습니다.")
     role = roles.ensure_role(uid)
     for g in _paired_graphs(project):
         pg.query("SELECT og_grant(%s, %s, %s)", (role, level, g))
