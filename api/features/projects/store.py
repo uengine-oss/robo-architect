@@ -371,12 +371,30 @@ def _paired_graphs(project: dict[str, Any]) -> list[str]:
 
 
 def share(graph: str, uid: str, level: str) -> dict[str, Any]:
-    """초대 — 호출 한 줄이다. 별도 멤버십 표가 필요 없는 것이 이 구조의 이점이다."""
+    """초대 — 호출 한 줄이다. 별도 멤버십 표가 필요 없는 것이 이 구조의 이점이다.
+
+    **없는 사번은 거부한다.** `ensure_role` 은 이름만 있으면 role 을 만들어 주므로,
+    오타 하나로 아무도 쓰지 않는 role 에 권한이 붙는다. 화면은 성공이라 말하고,
+    초대받았어야 할 사람 목록에는 그 프로젝트가 끝내 안 뜬다 — 오류가 없어서
+    어디가 틀렸는지 알 길이 없다.
+
+    실제로 그렇게 나왔다. 사번 자리에 개발용 **로그인 아이디**(`alice`)를 넣어
+    `p_alice` 가 생겼고, 앨리스의 진짜 role 은 `p_dev_alice` 라 목록이 그대로였다.
+    """
     if level not in LEVELS:
         raise ValueError(f"알 수 없는 등급: {level}")
     project = get_project(graph)
     if not project:
         raise ValueError(f"그런 프로젝트가 없다: {graph}")
+    uid = (uid or "").strip()
+    if not uid:
+        raise ValueError("사번을 입력하세요.")
+    known = pg.query("SELECT 1 FROM public.app_users WHERE uid = %s", (uid,))
+    if not known:
+        raise ValueError(
+            f"그런 사번의 사용자가 없습니다: {uid}. "
+            "한 번이라도 로그인한 사람만 초대할 수 있습니다."
+        )
     role = roles.ensure_role(uid)
     for g in _paired_graphs(project):
         pg.query("SELECT og_grant(%s, %s, %s)", (role, level, g))

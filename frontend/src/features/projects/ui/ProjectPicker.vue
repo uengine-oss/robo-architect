@@ -268,7 +268,10 @@ watch(() => auth.token, (t) => { if (t) refresh() })
           </li>
         </ul>
         <form class="pp__invite" @submit.prevent="submitInvite">
-          <input v-model="inviteUid" class="pp__input" placeholder="사번" />
+          <!-- 사번이지 로그인 아이디가 아니다. `alice` 를 넣어 아무도 안 쓰는
+               role 에 권한이 붙은 적이 있다 — 위 목록의 표기와 같은 형식이다. -->
+          <input v-model="inviteUid" class="pp__input"
+                 placeholder="사번 (예: DEV-ALICE)" />
           <select v-model="inviteLevel" class="pp__select">
             <option value="read">읽기</option>
             <option value="write">편집</option>

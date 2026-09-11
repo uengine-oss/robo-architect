@@ -265,6 +265,26 @@ def main() -> int:  # noqa: C901 — 전 구간을 한 흐름으로 읽히게 �
     check("저장소도 남을 막는다 — 앱을 우회해도", bolt_probe(guest, p["graph"]).startswith("거부"),
           bolt_probe(guest, p["graph"]))
 
+    # **없는 사번은 거부해야 한다.** `ensure_role` 은 이름만 있으면 role 을 만드니,
+    # 오타 하나로 아무도 안 쓰는 role 에 권한이 붙고 화면은 성공이라 말한다.
+    # 실제로 사번 자리에 로그인 아이디(`alice`)를 넣어 `p_alice` 가 생겼고,
+    # 초대받았어야 할 사람의 목록은 그대로였다 — 오류가 없어 원인을 못 찾는다.
+    ghost = PREFIX + "-없는사번"
+    ghost_role = roles.role_name(ghost)
+    rejected = False
+    try:
+        projects.share(p["graph"], ghost, "read")
+    except ValueError:
+        rejected = True
+    check("없는 사번으로는 초대할 수 없다", rejected)
+    # 판정은 예외가 아니라 **흔적**으로도 한다 — 거부한 뒤 role 이나 권한이
+    # 남으면 거부한 것이 아니다.
+    check("거부했으면 role 도 안 만든다",
+          not pg.query("SELECT 1 FROM pg_roles WHERE rolname = %s", (ghost_role,)),
+          ghost_role)
+    check("거부했으면 권한도 안 남는다",
+          not pg.query("SELECT 1 FROM og_catalog.grantee WHERE role = %s", (ghost_role,)))
+
     projects.share(p["graph"], guest, "read")
     check("초대하면 목록에 뜬다",
           p["graph"] in [x["graph"] for x in projects.list_projects(guest)])
