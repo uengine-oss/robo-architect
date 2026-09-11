@@ -8,6 +8,7 @@ import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
 import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
+import { openSse } from '@/app/sse'
 
 const props = defineProps({
   modelValue: {
@@ -711,7 +712,8 @@ async function startHybridIngestion() {
 }
 
 function connectToHybridStream(sid) {
-  eventSource.value = new EventSource(`/api/ingest/hybrid/stream/${sid}`)
+  // EventSource 는 헤더를 못 실어 인증·프로젝트가 안 붙는다 (app/sse.js).
+  eventSource.value = openSse(`/api/ingest/hybrid/stream/${sid}`)
   eventSource.value.addEventListener('progress', (e) => {
     const data = JSON.parse(e.data)
     currentPhase.value = data.phase
@@ -919,7 +921,7 @@ function connectToStream(sid, isReconnect = false) {
   }
 
   const url = isReconnect ? `/api/ingest/stream/${sid}?reconnect=true` : `/api/ingest/stream/${sid}`
-  eventSource.value = new EventSource(url)
+  eventSource.value = openSse(url)
   
   eventSource.value.addEventListener('progress', (e) => {
     const data = JSON.parse(e.data)

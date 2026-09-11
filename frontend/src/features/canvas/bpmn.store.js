@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { openSse } from '@/app/sse'
 
 export const useBpmnStore = defineStore('bpmn', () => {
   const loading = ref(false)
@@ -594,7 +595,8 @@ export const useBpmnStore = defineStore('bpmn', () => {
     agentTaskId.value = taskId
     setActiveExploringTaskId(taskId)
     const url = `/api/ingest/hybrid/task/${sessionId}/${taskId}/retrieve?force=${force ? 'true' : 'false'}`
-    _agentSource = new EventSource(url)
+    // EventSource 는 헤더를 못 실어 인증·프로젝트가 안 붙는다 (app/sse.js).
+    _agentSource = openSse(url)
     _wireAgentSseEvents(_agentSource)
   }
 
@@ -610,7 +612,7 @@ export const useBpmnStore = defineStore('bpmn', () => {
     agentState.value = 'running'
     agentTaskId.value = null
     const url = `/api/ingest/hybrid/process/${sessionId}/${processId}/explore?force=${force ? 'true' : 'false'}`
-    _agentSource = new EventSource(url)
+    _agentSource = openSse(url)
     _wireAgentSseEvents(_agentSource)
   }
 
