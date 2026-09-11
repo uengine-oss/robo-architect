@@ -10,6 +10,8 @@ import VoFieldsTable from './inspectors/VoFieldsTable.vue'
 import ReadModelCQRSConfigModal from './ReadModelCQRSConfigModal.vue'
 import GwtFieldInput from './GwtFieldInput.vue'
 import InvariantEditor from '@/features/invariants/ui/InvariantEditor.vue'
+import LockBanner from '@/features/collab/ui/LockBanner.vue'
+import { useElementLock } from '@/features/collab/useElementLock'
 import { createLogger, newOpId } from '@/app/logging/logger'
 // 043-fix — Design 캔버스 미리보기 중 저장은 라이브(/api/chat/confirm)가 아니라 제안 diff 로.
 import { isPreviewFor, usePreviewSession } from '@/app/previewSession'
@@ -66,6 +68,13 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'updated', 'request-chat'])
+
+// 열려 있는 동안 이 요소를 잡는다. 저장할 때 잠그면 이미 늦다 — 그때는 둘이
+// 각자 고친 뒤라서 한쪽 작업이 사라진다. 못 잡으면 **읽기로 연다**(아예 못
+// 열게 하면 옆 사람이 창을 켜 둔 채 자리를 비웠을 때 아무도 아무것도 못 한다).
+const lockedElementId = computed(() => props.nodeId || props.nodeData?.id || null)
+const { blockedBy: lockedByOther, editable: lockEditable } =
+  useElementLock(lockedElementId)
 
 const canvasStore = useCanvasStore()
 const aggregateViewerStore = useAggregateViewerStore()
@@ -3563,7 +3572,7 @@ function updateVoFieldValue(fieldName, value) {
           class="inspector-panel__btn primary"
           @click="save"
           title="Save"
-          :disabled="saving || !node || (!isDirty && !propIsDirty) || propHasBlockingErrors"
+          :disabled="saving || !node || (!isDirty && !propIsDirty) || propHasBlockingErrors || !lockEditable"
         >
           <span v-if="saving">저장 중...</span>
           <span v-else>저장</span>
@@ -3585,6 +3594,10 @@ function updateVoFieldValue(fieldName, value) {
     </div>
 
     <div class="inspector-panel__body">
+      <!-- 막기 전에 먼저 알린다. 아무 말 없이 저장만 실패하면 그 사이에 친
+           글자가 사라진다. -->
+      <LockBanner :holder="lockedByOther" />
+
       <div v-if="!node" class="inspector-panel__empty">
         <div class="inspector-panel__empty-icon">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">

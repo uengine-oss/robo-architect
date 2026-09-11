@@ -23,7 +23,7 @@
  * 옛 화면을 보게 된다. 그래서 여기서만 되잇는다.
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { openSse } from '@/app/sse'
 import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
 import { useAuthStore } from '@/features/auth/auth.store.js'
@@ -35,6 +35,8 @@ export const useCollabStore = defineStore('collab', () => {
   const viewers = ref([])
   const rev = ref(0)
   const connected = ref(false)
+  /** 지금 잡혀 있는 요소들. 서버가 밀어 준다 — 여기서 지어내지 않는다. */
+  const locks = ref([])
 
   let source = null
   let graph = null
@@ -57,6 +59,7 @@ export const useCollabStore = defineStore('collab', () => {
     if (!mine(payload)) return
     if (typeof payload.rev === 'number') rev.value = payload.rev
     if (Array.isArray(payload.viewers)) viewers.value = payload.viewers
+    if (Array.isArray(payload.locks)) locks.value = payload.locks
   }
 
   function onChanged(payload) {
@@ -88,6 +91,7 @@ export const useCollabStore = defineStore('collab', () => {
     })
     es.addEventListener('changed', (e) => onChanged(JSON.parse(e.data)))
     es.addEventListener('viewers', (e) => apply(JSON.parse(e.data)))
+    es.addEventListener('locks', (e) => apply(JSON.parse(e.data)))
     es.addEventListener('ping', () => { connected.value = true })
     es.onerror = () => {
       connected.value = false
@@ -101,6 +105,7 @@ export const useCollabStore = defineStore('collab', () => {
     stopped = false
     graph = nextGraph || null
     viewers.value = []
+    locks.value = []
     rev.value = 0
     retry = 0
     if (graph) open()
@@ -115,8 +120,55 @@ export const useCollabStore = defineStore('collab', () => {
     if (hard) {
       stopped = true
       viewers.value = []
+      locks.value = []
     }
   }
 
-  return { viewers, rev, connected, watch, close }
+  // ── 선점 잠금 ──────────────────────────────────────────────────────────
+  //
+  // **낙관적으로 그리지 않는다.** 눌렀을 때 먼저 잠긴 것처럼 보여 놓고 서버가
+  // 거절하면, 그 짧은 사이에 사람이 글자를 친다. 서버 답을 받고 나서 그린다.
+
+  const byId = computed(() => {
+    const m = new Map()
+    for (const l of locks.value) m.set(l.elementId, l)
+    return m
+  })
+
+  /** 이 요소를 남이 잡고 있나. 내 잠금은 '잠김'이 아니다. */
+  function heldByOther(elementId) {
+    const l = byId.value.get(elementId)
+    if (!l) return null
+    return l.uid === myUid() ? null : l
+  }
+
+  async function lock(elementId, label) {
+    if (!graph || !elementId) return { ok: false }
+    const r = await fetch('/api/collab/lock', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ elementId, label }),
+    })
+    const body = await r.json().catch(() => ({ ok: false }))
+    if (body.ok) {
+      // 다음 스트림 바퀴(최대 2초)를 기다리지 않고 내 화면에 먼저 반영한다.
+      // 서버가 이미 승인한 사실이라 지어내는 것이 아니다.
+      if (!byId.value.has(elementId)) {
+        locks.value = [...locks.value, { elementId, uid: myUid(), label }]
+      }
+    }
+    return body
+  }
+
+  async function unlock(elementId) {
+    if (!graph || !elementId) return
+    locks.value = locks.value.filter((l) => l.elementId !== elementId)
+    await fetch('/api/collab/unlock', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ elementId }),
+    }).catch(() => {})
+  }
+
+  return { viewers, rev, connected, locks, heldByOther, lock, unlock, watch, close }
 })

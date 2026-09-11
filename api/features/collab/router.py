@@ -1,8 +1,10 @@
 """같은 프로젝트를 여럿이 볼 때 — 알림 스트림과 접속자.
 
 ```
-GET  /api/collab/stream     이 프로젝트의 변경·접속자 (SSE)
+GET  /api/collab/stream     이 프로젝트의 변경·접속자·잠금 (SSE)
 GET  /api/collab/state      같은 내용 1회 (진단·검사용)
+POST /api/collab/lock       이 요소를 내가 잡는다
+POST /api/collab/unlock     내 잠금을 푼다
 POST /api/collab/leave      창을 닫았다
 ```
 
@@ -92,7 +94,18 @@ def _graph(request: Request, uid: str) -> str:
 
 def _snapshot(graph: str) -> dict:
     rev = store.revision(graph)
-    return {"graph": graph, **rev, "viewers": store.viewers(graph)}
+    return {
+        "graph": graph, **rev,
+        "viewers": store.viewers(graph),
+        "locks": store.locks(graph),
+    }
+
+
+def _writable(uid: str, graph: str) -> None:
+    """잠글 수 있는 사람인가. **읽기 등급은 못 잠근다** — 못 고칠 것을 잡아
+    두면 그건 잠금이 아니라 방해다."""
+    if projects.level_of(uid, graph) == "read":
+        raise HTTPException(status_code=403, detail="읽기 권한으로는 편집할 수 없습니다.")
 
 
 @router.get("/state")
@@ -105,6 +118,40 @@ async def get_state(request: Request) -> dict:
     return _snapshot(graph)
 
 
+@router.post("/lock")
+async def post_lock(request: Request, body: dict = Body(default={})) -> dict:
+    """이 요소를 내가 잡는다.
+
+    못 잡았을 때 **누가 갖고 있는지 함께 돌려준다.** "실패"만 말하면 화면이
+    아무것도 설명하지 못하고, 사람은 같은 버튼을 계속 누른다.
+    """
+    uid = _uid(request)
+    graph = _graph(request, uid)
+    _writable(uid, graph)
+    element_id = str((body or {}).get("elementId") or "").strip()
+    if not element_id:
+        raise HTTPException(status_code=400, detail="어느 요소인지 없습니다.")
+    store.ensure_schema()
+    result = store.acquire_lock(
+        graph, element_id, uid,
+        display_name=_claims(request).get("name"),
+        label=str((body or {}).get("label") or "")[:120] or None,
+    )
+    # **판 번호는 올리지 않는다.** 올리면 누가 노드를 고르기만 해도 남의 창이
+    # 그래프를 통째로 다시 읽는다. 자물쇠는 자기 이벤트(`locks`)로 간다.
+    return result
+
+
+@router.post("/unlock")
+async def post_unlock(request: Request, body: dict = Body(default={})) -> dict:
+    """내 잠금을 푼다. **남의 것은 못 푼다** — 풀 수 있으면 잠금이 아니다."""
+    uid = _uid(request)
+    graph = _graph(request, uid)
+    element_id = str((body or {}).get("elementId") or "").strip()
+    released = store.release_lock(graph, element_id, uid) if element_id else False
+    return {"ok": released}
+
+
 @router.post("/leave")
 async def post_leave(request: Request, body: dict = Body(default={})) -> dict:
     """창을 닫았다. 안 불려도 TTL 이 걷어가지만, 불리면 즉시 사라진다."""
@@ -112,6 +159,8 @@ async def post_leave(request: Request, body: dict = Body(default={})) -> dict:
     graph = (body or {}).get("graph") or request.headers.get("x-project-graph") or ""
     if store.valid_graph(graph):
         store.leave(graph, uid)
+        # 잠금도 같이 푼다. 안 그러면 TTL 이 걷어갈 때까지 남이 못 고친다.
+        store.release_all(graph, uid)
     return {"ok": True}
 
 
@@ -127,6 +176,7 @@ async def stream(request: Request) -> StreamingResponse:
         # 변경이 있을 때까지 자기가 몇 판을 보고 있는지 모른다.
         last = store.revision(graph)["rev"]
         last_viewers: list[str] = []
+        last_locks: list[tuple] = []
         yield _sse("hello", _snapshot(graph))
         ticks = 0
         try:
@@ -138,6 +188,9 @@ async def stream(request: Request) -> StreamingResponse:
                 # 폴링 한 바퀴가 곧 심장박동이다. 별도 타이머를 두면 둘이
                 # 어긋나 유령 접속자가 남는다.
                 store.heartbeat(graph, uid, display)
+                # 내 잠금도 같은 바퀴에 갱신한다. 따로 타이머를 두면 둘이
+                # 어긋나 **내가 보고 있는데 내 잠금이 만료된다.**
+                store.refresh_locks(graph, uid)
 
                 current = store.revision(graph)
                 if current["rev"] != last:
@@ -151,11 +204,18 @@ async def stream(request: Request) -> StreamingResponse:
                     last_viewers = ids
                     yield _sse("viewers", {"graph": graph, "viewers": people})
 
+                held = store.locks(graph)
+                shape = [(l["elementId"], l["uid"]) for l in held]
+                if shape != last_locks:
+                    last_locks = shape
+                    yield _sse("locks", {"graph": graph, "locks": held})
+
                 if ticks % PING_EVERY == 0:
                     yield _sse("ping", {"rev": last})
         finally:
             # 브라우저가 창을 닫으면 여기로 온다. TTL 을 기다리지 않는다.
             store.leave(graph, uid)
+            store.release_all(graph, uid)
 
     return StreamingResponse(
         gen(),
