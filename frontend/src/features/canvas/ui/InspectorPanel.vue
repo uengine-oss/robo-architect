@@ -3593,11 +3593,16 @@ function updateVoFieldValue(fieldName, value) {
       </select>
     </div>
 
-    <div class="inspector-panel__body">
-      <!-- 막기 전에 먼저 알린다. 아무 말 없이 저장만 실패하면 그 사이에 친
-           글자가 사라진다. -->
-      <LockBanner :holder="lockedByOther" />
+    <!-- 막기 전에 먼저 알린다. 아무 말 없이 저장만 실패하면 그 사이에 친
+         글자가 사라진다.
 
+         **`__body` 바깥에 둔다.** 그 안에는 open-pencil federated 편집기가
+         들어 있어서, 형제 목록이 한 칸만 밀려도 Vue 의 패치가 죽은 서브트리로
+         들어간다("Cannot set properties of null (setting '__vnode')"). 배너
+         자신도 뿌리를 항상 그려서 노드 수를 고정한다. -->
+    <LockBanner :holder="lockedByOther" />
+
+    <div class="inspector-panel__body">
       <div v-if="!node" class="inspector-panel__empty">
         <div class="inspector-panel__empty-icon">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">

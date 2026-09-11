@@ -21,6 +21,7 @@
  */
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useCollabStore } from '@/features/collab/collab.store.js'
+import { holdDataRefresh } from '@/app/lifecycle/dataLifecycle'
 
 /**
  * @param {import('vue').Ref<string|null>} elementId 지금 열려 있는 요소
@@ -31,6 +32,12 @@ export function useElementLock(elementId, labelOf) {
   /** 내가 잡았나. 못 잡았으면 읽기로 연다. */
   const held = ref(false)
   let current = null
+
+  // **열어 둔 동안에는 남의 변경으로 다시 그리지 않는다.** 이 자리(Inspector)는
+  // open-pencil federated 편집기를 품고 있어서, 남이 쓸 때마다 트리를 다시
+  // 그리면 죽은 서브트리로 패치가 들어간다 — 실제로 그 오류가 났다. 고치던
+  // 값이 초기화되는 문제도 같이 없어진다.
+  const releaseRefreshHold = holdDataRefresh()
 
   /** 남이 잡고 있으면 그 사람. 아니면 null. */
   const blockedBy = computed(() =>
@@ -63,7 +70,11 @@ export function useElementLock(elementId, labelOf) {
     { immediate: true },
   )
 
-  onUnmounted(drop)
+  onUnmounted(() => {
+    drop()
+    // 안 풀면 이 창은 영영 남의 변경을 안 받는다.
+    releaseRefreshHold()
+  })
 
   return { held, blockedBy, editable, release: drop }
 }
