@@ -320,8 +320,16 @@ def main() -> int:
     other = bolt_read(role_a, pw_a, pb["graph"])
     check("남의 graph 는 Postgres 가 거부한다 — 앱을 우회해도 막힌다",
           other.startswith("거부"), other)
-    real = bolt_read(role_a, pw_a, "robo")
-    check("설계 graph 도 안 보인다", real.startswith("거부"), real)
+    # `.env` 의 설계 graph 는 프로젝트가 아니다 — 아무에게도 권한이 없어야 한다.
+    # **다만 비어 있으면 이 검사는 아무 말도 못 한다.** 라벨이 하나도 없으면
+    # `MATCH (n)` 은 볼 것이 없어 권한을 묻지도 않고 0 을 돌려준다. 초기화한
+    # 직후에 이 줄이 FAIL 로 뜨는 것이 그 경우였고, 격리는 멀쩡했다.
+    if graph_node_counts().get("robo"):
+        real = bolt_read(role_a, pw_a, "robo")
+        check("설계 graph 도 안 보인다", real.startswith("거부"), real)
+    else:
+        print("  --   설계 graph(robo) 가 비어 있어 격리를 잴 수 없다 — "
+              "빈 graph 는 권한 없이도 0 건을 돌려준다")
 
     print("\n설계와 분석은 한 세트다")
     # 설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘을 따로 고르면 추적성이 다른

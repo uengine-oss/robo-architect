@@ -41,6 +41,15 @@ export const useAuthStore = defineStore('auth', () => {
   const status = ref('unknown')
   const provider = ref(null)
   const checking = ref(false)
+  /**
+   * 프로젝트 때문에 막힌 상태. `PROJECT_NOT_SELECTED` 또는 `PROJECT_FORBIDDEN`.
+   *
+   * **호출부가 정하지 않는다.** 인터셉터가 응답을 보고 여기에 적는다 — 스토어마다
+   * 403 을 따로 해석하게 두면 한 곳만 빠져도 그 화면은 "서버 연결 실패"라고
+   * 말한다. 실제로 그렇게 나왔다: 프로젝트가 0개인 사용자에게 백엔드가
+   * 멀쩡한데 죽었다고 알렸다.
+   */
+  const projectError = ref(null)
 
   const authenticated = computed(() => status.value === 'approved' && !!user.value)
   const pending = computed(() => status.value === 'pending')
@@ -57,6 +66,14 @@ export const useAuthStore = defineStore('auth', () => {
   function setProject(graph) {
     projectGraph.value = graph || null
     writeStored(PROJECT_KEY, projectGraph.value)
+    // 고쳤으니 막힘도 푼다. 남겨 두면 프로젝트를 만든 뒤에도 안내가 붙어 있다.
+    projectError.value = null
+  }
+
+  /** 인터셉터 전용. 같은 코드를 다시 적어 화면이 깜빡이지 않게 한다. */
+  function setProjectError(code) {
+    const next = code || null
+    if (projectError.value !== next) projectError.value = next
   }
 
   async function loadProvider() {
@@ -128,8 +145,9 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   return {
-    token, projectGraph, user, status, provider, checking,
+    token, projectGraph, user, status, provider, checking, projectError,
     authenticated, pending, rejected, isAdmin, enforced,
-    setToken, setProject, loadProvider, refresh, devLogin, ssoLogin, logout,
+    setToken, setProject, setProjectError,
+    loadProvider, refresh, devLogin, ssoLogin, logout,
   }
 })

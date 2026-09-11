@@ -28,6 +28,7 @@ import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useCanvasPreviewRequestStore } from '@/features/canvas/canvasPreviewRequest.store'
 import { enterPreview, exitPreview, usePreviewSession } from '@/app/previewSession'
 import PreviewBanner from '@/app/ui/PreviewBanner.vue'
+import ProjectGateBanner from '@/app/ui/ProjectGateBanner.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 // 032: desktop launcher gate — when running inside Electron the launcher
 // view is shown until the user picks (Neo4j connection, project root) and
@@ -462,6 +463,8 @@ onUnmounted(() => {
       :active-tab="activeTab"
       @update:active-tab="activeTab = $event"
     />
+    <!-- 프로젝트를 안 골랐거나 권한이 없을 때. 화면마다 403 을 해석하지 않는다. -->
+    <ProjectGateBanner />
     <!-- 040 — Proposal 임팩트 미리보기 식별 배너(활성 시에만 표시, FR-007) -->
     <PreviewBanner />
     <div class="main-content">

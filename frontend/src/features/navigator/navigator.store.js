@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
+import { apiFailure, isNetworkError as networkFailure } from '@/app/apiError'
 
 export const useNavigatorStore = defineStore('navigator', () => {
   const log = createLogger({ scope: 'NavigatorStore' })
@@ -24,23 +25,20 @@ export const useNavigatorStore = defineStore('navigator', () => {
     try {
       const response = await fetch('/api/user-stories/unassigned')
       if (!response.ok) {
-        const errorMsg = `Failed to fetch user stories (HTTP ${response.status})`
+        const err = await apiFailure(response, 'user stories')
         log.error(
           'navigator_fetch_user_stories_failed',
-          errorMsg,
+          err.message,
           { httpStatus: response.status, statusText: response.statusText }
         )
-        throw new Error(errorMsg)
+        throw err
       }
       userStories.value = await response.json()
     } catch (e) {
       // 403 은 서버가 살아 있다는 증거다 — "백엔드가 안 떴다"로 옮기면 사람이
       // 엉뚱한 데를 본다. 프로젝트를 안 골랐을 때 실제로 그렇게 나왔다.
       if (e?.projectError) { error.value = e.message; return }
-      const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
-                             e?.message?.includes('ECONNRESET') ||
-                             e?.message?.includes('Failed to fetch') ||
-                             e?.name === 'TypeError'
+      const isNetworkError = networkFailure(e)
       const errorDetails = {
         errorMessage: e?.message || String(e),
         errorName: e?.name,
@@ -67,29 +65,22 @@ export const useNavigatorStore = defineStore('navigator', () => {
       const response = await fetch('/api/contexts')
       if (!response.ok) {
         // 프로젝트를 안 골랐거나 권한이 없는 것은 **서버 장애가 아니다.**
-        if (response.status === 403) {
-          const body = await response.json().catch(() => ({}))
-          const err = new Error(body.detail || '이 프로젝트를 볼 수 없습니다.')
-          err.projectError = body.code || 'PROJECT_FORBIDDEN'
-          throw err
+        const err = await apiFailure(response, 'contexts')
+        if (!err.projectError) {
+          log.error(
+            'navigator_fetch_contexts_failed',
+            err.message,
+            { httpStatus: response.status, statusText: response.statusText }
+          )
         }
-        const errorMsg = `Failed to fetch contexts (HTTP ${response.status})`
-        log.error(
-          'navigator_fetch_contexts_failed',
-          errorMsg,
-          { httpStatus: response.status, statusText: response.statusText }
-        )
-        throw new Error(errorMsg)
+        throw err
       }
       contexts.value = await response.json()
     } catch (e) {
       // 403 은 서버가 살아 있다는 증거다 — "백엔드가 안 떴다"로 옮기면 사람이
       // 엉뚱한 데를 본다. 프로젝트를 안 골랐을 때 실제로 그렇게 나왔다.
       if (e?.projectError) { error.value = e.message; return }
-      const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
-                             e?.message?.includes('ECONNRESET') ||
-                             e?.message?.includes('Failed to fetch') ||
-                             e?.name === 'TypeError'
+      const isNetworkError = networkFailure(e)
       const errorMsg = isNetworkError 
         ? '서버 연결 실패: 백엔드 서버가 실행 중인지 확인해주세요.'
         : (e?.message || 'Failed to fetch contexts')
@@ -122,13 +113,15 @@ export const useNavigatorStore = defineStore('navigator', () => {
     try {
       const response = await fetch(`/api/contexts/${contextId}/full-tree`)
       if (!response.ok) {
-        const errorMsg = `Failed to fetch context tree (HTTP ${response.status})`
-        log.error(
-          'navigator_fetch_context_tree_failed',
-          errorMsg,
-          { contextId, forceRefresh, httpStatus: response.status, statusText: response.statusText }
-        )
-        throw new Error(errorMsg)
+        const err = await apiFailure(response, 'context tree')
+        if (!err.projectError) {
+          log.error(
+            'navigator_fetch_context_tree_failed',
+            err.message,
+            { contextId, forceRefresh, httpStatus: response.status, statusText: response.statusText }
+          )
+        }
+        throw err
       }
       const tree = await response.json()
       contextTrees.value[contextId] = tree
@@ -137,10 +130,7 @@ export const useNavigatorStore = defineStore('navigator', () => {
       // 403 은 서버가 살아 있다는 증거다 — "백엔드가 안 떴다"로 옮기면 사람이
       // 엉뚱한 데를 본다. 프로젝트를 안 골랐을 때 실제로 그렇게 나왔다.
       if (e?.projectError) { error.value = e.message; return }
-      const isNetworkError = e?.message?.includes('ECONNREFUSED') || 
-                             e?.message?.includes('ECONNRESET') ||
-                             e?.message?.includes('Failed to fetch') ||
-                             e?.name === 'TypeError'
+      const isNetworkError = networkFailure(e)
       const errorDetails = {
         contextId,
         forceRefresh,
@@ -664,7 +654,7 @@ export const useNavigatorStore = defineStore('navigator', () => {
 
       const response = await fetch('/api/contexts')
       if (!response.ok) {
-        throw new Error(`Failed to fetch contexts (HTTP ${response.status})`)
+        throw await apiFailure(response, 'contexts')
       }
       contexts.value = await response.json()
 
@@ -681,10 +671,7 @@ export const useNavigatorStore = defineStore('navigator', () => {
       // 403 은 서버가 살아 있다는 증거다 — "백엔드가 안 떴다"로 옮기면 사람이
       // 엉뚱한 데를 본다. 프로젝트를 안 골랐을 때 실제로 그렇게 나왔다.
       if (e?.projectError) { error.value = e.message; return }
-      const isNetworkError = e?.message?.includes('ECONNREFUSED') ||
-                             e?.message?.includes('ECONNRESET') ||
-                             e?.message?.includes('Failed to fetch') ||
-                             e?.name === 'TypeError'
+      const isNetworkError = networkFailure(e)
       error.value = isNetworkError
         ? '서버 연결 실패: 백엔드 서버가 실행 중인지 확인해주세요.'
         : (e?.message || 'Navigator refresh failed')

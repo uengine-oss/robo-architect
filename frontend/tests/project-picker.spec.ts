@@ -71,9 +71,23 @@ test.describe('프로젝트 선택기', () => {
     await expect(btn).toContainText('인사관리 설계')
   })
 
-  test('고르지 않았으면 선택 안 됨으로 보인다', async ({ page }) => {
+  test('고르지 않았으면 첫 번째를 골라 준다', async ({ page }) => {
+    // 옛 계약은 "선택 안 됨"이었다. 그대로 두면 **아무것도 시작할 수 없다** —
+    // 고르지 않은 요청은 서버에서 `.env` 의 graph 로 떨어지고, 거기 권한이 없는
+    // 사람에게는 모든 화면이 403 이 된다. 두 번째 계정이 이 자리에 걸렸다.
     await open(page)
+    await expect(page.locator('.pp__btn')).toContainText('인사관리 설계', { timeout: 30_000 })
+    const saved = await page.evaluate(() => window.localStorage.getItem('robo.auth.project'))
+    expect(saved, '골라 준 것이 이후 요청에도 실려야 한다').toBe('prj_aaa')
+  })
+
+  test('고를 것이 없으면 아무것도 고르지 않는다', async ({ page }) => {
+    // 프로젝트가 0개인 첫 사용자다. 없는 것을 지어내면 안 된다 —
+    // 이 상태의 안내는 배너가 맡는다(`project-gate-banner.spec.ts`).
+    await open(page, { projects: { projects: [] } })
     await expect(page.locator('.pp__btn')).toContainText('선택 안 됨', { timeout: 30_000 })
+    const saved = await page.evaluate(() => window.localStorage.getItem('robo.auth.project'))
+    expect(saved).toBeNull()
   })
 
   test('목록에 등급이 함께 보인다', async ({ page }) => {
@@ -109,12 +123,14 @@ test.describe('프로젝트 선택기', () => {
     expect(seen[seen.length - 1], '고른 프로젝트가 요청에 실려야 한다').toBe('prj_bbb')
   })
 
-  test('권한이 사라진 프로젝트는 선택이 풀린다', async ({ page }) => {
+  test('권한이 사라진 프로젝트는 붙잡고 있지 않는다', async ({ page }) => {
     // 목록에 없는 graph 를 고른 상태로 들어온다 — 회수됐거나 지워진 경우다.
+    // **그 값을 남겨 두면 계속 403 을 받는다.** 풀고 나면 볼 수 있는 것으로
+    // 옮겨 간다.
     await open(page, { project: 'prj_gone' })
-    await expect(page.locator('.pp__btn')).toContainText('선택 안 됨', { timeout: 30_000 })
+    await expect(page.locator('.pp__btn')).toContainText('인사관리 설계', { timeout: 30_000 })
     const saved = await page.evaluate(() => window.localStorage.getItem('robo.auth.project'))
-    expect(saved, '남겨 두면 계속 403 을 받는다').toBeNull()
+    expect(saved, '없는 graph 가 남아 있으면 안 된다').toBe('prj_aaa')
   })
 
   test('만들 때는 이름만 보낸다', async ({ page }) => {

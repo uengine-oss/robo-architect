@@ -124,6 +124,35 @@ export function installBackendHeaderInterceptor() {
       console.warn('[http] backend header interceptor skipped:', err && err.message)
     }
 
-    return original(input, nextInit)
+    const response = await original(input, nextInit)
+    noteProjectError(response)
+    return response
   }
+}
+
+// 프로젝트 때문에 막힌 응답의 코드. 백엔드 `BindingDenied.code` 와 같은 값이다.
+const PROJECT_CODES = new Set(['PROJECT_NOT_SELECTED', 'PROJECT_FORBIDDEN'])
+
+/**
+ * 403 을 **한 곳에서** 해석한다.
+ *
+ * 스토어마다 따로 해석하게 두면 빠뜨린 곳이 생기고, 그 화면은 403 을 "서버 연결
+ * 실패"로 옮긴다 — 백엔드가 멀쩡한데 죽었다고 말하는 것이라 사람이 엉뚱한 데를
+ * 본다. 프로젝트가 하나도 없는 사용자에게 실제로 그렇게 나왔다.
+ *
+ * 본문은 복제해서 읽는다. 원본을 읽으면 호출부가 같은 응답을 다시 못 읽는다.
+ */
+function noteProjectError(response) {
+  if (!response || response.status !== 403) return
+  try {
+    if (!isSameOrigin(response.url || '')) return
+  } catch {
+    return
+  }
+  response.clone().json().then((body) => {
+    const code = body && body.code
+    if (PROJECT_CODES.has(code)) useAuthStore().setProjectError(code)
+  }).catch(() => {
+    /* 본문이 JSON 이 아니면 우리 것이 아니다 — 아무 말도 하지 않는다 */
+  })
 }
