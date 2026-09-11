@@ -143,6 +143,18 @@ def get_llm(
         if base_url and "base_url" not in effective_kwargs:
             effective_kwargs["base_url"] = base_url
 
+        # 사내 게이트웨이(P-GPT)는 위 설정을 **덮는다**. 반대로 두면, 이미
+        # OPENAI_BASE_URL 이 있는 배포에서 P-GPT 를 켜도 아무 일이 안 일어나면서
+        # 켜진 것처럼 보인다. 덮었다는 사실은 ai_gateway.describe() 에 남는다.
+        # 호출 시점에 명시한 인자는 여전히 설정보다 세다.
+        from api.platform import ai_gateway
+
+        for key, value in ai_gateway.chat_overrides().items():
+            if key not in kwargs:
+                effective_kwargs[key] = value
+        if model is None and ai_gateway.chat_model():
+            resolved_model = ai_gateway.chat_model()
+
         return ChatOpenAI(model=resolved_model, **effective_kwargs)
 
     if resolved_provider == "anthropic":

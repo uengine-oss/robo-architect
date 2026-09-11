@@ -7,6 +7,7 @@ import { useRequirementsStore } from '@/features/requirements/requirements.store
 import { useLanguageStore } from '@/app/language.store'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import UserAdminSection from '@/features/auth/ui/UserAdminSection.vue'
+import AiRoutingSection from '@/features/auth/ui/AiRoutingSection.vue'
 
 const auth = useAuthStore()
 
@@ -145,6 +146,10 @@ function reloadAfterClear() {
           <!-- 사용자 관리 — 관리자에게만. 서버도 403 으로 막으므로 여기는 자리를
                감추는 것뿐이다. -->
           <UserAdminSection v-if="auth.isAdmin" />
+
+          <!-- AI 호출 경로 — 어느 갈래가 사내 게이트웨이로 갔고 어느 갈래가
+               못 갔는지. 관리자에게만 보인다(운영 설정이다). -->
+          <AiRoutingSection v-if="auth.isAdmin" />
 
           <!-- Domain Terminology (Ubiquitous Language) Setting -->
           <div class="settings-section">

@@ -33,6 +33,7 @@ from api.features.auth.tokens import (
 from api.features.accounts import store as accounts
 from api.platform.identity.auth_guard import auth_enforced
 from api.platform.identity.connection_binding import binding_enabled
+from api.platform.ai_gateway import describe as describe_ai_gateway
 from api.platform.embeddings import describe as describe_embeddings
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
@@ -62,6 +63,9 @@ async def get_provider() -> dict:
         "enterprise": provider is not AuthProvider.NONE,
         "callbackAllowlist": callback_allowlist(),
         "embeddings": describe_embeddings(),
+        # AI 호출 여섯 갈래가 지금 어디를 보는가. 옮겨지지 않는 갈래를
+        # 이름으로 부르는 것이 이 값의 목적이다 — 조용히 초록이면 안 된다.
+        "aiGateway": describe_ai_gateway(),
         # 우회로가 열려 있으면 진단에서 바로 보여야 한다. 조용히 열린 채로 두는
         # 것이 이 기능의 유일한 실패 방식이다.
         "devLogin": describe_dev_login(),

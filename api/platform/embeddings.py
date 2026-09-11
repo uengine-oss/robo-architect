@@ -31,20 +31,48 @@ OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 def embedding_model(default: str = DEFAULT_EMBEDDING_MODEL) -> str:
     # `HYBRID_EMBEDDING_MODEL` 은 기존 키 — 하위 호환으로 계속 인정한다.
-    return env_first(["EMBEDDING_MODEL", "HYBRID_EMBEDDING_MODEL"], default=default) or default
+    return (
+        env_first(
+            ["PGPT_EMBEDDING_MODEL", "EMBEDDING_MODEL", "HYBRID_EMBEDDING_MODEL"],
+            default=default,
+        )
+        or default
+    )
+
+
+def _pgpt_embedding() -> dict[str, str]:
+    """P-GPT 임베딩 설정. **채팅용 `PGPT_BASE_URL` 만으로는 안 움직인다** —
+    게이트웨이가 임베딩을 제공하지 않는 경우가 있어, 임베딩은 명시해야 따라온다.
+    순환 import 를 피하려고 함수 안에서 부른다."""
+    from api.platform import ai_gateway
+
+    return ai_gateway.embedding_overrides()
 
 
 def describe() -> dict[str, Any]:
     """진단용 현재 임베딩 라우팅 상태. 키 값은 담지 않는다."""
-    dedicated_key = env_first(["EMBEDDING_API_KEY", "OPENAI_EMBEDDING_API_KEY"], default=None)
-    chat_base_url = env_first(["OPENAI_BASE_URL", "OPENAI_API_BASE"], default=None)
-    embed_base_url = env_str("EMBEDDING_BASE_URL", default=None)
+    pgpt = _pgpt_embedding()
+    dedicated_key = pgpt.get("api_key") or env_first(
+        ["EMBEDDING_API_KEY", "OPENAI_EMBEDDING_API_KEY"], default=None
+    )
+    # 채팅이 어디를 보는가 — P-GPT 가 켜졌으면 그쪽이다. 여기를 안 갱신하면
+    # 게이트웨이로 옮겨 놓고도 "위험 없음"이라고 답한다.
+    chat_base_url = env_str("PGPT_BASE_URL", default=None) or env_first(
+        ["OPENAI_BASE_URL", "OPENAI_API_BASE"], default=None
+    )
+    embed_base_url = pgpt.get("base_url") or env_str("EMBEDDING_BASE_URL", default=None)
+
+    # **물려받는 주소와 위험을 재는 주소는 다르다.** 전용 설정이 없을 때 임베딩이
+    # 실제로 가는 곳은 langchain 이 스스로 읽는 `OPENAI_BASE_URL` 이다 —
+    # `PGPT_BASE_URL` 은 우리가 `ChatOpenAI` 에만 넘기는 값이라 임베딩에 안 닿는다.
+    # 둘을 한 변수로 묶으면 진단이 가지도 않는 주소를 가리킨다.
+    inherited_base_url = env_first(["OPENAI_BASE_URL", "OPENAI_API_BASE"], default=None)
 
     if dedicated_key:
         effective = embed_base_url or OPENAI_DEFAULT_BASE_URL
         source = "dedicated"
     else:
-        effective = embed_base_url or chat_base_url or OPENAI_DEFAULT_BASE_URL
+        effective = embed_base_url or inherited_base_url or OPENAI_DEFAULT_BASE_URL
         source = "inherited"
 
     # Chat 이 게이트웨이로 가는데 임베딩 전용 설정이 없으면, 임베딩도 게이트웨이로
@@ -75,8 +103,11 @@ def get_embeddings(model: str | None = None, **kwargs: Any):
     from langchain_openai import OpenAIEmbeddings
 
     resolved_model = model or embedding_model()
-    dedicated_key = env_first(["EMBEDDING_API_KEY", "OPENAI_EMBEDDING_API_KEY"], default=None)
-    embed_base_url = env_str("EMBEDDING_BASE_URL", default=None)
+    pgpt = _pgpt_embedding()
+    dedicated_key = pgpt.get("api_key") or env_first(
+        ["EMBEDDING_API_KEY", "OPENAI_EMBEDDING_API_KEY"], default=None
+    )
+    embed_base_url = pgpt.get("base_url") or env_str("EMBEDDING_BASE_URL", default=None)
 
     if dedicated_key:
         kwargs.setdefault("api_key", dedicated_key)
