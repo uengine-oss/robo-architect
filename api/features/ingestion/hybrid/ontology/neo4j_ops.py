@@ -1200,6 +1200,36 @@ def debug_session_snapshot(session_id: str) -> dict:
     return snapshot
 
 
+def list_session_ids() -> list[dict]:
+    """이 프로젝트 graph 에 남아 있는 BPM 세션 목록.
+
+    **화면이 세션 아이디를 브라우저에만 들고 있었다.** `localStorage` 키 하나라
+    프로젝트를 바꿔도 그대로 남고, 다른 기기·다른 창에서는 아예 없다. 그러면
+    graph 에 BPM 이 멀쩡히 있는데 Process 탭이 빈 화면이 된다 — 오류도 안 난다.
+
+    세션 아이디는 이미 graph 안에 있다(`BpmSession`). 여기서 돌려주면 화면이
+    프로젝트를 고르는 순간 그 프로젝트의 BPM 을 찾을 수 있다.
+    """
+    rows: list[dict] = []
+    with get_session() as s:
+        for rec in s.run(
+            "MATCH (b:BpmSession) "
+            "OPTIONAL MATCH (p:BpmProcess {session_id: b.session_id}) "
+            "WITH b, count(p) AS processes "
+            "RETURN b.session_id AS session_id, b.updated_at AS updated_at, "
+            "       processes ORDER BY updated_at DESC"
+        ):
+            sid = rec.get("session_id")
+            if not sid:
+                continue
+            rows.append({
+                "session_id": sid,
+                "updatedAt": rec.get("updated_at"),
+                "processes": int(rec.get("processes") or 0),
+            })
+    return rows
+
+
 def fetch_bpm_skeleton_cytoscape(session_id: str) -> dict:
     """Read BpmTask graph for rendering (cytoscape-compatible element list)."""
     nodes: list[dict] = []

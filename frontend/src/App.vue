@@ -408,9 +408,11 @@ onMounted(async () => {
 
   // Rehydrate hybrid session at the app level so BPMN canvas is ready the
   // moment the BPMN tab mounts (regardless of which tab the user refreshes on).
-  if (bpmnStore.hybridSessionId) {
-    bpmnStore.rehydrateHybrid().catch(() => { /* best-effort */ })
-  }
+  // **캐시가 있을 때만 부르면 안 된다.** 세션 아이디는 브라우저에만 있던
+  // 값이라, 다른 기기·새 창·다른 프로젝트에서는 비어 있다. 그때 건너뛰면
+  // graph 에 BPM 이 있는데도 Process 탭이 빈 화면이 된다. 스토어가 graph 에
+  // 물어보므로 조건 없이 부른다 — 없으면 조용히 no-session 으로 끝난다.
+  bpmnStore.rehydrateHybrid().catch(() => { /* best-effort */ })
 
   // Listen for cross-component tab switch requests
   window.addEventListener('robo:switch-tab', _onSwitchTab)

@@ -41,6 +41,7 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     fetch_processes_for_session,
     fetch_rules,
     fetch_session_snapshot,
+    list_session_ids,
     move_rule_between_tasks,
     reject_review_mapping,
     unassign_rule_from_task,
@@ -261,6 +262,20 @@ async def serve_hybrid_pdf(filename: str):
     if not full.is_file():
         raise HTTPException(status_code=404, detail="PDF not found")
     return FileResponse(str(full), media_type="application/pdf", filename=safe)
+
+
+@router.get("/sessions")
+async def list_hybrid_sessions() -> dict[str, Any]:
+    """이 프로젝트 graph 가 들고 있는 BPM 세션.
+
+    **화면이 프로젝트를 바꿔도 세션을 못 따라온다.** 세션 아이디가 브라우저
+    `localStorage` 에 키 하나로만 있어서, 다른 프로젝트를 고르면 이전 세션이
+    그대로 남고 새 기기·새 창에서는 아예 없다. 그러면 BPM 이 graph 에 멀쩡히
+    있는데 Process 탭이 비어 보인다.
+
+    진실은 graph 에 있다 — `BpmSession` 노드가 프로젝트마다 남는다.
+    """
+    return {"sessions": list_session_ids()}
 
 
 @router.get("/bpm/{session_id}")

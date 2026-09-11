@@ -82,7 +82,28 @@ class Neo4jClient(
 
     @contextmanager
     def session(self):
-        """Context manager for Neo4j sessions."""
+        """Context manager for Neo4j sessions.
+
+        **요청이 고른 프로젝트를 따라간다.** 이 클라이언트는 프로세스 하나에
+        싱글턴(`get_neo4j_client`)이고 `config.database` 는 프로세스가 뜰 때
+        `.env` 로 정해진다. 그대로 두면 표준 인제스천(= `ES 승격`)이 어느
+        프로젝트에서 시작하든 **`.env` 의 graph 한 곳**에 쓴다.
+
+        실측으로 그랬다 — B 프로젝트에서 승격했더니 UserStory 12·Command 11 이
+        전부 `robo` 로 갔고, 정작 그 프로젝트의 graph 에는 한 건도 안 생겼다.
+        문서 업로드 1단계는 다른 코드라 제대로 갈렸기 때문에, 화면에서는
+        "프로세스는 있는데 승격 결과만 안 보인다"로 나타난다.
+
+        기본 설정 그대로일 때만 공용 진입점에 맡긴다 — 호출부가 연결을 명시해
+        만든 클라이언트는 그 뜻을 그대로 지킨다.
+        """
+        if self.config == Neo4jConfig():
+            from api.platform.neo4j import get_session as platform_session
+
+            with platform_session() as session:
+                yield session
+            return
+
         if self.config.database:
             session = self.driver.session(database=self.config.database)
         else:

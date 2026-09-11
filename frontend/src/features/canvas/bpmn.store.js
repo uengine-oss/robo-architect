@@ -165,18 +165,49 @@ export const useBpmnStore = defineStore('bpmn', () => {
   // DB is the source of truth. localStorage only tracks the active session id
   // so a page refresh can re-fetch everything from /session/{sid}/snapshot.
   // ---------------------------------------------------------------------------
-  const HYBRID_SID_KEY = 'hybrid.session_id'
-  const LEGACY_LS_KEYS = ['hybrid.bpmn.v1']  // cleaned up on first load
+  // **프로젝트마다 다른 세션이다.** 키 하나로 두면 프로젝트를 바꿔도 이전 세션이
+  // 그대로 남아, 다른 프로젝트의 BPM 을 보여 주거나 빈 화면이 된다. 그리고 다른
+  // 기기·새 창에는 아예 값이 없다 — graph 에 BPM 이 멀쩡히 있는데도.
+  // 진실은 graph 의 `BpmSession` 이고, 이 저장은 빠른 재방문용 캐시일 뿐이다.
+  const HYBRID_SID_KEY_BASE = 'hybrid.session_id'
+  const LEGACY_LS_KEYS = ['hybrid.bpmn.v1', HYBRID_SID_KEY_BASE]  // cleaned up on first load
+
+  function _sidKey() {
+    try {
+      const graph = localStorage.getItem('robo.auth.project') || ''
+      return graph ? `${HYBRID_SID_KEY_BASE}.${graph}` : HYBRID_SID_KEY_BASE
+    } catch { return HYBRID_SID_KEY_BASE }
+  }
 
   function _loadSessionId() {
-    try { return localStorage.getItem(HYBRID_SID_KEY) || null } catch { return null }
+    try { return localStorage.getItem(_sidKey()) || null } catch { return null }
   }
   function _saveSessionId(sid) {
     try {
-      if (sid) localStorage.setItem(HYBRID_SID_KEY, sid)
-      else localStorage.removeItem(HYBRID_SID_KEY)
+      if (sid) localStorage.setItem(_sidKey(), sid)
+      else localStorage.removeItem(_sidKey())
       for (const k of LEGACY_LS_KEYS) localStorage.removeItem(k)
     } catch { /* quota or disabled — fine */ }
+  }
+
+  /**
+   * 이 프로젝트의 BPM 세션을 **서버에서** 찾는다.
+   *
+   * 캐시가 없거나 이 프로젝트 것이 아니면 화면이 빈 채로 남는다. 그래서 진실인
+   * graph 를 묻고, 캐시는 그 목록에 있을 때만 쓴다.
+   */
+  async function resolveSessionFromGraph() {
+    try {
+      const res = await fetch('/api/ingest/hybrid/sessions')
+      if (!res.ok) return null
+      const rows = (await res.json()).sessions || []
+      if (!rows.length) return null
+      const cached = _loadSessionId()
+      const hit = cached && rows.find(r => r.session_id === cached)
+      return (hit || rows[0]).session_id
+    } catch {
+      return null
+    }
   }
 
   // B3 — review candidates (rejectedRulesByTask) are derived only from explore
@@ -654,6 +685,9 @@ export const useBpmnStore = defineStore('bpmn', () => {
 
   /** Fetch the full hybrid snapshot from Neo4j and populate the store. */
   async function rehydrateHybrid(sid = hybridSessionId.value) {
+    // 캐시가 비었으면 graph 에 묻는다. 여기서 포기하면 "문서 업로드는 했는데
+    // 프로세스가 없다"가 된다 — 실제로 그렇게 보였다.
+    if (!sid) sid = await resolveSessionFromGraph()
     if (!sid) return { ok: false, reason: 'no-session' }
     isHybridRehydrating.value = true
     try {

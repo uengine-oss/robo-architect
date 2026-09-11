@@ -94,7 +94,8 @@ onMounted(async () => {
   // non-BPMN tab and then switched here, activeBpmnXml may already be set. The
   // watch below picks it up via `immediate: true`. If rehydrate hasn't run yet
   // (edge case — store was cleared by another tab), fire it now.
-  if (store.hybridSessionId && !store.activeBpmnXml && !store.isHybridRehydrating) {
+  // 세션 아이디가 아직 없을 수도 있다 — 스토어가 graph 에서 찾는다.
+  if (!store.activeBpmnXml && !store.isHybridRehydrating) {
     try { await store.rehydrateHybrid() } catch { /* best-effort */ }
   }
   // If activeBpmnXml was already set before mount, the immediate watch ran at
