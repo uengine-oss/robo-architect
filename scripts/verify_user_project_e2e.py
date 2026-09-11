@@ -297,6 +297,51 @@ def main() -> int:  # noqa: C901 — 전 구간을 한 흐름으로 읽히게 �
           projects.level_of(owner, p["analyzerGraph"]), "admin")
     note("짝이 있어야 분석 wipe 가 이 프로젝트 안에서만 일어난다.")
 
+    # ── 6. 분석 없이 설계만 하는 길 ─────────────────────────────────
+    head("6. 분석 없이도 설계는 진행되는가")
+
+    # **분석이 선행되지 않는 프로젝트가 정상이다.** 문서만 올려 설계를 시작하는
+    # 길이 있고, 그 길이 막히면 제품의 절반이 막힌다.
+    #
+    # 조용히 깨지는 쪽이라 실제로 불러서 잰다 — 분석 짝이 없으면 조회가 `None`
+    # 세션을 받는데, 한 곳이라도 그걸 안 다루면 500 이 난다. 함수 반환값만 보면
+    # 그 자리는 드러나지 않는다.
+    solo = client.post("/api/projects", json={"name": "E2E 설계 전용"}, headers=ah)
+    check("설계 전용 프로젝트를 만든다", solo.status_code == 200, str(solo.status_code))
+    sg = solo.json().get("graph", "") if solo.status_code == 200 else ""
+    if sg:
+        created_graphs.append(sg)
+        off = client.post(f"/api/projects/{sg}/analyzer", json={"analyzerGraph": None},
+                          headers=ah)
+        check("분석을 '쓰지 않음'으로 둘 수 있다", off.status_code == 200, str(off.status_code))
+        check("정말 비었다", not (projects.get_project(sg) or {}).get("analyzerGraph"))
+
+        sh = {**ah, "X-Project-Graph": sg}
+        for path in ("/api/contexts",
+                     "/api/user-stories/unassigned",
+                     "/api/ingest/replacement-preview",
+                     "/api/deliverables/snapshots"):
+            r = client.get(path, headers=sh)
+            check(f"분석 없이도 열린다 — {path}", r.status_code == 200,
+                  f"{r.status_code} {r.text[:80]}")
+
+        # **위의 넷은 분석을 안 읽는다.** 그것만 재면 분석 쪽이 통째로 깨져도
+        # 초록이 된다 — 결함을 심어 보니 정확히 그랬다. 분석을 **실제로 읽는**
+        # 자리를 함께 불러야 "없어도 된다"가 확인된다.
+        stats = client.get("/api/ingest/stats", headers=sh)
+        check("분석을 읽는 자리도 열린다 — /api/ingest/stats",
+              stats.status_code == 200, f"{stats.status_code} {stats.text[:80]}")
+        # **200 만으로는 부족하다.** 이 자리는 어떤 예외든 삼키고
+        # `{"counts": {}, "error": ...}` 로 200 을 돌려준다 — 터진 것과 "분석이
+        # 없다"가 같은 모양이 된다. 결함을 심어 보니 그대로 초록이었다.
+        # 그래서 **`error` 가 없다**는 것까지 잰다.
+        sj = stats.json() if stats.status_code == 200 else {}
+        check("그리고 조용히 '분석 없음'이라고 답한다 — 터진 것이 아니라",
+              stats.status_code == 200 and "error" not in sj
+              and sj.get("analyzerGraph") is None and sj.get("counts") == {},
+              stats.text[:160])
+        note("분석은 선행 조건이 아니다 — 문서만 올려도 설계가 시작된다.")
+
     # ── 정리 ─────────────────────────────────────────────────────────
     head("정리")
     client.close()
