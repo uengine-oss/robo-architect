@@ -90,16 +90,33 @@ test.describe('프로젝트 선택기', () => {
     expect(saved).toBeNull()
   })
 
-  test('목록에 등급이 함께 보인다', async ({ page }) => {
+  test('목록에 내 것과 받은 것이 구별돼 보인다', async ({ page }) => {
+    // 처음에는 등급(관리·읽기)을 띄웠는데, 목록에 남의 프로젝트가 섞이면
+    // **먼저 알고 싶은 것은 "누구 것인가"** 다. 등급은 그걸 대신 못 한다 —
+    // 남이 관리 등급으로 공유해 준 것도 `관리` 라 내 것과 구별되지 않는다.
     await open(page, { project: 'prj_aaa' })
     await page.locator('.pp__btn').click()
     const items = page.locator('.pp__item')
     await expect(items).toHaveCount(2)
     await expect(items.nth(0)).toContainText('인사관리 설계')
-    await expect(items.nth(0)).toContainText('관리')
-    await expect(items.nth(1)).toContainText('읽기')
+    await expect(items.nth(0).locator('.pp__scope')).toHaveText('mine')
+    await expect(items.nth(1).locator('.pp__scope')).toHaveText('shared')
+    // 받은 것만 색이 다르다 — 둘 다 같으면 칩이 있으나 마나다.
+    await expect(items.nth(0).locator('.pp__scope')).not.toHaveClass(/pp__scope--shared/)
+    await expect(items.nth(1).locator('.pp__scope')).toHaveClass(/pp__scope--shared/)
+    // 등급은 사라진 게 아니라 도움말로 옮겼다.
+    await expect(items.nth(1).locator('.pp__scope')).toHaveAttribute('title', /읽기/)
     await expect(items.nth(0), '지금 보고 있는 것이 표시돼야 한다')
       .toHaveClass(/pp__item--on/)
+  })
+
+  test('공유 화면의 참여자 목록에는 등급이 그대로다', async ({ page }) => {
+    // 거기서는 "사람마다 무엇을 할 수 있나"가 주제라 등급이 맞는 정보다.
+    await open(page, { project: 'prj_aaa' })
+    await page.route('**/api/projects/prj_aaa/members', (r: any) => r.fulfill({ json: MEMBERS }))
+    await page.locator('.pp__btn').click()
+    await page.getByRole('button', { name: '공유 관리' }).click()
+    await expect(page.locator('.pp__members .pp__level').first()).toHaveText('관리')
   })
 
   test('바꾸면 저장되고 이후 요청에 실린다', async ({ page }) => {

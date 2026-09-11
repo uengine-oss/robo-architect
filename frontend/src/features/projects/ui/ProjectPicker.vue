@@ -26,6 +26,21 @@ const message = ref('')
 
 const LEVEL_LABEL = { read: '읽기', write: '편집', admin: '관리' }
 
+/**
+ * 목록의 칩은 **출처**를 말한다 — 내 것인가, 받은 것인가.
+ *
+ * 등급(관리·읽기)을 띄웠더니 정작 알고 싶은 것이 안 보였다. 목록에 남의
+ * 프로젝트가 섞이기 시작하면 "이건 누구 것인가"가 먼저다. 등급은 그것을
+ * 대신해 주지 못한다 — 남이 관리 등급으로 공유해 준 프로젝트도 `관리` 로
+ * 보여서 내 것과 구별되지 않는다.
+ *
+ * 등급은 공유 화면(참여자 목록)에 그대로 남는다. 거기서는 사람마다 무엇을
+ * 할 수 있는지가 주제라 등급이 맞는 정보다.
+ */
+function isMine(p) {
+  return !!p && p.ownerUid === (auth.user || {}).uid
+}
+
 /** 로그인하지 않았으면 고를 것이 없다. 목록이 비었다고 안내하면 오해를 준다. */
 const signedIn = computed(() => !!auth.token)
 
@@ -197,7 +212,12 @@ watch(() => auth.token, (t) => { if (t) refresh() })
                   분석 미지정
                 </span>
               </span>
-              <span class="pp__level">{{ LEVEL_LABEL[p.level] || p.level }}</span>
+              <span class="pp__scope" :class="{ 'pp__scope--shared': !isMine(p) }"
+                    :title="isMine(p)
+                      ? '내가 만든 프로젝트입니다'
+                      : `공유받은 프로젝트입니다 — ${LEVEL_LABEL[p.level] || p.level} 등급`">
+                {{ isMine(p) ? 'mine' : 'shared' }}
+              </span>
             </button>
             <button v-if="p.level === 'admin'" class="pp__pairbtn" @click.stop="openPair(p)"
                     title="추적성이 어떤 분석 결과를 근거로 삼을지 고릅니다">
@@ -321,6 +341,10 @@ watch(() => auth.token, (t) => { if (t) refresh() })
 .pp__pair--none { color:var(--status-amber-fg); font-family:var(--font-main); }
 .pp__level { font-size:0.62rem; color:var(--status-neutral-fg); background:var(--status-neutral-bg);
   border-radius:9px; padding:1px 7px; margin-left:var(--spacing-sm); flex-shrink:0; }
+.pp__scope { font-size:0.62rem; color:var(--status-neutral-fg); background:var(--status-neutral-bg);
+  border-radius:9px; padding:1px 7px; margin-left:var(--spacing-sm); flex-shrink:0;
+  font-family:var(--font-mono); letter-spacing:0.02em; }
+.pp__scope--shared { color:var(--status-blue-fg); background:var(--status-blue-bg); }
 .pp__pairbtn { margin: 2px 0 0 10px; padding: 2px 8px; font-size: 0.68rem;
   font-family: inherit; cursor: pointer; color: var(--color-text-light);
   background: var(--color-bg-tertiary); border: 1px solid var(--color-border);
