@@ -119,7 +119,8 @@ class UserStoryOps:
         query = """
         MATCH (us:UserStory)
         OPTIONAL MATCH (us)-[:IMPLEMENTS]->(target)
-        WITH us, collect(DISTINCT {type: labels(target)[0], name: target.name, id: target.id}) as implemented_in
+        WITH us, collect(DISTINCT target) AS targets
+        ORDER BY us.id
         RETURN {
             id: us.id,
             role: us.role,
@@ -130,9 +131,9 @@ class UserStoryOps:
             uiDescription: us.uiDescription,
             displayName: us.displayName,
             sourceScreenName: us.sourceScreenName,
-            implemented_in: implemented_in
+            implemented_in: [t IN targets WHERE t IS NOT NULL |
+                             {type: labels(t)[0], name: t.name, id: t.id}]
         } as user_story
-        ORDER BY user_story.id
         """
         with self.session() as session:
             result = session.run(query)

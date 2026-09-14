@@ -574,6 +574,50 @@ async def extract_commands_phase(ctx: IngestionWorkflowContext) -> AsyncGenerato
                     commands = []
 
             all_commands[agg_id] = commands
+
+            # ── 커맨드 0개는 **조용하지 않아야 한다** ─────────────────────
+            # 여기가 비어도 아래 `if commands:` 를 그냥 지나가, 로그도 진행
+            # 메시지도 안 남았다. 22개 애그리거트 중 21개가 0개로 끝난 실행이
+            # 있었는데 화면에는 "완료"로 보였고, 세션은 메모리에만 있어
+            # 끝난 뒤에는 왜 그랬는지 알 길이 없었다.
+            #
+            # **원인을 갈라서** 적는다 — 붙은 US 가 없어서 LLM 이 아무 입력도
+            # 못 받은 것과, 입력은 줬는데 LLM 이 0개를 낸 것은 고칠 곳이 다르다.
+            if not commands:
+                _why = (
+                    "BC 에 붙은 User Story 가 없다" if not bc_us_ids
+                    else "User Story 본문을 못 찾았다(ctx.user_stories 와 id 불일치)"
+                    if not stories_context.strip()
+                    else "LLM 이 0개를 냈다"
+                )
+                SmartLogger.log(
+                    "WARNING",
+                    f"Command 0개: {agg_name} — {_why}",
+                    category="ingestion.workflow.commands.empty",
+                    params={
+                        "session_id": ctx.session.id,
+                        "bc_id": bc_id,
+                        "bc_name": bc_name,
+                        "agg_id": agg_id,
+                        "agg_name": agg_name,
+                        "bc_user_story_count": len(bc_us_ids),
+                        "stories_context_chars": len(stories_context),
+                        "reason": _why,
+                    },
+                )
+                yield ProgressEvent(
+                    phase=IngestionPhase.EXTRACTING_COMMANDS,
+                    message=f"⚠️ Command 0개: {agg_name} — {_why}",
+                    progress=65,
+                    data={
+                        "type": "CommandEmpty",
+                        "aggregateId": agg_id,
+                        "aggregateName": agg_name,
+                        "bcName": bc_name,
+                        "reason": _why,
+                    },
+                )
+
             # Collect command names (+ displayName) for cross-aggregate dedup
             for cmd in commands:
                 cmd_n = cmd.get("name") if isinstance(cmd, dict) else getattr(cmd, "name", "")

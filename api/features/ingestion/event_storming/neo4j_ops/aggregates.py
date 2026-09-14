@@ -5,6 +5,7 @@ from typing import Any
 
 from api.platform.keys import aggregate_key
 
+from ._coerce import coerce_lists
 from ._bulk_helper import (
     BulkResult,
     chunked,
@@ -137,7 +138,8 @@ class AggregateOps:
         query = """
         MATCH (bc:BoundedContext {id: $bc_id})-[:HAS_AGGREGATE]->(agg:Aggregate)
         OPTIONAL MATCH (agg)-[:HAS_COMMAND]->(cmd:Command)
-        WITH agg, collect(DISTINCT cmd {.id, .name}) as commands
+        WITH agg, collect(DISTINCT cmd) AS cmds
+        ORDER BY agg.name
         RETURN {
             id: agg.id,
             name: agg.name,
@@ -146,34 +148,21 @@ class AggregateOps:
             invariants: agg.invariants,
             enumerations: agg.enumerations,
             valueObjects: agg.valueObjects,
-            commands: commands
+            commands: [c IN cmds WHERE c IS NOT NULL | {id: c.id, name: c.name}]
         } as aggregate
-        ORDER BY aggregate.name
         """
         with self.session() as session:
             result = session.run(query, bc_id=bc_id)
-            aggregates = []
-            for record in result:
-                agg_dict = dict(record["aggregate"])
-                # Parse JSON strings back to lists
-                if isinstance(agg_dict.get("enumerations"), str):
-                    try:
-                        agg_dict["enumerations"] = json.loads(agg_dict["enumerations"])
-                    except (json.JSONDecodeError, TypeError):
-                        agg_dict["enumerations"] = []
-                elif agg_dict.get("enumerations") is None:
-                    agg_dict["enumerations"] = []
-                
-                if isinstance(agg_dict.get("valueObjects"), str):
-                    try:
-                        agg_dict["valueObjects"] = json.loads(agg_dict["valueObjects"])
-                    except (json.JSONDecodeError, TypeError):
-                        agg_dict["valueObjects"] = []
-                elif agg_dict.get("valueObjects") is None:
-                    agg_dict["valueObjects"] = []
-                
-                aggregates.append(agg_dict)
-            return aggregates
+            # 배열 속성은 맵 투영을 지나며 JSON **문자열**이 된다(`_coerce`).
+            # 전에는 `enumerations`·`valueObjects` 둘만 여기서 손으로 풀고
+            # `invariants` 는 빠져 있었다 — 그쪽은 글자로 순회되고 있었다.
+            return [
+                coerce_lists(
+                    dict(record["aggregate"]),
+                    "enumerations", "valueObjects", "invariants",
+                )
+                for record in result
+            ]
 
     def create_aggregate(
         self,

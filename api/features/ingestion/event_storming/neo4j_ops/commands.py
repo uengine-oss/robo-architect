@@ -249,7 +249,8 @@ class CommandOps:
         query = """
         MATCH (agg:Aggregate {id: $aggregate_id})-[:HAS_COMMAND]->(cmd:Command)
         OPTIONAL MATCH (cmd)-[:EMITS]->(evt:Event)
-        WITH cmd, collect(DISTINCT evt {.id, .name}) as emits
+        WITH cmd, collect(DISTINCT evt) AS evts
+        ORDER BY cmd.name
         RETURN {
             id: cmd.id,
             name: cmd.name,
@@ -258,9 +259,8 @@ class CommandOps:
             category: cmd.category,
             inputSchema: cmd.inputSchema,
             description: cmd.description,
-            emits: emits
+            emits: [e IN evts WHERE e IS NOT NULL | {id: e.id, name: e.name}]
         } as command
-        ORDER BY command.name
         """
         with self.session() as session:
             result = session.run(query, aggregate_id=aggregate_id)

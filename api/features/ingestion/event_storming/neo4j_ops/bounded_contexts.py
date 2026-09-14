@@ -4,6 +4,8 @@ from typing import Any
 
 from api.platform.keys import bc_key
 
+from ._coerce import coerce_lists
+
 from ._bulk_helper import (
     BulkResult,
     bulk_flush,
@@ -47,11 +49,23 @@ class BoundedContextOps:
     # =========================================================================
 
     def get_all_bounded_contexts(self) -> list[dict[str, Any]]:
-        """Fetch all bounded contexts with their aggregates."""
+        """Fetch all bounded contexts with their aggregates.
+
+        Ontological 에서 **두 곳이 달랐다**(`enterprise-todo.md` §21):
+
+        1. `ORDER BY bounded_context.name` — RETURN 에서 만든 이름을 ORDER BY 가
+           못 본다. `variable 'bounded_context' is not defined` 로 **던진다**.
+           이 예외가 위에서 먹혀 `ctx.bounded_contexts` 가 빈 채로 다음 단계로
+           갔고, 인제스천이 반쪽으로 돌았다. → 원래 변수(`bc.name`)로 정렬한다.
+        2. `collect(DISTINCT agg {.id,.name})` — 매치가 **없을 때** `[]` 가 아니라
+           `[{id:null,name:null}]` 이 된다. 애그리거트가 없는 BC 가 **유령 한
+           개**를 갖게 된다. → 노드를 모아 두고 null 을 걸러 낸 뒤 투영한다.
+        """
         query = """
         MATCH (bc:BoundedContext)
         OPTIONAL MATCH (bc)-[:HAS_AGGREGATE]->(agg:Aggregate)
-        WITH bc, collect(DISTINCT agg {.id, .name}) as aggregates
+        WITH bc, collect(DISTINCT agg) AS aggs
+        ORDER BY bc.name
         RETURN {
             id: bc.id,
             name: bc.name,
@@ -60,13 +74,17 @@ class BoundedContextOps:
             owner: bc.owner,
             domainType: bc.domainType,
             userStoryIds: bc.userStoryIds,
-            aggregates: aggregates
+            aggregates: [a IN aggs WHERE a IS NOT NULL | {id: a.id, name: a.name}]
         } as bounded_context
-        ORDER BY bounded_context.name
         """
         with self.session() as session:
             result = session.run(query)
-            return [dict(record["bounded_context"]) for record in result]
+            # `userStoryIds` 는 맵 투영을 지나며 JSON **문자열**이 된다.
+            # 풀지 않으면 호출부가 글자를 하나씩 순회한다 — `_coerce` 참고.
+            return [
+                coerce_lists(dict(record["bounded_context"]), "userStoryIds")
+                for record in result
+            ]
 
     def create_bounded_context(
         self,
