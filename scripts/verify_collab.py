@@ -118,6 +118,25 @@ def main() -> int:
     check("'모른다'와 '없다'는 다르다 — 없을 때는 빈 리스트",
           store.changes_since(G, r3, r3), [])
 
+    # **판이 두 번 오르면 정밀 경로가 통째로 무력화된다.** 실제로 그랬다 —
+    # `/api/chat/confirm` 이 publish 하고, 그 뒤 미들웨어가 POST 라고 또 올렸다.
+    # 그 사이에 '목록 없는 판'이 끼어 받는 쪽이 늘 통째로 다시 읽었다.
+    class _H(dict):
+        def get(self, k, d=None):
+            return super().get(k.lower(), d)
+
+    hdr = _H({"x-project-graph": G})
+    before_rev = store.revision(G)["rev"]
+    notify.after_request(hdr, None, "POST", "/api/chat/confirm", 200,
+                         already_published=True)
+    check("publish 한 요청은 미들웨어가 또 안 올린다",
+          store.revision(G)["rev"], before_rev)
+    # 반대쪽도 재야 한다. 전부 막아 버리면 목록 없는 쓰기가 조용해진다.
+    notify.after_request(hdr, None, "POST", "/api/chat/confirm", 200,
+                         already_published=False)
+    check("publish 안 한 요청은 그대로 올린다",
+          store.revision(G)["rev"], before_rev + 1)
+
     check("목록이 비면 아무것도 안 남긴다", store.publish(G, []), None)
     check("이름이 아닌 값은 목록도 안 남긴다", store.publish("../etc", [{"a": 1}]), None)
 

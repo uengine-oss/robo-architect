@@ -53,8 +53,15 @@ def should_notify(method: str, path: str, status_code: int) -> bool:
 
 
 def after_request(headers, bound, method: str, path: str, status_code: int,
-                  actor_uid: str | None = None) -> None:
-    """응답이 정해진 뒤 1회. **던지지 않는다** — 알림 때문에 쓰기가 깨지면 안 된다."""
+                  actor_uid: str | None = None, already_published: bool = False) -> None:
+    """응답이 정해진 뒤 1회. **던지지 않는다** — 알림 때문에 쓰기가 깨지면 안 된다.
+
+    핸들러가 **무엇이 바뀌었는지까지** 알려 줬으면(`store.publish`) 여기서는
+    아무것도 안 한다. 또 올리면 그 사이에 목록 없는 판이 끼어, 받는 쪽이
+    정밀하게 못 따라잡고 통째로 다시 읽는다.
+    """
+    if already_published:
+        return
     if not should_notify(method, path, status_code):
         return
     try:

@@ -52,6 +52,10 @@ export function useElementLock(elementId, labelOf) {
     // 열려 있는 요소가 그새 바뀌었으면 방금 잡은 것은 남의 것이 된다.
     if (elementId.value !== id) { collab.unlock(id); return }
     held.value = !!r.ok
+    // **잡았을 때만 '편집 중'이다.** 못 잡았으면 나는 읽기로 보고 있는
+    // 것이고, 그때는 상대 변경이 **보여야 한다** — 안 보이면 옛 값을 보면서
+    // "실시간이 안 된다"고 하게 된다. 실제로 그렇게 나왔다.
+    collab.setEditing(r.ok ? id : null)
   }
 
   function drop() {
@@ -66,8 +70,9 @@ export function useElementLock(elementId, labelOf) {
       if (id === current) return
       drop()
       current = id || null
-      // 열고 있는 요소를 스토어에 알린다. 남의 변경이 와도 이것만은 안 건드린다.
-      collab.setEditing(current)
+      // 잠금을 잡기 **전**에는 편집 중이 아니다. 여기서 미리 표시하면, 못 잡는
+      // 경우에도 잠깐 상대 변경이 막힌다.
+      collab.setEditing(null)
       if (id) take(id)
     },
     { immediate: true },

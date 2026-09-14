@@ -94,7 +94,11 @@ def _publish_to_other_windows(request: Request, applied: List[Dict[str, Any]]) -
             # 알릴 대상을 특정할 수 없다.
             return
         claims = getattr(request.state, "auth_claims", None) or {}
-        collab.publish(graph, applied, actor_uid=claims.get("sub"))
+        if collab.publish(graph, applied, actor_uid=claims.get("sub")) is not None:
+            # **미들웨어가 또 올리지 않게 표시한다.** 두 번 오르면 그 사이에
+            # "목록 없는 판"이 끼어, 받는 쪽이 정밀하게 못 따라잡고 통째로 다시
+            # 읽는다 — 목록을 실은 보람이 통째로 사라진다. 실제로 그랬다.
+            request.state.collab_published = True
     except Exception:
         return
 

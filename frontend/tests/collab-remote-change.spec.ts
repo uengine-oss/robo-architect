@@ -238,7 +238,32 @@ test('빈 목록이면 갈아끼울 것이 없다', async ({ page }) => {
   expect(remote, '빈 목록에 갈아끼울 것은 없다').toEqual([])
 })
 
-test('내가 열어 둔 요소는 남의 변경으로 안 바뀐다', async ({ page }) => {
+test('잠금을 못 잡고 열어만 뒀으면 남의 변경이 보인다', async ({ page }) => {
+  // **여기가 한 번 틀렸다.** "열어 둔 요소는 안 바꾼다"로만 두니, 상대가
+  // 잡고 있어서 내가 읽기로 보고 있을 때도 갱신이 막혔다 — 옛 값을 보면서
+  // "실시간이 안 된다"고 하게 된다.
+  //
+  // 막아야 하는 것은 **내가 잡고 고치는 중**일 때뿐이다.
+  const release = await bootGated(page,
+    'event: changed\ndata: ' + JSON.stringify({
+      graph: 'prj_aaa', rev: 3, actorUid: 'DEV-ALICE',
+      changes: [{ action: 'update', targetId: 'n-open', targetType: 'Command' }],
+    }) + '\n\n')
+
+  // 잠금을 못 잡은 상태 = 편집 중이 아니다.
+  await page.evaluate(async () => {
+    const mod = await import('/src/features/collab/collab.store.js')
+    mod.useCollabStore().setEditing(null)
+  })
+  release()
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__remote?.map((c: any) => c.targetId)),
+      { timeout: 10_000 })
+    .toEqual(['n-open'])
+})
+
+test('내가 잡고 고치는 중인 요소는 남의 변경으로 안 바뀐다', async ({ page }) => {
   const release = await bootGated(page,
     'event: changed\ndata: ' + JSON.stringify({
       graph: 'prj_aaa', rev: 3, actorUid: 'DEV-ALICE',

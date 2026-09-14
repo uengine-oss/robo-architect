@@ -322,6 +322,8 @@ async def neo4j_override_middleware(request: Request, call_next):
                 request.url.path, response.status_code,
                 # 누가 바꿨는지. 받는 쪽이 자기 변경은 건너뛴다.
                 actor_uid=(getattr(request.state, "auth_claims", None) or {}).get("sub"),
+                # 핸들러가 이미 변경 목록까지 알렸으면 또 올리지 않는다.
+                already_published=getattr(request.state, "collab_published", False),
             )
         except Exception:
             pass
