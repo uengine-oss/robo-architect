@@ -1082,6 +1082,12 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
                     "source_unit_id": getattr(us, "source_unit_id", None),
                     "sequence": getattr(us, "sequence", None),
                     "acceptance_criteria": list(getattr(us, "acceptance_criteria", []) or []),
+                    # 구조화 US 문서에서만 찬다. **여기를 빠뜨리면 저장부를
+                    # 고쳐 놔도 값이 영영 안 온다** — 행을 손으로 조립하기
+                    # 때문에 모델에 필드를 더하는 것만으로는 안 따라온다.
+                    "epic_id": getattr(us, "epic_id", None),
+                    "epic_name": getattr(us, "epic_name", None),
+                    "tasks": list(getattr(us, "tasks", []) or []),
                 }
             )
         from api.features.ingestion.suspend_gate import session_call_slot

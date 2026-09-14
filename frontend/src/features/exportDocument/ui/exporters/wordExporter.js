@@ -410,13 +410,18 @@ export async function exportToWord({ allContexts, fullTrees, sortedContexts, all
 
     children.push(sectionTitle(`${sn.traceabilityMatrix}. 추적성 요약`))
     children.push(table(
-      ['전체 요소', '직접 매핑', '추론 매핑', '미매핑', '매핑된 US', '직접 매핑률'],
+      ['전체 요소', '직접 매핑', '추론 매핑', '미매핑', 'User Story', '매핑된 US', '요소 없는 US', '직접 매핑률'],
       [[
         traceSummary.elements, traceSummary.directElements, traceSummary.inferredElements,
-        traceSummary.unmappedElements, traceSummary.mappedUserStories,
+        traceSummary.unmappedElements,
+        // 설계 요소가 없는 US 도 매트릭스에 남는다. 비기능 요구는 요소로 안
+        // 떨어지는 것이 정상이고, 그 수를 숨기면 **요구 누락과 구별되지 않는다.**
+        traceSummary.userStories ?? traceSummary.mappedUserStories,
+        traceSummary.mappedUserStories,
+        traceSummary.storiesWithoutElements ?? 0,
         `${(traceSummary.directRatio * 100).toFixed(1)}%`,
       ]],
-      [1500, 1500, 1500, 1500, 1500, 1500]
+      [1200, 1200, 1200, 1100, 1200, 1200, 1300, 1100]
     ))
     children.push(pageBreak())
 
@@ -424,6 +429,17 @@ export async function exportToWord({ allContexts, fullTrees, sortedContexts, all
     traceGroups.forEach(g => {
       children.push(sectionTitle(`${g.us.id}`))
       children.push(desc(g.us.name))
+      // 에픽과 태스크는 고객 문서의 구조다. 있으면 보여 준다.
+      if (g.us.epicId) children.push(desc(`에픽: ${g.us.epicId} ${g.us.epicName || ''}`.trim()))
+      if (g.us.tasks?.length) {
+        children.push(desc(`태스크: ${g.us.tasks.map(t => `${t.id} ${t.name}`).join(' · ')}`))
+      }
+      // **빈 표를 그리지 않는다.** 머리만 있는 표는 결함처럼 보이고, 요소가
+      // 없는 것이 정상인 경우(비기능 요구)와 구별되지 않는다.
+      if (!g.rows?.length) {
+        children.push(desc('설계 요소 없음 — 비기능 요구이거나 아직 설계에 반영되지 않았습니다.'))
+        return
+      }
       children.push(table(
         ['유형', '이름', 'ID'],
         g.rows.map(r => [

@@ -439,11 +439,16 @@ export async function exportToWord(data, container, onProgress) {
     sections.push(sec([
       h2(`${sn.traceabilityMatrix}. 추적성 요약`),
       tbl(
-        ['전체 요소', '직접 매핑', '추론 매핑', '미매핑', '매핑된 US', '직접 매핑률'],
+        ['전체 요소', '직접 매핑', '추론 매핑', '미매핑', 'User Story', '매핑된 US', '요소 없는 US', '직접 매핑률'],
+        // 설계 요소가 없는 US 도 매트릭스에 남는다. 그 수를 숨기면 **요구가
+        // 누락된 것과 구별되지 않는다.**
         [[traceSummary.elements, traceSummary.directElements, traceSummary.inferredElements,
-          traceSummary.unmappedElements, traceSummary.mappedUserStories,
+          traceSummary.unmappedElements,
+          traceSummary.userStories ?? traceSummary.mappedUserStories,
+          traceSummary.mappedUserStories,
+          traceSummary.storiesWithoutElements ?? 0,
           `${(traceSummary.directRatio * 100).toFixed(1)}%`]],
-        [1500, 1500, 1500, 1500, 1500, 1500]
+        [1200, 1200, 1200, 1100, 1200, 1200, 1300, 1100]
       ),
     ]))
 
@@ -453,6 +458,20 @@ export async function exportToWord(data, container, onProgress) {
       traceGroups.forEach(g => {
         ch.push(h3(`${g.us.id}`))
         ch.push(para(g.us.name, { size: 20, color: '666666', after: 60 }))
+        if (g.us.epicId) {
+          ch.push(para(`에픽: ${g.us.epicId} ${g.us.epicName || ''}`.trim(),
+            { size: 18, color: '888888', after: 40 }))
+        }
+        if (g.us.tasks?.length) {
+          ch.push(para(`태스크: ${g.us.tasks.map(t => `${t.id} ${t.name}`).join(' · ')}`,
+            { size: 18, color: '888888', after: 40 }))
+        }
+        // **빈 표를 그리지 않는다.** 머리만 있는 표는 결함처럼 보인다.
+        if (!g.rows?.length) {
+          ch.push(para('설계 요소 없음 — 비기능 요구이거나 아직 설계에 반영되지 않았습니다.',
+            { size: 20, color: '666666', after: 80 }))
+          return
+        }
         ch.push(tbl(['유형', '이름', 'ID'],
           g.rows.map(r => [
             label(r.type),
