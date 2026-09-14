@@ -12,6 +12,7 @@ import GwtFieldInput from './GwtFieldInput.vue'
 import InvariantEditor from '@/features/invariants/ui/InvariantEditor.vue'
 import LockBanner from '@/features/collab/ui/LockBanner.vue'
 import { useElementLock } from '@/features/collab/useElementLock'
+import { useDataRefresh, useRemoteChanges } from '@/app/lifecycle/dataLifecycle'
 import { createLogger, newOpId } from '@/app/logging/logger'
 // 043-fix — Design 캔버스 미리보기 중 저장은 라이브(/api/chat/confirm)가 아니라 제안 diff 로.
 import { isPreviewFor, usePreviewSession } from '@/app/previewSession'
@@ -1263,6 +1264,47 @@ const dirtyFields = computed(() => {
 })
 
 const isDirty = computed(() => dirtyFields.value.length > 0)
+
+// **열어 둔 채로 남이 고치면 그 값이 보여야 한다.**
+//
+// 이 패널의 값은 열 때 한 번 채워지고 끝이었다. 그래서 읽기로 보는 사람은 옆
+// 사람이 저장해도 **옛 값을 계속 보면서** "실시간이 안 된다"고 하게 된다.
+// 두 창을 띄운 검사(`collab-two-users.spec.ts`)로 재현했다.
+//
+// **다시 읽어야 할 곳이 둘이다.** 이걸 한쪽만 해서 두 번 헛짚었다.
+//
+//     캔버스에 있는 노드     저장소가 갱신되면 `node` 가 따라온다
+//     트리에서 연 노드       `fetchNodeFromAPI` 로 **한 번만** 읽는다.
+//                            `fetchAttemptedNodeId` 가 재요청을 막고 있어서
+//                            저장소가 갱신돼도 영영 옛 값이다
+//
+// 그래서 알림이 오면 그 마커를 지워 **다시 읽게** 한 뒤 form 을 채운다.
+//
+// 언제 다시 채우는가 — **내가 칠 수 없거나, 안 쳤을 때만.**
+//
+//     읽기로 보는 중(`!lockEditable`)   덮어쓸 내 글자가 없다
+//     잡았지만 안 고쳤다(`!isDirty`)     역시 잃을 것이 없다
+//     잡고 고치는 중                     **안 건드린다** — 치던 글자가 사라진다
+//                                        대신 `conflictOnOpenElement` 가 알린다
+function refetchOpenNodeFromRemote() {
+  if (!lockedElementId.value) return
+  if (lockEditable.value && isDirty.value) return
+  // 트리에서 연 노드를 다시 읽게 한다. 안 지우면 재요청 자체가 막혀 있다.
+  if (props.nodeId) {
+    fetchedNodeData.value = null
+    fetchAttemptedNodeId.value = null
+  }
+  nextTick(() => resetToNode())
+}
+
+// 목록이 실린 알림(AI 채팅 등)과 목록 없는 보통의 쓰기(`PUT /api/graph/...`)를
+// 둘 다 받는다. 목록 쪽만 들었다가 한 번 헛짚었다 — 보통의 저장은 목록을 안 싣는다.
+useRemoteChanges((changes) => {
+  const openId = lockedElementId.value
+  if (!openId || !Array.isArray(changes)) return
+  if (changes.some((c) => c && c.targetId === openId)) refetchOpenNodeFromRemote()
+})
+useDataRefresh(() => refetchOpenNodeFromRemote())
 
 function generateChangeId(prefix = 'inspector') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -3683,6 +3725,23 @@ function updateVoFieldValue(fieldName, value) {
           </button>
         </div>
 
+        <!-- 남이 잡고 있으면 **입력칸까지 막는다.**
+
+             배너와 저장 버튼만 막아 두면 사람은 계속 칠 수 있고, 다 친 다음에야
+             저장이 안 된다는 것을 안다 — 그 사이에 친 글자는 사라진다. 실제로
+             그 상태로 나갔고 "비활성화가 안 된다"는 보고를 받았다.
+
+             `fieldset[disabled]` 은 **안에 새로 생기는 칸까지** 함께 막는다.
+             칸마다 `:disabled` 를 달면 새 칸을 더할 때 반드시 하나를 빠뜨린다.
+
+             **탭 바는 밖에 둔다.** 안에 넣으면 읽기로 보는 사람이 다른 탭조차
+             못 본다 — 잠금은 겹쳐 쓰는 것을 막는 것이지 사람을 막는 것이 아니다.
+
+             껍데기는 잠김 여부와 무관하게 **늘 있다.** 이 자리는 open-pencil
+             federated 편집기 옆이라, 형제가 생겼다 없어지면 Vue 의 패치가 죽은
+             서브트리로 들어간다(파일 상단·LockBanner 에 같은 부류가 적혀 있다). -->
+        <fieldset class="inspector-panel__lockguard" :disabled="!lockEditable">
+
         <div v-if="error" class="inspector-alert error">{{ error }}</div>
         <div v-else-if="successMsg" class="inspector-alert success">{{ successMsg }}</div>
 
@@ -4808,6 +4867,7 @@ function updateVoFieldValue(fieldName, value) {
           </div>
         </div>
 
+        </fieldset>
       </div>
     </div>
 
@@ -5514,6 +5574,25 @@ function updateVoFieldValue(fieldName, value) {
 </template>
 
 <style scoped>
+
+/* 잠금 껍데기는 **배치를 바꾸지 않는다.** `fieldset` 은 기본 테두리·여백이
+   있고 flex 안에서 `min-width: auto` 로 줄어들지 않는 성질이 있어, 그대로 두면
+   패널 폭이 틀어진다. `display: contents` 로 상자를 없애면 자식들이 원래 자리에
+   그대로 놓인다 — 막는 것은 배치가 아니라 입력이다.
+
+   `:disabled` 는 DOM 상속이라 상자를 없애도 그대로 먹는다. */
+.inspector-panel__lockguard {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+/* 막혔다는 것이 눈에도 보여야 한다 — 배너를 못 본 사람이 왜 안 쳐지는지 안다. */
+.inspector-panel__lockguard:disabled :is(input, textarea, select) {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
 .inspector-panel {
   display: flex;
   flex-direction: column;

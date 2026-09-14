@@ -8,7 +8,7 @@ import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { useCanvasPreviewRequestStore } from '@/features/canvas/canvasPreviewRequest.store'
 import { createLogger, newOpId } from '@/app/logging/logger'
-import { useRemoteChanges } from '@/app/lifecycle/dataLifecycle'
+import { useDataRefresh, useRemoteChanges } from '@/app/lifecycle/dataLifecycle'
 
 // Custom Nodes
 import CommandNode from './nodes/CommandNode.vue'
@@ -412,6 +412,23 @@ function openInspectorForNodeData(nodeData) {
     panelMode.value = 'inspector'
   }
 }
+
+// **열어 둔 Inspector 가 남의 저장을 반영하게 한다.**
+//
+// 트리에서 연 요소는 여기서 `inspectingNodeData` 에 **한 번 담고 끝**이라,
+// 저장소가 갱신돼도 패널은 그 낡은 객체를 계속 본다(패널의 `node` 는
+// `nodeData` 를 가장 먼저 쓴다). 그래서 읽기로 보는 사람은 옆 사람이 저장해도
+// **옛 값을 계속 보면서** "실시간이 안 된다"고 하게 된다.
+//
+// 낡은 것을 **비우기만** 한다. 그러면 패널이 저장소 → API 순서로 다시 읽는다
+// (이미 있는 길이다). 여기서 직접 다시 읽으면 그 순서를 한 번 더 구현하게 된다.
+//
+// 고치고 있는 사람의 화면은 안 건드린다 — 패널이 `isDirty` 로 가른다.
+useDataRefresh(() => {
+  if (inspectingNodeId.value && inspectingNodeData.value) {
+    inspectingNodeData.value = null
+  }
+})
 
 // Provide Inspector opening functions for child components
 provide('openInspector', {

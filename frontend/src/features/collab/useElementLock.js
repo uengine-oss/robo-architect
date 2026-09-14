@@ -33,11 +33,26 @@ export function useElementLock(elementId, labelOf) {
   const held = ref(false)
   let current = null
 
-  // **열어 둔 동안에는 남의 변경으로 다시 그리지 않는다.** 이 자리(Inspector)는
-  // open-pencil federated 편집기를 품고 있어서, 남이 쓸 때마다 트리를 다시
-  // 그리면 죽은 서브트리로 패치가 들어간다 — 실제로 그 오류가 났다. 고치던
-  // 값이 초기화되는 문제도 같이 없어진다.
-  const releaseRefreshHold = holdDataRefresh()
+  // **잡은 동안에만** 남의 변경으로 다시 그리지 않는다.
+  //
+  // 이 자리(Inspector)는 open-pencil federated 편집기를 품고 있어서, 남이 쓸
+  // 때마다 트리를 다시 그리면 죽은 서브트리로 패치가 들어간다. 고치던 값이
+  // 초기화되는 문제도 같이 없어진다. 그래서 잠금을 잡은 동안은 미룬다.
+  //
+  // **그런데 열기만 하면 무조건 미루게 해 뒀던 것이 문제였다.** 읽기로 보는
+  // 사람까지 막혔다. 그 사람은 덮어쓸 글자가 없는데, 옆 사람이 저장해도 아무
+  // 일이 안 일어나고 **옛 값을 계속 본다** — "실시간이 안 된다"는 보고가 이것이다.
+  //
+  //     잡았다    미룬다   내가 치던 것이 날아가면 안 된다
+  //     읽기      안 미룬다 잃을 것이 없다. 최신을 봐야 한다
+  //
+  // 목록 없는 쓰기(`changes` 가 안 실린 경우)는 거친 알림밖에 없어서, 이걸
+  // 막으면 그 변경은 **영영 안 보인다.** 그래서 갈래를 나눈다.
+  let releaseRefreshHold = null
+  function holdWhileEditing(on) {
+    if (on && !releaseRefreshHold) releaseRefreshHold = holdDataRefresh()
+    else if (!on && releaseRefreshHold) { releaseRefreshHold(); releaseRefreshHold = null }
+  }
 
   /** 남이 잡고 있으면 그 사람. 아니면 null. */
   const blockedBy = computed(() =>
@@ -52,6 +67,8 @@ export function useElementLock(elementId, labelOf) {
     // 열려 있는 요소가 그새 바뀌었으면 방금 잡은 것은 남의 것이 된다.
     if (elementId.value !== id) { collab.unlock(id); return }
     held.value = !!r.ok
+    // 잡았으면 그때부터 미룬다. 못 잡았으면 읽기이므로 계속 받는다.
+    holdWhileEditing(held.value)
     // **잡았을 때만 '편집 중'이다.** 못 잡았으면 나는 읽기로 보고 있는
     // 것이고, 그때는 상대 변경이 **보여야 한다** — 안 보이면 옛 값을 보면서
     // "실시간이 안 된다"고 하게 된다. 실제로 그렇게 나왔다.
@@ -62,6 +79,7 @@ export function useElementLock(elementId, labelOf) {
     if (current) { collab.unlock(current); current = null }
     collab.setEditing(null)
     held.value = false
+    holdWhileEditing(false)
   }
 
   watch(
@@ -79,9 +97,8 @@ export function useElementLock(elementId, labelOf) {
   )
 
   onUnmounted(() => {
+    // `drop` 이 미루기까지 푼다. 안 풀면 이 창은 영영 남의 변경을 안 받는다.
     drop()
-    // 안 풀면 이 창은 영영 남의 변경을 안 받는다.
-    releaseRefreshHold()
   })
 
   return { held, blockedBy, editable, release: drop }
