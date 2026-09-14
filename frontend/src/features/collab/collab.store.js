@@ -95,9 +95,18 @@ export const useCollabStore = defineStore('collab', () => {
       if (open && safe.length !== payload.changes.length) {
         conflictOnOpenElement.value = payload.actorUid || true
       }
-      return
     }
 
+    // **목록을 보냈어도 거친 쪽을 같이 울린다.**
+    //
+    // 요소 목록을 제자리에 반영할 줄 아는 곳은 캔버스뿐이다. 네비게이터 트리·
+    // 이벤트 모델링·요구사항 화면은 여전히 `robo:data-changed` 만 듣는다. 여기서
+    // 끊으면 **AI 채팅으로 이름을 바꿨을 때 캔버스만 바뀌고 트리는 영영 안
+    // 바뀐다** — 실제로 그렇게 만들었다가 되돌렸다.
+    //
+    // 편집 중이면 이 쪽은 `holdDataRefresh` 가 미룬다(트리를 다시 그리면 편집
+    // 중이던 화면이 초기화되므로). 그동안에도 캔버스는 위에서 이미 반영됐다 —
+    // **급한 쪽은 즉시, 나머지는 손을 뗄 때**가 이 둘의 역할 분담이다.
     emitDataChanged('remote-change')
   }
 

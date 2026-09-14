@@ -165,7 +165,7 @@ async function bootGated(page: any, body: string) {
   return release
 }
 
-test('목록이 오면 그 요소만 갈아끼운다 — 통째로 다시 읽지 않는다', async ({ page }) => {
+test('목록이 오면 그 요소만 갈아끼운다', async ({ page }) => {
   await bootWatching(page, withChanges([
     { action: 'update', targetId: 'n1', targetType: 'Command' },
   ]))
@@ -174,11 +174,50 @@ test('목록이 오면 그 요소만 갈아끼운다 — 통째로 다시 읽지
     .poll(() => page.evaluate(() => (window as any).__remote?.map((c: any) => c.targetId)),
       { timeout: 10_000 })
     .toEqual(['n1'])
+})
 
-  // 통째로 다시 읽는 쪽은 울리면 안 된다 — 울리면 편집 중이던 화면이 초기화된다.
-  const coarse = await page.evaluate(() => (window as any).__dataChanged)
-  expect(coarse, '목록이 있는데도 통째로 다시 읽으면 세분화한 의미가 없다')
-    .not.toContain('remote-change')
+test('목록을 보내도 거친 쪽을 같이 울린다 — 트리가 안 바뀌면 안 된다', async ({ page }) => {
+  // **한 번 이걸 끊었다가 회귀를 만들었다.** 요소 목록을 제자리에 반영할 줄
+  // 아는 곳은 캔버스뿐이라, 여기서 끊으면 네비게이터 트리·이벤트 모델링이
+  // 영영 옛 이름을 들고 있는다.
+  await bootWatching(page, withChanges([
+    { action: 'rename', targetId: 'n1', targetType: 'Command', name: '새 이름' },
+  ]))
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__dataChanged), { timeout: 10_000 })
+    .toContain('remote-change')
+})
+
+test('편집 중이면 거친 쪽만 미뤄지고 요소 반영은 즉시다', async ({ page }) => {
+  // 이것이 이번 작업의 요지다 — **급한 쪽은 즉시, 나머지는 손을 뗄 때.**
+  const release = await bootGated(page,
+    'event: changed\ndata: ' + JSON.stringify({
+      graph: 'prj_aaa', rev: 3, actorUid: 'DEV-ALICE',
+      changes: [{ action: 'update', targetId: 'n-other', targetType: 'Event' }],
+    }) + '\n\n')
+
+  // 편집 중을 흉내 낸다 — Inspector 가 열려 있을 때와 같은 상태.
+  const release2 = await page.evaluate(async () => {
+    const m = await import('/src/app/lifecycle/dataLifecycle.js')
+    ;(window as any).__release = m.holdDataRefresh()
+    return true
+  })
+  expect(release2).toBe(true)
+  release()
+
+  // 요소 반영은 미루지 않는다.
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__remote?.length), { timeout: 10_000 })
+    .toBe(1)
+  // 트리를 다시 그리는 쪽은 손을 뗄 때까지 미뤄진다.
+  expect(await page.evaluate(() => (window as any).__dataChanged),
+    '편집 중에 트리를 다시 그리면 고치던 값이 초기화된다').toEqual([])
+
+  await page.evaluate(() => (window as any).__release())
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__dataChanged), { timeout: 5_000 })
+    .toContain('remote-change')
 })
 
 test('목록이 없으면 통째로 다시 읽는다', async ({ page }) => {
@@ -191,15 +230,12 @@ test('목록이 없으면 통째로 다시 읽는다', async ({ page }) => {
     .toContain('remote-change')
 })
 
-test('빈 목록은 아무 일도 아니다 — 통째로 다시 읽지 않는다', async ({ page }) => {
+test('빈 목록이면 갈아끼울 것이 없다', async ({ page }) => {
   await bootWatching(page, withChanges([]))
   await page.waitForTimeout(2500)
 
-  const coarse = await page.evaluate(() => (window as any).__dataChanged)
   const remote = await page.evaluate(() => (window as any).__remote)
-  expect(coarse, '빈 목록을 "모른다"로 읽으면 헛되이 전부 다시 읽는다')
-    .not.toContain('remote-change')
-  expect(remote).toEqual([])
+  expect(remote, '빈 목록에 갈아끼울 것은 없다').toEqual([])
 })
 
 test('내가 열어 둔 요소는 남의 변경으로 안 바뀐다', async ({ page }) => {
