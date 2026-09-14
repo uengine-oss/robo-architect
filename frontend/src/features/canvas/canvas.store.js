@@ -1591,14 +1591,21 @@ export const useCanvasStore = defineStore('canvas', () => {
         const idx = nodes.value.findIndex(n => n.id === targetId)
         if (idx !== -1) {
           const existing = nodes.value[idx]
-          const nextName = change.targetName || existing.data?.name
+          // 서버가 바꾼 필드 묶음. `/api/chat/confirm` 의 appliedChanges 는
+          // **바뀐 값을 `updates` 안에 담아** 돌려준다 — 평평한 필드만 읽으면
+          // 여기 담긴 것이 통째로 무시된다. 실제로 `displayName` 을 고쳐도
+          // 화면이 그대로였다(내 창에서도, 남의 창에서도).
+          const updates = (change.updates && typeof change.updates === 'object')
+            ? change.updates
+            : {}
+          const nextName = updates.name || change.targetName || existing.data?.name
           nodes.value[idx] = {
             ...existing,
             data: {
               ...existing.data,
               name: nextName,
               label: nextName || existing.data?.label,
-              description: change.description || existing.data?.description,
+              description: updates.description || change.description || existing.data?.description,
               // Inspector MVP fields (safe no-op for non-matching node types)
               actor: change.actor ?? existing.data?.actor,
               version: change.version ?? existing.data?.version,
@@ -1608,7 +1615,11 @@ export const useCanvasStore = defineStore('canvas', () => {
               template: change.template ?? existing.data?.template,
               attachedToId: change.attachedToId ?? existing.data?.attachedToId,
               attachedToType: change.attachedToType ?? existing.data?.attachedToType,
-              attachedToName: change.attachedToName ?? existing.data?.attachedToName
+              attachedToName: change.attachedToName ?? existing.data?.attachedToName,
+              // **맨 끝에 얹는다.** 위에서 이름 붙여 다루는 필드 말고도
+              // 서버가 바꾼 것이 더 있을 수 있다(displayName 이 그랬다).
+              // 여기서 받아 두면 새 필드가 생겨도 화면이 따라간다.
+              ...updates
             }
           }
           nodes.value = [...nodes.value]
