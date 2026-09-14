@@ -485,7 +485,69 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
 
     input_content = ctx.content
     _hybrid_processed = False
+    _us_document_processed = False
     should_chunk_result = False
+
+    # ── 구조화된 US 명세 문서 (포스코 포맷) ──────────────────────────────
+    #
+    # 문서에 `##### [US-FR-001] 이름` 헤더가 있으면 **LLM 을 안 부른다.** 이미
+    # 구조화돼 있어서 읽기만 하면 되고, LLM 에 넣으면 셋을 잃는다.
+    #
+    #     ID     프롬프트가 "US-001, US-002 로 순차 부여"라고 지시한다
+    #            → 문서의 US-FR-001 이 버려진다
+    #     잘림   출력 토큰 한계에 걸리면 뒤쪽 스토리가 통째로 사라진다
+    #     재현성 같은 문서를 두 번 넣으면 다른 결과가 나온다
+    #
+    # 이 모양이 아니면 아래 기존 경로가 그대로 돈다 — 한 줄도 안 바뀐다.
+    if not _figma_processed and ctx.source_type != "hybrid":
+        from api.features.ingestion.user_story_format import (
+            looks_like_user_story_document,
+            parse_user_story_document,
+            to_generated_user_stories,
+        )
+
+        if looks_like_user_story_document(input_content):
+            parsed = parse_user_story_document(input_content)
+            if parsed.stories:
+                yield ProgressEvent(
+                    phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                    message=f"구조화된 User Story 문서 감지 — {len(parsed.stories)}개를 그대로 읽습니다",
+                    progress=PHASE_START + 2,
+                )
+                # 목록 표와 명세가 어긋나면 **말해 준다.** 조용히 빠지면 그
+                # 스토리는 아무 데도 안 나타나는데 사람은 다 들어갔다고 믿는다.
+                if parsed.listed_without_spec:
+                    yield ProgressEvent(
+                        phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                        message=(
+                            "목록에는 있는데 명세가 없는 User Story "
+                            f"{len(parsed.listed_without_spec)}건: "
+                            + ", ".join(parsed.listed_without_spec[:8])
+                        ),
+                        progress=PHASE_START + 3,
+                    )
+                user_stories = normalize_and_dedup_user_stories(
+                    to_generated_user_stories(parsed), ctx.session.id
+                )
+                ctx.user_stories = user_stories
+                _us_document_processed = True
+                SmartLogger.log(
+                    "INFO",
+                    "구조화된 US 문서를 LLM 없이 읽었다.",
+                    category="ingestion.user_stories.structured_document",
+                    params={
+                        "session_id": ctx.session.id,
+                        "count": len(user_stories),
+                        "ids": [getattr(s, "id", None) for s in user_stories][:40],
+                        "listed_without_spec": parsed.listed_without_spec,
+                        "spec_without_listing": parsed.spec_without_listing,
+                    },
+                )
+                yield ProgressEvent(
+                    phase=IngestionPhase.EXTRACTING_USER_STORIES,
+                    message=f"User Story 추출 완료 (총 {len(user_stories)}개 · LLM 호출 0회)",
+                    progress=PHASE_END - 2,
+                )
 
     # Hybrid mode: BPM (Phase 1~4) → User Stories. One group = one BpmTask.
     if ctx.source_type == "hybrid":
@@ -605,7 +667,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             )
             _hybrid_processed = True
 
-    if not _figma_processed and not _hybrid_processed:
+    if not _figma_processed and not _hybrid_processed and not _us_document_processed:
         # 스캐닝 및 청킹 판단
         content_tokens = estimate_tokens(input_content)
         should_chunk_result = should_chunk(input_content, max_tokens=USER_STORY_CHUNK_SIZE)
@@ -632,7 +694,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             },
         )
 
-    if not _figma_processed and not _hybrid_processed and should_chunk_result:
+    if not _figma_processed and not _hybrid_processed and not _us_document_processed and should_chunk_result:
         print(f"[CHUNKING DEBUG] Entering chunking path - will split into chunks")
         yield ProgressEvent(
             phase=IngestionPhase.EXTRACTING_USER_STORIES,
@@ -937,7 +999,7 @@ async def extract_user_stories_phase(ctx: IngestionWorkflowContext) -> AsyncGene
             message=f"User Story 추출 완료 (총 {len(user_stories)}개)",
             progress=PHASE_END - 2
         )
-    elif not _figma_processed and not _hybrid_processed:
+    elif not _figma_processed and not _hybrid_processed and not _us_document_processed:
         # 기존 로직 (청킹 불필요)
         print(f"[CHUNKING DEBUG] Entering non-chunking path - processing entire document at once")
         yield ProgressEvent(

@@ -96,6 +96,12 @@ class GeneratedUserStory(BaseModel):
     # 함께 저장된다", ...]. Cross-chunk consolidation populates this from
     # rule-fragments that the chunk-level extraction created as separate stories.
     acceptance_criteria: list[str] = Field(default_factory=list, description="Field-level / business-rule details for this user story. Not separate stories.")
+    # 구조화된 US 문서(포스코 포맷)에서 온 경우에만 찬다. LLM 추출 경로에서는 비어
+    # 있다 — **비었다고 잘못된 것이 아니다.** 채워 넣으려고 추측하면 추적성이
+    # 조용히 어긋난다.
+    epic_id: Optional[str] = Field(default=None, description="US-FR-001 이 속한 에픽 (EP-001). 구조화 문서에서만.")
+    epic_name: Optional[str] = Field(default=None, description="에픽 이름. 구조화 문서에서만.")
+    tasks: list[dict] = Field(default_factory=list, description="US-FR-001-TASK-001 목록. 구조화 문서에서만. 비기능 US 는 0개가 정상.")
 
 
 class UserStoryList(BaseModel):
