@@ -165,12 +165,28 @@ class FeatureOps:
                 if guarded and guarded["c"] > 0:
                     return False
 
+            # **두 문장으로 나눈다.** 한 문장에 `OPTIONAL MATCH` + 그 변수의
+            # `DELETE` 를 두면 Ontological 에서 **매치가 없을 때 행이 0개가
+            # 되어 뒤따르는 MERGE 가 아예 안 돈다.** 실측:
+            #
+            #     OPTIONAL MATCH 만            정상 (null 행이 나온다)
+            #     OPTIONAL + DELETE, 매치 있음  정상
+            #     OPTIONAL + DELETE, 매치 없음  **행 0개**   ← 여기서 죽는다
+            #
+            # 첫 인제스천에서는 US 에 붙은 Feature 가 없으니 **항상** 이 경우다.
+            # 그래서 `HAS_USER_STORY` 가 한 건도 안 생기고 있었다(다섯 프로젝트
+            # 전부 0건). 오류도 로그도 없다 — 함수가 False 를 돌려줄 뿐이다.
+            session.run(
+                """
+                MATCH (:Feature)-[old:HAS_USER_STORY]->(us:UserStory {id: $us_id})
+                DELETE old
+                """,
+                us_id=user_story_id,
+            )
             rec = session.run(
                 """
                 MATCH (us:UserStory {id: $us_id})
                 MATCH (f:Feature {id: $feature_id})
-                OPTIONAL MATCH (us)<-[old:HAS_USER_STORY]-(:Feature)
-                DELETE old
                 MERGE (f)-[r:HAS_USER_STORY]->(us)
                   ON CREATE SET r.createdAt = datetime()
                 SET r.source = $source, r.confidence = $confidence

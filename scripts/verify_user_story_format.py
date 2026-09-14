@@ -145,6 +145,38 @@ def main() -> int:
         )[0]["og_cypher"]
         check("빈 값이 에픽을 안 덮는다", again["e"], "EP-001")
         check("빈 값이 태스크를 안 덮는다", len(again["t"] or []), 3)
+
+        print("\n── Feature 연결 (US 를 에픽 묶음에 붙인다) ────────────")
+        # **다섯 프로젝트 전부 0건이었다.** 오류도 로그도 없었다 —
+        # `OPTIONAL MATCH` + 그 변수의 `DELETE` 가 Ontological 에서 매치가
+        # 없을 때 행을 0개로 만들어, 뒤따르는 MERGE 가 아예 안 돌았다.
+        # 첫 인제스천에서는 US 에 붙은 Feature 가 없으니 **항상** 그 경우다.
+        cli = Neo4jClient()
+        pg.query("SELECT * FROM og_cypher(%s,%s)", (G, "CREATE (:Feature {id:'zzF-1'})"))
+        pg.query("SELECT * FROM og_cypher(%s,%s)", (G, "CREATE (:Feature {id:'zzF-2'})"))
+
+        check("처음 붙이면 True",
+              cli.link_user_story_to_feature("US-FR-001", "zzF-1",
+                                             source="llm", respect_manual=True), True)
+        linked = pg.query(
+            "SELECT * FROM og_cypher(%s,%s)",
+            (G, "MATCH (:Feature)-[r:HAS_USER_STORY]->(:UserStory) RETURN count(r) AS c"),
+        )[0]["og_cypher"]["c"]
+        check("연결이 실제로 생긴다", linked, 1)
+
+        cli.link_user_story_to_feature("US-FR-001", "zzF-2", source="llm", respect_manual=True)
+        after = pg.query(
+            "SELECT * FROM og_cypher(%s,%s)",
+            (G, "MATCH (f:Feature)-[:HAS_USER_STORY]->(:UserStory) RETURN collect(f.id) AS f"),
+        )[0]["og_cypher"]["f"]
+        # US 는 Feature 하나에만 속한다 — 옛 연결이 안 지워지면 둘이 된다.
+        check("옮기면 옛 연결이 지워진다", after, ["zzF-2"])
+
+        pg.query("SELECT * FROM og_cypher(%s,%s)",
+                 (G, "MATCH (:Feature)-[r:HAS_USER_STORY]->(:UserStory) SET r.source='manual'"))
+        check("사람이 붙인 것은 안 덮는다",
+              cli.link_user_story_to_feature("US-FR-001", "zzF-1",
+                                             source="llm", respect_manual=True), False)
     finally:
         _drop()
         print("\n일회용 graph 삭제")
