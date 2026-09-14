@@ -24,6 +24,10 @@ MERGE (us:UserStory {id: r.id})
                 us.sourceUnitId = r.source_unit_id,
                 us.sequence = r.sequence,
                 us.acceptanceCriteria = r.acceptance_criteria,
+                us.epicId = r.epic_id,
+                us.epicName = r.epic_name,
+                us.taskIds = r.task_ids,
+                us.taskNames = r.task_names,
                 us.createdAt = datetime()
   ON MATCH SET us.name = CASE WHEN us.name IS NULL THEN r.name ELSE us.name END,
                us.role = CASE WHEN r.role IS NOT NULL AND r.role <> '' THEN r.role ELSE us.role END,
@@ -41,13 +45,22 @@ MERGE (us:UserStory {id: r.id})
                    WHEN r.acceptance_criteria IS NOT NULL AND size(r.acceptance_criteria) > 0 THEN r.acceptance_criteria
                    ELSE us.acceptanceCriteria
                END,
+               // 구조화 US 문서에서만 찬다. **빈 값으로 덮지 않는다** — 다시
+               // 인제스천할 때 LLM 경로로 들어오면 이 값들이 비어 오는데,
+               // 그때 덮으면 에픽과 태스크가 조용히 사라진다.
+               us.epicId = CASE WHEN r.epic_id IS NOT NULL AND r.epic_id <> '' THEN r.epic_id ELSE us.epicId END,
+               us.epicName = CASE WHEN r.epic_name IS NOT NULL AND r.epic_name <> '' THEN r.epic_name ELSE us.epicName END,
+               us.taskIds = CASE WHEN r.task_ids IS NOT NULL AND size(r.task_ids) > 0 THEN r.task_ids ELSE us.taskIds END,
+               us.taskNames = CASE WHEN r.task_names IS NOT NULL AND size(r.task_names) > 0 THEN r.task_names ELSE us.taskNames END,
                us.updatedAt = datetime()
 RETURN us {.id, .name, .role, .action, .benefit, .priority, .status, .sequence,
            uiDescription: us.uiDescription, displayName: us.displayName,
            sourceScreenName: us.sourceScreenName, sourceUnitId: us.sourceUnitId,
            acceptanceCriteria: us.acceptanceCriteria,
            criteriaUserEdited: coalesce(us.criteriaUserEdited, false),
-           criteriaEditedAt: us.criteriaEditedAt} AS result
+           criteriaEditedAt: us.criteriaEditedAt,
+           epicId: us.epicId, epicName: us.epicName,
+           taskIds: us.taskIds, taskNames: us.taskNames} AS result
 """
 
 
@@ -68,6 +81,12 @@ def _normalize_user_story_row(r: dict[str, Any]) -> dict[str, Any]:
         "priority": r.get("priority") or "medium",
         "status": r.get("status") or "draft",
         "ui_description": r.get("ui_description") or "",
+        # 태스크는 이름/ID 를 **짝지어 두 배열**로 둔다. Ontological 은 노드
+        # 속성에 dict 배열을 못 담는다 — 담으려 하면 조용히 빈 값이 된다.
+        "epic_id": r.get("epic_id") or "",
+        "epic_name": r.get("epic_name") or "",
+        "task_ids": [t.get("id", "") for t in (r.get("tasks") or [])],
+        "task_names": [t.get("name", "") for t in (r.get("tasks") or [])],
         "display_name": r.get("display_name") or "",
         "source_screen_name": r.get("source_screen_name") or "",
         "source_unit_id": r.get("source_unit_id") or "",

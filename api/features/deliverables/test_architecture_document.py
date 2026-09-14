@@ -41,6 +41,9 @@ def test_collect_elements_dedupes_events_seen_twice():
 
 def test_traceability_direct_and_inferred(monkeypatch):
     """직접 IMPLEMENTS 가 있으면 direct, 없으면 상위 Aggregate 매핑을 상속한다."""
+    monkeypatch.setattr(ad, "_fetch_all_user_stories", lambda sid: [
+        {"id": "US-001", "role": "고객", "action": "주문한다"},
+    ])
     monkeypatch.setattr(
         ad,
         "_fetch_direct_links",
@@ -69,11 +72,14 @@ def test_traceability_direct_and_inferred(monkeypatch):
         "inferredElements": 2,
         "unmappedElements": 2,
         "mappedUserStories": 1,
+        "userStories": 1,
+        "storiesWithoutElements": 0,
         "directRatio": round(2 / 6, 4),
     }
 
 
 def test_traceability_all_unmapped_when_no_links(monkeypatch):
+    monkeypatch.setattr(ad, "_fetch_all_user_stories", lambda sid: [])
     monkeypatch.setattr(ad, "_fetch_direct_links", lambda sid: {})
     m = ad._build_traceability_matrix("sid", [_tree()])
 
@@ -81,6 +87,67 @@ def test_traceability_all_unmapped_when_no_links(monkeypatch):
     assert m["inferred"] == []
     assert len(m["unmapped"]) == 6
     assert m["summary"]["directRatio"] == 0.0
+
+
+def test_설계_요소가_없는_스토리도_매트릭스에_남는다(monkeypatch):
+    """**요소 기준으로만 그룹을 만들면 이런 스토리는 통째로 사라진다.**
+
+    비기능 요구(암호화·성능)는 설계 요소로 안 떨어지는 것이 정상인데, 그렇다고
+    추적성 문서에서 없어지면 **요구가 누락된 것과 구별되지 않는다.**
+    """
+    monkeypatch.setattr(ad, "_fetch_all_user_stories", lambda sid: [
+        {"id": "US-FR-001", "displayName": "주문한다", "epicId": "EP-001",
+         "epicName": "주문", "taskIds": ["US-FR-001-TASK-001"],
+         "taskNames": ["주문 등록"]},
+        {"id": "US-NFR-001", "displayName": "개인정보 보호", "epicId": "EP-007",
+         "epicName": "보안", "taskIds": [], "taskNames": []},
+    ])
+    monkeypatch.setattr(ad, "_fetch_direct_links", lambda sid: {
+        "bc-1": [{"id": "US-FR-001", "displayName": "주문한다"}],
+    })
+    m = ad._build_traceability_matrix("sid", [_tree()])
+
+    assert [g["us"]["id"] for g in m["groups"]] == ["US-FR-001", "US-NFR-001"]
+    assert m["storiesWithoutElements"] == ["US-NFR-001"]
+    assert m["summary"]["userStories"] == 2
+    assert m["summary"]["mappedUserStories"] == 1
+
+
+def test_에픽과_태스크가_매트릭스에_실린다(monkeypatch):
+    """포스코 문서는 에픽으로 묶고 스토리를 태스크로 다시 쪼갠다. 두 축이 없으면
+    고객이 자기 문서의 구조를 이 매트릭스에서 못 찾는다."""
+    monkeypatch.setattr(ad, "_fetch_all_user_stories", lambda sid: [])
+    monkeypatch.setattr(ad, "_fetch_direct_links", lambda sid: {
+        "bc-1": [{
+            "id": "US-FR-001", "role": "인사업무담당자", "action": "수립한다",
+            "displayName": "시뮬레이션 기반 인력계획 수립",
+            "epicId": "EP-001", "epicName": "인사 의사결정",
+            "taskIds": ["US-FR-001-TASK-001", "US-FR-001-TASK-002"],
+            "taskNames": ["시나리오 등록", "시뮬레이션 실행"],
+        }],
+    })
+    us = ad._build_traceability_matrix("sid", [_tree()])["groups"][0]["us"]
+
+    # 문서가 준 이름이 이긴다 — 우리가 조립한 "역할: 행위" 로 바꾸면 고객이
+    # 자기 문서에서 못 찾는다.
+    assert us["name"] == "시뮬레이션 기반 인력계획 수립"
+    assert (us["epicId"], us["epicName"]) == ("EP-001", "인사 의사결정")
+    assert us["tasks"] == [
+        {"id": "US-FR-001-TASK-001", "name": "시나리오 등록"},
+        {"id": "US-FR-001-TASK-002", "name": "시뮬레이션 실행"},
+    ]
+
+
+def test_태스크_배열_길이가_어긋나도_안_깨진다(monkeypatch):
+    """id 와 name 을 **따로** 저장한다(Ontological 이 dict 배열을 못 담는다).
+    한쪽이 짧게 저장된 옛 데이터가 있어도 문서 생성이 멈추면 안 된다."""
+    monkeypatch.setattr(ad, "_fetch_all_user_stories", lambda sid: [])
+    monkeypatch.setattr(ad, "_fetch_direct_links", lambda sid: {
+        "bc-1": [{"id": "US-FR-001", "displayName": "이름",
+                  "taskIds": ["T-1", "T-2"], "taskNames": ["하나"]}],
+    })
+    us = ad._build_traceability_matrix("sid", [_tree()])["groups"][0]["us"]
+    assert us["tasks"] == [{"id": "T-1", "name": "하나"}]
 
 
 def _snapshot():

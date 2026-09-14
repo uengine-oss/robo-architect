@@ -57,7 +57,15 @@ def _display(node: dict) -> str:
 
 
 def _us_name(us: dict) -> str:
-    """기준 템플릿의 사용자 스토리 표기(`역할: 행위`)를 맞춘다."""
+    """사용자 스토리 표기.
+
+    기준 템플릿은 `역할: 행위` 로 적는다. 다만 **문서가 이름을 준 경우**
+    (포스코 US 명세의 `시뮬레이션 기반 인력계획 수립`) 그것이 그 조직이 쓰는
+    이름이다 — 우리가 조립한 문장으로 바꾸면 고객이 자기 문서에서 못 찾는다.
+    """
+    display = (us.get("displayName") or "").strip()
+    if display:
+        return display
     role = us.get("role") or "user"
     action = us.get("action") or ""
     return f"{role}: {action}"
@@ -216,13 +224,50 @@ def _fetch_direct_links(session_id: str) -> dict[str, list[dict]]:
     WHERE n:BoundedContext OR n:Aggregate OR n:Command OR n:Event
        OR n:Policy OR n:ReadModel
     RETURN n.id AS element_id, labels(n) AS labels,
-           us {.id, .role, .action} AS us
+           us {.id, .role, .action, .displayName, .epicId, .epicName,
+               .taskIds, .taskNames} AS us
     """
     by_element: dict[str, list[dict]] = {}
     with get_session() as s:
         for rec in s.run(query, sid=session_id):
             by_element.setdefault(rec["element_id"], []).append(dict(rec["us"]))
     return by_element
+
+
+def _us_header(us: dict) -> dict:
+    """매트릭스 그룹의 머리. **에픽과 태스크를 싣는다.**
+
+    포스코 US 문서는 에픽(EP-001)으로 묶고 스토리를 태스크로 다시 쪼갠다.
+    그 두 축이 없으면 고객은 자기 문서의 구조를 이 매트릭스에서 못 찾는다.
+
+    태스크는 그래프에 **id 배열과 name 배열로 따로** 저장돼 있다(Ontological 이
+    노드 속성에 dict 배열을 못 담는다). 여기서 짝지어 되돌린다 — 길이가 어긋나면
+    있는 만큼만 짝짓는다.
+    """
+    ids = us.get("taskIds") or []
+    names = us.get("taskNames") or []
+    return {
+        "id": us.get("id"),
+        "name": _us_name(us),
+        "epicId": us.get("epicId") or None,
+        "epicName": us.get("epicName") or None,
+        "tasks": [
+            {"id": i, "name": n}
+            for i, n in zip(ids, names)
+        ],
+    }
+
+
+def _fetch_all_user_stories(session_id: str) -> list[dict]:
+    """이 세션의 User Story 전부. 설계 연결 유무를 안 본다."""
+    query = """
+    MATCH (us:UserStory {session_id: $sid})
+    RETURN us {.id, .role, .action, .displayName, .epicId, .epicName,
+               .taskIds, .taskNames} AS us
+    ORDER BY us.id
+    """
+    with get_session() as s:
+        return [dict(rec["us"]) for rec in s.run(query, sid=session_id)]
 
 
 def _collect_elements(trees: list[dict]) -> list[dict]:
@@ -378,7 +423,7 @@ def _build_traceability_matrix(session_id: str, trees: list[dict]) -> dict:
         stats["direct"] += 1
         for us in us_list:
             key = us["id"]
-            group = groups.setdefault(key, {"us": {"id": us["id"], "name": _us_name(us)}, "rows": []})
+            group = groups.setdefault(key, {"us": _us_header(us), "rows": []})
             group["rows"].append(
                 {
                     "type": el["type"],
@@ -390,17 +435,37 @@ def _build_traceability_matrix(session_id: str, trees: list[dict]) -> dict:
                 }
             )
 
+    # **설계에 하나도 안 걸린 User Story 를 여기서 되살린다.**
+    #
+    # 위 루프는 *요소* 를 돌면서 그 요소에 붙은 US 로 그룹을 만든다. 그래서
+    # 요소가 하나도 없는 US 는 **그룹 자체가 안 생기고 문서에서 통째로
+    # 사라진다** — 미매핑 목록에도 안 뜬다(그쪽은 요소 기준이다).
+    #
+    # 특히 비기능 US 가 이 구멍에 빠진다. 암호화·성능 같은 품질 요구는 설계
+    # 요소로 안 떨어지는 것이 정상인데, 그렇다고 추적성 문서에서 없어지면
+    # **요구가 누락된 것과 구별되지 않는다.**
+    for us in _fetch_all_user_stories(session_id):
+        groups.setdefault(us["id"], {"us": _us_header(us), "rows": []})
+
+    stories_without_elements = sorted(
+        g["us"]["id"] for g in groups.values() if not g["rows"]
+    )
+
     total = stats["direct"] + stats["inferred"] + stats["unmapped"]
     return {
         "groups": sorted(groups.values(), key=lambda g: g["us"]["id"]),
         "inferred": inferred,
         "unmapped": unmapped,
+        #: 설계 요소가 하나도 없는 User Story. 비기능 요구는 여기 있는 것이 정상이다.
+        "storiesWithoutElements": stories_without_elements,
         "summary": {
             "elements": total,
             "directElements": stats["direct"],
             "inferredElements": stats["inferred"],
             "unmappedElements": stats["unmapped"],
-            "mappedUserStories": len(groups),
+            "mappedUserStories": sum(1 for g in groups.values() if g["rows"]),
+            "userStories": len(groups),
+            "storiesWithoutElements": len(stories_without_elements),
             "directRatio": round(stats["direct"] / total, 4) if total else 0.0,
         },
     }
