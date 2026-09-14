@@ -48,6 +48,12 @@ async function boot(page: any, onStream: (headers: Record<string, string>) => an
     window.addEventListener('robo:data-changed', (e: any) => {
       ;(window as any).__dataChanged.push(e?.detail?.reason)
     })
+    // **초기 스크립트에서 건다.** `goto` 뒤에 걸면 스트림이 먼저 도착해 놓친다
+    // — 실제로 두 검사가 그렇게 비어 있었다.
+    ;(window as any).__remote = []
+    window.addEventListener('robo:remote-changes', (e: any) => {
+      ;(window as any).__remote.push(...(e?.detail?.changes || []))
+    })
   })
   await page.route('**/api/auth/provider', (r: any) => r.fulfill({ json: PROVIDER }))
   await page.route('**/api/auth/me', (r: any) => r.fulfill({ json: ME }))
@@ -109,4 +115,112 @@ test('다른 프로젝트의 알림은 무시한다', async ({ page }) => {
   await page.waitForTimeout(2500)
   const fired = await page.evaluate(() => (window as any).__dataChanged)
   expect(fired).not.toContain('remote-change')
+})
+
+/**
+ * 여기부터는 **요소 단위 반영**이다.
+ *
+ * "뭔가 바뀌었다"만 오면 받는 쪽이 통째로 다시 읽는다 — 그러면 편집 중이던
+ * 화면이 초기화되고 Inspector 의 federated 편집기가 깨진다. 그래서 편집 중에는
+ * 미뤄 뒀는데, 그러면 이번엔 **바로 안 보인다.**
+ *
+ * 서버가 무엇이 바뀌었는지 실어 주면 둘 다 풀린다 — 그 요소만 갈아끼우니
+ * 미룰 이유가 없다.
+ */
+
+function withChanges(changes: unknown) {
+  return sse(
+    'event: hello\ndata: {"graph":"prj_aaa","rev":1,"viewers":[],"locks":[]}\n\n' +
+    'event: changed\ndata: ' +
+    JSON.stringify({ graph: 'prj_aaa', rev: 2, actorUid: 'DEV-ALICE', changes }) +
+    '\n\n',
+  )
+}
+
+async function bootWatching(page: any, body: any) {
+  await boot(page, () => body)
+}
+
+/**
+ * 스트림을 **붙잡았다 놓는다.**
+ *
+ * 열자마자 이벤트가 도착하면 검사가 준비를 마치기 전에 지나간다. 열어 두고,
+ * 준비가 끝난 뒤에 내보낸다 — 실제 순서(창이 떠 있고, 나중에 남이 쓴다)와도
+ * 이쪽이 더 가깝다.
+ */
+async function bootGated(page: any, body: string) {
+  let release: () => void = () => {}
+  const gate = new Promise<void>((r) => { release = r })
+  await boot(page, () => ({
+    status: 200,
+    contentType: 'text/event-stream',
+    body: 'event: hello\ndata: {"graph":"prj_aaa","rev":1,"viewers":[],"locks":[]}\n\n',
+  }))
+  // hello 만 먼저 보낸 스트림은 닫힌다. 두 번째 연결에서 본론을 내보낸다.
+  await page.unroute('**/api/collab/stream')
+  await page.route('**/api/collab/stream', async (r: any) => {
+    await gate
+    r.fulfill({ status: 200, contentType: 'text/event-stream', body })
+  })
+  return release
+}
+
+test('목록이 오면 그 요소만 갈아끼운다 — 통째로 다시 읽지 않는다', async ({ page }) => {
+  await bootWatching(page, withChanges([
+    { action: 'update', targetId: 'n1', targetType: 'Command' },
+  ]))
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__remote?.map((c: any) => c.targetId)),
+      { timeout: 10_000 })
+    .toEqual(['n1'])
+
+  // 통째로 다시 읽는 쪽은 울리면 안 된다 — 울리면 편집 중이던 화면이 초기화된다.
+  const coarse = await page.evaluate(() => (window as any).__dataChanged)
+  expect(coarse, '목록이 있는데도 통째로 다시 읽으면 세분화한 의미가 없다')
+    .not.toContain('remote-change')
+})
+
+test('목록이 없으면 통째로 다시 읽는다', async ({ page }) => {
+  // 목록을 못 싣는 쓰기(그 밖의 42곳)가 여기로 온다. 이쪽을 없애면 그 변경이
+  // **조용히 안 보인다.**
+  await bootWatching(page, withChanges(undefined))
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__dataChanged), { timeout: 10_000 })
+    .toContain('remote-change')
+})
+
+test('빈 목록은 아무 일도 아니다 — 통째로 다시 읽지 않는다', async ({ page }) => {
+  await bootWatching(page, withChanges([]))
+  await page.waitForTimeout(2500)
+
+  const coarse = await page.evaluate(() => (window as any).__dataChanged)
+  const remote = await page.evaluate(() => (window as any).__remote)
+  expect(coarse, '빈 목록을 "모른다"로 읽으면 헛되이 전부 다시 읽는다')
+    .not.toContain('remote-change')
+  expect(remote).toEqual([])
+})
+
+test('내가 열어 둔 요소는 남의 변경으로 안 바뀐다', async ({ page }) => {
+  const release = await bootGated(page,
+    'event: changed\ndata: ' + JSON.stringify({
+      graph: 'prj_aaa', rev: 3, actorUid: 'DEV-ALICE',
+      changes: [
+        { action: 'update', targetId: 'n-open', targetType: 'Command' },
+        { action: 'update', targetId: 'n-other', targetType: 'Event' },
+      ],
+    }) + '\n\n')
+
+  // 남이 쓰기 **전에** "이걸 열어 놨다"고 알린다.
+  await page.evaluate(async () => {
+    const mod = await import('/src/features/collab/collab.store.js')
+    mod.useCollabStore().setEditing('n-open')
+  })
+  release()
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__remote?.map((c: any) => c.targetId)),
+      { timeout: 10_000 })
+    .toEqual(['n-other'])
 })

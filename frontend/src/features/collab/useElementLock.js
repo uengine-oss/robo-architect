@@ -56,6 +56,7 @@ export function useElementLock(elementId, labelOf) {
 
   function drop() {
     if (current) { collab.unlock(current); current = null }
+    collab.setEditing(null)
     held.value = false
   }
 
@@ -65,6 +66,8 @@ export function useElementLock(elementId, labelOf) {
       if (id === current) return
       drop()
       current = id || null
+      // 열고 있는 요소를 스토어에 알린다. 남의 변경이 와도 이것만은 안 건드린다.
+      collab.setEditing(current)
       if (id) take(id)
     },
     { immediate: true },

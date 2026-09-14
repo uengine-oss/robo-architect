@@ -29,6 +29,11 @@ import { onMounted, onUnmounted } from 'vue'
 
 const EVENT = 'robo:data-changed'
 
+// 요소 단위 원격 변경. `robo:data-changed` 와 **일부러 따로 둔다** — 저쪽은
+// "통째로 다시 읽어라"이고 이쪽은 "이것들만 갈아끼워라"다. 하나로 합치면
+// 받는 쪽이 둘을 구별 못 해 결국 통째로 읽는다.
+const REMOTE = 'robo:remote-changes'
+
 // 지금 무언가를 편집 중인 화면의 수. 0 이 되면 미뤄 둔 것을 푼다.
 let holds = 0
 // 미뤄 둔 이유. 여러 번 와도 한 번만 울린다 — 열 번 바뀌었어도 할 일은 한 번이다.
@@ -86,4 +91,31 @@ export function useDataRefresh(refreshFn) {
   }
   onMounted(() => window.addEventListener(EVENT, handler))
   onUnmounted(() => window.removeEventListener(EVENT, handler))
+}
+
+
+/**
+ * 남이 바꾼 **요소 목록**을 알린다. 받는 쪽은 `syncAfterChanges` 로 제자리에
+ * 적용한다 — 자기 창이 자기 저장을 반영할 때 쓰는 바로 그 길이다.
+ *
+ * 편집 중이라고 미루지 않는다. 통째로 다시 읽는 것이 아니라 그 요소만 바꾸는
+ * 것이라, 내가 열어 둔 것만 빼면 화면이 흔들리지 않는다. 빼는 일은 보내는
+ * 쪽(collab.store)이 한다 — 받는 쪽마다 다시 판단하게 두면 한 곳은 빠뜨린다.
+ */
+export function emitRemoteChanges(changes) {
+  if (!Array.isArray(changes) || !changes.length) return
+  window.dispatchEvent(new CustomEvent(REMOTE, { detail: { changes } }))
+}
+
+/** 남이 바꾼 요소 목록을 받는다. `<script setup>` 최상단에서 1회. */
+export function useRemoteChanges(applyFn) {
+  const handler = (e) => {
+    try {
+      applyFn(e?.detail?.changes || [])
+    } catch (err) {
+      console.error('[dataLifecycle] remote apply failed:', err)
+    }
+  }
+  onMounted(() => window.addEventListener(REMOTE, handler))
+  onUnmounted(() => window.removeEventListener(REMOTE, handler))
 }

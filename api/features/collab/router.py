@@ -194,8 +194,20 @@ async def stream(request: Request) -> StreamingResponse:
 
                 current = store.revision(graph)
                 if current["rev"] != last:
+                    # **무엇이 바뀌었는지 실을 수 있으면 싣는다.** 그러면 받는
+                    # 쪽이 그 요소만 제자리에서 갈아끼우고, 통째로 다시 읽지
+                    # 않으므로 편집 중이던 화면이 안 깨진다.
+                    #
+                    # 못 실으면(목록 없는 쓰기가 섞였거나 너무 뒤처졌으면)
+                    # 목록 없이 보낸다 — 받는 쪽이 거친 길로 간다.
+                    # **빈 목록과 "모른다"를 구별해야 한다**: 합치면 빠진 변경이
+                    # 조용히 사라진다.
+                    detail = store.changes_since(graph, last, current["rev"])
                     last = current["rev"]
-                    yield _sse("changed", {"graph": graph, **current})
+                    payload = {"graph": graph, **current}
+                    if detail is not None:
+                        payload["changes"] = detail
+                    yield _sse("changed", payload)
 
                 # 접속자는 바뀔 때만 보낸다 — 매 바퀴 보내면 화면이 깜빡인다.
                 people = store.viewers(graph)

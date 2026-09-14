@@ -8,6 +8,7 @@ import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 import { useCanvasPreviewRequestStore } from '@/features/canvas/canvasPreviewRequest.store'
 import { createLogger, newOpId } from '@/app/logging/logger'
+import { useRemoteChanges } from '@/app/lifecycle/dataLifecycle'
 
 // Custom Nodes
 import CommandNode from './nodes/CommandNode.vue'
@@ -29,6 +30,15 @@ import InspectorPanel from './InspectorPanel.vue'
 import ExportDocumentDialog from '@/features/exportDocument/ui/ExportDocumentDialog.vue'
 
 const canvasStore = useCanvasStore()
+
+// 남이 고친 요소를 **제자리에서** 갈아끼운다.
+//
+// 통째로 다시 읽지 않는다. `syncAfterChanges` 는 내 창이 내 저장을 반영할 때
+// 쓰는 바로 그 길이고, 여기서는 같은 목록을 남의 창에서 받는 것뿐이다 —
+// 새 코드가 아니라 이미 검증된 길에 입구를 하나 더 낸 것이다.
+//
+// 내가 열어 둔 요소는 보내는 쪽(collab.store)이 이미 빼고 준다.
+useRemoteChanges((changes) => canvasStore.syncAfterChanges(changes))
 const isDragOver = ref(false)
 const log = createLogger({ scope: 'CanvasWorkspace' })
 

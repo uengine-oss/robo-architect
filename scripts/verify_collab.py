@@ -65,7 +65,8 @@ def check(label: str, got, want) -> None:
 
 
 def cleanup() -> None:
-    for table in ("app_element_locks", "app_project_presence", "app_project_revisions"):
+    for table in ("app_element_locks", "app_project_presence",
+                  "app_project_changes", "app_project_revisions"):
         try:
             pg.execute(f"DELETE FROM public.{table} WHERE graph = %s", (G,))
         except Exception:
@@ -91,6 +92,34 @@ def main() -> int:
     check("실패한 쓰기에는 안 울린다", notify.should_notify("POST", "/api/graph/x", 403), False)
     check("스트림 자신에는 안 울린다",
           notify.should_notify("POST", "/api/collab/lock", 200), False)
+
+    print("\n── 무엇이 바뀌었는지 실어 보내기 ───────────────────────")
+    # "뭔가 바뀌었다"만 보내면 받는 쪽이 통째로 다시 읽는다 — 그러면 편집 중이던
+    # 화면이 초기화된다. 서버는 이미 `appliedChanges` 로 무엇이 바뀌었는지 안다.
+    base = store.revision(G)["rev"]
+    r1 = store.publish(G, [{"action": "update", "targetId": "n1", "targetType": "Command"}],
+                       actor_uid="U1")
+    check("목록을 실으면 판도 오른다", r1, base + 1)
+    got = store.changes_since(G, base, r1)
+    check("그 판의 목록이 그대로 나온다", (got or [{}])[0].get("targetId"), "n1")
+
+    r2 = store.publish(G, [{"action": "update", "targetId": "n2", "targetType": "Event"}],
+                       actor_uid="U1")
+    check("두 판을 건너뛰면 둘 다 모아 준다",
+          [c["targetId"] for c in (store.changes_since(G, base, r2) or [])], ["n1", "n2"])
+
+    # **이 검사가 이 구간의 핵심이다.** 목록 없는 쓰기가 하나라도 끼면 정밀하게
+    # 못 따라잡는다. 그걸 빈 리스트로 답하면 **그 변경이 조용히 사라진다.**
+    store.bump(G, actor_uid="U1", reason="POST /api/something")
+    r3 = store.publish(G, [{"action": "update", "targetId": "n3", "targetType": "Event"}],
+                       actor_uid="U1")
+    check("목록 없는 판이 끼면 '모른다'(None)를 준다",
+          store.changes_since(G, r2, r3), None)
+    check("'모른다'와 '없다'는 다르다 — 없을 때는 빈 리스트",
+          store.changes_since(G, r3, r3), [])
+
+    check("목록이 비면 아무것도 안 남긴다", store.publish(G, []), None)
+    check("이름이 아닌 값은 목록도 안 남긴다", store.publish("../etc", [{"a": 1}]), None)
 
     print("\n── 접속자 ──────────────────────────────────────────────")
     store.heartbeat(G, "U1", "일번")

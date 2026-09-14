@@ -25,7 +25,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { openSse } from '@/app/sse'
-import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
+import { emitDataChanged, emitRemoteChanges } from '@/app/lifecycle/dataLifecycle'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 
 // 되잇기 간격. 서버가 죽었을 때 초당 한 번씩 두드리지 않도록 늘려 간다.
@@ -34,9 +34,19 @@ const RETRY_MS = [2000, 5000, 10000, 30000]
 export const useCollabStore = defineStore('collab', () => {
   const viewers = ref([])
   const rev = ref(0)
+  /**
+   * 내가 열어 둔 요소를 남이 고쳤다. 값은 그 사람의 사번.
+   *
+   * **조용히 두면 안 된다.** 내 화면은 옛 값을 들고 있고, 저장하면 상대 변경을
+   * 덮는다. 잠금을 잡았으면 여기까지 올 일이 없지만, 읽기로 열었거나 잠금이
+   * 만료된 뒤라면 생긴다.
+   */
+  const conflictOnOpenElement = ref(null)
   const connected = ref(false)
   /** 지금 잡혀 있는 요소들. 서버가 밀어 준다 — 여기서 지어내지 않는다. */
   const locks = ref([])
+  /** 내가 지금 열어 놓고 고치는 요소. 남의 변경이 와도 이것만은 안 건드린다. */
+  const editingElementId = ref(null)
 
   let source = null
   let graph = null
@@ -68,6 +78,26 @@ export const useCollabStore = defineStore('collab', () => {
     // 내가 쓴 것이면 이미 내 화면은 최신이다. 다시 그리면 편집 중이던 상태를
     // 내가 날린다.
     if (payload.actorUid && payload.actorUid === myUid()) return
+
+    // **목록이 있으면 그 요소만 갈아끼운다.** 통째로 다시 읽지 않으므로
+    // 상대가 편집 중이어도 화면이 안 흔들린다.
+    //
+    // `changes` 가 **없는 것**과 **빈 것**은 다르다. 없으면 서버가 모른다는
+    // 뜻이라 거친 길로 가야 하고, 비었으면 정말 바뀐 요소가 없다는 뜻이다.
+    // 합치면 빠진 변경이 조용히 사라진다.
+    if (Array.isArray(payload.changes)) {
+      const open = editingElementId.value
+      const safe = open
+        ? payload.changes.filter((c) => c && c.targetId !== open)
+        : payload.changes
+      emitRemoteChanges(safe)
+      // 내가 열어 둔 것이 바뀌었다면 저장할 때 덮어쓰게 된다 — 알려는 준다.
+      if (open && safe.length !== payload.changes.length) {
+        conflictOnOpenElement.value = payload.actorUid || true
+      }
+      return
+    }
+
     emitDataChanged('remote-change')
   }
 
@@ -170,5 +200,16 @@ export const useCollabStore = defineStore('collab', () => {
     }).catch(() => {})
   }
 
-  return { viewers, rev, connected, locks, heldByOther, lock, unlock, watch, close }
+  /** 지금 고치고 있는 요소를 알린다. `useElementLock` 이 부른다.
+   *  **한 곳에서만 판단한다** — 받는 쪽마다 "이건 내가 열어 둔 건가"를 다시
+   *  재게 두면 한 곳은 빠뜨리고, 빠뜨린 곳에서 남의 변경이 내 편집을 덮는다. */
+  function setEditing(id) {
+    editingElementId.value = id || null
+    if (!id) conflictOnOpenElement.value = null
+  }
+
+  return {
+    viewers, rev, connected, locks, conflictOnOpenElement,
+    heldByOther, lock, unlock, setEditing, watch, close,
+  }
 })

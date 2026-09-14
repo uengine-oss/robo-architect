@@ -72,7 +72,21 @@ CREATE TABLE IF NOT EXISTS public.app_element_locks (
 );
 CREATE INDEX IF NOT EXISTS idx_app_locks_holder
     ON public.app_element_locks (graph, uid);
+
+CREATE TABLE IF NOT EXISTS public.app_project_changes (
+    graph      TEXT NOT NULL,
+    rev        BIGINT NOT NULL,
+    actor_uid  TEXT,
+    changes    JSONB NOT NULL,
+    at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (graph, rev)
+);
 """
+
+# 판마다 변경 목록을 얼마나 남길 것인가. 뒤처진 창이 따라잡을 만큼만 남기고
+# 버린다 — 이것은 이력이 아니라 **따라잡기용 꼬리**다. 더 뒤처진 창은 목록 대신
+# "통째로 다시 읽어라"를 받는다.
+CHANGE_TAIL = 200
 
 # 잠금이 저절로 풀리는 시간. 창을 닫으면 스트림이 끊기고 갱신이 멎는다.
 # **이게 없으면 브라우저를 강제 종료한 사람이 요소를 영영 잠가 놓는다.**
@@ -337,3 +351,77 @@ def locks(graph: str) -> list[dict[str, Any]]:
         }
         for r in rows
     ]
+
+
+# ── 무엇이 바뀌었는가 ────────────────────────────────────────────────────
+#
+# "뭔가 바뀌었다"만 보내면 받는 쪽이 통째로 다시 읽는다. 그러면 편집 중이던
+# 화면이 초기화되고, Inspector 의 federated 편집기가 깨진다(done §49).
+#
+# **그런데 서버는 이미 무엇이 바뀌었는지 알고 있다.** `/api/chat/confirm` 이
+# `appliedChanges` 를 만들어 돌려주고, 화면은 그것을 `syncAfterChanges` 로
+# 제자리에 적용한다 — 자기 창에서는 이미 그렇게 돌고 있었다. 남의 창에도 같은
+# 목록을 주면 같은 길로 반영된다.
+#
+#     자기 창    응답의 appliedChanges  →  syncAfterChanges
+#     남의 창    스트림의 changes       →  syncAfterChanges   ← 여기를 잇는다
+#
+# 목록을 못 주는 쓰기(그 밖의 42곳)는 지금처럼 "판이 올랐다"만 보낸다. 그쪽은
+# 받는 쪽이 통째로 다시 읽는다 — **정밀한 길과 거친 길을 섞어 두는 것이지,
+# 거친 길을 없애는 것이 아니다.**
+
+def publish(graph: Optional[str], changes: list[dict[str, Any]], *,
+            actor_uid: str | None = None) -> Optional[int]:
+    """판을 올리면서 **무엇이 바뀌었는지**를 같이 남긴다.
+
+    `bump` 과 마찬가지로 **절대 던지지 않는다.** 목록을 못 남겨도 판은 올라야
+    하고(그래야 남의 창이 거친 길로라도 갱신된다), 무엇보다 쓰기가 깨지면 안 된다.
+    """
+    if not valid_graph(graph) or not changes:
+        return None
+    rev = bump(graph, actor_uid=actor_uid, reason="changes")
+    if rev is None:
+        return None
+    try:
+        import json as _json
+
+        pg.execute(
+            "INSERT INTO public.app_project_changes (graph, rev, actor_uid, changes) "
+            "VALUES (%s, %s, %s, %s::jsonb) ON CONFLICT (graph, rev) DO NOTHING",
+            (graph, rev, actor_uid, _json.dumps(changes, ensure_ascii=False)),
+        )
+        # 꼬리만 남긴다. 안 지우면 프로젝트마다 무한히 쌓인다.
+        pg.execute(
+            "DELETE FROM public.app_project_changes "
+            " WHERE graph = %s AND rev <= %s - %s",
+            (graph, rev, CHANGE_TAIL),
+        )
+    except Exception:
+        # 판은 이미 올랐다. 받는 쪽은 목록 없이 거친 길로 간다.
+        return rev
+    return rev
+
+
+def changes_since(graph: str, since_rev: int, upto_rev: int) -> Optional[list[dict[str, Any]]]:
+    """`since_rev` 다음부터 `upto_rev` 까지의 변경 목록.
+
+    **`None` 은 "모른다"이지 "없다"가 아니다.** 중간에 목록 없는 판이 하나라도
+    끼면 정밀하게 못 따라잡으므로 `None` 을 준다 — 받는 쪽이 통째로 다시 읽게.
+    이 구분을 빈 리스트와 합치면 **빠진 변경이 조용히 사라진다.**
+    """
+    if not valid_graph(graph) or upto_rev <= since_rev:
+        return []
+    rows = pg.query(
+        "SELECT rev, changes FROM public.app_project_changes "
+        " WHERE graph = %s AND rev > %s AND rev <= %s ORDER BY rev",
+        (graph, since_rev, upto_rev),
+    )
+    # 판 하나마다 목록이 하나씩 있어야 빠짐없이 따라잡은 것이다.
+    if len(rows) != upto_rev - since_rev:
+        return None
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        payload = r["changes"]
+        if isinstance(payload, list):
+            out.extend(payload)
+    return out
