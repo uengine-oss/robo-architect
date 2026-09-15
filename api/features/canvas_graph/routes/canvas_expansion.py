@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from api.features.collab.guard import ensure_not_locked_by_other
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
@@ -242,6 +243,10 @@ async def update_node(node_id: str, request: Request) -> dict[str, Any]:
 
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    # **남이 잡고 있으면 여기서 멈춘다.** 화면은 이미 입력칸을 막지만 그것만으로는
+    # 약속이지 보장이 아니다 — 같은 요소를 API 로 그냥 덮어쓸 수 있었다.
+    ensure_not_locked_by_other(request, [node_id])
 
     with get_session() as session:
         set_clauses = ", ".join(f"n.{k} = ${k}" for k in updates)

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from starlette.requests import Request
 
 from api.features.collab import store as collab
+from api.features.collab.guard import ensure_not_locked_by_other
 from api.features.model_modifier.chat_contracts import ConfirmRequest, ConfirmResponse, DraftChange
 from api.features.model_modifier.model_change_application import apply_confirmed_changes_atomic
 from api.platform.neo4j_context import get_override
@@ -44,6 +45,11 @@ async def confirm_changes(payload: ConfirmRequest, request: Request) -> ConfirmR
             },
         },
     )
+
+    # **남이 잡고 있는 요소가 하나라도 있으면 전부 멈춘다.** 이 경로는
+    # all-or-nothing 이라 일부만 적용하면 사용자는 무엇이 들어가고 무엇이 빠졌는지
+    # 모른다. 막는 것은 적용 **전**이어야 한다.
+    ensure_not_locked_by_other(request, [d.targetId for d in approved])
 
     try:
         applied, errors = apply_confirmed_changes_atomic([d.model_dump() for d in approved])

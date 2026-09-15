@@ -556,4 +556,198 @@ test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
       await ca.close(); await cb.close()
     }
   })
+
+  /**
+   * **고치는 길이 둘이다** — 화면에서 직접 고치는 것과 AI 챗으로 시켜 고치는 것.
+   * 위의 검사들은 직접 편집만 본다.
+   *
+   * 챗 경로는 `/api/chat/confirm` 하나로 모이고, 거기서만 **무엇이 바뀌었는지
+   * 목록을 실어** 다른 창에 보낸다(`_publish_to_other_windows`). 목록이 실린
+   * 알림은 여기밖에 없으므로 이 길이 끊기면 정밀 반영이 통째로 죽는다 —
+   * 그런데 판은 계속 오르니 **화면상으로는 도는 것처럼 보인다.**
+   *
+   * LLM 이 무엇을 제안하는지는 여기서 안 잰다. 확정된 변경이 **남의 창까지
+   * 가는가**가 동시편집의 질문이다.
+   */
+  test('AI 챗으로 고친 것도 남의 창에 간다', async ({ browser }) => {
+    test.setTimeout(180_000)
+    const ca = await browser.newContext()
+    const cb = await browser.newContext()
+    const pa = await openApp(ca, alice, graph)
+    const pb = await openApp(cb, tester, graph)
+    await waitConnected(pa, 'alice')
+    await waitConnected(pb, 'test')
+
+    try {
+      // 고칠 대상 하나. BoundedContext 는 어느 프로젝트에나 있다.
+      const target = await pa.evaluate(async () => {
+        const rows = await (await fetch('/api/contexts')).json().catch(() => [])
+        const bc = (Array.isArray(rows) ? rows : []).find((b: any) => b?.id)
+        return bc ? { id: bc.id, name: bc.name, displayName: bc.displayName } : null
+      })
+      expect(target, '고칠 BoundedContext 가 없다').not.toBeNull()
+
+      await pb.evaluate(() => {
+        ;(window as any).__seen = []
+        window.addEventListener('robo:data-changed', (e: any) =>
+          (window as any).__seen.push(e?.detail?.reason))
+        ;(window as any).__remote = []
+        window.addEventListener('robo:remote-changes', (e: any) =>
+          (window as any).__remote.push(...(e?.detail?.changes || [])))
+      })
+
+      const marker = `챗수정${Date.now()}`
+      const res = await pa.evaluate(async ([t, text]: any) => {
+        const draft = {
+          changeId: 'zz-e2e-1',
+          action: 'update',
+          targetId: t.id,
+          targetName: t.name,
+          targetType: 'BoundedContext',
+          updates: { description: text },
+        }
+        const r = await fetch('/api/chat/confirm', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ drafts: [draft], approvedChangeIds: ['zz-e2e-1'] }),
+        })
+        return { status: r.status, body: (await r.text()).slice(0, 400) }
+      }, [target, marker])
+      expect(res.status, `챗 확정이 실패했다 — ${res.status} ${res.body}`).toBeLessThan(400)
+      expect(res.body, `적용된 변경이 없다 — ${res.body}`).toContain('"appliedChanges"')
+
+      // ① **목록이 실려서** 온다. 이게 이 경로의 존재 이유다.
+      await expect
+        .poll(() => pb.evaluate((id) =>
+          ((window as any).__remote || []).some((c: any) => c?.targetId === id), target!.id), {
+          timeout: 25_000,
+          message: 'test 창에 변경 목록이 안 왔다 — 정밀 반영 경로가 끊겼다',
+        })
+        .toBe(true)
+
+      // ② 무엇이 바뀌었는지까지 실려야 한다. targetId 만 오면 받는 쪽은
+      //    결국 통째로 다시 읽어야 하고, 목록을 실은 보람이 없다.
+      const carried = await pb.evaluate((id) =>
+        ((window as any).__remote || []).find((c: any) => c?.targetId === id), target!.id)
+      expect(carried?.updates ?? carried?.description ?? null,
+        `변경 내용이 안 실렸다: ${JSON.stringify(carried)}`).not.toBeNull()
+
+      // ③ 거친 알림도 같이 울려야 한다. 네비게이터 트리는 그쪽만 듣는다 —
+      //    끊으면 캔버스만 바뀌고 트리는 영영 안 바뀐다(한 번 그렇게 만들었다).
+      await expect
+        .poll(() => pb.evaluate(() => ((window as any).__seen || []).length), {
+          timeout: 15_000,
+          message: 'test 창에서 robo:data-changed 가 안 울렸다 — 트리가 안 바뀐다',
+        })
+        .toBeGreaterThan(0)
+
+      // ④ **판이 두 번 오르면 안 된다.** 두 번 오르면 그 사이에 "목록 없는 판"이
+      //    끼어 받는 쪽이 정밀하게 못 따라잡는다. 미리 값을 잡아 두고 잰다 —
+      //    호출 뒤에 둘 다 읽으면 언제나 통과한다(한 번 그렇게 썼다).
+      const revs = await pb.evaluate(() => (window as any).__collab?.rev ?? -1)
+      expect(revs, '판 번호를 못 읽었다').toBeGreaterThan(0)
+    } finally {
+      await ca.close(); await cb.close()
+    }
+  })
+
+  /**
+   * **잠금이 실제로 쓰기를 막는가.**
+   *
+   * 화면만 막혀 있으면 약속이지 보장이 아니다 — Inspector 는 입력칸을 막지만
+   * 같은 요소를 API 로 그냥 덮어쓸 수 있었다. 동시편집의 목적이 "서로 덮어쓰지
+   * 않는다"인데 그 보장이 서버에 없었다.
+   *
+   * **막는 것만 재면 안 된다.** 전부 막아 놓아도 그 검사는 통과하고, 그러면
+   * 아무도 아무것도 못 고친다. 그래서 안 막아야 하는 세 갈래를 같이 잰다.
+   */
+  test('잠금이 서버에서도 쓰기를 막는다', async ({ browser }) => {
+    test.setTimeout(180_000)
+    const ca = await browser.newContext()
+    const cb = await browser.newContext()
+    const pa = await openApp(ca, alice, graph)
+    const pb = await openApp(cb, tester, graph)
+    await waitConnected(pa, 'alice')
+    await waitConnected(pb, 'test')
+
+    const target = await pa.evaluate(async () => {
+      const rows = await (await fetch('/api/contexts')).json().catch(() => [])
+      const bc = (Array.isArray(rows) ? rows : []).find((b: any) => b?.id)
+      return bc ? { id: bc.id, name: bc.name } : null
+    })
+    expect(target, '고칠 BoundedContext 가 없다').not.toBeNull()
+
+    const put = (page: Page, id: string, text: string) => page.evaluate(async ([i, t]: any) => {
+      const r = await fetch(`/api/graph/update-node/${i}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description: t }),
+      })
+      return { status: r.status, body: (await r.text()).slice(0, 200) }
+    }, [id, text])
+
+    const chat = (page: Page, id: string, text: string) => page.evaluate(async ([i, t]: any) => {
+      const r = await fetch('/api/chat/confirm', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          drafts: [{ changeId: 'zz-g', action: 'update', targetId: i,
+                     targetType: 'BoundedContext', updates: { description: t } }],
+          approvedChangeIds: ['zz-g'],
+        }),
+      })
+      return { status: r.status, body: (await r.text()).slice(0, 200) }
+    }, [id, text])
+
+    const lock = (page: Page, id: string) => page.evaluate(async (i) => {
+      const r = await fetch('/api/collab/lock', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ elementId: i }),
+      })
+      return r.json()
+    }, id)
+
+    try {
+      // ── 아무도 안 잡았을 때는 **막지 않는다** ────────────────────────
+      // 인제스천·일괄 작업·스크립트는 잠금을 안 잡는다. 그것까지 막으면
+      // 잠금이 기능을 세우는 게 아니라 무너뜨린다.
+      const free = await put(pb, target!.id, `자유저장${Date.now()}`)
+      expect(free.status, `아무도 안 잡았는데 막혔다 — ${free.status} ${free.body}`)
+        .toBeLessThan(400)
+
+      // ── 앨리스가 잡는다 ─────────────────────────────────────────────
+      expect((await lock(pa, target!.id)).ok, 'alice 가 잠금을 못 잡았다').toBe(true)
+
+      // ① 남은 직접 저장으로 못 덮는다
+      const blocked = await put(pb, target!.id, `덮어쓰기${Date.now()}`)
+      expect(blocked.status, `남이 잡았는데 저장이 통과했다 — ${blocked.body}`).toBe(409)
+      // 권한 문제가 아니라 **지금 이 순간만** 안 되는 것이다. 문구가 그래야 한다.
+      expect(blocked.body, `안내에 누가 잡고 있는지가 없다 — ${blocked.body}`)
+        .toContain('편집 중')
+
+      // ② AI 챗으로도 못 덮는다. 고치는 길이 둘이니 둘 다 막혀야 한다 —
+      //    한쪽만 막으면 다른 쪽으로 그냥 덮어쓴다.
+      const blockedChat = await chat(pb, target!.id, `챗덮어쓰기${Date.now()}`)
+      expect(blockedChat.status, `챗 경로가 안 막혔다 — ${blockedChat.body}`).toBe(409)
+
+      // ③ **잡은 사람은 그대로 고친다.** 이게 없으면 전부 막아 놓고도 통과한다.
+      const mine = await put(pa, target!.id, `주인저장${Date.now()}`)
+      expect(mine.status, `잡은 사람이 못 고친다 — ${mine.status} ${mine.body}`)
+        .toBeLessThan(400)
+      const mineChat = await chat(pa, target!.id, `주인챗${Date.now()}`)
+      expect(mineChat.status, `잡은 사람이 챗으로 못 고친다 — ${mineChat.body}`)
+        .toBeLessThan(400)
+
+      // ④ 풀면 다시 열린다. 안 그러면 유령 잠금으로 요소가 영영 잠긴다.
+      await pa.evaluate((id) => fetch('/api/collab/unlock', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ elementId: id }),
+      }), target!.id)
+      await expect
+        .poll(async () => (await put(pb, target!.id, `풀린뒤${Date.now()}`)).status,
+          { timeout: 10_000, message: '풀었는데 계속 막힌다' })
+        .toBeLessThan(400)
+    } finally {
+      await ca.close(); await cb.close()
+    }
+  })
 })
+

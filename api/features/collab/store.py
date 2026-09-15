@@ -353,6 +353,36 @@ def locks(graph: str) -> list[dict[str, Any]]:
     ]
 
 
+def blocking_holder(graph: Optional[str], element_id: str, uid: str) -> dict[str, Any] | None:
+    """이 요소를 **남이** 잡고 있으면 그 사람. 아니면 None.
+
+    내 잠금은 막지 않는다. 아무도 안 잡고 있어도 막지 않는다 — 잠금을 안 거치는
+    쓰기(일괄 작업·인제스천)가 있고, 그것까지 막으면 잠금이 기능을 세우는 게
+    아니라 무너뜨린다.
+
+    **만료된 잠금은 없는 것으로 친다.** 브라우저를 강제 종료한 사람의 잠금이
+    남아 아무도 못 고치는 요소가 생기면 안 된다 — `locks()` 와 같은 기준이다.
+    """
+    if not valid_graph(graph) or not element_id or not uid:
+        return None
+    rows = pg.query(
+        """
+        SELECT l.uid,
+               COALESCE(u.value->>'displayName', l.display_name, l.uid) AS who
+          FROM public.app_element_locks l
+          LEFT JOIN public.app_users u ON u.uid = l.uid
+         WHERE l.graph = %s
+           AND l.element_id = %s
+           AND l.uid <> %s
+           AND l.refreshed_at > now() - make_interval(secs => %s)
+        """,
+        (graph, element_id, uid, LOCK_TTL_SECONDS),
+    )
+    if not rows:
+        return None
+    return {"uid": rows[0]["uid"], "displayName": rows[0]["who"]}
+
+
 # ── 무엇이 바뀌었는가 ────────────────────────────────────────────────────
 #
 # "뭔가 바뀌었다"만 보내면 받는 쪽이 통째로 다시 읽는다. 그러면 편집 중이던
