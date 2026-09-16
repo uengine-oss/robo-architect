@@ -711,6 +711,26 @@ test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
       return { status: r.status, body: (await r.text()).slice(0, 200) }
     }, [id, text])
 
+    /**
+     * 챗 **초안** 경로. 여기서 고른 요소가 그대로 프롬프트에 실린다.
+     *
+     * `/confirm` 만 막으면 남이 잡은 요소로 초안을 다 만든 뒤 마지막에
+     * 튕긴다 — 사람은 LLM 을 한 번 돌리고 나서야 못 쓴다는 걸 안다.
+     * **고를 때 막아야 한다.**
+     */
+    const chatDraft = (page: Page, id: string) => page.evaluate(async (i) => {
+      const r = await fetch('/api/chat/modify', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          prompt: '설명을 한 줄로 줄여줘',
+          selectedNodes: [{ id: i, type: 'BoundedContext', name: 'zz' }],
+          conversationHistory: [],
+        }),
+      })
+      // 본문은 스트림이라 안 읽는다 — 막혔는지는 헤더에서 이미 갈린다.
+      return { status: r.status, body: r.ok ? '' : (await r.text()).slice(0, 200) }
+    }, id)
+
     const lock = (page: Page, id: string) => page.evaluate(async (i) => {
       const r = await fetch('/api/collab/lock', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -742,12 +762,20 @@ test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
       const blockedChat = await chat(pb, target!.id, `챗덮어쓰기${Date.now()}`)
       expect(blockedChat.status, `챗 경로가 안 막혔다 — ${blockedChat.body}`).toBe(409)
 
+      // ②-2 초안도 막힌다. 다 만들어 놓고 마지막에 튕기면 늦다.
+      const blockedDraft = await chatDraft(pb, target!.id)
+      expect(blockedDraft.status, `챗 초안이 안 막혔다 — ${blockedDraft.status} ${blockedDraft.body}`)
+        .toBe(409)
+
       // ③ **잡은 사람은 그대로 고친다.** 이게 없으면 전부 막아 놓고도 통과한다.
       const mine = await put(pa, target!.id, `주인저장${Date.now()}`)
       expect(mine.status, `잡은 사람이 못 고친다 — ${mine.status} ${mine.body}`)
         .toBeLessThan(400)
       const mineChat = await chat(pa, target!.id, `주인챗${Date.now()}`)
       expect(mineChat.status, `잡은 사람이 챗으로 못 고친다 — ${mineChat.body}`)
+        .toBeLessThan(400)
+      const mineDraft = await chatDraft(pa, target!.id)
+      expect(mineDraft.status, `잡은 사람이 초안을 못 만든다 — ${mineDraft.body}`)
         .toBeLessThan(400)
 
       // ④ 풀면 다시 열린다. 안 그러면 유령 잠금으로 요소가 영영 잠긴다.
