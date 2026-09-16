@@ -23,7 +23,8 @@ import { pickFreePort } from "./ports";
 import { getSecret, setSecret } from "./secret-store";
 
 const MANIFEST_NAME = "runtime-manifest.json";
-const STATE_SCHEMA_VERSION = 1;
+// 2: pdf2bpmn 포트가 늘어 포트가 넷에서 다섯이 됐다. 옛 상태는 버리고 다시 뽑는다.
+const STATE_SCHEMA_VERSION = 2;
 const MANIFEST_SCHEMA_VERSION = 3;
 const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
 const NEO4J_PASSWORD_SECRET_ID = "runtime.docker.neo4j.password";
@@ -43,6 +44,7 @@ export interface RuntimeManifest {
     fabric: string;
     parser: string;
     gateway: string;
+    pdf2bpmn: string;
   };
   imageIds: Record<keyof RuntimeManifest["images"], string>;
   architect: {
@@ -51,7 +53,7 @@ export interface RuntimeManifest {
     entrypoint: string;
   };
   environment: Record<
-    "analyzer" | "catalog" | "fabric" | "parser" | "gateway" | "architect",
+    "analyzer" | "catalog" | "fabric" | "parser" | "gateway" | "pdf2bpmn" | "architect",
     { file: string; sha256: string }
   >;
   source: Record<string, string>;
@@ -62,6 +64,8 @@ export interface DockerStackPorts {
   analyzer: number;
   gateway: number;
   architect: number;
+  /** 문서→BPMN 을 뽑는 자체 호스팅 서비스. 루프백에만 연다. */
+  pdf2bpmn: number;
 }
 
 interface PersistedDockerState {
@@ -143,6 +147,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     "fabric",
     "parser",
     "gateway",
+    "pdf2bpmn",
   ]) {
     if (!manifest.images?.[required as keyof RuntimeManifest["images"]]) {
       throw new Error(`runtime.manifest_invalid: missing image ${required}`);
@@ -174,7 +179,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
   if (!/^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/.test(manifest.architect.entrypoint)) {
     throw new Error("runtime.manifest_invalid: architect.entrypoint");
   }
-  for (const required of ["analyzer", "catalog", "fabric", "parser", "gateway", "architect"]) {
+  for (const required of ["analyzer", "catalog", "fabric", "parser", "gateway", "pdf2bpmn", "architect"]) {
     const snapshot = manifest.environment?.[required as keyof RuntimeManifest["environment"]];
     if (!snapshot || !/^[a-f0-9]{64}$/.test(snapshot.sha256 ?? "")) {
       throw new Error(`runtime.manifest_invalid: environment.${required}.sha256`);
@@ -340,7 +345,7 @@ function loadPersistedState(releaseId: string): PersistedDockerState | null {
       return null;
     }
     const ports = Object.values(parsed.ports);
-    if (ports.length !== 4 || ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535)) {
+    if (ports.length !== 5 || ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535)) {
       return null;
     }
     return parsed;
@@ -358,6 +363,7 @@ async function createState(releaseId: string): Promise<PersistedDockerState> {
       analyzer: await pickFreePort(),
       gateway: await pickFreePort(),
       architect: await pickFreePort(),
+      pdf2bpmn: await pickFreePort(),
     },
   };
   const file = statePath();
@@ -384,11 +390,13 @@ function composeEnvironment(
     ROBO_IMAGE_FABRIC: manifest.images.fabric,
     ROBO_IMAGE_PARSER: manifest.images.parser,
     ROBO_IMAGE_GATEWAY: manifest.images.gateway,
+    ROBO_IMAGE_PDF2BPMN: manifest.images.pdf2bpmn,
     ROBO_NEO4J_PASSWORD: password,
     ROBO_NEO4J_PORT: String(state.ports.neo4j),
     ROBO_ANALYZER_PORT: String(state.ports.analyzer),
     ROBO_GATEWAY_PORT: String(state.ports.gateway),
     ROBO_ARCHITECT_API_PORT: String(state.ports.architect),
+    ROBO_PDF2BPMN_PORT: String(state.ports.pdf2bpmn),
   };
 }
 
@@ -420,6 +428,12 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
 
   const hostNeo4jUri = `bolt://127.0.0.1:${state.ports.neo4j}`;
   process.env.ROBO_GATEWAY_URL = `http://127.0.0.1:${state.ports.gateway}`;
+  // 문서→BPMN 은 **안에서 돈다.** 이 줄이 없으면 Architect 는 번들 `.env` 의
+  // 값(= 바깥 SaaS)이나 빈 값을 쓰고, 사내망에서는 그 호출이 막힌다. 막히면
+  // 폴백으로 내려가는데 **그게 눈에 안 띈다** — 화면에는 그대로 BPM 이 나온다.
+  // (폴백 품질이 실제로 얼마나 나쁜지는 아직 안 쟀다.)
+  // `load_dotenv()` 는 기본이 override=False 라 여기서 준 값이 번들 .env 를 이긴다.
+  process.env.PDF2BPMN_FACADE_URL = `http://127.0.0.1:${state.ports.pdf2bpmn}`;
   process.env.ROBO_CLUSTER_MCP_URL = `http://127.0.0.1:${state.ports.analyzer}/robo/mcp/`;
   process.env.ROBO_NEO4J_URI = hostNeo4jUri;
   process.env.ROBO_NEO4J_USER = "neo4j";

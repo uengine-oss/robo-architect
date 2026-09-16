@@ -2,6 +2,7 @@ import { test, expect, request as pwRequest, type Page } from '@playwright/test'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { execFileSync } from 'child_process'
+import { mkdirSync, writeFileSync } from 'fs'
 
 /**
  * **화면에서 문서를 넣어 BPM 이 나오는가 — 그리고 그게 우리 컨테이너가 낸 것인가.**
@@ -188,6 +189,31 @@ test.describe('문서 업로드 → BPM (자체 호스팅 pdf2bpmn)', () => {
     expect(after,
       `자체 호스팅 컨테이너(${CONTAINER})에 요청이 안 들어왔다 — 바깥 서비스나 native 로 갔다`)
       .toBeGreaterThan(before)
+
+    // 그래프에 실제로 뭐가 들어갔나 — 인제스천 교체 고지가 그걸 세어 준다.
+    const countsCtx = await pwRequest.newContext()
+    const graphCounts = await countsCtx
+      .get(`${API}/api/ingest/replacement-preview`, {
+        headers: { Authorization: `Bearer ${who.token}`, 'X-Project-Graph': graph },
+      })
+      .then((r) => (r.ok() ? r.json() : {}))
+      .then((b) => b?.counts ?? {})
+      .catch(() => ({}))
+    await countsCtx.dispose()
+    expect(graphCounts.BpmTask ?? 0, '그래프에 BpmTask 가 안 들어갔다').toBeGreaterThan(0)
+
+    // **잰 값을 파일로 남긴다.** 콘솔은 훅에 먹혀 사라진 적이 있고, 컨테이너
+    // 로그는 재시작에 날아간다. 증거가 남아야 다음 사람이 다시 안 잰다.
+    mkdirSync('test-results', { recursive: true })
+    writeFileSync('test-results/pdf2bpmn-ui-pass.json', JSON.stringify({
+      graph, facadeHitsBefore: before, facadeHitsAfter: after,
+      taskCount: names.length, taskNames: names,
+      // **그래프에서 센다.** 스냅샷 XML 에는 gateway 요소가 안 실린다 —
+      // 거기서 세면 facade 든 폴백이든 늘 0 이 나와 아무것도 못 가른다.
+      // 한 번 그걸로 facade 와 폴백을 비교했다가 헛것을 봤다.
+      gatewayCount: graphCounts.BpmGateway ?? 0,
+      graphCounts,
+    }, null, 2))
 
     // 캔버스에도 그려지는가 — 사람이 보는 마지막 자리.
     //

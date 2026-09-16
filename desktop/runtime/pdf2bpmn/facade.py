@@ -17,6 +17,14 @@ def _get_executor():
         _executor = PDF2BPMNAgentExecutor()
     return _executor
 
+# 추출기는 OpenAI 클라이언트를 **`LLM_BASE_URL` 로만** 돌린다. 사내망 구성은
+# 보통 `OPENAI_BASE_URL` 쪽을 채우는데, 그것만 있으면 클라이언트가 그대로
+# api.openai.com 으로 나가려다 막힌다 — 그러면 Architect 가 폴백으로 내려가고
+# **화면에는 그대로 BPM 이 나와서** 이 컨테이너가 놀고 있다는 걸 아무도 모른다.
+# 하나만 채워도 돌게 여기서 잇는다. 둘 다 있으면 LLM_BASE_URL 이 이긴다.
+if not os.getenv("LLM_BASE_URL", "").strip() and os.getenv("OPENAI_BASE_URL", "").strip():
+    os.environ["LLM_BASE_URL"] = os.environ["OPENAI_BASE_URL"].strip()
+
 UP = os.getenv("UPSTREAM_API", "http://pdf2bpmn-api:8000").rstrip("/")
 API_KEY = os.getenv("FACADE_API_KEY", "").strip()
 app = FastAPI(title="pdf2bpmn-facade")
