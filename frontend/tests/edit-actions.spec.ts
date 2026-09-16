@@ -100,6 +100,36 @@ async function readBack(id: string): Promise<any> {
   } finally { await ctx.dispose() }
 }
 
+/**
+ * 고친 값을 제자리로 돌려놓는다.
+ *
+ * 화면을 거쳐 되돌리면 또 dirty 판정을 타야 해서 실패할 수 있다. 되돌리기는
+ * **반드시 되는 길**이어야 하므로 API 로 직접 쓴다. 어느 칸이었는지는 화면이
+ * 알려 주지 않으므로, 실제로 바뀐 필드를 원래 값과 대조해 찾는다.
+ */
+async function restore(id: string, original: string): Promise<boolean> {
+  const ctx = await pwRequest.newContext()
+  try {
+    for (const field of ['description', 'action', 'name', 'displayName']) {
+      const r = await ctx.put(`${API}/api/graph/update-node/${encodeURIComponent(id)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Project-Graph': graph,
+          'content-type': 'application/json',
+        },
+        data: { [field]: original },
+      })
+      if (r.ok()) {
+        const back = JSON.stringify(await readBack(id) || {})
+        if (back.includes(original.slice(-24))) return true
+      }
+    }
+    return false
+  } catch {
+    return false
+  } finally { await ctx.dispose() }
+}
+
 test('요소를 열어 고치고 저장하면 그래프에 들어간다', async ({ browser }) => {
   test.setTimeout(240_000)
   const page = await openApp(browser)
@@ -173,9 +203,24 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
 
     const after = await readBack(openId)
     const saved = JSON.stringify(after || {}).includes(marker)
+
+    // **더럽힌 것은 되돌린다.**
+    //
+    // 이 검사는 `zz_` 일회용 graph 가 아니라 **실제 프로젝트**를 연다 —
+    // 화면을 거쳐야 하는 검사라 일회용 graph 로는 못 한다. 그 대신 고친 값을
+    // 반드시 제자리로 돌려놓는다. 안 그러면 검사를 돌릴 때마다 남의 설계 문서에
+    // "수정확인1789..." 가 한 줄씩 쌓인다(실제로 그랬다).
+    //
+    // 화면으로 되돌리면 또 dirty 판정을 타야 해서 실패할 수 있다. 되돌리기는
+    // **반드시 되는 길**이어야 하므로 API 로 직접 쓴다.
+    const restored = await restore(openId, originalValue)
+
     rows.push({
       label, type, button: btns[liveIdx].title, saved,
-      note: saved ? '' : `저장은 눌렀는데 그래프에 없다 (원래값 끝: ${originalValue.slice(-16)})`,
+      note: [
+        saved ? '' : `저장은 눌렀는데 그래프에 없다 (원래값 끝: ${originalValue.slice(-16)})`,
+        restored ? '' : '**되돌리기 실패 — 이 요소에 검사 흔적이 남았다**',
+      ].filter(Boolean).join(' · '),
     })
   }
 
@@ -191,4 +236,11 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
   const broken = rows.filter((r) => !r.saved)
   expect(broken, `직접 편집이 안 되는 종류: ${broken.map((b) => `${b.type}(${b.note})`).join(' · ')}`)
     .toEqual([])
+
+  // **실 데이터를 더럽힌 채로 통과하면 안 된다.** 되돌리기가 실패한 것이
+  // 있으면 그 자리에 검사 흔적이 남았다는 뜻이고, 다음 사람이 그걸 설계 내용으로
+  // 읽는다.
+  const dirty = rows.filter((r) => r.note.includes('되돌리기 실패'))
+  expect(dirty.map((d) => `${d.type}/${d.label.slice(0, 20)}`),
+    '검사가 실제 프로젝트에 흔적을 남겼다').toEqual([])
 })

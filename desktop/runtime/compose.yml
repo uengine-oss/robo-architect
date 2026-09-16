@@ -205,6 +205,62 @@ services:
       retries: 24
       start_period: 15s
 
+  # pdf2bpmn — **문서에서 BPMN 을 뽑는 서비스. 사내망에서는 바깥을 못 부른다.**
+  #
+  # 지금까지 이 호출은 `https://pdf2bpmn.process-gpt.io` 로 나갔다. 사내망에서는
+  # 막히고, 막히면 Architect 는 native 추출기로 떨어지는데 **그쪽은 빈 결과를
+  # 낸다**(실측: process 0 · task 0). 그래서 같이 말아 넣는다.
+  #
+  # ## 왜 컨테이너 하나인가
+  #
+  # Architect 가 실제로 쓰는 경로는 `POST /api/consulting-bpmn` 하나뿐이고,
+  # 그 경로는 **Neo4j·Supabase·Memento·업스트림 API 를 하나도 안 탄다** — 순수
+  # LLM 계산이다. 업로드·잡·폴링 흐름은 클라이언트에 메서드만 있고 안 쓴다.
+  #
+  # ## facade.py 는 이미지 밖에 둔다
+  #
+  # 이미지(2.06GB)를 다시 굽지 않고 고칠 수 있다. k8s 쪽은 같은 코드를
+  # ConfigMap 으로 넣는데, 여기서는 파일 하나를 마운트한다.
+  #
+  # ## `entrypoint` 로 덮어야 한다
+  #
+  # 이미지의 `entrypoint.sh` 는 자기 스택(run.py api + a2a_server)을 띄운다.
+  # `command:` 만 주면 그게 그대로 돌고 **우리 앱은 안 뜬다** — 컨테이너는
+  # running 인데 포트가 닫혀 있고 오류도 안 난다. k8s 의 `command:` 는
+  # ENTRYPOINT 를 덮지만 compose 의 `command:` 는 CMD 만 덮는다.
+  pdf2bpmn:
+    image: ${ROBO_IMAGE_PDF2BPMN}
+    platform: linux/amd64
+    env_file:
+      - ./config/pdf2bpmn.env
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: pdf2bpmn
+    entrypoint: ["sh", "-c", "cd /app && PYTHONPATH=/app:/facade exec uvicorn facade:app --host 0.0.0.0 --port 8080"]
+    volumes:
+      - ./pdf2bpmn/facade.py:/facade/facade.py:ro
+    environment:
+      PYTHONIOENCODING: utf-8
+    ports:
+      # **루프백에만 연다.** 0.0.0.0 이면 같은 망의 아무나 이 LLM 을 쓴다.
+      - "127.0.0.1:${ROBO_PDF2BPMN_PORT}:8080"
+    healthcheck:
+      # `/healthz` 는 인증 없이 열려 있다(facade.py 의 미들웨어가 예외로 둔다).
+      # **떴다는 것만 말해 준다** — 실제로 BPMN 이 나오는지는 별도로 잰다
+      # (`scripts/verify_pdf2bpmn_selfhosted.py`).
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
 volumes:
   neo4j_data:
   neo4j_logs:

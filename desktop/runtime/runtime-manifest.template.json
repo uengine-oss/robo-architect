@@ -11,7 +11,8 @@
     "catalog": "uengine/robo-data-catalog:RELEASE_ID",
     "fabric": "uengine/robo-data-fabric:RELEASE_ID",
     "parser": "uengine/robo-antlr-parser:RELEASE_ID",
-    "gateway": "uengine/robo-api-gateway:RELEASE_ID"
+    "gateway": "uengine/robo-api-gateway:RELEASE_ID",
+    "pdf2bpmn": "ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77"
   },
   "imageIds": {
     "neo4j": "sha256:IMAGE_ID_NEO4J",
@@ -20,7 +21,8 @@
     "catalog": "sha256:IMAGE_ID_CATALOG",
     "fabric": "sha256:IMAGE_ID_FABRIC",
     "parser": "sha256:IMAGE_ID_PARSER",
-    "gateway": "sha256:IMAGE_ID_GATEWAY"
+    "gateway": "sha256:IMAGE_ID_GATEWAY",
+    "pdf2bpmn": "sha256:IMAGE_ID_PDF2BPMN"
   },
   "architect": {
     "python": "architect/python/python.exe",
@@ -47,6 +49,10 @@
     "gateway": {
       "file": "config/gateway.env",
       "sha256": "ENV_SHA256_GATEWAY"
+    },
+    "pdf2bpmn": {
+      "file": "config/pdf2bpmn.env",
+      "sha256": "ENV_SHA256_PDF2BPMN"
     },
     "architect": {
       "file": "architect/app/.env",

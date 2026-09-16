@@ -1,0 +1,77 @@
+# pdf2bpmn 자체 호스팅 — **사내망에서 문서 업로드가 돌게 한다.**
+#
+# 지금까지 문서 업로드는 `https://pdf2bpmn.process-gpt.io` 를 지났다. 사내망에서는
+# 그 호출이 막힌다. 설정으로 주소만 바꾸는 문제가 아니라 그 서비스를 안에 올리는
+# 일이다 — 그런데 **생각보다 가볍다.**
+#
+# ## 왜 컨테이너 하나인가
+#
+# robo 가 실제로 쓰는 경로는 하나뿐이다:
+#
+#     _run_via_facade → POST /api/consulting-bpmn → 순수 LLM 계산
+#
+# 업로드·잡·폴링 흐름은 클라이언트에 메서드만 있고 안 쓴다. 그 경로는
+# **Neo4j·Supabase·Memento·업스트림 API 를 하나도 안 탄다.** 그래서 추출기
+# 이미지 위에 `facade.py` 만 얹으면 끝난다.
+#
+# ## LLM 은 P-GPT 로 간다
+#
+#     pdf2bpmn_agent_executor.py:290   openai_base_url = os.getenv("LLM_BASE_URL")
+#                               :341   client_kwargs["base_url"] = openai_base_url
+#
+# `LLM_BASE_URL` 이 있으면 OpenAI 클라이언트가 그쪽으로 간다. 사내망에서는
+# P-GPT 를 준다. 값이 없으면 api.openai.com 으로 나가므로 **사내망에서는 반드시
+# 채운다** — 안 채우면 조용히 바깥으로 나가려다 실패한다.
+#
+# ## 이미지 반입
+#
+# `ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77` (2.06GB, amd64).
+# 사내망에는 인터넷이 없으므로 **밖에서 받아 tar 로 옮긴다**:
+#
+#     docker pull --platform linux/amd64 ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77
+#     docker save <이미지> -o pdf2bpmn-extractor-8156f77.tar
+#     (사내에서) docker load -i pdf2bpmn-extractor-8156f77.tar
+#
+# ## robo 쪽 설정
+#
+#     PDF2BPMN_FACADE_URL=http://127.0.0.1:8610
+#     PDF2BPMN_FACADE_KEY=<compose 의 FACADE_API_KEY 와 같은 값. 안 쓰면 둘 다 비운다>
+
+services:
+  pdf2bpmn-facade:
+    image: ${PDF2BPMN_IMAGE:-ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77}
+    platform: linux/amd64
+    container_name: pdf2bpmn-facade
+    restart: unless-stopped
+    # `facade.py` 는 이미지 밖에 있다 — 마운트해서 얹는다. 이미지를 다시 굽지
+    # 않으므로 facade 를 고칠 때 이미지 반입을 다시 하지 않아도 된다.
+    #
+    # **`entrypoint` 로 덮어야 한다.** k8s 의 `command:` 는 ENTRYPOINT 를 덮지만
+    # compose 의 `command:` 는 CMD 만 덮는다. `command:` 만 주면 이미지의
+    # `entrypoint.sh` 가 자기 스택(run.py api + a2a_server.py)을 띄우고 우리
+    # uvicorn 은 **안 뜬다** — 컨테이너는 running 인데 8080 이 닫혀 있다.
+    # k8s yaml 을 compose 로 옮길 때 그대로 베끼면 여기서 걸린다.
+    entrypoint: ["sh", "-c", "cd /app && PYTHONPATH=/app:/facade exec uvicorn facade:app --host 0.0.0.0 --port 8080"]
+    volumes:
+      # **한 벌만 둔다.** 납품 런타임이 싣는 그 파일을 개발에서도 그대로 쓴다 —
+      # 두 벌이면 한쪽만 고치고 다른 쪽에서 재게 된다.
+      - ../../desktop/runtime/pdf2bpmn/facade.py:/facade/facade.py:ro
+    environment:
+      # 사내망에서는 P-GPT. 비우면 api.openai.com 으로 나간다.
+      LLM_BASE_URL: ${PGPT_BASE_URL:-}
+      OPENAI_API_KEY: ${PGPT_API_KEY:-${OPENAI_API_KEY:-}}
+      LLM_MODEL: ${PGPT_CHAT_MODEL:-gpt-4o}
+      OPENAI_MODEL: ${PGPT_CHAT_MODEL:-gpt-4o}
+      # 공유 비밀. 비우면 인증 없이 연다(127.0.0.1 바인딩이라 기본은 그걸로 충분).
+      FACADE_API_KEY: ${PDF2BPMN_FACADE_KEY:-}
+      PYTHONIOENCODING: utf-8
+    ports:
+      # **루프백에만 연다.** 0.0.0.0 으로 열면 같은 망의 아무나 LLM 을 쓴다.
+      - "127.0.0.1:${PDF2BPMN_FACADE_PORT:-8610}:8080"
+    healthcheck:
+      # `/healthz` 는 인증 없이 열려 있다(facade.py 의 미들웨어가 예외로 둔다).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
