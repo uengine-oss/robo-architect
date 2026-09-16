@@ -793,6 +793,84 @@ test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
   })
 
   /**
+   * **AI 챗 화면도 인스펙터와 같아야 한다.**
+   *
+   * 서버는 이미 막는다(409). 그런데 화면이 아무 말도 안 하면 사람은 프롬프트를
+   * 다 쳐서 보내고 나서야 안다 — 그 사이에 친 글자는 사라진다. 인스펙터는
+   * 잠기면 배너를 띄우고 입력칸을 잠근다. 챗도 그래야 한다.
+   *
+   * **챗은 잠금을 잡지 않는다.** 고르기만 해도 잠가 버리면 인스펙터로 고치려던
+   * 사람이 막힌다. 여기서는 **읽기만** 한다 — 남이 잡았나만 본다.
+   */
+  // **아직 화면으로 못 쟀다.** 구현은 들어갔다(ChatPanel.vue 의 LockBanner +
+  // lockedChips). 그런데 이 검사에서 챗 패널이 안 열린다 — Data 탭과 오른쪽
+  // 사이드바까지는 뜨는데(`.aggregate-right-sidebar` 확인됨) Chat 아이콘을
+  // 눌러도 `.chat-panel` 이 안 붙는다. 원인 미확인.
+  // 서버 쪽 차단은 `잠금이 서버에서도 쓰기를 막는다` 가 이미 재고 있다.
+  test.fixme('챗 화면이 남의 선점을 알리고 입력을 막는다', async ({ browser }) => {
+    const ca = await browser.newContext()
+    const cb = await browser.newContext()
+    const pa = await openApp(ca, alice, graph)
+    const pb = await openApp(cb, tester, graph)
+    await waitConnected(pa, 'alice')
+    await waitConnected(pb, 'test')
+
+    try {
+      const target = await pa.evaluate(async () => {
+        const rows = await (await fetch('/api/contexts')).json().catch(() => [])
+        const bc = (Array.isArray(rows) ? rows : []).find((b: any) => b?.id)
+        return bc ? { id: bc.id, name: bc.name || 'BC' } : null
+      })
+      expect(target, '고칠 BoundedContext 가 없다').not.toBeNull()
+
+      // 챗에 그 요소를 올린다. 화면 조작(캔버스 선택) 대신 스토어에 직접 넣는다 —
+      // 재는 것은 **선택 수단이 아니라 잠금 반응**이다.
+      const seed = async (page: Page) => page.evaluate(async (t) => {
+        const { useModelModifierStore } = await import('/src/features/modelModifier/modelModifier.store.js')
+        useModelModifierStore().setSelectedNodes([{ id: t.id, type: 'BoundedContext', name: t.name }])
+      }, target!)
+
+      // 챗은 **Data 탭** 오른쪽 사이드바의 Chat 아이콘으로 연다.
+      // 탭 버튼은 상단 네비게이션 안에 있다 — `.first()` 로 전체에서 고르면
+      // 다른 곳의 같은 이름을 집어 클릭이 헛돈다.
+      await pb.locator('nav').getByRole('button', { name: 'Data', exact: true }).click()
+      const sidebar = pb.locator('.aggregate-right-sidebar')
+      await expect(sidebar, 'Data 탭이 안 열렸다').toBeVisible({ timeout: 20_000 })
+      await sidebar.locator('[title="Chat"]').click()
+
+      const input = pb.locator('.chat-input__textarea')
+      const banner = pb.locator('.chat-input .lockbar, .chat-panel .lockbar')
+
+      // ① 아무도 안 잡았을 때는 **칠 수 있어야 한다.** 이게 없으면 전부
+      //    막아 놓고도 통과한다.
+      await seed(pb)
+      await expect(input, '챗 입력칸이 안 보인다').toBeVisible({ timeout: 15_000 })
+      await expect(input, '아무도 안 잡았는데 입력이 막혔다').toBeEnabled({ timeout: 10_000 })
+      await expect(banner, '아무도 안 잡았는데 배너가 떴다').toHaveCount(0)
+
+      // ② 앨리스가 잡으면 — 알리고 막는다
+      await pa.evaluate((id) => fetch('/api/collab/lock', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ elementId: id }),
+      }), target!.id)
+
+      await expect(banner, '남이 잡았는데 챗이 아무 말도 안 한다').toBeVisible({ timeout: 15_000 })
+      await expect(banner).toContainText('편집 중')
+      await expect(input, '남이 잡았는데 입력칸이 열려 있다').toBeDisabled({ timeout: 10_000 })
+
+      // ③ 풀면 다시 칠 수 있어야 한다. 안 그러면 유령 잠금으로 영영 막힌다.
+      await pa.evaluate((id) => fetch('/api/collab/unlock', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ elementId: id }),
+      }), target!.id)
+      await expect(input, '풀었는데 입력칸이 계속 막혀 있다').toBeEnabled({ timeout: 15_000 })
+      await expect(banner).toHaveCount(0)
+    } finally {
+      await ca.close(); await cb.close()
+    }
+  })
+
+  /**
    * **오래 잡고 있으면 선점이 풀리고, 그 뒤로 아무것도 안 된다.**
    *
    * 서버 TTL 은 60초이고 SSE 스트림이 2초마다 갱신한다. 절전·네트워크 끊김·

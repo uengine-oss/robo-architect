@@ -63,14 +63,26 @@ export function useElementLock(elementId, labelOf) {
 
   // 다시 집는 요청이 겹치지 않게. 스트림이 2초마다 도는데 그때마다 새로 집으면
   // 답이 오기 전에 또 보낸다.
+  //
+  // **그런데 이 빗장은 스스로 풀려야 한다.** 요청 하나가 영영 안 끝나면
+  // (백엔드 포화·네트워크 블랙홀) `taking` 이 true 로 굳고, 그 뒤로는 서버가
+  // 아무리 'free' 를 줘도 **다시 집는 일이 영영 안 일어난다.** 이건 §58 이
+  // 고치려던 바로 그 모양 — "만료 뒤 돌아갈 길이 없다" — 이 다른 이유로
+  // 되살아난 것이다. 그래서 시간 제한을 둔다.
+  const TAKE_TIMEOUT_MS = 10_000
   let taking = false
 
   async function take(id) {
     if (!id || taking) return
     taking = true
     try {
-      await _take(id)
+      await Promise.race([
+        _take(id),
+        new Promise((resolve) => setTimeout(resolve, TAKE_TIMEOUT_MS)),
+      ])
     } finally {
+      // 늦게 끝난 요청이 남아 있어도 빗장은 푼다. 그 요청이 나중에 성공하면
+      // 서버 상태가 'mine' 으로 오고, 위 watch 가 `held` 를 맞춰 준다.
       taking = false
     }
   }

@@ -4,12 +4,15 @@ import { useModelModifierStore } from '@/features/modelModifier/modelModifier.st
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
 import ImpactDetailsModal from '@/features/modelModifier/ui/ImpactDetailsModal.vue'
+import LockBanner from '@/features/collab/ui/LockBanner.vue'
+import { useCollabStore } from '@/features/collab/collab.store'
 
 const emit = defineEmits(['close'])
 
 const chatStore = useModelModifierStore()
 const canvasStore = useCanvasStore()
 const ingestionStore = useIngestionStore()
+const collab = useCollabStore()
 
 // Inject Inspector opening functions from CanvasWorkspace
 const inspectorFunctions = inject('openInspector', null)
@@ -38,6 +41,25 @@ const selectedChips = computed(() => {
     }
   })
 })
+
+/**
+ * 고른 것 중 **남이 잡고 있는 것**.
+ *
+ * 서버는 이미 막는다(`/api/chat/modify` · `/api/chat/confirm` 둘 다 409).
+ * 그런데 화면이 아무 말도 안 하면 사람은 프롬프트를 다 쳐서 보내고 나서야
+ * 안다 — 그 사이에 친 글자는 사라진다. 인스펙터는 배너를 띄우고 입력칸을
+ * 잠근다. **여기도 같아야 한다.**
+ *
+ * **잠금을 잡지는 않는다.** `useElementLock` 은 열면 집는데, 챗은 고르기만
+ * 해도 집어 버리면 인스펙터로 고치려던 사람을 막는다. 여기서는 읽기만 한다.
+ */
+const lockedChips = computed(() =>
+  selectedChips.value
+    .map((c) => ({ chip: c, holder: collab.heldByOther(c.id) }))
+    .filter((x) => !!x.holder),
+)
+/** 배너에 이름을 띄울 사람. 여럿이면 첫 사람 — 어차피 하나만 막혀도 못 보낸다. */
+const chatLockHolder = computed(() => lockedChips.value[0]?.holder || null)
 
 function getTypeColor(type) {
   const colors = {
@@ -492,6 +514,8 @@ function closeImpactDetails() {
       @dragleave="handleDragLeave"
       @drop="handleDrop"
     >
+      <LockBanner :holder="chatLockHolder" />
+
       <div v-if="selectedChips.length > 0" class="chat-input__chips">
         <span
           v-for="chip in selectedChips"
@@ -533,7 +557,7 @@ function closeImpactDetails() {
             : selectedChips.length > 0 
               ? '수정 요청을 입력하세요...' 
               : '캔버스에서 객체를 선택하고 수정 요청을 입력하세요'"
-          :disabled="chatStore.isProcessing || (selectedChips.length === 0)"
+          :disabled="chatStore.isProcessing || selectedChips.length === 0 || lockedChips.length > 0"
           @keydown="handleKeyDown"
           @compositionstart="handleCompositionStart"
           @compositionend="handleCompositionEnd"
@@ -541,7 +565,7 @@ function closeImpactDetails() {
         ></textarea>
         <button
           class="chat-input__send"
-          :disabled="!inputText.trim() || chatStore.isProcessing || selectedChips.length === 0"
+          :disabled="!inputText.trim() || chatStore.isProcessing || selectedChips.length === 0 || lockedChips.length > 0"
           @click="sendMessage"
         >
           <svg v-if="!chatStore.isProcessing" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
