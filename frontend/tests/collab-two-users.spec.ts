@@ -98,7 +98,21 @@ async function sharedGraph(a: Who, b: Who): Promise<string> {
   expect(both.length,
     `둘 다 쓰기 권한인 프로젝트가 있어야 한다 (${a.uid}: ${[...ga].join('/')} · ${b.uid}: ${[...gb].join('/')})`)
     .toBeGreaterThan(0)
-  return both[0] as string
+
+  // **설계가 들어 있는 것을 고른다.** 첫 번째를 그냥 집었다가 새로 만든 빈
+  // 프로젝트에 걸려, 트리가 안 떠서 "잠금이 안 돌아온다"로 보였다 — 앱이 아니라
+  // 검사가 고른 자리가 틀린 것이었다.
+  const ctx = await pwRequest.newContext()
+  try {
+    for (const g of both) {
+      const r = await ctx.get(`${API}/api/contexts`, {
+        headers: { Authorization: `Bearer ${a.token}`, 'X-Project-Graph': g as string },
+      })
+      const rows = r.ok() ? await r.json().catch(() => []) : []
+      if (Array.isArray(rows) && rows.some((b2: any) => b2?.id)) return g as string
+    }
+  } finally { await ctx.dispose() }
+  throw new Error(`설계가 들어 있는 공용 프로젝트가 없다 (후보: ${both.join(', ')})`)
 }
 
 async function openApp(ctx: BrowserContext, who: Who, graph: string): Promise<Page> {
@@ -749,5 +763,109 @@ test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
       await ca.close(); await cb.close()
     }
   })
-})
 
+  /**
+   * **오래 잡고 있으면 선점이 풀리고, 그 뒤로 아무것도 안 된다.**
+   *
+   * 서버 TTL 은 60초이고 SSE 스트림이 2초마다 갱신한다. 절전·네트워크 끊김·
+   * 재연결 백오프(최대 30초)로 스트림이 그보다 오래 멎으면 잠금이 걷힌다.
+   *
+   * 그런데 화면은 **계속 내가 잡은 줄 안다** — `take()` 는 열린 요소가 바뀔
+   * 때만 돌고, `held` 는 서버 목록과 맞춰지지 않는다. 그래서 입력칸이 열린
+   * 채로 남고, 저장하면 서버 잠금이 409 를 던진다. 닫았다 다시 열기 전에는
+   * 되돌아갈 길이 없다.
+   *
+   * ## 만료를 어떻게 흉내 내나
+   *
+   * 60초를 기다리지 않는다. `POST /api/collab/leave` 가 **TTL 과 같은 일**을
+   * 한다 — `release_all` 로 그 사람의 잠금을 지운다. 갱신(`refresh_locks`)은
+   * 있는 행만 건드리므로 되살아나지 않는다. 화면은 자기가 풀렸다는 것을 모른다.
+   */
+  test('선점이 풀려도 계속 고칠 수 있어야 한다', async ({ browser }) => {
+    test.setTimeout(180_000)
+    const ca = await browser.newContext()
+    const pa = await openApp(ca, alice, graph)
+    await waitConnected(pa, 'alice')
+
+    try {
+      // **Inspector 를 실제로 열어야 한다.** API 로 직접 잠그면 `useElementLock`
+      // 이 아예 안 돌아서, 고친 코드를 하나도 안 지나고 실패한다(한 번 그렇게 썼다).
+      const designTab = pa.locator('.top-bar__tab, .app-tab, button')
+        .filter({ hasText: /^Design$/ }).first()
+      if (await designTab.isVisible({ timeout: 8_000 }).catch(() => false)) {
+        await designTab.click()
+        await pa.waitForTimeout(1500)
+      }
+      const expand = pa.locator('.tree-action-btn[title="Expand All"]')
+      await expect(expand, 'Design 탭의 트리가 안 뜬다').toBeVisible({ timeout: 20_000 })
+      await expand.click()
+      await expect
+        .poll(() => pa.locator('.tree-node__label').count(), { timeout: 25_000 })
+        .toBeGreaterThan(10)
+
+      const labels = (await pa.locator('.tree-node__label').allTextContents())
+        .map((t) => t.trim()).filter((t) => t && !/\(\d+\)\s*$/.test(t))
+      let elementId: string | null = null
+      for (const label of labels.slice(0, 20)) {
+        const row = pa.locator('.tree-node__label').filter({ hasText: label }).first()
+        if (!(await row.isVisible().catch(() => false))) continue
+        await row.dblclick()
+        if (!(await pa.locator('.inspector-panel').isVisible({ timeout: 4_000 }).catch(() => false))) continue
+        await pa.waitForTimeout(1800)
+        const ids = await pa.evaluate(() =>
+          ((window as any).__collab?.locks || []).map((l: any) => l.elementId))
+        if (ids.length) { elementId = ids[0]; break }
+      }
+      expect(elementId, '요소를 열어 잠금을 잡지 못했다').not.toBeNull()
+
+      // 서버에서 내 잠금이 사라진다 — TTL 이 걷어간 것과 같은 상태.
+      // `release_all` 이 지우고, 갱신(`refresh_locks`)은 있는 행만 건드리므로
+      // 되살아나지 않는다. 화면은 자기가 풀렸다는 것을 모른다.
+      await pa.evaluate((g) => fetch('/api/collab/leave', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ graph: g }),
+      }), graph)
+
+      // ① **다시 집어야 한다.** 스트림 한 바퀴는 2초. 여유를 둔다.
+      await expect
+        .poll(async () => pa.evaluate(async (id) => {
+          const res = await fetch('/api/collab/state')
+          if (!res.ok) return false
+          const j = await res.json()
+          return (j.locks || []).some((l: any) => l.elementId === id)
+        }, elementId!), {
+          timeout: 30_000,
+          message: '풀린 잠금을 다시 집지 않는다 — 이후 저장이 409 로 막힌다',
+        })
+        .toBe(true)
+
+      // ② 다시 집힌 것이 **내 것**이어야 한다. 남의 것을 내 것으로 세면
+      //    화면은 열려 있는데 저장은 막히는 지금 상태와 똑같아진다.
+      const holder = await pa.evaluate(async (id) => {
+        const res = await fetch('/api/collab/state')
+        const j = res.ok ? await res.json() : { locks: [] }
+        return (j.locks || []).find((x: any) => x.elementId === id)?.uid ?? null
+      }, elementId!)
+      expect(holder, '다시 집힌 잠금이 alice 것이 아니다').toBe(alice.uid)
+
+      // ③ 화면도 **고칠 수 있는 상태**여야 한다. 서버만 돌아오고 입력칸이
+      //    잠겨 있으면 사용자에게는 여전히 안 되는 것이다.
+      const usable = await pa.evaluate(() => {
+        const panel = document.querySelector('.inspector-panel')
+        const fields = [...(panel?.querySelectorAll('input, textarea, select') || [])]
+          .filter((el: any) => el.type !== 'hidden' && el.offsetParent !== null)
+        return {
+          total: fields.length,
+          open: fields.filter((el: any) => !el.matches(':disabled') && !el.readOnly).length,
+          banner: !!document.querySelector('.lockbar'),
+        }
+      })
+      expect(usable.total, '입력칸이 없으면 아무것도 안 잰 것이다').toBeGreaterThan(0)
+      expect(usable.open, `되집었는데 입력칸이 ${usable.open}/${usable.total} 만 열려 있다`)
+        .toBe(usable.total)
+      expect(usable.banner, '내 것인데 "남이 편집 중" 배너가 떠 있다').toBe(false)
+    } finally {
+      await ca.close()
+    }
+  })
+})

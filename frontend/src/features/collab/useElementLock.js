@@ -61,8 +61,21 @@ export function useElementLock(elementId, labelOf) {
   /** 이 요소를 지금 고칠 수 있나. */
   const editable = computed(() => !blockedBy.value)
 
+  // 다시 집는 요청이 겹치지 않게. 스트림이 2초마다 도는데 그때마다 새로 집으면
+  // 답이 오기 전에 또 보낸다.
+  let taking = false
+
   async function take(id) {
-    if (!id) return
+    if (!id || taking) return
+    taking = true
+    try {
+      await _take(id)
+    } finally {
+      taking = false
+    }
+  }
+
+  async function _take(id) {
     const r = await collab.lock(id, labelOf ? labelOf() : undefined)
     // 열려 있는 요소가 그새 바뀌었으면 방금 잡은 것은 남의 것이 된다.
     if (elementId.value !== id) { collab.unlock(id); return }
@@ -94,6 +107,51 @@ export function useElementLock(elementId, labelOf) {
       if (id) take(id)
     },
     { immediate: true },
+  )
+
+  // ── 서버가 진실이다 — 내 잠금이 사라졌으면 다시 집는다 ────────────────
+  //
+  // **오래 잡고 있으면 선점이 풀리고 그 뒤로 아무것도 안 됐다.**
+  //
+  // 서버 TTL 은 60초이고 스트림이 2초마다 갱신한다. 절전·네트워크 끊김·재연결
+  // 백오프(최대 30초)로 스트림이 그보다 오래 멎으면 잠금이 걷힌다. 그런데
+  // `take()` 는 **열린 요소가 바뀔 때만** 돌고 `held` 는 서버 목록과 안 맞춰져서,
+  // 화면은 계속 내가 잡은 줄 알았다 — 입력칸은 열려 있고, 저장하면 409 를 맞고,
+  // 닫았다 다시 열기 전에는 되돌아갈 길이 없었다.
+  //
+  // 그래서 **서버가 들고 있는 상태를 따라간다.**
+  //
+  //     mine    내 것이다            held 를 맞춘다
+  //     free    아무도 안 잡았다      **다시 집는다** — 내가 아직 열어 두고 있으니까
+  //     other   남이 가져갔다        읽기로 내린다. 배너는 `blockedBy` 가 띄운다
+  //
+  // 끊긴 동안에는 목록이 낡아서 `mine` 으로 남는다 — 그때는 아무것도 안 한다.
+  // 다시 붙으면 `hello` 가 새 목록을 주고, 그 자리에서 `free` 가 되어 되집는다.
+  watch(
+    () => (elementId.value ? collab.holderState(elementId.value) : null),
+    (state) => {
+      const id = elementId.value
+      if (!id || id !== current || !state) return
+      if (state === 'mine') {
+        if (!held.value) {
+          held.value = true
+          holdWhileEditing(true)
+          collab.setEditing(id)
+        }
+        return
+      }
+      if (state === 'other') {
+        // **뺏긴 것을 숨기지 않는다.** 읽기로 내려야 입력칸이 잠기고 배너가 뜬다.
+        if (held.value) {
+          held.value = false
+          holdWhileEditing(false)
+          collab.setEditing(null)
+        }
+        return
+      }
+      // free — 아무도 안 잡았다. 내가 열어 두고 있으면 내 것이어야 한다.
+      take(id)
+    },
   )
 
   onUnmounted(() => {

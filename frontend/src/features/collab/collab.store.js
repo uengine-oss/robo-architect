@@ -181,6 +181,25 @@ export const useCollabStore = defineStore('collab', () => {
     return l.uid === myUid() ? null : l
   }
 
+  /** 이 요소를 **내가** 잡고 있나 — 서버가 그렇게 알고 있나.
+   *
+   *  "내가 잡았다고 믿는 것"과 "서버가 내 것으로 들고 있는 것"은 다르다.
+   *  스트림이 TTL(60초)보다 오래 멎으면 서버는 걷어가는데 화면은 계속 잡은
+   *  줄 안다 — 그러면 입력칸이 열린 채 남고 저장할 때 409 를 맞는다.
+   *  **서버 쪽이 진실이므로 여기서 묻는다.** */
+  function heldByMe(elementId) {
+    const l = byId.value.get(elementId)
+    return !!l && l.uid === myUid()
+  }
+
+  /** 지금 이 요소가 누구 것인가 — `mine` · `other` · `free`.
+   *  받는 쪽마다 `locks` 를 뒤져 판단하게 두면 기준이 갈린다. 한 곳에서 답한다. */
+  function holderState(elementId) {
+    if (!elementId) return 'free'
+    if (heldByMe(elementId)) return 'mine'
+    return heldByOther(elementId) ? 'other' : 'free'
+  }
+
   async function lock(elementId, label) {
     if (!graph || !elementId) return { ok: false }
     const r = await fetch('/api/collab/lock', {
@@ -219,6 +238,6 @@ export const useCollabStore = defineStore('collab', () => {
 
   return {
     viewers, rev, connected, locks, conflictOnOpenElement,
-    heldByOther, lock, unlock, setEditing, watch, close,
+    heldByOther, heldByMe, holderState, lock, unlock, setEditing, watch, close,
   }
 })
