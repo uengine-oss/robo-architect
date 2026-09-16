@@ -872,12 +872,7 @@ test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
     }
   })
 
-  // **아직 화면으로 못 쟀다.** 구현은 들어갔다(ChatPanel.vue 의 LockBanner +
-  // lockedChips). 그런데 이 검사에서 챗 패널이 안 열린다 — Data 탭과 오른쪽
-  // 사이드바까지는 뜨는데(`.aggregate-right-sidebar` 확인됨) Chat 아이콘을
-  // 눌러도 `.chat-panel` 이 안 붙는다. 원인 미확인.
-  // 서버 쪽 차단은 `잠금이 서버에서도 쓰기를 막는다` 가 이미 재고 있다.
-  test.fixme('챗 화면이 남의 선점을 알리고 입력을 막는다', async ({ browser }) => {
+  test('챗 화면이 남의 선점을 알리고 입력을 막는다', async ({ browser }) => {
     const ca = await browser.newContext()
     const cb = await browser.newContext()
     const pa = await openApp(ca, alice, graph)
@@ -900,16 +895,18 @@ test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
         useModelModifierStore().setSelectedNodes([{ id: t.id, type: 'BoundedContext', name: t.name }])
       }, target!)
 
-      // 챗은 **Data 탭** 오른쪽 사이드바의 Chat 아이콘으로 연다.
-      // 탭 버튼은 상단 네비게이션 안에 있다 — `.first()` 로 전체에서 고르면
-      // 다른 곳의 같은 이름을 집어 클릭이 헛돈다.
-      await pb.locator('nav').getByRole('button', { name: 'Data', exact: true }).click()
-      const sidebar = pb.locator('.aggregate-right-sidebar')
-      await expect(sidebar, 'Data 탭이 안 열렸다').toBeVisible({ timeout: 20_000 })
-      await sidebar.locator('[title="Chat"]').click()
+      // 챗은 **Design 탭** 오른쪽에 있다 — 처음부터 열려 있는 것이 기본값이고,
+      // 접혀 있으면 사이드바의 Chat 아이콘으로 연다.
+      // (한동안 Data 탭에서 찾다가 못 열었다. 같은 컴포넌트가 두 곳에 붙는다.)
+      await pb.locator('nav').getByRole('button', { name: 'Design', exact: true }).click()
+      const chatPanel = pb.locator('.chat-panel')
+      if (!(await chatPanel.isVisible({ timeout: 3_000 }).catch(() => false))) {
+        await pb.locator('.right-sidebar [title="Chat"]').first().click()
+      }
+      await expect(chatPanel, '챗 패널이 안 열린다').toBeVisible({ timeout: 20_000 })
 
       const input = pb.locator('.chat-input__textarea')
-      const banner = pb.locator('.chat-input .lockbar, .chat-panel .lockbar')
+      const banner = pb.locator('.chat-panel .lockbar')
 
       // ① 아무도 안 잡았을 때는 **칠 수 있어야 한다.** 이게 없으면 전부
       //    막아 놓고도 통과한다.
