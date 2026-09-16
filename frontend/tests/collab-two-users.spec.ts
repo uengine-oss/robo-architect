@@ -802,6 +802,76 @@ test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
    * **챗은 잠금을 잡지 않는다.** 고르기만 해도 잠가 버리면 인스펙터로 고치려던
    * 사람이 막힌다. 여기서는 **읽기만** 한다 — 남이 잡았나만 본다.
    */
+  /**
+   * **같은 요소로 Inspector 와 AI 챗을 오가면 잠금이 풀린다.**
+   *
+   * Design 탭은 오른쪽 자리 하나를 `v-if`/`v-else-if` 로 나눠 쓴다. 챗으로
+   * 바꾸면 Inspector 가 **unmount 되고**, 거기서 `onUnmounted → drop() → unlock`
+   * 이 돈다. 사람은 같은 요소를 계속 붙들고 있는데 서버에서는 놓아 버린다 —
+   * 그 사이에 남이 집어 갈 수 있다.
+   *
+   * 닫은 것과 **패널만 바꾼 것**을 구별해야 한다.
+   */
+  test('Inspector 와 챗을 오가도 잠금이 유지된다', async ({ browser }) => {
+    test.setTimeout(180_000)
+    const ca = await browser.newContext()
+    const pa = await openApp(ca, alice, graph)
+    await waitConnected(pa, 'alice')
+
+    try {
+      const designTab = pa.locator('nav').getByRole('button', { name: 'Design', exact: true })
+      if (await designTab.isVisible({ timeout: 8_000 }).catch(() => false)) {
+        await designTab.click()
+        await pa.waitForTimeout(1500)
+      }
+      const expand = pa.locator('.tree-action-btn[title="Expand All"]')
+      await expect(expand, 'Design 탭의 트리가 안 뜬다').toBeVisible({ timeout: 20_000 })
+      await expand.click()
+      await expect.poll(() => pa.locator('.tree-node__label').count(), { timeout: 25_000 })
+        .toBeGreaterThan(5)
+
+      // Inspector 를 열어 잠금을 잡는다
+      let elementId: string | null = null
+      const labels = (await pa.locator('.tree-node__label').allTextContents())
+        .map((t) => t.trim()).filter((t) => t && !/\(\d+\)\s*$/.test(t))
+      for (const label of labels.slice(0, 20)) {
+        const row = pa.locator('.tree-node__label').filter({ hasText: label }).first()
+        if (!(await row.isVisible().catch(() => false))) continue
+        await row.dblclick()
+        if (!(await pa.locator('.inspector-panel').isVisible({ timeout: 4_000 }).catch(() => false))) continue
+        await pa.waitForTimeout(1800)
+        const ids = await pa.evaluate(() =>
+          ((window as any).__collab?.locks || []).map((l: any) => l.elementId))
+        if (ids.length) { elementId = ids[0]; break }
+      }
+      expect(elementId, '요소를 열어 잠금을 잡지 못했다').not.toBeNull()
+
+      const mineOnServer = () => pa.evaluate(async (id) => {
+        const r = await fetch('/api/collab/state')
+        const j = r.ok ? await r.json() : { locks: [] }
+        return (j.locks || []).some((l: any) => l.elementId === id)
+      }, elementId!)
+      expect(await mineOnServer(), '열었는데 서버에 잠금이 없다').toBe(true)
+
+      // **챗으로 바꾼다.** 같은 요소를 계속 붙들고 있는 것이다.
+      await pa.locator('[title="Chat"]').first().click()
+      await expect(pa.locator('.chat-panel'), '챗 패널이 안 열린다')
+        .toBeVisible({ timeout: 10_000 })
+
+      // 잠금은 그대로여야 한다. 스트림 한 바퀴(2초)보다 넉넉히 본다.
+      await pa.waitForTimeout(6_000)
+      expect(await mineOnServer(),
+        'Inspector → 챗 으로 바꿨더니 잠금이 풀렸다').toBe(true)
+
+      // 돌아와도 그대로여야 한다
+      await pa.locator('[title="Inspector"], [title="Properties"]').first().click().catch(() => {})
+      await pa.waitForTimeout(3_000)
+      expect(await mineOnServer(), '챗 → Inspector 로 돌아왔더니 잠금이 없다').toBe(true)
+    } finally {
+      await ca.close()
+    }
+  })
+
   // **아직 화면으로 못 쟀다.** 구현은 들어갔다(ChatPanel.vue 의 LockBanner +
   // lockedChips). 그런데 이 검사에서 챗 패널이 안 열린다 — Data 탭과 오른쪽
   // 사이드바까지는 뜨는데(`.aggregate-right-sidebar` 확인됨) Chat 아이콘을

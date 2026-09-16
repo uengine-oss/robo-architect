@@ -101,7 +101,11 @@ export function useElementLock(elementId, labelOf) {
   }
 
   function drop() {
-    if (current) { collab.unlock(current); current = null }
+    // **바로 풀지 않는다.** 이 컴포넌트가 사라지는 것이 곧 사람이 손을 뗀
+    // 것은 아니다 — Design 탭에서 챗으로 바꾸면 Inspector 가 unmount 되는데,
+    // 사람은 같은 요소를 계속 붙들고 있다. 유예 안에 다시 잡으면 없던 일이
+    // 되고, 정말 닫았으면 풀린다 (`collab.store` 의 unlockSoon).
+    if (current) { collab.unlockSoon(current); current = null }
     collab.setEditing(null)
     held.value = false
     holdWhileEditing(false)

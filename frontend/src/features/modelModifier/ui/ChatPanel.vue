@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, nextTick, watch, inject } from 'vue'
+import { ref, computed, nextTick, watch, inject, onUnmounted } from 'vue'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useIngestionStore } from '@/features/requirementsIngestion/ingestion.store'
@@ -60,6 +60,38 @@ const lockedChips = computed(() =>
 )
 /** 배너에 이름을 띄울 사람. 여럿이면 첫 사람 — 어차피 하나만 막혀도 못 보낸다. */
 const chatLockHolder = computed(() => lockedChips.value[0]?.holder || null)
+
+// ── 내가 이미 잡고 있던 것은 **놓지 않는다** ──────────────────────────────
+//
+// Design 탭은 오른쪽 자리 하나를 Inspector 와 이 패널이 `v-if` 로 나눠 쓴다.
+// 챗으로 바꾸면 Inspector 가 unmount 되면서 잠금을 놓는데, 사람은 **같은
+// 요소를 계속 붙들고 있다.** 그래서 오갈 때마다 풀렸다 — 그 틈에 남이 집어
+// 갈 수 있다.
+//
+// 여기서 **새로 잡지는 않는다.** 고르기만 해도 집어 버리면 인스펙터로 고치려던
+// 사람이 막힌다. 이미 내 것인 칩만 이어받아 놓지 않는다.
+const keptLocks = new Set()
+
+watch(
+  () => selectedChips.value.map((c) => c.id).join('\u0000'),
+  () => {
+    for (const chip of selectedChips.value) {
+      if (!chip.id || keptLocks.has(chip.id)) continue
+      if (!collab.heldByMe(chip.id)) continue
+      keptLocks.add(chip.id)
+      // 이 호출이 Inspector 가 걸어 둔 '잠시 뒤 풀기' 예약을 취소한다.
+      collab.lock(chip.id)
+    }
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  // 이어받은 것은 이어서 놓는다 — 여기서도 유예를 둔다. 다시 Inspector 로
+  // 돌아가는 중이면 그쪽이 곧바로 잡아 예약을 취소한다.
+  for (const id of keptLocks) collab.unlockSoon(id)
+  keptLocks.clear()
+})
 
 function getTypeColor(type) {
   const colors = {

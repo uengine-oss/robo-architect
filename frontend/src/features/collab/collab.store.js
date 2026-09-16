@@ -200,8 +200,42 @@ export const useCollabStore = defineStore('collab', () => {
     return heldByOther(elementId) ? 'other' : 'free'
   }
 
+  /**
+   * 풀기를 **잠깐 미뤄 둔 것들**. 키는 elementId.
+   *
+   * 화면이 잠깐 사라지는 것과 사람이 손을 떼는 것은 다르다. Design 탭은
+   * 오른쪽 자리 하나를 Inspector 와 챗이 `v-if` 로 나눠 쓰기 때문에, 챗으로
+   * 바꾸면 Inspector 가 unmount 되고 거기서 잠금을 푼다 — 사람은 같은 요소를
+   * 계속 붙들고 있는데 서버에서는 놓아 버린다. 그 틈에 남이 집어 갈 수 있다.
+   *
+   * 그래서 **바로 풀지 않고 잠깐 기다린다.** 그 사이에 같은 요소를 다시
+   * 잡으면(패널을 바꾼 것이었다면) 예약을 취소한다. 정말 닫았으면 시간이
+   * 지나 풀린다.
+   *
+   * 유예는 짧게 둔다 — 길면 "손을 떼면 풀린다"가 거짓말이 된다. 서버 TTL(60초)
+   * 과 스트림 끊김 시 `release_all` 이 뒤를 받쳐 준다.
+   */
+  const RELEASE_GRACE_MS = 5_000
+  const pendingRelease = new Map()
+
+  function cancelRelease(elementId) {
+    const t = pendingRelease.get(elementId)
+    if (t) { clearTimeout(t); pendingRelease.delete(elementId) }
+  }
+
+  /** 유예를 두고 푼다. 그 사이 다시 잡으면 없던 일이 된다. */
+  function unlockSoon(elementId) {
+    if (!graph || !elementId || pendingRelease.has(elementId)) return
+    pendingRelease.set(elementId, setTimeout(() => {
+      pendingRelease.delete(elementId)
+      unlock(elementId)
+    }, RELEASE_GRACE_MS))
+  }
+
   async function lock(elementId, label) {
     if (!graph || !elementId) return { ok: false }
+    // 다시 잡았다 = 놓은 게 아니었다.
+    cancelRelease(elementId)
     const r = await fetch('/api/collab/lock', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -220,6 +254,7 @@ export const useCollabStore = defineStore('collab', () => {
 
   async function unlock(elementId) {
     if (!graph || !elementId) return
+    cancelRelease(elementId)
     locks.value = locks.value.filter((l) => l.elementId !== elementId)
     await fetch('/api/collab/unlock', {
       method: 'POST',
@@ -238,6 +273,6 @@ export const useCollabStore = defineStore('collab', () => {
 
   return {
     viewers, rev, connected, locks, conflictOnOpenElement,
-    heldByOther, heldByMe, holderState, lock, unlock, setEditing, watch, close,
+    heldByOther, heldByMe, holderState, lock, unlock, unlockSoon, setEditing, watch, close,
   }
 })

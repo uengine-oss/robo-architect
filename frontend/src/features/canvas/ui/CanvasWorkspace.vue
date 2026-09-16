@@ -971,7 +971,13 @@ onUnmounted(() => {
           </svg>
         </button>
       </div>
-      <div v-if="panelMode === 'chat'" class="chat-panel-wrapper">
+      <!-- **둘을 같이 띄워 두고 보이기만 바꾼다.**
+           `v-if` 로 갈아 끼우면 챗으로 바꿀 때 Inspector 가 unmount 되고,
+           거기서 `onUnmounted → 잠금 풀기`가 돈다. 사람은 같은 요소를 계속
+           붙들고 있는데 서버에서는 놓아 버려서, 오갈 때마다 선점이 풀렸다.
+           패널을 접으면(`panelMode === 'none'`) 바깥 `v-if` 가 둘 다 내리므로
+           "손을 떼면 풀린다"는 그대로다. -->
+      <div v-show="panelMode === 'chat'" class="chat-panel-wrapper">
         <ChatPanel @close="panelMode = 'none'" />
       </div>
 
@@ -982,7 +988,11 @@ onUnmounted(() => {
            to re-use the previous panel instance for the new node, which
            leaves open-pencil's CanvasKit/editor state half-destroyed and the
            Design tab shows a blank/black box from the second UI onward. -->
-      <div v-else-if="panelMode === 'inspector'" class="inspector-wrapper">
+      <div
+        v-if="panelMode === 'inspector' || inspectingNodeId"
+        v-show="panelMode === 'inspector'"
+        class="inspector-wrapper"
+      >
         <InspectorPanel
           :key="inspectingNodeId || 'inspector-empty'"
           :node-id="inspectingNodeId"
