@@ -190,12 +190,23 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
       continue
     }
     const originalValue = await field.inputValue()
-    // **이 입력칸이 정말 이 요소의 것인가.** 앞 요소의 흔적이 그대로 보이면
-    // 패널이 안 바뀐 것일 수 있다 — 그러면 저장 여부를 단정하면 안 된다.
-    // (`.inspector-panel__title` 은 쓸 수 없다. 요소 이름이 아니라 고정
+
+    // **이 입력칸이 정말 이 요소의 것인가 — 치기 전에 본다.**
+    //
+    // 앞선 검사 흔적이 원래값에 보이면 패널이 안 바뀐 것이다(앞 요소의 칸을
+    // 보고 있다). 그대로 치면 **남의 요소에 쓰고, 되돌리기는 지금 연 id 로
+    // 하므로 되돌려지지도 않는다** — 실제로 그렇게 실 데이터에 흔적을 남겼다.
+    // 판정을 나중으로 미루면 늦는다. 여기서 멈춘다.
+    //
+    // (`.inspector-panel__title` 로는 못 가른다. 요소 이름이 아니라 고정
     //  머리말 "Inspector · User Story" 라, 그걸로 가르려다 멀쩡한 7종까지
     //  거짓으로 실패시켰다.)
-    const looksBorrowed = /수정확인\d{10,}/.test(originalValue)
+    if (/수정확인\d{10,}/.test(originalValue)) {
+      rows.push({ label, type, button: null, saved: false,
+        note: `**입력칸이 남의 것으로 보인다** — 원래값에 앞선 검사 흔적이 있다 `
+          + `(끝: ${originalValue.slice(-16)}). **치지 않고 멈춘다.** 저장 여부는 모른다` })
+      continue
+    }
     await field.click()
     await field.press('End')
     await field.pressSequentially(` ${marker}`, { delay: 8 })
@@ -238,9 +249,7 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
         saved ? ''
           : unreadable
             ? `**못 읽었다** — expand-with-bc 응답에 ${openId} 가 없다. 저장 여부는 모른다`
-            : looksBorrowed
-              ? `**입력칸이 남의 것으로 보인다** — 원래값에 앞선 검사 흔적이 있다 (끝: ${originalValue.slice(-16)}). 저장 여부는 모른다`
-              : `저장은 눌렀는데 그래프에 없다 (원래값 끝: ${originalValue.slice(-16)})`,
+            : `저장은 눌렀는데 그래프에 없다 (원래값 끝: ${originalValue.slice(-16)})`,
         restored ? '' : '**되돌리기 실패 — 이 요소에 검사 흔적이 남았다**',
       ].filter(Boolean).join(' · '),
     })
