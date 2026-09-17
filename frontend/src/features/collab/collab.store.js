@@ -48,11 +48,39 @@ export const useCollabStore = defineStore('collab', () => {
   /** 내가 지금 열어 놓고 고치는 요소. 남의 변경이 와도 이것만은 안 건드린다. */
   const editingElementId = ref(null)
 
+  /** 스트림이 끊긴 시각. `connected` 만으로는 **얼마나** 끊겼는지를 몰라서
+   *  화면이 "잠깐 깜빡인 것"과 "위험한 것"을 못 가른다. */
+  const disconnectedSince = ref(null)
+
   let source = null
   let graph = null
   let retry = 0
   let retryTimer = null
   let stopped = true
+  let beatTimer = null
+  let lastBeat = 0
+
+  /**
+   * 이 **창**의 이름. 사람이 아니라 창을 센다 — 한 사람이 창을 둘 열었을 때
+   * 하나를 닫는다고 다른 창의 잠금이 죽으면 안 된다.
+   *
+   * 새로고침하면 새 값이 된다. 그래도 되는 이유는 옛 세션이 유예 뒤에 저절로
+   * 사라지고, 그 전에는 같은 사람의 것이라 잠금을 막지 않기 때문이다.
+   */
+  const sessionId = (() => {
+    try {
+      const k = 'robo.collab.session'
+      let v = sessionStorage.getItem(k)
+      if (!v) {
+        v = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+        sessionStorage.setItem(k, v)
+      }
+      return v
+    } catch {
+      // 사생활 보호 모드 등으로 막히면 메모리 값으로 간다. 새로고침하면 바뀐다.
+      return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    }
+  })()
 
   function myUid() {
     return (useAuthStore().user || {}).uid || null
@@ -110,6 +138,64 @@ export const useCollabStore = defineStore('collab', () => {
     emitDataChanged('remote-change')
   }
 
+  function markDisconnected() {
+    if (connected.value || !disconnectedSince.value) disconnectedSince.value = Date.now()
+    connected.value = false
+  }
+
+  /**
+   * **스트림과 별개로 "나 여기 있다"를 알린다.**
+   *
+   * 선점의 수명은 이제 이 박동이 정한다. 전에는 SSE 스트림 하나가 그 일을
+   * 했는데, 스트림은 프록시·절전·재연결 백오프로 흔하게 끊긴다 — 그때마다
+   * 서버는 사람이 떠난 것으로 보고 잠금을 놓았다. 사람은 글자를 치고 있는데도.
+   *
+   * 보통 `fetch` 는 그런 상황에서도 대개 살아 있다. **두 채널이 다 죽었을 때만**
+   * 사람이 정말 없는 것이고, 그때는 잠금이 풀리는 것이 맞다.
+   *
+   * 덤이 하나 더 있다 — 응답에 잠금 목록이 실려 오므로, 스트림이 끊긴 동안에도
+   * 화면이 **남이 집어간 것**을 안다. 안 그러면 낡은 목록을 붙들고 "아직 내
+   * 것"이라고 믿는다.
+   */
+  // 서버 유예(25초)의 **절반보다 짧아야 한다.** 한 번 놓쳐도 살아남는다.
+  const BEAT_WHILE_CONNECTED_MS = 10_000
+  const BEAT_WHILE_DOWN_MS = 5_000
+
+  async function beat() {
+    if (!graph || stopped) return
+    lastBeat = Date.now()
+    try {
+      const r = await fetch(`/api/collab/state?session=${encodeURIComponent(sessionId)}`)
+      if (!r.ok) return
+      const body = await r.json()
+      apply(body)
+    } catch {
+      // 이 길까지 막혔으면 정말 끊긴 것이다. 서버가 유예 뒤에 걷어간다.
+    }
+  }
+
+  /**
+   * 끊긴 지 오래됐나 — **화면이 사람에게 말해야 하는 순간.**
+   *
+   * `connected` 만 보면 안 된다. 스트림은 한두 번 깜빡이고 바로 붙는 일이
+   * 흔한데, 그때마다 경고를 띄우면 사람이 배너를 안 읽게 된다. 반대로 아무
+   * 말도 안 하면, 정말 끊긴 동안 **잃을 글자를 계속 친다.**
+   */
+  const RISK_AFTER_MS = 8_000
+  const staleConnection = ref(false)
+
+  function startBeat() {
+    clearInterval(beatTimer)
+    beatTimer = setInterval(() => {
+      if (stopped || !graph) return
+      staleConnection.value = !connected.value
+        && !!disconnectedSince.value
+        && Date.now() - disconnectedSince.value >= RISK_AFTER_MS
+      const due = connected.value ? BEAT_WHILE_CONNECTED_MS : BEAT_WHILE_DOWN_MS
+      if (Date.now() - lastBeat >= due) beat()
+    }, 2_000)
+  }
+
   function scheduleRetry() {
     if (stopped) return
     const wait = RETRY_MS[Math.min(retry, RETRY_MS.length - 1)]
@@ -121,10 +207,12 @@ export const useCollabStore = defineStore('collab', () => {
   function open() {
     close(false)
     if (!graph) return
-    const es = openSse('/api/collab/stream')
+    const es = openSse(`/api/collab/stream?session=${encodeURIComponent(sessionId)}`)
     source = es
     es.addEventListener('hello', (e) => {
       connected.value = true
+      disconnectedSince.value = null
+      staleConnection.value = false
       retry = 0
       apply(JSON.parse(e.data))
     })
@@ -133,7 +221,7 @@ export const useCollabStore = defineStore('collab', () => {
     es.addEventListener('locks', (e) => apply(JSON.parse(e.data)))
     es.addEventListener('ping', () => { connected.value = true })
     es.onerror = () => {
-      connected.value = false
+      markDisconnected()
       scheduleRetry()
     }
   }
@@ -147,15 +235,19 @@ export const useCollabStore = defineStore('collab', () => {
     locks.value = []
     rev.value = 0
     retry = 0
-    if (graph) open()
+    if (graph) { open(); lastBeat = 0; startBeat() }
     else close()
   }
 
   function close(hard = true) {
     clearTimeout(retryTimer)
+    if (hard) { clearInterval(beatTimer); beatTimer = null }
     if (source) { try { source.close() } catch { /* 이미 닫힘 */ } }
     source = null
-    connected.value = false
+    // **여기서도 시각을 남긴다.** `connected` 만 내리면 "얼마나 끊겼나"를 아무도
+    // 모르고, 화면은 위험을 말할 근거를 잃는다. 실제로 그래서 배너가 안 떴다 —
+    // 끊는 길이 둘(`onerror` · `close`)인데 한쪽만 기록하고 있었다.
+    markDisconnected()
     if (hard) {
       stopped = true
       viewers.value = []
@@ -239,7 +331,7 @@ export const useCollabStore = defineStore('collab', () => {
     const r = await fetch('/api/collab/lock', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ elementId, label }),
+      body: JSON.stringify({ elementId, label, session: sessionId }),
     })
     const body = await r.json().catch(() => ({ ok: false }))
     if (body.ok) {
@@ -259,8 +351,36 @@ export const useCollabStore = defineStore('collab', () => {
     await fetch('/api/collab/unlock', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ elementId }),
+      body: JSON.stringify({ elementId, session: sessionId }),
     }).catch(() => {})
+  }
+
+  /**
+   * 창을 닫는다 — **유예를 기다리지 않고 알려 주고 간다.**
+   *
+   * 전에는 서버가 스트림이 끊기는 것을 보고 치웠다. 그걸 없앴으므로(스트림이
+   * 끊긴 것과 사람이 떠난 것은 다르다) 정말 떠날 때는 여기서 말해야 한다.
+   * 안 하면 남이 그 요소를 유예만큼 못 고친다.
+   *
+   * `keepalive` 가 핵심이다 — 문서가 사라지는 중에도 요청이 나간다. 보통
+   * `fetch` 는 그 자리에서 취소된다. `sendBeacon` 은 헤더를 못 실어 우리
+   * 인증을 못 태운다.
+   */
+  function sayGoodbye() {
+    if (!graph) return
+    try {
+      fetch('/api/collab/leave', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ graph, session: sessionId }),
+        keepalive: true,
+      }).catch(() => {})
+    } catch { /* 떠나는 길이다 — 여기서 막을 것은 없다 */ }
+  }
+
+  if (typeof window !== 'undefined') {
+    // `pagehide` 가 `beforeunload` 보다 믿을 만하다 — 모바일·뒤로가기 캐시에서도 온다.
+    window.addEventListener('pagehide', sayGoodbye)
   }
 
   /** 지금 고치고 있는 요소를 알린다. `useElementLock` 이 부른다.
@@ -272,7 +392,9 @@ export const useCollabStore = defineStore('collab', () => {
   }
 
   return {
-    viewers, rev, connected, locks, conflictOnOpenElement,
+    viewers, rev, connected, disconnectedSince, staleConnection, sessionId,
+    locks, conflictOnOpenElement,
+    beat, sayGoodbye,
     heldByOther, heldByMe, holderState, lock, unlock, unlockSoon, setEditing, watch, close,
   }
 })

@@ -66,12 +66,26 @@ CREATE TABLE IF NOT EXISTS public.app_element_locks (
     uid          TEXT NOT NULL,
     display_name TEXT,
     label        TEXT,
+    session      TEXT,
     acquired_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     refreshed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (graph, element_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_locks_holder
     ON public.app_element_locks (graph, uid);
+
+ALTER TABLE IF EXISTS public.app_element_locks
+    ADD COLUMN IF NOT EXISTS session TEXT;
+
+CREATE TABLE IF NOT EXISTS public.app_collab_sessions (
+    graph      TEXT NOT NULL,
+    uid        TEXT NOT NULL,
+    session    TEXT NOT NULL,
+    last_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (graph, uid, session)
+);
+CREATE INDEX IF NOT EXISTS idx_app_sessions_holder
+    ON public.app_collab_sessions (graph, uid, last_seen DESC);
 
 CREATE TABLE IF NOT EXISTS public.app_project_changes (
     graph      TEXT NOT NULL,
@@ -88,9 +102,46 @@ CREATE TABLE IF NOT EXISTS public.app_project_changes (
 # "통째로 다시 읽어라"를 받는다.
 CHANGE_TAIL = 200
 
-# 잠금이 저절로 풀리는 시간. 창을 닫으면 스트림이 끊기고 갱신이 멎는다.
-# **이게 없으면 브라우저를 강제 종료한 사람이 요소를 영영 잠가 놓는다.**
-LOCK_TTL_SECONDS = 60
+# 잠금의 수명은 **시계가 아니라 접속**이다.
+#
+# 전에는 `LOCK_TTL_SECONDS = 60` 이었고, 그 60초를 갱신하는 것은 SSE 스트림뿐이었다.
+# 두 방향으로 다 틀렸다.
+#
+#     스트림이 끊기면        `release_all` 이 **그 자리에서** 잠금을 놓았다.
+#                            사람은 화면 앞에 앉아 글자를 치고 있는데. 60초를
+#                            기다리지도 않는다 — 실측으로 10초 안에 사라졌다
+#     스트림 종료를 못 보면   반열림 연결·백엔드 재시작. 잠금이 60초를 더 산다
+#
+# 재야 하는 것은 "몇 초가 지났나"가 아니라 **"그 사람이 아직 붙어 있나"** 다.
+# 그 사실은 `app_collab_sessions` 가 들고 있다 — 창(탭)마다 한 행이고, 앱이
+# **스트림과 별개로** 보통 HTTP 로 갱신한다. 그래서 SSE 만 끊기는 흔한 경우
+# (프록시·절전·재연결 백오프)에 잠금이 안 풀린다.
+#
+# 이 값은 반드시 `PRESENCE_TTL_SECONDS` 보다 커야 한다. 같거나 작으면 접속자
+# 목록이 깜빡이는 순간에 잠금이 걷힌다.
+LOCK_ABSENT_GRACE_SECONDS = 25
+
+# 창이 자기를 알리는 주기(화면 쪽 값)보다 넉넉해야 한다 — 5초마다 알리므로
+# 다섯 번을 놓쳐도 버틴다.
+assert LOCK_ABSENT_GRACE_SECONDS > PRESENCE_TTL_SECONDS
+
+# 보유자가 아직 붙어 있는가. **한 곳에만 적는다** — `locks()` 와
+# `blocking_holder()` 와 `acquire_lock()` 이 기준을 따로 들면, 한쪽에는 보이는데
+# 다른 쪽에서는 못 집는 상태가 생긴다.
+# 잠금은 **사람이 아니라 창**에 묶인다.
+#
+# 사람에만 묶었더니, 창을 둘 열어 둔 사람이 편집하던 창을 닫아도 다른 창이
+# 살아 있다는 이유로 잠금이 남았다. 남은 창은 그 요소를 열고 있지도 않은데
+# 아무도 못 고치게 된다.
+#
+# `l.session` 이 비어 있으면(옛 행·스크립트) 사람 기준으로 본다 — 그것까지
+# 막으면 잠금을 안 거치는 쓰기가 영구 잠금이 된다.
+_HOLDER_PRESENT = """
+    EXISTS (SELECT 1 FROM public.app_collab_sessions s
+             WHERE s.graph = l.graph AND s.uid = l.uid
+               AND (l.session IS NULL OR l.session = '' OR s.session = l.session)
+               AND s.last_seen > now() - make_interval(secs => {grace}))
+""".format(grace=LOCK_ABSENT_GRACE_SECONDS)
 
 
 def ensure_schema() -> None:
@@ -154,8 +205,18 @@ def revision(graph: str) -> dict[str, Any]:
 
 # ── 접속자 ───────────────────────────────────────────────────────────────
 
-def heartbeat(graph: str, uid: str, display_name: str | None = None) -> None:
-    """내가 아직 이 프로젝트를 보고 있다. 스트림이 한 바퀴마다 부른다."""
+def heartbeat(graph: str, uid: str, display_name: str | None = None,
+              session: str | None = None) -> None:
+    """내가 아직 이 프로젝트를 보고 있다.
+
+    **접속자 표시와 잠금 수명을 같은 자리에서 올린다.** 둘을 다른 곳에서 올리면
+    수명이 갈리고, 갈린 순간 "접속자에는 있는데 잠금은 만료된" 상태가 생긴다 —
+    그게 정확히 전에 있던 고장이다(접속 15초 · 잠금 60초).
+
+    `session` 은 **창(탭) 하나**를 가리킨다. 사람이 아니라 창을 세는 이유는,
+    한 사람이 창을 둘 열었을 때 하나를 닫는다고 다른 창의 잠금이 죽으면 안
+    되기 때문이다.
+    """
     if not valid_graph(graph) or not uid:
         return
     try:
@@ -168,15 +229,57 @@ def heartbeat(graph: str, uid: str, display_name: str | None = None) -> None:
             """,
             (graph, uid, display_name),
         )
+        if session:
+            pg.execute(
+                """
+                INSERT INTO public.app_collab_sessions (graph, uid, session, last_seen)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (graph, uid, session) DO UPDATE SET last_seen = now()
+                """,
+                (graph, uid, session),
+            )
     except Exception:
         return
 
 
-def leave(graph: str, uid: str) -> None:
-    """창을 닫았다. 안 불려도 TTL 이 걷어가지만, 불리면 즉시 사라진다."""
+def live_sessions(graph: str, uid: str, exclude: str | None = None) -> int:
+    """이 사람의 창이 아직 몇 개 붙어 있나. `exclude` 는 지금 닫는 창."""
+    if not valid_graph(graph) or not uid:
+        return 0
+    rows = pg.query(
+        """
+        SELECT count(*) AS n FROM public.app_collab_sessions
+         WHERE graph = %s AND uid = %s
+           AND (%s IS NULL OR session <> %s)
+           AND last_seen > now() - make_interval(secs => %s)
+        """,
+        (graph, uid, exclude, exclude, LOCK_ABSENT_GRACE_SECONDS),
+    )
+    return int(rows[0]["n"]) if rows else 0
+
+
+def leave(graph: str, uid: str, session: str | None = None) -> None:
+    """창을 닫았다. 안 불려도 유예가 걷어가지만, 불리면 즉시 사라진다.
+
+    **창이 여럿이면 마지막 창을 닫을 때만 접속자에서 뺀다.** 한 창을 닫았다고
+    그 사람이 떠난 것은 아니다.
+    """
     if not valid_graph(graph) or not uid:
         return
     try:
+        if session:
+            pg.execute(
+                "DELETE FROM public.app_collab_sessions "
+                "WHERE graph = %s AND uid = %s AND session = %s",
+                (graph, uid, session),
+            )
+            if live_sessions(graph, uid):
+                return
+        else:
+            pg.execute(
+                "DELETE FROM public.app_collab_sessions WHERE graph = %s AND uid = %s",
+                (graph, uid),
+            )
         pg.execute(
             "DELETE FROM public.app_project_presence WHERE graph = %s AND uid = %s",
             (graph, uid),
@@ -234,7 +337,8 @@ def viewers(graph: str) -> list[dict[str, Any]]:
 
 def acquire_lock(graph: str, element_id: str, uid: str,
                  display_name: str | None = None,
-                 label: str | None = None) -> dict[str, Any]:
+                 label: str | None = None,
+                 session: str | None = None) -> dict[str, Any]:
     """이 요소를 내가 잡는다. 이미 남이 잡고 있으면 그 사람을 돌려준다.
 
     한 문장으로 끝내는 것이 핵심이다. "만료된 것을 지우고 → 넣는다"로 나누면
@@ -245,23 +349,30 @@ def acquire_lock(graph: str, element_id: str, uid: str,
     rows = pg.query(
         """
         INSERT INTO public.app_element_locks
-               (graph, element_id, uid, display_name, label)
-        VALUES (%s, %s, %s, %s, %s)
+               (graph, element_id, uid, display_name, label, session)
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (graph, element_id) DO UPDATE
            SET uid = EXCLUDED.uid,
                display_name = EXCLUDED.display_name,
                label = EXCLUDED.label,
+               session = EXCLUDED.session,
                refreshed_at = now(),
                -- 내가 이미 갖고 있었으면 잡은 시각은 그대로 둔다.
                acquired_at = CASE
                    WHEN public.app_element_locks.uid = EXCLUDED.uid
                    THEN public.app_element_locks.acquired_at ELSE now() END
          WHERE public.app_element_locks.uid = EXCLUDED.uid
-            OR public.app_element_locks.refreshed_at
-               < now() - make_interval(secs => %s)
+            OR NOT EXISTS (
+                   SELECT 1 FROM public.app_collab_sessions s
+                    WHERE s.graph = public.app_element_locks.graph
+                      AND s.uid = public.app_element_locks.uid
+                      AND (public.app_element_locks.session IS NULL
+                           OR public.app_element_locks.session = ''
+                           OR s.session = public.app_element_locks.session)
+                      AND s.last_seen > now() - make_interval(secs => %s))
         RETURNING uid, display_name, acquired_at
         """,
-        (graph, element_id, uid, display_name, label, LOCK_TTL_SECONDS),
+        (graph, element_id, uid, display_name, label, session, LOCK_ABSENT_GRACE_SECONDS),
     )
     if rows:
         return {"ok": True, "elementId": element_id, "uid": uid}
@@ -294,10 +405,11 @@ def release_lock(graph: str, element_id: str, uid: str) -> bool:
 
 
 def refresh_locks(graph: str, uid: str) -> None:
-    """내가 아직 붙어 있다 — 스트림이 한 바퀴마다 부른다.
+    """마지막으로 이 사람이 잠금을 만진 시각을 적어 둔다.
 
-    갱신이 멎으면 TTL 이 걷어간다. 그게 창을 강제로 닫은 사람의 잠금을 푸는
-    유일한 길이다.
+    **이제 잠금의 생사를 정하는 값이 아니다.** 생사는 `app_collab_sessions` 가
+    정한다(`_HOLDER_PRESENT`). 이 열은 "언제부터 이 상태였나"를 사람이 볼 때만
+    쓴다 — 지우면 진단할 때 눈이 하나 없어진다.
     """
     if not valid_graph(graph) or not uid:
         return
@@ -311,17 +423,77 @@ def refresh_locks(graph: str, uid: str) -> None:
         return
 
 
-def release_all(graph: str, uid: str) -> None:
-    """창을 닫았다. TTL 을 기다리지 않고 바로 푼다."""
+def release_all(graph: str, uid: str, session: str | None = None) -> None:
+    """창을 닫았다. 유예를 기다리지 않고 바로 푼다.
+
+    `session` 을 주면 **그 창이 잡은 것만** 푼다. 같은 사람의 다른 창이 고치고
+    있는 것까지 놓아 버리면 안 된다.
+    """
     if not valid_graph(graph) or not uid:
         return
     try:
-        pg.execute(
-            "DELETE FROM public.app_element_locks WHERE graph = %s AND uid = %s",
-            (graph, uid),
-        )
+        if session:
+            pg.execute(
+                "DELETE FROM public.app_element_locks "
+                "WHERE graph = %s AND uid = %s "
+                "AND (session = %s OR session IS NULL OR session = '')",
+                (graph, uid, session),
+            )
+        else:
+            pg.execute(
+                "DELETE FROM public.app_element_locks WHERE graph = %s AND uid = %s",
+                (graph, uid),
+            )
     except Exception:
         return
+
+
+def sweep_absent_locks(graph: str | None = None) -> int:
+    """보유자가 사라진 잠금을 **지운다.** 지운 개수를 돌려준다.
+
+    **못 했으면 -1 이다.** 0 과 같은 값으로 돌려주면 "치울 게 없었다"와
+    "치우려다 실패했다"가 구별이 안 된다 — 이 저장소가 반복해서 낸 고장이 그
+    모양이고, 이 함수도 처음 판에서 정확히 그렇게 틀렸다(파라미터 타입 오류를
+    `except` 가 먹고 0 을 냈다).
+
+    숨기는 것만으로는 부족하다 — `locks()` 가 안 보여 줘도 행이 남아 있으면
+    `ON CONFLICT` 가 그 행을 계속 만나고, 무엇보다 **표를 들여다본 사람이
+    유령을 진짜로 착각한다.**
+
+    두 자리에서 돈다. 스트림 한 바퀴마다(붙어 있는 창이 있을 때), 그리고
+    **기동 시 한 번** — 붙은 창이 하나도 없을 때가 유령이 가장 잘 남는 자리이고,
+    그때는 한 바퀴도 안 돈다. 백엔드를 재시작하면 정확히 그 상태가 된다.
+    """
+    if graph is not None and not valid_graph(graph):
+        return -1
+    try:
+        # `%s::text` 의 캐스트가 필요하다. 없으면 Postgres 가 `%s IS NULL` 의
+        # 타입을 못 정해 `IndeterminateDatatype` 을 던진다.
+        return pg.execute(
+            """
+            DELETE FROM public.app_element_locks l
+             WHERE (%s::text IS NULL OR l.graph = %s::text)
+               AND NOT """ + _HOLDER_PRESENT + """
+            """,
+            (graph, graph),
+        )
+    except Exception as exc:  # noqa: BLE001 — 정리가 실패해도 앱은 돌아야 한다
+        _log_sweep_failure(exc)
+        return -1
+
+
+def _log_sweep_failure(exc: Exception) -> None:
+    """조용히 넘기지 않는다 — 다음 사람이 "0건"을 답으로 읽지 않게."""
+    try:
+        from api.platform.observability.smart_logger import SmartLogger
+        SmartLogger.log(
+            "WARN",
+            f"보유자 없는 선점 정리에 실패했다: {exc}",
+            category="collab.locks.sweep_failed",
+            params={"error": str(exc)[:300]},
+        )
+    except Exception:  # noqa: BLE001 — 로깅 실패가 앱을 막으면 안 된다
+        print(f"[collab] 선점 정리 실패: {exc}", flush=True)
 
 
 def locks(graph: str) -> list[dict[str, Any]]:
@@ -336,10 +508,10 @@ def locks(graph: str) -> list[dict[str, Any]]:
           FROM public.app_element_locks l
           LEFT JOIN public.app_users u ON u.uid = l.uid
          WHERE l.graph = %s
-           AND l.refreshed_at > now() - make_interval(secs => %s)
+           AND """ + _HOLDER_PRESENT + """
          ORDER BY l.acquired_at
         """,
-        (graph, LOCK_TTL_SECONDS),
+        (graph,),
     )
     return [
         {
@@ -374,9 +546,9 @@ def blocking_holder(graph: Optional[str], element_id: str, uid: str) -> dict[str
          WHERE l.graph = %s
            AND l.element_id = %s
            AND l.uid <> %s
-           AND l.refreshed_at > now() - make_interval(secs => %s)
+           AND """ + _HOLDER_PRESENT + """
         """,
-        (graph, element_id, uid, LOCK_TTL_SECONDS),
+        (graph, element_id, uid),
     )
     if not rows:
         return None

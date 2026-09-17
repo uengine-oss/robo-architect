@@ -61,6 +61,17 @@ export function useElementLock(elementId, labelOf) {
   /** 이 요소를 지금 고칠 수 있나. */
   const editable = computed(() => !blockedBy.value)
 
+  /**
+   * 잡고는 있는데 **서버와 말이 끊겼다.**
+   *
+   * 선점의 수명은 이제 "붙어 있나"로 정해지므로, 두 채널이 다 끊긴 채로 오래
+   * 있으면 서버가 이 잠금을 걷어 간다 — 그러면 그 사이 친 글자는 저장할 때
+   * 사라진다. **입력칸은 안 막는다.** 끊긴 것은 아직 뺏긴 것이 아니고, 잠깐
+   * 깜빡였다 붙는 흔한 경우에 편집을 방해하면 안 된다. 뺏겼을 때(`blockedBy`)
+   * 막는 길은 따로 있다.
+   */
+  const atRisk = computed(() => held.value && collab.staleConnection)
+
   // 다시 집는 요청이 겹치지 않게. 스트림이 2초마다 도는데 그때마다 새로 집으면
   // 답이 오기 전에 또 보낸다.
   //
@@ -175,5 +186,5 @@ export function useElementLock(elementId, labelOf) {
     drop()
   })
 
-  return { held, blockedBy, editable, release: drop }
+  return { held, blockedBy, editable, atRisk, release: drop }
 }

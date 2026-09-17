@@ -111,6 +111,31 @@ async def lifespan(app: FastAPI):
             category="figma_binding.full_sync.stale_lock_released",
             params={"error": str(e)},
         )
+    # 057: 기동 시 유령 선점을 치운다.
+    #
+    # **붙은 창이 하나도 없을 때가 유령이 가장 잘 남는 자리다.** 정리는 스트림
+    # 한 바퀴마다 도는데, 백엔드가 재시작되면 그 바퀴가 아무도 안 돈다 —
+    # 그러면 재시작 전에 잡혀 있던 잠금이 **아무도 못 고치는 요소**로 남는다.
+    try:
+        from api.features.collab import store as collab_store
+        collab_store.ensure_schema()
+        swept = collab_store.sweep_absent_locks()
+        # **-1 은 "치울 게 없었다"가 아니라 "못 했다"이다.** 그쪽은
+        # `sweep_absent_locks` 가 이미 따로 알린다.
+        if swept > 0:
+            SmartLogger.log(
+                "INFO",
+                f"기동 시 보유자 없는 선점 {swept}건을 치웠다",
+                category="collab.locks.swept_on_startup",
+                params={"count": swept},
+            )
+    except Exception as e:  # noqa: BLE001 — 정리 실패가 기동을 막으면 안 된다
+        SmartLogger.log(
+            "WARN",
+            f"Failed to sweep absent collab locks: {e}",
+            category="collab.locks.sweep_failed",
+            params={"error": str(e)},
+        )
     # 029: enter the robo-spec MCP session-manager context for the lifetime
     # of the app. Without this the streamable-HTTP handler raises
     # "Task group is not initialized" on the first request. Falls back to

@@ -23,6 +23,14 @@
 defineProps({
   /** `useElementLock().blockedBy` — 남이 잡고 있으면 그 사람, 아니면 null */
   holder: { type: Object, default: null },
+  /**
+   * `useElementLock().atRisk` — 내가 잡고 있는데 서버와 말이 끊겼다.
+   *
+   * **남이 잡은 것과 다른 문장이어야 한다.** 원인이 다르고 사람이 할 일도
+   * 다르다 — 저쪽은 기다리거나 말을 걸어야 하고, 이쪽은 연결이 돌아올 때까지
+   * 큰 수정을 미뤄야 한다. 같은 문장으로 뭉치면 둘 다 안 읽힌다.
+   */
+  atRisk: { type: Boolean, default: false },
 })
 </script>
 
@@ -33,6 +41,13 @@ defineProps({
       <span class="lockbar__text">
         <strong>{{ holder.displayName || holder.uid }}</strong> 님이 편집 중입니다.
         지금은 읽기만 됩니다.
+      </span>
+    </div>
+    <div v-else-if="atRisk" class="lockbar lockbar--risk">
+      <span class="lockbar__icon">⚠️</span>
+      <span class="lockbar__text">
+        서버와 연결이 끊겼습니다. 연결이 돌아오지 않으면 편집권을 잃고
+        <strong>지금 고친 내용이 저장되지 않을 수 있습니다.</strong>
       </span>
     </div>
   </div>
@@ -54,6 +69,7 @@ defineProps({
   background: rgba(220, 160, 60, 0.16);
   color: inherit;
 }
+.lockbar--risk { background: rgba(200, 70, 60, 0.16); }
 .lockbar__icon { font-size: 12px; }
 .lockbar__text { flex: 1; }
 </style>

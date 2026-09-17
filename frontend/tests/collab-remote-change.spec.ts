@@ -61,7 +61,7 @@ async function boot(page: any, onStream: (headers: Record<string, string>) => an
     r.request().method() === 'GET' ? r.fulfill({ json: PROJECTS }) : r.fallback())
   await page.route('**/api/ingest/hybrid/sessions', (r: any) =>
     r.fulfill({ json: { sessions: [] } }))
-  await page.route('**/api/collab/stream', (r: any) =>
+  await page.route('**/api/collab/stream*', (r: any) =>
     r.fulfill(onStream(r.request().headers())))
   await page.goto('/', { waitUntil: 'domcontentloaded' })
 }
@@ -157,8 +157,8 @@ async function bootGated(page: any, body: string) {
     body: 'event: hello\ndata: {"graph":"prj_aaa","rev":1,"viewers":[],"locks":[]}\n\n',
   }))
   // hello 만 먼저 보낸 스트림은 닫힌다. 두 번째 연결에서 본론을 내보낸다.
-  await page.unroute('**/api/collab/stream')
-  await page.route('**/api/collab/stream', async (r: any) => {
+  await page.unroute('**/api/collab/stream*')
+  await page.route('**/api/collab/stream*', async (r: any) => {
     await gate
     r.fulfill({ status: 200, contentType: 'text/event-stream', body })
   })

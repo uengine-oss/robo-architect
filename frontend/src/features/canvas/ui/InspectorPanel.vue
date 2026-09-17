@@ -74,7 +74,7 @@ const emit = defineEmits(['close', 'updated', 'request-chat'])
 // 각자 고친 뒤라서 한쪽 작업이 사라진다. 못 잡으면 **읽기로 연다**(아예 못
 // 열게 하면 옆 사람이 창을 켜 둔 채 자리를 비웠을 때 아무도 아무것도 못 한다).
 const lockedElementId = computed(() => props.nodeId || props.nodeData?.id || null)
-const { blockedBy: lockedByOther, editable: lockEditable } =
+const { blockedBy: lockedByOther, editable: lockEditable, atRisk: lockAtRisk } =
   useElementLock(lockedElementId)
 
 const canvasStore = useCanvasStore()
@@ -3642,7 +3642,7 @@ function updateVoFieldValue(fieldName, value) {
          들어 있어서, 형제 목록이 한 칸만 밀려도 Vue 의 패치가 죽은 서브트리로
          들어간다("Cannot set properties of null (setting '__vnode')"). 배너
          자신도 뿌리를 항상 그려서 노드 수를 고정한다. -->
-    <LockBanner :holder="lockedByOther" />
+    <LockBanner :holder="lockedByOther" :at-risk="lockAtRisk" />
 
     <div class="inspector-panel__body">
       <div v-if="!node" class="inspector-panel__empty">

@@ -1,6 +1,4 @@
-import { test, expect, request as pwRequest, type Page, type BrowserContext } from '@playwright/test'
-import { readFileSync } from 'fs'
-import { resolve } from 'path'
+import { test, expect, type Page } from '@playwright/test'
 
 /**
  * **두 사람이 정말로 같은 요소를 열었을 때** 잠기고, 반영되는가.
@@ -18,151 +16,26 @@ import { resolve } from 'path'
  * 사용자가 보는 것을 본다.
  */
 
-const API = process.env.ROBO_API_URL || 'http://localhost:8000'
+import {
+  login, sharedGraph, openApp, attach, waitConnected, locksOf, devPassword, type Who,
+} from './helpers/collab'
 
-/**
- * 개발용 계정의 비밀번호. `test` 만 공용 기본값을 쓰고 나머지는 계정마다 다르다
- * (`AUTH_DEV_LOGIN_ACCOUNTS=loginId:pw:사번:이름:부서, ...`).
- *
- * **값을 찍지 않는다.** 로컬 개발 자격이지만 로그에 남길 이유가 없다.
- */
-function devPassword(loginId: string): string {
-  if (loginId === (process.env.AUTH_DEV_LOGIN_ID || 'test')) {
-    return process.env.AUTH_DEV_LOGIN_PASSWORD || 'test'
-  }
-  // playwright 는 frontend/ 에서 돈다. `__dirname` 은 여기서 정의되지 않아
-  // 한 번 조용히 기본 비밀번호로 떨어졌고, 그러면 401 만 보이고 **왜인지가
-  // 안 보인다.** 못 찾으면 말하게 한다.
-  const envPath = resolve(process.cwd(), '../.env')
-  let env = ''
-  try {
-    env = readFileSync(envPath, 'utf-8')
-  } catch {
-    throw new Error(`개발용 계정 비밀번호를 읽을 곳이 없다: ${envPath}`)
-  }
-  const line = env.split('\n').find((l) => l.startsWith('AUTH_DEV_LOGIN_ACCOUNTS='))
-  for (const acc of (line || '').slice('AUTH_DEV_LOGIN_ACCOUNTS='.length).trim().split(',')) {
-    const f = acc.split(':')
-    if (f[0]?.trim() === loginId && f[1]) return f[1]
-  }
-  throw new Error(`${envPath} 의 AUTH_DEV_LOGIN_ACCOUNTS 에 '${loginId}' 가 없다`)
-}
-
-// 로그인 상태를 spec 이 직접 만든다 — globalSetup 의 것은 한 사람 몫이다.
-test.use({ storageState: { cookies: [], origins: [] } })
+// 위 부품들은 `helpers/collab.ts` 로 옮겼다 — 새 동시편집 검사 둘이 같은 것을
+// 쓴다. 두 벌로 두면 한쪽만 고치고 다른 쪽에서 재게 된다.
 
 /**
  * 실제로 눌리는 저장 버튼.
  *
  * 패널에 `저장` 이 **둘** 있다. 머리쪽(`title="Save"`)은 어떤 칸을 고쳐도 계속
  * 잠겨 있고, 본문 아래쪽 것만 켜진다. 앞의 것을 집어 "저장이 안 켜진다"고
- * 한참 헤맸다 — 별도 문제로 적어 뒀다.
+ * 한참 헤맸다.
  */
 function enabledSave(page: Page) {
   return page.locator('.inspector-panel__btn.primary:not([title="Save"])').first()
 }
 
-type Who = { token: string; uid: string; name: string }
-
-async function login(loginId: string): Promise<Who> {
-  const ctx = await pwRequest.newContext()
-  try {
-    const r = await ctx.post(`${API}/api/auth/dev-login`, {
-      multipart: { loginId, password: devPassword(loginId) },
-    })
-    const body = await r.json().catch(() => ({} as any))
-    expect(body.accessToken, `${loginId} 로 로그인하지 못했다 (${body.status || r.status()})`).toBeTruthy()
-    return { token: body.accessToken, uid: body.user?.uid || '', name: body.user?.displayName || loginId }
-  } finally {
-    await ctx.dispose()
-  }
-}
-
-/**
- * 둘 다 **쓸 수 있는** 프로젝트.
- *
- * "볼 수 있는" 으로 고르면 안 된다 — 읽기 권한이면 잠금 자체가 403 이라
- * 잠금을 재려다 권한을 재게 된다. 실제로 한 번 그렇게 헛짚었다.
- */
-async function sharedGraph(a: Who, b: Who): Promise<string> {
-  const listFor = async (w: Who) => {
-    const ctx = await pwRequest.newContext()
-    try {
-      const r = await ctx.get(`${API}/api/projects`, { headers: { Authorization: `Bearer ${w.token}` } })
-      const rows = r.ok() ? ((await r.json()).projects || []) : []
-      return new Set(rows.filter((p: any) => p.level && p.level !== 'read').map((p: any) => p.graph))
-    } finally { await ctx.dispose() }
-  }
-  const [ga, gb] = await Promise.all([listFor(a), listFor(b)])
-  const both = [...ga].filter((g: any) => gb.has(g))
-  expect(both.length,
-    `둘 다 쓰기 권한인 프로젝트가 있어야 한다 (${a.uid}: ${[...ga].join('/')} · ${b.uid}: ${[...gb].join('/')})`)
-    .toBeGreaterThan(0)
-
-  // **설계가 들어 있는 것을 고른다.** 첫 번째를 그냥 집었다가 새로 만든 빈
-  // 프로젝트에 걸려, 트리가 안 떠서 "잠금이 안 돌아온다"로 보였다 — 앱이 아니라
-  // 검사가 고른 자리가 틀린 것이었다.
-  const ctx = await pwRequest.newContext()
-  try {
-    for (const g of both) {
-      const r = await ctx.get(`${API}/api/contexts`, {
-        headers: { Authorization: `Bearer ${a.token}`, 'X-Project-Graph': g as string },
-      })
-      const rows = r.ok() ? await r.json().catch(() => []) : []
-      if (Array.isArray(rows) && rows.some((b2: any) => b2?.id)) return g as string
-    }
-  } finally { await ctx.dispose() }
-  throw new Error(`설계가 들어 있는 공용 프로젝트가 없다 (후보: ${both.join(', ')})`)
-}
-
-async function openApp(ctx: BrowserContext, who: Who, graph: string): Promise<Page> {
-  const page = await ctx.newPage()
-  // **모든 문서마다 다시 돈다.** 새로고침·라우팅에도 신원이 유지돼야 한다.
-  await page.addInitScript(([token, g]) => {
-    localStorage.setItem('robo.auth.token', token as string)
-    localStorage.setItem('robo.auth.project', g as string)
-  }, [who.token, graph])
-  await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await expect(page.locator('#app')).toBeVisible({ timeout: 20_000 })
-  await attach(page)
-  return page
-}
-
-/**
- * 스토어를 창 안에서 붙잡아 둔다.
- *
- * 앱은 pinia 를 `window` 에 안 내놓는다. 개발 서버에서는 소스 모듈이 같은
- * 인스턴스라, 모듈을 들여와 `useXStore()` 를 부르면 **앱이 쓰는 바로 그
- * 스토어**가 온다(앱이 이미 `app.use(pinia)` 로 활성 인스턴스를 정해 뒀다).
- * 기존 검사들이 `dataLifecycle.js` 를 이렇게 들여온다.
- */
-async function attach(page: Page) {
-  await page.waitForFunction(() => !!document.querySelector('#app'), null, { timeout: 20_000 })
-  await page.evaluate(async () => {
-    const { useCollabStore } = await import('/src/features/collab/collab.store.js')
-    const { useAuthStore } = await import('/src/features/auth/auth.store.js')
-    ;(window as any).__collab = useCollabStore()
-    ;(window as any).__auth = useAuthStore()
-  })
-}
-
-/** 잠금 스트림이 붙었는지. 안 붙었으면 아래 검사는 전부 무의미하다. */
-async function waitConnected(page: Page, label: string) {
-  await expect
-    .poll(async () => page.evaluate(() => {
-      const c = (window as any).__collab
-      return c ? !!c.connected : null
-    }), { timeout: 25_000, message: `${label}: collab 스트림이 안 붙었다` })
-    .toBe(true)
-}
-
-/** 이 창이 보고 있는 잠금 목록. 스토어에서 직접 읽는다 — 화면보다 앞선다. */
-function locksOf(page: Page) {
-  return page.evaluate(() => {
-    const c = (window as any).__collab
-    return c ? JSON.parse(JSON.stringify(c.locks || [])) : null
-  })
-}
+// 로그인 상태를 spec 이 직접 만든다 — globalSetup 의 것은 한 사람 몫이다.
+test.use({ storageState: { cookies: [], origins: [] } })
 
 test.describe('두 사람이 같은 프로젝트를 볼 때', () => {
   let alice: Who, tester: Who, graph: string

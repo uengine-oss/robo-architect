@@ -72,6 +72,26 @@ def _uid(request: Request) -> str:
     return uid
 
 
+def _session(request: Request, body: dict | None = None) -> str | None:
+    """이 요청이 **어느 창**에서 왔나.
+
+    잠금의 수명을 이 값으로 잰다. 사람이 아니라 창을 세는 이유는, 한 사람이
+    창을 둘 열었을 때 하나를 닫는다고 다른 창의 잠금이 죽으면 안 되기 때문이다.
+
+    없으면 `None` — 그때는 세션 행을 안 만든다. **그러면 그 클라이언트의 잠금은
+    아무도 안 살려 주므로 유예 뒤에 걷힌다.** 옛 화면·스크립트가 조용히 영구
+    잠금을 만드는 것보다 낫다.
+    """
+    v = (
+        request.headers.get("x-collab-session")
+        or request.query_params.get("session")
+        or ((body or {}).get("session") if isinstance(body, dict) else None)
+        or ""
+    )
+    v = str(v).strip()
+    return v[:64] or None
+
+
 def _graph(request: Request, uid: str) -> str:
     """이 요청이 볼 프로젝트. **권한을 여기서 확인한다.**
 
@@ -114,7 +134,10 @@ async def get_state(request: Request) -> dict:
     uid = _uid(request)
     graph = _graph(request, uid)
     store.ensure_schema()
-    store.heartbeat(graph, uid, _claims(request).get("name"))
+    # **이 호출이 창의 심장박동이다.** 화면은 스트림과 별개로 이것을 주기적으로
+    # 부른다 — 프록시가 SSE 만 끊거나 재연결 백오프가 길어져도, 사람이 거기
+    # 있다는 사실은 이 길로 계속 전해진다. 그 사실이 곧 잠금의 수명이다.
+    store.heartbeat(graph, uid, _claims(request).get("name"), _session(request))
     return _snapshot(graph)
 
 
@@ -132,10 +155,14 @@ async def post_lock(request: Request, body: dict = Body(default={})) -> dict:
     if not element_id:
         raise HTTPException(status_code=400, detail="어느 요소인지 없습니다.")
     store.ensure_schema()
+    # 잡는 것과 "붙어 있다"를 **같은 자리에서** 올린다. 따로 두면 잡자마자
+    # 유예 안에 죽는 창이 생긴다 — 세션을 안 보내는 클라이언트가 그렇다.
+    store.heartbeat(graph, uid, _claims(request).get("name"), _session(request, body))
     result = store.acquire_lock(
         graph, element_id, uid,
         display_name=_claims(request).get("name"),
         label=str((body or {}).get("label") or "")[:120] or None,
+        session=_session(request, body),
     )
     # **판 번호는 올리지 않는다.** 올리면 누가 노드를 고르기만 해도 남의 창이
     # 그래프를 통째로 다시 읽는다. 자물쇠는 자기 이벤트(`locks`)로 간다.
@@ -157,10 +184,13 @@ async def post_leave(request: Request, body: dict = Body(default={})) -> dict:
     """창을 닫았다. 안 불려도 TTL 이 걷어가지만, 불리면 즉시 사라진다."""
     uid = _uid(request)
     graph = (body or {}).get("graph") or request.headers.get("x-project-graph") or ""
+    session = _session(request, body)
     if store.valid_graph(graph):
-        store.leave(graph, uid)
-        # 잠금도 같이 푼다. 안 그러면 TTL 이 걷어갈 때까지 남이 못 고친다.
-        store.release_all(graph, uid)
+        store.leave(graph, uid, session)
+        # **이 창이 잡은 것만 푼다.** 같은 사람의 다른 창이 고치고 있는 것까지
+        # 놓아 버리면 안 되고, 반대로 "다른 창이 있으니 그대로 둔다"로 하면
+        # 아무도 열고 있지 않은 요소가 잠긴 채 남는다. 둘 다 실제로 겪었다.
+        store.release_all(graph, uid, session)
     return {"ok": True}
 
 
@@ -169,7 +199,10 @@ async def stream(request: Request) -> StreamingResponse:
     uid = _uid(request)
     graph = _graph(request, uid)
     display = _claims(request).get("name")
+    session = _session(request)
     store.ensure_schema()
+    # 스트림을 여는 이 요청 자체는 창이 진짜로 보낸 것이다 — 한 번은 찍는다.
+    store.heartbeat(graph, uid, display, session)
 
     async def gen() -> AsyncIterator[bytes]:
         # 첫 이벤트는 **지금 상태**다. 이걸 안 보내면 창을 새로 연 사람은 다음
@@ -187,10 +220,22 @@ async def stream(request: Request) -> StreamingResponse:
                 ticks += 1
                 # 폴링 한 바퀴가 곧 심장박동이다. 별도 타이머를 두면 둘이
                 # 어긋나 유령 접속자가 남는다.
+                # **여기서 세션을 올리지 않는다.**
+                #
+                # 올렸더니 서버가 제 손으로 창을 살려 놨다. 창이 완전히 끊긴
+                # 뒤에도(오프라인 실측) 이 고리가 계속 돌면서 "붙어 있다"를
+                # 찍어, 선점이 60초가 지나도 안 풀렸다. **붙어 있다는 사실은
+                # 창이 실제로 보낸 요청으로만 안다** — 서버의 고리는 그 증거가
+                # 아니다.
+                #
+                # 접속자 표시는 이 고리로 갱신해도 된다. 그쪽은 "보여 줄까"의
+                # 문제이고, 잘못돼도 남의 편집을 막지 않는다.
                 store.heartbeat(graph, uid, display)
-                # 내 잠금도 같은 바퀴에 갱신한다. 따로 타이머를 두면 둘이
-                # 어긋나 **내가 보고 있는데 내 잠금이 만료된다.**
                 store.refresh_locks(graph, uid)
+                # 보유자가 사라진 잠금을 이 바퀴에 치운다. 숨기는 것으로는
+                # 부족하다 — 행이 남으면 표를 들여다본 사람이 유령을 진짜로
+                # 착각하고, 취득 경로가 그 행을 계속 만난다.
+                store.sweep_absent_locks(graph)
 
                 current = store.revision(graph)
                 if current["rev"] != last:
@@ -225,9 +270,18 @@ async def stream(request: Request) -> StreamingResponse:
                 if ticks % PING_EVERY == 0:
                     yield _sse("ping", {"rev": last})
         finally:
-            # 브라우저가 창을 닫으면 여기로 온다. TTL 을 기다리지 않는다.
-            store.leave(graph, uid)
-            store.release_all(graph, uid)
+            # **여기서 아무것도 놓지 않는다.**
+            #
+            # 전에는 `leave` + `release_all` 이 있었다. 그래서 스트림이 끊기는
+            # 순간 잠금이 풀렸다 — 프록시가 SSE 만 끊거나, 절전에서 깨거나,
+            # 재연결 백오프가 도는 그 몇 초 사이에. 사람은 화면 앞에 앉아
+            # 글자를 치고 있는데 서버는 이미 놓은 뒤였고, 그 틈에 남이 집어
+            # 가면 돌아와서 저장할 때 409 를 맞았다. 실측: 끊고 10초 만에 사라진다.
+            #
+            # **스트림이 끊긴 것과 사람이 떠난 것은 다르다.** 떠난 것은 두 길로만
+            # 안다 — 창이 알려 주거나(`/leave`), 심장박동이 유예만큼 멎거나.
+            # 후자는 `sweep_absent_locks` 가 치운다.
+            pass
 
     return StreamingResponse(
         gen(),
