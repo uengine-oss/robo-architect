@@ -2,7 +2,7 @@
 
 **Feature Branch**: `enterprise-custom-p` (전용 브랜치를 따지 않는다 — 납품 브랜치에서 이어 간다)
 **Spec Dir**: `specs/057-presence-bound-element-lock`
-**사용자 매뉴얼**: [manual/README.md](manual/README.md) — 화면 캡처는 Playwright 로 생성
+**사용자 매뉴얼**: [manual/manual.md](manual/manual.md) (+ `manual.docx`) — 화면 캡처는 Playwright 로 생성
 **Created**: 2026-09-17
 **Status**: 구현·검증 완료 (2026-09-17) — US1~US5 화면에서 통과, 결함 주입 6종 확인
 

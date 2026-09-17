@@ -34,9 +34,16 @@
 
 ## T5 — 매뉴얼
 
-- [x] T022 `manual/` — 사용자 매뉴얼. **캡처는 Playwright 가 두 사람을 띄워 찍는다**
-      (`frontend/tests/collab-manual-capture.spec.ts` → `manual/images/`).
-      손으로 그린 그림은 화면이 바뀌면 조용히 거짓말을 하고, 그 거짓말은 고객이 먼저 본다
+> 036(`036-bpmn-rule-mapping-recall/manual/`)과 같은 짜임새로 둔다 —
+> `manual.md` · `screenshots/` · `artifacts/`(캡처 spec + 전용 config) · `manual.docx`.
+
+- [x] T022 캡처 자동화 — `manual/artifacts/playwright-057-collab.spec.ts` +
+      `playwright.config.ts`. **두 사람을 실제로 띄운다**(동시편집은 혼자 못 찍는다).
+      경로는 `path.resolve(__dirname, ...)` 로 푼다 — 상대 경로로 두면 실행
+      디렉터리 기준이 되어 **조용히 엉뚱한 곳에 찍히고 검사는 통과한다**(한 번 그랬다)
+- [x] T023 매뉴얼 본문 — `manual/manual.md`(한국어): 문제 · 사용법 · 화면 ·
+      **측정 결과표**(기준 SC 대비) · 안전성/롤백 · FAQ · 캡처 재현
+- [x] T024 `manual.docx` 변환 — pandoc, 스크린샷 7장 임베드 확인
 
 ## T4 — 검증의 검증
 

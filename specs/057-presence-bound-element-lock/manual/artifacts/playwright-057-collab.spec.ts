@@ -1,9 +1,14 @@
 import { test, expect, type Page } from '@playwright/test'
-import { login, sharedGraph, openApp, waitConnected, gotoDesignTree, type Who } from './helpers/collab'
+import path from 'path'
+// 검사 부품은 **한 벌만 둔다** — `frontend/tests/helpers/collab.ts`.
+// 여기에 다시 쓰면 한쪽만 고치고 다른 쪽에서 재게 된다.
+import {
+  login, sharedGraph, openApp, waitConnected, gotoDesignTree, type Who,
+} from '../../../../frontend/tests/helpers/collab'
 
 /**
  * **동시편집 매뉴얼의 화면을 실제로 찍는다**
- * → `specs/057-presence-bound-element-lock/manual/images/`.
+ * → `specs/057-presence-bound-element-lock/manual/screenshots/`.
  *
  * 매뉴얼에 손으로 그린 그림을 넣지 않는다. 화면이 바뀌면 그림이 조용히
  * 거짓말을 하기 시작하고, 그 거짓말은 고객이 먼저 본다. 여기서 찍은 것만 쓴다.
@@ -12,12 +17,13 @@ import { login, sharedGraph, openApp, waitConnected, gotoDesignTree, type Who } 
  *
  * 실 데이터를 고치지 않는다. 잠그고 보고 푸는 것만 한다.
  *
- *     npx playwright test tests/collab-manual-capture.spec.ts --workers=1
+ *     cd frontend && npx playwright test \
+ *       --config ../specs/057-presence-bound-element-lock/manual/artifacts/playwright.config.ts
  */
 
-const IMG = '../specs/057-presence-bound-element-lock/manual/images'
-
-test.use({ storageState: { cookies: [], origins: [] } })
+// **파일 기준으로 푼다.** 상대 경로로 두면 실행 디렉터리 기준이 되어,
+// 조용히 엉뚱한 곳에 찍히고 검사는 그대로 통과한다 — 실제로 한 번 그랬다.
+const IMG = path.resolve(__dirname, '../screenshots')
 
 async function openCanvas(page: Page): Promise<string> {
   await gotoDesignTree(page)
