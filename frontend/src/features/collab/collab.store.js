@@ -52,6 +52,17 @@ export const useCollabStore = defineStore('collab', () => {
    *  화면이 "잠깐 깜빡인 것"과 "위험한 것"을 못 가른다. */
   const disconnectedSince = ref(null)
 
+  /**
+   * **화면에 실제로 반영된 판.** `rev` 와 다르다.
+   *
+   * `rev` 는 "서버가 몇 판인가"이고 이것은 "내가 몇 판까지 그렸나"다. 둘을
+   * 하나로 두면 **판만 올라가고 화면은 안 바뀐 상태**가 눈에 안 보인다 —
+   * 실측으로 그랬다. 스트림이 끊긴 사이 남이 고치면 심장박동이 rev 를 올려
+   * 놓는데 화면은 한 번도 안 울렸고, 재연결해도 안 울렸다.
+   */
+  let appliedRev = -1
+  let attached = false
+
   let source = null
   let graph = null
   let retry = 0
@@ -103,6 +114,7 @@ export const useCollabStore = defineStore('collab', () => {
   function onChanged(payload) {
     if (!mine(payload)) return
     apply(payload)
+    if (typeof payload.rev === 'number') appliedRev = payload.rev
     // 내가 쓴 것이면 이미 내 화면은 최신이다. 다시 그리면 편집 중이던 상태를
     // 내가 날린다.
     if (payload.actorUid && payload.actorUid === myUid()) return
@@ -138,6 +150,25 @@ export const useCollabStore = defineStore('collab', () => {
     emitDataChanged('remote-change')
   }
 
+  /**
+   * **판은 올랐는데 화면이 안 울린 경우를 메운다.**
+   *
+   * 정밀한 길(`changed` + 요소 목록)은 스트림에만 있다. 스트림이 끊긴 동안
+   * 일어난 남의 변경은 그 길로 영영 안 온다 — 무엇이 바뀌었는지 서버가 다시
+   * 말해 주지 않기 때문이다. 그래서 **목록 없이 "통째로 다시 읽어라"** 로
+   * 따라잡는다. 이 저장소에 이미 있는 거친 길이다.
+   *
+   * 내 변경이었어도 손해는 다시 읽는 것뿐이다. 반대로 안 메우면 **남이 챗으로
+   * 고친 내용을 안 보고 그 위에 덮어쓴다.**
+   */
+  function catchUp(nextRev) {
+    if (typeof nextRev !== 'number') return
+    if (!attached) { appliedRev = nextRev; attached = true; return }
+    if (nextRev <= appliedRev) return
+    appliedRev = nextRev
+    emitDataChanged('remote-change-catchup')
+  }
+
   function markDisconnected() {
     if (connected.value || !disconnectedSince.value) disconnectedSince.value = Date.now()
     connected.value = false
@@ -169,6 +200,8 @@ export const useCollabStore = defineStore('collab', () => {
       if (!r.ok) return
       const body = await r.json()
       apply(body)
+      // 스트림이 죽어 있는 동안 이 길이 유일한 눈이다.
+      if (mine(body)) catchUp(body.rev)
     } catch {
       // 이 길까지 막혔으면 정말 끊긴 것이다. 서버가 유예 뒤에 걷어간다.
     }
@@ -214,7 +247,11 @@ export const useCollabStore = defineStore('collab', () => {
       disconnectedSince.value = null
       staleConnection.value = false
       retry = 0
-      apply(JSON.parse(e.data))
+      const payload = JSON.parse(e.data)
+      apply(payload)
+      // **되붙는 순간이 가장 위험하다.** 끊긴 동안의 변경은 여기서 안 메우면
+      // 영영 안 온다.
+      if (mine(payload)) catchUp(payload.rev)
     })
     es.addEventListener('changed', (e) => onChanged(JSON.parse(e.data)))
     es.addEventListener('viewers', (e) => apply(JSON.parse(e.data)))
@@ -230,7 +267,14 @@ export const useCollabStore = defineStore('collab', () => {
   function watch(nextGraph) {
     if (nextGraph === graph && source) return
     stopped = false
+    // **프로젝트를 바꾼 것과 같은 프로젝트로 다시 붙는 것은 다르다.**
+    //
+    // 바꿨으면 화면이 어차피 처음부터 읽으니 첫 소식은 안 울려야 한다. 그런데
+    // 둘을 같게 봤더니, 끊겼다 되붙는 자리에서도 "처음부터"로 쳐서 **끊긴 동안의
+    // 남의 변경을 통째로 삼켰다.** 되붙는 순간이 가장 위험한 자리인데 거기서 삼켰다.
+    const switched = (nextGraph || null) !== graph
     graph = nextGraph || null
+    if (switched) { appliedRev = -1; attached = false }
     viewers.value = []
     locks.value = []
     rev.value = 0
