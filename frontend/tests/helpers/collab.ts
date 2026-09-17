@@ -89,6 +89,35 @@ export async function sharedGraph(a: Who, b: Who): Promise<string> {
   throw new Error(`설계가 들어 있는 공용 프로젝트가 없다 (후보: ${both.join(', ')})`)
 }
 
+/**
+ * 한 사람이 **쓸 수 있고 설계가 들어 있는** 프로젝트.
+ *
+ * `projects[0]` 을 그냥 집으면 안 된다 — 목록 맨 앞이 빈 프로젝트일 수 있고,
+ * 그러면 트리가 안 떠서 **"앱이 안 된다"처럼 보인다.** `collab-two-users` 가
+ * 한 번 이렇게 틀렸고(done-v2 §58), `edit-actions` 는 그 교훈이 안 옮겨져서
+ * 09-16 에 빈 프로젝트가 하나 생기자 그날부터 깨졌다.
+ */
+export async function graphWithDesign(token: string): Promise<string> {
+  const ctx = await pwRequest.newContext()
+  try {
+    const r = await ctx.get(`${API}/api/projects`, { headers: { Authorization: `Bearer ${token}` } })
+    const rows = r.ok() ? ((await r.json()).projects || []) : []
+    const writable = rows.filter((p: any) => p.level && p.level !== 'read').map((p: any) => p.graph)
+    expect(writable.length, '쓸 수 있는 프로젝트가 있어야 한다').toBeGreaterThan(0)
+    const empty: string[] = []
+    for (const g of writable) {
+      const c = await ctx.get(`${API}/api/contexts`, {
+        headers: { Authorization: `Bearer ${token}`, 'X-Project-Graph': g },
+      })
+      const bcs = c.ok() ? await c.json().catch(() => []) : []
+      if (Array.isArray(bcs) && bcs.some((b: any) => b?.id)) return g
+      empty.push(g)
+    }
+    // **0건의 이유를 남긴다.** "트리가 안 뜬다"만 보면 앱을 파게 된다.
+    throw new Error(`설계가 들어 있는 프로젝트가 없다 — 전부 비었다: ${empty.join(', ')}`)
+  } finally { await ctx.dispose() }
+}
+
 export async function openApp(ctx: BrowserContext, who: Who, graph: string): Promise<Page> {
   const page = await ctx.newPage()
   // **모든 문서마다 다시 돈다.** 새로고침·라우팅에도 신원이 유지돼야 한다.

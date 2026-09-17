@@ -1,4 +1,5 @@
 import { test, expect, request as pwRequest, type Page } from '@playwright/test'
+import { graphWithDesign } from './helpers/collab'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
@@ -54,11 +55,10 @@ test.beforeAll(async () => {
     })
     token = (await r.json()).accessToken
     expect(token, '로그인하지 못했다').toBeTruthy()
-    const pr = await ctx.get(`${API}/api/projects`, { headers: { Authorization: `Bearer ${token}` } })
-    const rows = pr.ok() ? ((await pr.json()).projects || []) : []
-    const writable = rows.filter((p: any) => p.level && p.level !== 'read')
-    expect(writable.length, '쓸 수 있는 프로젝트가 있어야 한다').toBeGreaterThan(0)
-    graph = writable[0].graph
+    // **첫 번째를 그냥 집지 않는다.** 09-16 에 빈 프로젝트가 하나 생기자 그것이
+    // 목록 맨 앞에 와서, 트리가 안 떠 "앱이 안 된다"처럼 보였다. 같은 함정이
+    // `collab-two-users` 에도 있었다(done-v2 §58).
+    graph = await graphWithDesign(token)
     console.log(`[test] graph=${graph}`)
   } finally { await ctx.dispose() }
 })
@@ -144,9 +144,17 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
 
   const skipped: string[] = []
 
-  for (const label of labels.slice(0, 120)) {
+  // **줄은 번호로 잡는다.** 라벨 텍스트로 찾으면 `.first()` 가 다른 줄에 갈 수
+  // 있고, 그러면 **연 요소와 종류를 서로 다른 줄에서 읽는다** — 실제로 그래서
+  // UserStory 를 열어 놓고 "aggregate 가 저장이 안 된다"고 보고했다.
+  const rowLocator = page.locator('.tree-node__label')
+  const rowCount = Math.min(await rowLocator.count(), 120)
+
+  for (let i = 0; i < rowCount; i += 1) {
     if (rows.length >= 8) break
-    const row = page.locator('.tree-node__label').filter({ hasText: label }).first()
+    const row = rowLocator.nth(i)
+    const label = (await row.textContent().catch(() => ''))?.trim() || ''
+    if (!label || /\(\d+\)\s*$/.test(label)) continue
     if (!(await row.isVisible().catch(() => false))) { skipped.push(`${label.slice(0,18)}: 안 보임`); continue }
     await row.dblclick()
     if (!(await page.locator('.inspector-panel').isVisible({ timeout: 3_000 }).catch(() => false))) {
@@ -166,13 +174,12 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
     // 했다가 전부 UserStory 로 나왔다 — 그 응답은 요소 하나가 아니라 주변
     // 서브그래프라, 같은 id 로 찾은 것이 내가 연 그것이 아니었다.
     // 트리는 `tree-node__icon--{type}` 으로 종류를 그대로 들고 있다.
-    const type = await page.evaluate((lbl) => {
-      const el = [...document.querySelectorAll('.tree-node__label')]
-        .find((e) => (e.textContent || '').trim() === lbl)
-      const icon = el?.closest('.tree-node__header')?.querySelector('[class*="tree-node__icon--"]')
-      const cls = [...(icon?.classList || [])].find((c) => c.startsWith('tree-node__icon--'))
+    // 종류는 **연 바로 그 줄**에서 읽는다 — 텍스트로 다시 찾지 않는다.
+    const type = await row.evaluate((el: any) => {
+      const icon = el.closest('.tree-node__header')?.querySelector('[class*="tree-node__icon--"]')
+      const cls = [...(icon?.classList || [])].find((c: string) => c.startsWith('tree-node__icon--'))
       return cls ? cls.replace('tree-node__icon--', '') : '(모름)'
-    }, label)
+    })
     if (seenTypes.has(type)) { skipped.push(`${label.slice(0,18)}: ${type} 이미 봄`); continue }
     seenTypes.add(type)
 
@@ -183,6 +190,12 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
       continue
     }
     const originalValue = await field.inputValue()
+    // **이 입력칸이 정말 이 요소의 것인가.** 앞 요소의 흔적이 그대로 보이면
+    // 패널이 안 바뀐 것일 수 있다 — 그러면 저장 여부를 단정하면 안 된다.
+    // (`.inspector-panel__title` 은 쓸 수 없다. 요소 이름이 아니라 고정
+    //  머리말 "Inspector · User Story" 라, 그걸로 가르려다 멀쩡한 7종까지
+    //  거짓으로 실패시켰다.)
+    const looksBorrowed = /수정확인\d{10,}/.test(originalValue)
     await field.click()
     await field.press('End')
     await field.pressSequentially(` ${marker}`, { delay: 8 })
@@ -201,8 +214,12 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
     await page.locator('.inspector-panel__btn.primary').nth(liveIdx).click()
     await page.waitForTimeout(3000)
 
+    // **"값이 안 들어갔다"와 "응답에 그 요소가 없다"는 다른 사건이다.**
+    // `expand-with-bc` 는 요소 하나가 아니라 주변 서브그래프를 준다 — 연 요소가
+    // 그 안에 없으면 저장이 멀쩡해도 `null` 이 온다. 둘을 뭉치면 앱을 파게 된다.
     const after = await readBack(openId)
-    const saved = JSON.stringify(after || {}).includes(marker)
+    const saved = after !== null && JSON.stringify(after).includes(marker)
+    const unreadable = after === null
 
     // **더럽힌 것은 되돌린다.**
     //
@@ -218,7 +235,12 @@ test('요소를 열어 고치고 저장하면 그래프에 들어간다', async 
     rows.push({
       label, type, button: btns[liveIdx].title, saved,
       note: [
-        saved ? '' : `저장은 눌렀는데 그래프에 없다 (원래값 끝: ${originalValue.slice(-16)})`,
+        saved ? ''
+          : unreadable
+            ? `**못 읽었다** — expand-with-bc 응답에 ${openId} 가 없다. 저장 여부는 모른다`
+            : looksBorrowed
+              ? `**입력칸이 남의 것으로 보인다** — 원래값에 앞선 검사 흔적이 있다 (끝: ${originalValue.slice(-16)}). 저장 여부는 모른다`
+              : `저장은 눌렀는데 그래프에 없다 (원래값 끝: ${originalValue.slice(-16)})`,
         restored ? '' : '**되돌리기 실패 — 이 요소에 검사 흔적이 남았다**',
       ].filter(Boolean).join(' · '),
     })
