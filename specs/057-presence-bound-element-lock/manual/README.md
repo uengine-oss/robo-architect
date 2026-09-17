@@ -1,6 +1,6 @@
 # 동시편집 사용 매뉴얼
 
-> 기능 명세: [specs/057-presence-bound-element-lock](../../specs/057-presence-bound-element-lock/spec.md)
+> 기능 명세: [spec.md](../spec.md) · [plan.md](../plan.md) · [tasks.md](../tasks.md)
 > 대상 사용자: 같은 프로젝트를 **여럿이 함께 고치는 사람**(기획자·아키텍트)
 > 최종 업데이트: 2026-09-17
 
@@ -199,7 +199,7 @@ Inspector 위쪽에 🔒 배너가 있는지 보세요. 남이 그 요소를 고
 
 ## 관련 문서
 
-- 기능 명세: [specs/057-presence-bound-element-lock](../../specs/057-presence-bound-element-lock/spec.md)
+- 기능 명세: [spec.md](../spec.md)
 - 화면 캡처 시나리오: `frontend/tests/collab-manual-capture.spec.ts`
 - 동작 검증: `frontend/tests/collab-lock-lifetime.spec.ts` · `collab-two-paths.spec.ts` ·
   `collab-catchup.spec.ts` · `collab-two-users.spec.ts`

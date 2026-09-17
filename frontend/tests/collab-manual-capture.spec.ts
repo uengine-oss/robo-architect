@@ -2,7 +2,8 @@ import { test, expect, type Page } from '@playwright/test'
 import { login, sharedGraph, openApp, waitConnected, gotoDesignTree, type Who } from './helpers/collab'
 
 /**
- * **동시편집 매뉴얼의 화면을 실제로 찍는다** → `docs/collab-manual/images/`.
+ * **동시편집 매뉴얼의 화면을 실제로 찍는다**
+ * → `specs/057-presence-bound-element-lock/manual/images/`.
  *
  * 매뉴얼에 손으로 그린 그림을 넣지 않는다. 화면이 바뀌면 그림이 조용히
  * 거짓말을 하기 시작하고, 그 거짓말은 고객이 먼저 본다. 여기서 찍은 것만 쓴다.
@@ -14,7 +15,7 @@ import { login, sharedGraph, openApp, waitConnected, gotoDesignTree, type Who } 
  *     npx playwright test tests/collab-manual-capture.spec.ts --workers=1
  */
 
-const IMG = '../docs/collab-manual/images'
+const IMG = '../specs/057-presence-bound-element-lock/manual/images'
 
 test.use({ storageState: { cookies: [], origins: [] } })
 
