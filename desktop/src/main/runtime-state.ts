@@ -21,6 +21,7 @@ import {
   deriveCapabilities,
   type Capability,
   type GraphGuard,
+  type LegacyDataNotice,
   type ManagedService,
   type ManagedServiceId,
   type ProbeKind,
@@ -66,6 +67,7 @@ export interface RuntimeSnapshot {
   graphGuard: GraphGuard | null;
   dockerAvailable: boolean | null;
   releaseId: string | null;
+  legacyData: LegacyDataNotice | null;
   legacyStatus: ReturnType<typeof deriveLegacyStatus>;
 }
 
@@ -78,6 +80,7 @@ export class RuntimeRegistry {
   private guard: GraphGuard | null = null;
   private docker: boolean | null = null;
   private release: string | null = null;
+  private legacy: LegacyDataNotice | null = null;
 
   /** 감독 대상 목록을 정한다. **목록에 없는 서비스는 기능 파생에서 "모른다"가 된다.** */
   register(ids: ManagedServiceId[]): void {
@@ -101,6 +104,17 @@ export class RuntimeRegistry {
 
   setReleaseId(releaseId: string | null): void {
     this.release = releaseId;
+  }
+
+  /**
+   * 옛 구성에 남은 데이터 안내 (T049).
+   *
+   * `null` 은 **"아직 안 봤다"** 다 — "안내가 필요 없다"가 아니다. 렌더러가 둘을
+   * 같은 화면으로 보여주면, 업그레이드한 사용자가 빈 프로젝트 목록을 보고
+   * **데이터가 지워진 줄 안다.**
+   */
+  setLegacyData(notice: LegacyDataNotice | null): void {
+    this.legacy = notice;
   }
 
   /**
@@ -147,6 +161,7 @@ export class RuntimeRegistry {
       graphGuard: this.guard,
       dockerAvailable: this.docker,
       releaseId: this.release,
+      legacyData: this.legacy,
       legacyStatus: deriveLegacyStatus(services),
     };
   }

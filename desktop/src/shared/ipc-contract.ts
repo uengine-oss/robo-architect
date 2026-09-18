@@ -113,6 +113,8 @@ export type UpdateState =
 export interface RuntimeState {
   /** spec 058 — 아래 신규 필드는 **모두 선택적**이다. 옛 렌더러를 깨뜨리지 않는다. */
   services?: ManagedService[];
+  /** 옛 구성에 남은 데이터 안내(T049). `null` 은 "아직 안 봤다"다. */
+  legacyData?: LegacyDataNotice | null;
   capabilities?: Capability[];
   graphGuard?: GraphGuard | null;
   releaseId?: string | null;
@@ -275,12 +277,20 @@ export type Unsubscribe = () => void;
 import type {
   Capability,
   GraphGuard,
+  LegacyDataNotice,
   ManagedService,
   ManagedServiceId,
   RuntimeStatusPayload,
 } from "./runtime-contract";
 
-export type { Capability, GraphGuard, ManagedService, ManagedServiceId, RuntimeStatusPayload };
+export type {
+  Capability,
+  GraphGuard,
+  LegacyDataNotice,
+  ManagedService,
+  ManagedServiceId,
+  RuntimeStatusPayload,
+};
 
 export interface DesktopBridge {
   app: {

@@ -173,6 +173,18 @@ export interface GraphGuard {
   reason: string | null;
 }
 
+/**
+ * 옛 구성에 남은 데이터 안내 (T049). `null` 이면 아직 안 봤다는 뜻이고, 안내가
+ * 필요 없다는 뜻이 아니다.
+ */
+export interface LegacyDataNotice {
+  legacyVolumes: string[];
+  currentGraphEmpty: boolean | null;
+  needsAttention: boolean;
+  reason: string | null;
+  action: string | null;
+}
+
 export interface RuntimeStatusPayload {
   services: ManagedService[];
   capabilities: Capability[];

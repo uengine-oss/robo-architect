@@ -50,6 +50,10 @@ PREFIX = "zz_"
 GRAPH_A, GRAPH_B = "zz_isolation_a", "zz_isolation_b"
 ROLE_A, ROLE_B = "zz_iso_a", "zz_iso_b"
 PW_A, PW_B = "zz_iso_pw_a", "zz_iso_pw_b"
+# **아무 graph 에도 권한이 없는 role** (T048). "0 건"과 "거부"를 가르는 자리다.
+ROLE_NONE, PW_NONE = "zz_iso_none", "zz_iso_pw_none"
+# 비어 있는 graph — 테이블이 없으면 거부할 대상도 없다. 그 경우를 따로 본다.
+GRAPH_EMPTY = "zz_isolation_empty"
 # 개수를 다르게 둔다. 같으면 한쪽을 다른 쪽으로 착각해도 안 드러난다.
 COUNT_A, COUNT_B, COUNT_GAMMA = 3, 5, 2
 
@@ -78,7 +82,7 @@ def cypher_as_owner(graph: str, query: str) -> str:
 
 
 def guard_names() -> None:
-    for name in (GRAPH_A, GRAPH_B, ROLE_A, ROLE_B):
+    for name in (GRAPH_A, GRAPH_B, GRAPH_EMPTY, ROLE_A, ROLE_B, ROLE_NONE):
         if not name.startswith(PREFIX):
             raise Unmeasured(f"'{PREFIX}' 로 시작하지 않는 이름: {name}")
 
@@ -86,9 +90,9 @@ def guard_names() -> None:
 # ---------------------------------------------------------------------------
 
 def setup() -> None:
-    for g in (GRAPH_A, GRAPH_B):
+    for g in (GRAPH_A, GRAPH_B, GRAPH_EMPTY):
         psql(f"SELECT og_create_graph('{g}')")
-    for role, pw in ((ROLE_A, PW_A), (ROLE_B, PW_B)):
+    for role, pw in ((ROLE_A, PW_A), (ROLE_B, PW_B), (ROLE_NONE, PW_NONE)):
         psql(f"DROP ROLE IF EXISTS {role}")
         psql(f"CREATE ROLE {role} LOGIN PASSWORD '{pw}'")
 
@@ -190,6 +194,33 @@ def check(results: list[str]) -> None:
             raise Measured(f"{role} 이 남의 graph 에서 :{absent_label} {count} 건을 봤다")
 
 
+def check_no_grant(results: list[str]) -> None:
+    """**아무 권한 없는 role 은 "0 건"이 아니라 거부여야 한다** (T048).
+
+    이 자리를 따로 보는 이유: `MATCH (n)` 이 0 건을 내면 격리가 성립하는 것처럼
+    보인다. 권한이 없어서 0 인지, 데이터가 없어서 0 인지 **그 값만으로는 못 가린다.**
+
+    그래서 두 경우를 나눠 본다.
+
+        데이터가 있는 graph   거부여야 한다. 0 건이면 새고 있는 것이다
+        비어 있는 graph       거부여야 한다. **테이블이 없으니 거부할 것도 없다**는
+                              구현이면 여기서 0 이 나오고, 그러면 위 검사가 빈
+                              graph 에서는 아무것도 증명하지 못한다는 뜻이 된다
+    """
+    for graph, note in ((GRAPH_A, "데이터 있음"), (GRAPH_EMPTY, "비어 있음")):
+        for query, what in (
+            (LABELLESS, "라벨 없는 스캔"),
+            ("MATCH (n:ZzAlpha) RETURN count(n) AS c", ":ZzAlpha"),
+        ):
+            count, denied = ask(ROLE_NONE, PW_NONE, graph, query)
+            if denied is None:
+                raise Measured(
+                    f"{ROLE_NONE}(권한 없음) 이 {graph}({note}) 에서 {what} 를 실행했다 "
+                    f"(결과 {count}). **0 건이어도 격리가 아니다** — 거부되어야 한다"
+                )
+        results.append(f"  ✓ {ROLE_NONE}(권한 없음) → {graph}({note}) 전부 거부됨")
+
+
 def check_new_label(results: list[str]) -> None:
     """graph 가 생긴 **뒤에** 새 라벨이 나타나도 격리가 유지되는가.
 
@@ -219,7 +250,7 @@ def teardown() -> list[str]:
     try:
         rows = psql(
             "SELECT role || '|' || graph FROM og_catalog.grantee "
-            f"WHERE role IN ('{ROLE_A}','{ROLE_B}')"
+            f"WHERE role IN ('{ROLE_A}','{ROLE_B}','{ROLE_NONE}')"
         )
         for line in filter(None, rows.splitlines()):
             role, graph = line.split("|", 1)
@@ -229,12 +260,12 @@ def teardown() -> list[str]:
                 problems.append(f"og_revoke({role},{graph}): {exc}")
     except Unmeasured as exc:
         problems.append(f"grantee 조회 실패: {exc}")
-    for graph in (GRAPH_A, GRAPH_B):
+    for graph in (GRAPH_A, GRAPH_B, GRAPH_EMPTY):
         try:
             psql(f"SELECT og_drop_graph('{graph}')")
         except Unmeasured as exc:
             problems.append(f"og_drop_graph({graph}): {exc}")
-    for role in (ROLE_A, ROLE_B):
+    for role in (ROLE_A, ROLE_B, ROLE_NONE):
         try:
             psql(f"DROP OWNED BY {role}")
             psql(f"DROP ROLE {role}")
@@ -244,16 +275,19 @@ def teardown() -> list[str]:
     try:
         left = psql(
             "SELECT count(*) FROM og_catalog.graph WHERE name IN "
-            f"('{GRAPH_A}','{GRAPH_B}')"
+            f"('{GRAPH_A}','{GRAPH_B}','{GRAPH_EMPTY}')"
         )
         if left != "0":
             problems.append(f"graph 가 {left} 개 남았다")
-        left = psql(f"SELECT count(*) FROM pg_roles WHERE rolname IN ('{ROLE_A}','{ROLE_B}')")
+        left = psql(
+            "SELECT count(*) FROM pg_roles WHERE rolname IN "
+            f"('{ROLE_A}','{ROLE_B}','{ROLE_NONE}')"
+        )
         if left != "0":
             problems.append(f"role 이 {left} 개 남았다")
         left = psql(
             "SELECT count(*) FROM og_catalog.grantee WHERE role IN "
-            f"('{ROLE_A}','{ROLE_B}')"
+            f"('{ROLE_A}','{ROLE_B}','{ROLE_NONE}')"
         )
         if left != "0":
             problems.append(f"og_catalog.grantee 에 {left} 행 남았다 — 같은 이름 role 이 물려받는다")
@@ -273,6 +307,7 @@ def main() -> int:
         plant()
         grant()
         check(results)
+        check_no_grant(results)
         check_new_label(results)
     except Measured as exc:
         results.append(f"  ✗ {exc}")

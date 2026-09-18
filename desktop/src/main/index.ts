@@ -135,6 +135,7 @@ function buildRuntimeState(): RuntimeState {
   return {
     ...base,
     services: snapshot.services,
+    legacyData: snapshot.legacyData,
     capabilities: snapshot.capabilities,
     graphGuard: snapshot.graphGuard,
     dockerAvailable: snapshot.dockerAvailable,
