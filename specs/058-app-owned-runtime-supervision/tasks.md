@@ -205,7 +205,11 @@ description: "Task list — 058 설치본 런타임 감독과 복구"
 - [X] T012 [P] `robo-workspace/.env.example` 에서 `ai-server.dream-flow.com`·`frentis-ai-model` 을 걷어낸다. **이 파일은 git 추적 대상**이라 납품 자산에 우리 내부 엔드포인트가 남는다 (공통)
 - [X] T013 [P] `robo-workspace/.env` 의 `ROBO_LLM_*`(analyzer 용 `qwen38_sglang_local`·키 `frentis`)을 고객 환경 기준으로 정리한다. 현재는 OpenAI, 이후 P-GPT. **무엇을 쓸지 미정이면 미정이라고 적고 넘긴다** (공통)
 - [X] T014 릴리스 환경 검사에 **"값이 맞는가"** 관문을 더한다 — `robo-workspace/scripts/robo.ps1` 의 `Get-ReleaseEnvironmentConfigurationErrors` 가 지금은 비어 있는지와 placeholder 목록만 본다. 개발사 내부 도메인이 남아 있으면 실패하게 한다 — robo-workspace 소유라 브랜치+PR 로 넘긴다 (공통)
-- [ ] T015 T014 가 무는지 확인한다 — 내부 도메인을 하나 넣고 `release` 가 던지는 것을 본 뒤 되돌린다 (윈)
+- [X] T015 T014 가 무는지 확인한다 — 내부 도메인을 하나 넣고 `release` 가 던지는 것을 본 뒤 되돌린다 (윈)
+
+> **T015 실측 (2026-09-18, Windows)** — 관문이 **양방향으로** 물었다.
+> 사내 주소를 한 줄 넣으면 `FAIL`, 되돌리면 `[ OK ]`, 되돌림도 성공했다.
+> **막는 쪽만 재지 않았다** — 정상값에서 열리는 것까지 같이 쟀다.
 
 > **T012~T014 실측 (2026-09-17, 맥)** — `robo-workspace` PR #2 로 넘겼다
 > (브랜치 `fix/release-env-no-internal-endpoints`, 커밋 `1116c71`).
@@ -536,6 +540,7 @@ start.sh                컨테이너 안에서 빌드한 뒤 psql·bolt 를 손�
 > **파괴적 질의를 원본 그대로** 돌렸다.
 - [ ] T088 `desktop` 의 eslint 가 `tests/` 를 타입 검사하지 못한다 — `tsconfig.main.json`·`tsconfig.preload.json` 이 `src/` 만 include 해서, **검사 파일마다 `Parsing error: file was not found in any of the provided project(s)` 가 하나씩 쌓인다**(기존 `settings-migrate.spec.ts`·`smoke.spec.ts`·`desktop-launcher-e2e.spec.ts` 도 같다). 검사용 tsconfig 를 더해 eslint project 에 넣는다. 이 회차에 검사 파일을 넷 더해 같은 오류가 4건 늘었다 — 코드 문제가 아니라 설정 구멍이다 (맥)
 - [ ] T089 **`open-pencil` 의 `.lfsconfig` 에 커밋된 R2 자격증명을 폐기한다 — `uengine-oss/open-pencil` 소유.** 접근 키와 비밀 키가 LFS 원격 URL 안에 **평문으로 커밋**돼 있고, 그 키는 인증에 실패한다. 증상은 "저장소를 못 받는다"가 아니다 — clone 8개가 **전부 성공한 다음** `git submodule update` 가 거기서 멈춘다. 키 폐기 + 히스토리 정리(URL 을 자격증명 없는 형태로 바꾸고 인증은 `~/.gitconfig`·`credential helper` 로) 가 필요하다. 우리 쪽(`robo-workspace b931c94`)은 릴리스가 그 키에 **의존하지 않게만** 만들었다: `GIT_LFS_SKIP_SMUDGE=1` 기본값. 끄고 가도 되는 근거는 세어서 확인했다 — LFS 추적은 `tests/fixtures` 의 5개(`.fig` 3 · `.ttf` 2)뿐이고 `.gitattributes` 3번째 줄이 잡는 `canvaskit-webgpu/*.wasm` 은 `git ls-files "*.wasm"` 0건(경로 자체가 없다). **그 줄에 실재하는 wasm 이 생기면 이 우회는 무효다** — 런타임에 쓰이는 파일을 포인터로 받으면 앱이 조용히 깨진다 (맥에서 목록만 측정)
+- [ ] T090 **`setup` 이 자기 산출물을 되읽게 한다 — `robo-workspace` 소유.** 2026-09-18 Windows 실측: `LongPathsEnabled=0` 때문에 torch 설치가 중간에 깨졌는데 `setup` 은 `[ OK ]` 로 통과시켰다. **pip 이 METADATA 없는 빈 `dist-info` 를 "설치됨"으로 신뢰**하기 때문이다 — `torch-2.13.0+cpu.dist-info` 의 최상위 파일이 0개(`METADATA`·`RECORD` 없음)인데도 다음 실행이 "already satisfied" 로 건너뛴다. 증상은 훨씬 뒤에 `ModuleNotFoundError: No module named 'torchgen'` 로 나온다 — **설치 단계를 가리키지 않는다.** 고칠 방향: `uv sync`/`pip install` 뒤에 핵심 모듈을 **import 로 되읽어** 확인한다(`python -c "import torch, torchgen"`). 교훈은 이 스펙의 `ProbeOutcome` 과 같다 — **"명령이 0으로 끝났다"는 "결과물이 성립한다"가 아니다.** 되읽기가 실패하면 `dist-info` 잔해를 지우고 재설치해야 한다(지우지 않으면 pip 이 또 건너뛴다) (윈에서 발견 · 고치는 자리는 robo-workspace)
 - [ ] T037 [US2] 화면에서 잠긴 것이 보이는지 확인한다 — 분석 탭이 왜 막혔는지 말하는가 (윈)
 
 ---
