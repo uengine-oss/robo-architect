@@ -1,28 +1,79 @@
 services:
-  neo4j:
-    image: ${ROBO_IMAGE_NEO4J}
+  # graph-db — **저장소는 Ontological 이다. Neo4j 가 아니다.**
+  #
+  # 왜 바꿨나: `neo4j:5.26.0` 은 **Community** 라 database 를 하나만 가진다.
+  #   CREATE DATABASE  →  Unsupported administration command  (2026-09-17 실측)
+  # 그래서 설계 graph 와 분석 graph 를 나눌 수 없었다. 분석은 대상 graph 를 통째로
+  # 비우고 다시 쓰므로, 나눌 수 없다는 것은 **분석이 설계를 지운다**는 뜻이다.
+  # Ontological 은 `og_create_graph` 로 graph 를 얼마든지 만든다.
+  #
+  # 앱 코드는 안 바뀐다 — Bolt 게이트웨이가 Neo4j 프로토콜을 그대로 말한다.
+  graph-db:
+    image: ${ROBO_IMAGE_GRAPH_DB}
     restart: unless-stopped
     labels:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
-      org.uengine.robo.component: neo4j
-    ports:
-      - "127.0.0.1:${ROBO_NEO4J_PORT}:7687"
+      org.uengine.robo.component: graph-db
     environment:
-      NEO4J_AUTH: neo4j/${ROBO_NEO4J_PASSWORD}
-      ROBO_NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      POSTGRES_USER: ${ROBO_GRAPH_USER}
+      POSTGRES_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      POSTGRES_DB: ${ROBO_GRAPH_DESIGN}
+      # 엔트리포인트 훅이 둘 다 만들고, **같으면 거기서 멈춘다**(설계가 지워지는 구성).
+      OG_GRAPH_DESIGN: ${ROBO_GRAPH_DESIGN}
+      OG_GRAPH_ANALYSIS: ${ROBO_GRAPH_ANALYSIS}
     volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
+      - graph_data:/var/lib/postgresql/data
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "cypher-shell -a bolt://127.0.0.1:7687 -u neo4j -p \"$$ROBO_NEO4J_PASSWORD\" \"RETURN 1\" >/dev/null 2>&1",
-        ]
+      # **떴는지만 본다.** 확장이 깔렸고 graph 가 있는지는 기능 프로브가 따로 잰다
+      # (`scripts/probe_runtime.py`). healthcheck 가 준비의 근거가 아니다 — 같은
+      # healthy 상태에서 실제 일은 못 하는 경우를 09-17 에 쟀다.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -q"]
       interval: 5s
       timeout: 5s
       retries: 30
       start_period: 20s
+
+  # graph-bolt — Neo4j Bolt 프로토콜 게이트웨이. **상태를 갖지 않는다.**
+  #
+  # 왜 별도 컨테이너인가: 받은 질의를 전부 `og_cypher()` 로 넘길 뿐이라 Postgres 와
+  # 묶을 이유가 없다. 묶으면 공식 postgres 엔트리포인트(initdb·PGDATA·시그널)를
+  # 우리가 다시 만들어야 하고, 무엇보다 **Bolt 를 사람이 띄우게 된다** — 이 저장소가
+  # 반복해 밟은 함정이 거기서 나왔다(엔진을 다시 깔고 Bolt 를 안 띄워 psql 은 되는데
+  # 앱만 죽는 상태). 별도 서비스로 두면 수명을 compose 가 쥔다.
+  graph-bolt:
+    image: ${ROBO_IMAGE_GRAPH_BOLT}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: graph-bolt
+    ports:
+      # **루프백에만 연다.** Bolt 는 평문 인증이다.
+      - "127.0.0.1:${ROBO_NEO4J_PORT}:7687"
+    environment:
+      OG_BOLT_LISTEN: 0.0.0.0:7687
+      OG_BOLT_PGHOST: graph-db
+      OG_BOLT_PGPORT: "5432"
+      OG_BOLT_PGDATABASE: ${ROBO_GRAPH_DESIGN}
+      OG_BOLT_GRAPH: ${ROBO_GRAPH_DESIGN}
+      PGPASSWORD: ${ROBO_NEO4J_PASSWORD}
+    depends_on:
+      graph-db:
+        condition: service_healthy
+    healthcheck:
+      # 포트가 응답하는지만 본다. 실제로 질의가 도는지는 기능 프로브가 잰다.
+      #
+      # **`CMD-SHELL` 을 쓰지 않는다** — 그건 `/bin/sh`(= dash)로 돌고 dash 에는
+      # `/dev/tcp` 가 없다. 처음에 그렇게 썼다가 Bolt 가 멀쩡한데 unhealthy 로
+      # 떴고, 의존 서비스 넷이 `Created` 에서 멈췄다. **앱이 아니라 검사가 틀린**
+      # 경우다. bash 로 명시한다.
+      #
+      # 게이트웨이는 `0.0.0.0:7687` 에 바인드하므로 IPv4 확인으로 충분하다.
+      # (IPv6 전용 바인딩이면 이 방식이 거짓 음성을 낸다 — 그때는 방식을 바꾼다.)
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7687"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
 
   mindsdb:
     image: ${ROBO_IMAGE_MINDSDB}
@@ -53,15 +104,22 @@ services:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
       org.uengine.robo.component: fabric
     environment:
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER}
       NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
-      NEO4J_DATABASE: neo4j
-      DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
+      NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS}
+      # **켜 둔다.** 화면이 프로젝트마다 다른 graph 를 보려면 이 스위치가 필요하다.
+      # 끄면 헤더를 실은 요청이 403 이다. 그런데 화면이 실제로 보내는 헤더는
+      # `X-Neo4j-Database` 하나(브라우저는 연결 자격을 안 들고 있다)이고, 예전에는
+      # 그 갈래가 `from_headers` 에서 `None` 이 되어 **403 도 안 나고 조용히 무시**됐다
+      # — 매 요청이 아래 `NEO4J_DATABASE` 로 갔다. 그 갈래를 고친 것과 **짝이다**
+      # (catalog `graph/connection.py` · fabric `registry/connection.py`).
+      # 한쪽만 들어가면: 고침만 = 화면이 403, 스위치만 = 지금처럼 조용히 무시.
+      DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "true"
       MINDSDB_URL: http://mindsdb:47334
       MINDSDB_REPLACE_LOCALHOST: host.docker.internal
     depends_on:
-      neo4j:
+      graph-bolt:
         condition: service_healthy
       mindsdb:
         condition: service_healthy
@@ -87,14 +145,21 @@ services:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
       org.uengine.robo.component: catalog
     environment:
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER}
       NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
-      NEO4J_DATABASE: neo4j
+      NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS}
       DATA_FABRIC_URL: http://fabric:8404
-      CATALOG_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
+      # **켜 둔다.** 화면이 프로젝트마다 다른 graph 를 보려면 이 스위치가 필요하다.
+      # 끄면 헤더를 실은 요청이 403 이다. 그런데 화면이 실제로 보내는 헤더는
+      # `X-Neo4j-Database` 하나(브라우저는 연결 자격을 안 들고 있다)이고, 예전에는
+      # 그 갈래가 `from_headers` 에서 `None` 이 되어 **403 도 안 나고 조용히 무시**됐다
+      # — 매 요청이 아래 `NEO4J_DATABASE` 로 갔다. 그 갈래를 고친 것과 **짝이다**
+      # (catalog `graph/connection.py` · fabric `registry/connection.py`).
+      # 한쪽만 들어가면: 고침만 = 화면이 403, 스위치만 = 지금처럼 조용히 무시.
+      CATALOG_ALLOW_NEO4J_HEADER_OVERRIDE: "true"
     depends_on:
-      neo4j:
+      graph-bolt:
         condition: service_healthy
       fabric:
         condition: service_healthy
@@ -122,20 +187,20 @@ services:
     ports:
       - "127.0.0.1:${ROBO_ANALYZER_PORT}:5502"
     environment:
-      ROBO_NEO4J_URI: bolt://neo4j:7687
-      ROBO_NEO4J_USER: neo4j
+      ROBO_NEO4J_URI: bolt://graph-bolt:7687
+      ROBO_NEO4J_USER: ${ROBO_GRAPH_USER}
       ROBO_NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
-      ROBO_NEO4J_DATABASE: neo4j
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
+      ROBO_NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS}
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER}
       NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
-      NEO4J_DATABASE: neo4j
+      NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS}
       ROBO_CATALOG_BASE_URL: http://catalog:5503/robo
       ROBO_DATA_DIR: /data
     volumes:
       - shared_data:/data
     depends_on:
-      neo4j:
+      graph-bolt:
         condition: service_healthy
       catalog:
         condition: service_healthy
@@ -208,8 +273,18 @@ services:
   # pdf2bpmn — **문서에서 BPMN 을 뽑는 서비스. 사내망에서는 바깥을 못 부른다.**
   #
   # 지금까지 이 호출은 `https://pdf2bpmn.process-gpt.io` 로 나갔다. 사내망에서는
-  # 막히고, 막히면 Architect 는 native 추출기로 떨어지는데 **그쪽은 빈 결과를
-  # 낸다**(실측: process 0 · task 0). 그래서 같이 말아 넣는다.
+  # 막힌다. 그래서 같이 말아 넣는다.
+  #
+  # **"막히면 native 가 빈 결과를 낸다"는 틀렸다 (2026-09-17 정정).** 그 실측은
+  # 본문이 비어 있을 때의 값이었다. 본문을 넣으면 native 도 그럴듯한 BPM 을 낸다.
+  #
+  #   facade 를 401 로 죽여 놓고 6796자 문서를 넣었더니
+  #   → source=native · task 7 · gateway 2 · 이름도 멀쩡하다
+  #   (09-16 실측도 같은 말을 했다: 폴백 task 8 · gateway 2 / facade 6 · 2)
+  #
+  # **이것이 더 위험하다.** 결과물로는 못 가린다 — 우리 컨테이너가 놀아도 화면에는
+  # 그럴듯한 BPM 이 나온다. 자체 호스팅의 근거는 품질이 아니라 **사내망에서 바깥을
+  # 못 부른다**는 것 하나이고, 출처는 **결과물이 아니라 기록으로만** 가른다.
   #
   # ## 왜 컨테이너 하나인가
   #
@@ -262,7 +337,6 @@ services:
       start_period: 30s
 
 volumes:
-  neo4j_data:
-  neo4j_logs:
+  graph_data:
   mindsdb_data:
   shared_data:

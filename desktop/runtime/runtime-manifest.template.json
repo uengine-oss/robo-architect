@@ -1,11 +1,12 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "releaseId": "RELEASE_ID",
   "composeFile": "compose.yml",
   "imageArchive": "robo-images.tar",
   "imageArchiveSha256": "IMAGE_ARCHIVE_SHA256",
   "images": {
-    "neo4j": "neo4j:5.26.0",
+    "graphDb": "uengine/ontological-db:RELEASE_ID",
+    "graphBolt": "uengine/ontological-bolt:RELEASE_ID",
     "mindsdb": "mindsdb/mindsdb:v26.1.0",
     "analyzer": "uengine/robo-analyzer:RELEASE_ID",
     "catalog": "uengine/robo-data-catalog:RELEASE_ID",
@@ -15,7 +16,8 @@
     "pdf2bpmn": "ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77"
   },
   "imageIds": {
-    "neo4j": "sha256:IMAGE_ID_NEO4J",
+    "graphDb": "sha256:IMAGE_ID_GRAPH_DB",
+    "graphBolt": "sha256:IMAGE_ID_GRAPH_BOLT",
     "mindsdb": "sha256:IMAGE_ID_MINDSDB",
     "analyzer": "sha256:IMAGE_ID_ANALYZER",
     "catalog": "sha256:IMAGE_ID_CATALOG",
@@ -23,6 +25,11 @@
     "parser": "sha256:IMAGE_ID_PARSER",
     "gateway": "sha256:IMAGE_ID_GATEWAY",
     "pdf2bpmn": "sha256:IMAGE_ID_PDF2BPMN"
+  },
+  "graphs": {
+    "user": "robo",
+    "design": "robo",
+    "analysis": "analyzer_run"
   },
   "architect": {
     "python": "architect/python/python.exe",

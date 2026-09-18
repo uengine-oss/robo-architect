@@ -219,8 +219,12 @@ async function startBackendInternal(): Promise<{ port: number }> {
     NEO4J_USER: process.env.ROBO_NEO4J_USER ?? process.env.NEO4J_USER,
     NEO4J_PASSWORD: process.env.ROBO_NEO4J_PASSWORD ?? process.env.NEO4J_PASSWORD,
     NEO4J_DATABASE: process.env.ROBO_NEO4J_DATABASE ?? process.env.NEO4J_DATABASE,
+    // **설계 graph 로 덮지 않는다.** analyzer 는 대상 graph 를 통째로 비우고 다시
+    // 쓰므로, 여기에 설계 graph 가 들어가면 첫 분석에서 설계가 사라진다. 예전에
+    // `ROBO_NEO4J_DATABASE` 로 덮던 건 번들 Neo4j 가 Community 라 database 가 하나
+    // 뿐이어서였다 — 그때는 그게 유일한 구성이었다. 이제는 갈라져 있다.
     ANALYZER_NEO4J_DATABASE:
-      process.env.ROBO_NEO4J_DATABASE ?? process.env.ANALYZER_NEO4J_DATABASE,
+      process.env.ROBO_ANALYZER_NEO4J_DATABASE ?? process.env.ANALYZER_NEO4J_DATABASE,
   };
 
   const spawned = spawn(executable, args, {

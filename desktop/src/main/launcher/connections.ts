@@ -91,12 +91,23 @@ function validateUser(user: string): string {
   return user;
 }
 
+/**
+ * 저장소의 database(= Ontological 의 graph) 이름.
+ *
+ * 규칙이 두 가지를 다 받아야 한다:
+ *   Neo4j database    소문자·숫자·하이픈
+ *   Ontological graph `^[A-Za-z_][A-Za-z0-9_]{0,62}$` — **밑줄을 쓴다**
+ *
+ * 옛 규칙은 밑줄을 거부했다. 번들 저장소가 Ontological 로 바뀌면서 분석 graph 기본값이
+ * `analyzer_run` 이 됐는데, 그러면 앱이 스택을 다 띄운 **뒤에** 연결 저장에서 터진다.
+ * 증상이 "저장소가 안 뜬다" 가 아니라 "연결 저장 실패" 로 보인다.
+ */
 function validateDatabase(db: string | undefined | null): string | undefined {
   if (db == null || db === "") return undefined;
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(db)) {
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$/.test(db)) {
     throw new IpcHandlerError(
       IpcErrorCodes.VALIDATION,
-      "database must be lowercase letters/digits/dashes, 1–63 chars",
+      "database must be letters/digits/underscores/dashes, 1–63 chars",
     );
   }
   return db;

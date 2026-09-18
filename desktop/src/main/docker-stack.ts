@@ -19,15 +19,28 @@ import path from "node:path";
 import { getDataDir } from "./data-dir";
 import { ensureBundledConnection } from "./launcher/connections";
 import { log } from "./logging";
+import net from "node:net";
+
 import { pickFreePort } from "./ports";
+import type { ManagedServiceId } from "../shared/runtime-contract";
 import { getSecret, setSecret } from "./secret-store";
 
 const MANIFEST_NAME = "runtime-manifest.json";
 // 2: pdf2bpmn 포트가 늘어 포트가 넷에서 다섯이 됐다. 옛 상태는 버리고 다시 뽑는다.
-const STATE_SCHEMA_VERSION = 2;
-const MANIFEST_SCHEMA_VERSION = 3;
+// 3: 저장소가 Neo4j → Ontological 로 바뀌며 `ports.neo4j` 가 `ports.graph` 가 됐다.
+//    키 이름이 바뀌었으므로 옛 상태는 읽지 않는다(읽으면 포트가 `undefined` 가 된다).
+const STATE_SCHEMA_VERSION = 3;
+// 4: images.neo4j → images.graphDb + images.graphBolt, graphs 항목 추가.
+const MANIFEST_SCHEMA_VERSION = 4;
 const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
-const NEO4J_PASSWORD_SECRET_ID = "runtime.docker.neo4j.password";
+// 저장소 비밀번호. **이제 Postgres role 의 비밀번호다** — Bolt 게이트웨이는 받은
+// 자격증명을 그대로 Postgres 에 넘긴다(사용자 = role). 이름을 엔진 중립으로 옮기되,
+// 이미 깔린 앱의 키체인 항목을 잃지 않도록 옛 id 를 한 번 읽어 옮긴다.
+const GRAPH_PASSWORD_SECRET_ID = "runtime.docker.graph.password";
+const LEGACY_NEO4J_PASSWORD_SECRET_ID = "runtime.docker.neo4j.password";
+// graph 이름 규칙 — `ontological-db/docker/runtime/10-ontological-init.sh` 와 **같은 식**.
+// 이름이 그대로 SQL 문자열이 된다. 양쪽이 어긋나면 컨테이너는 뜨는데 앱이 못 읽는다.
+const GRAPH_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
 const DOCKER_COMMAND_TIMEOUT_MS = 10 * 60_000;
 
 export interface RuntimeManifest {
@@ -37,7 +50,10 @@ export interface RuntimeManifest {
   imageArchive: string;
   imageArchiveSha256: string;
   images: {
-    neo4j: string;
+    /** Ontological 확장이 든 PostgreSQL. */
+    graphDb: string;
+    /** Neo4j Bolt 프로토콜 게이트웨이. 앱 코드는 이쪽만 본다. */
+    graphBolt: string;
     mindsdb: string;
     analyzer: string;
     catalog: string;
@@ -47,6 +63,18 @@ export interface RuntimeManifest {
     pdf2bpmn: string;
   };
   imageIds: Record<keyof RuntimeManifest["images"], string>;
+  /**
+   * 설계 graph 와 분석 graph 의 이름. **반드시 달라야 한다** — 분석은 대상 graph 를
+   * 통째로 비우고 다시 쓰므로, 같으면 분석이 설계를 지운다(FR-008).
+   * 컨테이너 엔트리포인트도 같은 검사를 하지만 여기서 먼저 막는다: 거기서 걸리면
+   * 증상이 "컨테이너가 안 뜬다" 로만 보인다.
+   */
+  graphs: {
+    /** Postgres role 이자 Bolt 로그인 사용자. */
+    user: string;
+    design: string;
+    analysis: string;
+  };
   architect: {
     python: string;
     app: string;
@@ -60,7 +88,8 @@ export interface RuntimeManifest {
 }
 
 export interface DockerStackPorts {
-  neo4j: number;
+  /** Bolt 게이트웨이의 호스트 포트. 엔진이 아니라 **프로토콜**을 가리키는 이름이다. */
+  graph: number;
   analyzer: number;
   gateway: number;
   architect: number;
@@ -140,7 +169,8 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     }
   }
   for (const required of [
-    "neo4j",
+    "graphDb",
+    "graphBolt",
     "mindsdb",
     "analyzer",
     "catalog",
@@ -171,6 +201,19 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     if (!/^[a-f0-9]{40}$/.test(manifest.source?.[required] ?? "")) {
       throw new Error(`runtime.manifest_invalid: source.${required}`);
     }
+  }
+  const graphs = manifest.graphs;
+  if (!graphs || typeof graphs !== "object") {
+    throw new Error("runtime.manifest_invalid: graphs");
+  }
+  for (const key of ["user", "design", "analysis"] as const) {
+    if (!GRAPH_NAME_PATTERN.test(graphs[key] ?? "")) {
+      throw new Error(`runtime.manifest_invalid: graphs.${key}`);
+    }
+  }
+  if (graphs.design === graphs.analysis) {
+    // 조용히 넘어가면 첫 분석에서 설계가 사라진다. 기동 전에 멈춘다.
+    throw new Error("runtime.manifest_invalid: graphs.design must differ from graphs.analysis");
   }
   ensureRuntimeChild(root, manifest.composeFile, "composeFile");
   ensureRuntimeChild(root, manifest.imageArchive, "imageArchive");
@@ -326,11 +369,19 @@ async function ensureImages(root: string, manifest: RuntimeManifest): Promise<vo
   });
 }
 
-async function neo4jPassword(): Promise<string> {
-  const existing = await getSecret(NEO4J_PASSWORD_SECRET_ID);
+async function graphPassword(): Promise<string> {
+  const existing = await getSecret(GRAPH_PASSWORD_SECRET_ID);
   if (existing) return existing;
+  // 저장소를 바꾸기 전에 깔린 앱은 옛 id 에 들고 있다. **새로 뽑으면 안 된다** —
+  // 볼륨의 role 비밀번호는 그대로인데 앱만 다른 값을 쓰게 되어 인증만 실패한다.
+  const legacy = await getSecret(LEGACY_NEO4J_PASSWORD_SECRET_ID);
+  if (legacy) {
+    await setSecret(GRAPH_PASSWORD_SECRET_ID, legacy);
+    log("info", "docker.graph_password.migrated", { from: LEGACY_NEO4J_PASSWORD_SECRET_ID });
+    return legacy;
+  }
   const created = randomBytes(32).toString("base64url");
-  await setSecret(NEO4J_PASSWORD_SECRET_ID, created);
+  await setSecret(GRAPH_PASSWORD_SECRET_ID, created);
   return created;
 }
 
@@ -354,12 +405,83 @@ function loadPersistedState(releaseId: string): PersistedDockerState | null {
   }
 }
 
+/**
+ * 묵은 포트를 되잡는다 (spec 058 T040).
+ *
+ * `loadPersistedState` 는 **범위만** 본다 — 1024~65535 면 통과다. 그런데 앱이 꺼져 있던
+ * 동안 다른 프로그램이 그 포트를 잡았을 수 있다. 그대로 쓰면 `compose up` 이
+ * `bind: address already in use` 로 죽는데, 그 메시지는 **어느 서비스의 어느 포트인지**
+ * 를 말해 주지 않는다.
+ *
+ * ## 이어받는 경우에는 막혀 있는 것이 정상이다
+ *
+ * 우리 컨테이너가 이미 그 포트를 쥐고 있으면 "막혀 있다"로 보이지만 그건 정상이다.
+ * 그래서 **우리가 쥔 포트 목록을 받아 제외한다.** 이걸 빠뜨리면 재부팅마다 포트가
+ * 바뀌고, 그때마다 외부 도구의 설정이 깨진다.
+ *
+ * ## 조용히 바꾸지 않는다
+ *
+ * 바뀐 포트를 알려야 한다. 외부 도구(브라우저 북마크·스크립트)가 옛 포트를 쥐고
+ * 있으면 "갑자기 안 된다"가 된다. 그래서 바뀐 목록을 돌려준다.
+ */
+export interface PortReclaim {
+  ports: DockerStackPorts;
+  /** 바뀐 것만. 비어 있으면 그대로 쓴 것이다. */
+  changed: Array<{ key: keyof DockerStackPorts; from: number; to: number }>;
+}
+
+export async function reclaimBlockedPorts(
+  ports: DockerStackPorts,
+  options: {
+    /** 우리가 이미 쥐고 있는 포트 — 막혀 있어도 정상이다. */
+    heldByUs?: number[];
+    /** 포트가 쓸 수 있는지 보는 함수. 검사에서 갈아 끼운다. */
+    isFree?: (port: number) => Promise<boolean>;
+    /** 새 포트를 뽑는 함수. */
+    pick?: () => Promise<number>;
+  } = {},
+): Promise<PortReclaim> {
+  const held = new Set(options.heldByUs ?? []);
+  const isFree = options.isFree ?? defaultIsFree;
+  const pick = options.pick ?? (() => pickFreePort());
+
+  const next = { ...ports };
+  const changed: PortReclaim["changed"] = [];
+  // 새로 뽑은 포트끼리 겹치지 않게 모아 둔다. 한 번에 여러 개를 바꿀 때 같은 번호가
+  // 두 번 나오면 두 서비스가 같은 포트를 잡으려 든다.
+  const taken = new Set<number>(Object.values(ports));
+
+  for (const key of Object.keys(next) as Array<keyof DockerStackPorts>) {
+    const current = next[key];
+    if (held.has(current) || (await isFree(current))) continue;
+    let candidate = await pick();
+    for (let attempt = 0; attempt < 8 && taken.has(candidate); attempt += 1) {
+      candidate = await pick();
+    }
+    taken.add(candidate);
+    next[key] = candidate;
+    changed.push({ key, from: current, to: candidate });
+  }
+  return { ports: next, changed };
+}
+
+async function defaultIsFree(port: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", () => resolve(false));
+    server.listen({ host: "127.0.0.1", port }, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
 async function createState(releaseId: string): Promise<PersistedDockerState> {
   const state: PersistedDockerState = {
     schemaVersion: STATE_SCHEMA_VERSION,
     releaseId,
     ports: {
-      neo4j: await pickFreePort(),
+      graph: await pickFreePort(),
       analyzer: await pickFreePort(),
       gateway: await pickFreePort(),
       architect: await pickFreePort(),
@@ -383,7 +505,8 @@ function composeEnvironment(
     ...process.env,
     COMPOSE_PROJECT_NAME,
     ROBO_RELEASE_ID: manifest.releaseId,
-    ROBO_IMAGE_NEO4J: manifest.images.neo4j,
+    ROBO_IMAGE_GRAPH_DB: manifest.images.graphDb,
+    ROBO_IMAGE_GRAPH_BOLT: manifest.images.graphBolt,
     ROBO_IMAGE_MINDSDB: manifest.images.mindsdb,
     ROBO_IMAGE_ANALYZER: manifest.images.analyzer,
     ROBO_IMAGE_CATALOG: manifest.images.catalog,
@@ -391,8 +514,13 @@ function composeEnvironment(
     ROBO_IMAGE_PARSER: manifest.images.parser,
     ROBO_IMAGE_GATEWAY: manifest.images.gateway,
     ROBO_IMAGE_PDF2BPMN: manifest.images.pdf2bpmn,
+    // 이름은 `ROBO_NEO4J_*` 그대로 둔다 — 컨테이너 안의 서비스들이 Neo4j 드라이버로
+    // 붙고, 그 드라이버가 읽는 변수 이름이다. **엔진이 아니라 프로토콜의 이름이다.**
     ROBO_NEO4J_PASSWORD: password,
-    ROBO_NEO4J_PORT: String(state.ports.neo4j),
+    ROBO_NEO4J_PORT: String(state.ports.graph),
+    ROBO_GRAPH_USER: manifest.graphs.user,
+    ROBO_GRAPH_DESIGN: manifest.graphs.design,
+    ROBO_GRAPH_ANALYSIS: manifest.graphs.analysis,
     ROBO_ANALYZER_PORT: String(state.ports.analyzer),
     ROBO_GATEWAY_PORT: String(state.ports.gateway),
     ROBO_ARCHITECT_API_PORT: String(state.ports.architect),
@@ -413,7 +541,7 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   await ensureDockerDaemon();
   await ensureImages(root, manifest);
 
-  const password = await neo4jPassword();
+  const password = await graphPassword();
   const state = loadPersistedState(manifest.releaseId) ?? (await createState(manifest.releaseId));
   const env = composeEnvironment(manifest, state, password);
 
@@ -426,7 +554,7 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
     secret: password,
   });
 
-  const hostNeo4jUri = `bolt://127.0.0.1:${state.ports.neo4j}`;
+  const hostBoltUri = `bolt://127.0.0.1:${state.ports.graph}`;
   process.env.ROBO_GATEWAY_URL = `http://127.0.0.1:${state.ports.gateway}`;
   // 문서→BPMN 은 **안에서 돈다.** 이 줄이 없으면 Architect 는 번들 `.env` 의
   // 값(= 바깥 SaaS)이나 빈 값을 쓰고, 사내망에서는 그 호출이 막힌다. 막히면
@@ -435,15 +563,20 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   // `load_dotenv()` 는 기본이 override=False 라 여기서 준 값이 번들 .env 를 이긴다.
   process.env.PDF2BPMN_FACADE_URL = `http://127.0.0.1:${state.ports.pdf2bpmn}`;
   process.env.ROBO_CLUSTER_MCP_URL = `http://127.0.0.1:${state.ports.analyzer}/robo/mcp/`;
-  process.env.ROBO_NEO4J_URI = hostNeo4jUri;
-  process.env.ROBO_NEO4J_USER = "neo4j";
+  process.env.ROBO_NEO4J_URI = hostBoltUri;
+  // 사용자 = Postgres role. Bolt 게이트웨이는 받은 자격증명을 Postgres 에 그대로 넘긴다.
+  process.env.ROBO_NEO4J_USER = manifest.graphs.user;
   process.env.ROBO_NEO4J_PASSWORD = password;
-  process.env.ROBO_NEO4J_DATABASE = "neo4j";
+  // **설계와 분석을 갈라 준다.** 예전에는 둘이 같은 값이었는데, 그건 무능이 아니라
+  // 제약이었다 — 번들 이미지가 Neo4j Community 라 database 가 하나뿐이었다.
+  // 이제 갈라지므로, 여기서 같은 값을 주면 분석이 설계를 지운다.
+  process.env.ROBO_NEO4J_DATABASE = manifest.graphs.design;
+  process.env.ROBO_ANALYZER_NEO4J_DATABASE = manifest.graphs.analysis;
   await ensureBundledConnection({
-    uri: hostNeo4jUri,
-    user: "neo4j",
+    uri: hostBoltUri,
+    user: manifest.graphs.user,
     password,
-    database: "neo4j",
+    database: manifest.graphs.design,
   });
 
   current = {
@@ -456,17 +589,28 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   log("info", "docker.stack.ready", {
     releaseId: manifest.releaseId,
     projectName: COMPOSE_PROJECT_NAME,
-    neo4jPort: state.ports.neo4j,
+    graphPort: state.ports.graph,
     analyzerPort: state.ports.analyzer,
     gatewayPort: state.ports.gateway,
   });
   return current;
 }
 
+/**
+ * 앱이 소유한 컨테이너만 **멈춘다.** 지우지 않는다 (spec 058 T041 · FR-015).
+ *
+ * `docker compose stop` 이고 `down` 이 아니다. `down -v` 는 named volume 을 지우고,
+ * 그건 사용자 데이터를 지우는 것이다. `down` 도 컨테이너를 지워 다음 기동을 느리게
+ * 한다(2GB tar 재적재).
+ *
+ * **호출자가 0건이었다.** 내리는 길이 코드에 있는데 화면에서 닿을 수 없었다 —
+ * 사용자는 Docker Desktop 을 직접 열어 끄는 수밖에 없었고, 그러면 우리 것과 남의 것을
+ * 가려 주지 않는다. `runtime:stopEngine` 이 이 함수를 부른다.
+ */
 export async function stopDockerStack(): Promise<void> {
   const runtime = current;
   if (!runtime) return;
-  const password = await neo4jPassword();
+  const password = await graphPassword();
   const persisted = loadPersistedState(runtime.releaseId);
   if (!persisted) throw new Error("docker.state_missing: cannot stop owned stack safely");
   await runDocker(
@@ -479,6 +623,44 @@ export async function stopDockerStack(): Promise<void> {
   current = null;
   log("info", "docker.stack.stopped", { projectName: COMPOSE_PROJECT_NAME });
 }
+
+/**
+ * 한 서비스만 다시 올린다 (spec 058 T041 · FR-018).
+ *
+ * `compose up --detach <service>` 다. 스택 전체를 흔들지 않는다 — 하나가 죽었는데
+ * 전부 재기동하면 **멀쩡한 나머지의 연결이 끊긴다.**
+ *
+ * `architect` 는 컨테이너가 아니라 호스트 프로세스다. 그쪽은 `backend:retry` 가 담당하고
+ * 여기서는 거부한다 — 한 사실을 두 곳에서 처리하면 어느 쪽이 이겼는지 모른다.
+ */
+export async function restartOwnedService(serviceId: ManagedServiceId): Promise<void> {
+  if (serviceId === "architect") {
+    throw new Error("docker.not_a_container: architect 는 backend:retry 로 되살린다");
+  }
+  const runtime = current;
+  if (!runtime) throw new Error("docker.stack_not_started");
+  const persisted = loadPersistedState(runtime.releaseId);
+  if (!persisted) throw new Error("docker.state_missing: cannot restart safely");
+  const password = await graphPassword();
+  // 서비스 id 와 compose 서비스 이름이 다른 자리가 있다(`graph` → 컨테이너 둘).
+  const targets = COMPOSE_SERVICES_OF[serviceId] ?? [serviceId];
+  await runDocker(
+    composeArgs(runtime.runtimeDir, runtime.manifest, ["up", "--detach", ...targets]),
+    { env: composeEnvironment(runtime.manifest, persisted, password), secret: password },
+  );
+  log("info", "docker.service.restarted", { serviceId, targets: targets.join(",") });
+}
+
+/**
+ * 서비스 id → compose 서비스 이름.
+ *
+ * **`graph` 는 컨테이너가 둘이다.** 앱이 보는 것은 Bolt 하나지만 되살릴 때는 둘을
+ * 같이 봐야 한다 — Postgres 만 올리고 Bolt 를 안 올리면 **psql 은 되는데 앱만 죽는**
+ * 상태가 된다. 이 저장소가 반복해 밟은 함정이다.
+ */
+const COMPOSE_SERVICES_OF: Partial<Record<ManagedServiceId, string[]>> = {
+  graph: ["graph-db", "graph-bolt"],
+};
 
 export function getDockerStackRuntime(): DockerStackRuntime | null {
   return current
