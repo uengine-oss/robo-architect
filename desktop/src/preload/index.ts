@@ -15,6 +15,12 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
+import {
+  RUNTIME_CHANNELS,
+  type ManagedServiceId,
+  type RuntimeStatusPayload,
+} from "../shared/runtime-contract";
+
 import type {
   BackendStatusEvent,
   DataDirChooseResult,
@@ -171,6 +177,20 @@ const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "
   },
   backend: {
     retry: () => invoke<{ ok: true }>("backend:retry"),
+  },
+  runtime: {
+    // 상태가 **바뀔 때만** 온다(계약). 렌더러가 5초마다 다시 그리지 않게 하려면
+    // 미는 쪽이 지켜야 하는 약속이다.
+    onStatus: (cb: (e: RuntimeStatusPayload) => void) => subscribe(RUNTIME_CHANNELS.onStatus, cb),
+    retryService: (input: { serviceId: ManagedServiceId }) =>
+      invoke<{ ok: true }>(RUNTIME_CHANNELS.retryService, input),
+    stopEngine: (input: { confirm: true }) =>
+      invoke<{ ok: true; stoppedServiceIds: ManagedServiceId[] }>(
+        RUNTIME_CHANNELS.stopEngine,
+        input,
+      ),
+    openDiagnostics: (input: { serviceId?: ManagedServiceId }) =>
+      invoke<{ ok: true }>(RUNTIME_CHANNELS.openDiagnostics, input),
   },
   logs: {
     reveal: () => invoke<{ ok: true }>("logs:reveal"),

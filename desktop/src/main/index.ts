@@ -28,6 +28,13 @@ import {
 
 import { ensureDataDirs } from "./data-dir";
 import { initLogging, log, revealLogs } from "./logging";
+import { RuntimeRegistry } from "./runtime-state";
+import { RUNTIME_CHANNELS } from "../shared/runtime-contract";
+import {
+  getDockerStackRuntime,
+  restartOwnedService,
+  stopDockerStack,
+} from "./docker-stack";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
 import {
   copy,
@@ -100,18 +107,38 @@ function resolveFrontendDist(): string {
   return path.resolve(app.getAppPath(), "..", "frontend", "dist");
 }
 
+/**
+ * 감독 상태를 들고 있는 것 (spec 058). 프로세스 안에 사는 값이고 디스크에 안 쓴다 —
+ * 재기동하면 처음부터 다시 잰다(옛 값을 믿는 것보다 싸고 정확하다).
+ */
+export const runtimeRegistry = new RuntimeRegistry();
+
 function buildRuntimeState(): RuntimeState {
   const be = getRuntimeBackend();
-  return {
+  const snapshot = runtimeRegistry.snapshot();
+  const base: RuntimeState = {
     appVersion: app.getVersion(),
     backendPort: be.port,
     boltPort: null, // T023 — Neo4j-managed mode not yet implemented
     backendPid: be.pid,
     neo4jPid: null,
-    status: be.status,
+    // 감독 대상이 등록돼 있으면 파생 status 를 쓴다. 없으면 예전 값 그대로 —
+    // **하위 호환을 위해 필드를 지우지도, 뜻을 바꾸지도 않는다.**
+    status: snapshot.services.length > 0 ? snapshot.legacyStatus : be.status,
     dataSource: "bundled",
     dataDir: app.getPath("userData"),
     updateState: "idle",
+  };
+  // **등록이 비어 있으면 신규 필드를 아예 안 실는다.** 빈 목록을 실으면 렌더러가
+  // "서비스가 없다"로 읽고, 그건 "아직 안 쟀다"와 완전히 다른 화면이 된다.
+  if (snapshot.services.length === 0) return base;
+  return {
+    ...base,
+    services: snapshot.services,
+    capabilities: snapshot.capabilities,
+    graphGuard: snapshot.graphGuard,
+    dockerAvailable: snapshot.dockerAvailable,
+    releaseId: snapshot.releaseId,
   };
 }
 
@@ -284,6 +311,54 @@ function registerIpcHandlers(): void {
   });
 
   registerHandler("logs:reveal", async () => {
+    await revealLogs();
+    return { ok: true as const };
+  });
+
+  // ---------------------------------------------------------------------------
+  // spec 058 런타임 감독 — 기존 `app:*` 채널은 그대로 둔다
+  // ---------------------------------------------------------------------------
+
+  registerHandler(RUNTIME_CHANNELS.retryService, async ({ serviceId }) => {
+    // 자동 되살리기가 한계에 도달해 `stopped` 가 된 뒤에도 **이 길은 열려 있다**(FR-018).
+    // 사람이 원인을 고친 뒤 다시 시도하는 자리다.
+    if (!runtimeRegistry.knows(serviceId)) {
+      throw new IpcHandlerError(IpcErrorCodes.VALIDATION, `unknown service: ${serviceId}`);
+    }
+    try {
+      await restartOwnedService(serviceId);
+      return { ok: true as const };
+    } catch (err) {
+      throw new IpcHandlerError(
+        IpcErrorCodes.INTERNAL,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  });
+
+  registerHandler(RUNTIME_CHANNELS.stopEngine, async ({ confirm }) => {
+    // `confirm` 을 요구하는 이유: 실수로 부르면 **남의 화면에서 서비스가 사라진다.**
+    if (confirm !== true) {
+      throw new IpcHandlerError(IpcErrorCodes.VALIDATION, "stopEngine requires confirm: true");
+    }
+    const before = getDockerStackRuntime();
+    try {
+      // `stop` 이고 `down` 이 아니다 — **named volume 을 지우지 않는다**(FR-015).
+      await stopDockerStack();
+    } catch (err) {
+      throw new IpcHandlerError(
+        IpcErrorCodes.INTERNAL,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    const stoppedServiceIds = before ? runtimeRegistry.containerServiceIds() : [];
+    for (const id of stoppedServiceIds) runtimeRegistry.markStopped(id, "사용자가 내렸습니다.");
+    log("info", "runtime.stop_engine", { count: stoppedServiceIds.length });
+    return { ok: true as const, stoppedServiceIds };
+  });
+
+  registerHandler(RUNTIME_CHANNELS.openDiagnostics, async () => {
+    // 지금은 로그 위치를 연다. 서비스별 로그 갈래는 화면 작업(T028)과 같이 온다.
     await revealLogs();
     return { ok: true as const };
   });

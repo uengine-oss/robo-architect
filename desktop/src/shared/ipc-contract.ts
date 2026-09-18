@@ -111,6 +111,18 @@ export type UpdateState =
   | "error";
 
 export interface RuntimeState {
+  /** spec 058 — 아래 신규 필드는 **모두 선택적**이다. 옛 렌더러를 깨뜨리지 않는다. */
+  services?: ManagedService[];
+  capabilities?: Capability[];
+  graphGuard?: GraphGuard | null;
+  releaseId?: string | null;
+  /**
+   * 컨테이너 실행 환경 자체의 유무.
+   *
+   * **세 값이다.** `false` 는 "없다"(화면이 준비 안내를 낸다), `null` 은 **"아직 못
+   * 쟀다"** 다. 둘을 뭉치면 기동 초반에 "도커를 설치하세요"가 잘못 뜬다.
+   */
+  dockerAvailable?: boolean | null;
   appVersion: string;
   backendPort: number | null;
   boltPort: number | null;
@@ -201,6 +213,14 @@ export interface IpcRequestMap {
   "update:check": [void, UpdateCheckResult];
   "update:apply": [void, { ok: true }];
   "app:openExternal": [OpenExternalParams, { ok: true }];
+  // spec 058 — **이 표에 없으면 registerHandler 가 타입에서 걸린다.** 채널을 더하고
+  // 여기 빠뜨리면 빌드가 막는다. 계약이 한 곳에 모여 있다는 뜻이다.
+  "runtime:retryService": [{ serviceId: ManagedServiceId }, { ok: true }];
+  "runtime:stopEngine": [
+    { confirm: true },
+    { ok: true; stoppedServiceIds: ManagedServiceId[] },
+  ];
+  "runtime:openDiagnostics": [{ serviceId?: ManagedServiceId }, { ok: true }];
 }
 
 export type IpcChannel = keyof IpcRequestMap;
@@ -232,6 +252,11 @@ export interface IpcSubscriptionMap {
   "app:onBackendStatus": BackendStatusEvent;
   "app:onUpdateState": UpdateStateEvent;
   "app:onDataSourceChanged": DataSourceChangedEvent;
+  /**
+   * spec 058. **이 표에 없으면 preload 가 구독을 못 만든다** — 채널만 더하고 여기
+   * 빠뜨리면 빌드에서 걸린다(실제로 걸렸다). 계약이 한 곳에 모여 있다는 뜻이다.
+   */
+  "runtime:onStatus": RuntimeStatusPayload;
 }
 
 export type IpcSubscriptionChannel = keyof IpcSubscriptionMap;
@@ -242,6 +267,20 @@ export type Unsubscribe = () => void;
 // ---------------------------------------------------------------------------
 // The shape exposed on `window.desktop` (preload contextBridge surface)
 // ---------------------------------------------------------------------------
+
+/**
+ * 런타임 감독 타입은 `runtime-contract.ts` 에 산다 — 이 파일은 023·032 계약이고
+ * 섞으면 어느 스펙의 계약인지 안 보인다.
+ */
+import type {
+  Capability,
+  GraphGuard,
+  ManagedService,
+  ManagedServiceId,
+  RuntimeStatusPayload,
+} from "./runtime-contract";
+
+export type { Capability, GraphGuard, ManagedService, ManagedServiceId, RuntimeStatusPayload };
 
 export interface DesktopBridge {
   app: {
@@ -265,6 +304,20 @@ export interface DesktopBridge {
   };
   backend: {
     retry(): Promise<IpcResult<{ ok: true }>>;
+  };
+  /**
+   * 런타임 감독 (spec 058). **기존 `app.*` 을 대체하지 않는다** — `getRuntimeState` 와
+   * `onBackendStatus` 는 그대로 살아 있고, 이쪽이 더해진다.
+   */
+  runtime: {
+    /** 상태가 **바뀔 때만** 온다. 주기 전송이 아니다. */
+    onStatus(cb: (e: RuntimeStatusPayload) => void): Unsubscribe;
+    retryService(input: { serviceId: ManagedServiceId }): Promise<IpcResult<{ ok: true }>>;
+    /** 앱이 소유한 컨테이너만 내린다. **사용자 데이터는 보존한다.** */
+    stopEngine(input: { confirm: true }): Promise<
+      IpcResult<{ ok: true; stoppedServiceIds: ManagedServiceId[] }>
+    >;
+    openDiagnostics(input: { serviceId?: ManagedServiceId }): Promise<IpcResult<{ ok: true }>>;
   };
   logs: {
     reveal(): Promise<IpcResult<{ ok: true }>>;
