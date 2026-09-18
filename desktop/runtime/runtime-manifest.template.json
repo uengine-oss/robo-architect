@@ -1,6 +1,9 @@
 {
   "schemaVersion": 4,
   "releaseId": "RELEASE_ID",
+  "releaseChannel": "RELEASE_CHANNEL",
+  "authEnforced": false,
+  "authProvider": "none",
   "composeFile": "compose.yml",
   "imageArchive": "robo-images.tar",
   "imageArchiveSha256": "IMAGE_ARCHIVE_SHA256",
