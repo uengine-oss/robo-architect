@@ -75,6 +75,7 @@
     "fabric": "FABRIC_COMMIT",
     "frontend": "FRONTEND_COMMIT",
     "parser": "PARSER_COMMIT",
-    "gateway": "GATEWAY_COMMIT"
+    "gateway": "GATEWAY_COMMIT",
+    "ontological": "ONTOLOGICAL_COMMIT"
   }
 }
