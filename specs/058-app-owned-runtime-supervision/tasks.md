@@ -535,6 +535,7 @@ start.sh                컨테이너 안에서 빌드한 뒤 psql·bolt 를 손�
 > **안 쟀다**: T037(화면) — (윈). 실제 분석 완주는 LLM 비용 때문에 안 돌렸고, 대신
 > **파괴적 질의를 원본 그대로** 돌렸다.
 - [ ] T088 `desktop` 의 eslint 가 `tests/` 를 타입 검사하지 못한다 — `tsconfig.main.json`·`tsconfig.preload.json` 이 `src/` 만 include 해서, **검사 파일마다 `Parsing error: file was not found in any of the provided project(s)` 가 하나씩 쌓인다**(기존 `settings-migrate.spec.ts`·`smoke.spec.ts`·`desktop-launcher-e2e.spec.ts` 도 같다). 검사용 tsconfig 를 더해 eslint project 에 넣는다. 이 회차에 검사 파일을 넷 더해 같은 오류가 4건 늘었다 — 코드 문제가 아니라 설정 구멍이다 (맥)
+- [ ] T089 **`open-pencil` 의 `.lfsconfig` 에 커밋된 R2 자격증명을 폐기한다 — `uengine-oss/open-pencil` 소유.** 접근 키와 비밀 키가 LFS 원격 URL 안에 **평문으로 커밋**돼 있고, 그 키는 인증에 실패한다. 증상은 "저장소를 못 받는다"가 아니다 — clone 8개가 **전부 성공한 다음** `git submodule update` 가 거기서 멈춘다. 키 폐기 + 히스토리 정리(URL 을 자격증명 없는 형태로 바꾸고 인증은 `~/.gitconfig`·`credential helper` 로) 가 필요하다. 우리 쪽(`robo-workspace b931c94`)은 릴리스가 그 키에 **의존하지 않게만** 만들었다: `GIT_LFS_SKIP_SMUDGE=1` 기본값. 끄고 가도 되는 근거는 세어서 확인했다 — LFS 추적은 `tests/fixtures` 의 5개(`.fig` 3 · `.ttf` 2)뿐이고 `.gitattributes` 3번째 줄이 잡는 `canvaskit-webgpu/*.wasm` 은 `git ls-files "*.wasm"` 0건(경로 자체가 없다). **그 줄에 실재하는 wasm 이 생기면 이 우회는 무효다** — 런타임에 쓰이는 파일을 포인터로 받으면 앱이 조용히 깨진다 (맥에서 목록만 측정)
 - [ ] T037 [US2] 화면에서 잠긴 것이 보이는지 확인한다 — 분석 탭이 왜 막혔는지 말하는가 (윈)
 
 ---
