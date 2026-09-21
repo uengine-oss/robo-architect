@@ -29,7 +29,8 @@ const MANIFEST_NAME = "runtime-manifest.json";
 // 2: pdf2bpmn 포트가 늘어 포트가 넷에서 다섯이 됐다. 옛 상태는 버리고 다시 뽑는다.
 // 3: 저장소가 Neo4j → Ontological 로 바뀌며 `ports.neo4j` 가 `ports.graph` 가 됐다.
 //    키 이름이 바뀌었으므로 옛 상태는 읽지 않는다(읽으면 포트가 `undefined` 가 된다).
-const STATE_SCHEMA_VERSION = 3;
+// 4: 호스트 Architect API 가 Ontological PostgreSQL 에 직접 붙도록 graphPg 포트를 추가.
+const STATE_SCHEMA_VERSION = 4;
 // 4: images.neo4j → images.graphDb + images.graphBolt, graphs 항목 추가.
 const MANIFEST_SCHEMA_VERSION = 4;
 const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
@@ -90,6 +91,8 @@ export interface RuntimeManifest {
 export interface DockerStackPorts {
   /** Bolt 게이트웨이의 호스트 포트. 엔진이 아니라 **프로토콜**을 가리키는 이름이다. */
   graph: number;
+  /** Ontological PostgreSQL의 호스트 포트. Architect 사용자/프로젝트 저장소가 쓴다. */
+  graphPg: number;
   analyzer: number;
   gateway: number;
   architect: number;
@@ -396,7 +399,7 @@ function loadPersistedState(releaseId: string): PersistedDockerState | null {
       return null;
     }
     const ports = Object.values(parsed.ports);
-    if (ports.length !== 5 || ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535)) {
+    if (ports.length !== 6 || ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535)) {
       return null;
     }
     return parsed;
@@ -482,6 +485,7 @@ async function createState(releaseId: string): Promise<PersistedDockerState> {
     releaseId,
     ports: {
       graph: await pickFreePort(),
+      graphPg: await pickFreePort(),
       analyzer: await pickFreePort(),
       gateway: await pickFreePort(),
       architect: await pickFreePort(),
@@ -518,6 +522,7 @@ function composeEnvironment(
     // 붙고, 그 드라이버가 읽는 변수 이름이다. **엔진이 아니라 프로토콜의 이름이다.**
     ROBO_NEO4J_PASSWORD: password,
     ROBO_NEO4J_PORT: String(state.ports.graph),
+    ROBO_GRAPH_PG_PORT: String(state.ports.graphPg),
     ROBO_GRAPH_USER: manifest.graphs.user,
     ROBO_GRAPH_DESIGN: manifest.graphs.design,
     ROBO_GRAPH_ANALYSIS: manifest.graphs.analysis,
@@ -572,6 +577,13 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   // 이제 갈라지므로, 여기서 같은 값을 주면 분석이 설계를 지운다.
   process.env.ROBO_NEO4J_DATABASE = manifest.graphs.design;
   process.env.ROBO_ANALYZER_NEO4J_DATABASE = manifest.graphs.analysis;
+  // 사용자·프로젝트 저장소는 Bolt가 아니라 같은 Ontological PostgreSQL에 직접 붙는다.
+  // 비밀번호는 파일로 내리지 않고 DPAPI에서 읽은 값을 백엔드 spawn 환경으로만 넘긴다.
+  process.env.OG_PG_HOST = "127.0.0.1";
+  process.env.OG_PG_PORT = String(state.ports.graphPg);
+  process.env.OG_PG_DATABASE = manifest.graphs.design;
+  process.env.OG_PG_USER = manifest.graphs.user;
+  process.env.OG_PG_PASSWORD = password;
   await ensureBundledConnection({
     uri: hostBoltUri,
     user: manifest.graphs.user,
@@ -590,6 +602,7 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
     releaseId: manifest.releaseId,
     projectName: COMPOSE_PROJECT_NAME,
     graphPort: state.ports.graph,
+    graphPgPort: state.ports.graphPg,
     analyzerPort: state.ports.analyzer,
     gatewayPort: state.ports.gateway,
   });

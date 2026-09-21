@@ -110,6 +110,7 @@ test.describe("이미 떠 있는 것을 이어받는다 (T039)", () => {
 test.describe("묵은 포트를 되잡는다 (T040)", () => {
   const ports: DockerStackPorts = {
     graph: 38687,
+    graphPg: 35432,
     analyzer: 38502,
     gateway: 38000,
     architect: 38001,
@@ -146,7 +147,9 @@ test.describe("묵은 포트를 되잡는다 (T040)", () => {
     expect(result.ports.graph).toBe(38687);
     expect(result.ports.gateway).toBe(38000);
     // 나머지는 막혀 있으니 바뀐다.
-    expect(result.changed.map((c) => c.key).sort()).toEqual(["analyzer", "architect", "pdf2bpmn"]);
+    expect(result.changed.map((c) => c.key).sort()).toEqual([
+      "analyzer", "architect", "graphPg", "pdf2bpmn",
+    ]);
   });
 
   test("새로 뽑은 포트끼리 겹치지 않는다", async () => {

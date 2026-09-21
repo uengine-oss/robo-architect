@@ -126,6 +126,36 @@ def get_llm(
     if resolved_provider == "openai":
         from langchain_openai import ChatOpenAI
 
+        class FunctionCallingChatOpenAI(ChatOpenAI):
+            """OpenAI structured output의 안전한 기본값을 고정한다.
+
+            langchain-openai 1.x는 ``with_structured_output`` 기본값을
+            ``json_schema``로 바꿨다. 우리 Pydantic 모델 중 일부는 OpenAI strict
+            JSON Schema의 제한(모든 필드 required 등)을 만족하지 않아 요청 자체가
+            HTTP 400으로 거절된다. 함수 호출 방식은 같은 모델들을 정상 지원한다.
+
+            호출부가 method를 명시하면 그 선택은 그대로 존중한다.
+            """
+
+            def with_structured_output(
+                self,
+                schema=None,
+                *,
+                method="function_calling",
+                include_raw=False,
+                strict=None,
+                tools=None,
+                **kwargs,
+            ):
+                return super().with_structured_output(
+                    schema,
+                    method=method,
+                    include_raw=include_raw,
+                    strict=strict,
+                    tools=tools,
+                    **kwargs,
+                )
+
         # Granular httpx timeout: tight READ bound kills a stalled SSE stream,
         # while connect/pool stay generous. ChatOpenAI forwards this to the
         # underlying openai/httpx client.
@@ -155,7 +185,7 @@ def get_llm(
         if model is None and ai_gateway.chat_model():
             resolved_model = ai_gateway.chat_model()
 
-        return ChatOpenAI(model=resolved_model, **effective_kwargs)
+        return FunctionCallingChatOpenAI(model=resolved_model, **effective_kwargs)
 
     if resolved_provider == "anthropic":
         from langchain_anthropic import ChatAnthropic

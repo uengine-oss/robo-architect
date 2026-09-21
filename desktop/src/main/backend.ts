@@ -72,7 +72,10 @@ function backendCwdCandidates(): string[] {
     .filter((v): v is string => typeof v === "string" && v.length > 0);
 }
 
-const READINESS_TIMEOUT_MS = 60_000;
+// 첫 설치에서는 Python import와 MCP 초기화가 2분을 넘길 수 있다. 60초는 경고
+// 경계일 뿐 실패 판정이 아니다. 프로세스가 살아 있으면 최대 5분까지 이어받는다.
+const READINESS_WARNING_MS = 60_000;
+const READINESS_TIMEOUT_MS = 5 * 60_000;
 const READINESS_INITIAL_BACKOFF_MS = 200;
 const READINESS_MAX_BACKOFF_MS = 1_500;
 const STOP_GRACE_MS = 5_000;
@@ -143,6 +146,8 @@ async function probeHealth(port: number, signal: AbortSignal): Promise<boolean> 
 
 async function waitForReady(port: number): Promise<void> {
   const deadline = Date.now() + READINESS_TIMEOUT_MS;
+  const warningAt = Date.now() + READINESS_WARNING_MS;
+  let warned = false;
   let backoff = READINESS_INITIAL_BACKOFF_MS;
   const ac = new AbortController();
   while (Date.now() < deadline) {
@@ -150,6 +155,15 @@ async function waitForReady(port: number): Promise<void> {
     if (ok) return;
     if (child && child.exitCode !== null) {
       throw new Error(`backend.exited_before_ready: code=${child.exitCode}`);
+    }
+    if (!warned && Date.now() >= warningAt) {
+      warned = true;
+      log("warn", "backend.readiness_slow", {
+        port,
+        elapsedMs: READINESS_WARNING_MS,
+        timeoutMs: READINESS_TIMEOUT_MS,
+      });
+      setStatus("starting-backend", "백엔드 초기화가 계속 진행 중입니다.");
     }
     await delay(backoff);
     backoff = Math.min(backoff * 1.5, READINESS_MAX_BACKOFF_MS);
@@ -180,7 +194,7 @@ async function startBackendInternal(): Promise<{ port: number }> {
       "uvicorn",
       bundled.entrypoint,
       "--host",
-      "0.0.0.0",
+      "127.0.0.1",
       "--port",
       String(port),
       "--log-level",
@@ -219,6 +233,11 @@ async function startBackendInternal(): Promise<{ port: number }> {
     NEO4J_USER: process.env.ROBO_NEO4J_USER ?? process.env.NEO4J_USER,
     NEO4J_PASSWORD: process.env.ROBO_NEO4J_PASSWORD ?? process.env.NEO4J_PASSWORD,
     NEO4J_DATABASE: process.env.ROBO_NEO4J_DATABASE ?? process.env.NEO4J_DATABASE,
+    OG_PG_HOST: process.env.OG_PG_HOST,
+    OG_PG_PORT: process.env.OG_PG_PORT,
+    OG_PG_DATABASE: process.env.OG_PG_DATABASE,
+    OG_PG_USER: process.env.OG_PG_USER,
+    OG_PG_PASSWORD: process.env.OG_PG_PASSWORD,
     // **설계 graph 로 덮지 않는다.** analyzer 는 대상 graph 를 통째로 비우고 다시
     // 쓰므로, 여기에 설계 graph 가 들어가면 첫 분석에서 설계가 사라진다. 예전에
     // `ROBO_NEO4J_DATABASE` 로 덮던 건 번들 Neo4j 가 Community 라 database 가 하나
