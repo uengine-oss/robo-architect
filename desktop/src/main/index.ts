@@ -176,6 +176,34 @@ function registerAppProtocol(): void {
         upstreamBase = `http://127.0.0.1:${port}`;
       }
       const upstream = `${upstreamBase}${pathname}${url.search}`;
+      let proxyHeaders = request.headers;
+      let proxyBody: BodyInit | null = request.body;
+
+      // 릴리스 구성요소의 버전이 잠시 어긋나도 분석이 막히지 않게 gateway 경계에서
+      // 계약을 좁힌다. 구 Analyzer UI는 Parser용 메타데이터 전체를 /robo/analyze로
+      // 보내지만 현재 Analyzer는 아래 네 필드만 허용(extra="forbid")한다.
+      // 그 결과 파싱 성공 직후 422 detail 객체 네 개가 `[object Object]`로 보였다.
+      if (pathname === "/api/gateway/robo/analyze" && request.method === "POST") {
+        try {
+          const input = await request.clone().json() as Record<string, unknown>;
+          proxyBody = JSON.stringify({
+            strategy: input.strategy,
+            locale: typeof input.locale === "string" ? input.locale : "ko",
+            selected_source_ids: Array.isArray(input.selected_source_ids)
+              ? input.selected_source_ids
+              : [],
+            datasource: input.datasource ?? input.datasourceName ?? null,
+          });
+          const headers = new Headers(request.headers);
+          headers.delete("content-length");
+          headers.set("content-type", "application/json");
+          proxyHeaders = headers;
+        } catch (err) {
+          log("warn", "protocol.analyzer_request_normalize_failed", {
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
       // 진단: 렌더러가 Neo4j override 헤더를 실었는지 (여기서 끊기면 프록시 문제).
       log("info", "protocol.api_proxy.headers", {
         pathname,
@@ -185,8 +213,8 @@ function registerAppProtocol(): void {
       try {
         return await net.fetch(upstream, {
           method: request.method,
-          headers: request.headers,
-          body: request.body,
+          headers: proxyHeaders,
+          body: proxyBody,
           // 프로젝트 전환은 renderer 전체 새로고침이다. 이전 문서가 사라질 때
           // app:// Request 는 abort 되므로 그 신호를 upstream 에도 전달해야 한다.
           // 전달하지 않으면 collab SSE 와 초기 API 요청이 백엔드/gateway 쪽에
@@ -195,7 +223,7 @@ function registerAppProtocol(): void {
           redirect: "manual",
           // duplex required when sending a streaming body — net.fetch follows
           // the Web Fetch spec.
-          ...(request.body ? { duplex: "half" as const } : {}),
+          ...(proxyBody ? { duplex: "half" as const } : {}),
         });
       } catch (err) {
         log("error", "protocol.api_proxy.failed", {
