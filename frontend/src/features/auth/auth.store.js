@@ -76,14 +76,26 @@ export const useAuthStore = defineStore('auth', () => {
     if (projectError.value !== next) projectError.value = next
   }
 
-  async function loadProvider() {
-    try {
-      const r = await fetch('/api/auth/provider')
-      provider.value = r.ok ? await r.json() : null
-    } catch {
-      provider.value = null
+  async function loadProvider({ attempts = 1, delayMs = 500 } = {}) {
+    const maxAttempts = Math.max(1, Number(attempts) || 1)
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const r = await fetch('/api/auth/provider')
+        if (r.ok) {
+          provider.value = await r.json()
+          return provider.value
+        }
+      } catch {
+        /* Electron may render before the packaged backend is listening. */
+      }
+
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+      }
     }
-    return provider.value
+
+    provider.value = null
+    return null
   }
 
   /** 저장된 토큰이 아직 쓸 만한지 서버에 확인한다. */

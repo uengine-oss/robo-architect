@@ -408,7 +408,10 @@ onUnmounted(() => collab.close())
 onMounted(async () => {
   // 인증 설정을 먼저 읽고, 저장된 토큰이 아직 쓸 만한지 확인한다.
   // 실패해도 앱은 뜬다 — 강제가 꺼져 있으면 로그인 없이 쓰던 대로 쓴다.
-  auth.loadProvider().then(() => auth.refresh())
+  // Electron opens the renderer while Docker and the packaged API are still
+  // starting. Keep asking until the API is ready; a single early failure used
+  // to leave `provider` null for the whole session and silently bypass login.
+  auth.loadProvider({ attempts: 60, delayMs: 1000 }).then(() => auth.refresh())
 
   // Load saved navigator width and collapsed state
   try {
