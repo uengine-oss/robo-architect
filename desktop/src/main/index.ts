@@ -187,6 +187,11 @@ function registerAppProtocol(): void {
           method: request.method,
           headers: request.headers,
           body: request.body,
+          // 프로젝트 전환은 renderer 전체 새로고침이다. 이전 문서가 사라질 때
+          // app:// Request 는 abort 되므로 그 신호를 upstream 에도 전달해야 한다.
+          // 전달하지 않으면 collab SSE 와 초기 API 요청이 백엔드/gateway 쪽에
+          // 계속 남고, 전환을 반복한 뒤 새 요청이 연결 풀을 기다리며 무한대기한다.
+          signal: request.signal,
           redirect: "manual",
           // duplex required when sending a streaming body — net.fetch follows
           // the Web Fetch spec.
