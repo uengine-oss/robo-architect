@@ -16,7 +16,7 @@
  * 새로고침해야만 반영되는데 그걸 알 방법이 없다. 그래서 활성화될 때마다
  * 루트를 다시 읽고, 달라졌을 때만 remote 를 다시 마운트한다.
  */
-import { ref, computed, inject, watch, onMounted, onBeforeUnmount, onActivated } from 'vue'
+import { ref, computed, inject, watch, onBeforeUnmount, onActivated } from 'vue'
 import { useProjectsStore } from '@/features/projects/projects.store.js'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
@@ -94,6 +94,13 @@ async function mountRemote() {
   isLoading.value = true
   loadError.value = ''
   try {
+    // App boot is asynchronous in Electron: the renderer is visible before the
+    // packaged API has returned auth/project context. Mounting the remote while
+    // provider is still null makes it look like connection binding is disabled,
+    // so Analyzer starts against its shared defaults with no project root or DB.
+    if (!auth.provider) return
+    if (auth.enforced && !auth.authenticated) return
+
     // 이 프로젝트의 분석 graph. 분석은 **대상 graph 를 통째로 비우고** 시작하므로,
     // 이 값이 없으면 분석기가 자기 env 에 고정된 graph 하나를 비운다 — 다른
     // 프로젝트에서 분석을 한 번 돌리면 여기 결과가 사라진다. 오류는 안 난다.
@@ -161,8 +168,6 @@ function teardown() {
   if (hostEl.value) hostEl.value.innerHTML = ''
 }
 
-onMounted(mountRemote)
-
 async function remountIfRootChanged() {
   // 아직 마운트 전이거나 마운트 중이면 할 일이 없다 — mountRemote 가 최신 값을 읽는다.
   // 막혀 있던 경우에도 다시 본다 — 프로젝트를 고르면 그때 띄워야 한다.
@@ -182,7 +187,23 @@ onActivated(remountIfRootChanged)
 
 // 3차 — 선택기에서 분석 짝을 고치면 새로고침 없이 값만 바뀐다. 그대로 두면
 // 분석기가 옛 graph 를 계속 쓰고, 거기서 분석을 돌리면 그 graph 가 비워진다.
-watch(() => projectsStore.currentAnalyzerGraph, remountIfRootChanged)
+// Auth provider, login and selected project are all populated after the shell
+// has mounted. Reconcile on each transition so the first Analyzer mount cannot
+// escape project binding with empty bootstrap values.
+watch(
+  [
+    () => auth.provider,
+    () => auth.status,
+    () => auth.projectGraph,
+    () => projectsStore.currentAnalyzerGraph,
+  ],
+  async () => {
+    if (!auth.provider || (auth.enforced && !auth.authenticated)) return
+    if (!unmountRemote) await mountRemote()
+    else await remountIfRootChanged()
+  },
+  { immediate: true },
+)
 
 onBeforeUnmount(teardown)
 </script>
