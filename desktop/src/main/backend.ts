@@ -238,6 +238,12 @@ async function startBackendInternal(): Promise<{ port: number }> {
     OG_PG_DATABASE: process.env.OG_PG_DATABASE,
     OG_PG_USER: process.env.OG_PG_USER,
     OG_PG_PASSWORD: process.env.OG_PG_PASSWORD,
+    // 패키지 앱은 로그인 사용자가 만든 프로젝트 graph 를 요청마다 고른다.
+    // 이 값이 꺼져 있으면 X-Project-Graph 가 권한 경계를 만들지 못하고 런처
+    // 연결의 기본 graph 로 모든 프로젝트가 합쳐진다. 명시 설정은 존중하되,
+    // 납품 경로(packaged)는 안전한 기본값을 사용한다.
+    AUTH_BIND_CONNECTION:
+      process.env.AUTH_BIND_CONNECTION ?? (packaged ? "true" : undefined),
     // **설계 graph 로 덮지 않는다.** analyzer 는 대상 graph 를 통째로 비우고 다시
     // 쓰므로, 여기에 설계 graph 가 들어가면 첫 분석에서 설계가 사라진다. 예전에
     // `ROBO_NEO4J_DATABASE` 로 덮던 건 번들 Neo4j 가 Community 라 database 가 하나

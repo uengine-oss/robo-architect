@@ -22,6 +22,27 @@ class Neo4jContextTest(unittest.TestCase):
         set_override(None)
         self.assertIsNone(get_override())
 
+    def test_selected_project_graph_wins_over_connection_default(self) -> None:
+        override = Neo4jOverride.from_headers({
+            "x-neo4j-uri": "bolt://selected:7687",
+            "x-neo4j-user": "neo4j",
+            "x-neo4j-password": "secret",
+            "x-neo4j-database": "connection_default",
+            "x-project-graph": "prj_current",
+        })
+
+        self.assertIsNotNone(override)
+        self.assertEqual(override.database, "prj_current")
+
+    def test_connection_default_is_used_without_selected_project(self) -> None:
+        override = Neo4jOverride.from_headers({
+            "x-neo4j-uri": "bolt://selected:7687",
+            "x-neo4j-database": "connection_default",
+        })
+
+        self.assertIsNotNone(override)
+        self.assertEqual(override.database, "connection_default")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,7 +30,16 @@ class Neo4jOverride:
 
     @classmethod
     def from_headers(cls, headers: Mapping[str, str]) -> Optional["Neo4jOverride"]:
-        """``X-Neo4j-*`` 헤더 → override. URI 없으면 None → .env 폴백."""
+        """요청 헤더 → override. URI 없으면 None → .env 폴백.
+
+        ``X-Neo4j-Database`` 는 런처에서 고른 *연결의 기본 graph* 이고,
+        ``X-Project-Graph`` 는 사용자가 앱 안에서 고른 *현재 프로젝트*다. 한
+        연결에 여러 프로젝트를 만들 수 있으므로 현재 프로젝트가 항상 우선한다.
+
+        인증 연결 바인딩이 켜진 배포에서는 ``connection_binding`` 이 동일한
+        우선순위와 권한 검사를 먼저 적용한다. 이 경로는 바인딩을 끈 로컬/개발
+        실행에서도 프로젝트 전환이 같은 graph 로 떨어지지 않게 하는 폴백이다.
+        """
         uri = headers.get("x-neo4j-uri")
         if not uri:
             return None
@@ -38,7 +47,11 @@ class Neo4jOverride:
             uri=uri,
             user=headers.get("x-neo4j-user", "neo4j"),
             password=headers.get("x-neo4j-password", ""),
-            database=headers.get("x-neo4j-database") or None,
+            database=(
+                headers.get("x-project-graph")
+                or headers.get("x-neo4j-database")
+                or None
+            ),
             analyzer_database=headers.get("x-analyzer-database") or None,
             # Electron 헤더는 프로젝트의 결정이 아니다 — 없으면 `.env` 가 맞다.
             analyzer_pinned=False,
