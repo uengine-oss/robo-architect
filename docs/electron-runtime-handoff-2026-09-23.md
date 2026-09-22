@@ -35,6 +35,17 @@ Electron이 Compose를 시작하고 포트를 선택해 `%APPDATA%\robo-architec
 
 표의 SHA는 작성 시점의 로컬 체크아웃이다. 중첩 서브모듈의 `HEAD`는 분리(detached) 상태일 수 있으며, **그 자체가 오류는 아니다**. 독립 저장소의 `main`이 더 앞서도 Architect 프로필은 자동으로 따라가지 않는다. `git pull`만으로 서브모듈 gitlink·Docker 이미지·`app.asar`·번들 Python이 갱신되지 않는다. 상위 저장소가 의도한 서브모듈 commit을 가리키도록 갱신·커밋하고, release를 다시 만들어야 한다.
 
+### 다른 브랜치가 영향을 주는 범위
+
+| 대상 | Architect 개발 실행·다음 release가 읽는 기준 | 다른 브랜치의 변경이 반영되는 조건 |
+|---|---|---|
+| Analyzer·Catalog·Fabric·Analyzer frontend·open-pencil | `robo-architect` 부모 커밋이 기록한 **중첩 서브모듈 SHA** | 필요한 커밋으로 서브모듈 gitlink를 갱신하고 Architect에 커밋·푸시한 뒤 다시 빌드해야 한다. 형제 독립 저장소의 `main`을 푸시하는 것만으로는 반영되지 않는다. |
+| Architect 본체·Parser·Gateway·Ontological DB | `robo-workspace/workspace.json`의 지정 URL·브랜치에서 release 준비 시 `pull --ff-only`한 HEAD | 변경을 지정 브랜치에 반영하거나 Workspace의 브랜치 pin을 의도적으로 변경하고 새 release를 만들어야 한다. 임의의 다른 브랜치는 읽지 않는다. |
+| Workspace 실행기·환경 계약 | release를 수행하는 `robo-workspace` 체크아웃 | Workspace 변경도 커밋된 실행기·설정 상태로 release해야 한다. |
+| 이미 생성된 `win-unpacked`/설치본 | 해당 산출물의 `runtime-manifest.json` source SHA·이미지 ID와 실제 `app.asar`·프런트 번들 | 이후 어느 브랜치에 푸시해도 자동 갱신되지 않는다. 새 산출물을 빌드하고 정확한 실행 파일 경로를 확인해야 한다. |
+
+즉 **다른 브랜치가 무조건 무관한 것은 아니다.** 다음 release의 최상위 저장소에는 Workspace의 지정 브랜치가 중요하고, Analyzer 계열에는 Architect의 서브모듈 SHA가 중요하다. release는 소스 저장소가 깨끗한지, 지정 브랜치인지, 서브모듈이 부모가 기록한 커밋에 있는지를 검사한다. `robo.cmd sync architect-electron` 또는 release 준비로 브랜치·서브모듈을 동기화한 뒤 manifest의 `source`를 대조한다.
+
 현재 `dist-figma-pair/win-unpacked/resources/runtime/runtime-manifest.json`은 release `0.1.0-w6046d7f3-aebdb75a6`와 이미지 태그·image ID·source SHA를 고정한다. 이 manifest의 Architect SHA와 frontend SHA는 현재 체크아웃보다 오래되었다. 따라서 이 실행 파일로 새 소스를 검증했다고 주장하려면 **실제 로드된 `app.asar`, frontend, runtime manifest, 이미지 ID를 각각** 확인해야 한다. 임의의 개발용 unpacked 디렉터리를 재사용하면 소스와 번들이 섞일 수 있다. `desktop/resources/runtime/runtime-manifest.json`도 같은 오래된 릴리스 값을 담고 있다. `robo-workspace`는 `project/` 안이 아닌 `C:\Users\YSW\Desktop\robo-workspace`에 있으며, 이 문서의 pin 표에는 그 저장소의 release 설정·HEAD는 포함하지 않았다.
 
 ## 3. 기동과 인증
