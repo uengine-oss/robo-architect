@@ -65,7 +65,7 @@ Legacy 탭의 Navigator는 Catalog의 전체 그래프 응답을 받은 뒤 채�
 
 플러그인은 Backend URL(현재 시험값 `http://127.0.0.1:50065`), Figma File Key, **Robo Architect Figma 연동 화면에서 발급한 5분 일회용 연결 코드**가 필요하다. 코드 교환은 `/api/auth/figma-exchange`이고, 발급은 로그인한 사용자의 현재 프로젝트 권한을 검사하는 `/api/auth/figma-pair`다. 교환된 토큰은 Figma API와 지정 프로젝트 graph에만 사용할 수 있다. 화면의 “5분간 유효한 일회용 코드”는 입력된 코드가 아니라 placeholder다.
 
-직전에는 플러그인이 `Connecting to ...`에서 멈추고 백엔드에 요청 자체가 도착하지 않았다. 현재 소스 `e4b4567`은 요청을 Figma 플러그인 메인 스레드의 Fetch API로 전달하고, 코드가 비었을 때 즉시 안내하도록 수정·푸시했으며 플러그인 번들 빌드는 통과했다. **실제 Figma에서 재연결 성공은 아직 확인되지 않았다.** 개발 플러그인을 다시 불러오고 새 코드를 발급해 입력한 뒤 `/api/figma-plugin/status` 도착 여부를 확인해야 한다. Electron 재시작만으로 Figma 개발 플러그인의 로드된 코드가 자동 교체되지는 않는다. `50065`도 고정 계약이 아니므로 다음 실행에서는 `docker-state.json`/백엔드 포트를 다시 확인한다.
+직전에는 플러그인이 `Connecting to ...`에서 멈추고 백엔드에 요청 자체가 도착하지 않았다. 소스 `e4b4567`은 요청을 Figma 플러그인 메인 스레드의 Fetch API로 전달하고, 코드가 비었을 때 즉시 안내하도록 수정했다. 이후 Figma가 `devAllowedDomains`의 `127.0.0.1` 항목을 manifest 등록 단계에서 거부해 `0e977b6`에서 그 항목을 제거했다. **2026-09-23 사용자가 플러그인 연결 성공을 확인했다.** 재실행할 때는 개발 플러그인을 다시 불러오고 새 연결 코드를 발급해 입력한다. Electron 재시작만으로 Figma 개발 플러그인의 로드된 코드가 자동 교체되지는 않는다. `50065`도 고정 계약이 아니므로 다음 실행에서는 `docker-state.json`/백엔드 포트를 다시 확인한다.
 
 ## 6. 실행 방법 (Windows PowerShell)
 
