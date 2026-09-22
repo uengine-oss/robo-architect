@@ -35,7 +35,7 @@ Electron이 Compose를 시작하고 포트를 선택해 `%APPDATA%\robo-architec
 
 표의 SHA는 작성 시점의 로컬 체크아웃이다. 중첩 서브모듈의 `HEAD`는 분리(detached) 상태일 수 있으며, **그 자체가 오류는 아니다**. 독립 저장소의 `main`이 더 앞서도 Architect 프로필은 자동으로 따라가지 않는다. `git pull`만으로 서브모듈 gitlink·Docker 이미지·`app.asar`·번들 Python이 갱신되지 않는다. 상위 저장소가 의도한 서브모듈 commit을 가리키도록 갱신·커밋하고, release를 다시 만들어야 한다.
 
-현재 `dist-figma-pair/win-unpacked/resources/runtime/runtime-manifest.json`은 release `0.1.0-w6046d7f3-aebdb75a6`와 이미지 태그·image ID·source SHA를 고정한다. 이 manifest의 Architect SHA와 frontend SHA는 현재 체크아웃보다 오래되었다. 따라서 이 실행 파일로 새 소스를 검증했다고 주장하려면 **실제 로드된 `app.asar`, frontend, runtime manifest, 이미지 ID를 각각** 확인해야 한다. 임의의 개발용 unpacked 디렉터리를 재사용하면 소스와 번들이 섞일 수 있다. `desktop/resources/runtime/runtime-manifest.json`도 같은 오래된 릴리스 값을 담고 있다. `robo-workspace` 저장소 자체는 현재 `project/` 아래에 없으므로 그 release 설정·pin 파일의 최신 상태는 여기서 확인하지 못했다.
+현재 `dist-figma-pair/win-unpacked/resources/runtime/runtime-manifest.json`은 release `0.1.0-w6046d7f3-aebdb75a6`와 이미지 태그·image ID·source SHA를 고정한다. 이 manifest의 Architect SHA와 frontend SHA는 현재 체크아웃보다 오래되었다. 따라서 이 실행 파일로 새 소스를 검증했다고 주장하려면 **실제 로드된 `app.asar`, frontend, runtime manifest, 이미지 ID를 각각** 확인해야 한다. 임의의 개발용 unpacked 디렉터리를 재사용하면 소스와 번들이 섞일 수 있다. `desktop/resources/runtime/runtime-manifest.json`도 같은 오래된 릴리스 값을 담고 있다. `robo-workspace`는 `project/` 안이 아닌 `C:\Users\YSW\Desktop\robo-workspace`에 있으며, 이 문서의 pin 표에는 그 저장소의 release 설정·HEAD는 포함하지 않았다.
 
 ## 3. 기동과 인증
 
@@ -67,7 +67,52 @@ Legacy 탭의 Navigator는 Catalog의 전체 그래프 응답을 받은 뒤 채�
 
 직전에는 플러그인이 `Connecting to ...`에서 멈추고 백엔드에 요청 자체가 도착하지 않았다. 현재 소스 `e4b4567`은 요청을 Figma 플러그인 메인 스레드의 Fetch API로 전달하고, 코드가 비었을 때 즉시 안내하도록 수정·푸시했으며 플러그인 번들 빌드는 통과했다. **실제 Figma에서 재연결 성공은 아직 확인되지 않았다.** 개발 플러그인을 다시 불러오고 새 코드를 발급해 입력한 뒤 `/api/figma-plugin/status` 도착 여부를 확인해야 한다. Electron 재시작만으로 Figma 개발 플러그인의 로드된 코드가 자동 교체되지는 않는다. `50065`도 고정 계약이 아니므로 다음 실행에서는 `docker-state.json`/백엔드 포트를 다시 확인한다.
 
-## 6. 안전한 재현·릴리스 체크리스트
+## 6. 실행 방법 (Windows PowerShell)
+
+아래 경로는 **현재 장비의 실제 배치**다. 다른 PC에서는 경로를 바꾼다. 개발 프로필과 패키지 앱의 Compose 스택을 동시에 무작정 띄우지 않는다. 실행 전 Docker Desktop이 켜져 있는지 확인하고, 이미 분석이나 업로드 중이면 종료·재시작 전에 작업 상태를 확인한다.
+
+### A. Workspace 개발 실행 — 수정 소스 검증용
+
+```powershell
+Set-Location 'C:\Users\YSW\Desktop\robo-workspace'
+.\robo.cmd doctor architect-electron
+.\robo.cmd up architect-electron -Build
+```
+
+최초 준비 또는 의존성 변경 시에는 먼저 `.\robo.cmd setup architect-electron`을 실행한다. 개발용 환경 설정은 `robo-workspace\.env`를 사용한다. 이미 빌드한 것을 그대로 실행하려면 `-Build`를 빼고 `.\robo.cmd up architect-electron`을 쓴다. 상태 확인과 **이 프로필이 관리하는 프로세스 종료**는 다음 명령이다.
+
+```powershell
+.\robo.cmd status architect-electron
+.\robo.cmd down architect-electron
+```
+
+Architect 저장소의 `scripts\dev-desktop.cmd`는 독립 런처가 아니라 위 Workspace 실행기의 래퍼다. 현재 폴더 배치에서는 Workspace를 자동으로 찾지만, 다른 배치에서는 `ROBO_WORKSPACE_DIR`을 지정한다. 이 개발 실행은 아래 오프라인 패키지의 이미지·인증 구성을 그대로 보증하지 않는다.
+
+### B. 기존 패키지 `win-unpacked` 실행 — 현재 릴리스 재현용
+
+```powershell
+Set-Location 'C:\Users\YSW\Desktop\project\robo-architect'
+Get-Content '.\desktop\out\dist-figma-pair\win-unpacked\resources\runtime\runtime-manifest.json' |
+  ConvertFrom-Json | Select-Object releaseId, source
+& '.\desktop\out\dist-figma-pair\win-unpacked\Robo-Architect.exe'
+```
+
+이 실행 파일은 작성 시점에 존재하지만 **현재 HEAD를 자동 반영하지 않는다**. 앱은 번들 manifest의 이미지·환경 checksum을 사용하고, 포트는 `%APPDATA%\robo-architect-desktop\runtime\docker-state.json`에 저장한다. 로그인 화면이 다르거나 변경 사항이 안 보이면 앱을 다시 띄우기 전에 **실행 파일 경로와 manifest SHA**부터 확인한다. 로그는 `%APPDATA%\robo-architect-desktop\logs\desktop.log`다. 볼륨을 지우거나 번들 `.env`를 직접 고쳐서 맞추지 않는다.
+
+### C. 새 unpacked/설치본 만들기 — 최신 소스 반영용
+
+```powershell
+Set-Location 'C:\Users\YSW\Desktop\robo-workspace'
+.\robo.cmd setup architect-electron
+.\robo.cmd doctor architect-electron
+.\robo.cmd build architect-electron unpacked
+# 전달용 전체 오프라인 릴리스가 필요할 때만:
+.\robo.cmd release architect-electron
+```
+
+`build ... unpacked`와 `release ...`는 목적이 다르다. 전달용 release는 Docker 이미지·Python 런타임·환경 스냅샷을 함께 묶으므로 시간이 오래 걸리고, 결과 manifest의 SHA를 반드시 재확인한다. `robo-architect\scripts\build-desktop-app.cmd`도 Workspace 빌드의 래퍼다. `-SkipFrontend`는 기존 프런트 산출물 재사용이 의도된 경우에만 사용한다. Figma 플러그인은 Electron과 별도 번들이므로 `figma-plugin/build.sh`로 빌드한 다음 Figma 개발 플러그인을 다시 불러와야 한다.
+
+## 7. 안전한 재현·릴리스 체크리스트
 
 1. 각 독립 저장소의 브랜치·SHA·dirty 상태, Architect gitlink SHA를 기록한다. 필요한 변경은 각 저장소에 커밋·푸시한 뒤 상위 gitlink를 갱신한다.
 2. release 입력 pin과 결과 `runtime-manifest.json`의 `source`, 이미지 태그·ID, 환경 스냅샷 checksum을 대조한다. **브랜치 이름보다 SHA가 실제 실행 근거다.**
