@@ -13,7 +13,7 @@ bun build src/plugin.ts --outdir=dist --target=browser --format=iife 2>&1
 # a table border, a JS or — closed the substitution early and sed died with
 # "bad flag in substitute command". It also mangled backslashes and collapsed
 # every newline. Doing the escaping in Python keeps the file byte-exact.
-python3 - <<'PY'
+python - <<'PY'
 import json, pathlib
 dist = pathlib.Path("dist/plugin.js")
 html = pathlib.Path("src/ui.html").read_text(encoding="utf-8")

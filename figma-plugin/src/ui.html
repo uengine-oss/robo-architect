@@ -61,6 +61,10 @@
     <label>File Key (자동 감지 실패 시 파일 URL 을 붙여넣으세요)</label>
     <input id="fileKeyInput" type="text" placeholder="키 또는 https://figma.com/design/&lt;key&gt;/..." oninput="this.dataset.userEdited = '1'" />
   </div>
+  <div class="field">
+    <label>연결 코드 (Robo Architect의 Figma 연동 화면에서 발급)</label>
+    <input id="pairCodeInput" type="text" autocomplete="off" placeholder="5분간 유효한 일회용 코드" />
+  </div>
 
   <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
     <button id="connectBtn" class="btn btn--primary" onclick="toggleConnection()">연결</button>
@@ -77,6 +81,20 @@
     let connected = false
     let fileKey = null
     let fileName = ''
+    let pluginToken = null
+    let pluginProjectGraph = null
+    let pairedBackendOrigin = null
+    const nativeFetch = window.fetch.bind(window)
+
+    // Only send the scoped plugin credential to the paired local backend.
+    function fetch(input, init = {}) {
+      const target = new URL(typeof input === 'string' ? input : input.url, window.location.href)
+      if (!pluginToken || target.origin !== pairedBackendOrigin) return nativeFetch(input, init)
+      const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined))
+      headers.set('Authorization', `Bearer ${pluginToken}`)
+      headers.set('X-Project-Graph', pluginProjectGraph)
+      return nativeFetch(input, { ...init, headers })
+    }
     // Track whether this session has already registered a binding with the
     // backend (POST /api/figma-binding/connect). Done once per "연결" click
     // so re-polls don't spam the binding endpoint.
@@ -136,10 +154,8 @@
               fileKey = msg.autoDetectedFileKey
               if (!fkInput.value) fkInput.value = msg.autoDetectedFileKey
             }
-            if (urlInput.value && !connected) {
-              addLog('Auto-connecting with saved config...')
-              connect()
-            }
+            // Pairing is intentionally not persisted. The user enters a fresh
+            // code when the plugin session starts, rather than storing a token.
           }
           break
 
@@ -393,9 +409,31 @@
 
     let pollTimer = null
 
-    function startPolling(baseUrl) {
+    async function startPolling(baseUrl) {
       // Normalize URL (remove trailing slash, ws→http conversion)
       const httpUrl = baseUrl.replace(/\/$/, '').replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://').replace(/\/ws\/figma-plugin.*$/, '')
+
+      const code = document.getElementById('pairCodeInput').value.trim()
+      if (code) {
+        try {
+          const response = await nativeFetch(`${httpUrl}/api/auth/figma-exchange`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code }),
+          })
+          const payload = await response.json().catch(() => ({}))
+          if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`)
+          pluginToken = payload.token
+          pluginProjectGraph = payload.projectGraph
+          pairedBackendOrigin = new URL(httpUrl).origin
+          document.getElementById('pairCodeInput').value = ''
+          addLog('프로젝트 연결 코드 인증 완료', 'success')
+        } catch (error) {
+          setStatus('disconnected')
+          addLog(`연결 코드 인증 실패: ${error.message || error}`, 'error')
+          return
+        }
+      }
 
       // Register via REST
       addLog(`Connecting to ${httpUrl}...`)

@@ -68,12 +68,16 @@ def _module_rows() -> list[dict]:
             """,
         ))
         if not rows:
-            # Fallback: some test fixtures store the same data under :FILE.
+            # New analyzer C graphs have PACKAGE/FILE nodes without summaries,
+            # while their FUNCTION nodes carry rich semantic summaries. Treat
+            # each routine as a retrieval unit; structured rules use the same
+            # producer id as source_module.
             rows = list(s.run(
                 """
-                MATCH (f:FILE)
-                WHERE f.summary IS NOT NULL AND f.summary <> ''
-                RETURN coalesce(f.module_id, f.id) AS fqn, f.name AS name,
+                MATCH (f)
+                WHERE (f:FUNCTION OR f:METHOD)
+                  AND f.summary IS NOT NULL AND f.summary <> ''
+                RETURN coalesce(f.function_id, f._id, f.id) AS fqn, f.name AS name,
                        f.summary AS summary, f.stereotype AS stereotype
                 """,
             ))
@@ -93,8 +97,8 @@ def _module_rows() -> list[dict]:
 
     return [
         {
-            "fqn": r["fqn"] or r["name"],
-            "name": r["name"] or r["fqn"],
+            "fqn": str(r["fqn"] or r["name"]),
+            "name": str(r["name"] or r["fqn"]),
             "summary": r["summary"] or "",
             "stereotype": r.get("stereotype"),
         }

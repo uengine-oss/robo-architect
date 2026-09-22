@@ -129,6 +129,9 @@ async function mountRemote() {
       const r = await window.desktop?.connections?.resolveActiveForBackend?.()
       if (r?.ok && r.data) neo4j = r.data
     } catch { neo4j = undefined }
+    // Bundled containers cannot connect to the host Bolt URI. In that mode
+    // the remote sends only neo4jDatabase; analyzer/catalog combine it with
+    // their internal Compose connection settings.
 
     // embedded: architect 탭 안에 끼워지므로 analyzer 자체 상단바를 숨긴다.
     // onProjectRootChange: analyzer 화면에서 폴더를 바꾸면 host 가 저장한다.

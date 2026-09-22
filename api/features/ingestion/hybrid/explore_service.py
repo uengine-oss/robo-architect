@@ -28,6 +28,9 @@ from api.features.ingestion.hybrid.contracts import (
     GlossaryTerm,
     RuleDTO,
 )
+from api.features.ingestion.hybrid.code_to_rules.rule_extractor import (
+    extract_rules_from_analyzer_graph,
+)
 from api.features.ingestion.hybrid.mapper.agentic_retriever import run_agentic_retrieval
 from api.features.ingestion.hybrid.mapper.condition_extractor import (
     extract_conditions_for_task,
@@ -42,12 +45,38 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     fetch_session_snapshot,
     save_mappings,
     save_task_conditions,
+    save_rules,
 )
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 
 
 Sink = Callable[[dict], Awaitable[None]]
+
+
+async def _ensure_session_rules(session_id: str, sink: Sink) -> bool:
+    """Backfill older BPM sessions once the paired analysis has been repaired.
+
+    A document may have been ingested while the analyzer graph was empty or
+    carried an older RULE schema. Exploring must not silently report success
+    with zero candidates; read the *current project's paired* analyzer graph.
+    """
+    snapshot = fetch_session_snapshot(session_id)
+    if not snapshot.get("processes"):
+        await sink({"type": "AgentError", "error": "BPM 세션을 찾지 못했습니다."})
+        return False
+    if snapshot.get("rules"):
+        return True
+    rules = await extract_rules_from_analyzer_graph()
+    if not rules:
+        await sink({
+            "type": "AgentError",
+            "error": "이 프로젝트의 분석 그래프에서 매핑 가능한 룰을 찾지 못했습니다. 레거시 분석 결과와 프로젝트의 분석 짝을 확인하세요.",
+        })
+        return False
+    save_rules(session_id, rules)
+    await sink({"type": "RuleCandidatesLoaded", "rule_count": len(rules)})
+    return True
 
 
 # =============================================================================
@@ -161,6 +190,9 @@ async def explore_task(
 
     `force=True`: replace any existing mappings via fresh agentic retrieval.
     """
+    if not await _ensure_session_rules(session_id, sink):
+        return {"cached": False, "mapping_count": 0, "error": "No mapping candidates"}
+
     (
         task_dict_by_id, process_by_id, process_actors,
         rules, task_dto_by_id, task_to_process,
@@ -331,6 +363,8 @@ async def explore_process(
     Sequential by default (concurrency=1) so per-task SSE events arrive in
     `sequence_index` order — matches user's mental model of "task 1 → 2 → 3 ...".
     """
+    if not await _ensure_session_rules(session_id, sink):
+        return {"explored": 0, "cached": 0, "errors": 1, "error": "No mapping candidates"}
     snap = fetch_session_snapshot(session_id)
     process_dict = next((p for p in snap.get("processes", []) if p["id"] == process_id), None)
     if not process_dict:

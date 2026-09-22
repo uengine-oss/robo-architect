@@ -202,14 +202,6 @@ app = FastAPI(
 # diagnostic. The project has no cookie/session auth, so credentials are
 # unused — flipping the flag is safe. Switch back to a concrete origin
 # allow-list (and credentials=True) only when introducing real auth.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # -----------------------------------------------------------------------------
 # Request Correlation + Narrative Logging (LDVC)
 # -----------------------------------------------------------------------------
@@ -361,6 +353,17 @@ async def neo4j_override_middleware(request: Request, call_next):
 # BEFORE the request_id middleware's start/end logs fire — http_context()
 # now includes the resolved language alongside request_id on every log line.
 app.middleware("http")(language_middleware)
+
+# Starlette wraps later middleware around earlier ones. CORS must be outermost
+# so authentication failures also carry Access-Control-Allow-Origin; otherwise
+# the Figma iframe sees an opaque "Failed to fetch" instead of HTTP 401.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Include ingestion router
 from api.features.ingestion.router import router as ingestion_router

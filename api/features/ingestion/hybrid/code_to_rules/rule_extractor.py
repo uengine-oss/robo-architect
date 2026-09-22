@@ -44,11 +44,16 @@ WITH f, hr, r,
         }
      ] AS examples
 RETURN
-    coalesce(f.function_id, f.id, f.name) AS function_id,
+    coalesce(f.function_id, f._id, f.id, f.name) AS function_id,
     coalesce(f.name, f.function_id, f.id, '') AS function_name,
-    coalesce(f.module_id, f.owner_id) AS module_id,
+    coalesce(f.module_id, f.owner_id, f._owner) AS module_id,
     f.summary                         AS function_summary,
     r.statement                       AS statement,
+    coalesce(r._id, r.id)             AS analyzer_rule_id,
+    r.condition_description           AS condition_description,
+    r.condition                       AS condition,
+    r.effect_descriptions             AS effect_descriptions,
+    r.code_text                       AS code_text,
     coalesce(hr.coupled_domains, [])  AS coupled_domains,
     examples                          AS examples
 ORDER BY function_name, r.statement
@@ -154,6 +159,45 @@ def _merge_writes(*sources: list[dict]) -> list[dict]:
     return merge_write_effects(*sources)
 
 
+def _structured_rule(rec) -> RuleDTO | None:
+    """Adapt the analyzer's condition/effects RULE schema to ingestion GWT.
+
+    Recent framework and DBMS runs emit no EXAMPLE nodes or ``statement``. Their
+    verified condition/effect descriptions are the semantic source of truth;
+    fabricating a code interpretation with another LLM here would lose provenance.
+    """
+    effects = [str(x).strip() for x in (rec.get("effect_descriptions") or []) if str(x).strip()]
+    if not effects:
+        return None
+    function_name = str(rec.get("function_name") or rec.get("function_id") or "").strip()
+    condition = str(rec.get("condition_description") or rec.get("condition") or "").strip()
+    if is_infra(" ".join(effects), function_name):
+        return None
+    given = condition or "해당 코드 경로의 조건이 충족됨"
+    when = f"{function_name} 실행"
+    then = "; ".join(effects)
+    if not is_meaningful_gwt(given, when, then):
+        return None
+    analyzer_id = rec.get("analyzer_rule_id")
+    if analyzer_id is None:
+        return None
+    fid = str(rec.get("function_id") or function_name)
+    rid = _rule_id(fid, str(analyzer_id))
+    return RuleDTO(
+        id=rid,
+        given=given,
+        when=when,
+        then=then,
+        source_function=function_name,
+        # New analyzer runs use the generic owner marker "analyzer", not a
+        # retrievable module id. Module search falls back to routine summaries.
+        source_module=(fid if rec.get("module_id") in (None, "analyzer")
+                       else str(rec.get("module_id"))),
+        title=f"{condition}: {then}" if condition else then,
+        examples=[ExampleDTO(example_id=f"{rid}_example", given=given, when_=when, then_=then)],
+    )
+
+
 async def extract_rules_from_analyzer_graph(
     analyzer_graph_ref: str | None = None,
 ) -> list[RuleDTO]:
@@ -189,6 +233,12 @@ async def extract_rules_from_analyzer_graph(
     for rec in records:
         statement = rec.get("statement")
         fn_name = rec.get("function_name")
+        if not statement and rec.get("analyzer_rule_id") is not None:
+            modern = _structured_rule(rec)
+            if modern and modern.id not in seen:
+                seen.add(modern.id)
+                rules.append(modern)
+            continue
         if is_infra(statement, fn_name):
             continue
 

@@ -16,6 +16,7 @@ GET      /api/auth/me                내 세션 상태
 from __future__ import annotations
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request
+from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
 
 from api.features.auth.config import (
@@ -39,6 +40,43 @@ from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+class FigmaExchangeRequest(BaseModel):
+    code: str
+
+
+@router.post("/figma-pair")
+async def create_figma_pair(request: Request) -> dict:
+    """로그인한 사용자가 현재 프로젝트에 대해 5분짜리 연결 코드를 발급한다."""
+    from api.features.auth.figma_pairing import create_code
+    from api.features.projects import store as projects
+
+    raw = request.headers.get("authorization") or ""
+    try:
+        claims = verify_token(raw[7:].strip() if raw[:7].lower() == "bearer " else None)
+    except TokenError as exc:
+        raise HTTPException(401, "로그인이 필요합니다.") from exc
+    if claims.get("scope") or not claims.get("approved"):
+        raise HTTPException(403, "일반 사용자 세션이 필요합니다.")
+    graph = (request.headers.get("x-project-graph") or "").strip()
+    allowed = next((p for p in projects.list_projects(str(claims["sub"])) if p["graph"] == graph), None)
+    if not allowed or allowed.get("level") not in ("write", "admin"):
+        raise HTTPException(403, "선택한 프로젝트에 쓰기 권한이 없습니다.")
+    code, ttl = create_code(claims, graph)
+    return {"code": code, "expiresInSeconds": ttl}
+
+
+@router.post("/figma-exchange")
+async def exchange_figma_pair(body: FigmaExchangeRequest) -> dict:
+    """Figma 플러그인이 코드를 한 번 교환해 제한된 토큰을 받는다."""
+    from api.features.auth.figma_pairing import exchange_code
+
+    result = exchange_code(body.code.strip())
+    if not result:
+        raise HTTPException(401, "연결 코드가 만료됐거나 이미 사용됐습니다.")
+    token, graph = result
+    return {"token": token, "projectGraph": graph}
 
 
 def _require_swp() -> SwpSettings:

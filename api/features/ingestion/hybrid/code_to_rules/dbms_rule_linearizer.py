@@ -19,10 +19,16 @@ _RULE_QUERY = """
 MATCH (root)
 WHERE root:FUNCTION OR root:PROCEDURE OR root:METHOD OR root:TRIGGER
 MATCH (root)-[:PARENT_OF*0..]->(o)-[hr:HAS_RULE]->(r:RULE)
-RETURN coalesce(root.function_id, root.id) AS function_id,
+RETURN coalesce(root.function_id, root._id, root.id) AS function_id,
        coalesce(root.name, root.function_id, root.id, '') AS function_name,
+       coalesce(root.module_id, root.owner_id, root._owner) AS module_id,
        root.summary                   AS function_summary,
        r.statement                    AS statement,
+       coalesce(r._id, r.id)          AS analyzer_rule_id,
+       r.condition_description        AS condition_description,
+       r.condition                    AS condition,
+       r.effect_descriptions          AS effect_descriptions,
+       r.code_text                    AS code_text,
        coalesce(hr.coupled_domains, []) AS coupled_domains,
        [(r)-[:HAS_EXAMPLE]->(e:EXAMPLE) |
           {example_id: coalesce(e.example_id, e.id), given: e.given, when_: e.when_, then_: e.then_,
@@ -58,8 +64,14 @@ def linearize_dbms_rules(session) -> list[dict[str, Any]]:
         {
             "function_id": row["function_id"],
             "function_name": row["function_name"] or row["function_id"],
+            "module_id": row["module_id"],
             "function_summary": row["function_summary"],
             "statement": row["statement"],
+            "analyzer_rule_id": row["analyzer_rule_id"],
+            "condition_description": row["condition_description"],
+            "condition": row["condition"],
+            "effect_descriptions": row["effect_descriptions"],
+            "code_text": row["code_text"],
             "coupled_domains": list(row["coupled_domains"] or []),
             "examples": row["examples"] or [],
         }

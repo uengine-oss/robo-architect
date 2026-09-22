@@ -6,6 +6,7 @@ import FullSyncSection from './FullSyncSection.vue'
 import HistoryFailureRow from './HistoryFailureRow.vue'
 import HistorySyncRunRow from './HistorySyncRunRow.vue'
 import PreviousBindingGroup from './PreviousBindingGroup.vue'
+import { useAuthStore } from '@/features/auth/auth.store.js'
 
 // Connect / Replace happen from the Figma plugin (which posts file_key +
 // file_name to /api/figma-binding/connect). This modal is read-only +
@@ -19,6 +20,26 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const store = useFigmaBindingStore()
+const auth = useAuthStore()
+const pairingCode = ref('')
+const pairingError = ref('')
+const pairingBusy = ref(false)
+
+async function createPairingCode() {
+  pairingBusy.value = true
+  pairingError.value = ''
+  pairingCode.value = ''
+  try {
+    const response = await fetch('/api/auth/figma-pair', { method: 'POST' })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`)
+    pairingCode.value = body.code
+  } catch (error) {
+    pairingError.value = error.message || '연결 코드를 만들지 못했습니다.'
+  } finally {
+    pairingBusy.value = false
+  }
+}
 
 const tab = ref('main') // 'main' | 'history'
 
@@ -179,11 +200,17 @@ watch(tab, (t) => {
       </nav>
 
       <div class="fb-modal__body">
+        <div v-if="tab === 'main' && auth.enforced" class="fb-section">
+          <p class="fb-hint">Figma 플러그인에서 연결하기 전에 이 프로젝트의 연결 코드를 발급하세요. 코드는 한 번만 사용할 수 있고 5분 뒤 만료됩니다.</p>
+          <button class="fb-btn fb-btn--primary" :disabled="pairingBusy || !auth.projectGraph" @click="createPairingCode">연결 코드 발급</button>
+          <code v-if="pairingCode" class="fb-pairing-code">{{ pairingCode }}</code>
+          <p v-if="pairingError" class="fb-error">{{ pairingError }}</p>
+        </div>
         <!-- No binding yet → plugin instructions -->
         <div v-if="tab === 'main' && !store.binding" class="fb-section">
           <p class="fb-hint">
             바인딩된 Figma 다큐먼트가 없습니다. 연동은 <strong>RoboArchitect Sync 플러그인</strong>에서
-            진행합니다 — 별도의 API 토큰은 필요하지 않습니다.
+            진행합니다. 로그인 사용 중에는 위에서 발급한 연결 코드를 플러그인에 입력하세요.
           </p>
           <ol class="fb-steps">
             <li>Figma 데스크톱에서 연동하려는 파일을 엽니다.</li>

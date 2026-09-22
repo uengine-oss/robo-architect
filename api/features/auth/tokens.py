@@ -22,7 +22,7 @@ from api.platform.observability.smart_logger import SmartLogger
 
 __all__ = [
     "issue_token", "verify_token", "token_ttl_seconds",
-    "jwt_secret_configured", "TokenError",
+    "jwt_secret_configured", "issue_plugin_token", "TokenError",
 ]
 
 ALGORITHM = "HS256"
@@ -87,6 +87,21 @@ def issue_token(user: dict[str, Any], source: str = "swp") -> str:
     }
     if not payload["sub"]:
         raise ValueError("uid 가 없는 사용자에게는 토큰을 발급하지 않는다")
+    return jwt.encode(payload, _secret(), algorithm=ALGORITHM)
+
+
+def issue_plugin_token(claims: dict[str, Any], graph: str) -> str:
+    """Figma API 전용 토큰. 일반 앱 경로에는 AuthGuard 가 접근을 거부한다."""
+    now = int(time.time())
+    payload = {
+        "sub": str(claims["sub"]),
+        "approved": True,
+        "src": "figma-plugin",
+        "scope": "figma-plugin",
+        "project": graph,
+        "iat": now,
+        "exp": now + min(token_ttl_seconds(), 8 * 60 * 60),
+    }
     return jwt.encode(payload, _secret(), algorithm=ALGORITHM)
 
 

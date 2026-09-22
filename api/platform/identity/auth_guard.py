@@ -35,6 +35,7 @@ _OPEN_EXACT = frozenset({
     "/health", "/healthz", "/docs", "/redoc", "/openapi.json", "/favicon.ico",
     "/api/auth/provider", "/api/auth/sso/init", "/api/auth/sso/valid",
     "/api/auth/dev-login", "/api/auth/me",
+    "/api/auth/figma-exchange",
 })
 # 정적 자산은 접두사로 연다 — 로그인 화면을 그리는 데 필요하다.
 _OPEN_PREFIX = ("/assets/", "/static/", "/@vite/", "/node_modules/")
@@ -77,6 +78,17 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
                 {"detail": "승인 대기 중인 계정입니다.", "code": "AUTH_NOT_APPROVED"},
                 status_code=403,
             )
+
+        if claims.get("scope") == "figma-plugin":
+            graph = str(claims.get("project") or "")
+            if not (
+                request.url.path.startswith("/api/figma-plugin/")
+                or request.url.path.startswith("/api/figma-binding/")
+                or request.url.path == "/api/figma-binding"
+            ) or request.headers.get("x-project-graph") != graph:
+                return JSONResponse({"detail": "Figma 연결 토큰의 범위를 벗어났습니다."}, status_code=403)
+        elif claims.get("scope"):
+            return JSONResponse({"detail": "지원하지 않는 토큰 범위입니다."}, status_code=403)
 
         request.state.auth_claims = claims
         return await call_next(request)
