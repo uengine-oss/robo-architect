@@ -44,6 +44,34 @@ setTimeout(() => { void loadAndSendStoredConfig() }, 50)
 figma.ui.onmessage = async (msg: any) => {
   try {
     switch (msg.type) {
+      case 'HTTP_REQUEST': {
+        // Figma's plugin main thread owns the supported Fetch API. Requests
+        // from the UI iframe can stall before reaching a local backend.
+        const url = String(msg.url || '')
+        try {
+          if (!/^https?:\/\//i.test(url)) {
+            throw new Error('Unsupported backend URL protocol')
+          }
+          const response = await fetch(url, {
+            method: msg.method || 'GET',
+            headers: msg.headers || {},
+            body: msg.body || undefined,
+          })
+          figma.ui.postMessage({
+            type: 'HTTP_RESPONSE',
+            requestId: msg.requestId,
+            status: response.status,
+            body: await response.text(),
+          })
+        } catch (error: any) {
+          figma.ui.postMessage({
+            type: 'HTTP_RESPONSE',
+            requestId: msg.requestId,
+            error: error?.message || String(error),
+          })
+        }
+        break
+      }
       case 'UPDATE_NODES':
         await handleNodeUpdates(msg.nodeUpdates || [])
         break

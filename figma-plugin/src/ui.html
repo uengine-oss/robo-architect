@@ -85,15 +85,40 @@
     let pluginProjectGraph = null
     let pairedBackendOrigin = null
     const nativeFetch = window.fetch.bind(window)
+    const pendingHttp = new Map()
+    let httpRequestSeq = 0
+
+    function pluginFetch(url, options) {
+      return new Promise((resolve, reject) => {
+        const requestId = `http-${++httpRequestSeq}`
+        const timeoutMs = /\/(status|figma-exchange)$/.test(url) ? 10000 : 120000
+        const timer = setTimeout(() => {
+          pendingHttp.delete(requestId)
+          reject(new Error('백엔드 요청 시간이 초과됐습니다. Figma 개발 플러그인을 다시 불러오고 Backend URL을 확인하세요.'))
+        }, timeoutMs)
+        pendingHttp.set(requestId, { resolve, reject, timer })
+        parent.postMessage({ pluginMessage: {
+          type: 'HTTP_REQUEST', requestId, url,
+          method: options.method || 'GET',
+          headers: Object.fromEntries(new Headers(options.headers).entries()),
+          body: options.body || null,
+        } }, '*')
+      })
+    }
 
     // Only send the scoped plugin credential to the paired local backend.
     function fetch(input, init = {}) {
       const target = new URL(typeof input === 'string' ? input : input.url, window.location.href)
-      if (!pluginToken || target.origin !== pairedBackendOrigin) return nativeFetch(input, init)
+      const configuredUrl = document.getElementById('serverUrl').value.trim()
+      let backendOrigin
+      try { backendOrigin = new URL(configuredUrl).origin } catch { return nativeFetch(input, init) }
+      if (target.origin !== backendOrigin) return nativeFetch(input, init)
       const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined))
-      headers.set('Authorization', `Bearer ${pluginToken}`)
-      headers.set('X-Project-Graph', pluginProjectGraph)
-      return nativeFetch(input, { ...init, headers })
+      if (pluginToken && target.origin === pairedBackendOrigin) {
+        headers.set('Authorization', `Bearer ${pluginToken}`)
+        headers.set('X-Project-Graph', pluginProjectGraph)
+      }
+      return pluginFetch(target.href, { ...init, headers })
     }
     // Track whether this session has already registered a binding with the
     // backend (POST /api/figma-binding/connect). Done once per "연결" click
@@ -111,6 +136,20 @@
       if (!msg) return
 
       switch (msg.type) {
+        case 'HTTP_RESPONSE': {
+          const pending = pendingHttp.get(msg.requestId)
+          if (!pending) break
+          pendingHttp.delete(msg.requestId)
+          clearTimeout(pending.timer)
+          if (msg.error) pending.reject(new Error(msg.error))
+          else pending.resolve({
+            ok: msg.status >= 200 && msg.status < 300,
+            status: msg.status,
+            text: async () => msg.body || '',
+            json: async () => JSON.parse(msg.body || 'null'),
+          })
+          break
+        }
         case 'PLUGIN_READY':
           fileKey = msg.fileKey
           fileName = msg.fileName || ''
@@ -361,6 +400,11 @@
     function connect() {
       const baseUrl = document.getElementById('serverUrl').value
       if (!baseUrl) return
+      if (!pluginToken && !document.getElementById('pairCodeInput').value.trim()) {
+        setStatus('disconnected')
+        addLog('연결 코드가 필요합니다. Robo Architect의 Figma 연동 화면에서 새 코드를 발급해 입력하세요.', 'error')
+        return
+      }
       const manualFileKey = extractFileKey(document.getElementById('fileKeyInput').value)
       // 붙여넣은 URL 은 키로 바꿔 되돌려 놓는다 — 다음 실행에 그대로 저장된다.
       if (manualFileKey) {
@@ -416,7 +460,7 @@
       const code = document.getElementById('pairCodeInput').value.trim()
       if (code) {
         try {
-          const response = await nativeFetch(`${httpUrl}/api/auth/figma-exchange`, {
+          const response = await fetch(`${httpUrl}/api/auth/figma-exchange`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code }),

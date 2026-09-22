@@ -7,10 +7,9 @@
     "figma"
   ],
   "networkAccess": {
-    "allowedDomains": [
-      "*"
-    ],
-    "reasoning": "Connects to local RoboArchitect backend via WebSocket for real-time design sync"
+    "allowedDomains": ["*"],
+    "devAllowedDomains": ["http://127.0.0.1:50065", "http://localhost:50065"],
+    "reasoning": "Connects to the RoboArchitect backend for design sync via HTTP requests"
   },
   "permissions": [
     "currentuser"
