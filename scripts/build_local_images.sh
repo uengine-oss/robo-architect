@@ -43,7 +43,7 @@ mkdir -p "$SCRATCH"
 # 상류에서 받는 것 — 태그가 고정이다 (desktop/runtime/runtime-manifest.template.json)
 PULL_NEO4J="neo4j:5.26.0"
 PULL_MINDSDB="mindsdb/mindsdb:v26.1.0"
-PULL_PDF2BPMN="ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77"
+PULL_PDF2BPMN="ghcr.io/uengine-oss/process-gpt-bpmn-extractor:c7992ce"
 
 FAILED=()
 WORKAROUNDS=()

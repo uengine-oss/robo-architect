@@ -16,7 +16,7 @@
     "fabric": "uengine/robo-data-fabric:RELEASE_ID",
     "parser": "uengine/robo-antlr-parser:RELEASE_ID",
     "gateway": "uengine/robo-api-gateway:RELEASE_ID",
-    "pdf2bpmn": "ghcr.io/uengine-oss/process-gpt-bpmn-extractor:8156f77",
+    "pdf2bpmn": "ghcr.io/uengine-oss/process-gpt-bpmn-extractor:c7992ce",
     "wireframe": "uengine/open-pencil:RELEASE_ID"
   },
   "imageIds": {

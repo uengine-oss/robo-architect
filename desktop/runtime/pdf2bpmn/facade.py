@@ -102,8 +102,17 @@ def _bpmn_via_generator(n, pid):
         task_role_map=ent["task_role_map"], neo4j_sequence_flows=sf,
     )
 
-# Vendored from process-gpt-bpmn-extractor main (consulting_to_extracted_messages.py);
-# the deployed image 8156f77 predates this module. Pure prompt text — no deps.
+# process-gpt-bpmn-extractor 의 `consulting_to_extracted_messages.py` 에서 갈라져 나온
+# 프롬프트다. 순수 텍스트라 의존성이 없다.
+#
+# **이미지에서 import 하지 않는다.** 처음 베낀 이유는 당시 이미지(8156f77)에 그 모듈이
+# 없어서였지만, 지금(c7992ce)은 `/app/src/pdf2bpmn/processgpt/` 에 있다. 그런데도
+# 벤더본을 쓰는 이유는 **여기 것이 더 엄격하기 때문**이다 — 2026-09-23 대조:
+#   · 분기 갈래를 빠뜨리지 말 것(3갈래면 flow 도 3개)
+#   · 단순 확인/조회/검증/저장/등록은 gateway 가 아니라 task
+# 두 줄이 상류에 없다. 상류로 갈아타면 '확인' 단계가 다이아몬드가 되어 BPM 이
+# 분기투성이가 된다(네이티브 폴백이 같은 문서에서 gateway 5 를 낸 이유로 보인다).
+# 상류가 이 규칙을 흡수하면 그때 import 로 바꾼다.
 _CONSULTING_SYS = (
     "### (목표) 컨설팅 내용 → 추출 구조(extracted) 변환 전용\n"
     "- 당신의 작업은 1가지: 제공된 컨설팅 내용을 분석해 하나의 업무 프로세스 추출 구조(JSON)를 만드는 것입니다.\n"
