@@ -706,9 +706,21 @@ async def get_sync_runs(
 
 
 @router.get("/failures", response_model=FailuresListResponse)
-async def get_failures(request: Request) -> dict[str, Any]:
+def get_failures(request: Request) -> dict[str, Any]:
     """Canonical project-scoped failure list, classified by retryability.
-    Source for the History tab + ingestion floating panel + Inspector badge."""
+    Source for the History tab + ingestion floating panel + Inspector badge.
+
+    **`async def` 가 아닌 것이 의도다.** 이 핸들러가 부르는 것은 전부 동기
+    Neo4j 호출이다. `async def` 로 두면 그 동기 호출이 uvicorn 이벤트 루프
+    위에서 돌아 **요청 하나가 앱 전체를 세운다** — 실패가 1건만 있어도 History
+    탭을 여는 순간 화면이 굳던 것이 이것이었다. 평범한 `def` 로 두면 FastAPI 가
+    threadpool 로 넘기므로 루프가 계속 돈다.
+
+    threadpool 로 넘겨도 **프로젝트 graph 는 그대로 따라간다.** 미들웨어가
+    건 `neo4j_override` ContextVar 를 anyio 가 워커 스레드로 복사한다(번들
+    런타임 anyio 4.12 / starlette 0.50 에서 실측). 이게 아니었다면 조회가
+    `.env` 기본 graph 로 떨어져 **다른 프로젝트의 실패 목록**을 보여줬을 것이다.
+    """
     return service.list_failures()
 
 

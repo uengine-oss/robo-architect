@@ -679,11 +679,28 @@ def list_failures_with_binding_key() -> list[dict[str, Any]]:
 
 
 def fetch_classifier_view(ui_ids: list[str]) -> dict[str, Any]:
-    """One-shot Cypher to populate the classifier's `neo4j_view` for many ids
-    at once: `{ui_present: {id: bool}, storyboard_archived: {id: bool}}`.
+    """Populate the classifier's `neo4j_view` for many ids at once:
+    `{ui_present: {id: bool}, storyboard_archived: {id: bool}}`.
+
+    스토리보드 소속은 **`storyboard_resolver` 에 맡긴다.** 여기서 직접 걷지
+    않는다. 예전에는 이 함수가 도달성 탐색을 인라인으로 다시 짰는데, 그것이
+    바로 `resolve_storyboard_for_ui` 의 docstring 이 "재현하지 말라"고 적어둔
+    모양이었다 — 관계 타입 제한이 아예 없는 `(u:UI)<-[*1..30]-(c:Command)` 에,
+    `WITH` 를 거친 값을 다시 패턴 대상으로 여는 조합. 그쪽 측정으로 깊이 12 에서
+    19.3초, 30 에서는 서버 임시 공간을 소진하고 죽었다. `/failures` 는 실패가
+    1건만 있어도 이 경로로 들어오므로, 그때마다 앱이 통째로 멈췄다.
+
+    같은 코드에 **조용한 오답**도 있었다. `UNWIND` 로 id 를 펼쳐 놓고 `WITH uid,
+    c LIMIT 1` 을 걸었는데, Cypher 의 `LIMIT` 은 id 별이 아니라 **스트림 전체**에
+    걸린다. 그래서 몇 건을 넘기든 "보관됨" 판정을 받을 수 있는 UI 는 언제나
+    최대 한 건이었다. 분류기는 없는 키를 `retryable` 로 흘려보내므로(§
+    `failure_classifier.classify`) 나머지는 재시도 가능으로 잘못 표시됐고,
+    이것은 오류 없이 지나간다.
     """
     if not ui_ids:
         return {"ui_present": {}, "storyboard_archived": {}}
+
+    from . import storyboard_resolver  # noqa: PLC0415  (순환 임포트 회피)
 
     with get_session() as session:
         # Which UI ids still exist
@@ -696,30 +713,35 @@ def fetch_classifier_view(ui_ids: list[str]) -> dict[str, Any]:
             ids=ui_ids,
         ).data()
 
-        # Owning-storyboard archived check: a UI is "owned by an archived
-        # storyboard" when the BFS-resolved entry-command's
-        # :StoryboardPageMapping.status = 'archived'.
-        archived_rows = session.run(
-            """
-            UNWIND $ids AS uid
-            OPTIONAL MATCH (u:UI {id: uid})<-[*1..30]-(c0:Command)
-            OPTIONAL MATCH (c0)<-[pinv:INVOKES]-(:Policy)
-            WITH uid, c0, count(pinv) AS invoked
-            // OPTIONAL MATCH 의 WHERE 는 행을 버리지 않고 null 을 남긴다 —
-            // 그 의미를 유지하려고 필터가 아니라 CASE 로 접는다.
-            WITH uid, CASE WHEN c0 IS NOT NULL AND invoked = 0 THEN c0 ELSE null END AS c
-            WITH uid, c LIMIT 1
-            OPTIONAL MATCH (m:StoryboardPageMapping {commandId: c.id})
-            RETURN uid AS id,
-                   coalesce(m.status, 'active') = 'archived' AS archived
-            """,
-            ids=ui_ids,
-        ).data()
+        # 보관된 스토리보드의 entry command 집합. 매핑 전체를 한 번에 읽는다 —
+        # UI 마다 되묻지 않으려는 것이고, 행 수는 스토리보드 수라 작다.
+        archived_commands = {
+            r["commandId"]
+            for r in session.run(
+                """
+                MATCH (m:StoryboardPageMapping)
+                WHERE m.status = 'archived'
+                RETURN m.commandId AS commandId
+                """
+            ).data()
+            if r.get("commandId")
+        }
 
     ui_present: dict[str, bool] = {r["id"]: bool(r.get("present")) for r in present_rows}
-    storyboard_archived: dict[str, bool] = {
-        r["id"]: bool(r.get("archived")) for r in archived_rows
-    }
+
+    storyboard_archived: dict[str, bool] = {}
+    if archived_commands:
+        # entry command 목록은 UI 마다 다시 뽑지 않고 한 번만 넘긴다 —
+        # `resolve_storyboard_for_ui` 가 그러라고 열어둔 인자다.
+        entry_commands = storyboard_resolver.list_entry_commands()
+        for uid in ui_ids:
+            if not ui_present.get(uid):
+                continue  # 사라진 UI 는 분류기가 앞 단계에서 먼저 잡는다
+            owner = storyboard_resolver.resolve_storyboard_for_ui(
+                uid, entry_commands=entry_commands
+            )
+            storyboard_archived[uid] = bool(owner and owner in archived_commands)
+
     return {"ui_present": ui_present, "storyboard_archived": storyboard_archived}
 
 
