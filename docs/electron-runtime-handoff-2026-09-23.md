@@ -100,6 +100,44 @@ if not await open_pencil_client.is_available_async():
 - **manifest 템플릿을 먼저 맞춰야 한다.** `robo.ps1` 이 `Assert-ManifestTemplateCovers` 로 `images`·`imageIds` 를 검사하는데, 그 검사는 이미지를 다 구운 뒤가 아니라 앞에 있다 — 그래도 키를 빠뜨리면 릴리스가 중간에 선다. 주석이 *"한 줄 불일치의 대가가 빌드 한 판(1~2시간)"* 이라고 적어둔 자리다.
 - **`oven/bun:1.4-slim` 에는 `curl`·`wget`·`nc` 가 하나도 없다**(실측). 도구를 더해 이미지를 키우는 대신 `bun -e` 로 `/health` 를 재고, `status:ok` 인지까지 본다.
 
+### 통합 확인 (2026-09-23, 새 unpacked)
+
+`robo.cmd build architect-electron unpacked -SkipFrontend` 로 다시 구워
+`desktop/out/dist/win-unpacked` 에서 띄웠다. **환경변수를 하나도 주지 않았다** —
+`WIREFRAME_SERVICE_URL` 을 일부러 비워 앱이 스스로 정하게 뒀다.
+
+```text
+컨테이너 10개 전부 healthy
+  robo-architect-desktop-wireframe-1   Up (healthy)  127.0.0.1:63585->7610/tcp
+
+docker-state.json
+  schemaVersion 5          ← 4 를 버리고 다시 뽑았다(포트 7개)
+  ports.wireframe 63585
+```
+
+`schemaVersion` 이 5 로 올라가며 옛 상태가 버려지고 포트가 전부 새로 할당됐다 —
+백엔드도 50065 가 아니라 63583 으로 옮겨갔다. 의도한 동작이다.
+
+앱이 실제로 렌더러를 무는지는 UI 한 건의 `sceneGraph` 를 비우고 다시 생성해
+확인했다.
+
+```text
+POST :63583/api/ai-design/wireframe/{ui}
+  context_loaded  휴가 신청 반려 (BC: LeaveApplication)
+  tool_result     render ok=true nodeCount=28
+  persist_done    nodeCount=28
+  done            "…반려 사유 입력 및 반려 처리를 할 수 있는 … 와이어프레임을 생성했습니다"
+```
+
+수동 주입 없이 `docker-stack.ts` 가 넣은 `WIREFRAME_SERVICE_URL` 만으로 사슬이
+이어진다.
+
+> 이 확인은 **unpacked 빌드**로 한 것이다. `desktop/resources/runtime` 의
+> `compose.yml`·`runtime-manifest.json` 을 손으로 맞추고, 이미지는 로컬에 태그해
+> `ensureImages` 의 재사용 경로를 탔다(`robo-images.tar` 는 다시 만들지 않았다).
+> **전달용 release 는 tar 를 새로 구워야 하고**, 그때 `robo.ps1` 의
+> `Build-ReleaseImage 'wireframe'` 이 돈다. 그 경로는 아직 안 돌렸다.
+
 ### 기능 프로브를 왜 따로 두나
 
 058 의 근거가 여기서도 그대로 성립한다 — **healthcheck 는 준비의 근거가 아니다.** 이 서비스가 "떠 있는데 못 하는" 상태면 와이어프레임 단계가 또 조용히 빈다. 그래서 프로브는 `/health` 200 만 보지 않고 **실제로 한 장 그려서** 노드가 0이 아닌지 확인한다. LLM 을 안 타므로 값싸다.
@@ -260,7 +298,7 @@ robo.cmd up architect-electron          설치본(Robo-Architect.exe)
 
 전제 조건이 둘 있다.
 
-- **`bun` 이 PATH 에 있어야 한다.** `robo.ps1` 은 `file` 에 경로 구분자가 없으면 `Get-Command` 로 찾는다. 없으면 `robo.cmd doctor architect-electron` 이 `bun is not available` 로 세운다.
+- **`bun` 이 PATH 에 있어야 한다.** `robo.ps1` 은 `file` 에 경로 구분자가 없으면 `Get-Command` 로 찾는다. **`doctor` 는 이것을 못 잡는다** — 실행 파일 검사가 `file -match '[/\]'` 일 때만 돌기 때문이다(`robo.ps1:613`). 없으면 `robo.cmd up` 시점에 `bun is not available` 로 선다(`robo.ps1:1209`). 다만 포트(7610) 점유 검사는 `doctor` 가 한다.
 - **`open-pencil/node_modules` 가 있어야 한다.** 없으면 `cd open-pencil && bun install`. 설치본에는 이 조건이 없다 — 이미지 안에서 `bun install --production` 으로 만든다.
 
 그리고 개발 실행은 **설치본의 이미지·인증 구성을 보증하지 않는다.** 설치본에서만 나는 실패(예: `PDF2BPMN_FACADE_KEY` 누락으로 facade 가 401 을 내는 것)는 개발 실행에서 재현되지 않을 수 있다.
