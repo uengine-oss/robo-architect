@@ -59,6 +59,7 @@ export type ManagedServiceId =
   | "parser"
   | "gateway"
   | "pdf2bpmn"
+  | "wireframe"
   | "architect";
 
 export type ServiceOwner = "app" | "external";

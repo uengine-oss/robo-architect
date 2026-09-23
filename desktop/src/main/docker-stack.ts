@@ -30,7 +30,10 @@ const MANIFEST_NAME = "runtime-manifest.json";
 // 3: 저장소가 Neo4j → Ontological 로 바뀌며 `ports.neo4j` 가 `ports.graph` 가 됐다.
 //    키 이름이 바뀌었으므로 옛 상태는 읽지 않는다(읽으면 포트가 `undefined` 가 된다).
 // 4: 호스트 Architect API 가 Ontological PostgreSQL 에 직접 붙도록 graphPg 포트를 추가.
-const STATE_SCHEMA_VERSION = 4;
+// 5: open-pencil 와이어프레임 렌더러(7610) 가 스택에 들어와 포트가 하나 늘었다.
+//    **옛 상태를 그대로 읽으면 `ports.wireframe` 이 undefined 가 되고**, compose 는
+//    `ROBO_WIREFRAME_PORT` 가 빈 채로 포트 매핑을 만들려다 죽는다. 버리고 다시 뽑는다.
+const STATE_SCHEMA_VERSION = 5;
 // 4: images.neo4j → images.graphDb + images.graphBolt, graphs 항목 추가.
 const MANIFEST_SCHEMA_VERSION = 4;
 const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
@@ -62,6 +65,8 @@ export interface RuntimeManifest {
     parser: string;
     gateway: string;
     pdf2bpmn: string;
+    /** open-pencil 와이어프레임 렌더러. 없으면 sceneGraph 가 조용히 빈다. */
+    wireframe: string;
   };
   imageIds: Record<keyof RuntimeManifest["images"], string>;
   /**
@@ -98,6 +103,8 @@ export interface DockerStackPorts {
   architect: number;
   /** 문서→BPMN 을 뽑는 자체 호스팅 서비스. 루프백에만 연다. */
   pdf2bpmn: number;
+  /** open-pencil 와이어프레임 렌더러(JSX→SceneGraph). 루프백에만 연다. */
+  wireframe: number;
 }
 
 interface PersistedDockerState {
@@ -181,6 +188,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     "parser",
     "gateway",
     "pdf2bpmn",
+    "wireframe",
   ]) {
     if (!manifest.images?.[required as keyof RuntimeManifest["images"]]) {
       throw new Error(`runtime.manifest_invalid: missing image ${required}`);
@@ -490,6 +498,7 @@ async function createState(releaseId: string): Promise<PersistedDockerState> {
       gateway: await pickFreePort(),
       architect: await pickFreePort(),
       pdf2bpmn: await pickFreePort(),
+      wireframe: await pickFreePort(),
     },
   };
   const file = statePath();
@@ -518,6 +527,7 @@ function composeEnvironment(
     ROBO_IMAGE_PARSER: manifest.images.parser,
     ROBO_IMAGE_GATEWAY: manifest.images.gateway,
     ROBO_IMAGE_PDF2BPMN: manifest.images.pdf2bpmn,
+    ROBO_IMAGE_WIREFRAME: manifest.images.wireframe,
     // 이름은 `ROBO_NEO4J_*` 그대로 둔다 — 컨테이너 안의 서비스들이 Neo4j 드라이버로
     // 붙고, 그 드라이버가 읽는 변수 이름이다. **엔진이 아니라 프로토콜의 이름이다.**
     ROBO_NEO4J_PASSWORD: password,
@@ -530,6 +540,7 @@ function composeEnvironment(
     ROBO_GATEWAY_PORT: String(state.ports.gateway),
     ROBO_ARCHITECT_API_PORT: String(state.ports.architect),
     ROBO_PDF2BPMN_PORT: String(state.ports.pdf2bpmn),
+    ROBO_WIREFRAME_PORT: String(state.ports.wireframe),
   };
 }
 
@@ -568,6 +579,17 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   // `load_dotenv()` 는 기본이 override=False 라 여기서 준 값이 번들 .env 를 이긴다.
   process.env.PDF2BPMN_FACADE_URL = `http://127.0.0.1:${state.ports.pdf2bpmn}`;
   process.env.ROBO_CLUSTER_MCP_URL = `http://127.0.0.1:${state.ports.analyzer}/robo/mcp/`;
+  // 와이어프레임 렌더러도 **안에서 돈다.** 이 줄이 없으면 Architect 는
+  // `open_pencil_client` 의 기본값 `http://localhost:7610` 을 쓰는데, 그건 `dev.sh`
+  // 가 Bun 으로 띄울 때의 주소다 — 설치본에는 거기 아무것도 없다.
+  //
+  // **그리고 그 부재가 오류로 안 보인다.** `run_render_agent` 는 서비스가 없으면
+  // `(None, None)` 을 내는데 인제스천 경로는 `on_event=None` 으로 부르므로 error
+  // 이벤트가 아무 데도 안 간다. 화면에는 "UI 와이어프레임 생성 중…" 이 그대로
+  // 흐르고 UI 노드만 `sceneGraph=null` 로 남는다. 증상은 한참 뒤 Figma 싱크에서
+  // "이 UI 노드에는 아직 sceneGraph가 없습니다" 로 나온다 — 원인과 증상이 멀다.
+  // 2026-09-23 실측(같은 입력, 렌더러만 추가): 0/27 → 와이어프레임 29/29.
+  process.env.WIREFRAME_SERVICE_URL = `http://127.0.0.1:${state.ports.wireframe}`;
   process.env.ROBO_NEO4J_URI = hostBoltUri;
   // 사용자 = Postgres role. Bolt 게이트웨이는 받은 자격증명을 Postgres 에 그대로 넘긴다.
   process.env.ROBO_NEO4J_USER = manifest.graphs.user;

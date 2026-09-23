@@ -38,6 +38,7 @@ const DISPLAY_NAMES: Record<ManagedServiceId, string> = {
   parser: "코드 파서",
   gateway: "API 게이트웨이",
   pdf2bpmn: "문서→BPMN 생성기",
+  wireframe: "와이어프레임 렌더러",
   architect: "Architect 백엔드",
 };
 

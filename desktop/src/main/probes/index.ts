@@ -38,6 +38,7 @@ export interface ProbeContext {
     gateway: number;
     architect: number;
     pdf2bpmn: number;
+    wireframe: number;
   };
   graph: {
     user: string;
@@ -283,12 +284,56 @@ const parserProbes: ProbePair = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// wireframe — open-pencil 렌더러
+// ---------------------------------------------------------------------------
+
+const wireframeProbes: ProbePair = {
+  async health(context) {
+    const reached = await httpReach(`http://127.0.0.1:${context.ports.wireframe}/health`);
+    return reached.outcome === "error" ? cannot(reached.detail) : ok(reached.detail);
+  },
+  async capability(context) {
+    // **`/health` 200 은 준비의 근거가 아니다.** 이 서비스가 못 하는 상태로 떠 있으면
+    // 와이어프레임 단계가 조용히 빈다 — `run_render_agent` 가 `(None, None)` 을 내고
+    // 인제스천 경로는 `on_event=None` 이라 오류가 아무 데도 안 간다. 증상은 한참 뒤
+    // Figma 싱크에서 "sceneGraph가 없습니다" 로만 나온다(2026-09-23 실측 0/27).
+    //
+    // 그래서 **실제로 한 장 그려 본다.** LLM 을 안 타므로 값싸다(실측 10ms 대).
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(`http://127.0.0.1:${context.ports.wireframe}/render`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          name: "probe",
+          width: 375,
+          height: 812,
+          jsx: '<Frame name="probe" w={375} h="hug" flex="col" p={8}><Text name="t" size={12}>probe</Text></Frame>',
+        }),
+      });
+      if (!response.ok) return no(`render=${response.status}`);
+      const body = (await response.json()) as { nodes?: Record<string, unknown> };
+      const count = Object.keys(body.nodes ?? {}).length;
+      // 노드가 0 이면 답은 했는데 아무것도 못 그린 것이다 — pass 로 부르지 않는다.
+      return count > 0 ? ok(`render 노드 ${count}개`) : no("render 가 빈 sceneGraph 를 냈다");
+    } catch (error) {
+      return cannot(error instanceof Error ? error.message : String(error));
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+};
+
 const PROBES: Partial<Record<ManagedServiceId, ProbePair>> = {
   graph: graphProbes,
   gateway: gatewayProbes,
   analyzer: analyzerProbes,
   parser: parserProbes,
   pdf2bpmn: pdf2bpmnProbes,
+  wireframe: wireframeProbes,
   catalog: { health: containerHealth("catalog", "http://127.0.0.1:5503/robo/check-data/") },
   fabric: { health: containerHealth("fabric", "http://127.0.0.1:8404/health") },
   mindsdb: { health: containerHealth("mindsdb", "http://127.0.0.1:47334/api/status") },

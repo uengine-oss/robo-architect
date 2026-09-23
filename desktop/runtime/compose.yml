@@ -340,6 +340,55 @@ services:
       retries: 30
       start_period: 30s
 
+  # wireframe — **open-pencil 렌더러. 없으면 와이어프레임 단계가 조용히 빈다.**
+  #
+  # Architect 의 와이어프레임 에이전트가 JSX 를 만들어 `/render` 로 넘기면
+  # SerializedSceneGraph 가 돌아온다. **LLM 은 이 컨테이너에서 안 돈다** — 모델
+  # 호출은 호스트 백엔드 쪽이고, 여기는 렌더링만 한다. 그래서 키가 필요 없다.
+  #
+  # ## 왜 뒤늦게 들어왔나 — 빠져 있어도 아무도 못 알아챈다
+  #
+  # `dev.sh` 는 이 서비스를 Bun 으로 띄우지만(포트 7610) 설치본은 안 띄웠다.
+  # 그런데 그 부재가 **오류로 안 보인다**: `run_render_agent` 는 서비스가 없으면
+  # `(None, None)` 을 내는데, 인제스천 경로는 `on_event=None` 으로 부르므로
+  # 그 error 이벤트가 아무 데도 안 간다. 화면에는 "UI 와이어프레임 생성 중…" 과
+  # "UI 생성: <이름>" 이 그대로 흐르고, UI 노드는 `sceneGraph=null` 로 남는다.
+  # 그 다음 Figma 싱크가 UI 마다 "이 UI 노드에는 아직 sceneGraph가 없습니다" 로
+  # 죽는다 — **증상은 Figma 에서 나오는데 원인은 여기에 있다.**
+  #
+  # 2026-09-23 실측(같은 입력, 렌더러만 추가):
+  #   없을 때  와이어프레임  0/27 · Figma 프레임  0
+  #   있을 때  와이어프레임 29/29 · Figma 프레임 28/29
+  wireframe:
+    image: ${ROBO_IMAGE_WIREFRAME}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: wireframe
+    environment:
+      WIREFRAME_SERVICE_PORT: "7610"
+      # 이미지가 굽힐 때 같이 들어간다(open-pencil `docs/components.fig`).
+      COMPONENT_LIBRARY_PATH: /app/docs/components.fig
+    ports:
+      # **루프백에만 연다.** Architect API 는 Windows 호스트에서 돌므로 호스트
+      # 포트가 있어야 닿는다 — analyzer·gateway·pdf2bpmn 과 같은 이유다.
+      - "127.0.0.1:${ROBO_WIREFRAME_PORT}:7610"
+    healthcheck:
+      # **`oven/bun:1.4-slim` 에는 curl·wget·nc 가 하나도 없다**(실측). 도구를
+      # 더해 이미지를 키우는 대신 bun 으로 잰다. `/health` 는 컴포넌트 카탈로그를
+      # 실제로 읽은 뒤에야 `status:ok` 를 내므로, 포트만 열린 상태와 구분된다.
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r=await fetch('http://127.0.0.1:7610/health');if(!r.ok)process.exit(1);const j=await r.json();process.exit(j.status==='ok'?0:1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
 volumes:
   graph_data:
   mindsdb_data:
