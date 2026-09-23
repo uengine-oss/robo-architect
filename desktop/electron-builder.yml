@@ -21,9 +21,14 @@ extraResources:
   - from: ../frontend/dist
     to: frontend/dist
     filter: ["**/*"]
+  # **이미지 tar 는 일부러 뺀다.** 넣으면 NSIS 가 설치본을 못 만든다 —
+  # `makensis` 는 32비트(실측)라 주소공간이 2GB 남짓인데 tar 하나가 2.5GB 다.
+  # 2026-09-23 실측: 페이로드 3.27GB 에서 `failed creating mmap of …nsis.7z`.
+  # 이미지를 줄여 넘길 수 있는 벽이 아니다(analyzer 한 장이 2.1GB).
+  # tar 는 설치 파일 옆에 함께 전달하고, 앱이 `resolveImageArchive` 로 찾는다.
   - from: resources/runtime
     to: runtime
-    filter: ["**/*"]
+    filter: ["**/*", "!robo-images.tar"]
 
 win:
   target:

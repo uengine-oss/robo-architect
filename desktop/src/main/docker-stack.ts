@@ -227,7 +227,13 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     throw new Error("runtime.manifest_invalid: graphs.design must differ from graphs.analysis");
   }
   ensureRuntimeChild(root, manifest.composeFile, "composeFile");
-  ensureRuntimeChild(root, manifest.imageArchive, "imageArchive");
+  // **imageArchive 는 여기서 존재를 보지 않는다.** 설치 파일 안에 넣지 않으므로
+  // (NSIS 32비트 한계 — `resolveImageArchive` 주석) 패키지 밖에 있을 수 있다.
+  // 값이 파일 이름으로 쓸 만한지만 본다. 실제 자리와 무결성은 기동 시점에 잰다.
+  if (typeof manifest.imageArchive !== "string"
+      || !/^[A-Za-z0-9._-]{1,120}$/.test(path.basename(manifest.imageArchive))) {
+    throw new Error("runtime.manifest_invalid: imageArchive");
+  }
   ensureRuntimeChild(root, manifest.architect.python, "architect.python");
   ensureRuntimeChild(root, manifest.architect.app, "architect.app");
   if (!/^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/.test(manifest.architect.entrypoint)) {
@@ -331,6 +337,48 @@ async function inspectImageId(image: string): Promise<string | null> {
   }
 }
 
+/**
+ * 오프라인 이미지 아카이브를 찾는다.
+ *
+ * **이 파일은 설치 파일 안에 넣지 않는다.** 넣으면 NSIS 가 설치본을 못 만든다 —
+ * `makensis` 는 32비트라 주소공간이 2GB 남짓인데, 이미지 tar 하나가 2.5GB 다
+ * (2026-09-23 실측: 페이로드 3.27GB, `failed creating mmap of …nsis.7z`).
+ * 이미지를 줄여서 넘길 수 있는 벽이 아니다 — analyzer 한 장이 2.1GB 다.
+ *
+ * 그래서 tar 는 설치 파일 **옆에** 함께 전달하고, 설치한 사람이 아래 자리 중
+ * 하나에 둔다. 어디서 찾았든 `imageArchiveSha256` 으로 무결성을 검사하므로
+ * 자리가 늘어도 신뢰는 그대로다.
+ *
+ *   1. `ROBO_IMAGE_ARCHIVE`       — 절대 경로로 명시 (운영자가 원하는 자리)
+ *   2. `<앱 데이터>/runtime/<이름>` — 권장. 설치 후 여기에 복사한다
+ *   3. `<설치 폴더>/runtime/<이름>` — 옛 구성(패키지 안에 넣던 시절) 하위 호환
+ */
+function resolveImageArchive(root: string, manifest: RuntimeManifest): string {
+  const candidates: string[] = [];
+
+  const override = (process.env.ROBO_IMAGE_ARCHIVE ?? "").trim();
+  if (override) candidates.push(path.resolve(override));
+
+  // manifest 의 값은 파일 이름으로만 쓴다 — 경로 조작을 막는다.
+  const name = path.basename(manifest.imageArchive);
+  candidates.push(path.join(getDataDir(), "runtime", name));
+  candidates.push(path.join(path.resolve(root), name));
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      log("info", "docker.image_archive.located", { path: candidate });
+      return candidate;
+    }
+  }
+  // **어디를 봤는지 말해 준다.** 그러지 않으면 "파일이 없다" 만 남아서
+  // 어디에 두어야 하는지 사람이 알 수 없다.
+  throw new Error(
+    `docker.image_archive_missing: ${name} 을 찾지 못했다. 찾아본 자리: ` +
+      candidates.join(" | ") +
+      ` — 전달받은 ${name} 을 두 번째 자리에 복사하거나 ROBO_IMAGE_ARCHIVE 로 지정하라`,
+  );
+}
+
 async function ensureImages(root: string, manifest: RuntimeManifest): Promise<void> {
   const missing: string[] = [];
   for (const [name, image] of Object.entries(manifest.images)) {
@@ -346,10 +394,7 @@ async function ensureImages(root: string, manifest: RuntimeManifest): Promise<vo
     return;
   }
 
-  const archive = ensureRuntimeChild(root, manifest.imageArchive, "imageArchive");
-  if (!fs.existsSync(archive)) {
-    throw new Error(`docker.image_archive_missing: ${archive}`);
-  }
+  const archive = resolveImageArchive(root, manifest);
   log("info", "docker.image_archive.verifying", {
     releaseId: manifest.releaseId,
     missingCount: missing.length,

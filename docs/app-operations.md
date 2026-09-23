@@ -50,21 +50,43 @@ Robo-Architect.exe  (Electron)
 
 ## 2. 설치
 
-필요한 것은 둘뿐이다.
+필요한 것은 셋이다.
 
 | | |
 |---|---|
 | **Docker Desktop** | 켜져 있어야 한다. 앱이 컨테이너를 띄운다 |
 | **`Robo-Architect-Setup-<릴리스>.exe`** | 관리자 권한 불필요(per-user 설치) |
+| **`robo-images.tar`** | 컨테이너 이미지 전부. 설치 파일과 **함께** 받는다 |
 
-설치 파일 안에 **이미지·번들 Python·프런트가 전부 들어 있다.** 인터넷도,
-소스 체크아웃도, `docker pull` 도 필요 없다. 오프라인 설치가 설계 목표다.
+인터넷도, 소스 체크아웃도, `docker pull` 도 필요 없다. 오프라인 설치가 설계
+목표다. 다만 **이미지는 설치 파일 안에 들어 있지 않고 옆에 따로 온다** — tar
+하나가 2.5GB 라 설치 파일 생성기(`makensis`, 32비트)의 주소공간 한계를 넘는다.
 
-받은 파일이 맞는지 `SHA256SUMS` 로 확인한다.
+### 순서
+
+**1. 받은 파일이 맞는지 확인한다.** 두 파일 모두 `SHA256SUMS` 에 적혀 있다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Robo-Architect-Setup-<릴리스>.exe
+Get-FileHash -Algorithm SHA256 `
+  .\Robo-Architect-Setup-<릴리스>.exe, .\robo-images.tar
 ```
+
+**2. 설치 파일을 실행한다.**
+
+**3. 이미지 tar 를 앱이 찾는 자리에 둔다.** 이 단계를 빠뜨리면 앱이 첫 기동에서
+`docker.image_archive_missing` 으로 선다(찾아본 자리를 오류에 적어 준다).
+
+```powershell
+$dest = Join-Path $env:APPDATA 'robo-architect-desktop\runtime'
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Move-Item .\robo-images.tar (Join-Path $dest 'robo-images.tar')
+```
+
+> 다른 자리에 두고 싶으면 `ROBO_IMAGE_ARCHIVE` 에 절대 경로를 지정해도 된다.
+> 어디에 두든 앱이 manifest 의 `imageArchiveSha256` 으로 무결성을 검사한다.
+
+첫 기동에서 이미지를 적재하느라 몇 분 걸린다. 한 번 적재하면 그 뒤로는 tar 를
+다시 읽지 않는다 — 이미지 ID 가 manifest 와 맞으면 건너뛴다.
 
 ---
 
@@ -147,6 +169,7 @@ docker compose --project-name robo-architect-desktop down
 | 증상 | 먼저 본다 |
 |---|---|
 | 앱이 아예 안 뜬다 | `desktop.log` 의 `backend.status`. `runtime.environment_checksum_mismatch` 면 설치본 `.env` 를 누가 고친 것이다 |
+| 첫 기동에서 `docker.image_archive_missing` | `robo-images.tar` 를 안 옮겼다. 설치 §3 |
 | 프로젝트 생성이 안 된다 | `AUTH_ROLE_SECRET` |
 | 매번 로그인이 풀린다 | `AUTH_JWT_SECRET` |
 | 컨테이너는 healthy 인데 화면이 죽어 있다 | **healthcheck 는 준비의 근거가 아니다.** 앱의 서비스 상태 표시를 본다 — 기능 프로브가 따로 잰다 |
