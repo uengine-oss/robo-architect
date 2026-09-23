@@ -15,7 +15,7 @@
  *   - Auto-update (US2 T031–T037)
  */
 
-import { app, BrowserWindow, nativeImage, net, protocol, shell } from "electron";
+import { BrowserWindow, app, dialog, nativeImage, net, protocol, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -169,10 +169,16 @@ function registerAppProtocol(): void {
       if (pathname === "/api/gateway" || pathname.startsWith("/api/gateway/")) {
         upstreamBase = process.env.ROBO_GATEWAY_URL ?? "http://127.0.0.1:9000";
       } else {
-        const port = getRuntimeBackend().port;
-        if (port === null) {
-          return new Response("Backend not ready", { status: 503 });
+        const be = getRuntimeBackend();
+        if (be.port === null) {
+          // 이유를 실어 보낸다. 지금 프런트의 `apiFailure` 는 본문을 안 읽고
+          // "Failed to fetch <무엇> (HTTP 503)" 만 만들지만, 로그·네트워크 탭·
+          // 나중에 붙일 화면에는 이게 유일한 단서다.
+          const reason =
+            be.status === "fatal" && be.detail ? be.detail : "Backend not ready";
+          return new Response(reason, { status: 503 });
         }
+        const port = be.port;
         upstreamBase = `http://127.0.0.1:${port}`;
       }
       const upstream = `${upstreamBase}${pathname}${url.search}`;
@@ -416,6 +422,7 @@ function registerIpcHandlers(): void {
   registerHandler("fs:stageProject", stageProject);
 
   // Bridge backend status changes to the renderer.
+  let fatalDialogShown = false;
   onBackendStatusChange((status, detail) => {
     const be = getRuntimeBackend();
     pushToRenderer("app:onBackendStatus", {
@@ -424,6 +431,23 @@ function registerIpcHandlers(): void {
       boltPort: null,
       detail,
     });
+    // **기동이 끝내 실패하면 사람이 볼 수 있게 말한다.**
+    //
+    // `app:onBackendStatus` 로 밀긴 하는데, 그것을 **그리는 화면이 없다** —
+    // `features/runtime-status` 는 스토어만 있고 컴포넌트가 없어서 어디에도
+    // 안 붙어 있다(058 US1 의 남은 몫). 그래서 백엔드가 이유를 대고 멈춰도
+    // 화면에는 그 이유가 아니라 **가장 먼저 실패한 API 호출**이 보인다 —
+    // 프록시의 `503 Backend not ready` 가 `Failed to fetch contexts (HTTP 503)`
+    // 로 나오는 식이다(실측). 원인과 증상이 완전히 떨어져 있다.
+    //
+    // 화면을 제대로 붙이기 전까지는 OS 대화상자가 가장 확실하다 — 렌더러가
+    // 안 떴어도, 스토어를 아무도 안 읽어도 보인다.
+    // 한 번만 띄운다. `showErrorBox` 는 모달이라, 재시도마다 뜨면 대화상자가
+    // 쌓여 앱을 끄지도 못하게 된다.
+    if (status === "fatal" && detail && !fatalDialogShown) {
+      fatalDialogShown = true;
+      dialog.showErrorBox("Robo Architect 를 시작할 수 없다", detail);
+    }
   });
 
   // Stubs for 023 channels whose owning task hasn't shipped yet — kept here so

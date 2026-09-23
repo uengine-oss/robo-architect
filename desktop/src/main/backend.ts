@@ -84,6 +84,13 @@ export interface BackendRuntime {
   port: number | null;
   pid: number | null;
   status: RuntimeStatus;
+  /**
+   * 마지막 상태 변화의 사유. `fatal` 일 때 **왜 못 떴는지**가 여기 있다.
+   *
+   * 예전에는 리스너에게만 넘기고 어디에도 안 남겨서, 나중에 상태를 물어본
+   * 쪽(예: API 프록시)은 "안 떴다" 까지만 알고 이유를 몰랐다.
+   */
+  detail?: string;
 }
 
 export type BackendStatusListener = (
@@ -105,7 +112,7 @@ export function onBackendStatusChange(cb: BackendStatusListener): () => void {
 }
 
 function setStatus(next: RuntimeStatus, detail?: string): void {
-  runtime = { ...runtime, status: next };
+  runtime = { ...runtime, status: next, detail };
   log("info", "backend.status", { status: next, detail, port: runtime.port, pid: runtime.pid });
   for (const cb of listeners) {
     try {
@@ -273,7 +280,7 @@ async function startBackendInternal(): Promise<{ port: number }> {
   spawned.on("exit", (code, signal) => {
     log("warn", "backend.exit", { code, signal });
     const wasReady = runtime.status === "ready";
-    runtime = { port: null, pid: null, status: runtime.status };
+    runtime = { port: null, pid: null, status: runtime.status, detail: runtime.detail };
     if (child === spawned) child = null;
     if (wasReady) {
       setStatus("backend-crashed", `exit code=${code} signal=${signal ?? "none"}`);
