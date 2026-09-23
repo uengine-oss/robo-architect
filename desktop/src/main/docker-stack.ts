@@ -361,7 +361,8 @@ function resolveImageArchive(root: string, manifest: RuntimeManifest): string {
 
   // manifest 의 값은 파일 이름으로만 쓴다 — 경로 조작을 막는다.
   const name = path.basename(manifest.imageArchive);
-  candidates.push(path.join(getDataDir(), "runtime", name));
+  const recommended = path.join(getDataDir(), "runtime", name);
+  candidates.push(recommended);
   candidates.push(path.join(path.resolve(root), name));
 
   for (const candidate of candidates) {
@@ -372,10 +373,13 @@ function resolveImageArchive(root: string, manifest: RuntimeManifest): string {
   }
   // **어디를 봤는지 말해 준다.** 그러지 않으면 "파일이 없다" 만 남아서
   // 어디에 두어야 하는지 사람이 알 수 없다.
+  // **서수로 말하지 않는다.** `ROBO_IMAGE_ARCHIVE` 가 있고 없고에 따라 후보의
+  // 순번이 밀려서, "두 번째 자리" 같은 안내가 틀린 곳을 가리킨다(실측).
   throw new Error(
     `docker.image_archive_missing: ${name} 을 찾지 못했다. 찾아본 자리: ` +
       candidates.join(" | ") +
-      ` — 전달받은 ${name} 을 두 번째 자리에 복사하거나 ROBO_IMAGE_ARCHIVE 로 지정하라`,
+      ` — 전달받은 ${name} 을 ${recommended} 로 복사하거나 ` +
+      `ROBO_IMAGE_ARCHIVE 에 절대 경로를 지정하라`,
   );
 }
 

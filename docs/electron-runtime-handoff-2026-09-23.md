@@ -336,6 +336,97 @@ Set-Location 'C:\Users\YSW\Desktop\robo-workspace'
 
 `build ... unpacked`와 `release ...`는 목적이 다르다. 전달용 release는 Docker 이미지·Python 런타임·환경 스냅샷을 함께 묶으므로 시간이 오래 걸리고, 결과 manifest의 SHA를 반드시 재확인한다. `robo-architect\scripts\build-desktop-app.cmd`도 Workspace 빌드의 래퍼다. `-SkipFrontend`는 기존 프런트 산출물 재사용이 의도된 경우에만 사용한다. Figma 플러그인은 Electron과 별도 번들이므로 `figma-plugin/build.sh`로 빌드한 다음 Figma 개발 플러그인을 다시 불러와야 한다.
 
+## 6-A. 릴리스가 처음으로 완주했다 (2026-09-23)
+
+### 그전까지는 한 번도 끝난 적이 없다
+
+`robo-workspace/_releases` 가 비어 있었다. 지금까지 쓰던 `dist-*` 산출물은 전부
+`build ... unpacked` 로 만든 것이고, **설치 파일 생성 단계는 원래부터 막혀 있었다.**
+초판이 `runtime-manifest.json` 의 release ID 를 근거로 삼은 것은 릴리스가 중간까지
+갔다는 뜻이지 설치 파일이 나왔다는 뜻이 아니었다.
+
+막힌 이유는 크기다.
+
+```text
+makensis.exe        32비트 (실측)          주소공간 2GB 남짓
+win-unpacked        3,233 MB
+  robo-images.tar   2,560 MB   ← 79%
+  architect(Python)   342 MB
+  나머지              331 MB
+→ ESTIMATED_SIZE 3.27GB · `failed creating mmap of …nsis.7z`
+```
+
+**이미지를 줄여 넘길 수 있는 벽이 아니다** — tar 안에서 analyzer 한 장이 2.1GB 다.
+와이어프레임 렌더러(1GB)가 마지막 한 방이긴 했으나, 그것이 없어도 2.4GB 라
+아슬아슬했다.
+
+### 구조를 바꿨다 — tar 를 설치 파일 밖으로
+
+설치 파일 안에 넣지 않고 **옆에 함께 전달**한다. 앱은 세 자리를 순서대로 본다.
+
+```text
+1. ROBO_IMAGE_ARCHIVE                                  절대 경로로 명시
+2. %APPDATA%obo-architect-desktopuntimeobo-images.tar   ← 권장
+3. <설치 폴더>esourcesuntimeobo-images.tar              ← 옛 구성 하위 호환
+```
+
+어디서 찾든 `imageArchiveSha256` 으로 무결성을 검사하므로 자리가 늘어도 신뢰는
+그대로다. 못 찾으면 **찾아본 자리를 전부 오류에 적는다** — "파일이 없다" 만
+남으면 어디에 두어야 하는지 사람이 알 수 없다.
+
+릴리스는 tar 를 `_releases/<id>/` 에 복사하고 `SHA256SUMS` 를 두 줄로 쓰며,
+매니페스트가 적어둔 해시와 복사된 파일을 대조해 어긋나면 거기서 멈춘다.
+
+### 산출물
+
+```text
+_releases/0.1.0-w9a12dc29-a00eeb560/
+  Robo-Architect-Setup-….exe      173 MB      ← 3.27GB 에서 내려왔다
+  robo-images.tar               2,560 MB
+  runtime-manifest.json
+  SHA256SUMS                        2줄
+```
+
+manifest 의 `images` 가 **10개**다(wireframe 포함), `pdf2bpmn` 은 `c7992ce`,
+`source.ontological` 은 조직 저장소에서 왔다.
+
+### 설치 검증 — 고객 현장을 재현했다
+
+스택을 내리고 **매니페스트의 이미지 10개를 전부 삭제한 뒤** 설치 파일로 새로 깔았다.
+
+```text
+07:33:35  docker.image_archive.located    %APPDATA%\…untimeobo-images.tar  ← 패키지 밖
+07:33:35  docker.image_archive.verifying  missingCount=10
+07:37:35  docker.image_archive.loaded     count=10        (약 4분)
+07:38:12  docker.stack.ready
+07:38:32  backend.status ready            port=55799
+```
+
+컨테이너 10/10 healthy, 프로젝트 2개 보존(볼륨 유지). tar 를 옮기지 않은 상태로도
+한 번 띄워 **오류 경로**를 확인했다 — 찾아본 두 자리를 전체 경로로 적고 무엇을
+하라고 말해 준다.
+
+### 이 과정에서 드러난 결함 둘 (고쳤다)
+
+- **오류 문구가 서수로 말했다.** "두 번째 자리에 복사하라" 였는데
+  `ROBO_IMAGE_ARCHIVE` 가 없으면 후보가 둘뿐이라 권장 자리가 첫 번째로 찍힌다.
+  경로를 직접 말하도록 바꿨다.
+- **스테이징 폴더의 잔재가 납품 자산까지 따라갔다.** 릴리스는
+  `desktop/resources/runtime` 을 비우지 않고 덮어쓰기만 해서, 손으로 만든
+  `compose.yml.bak`·`runtime-manifest.json.bak` 이 설치본에 실렸다. 크기는
+  작지만 **고객에게 나가는 물건에 정체 모를 파일이 있는 것**이 문제다.
+  릴리스가 쓰는 항목만 남기고 나머지를 걷어내는 단계를 넣었다.
+
+### ⚠ 이것은 납품본이 아니다
+
+```text
+releaseChannel: internal-test   authEnforced: false   authProvider: none
+```
+
+`robo-workspace/.env` 가 `AUTH_ENFORCE=false` + `ROBO_RELEASE_CHANNEL=internal-test`
+라서 릴리스의 납품 관문(`AUTH_ENFORCE=true` 이고 `AUTH_PROVIDER` 가 none 이 아닐 것)
+을 우회한 빌드다. 전달본은 그 값들을 채우고 다시 구워야 한다.
+
 ## 7. 안전한 재현·릴리스 체크리스트
 
 1. 각 독립 저장소의 브랜치·SHA·dirty 상태, Architect gitlink SHA를 기록한다. 필요한 변경은 각 저장소에 커밋·푸시한 뒤 상위 gitlink를 갱신한다.
