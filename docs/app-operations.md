@@ -90,16 +90,32 @@ Move-Item .\robo-images.tar (Join-Path $dest 'robo-images.tar')
 
 ---
 
-## 3. 설치 후 한 번 — 비밀 세 개를 채운다
+## 3. 설치 후 한 번 — 비밀을 채운다
 
-**이것을 안 하면 앱은 뜨지만 일을 못 한다.** 아래 셋은 릴리스에 일부러 굽지
-않는다(`release-environment.json` 의 `credentialNames`). 설치한 사람이 채운다.
+**릴리스에는 비밀이 들어 있지 않다.** 설치한 사람이 환경변수로 넣는다.
+안 넣으면 앱이 **기동에서 이름을 대고 멈춘다**(`runtime.credentials_missing`)
+— 무엇이 비었는지 오류 메시지가 그대로 알려 주므로, 목록을 외울 필요는 없다.
+
+필요한 이름은 릴리스마다 `runtime-manifest.json` 의 `credentialNames` 에 적혀
+있다. 보통은 이렇다.
 
 | 변수 | 없으면 생기는 일 |
 |---|---|
 | `AUTH_JWT_SECRET` | 앱을 다시 열 때마다 **모든 세션이 끊긴다**(임시 비밀로 토큰 발급) |
 | `AUTH_ROLE_SECRET` | **프로젝트를 만들 수 없다** — "role 비밀번호를 만들 수 없다" 오류 |
 | `PDF2BPMN_FACADE_KEY` | 문서→BPMN 이 **조용히 폴백으로 내려간다**. 화면에는 그대로 BPM 이 나와서 눈치채기 어렵다 |
+| `OPENAI_API_KEY` 계열 | 분석·생성이 전부 빈손으로 끝난다 |
+
+> **같은 모델 키를 여러 이름으로 요구한다** — `OPENAI_API_KEY`,
+> `LLM_API_KEY`, `ROBO_LLM_API_KEY`, `ROBO_EMBED_API_KEY`,
+> `ROBO_SEARCH_LLM_API_KEY`. 서비스마다 읽는 변수 이름이 달라서다. 값은 같은
+> 것을 넣으면 된다. 이름을 하나로 모으는 것은 각 서비스 이미지를 건드려야
+> 하는 일이라 아직 안 했다.
+
+`PDF2BPMN_FACADE_KEY` 는 **모델 키와 다른 값**으로 정한다. 아무 난수면 된다 —
+컨테이너와 백엔드가 서로를 확인하는 용도일 뿐이다. (예전 설치본은 이 값이
+모델 키와 글자까지 같았다. 그러면 이 파일을 읽을 수 있는 사람이 모델 키도
+읽는다.)
 
 **설치본의 `.env` 를 고치면 안 된다.** 그 파일은 manifest 의 checksum 에 묶여
 있어서, 한 글자만 바뀌어도 앱이 `runtime.environment_checksum_mismatch` 로
@@ -113,8 +129,15 @@ function New-Secret { $b = New-Object byte[] 48; $rng.GetBytes($b); [Convert]::T
 
 [Environment]::SetEnvironmentVariable('AUTH_JWT_SECRET',  (New-Secret), 'User')
 [Environment]::SetEnvironmentVariable('AUTH_ROLE_SECRET', (New-Secret), 'User')
-# pdf2bpmn 의 공유 시크릿. 릴리스 담당자에게 받는다.
-[Environment]::SetEnvironmentVariable('PDF2BPMN_FACADE_KEY', '<받은 값>', 'User')
+# pdf2bpmn 의 공유 시크릿. **모델 키를 재사용하지 마라.**
+[Environment]::SetEnvironmentVariable('PDF2BPMN_FACADE_KEY', (New-Secret), 'User')
+
+# 모델 키. 같은 값을 읽는 이름이 여럿이다(위 표의 주석 참고).
+$modelKey = '<발급받은 모델 키>'
+foreach ($n in 'OPENAI_API_KEY','LLM_API_KEY','ROBO_LLM_API_KEY',
+                'ROBO_EMBED_API_KEY','ROBO_SEARCH_LLM_API_KEY') {
+  [Environment]::SetEnvironmentVariable($n, $modelKey, 'User')
+}
 ```
 
 > 설정한 뒤 **로그아웃·재로그인하거나 Explorer 를 재시작**해야 아이콘으로 켠
@@ -170,6 +193,7 @@ docker compose --project-name robo-architect-desktop down
 |---|---|
 | 앱이 아예 안 뜬다 | `desktop.log` 의 `backend.status`. `runtime.environment_checksum_mismatch` 면 설치본 `.env` 를 누가 고친 것이다 |
 | 첫 기동에서 `docker.image_archive_missing` | `robo-images.tar` 를 안 옮겼다. 설치 §3 |
+| 기동에서 `runtime.credentials_missing` | 오류가 댄 이름을 환경변수로 넣는다. 설치 §3 |
 | 프로젝트 생성이 안 된다 | `AUTH_ROLE_SECRET` |
 | 매번 로그인이 풀린다 | `AUTH_JWT_SECRET` |
 | 컨테이너는 healthy 인데 화면이 죽어 있다 | **healthcheck 는 준비의 근거가 아니다.** 앱의 서비스 상태 표시를 본다 — 기능 프로브가 따로 잰다 |

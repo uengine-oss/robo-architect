@@ -243,7 +243,7 @@ Legacy 탭의 Navigator는 Catalog의 전체 그래프 응답을 받은 뒤 채�
 
 - **pdf2bpmn facade 401.** `PDF2BPMN_FACADE_KEY` 가 백엔드 환경에 없어 3건 모두 401 → 네이티브 폴백. **화면에서는 구분되지 않는다.** 컨테이너 쪽 `config/pdf2bpmn.env` 의 `FACADE_API_KEY` 는 값이 **OpenAI 키와 동일**하다(둘 다 `sk-proj-…` 164자) — 공유 시크릿으로 모델 키를 재사용한 것이라 납품 전 정리가 필요하다.
 - **`source_pdf_name` 오기.** 프로세스 3개가 내용은 각각 다른 문서인데 출처가 전부 첫 PDF 로 찍힌다. 본문 접지는 문서별로 정확하다(구절 45건, 29/29) — 이름표만 틀린다.
-- **`GET /api/figma-binding/failures` 가 백엔드를 통째로 멈춘다.** 실패가 1건이라도 있으면 조기 반환 경로를 안 타고 `fetch_classifier_view` 로 들어가는데, 그 안에 `OPTIONAL MATCH (u:UI {id: uid})<-[*1..30]-(c0:Command)` 가 있다. 관계 타입 제한 없는 30홉 역방향 경로를 실패 UI 마다 도는 것이라 끝나지 않는다. 게다가 `get_failures` 가 `async def` 인데 동기 함수를 스레드풀 없이 직접 부르므로 **uvicorn 이벤트 루프가 통째로 막힌다** — 한 요청이 앱 전체를 세운다. 실패가 0건일 때는 조기 반환해서 드러나지 않았다. **실패가 남아 있는 동안 History 탭·실패 패널을 열지 말 것.**
+- **`GET /api/figma-binding/failures` 가 백엔드를 통째로 멈춘다.** → **2026-09-23 고쳤다(§6-B).**
 - **`FigmaBinding.lastSyncAt` 이 갱신되지 않는다.** 프레임 28장이 올라간 뒤에도 `null` 이었다.
 
 ### 해소된 결함
@@ -260,7 +260,7 @@ Legacy 탭의 Navigator는 Catalog의 전체 그래프 응답을 받은 뒤 채�
 
 **2026-09-23 재검증.** 그래프를 비우면 `FigmaBinding` 노드도 사라지므로 플러그인을 다시 연결해야 한다(모달의 "바인딩된 Figma 다큐먼트가 없습니다" 가 그때는 정상 상태다). 재연결 후 스토리보드 페이지 생성과 프레임 push 가 동작했다 — 프레임 28/29. 초판이 적어둔 "플러그인이 연결됐는데 UI 가 하나도 안 생긴다" 의 원인은 플러그인이 아니라 **와이어프레임 렌더러 부재**였다(§1-A).
 
-싱크 실패를 조사할 때 `/api/figma-binding/failures` 를 부르면 백엔드가 멈춘다(§4-A). 실패 목록은 그래프에서 직접 읽는 편이 안전하다 — `MATCH (u:UI) WHERE u.figmaSyncStatus = 'failed' RETURN u.displayName, u.figmaSyncLastError`.
+싱크 실패 조회(`/api/figma-binding/failures`)가 백엔드를 멈추던 문제는 §6-B 에서 고쳤다. 그래프에서 직접 읽어도 된다 — `MATCH (u:UI) WHERE u.figmaSyncStatus = 'failed' RETURN u.displayName, u.figmaSyncLastError`.
 
 ## 6. 실행 방법 (Windows PowerShell)
 
@@ -366,8 +366,14 @@ win-unpacked        3,233 MB
 
 ```text
 1. ROBO_IMAGE_ARCHIVE                                  절대 경로로 명시
-2. %APPDATA%obo-architect-desktopuntimeobo-images.tar   ← 권장
-3. <설치 폴더>esourcesuntimeobo-images.tar              ← 옛 구성 하위 호환
+2. %APPDATA%
+obo-architect-desktop
+untime
+obo-images.tar   ← 권장
+3. <설치 폴더>
+esources
+untime
+obo-images.tar              ← 옛 구성 하위 호환
 ```
 
 어디서 찾든 `imageArchiveSha256` 으로 무결성을 검사하므로 자리가 늘어도 신뢰는
@@ -395,7 +401,9 @@ manifest 의 `images` 가 **10개**다(wireframe 포함), `pdf2bpmn` 은 `c7992c
 스택을 내리고 **매니페스트의 이미지 10개를 전부 삭제한 뒤** 설치 파일로 새로 깔았다.
 
 ```text
-07:33:35  docker.image_archive.located    %APPDATA%\…untimeobo-images.tar  ← 패키지 밖
+07:33:35  docker.image_archive.located    %APPDATA%\…
+untime
+obo-images.tar  ← 패키지 밖
 07:33:35  docker.image_archive.verifying  missingCount=10
 07:37:35  docker.image_archive.loaded     count=10        (약 4분)
 07:38:12  docker.stack.ready
@@ -426,6 +434,148 @@ releaseChannel: internal-test   authEnforced: false   authProvider: none
 `robo-workspace/.env` 가 `AUTH_ENFORCE=false` + `ROBO_RELEASE_CHANNEL=internal-test`
 라서 릴리스의 납품 관문(`AUTH_ENFORCE=true` 이고 `AUTH_PROVIDER` 가 none 이 아닐 것)
 을 우회한 빌드다. 전달본은 그 값들을 채우고 다시 구워야 한다.
+
+## 6-B. 납품 자산에서 비밀을 걷어냈다 (2026-09-23)
+
+### 설치본 안에 개발사 모델 키가 있었다
+
+설치본의 `config/*.env` 를 전수로 훑었다. 값은 찍지 않고 sha256 앞 10자리만
+떠서 비교했다.
+
+```text
+analyzer.env     ROBO_LLM_API_KEY · ROBO_EMBED_API_KEY · ROBO_SEARCH_LLM_API_KEY
+catalog.env      LLM_API_KEY · OPENAI_API_KEY
+fabric.env       OPENAI_API_KEY
+pdf2bpmn.env     OPENAI_API_KEY · FACADE_API_KEY
+architect/.env   LLM_API_KEY · OPENAI_API_KEY
+                 → 전부 같은 값 (164자, fp d08eda6f)
+```
+
+**5개 파일 · 7개 이름 · 같은 키 하나.** 설치 파일을 받은 사람은 누구나 읽을 수
+있다.
+
+### `credentialNames` 를 반대로 읽고 있었다
+
+`app-operations.md` 초판에 *"릴리스에 일부러 굽지 않는다(`credentialNames`)"*
+라고 적어뒀는데 **틀렸다.** 그 목록은 제외 목록이 아니라 **검증 목록**이다.
+
+```powershell
+foreach($name in @($contract.credentialNames)){      # robo.ps1:140
+  if(@($contract.placeholderValues)-contains$value.ToLowerInvariant()){
+    $errors+="Packaged runtime credential still uses a placeholder: $name"
+  }
+}
+```
+
+"placeholder 말고 **진짜 값**을 넣어라" 는 뜻이다. 즉 이 관문은 키가 빠지는
+것을 막은 게 아니라 **진짜 키가 들어가도록 강제**하고 있었다. 실제로 포장하는
+`Write-ReleaseEnvironmentSnapshots` 는 `.env` 값을 그대로 베껴 썼다.
+
+`FACADE_API_KEY` 는 그 목록에조차 없었다.
+
+### 고친 모양 — 굽지 않고, 넘겨주고, 없으면 멈춘다
+
+| 어디 | 무엇 |
+|---|---|
+| `robo.ps1` | `credentialNames` 의 이름은 **파일에 쓰지 않는다**. 대신 매니페스트 `credentialNames` 에 **이름만** 싣는다 |
+| `release-environment.json` | `FACADE_API_KEY` 를 pdf2bpmn scope 에서 뺀다 — compose 가 `PDF2BPMN_FACADE_KEY` 로 채운다 |
+| `compose.yml` | 서비스별 `environment:` 로 호스트 환경변수를 넘긴다. `environment:` 가 `env_file:` 을 이긴다 |
+| `docker-stack.ts` | 기동에서 `assertCredentialsPresent` — 없으면 **이름을 대고 멈춘다** |
+| `.env.example` | 비밀 취급 방침을 머리에 못 박고, `FACADE_API_KEY` 항목을 없앴다 |
+
+부수 효과가 하나 있는데 이쪽이 오히려 본질이다 — **환경 스냅샷 checksum 이
+이제 비밀 없는 파일에 대해 계산된다.** 지금까지 매니페스트가 무결성을 보증하던
+그 파일이 키를 담고 있었다.
+
+`assertCredentialsPresent` 는 이미지 적재 **앞**에 둔다. 4분짜리 tar 를 다 풀고
+나서 "키가 없다" 고 말하는 것은 사람 시간을 버리는 일이다.
+
+경고가 아니라 정지인 이유는 058 의 근거 그대로다 — 키가 비어도 서비스는 뜨고,
+healthy 를 보고하고, 분석도 "완료" 라고 말한다. 다만 결과가 빈다.
+
+### 실측
+
+```text
+docker compose config     FACADE_API_KEY=<PDF2BPMN_FACADE_KEY 값>   ← 이름 통합 확인
+                          PARSER_REPAIR_AGENT_API_KEY=""            ← 미설정 시 빈 값, 경고 없음
+                          compose 문법 OK
+tests/environment-contract.ps1   통과 — 포장된 7개 파일 어디에도 fixture 키 값이 없다
+```
+
+### 이 과정에서 드러난 것 — 테스트가 5일째 빨간 채였다
+
+`tests/environment-contract.ps1` 은 **내 변경 이전부터 실패하고 있었다.** 세 곳이
+현실과 어긋나 있었다.
+
+| 깨진 자리 | 언제 | 왜 |
+|---|---|---|
+| `.env.example` 오류 개수 `-ne 2` | `18a8a99` (09-18) | AUTH 관문이 하나 늘어 3개가 됐다 |
+| `release.env` 픽스처에 `AUTH_ENFORCE` 없음 | `18a8a99` (09-18) | 같은 커밋이 요구만 더하고 픽스처를 안 채웠다 |
+| 매니페스트 `schemaVersion -ne 3` | `a785ebf` | 스키마가 4 로 올랐다 |
+
+세 곳 모두 **기대값을 숫자로 박아둔 자리**였다. 개수 검사는 이름 검사로 바꾸고,
+스키마는 앱의 `MANIFEST_SCHEMA_VERSION` 을 읽어 맞추게 했다. 그래야 다음에 올릴
+때 이 테스트가 막지 않는다.
+
+> **이 테스트가 이렇게 오래 빨간 것 자체가 신호다.** 릴리스 관문을 지키라고
+> 있는 테스트인데 아무도 돌리지 않았다. 지금은 통과하지만 CI 에 걸려 있지
+> 않으므로 다시 조용히 썩을 수 있다.
+
+`tests/process-ownership.ps1` 은 여전히 실패한다 — 이 기계의 `robo-workspace/.env`
+에 `ROBO_NEO4J_PASSWORD` 가 없어서다. 이번 변경과 무관한 로컬 설정 문제다.
+
+## 6-C. `/failures` 가 앱을 멈추던 문제 (2026-09-23 고침)
+
+### 두 겹이었다
+
+```python
+# router.py — 이벤트 루프를 막는다
+async def get_failures(request: Request):
+    return service.list_failures()        # 전부 동기 Neo4j 호출
+
+# repository.py — 끝나지 않는 탐색
+OPTIONAL MATCH (u:UI {id: uid})<-[*1..30]-(c0:Command)
+```
+
+`async def` 안에서 동기 호출을 하면 uvicorn 이벤트 루프가 통째로 막힌다 —
+**요청 하나가 앱 전체를 세운다.** 그 요청이 하필 끝나지 않는 탐색이었다.
+
+### 같은 함정을 이미 한 번 피한 코드가 옆에 있었다
+
+`storyboard_resolver.resolve_storyboard_for_ui` 의 docstring 이 바로 이
+실수를 적어 두고 있다 — "`WITH` 를 거친 값을 다시 패턴 대상으로 열면 인접
+탐색이 아니라 경로 열거가 된다", 측정으로 **깊이 10 에서 3.3초, 12 에서 19.3초,
+30 에서는 서버 임시 공간을 소진하고 죽었다**.
+
+`fetch_classifier_view` 는 그 탐색을 인라인으로 **다시 짰다.** 그것도 더 나쁘게 —
+관계 타입 제한이 아예 없었다(resolver 는 10종으로 제한한다).
+
+### 조용한 오답도 같이 있었다
+
+```cypher
+UNWIND $ids AS uid
+...
+WITH uid, c LIMIT 1        -- id 별이 아니라 스트림 전체에 걸린다
+```
+
+몇 건을 넘기든 **"스토리보드 보관됨" 판정을 받을 수 있는 UI 는 최대 한 건**
+이었다. 분류기는 없는 키를 `retryable` 로 흘려보내므로 나머지는 재시도 가능으로
+잘못 표시됐고, 이것은 오류를 내지 않는다.
+
+### 고친 모양
+
+`fetch_classifier_view` 가 직접 걷지 않고 `storyboard_resolver` 에 맡긴다.
+보관된 스토리보드가 0건이면 탐색을 아예 안 한다. 라우터는 `async def` 를
+떼어 FastAPI 가 threadpool 로 넘기게 했다.
+
+**threadpool 로 넘겨도 프로젝트 graph 는 따라간다** — 미들웨어가 건
+`neo4j_override` ContextVar 를 anyio 가 워커 스레드로 복사한다. 그냥 믿지 않고
+번들 런타임으로 쟀다(anyio 4.12.0 / starlette 0.50.0 / fastapi 0.127.0,
+`propagated: True`). 이게 아니었다면 조회가 `.env` 기본 graph 로 떨어져 **다른
+프로젝트의 실패 목록**을 보여줬을 것이다.
+
+회귀 테스트 6개를 더했다(`test_classifier_view.py`). 옛 질의가 정말 걸리는지
+확인해 **헛도는 테스트가 아님**을 봤다. figma_binding 스위트 24개 통과.
 
 ## 7. 안전한 재현·릴리스 체크리스트
 
