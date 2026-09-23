@@ -122,6 +122,23 @@ services:
       DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "true"
       MINDSDB_URL: http://mindsdb:47334
       MINDSDB_REPLACE_LOCALHOST: host.docker.internal
+      # ── 모델 키는 이미지에도 설치본에도 굽지 않는다 ──────────────────
+      #
+      # 예전에는 `config/*.env` 안에 값이 그대로 들어 있었다. 릴리스가
+      # `robo-workspace/.env` 를 베껴 썼기 때문이다. 2026-09-23 설치본을
+      # 감사해 보니 **같은 OpenAI 키가 5개 파일 7개 이름으로** 실려 있었다 —
+      # 고객에게 나가는 설치 파일 안에 개발사 모델 키가 있었다는 뜻이다.
+      #
+      # 이제 릴리스가 그 이름들을 빼고(`robo.ps1`
+      # `Write-ReleaseEnvironmentSnapshots`), 설치한 사람이 환경변수로 넣은
+      # 값을 **여기서** 컨테이너로 넘긴다. compose 는 `environment:` 가
+      # `env_file:` 을 이기므로, 옛 설치본의 파일 값이 남아 있어도 이쪽이
+      # 우선한다.
+      #
+      # `:-` 를 붙여 비어 있을 때 경고 없이 빈 값으로 두되, **비었다는 사실은
+      # 앱이 기동에서 이름을 대고 말한다**(`docker-stack.ts` 의
+      # `assertCredentialsPresent`). 여기서 조용히 비는 것이 제일 나쁘다.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:
       graph-bolt:
         condition: service_healthy
@@ -162,6 +179,9 @@ services:
       # (catalog `graph/connection.py` · fabric `registry/connection.py`).
       # 한쪽만 들어가면: 고침만 = 화면이 403, 스위치만 = 지금처럼 조용히 무시.
       CATALOG_ALLOW_NEO4J_HEADER_OVERRIDE: "true"
+      # 모델 키는 굽지 않고 호스트 환경에서 받는다 — 근거는 `fabric` 참고.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
     depends_on:
       graph-bolt:
         condition: service_healthy
@@ -201,6 +221,10 @@ services:
       NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS}
       ROBO_CATALOG_BASE_URL: http://catalog:5503/robo
       ROBO_DATA_DIR: /data
+      # 모델 키는 굽지 않고 호스트 환경에서 받는다 — 근거는 `fabric` 참고.
+      ROBO_LLM_API_KEY: ${ROBO_LLM_API_KEY:-}
+      ROBO_EMBED_API_KEY: ${ROBO_EMBED_API_KEY:-}
+      ROBO_SEARCH_LLM_API_KEY: ${ROBO_SEARCH_LLM_API_KEY:-}
     volumes:
       - shared_data:/data
     depends_on:
@@ -232,6 +256,9 @@ services:
     environment:
       SERVER_PORT: "8081"
       ROBO_DATA_DIR: /data
+      # 모델 키는 굽지 않고 호스트 환경에서 받는다 — 근거는 `fabric` 참고.
+      # 복구 에이전트를 안 쓰면 비어 있어도 된다(파싱 자체는 LLM 을 안 탄다).
+      PARSER_REPAIR_AGENT_API_KEY: ${PARSER_REPAIR_AGENT_API_KEY:-}
     volumes:
       - shared_data:/data
     healthcheck:
@@ -321,6 +348,18 @@ services:
       - ./pdf2bpmn/facade.py:/facade/facade.py:ro
     environment:
       PYTHONIOENCODING: utf-8
+      # 모델 키는 굽지 않고 호스트 환경에서 받는다 — 근거는 `fabric` 참고.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # **facade 의 공유 시크릿은 모델 키가 아니다.**
+      # 예전 설치본에서는 이 값이 `OPENAI_API_KEY` 와 **글자 하나까지 같았다**
+      # (실측 fp 일치). 공유 시크릿으로 모델 키를 재사용한 것이라, 이 파일을
+      # 읽을 수 있는 사람은 모델 키도 읽는다.
+      #
+      # 이름도 하나로 모은다. Architect 쪽은 `PDF2BPMN_FACADE_KEY`, 컨테이너
+      # 쪽은 `FACADE_API_KEY` 라 **둘이 같아야 하는데 이름이 달랐고**, 그래서
+      # 한쪽만 채우면 401 이 나고 Architect 는 조용히 폴백으로 내려갔다.
+      # 이제 설치한 사람은 `PDF2BPMN_FACADE_KEY` 하나만 정하면 된다.
+      FACADE_API_KEY: ${PDF2BPMN_FACADE_KEY:-}
     ports:
       # **루프백에만 연다.** 0.0.0.0 이면 같은 망의 아무나 이 LLM 을 쓴다.
       - "127.0.0.1:${ROBO_PDF2BPMN_PORT}:8080"

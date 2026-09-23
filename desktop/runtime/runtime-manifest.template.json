@@ -41,6 +41,7 @@
     "app": "architect/app",
     "entrypoint": "api.main:app"
   },
+  "credentialNames": [],
   "environment": {
     "analyzer": {
       "file": "config/analyzer.env",

@@ -90,6 +90,17 @@ export interface RuntimeManifest {
     "analyzer" | "catalog" | "fabric" | "parser" | "gateway" | "pdf2bpmn" | "architect",
     { file: string; sha256: string }
   >;
+  /**
+   * 이 릴리스가 **일부러 굽지 않은** 비밀의 이름들. 값은 없다.
+   *
+   * 예전 릴리스는 `robo-workspace/.env` 의 값을 `config/*.env` 에 그대로
+   * 베껴 넣었다. 그래서 같은 OpenAI 키가 설치본 안에 5개 파일·7개 이름으로
+   * 들어 있었다(2026-09-23 감사). 이제 릴리스가 빼고, 설치한 사람이
+   * 환경변수로 넣는다 — 무엇을 넣어야 하는지는 이 목록이 말해 준다.
+   *
+   * 옛 매니페스트에는 없는 필드다. 없으면 검사도 없다(하위 호환).
+   */
+  credentialNames?: string[];
   source: Record<string, string>;
 }
 
@@ -325,6 +336,36 @@ async function ensureEnvironmentSnapshots(
     releaseId: manifest.releaseId,
     count: Object.keys(manifest.environment).length,
   });
+}
+
+/**
+ * 매니페스트가 이름을 댄 비밀이 실제로 환경에 있는지 본다.
+ *
+ * **경고로 끝내지 않는 이유.** 키가 비면 서비스는 뜬다. 떠서 healthy 를
+ * 보고하고, 분석도 "완료" 라고 말한다 — 다만 결과가 비거나 폴백으로
+ * 내려간다. 이 앱이 반복해서 밟은 실패 모양이 정확히 그것이라(058:
+ * "healthcheck 는 준비의 근거가 아니다"), 여기서 이름을 대고 멈춘다.
+ * `runtime.environment_checksum_mismatch` 와 같은 급으로 다룬다.
+ */
+function assertCredentialsPresent(manifest: RuntimeManifest): void {
+  const names = manifest.credentialNames ?? [];
+  if (names.length === 0) return;
+  const missing = names.filter((n) => !(process.env[n] ?? "").trim());
+  if (missing.length === 0) {
+    log("info", "runtime.credentials.verified", {
+      releaseId: manifest.releaseId,
+      count: names.length,
+    });
+    return;
+  }
+  // 값은 절대 찍지 않는다 — 있는 것의 이름조차 굳이 남길 이유가 없다.
+  log("error", "runtime.credentials_missing", { names: missing });
+  throw new Error(
+    `runtime.credentials_missing: 이 릴리스는 비밀을 굽지 않는다. ` +
+      `다음 환경변수를 채우고 다시 실행하라 — ${missing.join(", ")}. ` +
+      `설정 예: [Environment]::SetEnvironmentVariable('${missing[0]}', '<값>', 'User') ` +
+      `(설정 뒤 로그아웃·재로그인해야 아이콘으로 켠 앱에 반영된다)`,
+  );
 }
 
 async function inspectImageId(image: string): Promise<string | null> {
@@ -603,6 +644,9 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   const root = runtimeDirectory();
   const manifest = readManifest(root);
   await ensureEnvironmentSnapshots(root, manifest);
+  // 이미지를 적재하기 **전에** 본다. 4분짜리 tar 적재를 끝내고 나서
+  // "키가 없다" 고 말하는 것은 사람 시간을 버리는 일이다.
+  assertCredentialsPresent(manifest);
   await ensureDockerDaemon();
   await ensureImages(root, manifest);
 
