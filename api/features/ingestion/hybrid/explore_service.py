@@ -39,6 +39,12 @@ from api.features.ingestion.hybrid.mapper.cross_process_arbitrator import (
     ClaimEntry,
     arbitrate_rule_home,
 )
+from api.features.ingestion.hybrid.mapper.module_retriever import (
+    REASON_NO_ANALYSIS_LINK,
+    REASON_NO_SUMMARIES,
+    last_empty_reason,
+    reset_empty_reason,
+)
 from api.features.ingestion.hybrid.mapper.rule_context import build_rule_contexts
 from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     delete_task_rule_mapping,
@@ -363,6 +369,8 @@ async def explore_process(
     Sequential by default (concurrency=1) so per-task SSE events arrive in
     `sequence_index` order — matches user's mental model of "task 1 → 2 → 3 ...".
     """
+    # 지난 탐색의 이유가 이번 결과에 붙지 않게 한다.
+    reset_empty_reason()
     if not await _ensure_session_rules(session_id, sink):
         return {"explored": 0, "cached": 0, "errors": 1, "error": "No mapping candidates"}
     snap = fetch_session_snapshot(session_id)
@@ -414,12 +422,60 @@ async def explore_process(
 
     await asyncio.gather(*[_one(t["id"]) for t in tasks_in_order])
 
+    # **0 으로 끝났으면 왜인지 말한다.**
+    #
+    # 여기까지 오는 길은 여럿인데 화면에는 전부 "매핑 0" 한 모양으로 보인다. 그러면
+    # 사용자가 할 수 있는 판단은 "기능이 고장났다" 뿐이다 — 2026-09-28 에 실제로
+    # 그렇게 보고됐고, 실측한 원인은 **문서와 코드의 도메인이 달랐던 것**이었다
+    # (BPM 은 인사, 분석 짝은 수납 코드). 기능은 멀쩡했다.
+    if counters["total_mappings"] == 0:
+        await sink({
+            "type": "ProcessExploreNoMatches",
+            "process_id": process_id,
+            "process_name": process_dict.get("name", ""),
+            **_no_match_diagnosis(),
+        })
+
     await sink({
         "type": "ProcessExploreEnd",
         "process_id": process_id,
         **counters,
     })
     return counters
+
+
+def _no_match_diagnosis() -> dict:
+    """매핑이 0일 때 **사람이 다음에 무엇을 할지** 고를 수 있게 한다.
+
+    `reason` 은 화면이 분기할 수 있는 코드이고, `message` 는 그대로 보여도 되는
+    문장이다. 둘을 함께 주는 이유: 코드만 주면 화면이 문장을 또 만들어야 하고,
+    문장만 주면 화면이 분기할 수 없다.
+    """
+    reason = last_empty_reason()
+    if reason == REASON_NO_ANALYSIS_LINK:
+        return {
+            "reason": reason,
+            "message": (
+                "이 프로젝트에 분석 결과가 연결돼 있지 않습니다. "
+                "프로젝트 설정에서 분석 짝을 지정한 뒤 다시 탐색하세요."
+            ),
+        }
+    if reason == REASON_NO_SUMMARIES:
+        return {
+            "reason": reason,
+            "message": (
+                "연결된 분석 그래프에 모듈 요약이 없습니다. "
+                "코드 분석을 다시 돌려야 룰을 매핑할 수 있습니다."
+            ),
+        }
+    return {
+        "reason": "no_module_above_threshold",
+        "message": (
+            "문서의 업무와 연결된 코드가 서로 다른 영역으로 보입니다 — "
+            "닮은 모듈을 하나도 찾지 못했습니다. "
+            "이 프로젝트의 분석 짝이 이 문서의 업무를 담고 있는 코드인지 확인하세요."
+        ),
+    }
 
 
 # =============================================================================

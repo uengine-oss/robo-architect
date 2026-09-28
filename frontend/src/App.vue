@@ -38,6 +38,7 @@ import LauncherView from '@/features/desktop-launcher/LauncherView.vue'
 import LoginView from '@/features/auth/ui/LoginView.vue'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import { useCollabStore } from '@/features/collab/collab.store.js'
+import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 // 034 US7 — 설계 미반영 User Story 식별 + 반영 프롬프트.
 import DesignReflectPrompt from '@/features/requirements/ui/DesignReflectPrompt.vue'
@@ -398,9 +399,40 @@ const collab = useCollabStore()
 //
 // 기다리는 값이 `checking` 이 아니라 `status` 인 이유: `checking` 은 확인이
 // **시작되기 전에도** false 다. 그걸로 막으면 아무것도 안 막힌다.
+// **첫 프로젝트가 정해지면 한 번 다시 읽는다.**
+//
+// 화면들은 `onMounted` 에서 한 번 읽는다. 그런데 그 시점에는 아직
+//   ① 토큰 검증(`auth.refresh`)이 안 끝났거나          → 401
+//   ② 프로젝트가 안 정해졌다(`/api/projects` 응답 전)   → 403
+// 둘 다 비동기라 **네비게이터의 첫 조회가 먼저 나간다.** 2026-09-28 실측:
+//
+//     07:29:23  GET /api/contexts                403
+//     07:29:23  GET /api/ingest/hybrid/sessions  403
+//     07:29:23  GET /api/projects                200   ← 프로젝트는 이 뒤에 정해진다
+//
+// 그리고 **아무도 다시 읽지 않는다.** 데이터 버스는 인제스천 완료·초기화에만
+// 울리기 때문이다. 그래서 앱을 다시 켜면 트리가 빈 채로 남고, 사용자가 무언가
+// 건드려야 그제서야 채워진다 — "재실행하면 process·design 이 조회가 안 된다".
+//
+// `projects.store.load()` 의 "첫 진입이라 아직 아무 데이터도 안 읽었다" 는 주석이
+// 이 전제를 틀리게 적고 있었다. 읽었고, 403 이었다.
+//
+// **프로젝트를 바꾸는 경우는 여기서 다루지 않는다** — `select()` 가
+// `location.reload()` 로 통째로 다시 띄운다. 여기는 **처음 정해지는 순간** 한 번뿐이다.
+let firstProjectSeen = false
 watch(
   () => (auth.status !== 'unknown' && (auth.authenticated || !auth.enforced)) && auth.projectGraph,
-  (graph) => { if (graph) collab.watch(graph); else collab.close() },
+  (graph) => {
+    if (graph) {
+      collab.watch(graph)
+      if (!firstProjectSeen) {
+        firstProjectSeen = true
+        emitDataChanged('project-ready')
+      }
+    } else {
+      collab.close()
+    }
+  },
   { immediate: true },
 )
 onUnmounted(() => collab.close())

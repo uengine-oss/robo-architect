@@ -60,8 +60,13 @@ export const useProjectsStore = defineStore('projects', () => {
       // 놓는다 — 백엔드가 멀쩡한데 죽은 것처럼 보인다. 시크릿 창으로 두 번째
       // 계정에 들어가자마자 이 자리에 걸렸다.
       //
-      // 새로고침하지 않는다. 첫 진입이라 아직 아무 데이터도 안 읽었고, 여기서
-      // 새로고침하면 로그인 직후 화면이 한 번 더 깜빡인다.
+      // 새로고침하지 않는다 — 로그인 직후 화면이 한 번 더 깜빡인다.
+      //
+      // ⚠ 예전 주석은 "첫 진입이라 아직 아무 데이터도 안 읽었다" 고 적었는데
+      // **틀렸다.** 화면들의 `onMounted` 조회는 이 응답을 기다리지 않고 먼저
+      // 나가고, 프로젝트가 없으니 403 을 받는다(2026-09-28 실측). 그래서 여기서
+      // 고른 뒤 누군가 다시 읽어야 한다 — `App.vue` 가 프로젝트가 처음 정해지는
+      // 순간 `emitDataChanged('project-ready')` 로 한 번 울린다.
       if (!auth.projectGraph && projects.value.length) {
         auth.setProject(projects.value[0].graph)
       }
