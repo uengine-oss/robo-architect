@@ -26,7 +26,7 @@ import {
   type RuntimeState,
 } from "../shared/ipc-contract";
 
-import { ensureDataDirs } from "./data-dir";
+import { ensureDataDirs, getLogsDir } from "./data-dir";
 import { initLogging, log, revealLogs } from "./logging";
 import { RuntimeRegistry } from "./runtime-state";
 import { RUNTIME_CHANNELS } from "../shared/runtime-contract";
@@ -83,7 +83,15 @@ protocol.registerSchemesAsPrivileged([
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  console.log("single-instance.already_running — exiting");
+  // 파일 로거는 아직 초기화 전이라 콘솔뿐인데, **콘솔 쓰기는 던질 수 있다**
+  // (부모 프로세스가 먼저 끝나면 stdout 이 EPIPE 를 낸다 — `logging.ts` 참고).
+  // 종료하려던 자리에서 예외로 죽으면 "두 번째 인스턴스가 조용히 나간다" 가
+  // "오류 대화상자가 뜬다" 로 바뀐다.
+  try {
+    console.log("single-instance.already_running — exiting");
+  } catch {
+    /* 두 번째 인스턴스는 어차피 나간다 */
+  }
   app.quit();
   // Note: no `process.exit` — Electron tears down on `app.quit` and we
   // explicitly skip the rest of the wiring below in the second instance.
@@ -487,6 +495,36 @@ async function bootstrap(): Promise<void> {
   await ensureDataDirs();
   initLogging();
   log("info", "app.ready", { appVersion: app.getVersion() });
+
+  // **죽더라도 기록은 남긴다.**
+  //
+  // 처리기가 없으면 Electron 이 기본 대화상자("A JavaScript error occurred in the
+  // main process")를 띄우고 끝난다 — `desktop.log` 에는 **아무것도 안 남는다.**
+  // 사용자가 스크린샷을 보내 주지 않으면 무슨 일이 있었는지 알 길이 없다.
+  //
+  // EPIPE 는 삼킨다. 앱을 띄운 부모 프로세스가 먼저 끝나면 물려받은 stdout 이
+  // 끊기고, 그 뒤 쓰기가 EPIPE 를 낸다. **앱의 잘못이 아니고 기능에도 영향이
+  // 없다** — 이것 때문에 죽는 것이 오히려 결함이다(2026-09-28 실측).
+  process.on("uncaughtException", (error: NodeJS.ErrnoException) => {
+    const epipe = error?.code === "EPIPE";
+    log(epipe ? "warn" : "error", "app.uncaught_exception", {
+      code: error?.code,
+      message: error?.message,
+      stack: error?.stack?.split("\n").slice(0, 8).join(" | "),
+      swallowed: epipe,
+    });
+    if (epipe) return;
+    // 그 밖의 예외는 사람에게 보이고 끝낸다 — 기본 동작과 같되 기록이 남는다.
+    try {
+      dialog.showErrorBox(
+        "Robo Architect 에 오류가 발생했다",
+        `${error?.message ?? error}\n\n자세한 내용은 로그를 보라:\n${getLogsDir()}`,
+      );
+    } catch {
+      /* 대화상자를 못 띄우는 상황이라도 위 로그는 남았다 */
+    }
+    app.exit(1);
+  });
 
   // Set macOS Dock icon.
   if (process.platform === "darwin" && app.dock) {
