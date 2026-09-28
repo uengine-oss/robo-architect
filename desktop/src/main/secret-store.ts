@@ -22,6 +22,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getDataDir } from "./data-dir";
+import { SecretUndecryptableError } from "./secret-errors";
+
+export { SecretUndecryptableError } from "./secret-errors";
 
 const SECRETS_SUBDIR = "secrets";
 
@@ -60,12 +63,20 @@ export async function setSecret(id: string, value: string): Promise<void> {
 
 export async function getSecret(id: string): Promise<string | null> {
   ensureUsable();
+  let cipher: Buffer;
   try {
-    const cipher = await fs.promises.readFile(secretFile(id));
-    return safeStorage.decryptString(cipher);
+    cipher = await fs.promises.readFile(secretFile(id));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
+  }
+  try {
+    return safeStorage.decryptString(cipher);
+  } catch (err) {
+    // 파일을 읽는 것과 푸는 것을 나눈 이유: 예전에는 한 `try` 안에 있어서 **없는
+    // 파일과 못 여는 파일이 같은 자리에서** 갈렸고, 못 여는 쪽이 드라이버 원문
+    // 그대로 위로 올라갔다.
+    throw new SecretUndecryptableError(id, secretFile(id), err);
   }
 }
 
