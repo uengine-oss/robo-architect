@@ -634,9 +634,61 @@ function composeEnvironment(
   };
 }
 
-function composeArgs(root: string, manifest: RuntimeManifest, command: string[]): string[] {
+/** 중앙 DB 모드에서 겹쳐 얹는 overlay. `compose.yml` 과 같은 자리에 있다. */
+const REMOTE_GRAPH_COMPOSE = "compose.remote-graph.yml";
+
+interface GraphTopology {
+  /** `central` 이면 그래프 저장소가 이 PC 밖에 있다. */
+  mode: "bundled" | "central";
+  /** central 일 때만 채워진다. */
+  host: string | null;
+  boltPort: number;
+  pgPort: number;
+}
+
+/**
+ * 그래프 저장소가 이 PC 안에 있는가, 사내 서버에 있는가.
+ *
+ * **왜 환경변수로 정하나.** 이 판정은 Compose 를 띄우기 **전에** 필요하다. 런처의
+ * 연결 선택 화면은 스택이 뜬 뒤에 나오므로 거기서 고를 수 없다 — 배포 모델은
+ * 설치 시점에 정해지는 것이고 사용자가 매번 고르는 것이 아니다.
+ *
+ * 기본은 `bundled` 다. 아무것도 설정하지 않으면 지금까지와 똑같이 동작한다.
+ */
+function graphTopology(): GraphTopology {
+  const raw = (process.env.ROBO_GRAPH_MODE ?? "").trim().toLowerCase();
+  const boltPort = Number.parseInt(process.env.ROBO_GRAPH_BOLT_PORT ?? "", 10) || 7687;
+  const pgPort = Number.parseInt(process.env.ROBO_GRAPH_PG_PORT ?? "", 10) || 5432;
+  if (raw !== "central") {
+    return { mode: "bundled", host: null, boltPort, pgPort };
+  }
+  const host = (process.env.ROBO_GRAPH_HOST ?? "").trim();
+  if (!host) {
+    throw new Error(
+      "runtime.graph_host_missing: ROBO_GRAPH_MODE=central 인데 ROBO_GRAPH_HOST 가 없다. " +
+        "중앙 그래프 서버의 주소를 지정하라 (예: 10.10.0.5). " +
+        "서버는 compose.central-db.yml 로 띄운다",
+    );
+  }
+  return { mode: "central", host, boltPort, pgPort };
+}
+
+function composeArgs(
+  root: string,
+  manifest: RuntimeManifest,
+  command: string[],
+  topology: GraphTopology = graphTopology(),
+): string[] {
   const composeFile = ensureRuntimeChild(root, manifest.composeFile, "composeFile");
-  return ["compose", "--project-name", COMPOSE_PROJECT_NAME, "--file", composeFile, ...command];
+  const files = ["--file", composeFile];
+  if (topology.mode === "central") {
+    // overlay 가 번들 DB 를 프로필로 빼고 Bolt 주소를 중앙으로 돌린다.
+    // **모든 compose 호출에 같이 실어야 한다** — 한 번이라도 빠지면 그 호출은
+    // 번들 DB 가 있다고 보고, `down` 이 남의 컨테이너를 건드리거나 `up` 이
+    // 로컬 DB 를 되살린다.
+    files.push("--file", ensureRuntimeChild(root, REMOTE_GRAPH_COMPOSE, "remoteGraphCompose"));
+  }
+  return ["compose", "--project-name", COMPOSE_PROJECT_NAME, ...files, ...command];
 }
 
 export async function startDockerStack(): Promise<DockerStackRuntime> {

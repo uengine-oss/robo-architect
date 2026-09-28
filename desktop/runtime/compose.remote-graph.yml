@@ -1,0 +1,69 @@
+# compose.remote-graph.yml — 그래프 저장소를 **중앙 서버**에서 쓸 때 겹쳐 얹는다.
+#
+#     docker compose -f compose.yml -f compose.remote-graph.yml up
+#
+# ## 왜 필요한가
+#
+# Electron 은 앱을 사용자 PC 로 내려보냈다. 그래서 각 PC 가 자기 `graph-db` 와 자기
+# 볼륨을 갖고, **프로젝트 공유가 성립하지 않는다** — 프로젝트·권한·공유는 모두
+# 그 저장소에 있다. 팀이 같은 설계를 함께 보려면 저장소가 하나여야 한다.
+#
+# 그래서 배포 모델을 둘로 나눈다.
+#
+#     bundled   compose.yml 만          PC 안에 DB 까지. 1인 도구.
+#     central   + 이 파일              DB 는 사내 서버 한 대(compose.central-db.yml),
+#                                      PC 는 나머지 8개 컨테이너만.
+#
+# msa-ez 의 `docker-compose.split.db.yml` / `.ap.yml` 과 같은 이유의 분할이다. 다만
+# 그쪽은 *서버 내부* 분할이었고 여기서는 **서버와 PC** 를 가른다.
+#
+# ## 왜 별도 파일인가 — 서비스 정의를 복사하지 않기 위해
+#
+# 8개 서비스를 두 파일에 적으면 반드시 한쪽이 뒤처지고, 뒤처진 쪽은 조용하다.
+# 그래서 기준은 `compose.yml` 하나이고 이 파일은 **차이만** 적는다.
+#
+# ## 필요한 변수
+#
+#     ROBO_GRAPH_HOST        중앙 DB 의 주소 (IP 또는 호스트명)
+#     ROBO_GRAPH_BOLT_PORT   기본 7687
+#
+# `docker-stack.ts` 가 중앙 모드에서 이 값들을 채운다.
+
+services:
+  # 번들 DB 를 띄우지 않는다. **지우는 것이 아니라 프로필로 뺀다** — 정의가 남아
+  # 있어야 `compose.yml` 하나로 돌리는 bundled 모드가 그대로 산다.
+  graph-db:
+    profiles: ["bundled-db"]
+  graph-bolt:
+    profiles: ["bundled-db"]
+
+  # `depends_on` 은 **다시 쓴다.** compose 는 매핑을 병합하므로 남길 것만 적으면
+  # `graph-bolt` 가 그대로 남는다. `!override` 로 통째로 바꿔야 한다.
+  #
+  # `!reset {}` 로 비우지 않는 이유: 그러면 graph 와 무관한 의존(mindsdb·fabric·
+  # catalog)까지 사라져 기동 순서가 흐트러진다. graph 만 빼고 나머지는 지킨다.
+  fabric:
+    depends_on: !override
+      mindsdb:
+        condition: service_healthy
+    environment:
+      NEO4J_URI: bolt://${ROBO_GRAPH_HOST}:${ROBO_GRAPH_BOLT_PORT:-7687}
+
+  catalog:
+    depends_on: !override
+      fabric:
+        condition: service_healthy
+    environment:
+      NEO4J_URI: bolt://${ROBO_GRAPH_HOST}:${ROBO_GRAPH_BOLT_PORT:-7687}
+
+  analyzer:
+    depends_on: !override
+      catalog:
+        condition: service_healthy
+    environment:
+      ROBO_NEO4J_URI: bolt://${ROBO_GRAPH_HOST}:${ROBO_GRAPH_BOLT_PORT:-7687}
+      NEO4J_URI: bolt://${ROBO_GRAPH_HOST}:${ROBO_GRAPH_BOLT_PORT:-7687}
+
+  # `gateway` 는 graph 를 직접 보지 않는다(analyzer·catalog·fabric·parser 만 본다).
+  # 그래서 여기서 손대지 않는다 — 건드리면 의존을 다시 적어야 하고, 그 목록이
+  # `compose.yml` 과 어긋나는 순간 조용히 틀려진다.

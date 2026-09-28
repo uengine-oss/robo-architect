@@ -1,0 +1,93 @@
+# compose.central-db.yml — **사내 서버 한 대**에서 그래프 저장소만 띄운다.
+#
+#     docker compose -f compose.central-db.yml up -d
+#
+# PC 마다 앱을 깔면 각자 자기 DB 를 갖게 되고 프로젝트 공유가 성립하지 않는다.
+# 팀이 같은 설계를 함께 보려면 이 파일을 서버 한 대에서 돌리고, 각 PC 는
+# `compose.yml` + `compose.remote-graph.yml` 로 나머지만 띄운다.
+#
+# 이 파일은 **앱이 돌리지 않는다.** 서버를 세우는 사람이 직접 돌린다. 그래서
+# 이미지 태그·자격증명을 환경에서 직접 받고, 없으면 기동을 거부한다.
+#
+# ## 필요한 변수 (`.env` 또는 셸)
+#
+#     ROBO_IMAGE_GRAPH_DB     설치본 매니페스트의 images.graphDb 와 **같은 값**
+#     ROBO_IMAGE_GRAPH_BOLT   images.graphBolt 와 같은 값
+#     ROBO_GRAPH_USER         PostgreSQL role 이자 Bolt 로그인 사용자
+#     ROBO_GRAPH_PASSWORD     그 비밀번호
+#     ROBO_GRAPH_DESIGN       설계 graph 이름
+#     ROBO_GRAPH_ANALYSIS     분석 graph 이름 — **설계와 달라야 한다**
+#     ROBO_GRAPH_BIND         공개할 주소. 아래 설명을 읽고 정한다.
+#     ROBO_GRAPH_BOLT_PORT    기본 7687
+#     ROBO_GRAPH_PG_PORT      기본 5432
+#
+# 이미지 태그를 설치본 매니페스트와 맞추는 것이 중요하다. 다르면 게이트웨이와
+# 앱이 다른 스키마를 가정하게 되고, 그 어긋남은 기동이 아니라 **첫 질의**에서
+# 드러난다. 매니페스트의 `imageIds` 로 대조하는 것이 가장 확실하다.
+#
+# ## `ROBO_GRAPH_BIND` — 기본값을 두지 않았다
+#
+# 설치본의 `compose.yml` 은 Bolt·PostgreSQL 을 `127.0.0.1` 에만 연다. 중앙 DB 는
+# 다른 PC 가 닿아야 하므로 그럴 수 없다. **그 순간 루프백이라는 1차 방어가
+# 없어지고 인증이 유일한 경계가 된다.**
+#
+# Bolt 는 평문 인증이다. 사내망이라도 아무 대역에 열지 말고, 필요한 대역만
+# 지정하라 — 예: `10.10.0.5`. 기본값을 두면 누군가 생각 없이 `0.0.0.0` 으로
+# 열게 되므로 **일부러 비워 두고 기동을 거부**한다.
+
+services:
+  graph-db:
+    image: ${ROBO_IMAGE_GRAPH_DB:?설치본 매니페스트의 images.graphDb 값을 지정하라}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.component: graph-db
+      org.uengine.robo.topology: central
+    environment:
+      POSTGRES_USER: ${ROBO_GRAPH_USER:?graph role 이름을 지정하라}
+      POSTGRES_PASSWORD: ${ROBO_GRAPH_PASSWORD:?graph 비밀번호를 지정하라}
+      POSTGRES_DB: ${ROBO_GRAPH_DESIGN:?설계 graph 이름을 지정하라}
+      # 엔트리포인트 훅이 둘 다 만들고, **같으면 거기서 멈춘다**(분석이 설계를 지우는 구성).
+      OG_GRAPH_DESIGN: ${ROBO_GRAPH_DESIGN}
+      OG_GRAPH_ANALYSIS: ${ROBO_GRAPH_ANALYSIS:?분석 graph 이름을 지정하라 — 설계와 달라야 한다}
+    ports:
+      - "${ROBO_GRAPH_BIND:?공개할 주소를 지정하라 — 위 주석을 읽어라}:${ROBO_GRAPH_PG_PORT:-5432}:5432"
+    volumes:
+      # **여기가 팀의 데이터 전부다.** 백업 대상이고, 지우면 되돌릴 수 없다.
+      - graph_data:/var/lib/postgresql/data
+    healthcheck:
+      # 떴는지만 본다. 확장·graph 유무는 기능 프로브가 따로 잰다.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  graph-bolt:
+    image: ${ROBO_IMAGE_GRAPH_BOLT:?설치본 매니페스트의 images.graphBolt 값을 지정하라}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.component: graph-bolt
+      org.uengine.robo.topology: central
+    ports:
+      - "${ROBO_GRAPH_BIND}:${ROBO_GRAPH_BOLT_PORT:-7687}:7687"
+    environment:
+      OG_BOLT_LISTEN: 0.0.0.0:7687
+      OG_BOLT_PGHOST: graph-db
+      OG_BOLT_PGPORT: "5432"
+      OG_BOLT_PGDATABASE: ${ROBO_GRAPH_DESIGN}
+      OG_BOLT_GRAPH: ${ROBO_GRAPH_DESIGN}
+      PGPASSWORD: ${ROBO_GRAPH_PASSWORD}
+    depends_on:
+      graph-db:
+        condition: service_healthy
+    healthcheck:
+      # `CMD-SHELL` 을 쓰지 않는다 — dash 에는 `/dev/tcp` 가 없어 멀쩡한 Bolt 가
+      # unhealthy 로 뜬다(설치본 compose.yml 에 같은 주석이 있다). bash 로 명시한다.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7687"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+volumes:
+  graph_data:
