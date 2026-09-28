@@ -16,7 +16,9 @@
  * 사용:
  *   node scripts/probe-runtime.mjs --project robo-og-measure --bolt 38687 \
  *        --gateway 38000 --analyzer 38502 --pdf2bpmn 38611 \
- *        --graph-user robo --graph-name robo [--json]
+ *        --graph-user robo --graph-name robo [--graph-host 10.10.0.5] [--json]
+ *
+ * `--graph-host` 는 중앙 DB 모드에서만 쓴다. 안 주면 이 PC(`127.0.0.1`)를 잰다.
  *
  * 종료 코드: 0 전부 pass · 1 fail 있음 · 3 못 쟀다(error 있고 fail 없음)
  */
@@ -54,6 +56,9 @@ if (missing.length > 0) {
 
 const context = {
   projectName: flag("project"),
+  // 중앙 DB 를 재려면 여기에 그 주소를 준다. 안 주면 이 PC 다.
+  // LAN 지연 측정이 이 인자로 돈다 — 같은 프로브를 로컬과 중앙에 걸어 비교한다.
+  graphHost: flag("graph-host"),
   ports: {
     graph: Number(flag("bolt")),
     analyzer: Number(flag("analyzer")),

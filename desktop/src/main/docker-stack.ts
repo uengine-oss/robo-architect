@@ -17,6 +17,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getDataDir } from "./data-dir";
+import {
+  graphEndpoint,
+  graphTopology,
+  type GraphTopology,
+} from "./graph-topology";
 import { ensureBundledConnection } from "./launcher/connections";
 import { log } from "./logging";
 import net from "node:net";
@@ -603,7 +608,9 @@ function composeEnvironment(
   manifest: RuntimeManifest,
   state: PersistedDockerState,
   password: string,
+  topology: GraphTopology = graphTopology(),
 ): NodeJS.ProcessEnv {
+  const endpoint = graphEndpoint(state.ports, topology);
   return {
     ...process.env,
     COMPOSE_PROJECT_NAME,
@@ -621,8 +628,18 @@ function composeEnvironment(
     // 이름은 `ROBO_NEO4J_*` 그대로 둔다 — 컨테이너 안의 서비스들이 Neo4j 드라이버로
     // 붙고, 그 드라이버가 읽는 변수 이름이다. **엔진이 아니라 프로토콜의 이름이다.**
     ROBO_NEO4J_PASSWORD: password,
+    // **이 둘은 "이 PC 에 발행하는 포트"** 다. 번들 DB 를 띄울 때만 쓰인다.
+    // 아래 `ROBO_GRAPH_*_PORT` 와 뜻이 다르므로 이름을 갈라 둔다 — 한 이름이 두
+    // 뜻을 가지면 중앙 모드에서 어느 쪽이 이겼는지 읽는 사람이 알 수 없다.
     ROBO_NEO4J_PORT: String(state.ports.graph),
-    ROBO_GRAPH_PG_PORT: String(state.ports.graphPg),
+    ROBO_GRAPH_PG_LOCAL_PORT: String(state.ports.graphPg),
+    // **이 셋은 "그래프가 어디 있는가"** 다. 두 모드에서 뜻이 같다 — bundled 면 이
+    // PC, central 이면 사내 서버. `compose.remote-graph.yml` 이 읽는 값이고,
+    // bundled 에서도 채워 둔다. 모드별로 비워 두면 나중에 overlay 를 얹었을 때
+    // `bolt://:7687` 이 조용히 만들어진다.
+    ROBO_GRAPH_HOST: endpoint.host,
+    ROBO_GRAPH_BOLT_PORT: String(endpoint.boltPort),
+    ROBO_GRAPH_PG_PORT: String(endpoint.pgPort),
     ROBO_GRAPH_USER: manifest.graphs.user,
     ROBO_GRAPH_DESIGN: manifest.graphs.design,
     ROBO_GRAPH_ANALYSIS: manifest.graphs.analysis,
@@ -636,42 +653,6 @@ function composeEnvironment(
 
 /** 중앙 DB 모드에서 겹쳐 얹는 overlay. `compose.yml` 과 같은 자리에 있다. */
 const REMOTE_GRAPH_COMPOSE = "compose.remote-graph.yml";
-
-interface GraphTopology {
-  /** `central` 이면 그래프 저장소가 이 PC 밖에 있다. */
-  mode: "bundled" | "central";
-  /** central 일 때만 채워진다. */
-  host: string | null;
-  boltPort: number;
-  pgPort: number;
-}
-
-/**
- * 그래프 저장소가 이 PC 안에 있는가, 사내 서버에 있는가.
- *
- * **왜 환경변수로 정하나.** 이 판정은 Compose 를 띄우기 **전에** 필요하다. 런처의
- * 연결 선택 화면은 스택이 뜬 뒤에 나오므로 거기서 고를 수 없다 — 배포 모델은
- * 설치 시점에 정해지는 것이고 사용자가 매번 고르는 것이 아니다.
- *
- * 기본은 `bundled` 다. 아무것도 설정하지 않으면 지금까지와 똑같이 동작한다.
- */
-function graphTopology(): GraphTopology {
-  const raw = (process.env.ROBO_GRAPH_MODE ?? "").trim().toLowerCase();
-  const boltPort = Number.parseInt(process.env.ROBO_GRAPH_BOLT_PORT ?? "", 10) || 7687;
-  const pgPort = Number.parseInt(process.env.ROBO_GRAPH_PG_PORT ?? "", 10) || 5432;
-  if (raw !== "central") {
-    return { mode: "bundled", host: null, boltPort, pgPort };
-  }
-  const host = (process.env.ROBO_GRAPH_HOST ?? "").trim();
-  if (!host) {
-    throw new Error(
-      "runtime.graph_host_missing: ROBO_GRAPH_MODE=central 인데 ROBO_GRAPH_HOST 가 없다. " +
-        "중앙 그래프 서버의 주소를 지정하라 (예: 10.10.0.5). " +
-        "서버는 compose.central-db.yml 로 띄운다",
-    );
-  }
-  return { mode: "central", host, boltPort, pgPort };
-}
 
 function composeArgs(
   root: string,
@@ -695,27 +676,33 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   if (current) return current;
   const root = runtimeDirectory();
   const manifest = readManifest(root);
+  // 아래 둘은 **이미지를 적재하기 전에** 본다. 4분짜리 tar 적재를 끝내고 나서
+  // "키가 없다"·"주소가 없다" 고 말하는 것은 사람 시간을 버리는 일이다.
+  const topology = graphTopology();
   await ensureEnvironmentSnapshots(root, manifest);
-  // 이미지를 적재하기 **전에** 본다. 4분짜리 tar 적재를 끝내고 나서
-  // "키가 없다" 고 말하는 것은 사람 시간을 버리는 일이다.
   assertCredentialsPresent(manifest);
   await ensureDockerDaemon();
   await ensureImages(root, manifest);
 
   const password = await graphPassword();
   const state = loadPersistedState(manifest.releaseId) ?? (await createState(manifest.releaseId));
-  const env = composeEnvironment(manifest, state, password);
+  const env = composeEnvironment(manifest, state, password, topology);
+  const endpoint = graphEndpoint(state.ports, topology);
 
   log("info", "docker.stack.starting", {
     releaseId: manifest.releaseId,
     projectName: COMPOSE_PROJECT_NAME,
+    graphMode: topology.mode,
+    // **주소는 비밀이 아니다.** 어느 저장소를 쓰는지 로그에서 못 보면 "왜 내 프로젝트가
+    // 안 보이나" 를 사람이 추측으로 풀어야 한다.
+    graphHost: endpoint.host,
   });
-  await runDocker(composeArgs(root, manifest, ["up", "--detach", "--wait", "--wait-timeout", "300"]), {
-    env,
-    secret: password,
-  });
+  await runDocker(
+    composeArgs(root, manifest, ["up", "--detach", "--wait", "--wait-timeout", "300"], topology),
+    { env, secret: password },
+  );
 
-  const hostBoltUri = `bolt://127.0.0.1:${state.ports.graph}`;
+  const hostBoltUri = `bolt://${endpoint.host}:${endpoint.boltPort}`;
   process.env.ROBO_GATEWAY_URL = `http://127.0.0.1:${state.ports.gateway}`;
   // 문서→BPMN 은 **안에서 돈다.** 이 줄이 없으면 Architect 는 번들 `.env` 의
   // 값(= 바깥 SaaS)이나 빈 값을 쓰고, 사내망에서는 그 호출이 막힌다. 막히면
@@ -746,8 +733,12 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   process.env.ROBO_ANALYZER_NEO4J_DATABASE = manifest.graphs.analysis;
   // 사용자·프로젝트 저장소는 Bolt가 아니라 같은 Ontological PostgreSQL에 직접 붙는다.
   // 비밀번호는 파일로 내리지 않고 DPAPI에서 읽은 값을 백엔드 spawn 환경으로만 넘긴다.
-  process.env.OG_PG_HOST = "127.0.0.1";
-  process.env.OG_PG_PORT = String(state.ports.graphPg);
+  //
+  // **여기를 루프백으로 못 박으면 중앙 모드가 반쪽이 된다.** Bolt 는 중앙을 보는데
+  // 사용자·프로젝트 저장소만 이 PC 를 보게 되고, 그러면 같은 프로젝트를 남이 만든
+  // 그래프에서 "없는 프로젝트" 로 읽는다 — 오류 없이.
+  process.env.OG_PG_HOST = endpoint.host;
+  process.env.OG_PG_PORT = String(endpoint.pgPort);
   process.env.OG_PG_DATABASE = manifest.graphs.design;
   process.env.OG_PG_USER = manifest.graphs.user;
   process.env.OG_PG_PASSWORD = password;
@@ -756,6 +747,7 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
     user: manifest.graphs.user,
     password,
     database: manifest.graphs.design,
+    central: topology.mode === "central",
   });
 
   current = {
@@ -768,8 +760,10 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   log("info", "docker.stack.ready", {
     releaseId: manifest.releaseId,
     projectName: COMPOSE_PROJECT_NAME,
-    graphPort: state.ports.graph,
-    graphPgPort: state.ports.graphPg,
+    graphMode: topology.mode,
+    graphHost: endpoint.host,
+    graphPort: endpoint.boltPort,
+    graphPgPort: endpoint.pgPort,
     analyzerPort: state.ports.analyzer,
     gatewayPort: state.ports.gateway,
   });
@@ -816,6 +810,20 @@ export async function stopDockerStack(): Promise<void> {
 export async function restartOwnedService(serviceId: ManagedServiceId): Promise<void> {
   if (serviceId === "architect") {
     throw new Error("docker.not_a_container: architect 는 backend:retry 로 되살린다");
+  }
+  // **중앙 모드에서 graph 는 우리 것이 아니다.** 그리고 이 거부가 없으면 조용히
+  // 틀리지 않고 **더 나쁘게** 틀린다 — overlay 가 번들 DB 를 프로필로 빼 두지만,
+  // `compose up <서비스>` 로 그 서비스를 **지목하면 프로필이 자동 활성된다**
+  // (2026-09-28 실측: compose v2, `up -d a` 가 `profiles: [bundled-db]` 인 a 를 띄웠다).
+  // 즉 재시도 한 번에 빈 로컬 DB 가 살아나고, 앱은 중앙을 보는 채로 남는다.
+  if (serviceId === "graph") {
+    const topology = graphTopology();
+    if (topology.mode === "central") {
+      throw new Error(
+        `docker.graph_is_remote: 그래프가 중앙 서버(${topology.host})에 있어 이 PC 에서 ` +
+          "되살릴 수 없다. 서버에서 compose.central-db.yml 로 확인하라",
+      );
+    }
   }
   const runtime = current;
   if (!runtime) throw new Error("docker.stack_not_started");

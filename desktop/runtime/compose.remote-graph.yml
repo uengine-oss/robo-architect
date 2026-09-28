@@ -24,10 +24,16 @@
 #
 # ## 필요한 변수
 #
-#     ROBO_GRAPH_HOST        중앙 DB 의 주소 (IP 또는 호스트명)
+#     ROBO_GRAPH_HOST        그래프가 있는 곳 (IP 또는 호스트명)
 #     ROBO_GRAPH_BOLT_PORT   기본 7687
 #
-# `docker-stack.ts` 가 중앙 모드에서 이 값들을 채운다.
+# `docker-stack.ts` 의 `composeEnvironment()` 가 **두 모드에서 모두** 채운다. bundled
+# 이면 `127.0.0.1` + 발행 포트, central 이면 사내 서버의 주소·포트다. 모드에 따라
+# 비워 두지 않는 이유: 비면 compose 가 `bolt://:7687` 을 만들고 컨테이너는 그대로
+# 뜬다 — 오류가 아니라 **조용히 닿지 않는 주소**가 된다.
+#
+# 이 PC 에 번들 DB 를 발행하는 포트는 이름이 다르다(`ROBO_NEO4J_PORT` ·
+# `ROBO_GRAPH_PG_LOCAL_PORT`). 한 이름에 두 뜻을 담지 않는다.
 
 services:
   # 번들 DB 를 띄우지 않는다. **지우는 것이 아니라 프로필로 뺀다** — 정의가 남아

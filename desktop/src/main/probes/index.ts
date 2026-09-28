@@ -40,6 +40,15 @@ export interface ProbeContext {
     pdf2bpmn: number;
     wireframe: number;
   };
+  /**
+   * 그래프가 있는 호스트. 안 주면 이 PC(`127.0.0.1`)다.
+   *
+   * **다른 서비스에는 이런 필드가 없다.** 나머지 8개는 어느 배치 모델에서도 이 PC 의
+   * 컨테이너로 돌기 때문이다. 그래프만 사내 서버로 나갈 수 있다(배포 모델 A).
+   * 이 값이 없으면 중앙 모드에서 그래프 프로브가 항상 "bolt closed" 를 내고,
+   * **멀쩡한 저장소를 고장으로 읽는다.**
+   */
+  graphHost?: string;
   graph: {
     user: string;
     /** **detail 에 절대 싣지 않는다.** */
@@ -47,6 +56,12 @@ export interface ProbeContext {
     design: string;
     analysis: string;
   };
+}
+
+/** 그래프를 어느 호스트에서 재는가. */
+function graphHostOf(context: ProbeContext): string {
+  const host = (context.graphHost ?? "").trim();
+  return host || "127.0.0.1";
 }
 
 /**
@@ -83,12 +98,14 @@ const later = (detail: string) => ({ outcome: "skipped" as ProbeOutcome, detail 
 
 const graphProbes: ProbePair = {
   async health(context) {
-    return (await portOpen("127.0.0.1", context.ports.graph))
-      ? ok("bolt open")
-      : no("bolt closed");
+    const host = graphHostOf(context);
+    return (await portOpen(host, context.ports.graph))
+      ? ok(`bolt open (${host})`)
+      : no(`bolt closed (${host})`);
   },
   async capability(context) {
-    if (!(await portOpen("127.0.0.1", context.ports.graph))) {
+    const host = graphHostOf(context);
+    if (!(await portOpen(host, context.ports.graph))) {
       return later("bolt 가 안 열려 있어 재지 않음");
     }
     if (!context.graph.user || !context.graph.design) {
@@ -107,7 +124,7 @@ const graphProbes: ProbePair = {
       return cannot("neo4j 드라이버 없음 — 재지 못함");
     }
     const driver = driverModule.default.driver(
-      `bolt://127.0.0.1:${context.ports.graph}`,
+      `bolt://${host}:${context.ports.graph}`,
       driverModule.auth.basic(context.graph.user, context.graph.password),
     );
     try {

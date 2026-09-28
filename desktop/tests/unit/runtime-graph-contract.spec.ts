@@ -23,6 +23,7 @@ const desktopRoot = path.resolve(__dirname, "..", "..");
 const read = (...p: string[]) => fs.readFileSync(path.join(desktopRoot, ...p), "utf8");
 
 const composeSource = read("runtime", "compose.yml");
+const remoteGraphSource = read("runtime", "compose.remote-graph.yml");
 const stackSource = read("src", "main", "docker-stack.ts");
 const backendSource = read("src", "main", "backend.ts");
 const connectionsSource = read("src", "main", "launcher", "connections.ts");
@@ -45,6 +46,28 @@ test.describe("compose ↔ docker-stack 변수 계약", () => {
     // 없는 변수는 compose 에서 **빈 문자열**이 된다. 이미지 이름이 비면 실패가 보이지만
     // graph 이름이 비면 조용히 엉뚱한 곳을 읽는다.
     expect(missing, `compose 가 쓰는데 앱이 안 주는 변수: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  test("중앙 DB overlay 가 쓰는 ROBO_* 도 앱이 전부 준다", () => {
+    // **여기가 빠지면 `bolt://:7687` 이 된다.** compose 는 없는 변수를 빈 문자열로
+    // 채우고 컨테이너는 그대로 뜨므로, 오류가 아니라 **닿지 않는 주소**가 조용히
+    // 만들어진다. overlay 는 `:-7687` 같은 기본값을 쓰는 자리가 있어 `${VAR:-기본}`
+    // 형태까지 같이 본다.
+    const used = new Set(
+      [...remoteGraphSource.matchAll(/\$\{(ROBO_[A-Z0-9_]+)(?::-[^}]*)?\}/g)].map((m) => m[1]!),
+    );
+    expect(used, "overlay 가 아무 변수도 안 쓴다 — 이 검사가 헛돈다").toContain("ROBO_GRAPH_HOST");
+    const emitted = emittedComposeVars();
+    const missing = [...used].filter((name) => !emitted.has(name)).sort();
+    expect(missing, `overlay 가 쓰는데 앱이 안 주는 변수: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  test("로컬 발행 포트와 그래프 위치는 이름이 다르다", () => {
+    // 한 이름에 두 뜻을 담으면 중앙 모드에서 **어느 쪽이 이겼는지** 읽는 사람이
+    // 알 수 없다. `compose.yml` 의 Postgres 발행 포트는 로컬 전용 이름을 쓴다.
+    expect(composeSource).toContain("${ROBO_GRAPH_PG_LOCAL_PORT}");
+    const publishesViaSharedName = /- "127\.0\.0\.1:\$\{ROBO_GRAPH_PG_PORT\}/.test(composeSource);
+    expect(publishesViaSharedName, "발행 포트가 중앙 포트 이름을 다시 쓰고 있다").toBe(false);
   });
 
   test("저장소는 Ontological 이다 — 옛 Neo4j 이미지 변수는 남아 있지 않다", () => {

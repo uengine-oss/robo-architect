@@ -26,6 +26,15 @@ import { loadSettings, saveSettings } from "../settings";
 
 const TEST_TIMEOUT_MS = 5000;
 const BUNDLED_CONNECTION_LABEL = "Robo Architect (Bundled)";
+/**
+ * 중앙 DB 모드의 표시 이름.
+ *
+ * `source: "bundled"` 는 **"앱이 관리하는 연결"** 이라는 표식이므로 두 모드에서 같다
+ * (그것으로 기존 행을 찾는다). 바뀌는 것은 사람이 보는 이름뿐이다 — 중앙 서버를
+ * 가리키는 연결에 "Bundled" 라고 적어 두면 사용자가 자기 PC 의 DB 를 보고 있다고
+ * 읽는다.
+ */
+const CENTRAL_CONNECTION_LABEL = "Robo Architect (중앙 DB)";
 
 // ---------------------------------------------------------------------------
 // Re-key helper (T009) — used by migration; predates the rest of CRUD.
@@ -182,24 +191,27 @@ export async function ensureBundledConnection(input: {
   user: string;
   password: string;
   database: string;
+  /** 그래프가 이 PC 밖에 있으면 `true`. 표시 이름만 바뀐다. */
+  central?: boolean;
 }): Promise<SavedConnection> {
   const uri = validateUri(input.uri);
   const user = validateUser(input.user);
   const database = validateDatabase(input.database);
+  const label = input.central ? CENTRAL_CONNECTION_LABEL : BUNDLED_CONNECTION_LABEL;
   const settings = await loadSettings();
   const existing = settings.savedConnections.find((connection) => connection.source === "bundled");
 
   const bundled: SavedConnection = existing
     ? {
         ...existing,
-        label: BUNDLED_CONNECTION_LABEL,
+        label,
         uri,
         user,
         database,
       }
     : {
         id: randomUUID(),
-        label: BUNDLED_CONNECTION_LABEL,
+        label,
         uri,
         user,
         database,
