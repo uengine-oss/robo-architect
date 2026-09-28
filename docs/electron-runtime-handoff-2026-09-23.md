@@ -596,7 +596,7 @@ WITH uid, c LIMIT 1        -- id 별이 아니라 스트림 전체에 걸린다
 5. Figma는 플러그인 재로드, 새 연결 코드 발급, 교환·status 요청 도착 및 지정 프로젝트 graph 권한을 별도로 검증한다.
 6. 첫 Legacy 진입 지연은 Catalog 전체 graph 요청의 구간별 시간을 기록해 성능 이슈로 추적한다. 기능 성공과 성능 개선을 하나의 완료 판정으로 합치지 않는다.
 
-8. **서비스를 하나 더할 때** 는 순서를 지킨다 — `runtime-manifest.template.json` 의 `images`·`imageIds` 에 키를 먼저 넣고, `docker-stack.ts` 의 `STATE_SCHEMA_VERSION` 을 올리고(포트가 늘면 옛 상태 파일이 `undefined` 를 낸다), `ManagedServiceId`·표시명·프로브를 채운 뒤, `robo.ps1` 에 이미지 빌드를 더한다. 프로브는 healthcheck 로 끝내지 말고 **그 서비스가 실제로 하는 일**을 값싸게 한 번 시킨다.
-9. 개발 실행(`robo.cmd up`)과 설치본은 **서비스 구성이 다르다**(§6 A). 한쪽에서 된 것을 다른 쪽의 근거로 쓰지 않는다.
+7. **서비스를 하나 더할 때** 는 순서를 지킨다 — `runtime-manifest.template.json` 의 `images`·`imageIds` 에 키를 먼저 넣고, `docker-stack.ts` 의 `STATE_SCHEMA_VERSION` 을 올리고(포트가 늘면 옛 상태 파일이 `undefined` 를 낸다), `ManagedServiceId`·표시명·프로브를 채운 뒤, `robo.ps1` 에 이미지 빌드를 더한다. 프로브는 healthcheck 로 끝내지 말고 **그 서비스가 실제로 하는 일**을 값싸게 한 번 시킨다.
+8. 개발 실행(`robo.cmd up`)과 설치본은 **서비스 구성이 다르다**(§6 A). 한쪽에서 된 것을 다른 쪽의 근거로 쓰지 않는다.
 
 주요 근거: `desktop/src/main/docker-stack.ts`, `desktop/src/main/backend.ts`, `desktop/src/main/probes/index.ts`, `desktop/runtime/compose.yml`, `open-pencil/Dockerfile`, `open-pencil/packages/cli/src/wireframe-service.ts`, `api/features/ai_design/wireframe_agent.py`, `api/platform/open_pencil_client.py`, `api/features/figma_binding/repository.py`, `robo-workspace/workspace.json`, `robo-workspace/scripts/robo.ps1`, `desktop/out/dist-figma-pair/win-unpacked/resources/runtime/runtime-manifest.json`, `api/platform/identity/auth_guard.py`, `api/features/auth/router.py`, `.gitmodules`, 각 저장소의 2026-09-23 로컬 `HEAD`.
