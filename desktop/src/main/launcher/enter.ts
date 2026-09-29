@@ -41,17 +41,31 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
   if (typeof input?.connectionId !== "string" || input.connectionId.length === 0) {
     throw new IpcHandlerError(IpcErrorCodes.VALIDATION, "connectionId required");
   }
-  if (typeof input.projectRoot !== "string" || input.projectRoot.length === 0) {
-    throw new IpcHandlerError(IpcErrorCodes.VALIDATION, "projectRoot required");
-  }
-
-  const rootValidation = await validateProjectRoot(input.projectRoot);
-  if (!rootValidation.valid) {
-    const code =
-      rootValidation.reason === "unreadable"
-        ? IpcErrorCodes.PROJECT_ROOT_UNREADABLE
-        : IpcErrorCodes.PROJECT_ROOT_INVALID;
-    throw new IpcHandlerError(code, `projectRoot is ${rootValidation.reason}`);
+  // ---------- projectRoot 는 **선택이다** ----------
+  //
+  // 인제스천(분석 → BPM → 룰 매핑 → ES 승격)은 결과를 전부 graph 에 쓴다. 폴더가
+  // 필요한 것은 제품의 **코드를 건드리는 쪽**뿐이다 —
+  //
+  //   Code 탭(Claude Code PTY)   `claude` CLI 의 cwd
+  //   Proposals 샌드박스          <projectRoot>/.sandbox/proposal/<PRO-NNN> worktree
+  //   Analysis 탭                 ImplementationFile 경로를 실제 소스로 여는 데
+  //   identity:resolve            그 폴더의 git config
+  //
+  // 사내망에는 `claude` CLI 가 없어서 Code 탭과 Proposals 를 쓰지 않는다. 그러면
+  // 기동 때 폴더를 묻는 것은 **아무도 쓰지 않을 값을 사람에게 요구하는 일**이다.
+  //
+  // 그래서 없으면 없는 대로 진입한다. 주면 예전처럼 검증한다 — 잘못된 경로를
+  // 받아 두면 나중에 그 탭들이 조용히 엉뚱한 곳을 본다.
+  const projectRoot = typeof input.projectRoot === "string" ? input.projectRoot : "";
+  if (projectRoot.length > 0) {
+    const rootValidation = await validateProjectRoot(projectRoot);
+    if (!rootValidation.valid) {
+      const code =
+        rootValidation.reason === "unreadable"
+          ? IpcErrorCodes.PROJECT_ROOT_UNREADABLE
+          : IpcErrorCodes.PROJECT_ROOT_INVALID;
+      throw new IpcHandlerError(code, `projectRoot is ${rootValidation.reason}`);
+    }
   }
 
   // ---------- look up the saved connection ----------
@@ -86,12 +100,13 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
   const enteredAt = new Date().toISOString();
   const profile: LaunchProfile = {
     connectionId: connection.id,
-    projectRoot: input.projectRoot,
+    projectRoot,
     enteredAt,
   };
 
   await markConnectionUsed(connection.id);
-  await pushRecentProjectRoot(input.projectRoot);
+  // 빈 값은 최근 목록에 넣지 않는다 — 넣으면 다음 기동에서 빈 항목이 최신으로 뜬다.
+  if (projectRoot.length > 0) await pushRecentProjectRoot(projectRoot);
   // Re-read after the helpers' modifications, then set lastProfile.
   const settings2 = await loadSettings();
   settings2.lastProfile = profile;
@@ -101,7 +116,8 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
   // Project-local git config may now apply, overriding the renderer's
   // pre-Enter resolution. The renderer treats the returned identity as
   // authoritative and writes it into the session store.
-  const authoritativeIdentity = await resolveSessionUser(input.projectRoot);
+  // 폴더가 없으면 전역 git config 로 푼다(런처 마운트 때 이미 그렇게 한다).
+  const authoritativeIdentity = await resolveSessionUser(projectRoot || null);
 
   markEntered(profile);
 

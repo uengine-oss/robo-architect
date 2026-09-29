@@ -58,7 +58,9 @@ const gitFormError = ref(null)
 const hasIdentity = computed(() => session.user && session.user.source !== 'unknown-fallback')
 const canEnter = computed(() => {
   if (!launcher.selectedConnectionId) return false
-  if (!rootValid.value) return false
+  // **폴더는 필수가 아니다.** 고른 경로가 있으면 유효해야 하지만, 아예 안 고른
+  // 것은 막지 않는다 — 인제스천은 폴더 없이 끝까지 돈다.
+  if (rootPath.value && !rootValid.value) return false
   return !entering.value
 })
 
@@ -137,8 +139,16 @@ async function maybeAutoEnter() {
   // 연결이 번들 하나뿐일 때만. 여럿이면 사용자가 고를 것이 실제로 있다.
   const conns = launcher.savedConnections
   if (conns.length !== 1 || conns[0].source !== 'bundled') return false
-  // 기억해 둔 폴더가 아직 쓸 만한가. `reloadRecentRoots` 가 이미 채우고 검증했다.
-  if (!rootPath.value || !rootValid.value) return false
+  // **폴더는 조건이 아니다.** 인제스천 결과는 전부 graph 로 가고, 폴더가 필요한
+  // 곳은 코드를 건드리는 탭들뿐이다(Code·Proposals·Analysis 소스 열기). 사내망에는
+  // `claude` CLI 가 없어 그 탭들을 쓰지 않으므로, 아무도 안 쓸 값을 기동 때
+  // 요구하지 않는다. 기억해 둔 폴더가 있으면 실어 보내고, 없으면 빈 채로 간다.
+  // 기억해 둔 폴더가 더 이상 안 열리면 **비우고 들어간다.** 아무도 안 쓰는 값
+  // 때문에 기동이 막히면 안 된다. 필요한 탭에서 다시 정하면 된다.
+  if (rootPath.value && !rootValid.value) {
+    rootPath.value = ''
+    rootError.value = null
+  }
   launcher.select(conns[0].id)
   await onEnter()
   // 실패했으면 화면을 보여 줘야 한다 — 조용히 멈춰 있으면 안 된다.
@@ -311,7 +321,7 @@ async function onSaveGitConfig() {
 async function onEnter() {
   if (!canEnter.value) {
     if (!launcher.selectedConnectionId) enterError.value = '커넥션을 선택해주세요.'
-    else if (!rootValid.value) enterError.value = '프로젝트 폴더를 선택해주세요.'
+    else if (rootPath.value && !rootValid.value) enterError.value = '고른 폴더를 열 수 없습니다.'
     return
   }
   entering.value = true
@@ -329,7 +339,10 @@ async function onEnter() {
         projectRoot: rootPath.value,
       })
       // Persist projectRoot for the existing Claude Code workspace integration.
-      try { localStorage.setItem('claude_code_workspace_root', rootPath.value) } catch { /* ignore */ }
+      // 빈 값으로 덮지 않는다 — Code 탭에서 따로 정해 둔 것을 지운다.
+      if (rootPath.value) {
+        try { localStorage.setItem('claude_code_workspace_root', rootPath.value) } catch { /* ignore */ }
+      }
       // session.entered flips true → App.vue gate dissolves automatically.
     } else {
       enterError.value = explainEnterError(r.error)

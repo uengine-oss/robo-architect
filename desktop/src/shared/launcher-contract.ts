@@ -193,7 +193,17 @@ export interface ProjectRootCreateInput {
 
 export interface LauncherEnterInput {
   connectionId: string;
-  projectRoot: string;
+  /**
+   * 작업할 소스 폴더. **선택이다.**
+   *
+   * 인제스천 결과는 전부 graph 로 가므로 폴더가 없어도 제품의 대부분이 돈다.
+   * 필요한 곳은 코드를 건드리는 쪽뿐이다 — Code 탭(`claude` CLI 의 cwd),
+   * Proposals 샌드박스 worktree, Analysis 탭의 소스 열기. 사내망에는
+   * `claude` CLI 가 없어 앞의 둘을 쓰지 않는다.
+   *
+   * 비워서 보내면 묻지 않고 진입한다. 주면 존재·읽기 가능 여부를 검증한다.
+   */
+  projectRoot?: string;
   /** Renderer's snapshot of identity; main re-resolves and may return a different value. */
   identity: SessionUser;
 }
