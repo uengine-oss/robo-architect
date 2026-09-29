@@ -209,8 +209,15 @@ async def run_hybrid_workflow(
                     skel.bpmn_xml = build_bpmn_xml(skel)
                 except Exception:
                     skel.bpmn_xml = None
-            # Persist this process's subgraph + per-process XML on BpmProcess node
-            save_bpm_skeleton(session_id, skel)
+            # Persist this process's subgraph + per-process XML on BpmProcess node.
+            # 출처를 **여기서** 같이 넘긴다 — `phase1.source` 는 이 시점에만 손에
+            # 있고, 스트림으로 흘린 값은 지나가면 사라진다(spec 058 §6).
+            save_bpm_skeleton(
+                session_id,
+                skel,
+                generated_by=phase1.source,
+                fallback_reason=phase1.error,
+            )
 
         # Rename pdf2bpmn's side-effect nodes (:Event/:Gateway/:Process) to :Bpmn* and
         # tag with our session_id — prevents label clash with event_storming :Event.

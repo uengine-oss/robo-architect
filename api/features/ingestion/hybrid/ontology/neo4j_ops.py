@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from api.features.ingestion.hybrid.contracts import (
     ActivityRuleMapping,
     BpmActor,
@@ -107,16 +109,52 @@ def save_bpm_processes(session_id: str, processes: list[BpmProcess]) -> None:
             )
 
 
-def save_bpm_skeleton(session_id: str, skeleton: BpmSkeleton) -> None:
+def save_bpm_skeleton(
+    session_id: str,
+    skeleton: BpmSkeleton,
+    *,
+    generated_by: str | None = None,
+    fallback_reason: str | None = None,
+) -> None:
     """Persist actors, tasks, sequences, and NEXT relations to Neo4j.
     Also writes a :BpmSession marker node holding the bpmn_xml so the
     frontend can rehydrate the canvas without relying on localStorage.
 
     If `skeleton.process` is set, each Actor/Task node is stamped with the
     `process_id` property and connected via (BpmProcess)-[:HAS_TASK]/[:HAS_ACTOR].
+
+    ## `generated_by` — 이 BPMN 을 누가 냈나 (spec 058 §6, T059)
+
+    `facade` | `a2a` | `native` 중 하나. 폴백이면 `fallback_reason` 에 왜인지.
+
+    **결과물로는 가릴 수 없어서** 노드에 남긴다. 2026-09-17 에 facade 를 죽여
+    놓고 native 가 task 7 · gateway 2 를 그럴듯하게 냈다 — 화면만 보면 성공과
+    구별되지 않는다. 진행 스트림에 `🔌 Phase 1 소스:` 로 흘리긴 했지만 **그건
+    지나가면 사라진다.** 앱을 다시 열면 알 길이 없었다.
+
+    `None` 이면 **아무것도 쓰지 않는다.** 그래야 옛 노드의 "모른다"와 `native`
+    가 구분된다(T060) — 빈 값을 `native` 로 읽으면 폴백이 아니었던 것까지
+    폴백으로 집계된다. 같은 이유로 재저장 때 이미 있는 값을 `null` 로 덮지
+    않는다.
     """
     process = skeleton.process
     pid = process.id if process else None
+    # 값이 있을 때만 SET 절을 붙인다. 파라미터만 None 으로 넘기면 MERGE 가
+    # 기존 값을 지운다 — 같은 세션을 다시 저장할 때 출처가 사라진다.
+    provenance_set = ""
+    provenance_params: dict[str, object] = {}
+    if generated_by:
+        provenance_set = (
+            ", p.generatedBy = $generated_by"
+            ", p.generationFallbackReason = $fallback_reason"
+            ", p.generatedAt = $generated_at"
+        )
+        provenance_params = {
+            "generated_by": generated_by,
+            # 폴백이 아니면 사유가 없다 — 빈 문자열이 아니라 없음이다.
+            "fallback_reason": fallback_reason or None,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
     with get_session() as s:
         s.run(
             f"MERGE (h:{L_BPM_SESSION} {{id: $sid, session_id: $sid}}) "
@@ -142,13 +180,15 @@ def save_bpm_skeleton(session_id: str, skeleton: BpmSkeleton) -> None:
                 "SET p.name = $name, p.description = $desc, "
                 "    p.domain_keywords = $keywords, "
                 "    p.source_pdf_name = $pdf_name, p.bpmn_xml = $xml, "
-                "    p.updated_at = datetime()",
+                "    p.updated_at = datetime()"
+                + provenance_set,
                 id=process.id, sid=session_id, name=process.name,
                 next_idx=next_idx,
                 desc=process.description,
                 keywords=list(process.domain_keywords or []),
                 pdf_name=process.source_pdf_name,
                 xml=skeleton.bpmn_xml or "",
+                **provenance_params,
             )
         for actor in skeleton.actors:
             s.run(
