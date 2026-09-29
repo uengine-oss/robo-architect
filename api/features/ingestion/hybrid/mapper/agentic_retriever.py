@@ -73,6 +73,7 @@ from api.features.ingestion.hybrid.mapper.module_retriever import (
     MIN_MODULE_CONFIDENCE,
     ModuleCandidate,
     fetch_all_modules,
+    process_gate_enabled,
     retrieve_top_modules,
 )
 
@@ -87,17 +88,26 @@ from api.features.ingestion.hybrid.mapper.module_retriever import (
 # Floor at 0.45 keeps near-misses (so user can review them in the rejected
 # panel) while excluding the long tail of obvious mismatches that previously
 # inflated reject lists to 40+ entries per task.
-MIN_BL_INCLUSION = 0.45
+#
+# 2026-09-29 재보정: 0.45 → 0.40.
+#
+# 위 보정은 C/PL-SQL 분석 그래프에서 잡은 것이다. Java 분석은 MODULE 요약이 없어
+# METHOD 요약으로 순위를 매기고(`module_retriever._module_rows` 폴백), 그러면 rule
+# blob 쪽 코사인 분포도 같이 내려앉는다. hr-sample 실측(rule 68 · task 28):
+#
+#   모듈 floor 만 순위로 바꾸고 0.45 유지 : 후보 0인 task 2/28 · 정답 룰 포함 20/28
+#   거기서 0.40 으로 내림              : 후보 0인 task 0/28 · 정답 룰 포함 28/28
+#
+# 후보 수는 task 평균 7.1 → 10.9 로 늘지만 `bl_top_k`(20) 예산 안이고, 후보 중
+# 정답 파일 비율은 78% → 72% 로만 떨어진다. **검증기가 판단할 것을 검증기에 보낸다**
+# 는 쪽이 맞다 — 0.45 는 검증기를 부르기도 전에 정답을 잘라내고 있었다.
+MIN_BL_INCLUSION = 0.40
 
 # Reject surfacing thresholds — emit only true near-miss rejects to the user.
-# Per §9.1 calibration the cosine bands are:
-#   ≥ 0.50      — validator usually accepts (already mapped)
-#   0.45 ~ 0.50 — near-miss / close call (the band worth user review)
-#   < 0.45      — already cut by MIN_BL_INCLUSION at Step 2
-# Floor matches `MIN_BL_INCLUSION` (0.45) so the entire near-miss band is
-# eligible to surface. `REJECT_VISIBLE_CAP` is the actual attention-budget
-# control — only the top-N by score per task make it through.
-REJECT_NEAR_MISS_FLOOR = 0.45
+# 문턱은 `MIN_BL_INCLUSION` 에 묶어 둔다. 따로 적어 두면 한쪽만 재보정됐을 때
+# "Step 2 에서 이미 잘린 구간을 화면이 기다리는" 상태가 조용히 생긴다.
+# `REJECT_VISIBLE_CAP` 이 실제 주의력 예산 조절 레버다 — task 당 상위 N개만 올린다.
+REJECT_NEAR_MISS_FLOOR = MIN_BL_INCLUSION
 REJECT_VISIBLE_CAP = 3
 
 from api.platform.observability.smart_logger import SmartLogger
@@ -356,7 +366,36 @@ async def run_agentic_retrieval(
     # the threshold even for legitimate tasks because module summaries are
     # coarse-grained — so we gate per-process, not per-task.
     process_max_score = max(seen_fqns.values(), default=0.0)
-    if not skip_process_gate and process_max_score < min_module_score:
+
+    # 코사인과 무관한 단락 — **모듈이 한 개도 없다.** 분석 짝이 안 붙었거나 분석
+    # 그래프에 요약이 없는 경우다(`module_retriever.last_empty_reason` 참고).
+    # 코사인 게이트를 끈 뒤에도 이 자리는 남아야 한다: 여기서 안 끊으면 task 마다
+    # "후보 0" 경고만 줄줄이 남고, **왜 0인지는 어디에도 안 남는다.**
+    if not seen_fqns:
+        await sink({
+            "type": "AgentDone",
+            "process_id": process.id,
+            "accepted": 0,
+            "total_ms": int((time.perf_counter() - started) * 1000),
+            "skipped": True,
+            "reason": "no_modules",
+        })
+        SmartLogger.log(
+            "WARN", "Process skipped — 분석 그래프에서 모듈을 하나도 못 읽었다",
+            category="ingestion.hybrid.agentic",
+            params={
+                "process_id": process.id,
+                "process_name": process.name,
+                "reason": "no_modules",
+                "module_rows": len(module_rows),
+            },
+        )
+        return result
+
+    # 게이트는 기본으로 꺼져 있다 — 이유는 `module_retriever.MIN_MODULE_CONFIDENCE`
+    # 위의 양성/음성 실측에 적어 두었다. 여기서 막는 대신 검증기가 물리게 둔다.
+    gate_on = process_gate_enabled() and not skip_process_gate
+    if gate_on and process_max_score < min_module_score:
         await sink({
             "type": "AgentDone",
             "process_id": process.id,

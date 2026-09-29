@@ -17,6 +17,7 @@ side (see §B "MODULE 임베딩 캐싱").
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -180,30 +181,58 @@ def _build_query(process: BpmProcess, task: BpmTaskDTO) -> str:
 
 # §2.B P1 — PROCESS-level threshold (applied by the orchestrator, not here).
 # Below this cosine (on the max task-level score for a process), the analyzer
-# code is assumed to NOT implement this process. Prevents contamination when
-# the analyzer DB only contains code for a subset of the document's processes
-# (e.g., 해지 프로세스에 대응하는 구현이 없는데 신청 모듈이 "가장 가깝다" 고 끌려들어오는 케이스).
+# code was assumed to NOT implement this process.
 #
-# Task-level scores can be much lower than the process max because a single
-# module summary aggregates many functions while a task query is narrow —
-# filtering at task level over-rejects legitimate mappings (e.g., "입력값
-# 검증" task scored 0.53 even though a000_input_validation is its exact
-# implementation). So: we rank here without cutoff, and
-# `run_agentic_retrieval` applies the cutoff once per process.
+# **2026-09-29: 이 문턱은 켜 두면 안 된다는 것이 실측으로 드러났다.** 같은 hr-sample
+# 을 놓고 양성(HR 문서 × HR 코드)과 음성(HR 문서 × 자동납부 C 코드)을 나란히 쟀더니
+# 두 분포가 겹친다 —
+#
+#   양성 프로세스별 최대 코사인 : 0.591 / 0.472 / 0.439
+#   음성 프로세스별 최대 코사인 : 0.428 / 0.319 / 0.354
+#
+# 0.55 로 자르면 **정답 corpus 의 프로세스 3개 중 2개가 잘린다.** 반대로 두 분포를
+# 가르는 값은 아예 없다(양성 0.439 < 음성 0.428 근접). 분포를 정규화해도(z-score)
+# 뒤집히기만 한다 — 음성의 월근태마감이 z 2.98 로 양성의 같은 프로세스(z 2.67)보다
+# 높다. **모듈 요약 수준의 임베딩에는 "이 코드가 이 문서를 구현하는가" 를 판정할
+# 신호가 없다.**
+#
+# 그 판정은 원래 할 수 있는 것이 한다 — LLM 검증기다. 실제로 검증기는 연차부여
+# task 에 잘못 올라온 LeaveRequestService 룰들을 전부 물렸다(= 옳게 판단했다).
+# 그래서 게이트는 기본 **끔**이고, 구현이 없는 프로세스는 "검증기가 전부 물렸다"
+# (`all_rejected`) 로 드러난다 — 코사인 한 숫자보다 사람이 읽을 수 있는 근거다.
+#
+# 대가는 LLM 비용이다: 구현이 없는 프로세스도 task 마다 검증기를 한 번 태운다.
+# 대량 배치에서 그 비용이 문제가 되면 `HYBRID_PROCESS_GATE=on` 으로 되살린다
+# (그때는 위 실측대로 정답이 잘릴 수 있다는 것을 알고 켜는 것이다).
 MIN_MODULE_CONFIDENCE = 0.55
 
-# Per-module inclusion floor. A module with score below this is almost
-# certainly noise — including it injects its (50~) BLs into the Step 2
-# candidate pool for no upside. This matters at scale (large systems with
-# 1000+ modules): top_k alone would let a long tail of rank 18, 19, 20
-# modules with score 0.30~0.40 leak BLs into Step 2.
+
+def process_gate_enabled() -> bool:
+    """프로세스 단위 코사인 게이트를 쓸지. 기본 끔 — 위 주석의 실측 때문이다."""
+    return os.getenv("HYBRID_PROCESS_GATE", "off").strip().lower() in {"1", "true", "yes", "on"}
+
+# Per-module inclusion floor — **순위로 자르고, 절대값으로는 거의 자르지 않는다.**
 #
-# Relationship to MIN_MODULE_CONFIDENCE:
-#   - MIN_MODULE_CONFIDENCE (0.55) = process-level gate: kills whole process
-#     if no module reaches this bar.
-#   - MIN_MODULE_INCLUSION   (0.45) = per-module floor: inside a passing
-#     process, still drop modules that individually score below this floor.
-MIN_MODULE_INCLUSION = 0.45
+# 예전 값은 0.45 였다. 그 숫자는 MODULE 노드에 모듈 단위 요약이 있는 corpus(C·
+# PL/SQL)에서 잡은 것인데, Java 처럼 MODULE 요약이 없는 분석 그래프는 `_module_rows`
+# 의 폴백을 타고 **METHOD 요약**으로 순위를 매긴다. 텍스트 길이와 추상화 수준이
+# 달라지면 코사인 분포가 통째로 내려앉는다 — 그래서 같은 0.45 가 전혀 다른 뜻이 된다.
+#
+# 2026-09-29 실측(hr-sample, METHOD 171개 · task 28개):
+#
+#   월 근태 마감 프로세스의 task 8개 : 0.45 를 넘는 모듈이 **하나도 없다**
+#                                   (최고 0.439, 정답인 MonthlyClosingService 는 0.37~0.39)
+#   → 모듈 0개 → in_scope 0개 → 후보 0개 → task 8개 전부 `no_candidates`
+#
+# 즉 "어휘가 안 맞아서 못 찾은" 것이 아니라 **문턱이 정답을 잘랐다.** 문턱을 순위로
+# 바꾸면(top_k 만 적용) 같은 데이터에서:
+#
+#   후보 0인 task   8/28 → 0/28
+#   정답 룰이 후보에 든 task  14/28 → 28/28   (검증기에 가는 후보 5.7 → 10.9개)
+#
+# 절대 하한은 **진짜 쓰레기만** 거르는 자리로 남긴다(무관한 corpus 의 중앙값이 대략
+# 0.20~0.26 이었다). 이 값으로 정답이 잘리면 안 된다 — 자를 일은 top_k 가 한다.
+MIN_MODULE_INCLUSION = 0.10
 
 
 async def retrieve_top_modules(
