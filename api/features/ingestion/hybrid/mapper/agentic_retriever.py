@@ -93,8 +93,9 @@ from api.features.ingestion.hybrid.mapper.module_retriever import (
 #
 # 2026-09-29 재보정: 0.45 → 0.40.
 #
-# 위 보정은 C/PL-SQL 분석 그래프에서 잡은 것이다. Java 분석은 MODULE 요약이 없어
-# METHOD 요약으로 순위를 매기고(`module_retriever._module_rows` 폴백), 그러면 rule
+# 위 보정은 **컨테이너 요약이 있던 시절**의 분포에서 잡은 것이다. 애널라이저가
+# 2026-08-20 에 그 요약 생성을 없앤 뒤(자세한 내력은 `module_retriever` 의
+# `MIN_MODULE_INCLUSION` 주석) Step 1 은 루틴 요약으로 순위를 매기고, 그러면 rule
 # blob 쪽 코사인 분포도 같이 내려앉는다. hr-sample 실측(rule 68 · task 28):
 #
 #   모듈 floor 만 순위로 바꾸고 0.45 유지 : 후보 0인 task 2/28 · 정답 룰 포함 20/28

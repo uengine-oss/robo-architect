@@ -127,8 +127,8 @@ def _module_rows() -> list[dict]:
                    m.summary AS summary, m.stereotype AS stereotype
             """,
         ))
-        # 루틴 단위 요약. C 그래프는 PACKAGE/FILE 에 요약이 없고 FUNCTION 에만 있다.
-        # Java 그래프도 CLASS/FILE 에 `summary` 컬럼 자체가 없다(2026-09-29 확인).
+        # 루틴 단위 요약. 2026-08-20 이후 분석 그래프에는 컨테이너(CLASS/FILE/PACKAGE)
+        # 요약이 **언어와 무관하게** 없다 — C 그래프도 FUNCTION 에만 있다(09-29 실측).
         rows += list(s.run(
             """
             MATCH (f)
@@ -198,7 +198,8 @@ def _build_query(process: BpmProcess, task: BpmTaskDTO) -> str:
 #   양성 프로세스별 최대 코사인 : 0.591 / 0.472 / 0.439
 #   음성 프로세스별 최대 코사인 : 0.428 / 0.319 / 0.354
 #
-# 0.55 로 자르면 **정답 corpus 의 프로세스 3개 중 2개가 잘린다.** 반대로 두 분포를
+# 0.55 로 자르면 **정답 corpus 의 프로세스 3개 중 2개가 잘린다**(루틴 요약 기준).
+# 반대로 두 분포를
 # 가르는 값은 아예 없다(양성 0.439 < 음성 0.428 근접). 분포를 정규화해도(z-score)
 # 뒤집히기만 한다 — 음성의 월근태마감이 z 2.98 로 양성의 같은 프로세스(z 2.67)보다
 # 높다. **모듈 요약 수준의 임베딩에는 "이 코드가 이 문서를 구현하는가" 를 판정할
@@ -221,10 +222,27 @@ def process_gate_enabled() -> bool:
 
 # Per-module inclusion floor — **순위로 자르고, 절대값으로는 거의 자르지 않는다.**
 #
-# 예전 값은 0.45 였다. 그 숫자는 MODULE 노드에 모듈 단위 요약이 있는 corpus(C·
-# PL/SQL)에서 잡은 것인데, Java 처럼 MODULE 요약이 없는 분석 그래프는 `_module_rows`
-# 의 폴백을 타고 **METHOD 요약**으로 순위를 매긴다. 텍스트 길이와 추상화 수준이
-# 달라지면 코사인 분포가 통째로 내려앉는다 — 그래서 같은 0.45 가 전혀 다른 뜻이 된다.
+# 예전 값은 0.45 였다. 그 숫자는 **컨테이너(MODULE/CLASS/FILE) 요약이 있던 시절**의
+# 분포에서 잡은 것이다. 애널라이저가 그 요약을 없앴다 —
+#
+#   2026-08-20  f91f90da  "remove aggregate summary LLMs"
+#               module_summary.yaml(framework·dbms) · module_summary_contract.md
+#               · module_summary_response_schema.py 삭제 → 생성 주체가 사라짐
+#   2026-09-01  039ba8c8  `Module.summary` 필드까지 제거
+#
+# 그래서 그 뒤에 만든 분석 그래프에는 CLASS·FILE 에 요약이 **없다**. 언어와 무관하다
+# — C 그래프도 FILE 에 없고 FUNCTION 에만 있다(2026-09-29 실측). 그래서
+# `_module_rows` 는 폴백을 타고 **루틴(METHOD/FUNCTION) 요약**으로 순위를 매긴다
+# (폴백 자체는 2026-09-22 `627dc7f` 에 붙었다).
+#
+# 즉 Step 1 의 입력이 "클래스가 무슨 일을 한다" 에서 "이 메서드가 무슨 일을 한다" 로
+# 바뀌었는데 **문턱만 옛 분포에 남았다.** 글의 길이와 추상화 수준이 달라지면 코사인
+# 분포가 통째로 내려앉는다 — 같은 0.45 가 전혀 다른 뜻이 된다.
+#
+# 발행 계약(`product_graph.NODE_PROPERTY_KEYS`)은 지금도 `source` 노드에 `summary` 를
+# 허용한다. 막힌 것이 아니라 **채우는 쪽이 없어진 것**이다 — 되살리려면 애널라이저에서
+# 되살려야 하고, 그 커밋은 "derived prose 가 분석의 권위가 되면 안 된다" 며 일부러
+# 없앤 것이라 그쪽 설계와 부딪친다.
 #
 # 2026-09-29 실측(hr-sample, METHOD 171개 · task 28개):
 #
