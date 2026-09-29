@@ -44,6 +44,60 @@ const inputMode = ref('file') // 'file', 'text', 'jira', 'figma', or 'analyzer'
 
 // Analyzer graph state
 const analyzerStats = ref(null) // { total, counts, hasData }
+
+/**
+ * 분석 결과를 카드로 편다.
+ *
+ * ## 왜 고정 목록을 버렸나
+ *
+ * 전에는 `FUNCTION · RULE · EXAMPLE · QUESTION · TABLE` 다섯 칸이 하드코딩돼
+ * 있었고, 값이 0이면 칸이 사라졌다. 그 목록은 **C/DBMS 분석의 모양**이다.
+ * Java 를 분석하면 `FUNCTION`(→`METHOD`)·`EXAMPLE`·`QUESTION` 이 전부 0이라
+ * **RULE 과 TABLE 둘만 남는다.**
+ *
+ * 2026-09-29 실측(hr-sample): 백엔드는 20종 1306개를 돌려주는데 화면은
+ * `RULE 75 · 테이블 15` 두 칸만 보여줬다 — CLASS 30, METHOD 171, COLUMN 101,
+ * PACKAGE 7 이 전부 화면 밖이었다. "분석이 덜 됐나" 로 읽히는 것이 당연하다.
+ *
+ * ## 무엇을 개별로 두고 무엇을 뭉치나
+ *
+ * 선언(패키지·파일·클래스·함수/메서드·필드)과 데이터(테이블·컬럼), 그리고
+ * 규칙은 **사람이 개수를 직접 확인하는 것들**이라 따로 둔다. `IF`·`TRY`·
+ * `RETURN` 같은 구문 노드는 수백 개씩 나오고 개별 숫자가 판단에 쓰이지 않으므로
+ * `구문` 한 칸으로 합친다 — **버리지 않고 합친다.** 무엇이 합쳐졌는지는 툴팁에,
+ * 전체 개수와 종 수는 격자 아래에 적는다.
+ */
+const ANALYZER_CARD_ORDER = [
+  ['PACKAGE', '패키지'],
+  ['FILE', '파일'],
+  ['CLASS', '클래스'],
+  ['FUNCTION', '함수'],
+  ['METHOD', '메서드'],
+  ['FIELD', '필드'],
+  ['CONSTANT_FIELD', '상수'],
+  ['TABLE', '테이블'],
+  ['COLUMN', '컬럼'],
+  ['EXAMPLE', 'Example'],
+  ['QUESTION', 'Question'],
+]
+const analyzerCards = computed(() => {
+  const counts = analyzerStats.value?.counts || {}
+  const cards = []
+  // 규칙이 이 화면의 핵심이다 — 맨 앞에, 강조해서.
+  if (counts.RULE) cards.push({ key: 'RULE', label: 'Rule', value: counts.RULE, accent: true })
+  for (const [key, label] of ANALYZER_CARD_ORDER) {
+    if (counts[key]) cards.push({ key, label, value: counts[key] })
+  }
+  // 남은 것 = 구문 노드. 합쳐서 한 칸으로, 무엇이 합쳐졌는지는 툴팁에.
+  const named = new Set(['RULE', ...ANALYZER_CARD_ORDER.map(([k]) => k)])
+  const rest = Object.entries(counts).filter(([k, v]) => !named.has(k) && v)
+  if (rest.length > 0) {
+    const total = rest.reduce((s, [, v]) => s + v, 0)
+    const hint = rest.sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ')
+    cards.push({ key: '__rest', label: `구문 ${rest.length}종`, value: total, hint })
+  }
+  return cards
+})
 const isLoadingAnalyzerStats = ref(false)
 // Documents attached in analyzer (코드 분석) mode — multiple PDF/TXT/MD for one Hybrid run.
 // Backend merges PDFs; `FormData` sends each as repeated field `files`.
@@ -2124,29 +2178,23 @@ function useSample() {
                       <p class="analyzer-subtitle">분석 그래프에서 이벤트 스토밍 모델을 생성합니다</p>
                     </div>
                   </div>
+                  <!-- 분석기가 낸 것을 **버리지 않고** 그린다. 목록을 고정해 두면
+                       언어가 바뀔 때 조용히 빈 화면이 된다 — 아래 `analyzerCards` 주석 참고. -->
                   <div class="analyzer-grid">
-                    <div v-if="analyzerStats.counts.FUNCTION" class="analyzer-card">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.FUNCTION }}</span>
-                      <span class="analyzer-card__label">함수</span>
-                    </div>
-                    <!-- 생산자(analyzer) 라벨 = UPPER_SNAKE (spec 044 C1) — 옛 PascalCase Rule/Example/Question/Table 는 0표시되어 정정 -->
-                    <div v-if="analyzerStats.counts.RULE" class="analyzer-card analyzer-card--accent">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.RULE }}</span>
-                      <span class="analyzer-card__label">Rule</span>
-                    </div>
-                    <div v-if="analyzerStats.counts.EXAMPLE" class="analyzer-card">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.EXAMPLE }}</span>
-                      <span class="analyzer-card__label">Example</span>
-                    </div>
-                    <div v-if="analyzerStats.counts.QUESTION" class="analyzer-card">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.QUESTION }}</span>
-                      <span class="analyzer-card__label">Question</span>
-                    </div>
-                    <div v-if="analyzerStats.counts.TABLE" class="analyzer-card">
-                      <span class="analyzer-card__value">{{ analyzerStats.counts.TABLE }}</span>
-                      <span class="analyzer-card__label">테이블</span>
+                    <div
+                      v-for="card in analyzerCards"
+                      :key="card.key"
+                      class="analyzer-card"
+                      :class="{ 'analyzer-card--accent': card.accent }"
+                      :title="card.hint || null"
+                    >
+                      <span class="analyzer-card__value">{{ card.value }}</span>
+                      <span class="analyzer-card__label">{{ card.label }}</span>
                     </div>
                   </div>
+                  <p class="analyzer-total">
+                    노드 {{ analyzerStats.total }}개 · {{ Object.keys(analyzerStats.counts || {}).length }}종
+                  </p>
 
                   <!-- Document attach slot — required to start Hybrid ingestion -->
                   <div class="analyzer-doc-section">
@@ -3994,8 +4042,17 @@ function useSample() {
 
 .analyzer-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* 칸 수가 언어마다 다르다(Java 8칸·C 5칸). 4칸 고정이면 남거나 눌린다. */
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
   gap: var(--spacing-sm);
+}
+
+/* 격자에 안 보이는 것이 없다는 것을 숫자로 말한다. */
+.analyzer-total {
+  margin: var(--spacing-xs) 0 0;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  text-align: right;
 }
 
 .analyzer-card {
