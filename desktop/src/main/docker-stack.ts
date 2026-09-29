@@ -471,7 +471,10 @@ export function assertAuthPostureNotOverridden(manifest: RuntimeManifest): void 
       `환경변수가 체크섬으로 잠근 .env 를 이기기 때문에(load_dotenv 는 ` +
       `override=False) 파일 검사로는 걸리지 않는다. 지우고 다시 실행하라: ` +
       `[Environment]::SetEnvironmentVariable('${first.name}', $null, 'User') ` +
-      `(지운 뒤 로그아웃·재로그인해야 아이콘으로 켠 앱에 반영된다). ` +
+      `(이 명령은 값을 빈 문자열로 남길 수 있다 — 빈 값은 "설정하지 않음" 으로 ` +
+      `보므로 그대로도 된다. 이름까지 없애려면 ` +
+      `Remove-ItemProperty HKCU:\\Environment -Name ${first.name}. ` +
+      `어느 쪽이든 로그아웃·재로그인해야 아이콘으로 켠 앱에 반영된다). ` +
       `사내망 밖에서 화면을 밟아야 한다면 ROBO_RELEASE_CHANNEL=internal-test 로 ` +
       `따로 구워라 — 그 빌드에서는 이 검사가 경고로 끝난다.`,
   );
