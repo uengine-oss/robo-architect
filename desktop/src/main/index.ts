@@ -401,7 +401,9 @@ function createMainWindow(): BrowserWindow {
   window.on("restore", () => log("info", "window.restore", {}));
   window.on("maximize", () => log("info", "window.maximize", {}));
   window.on("unmaximize", () => log("info", "window.unmaximize", {}));
+  window.on("close", () => log("info", "window.close", {}));
   window.on("closed", () => {
+    log("info", "window.closed", {});
     if (mainWindow === window) {
       mainWindow = null;
     }
@@ -661,6 +663,7 @@ if (gotLock) {
   });
 
   app.on("window-all-closed", () => {
+    log("info", "app.window_all_closed", {});
     app.quit();
   });
 
@@ -672,8 +675,16 @@ if (gotLock) {
       try {
         await stopBackend();
       } finally {
+        log("info", "app.exit", { reason: "backend stopped" });
         app.exit(0);
       }
     }
   });
+
+  // **끝났다는 사실 자체를 남긴다.** `before-quit` 은 백엔드가 떠 있을 때만
+  // 뒤를 마저 돌고, 강제 종료(작업관리자·`Stop-Process`)는 아무 흔적도 안 남긴다.
+  // 그러면 로그의 마지막 줄만 보고는 "여기서 껐다" 와 "여기서 죽었다" 를 구별할
+  // 수 없다 — 다음 기동의 `app.ready` 와 짝이 맞는지로만 짐작해야 했다.
+  app.on("will-quit", () => log("info", "app.will_quit", {}));
+  app.on("quit", (_e, exitCode) => log("info", "app.quit", { exitCode }));
 }
