@@ -2121,7 +2121,7 @@ function useSample() {
                     </div>
                     <div>
                       <p class="analyzer-title">코드 분석 데이터 준비됨</p>
-                      <p class="analyzer-subtitle">Neo4j 그래프에서 이벤트 스토밍 모델을 생성합니다</p>
+                      <p class="analyzer-subtitle">분석 그래프에서 이벤트 스토밍 모델을 생성합니다</p>
                     </div>
                   </div>
                   <div class="analyzer-grid">

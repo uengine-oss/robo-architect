@@ -4136,7 +4136,7 @@ function updateVoFieldValue(fieldName, value) {
                   :disabled="backendGenLoading"
                   @click="generateBackendWireframe"
                   style="font-size:12px;background:#0acf83;color:#fff;"
-                  title="백엔드 LLM이 와이어프레임을 직접 생성하고 Neo4j에 저장합니다 (브라우저 작업 없음)"
+                  title="백엔드 LLM이 와이어프레임을 직접 생성하고 그래프에 저장합니다 (브라우저 작업 없음)"
                 >
                   {{ backendGenLoading ? backendGenProgress || '생성 중…' : '백엔드 AI로 생성' }}
                 </button>

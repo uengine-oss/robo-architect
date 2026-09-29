@@ -392,7 +392,7 @@ onMounted(async () => {
           <p v-if="createNodeCount > 0" style="color:#fa5252;font-size:0.68rem;margin-top:6px;padding:6px 8px;background:rgba(250,82,82,.06);border:1px solid rgba(250,82,82,.25);border-radius:4px">
             ⚠ 신규 생성된 <strong>{{ createNodeCount }}개 노드</strong>가 삭제됩니다 (UserStory/Feature/BoundedContext).
           </p>
-          <p style="color:#fa5252;font-size:0.68rem;margin-top:4px">⚠ 이 작업은 실제 Neo4j 노드를 수정합니다. 되돌린 후 다시 적용해야 합니다.</p>
+          <p style="color:#fa5252;font-size:0.68rem;margin-top:4px">⚠ 이 작업은 실제 그래프 노드를 수정합니다. 되돌린 후 다시 적용해야 합니다.</p>
         </div>
         <div class="cp-dialog__footer">
           <button class="tb-btn" @click="undoDialog=false">취소</button>

@@ -27,7 +27,11 @@ const desktop = window.desktop
 // --- form state for "Add connection" ---
 const formLabel = ref('')
 const formUri = ref('bolt://localhost:7687')
-const formUser = ref('neo4j')
+// 기본 사용자는 `robo` 다 — 매니페스트의 `graphs.user`. 예전 기본값 `neo4j` 는
+// **이 제품에 존재하지 않는 계정**이라, 연결을 손으로 추가하면 반드시 인증에
+// 실패했다. 엔진이 Neo4j 이던 시절의 잔재다(지금은 ontological PostgreSQL +
+// Bolt 게이트웨이). `bolt://` 는 엔진이 아니라 프로토콜 이름이라 그대로 둔다.
+const formUser = ref('robo')
 const formDatabase = ref('')
 const formPassword = ref('')
 const testResult = ref(null) // {kind: 'success'|'error', message, serverVersion?}
@@ -124,7 +128,7 @@ async function onTest() {
 function explainNeo4jError(err) {
   switch (err.code) {
     case 'NEO4J_AUTH_FAILED': return 'Wrong username or password.'
-    case 'NEO4J_UNREACHABLE': return 'Host unreachable — check the Bolt URI and that Neo4j is running.'
+    case 'NEO4J_UNREACHABLE': return 'Host unreachable — check the Bolt URI and that the graph server is running.'
     case 'NEO4J_TIMEOUT': return 'Connection timed out after 5 seconds.'
     case 'NEO4J_TLS_ERROR': return 'TLS error — check the scheme (bolt:// vs neo4j+s://) and certificate.'
     case 'VALIDATION': return err.message
@@ -280,9 +284,9 @@ function explainEnterError(err) {
     case 'NEO4J_AUTH_FAILED':
       return 'The stored password no longer works for this connection. Edit it and try again.'
     case 'NEO4J_UNREACHABLE':
-      return 'The Neo4j server is not reachable. Check the host/port and try again.'
+      return 'The graph server is not reachable. Check the host/port and try again.'
     case 'NEO4J_TIMEOUT':
-      return 'Neo4j took too long to respond.'
+      return 'The graph server took too long to respond.'
     case 'PROJECT_ROOT_INVALID':
     case 'PROJECT_ROOT_UNREADABLE':
       return `Project root: ${err.message}`
@@ -342,7 +346,11 @@ function explainEnterError(err) {
 
     <!-- Saved connections list -->
     <section class="section">
-      <h2>Neo4j connection</h2>
+      <!-- 엔진 이름이 아니라 **무엇에 붙는지**를 적는다. 이 제품의 그래프는
+           ontological PostgreSQL 이고, 앱은 그 앞의 Bolt 게이트웨이에 붙는다.
+           화면이 "NEO4J CONNECTION" 이라고 말하면 납품처에서 "왜 Neo4j 를
+           쓰나" 라는 질문이 먼저 온다 — 실제로 그렇게 물어왔다. -->
+      <h2>그래프 연결</h2>
 
       <div v-if="launcher.savedConnections.length > 0" class="connection-list">
         <button
