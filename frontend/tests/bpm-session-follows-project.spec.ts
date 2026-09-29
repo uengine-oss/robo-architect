@@ -43,8 +43,11 @@ async function boot(page: any, opts: { project?: string; cachedSid?: string } = 
   const snapshots: string[] = []
 
   await page.addInitScript(([project, cached]: [string | null, string | null]) => {
-    window.localStorage.setItem('robo.auth.token', 'stub-token')
-    if (project) window.localStorage.setItem('robo.auth.project', project)
+    // 토큰·프로젝트는 2026-09-29 에 `sessionStorage` 로 옮겼다(앱을 끄면
+    // 로그인부터). 여기를 localStorage 로 두면 인증 게이트가 안 열려 스냅샷을
+    // 아예 안 부른다 — 이 검사가 조용히 무의미해진다.
+    window.sessionStorage.setItem('robo.auth.token', 'stub-token')
+    if (project) window.sessionStorage.setItem('robo.auth.project', project)
     // 옛 방식이 쓰던 전역 키 — 프로젝트를 안 가린다.
     if (cached) window.localStorage.setItem('hybrid.session_id', cached)
   }, [opts.project ?? null, opts.cachedSid ?? null])

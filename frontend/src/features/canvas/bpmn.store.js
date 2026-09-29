@@ -689,16 +689,41 @@ export const useBpmnStore = defineStore('bpmn', () => {
   }
 
   /** Fetch the full hybrid snapshot from Neo4j and populate the store. */
-  async function rehydrateHybrid(sid = hybridSessionId.value) {
+  async function rehydrateHybrid(sid) {
+    // 인자가 없으면 캐시를 쓴다. 그 캐시가 **낡았을 수 있다는 것**이 아래의 핵심.
+    const fromCache = sid === undefined
+    if (fromCache) sid = hybridSessionId.value
     // 캐시가 비었으면 graph 에 묻는다. 여기서 포기하면 "문서 업로드는 했는데
     // 프로세스가 없다"가 된다 — 실제로 그렇게 보였다.
     if (!sid) sid = await resolveSessionFromGraph()
     if (!sid) return { ok: false, reason: 'no-session' }
     isHybridRehydrating.value = true
     try {
-      const res = await fetch(`/api/ingest/hybrid/session/${sid}/snapshot`)
+      let res = await fetch(`/api/ingest/hybrid/session/${sid}/snapshot`)
       if (!res.ok) return { ok: false, reason: `http-${res.status}` }
-      const data = await res.json()
+      let data = await res.json()
+
+      // **낡은 id 는 404 가 아니라 200 + 빈 것으로 온다.** 위 검사에 안 걸리고
+      // 화면에는 "프로세스가 없다"로 보인다. 재적재는 세션 id 를 **바꾸므로**,
+      // 문서를 다시 올린 뒤 화면만 빈 채로 남는 일이 실제로 있었다
+      // (2026-09-29: `fd8fc503` → `f836078c`).
+      //
+      // `resolveSessionFromGraph` 는 목록에 있을 때만 캐시를 쓴다 — 한 번 되물으면
+      // 살아 있는 세션으로 옮겨 간다. **빈 결과일 때만** 하므로 정상 경로에는
+      // 요청이 늘지 않고, 호출자가 id 를 명시했을 때는 건드리지 않는다.
+      if (fromCache && !(data.processes || []).length && !(data.tasks || []).length) {
+        const resolved = await resolveSessionFromGraph()
+        if (resolved && resolved !== sid) {
+          const retry = await fetch(`/api/ingest/hybrid/session/${resolved}/snapshot`)
+          if (retry.ok) {
+            const fresh = await retry.json()
+            if ((fresh.processes || []).length || (fresh.tasks || []).length) {
+              sid = resolved
+              data = fresh
+            }
+          }
+        }
+      }
       hybridProcesses.value = data.processes || []
       hybridActors.value = data.actors || []
       hybridTasks.value = data.tasks || []
