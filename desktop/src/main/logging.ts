@@ -1,9 +1,21 @@
 /**
  * Structured JSONL logger for the Electron main process.
  *
- * - Writes to `<dataDir>/logs/desktop.log` as newline-delimited JSON.
- * - Rotates by size (default 5 MB) with up to 5 historical files.
+ * - Writes to `<dataDir>/logs/desktop-YYYY-MM-DD.log` as newline-delimited JSON.
+ * - **날짜별 파일**이 기본이고, 한 날짜 안에서 커지면 크기로 한 번 더 나눈다.
+ * - 오래된 날짜 파일은 `RETENTION_DAYS` 뒤에 지운다.
  * - `revealLogs()` opens the logs directory in the OS file manager (FR-016).
+ *
+ * ## 왜 날짜별인가
+ *
+ * 전에는 `desktop.log` 한 파일에 5MB 씩 돌려썼다(`.1`~`.5`). 그러면 **"어제
+ * 무슨 일이 있었나" 를 물을 수가 없다** — 경계가 크기라서 날짜와 안 맞고,
+ * 바쁜 하루가 조용한 한 주를 밀어낸다. 실제로 2026-09-28 의 설치 검증 기록이
+ * 다음 날 기동 로그와 같은 파일에 섞여 있었다.
+ *
+ * 날짜는 **로컬 시각**으로 정한다. 줄 안의 `ts` 는 ISO(UTC)지만, 파일을 찾는
+ * 사람은 "9월 29일 오전" 처럼 자기 시계로 생각한다. UTC 로 나누면 KST 오전 9시가
+ * 전날 파일에 들어가 아무도 못 찾는다.
  *
  * Used by every Phase-2 subsystem (data-dir, ipc) and by all US1+ modules.
  * No external log dependency — keeps the main bundle small and avoids
@@ -25,14 +37,104 @@ interface LogEntry {
   data?: Record<string, unknown>;
 }
 
-const MAX_BYTES = 5 * 1024 * 1024;
-const MAX_FILES = 5;
-const LOG_FILE = "desktop.log";
+/** 한 날짜 파일이 이만큼 커지면 `-1`, `-2` … 로 이어 쓴다. */
+const MAX_BYTES = 20 * 1024 * 1024;
+/** 하루 안에서 나눌 수 있는 최대 조각 수. 넘으면 마지막 조각에 계속 쓴다. */
+const MAX_PARTS = 20;
+/** 이보다 오래된 날짜 파일은 지운다. */
+const RETENTION_DAYS = 30;
+const PREFIX = "desktop-";
+const SUFFIX = ".log";
 
-let logFilePath: string | null = null;
+/** `desktop-2026-09-29.log` 와 `desktop-2026-09-29-3.log` 를 둘 다 잡는다. */
+const DAILY_FILE = /^desktop-(\d{4})-(\d{2})-(\d{2})(?:-(\d+))?\.log$/;
+
+let logsDir: string | null = null;
 let initialized = false;
 /** 콘솔 미러가 한 번 깨지면 다시 시도하지 않는다. 아래 `mirrorToConsole` 참고. */
 let consoleBroken = false;
+/** 지금 쓰고 있는 파일. 날짜가 바뀌면 다시 계산한다. */
+let activeDay: string | null = null;
+let activePath: string | null = null;
+/**
+ * 지금 조각에 쌓인 바이트. **메모리로 센다.**
+ *
+ * 매 줄 `statSync` 를 부르면 로그 한 줄마다 파일 시스템 왕복이 생긴다. 이
+ * 프로세스가 유일한 기록자이므로 세어 두면 맞고, 틀려도 조각 경계가 조금
+ * 밀리는 것뿐이다.
+ */
+let activeBytes = 0;
+
+/** 로컬 시각의 `YYYY-MM-DD`. `toISOString()` 은 UTC 라 쓸 수 없다. */
+export function localDayKey(at: Date = new Date()): string {
+  const y = at.getFullYear();
+  const m = String(at.getMonth() + 1).padStart(2, "0");
+  const d = String(at.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * 그 날짜에 **지금 써야 하는** 파일 경로.
+ *
+ * 조각이 이미 있으면 마지막 조각을 이어 쓰고, 그것이 한도를 넘었으면 다음
+ * 조각을 만든다. 예전처럼 파일을 밀어 올리지(rename) 않는다 — 날짜별에서는
+ * 밀어 올릴 이유가 없고, rename 은 열려 있는 핸들과 싸운다.
+ */
+export function resolveDayFile(dir: string, day: string): string {
+  const base = (part: number) =>
+    path.join(dir, part === 0 ? `${PREFIX}${day}${SUFFIX}` : `${PREFIX}${day}-${part}${SUFFIX}`);
+
+  let part = 0;
+  for (; part < MAX_PARTS; part += 1) {
+    const file = base(part);
+    let size: number;
+    try {
+      size = fs.statSync(file).size;
+    } catch {
+      return file; // 없다 — 여기가 새 조각이다.
+    }
+    if (size < MAX_BYTES) return file;
+  }
+  // 한도를 다 썼다. 마지막 조각에 계속 쓴다 — 로그가 커지는 것보다 로그를
+  // 잃는 것이 나쁘다.
+  return base(MAX_PARTS - 1);
+}
+
+/**
+ * 보존 기간이 지난 날짜 파일을 지운다.
+ *
+ * 이름의 날짜로만 판단한다 — mtime 은 파일을 복사하거나 백업에서 되살리면
+ * 바뀌어서, "언제의 기록인가" 를 말해 주지 못한다.
+ */
+export function pruneOldDays(
+  dir: string,
+  now: Date = new Date(),
+  retentionDays: number = RETENTION_DAYS,
+): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  cutoff.setDate(cutoff.getDate() - retentionDays);
+
+  const removed: string[] = [];
+  for (const name of names) {
+    const m = DAILY_FILE.exec(name);
+    if (!m) continue; // 옛 `desktop.log` 등은 건드리지 않는다.
+    const day = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (day >= cutoff) continue;
+    try {
+      fs.unlinkSync(path.join(dir, name));
+      removed.push(name);
+    } catch {
+      /* 못 지워도 로깅은 계속된다 */
+    }
+  }
+  return removed;
+}
 
 /**
  * 콘솔 미러. **절대 던지지 않는다.**
@@ -71,9 +173,39 @@ export function initLogging(): void {
   if (initialized) return;
   const dir = getLogsDir();
   fs.mkdirSync(dir, { recursive: true });
-  logFilePath = path.join(dir, LOG_FILE);
+  logsDir = dir;
   initialized = true;
-  log("info", "logging.initialized", { path: logFilePath });
+  const removed = pruneOldDays(dir);
+  log("info", "logging.initialized", {
+    dir,
+    file: path.basename(currentPath() ?? ""),
+    retentionDays: RETENTION_DAYS,
+    ...(removed.length > 0 ? { pruned: removed.length } : {}),
+  });
+}
+
+/** 그 경로로 갈아타면서 이미 들어 있는 바이트를 읽어 센다. */
+function switchTo(file: string): string {
+  activePath = file;
+  try {
+    activeBytes = fs.statSync(file).size;
+  } catch {
+    activeBytes = 0; // 아직 없는 파일
+  }
+  return file;
+}
+
+/** 지금 쓸 파일. 날짜가 넘어가면 여기서 새 파일로 갈아탄다. */
+function currentPath(): string | null {
+  if (!logsDir) return null;
+  const day = localDayKey();
+  if (day !== activeDay || activePath === null) {
+    activeDay = day;
+    // 자정을 넘겨 돌고 있던 앱이라면, 넘어간 시점에 한 번 정리한다.
+    pruneOldDays(logsDir);
+    return switchTo(resolveDayFile(logsDir, day));
+  }
+  return activePath;
 }
 
 export function log(level: Level, event: string, data?: Record<string, unknown>): void {
@@ -86,44 +218,21 @@ export function log(level: Level, event: string, data?: Record<string, unknown>)
   // Mirror to the console for `npm run dev` ergonomics — 던지지 않는다.
   mirrorToConsole(level, line.trimEnd());
 
-  if (!logFilePath) return;
+  const file = currentPath();
+  if (!file) return;
   try {
-    rotateIfNeeded(logFilePath);
-    fs.appendFileSync(logFilePath, line, { encoding: "utf8" });
+    fs.appendFileSync(file, line, { encoding: "utf8" });
+    activeBytes += Buffer.byteLength(line, "utf8");
+    // 조각이 한도를 넘었으면 다음 줄부터 다음 조각으로 간다.
+    if (activeBytes >= MAX_BYTES && logsDir && activeDay) {
+      switchTo(resolveDayFile(logsDir, activeDay));
+    }
   } catch (err) {
     // Last-resort: never throw from a log call.
     //
     // 예전에는 여기서 `console.error` 를 직접 불렀다. 그런데 그것도 EPIPE 로
     // 던질 수 있어서, **"절대 던지지 않는다"고 적어둔 자리가 던지고 있었다.**
     mirrorToConsole("error", `logging.write_failed ${String(err)}`);
-  }
-}
-
-function rotateIfNeeded(file: string): void {
-  let size = 0;
-  try {
-    size = fs.statSync(file).size;
-  } catch {
-    return; // File doesn't exist yet — first write will create it.
-  }
-  if (size < MAX_BYTES) return;
-
-  // Shift desktop.log.(N-1) → desktop.log.N, dropping the oldest.
-  for (let i = MAX_FILES - 1; i >= 1; i--) {
-    const from = `${file}.${i}`;
-    const to = `${file}.${i + 1}`;
-    if (fs.existsSync(from)) {
-      try {
-        fs.renameSync(from, to);
-      } catch {
-        /* swallow — best-effort rotation */
-      }
-    }
-  }
-  try {
-    fs.renameSync(file, `${file}.1`);
-  } catch {
-    /* swallow */
   }
 }
 

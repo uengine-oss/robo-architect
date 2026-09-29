@@ -219,13 +219,19 @@ function registerAppProtocol(): void {
         }
       }
       // 진단: 렌더러가 Neo4j override 헤더를 실었는지 (여기서 끊기면 프록시 문제).
+      //
+      // **method 를 함께 남긴다.** 전에는 경로만 남겨서 `GET /api/proposals/`(조회)
+      // 와 `POST /api/proposals/`(생성)가 로그에서 같게 보였다 — "무엇을 했나" 를
+      // 되짚을 때 가장 알고 싶은 것이 그 차이다.
+      const startedAt = Date.now();
       log("info", "protocol.api_proxy.headers", {
+        method: request.method,
         pathname,
         neo4jUri: request.headers.get("x-neo4j-uri") ?? "(none)",
         neo4jDb: request.headers.get("x-neo4j-database") ?? "(none)",
       });
       try {
-        return await net.fetch(upstream, {
+        const response = await net.fetch(upstream, {
           method: request.method,
           headers: proxyHeaders,
           body: proxyBody,
@@ -239,9 +245,21 @@ function registerAppProtocol(): void {
           // the Web Fetch spec.
           ...(proxyBody ? { duplex: "half" as const } : {}),
         });
+        // 결과까지 남긴다. 401·403·5xx 가 언제 몇 건 났는지가 사후에 가장
+        // 자주 필요한 정보다 — 오늘 fail-open 을 이 줄들로 확인했다.
+        log(response.ok ? "info" : "warn", "protocol.api_proxy.done", {
+          method: request.method,
+          pathname,
+          status: response.status,
+          ms: Date.now() - startedAt,
+        });
+        return response;
       } catch (err) {
         log("error", "protocol.api_proxy.failed", {
+          method: request.method,
+          pathname,
           upstream,
+          ms: Date.now() - startedAt,
           message: err instanceof Error ? err.message : String(err),
         });
         return new Response("Bad Gateway", { status: 502 });
@@ -330,6 +348,43 @@ function createMainWindow(): BrowserWindow {
   window.webContents.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL) => {
     log("error", "window.did_fail_load", { errorCode, errorDescription, validatedURL });
   });
+
+  // 화면 쪽 활동을 파일에 남긴다.
+  //
+  // 프런트엔드는 `app/logging/logger.js`(LDVC) 로 기록하는데, 그 로거는
+  // **브라우저 콘솔에만** 쓴다. DevTools 를 열어 둔 사람만 볼 수 있으니 사실상
+  // 남지 않는다. 여기서 한 번 받으면 8개 호출 지점을 고치지 않고도 전부 파일에
+  // 들어온다.
+  //
+  // `level` 은 0~3 = verbose·info·warning·error. `verbose` 는 버린다 —
+  // Vite·Vue 내부 잡담이 하루치 파일을 채운다.
+  // Electron 31 의 WebContents 는 아직 (level, message, line, sourceId) 를 준다 —
+  // `MessageDetails` 를 받는 쪽은 `ServiceWorkers` 다. 올릴 때 여기가 조용히
+  // 어긋나므로 형태를 적어 둔다.
+  const CONSOLE_LEVELS = ["debug", "info", "warn", "error"] as const;
+  window.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    if (level <= 0) return;
+    log(CONSOLE_LEVELS[level] ?? "info", "renderer.console", {
+      message: message.length > 2000 ? `${message.slice(0, 2000)}…` : message,
+      source: sourceId ? path.basename(sourceId) : undefined,
+      line,
+    });
+  });
+
+  // 화면이 죽거나 멈춘 것. 사용자는 "앱이 하얘졌다" 로만 말할 수 있다.
+  window.webContents.on("render-process-gone", (_e, d) => {
+    log("error", "renderer.gone", { reason: d.reason, exitCode: d.exitCode });
+  });
+  window.on("unresponsive", () => log("warn", "renderer.unresponsive", {}));
+  window.on("responsive", () => log("info", "renderer.responsive", {}));
+
+  // 사용자의 창 조작. "그때 창을 최소화해 뒀나" 같은 질문에 답한다.
+  window.on("focus", () => log("info", "window.focus", {}));
+  window.on("blur", () => log("info", "window.blur", {}));
+  window.on("minimize", () => log("info", "window.minimize", {}));
+  window.on("restore", () => log("info", "window.restore", {}));
+  window.on("maximize", () => log("info", "window.maximize", {}));
+  window.on("unmaximize", () => log("info", "window.unmaximize", {}));
   window.on("closed", () => {
     if (mainWindow === window) {
       mainWindow = null;

@@ -60,14 +60,22 @@ export function registerHandler<C extends IpcChannel>(
   registeredChannels.add(channel);
 
   ipcMain.handle(channel, async (_event, args: IpcRequestMap[C][0]) => {
+    const startedAt = Date.now();
     try {
       const data = await handler(args);
+      // **성공도 남긴다.** 전에는 실패만 남겼다. 그러면 "그때 무엇을 했나" 를
+      // 되짚을 수 없다 — 사용자가 무엇을 눌렀는지가 전부 IPC 로 지나간다.
+      //
+      // **인수는 남기지 않는다.** 비밀·프로젝트 경로·그래프 비밀번호가 이 길로
+      // 오간다. 채널 이름과 걸린 시간이면 "무슨 일을 했나" 는 충분히 말한다.
+      log("info", "ipc.handled", { channel, ms: Date.now() - startedAt });
       const result: IpcResult<IpcRequestMap[C][1]> = { ok: true, data };
       return result;
     } catch (err) {
       const error = toIpcError(err);
       log("error", "ipc.handler_failed", {
         channel,
+        ms: Date.now() - startedAt,
         code: error.code,
         message: error.message,
         stack: err instanceof Error ? err.stack : undefined,
