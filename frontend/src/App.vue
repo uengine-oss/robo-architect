@@ -36,6 +36,7 @@ import { createLogger, newOpId } from '@/app/logging/logger'
 // starts true) so this gate is transparent to the existing SPA deployment.
 import LauncherView from '@/features/desktop-launcher/LauncherView.vue'
 import LoginView from '@/features/auth/ui/LoginView.vue'
+import AuthGateNotice from '@/features/auth/ui/AuthGateNotice.vue'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import { useCollabStore } from '@/features/collab/collab.store.js'
 import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
@@ -54,12 +55,21 @@ const bpmnStore = useBpmnStore()
 const session = useSessionStore()
 const auth = useAuthStore()
 
-// 인증을 강제할 때만 문을 잠근다. 꺼져 있으면 지금까지처럼 바로 들어간다.
-// `checking` 동안에는 아무 판정도 하지 않는다 — 저장된 토큰을 확인하기 전에
-// 로그인 화면을 띄우면 새로고침마다 화면이 한 번 깜빡인다.
-const authGateBlocked = computed(
-  () => auth.enforced && !auth.checking && auth.status !== 'unknown' && !auth.authenticated,
-)
+/**
+ * 부팅 때 `/api/auth/provider` 를 몇 번까지 물어볼지. 기본 300(≈5분)은
+ * `desktop/src/main/backend.ts` 의 `READINESS_TIMEOUT_MS` 와 같은 값이다.
+ *
+ * 검사에서만 줄인다. 줄이면 게이트가 더 **빨리 닫히므로** 우회 수단이 아니다.
+ */
+function providerAttempts() {
+  const override = Number(window.__ROBO_AUTH_PROVIDER_ATTEMPTS__)
+  return Number.isFinite(override) && override >= 1 ? Math.min(override, 300) : 300
+}
+
+// 문을 열지 말지는 **스토어의 `gate`** 가 정한다(`auth.store.js`). 여기서 조건을
+// 다시 쓰지 않는 이유: 전에는 이 자리에 한 줄로 펼쳐져 있었고, 그 한 줄이
+// `auth.enforced` 를 boolean 으로 읽어 **인증 서버에 못 닿은 것을 "강제 꺼짐"
+// 으로 해석했다.** 단위 시험이 닿지 않는 자리라 그대로 납품본까지 갔다.
 
 // Tab state management — 시작 탭 = Proposals (사용자 기본 진입점)
 const activeTab = ref('Proposals')
@@ -421,7 +431,9 @@ const collab = useCollabStore()
 // `location.reload()` 로 통째로 다시 띄운다. 여기는 **처음 정해지는 순간** 한 번뿐이다.
 let firstProjectSeen = false
 watch(
-  () => (auth.status !== 'unknown' && (auth.authenticated || !auth.enforced)) && auth.projectGraph,
+  // 게이트가 열렸을 때만 센다. 같은 판정을 여기서 다시 쓰지 않는다 — 전에는
+  // 이 조건이 위 게이트와 따로 적혀 있어서, 한쪽을 고치면 다른 쪽이 남았다.
+  () => auth.gate === 'open' && auth.projectGraph,
   (graph) => {
     if (graph) {
       collab.watch(graph)
@@ -439,11 +451,22 @@ onUnmounted(() => collab.close())
 
 onMounted(async () => {
   // 인증 설정을 먼저 읽고, 저장된 토큰이 아직 쓸 만한지 확인한다.
-  // 실패해도 앱은 뜬다 — 강제가 꺼져 있으면 로그인 없이 쓰던 대로 쓴다.
+  //
   // Electron opens the renderer while Docker and the packaged API are still
   // starting. Keep asking until the API is ready; a single early failure used
   // to leave `provider` null for the whole session and silently bypass login.
-  auth.loadProvider({ attempts: 60, delayMs: 1000 }).then(() => auth.refresh())
+  //
+  // **예산을 백엔드 쪽 한도에 맞춘다.** 60초였는데 `backend.ts` 는 첫 기동에
+  // 최대 5분을 준다(`READINESS_TIMEOUT_MS`) — 그래서 60초는 "못 닿았다" 를
+  // 너무 일찍 선언했다. 전에는 그게 곧 로그인 우회였으므로 치명적이었고, 지금은
+  // 게이트가 닫히는 쪽이라 안전하지만 그래도 거짓 실패를 보여줄 이유가 없다.
+  //
+  // `__ROBO_AUTH_PROVIDER_ATTEMPTS__` 는 검사용 이음새다. **이 값으로 문을 열 수는
+  // 없다** — 줄이면 "닿지 못했다" 를 더 빨리 말하게 되고, 그건 게이트를 *닫는*
+  // 쪽이다. 없으면 이 화면을 확인하려고 5분을 기다려야 한다.
+  auth
+    .loadProvider({ attempts: providerAttempts(), delayMs: 1000 })
+    .then(() => auth.refresh())
 
   // Load saved navigator width and collapsed state
   try {
@@ -509,9 +532,12 @@ onUnmounted(() => {
        the user has completed the launcher hand-off (connection + project
        root + identity). In web mode session.entered is true from the start,
        so the entire branch is unreachable and the existing SPA renders as-is. -->
-  <!-- 인증 게이트. `AUTH_ENFORCE` 가 켜졌을 때만 걸린다. 런처보다 앞에 둔다 —
-       누구인지 모르는 채로 연결을 고르게 할 이유가 없다. -->
-  <LoginView v-if="authGateBlocked" />
+  <!-- 인증 게이트. 런처보다 앞에 둔다 — 누구인지 모르는 채로 연결을 고르게 할
+       이유가 없다. **모르는 동안도 앞에 둔다**: 확인 중이거나 인증 서버에 닿지
+       못했으면 런처도 작업화면도 그리지 않는다. -->
+  <AuthGateNotice v-if="auth.gate === 'checking' || auth.gate === 'unreachable'"
+                  :state="auth.gate" />
+  <LoginView v-else-if="auth.gate === 'login'" />
   <LauncherView v-else-if="session.isDesktop && !session.entered" />
   <div v-else class="app-container">
     <TopBar

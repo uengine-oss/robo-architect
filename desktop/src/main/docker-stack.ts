@@ -106,6 +106,24 @@ export interface RuntimeManifest {
    * 옛 매니페스트에는 없는 필드다. 없으면 검사도 없다(하위 호환).
    */
   credentialNames?: string[];
+  /**
+   * 이 릴리스가 **로그인을 강제하는지**. 굽는 쪽의 의도이고, 실제 스위치는
+   * `architect/app/.env` 의 `AUTH_ENFORCE` 다. 여기 적어 두는 이유는
+   * 아래 `assertAuthPostureNotOverridden` 이 "이건 잠긴 납품본인가" 를 알아야
+   * 하기 때문이다. 옛 매니페스트에는 없다(하위 호환).
+   */
+  authEnforced?: boolean;
+  /** `none` 이면 사내 인증이 아니다. `posco`·`swp` 면 SSO 납품본이다. */
+  authProvider?: string;
+  /**
+   * `delivery` 또는 `internal-test`. `robo.ps1` 의 `Get-ReleaseAuthPosture` 가 정한다.
+   *
+   * 사내망 밖에서는 인증을 켠 설치본으로 화면을 밟을 수 없다. 그래서 길을
+   * 없애지 않고 **이름을 붙였다** — `internal-test` 로 구우면 인증을 끈 빌드를
+   * 만들 수 있고, 그 사실이 여기 남는다. 없으면 `delivery` 로 본다(하위 호환):
+   * 모르는 빌드를 느슨한 쪽으로 가정하면 안 된다.
+   */
+  releaseChannel?: string;
   source: Record<string, string>;
 }
 
@@ -370,6 +388,92 @@ function assertCredentialsPresent(manifest: RuntimeManifest): void {
       `다음 환경변수를 채우고 다시 실행하라 — ${missing.join(", ")}. ` +
       `설정 예: [Environment]::SetEnvironmentVariable('${missing[0]}', '<값>', 'User') ` +
       `(설정 뒤 로그아웃·재로그인해야 아이콘으로 켠 앱에 반영된다)`,
+  );
+}
+
+const ENFORCE_VAR = "AUTH_ENFORCE";
+const DEV_LOGIN_VAR = "AUTH_DEV_LOGIN_ENABLED";
+const TRUTHY = new Set(["1", "true", "yes", "on"]);
+const FALSY = new Set(["0", "false", "no", "off"]);
+
+/**
+ * 납품본의 **인증 자세를 환경변수로 뒤집은 것**을 막는다.
+ *
+ * ## 체크섬만으로는 부족하다
+ *
+ * `architect/app/.env` 는 sha256 으로 잠가 뒀다. 그런데 백엔드가
+ * `load_dotenv()` 를 기본값(`override=False`)으로 부르므로 **이미 프로세스
+ * 환경에 있는 값이 잠긴 파일을 이긴다.** 파일은 한 글자도 안 바뀌니
+ * `runtime.environment.verified` 는 그대로 통과한다.
+ *
+ * 2026-09-29 에 이 PC 가 정확히 그 상태였다 — `.env` 는
+ * `AUTH_DEV_LOGIN_ENABLED=false`, 서버 응답은 `devLogin.enabled: true`.
+ *
+ * ## 둘을 함께 본다
+ *
+ * ```
+ * AUTH_ENFORCE=false            문을 통째로 없앤다        (더 큰 구멍)
+ * AUTH_DEV_LOGIN_ENABLED=true   SSO 를 건너뛰는 길을 연다
+ * ```
+ *
+ * ## 채널로 갈린다 — 끌 수 있느냐가 아니라 이름이 있느냐
+ *
+ * `robo.ps1` 의 `Get-ReleaseAuthPosture` 가 같은 원칙을 이미 적어 뒀다:
+ * *"문제는 끌 수 있다는 것이 아니라, 이름 없는 예외가 납품으로 새는 것"*.
+ * 그래서 `internal-test` 채널 빌드는 경고만 하고 통과시키고,
+ * `delivery` 채널에서는 멈춘다.
+ *
+ * ## 왜 경고가 아니라 중단인가
+ *
+ * 우회가 열려 있어도 앱은 정상으로 보인다. 로그인 화면이 뜨고, 개발용 칸이
+ * 하나 더 있을 뿐이다 — **증상이 없다.** 증상이 없는 우회는 발견되지 않으므로
+ * 기동 시점에 이름을 대고 멈춘다. `runtime.credentials_missing` 과 같은 급이다.
+ *
+ * 릴리스가 스스로 그렇게 구운 경우(`.env` 자체의 값)는 여기서 막지 않는다.
+ * 그건 굽는 쪽의 결정이고 체크섬과 `robo.ps1` 관문이 이미 덮는다.
+ */
+export function assertAuthPostureNotOverridden(manifest: RuntimeManifest): void {
+  const enterprise =
+    manifest.authEnforced === true &&
+    (manifest.authProvider ?? "none").toLowerCase() !== "none";
+  if (!enterprise) return;
+
+  const read = (name: string) => (process.env[name] ?? "").trim().toLowerCase();
+  const found: { name: string; state: string }[] = [];
+  // 빈 값은 "설정하지 않음" 으로 본다 — 지운 흔적일 뿐이다.
+  if (FALSY.has(read(ENFORCE_VAR))) found.push({ name: ENFORCE_VAR, state: "꺼짐" });
+  if (TRUTHY.has(read(DEV_LOGIN_VAR))) found.push({ name: DEV_LOGIN_VAR, state: "켜짐" });
+  const first = found[0];
+  if (!first) return;
+  const overrides = found.map((f) => `${f.name}=${f.state}`);
+
+  const channel = (manifest.releaseChannel ?? "delivery").toLowerCase();
+  if (channel === "internal-test") {
+    // 이름이 붙은 예외다. 매니페스트에 채널로 남아 있으므로 통과시키되,
+    // 이 빌드로 납품하지 말라는 것을 로그에 남긴다.
+    log("warn", "runtime.auth_posture_override_allowed", {
+      releaseId: manifest.releaseId,
+      releaseChannel: channel,
+      overrides,
+    });
+    return;
+  }
+
+  log("error", "runtime.auth_posture_override", {
+    releaseId: manifest.releaseId,
+    releaseChannel: channel,
+    overrides,
+  });
+  throw new Error(
+    `runtime.auth_posture_override: 이 릴리스는 사내 인증 납품본이다` +
+      `(releaseChannel=${channel}, authProvider=${manifest.authProvider}). ` +
+      `그런데 환경변수가 그 자세를 뒤집고 있다 — ${overrides.join(", ")}. ` +
+      `환경변수가 체크섬으로 잠근 .env 를 이기기 때문에(load_dotenv 는 ` +
+      `override=False) 파일 검사로는 걸리지 않는다. 지우고 다시 실행하라: ` +
+      `[Environment]::SetEnvironmentVariable('${first.name}', $null, 'User') ` +
+      `(지운 뒤 로그아웃·재로그인해야 아이콘으로 켠 앱에 반영된다). ` +
+      `사내망 밖에서 화면을 밟아야 한다면 ROBO_RELEASE_CHANNEL=internal-test 로 ` +
+      `따로 구워라 — 그 빌드에서는 이 검사가 경고로 끝난다.`,
   );
 }
 
@@ -681,6 +785,7 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   const topology = graphTopology();
   await ensureEnvironmentSnapshots(root, manifest);
   assertCredentialsPresent(manifest);
+  assertAuthPostureNotOverridden(manifest);
   await ensureDockerDaemon();
   await ensureImages(root, manifest);
 

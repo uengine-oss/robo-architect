@@ -67,6 +67,77 @@ test.describe('로그인 게이트', () => {
     await stub(page, { provider: { ...PROVIDER, enforce: false } })
     await page.goto('/', { waitUntil: 'networkidle' })
     await expect(page.locator('.login__card')).toHaveCount(0)
+    await expect(page.locator('.gate__card'), '강제가 꺼졌으면 기다릴 이유도 없다').toHaveCount(0)
+  })
+
+  /**
+   * **여기가 2026-09-29 에 비어 있던 자리다.**
+   *
+   * 위의 모든 검사는 `/api/auth/provider` 를 즉시 성공으로 가로챈다. 그래서
+   * "서버가 대답하기 전" 이라는 상태를 한 번도 밟지 않았고, 그 상태에서 앱이
+   * 통째로 열리는 것을 아무도 못 봤다. 실측: 창이 뜬 뒤 백엔드가 응답하기까지
+   * 44초, 첫 설치에서는 2분 이상. 그 시간 동안 `provider === null` →
+   * `enforced === false` → 게이트가 열렸다.
+   *
+   * `enforce: false` 를 확인하는 검사가 있었던 것이 오히려 함정이었다 —
+   * **"응답이 없다" 와 "강제가 꺼져 있다" 를 코드가 같게 다뤘기 때문에**
+   * 통과하는 검사가 곧 통과하는 우회였다.
+   */
+  test('응답이 오기 전에는 로그인 화면도 런처도 열지 않는다', async ({ page }) => {
+    // 영원히 대답하지 않는 서버. 끊지 않고 붙잡는다 — 실제 증상이 그랬다
+    // (백엔드가 아직 listen 하지 않아 연결 자체가 늦는다).
+    await page.route('**/api/auth/provider', () => { /* 응답하지 않는다 */ })
+    await page.route('**/api/auth/me', (r: any) =>
+      r.fulfill({ json: { authenticated: false, status: 'anonymous' } }))
+    await page.goto('/', { waitUntil: 'domcontentloaded' })
+
+    const gate = page.locator('.gate__card')
+    await expect(gate, '확인 중 화면이 앞을 막아야 한다').toBeVisible({ timeout: 30_000 })
+    await expect(gate).toContainText('인증 설정을 확인하는 중')
+
+    // 열려서는 안 되는 것들. 이 세 줄이 옛 코드에서 실패한다.
+    await expect(page.locator('.launcher'), '런처가 열리면 안 된다').toHaveCount(0)
+    await expect(page.locator('.app-container'), '작업화면이 열리면 안 된다').toHaveCount(0)
+    await expect(page.locator('.login__card'), '아직 강제 여부를 모른다').toHaveCount(0)
+  })
+
+  test('늦게라도 오면 그때 로그인 화면으로 넘어간다', async ({ page }) => {
+    await page.route('**/api/auth/me', (r: any) =>
+      r.fulfill({ json: { authenticated: false, status: 'anonymous' } }))
+    // 첫 요청은 실패시키고, 두 번째부터 성공시킨다 — 재시도가 진짜로 도는지 본다.
+    let calls = 0
+    await page.route('**/api/auth/provider', async (r: any) => {
+      calls += 1
+      if (calls === 1) return r.abort('connectionrefused')
+      await r.fulfill({ json: PROVIDER })
+    })
+
+    await page.goto('/', { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('.gate__card')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.login__card'), '재시도가 성공하면 로그인으로 바뀐다')
+      .toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.gate__card')).toHaveCount(0)
+    expect(calls, '한 번 실패했으면 다시 물어봐야 한다').toBeGreaterThan(1)
+  })
+
+  test('끝까지 못 닿으면 열지 않고 이유를 말한다', async ({ page }) => {
+    await page.route('**/api/auth/me', (r: any) => r.abort('connectionrefused'))
+    // 1회 예산으로 부르는 경로를 흉내 내지 않고, 화면이 스스로 포기한 뒤를 본다.
+    // `attempts` 예산이 크므로 스토어를 직접 몰아 세운다.
+    await page.route('**/api/auth/provider', (r: any) => r.abort('connectionrefused'))
+    await page.addInitScript(() => {
+      // 부팅 재시도 예산을 짧게 줄인다 — 300초를 기다릴 수는 없다.
+      ;(window as any).__ROBO_AUTH_PROVIDER_ATTEMPTS__ = 2
+    })
+    await page.goto('/', { waitUntil: 'domcontentloaded' })
+
+    const gate = page.locator('.gate__card')
+    await expect(gate).toBeVisible({ timeout: 30_000 })
+    await expect(gate, '닿지 못한 것을 "인증 꺼짐" 으로 읽지 않는다')
+      .toContainText('인증 서버에 닿지 못했습니다', { timeout: 30_000 })
+    await expect(gate).toContainText('열지 않았습니다')
+    await expect(page.locator('.launcher')).toHaveCount(0)
+    await expect(page.locator('.app-container')).toHaveCount(0)
   })
 
   test('승인 대기는 안내를 보여 주고 토큰을 저장하지 않는다', async ({ page }) => {

@@ -40,6 +40,17 @@ export const useAuthStore = defineStore('auth', () => {
   /** 'unknown' 은 아직 서버에 물어보기 전이다 — 로그인 화면을 성급히 띄우지 않는다. */
   const status = ref('unknown')
   const provider = ref(null)
+  /**
+   * `provider` 가 담긴 것을 **어떻게 알았는지**. `'unknown' | 'loaded' | 'unreachable'`.
+   *
+   * 이게 없을 때 `provider === null` 은 두 가지를 동시에 뜻했다 —
+   * "아직 못 물어봤다" 와 "물어봤고, 강제가 꺼져 있다". 그래서 백엔드에 닿기
+   * 전에는 `enforced` 가 false 로 접혀 **인증 강제가 없는 것처럼 열렸다.**
+   * 실제로 그랬다: 창이 뜨고 백엔드가 응답하기까지 44초가 비었고(2026-09-29
+   * 실측), 그 사이 로그인 화면 없이 런처가 그려졌다. 첫 설치에서는 백엔드
+   * 기동이 2분을 넘을 수 있다(desktop/src/main/backend.ts 주석).
+   */
+  const providerStatus = ref('unknown')
   const checking = ref(false)
   /**
    * 프로젝트 때문에 막힌 상태. `PROJECT_NOT_SELECTED` 또는 `PROJECT_FORBIDDEN`.
@@ -55,8 +66,36 @@ export const useAuthStore = defineStore('auth', () => {
   const pending = computed(() => status.value === 'pending')
   const rejected = computed(() => status.value === 'rejected')
   const isAdmin = computed(() => (user.value || {}).role === 'admin')
+  /**
+   * 인증 강제 여부. `'unknown' | 'on' | 'off'`.
+   *
+   * **모를 때가 'off' 가 아니다.** 이것을 boolean 하나로 둔 것이 아래 `gate` 가
+   * 막으려는 fail-open 을 만들었다.
+   */
+  const enforcement = computed(() => {
+    if (providerStatus.value !== 'loaded') return 'unknown'
+    return (provider.value || {}).enforce ? 'on' : 'off'
+  })
   /** 강제가 꺼져 있으면 로그인 없이도 쓰던 대로 쓴다. */
-  const enforced = computed(() => !!(provider.value || {}).enforce)
+  const enforced = computed(() => enforcement.value === 'on')
+
+  /**
+   * 화면을 무엇으로 여는가. `'checking' | 'unreachable' | 'login' | 'open'`.
+   *
+   * 판정을 여기 한 곳에 모은 이유는 **이것만 시험하면 되게** 하려는 것이다.
+   * 전에는 이 조건이 `App.vue` 의 computed 한 줄에 펼쳐져 있어서 단위 시험이
+   * 닿지 못했고, 그래서 fail-open 이 아무 경고 없이 납품본까지 갔다.
+   *
+   * 원칙: **모를 때는 닫는다.**
+   */
+  const gate = computed(() => {
+    if (enforcement.value === 'unknown') {
+      return providerStatus.value === 'unreachable' ? 'unreachable' : 'checking'
+    }
+    if (enforcement.value === 'off') return 'open'
+    if (checking.value || status.value === 'unknown') return 'checking'
+    return authenticated.value ? 'open' : 'login'
+  })
 
   function setToken(value) {
     token.value = value || null
@@ -83,6 +122,7 @@ export const useAuthStore = defineStore('auth', () => {
         const r = await fetch('/api/auth/provider')
         if (r.ok) {
           provider.value = await r.json()
+          providerStatus.value = 'loaded'
           return provider.value
         }
       } catch {
@@ -94,8 +134,12 @@ export const useAuthStore = defineStore('auth', () => {
       }
     }
 
-    provider.value = null
-    return null
+    // 이번엔 못 닿았다. **이미 알아낸 것은 지우지 않는다** — 로그인 화면이
+    // `loadProvider()` 를 1회짜리로 한 번 더 부르기 때문이다. 거기서 잠깐
+    // 끊긴 것을 "서버가 사라졌다" 로 읽으면, 로그인하던 사람이 오류 화면으로
+    // 튕겨 나간다.
+    if (providerStatus.value !== 'loaded') providerStatus.value = 'unreachable'
+    return provider.value
   }
 
   /** 저장된 토큰이 아직 쓸 만한지 서버에 확인한다. */
@@ -157,8 +201,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   return {
-    token, projectGraph, user, status, provider, checking, projectError,
-    authenticated, pending, rejected, isAdmin, enforced,
+    token, projectGraph, user, status, provider, providerStatus, checking, projectError,
+    authenticated, pending, rejected, isAdmin, enforced, enforcement, gate,
     setToken, setProject, setProjectError,
     loadProvider, refresh, devLogin, ssoLogin, logout,
   }
