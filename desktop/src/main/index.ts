@@ -153,6 +153,45 @@ function buildRuntimeState(): RuntimeState {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * 진행 중인 upstream 프록시 요청들. **문서가 바뀌면 전부 끊는다.**
+ *
+ * ## 왜 필요한가 — 2026-09-29 실측
+ *
+ * 화면이 `Analyzer 로드 중…` 에서 멈췄다. 로그를 보니 요청이 **시작만 되고
+ * 끝나지 않았다** — `protocol.api_proxy.headers` 는 찍히는데 `done` 도 `failed`
+ * 도 안 온다. 그런데 백엔드를 직접 때리면 19~223ms 로 멀쩡히 답했다.
+ *
+ *     Robo-Architect → backend :  Established 6
+ *
+ * **정확히 6이다.** Chromium 의 호스트당 동시 연결 한도다. `/api/collab/stream`
+ * 같은 SSE 가 오래 살아서 자리를 물고, 렌더러가 재적재될 때마다(그날 4번) 앞
+ * 문서의 스트림이 남아 쌓였다. 6개가 다 차면 새 요청은 소켓을 기다리며
+ * **무한 대기**한다 — 화면에는 "로딩 중" 으로만 보인다.
+ *
+ * `net.fetch` 에 `request.signal` 을 넘기는 것은 이미 하고 있다. 그것은 렌더러가
+ * 요청을 취소할 때를 덮는다. 그런데 **하드 리로드는 그 신호를 태워 보내지
+ * 못한다** — 문서가 통째로 사라지므로 취소해 줄 주체가 없다. 그래서 main 이
+ * 문서 전환을 보고 직접 끊는다.
+ */
+/** 이만큼 기다렸는데도 응답이 없으면 로그로 말한다. */
+const STALL_WARN_MS = 15_000;
+
+const inflightProxy = new Set<AbortController>();
+
+function abortInflightProxy(reason: string): void {
+  if (inflightProxy.size === 0) return;
+  log("info", "protocol.api_proxy.aborted_all", { count: inflightProxy.size, reason });
+  for (const controller of [...inflightProxy]) {
+    try {
+      controller.abort();
+    } catch {
+      /* 이미 끝난 것 */
+    }
+  }
+  inflightProxy.clear();
+}
+
 // T015 protocol handler — serves the SPA from frontend/dist AND proxies
 // `/api/*` to the live backend port. Putting the proxy here avoids editing
 // the SPA's API client (T017 will replace this with a clean apiBase.js).
@@ -228,9 +267,32 @@ function registerAppProtocol(): void {
       log("info", "protocol.api_proxy.headers", {
         method: request.method,
         pathname,
+        // 붙잡힌 요청 수. 6 에 가까워지면 아래 `stalled` 가 곧 뜬다 —
+        // Chromium 의 호스트당 동시 연결 한도가 6이다.
+        inflight: inflightProxy.size,
         neo4jUri: request.headers.get("x-neo4j-uri") ?? "(none)",
         neo4jDb: request.headers.get("x-neo4j-database") ?? "(none)",
       });
+      // 렌더러의 취소 신호와 **문서 전환**을 하나로 묶는다. `request.signal` 만
+      // 넘기면 하드 리로드를 못 덮는다 — 위 `inflightProxy` 주석 참고.
+      const controller = new AbortController();
+      inflightProxy.add(controller);
+      if (request.signal.aborted) controller.abort();
+      else request.signal.addEventListener("abort", () => controller.abort(), { once: true });
+
+      // **멈춘 것을 멈췄다고 말한다.** 연결 풀이 차면 `net.fetch` 는 던지지도
+      // 끝나지도 않고 소켓을 기다린다 — 화면은 "로딩 중" 이고 로그에는 시작만
+      // 남아, 2026-09-29 에 그 상태를 알아내는 데 로그 대조가 필요했다.
+      const stallTimer = setTimeout(() => {
+        log("warn", "protocol.api_proxy.stalled", {
+          method: request.method,
+          pathname,
+          waitedMs: Date.now() - startedAt,
+          inflight: inflightProxy.size,
+          hint: "호스트당 동시 연결 6개가 다 찼을 수 있다(SSE 가 오래 문다)",
+        });
+      }, STALL_WARN_MS);
+
       try {
         const response = await net.fetch(upstream, {
           method: request.method,
@@ -240,7 +302,7 @@ function registerAppProtocol(): void {
           // app:// Request 는 abort 되므로 그 신호를 upstream 에도 전달해야 한다.
           // 전달하지 않으면 collab SSE 와 초기 API 요청이 백엔드/gateway 쪽에
           // 계속 남고, 전환을 반복한 뒤 새 요청이 연결 풀을 기다리며 무한대기한다.
-          signal: request.signal,
+          signal: controller.signal,
           redirect: "manual",
           // duplex required when sending a streaming body — net.fetch follows
           // the Web Fetch spec.
@@ -248,14 +310,20 @@ function registerAppProtocol(): void {
         });
         // 결과까지 남긴다. 401·403·5xx 가 언제 몇 건 났는지가 사후에 가장
         // 자주 필요한 정보다 — 오늘 fail-open 을 이 줄들로 확인했다.
+        clearTimeout(stallTimer);
         log(response.ok ? "info" : "warn", "protocol.api_proxy.done", {
           method: request.method,
           pathname,
           status: response.status,
           ms: Date.now() - startedAt,
         });
+        // **여기서 지우지 않는다.** SSE 는 헤더를 받은 뒤에도 본문이 계속
+        // 흐르고, 그 스트림이 소켓을 물고 있는 장본인이다. 다음 문서 전환이
+        // 끊어 줄 때까지 등록해 둔다.
         return response;
       } catch (err) {
+        clearTimeout(stallTimer);
+        inflightProxy.delete(controller);
         log("error", "protocol.api_proxy.failed", {
           method: request.method,
           pathname,
@@ -355,6 +423,13 @@ function createMainWindow(): BrowserWindow {
   //
   // 이중 진입을 막으려던 가드인데, 정작 막은 것은 **정상적인 재적재**였다.
   // 문서가 바뀌면 그 전 렌더러는 존재하지 않으므로 pending 이 맞다.
+  // 새 문서가 뜨기 **시작할 때** 앞 문서의 upstream 요청을 끊는다. 끊지 않으면
+  // SSE 가 소켓을 물고 남아, 재적재를 몇 번 반복하면 호스트당 6개 한도가 차서
+  // 새 요청이 무한 대기한다(화면에는 "로딩 중" 으로만 보인다).
+  window.webContents.on("did-start-navigation", (_e, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) abortInflightProxy("main frame navigation");
+  });
+
   window.webContents.on("did-finish-load", () => {
     markPending();
     log("info", "launcher.phase_reset", { reason: "renderer document loaded" });
