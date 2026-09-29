@@ -406,6 +406,21 @@ async def run_agentic_retrieval(
             ],
         })
         if not candidates:
+            # 여기는 아래 요약 로그에 닿지 못하고 빠져나간다. 그런데 **이 경우가
+            # 가장 알고 싶은 것**이다 — 검증 LLM 을 부르기도 전에 임베딩 검색이
+            # 아무것도 못 냈다는 뜻이고, 어휘·임계값을 봐야 한다는 신호다.
+            SmartLogger.log(
+                "WARN",
+                f"Task mapping no_candidates: '{task.name}' — 임베딩 검색이 후보를 내지 못했다",
+                category="ingestion.hybrid.agentic.task",
+                params={
+                    "task_id": task.id,
+                    "task_name": task.name,
+                    "reason": "no_candidates",
+                    "candidates": 0,
+                    "rules_in_scope": len(rules),
+                },
+            )
             await sink({"type": "AgentFinalMatches", "task_id": task.id, "rules": []})
             continue
 
@@ -416,7 +431,7 @@ async def run_agentic_retrieval(
             )
         except Exception as e:
             SmartLogger.log(
-                "WARN", "Agentic validator LLM call failed — skipping task",
+                "WARN", f"Agentic validator LLM call failed — skipping task: {e}",
                 category="ingestion.hybrid.agentic",
                 params={"task_id": task.id, "error": str(e)},
             )
@@ -499,6 +514,45 @@ async def run_agentic_retrieval(
             ],
             "rejects": near_miss_rejects,
         })
+
+        # **task 하나가 어디서 끝났는지 한 줄로 남긴다.**
+        #
+        # 2026-09-29: hr-sample + HR 문서 3개로 전체 탐색을 돌렸더니 task 28개 중
+        # 7개만 매핑됐다. 그런데 **나머지 21개가 왜 비었는지 아무 데도 없었다** —
+        # `RetrievalResult` 는 `accepted` 만 들고 있고, 탈락은 SSE 로 흘러 지나가면
+        # 사라진다. 화면에는 전부 "매핑 0" 한 모양이라 "기능이 고장났다" 로만 보인다.
+        #
+        # 0으로 끝나는 길은 둘이고 **성격이 정반대다** —
+        #
+        #   no_candidates   임베딩 검색이 후보를 못 냈다 → 어휘·임계값 문제
+        #   all_rejected    후보는 있었는데 검증 LLM 이 전부 물렸다 → 판단 문제
+        #                   (코드에 그 업무가 정말 없으면 이게 정답이다)
+        #
+        # 둘을 구별하지 못하면 고칠 곳을 고를 수 없다.
+        reason = (
+            "ok" if accepted_this_task
+            else "no_candidates" if not candidates
+            else "no_verdicts" if not verdicts
+            else "all_rejected"
+        )
+        SmartLogger.log(
+            "INFO" if accepted_this_task else "WARN",
+            (
+                f"Task mapping {reason}: '{task.name}' "
+                f"candidates={len(candidates)} verdicts={len(verdicts)} "
+                f"accepted={len(accepted_this_task)}"
+            ),
+            category="ingestion.hybrid.agentic.task",
+            params={
+                "task_id": task.id,
+                "task_name": task.name,
+                "reason": reason,
+                "candidates": len(candidates),
+                "verdicts": len(verdicts),
+                "accepted": len(accepted_this_task),
+                "top_reject_score": (ranked_rejects[0]["score"] if ranked_rejects else None),
+            },
+        )
         result.accepted.extend(accepted_this_task)
 
     # --- Post-processing: per-task cap only ----------------------------------

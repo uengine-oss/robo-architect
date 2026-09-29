@@ -300,7 +300,7 @@ async def explore_task(
             await _refresh_task_conditions(session_id, task_dto, new_mappings, rules)
         except Exception as e:
             SmartLogger.log(
-                "WARN", "Per-task conditions refresh failed (continuing)",
+                "WARN", f"Per-task conditions refresh failed (continuing): {e}",
                 category="ingestion.hybrid.explore.conditions",
                 params={"task_id": task_id, "error": str(e)},
             )
