@@ -110,11 +110,29 @@ test.describe('고를 것이 없으면 묻지 않는다', () => {
 test.describe('건너뛰면 안 되는 경우 — 여기가 본론이다', () => {
   test.setTimeout(120_000)
 
-  test('기억해 둔 폴더가 없으면 묻는다 (첫 실행)', async ({ page }) => {
+  test('기억해 둔 폴더가 없으면 묻는다 (첫 실행) — 그런데 폴더만 묻는다', async ({ page }) => {
     await stubDesktop(page, { recentRoots: [] })
     await page.goto('/', { waitUntil: 'domcontentloaded' })
     await expect(launcherCard(page)).toBeVisible({ timeout: 20_000 })
     expect(await page.evaluate(() => (window as any).__enterCalls.length)).toBe(0)
+
+    // 첫 실행에서 물어야 하는 것은 **폴더뿐**이다. 연결은 앱이 정한다.
+    const body = page.locator('.launcher')
+    await expect(body).toContainText('Project root')
+    await expect(body, '그래프 연결을 물으면 안 된다').not.toContainText('그래프 연결')
+    await expect(body).not.toContainText('Add a new connection')
+  })
+
+  test('번들 말고 다른 연결도 있으면 연결 칸을 보여 준다', async ({ page }) => {
+    // 숨기는 조건을 "번들이 하나라도 있으면" 으로 쓰면 이 연결을 영영 못 고른다.
+    await stubDesktop(page, {
+      recentRoots: [],
+      connections: [BUNDLED, { ...BUNDLED, id: 'c2', label: '사내 중앙 DB', source: 'manual' }],
+    })
+    await page.goto('/', { waitUntil: 'domcontentloaded' })
+    await expect(launcherCard(page)).toBeVisible({ timeout: 20_000 })
+    await expect(page.locator('.launcher')).toContainText('그래프 연결')
+    await expect(page.locator('.launcher')).toContainText('사내 중앙 DB')
   })
 
   test('폴더가 사라졌으면 묻는다 — 조용히 들어가면 안 된다', async ({ page }) => {

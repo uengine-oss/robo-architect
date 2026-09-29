@@ -110,6 +110,29 @@ async function reresolveIdentity(rootForCwd) {
  */
 const autoEntering = ref(true)
 
+/**
+ * 앱이 스스로 만든 번들 연결이 있는가.
+ *
+ * 있으면 **연결은 사람이 정할 것이 아니다** — 화면에서 빼고 자동으로 고른다.
+ * 없으면(개발 환경, 손으로 다른 그래프에 붙는 경우) 고르는 칸을 보여 준다.
+ */
+const bundledConnection = computed(() => {
+  const conns = launcher.savedConnections
+  // **하나뿐일 때만**이다. 번들 말고 다른 연결도 있으면 고를 것이 실제로
+  // 있으므로 칸을 숨기면 안 된다 — 숨기면 그 연결을 영영 못 고른다.
+  return conns.length === 1 && conns[0].source === 'bundled' ? conns[0] : null
+})
+const hasBundledConnection = computed(() => bundledConnection.value !== null)
+
+// 번들 연결은 보이든 안 보이든 항상 고른 상태로 둔다 — `enter` 가 요구한다.
+watch(
+  bundledConnection,
+  (conn) => {
+    if (conn && launcher.selectedConnectionId !== conn.id) launcher.select(conn.id)
+  },
+  { immediate: true },
+)
+
 async function maybeAutoEnter() {
   // 연결이 번들 하나뿐일 때만. 여럿이면 사용자가 고를 것이 실제로 있다.
   const conns = launcher.savedConnections
@@ -385,8 +408,15 @@ function explainEnterError(err) {
       </div>
     </header>
 
-    <!-- Saved connections list -->
-    <section class="section">
+    <!-- 그래프 연결.
+         **번들 연결이 있으면 화면에서 아예 묻지 않는다.** 앱이 스택을 소유하고
+         연결을 스스로 만들어 고르므로 사람이 정할 것이 없다. 브리지가 없어도
+         백엔드가 같은 `.env` 로 폴백하므로, 이 칸은 값을 더하지 않으면서
+         "왜 Neo4j 를 쓰나" 라는 질문만 만들었다.
+
+         번들 연결이 없을 때만 보여 준다 — 개발 환경이나 손으로 다른 그래프에
+         붙어야 하는 경우다. 길을 없애지는 않는다. -->
+    <section v-if="!hasBundledConnection" class="section">
       <!-- 엔진 이름이 아니라 **무엇에 붙는지**를 적는다. 이 제품의 그래프는
            ontological PostgreSQL 이고, 앱은 그 앞의 Bolt 게이트웨이에 붙는다.
            화면이 "NEO4J CONNECTION" 이라고 말하면 납품처에서 "왜 Neo4j 를
