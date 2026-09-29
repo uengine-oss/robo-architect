@@ -15,11 +15,40 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
-import {
-  RUNTIME_CHANNELS,
-  type ManagedServiceId,
-  type RuntimeStatusPayload,
-} from "../shared/runtime-contract";
+import type { ManagedServiceId, RuntimeStatusPayload } from "../shared/runtime-contract";
+
+/**
+ * `RUNTIME_CHANNELS` 의 **지역 사본**. 왜 베끼는가.
+ *
+ * 이 preload 는 `sandbox: true` 로 뜬다(`src/main/index.ts`). 샌드박스 preload 의
+ * `require` 는 `electron` 과 일부 내장 모듈만 해소한다 — **상대 경로는 못 찾는다.**
+ * 그래서 값 import 하나가 브리지를 통째로 죽인다:
+ *
+ *     Unable to load preload script: …\app.asar\dist\preload\preload\index.js
+ *     Error: module not found: ../shared/runtime-contract
+ *
+ * 실제로 그랬다. `bba8be6`(2026-09-18)이 이 파일의 **최초 값 import** 로
+ * `RUNTIME_CHANNELS` 를 들여왔고, 그 뒤 11일 동안 패키지 앱의 IPC 가 하나도
+ * 동작하지 않았다 — `window.robo` 가 없으니 화면은 자기를 웹 SPA 로 알고
+ * 런처를 건너뛰었다. HTTP 는 `app://` 프록시로 멀쩡히 흘러서 **증상이 없었다.**
+ * 2026-09-29 에 렌더러 콘솔을 파일로 받기 시작한 뒤에야 드러났다.
+ *
+ * 번들러를 붙이면 근본 해결이지만 오프라인 설치본에 빌드 의존성을 더하는 값이
+ * 이 4개 문자열보다 크지 않다. 대신 **어긋나면 컴파일이 깨지게** 묶는다.
+ */
+const RUNTIME_CHANNELS = {
+  onStatus: "runtime:onStatus",
+  retryService: "runtime:retryService",
+  stopEngine: "runtime:stopEngine",
+  openDiagnostics: "runtime:openDiagnostics",
+} as const;
+
+// 원본과 양방향으로 대조한다. 한쪽에 채널이 생기거나 문자열이 달라지면 여기서
+// 컴파일이 깨진다. `import(...)` 는 타입 위치라 런타임 require 를 만들지 않는다.
+type SharedRuntimeChannels = typeof import("../shared/runtime-contract")["RUNTIME_CHANNELS"];
+const _channelsAreComplete: SharedRuntimeChannels = RUNTIME_CHANNELS;
+const _channelsAreExact: typeof RUNTIME_CHANNELS = _channelsAreComplete;
+void _channelsAreExact;
 
 import type {
   BackendStatusEvent,
