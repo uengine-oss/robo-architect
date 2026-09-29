@@ -90,8 +90,45 @@ async function reresolveIdentity(rootForCwd) {
   }
 }
 
+/**
+ * 고를 것이 없으면 묻지 않는다.
+ *
+ * 이 런처는 사용자가 자기 Neo4j 를 들고 오던 시절의 화면이다. 지금 납품본은
+ * **앱이 스택을 소유**하고, 번들 연결을 스스로 만들어 미리 골라 둔다. 그래서
+ * 두 칸 중 실제로 사람이 정할 것은 프로젝트 폴더뿐이고, 그것도 한 번 정하면
+ * 다음부터는 같은 값이다.
+ *
+ * 연결 단계가 사실상 잉여라는 근거: 브리지가 없으면 `app/http.js` 가
+ * `X-Neo4j-*` 헤더를 빼고 보내고 **백엔드는 자기 `.env` 로 폴백한다**(계약).
+ * 납품본에서 그 `.env` 는 같은 번들 그래프를 가리킨다 — 2026-09-18~29 에
+ * preload 가 깨져 런처가 통째로 건너뛰어졌는데 아무것도 깨지지 않은 이유가
+ * 그것이다.
+ *
+ * **처음 한 번은 묻는다.** 프로젝트 폴더는 잉여가 아니다 — Code 탭·Analysis
+ * 탭·Proposals 샌드박스가 실제로 쓴다. 기억해 둔 폴더가 아직 유효할 때만
+ * 건너뛰고, 폴더가 사라졌거나 연결이 여럿이면 화면을 그대로 보여 준다.
+ */
+const autoEntering = ref(true)
+
+async function maybeAutoEnter() {
+  // 연결이 번들 하나뿐일 때만. 여럿이면 사용자가 고를 것이 실제로 있다.
+  const conns = launcher.savedConnections
+  if (conns.length !== 1 || conns[0].source !== 'bundled') return false
+  // 기억해 둔 폴더가 아직 쓸 만한가. `reloadRecentRoots` 가 이미 채우고 검증했다.
+  if (!rootPath.value || !rootValid.value) return false
+  launcher.select(conns[0].id)
+  await onEnter()
+  // 실패했으면 화면을 보여 줘야 한다 — 조용히 멈춰 있으면 안 된다.
+  return session.entered
+}
+
 onMounted(async () => {
-  await Promise.all([reresolveIdentity(null), reloadConnections(), reloadRecentRoots()])
+  try {
+    await Promise.all([reresolveIdentity(null), reloadConnections(), reloadRecentRoots()])
+    await maybeAutoEnter()
+  } finally {
+    autoEntering.value = false
+  }
 })
 
 // Re-resolve identity whenever the project root changes (FR-008).
@@ -299,7 +336,11 @@ function explainEnterError(err) {
 </script>
 
 <template>
-  <div class="launcher">
+  <!-- 건너뛸 수 있는지 판정하는 동안에는 화면을 그리지 않는다. 그리면 매 기동마다
+       고를 것 없는 선택지가 한 번 번쩍인다. -->
+  <div v-if="autoEntering" class="launcher launcher--deciding"></div>
+
+  <div v-else class="launcher">
     <!-- Brand — same style as TopBar (global .top-bar__logo classes) -->
     <div class="top-bar__logo launcher-brand">
       <div class="top-bar__logo-icon">RA</div>
@@ -443,6 +484,12 @@ function explainEnterError(err) {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+/* 건너뛸 수 있는지 판정하는 동안. 비워 두되 자리를 차지해, 앱 배경이 아니라
+   런처가 떠 있다가 사라지는 것으로 보이게 한다(창이 잠깐 하얘지지 않는다). */
+.launcher--deciding {
+  min-height: 100vh;
 }
 
 /* Brand — extends global .top-bar__logo with launcher-specific bottom border */
