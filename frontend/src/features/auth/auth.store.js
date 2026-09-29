@@ -15,10 +15,44 @@ import { ref, computed } from 'vue'
 const TOKEN_KEY = 'robo.auth.token'
 const PROJECT_KEY = 'robo.auth.project'
 
-/** localStorage 는 환경에 따라 접근 자체가 던진다. 실패해도 앱이 죽지 않게 한다. */
+/**
+ * 토큰은 **`sessionStorage`** 에 둔다. `localStorage` 가 아니다.
+ *
+ * 둘의 차이가 그대로 제품의 차이가 된다 —
+ *
+ *   localStorage     창을 닫았다 켜도 남는다 → 앱을 껐다 켜도 로그인 화면이
+ *                    안 뜬다(토큰 TTL 8시간). 사내 배포본에서 자리를 비운 PC 가
+ *                    다음 사람에게 그대로 열려 있다는 뜻이다.
+ *   sessionStorage   문서 컨텍스트가 살아 있는 동안만 남는다. **새로고침은
+ *                    견디고**(프로젝트 전환이 `location.reload()` 를 쓴다),
+ *                    앱을 끄면 사라진다.
+ *
+ * 그래서 "앱을 켜면 로그인부터" 가 성립하면서도, 쓰는 도중의 새로고침에
+ * 다시 로그인시키지 않는다.
+ *
+ * 저장소는 환경에 따라 접근 자체가 던진다(시크릿 창, 사이트 데이터 차단).
+ * 실패해도 앱이 죽지 않게 감싼다 — 그 경우 이번 세션은 메모리로만 돈다.
+ */
+function store() {
+  return window.sessionStorage
+}
+
+/**
+ * 예전 빌드가 `localStorage` 에 남긴 토큰을 지운다.
+ *
+ * 옮기기만 하면 옛 토큰이 디스크에 **그대로 남는다.** 읽지는 않지만 남아 있는
+ * 자격증명이고, PC 를 넘겨받은 사람이 파일에서 꺼낼 수 있다. 한 번만 돌면 된다.
+ */
+try {
+  window.localStorage.removeItem(TOKEN_KEY)
+  window.localStorage.removeItem(PROJECT_KEY)
+} catch {
+  /* 접근이 막힌 환경 — 지울 것도 없다 */
+}
+
 function readStored(key) {
   try {
-    return window.localStorage.getItem(key)
+    return store().getItem(key)
   } catch {
     return null
   }
@@ -26,8 +60,8 @@ function readStored(key) {
 
 function writeStored(key, value) {
   try {
-    if (value === null || value === undefined) window.localStorage.removeItem(key)
-    else window.localStorage.setItem(key, value)
+    if (value === null || value === undefined) store().removeItem(key)
+    else store().setItem(key, value)
   } catch {
     /* 저장하지 못해도 이번 세션은 메모리로 돈다 */
   }

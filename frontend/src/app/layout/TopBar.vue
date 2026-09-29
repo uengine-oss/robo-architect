@@ -31,7 +31,18 @@ const emit = defineEmits(['update:activeTab'])
 // 'Analysis'(분석기 임베드) → 'Legacy' 로 라벨 변경 + 맨 앞으로 이동(Proposals 앞).
 // 'Template' — 템플릿 기반 코드 생성(ENT-GEN-001). 'Code'(Claude Code TUI)와
 // 나란히 둔다. 나중에 이 브랜치에서만 'Code' 를 빼고 대체할 수 있다.
-const tabs = ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code', 'Template']
+// 2026-09-29 — 사내망 배포에서 'Proposals' 와 'Code' 를 탭에서 뺀다.
+//
+// 둘 다 `claude` CLI 를 필요로 한다. Proposals 는 worktree 안에서 Claude Code
+// 셀(PTY)로 구현을 돌리고(spec 039), Code 탭은 그 PTY 자체다. 사내망에는 그
+// CLI 가 없으므로 열어 두면 **눌렀을 때 아무 일도 안 일어나는 탭**이 된다.
+//
+// **컴포넌트·라우팅은 그대로 둔다.** `App.vue` 의 tabComponents 에 남아 있고
+// 여기 목록에서만 빠진다 — 'Changes' 탭을 숨긴 방식과 같다. 되살릴 때 아래 한
+// 줄을 바꾸면 된다.
+//
+//   전체:  ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code', 'Template']
+const tabs = ['Legacy', 'Stories', 'Process', 'Design', 'Data', 'Template']
 
 const canvasStore = useCanvasStore()
 // 043 — 'Big picture' 뷰 비활성화: store 사용 제거.

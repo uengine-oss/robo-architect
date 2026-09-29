@@ -153,7 +153,7 @@ test.describe('로그인 게이트', () => {
     await page.getByRole('button', { name: '들어가기' }).click()
 
     await expect(page.locator('.login__card')).toContainText('승인을 기다리는 중입니다')
-    const stored = await page.evaluate(() => window.localStorage.getItem('robo.auth.token'))
+    const stored = await page.evaluate(() => window.sessionStorage.getItem('robo.auth.token'))
     expect(stored, '대기 상태에서는 토큰이 저장되면 안 된다').toBeNull()
   })
 
@@ -176,7 +176,7 @@ test.describe('로그인 게이트', () => {
     await page.getByRole('button', { name: '들어가기' }).click()
 
     await expect(page.locator('.login__card'), '게이트가 열려야 한다').toHaveCount(0, { timeout: 20_000 })
-    const stored = await page.evaluate(() => window.localStorage.getItem('robo.auth.token'))
+    const stored = await page.evaluate(() => window.sessionStorage.getItem('robo.auth.token'))
     expect(stored).toBe('stub-token')
 
     // 인터셉터가 실어 보내는지 — 호출부를 고치지 않고도 붙는 것이 요점이다.
@@ -199,10 +199,12 @@ test.describe('관리자 화면', () => {
   }
 
   async function openSettings(page: any, me: any) {
+    // 토큰은 `sessionStorage` 에 있다 — 앱을 끄면 로그인부터이기 때문이다
+    // (`auth-session-lifetime.spec.ts`).
     // 저장된 토큰이 없으면 화면이 서버에 물어보지도 않고 익명으로 둔다 —
     // 게이트에 걸려 TopBar 자체가 안 뜬다. 로그인해 둔 상태를 흉내 낸다.
     await page.addInitScript(() =>
-      window.localStorage.setItem('robo.auth.token', 'stub-token'))
+      window.sessionStorage.setItem('robo.auth.token', 'stub-token'))
     await stub(page, { me })
     await page.route('**/api/accounts', (r: any) => r.fulfill({ json: USERS }))
     await page.goto('/', { waitUntil: 'networkidle' })

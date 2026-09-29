@@ -71,8 +71,15 @@ function providerAttempts() {
 // `auth.enforced` 를 boolean 으로 읽어 **인증 서버에 못 닿은 것을 "강제 꺼짐"
 // 으로 해석했다.** 단위 시험이 닿지 않는 자리라 그대로 납품본까지 갔다.
 
-// Tab state management — 시작 탭 = Proposals (사용자 기본 진입점)
-const activeTab = ref('Proposals')
+// Tab state management — 시작 탭.
+//
+// 예전 기본값은 'Proposals' 였는데 그 탭을 사내망 배포에서 숨겼다(`TopBar.vue`).
+// 그대로 두면 **목록에 없는 탭으로 앱이 열린다** — 내용은 그려지는데 상단에
+// 선택된 탭이 없다.
+//
+// 'Legacy'(분석기)가 새 기본이다. 작업 순서의 첫 단계이기도 하다:
+// 레거시 코드 분석 → 문서 업로드 → 프로세스 생성 → 룰 매핑 → ES 승격.
+const activeTab = ref('Legacy')
 
 // Claude Code workdir state — hydrated from localStorage so the inspector's
 // source viewer (feature 029) can resolve ImplementationFile paths even

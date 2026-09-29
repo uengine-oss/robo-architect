@@ -57,6 +57,7 @@ import {
 // surface answers (with a typed VALIDATION error) for every launcher channel
 // until each gating task lands a real handler.
 import { registerLauncherIpcStubs } from "./launcher/ipc-handlers";
+import { markPending } from "./launcher/launcher-state";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -342,6 +343,21 @@ function createMainWindow(): BrowserWindow {
     if (input.type === "keyDown" && input.key === "I" && input.shift && (input.meta || input.control)) {
       window.webContents.toggleDevTools();
     }
+  });
+
+  // 렌더러 문서가 새로 뜨면 런처 상태를 되돌린다.
+  //
+  // `markEntered` 는 main 에 남고 렌더러의 `session.entered` 는 문서와 함께
+  // 사라진다. 그래서 새로고침(프로젝트 전환이 `location.reload()` 를 쓴다)이나
+  // 재적재 뒤에 렌더러가 다시 `launcher:enter` 를 부르면 main 이
+  // **`launcher:enter called twice without an intervening reopen`** 으로 막았다.
+  // 화면에는 런처가 뜬 채 붉은 오류만 남는다.
+  //
+  // 이중 진입을 막으려던 가드인데, 정작 막은 것은 **정상적인 재적재**였다.
+  // 문서가 바뀌면 그 전 렌더러는 존재하지 않으므로 pending 이 맞다.
+  window.webContents.on("did-finish-load", () => {
+    markPending();
+    log("info", "launcher.phase_reset", { reason: "renderer document loaded" });
   });
 
   window.once("ready-to-show", () => window.show());

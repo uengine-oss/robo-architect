@@ -175,7 +175,10 @@ export const useBpmnStore = defineStore('bpmn', () => {
 
   function _sidKey() {
     try {
-      const graph = localStorage.getItem('robo.auth.project') || ''
+      // 인증 상태와 같은 저장소를 본다 — `auth.store.js` 가 토큰·프로젝트를
+      // `sessionStorage` 로 옮겼다(앱을 끄면 로그인부터). 여기만 localStorage 를
+      // 보면 로그아웃 뒤에도 전 프로젝트의 세션 키를 계속 쓴다.
+      const graph = sessionStorage.getItem('robo.auth.project') || ''
       return graph ? `${HYBRID_SID_KEY_BASE}.${graph}` : HYBRID_SID_KEY_BASE
     } catch { return HYBRID_SID_KEY_BASE }
   }
