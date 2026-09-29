@@ -194,11 +194,17 @@ MERGE (gwt)-[:DERIVED_FROM]->(r)
 
 def _save_gwt(session, *, parent_type: str, parent_id: str,
               given_ref_json, when_ref_json, then_ref_json,
-              test_cases_json, refs: list) -> None:
+              test_cases_json, refs: list) -> bool:
     """GWT 를 저장하고 참조를 다시 잇는다 — 세 문장으로 나눠서.
 
     한 문장에 읽기 → 쓰기 → 읽기 를 섞지 않는 것이 요점이다. 자세한 이유는
     `_GWT_UPSERT` 위 주석에 있다.
+
+    **정말로 저장했는지를 돌려준다.** 예전에는 `None` 이었고, 부모를 못 찾으면
+    "조용히 끝낸다" 고 적힌 자리에서 그대로 돌아갔다. 그런데 호출부는 그것과
+    무관하게 `total_gwt_created` 를 올렸다 — 즉 **아무것도 안 써도 요약은
+    정상으로 찍혔다.** 바로 위 `_GWT_RULE_UPSERT` 주석이 같은 사고를 이미
+    적어 뒀다("호출부가 예외를 WARN 으로 삼켜서 요약만 정상으로 찍혔다").
     """
     rec = session.run(
         _GWT_UPSERT,
@@ -211,11 +217,19 @@ def _save_gwt(session, *, parent_type: str, parent_id: str,
     ).single()
     gwt_id = rec["id"] if rec else None
     if not gwt_id:
-        # 부모를 못 찾았다 — 이어 붙일 곳이 없으므로 조용히 끝낸다.
-        return
+        # 부모를 못 찾았다 — 이어 붙일 곳이 없다. **이름을 대고 남긴다.**
+        # 조용히 끝내면 "GWT 를 만들었다" 는 요약과 빈 그래프가 공존한다.
+        SmartLogger.log(
+            "WARNING",
+            f"GWT 를 붙일 부모를 못 찾아 저장하지 않았다: {parent_type} {parent_id}",
+            category="ingestion.workflow.gwt.parent_missing",
+            params={"parent_type": parent_type, "parent_id": parent_id},
+        )
+        return False
     session.run(_GWT_CLEAR_REFS, gwt_id=gwt_id)
     if refs:
         session.run(_GWT_LINK_REFS, gwt_id=gwt_id, refs=refs)
+    return True
 
 
 
@@ -690,7 +704,7 @@ If no properties are available, only then use empty fieldValues {{}}."""
                 refs.append({"id": ref["referencedNodeId"], "type": ref["referencedNodeType"]})
         
         with client.session() as session:
-            _save_gwt(
+            saved = _save_gwt(
                 session,
                 parent_type="Command",
                 parent_id=cmd_id,
@@ -700,7 +714,11 @@ If no properties are available, only then use empty fieldValues {{}}."""
                 test_cases_json=test_cases_json,
                 refs=refs,
             )
-        
+
+        # 저장하지 못했으면 0 이다. 세어 놓고 그래프에 없으면, 다음 사람이
+        # 없는 결함을 찾느라 시간을 쓴다.
+        if not saved:
+            return 0
         return max(len(test_cases_payload), 1)
     except Exception as e:
         SmartLogger.log(
@@ -752,7 +770,7 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     fallback_refs.append({"id": ref["referencedNodeId"], "type": ref["referencedNodeType"]})
             
             with client.session() as session:
-                _save_gwt(
+                saved = _save_gwt(
                     session,
                     parent_type="Command",
                     parent_id=cmd_id,
@@ -762,7 +780,8 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     test_cases_json=fallback_test_cases_json,
                     refs=fallback_refs,
                 )
-            return 1
+            # 폴백도 마찬가지다 — 저장 못 했으면 0 이다.
+            return 1 if saved else 0
         except Exception:
             return 0
 
@@ -997,8 +1016,18 @@ async def generate_gwt_phase(ctx: IngestionWorkflowContext) -> AsyncGenerator[Pr
     if should_chunk_list(all_command_tasks, item_to_text=_estimate_command_tokens, max_items=8, max_tokens=60000):
         # Split into chunks with conservative size
         # chunk_size=8: max 8 commands per chunk (~48k tokens)
-        # overlap_count=1: minimal overlap for GWT (less critical than extraction)
-        command_chunks = split_list_with_overlap(all_command_tasks, chunk_size=8, overlap_count=1)
+        #
+        # **overlap_count=0 이다.** 겹침은 추출처럼 앞뒤 맥락이 필요한 단계에서
+        # 값을 한다. GWT 는 Command 하나마다 독립으로 LLM 을 부르고, 결과를
+        # `MERGE (gwt {parentType, parentId})` 로 upsert 한다 — 같은 Command 가
+        # 두 청크에 들어가면 **LLM 을 한 번 더 부르고, 먼저 만든 것을 덮는다.**
+        # 얻는 것이 없고 돈과 시간만 쓴다.
+        #
+        # 그리고 요약이 틀어졌다. 실측(2026-09-29, 인사관리 Command 29개):
+        #   29개 → 5청크 → 33회 처리(4개 중복) → 요약 "140개", 그래프 124개.
+        # 데이터가 사라진 것이 아니라 중복분을 두 번 센 것이었지만, 그 16의
+        # 차이를 쫓는 데 시간이 들었다.
+        command_chunks = split_list_with_overlap(all_command_tasks, chunk_size=8, overlap_count=0)
         total_chunks = len(command_chunks)
         
         chunk_results = []
