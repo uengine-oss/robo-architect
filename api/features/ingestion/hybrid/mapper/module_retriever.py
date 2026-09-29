@@ -106,6 +106,17 @@ def _module_rows() -> list[dict]:
         )
         _set_last_reason(REASON_NO_ANALYSIS_LINK)
         return []
+    # **둘을 합친다 — 둘 중 하나가 아니다.**
+    #
+    # 예전에는 컨테이너 조회가 비었을 때만 루틴으로 폴백했다. 그러면 컨테이너
+    # **하나**에 요약이 붙는 순간 루틴 코퍼스 171개가 통째로 사라진다. 그 전환은
+    # 화면에 아무 흔적도 남기지 않으므로, 애널라이저가 요약을 한 단계 위로 옮기는
+    # 날 매핑이 조용히 0이 된다. 실제로 robo-architect `main` 의 Step 1
+    # (`container_retriever`)은 폴백이 아예 없어서 이 DB 의 그래프에서는 0건이다.
+    #
+    # 합쳐 두면 어느 쪽에 요약이 붙어 있든 같은 순위표에 들어온다. 범위 판정은
+    # `agentic_retriever` 가 PARENT_OF 로 위아래를 이어 해결한다 — 그래서 단계가
+    # 섞여도 룰이 범위 밖으로 떨어지지 않는다.
     with sess as s:
         rows = list(s.run(
             """
@@ -116,20 +127,17 @@ def _module_rows() -> list[dict]:
                    m.summary AS summary, m.stereotype AS stereotype
             """,
         ))
-        if not rows:
-            # New analyzer C graphs have PACKAGE/FILE nodes without summaries,
-            # while their FUNCTION nodes carry rich semantic summaries. Treat
-            # each routine as a retrieval unit; structured rules use the same
-            # producer id as source_module.
-            rows = list(s.run(
-                """
-                MATCH (f)
-                WHERE (f:FUNCTION OR f:METHOD)
-                  AND f.summary IS NOT NULL AND f.summary <> ''
-                RETURN coalesce(f.function_id, f._id, f.id) AS fqn, f.name AS name,
-                       f.summary AS summary, f.stereotype AS stereotype
-                """,
-            ))
+        # 루틴 단위 요약. C 그래프는 PACKAGE/FILE 에 요약이 없고 FUNCTION 에만 있다.
+        # Java 그래프도 CLASS/FILE 에 `summary` 컬럼 자체가 없다(2026-09-29 확인).
+        rows += list(s.run(
+            """
+            MATCH (f)
+            WHERE (f:FUNCTION OR f:METHOD)
+              AND f.summary IS NOT NULL AND f.summary <> ''
+            RETURN coalesce(f.function_id, f._id, f.id) AS fqn, f.name AS name,
+                   f.summary AS summary, f.stereotype AS stereotype
+            """,
+        ))
     if not rows:
         # Downstream this is not an error. `agentic_retriever` sees a top module
         # score of 0.0, falls under the process gate, and skips the process with
@@ -294,3 +302,59 @@ async def retrieve_top_modules(
 def fetch_all_modules() -> list[dict]:
     """Public helper so the orchestrator can fetch MODULE rows once per run."""
     return _module_rows()
+
+
+def fetch_containment() -> dict[str, str]:
+    """자식 id → 부모 id. Step 1 이 고른 단계와 룰이 가리키는 단계를 잇는다.
+
+    **이것이 없으면 조용히 0이 된다.** Step 1 은 요약이 붙은 노드를 고르는데
+    (CLASS 일 수도, METHOD 일 수도 있다) 룰의 `source_module` 은 **언제나 루틴의
+    id** 다. 컨테이너 단계로 고른 날에는 두 집합이 한 번도 겹치지 않는다 —
+    범위에 드는 룰이 0개이고, 화면에는 다른 모든 실패와 똑같은 "매핑 0" 이 된다.
+    검증 LLM 은 불리지도 않으므로 로그에도 판단 근거가 안 남는다.
+
+    반환은 한 단계짜리 부모 맵이다. 호출자가 위로 걸어 올라간다(PACKAGE →
+    CLASS → METHOD 처럼 두 단계 이상 떨어져 있어도 닿는다).
+    """
+    sess = analyzer_session()
+    if sess is None:
+        return {}
+    parent: dict[str, str] = {}
+    with sess as s:
+        # 루틴 → 그것을 담은 컨테이너
+        for r in s.run(
+            """
+            MATCH (c)-[:PARENT_OF]->(f)
+            WHERE (f:FUNCTION OR f:METHOD OR f:PROCEDURE OR f:TRIGGER)
+            RETURN coalesce(f.function_id, f._id, f.id) AS child,
+                   coalesce(c.module_id, c.id) AS parent
+            """,
+        ):
+            child, up = r["child"], r["parent"]
+            if child and up:
+                parent[str(child)] = str(up)
+        # 컨테이너 → 그 위 컨테이너 (PACKAGE 가 CLASS 를 담는 경우)
+        for r in s.run(
+            """
+            MATCH (c)-[:PARENT_OF]->(m)
+            WHERE (m:MODULE OR m:FILE OR m:CLASS OR m:INTERFACE OR m:RECORD)
+            RETURN coalesce(m.module_id, m.id) AS child,
+                   coalesce(c.module_id, c.id) AS parent
+            """,
+        ):
+            child, up = r["child"], r["parent"]
+            if child and up and str(child) != str(up):
+                parent.setdefault(str(child), str(up))
+    return parent
+
+
+def ancestors_of(node_id: str, parent: dict[str, str], *, limit: int = 16) -> list[str]:
+    """`node_id` 자신 + 조상들. 순환이 있어도 멈춘다(그래프는 신뢰 대상이 아니다)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    cur = (node_id or "").strip()
+    while cur and cur not in seen and len(out) < limit:
+        seen.add(cur)
+        out.append(cur)
+        cur = (parent.get(cur) or "").strip()
+    return out

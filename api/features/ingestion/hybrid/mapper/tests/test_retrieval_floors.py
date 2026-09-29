@@ -78,9 +78,11 @@ def _fixture():
     return process, task, rule, ctx, rows
 
 
-def _run(monkeypatch, module_cos: float, rule_cos: float, **kwargs):
-    process, task, rule, ctx, rows = _fixture()
-    monkeypatch.setattr(ar, "fetch_all_modules", lambda: rows)
+def _run(monkeypatch, module_cos: float, rule_cos: float,
+         rows=None, containment=None, **kwargs):
+    process, task, rule, ctx, default_rows = _fixture()
+    monkeypatch.setattr(ar, "fetch_all_modules", lambda: rows or default_rows)
+    monkeypatch.setattr(ar, "fetch_containment", lambda: containment or {})
     calls: list[int] = []
 
     async def fake_validate(_p, _t, candidates, **_kw):
@@ -116,6 +118,7 @@ def test_empty_module_corpus_short_circuits(monkeypatch):
     """모듈이 0개면 task 마다 경고를 흘리지 않고 한 번에 끊는다."""
     process, task, rule, ctx, _ = _fixture()
     monkeypatch.setattr(ar, "fetch_all_modules", list)
+    monkeypatch.setattr(ar, "fetch_containment", dict)
     called: list[int] = []
 
     async def fake_validate(*_a, **_kw):
@@ -176,3 +179,53 @@ def test_explore_path_ignores_the_gate_even_when_enabled(monkeypatch):
                          skip_process_gate=True)
     assert calls == [1]
     assert len(result.accepted) == 1
+
+
+# --------------------------------------------------------------------------
+# 단계가 어긋나도 범위가 유지되는가 — 조용한 0의 다른 문
+#
+# Step 1 은 **요약이 붙은** 노드를 고른다. 그게 METHOD 일 수도, CLASS 일 수도
+# 있다. 룰의 `source_module` 은 언제나 루틴 id 다. 컨테이너 단계로 고른 날
+# 두 집합은 한 번도 겹치지 않는다 — robo-architect `main` 의 Step 1
+# (`container_retriever`)이 정확히 그 모양이고, 이 DB 의 그래프에서는 0건이다.
+# --------------------------------------------------------------------------
+CONTAINER_ROWS = [{"fqn": "c_1", "name": "MonthlyClosingService",
+                   "summary": f"{MODULE_MARK} 클래스 요약", "stereotype": None}]
+
+
+def test_container_level_step1_still_reaches_routine_level_rules(monkeypatch):
+    """CLASS 가 뽑혀도 그 안의 METHOD 가 낸 룰은 범위 안이다."""
+    result, calls = _run(monkeypatch, module_cos=0.44, rule_cos=0.42,
+                         rows=CONTAINER_ROWS, containment={"m_1": "c_1"})
+    assert calls == [1], "컨테이너로 뽑힌 날 룰이 전부 범위 밖으로 떨어졌다"
+    assert len(result.accepted) == 1
+
+
+def test_without_containment_the_levels_do_not_meet(monkeypatch):
+    """대조 — 이어 주지 않으면 같은 입력이 0이 된다(이 검사가 지키는 대상)."""
+    _result, calls = _run(monkeypatch, module_cos=0.44, rule_cos=0.42,
+                          rows=CONTAINER_ROWS, containment={})
+    assert calls == []
+
+
+def test_containment_walks_more_than_one_level(monkeypatch):
+    """PACKAGE → CLASS → METHOD 처럼 두 단계 떨어져 있어도 닿는다."""
+    rows = [{"fqn": "pkg_1", "name": "hr", "summary": f"{MODULE_MARK} 패키지 요약",
+             "stereotype": None}]
+    _result, calls = _run(monkeypatch, module_cos=0.44, rule_cos=0.42,
+                          rows=rows, containment={"m_1": "c_1", "c_1": "pkg_1"})
+    assert calls == [1]
+
+
+def test_ancestors_stop_on_a_cycle():
+    """그래프는 신뢰 대상이 아니다 — 순환이 있어도 멈춘다."""
+    assert mr.ancestors_of("a", {"a": "b", "b": "a"}) == ["a", "b"]
+
+
+def test_ancestors_respect_the_limit():
+    chain = {str(i): str(i + 1) for i in range(100)}
+    assert len(mr.ancestors_of("0", chain, limit=5)) == 5
+
+
+def test_ancestors_of_unknown_node_is_itself():
+    assert mr.ancestors_of("solo", {}) == ["solo"]

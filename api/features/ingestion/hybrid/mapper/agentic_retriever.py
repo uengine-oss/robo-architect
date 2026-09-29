@@ -72,7 +72,9 @@ def _max_recoveries_per_task() -> int:
 from api.features.ingestion.hybrid.mapper.module_retriever import (
     MIN_MODULE_CONFIDENCE,
     ModuleCandidate,
+    ancestors_of,
     fetch_all_modules,
+    fetch_containment,
     process_gate_enabled,
     retrieve_top_modules,
 )
@@ -154,22 +156,27 @@ def _candidates_for_task(
     cache: EmbeddingCache,
     actor_name_by_id: dict[str, str],
     glossary: list[GlossaryTerm] | None = None,
+    containment: dict[str, str] | None = None,
 ) -> list[CandidateBL]:
     """Step 2 — filter rules to those inside the Step-1 modules, then use
     embedding similarity to pick the top-k for this task.
 
-    Module match is **exact**: both sides are the analyzer's module id.
-      - `module_fqns` = `m.id` (module_retriever query)
-      - `source_module` = `f.owner_id` — the analyzer now stores the owning module
-        as a node property (analyzer spec 047 FR-007).
+    범위 판정은 id 비교다 — **id 는 열쇠이지 주소가 아니다.** 예전 코드는
+    `source_module` 을 함수 id 에서 잘라 만들던 시절의 잔재로 "뒤쪽 조각"을
+    비교했는데, 그 추측은 사라졌다.
 
-    The old code compared "trailing segments" because `source_module` used to be
-    *guessed by slicing the function id*, which could
-    produce a bare name that never matched a fully-qualified one. That slicing is
-    gone — **an id is an opaque key, not an address to parse**. Rules with no
-    module info still fall through to embedding-only (can't prove exclusion).
+    다만 **양쪽이 같은 단계일 거라고 가정하면 안 된다.** `source_module` 은 언제나
+    루틴의 id 인데, Step 1 은 *요약이 붙어 있는* 노드를 고른다 — 그게 METHOD 일
+    수도 있고 CLASS·FILE 일 수도 있다. 컨테이너 단계로 고른 날에는 두 집합이 한
+    번도 겹치지 않고, 그러면 **범위에 드는 룰이 0개**가 되어 검증기를 부르지도
+    못한 채 "매핑 0" 으로 끝난다. 화면에는 다른 실패와 구별되지 않는다.
+
+    그래서 `containment`(자식→부모) 로 **위로 걸어 올라가며** 비교한다. 루틴이
+    직접 뽑혔거나, 그 루틴을 담은 컨테이너가 뽑혔으면 범위 안이다.
+    출처가 아예 없는 룰은 그대로 통과시킨다(배제를 증명할 수 없다).
     """
     module_set = {fqn for fqn in module_fqns if fqn}
+    parent = containment or {}
 
     in_scope: list[tuple[RuleDTO, RuleContext]] = []
     for r in rules:
@@ -180,7 +187,7 @@ def _candidates_for_task(
         if not sm:
             in_scope.append((r, ctx))
             continue
-        if sm in module_set:
+        if any(node in module_set for node in ancestors_of(sm, parent)):
             in_scope.append((r, ctx))
 
     if not in_scope:
@@ -331,6 +338,7 @@ async def run_agentic_retrieval(
 
     # ------ Step 1: module retrieval (per Task, but share the module corpus) ------
     module_rows = fetch_all_modules()
+    containment = fetch_containment()
     per_task_modules: dict[str, list[ModuleCandidate]] = {}
     for task in tasks:
         cands = await retrieve_top_modules(
@@ -392,6 +400,32 @@ async def run_agentic_retrieval(
         )
         return result
 
+    # **단계가 어긋났는지 한 번만 본다.** 뽑힌 모듈 전체를 통틀어도 범위에 드는
+    # 룰이 하나도 없다면, 점수 문제가 아니라 **양쪽이 다른 단계의 id 를 들고 있는
+    # 것**이다(Step 1 은 CLASS 를, 룰은 METHOD 를). 이 경우 task 마다 "후보 0" 만
+    # 줄줄이 남고 진짜 이유는 어디에도 안 남는다 — 여기서 이름을 붙여 둔다.
+    if rules:
+        reachable = 0
+        for r in rules:
+            ctx = ctx_by_rule.get(r.id)
+            sm = (r.source_module or (ctx.source_module if ctx else "") or "").strip()
+            if not sm or any(n in seen_fqns for n in ancestors_of(sm, containment)):
+                reachable += 1
+        if reachable == 0:
+            SmartLogger.log(
+                "WARN",
+                "룰의 출처가 Step 1 이 고른 노드와 한 번도 겹치지 않는다 — "
+                "단계가 어긋났다(컨테이너 vs 루틴). 후보는 전부 0이 된다",
+                category="ingestion.hybrid.agentic",
+                params={
+                    "process_id": process.id,
+                    "reason": "scope_identity_mismatch",
+                    "rules": len(rules),
+                    "modules": len(seen_fqns),
+                    "containment_edges": len(containment),
+                },
+            )
+
     # 게이트는 기본으로 꺼져 있다 — 이유는 `module_retriever.MIN_MODULE_CONFIDENCE`
     # 위의 양성/음성 실측에 적어 두었다. 여기서 막는 대신 검증기가 물리게 둔다.
     gate_on = process_gate_enabled() and not skip_process_gate
@@ -428,7 +462,7 @@ async def run_agentic_retrieval(
             task=task, process=process, rules=rules,
             contexts_by_rule=ctx_by_rule, module_fqns=module_fqns,
             top_k=bl_top_k, cache=cache, actor_name_by_id=actor_name_by_id,
-            glossary=glossary,
+            glossary=glossary, containment=containment,
         )
         await sink({
             "type": "AgentStepBlSearch",
