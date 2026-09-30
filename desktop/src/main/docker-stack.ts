@@ -598,23 +598,75 @@ async function graphPassword(): Promise<string> {
   return created;
 }
 
-function loadPersistedState(releaseId: string): PersistedDockerState | null {
+/** `DockerStackPorts` 의 키 — 하나라도 빠지면 compose 가 빈 값을 받는다. */
+export const PORT_KEYS: readonly (keyof DockerStackPorts)[] = [
+  "graph", "graphPg", "analyzer", "gateway", "architect", "pdf2bpmn", "wireframe",
+];
+
+function isUsablePort(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 1024 && (value as number) <= 65535;
+}
+
+/**
+ * 저장된 파일에서 **다시 쓸 수 있는 포트만** 골라낸다.
+ *
+ * ## 왜 이렇게 바꿨나
+ *
+ * 예전 코드는 `Object.values(parsed.ports).length !== 6` 이면 상태를 버렸다. 그런데
+ * 포트는 **7개**다(`graphPg` 가 나중에 늘었다). 그래서 이 함수는 **언제나 null 을
+ * 돌려주었고**, 저장된 포트는 쓰인 적이 없다 — 기동마다 전부 새로 뽑혔다.
+ *
+ * 조용한 고장이었다. 앱은 잘 뜨고, 포트가 바뀌는 것도 화면에 안 나온다. 2026-09-30
+ * 에 **Figma 플러그인이 재기동마다 끊기는** 것으로 드러났다 — 플러그인에 손으로 적어
+ * 둔 `http://127.0.0.1:50065` 가 매번 죽은 주소가 되고, 화면에는 원인을 알 수 없는
+ * `Failed to fetch` 만 떴다. 사내망에서는 방화벽 규칙도 같이 무효가 된다.
+ *
+ * 그래서 두 가지를 바꾼다.
+ *
+ * 1. **개수를 세지 않는다.** 키마다 값을 본다. 포트가 또 늘어도 안 깨진다.
+ * 2. **releaseId 가 달라도 포트는 물려받는다.** 포트는 릴리스의 속성이 아니다.
+ *    업그레이드했다고 방화벽 규칙과 플러그인 설정이 무효가 될 이유가 없다.
+ *    없는 키만 새로 뽑는다(서비스가 늘어난 경우).
+ *
+ * 가용성은 `reclaimBlockedPorts` 가 따로 본다 — 물려받은 포트가 막혀 있으면 그쪽에서
+ * 바뀌고, 무엇이 바뀌었는지 알린다.
+ */
+export function reusablePorts(raw: unknown): Partial<DockerStackPorts> {
+  const out: Partial<DockerStackPorts> = {};
+  const ports = (raw as { ports?: Record<string, unknown> } | null)?.ports;
+  if (!ports || typeof ports !== "object") return out;
+  const seen = new Set<number>();
+  for (const key of PORT_KEYS) {
+    const value = ports[key];
+    // 같은 포트가 두 서비스에 적혀 있으면 둘째는 버린다 — 하나는 반드시 못 뜬다.
+    if (isUsablePort(value) && !seen.has(value)) {
+      seen.add(value);
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * 지금 **돌고 있는** 스택의 compose env 를 만들 때 쓰는 상태.
+ *
+ * 파일을 다시 읽지 않는다 — 돌고 있는 스택이 실제로 쓰는 포트는 메모리의
+ * `current.ports` 다. 파일과 어긋나면(`reclaimBlockedPorts` 가 바꿨을 때) 파일을
+ * 믿는 쪽이 **남의 포트로 compose 를 부르게** 된다.
+ */
+function persistedFromRuntime(runtime: DockerStackRuntime): PersistedDockerState {
+  return {
+    schemaVersion: STATE_SCHEMA_VERSION,
+    releaseId: runtime.releaseId,
+    ports: runtime.ports,
+  };
+}
+
+function loadReusablePorts(): Partial<DockerStackPorts> {
   try {
-    const parsed = JSON.parse(fs.readFileSync(statePath(), "utf8")) as PersistedDockerState;
-    if (
-      parsed.schemaVersion !== STATE_SCHEMA_VERSION ||
-      parsed.releaseId !== releaseId ||
-      !parsed.ports
-    ) {
-      return null;
-    }
-    const ports = Object.values(parsed.ports);
-    if (ports.length !== 6 || ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535)) {
-      return null;
-    }
-    return parsed;
+    return reusablePorts(JSON.parse(fs.readFileSync(statePath(), "utf8")));
   } catch {
-    return null;
+    return {};
   }
 }
 
@@ -690,18 +742,28 @@ async function defaultIsFree(port: number): Promise<boolean> {
 }
 
 async function createState(releaseId: string): Promise<PersistedDockerState> {
+  // 쓸 수 있는 것은 물려받고 **없는 것만** 새로 뽑는다. 그래야 재기동·업그레이드
+  // 뒤에도 주소가 그대로다(위 `reusablePorts` 의 설명 참고).
+  const reused = loadReusablePorts();
+  const taken = new Set<number>(Object.values(reused) as number[]);
+  const ports = {} as DockerStackPorts;
+  for (const key of PORT_KEYS) {
+    const kept = reused[key];
+    if (kept !== undefined) {
+      ports[key] = kept;
+      continue;
+    }
+    let fresh = await pickFreePort();
+    // 새로 뽑은 것이 물려받은 것과 겹치면 다시 뽑는다 — 앱이 내려가 있는 동안
+    // 그 포트는 비어 있으므로 `pickFreePort` 가 같은 번호를 줄 수 있다.
+    while (taken.has(fresh)) fresh = await pickFreePort();
+    taken.add(fresh);
+    ports[key] = fresh;
+  }
   const state: PersistedDockerState = {
     schemaVersion: STATE_SCHEMA_VERSION,
     releaseId,
-    ports: {
-      graph: await pickFreePort(),
-      graphPg: await pickFreePort(),
-      analyzer: await pickFreePort(),
-      gateway: await pickFreePort(),
-      architect: await pickFreePort(),
-      pdf2bpmn: await pickFreePort(),
-      wireframe: await pickFreePort(),
-    },
+    ports,
   };
   const file = statePath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -793,7 +855,9 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   await ensureImages(root, manifest);
 
   const password = await graphPassword();
-  const state = loadPersistedState(manifest.releaseId) ?? (await createState(manifest.releaseId));
+  // `createState` 가 쓸 수 있는 포트를 물려받으므로 여기서 따로 읽지 않는다.
+  // 매번 파일을 다시 쓰는 것은 의도다 — releaseId 를 현재 값으로 맞춘다.
+  const state = await createState(manifest.releaseId);
   const env = composeEnvironment(manifest, state, password, topology);
   const endpoint = graphEndpoint(state.ports, topology);
 
@@ -893,8 +957,7 @@ export async function stopDockerStack(): Promise<void> {
   const runtime = current;
   if (!runtime) return;
   const password = await graphPassword();
-  const persisted = loadPersistedState(runtime.releaseId);
-  if (!persisted) throw new Error("docker.state_missing: cannot stop owned stack safely");
+  const persisted = persistedFromRuntime(runtime);
   await runDocker(
     composeArgs(runtime.runtimeDir, runtime.manifest, ["stop"]),
     {
@@ -935,8 +998,7 @@ export async function restartOwnedService(serviceId: ManagedServiceId): Promise<
   }
   const runtime = current;
   if (!runtime) throw new Error("docker.stack_not_started");
-  const persisted = loadPersistedState(runtime.releaseId);
-  if (!persisted) throw new Error("docker.state_missing: cannot restart safely");
+  const persisted = persistedFromRuntime(runtime);
   const password = await graphPassword();
   // 서비스 id 와 compose 서비스 이름이 다른 자리가 있다(`graph` → 컨테이너 둘).
   const targets = COMPOSE_SERVICES_OF[serviceId] ?? [serviceId];

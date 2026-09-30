@@ -25,6 +25,52 @@ const pairingCode = ref('')
 const pairingError = ref('')
 const pairingBusy = ref(false)
 
+/**
+ * 플러그인의 **Backend URL** 에 넣을 주소.
+ *
+ * **백엔드 포트는 기동마다 바뀐다.** 그런데 이 모달은 "주소를 입력하세요" 라고만
+ * 적어 두고 그 주소를 알려 주지 않았다. 사용자가 스스로 찾아야 했고, 앱을 다시
+ * 띄우면 플러그인에 남은 값이 조용히 틀린 값이 된다 — 화면에는 원인을 알 수 없는
+ * `Failed to fetch` 만 뜬다(2026-09-30 실측: 플러그인 50065 vs 실제 59010,
+ * 연결 거부. CORS 도 인증도 멀쩡했다). 그래서 지금 값을 보여 주고 복사하게 한다.
+ *
+ * Electron 에서 `window.location.hostname` 은 `app` 이라 쓸 수 없다 —
+ * `getRuntimeState().backendPort` 가 유일한 근거다(`workspace.api.js` 와 같은 방식).
+ */
+const backendUrl = ref('')
+const backendUrlError = ref('')
+const copied = ref(false)
+
+async function resolveBackendUrl() {
+  backendUrlError.value = ''
+  try {
+    if (window.desktop?.app?.getRuntimeState) {
+      const result = await window.desktop.app.getRuntimeState()
+      const port = result?.ok ? result.data?.backendPort : null
+      if (port) { backendUrl.value = `http://127.0.0.1:${port}`; return }
+      // 포트를 못 받는 경우는 백엔드가 아직 안 떴을 때다. 추측하지 않는다 —
+      // 틀린 주소를 자신 있게 보여 주는 것이 침묵보다 나쁘다.
+      backendUrlError.value = '백엔드가 아직 준비되지 않았습니다.'
+      return
+    }
+    // 브라우저(개발) 경로는 프런트와 같은 출처로 프록시된다.
+    backendUrl.value = window.location.origin
+  } catch (e) {
+    backendUrlError.value = e?.message || '백엔드 주소를 확인하지 못했습니다.'
+  }
+}
+
+async function copyBackendUrl() {
+  if (!backendUrl.value) return
+  try {
+    await navigator.clipboard.writeText(backendUrl.value)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1500)
+  } catch {
+    // 클립보드를 못 쓰는 환경 — 값은 화면에 있으니 손으로 복사하면 된다.
+  }
+}
+
 async function createPairingCode() {
   pairingBusy.value = true
   pairingError.value = ''
@@ -110,6 +156,8 @@ watch(
     if (open) {
       tab.value = 'main'
       store.loadBinding()
+      // 열 때마다 다시 잰다 — 백엔드가 다시 떴으면 포트가 바뀌어 있다.
+      resolveBackendUrl()
     }
   }
 )
@@ -200,6 +248,20 @@ watch(tab, (t) => {
       </nav>
 
       <div class="fb-modal__body">
+        <div v-if="tab === 'main'" class="fb-section fb-backend">
+          <label class="fb-backend__label">플러그인의 <strong>Backend URL</strong></label>
+          <code v-if="backendUrl" class="fb-backend__url">{{ backendUrl }}</code>
+          <span v-else class="fb-backend__pending">{{ backendUrlError || '확인 중…' }}</span>
+          <button v-if="backendUrl" class="fb-btn" @click="copyBackendUrl">
+            {{ copied ? '복사했습니다' : '복사' }}
+          </button>
+          <p class="fb-hint fb-backend__why">
+            <strong>포트는 앱을 다시 띄울 때마다 바뀝니다.</strong> 플러그인에 남아 있는
+            옛 주소는 원인이 안 보이는 <code>Failed to fetch</code> 로 나타납니다 —
+            연결이 안 되면 먼저 이 값을 다시 붙여넣으세요.
+          </p>
+        </div>
+
         <div v-if="tab === 'main' && auth.enforced" class="fb-section">
           <p class="fb-hint">Figma 플러그인에서 연결하기 전에 이 프로젝트의 연결 코드를 발급하세요. 코드는 한 번만 사용할 수 있고 5분 뒤 만료됩니다.</p>
           <button class="fb-btn fb-btn--primary" :disabled="pairingBusy || !auth.projectGraph" @click="createPairingCode">연결 코드 발급</button>
@@ -215,7 +277,7 @@ watch(tab, (t) => {
           <ol class="fb-steps">
             <li>Figma 데스크톱에서 연동하려는 파일을 엽니다.</li>
             <li>Plugins → Development → <strong>RoboArchitect Sync</strong>를 실행합니다.</li>
-            <li>Backend URL에 이 Robo Architect 백엔드 주소를 입력하고 <strong>연결</strong>을 누릅니다.
+            <li>Backend URL에 <strong>위에 표시된 주소</strong>를 붙여넣고 <strong>연결</strong>을 누릅니다.
               자동으로 이 파일이 바인딩 등록됩니다.</li>
             <li>연결되면 이 모달을 다시 열어 상태를 확인할 수 있습니다. 디자인 시스템
               컴포넌트를 가져오려면 플러그인의 <strong>디자인 시스템 스캔</strong>을 누르세요.</li>
@@ -604,4 +666,22 @@ watch(tab, (t) => {
   font-size: 0.78rem;
   color: #0acf83;
 }
+/* 플러그인에 붙여넣을 주소 — 포트가 기동마다 바뀌므로 화면이 알려 준다. */
+.fb-backend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fb-backend__label { font-size: 0.8rem; }
+.fb-backend__url {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.8rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  user-select: all;
+}
+.fb-backend__pending { font-size: 0.8rem; opacity: 0.7; }
+.fb-backend__why { flex: 1 1 100%; margin: 4px 0 0; }
 </style>
