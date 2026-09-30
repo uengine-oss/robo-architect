@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from api.platform.env import env_first, env_str
+from api.platform.env import env_first, env_int, env_str
 from api.platform.observability.smart_logger import SmartLogger
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
@@ -126,4 +126,15 @@ def get_embeddings(model: str | None = None, **kwargs: Any):
                 params={"base_url": state["baseUrl"], "model": resolved_model},
             )
 
+    # **멈춘 호출은 기다리지 않고 다시 던진다.**
+    #
+    # 2026-09-30 실측: 같은 embeddings 요청을 20번 재니 **세 번에 한 번이 5~20초**
+    # 걸렸다. 그런데 서버가 보고한 처리 시간(`openai-processing-ms`)은 전부
+    # 45~75ms 이고, rate limit 여유는 요청 9999/10000 · 토큰 4,999,991/5,000,000,
+    # DNS·TCP·TLS 도 60ms 로 안정적이었다. 즉 **응답 본문이 회선에서 멈추는 것**이고
+    # 기다려서 나아지지 않는다 — 다시 던지는 것이 빠르다.
+    #
+    # 기본값이 없으면 langchain 은 무한정 기다린다. 그게 task 하나를 3분으로 만들었다.
+    kwargs.setdefault("timeout", float(env_int("EMBEDDING_TIMEOUT_SECONDS", default=30)))
+    kwargs.setdefault("max_retries", env_int("EMBEDDING_MAX_RETRIES", default=3))
     return OpenAIEmbeddings(model=resolved_model, **kwargs)

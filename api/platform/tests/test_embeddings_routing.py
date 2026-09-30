@@ -80,3 +80,39 @@ def test_describe_never_exposes_key(monkeypatch):
     state = emb.describe()
 
     assert "sk-secret-value" not in str(state)
+
+
+# ── 멈춘 호출을 기다리지 않는다 (2026-09-30) ─────────────────────────────────
+#
+# 실측: 같은 embeddings 요청 20번 중 **셋에 하나가 5~20초** 걸렸다. 그런데 서버가
+# 보고한 처리 시간(`openai-processing-ms`)은 전부 45~75ms 이고, rate limit 여유는
+# 요청 9999/10000 · 토큰 4,999,991/5,000,000, DNS·TCP·TLS 도 60ms 로 안정적이었다.
+# 회선에서 응답 본문이 멈추는 것이므로 **기다려서 나아지지 않는다.** 기본값이 없으면
+# langchain 은 무한정 기다리고, 그것이 task 하나를 3분으로 만들었다.
+
+
+def test_임베딩_호출에_상한과_재시도가_있다(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    e = emb.get_embeddings()
+    timeout = getattr(e, "request_timeout", None) or getattr(e, "timeout", None)
+    assert timeout, "상한이 없다 — 멈춘 호출을 무한정 기다린다"
+    assert float(timeout) <= 60, f"상한이 너무 크다: {timeout}"
+    assert e.max_retries >= 1, "재시도가 없다 — 한 번 멈추면 그 task 가 멈춘다"
+
+
+def test_상한을_환경변수로_바꿀_수_있다(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("EMBEDDING_TIMEOUT_SECONDS", "7")
+    monkeypatch.setenv("EMBEDDING_MAX_RETRIES", "5")
+    e = emb.get_embeddings()
+    timeout = getattr(e, "request_timeout", None) or getattr(e, "timeout", None)
+    assert float(timeout) == 7.0
+    assert e.max_retries == 5
+
+
+def test_호출자가_준_값이_기본값을_이긴다(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    e = emb.get_embeddings(timeout=3.0, max_retries=1)
+    timeout = getattr(e, "request_timeout", None) or getattr(e, "timeout", None)
+    assert float(timeout) == 3.0
+    assert e.max_retries == 1
