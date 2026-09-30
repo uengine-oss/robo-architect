@@ -276,6 +276,139 @@ _US_QUERIES = {
 }
 
 
+def _routine_entry(routine_id: str, cache: dict[str, dict | None]) -> dict | None:
+    """분석 그래프의 루틴 하나 — 이름·요약·위치·코드·테이블.
+
+    키는 `Rule.source_module` 이고 그것이 **루틴 노드의 id** 다(68/68 일치, 실측).
+    문자열로 맞추지 않으므로 생산자가 문장 표기를 바꿔도 안 끊긴다.
+    """
+    if not routine_id:
+        return None
+    if routine_id in cache:
+        return cache[routine_id]
+    # **키는 노드의 내부 id(`_id`) 다.** `f.id`·`f.function_id`·`f.name` 으로 맞추던
+    # 옛 조회는 이 그래프에서 전건 0이다 — METHOD 에 `id`·`function_id` 속성이 아예
+    # 없다(속성은 name/signature/summary/file_path/code_text/…). 이 DB 에서 내부 id 를
+    # 가리키는 것은 `_id` 뿐이고, 설계 shadow 의 `source_module` 이 그 값이다.
+    rows = _analyzer_query("""
+        MATCH (f) WHERE f._id = $rid
+          AND (f:FUNCTION OR f:METHOD OR f:PROCEDURE OR f:TRIGGER)
+        OPTIONAL MATCH (f)-[acc:READS|WRITES]->(tb:TABLE)
+        RETURN f.name AS name, f.summary AS summary, f.file_path AS file_path,
+               f.start_line AS start_line, f.end_line AS end_line,
+               f.code_text AS code_text,
+               collect(DISTINCT {table: tb.name, access: type(acc)}) AS tables
+        LIMIT 1
+    """, {"rid": routine_id})
+    if not rows:
+        cache[routine_id] = None
+        return None
+    f = rows[0]
+    real_id = routine_id
+    tables: dict[str, dict] = {}
+    for r in (f.get("tables") or []):
+        tname = r.get("table")
+        if not tname:
+            continue
+        tb = tables.setdefault(tname, {"name": tname, "columns": [], "access": []})
+        if r.get("access"):
+            tb["access"].append(r["access"])
+    for tb in tables.values():
+        tb["access"] = sorted(set(tb["access"]))
+    location = f.get("file_path") or ""
+    if f.get("start_line"):
+        location += f":{f['start_line']}"
+        if f.get("end_line"):
+            location += f"-{f['end_line']}"
+    entry = {
+        "id": real_id,
+        "name": f.get("name", ""),
+        "summary": f.get("summary", ""),
+        "location": location,
+        "code": f.get("code_text") or "",
+        "tables": list(tables.values()),
+    }
+    cache[routine_id] = entry
+    return entry
+
+
+def _sources_from_persisted(
+    request: Request,
+    node_id: str,
+    node_info: dict,
+    node_type: str,
+    bc_info: dict | None,
+    rows: list[dict],
+) -> dict:
+    """영속된 `SOURCED_FROM` 엣지로 출처 응답을 만든다.
+
+    응답 모양은 옛 경로와 같다(`sources[].us / rules / functions`) — 화면을 안
+    고쳐도 된다. 룰마다 `evidence_role`(주/보조)과 `via_task_id`(어느 task 를
+    거쳤는지)가 더 실린다.
+
+    UserStory 를 못 찾은 엣지는 버리지 않고 `us.id = ""` 묶음에 남긴다 —
+    **근거가 있는데 화면에서 사라지는 것이 가장 나쁘다.**
+    """
+    grouped: dict[str, dict] = {}
+    func_cache: dict[str, dict | None] = {}
+    for r in rows:
+        usid = r.get("us_id") or ""
+        g = grouped.setdefault(usid, {
+            "us": {"id": usid, "role": r.get("role") or "", "action": r.get("action") or ""},
+            "rules": [],
+            "functions": [],
+            "_fids": [],
+        })
+        g["rules"].append({
+            "seq": "",
+            "title": r.get("title") or "",
+            "coupled_domain": None,
+            "given": r.get("given") or "",
+            "when": r.get("wh") or "",
+            "then": r.get("th") or "",
+            "boundary_example_ids": [],
+            "function_id": r.get("fn") or "",
+            "writes": [],
+            # 여기가 새로 실리는 둘이다.
+            "evidence_role": r.get("evidence_role") or "primary",
+            "via_task_id": r.get("via_task_id") or "",
+        })
+        rid = r.get("routine_id") or ""
+        if rid and rid not in g["_fids"]:
+            g["_fids"].append(rid)
+
+    sources: list[dict] = []
+    for g in grouped.values():
+        for rid in g.pop("_fids"):
+            entry = _routine_entry(rid, func_cache)
+            if entry is not None:
+                g["functions"].append(entry)
+        # 주 근거가 먼저 보이게 한다.
+        g["rules"].sort(key=lambda x: (x["evidence_role"] != "primary", x["title"]))
+        sources.append(g)
+    # UserStory 를 못 찾은 묶음은 마지막에 둔다.
+    sources.sort(key=lambda s: (s["us"]["id"] == "", s["us"]["id"]))
+
+    rule_count = sum(len(s["rules"]) for s in sources)
+    SmartLogger.log(
+        "INFO",
+        f"출처(영속 엣지): source {len(sources)} · rule {rule_count} · node {node_id}",
+        category="graph.traceability.done",
+        params={**http_context(request), "node_id": node_id, "node_type": node_type,
+                "source_count": len(sources), "rule_count": rule_count,
+                "path": "persisted"},
+    )
+    return {
+        "node": {
+            "id": node_id,
+            "name": node_info.get("displayName") or node_info.get("name", ""),
+            "type": node_type,
+        },
+        "bc": ({"id": bc_info["id"], "name": bc_info["name"]} if bc_info else None),
+        "sources": sources,
+    }
+
+
 @router.get("/traceability/{node_id}")
 async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
     """
@@ -340,6 +473,38 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
                 RETURN DISTINCT us.id AS id, us.role AS role, us.action AS action, us.sourceUnitId AS src
             """
         us_rows = _query(us_query, {"id": node_id})
+
+    # 4-0) **출처는 이미 그래프에 있다 — 다시 유도하지 않는다.**
+    #
+    # 2026-09-30 실측: 이 라우트가 화면의 출처 탭을 채우는데, Command 를 물으면
+    # `rules: 0 · functions: 0` 이 나왔다. US 만 보이고 근거가 없다.
+    #
+    # 원인은 유도 과정의 분석 그래프 조인이었다 — `ar.statement` 로 맞추는데
+    # **생산자의 `RULE` 에 `statement` 가 없다**(속성은 `condition`·
+    # `condition_description`, 효과는 `__ext.effect_descriptions`). 전건 NULL 이라
+    # 오류 없이 0건이 된다. `condition_description` 으로 바꿔도 안 맞는다 — 설계
+    # shadow 의 `title` 은 `condition_description + ": " + 효과` 로 **합성한 문자열**
+    # 이어서 68개 중 0건이 일치한다.
+    #
+    # 승격이 이제 요소마다 `(x)-[:SOURCED_FROM {evidence_role, via_task_id}]->(Rule)`
+    # 을 남긴다(실측 Command 16/16 · Event 63/63 · ReadModel 18/18 · Aggregate 4/4).
+    # 그러니 유도할 것이 없다. 그리고 루틴은 **정확한 키**로 잇는다 —
+    # `Rule.source_module` 이 분석 그래프 루틴 노드의 id 다(68/68 일치, 실측).
+    #
+    # 엣지가 없는 노드(rfp/figma US, 이 정책 이전 데이터)는 아래 옛 경로로 간다.
+    persisted = _query("""
+        MATCH (n {id: $id})-[sf:SOURCED_FROM]->(r:Rule)
+        OPTIONAL MATCH (us:UserStory) WHERE us.sourceUnitId = sf.via_task_id
+        RETURN coalesce(us.id, '') AS us_id, us.role AS role, us.action AS action,
+               r.title AS title, r.given AS given, r.when AS wh, r.then AS th,
+               r.source_function AS fn, r.source_module AS routine_id,
+               coalesce(sf.evidence_role, 'primary') AS evidence_role,
+               sf.via_task_id AS via_task_id
+    """, {"id": node_id})
+
+    if persisted:
+        return _sources_from_persisted(request, node_id, node_info, node_type,
+                                       bc_info, persisted)
 
     # 4) Per US, build a `source` entry: { us, rules, function }.
     #    Rules + Function are the *real* source-of-truth (verification §3.8) —
