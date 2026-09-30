@@ -123,3 +123,23 @@ def test_합계와_종류별_수를_같이_센다(run):
         assert counts[f"sourced_from_{key}"] > 0, f"{key} 수를 안 센다"
     # Policy 는 길이 둘이라 합쳐진다.
     assert counts["sourced_from_policy"] == 14
+
+
+def test_출처_부착이_cross_bc_policy_뒤에_온다():
+    """순서가 거꾸로면 그 Policy 들은 출처를 못 받는다.
+
+    2026-09-30 실측: 승격 중간에 Policy 12개, 끝나면 18개였다 — 늘어난 6개가
+    `_create_cross_bc_policies` 에서 만들어진다. 부착이 그 앞이면 6개는 아직
+    존재하지 않는다. **예전 "Policy 출처 0/9" 의 절반이 이 순서였다.**
+
+    소스 순서로 잰다 — 이 단계는 SSE 생성기 안이라 부분 실행이 까다롭다.
+    """
+    import inspect
+
+    src = inspect.getsource(promote_to_es)
+    cross = src.index("cross_policies = await _create_cross_bc_policies(")
+    attach = src.index("trace_counts = _attach_analyzer_traceability(")
+    assert cross < attach, (
+        "traceability 부착이 cross-BC Policy 생성보다 앞에 있다 — "
+        "그 Policy 들은 출처를 못 받는다"
+    )

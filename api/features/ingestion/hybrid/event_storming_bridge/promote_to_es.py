@@ -535,21 +535,28 @@ async def hybrid_post_workflow_hook(
             {"type": "HybridOrphanUsBackfilled", "edge_count": orphans},
         )
 
-    yield _ev("🧬 분석기 traceability 엣지 부착 중 (US→Rule, Question→BC)...", 98,
+    # **Cross-BC Policy 를 먼저 만든다.** 순서가 거꾸로면 그 Policy 들은 출처를 못 받는다.
+    #
+    # 2026-09-30 실측: 승격 중간에 Policy 가 12개였고 끝나면 18개였다 — 늘어난 6개가
+    # 여기서 만들어지는 cross-BC Policy 다. traceability 부착이 그 앞에 있으면 6개는
+    # 아직 존재하지 않아 `SOURCED_FROM` 을 못 받는다. **예전 "Policy 출처 0/9" 의
+    # 절반은 이 순서였다** — 출처를 만들어 주는 코드가 없던 것과, 만들어 줄 때
+    # 대상이 아직 없던 것이 겹쳐 있었다.
+    yield _ev("🔁 Cross-BC Policy 탐지 중 (BpmTask.NEXT 흐름 기반)...", 98)
+    cross_policies = await _create_cross_bc_policies(hybrid_session_id)
+    yield _ev(
+        f"🔁 Cross-BC Policy {len(cross_policies)}개 생성", 98,
+        {"type": "HybridCrossBcPolicies", "policies": cross_policies},
+    )
+
+    yield _ev("🧬 분석기 traceability 엣지 부착 중 (US→Rule, Question→BC)...", 99,
               {"type": "HybridTraceabilityStart"})
     trace_counts = _attach_analyzer_traceability(hybrid_session_id)
     yield _ev(
         f"🧬 traceability 부착: SOURCED_FROM {trace_counts['sourced_from']} / "
         f"ATTACHED_TO {trace_counts['attached_to']}",
-        98,
+        99,
         {"type": "HybridTraceabilityAttached", "counts": trace_counts},
-    )
-
-    yield _ev("🔁 Cross-BC Policy 탐지 중 (BpmTask.NEXT 흐름 기반)...", 99)
-    cross_policies = await _create_cross_bc_policies(hybrid_session_id)
-    yield _ev(
-        f"🔁 Cross-BC Policy {len(cross_policies)}개 생성", 99,
-        {"type": "HybridCrossBcPolicies", "policies": cross_policies},
     )
 
     SmartLogger.log(
