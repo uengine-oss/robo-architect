@@ -486,9 +486,29 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
     return result
 
 
+@router.get("/traceability/node/{node_id}/source-rules")
+async def get_node_source_rules(request: Request, node_id: str) -> dict[str, Any]:
+    """어떤 ES 요소든 그 **코드 출처**를 돌려준다 — 라벨을 묻지 않는다.
+
+    UserStory 전용이던 것을 일반화했다. 2026-09-30 실측에서 Command·Aggregate·
+    Event·Policy·ReadModel 은 노드에 출처가 없었고, 그것을 돌려주는 길도 없었다.
+    승격이 이제 그 요소들에도 `(x)-[:SOURCED_FROM {evidence_role, via_task_id}]->(Rule)`
+    을 남기므로, 조회는 라벨과 무관하게 같은 한 줄이면 된다.
+
+    `/traceability/userstory/{id}/source-rules` 는 같은 것을 부른다 — 프런트가
+    쓰고 있어 남겨 둔다.
+    """
+    return _source_rules(request, node_id)
+
+
 @router.get("/traceability/userstory/{us_id}/source-rules")
 async def get_userstory_source_rules(request: Request, us_id: str) -> dict[str, Any]:
-    """Return analyzer Rules a UserStory was sourced from.
+    """`/traceability/node/{id}/source-rules` 의 옛 이름. 동작은 같다."""
+    return _source_rules(request, us_id)
+
+
+def _source_rules(request: Request, node_id: str) -> dict[str, Any]:
+    """Return analyzer Rules a node was sourced from.
 
     Hybrid-mode US nodes carry `(us)-[:SOURCED_FROM]->(Rule)` edges installed
     by Phase 5 promote-to-es (BpmTask → REALIZED_BY → shadow Rule, fanned out
@@ -506,7 +526,7 @@ async def get_userstory_source_rules(request: Request, us_id: str) -> dict[str, 
     #
     # 이 정책 전에 만든 엣지에는 `evidence_role` 이 없다 — `primary` 로 본다.
     rows = _query("""
-        MATCH (us:UserStory {id: $usid})-[sf:SOURCED_FROM]->(r:Rule)
+        MATCH (n {id: $usid})-[sf:SOURCED_FROM]->(r:Rule)
         // 오퍼레이션 단위(루틴) 기준 조인 — dbms 룰 오너=자식구문 → PARENT_OF*0.. 로 루틴 복원.
         OPTIONAL MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
           WHERE ar.session_id IS NULL
@@ -517,12 +537,14 @@ async def get_userstory_source_rules(request: Request, us_id: str) -> dict[str, 
                r.title AS statement,
                r.source_function AS source_function,
                coalesce(hr.local_rule_id, '') AS local_id,
-               coalesce(sf.evidence_role, 'primary') AS evidence_role
+               coalesce(sf.evidence_role, 'primary') AS evidence_role,
+               sf.via_task_id AS via_task_id
         ORDER BY evidence_role, local_id, statement
-    """, {"usid": us_id})
+    """, {"usid": node_id})
 
-    SmartLogger.log("INFO", f"US source-rules: {len(rows)} for {us_id}",
+    SmartLogger.log("INFO", f"source-rules: {len(rows)} for {node_id}",
                     category="graph.traceability.us_source_rules",
-                    params={**http_context(request), "us_id": us_id, "count": len(rows)})
+                    params={**http_context(request), "node_id": node_id, "count": len(rows)})
 
-    return {"us_id": us_id, "rules": rows}
+    # `us_id` 는 옛 이름이다 — 프런트가 읽고 있어 같이 싣는다.
+    return {"node_id": node_id, "us_id": node_id, "rules": rows}

@@ -208,6 +208,19 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
         task via sourceUnitId. Lets PRD generation pull every rule
         statement that contributed to a story.
 
+      (Command|Event|Policy|ReadModel|Aggregate)-[:SOURCED_FROM]->(Rule)
+        **전술 요소도 코드 출처를 들고 있어야 한다.** 2026-09-30 실측: UserStory 는
+        32/32 가 룰까지 닿는데 Command·Aggregate·Event·Policy·ReadModel 은 **노드에
+        아무것도 없었다** — `Command` 의 속성은 name/actor/category/inputSchema 뿐이고
+        `__ext` 도 비어 있었다. 그래서 "이 Command 가 어느 코드에서 나왔나" 를 물으면
+        `(us)-[:IMPLEMENTS]->(c)` 를 거꾸로 타고 그 US 의 룰을 **전부 합치는** 2홉
+        추론밖에 없었다(`ApproveApprovalStep` 이 룰 9개, `CreateLeaveApplication` 이
+        10개 — 사실상 "모르겠다"다).
+
+        승격 시점에는 그 사슬이 그래프에 이미 있다. 그래서 여기서 기록한다 —
+        추론을 매번 다시 하지 않는다. 엣지가 `via_task_id` 로 **어느 task 를 거쳤는지**
+        까지 들고 있으므로 화면이 희석을 풀어 보여 줄 수 있다.
+
       (Question)-[:ATTACHED_TO]->(BoundedContext)
         Analyzer Questions live on FUNCTION nodes. We follow the function
         to its REALIZED_BY task → IMPLEMENTS BC chain so the question
@@ -236,6 +249,53 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
             sid=hybrid_session_id,
         ).single()
         counts["sourced_from"] = int(rec["c"]) if rec else 0
+
+        # ── 전술 요소로 같은 출처를 뻗는다 ──────────────────────────────────
+        #
+        # 이미 그래프에 있는 관계만 쓴다(2026-09-30 실측으로 확인한 방향):
+        #
+        #   Command    (us)-[:IMPLEMENTS]->(c)
+        #   Aggregate  (us)-[:IMPLEMENTS]->(a)
+        #   ReadModel  (us)-[:IMPLEMENTS]->(rm)
+        #   Event      (us)-[:HAS_EVENT]->(ev)
+        #   Policy     (us)-[:IMPLEMENTS]->(p)                    12/18
+        #              (us)-[:HAS_EVENT]->(ev)-[:TRIGGERS]->(p)   18/18 ← 합성 Policy
+        #
+        # Policy 만 두 길인 이유: BC 간 합성 Policy 는 US 가 직접 가리키지 않고
+        # 트리거 Event 로만 이어진다. 그 길이 없으면 6개가 출처를 못 받는다.
+        #
+        # **`primary` 는 덮이지 않는다.** 한 요소에 여러 task 가 모일 수 있고
+        # (Command 하나를 US 8개가 구현하기도 한다), 그중 하나라도 그 룰의 주
+        # 근거라면 요소 입장에서도 주 근거다. `MERGE` 뒤에 그냥 SET 하면 마지막
+        # task 의 역할이 이겨서 primary 가 supporting 으로 뒤집힌다.
+        element_paths: list[tuple[str, str]] = [
+            ("Command", "MATCH (us)-[:IMPLEMENTS]->(x:Command {session_id: $sid})"),
+            ("Aggregate", "MATCH (us)-[:IMPLEMENTS]->(x:Aggregate {session_id: $sid})"),
+            ("ReadModel", "MATCH (us)-[:IMPLEMENTS]->(x:ReadModel {session_id: $sid})"),
+            ("Event", "MATCH (us)-[:HAS_EVENT]->(x:Event {session_id: $sid})"),
+            ("Policy", "MATCH (us)-[:IMPLEMENTS]->(x:Policy {session_id: $sid})"),
+            ("Policy/triggered",
+             "MATCH (us)-[:HAS_EVENT]->(:Event {session_id: $sid})"
+             "-[:TRIGGERS]->(x:Policy {session_id: $sid})"),
+        ]
+        for label, hop in element_paths:
+            rec = s.run(
+                "MATCH (t:BpmTask {session_id: $sid})-[m:REALIZED_BY]->(r:Rule {session_id: $sid}) "
+                "MATCH (us:UserStory {session_id: $sid}) WHERE us.sourceUnitId = t.id "
+                f"{hop} "
+                "MERGE (x)-[rel:SOURCED_FROM]->(r) "
+                "SET rel.via_task_id = coalesce(rel.via_task_id, t.id), "
+                "    rel.evidence_role = CASE WHEN rel.evidence_role = 'primary' "
+                "                             THEN 'primary' "
+                "                             ELSE coalesce(m.evidence_role, 'primary') END "
+                "RETURN count(rel) AS c",
+                sid=hybrid_session_id,
+            ).single()
+            made = int(rec["c"]) if rec else 0
+            counts[f"sourced_from_{label.split('/')[0].lower()}"] = (
+                counts.get(f"sourced_from_{label.split('/')[0].lower()}", 0) + made
+            )
+            counts["sourced_from"] += made
 
         # (Question)-[:ATTACHED_TO]->(BC) via FUNCTION → task → IMPLEMENTS BC.
         # We touch any analyzer Question (no session_id); this is a one-way
