@@ -496,8 +496,17 @@ async def get_userstory_source_rules(request: Request, us_id: str) -> dict[str, 
     so the response `rules` list is simply empty — caller decides whether to
     render the section.
     """
+    # `evidence_role` 을 같이 돌려준다 — `primary`(주 근거) 또는 `supporting`(보조 근거).
+    #
+    # 굵은 레거시 룰 하나가 여러 task 를 정당하게 뒷받침한다(`applyLeave` 한
+    # 메서드가 검증·저장을 다 한다). 중재는 집을 하나만 고르지만 진 쪽을 지우지
+    # 않고 `supporting` 으로 남긴다(2026-09-30 정책 — 지우던 때에는 task 29개 중
+    # 12개가 근거를 통째로 잃었다). 화면이 그 구분을 보여 줘야 "왜 이 룰이 두
+    # 군데에 있나" 를 사람이 읽을 수 있다.
+    #
+    # 이 정책 전에 만든 엣지에는 `evidence_role` 이 없다 — `primary` 로 본다.
     rows = _query("""
-        MATCH (us:UserStory {id: $usid})-[:SOURCED_FROM]->(r:Rule)
+        MATCH (us:UserStory {id: $usid})-[sf:SOURCED_FROM]->(r:Rule)
         // 오퍼레이션 단위(루틴) 기준 조인 — dbms 룰 오너=자식구문 → PARENT_OF*0.. 로 루틴 복원.
         OPTIONAL MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
           WHERE ar.session_id IS NULL
@@ -507,8 +516,9 @@ async def get_userstory_source_rules(request: Request, us_id: str) -> dict[str, 
         RETURN r.id AS rule_id,
                r.title AS statement,
                r.source_function AS source_function,
-               coalesce(hr.local_rule_id, '') AS local_id
-        ORDER BY local_id, statement
+               coalesce(hr.local_rule_id, '') AS local_id,
+               coalesce(sf.evidence_role, 'primary') AS evidence_role
+        ORDER BY evidence_role, local_id, statement
     """, {"usid": us_id})
 
     SmartLogger.log("INFO", f"US source-rules: {len(rows)} for {us_id}",

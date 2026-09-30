@@ -48,6 +48,7 @@ from api.features.ingestion.hybrid.mapper.module_retriever import (
 from api.features.ingestion.hybrid.mapper.rule_context import build_rule_contexts
 from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     delete_task_rule_mapping,
+    set_task_rule_mapping_role,
     fetch_session_snapshot,
     save_mappings,
     save_task_conditions,
@@ -490,23 +491,44 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
     are no conflicts (typical case for a single-task explore that didn't
     overlap with prior mappings) — the conflict-detection query is one MATCH.
 
-    **여기가 지금 가장 큰 손실 지점이다.** 2026-09-29 실측(hr-sample, 프로세스 3개):
+    **진 쪽을 지우지 않는다 — 보조 근거로 내린다.** 2026-09-30 에 분포를 재고 정한
+    정책이다. 지우던 때의 실측(hr-sample, 프로세스 3개, task 29개):
 
-        검증기가 수락한 매핑        72
-        그래프에 남은 것           31      ← 41개를 이 함수가 지웠다
-        매핑된 task              27 → 15  ← task 12개의 매핑이 **전부** 사라졌다
+        검증기가 수락한 매핑        81
+        그래프에 남은 것           35      ← 43개를 이 함수가 지웠다
+        매핑된 task              17 / 29  ← **12개가 근거를 통째로 잃었다**
 
-    그런데 **무엇을 왜 지웠는지 파일 로그에 안 남았다** — SSE 의 `ArbitrationDecision`
-    으로만 나가고 화면을 닫으면 사라진다. 그래서 "매핑이 왜 15/28 이냐" 를 사후에
-    확인할 방법이 없었다. 아래에서 SmartLogger 로 같이 남긴다.
+    그 12개는 **전부 여기서만** 잃었다 — Step 1·문턱 단계의 손실은 0건이었고
+    (`recall@20 = 19/19`, `RESCUED 0건`), 모든 task 가 `accepted ≥ 1` 을 받았다.
 
-    정책 자체("한 룰은 한 task 에만 산다")가 맞는지는 별건이다 — 같은 코드베이스를
-    공유하는 프로세스들끼리는 같은 룰을 정당하게 쓸 수 있다(예: `잔여 휴가 확인` 과
-    `부여 및 잔여 생성` 이 같은 `LeaveBalanceDao` 룰을 다툰다). 분포를 보고 정한다.
+    원인은 정책이 데이터를 못 담는 것이다. 레거시의 룰 단위(루틴)가 설계의 task
+    단위보다 **굵다** — `applyLeave` 한 메서드가 입력 검증·DTO·상태·저장을 다 하므로
+    검증기는 그 룰을 `사전 신청 기한 확인`·`증빙 서류 확인`·`중복 신청 확인` 에
+    정당하게 붙였다. "한 룰은 한 task 에만 산다" 를 강제하면 그중 하나만 남고
+    나머지는 **유일한 근거를 잃는다**(accepted=1 이었으므로 0이 된다).
+
+        룰 rule_dbe3b052ffd8 → '휴가 신청서 접수'
+           진 쪽 6개: 1건당 최대 신청일수 확인, 사전 신청 기한 확인, 증빙 서류 확인,
+                    잔여 휴가 확인, 결재선 생성, 중복 신청 확인
+
+    그래서 집은 여전히 하나만 고르되(`evidence_role='primary'`), 나머지는 남긴다
+    (`evidence_role='supporting'`). 인수조건 ③이 묻는 것은 "설계 근거가 영속되는가" 이고,
+    지우는 것은 중복 제거가 아니라 **추적 상실**이었다. 역할은 승격에서도 이어진다 —
+    `(UserStory)-[:SOURCED_FROM {evidence_role}]->(Rule)`.
+
+    `verdict.reject` 는 다르다. 중재가 "어느 task 의 것도 아닌 횡단 유틸" 이라고
+    판정한 경우이므로 그대로 **지운다** — 그건 "집이 어디냐" 가 아니라 "근거가
+    아니다" 라는 판정이다. 위 실측에서 이 경로는 0건이었다.
+
+    무엇을 왜 바꿨는지는 SmartLogger 로 파일에 남긴다. 그게 없어서 2026-09-29 에는
+    "매핑이 왜 15/28 이냐" 를 사후에 되짚을 수 없었다(SSE 로만 나가고 화면을 닫으면
+    사라진다).
     """
     contested = _detect_contested_claims(session_id)
     if not contested:
-        return {"contested": 0, "resolved": 0, "rejected": 0}
+        # 아래 정상 반환과 **같은 키**를 준다. 하나라도 빠지면 부르는 쪽이
+        # `["demoted"]` 에서 KeyError 를 맞는다.
+        return {"contested": 0, "resolved": 0, "rejected": 0, "demoted": 0, "deleted": 0}
 
     await sink({
         "type": "ArbitrationStart",
@@ -525,6 +547,7 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
     resolved = 0
     rejected = 0
     deleted = 0
+    demoted = 0
     for rule_id, claims in contested:
         rule = rule_by_id.get(rule_id)
         if not rule:
@@ -586,14 +609,31 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
 
         winner_tid = verdict.home_task_id
         losers = [c.task.id for c in claim_entries if c.task.id != winner_tid]
+        # **진 쪽을 지우지 않는다 — 보조 근거로 내린다.**
+        #
+        # 2026-09-30 실측으로 정한 정책이다. 지우던 때에는 검증기가 수락한 81건
+        # 중 43건이 사라지고 **task 29개 중 12개가 근거를 통째로 잃었다.** 그
+        # 12개는 전부 여기서만 잃었다(Step 1·문턱 손실 0건).
+        #
+        # 원인은 레거시의 룰 단위가 설계의 task 단위보다 **굵다**는 것이다 —
+        # `applyLeave` 한 메서드가 입력 검증·DTO·상태·저장을 다 하므로 그 룰은
+        # `사전 신청 기한 확인`·`증빙 서류 확인`·`중복 신청 확인` 의 **유일한**
+        # 근거였다. 1:1 을 강제하면 굵은 룰 하나당 task N−1 개가 반드시 빈다.
+        #
+        # 집은 여전히 하나만 고른다(`primary`). 나머지는 남긴다(`supporting`).
+        set_task_rule_mapping_role(
+            session_id, winner_tid, rule_id, "primary", verdict.rationale,
+        )
         for ltid in losers:
-            delete_task_rule_mapping(session_id, ltid, rule_id)
-        deleted += len(losers)
+            set_task_rule_mapping_role(
+                session_id, ltid, rule_id, "supporting", verdict.rationale,
+            )
+        demoted += len(losers)
         name_of = {c.task.id: c.task.name for c in claim_entries}
         SmartLogger.log(
             "INFO",
             f"중재: 룰 {rule_id} → '{name_of.get(winner_tid, winner_tid)}' "
-            f"(진 쪽 {len(losers)}개 삭제: {', '.join(name_of.get(x, x) for x in losers)})"
+            f"(보조로 내린 것 {len(losers)}개: {', '.join(name_of.get(x, x) for x in losers)})"
             f" :: {verdict.rationale[:160]}",
             category="ingestion.hybrid.arbitration",
             params={
@@ -601,9 +641,9 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
                 "rule_id": rule_id,
                 "outcome": "single_home",
                 "claims": len(claim_entries),
-                "deleted": len(losers),
+                "demoted": len(losers),
                 "winner": name_of.get(winner_tid, winner_tid),
-                "losers": [name_of.get(x, x) for x in losers],
+                "supporting": [name_of.get(x, x) for x in losers],
             },
         )
         await sink({
@@ -611,6 +651,8 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
             "rule_id": rule_id,
             "winning_task_id": winner_tid,
             "losing_task_ids": losers,
+            # 화면이 "지웠다" 로 읽지 않게 한다 — 남아 있고 역할만 바뀐다.
+            "demoted_task_ids": losers,
             "rejected": False,
             "rationale": verdict.rationale,
         })
@@ -622,18 +664,19 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
     SmartLogger.log(
         "WARN" if deleted else "INFO",
         f"중재 끝: 경합 룰 {len(contested)}개 · 해소 {resolved} · 전부물림 {rejected} "
-        f"· **삭제한 매핑 {deleted}개**",
+        f"· 보조로 내린 매핑 {demoted}개 · **삭제한 매핑 {deleted}개**",
         category="ingestion.hybrid.arbitration",
         params={
             "session_id": session_id,
             "contested": len(contested),
             "resolved": resolved,
             "rejected_all": rejected,
+            "demoted_mappings": demoted,
             "deleted_mappings": deleted,
         },
     )
     return {"contested": len(contested), "resolved": resolved,
-            "rejected": rejected, "deleted": deleted}
+            "rejected": rejected, "demoted": demoted, "deleted": deleted}
 
 
 def _detect_contested_claims(session_id: str) -> list[tuple[str, list[dict]]]:

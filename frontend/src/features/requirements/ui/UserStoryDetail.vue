@@ -198,7 +198,16 @@ async function saveEdit() {
             Source Business Rules ({{ sourceRules.length }})
           </div>
           <ul class="source-rules__list">
-            <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item">
+            <!--
+              보조 근거를 구분해 보여 준다. 굵은 레거시 룰 하나가 여러 task 를
+              정당하게 뒷받침한다(`applyLeave` 한 메서드가 검증·저장을 다 한다).
+              중재는 집을 하나만 고르되 진 쪽을 지우지 않고 보조로 남긴다 —
+              그 구분이 없으면 "왜 같은 룰이 두 군데에 있나" 를 읽을 수 없다.
+            -->
+            <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item"
+                :class="{ 'source-rule-item--supporting': rule.evidence_role === 'supporting' }">
+              <span v-if="rule.evidence_role === 'supporting'" class="source-rule-role"
+                    title="다른 task 가 이 룰의 주 근거다. 여기서는 보조 근거로 남았다.">보조</span>
               <span class="source-rule-stmt">{{ rule.statement }}</span>
               <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>
             </li>
@@ -406,6 +415,14 @@ async function saveEdit() {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: 0.75rem; color: var(--color-text-light);
   background: rgba(0, 0, 0, 0.04); padding: 1px 6px; border-radius: 4px;
+}
+/* 보조 근거 — 지우지 않고 남기되 주 근거보다 약하게 보인다. */
+.source-rule-item--supporting .source-rule-stmt { color: var(--color-text-light); }
+.source-rule-role {
+  flex-shrink: 0;
+  font-size: 0.7rem; font-weight: 600; line-height: 1.6;
+  color: #6d4c00; background: #fff8e1; border: 1px solid #ffe082;
+  padding: 0 5px; border-radius: 4px;
 }
 .us-detail__criteria h4 { font-size: 0.8rem; margin: 8px 0; color: var(--color-text); }
 .us-detail__no-criteria { font-size: 0.8rem; color: var(--color-text-light); }

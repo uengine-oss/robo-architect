@@ -220,11 +220,18 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
         # (US)-[:SOURCED_FROM]->(Rule) via shadow Rule reached through BpmTask.
         # Shadow Rule has session_id (created during BPM phase); we follow that
         # so PRD generation can retrieve title/given/when/then directly.
+        # `evidence_role` 을 같이 옮긴다 — ES 요소의 출처가 **주 근거인지 보조 근거인지**
+        # 구분되어야 한다. 중재가 진 쪽을 지우지 않고 `supporting` 으로 내리므로
+        # (2026-09-30 정책, `set_task_rule_mapping_role` 참고), 그 구분을 여기서
+        # 잃으면 승격된 UserStory 는 굵은 룰의 주인이 누구였는지 알 수 없다.
+        # 없으면 `primary` 로 본다 — 이 정책 전에 만든 엣지가 그렇다.
         rec = s.run(
-            "MATCH (t:BpmTask {session_id: $sid})-[:REALIZED_BY]->(r:Rule {session_id: $sid}) "
+            "MATCH (t:BpmTask {session_id: $sid})-[m:REALIZED_BY]->(r:Rule {session_id: $sid}) "
             "MATCH (us:UserStory {session_id: $sid}) "
             "WHERE us.sourceUnitId = t.id "
             "MERGE (us)-[rel:SOURCED_FROM]->(r) "
+            "SET rel.evidence_role = coalesce(m.evidence_role, 'primary'), "
+            "    rel.via_task_id = t.id "
             "RETURN count(rel) AS c",
             sid=hybrid_session_id,
         ).single()
