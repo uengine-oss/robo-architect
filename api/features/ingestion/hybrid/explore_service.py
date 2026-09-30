@@ -489,6 +489,20 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
     Reuses `cross_process_arbitrator.arbitrate_rule_home`. Cheap when there
     are no conflicts (typical case for a single-task explore that didn't
     overlap with prior mappings) — the conflict-detection query is one MATCH.
+
+    **여기가 지금 가장 큰 손실 지점이다.** 2026-09-29 실측(hr-sample, 프로세스 3개):
+
+        검증기가 수락한 매핑        72
+        그래프에 남은 것           31      ← 41개를 이 함수가 지웠다
+        매핑된 task              27 → 15  ← task 12개의 매핑이 **전부** 사라졌다
+
+    그런데 **무엇을 왜 지웠는지 파일 로그에 안 남았다** — SSE 의 `ArbitrationDecision`
+    으로만 나가고 화면을 닫으면 사라진다. 그래서 "매핑이 왜 15/28 이냐" 를 사후에
+    확인할 방법이 없었다. 아래에서 SmartLogger 로 같이 남긴다.
+
+    정책 자체("한 룰은 한 task 에만 산다")가 맞는지는 별건이다 — 같은 코드베이스를
+    공유하는 프로세스들끼리는 같은 룰을 정당하게 쓸 수 있다(예: `잔여 휴가 확인` 과
+    `부여 및 잔여 생성` 이 같은 `LeaveBalanceDao` 룰을 다툰다). 분포를 보고 정한다.
     """
     contested = _detect_contested_claims(session_id)
     if not contested:
@@ -510,6 +524,7 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
 
     resolved = 0
     rejected = 0
+    deleted = 0
     for rule_id, claims in contested:
         rule = rule_by_id.get(rule_id)
         if not rule:
@@ -540,6 +555,23 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
         if verdict.reject:
             for c in claim_entries:
                 delete_task_rule_mapping(session_id, c.task.id, rule_id)
+            deleted += len(claim_entries)
+            # **가장 파괴적인 경로다** — 이긴 쪽을 고르는 것이 아니라 주장 전부를
+            # 지운다. 그 룰은 어느 task 에서도 근거로 남지 않는다.
+            SmartLogger.log(
+                "WARN",
+                f"중재가 룰을 전부 물렸다: {rule_id} — 주장 {len(claim_entries)}개 삭제 "
+                f"({', '.join(c.task.name for c in claim_entries)}) :: {verdict.rationale[:160]}",
+                category="ingestion.hybrid.arbitration",
+                params={
+                    "session_id": session_id,
+                    "rule_id": rule_id,
+                    "outcome": "rejected_all",
+                    "claims": len(claim_entries),
+                    "deleted": len(claim_entries),
+                    "task_names": [c.task.name for c in claim_entries],
+                },
+            )
             await sink({
                 "type": "ArbitrationDecision",
                 "rule_id": rule_id,
@@ -556,6 +588,24 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
         losers = [c.task.id for c in claim_entries if c.task.id != winner_tid]
         for ltid in losers:
             delete_task_rule_mapping(session_id, ltid, rule_id)
+        deleted += len(losers)
+        name_of = {c.task.id: c.task.name for c in claim_entries}
+        SmartLogger.log(
+            "INFO",
+            f"중재: 룰 {rule_id} → '{name_of.get(winner_tid, winner_tid)}' "
+            f"(진 쪽 {len(losers)}개 삭제: {', '.join(name_of.get(x, x) for x in losers)})"
+            f" :: {verdict.rationale[:160]}",
+            category="ingestion.hybrid.arbitration",
+            params={
+                "session_id": session_id,
+                "rule_id": rule_id,
+                "outcome": "single_home",
+                "claims": len(claim_entries),
+                "deleted": len(losers),
+                "winner": name_of.get(winner_tid, winner_tid),
+                "losers": [name_of.get(x, x) for x in losers],
+            },
+        )
         await sink({
             "type": "ArbitrationDecision",
             "rule_id": rule_id,
@@ -567,7 +617,23 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
         resolved += 1
 
     await sink({"type": "ArbitrationEnd", "resolved": resolved, "rejected": rejected})
-    return {"contested": len(contested), "resolved": resolved, "rejected": rejected}
+    # **한 줄로 손실 규모를 남긴다.** 이 숫자가 없으면 "매핑이 왜 적냐" 를 사후에
+    # 되짚을 수 없다 — 2026-09-29 에 실제로 그랬다(수락 72 → 영속 31).
+    SmartLogger.log(
+        "WARN" if deleted else "INFO",
+        f"중재 끝: 경합 룰 {len(contested)}개 · 해소 {resolved} · 전부물림 {rejected} "
+        f"· **삭제한 매핑 {deleted}개**",
+        category="ingestion.hybrid.arbitration",
+        params={
+            "session_id": session_id,
+            "contested": len(contested),
+            "resolved": resolved,
+            "rejected_all": rejected,
+            "deleted_mappings": deleted,
+        },
+    )
+    return {"contested": len(contested), "resolved": resolved,
+            "rejected": rejected, "deleted": deleted}
 
 
 def _detect_contested_claims(session_id: str) -> list[tuple[str, list[dict]]]:
