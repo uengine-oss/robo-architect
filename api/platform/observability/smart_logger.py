@@ -1,4 +1,5 @@
 import shutil
+import sys
 import time
 import json
 import os
@@ -255,6 +256,33 @@ class SmartLogger:
             # flush=True: ./dev.sh 처럼 stdout 이 파이프면 블록 버퍼링에 걸려
             # 로그가 터미널에 늦게(또는 프로세스 종료까지 아예) 안 나온다.
             if self._should_include_all(level):
-                print(f"[{level}]{category_str} {message} {params}", flush=True)
+                self._print(f"[{level}]{category_str} {message} {params}")
             else :
-                print(f"[{level}]{category_str} {message}", flush=True)
+                self._print(f"[{level}]{category_str} {message}")
+
+    @staticmethod
+    def _print(line: str) -> None:
+        """**로그 한 줄이 호출자를 죽이지 못하게 한다.**
+
+        한국어 Windows 에서 파이프에 붙은 python 의 stdout 은 cp949 이고, cp949 에
+        없는 글자(`—` U+2014, 이모지 등)를 `print` 하면 UnicodeEncodeError 가
+        호출자에게 올라간다. 2026-09-30 에 이것이 문서 업로드 인제스천을 Phase 1
+        직후 매번 죽였다 — 죽인 것은 로직이 아니라 성공을 알리는 INFO 한 줄이었다
+        ("facade produced Phase 1 bundle — using it").
+
+        설치본은 `PYTHONUTF8=1` 로 띄우므로 정상 경로에서는 여기 안 걸린다. 그래도
+        남겨 둔다 — 운영자가 백엔드를 손으로 띄우는 경로가 있고, **관측 수단이
+        관측 대상을 망가뜨리는 것은 어떤 경우에도 안 된다**.
+        """
+        try:
+            print(line, flush=True)
+        except UnicodeEncodeError:
+            enc = (getattr(sys.stdout, "encoding", None) or "ascii")
+            try:
+                print(line.encode(enc, "backslashreplace").decode(enc, "replace"),
+                      flush=True)
+            except Exception:
+                pass
+        except Exception:
+            # 파이프가 닫힌 뒤(Electron 종료 중) 등. 로그를 잃는 편이 낫다.
+            pass

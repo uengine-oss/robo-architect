@@ -234,6 +234,16 @@ async function startBackendInternal(): Promise<{ port: number }> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
+    // **stdout 은 UTF-8 이어야 한다.** 아래 `buf.toString()` 이 UTF-8 로 디코딩하고,
+    // 한국어 Windows 에서 파이프에 붙은 python 의 기본 인코딩은 cp949 다. 둘이
+    // 어긋나면 두 가지가 같이 터진다 — 로그의 한글이 전부 깨지고(U+FFFD),
+    // cp949 에 없는 글자(`—` U+2014 등)를 담은 로그 한 줄이 `print()` 에서
+    // UnicodeEncodeError 를 던져 **그 요청을 죽인다**. 2026-09-30 에 문서 업로드
+    // 인제스천이 Phase 1 직후 매번 죽은 원인이 이것이었다("facade produced
+    // Phase 1 bundle — using it" 의 em dash). 앱을 셸에서 띄우면 그 셸의
+    // PYTHONUTF8 를 물려받아 우연히 살아나므로, 개발 중에는 안 보인다.
+    PYTHONUTF8: "1",
+    PYTHONIOENCODING: "utf-8",
     API_PORT: String(port),
     ROBO_SPEC_BACKEND_URL: `http://127.0.0.1:${port}`,
     NEO4J_URI: process.env.ROBO_NEO4J_URI ?? process.env.NEO4J_URI,
