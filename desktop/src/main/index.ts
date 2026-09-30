@@ -27,7 +27,7 @@ import {
 } from "../shared/ipc-contract";
 
 import { ensureDataDirs, getLogsDir } from "./data-dir";
-import { initLogging, log, revealLogs } from "./logging";
+import { disableConsoleMirror, initLogging, log, revealLogs } from "./logging";
 import { RuntimeRegistry } from "./runtime-state";
 import { RUNTIME_CHANNELS } from "../shared/runtime-contract";
 import {
@@ -653,14 +653,37 @@ async function bootstrap(): Promise<void> {
   // EPIPE 는 삼킨다. 앱을 띄운 부모 프로세스가 먼저 끝나면 물려받은 stdout 이
   // 끊기고, 그 뒤 쓰기가 EPIPE 를 낸다. **앱의 잘못이 아니고 기능에도 영향이
   // 없다** — 이것 때문에 죽는 것이 오히려 결함이다(2026-09-28 실측).
+  //
+  // **삼키는 것만으로는 부족하다.** 2026-09-30 실측: EPIPE 를 기록하는 이
+  // `log()` 가 콘솔 미러를 통해 또 EPIPE 를 냈고, 그것이 다시 여기로 왔다.
+  // 15분에 `app.uncaught_exception` 32,178줄(21MB), main 프로세스가 한 코어를
+  // 100% 물고 응답 정지, SSE 프록시가 막혀 **백엔드 전체 탐색이 3번째 프로세스
+  // 에서 멈췄다.** 그래서 (1) 첫 EPIPE 에 콘솔 미러를 끄고, (2) 한 번만 적고,
+  // (3) 처리기 재진입을 막는다. 셋 중 하나만 빠져도 되돌아온다.
+  let handling = false;
+  let epipeSeen = 0;
   process.on("uncaughtException", (error: NodeJS.ErrnoException) => {
     const epipe = error?.code === "EPIPE";
-    log(epipe ? "warn" : "error", "app.uncaught_exception", {
-      code: error?.code,
-      message: error?.message,
-      stack: error?.stack?.split("\n").slice(0, 8).join(" | "),
-      swallowed: epipe,
-    });
+    if (epipe) {
+      // 미러가 원인일 수 있다 — 기록하기 **전에** 끊는다.
+      disableConsoleMirror();
+      epipeSeen += 1;
+      // 두 번째부터는 적지 않는다. 같은 줄이 로그를 통째로 덮어 버린다.
+      if (epipeSeen > 1) return;
+    }
+    if (handling) return; // 기록 자체가 던진 경우
+    handling = true;
+    try {
+      log(epipe ? "warn" : "error", "app.uncaught_exception", {
+        code: error?.code,
+        message: error?.message,
+        stack: error?.stack?.split("\n").slice(0, 8).join(" | "),
+        swallowed: epipe,
+        ...(epipe ? { note: "콘솔 미러를 껐다. 이후 EPIPE 는 적지 않는다." } : {}),
+      });
+    } finally {
+      handling = false;
+    }
     if (epipe) return;
     // 그 밖의 예외는 사람에게 보이고 끝낸다 — 기본 동작과 같되 기록이 남는다.
     try {

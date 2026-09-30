@@ -169,8 +169,64 @@ function mirrorToConsole(level: Level, line: string): void {
   }
 }
 
+/**
+ * 콘솔 미러를 **영구히** 끈다.
+ *
+ * ## 왜 위의 try/catch 로 부족한가
+ *
+ * 위 주석은 EPIPE 가 `console.log` 에서 **동기로** 올라온다고 적어 두었다. 그런데
+ * 2026-09-30 실측에서 그 예외가 저 `catch` 를 **지나쳤다** — 스택이
+ * `writeSync → SyncWriteStream._write → writeOrBuffer → Writable.write →
+ * console.log` 로 끝났고, `uncaughtException` 으로 왔다. 그래서 `consoleBroken`
+ * 이 켜지지 않았고, **로그 한 줄마다 예외가 하나** 생겼다.
+ *
+ * 그 예외를 처리기가 다시 `log()` 로 기록했고, 그 `log()` 가 또 미러를 불러
+ * 또 EPIPE 를 냈다. 15분 만에 `app.uncaught_exception` **32,178줄 · 21MB** 가
+ * 쌓이고 main 프로세스가 한 코어를 100% 물고 응답을 멈췄다. 그 결과 SSE 프록시가
+ * 스트림을 못 비워 **백엔드의 전체 탐색이 3번째 프로세스에서 멈췄다** — 로그
+ * 미러 하나가 인제스천을 세운 것이다.
+ *
+ * 그래서 예외가 **어디로 오든** 한 번 보면 끄는 입구를 따로 둔다.
+ */
+export function disableConsoleMirror(): void {
+  consoleBroken = true;
+}
+
+/** 콘솔 미러가 꺼졌는지. 검사용. */
+export function isConsoleMirrorDisabled(): boolean {
+  return consoleBroken;
+}
+
+/**
+ * 미러를 다시 켠다. **검사에서만 쓴다** — 한 파일 안의 검사들이 모듈 상태를
+ * 공유하므로, 먼저 돈 검사가 끈 것을 되돌리지 않으면 뒤 검사가 헛돈다.
+ * 제품 코드에는 호출자가 없다(`log-mirror-epipe.spec.ts` 가 그것도 잰다).
+ */
+export function resetConsoleMirrorForTests(): void {
+  consoleBroken = false;
+}
+
+/**
+ * stdout·stderr 의 `error` 를 우리가 받는다.
+ *
+ * 처리기가 없으면 이 이벤트가 `uncaughtException` 이 된다. 비동기로 오는 EPIPE
+ * 는 이 경로다 — 위의 `catch` 가 못 잡는 쪽.
+ */
+function guardStandardStreams(): void {
+  for (const stream of [process.stdout, process.stderr]) {
+    try {
+      stream.on("error", () => {
+        consoleBroken = true;
+      });
+    } catch {
+      /* 스트림이 없는 환경(윈도우 GUI 빌드)에서는 그냥 넘어간다 */
+    }
+  }
+}
+
 export function initLogging(): void {
   if (initialized) return;
+  guardStandardStreams();
   const dir = getLogsDir();
   fs.mkdirSync(dir, { recursive: true });
   logsDir = dir;
