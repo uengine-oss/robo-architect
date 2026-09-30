@@ -171,15 +171,31 @@ def _module_rows() -> list[dict]:
 
 
 def _build_query(process: BpmProcess, task: BpmTaskDTO) -> str:
-    """Compose the vector query text. Intentionally verbose — `domain_keywords`
-    carry the business-domain signal that disambiguates tasks with identical
-    names across processes (e.g., "입력값 검증" in 계좌등록 vs 결제승인).
+    """검색 질의 = 프로세스 이름 + task 이름(+설명). **`domain_keywords` 는 넣지 않는다.**
+
+    예전 주석은 키워드가 "같은 이름의 task 를 프로세스 간에 구별해 준다" 고 적었다.
+    구별은 맞지만 **그 일은 `process.name` 이 이미 한다.** 키워드 8개를 더하면 task
+    이름이 질의의 10% 남짓으로 눌려, **같은 프로세스 안에서 task 를 바꿔도 순위가
+    거의 안 바뀐다** — 실측에서 휴가신청 13개 task 중 12개가 같은 메서드를 1위로
+    뽑았다(`rejectLeave`). task 단위 검색이 사실상 프로세스 단위가 된다.
+
+    실측 (hr-sample · METHOD 171 · task 28 · 검증기가 수락한 매핑 19건이 정답):
+
+        질의                     recall@5   @10    @20   정답파일 hit@5
+        proc + kw + task (옛것)    12/19  15/19  19/19       21/28
+        proc + task (지금)         13/19  16/19  19/19       28/28
+        task 만                   11/19  12/19  16/19       28/28   ← 나빠진다
+
+    프로세스 이름은 빼면 안 된다(맨 아래 줄). 키워드만 뺀다.
+
+    문서 쪽은 **손대지 않았다.** 같은 실측에서 하위함수 요약·읽고쓰는 테이블 이름·
+    원문 `code_text` 를 검색 문서에 이어 붙여 봤지만 **이득이 없었다**(recall@20 이
+    19/19 → 18~19/19 로 제자리). 임베딩 비용과 복잡도만 늘어난다 — 다시 시도하려면
+    먼저 이 측정을 반박해야 한다.
     """
     parts: list[str] = []
     if process.name:
         parts.append(process.name)
-    if process.domain_keywords:
-        parts.extend(process.domain_keywords)
     if task.name:
         parts.append(task.name)
     if task.description:
@@ -240,9 +256,19 @@ def process_gate_enabled() -> bool:
 # 분포가 통째로 내려앉는다 — 같은 0.45 가 전혀 다른 뜻이 된다.
 #
 # 발행 계약(`product_graph.NODE_PROPERTY_KEYS`)은 지금도 `source` 노드에 `summary` 를
-# 허용한다. 막힌 것이 아니라 **채우는 쪽이 없어진 것**이다 — 되살리려면 애널라이저에서
-# 되살려야 하고, 그 커밋은 "derived prose 가 분석의 권위가 되면 안 된다" 며 일부러
-# 없앤 것이라 그쪽 설계와 부딪친다.
+# 허용한다. 막힌 것이 아니라 **채우는 쪽이 없어진 것**이다. 그리고 그것은
+# **의도된 설계다** — 애널라이저 담당자 확인: *"summary 로는 열화되는 게 많아서 원문
+# 코드 + 호출된 하위함수 summary 정도를 활용하고 있다."* 그러니 되살리는 것이 아니라
+# **지금 계약에 맞추는 것**이 맞다. 계약이 주는 것은 루틴 단위 요약뿐이다.
+#
+# **그래서 이 값은 문턱이 아니다 — 0.0 이고, 자르는 일은 `top_k` 가 한다.**
+# 0.45 를 0.10 으로 "낮추는" 것은 고치는 척하는 것이었다. 실측(hr-sample):
+#
+#   top_k=20 컷이 실제로 자르는 지점   0.306 ~ 0.393
+#   0.10 에 걸리는 모듈               171개 중 2~6개 — **전부 이미 20위 밖**
+#
+# 즉 0.10 은 한 번도 작동하지 않았다. 코퍼스가 바뀌면 절대값의 뜻이 바뀐다는 것이
+# 이 사건의 교훈이고(위 내력), 그렇다면 절대값을 **두지 않는 것**이 답이다.
 #
 # 2026-09-29 실측(hr-sample, METHOD 171개 · task 28개):
 #
@@ -258,7 +284,7 @@ def process_gate_enabled() -> bool:
 #
 # 절대 하한은 **진짜 쓰레기만** 거르는 자리로 남긴다(무관한 corpus 의 중앙값이 대략
 # 0.20~0.26 이었다). 이 값으로 정답이 잘리면 안 된다 — 자를 일은 top_k 가 한다.
-MIN_MODULE_INCLUSION = 0.10
+MIN_MODULE_INCLUSION = 0.0
 
 
 async def retrieve_top_modules(
@@ -276,10 +302,15 @@ async def retrieve_top_modules(
     fetched the analyzer MODULE catalog once per session (avoids re-query
     on every Task). Pass `cache` to share embeddings across tasks.
 
-    Two-stage scoring:
-      1. rank all modules by query cosine
-      2. drop scores below `min_inclusion_score` (long-tail noise floor)
-      3. keep the top-k of what's left
+    순위로만 자른다:
+      1. 질의 코사인으로 전체 순위를 낸다
+      2. `min_inclusion_score` 는 기본 0.0 — **아무것도 자르지 않는다**
+         (코퍼스마다 뜻이 달라지는 절대값을 두지 않기로 했다. 위 상수 주석 참고)
+      3. 상위 `top_k` 만 남긴다  ← 여기가 실제 컷이다
+
+    **Step 1 의 역할은 "고르는 것" 이 아니라 "잃지 않는 것" 이다.** 판정은 Step 3 의
+    LLM 검증기가 한다. 실측에서 상위 20개는 정답을 19/19 담았지만, 그것은 메서드
+    171개짜리 코퍼스다 — 수만 개 규모에서 top-k 가 정답을 담는다는 근거는 **없다.**
 
     The PROCESS-level gate (MIN_MODULE_CONFIDENCE) is applied separately in
     `run_agentic_retrieval` against the max task score.

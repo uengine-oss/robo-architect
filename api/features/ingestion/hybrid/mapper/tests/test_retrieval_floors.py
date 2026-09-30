@@ -229,3 +229,69 @@ def test_ancestors_respect_the_limit():
 
 def test_ancestors_of_unknown_node_is_itself():
     assert mr.ancestors_of("solo", {}) == ["solo"]
+
+
+# --------------------------------------------------------------------------
+# Step 1 을 현재 계약에 맞춤 (2026-09-30)
+#
+# 애널라이저는 컨테이너 요약을 **의도적으로** 주지 않는다(담당자 확인). 그러니
+# 되살리는 것이 아니라 지금 계약에 맞추는 것이 맞고, 계약이 주는 것은 루틴 단위
+# 요약뿐이다. 그 상태에서 실측으로 지지된 수정은 둘뿐이었다 —
+#   ① 질의에서 domain_keywords 를 뺀다   (정답파일 hit@5  21/28 → 28/28)
+#   ② 절대 문턱을 없앤다                 (0.10 은 한 번도 걸리지 않았다)
+# --------------------------------------------------------------------------
+def test_module_query_drops_domain_keywords():
+    """키워드 8개가 task 이름을 눌러 task 단위 검색이 프로세스 단위가 됐다."""
+    process = BpmProcess(id="p1", name="월 근태 마감", session_id="s1",
+                         domain_keywords=["근태 관리", "월 마감", "급여 연계"])
+    task = BpmTaskDTO(id="t1", name="마감 확정", process_id="p1")
+    q = mr._build_query(process, task)
+    assert "월 근태 마감" in q, "프로세스 이름은 빼면 안 된다 — task 만 쓰면 나빠진다"
+    assert "마감 확정" in q
+    for kw in process.domain_keywords:
+        assert kw not in q, f"domain_keywords 가 다시 들어왔다: {kw}"
+
+
+def test_module_query_keeps_task_description():
+    process = BpmProcess(id="p1", name="월 근태 마감", session_id="s1", domain_keywords=[])
+    task = BpmTaskDTO(id="t1", name="마감 확정", description="집계 결과를 확정한다",
+                      process_id="p1")
+    assert "집계 결과를 확정한다" in mr._build_query(process, task)
+
+
+def test_module_floor_is_zero_not_lowered():
+    """'낮춘 문턱' 은 고치는 척이다 — 값이 아니라 순위가 자른다."""
+    assert mr.MIN_MODULE_INCLUSION == 0.0
+
+
+def test_low_scoring_modules_survive_when_rank_allows(monkeypatch):
+    """점수로는 아무것도 버리지 않는다. 옛 0.45 floor 면 1개만 남았다."""
+    rows = [
+        {"fqn": "m_hi",  "name": "hi",  "summary": f"{MODULE_MARK} 상위", "stereotype": None},
+        {"fqn": "m_mid", "name": "mid", "summary": "중간 요약", "stereotype": None},
+        {"fqn": "m_lo",  "name": "lo",  "summary": "낮은 요약", "stereotype": None},
+    ]
+    cache = AngleCache({
+        QUERY_MARK: 0.0,
+        MODULE_MARK: math.acos(0.90),
+        "중간": math.acos(0.20),
+        "낮은": math.acos(0.05),
+    })
+    process = BpmProcess(id="p1", name=QUERY_MARK, session_id="s1", domain_keywords=[])
+    task = BpmTaskDTO(id="t1", name="확정", process_id="p1")
+    got = asyncio.run(mr.retrieve_top_modules(process, task, top_k=20,
+                                              cache=cache, module_rows=rows))
+    assert [c.fqn for c in got] == ["m_hi", "m_mid", "m_lo"]
+
+
+def test_top_k_is_the_real_cut(monkeypatch):
+    """자르는 일은 top_k 가 한다 — 그 자리를 옮기면 잡힌다."""
+    rows = [{"fqn": f"m{i}", "name": f"m{i}", "summary": f"{MODULE_MARK} {i}",
+             "stereotype": None} for i in range(5)]
+    cache = AngleCache({QUERY_MARK: 0.0, MODULE_MARK: math.acos(0.5)})
+    process = BpmProcess(id="p1", name=QUERY_MARK, session_id="s1", domain_keywords=[])
+    task = BpmTaskDTO(id="t1", name="확정", process_id="p1")
+    got = asyncio.run(mr.retrieve_top_modules(process, task, top_k=2,
+                                              cache=cache, module_rows=rows))
+    assert len(got) == 2
+
