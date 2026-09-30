@@ -299,6 +299,17 @@ async def explore_task(
     if new_mappings:
         try:
             await _refresh_task_conditions(session_id, task_dto, new_mappings, rules)
+        except TypeError as e:
+            # **호출 서명이 어긋난 것은 런타임 사정이 아니라 코드 결함이다.**
+            # 같은 무게로 WARN 하면 LLM 실패·문서 없음과 섞여 묻힌다 — 실제로
+            # 5개월 묻혔다. 탐색은 계속하되(조건은 부가 정보다) 레벨을 올리고
+            # "코드 결함" 이라고 적는다.
+            SmartLogger.log(
+                "ERROR",
+                f"조건 생성 호출이 코드 결함으로 실패했다 (탐색은 계속): {e}",
+                category="ingestion.hybrid.explore.conditions",
+                params={"task_id": task_id, "error": str(e), "kind": "signature_mismatch"},
+            )
         except Exception as e:
             SmartLogger.log(
                 "WARN", f"Per-task conditions refresh failed (continuing): {e}",
@@ -340,7 +351,16 @@ async def _refresh_task_conditions(
     from api.features.ingestion.hybrid.contracts import DocumentPassage
     passage_objs = [DocumentPassage(**{k: v for k, v in p.items() if k in DocumentPassage.model_fields})
                     for p in passages]
-    conds = await extract_conditions_for_task(task, passage_objs, task_rules)
+    # **서명은 `(task_name, task_description, passages, rules)` 다.**
+    #
+    # 2026-05-06(`8226f55`)부터 여기서 `task` DTO 를 한 덩어리로 넘겨 인자가 셋이었다.
+    # `TypeError: extract_conditions_for_task() missing 1 required positional
+    # argument: 'rules'` 가 매 task 마다 났고, 바깥 `except` 가 그것을 WARN 한 줄로
+    # 삼켜 **5개월** 동안 조건이 하나도 안 생겼다(`BpmTask.conditions` 0/28).
+    # 호출이 성공했더라도 첫 인자가 이름이 아니라 DTO 라 프롬프트가 어긋났다.
+    conds = await extract_conditions_for_task(
+        task.name, task.description, passage_objs, task_rules,
+    )
     if conds:
         save_task_conditions(session_id, {task.id: conds})
 
