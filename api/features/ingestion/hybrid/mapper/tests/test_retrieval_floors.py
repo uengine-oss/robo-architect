@@ -295,3 +295,113 @@ def test_top_k_is_the_real_cut(monkeypatch):
                                               cache=cache, module_rows=rows))
     assert len(got) == 2
 
+
+# --------------------------------------------------------------------------
+# 문턱은 얇게 만들 수 있지만 **비울 수는 없다** (2026-09-30)
+#
+# 2026-09-29 의 실패는 절대 문턱 자체보다 "0이 되어도 아무도 모른다" 가 본질이었다.
+# 문턱이 정답을 통째로 잘라도 `no_candidates` 로만 보였고, 그것은 "코드에 그 업무가
+# 없다" 와 구별되지 않았다. 그래서 문턱에서 아무것도 못 살아남으면 순위로 구조한다.
+#
+# `MIN_BL_INCLUSION` 을 없애는 안(순위만)은 **버렸다** — 실측에서 28개 task 중 25개가
+# 정확히 top_k(20)로 평평해져 Step 2 가 판별을 그만둔다. 문턱이 후보 수를 3~18개로
+# 흩어 놓는 유일한 장치다.
+# --------------------------------------------------------------------------
+BELOW = "문턱아래"
+ABOVE = "문턱위"
+
+
+def _rules(n: int, mark: str, start: int = 0):
+    rules, ctxs = [], {}
+    for k in range(start, start + n):
+        rid = f"r{k}"
+        rules.append(RuleDTO(id=rid, given="g", when="w", then="t",
+                             source_module="m_1", source_function="fn", title=f"{mark} {k}"))
+        ctxs[rid] = RuleContext(rule_id=rid, given=f"{mark} {k}", when="w", then="t",
+                                source_module="m_1", source_function="fn")
+    return rules, ctxs
+
+
+def _step2(rules, ctxs, *, above_cos=0.50, below_cos=0.20):
+    process = BpmProcess(id="p1", name=QUERY_MARK, session_id="s1", domain_keywords=[])
+    task = BpmTaskDTO(id="t1", name="확정", process_id="p1")
+    cache = AngleCache({
+        QUERY_MARK: 0.0,
+        ABOVE: math.acos(above_cos),
+        BELOW: math.acos(below_cos),
+    })
+    stats = ar.Step2Stats()
+    got = ar._candidates_for_task(
+        task=task, process=process, rules=rules, contexts_by_rule=ctxs,
+        module_fqns=["m_1"], top_k=20, cache=cache, actor_name_by_id={},
+        stats=stats,
+    )
+    return got, stats
+
+
+def test_bl_floor_never_empties_the_list():
+    """전부 문턱 아래여도 빈손으로 나가지 않는다 — 그게 조용한 0의 원인이었다."""
+    rules, ctxs = _rules(8, BELOW)
+    got, stats = _step2(rules, ctxs)
+    assert len(got) == ar.BL_FLOOR_RESCUE_N
+    assert stats.rescued is True
+    assert stats.above_floor == 0
+
+
+def test_rescue_is_capped():
+    """구조는 상한이 있다 — 검증기 부하가 문턱 없는 것과 같아지면 안 된다."""
+    rules, ctxs = _rules(20, BELOW)
+    got, _ = _step2(rules, ctxs)
+    assert len(got) == ar.BL_FLOOR_RESCUE_N
+
+
+def test_rescue_cannot_invent_candidates():
+    """범위에 3개뿐이면 3개다."""
+    rules, ctxs = _rules(3, BELOW)
+    got, stats = _step2(rules, ctxs)
+    assert len(got) == 3
+    assert stats.rescued is True
+
+
+def test_no_rescue_when_the_floor_passes():
+    """정상 경로는 건드리지 않는다."""
+    rules, ctxs = _rules(8, ABOVE)
+    got, stats = _step2(rules, ctxs)
+    assert len(got) == 8
+    assert stats.rescued is False
+    assert stats.above_floor == 8
+
+
+def test_top_cut_score_is_recorded():
+    """문턱이 자른 것 중 최고 점수 — 코퍼스가 옮겨갔는지 보는 신호다."""
+    a_rules, a_ctxs = _rules(2, ABOVE, start=0)
+    b_rules, b_ctxs = _rules(6, BELOW, start=100)
+    got, stats = _step2(a_rules + b_rules, {**a_ctxs, **b_ctxs},
+                        above_cos=0.50, below_cos=0.38)
+    assert len(got) == 2
+    assert stats.above_floor == 2
+    assert stats.rescued is False
+    assert abs(stats.top_cut_score - 0.38) < 0.005, "잘린 최고 점수가 안 남았다"
+    assert abs(stats.top_score - 0.50) < 0.005
+
+
+def test_empty_scope_is_still_empty():
+    """룰이 범위에 하나도 없으면 구조할 것도 없다 — 이건 진짜 0이다."""
+    rules, ctxs = _rules(4, BELOW)
+    process = BpmProcess(id="p1", name=QUERY_MARK, session_id="s1", domain_keywords=[])
+    task = BpmTaskDTO(id="t1", name="확정", process_id="p1")
+    stats = ar.Step2Stats()
+    got = ar._candidates_for_task(
+        task=task, process=process, rules=rules, contexts_by_rule=ctxs,
+        module_fqns=["m_other"], top_k=20, cache=AngleCache({QUERY_MARK: 0.0}),
+        actor_name_by_id={}, stats=stats,
+    )
+    assert got == []
+    assert stats.in_scope == 0
+    assert stats.rescued is False
+
+
+def test_bl_floor_still_binds():
+    """문턱을 없애면 Step 2 가 판별을 그만둔다 — 값이 남아 있어야 한다."""
+    assert ar.MIN_BL_INCLUSION == 0.40
+

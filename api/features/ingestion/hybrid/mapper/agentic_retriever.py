@@ -113,11 +113,41 @@ MIN_BL_INCLUSION = 0.40
 REJECT_NEAR_MISS_FLOOR = MIN_BL_INCLUSION
 REJECT_VISIBLE_CAP = 3
 
+# **문턱은 목록을 얇게 만들 수 있지만 비울 수는 없다.**
+#
+# 2026-09-29 의 실패는 절대 문턱 자체보다 *"0이 되어도 아무도 모른다"* 가 본질이었다.
+# 문턱이 정답을 통째로 잘라도 화면과 로그에는 "후보가 없다"(`no_candidates`)로만
+# 보였고, 그건 "코드에 그 업무가 없다" 와 구별되지 않았다.
+#
+# 그래서 문턱에서 **아무것도 살아남지 못하면** 순위 상위 몇 개를 그대로 태운다.
+# 그러면 절대값의 위험이 "정답을 잃음" 에서 "후보가 조금 늘고 경고 한 줄" 로 내려간다.
+#
+# 5인 이유: 실측에서 `MIN_BL_INCLUSION` 을 통과한 후보가 가장 적은 task 가 3개였고
+# (28개 task 중 최소 3 · 최대 18), 검증기 한 번에 5개는 부담이 아니다. 문턱이 다
+# 자른 상황은 애초에 드물어야 하므로 **넉넉히 주는 것보다 눈에 띄게 하는 것**이 중요하다.
+BL_FLOOR_RESCUE_N = 5
+
 from api.platform.observability.smart_logger import SmartLogger
 
 
 AgentEvent = dict
 AgentEventSink = Callable[[AgentEvent], Awaitable[None]]
+
+
+@dataclass
+class Step2Stats:
+    """Step 2 가 무엇을 잘랐는지. **잘린 최고 점수가 코퍼스 이동의 신호다.**
+
+    문턱(0.40)이 0.39 를 자르고 있으면 그 코퍼스는 보정 시점과 다른 분포에 있다.
+    그것을 보려면 `top_cut_score` 가 남아 있어야 한다 — 없으면 2026-09-29 처럼
+    한 달 뒤에 "매핑이 왜 안 되지" 로만 드러난다.
+    """
+
+    in_scope: int = 0
+    above_floor: int = 0
+    top_score: float = 0.0
+    top_cut_score: float = 0.0   # 문턱에 걸려 떨어진 것 중 최고 점수
+    rescued: bool = False
 
 
 @dataclass
@@ -158,6 +188,7 @@ def _candidates_for_task(
     actor_name_by_id: dict[str, str],
     glossary: list[GlossaryTerm] | None = None,
     containment: dict[str, str] | None = None,
+    stats: Step2Stats | None = None,
 ) -> list[CandidateBL]:
     """Step 2 — filter rules to those inside the Step-1 modules, then use
     embedding similarity to pick the top-k for this task.
@@ -192,6 +223,8 @@ def _candidates_for_task(
             in_scope.append((r, ctx))
 
     if not in_scope:
+        if stats is not None:
+            stats.in_scope = 0
         return []
 
     # Build embeddings for ranking. Query = Process keywords + Task name/desc.
@@ -240,13 +273,18 @@ def _candidates_for_task(
         return [CandidateBL(rule=r, context=ctx, score=0.0)
                 for r, ctx in in_scope][: top_k]
 
-    def _above_floor(qv, vecs) -> list[tuple[int, float]]:
+    def _ranked(qv, vecs) -> list[tuple[int, float]]:
         out = [(i, cosine(qv, rv)) for i, rv in enumerate(vecs) if rv]
-        out = [(i, s) for i, s in out if s >= MIN_BL_INCLUSION]
         out.sort(key=lambda x: x[1], reverse=True)
         return out
 
-    base = _above_floor(qv0, rule_vecs0)
+    def _above_floor(qv, vecs) -> list[tuple[int, float]]:
+        return [(i, s) for i, s in _ranked(qv, vecs) if s >= MIN_BL_INCLUSION]
+
+    # 문턱 없는 전체 순위를 한 번 계산해 둔다 — 구조(rescue)와 통계 양쪽에 쓴다.
+    # 코사인은 이미 다 계산했으므로 추가 비용이 없다.
+    ranked_all = _ranked(qv0, rule_vecs0)
+    base = [(i, s) for i, s in ranked_all if s >= MIN_BL_INCLUSION]
 
     # §036 — glossary 용어 정규화(양방향) + union-under-cap.
     # 핵심 원칙(인지부하·비용 최소화):
@@ -275,6 +313,38 @@ def _candidates_for_task(
     else:
         # full-plate task 또는 정규화 off → baseline만(회귀·churn·추가비용 0).
         picked = base[: max(1, top_k)]
+
+    # **문턱이 다 잘랐으면 순위로 구조한다.** 여기서 빈손으로 나가면 호출부는
+    # `no_candidates` 를 남기고, 그것은 "코드에 그 업무가 없다" 와 구별되지 않는다.
+    rescued = False
+    if not picked and ranked_all:
+        picked = ranked_all[: max(1, BL_FLOOR_RESCUE_N)]
+        rescued = True
+
+    kept_ids = {i for i, _ in picked}
+    cut = [s for i, s in ranked_all if i not in kept_ids]
+    if stats is not None:
+        stats.in_scope = len(in_scope)
+        stats.above_floor = len(base)
+        stats.top_score = round(ranked_all[0][1], 4) if ranked_all else 0.0
+        stats.top_cut_score = round(max(cut), 4) if cut else 0.0
+        stats.rescued = rescued
+
+    if rescued:
+        SmartLogger.log(
+            "WARN",
+            f"BL 문턱이 후보를 전부 잘라 순위 상위 {len(picked)}개로 구조했다 — "
+            f"'{task.name}' 최고점 {ranked_all[0][1]:.3f} < 문턱 {MIN_BL_INCLUSION}",
+            category="ingestion.hybrid.agentic.floor",
+            params={
+                "task_id": task.id,
+                "reason": "bl_floor_rescued",
+                "floor": MIN_BL_INCLUSION,
+                "top_score": round(ranked_all[0][1], 4),
+                "in_scope": len(in_scope),
+                "rescued": len(picked),
+            },
+        )
 
     score_by_idx = {i: s for i, s in picked}
     return [
@@ -458,12 +528,13 @@ async def run_agentic_retrieval(
         # run it off the event loop so a slow embeddings call can't freeze the
         # whole server (this is the document-upload-only mapping phase — the
         # blocking embed here was the cause of the UI-generation hang).
+        step2 = Step2Stats()
         candidates = await asyncio.to_thread(
             _candidates_for_task,
             task=task, process=process, rules=rules,
             contexts_by_rule=ctx_by_rule, module_fqns=module_fqns,
             top_k=bl_top_k, cache=cache, actor_name_by_id=actor_name_by_id,
-            glossary=glossary, containment=containment,
+            glossary=glossary, containment=containment, stats=step2,
         )
         await sink({
             "type": "AgentStepBlSearch",
@@ -615,6 +686,12 @@ async def run_agentic_retrieval(
                 f"Task mapping {reason}: '{task.name}' "
                 f"candidates={len(candidates)} verdicts={len(verdicts)} "
                 f"accepted={len(accepted_this_task)}"
+                # **문턱이 무엇을 잘랐는지 매번 남긴다.** `cut` 이 문턱에 붙어 오르면
+                # 그 코퍼스는 보정 시점과 다른 분포에 있다는 신호다 — 2026-09-29 처럼
+                # 한 달 뒤에 "매핑이 왜 안 되지" 로 드러나지 않게 한다.
+                f" | scope={step2.in_scope} floor={step2.above_floor}"
+                f" top={step2.top_score:.3f} cut={step2.top_cut_score:.3f}"
+                + (" RESCUED" if step2.rescued else "")
             ),
             category="ingestion.hybrid.agentic.task",
             params={
@@ -625,6 +702,11 @@ async def run_agentic_retrieval(
                 "verdicts": len(verdicts),
                 "accepted": len(accepted_this_task),
                 "top_reject_score": (ranked_rejects[0]["score"] if ranked_rejects else None),
+                "in_scope": step2.in_scope,
+                "above_floor": step2.above_floor,
+                "top_score": step2.top_score,
+                "top_cut_score": step2.top_cut_score,
+                "floor_rescued": step2.rescued,
             },
         )
         result.accepted.extend(accepted_this_task)
