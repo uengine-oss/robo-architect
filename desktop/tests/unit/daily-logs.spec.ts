@@ -21,7 +21,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { localDayKey, pruneOldDays, resolveDayFile } from "../../src/main/logging";
+import { localDayKey, pruneOldDays, recycleIfFull, resolveDayFile } from "../../src/main/logging";
 
 function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "robo-logs-"));
@@ -143,5 +143,45 @@ test.describe("오래된 날짜만 지운다", () => {
 
   test("폴더가 없어도 던지지 않는다 — 로깅이 앱을 죽이면 안 된다", () => {
     expect(() => pruneOldDays(path.join(tmpdir(), "nope"), now, 30)).not.toThrow();
+  });
+});
+
+/**
+ * **조각을 다 쓰면 마지막 조각을 비운다** (2026-09-30).
+ *
+ * 예전에는 한도를 다 쓰면 마지막 조각에 **계속 이어 썼다** — "로그가 커지는 것보다
+ * 로그를 잃는 것이 나쁘다" 는 이유였다. 그 문장이 틀렸음이 드러났다: main 프로세스의
+ * EPIPE 로그 루프가 마지막 조각을 **1.18GB** 까지 키우고 하루치 로그가 1.6GB 가 됐다.
+ * 보존이 30일이니 그런 날 몇 번이면 디스크가 찬다. 사고를 보는 데 필요한 것은
+ * **마지막 부분**이므로, 최근 한 조각을 남기고 버리는 편이 낫다.
+ */
+test.describe("하루치 조각을 다 썼을 때", () => {
+  test("한도를 넘은 파일은 비우고 표시를 남긴다", () => {
+    const dir = tmpdir();
+    const file = path.join(dir, "desktop-2026-09-30-19.log");
+    fs.writeFileSync(file, "x".repeat(2048) + "\n");
+
+    const bytes = recycleIfFull(file, 1024);
+
+    const after = fs.readFileSync(file, "utf8");
+    expect(after.length, "비우지 않았다 — 이 파일은 무한히 커진다").toBeLessThan(600);
+    expect(bytes).toBe(Buffer.byteLength(after, "utf8"));
+    const entry = JSON.parse(after.trim());
+    expect(entry.event).toBe("logging.day_parts_exhausted");
+    // 무엇을 버렸는지 남긴다 — 로그가 갑자기 짧아진 이유를 뒤에서 알 수 있어야 한다.
+    expect(entry.data.discardedBytes).toBeGreaterThan(2000);
+  });
+
+  test("한도 아래면 손대지 않는다", () => {
+    const dir = tmpdir();
+    const file = path.join(dir, "desktop-2026-09-30-19.log");
+    fs.writeFileSync(file, "keep me\n");
+
+    expect(recycleIfFull(file, 1024)).toBe(8);
+    expect(fs.readFileSync(file, "utf8")).toBe("keep me\n");
+  });
+
+  test("없는 파일은 0", () => {
+    expect(recycleIfFull(path.join(tmpdir(), "nope.log"), 1024)).toBe(0);
   });
 });

@@ -127,3 +127,27 @@ test('권한이 없는 것과 안 고른 것을 구별한다', async ({ page }) 
   // 머리글로 가른다 — 안내문에는 "프로젝트를 선택" 이 양쪽에 다 나온다.
   await expect(page.locator('.pgate__text')).toHaveText('이 프로젝트를 볼 수 없습니다.')
 })
+
+test('프로젝트가 정해진 뒤 늦게 온 403 은 안내를 되살리지 않는다', async ({ page }) => {
+  // **경합이다.** 화면들의 `onMounted` 조회는 `/api/projects` 응답을 기다리지
+  // 않고 먼저 나간다. 그 403(`PROJECT_NOT_SELECTED`)이 첫 프로젝트를 고른
+  // **뒤에** 도착하면, `setProject` 가 지운 안내가 다시 붙고 아무도 다시
+  // 지우지 않는다. 2026-09-30 증상 — 앱을 처음 띄우면 첫 프로젝트로 들어가
+  // 있는데 "프로젝트를 선택해 주세요" 가 그대로 남아 있었다.
+  await page.route('**/api/projects', (route: any) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ projects: [{
+      graph: 'prj_mine', displayName: '내 프로젝트', level: 'owner',
+      analyzerGraph: 'prj_mine_a', ownerUid: 'DEV-ME', adopted: true,
+    }] }),
+  }))
+  // graph 경로는 **늦게** 안 골랐다고 답한다 — 선택이 먼저 끝나게 한다.
+  await page.route(/\/api\/(?!auth|projects|accounts|health)/, async (route: any) => {
+    await new Promise((r) => setTimeout(r, 600))
+    await route.fulfill(DENIED)
+  })
+  await page.goto('/', { waitUntil: 'networkidle' })
+
+  // 프로젝트가 정해진 화면에서 "안 골랐다" 는 참이 아니다.
+  await expect(page.locator('.pgate__text')).toHaveCount(0)
+})

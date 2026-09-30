@@ -95,8 +95,12 @@ export function resolveDayFile(dir: string, day: string): string {
     }
     if (size < MAX_BYTES) return file;
   }
-  // 한도를 다 썼다. 마지막 조각에 계속 쓴다 — 로그가 커지는 것보다 로그를
-  // 잃는 것이 나쁘다.
+  // 한도를 다 썼다. 마지막 조각으로 돌아간다 — `switchTo` 가 그것을 **비우고**
+  // 다시 쓴다. 예전에는 여기서 계속 이어 썼는데("로그가 커지는 것보다 로그를
+  // 잃는 것이 나쁘다"), 2026-09-30 에 그 문장이 틀렸음이 드러났다: 로그 루프
+  // 하나가 이 조각을 **1.18GB** 까지 키웠고 하루치 로그가 1.6GB 가 됐다. 보존이
+  // 30일이니 그런 날 몇 번이면 디스크가 찬다. 최근 20MB 를 남기고 버리는 편이
+  // 낫다 — 사고를 보는 데 필요한 것은 마지막 부분이다.
   return base(MAX_PARTS - 1);
 }
 
@@ -240,15 +244,51 @@ export function initLogging(): void {
   });
 }
 
-/** 그 경로로 갈아타면서 이미 들어 있는 바이트를 읽어 센다. */
+/**
+ * 그 경로로 갈아타면서 이미 들어 있는 바이트를 읽어 센다.
+ *
+ * **한도를 넘은 파일을 받으면 비운다.** 그런 파일이 오는 경우는 하나뿐이다 —
+ * `resolveDayFile` 이 조각을 다 써서 마지막 조각을 돌려준 것. 비우지 않으면
+ * 무한히 커진다(2026-09-30: 한 조각이 1.18GB).
+ */
 function switchTo(file: string): string {
   activePath = file;
-  try {
-    activeBytes = fs.statSync(file).size;
-  } catch {
-    activeBytes = 0; // 아직 없는 파일
-  }
+  activeBytes = recycleIfFull(file);
   return file;
+}
+
+/**
+ * 그 파일이 이미 한도를 넘었으면 **비우고** 표시를 한 줄 남긴다.
+ * 돌려주는 값은 그 뒤 파일에 들어 있는 바이트 수다.
+ *
+ * `switchTo` 가 한도를 넘은 파일을 받는 경우는 하나뿐이다 — `resolveDayFile` 이
+ * 하루치 조각(`MAX_PARTS`)을 다 써서 마지막 조각을 돌려준 것. 비우지 않으면
+ * 무한히 커진다: 2026-09-30 에 로그 루프가 한 조각을 **1.18GB** 까지 키웠고
+ * 하루치가 1.6GB 가 됐다. 보존이 30일이라 그런 날 몇 번이면 디스크가 찬다.
+ */
+export function recycleIfFull(file: string, maxBytes: number = MAX_BYTES): number {
+  let size: number;
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return 0; // 아직 없는 파일
+  }
+  if (size < maxBytes) return size;
+  try {
+    fs.truncateSync(file, 0);
+    // `log()` 를 부르면 여기로 되돌아온다 — 표시는 직접 쓴다.
+    const note =
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "warn",
+        event: "logging.day_parts_exhausted",
+        data: { file: path.basename(file), maxParts: MAX_PARTS, discardedBytes: size },
+      }) + "\n";
+    fs.appendFileSync(file, note, { encoding: "utf8" });
+    return Buffer.byteLength(note, "utf8");
+  } catch {
+    return size; // 못 비웠으면 세던 대로 둔다
+  }
 }
 
 /** 지금 쓸 파일. 날짜가 넘어가면 여기서 새 파일로 갈아탄다. */

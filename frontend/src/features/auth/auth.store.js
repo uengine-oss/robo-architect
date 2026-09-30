@@ -143,9 +143,24 @@ export const useAuthStore = defineStore('auth', () => {
     projectError.value = null
   }
 
-  /** 인터셉터 전용. 같은 코드를 다시 적어 화면이 깜빡이지 않게 한다. */
+  /**
+   * 인터셉터 전용. 같은 코드를 다시 적어 화면이 깜빡이지 않게 한다.
+   *
+   * **`PROJECT_NOT_SELECTED` 는 프로젝트가 정해진 뒤에는 버린다.** 그 403 은
+   * 늦게 도착한 것이다 — 화면들의 `onMounted` 조회는 `/api/projects` 응답을
+   * 기다리지 않고 먼저 나가고(`projects.store.js` 의 주석 참고), 그 응답이
+   * 첫 프로젝트를 고른 **뒤에** 돌아온다. 그러면 `setProject` 가 지운 안내가
+   * 다시 붙고, 아무도 다시 지우지 않는다.
+   *
+   * 2026-09-30 증상: 앱을 처음 띄우면 첫 프로젝트로 들어가 있는데 **"프로젝트를
+   * 선택해 주세요" 가 그대로 남아 있었다.** 프로젝트가 정해진 화면에서 그 문구는
+   * 참이 아니다.
+   *
+   * `PROJECT_FORBIDDEN` 은 다르다 — 고른 프로젝트를 못 볼 수 있으니 그대로 적는다.
+   */
   function setProjectError(code) {
-    const next = code || null
+    let next = code || null
+    if (next === 'PROJECT_NOT_SELECTED' && projectGraph.value) next = null
     if (projectError.value !== next) projectError.value = next
   }
 
