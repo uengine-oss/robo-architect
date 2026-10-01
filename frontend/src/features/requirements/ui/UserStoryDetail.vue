@@ -207,7 +207,7 @@ async function saveEdit() {
             <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item"
                 :class="{ 'source-rule-item--supporting': rule.evidence_role === 'supporting' }">
               <span v-if="rule.evidence_role === 'supporting'" class="source-rule-role"
-                    title="다른 task 가 이 룰의 주 근거다. 여기서는 보조 근거로 남았다.">보조</span>
+                    title="이 룰의 주 근거는 다른 task 다. 중재에서 그쪽이 뽑혔고, 여기서는 지우지 않고 보조 근거로 남겼다.">보조</span>
               <span class="source-rule-stmt">{{ rule.statement }}</span>
               <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>
             </li>
@@ -423,6 +423,11 @@ async function saveEdit() {
   font-size: 0.7rem; font-weight: 600; line-height: 1.6;
   color: #6d4c00; background: #fff8e1; border: 1px solid #ffe082;
   padding: 0 5px; border-radius: 4px;
+  /* 설명이 달려 있다는 것을 보이게 한다 — 모르면 호버할 생각을 못 한다.
+     Inspector 출처 탭의 같은 배지와 맞춘다. */
+  cursor: help;
+  text-decoration: underline dotted rgba(109, 76, 0, 0.5);
+  text-underline-offset: 2px;
 }
 .us-detail__criteria h4 { font-size: 0.8rem; margin: 8px 0; color: var(--color-text); }
 .us-detail__no-criteria { font-size: 0.8rem; color: var(--color-text-light); }

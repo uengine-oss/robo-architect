@@ -4802,10 +4802,24 @@ function updateVoFieldValue(fieldName, value) {
                       class="trace-rule"
                       :class="{ 'trace-rule--supporting': rule.evidence_role === 'supporting' }">
                       <div class="trace-rule__header">
+                        <!--
+                          "보조" 는 **왜 같은 룰이 두 군데에 나오는지**를 설명하는
+                          말이다. 뜻을 모르면 중복으로만 보인다 — 호버로 알려 준다.
+                        -->
                         <span v-if="rule.evidence_role === 'supporting'" class="trace-rule__role"
-                          title="다른 task 가 이 룰의 주 근거다. 여기서는 보조 근거로 남았다.">보조</span>
-                        <span class="trace-rule__seq" :class="{ 'trace-rule__seq--coupled': rule.coupled_domain }">
-                          {{ rule.seq || '—' }}
+                          title="이 룰의 주 근거는 다른 task 다. 중재에서 그쪽이 뽑혔고, 여기서는 지우지 않고 보조 근거로 남겼다.">보조</span>
+                        <!--
+                          순번은 **있을 때만** 보여 준다. 영속 엣지 경로는 순번을
+                          싣지 않아(`traceability.py` 의 `"seq": ""`) 전건이 '—' 로
+                          찍혔다 — 모든 줄에 같은 자리를 차지하는 빈 배지였다.
+                          실측(2026-10-01): 설계 graph 의 `Rule` 에는 순번 속성이
+                          **컬럼에도 `__ext` 에도 없다**(68/68). 옛 유도 경로만
+                          `BusinessLogic.sequence` 를 싣는다. 그쪽에서는 뜻이 있다.
+                        -->
+                        <span v-if="rule.seq" class="trace-rule__seq"
+                          :class="{ 'trace-rule__seq--coupled': rule.coupled_domain }"
+                          title="이 룰이 원본 함수 안에서 몇 번째인지(분석기가 매긴 순번)">
+                          {{ rule.seq }}
                         </span>
                         <span v-if="rule.coupled_domain" class="trace-rule__domain" :title="`coupled domain: ${rule.coupled_domain}`">
                           ★{{ rule.coupled_domain }}
@@ -5926,8 +5940,13 @@ function updateVoFieldValue(fieldName, value) {
   font-size: 0.65rem; font-weight: 700; line-height: 1.5;
   color: #6d4c00; background: #fff8e1; border: 1px solid #ffe082;
   padding: 0 5px; border-radius: 4px;
+  /* 설명이 달려 있다는 것을 보이게 한다 — 모르면 호버할 생각을 못 한다. */
+  cursor: help;
+  text-decoration: underline dotted rgba(109, 76, 0, 0.5);
+  text-underline-offset: 2px;
 }
 .trace-rule__seq {
+  cursor: help;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: 0.7rem;
   font-weight: 600;
