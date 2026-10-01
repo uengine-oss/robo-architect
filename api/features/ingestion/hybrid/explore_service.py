@@ -29,6 +29,7 @@ from api.features.ingestion.hybrid.contracts import (
     RuleDTO,
 )
 from api.features.ingestion.hybrid.mapper.agentic_retriever import run_agentic_retrieval
+from api.features.ingestion.hybrid.mapper.embeddings import session_embedding_cache
 from api.features.ingestion.hybrid.mapper.condition_extractor import (
     extract_conditions_for_task,
 )
@@ -39,6 +40,7 @@ from api.features.ingestion.hybrid.mapper.cross_process_arbitrator import (
 from api.features.ingestion.hybrid.mapper.rule_context import build_rule_contexts
 from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     delete_task_rule_mapping,
+    set_task_rule_mapping_role,
     fetch_session_snapshot,
     save_mappings,
     save_task_conditions,
@@ -217,6 +219,11 @@ async def explore_task(
         retrieval = await run_agentic_retrieval(
             process=process, tasks=[task_dto], actors=actors,
             rules=rules, contexts=contexts, event_sink=sink,
+            # **task 마다 코퍼스를 다시 임베딩하지 않는다.** 안 넘기면
+            # `run_agentic_retrieval` 이 새 캐시를 만들고 루틴 전체가 매번
+            # 다시 임베딩된다. 프로세스가 달라도 코퍼스는 같으므로(같은 분석
+            # graph) 세션으로 묶는다. 실측(enterprise): task 당 10.1 -> 5.5~6.0.
+            cache=session_embedding_cache(session_id),
             # Per-task re-explore: the parent process already passed the batch
             # gate at ingestion time; re-evaluating from this single task's
             # module score would falsely reject legitimate tasks (§8 P1).
@@ -402,7 +409,9 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
     """
     contested = _detect_contested_claims(session_id)
     if not contested:
-        return {"contested": 0, "resolved": 0, "rejected": 0}
+        # 아래 정상 반환과 **같은 키**를 준다. 하나라도 빠지면 부르는 쪽이
+        # `["demoted"]` 에서 KeyError 를 맞는다.
+        return {"contested": 0, "resolved": 0, "rejected": 0, "demoted": 0, "deleted": 0}
 
     await sink({
         "type": "ArbitrationStart",
@@ -420,6 +429,8 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
 
     resolved = 0
     rejected = 0
+    demoted = 0
+    deleted = 0
     for rule_id, claims in contested:
         rule = rule_by_id.get(rule_id)
         if not rule:
@@ -450,6 +461,7 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
         if verdict.reject:
             for c in claim_entries:
                 delete_task_rule_mapping(session_id, c.task.id, rule_id)
+            deleted += len(claim_entries)
             await sink({
                 "type": "ArbitrationDecision",
                 "rule_id": rule_id,
@@ -464,20 +476,59 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
 
         winner_tid = verdict.home_task_id
         losers = [c.task.id for c in claim_entries if c.task.id != winner_tid]
+        # **진 쪽을 지우지 않는다 — 보조 근거로 내린다.**
+        #
+        # 레거시의 룰 단위(루틴)가 설계의 task 단위보다 **굵다** — 메서드 하나가
+        # 입력 검증·DTO·상태·저장을 다 하므로, 검증기는 그 룰을 여러 task 에
+        # 정당하게 붙인다. "한 룰은 한 task 에만 산다" 를 강제하면 그중 하나만
+        # 남고 나머지는 **유일한 근거를 잃는다**(accepted=1 이면 0이 된다).
+        #
+        # enterprise 실측(hr-sample, task 29): 지울 때 수락 81 → 남은 것 35,
+        # **task 12개가 근거를 통째로 잃었다.** 그 12개는 전부 여기서만 잃었다.
+        #
+        # 집은 여전히 하나만 고른다(`primary`). 나머지는 남긴다(`supporting`).
+        # `verdict.reject` 는 위에서 그대로 지운다 — 그건 "집이 어디냐" 가 아니라
+        # "근거가 아니다" 라는 판정이다.
+        set_task_rule_mapping_role(
+            session_id, winner_tid, rule_id, "primary", verdict.rationale,
+        )
         for ltid in losers:
-            delete_task_rule_mapping(session_id, ltid, rule_id)
+            set_task_rule_mapping_role(
+                session_id, ltid, rule_id, "supporting", verdict.rationale,
+            )
+        demoted += len(losers)
         await sink({
             "type": "ArbitrationDecision",
             "rule_id": rule_id,
             "winning_task_id": winner_tid,
             "losing_task_ids": losers,
+            # 화면이 "지웠다" 로 읽지 않게 한다 — 남아 있고 역할만 바뀐다.
+            "demoted_task_ids": losers,
             "rejected": False,
             "rationale": verdict.rationale,
         })
         resolved += 1
 
-    await sink({"type": "ArbitrationEnd", "resolved": resolved, "rejected": rejected})
-    return {"contested": len(contested), "resolved": resolved, "rejected": rejected}
+    await sink({"type": "ArbitrationEnd", "resolved": resolved,
+                "rejected": rejected, "demoted": demoted})
+    # **한 줄로 손실 규모를 남긴다.** SSE 로만 나가면 화면을 닫는 순간 사라져서
+    # "매핑이 왜 적냐" 를 사후에 되짚을 수 없다.
+    SmartLogger.log(
+        "WARN" if deleted else "INFO",
+        f"중재 끝: 경합 룰 {len(contested)}개 · 해소 {resolved} · 전부물림 {rejected} "
+        f"· 보조로 내린 매핑 {demoted}개 · **삭제한 매핑 {deleted}개**",
+        category="ingestion.hybrid.arbitration",
+        params={
+            "session_id": session_id,
+            "contested": len(contested),
+            "resolved": resolved,
+            "rejected_all": rejected,
+            "demoted_mappings": demoted,
+            "deleted_mappings": deleted,
+        },
+    )
+    return {"contested": len(contested), "resolved": resolved,
+            "rejected": rejected, "demoted": demoted, "deleted": deleted}
 
 
 def _detect_contested_claims(session_id: str) -> list[tuple[str, list[dict]]]:

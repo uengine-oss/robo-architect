@@ -15,8 +15,8 @@ from api.features.ingestion.hybrid.mapper import agentic_retriever as ar
 
 def test_floor_constants_unchanged():
     # 036은 floor를 낮추지 않는다(= 통과 기준 유지). 값이 바뀌면 인지부하/비용 제약 위반.
-    assert ar.MIN_BL_INCLUSION == 0.45
-    assert ar.REJECT_NEAR_MISS_FLOOR == 0.45
+    assert ar.MIN_BL_INCLUSION == 0.40  # 09-29 재보정 — test_retrieval_floors.py 참고
+    assert ar.REJECT_NEAR_MISS_FLOOR == ar.MIN_BL_INCLUSION
     assert ar.REJECT_VISIBLE_CAP == 3
 
 

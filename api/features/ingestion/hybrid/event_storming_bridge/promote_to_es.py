@@ -186,10 +186,16 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
     counts = {"sourced_from": 0}
     with get_session() as s:
         rec = s.run(
-            "MATCH (t:BpmTask {session_id: $sid})-[:REALIZED_BY]->(r:Rule {session_id: $sid}) "
+            # `evidence_role` 을 같이 옮긴다 — 중재가 진 쪽을 지우지 않고
+            # `supporting` 으로 내리므로, 그 구분을 여기서 잃으면 승격된
+            # UserStory 는 굵은 룰의 주인이 누구였는지 알 수 없다.
+            # 없으면 `primary` 로 본다 — 이 정책 전에 만든 엣지가 그렇다.
+            "MATCH (t:BpmTask {session_id: $sid})-[m:REALIZED_BY]->(r:Rule {session_id: $sid}) "
             "MATCH (us:UserStory {session_id: $sid}) "
             "WHERE us.sourceUnitId = t.id "
             "MERGE (us)-[rel:SOURCED_FROM]->(r) "
+            "SET rel.evidence_role = coalesce(m.evidence_role, 'primary'), "
+            "    rel.via_task_id = t.id "
             "RETURN count(rel) AS c",
             sid=hybrid_session_id,
         ).single()

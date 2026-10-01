@@ -102,6 +102,32 @@ def _driver_for(uri: str, user: str, password: str) -> Driver:
     return driver
 
 
+def analyzer_database() -> Optional[str]:
+    """이 요청이 읽어야 할 분석 graph. 없으면 None.
+
+    main 에서는 `.env` 가 정한 하나다. 요청이 연결을 지정했으면(`X-Neo4j-*`)
+    `get_session` 이 그쪽을 우선하므로 여기서 또 가를 필요가 없다 — Electron 이
+    고른 DB 하나에 설계·분석이 함께 있기 때문이다.
+
+    **None 을 돌려줄 수 있다**는 것이 이 함수의 계약이다. `.env` 에 분석 graph 가
+    없으면 "분석 짝이 없다"이고, 그것은 정상 상태다(문서만 올린 프로젝트).
+    부르는 쪽이 그 경우를 명시로 다루게 한다.
+    """
+    return ANALYZER_NEO4J_DATABASE or None
+
+
+def analyzer_session():
+    """분석 graph 세션. **분석 짝이 없으면 None** 을 돌려준다.
+
+    `get_session(database=None)` 은 설계 graph 로 떨어지므로 그대로 쓸 수 없다 —
+    그러면 분석이 없는 프로젝트에서 설계 graph 를 분석인 줄 알고 읽는다.
+    """
+    db = analyzer_database()
+    if not db:
+        return None
+    return get_session(database=db)
+
+
 def get_session(database: str | None = None):
     """Get a Neo4j session.
 
