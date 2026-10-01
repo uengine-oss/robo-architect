@@ -47,6 +47,7 @@
 - 신규 모듈: `api/features/ingestion/hybrid/` (가칭) — 문서와 코드 분석 결과를 조합하는 파이프라인.
 - **외부 의존성**: `uengine-oss/process-gpt-bpmn-extractor` 를 A2A 서비스로 별도 기동 (기본 `http://localhost:9999`). 우리 리포는 A2A 클라이언트 호출 + 결과 어댑터만 포함.
 - 신규 API 라우트: `POST /api/ingest/hybrid/upload`, `GET /api/ingest/hybrid/stream/{session_id}`, `GET /api/ingest/hybrid/pdf/{filename}` (A2A 서비스용 PDF 서빙), `GET /api/ingest/hybrid/bpm/{session_id}` (BpmTask cytoscape).
+  > **`GET /bpm/{session_id}` 는 2026-10-01 에 지웠다.** 호출처가 한 군데도 없었고(화면은 `/session/{id}/snapshot` 을 쓴다), 엣지 질의가 라벨로 안 좁혀져 ES 승격 뒤 1,445개 중 1,341개가 없는 노드를 가리켰다. 고쳐 봐야 아무도 안 부르는 것이었다.
 - 신규 Neo4j 노드/관계 스키마 확장 (`BpmTask`, `BpmSequence`, `Rule`, `ActivityMapping`).
 - **BPM 렌더링 소스 전환**: BPM 탭을 기존 "이벤트 스토밍(Command/Event/Policy) 역조합 → BPMN XML" 방식에서 벗어나, **Phase 1에서 문서로부터 직접 추출된 `BpmTask` 그래프**를 일차 소스로 사용.
 - 기존 `analyzer_graph` 결과(BusinessLogic, FUNCTION, Actor)와 기존 `event_storming` 산출물 재사용(Phase 2/5에서 참조).

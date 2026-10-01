@@ -3,7 +3,6 @@
 Endpoints:
 - POST /api/ingest/hybrid/upload      — one or more docs (`file` and/or repeated `files`) + optional `text`
 - GET  /api/ingest/hybrid/stream/{id} — SSE progress
-- GET  /api/ingest/hybrid/bpm/{id}    — read BpmTask graph (cytoscape elements)
 
 Reuses ingestion_sessions infrastructure so the existing floating progress panel
 on the frontend works without modification.
@@ -37,7 +36,6 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     assign_rule_to_task,
     clear_all_hybrid_workspace,
     debug_session_snapshot,
-    fetch_bpm_skeleton_cytoscape,
     fetch_processes_for_session,
     fetch_rules,
     fetch_session_snapshot,
@@ -276,12 +274,6 @@ async def list_hybrid_sessions() -> dict[str, Any]:
     진실은 graph 에 있다 — `BpmSession` 노드가 프로젝트마다 남는다.
     """
     return {"sessions": list_session_ids()}
-
-
-@router.get("/bpm/{session_id}")
-async def get_hybrid_bpm(session_id: str) -> dict[str, Any]:
-    """Return the BpmTask graph for the BPMN panel (cytoscape elements)."""
-    return fetch_bpm_skeleton_cytoscape(session_id)
 
 
 @router.get("/session/{session_id}/snapshot")
