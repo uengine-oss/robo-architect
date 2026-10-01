@@ -259,6 +259,10 @@ async function startBackendInternal(): Promise<{ port: number }> {
     // 이 값이 꺼져 있으면 X-Project-Graph 가 권한 경계를 만들지 못하고 런처
     // 연결의 기본 graph 로 모든 프로젝트가 합쳐진다. 명시 설정은 존중하되,
     // 납품 경로(packaged)는 안전한 기본값을 사용한다.
+    // 번들 런타임(= 설치본)인지 알려 준다. 백엔드가 **읽는 사람이 누구인지**
+    // 알아야 안내를 맞출 수 있다 — 예: 코드 생성 템플릿이 비었을 때, 개발에서는
+    // "fetch-templates.sh 를 돌려라" 가 맞지만 설치본에서는 쓸모없는 말이다.
+    ROBO_PACKAGED_RUNTIME: packaged ? "1" : undefined,
     // 백엔드가 **중앙 DB 구성인지** 알아야 한다. 중앙에서는 이미 있는 role 의
     // 비밀번호를 덮어쓰지 않는다 — 비밀을 잘못 넣은 PC 한 대가 그 사용자를
     // 다른 모든 PC 에서 끊어 버리기 때문이다(`projects/roles.py`).

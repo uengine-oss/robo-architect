@@ -19,6 +19,29 @@ from api.platform.observability.smart_logger import SmartLogger
 router = APIRouter(prefix="/api/code-templates", tags=["code-templates"])
 
 
+def _empty_hint() -> str:
+    """세트가 0개일 때의 안내. **읽는 사람이 다르다.**
+
+    개발 중이면 `fetch-templates.sh` 를 돌리면 된다. 그런데 **납품본에서는 그
+    안내가 쓸모없다** — 사내망에는 GitHub 도 없고, 받는 쪽이 할 수 있는 일도
+    아니다. 그쪽에는 "덜 구워진 산출물" 이라고 말해야 전달이 된다.
+
+    설치본인지는 `app` 폴더 이름으로 보지 않는다. 굽기가 번들 런타임에만
+    넣는 표식(`ROBO_PACKAGED_RUNTIME`)이 있으면 그것을 쓰고, 없으면 개발로 본다.
+    """
+    import os
+
+    packaged = (os.environ.get("ROBO_PACKAGED_RUNTIME") or "").strip().lower() in (
+        "1", "true", "yes", "on")
+    if packaged:
+        return (
+            "코드 생성 템플릿이 설치본에 들어 있지 않습니다. 이 PC 에서 고칠 수 "
+            "없고, 템플릿을 포함해 다시 구운 설치본이 필요합니다 — 배포 담당자에게 "
+            "알려 주세요."
+        )
+    return "scripts/fetch-templates.sh 를 실행해 템플릿을 받으세요."
+
+
 @router.get("/sets")
 async def list_sets() -> dict:
     """`templates/` 아래에 받아 둔 템플릿 묶음 목록."""
@@ -27,7 +50,7 @@ async def list_sets() -> dict:
         "sets": sets,
         # 비어 있으면 화면이 원인을 말할 수 있어야 한다.
         "templatesRoot": str(repository.TEMPLATES_ROOT),
-        "hint": None if sets else "scripts/fetch-templates.sh 를 실행해 템플릿을 받으세요.",
+        "hint": None if sets else _empty_hint(),
     }
 
 

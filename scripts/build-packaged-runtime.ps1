@@ -54,7 +54,7 @@ function Copy-SourceTree([string]$Source, [string]$Destination) {
     $Source,
     $Destination,
     '/E',
-    '/XD', '__pycache__', '.pytest_cache', 'logs',
+    '/XD', '__pycache__', '.pytest_cache', 'logs', '.git',
     '/XF', '*.pyc', '*.pyo',
     '/NFL', '/NDL', '/NJH', '/NJS', '/NP'
   )
@@ -107,6 +107,23 @@ Invoke-Checked 'uv.exe' @(
 Write-Host '[runtime] copying application sources' -ForegroundColor Cyan
 Copy-SourceTree (Join-Path $ArchitectRoot 'api') (Join-Path $AppRoot 'api')
 Copy-SourceTree (Join-Path $ArchitectRoot 'skills') (Join-Path $AppRoot 'skills')
+
+# 코드 생성 템플릿. 백엔드가 `<app>/templates` 를 읽는다
+# (`api/features/code_templates/repository.py`). 이걸 안 실으면 납품본에서
+# 템플릿 세트가 **0개**가 된다 — 기능이 있는 채로 비어 있다.
+#
+# 저장소에는 추적하지 않고(`.gitignore`) `scripts/fetch-templates.sh` 로 받는다.
+# 그래서 **굽기 전에 받아 두어야 한다.** 없으면 여기서 막는다 — 조용히 비는
+# 산출물을 만드는 것보다 굽기가 서는 편이 낫다.
+$templatesSource = Join-Path $ArchitectRoot 'templates'
+if (-not (Test-Path $templatesSource)) {
+  throw @"
+templates/ 가 없어 코드 생성 템플릿을 실을 수 없다.
+굽기 전에 한 번 받아라:  bash scripts/fetch-templates.sh
+(이 디렉터리는 저장소에 추적하지 않는다 — .gitignore 참고)
+"@
+}
+Copy-SourceTree $templatesSource (Join-Path $AppRoot 'templates')
 Copy-Item -LiteralPath (Join-Path $ArchitectRoot 'pyproject.toml') -Destination $AppRoot
 Copy-Item -LiteralPath (Join-Path $ArchitectRoot 'uv.lock') -Destination $AppRoot
 
