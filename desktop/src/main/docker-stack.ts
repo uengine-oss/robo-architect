@@ -316,16 +316,90 @@ async function runDocker(
   });
 }
 
-async function ensureDockerDaemon(): Promise<void> {
-  try {
-    await runDocker(["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 15_000 });
-  } catch (err) {
-    throw new Error(
-      `docker.daemon_unavailable: start Docker Desktop and retry: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+/** 도커 엔진이 뜰 때까지 기다리는 시간. 그 뒤에는 사람에게 넘긴다. */
+const DAEMON_WAIT_MS = 120_000;
+const DAEMON_RETRY_MS = 3_000;
+
+/**
+ * 도커 엔진을 **기다린다.** 한 번 물어보고 포기하지 않는다.
+ *
+ * 2026-10-01 에 이렇게 당했다 — 엔진이 재시작되는 사이에 앱이 떴고,
+ * `npipe:////./pipe/dockerDesktopLinuxEngine` 이 아직 없어서 **1초 만에** fatal 로
+ * 끝났다. 13초 뒤 `app.backend_start_failed`, 그 뒤로는 아무것도 안 했다.
+ * 엔진은 46초 뒤 멀쩡히 올라왔는데 **앱은 죽은 채로 남아 있었다** — 사람이
+ * 다시 띄우기 전까지. 로그에는 2초마다 도는 IPC 만 쌓였다.
+ *
+ * 도커 데스크톱은 로그인 직후나 엔진 재시작 뒤 **30~90초**가 보통이다. 그 창을
+ * 못 견디면 "껐다 켜면 되는" 실패를 사람에게 떠넘기는 것이다.
+ *
+ * 기다리는 동안 UI 는 `starting-db` 다(backend.ts 가 먼저 세운다). 로그에는
+ * 시도마다 남겨, **멈춘 것이 아니라 기다리는 중**임이 보이게 한다.
+ */
+export type DaemonWaitOptions = {
+  /** 기다리는 총 시간. 기본 `DAEMON_WAIT_MS`. */
+  waitMs?: number;
+  /** 시도 사이 간격. 기본 `DAEMON_RETRY_MS`. */
+  retryMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+/**
+ * 정책만 떼어 놓는다 — 시계도 잠도 주입할 수 있어야 **검사가 2분을 기다리지
+ * 않는다.** `probe` 는 "엔진에 물어보기" 한 번이다.
+ */
+export async function awaitDockerDaemon(
+  probe: () => Promise<string>,
+  options: DaemonWaitOptions = {},
+): Promise<{ attempts: number; waitedMs: number }> {
+  const waitMs = options.waitMs ?? DAEMON_WAIT_MS;
+  const retryMs = options.retryMs ?? DAEMON_RETRY_MS;
+  const now = options.now ?? Date.now;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  const started = now();
+  const deadline = started + waitMs;
+  let attempt = 0;
+  let last: unknown;
+
+  for (;;) {
+    attempt += 1;
+    try {
+      const version = await probe();
+      if (attempt > 1) {
+        log("info", "docker.daemon.ready", {
+          attempt,
+          waitedMs: now() - started,
+          serverVersion: version,
+        });
+      }
+      return { attempts: attempt, waitedMs: now() - started };
+    } catch (err) {
+      last = err;
+      if (now() >= deadline) break;
+      log("info", "docker.daemon.waiting", {
+        attempt,
+        waitedMs: now() - started,
+        remainingMs: Math.max(0, deadline - now()),
+      });
+      await sleep(retryMs);
+    }
   }
+
+  const waitedSec = Math.round((now() - started) / 1000);
+  throw new Error(
+    `docker.daemon_unavailable: ${waitedSec}초 기다렸지만 도커 엔진이 응답하지 않습니다. ` +
+      `Docker Desktop 을 켜고 다시 시도하세요: ${
+        last instanceof Error ? last.message : String(last)
+      }`,
+  );
+}
+
+async function ensureDockerDaemon(): Promise<void> {
+  await awaitDockerDaemon(() =>
+    runDocker(["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 15_000 }),
+  );
 }
 
 async function sha256File(filePath: string): Promise<string> {
