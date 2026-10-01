@@ -127,6 +127,68 @@ def test_루틴_조회는_내부_id_로_맞춘다():
     assert "READS|WRITES" in src, "테이블 접근을 안 읽는다"
 
 
+def test_테이블에_컬럼이_실린다():
+    """컬럼이 없으면 화면의 "N cols" 가 영영 안 뜬다 — 2026-09-30 에 떨어뜨렸다.
+
+    그래프에는 있다(실측: TABLE 15개 전부에 컬럼, HAS_COLUMN 101개). 안 읽었을 뿐이다.
+    """
+    src = inspect.getsource(tr._routine_entry)
+    assert "HAS_COLUMN" in src, "컬럼을 안 읽는다"
+
+
+def test_컬럼_속성_이름을_맞게_읽는다():
+    """`dtype`·`is_primary_key` 로 읽으면 **오류 없이 전건 null** 이다.
+
+    이 그래프의 COLUMN 은 `data_type`·`primary_key` 다. 옛 경로가 틀린 이름을
+    쓰고 있어서, 돌던 시절에도 타입과 PK 표시는 늘 비어 있었다 — `ar.statement`
+    와 같은 모양의 조용한 오탈자다. 두 경로 모두 본다.
+    """
+    for fn in (tr._routine_entry, tr._analyzer_table_access):
+        src = inspect.getsource(fn)
+        assert "c.data_type" in src, f"{fn.__name__}: 타입을 틀린 이름으로 읽는다"
+        assert "c.primary_key" in src, f"{fn.__name__}: PK 를 틀린 이름으로 읽는다"
+        assert "c.dtype" not in src, f"{fn.__name__}: `dtype` 이 남아 있다"
+        assert "c.is_primary_key" not in src, f"{fn.__name__}: `is_primary_key` 가 남아 있다"
+
+
+def test_같은_표가_두_번_와도_컬럼은_한_벌이다(monkeypatch):
+    """한 루틴이 같은 표를 READS·WRITES 양쪽으로 건드리면 행이 둘 온다."""
+    rows = [{
+        "name": "saveBalance", "summary": "", "file_path": "x.java",
+        "start_line": 1, "end_line": 9, "code_text": "",
+        "tables": [
+            {"table": "HR_BALANCE", "access": "READS",
+             "columns": [{"name": "ID", "type": "NUMBER", "pk": True},
+                         {"name": "DAYS", "type": "NUMBER", "pk": False}]},
+            {"table": "HR_BALANCE", "access": "WRITES",
+             "columns": [{"name": "ID", "type": "NUMBER", "pk": True},
+                         {"name": "DAYS", "type": "NUMBER", "pk": False}]},
+        ],
+    }]
+    monkeypatch.setattr(tr, "_analyzer_query", lambda q, p=None: rows)
+    entry = tr._routine_entry("77", {})
+    assert entry is not None
+    assert len(entry["tables"]) == 1, f"표가 쪼개졌다: {entry['tables']}"
+    t = entry["tables"][0]
+    assert t["access"] == ["READS", "WRITES"]
+    assert [c["name"] for c in t["columns"]] == ["ID", "DAYS"]
+    assert t["columns"][0]["pk"] is True
+    assert t["columns"][0]["type"] == "NUMBER"
+
+
+def test_이름_없는_컬럼은_버린다(monkeypatch):
+    """표에 컬럼이 안 붙어 있으면 `collect` 가 `{name: null}` 한 개를 돌려준다."""
+    rows = [{
+        "name": "touch", "summary": "", "file_path": "", "start_line": None,
+        "end_line": None, "code_text": "",
+        "tables": [{"table": "HR_X", "access": "READS",
+                    "columns": [{"name": None, "type": None, "pk": False}]}],
+    }]
+    monkeypatch.setattr(tr, "_analyzer_query", lambda q, p=None: rows)
+    entry = tr._routine_entry("88", {})
+    assert entry["tables"][0]["columns"] == []
+
+
 def test_엣지가_있으면_그_경로로_간다(monkeypatch):
     """옛 유도(분석 그래프 문자열 조인)를 타면 rules 가 0으로 돌아간다."""
     src = inspect.getsource(tr.get_traceability)

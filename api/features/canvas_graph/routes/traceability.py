@@ -96,8 +96,11 @@ def _analyzer_table_access(fid: str) -> list[dict]:
     body = """
         WHERE coalesce(op.function_id, op.id) = $fid
         OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:COLUMN)
+        // 속성 이름 주의 — 이 그래프의 COLUMN 은 `data_type`·`primary_key` 다.
+        // `dtype`·`is_primary_key` 로 읽으면 오류 없이 전건 null 이 된다(실측).
         WITH t, type(r) AS access,
-             collect(DISTINCT {name: c.name, dtype: c.dtype, pk: c.is_primary_key}) AS columns
+             collect(DISTINCT {name: c.name, dtype: c.data_type,
+                               pk: coalesce(c.primary_key, false)}) AS columns
         RETURN access, t.name AS table_name, columns
         ORDER BY t.name
     """
@@ -294,11 +297,17 @@ def _routine_entry(routine_id: str, cache: dict[str, dict | None]) -> dict | Non
         MATCH (f) WHERE f._id = $rid
           AND (f:FUNCTION OR f:METHOD OR f:PROCEDURE OR f:TRIGGER)
         OPTIONAL MATCH (f)-[acc:READS|WRITES]->(tb:TABLE)
+        // 컬럼까지 같이 읽는다. 이게 없으면 화면의 "N cols" 가 영영 안 뜬다.
+        // 속성 이름은 `data_type`·`primary_key` 다 — `dtype`·`is_primary_key`
+        // 로 읽으면 오류 없이 전건 null 이 된다.
+        OPTIONAL MATCH (tb)-[:HAS_COLUMN]->(c:COLUMN)
+        WITH f, tb.name AS table_name, type(acc) AS access,
+             collect(DISTINCT {name: c.name, type: c.data_type,
+                               pk: coalesce(c.primary_key, false)}) AS cols
         RETURN f.name AS name, f.summary AS summary, f.file_path AS file_path,
                f.start_line AS start_line, f.end_line AS end_line,
                f.code_text AS code_text,
-               collect(DISTINCT {table: tb.name, access: type(acc)}) AS tables
-        LIMIT 1
+               collect({table: table_name, access: access, columns: cols}) AS tables
     """, {"rid": routine_id})
     if not rows:
         cache[routine_id] = None
@@ -313,6 +322,13 @@ def _routine_entry(routine_id: str, cache: dict[str, dict | None]) -> dict | Non
         tb = tables.setdefault(tname, {"name": tname, "columns": [], "access": []})
         if r.get("access"):
             tb["access"].append(r["access"])
+        if not tb["columns"]:
+            # 같은 표가 READS·WRITES 두 줄로 오면 컬럼은 한 번만 담는다.
+            tb["columns"] = [
+                {"name": c["name"], "type": c.get("type") or "",
+                 "pk": bool(c.get("pk"))}
+                for c in (r.get("columns") or []) if c and c.get("name")
+            ]
     for tb in tables.values():
         tb["access"] = sorted(set(tb["access"]))
     location = f.get("file_path") or ""
