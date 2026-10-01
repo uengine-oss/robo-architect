@@ -8,6 +8,7 @@ and good enough for 한↔영 short-span matching.
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 import os
 from typing import Iterable
 
@@ -68,3 +69,37 @@ def cosine(a: list[float], b: list[float]) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return dot / (na * nb)
+
+# ── 세션 공유 캐시 ────────────────────────────────────────────────────────
+#
+# 이것이 없으면 `run_agentic_retrieval` 이 task 마다 새 캐시를 만들고, 루틴
+# 코퍼스 전체가 **task 마다 다시 임베딩된다.** 실측(enterprise, hr-sample
+# 171 루틴 · 28 task): task 당 embeddings 호출 10.1 → 5.5~6.0.
+# 1이 되지는 않는다 — task 질의 자체는 매번 새것이라 캐싱할 수 없다.
+_MAX_SESSIONS = 2
+_by_session: "OrderedDict[str, EmbeddingCache]" = OrderedDict()
+
+
+def session_embedding_cache(session_id: str | None) -> EmbeddingCache:
+    """그 세션의 공유 캐시. 세션 id 가 없으면 매번 새로 만든다(격리).
+
+    남의 세션 벡터를 물려받는 편이 다시 임베딩하는 것보다 나쁘다.
+    **크게 자라지 않는다** — 벡터는 1536 float, 코퍼스가 수백 개면 수 MB 다.
+    그래도 세션을 무한히 쌓지는 않는다: 오래된 세션부터 버린다.
+    """
+    if not session_id:
+        return EmbeddingCache()
+    hit = _by_session.get(session_id)
+    if hit is not None:
+        _by_session.move_to_end(session_id)
+        return hit
+    cache = EmbeddingCache()
+    _by_session[session_id] = cache
+    while len(_by_session) > _MAX_SESSIONS:
+        _by_session.popitem(last=False)
+    return cache
+
+
+def reset_session_embedding_caches() -> None:
+    """검사용. 제품 코드에는 호출자가 없다."""
+    _by_session.clear()

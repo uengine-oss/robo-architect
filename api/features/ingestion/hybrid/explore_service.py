@@ -29,6 +29,7 @@ from api.features.ingestion.hybrid.contracts import (
     RuleDTO,
 )
 from api.features.ingestion.hybrid.mapper.agentic_retriever import run_agentic_retrieval
+from api.features.ingestion.hybrid.mapper.embeddings import session_embedding_cache
 from api.features.ingestion.hybrid.mapper.condition_extractor import (
     extract_conditions_for_task,
 )
@@ -217,6 +218,11 @@ async def explore_task(
         retrieval = await run_agentic_retrieval(
             process=process, tasks=[task_dto], actors=actors,
             rules=rules, contexts=contexts, event_sink=sink,
+            # **task 마다 코퍼스를 다시 임베딩하지 않는다.** 안 넘기면
+            # `run_agentic_retrieval` 이 새 캐시를 만들고 루틴 전체가 매번
+            # 다시 임베딩된다. 프로세스가 달라도 코퍼스는 같으므로(같은 분석
+            # graph) 세션으로 묶는다. 실측(enterprise): task 당 10.1 -> 5.5~6.0.
+            cache=session_embedding_cache(session_id),
             # Per-task re-explore: the parent process already passed the batch
             # gate at ingestion time; re-evaluating from this single task's
             # module score would falsely reject legitimate tasks (§8 P1).
