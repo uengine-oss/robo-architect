@@ -296,9 +296,24 @@ def _set_merge_failed(proposal_id: str, actor: str, detail: str) -> None:
 
 
 def _update_spec_docs(proposal_id: str) -> None:
-    """Accept 후 specs/ 디렉토리 마크다운 문서 자동 갱신 (v1: 간단한 이력 추가)."""
+    """Accept 후 ``specs/`` 마크다운 이력 갱신 (v1: 간단한 이력 추가).
+
+    **납품 산출물에는 `specs/` 가 없다.** 굽기(`build-packaged-runtime.ps1`)가
+    `app` 에 넣는 것은 `api`·`skills`·`templates`·`pyproject.toml`·`uv.lock`
+    다섯이고, `specs/` 는 사내 설계 문서라 **일부러 안 싣는다** — 고객 PC 로 나갈
+    이유가 없다(템플릿의 `.git` 을 뺀 것과 같은 이유다).
+
+    전에는 그 자리에서 ``FileNotFoundError`` 가 나고 호출자가 WARN 으로 받았다.
+    Accept 는 성공했지만 **Accept 마다 경고가 하나씩 쌓였다** — 설계대로 없는
+    것을 결함처럼 보고한 셈이다. 없으면 건너뛰되 **사유를 남긴다.**
+    """
     from pathlib import Path
     specs_dir = Path(__file__).parents[4] / "specs"
+    if not specs_dir.is_dir():
+        SmartLogger.log("INFO", f"spec docs skipped (no specs/): {proposal_id}",
+                        category="proposal_lifecycle.merge.spec_update_skip",
+                        params={"proposalId": proposal_id, "specsDir": str(specs_dir)})
+        return
     changelog_file = specs_dir / "proposal-changes.md"
 
     now = datetime.now(timezone.utc).isoformat()
