@@ -250,11 +250,30 @@ watch(tab, (t) => {
       <div class="fb-modal__body">
         <div v-if="tab === 'main'" class="fb-section fb-backend">
           <label class="fb-backend__label">플러그인의 <strong>Backend URL</strong></label>
-          <code v-if="backendUrl" class="fb-backend__url">{{ backendUrl }}</code>
+          <!--
+            복사는 **주소 옆 아이콘**이다. 따로 떨어진 단추는 무엇을 복사하는지
+            한 번 더 읽게 만든다. 눌렀을 때 글자가 아니라 아이콘이 바뀌는 것은
+            단추 너비가 변하면 옆의 주소가 밀리기 때문이다.
+          -->
+          <span v-if="backendUrl" class="fb-backend__box">
+            <code class="fb-backend__url">{{ backendUrl }}</code>
+            <button class="fb-backend__copy" :class="{ 'is-copied': copied }"
+                    type="button" @click="copyBackendUrl"
+                    :title="copied ? '복사했습니다' : '주소 복사'"
+                    :aria-label="copied ? '복사했습니다' : '주소 복사'">
+              <svg v-if="!copied" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <rect x="5.5" y="5.5" width="8" height="9" rx="1.5"
+                      fill="none" stroke="currentColor" stroke-width="1.3" />
+                <path d="M10.5 3.5h-7a1 1 0 0 0-1 1v7" fill="none"
+                      stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+              </svg>
+              <svg v-else viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor"
+                      stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </span>
           <span v-else class="fb-backend__pending">{{ backendUrlError || '확인 중…' }}</span>
-          <button v-if="backendUrl" class="fb-btn" @click="copyBackendUrl">
-            {{ copied ? '복사했습니다' : '복사' }}
-          </button>
           <p class="fb-hint fb-backend__why">
             <strong>포트는 앱을 다시 띄울 때마다 바뀝니다.</strong> 플러그인에 남아 있는
             옛 주소는 원인이 안 보이는 <code>Failed to fetch</code> 로 나타납니다 —
@@ -674,14 +693,39 @@ watch(tab, (t) => {
   gap: 8px;
 }
 .fb-backend__label { font-size: 0.8rem; }
+/* 주소와 복사 아이콘을 한 덩어리로 묶는다 — 둘 사이가 벌어지면 다시 "무엇을
+   복사하나" 를 읽게 된다. */
+.fb-backend__box {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+}
 .fb-backend__url {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: 0.8rem;
-  padding: 3px 8px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.05);
+  padding: 3px 4px 3px 8px;
   user-select: all;
 }
+.fb-backend__copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 아이콘이 바뀌어도 너비가 고정이라 옆의 주소가 밀리지 않는다. */
+  width: 22px;
+  height: 22px;
+  margin-right: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-light, #666);
+  cursor: pointer;
+}
+.fb-backend__copy:hover { background: rgba(0, 0, 0, 0.08); color: var(--color-text, #222); }
+.fb-backend__copy:focus-visible { outline: 2px solid var(--color-primary, #3b82f6); outline-offset: 1px; }
+.fb-backend__copy.is-copied { color: #2e7d32; }
 .fb-backend__pending { font-size: 0.8rem; opacity: 0.7; }
 .fb-backend__why { flex: 1 1 100%; margin: 4px 0 0; }
 </style>
