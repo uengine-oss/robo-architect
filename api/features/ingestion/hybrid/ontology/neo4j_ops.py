@@ -909,7 +909,10 @@ def fetch_session_snapshot(session_id: str) -> dict:
             f"""
             MATCH (am:{L_ACTIVITY_MAPPING} {{session_id: $sid}})
             OPTIONAL MATCH (t:{L_BPM_TASK} {{id: am.task_id, session_id: $sid}})-[r:{R_REALIZED_BY}]->(:{L_RULE} {{id: am.rule_id, session_id: $sid}})
-            WITH am WHERE r IS NULL
+            // `r` 을 WITH 로 함께 넘긴다 — 투영에서 떨어뜨린 변수는
+            // 뒤따르는 WHERE 에서 볼 수 없다. 게이트웨이가 문법 오류로 막는다.
+            WITH am, r
+            WHERE r IS NULL
             RETURN am
             """,
             sid=session_id,

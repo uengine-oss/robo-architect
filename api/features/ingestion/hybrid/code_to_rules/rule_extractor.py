@@ -47,6 +47,13 @@ ORDER BY function_id, rule_order, analyzer_rule_id
 """
 
 
+def _as_id(value) -> str | None:
+    """노드 id 를 문자열로. 게이트웨이가 정수로 주는 경우가 있다."""
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
 def _rule_id(analyzer_rule_id: str, function_id: str, condition: str) -> str:
     source = analyzer_rule_id or f"{function_id}|{condition}"
     return "rule_" + hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
@@ -132,9 +139,12 @@ async def extract_rules_from_analyzer_graph(
                 when=condition,
                 then=outcome,
                 source_function=function_name,
-                source_function_id=record.get("function_id") or None,
-                source_rule_id=record.get("analyzer_rule_id") or None,
-                source_container=record.get("source_container_id") or None,
+                # **문자열로 바꿔서 넣는다.** ontological 게이트웨이는 노드의
+                # `_id` 를 **정수**로 돌려주고, 이 DTO 의 세 필드는 `str` 이라
+                # pydantic 이 전건을 거부한다 — 룰이 한 건도 안 만들어진다.
+                source_function_id=_as_id(record.get("function_id")),
+                source_rule_id=_as_id(record.get("analyzer_rule_id")),
+                source_container=_as_id(record.get("source_container_id")),
                 confidence=1.0,
                 title=title or None,
                 writes=_expand_writes(list(record.get("raw_writes") or [])),
