@@ -28,11 +28,20 @@ const pairingBusy = ref(false)
 /**
  * 플러그인의 **Backend URL** 에 넣을 주소.
  *
- * **백엔드 포트는 기동마다 바뀐다.** 그런데 이 모달은 "주소를 입력하세요" 라고만
- * 적어 두고 그 주소를 알려 주지 않았다. 사용자가 스스로 찾아야 했고, 앱을 다시
- * 띄우면 플러그인에 남은 값이 조용히 틀린 값이 된다 — 화면에는 원인을 알 수 없는
- * `Failed to fetch` 만 뜬다(2026-09-30 실측: 플러그인 50065 vs 실제 59010,
- * 연결 거부. CORS 도 인증도 멀쩡했다). 그래서 지금 값을 보여 주고 복사하게 한다.
+ * 이 모달은 "주소를 입력하세요" 라고만 적어 두고 그 주소를 알려 주지 않았다.
+ * 사용자가 스스로 찾아야 했고, 플러그인에 남은 값이 조용히 틀린 값이 되면 화면에는
+ * 원인을 알 수 없는 `Failed to fetch` 만 떴다(2026-09-30 실측: 플러그인 50065 vs
+ * 실제 59010, 연결 거부. CORS 도 인증도 멀쩡했다). 그래서 지금 값을 보여 준다.
+ *
+ * **포트가 기동마다 바뀌던 것은 `cfed172`(9/30)로 끝났다 — 설치본 한정이다.**
+ *
+ *   설치본   `backend.ts:197` `stack.ports.architect` — `docker-state.json` 에
+ *            저장된 값을 다시 쓴다. 설치 네 번 연속 59010 으로 확인했다
+ *   개발     `backend.ts:212` `pickFreePort()` — **지금도 기동마다 바뀐다**
+ *
+ * 그래서 화면 문구는 설치본 기준으로 적는다. 바뀌는 경우가 남아 있으니
+ * (저장 파일이 지워지거나 그 포트를 남이 쓰고 있으면 새로 뽑는다) 다시 붙여넣는
+ * 길은 그대로 안내한다.
  *
  * Electron 에서 `window.location.hostname` 은 `app` 이라 쓸 수 없다 —
  * `getRuntimeState().backendPort` 가 유일한 근거다(`workspace.api.js` 와 같은 방식).
@@ -275,9 +284,10 @@ watch(tab, (t) => {
           </span>
           <span v-else class="fb-backend__pending">{{ backendUrlError || '확인 중…' }}</span>
           <p class="fb-hint fb-backend__why">
-            <strong>포트는 앱을 다시 띄울 때마다 바뀝니다.</strong> 플러그인에 남아 있는
-            옛 주소는 원인이 안 보이는 <code>Failed to fetch</code> 로 나타납니다 —
-            연결이 안 되면 먼저 이 값을 다시 붙여넣으세요.
+            <strong>이 주소는 고정입니다</strong> — 앱을 다시 띄워도 같은 포트를 씁니다.
+            다만 플러그인에 <em>옛</em> 주소가 남아 있으면 원인이 안 보이는
+            <code>Failed to fetch</code> 로 나타납니다 — 연결이 안 되면 먼저 이 값을
+            다시 붙여넣으세요.
           </p>
         </div>
 
