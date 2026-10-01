@@ -28,6 +28,7 @@ import {
 
 import { ensureDataDirs, getLogsDir } from "./data-dir";
 import { disableConsoleMirror, initLogging, log, revealLogs } from "./logging";
+import { isStreamingResponse } from "./proxy-stream";
 import { RuntimeRegistry } from "./runtime-state";
 import { RUNTIME_CHANNELS } from "../shared/runtime-contract";
 import {
@@ -317,9 +318,18 @@ function registerAppProtocol(): void {
           status: response.status,
           ms: Date.now() - startedAt,
         });
-        // **여기서 지우지 않는다.** SSE 는 헤더를 받은 뒤에도 본문이 계속
-        // 흐르고, 그 스트림이 소켓을 물고 있는 장본인이다. 다음 문서 전환이
-        // 끊어 줄 때까지 등록해 둔다.
+        // SSE 는 헤더를 받은 뒤에도 본문이 계속 흐르고, **그 스트림이 소켓을
+        // 물고 있는 장본인**이다. 그것만 다음 문서 전환까지 등록해 둔다.
+        //
+        // 끝난 요청까지 남겨 두면 집합이 **세션 내내 자란다**. 2026-10-01 실측:
+        // 하루 동안 0 → 860 으로 올라가기만 했다(한 번도 안 내려왔다). 그러면
+        // 위에 적어 둔 "6 에 가까워지면 stalled 가 곧 뜬다" 가 뜻을 잃고,
+        // **붙잡힌 요청 수를 보려고 둔 숫자가 누적 요청 수**가 된다.
+        // 측정 수단이 거짓말을 하면 그 자리를 다시 못 본다.
+        //
+        // 멈춘 요청은 애초에 여기까지 오지 못하므로 그대로 남는다 — 끊어야 할
+        // 것은 계속 끊을 수 있다.
+        if (!isStreamingResponse(response)) inflightProxy.delete(controller);
         return response;
       } catch (err) {
         clearTimeout(stallTimer);
