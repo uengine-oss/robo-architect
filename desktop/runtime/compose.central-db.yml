@@ -55,8 +55,17 @@ services:
       # **여기가 팀의 데이터 전부다.** 백업 대상이고, 지우면 되돌릴 수 없다.
       - graph_data:/var/lib/postgresql/data
     healthcheck:
-      # 떴는지만 본다. 확장·graph 유무는 기능 프로브가 따로 잰다.
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -q"]
+      # 떴는지 **그리고 초기화가 끝났는지** 본다.
+      #
+      # `pg_isready` 만 보면 초기화가 거부돼도 healthy 로 뜬다. 설계와 분석 graph
+      # 이름을 같게 주면 훅이 올바르게 거부하는데(데이터는 지켜진다) 컨테이너는
+      # 그대로 뜨고 `ps` 는 healthy 라고 말한다 — 세우는 사람은 성공한 줄 알고
+      # 넘어가고 첫 질의에서야 안다(2026-10-01 예행에서 실제로 그랬다).
+      #
+      # 그래서 `og_catalog.graph` 가 있는지도 같이 본다. 훅이 거부하면 이 표가
+      # 없으므로 컨테이너는 **unhealthy** 로 남고, `up --wait` 가 거기서 선다.
+      test: ["CMD-SHELL",
+             "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -q && psql -U $$POSTGRES_USER -d $$POSTGRES_DB -Atc 'SELECT 1 FROM og_catalog.graph LIMIT 1' > /dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 30
