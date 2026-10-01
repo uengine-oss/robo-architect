@@ -29,7 +29,10 @@ L_BPMN_PROCESS = "BpmnProcess"   # was :Process (BPMN process 정의)
 R_PERFORMS = "PERFORMS"  # (BpmActor)-[:PERFORMS]->(BpmTask)
 R_NEXT = "NEXT"  # (BpmTask)-[:NEXT]->(BpmTask)
 R_CONTAINS = "CONTAINS"  # (BpmSequence)-[:CONTAINS]->(BpmTask)
-R_REALIZED_BY = "REALIZED_BY"  # (BpmTask)-[:REALIZED_BY {confidence}]->(Rule)
+R_REALIZED_BY = "REALIZED_BY"  # (BpmTask)-[:REALIZED_BY {confidence, evidence_role}]->(Rule)
+# `evidence_role` = "primary" | "supporting". 굵은 레거시 룰 하나가 여러 task 를
+# 정당하게 뒷받침한다 — 중재는 집(primary)을 하나만 고르되 진 쪽을 지우지 않고
+# supporting 으로 남긴다(2026-09-30). 없으면 primary 로 읽는다.
 R_USES = "USES"  # (BpmTask)-[:USES]->(FUNCTION)  — bridge to analyzer graph
 R_EVALUATES = "EVALUATES"  # (Rule)-[:EVALUATES]->(Column|Table)
 R_PROMOTED_TO = "PROMOTED_TO"  # (BpmTask)-[:PROMOTED_TO]->(Command|Event|Policy|Aggregate)

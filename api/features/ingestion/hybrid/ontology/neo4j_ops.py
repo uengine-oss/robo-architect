@@ -420,7 +420,10 @@ def save_mappings(
                 f"MERGE (t)-[rel:{R_REALIZED_BY}]->(r) "
                 "SET rel.confidence = $score, rel.method = $method, rel.reviewed = $reviewed, "
                 "    rel.rationale = $rationale, rel.evidence_refs = $evidence_refs, "
-                "    rel.evidence_path = $evidence_path, rel.agent_verdict = $agent_verdict",
+                "    rel.evidence_path = $evidence_path, rel.agent_verdict = $agent_verdict, "
+                # 새로 저장되는 매핑은 모두 **주 근거**로 시작한다. 중재가 경합을
+                # 보고 진 쪽을 `supporting` 으로 내린다(지우지 않는다).
+                "    rel.evidence_role = 'primary'",
                 tid=m.task_id, rid=m.rule_id, sid=session_id,
                 score=m.score, method=m.method, reviewed=m.reviewed,
                 rationale=m.rationale, evidence_refs=list(m.evidence_refs or []),
@@ -432,7 +435,7 @@ def save_mappings(
                 f"MERGE (am:{L_ACTIVITY_MAPPING} {{id: $id, session_id: $sid}}) "
                 "SET am.task_id = $tid, am.rule_id = $rid, am.score = $score, "
                 "    am.method = $method, am.reviewed = $reviewed, "
-                "    am.rationale = $rationale",
+                "    am.rationale = $rationale, am.evidence_role = 'primary'",
                 id=amid, sid=session_id, tid=m.task_id, rid=m.rule_id,
                 score=m.score, method=m.method, reviewed=m.reviewed,
                 rationale=m.rationale,
@@ -457,6 +460,50 @@ def save_mappings(
                 "SET rel.direction = $direction",
                 name=table_name, sid=session_id, rid=rule_id, direction=direction,
             )
+
+
+def set_task_rule_mapping_role(
+    session_id: str,
+    task_id: str,
+    rule_id: str,
+    role: str,
+    rationale: str | None = None,
+) -> None:
+    """매핑의 역할을 `primary`(주 근거) 또는 `supporting`(보조 근거)으로 적는다.
+
+    **중재가 진 쪽을 지우는 대신 여기로 내린다.** 2026-09-30 실측이 이유다 —
+    검증기가 수락한 81건 중 43건을 중재가 지웠고, task 29개 중 **12개가 근거를
+    통째로 잃었다.** 그 12개는 전부 중재에서만 잃었다(Step 1·문턱 손실 0).
+
+    원인은 레거시의 룰 단위가 설계의 task 단위보다 **굵다**는 것이다.
+    `applyLeave` 한 메서드가 입력 검증·DTO·상태·저장을 다 하므로, 검증기는 그
+    룰을 `사전 신청 기한 확인`·`증빙 서류 확인`·`중복 신청 확인` 에 정당하게
+    붙였다. "한 룰은 한 task 에만 산다" 를 강제하면 그중 하나만 남고 나머지는
+    **유일한 근거를 잃는다**(accepted=1 이었으므로 0이 된다).
+
+    그래서 집은 여전히 하나만 고르되(`primary`), 나머지는 남긴다
+    (`supporting`). 인수조건 ③이 묻는 것은 "근거가 영속되는가" 이고, 지우는
+    것은 중복 제거가 아니라 **추적 상실**이었다.
+    """
+    if not (session_id and task_id and rule_id):
+        return
+    if role not in ("primary", "supporting"):
+        raise ValueError(f"role 은 primary 또는 supporting 이어야 한다: {role!r}")
+    with get_session() as s:
+        s.run(
+            f"MATCH (t:{L_BPM_TASK} {{id: $tid, session_id: $sid}})"
+            f"-[rel:{R_REALIZED_BY}]->(r:{L_RULE} {{id: $rid, session_id: $sid}}) "
+            "SET rel.evidence_role = $role, "
+            "    rel.evidence_role_rationale = CASE WHEN $rationale IS NULL "
+            "         THEN rel.evidence_role_rationale ELSE $rationale END",
+            tid=task_id, rid=rule_id, sid=session_id, role=role, rationale=rationale,
+        )
+        s.run(
+            f"MATCH (am:{L_ACTIVITY_MAPPING} "
+            "{session_id: $sid, task_id: $tid, rule_id: $rid}) "
+            "SET am.evidence_role = $role",
+            sid=session_id, tid=task_id, rid=rule_id, role=role,
+        )
 
 
 def delete_task_rule_mapping(session_id: str, task_id: str, rule_id: str) -> None:
@@ -526,7 +573,9 @@ def accept_review_mapping(session_id: str, task_id: str, rule_id: str) -> dict:
             f"MATCH (t:{L_BPM_TASK} {{id: $tid, session_id: $sid}}), "
             f"(r:{L_RULE} {{id: $rid, session_id: $sid}}) "
             f"MERGE (t)-[rel:{R_REALIZED_BY}]->(r) "
-            "SET rel.confidence = $score, rel.method = $method, rel.reviewed = true",
+            "SET rel.confidence = $score, rel.method = $method, rel.reviewed = true, "
+            # 사람이 직접 수락한 것은 주 근거다.
+            "    rel.evidence_role = 'primary'",
             tid=task_id, rid=rule_id, sid=session_id, score=score, method=method,
         )
     return {"ok": True, "score": score, "method": method}
@@ -597,14 +646,15 @@ def assign_rule_to_task(
             f"MATCH (t:{L_BPM_TASK} {{id: $tid, session_id: $sid}}), "
             f"(r:{L_RULE} {{id: $rid, session_id: $sid}}) "
             f"MERGE (t)-[rel:{R_REALIZED_BY}]->(r) "
-            "SET rel.confidence = $conf, rel.method = 'manual', rel.reviewed = true",
+            "SET rel.confidence = $conf, rel.method = 'manual', rel.reviewed = true, "
+            "    rel.evidence_role = 'primary'",
             sid=session_id, tid=task_id, rid=rule_id, conf=float(confidence),
         )
         amid = f"am_{task_id}_{rule_id}"
         s.run(
             f"MERGE (am:{L_ACTIVITY_MAPPING} {{id: $id, session_id: $sid}}) "
             "SET am.task_id = $tid, am.rule_id = $rid, am.score = $conf, "
-            "    am.method = 'manual', am.reviewed = true",
+            "    am.method = 'manual', am.reviewed = true, am.evidence_role = 'primary'",
             id=amid, sid=session_id, tid=task_id, rid=rule_id, conf=float(confidence),
         )
     return {"ok": True, "method": "manual", "confidence": float(confidence)}
@@ -745,7 +795,9 @@ def fetch_session_snapshot(session_id: str) -> dict:
             RETURN t.id AS task_id, r.id AS rule_id,
                    link.confidence AS confidence, link.method AS method, link.reviewed AS reviewed,
                    link.rationale AS rationale, link.evidence_refs AS evidence_refs,
-                   link.evidence_path AS evidence_path, link.agent_verdict AS agent_verdict
+                   link.evidence_path AS evidence_path, link.agent_verdict AS agent_verdict,
+                   coalesce(link.evidence_role, 'primary') AS evidence_role,
+                   link.evidence_role_rationale AS evidence_role_rationale
             """,
             sid=session_id,
         ))
@@ -763,6 +815,9 @@ def fetch_session_snapshot(session_id: str) -> dict:
                 "rationale": row.get("rationale"),
                 "evidence_refs": row.get("evidence_refs") or [],
                 "evidence_path": row.get("evidence_path") or [],
+                # 주 근거 / 보조 근거. 중재가 진 쪽을 지우지 않고 내린다.
+                "evidence_role": row.get("evidence_role") or "primary",
+                "evidence_role_rationale": row.get("evidence_role_rationale"),
                 "agent_verdict": row.get("agent_verdict"),
             }
             rules_by_task.setdefault(row["task_id"], []).append(entry)

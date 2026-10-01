@@ -329,16 +329,25 @@ async def get_userstory_source_rules(request: Request, us_id: str) -> dict[str, 
     so the response `rules` list is simply empty — caller decides whether to
     render the section.
     """
+    # `evidence_role` 을 같이 돌려준다 — `primary`(주 근거) 또는 `supporting`(보조).
+    #
+    # 굵은 레거시 룰 하나가 여러 task 를 정당하게 뒷받침한다 — 메서드 하나가
+    # 검증·저장을 다 하기 때문이다. 중재는 집을 하나만 고르되 진 쪽을 지우지
+    # 않고 `supporting` 으로 남긴다. 화면이 그 구분을 보여 줘야 "왜 같은 룰이
+    # 두 군데에 있나" 를 사람이 읽을 수 있다.
+    #
+    # 이 정책 전에 만든 엣지에는 속성이 없다 — `primary` 로 본다.
     rows = _query("""
-        MATCH (us:UserStory {id: $usid})-[:SOURCED_FROM]->(r:Rule)
+        MATCH (us:UserStory {id: $usid})-[sf:SOURCED_FROM]->(r:Rule)
         RETURN r.id AS rule_id,
                r.title AS title,
                r.source_function AS source_function,
                r.source_rule_id AS source_rule_id,
                coalesce(r.given, '') AS given,
                coalesce(r.`when`, '') AS when,
-               coalesce(r.`then`, '') AS then
-        ORDER BY r.id
+               coalesce(r.`then`, '') AS then,
+               coalesce(sf.evidence_role, 'primary') AS evidence_role
+        ORDER BY evidence_role, r.id
     """, {"usid": us_id})
 
     SmartLogger.log("INFO", f"US source-rules: {len(rows)} for {us_id}",
