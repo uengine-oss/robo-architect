@@ -29,7 +29,15 @@ from psycopg import sql
 
 from api.platform import pg
 
-__all__ = ["role_name", "role_password", "ensure_role", "role_exists", "role_secret_configured"]
+__all__ = ["role_name", "role_password", "ensure_role", "role_exists",
+           "role_secret_configured", "central_mode", "RoleSecretMismatch"]
+
+
+class RoleSecretMismatch(RuntimeError):
+    """이 PC 의 `AUTH_ROLE_SECRET` 이 DB 에 걸린 것과 다르다.
+
+    **덮어쓰지 않고 멈춘다.** 덮으면 그 사용자가 다른 PC 에서 못 붙는다.
+    """
 
 _SAFE = re.compile(r"[^a-z0-9_]+")
 
@@ -53,15 +61,38 @@ def role_secret_configured() -> bool:
     return bool(_secret_raw())
 
 
+def central_mode() -> bool:
+    """그래프 저장소가 **사내 서버 한 대**에 있고 여러 PC 가 함께 쓰는 구성인가.
+
+    `docker-stack.ts` 가 계산해 백엔드 환경에 실어 준다. 모르면 단일 PC 로 본다 —
+    모르는 상태에서 중앙으로 가정하면 1인 사용자가 기동을 못 한다.
+    """
+    return (os.environ.get("ROBO_GRAPH_MODE") or "").strip().lower() == "central"
+
+
 def _secret_raw() -> str:
-    # 전용 비밀이 없으면 세션 비밀을 쓴다. 둘을 나누는 편이 낫지만, 하나만 두고
-    # 쓰다가 role 비밀번호가 임시값으로 만들어지는 쪽이 더 나쁘다.
-    return (os.environ.get("AUTH_ROLE_SECRET") or os.environ.get("AUTH_JWT_SECRET") or "").strip()
+    """role 비밀번호의 씨앗.
+
+    **중앙 모드에서는 전용값만 받는다.** 단일 PC 에서는 세션 비밀로 대체한다 —
+    하나만 두고 쓰다가 role 비밀번호가 임시값으로 만들어지는 쪽이 더 나쁘기
+    때문이다. 중앙에서는 반대다: `AUTH_JWT_SECRET` 은 "바꿔도 재로그인하면 그만"
+    이라 가볍게 바뀌는데, 그걸 씨앗으로 쓰면 **전원의 DB 비밀번호가 같이 바뀐다.**
+    """
+    dedicated = (os.environ.get("AUTH_ROLE_SECRET") or "").strip()
+    if dedicated or central_mode():
+        return dedicated
+    return (os.environ.get("AUTH_JWT_SECRET") or "").strip()
 
 
 def role_password(uid: str) -> str:
     secret = _secret_raw()
     if not secret:
+        if central_mode():
+            raise RuntimeError(
+                "중앙 DB 구성인데 AUTH_ROLE_SECRET 이 없다. "
+                "이 값은 **모든 PC 가 같아야** 하고, AUTH_JWT_SECRET 으로 대신할 수 없다 "
+                "— 그걸 쓰면 세션 비밀을 바꿀 때 전원의 DB 비밀번호가 같이 바뀐다."
+            )
         raise RuntimeError(
             "AUTH_ROLE_SECRET(또는 AUTH_JWT_SECRET)이 없어 role 비밀번호를 만들 수 없다"
         )
@@ -73,6 +104,30 @@ def role_exists(name: str) -> bool:
     return bool(pg.query("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,)))
 
 
+def _can_login(name: str, password: str) -> bool:
+    """그 role 로 실제로 붙어 본다 — 유도한 비밀번호가 DB 와 맞는가.
+
+    맞는지 확인할 길이 이것뿐이다. Postgres 는 비밀번호를 해시로만 들고 있고,
+    우리가 쓰는 것도 해시 유도값이라 비교해 볼 평문이 양쪽에 없다.
+    """
+    import psycopg
+
+    from api.platform.pg import pg_dsn
+
+    dsn = pg_dsn()
+    # 사용자와 비밀번호만 갈아 끼운다. 나머지(host/port/dbname)는 그대로 쓴다.
+    parts = [p for p in dsn.split(" ")
+             if p and not p.startswith(("user=", "password="))]
+    parts += [f"user={name}", f"password={password}"]
+    try:
+        with psycopg.connect(" ".join(parts), connect_timeout=5):
+            return True
+    except psycopg.OperationalError:
+        # 비밀번호 불일치뿐 아니라 "붙을 권한이 없다" 도 여기로 온다. 둘 다
+        # **덮어쓰면 안 되는** 경우이므로 구별하지 않는다.
+        return False
+
+
 def ensure_role(uid: str) -> str:
     """사용자 role 이 있게 만든다. 이미 있으면 비밀번호만 다시 건다.
 
@@ -82,6 +137,19 @@ def ensure_role(uid: str) -> str:
     name = role_name(uid)
     password = role_password(uid)
     ident = sql.Identifier(name)
+
+    # **중앙 DB 에서는 이미 있는 role 을 건드리지 않는다.** 아래 ALTER 는 단일 PC
+    # 에서 "비밀이 바뀌면 따라오게" 하는 장치인데, 여럿이 쓰는 저장소에서는 비밀을
+    # 잘못 넣은 PC 한 대가 그 사용자를 **다른 모든 PC 에서** 끊어 버리는 경로가 된다.
+    if central_mode() and role_exists(name):
+        if _can_login(name, password):
+            return name
+        raise RoleSecretMismatch(
+            f"이 PC 의 AUTH_ROLE_SECRET 이 '{name}' 에 걸린 것과 다르다. "
+            "비밀번호를 덮어쓰지 않고 멈춘다 — 덮으면 이 사용자가 다른 PC 에서 "
+            "못 붙는다. 이 PC 의 값을 다른 PC 와 맞춰라."
+        )
+
     with pg.connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,))
