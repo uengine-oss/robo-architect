@@ -4791,8 +4791,19 @@ function updateVoFieldValue(fieldName, value) {
                     </div>
 
                     <!-- Source rules: Rule.statement + Example given/when/then -->
-                    <div v-for="rule in (src.rules || [])" :key="`${src.us.id}-${rule.seq}-${rule.title}`" class="trace-rule">
+<!--
+                      주 근거와 보조 근거를 구분한다. 굵은 레거시 룰 하나가 여러
+                      task 를 정당하게 뒷받침한다 — 메서드 하나가 검증·저장을 다
+                      하기 때문이다. 중재는 집을 하나만 고르되 진 쪽을 지우지 않고
+                      보조로 남긴다. 그 구분이 없으면 "왜 같은 룰이 두 군데에
+                      있나" 를 읽을 수 없다. 주 근거가 먼저 온다(API 가 정렬한다).
+                    -->
+                    <div v-for="rule in (src.rules || [])" :key="`${src.us.id}-${rule.seq}-${rule.title}`"
+                      class="trace-rule"
+                      :class="{ 'trace-rule--supporting': rule.evidence_role === 'supporting' }">
                       <div class="trace-rule__header">
+                        <span v-if="rule.evidence_role === 'supporting'" class="trace-rule__role"
+                          title="다른 task 가 이 룰의 주 근거다. 여기서는 보조 근거로 남았다.">보조</span>
                         <span class="trace-rule__seq" :class="{ 'trace-rule__seq--coupled': rule.coupled_domain }">
                           {{ rule.seq || '—' }}
                         </span>
@@ -5907,6 +5918,14 @@ function updateVoFieldValue(fieldName, value) {
   align-items: baseline;
   gap: 6px;
   margin-bottom: 4px;
+}
+/* 보조 근거 — 지우지 않고 남기되 주 근거보다 약하게 보인다. */
+.trace-rule--supporting { opacity: 0.72; }
+.trace-rule__role {
+  flex-shrink: 0;
+  font-size: 0.65rem; font-weight: 700; line-height: 1.5;
+  color: #6d4c00; background: #fff8e1; border: 1px solid #ffe082;
+  padding: 0 5px; border-radius: 4px;
 }
 .trace-rule__seq {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
