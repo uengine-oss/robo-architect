@@ -41,7 +41,8 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.ingestion_workflow_runner import clear_event_storming_nodes
 from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
-from api.features.ingestion.replacement import capture_before_replace
+from api.features.ingestion.replacement import capture_before_replace, safe_counts
+from api.features.ingestion import runs
 from api.platform.observability.smart_logger import SmartLogger
 
 # Small delay between incremental emits so the UI sees a smooth reveal.
@@ -65,7 +66,12 @@ async def run_hybrid_workflow(
     pdf_url: Optional[str] = None,
     source_pdf_name: Optional[str] = None,
     pdf_artifacts: Optional[list[dict[str, Optional[str]]]] = None,
+    uid: Optional[str] = None,
 ) -> AsyncGenerator[ProgressEvent, None]:
+    # 이 적재가 돌고 있다는 사실을 **프로세스 밖에** 적어 둔다. 앱이 강제 종료되면
+    # 이 행만 남는다 — 지우기는 이미 일어났고 말해 줄 사람은 죽었다(`runs.py`).
+    run_id: Optional[str] = None
+    beater: Optional[runs.Heartbeat] = None
     try:
         yield _ev(HybridPhase.UPLOAD, "📥 문서 준비 완료", 3, {"chars": len(content)})
 
@@ -77,7 +83,17 @@ async def run_hybrid_workflow(
         # graph is preserved (single-label / session_id guards).
         # 지우기 직전에 현재 판을 보관한다 — 이 wipe 가 프로젝트의 설계를
         # 통째로 갈아엎으므로, 여기가 되찾을 수 있는 마지막 자리다.
-        capture_before_replace(reason="ingest-hybrid")
+        # 지워질 건수는 **지우기 전에만** 셀 수 있다. 경고가 "무엇이 없어졌는지"를
+        # 말하는 근거이자 보관 meta 의 값이라 한 번 세서 둘이 나눠 쓴다.
+        wiped = safe_counts()
+        run_id = runs.start(None, session_id, uid=uid, kind="hybrid", counts=wiped)
+        beater = runs.heartbeat(run_id)
+        saved = capture_before_replace(reason="ingest-hybrid", counts=wiped)
+        # 보관이 실제로 됐는가. **빈 목록이면 되찾을 길이 없다** — 승격 전 프로젝트는
+        # `live_sessions()` 가 BoundedContext 를 못 찾아 아무것도 안 남긴다. 경고가
+        # 없는 구명줄을 가리키지 않도록 사실을 그대로 적는다.
+        runs.note(run_id, snapshots=[m.get("snapshotKey") for m in (saved or [])],
+                  phase="document_bpm")
         clear_all_hybrid_workspace()
         try:
             clear_event_storming_nodes(get_neo4j_client(), session_id)
@@ -385,11 +401,22 @@ async def run_hybrid_workflow(
             {"type": "HybridPhase5Pending"},
         )
 
+        runs.finish(run_id, "complete")
         yield _ev(HybridPhase.COMPLETE, "✅ Hybrid ingestion 완료 (BPM)", 100, {"session_id": session_id})
     except Exception as e:
+        # 오류는 **중단이 아니다** — 화면이 이 자리에서 말을 한다. 경고를 띄우는 것은
+        # 아무도 말하지 못한 경우(프로세스가 죽은 경우)뿐이다.
+        runs.finish(run_id, "error", str(e))
         SmartLogger.log(
             "ERROR", "Hybrid ingestion failed",
             category="ingestion.hybrid.run",
             params={"session_id": session_id, "error": str(e)},
         )
         yield _ev(HybridPhase.ERROR, f"❌ 오류: {e}", 0, {"error": str(e)})
+    finally:
+        # 여기까지 와서 아직 `running` 이면 **사람이 멈춘 것**이다(취소·창 닫기로
+        # 제너레이터가 닫힌다). 강제 종료는 이 자리를 밟지 못한다 — 그 차이가
+        # 경고를 띄울지 말지를 가른다.
+        if beater is not None:
+            beater.stop()
+        runs.finish(run_id, "cancelled")

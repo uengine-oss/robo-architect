@@ -22,7 +22,9 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
-from api.features.projects.access import require_write
+from api.features.projects.access import request_uid, require_write
+from api.features.ingestion import runs
+from api.platform.neo4j import design_database
 from api.features.ingestion.hybrid.document_to_bpm.config import (
     a2a_pdf_tmp_dir,
     hybrid_public_base_url,
@@ -160,6 +162,8 @@ async def upload_hybrid(
 
     session = create_session()
     session.content = content
+    # 누가 돌리는 작업인가. 강제 종료되면 **이 값만이** 경고에 이름을 붙인다(`runs.py`).
+    setattr(session, "uid", request_uid(request))
     session.source_type = "hybrid"
     session.display_language = (display_language or "ko").strip().lower() or "ko"
     setattr(session, "analyzer_graph_ref", analyzer_graph_ref)
@@ -210,6 +214,7 @@ async def stream_hybrid(session_id: str, request: Request, reconnect: bool = Fal
         pdf_url = getattr(session, "pdf_url", None)
         source_pdf_name = getattr(session, "source_pdf_name", None)
         pdf_artifacts = getattr(session, "hybrid_pdf_artifacts", None)
+        uid = getattr(session, "uid", None)
 
         async def _run():
             try:
@@ -218,6 +223,7 @@ async def stream_hybrid(session_id: str, request: Request, reconnect: bool = Fal
                     pdf_path=pdf_path, pdf_url=pdf_url,
                     source_pdf_name=source_pdf_name,
                     pdf_artifacts=pdf_artifacts,
+                    uid=uid,
                 ):
                     if getattr(session, "is_cancelled", False):
                         add_event(session, ProgressEvent(
@@ -281,8 +287,19 @@ async def list_hybrid_sessions() -> dict[str, Any]:
     있는데 Process 탭이 비어 보인다.
 
     진실은 graph 에 있다 — `BpmSession` 노드가 프로젝트마다 남는다.
+
+    **반쯤 쓰인 세션에 표를 붙인다.** `BpmSession` 에는 완료 표시가 없어서, 적재가
+    중간에 죽어 생긴 판이 완주한 판과 **건수만 다른 똑같은 줄**로 보인다. 중단된
+    적재가 쓰던 세션 아이디는 적재 기록이 들고 있다(`ingestion/runs.py`) —
+    그것을 `interrupted` 로 실어 보낸다. **지우지는 않는다**: 반쯤이라도 그게 그
+    프로젝트에 남은 전부일 수 있고, 지우는 판단은 사람의 것이다.
     """
-    return {"sessions": list_session_ids()}
+    half = runs.interrupted_session_ids(design_database())
+    rows = list_session_ids()
+    for row in rows:
+        if row.get("session_id") in half:
+            row["interrupted"] = True
+    return {"sessions": rows}
 
 
 @router.get("/session/{session_id}/snapshot")

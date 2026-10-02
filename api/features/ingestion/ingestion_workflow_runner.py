@@ -23,7 +23,7 @@ Event Modeling 기반 체인:
 
 from __future__ import annotations
 
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 import asyncio
 import time
@@ -54,7 +54,8 @@ from api.features.ingestion.workflow.phases.user_stories import extract_user_sto
 from api.features.ingestion.workflow.phases.user_story_sequencing import assign_user_story_sequences_phase
 from api.platform.env import IS_SKIP_UI_PHASE
 from api.platform.neo4j import get_session
-from api.features.ingestion.replacement import capture_before_replace
+from api.features.ingestion.replacement import capture_before_replace, safe_counts
+from api.features.ingestion import runs
 from api.platform.observability.smart_logger import SmartLogger
 from api.features.ingestion.workflow.utils.phase_logger import save as log_phase, save_summary as log_summary
 
@@ -268,6 +269,9 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
     # this workflow auto-attaches an IngestionTokenCallback. Reset in the
     # outer except/return paths below (this generator may exit at many points).
     _session_token = set_current_session(session)
+    # 적재 기록. 강제 종료되면 이 행만 남는다 — 아래 지우기 **직전에** 채운다.
+    run_id: Optional[str] = None
+    beater: Optional[runs.Heartbeat] = None
 
     client = get_neo4j_client()
     llm = get_llm()
@@ -290,7 +294,15 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         #    지우기 **직전에** 현재 판을 산출물로 조립해 보관한다. 교체 자체는
         #    원래부터 이 자리에서 일어나고 있었다 — 없던 것은 되찾을 방법이다.
         try:
-            capture_before_replace(reason="ingest")
+            # **지우기 전에** 돌고 있다는 사실을 Postgres 에 적는다 — 앱이 강제
+            # 종료되면 그 행만 남아 다음 사람에게 무슨 일이 있었는지 말한다
+            # (`runs.py`). 지워질 건수도 지우기 전에만 셀 수 있다.
+            wiped = safe_counts()
+            run_id = runs.start(None, session.id, uid=getattr(session, "uid", None),
+                                kind="standard", counts=wiped)
+            beater = runs.heartbeat(run_id)
+            saved = capture_before_replace(reason="ingest", counts=wiped)
+            runs.note(run_id, snapshots=[m.get("snapshotKey") for m in (saved or [])])
             clear_event_storming_nodes(client, session.id)
             yield ProgressEvent(
                 phase=IngestionPhase.PARSING,
@@ -512,6 +524,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 }
             },
         ))
+        runs.finish(run_id, "complete")
         SmartLogger.log(
             "INFO",
             "Ingestion workflow complete",
@@ -545,6 +558,8 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             data={"error": "Cancelled by user", "cancelled": True},
         ))
     except Exception as e:
+        # 오류는 **중단이 아니다** — 화면이 이 자리에서 말을 한다.
+        runs.finish(run_id, "error", str(e))
         import traceback
         error_trace = traceback.format_exc()
         SmartLogger.log(
@@ -565,6 +580,12 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             data={"error": str(e)},
         ))
     finally:
+        # 박동을 먼저 세운다 — 스레드가 남으면 죽은 작업이 살아 있는 척한다.
+        # 여기까지 와서 아직 `running` 이면 **사람이 멈춘 것**이다(취소·제너레이터
+        # 닫힘). 강제 종료는 이 자리를 밟지 못한다 — 그 차이가 경고를 가른다.
+        if beater is not None:
+            beater.stop()
+        runs.finish(run_id, "cancelled")
         # Spec 017: clear the workflow's session context so subsequent get_llm()
         # calls (e.g. /api/chat/modify) don't accidentally inherit this
         # workflow's token callback.

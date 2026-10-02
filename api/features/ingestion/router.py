@@ -34,6 +34,10 @@ from api.features.ingestion.ingestion_sessions import (
     wait_if_paused,
 )
 from api.features.ingestion.ingestion_workflow_runner import run_ingestion_workflow
+from api.features.ingestion import runs
+from api.features.projects.access import request_graph, request_uid, require_write
+from api.features.projects import store as projects
+from api.platform.neo4j import design_database
 from api.features.ingestion.requirements_document_text import extract_text_from_pdf
 from api.platform.observability.request_logging import (
     http_context,
@@ -67,7 +71,14 @@ async def upload_document(
     Note: Large file uploads are supported.
     Text input is limited to 1024KB due to Starlette's FormData default limit.
     For large content, please use file upload instead.
+
+    **쓰기 권한을 여기서 먼저 본다.** 안 보면 읽기 등급 사용자도 세션을 받고,
+    워크플로가 지우기와 임베딩까지 간 뒤 첫 쓰기에서 DB 가 막는다 — 데이터는
+    안전하지만 돈과 시간을 쓰고 화면에는 아무 말도 안 간다. 하이브리드 업로드는
+    2026-10-02 에 같은 이유로 막았고(`projects/access.py`), **이 표준 경로 셋은
+    그때 빠져 있었다.**
     """
+    require_write(request)
     content = ""
 
     if file:
@@ -152,6 +163,8 @@ async def upload_document(
 
     session = create_session()
     session.content = content
+    # 누가 돌리는 작업인가. 강제 종료되면 **이 값만이** 경고에 이름을 붙인다(`runs.py`).
+    setattr(session, "uid", request_uid(request))
     session.display_language = (display_language or "ko").strip().lower() or "ko"
     if session.display_language not in ("ko", "en"):
         session.display_language = "ko"
@@ -199,7 +212,10 @@ async def upload_figma_document(
     """
     Upload Figma node data (JSON) to start ingestion.
     Parses Figma UI element structure into requirements for Event Storming extraction.
+
+    쓰기 권한을 먼저 본다 — `/upload` 와 같은 이유다.
     """
+    require_write(request)
     if not body.figma_nodes:
         raise HTTPException(status_code=400, detail="figma_nodes must not be empty")
 
@@ -218,6 +234,7 @@ async def upload_figma_document(
 
     session = create_session()
     session.content = content
+    setattr(session, "uid", request_uid(request))
     session.display_language = (body.display_language or "ko").strip().lower() or "ko"
     if session.display_language not in ("ko", "en"):
         session.display_language = "ko"
@@ -257,13 +274,17 @@ class DesignForUserStoriesRequest(BaseModel):
 async def design_for_user_stories(request: Request, body: DesignForUserStoriesRequest) -> dict[str, Any]:
     """선택된 User Story에 대해 기존 인제스천 설계 단계(events→aggregate→command→
     readmodel)를 정순 실행한다. 진행은 기존 `/api/ingest/stream/{session_id}` SSE로 흐른다
-    (034 US7 — 기존 인제스천 루프·UI·순서 재사용)."""
+    (034 US7 — 기존 인제스천 루프·UI·순서 재사용).
+
+    쓰기 권한을 먼저 본다 — 이 길도 설계 graph 에 쓴다."""
+    require_write(request)
     ids = [i for i in (body.userStoryIds or []) if i]
     if not ids:
         raise HTTPException(status_code=400, detail="userStoryIds must not be empty")
 
     session = create_session()
     session.content = ""
+    setattr(session, "uid", request_uid(request))
     session.display_language = (body.display_language or "ko").strip().lower() or "ko"
     session.source_type = "rfp"
     # 스트림 핸들러가 이 모드를 보고 incremental 러너로 분기한다.
@@ -600,6 +621,47 @@ async def list_sessions(request: Request) -> list[dict[str, Any]]:
         }
         for s in list_active_sessions()
     ]
+
+
+@router.get("/runs")
+async def ingestion_runs(request: Request) -> dict[str, Any]:
+    """이 프로젝트에서 **지금 돌고 있는 적재**와 **중단된 적재**.
+
+    화면이 프로젝트를 열 때마다 묻는다. 중단 판정은 박동이 한다(`runs.py`).
+
+    **격리를 여기서 본다.** 적재 기록은 `public.*` 표라 소유자 자격으로 열리고
+    **Postgres 가 안 막는다**(`runs.py` 머리말). 그래서 참여자 표가 있는 구성에서는
+    참여자가 아닌 사람에게 빈 목록을 준다. 표가 **비어 있으면 그대로 통과**시킨다 —
+    단일 PC 는 등급을 아예 쓰지 않으므로, 여기서 막으면 멀쩡한 화면이 조용해진다.
+    """
+    graph = request_graph(request) or design_database() or ""
+    empty = {"graph": graph, "running": [], "interrupted": []}
+    if not graph:
+        return empty
+    uid = request_uid(request)
+    if uid:
+        try:
+            member_uids = [m.get("uid") for m in projects.members(graph)]
+        except Exception:  # noqa: BLE001 — 참여자를 못 읽는 것은 거절의 근거가 아니다
+            member_uids = []
+        if member_uids and uid not in member_uids:
+            return empty
+    return {"graph": graph, **runs.state(graph)}
+
+
+@router.post("/runs/{run_id}/ack")
+async def ack_ingestion_run(request: Request, run_id: str) -> dict[str, Any]:
+    """중단 경고를 사람이 닫는다.
+
+    **읽기 등급은 닫을 수 없다** — 경고는 프로젝트의 상태이고, 보는 사람이 치우면
+    소유자가 영영 못 본다. graph 를 함께 걸러 남의 프로젝트는 닫지 못한다.
+    """
+    require_write(request)
+    graph = request_graph(request) or design_database() or ""
+    closed = runs.acknowledge(run_id, request_uid(request), graph=graph or None)
+    if not closed:
+        raise HTTPException(status_code=404, detail="이미 닫혔거나 없는 적재 기록입니다")
+    return {"acked": run_id}
 
 
 @router.get("/replacement-preview")

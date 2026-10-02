@@ -29,6 +29,7 @@ import { useCanvasPreviewRequestStore } from '@/features/canvas/canvasPreviewReq
 import { enterPreview, exitPreview, usePreviewSession } from '@/app/previewSession'
 import PreviewBanner from '@/app/ui/PreviewBanner.vue'
 import ProjectGateBanner from '@/app/ui/ProjectGateBanner.vue'
+import IngestionInterruptedBanner from '@/app/ui/IngestionInterruptedBanner.vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 // 032: desktop launcher gate — when running inside Electron the launcher
 // view is shown until the user picks (Neo4j connection, project root) and
@@ -553,6 +554,9 @@ onUnmounted(() => {
     />
     <!-- 프로젝트를 안 골랐거나 권한이 없을 때. 화면마다 403 을 해석하지 않는다. -->
     <ProjectGateBanner />
+    <!-- 적재가 중단된 채 끝났을 때. **지우기는 이미 일어났고** 말해 줄 사람은
+         죽었으므로, 기록은 Postgres 에 있고 사람이 닫을 때까지 남는다. -->
+    <IngestionInterruptedBanner />
     <!-- 040 — Proposal 임팩트 미리보기 식별 배너(활성 시에만 표시, FR-007) -->
     <PreviewBanner />
     <div class="main-content">

@@ -23,7 +23,8 @@ from typing import Any, Optional
 from api.platform.neo4j import design_database, get_session
 from api.platform.observability.smart_logger import SmartLogger
 
-__all__ = ["live_sessions", "preview", "capture_before_replace", "PRESERVED_LABELS"]
+__all__ = ["live_sessions", "preview", "safe_counts", "capture_before_replace",
+           "PRESERVED_LABELS"]
 
 # `clear-all` 이 지키는 것과 같은 목록. 인제스천 교체도 같은 것을 남긴다 —
 # Figma 연결은 설계가 바뀌어도 살아 있어야 한다(다시 잇는 비용이 크다).
@@ -86,7 +87,25 @@ def preview() -> dict[str, Any]:
     }
 
 
-def capture_before_replace(reason: str = "replaced") -> list[dict[str, Any]]:
+def safe_counts() -> dict[str, int]:
+    """지워질 것들의 라벨별 건수. **세다가 실패해도 적재를 세우지 않는다.**
+
+    이 값은 "무엇이 없어졌는지" 를 말하는 근거다(`ingestion/runs.py` 가 적재 기록에
+    박아 둔다). 지운 뒤에는 셀 수 없으니 **지우기 전에** 한 번 센다. 세지 못하는
+    것은 적재를 막을 이유가 아니다 — 경고가 조금 덜 친절해질 뿐이다.
+    """
+    try:
+        return {k: int(v) for k, v in (preview().get("counts") or {}).items()}
+    except Exception as exc:  # noqa: BLE001 — 세기 실패가 적재를 막지 않는다
+        SmartLogger.log(
+            "WARN", f"지워질 건수를 세지 못했다 (적재는 계속한다): {exc}",
+            category="ingestion.replace.count.error", params={"error": str(exc)},
+        )
+        return {}
+
+
+def capture_before_replace(reason: str = "replaced", *,
+                           counts: Optional[dict[str, int]] = None) -> list[dict[str, Any]]:
     """지우기 직전에 현재 판을 보관한다. 보관한 판들의 meta 를 돌려준다.
 
     실패해도 예외를 올리지 않는다 — 인제스천은 사용자가 시작한 일이고, 보관은
@@ -110,7 +129,8 @@ def capture_before_replace(reason: str = "replaced") -> list[dict[str, Any]]:
             )
             return []
 
-        counts = preview().get("counts", {})
+        # 부르는 쪽이 이미 세 두었으면 다시 세지 않는다 — 라벨마다 질의가 한 번씩 간다.
+        counts = counts if counts is not None else safe_counts()
         saved: list[dict[str, Any]] = []
         for sid in sessions:
             document = build_architecture_document(sid)
