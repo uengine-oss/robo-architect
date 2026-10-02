@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from api.features.accounts import store
+from api.features.accounts.guard import require_admin
 from api.features.auth.tokens import TokenError, verify_token
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
@@ -22,27 +23,9 @@ from api.platform.observability.smart_logger import SmartLogger
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
 
-def _require_admin(request: Request) -> str:
-    """관리자의 사번. 아니면 401/403.
-
-    클레임의 역할을 믿지 않고 **저장된 값을 다시 읽는다.** 관리자에서 내려온
-    사람의 토큰이 만료 전까지 살아 있기 때문이다 — 사용자 관리는 뜨거운 경로가
-    아니라 표를 한 번 더 읽어도 된다.
-    """
-    claims = getattr(request.state, "auth_claims", None)
-    if not claims:
-        header = request.headers.get("authorization") or ""
-        token = header[7:].strip() if header[:7].lower() == "bearer " else None
-        try:
-            claims = verify_token(token)
-        except TokenError:
-            raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
-    uid = str(claims.get("sub") or "")
-    store.ensure_schema()
-    user = store.get_user(uid)
-    if not store.is_admin(user):
-        raise HTTPException(status_code=403, detail="관리자만 할 수 있습니다.")
-    return uid
+# 판정은 `accounts/guard.py` 한 자리에 있다 — 관리자만 할 수 있는 일이 둘로
+# 늘면서(템플릿 수정, TPL-1) 베껴 두면 한쪽만 느슨해지기 때문이다.
+_require_admin = require_admin
 
 
 @router.get("")

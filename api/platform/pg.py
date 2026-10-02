@@ -46,6 +46,15 @@ def _host_from_bolt(uri: str) -> str:
     return urlparse(raw).hostname or "localhost"
 
 
+# 붙는 데 이만큼 걸리면 **안 붙는 것으로 본다**.
+#
+# 기본값이 없으면 psycopg 는 OS 의 TCP 재시도가 끝날 때까지 기다린다 — 중앙 DB 가
+# 꺼져 있거나 주소가 틀린 PC 에서 요청 하나가 수십 초를 먹는다(2026-10-02 실측:
+# 템플릿 목록 호출 하나가 그렇게 늘어졌다). **멈춘 화면보다 빨리 틀리는 편이 낫다** —
+# 호출부는 `PgUnavailable` 을 이미 다룬다.
+_CONNECT_TIMEOUT_SECONDS = "5"
+
+
 def pg_dsn() -> str:
     """접속 문자열. 비밀번호는 여기서만 다루고 로그에 싣지 않는다."""
     explicit = os.environ.get("OG_PG_DSN")
@@ -56,7 +65,16 @@ def pg_dsn() -> str:
     dbname = os.environ.get("OG_PG_DATABASE", "og")
     user = os.environ.get("OG_PG_USER") or os.environ.get("NEO4J_USER", "dev")
     password = os.environ.get("OG_PG_PASSWORD") or os.environ.get("NEO4J_PASSWORD", "")
-    return f"host={host} port={port} dbname={dbname} user={user} password={password}"
+    timeout = (os.environ.get("OG_PG_CONNECT_TIMEOUT") or _CONNECT_TIMEOUT_SECONDS).strip()
+    # **빈 값은 아예 안 쓴다.** `password=` 뒤에 다른 키가 오면 libpq 가 그 자리에서
+    # 멈춘다 — 비밀번호가 없는 환경에서 모든 PG 호출이 영영 안 돌아왔다(2026-10-02
+    # 실측). 끝에 있을 때는 멀쩡하던 것이라, 키를 하나 덧붙이는 순간 드러났다.
+    parts = [f"host={host}", f"port={port}", f"dbname={dbname}", f"user={user}"]
+    if password:
+        parts.append(f"password={password}")
+    if timeout:
+        parts.append(f"connect_timeout={timeout}")
+    return " ".join(parts)
 
 
 @contextmanager

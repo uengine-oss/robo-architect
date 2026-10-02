@@ -13,6 +13,13 @@ Git API 로 원격을 읽지 않는다. 납품은 내부망이고, 템플릿은
 
 본문 끝에는 `<function>` 블록이 붙을 수 있다. 그 안은 JavaScript 이고,
 템플릿이 쓰는 Handlebars 헬퍼를 스스로 정의한다 — 렌더러가 등록해야 한다.
+
+## 파일은 **원본**이고, 고친 것은 DB 에 있다 (TPL-1)
+
+여기서 읽는 파일은 산출물에 실려 온 **출고 상태**다. 관리자가 고친 것은
+`store.py` 가 중앙 DB 에 들고 있고, 같은 경로가 있으면 **DB 가 이긴다**.
+그래서 되돌리기는 복사본이 아니라 **DB 행을 지우는 것**이다 — 원본은 언제나
+여기 그대로 있다. DB 가 비어 있거나 못 읽으면 지금까지와 똑같이 동작한다.
 """
 
 from __future__ import annotations
@@ -58,6 +65,11 @@ class TemplateFile:
     out_file_name: str | None
     body: str
     functions: list[str] = field(default_factory=list)
+    # 이 한 장이 **어디서 왔는가**. `file` 은 산출물 원본, `db` 는 고친 것.
+    # 화면이 "원본과 다름" 을 말할 수 있는 근거이고, 되돌리기 버튼의 조건이다.
+    source: str = "file"
+    updated_at: str | None = None
+    updated_by: str | None = None
 
     @property
     def is_configuration(self) -> bool:
@@ -73,6 +85,9 @@ class TemplateFile:
             "body": self.body,
             "functions": self.functions,
             "isConfiguration": self.is_configuration,
+            "source": self.source,
+            "updatedAt": self.updated_at,
+            "updatedBy": self.updated_by,
         }
 
 
@@ -158,18 +173,58 @@ def resolve_set(name: str) -> Path:
     return candidate
 
 
-def load_templates(name: str) -> list[TemplateFile]:
-    """묶음 하나의 모든 템플릿을 파싱해 돌려준다."""
+def read_original(name: str, relative_path: str) -> str | None:
+    """산출물에 실려 온 **원본** 한 장. DB 에만 있는 템플릿이면 `None`.
+
+    되돌리기와 "원본과 비교" 가 이것을 쓴다. 경로는 사용자 입력이므로 묶음 밖을
+    가리키면 거부한다 — `resolve_set` 과 같은 규칙이다.
+    """
     root = resolve_set(name)
+    candidate = (root / relative_path).resolve()
+    if root not in candidate.parents and candidate.parent != root:
+        raise ValueError(f"템플릿 경로가 올바르지 않습니다: {relative_path!r}")
+    if not candidate.is_file():
+        return None
+    try:
+        return candidate.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _from_override(relative_path: str, row: dict[str, Any]) -> TemplateFile:
+    t = parse_template(row.get("body") or "", relative_path)
+    t.source = "db"
+    updated = row.get("updated_at")
+    t.updated_at = updated.isoformat() if hasattr(updated, "isoformat") else (
+        str(updated) if updated else None)
+    t.updated_by = row.get("updated_by")
+    return t
+
+
+def load_templates(name: str, overrides: dict[str, dict[str, Any]] | None = None) -> list[TemplateFile]:
+    """묶음 하나의 모든 템플릿을 파싱해 돌려준다.
+
+    `overrides` 가 있으면 **같은 경로는 그것으로 갈아 끼운다**(TPL-1). 파일에 없고
+    DB 에만 있는 경로는 뒤에 붙인다 — 관리자가 새로 만든 템플릿이다.
+    """
+    root = resolve_set(name)
+    rest = dict(overrides or {})
     out: list[TemplateFile] = []
     for p in _walk(root):
+        rel = str(p.relative_to(root))
+        over = rest.pop(rel, None)
+        if over is not None:
+            out.append(_from_override(rel, over))
+            continue
         try:
             text = p.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             # 바이너리는 템플릿이 아니다. 조용히 건너뛰지 않고 표시만 남긴다.
-            out.append(TemplateFile(str(p.relative_to(root)), None, None, None, ""))
+            out.append(TemplateFile(rel, None, None, None, ""))
             continue
-        out.append(parse_template(text, str(p.relative_to(root))))
+        out.append(parse_template(text, rel))
+    for rel in sorted(rest):
+        out.append(_from_override(rel, rest[rel]))
     return out
 
 
@@ -190,11 +245,14 @@ def parse_config_fields(body: str) -> list[dict[str, str]]:
     return out
 
 
-def config_fields_for(name: str) -> list[dict[str, str]]:
-    """묶음 하나가 요구하는 옵션 목록. 설정 파일이 없으면 빈 목록이다."""
+def config_fields_for(name: str, overrides: dict[str, dict[str, Any]] | None = None) -> list[dict[str, str]]:
+    """묶음 하나가 요구하는 옵션 목록. 설정 파일이 없으면 빈 목록이다.
+
+    고친 설정 파일도 반영한다 — 안 그러면 **입력 폼만 옛 상태로 남는다.**
+    """
     fields: list[dict[str, str]] = []
     seen: set[str] = set()
-    for t in load_templates(name):
+    for t in load_templates(name, overrides):
         if not t.is_configuration:
             continue
         for f in parse_config_fields(t.body):

@@ -15,6 +15,7 @@ import { renderAll } from '../renderer.js'
 import { buildTree, collapseChains, firstFile } from '../tree.js'
 import GeneratedTree from './GeneratedTree.vue'
 import GeneratedViewer from './GeneratedViewer.vue'
+import TemplateSourcePanel from './TemplateSourcePanel.vue'
 
 // POSCO DX 템플릿이 기본이자 사실상 유일한 묶음이다. 다른 것이 받아져 있을
 // 때만 고를 수 있게 한다 — 하나뿐이면 선택지를 보여 줄 이유가 없다.
@@ -33,6 +34,10 @@ const sessionId = ref('')
 // 기준 구현도 그 파일로 폼을 만든다. 여기서 항목을 지어내지 않는다.
 const optionFields = ref([])
 const options = ref({})
+// 묶음의 템플릿 전체. 생성에도 쓰고 **원본 보기/수정**에도 쓴다 — 같은 응답이다.
+const templateFiles = ref([])
+// 원본 보기로 바꾸면 생성 결과 자리에 템플릿 편집기가 들어온다 (TPL-1).
+const sourceMode = ref(false)
 // 사용자가 손댄 항목은 세션을 바꿔도 지킨다.
 const editedKeys = ref(new Set())
 
@@ -44,6 +49,9 @@ const selected = ref(null)
 const hasChoice = computed(() => sets.value.length > 1)
 const currentSession = computed(() => sessions.value.find((s) => s.id === sessionId.value))
 const fileCount = computed(() => result.value?.files?.length || 0)
+const overriddenCount = computed(
+  () => templateFiles.value.filter((f) => f.source === 'db').length,
+)
 const serviceId = computed(() => options.value.serviceId || '')
 
 /** 세션 이름에서 자바 패키지 한 마디로 쓸 만한 기본값을 만든다. */
@@ -85,10 +93,21 @@ onMounted(async () => {
   }
 })
 
-/** 묶음이 요구하는 옵션 목록을 읽어 온다. 묶음을 바꾸면 다시 읽는다. */
+/** 묶음의 템플릿과 옵션을 읽어 온다. 묶음을 바꾸거나 템플릿을 고치면 다시 읽는다. */
 async function loadOptions() {
-  const { options: fields } = await listFiles(setName.value)
+  const { options: fields, files } = await listFiles(setName.value)
   optionFields.value = fields || []
+  templateFiles.value = files || []
+}
+
+/**
+ * 템플릿이 바뀌었다. **생성해 둔 결과는 더 이상 그 템플릿의 산물이 아니다** —
+ * 지우고 다시 누르게 한다. 남겨 두면 어느 템플릿으로 만든 것인지 알 수 없다.
+ */
+async function onTemplateChanged() {
+  result.value = null
+  selected.value = null
+  try { await loadOptions() } catch (e) { error.value = e.message }
 }
 
 watch(setName, async (name) => {
@@ -173,6 +192,15 @@ async function download() {
       <button class="tpl__btn" :disabled="!fileCount" @click="download">
         ZIP 내려받기<span v-if="fileCount"> ({{ fileCount }})</span>
       </button>
+      <!-- 생성 결과가 마음에 안 들면 고칠 것은 템플릿이다. 그 자리를 여기 둔다. -->
+      <button
+        class="tpl__btn"
+        :class="{ 'tpl__btn--on': sourceMode }"
+        :disabled="!templateFiles.length"
+        @click="sourceMode = !sourceMode"
+      >
+        템플릿 원본<span v-if="overriddenCount"> ({{ overriddenCount }} 수정됨)</span>
+      </button>
 
       <div class="tpl__spacer"></div>
       <span class="tpl__pkg">
@@ -190,7 +218,14 @@ async function download() {
       <span class="tpl__dim">{{ result.errors[0].template }}: {{ result.errors[0].error }}</span>
     </p>
 
-    <div v-if="result" class="tpl__body">
+    <TemplateSourcePanel
+      v-if="sourceMode"
+      :set-name="setName"
+      :files="templateFiles"
+      @changed="onTemplateChanged"
+    />
+
+    <div v-else-if="result" class="tpl__body">
       <nav class="tpl__tree">
         <GeneratedTree
           :files="result.files"
@@ -243,6 +278,7 @@ async function download() {
   color: #fff; background: var(--ccw-accent); border-color: var(--ccw-accent);
 }
 .tpl__btn--primary:hover:not(:disabled) { background: var(--ccw-accent-strong); }
+.tpl__btn--on { border-color: var(--ccw-accent); color: var(--ccw-accent); }
 
 .tpl__spacer { flex: 1; }
 .tpl__pkg {
