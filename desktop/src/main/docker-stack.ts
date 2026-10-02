@@ -656,7 +656,39 @@ async function ensureImages(root: string, manifest: RuntimeManifest): Promise<vo
   });
 }
 
-async function graphPassword(): Promise<string> {
+/**
+ * 그래프 저장소에 붙을 비밀번호.
+ *
+ * **모드마다 출처가 다르다. 이게 없어서 중앙 모드가 한 번도 돌지 못했다.**
+ *
+ * ```
+ * bundled   이 PC 가 만들어 DPAPI 에 넣어 둔 값. 볼륨도 이 PC 것이므로 맞는다
+ * central   **서버가 정한 값**이다. 서버는 `compose.central-db.yml` 을 돌린
+ *           사람이 `ROBO_GRAPH_PASSWORD` 로 정했고, PC 는 그 값을 받아야 한다
+ * ```
+ *
+ * 전에는 두 모드가 같은 길을 썼다 — PC 가 **자기가 만든 난수**로 중앙 서버에
+ * 붙으려 했다는 뜻이다. PC 마다 다른 난수라 서버가 맞춰 줄 수도 없다.
+ * 호스트와 포트만 중앙을 가리키고 자격은 이 PC 것이었으므로, 켜 봤다면
+ * 인증 실패로 끝났다. 2026-10-02 에 코드를 읽어 찾았다(로그 38회 전부 bundled).
+ *
+ * 그래서 중앙 모드에서는 **없으면 멈춘다.** `ROBO_GRAPH_HOST` 와 같은 태도다 —
+ * 조용히 틀린 자격으로 붙어 "인증 실패" 만 남기는 것보다, 무엇을 넣어야 하는지
+ * 말하고 서는 편이 낫다.
+ */
+export async function graphPassword(
+  topology: GraphTopology = graphTopology(),
+): Promise<string> {
+  if (topology.mode === "central") {
+    const given = (process.env.ROBO_GRAPH_PASSWORD ?? "").trim();
+    if (given) return given;
+    throw new Error(
+      "runtime.graph_password_missing: ROBO_GRAPH_MODE=central 인데 " +
+        "ROBO_GRAPH_PASSWORD 가 없다. 중앙 서버를 세울 때 정한 값을 그대로 넣어라 " +
+        "(compose.central-db.yml 의 ROBO_GRAPH_PASSWORD). 이 PC 가 만든 값으로는 " +
+        "서버에 붙을 수 없다",
+    );
+  }
   const existing = await getSecret(GRAPH_PASSWORD_SECRET_ID);
   if (existing) return existing;
   // 저장소를 바꾸기 전에 깔린 앱은 옛 id 에 들고 있다. **새로 뽑으면 안 된다** —
@@ -925,10 +957,11 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   await ensureEnvironmentSnapshots(root, manifest);
   assertCredentialsPresent(manifest);
   assertAuthPostureNotOverridden(manifest);
+  // **비밀번호를 이미지 적재보다 먼저 본다.** 중앙 모드에서 값이 없으면 4분짜리
+  // tar 를 다 읽고 나서 "비밀번호가 없다" 고 말하게 된다 — 위의 둘과 같은 이유다.
+  const password = await graphPassword(topology);
   await ensureDockerDaemon();
   await ensureImages(root, manifest);
-
-  const password = await graphPassword();
   // `createState` 가 쓸 수 있는 포트를 물려받으므로 여기서 따로 읽지 않는다.
   // 매번 파일을 다시 쓰는 것은 의도다 — releaseId 를 현재 값으로 맞춘다.
   const state = await createState(manifest.releaseId);
