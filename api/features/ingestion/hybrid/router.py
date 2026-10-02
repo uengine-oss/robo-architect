@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
+from api.features.projects.access import require_write
 from api.features.ingestion.hybrid.document_to_bpm.config import (
     a2a_pdf_tmp_dir,
     hybrid_public_base_url,
@@ -63,6 +64,7 @@ router = APIRouter(prefix="/api/ingest/hybrid", tags=["ingestion-hybrid"])
 
 @router.post("/upload")
 async def upload_hybrid(
+    request: Request,
     file: Optional[UploadFile] = File(
         None,
         description="단일 업로드 (기존 호환). `files`와 함께내면 모두 합쳐 처리합니다.",
@@ -75,7 +77,14 @@ async def upload_hybrid(
     analyzer_graph_ref: Optional[str] = Form(None),
     display_language: Optional[str] = Form("ko"),
 ) -> dict[str, Any]:
-    """여러 문서의 본문은 합치고, PDF가 여러 개면 파일마다 저장한 뒤 Phase1에서 A2A를 PDF별로 호출합니다."""
+    """여러 문서의 본문은 합치고, PDF가 여러 개면 파일마다 저장한 뒤 Phase1에서 A2A를 PDF별로 호출합니다.
+
+    **쓰기 권한을 여기서 먼저 본다.** 안 보면 읽기 등급 사용자도 200 과 세션을
+    받고, 워크플로가 돌며 임베딩까지 부른 뒤 첫 쓰기에서 DB 가 막는다 —
+    데이터는 안전하지만 **돈과 시간을 쓰고 화면에는 아무 말도 안 간다**
+    (2026-10-02 실측: SSE 0바이트). 거절은 싸고 침묵은 비싸다.
+    """
+    require_write(request)
 
     def _gather_uploads() -> list[UploadFile]:
         out: list[UploadFile] = []
