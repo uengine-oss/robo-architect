@@ -22,6 +22,7 @@ import {
   DEFAULT_PG_PORT,
   graphEndpoint,
   graphTopology,
+  unreachableFromContainers,
 } from "../../src/main/graph-topology";
 
 /** 실행마다 달라지는 로컬 발행 포트. 중앙 모드에서는 쓰이지 않아야 한다. */
@@ -141,5 +142,64 @@ test.describe("못 쓸 포트 값은 표준 포트로 되돌린다", () => {
         ROBO_GRAPH_BOLT_PORT: " 7688 ",
       }).boltPort,
     ).toBe(7688);
+  });
+});
+
+test.describe("중앙 모드에서 **루프백 주소를 거부한다**", () => {
+  // 왜 이것이 필요한가. `ROBO_GRAPH_HOST` 는 호스트 백엔드만 보는 값이 아니다 —
+  // 같은 값이 컨테이너 8개에도 그대로 들어간다. 컨테이너 안의 `127.0.0.1` 은
+  // 자기 자신이라 `fabric` 이 Bolt 에 못 붙고 앱은 "시작할 수 없다" 만 말한다.
+  // 2026-10-02 에 그 화면을 봤고 **아무 설명이 없었다.** 기동 전에 말하게 한다.
+  for (const host of ["127.0.0.1", "127.0.0.53", "localhost", "LOCALHOST", "::1", "[::1]"]) {
+    test(`${host} 는 멈춘다`, () => {
+      expect(() =>
+        graphTopology({ ROBO_GRAPH_MODE: "central", ROBO_GRAPH_HOST: host }),
+      ).toThrow(/graph_host_unreachable/);
+    });
+  }
+
+  test("host.docker.internal 도 멈춘다 — 호스트에서는 안 풀린다", () => {
+    expect(() =>
+      graphTopology({
+        ROBO_GRAPH_MODE: "central",
+        ROBO_GRAPH_HOST: "host.docker.internal",
+      }),
+    ).toThrow(/graph_host_unreachable/);
+  });
+
+  test("'모든 주소' 는 붙을 대상이 아니다", () => {
+    expect(() =>
+      graphTopology({ ROBO_GRAPH_MODE: "central", ROBO_GRAPH_HOST: "0.0.0.0" }),
+    ).toThrow(/graph_host_unreachable/);
+  });
+
+  test("거절 문구가 **무엇을 쓰라고** 말한다", () => {
+    let message = "";
+    try {
+      graphTopology({ ROBO_GRAPH_MODE: "central", ROBO_GRAPH_HOST: "127.0.0.1" });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    // 증상만 말하면 사람은 도커를 의심한다. 고칠 수 있는 말이어야 한다.
+    expect(message).toContain("컨테이너");
+    expect(message).toContain("WSL");
+    expect(message).toContain("ipconfig");
+  });
+
+  test("실제로 쓰는 주소들은 통과한다", () => {
+    // 10/2 에 쓴 WSL 스위치 주소 · 사내 서버 · 이름.
+    for (const host of ["172.27.64.1", "10.10.0.5", "graph.posco.net"]) {
+      expect(unreachableFromContainers(host)).toBeNull();
+      expect(graphTopology({ ROBO_GRAPH_MODE: "central", ROBO_GRAPH_HOST: host }).host).toBe(
+        host,
+      );
+    }
+  });
+
+  test("bundled 는 그대로 루프백이다 — 거절은 중앙 모드만이다", () => {
+    // 번들 DB 는 이 PC 안에 있고, 그쪽 주소는 루프백이어야 맞다.
+    const topology = graphTopology({ ROBO_GRAPH_HOST: "127.0.0.1" });
+    expect(topology.mode).toBe("bundled");
+    expect(graphEndpoint(LOCAL_PORTS, topology).host).toBe("127.0.0.1");
   });
 });

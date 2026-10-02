@@ -310,6 +310,37 @@ from api.platform.identity.connection_binding import (  # noqa: E402
     BindingDenied, binding_enabled, needs_graph, resolve_for_request,
 )
 from api.features.collab import notify as collab_notify  # noqa: E402
+from neo4j.exceptions import Neo4jError  # noqa: E402
+from api.platform.identity.graph_errors import explain as explain_graph_error  # noqa: E402
+
+
+# 그래프가 거절한 것을 500 으로 흘리지 않는다.
+#
+# 읽기 등급 사용자는 **자기 role 로** Bolt 에 붙는다. 그래서 자격 실패는 바인딩할
+# 때가 아니라 세션을 열 때, 즉 **라우터 안에서** 난다. 그대로 두면 화면에는 "서버
+# 오류" 가 보이고, 같은 원인을 `ensure_role` 쪽은 503 으로 설명해 준다 — 사람이
+# 먼저 만나는 쪽이 침묵하던 것이다(2026-10-02 실측). 자리를 하나만 둔다.
+def _graph_error_response(exc: BaseException) -> JSONResponse | None:
+    told = explain_graph_error(exc)
+    if not told:
+        return None   # 모르는 실패는 **아는 척하지 않는다** — 500 이 맞다.
+    status, code, detail = told
+    SmartLogger.log(
+        "WARN", f"그래프가 거절했다 → {status} {code}",
+        category="auth.graph.denied",
+        params={"code": code, "error_type": type(exc).__name__,
+                "server_code": str(getattr(exc, "code", "") or "")},
+    )
+    return JSONResponse({"detail": detail, "code": code}, status_code=status)
+
+
+@app.exception_handler(Neo4jError)
+async def neo4j_error_handler(request: Request, exc: Neo4jError):
+    """라우터가 안 잡은 그래프 오류. 아는 둘만 옮기고 나머지는 500 그대로 올린다."""
+    response = _graph_error_response(exc)
+    if response is not None:
+        return response
+    raise exc
 
 
 @app.middleware("http")
@@ -329,7 +360,14 @@ async def neo4j_override_middleware(request: Request, call_next):
     effective = bound or Neo4jOverride.from_headers(request.headers)
     set_override(effective)
     try:
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Neo4jError as exc:
+            # 예외 핸들러를 못 거치는 경로(스트리밍 응답이 열린 뒤 등)도 받는다.
+            told = _graph_error_response(exc)
+            if told is None:
+                raise
+            return told
         # 같은 프로젝트를 보는 다른 창이 **새로고침 없이** 알아챌 수 있게 판을
         # 올린다. 쓰기 코드마다 호출을 심으면 반드시 하나를 빠뜨리고, 빠뜨린
         # 것은 조용하다 — 그래서 목은 여기 하나다.

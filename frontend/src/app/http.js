@@ -126,12 +126,53 @@ export function installBackendHeaderInterceptor() {
 
     const response = await original(input, nextInit)
     noteProjectError(response)
+    noteGraphError(response)
     return response
   }
 }
 
 // 프로젝트 때문에 막힌 응답의 코드. 백엔드 `BindingDenied.code` 와 같은 값이다.
 const PROJECT_CODES = new Set(['PROJECT_NOT_SELECTED', 'PROJECT_FORBIDDEN'])
+
+// 그래프가 이 PC 의 설정 때문에 거절한 것. 백엔드 `graph_errors.py` 와 같은 값이다.
+const GRAPH_FAULT_CODE = 'GRAPH_ROLE_AUTH_FAILED'
+
+// 그래프를 실제로 읽는 길. 여기가 200 이면 설정은 멀쩡하다 — 그때만 안내를 지운다.
+const GRAPH_PATHS = ['/api/graph', '/api/ingest', '/api/requirements', '/api/collab']
+
+/**
+ * 503 **하나만** 해석한다 — "이 PC 의 계정 비밀 값이 서버와 다르다".
+ *
+ * 이것을 화면마다 해석하게 두면 한 곳도 안 해석한다(지금까지 그랬다). 사람이 보는
+ * 것은 "서버 오류" 이고, 정작 원인은 **이 PC 의 설치 설정**이라 서버를 아무리 봐도
+ * 안 나온다. 403 을 한 곳에서 보는 것과 같은 이유로 여기 둔다.
+ */
+function noteGraphError(response) {
+  if (!response) return
+  try {
+    if (!isSameOrigin(response.url || '')) return
+  } catch {
+    return
+  }
+  if (response.ok) {
+    // 그래프를 읽는 길이 성공했으면 설정은 멀쩡하다.
+    try {
+      const path = new URL(response.url, window.location.origin).pathname
+      if (GRAPH_PATHS.some((p) => path.startsWith(p))) useAuthStore().setGraphOk()
+    } catch {
+      /* 주소를 못 읽으면 아무 말도 하지 않는다 */
+    }
+    return
+  }
+  if (response.status !== 503) return
+  response.clone().json().then((body) => {
+    if (body && body.code === GRAPH_FAULT_CODE) {
+      useAuthStore().setGraphError({ code: body.code, detail: body.detail || '' })
+    }
+  }).catch(() => {
+    /* 본문이 JSON 이 아니면 우리 것이 아니다 */
+  })
+}
 
 /**
  * 403 을 **한 곳에서** 해석한다.

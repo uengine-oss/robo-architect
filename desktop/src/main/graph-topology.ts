@@ -46,6 +46,42 @@ export const LOOPBACK = "127.0.0.1";
 export const DEFAULT_BOLT_PORT = 7687;
 export const DEFAULT_PG_PORT = 5432;
 
+/**
+ * 이 주소를 **컨테이너도 쓴다** — 그래서 루프백이면 못 쓴다.
+ *
+ * `ROBO_GRAPH_HOST` 는 호스트 백엔드만 보는 값이 아니다. 같은 값이 compose 를 타고
+ * 컨테이너 8개에 그대로 들어간다(`fabric`·`catalog`·`analyzer`). 컨테이너 안에서
+ * `127.0.0.1` 은 **자기 자신**이라, Bolt 에 못 붙어 `fabric` 이 서고 앱은 그냥
+ * "시작할 수 없다" 만 말한다 — 2026-10-02 에 그 화면을 실제로 봤고, **아무 설명이
+ * 없었다.**
+ *
+ * `host.docker.internal` 도 답이 아니다. 컨테이너에서는 풀리지만 **호스트에서는
+ * 안 풀려서** 이번엔 백엔드가 못 붙는다. 양쪽이 같이 닿는 주소여야 한다 — Windows
+ * 에서는 WSL 가상 스위치 주소(`172.x.x.1` 꼴)가 그것이다.
+ *
+ * 쓸 수 없는 이유를 돌려준다. 쓸 수 있으면 `null`.
+ */
+export function unreachableFromContainers(host: string): string | null {
+  const name = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!name) return null; // 빈 값은 호출부가 따로 거절한다.
+  if (name === "localhost" || name.endsWith(".localhost")) {
+    return "localhost 는 컨테이너 안에서 컨테이너 자신을 가리킨다";
+  }
+  if (name === "::1" || name === "0:0:0:0:0:0:0:1") {
+    return "::1 은 컨테이너 안에서 컨테이너 자신을 가리킨다";
+  }
+  if (/^127\./.test(name)) {
+    return `${host} 는 컨테이너 안에서 컨테이너 자신을 가리킨다`;
+  }
+  if (name === "0.0.0.0" || name === "::") {
+    return `${host} 는 '모든 주소' 라는 뜻이고 붙을 대상이 아니다`;
+  }
+  if (name === "host.docker.internal") {
+    return "host.docker.internal 은 컨테이너에서만 풀린다 — 호스트 백엔드가 못 붙는다";
+  }
+  return null;
+}
+
 function positiveInt(raw: string | undefined, fallback: number): number {
   const value = Number.parseInt((raw ?? "").trim(), 10);
   return Number.isInteger(value) && value > 0 && value <= 65535 ? value : fallback;
@@ -74,6 +110,18 @@ export function graphTopology(env: NodeJS.ProcessEnv = process.env): GraphTopolo
       "runtime.graph_host_missing: ROBO_GRAPH_MODE=central 인데 ROBO_GRAPH_HOST 가 없다. " +
         "중앙 그래프 서버의 주소를 지정하라 (예: 10.10.0.5). " +
         "서버는 compose.central-db.yml 로 띄운다",
+    );
+  }
+  const unreachable = unreachableFromContainers(host);
+  if (unreachable) {
+    // 기동 전에 멈춘다. 이 값으로 띄우면 `fabric` 이 설명 없이 죽고, 사람은
+    // 도커를 의심한다 — **고칠 수 있는 말**을 여기서 한 번 하는 것이 전부다.
+    throw new Error(
+      `runtime.graph_host_unreachable: ROBO_GRAPH_HOST=${host} 로는 중앙 DB 에 붙을 수 없다. ` +
+        `${unreachable}. 이 주소는 **컨테이너 8개에도 그대로** 들어가므로 ` +
+        "호스트와 컨테이너가 **둘 다** 닿는 주소여야 한다. " +
+        "다른 PC 라면 그 서버의 LAN 주소를, 이 PC 에 서버를 띄웠다면 " +
+        "WSL 가상 스위치 주소(ipconfig 의 vEthernet (WSL) IPv4, 172.x.x.1 꼴)를 쓴다",
     );
   }
   return { mode: "central", host, boltPort, pgPort };

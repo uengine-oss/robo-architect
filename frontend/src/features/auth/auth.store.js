@@ -71,6 +71,15 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref(readStored(TOKEN_KEY))
   const projectGraph = ref(readStored(PROJECT_KEY))
   const user = ref(null)
+  /**
+   * 그래프가 **이 PC 의 설정 때문에** 거절할 때의 안내.
+   *
+   * 중앙 DB 에서 `AUTH_ROLE_SECRET` 이 서버와 다르면 읽기 등급 사용자의 모든 조회가
+   * 막힌다. 백엔드는 503 과 함께 **고칠 수 있는 말**을 주는데(`graph_errors.py`),
+   * 그걸 그리는 자리가 없으면 화면에는 다시 "서버 연결 실패" 가 보인다 — 멀쩡한
+   * 서버를 의심하게 만드는 바로 그 모양이다. 인터셉터가 적고 배너가 그린다.
+   */
+  const graphError = ref(null)
   /** 'unknown' 은 아직 서버에 물어보기 전이다 — 로그인 화면을 성급히 띄우지 않는다. */
   const status = ref('unknown')
   const provider = ref(null)
@@ -158,6 +167,20 @@ export const useAuthStore = defineStore('auth', () => {
    *
    * `PROJECT_FORBIDDEN` 은 다르다 — 고른 프로젝트를 못 볼 수 있으니 그대로 적는다.
    */
+  /**
+   * 설치가 잘못된 것은 **사람이 고칠 때까지 사실**이다. 그래서 성공 응답 하나로
+   * 지우지 않는다 — 프로젝트를 안 쓰는 길(로그인·목록)은 멀쩡히 200 을 주기 때문에,
+   * 그걸로 지우면 안내가 깜빡이다 사라진다. 지우는 것은 **그래프 조회가 실제로
+   * 성공했을 때**뿐이다(`setGraphOk`).
+   */
+  function setGraphError(payload) {
+    graphError.value = payload || null
+  }
+
+  function setGraphOk() {
+    if (graphError.value) graphError.value = null
+  }
+
   function setProjectError(code) {
     let next = code || null
     if (next === 'PROJECT_NOT_SELECTED' && projectGraph.value) next = null
@@ -251,8 +274,9 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     token, projectGraph, user, status, provider, providerStatus, checking, projectError,
+    graphError,
     authenticated, pending, rejected, isAdmin, enforced, enforcement, gate,
-    setToken, setProject, setProjectError,
+    setToken, setProject, setProjectError, setGraphError, setGraphOk,
     loadProvider, refresh, devLogin, ssoLogin, logout,
   }
 })
