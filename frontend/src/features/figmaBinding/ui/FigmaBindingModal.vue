@@ -289,6 +289,17 @@ watch(tab, (t) => {
             <code>Failed to fetch</code> 로 나타납니다 — 연결이 안 되면 먼저 이 값을
             다시 붙여넣으세요.
           </p>
+          <!--
+            "다른 PC 에서도 되나" 는 실제로 나온 질문이다(2026-10-06). 포트는 앱이
+            자동으로 알아내지만 **주소는 늘 이 PC** 다 — 백엔드가 `127.0.0.1` 로만
+            듣는다. Figma 데스크톱 앱이 같은 PC 에서 도니 그것으로 충분하고,
+            밖에서 닿지 않는 것이 **의도된 경계**다.
+          -->
+          <p class="fb-hint fb-backend__why">
+            <strong>이 PC 에서만 닿습니다</strong> — 포트는 앱이 알아서 찾지만 주소는
+            늘 <code>127.0.0.1</code> 입니다. 백엔드가 이 PC 안에서만 듣기 때문이고,
+            Figma 데스크톱 앱이 같은 PC 에서 도니 그대로 쓰시면 됩니다.
+          </p>
         </div>
 
         <div v-if="tab === 'main' && auth.enforced" class="fb-section">

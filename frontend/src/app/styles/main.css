@@ -1039,3 +1039,54 @@ body {
 .tb-btn--danger { background: rgba(250,82,82,0.12); color: #fa5252; border-color: rgba(250,82,82,0.3); }
 .tb-btn--danger:hover:not(:disabled) { background: rgba(250,82,82,0.2); }
 
+
+/* =====================================================
+   설명 풍선 — `title` 을 믿지 않는다
+   =====================================================
+   `title` 속성은 Electron 안에서 **안 뜨는 경우가 있다.** 마우스 모양(`cursor: help`)
+   만 바뀌고 설명은 안 나와서, 사람은 "뭔가 있나 본데 안 보인다" 로 끝난다
+   (2026-10-06 사용자 지적 — "보조" 배지가 그랬다).
+
+   그래서 우리가 그린다. 쓰는 쪽은 이렇게 —
+
+       <span class="hint" data-tip="설명" tabindex="0">보조</span>
+
+   `tabindex` 를 주면 키보드로도 읽을 수 있다. `title` 은 **같이 두지 않는다** —
+   둘 다 있으면 풍선 두 개가 겹쳐 보인다.
+   ===================================================== */
+.hint {
+  position: relative;
+  cursor: help;
+}
+.hint::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 60;
+  width: max-content;
+  max-width: 280px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border, #d0d0d0);
+  background: var(--color-bg-tertiary, #fff);
+  color: var(--color-text, #222);
+  font-size: 0.7rem;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  text-align: left;
+  text-decoration: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease 0.25s, visibility 0s linear 0.25s;
+  pointer-events: none;
+}
+.hint:hover::after,
+.hint:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
+/* 오른쪽 끝에 붙은 배지는 풍선이 화면 밖으로 나간다 — 그때만 오른쪽 정렬한다. */
+.hint--right::after { left: auto; right: 0; }
