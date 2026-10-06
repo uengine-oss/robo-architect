@@ -78,18 +78,37 @@ export const useCollabStore = defineStore('collab', () => {
    * 새로고침하면 새 값이 된다. 그래도 되는 이유는 옛 세션이 유예 뒤에 저절로
    * 사라지고, 그 전에는 같은 사람의 것이라 잠금을 막지 않기 때문이다.
    */
+  /**
+   * 창 이름을 만든다. **`Math.random` 을 쓰지 않는다.**
+   *
+   * 이 값은 잠금의 주인을 가리는 이름이다 — 남의 창 이름을 알면 그 잠금을
+   * 자기 것처럼 다룰 수 있다(`X-Collab-Session`). 예측 가능한 난수로 만들 값이
+   * 아니다. 중앙 DB 에서는 같은 프로젝트를 여러 사람이 동시에 열고 있으므로
+   * 더 그렇다. `crypto` 가 없으면(아주 옛 환경) 그때만 옛 방식으로 떨어진다.
+   */
+  const newSessionName = () => {
+    const c = globalThis.crypto
+    if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+    if (c && typeof c.getRandomValues === 'function') {
+      const b = new Uint8Array(16)
+      c.getRandomValues(b)
+      return [...b].map((x) => x.toString(16).padStart(2, '0')).join('')
+    }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  }
+
   const sessionId = (() => {
     try {
       const k = 'robo.collab.session'
       let v = sessionStorage.getItem(k)
       if (!v) {
-        v = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+        v = newSessionName()
         sessionStorage.setItem(k, v)
       }
       return v
     } catch {
       // 사생활 보호 모드 등으로 막히면 메모리 값으로 간다. 새로고침하면 바뀐다.
-      return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+      return newSessionName()
     }
   })()
 

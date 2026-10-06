@@ -4,11 +4,23 @@ from api.features.ingestion.hybrid import pipeline_verification
 
 
 class _Result:
+    """집계 하나(`single`)로도, 행 목록(`for rec in ...`)으로도 쓰인다.
+
+    지표 쿼리는 `single()` 로 숫자 하나를 읽고, 2026-10-06 에 붙은 일관성 검사
+    (Policy↔Command)는 **행을 돈다**. 한쪽만 흉내 내면 그 검사가 가짜에서
+    `TypeError` 로 죽는다 — 실제로 그렇게 걸렸다.
+    """
+
     def __init__(self, value):
         self._value = value
 
     def single(self):
+        if isinstance(self._value, list):
+            return self._value[0] if self._value else None
         return None if self._value is None else {"c": self._value}
+
+    def __iter__(self):
+        return iter(self._value if isinstance(self._value, list) else [])
 
 
 class _Session:

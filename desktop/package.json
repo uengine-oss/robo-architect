@@ -28,7 +28,6 @@
     "typescript": "^5.5.0"
   },
   "dependencies": {
-    "electron-updater": "^6.3.0",
     "get-port": "^7.1.0",
     "neo4j-driver": "^5.28.3"
   }

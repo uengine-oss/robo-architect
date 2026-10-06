@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from api.features.ingestion.hybrid.policy_consistency import (
+    check_policy_targets,
+    duplicate_commands,
+)
 from api.platform.neo4j import get_session
 
 
@@ -116,6 +120,32 @@ def verify_pipeline_status(session_id: str) -> dict:
     grounding_ok = sourced_from > 0 if mapping_applicable else task_passages > 0
     prd_ready = es_ok and promoted_to > 0 and implements_bc > 0
 
+    # **보고만 한다.** `pipeline_ready` 를 뒤집지 않는다 — 새 검사가 기존 완주
+    # 판정을 바꾸면, 어제까지 끝났던 세션이 오늘 안 끝난 것이 된다.
+    #
+    # 세션을 새로 연다. 위 블록은 지표를 다 세고 닫혔고, 거기에 끼워 넣으면
+    # **지표 쿼리 하나가 실패할 때 이 검사까지 같이 죽는다**(그 반대도 마찬가지다).
+    with get_session() as s:
+        policy_rows = [
+            dict(rec)
+            for rec in s.run(
+                "MATCH (p:Policy {session_id: $sid}) "
+                "OPTIONAL MATCH (p)-[:INVOKES]->(c:Command) "
+                "RETURN p.name AS policy, p.description AS description, c.name AS command",
+                sid=session_id,
+            )
+        ]
+        command_names = [
+            rec["name"]
+            for rec in s.run(
+                "MATCH (c:Command {session_id: $sid}) RETURN c.name AS name", sid=session_id
+            )
+            if rec["name"]
+        ]
+
+    policy_check = check_policy_targets(policy_rows)
+    command_check = duplicate_commands(command_names)
+
     return {
         "session_id": session_id,
         "source_kind": source_kind,
@@ -152,6 +182,11 @@ def verify_pipeline_status(session_id: str) -> dict:
                 "total_questions": total_questions,
                 "attached_questions": attached_questions,
             },
+        },
+        # 세기만 하는 것들. 판정(`summary`)에는 안 들어간다 — 사람이 보고 정한다.
+        "consistency": {
+            "policy_targets": policy_check,
+            "commands": command_check,
         },
         "notes": [
             "BPM: BpmProcess/BpmTask 존재 여부",

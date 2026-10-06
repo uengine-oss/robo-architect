@@ -25,8 +25,12 @@
  * What this module does NOT do:
  *   - Build runtime artifacts (the Workspace release command owns that)
  *   - Stop the warm Docker stack on ordinary window close
- *   - Auto-restart loop with backoff after crash (T020 full)
- *   - Status-cycle pushes integrated with electron-updater (T031)
+ *   - Status-cycle pushes integrated with an auto-updater (T031 — 자동 갱신은
+ *     사내망 납품에 쓰지 않는다. 의존성도 지웠다)
+ *
+ * What this module DOES do since 2026-10-06:
+ *   - 떠 있던 백엔드가 죽으면 **상한을 두고 되살린다**(STAB-1 ⒝ ·
+ *     `shouldRestartAfterCrash`). 무한 재시작은 원인을 가리므로 창 안의 횟수를 센다
  */
 
 import { app } from "electron";
@@ -79,6 +83,49 @@ const READINESS_TIMEOUT_MS = 5 * 60_000;
 const READINESS_INITIAL_BACKOFF_MS = 200;
 const READINESS_MAX_BACKOFF_MS = 1_500;
 const STOP_GRACE_MS = 5_000;
+
+/**
+ * 떠 있던 백엔드가 죽었을 때 **몇 번까지 되살리나.**
+ *
+ * 10/1 저녁에 백엔드가 힙 손상(`0xC0000374`)으로 내려갔고, 그 뒤 앱은 **아무것도
+ * 하지 않았다** — 사람이 껐다 켜야 했다. 화면은 그냥 안 되는 상태로 남는다.
+ *
+ * 그렇다고 무한히 되살리면 더 나쁘다. 같은 이유로 계속 죽는 백엔드를 끝없이
+ * 다시 띄우면 **로그만 채우고 원인을 가린다** — 사람은 "느리다" 고만 느낀다.
+ * 그래서 창(window) 안에서 횟수를 센다. 넘으면 멈추고, **왜 멈췄는지 말한다.**
+ */
+export const CRASH_RESTART_LIMIT = 3;
+export const CRASH_WINDOW_MS = 10 * 60_000;
+
+/** 되살리기 전 기다리는 시간. 뒤로 갈수록 길다 — 즉사하는 고장에 매달리지 않는다. */
+export const CRASH_BACKOFF_MS = [2_000, 5_000, 15_000] as const;
+
+/**
+ * 이번 크래시에 **되살릴 것인가**.
+ *
+ * `history` 는 크래시 시각들(이번 것 포함)이다. 창 밖의 것은 센 적 없는 것으로
+ * 친다 — 어제 두 번 죽은 것이 오늘의 한 번을 막으면 안 된다.
+ *
+ * 순수 함수로 둔다. 타이머와 spawn 을 섞으면 **이 판정만 따로 잴 수 없다**.
+ */
+export function shouldRestartAfterCrash(
+  history: readonly number[],
+  now: number,
+  options: { limit?: number; windowMs?: number } = {},
+): { restart: boolean; recent: number; waitMs: number } {
+  const limit = options.limit ?? CRASH_RESTART_LIMIT;
+  const windowMs = options.windowMs ?? CRASH_WINDOW_MS;
+  const recent = history.filter((at) => now - at < windowMs).length;
+  const waitMs = CRASH_BACKOFF_MS[Math.min(recent, CRASH_BACKOFF_MS.length) - 1] ?? 0;
+  return { restart: recent <= limit, recent, waitMs };
+}
+
+/** 창 안의 크래시 시각들. 되살리기 판정이 이것만 본다. */
+const crashHistory: number[] = [];
+/** 우리가 내린 것인가. 내린 것을 되살리면 종료가 안 된다. */
+let intentionalStop = false;
+/** 되살리기가 예약돼 있는가. 두 번 예약하면 두 번 뜬다. */
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
 
 export interface BackendRuntime {
   port: number | null;
@@ -300,8 +347,38 @@ async function startBackendInternal(): Promise<{ port: number }> {
     const wasReady = runtime.status === "ready";
     runtime = { port: null, pid: null, status: runtime.status, detail: runtime.detail };
     if (child === spawned) child = null;
-    if (wasReady) {
-      setStatus("backend-crashed", `exit code=${code} signal=${signal ?? "none"}`);
+    if (wasReady && !intentionalStop) {
+      const detail = `exit code=${code} signal=${signal ?? "none"}`;
+      setStatus("backend-crashed", detail);
+      const now = Date.now();
+      crashHistory.push(now);
+      const verdict = shouldRestartAfterCrash(crashHistory, now);
+      log("warn", "backend.crash", {
+        detail,
+        recent: verdict.recent,
+        limit: CRASH_RESTART_LIMIT,
+        willRestart: verdict.restart,
+        waitMs: verdict.waitMs,
+      });
+      if (verdict.restart) {
+        // 사람이 아무것도 안 해도 돌아오게 한다. **다만 횟수를 센다.**
+        restartTimer = setTimeout(() => {
+          restartTimer = null;
+          void startBackend().catch((err) => {
+            log("error", "backend.crash_restart_failed", {
+              message: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }, verdict.waitMs);
+      } else {
+        // 멈추는 것도 결정이다 — **왜 멈췄는지** 말한다. 무한 재시작은 원인을 가린다.
+        setStatus(
+          "fatal",
+          `백엔드가 ${CRASH_WINDOW_MS / 60_000}분 안에 ${verdict.recent}번 죽었습니다. ` +
+            "되살리기를 멈춥니다 — 앱을 껐다 켜고, 그래도 같으면 로그를 담당자에게 보내 주세요 " +
+            `(마지막 사유: ${detail}).`,
+        );
+      }
     }
   });
 
@@ -312,6 +389,8 @@ async function startBackendInternal(): Promise<{ port: number }> {
     throw err;
   }
 
+  // 떴으면 다음 종료는 다시 "우리가 내린 것" 이 아니다.
+  intentionalStop = false;
   setStatus("ready");
   return { port };
 }
@@ -339,6 +418,12 @@ export async function retryBackend(): Promise<{ port: number }> {
 }
 
 export async function stopBackend(): Promise<void> {
+  // 우리가 내리는 것이다 — 아래 `exit` 핸들러가 이것을 크래시로 읽으면 안 된다.
+  intentionalStop = true;
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
   const c = child;
   if (!c || c.exitCode !== null) {
     child = null;

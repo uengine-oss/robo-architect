@@ -35,12 +35,27 @@ let installed = false
 // 헤더 없이 나가고 백엔드가 .env 로 폴백한다(계약).
 let neo4jHeaders = null
 
+/**
+ * **"없다" 도 기억한다.**
+ *
+ * 값이 있을 때만 캐시하면, 없는 구성(번들·중앙 DB 처럼 override 가 null 인 구성)에서
+ * **요청마다 IPC 를 한 번씩 더 보낸다** — 기동에 60~76회가 그렇게 나갔다(INFRA-1).
+ * 그렇다고 영영 기억하면, 사람이 런처에서 연결을 새로 고른 뒤에도 헤더가 안 붙어
+ * **조용히 .env 로 돌게 된다.** 그래서 없음만 짧게 기억한다.
+ */
+const NEGATIVE_TTL_MS = 30_000
+let noHeadersUntil = 0
+
 async function resolveNeo4jHeaders() {
   if (neo4jHeaders) return neo4jHeaders
+  if (Date.now() < noHeadersUntil) return null
   try {
     const res = await window.desktop?.connections?.resolveActiveForBackend?.()
     const conn = res?.ok ? res.data : null
-    if (!conn?.uri) return null
+    if (!conn?.uri) {
+      noHeadersUntil = Date.now() + NEGATIVE_TTL_MS
+      return null
+    }
     neo4jHeaders = {
       'X-Neo4j-Uri': conn.uri,
       'X-Neo4j-User': conn.user,
@@ -49,7 +64,10 @@ async function resolveNeo4jHeaders() {
     }
     return neo4jHeaders
   } catch {
-    return null // bridge 부재(브라우저) — 조용한 실패가 아니라 계약상 정상 폴백
+    // bridge 부재(브라우저) — 조용한 실패가 아니라 계약상 정상 폴백.
+    // 이쪽도 기억한다. 브라우저에서는 영영 없을 값이라 요청마다 물을 이유가 없다.
+    noHeadersUntil = Date.now() + NEGATIVE_TTL_MS
+    return null
   }
 }
 
