@@ -17,6 +17,8 @@ defineProps({
   depth: { type: Number, default: 0 },
   activePath: { type: String, default: '' },
   isOpen: { type: Function, required: true },
+  // 표시할 경로들. 생성 결과에는 안 쓰이고, 템플릿 트리가 '수정됨' 을 찍는 데 쓴다.
+  marked: { type: Object, default: null },
 })
 
 defineEmits(['toggle', 'open'])
@@ -34,6 +36,11 @@ defineEmits(['toggle', 'open'])
       <span class="gtn__caret">{{ node.dir ? (isOpen(node) ? '▾' : '▸') : '' }}</span>
       <FileIcon :name="node.name" :dir="node.dir" :open="isOpen(node)" />
       <span class="gtn__name">{{ node.name }}</span>
+      <span
+        v-if="marked && !node.dir && marked.has(node.path)"
+        class="gtn__mark"
+        title="원본과 다릅니다"
+      >●</span>
       <span v-if="node.dir" class="gtn__count">{{ node.children.length }}</span>
     </button>
 
@@ -45,6 +52,7 @@ defineEmits(['toggle', 'open'])
         :depth="depth + 1"
         :active-path="activePath"
         :is-open="isOpen"
+        :marked="marked"
         @toggle="$emit('toggle', $event)"
         @open="$emit('open', $event)"
       />
@@ -65,4 +73,5 @@ defineEmits(['toggle', 'open'])
 .gtn__caret { width: 10px; flex: none; color: var(--ccw-text-dim); }
 .gtn__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gtn__count { margin-left: auto; color: var(--ccw-text-dim); font-size: 11px; }
+.gtn__mark { margin-left: auto; color: var(--ccw-accent); font-size: 10px; }
 </style>

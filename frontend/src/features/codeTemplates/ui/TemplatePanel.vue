@@ -199,7 +199,7 @@ async function download() {
         :disabled="!templateFiles.length"
         @click="sourceMode = !sourceMode"
       >
-        템플릿 원본<span v-if="overriddenCount"> ({{ overriddenCount }} 수정됨)</span>
+        템플릿 수정모드<span v-if="overriddenCount"> ({{ overriddenCount }} 수정됨)</span>
       </button>
 
       <div class="tpl__spacer"></div>

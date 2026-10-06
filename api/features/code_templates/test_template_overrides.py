@@ -51,7 +51,7 @@ def templates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_덮어쓰지_않은_것은_원본_그대로다(templates: Path):
     files = {t.relative_path: t for t in repository.load_templates("set-a")}
-    assert set(files) == {"A.java", str(Path("sub/B.java"))}
+    assert set(files) == {"A.java", "sub/B.java"}
     assert all(t.source == "file" for t in files.values())
     assert files["A.java"].body == "class A {}\n"
 
@@ -64,7 +64,7 @@ def test_같은_경로는_DB_가_이긴다(templates: Path):
     assert files["A.java"].source == "db"
     assert files["A.java"].updated_by == "admin1"
     # 손대지 않은 것은 그대로다 — 한 장을 고쳤다고 묶음이 통째로 DB 가 되지 않는다.
-    assert files[str(Path("sub/B.java"))].source == "file"
+    assert files["sub/B.java"].source == "file"
 
 
 def test_DB_에만_있는_템플릿도_실린다(templates: Path):
@@ -78,10 +78,22 @@ def test_옵션_폼도_고친_설정을_본다(templates: Path):
     """설정 파일을 고쳤는데 입력 폼만 옛것이면, 고친 보람이 없다."""
     cfg = ("---\n<text-field :value.sync=\"value.serviceId\" label=\"서비스 ID\">"
            "</text-field>\n")
-    over = {str(Path("_template/configuration.html")): {
+    over = {"_template/configuration.html": {
         "body": cfg, "updated_at": None, "updated_by": None}}
     keys = [f["key"] for f in repository.config_fields_for("set-a", over)]
     assert keys == ["serviceId"]
+
+
+def test_상대경로는_늘_슬래시다(templates):
+    """윈도우의 `a\b` 가 그대로 나가면 화면이 **폴더를 못 만든다**(37장이 한 줄로
+    쏟아진다). DB 기본키와 URL 질의값이기도 해서 경계를 넘기 전에 고른다."""
+    paths = [t.relative_path for t in repository.load_templates("set-a")]
+    assert "sub/B.java" in paths
+    assert not any("\\" in p for p in paths)
+
+
+def test_옛_백슬래시_경로도_같은_파일을_가리킨다(templates):
+    assert repository.read_original("set-a", r"sub\B.java") is not None
 
 
 # ── ② 원본 ────────────────────────────────────────────────────────────────
@@ -109,8 +121,8 @@ class _Spy:
         self.saved: list[tuple] = []
         self.reverted: list[tuple] = []
 
-    def save(self, set_name, path, body, uid):
-        self.saved.append((set_name, path, body, uid))
+    def save(self, set_name, path, body, uid, *, original=None):
+        self.saved.append((set_name, path, body, uid, original))
         return {"set": set_name, "path": path, "bytes": len(body)}
 
     def revert(self, set_name, path, uid):

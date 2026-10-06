@@ -18,6 +18,7 @@
 import { computed, ref, watch } from 'vue'
 import { getTemplateFile, revertTemplateFile, saveTemplateFile } from '../api.js'
 import { useAuthStore } from '@/features/auth/auth.store.js'
+import GeneratedTree from './GeneratedTree.vue'
 
 const props = defineProps({
   setName: { type: String, required: true },
@@ -36,11 +37,19 @@ const error = ref(null)
 const notice = ref(null)
 const showOriginal = ref(false)
 
-/** 설정 파일도 템플릿이다 — 고칠 수 있어야 한다. 순서만 뒤로 둔다. */
-const list = computed(() =>
-  [...props.files].sort((a, b) =>
-    Number(a.isConfiguration) - Number(b.isConfiguration)
-    || a.relativePath.localeCompare(b.relativePath)),
+/**
+ * **원본의 폴더 구조 그대로 본다.**
+ *
+ * 처음에는 상대경로를 한 줄씩 늘어놓았는데, 37장이 평평하게 쏟아져 어느 계층의
+ * 무엇인지 읽히지 않았다(사용자 지적). 생성 결과와 **같은 트리 부품**을 쓴다 —
+ * 두 번째 탐색기를 만들면 둘이 어긋난다.
+ */
+const treeFiles = computed(() =>
+  props.files.map((f) => ({ ...f, path: f.relativePath })),
+)
+/** 원본과 다른 장들. 트리가 여기에 점을 찍는다. */
+const markedPaths = computed(
+  () => new Set(props.files.filter((f) => f.source === 'db').map((f) => f.relativePath)),
 )
 
 const dirty = computed(() => !!detail.value && draft.value !== detail.value.current)
@@ -125,26 +134,22 @@ function when(iso) {
 <template>
   <div class="tsrc">
     <nav class="tsrc__list">
-      <button
-        v-for="f in list"
-        :key="f.relativePath"
-        class="tsrc__item"
-        :class="{ 'tsrc__item--on': f.relativePath === path }"
-        @click="open(f.relativePath)"
-      >
-        <span class="tsrc__name">{{ f.relativePath }}</span>
-        <span v-if="f.source === 'db'" class="tsrc__tag" title="원본과 다릅니다">수정됨</span>
-        <span v-else-if="f.isConfiguration" class="tsrc__tag tsrc__tag--dim">설정</span>
-      </button>
+      <GeneratedTree
+        :files="treeFiles"
+        :active-path="path"
+        :marked="markedPaths"
+        @open="open($event.relativePath)"
+      />
     </nav>
 
     <section v-if="detail" class="tsrc__pane">
       <header class="tsrc__bar">
         <b class="tsrc__path">{{ detail.path }}</b>
+        <!-- 손댄 것만 말한다. 안 고친 장에까지 '원본 그대로' 를 붙이면 37줄이 전부
+             같은 말을 하고, 정작 다른 한 장이 묻힌다(사용자 지적). -->
         <span v-if="modified" class="tsrc__meta">
           {{ detail.updatedBy || '누군가' }} · {{ when(detail.updatedAt) }} 수정
         </span>
-        <span v-else class="tsrc__meta">원본 그대로</span>
 
         <div class="tsrc__spacer"></div>
 
@@ -161,6 +166,11 @@ function when(iso) {
 
       <p v-if="!canEdit" class="tsrc__note">
         읽기 전용입니다 — 템플릿 수정은 <b>관리자</b>만 할 수 있습니다.
+      </p>
+      <p v-if="detail.originalChanged" class="tsrc__note tsrc__note--warn">
+        <b>출고 템플릿이 그 뒤에 바뀌었습니다.</b>
+        이 수정본이 새 원본을 덮고 있습니다 — <b>원본 보기</b>로 비교한 뒤,
+        새것을 쓰려면 <b>원본으로 되돌리기</b>를 누르세요.
       </p>
       <p v-if="detail.hasFunctions" class="tsrc__note tsrc__note--warn">
         이 템플릿은 <code>&lt;function&gt;</code> 블록을 담고 있습니다.

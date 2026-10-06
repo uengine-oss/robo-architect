@@ -129,6 +129,14 @@ async def get_file(
             raise HTTPException(status_code=404, detail="그 이력 판이 없습니다.")
         current = body
     updated = (row or {}).get("updated_at")
+    # **출고 원본이 그 뒤에 바뀌었는가.** 고칠 때의 지문과 지금 산출물의 지문을
+    # 견준다. 다르면 이 행이 **새 원본을 덮고 있는 것**이고, 사람은 그 사실을 알
+    # 길이 없다 — 다음 설치본이 고친 템플릿이 조용히 묻히는 자리다.
+    saved_sha = (row or {}).get("original_sha")
+    original_changed = bool(
+        saved_sha and original is not None
+        and store.original_fingerprint(original) != saved_sha
+    )
     return {
         "set": set_name,
         "path": path,
@@ -140,6 +148,7 @@ async def get_file(
         "updatedAt": updated.isoformat() if hasattr(updated, "isoformat") else None,
         "updatedBy": (row or {}).get("updated_by"),
         "history": store.history(set_name, path),
+        "originalChanged": original_changed,
         # 이 글이 **실행되는가**. 화면이 경고를 띄울 근거다.
         "hasFunctions": "<function>" in (current or ""),
     }
@@ -165,9 +174,12 @@ async def save_file(
         repository.read_original(set_name, path)
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
     if not (body or "").strip():
         raise HTTPException(status_code=400, detail="빈 템플릿은 저장하지 않습니다.")
-    saved = store.save(set_name, path, body, uid)
+    # 고칠 때의 출고 원본을 **지문으로** 남긴다 — 나중에 산출물이 바뀌면 그것을 안다.
+    original = repository.read_original(set_name, path)
+    saved = store.save(set_name, path, body, uid, original=original)
     SmartLogger.log(
         "WARN", "코드 생성 템플릿 수정",
         category="code_templates.saved",

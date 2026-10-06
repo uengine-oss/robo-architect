@@ -36,6 +36,18 @@ TEMPLATES_ROOT = Path(__file__).resolve().parents[3] / "templates"
 _SKIP_DIRS = {".git", "node_modules", "__pycache__"}
 _SKIP_NAMES = {".gitkeep", ".gitignore", ".DS_Store"}
 
+def rel_path(path: Path, root: Path) -> str:
+    """묶음 안의 상대 경로. **구분자는 늘 `/` 다.**
+
+    `Path.relative_to` 는 윈도우에서 `a\b` 를 준다. 그 값이 그대로 —
+      · 화면의 트리 키가 되고(`/` 로만 쪼개면 **폴더가 안 생겨 한 줄로 쏟아진다**)
+      · DB 의 기본키가 되고(굽는 기계가 바뀌면 같은 파일이 다른 행이 된다)
+      · URL 질의값이 된다
+    그래서 경계를 넘기 전에 한 번만 고른다. 읽을 때는 둘 다 받는다(`read_original`).
+    """
+    return str(path.relative_to(root)).replace("\\", "/")
+
+
 _FRONT_MATTER_KEYS = ("forEach", "path", "fileName")
 _FUNCTION_BLOCK = re.compile(r"<function>(.*?)</function>", re.DOTALL)
 
@@ -180,7 +192,8 @@ def read_original(name: str, relative_path: str) -> str | None:
     가리키면 거부한다 — `resolve_set` 과 같은 규칙이다.
     """
     root = resolve_set(name)
-    candidate = (root / relative_path).resolve()
+    # 화면이 `/` 로 보내든 옛 기록이 `\` 로 들고 있든 같은 파일을 가리켜야 한다.
+    candidate = (root / (relative_path or "").replace("\\", "/")).resolve()
     if root not in candidate.parents and candidate.parent != root:
         raise ValueError(f"템플릿 경로가 올바르지 않습니다: {relative_path!r}")
     if not candidate.is_file():
@@ -211,7 +224,7 @@ def load_templates(name: str, overrides: dict[str, dict[str, Any]] | None = None
     rest = dict(overrides or {})
     out: list[TemplateFile] = []
     for p in _walk(root):
-        rel = str(p.relative_to(root))
+        rel = rel_path(p, root)
         over = rest.pop(rel, None)
         if over is not None:
             out.append(_from_override(rel, over))

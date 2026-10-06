@@ -7,6 +7,8 @@ import GeneratedTreeNode from './GeneratedTreeNode.vue'
 const props = defineProps({
   files: { type: Array, default: () => [] },
   activePath: { type: String, default: '' },
+  /** 점을 찍을 경로들(Set). 템플릿 트리가 '수정됨' 에 쓴다. */
+  marked: { type: Object, default: null },
 })
 const emit = defineEmits(['open'])
 
@@ -44,6 +46,7 @@ const isOpen = (node) => expanded.value.has(node.path)
       :depth="0"
       :active-path="activePath"
       :is-open="isOpen"
+      :marked="marked"
       @toggle="toggle"
       @open="emit('open', $event)"
     />

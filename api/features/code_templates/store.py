@@ -40,6 +40,7 @@ DB     고친 것만 한 줄씩 쌓인다. 같은 경로가 있으면 **DB 가 �
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Any, Optional
 
@@ -48,7 +49,8 @@ from api.platform.observability.smart_logger import SmartLogger
 
 __all__ = [
     "ensure_schema", "overrides", "override_counts", "get", "save", "revert",
-    "history", "history_body", "HISTORY_LIMIT", "UNAVAILABLE_BACKOFF_SECONDS",
+    "history", "history_body", "original_fingerprint",
+    "HISTORY_LIMIT", "UNAVAILABLE_BACKOFF_SECONDS",
 ]
 
 # 한 경로에 남기는 이력 수. 되돌리기용 꼬리이지 영구 보관소가 아니다.
@@ -63,6 +65,9 @@ CREATE TABLE IF NOT EXISTS public.app_code_templates (
     updated_by    TEXT,
     PRIMARY KEY (set_name, relative_path)
 );
+-- 고칠 때의 **출고 원본 지문**. 다음 설치본이 그 템플릿을 바꿨는데 이 행이
+-- 덮고 있으면, 사람은 새 원본을 영영 못 본다 — 그 사실을 화면이 말할 수 있게 둔다.
+ALTER TABLE public.app_code_templates ADD COLUMN IF NOT EXISTS original_sha TEXT;
 CREATE TABLE IF NOT EXISTS public.app_code_template_history (
     id            BIGSERIAL PRIMARY KEY,
     set_name      TEXT NOT NULL,
@@ -125,7 +130,7 @@ def overrides(set_name: str) -> dict[str, dict[str, Any]]:
     try:
         ensure_schema()
         rows = pg.query(
-            "SELECT relative_path, body, updated_at, updated_by "
+            "SELECT relative_path, body, updated_at, updated_by, original_sha "
             "  FROM public.app_code_templates WHERE set_name = %s",
             (set_name,),
         )
@@ -163,7 +168,7 @@ def get(set_name: str, relative_path: str) -> Optional[dict[str, Any]]:
     try:
         ensure_schema()
         rows = pg.query(
-            "SELECT relative_path, body, updated_at, updated_by "
+            "SELECT relative_path, body, updated_at, updated_by, original_sha "
             "  FROM public.app_code_templates WHERE set_name = %s AND relative_path = %s",
             (set_name, relative_path),
         )
@@ -174,7 +179,15 @@ def get(set_name: str, relative_path: str) -> Optional[dict[str, Any]]:
     return rows[0] if rows else None
 
 
-def save(set_name: str, relative_path: str, body: str, uid: str) -> dict[str, Any]:
+def original_fingerprint(text: Optional[str]) -> Optional[str]:
+    """출고 원본의 지문. 없으면 `None`(= DB 에만 있는 템플릿)."""
+    if text is None:
+        return None
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def save(set_name: str, relative_path: str, body: str, uid: str,
+         *, original: Optional[str] = None) -> dict[str, Any]:
     """고친 내용을 쓴다. **이력을 먼저 남긴다** — 쓰다 실패해도 앞판이 남게.
 
     실패하면 예외를 올린다. 읽기와 달리 **저장은 조용히 실패하면 안 된다** —
@@ -184,6 +197,7 @@ def save(set_name: str, relative_path: str, body: str, uid: str) -> dict[str, An
     global _unavailable_until
     _unavailable_until = 0.0
     ensure_schema()
+    sha = original_fingerprint(original)
     with pg.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -194,11 +208,12 @@ def save(set_name: str, relative_path: str, body: str, uid: str) -> dict[str, An
             )
             cur.execute(
                 "INSERT INTO public.app_code_templates "
-                "(set_name, relative_path, body, updated_at, updated_by) "
-                "VALUES (%s, %s, %s, now(), %s) "
+                "(set_name, relative_path, body, updated_at, updated_by, original_sha) "
+                "VALUES (%s, %s, %s, now(), %s, %s) "
                 "ON CONFLICT (set_name, relative_path) DO UPDATE "
-                "SET body = EXCLUDED.body, updated_at = now(), updated_by = EXCLUDED.updated_by",
-                (set_name, relative_path, body, uid or None),
+                "SET body = EXCLUDED.body, updated_at = now(), "
+                "    updated_by = EXCLUDED.updated_by, original_sha = EXCLUDED.original_sha",
+                (set_name, relative_path, body, uid or None, sha),
             )
             cur.execute(
                 "DELETE FROM public.app_code_template_history WHERE id IN ("
