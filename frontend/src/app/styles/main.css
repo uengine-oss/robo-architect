@@ -1049,16 +1049,20 @@ body {
 
    그래서 우리가 그린다. 쓰는 쪽은 이렇게 —
 
-       <span class="hint" data-tip="설명" tabindex="0">보조</span>
+       <span class="tipped" data-tip="설명" tabindex="0">보조</span>
 
    `tabindex` 를 주면 키보드로도 읽을 수 있다. `title` 은 **같이 두지 않는다** —
    둘 다 있으면 풍선 두 개가 겹쳐 보인다.
+
+   이름이 `hint` 가 아닌 이유: 이 저장소에는 `<p class="hint">설명 문장</p>` 이
+   **이미 50곳** 있다. 거기에 이 규칙이 걸리면 전부 물음표 커서가 되고, 호버하면
+   **빈 풍선**이 뜬다. 그래서 새 이름을 쓰고, `[data-tip]` 으로 한 번 더 좁힌다.
    ===================================================== */
-.hint {
+.tipped[data-tip] {
   position: relative;
   cursor: help;
 }
-.hint::after {
+.tipped[data-tip]::after {
   content: attr(data-tip);
   position: absolute;
   left: 0;
@@ -1083,10 +1087,10 @@ body {
   transition: opacity 0.12s ease 0.25s, visibility 0s linear 0.25s;
   pointer-events: none;
 }
-.hint:hover::after,
-.hint:focus-visible::after {
+.tipped[data-tip]:hover::after,
+.tipped[data-tip]:focus-visible::after {
   opacity: 1;
   visibility: visible;
 }
 /* 오른쪽 끝에 붙은 배지는 풍선이 화면 밖으로 나간다 — 그때만 오른쪽 정렬한다. */
-.hint--right::after { left: auto; right: 0; }
+.tipped--right[data-tip]::after { left: auto; right: 0; }

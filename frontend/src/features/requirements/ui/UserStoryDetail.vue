@@ -207,7 +207,7 @@ async function saveEdit() {
             <li v-for="rule in sourceRules" :key="rule.rule_id" class="source-rule-item"
                 :class="{ 'source-rule-item--supporting': rule.evidence_role === 'supporting' }">
               <span v-if="rule.evidence_role === 'supporting'"
-                    class="source-rule-role hint" tabindex="0"
+                    class="source-rule-role tipped" tabindex="0"
                     data-tip="이 룰의 주 근거는 다른 task 다. 중재에서 그쪽이 뽑혔고, 여기서는 지우지 않고 보조 근거로 남겼다.">보조</span>
               <span class="source-rule-stmt">{{ rule.statement }}</span>
               <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>

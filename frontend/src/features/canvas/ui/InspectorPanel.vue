@@ -4807,7 +4807,7 @@ function updateVoFieldValue(fieldName, value) {
                           말이다. 뜻을 모르면 중복으로만 보인다 — 호버로 알려 준다.
                         -->
                         <span v-if="rule.evidence_role === 'supporting'"
-                          class="trace-rule__role hint" tabindex="0"
+                          class="trace-rule__role tipped" tabindex="0"
                           data-tip="이 룰의 주 근거는 다른 task 다. 중재에서 그쪽이 뽑혔고, 여기서는 지우지 않고 보조 근거로 남겼다.">보조</span>
                         <!--
                           순번은 **있을 때만** 보여 준다. 영속 엣지 경로는 순번을
@@ -4817,12 +4817,12 @@ function updateVoFieldValue(fieldName, value) {
                           **컬럼에도 `__ext` 에도 없다**(68/68). 옛 유도 경로만
                           `BusinessLogic.sequence` 를 싣는다. 그쪽에서는 뜻이 있다.
                         -->
-                        <span v-if="rule.seq" class="trace-rule__seq hint" tabindex="0"
+                        <span v-if="rule.seq" class="trace-rule__seq tipped" tabindex="0"
                           :class="{ 'trace-rule__seq--coupled': rule.coupled_domain }"
                           data-tip="이 룰이 원본 함수 안에서 몇 번째인지(분석기가 매긴 순번)">
                           {{ rule.seq }}
                         </span>
-                        <span v-if="rule.coupled_domain" class="trace-rule__domain hint" tabindex="0"
+                        <span v-if="rule.coupled_domain" class="trace-rule__domain tipped" tabindex="0"
                           :data-tip="`이 룰이 다른 도메인(${rule.coupled_domain})과 얽혀 있다는 표시`">
                           ★{{ rule.coupled_domain }}
                         </span>
