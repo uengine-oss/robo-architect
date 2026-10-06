@@ -12,6 +12,7 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_OUTPUT,
     AI_AUDIT_LOG_FULL_PROMPT,
 )
+from api.features.ingestion.db_identity import adopt_db_identity
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.event_storming.nodes import EventList
 from api.features.ingestion.event_storming.prompts import EXTRACT_EVENTS_PROMPT, SYSTEM_PROMPT
@@ -53,13 +54,8 @@ async def _create_event_with_links(
         if not created_evt or not created_evt.get("id"):
             return None, f"bulk_create_events returned empty result for {name}"
 
-        # Overwrite LLM-proposed id with UUID from DB (only if evt is an object, not dict)
-        try:
-            if not isinstance(evt, dict):
-                evt.id = created_evt.get("id")
-                evt.key = created_evt.get("key")
-        except Exception:
-            pass
+        # LLM 이 지어낸 id 를 DB 가 돌려준 것으로 덮는다. 못 덮으면 WARN 이 남는다.
+        adopt_db_identity(evt, created_evt, kind="Event", name=name)
 
         # Link user stories (batch processing)
         us_ids = getattr(evt, "user_story_ids", []) or []

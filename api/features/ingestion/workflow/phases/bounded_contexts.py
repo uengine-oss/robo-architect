@@ -14,6 +14,7 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_OUTPUT,
     AI_AUDIT_LOG_FULL_PROMPT,
 )
+from api.features.ingestion.db_identity import adopt_db_identity
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.event_storming.nodes import BoundedContextList
 from api.features.ingestion.event_storming.prompts import IDENTIFY_BC_FROM_STORIES_PROMPT, SYSTEM_PROMPT
@@ -164,12 +165,8 @@ async def _create_bc_with_links(
             # 진짜 원인이 ValueError 로 덮여 로그에 남지 않는다.
             return None, [], f"bulk_create_bounded_contexts returned empty result for {bc_name}"
         
-        # Overwrite LLM-proposed id with UUID from DB (canonical) - only if bc is an object, not dict
-        try:
-            if not isinstance(bc, dict):
-                bc.id = created_bc.get("id")
-        except Exception:
-            pass
+        # LLM 이 지어낸 id 를 DB 가 돌려준 것으로 덮는다. 못 덮으면 WARN 이 남는다.
+        adopt_db_identity(bc, created_bc, kind="BoundedContext", name=bc_name, fields=("id",))
         # Preserve natural key (helps downstream property generation prompts)
         try:
             if not isinstance(bc, dict):
