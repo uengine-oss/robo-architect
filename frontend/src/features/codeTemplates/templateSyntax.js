@@ -33,6 +33,15 @@ export function bodyOf(text) {
  */
 export function syntaxError(text) {
   const rest = bodyOf(text)
+  // **태그 짝을 먼저 센다.** 이것이 Handlebars 컴파일로는 안 잡힌다 — 안 닫힌
+  // `<function>` 은 정규식에 안 걸리니 블록으로 **안 보이고**, 남은 JS 는
+  // Handlebars 에게 그냥 글자다. 그대로 저장되면 그 JavaScript 가 생성된
+  // 파일에 **본문으로 찍힌다**. 서버 검사(`syntax.py`)와 같은 규칙이다.
+  const opens = (rest.match(/<function>/g) || []).length
+  const closes = (rest.match(/<\/function>/g) || []).length
+  if (opens !== closes) {
+    return `\`<function>\` 태그의 짝이 맞지 않습니다 — 여는 것 ${opens}개, 닫는 것 ${closes}개.`
+  }
   const blocks = [...rest.matchAll(FUNCTION_BLOCK)]
   const body = rest.replace(FUNCTION_BLOCK, '')
   try {
