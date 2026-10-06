@@ -4808,7 +4808,7 @@ function updateVoFieldValue(fieldName, value) {
                         -->
                         <span v-if="rule.evidence_role === 'supporting'"
                           class="trace-rule__role tipped" tabindex="0"
-                          data-tip="이 룰의 주 근거는 다른 task 다. 중재에서 그쪽이 뽑혔고, 여기서는 지우지 않고 보조 근거로 남겼다.">보조</span>
+                          data-tip="이 룰은 다른 업무 단계에 더 가깝습니다. 여기서는 참고로만 함께 보여 줍니다 — 같은 룰이 두 곳에 보이는 이유입니다.">보조</span>
                         <!--
                           순번은 **있을 때만** 보여 준다. 영속 엣지 경로는 순번을
                           싣지 않아(`traceability.py` 의 `"seq": ""`) 전건이 '—' 로
@@ -4819,11 +4819,11 @@ function updateVoFieldValue(fieldName, value) {
                         -->
                         <span v-if="rule.seq" class="trace-rule__seq tipped" tabindex="0"
                           :class="{ 'trace-rule__seq--coupled': rule.coupled_domain }"
-                          data-tip="이 룰이 원본 함수 안에서 몇 번째인지(분석기가 매긴 순번)">
+                          data-tip="원본 코드에서 이 룰이 몇 번째로 나오는지">
                           {{ rule.seq }}
                         </span>
                         <span v-if="rule.coupled_domain" class="trace-rule__domain tipped" tabindex="0"
-                          :data-tip="`이 룰이 다른 도메인(${rule.coupled_domain})과 얽혀 있다는 표시`">
+                          :data-tip="`이 룰은 다른 업무(${rule.coupled_domain})와도 관련이 있습니다`">
                           ★{{ rule.coupled_domain }}
                         </span>
                         <span class="trace-rule__title">{{ rule.title }}</span>
