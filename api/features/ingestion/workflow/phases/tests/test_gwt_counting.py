@@ -150,3 +150,39 @@ def test_refs가_없으면_연결_문장을_건너뛴다() -> None:
     )
     assert ok is True
     assert len(session.queries) == 2, "upsert + clear 까지만 돈다"
+
+
+# ---------------------------------------------------------------------------
+# ③ 저장 못 했으면 **말한다** (2026-10-06)
+# ---------------------------------------------------------------------------
+#
+# ②는 "세지 않는다" 까지만 지켰다. 그런데 안 센 이유가 어디에도 남지 않으면,
+# 나중에 "이 Command 는 왜 GWT 가 없나" 를 물을 때 **답할 방법이 없다** — 설계상
+# 없는 것(Policy GWT 는 `if False:` 로 끈 상태다)과 사고로 없는 것이 같은 모양이
+# 된다. 기준 그래프에서 Command 17 중 GWT 15 를 보고 실제로 그 질문을 했고,
+# 둘이 비어 있던 이유를 **로그가 아니라 노드를 하나씩 뒤져서** 알아냈다
+# (중복 승격된 Command 두 벌이었다).
+
+def test_폴백이_아무것도_못_썼으면_로그로_말한다() -> None:
+    """실패를 세지 않는 것만으로는 부족하다 — **이유가 남아야** 한다."""
+    import inspect
+
+    from api.features.ingestion.workflow.phases import gwt as gwt_module
+
+    src = inspect.getsource(gwt_module._generate_gwt_for_command)
+    assert "ingestion.workflow.gwt.fallback_empty" in src, \
+        "폴백이 아무것도 안 썼을 때 말하지 않는다"
+    assert "ingestion.workflow.gwt.fallback_error" in src, \
+        "폴백 자체가 실패했을 때 말하지 않는다"
+
+
+def test_폴백_경로에_조용한_반환이_없다() -> None:
+    """`except Exception:` 다음에 바로 `return 0` 이 오면 사유가 사라진다."""
+    import inspect
+    import re
+
+    from api.features.ingestion.workflow.phases import gwt as gwt_module
+
+    src = inspect.getsource(gwt_module._generate_gwt_for_command)
+    silent = re.search(r"except\s+Exception\s*:\s*\n\s*return\s+0", src)
+    assert silent is None, "조용히 0 을 돌려주는 자리가 다시 생겼다"

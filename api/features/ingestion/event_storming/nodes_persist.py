@@ -1,5 +1,19 @@
 """
 Event Storming Nodes: persist generated artifacts into Neo4j
+
+## 앱은 이 파일을 부르지 않는다 (2026-10-06 확인)
+
+호출자를 따라가면 `graph.py` → `nodes.py` → **`cli.py`**(`uv run msaez run`) 하나뿐이다.
+앱의 적재는 `workflow/phases/*` 와 `hybrid/event_storming_bridge/promote_to_es` 로
+가고, 그쪽에서만 `event_storming.neo4j_client` 를 쓴다.
+
+**그래서 여기의 `except Exception: pass` 들은 고치지 않았다.** id 심기(5자리)와
+`upsert_gwt`(3자리)가 같은 모양으로 남아 있지만, 살아 있는 쪽은 이미 고쳐졌다
+(`db_identity.adopt_db_identity` · `phases/gwt.py` 의 ERROR/WARN). 죽은 코드에
+경고를 다는 것은 **고친 것처럼 보이게만 한다.**
+
+처분은 결정 사항이다 — spec-046 이 같은 이유로 데드 ES 클러스터 4파일을 지웠다.
+지울지 CLI 를 살릴지 정하기 전까지, 이 파일을 "살아 있는 적재 경로" 로 읽지 않는다.
 """
 
 from __future__ import annotations

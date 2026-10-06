@@ -781,8 +781,28 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     refs=fallback_refs,
                 )
             # 폴백도 마찬가지다 — 저장 못 했으면 0 이다.
+            if not saved:
+                SmartLogger.log(
+                    "WARN",
+                    f"GWT 폴백 저장이 아무 것도 쓰지 않았다 — Command {cmd_name} 에 GWT 가 없다",
+                    category="ingestion.workflow.gwt.fallback_empty",
+                    params={"session_id": ctx.session.id, "command_name": cmd_name,
+                            "command_id": cmd_id},
+                )
             return 1 if saved else 0
-        except Exception:
+        except Exception as fallback_error:  # noqa: BLE001 — 한 Command 때문에 단계를 세우지 않는다
+            # **여기서 말하지 않으면 그 Command 는 GWT 없이 조용히 지나간다.**
+            # 바깥의 `command_error` 는 "생성이 실패했다" 까지만 말한다 — 폴백까지
+            # 실패했다는 사실은 이 줄에만 남는다. 나중에 "이 Command 는 왜 GWT 가
+            # 없나" 를 물을 때, 답이 로그에 있어야 한다(그 수를 세어 설계인지
+            # 사고인지 가린다).
+            SmartLogger.log(
+                "WARN",
+                f"GWT 폴백 저장도 실패했다 — Command {cmd_name}: {fallback_error}",
+                category="ingestion.workflow.gwt.fallback_error",
+                params={"session_id": ctx.session.id, "command_name": cmd_name,
+                        "command_id": cmd_id, "error": str(fallback_error)},
+            )
             return 0
 
 
