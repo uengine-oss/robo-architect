@@ -11,6 +11,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import JSZip from 'jszip'
 import { getContext, listFiles, listSessions, listSets } from '../api.js'
+import { useProjectsStore } from '@/features/projects/projects.store.js'
 import { renderAll } from '../renderer.js'
 import { buildTree, collapseChains, firstFile } from '../tree.js'
 import GeneratedTree from './GeneratedTree.vue'
@@ -20,6 +21,10 @@ import TemplateSourcePanel from './TemplateSourcePanel.vue'
 // POSCO DX 템플릿이 기본이자 사실상 유일한 묶음이다. 다른 것이 받아져 있을
 // 때만 고를 수 있게 한다 — 하나뿐이면 선택지를 보여 줄 이유가 없다.
 const DEFAULT_SET = 'template-poscodx'
+
+const projects = useProjectsStore()
+/** 지금 고른 프로젝트의 이름. 세션은 이 프로젝트 안의 것들이다. */
+const projectName = computed(() => projects.currentName || '프로젝트')
 
 const sets = ref([])
 const setName = ref(DEFAULT_SET)
@@ -54,15 +59,27 @@ const overriddenCount = computed(
 )
 const serviceId = computed(() => options.value.serviceId || '')
 
-/** 세션 이름에서 자바 패키지 한 마디로 쓸 만한 기본값을 만든다. */
+/** 자바 패키지 한 마디로 쓸 만한 기본값을 만든다. 영문이 없으면 빈 값이다. */
 function suggestServiceId(name) {
   const ascii = (name || '').replace(/[^0-9A-Za-z]+/g, '')
   return ascii ? ascii.charAt(0).toLowerCase() + ascii.slice(1) : ''
 }
 
-// 세션 이름에서 만든 값을 채워 두되, 사용자가 고친 항목은 건드리지 않는다.
-watch([sessionId, optionFields], () => {
-  const suggested = suggestServiceId(currentSession.value?.name) || sessionId.value
+/**
+ * 기본값은 **프로젝트 이름**에서 만든다.
+ *
+ * 전에는 세션 이름(= 첫 프로세스 이름)에서 만들고, 영문이 하나도 없으면
+ * **세션 아이디로 떨어졌다** — 그래서 패키지가 `com.poscodx.0eb8e37f.…` 가 됐다.
+ * 사람이 읽을 수 없는 값이고 자바 패키지로도 뜻이 없다. 이름이 전부 한글이면
+ * **비워 둔다** — 비면 생성 버튼이 입력을 요구하므로, 지어내는 것보다 낫다.
+ */
+function suggestedServiceId() {
+  return suggestServiceId(projectName.value) || suggestServiceId(currentSession.value?.name) || ''
+}
+
+// 기본값을 채워 두되, 사용자가 고친 항목은 건드리지 않는다.
+watch([sessionId, optionFields, projectName], () => {
+  const suggested = suggestedServiceId()
   const next = { ...options.value }
   for (const f of optionFields.value) {
     if (editedKeys.value.has(f.key)) continue
@@ -159,10 +176,12 @@ async function download() {
   <div class="tpl">
     <header class="tpl__toolbar">
       <div class="tpl__field">
-        <label>세션</label>
+        <label>프로젝트 · 세션</label>
         <select v-model="sessionId" :disabled="!sessions.length">
-          <option v-for="s in sessions" :key="s.id" :value="s.id">
-            {{ s.name }} — BC {{ s.boundedContexts }}
+          <!-- 세션 아이디(`0eb8e37f`)는 사람이 고를 수 있는 이름이 아니다.
+               **프로젝트 이름**을 앞에 두고, 세션은 그 안의 판으로 읽히게 한다. -->
+          <option v-for="s in sessions" :key="s.id" :value="s.id" :title="s.id">
+            {{ projectName }} · {{ s.name === s.id ? '이름 없는 판' : s.name }} — BC {{ s.boundedContexts }}
           </option>
         </select>
       </div>
@@ -203,9 +222,14 @@ async function download() {
       </button>
 
       <div class="tpl__spacer"></div>
+      <!-- 무슨 값인지 말해 준다. 전에는 `com.poscodx.0eb8e37f.<boundedContext>` 가
+           아무 설명 없이 떠 있어 읽는 사람이 뜻을 알 수 없었다. -->
       <span class="tpl__pkg">
+        <span class="tpl__pkglabel">생성 패키지</span>
         com.poscodx.<b>{{ serviceId || 'serviceId' }}</b>.&lt;boundedContext&gt;
-        <template v-if="!hasChoice"> · {{ setName || '템플릿 없음' }}</template>
+        <template v-if="!hasChoice">
+          <span class="tpl__pkglabel">템플릿</span>{{ setName || '없음' }}
+        </template>
       </span>
     </header>
 
@@ -213,10 +237,21 @@ async function download() {
       {{ setsHint }} <span class="tpl__dim">{{ templatesRoot }}</span>
     </p>
     <p v-if="error" class="tpl__banner tpl__banner--err">{{ error }}</p>
-    <p v-if="result?.errors?.length" class="tpl__banner tpl__banner--warn">
-      템플릿 {{ result.errors.length }}건이 렌더링되지 않았습니다 —
-      <span class="tpl__dim">{{ result.errors[0].template }}: {{ result.errors[0].error }}</span>
-    </p>
+    <!-- 템플릿을 고칠 수 있게 되면서 **문법 오류가 흔한 일**이 됐다. 첫 줄만
+         보여 주면 어느 장이 왜 깨졌는지 알 수 없다 — 다 보여 준다. -->
+    <div v-if="result?.errors?.length" class="tpl__banner tpl__banner--err">
+      <b>템플릿 {{ result.errors.length }}건이 렌더링되지 않았습니다.</b>
+      <span class="tpl__dim">수정모드에서 그 장을 열어 고치거나 원본으로 되돌리세요.</span>
+      <ul class="tpl__errs">
+        <li v-for="(e, i) in result.errors.slice(0, 8)" :key="i">
+          <code>{{ e.template }}</code>
+          <span v-if="e.item"> · {{ e.item }}</span> — {{ e.error }}
+        </li>
+      </ul>
+      <span v-if="result.errors.length > 8" class="tpl__dim">
+        그 밖에 {{ result.errors.length - 8 }}건 더
+      </span>
+    </div>
 
     <TemplateSourcePanel
       v-if="sourceMode"
@@ -286,6 +321,15 @@ async function download() {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .tpl__pkg b { color: var(--ccw-text-muted); font-weight: 600; }
+.tpl__pkglabel {
+  margin-right: 5px; padding: 0 5px; border-radius: 7px; font-size: 10px;
+  color: var(--ccw-text-dim); border: 1px solid var(--ccw-border);
+  font-family: inherit;
+}
+.tpl__pkglabel:not(:first-child) { margin-left: 10px; }
+.tpl__errs { margin: 4px 0 0; padding-left: 18px; }
+.tpl__errs li { margin: 1px 0; }
+.tpl__errs code { color: var(--ccw-text-muted); }
 
 .tpl__banner { margin: 0; padding: 6px 12px; font-size: 12px;
   border-bottom: 1px solid var(--ccw-border); }

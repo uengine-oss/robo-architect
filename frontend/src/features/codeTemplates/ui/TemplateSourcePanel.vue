@@ -19,6 +19,7 @@ import { computed, ref, watch } from 'vue'
 import { getTemplateFile, revertTemplateFile, saveTemplateFile } from '../api.js'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import GeneratedTree from './GeneratedTree.vue'
+import { syntaxError } from '../templateSyntax.js'
 
 const props = defineProps({
   setName: { type: String, required: true },
@@ -77,6 +78,12 @@ watch(() => props.setName, () => { path.value = ''; detail.value = null })
 
 async function save() {
   if (!canEdit.value || !dirty.value || busy.value) return
+  const bad = syntaxError(draft.value)
+  if (bad) {
+    notice.value = null
+    error.value = bad + ' — 저장하지 않았습니다.'
+    return
+  }
   busy.value = true
   error.value = null
   try {
