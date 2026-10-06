@@ -192,3 +192,36 @@ def test_묶음_밖_경로는_저장도_거부한다(templates: Path, spy: _Spy,
         _run(router.save_file(None, "set-a", path="../escape.java", body="x"))
     assert e.value.status_code == 400
     assert spy.saved == []
+
+
+# ── ④ 문법 (TPL-2) ─────────────────────────────────────────────────────────
+#
+# 화면은 저장 전에 Handlebars 를 컴파일해 막는다. **그 문을 지나지 않는 길이
+# 있었다** — API 직접 호출. 저장된 한 장은 모든 PC 가 쓰므로 쓰는 자리에서도 본다.
+# 검사기 자체는 `test_template_syntax.py` 가 센다. 여기서는 **라우트가 그것을
+# 실제로 부르는가**만 본다.
+
+def test_깨진_템플릿은_저장하지_않는다(templates: Path, spy: _Spy,
+                                             monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(router, "require_admin", lambda _r: "ADMIN-1")
+    with pytest.raises(HTTPException) as e:
+        _run(router.save_file(
+            None, "set-a", path="A.java",
+            body="forEach: Aggregate\npath: p\n---\nclass {{name}}};\n"))
+    assert e.value.status_code == 400
+    # 자기 자바 코드를 의심하지 않도록 **무엇이 깨졌는지**를 말한다.
+    assert "템플릿 문법" in e.value.detail
+    assert spy.saved == []
+
+
+def test_멀쩡한_템플릿은_그대로_저장된다(templates: Path, spy: _Spy,
+                                                 monkeypatch: pytest.MonkeyPatch):
+    """문을 세웠으니 **멀쩡한 것이 지나가는지**도 같은 자리에서 못으로 박는다."""
+    monkeypatch.setattr(router, "require_admin", lambda _r: "ADMIN-1")
+    body = ("forEach: Aggregate\npath: p\nfileName: {{name}}.java\n---\n"
+            "{{#fieldDescriptors}}{{^if (isPrimitive className)}}"
+            "import {{className}};{{/if}}{{/fieldDescriptors}}\n"
+            "<function>\nfunction f(s) { return s.replace(/[{}]/g, '') }\n</function>\n")
+    out = _run(router.save_file(None, "set-a", path="A.java", body=body))
+    assert out["saved"] is True
+    assert spy.saved[0][2] == body

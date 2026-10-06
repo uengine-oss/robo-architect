@@ -20,6 +20,7 @@ from api.features.accounts.guard import require_admin
 from api.features.code_templates import context as ctx_builder
 from api.features.code_templates import repository
 from api.features.code_templates import store
+from api.features.code_templates import syntax
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -177,6 +178,19 @@ async def save_file(
 
     if not (body or "").strip():
         raise HTTPException(status_code=400, detail="빈 템플릿은 저장하지 않습니다.")
+    # **깨진 템플릿을 받지 않는다** (TPL-2). 화면도 저장 전에 같은 것을 보지만
+    # (`templateSyntax.js`), API 를 직접 부르면 그 문을 지나지 않는다 — 그리고 이
+    # 저장은 **모든 PC 의 코드 생성**이 쓰는 한 장이 된다. 거절은 로그에 남긴다:
+    # 화면을 거쳤다면 여기까지 올 일이 없으므로, 남으면 그 자체가 신호다.
+    bad = syntax.syntax_error(body)
+    if bad:
+        SmartLogger.log(
+            "WARN", "깨진 코드 생성 템플릿을 거절했다",
+            category="code_templates.rejected",
+            params={**http_context(request), "set": set_name, "path": path,
+                    "uid": uid, "reason": bad},
+        )
+        raise HTTPException(status_code=400, detail=f"{bad} 저장하지 않았습니다.")
     # 고칠 때의 출고 원본을 **지문으로** 남긴다 — 나중에 산출물이 바뀌면 그것을 안다.
     original = repository.read_original(set_name, path)
     saved = store.save(set_name, path, body, uid, original=original)
