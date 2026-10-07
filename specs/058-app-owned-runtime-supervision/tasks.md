@@ -243,7 +243,23 @@ description: "Task list — 058 설치본 런타임 감독과 복구"
 - [X] T017 [P] `desktop/src/main/service-catalog.ts` 를 만든다 — 서비스 9개와 각 서비스가 막는 기능(`Capability`)의 대응표. compose 의 `org.uengine.robo.component` 값과 id 를 일치시킨다 (공통)
 - [X] T018 `desktop/src/main/supervisor.ts` 의 뼈대를 만든다 — 프로브 주기(health 5초 · capability 60초), 상태 전이(`pending→starting→ready/degraded/failed/stopped`), 변경 시에만 푸시 (공통)
 - [X] T019 `desktop/src/main/ipc.ts`·`index.ts`·`preload/index.ts` 에 `runtime:onStatus`·`runtime:retryService`·`runtime:stopEngine`·`runtime:openDiagnostics` 를 등록한다. **`app:getRuntimeState`·`app:onBackendStatus` 는 계속 동작해야 한다** — `ClaudeCodeTerminal.vue`·`workspace.api.js` 가 쓴다 (공통)
-- [ ] T020 하위 호환 회귀 검사를 `desktop/tests/` 에 만든다 — 기존 두 채널의 반환 형태가 안 깨지는지. 필드를 하나 지워 검사가 무는 것을 확인한다 (공통)
+- [X] T020 하위 호환 회귀 검사를 `desktop/tests/` 에 만든다 — 기존 두 채널의 반환 형태가 안 깨지는지. 필드를 하나 지워 검사가 무는 것을 확인한다 (공통)
+> **T020 실측 (2026-10-07, 윈)**
+>
+> 타입은 런타임에 사라지므로 `RuntimeState` 를 객체로 검사할 수 없다. 그래서
+> **소스를 읽어 `buildRuntimeState()` 가 실제로 싣는 키**를 센다
+> (`desktop/tests/unit/legacy-channels-compat.spec.ts`, 검사 5개).
+>
+> 지키는 것은 옛 필수 필드 아홉과 `...base` 전개, `BackendStatusEvent` 의 세 필드,
+> 그리고 `status` 가 **옛 여덟 말만** 돌려주는 것이다 — 감독이 붙은 뒤에도.
+>
+> **필드를 하나 지워 무는 것을 봤다** — `backendPort: be.port,` 를 빼니
+> "buildRuntimeState() 가 안 싣는 옛 필드: backendPort" 로 물었다(1 failed).
+> 되돌리니 5개 통과. 그 필드가 유일한 근거인 자리가 셋이다 —
+> `ClaudeCodeTerminal.vue` · `workspace.api.js` · `FigmaBindingModal.vue`.
+> 빠지면 화면이 "Analyzer 로드 중…" 에서 멎는다(9/29 에 본 그 모양).
+>
+> 단위 검사 **231개 전부 통과**.
 > **T016~T020 실측 (2026-10-07, 윈)**
 >
 > 닫은 셋은 **스펙이 적은 자리와 다른 곳**에 들어갔다. 적어 두지 않으면 다음 사람이
