@@ -239,11 +239,29 @@ description: "Task list — 058 설치본 런타임 감독과 복구"
 
 ### 공통 타입과 뼈대
 
-- [ ] T016 [P] `desktop/src/shared/ipc-contract.ts` 에 `ManagedService`·`Capability`·`ProbeResult`·`GraphGuard` 를 더하고 `RuntimeState` 를 확장한다. **기존 필드는 지우지 않는다** — `status` 는 파생값으로 유지 (공통)
-- [ ] T017 [P] `desktop/src/main/service-catalog.ts` 를 만든다 — 서비스 9개와 각 서비스가 막는 기능(`Capability`)의 대응표. compose 의 `org.uengine.robo.component` 값과 id 를 일치시킨다 (공통)
-- [ ] T018 `desktop/src/main/supervisor.ts` 의 뼈대를 만든다 — 프로브 주기(health 5초 · capability 60초), 상태 전이(`pending→starting→ready/degraded/failed/stopped`), 변경 시에만 푸시 (공통)
-- [ ] T019 `desktop/src/main/ipc.ts`·`index.ts`·`preload/index.ts` 에 `runtime:onStatus`·`runtime:retryService`·`runtime:stopEngine`·`runtime:openDiagnostics` 를 등록한다. **`app:getRuntimeState`·`app:onBackendStatus` 는 계속 동작해야 한다** — `ClaudeCodeTerminal.vue`·`workspace.api.js` 가 쓴다 (공통)
+- [X] T016 [P] `desktop/src/shared/ipc-contract.ts` 에 `ManagedService`·`Capability`·`ProbeResult`·`GraphGuard` 를 더하고 `RuntimeState` 를 확장한다. **기존 필드는 지우지 않는다** — `status` 는 파생값으로 유지 (공통)
+- [X] T017 [P] `desktop/src/main/service-catalog.ts` 를 만든다 — 서비스 9개와 각 서비스가 막는 기능(`Capability`)의 대응표. compose 의 `org.uengine.robo.component` 값과 id 를 일치시킨다 (공통)
+- [X] T018 `desktop/src/main/supervisor.ts` 의 뼈대를 만든다 — 프로브 주기(health 5초 · capability 60초), 상태 전이(`pending→starting→ready/degraded/failed/stopped`), 변경 시에만 푸시 (공통)
+- [X] T019 `desktop/src/main/ipc.ts`·`index.ts`·`preload/index.ts` 에 `runtime:onStatus`·`runtime:retryService`·`runtime:stopEngine`·`runtime:openDiagnostics` 를 등록한다. **`app:getRuntimeState`·`app:onBackendStatus` 는 계속 동작해야 한다** — `ClaudeCodeTerminal.vue`·`workspace.api.js` 가 쓴다 (공통)
 - [ ] T020 하위 호환 회귀 검사를 `desktop/tests/` 에 만든다 — 기존 두 채널의 반환 형태가 안 깨지는지. 필드를 하나 지워 검사가 무는 것을 확인한다 (공통)
+> **T016~T020 실측 (2026-10-07, 윈)**
+>
+> 닫은 셋은 **스펙이 적은 자리와 다른 곳**에 들어갔다. 적어 두지 않으면 다음 사람이
+> 없는 파일을 찾는다.
+>
+> ```
+> T016  타입은 `shared/runtime-contract.ts` 에 선언하고 `ipc-contract.ts` 가 재수출한다.
+>       `RuntimeState.status` 는 그대로 남아 있다(지우지 않았다)
+> T017  `service-catalog.ts` 는 **안 만들었다** — 같은 표가 `runtime-contract.ts` 의
+>       `CAPABILITY_REQUIREMENTS` 다. 서비스는 아홉이 아니라 **열**이다(`architect` 포함)
+> T018  뼈대를 둘로 갈랐다 — 판정은 `supervisor.ts`, **주기는 `supervision.ts`**.
+>       한 파일에 두면 판정 검사가 시간을 기다려야 한다
+> T019  채널·스토어는 이미 있었고 **없던 것은 미는 쪽**이었다 — `applyProbe` 호출자가
+>       저장소 전체에서 0개였다(`enterprise-done7` §142·§147)
+> ```
+>
+> **T020 은 열린 채다.** 기존 두 채널(`app:getRuntimeState`·`app:onBackendStatus`)을
+> 거는 검사가 `desktop/tests/` 에 **0건이다**(2026-10-07 에 세었다).
 
 ---
 
@@ -408,11 +426,28 @@ start.sh                컨테이너 안에서 빌드한 뒤 psql·bolt 를 손�
 - [X] T025 [US1] `supervisor.ts` 가 프로브 결과를 `ManagedService.state` 로 옮기게 한다 — **health 만 통과한 서비스는 `ready` 가 아니다**(`starting`). capability 실패이면서 컨테이너가 살아 있으면 `degraded` (맥)
 - [X] T026 [P] [US1] `frontend/src/features/runtime-status/runtime.store.js` 를 만든다 — `runtime:onStatus` 구독. **지금 `frontend/src` 에는 이 구독이 0건이다** (공통)
 - [ ] T087 [US1] **설정이 가리키는 LLM config 이 이미지에 실재하는지** 검사하는 관문을 더한다 — 2026-09-18 실측: `ROBO_LLM_CONFIG=qwen38_sglang_local` 인데 이미지에는 `qwen36_sglang_local.yaml` 뿐이었다(한 자리 차이). compose 는 healthy, `GET /` 는 200, 실패는 **첫 LLM 호출**에서 난다. 릴리스 환경 검사(`robo-workspace` PR #2 의 `forbiddenValuePatterns` 자리)가 "값이 맞는가" 는 보지만 "그 이름이 이미지에 있는가" 는 안 본다 (공통)
-- [ ] T027 [P] [US1] `frontend/src/features/runtime-status/StartupGate.vue` 를 만든다 — 기동 단계를 이름과 함께 보여주고, **마지막 진전 시각**을 표시해 "오래 걸리는 중"과 "멎었다"를 구분한다. 무한 대기 금지 (윈)
-- [ ] T028 [P] [US1] `frontend/src/features/runtime-status/RuntimeStatusPanel.vue` 를 만든다 — 서비스별 상태 · 앱 소유/외부 구분 · 실패 시 영향받는 기능과 복구 동작 (윈)
-- [ ] T029 [US1] 준비 안 된 기능의 진입을 막는다 — `capabilities[].state !== 'available'` 이면 그 탭·버튼이 이유를 말하거나 비활성. **조용히 빈 화면을 주지 않는다** (윈)
+- [X] T027 [P] [US1] `frontend/src/features/runtime-status/StartupGate.vue` 를 만든다 — 기동 단계를 이름과 함께 보여주고, **마지막 진전 시각**을 표시해 "오래 걸리는 중"과 "멎었다"를 구분한다. 무한 대기 금지 (윈)
+- [X] T028 [P] [US1] `frontend/src/features/runtime-status/RuntimeStatusPanel.vue` 를 만든다 — 서비스별 상태 · 앱 소유/외부 구분 · 실패 시 영향받는 기능과 복구 동작 (윈)
+- [X] T029 [US1] 준비 안 된 기능의 진입을 막는다 — `capabilities[].state !== 'available'` 이면 그 탭·버튼이 이유를 말하거나 비활성. **조용히 빈 화면을 주지 않는다** (윈)
 - [ ] T030 [US1] 컨테이너 실행 환경 자체가 없는 경우를 화면에서 다룬다 — `dockerAvailable: false` 일 때 "무엇을 준비해야 하는가"와 다시 시도하는 길 (윈)
 - [ ] T031 [US1] 화면 검사를 `frontend/tests/runtime-status.spec.ts` 에 만든다 — 서비스를 하나씩 죽여 **모든 경우에** 이름·기능·복구 방법이 나오는지(누락 0건, SC-002). 실 프로젝트를 열면 되돌리기를 먼저 만든다 (윈)
+> **T027~T031 실측 (2026-10-07, 윈)**
+>
+> 화면 셋은 `features/runtime-status/`**`ui/`** 아래다 — 스펙이 적은 경로보다 한 겹
+> 깊다(`StartupGate.vue` · `RuntimeStatusPanel.vue` · 그리고 스펙에 없던
+> `RuntimeStatusBanner.vue`). 배너를 더한 이유는 **상태를 탭 하나로 두면 아무도 안 보기**
+> 때문이다 — 고장은 사람이 다른 일을 하는 중에 난다.
+>
+> **T029 는 좁게 닫았다.** 모든 탭·버튼이 아니라 **이름 붙은 두 자리**(레거시 탭 ·
+> 적재 모달)만 막는다. 판정이 틀릴 수 있는 동안 넓게 막으면 **막는 범위가 곧 피해
+> 범위다** — 그날 아침 배선이 두 서비스를 잘못 적어 `failed` 로 보고했다(§145).
+>
+> **T030·T031 은 열린 채다.** T031 의 쓸기는 손으로 한 번 쟀고(여덟을 하나씩 내렸다
+> 올려 **8/8 이름과 이유 · 8/8 복귀**, §148) 그 스크립트를
+> `scripts/verify_runtime_service_sweep.py` 로 들였다 — 다시 돌릴 수 없는 측정은
+> 측정이 아니다. 남은 것은 **화면 쪽 spec** 과 아직 한 번도 못 본 `degraded`
+> (T024 처럼 자격을 깨야 보인다) · 성격이 다른 둘(`architect` 호스트 프로세스 ·
+> `graph` 중앙 DB).
 - [X] T032 [US1] 서버 쪽 검사를 `scripts/verify_runtime_supervision.py` 에 만든다 — 프로브 판정과 컨테이너 물리 상태가 일치하는지. **비밀정보를 출력에 남기지 않는다** (맥)
 
 > **T021·T023·T024·T025·T026·T032 실측 (2026-09-18, 맥)**
