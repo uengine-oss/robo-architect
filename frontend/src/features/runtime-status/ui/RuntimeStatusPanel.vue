@@ -33,6 +33,11 @@
 import { computed, ref } from 'vue'
 import { useRuntimeStore } from '../runtime.store.js'
 
+const props = defineProps({
+  /** 배너 안에 들어갈 때는 제목을 숨긴다 — 배너가 이미 같은 말을 했다. */
+  embedded: { type: Boolean, default: false },
+})
+
 const runtime = useRuntimeStore()
 const busyService = ref(null)
 const actionError = ref(null)
@@ -89,8 +94,8 @@ async function diagnostics(serviceId) {
 
 <template>
   <section class="rts">
-    <header class="rts__head">
-      <h3 class="rts__title">실행 상태</h3>
+    <header v-if="!props.embedded || runtime.releaseId" class="rts__head">
+      <h3 v-if="!props.embedded" class="rts__title">실행 상태</h3>
       <span v-if="runtime.releaseId" class="rts__release">{{ runtime.releaseId }}</span>
     </header>
 

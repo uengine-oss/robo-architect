@@ -221,6 +221,21 @@ export const RUNTIME_CHANNELS = {
 /** graph 분리가 깨지면 못 쓰는 기능들. 분석은 대상 graph 를 비우고 다시 쓴다. */
 export const GUARD_DEPENDENT_CAPABILITIES: readonly CapabilityId[] = ["legacy-analysis"];
 
+/**
+ * 조사를 **받침으로 고른다** — `이(가)` 는 읽는 사람에게 기계가 쓴 문장으로 보인다.
+ *
+ * 이 문장이 보이는 자리는 **무언가 고장 난 화면**이다. 거기서까지 어색하면,
+ * 읽는 사람은 설명을 덜 믿는다. 한글이 아닌 끝(영문·숫자)은 `이` 로 둔다 —
+ * 서비스 이름이 `pdf2bpmn` 처럼 영문일 수 있다.
+ */
+function subjectParticle(word: string): string {
+  const last = (word || "").trim().slice(-1);
+  if (!last) return "이";
+  const code = last.charCodeAt(0);
+  if (code < 0xac00 || code > 0xd7a3) return "이";
+  return (code - 0xac00) % 28 === 0 ? "가" : "이";
+}
+
 export function deriveCapabilities(
   services: ManagedService[],
   guard?: GraphGuard | null,
@@ -242,13 +257,13 @@ export function deriveCapabilities(
       blockedReason = `상태를 확인하지 못한 서비스가 있습니다: ${missing.join(", ")}`;
     } else if (broken.length > 0) {
       state = "unavailable";
-      blockedReason = `${describe(broken)} 이(가) 준비되지 않았습니다. 런타임 상태에서 다시 시도할 수 있습니다.`;
+      blockedReason = `${describe(broken)}${subjectParticle(describe(broken))} 준비되지 않았습니다. 런타임 상태에서 다시 시도할 수 있습니다.`;
     } else if (waiting.length > 0) {
       state = "unavailable";
-      blockedReason = `${describe(waiting)} 이(가) 기동 중입니다. 잠시 뒤 다시 시도하세요.`;
+      blockedReason = `${describe(waiting)}${subjectParticle(describe(waiting))} 기동 중입니다. 잠시 뒤 다시 시도하세요.`;
     } else if (degraded.length > 0) {
       state = "degraded";
-      blockedReason = `${describe(degraded)} 이(가) 떴지만 일할 수 없는 상태입니다. 설정을 확인하세요.`;
+      blockedReason = `${describe(degraded)}${subjectParticle(describe(degraded))} 떴지만 일할 수 없는 상태입니다. 설정을 확인하세요.`;
     }
 
     // **분리 판정은 서비스 상태와 독립이다.** 전부 ready 여도 두 graph 가 같으면

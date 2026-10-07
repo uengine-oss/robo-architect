@@ -31,16 +31,34 @@ const show = computed(() => {
 
 const tone = computed(() => (broken.value.length > 0 || runtime.dockerAvailable === false ? 'bad' : 'warn'))
 
-/** 한 줄 요약. **무엇이 안 되는지**를 기능 이름으로 먼저 말한다. */
+/**
+ * 조사를 **받침으로 고른다.** `을(를)` 은 읽는 사람에게 기계가 쓴 문장으로 보인다 —
+ * 이 배너는 고장 났을 때 보는 자리라, 거기서까지 어색하면 신뢰를 깎는다.
+ */
+function hasFinalConsonant(word) {
+  const last = (word || '').trim().slice(-1)
+  if (!last) return null
+  const code = last.charCodeAt(0)
+  if (code < 0xac00 || code > 0xd7a3) return null // 영문·숫자 끝 — 가릴 수 없다
+  return (code - 0xac00) % 28 !== 0
+}
+
+const withObjectParticle = (word) => `${word}${hasFinalConsonant(word) === false ? '를' : '을'}`
+const withSubjectParticle = (word) => `${word}${hasFinalConsonant(word) === false ? '가' : '이'}`
+
+/** 한 줄 요약. **무엇이 안 되는지**를 기능 이름으로, **왜**를 서비스 이름으로 말한다. */
 const summary = computed(() => {
   if (runtime.dockerAvailable === false) return '컨테이너 실행 환경(Docker)이 응답하지 않습니다.'
-  const blockedCaps = runtime.capabilities.filter((c) => c.state === 'unavailable')
-  const names = blockedCaps.map((c) => c.displayName)
-  const services = [...broken.value, ...degraded.value].length
+  const stuck = [...broken.value, ...degraded.value]
+  // 이름을 한 번에 말해 주면 **자세히를 누르지 않고도** 무엇을 고쳐야 하는지 안다.
+  const who = stuck.map((s) => s.displayName || s.id).join(' · ')
+  const names = runtime.capabilities
+    .filter((c) => c.state === 'unavailable')
+    .map((c) => c.displayName)
   if (names.length > 0) {
-    return `${names.join(' · ')} 을(를) 지금 쓸 수 없습니다 — 서비스 ${services}개가 준비되지 않았습니다.`
+    return `지금 ${withObjectParticle(names.join(' · '))} 쓸 수 없습니다 — ${withSubjectParticle(who)} 준비되지 않았습니다.`
   }
-  return `서비스 ${services}개가 준비되지 않았습니다 — 쓰는 기능에 따라 영향이 없을 수도 있습니다.`
+  return `${withSubjectParticle(who)} 준비되지 않았습니다 — 쓰는 기능에 따라 영향이 없을 수도 있습니다.`
 })
 </script>
 
@@ -53,7 +71,8 @@ const summary = computed(() => {
     </button>
   </div>
   <div v-if="show && open" class="rbn__drawer">
-    <RuntimeStatusPanel />
+    <!-- 배너가 이미 "실행 상태" 라고 말했다. 패널이 또 말하면 같은 제목이 두 번이다. -->
+    <RuntimeStatusPanel :embedded="true" />
   </div>
 </template>
 
