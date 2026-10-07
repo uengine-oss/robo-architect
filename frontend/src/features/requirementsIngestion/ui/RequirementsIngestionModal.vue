@@ -6,6 +6,8 @@ import { useEventModelingStore } from '@/features/eventModeling/eventModeling.st
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
+// 058 T029 — 준비 안 된 기능으로는 시작하지 않는다(이유를 말하고 막는다).
+import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
 import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
 import { openSse } from '@/app/sse'
@@ -26,6 +28,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'complete', 'session-restored'])
 
 const navigatorStore = useNavigatorStore()
+const runtime = useRuntimeStore()
 const ingestionStore = useIngestionStore()
 const eventModelingStore = useEventModelingStore()
 const bpmnStore = useBpmnStore()
@@ -404,7 +407,22 @@ watch(
   { immediate: true },
 )
 
+/**
+ * 이 적재가 **어느 기능에 걸려 있나** (spec 058 T029).
+ *
+ * 하이브리드(코드+문서)는 문서→BPMN 서비스가 있어야 하고, 나머지는 업로드 경로만
+ * 있으면 된다. 서비스가 죽었는데 버튼이 그대로 눌리면 **조용히 실패한 결과**를
+ * 사람이 적재 실패로 읽는다 — 실제로 그 자리를 여러 번 밟았다.
+ */
+const neededCapability = computed(() =>
+  inputMode.value === 'analyzer' ? 'bpmn-generation' : 'document-ingestion',
+)
+const runtimeBlocked = computed(() => !runtime.isAvailable(neededCapability.value))
+const runtimeBlockedWhy = computed(() => runtime.blockedReason(neededCapability.value))
+
 const canSubmit = computed(() => {
+  // **준비 안 된 기능은 시작하지 않는다.** 모르면 열지 않는다(스토어가 그렇게 답한다).
+  if (runtimeBlocked.value) return false
   if (inputMode.value === 'file') {
     return file.value !== null
   }
@@ -2454,6 +2472,11 @@ function useSample() {
             </template>
           </div>
           
+          <!-- 058 T029 — 준비 안 된 기능은 **이유를 말하고** 막는다.
+               조용히 빈 화면이나 실패를 주지 않는다. -->
+          <p v-if="!showClearConfirm && runtimeBlocked" class="runtime-blocked">
+            {{ runtimeBlockedWhy || '필요한 서비스가 아직 준비되지 않았습니다.' }}
+          </p>
           <!-- Footer (hidden during confirm) -->
           <div v-if="!showClearConfirm" class="modal-footer">
             <button class="btn btn--secondary" @click="closeModal">
@@ -2462,6 +2485,7 @@ function useSample() {
             <button
               class="btn btn--primary"
               :disabled="!canSubmit || isUploading || isLoadingPageContent || isCheckingReplace"
+              :title="runtimeBlockedWhy || ''"
               @click="handleStartClick"
             >
               <template v-if="isUploading || isLoadingPageContent">
@@ -4416,5 +4440,13 @@ function useSample() {
   color: #9ca3af;
   font-style: italic;
   text-align: center;
+}
+.runtime-blocked {
+  margin: 0;
+  padding: 8px 20px;
+  background: #fff6e0;
+  border-top: 1px solid #f2dca8;
+  color: #7a5a12;
+  font-size: 12px;
 }
 </style>

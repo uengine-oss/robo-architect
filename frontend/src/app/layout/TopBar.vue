@@ -12,6 +12,10 @@ import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue
 import FigmaButton from '@/features/figmaBinding/ui/FigmaButton.vue'
 import FigmaBindingModal from '@/features/figmaBinding/ui/FigmaBindingModal.vue'
 import SettingsPanel from './SettingsPanel.vue'
+// 058 T029 — 준비 안 된 기능의 **진입을 막되 이유를 말한다.** 좁게 간다:
+// 이름이 붙은 두 자리(레거시 탐색 · 적재 시작)만 본다. 넓게 막으면 프로브가
+// 한 번 틀린 날 **멀쩡한 앱이 통째로 잠긴다**(2026-10-07 에 실제로 배선이 틀렸다).
+import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
 
 const props = defineProps({
   activeTab: {
@@ -43,6 +47,18 @@ const emit = defineEmits(['update:activeTab'])
 //
 //   전체:  ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code', 'Template']
 const tabs = ['Legacy', 'Stories', 'Process', 'Design', 'Data', 'Template']
+
+const runtime = useRuntimeStore()
+/** 탭 ↔ 기능. **여기 없는 탭은 막지 않는다.** */
+const TAB_CAPABILITY = { Legacy: 'legacy-analysis' }
+const tabBlocked = (tab) => {
+  const capability = TAB_CAPABILITY[tab]
+  return capability ? !runtime.isAvailable(capability) : false
+}
+const tabBlockedWhy = (tab) => {
+  const capability = TAB_CAPABILITY[tab]
+  return capability ? runtime.blockedReason(capability) : null
+}
 
 const canvasStore = useCanvasStore()
 // 043 — 'Big picture' 뷰 비활성화: store 사용 제거.
@@ -98,7 +114,13 @@ function selectTab(tab) {
             v-for="tab in tabs"
             :key="tab"
             class="top-bar__tab"
-            :class="{ 'is-active': activeTab === tab || (tab === 'Process' && (activeTab === 'Processes' || activeTab === 'Event Modeling')) }"
+            :class="{
+              'is-active': activeTab === tab || (tab === 'Process' && (activeTab === 'Processes' || activeTab === 'Event Modeling')),
+              'is-blocked': tabBlocked(tab),
+              tipped: tabBlocked(tab),
+            }"
+            :disabled="tabBlocked(tab)"
+            :data-tip="tabBlocked(tab) ? tabBlockedWhy(tab) : null"
             @click="selectTab(tab)"
           >
             {{ tab }}
@@ -410,5 +432,9 @@ function selectTab(tab) {
   transform: scale(0.97);
 }
 
+.top-bar__tab.is-blocked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 </style>
 
