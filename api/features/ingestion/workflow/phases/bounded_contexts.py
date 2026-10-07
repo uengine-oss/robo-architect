@@ -16,7 +16,7 @@ from api.platform.env import (
 )
 from api.features.ingestion.db_identity import adopt_db_identity
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
-from api.features.ingestion.event_storming.nodes import BoundedContextList
+from api.features.ingestion.event_storming.structured_outputs import BoundedContextList
 from api.features.ingestion.event_storming.prompts import IDENTIFY_BC_FROM_STORIES_PROMPT, SYSTEM_PROMPT
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.features.ingestion.workflow.utils.chunking import (

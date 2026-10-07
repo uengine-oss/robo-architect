@@ -13,7 +13,7 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_PROMPT,
 )
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
-from api.features.ingestion.event_storming.nodes import PolicyList
+from api.features.ingestion.event_storming.structured_outputs import PolicyList
 from api.features.ingestion.event_storming.prompts import IDENTIFY_POLICIES_PROMPT, SYSTEM_PROMPT
 from api.features.ingestion.workflow.ingestion_workflow_context import IngestionWorkflowContext
 from api.features.ingestion.workflow.utils.chunking import (
