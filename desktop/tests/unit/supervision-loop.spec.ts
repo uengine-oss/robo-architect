@@ -289,3 +289,87 @@ test("백엔드의 생존은 **pid** 로 본다 — 컨테이너 목록에 없�
     "호스트 프로세스를 docker ps 로 찾으면 멀쩡한 백엔드가 failed 가 된다",
   );
 });
+
+// ── ⑥ 되살아나면 **기다리지 않는다** (2026-10-07 실측) ─────────────────────
+//
+// 컨테이너를 내렸다 올리니 health 는 5초 만에 통과했는데 `ready` 는 **60초 뒤**에
+// 떴다 — 기능 프로브 주기를 그대로 기다린 것이다. 그 1분 동안 화면은 멀쩡히
+// 돌아온 서비스를 "준비 중" 으로 말한다. health 가 아니오→예로 뒤집힌 순간이
+// **지금 다시 재야 할 때**다.
+
+test("health 가 되살아나면 기능 프로브를 **그 자리에서** 다시 돌린다", async () => {
+  let clock = 0;
+  let healthy = false;
+  const ran: string[] = [];
+  const supervision = startSupervision<{ tag: string }>(
+    {
+      ids: () => ["pdf2bpmn"] as ManagedServiceId[],
+      hasCapability: () => true,
+      context: async () => ({ tag: "ctx" }),
+      probe: async (_ctx, id, kind) => {
+        ran.push(`${clock}:${kind}`);
+        return {
+          serviceId: id,
+          kind,
+          outcome: kind === "health" && !healthy ? "fail" : "pass",
+          detail: "",
+          durationMs: 1,
+        };
+      },
+      running: async () => [],
+      alive: () => null,
+      apply: () => {},
+      register: () => {},
+      changed: () => [],
+      log: () => {},
+      now: () => clock,
+    },
+    { autostart: false },
+  );
+
+  await supervision.tick();                  // 0초: health=fail · capability 도 한 번
+  clock = HEALTH_INTERVAL_MS;                // 5초
+  healthy = true;
+  await supervision.tick();                  // health 가 되살아난다
+
+  const atFive = ran.filter((r) => r.startsWith(`${HEALTH_INTERVAL_MS}:`));
+  expectBe(atFive.includes(`${HEALTH_INTERVAL_MS}:health`), true, "health 는 주기대로");
+
+  clock += 1_000;                            // 6초 — 60초를 기다리지 않는다
+  await supervision.tick();
+  expectBe(
+    ran.includes(`${clock}:capability`),
+    true,
+    "health 가 되살아났는데 기능 프로브가 60초를 기다린다 — 화면이 그동안 '준비 중' 이다",
+  );
+});
+
+test("health 가 계속 통과면 기능 프로브를 당기지 않는다 — 1초마다 때리면 안 된다", async () => {
+  let clock = 0;
+  const ran: string[] = [];
+  const supervision = startSupervision<{ tag: string }>(
+    {
+      ids: () => ["pdf2bpmn"] as ManagedServiceId[],
+      hasCapability: () => true,
+      context: async () => ({ tag: "ctx" }),
+      probe: async (_ctx, id, kind) => {
+        ran.push(kind);
+        return { serviceId: id, kind, outcome: "pass", detail: "", durationMs: 1 };
+      },
+      running: async () => [],
+      alive: () => null,
+      apply: () => {},
+      register: () => {},
+      changed: () => [],
+      log: () => {},
+      now: () => clock,
+    },
+    { autostart: false },
+  );
+  await supervision.tick();                       // 0초 — 둘 다
+  for (let i = 1; i <= 5; i += 1) {               // 5·10·15·20·25초 — health 만
+    clock = i * HEALTH_INTERVAL_MS;
+    await supervision.tick();
+  }
+  expectBe(ran.filter((k) => k === "capability").length, 1, "기능 프로브가 주기를 넘어 돌았다");
+});

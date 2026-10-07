@@ -194,6 +194,8 @@ export function startSupervision<Context>(
     ManagedServiceId,
     { health: ProbeResult | null; capability: ProbeResult | null }
   >();
+  /** 앞 틱의 health 가 통과였나. **아니오→예**로 뒤집히면 기능 프로브를 당긴다. */
+  const healthWas = new Map<ManagedServiceId, boolean>();
   let registered = false;
   let timer: ReturnType<typeof setInterval> | null = null;
   let stopped = false;
@@ -237,8 +239,21 @@ export function startSupervision<Context>(
           lastRun.set(probeKey(id, kind), now());
           inflight.delete(probeKey(id, kind));
         }
+        // **health 가 되살아났으면 기능 프로브를 기다리지 않는다.**
+        //
+        // 2026-10-07 실측: 컨테이너를 내렸다 올리니 5초 만에 health 가 통과했는데
+        // `ready` 는 **60초 뒤**에 떴다 — 기능 프로브 주기를 그대로 기다린 것이다.
+        // 그 1분 동안 화면은 멀쩡히 돌아온 서비스를 "준비 중" 으로 말한다.
+        // health 가 아니오→예로 뒤집힌 순간은 **지금 다시 재야 할 때**다.
       }),
     );
+
+    for (const { id, kind } of plan) {
+      if (kind !== "health" || !deps.hasCapability(id)) continue;
+      const nowPass = latest.get(id)?.health?.outcome === "pass";
+      if (nowPass && healthWas.get(id) === false) lastRun.delete(probeKey(id, "capability"));
+      healthWas.set(id, nowPass);
+    }
 
     // 판정은 **모든 결과를 모은 뒤** 한 번에 한다 — health 와 capability 가 따로
     // 적용되면 같은 틱 안에서 상태가 두 번 뒤집혀 로그가 거짓 변화를 남긴다.
