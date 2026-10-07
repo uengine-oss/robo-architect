@@ -36,6 +36,17 @@ import {
   restartOwnedService,
   stopDockerStack,
 } from "./docker-stack";
+import { graphPassword } from "./docker-stack";
+import { graphTopology } from "./graph-topology";
+import {
+  containerNames as probeContainerNames,
+  hasCapabilityProbe,
+  probedServiceIds,
+  runProbe,
+  type ProbeContext,
+} from "./probes";
+import { runningContainerNames } from "./probes/net";
+import { startSupervision, type Supervision } from "./supervision";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
 import {
   copy,
@@ -122,6 +133,101 @@ function resolveFrontendDist(): string {
  * 재기동하면 처음부터 다시 잰다(옛 값을 믿는 것보다 싸고 정확하다).
  */
 export const runtimeRegistry = new RuntimeRegistry();
+
+/**
+ * 프로브를 주기적으로 돌리는 것 (spec 058 T018).
+ *
+ * **2026-10-07 까지 이것이 없었다.** 프로브와 판정은 다 있었는데 돌려 주는 쪽이
+ * 없어서 `runtimeRegistry` 가 언제나 비었고, 그래서 `buildRuntimeState()` 가
+ * 서비스 목록을 아예 싣지 않았다 — 설계는 서비스 9개를 따로 보는데 동작은
+ * 백엔드 상태 하나였다.
+ */
+let supervision: Supervision | null = null;
+
+/**
+ * 프로브에 필요한 설정. **스택이 아직 안 뜨면 `null`** — 추측해서 재지 않는다.
+ *
+ * 비밀번호는 한 번 얻어 두고 다시 쓴다(중앙 모드에서는 환경변수, 번들 모드에서는
+ * 시크릿 저장소). 못 얻으면 **한 번만** 말하고 재지 않는다 — 틱마다 같은 경고를
+ * 쌓으면 로그가 그 한 줄로 덮인다.
+ */
+function makeProbeContextProvider(): () => Promise<ProbeContext | null> {
+  let password: string | null = null;
+  let passwordFailed = false;
+  return async () => {
+    const runtime = getDockerStackRuntime();
+    if (!runtime) return null;
+    if (password === null) {
+      if (passwordFailed) return null;
+      try {
+        password = await graphPassword();
+      } catch (error) {
+        passwordFailed = true;
+        log("warn", "runtime.supervision.no_graph_password", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    }
+    const topology = graphTopology();
+    return {
+      projectName: runtime.projectName,
+      ports: {
+        graph: runtime.ports.graph,
+        analyzer: runtime.ports.analyzer,
+        gateway: runtime.ports.gateway,
+        architect: runtime.ports.architect,
+        pdf2bpmn: runtime.ports.pdf2bpmn,
+        wireframe: runtime.ports.wireframe,
+      },
+      // 중앙 모드에서는 그래프만 다른 기계에 있다. 이 값이 없으면 프로브가
+      // 멀쩡한 중앙 저장소를 "bolt closed" 로 읽는다.
+      graphHost: topology.mode === "central" ? topology.host : undefined,
+      graph: {
+        user: runtime.manifest.graphs.user,
+        password,
+        design: runtime.manifest.graphs.design,
+        analysis: runtime.manifest.graphs.analysis,
+      },
+    };
+  };
+}
+
+function startRuntimeSupervision(): void {
+  if (supervision) return;
+  const context = makeProbeContextProvider();
+  supervision = startSupervision<ProbeContext>({
+    ids: () => probedServiceIds(),
+    hasCapability: (id) => hasCapabilityProbe(id),
+    context,
+    probe: (ctx, id, kind) => runProbe(ctx, id, kind),
+    running: () => runningContainerNames(),
+    containerNames: (ctx, id) => probeContainerNames(ctx, id),
+    apply: (id, facts) => runtimeRegistry.applyProbe(id, facts),
+    register: (ids) => runtimeRegistry.register(ids),
+    changed: () => {
+      // `diff` 는 **넘긴 목록과 지금을 비교해** 바뀐 id 만 준다. 앞 틱의 목록을
+      // 들고 있다가 넘기고, 바뀐 것들의 **지금 값**을 돌려준다.
+      const changedIds = new Set(runtimeRegistry.diff(lastServices));
+      const current = runtimeRegistry.snapshot().services;
+      lastServices = current;
+      return current
+        .filter((service) => changedIds.has(service.id))
+        .map((service) => ({
+          id: service.id,
+          state: service.state,
+          stateReason: service.stateReason,
+        }));
+    },
+    log: (level, event, params) => log(level, event, params),
+  });
+  log("info", "runtime.supervision.started", {
+    services: probedServiceIds().length,
+  });
+}
+
+/** 앞 틱의 서비스 목록. `diff` 에 넘겨 **바뀐 것만** 기록한다. */
+let lastServices: ReturnType<RuntimeRegistry["snapshot"]>["services"] = [];
 
 function buildRuntimeState(): RuntimeState {
   const be = getRuntimeBackend();
@@ -737,9 +843,13 @@ async function bootstrap(): Promise<void> {
     log("error", "app.backend_start_failed", {
       message: err instanceof Error ? err.message : String(err),
     });
+    // **실패해도 감독은 돈다.** 무엇이 준비되지 않았는지는 그때가 가장 알고 싶다.
     // status is already set to "fatal" by backend.ts; the renderer will see
     // the push and (post-T027) show the fatal screen.
   }
+
+  // 스택이 떴으면(또는 뜨다 실패했으면) 서비스별로 재기 시작한다 (T018).
+  startRuntimeSupervision();
 }
 
 // ---------------------------------------------------------------------------
@@ -777,6 +887,9 @@ if (gotLock) {
 
   app.on("before-quit", async (event) => {
     log("info", "app.before-quit", {});
+    // 감독을 먼저 세운다 — 내리는 중의 프로브는 "죽었다" 를 새로 기록할 뿐이다.
+    supervision?.stop();
+    supervision = null;
     // Best-effort: give the backend a graceful shutdown before Electron exits.
     if (getRuntimeBackend().pid !== null) {
       event.preventDefault();

@@ -79,6 +79,24 @@ export async function dockerAvailable(): Promise<boolean> {
 }
 
 /**
+ * 지금 **돌고 있는** 컨테이너 이름 전부. 한 번의 `docker ps` 로 얻는다.
+ *
+ * 서비스마다 따로 물으면 9번 `docker ps` 를 돌린다 — 틱마다 그러면 데몬을 때린다.
+ *
+ * **못 얻으면 빈 배열이다.** 그리고 빈 배열은 "아무것도 안 돈다" 가 아니라
+ * **"모른다"** 로 읽혀야 한다(`supervision.aliveFrom` 이 그렇게 받는다). 도커가
+ * 꺼진 상태를 "전부 죽었다" 로 바꿔 말하면, 화면이 멀쩡한 서비스를 고장으로 띄운다.
+ */
+export async function runningContainerNames(timeoutMs = 10_000): Promise<string[]> {
+  const { code, out } = await run("docker", ["ps", "--format", "{{.Names}}"], timeoutMs);
+  if (code !== 0) return [];
+  return out
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+/**
  * 컨테이너 **안에서** HTTP 코드를 얻는다 — 호스트에 포트를 안 연 서비스를 재려고.
  *
  * 이미지마다 든 도구가 다르다. parser·gateway 는 Java 이미지라 `python` 이 없고
