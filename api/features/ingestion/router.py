@@ -15,7 +15,8 @@ import sys
 import asyncio
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
@@ -35,6 +36,7 @@ from api.features.ingestion.ingestion_sessions import (
 )
 from api.features.ingestion.ingestion_workflow_runner import run_ingestion_workflow
 from api.features.ingestion import runs
+from api.features.ingestion.replacement import require_replace_ack
 from api.features.projects.access import request_graph, request_uid, require_write
 from api.features.projects import store as projects
 from api.platform.neo4j import design_database
@@ -63,6 +65,7 @@ async def upload_document(
     display_language: Optional[str] = Form("ko"),
     source_type: Optional[str] = Form("rfp"),
     ui_generation_mode: Optional[str] = Form("html"),
+    replace_ack: bool = Query(default=False, alias="replaceAck"),
 ) -> dict[str, Any]:
     """
     Upload a requirements document (text or PDF) to start ingestion.
@@ -79,6 +82,10 @@ async def upload_document(
     그때 빠져 있었다.**
     """
     require_write(request)
+    # **지울 것이 있으면 확인을 받았는지 본다** (10/7). 화면은 이미 묻지만
+    # (`RequirementsIngestionModal`), 이 엔드포인트를 직접 부르면 그 문을 지나지
+    # 않고 **지우기부터 시작한다.** 확인 없으면 409 + 무엇이 지워지는지.
+    replacing = require_replace_ack(replace_ack)
     content = ""
 
     if file:
@@ -208,6 +215,7 @@ class FigmaUploadRequest(BaseModel):
 async def upload_figma_document(
     request: Request,
     body: FigmaUploadRequest,
+    replace_ack: bool = Query(default=False, alias="replaceAck"),
 ) -> dict[str, Any]:
     """
     Upload Figma node data (JSON) to start ingestion.
@@ -216,6 +224,7 @@ async def upload_figma_document(
     쓰기 권한을 먼저 본다 — `/upload` 와 같은 이유다.
     """
     require_write(request)
+    require_replace_ack(replace_ack)
     if not body.figma_nodes:
         raise HTTPException(status_code=400, detail="figma_nodes must not be empty")
 
@@ -271,12 +280,19 @@ class DesignForUserStoriesRequest(BaseModel):
 
 
 @router.post("/user-stories/design")
-async def design_for_user_stories(request: Request, body: DesignForUserStoriesRequest) -> dict[str, Any]:
+async def design_for_user_stories(
+    request: Request,
+    body: DesignForUserStoriesRequest,
+) -> dict[str, Any]:
     """선택된 User Story에 대해 기존 인제스천 설계 단계(events→aggregate→command→
     readmodel)를 정순 실행한다. 진행은 기존 `/api/ingest/stream/{session_id}` SSE로 흐른다
     (034 US7 — 기존 인제스천 루프·UI·순서 재사용).
 
-    쓰기 권한을 먼저 본다 — 이 길도 설계 graph 에 쓴다."""
+    쓰기 권한을 먼저 본다 — 이 길도 설계 graph 에 쓴다.
+
+    **교체 확인은 여기서 보지 않는다.** 이 길은 증분이다 — `incremental_design_runner`
+    가 그래프를 지우지 않고 기존 BC·Aggregate 를 MERGE 로 재사용한다. 지우지 않는
+    일에 확인을 물으면 **확인이 싸구려가 된다**(사람이 읽지 않고 누른다)."""
     require_write(request)
     ids = [i for i in (body.userStoryIds or []) if i]
     if not ids:

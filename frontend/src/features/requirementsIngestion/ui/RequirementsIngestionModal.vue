@@ -351,6 +351,33 @@ const showClearConfirm = ref(false)
 // 인제스천은 **교체**다 — 시작하자마자 이 프로젝트의 생성물을 통째로 지운다.
 // 서버가 무엇이 사라지는지 세어 주고, 지우기 직전에 이전 판을 보관한다.
 const replacePreview = ref(null)
+// 사용자가 "지우고 시작" 을 누른 사실. **서버도 이것을 본다** — 화면만 묻던
+// 자리에 서버 쪽 확인이 생겼고(`require_replace_ack`), 확인 없는 적재 요청은
+// 409 로 되묻는다. 그래서 누른 사실을 요청에 실어 보낸다.
+const replaceAcked = ref(false)
+
+/** 확인을 받았으면 `replaceAck=1` 을 붙인다. */
+function withAck(url) {
+  if (!replaceAcked.value) return url
+  return url + (url.includes('?') ? '&' : '?') + 'replaceAck=1'
+}
+
+/**
+ * 서버가 "지울 것이 있는데 확인이 없다" 고 되물었나.
+ *
+ * 미리보기를 못 읽었거나(네트워크), 그 사이 다른 창에서 적재한 경우에 온다.
+ * 그때 **빈 오류를 띄우지 않고** 서버가 보낸 건수로 그 자리에서 묻는다.
+ */
+function askedToConfirmReplace(status, detail) {
+  if (status !== 409) return false
+  const body = typeof detail === 'object' && detail !== null ? detail : {}
+  if (body.code !== 'INGEST_REPLACE_CONFIRM') return false
+  replacePreview.value = body
+  showClearConfirm.value = true
+  isUploading.value = false
+  isProcessing.value = false
+  return true
+}
 const isCheckingReplace = ref(false)
 const existingDataStats = ref(null)
 const isLoadingStats = ref(false)
@@ -740,10 +767,11 @@ async function startHybridIngestion() {
     }
     formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
 
-    const res = await fetch('/api/ingest/hybrid/upload', { method: 'POST', body: formData })
+    const res = await fetch(withAck('/api/ingest/hybrid/upload'), { method: 'POST', body: formData })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || 'Hybrid upload failed')
+      if (askedToConfirmReplace(res.status, err.detail)) return
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Hybrid upload failed')
     }
     const { session_id } = await res.json()
     sessionId.value = session_id
@@ -880,12 +908,16 @@ function connectToHybridStream(sid) {
 // 먼저 사라져 스냅샷이 빈 채로 남는다.
 async function confirmClearAndStart() {
   showClearConfirm.value = false
+  replaceAcked.value = true   // 서버에도 전한다
   await beginIngestion()
 }
 
 // User chose to cancel
 function cancelClear() {
   showClearConfirm.value = false
+  // 다음 시작은 **다시 묻는다.** 한 번 누른 확인이 계속 남아 있으면, 취소한 뒤
+  // 무심코 시작한 적재가 말없이 지우고 간다.
+  replaceAcked.value = false
 }
 
 async function startIngestion() {
@@ -912,7 +944,7 @@ async function startIngestion() {
         figmaBody.figma_file_key = figmaFileKey.value
         figmaBody.figma_node_id_map = figmaApiNodeIdMap.value
       }
-      uploadResponse = await fetch('/api/ingest/upload/figma', {
+      uploadResponse = await fetch(withAck('/api/ingest/upload/figma'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(figmaBody)
@@ -934,15 +966,16 @@ async function startIngestion() {
       formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
       formData.append('ui_generation_mode', (uiGenerationMode.value === 'figma' || uiGenerationMode.value === 'figma-with-components') ? uiGenerationMode.value : 'html')
 
-      uploadResponse = await fetch('/api/ingest/upload', {
+      uploadResponse = await fetch(withAck('/api/ingest/upload'), {
         method: 'POST',
         body: formData
       })
     }
     
     if (!uploadResponse.ok) {
-      const errData = await uploadResponse.json()
-      throw new Error(errData.detail || 'Upload failed')
+      const errData = await uploadResponse.json().catch(() => ({}))
+      if (askedToConfirmReplace(uploadResponse.status, errData.detail)) return
+      throw new Error(typeof errData.detail === 'string' ? errData.detail : 'Upload failed')
     }
     
     const { session_id } = await uploadResponse.json()

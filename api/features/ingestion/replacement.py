@@ -24,7 +24,7 @@ from api.platform.neo4j import design_database, get_session
 from api.platform.observability.smart_logger import SmartLogger
 
 __all__ = ["live_sessions", "preview", "safe_counts", "capture_before_replace",
-           "PRESERVED_LABELS"]
+           "require_replace_ack", "PRESERVED_LABELS"]
 
 # `clear-all` 이 지키는 것과 같은 목록. 인제스천 교체도 같은 것을 남긴다 —
 # Figma 연결은 설계가 바뀌어도 살아 있어야 한다(다시 잇는 비용이 크다).
@@ -85,6 +85,62 @@ def preview() -> dict[str, Any]:
         "total": sum(counts.values()),
         "preserved": list(PRESERVED_LABELS),
     }
+
+
+def require_replace_ack(acknowledged: bool) -> Optional[dict[str, Any]]:
+    """지울 것이 있으면 **확인을 받았는지** 본다. 받았으면 미리보기를 돌려준다.
+
+    ## 왜 서버에도 두나
+
+    화면은 이미 묻는다(`RequirementsIngestionModal.handleStartClick` 이
+    `/replacement-preview` 를 읽고 확인 대화상자를 띄운다). 그런데 **그 문을 지나지
+    않는 길이 있었다** — 업로드 엔드포인트를 직접 부르면 아무것도 묻지 않고
+    **지우기부터 시작한다.**
+
+    그리고 이 지우기는 `MATCH (n:Label) DETACH DELETE n` 이다 — WHERE 절이 없고,
+    "그 프로젝트만" 이 되는 이유는 **연결이 그 graph 에 묶여 있기 때문**이다.
+    즉 범위를 좁히는 것은 쿼리가 아니라 바인딩이고, 공유받은 사람이 재적재하면
+    **소유자의 BPM·ES 가 그대로 사라진다.** 되돌릴 길은 지우기 직전의 스냅샷뿐이다.
+
+    그만한 일을 **묻지 않고** 시작하지 않는다.
+
+    ## 돌려주는 값
+
+    `None` 이면 지울 것이 없다(첫 적재). dict 이면 그 판을 지우기로 **확인받았다** —
+    부르는 쪽이 그대로 로그에 실어 두면 "무엇을 지우겠다고 했는지" 가 남는다.
+
+    확인이 없으면 409 다. 400 이 아닌 이유는 **요청이 틀린 것이 아니라 상태가
+    충돌하는 것**이기 때문이고, 화면이 그 둘을 다르게 다룬다.
+    """
+    from fastapi import HTTPException
+
+    try:
+        data = preview()
+    except Exception as exc:  # noqa: BLE001 — 세기 실패가 적재를 막지 않는다
+        # 여기서 막으면 **멀쩡한 첫 적재까지** 못 하게 된다. 세지 못한 것은
+        # "지울 것이 있다" 의 근거가 아니다. 다만 조용히 넘어가지는 않는다.
+        SmartLogger.log(
+            "WARN", f"교체 확인용 건수를 세지 못했다 (적재는 계속한다): {exc}",
+            category="ingestion.replace.ack.count_error", params={"error": str(exc)},
+        )
+        return None
+
+    total = int(data.get("total") or 0)
+    if total <= 0:
+        return None  # 첫 적재 — 확인을 묻지 않는다(확인만 늘리면 사람은 읽지 않는다)
+    if acknowledged:
+        return data
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "INGEST_REPLACE_CONFIRM",
+            "message": (
+                f"이 프로젝트에 이미 만들어 둔 것이 {total}개 있습니다. 다시 적재하면 "
+                "먼저 지워집니다 — 계속하려면 확인 뒤 `replaceAck=1` 로 다시 보내세요."
+            ),
+            **{k: data.get(k) for k in ("graph", "counts", "total", "sessions", "preserved")},
+        },
+    )
 
 
 def safe_counts() -> dict[str, int]:

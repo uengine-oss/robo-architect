@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -58,7 +58,7 @@ from api.features.ingestion.ingestion_sessions import (
     unsubscribe,
 )
 from api.features.ingestion.requirements_document_text import extract_text_from_pdf
-from api.features.ingestion.replacement import capture_before_replace
+from api.features.ingestion.replacement import capture_before_replace, require_replace_ack
 from api.platform.observability.smart_logger import SmartLogger
 
 router = APIRouter(prefix="/api/ingest/hybrid", tags=["ingestion-hybrid"])
@@ -78,6 +78,7 @@ async def upload_hybrid(
     text: Optional[str] = Form(None),
     analyzer_graph_ref: Optional[str] = Form(None),
     display_language: Optional[str] = Form("ko"),
+    replace_ack: bool = Query(default=False, alias="replaceAck"),
 ) -> dict[str, Any]:
     """여러 문서의 본문은 합치고, PDF가 여러 개면 파일마다 저장한 뒤 Phase1에서 A2A를 PDF별로 호출합니다.
 
@@ -85,8 +86,12 @@ async def upload_hybrid(
     받고, 워크플로가 돌며 임베딩까지 부른 뒤 첫 쓰기에서 DB 가 막는다 —
     데이터는 안전하지만 **돈과 시간을 쓰고 화면에는 아무 말도 안 간다**
     (2026-10-02 실측: SSE 0바이트). 거절은 싸고 침묵은 비싸다.
+
+    **교체 확인도 여기서 본다** (10/7) — 화면은 이미 묻지만 이 엔드포인트를 직접
+    부르면 그 문을 지나지 않고 지우기부터 시작한다.
     """
     require_write(request)
+    require_replace_ack(replace_ack)
 
     def _gather_uploads() -> list[UploadFile]:
         out: list[UploadFile] = []
