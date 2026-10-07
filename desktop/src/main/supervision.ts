@@ -144,7 +144,15 @@ export interface SupervisionDeps<Context> {
   probe(context: Context, id: ManagedServiceId, kind: ProbeKind): Promise<ProbeResult>;
   /** 돌고 있는 컨테이너 이름 전부. 못 얻으면 빈 배열(= 모른다). */
   running(): Promise<string[]>;
-  containerNames(context: Context, id: ManagedServiceId): string[];
+  /**
+   * 이 서비스가 **물리적으로 살아 있나**. 모르면 `null`.
+   *
+   * 판단을 부르는 쪽에 둔다 — 서비스마다 근거가 다르기 때문이다. 컨테이너는
+   * `aliveFrom(running, …)` 이지만 **호스트 프로세스로 도는 백엔드는 컨테이너
+   * 목록에 아예 없다.** 처음 판은 그것을 모르고 `docker ps` 로만 봤고, 그래서
+   * 멀쩡히 응답하는 백엔드를 "실행 중이 아닙니다" 로 적었다(2026-10-07 설치본 실측).
+   */
+  alive(context: Context, id: ManagedServiceId, running: readonly string[]): boolean | null;
   /** 결과를 등록에 옮긴다(`RuntimeRegistry.applyProbe`). */
   apply(
     id: ManagedServiceId,
@@ -238,7 +246,7 @@ export function startSupervision<Context>(
     for (const id of new Set(plan.map((item) => item.id))) {
       const slot = latest.get(id) ?? { health: null, capability: null };
       deps.apply(id, {
-        alive: aliveFrom(running, deps.containerNames(context, id)),
+        alive: deps.alive(context, id, running),
         health: slot.health,
         capability: slot.capability,
         hasCapabilityProbe: deps.hasCapability(id),

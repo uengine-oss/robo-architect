@@ -46,7 +46,7 @@ import {
   type ProbeContext,
 } from "./probes";
 import { runningContainerNames } from "./probes/net";
-import { startSupervision, type Supervision } from "./supervision";
+import { aliveFrom, startSupervision, type Supervision } from "./supervision";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
 import {
   copy,
@@ -173,7 +173,10 @@ function makeProbeContextProvider(): () => Promise<ProbeContext | null> {
     return {
       projectName: runtime.projectName,
       ports: {
-        graph: runtime.ports.graph,
+        // **중앙 모드에서는 포트도 중앙의 것이다.** 호스트만 바꾸고 포트를 이 PC 의
+        // 스택 값(59006)으로 두면 `172.27.64.1:59006` 를 두드려 늘 "bolt closed" 가
+        // 난다 — 2026-10-07 설치본에서 실제로 그 줄을 봤다.
+        graph: topology.mode === "central" ? topology.boltPort : runtime.ports.graph,
         analyzer: runtime.ports.analyzer,
         gateway: runtime.ports.gateway,
         architect: runtime.ports.architect,
@@ -202,7 +205,13 @@ function startRuntimeSupervision(): void {
     context,
     probe: (ctx, id, kind) => runProbe(ctx, id, kind),
     running: () => runningContainerNames(),
-    containerNames: (ctx, id) => probeContainerNames(ctx, id),
+    alive: (ctx, id, running) => {
+      // 백엔드는 **호스트 프로세스**다 — 컨테이너 목록에 없다. 거기서 `docker ps`
+      // 로 판정하면 멀쩡히 응답하는 백엔드가 "실행 중이 아닙니다" 가 된다.
+      // 우리가 띄운 프로세스이므로 pid 가 가장 강한 근거다.
+      if (id === "architect") return getRuntimeBackend().pid !== null;
+      return aliveFrom(running, probeContainerNames(ctx, id));
+    },
     apply: (id, facts) => runtimeRegistry.applyProbe(id, facts),
     register: (ids) => runtimeRegistry.register(ids),
     changed: () => {

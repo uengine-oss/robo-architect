@@ -149,7 +149,7 @@ function harness(options: { running?: string[]; probe?: (id: ManagedServiceId, k
       context: async () => ({ tag: "ctx" }),
       probe: async (_ctx, id, kind) => (options.probe ?? result)(id, kind),
       running: async () => options.running ?? ["robo-graph-bolt-1"],
-      containerNames: () => ["robo-graph-bolt-1"],
+      alive: (_ctx, _id, running) => aliveFrom(running, ["robo-graph-bolt-1"]),
       apply: (id, facts) => applied.push({ id, ...facts }),
       register: (ids) => registered.push(ids),
       changed: () => {
@@ -203,7 +203,7 @@ test("설정을 모르면 아무것도 하지 않는다 — 추측해서 재지 
         throw new Error("설정이 없는데 프로브를 돌렸다");
       },
       running: async () => [],
-      containerNames: () => [],
+      alive: () => null,
       apply: (id, facts) => applied.push({ id, ...facts }),
       register: () => throwFail("등록도 하지 않는다"),
       changed: () => [],
@@ -232,7 +232,7 @@ test("프로브 하나가 터져도 **틱은 끝난다** — 말하고 넘어간
         return { serviceId: id, kind: "health", outcome: "pass", detail: "200", durationMs: 1 };
       },
       running: async () => [],
-      containerNames: () => [],
+      alive: () => null,
       apply: (id) => applied.push(id),
       register: () => {},
       changed: () => [],
@@ -250,4 +250,42 @@ test("프로브 하나가 터져도 **틱은 끝난다** — 말하고 넘어간
   clock += HEALTH_INTERVAL_MS;
   await supervision.tick();
   expectBe(calls, 4, "다음 주기에 다시 잰다");
+});
+
+// ── ⑤ 배선 — **설치본에서 두 서비스를 잘못 적었다** (2026-10-07) ───────────
+//
+// 감독을 처음 붙여 구워 보니 10개 중 둘이 `failed` 로 찍혔다. 둘 다 코드가 아니라
+// **배선이 틀린 것**이었고, 로그가 그 자리를 그대로 말해 줬다 —
+//
+//   graph      "bolt closed (172.27.64.1)"      호스트는 중앙인데 **포트가 이 PC 것**(59006)
+//   architect  "컨테이너/프로세스가 실행 중이 아닙니다"  **호스트 프로세스**를 `docker ps` 로 찾았다
+//
+// 둘 다 `index.ts` 의 배선이라 단위 검사로 돌릴 수 없다(electron 을 끌고 온다).
+// 그래서 **그 두 줄이 그대로 있는지**를 소스에서 본다. 투박하지만, 조용히
+// 되돌아가는 것이 실제로 있었던 일이다.
+
+import fs from "node:fs";
+import path from "node:path";
+
+const INDEX_TS = fs.readFileSync(
+  path.resolve(__dirname, "../../src/main/index.ts"),
+  "utf8",
+);
+
+test("중앙 모드에서는 **중앙의 bolt 포트**로 잰다", () => {
+  expectBe(
+    /graph:\s*topology\.mode === "central" \? topology\.boltPort : runtime\.ports\.graph/.test(
+      INDEX_TS,
+    ),
+    true,
+    "그래프 포트가 다시 이 PC 의 스택 값으로 돌아갔다 — 중앙에서 늘 bolt closed 가 된다",
+  );
+});
+
+test("백엔드의 생존은 **pid** 로 본다 — 컨테이너 목록에 없다", () => {
+  expectBe(
+    /if \(id === "architect"\) return getRuntimeBackend\(\)\.pid !== null/.test(INDEX_TS),
+    true,
+    "호스트 프로세스를 docker ps 로 찾으면 멀쩡한 백엔드가 failed 가 된다",
+  );
 });
