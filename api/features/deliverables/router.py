@@ -19,10 +19,10 @@ from api.features.deliverables.aggregate_export import build_aggregate_payloads
 from api.features.deliverables.docx_normalize import (
     DOCX_MIME,
     DocxNormalizeFailed,
-    DocxNormalizeUnavailable,
+    canonicalize_docx,
+    install_hint,
     compare_documents,
     inspect_docx_package,
-    normalize_docx,
     soffice_binary,
 )
 from api.features.deliverables.architecture_document import (
@@ -176,9 +176,18 @@ async def get_docx_normalization_status() -> dict:
     """
     binary = soffice_binary()
     return {
-        "available": binary is not None,
+        # **정본화 자체는 늘 된다** — LibreOffice 가 없으면 파이썬 재포장으로 낸다.
+        # 여기서 `available: false` 를 돌려주면 화면이 "정본화를 못 한다" 고 잘못 말한다.
+        "available": True,
+        "method": "soffice" if binary else "repack",
+        "soffice": binary is not None,
         "binary": binary,
-        "hint": None if binary else "libreoffice-writer 를 설치하거나 LIBREOFFICE_BIN 을 지정하세요.",
+        "hint": None
+        if binary
+        else (
+            "LibreOffice 가 없어 파이썬 재포장으로 정본화합니다 — ZIP 배치만 고치며 "
+            "내용은 바뀌지 않습니다. " + install_hint()
+        ),
     }
 
 
@@ -215,16 +224,7 @@ async def normalize_docx_endpoint(
         raise HTTPException(status_code=400, detail="docx(ZIP) 패키지로 열리지 않습니다.")
 
     try:
-        normalized = normalize_docx(data)
-    except DocxNormalizeUnavailable as exc:
-        # 정본화 불가와 변환 실패를 구분한다 — 전자는 환경 설정, 후자는 문서 문제다.
-        SmartLogger.log(
-            "WARN",
-            "DOCX normalization unavailable (LibreOffice not found).",
-            category="deliverables.docx_normalize.unavailable",
-            params={**http_context(request), "filename": filename},
-        )
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        normalized, method, fallback_reason = canonicalize_docx(data)
     except DocxNormalizeFailed as exc:
         SmartLogger.log(
             "ERROR",
@@ -250,6 +250,10 @@ async def normalize_docx_endpoint(
             "losses": diff["losses"],
             "size_before": len(data),
             "size_after": len(normalized),
+            # **어느 길로 냈는지 남긴다.** "이 문서가 ECM 에서 거부됐다" 를 되짚을 때
+            # soffice 로 낸 것과 재포장으로 낸 것은 다른 사실이다.
+            "method": method,
+            "fallback_reason": fallback_reason,
         },
     )
 
@@ -264,9 +268,10 @@ async def normalize_docx_endpoint(
             "X-Docx-Ecm-Compatible-After": str(after["ecmCompatible"]).lower(),
             "X-Docx-Lossless": str(diff["lossless"]).lower(),
             "X-Docx-Losses": "; ".join(diff["losses"]),
+            "X-Docx-Normalized-By": method,
             "Access-Control-Expose-Headers": (
                 "X-Docx-Ecm-Compatible-Before, X-Docx-Ecm-Compatible-After, "
-                "X-Docx-Lossless, X-Docx-Losses"
+                "X-Docx-Lossless, X-Docx-Losses, X-Docx-Normalized-By"
             ),
         },
     )

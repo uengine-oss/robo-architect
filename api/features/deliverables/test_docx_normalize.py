@@ -186,3 +186,136 @@ def test_binary_lookup_rejects_nonexistent_override(monkeypatch):
 
     assert dn.soffice_binary() is None
     assert dn.is_available() is False
+
+# ---------------------------------------------------------------------------
+# LibreOffice 없이 정본화 — 재포장 (2026-10-07)
+# ---------------------------------------------------------------------------
+
+
+def test_repack_fixes_both_reasons_the_detector_uses():
+    """`inspect` 가 대는 근거는 **둘뿐**이고, 둘 다 ZIP 배치 문제다."""
+    broken = _docx(
+        {"word/document.xml": _body(tables=1)}, content_types_first=False, with_dir_entry=True
+    )
+    assert dn.inspect_docx_package(broken)["ecmCompatible"] is False
+
+    fixed = dn.repack_docx(broken)
+    after = dn.inspect_docx_package(fixed)
+
+    assert after["ecmCompatible"] is True
+    assert after["reasons"] == []
+    assert after["firstEntry"] == dn.CONTENT_TYPES_ENTRY
+    assert after["hasDirectoryEntries"] is False
+
+
+def test_repack_does_not_lose_content():
+    """봉투를 다시 싸는 일이다 — **부품의 바이트는 손대지 않는다.**
+
+    ECM 판정만 통과시키고 내용을 깎으면 지금보다 나쁘다. 앱의 비교 함수로 센다.
+    """
+    broken = _docx(
+        {"word/document.xml": _body(paragraphs=3, tables=2, rows=4)},
+        content_types_first=False,
+        with_dir_entry=True,
+    )
+    fixed = dn.repack_docx(broken)
+
+    diff = dn.compare_documents(broken, fixed)
+    assert diff["lossless"] is True
+    assert diff["losses"] == []
+    # 본문 파트가 **바이트 그대로**인지까지 본다 — 지표가 같아도 다를 수 있다.
+    original = zipfile.ZipFile(io.BytesIO(broken)).read("word/document.xml")
+    repacked = zipfile.ZipFile(io.BytesIO(fixed)).read("word/document.xml")
+    assert repacked == original
+
+
+def test_repack_refuses_what_it_cannot_fix():
+    """docx 가 아니면 **고친 척하지 않는다** — 배치 문제가 아니기 때문이다."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("word/document.xml", _body())  # [Content_Types].xml 이 없다
+
+    with pytest.raises(dn.DocxNormalizeFailed) as exc:
+        dn.repack_docx(buf.getvalue())
+    assert dn.CONTENT_TYPES_ENTRY in str(exc.value)
+
+    with pytest.raises(dn.DocxNormalizeFailed):
+        dn.repack_docx(b"not a zip at all")
+
+
+# ---------------------------------------------------------------------------
+# 입구 — 좋은 길을 먼저, 없으면 되는 길로
+# ---------------------------------------------------------------------------
+
+
+def test_canonicalize_uses_soffice_when_present(monkeypatch):
+    monkeypatch.setattr(dn, "is_available", lambda: True)
+    monkeypatch.setattr(dn, "normalize_docx", lambda data, timeout_s=None: b"PK-from-soffice")
+
+    out, method, reason = dn.canonicalize_docx(_docx({"word/document.xml": _body()}))
+
+    assert (out, method, reason) == (b"PK-from-soffice", "soffice", None)
+
+
+def test_canonicalize_repacks_when_soffice_missing(monkeypatch):
+    """Windows 납품 PC 의 기본값이다 — **503 으로 끝나지 않는다.**"""
+    monkeypatch.setattr(dn, "is_available", lambda: False)
+    broken = _docx({"word/document.xml": _body()}, content_types_first=False)
+
+    out, method, reason = dn.canonicalize_docx(broken)
+
+    assert method == "repack"
+    assert "LibreOffice" in reason
+    assert dn.inspect_docx_package(out)["ecmCompatible"] is True
+
+
+def test_canonicalize_falls_back_but_says_why(monkeypatch):
+    """soffice 가 있는데 실패하면 재포장으로 떨어지고 **이유를 들고 온다.**
+
+    조용히 떨어지면 "soffice 가 멀쩡히 돌고 있다" 는 착각이 남는다.
+    """
+    monkeypatch.setattr(dn, "is_available", lambda: True)
+
+    def boom(data, timeout_s=None):
+        raise dn.DocxNormalizeFailed("rc=1 프로필 락")
+
+    monkeypatch.setattr(dn, "normalize_docx", boom)
+    broken = _docx({"word/document.xml": _body()}, content_types_first=False, with_dir_entry=True)
+
+    out, method, reason = dn.canonicalize_docx(broken)
+
+    assert method == "repack"
+    assert "rc=1" in reason
+    assert dn.inspect_docx_package(out)["ecmCompatible"] is True
+
+
+# ---------------------------------------------------------------------------
+# 납품 대상은 Windows 다 (2026-10-07)
+# ---------------------------------------------------------------------------
+
+
+def test_known_paths_include_windows_default_install(monkeypatch):
+    """**이 자리가 비어 있었다.** Windows 설치 관리자는 PATH 에 넣지 않는다 —
+    후보 경로에 없으면 정상 설치한 PC 에서도 영원히 "없다" 로 보인다.
+    """
+    monkeypatch.setenv("ProgramFiles", r"C:\Program Files")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\u\AppData\Local")
+
+    paths = dn._known_paths()
+
+    assert any(p.endswith(r"LibreOffice\program\soffice.exe") for p in paths), paths
+    assert any("Program Files" in p for p in paths)
+    assert any("AppData" in p for p in paths)
+    # 다른 운영체제 자리도 그대로 있어야 한다 — 맥·컨테이너에서 쓰는 길이다.
+    assert "/usr/lib/libreoffice/program/soffice" in paths
+
+
+def test_hint_does_not_tell_windows_users_to_install_a_linux_package(monkeypatch):
+    """`libreoffice-writer` 는 Windows 에 **없는 패키지 이름**이다 — 막다른 안내였다."""
+    monkeypatch.setattr(dn.os, "name", "nt")
+    hint = dn.install_hint()
+    assert "libreoffice-writer" not in hint
+    assert "soffice.exe" in hint
+
+    monkeypatch.setattr(dn.os, "name", "posix")
+    assert "libreoffice-writer" in dn.install_hint()

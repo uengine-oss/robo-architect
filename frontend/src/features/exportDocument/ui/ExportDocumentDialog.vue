@@ -252,6 +252,11 @@ function getExportPayload() {
 // "Word 문서가 아니다"라며 등록을 거부한다. 백엔드에서 LibreOffice 로 다시 저장하면
 // Office 표준 패키지가 된다.
 //
+// 2026-10-07: **LibreOffice 가 없어도 정본화된다.** 두 결함은 ZIP 배치 문제라
+// 서버가 파이썬으로 다시 담는다(`X-Docx-Normalized-By: repack`). 납품 PC 20여 대에
+// LibreOffice 를 깔지 않아도 ECM 호환 패키지가 나온다 — 다만 **고객 ECM 에 실제로
+// 올려 본 적은 없다**, 우리 쪽 판정이 통과한 것이다.
+//
 // 정본화에 실패해도 다운로드 자체는 되게 한다 — 원본으로 폴백하고, ECM 등록이
 // 거부될 수 있다는 것을 사용자에게 알린다.
 async function normalizeAndSaveDocx(blob, ext, baseName) {
@@ -278,6 +283,9 @@ async function normalizeAndSaveDocx(blob, ext, baseName) {
     if (res.headers.get('X-Docx-Lossless') === 'false') {
       const losses = res.headers.get('X-Docx-Losses') || ''
       showSnackbar(`정본화 중 내용 변화가 감지됐습니다: ${losses}`, 'error')
+    } else if (res.headers.get('X-Docx-Ecm-Compatible-After') === 'false') {
+      // 정본화를 돌렸는데도 호환이 아니면 **성공처럼 말하지 않는다.**
+      showSnackbar('정본화했지만 ECM 호환 판정이 아닙니다. 등록이 거부될 수 있습니다.', 'error')
     } else {
       showSnackbar('문서가 생성되었습니다. (ECM 등록용 정본화 완료)', 'success')
     }

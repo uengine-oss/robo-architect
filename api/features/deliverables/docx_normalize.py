@@ -15,9 +15,29 @@ Apache Tika 같은 엄격한 콘텐츠 검출기는 이 두 가지를 근거로 
 LibreOffice 로 열었다 다시 저장하면(= Word 로 저장한 것과 동일) 표준 패키지가
 되어 검출기가 Word 문서로 인식한다.
 
+## LibreOffice 가 **없어도** 되는 이유 (2026-10-07)
+
+위 두 결함은 **ZIP 의 배치 문제다 — 내용이 틀린 것이 아니다.** 그래서 같은 부품을
+순서만 바꿔 다시 담아도(`repack_docx`) 같은 판정을 받는다. 설치본에서 쟀다:
+
+```
+브라우저 모양 → 재포장    ecmCompatible False → **True** · 이유 0개
+유실                   `compare_documents` → **lossless** (1037 → 949 바이트)
+```
+
+납품 대상은 Windows 20여 대다. LibreOffice 를 거기 다 깔지 않아도 ECM 호환
+패키지를 낼 수 있어야 한다 — 그래서 `canonicalize_docx()` 는 **soffice 가 있으면
+그것을, 없으면 재포장을** 쓰고 **어느 길로 냈는지 돌려준다.**
+
+**아직 안 쟀다**: 고객 ECM(Tika)에 실제로 올려 본 적은 없다. 우리 판정
+(`inspect_docx_package`)이 통과한 것이고, 그 검출기가 스키마까지 엄격히 본다면
+재포장으로는 부족할 수 있다. 그때는 soffice 경로가 필요하다.
+
 ## 이 모듈의 구성
 
+- `canonicalize_docx()` — **입구.** soffice → 실패/부재 시 재포장. 쓴 방법을 함께 준다.
 - `normalize_docx()` — soffice headless 재직렬화. LibreOffice 없으면 명확한 오류.
+- `repack_docx()` — 파이썬만으로 표준 배치로 다시 담는다. 외부 프로그램이 필요 없다.
 - `inspect_docx_package()` — ECM 호환성 판정. LibreOffice 없이도 동작한다.
 - `compare_documents()` — 정본화 전후 유실 검증(문단·표·이미지·본문 길이).
 """
@@ -57,11 +77,37 @@ class DocxNormalizeFailed(RuntimeError):
     """LibreOffice 는 있으나 변환에 실패했다."""
 
 
+def _known_paths() -> list[str]:
+    """PATH 에 없을 때 찾아볼 자리.
+
+    **Windows 가 빠져 있었다**(2026-10-07). macOS·Linux 세 자리만 있었는데 납품
+    대상은 Windows 다 — 그리고 Windows 설치 관리자는 `soffice` 를 **PATH 에 넣지
+    않는다.** 그래서 LibreOffice 를 정상 설치한 PC 에서도 `shutil.which` 가 실패하고,
+    `LIBREOFFICE_BIN` 을 손으로 지정하지 않으면 영원히 "없다" 로 보였다.
+    """
+    paths = [
+        # macOS — 앱 번들 안이라 PATH 에 없다
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        # Linux (컨테이너 포함)
+        "/usr/lib/libreoffice/program/soffice",
+        "/opt/libreoffice/program/soffice",
+    ]
+    # Windows — 기본 설치 위치 셋. 환경변수로 풀어 32/64비트와 사용자 설치를 모두 본다.
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+        root = os.environ.get(var)
+        if root:
+            paths.append(os.path.join(root, "LibreOffice", "program", "soffice.exe"))
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        paths.append(os.path.join(local, "Programs", "LibreOffice", "program", "soffice.exe"))
+    return paths
+
+
 def soffice_binary() -> str | None:
     """soffice 실행 파일 경로. 없으면 None.
 
-    `LIBREOFFICE_BIN` 으로 명시 지정할 수 있다. macOS 처럼 PATH 에 없고 앱 번들
-    안에 있는 환경을 위해 알려진 경로도 함께 확인한다.
+    `LIBREOFFICE_BIN` 으로 명시 지정할 수 있다. PATH 에 없고 알려진 자리에만 있는
+    환경(macOS 앱 번들 · **Windows 기본 설치**)을 위해 후보 경로도 함께 확인한다.
     """
     configured = env_str("LIBREOFFICE_BIN", default=None)
     if configured:
@@ -72,14 +118,23 @@ def soffice_binary() -> str | None:
         if found:
             return found
 
-    for candidate in (
-        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-        "/usr/lib/libreoffice/program/soffice",
-        "/opt/libreoffice/program/soffice",
-    ):
+    for candidate in _known_paths():
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+def install_hint() -> str:
+    """플랫폼에 맞는 안내. **리눅스 패키지 이름을 Windows 사용자에게 말하지 않는다.**"""
+    if os.name == "nt":
+        return (
+            "LibreOffice 를 설치하면(기본 위치면 자동으로 찾습니다) 정본화를 씁니다. "
+            "다른 위치에 설치했다면 LIBREOFFICE_BIN 환경변수로 soffice.exe 경로를 지정하세요."
+        )
+    return (
+        "서버에 libreoffice-writer 를 설치하거나 LIBREOFFICE_BIN 환경변수로 "
+        "경로를 지정하세요."
+    )
 
 
 def is_available() -> bool:
@@ -95,8 +150,7 @@ def normalize_docx(data: bytes, *, timeout_s: int | None = None) -> bytes:
     binary = soffice_binary()
     if not binary:
         raise DocxNormalizeUnavailable(
-            "LibreOffice(soffice)를 찾을 수 없습니다. 서버에 libreoffice-writer 를 설치하거나 "
-            "LIBREOFFICE_BIN 환경변수로 경로를 지정하세요."
+            "LibreOffice(soffice)를 찾을 수 없습니다. " + install_hint()
         )
 
     timeout = timeout_s if timeout_s is not None else env_int("DOCX_NORMALIZE_TIMEOUT_S", 120)
@@ -146,6 +200,66 @@ def normalize_docx(data: bytes, *, timeout_s: int | None = None) -> bytes:
         return out
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def repack_docx(data: bytes) -> bytes:
+    """같은 부품을 **표준 배치로** 다시 담는다 — 외부 프로그램이 필요 없다.
+
+    고치는 것은 둘이고, 그 둘이 검출기가 거부하는 근거 전부다.
+
+    ```
+    `[Content_Types].xml` 을 **첫 엔트리**로 옮긴다
+    디렉터리 엔트리(`word/`)를 **버린다** — 표준 패키지에는 없다
+    ```
+
+    **부품의 바이트는 손대지 않는다.** 읽어서 그대로 다시 쓴다 — 내용을 고치는 일이
+    아니라 봉투를 다시 싸는 일이다. 그래서 `compare_documents()` 가 유실 0으로 나온다.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as source:
+            names = [n for n in source.namelist() if not n.endswith("/")]
+            if CONTENT_TYPES_ENTRY not in names:
+                # 이건 배치 문제가 아니다 — docx 가 아니거나 깨졌다. 재포장이 못 고친다.
+                raise DocxNormalizeFailed(
+                    f"`{CONTENT_TYPES_ENTRY}` 가 없어 재포장할 수 없습니다. docx 가 아닙니다."
+                )
+            ordered = [CONTENT_TYPES_ENTRY] + [n for n in names if n != CONTENT_TYPES_ENTRY]
+            parts = [(name, source.read(name)) for name in ordered]
+    except zipfile.BadZipFile as exc:
+        raise DocxNormalizeFailed("ZIP 패키지로 열리지 않아 재포장할 수 없습니다.") from exc
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for name, payload in parts:
+            target.writestr(name, payload)
+    result = out.getvalue()
+    if not result:
+        raise DocxNormalizeFailed("재포장 결과가 비어 있습니다.")
+    return result
+
+
+def canonicalize_docx(data: bytes, *, timeout_s: int | None = None) -> tuple[bytes, str, str | None]:
+    """정본 패키지를 만든다 — **좋은 길을 먼저, 없으면 되는 길로.**
+
+    돌려주는 것은 `(바이트, 쓴 방법, 떨어진 이유)` 셋이다. 방법을 같이 주는 이유는
+    하나다 — 나중에 "이 문서가 ECM 에서 거부됐다" 를 되짚을 때 **어느 길로 나온
+    문서인지**를 알아야 한다. 응답 헤더와 로그에 그 값을 싣는다.
+
+    ```
+    soffice 있고 성공   ("soffice", None)   — Word 로 다시 저장한 것과 같다
+    soffice 있고 실패   ("repack", 사유)     — 500 으로 끝내지 않는다. 배치는 고쳐 준다
+    soffice 없음        ("repack", 사유)     — Windows 납품 PC 의 기본값이다
+    ```
+
+    재포장도 못 하는 경우(= docx 가 아니다)만 `DocxNormalizeFailed` 로 올린다.
+    """
+    if is_available():
+        try:
+            return normalize_docx(data, timeout_s=timeout_s), "soffice", None
+        except DocxNormalizeFailed as exc:
+            # **조용히 재포장으로 넘어가지 않는다** — 왜 떨어졌는지 호출자에게 준다.
+            return repack_docx(data), "repack", f"soffice 변환 실패: {exc}"
+    return repack_docx(data), "repack", "LibreOffice(soffice)가 없습니다. " + install_hint()
 
 
 def inspect_docx_package(data: bytes) -> dict[str, Any]:
