@@ -217,11 +217,23 @@ function startRuntimeSupervision(): void {
     changed: () => {
       // `diff` 는 **넘긴 목록과 지금을 비교해** 바뀐 id 만 준다. 앞 틱의 목록을
       // 들고 있다가 넘기고, 바뀐 것들의 **지금 값**을 돌려준다.
-      const changedIds = new Set(runtimeRegistry.diff(lastServices));
-      const current = runtimeRegistry.snapshot().services;
-      lastServices = current;
-      return current
-        .filter((service) => changedIds.has(service.id))
+      const changedIds = runtimeRegistry.diff(lastServices);
+      const snapshot = runtimeRegistry.snapshot();
+      lastServices = snapshot.services;
+      if (changedIds.length > 0) {
+        // **바뀔 때만 민다** — 계약이 그렇고(`RuntimeStatusPayload`), 5초마다 같은
+        // 값을 보내면 렌더러가 그때마다 다시 그린다. 스토어도 "바뀐 것이 있을 때만
+        // 진전으로 센다" 로 받고 있어, 매번 밀면 **멎은 기동이 멎지 않은 것처럼** 보인다.
+        pushToRenderer(RUNTIME_CHANNELS.onStatus, {
+          services: snapshot.services,
+          capabilities: snapshot.capabilities,
+          graphGuard: snapshot.graphGuard,
+          changedServiceIds: changedIds,
+        });
+      }
+      const changedSet = new Set(changedIds);
+      return snapshot.services
+        .filter((service) => changedSet.has(service.id))
         .map((service) => ({
           id: service.id,
           state: service.state,

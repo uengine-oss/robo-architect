@@ -27,6 +27,7 @@ import {
   type ProbeKind,
   type ProbeResult,
 } from "../shared/runtime-contract";
+import { graphTopology } from "./graph-topology";
 import { changedServiceIds, decideState, deriveLegacyStatus, type ServiceFacts } from "./supervisor";
 
 const DISPLAY_NAMES: Record<ManagedServiceId, string> = {
@@ -42,8 +43,16 @@ const DISPLAY_NAMES: Record<ManagedServiceId, string> = {
   architect: "Architect 백엔드",
 };
 
-/** `architect` 만 호스트 프로세스다. 화면이 앱 소유와 외부를 갈라 보여야 한다(FR-005). */
-const OWNERS: Partial<Record<ManagedServiceId, "app" | "external">> = {};
+/**
+ * 앱이 소유하지 않는 것 — 화면이 둘을 갈라 보여야 한다(FR-005).
+ *
+ * **중앙 DB 모드에서 그래프는 남의 기계에 있다.** 그것을 "앱 소유" 로 그리면 사용자가
+ * 여기서 다시 시작할 수 있다고 읽는다 — 할 수 없는 일이다(그 서버는 이 PC 가 안 띄웠다).
+ * `architect` 는 컨테이너가 아니라 **호스트 프로세스**지만 앱이 띄우고 내리므로 소유다.
+ */
+const OWNERS: Partial<Record<ManagedServiceId, "app" | "external">> = {
+  graph: graphTopology().mode === "central" ? "external" : "app",
+};
 
 function blank(id: ManagedServiceId): ManagedService {
   return {

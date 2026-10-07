@@ -30,6 +30,10 @@ import { enterPreview, exitPreview, usePreviewSession } from '@/app/previewSessi
 import PreviewBanner from '@/app/ui/PreviewBanner.vue'
 import ProjectGateBanner from '@/app/ui/ProjectGateBanner.vue'
 import IngestionInterruptedBanner from '@/app/ui/IngestionInterruptedBanner.vue'
+// 058 US1 — 실행 상태. 서비스 하나가 못 뜬 것을 **기능의 말로** 옮겨 보여 준다.
+import RuntimeStatusBanner from '@/features/runtime-status/ui/RuntimeStatusBanner.vue'
+import StartupGate from '@/features/runtime-status/ui/StartupGate.vue'
+import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
 import { createLogger, newOpId } from '@/app/logging/logger'
 // 032: desktop launcher gate — when running inside Electron the launcher
 // view is shown until the user picks (Neo4j connection, project root) and
@@ -54,6 +58,7 @@ const navigatorStore = useNavigatorStore()
 const themeStore = useThemeStore() // Initialize theme store
 const bpmnStore = useBpmnStore()
 const session = useSessionStore()
+const runtime = useRuntimeStore()
 const auth = useAuthStore()
 
 /**
@@ -457,6 +462,11 @@ watch(
 )
 onUnmounted(() => collab.close())
 
+// 실행 상태 구독은 **게이트보다 먼저** 켠다 — 로그인도 런처도 백엔드가 떠야 하는데,
+// 안 뜬 이유를 말해 줄 수 있는 것이 이 구독뿐이다. 브라우저 모드면 스스로 빠진다.
+runtime.start()
+onUnmounted(() => runtime.stop())
+
 onMounted(async () => {
   // 인증 설정을 먼저 읽고, 저장된 토큰이 아직 쓸 만한지 확인한다.
   //
@@ -543,6 +553,9 @@ onUnmounted(() => {
   <!-- 인증 게이트. 런처보다 앞에 둔다 — 누구인지 모르는 채로 연결을 고르게 할
        이유가 없다. **모르는 동안도 앞에 둔다**: 확인 중이거나 인증 서버에 닿지
        못했으면 런처도 작업화면도 그리지 않는다. -->
+  <!-- 058 US1 — 쓸 수 있는 기능이 **하나도 없을 때만** 가린다. 하나라도 열려
+       있으면 배너로 내려간다. 멀쩡한 기능까지 막으면 고장 하나가 앱을 세운다. -->
+  <StartupGate />
   <AuthGateNotice v-if="auth.gate === 'checking' || auth.gate === 'unreachable'"
                   :state="auth.gate" />
   <LoginView v-else-if="auth.gate === 'login'" />
@@ -557,6 +570,8 @@ onUnmounted(() => {
     <!-- 적재가 중단된 채 끝났을 때. **지우기는 이미 일어났고** 말해 줄 사람은
          죽었으므로, 기록은 Postgres 에 있고 사람이 닫을 때까지 남는다. -->
     <IngestionInterruptedBanner />
+    <!-- 058 US1 — 준비 안 된 서비스가 있을 때만 뜬다(멀쩡하면 아무것도 안 띄운다). -->
+    <RuntimeStatusBanner />
     <!-- 040 — Proposal 임팩트 미리보기 식별 배너(활성 시에만 표시, FR-007) -->
     <PreviewBanner />
     <div class="main-content">
