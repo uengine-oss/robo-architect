@@ -70,6 +70,13 @@ _ES_LABELS = [
     "UserStory", "BoundedContext", "Aggregate", "Command", "Event",
     "ReadModel", "Policy", "Property", "CQRSConfig", "CQRSOperation",
     "UI", "GWT", "Feature", "Invariant",
+    # spec 025 의 사용자 여정. **빠져 있었다**(2026-10-07 측정).
+    #
+    # 적재는 교체다 — 그런데 이 둘이 목록에 없어서 재적재 때 살아남았다. 그리고
+    # 여정의 걸음은 `(:JourneyStep)-[:SHOWS]->(:UI)` 로 화면을 가리키는데 **그 UI 는
+    # 지워진다.** 즉 다시 적재할수록 **어디도 가리키지 않는 여정**이 쌓인다.
+    # 목록 끝에 둔다 — 지우기는 `reversed()` 로 돌아 잎부터 떼기 때문이다.
+    "Journey", "JourneyStep",
 ]
 
 
