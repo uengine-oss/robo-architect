@@ -231,6 +231,19 @@ function startRuntimeSupervision(): void {
           changedServiceIds: changedIds,
         });
       }
+      // **기능이 막히고 풀리는 것도 남긴다.** 서비스 상태만 적으면, 나중에
+      // "그때 사용자가 무엇을 못 했나" 를 되짚을 때 표를 손으로 다시 계산해야 한다.
+      // 그 표(`CAPABILITY_REQUIREMENTS`)는 바뀔 수 있고, 바뀐 뒤의 표로 옛 사고를
+      // 되짚으면 틀린 답이 나온다. 사실을 그때 적어 둔다.
+      for (const capability of snapshot.capabilities) {
+        if (lastCapabilityState.get(capability.id) === capability.state) continue;
+        lastCapabilityState.set(capability.id, capability.state);
+        log("info", "runtime.capability.state", {
+          capability: capability.id,
+          state: capability.state,
+          reason: capability.blockedReason,
+        });
+      }
       const changedSet = new Set(changedIds);
       return snapshot.services
         .filter((service) => changedSet.has(service.id))
@@ -246,6 +259,9 @@ function startRuntimeSupervision(): void {
     services: probedServiceIds().length,
   });
 }
+
+/** 앞 틱의 기능 상태. 바뀐 것만 기록한다. */
+const lastCapabilityState = new Map<string, string>();
 
 /** 앞 틱의 서비스 목록. `diff` 에 넘겨 **바뀐 것만** 기록한다. */
 let lastServices: ReturnType<RuntimeRegistry["snapshot"]>["services"] = [];
