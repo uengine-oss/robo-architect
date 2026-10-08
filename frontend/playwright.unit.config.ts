@@ -14,6 +14,12 @@ import { defineConfig } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['**/legacy-reference-unit.spec.ts', 'unit/**/*.spec.ts'],
+  // 넓히기만 한다. `runtime-status` 는 058 T031 이 요구한 이름 그대로 두고
+  // (`frontend/tests/runtime-status.spec.ts`) 여기 목록에 더했다.
+  testMatch: [
+    '**/legacy-reference-unit.spec.ts',
+    '**/runtime-status.spec.ts',
+    'unit/**/*.spec.ts',
+  ],
   timeout: 15_000,
 })

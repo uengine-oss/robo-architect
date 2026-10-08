@@ -15,54 +15,34 @@
  */
 import { computed, ref } from 'vue'
 import { useRuntimeStore } from '../runtime.store.js'
+import { screenTells } from '../messages.js'
 import RuntimeStatusPanel from './RuntimeStatusPanel.vue'
 
 const runtime = useRuntimeStore()
 const open = ref(false)
 
-const broken = computed(() => runtime.broken)
-const degraded = computed(() => runtime.degraded)
+/**
+ * 판정은 `../messages.js` 가 한다 — 템플릿에 흩어 두면 **검사를 걸 자리가 없다**
+ * (T031 이 요구하는 "모든 경우에 이름·기능·할 일" 을 세려면 순수 함수여야 한다).
+ * 배너는 그 결과를 **한 줄로** 그릴 뿐이다.
+ */
+const told = computed(() =>
+  screenTells({
+    services: runtime.services,
+    capabilities: runtime.capabilities,
+    dockerAvailable: runtime.dockerAvailable,
+    graphGuard: runtime.graphGuard,
+  }),
+)
 
 /** 띄울 이유가 있는가. **멀쩡하면 아무것도 안 띄운다.** */
 const show = computed(() => {
   if (!runtime.supported || !runtime.loaded) return false
-  return broken.value.length > 0 || degraded.value.length > 0 || runtime.dockerAvailable === false
+  return told.value.noticed
 })
 
-const tone = computed(() => (broken.value.length > 0 || runtime.dockerAvailable === false ? 'bad' : 'warn'))
-
-/**
- * 조사를 **받침으로 고른다.** `을(를)` 은 읽는 사람에게 기계가 쓴 문장으로 보인다 —
- * 이 배너는 고장 났을 때 보는 자리라, 거기서까지 어색하면 신뢰를 깎는다.
- */
-function hasFinalConsonant(word) {
-  const last = (word || '').trim().slice(-1)
-  if (!last) return null
-  const code = last.charCodeAt(0)
-  if (code < 0xac00 || code > 0xd7a3) return null // 영문·숫자 끝 — 가릴 수 없다
-  return (code - 0xac00) % 28 !== 0
-}
-
-const withObjectParticle = (word) => `${word}${hasFinalConsonant(word) === false ? '를' : '을'}`
-const withSubjectParticle = (word) => `${word}${hasFinalConsonant(word) === false ? '가' : '이'}`
-
-/** 한 줄 요약. **무엇이 안 되는지**를 기능 이름으로, **왜**를 서비스 이름으로 말한다. */
-const summary = computed(() => {
-  // 배너는 한 줄이다 — 그래서 **할 일 하나**만 적고 자세한 것은 "자세히" 로 넘긴다.
-  if (runtime.dockerAvailable === false) {
-    return 'Docker Desktop 이 꺼져 있어 서비스를 띄울 수 없습니다 — 실행하면 앱이 스스로 이어서 올립니다.'
-  }
-  const stuck = [...broken.value, ...degraded.value]
-  // 이름을 한 번에 말해 주면 **자세히를 누르지 않고도** 무엇을 고쳐야 하는지 안다.
-  const who = stuck.map((s) => s.displayName || s.id).join(' · ')
-  const names = runtime.capabilities
-    .filter((c) => c.state === 'unavailable')
-    .map((c) => c.displayName)
-  if (names.length > 0) {
-    return `지금 ${withObjectParticle(names.join(' · '))} 쓸 수 없습니다 — ${withSubjectParticle(who)} 준비되지 않았습니다.`
-  }
-  return `${withSubjectParticle(who)} 준비되지 않았습니다 — 쓰는 기능에 따라 영향이 없을 수도 있습니다.`
-})
+const tone = computed(() => (told.value.tone === 'bad' ? 'bad' : 'warn'))
+const summary = computed(() => told.value.headline)
 </script>
 
 <template>

@@ -32,6 +32,7 @@
  */
 import { computed, ref } from 'vue'
 import { useRuntimeStore } from '../runtime.store.js'
+import { rowActions, serviceLabel, sortedServices, stateText } from '../messages.js'
 
 const props = defineProps({
   /** 배너 안에 들어갈 때는 제목을 숨긴다 — 배너가 이미 같은 말을 했다. */
@@ -50,29 +51,18 @@ const logsError = ref(null)
 /** 전문을 펼쳤나. 처음에는 **눈에 걸릴 줄만** 보여준다. */
 const showAllLines = ref(false)
 
-const STATE_TEXT = {
-  ready: '준비됨',
-  starting: '준비 중',
-  degraded: '일부만 됨',
-  failed: '실패',
-  stopped: '내려감',
-  pending: '확인 전',
-}
+// 상태 문구·이름·정렬·행 동작은 `../messages.js` 가 정한다 — 배너와 **같은 말**을
+// 써야 하고, 그 판정에 검사가 걸려 있다(T031).
 
 /**
  * 이름은 **메인이 준다**(`runtime-state.DISPLAY_NAMES`). 여기에 또 적어 두면 같은
  * 사실이 두 곳에 생기고, 한쪽만 고친 날 화면과 로그가 다른 이름을 말한다.
  * 못 받았을 때만 id 로 떨어진다.
  */
-const label = (service) => service.displayName || service.id
+const label = serviceLabel
 
 /** 문제 있는 것을 위로. 사람이 **먼저 봐야 할 것**이 먼저 와야 한다. */
-const ORDER = { failed: 0, stopped: 1, degraded: 2, starting: 3, pending: 4, ready: 5 }
-const sorted = computed(() =>
-  [...runtime.services].sort(
-    (a, b) => (ORDER[a.state] ?? 9) - (ORDER[b.state] ?? 9) || label(a).localeCompare(label(b)),
-  ),
-)
+const sorted = computed(() => sortedServices(runtime.services))
 
 const blocked = computed(() => runtime.capabilities.filter((c) => c.state !== 'available'))
 const usable = computed(() => runtime.capabilities.filter((c) => c.state === 'available'))
@@ -214,12 +204,12 @@ const SOURCE_TEXT = {
           <span class="rts__dot" :class="`rts__dot--${s.state}`" aria-hidden="true"></span>
           <span class="rts__name">{{ label(s) }}</span>
           <span class="rts__id">{{ s.id }}</span>
-          <span class="rts__state">{{ STATE_TEXT[s.state] || s.state }}</span>
+          <span class="rts__state">{{ stateText(s.state) }}</span>
           <span v-if="s.owner === 'external'" class="rts__owner">밖에서 돎</span>
           <span class="rts__reason">{{ s.stateReason || '' }}</span>
           <span class="rts__acts">
             <button
-              v-if="s.state === 'failed' || s.state === 'stopped' || s.state === 'degraded'"
+              v-if="rowActions(s).includes('retry')"
               class="rts__btn"
               :disabled="busyService === s.id"
               @click="retry(s.id)"
