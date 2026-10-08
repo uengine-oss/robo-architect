@@ -4,6 +4,7 @@ import mermaid from 'mermaid'
 import { buildBcOverviewDef, buildContextMapDef, buildAggregateModelDef } from '../diagrams'
 // 화면과 문서가 **같은 말**을 써야 한다 — 다건/단건 판정은 한 자리에 둔다.
 import { resultKind } from '../text'
+import { sectionShown as shownOf, sectionNumbers as numbersOf } from '../sections'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
@@ -193,6 +194,8 @@ defineExpose({
   get allUserStories() { return allUserStories.value },
   get crossBCPolicies() { return crossBCPolicies.value },
   get sectionNumbers() { return sectionNumbers.value },
+  // 번호와 **같은 판정**을 내보낸다 — 내보내기 쪽이 조건을 따로 적으면 또 어긋난다.
+  get sectionShown() { return sectionShown.value },
   get deliverable() { return deliverable.value },
   get sessions() { return sessions.value },
   get snapshots() { return snapshots.value },
@@ -215,18 +218,15 @@ defineExpose({
 })
 
 // ── Helpers ──
-const sectionNumbers = computed(() => {
-  let n = 0; const nums = {}
-  if (selectedSections.value.userStories) nums.userStories = ++n
-  if (selectedSections.value.valueStream) nums.valueStream = ++n
-  if (selectedSections.value.boundedContext) nums.boundedContext = ++n
-  if (selectedSections.value.aggregateDesign) nums.aggregateDesign = ++n
-  if (selectedSections.value.modelOverview) nums.modelOverview = ++n
-  if (selectedSections.value.apiSpecification) nums.apiSpecification = ++n
-  if (selectedSections.value.aggregateDetail) nums.aggregateDetail = ++n
-  if (selectedSections.value.traceabilityMatrix) nums.traceabilityMatrix = ++n
-  return nums
-})
+// 섹션이 실리는지와 번호는 `../sections.js` 가 정한다 — 내보내기 쪽과 **같은 판정**을
+// 써야 하고, 따로 적으면 한쪽만 고쳐져 어긋난다(실제로 어긋났다).
+const sectionShown = computed(() => shownOf(selectedSections.value, {
+  valueStreamCount: valueStreamProcesses.value.length,
+  aggregateDesignCount: aggregateDesignContexts.value.length,
+  hasTraceSummary: Boolean(traceSummary.value),
+}))
+
+const sectionNumbers = computed(() => numbersOf(sectionShown.value))
 
 const domainOrder = { 'Core Domain': 0, 'Supporting Domain': 1, 'Generic Domain': 2 }
 const sortedContexts = computed(() =>

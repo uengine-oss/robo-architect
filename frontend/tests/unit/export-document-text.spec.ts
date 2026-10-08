@@ -21,6 +21,8 @@
 import { test, expect } from '@playwright/test'
 // @ts-expect-error 플레인 JS 모듈
 import { clip, resultKind } from '../../src/features/exportDocument/text.js'
+// @ts-expect-error 플레인 JS 모듈
+import { SECTION_ORDER, sectionShown, sectionNumbers } from '../../src/features/exportDocument/sections.js'
 
 /** 실제 BC 설명 — 178자. 80자에서 자르면 `approval lin` 으로 끊긴다. */
 const REAL_BC_DESC =
@@ -113,4 +115,65 @@ test('라틴만 있으면 **글자 수와 똑같이** 동작한다 — 지금 �
   // 자른 자리가 **낱말 경계**다.
   expect(REAL_BC_DESC.startsWith(body)).toBe(true)
   expect(REAL_BC_DESC[body.length]).toBe(' ')
+})
+
+// ---------------------------------------------------------------------------
+// 2026-10-08 — **내보낸 문서를 열어 보고** 나온 둘
+//
+// 넷을 고친 뒤 실제 .docx 를 풀어 세었더니 두 가지가 더 있었다. 둘 다 "비어 있다" 와
+// "없다" 를 같게 적던 것이다.
+// ---------------------------------------------------------------------------
+
+/** 내보내기의 `txt()` 가 하던 것 — 빈 문자열을 `-` 로 바꿨다. */
+const oldTxt = (s: unknown) => String(s || '-')
+/** 고친 것 — 값이 없으면 `-` 는 **부르는 쪽이** 정한다. */
+const newTxt = (s: unknown) => String(s ?? '')
+
+test('**일부러 비운 칸**은 비워 둔다 — `-` 는 "값이 없다" 는 뜻이다', () => {
+  // 실측(설계산출물-2026-10-08.docx) — 표 밖에 홀로 `-` 인 문단 **70개**.
+  // 표지 11 · 섹션 표지마다 6 · Aggregate 모델 쪽마다 1. 전부 `empty()`(=`para('')`)였다.
+  expect(oldTxt('')).toBe('-')
+  expect(newTxt('')).toBe('')
+  // 원문 근거 표에서 같은 US 의 둘째 줄은 ID·Task 를 비워 "위와 같다" 로 읽히게 둔다.
+  // `-` 가 찍히면 **"업무 Task 가 없다"** 로 보인다(실제로는 33개 US 전부 있었다).
+  expect(newTxt('')).not.toBe('-')
+  // 값이 **진짜 없을** 때는 여전히 `-` 다 — 표가 `String(c ?? '-')` 로 가른다.
+  expect(String(null ?? '-')).toBe('-')
+  expect(String(undefined ?? '-')).toBe('-')
+})
+
+test('숫자 0 을 `-` 로 바꾸지 않는다 — 0 은 값이다', () => {
+  expect(oldTxt(0)).toBe('-')
+  expect(newTxt(0)).toBe('0')
+})
+
+test('**안 실린 섹션이 번호를 먹지 않는다** — 문서 업로드 없이 생성한 경우', () => {
+  const allOn = Object.fromEntries(SECTION_ORDER.map((k: string) => [k, true]))
+  // 코드 분석 문서를 올리지 않으면 밸류 스트림·추적성이 비고, Aggregate 는 있다.
+  const shown = sectionShown(allOn, { valueStreamCount: 0, aggregateDesignCount: 5, hasTraceSummary: false })
+  expect(shown.valueStream).toBe(false)
+  expect(shown.traceabilityMatrix).toBe(false)
+  // 비어도 "없습니다" 를 적는 섹션은 **실린다** — 빈 것과 안 실리는 것은 다르다.
+  expect(shown.userStories).toBe(true)
+
+  const nums = sectionNumbers(shown)
+  expect(nums.valueStream).toBeUndefined()
+  expect(nums.traceabilityMatrix).toBeUndefined()
+  // 번호가 **1부터 빈틈없이** 이어진다 — `1 → 3` 으로 뛰면 섹션이 빠진 문서로 보인다.
+  expect(SECTION_ORDER.filter((k: string) => nums[k]).map((k: string) => nums[k])).toEqual([1, 2, 3, 4, 5, 6])
+})
+
+test('데이터가 다 있으면 여덟 개가 **1~8** 로 간다', () => {
+  const allOn = Object.fromEntries(SECTION_ORDER.map((k: string) => [k, true]))
+  const nums = sectionNumbers(sectionShown(allOn, { valueStreamCount: 3, aggregateDesignCount: 5, hasTraceSummary: true }))
+  expect(SECTION_ORDER.map((k: string) => nums[k])).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+})
+
+test('섹션을 **끄면** 그 번호도 사라지고 나머지가 당겨진다', () => {
+  const shown = sectionShown(
+    { userStories: true, boundedContext: true, modelOverview: true, aggregateDetail: true },
+    { valueStreamCount: 3, aggregateDesignCount: 5, hasTraceSummary: true },
+  )
+  const nums = sectionNumbers(shown)
+  expect(nums).toEqual({ userStories: 1, boundedContext: 2, modelOverview: 3, aggregateDetail: 4 })
 })

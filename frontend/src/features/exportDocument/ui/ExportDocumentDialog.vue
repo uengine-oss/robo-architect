@@ -224,6 +224,8 @@ function getExportPayload() {
       crossBCPolicies: tmpl.crossBCPolicies || [],
       sectionNumbers: tmpl.sectionNumbers || {},
       selectedSections: tmpl.selectedSections || {},
+      // 켜졌는가(selectedSections) 와 **실제로 실리는가**(sectionShown)는 다르다.
+      sectionShown: tmpl.sectionShown || {},
       // Session 스냅샷 기반 섹션 (Value Stream / 추적성 / 원문 근거).
       // 세션을 특정할 수 없으면 빈 값 → 해당 섹션은 문서에서 생략된다.
       valueStreamProcesses: tmpl.valueStreamProcesses || [],

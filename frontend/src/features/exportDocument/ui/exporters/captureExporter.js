@@ -12,6 +12,7 @@ import {
 import PptxGenJS from 'pptxgenjs'
 import { xmlSafe, isValidPng, fitPng } from '../../docxSafety'
 import { clip, resultKind } from '../../text'
+import { sectionShown as sectionShownOf } from '../../sections'
 
 // ── Constants ──
 const FONT = '맑은 고딕'
@@ -28,7 +29,25 @@ const HEADER_SHADING = { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F3F5' 
 
 
 // ── Word primitives ──
-function txt(s, o = {}) { return new TextRun({ text: xmlSafe(s || '-'), font: FONT, size: o.size || 22, bold: o.bold, italic: o.italic, color: o.color }) }
+/**
+ * 한 토막의 글자.
+ *
+ * ⚠ `s || '-'` 였다. 그래서 **일부러 비운 칸이 `-` 로 바뀌었다** —
+ * `-` 는 "값이 없다" 는 뜻이라 둘이 같아진다. 2026-10-08 에 내보낸 문서를 열어
+ * 세어 보니 —
+ *
+ * ```
+ * 표 밖에 홀로 `-` 인 문단 **70개** — 표지 11 · 섹션 표지마다 6 · Aggregate 모델 쪽마다 1
+ *   (`empty()` 가 `para('')` 인데 그 빈 줄이 전부 `-` 로 찍혔다)
+ * 원문 근거 표의 **33칸** — 같은 US 의 둘째 근거 줄은 ID·Task 를 비워 "위와 같다" 로
+ *   읽히게 둔 자리인데 `-` 가 찍혀 **"업무 Task 가 없다"** 로 보였다
+ *   (실제로는 33개 US 전부 Task 가 있다)
+ * ```
+ *
+ * 값이 없을 때 `-` 를 쓰는 것은 **부르는 쪽이 정한다**(`c.actor || '-'` 처럼).
+ * 표 칸은 `tbl` 이 `String(c ?? '-')` 로 이미 가른다 — 여기서 또 가리면 안 된다.
+ */
+function txt(s, o = {}) { return new TextRun({ text: xmlSafe(s ?? ''), font: FONT, size: o.size || 22, bold: o.bold, italic: o.italic, color: o.color }) }
 function para(t, o = {}) { return new Paragraph({ children: typeof t === 'string' ? [txt(t, o)] : t, spacing: { after: o.after ?? 120, before: o.before ?? 0 }, alignment: o.align, indent: o.indent, heading: o.heading }) }
 function h2(t) { return para(t, { heading: HeadingLevel.HEADING_2, size: 28, bold: true, after: 200 }) }
 function h3(t) { return para(t, { heading: HeadingLevel.HEADING_3, size: 24, bold: true, after: 120 }) }
@@ -115,7 +134,7 @@ export async function exportToWord(data, container, onProgress) {
     sectionNumbers: sn, selectedSections, helpers,
     valueStreamProcesses = [],
     traceGroups = [], traceInferred = [], traceUnmapped = [], traceSummary = null,
-    apiSummary = null, apiConvention = '',
+    apiSummary = null, apiConvention = '', sectionShown = null,
   } = data
   const { bcName, bcTree, getCommandsFromTree, getReadModelsFromTree, allCmdsForCtx, allEvtsForCtx, resolveNodeName, traceTypeLabel, storySources, storySourceTask, apiForCtx } = helpers
   const sections = []
@@ -123,7 +142,15 @@ export async function exportToWord(data, container, onProgress) {
   // Aggregate 설계 섹션에 실을 BC — 미리보기의 aggregateDesignContexts 와 같은 조건.
   const aggDesignContexts = sortedContexts.filter(ctx => (bcTree(ctx)?.aggregates || []).length)
   // 뒤 섹션들이 "이 내용을 내가 또 실어야 하나" 를 묻는 자리다.
-  const aggregateDesignInDoc = Boolean(selectedSections.aggregateDesign && aggDesignContexts.length)
+  // **켜졌는가**(selectedSections) 와 **실제로 실리는가**(shown)는 다르다. 켜 두었는데
+  // 데이터가 없어 안 실리는 섹션이 셋이다(밸류 스트림 · Aggregate 설계 · 추적성).
+  // 판정은 `../../sections.js` 한 자리에 있다 — 번호를 매기는 화면과 **같은 것**을 쓴다.
+  const shown = sectionShown || sectionShownOf(selectedSections, {
+    valueStreamCount: valueStreamProcesses.length,
+    aggregateDesignCount: aggDesignContexts.length,
+    hasTraceSummary: Boolean(traceSummary),
+  })
+  const aggregateDesignInDoc = Boolean(shown.aggregateDesign)
 
 
   // ── 표지 ──
@@ -140,12 +167,12 @@ export async function exportToWord(data, container, onProgress) {
   // ── 목차 ──
   const toc = []
   function tocAdd(t, indent) { toc.push(para(t, { size: indent ? 20 : 22, bold: !indent, after: indent ? 60 : 100, indent: indent ? { left: 720 } : undefined })) }
-  if (selectedSections.userStories) tocAdd(`${sn.userStories}. 사용자 스토리 종합`)
-  if (selectedSections.valueStream && valueStreamProcesses.length) {
+  if (shown.userStories) tocAdd(`${sn.userStories}. 사용자 스토리 종합`)
+  if (shown.valueStream) {
     tocAdd(`${sn.valueStream}. 밸류 스트림 분석`)
     valueStreamProcesses.forEach((proc, i) => tocAdd(`${sn.valueStream}-${i + 1}. ${proc.name}`, true))
   }
-  if (selectedSections.boundedContext) {
+  if (shown.boundedContext) {
     tocAdd(`${sn.boundedContext}. Bounded Context 정의`)
     tocAdd(`${sn.boundedContext}-1. 분해 결과`, true)
     sortedContexts.forEach((c, i) => tocAdd(`${sn.boundedContext}-${i + 3}. ${bcName(c)}`, true))
@@ -154,23 +181,23 @@ export async function exportToWord(data, container, onProgress) {
     tocAdd(`${sn.aggregateDesign}. Aggregate 설계`)
     aggDesignContexts.forEach(c => tocAdd(`${bcName(c)}`, true))
   }
-  if (selectedSections.modelOverview) {
+  if (shown.modelOverview) {
     tocAdd(`${sn.modelOverview}. 이벤트 스토밍 모델 전반 정보`)
     sortedContexts.forEach((c, i) => tocAdd(`${sn.modelOverview}-${i + 1}. ${bcName(c)}`, true))
   }
-  if (selectedSections.apiSpecification) {
+  if (shown.apiSpecification) {
     tocAdd(`${sn.apiSpecification}. API 명세`)
     sortedContexts.forEach((c, i) => tocAdd(`${sn.apiSpecification}-${i + 1}. ${bcName(c)}`, true))
   }
-  if (selectedSections.aggregateDetail) {
+  if (shown.aggregateDetail) {
     tocAdd(`${sn.aggregateDetail}. Aggregate 상세`)
     sortedContexts.forEach((c, ci) => (bcTree(c)?.aggregates || []).forEach((a, ai) => tocAdd(`${sn.aggregateDetail}-${ci + 1}-${ai + 1}. ${bcName(c)} / ${a.displayName || a.name}`, true)))
   }
-  if (selectedSections.traceabilityMatrix && traceSummary) tocAdd(`${sn.traceabilityMatrix}. 추적성 매트릭스`)
+  if (shown.traceabilityMatrix) tocAdd(`${sn.traceabilityMatrix}. 추적성 매트릭스`)
   sections.push(sec([h2('목 차'), ...toc]))
 
   // ── 1. 사용자 스토리 ──
-  if (selectedSections.userStories) {
+  if (shown.userStories) {
     sections.push(wordSectionCover(sn.userStories, '사용자 스토리 종합', '시스템에 등록된 사용자 스토리를 Bounded Context 별로 정리합니다.'))
     sections.push(sec([
       h2(`${sn.userStories}. 사용자 스토리 종합`),
@@ -203,7 +230,7 @@ export async function exportToWord(data, container, onProgress) {
   }
 
   // ── 밸류 스트림 분석 ──
-  if (selectedSections.valueStream && valueStreamProcesses.length) {
+  if (shown.valueStream) {
     sections.push(wordSectionCover(sn.valueStream, '밸류 스트림 분석', '업로드 문서에서 도출한 업무 프로세스를 Actor 흐름으로 정리하고, 각 단계가 어떤 사용자 스토리로 승격됐는지 연결합니다.'))
     valueStreamProcesses.forEach((proc, pi) => {
       const path = proc.linearPaths?.[0] || []
@@ -227,7 +254,7 @@ export async function exportToWord(data, container, onProgress) {
   }
 
   // ── 2. Bounded Context (요약 + 모든 BC 상세를 한 section에) ──
-  if (selectedSections.boundedContext) {
+  if (shown.boundedContext) {
     sections.push(wordSectionCover(sn.boundedContext, 'Bounded Context 정의', '도메인을 구성하는 Bounded Context의 역할, 구성 요소, 상호 관계를 정의합니다.'))
     const ch = [
       h2(`${sn.boundedContext}. Bounded Context 정의`),
@@ -290,7 +317,7 @@ export async function exportToWord(data, container, onProgress) {
   }
 
   // ── 3. 모델 전반 (한 BC = 한 section, 내부 소분류 합침) ──
-  if (selectedSections.modelOverview) {
+  if (shown.modelOverview) {
     sections.push(wordSectionCover(sn.modelOverview, '이벤트 스토밍 모델 전반 정보', 'Command, Event, Policy, Read Model 구성 요소를 정리합니다.'))
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return
@@ -345,7 +372,7 @@ export async function exportToWord(data, container, onProgress) {
   }
 
   // ── 4. API 명세 (한 BC = 한 section) ──
-  if (selectedSections.apiSpecification) {
+  if (shown.apiSpecification) {
     sections.push(wordSectionCover(sn.apiSpecification, 'API 명세', 'Command 및 Read Model 상세 정보입니다.'))
 
     // 도출된 Endpoint 계약 — 경로/메서드/Command/설명/파라미터.
@@ -400,7 +427,7 @@ export async function exportToWord(data, container, onProgress) {
     // 있는지와는 상관이 없다 — 계약이 없어도 §모델이 있으면 그 표는 이미 문서에 있고,
     // 여기서 또 실으면 그냥 중복이다. (처음에 `|| !hasEndpointContract` 를 붙였더니
     // "계약 없음 + 모델 있음" 에서 **둘 다 떠서** 중복이 남았다.)
-    const needsModelFallback = !selectedSections.modelOverview
+    const needsModelFallback = !shown.modelOverview
 
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return
@@ -438,7 +465,7 @@ export async function exportToWord(data, container, onProgress) {
   }
 
   // ── 5. Aggregate 상세 (한 Aggregate = 한 section) ──
-  if (selectedSections.aggregateDetail) {
+  if (shown.aggregateDetail) {
     sections.push(wordSectionCover(sn.aggregateDetail, 'Aggregate 상세', '속성, Enumeration, Value Object 구조를 정리합니다.'))
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t?.aggregates?.length) return
@@ -478,7 +505,7 @@ export async function exportToWord(data, container, onProgress) {
   }
 
   // ── 추적성 매트릭스 ──
-  if (selectedSections.traceabilityMatrix && traceSummary) {
+  if (shown.traceabilityMatrix) {
     sections.push(wordSectionCover(sn.traceabilityMatrix, '추적성 매트릭스', '사용자 스토리별로 매핑된 이벤트 스토밍 요소를 보여줍니다.'))
     const label = (type) => (traceTypeLabel ? traceTypeLabel(type) : type)
 
@@ -726,7 +753,7 @@ export async function exportToPPT(data, container, onProgress) {
   }
 
   // ── 2. BC ──
-  if (selectedSections.boundedContext) {
+  if (shown.boundedContext) {
     pptSec(pptx, sn.boundedContext, 'Bounded Context 정의', '도메인을 구성하는 Bounded Context의 역할, 구성 요소, 상호 관계를 정의합니다.')
     sb.startPage(`${sn.boundedContext}. Bounded Context 요약`)
     sb.addTable(['BC', '도메인', '설명', 'Agg', 'Cmd', 'Evt', 'RM'],
@@ -757,7 +784,7 @@ export async function exportToPPT(data, container, onProgress) {
   }
 
   // ── 3. 모델 전반 — 한 BC의 소 주제들을 같은 슬라이드에 합침 ──
-  if (selectedSections.modelOverview) {
+  if (shown.modelOverview) {
     pptSec(pptx, sn.modelOverview, '이벤트 스토밍 모델 전반 정보', 'Command, Event, Policy, Read Model 구성 요소를 정리합니다.')
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return; const bcN = bcName(ctx); let sub = 0
@@ -804,7 +831,7 @@ export async function exportToPPT(data, container, onProgress) {
   }
 
   // ── 4. API ──
-  if (selectedSections.apiSpecification) {
+  if (shown.apiSpecification) {
     pptSec(pptx, sn.apiSpecification, 'API 명세', 'Command 및 Read Model 상세 정보입니다.')
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return; const bcN = bcName(ctx)
@@ -829,7 +856,7 @@ export async function exportToPPT(data, container, onProgress) {
   }
 
   // ── 5. Aggregate 상세 ──
-  if (selectedSections.aggregateDetail) {
+  if (shown.aggregateDetail) {
     pptSec(pptx, sn.aggregateDetail, 'Aggregate 상세', '속성, Enumeration, Value Object 구조를 정리합니다.')
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t?.aggregates?.length) return; const bcN = bcName(ctx)
