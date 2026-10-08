@@ -108,13 +108,39 @@ export async function presentContainerNames(timeoutMs = 10_000): Promise<string[
   return out.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+/** `run` 과 같지만 **두 흐름을 섞지 않는다.** 섞는 순간 시간 순서를 잃는다. */
+function runSplit(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      command,
+      args,
+      { timeout: timeoutMs, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+      (_error, stdout, stderr) => resolve({ stdout: stdout ?? "", stderr: stderr ?? "" }),
+    );
+  });
+}
+
 /**
- * 컨테이너 로그의 마지막 `tail` 줄. stdout 과 stderr 를 **합쳐서** 준다 —
- * 파이썬 서비스는 오류를 stderr 로, 진행을 stdout 으로 내서 한쪽만 보면 앞뒤가 없다.
+ * 컨테이너 로그의 마지막 `tail` 줄 — **두 흐름을 갈라서** 돌려준다.
+ *
+ * `docker logs` 는 컨테이너의 stdout 을 우리 stdout 으로, stderr 를 우리 stderr 로
+ * 준다. 그래서 그냥 이어 붙이면 **시간이 뒤집힌다.** 2026-10-08 실측 — pdf2bpmn 은
+ * 접속 로그 109줄이 stdout, 기동 메시지 4줄이 stderr 였고, 이어 붙인 화면에서
+ * "Started server process" 가 **방금 찍힌 healthz 아래**에 깔렸다. 사용자가 그걸 봤다.
+ *
+ * `-t` 로 시각을 받아 **시각으로 합친다**(합치는 일은 `service-logs.mergeStreams`).
+ * 합치는 규칙을 여기 두지 않는 이유는 하나다 — **도커 없이 검사로 걸어야 한다.**
  */
-export async function containerLogs(name: string, tail: number, timeoutMs = 15_000): Promise<string> {
-  const { out } = await run("docker", ["logs", "--tail", String(tail), name], timeoutMs);
-  return out;
+export async function containerLogs(
+  name: string,
+  tail: number,
+  timeoutMs = 15_000,
+): Promise<{ stdout: string; stderr: string }> {
+  return runSplit("docker", ["logs", "-t", "--tail", String(tail), name], timeoutMs);
 }
 
 /**

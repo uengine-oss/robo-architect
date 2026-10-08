@@ -138,6 +138,21 @@ const shownLines = computed(() => {
   return logs.value.lines.slice(-8)
 })
 
+/**
+ * 고른 줄이 없으면 **그렇다고 말한다.**
+ *
+ * 2026-10-08 에 사용자가 degraded 상태에서 열어 보고 평범한 `healthz 200` 줄들을
+ * 받았다. 그 줄들이 조용히 떨어진 마지막 몇 줄이었는데, **원인처럼 읽힌다.**
+ * 그리고 실제로 원인은 로그에 없다 — pdf2bpmn 의 401 은 프로브가 **컨테이너 밖에서**
+ * 재서 안 것이고, 그래서 맨 위의 판정 이유가 유일한 근거다. 그 사실을 적어 준다.
+ */
+const fallbackNote = computed(() => {
+  if (!logs.value || showAllLines.value) return null
+  if (logs.value.highlights?.length) return null
+  if (!logs.value.lines.length) return null
+  return '로그에서 눈에 걸린 줄이 없습니다 — 마지막 줄들을 보여줍니다. 원인은 위의 판정 이유에 있을 수 있습니다.'
+})
+
 const SOURCE_TEXT = {
   container: '컨테이너 로그',
   backend: '백엔드(호스트 프로세스) 로그',
@@ -207,6 +222,7 @@ const SOURCE_TEXT = {
               >{{ showAllLines ? `눈에 걸린 줄만` : `전문 ${logs.lines.length}줄` }}</button>
             </p>
             <p v-if="logs.note" class="rts__note">{{ logs.note }}</p>
+            <p v-if="fallbackNote" class="rts__note">{{ fallbackNote }}</p>
             <pre v-if="shownLines.length" class="rts__logsBody">{{ shownLines.join('\n') }}</pre>
             <p class="rts__logsFoot">비밀 값은 가려서 보여 줍니다. 전문은 "폴더 열기" 의 파일에 있습니다.</p>
           </template>

@@ -204,8 +204,8 @@ export interface ReadDeps {
   dockerAvailable(): Promise<boolean>;
   /** 멈춘 것까지 포함한 컨테이너 이름. 못 얻으면 `null`. */
   presentContainers(): Promise<string[] | null>;
-  /** `docker logs --tail` 의 출력(stdout+stderr 합본). */
-  containerLogs(containerName: string, tail: number): Promise<string>;
+  /** `docker logs -t --tail` 의 **갈라진 두 흐름**. 합치는 것은 이 모듈이 한다. */
+  containerLogs(containerName: string, tail: number): Promise<{ stdout: string; stderr: string }>;
   /** 앱 로그에서 백엔드가 낸 줄만. */
   backendLines(tail: number): Promise<string[]>;
 }
@@ -236,7 +236,8 @@ export async function readServiceLogs(
 
   let raw: string[] = [];
   if (plan.source === "container" && plan.containerName) {
-    raw = splitLines(await deps.containerLogs(plan.containerName, tail));
+    const streams = await deps.containerLogs(plan.containerName, tail);
+    raw = mergeStreams(streams.stdout, streams.stderr, tail);
   } else if (plan.source === "backend") {
     raw = await deps.backendLines(tail);
   }
@@ -252,6 +253,56 @@ export async function readServiceLogs(
       plan.note ??
       (lines.length === 0 ? "로그에 남은 줄이 없습니다 — 아직 아무것도 안 찍혔습니다." : null),
   };
+}
+
+/** `2026-10-08T02:11:49.136248977Z ` 꼴 머리. `docker logs -t` 가 붙인다. */
+const STAMPED = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?Z\s?(.*)$/;
+
+/**
+ * 두 흐름을 **시각으로** 합친다.
+ *
+ * ## 왜 — 이어 붙이면 시간이 뒤집힌다
+ *
+ * 2026-10-08 에 사용자가 화면에서 그걸 봤다. 방금 찍힌 `healthz 200` 네 줄 **아래에**
+ * 한참 전의 "Started server process" 가 깔려 있었다. `docker logs` 가 stdout 과
+ * stderr 를 갈라 주는데 우리가 `stdout + stderr` 로 이어 붙였기 때문이다
+ * (실측: 접속 로그 109줄이 stdout · 기동 메시지 4줄이 stderr).
+ *
+ * 시각은 `HH:MM:SS` 로 짧게 남긴다. **앱 로그와 같은 UTC** 라 두 기록을 나란히 읽을
+ * 수 있다 — "앱이 degraded 로 바꾼 그 시각에 컨테이너는 뭘 하고 있었나" 가 그걸로 붙는다.
+ *
+ * 시각이 없는 줄(여러 줄짜리 traceback 의 둘째 줄 이후)은 **앞 줄에 붙여** 둔다.
+ * 따로 떼어 정렬하면 traceback 이 흩어져 못 읽는다.
+ */
+export function mergeStreams(stdout: string, stderr: string, limit = DEFAULT_TAIL): string[] {
+  const rows: { at: string; order: number; text: string }[] = [];
+  let order = 0;
+  for (const chunk of [stdout, stderr]) {
+    let last: { at: string; order: number; text: string } | null = null;
+    for (const line of chunk.split(/\r?\n/)) {
+      const trimmed = line.replace(/\s+$/, "");
+      if (!trimmed) continue;
+      const matched = STAMPED.exec(trimmed);
+      const at = matched?.[1] ?? "";
+      if (matched && at) {
+        // 화면에는 `HH:MM:SS` 만 남긴다 — 날짜는 하루치 로그에서 군더더기다.
+        last = { at, order: order++, text: `${at.slice(11)} ${matched[2] ?? ""}` };
+        rows.push(last);
+      } else if (last && last.at !== "") {
+        // **앞 줄이 시각을 가졌을 때만** 이어짐으로 본다 — traceback 의 둘째 줄.
+        last.text += `\n${trimmed}`;
+      } else {
+        // 시각이 아예 없는 로그(`-t` 없이 받은 것). **줄마다 한 줄**로 두고 순서만 지킨다 —
+        // 여기서 이어 붙이면 로그 전체가 **한 덩이**가 된다(검사가 그걸 먼저 물었다).
+        last = { at: "", order: order++, text: trimmed };
+        rows.push(last);
+      }
+    }
+  }
+  // 시각이 같으면 **받은 순서**를 지킨다(정렬이 줄을 섞으면 읽는 순서가 깨진다).
+  rows.sort((a, b) => (a.at === b.at ? a.order - b.order : a.at < b.at ? -1 : 1));
+  const merged = rows.map((row) => row.text);
+  return merged.slice(Math.max(0, merged.length - limit));
 }
 
 function splitLines(out: string): string[] {

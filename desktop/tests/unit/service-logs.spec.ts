@@ -28,6 +28,7 @@ import {
   normalizeTail,
   pickHighlights,
   planSource,
+  mergeStreams,
   readServiceLogs,
 } from "../../src/main/service-logs";
 
@@ -182,12 +183,13 @@ test("컨테이너 로그를 읽어 **가린 줄**과 고른 줄을 같이 준�
       ownerOf: () => "app",
       dockerAvailable: async () => true,
       presentContainers: async () => ["p-pdf2bpmn-1"],
-      containerLogs: async () =>
-        [
-          "INFO:     Started server process [1]",
-          "INFO:     config token=supersecretvalue",
-          "INFO:     Shutting down",
-        ].join("\n"),
+      // 실제 모양대로 **갈라서** 준다 — 접속·설정은 stdout, 기동·종료는 stderr.
+      containerLogs: async () => ({
+        stdout: "2026-10-08T02:00:02.000000000Z INFO:     config token=supersecretvalue\n",
+        stderr:
+          "2026-10-08T02:00:01.000000000Z INFO:     Started server process [1]\n" +
+          "2026-10-08T02:00:03.000000000Z INFO:     Shutting down\n",
+      }),
       backendLines: async () => [],
     },
     "pdf2bpmn",
@@ -195,8 +197,11 @@ test("컨테이너 로그를 읽어 **가린 줄**과 고른 줄을 같이 준�
 
   expect(logs.source).toBe("container");
   expect(logs.lines).toHaveLength(3);
+  // **시간 순서**로 합쳐져야 한다 — 두 흐름을 이어 붙이면 종료가 가운데로 간다
+  expect(logs.lines[0]).toContain("Started server process");
+  expect(logs.lines[2]).toContain("Shutting down");
   expect(logs.lines.join("\n")).not.toContain("supersecretvalue");
-  expect(logs.highlights).toContain("INFO:     Shutting down");
+  expect(logs.highlights.join("\n")).toContain("Shutting down");
 });
 
 test("백엔드는 앱 로그에서 읽고, **도커를 묻지 않는다**", async () => {
@@ -213,7 +218,7 @@ test("백엔드는 앱 로그에서 읽고, **도커를 묻지 않는다**", asy
         askedDocker = true;
         return [];
       },
-      containerLogs: async () => "",
+      containerLogs: async () => ({ stdout: "", stderr: "" }),
       backendLines: async () => ["[INFO] 인증되지 않은 요청을 막았다."],
     },
     "architect",
@@ -231,11 +236,67 @@ test("읽을 줄이 없으면 **왜 없는지** 말한다", async () => {
       ownerOf: () => "app",
       dockerAvailable: async () => true,
       presentContainers: async () => ["p-parser-1"],
-      containerLogs: async () => "",
+      containerLogs: async () => ({ stdout: "", stderr: "" }),
       backendLines: async () => [],
     },
     "parser",
   );
   expect(logs.lines).toEqual([]);
   expect(logs.note).toContain("아직 아무것도 안 찍혔습니다");
+});
+
+// ---------------------------------------------------------------------------
+// 두 흐름을 시각으로 합친다 (2026-10-08 — 사용자가 뒤집힌 화면을 봤다)
+// ---------------------------------------------------------------------------
+
+test("**이어 붙이면 시간이 뒤집힌다** — 시각으로 합친다", () => {
+  // 실제로 본 모양: 접속 로그가 stdout, 기동 메시지가 stderr 였다.
+  const stdout = [
+    "2026-10-08T02:11:49.136248977Z INFO:     172.18.0.1:37034 - \"GET /healthz HTTP/1.1\" 200 OK",
+    "2026-10-08T02:11:52.937538711Z INFO:     127.0.0.1:50878 - \"GET /healthz HTTP/1.1\" 200 OK",
+  ].join("\n");
+  const stderr = [
+    "2026-10-08T02:05:40.000000000Z INFO:     Started server process [1]",
+    "2026-10-08T02:05:41.000000000Z INFO:     Application startup complete.",
+  ].join("\n");
+
+  const merged = mergeStreams(stdout, stderr);
+
+  // 기동이 **먼저**, 접속 로그가 나중이어야 한다
+  expect(merged[0]).toContain("Started server process");
+  expect(merged[1]).toContain("Application startup complete");
+  expect(merged[2]).toContain("172.18.0.1:37034");
+  expect(merged[3]).toContain("127.0.0.1:50878");
+  // 시각은 `HH:MM:SS` 로 남는다 — 앱 로그와 같은 UTC 라 나란히 읽는다
+  expect(merged[0].startsWith("02:05:40 ")).toBe(true);
+});
+
+test("여러 줄짜리 traceback 은 **앞 줄에 붙여** 둔다", () => {
+  const stderr = [
+    "2026-10-08T02:06:00.000000000Z Traceback (most recent call last):",
+    '  File "/app/main.py", line 12, in run',
+    "    raise ValueError('boom')",
+    "2026-10-08T02:06:01.000000000Z INFO:     Shutting down",
+  ].join("\n");
+
+  const merged = mergeStreams("", stderr);
+
+  expect(merged).toHaveLength(2);
+  expect(merged[0]).toContain("Traceback");
+  expect(merged[0]).toContain("raise ValueError"); // 흩어지지 않았다
+  expect(merged[1]).toContain("Shutting down");
+});
+
+test("시각이 없는 로그(`-t` 없이 받은 것)도 **순서를 지킨다**", () => {
+  const merged = mergeStreams("first\nsecond\n", "");
+  expect(merged).toEqual(["first", "second"]);
+});
+
+test("합친 뒤에도 **줄 수 상한**을 지킨다", () => {
+  const many = [...Array(50)]
+    .map((_, i) => `2026-10-08T02:00:${String(i).padStart(2, "0")}.000Z line ${i}`)
+    .join("\n");
+  const merged = mergeStreams(many, "", 10);
+  expect(merged).toHaveLength(10);
+  expect(merged[9]).toContain("line 49"); // 마지막 것들이 남는다
 });
