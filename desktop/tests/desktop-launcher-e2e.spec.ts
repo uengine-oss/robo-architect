@@ -117,7 +117,10 @@ function setupIsolatedEnv(opts: {
 function cleanup(dir: string) {
   try {
     fs.rmSync(path.dirname(dir), { recursive: true, force: true });
-  } catch {}
+  } catch {
+    // 치우기 실패는 **검사 결과에 섞지 않는다** — 임시 디렉터리가 남는 것은
+    // 검사가 틀렸다는 뜻이 아니고, 윈도우에서는 아직 쥐고 있는 핸들 때문에 흔히 실패한다.
+  }
 }
 
 /** Launch Electron with a fully isolated userData and HOME. */

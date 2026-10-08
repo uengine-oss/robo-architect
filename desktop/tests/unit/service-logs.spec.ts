@@ -268,7 +268,9 @@ test("**이어 붙이면 시간이 뒤집힌다** — 시각으로 합친다", (
   expect(merged[2]).toContain("172.18.0.1:37034");
   expect(merged[3]).toContain("127.0.0.1:50878");
   // 시각은 `HH:MM:SS` 로 남는다 — 앱 로그와 같은 UTC 라 나란히 읽는다
-  expect(merged[0].startsWith("02:05:40 ")).toBe(true);
+  expect(merged.length).toBeGreaterThanOrEqual(4);
+  // `?? ""` 는 넘기려는 것이 아니다 — 줄이 없으면 빈 문자열이 되어 **여기서 떨어진다**.
+  expect(merged[0] ?? "").toMatch(/^02:05:40 /);
 });
 
 test("여러 줄짜리 traceback 은 **앞 줄에 붙여** 둔다", () => {

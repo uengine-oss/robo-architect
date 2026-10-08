@@ -149,7 +149,8 @@ export async function setGitConfigGlobal(name: string, email: string): Promise<S
       const finish = (err?: Error) => {
         if (settled) return;
         settled = true;
-        err ? reject(err) : resolve();
+        if (err) reject(err);
+        else resolve();
       };
       let child;
       try {

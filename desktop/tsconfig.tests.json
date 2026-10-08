@@ -1,0 +1,21 @@
+{
+  // 검사 파일을 **타입 검사하는 유일한 자리**다.
+  //
+  // tsconfig.main/preload 는 `include` 가 `src/**` 뿐이라 `tests/**` 를 한 번도 보지
+  // 않았고, playwright 는 트랜스파일만 한다(타입을 안 본다). 그래서 검사 파일은
+  // **어떤 도구도 타입을 안 보던 자리**였고, 거기서 `applyProbe(id, { probes: [...] })`
+  // 처럼 **없는 칸에 값을 넣어 아무것도 재지 않는 검사**가 통과했다.
+  //
+  // 굽는 산출물이 아니므로 `noEmit` 이다. 그래서 `composite` 를 끈다(둘은 같이 못 쓴다)
+  // — 즉 이 파일은 `tsconfig.json` 의 `references` 에 들어가지 않고 `tsc -p` 로 따로 돈다.
+  // 검사가 `src` 를 경로로 직접 들여오므로(`../../src/main/...`) 프로젝트 참조 대신
+  // 둘을 **한 프로그램에** 담는다.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["tests/**/*.ts", "src/**/*.ts"]
+}

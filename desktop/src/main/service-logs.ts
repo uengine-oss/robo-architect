@@ -288,7 +288,8 @@ const SELF_CLOCKED = /^\d{2}:\d{2}:\d{2}([.,]\d+)?\s/;
  *
  * 이어짐은 시각의 문제가 아니라 **줄의 모양**이다.
  */
-const CONTINUATION = /^(\s+|at\s|Caused by:|Suppressed:|\.\.\.\s*\d+\s+more|\u0009)/;
+// `\s+` 가 탭도 먹는다 — 따로 적던 `\u0009` 는 **같은 것을 두 번** 적은 것이었다(지웠다).
+const CONTINUATION = /^(\s+|at\s|Caused by:|Suppressed:|\.\.\.\s*\d+\s+more)/;
 
 /**
  * 두 흐름을 **시각으로** 합친다.
@@ -344,11 +345,4 @@ export function mergeStreams(stdout: string, stderr: string, limit = DEFAULT_TAI
   rows.sort((a, b) => (a.at === b.at ? a.order - b.order : a.at < b.at ? -1 : 1));
   const merged = rows.map((row) => row.text);
   return merged.slice(Math.max(0, merged.length - limit));
-}
-
-function splitLines(out: string): string[] {
-  return out
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\s+$/, ""))
-    .filter((line) => line.length > 0);
 }

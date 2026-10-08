@@ -47,7 +47,9 @@ test.describe("상한 안에서는 되살린다", () => {
   test("기다리는 시간이 뒤로 갈수록 길어진다 — 즉사하는 고장에 매달리지 않는다", () => {
     const waits = [1, 2, 3].map((n) => shouldRestartAfterCrash(justCrashed(n), NOW).waitMs);
     expect(waits).toEqual([...CRASH_BACKOFF_MS]);
-    expect(waits[0]).toBeLessThan(waits[2]);
+    const [first, , third] = waits;
+    // 값이 없으면 0 이 되어 `0 < 0` 으로 **떨어진다** — 통과로 새지 않는다.
+    expect(first ?? 0).toBeLessThan(third ?? 0);
   });
 });
 

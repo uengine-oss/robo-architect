@@ -110,15 +110,34 @@ test("`status` 는 **파생값으로 남아** 옛 뜻을 유지한다", () => {
   ): ProbeResult => ({ serviceId, kind, outcome, detail: "", durationMs: 1 });
 
   // 아무것도 안 쟨 상태 · 전부 ready · 하나 실패 — 세 경우 모두 옛 말이어야 한다.
+  //
+  // ⚠ 2026-10-08 에 이 검사가 **아무것도 안 재고 있었다.** `applyProbe` 에 `probes: [...]`
+  // 라는 **없는 칸**으로 넘겨서 `health`·`capability` 가 둘 다 `undefined` 였고, 세 경우가
+  // 전부 "아직 확인하지 않았다"(starting) 로 떨어졌다. 그런데도 통과했다 — 아는 값
+  // 집합 안에만 있으면 되니까. 타입 검사를 켜서(`tsconfig.tests.json`) 잡았다.
+  // 그래서 이제는 **경우마다 나와야 할 말을 못 박는다** — 안 그러면 또 조용히 번진다.
   const registry = new RuntimeRegistry();
   registry.register(ids);
   expect(known.has(registry.snapshot().legacyStatus)).toBe(true);
 
   for (const id of ids) {
-    registry.applyProbe(id, { alive: true, probes: [probe(id, "health", "pass")] });
+    registry.applyProbe(id, {
+      alive: true,
+      health: probe(id, "health", "pass"),
+      capability: null,
+      hasCapabilityProbe: false,
+    });
   }
-  expect(known.has(registry.snapshot().legacyStatus)).toBe(true);
+  expect(registry.snapshot().legacyStatus).toBe("ready");
 
-  registry.applyProbe("analyzer", { alive: false, probes: [probe("analyzer", "health", "fail")] });
-  expect(known.has(registry.snapshot().legacyStatus)).toBe(true);
+  registry.applyProbe("analyzer", {
+    alive: false,
+    health: probe("analyzer", "health", "fail"),
+    capability: null,
+    hasCapabilityProbe: false,
+  });
+  // architect 는 멀쩡하고 컨테이너 하나가 깨졌다 → 옛 말로는 `starting-db` 다.
+  const broken = registry.snapshot().legacyStatus;
+  expect(known.has(broken)).toBe(true);
+  expect(broken).toBe("starting-db");
 });

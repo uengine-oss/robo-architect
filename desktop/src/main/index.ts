@@ -20,11 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import {
-  IpcErrorCodes,
-  type IpcResult,
-  type RuntimeState,
-} from "../shared/ipc-contract";
+import { IpcErrorCodes, type RuntimeState } from "../shared/ipc-contract";
 
 import { ensureDataDirs, getLogsDir } from "./data-dir";
 import { backendLogLines, disableConsoleMirror, initLogging, log, revealLogs } from "./logging";

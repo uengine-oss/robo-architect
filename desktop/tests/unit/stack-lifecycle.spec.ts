@@ -115,6 +115,9 @@ test.describe("묵은 포트를 되잡는다 (T040)", () => {
     gateway: 38000,
     architect: 38001,
     pdf2bpmn: 38611,
+    // 2026-10-08: 이 칸이 **빠져 있었다.** 타입 검사를 안 받던 자리라(아래 주석) 와이어프레임
+    // 포트는 포트 되잡기 검사를 **한 번도 안 지났다** — `PORT_KEYS` 에는 들어 있는데도.
+    wireframe: 38777,
   };
 
   test("전부 비어 있으면 그대로 쓴다 — 재부팅마다 포트가 바뀌면 안 된다", async () => {
@@ -148,7 +151,7 @@ test.describe("묵은 포트를 되잡는다 (T040)", () => {
     expect(result.ports.gateway).toBe(38000);
     // 나머지는 막혀 있으니 바뀐다.
     expect(result.changed.map((c) => c.key).sort()).toEqual([
-      "analyzer", "architect", "graphPg", "pdf2bpmn",
+      "analyzer", "architect", "graphPg", "pdf2bpmn", "wireframe",
     ]);
   });
 
