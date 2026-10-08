@@ -24,6 +24,7 @@ import {
   DEFAULT_TAIL,
   MAX_TAIL,
   isNotable,
+  isSevered,
   maskSecrets,
   normalizeTail,
   pickHighlights,
@@ -358,4 +359,80 @@ test("들여쓰기 없는 보통 줄은 **이어 붙이지 않는다**", () => {
     "",
   );
   expect(merged).toHaveLength(2);
+});
+
+// ---------------------------------------------------------------------------
+// 2026-10-08 두 번째 사용자 화면 — **실제 parser 로그**로 쟨다
+//
+// 아래 줄들은 꾸민 것이 아니라 `docker logs -t --tail 200` 원문에서 그대로 떠온 것이다.
+// 첫 번째 화면에서 배운 것이 이것이었다 — **상상한 로그로 재면 또 놓친다.**
+// ---------------------------------------------------------------------------
+
+/**
+ * 스택 **중간에서** 시작하는 원문(`--tail` 이 자른 자리).
+ *
+ * ⚠ `ErrorReportValve` 줄을 빼지 말 것. 이 조각이 "눈에 걸린 줄" 로 올라온 이유가
+ * **그 클래스 이름 하나**다 — 어제 낱말 경계를 뺀 고침(§161 ③)의 뒷면이다.
+ * 처음 이 검사를 쓸 때 그 줄을 빼고 세 줄만 떠 왔더니 notable 이 아니어서
+ * **검사가 실제 결함을 재현하지 못했다.** 또 원문을 잘라 성질을 바꾼 것이다.
+ */
+const SEVERED_TAIL = [
+  "2026-10-08T05:42:22.091482023Z \tat org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)",
+  "2026-10-08T05:42:22.091491354Z \tat org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)",
+  "2026-10-08T05:42:22.091497604Z \tat org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)",
+  "2026-10-08T05:42:22.091492281Z \tat org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)",
+].join("\n");
+
+/** 온전한 한 사건 — 머리 줄 + 예외 이름 줄 + 스택. `at` 은 둘만 떠 왔다. */
+function occurrence(stamp: string): string {
+  return [
+    `2026-10-08T${stamp}.585270015Z ${stamp.slice(0, 8)} Unhandled exception`,
+    `2026-10-08T${stamp}.585296351Z org.springframework.web.servlet.resource.NoResourceFoundException: No static resource antlr.`,
+    `2026-10-08T${stamp}.585298174Z \tat org.springframework.web.servlet.resource.ResourceHttpRequestHandler.handleRequest(ResourceHttpRequestHandler.java:585)`,
+    `2026-10-08T${stamp}.585299669Z \tat org.springframework.web.servlet.mvc.HttpRequestHandlerAdapter.handle(HttpRequestHandlerAdapter.java:52)`,
+  ].join("\n");
+}
+
+test("**예외 이름 줄**은 그 앞의 머리에 붙는다 — 원인과 머리가 갈라지면 짝이 안 보인다", () => {
+  const merged = mergeStreams(occurrence("05:43:22"), "");
+  // 하나의 사건이면 **한 덩이**다. 갈라지면 화면에 고른 줄 둘로 뜨고,
+  // "Unhandled exception" 만 보는 사람은 원인을 못 찾는다(2026-10-08 사용자 화면).
+  expect(merged).toHaveLength(1);
+  const lines = (merged[0] ?? "").split("\n");
+  expect(lines[0]).toContain("Unhandled exception");
+  // 원인이 **머리 3줄 안**에 들어와야 한다 — 화면은 거기까지만 보여준다.
+  expect(lines[1]).toContain("NoResourceFoundException: No static resource");
+  expect(lines[2]).toContain("ResourceHttpRequestHandler.handleRequest");
+});
+
+test("예외 이름 줄도 **아무 데나 붙지는 않는다** — 앞 줄이 오류를 말할 때만", () => {
+  const merged = mergeStreams(
+    [
+      "2026-10-08T05:40:00.000Z 05:40:00 Tomcat started on port 8080",
+      "2026-10-08T05:40:01.000Z org.example.OddException: 뒤에 왔지만 앞 줄은 평범하다",
+    ].join("\n"),
+    "",
+  );
+  // 평범한 기동 줄에 예외를 붙이면 **없던 인과가 생긴다.**
+  expect(merged).toHaveLength(2);
+});
+
+test("앞이 잘린 스택 조각은 **고른 줄에서 뒤로 민다** — 원인을 말할 수 없다", () => {
+  const merged = mergeStreams([SEVERED_TAIL, occurrence("05:43:22")].join("\n"), "");
+  expect(merged).toHaveLength(2);
+  expect(isSevered(merged[0] ?? "")).toBe(true);
+  expect(isSevered(merged[1] ?? "")).toBe(false);
+
+  const picked = pickHighlights(merged);
+  // 조각은 `Exception` 을 품고 있어 notable 이다 — 그래서 고치기 전에는 **맨 위**에 섰다.
+  expect(isNotable(merged[0] ?? "")).toBe(true);
+  expect(picked).toHaveLength(1);
+  expect(picked[0]).toContain("Unhandled exception");
+});
+
+test("조각**뿐**이면 그것이라도 보여준다 — 아무것도 안 주면 \"로그가 없다\" 로 읽힌다", () => {
+  const merged = mergeStreams(SEVERED_TAIL, "");
+  const picked = pickHighlights(merged);
+  expect(picked).toHaveLength(1);
+  expect(picked[0]).toContain("ApplicationFilterChain.doFilter");
 });

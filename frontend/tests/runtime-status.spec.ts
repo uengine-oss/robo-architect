@@ -17,13 +17,16 @@
 import { test, expect } from '@playwright/test'
 // @ts-expect-error 플레인 JS 모듈
 import {
+  collapseRepeats,
   missingTells,
   rowActions,
+  screenLogRows,
   screenTells,
   serviceLabel,
   sortedServices,
   stateText,
   headOf,
+  totalLineCount,
 } from '../src/features/runtime-status/messages.js'
 
 /** 감독이 다루는 서비스 열. `runtime-state.DISPLAY_NAMES` 와 같은 집합이다. */
@@ -224,4 +227,83 @@ test('긴 덩이는 머리 3줄 + **몇 줄이 더 있는지** 말한다', () =>
   expect(lines[0]).toContain('NoResourceFoundException')
   expect(lines[3]).toContain('2줄 더')
   expect(lines[3]).toContain('전문에서')
+})
+
+// ---------------------------------------------------------------------------
+// 2026-10-08 두 번째 사용자 화면 — 토글의 수가 거짓이었고, 같은 사건이 네 번 떴다
+// ---------------------------------------------------------------------------
+
+/** 실제 parser 로그에서 합쳐진 한 덩이의 모양(44줄 중 머리만 떠 왔다). */
+function occurrence(stamp: string, lines = 44): string {
+  const body = [
+    `${stamp} Unhandled exception`,
+    'org.springframework.web.servlet.resource.NoResourceFoundException: No static resource antlr.',
+    '\tat org.springframework.web.servlet.resource.ResourceHttpRequestHandler.handleRequest(ResourceHttpRequestHandler.java:585)',
+  ]
+  while (body.length < lines) body.push(`\tat org.example.Frame${body.length}.run(Frame.java:${body.length})`)
+  return body.join('\n')
+}
+
+test('토글의 수는 **덩이 수가 아니라 줄 수**다', () => {
+  // 사용자 화면에 "전문 12줄" 이라고 떴는데 실제는 200줄이었다 — 12는 덩이 수였다.
+  const rows = [occurrence('05:43:22'), occurrence('05:44:23'), '05:44:58 Shutdown completed.']
+  expect(rows.length).toBe(3)
+  expect(totalLineCount(rows)).toBe(44 + 44 + 1)
+  // 값이 없을 때도 말이 되게 — 화면이 터지면 안 된다.
+  expect(totalLineCount(undefined)).toBe(0)
+  expect(totalLineCount([])).toBe(0)
+})
+
+test('잇달아 나온 **같은 사건**은 하나로 묶고 몇 번인지 말한다', () => {
+  const groups = collapseRepeats([
+    occurrence('05:43:22'),
+    occurrence('05:43:22'),
+    occurrence('05:44:23'),
+    occurrence('05:44:23'),
+  ])
+  // 시각은 달라도 **같은 사건**이다 — 시각으로 가르면 묶이지 않는다.
+  expect(groups).toHaveLength(1)
+  expect(groups[0].count).toBe(4)
+  expect(groups[0].from).toBe('05:43:22')
+  expect(groups[0].to).toBe('05:44:23')
+})
+
+test('중간에 **다른 사건**이 끼면 묶지 않는다 — 시간 순서가 깨진다', () => {
+  const groups = collapseRepeats([
+    occurrence('05:43:22'),
+    '05:43:30 HikariPool-1 - Shutdown initiated...',
+    occurrence('05:44:23'),
+  ])
+  expect(groups.map((g: { count: number }) => g.count)).toEqual([1, 1, 1])
+})
+
+test('화면 줄은 **자른 뒤에** 반복 표시를 붙인다 — 거꾸로 하면 표시가 잘려 나간다', () => {
+  const shown = screenLogRows([occurrence('05:43:22'), occurrence('05:44:23')])
+  expect(shown).toHaveLength(1)
+  const lines = shown[0].split('\n')
+  // 머리 3줄 + "그리고 N줄 더" + 반복 표시 = 5줄
+  expect(lines).toHaveLength(HEAD_PLUS_NOTE)
+  expect(lines[1]).toContain('NoResourceFoundException')
+  expect(lines[3]).toContain('그리고 41줄 더')
+  expect(lines[4]).toContain('같은 것이 2번')
+  expect(lines[4]).toContain('05:43:22 ~ 05:44:23')
+})
+
+const HEAD_PLUS_NOTE = 5
+
+test('한 번만 나온 것에는 **반복 표시를 안 붙인다**', () => {
+  const shown = screenLogRows(['05:44:58 HikariPool-1 - Shutdown completed.'])
+  expect(shown).toEqual(['05:44:58 HikariPool-1 - Shutdown completed.'])
+  expect(shown[0]).not.toContain('같은 것이')
+})
+
+test('반복이지만 **시각이 같으면** 범위를 적지 않는다 — 없는 정보를 꾸미지 않는다', () => {
+  const shown = screenLogRows([occurrence('05:43:22'), occurrence('05:43:22')])
+  expect(shown[0]).toContain('같은 것이 2번')
+  expect(shown[0]).not.toContain('~')
+})
+
+test('headOf 는 그대로다 — 짧은 덩이는 **건드리지 않는다**', () => {
+  expect(headOf('한 줄')).toBe('한 줄')
+  expect(headOf('a\nb\nc')).toBe('a\nb\nc')
 })

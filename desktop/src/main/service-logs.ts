@@ -137,10 +137,36 @@ export function isNotable(line: string): boolean {
   return NOTABLE.some((pattern) => pattern.test(line));
 }
 
-/** 전문에서 눈에 걸릴 줄만. **마지막 것들**을 우선한다 — 원인은 보통 끝에 있다. */
+/**
+ * **앞이 잘린 덩이**인가 — 첫 줄이 이어짐 모양이면 머리(원인 줄)가 없다.
+ *
+ * `--tail 200` 은 스택 **중간을** 자른다. 그러면 남은 `at …` 들이 붙을 앞 줄을 못 찾아
+ * 자기들끼리 한 덩이가 되고, 그 안의 클래스 이름 하나(`ErrorReportValve`) 때문에
+ * **눈에 걸린 줄로 올라온다.** 2026-10-08 사용자 화면의 맨 위가 그것이었다 —
+ *
+ * ```
+ * 05:42:22 	at org.apache.catalina.core.ApplicationFilterChain.doFilter(…)   ← 원인이 없다
+ * ```
+ *
+ * 어제 낱말 경계를 뺀 고침(§161 ③)의 뒷면이다. 조각은 **원인을 말할 수 없으니**
+ * 고를 때 뒤로 민다(전문에는 그대로 남는다).
+ */
+export function isSevered(chunk: string): boolean {
+  const first = chunk.split("\n", 1)[0] ?? "";
+  return CONTINUATION.test(first.replace(/^\d{2}:\d{2}:\d{2}\s/, ""));
+}
+
+/**
+ * 전문에서 눈에 걸릴 줄만. **마지막 것들**을 우선한다 — 원인은 보통 끝에 있다.
+ *
+ * 앞이 잘린 조각은 **온전한 것이 하나라도 있으면** 빼고, 없으면 넣는다 — 조각뿐일 때
+ * 아무것도 안 보여주면 "로그가 없다" 로 읽힌다(그건 거짓이다).
+ */
 export function pickHighlights(lines: string[], limit = 12): string[] {
   const hits = lines.filter(isNotable);
-  return hits.slice(Math.max(0, hits.length - limit));
+  const whole = hits.filter((chunk) => !isSevered(chunk));
+  const chosen = whole.length > 0 ? whole : hits;
+  return chosen.slice(Math.max(0, chosen.length - limit));
 }
 
 export function normalizeTail(tail: number | undefined): number {
@@ -292,6 +318,26 @@ const SELF_CLOCKED = /^\d{2}:\d{2}:\d{2}([.,]\d+)?\s/;
 const CONTINUATION = /^(\s+|at\s|Caused by:|Suppressed:|\.\.\.\s*\d+\s+more)/;
 
 /**
+ * **예외 이름만 적힌 줄**인가 — `org.…NoResourceFoundException: No static resource …`
+ * 또는 `ValueError: boom`.
+ *
+ * 이 줄은 들여쓰기도 `at ` 도 없어서 이어짐이 아니다. 그래서 앞 줄과 떨어진다.
+ * 그런데 실제 로그에서 **원인은 거의 늘 이 줄**이고, 그 앞 줄은 `Unhandled exception`
+ * 처럼 **아무것도 안 말하는 머리**다 — 2026-10-08 사용자 화면에서 고른 줄 둘이 한
+ * 사건이었고, 어느 것이 어느 것의 원인인지 안 보였다.
+ *
+ * 이름이 `:` 나 줄끝으로 끝나는 것만 본다 — 그래야 평범한 문장("ErrorHandler
+ * started")을 안 집는다.
+ */
+const EXCEPTION_HEAD = /^(?:[\w$]+\.)*[A-Z][\w$]*(?:Exception|Error|Throwable)(?=\s*(?::|$))/;
+
+/** 그 덩이가 **스택을 열어 둔 채** 끝났나 — 마지막 줄이 이어짐 모양이면 그렇다. */
+function stackIsOpen(text: string): boolean {
+  const lines = text.split("\n");
+  return CONTINUATION.test(lines[lines.length - 1] ?? "");
+}
+
+/**
  * 두 흐름을 **시각으로** 합친다.
  *
  * ## 왜 — 이어 붙이면 시간이 뒤집힌다
@@ -319,7 +365,17 @@ export function mergeStreams(stdout: string, stderr: string, limit = DEFAULT_TAI
       const at = matched?.[1] ?? "";
       const body = matched ? (matched[2] ?? "") : trimmed;
 
-      if (last && CONTINUATION.test(body)) {
+      // 예외 이름 줄은 **앞의 머리에 붙인다** — 단 앞 줄이 오류를 말하고 있고,
+      // 아직 한 줄뿐이거나(자바의 `Unhandled exception`) 스택을 열어 둔 채 끝났을
+      // 때만(파이썬의 `Traceback …` + 들여쓴 줄들). 그래야 평범한 줄 뒤에 온
+      // 예외가 **없던 인과를 만들지** 않는다.
+      const joinsHead =
+        last &&
+        EXCEPTION_HEAD.test(body) &&
+        isNotable(last.text) &&
+        (!last.text.includes("\n") || stackIsOpen(last.text));
+
+      if (last && (joinsHead || CONTINUATION.test(body))) {
         // **모양으로** 이어 붙인다 — 들여쓰기 · `at …` · `Caused by:` · `… N more`.
         // 도커가 그 줄에도 시각을 붙였는지는 상관없다(붙인다). 떼어 놓으면 스택이
         // 흩어지고, 그러면 "Unhandled exception" 만 보이고 **원인이 사라진다.**

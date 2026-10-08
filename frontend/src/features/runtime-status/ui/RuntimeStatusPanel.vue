@@ -32,7 +32,14 @@
  */
 import { computed, ref } from 'vue'
 import { useRuntimeStore } from '../runtime.store.js'
-import { headOf, rowActions, serviceLabel, sortedServices, stateText } from '../messages.js'
+import {
+  rowActions,
+  screenLogRows,
+  serviceLabel,
+  sortedServices,
+  stateText,
+  totalLineCount,
+} from '../messages.js'
 
 const props = defineProps({
   /** 배너 안에 들어갈 때는 제목을 숨긴다 — 배너가 이미 같은 말을 했다. */
@@ -124,11 +131,15 @@ async function toggleLogs(serviceId) {
 const shownLines = computed(() => {
   if (!logs.value) return []
   if (showAllLines.value) return logs.value.lines
-  // 고른 줄은 **머리만** 보여준다 — 스택이 붙어 한 줄이 40줄이 되면 그 벽에
-  // 원인이 묻힌다(2026-10-08 실측). 전문은 토글로 본다.
-  if (logs.value.highlights?.length) return logs.value.highlights.map((line) => headOf(line))
-  return logs.value.lines.slice(-8).map((line) => headOf(line))
+  // 고른 줄은 **묶고 자른다** — 같은 사건이 네 번 반복되고(2026-10-08 사용자 화면)
+  // 스택이 붙어 한 덩이가 40줄이 되면, 둘 다 **원인을 벽 뒤로 밀어낸다.**
+  // 전문은 토글로 본다.
+  if (logs.value.highlights?.length) return screenLogRows(logs.value.highlights)
+  return screenLogRows(logs.value.lines.slice(-8))
 })
+
+/** 토글에 적는 수는 **펼치면 보게 될 줄 수**다 — 덩이 수가 아니다. */
+const fullLineCount = computed(() => totalLineCount(logs.value?.lines))
 
 /**
  * 고른 줄이 없으면 **그렇다고 말한다.**
@@ -238,7 +249,7 @@ const SOURCE_TEXT = {
                 v-if="logs.lines.length > shownLines.length || showAllLines"
                 class="rts__btn rts__btn--quiet"
                 @click="showAllLines = !showAllLines"
-              >{{ showAllLines ? `눈에 걸린 줄만` : `전문 ${logs.lines.length}줄` }}</button>
+              >{{ showAllLines ? `눈에 걸린 줄만` : `전문 ${fullLineCount}줄` }}</button>
             </p>
             <p v-if="logs.note" class="rts__note">{{ logs.note }}</p>
             <p v-if="fallbackNote" class="rts__note">{{ fallbackNote }}</p>

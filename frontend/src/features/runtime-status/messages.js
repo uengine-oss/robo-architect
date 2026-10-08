@@ -171,3 +171,68 @@ export function headOf(row, limit = HEAD_LINES) {
   const rest = lines.length - limit
   return [...lines.slice(0, limit), `    … 그리고 ${rest}줄 더 (전문에서 봅니다)`].join('\n')
 }
+
+/**
+ * **전문이 몇 줄인가** — 덩이 수가 아니라 **줄 수**다.
+ *
+ * 2026-10-08 사용자 화면에 "전문 12줄" 이라고 떴는데 실제는 **200줄**이었다. 12는
+ * 합친 뒤의 **덩이 수**였고, 그 바로 아래에서 우리가 "그리고 40줄 더" 라고 말하고
+ * 있었다 — 한 화면에서 두 수가 서로를 부정했다. 토글의 수는 **펼치면 보게 될 줄 수**
+ * 여야 한다.
+ */
+export function totalLineCount(rows) {
+  if (!Array.isArray(rows)) return 0
+  return rows.reduce((sum, row) => sum + String(row ?? '').split('\n').length, 0)
+}
+
+/** 덩이의 시각을 뗀 몸통 — 반복을 견줄 때 시각은 달라도 **같은 사건**이다. */
+function bodyOf(row) {
+  return String(row ?? '').replace(/^\d{2}:\d{2}:\d{2}\s/, '')
+}
+
+/** 덩이의 시각 — 없으면 빈 문자열. */
+function stampOf(row) {
+  const matched = /^(\d{2}:\d{2}:\d{2})\s/.exec(String(row ?? ''))
+  return matched ? matched[1] : ''
+}
+
+/**
+ * **같은 것이 잇달아 나오면 묶는다.**
+ *
+ * 2026-10-08 사용자 화면 — 고른 줄 여섯 중 **넷이 같은 말**이었다
+ * (`Unhandled exception` + `NoResourceFoundException`). 똑같은 덩이를 네 번 그리면
+ * 그것이 다시 벽이 되고, **다른 사건**(종료 줄 둘)이 그 아래로 밀린다.
+ *
+ * 묶는 것은 **잇달아 나온 것**만이다 — 중간에 다른 사건이 끼면 시간 순서가 깨지므로
+ * 묶지 않는다.
+ */
+export function collapseRepeats(rows) {
+  if (!Array.isArray(rows)) return []
+  const out = []
+  for (const row of rows) {
+    const body = bodyOf(row)
+    const last = out[out.length - 1]
+    if (last && last.body === body) {
+      last.count += 1
+      last.to = stampOf(row) || last.to
+      continue
+    }
+    out.push({ text: row, body, count: 1, from: stampOf(row), to: stampOf(row) })
+  }
+  return out
+}
+
+/**
+ * 화면에 그릴 줄 — **묶고(반복) 자른다(머리)**. 순서가 중요하다.
+ *
+ * 자른 뒤에 묶으면 머리 3줄이 같아진 덩이들이 한 줄로 합쳐져 **다른 사건이 사라진다**.
+ * 반대로 묶은 뒤에 자르면 반복 표시가 잘려 나간다 — 그래서 **자르고 나서 덧붙인다.**
+ */
+export function screenLogRows(rows) {
+  return collapseRepeats(rows).map((group) => {
+    const head = headOf(group.text)
+    if (group.count <= 1) return head
+    const when = group.from && group.to && group.from !== group.to ? ` (${group.from} ~ ${group.to})` : ''
+    return `${head}\n    ↑ 같은 것이 ${group.count}번${when}`
+  })
+}
