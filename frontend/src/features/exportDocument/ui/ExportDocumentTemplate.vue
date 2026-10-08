@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import mermaid from 'mermaid'
 import { buildBcOverviewDef, buildContextMapDef, buildAggregateModelDef } from '../diagrams'
+// 화면과 문서가 **같은 말**을 써야 한다 — 다건/단건 판정은 한 자리에 둔다.
+import { resultKind } from '../text'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
@@ -345,6 +347,15 @@ const contextMapDef = computed(() => buildContextMapDef(bcSummaries.value, cross
 /** BC 하나의 Aggregate 구조도. */
 function aggregateModelDef(ctx) { return buildAggregateModelDef(bcTree(ctx)?.aggregates) }
 
+/**
+ * "API 명세" 섹션이 **모델 표(Command·Read Model 요약)를 대신 실어야 하는가.**
+ *
+ * 그 표들은 "모델 전반 정보" 섹션에 이미 있다. 둘 다 있으면 같은 내용이 두 번
+ * 들어간다(2026-10-08 실측 — Command 17개·Read Model 14개). 다만 Endpoint 계약이
+ * 없거나 모델 섹션을 껐으면 **그 표가 문서에서 아예 사라지므로** 그때는 싣는다.
+ */
+const needsModelFallback = computed(() => !apiSummary.value || !selectedSections.value.modelOverview)
+
 /** Aggregate 설계 섹션에 실을 BC — Aggregate 가 하나라도 있는 것만. */
 const aggregateDesignContexts = computed(() => sortedContexts.value.filter(ctx => (bcTree(ctx)?.aggregates || []).length))
 
@@ -402,7 +413,9 @@ function getCommandsFromTree(tree) {
   const cmds = []; for (const a of (tree.aggregates||[])) { for (const c of (a.commands||[])) { cmds.push({ id:c.id, name:c.displayName||c.name, agg:a.displayName||a.name, actor:c.actor||'', events:(c.events||[]).map(e=>e.displayName||e.name), schema:parseJsonFields(c.inputSchema) }) } }; return cmds
 }
 function getReadModelsFromTree(tree) {
-  return (tree.readmodels||[]).map(rm => ({ id:rm.id, name:rm.displayName||rm.name, desc:rm.description||'', pType:rm.provisioningType||'-', actor:rm.actor||'', isMultiple:rm.isMultipleResult||'', props:rm.properties||[], ops:rm.operations||[] }))
+  // `isMultipleResult === false` 는 **단건이라는 사실**이다. `|| ''` 로 적으면
+  // 화면에서 아무것도 안 뜨고 "모른다" 와 구별되지 않는다.
+  return (tree.readmodels||[]).map(rm => ({ id:rm.id, name:rm.displayName||rm.name, desc:rm.description||'', pType:rm.provisioningType||'-', actor:rm.actor||'', isMultiple:rm.isMultipleResult==null?'':resultKind(rm.isMultipleResult), props:rm.properties||[], ops:rm.operations||[] }))
 }
 function bcTree(ctx) { return fullTrees.value[ctx.id] }
 function bcName(ctx) { return fullTrees.value[ctx.id]?.displayName || ctx.name }
@@ -732,7 +745,7 @@ function resolveNodeName(nodeId) {
           <div v-if="bcTree(ctx)?.readmodels?.length" class="block">
             <h3>{{ bcName(ctx) }} - Read Model</h3>
             <table class="tbl tbl--sm"><thead><tr><th style="width:130px">이름</th><th style="width:70px">유형</th><th style="width:70px">Actor</th><th style="width:80px">결과</th><th>설명</th></tr></thead>
-              <tbody><tr v-for="r in bcTree(ctx).readmodels" :key="r.id"><td class="b">{{ r.displayName||r.name }}</td><td>{{ r.provisioningType||'-' }}</td><td>{{ r.actor||'-' }}</td><td>{{ r.isMultipleResult||'-' }}</td><td class="desc-cell">{{ r.description||'-' }}</td></tr></tbody>
+              <tbody><tr v-for="r in bcTree(ctx).readmodels" :key="r.id"><td class="b">{{ r.displayName||r.name }}</td><td>{{ r.provisioningType||'-' }}</td><td>{{ r.actor||'-' }}</td><td>{{ resultKind(r.isMultipleResult) }}</td><td class="desc-cell">{{ r.description||'-' }}</td></tr></tbody>
             </table>
           </div>
 
@@ -812,8 +825,14 @@ function resolveNodeName(nodeId) {
 
         <template v-for="(ctx,ci) in sortedContexts" :key="'api-'+ctx.id">
           <template v-if="bcTree(ctx)">
-            <!-- Commands -->
-            <div v-if="getCommandsFromTree(bcTree(ctx)).length" class="block">
+            <!-- Command 표는 **겹치지 않을 때만** 둔다.
+                 바로 앞 "모델 전반 정보" 섹션의 `{BC} - Command` 표와 다섯 열·데이터가
+                 같다(`allCmdsForCtx` 와 `getCommandsFromTree` 가 둘 다
+                 aggregates→commands 를 돈다). 2026-10-08 실측 — 기준 프로젝트에서
+                 Command 17개가 문서에 **두 번** 들어갔다.
+                 그렇다고 늘 빼면 Endpoint 계약이 없는 프로젝트나 "모델 전반 정보" 를 끈
+                 문서에서 이 섹션이 반쪽이 된다. 그래서 둘 중 하나가 없을 때만 싣는다. -->
+            <div v-if="needsModelFallback && getCommandsFromTree(bcTree(ctx)).length" class="block">
               <h3>{{ bcName(ctx) }} - Command</h3>
               <table class="tbl"><thead><tr><th style="width:120px">Command</th><th style="width:80px">Aggregate</th><th style="width:70px">Actor</th><th style="width:180px">Input Schema</th><th style="width:120px">발생 Event</th></tr></thead>
                 <tbody><tr v-for="c in getCommandsFromTree(bcTree(ctx))" :key="c.id">

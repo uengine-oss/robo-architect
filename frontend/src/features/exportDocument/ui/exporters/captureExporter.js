@@ -11,6 +11,7 @@ import {
 } from 'docx'
 import PptxGenJS from 'pptxgenjs'
 import { xmlSafe, isValidPng, fitPng } from '../../docxSafety'
+import { clip, resultKind } from '../../text'
 
 // ── Constants ──
 const FONT = '맑은 고딕'
@@ -217,7 +218,7 @@ export async function exportToWord(data, container, onProgress) {
       ...(await mmdImage(container, 'bc-overview')),
       h3(`${sn.boundedContext}-2. Bounded Context 요약`),
       tbl(['BC', '도메인 유형', '설명', 'Agg', 'Cmd', 'Evt', 'RM', 'US'],
-        sortedContexts.map(c => { const t = bcTree(c); return [bcName(c), c.domainType || '-', (c.description || t?.description || '-').slice(0, 80), t?.aggregates?.length || 0, t?.aggregates?.reduce((s, a) => s + (a.commands?.length || 0), 0) || 0, t?.aggregates?.reduce((s, a) => s + (a.events?.length || 0), 0) || 0, t?.readmodels?.length || 0, t?.userStories?.length || 0] }),
+        sortedContexts.map(c => { const t = bcTree(c); return [bcName(c), c.domainType || '-', clip(c.description || t?.description, 120), t?.aggregates?.length || 0, t?.aggregates?.reduce((s, a) => s + (a.commands?.length || 0), 0) || 0, t?.aggregates?.reduce((s, a) => s + (a.events?.length || 0), 0) || 0, t?.readmodels?.length || 0, t?.userStories?.length || 0] }),
         [1400, 1100, 2800, 600, 600, 600, 600, 600]),
       empty(),
     ]
@@ -306,14 +307,14 @@ export async function exportToWord(data, container, onProgress) {
       if (pols.length) {
         sub++; ch.push(h3(`${sn.modelOverview}-${ci + 1}-${sub}. Policy`))
         ch.push(tbl(['이름', 'Trigger Event', 'Invoke Command', '설명'],
-          pols.map(p => [p.displayName || p.name, resolveNodeName(p.triggerEventId), resolveNodeName(p.invokeCommandId), (p.description || '-').slice(0, 100)]),
+          pols.map(p => [p.displayName || p.name, resolveNodeName(p.triggerEventId), resolveNodeName(p.invokeCommandId), clip(p.description, 300)]),
           [1800, 2000, 2000, 3200]))
       }
 
       if (t.readmodels?.length) {
         sub++; ch.push(h3(`${sn.modelOverview}-${ci + 1}-${sub}. Read Model`))
         ch.push(tbl(['이름', '유형', 'Actor', '결과', '설명'],
-          t.readmodels.map(r => [r.displayName || r.name, r.provisioningType || '-', r.actor || '-', r.isMultipleResult || '-', (r.description || '-').slice(0, 80)]),
+          t.readmodels.map(r => [r.displayName || r.name, r.provisioningType || '-', r.actor || '-', resultKind(r.isMultipleResult), clip(r.description, 150)]),
           [1600, 800, 800, 1000, 4800]))
       }
 
@@ -363,24 +364,43 @@ export async function exportToWord(data, container, onProgress) {
       })
     }
 
+    // ⚠ Command 표와 Read Model 요약 표는 **"모델 전반 정보" 섹션에 이미 있다.**
+    //
+    // 2026-10-08 실측 — 그쪽(`allCmdsForCtx`)과 이쪽(`getCommandsFromTree`)이 둘 다
+    // aggregates→commands 를 돌아 **같은 다섯 열·같은 데이터**를 냈다. 기준 프로젝트에서
+    // Command 17개와 Read Model 14개가 문서에 **두 번** 들어갔다. Read Model 요약도
+    // 같은 다섯 열이었다.
+    //
+    // 그렇다고 통째로 빼면, Endpoint 계약(`apiSummary`)이 없는 프로젝트나 "모델 전반
+    // 정보" 를 끈 문서에서는 이 섹션이 **Read Model 속성만 남아** 반쪽이 된다.
+    // 그래서 **겹치지 않을 때만** 싣는다 — 중복은 없애고 빈 섹션도 만들지 않는다.
+    const hasEndpointContract = Boolean(apiSummary && apiForCtx)
+    const modelOverviewInDoc = Boolean(selectedSections.modelOverview)
+    const needsModelFallback = !hasEndpointContract || !modelOverviewInDoc
+
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return
       const ch = [h2(`${sn.apiSpecification}-${ci + 1}. ${bcName(ctx)} - API 명세`)]
 
-      const cmds = getCommandsFromTree(t)
-      if (cmds.length) {
-        ch.push(h3(`${sn.apiSpecification}-${ci + 1}-1. Command`))
-        ch.push(tbl(['Command', 'Aggregate', 'Actor', 'Input Schema', '발생 Event'],
-          cmds.map(c => [c.name, c.agg, c.actor || '-', c.schema.map(s => `${s.name}(${s.type})`).join(', ') || '-', c.events.join(', ') || '-']),
-          [1600, 1200, 800, 2800, 2000]))
+      if (needsModelFallback) {
+        const cmds = getCommandsFromTree(t)
+        if (cmds.length) {
+          ch.push(h3(`${sn.apiSpecification}-${ci + 1}-1. Command`))
+          ch.push(tbl(['Command', 'Aggregate', 'Actor', 'Input Schema', '발생 Event'],
+            cmds.map(c => [c.name, c.agg, c.actor || '-', c.schema.map(s => `${s.name}(${s.type})`).join(', ') || '-', c.events.join(', ') || '-']),
+            [1600, 1200, 800, 2800, 2000]))
+        }
       }
 
       const rms = getReadModelsFromTree(t)
       if (rms.length) {
-        ch.push(h3(`${sn.apiSpecification}-${ci + 1}-2. Read Model`))
-        ch.push(tbl(['이름', '유형', 'Actor', '결과', '설명'],
-          rms.map(r => [r.name, r.pType, r.actor || '-', r.isMultiple || '-', (r.desc || '-').slice(0, 80)]),
-          [1600, 800, 800, 1000, 4800]))
+        if (needsModelFallback) {
+          ch.push(h3(`${sn.apiSpecification}-${ci + 1}-2. Read Model`))
+          ch.push(tbl(['이름', '유형', 'Actor', '결과', '설명'],
+            rms.map(r => [r.name, r.pType, r.actor || '-', resultKind(r.isMultiple), clip(r.desc, 150)]),
+            [1600, 800, 800, 1000, 4800]))
+        }
+        // 속성은 **이 섹션에만** 있다 — 겹치지 않으니 늘 싣는다.
         rms.forEach(rm => {
           if (rm.props.length) {
             ch.push(h4(`${rm.name} - 속성`))
@@ -388,7 +408,8 @@ export async function exportToWord(data, container, onProgress) {
           }
         })
       }
-      sections.push(sec(ch))
+      // 머리만 남은 섹션은 만들지 않는다 — 빈 쪽은 **빠진 것처럼** 보인다.
+      if (ch.length > 1) sections.push(sec(ch))
     })
   }
 
@@ -448,7 +469,7 @@ export async function exportToWord(data, container, onProgress) {
           traceSummary.mappedUserStories,
           traceSummary.storiesWithoutElements ?? 0,
           `${(traceSummary.directRatio * 100).toFixed(1)}%`]],
-        [1200, 1200, 1200, 1100, 1200, 1200, 1300, 1100]
+        [1150, 1150, 1150, 1050, 1150, 1150, 1150, 1050]
       ),
     ]))
 
