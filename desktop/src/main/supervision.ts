@@ -298,3 +298,27 @@ export function startSupervision<Context>(
     },
   };
 }
+
+/**
+ * 도커가 **있는가 · 없는가 · 모르는가** 를 가른다 (058 T030).
+ *
+ * ## 왜 세 값인가
+ *
+ * `docker ps` 가 실패하는 이유는 둘이다 — 데몬이 없거나, 그 순간 바쁜 것. 그 둘을
+ * 뭉쳐 "없다" 로 말하면 **화면이 거짓말한다**("Docker Desktop 을 실행하세요" 가
+ * 멀쩡한 PC 에 뜬다). 그래서 실패했을 때만 한 번 더, 더 강한 질문(`docker info`)을
+ * 한다. 그래도 안 되면 **없다**, 되면 **모른다** 다.
+ *
+ * ```
+ * ps 성공              → true   (있다)
+ * ps 실패 · info 실패   → false  (없다 — 화면이 준비 안내를 낸다)
+ * ps 실패 · info 성공   → null   (**모른다** — 안내를 띄우지 않는다)
+ * ```
+ *
+ * `null` 을 `false` 로 떨어뜨리지 않는 이유는 058 전체가 세운 규칙이다 — **모르는
+ * 것을 안다고 말하지 않는다.**
+ */
+export function decideDockerAvailability(psOk: boolean, infoOk: boolean): boolean | null {
+  if (psOk) return true;
+  return infoOk ? null : false;
+}

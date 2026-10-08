@@ -62,6 +62,16 @@ const sinceProgress = computed(() => {
   <div v-if="show" class="sgate">
     <div class="sgate__box">
       <h2 class="sgate__title">준비하고 있습니다</h2>
+      <!--
+        도커가 없으면 **그것부터 말한다** (T030). 서비스 개수를 먼저 보여주면
+        사용자는 "앱이 느리다" 로 읽고 기다린다 — 그런데 기다려도 안 올라온다.
+        기다릴 일인지, 할 일이 있는지가 **다른 사실**이다.
+      -->
+      <p v-if="runtime.dockerAvailable === false" class="sgate__docker">
+        <b>Docker Desktop 이 꺼져 있습니다.</b>
+        시작 메뉴에서 실행해 고래 아이콘이 초록색이 되면(약 30초)
+        <b>이 앱이 스스로 이어서 올립니다</b> — 다시 켜지 않아도 됩니다.
+      </p>
       <p class="sgate__line">
         서비스 {{ runtime.services.length }}개 중
         <b>{{ runtime.services.filter((s) => s.state === 'ready').length }}개</b> 가 준비됐습니다.
@@ -114,6 +124,16 @@ const sinceProgress = computed(() => {
 }
 .sgate__title { margin: 0 0 10px; font-size: 18px; }
 .sgate__line { margin: 0 0 6px; font-size: 13px; }
+.sgate__docker {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid #f5c6c2;
+  border-radius: 4px;
+  background: #fdecea;
+  color: #7f231c;
+  font-size: 13px;
+  line-height: 1.6;
+}
 .sgate__waiting { margin: 0 0 6px; font-size: 12px; opacity: 0.8; font-family: ui-monospace, monospace; }
 .sgate__progress { margin: 0 0 12px; font-size: 12px; opacity: 0.8; }
 .sgate__progress--stalled { opacity: 1; color: #7f231c; }

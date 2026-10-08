@@ -88,12 +88,28 @@ export async function dockerAvailable(): Promise<boolean> {
  * 꺼진 상태를 "전부 죽었다" 로 바꿔 말하면, 화면이 멀쩡한 서비스를 고장으로 띄운다.
  */
 export async function runningContainerNames(timeoutMs = 10_000): Promise<string[]> {
+  return (await listRunningContainers(timeoutMs)).names;
+}
+
+/**
+ * 같은 `docker ps` 인데 **물어본 것이 됐는지**도 같이 준다.
+ *
+ * 빈 배열 하나로는 두 사실을 가를 수 없다 — "아무것도 안 돈다" 와 "도커에 못
+ * 물었다". 그래서 화면이 "도커를 준비하세요" 를 **언제 띄워야 하는지** 알 수 없었다
+ * (실제로 `setDockerAvailable` 의 호출자가 0개였고, 그 안내는 **뜰 수가 없었다**).
+ */
+export async function listRunningContainers(
+  timeoutMs = 10_000,
+): Promise<{ dockerOk: boolean; names: string[] }> {
   const { code, out } = await run("docker", ["ps", "--format", "{{.Names}}"], timeoutMs);
-  if (code !== 0) return [];
-  return out
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  if (code !== 0) return { dockerOk: false, names: [] };
+  return {
+    dockerOk: true,
+    names: out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  };
 }
 
 /**

@@ -50,10 +50,15 @@ import { readServiceLogs } from "./service-logs";
 import {
   containerLogs,
   dockerAvailable,
+  listRunningContainers,
   presentContainerNames,
-  runningContainerNames,
 } from "./probes/net";
-import { aliveFrom, startSupervision, type Supervision } from "./supervision";
+import {
+  aliveFrom,
+  decideDockerAvailability,
+  startSupervision,
+  type Supervision,
+} from "./supervision";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
 import {
   copy,
@@ -211,7 +216,16 @@ function startRuntimeSupervision(): void {
     hasCapability: (id) => hasCapabilityProbe(id),
     context,
     probe: (ctx, id, kind) => runProbe(ctx, id, kind),
-    running: () => runningContainerNames(),
+    running: async () => {
+      // 같은 `docker ps` 로 **도커 자체의 유무**까지 적는다 (T030).
+      // 여기서 안 적으면 `setDockerAvailable` 의 호출자가 0개로 남고, 화면의
+      // "도커를 준비하세요" 안내는 **뜰 수가 없다** — 10/8 에 그걸 세었다.
+      const seen = await listRunningContainers();
+      runtimeRegistry.setDockerAvailable(
+        decideDockerAvailability(seen.dockerOk, seen.dockerOk || (await dockerAvailable())),
+      );
+      return seen.names;
+    },
     alive: (ctx, id, running) => {
       // 백엔드는 **호스트 프로세스**다 — 컨테이너 목록에 없다. 거기서 `docker ps`
       // 로 판정하면 멀쩡히 응답하는 백엔드가 "실행 중이 아닙니다" 가 된다.

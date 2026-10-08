@@ -48,7 +48,10 @@ const withSubjectParticle = (word) => `${word}${hasFinalConsonant(word) === fals
 
 /** 한 줄 요약. **무엇이 안 되는지**를 기능 이름으로, **왜**를 서비스 이름으로 말한다. */
 const summary = computed(() => {
-  if (runtime.dockerAvailable === false) return '컨테이너 실행 환경(Docker)이 응답하지 않습니다.'
+  // 배너는 한 줄이다 — 그래서 **할 일 하나**만 적고 자세한 것은 "자세히" 로 넘긴다.
+  if (runtime.dockerAvailable === false) {
+    return 'Docker Desktop 이 꺼져 있어 서비스를 띄울 수 없습니다 — 실행하면 앱이 스스로 이어서 올립니다.'
+  }
   const stuck = [...broken.value, ...degraded.value]
   // 이름을 한 번에 말해 주면 **자세히를 누르지 않고도** 무엇을 고쳐야 하는지 안다.
   const who = stuck.map((s) => s.displayName || s.id).join(' · ')

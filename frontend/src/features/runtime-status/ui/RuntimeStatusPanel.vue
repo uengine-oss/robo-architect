@@ -175,10 +175,37 @@ const SOURCE_TEXT = {
     <p v-else-if="!runtime.loaded" class="rts__note">실행 상태를 확인하고 있습니다…</p>
 
     <template v-else>
-      <!-- 컨테이너 실행 환경 자체가 없을 때는 서비스 목록보다 이것이 먼저다. -->
-      <p v-if="runtime.dockerAvailable === false" class="rts__note rts__note--bad">
-        컨테이너 실행 환경(Docker)이 응답하지 않습니다. Docker Desktop 을 실행한 뒤
-        다시 시도하세요 — 앱이 알아서 기다렸다가 이어서 올립니다.
+      <!--
+        컨테이너 실행 환경 자체가 없을 때는 서비스 목록보다 이것이 먼저다 (T030).
+
+        한 줄로는 모자랐다. 받는 사람은 도커를 모르고 물어볼 사람이 없으니,
+        **무엇을 해야 하는지 · 얼마나 걸리는지 · 그다음에 뭘 해야 하는지**가 있어야
+        한다. 마지막 줄이 핵이다 — 앱이 스스로 이어서 올리므로 **아무것도 안 해도
+        된다**. 그 사실을 안 적으면 사용자가 앱을 끄고 다시 켠다.
+      -->
+      <div v-if="runtime.dockerAvailable === false" class="rts__docker">
+        <p class="rts__dockerTitle">컨테이너 실행 환경(Docker)이 응답하지 않습니다</p>
+        <p class="rts__dockerWhy">
+          이 앱은 서비스 여러 개를 컨테이너로 띄웁니다. 그 실행 환경이 꺼져 있으면
+          설계·분석·코드 생성이 모두 멈춥니다 — <b>앱이 고장 난 것은 아닙니다.</b>
+        </p>
+        <ol class="rts__dockerSteps">
+          <li><b>Docker Desktop</b> 을 실행합니다(시작 메뉴에서 "Docker Desktop").</li>
+          <li>고래 아이콘이 <b>초록색</b>이 될 때까지 기다립니다. 보통 30초쯤 걸립니다.</li>
+          <li>
+            그러면 <b>이 앱이 스스로 이어서 올립니다</b> — 다시 켜지 않아도 됩니다.
+            이 목록이 저절로 바뀝니다.
+          </li>
+        </ol>
+        <p class="rts__dockerFoot">
+          5초마다 다시 확인하고 있습니다. 10분이 지나도 이 안내가 남아 있으면
+          설치 담당자에게 전해 주세요.
+        </p>
+      </div>
+      <!-- **아직 못 쟨 것**(`null`)에는 아무 안내도 띄우지 않는다 — 모르는 것을
+           "도커가 없다" 로 바꿔 말하면 멀쩡한 PC 에 그 안내가 뜬다. -->
+      <p v-else-if="runtime.dockerAvailable === null" class="rts__note">
+        컨테이너 실행 환경을 확인하고 있습니다…
       </p>
 
       <ul class="rts__list">
@@ -277,6 +304,19 @@ const SOURCE_TEXT = {
 .rts__btn:disabled { opacity: 0.6; cursor: default; }
 .rts__btn--quiet { border-color: #e3e3e3; opacity: 0.8; }
 .rts__btn--on { border-color: #58a; color: #24557e; }
+.rts__docker {
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid #f5c6c2;
+  border-radius: 4px;
+  background: #fdecea;
+  color: #7f231c;
+}
+.rts__dockerTitle { margin: 0 0 4px; font-weight: 700; }
+.rts__dockerWhy { margin: 0 0 6px; }
+.rts__dockerSteps { margin: 0 0 6px; padding-left: 20px; }
+.rts__dockerSteps li { margin: 2px 0; }
+.rts__dockerFoot { margin: 0; font-size: 11px; opacity: 0.8; }
 .rts__logs { padding: 8px 0 10px 16px; border-bottom: 1px solid #eee; background: #fafafa; }
 .rts__logsWhy { margin: 0 0 6px; font-weight: 600; }
 .rts__logsHead { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 11px; opacity: 0.8; }
