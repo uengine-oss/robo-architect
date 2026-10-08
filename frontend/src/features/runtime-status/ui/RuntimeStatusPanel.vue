@@ -32,7 +32,7 @@
  */
 import { computed, ref } from 'vue'
 import { useRuntimeStore } from '../runtime.store.js'
-import { rowActions, serviceLabel, sortedServices, stateText } from '../messages.js'
+import { headOf, rowActions, serviceLabel, sortedServices, stateText } from '../messages.js'
 
 const props = defineProps({
   /** 배너 안에 들어갈 때는 제목을 숨긴다 — 배너가 이미 같은 말을 했다. */
@@ -124,8 +124,10 @@ async function toggleLogs(serviceId) {
 const shownLines = computed(() => {
   if (!logs.value) return []
   if (showAllLines.value) return logs.value.lines
-  if (logs.value.highlights?.length) return logs.value.highlights
-  return logs.value.lines.slice(-8)
+  // 고른 줄은 **머리만** 보여준다 — 스택이 붙어 한 줄이 40줄이 되면 그 벽에
+  // 원인이 묻힌다(2026-10-08 실측). 전문은 토글로 본다.
+  if (logs.value.highlights?.length) return logs.value.highlights.map((line) => headOf(line))
+  return logs.value.lines.slice(-8).map((line) => headOf(line))
 })
 
 /**

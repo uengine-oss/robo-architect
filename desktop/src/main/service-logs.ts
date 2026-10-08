@@ -111,13 +111,24 @@ export function maskSecrets(line: string): string {
 // ---------------------------------------------------------------------------
 
 const NOTABLE = [
-  // 오류
-  /\b(error|errno|exception|traceback|fatal|critical|panic|segfault)\b/i,
-  /\b(refused|denied|unauthorized|forbidden|timed?\s*out|timeout|unreachable)\b/i,
-  /\b(fail(ed|ure)?)\b/i,
+  // 오류.
+  //
+  // **낱말 경계를 쓰지 않는다.** 기술 로그의 말은 붙어서 온다 — 2026-10-08 실측:
+  // `\bexception\b` 가 `NoResourceFoundException` 을 **못 잡아서** 스택 43줄을 든
+  // 원인 줄이 안 뽑혔다(뽑힌 것은 그 위의 "Unhandled exception" 한 줄뿐이었다).
+  // 같은 이유로 `IOError`·`SQLException`·`ConnectTimeout` 도 놓친다.
+  /error|errno|exception|throwable|traceback|fatal|critical|panic|segfault/i,
+  /refus|denied|unauthoriz|forbidden|timed?\s*out|timeout|unreachable/i,
+  /fail(ed|ure|s|ing)?/i,
   /\bHTTP\/\d(\.\d)?"?\s+(4\d\d|5\d\d)\b/,
-  // **끝난 이유** — 10/7 의 답이 여기였다
-  /\b(shutting down|shutdown complete|stopping|stopped|terminated|killed|exit(ed|ing)?|oom)\b/i,
+  // **끝난 이유** — 10/7 의 답이 여기였다.
+  //
+  // 어간으로 잡는다. 처음엔 `shutdown complete` 로 적었는데 실제 로그는
+  // `Shutdown completed.` 였고 `complete\b` 가 **completed 를 못 잡았다**
+  // (2026-10-08, parser 로그에서 걸렸다). 말끝은 서비스마다 다르다.
+  /shut\s?down|shutting\s+down/i,
+  /\b(stopp(ed|ing)|terminat\w*|kill(ed)?|aborted?|oom)\b/i,
+  /\bexit(ed|ing|\s+code|\s+status)?\b/i,
   // 자격·설정
   /\b(invalid|missing|not found|no such)\b/i,
 ];
@@ -259,6 +270,27 @@ export async function readServiceLogs(
 const STAMPED = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?Z\s?(.*)$/;
 
 /**
+ * 서비스가 **이미 시각을 찍고 있는가**.
+ *
+ * 2026-10-08 실측 — parser(Spring Boot)는 `04:08:11 Closing JPA …` 로 찍는다. 거기에
+ * 우리 시각을 또 붙이면 `04:08:11 04:08:11 Closing JPA …` 가 된다(사용자가 화면에서
+ * 그걸 봤다). 도커 시각은 **정렬에만** 쓰고, 보여줄 때는 겹치지 않게 한다.
+ */
+const SELF_CLOCKED = /^\d{2}:\d{2}:\d{2}([.,]\d+)?\s/;
+
+/**
+ * **앞 줄의 이어짐**인가 — 모양으로 가른다.
+ *
+ * 처음에는 "도커 시각이 없는 줄" 을 이어짐으로 봤다. 그런데 `-t` 는 **모든 줄에**
+ * 시각을 붙인다 — 자바 스택의 `\tat org.apache…` 한 줄 한 줄이 각자 시각을 받는다.
+ * 그래서 그 규칙은 컨테이너 로그에서 **한 번도 안 먹었고**, "Unhandled exception" 만
+ * 뽑히고 **원인(스택)이 안 따라왔다**(2026-10-08, 사용자 화면).
+ *
+ * 이어짐은 시각의 문제가 아니라 **줄의 모양**이다.
+ */
+const CONTINUATION = /^(\s+|at\s|Caused by:|Suppressed:|\.\.\.\s*\d+\s+more|\u0009)/;
+
+/**
  * 두 흐름을 **시각으로** 합친다.
  *
  * ## 왜 — 이어 붙이면 시간이 뒤집힌다
@@ -284,13 +316,22 @@ export function mergeStreams(stdout: string, stderr: string, limit = DEFAULT_TAI
       if (!trimmed) continue;
       const matched = STAMPED.exec(trimmed);
       const at = matched?.[1] ?? "";
+      const body = matched ? (matched[2] ?? "") : trimmed;
+
+      if (last && CONTINUATION.test(body)) {
+        // **모양으로** 이어 붙인다 — 들여쓰기 · `at …` · `Caused by:` · `… N more`.
+        // 도커가 그 줄에도 시각을 붙였는지는 상관없다(붙인다). 떼어 놓으면 스택이
+        // 흩어지고, 그러면 "Unhandled exception" 만 보이고 **원인이 사라진다.**
+        last.text += `\n${body}`;
+        continue;
+      }
+
       if (matched && at) {
-        // 화면에는 `HH:MM:SS` 만 남긴다 — 날짜는 하루치 로그에서 군더더기다.
-        last = { at, order: order++, text: `${at.slice(11)} ${matched[2] ?? ""}` };
+        // 서비스가 **이미 시각을 찍고 있으면** 우리 것을 붙이지 않는다 — 안 그러면
+        // `04:08:11 04:08:11 …` 이 된다. 도커 시각은 **정렬에만** 쓴다.
+        const shown = SELF_CLOCKED.test(body) ? body : `${at.slice(11)} ${body}`;
+        last = { at, order: order++, text: shown };
         rows.push(last);
-      } else if (last && last.at !== "") {
-        // **앞 줄이 시각을 가졌을 때만** 이어짐으로 본다 — traceback 의 둘째 줄.
-        last.text += `\n${trimmed}`;
       } else {
         // 시각이 아예 없는 로그(`-t` 없이 받은 것). **줄마다 한 줄**로 두고 순서만 지킨다 —
         // 여기서 이어 붙이면 로그 전체가 **한 덩이**가 된다(검사가 그걸 먼저 물었다).

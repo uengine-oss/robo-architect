@@ -23,6 +23,7 @@ import {
   serviceLabel,
   sortedServices,
   stateText,
+  headOf,
 } from '../src/features/runtime-status/messages.js'
 
 /** 감독이 다루는 서비스 열. `runtime-state.DISPLAY_NAMES` 와 같은 집합이다. */
@@ -203,4 +204,24 @@ test('조사를 **받침으로** 고른다 — `을(를)` 로 때우지 않는�
   const withBatchim = screenTells(worldWith('analyzer', 'failed')).headline // "코드 분석기" → 받침 없음
   expect(withBatchim).not.toContain('을(를)')
   expect(withBatchim).not.toContain('이(가)')
+})
+
+// ---------------------------------------------------------------------------
+// 긴 덩이는 **머리만** (2026-10-08 — 스택을 붙이자 한 줄이 40줄이 됐다)
+// ---------------------------------------------------------------------------
+
+test('짧은 줄은 **그대로** 둔다', () => {
+  expect(headOf('한 줄')).toBe('한 줄')
+  expect(headOf('a\nb\nc')).toBe('a\nb\nc')
+})
+
+test('긴 덩이는 머리 3줄 + **몇 줄이 더 있는지** 말한다', () => {
+  const row = ['NoResourceFoundException: No static resource', '\tat A', '\tat B', '\tat C', '\tat D'].join('\n')
+  const head = headOf(row)
+  const lines = head.split('\n')
+  expect(lines).toHaveLength(4) // 머리 3줄 + 안내 한 줄
+  // **원인은 첫 줄에 있다** — 그것이 안 잘려야 한다.
+  expect(lines[0]).toContain('NoResourceFoundException')
+  expect(lines[3]).toContain('2줄 더')
+  expect(lines[3]).toContain('전문에서')
 })

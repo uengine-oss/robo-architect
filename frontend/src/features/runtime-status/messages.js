@@ -155,3 +155,19 @@ export function missingTells(state) {
   }
   return missing
 }
+
+/**
+ * 긴 덩이는 **머리만** 보여준다.
+ *
+ * 2026-10-08 실측 — 스택을 붙여 주자 고른 줄 하나가 **40줄**이 됐다. 그걸 그대로
+ * 그리면 패널이 로그 벽이 되고, **원인이 그 벽에 묻힌다.** 원인은 첫 줄에 있다
+ * (`NoResourceFoundException: No static resource …`) — 스택은 "전문" 에서 본다.
+ */
+export const HEAD_LINES = 3
+
+export function headOf(row, limit = HEAD_LINES) {
+  const lines = String(row ?? '').split('\n')
+  if (lines.length <= limit) return row
+  const rest = lines.length - limit
+  return [...lines.slice(0, limit), `    … 그리고 ${rest}줄 더 (전문에서 봅니다)`].join('\n')
+}

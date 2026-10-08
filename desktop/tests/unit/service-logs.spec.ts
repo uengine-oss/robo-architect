@@ -300,3 +300,60 @@ test("합친 뒤에도 **줄 수 상한**을 지킨다", () => {
   expect(merged).toHaveLength(10);
   expect(merged[9]).toContain("line 49"); // 마지막 것들이 남는다
 });
+
+// ---------------------------------------------------------------------------
+// 2026-10-08 — 사용자가 parser 로그를 보고 결함 둘을 더 잡았다
+// ---------------------------------------------------------------------------
+
+test("서비스가 **이미 시각을 찍으면** 우리 것을 붙이지 않는다", () => {
+  // 실측: parser(Spring Boot)는 `04:08:11 …` 로 찍는다. 우리가 또 붙여서
+  // `04:08:11 04:08:11 Closing JPA …` 가 화면에 떴다.
+  const merged = mergeStreams(
+    "2026-10-08T04:08:11.168177615Z 04:08:11 Closing JPA EntityManagerFactory\n",
+    "",
+  );
+  expect(merged).toHaveLength(1);
+  expect(merged[0]).toBe("04:08:11 Closing JPA EntityManagerFactory");
+  expect(merged[0]).not.toContain("04:08:11 04:08:11");
+});
+
+test("서비스가 시각을 안 찍으면 **우리가 붙인다**", () => {
+  const merged = mergeStreams("2026-10-08T04:08:11.000Z INFO: started\n", "");
+  expect(merged[0]).toBe("04:08:11 INFO: started");
+});
+
+test("자바 스택이 **한 덩이로** 따라온다 — 도커가 줄마다 시각을 붙여도", () => {
+  // 처음 규칙("시각 없는 줄만 이어짐")은 `-t` 앞에서 **한 번도 안 먹었다** —
+  // 그래서 "Unhandled exception" 만 뽑히고 원인이 사라졌다(사용자 화면).
+  const stdout = [
+    "2026-10-08T04:08:04.023Z 04:08:04 Unhandled exception",
+    "2026-10-08T04:08:04.024Z \tat org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)",
+    "2026-10-08T04:08:04.024Z \tat org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:389)",
+    "2026-10-08T04:08:04.025Z Caused by: java.sql.SQLException: connection closed",
+    "2026-10-08T04:08:11.168Z 04:08:11 Closing JPA EntityManagerFactory",
+  ].join("\n");
+
+  const merged = mergeStreams(stdout, "");
+
+  // 스택과 `Caused by:` 가 **예외 줄에 붙어** 한 줄(한 덩이)로 온다.
+  expect(merged).toHaveLength(2);
+  expect(merged[0]).toContain("Unhandled exception");
+  expect(merged[0]).toContain("StandardEngineValve.invoke");
+  expect(merged[0]).toContain("Caused by: java.sql.SQLException");
+  expect(merged[1]).toContain("Closing JPA");
+
+  // 그래서 **고른 줄에 원인이 들어 있다** — 그게 이 기능의 목적이다.
+  const picked = pickHighlights(merged);
+  expect(picked.join("\n")).toContain("Caused by: java.sql.SQLException");
+});
+
+test("들여쓰기 없는 보통 줄은 **이어 붙이지 않는다**", () => {
+  const merged = mergeStreams(
+    [
+      "2026-10-08T04:08:01.000Z INFO: one",
+      "2026-10-08T04:08:02.000Z INFO: two",
+    ].join("\n"),
+    "",
+  );
+  expect(merged).toHaveLength(2);
+});
