@@ -42,6 +42,14 @@ const runtime = useRuntimeStore()
 const busyService = ref(null)
 const actionError = ref(null)
 
+/** 어느 서비스의 로그를 펼쳐 놨나. 한 번에 하나만 — 둘을 펼치면 화면이 로그로 덮인다. */
+const openLogsFor = ref(null)
+const logs = ref(null)
+const logsLoading = ref(false)
+const logsError = ref(null)
+/** 전문을 펼쳤나. 처음에는 **눈에 걸릴 줄만** 보여준다. */
+const showAllLines = ref(false)
+
 const STATE_TEXT = {
   ready: '준비됨',
   starting: '준비 중',
@@ -83,12 +91,58 @@ async function retry(serviceId) {
   }
 }
 
-async function diagnostics(serviceId) {
+/** 폴더를 여는 길은 남겨 둔다 — 전문을 봐야 할 때가 있고, **파일이 원본**이다. */
+async function openLogFolder(serviceId) {
   try {
     await runtime.openDiagnostics(serviceId)
   } catch (e) {
     actionError.value = e?.message || String(e)
   }
+}
+
+/**
+ * 그 서비스의 로그를 **그 자리에서** 읽는다.
+ *
+ * 왜 이 버튼이 필요한가: 패널은 이미 "pdf2bpmn 실패 — 컨테이너/프로세스가 실행 중이
+ * 아닙니다" 까지 말한다. 그런데 **왜 그렇게 됐는지**는 그 문장에 없다. 2026-10-07 에
+ * 실제로 그랬다 — 답은 컨테이너 로그의 "Shutting down" 두 줄이었고, 그걸 보려면
+ * 사람이 `docker logs` 를 쳐야 했다. 받는 사람은 그걸 못 한다.
+ */
+async function toggleLogs(serviceId) {
+  if (openLogsFor.value === serviceId) {
+    openLogsFor.value = null
+    return
+  }
+  openLogsFor.value = serviceId
+  logs.value = null
+  logsError.value = null
+  showAllLines.value = false
+  logsLoading.value = true
+  try {
+    const result = await runtime.fetchServiceLogs(serviceId)
+    if (result && result.ok === false) logsError.value = result.error || '로그를 읽지 못했습니다.'
+    // IPC 는 `{ ok, data }` 로 오고, 브라우저 모드에서는 `{ ok: false }` 다.
+    else logs.value = result?.data ?? result
+  } catch (e) {
+    logsError.value = e?.message || String(e)
+  } finally {
+    logsLoading.value = false
+  }
+}
+
+/** 처음에는 **눈에 걸릴 줄**만. 없으면 마지막 몇 줄로 떨어진다 — 빈 칸을 주지 않는다. */
+const shownLines = computed(() => {
+  if (!logs.value) return []
+  if (showAllLines.value) return logs.value.lines
+  if (logs.value.highlights?.length) return logs.value.highlights
+  return logs.value.lines.slice(-8)
+})
+
+const SOURCE_TEXT = {
+  container: '컨테이너 로그',
+  backend: '백엔드(호스트 프로세스) 로그',
+  external: '이 PC 가 띄운 서비스가 아닙니다',
+  unavailable: '로그를 읽지 못했습니다',
 }
 </script>
 
@@ -113,7 +167,8 @@ async function diagnostics(serviceId) {
       </p>
 
       <ul class="rts__list">
-        <li v-for="s in sorted" :key="s.id" class="rts__row" :class="`rts__row--${s.state}`">
+        <template v-for="s in sorted" :key="s.id">
+        <li class="rts__row" :class="`rts__row--${s.state}`">
           <span class="rts__dot" :class="`rts__dot--${s.state}`" aria-hidden="true"></span>
           <span class="rts__name">{{ label(s) }}</span>
           <span class="rts__id">{{ s.id }}</span>
@@ -127,9 +182,36 @@ async function diagnostics(serviceId) {
               :disabled="busyService === s.id"
               @click="retry(s.id)"
             >{{ busyService === s.id ? '다시 시도 중…' : '다시 시도' }}</button>
-            <button class="rts__btn rts__btn--quiet" @click="diagnostics(s.id)">기록 보기</button>
+            <button
+              class="rts__btn"
+              :class="{ 'rts__btn--on': openLogsFor === s.id }"
+              @click="toggleLogs(s.id)"
+            >{{ openLogsFor === s.id ? '로그 접기' : '로그 보기' }}</button>
+            <button class="rts__btn rts__btn--quiet" @click="openLogFolder(s.id)">폴더 열기</button>
           </span>
         </li>
+        <!-- 로그는 그 서비스 **바로 아래**에 펼친다 — 어느 서비스의 것인지 섞이지 않게. -->
+        <li v-if="openLogsFor === s.id" class="rts__logs">
+          <!-- 판정 이유가 **1차 근거**다. 로그보다 먼저 읽혀야 한다. -->
+          <p v-if="s.stateReason" class="rts__logsWhy">{{ s.stateReason }}</p>
+          <p v-if="logsLoading" class="rts__note">로그를 읽고 있습니다…</p>
+          <p v-else-if="logsError" class="rts__note rts__note--bad">{{ logsError }}</p>
+          <template v-else-if="logs">
+            <p class="rts__logsHead">
+              <span>{{ SOURCE_TEXT[logs.source] || logs.source }}</span>
+              <span v-if="logs.containerName" class="rts__logsName">{{ logs.containerName }}</span>
+              <button
+                v-if="logs.lines.length > shownLines.length || showAllLines"
+                class="rts__btn rts__btn--quiet"
+                @click="showAllLines = !showAllLines"
+              >{{ showAllLines ? `눈에 걸린 줄만` : `전문 ${logs.lines.length}줄` }}</button>
+            </p>
+            <p v-if="logs.note" class="rts__note">{{ logs.note }}</p>
+            <pre v-if="shownLines.length" class="rts__logsBody">{{ shownLines.join('\n') }}</pre>
+            <p class="rts__logsFoot">비밀 값은 가려서 보여 줍니다. 전문은 "폴더 열기" 의 파일에 있습니다.</p>
+          </template>
+        </li>
+        </template>
       </ul>
 
       <!-- **서비스 이름만으로는 사람이 자기가 무엇을 못 하는지 모른다.** -->
@@ -178,6 +260,26 @@ async function diagnostics(serviceId) {
 .rts__btn { padding: 2px 8px; border: 1px solid #ccc; border-radius: 4px; background: #fff; font-size: 11px; cursor: pointer; }
 .rts__btn:disabled { opacity: 0.6; cursor: default; }
 .rts__btn--quiet { border-color: #e3e3e3; opacity: 0.8; }
+.rts__btn--on { border-color: #58a; color: #24557e; }
+.rts__logs { padding: 8px 0 10px 16px; border-bottom: 1px solid #eee; background: #fafafa; }
+.rts__logsWhy { margin: 0 0 6px; font-weight: 600; }
+.rts__logsHead { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 11px; opacity: 0.8; }
+.rts__logsName { font-family: ui-monospace, monospace; opacity: 0.7; }
+.rts__logsBody {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #e7e7e7;
+  border-radius: 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.rts__logsFoot { margin: 6px 0 0; font-size: 11px; opacity: 0.6; }
 .rts__caps { margin-top: 10px; }
 .rts__capsTitle { margin: 0 0 4px; font-size: 12px; }
 .rts__cap { margin: 2px 0; }

@@ -15,7 +15,7 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
-import type { ManagedServiceId, RuntimeStatusPayload } from "../shared/runtime-contract";
+import type { ManagedServiceId, RuntimeStatusPayload, ServiceLogs } from "../shared/runtime-contract";
 
 /**
  * `RUNTIME_CHANNELS` 의 **지역 사본**. 왜 베끼는가.
@@ -41,6 +41,7 @@ const RUNTIME_CHANNELS = {
   retryService: "runtime:retryService",
   stopEngine: "runtime:stopEngine",
   openDiagnostics: "runtime:openDiagnostics",
+  serviceLogs: "runtime:serviceLogs",
 } as const;
 
 // 원본과 양방향으로 대조한다. 한쪽에 채널이 생기거나 문자열이 달라지면 여기서
@@ -220,6 +221,9 @@ const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "
       ),
     openDiagnostics: (input: { serviceId?: ManagedServiceId }) =>
       invoke<{ ok: true }>(RUNTIME_CHANNELS.openDiagnostics, input),
+    // 줄은 **이미 가려져** 온다 — 렌더러는 그릴 뿐이다.
+    serviceLogs: (input: { serviceId: ManagedServiceId; tail?: number }) =>
+      invoke<ServiceLogs>(RUNTIME_CHANNELS.serviceLogs, input),
   },
   logs: {
     reveal: () => invoke<{ ok: true }>("logs:reveal"),

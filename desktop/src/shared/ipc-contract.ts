@@ -223,6 +223,8 @@ export interface IpcRequestMap {
     { ok: true; stoppedServiceIds: ManagedServiceId[] },
   ];
   "runtime:openDiagnostics": [{ serviceId?: ManagedServiceId }, { ok: true }];
+  // 줄은 **이미 가려져** 온다(`service-logs.maskSecrets`) — 렌더러가 또 가리지 않는다.
+  "runtime:serviceLogs": [{ serviceId: ManagedServiceId; tail?: number }, ServiceLogs];
 }
 
 export type IpcChannel = keyof IpcRequestMap;
@@ -281,6 +283,7 @@ import type {
   ManagedService,
   ManagedServiceId,
   RuntimeStatusPayload,
+  ServiceLogs,
 } from "./runtime-contract";
 
 export type {
@@ -290,6 +293,7 @@ export type {
   ManagedService,
   ManagedServiceId,
   RuntimeStatusPayload,
+  ServiceLogs,
 };
 
 export interface DesktopBridge {
@@ -328,6 +332,7 @@ export interface DesktopBridge {
       IpcResult<{ ok: true; stoppedServiceIds: ManagedServiceId[] }>
     >;
     openDiagnostics(input: { serviceId?: ManagedServiceId }): Promise<IpcResult<{ ok: true }>>;
+    serviceLogs(input: { serviceId: ManagedServiceId; tail?: number }): Promise<IpcResult<ServiceLogs>>;
   };
   logs: {
     reveal(): Promise<IpcResult<{ ok: true }>>;

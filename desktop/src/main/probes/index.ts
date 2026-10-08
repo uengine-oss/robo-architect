@@ -75,9 +75,13 @@ export const COMPOSE_SERVICE_CANDIDATES: Partial<Record<ManagedServiceId, string
   graph: ["graph-bolt", "neo4j"],
 };
 
-export function containerNames(context: ProbeContext, id: ManagedServiceId): string[] {
+export function containerNamesFor(projectName: string, id: ManagedServiceId): string[] {
   const candidates = COMPOSE_SERVICE_CANDIDATES[id] ?? [id];
-  return candidates.map((name) => `${context.projectName}-${name}-1`);
+  return candidates.map((name) => `${projectName}-${name}-1`);
+}
+
+export function containerNames(context: ProbeContext, id: ManagedServiceId): string[] {
+  return containerNamesFor(context.projectName, id);
 }
 
 type Probe = (context: ProbeContext) => Promise<Omit<ProbeResult, "serviceId" | "kind" | "durationMs">>;

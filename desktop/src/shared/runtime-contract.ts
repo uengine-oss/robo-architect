@@ -194,11 +194,35 @@ export interface RuntimeStatusPayload {
   changedServiceIds: ManagedServiceId[];
 }
 
+/**
+ * 서비스 하나의 로그 — **이미 가려진** 줄로 온다(`main/service-logs.ts`).
+ *
+ * `source` 가 왜 넷인가: 읽을 자리가 없는 이유마다 사용자에게 **다른 사실**이기
+ * 때문이다. 밖에서 도는 것(중앙 DB)·도커가 꺼진 것·컨테이너가 아직 없는 것을
+ * 한 말로 뭉치면 "로그가 없다" 가 되고, 그건 아무것도 알려 주지 않는다.
+ */
+export type LogSource = "container" | "backend" | "external" | "unavailable";
+
+export interface ServiceLogs {
+  serviceId: ManagedServiceId;
+  source: LogSource;
+  /** 읽은 컨테이너 이름. 컨테이너가 아니면 `null`. */
+  containerName: string | null;
+  /** 오래된 것 → 새 것 순서. **비밀 값은 이미 가려져 있다.** */
+  lines: string[];
+  /** 눈에 먼저 걸릴 줄(오류 · **끝난 이유**). `lines` 에도 그대로 있다. */
+  highlights: string[];
+  /** 읽을 것이 없을 때 **왜 없는지**를 사람 말로. */
+  note: string | null;
+}
+
 export const RUNTIME_CHANNELS = {
   onStatus: "runtime:onStatus",
   retryService: "runtime:retryService",
   stopEngine: "runtime:stopEngine",
   openDiagnostics: "runtime:openDiagnostics",
+  // 고장 난 서비스의 로그를 **그 자리에서** 읽는다(T028 의 남은 반).
+  serviceLogs: "runtime:serviceLogs",
 } as const;
 
 // ---------------------------------------------------------------------------

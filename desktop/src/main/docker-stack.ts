@@ -41,7 +41,7 @@ const MANIFEST_NAME = "runtime-manifest.json";
 const STATE_SCHEMA_VERSION = 5;
 // 4: images.neo4j → images.graphDb + images.graphBolt, graphs 항목 추가.
 const MANIFEST_SCHEMA_VERSION = 4;
-const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
+export const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
 // 저장소 비밀번호. **이제 Postgres role 의 비밀번호다** — Bolt 게이트웨이는 받은
 // 자격증명을 그대로 Postgres 에 넘긴다(사용자 = role). 이름을 엔진 중립으로 옮기되,
 // 이미 깔린 앱의 키체인 항목을 잃지 않도록 옛 id 를 한 번 읽어 옮긴다.

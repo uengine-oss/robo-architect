@@ -27,25 +27,32 @@ import {
 } from "../shared/ipc-contract";
 
 import { ensureDataDirs, getLogsDir } from "./data-dir";
-import { disableConsoleMirror, initLogging, log, revealLogs } from "./logging";
+import { backendLogLines, disableConsoleMirror, initLogging, log, revealLogs } from "./logging";
 import { isStreamingResponse } from "./proxy-stream";
 import { RuntimeRegistry } from "./runtime-state";
-import { RUNTIME_CHANNELS } from "../shared/runtime-contract";
+import { RUNTIME_CHANNELS, type ManagedServiceId } from "../shared/runtime-contract";
 import {
   getDockerStackRuntime,
   restartOwnedService,
   stopDockerStack,
 } from "./docker-stack";
-import { graphPassword } from "./docker-stack";
+import { COMPOSE_PROJECT_NAME, graphPassword } from "./docker-stack";
 import { graphTopology } from "./graph-topology";
 import {
   containerNames as probeContainerNames,
+  containerNamesFor,
   hasCapabilityProbe,
   probedServiceIds,
   runProbe,
   type ProbeContext,
 } from "./probes";
-import { runningContainerNames } from "./probes/net";
+import { readServiceLogs } from "./service-logs";
+import {
+  containerLogs,
+  dockerAvailable,
+  presentContainerNames,
+  runningContainerNames,
+} from "./probes/net";
 import { aliveFrom, startSupervision, type Supervision } from "./supervision";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
 import {
@@ -707,9 +714,39 @@ function registerIpcHandlers(): void {
   });
 
   registerHandler(RUNTIME_CHANNELS.openDiagnostics, async () => {
-    // 지금은 로그 위치를 연다. 서비스별 로그 갈래는 화면 작업(T028)과 같이 온다.
+    // 폴더를 여는 길은 **남겨 둔다** — 전문을 봐야 할 때가 있고, 로그는 파일이 원본이다.
     await revealLogs();
     return { ok: true as const };
+  });
+
+  /**
+   * 고장 난 서비스의 로그를 **그 자리에서** 읽는다 (T028 의 남은 반).
+   *
+   * 판정과 가리기는 `service-logs.ts` 의 순수 함수가 한다 — 여기서는 **어디서
+   * 읽을지** 만 이어 준다. 그래야 그 규칙을 단위 검사로 걸 수 있다.
+   */
+  registerHandler(RUNTIME_CHANNELS.serviceLogs, async ({ serviceId, tail }) => {
+    const logs = await readServiceLogs(
+      {
+        candidatesOf: (id: ManagedServiceId) => containerNamesFor(COMPOSE_PROJECT_NAME, id),
+        ownerOf: (id: ManagedServiceId) =>
+          runtimeRegistry.snapshot().services.find((s) => s.id === id)?.owner ?? "app",
+        dockerAvailable: () => dockerAvailable(),
+        presentContainers: () => presentContainerNames(),
+        containerLogs: (name: string, n: number) => containerLogs(name, n),
+        backendLines: async (n: number) => backendLogLines(n),
+      },
+      serviceId,
+      tail,
+    );
+    // **줄은 남기지 않는다.** 비밀이 가려졌다 해도 로그에 로그를 또 적을 이유가 없다.
+    log("info", "runtime.service_logs.read", {
+      service: serviceId,
+      source: logs.source,
+      lines: logs.lines.length,
+      highlights: logs.highlights.length,
+    });
+    return logs;
   });
 
   registerHandler("app:openExternal", async ({ url }) => {

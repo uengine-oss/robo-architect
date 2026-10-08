@@ -146,6 +146,18 @@ export const useRuntimeStore = defineStore('runtime', () => {
   }
 
   /**
+   * 그 서비스의 로그를 가져온다 — **메인이 이미 가린 줄**이 온다.
+   *
+   * 여기서 또 가리지 않는다. 가리는 규칙이 두 곳에 있으면 한쪽만 고친 날
+   * **덜 가린 쪽**이 화면에 뜬다.
+   */
+  async function fetchServiceLogs(serviceId, tail) {
+    const bridge = window?.desktop?.runtime
+    if (!bridge?.serviceLogs) return { ok: false, error: '이 창에서는 로그를 읽을 수 없습니다.' }
+    return bridge.serviceLogs({ serviceId, tail })
+  }
+
+  /**
    * 기능을 쓸 수 있는가 — 화면의 진입점이 이걸 보고 열고 닫는다.
    *
    * **모르면 열지 않는다.** 아직 못 받았거나 표에 없는 기능은 `false` 다.
@@ -185,6 +197,7 @@ export const useRuntimeStore = defineStore('runtime', () => {
     stop,
     retryService,
     openDiagnostics,
+    fetchServiceLogs,
     isAvailable,
     blockedReason,
   }

@@ -333,6 +333,38 @@ export function log(level: Level, event: string, data?: Record<string, unknown>)
 }
 
 /** Opens the logs directory in the OS file manager. Always succeeds (creates the dir if missing). */
+/**
+ * 백엔드가 낸 줄만 앱 로그에서 꺼낸다 — `architect` 의 "로그" 가 여기다.
+ *
+ * 백엔드는 **호스트 프로세스**라 컨테이너 로그가 없다. 대신 앱이 그 stdout·stderr 를
+ * `backend.stdout`·`backend.stderr` 이벤트로 받아 적는다. 그래서 그 둘만 걸러
+ * **원래 줄**(`data.line`)을 돌려준다 — JSON 껍데기는 사람이 읽을 것이 아니다.
+ *
+ * 오늘 파일만 읽는다. 어제까지 올라가면 "지금 왜 안 되는가" 와 멀어진다.
+ */
+export function backendLogLines(tail: number): string[] {
+  const file = resolveDayFile(getLogsDir(), localDayKey());
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return []; // 아직 파일이 없다 — **없는 것**이 맞는 답이다
+  }
+  const out: string[] = [];
+  for (const row of text.split(/\r?\n/)) {
+    if (!row.includes('"backend.std')) continue;
+    try {
+      const parsed = JSON.parse(row) as { event?: string; data?: { line?: string } };
+      if (parsed.event !== "backend.stdout" && parsed.event !== "backend.stderr") continue;
+      const line = parsed.data?.line;
+      if (typeof line === "string" && line.trim()) out.push(line.replace(/\s+$/, ""));
+    } catch {
+      // 반쯤 쓰인 줄은 건너뛴다 — 로그는 쓰는 중일 수 있다
+    }
+  }
+  return out.slice(Math.max(0, out.length - tail));
+}
+
 export async function revealLogs(): Promise<void> {
   const dir = getLogsDir();
   fs.mkdirSync(dir, { recursive: true });

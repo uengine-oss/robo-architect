@@ -97,6 +97,27 @@ export async function runningContainerNames(timeoutMs = 10_000): Promise<string[
 }
 
 /**
+ * 멈춘 것까지 포함한 컨테이너 이름 전부.
+ *
+ * `runningContainerNames()` 와 **다른 질문**이다 — 로그를 읽을 때 가장 알고 싶은
+ * 자리가 바로 **멈춘 컨테이너**다. 돌고 있는 것만 보면 그 자리를 영영 못 읽는다.
+ */
+export async function presentContainerNames(timeoutMs = 10_000): Promise<string[] | null> {
+  const { code, out } = await run("docker", ["ps", "-a", "--format", "{{.Names}}"], timeoutMs);
+  if (code !== 0) return null; // **못 얻은 것**이지 "없는 것" 이 아니다
+  return out.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+/**
+ * 컨테이너 로그의 마지막 `tail` 줄. stdout 과 stderr 를 **합쳐서** 준다 —
+ * 파이썬 서비스는 오류를 stderr 로, 진행을 stdout 으로 내서 한쪽만 보면 앞뒤가 없다.
+ */
+export async function containerLogs(name: string, tail: number, timeoutMs = 15_000): Promise<string> {
+  const { out } = await run("docker", ["logs", "--tail", String(tail), name], timeoutMs);
+  return out;
+}
+
+/**
  * 컨테이너 **안에서** HTTP 코드를 얻는다 — 호스트에 포트를 안 연 서비스를 재려고.
  *
  * 이미지마다 든 도구가 다르다. parser·gateway 는 Java 이미지라 `python` 이 없고
