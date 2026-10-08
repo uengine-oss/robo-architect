@@ -33,7 +33,15 @@ __all__ = ["connection", "query", "execute", "pg_dsn", "PgUnavailable"]
 
 
 class PgUnavailable(RuntimeError):
-    """Postgres 에 붙을 수 없다. 호출부가 기능을 끄고 안내할 수 있게 구분한다."""
+    """Postgres 에 붙을 수 없다.
+
+    **이 구분을 잡는 곳이 0개였다**(2026-10-08 실측). "호출부가 기능을 끄고 안내할
+    수 있게" 만들어 둔 이름인데, 아무도 안 잡아서 접속 실패가 그대로 500 으로
+    올라갔다. 이제 `api/main.py` 가 전역에서 받아 `pg_errors.explain` 으로 옮긴다 —
+    라우터마다 잡으면 **한 곳이 빠지고, 빠진 곳은 다시 500 으로 조용해진다.**
+
+    원래 예외를 `__cause__` 로 들고 간다(서버 코드가 거기 있다).
+    """
 
 
 def _host_from_bolt(uri: str) -> str:

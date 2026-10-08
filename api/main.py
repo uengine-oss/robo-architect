@@ -312,6 +312,9 @@ from api.platform.identity.connection_binding import (  # noqa: E402
 from api.features.collab import notify as collab_notify  # noqa: E402
 from neo4j.exceptions import Neo4jError  # noqa: E402
 from api.platform.identity.graph_errors import explain as explain_graph_error  # noqa: E402
+from api.platform.pg import PgUnavailable  # noqa: E402
+from api.platform.pg_errors import explain as explain_pg_error  # noqa: E402
+from api.platform.pg_errors import sqlstate_of as pg_sqlstate_of  # noqa: E402
 
 
 # 그래프가 거절한 것을 500 으로 흘리지 않는다.
@@ -341,6 +344,33 @@ async def neo4j_error_handler(request: Request, exc: Neo4jError):
     if response is not None:
         return response
     raise exc
+
+
+@app.exception_handler(PgUnavailable)
+async def pg_unavailable_handler(request: Request, exc: PgUnavailable):
+    """Postgres 에 붙지 못한 것. **아무도 안 잡던 자리다**(2026-10-08).
+
+    중앙 DB 는 PC 20여 대가 같이 본다. 그래서 여기서 나는 실패는 "우리 잘못" 이
+    아니라 **설치·용량·주소** 쪽이고, 그 사실을 사람에게 말해 줘야 한다 — 특히
+    동시 접속 한계(`53300`)는 **잠시 뒤 다시 하면 되는 것**이라 500 으로 보여선
+    안 된다. 모르는 실패는 그대로 올려 500 으로 둔다(아는 척하지 않는다).
+    """
+    told = explain_pg_error(exc.__cause__ or exc)
+    if told is None:
+        raise exc
+    status, code, detail = told
+    SmartLogger.log(
+        "WARN",
+        f"중앙 DB 가 거절했다 → {status} {code}",
+        category="db.unavailable",
+        params={
+            "code": code,
+            "sqlstate": pg_sqlstate_of(exc.__cause__ or exc),
+            "error_type": type(exc.__cause__ or exc).__name__,
+            # **메시지 본문은 싣지 않는다** — 접속 문자열이 섞일 수 있다.
+        },
+    )
+    return JSONResponse({"detail": detail, "code": code}, status_code=status)
 
 
 @app.middleware("http")
