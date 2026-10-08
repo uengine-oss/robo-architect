@@ -547,7 +547,16 @@ async def get_context_full_tree(context_id: str, request: Request) -> dict[str, 
                     if e and e.get("id"):
                         evt_ids.append(e["id"])
         rm_ids = list(readmodels_map.keys())
-        parent_ids = [*agg_ids, *cmd_ids, *evt_ids, *rm_ids]
+        # **같은 id 를 두 번 넣지 않는다.** `evt_ids` 는 aggregate 의 events 와 command 의
+        # events 양쪽에서 모으므로, 한 Event 가 2번(또는 Aggregate 둘에 걸리면 4번) 들어간다.
+        # 아래 질의들이 `UNWIND $parent_ids` 로 도는데 pid 가 중복되면 같은 (pid, prop) 짝이
+        # 그만큼 나오고, `collect` 가 **필드를 2~4배로 묶는다.**
+        #
+        # 2026-10-08 실측(기준 프로젝트) — Event 필드가 **242행인데 서로 다른 id 는 91개**
+        # 였다. 산출물 문서의 Event Payload 에 `approvalLineId(String)` 이 **네 번** 찍혔다.
+        # 오류는 안 났다 — 같은 값이 더 많이 나올 뿐이라서.
+        # `implementationFiles` 질의도 같은 모양이라 같이 낫는다.
+        parent_ids = list(dict.fromkeys([*agg_ids, *cmd_ids, *evt_ids, *rm_ids]))
 
         if parent_ids:
             prop_query = """

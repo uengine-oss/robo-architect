@@ -346,9 +346,13 @@ export async function exportToWord(data, container, onProgress) {
       const evts = allEvtsForCtx(ctx)
       if (evts.length) {
         sub++; ch.push(h3(`${sn.modelOverview}-${ci + 1}-${sub}. Event`))
-        ch.push(tbl(['이름', 'Aggregate', 'Version', 'Payload'],
-          evts.map(e => [e.displayName || e.name, e.aggName, e.version || '-', e.payloadFields.map(f => `${f.name}(${f.type})`).join(', ') || '-']),
-          [1800, 1200, 800, 5200]))
+        // `Version` 열을 뺐다 — 2026-10-08 실측에서 **26행 전부 `1.0.0`** 이었다.
+        // 올리는 코드가 없고(기본값 그대로 적힌다) 읽는 곳도 이 열뿐이었다.
+        // 한 가지 값만 담는 열은 자리만 먹고 아무것도 말하지 않는다. 그 폭을 Payload 로.
+        ch.push(tbl(['이름', 'Aggregate', 'Payload'],
+          evts.map(e => [e.displayName || e.name, e.aggName,
+            e.payloadFields.map(f => `${f.name}(${f.type})${f.isRequired ? '*' : ''}`).join(', ') || '-']),
+          [1800, 1200, 6000]))
       }
 
       const pols = (t.policies || []).filter(p => p.name)

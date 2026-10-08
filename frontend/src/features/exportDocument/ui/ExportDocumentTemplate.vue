@@ -5,6 +5,8 @@ import { buildBcOverviewDef, buildContextMapDef, buildAggregateModelDef } from '
 // 화면과 문서가 **같은 말**을 써야 한다 — 다건/단건 판정은 한 자리에 둔다.
 import { resultKind } from '../text'
 import { sectionShown as shownOf, sectionNumbers as numbersOf } from '../sections'
+// 필드가 `properties` 에 있는데 `payload` 를 읽어 **Event Payload 가 전부 비어** 나갔다.
+import { fieldsOf, parseJsonFields } from '../fields'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useNavigatorStore } from '@/features/navigator/navigator.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
@@ -406,9 +408,6 @@ function chunkRows(rows, size = ROWS_PER_PAGE) {
 }
 
 // ── Data helpers ──
-function parseJsonFields(json) {
-  if (!json) return []; try { const obj = typeof json === 'string' ? JSON.parse(json) : json; return Object.entries(obj).map(([k,v]) => ({ name:k, type: typeof v==='string'?v:JSON.stringify(v) })) } catch { return [] }
-}
 function getCommandsFromTree(tree) {
   const cmds = []; for (const a of (tree.aggregates||[])) { for (const c of (a.commands||[])) { cmds.push({ id:c.id, name:c.displayName||c.name, agg:a.displayName||a.name, actor:c.actor||'', events:(c.events||[]).map(e=>e.displayName||e.name), schema:parseJsonFields(c.inputSchema) }) } }; return cmds
 }
@@ -425,7 +424,7 @@ function allCmdsForCtx(ctx) {
 }
 function allEvtsForCtx(ctx) {
   const t = bcTree(ctx); if (!t) return []
-  const r = []; (t.aggregates||[]).forEach(a => (a.events||[]).forEach(e => r.push({ ...e, aggName:a.displayName||a.name, payloadFields:parseJsonFields(e.payload) }))); return r
+  const r = []; (t.aggregates||[]).forEach(a => (a.events||[]).forEach(e => r.push({ ...e, aggName:a.displayName||a.name, payloadFields:fieldsOf(e, 'payload') }))); return r
 }
 function resolveNodeName(nodeId) {
   if (!nodeId) return '-'
@@ -728,8 +727,8 @@ function resolveNodeName(nodeId) {
           <!-- Event -->
           <div v-if="allEvtsForCtx(ctx).length" class="block">
             <h3>{{ bcName(ctx) }} - Event</h3>
-            <table class="tbl tbl--sm"><thead><tr><th style="width:160px">이름</th><th style="width:120px">Aggregate</th><th style="width:70px">Version</th><th>Payload</th></tr></thead>
-              <tbody><tr v-for="e in allEvtsForCtx(ctx)" :key="e.id"><td class="b">{{ e.displayName||e.name }}</td><td>{{ e.aggName }}</td><td>{{ e.version||'-' }}</td><td><div v-for="f in e.payloadFields" :key="f.name" class="prop-line">{{ f.name }} <span class="prop-type">{{ f.type }}</span></div><span v-if="!e.payloadFields?.length">-</span></td></tr></tbody>
+            <table class="tbl tbl--sm"><thead><tr><th style="width:160px">이름</th><th style="width:120px">Aggregate</th><th>Payload</th></tr></thead>
+              <tbody><tr v-for="e in allEvtsForCtx(ctx)" :key="e.id"><td class="b">{{ e.displayName||e.name }}</td><td>{{ e.aggName }}</td><td><div v-for="f in e.payloadFields" :key="f.name" class="prop-line">{{ f.name }} <span class="prop-type">{{ f.type }}</span></div><span v-if="!e.payloadFields?.length">-</span></td></tr></tbody>
             </table>
           </div>
 
