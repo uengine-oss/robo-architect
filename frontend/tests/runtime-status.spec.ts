@@ -14,8 +14,6 @@
 //
 // 서버 쪽 쓸기(실제로 죽여 보는 것)는 `scripts/verify_runtime_service_sweep.py` 가
 // 따로 한다. 둘은 **다른 질문**이다 — 저쪽은 "감독이 잡는가", 이쪽은 "화면이 말하는가".
-import { readFileSync } from 'node:fs'
-
 import { test, expect } from '@playwright/test'
 // @ts-expect-error 플레인 JS 모듈
 import {
@@ -205,30 +203,4 @@ test('조사를 **받침으로** 고른다 — `을(를)` 로 때우지 않는�
   const withBatchim = screenTells(worldWith('analyzer', 'failed')).headline // "코드 분석기" → 받침 없음
   expect(withBatchim).not.toContain('을(를)')
   expect(withBatchim).not.toContain('이(가)')
-})
-
-// ---------------------------------------------------------------------------
-// **닿을 수 있는가** — 멀쩡할 때도 패널을 열 수 있어야 한다 (2026-10-08 사용자 지적)
-// ---------------------------------------------------------------------------
-
-test('멀쩡하면 배너는 안 뜬다 — 그래서 **문이 따로** 있어야 한다', () => {
-  const healthy = worldWith('analyzer', 'ready')
-  // 배너는 조용하다(그게 맞다 — 늘 떠 있는 띠는 며칠이면 안 보이게 된다)
-  expect(screenTells(healthy).noticed).toBe(false)
-
-  // 그런데 패널을 열 자리가 배너뿐이면 **로그 보기에 닿을 길이 없다.**
-  // 상단바에 상시 진입점(칩)이 있어야 하고, 그 칩은 `runtime.supported` 로만 걸린다.
-  // ESM 이라 `__dirname` 이 없다 — 모듈 주소에서 만든다.
-  const topBar = readFileSync(new URL('../src/app/layout/TopBar.vue', import.meta.url), 'utf8')
-  expect(topBar, '상단바에 실행 상태 칩이 없다').toContain('rt-chip')
-  expect(topBar, '칩이 패널을 열지 않는다').toContain('RuntimeStatusPanel')
-  // **고장 여부로 숨기지 않는다** — 그러면 다시 같은 구멍이 된다.
-  expect(topBar).toContain('v-if="runtime.supported"')
-})
-
-test('칩의 점은 **문제가 없으면 조용하다** — 초록도 소리다', () => {
-  // ESM 이라 `__dirname` 이 없다 — 모듈 주소에서 만든다.
-  const topBar = readFileSync(new URL('../src/app/layout/TopBar.vue', import.meta.url), 'utf8')
-  // ok 는 회색이어야 한다(초록으로 두면 늘 켜진 신호가 되고, 며칠이면 안 보인다).
-  expect(topBar).toMatch(/\.rt-chip--ok \.rt-chip__dot \{ background: #c9c9c9/)
 })

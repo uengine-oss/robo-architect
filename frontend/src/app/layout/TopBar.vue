@@ -2,7 +2,7 @@
 import ProjectPicker from '@/features/projects/ui/ProjectPicker.vue'
 import ViewerChips from '@/features/collab/ui/ViewerChips.vue'
 import UserMenu from '@/features/auth/ui/UserMenu.vue'
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 // 043 — 'Big picture' 뷰 비활성화: store import 제거.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
@@ -16,8 +16,6 @@ import SettingsPanel from './SettingsPanel.vue'
 // 이름이 붙은 두 자리(레거시 탐색 · 적재 시작)만 본다. 넓게 막으면 프로브가
 // 한 번 틀린 날 **멀쩡한 앱이 통째로 잠긴다**(2026-10-07 에 실제로 배선이 틀렸다).
 import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
-import { screenTells, stateText } from '@/features/runtime-status/messages.js'
-import RuntimeStatusPanel from '@/features/runtime-status/ui/RuntimeStatusPanel.vue'
 
 const props = defineProps({
   activeTab: {
@@ -52,33 +50,6 @@ const tabs = ['Legacy', 'Stories', 'Process', 'Design', 'Data', 'Template']
 
 const runtime = useRuntimeStore()
 /** 탭 ↔ 기능. **여기 없는 탭은 막지 않는다.** */
-/**
- * 실행 상태로 들어가는 **문**. 배너(알림)와 다른 것이다 — 알림은 드물어야 보이고,
- * 문은 늘 같은 자리에 있어야 찾는다. 멀쩡할 때도 로그를 보고 싶은 때가 있다
- * ("느린데 왜 느린가"가 "고장 났다"보다 흔하다).
- */
-const showRuntimePanel = ref(false)
-const runtimeTold = computed(() =>
-  screenTells({
-    services: runtime.services,
-    capabilities: runtime.capabilities,
-    dockerAvailable: runtime.dockerAvailable,
-    graphGuard: runtime.graphGuard,
-  }),
-)
-/** 점 하나로 요약한다. **문제가 없으면 조용한 회색** — 초록도 소리다. */
-const runtimeDot = computed(() => {
-  if (!runtime.supported || !runtime.loaded) return 'unknown'
-  return runtimeTold.value.noticed ? runtimeTold.value.tone : 'ok'
-})
-const runtimeTip = computed(() => {
-  if (!runtime.supported) return '이 창은 실행 상태를 감독하지 않습니다'
-  if (!runtime.loaded) return '실행 상태를 확인하고 있습니다…'
-  if (runtimeTold.value.noticed) return runtimeTold.value.headline
-  const ready = runtime.services.filter((s) => s.state === 'ready').length
-  return `서비스 ${ready}/${runtime.services.length} 준비됨 — 눌러서 로그를 봅니다`
-})
-
 const TAB_CAPABILITY = { Legacy: 'legacy-analysis' }
 const tabBlocked = (tab) => {
   const capability = TAB_CAPABILITY[tab]
@@ -213,21 +184,6 @@ function selectTab(tab) {
     </div>
 
     <div class="top-bar__right">
-      <!--
-        실행 상태로 들어가는 **문** (058 US1). 배너는 문제가 있을 때만 뜨므로,
-        멀쩡할 때 패널에 닿을 길이 없었다 — 그래서 "로그 보기" 도 고장 났을 때만
-        쓸 수 있었다(2026-10-08 사용자 지적). 문은 늘 같은 자리에 둔다.
-      -->
-      <button
-        v-if="runtime.supported"
-        class="rt-chip tipped"
-        :class="`rt-chip--${runtimeDot}`"
-        :data-tip="runtimeTip"
-        @click="showRuntimePanel = !showRuntimePanel"
-      >
-        <span class="rt-chip__dot" aria-hidden="true"></span>
-        실행 상태
-      </button>
       <!-- PRD zip 다운로드 — Code 탭에서만 노출. 배포 웹에선 임베디드 터미널 대신
            이 zip을 받아 로컬(데스크톱 / local claude)에서 구현하는 것이 정식 동선이라,
            Code 탭 상단에 상시 진입점을 둔다. zip 은 그래프에서 매번 새로 빌드되는
@@ -270,15 +226,6 @@ function selectTab(tab) {
       :visible="showPRDModal"
       @close="showPRDModal = false"
     />
-
-    <!-- 실행 상태 패널 — 상단바의 칩으로 연다. 고장이 없어도 열린다. -->
-    <div v-if="showRuntimePanel" class="rt-pop">
-      <div class="rt-pop__head">
-        <b>실행 상태</b>
-        <button class="rt-pop__x" @click="showRuntimePanel = false">닫기</button>
-      </div>
-      <RuntimeStatusPanel :embedded="true" />
-    </div>
 
     <!-- Figma Binding Modal (feature 016) -->
     <FigmaBindingModal v-model="showFigmaBindingModal" />
@@ -425,55 +372,6 @@ function selectTab(tab) {
   opacity: 0.6;
 }
 
-.rt-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid #dcdcdc;
-  border-radius: 14px;
-  background: #fff;
-  font-size: 12px;
-  color: #444;
-  cursor: pointer;
-}
-.rt-chip__dot { width: 8px; height: 8px; border-radius: 50%; background: #bbb; }
-/* 문제가 없으면 **조용하다** — 초록도 소리다. 회색 점이 기본이다. */
-.rt-chip--ok .rt-chip__dot { background: #c9c9c9; }
-.rt-chip--unknown .rt-chip__dot { background: #dcdcdc; }
-.rt-chip--warn { border-color: #f2dca8; background: #fff6e0; color: #7a5a12; }
-.rt-chip--warn .rt-chip__dot { background: #e0a21a; }
-.rt-chip--bad { border-color: #f5c6c2; background: #fdecea; color: #7f231c; }
-.rt-chip--bad .rt-chip__dot { background: #d14; }
-.rt-pop {
-  position: absolute;
-  top: 46px;
-  right: 12px;
-  z-index: 60;
-  width: 620px;
-  max-height: 70vh;
-  overflow: auto;
-  background: #fff;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
-}
-.rt-pop__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid #eee;
-  font-size: 13px;
-}
-.rt-pop__x {
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: #fff;
-  padding: 2px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
 .top-bar__right {
   display: flex;
   align-items: center;
