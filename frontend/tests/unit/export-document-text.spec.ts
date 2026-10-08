@@ -59,11 +59,17 @@ test('빈 값은 `-` 다 — 빈 칸은 "자리가 없는 것" 과 구별되지 
   expect(clip('   ', 80)).toBe('-')
 })
 
-test('공백이 없는 한 덩이도 **자르고 말줄임을 붙인다** — 한글 설명이 그렇다', () => {
+/** 폭을 센다 — 한글·한자는 2, 나머지는 1 (문서의 글꼴이 그렇게 앉는다). */
+function widthOf(s: string): number {
+  return [...s].reduce((w, c) => w + (/[ᄀ-ᅟ가-힣⺀-꓏]/.test(c) ? 2 : 1), 0)
+}
+
+test('공백이 없는 한 덩이도 **자르고 말줄임을 붙인다** — 띄어쓰기 없는 한글이 그렇다', () => {
   const korean = '휴가신청의생성검증취소를포함한전체생애주기를관리한다'.repeat(6)
   const out = clip(korean, 30)
   expect(out.endsWith('…')).toBe(true)
-  expect(out.length).toBe(31)
+  // 폭이 한도 안이다. 글자 수로는 15자뿐 — 한글 한 글자가 두 칸을 먹는다.
+  expect(widthOf(out.slice(0, -1))).toBeLessThanOrEqual(30)
 })
 
 test('`false` 는 **단건이라는 사실**이다 — `-`(모른다)로 적지 않는다', () => {
@@ -84,4 +90,27 @@ test('이미 사람 말로 적힌 값은 그대로 둔다 — 두 번 바꾸지 
   // 화면 쪽은 `getReadModelsFromTree` 에서 한 번 바꿔 문자열로 들고 있다.
   expect(resultKind('단건')).toBe('단건')
   expect(resultKind('다건')).toBe('다건')
+})
+
+test('한도는 **글자 수가 아니라 폭**이다 — 한국어 설명이 칸 높이를 두 배로 만들지 않는다', () => {
+  // 실측(10pt · 폭 2800 twips 열) — 한 줄에 라틴 **26자** · 한글 **13자** 가 앉는다.
+  // 글자 수로 재면 같은 한도 120 이 영어 **5줄** · 한국어 **10줄** 이 되어
+  // **쪽 넘김이 언어에 따라 달라진다.**
+  const korean =
+    '휴가 신청의 생성과 검증, 취소를 포함한 전체 생애 주기를 관리하며 결재선 생성과 상태 전이, ' +
+    '그리고 잔액 차감까지 한 덩이로 다룬다. 승인 이력은 단계마다 남는다.'
+  const out = clip(korean, 120)
+  expect(out.endsWith('…')).toBe(true)
+  expect(widthOf(out.slice(0, -1))).toBeLessThanOrEqual(120)
+  // 글자 수로 재던 때라면 120자가 남았을 것이다 — 폭으로 재니 **그 절반쯤**이다.
+  expect(out.length).toBeLessThan(80)
+})
+
+test('라틴만 있으면 **글자 수와 똑같이** 동작한다 — 지금 문서 출력은 바뀌지 않는다', () => {
+  const body = clip(REAL_BC_DESC, 120).slice(0, -1)
+  expect(body.length).toBeLessThanOrEqual(120)
+  expect(widthOf(body)).toBe(body.length)
+  // 자른 자리가 **낱말 경계**다.
+  expect(REAL_BC_DESC.startsWith(body)).toBe(true)
+  expect(REAL_BC_DESC[body.length]).toBe(' ')
 })

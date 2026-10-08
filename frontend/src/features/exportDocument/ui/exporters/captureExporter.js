@@ -74,6 +74,20 @@ async function captureSvg(container, selector) {
  * 화면에서 `data-mmd-id` 로 찾는다 — 클래스 이름으로 찾으면 스타일을 바꿀 때
  * 조용히 끊긴다. 못 찾으면 빈 배열이라 문서에서 그 자리만 빠진다.
  */
+/**
+ * 그림을 못 담았으면 **그렇다고 적는다.**
+ *
+ * `mmdImage` 는 실패하면 빈 배열을 돌려주고, 그러면 바로 위의 제목(`분해 결과`·
+ * `Aggregate 모델`)만 남아 **아래가 비어 있다.** 읽는 사람에게 그것은 "그림이 없는
+ * 설계" 와 구별되지 않는다. 화면 미리보기는 이미 "다이어그램을 그리지 못했습니다" 라고
+ * 적는다 — 문서도 같은 말을 해야 한다(2026-10-08).
+ */
+async function mmdImageOrNote(container, id, note) {
+  const parts = await mmdImage(container, id)
+  if (parts.length) return parts
+  return [para(note, { size: 20, color: '868E96', after: 160 })]
+}
+
 async function mmdImage(container, id, maxWidth = 550, maxHeight = 700) {
   const img = await captureSvg(container, `[data-mmd-id="${id}"]`)
   if (!isValidPng(img)) return []
@@ -108,6 +122,9 @@ export async function exportToWord(data, container, onProgress) {
   const aggTotal = Object.values(fullTrees).reduce((s, t) => s + (t.aggregates?.length || 0), 0)
   // Aggregate 설계 섹션에 실을 BC — 미리보기의 aggregateDesignContexts 와 같은 조건.
   const aggDesignContexts = sortedContexts.filter(ctx => (bcTree(ctx)?.aggregates || []).length)
+  // 뒤 섹션들이 "이 내용을 내가 또 실어야 하나" 를 묻는 자리다.
+  const aggregateDesignInDoc = Boolean(selectedSections.aggregateDesign && aggDesignContexts.length)
+
 
   // ── 표지 ──
   sections.push(sec([
@@ -133,7 +150,7 @@ export async function exportToWord(data, container, onProgress) {
     tocAdd(`${sn.boundedContext}-1. 분해 결과`, true)
     sortedContexts.forEach((c, i) => tocAdd(`${sn.boundedContext}-${i + 3}. ${bcName(c)}`, true))
   }
-  if (selectedSections.aggregateDesign && aggDesignContexts.length) {
+  if (aggregateDesignInDoc) {
     tocAdd(`${sn.aggregateDesign}. Aggregate 설계`)
     aggDesignContexts.forEach(c => tocAdd(`${bcName(c)}`, true))
   }
@@ -215,7 +232,7 @@ export async function exportToWord(data, container, onProgress) {
     const ch = [
       h2(`${sn.boundedContext}. Bounded Context 정의`),
       h3(`${sn.boundedContext}-1. 분해 결과`),
-      ...(await mmdImage(container, 'bc-overview')),
+      ...(await mmdImageOrNote(container, 'bc-overview', '분해 결과 다이어그램을 이 문서에 담지 못했습니다 — 화면(실행 상태 > 산출물 미리보기)에서 보십시오.')),
       h3(`${sn.boundedContext}-2. Bounded Context 요약`),
       tbl(['BC', '도메인 유형', '설명', 'Agg', 'Cmd', 'Evt', 'RM', 'US'],
         sortedContexts.map(c => { const t = bcTree(c); return [bcName(c), c.domainType || '-', clip(c.description || t?.description, 120), t?.aggregates?.length || 0, t?.aggregates?.reduce((s, a) => s + (a.commands?.length || 0), 0) || 0, t?.aggregates?.reduce((s, a) => s + (a.events?.length || 0), 0) || 0, t?.readmodels?.length || 0, t?.userStories?.length || 0] }),
@@ -240,7 +257,7 @@ export async function exportToWord(data, container, onProgress) {
     // Cross-BC Policy
     if (crossBCPolicies.length) {
       ch.push(h3(`${sn.boundedContext}-${sortedContexts.length + 3}. 컨텍스트 간 연관 관계`))
-      ch.push(...(await mmdImage(container, 'ctx-map')))
+      ch.push(...(await mmdImageOrNote(container, 'ctx-map', '컨텍스트 맵 다이어그램을 이 문서에 담지 못했습니다 — 아래 표가 같은 연결을 글로 담고 있습니다.')))
       ch.push(tbl(['발행 BC', 'Event', 'Policy', '수신 BC', 'Command'], crossBCPolicies.map(r => [r.fromBC, r.fromEvent, r.policy, r.toBC, r.toCommand]), [1600, 1800, 2200, 1600, 1800]))
     }
     sections.push(sec(ch))
@@ -251,13 +268,13 @@ export async function exportToWord(data, container, onProgress) {
   // 기준 템플릿(local-msaez)의 '애그리거트 설계' 자리다. 기준은 초안 옵션들을 장단점과
   // 함께 비교하지만 우리는 확정 모델만 갖는다. -1 에 확정 모델의 구조도를, -2 에 그
   // 구성의 근거가 되는 업무 불변식과 주요 커맨드를 싣는다 — 미리보기와 같은 내용이다.
-  if (selectedSections.aggregateDesign && aggDesignContexts.length) {
+  if (aggregateDesignInDoc) {
     sections.push(wordSectionCover(sn.aggregateDesign, 'Aggregate 설계', '각 Bounded Context 안에서 Aggregate 를 정의해 업무 불변성과 상태 일관성을 보장합니다. 트랜잭션 경계를 중심으로 모델을 구조화하고, 핵심 커맨드와 값 객체를 식별합니다.'))
     for (const ctx of aggDesignContexts) {
       const t = bcTree(ctx)
       const ch = [
         h2(`${sn.aggregateDesign}-1. Aggregate 모델: ${bcName(ctx)}`),
-        ...(await mmdImage(container, `agg-${ctx.id}`)),
+        ...(await mmdImageOrNote(container, `agg-${ctx.id}`, 'Aggregate 모델 다이어그램을 이 문서에 담지 못했습니다 — 아래 분석표와 `Aggregate 상세` 섹션이 같은 구조를 글로 담고 있습니다.')),
         h3(`${sn.aggregateDesign}-2. Aggregate 분석: ${bcName(ctx)}`),
         tbl(['Aggregate', '업무 불변식', '주요 커맨드'],
           (t?.aggregates || []).map(a => [
@@ -281,7 +298,11 @@ export async function exportToWord(data, container, onProgress) {
       const ch = [h2(`${sn.modelOverview}-${ci + 1}. ${bcN}`)]
       let sub = 0
 
-      if (t.aggregates?.length) {
+      // ⚠ 이 표의 세 열은 **"Aggregate 설계" 섹션이 이미 싣는다** — 거기 분석표가
+      // `Aggregate(+Root) · 업무 불변식 · 주요 커맨드` 다. 2026-10-08 실측 — 기준
+      // 프로젝트에서 **불변식 14개가 두 섹션에 똑같이** 들어갔다.
+      // 그 섹션이 문서에 없을 때만 싣는다(= Aggregate 설계를 껐을 때).
+      if (t.aggregates?.length && !aggregateDesignInDoc) {
         sub++; ch.push(h3(`${sn.modelOverview}-${ci + 1}-${sub}. Aggregate`))
         const rows = []; t.aggregates.forEach(a => { rows.push([a.displayName || a.name, a.rootEntity || '-', (a.invariants || []).join('; ') || '-']) })
         ch.push(tbl(['이름', 'Root Entity', 'Invariants'], rows, [1600, 1400, 6000]))
@@ -318,7 +339,8 @@ export async function exportToWord(data, container, onProgress) {
           [1600, 800, 800, 1000, 4800]))
       }
 
-      sections.push(sec(ch))
+      // 제목만 남은 쪽은 만들지 않는다 — **빈 쪽은 "빠진 것" 처럼 보인다.**
+      if (ch.length > 1) sections.push(sec(ch))
     })
   }
 
@@ -374,9 +396,11 @@ export async function exportToWord(data, container, onProgress) {
     // 그렇다고 통째로 빼면, Endpoint 계약(`apiSummary`)이 없는 프로젝트나 "모델 전반
     // 정보" 를 끈 문서에서는 이 섹션이 **Read Model 속성만 남아** 반쪽이 된다.
     // 그래서 **겹치지 않을 때만** 싣는다 — 중복은 없애고 빈 섹션도 만들지 않는다.
-    const hasEndpointContract = Boolean(apiSummary && apiForCtx)
-    const modelOverviewInDoc = Boolean(selectedSections.modelOverview)
-    const needsModelFallback = !hasEndpointContract || !modelOverviewInDoc
+    // 기준은 **"모델 전반 정보" 가 이 문서에 있는가" 하나**다. Endpoint 계약이
+    // 있는지와는 상관이 없다 — 계약이 없어도 §모델이 있으면 그 표는 이미 문서에 있고,
+    // 여기서 또 실으면 그냥 중복이다. (처음에 `|| !hasEndpointContract` 를 붙였더니
+    // "계약 없음 + 모델 있음" 에서 **둘 다 떠서** 중복이 남았다.)
+    const needsModelFallback = !selectedSections.modelOverview
 
     sortedContexts.forEach((ctx, ci) => {
       const t = bcTree(ctx); if (!t) return
@@ -447,7 +471,8 @@ export async function exportToWord(data, container, onProgress) {
             }
           })
         }
-        sections.push(sec(ch))
+        // 속성·Enumeration·Value Object 가 다 없으면 **제목 한 줄**짜리 쪽이 된다.
+        if (ch.length > 1) sections.push(sec(ch))
       })
     })
   }

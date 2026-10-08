@@ -351,10 +351,10 @@ function aggregateModelDef(ctx) { return buildAggregateModelDef(bcTree(ctx)?.agg
  * "API 명세" 섹션이 **모델 표(Command·Read Model 요약)를 대신 실어야 하는가.**
  *
  * 그 표들은 "모델 전반 정보" 섹션에 이미 있다. 둘 다 있으면 같은 내용이 두 번
- * 들어간다(2026-10-08 실측 — Command 17개·Read Model 14개). 다만 Endpoint 계약이
- * 없거나 모델 섹션을 껐으면 **그 표가 문서에서 아예 사라지므로** 그때는 싣는다.
+ * 들어간다(2026-10-08 실측 — Command 17개·Read Model 14개). 그 섹션을 **껐을 때만**
+ * 여기서 싣는다 — 그러면 중복도 없고 표가 문서에서 사라지지도 않는다.
  */
-const needsModelFallback = computed(() => !apiSummary.value || !selectedSections.value.modelOverview)
+const needsModelFallback = computed(() => !selectedSections.value.modelOverview)
 
 /** Aggregate 설계 섹션에 실을 BC — Aggregate 가 하나라도 있는 것만. */
 const aggregateDesignContexts = computed(() => sortedContexts.value.filter(ctx => (bcTree(ctx)?.aggregates || []).length))
