@@ -424,6 +424,8 @@ app.middleware("http")(language_middleware)
 
 from api.features.accounts.authority_client import AuthorityProxyMiddleware
 app.add_middleware(AuthorityProxyMiddleware)
+from api.features.ingestion.server_proxy import IngestionProxyMiddleware  # noqa: E402
+app.add_middleware(IngestionProxyMiddleware)
 
 # Starlette wraps later middleware around earlier ones. CORS must be outermost
 # so authentication failures also carry Access-Control-Allow-Origin; otherwise

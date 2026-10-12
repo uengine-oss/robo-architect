@@ -176,6 +176,10 @@ def get_session(database: str | None = None):
         db = database or NEO4J_DATABASE
         driver = get_driver()
 
+    from api.features.ingestion.server_scope import execution_scope
+    scope = execution_scope.get()
+    if scope is not None:
+        scope.check(db)
     if db:
         return driver.session(database=db)
     return driver.session()

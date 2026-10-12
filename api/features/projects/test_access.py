@@ -46,6 +46,8 @@ def _req(graph: str | None = "prj_x", uid: str | None = "E1") -> _Req:
 
 @pytest.fixture(autouse=True)
 def _stub(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("ROBO_GRAPH_MODE", raising=False)
+    monkeypatch.delenv("ROBO_AUTHORITY_URL", raising=False)
     monkeypatch.setattr(access, "request_uid",
                         lambda r: (r.headers.get("authorization") or "").replace("Bearer token-for-", ""))
 
@@ -86,3 +88,27 @@ def test_업로드가_그_검사를_실제로_부른다():
     text = src.read_text(encoding="utf-8")
     body = text.split("async def upload_hybrid")[1][:1200]
     assert "require_write(request)" in body, "업로드가 쓰기 권한을 안 본다"
+
+
+@pytest.mark.parametrize("level", ["write", "admin"])
+def test_central_project_writer_does_not_require_account_admin(monkeypatch, level):
+    monkeypatch.setenv("ROBO_GRAPH_MODE", "central")
+    monkeypatch.setattr(access.projects, "level_of", lambda uid, graph: level)
+    access.require_write(_req(uid="ordinary-member"))
+
+
+@pytest.mark.parametrize("level", [None, "read", "invalid"])
+def test_central_missing_or_read_permission_denied(monkeypatch, level):
+    monkeypatch.setenv("ROBO_GRAPH_MODE", "central")
+    monkeypatch.setattr(access.projects, "level_of", lambda uid, graph: level)
+    with pytest.raises(HTTPException) as exc:
+        access.require_write(_req())
+    assert exc.value.status_code == 403
+
+
+def test_central_permission_failure_denied(monkeypatch):
+    monkeypatch.setenv("ROBO_GRAPH_MODE", "central")
+    monkeypatch.setattr(access.projects, "level_of", lambda *args: (_ for _ in ()).throw(RuntimeError()))
+    with pytest.raises(HTTPException) as exc:
+        access.require_write(_req())
+    assert exc.value.status_code == 503

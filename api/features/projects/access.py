@@ -20,6 +20,7 @@ SSE 로 0바이트가 왔다. **"조용히 아무 일도 안 일어난다" 에 �
 
 from __future__ import annotations
 
+import os
 from fastapi import HTTPException, Request
 
 from api.features.projects import store as projects
@@ -54,18 +55,26 @@ def request_graph(request: Request) -> str:
 def require_write(request: Request) -> None:
     """이 요청이 **쓸 수 있는가**. 못 쓰면 403 으로 **지금** 끝낸다.
 
-    프로젝트를 안 골랐거나 등급을 모르면 **막지 않는다** — 그 판정은 연결
-    바인딩(`AUTH_BIND_CONNECTION`)과 각 라우터가 이미 한다. 여기서 또 막으면
-    단일 PC 구성(등급 표가 비어 있다)에서 멀쩡하던 길이 닫힌다.
+    중앙 구성은 로그인·프로젝트 선택·현재 쓰기 등급을 모두 확인하고,
+    저장소 장애 때 실행을 거절한다. 단일 PC 구성은 기존 호환 동작을 유지한다.
+    앱 관리자 역할이 아니라 프로젝트 write/admin 등급이 실행 근거다.
     """
     graph = request_graph(request)
     uid = request_uid(request)
+    strict = (os.environ.get("ROBO_GRAPH_MODE", "").strip().lower() == "central"
+              or bool(os.environ.get("ROBO_AUTHORITY_URL", "").strip()))
     if not graph or not uid:
+        if strict:
+            raise HTTPException(status_code=403, detail="로그인 후 프로젝트를 선택하세요.")
         return
     try:
         level = projects.level_of(uid, graph)
     except Exception:
+        if strict:
+            raise HTTPException(status_code=503, detail="프로젝트 쓰기 권한을 확인할 수 없습니다.")
         # 등급을 못 읽는 것은 **거절의 근거가 아니다.** 뒤에서 다시 걸린다.
         return
     if level == "read":
         raise HTTPException(status_code=403, detail=_READ_ONLY_DETAIL)
+    if strict and level not in ("write", "admin"):
+        raise HTTPException(status_code=403, detail="이 프로젝트에 쓰기 권한이 없습니다.")

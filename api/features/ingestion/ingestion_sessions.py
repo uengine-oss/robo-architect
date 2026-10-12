@@ -19,6 +19,7 @@ class IngestionSession:
     """Tracks state of an ingestion session."""
 
     id: str
+    project_graph: Optional[str] = None
     status: IngestionPhase = IngestionPhase.UPLOAD
     progress: int = 0
     message: str = ""
@@ -87,7 +88,12 @@ _sessions: dict[str, IngestionSession] = {}
 
 
 def get_session(session_id: str) -> Optional[IngestionSession]:
-    return _sessions.get(session_id)
+    session = _sessions.get(session_id)
+    from api.features.ingestion.server_scope import execution_scope
+    scope = execution_scope.get()
+    if scope and session and session.project_graph != scope.graph:
+        return None
+    return session
 
 
 def create_session(session_id: str | None = None) -> IngestionSession:
@@ -100,6 +106,13 @@ def create_session(session_id: str | None = None) -> IngestionSession:
     """
     sid = session_id or str(uuid.uuid4())[:8]
     session = IngestionSession(id=sid)
+    from api.features.ingestion.server_scope import execution_scope
+    scope = execution_scope.get()
+    if scope:
+        old = _sessions.get(sid)
+        if old and old.project_graph != scope.graph:
+            raise ValueError('다른 프로젝트의 세션을 덮어쓸 수 없습니다.')
+        session.project_graph = scope.graph
     _sessions[sid] = session
     return session
 

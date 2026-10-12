@@ -97,10 +97,13 @@ class Neo4jClient(
         기본 설정 그대로일 때만 공용 진입점에 맡긴다 — 호출부가 연결을 명시해
         만든 클라이언트는 그 뜻을 그대로 지킨다.
         """
-        if self.config == Neo4jConfig():
+        from api.features.ingestion.server_scope import execution_scope
+        server_scope = execution_scope.get()
+        if self.config == Neo4jConfig() or server_scope is not None:
             from api.platform.neo4j import get_session as platform_session
 
-            with platform_session() as session:
+            database = self.config.database if self.config != Neo4jConfig() else None
+            with platform_session(database=database) as session:
                 yield session
             return
 
