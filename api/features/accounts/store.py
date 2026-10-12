@@ -1,261 +1,268 @@
-"""사용자 저장소와 승인 상태.
-
-기준 구현(local-msaez `data-gateway/src/oauth/users.js`)과 **같은 모양**을 쓴다 —
-행 하나에 `value JSONB`, 조회에 쓰는 것만 generated column. 화면과 흐름을 옮겨올
-때 필드 이름이 어긋나지 않게 하려는 것이다.
-
-**다른 것은 식별자다.** 기준은 Gitea 계정이라 이메일이 사실상의 키이고 uid 는
-push-id 다. 우리는 사내망이고 SWP 가 사번을 준다. 이메일은 없을 수도 있어
-기준조차 `SWP_EMAIL_FALLBACK_DOMAIN` 으로 합성한다 — 없을 수 있는 값을 키로 쓰면
-안 된다. 그래서 **uid = 사번**이고, 이것이 그대로 Postgres role 이름
-(`p_<사번>`)의 근거가 된다.
-
-표는 그래프와 **같은 데이터베이스**(`og`)의 `public` 스키마에 둔다. 사용자·권한·
-감사가 한 트랜잭션 경계 안에 있으면 "누가 무엇을 했는가"가 조인 한 번이 된다.
-"""
-
+"""중앙 DB의 계정·정책. 스키마/최초 지정은 서버 운영 명령에서만 한다."""
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from api.platform import pg
-
-__all__ = [
-    "ensure_schema", "get_user", "find_by_email", "list_users",
-    "list_by_status", "set_status", "upsert_from_sso",
-    "resolve_status", "is_approved", "resolve_role", "is_admin",
-    "approval_enabled", "bootstrap_admins",
-    "STATUS_APPROVED", "STATUS_PENDING", "STATUS_REJECTED",
-    "ROLE_ADMIN", "ROLE_MEMBER",
-]
 
 STATUS_APPROVED = "approved"
 STATUS_PENDING = "pending"
 STATUS_REJECTED = "rejected"
 VALID_STATUSES = (STATUS_APPROVED, STATUS_PENDING, STATUS_REJECTED)
-
 ROLE_ADMIN = "admin"
 ROLE_MEMBER = "member"
 
-# status 는 generated column 이라 값이 없어도 'approved' 로 읽힌다. 이 기능을
-# 켜기 전에 쓰던 사용자가 잠기지 않게 하려는 것이고, 기준도 같은 판단을 한다.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS public.app_users (
-    uid         TEXT PRIMARY KEY,
-    value       JSONB NOT NULL DEFAULT '{}'::jsonb,
-    email       TEXT GENERATED ALWAYS AS (value->>'email') STORED,
-    status      TEXT GENERATED ALWAYS AS (coalesce(value->>'status', 'approved')) STORED,
-    role        TEXT GENERATED ALWAYS AS (coalesce(value->>'role', 'member')) STORED,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    uid TEXT PRIMARY KEY, value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    email TEXT GENERATED ALWAYS AS (value->>'email') STORED,
+    status TEXT GENERATED ALWAYS AS (coalesce(value->>'status', 'approved')) STORED,
+    role TEXT GENERATED ALWAYS AS (coalesce(value->>'role', 'member')) STORED,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_email
     ON public.app_users (email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_app_users_status ON public.app_users (status);
+CREATE TABLE IF NOT EXISTS public.app_auth_policy (
+    id SMALLINT PRIMARY KEY CHECK (id = 1), initialized BOOLEAN NOT NULL DEFAULT false,
+    approval_required BOOLEAN NOT NULL DEFAULT true, revision BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_by TEXT
+);
+INSERT INTO public.app_auth_policy (id) VALUES (1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS public.app_account_audit (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    actor_type TEXT NOT NULL CHECK (actor_type IN ('user', 'operator')),
+    actor_id TEXT NOT NULL, target_uid TEXT, action TEXT NOT NULL,
+    before_value JSONB, after_value JSONB, reason TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(), request_id TEXT
+);
 """
 
 
+class AuthorityNotInitialized(RuntimeError):  # noqa: N818
+    """운영자가 최초 관리자를 등록하지 않았다."""
+
+
+class AccountChangeDenied(RuntimeError):  # noqa: N818
+    """현재 권한 또는 마지막 관리자 보존 규칙으로 거절됐다."""
+
+
 def ensure_schema() -> None:
-    """표가 없으면 만든다. 여러 번 불러도 안전하다."""
-    with pg.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(_SCHEMA)
+    """서버 운영 명령 전용. 로그인/관리자 요청에서 호출하지 않는다."""
+    with pg.connection() as conn, conn.cursor() as cur:
+        cur.execute(_SCHEMA)
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _row_to_user(row: dict[str, Any]) -> dict[str, Any]:
-    """행을 사용자 dict 로. `value` 를 펼치고 uid 를 덮어쓰지 못하게 한다."""
+def _row_to_user(row: dict[str, Any]) -> dict:
     value = dict(row.get("value") or {})
     value.pop("uid", None)
     return {"uid": row["uid"], **value}
 
 
-# ── 상태·역할 판정 ────────────────────────────────────────────────────
-# 저장된 값이 없을 때의 기본을 한 곳에서 정한다. 호출부마다 다르게 기본값을
-# 정하면 어떤 경로는 잠기고 어떤 경로는 열린다.
-
-def resolve_status(user: Optional[dict[str, Any]]) -> str:
-    return (user or {}).get("status") or STATUS_APPROVED
+def resolve_status(user: dict | None) -> str:
+    return (user or {}).get("status") or STATUS_PENDING
 
 
-def is_approved(user: Optional[dict[str, Any]]) -> bool:
+def is_approved(user: dict | None) -> bool:
     return resolve_status(user) == STATUS_APPROVED
 
 
-def resolve_role(user: Optional[dict[str, Any]]) -> str:
+def resolve_role(user: dict | None) -> str:
     return (user or {}).get("role") or ROLE_MEMBER
 
 
-def is_admin(user: Optional[dict[str, Any]]) -> bool:
+def is_admin(user: dict | None) -> bool:
     return resolve_role(user) == ROLE_ADMIN
 
 
-# 저장 이름 ← SWP 신원 이름. 한 곳에만 둔다.
-_IDENTITY_FIELDS = (
-    ("loginId", "username"),
-    ("email", "email"),
-    ("displayName", "name"),
-    ("department", "department"),
-)
-
-
-def _admin_ids() -> list[str]:
-    """관리자로 부트스트랩할 사번 목록."""
-    raw = os.environ.get("ADMIN_EMPLOYEE_NOS", "")
-    return [x.strip() for x in raw.split(",") if x.strip()]
+def get_policy() -> dict:
+    rows = pg.query("SELECT * FROM public.app_auth_policy WHERE id = 1")
+    if not rows:
+        raise AuthorityNotInitialized("서버에서 계정 정책을 초기화해야 합니다.")
+    return rows[0]
 
 
 def approval_enabled() -> bool:
-    """승인제 스위치.
-
-    관리자를 한 명도 지정하지 않고 승인제를 켜면 **아무도 승인할 수 없어 전원이
-    잠긴다.** 그래서 관리자가 지정된 경우에만 켜지게 한다 — 기준도 같은 이유로
-    `adminEmails` 유무로 판정한다.
-    """
-    explicit = os.environ.get("AUTH_APPROVAL_REQUIRED", "").strip().lower()
-    if explicit in ("1", "true", "yes"):
-        return bool(_admin_ids())
-    if explicit in ("0", "false", "no"):
-        return False
-    return bool(_admin_ids())
+    return bool(get_policy()["approval_required"])
 
 
-# ── 조회 ─────────────────────────────────────────────────────────────
+def require_initialized() -> None:
+    if not get_policy()["initialized"]:
+        raise AuthorityNotInitialized("서버 운영자가 최초 관리자를 지정해야 합니다.")
 
-def get_user(uid: str) -> Optional[dict[str, Any]]:
+
+def get_user(uid: str) -> dict | None:
     rows = pg.query("SELECT uid, value FROM public.app_users WHERE uid = %s", (uid,))
     return _row_to_user(rows[0]) if rows else None
 
 
-def find_by_email(email: str) -> Optional[dict[str, Any]]:
+def find_by_email(email: str) -> dict | None:
     if not email:
         return None
     rows = pg.query("SELECT uid, value FROM public.app_users WHERE email = %s", (email,))
     return _row_to_user(rows[0]) if rows else None
 
 
-def list_users() -> list[dict[str, Any]]:
-    rows = pg.query(
-        "SELECT uid, value FROM public.app_users ORDER BY created_at DESC, uid"
-    )
-    return [_row_to_user(r) for r in rows]
+def list_users() -> list[dict]:
+    return [_row_to_user(row) for row in pg.query(
+        "SELECT uid, value FROM public.app_users ORDER BY created_at DESC, uid")]
 
 
-def list_by_status(status: str) -> list[dict[str, Any]]:
-    rows = pg.query(
+def list_by_status(status: str) -> list[dict]:
+    return [_row_to_user(row) for row in pg.query(
         "SELECT uid, value FROM public.app_users WHERE status = %s "
-        "ORDER BY created_at DESC, uid",
-        (status,),
-    )
-    return [_row_to_user(r) for r in rows]
+        "ORDER BY created_at DESC, uid", (status,))]
 
 
-# ── 변경 ─────────────────────────────────────────────────────────────
-
-def _write(uid: str, value: dict[str, Any]) -> dict[str, Any]:
-    value = {k: v for k, v in value.items() if k != "uid"}
-    pg.execute(
-        "INSERT INTO public.app_users (uid, value) VALUES (%s, %s::jsonb) "
-        "ON CONFLICT (uid) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
-        (uid, json.dumps(value, ensure_ascii=False)),
-    )
-    return {"uid": uid, **value}
+def _locked_policy(cur) -> dict:
+    cur.execute("SELECT * FROM public.app_auth_policy WHERE id = 1 FOR UPDATE")
+    policy = cur.fetchone()
+    if not policy:
+        raise AuthorityNotInitialized("서버에서 계정 정책을 초기화해야 합니다.")
+    return policy
 
 
-def set_status(uid: str, status: str) -> Optional[dict[str, Any]]:
-    """승인·거절. 없는 사용자는 만들지 않는다 — 오타로 유령 계정이 생긴다."""
+def _audit(cur, actor_type, actor_id, uid, action, before, after, reason, request_id):
+    cur.execute(
+        "INSERT INTO public.app_account_audit "
+        "(actor_type, actor_id, target_uid, action, before_value, after_value, reason, request_id) "
+        "VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)",
+        (actor_type, actor_id, uid, action, json.dumps(before, ensure_ascii=False),
+         json.dumps(after, ensure_ascii=False), reason, request_id))
+
+
+def _check_actor(cur, actor_uid: str) -> None:
+    cur.execute("SELECT uid, value FROM public.app_users WHERE uid = %s", (actor_uid,))
+    row = cur.fetchone()
+    user = _row_to_user(row) if row else None
+    if not is_admin(user) or not is_approved(user):
+        raise AccountChangeDenied("승인된 관리자만 변경할 수 있습니다.")
+
+
+def _preserve_admin(cur) -> None:
+    cur.execute("SELECT count(*) AS n FROM public.app_users "
+                "WHERE value->>'role' = 'admin' AND value->>'status' = 'approved'")
+    if not cur.fetchone()["n"]:
+        raise AccountChangeDenied("마지막 승인된 관리자는 해제하거나 거절할 수 없습니다.")
+
+
+def _change(uid: str, fields: dict, *, actor_uid: str, reason: str,
+            operator: bool = False, request_id: str | None = None, create: bool = False):
+    if not uid.strip() or not actor_uid.strip() or not reason.strip():
+        raise ValueError("사번·변경자·변경 사유가 필요합니다.")
+    with pg.connection() as conn, conn.cursor() as cur:
+        policy = _locked_policy(cur)
+        if not operator:
+            if not policy["initialized"]:
+                raise AuthorityNotInitialized("서버 운영자가 최초 관리자를 지정해야 합니다.")
+            _check_actor(cur, actor_uid)
+            if uid == actor_uid:
+                raise AccountChangeDenied("자기 계정의 역할·상태는 바꿀 수 없습니다.")
+        cur.execute("SELECT uid, value FROM public.app_users WHERE uid = %s FOR UPDATE", (uid,))
+        row = cur.fetchone()
+        if not row and not create:
+            return None
+        before = dict(row["value"]) if row else None
+        if policy["initialized"] and before is not None and all(before.get(k) == v for k, v in fields.items()):
+            return {"uid": uid, **before}
+        after = dict(before or {"employeeNo": uid, "created": _now()})
+        after.update(fields)
+        for key in fields:
+            after[key + "UpdatedAt"] = _now()
+        cur.execute(
+            "INSERT INTO public.app_users (uid, value) VALUES (%s, %s::jsonb) "
+            "ON CONFLICT (uid) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+            (uid, json.dumps(after, ensure_ascii=False)))
+        _preserve_admin(cur)
+        if operator and not policy["initialized"]:
+            # 환경변수에서 만들어진 기존 관리자를 자동 신뢰하지 않는다.
+            cur.execute("UPDATE public.app_users SET value = jsonb_set(value, '{role}', "
+                        "'\"member\"'::jsonb), updated_at = now() "
+                        "WHERE uid <> %s AND value->>'role' = 'admin' RETURNING uid", (uid,))
+            for old in cur.fetchall():
+                _audit(cur, "operator", actor_uid, old["uid"], "legacy_admin_revoked",
+                       {"role": ROLE_ADMIN}, {"role": ROLE_MEMBER}, reason, request_id)
+            cur.execute("UPDATE public.app_auth_policy SET initialized = true, "
+                        "revision = revision + 1, updated_at = now(), updated_by = %s WHERE id = 1",
+                        (actor_uid,))
+        _audit(cur, "operator" if operator else "user", actor_uid, uid, "account_changed",
+               before, after, reason, request_id)
+        return {"uid": uid, **after}
+
+
+def set_status(uid: str, status: str, *, actor_uid: str, reason: str = "사용자 승인 상태 변경",
+               request_id: str | None = None) -> dict | None:
     if status not in VALID_STATUSES:
         raise ValueError(f"알 수 없는 상태: {status}")
-    existing = get_user(uid)
-    if existing is None:
-        return None
-    value = {k: v for k, v in existing.items() if k != "uid"}
-    value["status"] = status
-    value["statusUpdatedAt"] = _now()
-    return _write(uid, value)
+    return _change(uid, {"status": status}, actor_uid=actor_uid, reason=reason,
+                   request_id=request_id)
 
 
-def set_role(uid: str, role: str) -> Optional[dict[str, Any]]:
+def set_role(uid: str, role: str, *, actor_uid: str, reason: str = "사용자 역할 변경",
+             request_id: str | None = None) -> dict | None:
     if role not in (ROLE_ADMIN, ROLE_MEMBER):
         raise ValueError(f"알 수 없는 역할: {role}")
-    existing = get_user(uid)
-    if existing is None:
-        return None
-    value = {k: v for k, v in existing.items() if k != "uid"}
-    value["role"] = role
-    value["roleUpdatedAt"] = _now()
-    return _write(uid, value)
+    return _change(uid, {"role": role}, actor_uid=actor_uid, reason=reason,
+                   request_id=request_id)
 
 
-def upsert_from_sso(identity: dict[str, Any]) -> dict[str, Any]:
-    """SSO 가 확인해 준 신원으로 사용자를 만들거나 갱신한다.
+def operator_grant(uid: str, *, operator_id: str, reason: str) -> dict:
+    return _change(uid, {"role": ROLE_ADMIN, "status": STATUS_APPROVED},
+                   actor_uid=operator_id, reason=reason, operator=True, create=True)
 
-    `identity` 는 `api.features.auth.swp` 의 `SwpIdentity.to_dict()` 결과다 —
-    `{id, username, name, email, department, empno}`. 그쪽 이름을 그대로 받아
-    번역 계층을 하나 더 만들지 않는다.
 
-    **기존 사용자의 상태와 역할은 로그인으로 바뀌지 않는다.** 재로그인이 승인을
-    되돌리거나 관리자 지정을 덮으면 권한 관리가 성립하지 않는다. 다만 환경변수로
-    지정한 관리자는 매번 다시 보장한다 — 관리자를 잃으면 아무도 승인할 수 없다.
-    """
+def operator_revoke(uid: str, *, operator_id: str, reason: str) -> dict | None:
+    return _change(uid, {"role": ROLE_MEMBER}, actor_uid=operator_id,
+                   reason=reason, operator=True)
+
+
+def set_policy(approval_required: bool, *, operator_id: str, reason: str) -> dict:
+    if not operator_id.strip() or not reason.strip():
+        raise ValueError("변경자·변경 사유가 필요합니다.")
+    with pg.connection() as conn, conn.cursor() as cur:
+        before = _locked_policy(cur)
+        if not before["initialized"]:
+            raise AuthorityNotInitialized("먼저 최초 관리자를 지정해야 합니다.")
+        _preserve_admin(cur)
+        cur.execute("UPDATE public.app_auth_policy SET approval_required = %s, "
+                    "revision = revision + 1, updated_at = now(), updated_by = %s "
+                    "WHERE id = 1 RETURNING approval_required, revision",
+                    (approval_required, operator_id))
+        after = cur.fetchone()
+        _audit(cur, "operator", operator_id, None, "policy_changed",
+               {"approval_required": before["approval_required"], "revision": before["revision"]},
+               after, reason, None)
+        return after
+
+
+_IDENTITY_FIELDS = (("loginId", "username"), ("email", "email"),
+                    ("displayName", "name"), ("department", "department"))
+
+
+def upsert_from_sso(identity: dict[str, Any]) -> dict:
+    """신원 필드만 원자적으로 갱신. 기존 권한을 되살리지 않는다."""
     uid = str(identity.get("empno") or identity.get("id") or "").strip()
     if not uid:
-        raise ValueError("사번도 로그인 ID 도 없다 — 사용자 식별자를 만들 수 없다")
-
-    admin = uid in _admin_ids()
-    existing = get_user(uid)
-    now = _now()
-
-    if existing is not None:
-        value = {k: v for k, v in existing.items() if k != "uid"}
-        # 이름·부서·이메일은 인사 이동으로 바뀌므로 최신 값을 따른다.
-        for stored, incoming in _IDENTITY_FIELDS:
-            if identity.get(incoming):
-                value[stored] = identity[incoming]
-        value["lastSignIn"] = now
-        if admin:
-            value["role"] = ROLE_ADMIN
-            value["status"] = STATUS_APPROVED
-        else:
-            value.setdefault("role", ROLE_MEMBER)
-            value.setdefault("status", STATUS_APPROVED)  # 도입 전 사용자는 잠그지 않는다
-        return _write(uid, value)
-
-    status = STATUS_APPROVED if admin or not approval_enabled() else STATUS_PENDING
-    value = {
-        "employeeNo": uid,
-        **{stored: identity.get(incoming) for stored, incoming in _IDENTITY_FIELDS},
-        "role": ROLE_ADMIN if admin else ROLE_MEMBER,
-        "status": status,
-        "created": now,
-        "lastSignIn": now,
-    }
-    return _write(uid, value)
-
-
-def bootstrap_admins() -> list[str]:
-    """환경변수로 지정된 관리자를 미리 만들어 둔다.
-
-    첫 관리자가 로그인하기 전에도 승인 대기자가 쌓일 수 있고, 그때 관리자 계정이
-    없으면 목록을 볼 사람이 없다. 사번만 아는 상태이므로 나머지는 비워 둔다.
-    """
-    made = []
-    for uid in _admin_ids():
-        if get_user(uid) is None:
-            _write(uid, {
-                "employeeNo": uid,
-                "role": ROLE_ADMIN,
-                "status": STATUS_APPROVED,
-                "created": _now(),
-                "bootstrapped": True,
-            })
-            made.append(uid)
-        else:
-            set_role(uid, ROLE_ADMIN)
-    return made
+        raise ValueError("사용자 식별자가 없습니다.")
+    profile = {stored: identity[incoming] for stored, incoming in _IDENTITY_FIELDS
+               if identity.get(incoming)}
+    profile["lastSignIn"] = _now()
+    with pg.connection() as conn, conn.cursor() as cur:
+        policy = _locked_policy(cur)
+        if not policy["initialized"]:
+            raise AuthorityNotInitialized("서버 운영자가 최초 관리자를 지정해야 합니다.")
+        initial = {"employeeNo": uid, "role": ROLE_MEMBER, "created": _now(),
+                   "status": STATUS_PENDING if policy["approval_required"] else STATUS_APPROVED,
+                   **profile}
+        cur.execute(
+            "INSERT INTO public.app_users (uid, value) VALUES (%s, %s::jsonb) "
+            "ON CONFLICT (uid) DO UPDATE SET value = app_users.value || %s::jsonb, "
+            "updated_at = now() RETURNING uid, value",
+            (uid, json.dumps(initial, ensure_ascii=False), json.dumps(profile, ensure_ascii=False)))
+        return _row_to_user(cur.fetchone())

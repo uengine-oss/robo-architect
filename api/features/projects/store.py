@@ -56,6 +56,9 @@ _GRAPH_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 
 def ensure_schema() -> None:
+    if os.environ.get("ROBO_AUTHORITY_SERVER") == "1":
+        pg.query("SELECT graph FROM public.app_projects LIMIT 0")
+        return
     with pg.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(_SCHEMA)

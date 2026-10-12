@@ -23,8 +23,8 @@ import os
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp
 
+from api.features.accounts.authority_client import AuthorityUnavailable
 from api.features.auth.tokens import TokenError, verify_token
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -42,7 +42,8 @@ _OPEN_PREFIX = ("/assets/", "/static/", "/@vite/", "/node_modules/")
 
 
 def auth_enforced() -> bool:
-    return (os.environ.get("AUTH_ENFORCE") or "").strip().lower() in _TRUE
+    from api.features.accounts.authority_client import authority_url
+    return bool(authority_url()) or (os.environ.get("AUTH_ENFORCE") or "").strip().lower() in _TRUE
 
 
 def _is_open(path: str) -> bool:
@@ -60,6 +61,8 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         token = header[7:].strip() if header[:7].lower() == "bearer " else None
         try:
             claims = verify_token(token)
+        except AuthorityUnavailable:
+            return JSONResponse({"detail": "중앙 권한 서버에 연결할 수 없습니다."}, status_code=503)
         except TokenError as exc:
             SmartLogger.log(
                 "INFO", "인증되지 않은 요청을 막았다.",

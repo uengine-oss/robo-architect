@@ -34,6 +34,7 @@ import {
   startSupervision,
 } from "../../src/main/supervision";
 import type { ManagedServiceId, ProbeKind, ProbeResult } from "../../src/shared/runtime-contract";
+import { decideState } from "../../src/main/supervisor";
 
 /** 왜 그렇게 돼야 하는지를 **실패 메시지에 남긴다** — 기존 검사들의 `expect` 를 쓴다. */
 const expectEqual = (actual: unknown, want: unknown, why?: string) =>
@@ -288,6 +289,19 @@ test("백엔드의 생존은 **pid** 로 본다 — 컨테이너 목록에 없�
     true,
     "호스트 프로세스를 docker ps 로 찾으면 멀쩡한 백엔드가 failed 가 된다",
   );
+});
+
+test("중앙 그래프는 로컬 컨테이너 부재가 외부 조회 결과를 덮지 않는다", () => {
+  expect(INDEX_TS).toMatch(/if \(id === "graph" && ctx\.graphHost\) return null/);
+  const result = (kind: ProbeKind, outcome: "pass" | "fail"): ProbeResult => ({
+    serviceId: "graph", kind, outcome, detail: "external Bolt probe", durationMs: 1,
+  });
+  expect(decideState({ alive: null, health: result("health", "pass"),
+    capability: result("capability", "pass"), hasCapabilityProbe: true }).state).toBe("ready");
+  expect(decideState({ alive: null, health: result("health", "fail"),
+    capability: result("capability", "pass"), hasCapabilityProbe: true }).state).toBe("failed");
+  expect(decideState({ alive: null, health: result("health", "pass"),
+    capability: result("capability", "fail"), hasCapabilityProbe: true }).state).toBe("degraded");
 });
 
 // ── ⑥ 되살아나면 **기다리지 않는다** (2026-10-07 실측) ─────────────────────

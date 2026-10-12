@@ -422,6 +422,9 @@ async def neo4j_override_middleware(request: Request, call_next):
 # now includes the resolved language alongside request_id on every log line.
 app.middleware("http")(language_middleware)
 
+from api.features.accounts.authority_client import AuthorityProxyMiddleware
+app.add_middleware(AuthorityProxyMiddleware)
+
 # Starlette wraps later middleware around earlier ones. CORS must be outermost
 # so authentication failures also carry Access-Control-Allow-Origin; otherwise
 # the Figma iframe sees an opaque "Failed to fetch" instead of HTTP 401.

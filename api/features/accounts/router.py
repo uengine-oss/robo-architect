@@ -16,7 +16,6 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from api.features.accounts import store
 from api.features.accounts.guard import require_admin
-from api.features.auth.tokens import TokenError, verify_token
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -50,7 +49,16 @@ async def set_status(request: Request, uid: str, body: dict = Body(...)) -> dict
     status = str((body or {}).get("status") or "")
     if status not in store.VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"알 수 없는 상태입니다: {status}")
-    user = store.set_status(uid, status)
+    try:
+        user = store.set_status(uid, status, actor_uid=admin_uid,
+                                reason=str(body.get("reason") or "사용자 승인 상태 변경"),
+                                request_id=getattr(request.state, "request_id", None))
+    except store.AccountChangeDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except store.AuthorityNotInitialized as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if user is None:
         raise HTTPException(status_code=404, detail="그런 사용자가 없습니다.")
     SmartLogger.log(
@@ -70,7 +78,16 @@ async def set_role(request: Request, uid: str, body: dict = Body(...)) -> dict:
     role = str((body or {}).get("role") or "")
     if role not in (store.ROLE_ADMIN, store.ROLE_MEMBER):
         raise HTTPException(status_code=400, detail=f"알 수 없는 역할입니다: {role}")
-    user = store.set_role(uid, role)
+    try:
+        user = store.set_role(uid, role, actor_uid=admin_uid,
+                              reason=str(body.get("reason") or "사용자 역할 변경"),
+                              request_id=getattr(request.state, "request_id", None))
+    except store.AccountChangeDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except store.AuthorityNotInitialized as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if user is None:
         raise HTTPException(status_code=404, detail="그런 사용자가 없습니다.")
     SmartLogger.log(

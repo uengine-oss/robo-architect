@@ -227,6 +227,9 @@ function startRuntimeSupervision(): void {
       // 로 판정하면 멀쩡히 응답하는 백엔드가 "실행 중이 아닙니다" 가 된다.
       // 우리가 띄운 프로세스이므로 pid 가 가장 강한 근거다.
       if (id === "architect") return getRuntimeBackend().pid !== null;
+      // 중앙 graph는 이 PC의 컨테이너 목록에 없다. 생존 여부는 여기서
+      // 추측하지 않고 외부 Bolt 연결·인증 조회 프로브로 판정한다.
+      if (id === "graph" && ctx.graphHost) return null;
       return aliveFrom(running, probeContainerNames(ctx, id));
     },
     apply: (id, facts) => runtimeRegistry.applyProbe(id, facts),

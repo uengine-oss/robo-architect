@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
@@ -42,6 +43,19 @@ class PgUnavailable(RuntimeError):
 
     원래 예외를 `__cause__` 로 들고 간다(서버 코드가 거기 있다).
     """
+
+
+_request_dsn: ContextVar[str | None] = ContextVar("pg_request_dsn", default=None)
+
+
+@contextmanager
+def using_dsn(dsn: str):
+    """Server-selected DB credentials, scoped to one task; never from request headers."""
+    token = _request_dsn.set(dsn)
+    try:
+        yield
+    finally:
+        _request_dsn.reset(token)
 
 
 def _host_from_bolt(uri: str) -> str:
@@ -65,7 +79,7 @@ _CONNECT_TIMEOUT_SECONDS = "5"
 
 def pg_dsn() -> str:
     """접속 문자열. 비밀번호는 여기서만 다루고 로그에 싣지 않는다."""
-    explicit = os.environ.get("OG_PG_DSN")
+    explicit = _request_dsn.get() or os.environ.get("OG_PG_DSN")
     if explicit:
         return explicit
     host = os.environ.get("OG_PG_HOST") or _host_from_bolt(os.environ.get("NEO4J_URI", ""))

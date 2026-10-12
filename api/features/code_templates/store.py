@@ -18,12 +18,11 @@ DB     고친 것만 한 줄씩 쌓인다. 같은 경로가 있으면 **DB 가 �
 그래서 DB 가 비어 있으면 **지금까지와 똑같이** 동작한다. 중앙 DB 가 없는 단일 PC
 구성에서도 마찬가지다 — 읽다 실패하면 파일로 간다(`overrides()` 는 예외를 안 올린다).
 
-## 권한은 **앱이 본다** — Postgres 가 안 막는다
+## AUTH-1: 중앙 API와 DB 권한 분리
 
-이 표는 `public.*` 이고 `pg.connection()` 은 **소유자 자격**으로 연다. 사용자 role 로
-붙는 그래프 읽기와 달리 DB 가 격리를 걸어 주지 않는다. 그러므로 "관리자만 고친다"는
-**라우터가** 지킨다(`accounts/guard.py`). 같은 함정을 적재 기록에도 적어 뒀다
-(`ingestion/runs.py` 머리말).
+중앙 API는 저장된 관리자 역할·승인 상태를 검사하고, PC 자격에는 이 표의 쓰기를
+주지 않는다(`accounts/access.py`). 중앙 runtime은 스키마를 만들지 않고 존재를 확인한다.
+운영 명령으로 마이그레이션한 뒤 API를 시작한다.
 
 ## 고치는 것은 **코드를 고치는 것이다**
 
@@ -41,6 +40,7 @@ DB     고친 것만 한 줄씩 쌓인다. 같은 경로가 있으면 **DB 가 �
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from typing import Any, Optional
 
@@ -110,7 +110,11 @@ def ensure_schema() -> None:
         return
     with pg.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(_SCHEMA)
+            if os.environ.get("ROBO_AUTHORITY_SERVER") == "1":
+                cur.execute("SELECT original_sha FROM public.app_code_templates LIMIT 0")
+                cur.execute("SELECT id FROM public.app_code_template_history LIMIT 0")
+            else:
+                cur.execute(_SCHEMA)
     _schema_ready = True
 
 
@@ -219,7 +223,7 @@ def save(set_name: str, relative_path: str, body: str, uid: str,
                 "DELETE FROM public.app_code_template_history WHERE id IN ("
                 " SELECT id FROM public.app_code_template_history"
                 "  WHERE set_name = %s AND relative_path = %s"
-                "  ORDER BY saved_at DESC OFFSET %s)",
+                "  ORDER BY saved_at DESC, id DESC OFFSET %s)",
                 (set_name, relative_path, HISTORY_LIMIT),
             )
     SmartLogger.log(
@@ -274,7 +278,7 @@ def history(set_name: str, relative_path: str) -> list[dict[str, Any]]:
             "SELECT id, action, saved_at, saved_by, length(body) AS bytes"
             "  FROM public.app_code_template_history"
             " WHERE set_name = %s AND relative_path = %s"
-            " ORDER BY saved_at DESC",
+            " ORDER BY saved_at DESC, id DESC",
             (set_name, relative_path),
         )
     except Exception as exc:  # noqa: BLE001

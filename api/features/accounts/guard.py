@@ -38,7 +38,21 @@ def current_uid(request: Request) -> str:
 def require_admin(request: Request) -> str:
     """관리자의 사번. 아니면 401/403."""
     uid = current_uid(request)
-    store.ensure_schema()
-    if not store.is_admin(store.get_user(uid)):
+    from api.features.accounts.authority_client import authority_url
+    if authority_url():
+        header = request.headers.get("authorization") or ""
+        try:
+            claims = verify_token(header[7:].strip() if header[:7].lower() == "bearer " else None)
+        except TokenError as exc:
+            raise HTTPException(status_code=401, detail="로그인이 필요합니다.") from exc
+        if claims.get("role") != store.ROLE_ADMIN or not claims.get("approved"):
+            raise HTTPException(status_code=403, detail="관리자만 할 수 있습니다.")
+        return str(claims["sub"])
+    try:
+        store.require_initialized()
+        user = store.get_user(uid)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="중앙 권한 저장소를 확인할 수 없습니다.") from exc
+    if not store.is_admin(user) or not store.is_approved(user):
         raise HTTPException(status_code=403, detail="관리자만 할 수 있습니다.")
     return uid

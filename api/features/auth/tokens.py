@@ -73,6 +73,9 @@ def issue_token(user: dict[str, Any], source: str = "swp") -> str:
     `source` 는 어떤 경로로 로그인했는지다 — `swp` 또는 `dev`. 감사에서 개발용
     우회 로그인을 구분할 수 있어야 하므로 토큰 안에 남긴다.
     """
+    from api.features.accounts.authority_client import authority_url
+    if authority_url():
+        raise TokenError("PC는 중앙 세션 토큰을 발급할 수 없습니다.")
     now = int(time.time())
     payload = {
         "sub": str(user.get("uid") or ""),
@@ -92,6 +95,9 @@ def issue_token(user: dict[str, Any], source: str = "swp") -> str:
 
 def issue_plugin_token(claims: dict[str, Any], graph: str) -> str:
     """Figma API 전용 토큰. 일반 앱 경로에는 AuthGuard 가 접근을 거부한다."""
+    from api.features.accounts.authority_client import authority_url
+    if authority_url():
+        raise TokenError("PC는 중앙 플러그인 토큰을 발급할 수 없습니다.")
     now = int(time.time())
     payload = {
         "sub": str(claims["sub"]),
@@ -113,6 +119,9 @@ def verify_token(token: Optional[str]) -> dict[str, Any]:
     """
     if not token:
         raise TokenError("토큰이 없다")
+    from api.features.accounts.authority_client import authority_url, introspect
+    if authority_url():
+        return introspect(token)
     try:
         return jwt.decode(token, _secret(), algorithms=[ALGORITHM])
     except jwt.ExpiredSignatureError as exc:

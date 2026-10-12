@@ -16,9 +16,10 @@ GET      /api/auth/me                내 세션 상태
 from __future__ import annotations
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request
-from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
+from api.features.accounts import store as accounts
 from api.features.auth.config import (
     AuthProvider,
     SwpSettings,
@@ -26,16 +27,20 @@ from api.features.auth.config import (
     callback_allowlist,
     is_allowed_callback,
 )
-from api.features.auth.dev_login import DevLoginSettings, describe as describe_dev_login, is_loopback
+from api.features.auth.dev_login import DevLoginSettings, is_loopback
+from api.features.auth.dev_login import describe as describe_dev_login
 from api.features.auth.swp import build_redirect_url, validate_sso_token
 from api.features.auth.tokens import (
-    TokenError, issue_token, jwt_secret_configured, token_ttl_seconds, verify_token,
+    TokenError,
+    issue_token,
+    jwt_secret_configured,
+    token_ttl_seconds,
+    verify_token,
 )
-from api.features.accounts import store as accounts
-from api.platform.identity.auth_guard import auth_enforced
-from api.platform.identity.connection_binding import binding_enabled
 from api.platform.ai_gateway import describe as describe_ai_gateway
 from api.platform.embeddings import describe as describe_embeddings
+from api.platform.identity.auth_guard import auth_enforced
+from api.platform.identity.connection_binding import binding_enabled
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -206,8 +211,10 @@ def _sign_in(request: Request, identity: dict, source: str) -> dict:
     띄우게 한다. 토큰을 주고 나중에 막는 구조는 막을 자리를 하나 더 만든다.
     """
     try:
-        accounts.ensure_schema()
         user = accounts.upsert_from_sso(identity)
+    except accounts.AuthorityNotInitialized as exc:
+        raise HTTPException(status_code=503, detail={"code": "AUTH_NOT_INITIALIZED",
+                                                   "message": str(exc)}) from exc
     except Exception as exc:  # 저장소가 없거나 붙지 못하는 경우
         SmartLogger.log(
             "ERROR", "사용자 저장소에 접근하지 못해 로그인을 마치지 못했다.",
@@ -301,12 +308,13 @@ async def me(request: Request) -> dict:
         return {"authenticated": False, "reason": str(exc)}
 
     try:
+        accounts.require_initialized()
         user = accounts.get_user(claims.get("sub", ""))
     except Exception:
-        user = None
+        raise HTTPException(status_code=503, detail="중앙 권한 저장소를 확인할 수 없습니다.")
 
-    status = accounts.resolve_status(user) if user else claims.get("status", "approved")
-    approved = accounts.is_approved(user) if user else bool(claims.get("approved"))
+    status = accounts.resolve_status(user)
+    approved = accounts.is_approved(user)
     return {
         "authenticated": approved,
         "status": status,
@@ -314,7 +322,7 @@ async def me(request: Request) -> dict:
             "uid": claims.get("sub"),
             "displayName": (user or {}).get("displayName") or claims.get("name"),
             "department": (user or {}).get("department") or claims.get("dept"),
-            "role": accounts.resolve_role(user) if user else claims.get("role"),
+            "role": accounts.resolve_role(user),
             "status": status,
             "source": claims.get("src"),
         },
