@@ -40,7 +40,8 @@ const MANIFEST_NAME = "runtime-manifest.json";
 //    `ROBO_WIREFRAME_PORT` 가 빈 채로 포트 매핑을 만들려다 죽는다. 버리고 다시 뽑는다.
 const STATE_SCHEMA_VERSION = 5;
 // 4: images.neo4j → images.graphDb + images.graphBolt, graphs 항목 추가.
-const MANIFEST_SCHEMA_VERSION = 4;
+// 5: 중앙 DB 서버에서 실행할 authority image를 오프라인 archive 계약에 추가.
+const MANIFEST_SCHEMA_VERSION = 5;
 export const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
 // 저장소 비밀번호. **이제 Postgres role 의 비밀번호다** — Bolt 게이트웨이는 받은
 // 자격증명을 그대로 Postgres 에 넘긴다(사용자 = role). 이름을 엔진 중립으로 옮기되,
@@ -63,6 +64,8 @@ export interface RuntimeManifest {
     graphDb: string;
     /** Neo4j Bolt 프로토콜 게이트웨이. 앱 코드는 이쪽만 본다. */
     graphBolt: string;
+    /** DB 서버에서만 실행하는 중앙 계정·프로젝트 권한 API. */
+    authority: string;
     mindsdb: string;
     analyzer: string;
     catalog: string;
@@ -215,6 +218,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
   for (const required of [
     "graphDb",
     "graphBolt",
+    "authority",
     "mindsdb",
     "analyzer",
     "catalog",

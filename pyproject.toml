@@ -53,6 +53,11 @@ dependencies = [
     "Jinja2>=3.1.0",
     "python-slugify>=8.0.0",
 
+    # 2.4.0 was yanked for a backward-compatibility bug. Keep the packaged
+    # runtime on the corrected 2.4 patch line instead of accepting it through
+    # a transitive dependency.
+    "numpy>=2.4.1,<2.5",
+
     # Robo-Spec MCP bridge (spec 029).
     # mcp: official Anthropic Python SDK — mounted in-process at /mcp.
     # watchfiles: backend file-watcher over <workspace>/specs/**/tasks.md

@@ -1,0 +1,24 @@
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/app/.venv/bin:$PATH
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY api ./api
+COPY scripts ./scripts
+COPY templates ./templates
+
+RUN python -c "import api.authority, scripts.accounts_admin"
+
+EXPOSE 59020
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=12 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:59020/healthz', timeout=3).read()"
+
+CMD ["python", "-m", "uvicorn", "api.authority:app", "--host", "0.0.0.0", "--port", "59020"]
+

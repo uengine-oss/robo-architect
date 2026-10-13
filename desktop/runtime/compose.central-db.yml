@@ -13,6 +13,7 @@
 #
 #     ROBO_IMAGE_GRAPH_DB     설치본 매니페스트의 images.graphDb 와 **같은 값**
 #     ROBO_IMAGE_GRAPH_BOLT   images.graphBolt 와 같은 값
+#     ROBO_IMAGE_AUTHORITY    images.authority 와 같은 값
 #     ROBO_GRAPH_USER         PostgreSQL role 이자 Bolt 로그인 사용자
 #     ROBO_GRAPH_PASSWORD     그 비밀번호
 #     ROBO_GRAPH_DESIGN       설계 graph 이름
@@ -20,6 +21,8 @@
 #     ROBO_GRAPH_BIND         공개할 주소. 아래 설명을 읽고 정한다.
 #     ROBO_GRAPH_BOLT_PORT    기본 7687
 #     ROBO_GRAPH_PG_PORT      기본 5432
+#     ROBO_AUTHORITY_BIND     authority API를 공개할 사내망 주소
+#     ROBO_AUTHORITY_PORT     기본 59020
 #
 # 이미지 태그를 설치본 매니페스트와 맞추는 것이 중요하다. 다르면 게이트웨이와
 # 앱이 다른 스키마를 가정하게 되고, 그 어긋남은 기동이 아니라 **첫 질의**에서
@@ -96,6 +99,26 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+      start_period: 10s
+
+  authority:
+    image: ${ROBO_IMAGE_AUTHORITY:?설치본 매니페스트의 images.authority 값을 지정하라}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.component: authority
+      org.uengine.robo.topology: central
+    env_file:
+      - ${ROBO_AUTHORITY_ENV_FILE:-central-authority.env}
+    ports:
+      - "${ROBO_AUTHORITY_BIND:?authority를 공개할 사내망 주소를 지정하라}:${ROBO_AUTHORITY_PORT:-59020}:59020"
+    depends_on:
+      graph-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:59020/healthz', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
       start_period: 10s
 
 volumes:

@@ -91,7 +91,7 @@ test.describe("설계 graph 와 분석 graph 를 가른다", () => {
   test("매니페스트 템플릿이 docker-stack 의 스키마 버전·이미지 목록과 맞는다", () => {
     const declared = Number(/const MANIFEST_SCHEMA_VERSION = (\d+);/.exec(stackSource)![1]);
     expect(manifest.schemaVersion).toBe(declared);
-    const required = [...stackSource.matchAll(/^\s{4}"(graphDb|graphBolt|mindsdb|analyzer|catalog|fabric|parser|gateway|pdf2bpmn)",$/gm)]
+    const required = [...stackSource.matchAll(/^\s{4}"(graphDb|graphBolt|authority|mindsdb|analyzer|catalog|fabric|parser|gateway|pdf2bpmn|wireframe)",$/gm)]
       .map((m) => m[1]!);
     expect(required.length).toBeGreaterThan(0);
     for (const name of required) {

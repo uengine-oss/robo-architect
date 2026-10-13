@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "releaseId": "RELEASE_ID",
   "releaseChannel": "RELEASE_CHANNEL",
   "authEnforced": true,
@@ -10,6 +10,7 @@
   "images": {
     "graphDb": "uengine/ontological-db:RELEASE_ID",
     "graphBolt": "uengine/ontological-bolt:RELEASE_ID",
+    "authority": "uengine/robo-authority:RELEASE_ID",
     "mindsdb": "mindsdb/mindsdb:v26.1.0",
     "analyzer": "uengine/robo-analyzer:RELEASE_ID",
     "catalog": "uengine/robo-data-catalog:RELEASE_ID",
@@ -22,6 +23,7 @@
   "imageIds": {
     "graphDb": "sha256:IMAGE_ID_GRAPH_DB",
     "graphBolt": "sha256:IMAGE_ID_GRAPH_BOLT",
+    "authority": "sha256:IMAGE_ID_AUTHORITY",
     "mindsdb": "sha256:IMAGE_ID_MINDSDB",
     "analyzer": "sha256:IMAGE_ID_ANALYZER",
     "catalog": "sha256:IMAGE_ID_CATALOG",

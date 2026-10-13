@@ -82,8 +82,21 @@ uvicorn api.authority:app --host 0.0.0.0 --port 59020
 운영 topology는 별도 AP 서버를 두지 않는다. DB central과 이 gateway를 기존 DB 서버에서
 함께 실행하고 59020을 사내망 인터페이스에 게시한다. 사용자 PC와 DB 서버가 같은 사내망에
 있으므로 `http://<DB_SERVER_PRIVATE_IP>:59020`으로 직접 통신한다. 인터넷 노출은 방화벽과
-접근 제어로 차단한다. 기존 중앙 DB compose의 두 컨테이너에 이 API가 자동 포함되지는
-않으므로 DB 서버 배포 compose에 서비스와 프로세스 감독을 추가해야 한다.
+접근 제어로 차단한다. 현재 릴리스의 `central-server/compose.yml`은 graph DB, Bolt와
+이 API를 함께 기동·감독하며 Authority image도 같은 `robo-images.tar`에 포함한다.
+서버에서는 `central-authority.env.example`을 `central-authority.env`로 복사한 뒤 제한
+runtime DSN, 별도 project operator DSN, SWP 설정과 비밀을 채운다. 완성된 파일은 PC
+설치본, Git, 배포 기록에 넣지 않는다.
+
+초기화·복구 명령도 Authority image 안에 들어 있다. DB 운영자 DSN을 서버의 비밀 관리
+경로에서 `OG_PG_DSN`으로 주입한 일회성 컨테이너에서 실행한다. Authority 상시 서비스에는
+이 superuser DSN을 절대 설정하지 않는다.
+
+```powershell
+docker compose run --rm --no-deps authority python -m scripts.accounts_admin migrate
+docker compose run --rm --no-deps authority python -m scripts.accounts_admin grant --employee-no <실제사번> --reason "최초 관리자 지정"
+docker compose run --rm --no-deps authority python -m scripts.accounts_admin policy --approval-required true --reason "납품 승인 정책"
+```
 
 PC OS 환경에는 `ROBO_AUTHORITY_URL=http://<DB_SERVER_PRIVATE_IP>:59020`을 설정하고 앱을
 다시 시작한다. HTTP는 loopback과 RFC1918/사설 IPv6 주소만 허용한다. 공인 IP·일반 hostname의
