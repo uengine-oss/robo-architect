@@ -509,10 +509,11 @@ def _fetch_promoted_map(session_id: str) -> tuple[dict[str, list[dict]], dict[st
 def list_sessions() -> list[dict[str, Any]]:
     """산출물을 뽑을 수 있는 Ingestion 세션 목록.
 
-    `BpmSession` 을 기준으로 하고, 세션별 규모(프로세스·Task·BC·User Story)를 함께
-    센다. 내보내기 화면이 "어느 세션의 산출물인지" 고를 수 있어야 하기 때문이다 —
-    산출물을 세션 단위로 고정해 놓고 세션을 고를 수단이 없으면, 지난 세션의 문서를
-    다시 뽑을 방법이 없다.
+    `BpmSession` 과 `BoundedContext.session_id` 를 함께 기준으로 하고, 세션별
+    규모(프로세스·Task·BC·User Story)를 센다. 파일 업로드의 표준 ingestion은
+    세션 ID를 결과 노드에 기록하지만 BPM 전용 `BpmSession` 노드는 만들지 않는다.
+    따라서 `BpmSession` 만 보면 정상 완료된 파일 업로드 결과가 템플릿 탭에서
+    통째로 사라진다.
 
     `updated_at` 내림차순. 값이 없는 세션은 뒤로 보낸다.
     """
@@ -539,6 +540,32 @@ def list_sessions() -> list[dict[str, Any]]:
     """
     with get_session() as s:
         rows = [dict(rec) for rec in s.run(query)]
+
+    # 표준 파일 업로드 경로의 세션. 하이브리드/BPM 경로와 겹칠 수 있으므로
+    # 아래에서 id 로 합치고, BpmSession 쪽 행을 우선한다.
+    standard_query = """
+    MATCH (seed:BoundedContext)
+    WHERE seed.session_id IS NOT NULL
+    WITH seed.session_id AS sid, max(seed.updated_at) AS updatedAt
+    OPTIONAL MATCH (p:BpmProcess {session_id: sid})
+    WITH sid, updatedAt, count(DISTINCT p) AS processes
+    OPTIONAL MATCH (t:BpmTask {session_id: sid})
+    WITH sid, updatedAt, processes, count(DISTINCT t) AS tasks
+    OPTIONAL MATCH (bc:BoundedContext {session_id: sid})
+    WITH sid, updatedAt, processes, tasks, count(DISTINCT bc) AS bounded_contexts
+    OPTIONAL MATCH (us:UserStory {session_id: sid})
+    RETURN sid AS id,
+           toString(updatedAt) AS updatedAt,
+           processes, tasks,
+           bounded_contexts AS boundedContexts,
+           count(DISTINCT us) AS userStories
+    """
+    with get_session() as s:
+        standard_rows = [dict(rec) for rec in s.run(standard_query)]
+
+    by_id = {row["id"]: row for row in standard_rows if row.get("id")}
+    by_id.update({row["id"]: row for row in rows if row.get("id")})
+    rows = sorted(by_id.values(), key=lambda row: row.get("updatedAt") or "", reverse=True)
 
     # 이름 후보: 첫 프로세스 이름. 세션 id 만으로는 사람이 고를 수 없다.
     name_query = """

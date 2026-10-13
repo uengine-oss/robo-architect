@@ -279,3 +279,27 @@ def test_list_sessions_empty(monkeypatch):
     monkeypatch.setattr(ad, "get_session", lambda: _Ctx(_Session([])))
 
     assert ad.list_sessions() == []
+
+
+def test_list_sessions_includes_standard_upload_without_bpm_session(monkeypatch):
+    """파일 업로드는 BC 에만 session_id 를 남겨도 템플릿 목록에 보여야 한다."""
+    class StandardOnlySession(_Session):
+        def run(self, query, **params):
+            if "MATCH (s:BpmSession)" in query:
+                return _Result(rows=[])
+            if "MATCH (seed:BoundedContext)" in query:
+                return _Result(rows=[_Rec({
+                    "id": "upload-session", "updatedAt": None,
+                    "processes": 0, "tasks": 0,
+                    "boundedContexts": 10, "userStories": 30,
+                })])
+            return super().run(query, **params)
+
+    monkeypatch.setattr(ad, "get_session", lambda: _Ctx(StandardOnlySession([], name=None)))
+
+    assert ad.list_sessions() == [{
+        "id": "upload-session", "updatedAt": None,
+        "processes": 0, "tasks": 0,
+        "boundedContexts": 10, "userStories": 30,
+        "name": "upload-session", "exportable": True,
+    }]
