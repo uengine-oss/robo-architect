@@ -60,6 +60,11 @@ class Frames(httpx.AsyncByteStream):
         yield b'data: {"progress":100}\n\n'
 
 
+def test_unset_ingestion_url_selects_local_execution(monkeypatch):
+    monkeypatch.delenv('ROBO_INGESTION_URL', raising=False)
+    assert server_proxy.ingestion_url() == ''
+
+
 def test_proxy_forwards_sse_and_strips_db_credentials(monkeypatch):
     monkeypatch.setenv('ROBO_INGESTION_URL','https://server.example')
     seen = []

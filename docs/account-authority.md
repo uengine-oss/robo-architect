@@ -74,17 +74,21 @@ PC를 새 제한 역할로 바꾸면 이 흐름도 서버에서 처리하도록 
 서버에는 ROBO_AUTHORITY_URL을 설정하지 않는다.
 
 ```text
-uvicorn api.authority:app --host 127.0.0.1 --port 59020
+uvicorn api.authority:app --host 0.0.0.0 --port 59020
 ```
 
 서버 전용 엔트리포인트는 인증 스위치가 꺼져 있어도 인증·DB 승인을 강제한다.
 개발 로그인은 AUTH_DEV_LOGIN_ENABLED/internal-test 여부와 무관하게 항상 거절한다.
-API 앞에 신뢰할 수 있는 인증서의 HTTPS 프록시를 둔다. 내부 HTTP 포트는 공개하지 않는다.
-기존 중앙 DB compose의 두 컨테이너에 이 API가 자동 포함되지는 않는다.
-서버 Python 런타임/의존성과 templates 반입, 프로세스 감독, HTTPS 설정은 VM에서 준비한다.
+운영 topology는 별도 AP 서버를 두지 않는다. DB central과 이 gateway를 기존 DB 서버에서
+함께 실행하고 59020을 사내망 인터페이스에 게시한다. 사용자 PC와 DB 서버가 같은 사내망에
+있으므로 `http://<DB_SERVER_PRIVATE_IP>:59020`으로 직접 통신한다. 인터넷 노출은 방화벽과
+접근 제어로 차단한다. 기존 중앙 DB compose의 두 컨테이너에 이 API가 자동 포함되지는
+않으므로 DB 서버 배포 compose에 서비스와 프로세스 감독을 추가해야 한다.
 
-PC OS 환경에는 `ROBO_AUTHORITY_URL=https://<중앙API주소>`를 설정하고 앱을 다시 시작한다.
-HTTP는 localhost/127.0.0.1/::1의 격리 시험에만 허용한다. 인증서 검증을 끄지 않는다.
+PC OS 환경에는 `ROBO_AUTHORITY_URL=http://<DB_SERVER_PRIVATE_IP>:59020`을 설정하고 앱을
+다시 시작한다. HTTP는 loopback과 RFC1918/사설 IPv6 주소만 허용한다. 공인 IP·일반 hostname의
+HTTP는 잘못된 외부 노출을 막기 위해 거절한다. 사내 DNS 이름을 사용해야 하는 환경은 HTTPS를
+쓰거나 별도의 명시적 허용 정책을 추가한다.
 PC는 /api/auth/*, /api/accounts/*, /api/projects/*, /api/code-templates/sets 경로를 중앙에 전달한다.
 템플릿 모델 /context는 PC에서 처리한다. 사용자/역할/Neo4j/Forwarded 헤더는 중앙에 전달하지 않는다.
 PC 토큰 검증은 중앙 /api/auth/introspect에서 최신 DB 상태를 확인한다.
@@ -101,12 +105,10 @@ PC 토큰 검증은 중앙 /api/auth/introspect에서 최신 DB 상태를 확인
 기존 graph adopt는 중앙 관리자만 허용한다. 기존 프로젝트의 공유 변경은 프로젝트 admin만 허용한다.
 이 단계는 프로젝트 운영 경계 구현이다. PC ingestion/서비스의 관리자 Bolt 자격 제거는 아직 남아 있다.
 
-서버 ingestion 경계를 사용할 때는 PC에
-`ROBO_INGESTION_URL=https://<중앙실행API주소>`도 설정한다. Workspace 릴리스는 두 URL을
-Architect 환경 snapshot에 포함하고 Electron은 해당 snapshot을 읽은 프로세스 환경을
-호스트 백엔드에 전달한다. 실행 API는 업로드·SSE 응답을 중계하지만 DB 자격은 PC 응답이나
-전달 헤더에 싣지 않는다. 두 URL을 지정한 뒤 중앙 서비스 장애가 나면 503으로 닫혀야 하며,
-PC의 로컬 ingestion 라우터를 실행하는 폴백은 허용하지 않는다.
+기본 설치 구조에서는 `ROBO_INGESTION_URL`을 설정하지 않는다. 분석·파싱·Fabric과 함께
+ingestion·탐색·승격도 사용자 PC에서 실행한다. Workspace 릴리스에는 authority origin만
+포함한다. 중앙 ingestion 프록시는 별도 중앙 실행 서버가 있는 다른 배포 형태를 위한 선택
+기능이며, 현재 사내 설치본에는 사용하지 않는다.
 
 Figma 연결 코드 발급도 중앙으로 이동한다. 해당 경로의 프로젝트 권한 조회는 그래프
 서비스 연동이 필요하므로 VM에서 별도로 회귀 검증해야 한다. 플러그인 토큰의 scope를 유지한다.

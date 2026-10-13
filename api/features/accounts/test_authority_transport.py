@@ -11,12 +11,20 @@ from api.features.auth import tokens
 from api.platform.identity.auth_guard import auth_enforced
 
 
-@pytest.mark.parametrize("url", ["http://vm.example", "https://user:secret@vm.example",
+@pytest.mark.parametrize("url", ["http://vm.example", "http://34.50.36.96",
+                                 "https://user:secret@vm.example",
                                  "https://vm.example/path", "https://vm.example?token=secret"])
 def test_authority_origin_validation(monkeypatch, url):
     monkeypatch.setenv("ROBO_AUTHORITY_URL", url)
     with pytest.raises(RuntimeError):
         client.authority_url()
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:59020", "http://10.20.30.40:59020",
+                                 "http://172.27.64.1:59020", "http://192.168.10.20:59020"])
+def test_authority_allows_intranet_http(monkeypatch, url):
+    monkeypatch.setenv("ROBO_AUTHORITY_URL", url)
+    assert client.authority_url() == url
 
 
 def test_pc_cannot_issue_or_verify_locally(monkeypatch):

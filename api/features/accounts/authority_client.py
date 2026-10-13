@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from ipaddress import ip_address, ip_network
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,9 +19,24 @@ def authority_url() -> str:
             or parsed.username or parsed.password or parsed.query or parsed.fragment
             or parsed.path not in ("", "/")):
         raise RuntimeError("ROBO_AUTHORITY_URL은 중앙 서버의 origin이어야 합니다.")
-    if parsed.scheme != "https" and parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
-        raise RuntimeError("중앙 권한 API는 HTTPS로 연결해야 합니다.")
+    if parsed.scheme == "http" and not _internal_http_host(parsed.hostname):
+        raise RuntimeError("HTTP 중앙 권한 API는 loopback 또는 사내망 IP만 허용합니다.")
     return raw
+
+
+_INTRANET_NETWORKS = tuple(ip_network(cidr) for cidr in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7",
+))
+
+
+def _internal_http_host(hostname: str) -> bool:
+    if hostname == "localhost":
+        return True
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        return False
+    return address.is_loopback or any(address in network for network in _INTRANET_NETWORKS)
 
 
 class AuthorityUnavailable(RuntimeError):  # noqa: N818

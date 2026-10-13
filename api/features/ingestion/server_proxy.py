@@ -1,4 +1,9 @@
-"""PC upload/SSE transport to the server, with no local execution fallback."""
+"""Optional upload/SSE transport for deployments with a central execution server.
+
+The standard desktop topology leaves ROBO_INGESTION_URL unset and executes the
+existing ingestion routes locally.  When explicitly configured, a failed central
+request is closed with 503 instead of silently falling back to local execution.
+"""
 import os
 from urllib.parse import urlsplit
 
