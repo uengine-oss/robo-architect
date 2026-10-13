@@ -101,6 +101,13 @@ PC 토큰 검증은 중앙 /api/auth/introspect에서 최신 DB 상태를 확인
 기존 graph adopt는 중앙 관리자만 허용한다. 기존 프로젝트의 공유 변경은 프로젝트 admin만 허용한다.
 이 단계는 프로젝트 운영 경계 구현이다. PC ingestion/서비스의 관리자 Bolt 자격 제거는 아직 남아 있다.
 
+서버 ingestion 경계를 사용할 때는 PC에
+`ROBO_INGESTION_URL=https://<중앙실행API주소>`도 설정한다. Workspace 릴리스는 두 URL을
+Architect 환경 snapshot에 포함하고 Electron은 해당 snapshot을 읽은 프로세스 환경을
+호스트 백엔드에 전달한다. 실행 API는 업로드·SSE 응답을 중계하지만 DB 자격은 PC 응답이나
+전달 헤더에 싣지 않는다. 두 URL을 지정한 뒤 중앙 서비스 장애가 나면 503으로 닫혀야 하며,
+PC의 로컬 ingestion 라우터를 실행하는 폴백은 허용하지 않는다.
+
 Figma 연결 코드 발급도 중앙으로 이동한다. 해당 경로의 프로젝트 권한 조회는 그래프
 서비스 연동이 필요하므로 VM에서 별도로 회귀 검증해야 한다. 플러그인 토큰의 scope를 유지한다.
 
