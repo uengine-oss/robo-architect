@@ -378,13 +378,16 @@ def _fetch_last_event_for_task(hybrid_session_id: str) -> dict[str, dict]:
         for r in s.run(
             "MATCH (us:UserStory {session_id: $sid})-[:HAS_EVENT]->(e:Event {session_id: $sid}) "
             "WHERE us.sourceUnitId IS NOT NULL "
-            "RETURN us.sourceUnitId AS tid, e.key AS ek, e.name AS en, e.sequence AS sq "
+            # displayName 도 읽는다 — 금지 대조는 **한국어끼리** 맞춘다(ISS-36).
+            "RETURN us.sourceUnitId AS tid, e.key AS ek, e.name AS en, "
+            "       e.displayName AS ed, e.sequence AS sq "
             "ORDER BY e.sequence",
             sid=hybrid_session_id,
         ):
             tid = r["tid"]
             if tid:
-                out[tid] = {"key": r["ek"], "name": r["en"]}
+                out[tid] = {"key": r["ek"], "name": r["en"],
+                            "displayName": r["ed"] or r["en"]}
     return out
 
 
@@ -396,12 +399,15 @@ def _fetch_first_command_for_task(hybrid_session_id: str) -> dict[str, dict]:
             "MATCH (us:UserStory {session_id: $sid})-[:HAS_EVENT]->(e:Event {session_id: $sid}) "
             "MATCH (c:Command {session_id: $sid})-[:EMITS]->(e) "
             "WHERE us.sourceUnitId IS NOT NULL "
-            "RETURN us.sourceUnitId AS tid, c.key AS ck, c.name AS cn, c.aggregate_id AS aid",
+            "RETURN us.sourceUnitId AS tid, c.key AS ck, c.name AS cn, "
+            "       c.displayName AS cd, c.aggregate_id AS aid",
             sid=hybrid_session_id,
         ):
             tid = r["tid"]
             if tid and tid not in out:
-                out[tid] = {"key": r["ck"], "name": r["cn"], "aggregate_key": r["aid"]}
+                out[tid] = {"key": r["ck"], "name": r["cn"],
+                            "displayName": r["cd"] or r["cn"],
+                            "aggregate_key": r["aid"]}
     return out
 
 
@@ -437,6 +443,78 @@ async def _name_cross_bc_policy(
     return fallback_name, fallback_desc
 
 
+_BAN_MARKERS = (
+    "할 수 없", "할수없", "하지 못하", "되돌리지 않", "금지", "불가",
+    "허용하지 않", "없도록", "없게 한다", "제외한다", "두 번 쓰지 못",
+)
+
+
+def _ko_tokens(text: str) -> set[str]:
+    import re
+
+    return {w for w in re.findall(r"[가-힣]+", text or "") if len(w) >= 2}
+
+
+def _stated_prohibitions(session_id: str) -> list[tuple[str, str]]:
+    """(표식 바로 앞 25자, 넓은 창) 쌍의 목록. 문장으로 쪼개지 않는다.
+
+    PDF 추출이 **낱말 가운데서 줄을 바꾼다**("마감\n을 해제할"). 문장 단위로 자르면
+    금지의 대상이 날아간다(done13 §254 에서 실제로 그랬다).
+    """
+    import re
+
+    try:
+        with get_session() as s:
+            rows = list(s.run(
+                "MATCH (d:DocumentPassage {session_id: $sid}) RETURN d.text AS t",
+                sid=session_id,
+            ))
+    except Exception:  # noqa: BLE001 — 없으면 대조를 건너뛴다. 생성은 막지 않는다
+        return []
+
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        text = re.sub(r"\s+", " ", row.get("t") or "")
+        for marker in _BAN_MARKERS:
+            start = 0
+            while True:
+                at = text.find(marker, start)
+                if at < 0:
+                    break
+                start = at + 1
+                near = text[max(0, at - 25): at].strip()
+                wide = text[max(0, at - 70): at + len(marker) + 30].strip()
+                key = re.sub(r"\s", "", wide)
+                if key and not any(key in k or k in key for k in seen):
+                    seen.add(key)
+                    out.append((near, wide))
+    return out
+
+
+def _common_name_tokens(session_id: str) -> set[str]:
+    """이 프로젝트에서 **흔한 낱말**. 기준을 밖에서 정하지 않는다."""
+    import collections
+
+    names: list[str] = []
+    try:
+        with get_session() as s:
+            for label in ("Command", "Event"):
+                names += [r["d"] for r in s.run(
+                    f"MATCH (n:{label} {{session_id: $sid}}) RETURN n.displayName AS d",
+                    sid=session_id,
+                ) if r["d"]]
+    except Exception:  # noqa: BLE001
+        return set()
+    freq = collections.Counter()
+    for name in names:
+        for token in _ko_tokens(name):
+            freq[token] += 1
+    if not names:
+        return set()
+    return {t for t, c in freq.items() if c >= max(3, int(len(names) * 0.12))}
+
+
 async def _create_cross_bc_policies(hybrid_session_id: str) -> list[dict]:
     """Walk BpmTask NEXT pairs, find cross-BC ones, build policies."""
     task_meta = fetch_task_metadata_for_bpm(hybrid_session_id)
@@ -456,6 +534,11 @@ async def _create_cross_bc_policies(hybrid_session_id: str) -> list[dict]:
     if not pairs:
         return created
 
+    # 원문이 금지한 것과 맞대 본다. **만들되 표시한다** — 지우지 않는다(ISS-36).
+    prohibitions = _stated_prohibitions(hybrid_session_id)
+    common_tokens = _common_name_tokens(hybrid_session_id)
+
+
     seen_keys: set[str] = set()
     with get_session() as s:
         for tid, ntid in pairs:
@@ -466,6 +549,16 @@ async def _create_cross_bc_policies(hybrid_session_id: str) -> list[dict]:
             bca = bc_of_task[tid]
             bcb = bc_of_task[ntid]
             name, desc = await _name_cross_bc_policy(bca[1], bcb[1], ev["name"], cm["name"])
+
+            # 금지 대조 — 커맨드 낱말은 표식 **바로 앞**, 트리거 낱말은 넓은 창.
+            cmd_tokens = _ko_tokens(cm.get("displayName") or "") - common_tokens
+            evt_tokens = _ko_tokens(ev.get("displayName") or "") - common_tokens
+            conflicts = [
+                wide for near, wide in prohibitions
+                if any(t in near for t in cmd_tokens)
+                and any(t in wide for t in evt_tokens)
+            ] if (cmd_tokens and evt_tokens) else []
+
             base_key = f"pol_{_slug(name)}"
             key = base_key
             n = 2
@@ -482,8 +575,10 @@ async def _create_cross_bc_policies(hybrid_session_id: str) -> list[dict]:
                 # once on create so re-merges stay idempotent.
                 "ON CREATE SET p.id = randomUUID() "
                 "SET p.name = $name, p.displayName = $name, p.description = $desc, "
-                "    p.kind = 'cross_bc', p.bc_id = $bcid",
+                "    p.kind = 'cross_bc', p.bc_id = $bcid, "
+                "    p.needs_review = $review, p.review_evidence = $evidence",
                 key=key, sid=hybrid_session_id, name=name, desc=desc, bcid=bca[0],
+                review=bool(conflicts), evidence=(conflicts[0][:300] if conflicts else ""),
             )
             s.run(
                 "MATCH (e:Event {key: $ek, session_id: $sid}), (p:Policy {key: $pk, session_id: $sid}) "
@@ -499,6 +594,9 @@ async def _create_cross_bc_policies(hybrid_session_id: str) -> list[dict]:
                 "key": key, "name": name, "kind": "cross_bc",
                 "trigger_event": ev["name"], "invoke_command": cm["name"],
                 "from_bc": bca[1], "to_bc": bcb[1],
+                "needs_review": bool(conflicts),
+                "match_skipped": not (cmd_tokens and evt_tokens),
+                "review_evidence": (conflicts[0][:300] if conflicts else ""),
             })
     return created
 
@@ -544,9 +642,13 @@ async def hybrid_post_workflow_hook(
     # 대상이 아직 없던 것이 겹쳐 있었다.
     yield _ev("🔁 Cross-BC Policy 탐지 중 (BpmTask.NEXT 흐름 기반)...", 98)
     cross_policies = await _create_cross_bc_policies(hybrid_session_id)
+    _flagged = [p for p in cross_policies if p.get("needs_review")]
     yield _ev(
-        f"🔁 Cross-BC Policy {len(cross_policies)}개 생성", 98,
-        {"type": "HybridCrossBcPolicies", "policies": cross_policies},
+        (f"🔁 Cross-BC Policy {len(cross_policies)}개 생성"
+         + (f" — **{len(_flagged)}개는 원문 금지에 걸립니다(검토 필요)**" if _flagged else "")),
+        98,
+        {"type": "HybridCrossBcPolicies", "policies": cross_policies,
+         "needs_review": len(_flagged)},
     )
 
     yield _ev("🧬 분석기 traceability 엣지 부착 중 (US→Rule, Question→BC)...", 99,

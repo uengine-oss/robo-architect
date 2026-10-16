@@ -440,12 +440,97 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
         except Exception:
             pass
 
+        # ── 원문이 **금지한 것**을 프롬프트에 싣는다 (ISS-27 · done13 §258) ──
+        # 프롬프트는 10-15 부터 "주어진 규칙을 확인하라" 고 말해 왔는데 **규칙을 준 적이
+        # 없다.** 인베리언트는 쓸 수 없다 — 이 단계는 progress ~80, 인베리언트 추출은
+        # 88~91 이라 **아직 만들어지지 않았다**. 그래서 원문 구절에서 **금지 표현 주변
+        # 창**만 뽑아 넣는다. 구절 전체를 넣지 않으므로 짧다.
+        #
+        # 창으로 뜨는 이유: PDF 추출이 **낱말 가운데서 줄을 바꾼다**("마감\n을 해제할").
+        # 문장 단위로 쪼개면 금지의 **대상**이 날아간다(§254 에서 실제로 그랬다).
+        _BAN_MARKERS = (
+            "할 수 없", "할수없", "하지 못하", "되돌리지 않", "금지", "불가",
+            "허용하지 않", "없도록", "없게 한다", "제외한다", "두 번 쓰지 못",
+        )
+        _CONSTRAINT_BUDGET = 3000
+
+        def _stated_constraints() -> str:
+            import re as _re
+
+            try:
+                with ctx.client.session() as _s:
+                    rows = list(_s.run(
+                        "MATCH (d:DocumentPassage {session_id: $sid}) "
+                        "RETURN d.text AS t",
+                        sid=getattr(ctx.session, "id", None),
+                    ))
+            except Exception as _e:  # noqa: BLE001 — 없으면 없는 대로 간다
+                SmartLogger.log(
+                    "WARN",
+                    f"Could not read stated constraints for policies: {_e}",
+                    category="ingestion.workflow.identify_policies.constraints.error",
+                    params={"session_id": getattr(ctx.session, "id", None),
+                            "error": str(_e)},
+                )
+                return ""
+
+            found: list[str] = []
+            seen: set[str] = set()
+            for row in rows:
+                text = _re.sub(r"\s+", " ", (row.get("t") or ""))
+                for marker in _BAN_MARKERS:
+                    start = 0
+                    while True:
+                        at = text.find(marker, start)
+                        if at < 0:
+                            break
+                        start = at + 1
+                        window = text[max(0, at - 70): at + len(marker) + 30].strip()
+                        key = _re.sub(r"\s", "", window)
+                        if key and not any(key in k or k in key for k in seen):
+                            seen.add(key)
+                            found.append(window)
+            if not found:
+                return ""
+            out, used = [], 0
+            for w in found:
+                if used + len(w) > _CONSTRAINT_BUDGET and out:
+                    break
+                out.append("- " + w)
+                used += len(w)
+            SmartLogger.log(
+                "INFO",
+                "Policy prompt carries %d stated constraints (%d chars) from %d passages"
+                % (len(out), used, len(rows)),
+                category="ingestion.workflow.identify_policies.constraints",
+                params={"session_id": getattr(ctx.session, "id", None),
+                        "constraints": len(out), "chars": used,
+                        "passages": len(rows), "found": len(found)},
+            )
+            return "\n".join(out)
+
+        constraints_text = _stated_constraints() or "(none found in the source material)"
+        _constraint_count = sum(
+            1 for line in constraints_text.splitlines() if line.startswith("- ")
+        )
+
+        yield ProgressEvent(
+            phase=IngestionPhase.IDENTIFYING_POLICIES,
+            message=(f"Policy 식별 준비 — 원문 금지 {_constraint_count}건을 함께 싣습니다"
+                     if _constraint_count else
+                     "Policy 식별 준비 — **원문에서 금지를 찾지 못했습니다**"),
+            progress=PHASE_START,
+            data={"stated_constraints": _constraint_count,
+                  "constraint_chars": len(constraints_text)},
+        )
+
         # 전체 프롬프트 텍스트 구성 (청킹 판단용)
         full_prompt_text = IDENTIFY_POLICIES_PROMPT.format(
             user_stories=user_stories_text,
             events=events_text,
             commands_by_bc=commands_text,
             bounded_contexts=bc_text,
+            constraints=constraints_text,
         ) + display_name_tail + _no_emits_hint
         # NOTE: source_report is not yet implemented in IngestionWorkflowContext.
         # When implemented, inject report context here:
@@ -545,6 +630,7 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                     events=chunk_events_text,
                     commands_by_bc=chunk_cmds_text,
                     bounded_contexts=bc_text,  # BC list always in full
+                    constraints=constraints_text,
                 ) + display_name_tail + _no_emits_hint
                 # 이전 청크에서 식별된 Policy 상세 정보 전달 — 중복 생성 방지 + 정합성
                 if _accumulated_policies:
@@ -897,6 +983,36 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             )
             policies = valid_policies
             ctx.policies = policies
+
+        # ── 트리거 성격 집계 — **프롬프트가 듣는지 재는 자리** ─────────────
+        #
+        # 2026-10-15 실측: 생성된 Policy 8개 중 업무적으로 말이 되는 것 0개였고,
+        # 트리거의 63%가 실패 이벤트였다(전체 이벤트 중 실패는 34%). 프롬프트가
+        # "실패 이벤트는 보상 동작이 원문에 적혀 있을 때만" 으로 바뀌었으므로,
+        # 이 비율이 내려가는지로 효과를 잰다. 거르지는 않는다 — 정당한 보상
+        # Policy 를 조용히 떨어뜨리면 지금보다 나빠진다(ISS-27 · done12 §232).
+        _FAILURE_MARKERS = ("failed", "failure", "error", "rejected", "denied", "실패", "거부", "오류")
+
+        def _is_failure_event(name: str) -> bool:
+            low = (name or "").lower()
+            return any(m in low for m in _FAILURE_MARKERS)
+
+        _failure_triggered = [
+            getattr(pol, "name", "?") for pol in policies
+            if _is_failure_event(getattr(pol, "trigger_event", "") or "")
+        ]
+        if policies:
+            SmartLogger.log(
+                "WARN" if len(_failure_triggered) * 2 > len(policies) else "INFO",
+                f"Policy triggers: {len(_failure_triggered)}/{len(policies)} react to failure events",
+                category="ingestion.workflow.policy.trigger_mix",
+                params={
+                    "session_id": ctx.session.id,
+                    "policies": len(policies),
+                    "failure_triggered": len(_failure_triggered),
+                    "names": _failure_triggered[:10],
+                },
+            )
 
         # ── Indirect cycle detection (2-hop) ─────────────────────────────
         # Event→Policy→Command→Event 그래프를 구축하고 2-hop 순환을 탐지.

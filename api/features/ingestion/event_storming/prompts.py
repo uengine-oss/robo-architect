@@ -1125,6 +1125,9 @@ Available Commands in each BC:
 Bounded Contexts:
 {bounded_contexts}
 
+Stated constraints from the source material — **do not contradict these**:
+{constraints}
+
 ## What is a Policy?
 A Policy is a reactive rule that listens to an Event from one Bounded Context and
 invokes a Command in a DIFFERENT Bounded Context. Policies are the **primary
@@ -1138,23 +1141,46 @@ mechanism** for connecting BCs in an event-driven architecture.
 5. IMPORTANT: The trigger_event_bc MUST be different from target_bc.
 6. IMPORTANT: Inherit user_story_ids from the triggering event for traceability.
 
-## Mandatory cross-BC flow categories
-You MUST systematically check EVERY pair of BCs for potential Policies.
-Common cross-BC flow patterns to look for:
+## How to find Policies — follow the business, not the BC grid
 
-- **Order → Payment**: Order placed → process/validate payment
-- **Payment → Order**: Payment approved/rejected → update order status
-- **Order → Notification**: Order placed/status changed → send notification
-- **Order → Delivery**: Order confirmed/paid → assign delivery
-- **Delivery → Notification**: Delivery status changed → send notification to customer
-- **Delivery → Order**: Delivery completed → update order status
-- **Account → Administration**: Account changes → detect abnormal activity
-- **Menu/Catalog → Notification**: Menu/product changed → notify interested parties
-- **Menu/Catalog → Sync**: Menu changed → propagate to customer-facing app
-- **Notification → Notification**: Notification failed → retry notification
+For EACH BC, ask: "When this BC emits an event, does another BC **have to** react
+for the business to be correct?" A Policy exists only when the answer is yes and you
+can point to the user story, document passage, or rule that says so.
 
-For EACH BC, ask: "When this BC emits an event, which OTHER BCs need to react?"
-If there are N Bounded Contexts, there are N×(N-1) potential directions — check each one.
+Domain-neutral patterns that usually do hold:
+
+- A **state change** in one BC is a precondition for work in another
+  (approved → the downstream record must reflect it)
+- A **completion** in one BC releases or closes something in another
+- A **period/cycle closing** hands a result to a downstream BC
+
+Do NOT enumerate the BC grid. If there are N BCs you are **not** expected to find a
+Policy for each of the N×(N-1) directions — most pairs have no business relationship.
+
+### Normal-flow events first
+
+Prefer events that represent **work that succeeded**. A failure/error event
+(names ending in Failed, Error, Rejected, …) may trigger a Policy **only when the
+compensating action is stated in the source material** — a user story, a document
+passage, or an extracted rule that says what must happen when it fails.
+
+Never invent a reaction to a failure. "X failed, so do some unrelated Y" is not a
+Policy; it is noise, and it is worse than an empty list because a reader believes it.
+
+### Never contradict a stated rule
+
+If the source material forbids an action under some condition, do NOT create a Policy
+that performs it. Example shape: when a rule says "closing cannot be released after
+the payroll has been sent", a Policy "payroll sent → release closing" is **wrong** —
+it is the exact opposite of the rule.
+
+**The "Stated constraints" section above is that list.** Read it before emitting, and
+for every Policy you are about to write, check whether its invoked Command is the
+thing a constraint forbids under the condition its trigger Event announces. If it is,
+do not write that Policy. (2026-10-16: this guideline existed but the constraints were
+never actually put in the prompt — the model was told to check a list it had not been
+given, and it produced "payroll transmission processed → release attendance closing",
+which the source forbids in two places.)
 
 ## Output format
 For each Policy, provide:
@@ -1175,15 +1201,20 @@ CRITICAL — EXACT NAME MATCHING:
 CRITICAL:
 - Do NOT generate IDs; server assigns UUID id + derives key.
 - **Prefer cross-BC:** Most Policies should connect DIFFERENT Bounded Contexts.
-  Same-BC Policies are acceptable only for intra-BC reactive/async flows
-  (e.g., NotificationFailed → ResendNotification within NotificationService).
+  Same-BC Policies are acceptable only for intra-BC reactive/async flows, and only
+  when the source material states the reaction (e.g., a retry that a document
+  actually prescribes). Do not generalise this into "failure events trigger Policies".
   Prioritize cross-BC Policies — they are the primary purpose of this phase.
 - **NO SELF-LOOPS:** The Command invoked by a Policy MUST NOT emit the same Event that triggered the Policy.
   For example, if trigger_event is "DelinquencyResolved", the invoke_command MUST NOT emit "DelinquencyResolved" —
   this creates an infinite loop (Event → Policy → Command → same Event → same Policy → ...).
   If you detect such a cycle, either choose a different Command or do NOT create that Policy.
-- **Be thorough:** In a typical e-commerce/delivery system with 5-7 BCs, expect at least 5-15 cross-BC Policies.
-  If you find fewer than 5, re-examine the BC pairs — you are likely missing important cross-BC flows.
+- **No quota.** Do not aim for a number. Emit only the Policies you can justify from
+  the user stories, documents, or rules you were given. **An empty list is a valid
+  answer** when the BCs have no reactive business relationship.
+  (2026-10-15: an earlier version of this prompt asked for "at least 5-15" and the
+  result was 8 Policies of which **none** made business sense — the number was met
+  and the meaning was not.)
 
 Output should be a list of PolicyCandidate objects."""
 
