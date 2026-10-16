@@ -84,6 +84,6 @@
     "frontend": "FRONTEND_COMMIT",
     "parser": "PARSER_COMMIT",
     "gateway": "GATEWAY_COMMIT",
-    "ontological": "ONTOLOGICAL_COMMIT"
+    "ontological": "ONTOLOGICAL_COMMIT", "templates": "TEMPLATES_COMMIT"
   }
 }

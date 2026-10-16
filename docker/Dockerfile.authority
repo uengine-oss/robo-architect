@@ -1,4 +1,11 @@
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+# Debian 13(trixie). **12(bookworm)에서 올렸다 — 2026-10-16.**
+#
+# 이 이미지만 bookworm 이라 열한 개 중 가장 나빴다(치명 9·고위험 76, done12 §222).
+# 베이스만 바꿔 재니 critical+high 가 **53 → 3** 이 된다
+# (openssl 17·perl 9·gnutls28 8·util-linux 6·glibc 5 가 통째로 빠진다).
+#
+# 파이썬은 3.11 그대로다. OS 와 런타임을 같이 올리면 무엇이 깨졌는지 못 가린다.
+FROM ghcr.io/astral-sh/uv:python3.11-trixie-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
