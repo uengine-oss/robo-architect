@@ -26,8 +26,34 @@ class SmartLogger:
             cls._instance = cls()
         return cls._instance
     
+    # 지나가는 로그를 받아 가는 사람들. 기록만 하고 **아무것도 바꾸지 않는다**.
+    #
+    # 왜 여기인가 — 무엇이 빠졌는지 세려면 단계마다 수집 코드를 심어야 하는데,
+    # 빠지는 자리는 이미 전부 이 함수를 지난다. 한 곳에 붙이면 단계가 늘어도
+    # 따라다닐 필요가 없다(ingestion/workflow/skip_ledger.py).
+    #
+    # `_should_log` **앞**에서 부른다. 기본 최소 수준이 ERROR 라 WARNING 은 파일에
+    # 안 남는데, 세야 하는 것 중에 WARNING 이 있다.
+    _observers = []
+
+    @classmethod
+    def add_observer(cls, fn):
+        """같은 함수를 두 번 넣지 않는다 — 모듈이 다시 임포트돼도 한 번만 센다."""
+        if fn not in cls._observers:
+            cls._observers.append(fn)
+
+    @classmethod
+    def remove_observer(cls, fn):
+        if fn in cls._observers:
+            cls._observers.remove(fn)
+
     @classmethod
     def log(cls, level, message, category=None, params=None, max_inline_chars=100):
+        for _fn in cls._observers:
+            try:
+                _fn(level, message, category, params)
+            except Exception:  # noqa: BLE001 — 기록이 본업(로깅)을 막지 않는다
+                pass
         cls.instance()._log(level, message, category, params, max_inline_chars)
 
 

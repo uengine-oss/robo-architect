@@ -115,6 +115,89 @@ const createdItems = ref([])
 const eventSource = ref(null)
 const error = ref(null)
 const summary = ref(null)
+
+/**
+ * 만든 것과 **남은 것**이 다르면 그 사실을 말한다.
+ *
+ * 2026-10-15 에 이 알림이 Event **110** 을 보여 줬는데 그래프에는 **64** 였다.
+ * 숫자가 메모리 맥락이라 두 출처를 더했고, 같은 세션에 쓰기 오류 24건이 났는데도
+ * 화면은 초록이었다. 이제 서버가 `stored`/`generated`/`missing` 을 함께 주므로,
+ * **차이가 있을 때만** 한 줄로 드러낸다 — 조용히 초록이면 안 된다.
+ */
+const MISSING_LABEL = {
+  user_stories: '사용자 스토리', bounded_contexts: 'BC', aggregates: 'Aggregate',
+  commands: 'Command', events: 'Event', readmodels: 'ReadModel',
+  uis: 'UI', policies: 'Policy',
+}
+const missingSummary = computed(() => {
+  const m = summary.value?.missing
+  if (!m) return null
+  const rows = Object.entries(m).filter(([, n]) => Number(n) > 0)
+  if (!rows.length) return null
+  return {
+    total: rows.reduce((sum, [, n]) => sum + Number(n), 0),
+    detail: rows.map(([k, n]) => `${MISSING_LABEL[k] || k} ${n}`).join(' · '),
+  }
+})
+
+/**
+ * **어디서** 빠졌나 — `summary.skipped` (서버의 skip 기록).
+ *
+ * `missing` 은 "몇 개" 까지만 말한다. 2026-10-15 에 실제로 빠진 것들은
+ * 단계가 서로 달랐다(policies 2 · readmodel 1 · bc 3 · gwt 8). 어디를 봐야
+ * 하는지가 숫자보다 중요하다.
+ *
+ * `missing` 이 비어 있어도 이쪽은 찰 수 있다 — 링크나 속성처럼 **노드 수에
+ * 안 잡히는 실패**가 있기 때문이다. 그래서 둘을 따로 본다.
+ */
+/**
+ * **안 쓴 입력** — `summary.unused`.
+ *
+ * 빠진 것(missing)·건너뛴 것(skipped)과 성격이 다르다. 이쪽은 "줬는데 안 썼다" 이고,
+ * 버린 것이 맞는지는 사람만 안다. 2026-10-15 실측: 문서 조각 45개 중 12개(27%)가
+ * 어느 Task 에도 안 붙었고 용어 30개는 엣지가 0이었다 — 화면은 초록이었다.
+ */
+const UNUSED_LABEL = { document_passages: '문서 조각', glossary_terms: '용어' }
+const unusedSummary = computed(() => {
+  const u = summary.value?.unused
+  if (!u) return null
+  const rows = Object.entries(u).filter(([, n]) => Number(n) > 0)
+  if (!rows.length) return null
+  return rows.map(([k, n]) => `${UNUSED_LABEL[k] || k} ${n}`).join(' · ')
+})
+
+/**
+ * 금지가 걸린 커맨드를 **자동 실행하는 정책**. 판정이 아니라 **읽을 목록**이다.
+ *
+ * 2026-10-16 실측: ⑤판 정책 하나가 원문이 두 군데서 금지한 동작
+ * ("급여 연계가 전송된 뒤에는 마감을 해제할 수 없다")을 자동화하라고 적었다.
+ * 설계대로 구현되면 감사 대상이고, 화면은 초록이었다. 그때는 그 금지가 모델에
+ * 아예 없어서 비교할 것조차 없었다 — 지금은 있다(done13 §253~§256).
+ *
+ * 걸러 내지 않는 이유: 금지가 걸린 커맨드를 자동 실행하는 정책이 언제나 틀린 것은
+ * 아니다. 거르면 맞는 정책도 같이 사라진다.
+ */
+const reviewSummary = computed(() => {
+  const r = summary.value?.review
+  if (!r || !r.prohibitions) return null
+  const first = (r.look_first || [])[0]
+  return {
+    policies: r.policies,
+    prohibitions: r.prohibitions,
+    lookFirst: (r.look_first || []).length,
+    example: first ? `${first.policy} → ${first.command}` : '',
+  }
+})
+
+const skippedSummary = computed(() => {
+  const sk = summary.value?.skipped
+  if (!sk || !sk.total) return null
+  const phases = Object.entries(sk.by_phase || {})
+    .slice(0, 4)
+    .map(([k, n]) => `${k} ${n}`)
+    .join(' · ')
+  return { total: sk.total, phases }
+})
 const isPanelMinimized = ref(false)
 const isPaused = ref(false)
 const isPausing = ref(false) // Track if pause request is in progress
@@ -2699,7 +2782,28 @@ function useSample() {
                 <span class="mini-stat__value">{{ summary.uis || 0 }}</span>
               </div>
             </div>
-            <p class="mini-summary__hint">네비게이터에서 확인하세요</p>
+            <p v-if="missingSummary" class="mini-summary__missing">
+              ⚠ 만든 것 중 <strong>{{ missingSummary.total }}개</strong>가 저장되지 않았습니다
+              — {{ missingSummary.detail }}
+            </p>
+            <p v-if="skippedSummary" class="mini-summary__missing">
+              ⚠ 저장 중 <strong>{{ skippedSummary.total }}건</strong>이 건너뛰어졌습니다
+              — {{ skippedSummary.phases }}
+            </p>
+            <p v-if="unusedSummary" class="mini-summary__unused">
+              쓰이지 않은 입력: {{ unusedSummary }} — 버려도 되는지 확인하세요
+            </p>
+            <p v-if="reviewSummary" class="mini-summary__review">
+              검토가 필요합니다 — 정책 <strong>{{ reviewSummary.policies }}개</strong>가
+              <strong>금지가 걸린 커맨드</strong>를 자동 실행합니다
+              (금지 {{ reviewSummary.prohibitions }}건<template v-if="reviewSummary.lookFirst">
+              · 먼저 볼 것 {{ reviewSummary.lookFirst }}건</template>)
+              <template v-if="reviewSummary.example"><br />예: {{ reviewSummary.example }}</template>
+            </p>
+            <p class="mini-summary__hint">
+              네비게이터에서 확인하세요<template v-if="missingSummary || skippedSummary">
+              · 위 숫자는 <strong>저장된 것</strong>입니다</template>
+            </p>
           </div>
         </div>
       </div>
@@ -2708,6 +2812,28 @@ function useSample() {
 </template>
 
 <style scoped>
+.mini-summary__unused {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b7280;
+}
+
+.mini-summary__review {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #b45309;
+}
+
+
+.mini-summary__missing {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d97706;
+}
+
 /* ============================================
    Upload Modal Styles
    ============================================ */

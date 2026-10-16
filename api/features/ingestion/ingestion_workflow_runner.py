@@ -231,6 +231,33 @@ def _augment_event(session: IngestionSession, ev: ProgressEvent) -> ProgressEven
 
     suspend_state = getattr(session, "suspend_state", "running") or "running"
 
+    # ── 실패로 끝나도 **무엇이 빠졌는지** 싣는다 ──────────────────────────
+    #
+    # 완료 이벤트에만 붙이면, 정작 가장 아픈 때(중간에 죽은 때)에 화면이 오류 문구
+    # 한 줄만 받는다. 2026-10-15 에 그랬다 — LLM 크레딧이 떨어져 ES 가 죽었는데
+    # 그때까지 건너뛴 것들은 아무 데도 안 실렸다. 기록은 여기서 닫히므로 완료
+    # 경로에서 다시 불러도 빈 값이 온다(한 번만 닫힌다).
+    if getattr(ev, "phase", None) == IngestionPhase.ERROR:
+        try:
+            from api.features.ingestion.workflow import skip_ledger
+
+            _skipped = skip_ledger.finish(session.id)
+            if _skipped:
+                _data = dict(getattr(ev, "data", None) or {})
+                _data["skipped"] = _skipped
+                try:
+                    from dataclasses import replace as _replace, is_dataclass as _is_dc
+                    ev = _replace(ev, data=_data) if _is_dc(ev) else ev
+                    if not _is_dc(ev):
+                        ev.data = _data
+                except Exception:  # noqa: BLE001
+                    try:
+                        ev.data = _data
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001 — 기록이 스트림을 막지 않는다
+            pass
+
     # ProgressEvent fields are dataclass-style; we attach tokens / suspendState
     # via dataclasses.replace if those fields exist, else as attributes.
     try:
@@ -290,6 +317,16 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
     )
 
     try:
+        # **빠지는 것을 여기서부터 센다.** 단계들이 남기는 skip/error 로그를 주워
+        # 완료 이벤트의 `summary.skipped` 로 올린다 — 조용히 사라지지 않게
+        # (ISS-28 · done12 §233). 기록이 실패해도 인제스천은 그대로 간다.
+        try:
+            from api.features.ingestion.workflow import skip_ledger
+
+            skip_ledger.start(session.id)
+        except Exception:  # noqa: BLE001
+            pass
+
         SmartLogger.log(
             "INFO",
             "Ingestion workflow started (Event Modeling chain)",
@@ -498,13 +535,250 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
         events_from_us_count = len(getattr(ctx, "events_from_us", []) or [])
         events_from_cmd_count = sum(len(evts) for evts in ctx.events_by_agg.values())
 
-        created_policy_count = 0
+        # ── 저장된 것을 **그래프에서** 센다 ───────────────────────────────
+        #
+        # 메모리 맥락으로 세면 두 가지가 틀린다.
+        #   ① events 를 두 출처에서 더하게 된다 — `events_from_us`(만든 수)와
+        #      `events_by_agg`(그것을 **그래프에서 다시 읽은** 것)는 같은 노드다.
+        #      2026-10-15 실측: 64 + 46 = **110**, 그래프에는 **64**.
+        #   ② 쓰기가 실패해도 메모리에는 남아 숫자가 줄지 않는다. 같은 세션에
+        #      neo4j 오류 24건(pg_type 충돌·교착)이 났는데 화면은 초록이었다.
+        #
+        # 그래서 **보여 주는 수는 저장된 수**다. 만든 수는 `generated` 로 같이 보내고,
+        # 둘이 다르면 `missing` 에 남긴다 — 조용히 사라지지 않게.
+        _STORED_LABELS = {
+            "user_stories": "UserStory",
+            "bounded_contexts": "BoundedContext",
+            "aggregates": "Aggregate",
+            "commands": "Command",
+            "events": "Event",
+            "readmodels": "ReadModel",
+            "uis": "UI",
+            "policies": "Policy",
+        }
+
+        def _stored_counts() -> dict[str, int]:
+            """세션에 실제로 남은 노드 수. 실패하면 빈 dict 를 준다."""
+            out: dict[str, int] = {}
+            try:
+                with get_session() as _s:
+                    for key, label in _STORED_LABELS.items():
+                        row = _s.run(
+                            f"MATCH (n:{label} {{session_id: $sid}}) RETURN count(n) AS cnt",
+                            sid=session.id,
+                        ).single()
+                        out[key] = int(row["cnt"]) if row else 0
+            except Exception as _e:  # noqa: BLE001 — 세기에 실패해도 완료는 막지 않는다
+                SmartLogger.log(
+                    "WARN",
+                    f"Failed to count stored nodes: {_e}",
+                    category="ingestion.workflow.stored_counts.error",
+                    params={"session_id": session.id, "error": str(_e)},
+                )
+                return {}
+            return out
+
+        stored = _stored_counts()
+
+        def _unused_inputs() -> dict[str, int]:
+            """쓰이지 않은 **입력**. 만든 것이 아니라 **안 쓴 것**을 센다.
+
+            2026-10-15 실측: 문서 조각 45개 중 12개(27%)가 어느 Task 에도 안 붙었고,
+            용어 30개는 엣지가 0이었다. 적게 나온 것(=missing)과 **성격이 다르다** —
+            이쪽은 "줬는데 안 썼다" 이고, 버린 것이 맞는지는 사람만 안다.
+            """
+            out: dict[str, int] = {}
+            try:
+                with get_session() as _s:
+                    row = _s.run(
+                        "MATCH (d:DocumentPassage {session_id: $sid}) "
+                        "WHERE NOT ()-[:SOURCED_FROM]->(d) RETURN count(d) AS cnt",
+                        sid=session.id,
+                    ).single()
+                    out["document_passages"] = int(row["cnt"]) if row else 0
+                    row = _s.run(
+                        "MATCH (g:GlossaryTerm {session_id: $sid}) "
+                        "WHERE NOT (g)--() RETURN count(g) AS cnt",
+                        sid=session.id,
+                    ).single()
+                    out["glossary_terms"] = int(row["cnt"]) if row else 0
+            except Exception as _e:  # noqa: BLE001 — 세기에 실패해도 완료는 막지 않는다
+                SmartLogger.log(
+                    "WARN",
+                    f"Failed to count unused inputs: {_e}",
+                    category="ingestion.workflow.unused_inputs.error",
+                    params={"session_id": session.id, "error": str(_e)},
+                )
+                return {}
+            return {k: v for k, v in out.items() if v > 0}
+
+        def _policy_prohibition_review() -> dict:
+            """금지가 걸린 커맨드를 자동 실행하는 정책을 **세어서 보여 준다**.
+
+            판정하지 않는다 — "모순이다" 라고 말하려면 금지의 조건과 트리거 사건이
+            같은 것인지 알아야 하고, 그것은 낱말 맞추기로 되지 않는다. 대신
+            **사람이 볼 목록**을 만든다. 2026-10-16 에 ⑤판 정책 하나가 원문이 두
+            군데서 금지한 동작("급여 연계 전송 뒤 마감 해제")을 자동화하라고
+            적었는데, 그때는 그 금지가 모델에 **아예 없어서** 비교할 것조차 없었다
+            (done13 §253~§255). 지금은 있다.
+            """
+            import collections as _collections
+            import re as _re
+
+            # **두 말을 다 안다.** 선언문의 언어는 적재 때 고른 표시 언어를 따라간다 —
+            # 한글로 돌리면 "…될 수 없다" 로 나오고, 영어 목록만 보면 금지가 0건이 된다
+            # (2026-10-16 앱 실행에서 실제로 그랬다 · done13 §261).
+            _BAN = (
+                # 영어
+                "cannot", "can not", "must not", "may not", "not allowed",
+                "shall not", "only if", "only when", "only by", "only after",
+                "never", "unless",
+                # 한국어 — 업무 문서와 선언문이 실제로 쓰는 말만 넣는다
+                "수 없", "하지 못", "못한다", "안 된다", "되어서는 안",
+                "해서는 안", "금지", "불가", "허용되지 않", "허용하지 않",
+                "만 할 수 있", "인 경우에만", "경우에만",
+            )
+            _STOP = {
+                "the", "a", "an", "of", "for", "and", "or", "to", "in", "on",
+                "be", "is", "are", "has", "have", "been", "not", "must", "may",
+                "can", "cannot", "only", "if", "when", "that", "this", "it",
+                "its", "by", "with", "at", "as", "from", "than", "more", "once",
+                "same", "any", "all", "each", "should", "already", "after",
+                "before",
+            }
+
+            def _stem(word: str) -> str:
+                for suf in ("ted", "ting", "tion", "sion", "ses", "ed", "ing", "es", "s"):
+                    if word.endswith(suf) and len(word) - len(suf) >= 4:
+                        return word[: -len(suf)]
+                return word
+
+            def _camel(name: str) -> set:
+                parts = _re.findall(r"[A-Z]+(?![a-z])|[A-Z][a-z]+|[a-z]+|\d+", name or "")
+                return {_stem(p.lower()) for p in parts
+                        if p.lower() not in _STOP and len(p) > 2}
+
+            def _words(text: str) -> set:
+                return {_stem(w) for w in _re.findall(r"[a-z]+", (text or "").lower())
+                        if w not in _STOP and len(w) > 3}
+
+            try:
+                with get_session() as _s:
+                    event_names = [r["n"] for r in _s.run(
+                        "MATCH (e:Event) RETURN e.name AS n"
+                    )]
+                    rows = [dict(r) for r in _s.run(
+                        "MATCH (e:Event)-[:TRIGGERS]->(p:Policy)-[:INVOKES]->(c:Command) "
+                        "MATCH (i:Invariant)-[:VERIFIED_BY]->(c) "
+                        "RETURN p.name AS policy, e.name AS trigger, "
+                        "c.name AS command, i.declaration AS invariant"
+                    )]
+            except Exception as _e:  # noqa: BLE001 — 세기에 실패해도 완료는 막지 않는다
+                SmartLogger.log(
+                    "WARN",
+                    f"Failed to review policies against invariants: {_e}",
+                    category="ingestion.workflow.policy_review.error",
+                    params={"session_id": session.id, "error": str(_e)},
+                )
+                return {}
+
+            # 흔한 낱말은 아무 데서나 겹친다. 기준을 밖에서 정하지 않고 **여기서** 센다.
+            freq = _collections.Counter()
+            for name in event_names:
+                for token in _camel(name):
+                    freq[token] += 1
+            threshold = max(3, int(len(event_names) * 0.15))
+            common = {t for t, c in freq.items() if c >= threshold}
+
+            banned = [r for r in rows
+                      if any(b in (r.get("invariant") or "").lower() for b in _BAN)]
+            narrow = []
+            for r in banned:
+                shared = sorted((_camel(r.get("trigger")) - common)
+                                & _words(r.get("invariant")))
+                if shared:
+                    narrow.append({
+                        "policy": r.get("policy"), "trigger": r.get("trigger"),
+                        "command": r.get("command"),
+                        "invariant": (r.get("invariant") or "")[:300],
+                        "shared_terms": shared,
+                    })
+            narrow.sort(key=lambda d: (-len(d["shared_terms"]), d["policy"] or ""))
+
+            out = {
+                "pairs": len(rows),
+                "prohibitions": len(banned),
+                "policies": len({r.get("policy") for r in banned}),
+                "look_first": narrow[:12],
+            }
+            if banned:
+                SmartLogger.log(
+                    "WARN",
+                    ("%d policy/invariant pairs carry a prohibition "
+                     "(%d policies) — %d worth reading first")
+                    % (len(banned), out["policies"], len(narrow)),
+                    category="ingestion.workflow.policy_review",
+                    params={"session_id": session.id, **{k: v for k, v in out.items()
+                                                         if k != "look_first"}},
+                )
+            return out if banned else {}
+
+        review = _policy_prohibition_review()
+
+        unused = _unused_inputs()
+        if unused:
+            SmartLogger.log(
+                "WARN",
+                "Some inputs were never used",
+                category="ingestion.workflow.unused_inputs",
+                params={"session_id": session.id, "unused": unused},
+            )
+
+        # **무엇이** 빠졌나. 숫자(missing)는 개수만 말한다 — 이름과 단계는 여기서 온다.
         try:
-            with get_session() as _count_session:
-                _pol_count = _count_session.run("MATCH (p:Policy) RETURN count(p) AS cnt").single()
-                created_policy_count = _pol_count["cnt"] if _pol_count else 0
-        except Exception:
-            created_policy_count = len(ctx.policies)  # fallback
+            from api.features.ingestion.workflow import skip_ledger
+
+            skipped = skip_ledger.finish(session.id)
+        except Exception:  # noqa: BLE001 — 기록은 완료를 막지 않는다
+            skipped = {}
+
+        # 워크플로가 **만들었다고 믿는** 수. 진단용이고 화면의 주 숫자가 아니다.
+        generated = {
+            "user_stories": len(ctx.user_stories),
+            "bounded_contexts": len(ctx.bounded_contexts),
+            "aggregates": sum(len(aggs) for aggs in ctx.aggregates_by_bc.values()),
+            "commands": sum(len(cmds) for cmds in ctx.commands_by_agg.values()),
+            # ⚠ 더하지 않는다. 둘은 같은 노드를 가리킨다(위 ① 참고).
+            "events": events_from_us_count,
+            "readmodels": sum(len(rms) for rms in (getattr(ctx, "readmodels_by_bc", {}) or {}).values()),
+            "uis": len(getattr(ctx, "uis", []) or []),
+            "policies": len(ctx.policies),
+        }
+
+        # 만든 것보다 **적게 남은** 것만 적는다. 많이 남은 것은 다른 경로로 생긴 것이라
+        # 손실이 아니다(2026-10-15 에 Command 가 그랬다 — 맥락 25, 그래프 26).
+        missing = {
+            k: generated[k] - stored[k]
+            for k in generated
+            if k in stored and stored[k] < generated[k]
+        }
+        if missing:
+            SmartLogger.log(
+                "WARN",
+                "Some generated nodes are not in the graph",
+                category="ingestion.workflow.stored_counts.missing",
+                params={"session_id": session.id, "missing": missing,
+                        "generated": generated, "stored": stored},
+            )
+
+        created_policy_count = stored.get("policies")
+        if created_policy_count is None:
+            try:
+                with get_session() as _count_session:
+                    _pol_count = _count_session.run("MATCH (p:Policy) RETURN count(p) AS cnt").single()
+                    created_policy_count = _pol_count["cnt"] if _pol_count else 0
+            except Exception:
+                created_policy_count = len(ctx.policies)  # fallback
 
         # spec 025 — UI-flow counters (populated by generate_ui_flow_edges_phase)
         ui_flow_summary = getattr(ctx, "ui_flow_summary", None) or {}
@@ -515,14 +789,25 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             progress=100,
             data={
                 "summary": {
-                    "user_stories": len(ctx.user_stories),
-                    "bounded_contexts": len(ctx.bounded_contexts),
-                    "aggregates": sum(len(aggs) for aggs in ctx.aggregates_by_bc.values()),
-                    "commands": sum(len(cmds) for cmds in ctx.commands_by_agg.values()),
-                    "events": events_from_us_count + events_from_cmd_count,
-                    "readmodels": sum(len(rms) for rms in (getattr(ctx, "readmodels_by_bc", {}) or {}).values()),
-                    "uis": len(getattr(ctx, "uis", []) or []),
+                    # **그래프에 남은 수**를 보여 준다. 못 셌을 때만 만든 수로 떨어진다.
+                    "user_stories": stored.get("user_stories", generated["user_stories"]),
+                    "bounded_contexts": stored.get("bounded_contexts", generated["bounded_contexts"]),
+                    "aggregates": stored.get("aggregates", generated["aggregates"]),
+                    "commands": stored.get("commands", generated["commands"]),
+                    "events": stored.get("events", generated["events"]),
+                    "readmodels": stored.get("readmodels", generated["readmodels"]),
+                    "uis": stored.get("uis", generated["uis"]),
                     "policies": created_policy_count,
+                    # 진단용 — 화면은 `missing` 이 있을 때만 쓴다.
+                    "generated": generated,
+                    "stored": stored,
+                    "missing": missing,
+                    "skipped": skipped,
+                    "unused": unused,
+                    # 금지가 걸린 커맨드를 자동 실행하는 정책 — **판정이 아니라 목록**이다
+                    "review": review,
+                    "events_from_us": events_from_us_count,
+                    "events_reachable_from_commands": events_from_cmd_count,
                     # spec 025 — UI flow layer counters
                     "journeys_created": int(ui_flow_summary.get("journeys_created", 0)),
                     "next_ui_edges_created": int(ui_flow_summary.get("next_ui_edges_created", 0)),
