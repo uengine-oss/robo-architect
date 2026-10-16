@@ -214,6 +214,34 @@ const namingSummary = computed(() => {
   }
 })
 
+/**
+ * 정책의 **이름과 배선**이 어긋난 것, 그리고 **순환**. 판정이 아니라 **읽을 목록**이다.
+ *
+ * 정책 *이름*은 코드 생성이 읽고 사람은 *설명*을 읽는다. 이름이 "이 사건에
+ * 반응한다" 고 말하는데 실제로 걸린 사건이 다르면 **산출물이 갈린다**.
+ * 순환은 방아쇠 사건을 그 정책이 부르는 커맨드가 다시 내는 것 — 제자리 돌기다.
+ *
+ * 2026-10-16 실측(정책 5개 · done13 §269): 순환 1 · 이름 불일치 3. 그 셋 중
+ * 둘은 이름이 가리키는 사건이 **그래프에 아예 없었고**, 하나는
+ * **라벨이 겹쳐 안 보이던** 것이었다 — `…OnAttendanceClosingConfirmed` 인데
+ * 실제 방아쇠는 `…Finalized` 이고 둘의 한국어 라벨이 같다.
+ * **결함 둘이 겹쳐 숨는다** — 그래서 위의 라벨 줄과 이 줄을 같이 본다.
+ */
+const wiringSummary = computed(() => {
+  const w = summary.value?.wiring
+  if (!w || (!w.circular && !w.name_mismatch)) return null
+  const first = (w.look_first || [])[0]
+  const loop = (w.circular_list || [])[0]
+  return {
+    circular: w.circular || 0,
+    mismatch: w.name_mismatch || 0,
+    ghost: (w.look_first || []).filter((d) => d && d.named_event_exists === false).length,
+    example: first
+      ? `${first.policy} — 이름은 ${first.name_says}, 실제는 ${first.actually}`
+      : (loop ? `${loop.policy} — ${loop.event} 를 다시 낸다` : ''),
+  }
+})
+
 const skippedSummary = computed(() => {
   const sk = summary.value?.skipped
   if (!sk || !sk.total) return null
@@ -2829,6 +2857,15 @@ function useSample() {
               이름과 라벨이 어긋납니다 — 한국어 라벨 <strong>{{ namingSummary.clashes }}개</strong>를
               서로 다른 사건 {{ namingSummary.events }}개가 함께 쓰고 있습니다
               <template v-if="namingSummary.example"><br />예: {{ namingSummary.example }}</template>
+            </p>
+            <p v-if="wiringSummary" class="mini-summary__review">
+              정책 배선을 확인하세요 —
+              <template v-if="wiringSummary.mismatch">이름과 걸린 사건이 다른 것
+              <strong>{{ wiringSummary.mismatch }}개</strong><template v-if="wiringSummary.ghost">
+              (그중 {{ wiringSummary.ghost }}개는 이름의 사건이 <strong>아예 없습니다</strong>)</template></template>
+              <template v-if="wiringSummary.circular"><template v-if="wiringSummary.mismatch"> · </template>제자리로 도는 것
+              <strong>{{ wiringSummary.circular }}개</strong></template>
+              <template v-if="wiringSummary.example"><br />예: {{ wiringSummary.example }}</template>
             </p>
             <p class="mini-summary__hint">
               네비게이터에서 확인하세요<template v-if="missingSummary || skippedSummary">

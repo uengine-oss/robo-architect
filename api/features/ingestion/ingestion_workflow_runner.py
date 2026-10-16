@@ -792,7 +792,107 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             return out
 
         review = _policy_prohibition_review()
+        def _policy_wiring_review() -> dict:
+            """정책의 **이름과 배선**이 어긋난 것, 그리고 **순환**을 표시한다.
+
+            둘 다 그래프만 보면 되는 **객관**이다 — 낱말 사전도 언어도 도메인도
+            필요 없다. 그래서 제품에서 센다(ISS-35 의 도메인 낱말 검사는 사전이
+            필요해서 뺐다).
+
+              ① **순환**  방아쇠 사건을 **그 정책이 부르는 커맨드가 낸다.**
+                         `AnnualLeaveExpired → ExpireAnnualLeave → 다시
+                         AnnualLeaveExpired` 는 설계가 아니라 제자리 돌기다
+              ② **이름 ≠ 배선**  정책 이름의 `On<사건>` 과 실제 TRIGGERS 가 다르다.
+                         정책 **이름**은 코드 생성이 읽고 사람은 **설명**을 읽으므로,
+                         어긋나면 산출물이 갈린다(ISS-35 와 같은 부류)
+
+            2026-10-16 실측(정책 5개): 순환 1 · 이름 ≠ 배선 3. 그 셋 중 둘은 이름이
+            가리키는 사건이 **그래프에 아예 없었고**, 하나는 **라벨이 겹쳐 안 보이던**
+            것이었다 — `…OnAttendanceClosingConfirmed` 인데 실제 방아쇠는
+            `…Finalized` 이고 둘의 한국어 라벨이 같다. **결함 둘이 겹쳐 숨는다.**
+
+            판정하지 않는다 — 순환이 맞는 설계인 경우도 드물게 있다. **사람이 볼
+            목록**이다.
+            """
+            import re as _re
+
+            def _said(policy: str) -> str | None:
+                """정책 이름이 "어느 사건에 반응한다" 고 말하는지 읽는다.
+
+                쓰이는 꼴 둘을 받는다 — `<동작>On<사건>` 과 `On<사건>Trigger<동작>`.
+                못 읽으면 **None 을 돌려주고 세지 않는다** — 이름 짓는 규칙이
+                바뀌면 조용히 틀린 판정을 내는 쪽이 더 나쁘다.
+                """
+                m = _re.search(r"On([A-Z][A-Za-z0-9]*?)(?:Trigger[A-Z][A-Za-z0-9]*)?$",
+                               policy or "")
+                return m.group(1) if m else None
+
+            try:
+                with get_session() as _s:
+                    rows = [dict(r) for r in _s.run(
+                        "MATCH (e:Event)-[:TRIGGERS]->(p:Policy)-[:INVOKES]->(c:Command) "
+                        "RETURN p.name AS policy, e.name AS trigger, c.name AS command"
+                    )]
+                    loops = [dict(r) for r in _s.run(
+                        "MATCH (e:Event)-[:TRIGGERS]->(p:Policy)-[:INVOKES]->"
+                        "(c:Command)-[:EMITS]->(e2:Event) WHERE e.name = e2.name "
+                        "RETURN p.name AS policy, e.name AS event, c.name AS command"
+                    )]
+                    known = {r["n"] for r in _s.run(
+                        "MATCH (e:Event) RETURN e.name AS n") if r["n"]}
+            except Exception as _e:  # noqa: BLE001 — 세기에 실패해도 완료는 막지 않는다
+                SmartLogger.log(
+                    "WARN",
+                    f"Failed to review policy wiring: {_e}",
+                    category="ingestion.workflow.policy_wiring.error",
+                    params={"session_id": session.id, "error": str(_e)},
+                )
+                return {}
+            if not rows:
+                return {}
+
+            mismatched, unreadable = [], 0
+            for r in rows:
+                said = _said(r.get("policy") or "")
+                if said is None:
+                    unreadable += 1
+                    continue
+                if said != (r.get("trigger") or ""):
+                    mismatched.append({
+                        "policy": r.get("policy"),
+                        "name_says": said,
+                        "actually": r.get("trigger"),
+                        # **이름이 가리키는 사건이 아예 없으면** 더 센 신호다
+                        "named_event_exists": said in known,
+                    })
+            mismatched.sort(key=lambda d: (d["named_event_exists"], d["policy"] or ""))
+
+            out = {
+                "policies": len(rows),
+                "circular": len(loops),
+                "name_mismatch": len(mismatched),
+                "name_unreadable": unreadable,
+                "circular_list": [
+                    {k: v for k, v in d.items() if k in ("policy", "event", "command")}
+                    for d in loops[:6]
+                ],
+                "look_first": mismatched[:6],
+            }
+            if loops or mismatched:
+                SmartLogger.log(
+                    "WARN",
+                    ("%d policies: %d loop back to their own trigger, "
+                     "%d carry a name that disagrees with the event wired to them")
+                    % (len(rows), len(loops), len(mismatched)),
+                    category="ingestion.workflow.policy_wiring",
+                    params={"session_id": session.id,
+                            **{k: v for k, v in out.items()
+                               if k not in ("circular_list", "look_first")}},
+                )
+            return out if (loops or mismatched) else {}
+
         naming = _name_label_mismatch()
+        wiring = _policy_wiring_review()
 
         unused = _unused_inputs()
         if unused:
@@ -876,6 +976,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     # 금지가 걸린 커맨드를 자동 실행하는 정책 — **판정이 아니라 목록**이다
                     "review": review,
                     "naming": naming,
+                    "wiring": wiring,
                     "events_from_us": events_from_us_count,
                     "events_reachable_from_commands": events_from_cmd_count,
                     # spec 025 — UI flow layer counters
