@@ -413,6 +413,21 @@ const hasChildren = computed(() => {
   return children.value.length > 0
 })
 
+/**
+ * 집합체 뷰어를 띄우는 탭 이름 — **둘이다.**
+ *
+ * App.vue 의 `tabComponents` 가 'Data' 와 'Aggregate' 를 **같은 AggregatePanel** 에
+ * 걸어 둔다. 탭을 `Aggregate` → `Data` 로 바꾸면서 옛 이름을 남긴 것이다.
+ * 여기서 'Aggregate' 하고만 비교하면 **실제 탭 이름('Data')이 아무 분기에도 안 걸려**
+ * 기본값인 Design 캔버스로 떨어진다. 2026-10-15 에 실제로 그랬다 —
+ * Design 에 '자동납부 신청', Data 에 '본인확인' 을 놓았는데 **Data 탭 explorer 가
+ * '자동납부 신청' 을 그려졌다고 표시**했다.
+ *
+ * 이름을 하나로 합치는 것이 맞지만 그건 App.vue 쪽 정리다. 그때까지 **여기 한 곳**에서
+ * 둘을 함께 본다.
+ */
+const AGGREGATE_TABS = new Set(['Aggregate', 'Data'])
+
 const isExpanded = computed(() => navigatorStore.isExpanded(props.node.id))
 
 // Check if node is on the currently active viewer's canvas
@@ -428,7 +443,7 @@ const isOnCanvas = computed(() => {
       return eventModelingBcIds.value.has(nodeId)
     } else if (currentTab === 'Design') {
       return canvasStore.nodeIds.includes(nodeId)
-    } else if (currentTab === 'Aggregate') {
+    } else if (AGGREGATE_TABS.has(currentTab)) {
       const selectedBcIdsArray = Array.from(aggregateViewerStore.selectedBcIds)
       return selectedBcIdsArray.includes(nodeId)
     }
@@ -611,7 +626,7 @@ async function addToCanvas() {
   if (props.node.type === 'BoundedContext') {
     if (currentTab === 'Event Modeling') {
       return  // Event Modeling은 프로세스 단위로 추가
-    } else if (currentTab === 'Aggregate') {
+    } else if (AGGREGATE_TABS.has(currentTab)) {
       await aggregateViewerStore.fetchAggregatesForBC(props.node.id)
       return
     }
