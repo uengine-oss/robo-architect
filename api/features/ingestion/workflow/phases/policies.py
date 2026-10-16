@@ -936,6 +936,36 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
                         command_to_events[emitting_cmd] = set()
                     command_to_events[emitting_cmd].add(evt_name)
 
+        # **그래프에서도 모은다.** 아래 `ctx.commands_by_agg` 루프의 주석이
+        # "Neo4j 의 관계에서도 수집" 이라고 말하지만 실제로는 **맥락만 읽는다** —
+        # 그래서 그래프에는 있는 `Command -[:EMITS]-> Event` 가 판정에 안 들어가고
+        # `AnnualLeaveExpired → ExpireAnnualLeave → 다시 AnnualLeaveExpired` 가
+        # 그대로 남았다(2026-10-16 실측 · done13 §269·§270).
+        #
+        # EMITS 는 이벤트를 저장할 때 만들어지고(`neo4j_ops/events.py`) 그 단계는
+        # 진행률 60 이전이다 — 이 단계는 75 라서 **이미 있다.**
+        # 맥락에서 모은 것을 **지우지 않고 더한다** — 순서가 또 바뀌어도 잃지 않는다.
+        # 함수 안에서 가져온다 — `ui_wireframes.py` 도 같은 꼴이다(모듈 적재 때
+        # 드라이버를 세우지 않는다)
+        from api.platform.neo4j import get_session
+
+        try:
+            with get_session() as _s:
+                for _r in _s.run(
+                    "MATCH (c:Command)-[:EMITS]->(e:Event) "
+                    "RETURN c.name AS c, e.name AS e"
+                ):
+                    _c, _e = _r["c"], _r["e"]
+                    if _c and _e:
+                        command_to_events.setdefault(_c, set()).add(_e)
+        except Exception as _e:  # noqa: BLE001 — 못 읽어도 맥락 쪽 판정은 그대로 돈다
+            SmartLogger.log(
+                "WARN",
+                f"Could not read Command→EMITS→Event from the graph: {_e}",
+                category="ingestion.workflow.policy.emits_read_failed",
+                params={"session_id": ctx.session.id, "error": str(_e)},
+            )
+
         # 또한 Neo4j의 Command→EMITS→Event 관계에서도 수집
         for agg_id, cmds in (ctx.commands_by_agg or {}).items():
             for cmd in cmds:
@@ -983,6 +1013,24 @@ async def identify_policies_phase(ctx: IngestionWorkflowContext) -> AsyncGenerat
             )
             policies = valid_policies
             ctx.policies = policies
+
+        # ── 이름이 배선과 어긋나는 것은 **표시만 한다** ─────────────────
+        #
+        # 2026-10-16 에 여기서 **이름을 다시 쓰려고 했다가 되돌렸다.** 정책 이름의
+        # `On<사건>` 을 실제 `trigger_event` 로 바꾸는 코드였는데, 시험하다
+        # 반례가 나왔다.
+        #
+        #     NoOnPartAtAll  (trigger=SomeEvent)  →  **NoOnSomeEvent**
+        #
+        # 이름 안에 우연히 들어간 `On`+대문자를 규약으로 읽는다. "그 사건이
+        # 그래프에 있나" 로도 못 가른다 — **고쳐야 할 두 건도 없는 사건을
+        # 가리킨다.** 정책 이름은 **코드 생성이 읽는 쪽**이라 조용히 한 글자
+        # 틀리면 산출물이 갈린다.
+        #
+        # 그래서 어긋남은 적재 완료 요약의 `"wiring"` 으로 **표시한다**
+        # (`ingestion_workflow_runner._policy_wiring_review`, done13 §269·§270).
+        # 실측 5개 중 3개가 어긋나고 그중 둘은 이름이 가리키는 사건이 아예 없다.
+        # 사람이 보고 고친다.
 
         # ── 트리거 성격 집계 — **프롬프트가 듣는지 재는 자리** ─────────────
         #
