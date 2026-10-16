@@ -73,14 +73,21 @@ Benefit: {benefit}
    - NEVER use Korean, spaces, or special characters in the name field.
    - Even if the user story is written in Korean, the event name MUST be in English.
 3. **displayName** field: A short localized UI label (language specified separately).
-4. Include both **success** and **failure** events when appropriate.
-   - Failure event name = success name stem + "Failed" (e.g., OrderPlaced → OrderPlacementFailed).
+4. **Normal flow first.** Emit the events for work that **succeeded**.
+   A failure event (name ending in Failed / Rejected / Denied) is allowed **only when this
+   user story itself prescribes what happens on failure** - a rejection path, a notification,
+   a retry, a compensating action. If the story does not say, emit **no** failure event.
+   - Do **NOT** pair every success with a failure. Most user stories need none.
+   - **NEVER** emit a failure of an event that is already a negative outcome
+     (no ...RejectionFailed, ...ExpirationFailed, ...CancellationFailed, ...DenialFailed).
+   - When one is warranted, name it: success name stem + "Failed"
+     (e.g., OrderPlaced -> OrderPlacementFailed).
 5. Focus on **business-significant state changes**, not technical details.
    - Internal validations, type checks, null checks, format conversions are NOT separate events.
-   - Group related validations into ONE event (e.g., InputValidated / InputValidationFailed).
+   - Group related validations into ONE event (e.g., a single InputValidated, not one event per field).
 6. Do NOT duplicate events from the previously generated list. If a prior event covers this story, skip it.
 7. Typically 1~3 events per user story. Keep focused.
-8. **order**: Assign chronological order within this user story. If this story involves multiple steps (e.g., place order → then payment), the first event gets order=1, the next order=2. Failure events share the same order as their success counterpart.
+8. **order**: Assign chronological order within this user story. If this story involves multiple steps (e.g., place order → then payment), the first event gets order=1, the next order=2. A failure event, **if** this story warranted one (rule 4), shares the order of its success counterpart.
 </rules>
 
 Return the events for this user story."""
@@ -224,10 +231,29 @@ async def extract_events_from_user_stories_phase(
             )
             events = []
 
+        # 예외 없이 **빈 목록**이 와도 US 하나가 통째로 사라진다. 2026-10-16 실측에서
+        # US 31개 중 5개가 이렇게 조용히 빠졌다(타임아웃 3개는 위에서 찍힌다).
+        # 분류는 zero_final — 원장(skip_ledger)의 표식과 맞춘다.
+        if not events:
+            SmartLogger.log(
+                "WARN",
+                f"Event extraction returned zero events for US {us_id}",
+                category="ingestion.workflow.events_from_us.zero_final",
+                params={"session_id": ctx.session.id, "us_id": us_id},
+            )
+
         events_sorted = sorted(events, key=lambda e: getattr(e, "order", 1) or 1)
         for evt in events_sorted:
             evt_name = (getattr(evt, "name", "") or "").strip()
             if not evt_name or evt_name in accumulated_events:
+                # 조용히 버리면 "생성했다" 와 "저장했다" 가 또 어긋난다(ISS-28 계열).
+                SmartLogger.log(
+                    "WARN",
+                    f"Event dropped as duplicate/blank: '{evt_name}' (US {us_id})",
+                    category="ingestion.workflow.events_from_us.duplicate_skip",
+                    params={"session_id": ctx.session.id, "us_id": us_id,
+                            "event_name": evt_name},
+                )
                 continue
 
             evt_display = getattr(evt, "displayName", "") or evt_name
