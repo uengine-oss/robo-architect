@@ -723,7 +723,76 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 )
             return out if banned else {}
 
+        def _name_label_mismatch() -> dict:
+            """서로 다른 Event 가 **같은 한국어 라벨**을 쓰는 것을 표시한다.
+
+            하류가 **갈려 읽는다**: 정책 *이름*은 영어 Event 이름으로 만들고 정책
+            *설명*은 `displayName` 을 쓴다. 사람은 한국어를 읽고 코드 생성은 영어를
+            읽으므로 둘이 어긋나면 **산출물이 갈린다.** 2026-10-16 에 실제로
+            `GrantAnnualLeaveOnEntitlementCalculated` 가 순환처럼 보였는데 라벨이
+            어긋난 탓이었다 — 하마터면 **없는 결함을 보고할 뻔했다**(done13 §253).
+
+            라벨이 겹치면 **한국어만 읽는 사람에게는 한 사건으로 보인다.** 정책
+            설명도 같아지고, 리뷰가 둘을 못 가른다.
+
+            **여기서 세는 것은 이 하나뿐이다.** "영어 뜻과 한국어 뜻이 다르다" 는
+            더 넓은 질문인데, 재 보니 기계가 할 만한 일이 아니었다 — 낱말 사전을
+            그 판의 데이터에서 배우게 해 봤더니 **1건을 맞히려고 7건을 울렸다**
+            (`승인됨`과 `확인됨`의 `인됨` 처럼 조각이 충돌한다). 사전을 코드에
+            박으면 이 검사가 **그 도메인 전용**이 된다. 그래서 그쪽은 제품이 아니라
+            `2026-10-16/이름-라벨-대조.py` 에 두고 **사람이 읽는다**.
+
+            판정하지 않는다 — 라벨이 더 정확한 경우도 있다. **사람이 볼 목록**이다.
+            """
+            import collections as _collections
+
+            try:
+                with get_session() as _s:
+                    rows = [dict(r) for r in _s.run(
+                        "MATCH (e:Event) WHERE e.displayName IS NOT NULL "
+                        "RETURN e.name AS name, e.displayName AS label"
+                    )]
+            except Exception as _e:  # noqa: BLE001 — 세기에 실패해도 완료는 막지 않는다
+                SmartLogger.log(
+                    "WARN",
+                    f"Failed to compare names against display labels: {_e}",
+                    category="ingestion.workflow.name_label.error",
+                    params={"session_id": session.id, "error": str(_e)},
+                )
+                return {}
+            rows = [r for r in rows
+                    if (r.get("name") or "").strip() and (r.get("label") or "").strip()]
+            if len(rows) < 4:
+                return {}
+
+            by_label = _collections.defaultdict(set)
+            for r in rows:
+                by_label[r["label"].strip()].add(r["name"].strip())
+            clashes = [{"label": k, "names": sorted(v)}
+                       for k, v in by_label.items() if len(v) > 1]
+            clashes.sort(key=lambda d: d["label"])
+            if not clashes:
+                return {}
+
+            out = {
+                "events": len(rows),
+                "label_clashes": len(clashes),
+                "events_affected": sum(len(c["names"]) for c in clashes),
+                "look_first": clashes[:8],
+            }
+            SmartLogger.log(
+                "WARN",
+                ("%d display labels are each shared by more than one event "
+                 "(%d events) — Korean readers cannot tell them apart")
+                % (len(clashes), out["events_affected"]),
+                category="ingestion.workflow.name_label",
+                params={"session_id": session.id,
+                        **{k: v for k, v in out.items() if k != "look_first"}},
+            )
+            return out
+
         review = _policy_prohibition_review()
+        naming = _name_label_mismatch()
 
         unused = _unused_inputs()
         if unused:
@@ -806,6 +875,7 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     "unused": unused,
                     # 금지가 걸린 커맨드를 자동 실행하는 정책 — **판정이 아니라 목록**이다
                     "review": review,
+                    "naming": naming,
                     "events_from_us": events_from_us_count,
                     "events_reachable_from_commands": events_from_cmd_count,
                     # spec 025 — UI flow layer counters

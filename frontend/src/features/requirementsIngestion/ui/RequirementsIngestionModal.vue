@@ -189,6 +189,31 @@ const reviewSummary = computed(() => {
   }
 })
 
+/**
+ * 서로 다른 Event 가 **같은 한국어 라벨**을 쓰는 것. 판정이 아니라 **읽을 목록**이다.
+ *
+ * 왜 보여 주나: 정책 *이름*은 영어 Event 이름으로 만들고 정책 *설명*은 한국어
+ * `displayName` 을 쓴다. 라벨이 겹치면 **한국어만 읽는 사람에게는 한 사건으로
+ * 보이고** 정책 설명도 같아진다. 2026-10-16 실측: Event 43개 중 두 개가
+ * "근태 마감 확정됨" 을 함께 쓰고 있었다(`AttendanceClosingConfirmed` ·
+ * `AttendanceClosingFinalized`). 그날 `GrantAnnualLeaveOnEntitlementCalculated` 가
+ * 순환처럼 보인 것도 라벨이 어긋난 탓이었다 — 하마터면 없는 결함을 보고할
+ * 뻔했다(done13 §253·§268).
+ *
+ * 거르지 않는 이유: 라벨이 겹쳐도 **맞는 경우가 있다**(정말 같은 사건을 두 이름으로
+ * 적었을 수 있다). 어느 쪽인지는 사람만 안다.
+ */
+const namingSummary = computed(() => {
+  const n = summary.value?.naming
+  if (!n || !n.label_clashes) return null
+  const first = (n.look_first || [])[0]
+  return {
+    clashes: n.label_clashes,
+    events: n.events_affected,
+    example: first ? `"${first.label}" ← ${(first.names || []).join(' · ')}` : '',
+  }
+})
+
 const skippedSummary = computed(() => {
   const sk = summary.value?.skipped
   if (!sk || !sk.total) return null
@@ -2799,6 +2824,11 @@ function useSample() {
               (금지 {{ reviewSummary.prohibitions }}건<template v-if="reviewSummary.lookFirst">
               · 먼저 볼 것 {{ reviewSummary.lookFirst }}건</template>)
               <template v-if="reviewSummary.example"><br />예: {{ reviewSummary.example }}</template>
+            </p>
+            <p v-if="namingSummary" class="mini-summary__review">
+              이름과 라벨이 어긋납니다 — 한국어 라벨 <strong>{{ namingSummary.clashes }}개</strong>를
+              서로 다른 사건 {{ namingSummary.events }}개가 함께 쓰고 있습니다
+              <template v-if="namingSummary.example"><br />예: {{ namingSummary.example }}</template>
             </p>
             <p class="mini-summary__hint">
               네비게이터에서 확인하세요<template v-if="missingSummary || skippedSummary">
