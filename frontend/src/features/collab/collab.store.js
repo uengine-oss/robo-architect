@@ -70,6 +70,7 @@ export const useCollabStore = defineStore('collab', () => {
   let stopped = true
   let beatTimer = null
   let lastBeat = 0
+  let beatInFlight = false
 
   /**
    * 이 **창**의 이름. 사람이 아니라 창을 센다 — 한 사람이 창을 둘 열었을 때
@@ -211,11 +212,34 @@ export const useCollabStore = defineStore('collab', () => {
   const BEAT_WHILE_CONNECTED_MS = 10_000
   const BEAT_WHILE_DOWN_MS = 5_000
 
+  /**
+   * 한 번에 **하나만** 떠 있게 한다.
+   *
+   * 예전에는 `lastBeat` 을 **시작할 때** 찍었다. 그래서 응답이 10초보다 오래 걸리면
+   * 앞 요청이 살아 있는데도 다음이 나갔다 — 고정 **주기**다. 백엔드가 바쁜 동안
+   * 한 번이 15초를 넘기자 겹친 요청이 **13**까지 올라갔고, 브라우저의 **호스트당
+   * 동시 연결 6개**를 넘겨 뒤엣것이 전부 줄을 섰다. 그 줄에 **진행 상황을 가져오는
+   * `/api/ingest/runs`** 가 같이 서서, 긴 작업 중에 화면이 죽은 것처럼 보였다
+   * (2026-10-14 실측: 9분에 멈춘 요청 54건 중 36이 이 호출, 8이 runs).
+   *
+   * 그래서 **끝날 때** 찍는다 — 고정 **간격**이 된다. 느려지면 간격이 저절로 늘어난다.
+   *
+   * 다만 간격이 늘어나는 데는 천장이 있어야 한다. 서버 유예가 25초이고 이 박동은
+   * 그 **절반보다 짧아야** 하므로, 8초에서 끊는다. 최악이 `8 + 10 = 18초`로
+   * 25초 안에 남는다. 끊긴 요청은 연결 자리도 같이 놓는다.
+   */
+  const BEAT_TIMEOUT_MS = 8_000
+
   async function beat() {
-    if (!graph || stopped) return
-    lastBeat = Date.now()
+    if (!graph || stopped || beatInFlight) return
+    beatInFlight = true
+    const ac = new AbortController()
+    const kill = setTimeout(() => ac.abort(), BEAT_TIMEOUT_MS)
     try {
-      const r = await fetch(`/api/collab/state?session=${encodeURIComponent(sessionId)}`)
+      const r = await fetch(
+        `/api/collab/state?session=${encodeURIComponent(sessionId)}`,
+        { signal: ac.signal },
+      )
       if (!r.ok) return
       const body = await r.json()
       apply(body)
@@ -223,6 +247,11 @@ export const useCollabStore = defineStore('collab', () => {
       if (mine(body)) catchUp(body.rev)
     } catch {
       // 이 길까지 막혔으면 정말 끊긴 것이다. 서버가 유예 뒤에 걷어간다.
+      // 끊어서 온 것(AbortError)도 여기로 온다 — 다음 박동이 다시 해 본다.
+    } finally {
+      clearTimeout(kill)
+      beatInFlight = false
+      lastBeat = Date.now()
     }
   }
 
