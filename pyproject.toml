@@ -31,6 +31,34 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.30",  # 고위험 3건 (보정 D · 2026-10-16)
+
+    # 취약점 보정 D — **간접 의존성의 바닥**을 여기에 적는다 (2026-10-16).
+    #
+    # 보정 A 로 OS 를 치우니(Debian 12→13, 치명 9→2) 남은 치명·고위험 37건 중
+    # 36이 pypi 였다. 아래 여덟은 **우리가 직접 import 하지 않는다** — 다른
+    # 패키지가 끌고 오는 것이고, 버전만 올리면 고쳐지는 것들이다.
+    #
+    # `[tool.uv] constraint-dependencies` 로 적었다가 **포장 런타임이 깨졌다**:
+    # `uv pip install --require-hashes` 는 범위를 거부하는데 제약은 범위다.
+    # 직접 의존으로 적으면 잠금 파일이 `==` 로 풀어 주고 해시도 붙는다.
+    "pyjwt>=2.14.0",            # 치명 1 + 고위험 5 — authority 의 토큰 검증
+    "anyio>=4.14.2",            # 치명 1
+    "pyasn1>=0.6.4",            # 고위험 5
+    "urllib3>=2.8.0",           # 고위험 5
+    "aiohttp>=3.14.3",          # 고위험 2
+    "orjson>=3.11.6",           # 고위험 1
+    "jaraco-context>=6.1.0",    # 고위험 1 — setuptools 가 끌고 온다
+    "wheel>=0.46.2",            # 고위험 1 — 빌드 때만 쓴다
+    #
+    # **일부러 올리지 않은 것 (고위험 11건)** — 미룬 이유를 같이 남긴다.
+    #   starlette 0.50.0 → 1.3.1 (고위험 2)
+    #       0.x → 1.x **메이저**다. fastapi 0.127 이 범위로 물고 있어 같이 올려야 한다.
+    #   cryptography 48 → 50 (고위험 3)
+    #       메이저 **둘**이다. JWT·TLS 가 다 여기에 매달려 있다.
+    #   mcp 1.27.1 → 1.28.1 · langchain-classic · langgraph-sdk · langsmith (각 1~3)
+    #       **LLM 스택이다.** 생성 품질을 한 변수씩 재는 중에 같이 올리면
+    #       결과 변화가 패치 때문인지 라이브러리 때문인지 **또 못 가린다**.
+    #       품질 검증이 끝나고, 한 번에, 따로 올린다.
     "sse-starlette>=2.1.0",
     
     # Utilities
@@ -72,40 +100,6 @@ dependencies = [
     # installs entirely. See api/features/claude_code/pty_backend.py.
     "pywinpty>=2.0; sys_platform == 'win32'",
 ]
-
-# 취약점 보정 D — **간접 의존성의 바닥**을 올린다 (2026-10-16).
-#
-# 보정 A 로 OS 를 치우니(Debian 12→13, 치명 9→2) 남은 치명·고위험 37건 중 36이
-# pypi 였다. 여기 적힌 것은 전부 **직접 의존이 아니다** — 그래서 `dependencies` 가
-# 아니라 제약으로 바닥만 올린다. 무엇을 쓰는지는 바뀌지 않고 버전만 올라간다.
-#
-# 측정값은 `docker scout cves --only-package-type pypi` 로 이미지에서 직접 쟀다.
-[tool.uv]
-constraint-dependencies = [
-    "pyjwt>=2.14.0",            # 치명 1 + 고위험 5 — authority 의 토큰 검증
-    "anyio>=4.14.2",            # 치명 1
-    "pyasn1>=0.6.4",            # 고위험 5
-    "urllib3>=2.8.0",           # 고위험 5
-    "python-multipart>=0.0.30", # 고위험 3 (직접 의존에도 같이 올렸다)
-    "aiohttp>=3.14.3",          # 고위험 2
-    "orjson>=3.11.6",           # 고위험 1
-    "jaraco-context>=6.1.0",    # 고위험 1 — setuptools 가 끌고 온다
-    "wheel>=0.46.2",            # 고위험 1 — 빌드 때만 쓴다
-]
-# **일부러 올리지 않은 것 (고위험 11건)** — 미룬 이유를 같이 남긴다.
-#
-#   starlette 0.50.0 → 1.3.1  (고위험 2)
-#       0.x → 1.x **메이저**다. fastapi 0.127 이 범위로 물고 있어 같이 올려야 한다.
-#       웹 계층 전체 회귀 시험이 딸린다 — ISS-02(npm 메이저)와 같은 성격의 작업이다.
-#   cryptography 48 → 50      (고위험 3)
-#       메이저 **둘**이다. JWT·TLS 가 다 여기에 매달려 있다.
-#   mcp 1.27.1 → 1.28.1       (고위험 3)
-#   langchain-classic 1.0.1 → 1.0.7 · langgraph-sdk 0.3.1 → 0.4.4 ·
-#   langsmith 0.8.5 → 0.8.18  (각 고위험 1)
-#       **LLM 스택이다.** 지금 생성 품질(ISS-33·ISS-25)을 한 변수씩 재고 있는데
-#       이걸 같이 올리면 결과 변화가 패치 때문인지 라이브러리 때문인지 **또 못 가린다**
-#       (10-15 에 프롬프트와 모델이 겹쳐 하루를 되돌린 그 실수다 — done13 §246).
-#       품질 검증이 끝나고, 한 번에, 따로 올린다.
 
 [project.optional-dependencies]
 dev = [

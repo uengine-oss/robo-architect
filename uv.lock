@@ -6,19 +6,6 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 
-[manifest]
-constraints = [
-    { name = "aiohttp", specifier = ">=3.14.3" },
-    { name = "anyio", specifier = ">=4.14.2" },
-    { name = "jaraco-context", specifier = ">=6.1.0" },
-    { name = "orjson", specifier = ">=3.11.6" },
-    { name = "pyasn1", specifier = ">=0.6.4" },
-    { name = "pyjwt", specifier = ">=2.14.0" },
-    { name = "python-multipart", specifier = ">=0.0.30" },
-    { name = "urllib3", specifier = ">=2.8.0" },
-    { name = "wheel", specifier = ">=0.46.2" },
-]
-
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -258,6 +245,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6b/5c/685e6633917e101e5dcb62b9dd76946cbb57c26e133bae9e0cd36033c0a9/attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11", size = 934251, upload-time = "2025-10-06T13:54:44.725Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/2a/7cc015f5b9f5db42b7d48157e23356022889fc354a2813c15934b7cb5c0e/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373", size = 67615, upload-time = "2025-10-06T13:54:43.17Z" },
+]
+
+[[package]]
+name = "backports-tarfile"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/86/72/cd9b395f25e290e633655a100af28cb253e4393396264a98bd5f5951d50f/backports_tarfile-1.2.0.tar.gz", hash = "sha256:d75e02c268746e1b8144c278978b6e98e85de6ad16f8e4b0844a154557eca991", size = 86406, upload-time = "2024-05-28T17:01:54.731Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/fa/123043af240e49752f1c4bd24da5053b6bd00cad78c2be53c0d1e8b975bc/backports.tarfile-1.2.0-py3-none-any.whl", hash = "sha256:77e284d754527b01fb1e6fa8a1afe577858ebe4e9dad8919e34c862cb399bc34", size = 30181, upload-time = "2024-05-28T17:01:53.112Z" },
 ]
 
 [[package]]
@@ -860,6 +856,18 @@ wheels = [
 ]
 
 [[package]]
+name = "jaraco-context"
+version = "6.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "backports-tarfile", marker = "python_full_version < '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/af/50/4763cd07e722bb6285316d390a164bc7e479db9d90daa769f22578f698b4/jaraco_context-6.1.2.tar.gz", hash = "sha256:f1a6c9d391e661cc5b8d39861ff077a7dc24dc23833ccee564b234b81c82dfe3", size = 16801, upload-time = "2026-03-20T22:13:33.922Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/58/bc8954bda5fcda97bd7c19be11b85f91973d67a706ed4a3aec33e7de22db/jaraco_context-6.1.2-py3-none-any.whl", hash = "sha256:bf8150b79a2d5d91ae48629d8b427a8f7ba0e1097dd6202a9059f29a36379535", size = 7871, upload-time = "2026-03-20T22:13:32.808Z" },
+]
+
+[[package]]
 name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1359,8 +1367,11 @@ name = "msaez2"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
+    { name = "anyio" },
     { name = "deepagents" },
     { name = "fastapi" },
+    { name = "jaraco-context" },
     { name = "jinja2" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
@@ -1372,8 +1383,11 @@ dependencies = [
     { name = "mcp" },
     { name = "neo4j" },
     { name = "numpy" },
+    { name = "orjson" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pyasn1" },
     { name = "pydantic" },
+    { name = "pyjwt" },
     { name = "pymupdf" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
@@ -1383,8 +1397,10 @@ dependencies = [
     { name = "sse-starlette" },
     { name = "tiktoken" },
     { name = "typer" },
+    { name = "urllib3" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
+    { name = "wheel" },
 ]
 
 [package.optional-dependencies]
@@ -1396,8 +1412,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.3" },
+    { name = "anyio", specifier = ">=4.14.2" },
     { name = "deepagents", specifier = ">=0.1.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "jaraco-context", specifier = ">=6.1.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "langchain", specifier = ">=0.3.0" },
     { name = "langchain-anthropic", specifier = ">=0.2.0" },
@@ -1409,8 +1428,11 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "neo4j", specifier = ">=5.0.0" },
     { name = "numpy", specifier = ">=2.4.1,<2.5" },
+    { name = "orjson", specifier = ">=3.11.6" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
+    { name = "pyasn1", specifier = ">=0.6.4" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pyjwt", specifier = ">=2.14.0" },
     { name = "pymupdf", specifier = ">=1.23.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
@@ -1423,8 +1445,10 @@ requires-dist = [
     { name = "sse-starlette", specifier = ">=2.1.0" },
     { name = "tiktoken", specifier = ">=0.7.0" },
     { name = "typer", specifier = ">=0.12.0" },
+    { name = "urllib3", specifier = ">=2.8.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
     { name = "watchfiles", specifier = ">=0.24.0" },
+    { name = "wheel", specifier = ">=0.46.2" },
 ]
 provides-extras = ["dev"]
 
@@ -3058,6 +3082,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/86/eb/20b6cdf273913d0ad05a6a14aed4b9a85591c18a987a3d47f20fa13dcc47/websockets-15.0.1-cp313-cp313-win32.whl", hash = "sha256:ba9e56e8ceeeedb2e080147ba85ffcd5cd0711b89576b83784d8605a7df455fa", size = 176393, upload-time = "2025-03-05T20:02:53.814Z" },
     { url = "https://files.pythonhosted.org/packages/1b/6c/c65773d6cab416a64d191d6ee8a8b1c68a09970ea6909d16965d26bfed1e/websockets-15.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:e09473f095a819042ecb2ab9465aee615bd9c2028e4ef7d933600a8401c79561", size = 176837, upload-time = "2025-03-05T20:02:55.237Z" },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743, upload-time = "2025-03-05T20:03:39.41Z" },
+]
+
+[[package]]
+name = "wheel"
+version = "0.48.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d0/20/50ed6bdf27dec98b568a8ae25dc599f35baa3d9709f9e83fd1edb56b9a90/wheel-0.48.0.tar.gz", hash = "sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322", size = 66471, upload-time = "2026-08-11T22:02:27.327Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/29/69cfbb602cd91690c55d38ba9fe53e6a7e76a6fa647bf38f19c138d25449/wheel-0.48.0-py3-none-any.whl", hash = "sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab", size = 33320, upload-time = "2026-08-11T22:02:26.1Z" },
 ]
 
 [[package]]
