@@ -31,8 +31,21 @@ from api.platform.observability.smart_logger import SmartLogger
 _TRUE = ("1", "true", "yes", "on")
 
 # 인증 없이 닿을 수 있는 자리. 로그인하려면 여기가 열려 있어야 한다.
+#
+# **헬스는 `/api/health` 다.** 2026-10-19 에 강제를 켜고 처음 돌려 보니 이 프로브가
+# 하루에 **596번 전부 401** 이었다 — 목록에 `/health`·`/healthz` 가 적혀 있었지만
+# 이 앱에는 **그 두 경로가 없다**: `/healthz` 는 `authority.py`(다른 앱)에 있고,
+# `/health` 는 `ai_design`·`robo_spec` 라우터에 접두사가 붙어 `/api/ai-design/health`
+# 가 된다. `api.main:app` 에 `mount` 도 없어 둘 다 닿을 수 없는 글자였다.
+# 위 docstring 이 "헬스를 열어 둔다" 고 적고 있으니 **의도는 열려 있었고 글자가
+# 어긋난 것**이다. 죽은 두 항목은 지웠다 — 목록이 넓어지는 만큼 구멍이 된다.
+#
+# 왜 이것이 중요한가: 데스크톱 프로브(`backend.ts` · `probes/index.ts`)는 "닿으면
+# 통과" 라 401 로도 기동은 안 막힌다. 대신 **본문을 못 읽는다** —
+# `{"status":"healthy","neo4j":"connected"}` 가 바로 그날 아침 그래프 주소가 틀린
+# 것을 잡아야 했던 값이다(done14 §273). 납품 자세에서는 **그래프가 죽어도 초록**이었다.
 _OPEN_EXACT = frozenset({
-    "/health", "/healthz", "/docs", "/redoc", "/openapi.json", "/favicon.ico",
+    "/api/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico",
     "/api/auth/provider", "/api/auth/sso/init", "/api/auth/sso/valid",
     "/api/auth/dev-login", "/api/auth/me",
     "/api/auth/figma-exchange",
