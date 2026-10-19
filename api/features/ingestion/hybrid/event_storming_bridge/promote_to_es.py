@@ -58,6 +58,17 @@ BPM 흐름에서 인접한 두 Task 가 서로 다른 BC 에 속하면,
 - description 은 한국어 1줄로 두 BC 간 자동화 의미 설명.
 """
 
+# handoff 방아쇠로 쓰지 않는 Event 이름 꼬리.
+#
+# 앞의 넷은 `IDENTIFY_POLICIES_PROMPT` 가 실패 이벤트의 보기로 **직접 적은 것**이고
+# (*"names ending in Failed, Error, Rejected, …"*), `Blocked` 는 2026-10-19 에
+# 실측으로 더했다(done14 §277 의 `LeaveApplicationBlocked`).
+#
+# ⚠ 꼬리 목록은 **완전하지 않다.** 부정적 결과를 다른 말로 지으면(예: `…Expired`)
+# 빠져나간다. 넓히는 것은 쉽지만 **맞는 handoff 를 같이 지우게 되므로**
+# 숫자를 보고 넓힌다 — 지금 근거가 있는 것만 넣는다.
+_FAILURE_EVENT_SUFFIXES = ("Failed", "Error", "Rejected", "Denied", "Blocked")
+
 
 class _CrossBcPolicyOut(BaseModel):
     name: str = Field(description="On{Event}Trigger{Command} 형식")
@@ -545,6 +556,42 @@ async def _create_cross_bc_policies(hybrid_session_id: str) -> list[dict]:
             ev = last_event.get(tid)
             cm = first_cmd.get(ntid)
             if not ev or not cm:
+                continue
+            # **실패 이벤트는 handoff 방아쇠가 아니다.** 흐름이 다음 task 로 넘어간 것이
+            # 아니라 멈추거나 갈라진 것이다.
+            #
+            # 이 규칙은 내가 새로 만든 것이 아니다 — `IDENTIFY_POLICIES_PROMPT` 가
+            # LLM 쪽에 **이미** 이렇게 적고 있다: *"A failure/error event (names ending
+            # in Failed, Error, Rejected, …) may trigger a Policy **only when the
+            # compensating action is stated in the source material**. Never invent a
+            # reaction to a failure. 'X failed, so do some unrelated Y' is not a …"*
+            # 그 규칙이 **여기에만 없었다.**
+            #
+            # 2026-10-19 실측(done14 §282): cross_bc 4개 중 하나가
+            # `PayrollInterfaceGenerationFailed` → `ConfirmMonthlyClosing` 이었다 —
+            # 글자 그대로 *"X 가 실패했으니 관련 없는 Y 를 해라"* 다. 게다가 그 커맨드에
+            # **"이미 마감된 월은 다시 확정할 수 없다"** 는 선언이 붙어 있어, 금지를
+            # 자동화하라고 적은 셈이 됐다.
+            #
+            # cross_bc 는 보상 동작이 원문에 적혀 있는지 **확인할 길이 없다**(BPM 의
+            # `NEXT` 만 보고 만든다). 확인할 수 없으면 만들지 않는다.
+            #
+            # 이름으로 가르는 것이 맞는 자리다 — Event 이름은 프롬프트가 **영문
+            # PascalCase 로 못 박고** 실패는 `성공이름 + Failed` 로 짓게 한다. 그래서
+            # §261 처럼 한국어를 같이 봐야 하는 문제가 아니다.
+            if (ev.get("name") or "").endswith(_FAILURE_EVENT_SUFFIXES):
+                SmartLogger.log(
+                    "INFO",
+                    "실패 이벤트는 BC 간 handoff 방아쇠로 쓰지 않는다 — 정책을 만들지 않았다.",
+                    # ⚠ 범주에 `skip`·`fail`·`error` 를 넣지 않는다 — `skip_ledger` 가
+                    #   그 말들을 "빠졌다" 로 세어 **건너뜀 줄이 이걸로 부풀어 오른다**.
+                    #   이것은 손실이 아니라 **의도한 제외**다.
+                    category="ingestion.hybrid.es.cross_bc.not_a_handoff",
+                    params={"session_id": hybrid_session_id,
+                            "trigger_event": ev.get("name"),
+                            "would_invoke": cm.get("name"),
+                            "from_bc": bc_of_task[tid][1], "to_bc": bc_of_task[ntid][1]},
+                )
                 continue
             bca = bc_of_task[tid]
             bcb = bc_of_task[ntid]
