@@ -157,14 +157,26 @@ const missingSummary = computed(() => {
  * 버린 것이 맞는지는 사람만 안다. 2026-10-15 실측: 문서 조각 45개 중 12개(27%)가
  * 어느 Task 에도 안 붙었고 용어 30개는 엣지가 0이었다 — 화면은 초록이었다.
  */
-const UNUSED_LABEL = { document_passages: '문서 조각', glossary_terms: '용어' }
-const unusedSummary = computed(() => {
-  const u = summary.value?.unused
-  if (!u) return null
-  const rows = Object.entries(u).filter(([, n]) => Number(n) > 0)
-  if (!rows.length) return null
-  return rows.map(([k, n]) => `${UNUSED_LABEL[k] || k} ${n}`).join(' · ')
-})
+/**
+ * **완료 모달에서 뺐다**(2026-10-19 · done14 §283 · ISS-48).
+ *
+ * 두 칸이 서로 다른 이유로 여기 있을 자리가 아니었다.
+ *
+ *   용어      판정식이 `NOT (g)--()` 인데 `GlossaryTerm` 에 엣지를 만드는 코드가
+ *            **저장소에 없다**. 실제 쓰임은 매핑이 LLM 프롬프트 맥락으로 읽는
+ *            것이다 — 엣지가 아니다. 그래서 **모든 적재에서 29/29 · 30/30** 으로
+ *            떴다. 사용자에게 "버려도 되는지 확인하세요" 를 묻는데 **확인할 방법이
+ *            없는 질문**이다. 매번 늑대가 왔다.
+ *   문서 조각  판정은 맞다(`SOURCED_FROM` 이 실제로 생긴다 · 45개 중 12개 = 27%).
+ *            그런데 **어느 12개인지 안 알려 주고**, 네비게이터에 `DocumentPassage`
+ *            가 없어 찾을 수도 없다. 그리고 이건 **사용자가 답할 질문이 아니라
+ *            제품 품질 지표**다 — 규칙 추출이 문서를 다 못 쓰고 있다는 뜻이고
+ *            (§230), 그건 적재마다 사용자가 결정할 일이 아니다.
+ *
+ * 숫자 자체는 완료 요약 payload(`summary.unused`)에 **그대로 남는다** — 측정과
+ * 기록은 계속 쓴다. 지운 것은 **이 경고줄**뿐이다. 조각 쪽은 진단 화면이
+ * 생기면 거기로 간다.
+ */
 
 /**
  * 금지가 걸린 커맨드를 **자동 실행하는 정책**. 판정이 아니라 **읽을 목록**이다.
@@ -180,12 +192,21 @@ const unusedSummary = computed(() => {
 const reviewSummary = computed(() => {
   const r = summary.value?.review
   if (!r || !r.prohibitions) return null
-  const first = (r.look_first || [])[0]
+  const look = r.look_first || []
+  // **이름을 띄운다.** 2026-10-19 까지 이 줄은 개수만 냈고, 좁히기가 비면
+  // `look_first` 도 비어서 **어느 정책인지 아무 데도 없었다**(done14 §283).
+  // 서버가 이제 좁힌 것이 없으면 넓은 목록을 보내 준다.
+  const names = []
+  for (const d of look) {
+    if (d && d.policy && !names.includes(d.policy)) names.push(d.policy)
+  }
   return {
     policies: r.policies,
     prohibitions: r.prohibitions,
-    lookFirst: (r.look_first || []).length,
-    example: first ? `${first.policy} → ${first.command}` : '',
+    // 좁히기가 골라낸 수. 0 이면 아래 이름들은 **넓은 쪽**이라 순서에 뜻이 없다.
+    narrowed: Number(r.narrowed || 0),
+    names: names.slice(0, 5),
+    more: Math.max(0, names.length - 5),
   }
 })
 
@@ -260,11 +281,21 @@ const wiringSummary = computed(() => {
  */
 const skippedSummary = computed(() => {
   const sk = summary.value?.skipped
-  if (!sk || !sk.total) return null
-  const parts = Object.entries(sk.by_phase || {}).map(([k, n]) => `${k} ${n}`)
+  // **손실만 띄운다.** `total` 은 "안 하기로 한 것"(중복 제거·`zero_final`)까지
+  // 세므로 거의 매번 0이 아니다 — 그걸 경고로 띄우면 사용자는 매번 ⚠ 를 받고
+  // 볼 것은 없다. 2026-10-19 실측: 한 판은 21건 중 **3건만** 손실이었고 다음 판은
+  // 5건 중 **0건**이었다(done14 §277·§282).
+  if (!sk || !Number(sk.failed)) return null
+  const items = (sk.failed_items || [])
+    .map((d) => [d.name, d.reason].filter(Boolean).join(' — ') || d.phase)
   const dropped = Number(sk.dropped || 0)
-  if (dropped > 0) parts.push(`기록 못 한 것 ${dropped}`)
-  return { total: sk.total, phases: parts.join(' · ') }
+  return {
+    failed: Number(sk.failed),
+    // **이름과 사유를 준다.** 개수만 주면 사람이 할 수 있는 일이 없다(ISS-43).
+    items: items.slice(0, 5),
+    more: Math.max(0, Number(sk.failed) - items.slice(0, 5).length),
+    dropped,
+  }
 })
 const isPanelMinimized = ref(false)
 const isPaused = ref(false)
@@ -2855,18 +2886,20 @@ function useSample() {
               — {{ missingSummary.detail }}
             </p>
             <p v-if="skippedSummary" class="mini-summary__missing">
-              ⚠ 저장 중 <strong>{{ skippedSummary.total }}건</strong>이 건너뛰어졌습니다
-              — {{ skippedSummary.phases }}
+              ⚠ 저장하려다 <strong>{{ skippedSummary.failed }}건</strong>이 실패했습니다
+              <template v-for="(it, i) in skippedSummary.items" :key="i"><br />· {{ it }}</template>
+              <template v-if="skippedSummary.more"><br />· 그 밖에 {{ skippedSummary.more }}건</template>
+              <template v-if="skippedSummary.dropped"><br />· 기록 못 한 것 {{ skippedSummary.dropped }}건</template>
             </p>
-            <p v-if="unusedSummary" class="mini-summary__unused">
-              쓰이지 않은 입력: {{ unusedSummary }} — 버려도 되는지 확인하세요
-            </p>
+            <!-- "쓰이지 않은 입력" 줄은 2026-10-19 에 뺐다 — 위 script 의
+                 `unused` 주석에 이유가 있다(용어는 구조상 항상 100% · 조각은
+                 사용자가 답할 질문이 아니다). 숫자는 payload 에 그대로 남는다. -->
             <p v-if="reviewSummary" class="mini-summary__review">
               검토가 필요합니다 — 정책 <strong>{{ reviewSummary.policies }}개</strong>가
               <strong>금지가 걸린 커맨드</strong>를 자동 실행합니다
-              (금지 {{ reviewSummary.prohibitions }}건<template v-if="reviewSummary.lookFirst">
-              · 먼저 볼 것 {{ reviewSummary.lookFirst }}건</template>)
-              <template v-if="reviewSummary.example"><br />예: {{ reviewSummary.example }}</template>
+              (금지 {{ reviewSummary.prohibitions }}건)
+              <template v-for="(n, i) in reviewSummary.names" :key="i"><br />· {{ n }}</template>
+              <template v-if="reviewSummary.more"><br />· 그 밖에 {{ reviewSummary.more }}개</template>
             </p>
             <p v-if="namingSummary" class="mini-summary__review">
               이름과 라벨이 어긋납니다 — 한국어 라벨 <strong>{{ namingSummary.clashes }}개</strong>를

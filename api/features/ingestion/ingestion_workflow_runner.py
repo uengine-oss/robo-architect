@@ -705,11 +705,30 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     })
             narrow.sort(key=lambda d: (-len(d["shared_terms"]), d["policy"] or ""))
 
+            # 좁힌 것이 비면 **넓은 것을 준다.**
+            #
+            # 2026-10-19 실측(done14 §283): 두 판 모두 `narrow` 가 비어서 화면에
+            # **"정책 N개가 금지가 걸린 커맨드를 자동 실행합니다" 라는 개수만** 떴다.
+            # 어느 정책인지는 화면에도 없고, 로그는 `look_first` 를 일부러 빼므로
+            # **아무 데도 없었다.** "읽을 목록" 이라면서 목록이 없던 것이다.
+            #
+            # 좁히기(트리거 낱말과 금지 문장의 낱말이 겹치는 것)는 **순서를 정하는
+            # 장치**지 걸러내는 장치가 아니다. 통과한 것이 없다고 해서 볼 것이 없는
+            # 게 아니다 — 그날 뽑아 보니 4개 중 둘이 실제로 금지를 어기고 있었다.
+            look_first = narrow[:12] or [
+                {"policy": r.get("policy"), "trigger": r.get("trigger"),
+                 "command": r.get("command"),
+                 "invariant": (r.get("invariant") or "")[:300],
+                 "shared_terms": []}
+                for r in banned[:12]
+            ]
             out = {
                 "pairs": len(rows),
                 "prohibitions": len(banned),
                 "policies": len({r.get("policy") for r in banned}),
-                "look_first": narrow[:12],
+                "look_first": look_first,
+                # 좁히기가 골라낸 수. 0 이면 위 목록은 **넓은 쪽**이다.
+                "narrowed": len(narrow),
             }
             if banned:
                 SmartLogger.log(
@@ -718,8 +737,14 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                      "(%d policies) — %d worth reading first")
                     % (len(banned), out["policies"], len(narrow)),
                     category="ingestion.workflow.policy_review",
-                    params={"session_id": session.id, **{k: v for k, v in out.items()
-                                                         if k != "look_first"}},
+                    params={"session_id": session.id,
+                            # **이름을 남긴다.** 2026-10-19 까지 이 자리는 `look_first` 를
+                            # 빼고 개수만 남겼다 — 그래서 모달을 닫으면 어느 정책이었는지
+                            # 되찾을 길이 없었다(done14 §283). 선언문 전문은 길어서 빼고
+                            # 정책·커맨드 이름만 남긴다. 그것만으로 그래프에서 찾을 수 있다.
+                            "policy_names": sorted({r.get("policy") for r in banned
+                                                    if r.get("policy")}),
+                            **{k: v for k, v in out.items() if k != "look_first"}},
                 )
             return out if banned else {}
 

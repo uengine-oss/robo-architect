@@ -74,18 +74,41 @@ class SkipLedger:
         })
 
     def summary(self) -> dict[str, Any]:
-        """화면과 기록에 실을 모양. 빈 세션이면 빈 dict 를 준다."""
+        """화면과 기록에 실을 모양. 빈 세션이면 빈 dict 를 준다.
+
+        **타당한 건너뜀과 손실을 가른다.** 2026-10-19 에 이것이 문제가 됐다
+        (done14 §277·§282): 한 판은 21건이 떴고 그중 **3건만 진짜 손실**(교착)이었고,
+        다음 판은 5건이 떴고 **손실은 0건**이었다. 둘이 같은 숫자로 섞여 나와서
+        사용자는 매번 경고를 받지만 **무엇을 봐야 하는지 알 수 없었다.**
+
+        가르는 자는 `level` 이다 — `ERROR` 는 하려다 못 한 것(예외·시간 초과)이고,
+        `WARNING` 은 **안 하기로 한 것**(`zero_final`·중복 제거)이다. 둘은 사람에게
+        다른 일이다: 앞은 봐야 하고 뒤는 안 봐도 된다.
+
+        ⚠ `total`·`by_phase` 는 **그대로 둔다** — 기록과 측정이 그 숫자를 쓴다
+        (§234 가 "만든 수와 저장된 수가 다르다" 를 잡는 근거다). 화면만 `failed`
+        쪽을 본다.
+        """
         if not self.entries:
             return {}
         by_phase: dict[str, int] = {}
         for e in self.entries:
             by_phase[e["phase"]] = by_phase.get(e["phase"], 0) + 1
+        failed = [e for e in self.entries if (e.get("level") or "").upper() == "ERROR"]
         return {
             "total": len(self.entries) + self.dropped,
             "by_phase": dict(sorted(by_phase.items(), key=lambda kv: -kv[1])),
             # 화면에는 앞의 것만 보인다. 전부는 로그에 있다.
             "items": self.entries[:20],
             "dropped": self.dropped,
+            # ── 아래 둘이 화면이 보는 것 ──────────────────────────────
+            # 하려다 **못 한** 것. 이름과 사유를 같이 준다 — 개수만 주면
+            # 사람이 할 수 있는 일이 없다(ISS-43 에서 배운 것).
+            "failed": len(failed),
+            "failed_items": [
+                {"phase": e["phase"], "name": e.get("name"), "reason": e.get("reason")}
+                for e in failed[:12]
+            ],
         }
 
 
