@@ -42,6 +42,24 @@ _SKIP_MARKERS = (
 )
 
 # params 에서 이름을 찾을 때 먼저 보는 열쇠들.
+# **안 하기로 한 것** — 화면의 경고줄에 안 싣는다.
+#
+# 짧게 유지한다. 여기 없는 범주는 **실패로 본다**(기본값을 그렇게 뒤집었다) —
+# 모르는 것을 숨기는 쪽보다 한 번 더 보여 주는 쪽이 싸다. 늘릴 때는 그 범주가
+# **"하려다 못 한 것"이 아니라 "안 하기로 한 것"** 임을 코드로 확인하고 늘린다.
+_BENIGN_MARKERS = (
+    "zero_final",      # 그 US 에서 뽑을 것이 없었다
+    "duplicate",       # 중복이라 하나만 남겼다
+    "orphan",          # 짝이 없다는 **알림**이지 손실이 아니다
+    "link_skipped",    # 이을 자리가 없어 안 이었다
+)
+
+
+def _is_benign(category: str) -> bool:
+    c = (category or "").lower()
+    return any(k in c for k in _BENIGN_MARKERS)
+
+
 _NAME_KEYS = (
     "name", "readmodel_name", "policy_name", "command_name", "event_name",
     "aggregate_name", "bc_name", "user_story_id", "us_id", "id",
@@ -81,9 +99,15 @@ class SkipLedger:
         다음 판은 5건이 떴고 **손실은 0건**이었다. 둘이 같은 숫자로 섞여 나와서
         사용자는 매번 경고를 받지만 **무엇을 봐야 하는지 알 수 없었다.**
 
-        가르는 자는 `level` 이다 — `ERROR` 는 하려다 못 한 것(예외·시간 초과)이고,
-        `WARNING` 은 **안 하기로 한 것**(`zero_final`·중복 제거)이다. 둘은 사람에게
-        다른 일이다: 앞은 봐야 하고 뒤는 안 봐도 된다.
+        ⚠ **가르는 자는 `level` 이 아니다.** 2026-10-19 에 처음 `level == "ERROR"` 로
+        갈랐다가 틀렸다 — 이 저장소에서 **실패를 뜻하는 범주 61개가 `WARN` 으로**
+        찍힌다(`events_from_us.create_error`·`bc.link_failed`·`gwt.fallback_error` …).
+        그대로 두면 **진짜 실패가 전부 "안 하기로 한 것" 으로 숨는다.**
+        이 파일 위쪽 주석이 이미 *"ERROR 라 WARNING 은 파일에 안 남는데, 우리가 세야
+        하는 것 중에는 WARNING 이 있다"* 고 적고 있었다 — **내가 그것을 안 읽었다.**
+
+        그래서 **범주로 가른다. 그리고 기본값을 뒤집었다** — 모르는 범주는 **실패로
+        본다.** 새 범주가 생겼을 때 조용히 숨는 쪽보다 **한 번 더 보여 주는 쪽**이 싸다.
 
         ⚠ `total`·`by_phase` 는 **그대로 둔다** — 기록과 측정이 그 숫자를 쓴다
         (§234 가 "만든 수와 저장된 수가 다르다" 를 잡는 근거다). 화면만 `failed`
@@ -94,7 +118,7 @@ class SkipLedger:
         by_phase: dict[str, int] = {}
         for e in self.entries:
             by_phase[e["phase"]] = by_phase.get(e["phase"], 0) + 1
-        failed = [e for e in self.entries if (e.get("level") or "").upper() == "ERROR"]
+        failed = [e for e in self.entries if not _is_benign(e.get("category") or "")]
         return {
             "total": len(self.entries) + self.dropped,
             "by_phase": dict(sorted(by_phase.items(), key=lambda kv: -kv[1])),
