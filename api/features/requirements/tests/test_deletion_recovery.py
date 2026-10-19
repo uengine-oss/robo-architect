@@ -17,6 +17,7 @@ from api.features.requirements.requirements_contracts import (
     UserStoryDeleteRequest,
 )
 from api.features.requirements.router import router
+from api.tests.route_paths import route_methods, route_paths
 
 
 def test_remove_design_defaults_off():
@@ -43,9 +44,10 @@ def test_record_and_restore_models():
 
 
 def test_deletion_history_routes_registered():
-    paths = {r.path for r in router.routes}
+    # FastAPI 0.146 부터 `include_router` 가 자식을 펼치지 않는다 — done14 §287
+    paths = route_paths(router)
     assert "/api/requirements/deletion-records" in paths
     assert "/api/requirements/deletion-records/{batch_id}/restore" in paths
     # DELETE /bounded-context (Epic delete) is registered too
-    methods = {(r.path, m) for r in router.routes for m in getattr(r, "methods", set())}
+    methods = route_methods(router)
     assert ("/api/requirements/bounded-context", "DELETE") in methods

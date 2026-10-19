@@ -15,6 +15,7 @@ from api.features.requirements.requirements_contracts import (
     EditHistoryItemDTO,
 )
 from api.features.requirements.router import router
+from api.tests.route_paths import route_paths
 
 
 def test_scope_field_mapping():
@@ -43,6 +44,9 @@ def test_chat_edit_contracts_defaults():
 
 
 def test_chat_edit_routes_registered():
-    paths = {r.path for r in router.routes}
+    # `{r.path for r in router.routes}` 로는 더 못 센다 — FastAPI 0.146 부터
+    # `include_router` 가 자식을 부모에 펼치지 않고 `_IncludedRouter` 래퍼를 꽂는다
+    # (done14 §287). 경로는 그대로 서비스되고, **내부 표현만** 바뀐 것이다.
+    paths = route_paths(router)
     for suffix in ("stream", "apply", "log", "history"):
         assert f"/api/requirements/chat-edit/{{scope}}/{{node_id}}/{suffix}" in paths
