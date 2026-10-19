@@ -23,7 +23,10 @@ dependencies = [
     "langchain-openai>=0.2.0",
     "langchain-anthropic>=0.2.0",
     "langchain-google-genai>=0.2.0",
-    "langgraph>=0.2.0",
+    # 보정 ⑤ (2026-10-19) — 1.2.2 → 1.2.16. **패치 올림이 자물쇠를 푼다**:
+    # langgraph 1.2.2 가 `langgraph-sdk<0.4.0` 로 물고 있어 sdk 0.4.4 가 막혀
+    # 있었다. 1.2.16 은 `langgraph-sdk<0.5.0,>=0.4.6` 을 요구한다(PyPI 에서 확인).
+    "langgraph>=1.2.16",
     "langgraph-checkpoint>=2.0.0",
     "deepagents>=0.1.0",
 
@@ -50,15 +53,42 @@ dependencies = [
     "jaraco-context>=6.1.0",    # 고위험 1 — setuptools 가 끌고 온다
     "wheel>=0.46.2",            # 고위험 1 — 빌드 때만 쓴다
     #
-    # **일부러 올리지 않은 것 (고위험 11건)** — 미룬 이유를 같이 남긴다.
-    #   starlette 0.50.0 → 1.3.1 (고위험 2)
-    #       0.x → 1.x **메이저**다. fastapi 0.127 이 범위로 물고 있어 같이 올려야 한다.
-    #   cryptography 48 → 50 (고위험 3)
-    #       메이저 **둘**이다. JWT·TLS 가 다 여기에 매달려 있다.
-    #   mcp 1.27.1 → 1.28.1 · langchain-classic · langgraph-sdk · langsmith (각 1~3)
-    #       **LLM 스택이다.** 생성 품질을 한 변수씩 재는 중에 같이 올리면
-    #       결과 변화가 패치 때문인지 라이브러리 때문인지 **또 못 가린다**.
-    #       품질 검증이 끝나고, 한 번에, 따로 올린다.
+    # ⚠ 위 둘은 **더 올릴 자리가 없다.** 2026-10-19 에 이미지를 열어 보니 걸린 사본이
+    #   `site-packages/setuptools/_vendor/jaraco.context-5.3.0` 과 `.../wheel-0.45.1`
+    #   이다 — **베이스 이미지의 setuptools 가 품고 있는 사본**이라 우리 바닥이
+    #   닿지 않는다(우리 venv 는 이미 wheel 0.48.0 이다). 그쪽은 보정 ⑥ 이다.
+    #
+    # ── 보정 ⑤ (2026-10-19) — **미뤘던 LLM 스택을 올린다** ──────────────────
+    #
+    # 위에서 "품질 검증이 끝나고, 한 번에, 따로 올린다" 고 적어 미뤘다.
+    # **그 조건이 풀렸다** — 적재 쪽 검증이 끝났다(done14 §283: 교착을 닫고 모달
+    # 다섯 줄을 정리했으며 "다시 돌릴 이유가 없다"). 그래서 지금 한 번에 올린다.
+    #
+    # 상한을 먼저 확인했다(이미지 안의 METADATA 를 읽어서):
+    #   cryptography       google-auth `>=38.0.3` · pyjwt `>=3.4.0`  → **상한 없음**
+    #   mcp                anthropic `>=1.0`                         → **상한 없음**
+    #   langchain-classic  langchain-community `<2.0.0,>=1.0.0`      → 1.0.7 은 범위 안
+    #   langsmith          langchain-core/community/classic `<1.0.0` → 0.8.18 은 범위 안
+    "cryptography>=50.0.0",     # 고위험 3 — 메이저 둘이지만 아무도 상한을 안 걸었다
+    # 고위험 3. ⚠ **상한을 건다.** `>=1.28.1` 만 적으면 uv 가 최신인 **2.3.0**(메이저)을
+    # 집는다. CVE 는 1.28.1 에서 고쳐지므로 메이저를 넘을 이유가 없고, 우리는 이것을
+    # **직접 쓴다** — `features/robo_spec/mcp_server.py` 가
+    # `from mcp.server.fastmcp import FastMCP` 를 한다(지연 import 라 기동 때 안 터진다).
+    # 2.x 로 올릴 때는 그 자리를 보고 따로 올린다.
+    "mcp>=1.28.1,<2",
+    "langchain-classic>=1.0.7", # 고위험 1
+    "langsmith>=0.8.18",        # 고위험 1
+    "langgraph-sdk>=0.4.6",     # 고위험 1 — langgraph 1.2.16 이 요구하는 바닥
+    #
+    # **아직 올리지 않은 것 (고위험 2)** — 미룬 이유를 남긴다.
+    #   starlette 0.50.0 → 1.3.1
+    #       CVE-2026-48818(SSRF · `<1.1.0`) · CVE-2026-54283(자원 제한 없음 · `<1.3.1`).
+    #       `fastapi 0.127.0` 이 `starlette<0.51.0` 로 물고 있어 **fastapi 를 같이
+    #       올려야 한다**(최신 0.146.0 은 `starlette>=0.46.0` 으로 상한이 없다 ·
+    #       PyPI 에서 확인). 그런데 이건 **백엔드 전체의 웹 프레임워크 올림**이고
+    #       우리 코드 **78 파일**이 starlette 를 직접 import 한다
+    #       (대부분 `starlette.requests.Request`). 바닥 한 줄과 다른 일이라
+    #       **따로, 돌려 보고** 올린다. 그때까지 심사에 설명이 필요하다.
     "sse-starlette>=2.1.0",
     
     # Utilities
