@@ -242,14 +242,29 @@ const wiringSummary = computed(() => {
   }
 })
 
+/**
+ * 건너뛴 것의 **내역**. 총계와 내역이 **더해서 맞아야** 한다.
+ *
+ * 2026-10-19 실측: 모달이 "21건이 건너뛰어졌습니다 — events_from_us 4 · policies 4 ·
+ * gwt 4 · bc 3" 이라고 냈다. 더하면 **15** 다. `.slice(0, 4)` 가 앞 4개만 찍고
+ * 나머지 6건을 **말없이 버렸다** — 말줄임도 "그 외 N" 도 없어서, 읽는 사람은
+ * 내역이 완전한 줄 알고 15로 읽는다. `by_phase` 는 큰 것부터 정렬돼 오므로
+ * 잘려 나간 쪽이 작은 것들이지만, **작다고 없는 것은 아니다**.
+ *
+ * 단계 이름은 많아도 여덟(`aggregates`·`bc`·`commands`·`events`·`events_from_us`·
+ * `policies`·`readmodels`·`user_stories`)이라 **전부 적어도 한 줄에 들어간다.**
+ *
+ * `dropped` 도 같이 적는다 — 원장은 300건을 넘기면 사유를 안 남기고 세기만 하는데
+ * (`skip_ledger.MAX_ENTRIES`), `total` 은 그것까지 포함하고 `by_phase` 는 포함하지
+ * 않는다. 그래서 그 칸을 빼면 **큰 적재에서 또 합이 안 맞는다**.
+ */
 const skippedSummary = computed(() => {
   const sk = summary.value?.skipped
   if (!sk || !sk.total) return null
-  const phases = Object.entries(sk.by_phase || {})
-    .slice(0, 4)
-    .map(([k, n]) => `${k} ${n}`)
-    .join(' · ')
-  return { total: sk.total, phases }
+  const parts = Object.entries(sk.by_phase || {}).map(([k, n]) => `${k} ${n}`)
+  const dropped = Number(sk.dropped || 0)
+  if (dropped > 0) parts.push(`기록 못 한 것 ${dropped}`)
+  return { total: sk.total, phases: parts.join(' · ') }
 })
 const isPanelMinimized = ref(false)
 const isPaused = ref(false)
