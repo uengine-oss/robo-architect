@@ -2915,6 +2915,19 @@ function useSample() {
               <strong>{{ wiringSummary.circular }}개</strong></template>
               <template v-if="wiringSummary.example"><br />예: {{ wiringSummary.example }}</template>
             </p>
+            <!-- **갈 곳을 적는다.** 2026-10-19 에 사용자가 물었다 — *"검토한다 해도
+                 수정할 수 없는데"*. 전제가 틀렸다: 고칠 수단은 **있다**.
+                 `model_modifier` 가 rename·connect·delete 를 Policy 에도 적용하고
+                 (`_apply_rename_tx` 가 `n.name` 을 직접 바꾼다), 그 채팅은 Design
+                 캔버스와 Event Modeling 패널 오른쪽에 붙어 있다.
+                 **모달이 그걸 말하지 않아서** 읽는 사람에게는 할 일이 없었다 —
+                 ISS-47("네비게이터에서 확인" 이 아무 데도 안 데려간다)과 같은 부류다.
+                 그래서 **볼 것이 있을 때만** 한 줄을 더 띄운다(§291). -->
+            <p v-if="reviewSummary || wiringSummary || namingSummary"
+               class="mini-summary__where">
+              고치는 곳 — <strong>Design 캔버스 오른쪽 💬 Chat</strong>(모델 수정)에서
+              정책의 <strong>이름을 바꾸거나 · 방아쇠를 다시 걸거나 · 지울 수</strong> 있습니다
+            </p>
             <p class="mini-summary__hint">
               네비게이터에서 확인하세요<template v-if="missingSummary || skippedSummary">
               · 위 숫자는 <strong>저장된 것</strong>입니다</template>
@@ -2939,6 +2952,17 @@ function useSample() {
   font-size: 11px;
   line-height: 1.5;
   color: #b45309;
+}
+
+/* 위 줄들은 **경고**(호박색)고 이것은 **안내**다 — 색을 달리 둔다.
+   경고와 같은 색이면 "또 하나의 문제" 로 읽힌다. */
+.mini-summary__where {
+  margin: 6px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #0f766e;
 }
 
 

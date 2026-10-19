@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import AsyncGenerator, Optional
 
 import asyncio
+import re
 import time
 
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
@@ -78,6 +79,49 @@ _ES_LABELS = [
     # 목록 끝에 둔다 — 지우기는 `reversed()` 로 돌아 잎부터 떼기 때문이다.
     "Journey", "JourneyStep",
 ]
+
+
+
+# ── 정책 이름 읽기 ─────────────────────────────────────────────────────
+#
+# **닫힌 함수 안에 두지 않는다.** 2026-10-19 에 이 둘이 `_policy_wiring_review`
+# 안에 있어서 **테스트를 못 썼고**, 그래서 축약을 오배선으로 부르는 것을
+# 화면에 뜬 뒤에야 알았다(§291). 재려면 밖에 있어야 한다.
+
+_POLICY_ON_EVENT = re.compile(r"On([A-Z][A-Za-z0-9]*?)(?:Trigger[A-Z][A-Za-z0-9]*)?$")
+_CAMEL_WORDS = re.compile(r"(?:[A-Z][a-z0-9]*)+")
+
+
+def policy_name_says(policy: str) -> str | None:
+    """정책 이름이 "어느 사건에 반응한다" 고 말하는지 읽는다.
+
+    쓰이는 꼴 둘을 받는다 — `<동작>On<사건>` 과 `On<사건>Trigger<동작>`.
+    못 읽으면 **None 을 돌려주고 세지 않는다** — 이름 짓는 규칙이 바뀌면
+    조용히 틀린 판정을 내는 쪽이 더 나쁘다.
+    """
+    m = _POLICY_ON_EVENT.search(policy or "")
+    return m.group(1) if m else None
+
+
+def policy_name_is_abbrev(said: str, actual: str) -> bool:
+    """이름이 실제 사건의 **앞부분**이면 오배선이 아니라 **축약**이다.
+
+    2026-10-19 실측(§291): 배선 검사가 2건을 *"이름의 사건이 **아예 없습니다**"* 로
+    띄웠다 — 10-16 에 **진짜 오배선**에 붙던 가장 센 문구다. 실제로는 둘 다
+    `…OnMonthlyAttendanceClosing` 인데 걸린 사건이
+    `MonthlyAttendanceClosingConfirmed` 였다. **빠진 것은 낱말 하나**다.
+
+    `!=` 와 정확한 이름 집합만 보면 **축약이 오배선과 같은 칸에 들어간다.**
+    위험한 쪽은 이름이 **다른** 사건을 가리키는 것이고, 그때는 앞부분이 겹치지
+    않는다. 그래서 **낱말 경계에서 끊기는 앞부분**만 봐준다 —
+    `MonthlyAttendanceClos` 처럼 낱말 중간에서 끊긴 것은 **봐주지 않는다.**
+    """
+    if not said or not actual:
+        return False
+    longer, shorter = (actual, said) if len(actual) > len(said) else (said, actual)
+    if not longer.startswith(shorter):
+        return False
+    return bool(_CAMEL_WORDS.fullmatch(longer[len(shorter):]))
 
 
 def clear_event_storming_nodes(client, session_id: str = "") -> None:
@@ -838,20 +882,12 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
 
             판정하지 않는다 — 순환이 맞는 설계인 경우도 드물게 있다. **사람이 볼
             목록**이다.
+
+            이름을 읽는 둘은 **모듈 수준**에 있다(`policy_name_says` ·
+            `policy_name_is_abbrev`) — 닫힌 함수 안에 있으면 **테스트를 못 쓴다**.
+            2026-10-19 에 그래서 축약을 오배선으로 부르는 것을 **화면에 뜬 뒤에야**
+            알았다(§291).
             """
-            import re as _re
-
-            def _said(policy: str) -> str | None:
-                """정책 이름이 "어느 사건에 반응한다" 고 말하는지 읽는다.
-
-                쓰이는 꼴 둘을 받는다 — `<동작>On<사건>` 과 `On<사건>Trigger<동작>`.
-                못 읽으면 **None 을 돌려주고 세지 않는다** — 이름 짓는 규칙이
-                바뀌면 조용히 틀린 판정을 내는 쪽이 더 나쁘다.
-                """
-                m = _re.search(r"On([A-Z][A-Za-z0-9]*?)(?:Trigger[A-Z][A-Za-z0-9]*)?$",
-                               policy or "")
-                return m.group(1) if m else None
-
             try:
                 with get_session() as _s:
                     rows = [dict(r) for r in _s.run(
@@ -876,18 +912,24 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             if not rows:
                 return {}
 
-            mismatched, unreadable = [], 0
+            mismatched, unreadable, abbreviated = [], 0, 0
             for r in rows:
-                said = _said(r.get("policy") or "")
+                said = policy_name_says(r.get("policy") or "")
                 if said is None:
                     unreadable += 1
                     continue
-                if said != (r.get("trigger") or ""):
+                if said == (r.get("trigger") or ""):
+                    continue
+                if policy_name_is_abbrev(said, r.get("trigger") or ""):
+                    abbreviated += 1
+                else:
                     mismatched.append({
                         "policy": r.get("policy"),
                         "name_says": said,
                         "actually": r.get("trigger"),
-                        # **이름이 가리키는 사건이 아예 없으면** 더 센 신호다
+                        # **이름이 가리키는 사건이 아예 없으면** 더 센 신호다.
+                        # ⚠ 축약은 위에서 걸러진다 — 축약된 이름도 "없는 사건"
+                        # 이지만 오배선이 아니다(§291).
                         "named_event_exists": said in known,
                     })
             mismatched.sort(key=lambda d: (d["named_event_exists"], d["policy"] or ""))
@@ -897,18 +939,23 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                 "circular": len(loops),
                 "name_mismatch": len(mismatched),
                 "name_unreadable": unreadable,
+                # 이름이 사건의 앞부분인 것. **화면에 안 띄운다** — 고칠 것이 아니다.
+                "name_abbreviated": abbreviated,
                 "circular_list": [
                     {k: v for k, v in d.items() if k in ("policy", "event", "command")}
                     for d in loops[:6]
                 ],
                 "look_first": mismatched[:6],
             }
-            if loops or mismatched:
+            # 축약만 있어도 **기록은 남긴다** — 화면은 조용하지만 예외가 실제로
+            # 걸렸는지 재야 한다(§291).
+            if loops or mismatched or abbreviated:
                 SmartLogger.log(
                     "WARN",
                     ("%d policies: %d loop back to their own trigger, "
-                     "%d carry a name that disagrees with the event wired to them")
-                    % (len(rows), len(loops), len(mismatched)),
+                     "%d carry a name that disagrees with the event wired to them, "
+                     "%d carry an abbreviated name (not a defect)")
+                    % (len(rows), len(loops), len(mismatched), abbreviated),
                     category="ingestion.workflow.policy_wiring",
                     params={"session_id": session.id,
                             **{k: v for k, v in out.items()
