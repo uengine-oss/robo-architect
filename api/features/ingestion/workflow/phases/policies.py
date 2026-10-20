@@ -273,7 +273,9 @@ async def _create_policy_with_links(
                 display_name=pol_display_name,
                 proposed_name=proposed_name,
             ),
-            timeout=8.0
+            # 드라이버 재시도 창 12초(§300)보다 뒤에 둔다 — 8초였을 때는
+            # **재시도가 시작되기도 전에** 우리가 끊었다.
+            timeout=20.0
         )
         
         # Overwrite LLM-proposed id with UUID from DB

@@ -57,7 +57,9 @@ class PolicyOps:
         """
         import time
         start_time = time.time()
-        MAX_TIMEOUT = 10.0  # 10초 최대 대기 시간
+        # 12초(드라이버 재시도 창 · §300)보다 **넉넉히 뒤**에 둔다 — 안 그러면
+        # 재시도 도중에 우리 타임아웃이 터져 교착이 `TimeoutError` 로 덮인다.
+        MAX_TIMEOUT = 20.0
         
         try:
             with self.session() as session:
@@ -99,24 +101,46 @@ class PolicyOps:
                 if elapsed > MAX_TIMEOUT:
                     raise TimeoutError(f"Policy creation query timeout for {name} (elapsed: {elapsed:.2f}s)")
                 
-                result = session.run(
-                    query,
-                    key=key,
-                    name=name,
-                    proposed_name=(proposed_name if proposed_name and proposed_name != name
-                                   else None),
-                    display_name=display_name,
-                    bc_id=bc_id,
-                    trigger_event_id=trigger_event_id,
-                    invoke_command_id=invoke_command_id,
-                    description=description,
+                # ── **관리 트랜잭션으로 돌린다** (2026-10-20 · done15 §300) ──────
+                #
+                # 2026-10-19 에 중앙 엔진을 올려 교착이 `ClientError` 가 아니라
+                # **`TransientError.Transaction.DeadlockDetected`** 로 오게 만들었다
+                # (done14 §279). 그런데 **그걸 받아서 다시 해 보는 쪽을 안 만들었다.**
+                #
+                # 2026-10-20 실측: 정책 10개를 `asyncio.gather` 로 동시에 만들다가
+                # **12건이 교착으로 실패**했고, 로그는 전부
+                # `create_policy ERROR: … failed after 1.01s: TransientError` 였다.
+                # **1초 만에 포기한다.** 분류만 바꾸고 재시도가 없으면 사용자에게는
+                # 전과 똑같이 "저장하려다 N건이 실패했습니다" 로 보인다.
+                #
+                # `session.run` 은 **자동 커밋**이라 드라이버가 재시도하지 않는다.
+                # `execute_write` 는 **관리 트랜잭션**이라 `TransientError` 를 만나면
+                # 드라이버가 기본 30초 창 안에서 **스스로 다시 건다.**
+                # 교착은 "둘이 같은 자물쇠를 반대 순서로 잡았다" 는 뜻이라
+                # **다시 걸면 대개 통과한다** — 재추첨이 아니라 같은 일을 다시 하는 것이다.
+                #
+                # ⚠ 이 저장소에는 `session.run` 이 **84곳**이고 관리 트랜잭션은 0곳이다.
+                #   여기만 바꾼 이유는 **여기서만 교착이 측정됐기** 때문이다.
+                #   다른 자리에서 교착이 보이면 같은 방식으로 옮긴다 — 한꺼번에
+                #   84곳을 바꾸는 것은 재 보지 않은 변경이다.
+                single_result = session.execute_write(
+                    lambda tx: tx.run(
+                        query,
+                        key=key,
+                        name=name,
+                        proposed_name=(proposed_name if proposed_name and proposed_name != name
+                                       else None),
+                        display_name=display_name,
+                        bc_id=bc_id,
+                        trigger_event_id=trigger_event_id,
+                        invoke_command_id=invoke_command_id,
+                        description=description,
+                    ).single()
                 )
-                
+
                 elapsed = time.time() - start_time
                 if elapsed > MAX_TIMEOUT:
                     raise TimeoutError(f"Policy creation query timeout for {name} (elapsed: {elapsed:.2f}s)")
-                
-                single_result = result.single()
                 
                 if not single_result:
                     print(f"[NEO4J] create_policy ERROR: No result returned for {name}", flush=True)

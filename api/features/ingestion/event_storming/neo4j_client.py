@@ -72,7 +72,20 @@ class Neo4jClient(
     @property
     def driver(self) -> Driver:
         if self._driver is None:
-            self._driver = GraphDatabase.driver(self.config.uri, auth=(self.config.user, self.config.password))
+            # `max_transaction_retry_time` 을 **명시한다** (2026-10-20 · done15 §300).
+            #
+            # 관리 트랜잭션(`execute_write`)은 `TransientError` 를 만나면 드라이버가
+            # 이 창 안에서 스스로 다시 건다. 기본은 **30초**인데, 우리 호출부는
+            # 8초(`asyncio.wait_for`)·10초(`MAX_TIMEOUT`)에 끊는다. 그대로 두면
+            # **우리 타임아웃이 먼저 터져서** 진짜 원인(교착)이 `TimeoutError` 로
+            # 덮인다 — 되풀이해 온 "원인을 덮는" 부류다.
+            # 그래서 창을 **12초**로 줄이고 호출부 쪽을 20초로 넓혔다.
+            # 교착 재시도는 보통 1~2초 안에 통과한다.
+            self._driver = GraphDatabase.driver(
+                self.config.uri,
+                auth=(self.config.user, self.config.password),
+                max_transaction_retry_time=12.0,
+            )
         return self._driver
 
     def close(self):
