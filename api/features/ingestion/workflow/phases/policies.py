@@ -162,6 +162,53 @@ async def _create_policy_with_links(
                         invoke_command_id = _fuzzy_match(pol.invoke_command, neo4j_cmd_candidates)
             except Exception:
                 pass  # 기존 로직으로 진행
+
+        # LLM이 target_bc 이름을 잘못 골라도 invoke_command가 현재 생성 세트의
+        # 다른 BC에 정확히 존재하면 그 Command의 실제 소유 BC로 교정한다.
+        # 2026-10-20 실측: ApplyApprovedLeave는 생성돼 있었지만 target_bc를
+        # Attendance로 써서 Policy 한 건만 유실됐다. Command 이름이 배선의 더
+        # 강한 키이며, 임의의 전역 그래프가 아니라 이번 ctx의 BC만 조회한다.
+        if not invoke_command_id:
+            current_bc_ids = [
+                bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
+                for bc in ctx.bounded_contexts
+            ]
+            current_bc_ids = [x for x in current_bc_ids if x]
+            with ctx.client.session() as _owner_s:
+                owner_rows = []
+                for rec in _owner_s.run(
+                    """
+                    UNWIND $bc_ids AS bc_id
+                    MATCH (bc:BoundedContext {id: bc_id})-[:HAS_AGGREGATE]->
+                          (:Aggregate)-[:HAS_COMMAND]->(cmd:Command)
+                    RETURN bc.id AS bc_id, bc.name AS bc_name,
+                           cmd {.id, .name, .displayName} AS c
+                    """,
+                    bc_ids=current_bc_ids,
+                ):
+                    c = dict(rec["c"])
+                    c["owner_bc_id"] = rec["bc_id"]
+                    c["owner_bc_name"] = rec["bc_name"]
+                    owner_rows.append((c.get("name", ""), c.get("displayName", ""), c))
+                corrected_id = _fuzzy_match(pol.invoke_command, owner_rows)
+                if corrected_id:
+                    owner = next(c for _, _, c in owner_rows if c.get("id") == corrected_id)
+                    invoke_command_id = corrected_id
+                    old_target = target_bc_id
+                    target_bc_id = owner["owner_bc_id"]
+                    SmartLogger.log(
+                        "WARN",
+                        f"Policy target BC corrected from '{pol.target_bc}' to "
+                        f"'{owner.get('owner_bc_name') or target_bc_id}' by command ownership",
+                        category="ingestion.workflow.policies.target_bc_corrected",
+                        params={
+                            "session_id": ctx.session.id,
+                            "policy_name": pol.name,
+                            "invoke_command": pol.invoke_command,
+                            "requested_bc_id": old_target,
+                            "actual_bc_id": target_bc_id,
+                        },
+                    )
     except Exception as e:
         return None, f"Failed to find target BC/command: {e}"
 

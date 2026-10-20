@@ -14,6 +14,7 @@ from api.features.ingestion.hybrid.contracts import (
     DocumentPassage,
     GlossaryTerm,
     RuleDTO,
+    RuleContext,
     TaskPassageLink,
 )
 from api.features.ingestion.hybrid.ontology.schema import (
@@ -587,6 +588,49 @@ def save_mappings(
                 "SET rel.direction = $direction",
                 name=table_name, sid=session_id, rid=rule_id, direction=direction,
             )
+
+
+def save_rule_contexts(session_id: str, contexts: list[RuleContext]) -> None:
+    """Freeze analyzer context while task exploration can still see it.
+
+    The analyzer database is a single-active-workspace graph.  A later code
+    analysis replaces its routines and table edges, while the design session
+    remains.  Persist both compact Rule properties (traceability response) and
+    project/session-local ExternalTable edges (graph/navigation) at exploration
+    time so those links survive that replacement.
+
+    Empty live values never overwrite an earlier non-empty snapshot.
+    """
+    if not contexts:
+        return
+    with get_session() as s:
+        for ctx in contexts:
+            reads = sorted({x for x in ctx.reads_tables if x})
+            writes = sorted({x for x in ctx.writes_tables if x})
+            s.run(
+                f"MATCH (r:{L_RULE} {{id: $rid, session_id: $sid}}) "
+                "SET r.source_summary = CASE WHEN $summary IS NULL OR $summary = '' "
+                "       THEN r.source_summary ELSE $summary END, "
+                "    r.reads_tables = CASE WHEN size($reads) = 0 "
+                "       THEN coalesce(r.reads_tables, []) ELSE $reads END, "
+                "    r.writes_tables = CASE WHEN size($writes) = 0 "
+                "       THEN coalesce(r.writes_tables, []) ELSE $writes END",
+                rid=ctx.rule_id, sid=session_id, summary=ctx.function_summary,
+                reads=reads, writes=writes,
+            )
+            for direction, names in (("READS", reads), ("WRITES", writes)):
+                for table_name in names:
+                    s.run(
+                        f"MERGE (tbl:{L_EXTERNAL_TABLE} {{name: $name, session_id: $sid}}) "
+                        f"WITH tbl MATCH (r:{L_RULE} {{id: $rid, session_id: $sid}}) "
+                        f"MERGE (r)-[rel:{R_EVALUATES}]->(tbl) "
+                        "SET rel.direction = CASE "
+                        "  WHEN rel.direction IS NULL THEN $direction "
+                        "  WHEN rel.direction = $direction THEN rel.direction "
+                        "  ELSE 'READS_WRITES' END",
+                        name=table_name, sid=session_id, rid=ctx.rule_id,
+                        direction=direction,
+                    )
 
 
 def set_task_rule_mapping_role(

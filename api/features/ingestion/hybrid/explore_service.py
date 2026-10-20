@@ -52,6 +52,7 @@ from api.features.ingestion.hybrid.ontology.neo4j_ops import (
     set_task_rule_mapping_role,
     fetch_session_snapshot,
     save_mappings,
+    save_rule_contexts,
     save_task_conditions,
     save_rules,
 )
@@ -249,6 +250,10 @@ async def explore_task(
     task_dto = task_dto_by_id.get(task_id)
     actors = process_actors.get(process.id, [])
     contexts = build_rule_contexts(rules)
+    # Freeze project-local routine/table provenance before saving mappings.
+    # The analyzer graph is mutable and will be replaced by the next project's
+    # analysis; mappings and ES promotion outlive that active workspace.
+    save_rule_contexts(session_id, contexts)
     # §036 — 이 세션 ingestion 때 추출·저장된 glossary를 retrieval 임베딩 정규화에 주입.
     # 평문 활동↔개발자 약어 룰의 어휘갭을 메워 어휘갭으로 탈락하던 룰을 회복(floor·예산 불변).
     glossary = _load_glossary(session_id)
