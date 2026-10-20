@@ -31,6 +31,10 @@ from api.features.ingestion.hybrid.contracts import (
 from api.features.ingestion.hybrid.code_to_rules.rule_extractor import (
     extract_rules_from_analyzer_graph,
 )
+from api.features.ingestion.hybrid.analysis_binding import (
+    AnalysisBindingError,
+    assert_session_analysis_binding,
+)
 from api.features.ingestion.hybrid.mapper.agentic_retriever import run_agentic_retrieval
 from api.features.ingestion.hybrid.mapper.embeddings import session_embedding_cache
 from api.features.ingestion.hybrid.mapper.condition_extractor import (
@@ -190,6 +194,7 @@ async def explore_task(
     *,
     force: bool = False,
     sink: Sink,
+    _binding_checked: bool = False,
 ) -> dict:
     """Run agentic retrieval for one task. Returns {cached, mapping_count}.
 
@@ -199,6 +204,14 @@ async def explore_task(
 
     `force=True`: replace any existing mappings via fresh agentic retrieval.
     """
+    if not _binding_checked:
+        try:
+            assert_session_analysis_binding(session_id)
+        except AnalysisBindingError as exc:
+            await sink({"type": "AgentError", "code": exc.code, "error": exc.detail})
+            return {"cached": False, "mapping_count": 0,
+                    "error": exc.detail, "code": exc.code}
+
     if not await _ensure_session_rules(session_id, sink):
         return {"cached": False, "mapping_count": 0, "error": "No mapping candidates"}
 
@@ -407,6 +420,12 @@ async def explore_process(
     """
     # 지난 탐색의 이유가 이번 결과에 붙지 않게 한다.
     reset_empty_reason()
+    try:
+        assert_session_analysis_binding(session_id)
+    except AnalysisBindingError as exc:
+        await sink({"type": "AgentError", "code": exc.code, "error": exc.detail})
+        return {"explored": 0, "cached": 0, "errors": 1,
+                "error": exc.detail, "code": exc.code}
     if not await _ensure_session_rules(session_id, sink):
         return {"explored": 0, "cached": 0, "errors": 1, "error": "No mapping candidates"}
     snap = fetch_session_snapshot(session_id)
@@ -443,7 +462,10 @@ async def explore_process(
     async def _one(task_id: str):
         async with sem:
             try:
-                r = await explore_task(session_id, task_id, force=force, sink=sink)
+                r = await explore_task(
+                    session_id, task_id, force=force, sink=sink,
+                    _binding_checked=True,
+                )
                 if r.get("error"):
                     counters["errors"] += 1
                 elif r.get("cached"):

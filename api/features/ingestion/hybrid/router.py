@@ -32,6 +32,10 @@ from api.features.ingestion.hybrid.document_to_bpm.config import (
 from api.features.ingestion.hybrid.event_storming_bridge.promote_to_es import (
     clear_promoted_nodes,
 )
+from api.features.ingestion.hybrid.analysis_binding import (
+    AnalysisBindingError,
+    assert_session_analysis_binding,
+)
 from api.features.ingestion.hybrid.hybrid_workflow_runner import run_hybrid_workflow
 from api.features.ingestion.hybrid.pipeline_verification import verify_pipeline_status
 from api.features.ingestion.hybrid.ontology.neo4j_ops import (
@@ -562,6 +566,16 @@ async def promote_start(
     only matter at the ES stage (BPM analysis is language-neutral and has no
     UI phase).
     """
+    # **기존 ES를 지우기 전에** BPM이 현재 프로젝트의 현재 분석과 같은지 본다.
+    # 불일치인데 먼저 clear하면 재생성도 못 하고 앞판만 잃는다.
+    try:
+        assert_session_analysis_binding(session_id)
+    except AnalysisBindingError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.detail},
+        ) from exc
+
     snap = fetch_session_snapshot(session_id)
     if not snap.get("tasks"):
         raise HTTPException(

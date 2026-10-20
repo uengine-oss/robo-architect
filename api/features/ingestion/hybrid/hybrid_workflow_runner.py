@@ -13,6 +13,7 @@ from typing import AsyncGenerator, Optional
 from api.features.ingestion.hybrid.code_to_rules.rule_extractor import (
     extract_rules_from_analyzer_graph,
 )
+from api.features.ingestion.hybrid.analysis_binding import bind_session_to_current_analysis
 from api.features.ingestion.hybrid.contracts import (
     BpmProcess,
     BpmSequenceDTO,
@@ -309,14 +310,25 @@ async def run_hybrid_workflow(
                 },
             )
 
-            # Phase 2.5 (BC pre-tagging) + Phase 2.6 (ES role pre-tagging) were
-            # retired on 2026-04-21 — the decisions they tried to pre-compute
-            # (Rule → BC, Rule → Aggregate/Command/Policy/etc.) require
-            # process + task context that's only available after Phase 3 and
-            # is properly resolved at Phase 5 (event storming promotion).
-            # Pre-tagging on raw GWT alone was heuristic and added noise.
-            # Fields `context_cluster` / `es_role` remain on Rule for legacy
-            # sessions but are no longer populated.
+        # BPM/Rules가 어느 프로젝트 분석 내용에서 나왔는지 여기서 확정한다.
+        # 탐색과 ES 승격은 이 graph+fingerprint가 현재 분석과 같을 때만 열린다.
+        # Rule이 0개여도 빈/엉뚱한 분석을 성공처럼 넘기지 않도록 지문은 검증한다.
+        binding = bind_session_to_current_analysis(session_id)
+        SmartLogger.log(
+            "INFO",
+            "BPM session bound to project analysis",
+            category="ingestion.hybrid.analysis_binding.created",
+            params={"session_id": session_id, **binding},
+        )
+
+        # Phase 2.5 (BC pre-tagging) + Phase 2.6 (ES role pre-tagging) were
+        # retired on 2026-04-21 — the decisions they tried to pre-compute
+        # (Rule → BC, Rule → Aggregate/Command/Policy/etc.) require
+        # process + task context that's only available after Phase 3 and
+        # is properly resolved at Phase 5 (event storming promotion).
+        # Pre-tagging on raw GWT alone was heuristic and added noise.
+        # Fields `context_cluster` / `es_role` remain on Rule for legacy
+        # sessions but are no longer populated.
 
         # --- Phase 3.0: Glossary (session-level, kept in pipeline — single LLM call) -----
         yield _ev(HybridPhase.MAPPING, "🧾 도메인 용어집 추출 중...", 82)
