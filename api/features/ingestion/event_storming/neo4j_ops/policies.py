@@ -47,8 +47,14 @@ class PolicyOps:
         key: str | None = None,
         description: str | None = None,
         display_name: str | None = None,
+        proposed_name: str | None = None,
     ) -> dict[str, Any]:
-        """Create a policy with TRIGGERS and INVOKES relationships."""
+        """Create a policy with TRIGGERS and INVOKES relationships.
+
+        `proposed_name` 은 **LLM 이 지었던 이름**이다. 2026-10-20 부터 `name` 은
+        배선에서 만들어 들어오므로(ISS-52 · done15 §295), 원래 이름을 버리면
+        "몇 개가 어떻게 달랐나" 를 나중에 못 센다. 같으면 안 적는다.
+        """
         import time
         start_time = time.time()
         MAX_TIMEOUT = 10.0  # 10초 최대 대기 시간
@@ -82,6 +88,7 @@ class PolicyOps:
                     pol.name = $name,
                     pol.displayName = $display_name,
                     pol.description = $description,
+                    pol.proposedName = $proposed_name,
                     pol.updatedAt = datetime()
                 MERGE (bc)-[:HAS_POLICY]->(pol)
                 MERGE (evt)-[:TRIGGERS {priority: 1, isEnabled: true}]->(pol)
@@ -96,6 +103,8 @@ class PolicyOps:
                     query,
                     key=key,
                     name=name,
+                    proposed_name=(proposed_name if proposed_name and proposed_name != name
+                                   else None),
                     display_name=display_name,
                     bc_id=bc_id,
                     trigger_event_id=trigger_event_id,

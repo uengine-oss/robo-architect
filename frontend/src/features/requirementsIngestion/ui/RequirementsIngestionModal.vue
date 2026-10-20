@@ -236,30 +236,23 @@ const namingSummary = computed(() => {
 })
 
 /**
- * 정책의 **이름과 배선**이 어긋난 것, 그리고 **순환**. 판정이 아니라 **읽을 목록**이다.
+ * **순환만** 본다 — 정책이 자기가 일으킨 사건에 다시 걸린 것.
  *
- * 정책 *이름*은 코드 생성이 읽고 사람은 *설명*을 읽는다. 이름이 "이 사건에
- * 반응한다" 고 말하는데 실제로 걸린 사건이 다르면 **산출물이 갈린다**.
- * 순환은 방아쇠 사건을 그 정책이 부르는 커맨드가 다시 내는 것 — 제자리 돌기다.
+ * 2026-10-20 에 이름-배선 어긋남은 이 줄에서 **뺐다**(done15 §295): 이름을
+ * 배선에서 만들게 고쳐서(ISS-52) 어긋날 수가 없어졌다. 백엔드 검사는 그대로
+ * 돌고 **로그에 남는다** — 다시 0 이 아니게 되면 화면이 아니라 그 고침을 본다.
  *
- * 2026-10-16 실측(정책 5개 · done13 §269): 순환 1 · 이름 불일치 3. 그 셋 중
- * 둘은 이름이 가리키는 사건이 **그래프에 아예 없었고**, 하나는
- * **라벨이 겹쳐 안 보이던** 것이었다 — `…OnAttendanceClosingConfirmed` 인데
- * 실제 방아쇠는 `…Finalized` 이고 둘의 한국어 라벨이 같다.
- * **결함 둘이 겹쳐 숨는다** — 그래서 위의 라벨 줄과 이 줄을 같이 본다.
+ * 순환은 **다른 결함**이고 ISS-52 가 못 고친다. 방아쇠 사건을 그 정책이 부르는
+ * 커맨드가 다시 내는 것 — 생성물이 제자리로 돈다. 2026-10-16 에 1건 나왔고
+ * 그 뒤로 0건이다. **드물어서 소음이 되지 않는다.**
  */
-const wiringSummary = computed(() => {
+const loopSummary = computed(() => {
   const w = summary.value?.wiring
-  if (!w || (!w.circular && !w.name_mismatch)) return null
-  const first = (w.look_first || [])[0]
+  if (!w || !w.circular) return null
   const loop = (w.circular_list || [])[0]
   return {
-    circular: w.circular || 0,
-    mismatch: w.name_mismatch || 0,
-    ghost: (w.look_first || []).filter((d) => d && d.named_event_exists === false).length,
-    example: first
-      ? `${first.policy} — 이름은 ${first.name_says}, 실제는 ${first.actually}`
-      : (loop ? `${loop.policy} — ${loop.event} 를 다시 낸다` : ''),
+    circular: w.circular,
+    example: loop ? `${loop.policy} — ${loop.event} 를 다시 낸다` : '',
   }
 })
 
@@ -2906,14 +2899,24 @@ function useSample() {
               서로 다른 사건 {{ namingSummary.events }}개가 함께 쓰고 있습니다
               <template v-if="namingSummary.example"><br />예: {{ namingSummary.example }}</template>
             </p>
-            <p v-if="wiringSummary" class="mini-summary__review">
-              정책 배선을 확인하세요 —
-              <template v-if="wiringSummary.mismatch">이름과 걸린 사건이 다른 것
-              <strong>{{ wiringSummary.mismatch }}개</strong><template v-if="wiringSummary.ghost">
-              (그중 {{ wiringSummary.ghost }}개는 이름의 사건이 <strong>아예 없습니다</strong>)</template></template>
-              <template v-if="wiringSummary.circular"><template v-if="wiringSummary.mismatch"> · </template>제자리로 도는 것
-              <strong>{{ wiringSummary.circular }}개</strong></template>
-              <template v-if="wiringSummary.example"><br />예: {{ wiringSummary.example }}</template>
+            <!-- **배선 줄을 뺐다** (2026-10-20 · done15 §295).
+                 이 줄은 "정책 이름이 실제 배선과 다르다" 를 알리는 줄이었다.
+                 2026-10-20 에 **이름을 배선에서 만들게** 고쳤으므로(ISS-52)
+                 어긋날 수가 없다 — 띄울 것이 없다.
+                 ⚠ 검사는 **지우지 않았다.** 그대로 돌고 로그에 남는다. 다시 0 이
+                   아니게 되면 그건 ISS-52 가 깨졌다는 뜻이고, 그때는 화면이
+                   아니라 **그 고침을 봐야 한다.**
+                 ⚠ 이 줄은 **덜 세고 있었다** — 이름의 *사건* 쪽만 보고 *동작* 쪽은
+                   안 봤다(ISS-40). 같은 판에서 모달은 4개라 했는데 실제로는
+                   5개가 어긋나 있었다. 숫자만 남겨도 틀린 숫자였다.
+                 ⚠ **순환만 남겼다.** 그건 ISS-52 가 **못 고치는** 다른 결함이고
+                   (정책이 **자기가 일으킨 사건**에 다시 걸린다 = 생성물이 제자리로
+                   돈다), 드물게 뜬다(10-16 에 1건 · 그 뒤로 0건). 드물기 때문에
+                   소음이 되지 않고, 뜨면 **반드시 봐야 한다.** -->
+            <p v-if="loopSummary" class="mini-summary__review">
+              제자리로 도는 정책이 <strong>{{ loopSummary.circular }}개</strong> 있습니다 —
+              자기가 일으킨 사건에 다시 걸려 있습니다
+              <template v-if="loopSummary.example"><br />예: {{ loopSummary.example }}</template>
             </p>
             <!-- **갈 곳을 적는다.** 2026-10-19 에 사용자가 물었다 — *"검토한다 해도
                  수정할 수 없는데"*. 전제가 틀렸다: 고칠 수단은 **있다**.
@@ -2923,7 +2926,7 @@ function useSample() {
                  **모달이 그걸 말하지 않아서** 읽는 사람에게는 할 일이 없었다 —
                  ISS-47("네비게이터에서 확인" 이 아무 데도 안 데려간다)과 같은 부류다.
                  그래서 **볼 것이 있을 때만** 한 줄을 더 띄운다(§291). -->
-            <p v-if="reviewSummary || wiringSummary || namingSummary"
+            <p v-if="reviewSummary || namingSummary"
                class="mini-summary__where">
               고치는 곳 — <strong>Design 캔버스 오른쪽 💬 Chat</strong>(모델 수정)에서
               정책의 <strong>이름을 바꾸거나 · 방아쇠를 다시 걸거나 · 지울 수</strong> 있습니다

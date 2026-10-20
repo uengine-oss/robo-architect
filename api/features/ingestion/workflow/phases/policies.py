@@ -30,6 +30,12 @@ from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
 
 
+# 한 세션에서 **이미 지어 준 이름**. 같은 이름이 둘 나오면 `policy_key` 가 같아져
+# MERGE 가 둘을 하나로 합친다 — 그건 조용한 손실이라 부딪히면 안 바꾼다.
+# 적재는 `asyncio.gather` 로 돌지만 예약과 검사 사이에 `await` 가 없어 안전하다.
+_derived_in_session: dict[str, set[str]] = {}
+
+
 def _fuzzy_match(query: str, candidates: list[tuple[str, str, Any]]) -> str | None:
     """
     query를 candidates [(name, displayName, obj)] 중에서 매칭.
@@ -194,7 +200,66 @@ async def _create_policy_with_links(
     except Exception:
         pass
 
-    pol_display_name = getattr(pol, "displayName", None) or pol.name
+    # ── 이름을 **배선에서 만든다** (ISS-52 · 2026-10-20 · done15 §295) ─────────
+    #
+    # 정책 이름은 LLM 이 자유롭게 적는 칸인데, 그 칸이 **생성물의 클래스 파일
+    # 이름**이 된다. 2026-10-20 실측: LLM 정책 **7개 중 5개**의 이름이 실제 배선과
+    # 달랐다. 가장 나쁜 것 셋은 이랬다 —
+    #
+    #     이름   ReleaseLeaveDeductionOnLeaveCancellation ("휴가 취소되면 공제를 푼다")
+    #     실제   LeaveDeductionReleased → **SummarizeMonthlyAttendance** ("월 근태 집계")
+    #
+    # 설명과 배선은 서로 맞았다. **이름만 거짓**이었고, 그 이름이 파일명이 된다.
+    #
+    # `cross_bc` 는 이미 배선에서 이름을 지어 **7개 전부 일치**한다. 같은 방식을
+    # 여기에 쓴다. 꼴은 각자 지킨다 — cross_bc 는 `On<사건>Trigger<동작>`,
+    # 여기는 이 저장소가 써 온 **`<동작>On<사건>`** 이다. 꼴을 통일하면 맞는
+    # 이름 7개를 함께 망친다(실측으로 확인했다).
+    #
+    # ⚠ 2026-10-16 에 **되돌린 것**(§270)과 다르다. 그때는 *있는 이름을 정규식으로
+    #   고쳤고* 반례(`NoOnPartAtAll`)에 걸렸다. 지금은 **이름을 읽지 않는다** —
+    #   배선만 보고 짓는다. 반례가 성립하지 않는다.
+    # ⚠ LLM 이 지은 이름은 **버리지 않는다** — `proposedName` 으로 남겨 나중에 잰다.
+    # ⚠ 이름이 같아지면 `policy_key` 가 같아져 **MERGE 가 둘을 하나로 합친다.**
+    #   그건 조용한 손실이라, 부딪히면 **LLM 이름을 그대로 두고 기록한다.**
+    derived_name = None
+    try:
+        with ctx.client.session() as _name_s:
+            _nr = _name_s.run(
+                "MATCH (e:Event {id: $eid}), (c:Command {id: $cid}) "
+                "RETURN e.name AS evt, c.name AS cmd",
+                eid=trigger_event_id, cid=invoke_command_id,
+            ).single()
+        if _nr and _nr["evt"] and _nr["cmd"]:
+            derived_name = f"{_nr['cmd']}On{_nr['evt']}"
+    except Exception:  # noqa: BLE001 — 이름을 못 지으면 LLM 것을 그대로 쓴다
+        derived_name = None
+
+    proposed_name = pol.name
+    if derived_name and derived_name != proposed_name:
+        # 같은 세션 안에서 이미 쓴 이름이면 합쳐진다 — 그럴 땐 안 바꾼다.
+        taken = _derived_in_session.setdefault(ctx.session.id, set())
+        if derived_name in taken:
+            SmartLogger.log(
+                "WARN",
+                f"Derived policy name collides, keeping LLM name: {derived_name}",
+                category="ingestion.workflow.policies.name_collision",
+                params={"session_id": ctx.session.id,
+                        "proposed_name": proposed_name, "derived_name": derived_name},
+            )
+        else:
+            taken.add(derived_name)
+            SmartLogger.log(
+                "INFO",
+                f"Policy name derived from wiring: {proposed_name} -> {derived_name}",
+                category="ingestion.workflow.policies.name_derived",
+                params={"session_id": ctx.session.id,
+                        "proposed_name": proposed_name, "derived_name": derived_name,
+                        "trigger_event": _nr["evt"], "invoke_command": _nr["cmd"]},
+            )
+            pol.name = derived_name
+
+    pol_display_name = getattr(pol, "displayName", None) or proposed_name
     # Create policy
     try:
         created_pol = await asyncio.wait_for(
@@ -206,6 +271,7 @@ async def _create_policy_with_links(
                 invoke_command_id=invoke_command_id,
                 description=pol.description,
                 display_name=pol_display_name,
+                proposed_name=proposed_name,
             ),
             timeout=8.0
         )
