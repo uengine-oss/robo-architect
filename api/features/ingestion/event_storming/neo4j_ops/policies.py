@@ -56,6 +56,7 @@ class PolicyOps:
         "몇 개가 어떻게 달랐나" 를 나중에 못 센다. 같으면 안 적는다.
         """
         import time
+        from api.features.ingestion.event_storming.neo4j_client import retry_on_transient
         start_time = time.time()
         # 12초(드라이버 재시도 창 · §300)보다 **넉넉히 뒤**에 둔다 — 안 그러면
         # 재시도 도중에 우리 타임아웃이 터져 교착이 `TimeoutError` 로 덮인다.
@@ -123,7 +124,10 @@ class PolicyOps:
                 #   여기만 바꾼 이유는 **여기서만 교착이 측정됐기** 때문이다.
                 #   다른 자리에서 교착이 보이면 같은 방식으로 옮긴다 — 한꺼번에
                 #   84곳을 바꾸는 것은 재 보지 않은 변경이다.
-                single_result = session.execute_write(
+                # `execute_write` 는 `TransientError`(교착)를 알아서 다시 건다.
+                # `pg_type` 충돌은 `ClientError` 라 그쪽이 안 받으므로
+                # **한 겹 더 감싼다**(§300). 둘 다 같은 돌진에서 나온다.
+                single_result = retry_on_transient(lambda: session.execute_write(
                     lambda tx: tx.run(
                         query,
                         key=key,
@@ -136,7 +140,7 @@ class PolicyOps:
                         invoke_command_id=invoke_command_id,
                         description=description,
                     ).single()
-                )
+                ))
 
                 elapsed = time.time() - start_time
                 if elapsed > MAX_TIMEOUT:

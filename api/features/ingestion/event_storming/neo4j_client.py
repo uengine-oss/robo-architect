@@ -36,6 +36,54 @@ from .neo4j_ops.ui_wireframes import UIWireframeOps
 from .neo4j_ops.user_stories import UserStoryOps
 
 
+# ── 일시적인 그래프 오류를 **다시 해 본다** (2026-10-20 · done15 §300) ──────
+#
+# 적재는 정책·속성을 `asyncio.gather` 로 **동시에** 건드린다. 2026-10-20 실측에서
+# 그 한 번의 돌진(02:15:01 의 **150밀리초 안**)에 14건이 같이 터졌다:
+#
+#     8건  Neo.TransientError.Transaction.DeadlockDetected
+#     6건  Neo.ClientError.Statement.ArgumentError
+#          "duplicate key value violates unique constraint **pg_type_typname_nsp_index**"
+#
+# 둘 다 **같은 뿌리**다 — 라벨을 처음 쓸 때 그래프 엔진이 Postgres 쪽 타입과
+# 테이블을 만드는데, 여럿이 동시에 만들면 카탈로그에서 부딪친다. 둘 다
+# **다시 하면 통과하는** 종류다(2026-10-15 에도 같은 짝이 나왔다 — `pg_type` 11 ·
+# 교착 13 · done12 §233).
+#
+# ⚠ 그런데 **드라이버는 앞의 것만 재시도한다.** `TransientError` 는 관리
+#   트랜잭션이 알아서 다시 걸지만, `pg_type` 충돌은 `ClientError` 로 와서
+#   **그냥 실패로 떨어진다.** 그래서 그 한 가지를 여기서 이름으로 집어 다시 한다.
+#
+# ⚠ **아무 ClientError 나 다시 하지 않는다.** ClientError 는 보통 "질의가 틀렸다"
+#   는 뜻이고, 그걸 다시 하면 같은 실패를 반복하며 시간만 쓴다. 그래서 표식을
+#   **이 한 줄로 좁혔다.** 늘릴 때는 "다시 하면 통과하는가" 를 재고 늘린다.
+_RETRYABLE_MARKERS = ("pg_type_typname_nsp_index",)
+
+
+def is_retryable_graph_error(exc: BaseException) -> bool:
+    """다시 해 볼 만한 일시적 오류인가."""
+    if "TransientError" in type(exc).__name__:
+        return True
+    return any(m in str(exc) for m in _RETRYABLE_MARKERS)
+
+
+def retry_on_transient(fn, *, attempts: int = 4, base_delay: float = 0.25):
+    """`fn()` 을 돌리고, **일시적 오류면** 짧게 쉰었다 다시 한다.
+
+    네 번 · 합쳐서 2초가 안 된다. 그보다 오래 걸리는 것은 일시적인 것이
+    아니라 **설계가 부딪치는 것**이고, 그건 숨기면 안 된다.
+    """
+    import time as _t
+
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 — 아래에서 가려 낸다
+            if i == attempts - 1 or not is_retryable_graph_error(e):
+                raise
+            _t.sleep(base_delay * (2 ** i))
+
+
 @dataclass
 class Neo4jConfig:
     """Neo4j connection configuration."""

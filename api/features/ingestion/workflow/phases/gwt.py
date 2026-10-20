@@ -25,6 +25,7 @@ from api.platform.env import (
     get_llm_provider_model,
 )
 from api.platform.observability.request_logging import summarize_for_log
+from api.features.ingestion.event_storming.neo4j_client import retry_on_transient
 from api.platform.observability.smart_logger import SmartLogger
 
 
@@ -351,9 +352,16 @@ async def _generate_gwt_for_command(
                     "trigger_evt_props": trigger_evt_props_list,
                 }
         
+        # 일시적 오류면 다시 한다 (2026-10-20 · done15 §300).
+        # 2026-10-20 실측: 정책을 동시에 만드는 그 150밀리초에 여기서 **6건**이
+        # `pg_type_typname_nsp_index` 중복키로 죽었다 — 읽기 질의인데도 그렇다.
+        # 라벨을 처음 쓸 때 엔진이 Postgres 타입을 만들기 때문이고,
+        # 다시 하면 통과한다. 실패하면 속성이 빈 채로 GWT 가 만들어진다 —
+        # **조용한 손실**이라 더 나쁘다.
+        # 타임아웃을 10 → 20 으로 넣었다 — 재시도 네 번이 들어갈 자리가 필요하다.
         props_data = await asyncio.wait_for(
-            asyncio.to_thread(_fetch_properties),
-            timeout=10.0
+            asyncio.to_thread(lambda: retry_on_transient(_fetch_properties)),
+            timeout=20.0
         )
         cmd_props = props_data["cmd_props"]
         agg_props = props_data["agg_props"]
