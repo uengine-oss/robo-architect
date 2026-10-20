@@ -7,6 +7,7 @@ while keeping a single stable access point (`get_neo4j_client`) for the ingestio
 
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -59,6 +60,46 @@ from .neo4j_ops.user_stories import UserStoryOps
 #   **이 한 줄로 좁혔다.** 늘릴 때는 "다시 하면 통과하는가" 를 재고 늘린다.
 _RETRYABLE_MARKERS = ("pg_type_typname_nsp_index",)
 
+# ── 다시 한 횟수를 **센다** (2026-10-20 · done15 §301) ────────────────
+#
+# 재시도를 넣고 나서 바로 알았다 — **성공한 재시도는 아무것도 안 남긴다.**
+# 2026-10-20 적재에서 오류가 0 으로 나왔는데, 그게 **재시도가 삼켜서인지
+# 애초에 안 난 것인지 가를 수가 없었다**(정책이 4개라 부딪힐 일이 적었다).
+#
+# 로그로는 안 된다 — 이 저장소는 **파일 최소 수준이 ERROR** 라 INFO·WARN 이
+# 안 남는다. 그래서 적재 **요약에 싣는다**(화면엔 안 띄운다 · §296).
+_retry_counts: dict[str, int] = {}
+_retry_lock = threading.Lock()
+
+
+def _retry_kind(exc: BaseException) -> str:
+    """어떤 부딪침인가. **대소문자를 안 가린다** — 같은 일을
+    두 가지로 부른다(코드는 `DeadlockDetected` · 메시지는 `deadlock detected`).
+    """
+    text = str(exc).lower()
+    if "pg_type_typname_nsp_index" in text:
+        return "pg_type"
+    if "deadlock" in text:
+        return "deadlock"
+    return "other_transient"
+
+
+def retry_stats_reset() -> None:
+    """적재 한 판이 시작할 때 부른다."""
+    with _retry_lock:
+        _retry_counts.clear()
+
+
+def retry_stats_snapshot() -> dict[str, int]:
+    """지금까지 몇 번 다시 했나. 비었으면 빈 dict 다."""
+    with _retry_lock:
+        return dict(_retry_counts)
+
+
+def _retry_bump(key: str) -> None:
+    with _retry_lock:
+        _retry_counts[key] = _retry_counts.get(key, 0) + 1
+
 
 def is_retryable_graph_error(exc: BaseException) -> bool:
     """다시 해 볼 만한 일시적 오류인가."""
@@ -79,8 +120,12 @@ def retry_on_transient(fn, *, attempts: int = 4, base_delay: float = 0.25):
         try:
             return fn()
         except Exception as e:  # noqa: BLE001 — 아래에서 가려 낸다
-            if i == attempts - 1 or not is_retryable_graph_error(e):
+            if not is_retryable_graph_error(e):
                 raise
+            if i == attempts - 1:
+                _retry_bump("gave_up." + _retry_kind(e))
+                raise
+            _retry_bump(_retry_kind(e))
             _t.sleep(base_delay * (2 ** i))
 
 

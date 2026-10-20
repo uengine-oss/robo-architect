@@ -29,6 +29,10 @@ import asyncio
 import re
 import time
 
+from api.features.ingestion.event_storming.neo4j_client import (
+    retry_stats_reset,
+    retry_stats_snapshot,
+)
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.ingestion_llm_runtime import (
     get_llm,
@@ -368,6 +372,9 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
             from api.features.ingestion.workflow import skip_ledger
 
             skip_ledger.start(session.id)
+            # 다시 한 횟수도 여기서 부른다(§301) — 기록과 같은 지점에서 시작해야
+            # 요약의 숫자가 같은 판을 가리킨다.
+            retry_stats_reset()
         except Exception:  # noqa: BLE001
             pass
 
@@ -1044,6 +1051,11 @@ async def run_ingestion_workflow(session: IngestionSession, content: str) -> Asy
                     "stored": stored,
                     "missing": missing,
                     "skipped": skipped,
+                    # 다시 한 횟수 (§301). **화면엔 안 띄운다** — 사용자가
+                    # 할 일이 없다. 우리가 "오류 0 이 **재시도가 삼켜서인지
+                    # 애초에 안 난 것인지**" 를 가르려고 실는다.
+                    # 비어 있으면 돌진 자체가 없었다는 뜻이다.
+                    "retries": retry_stats_snapshot(),
                     "unused": unused,
                     # 금지가 걸린 커맨드를 자동 실행하는 정책 — **판정이 아니라 목록**이다
                     "review": review,
