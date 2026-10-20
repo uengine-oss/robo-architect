@@ -104,6 +104,31 @@ def test_같은_루틴은_한_번만_읽는다(monkeypatch):
     assert calls == ["7", "7"], calls
 
 
+def test_분석_그래프가_교체돼도_영속_출처_스냅샷으로_표를_보인다(monkeypatch):
+    """다른 프로젝트 분석이 전역 analyzer graph를 교체해도 기존 설계 근거는 남는다."""
+    monkeypatch.setattr(tr, "_routine_entry", lambda rid, cache: None)
+    row = _edge(rid="deleted-routine")
+    row.update({
+        "source_summary": "휴가 신청을 저장한다",
+        "source_file_path": "src/LeaveService.java",
+        "source_start_line": 10,
+        "source_end_line": 24,
+        "reads_tables": ["HR_EMPLOYEE", "HR_LEAVE_REQUEST"],
+        "writes_tables": ["HR_LEAVE_REQUEST"],
+    })
+    out = tr._sources_from_persisted(
+        _Req(), "agg-1", {"name": "휴가"}, "Aggregate", None, [row],
+    )
+    fn = out["sources"][0]["functions"][0]
+    assert fn["snapshot"] is True
+    assert fn["location"] == "src/LeaveService.java:10-24"
+    tables = {t["name"]: t["access"] for t in fn["tables"]}
+    assert tables == {
+        "HR_EMPLOYEE": ["READS"],
+        "HR_LEAVE_REQUEST": ["READS", "WRITES"],
+    }
+
+
 def test_응답_모양이_옛_경로와_같다(monkeypatch):
     """화면을 안 고쳐도 되게 유지한다."""
     monkeypatch.setattr(tr, "_routine_entry", lambda rid, cache: None)

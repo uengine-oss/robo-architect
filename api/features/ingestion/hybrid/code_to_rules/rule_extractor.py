@@ -33,6 +33,8 @@ from api.platform.observability.smart_logger import SmartLogger
 _QUERY = """
 MATCH (f)-[hr:HAS_RULE]->(r:RULE)
 WITH f, hr, r,
+     [(f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE) | rt.name] AS reads_tables,
+     [(f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE) | wt.name] AS writes_tables,
      [(r)-[:HAS_EXAMPLE]->(e:EXAMPLE) |
         {
           example_id:  coalesce(e.example_id, e.id),
@@ -48,6 +50,11 @@ RETURN
     coalesce(f.name, f.function_id, f.id, '') AS function_name,
     coalesce(f.module_id, f.owner_id, f._owner) AS module_id,
     f.summary                         AS function_summary,
+    f.file_path                       AS source_file_path,
+    f.start_line                      AS source_start_line,
+    f.end_line                        AS source_end_line,
+    reads_tables                      AS reads_tables,
+    writes_tables                     AS writes_tables,
     r.statement                       AS statement,
     coalesce(r._id, r.id)             AS analyzer_rule_id,
     r.condition_description           AS condition_description,
@@ -193,6 +200,12 @@ def _structured_rule(rec) -> RuleDTO | None:
         # retrievable module id. Module search falls back to routine summaries.
         source_module=(fid if rec.get("module_id") in (None, "analyzer")
                        else str(rec.get("module_id"))),
+        source_summary=rec.get("function_summary"),
+        source_file_path=rec.get("source_file_path"),
+        source_start_line=rec.get("source_start_line"),
+        source_end_line=rec.get("source_end_line"),
+        reads_tables=sorted({str(x) for x in (rec.get("reads_tables") or []) if x}),
+        writes_tables=sorted({str(x) for x in (rec.get("writes_tables") or []) if x}),
         title=f"{condition}: {then}" if condition else then,
         examples=[ExampleDTO(example_id=f"{rid}_example", given=given, when_=when, then_=then)],
     )
@@ -283,6 +296,12 @@ async def extract_rules_from_analyzer_graph(
                 source_function=fn_name,
                 # 소속 모듈 = analyzer 가 준 `owner_id` 속성 (id 를 뜯지 않는다).
                 source_module=rec.get("module_id") or None,
+                source_summary=rec.get("function_summary"),
+                source_file_path=rec.get("source_file_path"),
+                source_start_line=rec.get("source_start_line"),
+                source_end_line=rec.get("source_end_line"),
+                reads_tables=sorted({str(x) for x in (rec.get("reads_tables") or []) if x}),
+                writes_tables=sorted({str(x) for x in (rec.get("writes_tables") or []) if x}),
                 confidence=1.0,
                 title=(statement or None),
                 examples=examples,

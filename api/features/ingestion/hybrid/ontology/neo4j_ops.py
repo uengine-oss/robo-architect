@@ -387,11 +387,20 @@ def save_rules(session_id: str, rules: list[RuleDTO]) -> None:
                 f"MERGE (r:{L_RULE} {{id: $id, session_id: $sid}}) "
                 "SET r.given = $given, r.`when` = $when, r.`then` = $then, "
                 "    r.source_function = $sf, r.source_module = $sm, r.confidence = $conf, "
+                "    r.source_summary = $source_summary, r.source_file_path = $source_file_path, "
+                "    r.source_start_line = $source_start_line, r.source_end_line = $source_end_line, "
+                "    r.reads_tables = $reads_tables, r.writes_tables = $writes_tables, "
                 "    r.title = $title, r.context_cluster = $ctx, "
                 "    r.es_role = $es_role, r.es_role_confidence = $es_role_conf",
                 id=rule.id, sid=session_id,
                 given=rule.given, when=rule.when, then=rule.then,
                 sf=rule.source_function, sm=rule.source_module, conf=rule.confidence,
+                source_summary=rule.source_summary,
+                source_file_path=rule.source_file_path,
+                source_start_line=rule.source_start_line,
+                source_end_line=rule.source_end_line,
+                reads_tables=rule.reads_tables,
+                writes_tables=rule.writes_tables,
                 title=rule.title, ctx=rule.context_cluster,
                 es_role=rule.es_role, es_role_conf=rule.es_role_confidence,
             )

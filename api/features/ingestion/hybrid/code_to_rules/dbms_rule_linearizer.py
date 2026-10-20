@@ -19,10 +19,18 @@ _RULE_QUERY = """
 MATCH (root)
 WHERE root:FUNCTION OR root:PROCEDURE OR root:METHOD OR root:TRIGGER
 MATCH (root)-[:PARENT_OF*0..]->(o)-[hr:HAS_RULE]->(r:RULE)
+WITH root, o, hr, r,
+     [(root)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE) | rt.name] AS reads_tables,
+     [(root)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE) | wt.name] AS writes_tables
 RETURN coalesce(root.function_id, root._id, root.id) AS function_id,
        coalesce(root.name, root.function_id, root.id, '') AS function_name,
        coalesce(root.module_id, root.owner_id, root._owner) AS module_id,
        root.summary                   AS function_summary,
+       root.file_path                 AS source_file_path,
+       root.start_line                AS source_start_line,
+       root.end_line                  AS source_end_line,
+       reads_tables                   AS reads_tables,
+       writes_tables                  AS writes_tables,
        r.statement                    AS statement,
        coalesce(r._id, r.id)          AS analyzer_rule_id,
        r.condition_description        AS condition_description,
@@ -66,6 +74,11 @@ def linearize_dbms_rules(session) -> list[dict[str, Any]]:
             "function_name": row["function_name"] or row["function_id"],
             "module_id": row["module_id"],
             "function_summary": row["function_summary"],
+            "source_file_path": row["source_file_path"],
+            "source_start_line": row["source_start_line"],
+            "source_end_line": row["source_end_line"],
+            "reads_tables": list(row["reads_tables"] or []),
+            "writes_tables": list(row["writes_tables"] or []),
             "statement": row["statement"],
             "analyzer_rule_id": row["analyzer_rule_id"],
             "condition_description": row["condition_description"],

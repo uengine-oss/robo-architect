@@ -367,6 +367,7 @@ def _sources_from_persisted(
     """
     grouped: dict[str, dict] = {}
     func_cache: dict[str, dict | None] = {}
+    snapshot_by_routine: dict[str, dict] = {}
     for r in rows:
         usid = r.get("us_id") or ""
         g = grouped.setdefault(usid, {
@@ -392,11 +393,38 @@ def _sources_from_persisted(
         rid = r.get("routine_id") or ""
         if rid and rid not in g["_fids"]:
             g["_fids"].append(rid)
+        if rid and rid not in snapshot_by_routine:
+            table_access: dict[str, set[str]] = {}
+            for access, names in (("READS", r.get("reads_tables") or []),
+                                  ("WRITES", r.get("writes_tables") or [])):
+                for name in names:
+                    if name:
+                        table_access.setdefault(name, set()).add(access)
+            tables = [
+                {"name": name, "columns": [], "access": sorted(accesses)}
+                for name, accesses in sorted(table_access.items())
+            ]
+            location = r.get("source_file_path") or ""
+            if r.get("source_start_line"):
+                location += f":{r['source_start_line']}"
+                if r.get("source_end_line"):
+                    location += f"-{r['source_end_line']}"
+            snapshot_by_routine[rid] = {
+                "id": rid,
+                "name": r.get("fn") or "",
+                "summary": r.get("source_summary") or "",
+                "location": location,
+                "code": "",
+                "tables": tables,
+                "snapshot": True,
+            }
 
     sources: list[dict] = []
     for g in grouped.values():
         for rid in g.pop("_fids"):
             entry = _routine_entry(rid, func_cache)
+            if entry is None:
+                entry = snapshot_by_routine.get(rid)
             if entry is not None:
                 g["functions"].append(entry)
         # 주 근거가 먼저 보이게 한다.
@@ -514,6 +542,12 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
         RETURN coalesce(us.id, '') AS us_id, us.role AS role, us.action AS action,
                r.title AS title, r.given AS given, r.when AS wh, r.then AS th,
                r.source_function AS fn, r.source_module AS routine_id,
+               r.source_summary AS source_summary,
+               r.source_file_path AS source_file_path,
+               r.source_start_line AS source_start_line,
+               r.source_end_line AS source_end_line,
+               coalesce(r.reads_tables, []) AS reads_tables,
+               coalesce(r.writes_tables, []) AS writes_tables,
                coalesce(sf.evidence_role, 'primary') AS evidence_role,
                sf.via_task_id AS via_task_id
     """, {"id": node_id})

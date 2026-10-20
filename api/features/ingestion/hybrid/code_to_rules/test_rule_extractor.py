@@ -9,12 +9,23 @@ def test_structured_analyzer_rule_becomes_mapping_candidate():
         "analyzer_rule_id": "code:c-src/payment.c:verify_payment::R-42",
         "condition_description": "결제수단이 카드이고 인증에 성공함",
         "effect_descriptions": ["승인 상태를 저장", "승인 결과를 반환"],
+        "function_summary": "결제 승인을 검증한다",
+        "source_file_path": "c-src/payment.c",
+        "source_start_line": 10,
+        "source_end_line": 40,
+        "reads_tables": ["PAYMENT", "CUSTOMER", "PAYMENT"],
+        "writes_tables": ["PAYMENT"],
     })
 
     assert rule is not None
     assert rule.source_module == "c-src/payment.c"
     assert rule.given == "결제수단이 카드이고 인증에 성공함"
     assert rule.then == "승인 상태를 저장; 승인 결과를 반환"
+    assert rule.source_summary == "결제 승인을 검증한다"
+    assert rule.source_file_path == "c-src/payment.c"
+    assert (rule.source_start_line, rule.source_end_line) == (10, 40)
+    assert rule.reads_tables == ["CUSTOMER", "PAYMENT"]
+    assert rule.writes_tables == ["PAYMENT"]
     assert len(rule.examples) == 1
     assert rule.examples[0].then_ == rule.then
 

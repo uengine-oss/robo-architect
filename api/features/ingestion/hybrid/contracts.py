@@ -195,6 +195,15 @@ class RuleDTO(BaseModel):
     then: str
     source_function: Optional[str] = None
     source_module: Optional[str] = None
+    # Analyzer is a mutable, single-active-workspace graph.  Persist the
+    # provenance needed by an already-generated design so a later analysis of
+    # another project cannot leave this Rule pointing at a deleted routine id.
+    source_summary: Optional[str] = None
+    source_file_path: Optional[str] = None
+    source_start_line: Optional[int] = None
+    source_end_line: Optional[int] = None
+    reads_tables: list[str] = Field(default_factory=list)
+    writes_tables: list[str] = Field(default_factory=list)
     confidence: float = 1.0
     # Rule.statement — the one-line business intent of this rule. Preferred over
     # given/when/then for classification since GWT values often carry concrete
