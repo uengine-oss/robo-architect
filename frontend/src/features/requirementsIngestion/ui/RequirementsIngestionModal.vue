@@ -179,84 +179,6 @@ const missingSummary = computed(() => {
  */
 
 /**
- * 금지가 걸린 커맨드를 **자동 실행하는 정책**. 판정이 아니라 **읽을 목록**이다.
- *
- * 2026-10-16 실측: ⑤판 정책 하나가 원문이 두 군데서 금지한 동작
- * ("급여 연계가 전송된 뒤에는 마감을 해제할 수 없다")을 자동화하라고 적었다.
- * 설계대로 구현되면 감사 대상이고, 화면은 초록이었다. 그때는 그 금지가 모델에
- * 아예 없어서 비교할 것조차 없었다 — 지금은 있다(done13 §253~§256).
- *
- * 걸러 내지 않는 이유: 금지가 걸린 커맨드를 자동 실행하는 정책이 언제나 틀린 것은
- * 아니다. 거르면 맞는 정책도 같이 사라진다.
- */
-const reviewSummary = computed(() => {
-  const r = summary.value?.review
-  if (!r || !r.prohibitions) return null
-  const look = r.look_first || []
-  // **이름을 띄운다.** 2026-10-19 까지 이 줄은 개수만 냈고, 좁히기가 비면
-  // `look_first` 도 비어서 **어느 정책인지 아무 데도 없었다**(done14 §283).
-  // 서버가 이제 좁힌 것이 없으면 넓은 목록을 보내 준다.
-  const names = []
-  for (const d of look) {
-    if (d && d.policy && !names.includes(d.policy)) names.push(d.policy)
-  }
-  return {
-    policies: r.policies,
-    prohibitions: r.prohibitions,
-    // 좁히기가 골라낸 수. 0 이면 아래 이름들은 **넓은 쪽**이라 순서에 뜻이 없다.
-    narrowed: Number(r.narrowed || 0),
-    names: names.slice(0, 5),
-    more: Math.max(0, names.length - 5),
-  }
-})
-
-/**
- * 서로 다른 Event 가 **같은 한국어 라벨**을 쓰는 것. 판정이 아니라 **읽을 목록**이다.
- *
- * 왜 보여 주나: 정책 *이름*은 영어 Event 이름으로 만들고 정책 *설명*은 한국어
- * `displayName` 을 쓴다. 라벨이 겹치면 **한국어만 읽는 사람에게는 한 사건으로
- * 보이고** 정책 설명도 같아진다. 2026-10-16 실측: Event 43개 중 두 개가
- * "근태 마감 확정됨" 을 함께 쓰고 있었다(`AttendanceClosingConfirmed` ·
- * `AttendanceClosingFinalized`). 그날 `GrantAnnualLeaveOnEntitlementCalculated` 가
- * 순환처럼 보인 것도 라벨이 어긋난 탓이었다 — 하마터면 없는 결함을 보고할
- * 뻔했다(done13 §253·§268).
- *
- * 거르지 않는 이유: 라벨이 겹쳐도 **맞는 경우가 있다**(정말 같은 사건을 두 이름으로
- * 적었을 수 있다). 어느 쪽인지는 사람만 안다.
- */
-const namingSummary = computed(() => {
-  const n = summary.value?.naming
-  if (!n || !n.label_clashes) return null
-  const first = (n.look_first || [])[0]
-  return {
-    clashes: n.label_clashes,
-    events: n.events_affected,
-    example: first ? `"${first.label}" ← ${(first.names || []).join(' · ')}` : '',
-  }
-})
-
-/**
- * **순환만** 본다 — 정책이 자기가 일으킨 사건에 다시 걸린 것.
- *
- * 2026-10-20 에 이름-배선 어긋남은 이 줄에서 **뺐다**(done15 §295): 이름을
- * 배선에서 만들게 고쳐서(ISS-52) 어긋날 수가 없어졌다. 백엔드 검사는 그대로
- * 돌고 **로그에 남는다** — 다시 0 이 아니게 되면 화면이 아니라 그 고침을 본다.
- *
- * 순환은 **다른 결함**이고 ISS-52 가 못 고친다. 방아쇠 사건을 그 정책이 부르는
- * 커맨드가 다시 내는 것 — 생성물이 제자리로 돈다. 2026-10-16 에 1건 나왔고
- * 그 뒤로 0건이다. **드물어서 소음이 되지 않는다.**
- */
-const loopSummary = computed(() => {
-  const w = summary.value?.wiring
-  if (!w || !w.circular) return null
-  const loop = (w.circular_list || [])[0]
-  return {
-    circular: w.circular,
-    example: loop ? `${loop.policy} — ${loop.event} 를 다시 낸다` : '',
-  }
-})
-
-/**
  * 건너뛴 것의 **내역**. 총계와 내역이 **더해서 맞아야** 한다.
  *
  * 2026-10-19 실측: 모달이 "21건이 건너뛰어졌습니다 — events_from_us 4 · policies 4 ·
@@ -2887,50 +2809,31 @@ function useSample() {
             <!-- "쓰이지 않은 입력" 줄은 2026-10-19 에 뺐다 — 위 script 의
                  `unused` 주석에 이유가 있다(용어는 구조상 항상 100% · 조각은
                  사용자가 답할 질문이 아니다). 숫자는 payload 에 그대로 남는다. -->
-            <p v-if="reviewSummary" class="mini-summary__review">
-              검토가 필요합니다 — 정책 <strong>{{ reviewSummary.policies }}개</strong>가
-              <strong>금지가 걸린 커맨드</strong>를 자동 실행합니다
-              (금지 {{ reviewSummary.prohibitions }}건)
-              <template v-for="(n, i) in reviewSummary.names" :key="i"><br />· {{ n }}</template>
-              <template v-if="reviewSummary.more"><br />· 그 밖에 {{ reviewSummary.more }}개</template>
-            </p>
-            <p v-if="namingSummary" class="mini-summary__review">
-              이름과 라벨이 어긋납니다 — 한국어 라벨 <strong>{{ namingSummary.clashes }}개</strong>를
-              서로 다른 사건 {{ namingSummary.events }}개가 함께 쓰고 있습니다
-              <template v-if="namingSummary.example"><br />예: {{ namingSummary.example }}</template>
-            </p>
-            <!-- **배선 줄을 뺐다** (2026-10-20 · done15 §295).
-                 이 줄은 "정책 이름이 실제 배선과 다르다" 를 알리는 줄이었다.
-                 2026-10-20 에 **이름을 배선에서 만들게** 고쳤으므로(ISS-52)
-                 어긋날 수가 없다 — 띄울 것이 없다.
-                 ⚠ 검사는 **지우지 않았다.** 그대로 돌고 로그에 남는다. 다시 0 이
-                   아니게 되면 그건 ISS-52 가 깨졌다는 뜻이고, 그때는 화면이
-                   아니라 **그 고침을 봐야 한다.**
-                 ⚠ 이 줄은 **덜 세고 있었다** — 이름의 *사건* 쪽만 보고 *동작* 쪽은
-                   안 봤다(ISS-40). 같은 판에서 모달은 4개라 했는데 실제로는
-                   5개가 어긋나 있었다. 숫자만 남겨도 틀린 숫자였다.
-                 ⚠ **순환만 남겼다.** 그건 ISS-52 가 **못 고치는** 다른 결함이고
-                   (정책이 **자기가 일으킨 사건**에 다시 걸린다 = 생성물이 제자리로
-                   돈다), 드물게 뜬다(10-16 에 1건 · 그 뒤로 0건). 드물기 때문에
-                   소음이 되지 않고, 뜨면 **반드시 봐야 한다.** -->
-            <p v-if="loopSummary" class="mini-summary__review">
-              제자리로 도는 정책이 <strong>{{ loopSummary.circular }}개</strong> 있습니다 —
-              자기가 일으킨 사건에 다시 걸려 있습니다
-              <template v-if="loopSummary.example"><br />예: {{ loopSummary.example }}</template>
-            </p>
-            <!-- **갈 곳을 적는다.** 2026-10-19 에 사용자가 물었다 — *"검토한다 해도
-                 수정할 수 없는데"*. 전제가 틀렸다: 고칠 수단은 **있다**.
-                 `model_modifier` 가 rename·connect·delete 를 Policy 에도 적용하고
-                 (`_apply_rename_tx` 가 `n.name` 을 직접 바꾼다), 그 채팅은 Design
-                 캔버스와 Event Modeling 패널 오른쪽에 붙어 있다.
-                 **모달이 그걸 말하지 않아서** 읽는 사람에게는 할 일이 없었다 —
-                 ISS-47("네비게이터에서 확인" 이 아무 데도 안 데려간다)과 같은 부류다.
-                 그래서 **볼 것이 있을 때만** 한 줄을 더 띄운다(§291). -->
-            <p v-if="reviewSummary || namingSummary"
-               class="mini-summary__where">
-              고치는 곳 — <strong>Design 캔버스 오른쪽 💬 Chat</strong>(모델 수정)에서
-              정책의 <strong>이름을 바꾸거나 · 방아쇠를 다시 걸거나 · 지울 수</strong> 있습니다
-            </p>
+            <!-- **경고 줄 넷을 전부 뺐다** (2026-10-20 · done15 §296).
+                 뺀 것: 금지가 걸린 커맨드 · 이름↔라벨 겹침 · 제자리로 도는 정책 ·
+                 "고치는 곳" 안내.
+
+                 완료 화면이 답해야 하는 질문은 **"이 결과물을 믿어도 되나"** 하나다.
+                 그 기준으로 남는 것은 **무엇이 만들어졌나**(위 숫자)와 **결과물이
+                 불완전한가**(저장 안 됨 · 실패한 건너뜀)뿐이다.
+
+                 뺀 넷은 전부 같은 성격이었다 — **결함이거나 결함일지 모르는 것**.
+                 그건 화면에 띄울 게 아니라 **안 생기게 하거나, 생기면 적재를
+                 실패시켜야** 한다. 금지 줄이 2026-10-19 에 진짜 위반 2건을 잡은 것은
+                 "띄울 가치가 있다" 가 아니라 **"막았어야 했다"** 는 뜻이다.
+
+                 ⚠ 실측이 뒷받침한다 — 2026-10-20 판에서 금지 줄은 정책 **14개 중
+                   9개(64%)** 에 붙었다. **3분의 2가 걸리는 표시는 거르는 장치가
+                   아니다.** 배선 줄은 "4개" 라 했는데 실제로는 5개였다(덜 셌다).
+
+                 ⚠ **검사는 지우지 않았다.** 백엔드에서 그대로 돌고 payload 와
+                   로그에 남는다. 다시 늘어나면 그건 **우리가 볼 신호**지 사용자가
+                   볼 것이 아니다.
+
+                 ⚠ 되돌리려면 `summary.review`·`summary.naming`·`summary.wiring` 을
+                   읽는 줄을 다시 쓰면 된다. 다만 **되돌리기 전에 "사용자가 이걸로
+                   무엇을 하나" 에 답할 수 있어야 한다** — 2026-10-16 부터 나흘간
+                   그 답 없이 이 줄들을 손봤다. -->
             <p class="mini-summary__hint">
               네비게이터에서 확인하세요<template v-if="missingSummary || skippedSummary">
               · 위 숫자는 <strong>저장된 것</strong>입니다</template>
@@ -2948,24 +2851,6 @@ function useSample() {
   font-size: 12px;
   line-height: 1.5;
   color: #6b7280;
-}
-
-.mini-summary__review {
-  margin: 4px 0 0;
-  font-size: 11px;
-  line-height: 1.5;
-  color: #b45309;
-}
-
-/* 위 줄들은 **경고**(호박색)고 이것은 **안내**다 — 색을 달리 둔다.
-   경고와 같은 색이면 "또 하나의 문제" 로 읽힌다. */
-.mini-summary__where {
-  margin: 6px 0 0;
-  padding-top: 6px;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  font-size: 11px;
-  line-height: 1.5;
-  color: #0f766e;
 }
 
 
