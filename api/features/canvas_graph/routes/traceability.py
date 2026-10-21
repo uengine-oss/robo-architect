@@ -348,6 +348,33 @@ def _routine_entry(routine_id: str, cache: dict[str, dict | None]) -> dict | Non
     return entry
 
 
+def _merge_call_tables(live: dict, snap: dict | None) -> dict:
+    """산 루틴에 **호출 한 다리 건너 닿는 테이블**을 얹는다 (2026-10-21 · ISS-61).
+
+    ⚠ ISS-61 이 화면까지 못 닿던 자리가 여기다. `_routine_entry` 는 분석 그래프에서
+    `(f)-[:READS|WRITES]->(:TABLE)` 만 읽는다 — **직접 치는 것뿐**이다. 그런데
+    `Rule.source_module` 이 루틴 노드 id 와 전건 맞아 산 루틴은 **항상** 찾히고,
+    경유 테이블을 담은 스냅샷은 `entry is None` 일 때만 쓰였으니 **한 번도 안 쓰였다**.
+
+    실측(2026-10-21): Aggregate 세 개 중 직접 치는 루틴을 가진 하나만 출처 테이블이
+    떴다 — AnnualLeaveEntitlement 1개(직접) · Attendance 0 · LeaveApplication 0.
+    경유를 든 규칙은 각각 6·9·16 개였는데 전부 버려졌다.
+
+    직접이 이미 있는 표는 **직접이 이긴다**. 경유만 있는 표에는 `via='call'` 을 달아
+    보낸다 — 화면이 "호출 경유" 배지로 가른다. 섞어 보내면 근거가 거짓이 된다.
+    """
+    if not snap:
+        return live
+    live_tables = live.get("tables") or []
+    have = {t.get("name") for t in live_tables}
+    merged = [{**t, "via": t.get("via") or "direct"} for t in live_tables]
+    for t in (snap.get("tables") or []):
+        if t.get("via") != "call" or t.get("name") in have:
+            continue
+        merged.append({**t, "via": "call"})
+    return {**live, "tables": merged}
+
+
 def _sources_from_persisted(
     request: Request,
     node_id: str,
@@ -441,9 +468,10 @@ def _sources_from_persisted(
     sources: list[dict] = []
     for g in grouped.values():
         for rid in g.pop("_fids"):
-            entry = _routine_entry(rid, func_cache)
-            if entry is None:
-                entry = snapshot_by_routine.get(rid)
+            live = _routine_entry(rid, func_cache)
+            snap = snapshot_by_routine.get(rid)
+            # 산 루틴을 찾았어도 스냅샷을 **버리지 않는다** — 경유 테이블이 거기 있다.
+            entry = _merge_call_tables(live, snap) if live is not None else snap
             if entry is not None:
                 g["functions"].append(entry)
         # 주 근거가 먼저 보이게 한다.
