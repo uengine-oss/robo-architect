@@ -501,6 +501,30 @@ export const useBpmnStore = defineStore('bpmn', () => {
           agentState.value = 'error'
           agentError.value = payload.error
           clearActiveExploringTaskId()
+          exploringProcessId.value = null
+          // 2026-10-21 — **막으면서 말을 안 했다.**
+          //
+          // 분석 결합 가드(ANALYSIS_*)가 막으면 서버는 이 이벤트 하나만 보내고
+          // 스트림을 닫는다. 그런데 `agentError` 는 **작업 인스펙터 안에서만**
+          // 보이고, "프로세스 전체 탐색" 은 인스펙터가 열려 있지 않다.
+          // 그래서 사용자 눈에는 **버튼이 죽은 것**으로 보였다(실제로 그랬다).
+          //
+          // 토스트로 띄운다. 결합 오류는 **무엇을 해야 하는지**까지 적는다 —
+          // "막혔다" 만 알려 주면 받는 쪽이 할 수 있는 일이 없다.
+          const code = payload.code || ''
+          const nextStep = {
+            ANALYSIS_NOT_PAIRED: '이 프로젝트에 분석 그래프를 짝지은 뒤 코드 분석을 실행하세요.',
+            ANALYSIS_GRAPH_EMPTY: '코드 분석을 끝낸 뒤 다시 시도하세요.',
+            ANALYSIS_BINDING_MISSING: '이 BPM 은 분석 결합 정보가 없습니다. BPM 을 다시 생성하세요.',
+            ANALYSIS_PROJECT_MISMATCH: 'BPM 을 만든 프로젝트를 선택하거나 BPM 을 다시 생성하세요.',
+            ANALYSIS_CONTENT_CHANGED: '코드 분석이 바뀌었습니다. BPM → 탐색 → ES 순서로 다시 만드세요.',
+            BPM_SESSION_NOT_FOUND: '이 프로젝트에서 BPM 세션을 찾지 못했습니다.',
+          }[code]
+          const lines = [`⚠️ 탐색을 시작하지 못했습니다`]
+          if (payload.error) lines.push(payload.error)
+          if (nextStep) lines.push(`→ ${nextStep}`)
+          if (code) lines.push(`(${code})`)
+          showToast(lines.join('\n'), 'warn')
         }
 
         // Process-batch lifecycle events
