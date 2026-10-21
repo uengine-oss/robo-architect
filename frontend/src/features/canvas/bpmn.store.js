@@ -458,7 +458,17 @@ export const useBpmnStore = defineStore('bpmn', () => {
         agentEvents.value = [...agentEvents.value, payload]
         const t = payload.type
 
-        if (t === 'AgentDone') agentState.value = 'done'
+        // ⚠ `AgentDone` 은 **작업 하나가 끝날 때마다** 온다 (2026-10-21 · done16 §310).
+        //
+        // 묶음 탐색(프로세스 전체)에서는 **첫 작업이 끝나자마자** 상태가 'done' 이 돼서
+        // `isExploring` 이 false 가 되고, 네비게이터의 탐색 버튼이 **전부 다시 켜졌다**.
+        // 그 상태에서 다른 프로세스를 누르면 `startProcessExplore` 가
+        // `closeAgentStream()` 으로 **돌던 묶음을 끊고** 새 스트림으로 넘어간다 —
+        // 사용자에게는 "중단되고 그걸로 넘어간다" 로 보였다(실제로 그랬다).
+        //
+        // 묶음은 `ProcessExploreEnd` 가 끝을 알린다. 그때까지는 'running' 을 유지한다.
+        // 바로 아래 `AgentPersisted`·`AgentCacheHit` 이 이미 같은 방식으로 가린다.
+        if (t === 'AgentDone' && !exploringProcessId.value) agentState.value = 'done'
         if (t === 'AgentCacheHit' && payload.task_id) {
           // §11 cache path: backend short-circuited (no LLM). Spinner off, no rehydrate.
           if (activeExploringTaskId.value === payload.task_id) clearActiveExploringTaskId()
@@ -633,6 +643,13 @@ export const useBpmnStore = defineStore('bpmn', () => {
   // so the Navigator spinner cascade works without extra wiring.
   function startProcessExplore(sessionId, processId, { force = false } = {}) {
     if (!sessionId || !processId) return
+    // 돌고 있으면 **새로 시작하지 않는다** (2026-10-21 · §310).
+    // 버튼 비활성화가 1차 방어지만, 그것만 믿으면 상태가 한 번 어긋났을 때
+    // **돌던 묶음이 조용히 끊긴다.** 여기서 한 번 더 막는다.
+    if (exploringProcessId.value) {
+      showToast('다른 프로세스를 탐색하는 중입니다 — 끝난 뒤에 다시 눌러 주세요', 'warn')
+      return
+    }
     closeAgentStream()
     agentEvents.value = []
     agentError.value = null
