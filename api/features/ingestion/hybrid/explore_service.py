@@ -262,11 +262,17 @@ async def explore_task(
 
     task_dto = task_dto_by_id.get(task_id)
     actors = process_actors.get(process.id, [])
-    contexts = build_rule_contexts(rules)
+    # ⚠ **이벤트 루프 위에서 돌리지 않는다** (2026-10-21 · ISS-62).
+    #
+    # 이 둘은 동기 그래프 호출이다. `explore_task` 는 `async` 이므로 그대로 부르면
+    # 그동안 **백엔드 전체가 멈춘다** — `/api/health` 조차 응답하지 않는다. 실제로
+    # 조회 하나가 41초 걸리던 날 사용자 화면에는 "계속 대기중" 만 떴다. 질의를
+    # 1초로 줄였어도(ISS-62) 작업마다 부르는 호출이므로 **루프에서 비켜 둔다.**
+    contexts = await asyncio.to_thread(build_rule_contexts, rules)
     # Freeze project-local routine/table provenance before saving mappings.
     # The analyzer graph is mutable and will be replaced by the next project's
     # analysis; mappings and ES promotion outlive that active workspace.
-    save_rule_contexts(session_id, contexts)
+    await asyncio.to_thread(save_rule_contexts, session_id, contexts)
     # §036 — 이 세션 ingestion 때 추출·저장된 glossary를 retrieval 임베딩 정규화에 주입.
     # 평문 활동↔개발자 약어 룰의 어휘갭을 메워 어휘갭으로 탈락하던 룰을 회복(floor·예산 불변).
     glossary = _load_glossary(session_id)

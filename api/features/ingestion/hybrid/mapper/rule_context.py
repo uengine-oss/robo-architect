@@ -27,47 +27,34 @@ WHERE (
         (source.routine_id IS NULL AND (f.name = source.function_name OR f.function_id = source.function_name))
       )
   AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
-// Tables the operation touches — framework: on f; dbms: on descendant statements.
-OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE)
-OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE)
-// ⚠ **살아 있는 조회도 한 다리를 타야 한다** (2026-10-21 · ISS-61).
-// 아래 `build_rule_contexts` 는 이 조회 결과를 **DTO 보다 먼저** 쓴다. 그래서
-// 여기에만 CALLS 가 없으면, rule_extractor 를 고쳐도 탐색 시점에 다시 직접분만
-// 남아 출처 테이블이 0 으로 돌아간다. 같은 한 다리를 여기서도 탄다.
-OPTIONAL MATCH (f)-[:CALLS]->(_cr)-[:PARENT_OF*0..]->(_crn)-[:READS]->(crt:TABLE)
-OPTIONAL MATCH (f)-[:CALLS]->(_cw)-[:PARENT_OF*0..]->(_cwn)-[:WRITES]->(cwt:TABLE)
-// Parent traversal — callers (one hop up the CALLS chain) + callees
-// (one hop down, used for orchestrator detection)
-OPTIONAL MATCH (caller)-[:CALLS]->(f)
-OPTIONAL MATCH (f)-[:CALLS]->(callee)
-// Container membership and its package.
-// HAS_MEMBER is DataType -> Variable and BELONGS_TO is Table -> Schema in the
-// analyzer (shared/neo4j/rel_types.py); a module reaches its functions through
-// HAS_FUNCTION and its package through BELONGS_TO_PACKAGE. Naming the wrong two
-// cost nothing loudly — both clauses are OPTIONAL, so parent_module and
-// parent_package simply came back empty for every rule.
-OPTIONAL MATCH (mod)-[:HAS_FUNCTION]->(f)
-OPTIONAL MATCH (mod)-[:BELONGS_TO_PACKAGE]->(pkg:PACKAGE)
-WITH source, f,
-     collect(DISTINCT rt.name) AS reads,
-     collect(DISTINCT wt.name) AS writes,
-     collect(DISTINCT crt.name) AS via_reads,
-     collect(DISTINCT cwt.name) AS via_writes,
-     collect(DISTINCT caller.name) AS callers,
-     collect(DISTINCT callee.name) AS callees,
-     collect(DISTINCT mod.name) AS mod_names,
-     collect(DISTINCT pkg.name) AS pkg_names
+// ⚠ **여기엔 `OPTIONAL MATCH` 를 두지 않는다** (2026-10-21 · ISS-62).
+//
+// 예전에는 여섯 개가 줄줄이 있었다. OPTIONAL MATCH 는 **행을 곱한다** —
+// 규칙 111개를 한 번에 넣으면 reads × writes × callers × callees × mod × pkg 로
+// 행이 터져 이 질의 하나가 **41초**(고치기 전) 걸렸다. 그리고 `explore_task` 가
+// 이것을 **작업마다 · 이벤트 루프 위에서 동기로** 부른다. 탐색을 누르면 백엔드가
+// 통째로 멈추고 `/api/health` 조차 안 돌아온다 — 화면에는 "계속 대기중" 만 뜬다.
+//
+// 패턴 컴프리헨션은 행을 곱하지 않는다. 여섯 개를 전부 그 모양으로 바꿨다.
+// 여기에 무엇을 더할 때도 **같은 모양**으로 더한다.
 RETURN source.rule_id AS rule_id,
        f.summary AS summary,
        [] AS actors,
-       [r IN reads  WHERE r IS NOT NULL] AS reads_tables,
-       [w IN writes WHERE w IS NOT NULL] AS writes_tables,
-       [r IN via_reads  WHERE r IS NOT NULL] AS reads_tables_via_calls,
-       [w IN via_writes WHERE w IS NOT NULL] AS writes_tables_via_calls,
-       [c IN callers WHERE c IS NOT NULL] AS callers,
-       [c IN callees WHERE c IS NOT NULL] AS callees,
-       head([m IN mod_names WHERE m IS NOT NULL]) AS parent_module,
-       head([p IN pkg_names WHERE p IS NOT NULL]) AS parent_package
+       // framework 는 루틴 자신, dbms 는 자식 구문에 테이블 접근이 붙는다(spec 044).
+       [(f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE) | rt.name] AS reads_tables,
+       [(f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE) | wt.name] AS writes_tables,
+       // 한 다리 건너 — SQL 은 DAO 에 있고 규칙은 서비스에 있다(ISS-61).
+       // `build_rule_contexts` 가 이 조회를 DTO 보다 먼저 쓰므로 여기에 없으면
+       // rule_extractor 를 고쳐도 출처 테이블이 0 으로 돌아간다.
+       [(f)-[:CALLS]->(_cr)-[:PARENT_OF*0..]->(_crn)-[:READS]->(crt:TABLE) | crt.name]
+          AS reads_tables_via_calls,
+       [(f)-[:CALLS]->(_cw)-[:PARENT_OF*0..]->(_cwn)-[:WRITES]->(cwt:TABLE) | cwt.name]
+          AS writes_tables_via_calls,
+       [(f)<-[:CALLS]-(_cl) | _cl.name] AS callers,
+       [(f)-[:CALLS]->(_ce) | _ce.name] AS callees,
+       head([(f)<-[:HAS_FUNCTION]-(_m) | _m.name]) AS parent_module,
+       head([(f)<-[:HAS_FUNCTION]-(_mp)-[:BELONGS_TO_PACKAGE]->(_pk:PACKAGE) | _pk.name])
+          AS parent_package
 """
 
 
