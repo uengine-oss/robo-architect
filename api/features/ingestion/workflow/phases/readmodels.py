@@ -12,6 +12,7 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_OUTPUT,
     AI_AUDIT_LOG_FULL_PROMPT,
 )
+from api.features.ingestion.event_storming.neo4j_client import retry_on_transient
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.event_storming.structured_outputs import ReadModelList
 from api.features.ingestion.event_storming.prompts import EXTRACT_READMODELS_PROMPT, SYSTEM_PROMPT
@@ -84,18 +85,23 @@ async def _create_readmodel_with_links(
     bc_id = bc.get("id") if isinstance(bc, dict) else getattr(bc, "id", None)
     
     try:
+        # ⚠ 여기도 같은 돌진에서 부딪힌다 (2026-10-21 · done16 §311).
+        # 2026-10-21 ES 생성 실패 6건 중 하나가 여기였다("2 — deadlock detected" —
+        # 그 "2" 는 `readmodel_index` 다). ReadModel 도 동시에 만든다.
+        # 타임아웃 10 → 20 (재시도 창 12초보다 뒤 · §300 의 배치 규칙).
         created = await asyncio.wait_for(
             asyncio.to_thread(
-                ctx.client.create_readmodel,
-                name=name,
-                bc_id=bc_id,
-                description=description,
-                provisioning_type="CQRS",
-                actor=actor,
-                is_multiple_result=is_multiple_result,
-                display_name=rm_display_name,
+                lambda: retry_on_transient(lambda: ctx.client.create_readmodel(
+                    name=name,
+                    bc_id=bc_id,
+                    description=description,
+                    provisioning_type="CQRS",
+                    actor=actor,
+                    is_multiple_result=is_multiple_result,
+                    display_name=rm_display_name,
+                ))
             ),
-            timeout=10.0
+            timeout=20.0
         )
         
         # Keep a runtime copy with traceability for later UI phase.

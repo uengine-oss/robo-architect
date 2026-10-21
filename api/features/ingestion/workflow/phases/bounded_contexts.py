@@ -15,6 +15,7 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_PROMPT,
 )
 from api.features.ingestion.db_identity import adopt_db_identity
+from api.features.ingestion.event_storming.neo4j_client import retry_on_transient
 from api.features.ingestion.ingestion_contracts import IngestionPhase, ProgressEvent
 from api.features.ingestion.event_storming.structured_outputs import BoundedContextList
 from api.features.ingestion.event_storming.prompts import IDENTIFY_BC_FROM_STORIES_PROMPT, SYSTEM_PROMPT
@@ -233,13 +234,25 @@ async def _create_bc_with_links(
             
             link_tasks = []
             for us_id in us_ids:
+                # ⚠ 여기도 **같은 돌진에서 부딪힌다** (2026-10-21 · done16 §311).
+                #
+                # 2026-10-21 ES 생성에서 **6건이 실패**했고 전부 이 자리였다 —
+                #   Leave / Attendance — deadlock detected
+                #   Leave / Attendance — duplicate key … pg_type_typname_nsp_index
+                # UserStory↔BC 링크를 **10개씩 묶어 동시에** 걸기 때문이다.
+                #
+                # 10-20 에 같은 부류를 고쳤지만(§300·§301) **측정된 두 자리에만**
+                # 넣었다(create_policy · gwt 속성 조회). 여기는 그때 안 나왔다.
+                # → 이제 나왔으니 **같은 장치를 붙인다.**
+                # ⚠ 타임아웃도 5초로는 재시도가 들어갈 자리가 없다 → 20초
+                #   (재시도 창 12초보다 뒤 · §300 의 배치 규칙).
                 link_task = asyncio.wait_for(
                     asyncio.to_thread(
-                        ctx.client.link_user_story_to_bc,
-                        us_id,
-                        created_bc.get("id")
+                        lambda _us=us_id, _bc=created_bc.get("id"): retry_on_transient(
+                            lambda: ctx.client.link_user_story_to_bc(_us, _bc)
+                        )
                     ),
-                    timeout=5.0
+                    timeout=20.0
                 )
                 link_tasks.append((us_id, link_task))
             
