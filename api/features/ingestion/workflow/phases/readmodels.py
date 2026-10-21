@@ -170,13 +170,26 @@ async def _create_readmodel_with_links(
         )
         
         # Create CQRS relationships: ReadModel -> Event (trigger_event_names)
+        #
+        # ⚠ 여기는 **1년 가까이 조용히 아무것도 안 만들고 있었다** (2026-10-21 · ISS-58).
+        # 예전에는 `await asyncio.gather(*link_tasks, return_exceptions=True)` 한 줄이
+        # 끝이었다 — 예외를 **리스트로 받아 놓고 아무도 보지 않았다.** 그래서
+        # 질의가 엔진에서 53번 죽는 동안 화면에도 로그에도 **한 글자도 안 남았고**,
+        # 설계 graph 의 CQRSConfig·CQRSOperation 은 **0** 이었다.
+        #
+        # **받은 것은 반드시 센다.** 실패는 `…cqrs_link_failed` 로 올려
+        # skip_ledger 가 적재 요약의 실패 수에 넣게 한다(범주에 양성 표가 없으므로
+        # 기본값대로 **손실**로 잡힌다). 못 찾은 사건은 `False` 로 돌아오므로
+        # 터진 것과 **따로** 센다 — 둘은 고칠 곳이 다르다.
         trigger_event_names = list(getattr(rm, "trigger_event_names", []) or [])
         if trigger_event_names:
             link_tasks = []
+            link_names = []
             for evt_name in trigger_event_names:
                 evt_name = (evt_name or "").strip()
                 if not evt_name:
                     continue
+                link_names.append(evt_name)
                 link_tasks.append(
                     asyncio.wait_for(
                         asyncio.to_thread(
@@ -188,7 +201,31 @@ async def _create_readmodel_with_links(
                     )
                 )
             if link_tasks:
-                await asyncio.gather(*link_tasks, return_exceptions=True)
+                results = await asyncio.gather(*link_tasks, return_exceptions=True)
+                for evt_name, outcome in zip(link_names, results):
+                    if isinstance(outcome, BaseException):
+                        SmartLogger.log(
+                            "WARNING",
+                            "ReadModel→Event CQRS 연결 실패",
+                            category="ingestion.workflow.readmodels.cqrs_link_failed",
+                            params={
+                                "session_id": ctx.session.id,
+                                "readmodel_name": name,
+                                "event_name": evt_name,
+                                "error": str(outcome)[:300],
+                            },
+                        )
+                    elif outcome is False:
+                        SmartLogger.log(
+                            "WARNING",
+                            "ReadModel→Event CQRS 연결 건너뜀: 그 이름의 사건이 없다",
+                            category="ingestion.workflow.readmodels.cqrs_event_not_found",
+                            params={
+                                "session_id": ctx.session.id,
+                                "readmodel_name": name,
+                                "event_name": evt_name,
+                            },
+                        )
 
         return {
             "readmodel": created,
