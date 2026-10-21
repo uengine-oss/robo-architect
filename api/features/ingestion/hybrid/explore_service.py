@@ -476,6 +476,19 @@ async def explore_process(
                     counters["total_mappings"] += int(r.get("mapping_count") or 0)
             except Exception as e:
                 counters["errors"] += 1
+                # ⚠ **로그에도 남긴다** (2026-10-21 · done16 §309).
+                #
+                # 전에는 SSE 로만 보냈다. 그래서 7개가 전부 실패했을 때 화면에는
+                # "오류 7" 만 뜨고 **무슨 오류인지는 어디에도 없었다** — 질의를
+                # 손으로 재현해서야 `CREATE requires a label per new node` 를 찾았다.
+                # SSE 는 사람이 보는 길이고, 로그는 **우리가 보는 길**이다. 둘 다 필요하다.
+                SmartLogger.log(
+                    "ERROR",
+                    f"Task explore failed: {task_id}: {e}",
+                    category="ingestion.hybrid.explore.task_failed",
+                    params={"session_id": session_id, "task_id": task_id,
+                            "error": str(e)[:400], "error_type": type(e).__name__},
+                )
                 await sink({"type": "AgentError", "task_id": task_id, "error": str(e)})
 
     await asyncio.gather(*[_one(t["id"]) for t in tasks_in_order])

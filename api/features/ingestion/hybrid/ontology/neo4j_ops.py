@@ -620,9 +620,18 @@ def save_rule_contexts(session_id: str, contexts: list[RuleContext]) -> None:
             )
             for direction, names in (("READS", reads), ("WRITES", writes)):
                 for table_name in names:
+                    # ⚠ **순서가 중요하다** (2026-10-21 · done16 §309).
+                    #
+                    # 전에는 `MERGE (tbl) WITH tbl MATCH (r) MERGE (r)-[rel]->(tbl)` 였다.
+                    # 이 엔진은 그 모양에서
+                    #   **CREATE requires a label per new node**
+                    # 로 죽는다. 그러면 `explore_task` 가 **통째로 실패**하고,
+                    # 화면에는 "Task 7개 처리(탐색 0 · 캐시 0 · **오류 7**)" 만 뜨다.
+                    #
+                    # **`MATCH (r)` 를 먼저** 두면 된다(엔진에 네 모양을 돌려 확인했다).
                     s.run(
+                        f"MATCH (r:{L_RULE} {{id: $rid, session_id: $sid}}) "
                         f"MERGE (tbl:{L_EXTERNAL_TABLE} {{name: $name, session_id: $sid}}) "
-                        f"WITH tbl MATCH (r:{L_RULE} {{id: $rid, session_id: $sid}}) "
                         f"MERGE (r)-[rel:{R_EVALUATES}]->(tbl) "
                         "SET rel.direction = CASE "
                         "  WHEN rel.direction IS NULL THEN $direction "
