@@ -260,35 +260,86 @@ class ReadModelOps:
         Finds Event by name (cross-BC safe). Idempotent via MERGE.
         Returns True if link was created, False if Event not found.
         """
+        # ⚠ 이 사슬은 **한 번도 만들어진 적이 없다** (2026-10-21 · ISS-58).
+        #
+        # 예전 질의는 한 번에 끝내려고 두 가지를 했고, **둘 다 이 엔진이 못 받는다**:
+        #   ① `WITH rm, coalesce(evt1, evt2, evt3) AS evt … MERGE (op)-[:TRIGGERED_BY]->(evt)`
+        #      → **`variable 'evt' is not defined`** (ISS-57 ⑤).
+        #        `WITH … AS 별칭` 으로 받은 노드는 **뒤 MERGE 의 패턴 변수로 못 쓴다.**
+        #   ② `'CQRS-' + rm.id` → `operator does not exist: unknown + text` (ISS-57 ②).
+        #
+        # 그래서 **둘로 나눈다** — 사건은 읽기로 고르고(파이썬이 우선순위를 쥔다),
+        # 쓰기는 **id 로 패턴 매치**하며 id 문자열은 **파이썬이 만들어 넘긴다.**
+        # 고칠 때는 반드시 진짜 그래프에 돌려 본다(단위 테스트로는 안 잡혔다).
+        # 순환 import 를 피해 안에서 가져온다 — `policies.py` 와 같은 이유다.
+        from api.features.ingestion.event_storming.neo4j_client import retry_on_transient
+
+        event_id = self._resolve_event_id(event_name)
+        if not event_id:
+            return False
+
+        cqrs_id = f"CQRS-{readmodel_id}"
+        op_id = f"CQRS-OP-{readmodel_id}-INSERT-{event_id}"
+        query = """
+        MATCH (rm:ReadModel {id: $rm_id})
+        MATCH (evt:Event {id: $evt_id})
+        MERGE (cqrs:CQRSConfig {id: $cqrs_id})
+        SET cqrs.readmodelId = rm.id
+        MERGE (rm)-[:HAS_CQRS]->(cqrs)
+        MERGE (op:CQRSOperation {id: $op_id})
+        SET op.operationType = 'INSERT',
+            op.cqrsConfigId = $cqrs_id,
+            op.triggerEventId = evt.id
+        MERGE (cqrs)-[:HAS_OPERATION]->(op)
+        MERGE (op)-[:TRIGGERED_BY]->(evt)
+        RETURN evt.id AS eventId
+        """
         with self.session() as session:
-            # name → displayName → 대소문자 무시 순으로 fuzzy matching
-            query = """
-            MATCH (rm:ReadModel {id: $rm_id})
-            OPTIONAL MATCH (evt1:Event {name: $event_name})
-            OPTIONAL MATCH (evt2:Event {displayName: $event_name})
-            OPTIONAL MATCH (evt3:Event) WHERE toLower(evt3.name) = toLower($event_name)
-               OR toLower(evt3.displayName) = toLower($event_name)
-            WITH rm, coalesce(evt1, evt2, evt3) AS evt
-            WHERE evt IS NOT NULL
-            WITH rm, evt, 'CQRS-' + rm.id AS cqrsId,
-                 'CQRS-OP-' + rm.id + '-INSERT-' + evt.id AS opId
+            record = retry_on_transient(
+                lambda: session.execute_write(
+                    lambda tx: tx.run(
+                        query,
+                        rm_id=readmodel_id,
+                        evt_id=event_id,
+                        cqrs_id=cqrs_id,
+                        op_id=op_id,
+                    ).single()
+                )
+            )
+        return record is not None
 
-            MERGE (cqrs:CQRSConfig {id: cqrsId})
-            SET cqrs.readmodelId = rm.id
-            MERGE (rm)-[:HAS_CQRS]->(cqrs)
+    def _resolve_event_id(self, event_name: str) -> str | None:
+        """name → displayName → 대소문자 무시 순으로 사건 하나를 고른다.
 
-            MERGE (op:CQRSOperation {id: opId})
-            SET op.operationType = 'INSERT',
-                op.cqrsConfigId = cqrsId,
-                op.triggerEventId = evt.id
-            MERGE (cqrs)-[:HAS_OPERATION]->(op)
-            MERGE (op)-[:TRIGGERED_BY]->(evt)
-            RETURN evt.id AS eventId
-            LIMIT 1
-            """
-            result = session.run(query, rm_id=readmodel_id, event_name=event_name)
-            record = result.single()
-            return record is not None
+        우선순위를 **파이썬이** 쥔다 — 엔진이 `coalesce(노드…)` 를 뒤 패턴으로
+        넘겨 주지 않기 때문이다(ISS-57 ⑤).
+        """
+        name = (event_name or "").strip()
+        if not name:
+            return None
+        query = """
+        MATCH (evt:Event)
+        WHERE evt.name = $event_name
+           OR evt.displayName = $event_name
+           OR toLower(evt.name) = toLower($event_name)
+           OR toLower(evt.displayName) = toLower($event_name)
+        RETURN evt.id AS id, evt.name AS name, evt.displayName AS displayName
+        """
+        with self.session() as session:
+            rows = [dict(r) for r in session.run(query, event_name=name)]
+        if not rows:
+            return None
+        lowered = name.lower()
+        for pick in (
+            lambda r: r.get("name") == name,
+            lambda r: r.get("displayName") == name,
+            lambda r: (r.get("name") or "").lower() == lowered,
+            lambda r: (r.get("displayName") or "").lower() == lowered,
+        ):
+            for row in rows:
+                if pick(row) and row.get("id"):
+                    return row["id"]
+        return rows[0].get("id")
 
     def link_user_story_to_readmodel(
         self,
