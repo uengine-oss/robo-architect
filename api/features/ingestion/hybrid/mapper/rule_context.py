@@ -111,6 +111,11 @@ def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
             actors=extra.get("actors", []),
             reads_tables=extra.get("reads_tables") or r.reads_tables,
             writes_tables=extra.get("writes_tables") or r.writes_tables,
+            # 한 다리 건너는 **Rule 스냅샷만** 들고 간다 (ISS-61). 살아 있는
+            # analyzer 조회(`extra`)는 이 둘을 안 싣는다 — 싣는 쪽이 생기면
+            # 위 두 줄과 같은 모양으로 맞춘다.
+            reads_tables_via_calls=r.reads_tables_via_calls,
+            writes_tables_via_calls=r.writes_tables_via_calls,
             context_cluster=r.context_cluster,
             callers=extra.get("callers", []),
             callees=extra.get("callees", []),

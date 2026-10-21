@@ -600,7 +600,10 @@ const nodeType = computed(() => traceData.value?.node?.type || '')
 const primaryRootTables = computed(() => {
   if (nodeType.value !== 'Aggregate') return []
   const tableMap = new Map() // tname -> { name, ops: Set, columns, sources: Set, tier }
-  const upsert = (tname, op, columns, usid, tier) => {
+  // ⚠ `via` 도 끌고 간다 (2026-10-21 · ISS-61). 호출 한 다리 건너 닿는 테이블이
+  // 여기로 들어오기 시작했는데, 직접인지 아닌지를 안 들고 오면 Aggregate 근거가
+  // **직접 친 것처럼** 보인다. 한 테이블에 직접이 하나라도 있으면 직접이 이긴다.
+  const upsert = (tname, op, columns, usid, tier, via) => {
     if (!tableMap.has(tname)) {
       tableMap.set(tname, {
         name: tname,
@@ -608,12 +611,14 @@ const primaryRootTables = computed(() => {
         columns: columns || [],
         sources: new Set(),
         tier,
+        via: via || 'direct',
       })
     }
     const entry = tableMap.get(tname)
     if (op) entry.ops.add(op)
     if (usid) entry.sources.add(usid)
     if (tier < entry.tier) entry.tier = tier
+    if (via === 'direct') entry.via = 'direct'
     if ((!entry.columns || !entry.columns.length) && columns?.length) {
       entry.columns = columns
     }
@@ -633,7 +638,7 @@ const primaryRootTables = computed(() => {
         const displayOp = op && op !== 'UNKNOWN'
           ? op
           : (access === 'READ_WRITE' ? 'READ_WRITE' : 'WRITES')
-        upsert(w.table, displayOp, null, usid, 1)
+        upsert(w.table, displayOp, null, usid, 1, 'direct')
       }
     }
   }
@@ -644,8 +649,9 @@ const primaryRootTables = computed(() => {
       for (const tbl of (fn.tables || [])) {
         if (!tbl.name) continue
         const access = tbl.access || []
-        if (access.includes('WRITES')) upsert(tbl.name, 'WRITES', tbl.columns, usid, 2)
-        if (access.includes('READS'))  upsert(tbl.name, 'READS',  tbl.columns, usid, 3)
+        const via = tbl.via || 'direct'
+        if (access.includes('WRITES')) upsert(tbl.name, 'WRITES', tbl.columns, usid, 2, via)
+        if (access.includes('READS'))  upsert(tbl.name, 'READS',  tbl.columns, usid, 3, via)
       }
     }
   }
@@ -4717,6 +4723,10 @@ function updateVoFieldValue(fieldName, value) {
                   <span class="trace-primary-table__name">{{ tbl.name }}</span>
                   <span v-for="op in tbl.ops" :key="op" class="trace-primary-table__access"
                     :class="`trace-primary-table__access--${op.toLowerCase()}`">{{ op }}</span>
+                  <span v-if="tbl.via === 'call'" class="trace-table__via"
+                    title="이 Aggregate 의 출처 루틴이 직접 치지 않고, 호출하는 루틴이 친다">
+                    호출 경유
+                  </span>
                   <span v-if="tbl.columns.length" class="trace-primary-table__count">{{ tbl.columns.length }} cols</span>
                 </div>
                 <div v-if="tbl.columns.length" class="trace-primary-table__cols">
@@ -4869,6 +4879,16 @@ function updateVoFieldValue(fieldName, value) {
                               class="trace-table__access"
                               :class="acc === 'READS' ? 'trace-table__access--reads' : 'trace-table__access--writes'">
                               {{ acc }}
+                            </span>
+                            <!--
+                              ⚠ 이 줄이 **근거의 정직함**을 지킨다 (2026-10-21 · ISS-61).
+                              이 코드베이스는 SQL 이 DAO 에 있고 규칙은 서비스에 있어,
+                              직접 치는 것만 세면 출처 테이블이 0 이 된다. 그래서 호출
+                              한 다리 건너 닿는 것도 싣되, **직접인 척하지 않는다.**
+                            -->
+                            <span v-if="tbl.via === 'call'" class="trace-table__via"
+                              title="이 루틴이 직접 치지 않고, 호출하는 루틴이 친다">
+                              호출 경유
                             </span>
                           </div>
                           <div v-if="tbl.columns?.length" class="trace-table__cols">
@@ -6503,6 +6523,17 @@ function updateVoFieldValue(fieldName, value) {
   padding: 0 5px;
   border-radius: 8px;
   text-transform: uppercase;
+}
+
+/* 호출 한 다리 건너 닿는 테이블 — 직접과 **눈으로 구분**된다 (ISS-61). */
+.trace-table__via {
+  font-size: 0.6rem;
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--color-text-muted, #94a3b8);
+  border: 1px dashed rgba(148, 163, 184, 0.4);
 }
 
 .trace-table__access--reads {

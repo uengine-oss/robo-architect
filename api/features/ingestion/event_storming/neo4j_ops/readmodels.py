@@ -292,8 +292,12 @@ class ReadModelOps:
             op.triggerEventId = evt.id
         MERGE (cqrs)-[:HAS_OPERATION]->(op)
         MERGE (op)-[:TRIGGERED_BY]->(evt)
-        RETURN evt.id AS eventId
+        RETURN count(evt) AS linked
         """
+        # ⚠ `RETURN evt.id` + `.single()` 이었다 (ISS-60). 같은 id 의 CQRSConfig 가
+        # 이미 여러 개 있으면 MERGE 가 그것들에 전부 묶여 **여러 줄**이 나오고
+        # `.single()` 이 터진다. 집계로 돌려받으면 줄은 **언제나 하나**이고,
+        # 0 이면 짝을 못 찾은 것이라 **뜻도 더 정확하다**.
         with self.session() as session:
             record = retry_on_transient(
                 lambda: session.execute_write(
@@ -306,7 +310,7 @@ class ReadModelOps:
                     ).single()
                 )
             )
-        return record is not None
+        return bool(record and (record.get("linked") or 0) > 0)
 
     def _resolve_event_id(self, event_name: str) -> str | None:
         """name → displayName → 대소문자 무시 순으로 사건 하나를 고른다.

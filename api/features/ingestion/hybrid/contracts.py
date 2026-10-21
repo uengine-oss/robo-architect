@@ -204,6 +204,11 @@ class RuleDTO(BaseModel):
     source_end_line: Optional[int] = None
     reads_tables: list[str] = Field(default_factory=list)
     writes_tables: list[str] = Field(default_factory=list)
+    # ⚠ 직접과 **섞지 않는다** (ISS-61). 위 둘은 "이 루틴이 직접 치는 SQL",
+    # 아래 둘은 "이 루틴이 **부르는 것**이 치는 SQL"(CALLS 한 다리). 이 코드베이스는
+    # SQL 이 DAO 에 있고 규칙이 서비스에 있어, 아래가 없으면 출처에 테이블이 안 뜬다.
+    reads_tables_via_calls: list[str] = Field(default_factory=list)
+    writes_tables_via_calls: list[str] = Field(default_factory=list)
     confidence: float = 1.0
     # Rule.statement — the one-line business intent of this rule. Preferred over
     # given/when/then for classification since GWT values often carry concrete
@@ -283,6 +288,11 @@ class RuleContext(BaseModel):
     actors: list[str] = Field(default_factory=list)
     reads_tables: list[str] = Field(default_factory=list)
     writes_tables: list[str] = Field(default_factory=list)
+    # ⚠ 직접과 **섞지 않는다** (ISS-61). 위 둘은 "이 루틴이 직접 치는 SQL",
+    # 아래 둘은 "이 루틴이 **부르는 것**이 치는 SQL"(CALLS 한 다리). 이 코드베이스는
+    # SQL 이 DAO 에 있고 규칙이 서비스에 있어, 아래가 없으면 출처에 테이블이 안 뜬다.
+    reads_tables_via_calls: list[str] = Field(default_factory=list)
+    writes_tables_via_calls: list[str] = Field(default_factory=list)
     context_cluster: Optional[str] = None  # Phase 2.5 BC tag
     # Parent-node context from analyzer graph (multi-module codebases)
     callers: list[str] = Field(default_factory=list)   # direct callers of source_function

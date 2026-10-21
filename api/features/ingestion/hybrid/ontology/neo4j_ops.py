@@ -614,11 +614,31 @@ def save_rule_contexts(session_id: str, contexts: list[RuleContext]) -> None:
                 "    r.reads_tables = CASE WHEN size($reads) = 0 "
                 "       THEN coalesce(r.reads_tables, []) ELSE $reads END, "
                 "    r.writes_tables = CASE WHEN size($writes) = 0 "
-                "       THEN coalesce(r.writes_tables, []) ELSE $writes END",
+                "       THEN coalesce(r.writes_tables, []) ELSE $writes END, "
+                # 한 다리 건너는 **다른 이름**으로 담는다 (ISS-61) — 인스펙터의
+                # 출처 탭이 이 속성들을 읽는다(간선이 아니라). 이름을 나눠야
+                # 화면이 "여기서 친다" 와 "부르는 것이 친다" 를 가를 수 있다.
+                "    r.reads_tables_via_calls = CASE WHEN size($via_reads) = 0 "
+                "       THEN coalesce(r.reads_tables_via_calls, []) ELSE $via_reads END, "
+                "    r.writes_tables_via_calls = CASE WHEN size($via_writes) = 0 "
+                "       THEN coalesce(r.writes_tables_via_calls, []) ELSE $via_writes END",
                 rid=ctx.rule_id, sid=session_id, summary=ctx.function_summary,
                 reads=reads, writes=writes,
+                via_reads=sorted({x for x in ctx.reads_tables_via_calls if x} - set(reads)),
+                via_writes=sorted({x for x in ctx.writes_tables_via_calls if x} - set(writes)),
             )
-            for direction, names in (("READS", reads), ("WRITES", writes)):
+            # 한 다리 건너 닿는 테이블도 **간선으로는 남긴다** (ISS-61).
+            # Rule 속성(`reads_tables`)은 **직접만** 담는다 — 뜻을 안 바꾼다.
+            # 간선에는 `via` 를 적어 화면이 "여기서 친다" 와 "부르는 것이 친다" 를
+            # 가를 수 있게 한다. 직접이 이미 있는 테이블은 직접이 이긴다.
+            via_reads = sorted({x for x in ctx.reads_tables_via_calls if x} - set(reads))
+            via_writes = sorted({x for x in ctx.writes_tables_via_calls if x} - set(writes))
+            for direction, names, via in (
+                ("READS", reads, "direct"),
+                ("WRITES", writes, "direct"),
+                ("READS", via_reads, "call"),
+                ("WRITES", via_writes, "call"),
+            ):
                 for table_name in names:
                     # ⚠ **순서가 중요하다** (2026-10-21 · done16 §309).
                     #
@@ -636,9 +656,12 @@ def save_rule_contexts(session_id: str, contexts: list[RuleContext]) -> None:
                         "SET rel.direction = CASE "
                         "  WHEN rel.direction IS NULL THEN $direction "
                         "  WHEN rel.direction = $direction THEN rel.direction "
-                        "  ELSE 'READS_WRITES' END",
+                        "  ELSE 'READS_WRITES' END, "
+                        "    rel.via = CASE "
+                        "  WHEN rel.via = 'direct' THEN 'direct' "
+                        "  ELSE $via END",
                         name=table_name, sid=session_id, rid=ctx.rule_id,
-                        direction=direction,
+                        direction=direction, via=via,
                     )
 
 

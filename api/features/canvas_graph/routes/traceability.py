@@ -394,14 +394,33 @@ def _sources_from_persisted(
         if rid and rid not in g["_fids"]:
             g["_fids"].append(rid)
         if rid and rid not in snapshot_by_routine:
+            # ⚠ 출처에 테이블이 안 뜨던 자리다 (2026-10-21 · ISS-61).
+            # 이 코드베이스는 SQL 이 DAO 에 있고 규칙은 서비스에 있다. 그래서
+            # **직접 치는 것만** 담으면 Aggregate 출처의 테이블이 **0** 이 된다.
+            # 한 다리 건너(CALLS) 닿는 것도 싣되 `via` 로 **갈라서** 보낸다 —
+            # 화면이 "여기서 친다"(direct) 와 "부르는 것이 친다"(call) 를
+            # 구분해 보여 줄 수 있어야 한다. 섞어 보내면 근거가 거짓이 된다.
             table_access: dict[str, set[str]] = {}
-            for access, names in (("READS", r.get("reads_tables") or []),
-                                  ("WRITES", r.get("writes_tables") or [])):
+            table_via: dict[str, str] = {}
+            for access, names, via in (
+                ("READS", r.get("reads_tables") or [], "direct"),
+                ("WRITES", r.get("writes_tables") or [], "direct"),
+                ("READS", r.get("reads_tables_via_calls") or [], "call"),
+                ("WRITES", r.get("writes_tables_via_calls") or [], "call"),
+            ):
                 for name in names:
-                    if name:
-                        table_access.setdefault(name, set()).add(access)
+                    if not name:
+                        continue
+                    table_access.setdefault(name, set()).add(access)
+                    if table_via.get(name) != "direct":
+                        table_via[name] = via
             tables = [
-                {"name": name, "columns": [], "access": sorted(accesses)}
+                {
+                    "name": name,
+                    "columns": [],
+                    "access": sorted(accesses),
+                    "via": table_via.get(name, "direct"),
+                }
                 for name, accesses in sorted(table_access.items())
             ]
             location = r.get("source_file_path") or ""
@@ -548,6 +567,8 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
                r.source_end_line AS source_end_line,
                coalesce(r.reads_tables, []) AS reads_tables,
                coalesce(r.writes_tables, []) AS writes_tables,
+               coalesce(r.reads_tables_via_calls, []) AS reads_tables_via_calls,
+               coalesce(r.writes_tables_via_calls, []) AS writes_tables_via_calls,
                coalesce(sf.evidence_role, 'primary') AS evidence_role,
                sf.via_task_id AS via_task_id
     """, {"id": node_id})

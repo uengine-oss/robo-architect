@@ -35,6 +35,20 @@ MATCH (f)-[hr:HAS_RULE]->(r:RULE)
 WITH f, hr, r,
      [(f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE) | rt.name] AS reads_tables,
      [(f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE) | wt.name] AS writes_tables,
+     // ⚠ **한 다리 건너**도 모은다 (2026-10-21 · ISS-61).
+     //
+     // 위 두 줄은 `PARENT_OF` 만 탄다 = **이 루틴이 직접 치는 SQL**. 그런데
+     // 이 코드베이스에서 SQL 은 전부 DAO 에 있고 **규칙은 서비스에 있다.**
+     // 그래서 규칙 111개 중 테이블을 가진 것이 6개뿐이었고, Aggregate 출처의
+     // 테이블은 **0** 이었다. 길이 없어서가 아니라 **안 타서**였다.
+     //
+     // ISS-59 로 서비스→DAO `CALLS` 가 생겼다(85 → 125). 그 한 다리를 탄다.
+     // ⚠ **직접과 섞지 않는다** — 뜻이 다르다. 직접은 "여기서 친다",
+     //   이쪽은 "여기서 부르는 것이 친다". 섞으면 숫자의 뜻이 조용히 바뀐다.
+     [(f)-[:CALLS]->(_cr)-[:PARENT_OF*0..]->(_crn)-[:READS]->(crt:TABLE) | crt.name]
+        AS reads_tables_via_calls,
+     [(f)-[:CALLS]->(_cw)-[:PARENT_OF*0..]->(_cwn)-[:WRITES]->(cwt:TABLE) | cwt.name]
+        AS writes_tables_via_calls,
      [(r)-[:HAS_EXAMPLE]->(e:EXAMPLE) |
         {
           example_id:  coalesce(e.example_id, e.id),
@@ -55,6 +69,8 @@ RETURN
     f.end_line                        AS source_end_line,
     reads_tables                      AS reads_tables,
     writes_tables                     AS writes_tables,
+    reads_tables_via_calls            AS reads_tables_via_calls,
+    writes_tables_via_calls           AS writes_tables_via_calls,
     r.statement                       AS statement,
     coalesce(r._id, r.id)             AS analyzer_rule_id,
     r.condition_description           AS condition_description,
@@ -206,6 +222,8 @@ def _structured_rule(rec) -> RuleDTO | None:
         source_end_line=rec.get("source_end_line"),
         reads_tables=sorted({str(x) for x in (rec.get("reads_tables") or []) if x}),
         writes_tables=sorted({str(x) for x in (rec.get("writes_tables") or []) if x}),
+        reads_tables_via_calls=sorted({str(x) for x in (rec.get("reads_tables_via_calls") or []) if x}),
+        writes_tables_via_calls=sorted({str(x) for x in (rec.get("writes_tables_via_calls") or []) if x}),
         title=f"{condition}: {then}" if condition else then,
         examples=[ExampleDTO(example_id=f"{rid}_example", given=given, when_=when, then_=then)],
     )
@@ -302,6 +320,8 @@ async def extract_rules_from_analyzer_graph(
                 source_end_line=rec.get("source_end_line"),
                 reads_tables=sorted({str(x) for x in (rec.get("reads_tables") or []) if x}),
                 writes_tables=sorted({str(x) for x in (rec.get("writes_tables") or []) if x}),
+                reads_tables_via_calls=sorted({str(x) for x in (rec.get("reads_tables_via_calls") or []) if x}),
+                writes_tables_via_calls=sorted({str(x) for x in (rec.get("writes_tables_via_calls") or []) if x}),
                 confidence=1.0,
                 title=(statement or None),
                 examples=examples,
