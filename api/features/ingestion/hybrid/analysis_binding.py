@@ -15,12 +15,25 @@ from dataclasses import dataclass
 from api.platform.neo4j import analyzer_database, analyzer_session, design_database, get_session
 
 
+# ⚠ 이 질의는 **두 번 죽었다** (2026-10-21 · done16 §305).
+#
+# ① `coalesce(n._id, ..., '')` — `_id` 는 그래프의 **내부 숫자 id**(bigint)다.
+#    문자열과 섞으면 `invalid input syntax for type bigint: ""` 로 죽는다.
+#    → **toString()** 으로 감싼다. catalog 에서 같은 부류를 겪었다(done15 §297).
+# ② `a_key + '|' + type(rel) + '|' + b_key` — 문자열 이어붙이기가
+#    `operator does not exist: text + unknown` 으로 죽는다.
+#    → **이어붙이지 않는다.** 조각을 `item_values` 에 나란히 넣고 정규화는
+#      파이썬에서 한다(`item_values` 는 정렬하지 않으므로 순서가 살아 있다).
+#
+# ⚠ 이 질의가 죽으면 **결합이 안 적히고**, 탐색은 `ANALYSIS_BINDING_MISSING` 으로
+#   막히며, 화면에는 **아무 말도 안 나온다.** 고칠 때는 반드시 실제 분석 graph 에
+#   돌려 본다 — 이 질의는 단위 테스트로 안 잡혔다.
 _FINGERPRINT_QUERY = """
 MATCH (n)
 WHERE n:FUNCTION OR n:PROCEDURE OR n:METHOD OR n:TRIGGER
    OR n:RULE OR n:EXAMPLE OR n:TABLE
 RETURN 'node' AS kind,
-       coalesce(n._id, n.function_id, n.example_id, n.id, n.name, '') AS item_key,
+       coalesce(toString(n._id), n.function_id, n.example_id, toString(n.id), n.name, '') AS item_key,
        labels(n) AS item_labels,
        [coalesce(n.name, ''), coalesce(n.summary, ''),
         coalesce(n.statement, ''), coalesce(n.condition_description, ''),
@@ -33,11 +46,11 @@ MATCH (a)-[rel:HAS_RULE|HAS_EXAMPLE|PARENT_OF|READS|WRITES|AFFECTS_TABLE|CALLS|H
 WHERE (a:FUNCTION OR a:PROCEDURE OR a:METHOD OR a:TRIGGER OR a:RULE OR a:EXAMPLE)
   AND (b:FUNCTION OR b:PROCEDURE OR b:METHOD OR b:TRIGGER OR b:RULE OR b:EXAMPLE OR b:TABLE)
 RETURN 'relationship' AS kind,
-       coalesce(a._id, a.function_id, a.example_id, a.id, a.name, '')
-       + '|' + type(rel) + '|'
-       + coalesce(b._id, b.function_id, b.example_id, b.id, b.name, '') AS item_key,
+       type(rel) AS item_key,
        [] AS item_labels,
-       [coalesce(rel.access, ''), coalesce(rel.op, ''),
+       [coalesce(toString(a._id), a.function_id, a.example_id, toString(a.id), a.name, ''),
+        coalesce(toString(b._id), b.function_id, b.example_id, toString(b.id), b.name, ''),
+        coalesce(rel.access, ''), coalesce(rel.op, ''),
         coalesce(rel.op_source, '')] AS item_values
 ORDER BY kind, item_key
 """
