@@ -30,6 +30,12 @@ WHERE (
 // Tables the operation touches — framework: on f; dbms: on descendant statements.
 OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE)
 OPTIONAL MATCH (f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE)
+// ⚠ **살아 있는 조회도 한 다리를 타야 한다** (2026-10-21 · ISS-61).
+// 아래 `build_rule_contexts` 는 이 조회 결과를 **DTO 보다 먼저** 쓴다. 그래서
+// 여기에만 CALLS 가 없으면, rule_extractor 를 고쳐도 탐색 시점에 다시 직접분만
+// 남아 출처 테이블이 0 으로 돌아간다. 같은 한 다리를 여기서도 탄다.
+OPTIONAL MATCH (f)-[:CALLS]->(_cr)-[:PARENT_OF*0..]->(_crn)-[:READS]->(crt:TABLE)
+OPTIONAL MATCH (f)-[:CALLS]->(_cw)-[:PARENT_OF*0..]->(_cwn)-[:WRITES]->(cwt:TABLE)
 // Parent traversal — callers (one hop up the CALLS chain) + callees
 // (one hop down, used for orchestrator detection)
 OPTIONAL MATCH (caller)-[:CALLS]->(f)
@@ -45,6 +51,8 @@ OPTIONAL MATCH (mod)-[:BELONGS_TO_PACKAGE]->(pkg:PACKAGE)
 WITH source, f,
      collect(DISTINCT rt.name) AS reads,
      collect(DISTINCT wt.name) AS writes,
+     collect(DISTINCT crt.name) AS via_reads,
+     collect(DISTINCT cwt.name) AS via_writes,
      collect(DISTINCT caller.name) AS callers,
      collect(DISTINCT callee.name) AS callees,
      collect(DISTINCT mod.name) AS mod_names,
@@ -54,6 +62,8 @@ RETURN source.rule_id AS rule_id,
        [] AS actors,
        [r IN reads  WHERE r IS NOT NULL] AS reads_tables,
        [w IN writes WHERE w IS NOT NULL] AS writes_tables,
+       [r IN via_reads  WHERE r IS NOT NULL] AS reads_tables_via_calls,
+       [w IN via_writes WHERE w IS NOT NULL] AS writes_tables_via_calls,
        [c IN callers WHERE c IS NOT NULL] AS callers,
        [c IN callees WHERE c IS NOT NULL] AS callees,
        head([m IN mod_names WHERE m IS NOT NULL]) AS parent_module,
@@ -111,11 +121,12 @@ def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
             actors=extra.get("actors", []),
             reads_tables=extra.get("reads_tables") or r.reads_tables,
             writes_tables=extra.get("writes_tables") or r.writes_tables,
-            # 한 다리 건너는 **Rule 스냅샷만** 들고 간다 (ISS-61). 살아 있는
-            # analyzer 조회(`extra`)는 이 둘을 안 싣는다 — 싣는 쪽이 생기면
-            # 위 두 줄과 같은 모양으로 맞춘다.
-            reads_tables_via_calls=r.reads_tables_via_calls,
-            writes_tables_via_calls=r.writes_tables_via_calls,
+            # 한 다리 건너도 **위 두 줄과 같은 규칙**으로 고른다 (ISS-61) —
+            # 살아 있는 analyzer 조회가 있으면 그쪽, 없으면 Rule 스냅샷.
+            reads_tables_via_calls=(extra.get("reads_tables_via_calls")
+                                    or r.reads_tables_via_calls),
+            writes_tables_via_calls=(extra.get("writes_tables_via_calls")
+                                     or r.writes_tables_via_calls),
             context_cluster=r.context_cluster,
             callers=extra.get("callers", []),
             callees=extra.get("callees", []),

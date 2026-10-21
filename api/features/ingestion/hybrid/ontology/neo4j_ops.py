@@ -391,6 +391,10 @@ def save_rules(session_id: str, rules: list[RuleDTO]) -> None:
                 "    r.source_summary = $source_summary, r.source_file_path = $source_file_path, "
                 "    r.source_start_line = $source_start_line, r.source_end_line = $source_end_line, "
                 "    r.reads_tables = $reads_tables, r.writes_tables = $writes_tables, "
+                # 한 다리 건너도 **같이 심는다** (ISS-61). 안 심으면 Rule 을 되읽는
+                # 경로에서 이 둘이 빈 채로 돌아와 출처 테이블이 다시 0 이 된다.
+                "    r.reads_tables_via_calls = $reads_via, "
+                "    r.writes_tables_via_calls = $writes_via, "
                 "    r.title = $title, r.context_cluster = $ctx, "
                 "    r.es_role = $es_role, r.es_role_confidence = $es_role_conf",
                 id=rule.id, sid=session_id,
@@ -401,6 +405,8 @@ def save_rules(session_id: str, rules: list[RuleDTO]) -> None:
                 source_start_line=rule.source_start_line,
                 source_end_line=rule.source_end_line,
                 reads_tables=rule.reads_tables,
+                reads_via=rule.reads_tables_via_calls,
+                writes_via=rule.writes_tables_via_calls,
                 writes_tables=rule.writes_tables,
                 title=rule.title, ctx=rule.context_cluster,
                 es_role=rule.es_role, es_role_conf=rule.es_role_confidence,
