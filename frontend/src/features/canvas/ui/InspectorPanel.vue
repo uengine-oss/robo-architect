@@ -608,17 +608,23 @@ const primaryRootTables = computed(() => {
       tableMap.set(tname, {
         name: tname,
         ops: new Set(),
+        // ⚠ `via` 는 **접근 종류마다** 다르다 (2026-10-22). 표 하나에 하나만
+        //   들고 있으면 `READS 직접 + WRITES 경유` 인 표가 통째로 "직접" 이
+        //   되어, **경유인 쓰기가 직접인 척**한다. 실측에서 걸렸다.
+        opVia: new Map(),
         columns: columns || [],
         sources: new Set(),
         tier,
-        via: via || 'direct',
       })
     }
     const entry = tableMap.get(tname)
-    if (op) entry.ops.add(op)
+    if (op) {
+      entry.ops.add(op)
+      // 같은 표·같은 접근에 직접이 이미 있으면 **직접이 이긴다**.
+      if (entry.opVia.get(op) !== 'direct') entry.opVia.set(op, via || 'direct')
+    }
     if (usid) entry.sources.add(usid)
     if (tier < entry.tier) entry.tier = tier
-    if (via === 'direct') entry.via = 'direct'
     if ((!entry.columns || !entry.columns.length) && columns?.length) {
       entry.columns = columns
     }
@@ -648,16 +654,24 @@ const primaryRootTables = computed(() => {
     for (const fn of (src.functions || [])) {
       for (const tbl of (fn.tables || [])) {
         if (!tbl.name) continue
-        const access = tbl.access || []
-        const via = tbl.via || 'direct'
-        if (access.includes('WRITES')) upsert(tbl.name, 'WRITES', tbl.columns, usid, 2, via)
-        if (access.includes('READS'))  upsert(tbl.name, 'READS',  tbl.columns, usid, 3, via)
+        // 백엔드가 **접근 종류마다** `via` 를 실어 보낸다 (2026-10-22).
+        for (const a of (tbl.accesses || [])) {
+          if (!a?.op) continue
+          upsert(tbl.name, a.op, tbl.columns, usid, a.op === 'WRITES' ? 2 : 3,
+                 a.via || 'direct')
+        }
       }
     }
   }
 
   return [...tableMap.values()]
-    .map(t => ({ ...t, ops: [...t.ops].sort(), sources: [...t.sources] }))
+    .map(t => ({
+      ...t,
+      // 화면은 `[{op, via}]` 로 받는다 — 배지를 접근마다 따로 붙이기 위해서다.
+      accesses: [...t.ops].sort().map(op => ({ op, via: t.opVia.get(op) || 'direct' })),
+      ops: [...t.ops].sort(),
+      sources: [...t.sources],
+    }))
     .sort((a, b) => a.tier - b.tier)
 })
 
@@ -4721,11 +4735,18 @@ function updateVoFieldValue(fieldName, value) {
               <div v-for="tbl in primaryRootTables" :key="tbl.name" class="trace-primary-table">
                 <div class="trace-primary-table__header">
                   <span class="trace-primary-table__name">{{ tbl.name }}</span>
-                  <span v-for="op in tbl.ops" :key="op" class="trace-primary-table__access"
-                    :class="`trace-primary-table__access--${op.toLowerCase()}`">{{ op }}</span>
-                  <span v-if="tbl.via === 'call'" class="trace-table__via"
-                    title="이 Aggregate 의 출처 루틴이 직접 치지 않고, 호출하는 루틴이 친다">
-                    호출 경유
+                  <!--
+                    ⚠ 배지를 **접근 종류 옆에** 붙인다 (2026-10-22). 표 단위로
+                    달면 `READS 직접 + WRITES 경유` 인 표가 통째로 직접이 되어
+                    **경유인 쓰기가 직접인 척**한다 — 실측에서 걸린 자리다.
+                  -->
+                  <span v-for="a in tbl.accesses" :key="a.op" class="trace-access">
+                    <span class="trace-primary-table__access"
+                      :class="`trace-primary-table__access--${a.op.toLowerCase()}`">{{ a.op }}</span>
+                    <span v-if="a.via === 'call'" class="trace-table__via"
+                      :title="`이 Aggregate 의 출처 루틴이 직접 ${a.op === 'READS' ? '읽지' : '쓰지'} 않고, 호출하는 루틴이 한다`">
+                      호출 경유
+                    </span>
                   </span>
                   <span v-if="tbl.columns.length" class="trace-primary-table__count">{{ tbl.columns.length }} cols</span>
                 </div>
@@ -4875,20 +4896,24 @@ function updateVoFieldValue(fieldName, value) {
                         <div v-for="tbl in fn.tables" :key="tbl.name" class="trace-table">
                           <div class="trace-table__header">
                             <span class="trace-table__name">{{ tbl.name }}</span>
-                            <span v-for="acc in tbl.access" :key="acc"
-                              class="trace-table__access"
-                              :class="acc === 'READS' ? 'trace-table__access--reads' : 'trace-table__access--writes'">
-                              {{ acc }}
-                            </span>
                             <!--
-                              ⚠ 이 줄이 **근거의 정직함**을 지킨다 (2026-10-21 · ISS-61).
+                              ⚠ 이 배지가 **근거의 정직함**을 지킨다 (2026-10-21 · ISS-61).
                               이 코드베이스는 SQL 이 DAO 에 있고 규칙은 서비스에 있어,
                               직접 치는 것만 세면 출처 테이블이 0 이 된다. 그래서 호출
                               한 다리 건너 닿는 것도 싣되, **직접인 척하지 않는다.**
+
+                              그리고 **접근 종류마다** 붙인다 (2026-10-22) — 같은 표를
+                              직접 읽고 경유로 쓰는 경우가 실제로 있다.
                             -->
-                            <span v-if="tbl.via === 'call'" class="trace-table__via"
-                              title="이 루틴이 직접 치지 않고, 호출하는 루틴이 친다">
-                              호출 경유
+                            <span v-for="a in tbl.accesses" :key="a.op" class="trace-access">
+                              <span class="trace-table__access"
+                                :class="a.op === 'READS' ? 'trace-table__access--reads' : 'trace-table__access--writes'">
+                                {{ a.op }}
+                              </span>
+                              <span v-if="a.via === 'call'" class="trace-table__via"
+                                :title="`이 루틴이 직접 ${a.op === 'READS' ? '읽지' : '쓰지'} 않고, 호출하는 루틴이 한다`">
+                                호출 경유
+                              </span>
                             </span>
                           </div>
                           <div v-if="tbl.columns?.length" class="trace-table__cols">
@@ -6526,6 +6551,9 @@ function updateVoFieldValue(fieldName, value) {
 }
 
 /* 호출 한 다리 건너 닿는 테이블 — 직접과 **눈으로 구분**된다 (ISS-61). */
+/* 접근 종류와 그 배지를 한 덩어리로 묶는다 (2026-10-22) — 줄바꿈될 때
+   `WRITES` 와 `호출 경유` 가 갈라지면 어느 접근의 배지인지 못 읽는다. */
+.trace-access { display:inline-flex; align-items:center; gap:3px; margin-right:4px; }
 .trace-table__via {
   font-size: 0.6rem;
   font-weight: 600;

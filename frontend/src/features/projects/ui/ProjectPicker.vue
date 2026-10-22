@@ -235,10 +235,19 @@ watch(() => auth.token, (t) => { if (t) refresh() })
                   {{ optionLabel(o) }}
                 </option>
               </select>
-              <p v-if="pairValue && pairValue !== p.graph + '_a'" class="pp__warnline">
-                ⚠ 다른 프로젝트와 나눠 쓰는 분석입니다. 여기서 분석을 다시 돌리면
-                그쪽 결과도 함께 사라집니다.
-              </p>
+<!--
+                ⚠ 여기 있던 경고 줄도 뺐다 (2026-10-22 · 사용자 판단).
+
+                "다른 프로젝트와 나눠 쓰는 분석입니다" 라는 문장이 **프로젝트가
+                분석 graph 를 위해 있는 것처럼** 읽혔다. 실제로 가르는 단위는
+                분석 graph 하나가 아니라 **적재 단위 전부**다. 틀린 그림을
+                심어 주는 경고는 없느니만 못하다.
+
+                ⚠ **지우는 동작 자체는 그대로다** — 분석은 대상 graph 를 비우고
+                다시 쓴다. 다시 알려 줄 거라면 문장을 **맞게** 써야 한다:
+                "이 분석을 함께 쓰는 프로젝트의 **적재 결과 전부**가 다시 돌릴 때
+                사라집니다."
+              -->
               <div class="pp__actions">
                 <button type="button" class="pp__link" @click="pairFor = ''">취소</button>
                 <button type="submit" class="pp__primary" :disabled="busy || pairLoading">저장</button>
@@ -246,10 +255,18 @@ watch(() => auth.token, (t) => { if (t) refresh() })
             </form>
           </li>
         </ul>
-        <p class="pp__warn" v-if="store.projects.length">
-          ⚠ 레거시 분석은 <b>대상 graph 를 통째로 비우고</b> 다시 씁니다.
-          같은 분석 graph 를 쓰는 다른 프로젝트가 있으면 그쪽 결과가 사라집니다.
-        </p>
+<!--
+          ⚠ 여기 있던 **항상 뜨는 경고 줄**을 뺐다 (2026-10-22).
+
+          "레거시 분석은 대상 graph 를 통째로 비운다" 를 프로젝트가 하나라도
+          있으면 **늘** 띄웠다. 그런데 위험한 경우는 **분석 graph 를 나눠 쓸
+          때뿐**이고, 그 경우에는 바로 위 `pp__warnline` 이 **그 프로젝트 줄에**
+          정확히 뜬다. 겹쳐 띄우면 늘 보이는 쪽이 배경이 되어, 정작 해당하는
+          줄도 같이 안 읽히게 된다.
+
+          그리고 **어긋난 조합은 이제 막힌다** — `ANALYSIS_PROJECT_MISMATCH` ·
+          `ANALYSIS_CONTENT_CHANGED` 가 만들기 전에 거부하고 이유를 띄운다.
+        -->
         <div class="pp__foot">
           <button class="pp__link" @click="mode = 'create'">＋ 새 프로젝트</button>
           <button v-if="store.canManage" class="pp__link" @click="openShare">공유 관리</button>
@@ -353,13 +370,10 @@ watch(() => auth.token, (t) => { if (t) refresh() })
 .pp__pairform { padding: 6px 10px 2px; }
 .pp__hint { font-size: 0.7rem; line-height: 1.6; color: var(--color-text-light);
   margin: 0 0 6px; }
-.pp__warnline { font-size: 0.68rem; line-height: 1.5; color: var(--status-amber-fg);
-  margin: 4px 0 0; }
+/* `.pp__warnline` 도 경고 줄과 함께 걷어냈다 (2026-10-22). */
 
-.pp__warn { font-size:0.68rem; line-height:1.6; color:var(--status-amber-fg);
-  background:var(--status-amber-bg); border-radius:var(--radius-sm); padding:6px 9px;
-  margin:var(--spacing-sm) 0 0; }
-.pp__warn b { font-weight:700; }
+/* `.pp__warn` 은 위의 항상 뜨던 경고 줄과 함께 걷어냈다 (2026-10-22).
+   쓰는 곳이 0 이 된 규칙을 남겨 두면 다음 사람이 "어디에 쓰나" 를 찾게 된다. */
 .pp__foot { display:flex; justify-content:space-between; margin-top:var(--spacing-sm);
   padding-top:9px; border-top:1px solid var(--color-border); }
 .pp__link { border:none; background:none; color:var(--color-accent); font-size:0.72rem;

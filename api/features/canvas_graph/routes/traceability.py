@@ -365,14 +365,30 @@ def _merge_call_tables(live: dict, snap: dict | None) -> dict:
     """
     if not snap:
         return live
-    live_tables = live.get("tables") or []
-    have = {t.get("name") for t in live_tables}
-    merged = [{**t, "via": t.get("via") or "direct"} for t in live_tables]
+    # 산 루틴이 읽어 온 것은 **전부 직접**이다(분석 graph 의 READS/WRITES 간선).
+    by_name: dict[str, dict] = {}
+    for t in (live.get("tables") or []):
+        by_name[t["name"]] = {
+            "name": t["name"],
+            "columns": t.get("columns") or [],
+            "accesses": [{"op": op, "via": "direct"} for op in (t.get("access") or [])],
+        }
+    # 스냅샷의 **경유만** 얹는다. 같은 표·같은 접근에 직접이 이미 있으면 안 덮는다.
     for t in (snap.get("tables") or []):
-        if t.get("via") != "call" or t.get("name") in have:
+        name = t.get("name")
+        if not name:
             continue
-        merged.append({**t, "via": "call"})
-    return {**live, "tables": merged}
+        entry = by_name.setdefault(
+            name, {"name": name, "columns": t.get("columns") or [], "accesses": []})
+        have = {a["op"] for a in entry["accesses"]}
+        for a in (t.get("accesses") or []):
+            if a.get("via") == "call" and a.get("op") not in have:
+                entry["accesses"].append({"op": a["op"], "via": "call"})
+        if not entry["columns"] and t.get("columns"):
+            entry["columns"] = t["columns"]
+    for entry in by_name.values():
+        entry["accesses"].sort(key=lambda a: a["op"])
+    return {**live, "tables": sorted(by_name.values(), key=lambda t: t["name"])}
 
 
 def _sources_from_persisted(
@@ -427,8 +443,15 @@ def _sources_from_persisted(
             # 한 다리 건너(CALLS) 닿는 것도 싣되 `via` 로 **갈라서** 보낸다 —
             # 화면이 "여기서 친다"(direct) 와 "부르는 것이 친다"(call) 를
             # 구분해 보여 줄 수 있어야 한다. 섞어 보내면 근거가 거짓이 된다.
-            table_access: dict[str, set[str]] = {}
-            table_via: dict[str, str] = {}
+            # ⚠ `via` 는 **표가 아니라 접근 종류마다** 다르다 (2026-10-22).
+            #
+            # 전에는 표 하나에 `via` 하나를 달았고, 직접이 하나라도 있으면
+            # 표 전체가 "직접" 으로 접혔다. 실측에서 바로 걸렸다 —
+            # `HR_LEAVE_BALANCE` 는 `selectBalance` 가 **직접 READS** 하고
+            # `grantAnnualLeave` 가 **경유 WRITES** 하는데, 화면에는
+            # `READS WRITES` 가 배지 없이 떠서 **경유인 쓰기가 직접인 척**했다.
+            # 뜻을 안 섞으려고 만든 장치가 그 한 자리에서 섞였다.
+            access_via: dict[str, dict[str, str]] = {}
             for access, names, via in (
                 ("READS", r.get("reads_tables") or [], "direct"),
                 ("WRITES", r.get("writes_tables") or [], "direct"),
@@ -438,17 +461,17 @@ def _sources_from_persisted(
                 for name in names:
                     if not name:
                         continue
-                    table_access.setdefault(name, set()).add(access)
-                    if table_via.get(name) != "direct":
-                        table_via[name] = via
+                    per = access_via.setdefault(name, {})
+                    # 같은 표·같은 접근이 양쪽에 다 있으면 **직접이 이긴다**.
+                    if per.get(access) != "direct":
+                        per[access] = via
             tables = [
                 {
                     "name": name,
                     "columns": [],
-                    "access": sorted(accesses),
-                    "via": table_via.get(name, "direct"),
+                    "accesses": [{"op": op, "via": per[op]} for op in sorted(per)],
                 }
-                for name, accesses in sorted(table_access.items())
+                for name, per in sorted(access_via.items())
             ]
             location = r.get("source_file_path") or ""
             if r.get("source_start_line"):

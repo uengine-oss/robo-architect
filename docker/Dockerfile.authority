@@ -5,7 +5,48 @@
 # (openssl 17·perl 9·gnutls28 8·util-linux 6·glibc 5 가 통째로 빠진다).
 #
 # 파이썬은 3.11 그대로다. OS 와 런타임을 같이 올리면 무엇이 깨졌는지 못 가린다.
-FROM ghcr.io/astral-sh/uv:python3.11-trixie-slim
+#
+# ⚠ **2026-10-22 — 베이스를 Ubuntu 24.04(noble) 로 옮겼다.**
+#
+# trixie 의 `zlib` 에 CVE-2026-85091 이 걸렸는데 **데비안이 고친 판을 안 냈다**
+# (trixie·sid 모두 vulnerable, 버그 #1146895). 이 이미지에 남은 마지막 1건이다.
+#     debian:trixie-slim   0C 1H
+#     ubuntu:24.04         **0C 0H**
+#
+# uv 는 noble 변형 이미지를 안 낸다(확인). 그래서 **uv 바이너리만 가져와**
+# noble 위에 올리고, **파이썬도 uv 가 받는다** — 배포판 파이썬이 아니라
+# uv 의 독립 빌드라 **3.11 을 그대로 쓸 수 있다**. 배포판을 바꾸면서도
+# 런타임 판은 안 움직인다(위 원칙 유지).
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    UV_PYTHON_INSTALL_DIR=/opt/python \
+    UV_LINK_MODE=copy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+# ⚠ **받아 온 파이썬에서 `pip` 와 `ensurepip` 휠을 걷어낸다** (2026-10-22 실측).
+#
+# uv 가 받는 독립 빌드에는 `site-packages/pip` 와
+# `ensurepip/_bundled/{pip-26.2.2,setuptools-79.0.1}.whl` 이 들어 있다.
+# 검사기는 **휠 안과 `pip/_vendor/` 까지** 읽어서
+# `urllib3 2.7.0` 2건 · `msgpack 1.1.2` 2건 · `setuptools 70.3.0` 1건을 올린다 —
+# 베이스를 옮기고 1 → 6 으로 **늘어나서** 알았다.
+#
+# 의존성은 **uv 가 `uv.lock` 으로** 넣는다. 런타임은 uvicorn 뿐이라
+# pip 를 부르는 자리가 없다. 없는 것을 안 싣는 것이 가장 확실하다.
+RUN uv python install 3.11 \
+    && PY="$(uv python find 3.11)" \
+    && PYROOT="$(dirname "$(dirname "$PY")")" \
+    && rm -rf "$PYROOT"/lib/python3.11/site-packages/pip \
+              "$PYROOT"/lib/python3.11/site-packages/pip-*.dist-info \
+              "$PYROOT"/lib/python3.11/ensurepip \
+    && ln -sf "$PY" /usr/local/bin/python3 \
+    && ln -sf /usr/local/bin/python3 /usr/local/bin/python
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -28,7 +69,14 @@ WORKDIR /app
 # ⚠ 둘 다 **빌드 시점 코드 경로**다(압축 해제). 이 이미지의 런타임은
 # `uvicorn api.authority:app` 뿐이고 setuptools 를 부르지 않는다. 그래도 올린다 —
 # **닿지 않는다는 설명보다 올리는 쪽이 싸다**(ISS-39 처럼 못 올리는 자리가 아니다).
-RUN uv pip install --system --no-cache 'setuptools>=84.0.0'
+#
+# ⚠ **2026-10-22 — 이 줄은 더 필요 없어졌다.**
+#
+# 그때 고친 것은 **베이스 이미지가 깔아 둔 시스템 setuptools** 였다. 이제
+# 파이썬을 uv 가 직접 받으므로(위 `uv python install`) 시스템 setuptools 가
+# 애초에 없다 — 넣으려 하면 `externally managed` 로 거부당한다(실측).
+# 남은 것은 우리 venv 안의 판뿐이고 그것은 `uv.lock` 이 정한다.
+# 줄은 지우되 **왜 있었는지는 남긴다** — 다음에 같은 증상을 보면 여기부터 읽는다.
 
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
