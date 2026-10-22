@@ -4732,6 +4732,26 @@ function updateVoFieldValue(fieldName, value) {
                 <span class="trace-primary__icon">📊</span>
                 Root Tables — Aggregate 가 영속되는 DB 테이블
               </div>
+              <!--
+                ⚠ 배지 뜻을 **눈에 보이게** 적는다 (2026-10-22).
+                전에는 `title` 로만 달아 뒀는데, 기본 툴팁은 1초쯤 머물러야 떠서
+                "올려도 안 뜬다" 는 말을 들었다. 읽는 사람이 배지 뜻을 모르면
+                **직접과 경유를 가른 것이 아무 의미가 없다.**
+              -->
+              <div class="trace-legend">
+                <span class="trace-legend__item">
+                  <span class="trace-primary-table__access trace-primary-table__access--reads">READS</span>
+                  이 표를 읽는다
+                </span>
+                <span class="trace-legend__item">
+                  <span class="trace-primary-table__access trace-primary-table__access--writes">WRITES</span>
+                  이 표에 쓴다
+                </span>
+                <span class="trace-legend__item">
+                  <span class="trace-table__via">호출 경유</span>
+                  출처 루틴이 직접 하지 않고, 그 루틴이 <b>부르는 쪽</b>이 한다
+                </span>
+              </div>
               <div v-for="tbl in primaryRootTables" :key="tbl.name" class="trace-primary-table">
                 <div class="trace-primary-table__header">
                   <span class="trace-primary-table__name">{{ tbl.name }}</span>
@@ -4892,7 +4912,13 @@ function updateVoFieldValue(fieldName, value) {
                       </div>
                       <!-- Tables -->
                       <div v-if="fn.tables?.length" class="trace-tables">
-                        <div class="trace-tables__title">관련 테이블</div>
+                        <div class="trace-tables__title">
+                          관련 테이블
+                          <span class="trace-legend__inline">
+                            — <b>호출 경유</b>는 이 루틴이 직접 하지 않고
+                            <b>부르는 쪽</b>이 한다는 뜻
+                          </span>
+                        </div>
                         <div v-for="tbl in fn.tables" :key="tbl.name" class="trace-table">
                           <div class="trace-table__header">
                             <span class="trace-table__name">{{ tbl.name }}</span>
@@ -6553,6 +6579,15 @@ function updateVoFieldValue(fieldName, value) {
 /* 호출 한 다리 건너 닿는 테이블 — 직접과 **눈으로 구분**된다 (ISS-61). */
 /* 접근 종류와 그 배지를 한 덩어리로 묶는다 (2026-10-22) — 줄바꿈될 때
    `WRITES` 와 `호출 경유` 가 갈라지면 어느 접근의 배지인지 못 읽는다. */
+/* 배지 뜻풀이 — **늘 보인다** (2026-10-22). 툴팁은 1초쯤 머물러야 떠서
+   읽는 사람이 배지를 모르는 채 지나간다. 가른 것을 읽히게 하려면 적어야 한다. */
+.trace-legend { display:flex; flex-wrap:wrap; gap:4px 12px;
+  margin:4px 0 8px; font-size:0.62rem; line-height:1.5;
+  color:var(--text-tertiary, #94a3b8); }
+.trace-legend__item { display:inline-flex; align-items:center; gap:4px; }
+.trace-legend__inline { font-size:0.62rem; font-weight:400;
+  color:var(--text-tertiary, #94a3b8); }
+
 .trace-access { display:inline-flex; align-items:center; gap:3px; margin-right:4px; }
 .trace-table__via {
   font-size: 0.6rem;
