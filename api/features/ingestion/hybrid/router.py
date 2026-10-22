@@ -24,6 +24,7 @@ from starlette.requests import Request
 
 from api.features.projects.access import request_uid, require_write
 from api.features.ingestion import runs
+from api.features.ingestion import service_id_gate
 from api.platform.neo4j import design_database
 from api.features.ingestion.hybrid.document_to_bpm.config import (
     a2a_pdf_tmp_dir,
@@ -82,6 +83,7 @@ async def upload_hybrid(
     text: Optional[str] = Form(None),
     analyzer_graph_ref: Optional[str] = Form(None),
     display_language: Optional[str] = Form("ko"),
+    service_id: Optional[str] = Form(None),
     replace_ack: bool = Query(default=False, alias="replaceAck"),
 ) -> dict[str, Any]:
     """여러 문서의 본문은 합치고, PDF가 여러 개면 파일마다 저장한 뒤 Phase1에서 A2A를 PDF별로 호출합니다.
@@ -95,6 +97,9 @@ async def upload_hybrid(
     부르면 그 문을 지나지 않고 지우기부터 시작한다.
     """
     require_write(request)
+    # 서비스 ID 를 제일 먼저 본다 — 이 길은 PDF 를 디스크에 쓰고 A2A 까지 가므로
+    # 뒤에서 거절하면 버린 시간이 더 크다.
+    pinned_session_id = service_id_gate.resolve(request, service_id)
     require_replace_ack(replace_ack)
 
     def _gather_uploads() -> list[UploadFile]:
@@ -169,7 +174,7 @@ async def upload_hybrid(
         except OSError:
             pass
 
-    session = create_session()
+    session = create_session(pinned_session_id)
     session.content = content
     # 누가 돌리는 작업인가. 강제 종료되면 **이 값만이** 경고에 이름을 붙인다(`runs.py`).
     setattr(session, "uid", request_uid(request))

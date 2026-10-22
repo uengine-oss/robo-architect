@@ -36,6 +36,7 @@ from api.features.ingestion.ingestion_sessions import (
 )
 from api.features.ingestion.ingestion_workflow_runner import run_ingestion_workflow
 from api.features.ingestion import runs
+from api.features.ingestion import service_id_gate
 from api.features.ingestion.replacement import require_replace_ack
 from api.features.projects.access import request_graph, request_uid, require_write
 from api.features.projects import store as projects
@@ -65,6 +66,7 @@ async def upload_document(
     display_language: Optional[str] = Form("ko"),
     source_type: Optional[str] = Form("rfp"),
     ui_generation_mode: Optional[str] = Form("html"),
+    service_id: Optional[str] = Form(None),
     replace_ack: bool = Query(default=False, alias="replaceAck"),
 ) -> dict[str, Any]:
     """
@@ -82,6 +84,9 @@ async def upload_document(
     그때 빠져 있었다.**
     """
     require_write(request)
+    # 서비스 ID 를 **제일 먼저** 본다. PDF 추출은 수십 초가 걸리는데, 모양이
+    # 틀렸거나 겹친 값을 그 뒤에 거절하면 사람이 그 시간을 그냥 버린다.
+    pinned_session_id = service_id_gate.resolve(request, service_id)
     # **지울 것이 있으면 확인을 받았는지 본다** (10/7). 화면은 이미 묻지만
     # (`RequirementsIngestionModal`), 이 엔드포인트를 직접 부르면 그 문을 지나지
     # 않고 **지우기부터 시작한다.** 확인 없으면 409 + 무엇이 지워지는지.
@@ -168,7 +173,7 @@ async def upload_document(
         },
     )
 
-    session = create_session()
+    session = create_session(pinned_session_id)
     session.content = content
     # 누가 돌리는 작업인가. 강제 종료되면 **이 값만이** 경고에 이름을 붙인다(`runs.py`).
     setattr(session, "uid", request_uid(request))
@@ -209,6 +214,7 @@ class FigmaUploadRequest(BaseModel):
     figma_file_key: str | None = None
     figma_node_id_map: dict[str, str] | None = None  # screen_name → figma_node_id
     ui_generation_mode: str = "html"  # "html" | "figma"
+    service_id: str | None = None  # 기업 체계의 서비스 ID (소유자만 · 변경 불가)
 
 
 @router.post("/upload/figma")
@@ -224,6 +230,7 @@ async def upload_figma_document(
     쓰기 권한을 먼저 본다 — `/upload` 와 같은 이유다.
     """
     require_write(request)
+    pinned_session_id = service_id_gate.resolve(request, body.service_id)
     require_replace_ack(replace_ack)
     if not body.figma_nodes:
         raise HTTPException(status_code=400, detail="figma_nodes must not be empty")
@@ -241,7 +248,7 @@ async def upload_figma_document(
     # Serialize figma nodes as the content (JSON string for workflow)
     content = json.dumps(body.figma_nodes, ensure_ascii=False)
 
-    session = create_session()
+    session = create_session(pinned_session_id)
     session.content = content
     setattr(session, "uid", request_uid(request))
     session.display_language = (body.display_language or "ko").strip().lower() or "ko"

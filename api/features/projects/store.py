@@ -26,14 +26,15 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from api.features.projects import roles
+from api.features.projects import roles, service_id as service_ids
 from api.platform import pg
 from api.platform.observability.smart_logger import SmartLogger
+from api.platform.pg_errors import sqlstate_of
 
 __all__ = [
     "ensure_schema", "create_project", "adopt_graph", "list_projects",
     "get_project", "share", "unshare", "members", "graph_exists", "prune_orphan_grants",
-    "set_analyzer_graph", "analyzer_options",
+    "set_analyzer_graph", "analyzer_options", "service_id_guard_ready",
     "LEVELS", "LEVEL_BY_ROLE_NAME",
 ]
 
@@ -50,6 +51,22 @@ CREATE TABLE IF NOT EXISTS public.app_projects (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_app_projects_owner ON public.app_projects (owner_uid);
+
+-- 서비스 ID — 기업 체계의 값. `owner_uid` 와 같은 수법으로 JSON 안의 값을 열로
+-- 끌어낸다. **유일성을 DB 가 지킨다**: 둘이 동시에 같은 값으로 만들면 SELECT
+-- 검사는 둘 다 통과시킨다(둘 다 아직 INSERT 전이다). 인덱스만이 못 박는다.
+--
+-- `lower()` 로 저장해 **대소문자를 구별하지 않고** 겹치는 것으로 본다 —
+-- `ROBO-1` 과 `robo-1` 이 다른 서비스로 보이면 사람이 틀린다.
+--
+-- 부분 인덱스라 **값이 없는 행은 서로 안 부딪친다** — 기존 프로젝트에는 이
+-- 값이 없고(사용자: "기존 프로젝트는 상관없음"), 체계를 아직 못 받은 사람도
+-- 프로젝트를 만들 수 있어야 한다.
+ALTER TABLE public.app_projects
+    ADD COLUMN IF NOT EXISTS service_id TEXT
+    GENERATED ALWAYS AS (lower(value->>'serviceId')) STORED;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_app_projects_service_id
+    ON public.app_projects (service_id) WHERE service_id IS NOT NULL;
 """
 
 _GRAPH_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
@@ -81,6 +98,37 @@ def _new_graph_name() -> str:
     raise RuntimeError("graph 이름을 만들지 못했다")
 
 
+_SERVICE_ID_GUARD_NAME = "uq_app_projects_service_id"
+_service_id_guard_seen = False
+
+
+def service_id_guard_ready() -> bool:
+    """서비스 ID 유일 인덱스가 **이 DB 에 실제로 있나.**
+
+    ⚠ 이 함수가 있는 이유가 중요하다. 중앙 구성에서 `/api/projects` 를 서비스하는
+    것은 **authority 서버**이고(`api/authority.py` 가 projects_router 를 싣는다),
+    거기서는 위 `ensure_schema()` 가 표가 있는지만 보고 돌아간다 — **DDL 을 돌리지
+    않는다.** 그래서 새 열과 인덱스는 운영 명령
+    `python -m scripts.accounts_admin migrate` 를 다시 돌릴 때 생긴다.
+
+    그걸 안 돌린 DB 에서는 `value` 에 `serviceId` 가 **그냥 들어간다** — INSERT 는
+    성공하고, 겹쳐도 아무 일이 안 일어난다. "당연히 유일해야" 하는 값이 조용히
+    유일하지 않게 된다. 그래서 받기 전에 **지킴이가 있는지 먼저 본다.**
+
+    한 번 본 참은 기억한다(인덱스가 사라지지는 않는다). 거짓은 기억하지 않는다 —
+    관리자가 `migrate` 를 돌린 뒤 **앱을 다시 띄우지 않아도** 되게.
+    """
+    global _service_id_guard_seen
+    if _service_id_guard_seen:
+        return True
+    rows = pg.query(
+        "SELECT 1 FROM pg_class WHERE relname = %s AND relkind = 'i'",
+        (_SERVICE_ID_GUARD_NAME,),
+    )
+    _service_id_guard_seen = bool(rows)
+    return _service_id_guard_seen
+
+
 def graph_exists(graph: str) -> bool:
     rows = pg.query("SELECT 1 FROM og_catalog.graph WHERE name = %s", (graph,))
     return bool(rows)
@@ -96,7 +144,8 @@ def _row_to_project(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def create_project(name: str, owner_uid: str, *, with_analyzer: bool = True) -> dict[str, Any]:
+def create_project(name: str, owner_uid: str, *, with_analyzer: bool = True,
+                   service_id: str | None = None) -> dict[str, Any]:
     """graph 를 만들고 소유자에게 admin 을 준다. **분석 graph 도 짝으로 만든다.**
 
     넷이 함께 되거나 함께 안 돼야 한다 — graph 만 생기고 권한이 없으면 아무도
@@ -107,12 +156,25 @@ def create_project(name: str, owner_uid: str, *, with_analyzer: bool = True) -> 
     graph 가 되어, 새 프로젝트에서 분석을 한 번 돌리면 **다른 프로젝트의 분석이
     사라진다.** 오류는 나지 않는다. 짝을 미리 만들어 두면 wipe 가 이 프로젝트
     안에 갇힌다.
+
+    `service_id` 는 기업 체계의 값이다 — **만들 때만 받고 그 뒤로 못 바꾼다**
+    (사용자 지시). 바꾸는 함수를 두지 않는 것이 그 강제다. 모양과 이유는
+    `service_id.py`, 유일성은 `_SCHEMA` 의 부분 유일 인덱스가 지킨다.
     """
     label = (name or "").strip()
     if not label:
         raise ValueError("프로젝트 이름이 비었다")
     if not owner_uid:
         raise ValueError("소유자를 알 수 없다")
+    sid = service_ids.validate(service_id)
+    if sid and not service_id_guard_ready():
+        # 지킴이 없이 받으면 겹쳐도 통과한다. 받지 않는 것이 옳다 — 조용히 틀린
+        # 데이터보다 지금 멈추는 쪽이 싸다.
+        raise ValueError(
+            "이 데이터베이스에는 서비스 ID 유일성 검사가 아직 없습니다. "
+            "서버에서 `python -m scripts.accounts_admin migrate` 를 한 번 "
+            "돌린 뒤 다시 시도하세요. (서비스 ID 를 비우면 지금도 만들 수 있습니다)"
+        )
 
     role = roles.ensure_role(owner_uid)
     graph = _new_graph_name()
@@ -122,21 +184,31 @@ def create_project(name: str, owner_uid: str, *, with_analyzer: bool = True) -> 
         "ownerUid": owner_uid,
         "created": _now(),
     }
+    if sid:
+        value["serviceId"] = sid
     if analyzer_graph:
         value["analyzerGraph"] = analyzer_graph
-    with pg.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT og_create_graph(%s)", (graph,))
-            cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", graph))
-            if analyzer_graph:
-                # 분석 graph 에도 같은 권한을 준다 — 추적성이 두 graph 를 오가며
-                # 읽으므로, 한쪽만 열어 두면 설계는 보이는데 출처만 막힌다.
-                cur.execute("SELECT og_create_graph(%s)", (analyzer_graph,))
-                cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", analyzer_graph))
-            cur.execute(
-                "INSERT INTO public.app_projects (graph, value) VALUES (%s, %s::jsonb)",
-                (graph, json.dumps(value, ensure_ascii=False)),
-            )
+    try:
+        with pg.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT og_create_graph(%s)", (graph,))
+                cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", graph))
+                if analyzer_graph:
+                    # 분석 graph 에도 같은 권한을 준다 — 추적성이 두 graph 를 오가며
+                    # 읽으므로, 한쪽만 열어 두면 설계는 보이는데 출처만 막힌다.
+                    cur.execute("SELECT og_create_graph(%s)", (analyzer_graph,))
+                    cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", analyzer_graph))
+                cur.execute(
+                    "INSERT INTO public.app_projects (graph, value) VALUES (%s, %s::jsonb)",
+                    (graph, json.dumps(value, ensure_ascii=False)),
+                )
+    except Exception as exc:  # noqa: BLE001 — 겹친 서비스 ID 만 말로 바꾼다
+        # 유일 인덱스에 걸린 것은 사용자가 고칠 수 있는 일이다. 그 외는 그대로 올린다.
+        # 트랜잭션이 함께 되돌아가므로 **graph 도 남지 않는다** — 이 함수의
+        # "넷이 함께 되거나 함께 안 돼야 한다" 가 서비스 ID 에도 그대로 적용된다.
+        if sid and sqlstate_of(exc) == "23505":
+            raise ValueError(f"이미 쓰고 있는 서비스 ID 입니다: {sid}") from exc
+        raise
     return {"graph": graph, **value, "level": "admin"}
 
 

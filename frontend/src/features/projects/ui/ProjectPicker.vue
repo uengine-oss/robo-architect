@@ -18,6 +18,7 @@ const store = useProjectsStore()
 const open = ref(false)
 const mode = ref('list')      // list | create | share
 const newName = ref('')
+const newServiceId = ref('')
 const inviteUid = ref('')
 const inviteLevel = ref('read')
 const memberList = ref([])
@@ -63,11 +64,14 @@ async function submitCreate() {
   busy.value = true
   message.value = ''
   try {
-    const p = await store.create(newName.value.trim())
+    const p = await store.create(newName.value.trim(), newServiceId.value)
     newName.value = ''
+    newServiceId.value = ''
     mode.value = 'list'
     store.select(p.graph)
   } catch (e) {
+    // 겹친 서비스 ID 와 모양 오류가 여기로 온다. **칸을 비우지 않는다** — 비우면
+    // 사람이 방금 적은 값을 다시 타이핑해야 하고, 무엇이 틀렸는지도 사라진다.
     message.value = e.message
   } finally {
     busy.value = false
@@ -201,6 +205,12 @@ watch(() => auth.token, (t) => { if (t) refresh() })
                     @click="store.select(p.graph)">
               <span class="pp__itemname">
                 {{ p.displayName || p.graph }}
+                <!-- 서비스 ID 를 여기 보여 주는 이유: 고치는 화면이 없으므로
+                     **보는 자리가 여기뿐**이다. 안 보이면 붙였는지도 모른다. -->
+                <span v-if="p.serviceId" class="pp__sid"
+                      title="기업 서비스 ID — 만들 때 정했고 바꿀 수 없다">
+                  {{ p.serviceId }}
+                </span>
                 <!-- 설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘은 한 세트다.
                      짝이 없으면 추적성이 .env 의 분석을 본다 — 보여 줘야 한다. -->
                 <span v-if="p.analyzerGraph" class="pp__pair"
@@ -281,6 +291,17 @@ watch(() => auth.token, (t) => { if (t) refresh() })
         </p>
         <form @submit.prevent="submitCreate">
           <input v-model="newName" class="pp__input" placeholder="예: 인사관리 설계" />
+          <!-- 서비스 ID — 기업이 서비스를 식별하는 자기 체계의 값.
+               ⚠ **지금 넣지 않으면 나중에 넣을 길이 없다.** 변경 불가로 정했으니
+               (지시) 이 칸은 이 화면에만 있다. 그래서 라벨이 아니라 아래 문장으로
+               그 사실을 적는다 — 칸만 두면 비워 두고 지나간다. -->
+          <input v-model="newServiceId" class="pp__input pp__input--sid"
+                 placeholder="서비스 ID (선택) — 예: ROBO-2026-001" />
+          <p class="pp__hint">
+            기업 서비스 ID 체계를 쓰면 여기 적습니다. 영문·숫자로 시작하고 끝나며
+            가운데에 <code>-</code> <code>_</code> <code>.</code> 를 쓸 수 있습니다.
+            <strong>만든 뒤에는 바꿀 수 없고</strong>, 비워 두면 ID 없이 만들어집니다.
+          </p>
           <div class="pp__actions">
             <button type="button" class="pp__link" @click="mode = 'list'">취소</button>
             <button type="submit" class="pp__primary" :disabled="busy || !newName.trim()">만들기</button>
@@ -356,6 +377,12 @@ watch(() => auth.token, (t) => { if (t) refresh() })
 .pp__pair { display:block; font-size:0.62rem; font-weight:400; color:var(--color-text-light);
   font-family:var(--font-mono); margin-top:2px; }
 .pp__pair--none { color:var(--status-amber-fg); font-family:var(--font-main); }
+/* 서비스 ID — 이름 옆 칩. 분석 짝(`pp__pair`)이 아래 줄을 쓰므로 이쪽은 같은
+   줄에 둬서 "이름에 붙은 식별자" 로 읽히게 한다. */
+.pp__sid { font-size:0.62rem; font-weight:500; font-family:var(--font-mono);
+  color:var(--status-blue-fg); background:var(--status-blue-bg);
+  border-radius:9px; padding:1px 7px; margin-left:var(--spacing-sm);
+  letter-spacing:0.02em; }
 .pp__level { font-size:0.62rem; color:var(--status-neutral-fg); background:var(--status-neutral-bg);
   border-radius:9px; padding:1px 7px; margin-left:var(--spacing-sm); flex-shrink:0; }
 .pp__scope { font-size:0.62rem; color:var(--status-neutral-fg); background:var(--status-neutral-bg);
@@ -386,6 +413,13 @@ watch(() => auth.token, (t) => { if (t) refresh() })
   border-radius:var(--radius-sm); background:var(--color-bg); color:var(--color-text);
   font-size:0.76rem; font-family:inherit; box-sizing:border-box; }
 .pp__input:focus { outline:none; border-color:var(--color-accent); }
+/* 서비스 ID 칸은 이름 칸 바로 아래 붙는다. 식별자라 등폭으로 쓴다 — 0 과 O,
+   1 과 l 을 눈으로 가려야 하는 값이다. */
+.pp__input--sid { margin-top:6px; font-family:var(--font-mono); font-size:0.72rem; }
+.pp__hint { font-size:0.68rem; color:var(--color-text-light); line-height:1.55;
+  margin:5px 2px 0; }
+.pp__hint code { font-family:var(--font-mono); font-size:0.95em;
+  background:var(--status-neutral-bg); border-radius:3px; padding:0 3px; }
 .pp__select { padding:7px; border:1px solid var(--color-border); border-radius:var(--radius-sm);
   background:var(--color-bg); color:var(--color-text); font-size:0.76rem; font-family:inherit; }
 .pp__actions { display:flex; justify-content:flex-end; gap:var(--spacing-sm);

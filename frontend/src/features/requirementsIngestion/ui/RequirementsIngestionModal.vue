@@ -8,6 +8,8 @@ import { useCanvasStore } from '@/features/canvas/canvas.store'
 import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.store'
 // 058 T029 — 준비 안 된 기능으로는 시작하지 않는다(이유를 말하고 막는다).
 import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
+import { useProjectsStore } from '@/features/projects/projects.store'
+import { useAuthStore } from '@/features/auth/auth.store.js'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
 import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
 import { openSse } from '@/app/sse'
@@ -29,6 +31,8 @@ const emit = defineEmits(['update:modelValue', 'complete', 'session-restored'])
 
 const navigatorStore = useNavigatorStore()
 const runtime = useRuntimeStore()
+const projectsStore = useProjectsStore()
+const authStore = useAuthStore()
 const ingestionStore = useIngestionStore()
 const eventModelingStore = useEventModelingStore()
 const bpmnStore = useBpmnStore()
@@ -277,6 +281,32 @@ watch(displayLanguage, (v) => { localStorage.setItem('app_display_language', v) 
 // is consulted first; falls back to 'figma' when no catalog entry resolves).
 const uiGenerationMode = ref(localStorage.getItem('app_ui_generation_mode') || 'html')
 watch(uiGenerationMode, (v) => { localStorage.setItem('app_ui_generation_mode', v) })
+
+// ── 서비스 ID — 이 적재에 붙이는 기업 체계의 값 ─────────────────────────────
+//
+// ⚠ **localStorage 에 기억하지 않는다.** 위의 둘과 다르다 — 이 값은 적재마다
+// 유일해야 하므로(지시), 기억해 두면 다음 적재가 백엔드에서 409 로 막힌다.
+// 매번 새로 적는 것이 이 값의 성질이다.
+const serviceId = ref('')
+// 소유자만 정할 수 있다(지시). `canManage`(admin 등급)로는 안 된다 — 남이
+// 관리 등급으로 공유해 준 프로젝트도 admin 이라, 칸을 보여 준 뒤 백엔드가 403 을
+// 낸다. 백엔드가 보는 것과 **같은 것**(ownerUid)을 본다.
+const isProjectOwner = computed(() => {
+  const owner = (projectsStore.current || {}).ownerUid || ''
+  return !!owner && owner === ((authStore.user || {}).uid || '')
+})
+
+/** 비면 `''`. 소유자가 아니면 **보내지 않는다** — 칸이 안 보이므로 남은 값일 뿐이다. */
+function trimmedServiceId() {
+  if (!isProjectOwner.value) return ''
+  return (serviceId.value || '').trim()
+}
+
+/** 적재 입구 셋이 같은 값을 같은 이름으로 보내게 한다. 한 군데만 고치는 일을 막는다. */
+function appendServiceId(formData) {
+  const sid = trimmedServiceId()
+  if (sid) formData.append('service_id', sid)
+}
 
 // Spec 024: read the bound FigmaBinding to gate the "Figma + Components"
 // toggle. componentCount > 0 enables it; otherwise the option is disabled.
@@ -881,6 +911,7 @@ async function startHybridIngestion() {
       throw new Error('Hybrid ingestion에 첨부할 문서가 필요합니다.')
     }
     formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
+    appendServiceId(formData)
 
     const res = await fetch(withAck('/api/ingest/hybrid/upload'), { method: 'POST', body: formData })
     if (!res.ok) {
@@ -1054,6 +1085,8 @@ async function startIngestion() {
         display_language: displayLanguage.value === 'en' ? 'en' : 'ko',
         ui_generation_mode: (uiGenerationMode.value === 'figma' || uiGenerationMode.value === 'figma-with-components') ? uiGenerationMode.value : 'html',
       }
+      const sid = trimmedServiceId()
+      if (sid) figmaBody.service_id = sid
       // Include Figma API metadata for node ID mapping (when using API mode)
       if (figmaInputSubMode.value === 'api' && figmaFileKey.value) {
         figmaBody.figma_file_key = figmaFileKey.value
@@ -1080,6 +1113,7 @@ async function startIngestion() {
       }
       formData.append('display_language', displayLanguage.value === 'en' ? 'en' : 'ko')
       formData.append('ui_generation_mode', (uiGenerationMode.value === 'figma' || uiGenerationMode.value === 'figma-with-components') ? uiGenerationMode.value : 'html')
+      appendServiceId(formData)
 
       uploadResponse = await fetch(withAck('/api/ingest/upload'), {
         method: 'POST',
@@ -2111,6 +2145,22 @@ function useSample() {
                     </div>
                   </div>
                 </div>
+                <!-- Row 3: 서비스 ID — 이 적재에 붙이는 기업 체계의 값.
+                     소유자에게만 보인다(지시: "프로젝트의 소유자만"). 편집자에게
+                     칸을 보여 주면 적고 나서 403 을 받는다 — 보여 주지 않는 쪽이
+                     거절보다 낫다. 적재 자체는 편집자도 그대로 할 수 있다. -->
+                <div v-if="isProjectOwner" class="options-sub-row service-id-row">
+                  <span class="display-language-label">서비스 ID</span>
+                  <input
+                    v-model="serviceId"
+                    class="service-id-input"
+                    placeholder="선택 — 예: ROBO-2026-001"
+                    title="기업 서비스 ID 체계의 값. 적재마다 유일해야 하고, 한 번 쓴 값은 다시 쓸 수 없습니다."
+                  />
+                  <span class="service-id-hint">
+                    비워 두면 자동 부여됩니다. <strong>적재마다 새 값</strong>이어야 합니다.
+                  </span>
+                </div>
               </div>
 
               <div
@@ -3118,6 +3168,36 @@ function useSample() {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
+}
+
+/* 서비스 ID — 언어·UI 모드와 같은 줄 묶음에 있지만 입력칸이라 간격을 좁게 둔다. */
+.service-id-row {
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+/* 식별자는 등폭으로 쓴다 — 0 과 O, 1 과 l 을 눈으로 가려야 하는 값이다. */
+.service-id-input {
+  width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  box-sizing: border-box;
+}
+
+.service-id-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.service-id-hint {
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+  line-height: 1.5;
 }
 
 .display-language-label {

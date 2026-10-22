@@ -76,11 +76,16 @@ async def list_projects(request: Request) -> dict:
 async def create_project(request: Request, body: dict = Body(...)) -> dict:
     uid = _uid(request)
     store.ensure_schema()
-    project = _guard(store.create_project, (body or {}).get("name", ""), uid)
+    payload = body or {}
+    # 만드는 사람이 곧 소유자다 — "소유자만 정한다" 가 여기서는 저절로 성립한다.
+    # 바꾸는 엔드포인트는 두지 않는다(변경 불가 지시).
+    project = _guard(store.create_project, payload.get("name", ""), uid,
+                     service_id=payload.get("serviceId"))
     SmartLogger.log(
         "INFO", "프로젝트를 만들었다.",
         category="projects.created",
-        params={**http_context(request), "graph": project["graph"], "owner": uid},
+        params={**http_context(request), "graph": project["graph"], "owner": uid,
+                "serviceId": project.get("serviceId") or ""},
     )
     return project
 

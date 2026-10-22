@@ -68,6 +68,7 @@ from api.platform.observability.smart_logger import SmartLogger
 __all__ = [
     "ensure_schema", "start", "beat", "note", "finish", "heartbeat", "Heartbeat",
     "state", "classify", "acknowledge", "interrupted_session_ids",
+    "session_id_taken",
     "BEAT_SECONDS", "ABSENT_GRACE_SECONDS",
 ]
 
@@ -168,6 +169,39 @@ def start(
     except Exception as exc:  # noqa: BLE001 — 기록 실패가 적재를 막지 않는다
         _warn("start", exc, graph=graph, session_id=session_id)
         return None
+
+
+def session_id_taken(session_id: str) -> bool:
+    """이 세션 id 를 **이미 쓴 적이 있나.**
+
+    사람이 정한 서비스 ID 가 적재마다 유일해야 한다는 지시를 재는 자리다. 이
+    표는 적재가 돌았다는 사실을 프로세스 밖에 남기므로, 앱을 다시 띄워도
+    "그 id 는 지난주에 썼다" 를 알 수 있다 — 메모리의 `_sessions` 는 못 한다.
+
+    ⚠ **graph 를 가리지 않는다.** 기업 체계의 ID 는 조직 전체에서 하나여야
+    한다는 뜻으로 읽었다("당연히 유일해야겠지"). 프로젝트를 가려 세면 두
+    프로젝트가 같은 서비스 ID 로 적재할 수 있게 된다.
+
+    ⚠ **유일 인덱스가 아니라 조회다.** 하이브리드가 Event Storming 으로 승격될
+    때 **같은 session_id 로 두 번째 run 행을 쓴다**(`hybrid/router.py` 가
+    상류 id 를 물려준다) — 인덱스를 걸면 그 정상 동작이 깨진다. 그래서 사람이
+    값을 넣는 **입구에서만** 센다. 같은 값을 밀리초 차이로 둘이 넣으면 통과할
+    수 있는데, 적재 시작은 사람 손 속도라 그 창은 실질적으로 닫혀 있다.
+    """
+    if not session_id:
+        return False
+    try:
+        ensure_schema()
+        rows = pg.query(
+            "SELECT 1 FROM public.app_ingestion_runs WHERE session_id = %s LIMIT 1",
+            (session_id,),
+        )
+        return bool(rows)
+    except Exception as exc:  # noqa: BLE001
+        # 셀 수 없으면 **막지 않는다.** 기록용 표가 안 읽힌다고 적재를 세우는 것은
+        # 이 모듈의 원칙("기록 실패가 적재를 막지 않는다")과 어긋난다.
+        _warn("session_id_taken", exc, session_id=session_id)
+        return False
 
 
 def note(run_id: Optional[str], **fields: Any) -> None:

@@ -77,11 +77,17 @@ export const useProjectsStore = defineStore('projects', () => {
     }
   }
 
-  async function create(name) {
+  // `serviceId` 는 기업 체계의 값이다. **만들 때만 보낸다** — 고치는 길은 없다.
+  // 빈 칸은 보내지 않는다(백엔드가 빈 문자열과 안 준 것을 같게 보지만, 그 약속에
+  // 기대지 않는 쪽이 낫다 — 한쪽이 바뀌면 조용히 어긋난다).
+  async function create(name, serviceId) {
+    const payload = { name }
+    const sid = (serviceId || '').trim()
+    if (sid) payload.serviceId = sid
     const r = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(payload),
     })
     const body = await r.json().catch(() => ({}))
     if (!r.ok) throw new Error(body.detail || `만들지 못했습니다 (${r.status})`)
