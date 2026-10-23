@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useCanvasStore } from '../../canvas.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { CONSTITUTION_VISIBLE } from '@/app/featureVisibility'
 
 const props = defineProps({
   id: String,
@@ -31,6 +32,9 @@ function closeBC(event) {
 }
 
 // 041 — 이 BC 의 헌장 편집기를 연다(앱 셸이 오케스트레이션). 노드 id = BC id.
+// 2026-10-23 — 버튼만 감춘다. 함수는 남긴다(되살리기는 한 줄이면 되게).
+const constitutionVisible = CONSTITUTION_VISIBLE
+
 function openConstitution(event) {
   event.stopPropagation()
   window.dispatchEvent(new CustomEvent('robo:open-constitution', {
@@ -47,8 +51,10 @@ function openConstitution(event) {
       
       <!-- Header Actions -->
       <div class="bc-container__actions">
-        <!-- 041 — 이 BC 의 헌장(Constitution) 진입점. App.vue 가 robo:open-constitution 수신. -->
+        <!-- 041 — 이 BC 의 헌장(Constitution) 진입점. App.vue 가 robo:open-constitution 수신.
+             2026-10-23 — Proposals 를 뺀 배포에서는 감춘다(`app/featureVisibility.js`). -->
         <button
+          v-if="constitutionVisible"
           class="bc-container__action-btn"
           @click="openConstitution"
           title="이 Bounded Context의 헌장 (Constitution)"

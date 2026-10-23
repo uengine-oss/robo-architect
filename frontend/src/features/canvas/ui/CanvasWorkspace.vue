@@ -28,6 +28,7 @@ import InspectorPanel from './InspectorPanel.vue'
 
 // Export Document Dialog
 import ExportDocumentDialog from '@/features/exportDocument/ui/ExportDocumentDialog.vue'
+import { CONSTITUTION_VISIBLE } from '@/app/featureVisibility'
 
 const canvasStore = useCanvasStore()
 
@@ -44,6 +45,11 @@ const log = createLogger({ scope: 'CanvasWorkspace' })
 
 // 041 — 프로젝트 헌장(Constitution) 진입점. 앱 셸(App.vue)이 robo:open-constitution 을
 // 수신해 ConstitutionEditor 모달을 연다(Design 측 관리, 이벤트 드리븐 오케스트레이션).
+//
+// 2026-10-23 — Proposals 를 뺀 배포에서는 버튼을 감춘다. **함수는 남긴다** —
+// 되살릴 때 `app/featureVisibility.js` 한 줄이면 되게.
+const constitutionVisible = CONSTITUTION_VISIBLE
+
 function openProjectConstitution() {
   window.dispatchEvent(new CustomEvent('robo:open-constitution', {
     detail: { scope: 'PROJECT' },
@@ -883,12 +889,15 @@ onUnmounted(() => {
       </div>
 
       <div class="canvas-toolbar">
-        <!-- 041 — 프로젝트 헌장(Constitution) 진입점. 앱 레벨에서 ConstitutionEditor 를 연다. -->
-        <button class="canvas-toolbar__btn" @click="openProjectConstitution" title="프로젝트 헌장 (Constitution)">
+        <!-- 041 — 프로젝트 헌장(Constitution) 진입점. 앱 레벨에서 ConstitutionEditor 를 연다.
+             2026-10-23 — Proposals 를 탭에서 뺀 배포에서는 **감춘다**. 헌장을 읽는 쪽이
+             `proposal_lifecycle` 하나뿐이라, 여기서 고쳐도 아무도 안 읽는다.
+             판단은 `app/featureVisibility.js` 한 자리에 있다. -->
+        <button v-if="constitutionVisible" class="canvas-toolbar__btn" @click="openProjectConstitution" title="프로젝트 헌장 (Constitution)">
           <span class="canvas-toolbar__emoji">📜</span>
         </button>
 
-        <div class="canvas-toolbar__divider"></div>
+        <div v-if="constitutionVisible" class="canvas-toolbar__divider"></div>
 
         <template v-if="canvasStore.nodes.length > 0">
         <button class="canvas-toolbar__btn" @click="zoomIn()" title="Zoom In">

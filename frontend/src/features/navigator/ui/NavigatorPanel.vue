@@ -7,6 +7,7 @@ import { useEventModelingStore } from '@/features/eventModeling/eventModeling.st
 import { useDebugMode } from '@/app/debug'
 import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
 import TreeNode from './TreeNode.vue'
+import { CONSTITUTION_VISIBLE } from '@/app/featureVisibility'
 
 const { isDebug } = useDebugMode()
 
@@ -177,6 +178,9 @@ const isLoading = computed(() => localLoading.value || navigatorStore.loading)
 const serviceName = ref('My Service Name')
 
 // 041 — 프로젝트 루트 헌장 편집기를 연다(App.vue 가 robo:open-constitution 을 듣고 모달 표시).
+// 2026-10-23 — 버튼만 감춘다. 함수는 남긴다.
+const constitutionVisible = CONSTITUTION_VISIBLE
+
 function openProjectConstitution() {
   window.dispatchEvent(new CustomEvent('robo:open-constitution', { detail: { scope: 'PROJECT' } }))
 }
@@ -308,8 +312,11 @@ function handleProcessDragStart(event, item) {
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
           </svg>
         </span>
-        <!-- 041 — 프로젝트 루트 헌장(Constitution) 진입점. Design 루트에 항상 노출. -->
-        <button class="constitution-root-btn" @click="openProjectConstitution" title="프로젝트 헌장 (Constitution)">
+        <!-- 041 — 프로젝트 루트 헌장(Constitution) 진입점. Design 루트에 항상 노출.
+             2026-10-23 — Proposals 를 뺀 배포에서는 감춘다. 헌장을 읽는 쪽이
+             `proposal_lifecycle` 하나뿐이라 고쳐도 아무도 안 읽는다.
+             판단은 `app/featureVisibility.js` 한 자리에 있다. -->
+        <button v-if="constitutionVisible" class="constitution-root-btn" @click="openProjectConstitution" title="프로젝트 헌장 (Constitution)">
           <span class="constitution-root-btn__emoji">📜</span>
           <span class="constitution-root-btn__label">헌장</span>
         </button>

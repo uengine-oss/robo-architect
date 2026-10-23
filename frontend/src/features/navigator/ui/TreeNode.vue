@@ -11,6 +11,7 @@ import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import { useInvariantsStore } from '@/features/invariants/invariants.store'
+import { CONSTITUTION_VISIBLE } from '@/app/featureVisibility'
 
 const props = defineProps({
   node: {
@@ -550,6 +551,9 @@ function addToChatSelection() {
 // Double click handler — UserStory opens in the unified InspectorPanel
 // (spec 019-userstory-properties-panel); other types add to canvas.
 // 041 — BC별 헌장 편집기를 연다(App.vue 가 robo:open-constitution 을 듣고 모달 표시).
+// 2026-10-23 — 버튼만 감춘다. 함수는 남긴다.
+const constitutionVisible = CONSTITUTION_VISIBLE
+
 function openBcConstitution() {
   window.dispatchEvent(new CustomEvent('robo:open-constitution', {
     detail: { scope: 'BOUNDED_CONTEXT', bcId: props.node.id }
@@ -733,9 +737,10 @@ async function addToCanvas() {
         </svg>
       </button>
       
-      <!-- 041 — BC별 헌장(Constitution) 진입점. Design 쪽에서 BC 헌장 오버라이드 편집. -->
+      <!-- 041 — BC별 헌장(Constitution) 진입점. Design 쪽에서 BC 헌장 오버라이드 편집.
+           2026-10-23 — Proposals 를 뺀 배포에서는 감춘다(`app/featureVisibility.js`). -->
       <button
-        v-if="node.type === 'BoundedContext'"
+        v-if="constitutionVisible && node.type === 'BoundedContext'"
         class="tree-node__edit-btn tree-node__constitution-btn"
         title="이 Bounded Context 의 헌장 (Constitution)"
         @click.stop="openBcConstitution"
