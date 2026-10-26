@@ -90,6 +90,22 @@ services:
       MINDSDB_DOCKER_ENV: "True"
       MINDSDB_STORAGE_DIR: /mindsdb/var
       SENTRY_IO_DSN: ""
+      # ⚠ **데이터 소스 비밀번호를 디스크에서 암호화한다** (2026-10-26).
+      #    mindsdb 의 `Integration.data` 는
+      #      SecretDataJson(os.environ.get("MINDSDB_DATA_ENCRYPTION_TYPE", "none"))
+      #    이고, `"none"` 이면 값을 **그대로 저장한다** — 즉 사용자가 넣은 DB
+      #    비밀번호가 볼륨 안 sqlite 에 **평문으로 남는다**(실측).
+      #    `localencryption` 은 AES-GCM 이고 바깥 서비스가 필요 없어
+      #    **오프라인에서 된다**. 키는 `robo-env.ps1` 이 이 PC 것으로 만든다.
+      #
+      #    ⚠ 기본값은 **`none`** 이다 — 키 없이 타입만 켜면 base64 디코드에서
+      #      죽는다. 새 `robo-env.ps1` 을 안 돌린 PC 는 지금과 똑같이 돈다.
+      #    ⚠ 이미 저장된 평문은 그대로 읽힌다(mind_castle 이 날값을 받아 준다).
+      #      새로 쓰는 것부터 암호화된다.
+      #    ⚠ **키를 잃거나 바꾸면 암호화된 값을 못 읽는다** — 데이터 소스
+      #      비밀번호를 다시 넣어야 한다. AUTH_ROLE_SECRET 과 같은 급이다.
+      MINDSDB_DATA_ENCRYPTION_TYPE: ${MINDSDB_DATA_ENCRYPTION_TYPE:-none}
+      MIND_CASTLE_LOCAL_ENCRYPTION_SECRET: ${MIND_CASTLE_LOCAL_ENCRYPTION_SECRET:-}
     volumes:
       - mindsdb_data:/mindsdb/var
     healthcheck:
