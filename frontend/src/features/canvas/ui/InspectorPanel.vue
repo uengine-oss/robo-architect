@@ -4761,14 +4761,33 @@ function updateVoFieldValue(fieldName, value) {
                   <span class="trace-primary-table__access trace-primary-table__access--writes">WRITES</span>
                   이 테이블의 값을 바꾼다 (저장·수정·삭제)
                 </span>
+<!--
+                  ⚠ **측정이 말할 수 있는 데까지만 말한다** (2026-10-26 · ISS-63).
+                  전에는 "이 테이블은 이 Aggregate 의 것으로 볼 만하다" ·
+                  "주인은 다른 Aggregate 일 수 있다 · 경계를 다시 볼 자리다" 라고
+                  **주인 이야기**를 했다. 그런데 배지가 재는 것은 주인이 아니라
+                  **"한 다리 건넜나"** 다 — 직접은 그 기능 안의 SQL, 간접은 그
+                  기능이 부르는 것의 SQL(CALLS 한 홉).
+
+                  이 코드베이스는 **SQL 이 DAO 에, 규칙이 Service 에** 있어서
+                  출처가 Service 면 **구조상 전부 간접**이다. 경계가 흐려서가
+                  아니라 그 다리를 타야 테이블이 보이기 때문이다(안 타던 때는
+                  Aggregate 테이블이 0개였다). 그걸 "경계를 다시 볼 자리" 라고
+                  하면 **계층 구조를 경계 문제로 오해하게** 만든다.
+
+                  판단의 **재료**는 주되, 판단을 **대신 내리지 않는다.**
+                -->
                 <span class="trace-legend__item">
                   <span class="trace-legend__none">배지 없음</span>
-                  이 Aggregate 가 <b>직접</b> 다룬다 — 이 테이블은 이 Aggregate 의 것으로 볼 만하다
+                  이 기능이 <b>자기 안에서</b> 직접 다룬다
                 </span>
                 <span class="trace-legend__item">
                   <span class="trace-table__via">간접</span>
-                  직접 다루지 않고 <b>다른 기능을 거쳐</b> 닿는다 —
-                  그 테이블의 주인은 <b>다른 Aggregate</b> 일 수 있다. 경계를 다시 볼 자리다
+                  이 기능이 <b>부르는 다른 기능</b>이 다룬다 (한 다리 건넌다)
+                </span>
+                <span class="trace-legend__note">
+                  ⓘ 둘은 <b>닿는 방법</b>의 차이입니다 — 테이블의 <b>주인</b>을 말하지 않습니다.
+                  저장 코드를 따로 두는 구조에서는 <b>간접이 많은 것이 정상</b>입니다.
                 </span>
               </div>
               <div v-for="tbl in primaryRootTables" :key="tbl.name" class="trace-primary-table">
@@ -4785,7 +4804,7 @@ function updateVoFieldValue(fieldName, value) {
                     <!-- ⚠ 값(`call`)은 그대로 두고 **보이는 글자만** 바꾼다 —
                          `간접` 이 `직접` 과 짝이 맞고 배지에 들어가는 길이다. -->
                     <span v-if="a.via === 'call'" class="trace-table__via"
-                      :title="`이 Aggregate 가 직접 ${a.op === 'READS' ? '읽지' : '쓰지'} 않고 다른 기능을 거쳐 닿는다 — 이 테이블의 주인은 다른 Aggregate 일 수 있다`">
+                      :title="`이 기능이 자기 안에서 ${a.op === 'READS' ? '읽지' : '쓰지'} 않고, 부르는 다른 기능이 한다 (한 다리 건넌다)`">
                       간접
                     </span>
                   </span>
@@ -6611,6 +6630,10 @@ function updateVoFieldValue(fieldName, value) {
 .trace-legend__item { flex:0 0 auto; max-width:100%; }
 /* "배지 없음" 은 배지가 아니라 **배지가 없다는 사실**을 가리킨다. 그래서 색을
    채우지 않고 **점선 테두리**로 둔다 — 진짜 배지와 헷갈리면 안 된다. */
+/* ⓘ 안내는 배지가 아니라 **읽는 법**이다. 뜻풀이 넷과 같은 줄에 섞이면
+   배지처럼 보이므로 **통째로 한 줄**을 차지하게 둔다. */
+.trace-legend__note { flex:1 1 100%; margin-top:4px; font-size:0.58rem;
+  color:var(--text-tertiary, #94a3b8); line-height:1.5; }
 .trace-legend__none { display:inline-block; padding:0 5px; border-radius:3px;
   border:1px dashed var(--border-subtle, #475569);
   color:var(--text-tertiary, #94a3b8); font-size:0.58rem; white-space:nowrap; }
