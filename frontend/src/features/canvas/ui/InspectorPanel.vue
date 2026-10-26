@@ -4736,20 +4736,39 @@ function updateVoFieldValue(fieldName, value) {
                 ⚠ 배지 뜻을 **눈에 보이게** 적는다 (2026-10-22).
                 전에는 `title` 로만 달아 뒀는데, 기본 툴팁은 1초쯤 머물러야 떠서
                 "올려도 안 뜬다" 는 말을 들었다. 읽는 사람이 배지 뜻을 모르면
-                **직접과 경유를 가른 것이 아무 의미가 없다.**
+                **직접과 간접을 가른 것이 아무 의미가 없다.**
+
+                ⚠ 글을 **설계자 말로** 다시 썼다 (2026-10-23). 전에는
+                "출처 루틴이 직접 하지 않고, 그 루틴이 부르는 쪽이 한다" 였는데
+                세 가지가 문제였다 —
+                  ① `루틴`·`부르는 쪽` 은 **개발자 말**이다. 이 화면을 읽는
+                     설계자는 그 말을 모른다
+                  ② **방법**만 설명하고 **뜻**을 안 적었다. 읽는 사람이 내릴
+                     판단은 "이 테이블이 정말 이 Aggregate 것인가" 인데 그 답이
+                     없었다
+                  ③ **배지가 없을 때**를 아무 데서도 안 적었다. `READS(없음) ·
+                     WRITES(간접)` 을 보면 없는 쪽이 무슨 뜻인지 알 길이 없다
+                그리고 `표` 와 `테이블` 을 섞어 쓰고 있었다 — 바로 위 제목이
+                "DB 테이블" 인데 여기만 "표" 였다. 설계자가 **화면의 표(그리드)**
+                로 읽을 수 있는 자리다.
               -->
               <div class="trace-legend">
                 <span class="trace-legend__item">
                   <span class="trace-primary-table__access trace-primary-table__access--reads">READS</span>
-                  이 표를 읽는다
+                  이 테이블에서 값을 가져온다
                 </span>
                 <span class="trace-legend__item">
                   <span class="trace-primary-table__access trace-primary-table__access--writes">WRITES</span>
-                  이 표에 쓴다
+                  이 테이블의 값을 바꾼다 (저장·수정·삭제)
                 </span>
                 <span class="trace-legend__item">
-                  <span class="trace-table__via">호출 경유</span>
-                  출처 루틴이 직접 하지 않고, 그 루틴이 <b>부르는 쪽</b>이 한다
+                  <span class="trace-legend__none">배지 없음</span>
+                  이 Aggregate 가 <b>직접</b> 다룬다 — 이 테이블은 이 Aggregate 의 것으로 볼 만하다
+                </span>
+                <span class="trace-legend__item">
+                  <span class="trace-table__via">간접</span>
+                  직접 다루지 않고 <b>다른 기능을 거쳐</b> 닿는다 —
+                  그 테이블의 주인은 <b>다른 Aggregate</b> 일 수 있다. 경계를 다시 볼 자리다
                 </span>
               </div>
               <div v-for="tbl in primaryRootTables" :key="tbl.name" class="trace-primary-table">
@@ -4763,9 +4782,11 @@ function updateVoFieldValue(fieldName, value) {
                   <span v-for="a in tbl.accesses" :key="a.op" class="trace-access">
                     <span class="trace-primary-table__access"
                       :class="`trace-primary-table__access--${a.op.toLowerCase()}`">{{ a.op }}</span>
+                    <!-- ⚠ 값(`call`)은 그대로 두고 **보이는 글자만** 바꾼다 —
+                         `간접` 이 `직접` 과 짝이 맞고 배지에 들어가는 길이다. -->
                     <span v-if="a.via === 'call'" class="trace-table__via"
-                      :title="`이 Aggregate 의 출처 루틴이 직접 ${a.op === 'READS' ? '읽지' : '쓰지'} 않고, 호출하는 루틴이 한다`">
-                      호출 경유
+                      :title="`이 Aggregate 가 직접 ${a.op === 'READS' ? '읽지' : '쓰지'} 않고 다른 기능을 거쳐 닿는다 — 이 테이블의 주인은 다른 Aggregate 일 수 있다`">
+                      간접
                     </span>
                   </span>
                   <span v-if="tbl.columns.length" class="trace-primary-table__count">{{ tbl.columns.length }} cols</span>
@@ -4915,8 +4936,8 @@ function updateVoFieldValue(fieldName, value) {
                         <div class="trace-tables__title">
                           관련 테이블
                           <span class="trace-legend__inline">
-                            — <b>호출 경유</b>는 이 루틴이 직접 하지 않고
-                            <b>부르는 쪽</b>이 한다는 뜻
+                            — <b>간접</b>은 이 기능이 직접 다루지 않고
+                            <b>다른 기능을 거쳐</b> 닿는다는 뜻
                           </span>
                         </div>
                         <div v-for="tbl in fn.tables" :key="tbl.name" class="trace-table">
@@ -4937,8 +4958,8 @@ function updateVoFieldValue(fieldName, value) {
                                 {{ a.op }}
                               </span>
                               <span v-if="a.via === 'call'" class="trace-table__via"
-                                :title="`이 루틴이 직접 ${a.op === 'READS' ? '읽지' : '쓰지'} 않고, 호출하는 루틴이 한다`">
-                                호출 경유
+                                :title="`이 기능이 직접 ${a.op === 'READS' ? '읽지' : '쓰지'} 않고 다른 기능을 거쳐 닿는다`">
+                                간접
                               </span>
                             </span>
                           </div>
@@ -6578,13 +6599,21 @@ function updateVoFieldValue(fieldName, value) {
 
 /* 호출 한 다리 건너 닿는 테이블 — 직접과 **눈으로 구분**된다 (ISS-61). */
 /* 접근 종류와 그 배지를 한 덩어리로 묶는다 (2026-10-22) — 줄바꿈될 때
-   `WRITES` 와 `호출 경유` 가 갈라지면 어느 접근의 배지인지 못 읽는다. */
+   `WRITES` 와 `간접` 이 갈라지면 어느 접근의 배지인지 못 읽는다. */
 /* 배지 뜻풀이 — **늘 보인다** (2026-10-22). 툴팁은 1초쯤 머물러야 떠서
    읽는 사람이 배지를 모르는 채 지나간다. 가른 것을 읽히게 하려면 적어야 한다. */
 .trace-legend { display:flex; flex-wrap:wrap; gap:4px 12px;
   margin:4px 0 8px; font-size:0.62rem; line-height:1.5;
   color:var(--text-tertiary, #94a3b8); }
 .trace-legend__item { display:inline-flex; align-items:center; gap:4px; }
+/* 뜻풀이가 네 줄이 되면서 한 줄에 다 안 들어간다. 항목을 **통째로** 줄바꿈해
+   `READS` 와 그 설명이 갈라지지 않게 한다 — 갈라지면 어느 배지의 설명인지 못 읽는다. */
+.trace-legend__item { flex:0 0 auto; max-width:100%; }
+/* "배지 없음" 은 배지가 아니라 **배지가 없다는 사실**을 가리킨다. 그래서 색을
+   채우지 않고 **점선 테두리**로 둔다 — 진짜 배지와 헷갈리면 안 된다. */
+.trace-legend__none { display:inline-block; padding:0 5px; border-radius:3px;
+  border:1px dashed var(--border-subtle, #475569);
+  color:var(--text-tertiary, #94a3b8); font-size:0.58rem; white-space:nowrap; }
 .trace-legend__inline { font-size:0.62rem; font-weight:400;
   color:var(--text-tertiary, #94a3b8); }
 
