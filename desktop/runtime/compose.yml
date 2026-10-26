@@ -158,8 +158,19 @@ services:
     depends_on:
       graph-bolt:
         condition: service_healthy
+      # ⚠ **service_started 다 — 건강을 기다리지 않는다** (2026-10-26).
+      #    fabric 은 기동할 때 mindsdb 에 **연결하지 않는다**(실측):
+      #    `main.py` 에 startup 훅이 없고, `/health` 는 무조건 healthy 를
+      #    돌려주며, mindsdb 를 부르는 곳은 요청 경로(datasources·query·
+      #    tables)뿐이다.
+      #
+      #    `service_healthy` 로 묶어 두었더니 2026-10-26 아침에 mindsdb 가
+      #    포트 경합으로 못 뜨자 **fabric·catalog·analyzer 셋이 시작조차
+      #    못 했다** — 쓰지도 않는 단계에서 **앱 전체가 멈췄다**.
+      #    순서는 지키되 건강은 기다리지 않는다. mindsdb 가 아프면
+      #    `데이터 소스` 화면만 실패하고 나머지는 정상으로 돈다.
       mindsdb:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test:
         [
