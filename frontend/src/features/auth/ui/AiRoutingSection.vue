@@ -29,6 +29,9 @@ const LABEL = {
   routed: '게이트웨이',
   default: '기본값',
   'config-only': '별도 설정',
+  // 이 배포에 없는 기능. "못 옮김" 과 **갈라 적는다** — 쓰지도 않는 것을
+  // 빨갛게 두면 점검하는 사람이 고칠 수 없는 항목을 영영 들고 다닌다.
+  'not-shipped': '안 씀',
   unroutable: '못 옮김',
 }
 </script>
@@ -88,6 +91,7 @@ const LABEL = {
 }
 /* 못 옮긴 갈래가 눈에 띄어야 한다 — 이 화면의 목적이 그것이다. */
 .air__row--unroutable .air__badge { background: rgba(220, 80, 60, 0.22); }
+.air__row--not-shipped .air__badge { background: rgba(140, 140, 150, 0.22); }
 .air__row--routed .air__badge { background: rgba(60, 160, 100, 0.22); }
 .air__name { font-weight: 600; }
 .air__target { opacity: 0.75; word-break: break-all; }

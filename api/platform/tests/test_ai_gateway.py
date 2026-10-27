@@ -122,21 +122,42 @@ def test_임베딩_모델도_묶음에서_고를_수_있다(monkeypatch):
     assert emb.embedding_model() == "posco-embed-v1"
 
 
-def test_옮겨지지_않는_갈래를_이름으로_부른다(monkeypatch):
-    """설정이 아니라 납품 항목인 것들. 목록에서 빠지면 잊힌다."""
+def test_막힌_갈래가_이제_없다(monkeypatch):
+    """2026-10-27 에 셋을 하나씩 재 보니 **셋 다 틀린 문구**였다.
+
+    · pdf2bpmn  — 자체 호스팅은 끝났고 compose 가 PGPT_* 를 넘긴다
+    · open-pencil — 브라우저가 아니라 **우리 프록시**를 지난다
+    · Claude Code — 2026-09-29 에 탭에서 뺐다. 이 배포에 없다
+
+    ⚠ `blocked` 가 비는 것이 이 검사의 핵심이다. 여기가 셋으로 돌아가면
+      누군가 문구를 되돌렸거나 배선이 끊긴 것이다.
+    """
     monkeypatch.setenv("PGPT_BASE_URL", GATEWAY)
-    monkeypatch.setenv("PDF2BPMN_FACADE_URL", "https://pdf2bpmn.process-gpt.io")
+    monkeypatch.setenv("PDF2BPMN_FACADE_URL", "http://127.0.0.1:64323")
 
     state = gw.describe()
-    assert set(state["blocked"]) == {
-        gw.PATH_PDF2BPMN, gw.PATH_CLAUDE_PTY, gw.PATH_OPEN_PENCIL,
-    }
+    assert state["blocked"] == []
+
     paths = {p["id"]: p for p in state["paths"]}
-    # 사내망을 막는 그 주소가 진단에 그대로 보여야 한다.
-    assert paths[gw.PATH_PDF2BPMN]["target"] == "https://pdf2bpmn.process-gpt.io"
+    # pdf2bpmn 은 **이 PC 안**을 가리키고, 게이트웨이를 따라간다.
+    assert paths[gw.PATH_PDF2BPMN]["target"] == "http://127.0.0.1:64323"
+    assert paths[gw.PATH_PDF2BPMN]["status"] == "routed"
+    # open-pencil 은 백엔드 프록시를 지난다 — 브라우저에 키가 가지 않는다.
+    assert paths[gw.PATH_OPEN_PENCIL]["status"] == "routed"
+    assert "프록시" in paths[gw.PATH_OPEN_PENCIL]["note"]
+    # Claude Code 는 **안 쓰는 갈래**다. "못 옮김" 과 갈라 적는다.
+    assert paths[gw.PATH_CLAUDE_PTY]["status"] == "not-shipped"
     # 분석기는 우리 프로세스가 아니다 — 코드가 아니라 설정 파일로 옮긴다.
     assert paths[gw.PATH_ANALYZER]["status"] == "config-only"
     assert "ROBO_LLM_CONFIG" in paths[gw.PATH_ANALYZER]["note"]
+
+
+def test_게이트웨이가_꺼져_있으면_옮겨졌다고_말하지_않는다(monkeypatch):
+    """조용히 초록인 것이 이 기능의 유일한 실패 방식이다."""
+    monkeypatch.delenv("PGPT_BASE_URL", raising=False)
+    paths = {p["id"]: p for p in gw.describe()["paths"]}
+    for name in (gw.PATH_ARCHITECT, gw.PATH_PDF2BPMN, gw.PATH_OPEN_PENCIL):
+        assert paths[name]["status"] == "default", name
 
 
 def test_여섯_갈래가_전부_보고된다(monkeypatch):

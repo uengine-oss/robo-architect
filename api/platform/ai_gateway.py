@@ -31,17 +31,25 @@ AI 를 부르는 자리가 **여섯 갈래**인데, 갈래마다 설정 이름�
 `OPENAI_BASE_URL` 이 있는 배포에서 P-GPT 를 켜도 **아무 일도 안 일어나면서
 켜진 것처럼 보인다.** 덮었다는 사실은 `describe()` 의 ``overrides`` 에 남는다.
 
-## 옮겨지지 않는 갈래
+## 옮겨지지 않는 갈래 — **2026-10-27 기준 0개**
 
-**둘**이다(2026-10-27 에 셋에서 줄었다). 설정이 아니라 **납품 항목**이다.
+셋이라고 적혀 있던 것을 그날 하나씩 재 보니 **셋 다 틀렸다.**
 
-    Claude Code PTY    `claude` CLI 가 Anthropic 에 직결
-    open-pencil AIChat 브라우저가 직접 부르고 키가 localStorage 에 있다
+    pdf2bpmn facade    예전엔 외부 SaaS(pdf2bpmn.process-gpt.io). 지금은 **이 PC 안
+                       컨테이너**가 돌고(자체 호스팅 완료) compose 가 PGPT_* 를
+                       넘긴다 → `facade.py` 가 값이 있을 때만 바꾼다
+    open-pencil AIChat 브라우저가 직접 부르지 **않는다**. `aiDesign/bootstrap.js` 가
+                       open-pencil 을 **우리 프록시**(`/api/ai-design/v1`)로 맞춰
+                       두었고, 그 프록시가 `platform/llm.py` → 여기를 지난다.
+                       브라우저에 가는 키는 자리표시자 `"proxy"` 뿐이다
+    Claude Code PTY    **이 배포에 없다.** 2026-09-29 에 Code · Proposals 탭을
+                       뺐다(`TopBar.vue`) — 사내망에 `claude` CLI 가 없다
 
-`pdf2bpmn facade` 는 **옮겨진다.** 예전에는 외부 SaaS(pdf2bpmn.process-gpt.io)로
-나갔지만 이제 이 PC 안 컨테이너가 돌고(자체 호스팅 완료), compose 가 PGPT_* 를
-그 컨테이너에 넘긴다. ⚠ 다만 **이 프로세스가 컨테이너 안의 값을 직접 읽지는
-못한다** — 같은 호스트 환경을 넘긴다는 사실로 말한다.
+⚠ 그러니 **문구를 고치지 않으면 점검표가 거짓말을 한다.** 세 줄 다 "별도 작업이
+필요하다" 고 말하고 있었는데, 하나는 이미 한 일이었고 하나는 처음부터 아니었고
+하나는 쓰지도 않는 기능이었다.
+⚠ 다만 pdf2bpmn 은 **이 프로세스가 컨테이너 안의 값을 직접 읽지 못한다** —
+같은 호스트 환경을 compose 가 넘긴다는 사실로 말하는 것이다.
 
 분석기 스택은 코드가 아니라 **설정 파일**로 옮긴다 —
 `robo-data-analyzer/llm_configs/<name>.yaml` 의 `api_base` 와 `ROBO_LLM_CONFIG`.
@@ -136,8 +144,13 @@ def describe() -> dict[str, Any]:
     ``status`` 는 셋뿐이다.
 
         routed       이 설정으로 게이트웨이를 본다
+        default      P-GPT 가 꺼져 있다 — 기존 OPENAI_* 로 간다
         config-only  우리 코드가 아니라 그쪽 설정 파일로 옮긴다
+        not-shipped  **이 배포에 그 기능이 없다** — 옮길 것도 없다
         unroutable   이 키로는 안 움직인다 — 납품 항목
+
+    ⚠ `blocked` 는 `unroutable` 만 센다. "안 쓰는 기능" 을 막힌 것으로 세면
+      납품 점검에서 **고칠 수 없는 항목이 영영 남아 있는 것처럼** 보인다.
     """
     from api.platform import embeddings as _emb
 
@@ -200,16 +213,28 @@ def describe() -> dict[str, Any]:
         {
             "id": PATH_CLAUDE_PTY,
             "label": "Claude Code PTY",
-            "status": "unroutable",
+            # 2026-09-29 에 **탭에서 뺐다**(`TopBar.vue` 의 `tabs`). 사내망에는
+            # `claude` CLI 가 없어서 열어 두면 눌러도 아무 일이 안 난다.
+            # 쓰지 않는 갈래를 "못 옮김" 으로 세면 점검표가 영영 안 닫힌다.
+            "status": "not-shipped",
             "target": "anthropic",
-            "note": "`claude` CLI 가 직결한다. OpenAI 호환 게이트웨이로 못 보낸다.",
+            "note": ("이 배포는 Code · Proposals 탭을 뺐다 — 쓰지 않는 갈래다. "
+                     "되살리면 `claude` CLI 가 Anthropic 에 직결하므로 OpenAI "
+                     "호환 게이트웨이로는 못 보낸다."),
         },
         {
             "id": PATH_OPEN_PENCIL,
             "label": "open-pencil AIChat",
-            "status": "unroutable",
-            "target": "browser",
-            "note": "브라우저가 직접 부르고 키가 localStorage 에 있다. 서버 설정이 안 닿는다.",
+            # 2026-10-27 정정: **밖으로 직접 나가지 않는다.**
+            # `frontend/src/features/aiDesign/bootstrap.js` 가 open-pencil 의
+            # localStorage 설정을 **우리 프록시**(`/api/ai-design/v1`)로 맞추고,
+            # 그 프록시가 `platform/llm.py` 를 거치므로 ai_gateway 를 따라간다.
+            # 브라우저에 들어가는 키는 자리표시자 `"proxy"` 뿐이다.
+            "status": "routed" if on else "default",
+            "target": "/api/ai-design/v1 → Architect 백엔드",
+            "note": ("브라우저가 아니라 **Architect 백엔드 프록시**를 지난다 — "
+                     "모델 키는 브라우저에 가지 않는다(자리표시자만 둔다). "
+                     "그래서 Architect 백엔드와 같이 움직인다."),
         },
     ]
 
