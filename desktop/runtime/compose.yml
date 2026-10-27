@@ -98,14 +98,29 @@ services:
       #    `localencryption` 은 AES-GCM 이고 바깥 서비스가 필요 없어
       #    **오프라인에서 된다**. 키는 `robo-env.ps1` 이 이 PC 것으로 만든다.
       #
-      #    ⚠ 기본값은 **`none`** 이다 — 키 없이 타입만 켜면 base64 디코드에서
-      #      죽는다. 새 `robo-env.ps1` 을 안 돌린 PC 는 지금과 똑같이 돈다.
+      #    ⚠⚠ **2026-10-27 — 아래 줄이 앱을 안 뜨게 했다. 고쳤다.**
+      #      예전에는 `${MIND_CASTLE_LOCAL_ENCRYPTION_SECRET:-}` 이었다. 그러면
+      #      키가 없는 PC 에서도 그 이름이 **빈 값으로 존재**한다. 그런데
+      #      `mind_castle/stores/__init__.py` 는 저장소를 **이름의 존재만 보고**
+      #      만든다 — `if all(e in env_vars.keys() for e in config_set)`. 그래서
+      #      `AESGCM(b"")` 를 만들다 **import 시점에** 죽고
+      #      (`ValueError: AESGCM key must be 128, 192, or 256 bits`),
+      #      `MINDSDB_DATA_ENCRYPTION_TYPE=none` 으로도 막을 수 없다.
+      #      ⇒ mindsdb 가 **재시작 고리**에 들고, fabric·catalog·analyzer 가
+      #        `Created` 에서 멈춘다. 증상은 "앱이 안 뜬다" 로 나타난다.
+      #      **값을 비운 `이름:` 은 호스트에 그 변수가 없으면 컨테이너에도 안
+      #      넣는다**(실측: `${VAR:-}` → 빈 값으로 존재, `VAR:` → 아예 없음).
+      #      변수가 없으면 mind_castle 은 저장소를 안 만든다(실측: `ok: []`).
+      #    ⚠ 기본값은 **`none`** 이다 — 키 없이 타입만 켜면 죽는다. 그래서
+      #      `docker-stack.ts` 의 `assertDatasourceEncryptionUsable` 이 기동
+      #      전에 **모양을 보고 멈춘다**(사람이 손으로 넣은 값까지 막는다).
       #    ⚠ 이미 저장된 평문은 그대로 읽힌다(mind_castle 이 날값을 받아 준다).
       #      새로 쓰는 것부터 암호화된다.
       #    ⚠ **키를 잃거나 바꾸면 암호화된 값을 못 읽는다** — 데이터 소스
       #      비밀번호를 다시 넣어야 한다. AUTH_ROLE_SECRET 과 같은 급이다.
       MINDSDB_DATA_ENCRYPTION_TYPE: ${MINDSDB_DATA_ENCRYPTION_TYPE:-none}
-      MIND_CASTLE_LOCAL_ENCRYPTION_SECRET: ${MIND_CASTLE_LOCAL_ENCRYPTION_SECRET:-}
+      # ⚠ **`${...:-}` 로 되돌리지 마라.** 위 주석이 그 이유다.
+      MIND_CASTLE_LOCAL_ENCRYPTION_SECRET:
     volumes:
       - mindsdb_data:/mindsdb/var
     healthcheck:
