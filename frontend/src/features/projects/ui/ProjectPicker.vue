@@ -148,6 +148,26 @@ function optionLabel(o) {
   return o.nodes == null ? o.label : `${o.label} (노드 ${o.nodes})`
 }
 
+/**
+ * ⇄ 칩이 말할 **한 줄**.
+ *
+ * 사람이 이 자리에서 판단할 것은 이름이 아니라 **내 분석인가 남의 분석인가**다.
+ * 남의 분석을 가리키고 있으면 그쪽에서 분석을 다시 돌릴 때 내 추적성의 근거가
+ * 통째로 바뀐다 — 그게 이 칩이 있는 이유다.
+ *
+ * ⚠ `<graph>_a` 가 "이 프로젝트의 짝" 이라는 규약의 **권위는 서버**다
+ *   (`api/features/projects/store.py` 의 `analyzer_options`). 여기서는 읽기만
+ *   한다. 규약이 바뀌어 어긋나도 칩이 "다른 분석" 이라 말할 뿐 동작은 그대로다.
+ */
+function pairLabel(p) {
+  if (p.analyzerGraph === `${p.graph}_a`) return '이 프로젝트의 분석'
+  const owner = store.projects.find(
+    (o) => o.graph !== p.graph && o.analyzerGraph === p.analyzerGraph,
+  )
+  const name = owner && (owner.displayName || '').trim()
+  return name ? `${name} 의 분석` : '다른 분석'
+}
+
 async function submitPair() {
   busy.value = true
   message.value = ''
@@ -213,9 +233,13 @@ watch(() => auth.token, (t) => { if (t) refresh() })
                 </span>
                 <!-- 설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘은 한 세트다.
                      짝이 없으면 추적성이 .env 의 분석을 본다 — 보여 줘야 한다. -->
+                <!-- ⚠ **내부 graph 이름을 여기에 쓰지 않는다** (2026-10-27 · 결정 ③-A).
+                     서비스 ID 를 만든 이유가 `prj_cf33c40fca_a` 같은 물리 이름을
+                     사람에게 안 보이게 하려는 것이었는데, 이 칩이 그 이름을 바로
+                     옆에 노출했다. 이름은 **title 로만** 남긴다. -->
                 <span v-if="p.analyzerGraph" class="pp__pair"
-                      title="함께 보는 분석 결과. 이 graph 로 분석을 다시 돌리면 지금 결과는 통째로 교체된다.">
-                  ⇄ {{ p.analyzerGraph }}
+                      :title="`함께 보는 분석 결과 — ${p.analyzerGraph}. 이 분석을 다시 돌리면 지금 결과는 통째로 교체된다.`">
+                  ⇄ {{ pairLabel(p) }}
                 </span>
                 <span v-else class="pp__pair pp__pair--none"
                       title="짝이 없으면 추적성이 .env 의 분석 graph 를 본다 — 다른 프로젝트의 분석일 수 있다">
@@ -374,8 +398,9 @@ watch(() => auth.token, (t) => { if (t) refresh() })
 .pp__item--on { background:var(--status-blue-bg); color:var(--color-text-bright);
   font-weight:600; }
 .pp__itemname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 칩이 이름 대신 사람 말을 담으므로 고정폭 글꼴을 뺐다 (2026-10-27). */
 .pp__pair { display:block; font-size:0.62rem; font-weight:400; color:var(--color-text-light);
-  font-family:var(--font-mono); margin-top:2px; }
+  margin-top:2px; }
 .pp__pair--none { color:var(--status-amber-fg); font-family:var(--font-main); }
 /* 서비스 ID — 이름 옆 칩. 분석 짝(`pp__pair`)이 아래 줄을 쓰므로 이쪽은 같은
    줄에 둬서 "이름에 붙은 식별자" 로 읽히게 한다. */
