@@ -345,6 +345,12 @@ services:
       # 한쪽만 채우면 401 이 나고 Architect 는 조용히 폴백으로 내려갔다.
       # 이제 설치한 사람은 `PDF2BPMN_FACADE_KEY` 하나만 정하면 된다.
       FACADE_API_KEY: ${PDF2BPMN_FACADE_KEY:-}
+      # 사내 AI 게이트웨이로 옮기는 손잡이. **Architect 백엔드와 같은 이름**이다.
+      # 값이 비면 facade 가 무시하므로 오늘 동작이 그대로 간다(§facade.py).
+      # ⚠ 여기를 `OPENAI_BASE_URL: ${PGPT_BASE_URL:-}` 로 쓰면 안 된다 —
+      #   호스트에 값이 없을 때 env_file 의 기본값을 **빈 값으로 덮는다**.
+      PGPT_BASE_URL: ${PGPT_BASE_URL:-}
+      PGPT_API_KEY: ${PGPT_API_KEY:-}
     ports:
       # **루프백에만 연다.** 0.0.0.0 이면 같은 망의 아무나 이 LLM 을 쓴다.
       - "127.0.0.1:${ROBO_PDF2BPMN_PORT}:8080"

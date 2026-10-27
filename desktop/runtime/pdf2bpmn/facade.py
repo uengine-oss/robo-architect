@@ -17,6 +17,28 @@ def _get_executor():
         _executor = PDF2BPMNAgentExecutor()
     return _executor
 
+# ── 사내 게이트웨이(P-GPT)로 보내는 자리 ────────────────────────────────
+#
+# 이 컨테이너는 **이 PC 안에서** 돈다(자체 호스팅은 끝났다). 그런데 그 안의
+# 추출기는 그대로 api.openai.com 으로 나갔다 — 사내망에서는 거기서 막힌다.
+# 밖으로 난 길을 바꾸는 값은 `config/pdf2bpmn.env` 에 있는데 그 파일은
+# **매니페스트 체크섬에 묶여 있어 설치한 사람이 못 고친다.**
+#
+# 그래서 Architect 백엔드와 **같은 손잡이**(PGPT_BASE_URL · PGPT_API_KEY)를
+# 여기서도 받는다. compose 가 호스트 환경을 그대로 넘긴다.
+#
+# ⚠ **빈 값으로 덮지 않는다.** compose 의 `${VAR:-}` 는 "없음" 이 아니라
+#   **"빈 값으로 있음"** 이다. 그것으로 `OPENAI_BASE_URL` 을 덮었다면 호스트에
+#   값이 없는 설치본은 env_file 의 기본값까지 잃는다. 그래서 이름이 다른
+#   `PGPT_*` 로 받고 **값이 있을 때만** 바꾼다 — 안 주면 오늘과 똑같이 돈다.
+_gateway = os.getenv("PGPT_BASE_URL", "").strip()
+if _gateway:
+    os.environ["LLM_BASE_URL"] = _gateway
+    os.environ["OPENAI_BASE_URL"] = _gateway
+_gateway_key = os.getenv("PGPT_API_KEY", "").strip()
+if _gateway_key:
+    os.environ["OPENAI_API_KEY"] = _gateway_key
+
 # 추출기는 OpenAI 클라이언트를 **`LLM_BASE_URL` 로만** 돌린다. 사내망 구성은
 # 보통 `OPENAI_BASE_URL` 쪽을 채우는데, 그것만 있으면 클라이언트가 그대로
 # api.openai.com 으로 나가려다 막힌다 — 그러면 Architect 가 폴백으로 내려가고

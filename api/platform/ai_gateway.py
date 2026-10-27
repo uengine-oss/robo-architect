@@ -33,11 +33,15 @@ AI 를 부르는 자리가 **여섯 갈래**인데, 갈래마다 설정 이름�
 
 ## 옮겨지지 않는 갈래
 
-세 갈래는 이 키로 안 움직인다. 설정이 아니라 **납품 항목**이다.
+**둘**이다(2026-10-27 에 셋에서 줄었다). 설정이 아니라 **납품 항목**이다.
 
-    pdf2bpmn facade    외부 SaaS (pdf2bpmn.process-gpt.io) — 문서 업로드가 여기를 지난다
     Claude Code PTY    `claude` CLI 가 Anthropic 에 직결
     open-pencil AIChat 브라우저가 직접 부르고 키가 localStorage 에 있다
+
+`pdf2bpmn facade` 는 **옮겨진다.** 예전에는 외부 SaaS(pdf2bpmn.process-gpt.io)로
+나갔지만 이제 이 PC 안 컨테이너가 돌고(자체 호스팅 완료), compose 가 PGPT_* 를
+그 컨테이너에 넘긴다. ⚠ 다만 **이 프로세스가 컨테이너 안의 값을 직접 읽지는
+못한다** — 같은 호스트 환경을 넘긴다는 사실로 말한다.
 
 분석기 스택은 코드가 아니라 **설정 파일**로 옮긴다 —
 `robo-data-analyzer/llm_configs/<name>.yaml` 의 `api_base` 와 `ROBO_LLM_CONFIG`.
@@ -176,9 +180,22 @@ def describe() -> dict[str, Any]:
         {
             "id": PATH_PDF2BPMN,
             "label": "pdf2bpmn facade",
-            "status": "unroutable",
+            # 2026-10-27: **자체 호스팅은 끝났다** — 이 PC 안 컨테이너가 돈다.
+            # 그 안의 추출기도 이제 같은 손잡이를 따라간다(compose 가 PGPT_* 를
+            # 넘기고 `facade.py` 가 값이 있을 때만 바꾼다).
+            "status": "routed" if on else "default",
             "target": env_str("PDF2BPMN_FACADE_URL", default=None),
-            "note": "외부 SaaS. 사내망에서 문서 업로드가 막힌다 — 자체 호스팅이 필요하다.",
+            "note": (
+                # 이 프로세스는 컨테이너 안의 값을 **직접 읽지 못한다.** 같은 호스트
+                # 환경을 compose 가 넘긴다는 사실로 말하는 것이라고 밝혀 둔다.
+                "이 PC 안 컨테이너가 돈다. 그 안의 추출기도 같은 호스트의 "
+                "PGPT_BASE_URL 을 따라간다(compose 가 넘긴다) — 컨테이너 안의 값을 "
+                "여기서 직접 읽지는 못한다."
+                if on
+                else "이 PC 안 컨테이너가 돈다. 다만 그 안의 추출기는 지금 "
+                     "OpenAI 로 직접 나간다 — PGPT_BASE_URL · PGPT_API_KEY 를 "
+                     "지정하면 함께 옮겨진다."
+            ),
         },
         {
             "id": PATH_CLAUDE_PTY,
