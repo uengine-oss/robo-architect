@@ -79,57 +79,6 @@ services:
       retries: 24
       start_period: 10s
 
-  mindsdb:
-    image: ${ROBO_IMAGE_MINDSDB}
-    restart: unless-stopped
-    labels:
-      org.uengine.robo.release: ${ROBO_RELEASE_ID}
-      org.uengine.robo.component: mindsdb
-    environment:
-      MINDSDB_APIS: http
-      MINDSDB_DOCKER_ENV: "True"
-      MINDSDB_STORAGE_DIR: /mindsdb/var
-      SENTRY_IO_DSN: ""
-      # ⚠ **데이터 소스 비밀번호를 디스크에서 암호화한다** (2026-10-26).
-      #    mindsdb 의 `Integration.data` 는
-      #      SecretDataJson(os.environ.get("MINDSDB_DATA_ENCRYPTION_TYPE", "none"))
-      #    이고, `"none"` 이면 값을 **그대로 저장한다** — 즉 사용자가 넣은 DB
-      #    비밀번호가 볼륨 안 sqlite 에 **평문으로 남는다**(실측).
-      #    `localencryption` 은 AES-GCM 이고 바깥 서비스가 필요 없어
-      #    **오프라인에서 된다**. 키는 `robo-env.ps1` 이 이 PC 것으로 만든다.
-      #
-      #    ⚠⚠ **2026-10-27 — 아래 줄이 앱을 안 뜨게 했다. 고쳤다.**
-      #      예전에는 `${MIND_CASTLE_LOCAL_ENCRYPTION_SECRET:-}` 이었다. 그러면
-      #      키가 없는 PC 에서도 그 이름이 **빈 값으로 존재**한다. 그런데
-      #      `mind_castle/stores/__init__.py` 는 저장소를 **이름의 존재만 보고**
-      #      만든다 — `if all(e in env_vars.keys() for e in config_set)`. 그래서
-      #      `AESGCM(b"")` 를 만들다 **import 시점에** 죽고
-      #      (`ValueError: AESGCM key must be 128, 192, or 256 bits`),
-      #      `MINDSDB_DATA_ENCRYPTION_TYPE=none` 으로도 막을 수 없다.
-      #      ⇒ mindsdb 가 **재시작 고리**에 들고, fabric·catalog·analyzer 가
-      #        `Created` 에서 멈춘다. 증상은 "앱이 안 뜬다" 로 나타난다.
-      #      **값을 비운 `이름:` 은 호스트에 그 변수가 없으면 컨테이너에도 안
-      #      넣는다**(실측: `${VAR:-}` → 빈 값으로 존재, `VAR:` → 아예 없음).
-      #      변수가 없으면 mind_castle 은 저장소를 안 만든다(실측: `ok: []`).
-      #    ⚠ 기본값은 **`none`** 이다 — 키 없이 타입만 켜면 죽는다. 그래서
-      #      `docker-stack.ts` 의 `assertDatasourceEncryptionUsable` 이 기동
-      #      전에 **모양을 보고 멈춘다**(사람이 손으로 넣은 값까지 막는다).
-      #    ⚠ 이미 저장된 평문은 그대로 읽힌다(mind_castle 이 날값을 받아 준다).
-      #      새로 쓰는 것부터 암호화된다.
-      #    ⚠ **키를 잃거나 바꾸면 암호화된 값을 못 읽는다** — 데이터 소스
-      #      비밀번호를 다시 넣어야 한다. AUTH_ROLE_SECRET 과 같은 급이다.
-      MINDSDB_DATA_ENCRYPTION_TYPE: ${MINDSDB_DATA_ENCRYPTION_TYPE:-none}
-      # ⚠ **`${...:-}` 로 되돌리지 마라.** 위 주석이 그 이유다.
-      MIND_CASTLE_LOCAL_ENCRYPTION_SECRET:
-    volumes:
-      - mindsdb_data:/mindsdb/var
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:47334/api/util/ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 60
-      start_period: 30s
-
   fabric:
     image: ${ROBO_IMAGE_FABRIC}
     env_file:
@@ -151,8 +100,9 @@ services:
       # (catalog `graph/connection.py` · fabric `registry/connection.py`).
       # 한쪽만 들어가면: 고침만 = 화면이 403, 스위치만 = 지금처럼 조용히 무시.
       DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "true"
-      MINDSDB_URL: http://mindsdb:47334
-      MINDSDB_REPLACE_LOCALHOST: host.docker.internal
+      # 사람이 적는 `localhost` 는 자기 PC 다. 그런데 원천에 실제로 붙는 쪽은
+      # **중앙 DB 컨테이너**(FDW 외부 서버가 거기서 열린다)이므로 바꿔 준다.
+      ROBO_DATASOURCE_REPLACE_LOCALHOST: host.docker.internal
       # ── 모델 키는 이미지에도 설치본에도 굽지 않는다 ──────────────────
       #
       # 예전에는 `config/*.env` 안에 값이 그대로 들어 있었다. 릴리스가
@@ -173,19 +123,12 @@ services:
     depends_on:
       graph-bolt:
         condition: service_healthy
-      # ⚠ **service_started 다 — 건강을 기다리지 않는다** (2026-10-26).
-      #    fabric 은 기동할 때 mindsdb 에 **연결하지 않는다**(실측):
-      #    `main.py` 에 startup 훅이 없고, `/health` 는 무조건 healthy 를
-      #    돌려주며, mindsdb 를 부르는 곳은 요청 경로(datasources·query·
-      #    tables)뿐이다.
-      #
-      #    `service_healthy` 로 묶어 두었더니 2026-10-26 아침에 mindsdb 가
-      #    포트 경합으로 못 뜨자 **fabric·catalog·analyzer 셋이 시작조차
-      #    못 했다** — 쓰지도 않는 단계에서 **앱 전체가 멈췄다**.
-      #    순서는 지키되 건강은 기다리지 않는다. mindsdb 가 아프면
-      #    `데이터 소스` 화면만 실패하고 나머지는 정상으로 돈다.
-      mindsdb:
-        condition: service_started
+      # ⚠ **2026-10-27: mindsdb 가 사라졌다.** 데이터 소스 연합을 중앙 DB 의
+      #    virtual fabric 이 맡는다(ADR-029). 그래서 fabric 이 기다릴 것은
+      #    `graph-bolt` 하나다 — 패브릭 문장이 그 통로로 간다.
+      #    ⚠ 예전에 mindsdb 를 `service_healthy` 로 묶어 두었다가 그것이 못
+      #      뜨자 **fabric·catalog·analyzer 셋이 시작조차 못 한** 일이 있었다
+      #      (2026-10-26). 의존을 늘릴 때는 그 값을 먼저 생각한다.
     healthcheck:
       test:
         [
@@ -472,5 +415,7 @@ services:
 
 volumes:
   graph_data:
-  mindsdb_data:
+  # ⚠ `mindsdb_data:` 를 선언에서 뺐다(2026-10-27). **도커 볼륨 자체는 남아
+  #    있다** — 되돌릴 유일한 길이고 거기에 등록해 둔 데이터 소스 비밀번호가
+  #    있다. 지우려면 사람이 이름을 대고 지운다.
   shared_data:

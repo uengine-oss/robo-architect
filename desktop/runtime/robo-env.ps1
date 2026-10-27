@@ -77,7 +77,6 @@ $ErrorActionPreference = 'Stop'
 $ALL_NAMES = @(
     'ROBO_GRAPH_MODE','ROBO_GRAPH_HOST','ROBO_GRAPH_PASSWORD',
     'ROBO_GRAPH_PG_PORT','ROBO_GRAPH_BOLT_PORT','ROBO_IMAGE_ARCHIVE',
-    'MINDSDB_DATA_ENCRYPTION_TYPE','MIND_CASTLE_LOCAL_ENCRYPTION_SECRET',
     'ROBO_AUTHORITY_URL','ROBO_INGESTION_URL',
     'AUTH_JWT_SECRET','AUTH_ROLE_SECRET','AUTH_APPROVAL_REQUIRED',
     'AUTH_DEV_LOGIN_ENABLED','AUTH_DEV_LOGIN_ACCOUNTS',
@@ -202,21 +201,11 @@ if (-not (Get-User 'PDF2BPMN_FACADE_KEY')) {
     $facadeNote = '이미 있어 그대로 둡니다'
 }
 
-# 데이터 소스 비밀번호를 **디스크에서 암호화**하는 키 — 이 PC 것입니다.
-#  ⚠ **이미 있으면 그대로 둡니다.** 바꾸면 그 키로 암호화해 둔 데이터 소스
-#    비밀번호를 **못 읽습니다**(다시 넣어야 합니다). AUTH_ROLE_SECRET 과 같은 급입니다.
-#  AES-GCM 이라 16·24·32바이트여야 합니다. 32바이트(256비트)로 만듭니다.
-if (-not (Get-User 'MIND_CASTLE_LOCAL_ENCRYPTION_SECRET')) {
-    $mdbKey = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($mdbKey)
-    Set-User 'MIND_CASTLE_LOCAL_ENCRYPTION_SECRET' (
-        [Convert]::ToBase64String($mdbKey).Replace('+','-').Replace('/','_'))
-    $mdbNote = '새로 만들었습니다'
-} else {
-    $mdbNote = '이미 있어 그대로 둡니다'
-}
-# 키가 있을 때만 켭니다 — 키 없이 타입만 켜면 mindsdb 가 기동에서 죽습니다.
-Set-User 'MINDSDB_DATA_ENCRYPTION_TYPE' 'localencryption'
+# 2026-10-27: 데이터 소스 비밀번호 암호화 키를 더 만들지 않습니다. mindsdb 가
+#   사라졌고, 원천 비밀번호는 중앙 DB 의 FDW user mapping 이 갖습니다 —
+#   그것은 superuser 만 읽습니다. 그래서 이 PC 가 들고 있을 키가 없습니다.
+#   이미 만들어 둔 값이 있으면 그대로 남습니다(지우지 않습니다). -Clear 로
+#   지울 수 있고, mindsdb 로 되돌릴 때 그 값이 있어야 옛 비밀번호를 읽습니다.
 
 # 중앙 DB 접속값 — **빈 칸은 건너뜁니다**(관리자가 이미 넣어 둔 값을 지우지 않습니다)
 if ($GRAPH_HOST)     { Set-User 'ROBO_GRAPH_MODE' 'central'; Set-User 'ROBO_GRAPH_HOST' $GRAPH_HOST }
@@ -253,8 +242,6 @@ Show-State @('ROBO_GRAPH_MODE','ROBO_GRAPH_HOST','ROBO_GRAPH_PASSWORD',
              'AUTH_ROLE_SECRET','AUTH_JWT_SECRET',
              'ROBO_GRAPH_PG_PORT','ROBO_GRAPH_BOLT_PORT') "중앙 DB 접속값 — 관리자가 주는 값"
 Show-State @('ROBO_IMAGE_ARCHIVE') "부품 묶음 자리 (비면 §5 복사본을 찾습니다)"
-Show-State @('MINDSDB_DATA_ENCRYPTION_TYPE','MIND_CASTLE_LOCAL_ENCRYPTION_SECRET') `
-    "데이터 소스 비밀번호 암호화 키 ($mdbNote)"
 if ($DEV_LOGIN) {
     Show-State @('AUTH_DEV_LOGIN_ENABLED','AUTH_DEV_LOGIN_ID','AUTH_DEV_LOGIN_PASSWORD',
                  'AUTH_DEV_LOGIN_EMPNO','AUTH_DEV_LOGIN_NAME','AUTH_DEV_LOGIN_ACCOUNTS') `

@@ -66,7 +66,6 @@ export interface RuntimeManifest {
     graphBolt: string;
     /** DB 서버에서만 실행하는 중앙 계정·프로젝트 권한 API. */
     authority: string;
-    mindsdb: string;
     analyzer: string;
     catalog: string;
     fabric: string;
@@ -219,7 +218,6 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     "graphDb",
     "graphBolt",
     "authority",
-    "mindsdb",
     "analyzer",
     "catalog",
     "fabric",
@@ -469,57 +467,12 @@ function assertCredentialsPresent(manifest: RuntimeManifest): void {
   );
 }
 
-const MINDSDB_KEY_VAR = "MIND_CASTLE_LOCAL_ENCRYPTION_SECRET";
-const MINDSDB_TYPE_VAR = "MINDSDB_DATA_ENCRYPTION_TYPE";
-const AES_KEY_BYTES = new Set([16, 24, 32]);
-
-/**
- * 데이터 소스 비밀번호 암호화가 **쓸 수 있는 모양인지** 기동 전에 본다.
- *
- * ⚠ 2026-10-27 에 이것 때문에 앱이 안 떴다. `mind_castle` 은 저장소를
- * **이름의 존재만 보고** 만들고(`if all(e in env_vars.keys() ...)`), 생성자가
- * 바로 `AESGCM(urlsafe_b64decode(value))` 를 한다. 그래서 값이 비거나 길이가
- * 틀리면 **import 시점에** `ValueError` 로 죽는다 — `MINDSDB_DATA_ENCRYPTION_TYPE`
- * 가 `none` 이어도 막을 수 없다. compose 쪽은 빈 값이면 이름을 안 넘기도록
- * 고쳤고, 이 게이트는 **사람이 손으로 넣은 값**을 같은 자리에서 막는다.
- *
- * **경고로 끝내지 않는 이유.** 통과시키면 mindsdb 가 재시작 고리에 들고,
- * `compose up --wait` 가 300초를 기다린 끝에 실패한다. 그 증상은
- * "데이터 소스 화면이 안 된다" 가 아니라 **"앱이 안 뜬다"** 다.
- * `runtime.credentials_missing` 과 같은 급으로 다룬다.
- */
-function assertDatasourceEncryptionUsable(): void {
-  const raw = (process.env[MINDSDB_KEY_VAR] ?? "").trim();
-  const type = (process.env[MINDSDB_TYPE_VAR] ?? "").trim().toLowerCase();
-  if (!raw) {
-    // 키가 없으면 암호화는 못 켠다. 타입만 켜져 있으면 그것이 결함이다.
-    if (type && type !== "none") {
-      throw new Error(
-        `runtime.datasource_encryption_key_missing: ${MINDSDB_TYPE_VAR}=${type} 인뒰 ` +
-          `${MINDSDB_KEY_VAR} 가 없다. 키 없이 타입만 켜면 mindsdb 가 기동에서 죽는다 — ` +
-          `robo-env.ps1 을 돌려 키를 만들거나 ${MINDSDB_TYPE_VAR} 를 지우라.`,
-      );
-    }
-    return;
-  }
-  // 제품은 `base64.urlsafe_b64decode` 를 사용한다 — 그것은 패딩이 틀리면
-  // 예상한다. Node 의 Buffer 는 관대해서 그것을 못 잡으므로 길이도 본다.
-  const bytes = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-  if (raw.length % 4 !== 0 || !AES_KEY_BYTES.has(bytes.length)) {
-    // 값은 절대 찍지 않는다 — 길이만.
-    log("error", "runtime.datasource_encryption_key_invalid", {
-      chars: raw.length,
-      bytes: bytes.length,
-    });
-    throw new Error(
-      `runtime.datasource_encryption_key_invalid: ${MINDSDB_KEY_VAR} 가 urlsafe base64 로 ` +
-        `16·24·32바이트가 아니다(지금 ${bytes.length}바이트, 부호 ${raw.length}자). ` +
-        `이 대로는 mindsdb 가 기동에서 죽어 앱이 안 뜼다 — robo-env.ps1 이 만든 값을 ` +
-        `쓰거나 그 이름을 지워라.`,
-    );
-  }
-  log("info", "runtime.datasource_encryption.verified", { bits: bytes.length * 8 });
-}
+// 2026-10-27: assertDatasourceEncryptionUsable 를 걷어냈다. mindsdb 가 사라졌고
+//    (ADR-029 의 virtual fabric 이 대신한다) 그 게이트는 mindsdb 의 mind_castle 이
+//    이름의 존재만 보고 저장소를 만드는 성질을 막던 것이다. 원천 비밀번호는 이제
+//    FDW user mapping 이 갖고, 그것은 superuser 만 읽는다.
+//    되돌린다면 그 게이트도 함께 돌려놓아야 한다 — 없으면 키가 빈 PC 에서
+//    앱이 통째로 안 뜬다(ISS-67 이 그것이었다).
 
 const ENFORCE_VAR = "AUTH_ENFORCE";
 const DEV_LOGIN_VAR = "AUTH_DEV_LOGIN_ENABLED";
@@ -948,7 +901,6 @@ function composeEnvironment(
     ROBO_RELEASE_ID: manifest.releaseId,
     ROBO_IMAGE_GRAPH_DB: manifest.images.graphDb,
     ROBO_IMAGE_GRAPH_BOLT: manifest.images.graphBolt,
-    ROBO_IMAGE_MINDSDB: manifest.images.mindsdb,
     ROBO_IMAGE_ANALYZER: manifest.images.analyzer,
     ROBO_IMAGE_CATALOG: manifest.images.catalog,
     ROBO_IMAGE_FABRIC: manifest.images.fabric,
@@ -1013,9 +965,6 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   await ensureEnvironmentSnapshots(root, manifest);
   assertCredentialsPresent(manifest);
   assertAuthPostureNotOverridden(manifest);
-  // ⚠ mindsdb 는 이 키가 못쓰면 **기동에서** 죽어 재시작 고리에 들고,
-  //   그러밍 앱이 통째로 안 뜼다(2026-10-27). 이미지 적재보다 앎에 본다.
-  assertDatasourceEncryptionUsable();
   // **비밀번호를 이미지 적재보다 먼저 본다.** 중앙 모드에서 값이 없으면 4분짜리
   // tar 를 다 읽고 나서 "비밀번호가 없다" 고 말하게 된다 — 위의 둘과 같은 이유다.
   const password = await graphPassword(topology);
