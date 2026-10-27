@@ -12,6 +12,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
+import { detailText } from '@/app/apiError'
+
 const TOKEN_KEY = 'robo.auth.token'
 const PROJECT_KEY = 'robo.auth.project'
 
@@ -253,7 +255,14 @@ export const useAuthStore = defineStore('auth', () => {
     form.append('password', password)
     const r = await fetch('/api/auth/dev-login', { method: 'POST', body: form })
     const body = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(body.detail || `로그인 실패 (${r.status})`)
+    if (!r.ok) {
+      // ⚠ `detail` 이 `{code, message}` 로 올 때가 있다(503 AUTH_NOT_INITIALIZED).
+      //   그대로 던지면 화면에 `[object Object]` 가 뜬다 — 2026-10-27 첫 설치.
+      const err = new Error(detailText(body.detail, `로그인 실패 (${r.status})`))
+      err.httpStatus = r.status
+      err.code = body.detail?.code || body.code || null
+      throw err
+    }
     return apply(body)
   }
 

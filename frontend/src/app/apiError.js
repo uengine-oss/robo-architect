@@ -14,6 +14,32 @@
  * 그래서 판정을 문구가 아니라 **사실**로 한다: HTTP 응답이 왔으면 서버는 살아 있다.
  */
 
+/**
+ * FastAPI 의 `detail` 을 **사람이 읽는 한 줄**로 바꾼다.
+ *
+ * `detail` 은 세 모양으로 온다 — 문자열, `{code, message}` 객체(우리가 코드를
+ * 같이 보낼 때), 그리고 검증 오류 배열. 객체를 그대로 `new Error()` 에 넣으면
+ * 화면에 **`[object Object]`** 가 뜬다. 2026-10-27 에 첫 설치의 로그인 화면이
+ * 그렇게 나왔다 — 진짜 메시지는 *"서버 운영자가 최초 관리자를 지정해야 합니다."*
+ * 였고, 그 한 줄이 없으면 **무엇을 해야 하는지 알 길이 없다.**
+ *
+ * @param {unknown} detail 응답 본문의 `detail`
+ * @param {string} fallback 모양을 못 알아볼 때 쓸 문구
+ * @returns {string}
+ */
+export function detailText(detail, fallback = '') {
+  if (typeof detail === 'string') return detail || fallback
+  if (Array.isArray(detail)) {
+    const parts = detail.map((d) => detailText(d?.msg ?? d, '')).filter(Boolean)
+    return parts.length ? parts.join(' · ') : fallback
+  }
+  if (detail && typeof detail === 'object') {
+    const text = detail.message ?? detail.msg ?? detail.detail
+    if (typeof text === 'string' && text) return text
+  }
+  return fallback
+}
+
 /** 프로젝트 때문에 막힌 응답의 코드. 백엔드 `BindingDenied.code` 와 같은 값이다. */
 const PROJECT_CODES = new Set(['PROJECT_NOT_SELECTED', 'PROJECT_FORBIDDEN'])
 
@@ -29,7 +55,7 @@ export async function apiFailure(response, what) {
   if (response.status === 403) {
     const body = await response.json().catch(() => ({}))
     if (PROJECT_CODES.has(body.code) || body.detail) {
-      const err = new Error(body.detail || '이 프로젝트를 볼 수 없습니다.')
+      const err = new Error(detailText(body.detail, '이 프로젝트를 볼 수 없습니다.'))
       err.httpStatus = 403
       err.projectError = body.code || 'PROJECT_FORBIDDEN'
       return err
