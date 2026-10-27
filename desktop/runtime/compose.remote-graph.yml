@@ -44,14 +44,20 @@ services:
     profiles: ["bundled-db"]
 
   # `depends_on` 은 **다시 쓴다.** compose 는 매핑을 병합하므로 남길 것만 적으면
-  # `graph-bolt` 가 그대로 남는다. `!override` 로 통째로 바꿔야 한다.
+  # `graph-bolt` 가 그대로 남는다.
   #
-  # `!reset {}` 로 비우지 않는 이유: 그러면 graph 와 무관한 의존(mindsdb·fabric·
-  # catalog)까지 사라져 기동 순서가 흐트러진다. graph 만 빼고 나머지는 지킨다.
+  # ⚠ **2026-10-27: 여기를 비웠다.** mindsdb 를 걷어낸 뒤 `compose.yml` 에서
+  #   fabric 이 기다리는 것은 `graph-bolt` 하나뿐인데, 중앙 모드에서는 그것이
+  #   프로필로 빠진다 ⇒ **기다릴 것이 없다**.
+  #   전에는 이 자리에 mindsdb 가 적혀 있었다. `compose.yml` 에서 그 서비스를
+  #   지웠는데 이 줄이 남아, compose 가 **프로젝트 자체를 거절했다** —
+  #   `service "fabric" depends on undefined service "mindsdb"` · 앱이 기동에서
+  #   죽었다(설치본 a2f212dba 에서 실제로 났다).
+  #   ⚠ **`compose.yml` 에서 서비스를 지울 때는 이 파일도 같이 본다.** 여기는
+  #     `!override`/`!reset` 로 이름을 **다시 적는** 자리라, 지운 이름이
+  #     조용히 살아남는다.
   fabric:
-    depends_on: !override
-      mindsdb:
-        condition: service_healthy
+    depends_on: !reset null
     environment:
       NEO4J_URI: bolt://${ROBO_GRAPH_HOST}:${ROBO_GRAPH_BOLT_PORT:-7687}
 

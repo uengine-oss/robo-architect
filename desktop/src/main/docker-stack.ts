@@ -985,7 +985,18 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
     graphHost: endpoint.host,
   });
   await runDocker(
-    composeArgs(root, manifest, ["up", "--detach", "--wait", "--wait-timeout", "300"], topology),
+    // `--remove-orphans` — compose 에서 **사라진 서비스의 컨테이너를 치운다**.
+    // 없으면 compose 는 경고만 하고 그대로 둔다: mindsdb 를 걷어낸 2026-10-27
+    // 판을 깔고 앱을 다시 띄워도 `robo-architect-desktop-mindsdb-1` 이 healthy
+    // 로 남아 있었다 — 사람 눈에는 "걷어냈다는데 아직 돌고 있다" 로 보인다.
+    // ⚠ 이 프로젝트 이름 밑에서 **일부러 띄운 일회성 컨테이너도 같이 지워진다**.
+    //   이 저장소에는 그런 것이 없지만, 생기면 다른 프로젝트 이름을 준다.
+    composeArgs(
+      root,
+      manifest,
+      ["up", "--detach", "--wait", "--wait-timeout", "300", "--remove-orphans"],
+      topology,
+    ),
     { env, secret: password },
   );
 

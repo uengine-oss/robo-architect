@@ -356,8 +356,13 @@ const PROBES: Partial<Record<ManagedServiceId, ProbePair>> = {
   pdf2bpmn: pdf2bpmnProbes,
   wireframe: wireframeProbes,
   catalog: { health: containerHealth("catalog", "http://127.0.0.1:5503/robo/check-data/") },
+  // ⚠ 2026-10-27: `mindsdb` 프로브를 뺐다. 이 표의 열쇠가 곧 **앱이 감독하는
+  //   서비스 목록**이다(`probedServiceIds()` → `runtimeRegistry.register`).
+  //   compose 에서 서비스를 지우고 여기를 안 지우면, 앱은 **영영 안 뜨는
+  //   서비스 하나를 화면에 띄운 채** 기다린다 — 오류가 아니라 "느린 기동" 처럼
+  //   보인다. 서비스를 지울 때는 **이 표와 `runtime-contract.ts` 의 id 합집합**
+  //   을 같이 본다.
   fabric: { health: containerHealth("fabric", "http://127.0.0.1:8404/health") },
-  mindsdb: { health: containerHealth("mindsdb", "http://127.0.0.1:47334/api/status") },
   architect: { health: httpHealth((context) => context.ports.architect, "/api/health") },
 };
 

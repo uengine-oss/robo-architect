@@ -52,7 +52,8 @@ export interface ProbeResult {
  */
 export type ManagedServiceId =
   | "graph"
-  | "mindsdb"
+  // ⚠ 2026-10-27: `mindsdb` 를 뺐다 — 제품을 걷어냈다(ADR-029 의 virtual fabric).
+  //   id 를 남겨 두면 프로브 표·이름표가 그것을 **다시 등록해도 타입이 통과한다**.
   | "analyzer"
   | "catalog"
   | "fabric"

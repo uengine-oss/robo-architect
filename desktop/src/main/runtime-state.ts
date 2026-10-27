@@ -32,7 +32,6 @@ import { changedServiceIds, decideState, deriveLegacyStatus, type ServiceFacts }
 
 const DISPLAY_NAMES: Record<ManagedServiceId, string> = {
   graph: "그래프 저장소",
-  mindsdb: "데이터 연결(MindsDB)",
   analyzer: "코드 분석기",
   catalog: "데이터 카탈로그",
   fabric: "데이터 패브릭",
