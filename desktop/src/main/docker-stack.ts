@@ -37,7 +37,6 @@ export interface RuntimeManifest {
   imageArchiveSha256: string;
   images: {
     neo4j: string;
-    mindsdb: string;
     analyzer: string;
     catalog: string;
     fabric: string;
@@ -137,7 +136,6 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
   }
   for (const required of [
     "neo4j",
-    "mindsdb",
     "analyzer",
     "catalog",
     "fabric",
@@ -378,7 +376,6 @@ function composeEnvironment(
     COMPOSE_PROJECT_NAME,
     ROBO_RELEASE_ID: manifest.releaseId,
     ROBO_IMAGE_NEO4J: manifest.images.neo4j,
-    ROBO_IMAGE_MINDSDB: manifest.images.mindsdb,
     ROBO_IMAGE_ANALYZER: manifest.images.analyzer,
     ROBO_IMAGE_CATALOG: manifest.images.catalog,
     ROBO_IMAGE_FABRIC: manifest.images.fabric,

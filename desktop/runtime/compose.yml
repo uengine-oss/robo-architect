@@ -24,25 +24,17 @@ services:
       retries: 30
       start_period: 20s
 
-  mindsdb:
-    image: ${ROBO_IMAGE_MINDSDB}
-    restart: unless-stopped
-    labels:
-      org.uengine.robo.release: ${ROBO_RELEASE_ID}
-      org.uengine.robo.component: mindsdb
-    environment:
-      MINDSDB_APIS: http
-      MINDSDB_DOCKER_ENV: "True"
-      MINDSDB_STORAGE_DIR: /mindsdb/var
-      SENTRY_IO_DSN: ""
-    volumes:
-      - mindsdb_data:/mindsdb/var
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:47334/api/util/ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 60
-      start_period: 30s
+  # ⚠ **mindsdb 서비스를 걷어냈다** (ontological 데이터 패브릭 가지).
+  #
+  # 이 제품은 데이터 소스 연합을 MindsDB 라는 **남의 제품**에 맡기고 있었다.
+  # 그 이미지 하나가 치명·고위험 **231건**을 들고 있었고, 공개된 판 872개를
+  # 전부 확인해도 **고친 판이 없었다**. 그래서 쓰지 않는 길을 만들었다 —
+  # 연합을 **그래프 데이터베이스가 직접** 한다(Ontological 의 virtual fabric).
+  #
+  # ⚠ **아직 끝이 아니다.** 이 가지의 그래프 저장소는 여전히 `neo4j` 인데,
+  #   새 패브릭 문장(`CREATE DATASOURCE` 따위)은 **Ontological 엔진만** 알아듣는다.
+  #   그 교체(neo4j → graph-db + graph-bolt)가 **다음 단계**다.
+  #   그 전까지 이 가지에서 **데이터 소스 기능은 돌지 않는다.**
 
   fabric:
     image: ${ROBO_IMAGE_FABRIC}
@@ -58,12 +50,11 @@ services:
       NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
       NEO4J_DATABASE: neo4j
       DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
-      MINDSDB_URL: http://mindsdb:47334
-      MINDSDB_REPLACE_LOCALHOST: host.docker.internal
+      # 사람이 적는 `localhost` 는 자기 PC 다. 원천에 실제로 붙는 쪽은 **그래프 DB
+      # 컨테이너**이므로 바꿔 준다(예전 `MINDSDB_REPLACE_LOCALHOST` 자리).
+      ROBO_DATASOURCE_REPLACE_LOCALHOST: host.docker.internal
     depends_on:
       neo4j:
-        condition: service_healthy
-      mindsdb:
         condition: service_healthy
     healthcheck:
       test:
@@ -208,5 +199,6 @@ services:
 volumes:
   neo4j_data:
   neo4j_logs:
-  mindsdb_data:
+  # ⚠ `mindsdb_data:` 를 선언에서 뺐다. **도커 볼륨 자체는 지우지 않는다** —
+  #   이미 깔린 PC 에 남아 있고, 되돌릴 때 쓸 유일한 길이다.
   shared_data:
