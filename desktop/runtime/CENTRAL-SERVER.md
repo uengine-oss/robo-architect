@@ -3,6 +3,33 @@
 이 디렉터리는 사용자 PC용 설치본과 같은 릴리스에서 생성된 서버 묶음이다.
 `runtime-manifest.json`의 image tag/ID와 `SHA256SUMS`를 먼저 대조한다.
 
+## 0. 먼저 — `robo-central.sh` 한 파일로 끝낸다
+
+아래 1~3절을 손으로 하지 않는다. 같은 디렉터리의 `robo-central.sh`를 열어
+맨 위 `[고치는 곳]`의 값 둘(`SERVER_IP`, `ADMIN_EMPNO`)만 채우고 돌린다.
+
+```bash
+vi robo-central.sh
+sudo bash robo-central.sh
+```
+
+이 한 번이 이미지 적재, 비밀 다섯 생성, `.env`·`central-authority.env` 작성(600),
+DB 기동, 역할 둘, `migrate`→`grant`→`policy`, 확인, 그리고 사용자 PC에 줄
+`pc-central-setup.ps1`까지 순서대로 처리한다. **다시 돌려도 안전하다** — 이미
+만든 비밀은 그대로 두고 이어간다.
+
+```bash
+sudo bash robo-central.sh check     # 상태와 값 길이만 본다(변경 없음)
+sudo bash robo-central.sh rebind    # 서버 IP·포트가 바뀌었을 때
+sudo bash robo-central.sh migrate   # 새 릴리스로 올린 뒤 표 구조만 맞출 때
+sudo bash robo-central.sh down      # 컨테이너만 내린다(볼륨은 남긴다)
+```
+
+자세한 설명과 현장에서 물렸던 자리는 `docs/가이드/관리자-DB올리기.md`에 있다.
+
+아래 1~3절은 **스크립트를 쓸 수 없을 때의 손 작업 기록**이다. 스크립트가 하는
+일과 순서가 같다.
+
 ## 1. 이미지와 설정 준비
 
 ```bash
