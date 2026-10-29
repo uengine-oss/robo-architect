@@ -205,24 +205,42 @@ stage_work_dir() {
 }
 
 # ── 이미지를 올린다 ─────────────────────────────────────────────────────────
+#  서버가 쓰는 것은 **세 장**이다(graph-db · graph-bolt · authority).
+#  ⚠ 한 장만 보고 건너뛰지 않는다 — graphDb 는 있는데 authority 가 없으면
+#    여기서는 조용히 지나가고, 뒤의 `compose run authority` 에서 엉뚱하게 터진다.
+#  ⚠ 태그가 아니라 **image ID** 로 대조한다. 태그는 같고 내용은 다른 장이 있을
+#    수 있고, 앱도 `ensureImages()` 에서 같은 대조를 해 거절한다.
+LOAD_IMAGE_KEYS=(graphDb graphBolt authority)
+
+images_all_present() {
+  local key ref want got
+  for key in "${LOAD_IMAGE_KEYS[@]}"; do
+    ref=$(json_in runtime-manifest.json images "$key")
+    want=$(json_in runtime-manifest.json imageIds "$key")
+    got=$(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)
+    [[ $got == "$want" ]] || { MISSING_IMAGE="$ref"; return 1; }
+  done
+  return 0
+}
+
 load_images() {
-  local want tar
-  want=$(json_in runtime-manifest.json images graphDb)
-  if docker image inspect "$want" >/dev/null 2>&1; then
-    ok "이미지가 이미 있다 ($want)"
+  local tar
+  MISSING_IMAGE=''
+  if images_all_present; then
+    ok "이미지 ${#LOAD_IMAGE_KEYS[@]}장이 이미 있다 (image ID 까지 같다)"
     return 0
   fi
   for tar in "$SCRIPT_DIR/../robo-images.tar" "$SCRIPT_DIR/robo-images.tar" "$WORK_DIR/robo-images.tar"; do
     if [[ -f $tar ]]; then
       say "  부품 묶음을 올린다 ($(du -h "$tar" | cut -f1)) — 몇 분 걸린다"
       docker load --input "$tar" | tail -3
-      docker image inspect "$want" >/dev/null 2>&1 ||
-        die "묶음을 올렸는데 $want 가 없다. 릴리스가 섞였다 — 같은 판의 폴더인지 본다."
+      images_all_present ||
+        die "묶음을 올렸는데 $MISSING_IMAGE 가 맞지 않는다. 릴리스가 섞였다 — 같은 판의 폴더인지 본다."
       ok '부품 묶음을 올렸다'
       return 0
     fi
   done
-  die 'robo-images.tar 를 못 찾았다. 릴리스 폴더째로 옮긴 뒤 그 안의 central-server/ 에서 돌린다.'
+  die "robo-images.tar 를 못 찾았고 ${MISSING_IMAGE} 가 없다. 릴리스 폴더째로 옮긴 뒤 그 안의 central-server/ 에서 돌린다."
 }
 
 # ── 설정 파일 둘 ────────────────────────────────────────────────────────────
