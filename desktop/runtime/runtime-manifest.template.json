@@ -5,7 +5,8 @@
   "imageArchive": "robo-images.tar",
   "imageArchiveSha256": "IMAGE_ARCHIVE_SHA256",
   "images": {
-    "neo4j": "neo4j:5.26.0",
+    "graphDb": "uengine/ontological-db:RELEASE_ID",
+    "graphBolt": "uengine/ontological-bolt:RELEASE_ID",
     "analyzer": "uengine/robo-analyzer:RELEASE_ID",
     "catalog": "uengine/robo-data-catalog:RELEASE_ID",
     "fabric": "uengine/robo-data-fabric:RELEASE_ID",
@@ -13,7 +14,8 @@
     "gateway": "uengine/robo-api-gateway:RELEASE_ID"
   },
   "imageIds": {
-    "neo4j": "sha256:IMAGE_ID_NEO4J",
+    "graphDb": "sha256:IMAGE_ID_GRAPH_DB",
+    "graphBolt": "sha256:IMAGE_ID_GRAPH_BOLT",
     "analyzer": "sha256:IMAGE_ID_ANALYZER",
     "catalog": "sha256:IMAGE_ID_CATALOG",
     "fabric": "sha256:IMAGE_ID_FABRIC",

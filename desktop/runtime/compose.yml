@@ -1,40 +1,73 @@
 services:
-  neo4j:
-    image: ${ROBO_IMAGE_NEO4J}
+  # ── 그래프 저장소 — **Ontological DB** ────────────────────────────────
+  #
+  # 2026-10-29: `neo4j` 를 걷어냈다. 이 가지는 데이터 소스 연합을 **그래프 DB 가
+  # 직접** 한다(Ontological 의 virtual fabric). 그 문장들(`CREATE DATASOURCE`,
+  # `CREATE VIRTUAL NODE` …)은 Ontological 이 더한 **확장 문법**이라 진짜 Neo4j
+  # 는 알아듣지 못한다 — 저장소를 바꾸지 않으면 패브릭 기능이 통째로 죽는다.
+  #
+  # 앱이 보는 것은 여전히 **Bolt 프로토콜**이다. 그래서 둘로 나눈다 —
+  # 엔진(postgres)과 Bolt 게이트웨이.
+  graph-db:
+    image: ${ROBO_IMAGE_GRAPH_DB}
     restart: unless-stopped
     labels:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
-      org.uengine.robo.component: neo4j
-    ports:
-      - "127.0.0.1:${ROBO_NEO4J_PORT}:7687"
+      org.uengine.robo.component: graph-db
     environment:
-      NEO4J_AUTH: neo4j/${ROBO_NEO4J_PASSWORD}
-      ROBO_NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      POSTGRES_USER: ${ROBO_GRAPH_USER}
+      POSTGRES_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      POSTGRES_DB: ${ROBO_GRAPH_DESIGN}
+      # 엔트리포인트 훅이 둘 다 만들고, **같으면 거기서 멈춘다**
+      # (설계 graph 를 분석이 지우는 구성을 기동에서 막는다).
+      OG_GRAPH_DESIGN: ${ROBO_GRAPH_DESIGN}
+      OG_GRAPH_ANALYSIS: ${ROBO_GRAPH_ANALYSIS}
+    ports:
+      # 호스트에서 직접 붙을 자리. Bolt 와 마찬가지로 **루프백에만** 연다.
+      - "127.0.0.1:${ROBO_GRAPH_PG_LOCAL_PORT}:5432"
     volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
+      - graph_data:/var/lib/postgresql/data
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "cypher-shell -a bolt://127.0.0.1:7687 -u neo4j -p \"$$ROBO_NEO4J_PASSWORD\" \"RETURN 1\" >/dev/null 2>&1",
-        ]
+      # **떴는지만 본다.** 확장이 깔렸고 graph 가 있는지는 별도로 잰다 —
+      # healthcheck 는 준비의 근거가 아니다.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -q"]
       interval: 5s
       timeout: 5s
       retries: 30
       start_period: 20s
 
-  # ⚠ **mindsdb 서비스를 걷어냈다** (ontological 데이터 패브릭 가지).
-  #
-  # 이 제품은 데이터 소스 연합을 MindsDB 라는 **남의 제품**에 맡기고 있었다.
-  # 그 이미지 하나가 치명·고위험 **231건**을 들고 있었고, 공개된 판 872개를
-  # 전부 확인해도 **고친 판이 없었다**. 그래서 쓰지 않는 길을 만들었다 —
-  # 연합을 **그래프 데이터베이스가 직접** 한다(Ontological 의 virtual fabric).
-  #
-  # ⚠ **아직 끝이 아니다.** 이 가지의 그래프 저장소는 여전히 `neo4j` 인데,
-  #   새 패브릭 문장(`CREATE DATASOURCE` 따위)은 **Ontological 엔진만** 알아듣는다.
-  #   그 교체(neo4j → graph-db + graph-bolt)가 **다음 단계**다.
-  #   그 전까지 이 가지에서 **데이터 소스 기능은 돌지 않는다.**
+  # Bolt 프로토콜 게이트웨이 — **상태를 갖지 않는다.** 받은 질의를 전부
+  # `og_cypher()` 로 넘긴다. 별도 컨테이너인 이유: 묶으면 **Bolt 를 사람이 띄우게
+  # 된다**(엔진은 깔았는데 Bolt 를 안 띄워 psql 은 되고 앱만 죽는 상태). 따로 두면
+  # 수명을 compose 가 쥔다.
+  graph-bolt:
+    image: ${ROBO_IMAGE_GRAPH_BOLT}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: graph-bolt
+    ports:
+      # **루프백에만 연다.** Bolt 는 평문 인증이다.
+      - "127.0.0.1:${ROBO_NEO4J_PORT}:7687"
+    environment:
+      OG_BOLT_LISTEN: 0.0.0.0:7687
+      OG_BOLT_PGHOST: graph-db
+      OG_BOLT_PGPORT: "5432"
+      OG_BOLT_PGDATABASE: ${ROBO_GRAPH_DESIGN}
+      OG_BOLT_GRAPH: ${ROBO_GRAPH_DESIGN}
+      PGPASSWORD: ${ROBO_NEO4J_PASSWORD}
+    depends_on:
+      graph-db:
+        condition: service_healthy
+    healthcheck:
+      # ⚠ **`CMD-SHELL` 을 쓰지 않는다** — 그건 dash 로 돌고 dash 에는 `/dev/tcp`
+      #   가 없다. 그렇게 썼다가 Bolt 가 멀쩡한데 unhealthy 로 떠서 의존 서비스가
+      #   `Created` 에서 멈췄다. **앱이 아니라 검사가 틀린** 경우다.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7687"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
 
   fabric:
     image: ${ROBO_IMAGE_FABRIC}
@@ -45,16 +78,16 @@ services:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
       org.uengine.robo.component: fabric
     environment:
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER}
       NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
-      NEO4J_DATABASE: neo4j
+      NEO4J_DATABASE: ${ROBO_GRAPH_DESIGN}
       DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
       # 사람이 적는 `localhost` 는 자기 PC 다. 원천에 실제로 붙는 쪽은 **그래프 DB
       # 컨테이너**이므로 바꿔 준다(예전 `MINDSDB_REPLACE_LOCALHOST` 자리).
       ROBO_DATASOURCE_REPLACE_LOCALHOST: host.docker.internal
     depends_on:
-      neo4j:
+      graph-bolt:
         condition: service_healthy
     healthcheck:
       test:
@@ -78,14 +111,14 @@ services:
       org.uengine.robo.release: ${ROBO_RELEASE_ID}
       org.uengine.robo.component: catalog
     environment:
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER}
       NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
-      NEO4J_DATABASE: neo4j
+      NEO4J_DATABASE: ${ROBO_GRAPH_DESIGN}
       DATA_FABRIC_URL: http://fabric:8404
       CATALOG_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
     depends_on:
-      neo4j:
+      graph-bolt:
         condition: service_healthy
       fabric:
         condition: service_healthy
@@ -113,20 +146,23 @@ services:
     ports:
       - "127.0.0.1:${ROBO_ANALYZER_PORT}:5502"
     environment:
-      ROBO_NEO4J_URI: bolt://neo4j:7687
-      ROBO_NEO4J_USER: neo4j
+      ROBO_NEO4J_URI: bolt://graph-bolt:7687
+      ROBO_NEO4J_USER: ${ROBO_GRAPH_USER}
       ROBO_NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
-      ROBO_NEO4J_DATABASE: neo4j
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
+      # ⚠ 분석은 대상 graph 를 **통째로 비우고 다시 쓴다.** 설계와 같은 이름을
+      #   주면 첫 분석에서 설계가 사라진다 — 엔진의 초기화 훅도 같은 이유로
+      #   둘이 같으면 기동을 거절한다.
+      ROBO_NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS}
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER}
       NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
-      NEO4J_DATABASE: neo4j
+      NEO4J_DATABASE: ${ROBO_GRAPH_DESIGN}
       ROBO_CATALOG_BASE_URL: http://catalog:5503/robo
       ROBO_DATA_DIR: /data
     volumes:
       - shared_data:/data
     depends_on:
-      neo4j:
+      graph-bolt:
         condition: service_healthy
       catalog:
         condition: service_healthy
@@ -197,8 +233,9 @@ services:
       start_period: 15s
 
 volumes:
-  neo4j_data:
-  neo4j_logs:
+  # ⚠ 이름이 바뀌었다 — **옛 `neo4j_data` 볼륨은 이 엔진이 못 읽는다**(제품이
+  #   다르다). 옮기는 길은 없다. 새로 만들고 다시 넣어야 한다.
+  graph_data:
   # ⚠ `mindsdb_data:` 를 선언에서 뺐다. **도커 볼륨 자체는 지우지 않는다** —
   #   이미 깔린 PC 에 남아 있고, 되돌릴 때 쓸 유일한 길이다.
   shared_data:

@@ -36,7 +36,8 @@ export interface RuntimeManifest {
   imageArchive: string;
   imageArchiveSha256: string;
   images: {
-    neo4j: string;
+    graphDb: string;
+    graphBolt: string;
     analyzer: string;
     catalog: string;
     fabric: string;
@@ -57,7 +58,10 @@ export interface RuntimeManifest {
 }
 
 export interface DockerStackPorts {
+  // Bolt 게이트웨이가 듣는 포트. 이름은 **프로토콜**을 가리킨다.
   neo4j: number;
+  // 엔진(postgres)이 듣는 포트 — 호스트 백엔드가 사용자·프로젝트 표에 직접 붙는다.
+  graphPg: number;
   analyzer: number;
   gateway: number;
   architect: number;
@@ -135,7 +139,8 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     }
   }
   for (const required of [
-    "neo4j",
+    "graphDb",
+    "graphBolt",
     "analyzer",
     "catalog",
     "fabric",
@@ -353,6 +358,7 @@ async function createState(releaseId: string): Promise<PersistedDockerState> {
     releaseId,
     ports: {
       neo4j: await pickFreePort(),
+      graphPg: await pickFreePort(),
       analyzer: await pickFreePort(),
       gateway: await pickFreePort(),
       architect: await pickFreePort(),
@@ -375,7 +381,14 @@ function composeEnvironment(
     ...process.env,
     COMPOSE_PROJECT_NAME,
     ROBO_RELEASE_ID: manifest.releaseId,
-    ROBO_IMAGE_NEO4J: manifest.images.neo4j,
+    ROBO_IMAGE_GRAPH_DB: manifest.images.graphDb,
+    ROBO_IMAGE_GRAPH_BOLT: manifest.images.graphBolt,
+    // ⚠ graph 이름 셋은 이 가지에서 **상수**다. 납품 가지는 매니페스트
+    //   (`manifest.graphs`)에서 읽는다 — 거기서는 설치마다 달라질 수 있어서다.
+    //   ⚠ 설계와 분석이 **같으면 엔진이 기동을 거절한다**(분석이 설계를 지운다).
+    ROBO_GRAPH_USER: "robo",
+    ROBO_GRAPH_DESIGN: "robo",
+    ROBO_GRAPH_ANALYSIS: "analyzer_run",
     ROBO_IMAGE_ANALYZER: manifest.images.analyzer,
     ROBO_IMAGE_CATALOG: manifest.images.catalog,
     ROBO_IMAGE_FABRIC: manifest.images.fabric,
@@ -383,6 +396,7 @@ function composeEnvironment(
     ROBO_IMAGE_GATEWAY: manifest.images.gateway,
     ROBO_NEO4J_PASSWORD: password,
     ROBO_NEO4J_PORT: String(state.ports.neo4j),
+    ROBO_GRAPH_PG_LOCAL_PORT: String(state.ports.graphPg),
     ROBO_ANALYZER_PORT: String(state.ports.analyzer),
     ROBO_GATEWAY_PORT: String(state.ports.gateway),
     ROBO_ARCHITECT_API_PORT: String(state.ports.architect),
