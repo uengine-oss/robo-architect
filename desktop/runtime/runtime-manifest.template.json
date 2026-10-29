@@ -60,6 +60,8 @@
   },
   "source": {
     "workspace": "WORKSPACE_COMMIT",
+    "ontological": "ONTOLOGICAL_COMMIT",
+    "templates": "TEMPLATES_COMMIT",
     "architect": "ARCHITECT_COMMIT",
     "openPencil": "OPEN_PENCIL_COMMIT",
     "analyzer": "ANALYZER_COMMIT",
