@@ -112,3 +112,13 @@ deploy/secrets.yaml
 
 # Runtime-generated proposal acceptance log (append-only; caused merge conflicts)
 specs/proposal-changes.md
+
+# 코드 생성 템플릿 — 별도 저장소(msa-ez/template-poscodx)를 클론해 쓴다.
+# 내용을 우리 이력에 섞지 않는다. `scripts/fetch-templates.sh` 로 받는다.
+#
+# ⚠ 이 줄이 없으면 **굽기가 막힌다.** 굽기는 이 폴더를 **필수 입력**으로 보는데
+#    (robo.ps1 의 `Assert-CleanReleaseRepository 'templates'`), 무시하지 않으면
+#    추적 안 되는 폴더로 떠서 **작업 트리 0건** 관문이 먼저 거절한다.
+#    치우면 이번엔 "release repository missing: templates" 로 죽는다 —
+#    2026-10-29 에 그 순서로 두 번 밟았다. enterprise 가지에는 전부터 있었다.
+templates/
