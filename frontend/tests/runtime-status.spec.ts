@@ -29,7 +29,17 @@ import {
   totalLineCount,
 } from '../src/features/runtime-status/messages.js'
 
-/** 감독이 다루는 서비스 열. `runtime-state.DISPLAY_NAMES` 와 같은 집합이다. */
+/** 감독이 다루는 서비스 **아홉**. `runtime-state.DISPLAY_NAMES` 와 같은 집합이다.
+ *
+ * ⚠ 이 목록은 **손으로 맞춘 사본**이다 — 그 쪽은 desktop 패키지에 있어 여기서
+ *   import 할 수 없다. 그래서 2026-10-27 에 `mindsdb` 를 거기서 지웠을 때
+ *   **이 목록만 열 개로 남아** 주석이 거짓이 됐다.
+ *
+ * ⚠⚠ **시험이 걸러 주지 못한다.** 이 시험은 **자기 목록으로 세계를 만들기**
+ *   때문에, 유령 항목이 있어도 그 항목의 경우가 하나 더 생겨 **그냥 통과한다**
+ *   (유령을 지운 뒤에도 74개 전부 통과했다). 사본을 검사하는 길이 없다.
+ *   ⇒ 서비스를 더하거나 빼면 **사람이 두 자리를 같이** 고친다.
+ */
 const SERVICES = [
   { id: 'graph', displayName: '설계·분석 저장소' },
   { id: 'architect', displayName: '백엔드' },
@@ -39,7 +49,6 @@ const SERVICES = [
   { id: 'gateway', displayName: 'API 게이트웨이' },
   { id: 'parser', displayName: '구문 분석기' },
   { id: 'pdf2bpmn', displayName: '문서→BPMN 생성기' },
-  { id: 'mindsdb', displayName: '예측 엔진' },
   { id: 'wireframe', displayName: '와이어프레임' },
 ]
 

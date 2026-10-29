@@ -3,6 +3,19 @@
 #
 # spec 058 T002.
 #
+# ⚠⚠ **2026-10-29: 이 스크립트는 낡았다. 그대로 돌리면 없는 것을 당긴다.**
+#
+#   `mindsdb/mindsdb:v26.1.0`  2026-10-27 에 **걷혔다.** 데이터 소스 연합은
+#                              중앙 DB(Ontological)의 virtual fabric 이 맡는다
+#   `neo4j:…`                  그래프 저장소가 **Ontological DB** 로 바뀌었다
+#                              (compose 에 `graph-db`·`graph-bolt` 로 있다)
+#
+# 반쯤 고치지 않는다 — mindsdb 만 빼면 neo4j 가 남아 **고쳐진 것처럼 보인다.**
+# 지금 이미지를 준비하는 **진짜 길**은 굽기다:
+#   enterprise  `robo.cmd release architect-electron`
+#   lite        `robo-lite.cmd`              (가지 `lite-p`)
+# 이 파일을 되살리려면 위 둘이 짓는 **이미지 표**를 보고 다시 쓴다.
+#
 # ## 종료 코드를 파이프에 태우지 않는다
 #
 # `docker build ... | tail` 은 **tail 의 종료 코드**를 낸다. 빌드가 죽어도 0 이다.

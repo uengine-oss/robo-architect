@@ -68,7 +68,6 @@ DEFAULT_SERVICES = [
     "catalog",
     "fabric",
     "gateway",
-    "mindsdb",
     "parser",
     "pdf2bpmn",
     "wireframe",
