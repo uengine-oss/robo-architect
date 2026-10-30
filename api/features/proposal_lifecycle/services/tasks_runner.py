@@ -186,6 +186,12 @@ async def stream_tasks(proposal_id: str) -> AsyncGenerator[tuple[str, dict], Non
     raw_tasks = data.get("tasks") if isinstance(data, dict) else (data if isinstance(data, list) else None)
     tasks = _normalize_tasks(raw_tasks or [])
     if not tasks:
+        # 무엇이 왔는지 남긴다 — 화면에는 「파싱 실패」뿐이라 원인을 볼 곳이 없었다.
+        SmartLogger.log("ERROR", f"tasks parse failed: {proposal_id}",
+                        category="proposal_lifecycle.tasks.parse_failed",
+                        params={"proposalId": proposal_id, "rawChars": len(raw),
+                                "parsedType": type(data).__name__,
+                                "rawHead": raw[:1500], "rawTail": raw[-1500:]})
         yield "error", {"code": "TASKS_PARSE_FAILED", "message": "작업 분해 결과 파싱 실패"}
         return
 

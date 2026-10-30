@@ -92,7 +92,13 @@ export async function createProject(input: ProjectsCreateInput): Promise<GraphPr
   }
   // 이름은 위 패턴으로만 통과한다 — 식별자 자리에 그대로 써도 된다.
   await run(`CREATE GRAPH ${name}`);
-  return listProjects();
+  // 만든 직후의 SHOW GRAPHS 에 새 그래프가 빠질 때가 있다 — 잠깐 기다려 다시 읽고, 그래도 없으면 목록에 붙인다.
+  for (let i = 0; i < 5; i++) {
+    const projects = await listProjects();
+    if (projects.some((p) => p.name === name)) return projects;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return [...(await listProjects()), { name, types: 0, isDefault: false, lastUsed: false }];
 }
 
 /** enter 가 쓰는 확인 — 고른 그래프가 실제로 있는가. */
