@@ -276,7 +276,7 @@ export async function testConnection(params: TestParams): Promise<TestResult> {
   }
 }
 
-function mapDriverError(err: unknown): IpcHandlerError {
+export function mapDriverError(err: unknown): IpcHandlerError {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const code = (err as any)?.code ?? "";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

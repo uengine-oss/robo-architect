@@ -20,6 +20,8 @@ import type {
   LauncherEnterResult,
 } from "../../shared/launcher-contract";
 import { connectionPasswordSecretId } from "../../shared/launcher-contract";
+import { useProjectGraph } from "../backend";
+import { GRAPH_DESIGN } from "../graphs";
 import { IpcHandlerError } from "../ipc";
 import { getSecret } from "../secret-store";
 import { loadSettings, saveSettings } from "../settings";
@@ -28,6 +30,7 @@ import { markConnectionUsed, testConnection } from "./connections";
 import { resolveSessionUser } from "./identity";
 import { canEnter, markEntered } from "./launcher-state";
 import { pushRecentProjectRoot, validateProjectRoot } from "./project-root";
+import { assertProjectExists } from "./projects";
 
 export async function handleLauncherEnter(input: LauncherEnterInput): Promise<LauncherEnterResult> {
   if (!canEnter()) {
@@ -73,13 +76,17 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
     );
   }
 
+  // lite: 번들 연결이면 프로젝트(그래프)를 고른다 — 연결은 하나, 그래프가 여럿.
+  const graph = connection.source === "bundled" ? (input.graph || GRAPH_DESIGN) : undefined;
+  if (graph) await assertProjectExists(graph);
+
   // testConnection throws on any failure with the right NEO4J_* code,
   // which surfaces to the renderer through the ipc envelope.
   await testConnection({
     uri: connection.uri,
     user: connection.user,
     password,
-    database: connection.database ?? "",
+    database: graph ?? connection.database ?? "",
   });
 
   // ---------- persist lastProfile + bump timestamps ----------
@@ -88,6 +95,7 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
     connectionId: connection.id,
     projectRoot: input.projectRoot,
     enteredAt,
+    ...(graph ? { graph } : {}),
   };
 
   await markConnectionUsed(connection.id);
@@ -103,10 +111,14 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
   // authoritative and writes it into the session store.
   const authoritativeIdentity = await resolveSessionUser(input.projectRoot);
 
+  // 백엔드를 고른 그래프로 — 다르면 백엔드만 다시 띄우고 준비될 때까지 기다린다.
+  if (graph) await useProjectGraph(graph);
+
   markEntered(profile);
 
   return {
     identity: authoritativeIdentity,
     activeConnectionId: connection.id,
+    ...(graph ? { graph } : {}),
   };
 }

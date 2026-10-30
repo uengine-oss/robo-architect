@@ -79,8 +79,32 @@ export interface ProjectRootEntry {
 export interface LaunchProfile {
   connectionId: string;
   projectRoot: string;
+  /** lite: 고른 프로젝트 그래프(Ontological DB). 번들 연결일 때만 있다. */
+  graph?: string;
   /** ISO-8601 UTC of the last successful Enter using this exact pair. */
   enteredAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// GraphProject — lite: Ontological DB 의 그래프 하나 = 프로젝트 하나.
+// Neo4j 는 DB 하나에 그래프 하나라 프로젝트마다 연결을 따로 뒀지만, Ontological 은
+// 한 DB 에 그래프를 여럿 둔다. 그래서 번들 연결 하나로 프로젝트를 고르고 만든다.
+// ---------------------------------------------------------------------------
+
+export interface GraphProject {
+  /** 그래프 이름 — 백엔드의 NEO4J_DATABASE 로 넘어간다. */
+  name: string;
+  /** 그래프에 정의된 노드 종류 수 (0 = 아직 빈 프로젝트). */
+  types: number;
+  /** 설치 때 만들어지는 기본 그래프. */
+  isDefault: boolean;
+  /** 지난번에 들어간 프로젝트 — 런처가 미리 고른다. */
+  lastUsed: boolean;
+}
+
+export interface ProjectsCreateInput {
+  /** 영문 소문자로 시작, 소문자·숫자·밑줄 2~40자. */
+  name: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +218,8 @@ export interface ProjectRootCreateInput {
 export interface LauncherEnterInput {
   connectionId: string;
   projectRoot: string;
+  /** lite: 번들 연결에서 쓸 프로젝트 그래프. 없으면 기본 그래프. */
+  graph?: string;
   /** Renderer's snapshot of identity; main re-resolves and may return a different value. */
   identity: SessionUser;
 }
@@ -203,6 +229,8 @@ export interface LauncherEnterResult {
   identity: SessionUser;
   /** The connection actually loaded into backend env. */
   activeConnectionId: string;
+  /** lite: 백엔드가 보고 있는 프로젝트 그래프. */
+  graph?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +255,8 @@ export interface LauncherIpcRequestMap {
   "identity:setGitConfig": [IdentitySetGitConfigInput, SessionUser];
   "launcher:enter": [LauncherEnterInput, LauncherEnterResult];
   "launcher:reopen": [void, { ok: true }];
+  "projects:list": [void, GraphProject[]];
+  "projects:create": [ProjectsCreateInput, GraphProject[]];
 }
 
 export type LauncherIpcChannel = keyof LauncherIpcRequestMap;
@@ -259,6 +289,11 @@ export interface LauncherDesktopBridge {
   launcher: {
     enter(input: LauncherEnterInput): Promise<IpcResult<LauncherEnterResult>>;
     reopen(): Promise<IpcResult<{ ok: true }>>;
+  };
+  projects: {
+    /** 번들 연결이 없으면(개발 모드) 빈 목록 — 런처는 연결 고르기로 돌아간다. */
+    list(): Promise<IpcResult<GraphProject[]>>;
+    create(input: ProjectsCreateInput): Promise<IpcResult<GraphProject[]>>;
   };
 }
 

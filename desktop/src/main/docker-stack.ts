@@ -17,10 +17,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getDataDir } from "./data-dir";
+import { GRAPH_ANALYSIS, GRAPH_DESIGN, GRAPH_USER } from "./graphs";
 import { ensureBundledConnection } from "./launcher/connections";
 import { log } from "./logging";
 import { pickFreePort } from "./ports";
 import { getSecret, setSecret } from "./secret-store";
+import { loadSettings } from "./settings";
 
 const MANIFEST_NAME = "runtime-manifest.json";
 const STATE_SCHEMA_VERSION = 1;
@@ -386,9 +388,9 @@ function composeEnvironment(
     // ⚠ graph 이름 셋은 이 가지에서 **상수**다. 납품 가지는 매니페스트
     //   (`manifest.graphs`)에서 읽는다 — 거기서는 설치마다 달라질 수 있어서다.
     //   ⚠ 설계와 분석이 **같으면 엔진이 기동을 거절한다**(분석이 설계를 지운다).
-    ROBO_GRAPH_USER: "robo",
-    ROBO_GRAPH_DESIGN: "robo",
-    ROBO_GRAPH_ANALYSIS: "analyzer_run",
+    ROBO_GRAPH_USER: GRAPH_USER,
+    ROBO_GRAPH_DESIGN: GRAPH_DESIGN,
+    ROBO_GRAPH_ANALYSIS: GRAPH_ANALYSIS,
     ROBO_IMAGE_ANALYZER: manifest.images.analyzer,
     ROBO_IMAGE_CATALOG: manifest.images.catalog,
     ROBO_IMAGE_FABRIC: manifest.images.fabric,
@@ -433,14 +435,17 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   process.env.ROBO_GATEWAY_URL = `http://127.0.0.1:${state.ports.gateway}`;
   process.env.ROBO_CLUSTER_MCP_URL = `http://127.0.0.1:${state.ports.analyzer}/robo/mcp/`;
   process.env.ROBO_NEO4J_URI = hostNeo4jUri;
-  process.env.ROBO_NEO4J_USER = "neo4j";
+  // Bolt 사용자는 엔진의 PG 역할 그대로다 — "neo4j" 로 붙으면 인증이 실패한다.
+  process.env.ROBO_NEO4J_USER = GRAPH_USER;
   process.env.ROBO_NEO4J_PASSWORD = password;
-  process.env.ROBO_NEO4J_DATABASE = "neo4j";
+  // 백엔드가 볼 프로젝트 그래프 — 지난번에 들어간 프로젝트가 있으면 그것으로 띄워
+  // 런처에서 같은 프로젝트로 들어갈 때 백엔드를 다시 띄우지 않게 한다(enter 가 바꾼다).
+  process.env.ROBO_NEO4J_DATABASE = (await lastProjectGraph()) ?? GRAPH_DESIGN;
   await ensureBundledConnection({
     uri: hostNeo4jUri,
-    user: "neo4j",
+    user: GRAPH_USER,
     password,
-    database: "neo4j",
+    database: GRAPH_DESIGN,
   });
 
   current = {
@@ -458,6 +463,14 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
     gatewayPort: state.ports.gateway,
   });
   return current;
+}
+
+async function lastProjectGraph(): Promise<string | null> {
+  const settings = await loadSettings();
+  const profile = settings.lastProfile;
+  if (!profile?.graph) return null;
+  const connection = settings.savedConnections.find((c) => c.id === profile.connectionId);
+  return connection?.source === "bundled" ? profile.graph : null;
 }
 
 export async function stopDockerStack(): Promise<void> {

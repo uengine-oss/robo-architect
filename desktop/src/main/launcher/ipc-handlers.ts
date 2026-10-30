@@ -31,6 +31,7 @@ import {
   testConnection,
 } from "./connections";
 import { handleLauncherEnter } from "./enter";
+import { createProject, listProjects } from "./projects";
 import { resolveSessionUser, setGitConfigGlobal } from "./identity";
 import {
   chooseProjectRoot,
@@ -56,6 +57,8 @@ const STUB_BY_CHANNEL: Record<LauncherIpcChannel, string> = {
   "identity:setGitConfig": "US3 T043b",
   "launcher:enter": "US1 T028",
   "launcher:reopen": "US5 T065",
+  "projects:list": "lite project graphs",
+  "projects:create": "lite project graphs",
 };
 
 const IMPLEMENTED_CHANNELS: ReadonlySet<LauncherIpcChannel> = new Set([
@@ -70,6 +73,8 @@ const IMPLEMENTED_CHANNELS: ReadonlySet<LauncherIpcChannel> = new Set([
   "identity:resolve",
   "identity:setGitConfig",
   "launcher:enter",
+  "projects:list",
+  "projects:create",
 ]);
 
 /**
@@ -90,6 +95,8 @@ export function registerLauncherIpcHandlers(): void {
   registerHandler("identity:resolve", ({ projectRoot }) => resolveSessionUser(projectRoot));
   registerHandler("identity:setGitConfig", ({ name, email }) => setGitConfigGlobal(name, email));
   registerHandler("launcher:enter", handleLauncherEnter);
+  registerHandler("projects:list", listProjects);
+  registerHandler("projects:create", createProject);
 
   // --- stubs for the rest ---
   for (const channel of Object.keys(STUB_BY_CHANNEL) as LauncherIpcChannel[]) {

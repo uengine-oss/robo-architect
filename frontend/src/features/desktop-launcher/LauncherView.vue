@@ -45,6 +45,15 @@ const entering = ref(false)
 const enterError = ref(null)
 
 // --- git identity form (shown when source === 'unknown-fallback') ---
+// lite: 번들 Ontological DB 의 프로젝트(그래프). 번들 연결이 있으면 연결 대신 이것을 고른다.
+const projects = ref([])
+const selectedGraph = ref(null)
+const newProjectName = ref('')
+const creatingProject = ref(false)
+const projectError = ref(null)
+const bundledConnection = computed(() => launcher.savedConnections.find((c) => c.source === 'bundled') || null)
+const projectMode = computed(() => !!bundledConnection.value && !!desktop.projects)
+
 const gitFormName = ref('')
 const gitFormEmail = ref('')
 const gitFormSaving = ref(false)
@@ -54,6 +63,7 @@ const gitFormError = ref(null)
 const hasIdentity = computed(() => session.user && session.user.source !== 'unknown-fallback')
 const canEnter = computed(() => {
   if (!launcher.selectedConnectionId) return false
+  if (projectMode.value && !selectedGraph.value) return false
   if (!rootValid.value) return false
   return !entering.value
 })
@@ -66,6 +76,43 @@ async function reloadConnections() {
   const r = await desktop.connections.list()
   if (r.ok) {
     launcher.setSavedConnections(r.data)
+    if (bundledConnection.value) {
+      launcher.select(bundledConnection.value.id)
+      await reloadProjects()
+    }
+  }
+}
+
+async function reloadProjects() {
+  if (!desktop.projects) return
+  const r = await desktop.projects.list()
+  if (!r.ok) {
+    projectError.value = r.error.message
+    return
+  }
+  projects.value = r.data
+  if (!selectedGraph.value || !r.data.some((p) => p.name === selectedGraph.value)) {
+    const pick = r.data.find((p) => p.lastUsed) || r.data.find((p) => p.isDefault) || r.data[0]
+    selectedGraph.value = pick ? pick.name : null
+  }
+}
+
+async function onCreateProject() {
+  projectError.value = null
+  const name = newProjectName.value.trim()
+  if (!name) return
+  creatingProject.value = true
+  try {
+    const r = await desktop.projects.create({ name })
+    if (r.ok) {
+      projects.value = r.data
+      selectedGraph.value = name
+      newProjectName.value = ''
+    } else {
+      projectError.value = r.error.message
+    }
+  } finally {
+    creatingProject.value = false
   }
 }
 
@@ -247,6 +294,7 @@ async function onSaveGitConfig() {
 async function onEnter() {
   if (!canEnter.value) {
     if (!launcher.selectedConnectionId) enterError.value = '커넥션을 선택해주세요.'
+    else if (projectMode.value && !selectedGraph.value) enterError.value = '프로젝트를 선택해주세요.'
     else if (!rootValid.value) enterError.value = '프로젝트 폴더를 선택해주세요.'
     return
   }
@@ -257,12 +305,14 @@ async function onEnter() {
       connectionId: launcher.selectedConnectionId,
       projectRoot: rootPath.value,
       identity: toRaw(session.user),
+      ...(projectMode.value ? { graph: selectedGraph.value } : {}),
     })
     if (r.ok) {
       session.commitProfile({
         identity: r.data.identity,
         activeConnectionId: r.data.activeConnectionId,
         projectRoot: rootPath.value,
+        graph: r.data.graph || null,
       })
       // Persist projectRoot for the existing Claude Code workspace integration.
       try { localStorage.setItem('claude_code_workspace_root', rootPath.value) } catch { /* ignore */ }
@@ -340,8 +390,39 @@ function explainEnterError(err) {
       </div>
     </header>
 
+    <!-- lite: 프로젝트 = 번들 Ontological DB 의 그래프. 연결은 하나라 고를 것이 없다. -->
+    <section v-if="projectMode" class="section">
+      <h2>프로젝트</h2>
+      <div v-if="projects.length > 0" class="connection-list">
+        <button
+          v-for="p in projects"
+          :key="p.name"
+          type="button"
+          class="connection-item"
+          :class="{ selected: selectedGraph === p.name }"
+          @click="selectedGraph = p.name"
+        >
+          <div class="connection-label">{{ p.name }}<span v-if="p.isDefault" class="project-tag">기본</span></div>
+          <div class="connection-uri">{{ p.types > 0 ? `노드 종류 ${p.types}개` : '빈 프로젝트' }}</div>
+        </button>
+      </div>
+      <div class="project-create">
+        <input
+          v-model="newProjectName"
+          type="text"
+          placeholder="새 프로젝트 이름 (예: food_delivery)"
+          @keydown.enter.prevent="onCreateProject"
+        />
+        <button type="button" :disabled="creatingProject || !newProjectName.trim()" @click="onCreateProject">
+          {{ creatingProject ? '만드는 중…' : '+ 새 프로젝트' }}
+        </button>
+      </div>
+      <p class="project-hint">프로젝트마다 그래프가 따로 만들어집니다 — 한 그래프 DB 안에서 서로 섞이지 않습니다.</p>
+      <p v-if="projectError" class="msg err">{{ projectError }}</p>
+    </section>
+
     <!-- Saved connections list -->
-    <section class="section">
+    <section v-else class="section">
       <h2>Neo4j connection</h2>
 
       <div v-if="launcher.savedConnections.length > 0" class="connection-list">
@@ -400,7 +481,7 @@ function explainEnterError(err) {
 
     <!-- Project root picker -->
     <section class="section">
-      <h2>Project root</h2>
+      <h2>{{ projectMode ? '코드 폴더' : 'Project root' }}</h2>
       <div class="root-row">
         <button type="button" class="root-pick" @click="pickRoot">폴더 선택…</button>
         <div v-if="rootPath" class="root-display" :class="{ invalid: !rootValid }">
@@ -416,7 +497,8 @@ function explainEnterError(err) {
     <section class="enter-section">
       <div class="enter-hints">
         <span v-if="!launcher.selectedConnectionId" class="enter-hint">커넥션을 선택해주세요</span>
-        <span v-else-if="!rootValid" class="enter-hint">프로젝트 폴더를 선택해주세요</span>
+        <span v-else-if="projectMode && !selectedGraph" class="enter-hint">프로젝트를 선택해주세요</span>
+        <span v-else-if="!rootValid" class="enter-hint">{{ projectMode ? '코드 폴더를 선택해주세요' : '프로젝트 폴더를 선택해주세요' }}</span>
       </div>
       <button type="button" class="enter" :disabled="!canEnter" @click="onEnter">
         {{ entering ? 'Entering…' : 'Enter →' }}
@@ -427,6 +509,46 @@ function explainEnterError(err) {
 </template>
 
 <style scoped>
+.project-tag {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  background: rgba(99, 140, 255, 0.18);
+  color: #9db4ff;
+  vertical-align: middle;
+}
+.project-create {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.project-create input {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: transparent;
+  color: inherit;
+  font-size: 0.9rem;
+  border-radius: 3px;
+}
+.project-create button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.project-create button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.project-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: #888;
+}
 .launcher {
   max-width: 720px;
   margin: 2rem auto;

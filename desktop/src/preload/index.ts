@@ -48,6 +48,8 @@ import type {
   LauncherDesktopBridge,
   LauncherEnterInput,
   LauncherEnterResult,
+  GraphProject,
+  ProjectsCreateInput,
   ProbeStatusInput,
   ProbeStatusResult,
   ProjectRootChooseResult,
@@ -125,6 +127,10 @@ const launcherBridge: LauncherDesktopBridge = {
       invoke<LauncherEnterResult>("launcher:enter", input),
     reopen: () => invoke<{ ok: true }>("launcher:reopen"),
   },
+  projects: {
+    list: () => invoke<GraphProject[]>("projects:list"),
+    create: (input: ProjectsCreateInput) => invoke<GraphProject[]>("projects:create", input),
+  },
 };
 
 // `DesktopBridge` now also includes the launcher surface (via module
@@ -145,7 +151,7 @@ const fsBridge: FsBrowserDesktopBridge = {
   },
 };
 
-const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher" | "fs"> = {
+const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher" | "projects" | "fs"> = {
   app: {
     getRuntimeState: () => invoke<RuntimeState>("app:getRuntimeState"),
     openExternal: (params: OpenExternalParams) =>

@@ -284,6 +284,18 @@ export async function retryBackend(): Promise<{ port: number }> {
   return startBackend();
 }
 
+/**
+ * lite: 백엔드가 볼 프로젝트 그래프를 바꾼다. 그래프는 백엔드 환경(NEO4J_DATABASE)으로
+ * 정해지므로 — 헤더 없이 들어오는 MCP 브리지·스킬 호출도 같은 그래프를 봐야 한다 —
+ * 다르면 백엔드만 다시 띄운다(Docker 스택은 그대로). 같으면 아무것도 하지 않는다.
+ */
+export async function useProjectGraph(graph: string): Promise<void> {
+  if (process.env.ROBO_NEO4J_DATABASE === graph && runtime.status === "ready") return;
+  log("info", "backend.project_graph", { from: process.env.ROBO_NEO4J_DATABASE ?? null, to: graph });
+  process.env.ROBO_NEO4J_DATABASE = graph;
+  await retryBackend();
+}
+
 export async function stopBackend(): Promise<void> {
   const c = child;
   if (!c || c.exitCode !== null) {
@@ -291,6 +303,8 @@ export async function stopBackend(): Promise<void> {
     return;
   }
   log("info", "backend.stop_requested", { pid: c.pid });
+  // 일부러 멈추는 것이다 — exit 핸들러가 이것을 crash 로 알리지 않게 상태를 먼저 내린다.
+  runtime = { ...runtime, status: "initializing" };
   c.kill("SIGTERM");
   const exited = await Promise.race([
     new Promise<boolean>((resolve) => c.once("exit", () => resolve(true))),
