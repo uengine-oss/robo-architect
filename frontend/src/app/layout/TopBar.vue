@@ -6,7 +6,6 @@ import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
-import FigmaButton from '@/features/figmaBinding/ui/FigmaButton.vue'
 import FigmaBindingModal from '@/features/figmaBinding/ui/FigmaBindingModal.vue'
 import SettingsPanel from './SettingsPanel.vue'
 
@@ -28,6 +27,8 @@ const emit = defineEmits(['update:activeTab'])
 // 'Analysis'(분석기 임베드) → 'Legacy' 로 라벨 변경 + 맨 앞으로 이동(Proposals 앞).
 const VIEW_TITLE = { Legacy: '레거시', Proposals: '프로포절', Stories: '요구사항', Requirements: '요구사항', Process: '프로세스', Processes: '프로세스', 'Event Modeling': '프로세스', Design: '설계', Data: '데이터', Aggregate: '데이터', Code: '코드' }
 const viewTitle = computed(() => VIEW_TITLE[props.activeTab] || props.activeTab)
+// 상단 줄은 그 화면의 도구가 있을 때만(프로세스 전환·개수·PRD) — Ontological Studio 처럼 위를 비운다.
+const hasBar = computed(() => ['Process', 'Processes', 'Event Modeling', 'Design', 'Data', 'Aggregate', 'Code'].includes(props.activeTab))
 
 const canvasStore = useCanvasStore()
 // 043 — 'Big picture' 뷰 비활성화: store 사용 제거.
@@ -51,7 +52,12 @@ function hasProjectHome() {
 }
 
 // 레일에서 Code 를 골랐는데 프로젝트 홈이 없으면 App 이 이 이벤트로 PRD 모달을 부탁한다
-if (typeof window !== 'undefined') window.addEventListener('robo:open-prd', () => { showPRDModal.value = true })
+if (typeof window !== 'undefined') {
+  window.addEventListener('robo:open-prd', () => { showPRDModal.value = true })
+  // 왼쪽 레일의 설정 · Figma 단추
+  window.addEventListener('robo:open-settings', () => { showSettingsPanel.value = true })
+  window.addEventListener('robo:open-figma', () => { showFigmaBindingModal.value = true })
+}
 
 function selectTab(tab) {
   if (tab === 'Code' && !hasProjectHome()) {
@@ -64,12 +70,12 @@ function selectTab(tab) {
 </script>
 
 <template>
-  <header class="top-bar">
+  <div class="top-bar-host">
+  <header v-if="hasBar" class="top-bar">
     <div class="top-bar__left">
       <!-- 브랜드와 화면 전환은 왼쪽 레일(SideRail.vue)로 옮겼다 — Ontological Studio 와 같은 배치.
            여기는 지금 화면의 제목 · 서브토글 · 수치 · 동작만. -->
       <div class="top-bar__view-mode">
-        <h2 class="top-bar__title">{{ viewTitle }}</h2>
         <!-- 043 — Process 영역의 BPM⇄Event Modeling 서브토글. activeTab을 'Process'(BPM)⇄
              'Processes'(Event Modeling)로 바꿔 네비/캔버스/상단바가 함께 전환된다. -->
         <div v-if="activeTab === 'Process' || activeTab === 'Processes' || activeTab === 'Event Modeling'" class="top-bar__subtoggle">
@@ -139,23 +145,11 @@ function selectTab(tab) {
         title="PRD zip 다운로드 — PRD 생성 모달 열기"
       >PRD zip 다운로드</button>
 
-      <!-- Figma Binding Button (feature 016) -->
-      <FigmaButton v-model="showFigmaBindingModal" />
-
-      <!-- Settings Button -->
-        <button 
-        class="settings-btn"
-        @click="showSettingsPanel = true"
-        title="Settings"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-        </button>
     </div>
     
-    <!-- Settings Panel -->
+  </header>
+
+    <!-- Settings Panel — 단추는 왼쪽 레일(SideRail.vue)에 있다: robo:open-settings -->
     <SettingsPanel
       :visible="showSettingsPanel"
       @close="showSettingsPanel = false"
@@ -169,10 +163,11 @@ function selectTab(tab) {
 
     <!-- Figma Binding Modal (feature 016) -->
     <FigmaBindingModal v-model="showFigmaBindingModal" />
-  </header>
+  </div>
 </template>
 
 <style scoped>
+.top-bar-host { display: contents; }
 .top-bar__title { margin: 0; font-size: 15px; font-weight: 650; color: var(--color-text-bright); letter-spacing: -.01em; }
 /* Layout sections */
 .top-bar__left {

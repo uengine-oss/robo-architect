@@ -32,6 +32,8 @@ const ICONS = {
   Data: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>',
   Code: '<path d="M8.5 7L3.5 12l5 5M15.5 7l5 5-5 5"/><path d="M13.5 4.5l-3 15"/>',
   Legacy: '<rect x="3" y="4" width="18" height="16" rx="2.2"/><path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5"/>',
+  figma: '<path d="M8.5 3.5h3.5v6H8.5a3 3 0 0 1 0-6z"/><path d="M12 3.5h3.5a3 3 0 0 1 0 6H12z"/><path d="M8.5 9.5H12v6H8.5a3 3 0 0 1 0-6z"/><circle cx="15.5" cy="12.5" r="3"/><path d="M8.5 15.5H12v3a3 3 0 1 1-3.5-3z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
   moon: '<path d="M20 14.2A8 8 0 0 1 9.8 4a8 8 0 1 0 10.2 10.2z"/>',
 }
@@ -42,6 +44,9 @@ function isActive(tab) {
   if (tab === 'Data') return ['Data', 'Aggregate'].includes(props.activeTab)
   return props.activeTab === tab
 }
+
+// 설정 · Figma 창은 TopBar 가 들고 있다 — 이벤트로 연다
+function openEv(name) { window.dispatchEvent(new CustomEvent(name)) }
 
 const graphLabel = computed(() => session.graph || (session.isDesktop ? '—' : 'web'))
 </script>
@@ -70,6 +75,12 @@ const graphLabel = computed(() => session.graph || (session.isDesktop ? '—' : 
         <span class="rail__dot"></span>
         <span class="rail__graph">{{ graphLabel }}</span>
       </div>
+      <button class="rail__btn" title="Figma 연동" @click="openEv('robo:open-figma')">
+        <svg class="rail__ic" viewBox="0 0 24 24" aria-hidden="true" v-html="ICONS.figma"></svg>
+      </button>
+      <button class="rail__btn" title="설정" @click="openEv('robo:open-settings')">
+        <svg class="rail__ic" viewBox="0 0 24 24" aria-hidden="true" v-html="ICONS.gear"></svg>
+      </button>
       <button class="rail__btn" :title="theme.theme === 'dark' ? '라이트 테마' : '다크 테마'" @click="theme.toggleTheme()">
         <svg class="rail__ic" viewBox="0 0 24 24" aria-hidden="true" v-html="ICONS[theme.theme === 'dark' ? 'sun' : 'moon']"></svg>
       </button>

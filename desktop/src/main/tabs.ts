@@ -156,8 +156,9 @@ export class TabWindow {
     wc.removeAllListeners("did-start-loading");
     wc.removeAllListeners("did-stop-loading");
     // The SPA keeps document.title = its current view, so the tab reads what it shows.
+    // (the embedded analyzer sets its own title — only the SPA's view names are taken)
     wc.on("page-title-updated", (_e, title) => {
-      if (title && title !== "Robo Architect") {
+      if (title && Object.values(VIEWS).includes(title)) {
         tab.title = title;
         this.sync();
       }
