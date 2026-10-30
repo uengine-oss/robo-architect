@@ -2,9 +2,11 @@
 // 왼쪽 아이콘 레일 — Ontological Studio 의 Studio 레일과 같은 모양(패밀리 룩).
 // 상단 탭 막대(TopBar)에 있던 화면 전환을 여기로 옮겼다. 위에 브랜드 박스, 가운데 화면,
 // 아래에 그래프 연결 상태 · 테마 · 개발사 표시.
+// 레거시 탭에서는 앱 화면 대신 레거시 기능의 메뉴(코드 · 데이터 소스 · 코드 그래프 · 데이터 스키마)만 보인다.
 import { computed } from 'vue'
 import { useThemeStore } from '@/app/theme.store'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
+import { LEGACY_FEATURES, legacyFeature, openLegacyFeature } from '@/features/analysis/legacyNav'
 
 const props = defineProps({
   activeTab: { type: String, default: 'Proposals' },
@@ -32,6 +34,10 @@ const ICONS = {
   Data: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>',
   Code: '<path d="M8.5 7L3.5 12l5 5M15.5 7l5 5-5 5"/><path d="M13.5 4.5l-3 15"/>',
   Legacy: '<rect x="3" y="4" width="18" height="16" rx="2.2"/><path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5"/>',
+  LegacyCode: '<path d="M8.5 7L3.5 12l5 5M15.5 7l5 5-5 5"/>',
+  LegacySources: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>',
+  LegacyGraph: '<circle cx="12" cy="5.5" r="2.2"/><circle cx="5.5" cy="18" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/><path d="M11 7.5L6.6 16M13 7.5l4.4 8.5M7.7 18h8.6"/>',
+  LegacySchema: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/>',
   figma: '<path d="M8.5 3.5h3.5v6H8.5a3 3 0 0 1 0-6z"/><path d="M12 3.5h3.5a3 3 0 0 1 0 6H12z"/><path d="M8.5 9.5H12v6H8.5a3 3 0 0 1 0-6z"/><circle cx="15.5" cy="12.5" r="3"/><path d="M8.5 15.5H12v3a3 3 0 1 1-3.5-3z"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
@@ -45,6 +51,15 @@ function isActive(tab) {
   return props.activeTab === tab
 }
 
+const isLegacy = computed(() => props.activeTab === 'Legacy')
+
+// 다른 화면에서 「레거시」 — 데스크톱 창이면 레거시 탭을 따로 연다(있으면 그 탭으로). 레거시 탭의 레일은
+// 레거시 메뉴만 보여 주므로, 지금 탭을 레거시로 바꾸면 원래 화면으로 돌아갈 메뉴가 없어진다.
+function select(tab) {
+  if (tab === 'Legacy' && window.raShell?.openTab) { window.raShell.openTab({ view: 'Legacy', reuse: true }); return }
+  emit('update:activeTab', tab)
+}
+
 // 설정 · Figma 창은 TopBar 가 들고 있다 — 이벤트로 연다
 function openEv(name) { window.dispatchEvent(new CustomEvent(name)) }
 
@@ -56,14 +71,27 @@ const graphLabel = computed(() => session.graph || (session.isDesktop ? '—' : 
     <div class="rail__brand" title="Robo Architect">
       <img src="/brand/ra-box.svg" alt="Robo Architect" />
     </div>
-    <div class="rail__items">
+    <div v-if="isLegacy" class="rail__items" aria-label="레거시">
+      <button
+        v-for="f in LEGACY_FEATURES"
+        :key="f.id"
+        class="rail__item"
+        :class="{ 'is-active': legacyFeature === f.id }"
+        :title="f.label"
+        @click="openLegacyFeature(f.id)"
+      >
+        <svg class="rail__ic" viewBox="0 0 24 24" aria-hidden="true" v-html="ICONS[f.icon]"></svg>
+        <span>{{ f.label }}</span>
+      </button>
+    </div>
+    <div v-else class="rail__items">
       <button
         v-for="it in ITEMS"
         :key="it.tab"
         class="rail__item"
         :class="{ 'is-active': isActive(it.tab) }"
         :title="it.label"
-        @click="emit('update:activeTab', it.tab)"
+        @click="select(it.tab)"
       >
         <svg class="rail__ic" viewBox="0 0 24 24" aria-hidden="true" v-html="ICONS[it.icon]"></svg>
         <span>{{ it.label }}</span>
@@ -105,6 +133,7 @@ const graphLabel = computed(() => session.graph || (session.isDesktop ? '—' : 
   display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 2px 8px;
   border: 0; border-radius: 9px; background: transparent; color: var(--color-text-light);
   font-size: 11.5px; line-height: 1.2; cursor: pointer; position: relative;
+  word-break: keep-all; text-align: center;
 }
 .rail__item:hover { background: var(--color-bg-tertiary); color: var(--color-text-bright); }
 .rail__item.is-active { background: var(--color-accent-soft); color: var(--color-accent); font-weight: 600; }

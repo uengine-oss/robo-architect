@@ -40,6 +40,8 @@ export interface TabTarget {
   proposal?: string;
   constitution?: boolean;
   title?: string;
+  /** 같은 화면만 띄운 탭이 이미 있으면 새로 열지 않고 그 탭으로 간다 */
+  reuse?: boolean;
 }
 
 interface Tab {
@@ -134,6 +136,10 @@ export class TabWindow {
   }
 
   open(target: TabTarget, { activate = true } = {}): string {
+    if (target.reuse && target.view) {
+      const same = this.tabs.find((x) => x.target.view === target.view && !x.target.proposal && !x.target.constitution);
+      if (same) { this.activate(same.id); return same.id; }
+    }
     const t: TabTarget = {};
     if (target.view && VIEWS[target.view]) t.view = target.view;
     if (target.proposal && /^[A-Za-z0-9_-]{1,40}$/.test(target.proposal)) t.proposal = target.proposal;

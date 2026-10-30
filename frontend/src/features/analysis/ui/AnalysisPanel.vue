@@ -10,6 +10,7 @@
  * remote 는 build 후 serve 되어야 한다(5001 포트). 미기동 시 에러 안내.
  */
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { legacyFeature, bindLegacyNav } from '../legacyNav'
 
 const hostEl = ref(null)
 const loadError = ref('')
@@ -35,7 +36,14 @@ onMounted(async () => {
       if (r?.ok && r.data) neo4j = r.data
     } catch { neo4j = undefined }
 
-    unmountRemote = remote.default.mount(hostEl.value, { embedded: true, projectRoot, neo4j })
+    // hideNav: 메뉴는 앱 레일(SideRail)이 그린다 — 분석기 왼쪽 메뉴는 숨기고 고른 메뉴만 주고받는다.
+    const want = legacyFeature.value
+    unmountRemote = remote.default.mount(hostEl.value, {
+      embedded: true, projectRoot, neo4j,
+      hideNav: true, onFeatureChange: (id) => { legacyFeature.value = id },
+    })
+    bindLegacyNav((id) => remote.default.setFeature?.(id))
+    if (want !== legacyFeature.value) remote.default.setFeature?.(want)
   } catch (err) {
     loadError.value = err?.message || String(err)
   } finally {
@@ -44,6 +52,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  bindLegacyNav(null)
   try { unmountRemote?.() } catch { /* 이미 해제됨 */ }
   unmountRemote = null
 })
