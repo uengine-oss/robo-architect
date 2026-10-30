@@ -13,7 +13,7 @@
  * (T026 / T033 / T043). Phase 2 only delivers the envelope + push primitives.
  */
 
-import { BrowserWindow, ipcMain } from "electron";
+import { ipcMain, webContents } from "electron";
 
 import type {
   IpcChannel,
@@ -89,16 +89,16 @@ function toIpcError(err: unknown): IpcError {
 }
 
 /**
- * Broadcasts a subscription event to every open BrowserWindow. The renderer
- * side delivers it to all listeners registered via the preload bridge.
+ * Broadcasts a subscription event to every page — window shells and the tab views laid over
+ * them (tabs.ts). The renderer side delivers it to all listeners registered via the preload bridge.
  */
 export function pushToRenderer<C extends IpcSubscriptionChannel>(
   channel: C,
   payload: IpcSubscriptionMap[C],
 ): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (window.isDestroyed()) continue;
-    window.webContents.send(channel, payload);
+  for (const wc of webContents.getAllWebContents()) {
+    if (wc.isDestroyed()) continue;
+    wc.send(channel, payload);
   }
 }
 

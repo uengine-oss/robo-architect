@@ -39,5 +39,22 @@ bootstrapAIDesign()
 // without this Hangul renders as tofu in the FrameEditor.
 preloadKoreanFont()
 
-app.mount('#app')
+// Tabbed desktop shell (desktop/src/main/tabs.ts): a tab works on the project opened on the
+// home, so it takes that session instead of showing the launcher. Must run before mount so the
+// launcher gate never flashes.
+async function adoptShellSession() {
+  const shell = window.raShell
+  if (!shell || !shell.session) return
+  try {
+    const s = await shell.session()
+    if (!s) return
+    const { useSessionStore } = await import('./features/desktop-launcher/stores/session-store.js')
+    useSessionStore().commitProfile({
+      identity: s.identity, activeConnectionId: s.connectionId, projectRoot: s.projectRoot, graph: s.graph,
+    })
+    try { localStorage.setItem('claude_code_workspace_root', s.projectRoot) } catch { /* ignore */ }
+  } catch { /* no shell session — the launcher gate stays */ }
+}
+
+adoptShellSession().finally(() => app.mount('#app'))
 

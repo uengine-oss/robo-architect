@@ -244,6 +244,9 @@ function onCreated(id) {
 
 onMounted(async () => {
   await store.fetchProposals()
+  // 데스크톱 셸 홈의 목록에서 연 탭: ?proposal=PRO-001 이면 그 프로포절을 연다
+  const pre = new URLSearchParams(window.location.search).get('proposal')
+  if (pre && !selectedId.value) await selectProposal({ id: pre })
   pollActiveProgress()
   _pollTimer = setInterval(pollActiveProgress, 8000)
 })

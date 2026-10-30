@@ -37,14 +37,15 @@
   --color-ui-light: #ffffff;
   
   /* UI Colors */
-  --color-bg: #1a1b1e;
-  --color-bg-secondary: #25262b;
-  --color-bg-tertiary: #2c2e33;
-  --color-text: #c1c2c5;
-  --color-text-light: #909296;
-  --color-text-bright: #ffffff;
-  --color-border: #373a40;
-  --color-accent: #228be6;
+  --color-bg: #14171c;
+  --color-bg-secondary: #191d24;
+  --color-bg-tertiary: #20252e;
+  --color-text: #d3d9e2;
+  --color-text-light: #93a1b3;
+  --color-text-bright: #f0f3f7;
+  --color-border: #2c333e;
+  --color-accent: #14a08c;
+  --color-accent-soft: rgba(20, 160, 140, .14);
 
   /* Semantic status tints (Dark) — translucent bg + bright fg */
   --status-neutral-bg: rgba(255, 255, 255, 0.08); --status-neutral-fg: #c1c2c5;
@@ -85,13 +86,15 @@
 :root.theme-light {
   /* UI Colors - Light Mode */
   --color-bg: #ffffff;
-  --color-bg-secondary: #f8f9fa;
-  --color-bg-tertiary: #e9ecef;
-  --color-text: #212529;
-  --color-text-light: #6c757d;
+  --color-bg-secondary: #f4f6f9;
+  --color-bg-tertiary: #e9edf2;
+  --color-text: #1a2029;
+  --color-text-light: #5a6778;
   --color-text-bright: #000000;
-  --color-border: #dee2e6;
-  --color-accent: #228be6;
+  --color-border: #d8dee6;
+  --color-accent: #0e8273;
+  --color-accent-soft: rgba(14, 130, 115, .10);
+  --brand-filter: none;
 
   /* Semantic status tints (Light) — pale bg + dark fg */
   --status-neutral-bg: #f3f4f6; --status-neutral-fg: #374151;
@@ -147,14 +150,15 @@
 /* Dark Theme (default) */
 :root.theme-dark {
   /* UI Colors - Dark Mode (default values) */
-  --color-bg: #1a1b1e;
-  --color-bg-secondary: #25262b;
-  --color-bg-tertiary: #2c2e33;
-  --color-text: #c1c2c5;
-  --color-text-light: #909296;
-  --color-text-bright: #ffffff;
-  --color-border: #373a40;
-  --color-accent: #228be6;
+  --color-bg: #14171c;
+  --color-bg-secondary: #191d24;
+  --color-bg-tertiary: #20252e;
+  --color-text: #d3d9e2;
+  --color-text-light: #93a1b3;
+  --color-text-bright: #f0f3f7;
+  --color-border: #2c333e;
+  --color-accent: #14a08c;
+  --color-accent-soft: rgba(20, 160, 140, .14);
   
   /* Canvas Colors - Dark Mode */
   --color-canvas-bg: #1a1b26;

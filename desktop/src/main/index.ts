@@ -15,7 +15,7 @@
  *   - Auto-update (US2 T031–T037)
  */
 
-import { app, BrowserWindow, nativeImage, net, protocol, shell } from "electron";
+import { app, Menu, nativeImage, net, protocol, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -50,8 +50,8 @@ import {
 // surface answers (with a typed VALIDATION error) for every launcher channel
 // until each gating task lands a real handler.
 import { registerLauncherIpcStubs } from "./launcher/ipc-handlers";
-
-let mainWindow: BrowserWindow | null = null;
+// Tabbed windows (Ontological Studio family): shell = tab strip + home, tabs = SPA views.
+import { TabWindow, firstWindow, menuItems, reopenLastProject, setPreload, wireShellIpc } from "./tabs";
 
 // T015 (US1): register `app://` as a privileged scheme so the renderer can
 // load the bundled SPA from disk with the same guarantees as https — fetch
@@ -83,15 +83,23 @@ if (!gotLock) {
 }
 
 app.on("second-instance", () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+  const w = firstWindow();
+  if (w) {
+    if (w.win.isMinimized()) w.win.restore();
+    w.win.focus();
   }
 });
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The window shell (tab strip + home): desktop/resources/shell, next to the app in a package. */
+function resolveShellDir(): string {
+  const dev = path.resolve(app.getAppPath(), "resources", "shell");
+  if (fs.existsSync(dev)) return dev;
+  return path.join(process.resourcesPath, "shell");
+}
 
 function resolveFrontendDist(): string {
   // Dev: `<repo-root>/frontend/dist` lives one level up from `desktop/`.
@@ -173,6 +181,17 @@ function registerAppProtocol(): void {
       }
     }
 
+    // The window shell (tab strip + home) — its own folder, same origin as the SPA so the two
+    // share the theme setting and the /api proxy.
+    if (pathname.startsWith("/__shell/")) {
+      const shellDir = resolveShellDir();
+      const file = path.normalize(path.join(shellDir, pathname.slice("/__shell/".length)));
+      if (!file.startsWith(shellDir + path.sep) || !fs.existsSync(file)) {
+        return new Response("Not Found", { status: 404 });
+      }
+      return net.fetch(pathToFileURL(file).toString());
+    }
+
     // Static SPA assets from frontend/dist.
     const filePath = path.normalize(path.join(frontendDist, pathname));
     if (!filePath.startsWith(frontendDist + path.sep) && filePath !== frontendDist) {
@@ -194,74 +213,29 @@ function registerAppProtocol(): void {
 }
 
 // ---------------------------------------------------------------------------
-// BrowserWindow
+// Windows — tabbed (tabs.ts). The SPA's own window handlers (open → browser, navigation
+// guard, DevTools key) live on each tab there.
 // ---------------------------------------------------------------------------
 
-function createMainWindow(): BrowserWindow {
-  const preloadPath = path.join(app.getAppPath(), "dist", "preload", "preload", "index.js");
-  const iconPath = path.resolve(app.getAppPath(), "resources", "icons", "icon_512x512.png");
+function iconPath(): string {
+  return path.resolve(app.getAppPath(), "resources", "icons", "icon_512x512.png");
+}
 
-  const window = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    title: "Robo Architect",
-    icon: iconPath,
-    show: false,
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
+function createMainWindow(): TabWindow {
+  setPreload(path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"));
+  return new TabWindow({ icon: iconPath() });
+}
 
-  // T015 polish: deny new BrowserWindows; route http(s) to OS browser (FR-021).
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http://") || url.startsWith("https://")) {
-      void shell.openExternal(url);
-    } else {
-      log("warn", "window.open_blocked", { url });
-    }
-    return { action: "deny" };
-  });
-  // Block in-page navigations to non-`app://` origins (defence in depth).
-  window.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith("app://")) {
-      event.preventDefault();
-      if (url.startsWith("http://") || url.startsWith("https://")) {
-        void shell.openExternal(url);
-      } else {
-        log("warn", "window.navigate_blocked", { url });
-      }
-    }
-  });
-
-  // Prevent the SPA's <title> tag from overriding the window title.
-  window.on("page-title-updated", (event) => {
-    event.preventDefault();
-  });
-
-  void window.loadURL("app://app/");
-
-  // Cmd+Shift+I (macOS) / Ctrl+Shift+I opens DevTools for debugging.
-  window.webContents.on("before-input-event", (_e, input) => {
-    if (input.type === "keyDown" && input.key === "I" && input.shift && (input.meta || input.control)) {
-      window.webContents.toggleDevTools();
-    }
-  });
-
-  window.once("ready-to-show", () => window.show());
-  window.webContents.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL) => {
-    log("error", "window.did_fail_load", { errorCode, errorDescription, validatedURL });
-  });
-  window.on("closed", () => {
-    if (mainWindow === window) {
-      mainWindow = null;
-    }
-  });
-
-  return window;
+function installMenu(): void {
+  const isMac = process.platform === "darwin";
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(isMac ? [{ role: "appMenu" as const }] : []),
+      { role: "editMenu" },
+      { label: "탭", submenu: menuItems() },
+      { role: "windowMenu" },
+    ]),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -373,14 +347,17 @@ async function bootstrap(): Promise<void> {
 
   registerAppProtocol();
   registerIpcHandlers();
+  wireShellIpc();
+  installMenu();
 
-  // Create the window early so the user gets a splash even while the backend
-  // starts up. The SPA proxy returns 503 for /api calls until backend is
-  // ready — the renderer will retry; full splash UI lands in T027.
-  mainWindow = createMainWindow();
+  // Create the window early so the home shows the start-up progress while the backend
+  // (and the Docker stack) come up. The SPA proxy returns 503 for /api until then.
+  createMainWindow();
 
   try {
     await startBackend();
+    // Reopen the last project (graph + code folder) so the home's cards work right away.
+    await reopenLastProject();
   } catch (err) {
     log("error", "app.backend_start_failed", {
       message: err instanceof Error ? err.message : String(err),

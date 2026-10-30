@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 // 043 — 'Big picture' 뷰 비활성화: store import 제거.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
@@ -26,7 +26,8 @@ const emit = defineEmits(['update:activeTab'])
 // 043 — 'Process'(BPM)·'Processes'(Event Modeling)를 하나의 'Process' 탭(서브토글)로 통합,
 // 'Big picture' 제거. 'Changes' 탭은 UI에서 숨김(App.vue tabComponents 에 유지).
 // 'Analysis'(분석기 임베드) → 'Legacy' 로 라벨 변경 + 맨 앞으로 이동(Proposals 앞).
-const tabs = ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code']
+const VIEW_TITLE = { Legacy: '레거시', Proposals: '프로포절', Stories: '요구사항', Requirements: '요구사항', Process: '프로세스', Processes: '프로세스', 'Event Modeling': '프로세스', Design: '설계', Data: '데이터', Aggregate: '데이터', Code: '코드' }
+const viewTitle = computed(() => VIEW_TITLE[props.activeTab] || props.activeTab)
 
 const canvasStore = useCanvasStore()
 // 043 — 'Big picture' 뷰 비활성화: store 사용 제거.
@@ -49,6 +50,9 @@ function hasProjectHome() {
   }
 }
 
+// 레일에서 Code 를 골랐는데 프로젝트 홈이 없으면 App 이 이 이벤트로 PRD 모달을 부탁한다
+if (typeof window !== 'undefined') window.addEventListener('robo:open-prd', () => { showPRDModal.value = true })
+
 function selectTab(tab) {
   if (tab === 'Code' && !hasProjectHome()) {
     showPRDModal.value = true
@@ -62,25 +66,10 @@ function selectTab(tab) {
 <template>
   <header class="top-bar">
     <div class="top-bar__left">
-      <div class="top-bar__logo">
-        <div class="top-bar__logo-icon">RA</div>
-        <span>Robo Architect</span>
-      </div>
-      
-      <!-- Tab Menu -->
+      <!-- 브랜드와 화면 전환은 왼쪽 레일(SideRail.vue)로 옮겼다 — Ontological Studio 와 같은 배치.
+           여기는 지금 화면의 제목 · 서브토글 · 수치 · 동작만. -->
       <div class="top-bar__view-mode">
-        <span class="view-mode-label">View mode</span>
-        <nav class="top-bar__tabs">
-          <button
-            v-for="tab in tabs"
-            :key="tab"
-            class="top-bar__tab"
-            :class="{ 'is-active': activeTab === tab || (tab === 'Process' && (activeTab === 'Processes' || activeTab === 'Event Modeling')) }"
-            @click="selectTab(tab)"
-          >
-            {{ tab }}
-          </button>
-        </nav>
+        <h2 class="top-bar__title">{{ viewTitle }}</h2>
         <!-- 043 — Process 영역의 BPM⇄Event Modeling 서브토글. activeTab을 'Process'(BPM)⇄
              'Processes'(Event Modeling)로 바꿔 네비/캔버스/상단바가 함께 전환된다. -->
         <div v-if="activeTab === 'Process' || activeTab === 'Processes' || activeTab === 'Event Modeling'" class="top-bar__subtoggle">
@@ -184,6 +173,7 @@ function selectTab(tab) {
 </template>
 
 <style scoped>
+.top-bar__title { margin: 0; font-size: 15px; font-weight: 650; color: var(--color-text-bright); letter-spacing: -.01em; }
 /* Layout sections */
 .top-bar__left {
   display: flex;

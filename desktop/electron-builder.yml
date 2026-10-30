@@ -24,6 +24,10 @@ extraResources:
   - from: resources/runtime
     to: runtime
     filter: ["**/*"]
+  # 창 셸(탭 줄 + 홈) — main/index.ts resolveShellDir 가 resources/shell 에서 찾는다
+  - from: resources/shell
+    to: shell
+    filter: ["**/*"]
 
 win:
   target:
