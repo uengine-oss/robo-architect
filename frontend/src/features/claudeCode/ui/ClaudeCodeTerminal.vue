@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { useThemeStore } from '@/app/theme.store'
 import { XTERM_THEMES } from './xterm-themes.js'
+import { sendWhenReady as gateSendWhenReady, DEFAULT_MIN_DELAY_MS } from '../model/readyGate.js'
 
 const props = defineProps({
   workdir: {
@@ -72,10 +73,6 @@ let pendingInputCommand = null  // set before connect() — sent once claude is 
 let queuedInput = null          // set after connect() if ws not yet open
 let wsOpenedAt = 0
 
-// Claude 가 처음 띄울 때 묻는 확인 화면(폴더 신뢰 · 권한 우회 동의 · 테마 · 안내). 떠 있는 동안
-// 명령을 보내면 끝의 Enter 가 기본값(No, exit)을 골라 claude 가 꺼진다 → 사람이 답할 때까지 미룬다.
-const CLAUDE_DIALOG_RE = /Enter to confirm|trust this folder|one you trust|Yes, I accept|Bypass Permissions mode|Choose the text style|Press Enter to continue/i
-
 function screenText() {
   const buf = terminal?.buffer?.active
   if (!buf) return ''
@@ -86,22 +83,16 @@ function screenText() {
   return lines.join('\n')
 }
 
-// 명령을 claude 입력란이 준비된 뒤에 보낸다 — 최소 minDelay 를 기다리고, 확인 화면이 없는 상태가
-// 2.5초 이어질 때 보낸다(확인 하나에 답한 직후 다음 확인이 뜨는 틈에 보내지 않도록).
-function sendWhenReady(cmd, minDelay = 6000) {
-  const start = Date.now()
-  let clearSince = 0
-  const tick = () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    if (CLAUDE_DIALOG_RE.test(screenText())) clearSince = 0
-    else if (!clearSince) clearSince = Date.now()
-    if (Date.now() - start >= minDelay && clearSince && Date.now() - clearSince >= 2500) {
-      ws.send(JSON.stringify({ type: 'input', data: cmd + '\r' }))
-      return
-    }
-    setTimeout(tick, 500)
-  }
-  tick()
+// 명령을 claude 입력란이 준비된 뒤에 보낸다 — 최소 minDelay 를 기다리고, Claude 첫 실행 확인 화면이
+// 없는 상태가 2.5초 이어질 때 보낸다(판정은 model/readyGate.js, 단위 시험 claude-ready-gate-unit).
+function sendWhenReady(cmd, minDelay = DEFAULT_MIN_DELAY_MS) {
+  gateSendWhenReady({
+    cmd,
+    minDelay,
+    getScreenText: screenText,
+    isOpen: () => !!ws && ws.readyState === WebSocket.OPEN,
+    send: (data) => ws.send(JSON.stringify({ type: 'input', data })),
+  })
 }
 
 // In Electron, window.location.hostname resolves to 'app' (custom app:// protocol)
