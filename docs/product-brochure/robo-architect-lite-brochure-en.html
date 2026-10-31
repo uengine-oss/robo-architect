@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Robo Architect Lite — Product Overview and Adoption Proposal</title>
+<style>
+  :root{
+    --navy:#0c1a2e; --navy2:#173458; --ink:#12203a; --body:#2b3648;
+    --accent:#1f5fd8; --accent-dark:#17408f; --accent-soft:#eaf1fe;
+    --amber-bg:#fdf8ec; --amber-line:#cf9c34; --amber-ink:#8a6410;
+    --muted:#6b7688; --line:#e4e8ef; --soft:#f7f9fc;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+  body{
+    font-family:"Pretendard","Apple SD Gothic Neo","Noto Sans KR",-apple-system,sans-serif;
+    color:var(--body); font-size:10.2pt; line-height:1.72;
+    word-break:keep-all; overflow-wrap:break-word;
+  }
+  @page{size:A4; margin:0}
+  .page{
+    position:relative; width:210mm; height:297mm; padding:20mm 18mm 16mm;
+    background:#fff; overflow:hidden; page-break-after:always;
+  }
+  .page:last-child{page-break-after:auto}
+
+  /* ── Cover / back cover ───────────────────────────── */
+  .cover{
+    background:linear-gradient(155deg,#0a1526 0%,#10243f 45%,#193a63 100%);
+    color:#fff; padding:24mm 18mm;
+  }
+  .cover::after{
+    content:""; position:absolute; inset:0;
+    background-image:radial-gradient(circle,rgba(255,255,255,.10) 1px,transparent 1px);
+    background-size:22px 22px; opacity:.5; pointer-events:none;
+  }
+  .cover > *{position:relative; z-index:1}
+  .brand{display:flex; align-items:center; gap:11px}
+  .brand-mark{
+    width:40px; height:40px; border-radius:10px; flex:none;
+    background:linear-gradient(140deg,#2f7bff,#1b48a8);
+    display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:15px; color:#fff; letter-spacing:.5px;
+  }
+  .brand-name{font-size:19px; font-weight:800; letter-spacing:-.3px; line-height:1.25}
+  .brand-sub{font-size:8.4pt; letter-spacing:3px; color:#8fb4e8; font-weight:600}
+  .cover-eyebrow{margin-top:26mm; font-size:8.6pt; letter-spacing:4px; color:#8fb4e8; font-weight:700}
+  .cover-title{margin-top:7px; font-size:33pt; font-weight:800; line-height:1.28; letter-spacing:-1.2px; color:#fff}
+  .cover-lead{margin-top:13px; font-size:11pt; line-height:1.85; color:#c3d6f0; max-width:132mm}
+  .cover-lead b{color:#fff; font-weight:700}
+  .cover-shot{
+    margin-top:12mm; border-radius:9px 0 0 9px; overflow:hidden;
+    box-shadow:0 22px 56px rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.14);
+    border-right:none; margin-right:-18mm; height:78mm;
+  }
+  .cover-shot img{width:100%; display:block}
+  .cover-stats{display:flex; gap:0; margin-top:11mm; border-top:1px solid rgba(255,255,255,.2); padding-top:8mm}
+  .cover-stats div{flex:1; border-left:1px solid rgba(255,255,255,.16); padding-left:14px}
+  .cover-stats div:first-child{border-left:none; padding-left:0}
+  .cover-stats b{display:block; font-size:16pt; font-weight:800; color:#fff; letter-spacing:-.4px}
+  .cover-stats span{font-size:8.4pt; color:#93b3dd; display:block; margin-top:3px}
+  .cover-foot{position:absolute; left:18mm; right:18mm; bottom:16mm; display:flex; justify-content:space-between; align-items:flex-end}
+  .cover-foot .d{font-size:10pt; font-weight:700; color:#fff}
+  .cover-foot .s{font-size:8.4pt; color:#93b3dd; margin-top:3px}
+  .cover-foot .org{font-size:12pt; font-weight:800; color:#cfe0f7; letter-spacing:-.3px}
+
+  /* ── Page header ───────────────────────────── */
+  .badge{
+    display:inline-block; background:var(--accent); color:#fff;
+    font-size:8pt; font-weight:700; letter-spacing:1.6px;
+    padding:4px 13px; border-radius:20px;
+  }
+  h1.sec{margin-top:11px; font-size:22pt; font-weight:800; color:var(--ink); letter-spacing:-1px; line-height:1.3}
+  h1.sec .num{color:var(--accent)}
+  .rule{width:34px; height:3px; background:var(--accent); margin:9px 0 15px}
+  .lead{font-size:10.4pt; line-height:1.78; color:var(--body); margin-bottom:5mm}
+  .lead b{color:var(--ink); font-weight:700}
+  h2.sub{font-size:11.6pt; font-weight:800; color:var(--ink); margin:5.5mm 0 3mm; letter-spacing:-.4px}
+  .lead + h2.sub{margin-top:0}
+  h3.mini{font-size:10pt; font-weight:700; color:var(--ink); margin:5mm 0 2.5mm}
+  p{margin-bottom:3mm}
+  p:last-child{margin-bottom:0}
+  b,strong{color:var(--ink); font-weight:700}
+  code{
+    font-family:"SF Mono",Menlo,monospace; font-size:8.6pt;
+    background:var(--soft); border:1px solid var(--line); border-radius:4px; padding:1px 5px; color:#334;
+  }
+
+  /* ── Cards ───────────────────────────── */
+  .grid{display:grid; gap:4mm}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .card{border:1px solid var(--line); border-radius:8px; padding:4.5mm 5mm; background:#fff}
+  .card .kicker{font-size:8pt; font-weight:700; color:var(--muted); letter-spacing:.4px; margin-bottom:2px}
+  .card .t{font-size:10.4pt; font-weight:700; color:var(--ink); margin-bottom:2.5mm; letter-spacing:-.3px}
+  .card p{font-size:9.4pt; line-height:1.7; margin:0}
+  .card.tinted{background:var(--soft)}
+  .stat-card{border-left:3px solid var(--accent); padding-left:11px}
+  .stat-card b{display:block; font-size:15pt; font-weight:800; color:var(--accent); letter-spacing:-.4px; line-height:1.3}
+  .stat-card .l{font-size:9.4pt; color:var(--ink); font-weight:700; margin-top:2px}
+  .stat-card .d{font-size:8.6pt; color:var(--muted); line-height:1.6}
+
+  /* ── Callouts ───────────────────────────── */
+  .callout{
+    background:var(--amber-bg); border-left:3px solid var(--amber-line);
+    padding:3.5mm 4.5mm; border-radius:0 6px 6px 0; font-size:9.2pt; line-height:1.68; margin:4mm 0;
+  }
+  .callout b{color:var(--amber-ink)}
+  .note{
+    background:var(--soft); border:1px solid var(--line);
+    padding:3.5mm 4.5mm; border-radius:7px; font-size:9.2pt; line-height:1.68; margin:4mm 0;
+  }
+  .note .t{font-size:9.6pt; font-weight:700; color:var(--ink); margin-bottom:2mm}
+  .quote{border-left:3px solid var(--accent); padding-left:12px; font-size:10pt; line-height:1.75; color:var(--ink); margin:3mm 0}
+
+  /* ── Tables ───────────────────────────── */
+  table{width:100%; border-collapse:collapse; font-size:9.3pt; margin:3mm 0}
+  th{
+    background:var(--soft); color:var(--ink); font-weight:700; text-align:left;
+    padding:2.6mm 3.2mm; border-bottom:1.5px solid var(--line); font-size:9.2pt;
+  }
+  td{padding:2.6mm 3.2mm; border-bottom:1px solid var(--line); vertical-align:top; line-height:1.6}
+  td:first-child{font-weight:700; color:var(--ink); white-space:nowrap}
+  table.free td:first-child{white-space:normal}
+  tr:last-child td{border-bottom:none}
+
+  /* ── Lists ───────────────────────────── */
+  ul.dot{list-style:none; margin:3mm 0}
+  ul.dot li{position:relative; padding-left:14px; margin-bottom:2.4mm; font-size:9.6pt; line-height:1.72}
+  ul.dot li::before{content:""; position:absolute; left:0; top:8px; width:5px; height:5px; border-radius:50%; background:var(--accent)}
+  ol.num{list-style:none; counter-reset:n; margin:3mm 0}
+  ol.num li{position:relative; padding-left:22px; margin-bottom:2.8mm; font-size:9.6pt; line-height:1.72; counter-increment:n}
+  ol.num li::before{
+    content:counter(n); position:absolute; left:0; top:2px; width:15px; height:15px; border-radius:50%;
+    background:var(--accent); color:#fff; font-size:7.6pt; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* ── Figures ───────────────────────────── */
+  figure{margin:4mm 0}
+  figure img{width:100%; display:block; border:1px solid var(--line); border-radius:7px}
+  figure.crop img{height:var(--h); object-fit:cover; object-position:top center}
+  .gallery figure img{height:80mm; object-fit:cover; object-position:top center}
+  figcaption{font-size:8.4pt; color:var(--muted); line-height:1.6; margin-top:2.5mm}
+  figcaption b{color:var(--ink); font-weight:700}
+  figcaption i{font-style:italic}
+
+  /* ── Flow diagrams ───────────────────────────── */
+  .flow{display:flex; align-items:center; gap:6px; margin:5mm 0; flex-wrap:nowrap}
+  .flow .step{
+    flex:1; text-align:center; border:1px solid var(--line); border-radius:7px;
+    padding:3.5mm 2mm; background:#fff;
+  }
+  .flow .step b{display:block; font-size:9.4pt; color:var(--ink); font-weight:700}
+  .flow .step span{display:block; font-size:8pt; color:var(--muted); margin-top:2px; line-height:1.5}
+  .flow .step.on{background:var(--accent); border-color:var(--accent)}
+  .flow .step.on b{color:#fff}
+  .flow .step.on span{color:#c9dcff}
+  .flow .arw{color:var(--muted); font-size:12pt; flex:none}
+  .pipe{display:flex; align-items:center; gap:0; margin:5mm 0}
+  .pipe .n{
+    width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff;
+    font-size:8.4pt; font-weight:700; display:flex; align-items:center; justify-content:center; flex:none;
+  }
+  .pipe .l{flex:1; height:2px; background:var(--line)}
+  .pipe-labels{display:flex; margin-top:2mm}
+  .pipe-labels div{flex:1; font-size:8.4pt; color:var(--ink); font-weight:700; text-align:center}
+  .pipe-labels div:first-child{text-align:left}
+  .pipe-labels div:last-child{text-align:right}
+
+  /* ── Topology boxes ───────────────────────────── */
+  .topo{display:flex; flex-direction:column; align-items:center; gap:0; margin:4mm 0}
+  .tb{
+    border:1px solid var(--line); border-radius:7px; padding:3mm 5mm; text-align:center;
+    background:#fff; min-width:56mm;
+  }
+  .tb b{display:block; font-size:9.6pt; color:var(--ink); font-weight:700}
+  .tb span{display:block; font-size:8.2pt; color:var(--muted); margin-top:1px}
+  .tb.solid{background:var(--accent); border-color:var(--accent)}
+  .tb.solid b{color:#fff} .tb.solid span{color:#c9dcff}
+  .tb.soft{background:var(--accent-soft); border-color:#c5d9fb}
+  .tdown{width:1px; height:6mm; background:var(--line); position:relative}
+  .tdown::after{content:"▼"; position:absolute; bottom:-4px; left:-4px; font-size:6pt; color:var(--line)}
+  .trow{display:flex; gap:4mm; justify-content:center; width:100%}
+  .dashed{border:1px dashed #b9c6d8; border-radius:8px; padding:3.5mm; background:#fbfcfe}
+  .dashed .dt{font-size:8.2pt; color:var(--muted); font-weight:700; text-align:center; margin-bottom:2.5mm}
+
+  /* ── Schedule ───────────────────────────── */
+  .gantt{margin:4mm 0}
+  .gantt .row{display:flex; align-items:center; gap:4mm; margin-bottom:2.6mm}
+  .gantt .lbl{width:44mm; flex:none}
+  .gantt .lbl b{display:block; font-size:9.4pt; color:var(--ink); font-weight:700}
+  .gantt .lbl span{display:block; font-size:8.2pt; color:var(--muted); line-height:1.5}
+  .gantt .track{flex:1; height:11px; background:var(--soft); border-radius:6px; position:relative}
+  .gantt .bar{position:absolute; height:11px; border-radius:6px; background:var(--accent)}
+  .gantt .bar.d{background:var(--accent-dark)}
+  .gantt .scale{display:flex; margin:0 0 2mm 48mm; font-size:7.6pt; color:var(--muted)}
+  .gantt .scale div{flex:1; text-align:right}
+
+  /* ── Footer ───────────────────────────── */
+  .foot{
+    position:absolute; left:18mm; right:18mm; bottom:9mm;
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:8pt; color:#9aa5b5; border-top:1px solid var(--line); padding-top:3mm;
+  }
+
+  /* ── Contents ───────────────────────────── */
+  .toc{display:grid; grid-template-columns:1fr 1fr; gap:0 11mm; margin:4mm 0 6mm}
+  .toc a{
+    display:flex; align-items:baseline; gap:8px; text-decoration:none; color:var(--body);
+    padding:2.1mm 0; border-bottom:1px solid var(--line); font-size:9.4pt;
+  }
+  .toc .tn{color:var(--accent); font-weight:700; font-size:8.6pt; width:16px; flex:none}
+  .toc .tt{flex:1; color:var(--ink); font-weight:600}
+  .toc .tp{color:var(--muted); font-size:8.6pt}
+  h1.plain{font-size:20pt; font-weight:800; color:var(--ink); letter-spacing:-.8px}
+  .eyebrow{font-size:8.4pt; letter-spacing:3px; color:var(--muted); font-weight:700}
+</style>
+
+</head>
+<body>
+<!-- ══════════════════ 1. Cover ══════════════════ -->
+<section class="page cover">
+<div class="brand">
+<div class="brand-mark">RA</div>
+<div>
+<div class="brand-name">Robo&nbsp;Architect Lite</div>
+<div class="brand-sub">AI ARCHITECTURE WORKBENCH</div>
+</div>
+</div>
+<div class="cover-eyebrow">PRODUCT OVERVIEW AND ADOPTION PROPOSAL</div>
+<h1 class="cover-title">When requirements change,<br/>the design moves with them.</h1>
+<p class="cover-lead">Describe a requirement in plain language. It is refined into a domain-driven design (DDD) with acceptance criteria and planned by your project's design principles. Claude Code on your PC builds it in an isolated workspace, and an accepted change <b>updates the code and the design graph together</b>.</p>
+<div class="cover-shot"><img alt="Robo&nbsp;Architect Lite Home screen" src="assets-en/cover-home.jpg"/></div>
+<div class="cover-stats">
+<div><b>21</b><span>AI work procedures defined as skill files</span></div>
+<div><b>7</b><span>service containers running on your PC</span></div>
+<div><b>Dual Merge</b><span>code and design graph updated together</span></div>
+</div>
+<div class="cover-foot">
+<div>
+<div class="d">October 2026</div>
+<div class="s">AI architecture workbench · Desktop app (Lite)</div>
+</div>
+<div class="org">uEngine</div>
+</div>
+</section>
+<!-- ══════════════════ 2. Contents ══════════════════ -->
+<section class="page">
+<div class="eyebrow">CONTENTS</div>
+<h1 class="plain">Contents</h1>
+<div class="rule"></div>
+<div class="toc">
+<a><span class="tn">01</span><span class="tt">The AI coding paradox</span><span class="tp">3</span></a>
+<a><span class="tn">09</span><span class="tt">Strengths ⑤⑥ Change impact · Legacy</span><span class="tp">14-15</span></a>
+<a><span class="tn">02</span><span class="tt">Specs · scenarios · domains</span><span class="tp">4</span></a>
+<a><span class="tn">10</span><span class="tt">System architecture and runtime</span><span class="tp">16</span></a>
+<a><span class="tn">03</span><span class="tt">Managing specs across teams</span><span class="tp">5</span></a>
+<a><span class="tn">11</span><span class="tt">Technology stack and skills</span><span class="tp">17</span></a>
+<a><span class="tn">04</span><span class="tt">Introducing Robo&nbsp;Architect Lite</span><span class="tp">6</span></a>
+<a><span class="tn">12</span><span class="tt">How to use it (real screens)</span><span class="tp">18-19</span></a>
+<a><span class="tn">05</span><span class="tt">Key deliverables ①②</span><span class="tp">7-8</span></a>
+<a><span class="tn">13</span><span class="tt">Security and governance</span><span class="tp">20</span></a>
+<a><span class="tn">06</span><span class="tt">Product screens at a glance</span><span class="tp">9</span></a>
+<a><span class="tn">14</span><span class="tt">Installation and delivery</span><span class="tp">21</span></a>
+<a><span class="tn">07</span><span class="tt">Strengths ①② Requirements · Plan</span><span class="tp">10-11</span></a>
+<a><span class="tn">15</span><span class="tt">Development and quality assurance</span><span class="tp">22</span></a>
+<a><span class="tn">08</span><span class="tt">Strengths ③④ Build · Validate</span><span class="tp">12-13</span></a>
+<a><span class="tn">16</span><span class="tt">MSAEZ track record · Adoption</span><span class="tp">23-24</span></a>
+</div>
+<h2 class="sub">Summary</h2>
+<div class="quote">In AI-assisted development, <b>defining what to build and how to check it comes first</b>. Robo&nbsp;Architect Lite links requirements, business scenarios and the domain model in a project graph. Each change is one proposal, carried through design, implementation, validation and merge.</div>
+<div class="grid g3" style="margin-top:4mm">
+<div class="stat-card">
+<b>SDD · BDD · DDD</b>
+<div class="d">Specs define requirements, scenarios set acceptance criteria, domains set the scope of each design</div>
+</div>
+<div class="stat-card">
+<b>Proposal-based</b>
+<div class="d">Each change is one proposal: requirements, plan, build and validation results in one history</div>
+</div>
+<div class="stat-card">
+<b>Runs on your PC</b>
+<div class="d">The graph DB and analysis services run in Docker; Claude Code on your PC does the AI work</div>
+</div>
+</div>
+<div class="note" style="margin-top:5mm"><div class="t">Change management that updates code and design together</div>When only the code changes, the design documents stop being a reliable reference. Accepting a validated proposal <b>merges the code and updates the design graph in one step</b>, so the next proposal is analyzed against the current design.</div>
+<h2 class="sub">What this document covers</h2>
+<div class="grid g4">
+<div class="card" style="padding:3.5mm 4mm">
+<div class="t" style="font-size:9.6pt">Product overview</div>
+<p style="font-size:8.8pt">pp. 3–15<br/>Background · deliverables · strengths</p>
+</div>
+<div class="card" style="padding:3.5mm 4mm">
+<div class="t" style="font-size:9.6pt">System</div>
+<p style="font-size:8.8pt">pp. 16–17<br/>Runtime · tech stack · skills</p>
+</div>
+<div class="card" style="padding:3.5mm 4mm">
+<div class="t" style="font-size:9.6pt">How to use it</div>
+<p style="font-size:8.8pt">pp. 18–19<br/>Real product screens · 6 steps</p>
+</div>
+<div class="card" style="padding:3.5mm 4mm">
+<div class="t" style="font-size:9.6pt">Adoption</div>
+<p style="font-size:8.8pt">pp. 20–24<br/>Security · installation · track record · schedule</p>
+</div>
+</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>2</span></div>
+</section>
+<!-- ══════════════════ 3. Background 1 ══════════════════ -->
+<section class="page">
+<div class="badge">01 · BACKGROUND</div>
+<h1 class="sec">The AI coding paradox</h1>
+<div class="rule"></div>
+<p class="lead">AI writes code fast, but reviewing and fixing that code takes time too. <b>Clear requirements, business context and acceptance criteria</b> are where effective use of AI begins.</p>
+<div class="grid g3">
+<div class="stat-card">
+<b>24% faster</b>
+<div class="l">What developers expected</div>
+<div class="d">Expected time saved with AI</div>
+</div>
+<div class="stat-card" style="border-left-color:#c0392b">
+<b style="color:#c0392b">19% slower</b>
+<div class="l">Actual task time</div>
+<div class="d">Time to finish tasks with AI</div>
+</div>
+<div class="stat-card">
+<b>16 · 246</b>
+<div class="l">Developers and tasks</div>
+<div class="d">Experienced open-source developers</div>
+</div>
+</div>
+<p style="font-size:8.4pt; color:var(--muted); margin-top:2mm">Source: <a href="https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/">METR, randomized controlled trial (2025)</a>. Measured with the tools and working environments of that time.</p>
+<h2 class="sub">Four issues to manage when using AI</h2>
+<div class="grid g2">
+<div class="card">
+<div class="kicker">ISSUE 1</div>
+<div class="t">Conveying business context</div>
+<p>AI needs the organization's business rules and terms. If they are not organized, people re-explain them in every chat, and gaps lead to wrong code.</p>
+</div>
+<div class="card">
+<div class="kicker">ISSUE 2</div>
+<div class="t">Review and rework</div>
+<p>Generated code still has to be checked against the requirements. Without clear acceptance criteria, review rests on judgment and takes longer.</p>
+</div>
+<div class="card">
+<div class="kicker">ISSUE 3</div>
+<div class="t">Ambiguous requirements</div>
+<p>Experienced developers fill gaps in a spec from domain knowledge. AI without that context can miss the intent, so requirements must be made concrete first.</p>
+</div>
+<div class="card">
+<div class="kicker">ISSUE 4</div>
+<div class="t">Sharing design rationale</div>
+<p>Decisions and reasons left in chat history are hard to find later. Kept with the requirements, they survive handovers and can be reused.</p>
+</div>
+</div>
+<h2 class="sub">How Robo&nbsp;Architect Lite addresses them</h2>
+<div class="grid g2">
+<div class="stat-card"><b>Context</b><div class="l">Project graph · design principles · legacy analysis</div><div class="d">AI sees the same business context at every stage</div></div>
+<div class="stat-card"><b>Review effort</b><div class="l">Acceptance criteria · design structure checks</div><div class="d">Each verdict shows its evidence: code and tests</div></div>
+<div class="stat-card"><b>Ambiguity</b><div class="l">User stories · Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then</div><div class="d">Made concrete before coding; AI asks when unclear</div></div>
+<div class="stat-card"><b>Rationale</b><div class="l">Proposal history · project design principles</div><div class="d">Decisions and reasons kept for later changes</div></div>
+</div>
+<div class="callout"><b>Set requirements and acceptance criteria before AI writes code.</b> Managing business rules and design rationale together gives implementation and review a consistent context.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>3</span></div>
+</section>
+<!-- ══════════════════ 4. Background 2 — SDD·BDD·DDD ══════════════════ -->
+<section class="page">
+<div class="badge">02 · BACKGROUND</div>
+<h1 class="sec">Specs, scenarios and domains supply context</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect connects three methods: <b>spec-driven development (SDD)</b> defines requirements, <b>behavior-driven development (BDD)</b> describes expected behavior, and <b>domain-driven design (DDD)</b> sets the boundaries of business areas and their terms.</p>
+<div class="grid g3">
+<div class="card tinted">
+<div class="kicker">SDD · SPEC-DRIVEN</div>
+<div class="t">Define the work in a spec</div>
+<p>Write the purpose and requirements, then the implementation plan and task list. AI and developers work from the same spec.</p>
+</div>
+<div class="card tinted">
+<div class="kicker">BDD · BEHAVIOR-DRIVEN</div>
+<div class="t">Describe by example</div>
+<p>State condition, action and result: “withdraw $20 from $100, leaving $80.” These become acceptance criteria.</p>
+</div>
+<div class="card tinted">
+<div class="kicker">DDD · DOMAIN-DRIVEN</div>
+<div class="t">Split by business area</div>
+<p>Draw domain boundaries from business concepts and rules, with clear terms and duties for each area.</p>
+</div>
+</div>
+<h2 class="sub">Example: refining a cash withdrawal requirement</h2>
+<table class="free">
+<tr><th style="width:22%">Format</th><th style="width:40%">Example — ATM withdrawal</th><th>What is still missing</th></tr>
+<tr><td>User story</td><td>“A customer can withdraw cash.”</td>
+<td>Exceptions such as a low balance, and how to handle them</td></tr>
+<tr><td>Requirements spec</td><td>“Authenticated users can withdraw cash.”</td>
+<td>Authentication, withdrawal limits and behavior on failure</td></tr>
+<tr><td>Detailed design</td><td><code>if balance &gt;= amount: balance -= amount</code></td>
+<td>Hard for non-developers to review</td></tr>
+<tr><td><b>BDD scenario</b></td><td><b>Given</b> $100 · <b>When</b> $20 is withdrawn · <b>Then</b> $20 is paid out, $80 remains</td>
+<td>Business and developers check one example</td></tr>
+</table>
+<h2 class="sub">Where the three methods are used in Robo&nbsp;Architect Lite</h2>
+<div class="grid g3">
+<div class="stat-card"><b>SDD</b><div class="l">Proposal · Plan · task list</div><div class="d">Confirmed before coding</div></div>
+<div class="stat-card"><b>BDD</b><div class="l">Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then criteria</div><div class="d">Used to judge results in validation</div></div>
+<div class="stat-card"><b>DDD</b><div class="l">Contexts · aggregates · events</div><div class="d">Detailed DDD mode has six stages</div></div>
+</div>
+<div class="callout"><b>BDD scenarios let business and IT review rules together.</b> Customers confirm that conditions and results match the intent, and AI writes tests from them. Each scenario is stored in the graph with its design elements and used as a criterion in validation.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>4</span></div>
+</section>
+<!-- ══════════════════ 5. Background 3 — files vs graph ══════════════════ -->
+<section class="page">
+<div class="badge">03 · BACKGROUND</div>
+<h1 class="sec">Specs from many teams need to be linked</h1>
+<div class="rule"></div>
+<p class="lead">File-based specs suit one team's requirements and plans. But <b>once information spreads across teams and repositories</b>, aligning terms and tracing the impact of a change get harder. Four issues need managing together.</p>
+<table class="free">
+<tr><th style="width:22%">Issue</th><th style="width:34%">Cause</th><th>Effect on the work</th></tr>
+<tr><td>Scattered specs</td><td>Specs live inside each repository</td>
+<td>Other teams' work is hidden, so features get built twice</td></tr>
+<tr><td>Inconsistent terms</td><td>Each repository defines its own terms</td>
+<td>Is a “subscriber” the same as a “customer”? Someone must check</td></tr>
+<tr><td>Impact analysis</td><td>Links exist only as document links</td>
+<td>A regulation change means checking documents and code by hand</td></tr>
+<tr><td>Knowledge handover</td><td>Knowledge sits with people and chat logs</td>
+<td>Handovers lose knowledge or repeat analysis</td></tr>
+</table>
+<div class="quote">Robo&nbsp;Architect keeps <b>how requirements, the domain model, acceptance criteria and change history relate</b> in a project graph. For a new change, it follows these links to separate new from modified elements and flags possible conflicts with implemented ones.</div>
+<h2 class="sub">File-based versus graph-based specs</h2>
+<table class="free">
+<tr><th style="width:20%">Aspect</th><th style="width:36%">File-based specs</th><th>Graph-based specs</th></tr>
+<tr><td>Where specs live</td><td>Markdown files per repository</td><td>One domain graph per project</td></tr>
+<tr><td>Boundaries</td><td>Repositories and folders</td><td>Bounded contexts (business areas)</td></tr>
+<tr><td>Terms</td><td>Each repository its own</td><td>Managed per domain, with relationships</td></tr>
+<tr><td>Change impact</td><td>File search, asking the owners</td><td>Traced along links, with conflict risk</td></tr>
+<tr><td>Criteria</td><td>Written in documents</td><td>Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then linked to the design</td></tr>
+<tr><td>Knowledge</td><td>Per-project files</td><td>Design elements linked to change history</td></tr>
+</table>
+<div class="callout"><b>Files and the graph work together.</b> Code stays in your Git repositories, while Robo&nbsp;Architect manages design relationships and change history as a graph. Implemented code is committed to a branch of the target repository.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>5</span></div>
+</section>
+<!-- ══════════════════ 6. Overview ══════════════════ -->
+<section class="page">
+<div class="badge">04 · OVERVIEW</div>
+<h1 class="sec">Introducing Robo&nbsp;Architect Lite</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect Lite is a <b>desktop AI architecture workbench for spec-driven development</b>. It refines requirements into a DDD design with acceptance criteria and plans by your design principles. Claude Code implements in an isolated workspace.</p>
+<div class="grid g3">
+<div class="card tinted">
+<div class="kicker">INPUT</div>
+<div class="t">Requirements</div>
+<p>A sentence or a pasted requirements document. Existing code and DBs can serve as evidence.</p>
+</div>
+<div class="card tinted">
+<div class="kicker">PROCESSING</div>
+<div class="t">DDD design and plan</div>
+<p>Contexts, features, stories and criteria, then aggregates, commands, events and architecture.</p>
+</div>
+<div class="card tinted">
+<div class="kicker">OUTPUT</div>
+<div class="t">Code and design graph</div>
+<p>Code on a dedicated branch with validation results. Accepting updates branch and graph.</p>
+</div>
+</div>
+<h2 class="sub">How it differs from the usual approach</h2>
+<table>
+<tr><th style="width:22%"></th><th style="width:33%">Document-centered design</th><th>Robo&nbsp;Architect Lite</th></tr>
+<tr><td>Design form</td><td>Diagrams and documents</td><td>Queryable graph (26 node, 32 relationship types)</td></tr>
+<tr><td>Unit of change</td><td>Separate tickets and documents</td><td>One proposal, from requirement to validation</td></tr>
+<tr><td>Standards</td><td>Documents kept by individuals</td><td>Each plan decision cites a design principle</td></tr>
+<tr><td>Implementation</td><td>Separate from the design</td><td>Claude Code, in an isolated branch workspace</td></tr>
+<tr><td>Validation</td><td>Reviewer's judgment</td><td>Criteria and structure checked, with evidence</td></tr>
+<tr><td>AI procedures</td><td>Personal prompts</td><td>Steps and rules in 21 skill files</td></tr>
+</table>
+<h2 class="sub">The flow at a glance</h2>
+<div class="flow">
+<div class="step"><b>INTENT</b><span>Refinement</span></div>
+<div class="arw">→</div>
+<div class="step"><b>PLAN</b><span>Principles · plan</span></div>
+<div class="arw">→</div>
+<div class="step"><b>IMPLEMENTING</b><span>Isolated build</span></div>
+<div class="arw">→</div>
+<div class="step"><b>VALIDATING</b><span>Structure · criteria</span></div>
+<div class="arw">→</div>
+<div class="step on"><b>ACCEPTED</b><span>Code + graph</span></div>
+</div>
+<div class="callout">You review each stage before moving on. <b>The target branch and the design graph change only after final acceptance (Accept).</b></div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>6</span></div>
+</section>
+<!-- ══════════════════ 7. Deliverables 1 ══════════════════ -->
+<section class="page">
+<div class="badge">05 · DELIVERABLES</div>
+<h1 class="sec">Deliverables ① — the project design graph</h1>
+<div class="rule"></div>
+<p class="lead">A proposal's design is stored in the <b>project graph</b>. Each project is its own graph inside the graph DB (Ontological DB), so designs stay separate, however many projects you create.</p>
+<figure class="crop" style="--h:63mm">
+<img alt="Strategic design result" src="assets-en/out-strategic.jpg"/>
+<figcaption><b>Figure 1.</b> Strategic design — under the bounded context Ordering (Core), the feature Order Placement, a user story and its Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then acceptance criteria. Each element is marked as new (CREATE). <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<h2 class="sub">What the graph stores</h2>
+<table>
+<tr><th style="width:22%">Layer</th><th>Nodes</th></tr>
+<tr><td>Requirements</td><td>Requirement · Feature · UserStory · Given/When/Then (acceptance criteria)</td></tr>
+<tr><td>Strategic design</td><td>BoundedContext (classified as Core · Supporting · Generic) · Policy</td></tr>
+<tr><td>Tactical design</td><td>Aggregate · Command · Event · ReadModel · Property · Invariant</td></tr>
+<tr><td>Screens · flows</td><td>UI · Journey · JourneyStep</td></tr>
+<tr><td>Changes · standards</td><td>Proposal (PRO-NNN) · Constitution (project design principles)</td></tr>
+</table>
+<div class="grid g3" style="margin-top:4mm">
+<div class="stat-card"><b>26</b><div class="l">Node types</div><div class="d">From requirements to proposals and principles</div></div>
+<div class="stat-card"><b>32</b><div class="l">Relationship types</div><div class="d">EMITS · TRIGGERS · HAS_GIVEN · EFFECT …</div></div>
+<div class="stat-card"><b>1 : 1</b><div class="l">Project to graph</div><div class="d">A separate graph for each project</div></div>
+</div>
+<div class="callout"><b>Follow the links between design elements to find what you need.</b> A user story's <b>Design trace</b> in the Requirements tab shows, in one line, the elements that handle it — for example, Place order button → PlaceOrder (command) → Order (aggregate) → OrderPlaced (event).</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>7</span></div>
+</section>
+<!-- ══════════════════ 8. Deliverables 2 ══════════════════ -->
+<section class="page">
+<div class="badge">05 · DELIVERABLES</div>
+<h1 class="sec">Deliverables ② — a record of every stage</h1>
+<div class="rule"></div>
+<p class="lead">Every stage of a proposal leaves a record. To learn later “why does this aggregate exist?”, open the proposal and see <b>the requirements, the plan's reasoning, the commits and the validation results</b> together.</p>
+<table class="free">
+<tr><th style="width:17%">Stage</th><th style="width:50%">Deliverables</th><th>Where it is kept</th></tr>
+<tr><td><b>INTENT</b></td><td>Strategic design (processes · contexts · features · stories · criteria), Impact Map</td><td>Proposal</td></tr>
+<tr><td><b>Principles</b></td><td>Markdown: Core Principles · Technology Constraints · Architecture · Repository Strategy · Governance</td><td>Project graph (one per project)</td></tr>
+<tr><td><b>PLAN</b></td><td>Tactical design, architecture decisions and their principles, open areas, impact analysis</td><td>Proposal</td></tr>
+<tr><td><b>Build</b></td><td>Tasks by phase, one commit per task</td><td><code>proposal/PRO-NNN</code> branch</td></tr>
+<tr><td><b>Validation</b></td><td>PASS · FAIL · SKIP cards with their evidence</td><td>Proposal</td></tr>
+<tr><td><b>ACCEPTED</b></td><td>Merged code, updated design graph, status history</td><td>Target branch · project graph</td></tr>
+</table>
+<figure class="crop" style="--h:53mm">
+<img alt="Project Constitution editor" src="assets-en/out-constitution.jpg"/>
+<figcaption><b>Figure 2.</b> The design principles (Constitution) editor — create the document by interview, then preview or edit it. <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<h2 class="sub">Results of tutorial proposal PRO-001 (demo data)</h2>
+<div class="grid g4">
+<div class="stat-card"><b>2 → 7</b><div class="l">Questions → principles</div><div class="d">Two interview questions</div></div>
+<div class="stat-card"><b>18</b><div class="l">Tasks · commits</div><div class="d">8 phases, a commit per task</div></div>
+<div class="stat-card"><b>125 files</b><div class="l">9,290 lines</div><div class="d">Excluding the lock file</div></div>
+<div class="stat-card"><b>296</b><div class="l">Tests passed</div><div class="d"><code>npm test</code> after merge</div></div>
+</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>8</span></div>
+</section>
+<!-- ══════════════════ 9. Screens at a glance ══════════════════ -->
+<section class="page">
+<div class="badge">06 · SCREENS</div>
+<h1 class="sec">Product screens at a glance</h1>
+<div class="rule"></div>
+<p class="lead">Eight feature cards on Home open each screen as a tab. The Requirements, Process, Design and Data tabs show <b>one project graph in different views</b>. Real product screens with demo data (tutorial exercise).</p>
+<div class="grid g2">
+<figure class="crop" style="--h:51mm; margin:0">
+<img alt="Requirements tab" src="assets-en/g-stories.jpg"/>
+<figcaption><b>Figure 3. Requirements</b> — context (EPIC) › feature (FEAT) › story (US) and acceptance criteria</figcaption>
+</figure>
+<figure class="crop" style="--h:51mm; margin:0">
+<img alt="Process tab, Event Modeling" src="assets-en/g-process.jpg"/>
+<figcaption><b>Figure 4. Process</b> — Event Modeling: Place order button → PlaceOrder → OrderPlaced</figcaption>
+</figure>
+<figure class="crop" style="--h:51mm; margin:0">
+<img alt="Design canvas" src="assets-en/g-design.jpg"/>
+<figcaption><b>Figure 5. Design canvas</b> — screens → commands (blue) → aggregates (yellow) → events (orange)</figcaption>
+</figure>
+<figure class="crop" style="--h:51mm; margin:0">
+<img alt="Legacy code graph and business rules" src="assets-en/g-legacy.jpg"/>
+<figcaption><b>Figure 6. Legacy</b> — code graph with each method's overview, business rules and examples</figcaption>
+</figure>
+</div>
+<h2 class="sub">Feature cards on Home</h2>
+<table class="free">
+<tr><th style="width:19%">Card</th><th style="width:31%">What it does</th><th style="width:19%">Card</th><th>What it does</th></tr>
+<tr><td>Proposals</td><td>Requirement to validation</td><td><b>Data Model</b></td><td>Entities · value objects</td></tr>
+<tr><td>Requirements</td><td>Context › feature › story</td><td><b>Code</b></td><td>Files · Claude Code terminal</td></tr>
+<tr><td>Process</td><td>BPM · Event Modeling</td><td><b>Legacy · Data Sources</b></td><td>Code analysis · existing DBs</td></tr>
+<tr><td>Design Canvas</td><td>EventStorming canvas</td><td><b>Project Constitution</b></td><td>Design principles · interview</td></tr>
+</table>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>9</span></div>
+</section>
+<!-- ══════════════════ 10. Strength 1 ══════════════════ -->
+<section class="page">
+<div class="badge">07 · STRENGTHS</div>
+<h1 class="sec"><span class="num">①</span> Refines requirements into DDD and criteria</h1>
+<div class="rule"></div>
+<p class="lead">Written requirements often miss exceptions and edge cases. Claude Code follows the INTENT skill to refine a requirement into <b>processes, bounded contexts, features, user stories and acceptance criteria</b>, so you can review edge cases the sentence never mentioned.</p>
+<div class="grid g2">
+<figure class="crop" style="--h:68mm; margin:0">
+<img alt="Proposal strategic design" src="assets-en/f1-intent.jpg"/>
+<figcaption><b>Figure 7.</b> PRO-001 strategic design — two processes from one requirement sentence. <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<div>
+<table class="free" style="margin-top:0">
+<tr><th style="width:42%">Result (127 s)</th><th>Content</th></tr>
+<tr><td>2 processes</td><td>Order Placement to Store Acceptance · Menu Upkeep</td></tr>
+<tr><td>2 contexts</td><td>Ordering (Core) · Menu Management (Supporting)</td></tr>
+<tr><td>7 features</td><td>Menu Item Registration, Order Placement and others</td></tr>
+<tr><td>9 stories</td><td>Store owner 4 · customer 5, each with criteria</td></tr>
+</table>
+</div>
+</div>
+<h2 class="sub">It proposes edge cases the sentence left out</h2>
+<ul class="dot">
+<li><b>Given</b> my order awaits acceptance · <b>When</b> I cancel · <b>Then</b> it is ‘Cancelled’ and the store can no longer accept it</li>
+<li><b>Given</b> the store accepted my order · <b>When</b> I try to cancel · <b>Then</b> it is refused and the order stays ‘Accepted’</li>
+<li><b>Given</b> a cancel and an accept arrive together · <b>When</b> both are processed · <b>Then</b> only the first takes effect</li>
+</ul>
+<h2 class="sub">Three modes to match the scope of a change</h2>
+<table class="free">
+<tr><th style="width:20%">Mode</th><th>How it works</th></tr>
+<tr><td>Simplified</td><td>INTENT → PLAN in two stages, for changes with a small impact</td></tr>
+<tr><td>Detailed DDD</td><td>Six stages, Discover → Decompose → … → Tactical, confirmed one by one</td></tr>
+<tr><td>ODA Standard</td><td>Designed on the TM Forum ODA standards, with a conformance check</td></tr>
+</table>
+<div class="callout"><b>You can also start from a requirements document.</b> A pasted five-section document produced 5 contexts, 10 features, 17 user stories and 2 processes in 161 seconds.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>10</span></div>
+</section>
+<!-- ══════════════════ 11. Strength 2 ══════════════════ -->
+<section class="page">
+<div class="badge">07 · STRENGTHS</div>
+<h1 class="sec"><span class="num">②</span> Plans grounded in design principles</h1>
+<div class="rule"></div>
+<p class="lead">The same feature gets different plans under different stacks and architecture styles. Deciding these anew for each proposal leads to inconsistent structures, so Robo&nbsp;Architect keeps one <b>design principles document (Constitution)</b> per project, and every plan follows it.</p>
+<h2 class="sub">Seven design principles from two questions</h2>
+<table class="free">
+<tr><th style="width:22%">Question</th><th style="width:44%">Reason for the recommendation</th><th>Answer chosen</th></tr>
+<tr><td>Architecture style</td><td>Two contexts joined at one point: a modular monolith keeps them apart at low cost</td><td>MONOLITH (recommended)</td></tr>
+<tr><td>Tech stack</td><td>Order rules need transactions; Spring Boot with PostgreSQL was suggested</td><td>Typed in: Node.js (Express) · React · SQLite</td></tr>
+</table>
+<figure class="crop" style="--h:55mm">
+<img alt="Architecture decision and the principles behind it" src="assets-en/f2-plan-grounds.jpg"/>
+<figcaption><b>Figure 8.</b> The Plan's decision “Deployment Env” — the principle sections it rests on (↳ Architecture; VII. Simplicity; Technology Constraints) appear with it. <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<table class="free">
+<tr><th style="width:17%">Decision</th><th>Content</th><th style="width:29%">Based on</th></tr>
+<tr><td>Deployment</td><td>One Node.js process serves the API and the React app; one SQLite file</td><td>Architecture · VII. Simplicity</td></tr>
+<tr><td>Data access</td><td>State re-checked in a transaction, so a conflicting accept and cancel cannot both succeed</td><td>Technology Constraints · VI</td></tr>
+<tr><td>API errors</td><td>Domain errors map to explicit 400 · 403 · 404 · 409 codes</td><td>Technology Constraints</td></tr>
+</table>
+<div class="callout"><b>Gaps in the principles are flagged.</b> No principle said how users sign in or who owns which store, so the plan used a development stub and marked AUTHENTICATION as a “Constitution Gap.” Changing the principles marks existing plans “stale”; implementation needs a plan confirmed against the latest principles.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>11</span></div>
+</section>
+<!-- ══════════════════ 12. Strength 3 ══════════════════ -->
+<section class="page">
+<div class="badge">08 · STRENGTHS</div>
+<h1 class="sec"><span class="num">③</span> Claude Code builds in isolation</h1>
+<div class="rule"></div>
+<p class="lead">AI code mixed straight into existing code is hard to review. For each proposal, Robo&nbsp;Architect creates a <b>Git worktree on a dedicated branch (<code>proposal/PRO-001</code>)</b>, a separate working folder of the same repository, and builds only there. The target branch is untouched until acceptance.</p>
+<ol class="num">
+<li><b>Generate the task list</b> — the confirmed Plan becomes tasks by phase, each listing the files it will create.</li>
+<li><b>Start implementation</b> — a worktree and branch are created in the target project folder, and the proposal's Claude Code cell opens in the Code tab.</li>
+<li><b>One commit per task</b> — Claude Code runs <code>/robo-implement PRO-001</code>, ticking off and committing each task as it finishes.</li>
+<li><b>Monitor and step in</b> — follow the progress bar and per-phase counts; stop the work or add instructions in the cell.</li>
+</ol>
+<div class="grid g2">
+<figure class="crop" style="--h:64mm; margin:0">
+<img alt="Implementation progress" src="assets-en/f3-progress.jpg"/>
+<figcaption><b>Figure 9.</b> PRO-001 during implementation — branch, worktree path, Running 2/18. <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<table class="free" style="margin-top:0">
+<tr><th style="width:36%">Phase</th><th>Tasks</th></tr>
+<tr><td>1 Setup</td><td>Monorepo, import rules</td></tr>
+<tr><td>2 Kernel</td><td>SQLite, migrations, errors</td></tr>
+<tr><td>3–4 Menu</td><td>MenuItem, commands, API</td></tr>
+<tr><td>5–6 Ordering</td><td>OrderDraft · Order, API</td></tr>
+<tr><td>7 Frontend</td><td>Menu and order screens</td></tr>
+<tr><td>8 Test</td><td>API tests, packaging</td></tr>
+</table>
+</div>
+<div class="grid g4" style="margin-top:5mm">
+<div class="stat-card"><b>18</b><div class="l">Tasks</div><div class="d">8 phases</div></div>
+<div class="stat-card"><b>About 35 min</b><div class="l">Build time</div><div class="d">After the prompts</div></div>
+<div class="stat-card"><b>18</b><div class="l">Commits</div><div class="d">One per task</div></div>
+<div class="stat-card"><b>9,290 lines</b><div class="l">125 files</div><div class="d">Excluding the lock file</div></div>
+</div>
+<div class="note"><div class="t">Folders follow the module boundaries set in the Plan</div><code>backend/src/modules/menu-management</code> · <code>ordering</code> · <code>backend/src/shared</code> · <code>backend/migrations</code> · <code>frontend/src/features/menu</code> · <code>ordering</code></div>
+<div class="callout"><b>You answer Claude Code's safety prompts yourself.</b> Robo&nbsp;Architect does not answer folder trust or bypass-permissions consent for you. Bypass mode is meant for the cell that works only in the isolated workspace.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>12</span></div>
+</section>
+<!-- ══════════════════ 13. Strength 4 ══════════════════ -->
+<section class="page">
+<div class="badge">08 · STRENGTHS</div>
+<h1 class="sec"><span class="num">④</span> Validates, then merges code and design</h1>
+<div class="rule"></div>
+<p class="lead">Finished tasks do not prove the code follows the design. <b>Structural validation</b> uses the robo-sync extractor to find the design's aggregates, fields, commands and events in the code. <b>Acceptance criteria validation</b> checks each Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then against code and tests, with evidence.</p>
+<figure style="margin:3mm 0 2mm">
+<img alt="Validation summary" src="assets-en/f4-verify-numbers.jpg"/>
+</figure>
+<table>
+<tr><th style="width:26%">Type</th><th>Checks</th><th>PASS</th><th>FAIL</th><th>SKIP</th></tr>
+<tr><td>Acceptance criteria</td><td>24</td><td>24</td><td>0</td><td>0</td></tr>
+<tr><td>Structural</td><td>28</td><td>28</td><td>0</td><td>0</td></tr>
+<tr><td>Total</td><td>52</td><td>52</td><td>0</td><td>0 (pass rate 100%)</td></tr>
+</table>
+<div class="grid g2">
+<figure class="crop" style="--h:58mm; margin:0">
+<img alt="Validation cards and evidence" src="assets-en/f4-verify-cards.jpg"/>
+<figcaption><b>Figure 10.</b> Acceptance criteria cards — verdict, command, scenario number and evidence. <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<div>
+<p style="font-size:9.2pt"><b>A SKIP is a check that could not be matched automatically.</b> This run had none: every command had its own input type, so all 10 were matched field by field. SKIPs count in the pass-rate total.</p>
+<p style="font-size:9.2pt"><b>A FAIL needs confirmation.</b> Accept is enabled only after “I acknowledge the failures and will proceed with Accept,” and the choice is recorded.</p>
+</div>
+</div>
+<h2 class="sub">Acceptance and rollback</h2>
+<table class="free">
+<tr><th style="width:26%">Action</th><th>What happens</th></tr>
+<tr><td>Accept (Dual Merge)</td><td>Merges the branch and writes the strategic and tactical design to the graph. If the graph update fails, the merge is undone and marked as failed</td></tr>
+<tr><td>Revoke (Undo)</td><td>“Graph only” or “Graph + Code” (a <code>git revert</code> of the merge)</td></tr>
+<tr><td>Destroy</td><td>Discards without accepting; cleans up the workspace, keeps the history</td></tr>
+</table>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>13</span></div>
+</section>
+<!-- ══════════════════ 14. Strength 5 ══════════════════ -->
+<section class="page">
+<div class="badge">09 · STRENGTHS</div>
+<h1 class="sec"><span class="num">⑤</span> Shows a change's impact on the design</h1>
+<div class="rule"></div>
+<p class="lead">Most development changes an existing design. In a project with an accepted design, a new proposal separates <b>new elements (CREATE) from modified ones (MODIFY)</b> and shows the conflict risk where implemented elements change.</p>
+<div class="flow">
+<div class="step"><b>Requirement</b><span>Rejection reason</span></div>
+<div class="arw">→</div>
+<div class="step"><b>INTENT</b><span>Existing context</span></div>
+<div class="arw">→</div>
+<div class="step"><b>PLAN</b><span>Aggregate modified</span></div>
+<div class="arw">→</div>
+<div class="step on"><b>Impact Map</b><span>New · modified · risk</span></div>
+</div>
+<p>For PRO-002 we entered a new rule: a store owner who rejects an order picks one reason, and the customer sees it. INTENT (70 seconds) added the feature Store Order Rejection and two stories to the existing Ordering context, with no new context. The Plan (about 7 minutes) kept PRO-001's deployment unit, libraries and folder layout.</p>
+<figure class="crop" style="--h:53mm">
+<img alt="Tactical Design, MODIFY and CREATE" src="assets-en/f5-tactical-modify.jpg"/>
+<figcaption><b>Figure 11.</b> PRO-002's tactical design — existing Order and MyOrderStatus are MODIFY; RejectOrder and OrderRejected are CREATE. <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<table class="free">
+<tr><th style="width:15%">Operation</th><th style="width:30%">Element</th><th style="width:15%">Conflict risk</th><th>Change</th></tr>
+<tr><td>MODIFY</td><td>Aggregate Order</td><td><b>HIGH</b></td><td>Rejected status, RejectionReason enum and property, 3 invariants</td></tr>
+<tr><td>CREATE</td><td>Command RejectOrder</td><td>NONE</td><td>Rejects an order with one reason</td></tr>
+<tr><td>CREATE</td><td>Event OrderRejected</td><td>NONE</td><td>Order rejected</td></tr>
+<tr><td>MODIFY</td><td>Read model MyOrderStatus</td><td>NONE</td><td>Shows the reason to the customer</td></tr>
+</table>
+<div class="callout"><b>HIGH shows where to look; it does not block.</b> Order is already implemented and accepted, so validation should confirm its existing criteria still pass. If another proposal is implementing the same element, submission to the Plan stage is blocked with a notice.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>14</span></div>
+</section>
+<!-- ══════════════════ 15. Strength 6 ══════════════════ -->
+<section class="page">
+<div class="badge">09 · STRENGTHS</div>
+<h1 class="sec"><span class="num">⑥</span> Legacy code and DBs as design evidence</h1>
+<div class="rule"></div>
+<p class="lead">Business rules are often recorded more precisely in code than in documents. Robo&nbsp;Architect analyzes legacy code into a graph of <b>classes, methods, tables and business rules</b>, and links each element of a new proposal to the code it is based on.</p>
+<div class="pipe">
+<div class="n">1</div><div class="l"></div><div class="n">2</div><div class="l"></div><div class="n">3</div><div class="l"></div>
+<div class="n">4</div><div class="l"></div><div class="n">5</div><div class="l"></div><div class="n">6</div><div class="l"></div><div class="n">7</div>
+</div>
+<div class="pipe-labels">
+<div>DDL parsing</div><div>Source loading</div><div>Project scan</div><div>Linking</div><div>Context setup</div><div>AI analysis</div><div>Post-processing</div>
+</div>
+<div class="grid g4" style="margin-top:5mm">
+<div class="stat-card"><b>141 s</b><div class="l">Analysis time</div><div class="d">Java · DDL sample system</div></div>
+<div class="stat-card"><b>6 · 18 · 7</b><div class="l">Classes · methods · tables</div><div class="d">32 columns, 46 calls</div></div>
+<div class="stat-card"><b>35–53</b><div class="l">Business rules</div><div class="d">Varies by run (35 · 52 · 53)</div></div>
+<div class="stat-card"><b>11 / 11</b><div class="l">Evidence links</div><div class="d">15 pieces of evidence</div></div>
+</div>
+<figure class="crop" style="--h:37.5mm">
+<img alt="Legacy evidence summary" src="assets-en/f6-evidence-head.jpg"/>
+<figcaption><b>Figure 12.</b> A proposal designed from legacy code: “Legacy evidence 15 · Evidence 11/11.” <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<div class="grid g2" style="margin-top:4mm">
+<figure class="crop" style="--h:62mm; margin:0">
+<img alt="Legacy evidence detail" src="assets-en/f6-evidence.jpg"/>
+<figcaption><b>Figure 13.</b> Evidence for the process “Order Rejection with Reason,” down to the source lines. <i>Demo data (tutorial exercise).</i></figcaption>
+</figure>
+<table class="free" style="margin-top:0">
+<tr><th style="width:46%">Mark</th><th>Meaning</th></tr>
+<tr><td>derived from · refines</td><td>Comes from / changes old behavior</td></tr>
+<tr><td>Source-inspected</td><td>Opened in the source</td></tr>
+<tr><td>Search-confirmed</td><td>Seen in search results</td></tr>
+<tr><td>File : line</td><td>Where the evidence points</td></tr>
+<tr><td>Cited by n elements</td><td>New elements relying on it</td></tr>
+</table>
+</div>
+<div class="callout"><b>Evidence adds conditions the requirement lacked.</b> Because <code>StoreService.close</code> returns how many waiting orders it rejected, the design gained the criterion “I am told that 3 orders were rejected.” Existing DBs can also be registered as data sources (PostgreSQL · MySQL · MariaDB).</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>15</span></div>
+</section>
+<!-- ══════════════════ 16. System architecture ══════════════════ -->
+<section class="page">
+<div class="badge">10 · ARCHITECTURE</div>
+<h1 class="sec">System architecture and runtime</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect Lite consists of <b>the desktop app, the Architect API running on your PC and seven Docker containers</b>. The app starts the containers itself and leaves them running after you quit, so the next start is faster. AI work is done by Claude Code on your PC.</p>
+<div class="topo">
+<div class="tb soft"><b>Desktop app (Electron)</b><span>Tabs · windows · container startup · project (graph) selection</span></div>
+<div class="tdown"></div>
+<div class="trow">
+<div class="tb"><b>Vue 3 screens</b><span>Home · Proposals · Requirements · Design · Code · Legacy</span></div>
+<div class="tb"><b>Claude Code CLI</b><span>Runs the 21 skills · implementation cell in the Code tab</span></div>
+</div>
+<div class="tdown"></div>
+<div class="tb solid"><b>Architect API (FastAPI) — runs on your PC</b><span>Proposal stages · skill runs · validation · Dual Merge · progress streaming</span></div>
+<div class="tdown"></div>
+<div class="trow">
+<div class="tb"><b>7 Docker containers</b><span>Graph DB · data fabric · legacy analysis</span></div>
+<div class="tb"><b>Target project (Git repository)</b><span>Code folder · <code>proposal/PRO-NNN</code> worktrees</span></div>
+</div>
+</div>
+<h2 class="sub">Containers</h2>
+<table class="free">
+<tr><th style="width:18%">Container</th><th style="width:22%">Group</th><th>Role</th></tr>
+<tr><td>graph-db<br/>graph-bolt</td><td>Ontological DB</td><td>Stores the design graphs and the analysis graph, one graph per project. graph-bolt is the Bolt protocol entry point; it passes queries to the graph engine without keeping state</td></tr>
+<tr><td>fabric<br/>catalog</td><td>Data fabric</td><td>Connects registered existing DBs to the graph DB and provides table, column and relationship information</td></tr>
+<tr><td>analyzer<br/>parser<br/>gateway</td><td>Legacy analysis</td><td>Parses code (ANTLR) and analyzes its meaning and business rules. The analyzer's AI calls go through the Architect API and are handled by Claude Code</td></tr>
+</table>
+<div class="note"><div class="t">Design graphs and the analysis graph are kept separate</div>Legacy analysis clears the analysis graph and writes it again. The graph DB is configured to refuse to start if the analysis graph has the same name as the design graph, which prevents an analysis from erasing design data.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>16</span></div>
+</section>
+<!-- ══════════════════ 17. Technology stack ══════════════════ -->
+<section class="page">
+<div class="badge">11 · ARCHITECTURE</div>
+<h1 class="sec">Technology stack and skills</h1>
+<div class="rule"></div>
+<p class="lead">The product uses <b>widely adopted frameworks and open-source technology</b>, so your team can understand and maintain it. The AI's procedures live in skill files, apart from product code.</p>
+<table class="free">
+<tr><th style="width:20%">Layer</th><th>Components</th></tr>
+<tr><td>Desktop</td><td>Electron 33 · electron-builder 25 (Windows NSIS · macOS DMG) · TypeScript</td></tr>
+<tr><td>Frontend</td><td>Vue 3.5 · Vite 5 · Pinia · Vue Flow (canvas) · bpmn-js 18 · Mermaid 11 · Tailwind CSS 4 · CodeMirror 6 · xterm.js 6</td></tr>
+<tr><td>Backend</td><td>Python 3.11+ · FastAPI · Uvicorn · Pydantic v2 · SSE (server-sent events) · MCP</td></tr>
+<tr><td>Graph DB</td><td>Ontological DB — graph engine and Bolt gateway, Cypher queries</td></tr>
+<tr><td>AI execution</td><td>Claude Code CLI (skills · Code tab cell) · OpenAI-compatible connector for the analyzer</td></tr>
+<tr><td>Analysis</td><td>Legacy analyzer · ANTLR parser · data fabric · data catalog · API gateway</td></tr>
+<tr><td>Testing</td><td>pytest · Playwright · ruff</td></tr>
+</table>
+<h2 class="sub">21 skill files</h2>
+<table class="free">
+<tr><th style="width:20%">Bundle</th><th>Skills</th></tr>
+<tr><td>robo-proposals<br/><span style="font-weight:400; color:var(--muted)">15</span></td><td>Stages — <code>intent</code> · <code>project-constitution</code> · <code>plan</code> · <code>tasks</code> · <code>implement</code> · <code>test</code> · <code>context</code> (impact)<br/>Detailed DDD — <code>scope</code> · <code>discover</code> · <code>decompose</code> · <code>strategize</code> · <code>connect</code> · <code>define</code> · <code>tactical</code><br/>Standards — <code>oda</code></td></tr>
+<tr><td>robo-spec<br/><span style="font-weight:400; color:var(--muted)">4</span></td><td><code>robo-implement</code> (build in the Code tab cell) · <code>robo-sync</code> (code → design check) · <code>robo-plan</code> · <code>robo-tasks</code></td></tr>
+<tr><td>robo-changes<br/><span style="font-weight:400; color:var(--muted)">2</span></td><td><code>robo-change-specify</code> · <code>robo-change-tasks</code> (requirement changes)</td></tr>
+</table>
+<div class="callout"><b>Editing a skill file changes the AI's judgment without touching product code.</b> We added one rule to the INTENT skill: “Append a short uppercase code in parentheses to every BoundedContext name.” Without a restart, the next analysis returned “Menu Management (MENU)” and “Ordering (ORD).”</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>17</span></div>
+</section>
+<!-- ══════════════════ 18. How to use it 1 ══════════════════ -->
+<section class="page">
+<div class="badge">12 · HOW TO USE</div>
+<h1 class="sec">How to use it — six steps</h1>
+<div class="rule"></div>
+<p class="lead">Open a project, write a proposal, review the design and plan, then implement, validate and accept. Below are <b>the six steps on real product screens</b>, with demo data (tutorial exercise).</p>
+<div class="pipe">
+<div class="n">1</div><div class="l"></div><div class="n">2</div><div class="l"></div>
+<div class="n">3</div><div class="l"></div><div class="n">4</div><div class="l"></div>
+<div class="n">5</div><div class="l"></div><div class="n">6</div>
+</div>
+<div class="pipe-labels">
+<div>Open project</div><div>Write proposal</div><div>Review design</div><div>Principles · plan</div><div>Isolated build</div><div>Validate · accept</div>
+</div>
+<h2 class="sub">Step 1 · Create and open a project</h2>
+<p>On Home, enter a project name (e.g. <code>hanbit_delivery_en</code>) and choose a Git repository as the code folder. <b>Open project</b> points the backend at this project's graph and enables the feature cards.</p>
+<figure class="crop" style="--h:39mm">
+<img alt="Project selection and code folder" src="assets-en/u1-project.jpg"/>
+<figcaption><b>Figure 14.</b> Project selection — each project gets its own graph, separate from all others.</figcaption>
+</figure>
+<div class="grid g2">
+<div>
+<h2 class="sub" style="margin-top:2mm">Step 2 · Write a proposal</h2>
+<p style="font-size:9.4pt">In the Proposals tab, click <b>+ New Proposal</b> and describe the change. Choose a mode (Simplified · Detailed DDD · ODA Standard) and click <b>Start AI Analysis</b>.</p>
+<figure class="crop" style="--h:38mm; margin:3mm 0 0">
+<img alt="New Proposal dialog" src="assets-en/u2-new-proposal.jpg"/>
+<figcaption><b>Figure 15.</b> The New Proposal dialog</figcaption>
+</figure>
+</div>
+<div>
+<h2 class="sub" style="margin-top:2mm">Step 3 · Review the strategic design</h2>
+<p style="font-size:9.4pt">The progress window shows what Claude Code is doing. Then review the strategic design and Impact Map, and regenerate with feedback if needed.</p>
+<figure class="crop" style="--h:38mm; margin:3mm 0 0">
+<img alt="Progress window while the requirement is analyzed" src="assets-en/u3-analyzing.jpg"/>
+<figcaption><b>Figure 16.</b> Analysis in progress — the legacy graph is searched for each requirement.</figcaption>
+</figure>
+</div>
+</div>
+<div class="note"><div class="t">The AI asks when something needs clarifying</div>If a requirement is ambiguous, multiple-choice questions appear during the analysis. Pick an option or type an answer; to go on without answering, click <b>Continue with current info</b>.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>18</span></div>
+</section>
+<!-- ══════════════════ 19. How to use it 2 ══════════════════ -->
+<section class="page">
+<div class="badge">12 · HOW TO USE</div>
+<h1 class="sec">Steps 4–6 · Plan, build, validate, accept</h1>
+<div class="rule"></div>
+<div class="grid g2">
+<div>
+<h2 class="sub" style="margin-top:0">Step 4 · Confirm principles and plan</h2>
+<p style="font-size:9.4pt">Click <b>Proceed to Plan →</b>, then <b>Generate Plan</b>. If the project has no design principles yet, an interview opens first. Review the architecture decisions and tactical design, then click <b>Confirm Plan</b>; <b>Open Sandbox Implementation</b> appears.</p>
+</div>
+<figure class="crop" style="--h:57mm; margin:0">
+<img alt="Plan confirmed" src="assets-en/u4-plan-confirmed.jpg"/>
+<figcaption><b>Figure 17.</b> Plan summary and confirmation</figcaption>
+</figure>
+<div>
+<h2 class="sub" style="margin-top:0">Step 5 · Build in an isolated workspace</h2>
+<p style="font-size:9.4pt">Click <b>Generate task list</b>, then <b>Start implementation</b>. <b>Go to Claude Code cell</b> opens the proposal's cell in the Code tab, where the work starts and you can follow file writes, tests and commits.</p>
+</div>
+<figure class="crop" style="--h:57mm; margin:0">
+<img alt="Implementation task list" src="assets-en/u5-tasks.jpg"/>
+<figcaption><b>Figure 18.</b> Task list: 18 tasks, each with its files.</figcaption>
+</figure>
+<div>
+<h2 class="sub" style="margin-top:0">Step 6 · Validate and accept</h2>
+<p style="font-size:9.4pt">When the build is done, click <b>Done → Verify</b>. Check the structural and acceptance criteria results, then click <b>Accept (Dual Merge)</b>: code and graph DB are updated together, and the status becomes ACCEPTED.</p>
+</div>
+<figure class="crop" style="--h:62mm; margin:0">
+<img alt="Dual Merge completed" src="assets-en/u6-accepted.jpg"/>
+<figcaption><b>Figure 19.</b> Dual Merge completed; <b>Revoke (Undo)</b> undoes it.</figcaption>
+</figure>
+</div>
+<div class="callout"><b>Stay on the tab while a long stage runs.</b> Reloading the tab or moving to another screen during plan generation starts it over. To do other work meanwhile, open a new tab from Home.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>19</span></div>
+</section>
+<!-- ══════════════════ 20. Security ══════════════════ -->
+<section class="page">
+<div class="badge">13 · SECURITY</div>
+<h1 class="sec">Security and governance</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect Lite is a desktop app that runs on the user's PC. Before adoption, review <b>the scope of data processing and the change approval procedure</b> against the points below.</p>
+<h2 class="sub">Data processing scope</h2>
+<ul class="dot">
+<li><b>Design data stays on the PC.</b> The graph DB lives in a local Docker volume, and the graph DB, Bolt and analysis ports listen only on the loopback address (127.0.0.1).</li>
+<li><b>AI requests go through Claude Code.</b> It analyzes, plans and implements with the user's own login. Requests include requirements, designs and parts of the code, so check them against your Claude Code usage policy.</li>
+<li><b>Legacy analysis calls AI without tools.</b> Claude Code answers the analyzer with text only, in an empty temporary folder.</li>
+<li><b>An OpenAI API key is optional.</b> It is used only for document upload and chat edits in the Design tab.</li>
+<li><b>Secrets stay out of logs.</b> Values such as local DB passwords go to a user-only file or the OS's encrypted store.</li>
+</ul>
+<h2 class="sub">Change control</h2>
+<table class="free">
+<tr><th style="width:22%">Item</th><th>Details</th></tr>
+<tr><td>Plan check</td><td>Implementation needs a Plan confirmed against the latest design principles</td></tr>
+<tr><td>Code isolation</td><td>Work happens in a branch worktree; the target branch is untouched until Accept</td></tr>
+<tr><td>Conflict detection</td><td>Plan submission is blocked if another proposal is building the same element</td></tr>
+<tr><td>Failure check</td><td>With any FAIL, Accept requires acknowledging the failures</td></tr>
+<tr><td>Combined update</td><td>If the graph update fails, the code merge is undone and marked as failed</td></tr>
+<tr><td>History · logs</td><td>Each status change records who and when; each request gets a tracking ID</td></tr>
+</table>
+<div class="note"><div class="t">AI execution settings</div>Proposal skills run in the Claude Code CLI by default; a setting can switch them to an OpenAI-compatible endpoint. The Code tab cell uses Claude Code.</div>
+<div class="callout"><b>Lite is a single-user app without accounts or permissions.</b> Author details come from the PC's Git settings. Policies such as separate approvers become operating procedures at adoption, and network and AI policies follow your standards.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>20</span></div>
+</section>
+<!-- ══════════════════ 21. Installation ══════════════════ -->
+<section class="page">
+<div class="badge">14 · INSTALLATION</div>
+<h1 class="sec">Installation and delivery</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect Lite runs as one desktop app and seven Docker containers. The app loads and starts the container images itself, so <b>there is no Python or database to install.</b></p>
+<table class="free">
+<tr><th style="width:20%">Platform</th><th>Contents</th><th style="width:24%">Availability</th></tr>
+<tr><td>Windows 10/11</td><td>Installer (about 100 MB), image bundle (about 1.5 GB, 7 images), SHA256SUMS. Per-user install, no admin rights</td><td>Provided on request</td></tr>
+<tr><td>macOS</td><td>Desktop app for Apple Silicon (DMG)</td><td>Installer being prepared for release</td></tr>
+<tr><td>First run</td><td>Checks the bundle's checksum, loads it and starts the 7 containers: about 50 s on the tutorial PC, 4–5 min on an installed copy's first run</td><td>—</td></tr>
+</table>
+<figure class="crop" style="--h:37mm">
+<img alt="Services starting on first run" src="assets-en/i-boot.jpg"/>
+<figcaption><b>Figure 20.</b> First run — the feature cards stay locked while the app starts the graph DB and analysis services in Docker.</figcaption>
+</figure>
+<h2 class="sub">Recommended environment</h2>
+<div class="grid g2">
+<div class="card">
+<div class="t">PC</div>
+<p>macOS or Windows 10/11, 16 GB of memory or more, 20 GB of free disk space or more.</p>
+</div>
+<div class="card">
+<div class="t">Docker Desktop</div>
+<p>Keep it running while you use the app: the graph DB and services are containers.</p>
+</div>
+<div class="card">
+<div class="t">Claude Code</div>
+<p>Run <code>claude</code> in a terminal and sign in first. It analyzes, plans and implements.</p>
+</div>
+<div class="card">
+<div class="t">Git</div>
+<p>The code folder must be a Git repository; each proposal gets a worktree of it.</p>
+</div>
+</div>
+<div class="callout"><b>Deliverables stay yours.</b> Code lands in your Git repository as per-task commits, and the design graph stays in the graph DB on the PC, where it can be queried over the Bolt protocol.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>21</span></div>
+</section>
+<!-- ══════════════════ 22. Quality ══════════════════ -->
+<section class="page">
+<div class="badge">15 · QUALITY</div>
+<h1 class="sec">Product development and quality assurance</h1>
+<div class="rule"></div>
+<p class="lead">The Robo&nbsp;Architect team follows <b>one process from spec to implementation and testing</b>. Each feature starts with a spec and a plan, and results are checked by automated tests and in the running app.</p>
+<h2 class="sub">A spec-first development process</h2>
+<p>Each feature goes from spec to plan to task list to implementation, and all of these stay in the repository: currently <b>59 feature folders with 58 specs, 42 plans and 39 task lists</b>.</p>
+<h2 class="sub">Automated testing</h2>
+<div class="grid g4">
+<div class="stat-card"><b>85</b><div class="l">Backend test files</div><div class="d">pytest · 725 test functions</div></div>
+<div class="stat-card"><b>72</b><div class="l">UI test files</div><div class="d">Playwright</div></div>
+<div class="stat-card"><b>14</b><div class="l">Regression tests</div><div class="d">No backend server needed</div></div>
+<div class="stat-card"><b>4</b><div class="l">Desktop test files</div><div class="d">Launcher · image loading</div></div>
+</div>
+<p style="margin-top:3mm">The regression suite (<code>npm run test:regression</code>) has 2 logic unit tests and 12 UI tests that replace server responses with fixed data. Static analysis uses ruff.</p>
+<h2 class="sub">Usage flow verified in the real app</h2>
+<p>The 14-chapter tutorial's screens and results come from the Lite app running on macOS (Apple Silicon). Stage times:</p>
+<table class="free">
+<tr><th style="width:30%">Stage</th><th style="width:20%">Time</th><th>Result</th></tr>
+<tr><td>INTENT (one sentence)</td><td>127 s</td><td>2 processes · 2 contexts · 9 stories</td></tr>
+<tr><td>Plan generation</td><td>693 s</td><td>28 tactical items, including 3 aggregates</td></tr>
+<tr><td>Implementation</td><td>About 35 min</td><td>18 tasks · 18 commits</td></tr>
+<tr><td>Validation to acceptance</td><td>About 8 min</td><td>52 checks: 52 PASS · 0 FAIL · 0 SKIP</td></tr>
+<tr><td>Legacy analysis</td><td>141 s</td><td>6 classes · 18 methods · 7 tables</td></tr>
+<tr><td>Change proposal PRO-002</td><td>70 s + 404 s</td><td>INTENT + Plan; Order MODIFY, risk HIGH</td></tr>
+<tr><td>Requirements document</td><td>161 s</td><td>5 contexts · 10 features · 17 stories</td></tr>
+</table>
+<div class="callout"><b>All screens in this brochure were captured from the real product during the tutorial.</b> AI results vary slightly by run: analyses of the same code gave 35, 52 and 53 business rules, with the same class, method and table counts.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>22</span></div>
+</section>
+<section class="page">
+<div class="badge">16 · REFERENCES</div>
+<h1 class="sec">Track record of the base product, MSAEZ</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect builds on <b>experience developing and operating MSAEZ (MSA Easy)</b>, an EventStorming-based design and code generation tool used in industry, on a public platform and in education.</p>
+<div class="grid g3">
+<div class="stat-card"><b>Enterprise</b><div class="l">POSCO DX</div><div class="d">Design and code generation for applications and microservices</div></div>
+<div class="stat-card"><b>Public platform</b><div class="l">DPG Integrated Testbed</div><div class="d">Registered and operated as a digital development tool (SaaS)</div></div>
+<div class="stat-card"><b>9,655</b><div class="l">MSA School learners</div><div class="d">325 sessions · 17,864 hours</div></div>
+</div>
+<h2 class="sub">① Industry — POSCO DX</h2>
+<p>POSCO DX uses MSAEZ to <b>design applications and microservices and generate their source code</b>, producing code from design models derived through EventStorming.</p>
+<h2 class="sub">② Public sector — DPG Integrated Testbed</h2>
+<p>The DPG (Digital Platform Government) Integrated Testbed, run by Korea's National Information Society Agency (NIA), helps SMEs, startups, citizen developers and public bodies <b>develop, test and verify services</b> with public and private data, cloud resources and private-sector SaaS tools.</p>
+<p>
+    MSA Easy (MSAEZ) is registered there as a SaaS that <b>automates microservice analysis, design,
+    implementation and deployment</b>.
+  </p>
+<h2 class="sub">③ Education — MSA School</h2>
+<p>MSAEZ is the <b>standard practice tool at MSA School</b>, a cloud-native development training provider. Learners design a domain with EventStorming, then generate code from the model and deploy it.</p>
+<p>Training to date: <b>325 sessions, 9,655 learners, 17,864 hours</b>, at basic, intermediate and advanced levels, covering Biz (EventStorming · DDD), Dev (Spring Boot · Kafka) and Ops (Kubernetes · GitOps).</p>
+<table class="free">
+<tr><th style="width:22%">Area</th><th style="width:36%">MSAEZ (base product)</th><th>Robo&nbsp;Architect Lite</th></tr>
+<tr><td>Design · build</td><td>EventStorming design, code from the model</td><td>DDD design per proposal, built and validated with Claude Code</td></tr>
+</table>
+<div class="callout"><b>From initial design to ongoing change management.</b> On top of MSAEZ's design and code generation, Robo&nbsp;Architect adds change impact analysis, stage-by-stage proposals, principle-based planning, a coding agent (Claude Code) and legacy-grounded design.<br/><span style="font-size:8.4pt; color:var(--muted)">* Training figures are MSA School's published totals. Scope and expected benefits are discussed individually with our sales team.</span></div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>23</span></div>
+</section>
+<!-- ══════════════════ 24. Adoption ══════════════════ -->
+<section class="page">
+<div class="badge">16 · ADOPTION</div>
+<h1 class="sec">Adoption process and schedule</h1>
+<div class="rule"></div>
+<p class="lead">Adoption runs <b>in four phases</b>, from an environment review and a PoC (proof of concept) to full rollout. The schedule below is a standard example, adjusted to your environment and review process.</p>
+<div class="gantt">
+<div class="scale"><div>2 wks</div><div>4 wks</div><div>6 wks</div><div>8 wks</div></div>
+<div class="row">
+<div class="lbl"><b>1. Environment review</b><span>PC specs · Docker · AI usage policy · target repository</span></div>
+<div class="track"><div class="bar" style="left:0; width:26%"></div></div>
+</div>
+<div class="row">
+<div class="lbl"><b>2. PoC</b><span>Analyze one business area of an existing system · run one change</span></div>
+<div class="track"><div class="bar" style="left:22%; width:30%"></div></div>
+</div>
+<div class="row">
+<div class="lbl"><b>3. Validation · training</b><span>Security review · architect training · project design principles</span></div>
+<div class="track"><div class="bar" style="left:48%; width:28%"></div></div>
+</div>
+<div class="row">
+<div class="lbl"><b>4. Full rollout</b><span>Wider scope · operational handover · skill customization</span></div>
+<div class="track"><div class="bar d" style="left:70%; width:30%"></div></div>
+</div>
+</div>
+<h2 class="sub">Key PoC checkpoints</h2>
+<ul class="dot">
+<li>Are real requirements <b>refined well into bounded contexts, user stories and acceptance criteria</b>?</li>
+<li>Does the analysis of existing code <b>link to new proposals as design evidence</b>?</li>
+<li>Do <b>implementation and merging fit</b> your repository layout and branching practice?</li>
+<li>Are the structural and acceptance criteria results <b>enough to judge the implementation</b>?</li>
+<li>Do Claude Code usage and data handling <b>comply with your security policy</b>?</li>
+</ul>
+<h2 class="sub">Items to agree on during adoption</h2>
+<div class="grid g4">
+<div class="card">
+<div class="t">AI execution</div>
+<p style="font-size:8.8pt">Claude Code accounts, policy and data handling scope.</p>
+</div>
+<div class="card">
+<div class="t">Repositories</div>
+<p style="font-size:8.8pt">Repositories to work in and the final merge branch.</p>
+</div>
+<div class="card">
+<div class="t">Design principles</div>
+<p style="font-size:8.8pt">Standards for stack, architecture and repository layout.</p>
+</div>
+<div class="card">
+<div class="t">Skills</div>
+<p style="font-size:8.8pt">Your design procedures and document formats, built in.</p>
+</div>
+</div>
+<div class="note"><div class="t">30-minute product demo and PoC planning</div>We demonstrate the real product, from entering a requirement through design, planning, implementation and validation. Send us some of your business documents in advance, and <b>we will prepare the demo with them</b>.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite Product Brochure</span><span>24</span></div>
+</section>
+<!-- ══════════════════ 25. Back cover ══════════════════ -->
+<section class="page cover">
+<div class="brand">
+<div class="brand-mark">RA</div>
+<div>
+<div class="brand-name">Robo&nbsp;Architect Lite</div>
+<div class="brand-sub">AI ARCHITECTURE WORKBENCH</div>
+</div>
+</div>
+<div class="cover-eyebrow">CONTACT US</div>
+<h1 class="cover-title">From requirement to code,<br/>manage every change together.</h1>
+<p class="cover-lead">Contact us about adoption, a product demo or a quote. Our specialists reply within one business day, and we can also schedule a product demo for you.</p>
+<div style="margin-top:16mm; border-top:1px solid rgba(255,255,255,.2); padding-top:9mm">
+<div style="display:flex; gap:0">
+<div style="flex:1">
+<div style="font-size:8pt; letter-spacing:2px; color:#8fb4e8; font-weight:700">COMPANY</div>
+<div style="font-size:12pt; font-weight:800; color:#fff; margin-top:5px">uEngine Solutions, Inc.</div>
+</div>
+<div style="flex:1">
+<div style="font-size:8pt; letter-spacing:2px; color:#8fb4e8; font-weight:700">PRODUCT</div>
+<div style="font-size:12pt; font-weight:800; color:#fff; margin-top:5px">Robo&nbsp;Architect Lite</div>
+</div>
+<div style="flex:1">
+<div style="font-size:8pt; letter-spacing:2px; color:#8fb4e8; font-weight:700">DOCUMENT</div>
+<div style="font-size:12pt; font-weight:800; color:#fff; margin-top:5px">Rev. 2026.10</div>
+</div>
+</div>
+</div>
+<div style="margin-top:14mm">
+<div style="font-size:8.4pt; letter-spacing:2px; color:#8fb4e8; font-weight:700; margin-bottom:5mm">
+      FOUR STAGES IN ONE PROPOSAL
+    </div>
+<div style="display:flex; gap:4mm">
+<div style="flex:1; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:4mm">
+<div style="font-size:10.5pt; font-weight:800; color:#fff">Requirements</div>
+<div style="font-size:8.4pt; color:#a9c4e6; margin-top:3px">From text and documents to DDD design</div>
+</div>
+<div style="flex:1; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:4mm">
+<div style="font-size:10.5pt; font-weight:800; color:#fff">Plan</div>
+<div style="font-size:8.4pt; color:#a9c4e6; margin-top:3px">Decisions based on design principles</div>
+</div>
+<div style="flex:1; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:4mm">
+<div style="font-size:10.5pt; font-weight:800; color:#fff">Build</div>
+<div style="font-size:8.4pt; color:#a9c4e6; margin-top:3px">Isolated workspace · Claude Code</div>
+</div>
+<div style="flex:1; background:rgba(255,255,255,.13); border:1px solid rgba(255,255,255,.28); border-radius:8px; padding:4mm">
+<div style="font-size:10.5pt; font-weight:800; color:#fff">Validate · merge</div>
+<div style="font-size:8.4pt; color:#c3d8f5; margin-top:3px">Code and design graph updated together</div>
+</div>
+</div>
+</div>
+<div class="cover-foot">
+<div>
+<div class="d">uEngine Solutions, Inc.</div>
+<div class="s">© 2026 uEngine Solutions. Rev. 2026.10 ·
+        Figures and screens may change without notice.</div>
+</div>
+<div class="org">uEngine</div>
+</div>
+</section>
+</body>
+</html>

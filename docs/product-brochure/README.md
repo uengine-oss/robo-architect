@@ -159,3 +159,92 @@ for name, (src, box) in MAP.items():
 - macOS(Apple Silicon) 설치 파일은 배포 준비 중으로만 적었다. 공개되면 21쪽 표를 고친다.
 - 프로포절 스킬의 OpenAI 호환 실행(`SKILL_RUNNER_PROVIDER=openai_compatible`)은 코드와 단위 시험으로만 확인했고 튜토리얼에서는 쓰지 않았다(20쪽).
 - 도입 일정(24쪽)은 이전 소개서의 표준 예시 그대로다.
+
+## English edition
+
+**Output**: `Robo-Architect-Brochure-2026.10.pdf` (A4 · 25 pages)
+**Source**: `robo-architect-lite-brochure-en.html` — same pages, layout and CSS rules as the Korean HTML (only the CSS comments are translated). Edit the wording in this file directly.
+**Images**: `assets-en/*.jpg` — same file names as `assets/`, cropped from the English-mode captures `demo/tutorial/shots-en/*.png` (2560×1440, JPG quality 92, 4:4:4). The Korean `assets/` and PDF are untouched.
+
+### Rebuild
+
+```bash
+cd frontend
+node ~/.claude/skills/brochure/assets/render.mjs \
+  ../docs/product-brochure/robo-architect-lite-brochure-en.html \
+  ../docs/product-brochure/Robo-Architect-Brochure-2026.10.pdf
+```
+
+Last render (2026-11-01): 25 pages, no overflow. Bottom slack on body pages 0–10 mm (cover and back cover 16 mm, as in the Korean edition). English runs longer than Korean, so the copy was shortened page by page; type sizes were not changed. A few figure heights (`--h`) differ from the Korean HTML to fit the English crops.
+
+Korean check: macOS Vision OCR (ko-KR + en-US) over the PDF rendered at 300 dpi and over every `assets-en` crop at full resolution, plus `pdftotext` on the text layer. Result: no Korean text. The only OCR hits were icons and punctuation misread at confidence 0.3 (an em dash in the page-21 table, ↗ arrows, the Design Canvas icon, actor icons on the design canvas).
+
+### Crop table (English)
+
+Shots marked * differ from the Korean table: either the Korean shot does not exist in `shots-en/` or the English shot shows the same moment under another name. Boxes differ where the English layout moved (longer text).
+
+| File | Source (`demo/tutorial/shots-en/`) | Box (x0, y0, x1, y1) | Page |
+|---|---|---|---|
+| cover-home.jpg | install-home-project.png * | 0, 0, 2560, 1040 | 1 |
+| out-strategic.jpg | proposal-07-strategic-3.png * | 1410, 615, 2530, 1020 | 7 |
+| out-constitution.jpg | constitution-01-editor.png | 600, 160, 1960, 575 | 8 |
+| g-stories.jpg | design-01-story-detail.png | 200, 85, 1370, 911 | 9 |
+| g-process.jpg | design-02-event-modeling.png | 800, 205, 1960, 905 | 9 |
+| g-design.jpg | design-03-design.png | 200, 170, 1560, 985 | 9 |
+| g-legacy.jpg | legacy-06-detail-rules.png | 1340, 268, 2540, 1115 | 9 |
+| f1-intent.jpg | proposal-06-detail.png | 1385, 270, 2535, 1190 | 10 |
+| f2-plan-grounds.jpg | plan-05-scroll-3.png | 1420, 282, 2515, 625 | 11 |
+| f3-progress.jpg | impl-08-progress-03437.png * | 1410, 580, 2530, 1440 | 12 |
+| f4-verify-numbers.jpg | verify-03-result-retake.png * | 1405, 900, 2535, 1050 | 13 |
+| f4-verify-cards.jpg | verify-03-result-retake-1.png * | 1395, 395, 2530, 1245 | 13 |
+| f5-tactical-modify.jpg | change-08-plan-modify.png | 1410, 795, 2530, 1135 | 14 |
+| f6-evidence-head.jpg | legacy-13-evidence.png | 1395, 250, 2555, 800 | 15 |
+| f6-evidence.jpg | legacy-14-evidence-pop.png | 1600, 200, 2540, 925 | 15 |
+| u1-project.jpg | install-project-folder.png * | 640, 465, 2450, 870 | 18 |
+| u2-new-proposal.jpg | proposal-02-create.png | 1385, 250, 2535, 770 | 18 |
+| u3-analyzing.jpg | proposal-03-analyzing-1.png * | 1395, 255, 2535, 820 | 18 |
+| u4-plan-confirmed.jpg | plan-06-confirmed.png | 1415, 660, 2535, 1420 | 19 |
+| u5-tasks.jpg | impl-05-tasks.png * | 1410, 660, 2530, 1440 | 19 |
+| u6-accepted.jpg | verify-06-accepted.png | 1405, 262, 2535, 1085 | 19 |
+| i-boot.jpg | install-boot.png | 620, 350, 2470, 770 | 21 |
+
+Why the replacements: `layout-01-home` / `layout-02-switch` were not captured in English (Home with the project open and the project panel come from the install chapter); the Ordering (Core) block is in `proposal-07-strategic-3` in the English layout; `impl-05-tasks`, `impl-08-progress-03437` and `verify-03-result-retake(-1)` are the known English equivalents (`to-webp.py` `EN_SHOT`); `proposal-03-analyzing-2` shows a Korean search query written by the model, so `proposal-03-analyzing-1` is used with a box that stops above its Korean line. Chapter 8–9 crops use the current captures only (`design-*` 16:07–16:08 UTC, `change-08-plan-modify` 16:05 UTC on 2026-10-31).
+
+```python
+from PIL import Image
+SHOTS = '../../demo/tutorial/shots-en/'      # from docs/product-brochure
+MAP = {'cover-home': ('install-home-project.png', (0, 0, 2560, 1040))}   # fill in from the table above
+for name, (src, box) in MAP.items():
+    Image.open(SHOTS + src).convert('RGB').crop(box).save(
+        f'assets-en/{name}.jpg', 'JPEG', quality=92, subsampling=0, optimize=True)
+```
+
+### Numbers that differ from the Korean edition
+
+Tutorial demo figures come from the English run (`tools/ra-docs/src-en/*.md` in the homepage work tree, and `shots-en/` logs and facts where the chapter 8–9 text is not yet reconciled). Code-derived numbers, METR figures, MSAEZ figures and installation figures are the same as in the Korean edition.
+
+| Page | Korean edition | English edition | Source |
+|---|---|---|---|
+| 8, 12 | 15 tasks · 15 commits · 6 phases | 18 tasks · 18 commits · 8 phases | implement.md |
+| 8, 12 | 69 files · 3,622 lines | 125 files · 9,290 lines | implement.md |
+| 8 | 45 tests passed after merge | 296 (274 backend + 22 frontend) | verify.md |
+| 10, 22 | INTENT 132 s · 6 features · 7 stories (owner 4, customer 3) | 127 s · 7 features · 9 stories (owner 4, customer 5) | proposal.md |
+| 10, 22 | Requirements document 171 s · 3 processes | 161 s · 2 processes (5 contexts · 10 features · 17 stories unchanged) | ingest.md |
+| 11 | Constitution gap IDENTITY_AND_STORE_OWNERSHIP_SOURCE; decisions deployment · data access · test strategy | AUTHENTICATION; decisions deployment · data access · API errors | plan.md |
+| 12 | Progress shot 7/15 · about 22 min | 2/18 · about 35 min | implement.md, shot |
+| 13, 22 | 49 checks: 44 PASS · 0 FAIL · 5 SKIP (90%); criteria 18, structural 31 | 52 checks: 52 PASS · 0 FAIL · 0 SKIP (100%); criteria 24, structural 28 | verify.md |
+| 13, 22 | Validation to acceptance about 7 min | about 8 min | verify.md |
+| 22 | Plan 598 s · 20 tactical items | 693 s · 28 items (3 aggregates) | plan.md |
+| 14, 22 | PRO-002 INTENT 80 s + Plan 395 s (about 6 min) | 70 s + 404 s (about 7 min) | `shots-en/change-log.txt` (change.md still shows the Korean run) |
+| 14 | Two features added; read model CustomerOrderView; Order with 2 invariants | One feature, Store Order Rejection, with two stories; read model MyOrderStatus; Order with 3 invariants | `facts-09-change.json`, `facts-09-plan.json`, `change-08-plan*.png` |
+| 15, 22 | Business rules 53 (runs: 35 · 53) | 35–53 (runs: 35 · 52 · 53) | legacy.md |
+| 15 | Evidence cited by 5 elements; criterion “no reason recorded before the feature” | Evidence detail with placeOrder and rejectOrder; criterion “I am told that 3 orders were rejected” | legacy.md, shot |
+| 17 | Skill rule: English name next to each context name | Short code in parentheses: Menu Management (MENU), Ordering (ORD) | skills.md |
+| 7, 9 | Trace / Event Modeling UI “주문하기 화면” | “Place order button” (UI name in the English graph) | design-02/03 shots |
+
+### Notes
+
+- Figure 2 (Constitution editor) does not show the document title: in the English capture the editor opens on a Sync Impact Report, so the caption describes the editor only.
+- Figure 13 shows two pieces of evidence (placeOrder, rejectOrder); the “Cited by n elements” line is below the visible area and is explained in the table next to it.
+- The home screenshot on the cover has the Design Canvas card in its hover state (as captured).
+- macOS (Apple Silicon) installer: stated as being prepared for release, as in the Korean edition.
