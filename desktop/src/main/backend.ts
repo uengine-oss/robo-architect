@@ -41,6 +41,7 @@ import {
   resolveBundledArchitectRuntime,
   startDockerStack,
 } from "./docker-stack";
+import { currentLang } from "./lang";
 import { pickFreePort } from "./ports";
 import { log } from "./logging";
 
@@ -221,6 +222,8 @@ async function startBackendInternal(): Promise<{ port: number }> {
     NEO4J_DATABASE: process.env.ROBO_NEO4J_DATABASE ?? process.env.NEO4J_DATABASE,
     ANALYZER_NEO4J_DATABASE:
       process.env.ROBO_NEO4J_DATABASE ?? process.env.ANALYZER_NEO4J_DATABASE,
+    // 앱 언어 — 영어 모드면 스킬(claude -p) 결과도 영어로(api/platform/skill_runner._with_output_language).
+    ROBO_LANG: currentLang(),
   };
 
   const spawned = spawn(executable, args, {
