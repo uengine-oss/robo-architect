@@ -2738,12 +2738,48 @@
   "구성 요소 묶는 중": "Grouping components",
   "용어집 만드는 중": "Building the glossary",
   "데이터 흐름 보강 중": "Enriching data lineage",
-  "코드 건강 지표 계산 중": "Computing code health metrics"
+  "코드 건강 지표 계산 중": "Computing code health metrics",
+  "데이터베이스 연결에 성공했습니다.": "Connected to the database.",
+  "✓ 데이터베이스 연결에 성공했습니다.": "✓ Connected to the database.",
+  "응용 서비스 (ApplicationService)": "ApplicationService",
+  "도메인 서비스 (DomainService)": "DomainService",
+  "저장소 (Repository)": "Repository",
+  "팩토리 (Factory)": "Factory",
+  "명령 (Command)": "Command",
+  "조회 (Query)": "Query",
+  "검증 (Validator)": "Validator",
+  "변환 (Translator)": "Translator",
+  "어댑터 (Adapter)": "Adapter",
+  "전략 (Strategy)": "Strategy",
+  "이벤트 처리 (EventHandler)": "EventHandler",
+  "스케줄러 (Scheduler)": "Scheduler",
+  "보조 (Helper)": "Helper",
+  "컨트롤러 (Controller)": "Controller",
+  "초기화 (Initializer)": "Initializer",
+  "서비스 (Service)": "Service",
+  "데이터 변경 (DataMutator)": "DataMutator",
+  "데이터 조회 (DataQuery)": "DataQuery",
+  "배치 처리 (BatchProcessor)": "BatchProcessor",
+  "메타 조회 (MetadataLookup)": "MetadataLookup",
+  "이벤트 트리거 (EventTrigger)": "EventTrigger",
+  "집계 (Aggregator)": "Aggregator",
+  "리포트 생성 (ReportGenerator)": "ReportGenerator",
+  "데이터 이관 (DataMigrator)": "DataMigrator",
+  "커서 순회 (CursorLooper)": "CursorLooper",
+  "패키지 초기화 (PackageInitializer)": "PackageInitializer"
  },
  "patterns": [
   [
    "{0} — {1}% · 상태: {2} · flagged {3} · resolved {4}",
    "{0} — {1}% · status: {2} · flagged {3} · resolved {4}"
+  ],
+  [
+   "→ {0} 의미 프레임 검토됨 ({1} slots)",
+   "→ {0} semantic frame reviewed ({1} slots)"
+  ],
+  [
+   "→ {0} 상세 조회 실패: {1}",
+   "→ Inspecting {0} failed: {1}"
   ],
   [
    "기본 · 노드 종류 {0}",
