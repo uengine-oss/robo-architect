@@ -5350,6 +5350,31 @@
    "#datasource-manager-title",
    "데이터 소스",
    "Data Sources"
+  ],
+  [
+   ".rule-section",
+   "예시",
+   "Examples"
+  ],
+  [
+   ".rule-example",
+   "상황",
+   "Given"
+  ],
+  [
+   ".rule-example",
+   "요청",
+   "When"
+  ],
+  [
+   ".rule-example",
+   "결과",
+   "Then"
+  ],
+  [
+   ".rule-section",
+   "효과",
+   "Effects"
   ]
  ]
 }
