@@ -91,3 +91,11 @@ def test_json_response_format():
         completion_response("m", "no json", "json")
     # 도구가 있으면 도구 모드가 먼저
     assert build_prompt({"messages": [], "tools": [LS], "response_format": rf})[2] == "choose"
+
+
+def test_english_mode_asks_for_english_values(monkeypatch):
+    from api.platform.skill_runner import _with_output_language
+    monkeypatch.setenv("ROBO_LANG", "en")
+    assert "OUTPUT LANGUAGE: English" in _with_output_language("요약해 줘")
+    monkeypatch.setenv("ROBO_LANG", "ko")
+    assert _with_output_language("요약해 줘") == "요약해 줘"

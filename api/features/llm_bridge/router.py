@@ -43,6 +43,7 @@ from api.platform.skill_runner import (
     _resolve_claude_bin,
     _run_process_sync,
     _skill_env,
+    _with_output_language,
     extract_json,
 )
 
@@ -286,6 +287,8 @@ async def chat_completions(request: Request):
     body = await request.json()
     model = str(body.get("model") or "")
     system, prompt, mode, fns = build_prompt(body)
+    # 영어 모드면 분석기 결과(요약 · 규칙 · 예시 · 설명)도 영어로 — 분석기 프롬프트는 한국어다
+    prompt = _with_output_language(prompt)
     started = time.monotonic()
     text = await _ask_claude(system, prompt, model)
     full = completion_response(model, text, mode, fns)
