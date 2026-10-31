@@ -78,3 +78,16 @@ def test_stream_chunks():
     assert first["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
     assert json.loads(events[1][6:])["choices"][0]["finish_reason"] == "tool_calls"
     assert "usage" in json.loads(events[2][6:])
+
+
+def test_json_response_format():
+    rf = {"type": "json_schema", "json_schema": {"name": "TableDesc", "schema": {"type": "object", "properties": {"description": {"type": "string"}}}}}
+    _, prompt, mode, _ = build_prompt({"messages": [{"role": "user", "content": "Describe table store."}], "response_format": rf})
+    assert mode == "json" and '"description"' in prompt
+    out = completion_response("m", 'Here it is:\n```json\n{"description": "가게"}\n```', "json")
+    assert json.loads(out["choices"][0]["message"]["content"]) == {"description": "가게"}
+    assert out["choices"][0]["finish_reason"] == "stop"
+    with pytest.raises(HTTPException):
+        completion_response("m", "no json", "json")
+    # 도구가 있으면 도구 모드가 먼저
+    assert build_prompt({"messages": [], "tools": [LS], "response_format": rf})[2] == "choose"

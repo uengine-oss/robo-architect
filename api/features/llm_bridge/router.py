@@ -16,6 +16,8 @@ OpenAI 키가 없거나 만료되면 13장(레거시 코드 분석)이 통째로
 - 도구 에이전트: scan · residual 같은 에이전트는 도구 여럿을 주고 고르게 한다(tool_choice
   auto · required). 도구 목록을 지시문에 넣고 `{"tool_calls": [...]}` 이나 `{"content": ...}`
   JSON 하나로 답하게 한다. 앞선 도구 호출과 그 결과도 대화 글에 넣는다.
+- JSON 응답: response_format(json_schema · json_object)이 오면 스키마를 지시문에 넣고, 답에서 JSON 만
+  골라 content 로 돌려준다(코드 펜스 · 설명이 섞여도).
 - stream=true 면 완성된 답을 OpenAI SSE 조각으로 보낸다(분석기는 반복 감시 때문에 스트림으로 부른다).
 
 ## 안전
@@ -129,7 +131,8 @@ def _choose_directive(mode: str, fns: list[dict]) -> str:
 
 
 def build_prompt(body: dict) -> tuple[str, str, str, list[dict]]:
-    """(system, user prompt, 도구 모드, 함수 정의들) — 대화는 한 덩어리 글로 넘긴다."""
+    """(system, user prompt, 모드, 함수 정의들) — 대화는 한 덩어리 글로 넘긴다.
+    모드: text · forced · choose · required(도구), json(response_format)."""
     messages = body.get("messages") or []
     names = _tool_names(messages)
     system_parts: list[str] = []
@@ -158,7 +161,28 @@ def build_prompt(body: dict) -> tuple[str, str, str, list[dict]]:
         )
     elif mode in ("choose", "required"):
         turns.append(_choose_directive(mode, fns))
+    elif _json_format(body) is not None:
+        mode = "json"
+        schema = _json_format(body)
+        turns.append(
+            "Output ONLY one JSON object" + (
+                f" that validates against this JSON Schema: {json.dumps(schema, ensure_ascii=False)}" if schema else ""
+            ) + ". No prose, no code fences."
+        )
     return "\n\n".join(system_parts), "\n\n".join(turns), mode, fns
+
+
+def _json_format(body: dict) -> dict | None:
+    """response_format 이 JSON 을 요구하면 그 스키마({} = 스키마 없는 json_object), 아니면 None.
+    LangChain 의 기본 구조화 출력(method="json_schema")이 이 길로 온다 — SDK 가 content 를 바로 JSON 으로 읽는다."""
+    rf = body.get("response_format")
+    if not isinstance(rf, dict):
+        return None
+    if rf.get("type") == "json_schema":
+        return (rf.get("json_schema") or {}).get("schema") or {}
+    if rf.get("type") == "json_object":
+        return {}
+    return None
 
 
 def _claude_cmd(system: str, model: str) -> list[str]:
@@ -208,6 +232,11 @@ def answer_message(text: str, mode: str, fns: list[dict]) -> tuple[dict, str]:
         if not isinstance(args, dict):
             _fail(f"claude did not return a JSON object for the tool call: {text[:300]}")
         return {"role": "assistant", "content": None, "tool_calls": [_tool_call(fns[0].get("name"), args)]}, "tool_calls"
+    if mode == "json":
+        parsed = extract_json(text)
+        if not isinstance(parsed, (dict, list)):
+            _fail(f"claude did not return JSON for response_format: {text[:300]}")
+        return {"role": "assistant", "content": json.dumps(parsed, ensure_ascii=False)}, "stop"
     if mode in ("choose", "required"):
         known = {f.get("name") for f in fns}
         parsed = extract_json(text)
