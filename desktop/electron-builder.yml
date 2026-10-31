@@ -64,7 +64,7 @@ nsis:
 
 # macOS (Apple Silicon): a DMG with a fixed name, so the website can link
 #   https://github.com/uengine-oss/robo-architect-lite-releases/releases/latest/download/Robo-Architect-Lite-mac-arm64.dmg
-# Build: scripts/build-packaged-runtime.sh, then `npm run dist:mac` (desktop/scripts/release/README.md).
+# Build: scripts/build-packaged-runtime.sh, then `npm run dist:mac` (scripts/release/README.md).
 mac:
   target:
     - target: dmg
