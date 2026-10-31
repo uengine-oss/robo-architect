@@ -15,9 +15,20 @@
  *
  * NEVER logged. Reads and writes log only the id, never the value, never
  * the file path beyond `~/` substitution (handled by callers).
+ *
+ * File mode (`<dataDir>/secrets/<id>.secret`, owner-only 0600): a packaged
+ * macOS build is signed ad hoc — there is no Developer ID, so every new
+ * version has a new code signature. The keychain then asks for the user's
+ * password before the new version may read the key the previous version
+ * stored, and a "Deny" leaves the app without the database password it set
+ * up on first launch. So a packaged macOS app keeps its secrets (the local
+ * database password, the bundled connection's password) in owner-only files
+ * and never touches the keychain; development keeps `safeStorage`.
+ * `ROBO_SECRET_STORE=file|keychain` overrides. An existing `<id>.bin` is
+ * still read through `safeStorage`, so nothing stored before is lost.
  */
 
-import { safeStorage } from "electron";
+import { app, safeStorage } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -32,6 +43,18 @@ function secretsDir(): string {
 function secretFile(id: string): string {
   validateId(id);
   return path.join(secretsDir(), `${id}.bin`);
+}
+
+function plainFile(id: string): string {
+  validateId(id);
+  return path.join(secretsDir(), `${id}.secret`);
+}
+
+function fileMode(): boolean {
+  const forced = process.env.ROBO_SECRET_STORE;
+  if (forced === "file") return true;
+  if (forced === "keychain") return false;
+  return app.isPackaged && process.platform === "darwin";
 }
 
 function validateId(id: string): void {
@@ -52,38 +75,60 @@ function ensureUsable(): void {
 }
 
 export async function setSecret(id: string, value: string): Promise<void> {
+  fs.mkdirSync(secretsDir(), { recursive: true, mode: 0o700 });
+  if (fileMode()) {
+    const file = plainFile(id);
+    const temporary = `${file}.tmp`;
+    await fs.promises.writeFile(temporary, value, { encoding: "utf8", mode: 0o600 });
+    await fs.promises.rename(temporary, file);
+    await unlinkIfPresent(secretFile(id)); // the file is the value now; a stale .bin must not win
+    return;
+  }
   ensureUsable();
-  fs.mkdirSync(secretsDir(), { recursive: true });
   const cipher = safeStorage.encryptString(value);
   await fs.promises.writeFile(secretFile(id), cipher, { mode: 0o600 });
 }
 
 export async function getSecret(id: string): Promise<string | null> {
-  ensureUsable();
   try {
-    const cipher = await fs.promises.readFile(secretFile(id));
-    return safeStorage.decryptString(cipher);
+    return await fs.promises.readFile(plainFile(id), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  let cipher: Buffer;
+  try {
+    cipher = await fs.promises.readFile(secretFile(id));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
+  ensureUsable();
+  return safeStorage.decryptString(cipher);
 }
 
-export async function deleteSecret(id: string): Promise<void> {
+async function unlinkIfPresent(file: string): Promise<void> {
   try {
-    await fs.promises.unlink(secretFile(id));
+    await fs.promises.unlink(file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 }
 
+export async function deleteSecret(id: string): Promise<void> {
+  await unlinkIfPresent(secretFile(id));
+  await unlinkIfPresent(plainFile(id));
+}
+
 export async function hasSecret(id: string): Promise<boolean> {
-  try {
-    await fs.promises.access(secretFile(id));
-    return true;
-  } catch {
-    return false;
+  for (const file of [plainFile(id), secretFile(id)]) {
+    try {
+      await fs.promises.access(file);
+      return true;
+    } catch {
+      /* next */
+    }
   }
+  return false;
 }
 
 /**
