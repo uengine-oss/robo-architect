@@ -30,6 +30,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from api.platform.observability.smart_logger import SmartLogger
 from api.platform.skill_runner import (
@@ -156,19 +157,37 @@ def completion_response(model: str, text: str, fn: dict | None) -> dict:
     }
 
 
+def stream_chunks(full: dict, include_usage: bool):
+    """완성된 응답을 OpenAI SSE 조각으로 — 분석기는 반복 감시 때문에 stream=True(stream_usage)로 부른다.
+    claude -p 는 한 번에 답하므로 내용 한 조각 + 끝 조각(+ 사용량) + [DONE]."""
+    base = {"id": full["id"], "object": "chat.completion.chunk", "created": full["created"], "model": full["model"]}
+    choice = full["choices"][0]
+    msg = choice["message"]
+    delta: dict[str, Any] = {"role": "assistant", "content": msg.get("content")}
+    if msg.get("tool_calls"):
+        delta["tool_calls"] = [{"index": i, **tc} for i, tc in enumerate(msg["tool_calls"])]
+    yield f"data: {json.dumps({**base, 'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]}, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps({**base, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': choice['finish_reason']}]})}\n\n"
+    if include_usage:
+        yield f"data: {json.dumps({**base, 'choices': [], 'usage': full['usage']})}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 @router.post("/chat/completions")
-async def chat_completions(request: Request) -> dict:
+async def chat_completions(request: Request):
     body = await request.json()
-    if body.get("stream"):
-        raise HTTPException(status_code=400, detail="stream is not supported by the Claude Code bridge")
     model = str(body.get("model") or "")
     system, prompt, fn = build_prompt(body)
     started = time.monotonic()
     text = await _ask_claude(system, prompt, model)
     SmartLogger.log("INFO", "LLM bridge answered via Claude Code.", category="api.llm_bridge.done",
                     params={"model": model, "tool": (fn or {}).get("name"), "seconds": round(time.monotonic() - started, 1),
-                            "prompt_chars": len(prompt)})
-    return completion_response(model, text, fn)
+                            "prompt_chars": len(prompt), "stream": bool(body.get("stream"))})
+    full = completion_response(model, text, fn)
+    if body.get("stream"):
+        include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
+        return StreamingResponse(stream_chunks(full, include_usage), media_type="text/event-stream")
+    return full
 
 
 @router.get("/models")
