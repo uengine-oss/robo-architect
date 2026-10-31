@@ -2732,7 +2732,13 @@
   "Docker 이미지 묶음을 불러오는 중": "Loading the bundled Docker images",
   "처음 실행에서 한 번만 받습니다": "Downloaded once, on the first launch",
   "Docker Desktop 을 켠 뒤 앱을 다시 여세요": "Start Docker Desktop, then open the app again",
-  "Docker 이미지를 내려받지 못했습니다 — 인터넷 연결을 확인하고 앱을 다시 여세요": "Could not download the Docker images — check the internet connection and open the app again"
+  "Docker 이미지를 내려받지 못했습니다 — 인터넷 연결을 확인하고 앱을 다시 여세요": "Could not download the Docker images — check the internet connection and open the app again",
+  "테이블 예시 데이터 가져오는 중": "Fetching sample table data",
+  "모듈 요약하는 중": "Summarising modules",
+  "구성 요소 묶는 중": "Grouping components",
+  "용어집 만드는 중": "Building the glossary",
+  "데이터 흐름 보강 중": "Enriching data lineage",
+  "코드 건강 지표 계산 중": "Computing code health metrics"
  },
  "patterns": [
   [
