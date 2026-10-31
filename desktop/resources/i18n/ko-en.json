@@ -2766,9 +2766,15 @@
   "리포트 생성 (ReportGenerator)": "ReportGenerator",
   "데이터 이관 (DataMigrator)": "DataMigrator",
   "커서 순회 (CursorLooper)": "CursorLooper",
-  "패키지 초기화 (PackageInitializer)": "PackageInitializer"
+  "패키지 초기화 (PackageInitializer)": "PackageInitializer",
+  "검증 실행 중...": "Running validation...",
+  "검증할 인수 조건/구조 변경이 없어 바로 통과 처리합니다.": "No acceptance criteria or structural changes to validate — passing right away."
  },
  "patterns": [
+  [
+   "인수 조건 {0}건 + 구조 검증 대상 로드. robo-sync 추출기로 대조합니다…",
+   "Loaded {0} acceptance criteria + structural targets. Comparing with the robo-sync extractor…"
+  ],
   [
    "{0} — {1}% · 상태: {2} · flagged {3} · resolved {4}",
    "{0} — {1}% · status: {2} · flagged {3} · resolved {4}"
