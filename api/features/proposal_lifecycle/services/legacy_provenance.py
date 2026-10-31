@@ -13,6 +13,9 @@ from api.platform.legacy_tool_events import decode_event, is_event
 from api.platform.neo4j import get_session
 from api.platform.observability.smart_logger import SmartLogger
 
+# 종류가 아닌 표지 라벨 — Ontological DB 에서는 ANALYZER_OWNED 가 언제나 첫 라벨(부모 타입)이다
+_MARKER_LABELS = {"EMBEDDED", "ANALYZER_OWNED"}
+
 
 def _extract_saved_path(error_text: str) -> str:
     """CLI 초대형 결과 안내문에서 실제 저장 파일 경로를 문구 비의존으로 찾는다."""
@@ -139,7 +142,7 @@ def _compact_inspection(node_id: str, data: dict, raw_head: str) -> dict:
             "view": "frame",
             "schemaVersion": str(data.get("schema_version") or ""),
             "name": node.get("name", ""),
-            "label": next((label for label in labels if label != "EMBEDDED"), ""),
+            "label": next((label for label in labels if label not in _MARKER_LABELS), ""),
             "semanticFrame": dict(node.get("semantic_frame") or {}),
             "ruleExamples": list(node.get("rule_examples") or []),
             "linkedContext": dict(node.get("linked_context") or {}),
@@ -150,7 +153,7 @@ def _compact_inspection(node_id: str, data: dict, raw_head: str) -> dict:
         "nodeId": node_id,
         "ok": True,
         "name": node.get("name", ""),
-        "label": next((label for label in node.get("labels", []) if label != "EMBEDDED"), ""),
+        "label": next((label for label in node.get("labels", []) if label not in _MARKER_LABELS), ""),
         "logicalName": properties.get("logical_name", ""),
         "summary": (properties.get("summary") or "")[:120],
         "source": _compact_source(node.get("source")),
