@@ -2768,7 +2768,9 @@
   "커서 순회 (CursorLooper)": "CursorLooper",
   "패키지 초기화 (PackageInitializer)": "PackageInitializer",
   "검증 실행 중...": "Running validation...",
-  "검증할 인수 조건/구조 변경이 없어 바로 통과 처리합니다.": "No acceptance criteria or structural changes to validate — passing right away."
+  "검증할 인수 조건/구조 변경이 없어 바로 통과 처리합니다.": "No acceptance criteria or structural changes to validate — passing right away.",
+  "영역": "Area",
+  "루틴": "Routine"
  },
  "patterns": [
   [
@@ -2918,6 +2920,18 @@
   [
    "[책임] {0}",
    "[responsibility] {0}"
+  ],
+  [
+   "영역 ({0})",
+   "Area ({0})"
+  ],
+  [
+   "루틴 ({0})",
+   "Routine ({0})"
+  ],
+  [
+   "모듈 ({0})",
+   "Module ({0})"
   ],
   [
    "{0}개 영향",
