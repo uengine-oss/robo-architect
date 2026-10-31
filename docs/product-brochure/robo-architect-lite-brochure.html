@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<title>Robo Architect Lite — 제품 소개 및 도입 제안서</title>
+<style>
+  :root{
+    --navy:#0c1a2e; --navy2:#173458; --ink:#12203a; --body:#2b3648;
+    --accent:#1f5fd8; --accent-dark:#17408f; --accent-soft:#eaf1fe;
+    --amber-bg:#fdf8ec; --amber-line:#cf9c34; --amber-ink:#8a6410;
+    --muted:#6b7688; --line:#e4e8ef; --soft:#f7f9fc;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+  body{
+    font-family:"Pretendard","Apple SD Gothic Neo","Noto Sans KR",-apple-system,sans-serif;
+    color:var(--body); font-size:10.2pt; line-height:1.72;
+    word-break:keep-all; overflow-wrap:break-word;
+  }
+  @page{size:A4; margin:0}
+  .page{
+    position:relative; width:210mm; height:297mm; padding:20mm 18mm 16mm;
+    background:#fff; overflow:hidden; page-break-after:always;
+  }
+  .page:last-child{page-break-after:auto}
+
+  /* ── 표지 / 배표지 ───────────────────────────── */
+  .cover{
+    background:linear-gradient(155deg,#0a1526 0%,#10243f 45%,#193a63 100%);
+    color:#fff; padding:24mm 18mm;
+  }
+  .cover::after{
+    content:""; position:absolute; inset:0;
+    background-image:radial-gradient(circle,rgba(255,255,255,.10) 1px,transparent 1px);
+    background-size:22px 22px; opacity:.5; pointer-events:none;
+  }
+  .cover > *{position:relative; z-index:1}
+  .brand{display:flex; align-items:center; gap:11px}
+  .brand-mark{
+    width:40px; height:40px; border-radius:10px; flex:none;
+    background:linear-gradient(140deg,#2f7bff,#1b48a8);
+    display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:15px; color:#fff; letter-spacing:.5px;
+  }
+  .brand-name{font-size:19px; font-weight:800; letter-spacing:-.3px; line-height:1.25}
+  .brand-sub{font-size:8.4pt; letter-spacing:3px; color:#8fb4e8; font-weight:600}
+  .cover-eyebrow{margin-top:26mm; font-size:8.6pt; letter-spacing:4px; color:#8fb4e8; font-weight:700}
+  .cover-title{margin-top:7px; font-size:33pt; font-weight:800; line-height:1.28; letter-spacing:-1.2px; color:#fff}
+  .cover-lead{margin-top:13px; font-size:11pt; line-height:1.85; color:#c3d6f0; max-width:132mm}
+  .cover-lead b{color:#fff; font-weight:700}
+  .cover-shot{
+    margin-top:12mm; border-radius:9px 0 0 9px; overflow:hidden;
+    box-shadow:0 22px 56px rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.14);
+    border-right:none; margin-right:-18mm; height:78mm;
+  }
+  .cover-shot img{width:100%; display:block}
+  .cover-stats{display:flex; gap:0; margin-top:11mm; border-top:1px solid rgba(255,255,255,.2); padding-top:8mm}
+  .cover-stats div{flex:1; border-left:1px solid rgba(255,255,255,.16); padding-left:14px}
+  .cover-stats div:first-child{border-left:none; padding-left:0}
+  .cover-stats b{display:block; font-size:16pt; font-weight:800; color:#fff; letter-spacing:-.4px}
+  .cover-stats span{font-size:8.4pt; color:#93b3dd; display:block; margin-top:3px}
+  .cover-foot{position:absolute; left:18mm; right:18mm; bottom:16mm; display:flex; justify-content:space-between; align-items:flex-end}
+  .cover-foot .d{font-size:10pt; font-weight:700; color:#fff}
+  .cover-foot .s{font-size:8.4pt; color:#93b3dd; margin-top:3px}
+  .cover-foot .org{font-size:12pt; font-weight:800; color:#cfe0f7; letter-spacing:-.3px}
+
+  /* ── 본문 헤더 ───────────────────────────── */
+  .badge{
+    display:inline-block; background:var(--accent); color:#fff;
+    font-size:8pt; font-weight:700; letter-spacing:1.6px;
+    padding:4px 13px; border-radius:20px;
+  }
+  h1.sec{margin-top:11px; font-size:22pt; font-weight:800; color:var(--ink); letter-spacing:-1px; line-height:1.3}
+  h1.sec .num{color:var(--accent)}
+  .rule{width:34px; height:3px; background:var(--accent); margin:9px 0 15px}
+  .lead{font-size:10.4pt; line-height:1.78; color:var(--body); margin-bottom:5mm}
+  .lead b{color:var(--ink); font-weight:700}
+  h2.sub{font-size:11.6pt; font-weight:800; color:var(--ink); margin:5.5mm 0 3mm; letter-spacing:-.4px}
+  .lead + h2.sub{margin-top:0}
+  h3.mini{font-size:10pt; font-weight:700; color:var(--ink); margin:5mm 0 2.5mm}
+  p{margin-bottom:3mm}
+  p:last-child{margin-bottom:0}
+  b,strong{color:var(--ink); font-weight:700}
+  code{
+    font-family:"SF Mono",Menlo,monospace; font-size:8.6pt;
+    background:var(--soft); border:1px solid var(--line); border-radius:4px; padding:1px 5px; color:#334;
+  }
+
+  /* ── 카드 ───────────────────────────── */
+  .grid{display:grid; gap:4mm}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .card{border:1px solid var(--line); border-radius:8px; padding:4.5mm 5mm; background:#fff}
+  .card .kicker{font-size:8pt; font-weight:700; color:var(--muted); letter-spacing:.4px; margin-bottom:2px}
+  .card .t{font-size:10.4pt; font-weight:700; color:var(--ink); margin-bottom:2.5mm; letter-spacing:-.3px}
+  .card p{font-size:9.4pt; line-height:1.7; margin:0}
+  .card.tinted{background:var(--soft)}
+  .stat-card{border-left:3px solid var(--accent); padding-left:11px}
+  .stat-card b{display:block; font-size:15pt; font-weight:800; color:var(--accent); letter-spacing:-.4px; line-height:1.3}
+  .stat-card .l{font-size:9.4pt; color:var(--ink); font-weight:700; margin-top:2px}
+  .stat-card .d{font-size:8.6pt; color:var(--muted); line-height:1.6}
+
+  /* ── 콜아웃 ───────────────────────────── */
+  .callout{
+    background:var(--amber-bg); border-left:3px solid var(--amber-line);
+    padding:3.5mm 4.5mm; border-radius:0 6px 6px 0; font-size:9.2pt; line-height:1.68; margin:4mm 0;
+  }
+  .callout b{color:var(--amber-ink)}
+  .note{
+    background:var(--soft); border:1px solid var(--line);
+    padding:3.5mm 4.5mm; border-radius:7px; font-size:9.2pt; line-height:1.68; margin:4mm 0;
+  }
+  .note .t{font-size:9.6pt; font-weight:700; color:var(--ink); margin-bottom:2mm}
+  .quote{border-left:3px solid var(--accent); padding-left:12px; font-size:10pt; line-height:1.75; color:var(--ink); margin:3mm 0}
+
+  /* ── 표 ───────────────────────────── */
+  table{width:100%; border-collapse:collapse; font-size:9.3pt; margin:3mm 0}
+  th{
+    background:var(--soft); color:var(--ink); font-weight:700; text-align:left;
+    padding:2.6mm 3.2mm; border-bottom:1.5px solid var(--line); font-size:9.2pt;
+  }
+  td{padding:2.6mm 3.2mm; border-bottom:1px solid var(--line); vertical-align:top; line-height:1.6}
+  td:first-child{font-weight:700; color:var(--ink); white-space:nowrap}
+  table.free td:first-child{white-space:normal}
+  tr:last-child td{border-bottom:none}
+
+  /* ── 리스트 ───────────────────────────── */
+  ul.dot{list-style:none; margin:3mm 0}
+  ul.dot li{position:relative; padding-left:14px; margin-bottom:2.4mm; font-size:9.6pt; line-height:1.72}
+  ul.dot li::before{content:""; position:absolute; left:0; top:8px; width:5px; height:5px; border-radius:50%; background:var(--accent)}
+  ol.num{list-style:none; counter-reset:n; margin:3mm 0}
+  ol.num li{position:relative; padding-left:22px; margin-bottom:2.8mm; font-size:9.6pt; line-height:1.72; counter-increment:n}
+  ol.num li::before{
+    content:counter(n); position:absolute; left:0; top:2px; width:15px; height:15px; border-radius:50%;
+    background:var(--accent); color:#fff; font-size:7.6pt; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* ── 그림 ───────────────────────────── */
+  figure{margin:4mm 0}
+  figure img{width:100%; display:block; border:1px solid var(--line); border-radius:7px}
+  figure.crop img{height:var(--h); object-fit:cover; object-position:top center}
+  .gallery figure img{height:80mm; object-fit:cover; object-position:top center}
+  figcaption{font-size:8.4pt; color:var(--muted); line-height:1.6; margin-top:2.5mm}
+  figcaption b{color:var(--ink); font-weight:700}
+  figcaption i{font-style:italic}
+
+  /* ── 흐름 다이어그램 ───────────────────────────── */
+  .flow{display:flex; align-items:center; gap:6px; margin:5mm 0; flex-wrap:nowrap}
+  .flow .step{
+    flex:1; text-align:center; border:1px solid var(--line); border-radius:7px;
+    padding:3.5mm 2mm; background:#fff;
+  }
+  .flow .step b{display:block; font-size:9.4pt; color:var(--ink); font-weight:700}
+  .flow .step span{display:block; font-size:8pt; color:var(--muted); margin-top:2px; line-height:1.5}
+  .flow .step.on{background:var(--accent); border-color:var(--accent)}
+  .flow .step.on b{color:#fff}
+  .flow .step.on span{color:#c9dcff}
+  .flow .arw{color:var(--muted); font-size:12pt; flex:none}
+  .pipe{display:flex; align-items:center; gap:0; margin:5mm 0}
+  .pipe .n{
+    width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff;
+    font-size:8.4pt; font-weight:700; display:flex; align-items:center; justify-content:center; flex:none;
+  }
+  .pipe .l{flex:1; height:2px; background:var(--line)}
+  .pipe-labels{display:flex; margin-top:2mm}
+  .pipe-labels div{flex:1; font-size:8.4pt; color:var(--ink); font-weight:700; text-align:center}
+  .pipe-labels div:first-child{text-align:left}
+  .pipe-labels div:last-child{text-align:right}
+
+  /* ── 토폴로지 박스 ───────────────────────────── */
+  .topo{display:flex; flex-direction:column; align-items:center; gap:0; margin:4mm 0}
+  .tb{
+    border:1px solid var(--line); border-radius:7px; padding:3mm 5mm; text-align:center;
+    background:#fff; min-width:56mm;
+  }
+  .tb b{display:block; font-size:9.6pt; color:var(--ink); font-weight:700}
+  .tb span{display:block; font-size:8.2pt; color:var(--muted); margin-top:1px}
+  .tb.solid{background:var(--accent); border-color:var(--accent)}
+  .tb.solid b{color:#fff} .tb.solid span{color:#c9dcff}
+  .tb.soft{background:var(--accent-soft); border-color:#c5d9fb}
+  .tdown{width:1px; height:6mm; background:var(--line); position:relative}
+  .tdown::after{content:"▼"; position:absolute; bottom:-4px; left:-4px; font-size:6pt; color:var(--line)}
+  .trow{display:flex; gap:4mm; justify-content:center; width:100%}
+  .dashed{border:1px dashed #b9c6d8; border-radius:8px; padding:3.5mm; background:#fbfcfe}
+  .dashed .dt{font-size:8.2pt; color:var(--muted); font-weight:700; text-align:center; margin-bottom:2.5mm}
+
+  /* ── 일정 ───────────────────────────── */
+  .gantt{margin:4mm 0}
+  .gantt .row{display:flex; align-items:center; gap:4mm; margin-bottom:2.6mm}
+  .gantt .lbl{width:44mm; flex:none}
+  .gantt .lbl b{display:block; font-size:9.4pt; color:var(--ink); font-weight:700}
+  .gantt .lbl span{display:block; font-size:8.2pt; color:var(--muted); line-height:1.5}
+  .gantt .track{flex:1; height:11px; background:var(--soft); border-radius:6px; position:relative}
+  .gantt .bar{position:absolute; height:11px; border-radius:6px; background:var(--accent)}
+  .gantt .bar.d{background:var(--accent-dark)}
+  .gantt .scale{display:flex; margin:0 0 2mm 48mm; font-size:7.6pt; color:var(--muted)}
+  .gantt .scale div{flex:1; text-align:right}
+
+  /* ── 푸터 ───────────────────────────── */
+  .foot{
+    position:absolute; left:18mm; right:18mm; bottom:9mm;
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:8pt; color:#9aa5b5; border-top:1px solid var(--line); padding-top:3mm;
+  }
+
+  /* ── 목차 ───────────────────────────── */
+  .toc{display:grid; grid-template-columns:1fr 1fr; gap:0 11mm; margin:4mm 0 6mm}
+  .toc a{
+    display:flex; align-items:baseline; gap:8px; text-decoration:none; color:var(--body);
+    padding:2.1mm 0; border-bottom:1px solid var(--line); font-size:9.4pt;
+  }
+  .toc .tn{color:var(--accent); font-weight:700; font-size:8.6pt; width:16px; flex:none}
+  .toc .tt{flex:1; color:var(--ink); font-weight:600}
+  .toc .tp{color:var(--muted); font-size:8.6pt}
+  h1.plain{font-size:20pt; font-weight:800; color:var(--ink); letter-spacing:-.8px}
+  .eyebrow{font-size:8.4pt; letter-spacing:3px; color:var(--muted); font-weight:700}
+</style>
+
+</head>
+<body>
+<!-- ══════════════════ 1. 표지 ══════════════════ -->
+<section class="page cover">
+<div class="brand">
+<div class="brand-mark">RA</div>
+<div>
+<div class="brand-name">Robo&nbsp;Architect Lite</div>
+<div class="brand-sub">AI ARCHITECTURE WORKBENCH</div>
+</div>
+</div>
+<div class="cover-eyebrow">제품 소개 및 도입 제안서</div>
+<h1 class="cover-title">요구사항이 바뀌면,<br/>설계도 함께 움직입니다.</h1>
+<p class="cover-lead">요구사항을 글로 입력하면 도메인 주도 설계(DDD)와 인수 조건으로 구체화하고, 프로젝트 설계 원칙에 따라 구현 계획을 작성합니다. 이 PC의 Claude Code가 격리된 작업 공간에서 구현하고, 검증을 거쳐 승인한 변경은 <b>코드와 설계 그래프에 함께 반영</b>합니다.</p>
+<div class="cover-shot"><img alt="Robo&nbsp;Architect Lite 홈 화면" src="assets/cover-home.jpg"/></div>
+<div class="cover-stats">
+<div><b>21종</b><span>스킬 파일로 정의한 AI 작업 절차</span></div>
+<div><b>7개</b><span>PC에서 실행하는 서비스 컨테이너</span></div>
+<div><b>Dual Merge</b><span>코드와 설계 그래프를 함께 반영</span></div>
+</div>
+<div class="cover-foot">
+<div>
+<div class="d">2026년 10월</div>
+<div class="s">AI 아키텍처 워크벤치 · 데스크톱 앱(Lite)</div>
+</div>
+<div class="org">uEngine</div>
+</div>
+</section>
+<!-- ══════════════════ 2. 목차 ══════════════════ -->
+<section class="page">
+<div class="eyebrow">CONTENTS</div>
+<h1 class="plain">목차</h1>
+<div class="rule"></div>
+<div class="toc">
+<a><span class="tn">01</span><span class="tt">AI 코딩의 역설</span><span class="tp">3</span></a>
+<a><span class="tn">09</span><span class="tt">특장점 ⑤⑥ 변경 영향 · 레거시 근거</span><span class="tp">14-15</span></a>
+<a><span class="tn">02</span><span class="tt">명세 · 시나리오 · 도메인</span><span class="tp">4</span></a>
+<a><span class="tn">10</span><span class="tt">시스템 구성과 실행 환경</span><span class="tp">16</span></a>
+<a><span class="tn">03</span><span class="tt">여러 팀의 명세 관리</span><span class="tp">5</span></a>
+<a><span class="tn">11</span><span class="tt">기술 스택과 스킬 체계</span><span class="tp">17</span></a>
+<a><span class="tn">04</span><span class="tt">Robo&nbsp;Architect Lite 소개</span><span class="tp">6</span></a>
+<a><span class="tn">12</span><span class="tt">사용 절차 (실제 화면)</span><span class="tp">18-19</span></a>
+<a><span class="tn">05</span><span class="tt">주요 산출물 ①②</span><span class="tp">7-8</span></a>
+<a><span class="tn">13</span><span class="tt">보안 · 거버넌스</span><span class="tp">20</span></a>
+<a><span class="tn">06</span><span class="tt">제품 화면 한눈에 보기</span><span class="tp">9</span></a>
+<a><span class="tn">14</span><span class="tt">설치 및 납품</span><span class="tp">21</span></a>
+<a><span class="tn">07</span><span class="tt">특장점 ①② 요구사항 · 계획</span><span class="tp">10-11</span></a>
+<a><span class="tn">15</span><span class="tt">개발 및 품질 검증 체계</span><span class="tp">22</span></a>
+<a><span class="tn">08</span><span class="tt">특장점 ③④ 구현 · 검증과 반영</span><span class="tp">12-13</span></a>
+<a><span class="tn">16</span><span class="tt">MSAEZ 도입 실적 · 도입 절차</span><span class="tp">23-24</span></a>
+</div>
+<h2 class="sub">한 장 요약</h2>
+<div class="quote">AI를 활용한 개발에서는 <b>구현할 기능과 검증 기준을 먼저 정의하는 일</b>이 중요합니다. Robo&nbsp;Architect Lite는 요구사항, 업무 시나리오, 도메인 모델을 프로젝트 그래프로 연결합니다. 변경 하나를 프로포절(변경 제안) 하나로 관리하며 설계, 구현, 검증, 반영까지 이어서 진행합니다.</div>
+<div class="grid g3" style="margin-top:4mm">
+<div class="stat-card">
+<b>SDD · BDD · DDD</b>
+<div class="d">명세로 요구사항을 정의하고, 시나리오로 검증 기준을 정하며, 도메인별로 설계 범위를 구분합니다</div>
+</div>
+<div class="stat-card">
+<b>프로포절 단위 변경</b>
+<div class="d">요구사항부터 계획, 구현, 검증 결과까지 변경 하나의 이력으로 남깁니다</div>
+</div>
+<div class="stat-card">
+<b>PC에서 실행</b>
+<div class="d">그래프 DB와 분석 서비스는 PC의 Docker에서 실행하고, AI 작업은 PC에 설치한 Claude Code가 수행합니다</div>
+</div>
+</div>
+<div class="note" style="margin-top:5mm"><div class="t">코드와 설계를 함께 반영하는 변경 관리</div>코드만 바뀌고 설계 문서가 그대로 남으면 다음 변경을 검토할 때 기준으로 삼기 어렵습니다. Robo&nbsp;Architect Lite는 검증을 마친 프로포절을 승인할 때 <b>코드 병합과 설계 그래프 반영을 함께 수행</b>합니다. 그래서 다음 프로포절은 최신 설계를 기준으로 영향 범위를 분석할 수 있습니다.</div>
+<h2 class="sub">이 문서가 다루는 것</h2>
+<div class="grid g4">
+<div class="card" style="padding:3.5mm 4mm">
+<div class="t" style="font-size:9.6pt">제품 개요</div>
+<p style="font-size:8.8pt">3–15쪽<br/>배경 · 정의 · 산출물 · 특장점</p>
+</div>
+<div class="card" style="padding:3.5mm 4mm">
+<div class="t" style="font-size:9.6pt">시스템 구성</div>
+<p style="font-size:8.8pt">16–17쪽<br/>실행 환경 · 기술 스택 · 스킬</p>
+</div>
+<div class="card" style="padding:3.5mm 4mm">
+<div class="t" style="font-size:9.6pt">사용 절차</div>
+<p style="font-size:8.8pt">18–19쪽<br/>실제 제품 화면 · 6단계</p>
+</div>
+<div class="card" style="padding:3.5mm 4mm">
+<div class="t" style="font-size:9.6pt">도입 안내</div>
+<p style="font-size:8.8pt">20–24쪽<br/>보안 · 설치 · 실적 · 일정</p>
+</div>
+</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>2</span></div>
+</section>
+<!-- ══════════════════ 3. 배경 ① ══════════════════ -->
+<section class="page">
+<div class="badge">01 · 배경</div>
+<h1 class="sec">AI 코딩의 역설</h1>
+<div class="rule"></div>
+<p class="lead">AI가 코드를 빠르게 작성하더라도 전체 개발 시간이 줄어드는 것은 아닙니다. 생성된 코드를 검토하고 수정하는 시간까지 고려해야 합니다. <b>요구사항과 업무 맥락, 검증 기준을 명확히 전달하는 것</b>이 AI 활용의 출발점입니다.</p>
+<div class="grid g3">
+<div class="stat-card">
+<b>24% 단축</b>
+<div class="l">참여 개발자의 사전 예상</div>
+<div class="d">AI 사용 시 예상한 작업 시간 감소율</div>
+</div>
+<div class="stat-card" style="border-left-color:#c0392b">
+<b style="color:#c0392b">19% 증가</b>
+<div class="l">실제 작업 시간</div>
+<div class="d">AI 사용 시 작업 완료까지 걸린 시간</div>
+</div>
+<div class="stat-card">
+<b>16명 · 246건</b>
+<div class="l">실험 참여자와 작업 수</div>
+<div class="d">숙련 개발자의 기존 오픈소스 프로젝트 작업</div>
+</div>
+</div>
+<p style="font-size:8.4pt; color:var(--muted); margin-top:2mm">출처: <a href="https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/">METR, 2025년 무작위 대조 실험</a>. 당시 도구와 참여자의 작업 환경에서 측정한 결과입니다.</p>
+<h2 class="sub">AI 활용 시 함께 관리해야 할 네 가지 문제</h2>
+<div class="grid g2">
+<div class="card">
+<div class="kicker">관리 항목 1</div>
+<div class="t">업무 맥락 전달</div>
+<p>AI가 조직의 업무 규칙과 용어를 이해하려면 관련 정보를 제공해야 합니다. 이 정보가 정리되어 있지 않으면 담당자가 대화마다 다시 설명해야 하고, 누락된 내용은 잘못된 구현으로 이어질 수 있습니다.</p>
+</div>
+<div class="card">
+<div class="kicker">관리 항목 2</div>
+<div class="t">검토와 수정 부담</div>
+<p>코드가 빠르게 생성되어도 요구사항에 맞는지 확인하는 과정은 필요합니다. 검증 기준이 불명확하면 담당자의 판단에 의존하게 되고, 검토와 수정에 드는 시간이 늘어납니다.</p>
+</div>
+<div class="card">
+<div class="kicker">관리 항목 3</div>
+<div class="t">모호한 요구사항</div>
+<p>숙련 개발자는 업무 지식을 바탕으로 기획서의 누락된 내용을 확인합니다. AI에 같은 맥락이 제공되지 않으면 의도와 다른 결과가 나올 수 있으므로, 구현 전에 요구사항을 구체화해야 합니다.</p>
+</div>
+<div class="card">
+<div class="kicker">관리 항목 4</div>
+<div class="t">설계 근거의 공유와 재사용</div>
+<p>설계 결정과 그 근거가 대화 기록에만 남으면 다음 작업에서 찾고 활용하기 어렵습니다. 담당자가 바뀌어도 이어서 사용할 수 있도록 요구사항과 함께 관리해야 합니다.</p>
+</div>
+</div>
+<h2 class="sub">네 가지 문제에 대한 Robo&nbsp;Architect Lite의 대응</h2>
+<div class="grid g2">
+<div class="stat-card"><b>맥락 전달</b><div class="l">프로젝트 그래프 · 설계 원칙 · 레거시 분석</div><div class="d">AI가 단계마다 같은 업무 맥락을 참조합니다</div></div>
+<div class="stat-card"><b>검토 부담</b><div class="l">인수 조건 · 설계 구조 검증</div><div class="d">판정마다 근거(파일 · 줄, 통과한 테스트)를 표시합니다</div></div>
+<div class="stat-card"><b>모호한 요구사항</b><div class="l">사용자 스토리 · Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then</div><div class="d">구현 전에 구체화하고, 필요하면 선택형 질문으로 확인합니다</div></div>
+<div class="stat-card"><b>설계 근거</b><div class="l">프로포절 이력 · 프로젝트 설계 원칙</div><div class="d">결정과 근거를 기록해 다음 변경에서 다시 사용합니다</div></div>
+</div>
+<div class="callout"><b>AI가 작성할 코드의 요구사항과 검증 기준을 먼저 정해야 합니다.</b> 업무 규칙과 설계 근거를 함께 관리하면, 구현과 검토에 필요한 맥락을 일관되게 제공할 수 있습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>3</span></div>
+</section>
+<!-- ══════════════════ 4. 배경 ② — SDD·BDD·DDD ══════════════════ -->
+<section class="page">
+<div class="badge">02 · 배경</div>
+<h1 class="sec">명세 · 시나리오 · 도메인으로 맥락을 구체화합니다</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect는 세 가지 방법론을 연결합니다. <b>명세 주도 개발(SDD)</b>로 요구사항을 정의하고, <b>행동 주도 개발(BDD)</b>로 기대 동작을 구체화하며, <b>도메인 주도 설계(DDD)</b>로 업무 영역과 용어의 경계를 정합니다.</p>
+<div class="grid g3">
+<div class="card tinted">
+<div class="kicker">SDD · 명세 주도 개발</div>
+<div class="t">구현할 내용을 명세로 정의</div>
+<p>목적과 요구사항을 문서로 정리한 뒤, 구현 계획과 작업 목록을 작성합니다. AI와 개발자가 같은 명세를 기준으로 작업할 수 있도록 합니다.</p>
+</div>
+<div class="card tinted">
+<div class="kicker">BDD · 행동 주도 개발</div>
+<div class="t">기대 동작을 사례로 설명</div>
+<p>“잔액이 100원일 때 20원을 인출하면 잔액은 80원이 된다”처럼 조건, 행동, 결과를 구체적으로 적습니다. 이 시나리오를 검증 기준으로 사용합니다.</p>
+</div>
+<div class="card tinted">
+<div class="kicker">DDD · 도메인 주도 설계</div>
+<div class="t">업무 영역별 설계 범위 구분</div>
+<p>업무 개념과 규칙을 기준으로 도메인의 경계를 정합니다. 각 영역에서 사용하는 용어와 책임을 명확히 해 AI에 필요한 맥락을 전달합니다.</p>
+</div>
+</div>
+<h2 class="sub">현금 인출 요구사항을 구체화하는 예</h2>
+<table class="free">
+<tr><th style="width:22%">작성 방식</th><th style="width:40%">예시 — ATM 현금 인출</th><th>검토 시 확인할 점</th></tr>
+<tr><td>사용자 스토리</td><td>“고객은 계좌에서 현금을 인출할 수 있어야 한다”</td>
+<td>잔액 부족 등 예외 상황과 처리 조건을 추가해야 합니다</td></tr>
+<tr><td>요구사항 명세서</td><td>“시스템은 인증된 사용자에게 현금 인출 기능을 제공한다”</td>
+<td>인증 조건과 인출 한도, 실패 시 동작을 구체화해야 합니다</td></tr>
+<tr><td>상세 설계서</td><td><code>if balance &gt;= amount: balance -= amount</code></td>
+<td>처리 로직을 표현하지만, 비개발자가 검토하기는 어렵습니다</td></tr>
+<tr><td><b>BDD 시나리오</b></td><td><b>Given</b> 잔액 100원 · <b>When</b> 20원 인출 · <b>Then</b> 현금 20원 지급, 잔액 80원</td>
+<td>업무 담당자와 개발자가 같은 사례로 기대 결과를 확인합니다</td></tr>
+</table>
+<h2 class="sub">Robo&nbsp;Architect Lite에서 세 방법론이 쓰이는 위치</h2>
+<div class="grid g3">
+<div class="stat-card"><b>SDD</b><div class="l">프로포절 · Plan · 작업 목록</div><div class="d">구현 전에 명세와 계획을 확정합니다</div></div>
+<div class="stat-card"><b>BDD</b><div class="l">Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then 인수 조건</div><div class="d">검증 단계의 판정 기준이 됩니다</div></div>
+<div class="stat-card"><b>DDD</b><div class="l">컨텍스트 · Aggregate · 명령 · 이벤트</div><div class="d">상세 DDD 방식은 6단계로 설계합니다</div></div>
+</div>
+<div class="callout"><b>BDD 시나리오는 업무 규칙을 함께 검토하는 기준입니다.</b> 기획자와 고객은 조건과 결과가 업무 의도에 맞는지 확인하고, AI는 이를 테스트 작성의 근거로 활용합니다. Robo&nbsp;Architect는 시나리오를 관련 설계 요소와 연결해 그래프에 저장하고, 구현 후 검증 단계에서 판정 기준으로 사용합니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>4</span></div>
+</section>
+<!-- ══════════════════ 5. 배경 ③ — 파일 vs 그래프 ══════════════════ -->
+<section class="page">
+<div class="badge">03 · 배경</div>
+<h1 class="sec">여러 팀의 명세를 연결해 관리해야 합니다</h1>
+<div class="rule"></div>
+<p class="lead">파일 기반 명세는 팀의 요구사항과 구현 계획을 정리하는 데 유용합니다. 다만 <b>여러 팀과 저장소에 정보가 분산되면</b> 용어를 맞추고 변경의 영향 범위를 파악하기 어려워집니다. 조직 차원에서는 다음 네 가지 문제를 함께 관리해야 합니다.</p>
+<table class="free">
+<tr><th style="width:22%">관리 과제</th><th style="width:34%">발생 원인</th><th>업무에 미치는 영향</th></tr>
+<tr><td>분산된 명세</td><td>명세 파일이 각 저장소 안에만 존재합니다</td>
+<td>다른 팀의 구현을 파악하기 어려워 같은 기능을 중복 개발할 수 있습니다</td></tr>
+<tr><td>용어 불일치</td><td>저장소마다 도메인 용어를 각자 정의합니다</td>
+<td>“수용가”와 “고객”처럼 서로 다른 용어가 같은 대상을 뜻하는지 확인해야 합니다</td></tr>
+<tr><td>영향 범위 파악</td><td>요구사항 · 설계 · 코드의 관계를 문서 링크로 관리합니다</td>
+<td>규정이 바뀌면 관련 문서와 코드를 일일이 확인해야 합니다</td></tr>
+<tr><td>설계 지식의 인계</td><td>업무 지식과 설계 근거가 담당자와 대화 기록에 의존합니다</td>
+<td>담당자 변경 시 업무 지식이 누락되거나 같은 분석을 반복할 수 있습니다</td></tr>
+</table>
+<div class="quote">Robo&nbsp;Architect는 <b>요구사항 · 도메인 모델 · 인수 조건 · 변경 이력의 관계</b>를 프로젝트 그래프로 관리합니다. 새 변경을 제안하면 연결된 설계 요소를 따라 새로 만들 요소와 수정할 요소를 구분하고, 이미 구현된 요소와의 충돌 가능성을 표시합니다.</div>
+<h2 class="sub">파일 기반과 그래프 기반의 차이</h2>
+<table class="free">
+<tr><th style="width:20%">비교 항목</th><th style="width:36%">파일 기반 명세</th><th>그래프 기반 명세</th></tr>
+<tr><td>명세의 위치</td><td>저장소 안의 마크다운 파일</td><td>프로젝트마다 하나씩 두는 도메인 그래프</td></tr>
+<tr><td>경계의 기준</td><td>저장소와 폴더 단위</td><td>Bounded Context 단위의 업무 영역</td></tr>
+<tr><td>용어 일관성</td><td>저장소마다 각자 기술</td><td>도메인별 용어와 관계를 함께 관리</td></tr>
+<tr><td>변경 영향 분석</td><td>파일 검색과 담당자 협의로 확인</td><td>연결 관계를 따라 영향 범위와 충돌 가능성 분석</td></tr>
+<tr><td>검증 기준</td><td>문서에 적은 수용 기준</td><td>설계 요소에 연결된 Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then 인수 조건</td></tr>
+<tr><td>지식의 축적</td><td>프로젝트별 파일에 기록</td><td>설계 요소와 프로포절(변경 제안) 이력으로 연결해 보존</td></tr>
+</table>
+<div class="callout"><b>파일 기반 도구와 그래프 기반 관리는 함께 활용할 수 있습니다.</b> 팀은 기존 Git 저장소에서 코드를 관리하고, Robo&nbsp;Architect는 설계 요소 간 관계와 변경 이력을 그래프로 관리합니다. 구현 코드는 대상 저장소의 브랜치에 커밋으로 남습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>5</span></div>
+</section>
+<!-- ══════════════════ 6. 소개 ══════════════════ -->
+<section class="page">
+<div class="badge">04 · 소개</div>
+<h1 class="sec">Robo&nbsp;Architect Lite 소개</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect Lite는 <b>명세 주도 개발을 위한 데스크톱 AI 아키텍처 워크벤치</b>입니다. 요구사항을 DDD 설계와 인수 조건으로 구체화하고 설계 원칙에 따라 계획을 작성합니다. 구현은 Claude Code가 격리된 작업 공간에서 수행합니다.</p>
+<div class="grid g3">
+<div class="card tinted">
+<div class="kicker">입력</div>
+<div class="t">요구사항</div>
+<p>추가하거나 변경할 기능을 문장으로 입력하거나 요구사항 문서를 붙여 넣습니다. 기존 코드와 데이터베이스를 연결해 설계 근거로 활용할 수 있습니다.</p>
+</div>
+<div class="card tinted">
+<div class="kicker">처리</div>
+<div class="t">DDD 설계와 구현 계획</div>
+<p>바운디드 컨텍스트, 기능, 사용자 스토리, 인수 조건으로 구체화합니다. 설계 원칙에 따라 Aggregate · 명령 · 이벤트와 아키텍처를 결정합니다.</p>
+</div>
+<div class="card tinted">
+<div class="kicker">출력</div>
+<div class="t">코드와 설계 그래프</div>
+<p>전용 브랜치에 구현한 코드와 검증 결과를 제공합니다. 승인하면 대상 브랜치와 프로젝트 그래프에 함께 반영합니다.</p>
+</div>
+</div>
+<h2 class="sub">기존 방식과의 차이</h2>
+<table>
+<tr><th style="width:22%"></th><th style="width:33%">문서 중심의 설계 관리</th><th>Robo&nbsp;Architect Lite</th></tr>
+<tr><td>설계의 형태</td><td>다이어그램 이미지와 문서</td><td>질의할 수 있는 프로젝트 그래프(노드 26종 · 관계 32종 정의)</td></tr>
+<tr><td>변경 단위</td><td>티켓과 문서를 따로 관리</td><td>프로포절 하나에 요구사항 · 계획 · 구현 · 검증 결과를 함께 기록</td></tr>
+<tr><td>설계 기준</td><td>담당자가 문서로 관리</td><td>프로젝트 설계 원칙을 계획의 결정마다 근거로 표시</td></tr>
+<tr><td>구현</td><td>설계와 별도로 진행</td><td>전용 브랜치의 격리된 작업 공간에서 Claude Code가 구현</td></tr>
+<tr><td>검증</td><td>리뷰어의 판단에 의존</td><td>인수 조건과 설계 구조를 근거(파일 · 줄)와 함께 판정</td></tr>
+<tr><td>AI 작업 절차</td><td>사람마다 다른 프롬프트</td><td>스킬 파일 21종에 절차와 규칙을 정의</td></tr>
+</table>
+<h2 class="sub">한눈에 보는 흐름</h2>
+<div class="flow">
+<div class="step"><b>INTENT</b><span>요구사항 구체화</span></div>
+<div class="arw">→</div>
+<div class="step"><b>PLAN</b><span>설계 원칙 · 계획</span></div>
+<div class="arw">→</div>
+<div class="step"><b>IMPLEMENTING</b><span>격리된 구현</span></div>
+<div class="arw">→</div>
+<div class="step"><b>VALIDATING</b><span>구조 · 인수 조건</span></div>
+<div class="arw">→</div>
+<div class="step on"><b>ACCEPTED</b><span>코드 + 그래프 반영</span></div>
+</div>
+<div class="callout">사용자는 단계별 결과를 검토한 뒤 다음 단계로 진행합니다. <b>대상 브랜치와 설계 그래프에는 최종 승인(Accept) 후에 반영</b>됩니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>6</span></div>
+</section>
+<!-- ══════════════════ 7. 산출물 ① ══════════════════ -->
+<section class="page">
+<div class="badge">05 · 산출물</div>
+<h1 class="sec">주요 산출물 ① — 프로젝트 설계 그래프</h1>
+<div class="rule"></div>
+<p class="lead">프로포절의 설계 결과는 <b>프로젝트 그래프</b>에 저장됩니다. 프로젝트 하나가 그래프 DB(Ontological DB) 안의 그래프 하나이므로, 프로젝트를 여러 개 만들어도 설계가 섞이지 않습니다.</p>
+<figure class="crop" style="--h:63mm">
+<img alt="전략 설계 결과" src="assets/out-strategic.jpg"/>
+<figcaption><b>그림 1.</b> 전략 설계 — 바운디드 컨텍스트 「주문」(Core) 아래의 기능 「주문하기」, 사용자 스토리, Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then 인수 조건. 요소마다 신규(CREATE)인지 표시합니다. <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<h2 class="sub">그래프에 저장하는 정보</h2>
+<table>
+<tr><th style="width:22%">계층</th><th>노드</th></tr>
+<tr><td>요구사항</td><td>Requirement · Feature · UserStory · Given/When/Then(인수 조건)</td></tr>
+<tr><td>전략 설계</td><td>BoundedContext(Core · Supporting · Generic 분류) · Policy</td></tr>
+<tr><td>전술 설계</td><td>Aggregate · Command · Event · ReadModel · Property · Invariant</td></tr>
+<tr><td>화면 · 흐름</td><td>UI · Journey · JourneyStep</td></tr>
+<tr><td>변경 · 기준</td><td>Proposal(PRO-NNN) · Constitution(프로젝트 설계 원칙)</td></tr>
+</table>
+<div class="grid g3" style="margin-top:4mm">
+<div class="stat-card"><b>26종</b><div class="l">노드 유형</div><div class="d">요구사항부터 프로포절 · 설계 원칙까지</div></div>
+<div class="stat-card"><b>32종</b><div class="l">관계 유형</div><div class="d">EMITS · TRIGGERS · HAS_GIVEN · EFFECT …</div></div>
+<div class="stat-card"><b>1 : 1</b><div class="l">프로젝트와 그래프</div><div class="d">프로젝트마다 그래프를 따로 생성</div></div>
+</div>
+<div class="callout"><b>설계 요소의 관계를 따라 필요한 정보를 찾습니다.</b> 요구사항 탭에서 사용자 스토리의 「설계 궤적」을 열면 주문하기 화면 → PlaceOrder(명령) → Order(Aggregate) → OrderPlaced(이벤트)처럼 스토리를 처리하는 설계 요소를 한 줄로 확인할 수 있습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>7</span></div>
+</section>
+<!-- ══════════════════ 8. 산출물 ② ══════════════════ -->
+<section class="page">
+<div class="badge">05 · 산출물</div>
+<h1 class="sec">주요 산출물 ② — 설계 원칙 · 계획 · 코드 · 검증 기록</h1>
+<div class="rule"></div>
+<p class="lead">프로포절은 단계마다 산출물을 남깁니다. 나중에 “이 Aggregate는 왜 생겼는가?”를 확인해야 할 때 해당 프로포절을 열어 <b>요구사항, 계획의 근거, 구현 커밋, 검증 결과</b>를 함께 볼 수 있습니다.</p>
+<table class="free">
+<tr><th style="width:17%">단계</th><th style="width:50%">산출물</th><th>보관 위치</th></tr>
+<tr><td><b>INTENT</b></td><td>전략 설계(프로세스 · 바운디드 컨텍스트 · 기능 · 사용자 스토리 · 인수 조건), Impact Map</td><td>프로포절</td></tr>
+<tr><td><b>설계 원칙</b></td><td>Core Principles · Technology Constraints · Architecture · Repository Strategy · Governance로 구성한 Markdown 문서</td><td>프로젝트 그래프(프로젝트당 1개)</td></tr>
+<tr><td><b>PLAN</b></td><td>전술 설계, 아키텍처 결정과 근거 원칙, 원칙이 정하지 않은 영역, 영향 분석</td><td>프로포절</td></tr>
+<tr><td><b>구현</b></td><td>Phase별 작업 목록, 작업마다 1건씩 기록하는 커밋</td><td>대상 저장소의<br/><code>proposal/PRO-NNN</code> 브랜치</td></tr>
+<tr><td><b>검증</b></td><td>판정 카드(PASS · FAIL · SKIP)와 근거(파일 · 줄, 통과한 테스트)</td><td>프로포절</td></tr>
+<tr><td><b>ACCEPTED</b></td><td>병합된 코드, 갱신된 설계 그래프, 상태 변경 이력</td><td>대상 브랜치 · 프로젝트 그래프</td></tr>
+</table>
+<figure class="crop" style="--h:53mm">
+<img alt="프로젝트 설계 원칙 편집기" src="assets/out-constitution.jpg"/>
+<figcaption><b>그림 2.</b> 프로젝트 설계 원칙(Constitution) 편집기 — 인터뷰로 작성한 「한빛 딜리버리 Constitution」을 미리보기 · 편집합니다. <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<h2 class="sub">튜토리얼 실습 프로포절 PRO-001의 결과(데모 데이터)</h2>
+<div class="grid g4">
+<div class="stat-card"><b>2 → 7</b><div class="l">질문 → 설계 원칙</div><div class="d">인터뷰 질문 2개로 원칙 7개 작성</div></div>
+<div class="stat-card"><b>15건</b><div class="l">작업 · 커밋</div><div class="d">Phase 6개, 작업마다 커밋 1건</div></div>
+<div class="stat-card"><b>69개 파일</b><div class="l">3,622줄</div><div class="d">잠금 파일 제외</div></div>
+<div class="stat-card"><b>45건</b><div class="l">테스트 통과</div><div class="d">병합 후 <code>npm test</code> 실행 결과</div></div>
+</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>8</span></div>
+</section>
+<!-- ══════════════════ 9. 화면 한눈에 ══════════════════ -->
+<section class="page">
+<div class="badge">06 · 화면</div>
+<h1 class="sec">제품 화면 한눈에 보기</h1>
+<div class="rule"></div>
+<p class="lead">홈의 기능 카드 여덟 개가 각 화면을 탭으로 엽니다. 요구사항 · 프로세스 · 설계 · 데이터 탭은 <b>같은 프로젝트 그래프를 용도에 맞게</b> 보여 줍니다. 아래는 실제 제품 화면이며, 데모 데이터(튜토리얼 실습) 기준입니다.</p>
+<div class="grid g2">
+<figure class="crop" style="--h:51mm; margin:0">
+<img alt="요구사항 탭" src="assets/g-stories.jpg"/>
+<figcaption><b>그림 3. 요구사항</b> — 컨텍스트(EPIC) › 기능(FEAT) › 스토리(US)와 인수 조건</figcaption>
+</figure>
+<figure class="crop" style="--h:51mm; margin:0">
+<img alt="프로세스 탭 이벤트 모델링" src="assets/g-process.jpg"/>
+<figcaption><b>그림 4. 프로세스</b> — 이벤트 모델링: 주문하기 화면 → PlaceOrder → OrderPlaced</figcaption>
+</figure>
+<figure class="crop" style="--h:51mm; margin:0">
+<img alt="설계 캔버스" src="assets/g-design.jpg"/>
+<figcaption><b>그림 5. 설계 캔버스</b> — 화면 → 명령(파랑) → Aggregate(노랑) → 이벤트(주황)</figcaption>
+</figure>
+<figure class="crop" style="--h:51mm; margin:0">
+<img alt="레거시 코드 그래프와 업무 규칙" src="assets/g-legacy.jpg"/>
+<figcaption><b>그림 6. 레거시</b> — 코드 그래프와 메서드별 개요 · 업무 규칙 · 예시</figcaption>
+</figure>
+</div>
+<h2 class="sub">홈의 기능 카드</h2>
+<table class="free">
+<tr><th style="width:19%">카드</th><th style="width:31%">하는 일</th><th style="width:19%">카드</th><th>하는 일</th></tr>
+<tr><td>프로포절</td><td>요구사항 → 설계 · 계획 · 구현 · 검증</td><td><b>데이터 모델</b></td><td>Aggregate의 엔티티 · 값 객체 · 열거형</td></tr>
+<tr><td>요구사항</td><td>컨텍스트 › 기능 › 스토리 › 인수 조건</td><td><b>코드</b></td><td>코드 폴더의 파일과 Claude Code 터미널</td></tr>
+<tr><td>프로세스</td><td>BPM 흐름과 이벤트 모델링</td><td><b>레거시 · 데이터 소스</b></td><td>기존 코드 분석, 기존 DB 연결</td></tr>
+<tr><td>설계 캔버스</td><td>이벤트스토밍 — Aggregate · 명령 · 이벤트</td><td><b>프로젝트 헌장</b></td><td>프로젝트 설계 원칙 편집 · 인터뷰</td></tr>
+</table>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>9</span></div>
+</section>
+<!-- ══════════════════ 10. 특장점 ① ══════════════════ -->
+<section class="page">
+<div class="badge">07 · 특장점</div>
+<h1 class="sec"><span class="num">①</span> 요구사항을 설계와 인수 조건으로 구체화합니다</h1>
+<div class="rule"></div>
+<p class="lead">문장으로 쓴 요구사항에는 예외 상황과 경계 조건이 빠지기 쉽습니다. 사용자가 요구사항을 입력하면 Claude Code가 INTENT 스킬에 따라 <b>프로세스 · 바운디드 컨텍스트 · 기능 · 사용자 스토리 · 인수 조건</b>으로 구체화합니다. 사용자는 문장에 없던 경계 상황까지 인수 조건으로 확인할 수 있습니다.</p>
+<div class="grid g2">
+<figure class="crop" style="--h:68mm; margin:0">
+<img alt="프로포절 전략 설계" src="assets/f1-intent.jpg"/>
+<figcaption><b>그림 7.</b> PRO-001의 전략 설계 — 요구사항 문장에서 프로세스 두 개를 도출했습니다. <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<div>
+<table class="free" style="margin-top:0">
+<tr><th style="width:42%">결과(132초)</th><th>내용</th></tr>
+<tr><td>프로세스 2개</td><td>메뉴 판매 운영 · 주문 생성과 접수 전 취소</td></tr>
+<tr><td>컨텍스트 2개</td><td>주문(Core) · 메뉴 관리(Supporting)</td></tr>
+<tr><td>기능 6개</td><td>메뉴 등록 · 가격 관리, 품절 관리, 주문하기 등</td></tr>
+<tr><td>스토리 7개</td><td>사장님 4개 · 고객 3개, 스토리마다 인수 조건</td></tr>
+</table>
+</div>
+</div>
+<h2 class="sub">문장에 없던 경계 조건까지 제시합니다</h2>
+<ul class="dot">
+<li><b>Given</b> ‘접수 대기’ 상태의 내 주문 · <b>When</b> 고객이 취소하면 · <b>Then</b> ‘취소됨’이 되고 가게는 그 주문을 접수할 수 없다</li>
+<li><b>Given</b> 가게가 이미 접수한 주문 · <b>When</b> 고객이 취소하면 · <b>Then</b> 취소가 거부되고 그 이유가 안내된다</li>
+<li><b>Given</b> 이미 취소된 주문 · <b>When</b> 다시 취소하면 · <b>Then</b> 상태 변화 없이 이미 취소된 주문임이 안내된다</li>
+</ul>
+<h2 class="sub">변경 범위에 맞는 세 가지 방식</h2>
+<table class="free">
+<tr><th style="width:20%">방식</th><th>진행 방법</th></tr>
+<tr><td>간소화</td><td>INTENT → PLAN 두 단계. 영향 범위가 작은 변경에 적합합니다</td></tr>
+<tr><td>상세 DDD</td><td>Discover → Decompose → … → Tactical 6단계를 하나씩 확정합니다</td></tr>
+<tr><td>ODA 표준</td><td>TM Forum ODA 표준을 근거로 설계하고 적합성을 점검합니다</td></tr>
+</table>
+<div class="callout"><b>요구사항 문서로도 시작할 수 있습니다.</b> 다섯 구획의 문서를 붙여 넣자 컨텍스트 5개, 기능 10개, 사용자 스토리 17개, 프로세스 3개가 나왔습니다(171초).</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>10</span></div>
+</section>
+<!-- ══════════════════ 11. 특장점 ② ══════════════════ -->
+<section class="page">
+<div class="badge">07 · 특장점</div>
+<h1 class="sec"><span class="num">②</span> 프로젝트 설계 원칙을 근거로 구현 계획을 작성합니다</h1>
+<div class="rule"></div>
+<p class="lead">같은 기능도 기술 스택과 아키텍처 스타일에 따라 구현 계획이 달라집니다. 이런 결정을 프로포절마다 새로 하면 프로포절끼리 서로 다른 구조를 만들게 됩니다. Robo&nbsp;Architect는 프로젝트마다 <b>설계 원칙 문서(Constitution)</b>를 하나 두고, 모든 계획이 이 원칙을 따르도록 합니다.</p>
+<h2 class="sub">질문 두 개로 작성한 설계 원칙 일곱 개</h2>
+<table class="free">
+<tr><th style="width:22%">질문</th><th style="width:44%">추천 근거</th><th>선택한 답</th></tr>
+<tr><td>아키텍처 스타일</td><td>바운디드 컨텍스트가 적고 단순해 단일 배포가 간단합니다</td><td>MONOLITH(추천)</td></tr>
+<tr><td>기술 스택</td><td>DDD Aggregate와 트랜잭션 일관성에 적합한 스택을 추천합니다</td><td>직접 입력: Node.js(Express) · React · SQLite</td></tr>
+</table>
+<figure class="crop" style="--h:53mm">
+<img alt="아키텍처 결정과 근거 원칙" src="assets/f2-plan-grounds.jpg"/>
+<figcaption><b>그림 8.</b> Plan의 아키텍처 결정 「프론트엔드」 — 근거가 된 설계 원칙 구획(↳ Technology Constraints)과 판단 이유를 함께 표시합니다. <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<table class="free">
+<tr><th style="width:18%">결정</th><th>내용</th><th style="width:24%">근거 원칙</th></tr>
+<tr><td>배포 환경</td><td>Node.js 프로세스 1개, SQLite 단일 파일 DB, React 빌드를 같은 앱이 제공</td><td>Architecture</td></tr>
+<tr><td>데이터 접근</td><td>모듈별 저장소 계층, 접수 · 취소는 상태 조건부 갱신으로 하나만 성공</td><td>II · Technology Constraints</td></tr>
+<tr><td>테스트 전략</td><td>도메인 불변식 단위 테스트와 API 통합 테스트</td><td>VI</td></tr>
+</table>
+<div class="callout"><b>원칙이 정하지 않은 영역은 따로 표시합니다.</b> 이번 계획에서는 “어느 사장님이 어느 가게의 주인인가”를 정한 원칙이 없어 「헌장 공백」으로 표시됐습니다. 설계 원칙을 수정하면 기존 계획은 「오래됨」으로 표시되며, 최신 원칙으로 확정한 계획이 있어야 구현을 시작할 수 있습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>11</span></div>
+</section>
+<!-- ══════════════════ 12. 특장점 ③ ══════════════════ -->
+<section class="page">
+<div class="badge">08 · 특장점</div>
+<h1 class="sec"><span class="num">③</span> 격리된 작업 공간에서 Claude Code가 구현합니다</h1>
+<div class="rule"></div>
+<p class="lead">AI가 작성한 코드가 기존 코드에 바로 섞이면 검토 범위를 정하기 어렵습니다. Robo&nbsp;Architect는 프로포절마다 <b>전용 브랜치(<code>proposal/PRO-001</code>)의 Git 워크트리</b>(같은 저장소의 별도 작업 폴더)를 만들고 그 안에서만 구현합니다. 대상 브랜치는 최종 승인 전까지 변경되지 않습니다.</p>
+<ol class="num">
+<li><b>작업 목록 생성</b> — 확정된 Plan을 Phase별 작업으로 나누고, 작업마다 생성할 파일 경로를 붙입니다.</li>
+<li><b>구현 시작</b> — 대상 프로젝트 폴더 안에 워크트리와 전용 브랜치를 만들고, 코드 탭에 프로포절 전용 Claude Code 셀을 엽니다.</li>
+<li><b>작업별 커밋</b> — Claude Code가 <code>/robo-implement PRO-001</code>로 작업을 하나씩 수행하고, 작업을 마칠 때마다 체크 표시와 커밋을 남깁니다.</li>
+<li><b>진행 확인 · 개입</b> — 진행 막대와 Phase별 완료 수를 확인하고, 셀에서 작업을 멈추고 추가 지시를 입력합니다.</li>
+</ol>
+<div class="grid g2">
+<figure class="crop" style="--h:54mm; margin:0">
+<img alt="구현 진행 상황" src="assets/f3-progress.jpg"/>
+<figcaption><b>그림 9.</b> 구현 중인 PRO-001 — 브랜치 · 워크트리 경로, 진행 7/15. <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<table class="free" style="margin-top:0">
+<tr><th style="width:36%">Phase</th><th>작업</th></tr>
+<tr><td>1 Setup</td><td>저장소 구성, Express · SQLite 기반, 인증, API 계약</td></tr>
+<tr><td>2 Domain</td><td>Menu · Order Aggregate와 불변식</td></tr>
+<tr><td>3 Menu API</td><td>메뉴 저장, 공개 인터페이스, 라우트</td></tr>
+<tr><td>4 Ordering API</td><td>주문 생성 · 접수 · 취소</td></tr>
+<tr><td>5 Frontend</td><td>사장님 화면 · 고객 화면</td></tr>
+<tr><td>6 Test</td><td>불변식 테스트 · API 통합 테스트</td></tr>
+</table>
+</div>
+<div class="grid g4" style="margin-top:5mm">
+<div class="stat-card"><b>15개</b><div class="l">작업</div><div class="d">Phase 6개</div></div>
+<div class="stat-card"><b>약 22분</b><div class="l">구현 시간</div><div class="d">확인 창 응답 이후</div></div>
+<div class="stat-card"><b>15건</b><div class="l">커밋</div><div class="d">작업마다 1건</div></div>
+<div class="stat-card"><b>3,622줄</b><div class="l">69개 파일</div><div class="d">잠금 파일 제외</div></div>
+</div>
+<div class="note"><div class="t">구현 결과 — Plan에서 정한 모듈 경계대로 생성된 폴더</div><code>backend/src/modules/menu</code> · <code>ordering</code> · <code>backend/migrations</code> · <code>frontend/src/pages/owner</code> · <code>customer</code> · <code>shared/src</code></div>
+<div class="callout"><b>Claude Code의 안전 확인은 사용자가 직접 응답합니다.</b> 처음 실행할 때 Claude Code가 폴더 신뢰와 권한 우회 모드 동의를 묻고, Robo&nbsp;Architect는 이 확인에 대신 응답하지 않습니다. 권한 우회는 격리된 작업 공간에서만 작업하는 구현 셀을 위한 설정입니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>12</span></div>
+</section>
+<!-- ══════════════════ 13. 특장점 ④ ══════════════════ -->
+<section class="page">
+<div class="badge">08 · 특장점</div>
+<h1 class="sec"><span class="num">④</span> 설계와 대조해 검증하고, 코드와 설계를 함께 반영합니다</h1>
+<div class="rule"></div>
+<p class="lead">작업 목록을 모두 완료했다고 해서 설계대로 구현됐다고 볼 수는 없습니다. 검증 단계는 두 가지를 확인합니다. <b>구조 검증</b>은 전술 설계의 Aggregate · 필드 · 명령 · 이벤트가 코드에 있는지 robo-sync 추출기로 대조합니다. <b>인수 조건 검증</b>은 Given&nbsp;·&nbsp;When&nbsp;·&nbsp;Then마다 코드와 테스트를 확인하고 근거를 붙입니다.</p>
+<figure style="margin:3mm 0 2mm">
+<img alt="검증 결과 요약" src="assets/f4-verify-numbers.jpg"/>
+</figure>
+<table>
+<tr><th style="width:26%">구분</th><th>건수</th><th>PASS</th><th>FAIL</th><th>SKIP</th></tr>
+<tr><td>인수 조건</td><td>18</td><td>18</td><td>0</td><td>0</td></tr>
+<tr><td>구조 검증</td><td>31</td><td>26</td><td>0</td><td>5</td></tr>
+<tr><td>합계</td><td>49</td><td>44</td><td>0</td><td>5 (통과율 90%)</td></tr>
+</table>
+<div class="grid g2">
+<figure class="crop" style="--h:58mm; margin:0">
+<img alt="검증 카드와 근거" src="assets/f4-verify-cards.jpg"/>
+<figcaption><b>그림 10.</b> 인수 조건 카드 — 판정, 대상 명령, 시나리오 번호와 근거(파일 · 줄, 통과한 테스트). <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<div>
+<p style="font-size:9.2pt"><b>SKIP은 자동 대조를 하지 못한 항목입니다.</b> 이번 SKIP 5건은 명령이 별도 타입 없이 서비스 메서드 인자로만 표현되어 추출기가 입력 필드를 읽지 못한 경우였습니다. 통과율은 SKIP을 포함한 전체 건수로 계산합니다.</p>
+<p style="font-size:9.2pt"><b>FAIL이 있으면 확인 절차를 거칩니다.</b> 「실패 항목을 인지하고 Accept를 진행합니다」를 선택해야 승인할 수 있으며, 그 기록이 남습니다.</p>
+</div>
+</div>
+<h2 class="sub">승인과 되돌리기</h2>
+<table class="free">
+<tr><th style="width:26%">작업</th><th>처리 내용</th></tr>
+<tr><td>Accept (Dual Merge)</td><td>전용 브랜치를 대상 브랜치에 병합하고, 전략 · 전술 설계를 프로젝트 그래프에 반영합니다. 그래프 반영이 실패하면 코드 병합을 되돌리고 실패 상태로 표시합니다</td></tr>
+<tr><td>수거(되돌리기)</td><td>「그래프만 되돌리기」 또는 「그래프 + 코드 되돌리기」(병합 커밋 <code>git revert</code>)를 선택합니다</td></tr>
+<tr><td>Destroy</td><td>승인하지 않고 폐기합니다. 격리된 작업 공간을 정리하고, 프로포절의 변경 이력은 보관합니다</td></tr>
+</table>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>13</span></div>
+</section>
+<!-- ══════════════════ 14. 특장점 ⑤ ══════════════════ -->
+<section class="page">
+<div class="badge">09 · 특장점</div>
+<h1 class="sec"><span class="num">⑤</span> 변경이 기존 설계에 미치는 영향을 구분해 보여 줍니다</h1>
+<div class="rule"></div>
+<p class="lead">실제 개발은 대부분 기존 설계를 수정하는 일입니다. 승인된 설계가 있는 프로젝트에서 새 프로포절을 만들면, Robo&nbsp;Architect는 <b>새로 만드는 요소(CREATE)와 기존 요소를 수정하는 요소(MODIFY)</b>를 구분합니다. 이미 구현된 요소를 수정하는 경우에는 충돌 가능성을 함께 표시합니다.</p>
+<div class="flow">
+<div class="step"><b>요구사항 입력</b><span>주문 거절 사유</span></div>
+<div class="arw">→</div>
+<div class="step"><b>INTENT</b><span>기존 컨텍스트에 추가</span></div>
+<div class="arw">→</div>
+<div class="step"><b>PLAN</b><span>기존 Aggregate 수정</span></div>
+<div class="arw">→</div>
+<div class="step on"><b>Impact Map</b><span>신규 · 수정 · 충돌</span></div>
+</div>
+<p>두 번째 프로포절 PRO-002에 “사장님은 주문을 거절할 때 사유를 하나 고르고, 고객은 그 사유를 본다”를 입력했습니다. INTENT 분석(80초)에서는 새 바운디드 컨텍스트 없이 기존 「주문」 컨텍스트에 기능 두 개가 추가됐습니다. Plan 생성(약 6분)에서는 PRO-001에서 확정한 결정(데이터 접근 방식, 테스트 도구, 폴더 구성)을 그대로 이어받았습니다.</p>
+<figure class="crop" style="--h:54mm">
+<img alt="Tactical Design MODIFY와 CREATE" src="assets/f5-tactical-modify.jpg"/>
+<figcaption><b>그림 11.</b> PRO-002의 전술 설계 — 기존 Order와 CustomerOrderView는 MODIFY, RejectOrder와 OrderRejected는 CREATE로 표시됩니다. <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<table class="free">
+<tr><th style="width:15%">연산</th><th style="width:30%">요소</th><th style="width:15%">충돌 가능성</th><th>변경 내용</th></tr>
+<tr><td>MODIFY</td><td>Aggregate Order</td><td><b>HIGH</b></td><td>상태에 REJECTED 추가, 거절 사유 열거형 · 속성, 불변식 2개</td></tr>
+<tr><td>CREATE</td><td>Command RejectOrder</td><td>NONE</td><td>사유를 받아 주문 거절</td></tr>
+<tr><td>CREATE</td><td>Event OrderRejected</td><td>NONE</td><td>주문 거절됨</td></tr>
+<tr><td>MODIFY</td><td>ReadModel CustomerOrderView</td><td>NONE</td><td>고객 주문 조회에 거절 사유 추가</td></tr>
+</table>
+<div class="callout"><b>HIGH는 진행을 막는 표시가 아니라 검토할 위치를 알려 주는 표시입니다.</b> Order는 이미 구현 · 승인된 Aggregate이므로 검증 단계에서 기존 인수 조건이 계속 통과하는지 확인해야 합니다. 같은 설계 요소를 다른 프로포절이 구현하고 있으면 Plan 단계로 제출할 수 없도록 알립니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>14</span></div>
+</section>
+<!-- ══════════════════ 15. 특장점 ⑥ ══════════════════ -->
+<section class="page">
+<div class="badge">09 · 특장점</div>
+<h1 class="sec"><span class="num">⑥</span> 기존 코드와 데이터베이스를 설계 근거로 활용합니다</h1>
+<div class="rule"></div>
+<p class="lead">기존 시스템의 업무 규칙은 문서보다 코드에 정확히 남아 있는 경우가 많습니다. Robo&nbsp;Architect는 레거시 코드를 분석해 <b>클래스 · 메서드 · 테이블과 업무 규칙</b>을 그래프로 구조화합니다. 새 프로포절을 만들면 요소마다 근거가 된 기존 코드를 연결합니다.</p>
+<div class="pipe">
+<div class="n">1</div><div class="l"></div><div class="n">2</div><div class="l"></div><div class="n">3</div><div class="l"></div>
+<div class="n">4</div><div class="l"></div><div class="n">5</div><div class="l"></div><div class="n">6</div><div class="l"></div><div class="n">7</div>
+</div>
+<div class="pipe-labels">
+<div>DDL 파싱</div><div>소스 적재</div><div>프로젝트 스캔</div><div>관계 연결</div><div>분석 맥락 구성</div><div>코드 분석(AI)</div><div>후처리</div>
+</div>
+<div class="grid g4" style="margin-top:5mm">
+<div class="stat-card"><b>141초</b><div class="l">분석 시간</div><div class="d">Java · DDL 예제 시스템</div></div>
+<div class="stat-card"><b>6 · 18 · 7</b><div class="l">클래스 · 메서드 · 테이블</div><div class="d">컬럼 32개, 호출 46개</div></div>
+<div class="stat-card"><b>53개</b><div class="l">업무 규칙</div><div class="d">실행마다 다름(35개 · 53개)</div></div>
+<div class="stat-card"><b>11 / 11</b><div class="l">근거 연결</div><div class="d">근거 15건, 새 요소 11개 모두 연결</div></div>
+</div>
+<figure class="crop" style="--h:40mm">
+<img alt="레거시 근거 요약" src="assets/f6-evidence-head.jpg"/>
+<figcaption><b>그림 12.</b> 레거시 코드를 근거로 만든 프로포절 — 머리에 「레거시 근거 15 · 근거 연결 11/11」을 표시합니다. <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<div class="grid g2" style="margin-top:4mm">
+<figure class="crop" style="--h:62mm; margin:0">
+<img alt="레거시 근거 상세" src="assets/f6-evidence.jpg"/>
+<figcaption><b>그림 13.</b> 프로세스 「사유 선택 주문 거절」의 근거 — <code>order/OrderService.java : 73~75</code> 원문과 이 근거를 인용한 요소 5개. <i>데모 데이터(튜토리얼 실습) 기준입니다.</i></figcaption>
+</figure>
+<table class="free" style="margin-top:0">
+<tr><th style="width:34%">표시</th><th>뜻</th></tr>
+<tr><td>유래 · 정제</td><td>기존 동작에서 나온 요소 / 기존 동작을 수정하는 요소</td></tr>
+<tr><td>원문 검토</td><td>원문 코드까지 열어 확인한 근거</td></tr>
+<tr><td>검색 확인</td><td>검색 결과로 확인한 근거</td></tr>
+<tr><td>파일 : 줄</td><td>근거가 된 원문 위치와 코드</td></tr>
+<tr><td>인용한 요소</td><td>같은 코드에 기대는 새 요소 목록</td></tr>
+</table>
+</div>
+<div class="callout"><b>요구사항 문장에 없던 조건도 근거에서 도출합니다.</b> 기존 시스템이 거절 사유를 저장하지 않는다는 사실에서 “사유 기록 기능 도입 이전에 거절된 주문은 ‘사유 정보 없음’으로 표시한다”는 인수 조건이 나왔습니다. 기존 DB는 데이터 소스(PostgreSQL · MySQL · MariaDB)로 등록해 실제 테이블을 확인할 수 있습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>15</span></div>
+</section>
+<!-- ══════════════════ 16. 시스템 구성 ══════════════════ -->
+<section class="page">
+<div class="badge">10 · 아키텍처</div>
+<h1 class="sec">시스템 구성과 실행 환경</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect Lite는 <b>데스크톱 앱, 이 PC에서 실행하는 Architect API, Docker 컨테이너 7개</b>로 구성됩니다. 앱을 실행하면 앱이 컨테이너를 직접 기동하고, 앱을 종료해도 컨테이너를 유지해 다음 실행 시간을 줄입니다. AI 작업은 이 PC의 Claude Code가 수행합니다.</p>
+<div class="topo">
+<div class="tb soft"><b>데스크톱 앱 (Electron)</b><span>탭 · 창 관리 · 컨테이너 기동 · 프로젝트(그래프) 선택</span></div>
+<div class="tdown"></div>
+<div class="trow">
+<div class="tb"><b>Vue 3 화면</b><span>홈 · 프로포절 · 요구사항 · 설계 · 코드 · 레거시</span></div>
+<div class="tb"><b>Claude Code CLI</b><span>스킬 21종 실행 · 코드 탭 구현 셀</span></div>
+</div>
+<div class="tdown"></div>
+<div class="tb solid"><b>Architect API (FastAPI) — 이 PC에서 실행</b><span>프로포절 단계 관리 · 스킬 실행 · 검증 · Dual Merge · 진행 상황 전송</span></div>
+<div class="tdown"></div>
+<div class="trow">
+<div class="tb"><b>Docker 컨테이너 7개</b><span>그래프 DB · 데이터 패브릭 · 레거시 분석</span></div>
+<div class="tb"><b>대상 프로젝트 (Git 저장소)</b><span>코드 폴더 · <code>proposal/PRO-NNN</code> 워크트리</span></div>
+</div>
+</div>
+<h2 class="sub">컨테이너 구성</h2>
+<table class="free">
+<tr><th style="width:18%">컨테이너</th><th style="width:22%">구분</th><th>역할</th></tr>
+<tr><td>graph-db<br/>graph-bolt</td><td>Ontological DB</td><td>설계 그래프와 분석 그래프를 저장하며, 프로젝트마다 그래프가 하나씩 생깁니다. graph-bolt는 Bolt 프로토콜 입구로, 상태 없이 질의를 그래프 엔진에 전달합니다</td></tr>
+<tr><td>fabric<br/>catalog</td><td>데이터 패브릭</td><td>등록한 기존 DB를 그래프 DB에 연결하고, 테이블 · 컬럼 · 관계 정보를 제공합니다</td></tr>
+<tr><td>analyzer<br/>parser<br/>gateway</td><td>레거시 분석</td><td>구문 분석(ANTLR)과 코드 의미 · 업무 규칙 분석을 수행합니다. 분석기의 AI 호출은 Architect API를 거쳐 Claude Code가 처리합니다</td></tr>
+</table>
+<div class="note"><div class="t">설계 그래프와 분석 그래프를 분리합니다</div>레거시 분석은 분석용 그래프를 비우고 다시 작성합니다. 설계 그래프와 이름이 같으면 그래프 DB가 기동을 거부하도록 구성해, 분석 작업이 설계 데이터를 지우는 일을 막습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>16</span></div>
+</section>
+<!-- ══════════════════ 17. 기술 스택 ══════════════════ -->
+<section class="page">
+<div class="badge">11 · 아키텍처</div>
+<h1 class="sec">기술 스택과 스킬 체계</h1>
+<div class="rule"></div>
+<p class="lead">고객사 개발팀이 구조를 이해하고 유지보수할 수 있도록 <b>널리 사용되는 프레임워크와 오픈소스 기술</b>로 구성했습니다. AI의 작업 절차는 제품 코드와 분리해 스킬 파일로 관리합니다.</p>
+<table class="free">
+<tr><th style="width:20%">레이어</th><th>구성</th></tr>
+<tr><td>데스크톱</td><td>Electron 33 · electron-builder 25(Windows NSIS · macOS DMG) · TypeScript</td></tr>
+<tr><td>프런트엔드</td><td>Vue 3.5 · Vite 5 · Pinia · Vue Flow(캔버스) · bpmn-js 18 · Mermaid 11 · Tailwind CSS 4 · CodeMirror 6 · xterm.js 6</td></tr>
+<tr><td>백엔드</td><td>Python 3.11 이상 · FastAPI · Uvicorn · Pydantic v2 · SSE(서버 전송 이벤트) · MCP</td></tr>
+<tr><td>그래프 DB</td><td>Ontological DB — 그래프 엔진과 Bolt 게이트웨이, Cypher 질의</td></tr>
+<tr><td>AI 실행</td><td>Claude Code CLI(스킬 실행 · 코드 탭 PTY 셀) · 분석기용 OpenAI 호환 연결 모듈</td></tr>
+<tr><td>분석 서비스</td><td>레거시 분석기 · ANTLR 구문 분석기 · 데이터 패브릭 · 데이터 카탈로그 · API 게이트웨이</td></tr>
+<tr><td>검증</td><td>pytest · Playwright · ruff</td></tr>
+</table>
+<h2 class="sub">스킬 파일 21종</h2>
+<table class="free">
+<tr><th style="width:20%">묶음</th><th>스킬</th></tr>
+<tr><td>robo-proposals<br/><span style="font-weight:400; color:var(--muted)">15종</span></td><td>단계 — <code>intent</code> · <code>project-constitution</code> · <code>plan</code> · <code>tasks</code> · <code>implement</code> · <code>test</code> · <code>context</code>(영향 분석)<br/>상세 DDD — <code>scope</code> · <code>discover</code> · <code>decompose</code> · <code>strategize</code> · <code>connect</code> · <code>define</code> · <code>tactical</code><br/>표준 — <code>oda</code></td></tr>
+<tr><td>robo-spec<br/><span style="font-weight:400; color:var(--muted)">4종</span></td><td><code>robo-implement</code>(코드 탭 셀의 구현) · <code>robo-sync</code>(코드 → 설계 구조 대조) · <code>robo-plan</code> · <code>robo-tasks</code></td></tr>
+<tr><td>robo-changes<br/><span style="font-weight:400; color:var(--muted)">2종</span></td><td><code>robo-change-specify</code> · <code>robo-change-tasks</code>(요구사항 변경)</td></tr>
+</table>
+<div class="callout"><b>스킬 파일을 수정하면 제품 코드를 바꾸지 않고 판단 기준을 바꿀 수 있습니다.</b> 튜토리얼에서 INTENT 스킬에 “바운디드 컨텍스트 이름에 영문 이름을 함께 표기한다”는 규칙 한 줄을 추가했습니다. 앱을 다시 시작하지 않아도 다음 분석부터 「메뉴 관리(MenuManagement)」 · 「주문(Ordering)」으로 나왔습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>17</span></div>
+</section>
+<!-- ══════════════════ 18. 사용 절차 1 ══════════════════ -->
+<section class="page">
+<div class="badge">12 · 사용 절차</div>
+<h1 class="sec">사용 절차 — 여섯 단계</h1>
+<div class="rule"></div>
+<p class="lead">프로젝트를 열고 프로포절을 작성한 뒤, 설계와 계획을 검토하고 구현 · 검증 · 승인을 진행합니다. 아래는 <b>실제 제품 화면으로 보는 여섯 단계의 사용 절차</b>입니다. 화면은 데모 데이터(튜토리얼 실습) 기준입니다.</p>
+<div class="pipe">
+<div class="n">1</div><div class="l"></div><div class="n">2</div><div class="l"></div>
+<div class="n">3</div><div class="l"></div><div class="n">4</div><div class="l"></div>
+<div class="n">5</div><div class="l"></div><div class="n">6</div>
+</div>
+<div class="pipe-labels">
+<div>프로젝트 열기</div><div>프로포절 작성</div><div>전략 설계 검토</div><div>설계 원칙 · 계획</div><div>격리된 구현</div><div>검증 · 승인</div>
+</div>
+<h2 class="sub">1단계 · 프로젝트 만들기와 열기</h2>
+<p>홈에서 새 프로젝트 이름(예: <code>hanbit_delivery</code>)을 입력하고 코드 폴더로 사용할 Git 저장소를 선택합니다. 「프로젝트 열기」를 누르면 앱이 이 프로젝트의 그래프로 백엔드를 연결하고 기능 카드를 활성화합니다.</p>
+<figure class="crop" style="--h:39mm">
+<img alt="프로젝트 선택과 코드 폴더" src="assets/u1-project.jpg"/>
+<figcaption><b>그림 14.</b> 프로젝트 선택 — 프로젝트마다 그래프가 따로 생기며, 다른 그래프와 섞이지 않습니다.</figcaption>
+</figure>
+<div class="grid g2">
+<div>
+<h2 class="sub" style="margin-top:2mm">2단계 · 프로포절 작성</h2>
+<p style="font-size:9.4pt">프로포절 탭에서 「＋ 새 Proposal」을 누르고, 추가하거나 변경할 기능을 문장으로 입력합니다. 진행 방식(간소화 · 상세 DDD · ODA 표준)을 선택하고 「AI 분석 시작」을 누릅니다.</p>
+<figure class="crop" style="--h:38mm; margin:3mm 0 0">
+<img alt="새 Proposal 생성" src="assets/u2-new-proposal.jpg"/>
+<figcaption><b>그림 15.</b> 새 Proposal 생성 창</figcaption>
+</figure>
+</div>
+<div>
+<h2 class="sub" style="margin-top:2mm">3단계 · 전략 설계 검토</h2>
+<p style="font-size:9.4pt">진행 창에 Claude Code의 작업 내용이 표시됩니다. 분석이 끝나면 전략 설계와 Impact Map을 검토하고, 필요하면 피드백을 적어 다시 생성합니다.</p>
+<figure class="crop" style="--h:38mm; margin:3mm 0 0">
+<img alt="자연어 인텐트 분해 진행 창" src="assets/u3-analyzing.jpg"/>
+<figcaption><b>그림 16.</b> 분석 진행 창 — 요구사항마다 레거시 그래프를 검색합니다.</figcaption>
+</figure>
+</div>
+</div>
+<div class="note"><div class="t">AI가 확인할 사항이 있으면 질문합니다</div>요구사항이 모호하면 분석 중에 선택형 질문이 나옵니다. 보기를 고르거나 직접 입력해 답하고, 질문 없이 진행하려면 「현재 정보로 계속」을 누릅니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>18</span></div>
+</section>
+<!-- ══════════════════ 19. 사용 절차 2 ══════════════════ -->
+<section class="page">
+<div class="badge">12 · 사용 절차</div>
+<h1 class="sec">4–6단계 · 계획 · 구현 · 검증과 승인</h1>
+<div class="rule"></div>
+<div class="grid g2">
+<div>
+<h2 class="sub" style="margin-top:0">4단계 · 설계 원칙과 계획 확정</h2>
+<p style="font-size:9.4pt">「Plan 단계로 진행」 후 「Plan 생성」을 누릅니다. 설계 원칙이 없는 프로젝트라면 인터뷰가 먼저 열립니다. 생성된 아키텍처 결정과 전술 설계를 검토하고 「Plan 확정」을 누르면 「샌드박스 구현 열기」가 나타납니다.</p>
+</div>
+<figure class="crop" style="--h:59mm; margin:0">
+<img alt="Plan 확정" src="assets/u4-plan-confirmed.jpg"/>
+<figcaption><b>그림 17.</b> Plan 요약과 확정</figcaption>
+</figure>
+<div>
+<h2 class="sub" style="margin-top:0">5단계 · 격리된 작업 공간에서 구현</h2>
+<p style="font-size:9.4pt">「작업 목록 생성」으로 Phase별 작업을 만들고 「구현하기」를 누릅니다. 「Claude Code 셀로 이동」을 누르면 코드 탭에 프로포절 전용 셀이 열리고 구현이 시작됩니다. 셀에서 파일 작성 · 테스트 · 커밋 과정을 그대로 확인할 수 있습니다.</p>
+</div>
+<figure class="crop" style="--h:57mm; margin:0">
+<img alt="구현 작업 목록" src="assets/u5-tasks.jpg"/>
+<figcaption><b>그림 18.</b> 구현 작업 목록 15개 — 작업마다 생성할 파일 경로가 붙습니다.</figcaption>
+</figure>
+<div>
+<h2 class="sub" style="margin-top:0">6단계 · 검증과 승인</h2>
+<p style="font-size:9.4pt">진행이 끝나면 「구현 완료 → 검증」을 누릅니다. 구조 검증과 인수 조건 결과를 확인한 뒤 「Accept (Dual Merge)」를 누르면 코드와 그래프 DB가 함께 갱신되고 상태가 ACCEPTED로 바뀝니다.</p>
+</div>
+<figure class="crop" style="--h:57mm; margin:0">
+<img alt="Dual Merge 완료" src="assets/u6-accepted.jpg"/>
+<figcaption><b>그림 19.</b> Dual Merge 완료 — 「수거(되돌리기)」로 되돌릴 수 있습니다.</figcaption>
+</figure>
+</div>
+<div class="callout"><b>시간이 걸리는 단계는 해당 탭을 유지한 채 기다립니다.</b> Plan 생성 중에 그 탭을 새로고침하거나 다른 화면으로 이동하면 처음부터 다시 생성합니다. 기다리는 동안 다른 작업은 홈에서 새 탭을 열어 진행합니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>19</span></div>
+</section>
+<!-- ══════════════════ 20. 보안 ══════════════════ -->
+<section class="page">
+<div class="badge">13 · 보안</div>
+<h1 class="sec">보안 · 거버넌스</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect Lite는 사용자 PC에서 실행하는 데스크톱 앱입니다. 도입 전에 <b>데이터 처리 범위와 변경 승인 절차</b>를 아래 기준으로 검토할 수 있습니다.</p>
+<h2 class="sub">데이터 처리 범위</h2>
+<ul class="dot">
+<li><b>설계 데이터는 PC 안에 저장합니다.</b> 그래프 DB는 PC의 Docker 볼륨에 저장하며, 그래프 DB · Bolt · 분석 서비스 포트는 이 PC의 루프백 주소(127.0.0.1)에만 엽니다.</li>
+<li><b>AI 요청은 Claude Code를 통해 처리합니다.</b> 프로포절의 분석 · 계획 · 구현은 PC의 Claude Code가 사용자의 로그인 세션으로 수행합니다. 요구사항과 설계, 코드 일부가 AI 요청에 포함되므로 조직의 Claude Code 사용 정책을 함께 검토해야 합니다.</li>
+<li><b>레거시 분석의 AI 호출은 도구 없이 처리합니다.</b> 분석기의 요청은 Architect API를 거쳐 Claude Code가 답하며, 이때 도구 없이 빈 임시 폴더에서 텍스트만 생성합니다.</li>
+<li><b>OpenAI API 키는 선택 사항입니다.</b> 문서 업로드와 설계 탭의 채팅 수정에만 사용합니다.</li>
+<li><b>비밀 값은 로그에 남기지 않습니다.</b> 로컬 DB 비밀번호 같은 값은 사용자 계정 전용 파일이나 OS 암호화 저장소에 보관합니다.</li>
+</ul>
+<h2 class="sub">변경 통제</h2>
+<table class="free">
+<tr><th style="width:22%">항목</th><th>내용</th></tr>
+<tr><td>계획 확인</td><td>최신 설계 원칙으로 확정한 Plan이 있어야 구현을 시작합니다</td></tr>
+<tr><td>코드 격리</td><td>구현은 전용 브랜치의 워크트리에서만 수행하며, 대상 브랜치는 Accept 전까지 변경되지 않습니다</td></tr>
+<tr><td>충돌 감지</td><td>같은 설계 요소를 다른 프로포절이 구현 중이면 Plan 단계 제출을 막고 알립니다</td></tr>
+<tr><td>실패 항목 확인</td><td>검증에 FAIL이 있으면 실패 항목을 인지했다는 확인을 선택해야 Accept할 수 있습니다</td></tr>
+<tr><td>동시 반영</td><td>그래프 반영이 실패하면 코드 병합을 되돌리고 실패 상태로 표시합니다</td></tr>
+<tr><td>이력 · 로그</td><td>상태 변경마다 처리자와 시각을 기록하고, 요청마다 추적 번호를 붙여 로그를 남깁니다</td></tr>
+</table>
+<div class="note"><div class="t">AI 실행 방식 설정</div>프로포절 스킬은 기본으로 Claude Code CLI에서 실행하며, 환경 설정으로 OpenAI 호환 엔드포인트를 선택할 수 있습니다. 코드 탭의 구현 셀은 Claude Code를 사용합니다.</div>
+<div class="callout"><b>Lite는 개인용 앱으로 계정 · 권한 관리를 제공하지 않습니다.</b> 작성자 정보는 PC의 Git 설정에서 읽습니다. 승인자 분리 같은 조직 정책은 도입 시 운영 절차로 정하고, 망 구성과 AI 사용 정책은 고객사 기준에 맞춰 협의합니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>20</span></div>
+</section>
+<!-- ══════════════════ 21. 설치 ══════════════════ -->
+<section class="page">
+<div class="badge">14 · 설치</div>
+<h1 class="sec">설치 및 납품 방식</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect Lite는 데스크톱 앱 하나와 Docker 컨테이너 7개로 실행됩니다. 앱이 컨테이너 이미지를 적재하고 기동하므로 <b>Python과 데이터베이스를 따로 설치할 필요가 없습니다.</b></p>
+<table class="free">
+<tr><th style="width:20%">구분</th><th>내용</th><th style="width:24%">제공 상태</th></tr>
+<tr><td>Windows 10/11</td><td>설치 프로그램(약 100MB) · 컨테이너 이미지 묶음(약 1.5GB, 이미지 7개) · 해시 파일(SHA256SUMS). 사용자 단위로 설치하며 관리자 권한이 필요 없습니다</td><td>요청 시 제공</td></tr>
+<tr><td>macOS</td><td>Apple Silicon용 데스크톱 앱(DMG)</td><td>설치 파일 배포 준비 중</td></tr>
+<tr><td>첫 실행</td><td>이미지 묶음의 해시를 확인한 뒤 적재하고 컨테이너 7개를 기동합니다. 튜토리얼 PC에서는 약 50초, 설치본 첫 실행은 이미지 적재 때문에 4~5분이 걸렸습니다</td><td>—</td></tr>
+</table>
+<figure class="crop" style="--h:37mm">
+<img alt="첫 실행 시 서비스 기동 화면" src="assets/i-boot.jpg"/>
+<figcaption><b>그림 20.</b> 첫 실행 — 앱이 Docker로 그래프 DB와 분석 서비스를 올리는 동안 기능 카드가 잠겨 있습니다.</figcaption>
+</figure>
+<h2 class="sub">권장 실행 환경</h2>
+<div class="grid g2">
+<div class="card">
+<div class="t">PC</div>
+<p>macOS 또는 Windows 10/11, 메모리 16GB 이상, 디스크 여유 공간 20GB 이상을 권장합니다.</p>
+</div>
+<div class="card">
+<div class="t">Docker Desktop</div>
+<p>그래프 DB와 분석 서비스가 컨테이너로 실행되므로 앱을 쓰는 동안 켜 두어야 합니다.</p>
+</div>
+<div class="card">
+<div class="t">Claude Code</div>
+<p>터미널에서 <code>claude</code>를 실행해 로그인해 둡니다. 프로포절의 분석 · 계획 · 구현에 사용합니다.</p>
+</div>
+<div class="card">
+<div class="t">Git</div>
+<p>코드 폴더는 Git 저장소여야 하며, 프로포절마다 이 저장소의 워크트리를 만듭니다.</p>
+</div>
+</div>
+<div class="callout"><b>산출물은 고객 자산으로 남습니다.</b> 구현 코드는 고객 Git 저장소에 작업별 커밋으로 남고, 설계 그래프는 PC의 그래프 DB에 저장되어 Bolt 프로토콜로 조회할 수 있습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>21</span></div>
+</section>
+<!-- ══════════════════ 22. 검증 ══════════════════ -->
+<section class="page">
+<div class="badge">15 · 검증</div>
+<h1 class="sec">제품 개발 및 품질 검증 체계</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect 개발팀은 <b>명세 작성부터 구현과 검증까지 일관된 절차</b>를 적용합니다. 기능마다 명세와 계획을 먼저 작성하고, 자동 시험과 실제 앱 실행으로 결과를 확인합니다.</p>
+<h2 class="sub">명세를 먼저 작성하는 개발 절차</h2>
+<p>기능은 명세 작성, 구현 계획 수립, 작업 목록 작성, 구현 순서로 개발합니다. 산출물은 저장소에 함께 보관하며, 현재 <b>기능 폴더 59개에 기능 명세 58건, 구현 계획 42건, 작업 목록 39건</b>이 기록되어 있습니다.</p>
+<h2 class="sub">자동 검증</h2>
+<div class="grid g4">
+<div class="stat-card"><b>85</b><div class="l">백엔드 시험 파일</div><div class="d">pytest · 시험 함수 725개</div></div>
+<div class="stat-card"><b>72</b><div class="l">화면 시험 파일</div><div class="d">Playwright</div></div>
+<div class="stat-card"><b>14</b><div class="l">회귀 시험 파일</div><div class="d">백엔드 서버 없이 실행</div></div>
+<div class="stat-card"><b>4</b><div class="l">데스크톱 시험 파일</div><div class="d">Electron 실행기 · 이미지 적재</div></div>
+</div>
+<p style="margin-top:3mm">회귀 시험(<code>npm run test:regression</code>)은 로직 단위 시험 2개와, 서버 응답을 미리 정한 데이터로 대신해 실행하는 화면 시험 12개로 구성합니다. 정적 분석은 ruff로 수행합니다.</p>
+<h2 class="sub">실제 앱으로 확인한 사용 흐름</h2>
+<p>튜토리얼 14개 장의 화면과 결과는 macOS(Apple Silicon)에서 Lite 앱을 실제로 실행해 얻었습니다. 단계별 소요 시간은 다음과 같습니다.</p>
+<table class="free">
+<tr><th style="width:30%">단계</th><th style="width:20%">소요 시간</th><th>결과</th></tr>
+<tr><td>INTENT(한 문장)</td><td>132초</td><td>프로세스 2 · 컨텍스트 2 · 스토리 7</td></tr>
+<tr><td>Plan 생성</td><td>598초</td><td>Aggregate 2개 등 전술 설계 20개 항목</td></tr>
+<tr><td>구현</td><td>약 22분</td><td>작업 15개 · 커밋 15건</td></tr>
+<tr><td>검증 ~ 승인</td><td>약 7분</td><td>49건 중 PASS 44 · FAIL 0 · SKIP 5</td></tr>
+<tr><td>레거시 분석</td><td>141초</td><td>클래스 6 · 메서드 18 · 테이블 7</td></tr>
+<tr><td>변경 프로포절 PRO-002</td><td>80초 + 395초</td><td>INTENT + Plan, Order MODIFY · 충돌 가능성 HIGH</td></tr>
+<tr><td>요구사항 문서 분석</td><td>171초</td><td>컨텍스트 5 · 기능 10 · 스토리 17</td></tr>
+</table>
+<div class="callout"><b>본 소개서의 화면은 모두 튜토리얼 실습 중 실제 제품에서 캡처했습니다.</b> AI가 만드는 결과는 실행마다 조금씩 다릅니다. 같은 코드를 두 번 분석했을 때 업무 규칙은 35개와 53개였고, 클래스 · 메서드 · 테이블 수는 같았습니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>22</span></div>
+</section>
+<section class="page">
+<div class="badge">16 · 레퍼런스</div>
+<h1 class="sec">기반 제품 MSAEZ의 도입 실적</h1>
+<div class="rule"></div>
+<p class="lead">Robo&nbsp;Architect는 이벤트스토밍 기반 설계 · 코드 생성 도구인 <b>MSAEZ(MSA Easy)의 개발 및 운영 경험</b>을 바탕으로 확장한 제품입니다. 다음은 MSAEZ의 산업 현장, 공공 플랫폼, 교육 분야 활용 사례입니다.</p>
+<div class="grid g3">
+<div class="stat-card"><b>대기업 실무</b><div class="l">포스코DX</div><div class="d">애플리케이션 · 마이크로서비스 설계와 소스 코드 생성 도구로 사용 중</div></div>
+<div class="stat-card"><b>공공 플랫폼</b><div class="l">DPG 통합테스트베드</div><div class="d">첨단 디지털 개발지원 도구(SaaS)로 등록·운영</div></div>
+<div class="stat-card"><b>9,655명</b><div class="l">MSA School 누적 수강생</div><div class="d">누적 교육 325회 · 17,864시간, 표준 실습 도구로 활용</div></div>
+</div>
+<h2 class="sub">① 산업 현장 — 포스코DX</h2>
+<p>MSAEZ는 포스코DX에서 <b>애플리케이션과 마이크로서비스의 설계 및 소스 코드 생성</b>에 사용되고 있습니다. 이벤트스토밍으로 도출한 설계 모델을 바탕으로 코드를 생성하는 데 활용됐습니다.</p>
+<h2 class="sub">② 공공 — DPG 통합테스트베드</h2>
+<p>DPG(디지털플랫폼정부) 통합테스트베드는 한국지능정보사회진흥원(NIA)이 운영하는 플랫폼입니다. 중소기업, 스타트업, 시민 개발자, 공공기관이 민간 · 공공 데이터와 클라우드 자원을 활용해 <b>서비스를 개발 · 시험 · 검증</b>할 수 있도록 지원합니다. 민간의 SaaS를 개발 지원 도구로 제공합니다.</p>
+<p>
+    MSA Easy(MSAEZ)는 이 테스트베드에 등록되어 <b>마이크로서비스의 분석 · 설계 · 구현 · 배포 전 과정을
+    자동화</b>하는 SaaS로 제공되고 있습니다.
+  </p>
+<h2 class="sub">③ 교육 — MSA School</h2>
+<p>MSAEZ는 클라우드 네이티브 개발 교육기관 <b>MSA School의 표준 실습 도구</b>로 사용됩니다. 수강생은 이벤트스토밍으로 도메인을 설계하고, 모델에서 코드를 생성해 배포하는 과정을 실습합니다.</p>
+<p>누적 교육 실적은 <b>325회, 수강생 9,655명, 17,864시간</b>입니다. 교육은 기초 · 중급 · 고급의 3단계로 구성되며, Biz(이벤트스토밍 · DDD), Dev(Spring Boot · Kafka), Ops(Kubernetes · GitOps)를 다룹니다.</p>
+<table class="free">
+<tr><th style="width:22%">구분</th><th style="width:36%">MSAEZ (기반 제품)</th><th>Robo&nbsp;Architect Lite</th></tr>
+<tr><td>설계 · 구현</td><td>이벤트스토밍 설계, 모델에서 코드 생성</td><td>프로포절 단위 DDD 설계, Claude Code 구현 · 검증</td></tr>
+</table>
+<div class="callout"><b>초기 설계에서 지속적인 변경 관리로 확장했습니다.</b> Robo&nbsp;Architect는 MSAEZ의 설계 · 코드 생성 기능을 바탕으로 변경 영향 분석, 프로포절 단계별 관리, 설계 원칙 기반 계획, 코딩 에이전트(Claude Code) 연동, 레거시 코드 근거 설계를 지원합니다.<br/><span style="font-size:8.4pt; color:var(--muted)">※ 교육 수치는 MSA School 공개 집계 기준입니다. 구축 범위와 도입 효과는 영업 담당자가 개별 안내합니다.</span></div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>23</span></div>
+</section>
+<!-- ══════════════════ 24. 도입 ══════════════════ -->
+<section class="page">
+<div class="badge">16 · 도입</div>
+<h1 class="sec">도입 절차 및 일정</h1>
+<div class="rule"></div>
+<p class="lead">환경 검토와 PoC(개념 검증)를 거쳐 본 도입까지 <b>4단계로 진행</b>합니다. 아래 일정은 표준 예시이며, 고객사의 환경과 검토 절차에 따라 조정합니다.</p>
+<div class="gantt">
+<div class="scale"><div>2주</div><div>4주</div><div>6주</div><div>8주</div></div>
+<div class="row">
+<div class="lbl"><b>1. 환경 검토</b><span>PC 사양 · Docker · AI 사용 정책 · 대상 저장소 확정</span></div>
+<div class="track"><div class="bar" style="left:0; width:26%"></div></div>
+</div>
+<div class="row">
+<div class="lbl"><b>2. PoC</b><span>기존 시스템의 업무 영역 1개 분석 · 변경 사례 1건 진행</span></div>
+<div class="track"><div class="bar" style="left:22%; width:30%"></div></div>
+</div>
+<div class="row">
+<div class="lbl"><b>3. 검증 · 교육</b><span>보안 검토 · 아키텍트 교육 · 프로젝트 설계 원칙 수립</span></div>
+<div class="track"><div class="bar" style="left:48%; width:28%"></div></div>
+</div>
+<div class="row">
+<div class="lbl"><b>4. 본 도입</b><span>대상 확대 · 운영 인수인계 · 스킬 커스터마이징</span></div>
+<div class="track"><div class="bar d" style="left:70%; width:30%"></div></div>
+</div>
+</div>
+<h2 class="sub">PoC 주요 검증 항목</h2>
+<ul class="dot">
+<li>실제 요구사항이 <b>바운디드 컨텍스트 · 사용자 스토리 · 인수 조건으로 적절히 구체화되는지</b></li>
+<li>기존 코드 분석 결과가 <b>새 프로포절의 설계 근거로 연결되는지</b></li>
+<li>기존 저장소 구성과 브랜치 운영 방식에 맞춰 <b>구현 · 병합을 진행할 수 있는지</b></li>
+<li>구조 검증과 인수 조건 결과로 <b>구현 결과를 판단할 수 있는지</b></li>
+<li>Claude Code 사용과 데이터 처리 방식이 <b>고객사의 보안 정책을 준수하는지</b></li>
+</ul>
+<h2 class="sub">도입 시 협의할 사항</h2>
+<div class="grid g4">
+<div class="card">
+<div class="t">AI 실행 방식</div>
+<p style="font-size:8.8pt">Claude Code 사용 계정과 조직 정책, 데이터 처리 범위를 정합니다.</p>
+</div>
+<div class="card">
+<div class="t">대상 저장소 · 브랜치 전략</div>
+<p style="font-size:8.8pt">작업할 저장소와 최종 병합 대상 브랜치를 정합니다.</p>
+</div>
+<div class="card">
+<div class="t">프로젝트 설계 원칙</div>
+<p style="font-size:8.8pt">기술 스택, 아키텍처, 저장소 구성의 기준을 정합니다.</p>
+</div>
+<div class="card">
+<div class="t">스킬 커스터마이징</div>
+<p style="font-size:8.8pt">조직의 설계 절차와 산출물 양식을 스킬에 반영합니다.</p>
+</div>
+</div>
+<div class="note"><div class="t">30분 제품 시연 및 PoC 환경 협의</div>요구사항 입력부터 설계 · 계획 · 구현 · 검증까지 실제 제품으로 시연합니다. 고객사의 업무 문서 일부를 미리 제공해 주시면 <b>해당 자료를 활용한 시연</b>을 준비합니다.</div>
+<div class="foot"><span>Robo&nbsp;Architect Lite 제품 소개서</span><span>24</span></div>
+</section>
+<!-- ══════════════════ 25. 배표지 ══════════════════ -->
+<section class="page cover">
+<div class="brand">
+<div class="brand-mark">RA</div>
+<div>
+<div class="brand-name">Robo&nbsp;Architect Lite</div>
+<div class="brand-sub">AI ARCHITECTURE WORKBENCH</div>
+</div>
+</div>
+<div class="cover-eyebrow">도입 문의</div>
+<h1 class="cover-title">요구사항부터 구현까지,<br/>변경을 함께 관리하세요.</h1>
+<p class="cover-lead">도입 상담, 제품 시연, 견적을 문의해 주세요. 담당 전문가가 영업일 기준 1일 이내에 답변드립니다. 필요하시면 제품 시연 일정도 함께 안내합니다.</p>
+<div style="margin-top:16mm; border-top:1px solid rgba(255,255,255,.2); padding-top:9mm">
+<div style="display:flex; gap:0">
+<div style="flex:1">
+<div style="font-size:8pt; letter-spacing:2px; color:#8fb4e8; font-weight:700">회사</div>
+<div style="font-size:12pt; font-weight:800; color:#fff; margin-top:5px">(주)유엔진솔루션즈</div>
+</div>
+<div style="flex:1">
+<div style="font-size:8pt; letter-spacing:2px; color:#8fb4e8; font-weight:700">제품</div>
+<div style="font-size:12pt; font-weight:800; color:#fff; margin-top:5px">Robo&nbsp;Architect Lite</div>
+</div>
+<div style="flex:1">
+<div style="font-size:8pt; letter-spacing:2px; color:#8fb4e8; font-weight:700">문서</div>
+<div style="font-size:12pt; font-weight:800; color:#fff; margin-top:5px">Rev. 2026.10</div>
+</div>
+</div>
+</div>
+<div style="margin-top:14mm">
+<div style="font-size:8.4pt; letter-spacing:2px; color:#8fb4e8; font-weight:700; margin-bottom:5mm">
+      프로포절 하나로 이어지는 네 단계
+    </div>
+<div style="display:flex; gap:4mm">
+<div style="flex:1; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:4mm">
+<div style="font-size:10.5pt; font-weight:800; color:#fff">요구사항</div>
+<div style="font-size:8.4pt; color:#a9c4e6; margin-top:3px">문장 · 문서에서 DDD 설계로</div>
+</div>
+<div style="flex:1; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:4mm">
+<div style="font-size:10.5pt; font-weight:800; color:#fff">계획</div>
+<div style="font-size:8.4pt; color:#a9c4e6; margin-top:3px">설계 원칙에 근거한 결정</div>
+</div>
+<div style="flex:1; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:4mm">
+<div style="font-size:10.5pt; font-weight:800; color:#fff">구현</div>
+<div style="font-size:8.4pt; color:#a9c4e6; margin-top:3px">격리된 작업 공간 · Claude Code</div>
+</div>
+<div style="flex:1; background:rgba(255,255,255,.13); border:1px solid rgba(255,255,255,.28); border-radius:8px; padding:4mm">
+<div style="font-size:10.5pt; font-weight:800; color:#fff">검증 · 반영</div>
+<div style="font-size:8.4pt; color:#c3d8f5; margin-top:3px">코드 · 설계 그래프 동시 반영</div>
+</div>
+</div>
+</div>
+<div class="cover-foot">
+<div>
+<div class="d">(주)유엔진솔루션즈 · uEngine Solutions, Inc.</div>
+<div class="s">© 2026 uEngine Solutions. 본 문서 Rev. 2026.10 ·
+        기재된 수치 · 화면은 작성 시점 기준이며 사전 통지 없이 변경될 수 있습니다.</div>
+</div>
+<div class="org">uEngine</div>
+</div>
+</section>
+</body>
+</html>
