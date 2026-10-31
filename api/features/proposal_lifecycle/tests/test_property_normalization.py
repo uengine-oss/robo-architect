@@ -188,3 +188,22 @@ def test_plan_contract_blocks_empty_aggregate_properties():
         },
     ])
     assert "Aggregate Order requires non-empty properties" in errors
+
+
+def test_plan_contract_lets_modify_add_properties_without_key():
+    # 수락된 Order 에 거절 사유만 덧붙이는 MODIFY — 키는 이미 그래프에 있다(영문 9장 실측)
+    command = {
+        "nodeLabel": "Command", "nodeTitle": "RejectOrder",
+        "fields": {"inputSchema": {}}, "properties": [], "userStoryRefs": ["US-1"],
+        "gwt": [{"scenario": "ok", "given": {"name": "g", "fieldValues": {}},
+                 "when": {"name": "w", "fieldValues": {}},
+                 "then": {"name": "t", "fieldValues": {}}}],
+    }
+    modify = {"nodeLabel": "Aggregate", "nodeTitle": "Order", "changeType": "MODIFY",
+              "properties": [{"name": "rejectionReason", "type": "RejectionReason"}]}
+    errors = tactical_contract_errors([modify, command])
+    assert not any("Aggregate Order" in e for e in errors)
+    created = {**modify, "changeType": "CREATE"}
+    assert "Aggregate Order requires an isKey property" in tactical_contract_errors([created, command])
+    untyped = {**modify, "properties": [{"name": "rejectionReason"}]}
+    assert "Aggregate Order requires typed property objects" in tactical_contract_errors([untyped, command])

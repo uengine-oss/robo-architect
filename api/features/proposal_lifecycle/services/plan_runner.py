@@ -248,12 +248,16 @@ def tactical_contract_errors(
     for aggregate in aggregates:
         title = aggregate.get("nodeTitle") or "<unnamed>"
         props = aggregate.get("properties")
+        # MODIFY 는 이미 수락된 애그리거트에 속성을 덧붙인다(proposal_apply) — 키는 그래프에 있으니
+        # 새 속성만 내도 된다. 키 · 비어 있지 않음은 새로 만드는 애그리거트에만 요구한다.
+        modify = str(aggregate.get("changeType") or "").upper() == "MODIFY"
         if not isinstance(props, list) or not props:
-            errors.append(f"Aggregate {title} requires non-empty properties")
+            if not modify:
+                errors.append(f"Aggregate {title} requires non-empty properties")
             continue
         if not all(isinstance(prop, dict) and prop.get("name") and prop.get("type") for prop in props):
             errors.append(f"Aggregate {title} requires typed property objects")
-        if not any(isinstance(prop, dict) and prop.get("isKey") is True for prop in props):
+        if not modify and not any(isinstance(prop, dict) and prop.get("isKey") is True for prop in props):
             errors.append(f"Aggregate {title} requires an isKey property")
     commands = [item for item in tactical if item.get("nodeLabel") == "Command"]
     if not commands:
