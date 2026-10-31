@@ -68,8 +68,41 @@ const isConnected = ref(false)
 const isConnecting = ref(true)
 const connectionError = ref('')
 const workdirDisplay = ref('')
-let pendingInputCommand = null  // set before connect() — sent 6s after ws.onopen
+let pendingInputCommand = null  // set before connect() — sent once claude is ready (sendWhenReady)
 let queuedInput = null          // set after connect() if ws not yet open
+let wsOpenedAt = 0
+
+// Claude 가 처음 띄울 때 묻는 확인 화면(폴더 신뢰 · 권한 우회 동의 · 테마 · 안내). 떠 있는 동안
+// 명령을 보내면 끝의 Enter 가 기본값(No, exit)을 골라 claude 가 꺼진다 → 사람이 답할 때까지 미룬다.
+const CLAUDE_DIALOG_RE = /Enter to confirm|trust this folder|one you trust|Yes, I accept|Bypass Permissions mode|Choose the text style|Press Enter to continue/i
+
+function screenText() {
+  const buf = terminal?.buffer?.active
+  if (!buf) return ''
+  const lines = []
+  for (let i = buf.baseY; i < buf.baseY + terminal.rows; i++) {
+    lines.push(buf.getLine(i)?.translateToString(true) || '')
+  }
+  return lines.join('\n')
+}
+
+// 명령을 claude 입력란이 준비된 뒤에 보낸다 — 최소 minDelay 를 기다리고, 확인 화면이 없는 상태가
+// 2.5초 이어질 때 보낸다(확인 하나에 답한 직후 다음 확인이 뜨는 틈에 보내지 않도록).
+function sendWhenReady(cmd, minDelay = 6000) {
+  const start = Date.now()
+  let clearSince = 0
+  const tick = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    if (CLAUDE_DIALOG_RE.test(screenText())) clearSince = 0
+    else if (!clearSince) clearSince = Date.now()
+    if (Date.now() - start >= minDelay && clearSince && Date.now() - clearSince >= 2500) {
+      ws.send(JSON.stringify({ type: 'input', data: cmd + '\r' }))
+      return
+    }
+    setTimeout(tick, 500)
+  }
+  tick()
+}
 
 // In Electron, window.location.hostname resolves to 'app' (custom app:// protocol)
 // which is not a real network host. Fetch the actual backend port from the main
@@ -227,15 +260,18 @@ function connect(workdir) {
     const dims = { cols: terminal.cols, rows: terminal.rows }
     ws.send(JSON.stringify({ type: 'resize', ...dims }))
 
+    wsOpenedAt = Date.now()
     // If a command was queued (e.g. /robo-implement CHG-009), send it after
-    // Claude's interactive session has had time to start and show a prompt.
-    const cmdToSend = pendingInputCommand || queuedInput
+    // Claude's interactive session has started and no first-run dialog is showing.
+    const cmdToSend = pendingInputCommand
+    const rawToSend = queuedInput
     pendingInputCommand = null
     queuedInput = null
-    if (cmdToSend) {
+    if (cmdToSend) sendWhenReady(cmdToSend)
+    if (rawToSend) {
       setTimeout(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data: cmdToSend + '\r' }))
+          ws.send(JSON.stringify({ type: 'input', data: rawToSend }))
         }
       }, 6000)  // 6s: Claude CLI startup + prompt render
     }
@@ -314,7 +350,16 @@ function sendInput(text) {
   }
 }
 
-defineExpose({ openWithWorkdir, sendInput, refit })
+// Send a command line (Enter appended) once claude is ready — see sendWhenReady.
+function sendCommand(cmd) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendWhenReady(cmd, Math.max(0, 6000 - (Date.now() - wsOpenedAt)))
+  } else {
+    pendingInputCommand = cmd
+  }
+}
+
+defineExpose({ openWithWorkdir, sendInput, sendCommand, refit })
 
 // Watch for workdir prop changes
 watch(() => props.workdir, (newWorkdir) => {
