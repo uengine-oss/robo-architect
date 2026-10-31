@@ -22,6 +22,7 @@ import { resolveSessionUser } from "./launcher/identity";
 import { activeProfile, currentPhase, markPending } from "./launcher/launcher-state";
 import { getRuntimeBackend } from "./backend";
 import { loadSettings } from "./settings";
+import { tr } from "./lang";
 
 const BAR = 38; // the shell's strip; the traffic lights sit inside it (macOS)
 const SHELL_URL = "app://app/__shell/index.html";
@@ -163,8 +164,9 @@ export class TabWindow {
     wc.removeAllListeners("did-stop-loading");
     // The SPA keeps document.title = its current view, so the tab reads what it shows.
     // (the embedded analyzer sets its own title — only the SPA's view names are taken)
+    // (English mode: the translator renames the SPA's title too — its English names count)
     wc.on("page-title-updated", (_e, title) => {
-      if (title && Object.values(VIEWS).includes(title)) {
+      if (title && Object.values(VIEWS).some((v) => v === title || tr(v) === title)) {
         tab.title = title;
         this.sync();
       }
@@ -272,12 +274,12 @@ export class TabWindow {
     const t = this.tab(id);
     if (!t) return;
     Menu.buildFromTemplate([
-      { label: "새로고침", click: () => t.view.webContents.reload() },
-      { label: "새 창으로 분리", click: () => this.detach(id) },
+      { label: tr("새로고침"), click: () => t.view.webContents.reload() },
+      { label: tr("새 창으로 분리"), click: () => this.detach(id) },
       { type: "separator" },
-      { label: "탭 닫기", click: () => this.close(id) },
+      { label: tr("탭 닫기"), click: () => this.close(id) },
       {
-        label: "다른 탭 닫기",
+        label: tr("다른 탭 닫기"),
         enabled: this.tabs.length > 1,
         click: () => this.tabs.filter((x) => x.id !== id).forEach((x) => this.close(x.id)),
       },
@@ -409,21 +411,21 @@ export function menuItems(): Electron.MenuItemConstructorOptions[] {
     if (w) fn(w);
   };
   return [
-    { label: "홈", accelerator: "CmdOrCtrl+T", click: on((w) => w.activate("home")) },
-    { label: "새 창", accelerator: "CmdOrCtrl+N", click: () => void new TabWindow() },
-    { label: "탭 닫기", accelerator: "CmdOrCtrl+W", click: on((w) => (w.active === "home" ? w.win.close() : w.close(w.active))) },
-    { label: "탭 새로고침", accelerator: "CmdOrCtrl+R", click: on((w) => w.activeContents().reload()) },
+    { label: tr("홈"), accelerator: "CmdOrCtrl+T", click: on((w) => w.activate("home")) },
+    { label: tr("새 창"), accelerator: "CmdOrCtrl+N", click: () => void new TabWindow() },
+    { label: tr("탭 닫기"), accelerator: "CmdOrCtrl+W", click: on((w) => (w.active === "home" ? w.win.close() : w.close(w.active))) },
+    { label: tr("탭 새로고침"), accelerator: "CmdOrCtrl+R", click: on((w) => w.activeContents().reload()) },
     { type: "separator" },
-    { label: "다음 탭", accelerator: "Ctrl+Tab", click: on((w) => w.cycle(1)) },
-    { label: "이전 탭", accelerator: "Ctrl+Shift+Tab", click: on((w) => w.cycle(-1)) },
+    { label: tr("다음 탭"), accelerator: "Ctrl+Tab", click: on((w) => w.cycle(1)) },
+    { label: tr("이전 탭"), accelerator: "Ctrl+Shift+Tab", click: on((w) => w.cycle(-1)) },
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
-      label: `탭 ${n}`,
+      label: tr(`탭 ${n}`),
       accelerator: `CmdOrCtrl+${n}`,
       visible: false,
       click: on((w) => w.nth(n)),
     })),
     { type: "separator" },
-    { label: "개발자 도구 (현재 탭)", accelerator: "Alt+CmdOrCtrl+I", click: on((w) => w.activeContents().toggleDevTools()) },
+    { label: tr("개발자 도구 (현재 탭)"), accelerator: "Alt+CmdOrCtrl+I", click: on((w) => w.activeContents().toggleDevTools()) },
   ];
 }
 

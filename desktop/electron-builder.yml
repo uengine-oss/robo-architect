@@ -28,6 +28,10 @@ extraResources:
   - from: resources/shell
     to: shell
     filter: ["**/*"]
+  # 영어 모드 — 런타임 번역기 + 사전 (main/lang.ts i18nDir 가 resources/i18n 에서 찾는다)
+  - from: resources/i18n
+    to: i18n
+    filter: ["translate.js", "ko-en.json"]
 
 win:
   target:

@@ -52,6 +52,8 @@ import {
 import { registerLauncherIpcStubs } from "./launcher/ipc-handlers";
 // Tabbed windows (Ontological Studio family): shell = tab strip + home, tabs = SPA views.
 import { TabWindow, firstWindow, menuItems, reopenLastProject, setPreload, wireShellIpc } from "./tabs";
+// English mode (runtime translator): language choice, the dictionary, <head> injection.
+import { currentLang, i18nAsset, initLanguage, injectHtml, langSource, saveLanguage, tr, type Lang } from "./lang";
 
 // T015 (US1): register `app://` as a privileged scheme so the renderer can
 // load the bundled SPA from disk with the same guarantees as https — fetch
@@ -68,6 +70,9 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// UI language — before "ready": it also sets Chromium's --lang for every renderer.
+initLanguage();
 
 // ---------------------------------------------------------------------------
 // T014 single-instance lock — must run synchronously at module load so the
@@ -121,6 +126,20 @@ function buildRuntimeState(): RuntimeState {
     dataDir: app.getPath("userData"),
     updateState: "idle",
   };
+}
+
+/**
+ * A file of ours. HTML pages (the shell, the SPA, the analyzer) get English mode in their
+ * <head> when the UI is English; everything else — and every page in Korean mode — is
+ * served as it is.
+ */
+function serveFile(file: string): Promise<Response> | Response {
+  if (currentLang() === "en" && file.endsWith(".html")) {
+    return new Response(injectHtml(fs.readFileSync(file, "utf8")), {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+  return net.fetch(pathToFileURL(file).toString());
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +200,13 @@ function registerAppProtocol(): void {
       }
     }
 
+    // English mode: the translator and the dictionary (lang.ts).
+    if (pathname.startsWith("/__i18n/")) {
+      const a = i18nAsset(pathname);
+      if (!a) return new Response("Not Found", { status: 404 });
+      return new Response(a.body, { headers: { "content-type": a.type, "cache-control": "no-store" } });
+    }
+
     // The window shell (tab strip + home) — its own folder, same origin as the SPA so the two
     // share the theme setting and the /api proxy.
     if (pathname.startsWith("/__shell/")) {
@@ -189,7 +215,7 @@ function registerAppProtocol(): void {
       if (!file.startsWith(shellDir + path.sep) || !fs.existsSync(file)) {
         return new Response("Not Found", { status: 404 });
       }
-      return net.fetch(pathToFileURL(file).toString());
+      return serveFile(file);
     }
 
     // Static SPA assets from frontend/dist.
@@ -206,9 +232,9 @@ function registerAppProtocol(): void {
         return new Response("Not Found", { status: 404 });
       }
       // SPA fallback for client-side routing.
-      return net.fetch(pathToFileURL(path.join(frontendDist, "index.html")).toString());
+      return serveFile(path.join(frontendDist, "index.html"));
     }
-    return net.fetch(pathToFileURL(filePath).toString());
+    return serveFile(filePath);
   });
 }
 
@@ -226,13 +252,31 @@ function createMainWindow(): TabWindow {
   return new TabWindow({ icon: iconPath() });
 }
 
+/** 언어 / Language: saved, then the app restarts in it (ROBO_LANG, when set, still wins). */
+function chooseLanguage(next: Lang): void {
+  if (next === currentLang()) return;
+  saveLanguage(next);
+  log("info", "lang.saved", { next, source: langSource() });
+  // the relaunch must not carry a --lang that would override the saved choice
+  app.relaunch({ args: process.argv.slice(1).filter((a) => !/^--lang(=|$)/.test(a)) });
+  app.quit();
+}
+
 function installMenu(): void {
   const isMac = process.platform === "darwin";
+  const langItem = (code: Lang, label: string): Electron.MenuItemConstructorOptions => ({
+    label,
+    type: "radio",
+    checked: currentLang() === code,
+    click: () => chooseLanguage(code),
+  });
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       ...(isMac ? [{ role: "appMenu" as const }] : []),
       { role: "editMenu" },
-      { label: "탭", submenu: menuItems() },
+      { label: tr("탭"), submenu: menuItems() },
+      // the two names stay in their own language — whoever cannot read the other one finds theirs
+      { label: currentLang() === "en" ? "Language" : "언어", submenu: [langItem("ko", "한국어"), langItem("en", "English")] },
       { role: "windowMenu" },
     ]),
   );
@@ -327,7 +371,7 @@ function registerIpcHandlers(): void {
 async function bootstrap(): Promise<void> {
   await ensureDataDirs();
   initLogging();
-  log("info", "app.ready", { appVersion: app.getVersion() });
+  log("info", "app.ready", { appVersion: app.getVersion(), lang: currentLang(), langSource: langSource() });
 
   // Set macOS Dock icon.
   if (process.platform === "darwin" && app.dock) {
