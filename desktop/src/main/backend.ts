@@ -41,6 +41,7 @@ import {
   resolveBundledArchitectRuntime,
   startDockerStack,
 } from "./docker-stack";
+import { getLogsDir } from "./data-dir";
 import { currentLang } from "./lang";
 import { pickFreePort } from "./ports";
 import { log } from "./logging";
@@ -232,8 +233,15 @@ async function startBackendInternal(): Promise<{ port: number }> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
-    // the bundled runtime sits inside the signed app — never write __pycache__ there
-    ...(app.isPackaged ? { PYTHONDONTWRITEBYTECODE: "1" } : {}),
+    // the bundled runtime sits inside the signed app — never write __pycache__ or the backend's
+    // logs (SmartLogger defaults to logs/ under its working directory) there
+    ...(app.isPackaged
+      ? {
+          PYTHONDONTWRITEBYTECODE: "1",
+          MAIN_LOG_PATH: join(getLogsDir(), "backend", "app_flow.jsonl"),
+          DETAIL_LOG_DIR: "details",
+        }
+      : {}),
     API_PORT: String(port),
     ROBO_SPEC_BACKEND_URL: `http://127.0.0.1:${port}`,
     NEO4J_URI: process.env.ROBO_NEO4J_URI ?? process.env.NEO4J_URI,
