@@ -5218,6 +5218,11 @@
    "#status",
    "찾지 못함",
    "not found"
+  ],
+  [
+   "#datasource-manager-title",
+   "데이터 소스",
+   "Data Sources"
   ]
  ]
 }
