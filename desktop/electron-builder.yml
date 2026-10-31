@@ -1,5 +1,10 @@
-appId: org.uengine.robo-architect
-productName: Robo-Architect
+appId: org.uengine.robo-architect-lite
+productName: Robo Architect Lite
+# The installed app's name for Electron (app.getName → ~/Library/Application Support/Robo Architect Lite,
+# the "Robo Architect Lite Safe Storage" keychain item). package.json keeps the development name, so a
+# development run and an installed copy never share a data folder.
+extraMetadata:
+  productName: Robo Architect Lite
 copyright: Copyright (c) ${author}
 
 directories:
@@ -21,9 +26,11 @@ extraResources:
   - from: ../frontend/dist
     to: frontend/dist
     filter: ["**/*"]
+  # scripts/build-packaged-runtime.sh (macOS) / build-packaged-runtime.ps1 (Windows):
+  # manifest, compose, service settings, bundled Python + Architect API
   - from: resources/runtime
     to: runtime
-    filter: ["**/*"]
+    filter: ["**/*", "!.gitkeep", "!**/.DS_Store", "!architect/requirements.lock.txt"]
   # 창 셸(탭 줄 + 홈) — main/index.ts resolveShellDir 가 resources/shell 에서 찾는다
   - from: resources/shell
     to: shell
@@ -38,7 +45,7 @@ win:
     - target: nsis
       arch: [x64]
   icon: resources/icons/icon.ico
-  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  artifactName: Robo-Architect-Lite-win-${arch}.${ext}
   # 코드 서명 인증서가 없다(내부 배포). 이 단계가 켜져 있으면 electron-builder 가
   # winCodeSign 툴체인을 받아 exe 리소스를 편집·서명하는데, 그 아카이브에 심볼릭 링크가 있어
   # Windows 에서 압축 해제가 실패한다(Sub items Errors). 서명을 안 할 거면 켤 이유가 없다.
@@ -50,25 +57,38 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
-  artifactName: ${productName}-Setup-${version}.${ext}
+  artifactName: Robo-Architect-Lite-Setup-win-x64.${ext}
   # Build the uninstaller inside the final installer. This avoids executing an
   # intermediate unsigned EXE, which enterprise App Control can block.
   script: installer.nsi
 
+# macOS (Apple Silicon): a DMG with a fixed name, so the website can link
+#   https://github.com/uengine-oss/robo-architect-lite-releases/releases/latest/download/Robo-Architect-Lite-mac-arm64.dmg
+# Build: scripts/build-packaged-runtime.sh, then `npm run dist:mac` (desktop/scripts/release/README.md).
 mac:
   target:
     - target: dmg
-      arch: [arm64, x64]
-    - target: zip
-      arch: [arm64, x64]
+      arch: [arm64]
   icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
-  hardenedRuntime: true
+  # No Developer ID: signed ad hoc after packing (scripts/adhoc-sign.js) — Gatekeeper then offers
+  # "Open Anyway" instead of calling a downloaded copy damaged. A hardened runtime needs entitlements
+  # (JIT) a real identity would bring, so it stays off with ad-hoc signing.
+  identity: null
+  hardenedRuntime: false
   gatekeeperAssess: false
-  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  artifactName: Robo-Architect-Lite-mac-${arch}.${ext}
+afterPack: scripts/adhoc-sign.js
 
 dmg:
-  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  title: Robo Architect Lite
+  artifactName: Robo-Architect-Lite-mac-${arch}.${ext}
+  icon: resources/icons/icon.icns
+  iconSize: 96
+  window: { width: 540, height: 380 }
+  contents:
+    - { x: 140, y: 200, type: file }
+    - { x: 400, y: 200, type: link, path: /Applications }
 
 # Signing + notarize blocks are added in US1/T029.
 # `publish` (update-feed) is added in US2/T032.

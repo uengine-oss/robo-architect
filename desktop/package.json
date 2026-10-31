@@ -2,7 +2,7 @@
   "name": "robo-architect-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Electron desktop shell for Robo-Architect (wraps the FastAPI backend + Vue SPA + bundled Neo4j).",
+  "description": "Robo Architect Lite — desktop app (Electron shell + host Architect API + Docker stack on Ontological DB).",
   "author": "uEngine",
   "license": "UNLICENSED",
   "main": "dist/main/main/index.js",
@@ -13,7 +13,8 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "test": "playwright test",
-    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\""
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "dist:mac": "npm run build && electron-builder --mac --arm64"
   },
   "devDependencies": {
     "@playwright/test": "^1.47.0",
