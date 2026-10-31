@@ -20,7 +20,7 @@ OpenAI 키가 없거나 만료되면 13장(레거시 코드 분석)이 통째로
 
 ## 안전
 
-Claude 에게 **도구를 하나도 주지 않는다**(텍스트 생성만). 빈 임시 폴더에서 돌리고,
+Claude 에게 **도구를 하나도 주지 않는다**(텍스트 생성만, MCP 서버도 없이). 빈 임시 폴더에서 돌리고,
 Anthropic 키 변수는 지운다(로컬 로그인 세션 사용 — skill_runner 와 같은 이유).
 """
 from __future__ import annotations
@@ -53,9 +53,10 @@ _SEM = asyncio.Semaphore(_CONCURRENCY)
 _TIMEOUT = int(os.getenv("ROBO_LLM_BRIDGE_TIMEOUT", "600"))
 #: config 의 model 이 "claude-code" 면 이 모델을 쓴다(빈 값이면 CLI 기본).
 _DEFAULT_MODEL = os.getenv("ROBO_LLM_BRIDGE_MODEL", "sonnet")
-#: 텍스트 생성만 — 파일 · 셸 · 웹 도구는 모두 막는다.
-_NO_TOOLS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "WebFetch",
-             "WebSearch", "NotebookEdit", "Task", "TodoWrite"]
+#: 텍스트 생성만 — 내장 도구는 하나도 없이(--tools ""), 사용자 설정의 MCP 서버도 띄우지 않는다
+#: (--strict-mcp-config, 설정 파일 없음). 도구가 하나라도 남으면 --max-turns 1 에서 도구를 부르려다
+#: error_max_turns 로 끝난다(분석기 scan 에이전트가 「파일 읽기」 같은 말을 보고 실제 도구를 찾았다).
+_TEXT_ONLY = ["--tools", "", "--strict-mcp-config"]
 
 
 def _content_text(content: Any) -> str:
@@ -161,8 +162,7 @@ def build_prompt(body: dict) -> tuple[str, str, str, list[dict]]:
 
 
 def _claude_cmd(system: str, model: str) -> list[str]:
-    cmd = [_resolve_claude_bin(), "-p", "--output-format", "json", "--max-turns", "1",
-           "--disallowedTools", *_NO_TOOLS]
+    cmd = [_resolve_claude_bin(), "-p", "--output-format", "json", "--max-turns", "1", *_TEXT_ONLY]
     use = _DEFAULT_MODEL if model in ("", "claude-code") else model
     if use:
         cmd += ["--model", use]
@@ -178,17 +178,22 @@ async def _ask_claude(system: str, prompt: str, model: str) -> str:
                 _run_process_sync, _claude_cmd(system, model), cwd, _TIMEOUT,
                 prompt.encode("utf-8"),
             )
-    if proc.returncode != 0:
-        raise HTTPException(status_code=502, detail=f"claude exited {proc.returncode}: "
-                            f"{(proc.stderr or b'')[-400:].decode('utf-8', 'replace')}")
     raw = (proc.stdout or b"").decode("utf-8", "replace")
+    if proc.returncode != 0 and not raw.strip().startswith("{"):
+        _fail(f"claude exited {proc.returncode}: {(proc.stderr or b'')[-400:].decode('utf-8', 'replace')}")
     try:
         envelope = json.loads(raw)
     except json.JSONDecodeError:
         return raw.strip()
     if envelope.get("is_error"):
-        raise HTTPException(status_code=502, detail=f"claude error: {str(envelope.get('result'))[:400]}")
+        _fail(f"claude error ({envelope.get('subtype')}): {str(envelope.get('result'))[:400]}")
     return str(envelope.get("result") or "")
+
+
+def _fail(detail: str) -> None:
+    """분석기는 상태 코드만 남기므로 까닭은 여기 로그에 적는다."""
+    SmartLogger.log("WARNING", "LLM bridge call failed.", category="api.llm_bridge.error", params={"detail": detail})
+    raise HTTPException(status_code=502, detail=detail)
 
 
 def _tool_call(name: str, args: Any) -> dict:
@@ -201,7 +206,7 @@ def answer_message(text: str, mode: str, fns: list[dict]) -> tuple[dict, str]:
     if mode == "forced":
         args = extract_json(text)
         if not isinstance(args, dict):
-            raise HTTPException(status_code=502, detail="claude did not return a JSON object for the tool call")
+            _fail(f"claude did not return a JSON object for the tool call: {text[:300]}")
         return {"role": "assistant", "content": None, "tool_calls": [_tool_call(fns[0].get("name"), args)]}, "tool_calls"
     if mode in ("choose", "required"):
         known = {f.get("name") for f in fns}
