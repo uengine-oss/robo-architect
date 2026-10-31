@@ -132,6 +132,8 @@ body:not(.at-home) #home { visibility: hidden; }
 .status-row .dot.bad { background: var(--err); }
 .status-row b { font-weight: 600; }
 .status-row small { display: block; color: var(--fg-dim); font-size: 11.5px; }
+.status-row .pull-bar { display: block; height: 4px; margin: 5px 0 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.status-row .pull-bar i { display: block; height: 100%; background: var(--accent); transition: width .4s ease; }
 .status-row button { margin-left: auto; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 
 .main { flex: 1; min-width: 0; overflow-y: auto; }

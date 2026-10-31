@@ -2727,7 +2727,12 @@
   "SKILL_RUNNER_PROVIDER는 claude_cli 또는 openai_compatible 이어야 합니다": "SKILL_RUNNER_PROVIDER must be claude_cli or openai_compatible",
   "기본 · 빈 프로젝트": "default · empty project",
   "만들기": "Create",
-  "미스캔": "not scanned"
+  "미스캔": "not scanned",
+  "Docker 이미지 내려받는 중": "Downloading Docker images",
+  "Docker 이미지 묶음을 불러오는 중": "Loading the bundled Docker images",
+  "처음 실행에서 한 번만 받습니다": "Downloaded once, on the first launch",
+  "Docker Desktop 을 켠 뒤 앱을 다시 여세요": "Start Docker Desktop, then open the app again",
+  "Docker 이미지를 내려받지 못했습니다 — 인터넷 연결을 확인하고 앱을 다시 여세요": "Could not download the Docker images — check the internet connection and open the app again"
  },
  "patterns": [
   [

@@ -57,6 +57,8 @@ const STATUS_KO = { INTENT: '인텐트', PLAN: '계획', IMPLEMENTING: '구현 �
 let tabState = { active: 'home', tabs: [] }
 let session = null
 let runtime = { status: 'initializing' }
+let boot = null      // image download progress while starting-db (BackendStatusEvent.progress)
+let bootError = ''   // why start-up failed (BackendStatusEvent.detail with fatal)
 let info = {}
 let projects = []
 let items = []
@@ -302,12 +304,32 @@ function bootText() {
     'starting-backend': 'Robo Architect 백엔드를 띄우는 중', fatal: '시작하지 못했습니다 — 로그 폴더를 보세요', 'backend-crashed': '백엔드가 멈췄습니다',
   })[runtime.status] || runtime.status
 }
+// first launch of a release: the seven images come from the registry (main/docker-images.ts)
+const IMAGE_LABEL = { graphDb: 'Ontological DB', graphBolt: 'Bolt', analyzer: 'Analyzer', catalog: 'Catalog', fabric: 'Data fabric', parser: 'Parser', gateway: 'API gateway' }
+const bytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`)
+function bootHtml() {
+  const p = boot
+  if (p && runtime.status === 'starting-db') {
+    if (p.phase === 'loading') return `<span>Docker 이미지 묶음을 불러오는 중</span> · ${p.count}`
+    const label = esc(IMAGE_LABEL[p.name] || p.name)
+    const one = p.totalBytes ? ` · ${bytes(p.currentBytes)} / ${bytes(p.totalBytes)}` : ''
+    const pct = p.overallTotal ? Math.min(100, Math.round((p.overallBytes / p.overallTotal) * 100)) : 0
+    return `<span>Docker 이미지 내려받는 중</span> ${p.index}/${p.count} — ${label}${one}`
+      + `<span class="pull-bar"><i style="width:${pct}%"></i></span>`
+      + `<span>처음 실행에서 한 번만 받습니다</span>${p.overallTotal ? ` · ${bytes(p.overallBytes)} / ${bytes(p.overallTotal)}` : ''}`
+  }
+  if (runtime.status === 'fatal' && bootError) {
+    if (/docker\.daemon_unavailable/.test(bootError)) return '<span>Docker Desktop 을 켠 뒤 앱을 다시 여세요</span>'
+    if (/docker\.image_pull_failed/.test(bootError)) return '<span>Docker 이미지를 내려받지 못했습니다 — 인터넷 연결을 확인하고 앱을 다시 여세요</span>'
+  }
+  return esc(bootText())
+}
 function renderStatus() {
   const ok = ready()
   const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed'
   const claude = info.claude
   $('status').innerHTML = `
-    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 7개 · 127.0.0.1` : esc(bootText())}</small></div></div>
+    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 7개 · 127.0.0.1` : bootHtml()}</small></div></div>
     <div class="status-row"><span class="dot ${claude ? 'ok' : 'warn'}"></span><div><b>에이전트</b> ${claude ? 'Claude Code' : '찾지 못함'}<small>${claude ? '이 PC 의 CLI 가 스킬로 분석 · 계획 · 구현합니다' : 'claude CLI 를 설치하고 로그인하세요'}</small></div></div>`
 }
 
@@ -346,6 +368,14 @@ if (S) {
   S.isFullScreen().then((on) => document.body.classList.toggle('full', !!on))
   S.onFullScreen((on) => document.body.classList.toggle('full', on))
 }
-if (D && D.app && D.app.onBackendStatus) D.app.onBackendStatus((e) => { runtime = { ...runtime, status: e.status }; load() })
+if (D && D.app && D.app.onBackendStatus) D.app.onBackendStatus((e) => {
+  const same = e.status === runtime.status
+  boot = e.progress || (e.status === 'starting-db' ? boot : null)
+  if (e.status === 'fatal') bootError = e.detail || ''
+  runtime = { ...runtime, status: e.status }
+  // download ticks only redraw the status — a full load() per tick would refetch everything
+  if (same && e.progress) renderStatus()
+  else load()
+})
 load()
 window.addEventListener('focus', () => { if (tabState.active === 'home') load() })
