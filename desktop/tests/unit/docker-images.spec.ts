@@ -118,7 +118,24 @@ test.describe("ensureImages", () => {
     expect(store.get("ghcr.io/o/a:0.1.0")?.id).toBe(ID_A);
   });
 
-  test("never moves a tag that points at another image (a fresh rebuild)", async () => {
+  test("a release reference left on an older image is moved to the image with the expected ID", async () => {
+    const store = new Map([
+      ["uengine/a:lite-mac", { id: ID_A, repoDigests: [] }],
+      ["ghcr.io/o/a:0.1.0", { id: ID_C, repoDigests: [] }], // tagged from an earlier build
+    ]);
+    const docker = fakeDocker(store);
+    const result = await ensureImages({
+      images: [{ name: "a", ref: "ghcr.io/o/a:0.1.0", id: ID_A }],
+      archive: null,
+      pull: true,
+      runDocker: docker.run,
+      log: quiet,
+    });
+    expect(result.tagged).toEqual(["a"]);
+    expect(store.get("ghcr.io/o/a:0.1.0")?.id).toBe(ID_A);
+  });
+
+  test("never moves a development tag that points at another image (a fresh rebuild)", async () => {
     const store = new Map([
       ["uengine/a:lite-mac", { id: ID_C, repoDigests: [] }], // just rebuilt
       ["old", { id: ID_A, repoDigests: [] }], // what the manifest still names

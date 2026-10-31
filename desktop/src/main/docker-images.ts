@@ -4,11 +4,13 @@
  * For every image in the runtime manifest, in this order:
  *
  *   1. the manifest's reference is already here with the expected identity  → reuse
- *   2. the reference is not here at all, but an image with the expected ID is → tag it, reuse
+ *   2. an image with the expected ID is here under another name               → tag it, reuse
  *      (a developer machine that built `uengine/*:lite-mac` runs a release
  *       manifest that names `ghcr.io/...:<version>` without downloading).
- *      A reference that IS here with another identity is never re-tagged —
- *      that would move a tag someone just rebuilt.
+ *      Only when the reference is absent, or the manifest pulls (its references
+ *      are the app's own, and a pull would move the tag anyway). A development
+ *      reference that is here with another identity is never re-tagged — that
+ *      would move a tag someone just rebuilt.
  *   3. an image archive is bundled with the runtime                          → `docker load` it
  *   4. the manifest allows pulls (`imagePull`, release runtimes only)        → pull from the registry
  *      A development manifest names local-only tags (`uengine/*:lite-mac`);
@@ -330,7 +332,7 @@ export async function ensureImages(options: EnsureImagesOptions): Promise<Ensure
       result.reused.push(entry.name);
       continue;
     }
-    if (!found && options.reuseById !== false) {
+    if ((!found || options.pull) && options.reuseById !== false) {
       const byId = await inspect(runDocker, entry.id);
       if (byId && identityMatches(byId, entry)) {
         await runDocker(["image", "tag", entry.id, entry.ref], { timeoutMs: 20_000 });
