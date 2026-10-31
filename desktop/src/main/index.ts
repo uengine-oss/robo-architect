@@ -325,13 +325,14 @@ function registerIpcHandlers(): void {
   registerHandler("fs:stageProject", stageProject);
 
   // Bridge backend status changes to the renderer.
-  onBackendStatusChange((status, detail) => {
+  onBackendStatusChange((status, detail, progress) => {
     const be = getRuntimeBackend();
     pushToRenderer("app:onBackendStatus", {
       status,
       backendPort: be.port,
       boltPort: null,
       detail,
+      progress,
     });
   });
 

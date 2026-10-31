@@ -2,10 +2,12 @@
  * Packaged Analyzer stack lifecycle.
  *
  * The distributable Electron app keeps the filesystem/PTY-sensitive Architect
- * API on the Windows host and runs the remaining services in one app-owned
- * Docker Compose project. This module is the only place that knows how to:
+ * API on the host and runs the remaining services in one app-owned Docker
+ * Compose project. This module is the only place that knows how to:
  *
- *   manifest -> offline image archive -> Compose environment -> warm stack
+ *   manifest -> images (local / archive / registry pull) -> Compose environment -> warm stack
+ *
+ * Getting the images is docker-images.ts.
  *
  * It intentionally does not own the Architect API child process; backend.ts
  * consumes the returned ports and starts that process with bundled Python.
@@ -17,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getDataDir } from "./data-dir";
+import { ensureImages as fetchImages, type ImageEntry, type ProgressListener } from "./docker-images";
 import { GRAPH_ANALYSIS, GRAPH_DESIGN, GRAPH_USER } from "./graphs";
 import { ensureBundledConnection } from "./launcher/connections";
 import { log } from "./logging";
@@ -27,7 +30,12 @@ import { loadSettings } from "./settings";
 const MANIFEST_NAME = "runtime-manifest.json";
 const STATE_SCHEMA_VERSION = 1;
 const MANIFEST_SCHEMA_VERSION = 3;
-const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
+const DEFAULT_COMPOSE_PROJECT_NAME = "robo-architect-desktop";
+// ROBO_COMPOSE_PROJECT: a second stack next to the usual one (packaged-app test with a
+// fresh data folder — the same project name would recreate the running containers).
+const COMPOSE_PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/.test(process.env.ROBO_COMPOSE_PROJECT ?? "")
+  ? (process.env.ROBO_COMPOSE_PROJECT as string)
+  : DEFAULT_COMPOSE_PROJECT_NAME;
 const NEO4J_PASSWORD_SECRET_ID = "runtime.docker.neo4j.password";
 const DOCKER_COMMAND_TIMEOUT_MS = 10 * 60_000;
 
@@ -35,8 +43,11 @@ export interface RuntimeManifest {
   schemaVersion: number;
   releaseId: string;
   composeFile: string;
-  imageArchive: string;
-  imageArchiveSha256: string;
+  /** a bundled `docker save` archive (offline install) */
+  imageArchive?: string | null;
+  imageArchiveSha256?: string | null;
+  /** release runtimes: missing images are pulled from the registry the references name */
+  imagePull?: boolean;
   images: {
     graphDb: string;
     graphBolt: string;
@@ -47,6 +58,10 @@ export interface RuntimeManifest {
     gateway: string;
   };
   imageIds: Record<keyof RuntimeManifest["images"], string>;
+  /** registry manifest digests recorded when the release images were pushed — pulls are pinned to them */
+  imageDigests?: Partial<Record<keyof RuntimeManifest["images"], string>>;
+  /** compressed download sizes (bytes) — the progress total before the registry reports one */
+  imageSizes?: Partial<Record<keyof RuntimeManifest["images"], number>>;
   architect: {
     python: string;
     app: string;
@@ -132,7 +147,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(manifest.releaseId ?? "")) {
     throw new Error("runtime.manifest_invalid: releaseId");
   }
-  if (!/^[a-f0-9]{64}$/.test(manifest.imageArchiveSha256 ?? "")) {
+  if (manifest.imageArchive && !/^[a-f0-9]{64}$/.test(manifest.imageArchiveSha256 ?? "")) {
     throw new Error("runtime.manifest_invalid: imageArchiveSha256");
   }
   for (const [name, image] of Object.entries(manifest.images ?? {})) {
@@ -156,6 +171,14 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     if (!/^sha256:[a-f0-9]{64}$/.test(imageId ?? "")) {
       throw new Error(`runtime.manifest_invalid: imageIds.${required}`);
     }
+    const digest = manifest.imageDigests?.[required as keyof RuntimeManifest["images"]];
+    if (digest !== undefined && !/^sha256:[a-f0-9]{64}$/.test(digest)) {
+      throw new Error(`runtime.manifest_invalid: imageDigests.${required}`);
+    }
+    const size = manifest.imageSizes?.[required as keyof RuntimeManifest["images"]];
+    if (size !== undefined && !(Number.isInteger(size) && size >= 0)) {
+      throw new Error(`runtime.manifest_invalid: imageSizes.${required}`);
+    }
   }
   for (const required of [
     "workspace",
@@ -173,7 +196,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     }
   }
   ensureRuntimeChild(root, manifest.composeFile, "composeFile");
-  ensureRuntimeChild(root, manifest.imageArchive, "imageArchive");
+  if (manifest.imageArchive) ensureRuntimeChild(root, manifest.imageArchive, "imageArchive");
   ensureRuntimeChild(root, manifest.architect.python, "architect.python");
   ensureRuntimeChild(root, manifest.architect.app, "architect.app");
   if (!/^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/.test(manifest.architect.entrypoint)) {
@@ -267,62 +290,41 @@ async function ensureEnvironmentSnapshots(
   });
 }
 
-async function inspectImageId(image: string): Promise<string | null> {
-  try {
-    return await runDocker(["image", "inspect", image, "--format", "{{.Id}}"], {
-      timeoutMs: 20_000,
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function ensureImages(root: string, manifest: RuntimeManifest): Promise<void> {
-  const missing: string[] = [];
-  for (const [name, image] of Object.entries(manifest.images)) {
-    const actualId = await inspectImageId(image);
-    const expectedId = manifest.imageIds[name as keyof RuntimeManifest["images"]];
-    if (actualId !== expectedId) missing.push(image);
-  }
-  if (missing.length === 0) {
-    log("info", "docker.images.reused", {
-      releaseId: manifest.releaseId,
-      count: Object.keys(manifest.images).length,
-    });
-    return;
-  }
-
-  const archive = ensureRuntimeChild(root, manifest.imageArchive, "imageArchive");
-  if (!fs.existsSync(archive)) {
-    throw new Error(`docker.image_archive_missing: ${archive}`);
-  }
-  log("info", "docker.image_archive.verifying", {
-    releaseId: manifest.releaseId,
-    missingCount: missing.length,
+async function ensureImages(
+  root: string,
+  manifest: RuntimeManifest,
+  onProgress?: ProgressListener,
+): Promise<void> {
+  const images: ImageEntry[] = Object.entries(manifest.images).map(([name, ref]) => {
+    const key = name as keyof RuntimeManifest["images"];
+    return {
+      name,
+      ref,
+      id: manifest.imageIds[key],
+      digest: manifest.imageDigests?.[key],
+      size: manifest.imageSizes?.[key],
+    };
   });
-  const actualSha = await sha256File(archive);
-  if (actualSha !== manifest.imageArchiveSha256) {
-    throw new Error(
-      `docker.image_archive_checksum_mismatch: expected=${manifest.imageArchiveSha256} actual=${actualSha}`,
-    );
-  }
-  log("info", "docker.image_archive.loading", {
-    releaseId: manifest.releaseId,
-    missingCount: missing.length,
+  const archive = manifest.imageArchive
+    ? {
+        path: ensureRuntimeChild(root, manifest.imageArchive, "imageArchive"),
+        sha256: manifest.imageArchiveSha256 ?? "",
+      }
+    : null;
+  const result = await fetchImages({
+    images,
+    archive,
+    pull: manifest.imagePull === true,
+    runDocker: (args, options) => runDocker(args, options),
+    log,
+    onProgress,
   });
-  await runDocker(["load", "--input", archive]);
-  for (const [name, image] of Object.entries(manifest.images)) {
-    const actualId = await inspectImageId(image);
-    const expectedId = manifest.imageIds[name as keyof RuntimeManifest["images"]];
-    if (actualId !== expectedId) {
-      throw new Error(
-        `docker.image_identity_mismatch: image=${image} expected=${expectedId} actual=${actualId ?? "missing"}`,
-      );
-    }
-  }
-  log("info", "docker.image_archive.loaded", {
+  log("info", "docker.images.ready", {
     releaseId: manifest.releaseId,
-    count: Object.keys(manifest.images).length,
+    reused: result.reused.length,
+    tagged: result.tagged,
+    loaded: result.loaded,
+    pulled: result.pulled,
   });
 }
 
@@ -410,13 +412,13 @@ function composeArgs(root: string, manifest: RuntimeManifest, command: string[])
   return ["compose", "--project-name", COMPOSE_PROJECT_NAME, "--file", composeFile, ...command];
 }
 
-export async function startDockerStack(): Promise<DockerStackRuntime> {
+export async function startDockerStack(onProgress?: ProgressListener): Promise<DockerStackRuntime> {
   if (current) return current;
   const root = runtimeDirectory();
   const manifest = readManifest(root);
   await ensureEnvironmentSnapshots(root, manifest);
   await ensureDockerDaemon();
-  await ensureImages(root, manifest);
+  await ensureImages(root, manifest, onProgress);
 
   const password = await neo4jPassword();
   const state = loadPersistedState(manifest.releaseId) ?? (await createState(manifest.releaseId));

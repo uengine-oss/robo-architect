@@ -35,7 +35,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { RuntimeStatus } from "../shared/ipc-contract";
+import type { ImagePullProgress, RuntimeStatus } from "../shared/ipc-contract";
 
 import {
   resolveBundledArchitectRuntime,
@@ -87,6 +87,7 @@ export interface BackendRuntime {
 export type BackendStatusListener = (
   status: RuntimeStatus,
   detail?: string,
+  progress?: ImagePullProgress,
 ) => void;
 
 let child: ChildProcess | null = null;
@@ -100,6 +101,23 @@ export function getRuntimeBackend(): BackendRuntime {
 export function onBackendStatusChange(cb: BackendStatusListener): () => void {
   listeners.add(cb);
   return () => listeners.delete(cb);
+}
+
+/**
+ * Image download progress while the status stays `starting-db` — pushed to the
+ * listeners (the home shows it) but not logged per tick; docker-images.ts logs
+ * each image once.
+ */
+function setProgress(progress: ImagePullProgress): void {
+  for (const cb of listeners) {
+    try {
+      cb(runtime.status, undefined, progress);
+    } catch (err) {
+      log("error", "backend.listener_threw", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }
 
 function setStatus(next: RuntimeStatus, detail?: string): void {
@@ -171,7 +189,7 @@ async function startBackendInternal(): Promise<{ port: number }> {
 
   if (packaged) {
     setStatus("starting-db");
-    const stack = await startDockerStack();
+    const stack = await startDockerStack(setProgress);
     const bundled = resolveBundledArchitectRuntime(stack);
     cwd = bundled.app;
     port = stack.ports.architect;
@@ -214,6 +232,8 @@ async function startBackendInternal(): Promise<{ port: number }> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
+    // the bundled runtime sits inside the signed app — never write __pycache__ there
+    ...(app.isPackaged ? { PYTHONDONTWRITEBYTECODE: "1" } : {}),
     API_PORT: String(port),
     ROBO_SPEC_BACKEND_URL: `http://127.0.0.1:${port}`,
     NEO4J_URI: process.env.ROBO_NEO4J_URI ?? process.env.NEO4J_URI,

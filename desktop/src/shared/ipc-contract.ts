@@ -215,6 +215,25 @@ export interface BackendStatusEvent {
   boltPort: number | null;
   /** Short human-readable reason; never a stack trace, never a secret. */
   detail?: string;
+  /** While `starting-db`: the Docker image being fetched (first launch of a release). */
+  progress?: ImagePullProgress;
+}
+
+/** One step of getting the stack's images (main/docker-images.ts). */
+export interface ImagePullProgress {
+  phase: "pulling" | "loading" | "verifying";
+  /** manifest key of the image — graphDb, graphBolt, analyzer, catalog, fabric, parser, gateway */
+  name: string;
+  ref: string;
+  /** 1-based position among the images that have to be fetched */
+  index: number;
+  count: number;
+  /** this image: bytes so far / its size (0 when not known yet) */
+  currentBytes: number;
+  totalBytes: number;
+  /** all images to fetch together */
+  overallBytes: number;
+  overallTotal: number;
 }
 
 export interface UpdateStateEvent {
