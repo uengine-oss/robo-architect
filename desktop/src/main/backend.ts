@@ -42,6 +42,7 @@ import {
   startDockerStack,
 } from "./docker-stack";
 import { getLogsDir } from "./data-dir";
+import { GRAPH_ANALYSIS } from "./graphs";
 import { currentLang } from "./lang";
 import { pickFreePort } from "./ports";
 import { log } from "./logging";
@@ -248,8 +249,9 @@ async function startBackendInternal(): Promise<{ port: number }> {
     NEO4J_USER: process.env.ROBO_NEO4J_USER ?? process.env.NEO4J_USER,
     NEO4J_PASSWORD: process.env.ROBO_NEO4J_PASSWORD ?? process.env.NEO4J_PASSWORD,
     NEO4J_DATABASE: process.env.ROBO_NEO4J_DATABASE ?? process.env.NEO4J_DATABASE,
-    ANALYZER_NEO4J_DATABASE:
-      process.env.ROBO_NEO4J_DATABASE ?? process.env.ANALYZER_NEO4J_DATABASE,
+    // 레거시 근거(robo-cluster)를 찾을 그래프 = 분석기가 쓰는 그래프. 프로젝트 그래프(ROBO_NEO4J_DATABASE)를
+    // 넘기면 프로포절 INTENT 가 그 이름으로 찾다가 「분석한 코드 없음」으로 근거 0개가 된다.
+    ANALYZER_NEO4J_DATABASE: process.env.ANALYZER_NEO4J_DATABASE ?? GRAPH_ANALYSIS,
     // 앱 언어 — 영어 모드면 스킬(claude -p) 결과도 영어로(api/platform/skill_runner._with_output_language).
     ROBO_LANG: currentLang(),
   };
