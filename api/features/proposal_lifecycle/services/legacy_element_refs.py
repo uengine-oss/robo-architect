@@ -291,6 +291,89 @@ def _structural_rule_statement(attributes: dict) -> str:
     return "구조: 직접 조건·효과 없음"
 
 
+# 분석 그래프의 자식 조회 — 두 가지 저장 모양을 읽는다.
+#   지금 분석기: id · graph_owner, RULE.statement, RULE -HAS_EXAMPLE-> EXAMPLE(given · when_ · then_)
+#   예전 분석기: _id · _owner, RULE.condition(_description) · effects(_descriptions), 예시 노드 없음
+# 지금 모양을 먼저 찾고, 없을 때만 예전 모양을 찾는다(Ontological DB 에서 _id 는 엔진 내부 번호라 섞으면 안 된다).
+# Ontological DB 는 reduce · 노드 목록 이어 붙이기(collect + collect)를 못 해서 쿼리를 나눠 파이썬에서 합친다.
+def _rules_query(key: str) -> str:
+    return (
+        f"MATCH (x {{{key}: $id}})-[:HAS_RULE]->(r:RULE) "
+        f"RETURN r.{key} AS id, coalesce(x.summary, '') AS parent_summary, "
+        "  coalesce(r.condition_description, r.condition, '') AS condition, "
+        "  coalesce(r.effect_descriptions, r.effects, []) AS effects, "
+        "  coalesce(r.statement, '') AS statement_text"
+    )
+
+
+_EXAMPLES_QUERY = (
+    "MATCH (r:RULE {id: $id})-[:HAS_EXAMPLE]->(e:EXAMPLE) "
+    "RETURN e.id AS id, coalesce(e.given, '') AS given, "
+    "  coalesce(e.when_, '') AS when, coalesce(e.then_, '') AS then"
+)
+
+
+def _table_queries(key: str) -> tuple[str, str]:
+    return (
+        f"MATCH (x {{{key}: $id}})-[:READS|WRITES]->(t:TABLE) RETURN DISTINCT t.{key} AS id, t.name AS name",
+        f"MATCH (x {{{key}: $id}})-[:HAS_RULE]->(:RULE)-[:READS|WRITES]->(t:TABLE) "
+        f"RETURN DISTINCT t.{key} AS id, t.name AS name",
+    )
+
+
+def _rows(session, query: str, **params) -> list[dict]:
+    return [dict(r) for r in session.run(query, **params)]
+
+
+def _rows_any_shape(session, make_query, parent_id: str) -> tuple[str, list]:
+    """지금 모양(id)으로 찾고, 비면 예전 모양(_id)으로 — 예전 모양을 못 읽는 엔진의 오류는 빈 결과로.
+    make_query 가 쿼리 여럿(tuple)을 주면 쿼리마다의 행 목록을 돌려준다."""
+    def run(key: str) -> list:
+        query = make_query(key)
+        if isinstance(query, tuple):
+            return [_rows(session, q, id=parent_id) for q in query]
+        return _rows(session, query, id=parent_id)
+
+    def found(rows: list) -> bool:
+        return any(rows) if rows and isinstance(rows[0], list) else bool(rows)
+
+    rows = run("id")
+    if found(rows):
+        return "id", rows
+    try:
+        return "_id", run("_id")
+    except Exception:  # noqa: BLE001 — 예전 모양 조회 실패는 「자식 없음」과 같다
+        return "id", rows
+
+
+def _graph_rules(session, parent_id: str) -> list[dict]:
+    shape, found = _rows_any_shape(session, _rules_query, parent_id)
+    rules = []
+    for rule in found:
+        effects = rule.get("effects") if isinstance(rule.get("effects"), list) else []
+        examples = _rows(session, _EXAMPLES_QUERY, id=rule["id"]) if shape == "id" else []
+        if not examples:
+            # 예전 모양 — 규칙 하나를 예시 하나로(부모 요약 · 조건 · 효과)
+            examples = [{"id": rule["id"], "given": rule.get("parent_summary", ""),
+                         "when": rule.get("condition") or "", "then": "\n".join(map(str, effects))}]
+        rule.pop("parent_summary", None)
+        statement_text = str(rule.pop("statement_text", "") or "").strip()
+        rule["examples"] = examples
+        rule["statement"] = statement_text or _structural_rule_statement(rule)
+        rules.append(rule)
+    return rules
+
+
+def _graph_tables(session, parent_id: str) -> list[dict]:
+    _shape, per_query = _rows_any_shape(session, _table_queries, parent_id)
+    seen: dict[str, dict] = {}
+    for rows in per_query:
+        for row in rows:
+            if row["id"] and row["id"] not in seen:
+                seen[row["id"]] = {"id": row["id"], "name": row["name"]}
+    return list(seen.values())
+
+
 def resolve_content_refs(strategic_diff: Any, tactical_diff: Any, fetch_children) -> list[dict]:
     """내용 인용(rule 문장·example G/W/T·table 이름)을 실제 노드 꼬리표로 결정론 승격한다.
 
@@ -498,29 +581,8 @@ def enforce_proposal_refs(
                 if parent_id in provenance_children:
                     rule_cache[parent_id] = provenance_children[parent_id]
                     return rule_cache[parent_id]
-                rules = [dict(r) for r in session.run(
-                    "MATCH (x {_id: $id, _owner: 'analyzer'})-[:HAS_RULE]->"
-                    "      (r:RULE {_owner: 'analyzer'}) "
-                    "RETURN r._id AS id, coalesce(r.condition_description, r.condition, '') AS condition, "
-                    "  coalesce(r.effect_descriptions, r.effects, []) AS effects, "
-                    "  [{id: r._id, given: coalesce(x.summary, ''), "
-                    "    when: coalesce(r.condition_description, r.condition, ''), "
-                    "    then: reduce(text = '', effect IN coalesce(r.effect_descriptions, r.effects, []) | "
-                    "      text + CASE WHEN text = '' THEN '' ELSE '\\n' END + effect)}] AS examples",
-                    id=parent_id,
-                )]
-                for rule in rules:
-                    rule["statement"] = _structural_rule_statement(rule)
-                # Parent/rule direct table access.
-                tables = [dict(r) for r in session.run(
-                    "MATCH (x {_id: $id, _owner: 'analyzer'}) "
-                    "OPTIONAL MATCH (x)-[:READS|WRITES]->(t1:TABLE) "
-                    "OPTIONAL MATCH (x)-[:HAS_RULE]->(:RULE)-[:READS|WRITES]->(t2:TABLE) "
-                    "WITH collect(DISTINCT t1) + collect(DISTINCT t2) AS ts "
-                    "UNWIND ts AS t WITH DISTINCT t WHERE t IS NOT NULL "
-                    "RETURN t._id AS id, t.name AS name",
-                    id=parent_id,
-                )]
+                rules = _graph_rules(session, parent_id)
+                tables = _graph_tables(session, parent_id)
                 rule_cache[parent_id] = {"rules": rules, "tables": tables}
             return rule_cache[parent_id]
 

@@ -385,3 +385,47 @@ def test_tactical_list_validated_with_element_keys():
 def test_tactical_non_list_input_is_noop():
     assert validate_tactical_refs(None, set()) == []
     assert validate_tactical_refs({"not": "list"}, set()) == []
+
+
+class _FakeSession:
+    """쿼리 글자에 들어 있는 낱말로 행을 고른다 — 지금 분석기(id · statement · EXAMPLE) 모양."""
+
+    def __init__(self, legacy_error: bool = False):
+        self.queries: list[str] = []
+        self.legacy_error = legacy_error
+
+    def run(self, query, **params):
+        self.queries.append(query)
+        if "_id:" in query and self.legacy_error:
+            raise RuntimeError("COALESCE types text and bigint cannot be matched")
+        if "{id: $id}" not in query and "_id:" not in query:
+            return []
+        if params.get("id") != "m1" and "HAS_EXAMPLE" not in query:
+            return []
+        if "HAS_EXAMPLE" in query:
+            return [{"id": "e1", "given": "주문 O1 이 WAITING", "when": "사장님이 거절", "then": "REJECTED"}]
+        if "HAS_RULE" in query and "READS|WRITES" not in query:
+            return [{"id": "r1", "parent_summary": "거절", "condition": "", "effects": [],
+                     "statement_text": "WAITING 주문만 REJECTED 로 바꾼다"}]
+        if "READS|WRITES" in query and "HAS_RULE" not in query:
+            return [{"id": "db:delivery.orders", "name": "orders"}]
+        return []
+
+
+def test_graph_children_read_current_analyzer_shape_without_reduce():
+    from api.features.proposal_lifecycle.services.legacy_element_refs import _graph_rules, _graph_tables
+
+    session = _FakeSession()
+    rules = _graph_rules(session, "m1")
+    assert rules[0]["statement"] == "WAITING 주문만 REJECTED 로 바꾼다"
+    assert rules[0]["examples"] == [{"id": "e1", "given": "주문 O1 이 WAITING", "when": "사장님이 거절", "then": "REJECTED"}]
+    assert _graph_tables(session, "m1") == [{"id": "db:delivery.orders", "name": "orders"}]
+    assert not any("reduce(" in q for q in session.queries)
+
+
+def test_graph_children_missing_parent_is_empty_even_if_old_shape_errors():
+    from api.features.proposal_lifecycle.services.legacy_element_refs import _graph_rules, _graph_tables
+
+    session = _FakeSession(legacy_error=True)
+    assert _graph_rules(session, "nope") == []
+    assert _graph_tables(session, "nope") == []
