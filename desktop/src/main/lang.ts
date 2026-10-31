@@ -110,13 +110,18 @@ export function injectHtml(html: string): string {
   const tags =
     '<script>window.OS_LANG="en"</script>' +
     '<script src="/__i18n/dict.js"></script>' +
-    '<script src="/__i18n/translate.js"></script>';
+    '<script src="/__i18n/translate.js"></script>' +
+    '<link rel="stylesheet" href="/__i18n/en.css">';
   return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + tags) : tags + html;
 }
 
-/** /__i18n/translate.js and /__i18n/dict.js (the dictionary as a script); null for other paths. */
+/**
+ * /__i18n/translate.js, /__i18n/dict.js (the dictionary as a script) and /__i18n/en.css (layout
+ * fixes for longer English text); null for other paths.
+ */
 export function i18nAsset(pathname: string): { type: string; body: string } | null {
   const js = "text/javascript; charset=utf-8";
+  if (pathname === "/__i18n/en.css") return { type: "text/css; charset=utf-8", body: fs.readFileSync(path.join(i18nDir(), "en.css"), "utf8") };
   if (pathname === "/__i18n/translate.js") return { type: js, body: fs.readFileSync(path.join(i18nDir(), "translate.js"), "utf8") };
   if (pathname === "/__i18n/dict.js") {
     const dict = lang === "en" ? fs.readFileSync(path.join(i18nDir(), "ko-en.json"), "utf8") : "{}";

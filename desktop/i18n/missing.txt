@@ -1,4 +1,4 @@
 # 0 extracted string(s) not translated by desktop/resources/i18n/ko-en.json
-# (3325 extracted: 2750 exact, 575 patterns; 515 skipped by rules; 27 dictionary entries not extracted — runtime data, fragments or stale)
+# (3326 extracted: 2750 exact, 576 patterns; 514 skipped by rules; 45 dictionary entries not extracted — runtime data, fragments or stale)
 # kind<TAB>text<TAB>first source   ([new] = not in the previous strings.json)
 

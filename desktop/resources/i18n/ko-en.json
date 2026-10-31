@@ -1090,7 +1090,7 @@
   "상세": "Detail",
   "실패": "Failed",
   "Intent 탭": "Intent section",
-  "에서 전략 분해(Discover · Decompose · Strategize)를 완료하세요.": "— complete the strategic decomposition (Discover · Decompose · Strategize) there.",
+  "에서 전략 분해(Discover · Decompose · Strategize)를 완료하세요.": ".",
   "돌아가기": "Back",
   "현재 단계로": "Back to current stage",
   "전술 단계 완료. 표준 Diff 로 수렴하면 아키텍처 Plan 생성으로 이어집니다.": "Tactical stages complete. Consolidating into a standard Diff continues to architecture Plan generation.",
@@ -2724,9 +2724,36 @@
   "Command name 누락": "Command name missing",
   "pivotal 또는 hotspot 중 하나는 지정해야 합니다.": "Specify either pivotal or hotspot.",
   "✓ 도구 결과 수신": "✓ Tool result received",
-  "SKILL_RUNNER_PROVIDER는 claude_cli 또는 openai_compatible 이어야 합니다": "SKILL_RUNNER_PROVIDER must be claude_cli or openai_compatible"
+  "SKILL_RUNNER_PROVIDER는 claude_cli 또는 openai_compatible 이어야 합니다": "SKILL_RUNNER_PROVIDER must be claude_cli or openai_compatible",
+  "기본 · 빈 프로젝트": "default · empty project",
+  "만들기": "Create",
+  "미스캔": "not scanned"
  },
  "patterns": [
+  [
+   "{0} — {1}% · 상태: {2} · flagged {3} · resolved {4}",
+   "{0} — {1}% · status: {2} · flagged {3} · resolved {4}"
+  ],
+  [
+   "기본 · 노드 종류 {0}",
+   "default · {0} node types"
+  ],
+  [
+   "전체 · {0}",
+   "All · {0}"
+  ],
+  [
+   "10월 {0}일",
+   "Oct {0}"
+  ],
+  [
+   "11월 {0}일",
+   "Nov {0}"
+  ],
+  [
+   "12월 {0}일",
+   "Dec {0}"
+  ],
   [
    "{0}개 영향",
    "{0} impacted"
@@ -2762,6 +2789,42 @@
   [
    "근거 연결 {0}/{1}",
    "Evidence {0}/{1}"
+  ],
+  [
+   "1월 {0}일",
+   "Jan {0}"
+  ],
+  [
+   "2월 {0}일",
+   "Feb {0}"
+  ],
+  [
+   "3월 {0}일",
+   "Mar {0}"
+  ],
+  [
+   "4월 {0}일",
+   "Apr {0}"
+  ],
+  [
+   "5월 {0}일",
+   "May {0}"
+  ],
+  [
+   "6월 {0}일",
+   "Jun {0}"
+  ],
+  [
+   "7월 {0}일",
+   "Jul {0}"
+  ],
+  [
+   "8월 {0}일",
+   "Aug {0}"
+  ],
+  [
+   "9월 {0}일",
+   "Sep {0}"
   ],
   [
    "신규 {0}",
@@ -2820,6 +2883,14 @@
    "Stalled — no update for {0}"
   ],
   [
+   "오늘 {0}",
+   "Today {0}"
+  ],
+  [
+   "{0}월 {1}일",
+   "{0}/{1}"
+  ],
+  [
    "{0}분",
    "{0}m"
   ],
@@ -2845,7 +2916,7 @@
   ],
   [
    "상태: {0}",
-   "status: {0}"
+   "Status: {0}"
   ],
   [
    "{0}개",
@@ -3890,10 +3961,6 @@
   [
    "{0} {1}번",
    "{0} #{1}"
-  ],
-  [
-   "{0} 선택",
-   "Select {0}"
   ],
   [
    "ObjectType chartConfig의 {0}가 문자열이 아닙니다.",
@@ -5116,5 +5183,41 @@
    "In-house model tool calls exceeded {0} turns"
   ]
  ],
- "context": []
+ "context": [
+  [
+   ".plan-stages__guard",
+   "먼저",
+   "First complete the strategic decomposition (Discover · Decompose · Strategize) in the"
+  ],
+  [
+   "#side-nav",
+   "프로젝트",
+   "Projects"
+  ],
+  [
+   "#seg",
+   "프로젝트",
+   "Projects"
+  ],
+  [
+   "#status",
+   "연결됨",
+   "connected"
+  ],
+  [
+   "#status",
+   "시작 중",
+   "starting"
+  ],
+  [
+   "#status",
+   "멈춤",
+   "stopped"
+  ],
+  [
+   "#status",
+   "찾지 못함",
+   "not found"
+  ]
+ ]
 }

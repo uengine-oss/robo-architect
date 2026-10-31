@@ -102,7 +102,6 @@ SKIP_RULES = [
     # ── anywhere ──
     {'file': '*', 'call': ['re.*', 'RegExp', '*.executescript', '*.execute', '*.run', 'session.run', 'tx.run'],
      'why': 'regex / SQL / Cypher'},
-    {'file': '*', 'text': r'^(오늘 \{0\}|\{0\}월 \{1\}일|\{0\}년 \{1\}월 \{2\}일)$', 'why': 'date format (translate.js handles dates)'},
     {'file': '*', 'var': ['*PROMPT*', '*prompt*', '*_SYSTEM*', '*system_msg*', '*INSTRUCTION*', '*instruction*'],
      'why': 'LLM prompt'},
     {'file': '*', 'fn': ['*prompt*', '*Prompt*', '*_compose_*', '_build_user_*', '_build_system_*'], 'why': 'LLM prompt'},
@@ -125,6 +124,8 @@ SKIP_RULES = [
     {'file': 'frontend/src/features/exportDocument/ui/exporters/captureExporter.js', 'text': r'^맑은 고딕$', 'why': 'font name'},
     {'file': AN + 'src/features/code-analysis/areaGraph.ts', 'text': r'^__기타__$', 'why': 'internal key'},
     {'file': AN + 'src/features/code-analysis/components/graph/GraphTab.vue', 'text': r'^에러$', 'why': 'string test, not shown'},
+    {'file': AN + 'src/domains/ontology/api/objectExplorer.ts', 'text': r'^\{0\} 선택$',
+     'why': 'a contract path inside a developer error, and too generic for a global pattern (user data ends in 선택)'},
     {'file': AN + 'src/workflows/schema-modeling/composables/useSchemaCanvasTableIntake.ts', 'text': r'^\[SchemaCanvas\]', 'why': 'log line'},
     # ── Electron main ──
     {'file': 'desktop/src/main/index.ts', 'text': r'^한국어$', 'why': 'the language menu names each language in its own language'},
