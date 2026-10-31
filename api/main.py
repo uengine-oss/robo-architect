@@ -296,6 +296,10 @@ app.include_router(req_changes_router)
 from api.features.proposal_lifecycle.router import router as proposal_router
 app.include_router(proposal_router)
 
+# Claude Code bridge — OpenAI 호환 /api/llm-bridge/v1 (레거시 분석기가 키 없이 Claude Code 로 돈다)
+from api.features.llm_bridge.router import router as llm_bridge_router
+app.include_router(llm_bridge_router)
+
 # Include constitution router (041 — Neo4j-backed project + per-BC constitution, Design side)
 from api.features.constitution.router import router as constitution_router
 app.include_router(constitution_router)

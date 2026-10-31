@@ -159,6 +159,8 @@ services:
       NEO4J_DATABASE: ${ROBO_GRAPH_DESIGN}
       ROBO_CATALOG_BASE_URL: http://catalog:5503/robo
       ROBO_DATA_DIR: /data
+      # Claude Code 다리(claude_code_bridge.yaml)가 부르는 호스트 백엔드 포트 — 실행마다 바뀐다
+      ROBO_ARCHITECT_API_PORT: ${ROBO_ARCHITECT_API_PORT}
     volumes:
       - shared_data:/data
     depends_on:
