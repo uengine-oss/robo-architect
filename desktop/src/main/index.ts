@@ -28,6 +28,7 @@ import {
 
 import { ensureDataDirs } from "./data-dir";
 import { initLogging, log, revealLogs } from "./logging";
+import { adoptHostPath } from "./host-path";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
 import {
   copy,
@@ -373,6 +374,8 @@ async function bootstrap(): Promise<void> {
   await ensureDataDirs();
   initLogging();
   log("info", "app.ready", { appVersion: app.getVersion(), lang: currentLang(), langSource: langSource() });
+  // Finder gives a .app a bare PATH — docker and claude must be found before anything spawns them.
+  await adoptHostPath(app.isPackaged);
 
   // Set macOS Dock icon.
   if (process.platform === "darwin" && app.dock) {
