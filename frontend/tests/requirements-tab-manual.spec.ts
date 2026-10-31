@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test'
+import { shotDir } from './helpers/shots'
+import { gotoView } from './helpers/nav'
+import { expandTreeNode } from './helpers/requirementsTree'
 
 /**
  * Spec 026 — Requirements Tab feature walkthrough.
@@ -8,7 +11,8 @@ import { test, expect } from '@playwright/test'
  * for the user manual. No Neo4j / backend process required.
  */
 
-const IMG = '../docs/requirements-tab-manual/images'
+// 문서 그림은 UPDATE_MANUAL_SHOTS=1 일 때만 덮어쓴다(helpers/shots).
+const IMG = shotDir('../docs/requirements-tab-manual/images', 'requirements-tab-manual')
 
 const TREE = {
   epics: [
@@ -254,16 +258,17 @@ test('Requirements tab — full feature walkthrough with screenshots', async ({ 
 
   // ── US1: open the Requirements tab ─────────────────────────────────────
   await page.goto('/')
-  await page.getByRole('button', { name: 'Requirements' }).first().click()
+  await gotoView(page, '요구사항')
   await expect(page.getByText('Order', { exact: true })).toBeVisible()
   await page.waitForTimeout(400)
   await page.screenshot({ path: `${IMG}/01-tab-overview.png`, fullPage: true })
 
   // ── US1: drill down Epic → Feature → User Story → Acceptance Criteria ──
-  await page.getByText('Order', { exact: true }).click()
-  await page.getByText('주문 취소', { exact: true }).click()
-  await page.getByText('Payment', { exact: true }).click()
-  await page.getByText('환불 처리', { exact: true }).click()
+  // 034 이후 트리 이름을 누르면 노드를 고르기만 한다 — 펼침은 ▸(helpers/requirementsTree).
+  await expandTreeNode(page, 'Order')
+  await expandTreeNode(page, '주문 취소')
+  await expandTreeNode(page, 'Payment')
+  await expandTreeNode(page, '환불 처리')
   const us1Caret = page
     .locator('.tree-node--us', { hasText: 'customer: cancel my order' })
     .locator('.caret')
@@ -279,10 +284,12 @@ test('Requirements tab — full feature walkthrough with screenshots', async ({ 
   await page.screenshot({ path: `${IMG}/03-user-story-detail.png`, fullPage: true })
 
   // ── US2: design-trace canvas (incl. the attached UI wireframe) ────────
+  // 035 — 설계 궤적은 아래 분할 칸에서 User Story 상세의 '설계 궤적' 탭으로 옮겨졌다.
+  await page.locator('.us-tab', { hasText: '설계 궤적' }).click()
   await expect(page.locator('.trace-canvas')).toBeVisible()
   await expect(page.locator('.vue-flow__node[data-id="ui-cancel"]')).toBeVisible()
   await page.waitForTimeout(800)
-  await page.locator('.req-detail-pane__canvas').screenshot({
+  await page.locator('.us-tab-body--trace').screenshot({
     path: `${IMG}/04-design-trace.png`,
   })
 
@@ -295,6 +302,10 @@ test('Requirements tab — full feature walkthrough with screenshots', async ({ 
   // ── US3: Add Requirement dialog — natural-language mode ───────────────
   await page.getByRole('button', { name: '+ 요구사항 추가' }).click()
   await expect(page.getByRole('heading', { name: '요구사항 추가' })).toBeVisible()
+  // 034 — 다이얼로그는 트리에서 고른 노드에 맞춰 단위(Epic/Feature/User Story)를 고른 채 열린다.
+  // User Story 를 고른 상태에선 Epic 으로 열리므로 User Story · 자연어 입력으로 바꾼다.
+  await page.locator('.dialog__units').getByRole('button', { name: 'User Story' }).click()
+  await page.locator('.dialog__tabs').getByRole('button', { name: '자연어 입력' }).click()
   await page.locator('.nl-input').fill('체크아웃 시 할인 쿠폰을 적용할 수 있어야 한다.')
   await page.waitForTimeout(300)
   await page.screenshot({ path: `${IMG}/06-add-natural-language.png`, fullPage: true })

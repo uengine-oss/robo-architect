@@ -1,4 +1,6 @@
 import { test, expect, Page } from '@playwright/test'
+import { shotDir } from './helpers/shots'
+import { gotoView, railItem } from './helpers/nav'
 
 /**
  * Spec 027 — aggregate-invariants end-to-end test.
@@ -13,8 +15,9 @@ import { test, expect, Page } from '@playwright/test'
  */
 
 // Relative to the Playwright cwd (the `frontend/` directory).
-const IMG = (name: string) =>
-  `../specs/027-aggregate-invariants/manual/images/${name}`
+// 문서 그림은 UPDATE_MANUAL_SHOTS=1 일 때만 덮어쓴다(helpers/shots).
+const IMG_DIR = shotDir('../specs/027-aggregate-invariants/manual/images', 'aggregate-invariants')
+const IMG = (name: string) => `${IMG_DIR}/${name}`
 
 const CONTEXTS = [
   { id: 'bc-1', name: 'Order', domainType: 'Core Domain', aggregateCount: 1, userStoryCount: 0 },
@@ -109,8 +112,11 @@ async function mockBackend(page: Page) {
 }
 
 /** Drill the navigator tree down to the expanded Invariants group. */
-async function openInvariantsGroup(page: Page) {
+async function openInvariantsGroup(page: Page, { viaDesign = true } = {}) {
   await page.goto('/')
+  // 시작 화면이 프로포절로 바뀌었다(0cefc7ac). 속성 패널(InspectorPanel)은 설계 화면에 있으므로 먼저 설계로 간다.
+  // 프로포절 화면에도 같은 트리가 보인다 — viaDesign:false 는 그 트리에서 바로 시작한다(아래 BUG 시험).
+  if (viaDesign) await gotoView(page, '설계')
   await page.getByText('Order (core)', { exact: true }).click()       // expand BC
   await page.getByText('Order', { exact: true }).first().click()       // expand Aggregate
   const group = page.getByText('Invariants', { exact: true })
@@ -156,4 +162,18 @@ test('DR-1 + DR-2 — the invariant GWT editor hides "When" and offers an Except
   await expect(page.getByText('When', { exact: true })).toHaveCount(0)
   await page.getByText('Exception', { exact: true }).scrollIntoViewIfNeeded()
   await page.screenshot({ path: IMG('03-gwt-editor-no-when.png'), fullPage: false })
+})
+
+// 제품 결함(보고됨) — 설계 화면을 아직 한 번도 열지 않은 상태(시작 화면 = 프로포절)에서 트리의 Invariant 를
+// 더블클릭하면 화면은 설계로 바뀌지만 속성 패널이 열리지 않는다. TreeNode.handleDoubleClick 이
+// activeTab='Design' 과 같은 틱에 inspectorRequest.request() 를 보내는데, CanvasWorkspace 는 그때 아직
+// 마운트 전이고 requestId 를 보는 watch 가 immediate 가 아니라 이 첫 요청을 놓친다(UserStory 더블클릭 ·
+// ImplementationFile 클릭도 같은 경로). 고쳐지면 이 시험이 '예상 밖 통과'로 알려 주므로 그때 test.fail 을 걷는다.
+test('BUG — Invariant double-click from the start view opens the editor on the first Design visit', async ({ page }) => {
+  test.fail(true, 'CanvasWorkspace drops an inspectorRequest made before it mounts (watch not immediate)')
+  await mockBackend(page)
+  await openInvariantsGroup(page, { viaDesign: false })
+  await page.getByText('주문 총액은 항상 0보다 커야 한다').dblclick()
+  await expect(railItem(page, '설계')).toHaveClass(/is-active/) // 화면 전환은 된다
+  await expect(page.getByText('선언문', { exact: true })).toBeVisible() // 편집기가 안 열린다 ← 결함
 })
