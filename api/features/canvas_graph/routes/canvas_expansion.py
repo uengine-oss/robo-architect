@@ -791,22 +791,18 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
     Expand a node and include its parent BoundedContext.
     This ensures nodes are always displayed within their BC container.
     """
-    context_query = """
-    MATCH (n {id: $node_id})
-    WITH n, labels(n)[0] as nodeType
-
-    // Find parent BC based on node type
-    OPTIONAL MATCH (bc1:BoundedContext {id: $node_id})
-    OPTIONAL MATCH (bc2:BoundedContext)-[:HAS_AGGREGATE]->(n)
-    OPTIONAL MATCH (bc3:BoundedContext)-[:HAS_AGGREGATE]->(agg:Aggregate)-[:HAS_COMMAND]->(n)
-    OPTIONAL MATCH (bc4:BoundedContext)-[:HAS_AGGREGATE]->(agg2:Aggregate)-[:HAS_COMMAND]->(cmd:Command)-[:EMITS]->(n)
-    OPTIONAL MATCH (bc5:BoundedContext)-[:HAS_POLICY]->(n)
-    OPTIONAL MATCH (bc6:BoundedContext)-[:HAS_UI]->(n)
-    OPTIONAL MATCH (bc7:BoundedContext)-[:HAS_READMODEL]->(n)
-
-    WITH n, nodeType, coalesce(bc1, bc2, bc3, bc4, bc5, bc6, bc7) as bc
-    RETURN n, nodeType, bc
-    """
+    # 노드를 먼저 읽고, 부모 BC 는 노드 종류별 한 줄 쿼리로 찾는다. 예전 한 방 쿼리
+    # (OPTIONAL MATCH 7개 + coalesce(bc1..bc7))는 Ontological DB 에서 n 이 null 로 돌아와
+    # dict(None) TypeError → BC 를 캔버스에 올려도 빈 틀만 생겼다(10-31).
+    node_query = "MATCH (n {id: $node_id}) RETURN n, labels(n)[0] AS nodeType LIMIT 1"
+    parent_bc_queries = {
+        "Aggregate": "MATCH (bc:BoundedContext)-[:HAS_AGGREGATE]->(:Aggregate {id: $node_id}) RETURN bc LIMIT 1",
+        "Command": "MATCH (bc:BoundedContext)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(:Command {id: $node_id}) RETURN bc LIMIT 1",
+        "Event": "MATCH (bc:BoundedContext)-[:HAS_AGGREGATE]->(:Aggregate)-[:HAS_COMMAND]->(:Command)-[:EMITS]->(:Event {id: $node_id}) RETURN bc LIMIT 1",
+        "Policy": "MATCH (bc:BoundedContext)-[:HAS_POLICY]->(:Policy {id: $node_id}) RETURN bc LIMIT 1",
+        "UI": "MATCH (bc:BoundedContext)-[:HAS_UI]->(:UI {id: $node_id}) RETURN bc LIMIT 1",
+        "ReadModel": "MATCH (bc:BoundedContext)-[:HAS_READMODEL]->(:ReadModel {id: $node_id}) RETURN bc LIMIT 1",
+    }
 
     with get_session() as session:
         SmartLogger.log(
@@ -815,10 +811,9 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
             category="api.graph.expand_with_bc.request",
             params={**http_context(request), "inputs": {"node_id": node_id}},
         )
-        ctx_result = session.run(context_query, node_id=node_id)
-        ctx_record = ctx_result.single()
+        ctx_record = session.run(node_query, node_id=node_id).single()
 
-        if not ctx_record:
+        if not ctx_record or ctx_record["n"] is None:
             SmartLogger.log(
                 "WARNING",
                 "Expand-with-BC aborted: node_id not found.",
@@ -828,7 +823,13 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
 
         node_type = ctx_record["nodeType"]
-        bc = ctx_record["bc"]
+        if node_type == "BoundedContext":
+            bc = ctx_record["n"]
+        elif node_type in parent_bc_queries:
+            bc_record = session.run(parent_bc_queries[node_type], node_id=node_id).single()
+            bc = bc_record["bc"] if bc_record else None
+        else:
+            bc = None
         main_node = dict(ctx_record["n"])
         main_node["type"] = node_type
         # Parse enumerations and valueObjects for Aggregate nodes
@@ -846,7 +847,8 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
             seen_ids.add(bc["id"])
             main_node["bcId"] = bc["id"]
 
-        nodes.append(main_node)
+        if node_id not in seen_ids:  # BC 자신을 펼칠 때 부모 BC 와 겹치지 않게
+            nodes.append(main_node)
         seen_ids.add(node_id)
 
         if node_type == "BoundedContext":
