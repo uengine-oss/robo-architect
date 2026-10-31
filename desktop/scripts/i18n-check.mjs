@@ -246,12 +246,25 @@ const S = {
       await check(app, ds, 'design-canvas')
       const node = ds.locator('.vue-flow__node').nth(1)
       if (await clickIf(node, 1500)) await check(app, ds, 'design-node-selected')
+      // double-click: the node's properties in the right panel (looked at, not edited)
+      if (await visible(node)) {
+        await node.dblclick().catch(() => {})
+        await sleep(2000)
+        await check(app, ds, 'design-node-properties')
+        await ds.keyboard.press('Escape').catch(() => {})
+      }
     }
   },
 
   async data({ app }) {
     const dt = await openTab(app, { view: 'Data' })
     await check(app, dt, 'data')
+    const bc = dt.locator('.left-panel .tree-node__header').first()
+    if (await visible(bc)) {
+      await bc.dblclick().catch(() => {})
+      await sleep(3000)
+      await check(app, dt, 'data-model')
+    }
   },
 
   async code({ app }) {
