@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:unit": "playwright test -c playwright.unit.config.ts",
+    "test:mocked": "playwright test -c playwright.regression.config.ts",
+    "test:regression": "npm run test:unit && npm run test:mocked"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",
