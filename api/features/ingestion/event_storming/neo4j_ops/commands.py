@@ -260,7 +260,7 @@ class CommandOps:
             description: cmd.description,
             emits: emits
         } as command
-        ORDER BY command.name
+        ORDER BY cmd.name
         """
         with self.session() as session:
             result = session.run(query, aggregate_id=aggregate_id)

@@ -113,7 +113,7 @@ class UserStoryOps:
             sourceScreenName: us.sourceScreenName,
             implemented_in: implemented_in
         } as user_story
-        ORDER BY user_story.id
+        ORDER BY us.id
         """
         with self.session() as session:
             result = session.run(query)

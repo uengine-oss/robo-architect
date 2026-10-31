@@ -62,7 +62,7 @@ class BoundedContextOps:
             userStoryIds: bc.userStoryIds,
             aggregates: aggregates
         } as bounded_context
-        ORDER BY bounded_context.name
+        ORDER BY bc.name
         """
         with self.session() as session:
             result = session.run(query)

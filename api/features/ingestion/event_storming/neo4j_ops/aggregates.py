@@ -148,7 +148,7 @@ class AggregateOps:
             valueObjects: agg.valueObjects,
             commands: commands
         } as aggregate
-        ORDER BY aggregate.name
+        ORDER BY agg.name
         """
         with self.session() as session:
             result = session.run(query, bc_id=bc_id)

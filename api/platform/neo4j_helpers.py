@@ -91,7 +91,7 @@ def build_context_full_tree(context_id: str) -> dict[str, Any] | None:
     rm_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_READMODEL]->(rm:ReadModel)
     RETURN rm {.id, .name, .displayName, .description, .provisioningType, .actor, .isMultipleResult} as readmodel
-    ORDER BY readmodel.name
+    ORDER BY rm.name
     """
     ui_query = """
     MATCH (bc:BoundedContext {id: $context_id})-[:HAS_UI]->(ui:UI)
