@@ -6,7 +6,8 @@ design by **Claude Code** on your computer. It also analyzes legacy code and dat
 repository holds **installers only**.
 
 Product page: https://www.uengine.org/en/contents/roboarchitect.html ·
-Tutorial (Korean, with a video for every chapter): https://www.uengine.org/docs/robo-architect/
+Tutorial with a video for every chapter: https://www.uengine.org/en/docs/robo-architect/ (English) ·
+https://www.uengine.org/docs/robo-architect/ (Korean)
 
 ## Download
 
