@@ -14,7 +14,8 @@
     "dist": "npm run build && electron-builder",
     "test": "playwright test",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
-    "dist:mac": "npm run build && electron-builder --mac --arm64"
+    "dist:mac": "npm run build && electron-builder --mac --arm64",
+    "dist:win": "npm run build && electron-builder --win --x64 --config electron-builder.win.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.47.0",

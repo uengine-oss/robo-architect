@@ -47,3 +47,26 @@ install places to find `docker` and `claude` (`desktop/src/main/host-path.ts`).
 
 Pull path tests: `cd desktop && npx playwright test tests/unit/docker-images.spec.ts` (no Docker) and
 `node scripts/test-image-pull.mjs` (a throwaway local registry and image).
+
+# Windows x64 (NSIS installer, cross-built on the Mac)
+
+The same app with a Windows runtime: python-build-standalone CPython for `x86_64-pc-windows-msvc` of
+the macOS runtime's version, the locked dependencies as `win_amd64` wheels, the same compose and
+settings, and the linux/amd64 builds of the seven images. Nothing runs under wine; the bundled
+backend's imports are traced on the Mac against the Windows file set instead of being run.
+`desktop/resources/runtime` stays the macOS runtime — the Windows one is `desktop/out/win/runtime`, and
+`desktop/electron-builder.win.js` packs it in place of the macOS one.
+
+```bash
+# 0. the linux/amd64 images uengine/*:lite-win (robo-lite-src/build/build-images-amd64.sh)
+
+# 1. the runtime — without the images yet: --no-images now, --manifest-only once they are there
+scripts/build-packaged-runtime-win.sh [--no-images]
+
+# 2. push the amd64 images and record desktop/out/release/image-digests-amd64.json (same format as
+#    image-digests.json), then pin the manifest to them (--image-tag if they are not :<version>)
+scripts/build-packaged-runtime-win.sh --manifest-only --digests desktop/out/release/image-digests-amd64.json
+
+# 3. the installer → desktop/out/dist/Robo-Architect-Lite-Setup-win-x64.exe (unsigned)
+(cd desktop && env -u ELECTRON_RUN_AS_NODE npm run dist:win)
+```

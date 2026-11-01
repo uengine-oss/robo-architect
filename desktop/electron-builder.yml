@@ -27,7 +27,8 @@ extraResources:
     to: frontend/dist
     filter: ["**/*"]
   # scripts/build-packaged-runtime.sh (macOS) / build-packaged-runtime.ps1 (Windows):
-  # manifest, compose, service settings, bundled Python + Architect API
+  # manifest, compose, service settings, bundled Python + Architect API.
+  # The Windows installer built on the Mac packs out/win/runtime instead (electron-builder.win.js).
   - from: resources/runtime
     to: runtime
     filter: ["**/*", "!.gitkeep", "!**/.DS_Store", "!architect/requirements.lock.txt"]
