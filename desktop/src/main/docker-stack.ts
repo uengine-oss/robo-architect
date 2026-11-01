@@ -214,11 +214,11 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
 
 async function runDocker(
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; secret?: string } = {},
+  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; secret?: string; input?: string } = {},
 ): Promise<string> {
   const timeout = options.timeoutMs ?? DOCKER_COMMAND_TIMEOUT_MS;
   return await new Promise<string>((resolve, reject) => {
-    execFile(
+    const child = execFile(
       "docker",
       args,
       {
@@ -242,6 +242,8 @@ async function runDocker(
         );
       },
     );
+    // 비밀 값은 명령줄(프로세스 목록에 보인다)이 아니라 표준 입력으로 넘긴다
+    if (options.input !== undefined) child.stdin?.end(options.input);
   });
 }
 
@@ -336,6 +338,60 @@ async function neo4jPassword(): Promise<string> {
   return created;
 }
 
+// 컨테이너 안 유닉스 소켓은 trust(pg_hba `local all all trust`)라 비밀번호 없이 들어가 바꾼다.
+// healthcheck 는 pg_isready 뿐이라 첫 기동의 초기화 서버에 걸릴 수 있어 몇 번 다시 해 본다.
+// 끝내 안 되면 경고만 남긴다 — 비밀번호가 맞으면 그대로 뜨고, 틀리면 다음 `up` 이 실제 원인을 보인다.
+async function syncGraphPassword(
+  root: string,
+  manifest: RuntimeManifest,
+  env: NodeJS.ProcessEnv,
+  password: string,
+): Promise<void> {
+  if (!/^[A-Za-z0-9_-]+$/.test(password)) throw new Error("docker.graph_password_invalid");
+  const args = composeArgs(root, manifest, [
+    "exec", "-T", "graph-db", "psql", "-v", "ON_ERROR_STOP=1", "-q", "-U", GRAPH_USER, "-d", GRAPH_DESIGN,
+  ]);
+  const input = `ALTER ROLE "${GRAPH_USER}" WITH PASSWORD '${password}';\n`;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try {
+      await runDocker(args, { env, secret: password, input, timeoutMs: 30_000 });
+      log("info", "docker.graph_password.synced", { user: GRAPH_USER, attempt });
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
+  log("warn", "docker.graph_password.sync_failed", {
+    user: GRAPH_USER,
+    message: lastError instanceof Error ? lastError.message : String(lastError),
+  });
+}
+
+// 지난 기동에서 (예: 비밀번호가 어긋나) 재시작을 되풀이하던 서비스는 재시작 대기(백오프) 중이라,
+// `up --wait` 가 그 unhealthy 를 보자마자 실패한다 — 그대로 두면 몇십 초 뒤 혼자 살아나도 앱은 이미 멈췄다.
+// 비밀번호를 맞춘 뒤 그런 서비스만 다시 시작시켜 대기를 끊는다.
+async function restartFailingServices(
+  root: string,
+  manifest: RuntimeManifest,
+  env: NodeJS.ProcessEnv,
+  password: string,
+): Promise<void> {
+  const listed = await runDocker(
+    composeArgs(root, manifest, ["ps", "--all", "--format", "{{.Service}}\t{{.State}}\t{{.Health}}"]),
+    { env, secret: password, timeoutMs: 30_000 },
+  );
+  const failing = listed
+    .split("\n")
+    .map((line) => line.trim().split("\t"))
+    .filter(([service, state, health]) => service && (state === "restarting" || health === "unhealthy"))
+    .map(([service]) => service as string);
+  if (failing.length === 0) return;
+  log("info", "docker.stack.restarting_failing", { services: failing });
+  await runDocker(composeArgs(root, manifest, ["restart", ...failing]), { env, secret: password });
+}
+
 function loadPersistedState(releaseId: string): PersistedDockerState | null {
   try {
     const parsed = JSON.parse(fs.readFileSync(statePath(), "utf8")) as PersistedDockerState;
@@ -428,6 +484,16 @@ export async function startDockerStack(onProgress?: ProgressListener): Promise<D
     releaseId: manifest.releaseId,
     projectName: COMPOSE_PROJECT_NAME,
   });
+  // ⚠ graph-db 를 **먼저** 올려 역할 비밀번호를 이 설치의 값으로 맞춘 뒤 나머지를 올린다.
+  //   POSTGRES_PASSWORD 는 볼륨을 처음 만들 때만 쓰인다 — 앱 데이터만 지우고 다시 설치했거나,
+  //   다른 설치(예전 판 · 개발 실행)가 같은 프로젝트로 만든 볼륨이면 비밀번호가 어긋나
+  //   fabric 이 `password authentication failed for user "robo"` 로 죽는다.
+  await runDocker(
+    composeArgs(root, manifest, ["up", "--detach", "--wait", "--wait-timeout", "300", "graph-db"]),
+    { env, secret: password },
+  );
+  await syncGraphPassword(root, manifest, env, password);
+  await restartFailingServices(root, manifest, env, password);
   await runDocker(composeArgs(root, manifest, ["up", "--detach", "--wait", "--wait-timeout", "300"]), {
     env,
     secret: password,
