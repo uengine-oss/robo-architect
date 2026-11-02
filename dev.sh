@@ -5,8 +5,9 @@
 #   1. backend          FastAPI / uvicorn        http://localhost:8000
 #   2. wireframe service open-pencil (Bun)        http://localhost:7610
 #   3. frontend         Vue / Vite               http://localhost:5173
+#   4. analyzer frontend Module Federation remote http://localhost:5001
 #
-# Logs from all three are prefixed and interleaved. Ctrl+C stops everything.
+# Logs from all four are prefixed and interleaved. Ctrl+C stops everything.
 #
 # Usage:   ./dev.sh
 # Override the open-pencil component library:
@@ -73,8 +74,12 @@ command -v npm >/dev/null 2>&1 || fail "'npm' not found on PATH (nvm: 'nvm use 2
 
 [ -d "$ROOT/open-pencil" ]   || fail "open-pencil/ missing — run: git submodule update --init open-pencil"
 [ -d "$ROOT/frontend" ]      || fail "frontend/ directory missing"
+[ -f "$ROOT/robo-analyzer/robo-data-frontend/package.json" ] || \
+  fail "analyzer frontend missing — run: git submodule update --init robo-analyzer/robo-data-frontend"
 [ -d "$ROOT/open-pencil/node_modules" ] || warn "open-pencil/node_modules missing — run: (cd open-pencil && bun install)"
 [ -d "$ROOT/frontend/node_modules" ]    || warn "frontend/node_modules missing — run: (cd frontend && npm install)"
+[ -d "$ROOT/robo-analyzer/robo-data-frontend/node_modules" ] || \
+  warn "analyzer frontend/node_modules missing — run: (cd robo-analyzer/robo-data-frontend && npm install)"
 
 COMPONENT_LIBRARY_PATH="${COMPONENT_LIBRARY_PATH:-docs/components.fig}"
 [ -f "$ROOT/open-pencil/$COMPONENT_LIBRARY_PATH" ] || \
@@ -83,13 +88,13 @@ COMPONENT_LIBRARY_PATH="${COMPONENT_LIBRARY_PATH:-docs/components.fig}"
 # ── Shutdown: SIGTERM then SIGKILL the well-known ports' listeners ───────────
 # `kill 0` alone leaks uvicorn workers when async threads (httpx, asyncio) keep
 # the interpreter alive past SIGTERM. We follow up with SIGKILL on whoever is
-# still listening on our three ports, so a re-run of dev.sh doesn't fail with
+# still listening on our four ports, so a re-run of dev.sh doesn't fail with
 # "Address already in use".
 trap '
   echo; echo "[dev] stopping all services...";
   kill 0 2>/dev/null;
   sleep 1;
-  for p in 8000 7610 5173; do
+  for p in 8000 7610 5173 5001; do
     pids=$(lsof -ti :$p -sTCP:LISTEN 2>/dev/null);
     [ -n "$pids" ] && kill -9 $pids 2>/dev/null;
   done
@@ -99,6 +104,7 @@ echo "[dev] starting stack — Ctrl+C to stop all"
 echo "[dev]   backend   → http://localhost:8000"
 echo "[dev]   wireframe → http://localhost:7610"
 echo "[dev]   frontend  → http://localhost:5173"
+echo "[dev]   analyzer  → http://localhost:5001"
 echo
 
 # ── 1. backend ───────────────────────────────────────────────────────────────
@@ -120,6 +126,14 @@ echo
 (
   cd "$ROOT/frontend"
   npm run dev 2>&1 | sed -l 's/^/[frontend] /'
+) &
+
+# ── 4. analyzer frontend (Module Federation remote) ──────────────────────────
+# Federation exposes remoteEntry.js from the production build only. The Vite
+# dev server on port 3000 cannot be mounted by the Architect host.
+(
+  cd "$ROOT/robo-analyzer/robo-data-frontend"
+  (npm run build && npm run preview -- --host 127.0.0.1 --port 5001 --strictPort) 2>&1 | sed -l 's/^/[analyzFE] /'
 ) &
 
 wait
