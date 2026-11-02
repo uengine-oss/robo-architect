@@ -17,12 +17,55 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+# Load the repository-level development environment for every child process.
+# Python loads .env on its own, but Vite's config reads process.env directly;
+# without this, ROBO_GATEWAY_URL and the Lite graph connection diverge.
+if [ -f "$ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
+
 # ── Resolve tooling ──────────────────────────────────────────────────────────
 BUN="$(command -v bun 2>/dev/null || true)"
 [ -z "$BUN" ] && [ -x "$HOME/.bun/bin/bun" ] && BUN="$HOME/.bun/bin/bun"
 
 fail() { echo "[dev] ✗ $1" >&2; exit 1; }
 warn() { echo "[dev] ! $1" >&2; }
+
+# A Lite Desktop stack keeps its graph password in the generated container
+# environment and allocates host ports dynamically. Local source development
+# can reuse that running stack without copying its secret into .env.
+if [ "${ROBO_LITE_DOCKER_DISCOVERY:-false}" = "true" ]; then
+  graph_bolt_container="${ROBO_LITE_GRAPH_BOLT_CONTAINER:-robo-architect-desktop-graph-bolt-1}"
+  analyzer_container="${ROBO_LITE_ANALYZER_CONTAINER:-robo-architect-desktop-analyzer-1}"
+  gateway_container="${ROBO_LITE_GATEWAY_CONTAINER:-robo-architect-desktop-gateway-1}"
+
+  if command -v docker >/dev/null 2>&1; then
+    graph_bolt_port="$(docker port "$graph_bolt_container" 7687/tcp 2>/dev/null | head -n 1 | awk -F: '{print $NF}')"
+    gateway_port="$(docker port "$gateway_container" 9000/tcp 2>/dev/null | head -n 1 | awk -F: '{print $NF}')"
+    graph_password="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$analyzer_container" 2>/dev/null | sed -n 's/^NEO4J_PASSWORD=//p' | head -n 1)"
+
+    if [ -n "$graph_bolt_port" ] && [ -n "$graph_password" ]; then
+      export NEO4J_URI="bolt://127.0.0.1:$graph_bolt_port"
+      export NEO4J_USER="${NEO4J_USER:-robo}"
+      export NEO4J_PASSWORD="$graph_password"
+      export NEO4J_DATABASE="${NEO4J_DATABASE:-robo}"
+      export ANALYZER_NEO4J_DATABASE="${ANALYZER_NEO4J_DATABASE:-analyzer_run}"
+      echo "[dev] using Lite graph runtime at $NEO4J_URI"
+    else
+      warn "Lite graph runtime discovery failed; check Docker containers or set NEO4J_* in .env"
+    fi
+
+    if [ -n "$gateway_port" ]; then
+      export ROBO_GATEWAY_URL="http://127.0.0.1:$gateway_port"
+      echo "[dev] using Lite gateway at $ROBO_GATEWAY_URL"
+    fi
+  else
+    warn "ROBO_LITE_DOCKER_DISCOVERY=true but docker is not on PATH"
+  fi
+fi
 
 command -v uv  >/dev/null 2>&1 || fail "'uv' not found on PATH"
 command -v npm >/dev/null 2>&1 || fail "'npm' not found on PATH (nvm: 'nvm use 22'?)"
