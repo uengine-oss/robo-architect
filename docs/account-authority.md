@@ -113,6 +113,38 @@ PC는 /api/auth/*, /api/accounts/*, /api/projects/*, /api/code-templates/sets �
 PC 토큰 검증은 중앙 /api/auth/introspect에서 최신 DB 상태를 확인한다.
 중앙 연결 실패 시 로컬 서명/DB 쓰기로 대체하지 않는다. 중앙 서명 비밀은 PC에 넣지 않는다.
 현재 이 동기 검증은 매 요청 중앙 HTTP를 호출하므로 VM에서 지연·동시 요청을 측정한다.
+> ⚠⚠ **지금 납품판(`-rdel-swp`)은 이 위임 경로로 돌지 않는다.** 2026-11-04 에 코드를
+> 읽어 확인했다. 아래 셋이 설계와 어긋나 있다.
+>
+> ```text
+> ① authority 상시 서비스가 안 뜬다
+>    robo-central.sh 는 `up -d --wait graph-db graph-bolt` 만 한다.
+>    authority 는 운영 CLI(accounts_admin)를 `compose run --rm` 으로 쓸 때만 뜬다
+> ② PC 에 ROBO_AUTHORITY_URL 을 넣는 것이 **없다**
+>    robo-env.ps1 은 -Clear 목록에만 두고, pc-central-setup.ps1 은 쓰지 않는다
+>    ⇒ authority_url() 이 "" 를 돌려주고 모든 호출부가 `if authority_url():` 이라
+>      **PC 가 중앙 PG 를 직접 보고 스스로 판정**한다
+>      (AuthorityProxyMiddleware 의 503 은 주소가 **잘못됐을 때만** 난다)
+> ③ PC 에 중앙 서명 비밀이 들어간다
+>    pc-central-setup.ps1 이 AUTH_JWT_SECRET · AUTH_ROLE_SECRET 를 넣는다 —
+>    이 문단의 "중앙 서명 비밀은 PC 에 넣지 않는다" 와 반대다
+> ```
+>
+> 그래서 **앱은 돈다**(`AUTH_ENFORCE=true` 로 인증은 걸린다). 다만 역할·프로젝트
+> 판정이 **각 PC 에서** 일어나고, 그 PC 는 서명 비밀을 갖고 있다. 위임 모델이
+> 주는 보호를 **아직 못 받고 있다.**
+>
+> 위임을 켜려면 넷이 함께 필요하다 — 하나라도 빠지면 조용히 로컬 경로로 돈다.
+> ```text
+> 1 서버에서 authority 를 **상시로** 띄운다 (compose 에 이미 있다)
+> 2 방화벽에 59020 을 PC 대역으로 연다
+> 3 각 PC 에 ROBO_AUTHORITY_URL=http://<서버IP>:59020 을 넣는다
+> 4 PC 에서 AUTH_JWT_SECRET · AUTH_ROLE_SECRET 를 **뺀다**
+>   (그 값으로 graph 비밀번호를 유도하는 자리가 있으므로 그 경로부터 정리해야 한다)
+> ⇒ 아직 한 번도 돌려 본 기록이 없다(관리자-DB올리기 §8 · done9 §180).
+>   켜기 전에 매 요청 중앙 HTTP 호출의 지연을 VM 에서 재야 한다(이 문단 마지막 줄)
+> ```
+
 
 프로젝트 운영을 활성화하려면 서버에만 `ROBO_PROJECT_OPERATOR_DSN`과 32자 이상의
 `AUTH_ROLE_SECRET`을 설정한다. 전자는 계정 runtime과 같은 DB의 별도 운영 역할이며

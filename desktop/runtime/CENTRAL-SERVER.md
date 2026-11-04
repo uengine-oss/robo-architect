@@ -91,9 +91,15 @@ curl http://<db-server-private-ip>:59020/healthz
 docker compose ps
 ```
 
-사용자 PC에는 `ROBO_GRAPH_HOST=<db-server-private-ip>`와
-`ROBO_AUTHORITY_URL=http://<db-server-private-ip>:59020`을 설정한다. 공개 인터넷으로
+사용자 PC에는 `ROBO_GRAPH_HOST=<db-server-private-ip>`를 설정한다. 공개 인터넷으로
 포트를 열지 않고 사내 사용자 PC 대역만 방화벽에서 허용한다.
+
+> ⚠ `ROBO_AUTHORITY_URL=http://<db-server-private-ip>:59020` 은 **중앙 위임 모델**을
+> 켤 때만 넣는다. **지금 납품판은 그 경로로 돌지 않는다** — `robo-central.sh` 가
+> authority 를 상시로 띄우지 않고, `pc-central-setup.ps1` 도 이 변수를 넣지 않는다.
+> 비어 있으면 앱이 **로컬 경로**로 돌고 인증은 `AUTH_ENFORCE=true` 로 그대로 걸린다.
+> ⇒ PC 설치에 **59020 은 필요 없다**(5433·7687 만 열면 붙는다).
+> 켜는 조건 넷은 `docs/account-authority.md` 의 같은 절에 적어 두었다.
 
 ## 운영 중 확인할 항목
 
