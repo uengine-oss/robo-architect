@@ -304,7 +304,7 @@ function bootText() {
     'starting-backend': 'Robo Architect 백엔드를 띄우는 중', fatal: '시작하지 못했습니다 — 로그 폴더를 보세요', 'backend-crashed': '백엔드가 멈췄습니다',
   })[runtime.status] || runtime.status
 }
-// first launch of a release: the seven images come from the registry (main/docker-images.ts)
+// first launch of a release: the images come from the registry (main/docker-images.ts)
 const IMAGE_LABEL = { graphDb: 'Ontological DB', graphBolt: 'Bolt', analyzer: 'Analyzer', catalog: 'Catalog', fabric: 'Data fabric', parser: 'Parser', gateway: 'API gateway' }
 const bytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`)
 function bootHtml() {
@@ -324,13 +324,26 @@ function bootHtml() {
   }
   return esc(bootText())
 }
+// AI 키 행. 대부분의 LLM 은 이 PC 의 CLI 가 하므로 키가 필요 없다. 기본 설치에서
+// 키에 걸려 있는 것은 **카탈로그의 표 설명·FK 추론**과 Architect 의 OpenAI 경로다.
+// main 의 openAiKey 가 **이름과 설정 여부만** 넘긴다 — 값은 넘어오지도, 찍히지도 않는다.
+function keyRowHtml() {
+  const k = info.openAiKey
+  if (!k || !Array.isArray(k.names)) return ''
+  if (k.set) {
+    return `<div class="status-row"><span class="dot ok"></span><div><b>AI 키</b> 설정됨<small>카탈로그의 표 설명과 FK 추론이 돕니다</small></div></div>`
+  }
+  // 무엇을 못 하게 되는지 먼저 말한다. 이름만 띄우면 무엇을 포기하는지 모른다.
+  return `<div class="status-row"><span class="dot warn"></span><div><b>AI 키</b> 미설정<small>카탈로그의 표 설명과 FK 추론이 실패합니다 · 명령 프롬프트에서 setx ${esc(k.names[k.names.length - 1])} &lt;키&gt; 를 실행하고 앱을 다시 여세요</small></div></div>`
+}
 function renderStatus() {
   const ok = ready()
   const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed'
   const claude = info.claude
   $('status').innerHTML = `
-    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 7개 · 127.0.0.1` : bootHtml()}</small></div></div>
+    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : bootHtml()}</small></div></div>
     <div class="status-row"><span class="dot ${claude ? 'ok' : 'warn'}"></span><div><b>에이전트</b> ${claude ? 'Claude Code' : '찾지 못함'}<small>${claude ? '이 PC 의 CLI 가 스킬로 분석 · 계획 · 구현합니다' : 'claude CLI 를 설치하고 로그인하세요'}</small></div></div>`
+    + keyRowHtml()
 }
 
 // ── loading ──

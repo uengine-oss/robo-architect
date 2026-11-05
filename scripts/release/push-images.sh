@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Push the seven stack images to the public GitHub Container Registry and record what was pushed.
+# Push the stack images to the public GitHub Container Registry and record what was pushed.
 #
 #   scripts/release/push-images.sh [--version 0.1.0] [--arch arm64|amd64] [--source-tag lite-mac] [--dry-run]
 #
@@ -48,7 +48,8 @@ analyzer|uengine/robo-analyzer|analyzer
 catalog|uengine/robo-data-catalog|catalog
 fabric|uengine/robo-data-fabric|fabric
 parser|uengine/robo-antlr-parser|parser
-gateway|uengine/robo-api-gateway|gateway"
+gateway|uengine/robo-api-gateway|gateway
+wireframe|uengine/open-pencil|wireframe"
 
 OUT_DIR="$ROOT/desktop/out/release"
 OUT="$OUT_DIR/$DIGESTS_NAME"
@@ -120,4 +121,4 @@ while IFS='|' read -r key local component; do
     >/dev/null 2>&1 || true
 done <<< "$IMAGES"
 "$ROOT/scripts/release/check-images-public.sh" --version "$VERSION$TAG_SUFFIX"
-say "all seven images are pushed and public"
+say "all stack images are pushed and public"

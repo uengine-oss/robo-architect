@@ -56,6 +56,8 @@ IMAGES = {
     "fabric":    ("uengine/robo-data-fabric",  "fabric"),
     "parser":    ("uengine/robo-antlr-parser", "parser"),
     "gateway":   ("uengine/robo-api-gateway",  "gateway"),
+    # open-pencil 렌더러. 없으면 와이어프레임 단계가 **조용히** 빈다(compose 의 주석에 실측).
+    "wireframe": ("uengine/open-pencil",        "wireframe"),
 }
 
 # Per-service settings (the same values as the development runtime, robo-lite-src/build/make-runtime.py).

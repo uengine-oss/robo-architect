@@ -1,5 +1,5 @@
 /**
- * Getting the stack's seven images onto this machine.
+ * Getting the stack's images onto this machine.
  *
  * For every image in the runtime manifest, in this order:
  *

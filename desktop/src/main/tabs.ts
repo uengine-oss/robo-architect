@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getDataDir, getLogsDir } from "./data-dir";
+import { getDockerStackRuntime } from "./docker-stack";
 import { log } from "./logging";
 import { handleLauncherEnter } from "./launcher/enter";
 import { resolveSessionUser } from "./launcher/identity";
@@ -348,6 +349,30 @@ async function claudeCli(): Promise<string | null> {
   return null;
 }
 
+/**
+ * Whether this PC has an OpenAI key, for the shell's status row — **the name only, never the value**.
+ *
+ * Most of the LLM work needs no key: the analyzer and the search LLM are `claude_code_bridge` and
+ * the Architect's skill runner is `claude_cli`, so the CLI on this PC does it. What is still on
+ * OpenAI in a default install, measured 2026-11-05:
+ *
+ *   catalog    `config/catalog.env` sets `LLM_PROVIDER=openai` and `FK_INFERENCE_ENABLED=true`,
+ *              and passes the key through as a bare name. Its settings read
+ *              `os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")`, so **either name
+ *              works** — the table descriptions and the FK inference are what break without it.
+ *   architect  `architect/app/.env` is `LLM_PROVIDER=openai` with no key, so the OpenAI SDK reads
+ *              `OPENAI_API_KEY` out of this process's environment.
+ *
+ * Not reported here: `ROBO_EMBED_API_KEY`. `config/analyzer.env` ships
+ * `ROBO_PIPELINE_EMBED_ENABLED=false`, so embeddings are off by design and search falls back to
+ * lexical (`search/corpus/corpus.py` calls that "임베딩을 끈 설치(키 없는 Lite)"). Setting that key
+ * alone would change nothing, so saying it is "missing" would be a false alarm.
+ */
+function openAiKey(): { names: string[]; set: boolean } {
+  const names = ["LLM_API_KEY", "OPENAI_API_KEY"];
+  return { names, set: names.some((n) => (process.env[n] || "").trim() !== "") };
+}
+
 export function wireShellIpc(): void {
   const shellOnly =
     <A extends unknown[], R>(fn: (w: TabWindow, ...a: A) => R) =>
@@ -397,6 +422,10 @@ export function wireShellIpc(): void {
         backend: be.status,
         graphUser: "robo",
         claude: await claudeCli(),
+        openAiKey: openAiKey(),
+        // 화면이 "Docker 컨테이너 N개" 를 손으로 적고 있었다 — 서비스가 늘면 틀린 말이
+        // 된다. 매니페스트의 이미지 수를 세서 넘긴다(스택에 뜨는 컨테이너와 1:1 이다).
+        stackServices: Object.keys(getDockerStackRuntime()?.manifest.images ?? {}).length || null,
         platform: process.platform,
         enteredProfile: activeProfile(),
       };

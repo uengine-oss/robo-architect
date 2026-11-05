@@ -3,7 +3,7 @@
 The installer is a DMG on the public repository `uengine-oss/robo-architect-lite-releases`, always
 under the same asset name, so the website can link
 `https://github.com/uengine-oss/robo-architect-lite-releases/releases/latest/download/Robo-Architect-Lite-mac-arm64.dmg`.
-The app ships without Docker images: on first launch it pulls the seven stack images from the public
+The app ships without Docker images: on first launch it pulls the stack images from the public
 GitHub Container Registry (`ghcr.io/uengine-oss/robo-architect-lite-<component>:<version>`, about
 1.1 GB) and shows the progress on the home screen (`desktop/src/main/docker-images.ts`). Images that
 are already on the machine with the recorded ID are reused (tagged), not downloaded.
@@ -14,7 +14,7 @@ are already on the machine with the recorded ID are reused (tagged), not downloa
 # 0. the images are final (uengine/*:lite-mac, robo-lite-src/build/build-images.sh) and the front end
 #    is built with the analyzer remote (robo-lite-src/build/build-frontend.sh → frontend/dist)
 
-# 1. push the seven images, record their digests and sizes, make the packages public
+# 1. push the images, record their digests and sizes, make the packages public
 #    (once before: gh auth refresh -h github.com -s write:packages,read:packages)
 scripts/release/push-images.sh            # --dry-run shows what it would do
 scripts/release/check-images-public.sh    # after switching any package to Public by hand
@@ -52,7 +52,7 @@ Pull path tests: `cd desktop && npx playwright test tests/unit/docker-images.spe
 
 The same app with a Windows runtime: python-build-standalone CPython for `x86_64-pc-windows-msvc` of
 the macOS runtime's version, the locked dependencies as `win_amd64` wheels, the same compose and
-settings, and the linux/amd64 builds of the seven images. Nothing runs under wine; the bundled
+settings, and the linux/amd64 builds of the stack images. Nothing runs under wine; the bundled
 backend's imports are traced on the Mac against the Windows file set instead of being run.
 `desktop/resources/runtime` stays the macOS runtime — the Windows one is `desktop/out/win/runtime`, and
 `desktop/electron-builder.win.js` packs it in place of the macOS one.

@@ -83,7 +83,7 @@ Robo Architect Lite $VERSION for macOS (Apple Silicon).
 **Download:** \`$ASSET\` below — open it and drag the app to Applications.
 
 **Requirements:** Docker Desktop (running) and Claude Code (installed and signed in). The first launch
-downloads the seven Docker images, about 1.1 GB (about 4.8 GB on disk); the home screen shows the progress.
+downloads the stack's Docker images, about 1.4 GB (about 4.8 GB on disk); the home screen shows the progress.
 
 **First launch:** the app is not notarized yet. When macOS says it could not verify the app, open
 System Settings › Privacy & Security and click **Open Anyway**.
