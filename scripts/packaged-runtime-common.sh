@@ -30,7 +30,7 @@ copy_app_snapshot() {
 #   --no-images     write compose.yml and the settings but no manifest (the images are not built yet)
 write_runtime_files() {
   python3 - "$@" <<'PY'
-import argparse, hashlib, json, shutil, subprocess, sys
+import argparse, hashlib, json, os, shutil, subprocess, sys
 from pathlib import Path
 
 ap = argparse.ArgumentParser()
@@ -187,11 +187,17 @@ for key, (local, component) in IMAGES.items():
     else:
         sizes[key] = image_size(f"{local}:{source_tag}")
 
-lite_src = Path("/Users/uengine/robo-lite-src")
+# Checkouts of the repositories that are not submodules here, at the commits the images came from.
+lite_src = Path(os.environ.get("ROBO_LITE_SRC", "/Users/uengine/robo-lite-src"))
+if digests_file:
+    # A release must say what it was built from: head() answers forty zeros for a missing checkout.
+    for repo in ("ontological-db", "antlr-code-parser", "api-gateway"):
+        if head(lite_src / repo) == "0" * 40:
+            raise SystemExit(f"[runtime] no git checkout at {lite_src / repo} — set ROBO_LITE_SRC")
 environment = {k: {"file": f"config/{k}.env", "sha256": sha(out / "config" / f"{k}.env")} for k in ENV}
 environment["architect"] = {"file": "architect/app/.env", "sha256": sha(out / "architect" / "app" / ".env")}
 manifest = {
-    "schemaVersion": 3,
+    "schemaVersion": 4,  # MANIFEST_SCHEMA_VERSION in desktop/src/main/docker-stack.ts — the app refuses any other
     "releaseId": f"lite-{version}",
     "releaseChannel": "stable",
     "releaseVariant": "lite",
