@@ -46,6 +46,7 @@ import { GRAPH_ANALYSIS } from "./graphs";
 import { currentLang } from "./lang";
 import { pickFreePort } from "./ports";
 import { log } from "./logging";
+import { llmBridgeEnv } from "./llm-bridge-env";
 
 /** 백엔드 루트임을 확정하는 표식 — 후보가 진짜 api/ 프로젝트인지 검증. */
 const BACKEND_MARKER = join("api", "main.py");
@@ -233,6 +234,7 @@ async function startBackendInternal(): Promise<{ port: number }> {
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...(packaged ? llmBridgeEnv(process.env, port) : {}),
     PYTHONUNBUFFERED: "1",
     // the bundled runtime sits inside the signed app — never write __pycache__ or the backend's
     // logs (SmartLogger defaults to logs/ under its working directory) there

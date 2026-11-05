@@ -360,8 +360,9 @@ async function claudeCli(): Promise<string | null> {
  *              and passes the key through as a bare name. Its settings read
  *              `os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")`, so **either name
  *              works** — the table descriptions and the FK inference are what break without it.
- *   architect  `architect/app/.env` is `LLM_PROVIDER=openai` with no key, so the OpenAI SDK reads
- *              `OPENAI_API_KEY` out of this process's environment.
+ *
+ * The Architect API needs no key either: without one, llm-bridge-env.ts points it at the bridge, in
+ * the backend's environment only, so what this reads is still what the user set.
  *
  * Not reported here: `ROBO_EMBED_API_KEY`. `config/analyzer.env` ships
  * `ROBO_PIPELINE_EMBED_ENABLED=false`, so embeddings are off by design and search falls back to
