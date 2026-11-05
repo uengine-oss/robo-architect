@@ -12,7 +12,7 @@ VERSION=$(node -p "require('$ROOT/desktop/package.json').version")
 ORG=uengine-oss
 ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
 private=""
-for component in graph-db graph-bolt analyzer catalog fabric parser gateway; do
+for component in graph-db graph-bolt analyzer catalog fabric parser gateway wireframe; do
   pkg="robo-architect-lite-$component"
   token=$(curl -fsS "https://ghcr.io/token?scope=repository:$ORG/$pkg:pull" 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)
