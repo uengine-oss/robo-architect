@@ -2778,6 +2778,10 @@
  },
  "patterns": [
   [
+   "카탈로그의 표 설명과 FK 추론이 실패합니다 · 터미널에서 launchctl setenv {0} <키> 를 실행하고 앱을 다시 여세요(재부팅하면 다시 실행)",
+   "Table descriptions and FK inference fail in the catalog · run launchctl setenv {0} <key> in Terminal and reopen the app (run it again after a restart)"
+  ],
+  [
    "카탈로그의 표 설명과 FK 추론이 실패합니다 · 명령 프롬프트에서 setx {0} <키> 를 실행하고 앱을 다시 여세요",
    "Table descriptions and FK inference fail in the catalog · run setx {0} <key> at a command prompt and reopen the app"
   ],

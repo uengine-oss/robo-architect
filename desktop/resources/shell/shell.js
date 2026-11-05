@@ -334,7 +334,12 @@ function keyRowHtml() {
     return `<div class="status-row"><span class="dot ok"></span><div><b>AI 키</b> 설정됨<small>카탈로그의 표 설명과 FK 추론이 돕니다</small></div></div>`
   }
   // 무엇을 못 하게 되는지 먼저 말한다. 이름만 띄우면 무엇을 포기하는지 모른다.
-  return `<div class="status-row"><span class="dot warn"></span><div><b>AI 키</b> 미설정<small>카탈로그의 표 설명과 FK 추론이 실패합니다 · 명령 프롬프트에서 setx ${esc(k.names[k.names.length - 1])} &lt;키&gt; 를 실행하고 앱을 다시 여세요</small></div></div>`
+  const name = esc(k.names[k.names.length - 1])
+  // Finder 로 연 앱은 셸 설정을 안 읽으므로(host-path.ts 는 PATH 만 가져온다) macOS 는 launchctl 이다.
+  const how = info.platform === 'darwin'
+    ? `터미널에서 launchctl setenv ${name} &lt;키&gt; 를 실행하고 앱을 다시 여세요(재부팅하면 다시 실행)`
+    : `명령 프롬프트에서 setx ${name} &lt;키&gt; 를 실행하고 앱을 다시 여세요`
+  return `<div class="status-row"><span class="dot warn"></span><div><b>AI 키</b> 미설정<small>카탈로그의 표 설명과 FK 추론이 실패합니다 · ${how}</small></div></div>`
 }
 function renderStatus() {
   const ok = ready()
