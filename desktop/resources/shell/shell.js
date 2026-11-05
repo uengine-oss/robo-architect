@@ -305,7 +305,7 @@ function bootText() {
   })[runtime.status] || runtime.status
 }
 // first launch of a release: the images come from the registry (main/docker-images.ts)
-const IMAGE_LABEL = { graphDb: 'Ontological DB', graphBolt: 'Bolt', analyzer: 'Analyzer', catalog: 'Catalog', fabric: 'Data fabric', parser: 'Parser', gateway: 'API gateway' }
+const IMAGE_LABEL = { graphDb: 'Ontological DB', graphBolt: 'Bolt', analyzer: 'Analyzer', catalog: 'Catalog', fabric: 'Data fabric', parser: 'Parser', gateway: 'API gateway', wireframe: 'Wireframe renderer' }
 const bytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`)
 function bootHtml() {
   const p = boot
