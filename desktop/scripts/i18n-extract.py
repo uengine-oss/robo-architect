@@ -395,7 +395,12 @@ def scan_js_files(files):
         lst = Path(tmp) / 'files.json'
         lst.write_text(json.dumps([{'abs': str(ROOT / f), 'rel': f} for f in files]), encoding='utf-8')
         env = dict(os.environ, NON_TEXT_ATTRS=json.dumps(sorted(NON_TEXT_ATTRS)))
-        r = subprocess.run(['node', str(helper), str(NODE_MODULES), str(lst)], capture_output=True, text=True, env=env)
+        # ⚠ encoding 을 못 박는다. `text=True` 만 두면 **로케일 코덱**으로 디코드해서
+        #   cp949 Windows 에서 한국어 JSON 이 UnicodeDecodeError 로 터진다. 그 예외는
+        #   읽기 스레드에서 나므로 r.stdout 이 None 이 되고, 겉으로는 json.loads(None) 의
+        #   TypeError 로만 보인다(2026-11-05 실측).
+        r = subprocess.run(['node', str(helper), str(NODE_MODULES), str(lst)], capture_output=True,
+                           text=True, encoding='utf-8', errors='replace', env=env)
         if r.returncode != 0:
             sys.exit('node helper failed:\n' + r.stderr)
         data = json.loads(r.stdout)
@@ -495,7 +500,8 @@ def analyzer_files():
             seen.update(batch)
             lst = Path(tmp) / 'files.json'
             lst.write_text(json.dumps([str(ROOT / f) for f in batch]), encoding='utf-8')
-            r = subprocess.run(['node', str(helper), str(NODE_MODULES), str(lst)], capture_output=True, text=True)
+            r = subprocess.run(['node', str(helper), str(NODE_MODULES), str(lst)], capture_output=True,
+                               text=True, encoding='utf-8', errors='replace')
             if r.returncode != 0:
                 sys.exit('deps helper failed:\n' + r.stderr)
             for absf, deps in json.loads(r.stdout).items():
