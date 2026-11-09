@@ -42,7 +42,7 @@ Get the file from the [latest release](https://github.com/uengine-oss/robo-archi
   **More info**, then **Run anyway**. Leave the install scope at the current user (no administrator
   rights), and clear the **Run** check box on the last screen — open the app from the Start menu, so it
   starts with your current environment.
-- **The first launch downloads the Docker images — about 1.4 GB (about 5.2 GB on disk)** from
+- **The first launch downloads the Docker images — about 1.2 GB (about 5 GB on disk)** from
   the GitHub Container Registry (`ghcr.io/uengine-oss/robo-architect-lite-*`). The home screen shows
   which image is downloading and how far it is. Later launches start in under a minute.
 - If the app says Docker is not available, start Docker Desktop and open the app again.
