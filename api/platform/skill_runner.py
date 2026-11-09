@@ -602,7 +602,6 @@ def _json_candidates(raw: str):
         # 성공한 구간은 통째로 건너뛴다 — 내부 조각을 다시 후보로 삼지 않는다.
         i = end
 
-
 def extract_json_candidates(raw: str) -> list:
     """파싱에 성공한 JSON 값들을 **큰 것부터** 돌려준다.
 
@@ -636,3 +635,14 @@ def extract_json(raw: str) -> dict | list | None:
         if length > best_len:
             best, best_len = value, length
     return best
+
+
+def skill_terminal_failure(raw: str) -> dict | None:
+    """Classify terminal Claude CLI messages before callers mislabel them as JSON errors."""
+    normalized = (raw or "").strip().lower()
+    if "you've hit your session limit" in normalized or "you’ve hit your session limit" in normalized:
+        return {
+            "code": "LLM_SESSION_LIMIT",
+            "message": (raw or "Claude Code session limit reached").strip()[:300],
+        }
+    return None

@@ -11,7 +11,7 @@ import json
 from typing import AsyncGenerator, Callable, Optional
 
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import extract_json
+from api.platform.skill_runner import extract_json, skill_terminal_failure
 from api.features.proposal_lifecycle.services.legacy_stage_capture import stream_stage_skill_lines
 
 _SKILL_ROOT = "robo-proposals"
@@ -64,7 +64,11 @@ async def stream_skill_json(
         yield "error", {"code": parse_error_code, "message": f"{skill_name} 스킬 실행 실패"}
         return
 
-    data = extract_json("\n".join(output_lines))
+    raw = "\n".join(output_lines)
+    if terminal_error := skill_terminal_failure(raw):
+        yield "error", terminal_error
+        return
+    data = extract_json(raw)
     if data is None:
         SmartLogger.log("WARN", f"stage skill parse failed: {skill_name}",
                         category="proposal_lifecycle.staged.parse_fail",

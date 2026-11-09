@@ -12,7 +12,7 @@ from typing import AsyncGenerator
 from api.platform.neo4j import get_session
 from api.platform.neo4j_helpers import load_domain_nodes
 from api.platform.observability.smart_logger import SmartLogger
-from api.platform.skill_runner import run_skill_once, extract_json
+from api.platform.skill_runner import extract_json, run_skill_once, skill_terminal_failure
 from api.features.proposal_lifecycle.services.legacy_stage_capture import stream_stage_skill_lines
 
 _SKILL_ROOT = "robo-proposals"
@@ -253,6 +253,10 @@ async def stream_intent(proposal_id: str) -> AsyncGenerator[tuple[str, dict], No
     raw = "\n".join(output_lines)
     if not raw.strip():
         yield "error", {"code": "INTENT_FAILED", "message": "인텐트 분해 실패"}
+        return
+
+    if terminal_error := skill_terminal_failure(raw):
+        yield "error", terminal_error
         return
 
     result_data = extract_json(raw)
