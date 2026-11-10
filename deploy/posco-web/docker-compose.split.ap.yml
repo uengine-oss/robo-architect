@@ -10,7 +10,7 @@
 # 설명은 통합 파일의 주석과 README.md 에 있다.
 # =====================================================================
 
-name: robo-architect
+name: robo-posco-web
 
 x-labels: &labels
   org.uengine.robo.topology: posco-web

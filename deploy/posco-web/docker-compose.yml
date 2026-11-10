@@ -41,7 +41,11 @@
 # `down -v` · `volume prune` 금지. `graph_data` 가 팀의 설계·분석 전부다.
 # =====================================================================
 
-name: robo-architect
+# 프로젝트 이름 — 컨테이너·볼륨 이름 앞에 붙는다(robo-posco-web_graph_data 등).
+# `robo-architect` 로 두었다가 바꿨다(2026-11-10): 저장소 루트의 개발용 docker-compose.yml 이
+# 폴더 이름 때문에 같은 `robo-architect` 로 묶여 서로를 orphan 으로 보았다 — --remove-orphans 를
+# 주면 한쪽이 다른 쪽 컨테이너를 지운다. lite 설치본은 robo-architect-desktop 이라 겹치지 않는다.
+name: robo-posco-web
 
 x-labels: &labels
   org.uengine.robo.topology: posco-web
