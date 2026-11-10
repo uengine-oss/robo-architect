@@ -98,21 +98,33 @@ AI 주소가 `.env` 하나로 모인 것과 위의 둘뿐).
 msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 — yml 은 저장소에 들어가고,
 비밀은 `.env`(600) 에만 둔다. 화면에서 고치는 방식은 같다(파일 하나를 연다).
 
-## 이미지 — 전부 고정 태그
+## 이미지 — 열두 장 전부 GHCR(`robo-posco-*`) · 전부 고정 태그
 
-```text
-납품판 그대로 (0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp)
-  uengine/ontological-db · ontological-bolt · robo-authority · robo-analyzer ·
-  robo-data-catalog · robo-data-fabric · robo-antlr-parser · robo-api-gateway ·
-  open-pencil · ghcr.io/uengine-oss/process-gpt-bpmn-extractor:735d135
-새로 굽는 둘 — CI(.github/workflows/posco-web-images.yml) 가 커밋으로 태그를 박는다
-  ghcr.io/uengine-oss/robo-architect-api:posco-web-<sha>
-  ghcr.io/uengine-oss/robo-architect-web:posco-web-<sha>
-```
+| 서비스 | 이미지 (`ghcr.io/uengine-oss/…`) | 태그 | 출처 |
+|---|---|---|---|
+| graph-db | `robo-posco-graph-db` | `0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp` | 납품판 그대로 |
+| graph-bolt | `robo-posco-graph-bolt` | 〃 | 〃 |
+| authority (+init) | `robo-posco-authority` | 〃 | 〃 |
+| analyzer | `robo-posco-analyzer` | 〃 | 〃 |
+| catalog | `robo-posco-catalog` | 〃 | 〃 |
+| fabric | `robo-posco-fabric` | 〃 | 〃 |
+| parser | `robo-posco-parser` | 〃 | 〃 |
+| gateway | `robo-posco-gateway` | 〃 | 〃 |
+| wireframe | `robo-posco-wireframe` | 〃 | 〃 |
+| pdf2bpmn | `robo-posco-pdf2bpmn` | `735d135` | 납품판 그대로 — ⚠ 상류 `process-gpt-bpmn-extractor:735d135` 는 같은 태그인데 **다른 이미지**다 |
+| architect-api | `robo-posco-architect-api` | `posco-web-<sha7>` | CI 가 굽는다 |
+| web (nginx) | `robo-posco-web` | `posco-web-<sha7>` | CI 가 굽는다 |
 
-납품판 열 장은 **다시 굽지 않는다.** 같은 커밋을 다시 구우면 image ID 가 달라져 납품판과
-대조가 끊긴다. 서버에 들일 때는 납품 `robo-images.tar` 를 `load` 하고(ID 를 매니페스트와
-대조), 새 두 장은 GHCR 에서 받거나 `docker save` 로 옮긴다.
+- 납품판 열 장은 **다시 굽지 않고** 납품 `robo-images.tar` 의 이미지를 그대로 올렸다
+  (2026-11-10). 같은 커밋이라도 다시 구우면 image ID 가 달라져 납품 매니페스트와 대조가 끊긴다.
+  올린 뒤 레지스트리의 **최상위(index) digest** 가 매니페스트 `imageIds` 와 같은 것을 확인했다
+  (`docker buildx imagetools inspect <ref>` 의 `Digest`). 이 도커는 containerd 저장소라 image ID 가
+  그 digest 다 — 받은 쪽에서 `docker image inspect --format '{{.Id}}'` 로 같은 값을 본다.
+- 이름을 `robo-posco-*` 로 따로 둔 이유: `robo-analyzer` · `robo-antlr-parser` ·
+  `robo-api-gateway` · `robo-data-fabric` 는 GHCR 에 **다른 제품의 공개 패키지**로 이미 있다.
+  거기에 태그를 더하면 고객 납품 이미지가 공개 패키지에 섞인다.
+- `robo-posco-*` 는 **private** 이다. 서버에서 한 번 `docker login ghcr.io`(읽기 권한 토큰 · 사람).
+  GHCR 에 못 닿는 서버는 `bundle.sh <dir> --images` 로 tar 하나에 묶어 옮긴다.
 
 ---
 

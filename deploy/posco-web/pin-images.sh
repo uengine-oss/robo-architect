@@ -11,11 +11,11 @@ cd "$(dirname "$0")"
 tag=${1:?usage: pin-images.sh <tag>}
 [[ $tag =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || { echo "bad tag: $tag" >&2; exit 2; }
 [[ $tag != latest ]] || { echo "latest 는 박지 않는다" >&2; exit 2; }
-for name in robo-architect-api robo-architect-web; do
+for name in robo-posco-architect-api robo-posco-web; do
   grep -q "image: ghcr.io/uengine-oss/$name:" docker-compose.yml ||
     { echo "docker-compose.yml 에 $name 가 없다" >&2; exit 1; }
   sed -i -E "s#(image: ghcr.io/uengine-oss/$name:)[A-Za-z0-9_.-]+#\1$tag#" docker-compose.yml
 done
 PY=python3; command -v python3 >/dev/null && python3 -c 'import sys' 2>/dev/null || PY=python
 "$PY" -I make-split.py
-grep -n "robo-architect-\(api\|web\):" docker-compose*.yml
+grep -n "robo-posco-\(architect-api\|web\):" docker-compose*.yml

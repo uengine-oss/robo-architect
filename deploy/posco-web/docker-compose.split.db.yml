@@ -17,7 +17,7 @@ x-labels: &labels
 
 services:
   graph-db:
-    image: uengine/ontological-db:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-graph-db:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     ports:
@@ -40,7 +40,7 @@ services:
       start_period: 20s
 
   graph-bolt:
-    image: uengine/ontological-bolt:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-graph-bolt:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     ports:
@@ -64,7 +64,7 @@ services:
       start_period: 10s
 
   authority:
-    image: uengine/robo-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     ports:
@@ -102,7 +102,7 @@ services:
         condition: service_completed_successfully
 
   authority-init:
-    image: uengine/robo-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: "no"
     labels: *labels
     environment:

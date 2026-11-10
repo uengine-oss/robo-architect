@@ -23,11 +23,18 @@
 # 저장소에 들어가고, 설치본 감사(2026-09-23)에서 같은 키가 5파일 7이름으로
 # 실려 나간 일이 있었다. 비밀은 `.env`(600) 에만 둔다.
 #
-# ## 이미지 태그
+# ## 이미지 — 전부 GHCR, 전부 고정 태그(latest 없음)
 #
-# 전부 **고정 태그**다(latest 없음). 납품판 열 장은 0.1.0 rdel-swp 그대로이고,
-# 새로 생긴 두 장(architect-api · web)은 CI 가 커밋으로 박은 태그다.
-# 태그를 바꿀 때는 세 파일을 같이 바꾼다 — `check.sh` 가 다르면 멈춘다.
+#   ghcr.io/uengine-oss/robo-posco-*     열두 장
+#     납품판 열 장  :0.1.0-wde10ff6c-…-rdel-swp (pdf2bpmn 은 :735d135)
+#                   납품 robo-images.tar 를 **그대로** 올렸다 → image ID 가 납품 매니페스트와 같다
+#     새 둘         :posco-web-<sha7> — CI 가 굽는다(architect-api · web)
+#   ⚠ pdf2bpmn 을 상류 `process-gpt-bpmn-extractor:735d135` 로 받지 않는다 — 같은 태그인데
+#     **다른 이미지**다(상류 b2d8c0… / 납품 3b2833…, 2026-11-10 측정).
+#
+# 서버가 GHCR 에 못 닿으면 `bundle.sh --images` 로 tar 하나에 묶어 옮긴다.
+# ⚠ robo-posco-* 는 **private** 패키지다 — 서버에서 한 번 `docker login ghcr.io`(사람).
+# 태그를 바꿀 때는 통합 파일만 고치고 make-split.py — `check.sh` 가 어긋나면 멈춘다.
 #
 # ## 지우지 않는다
 #
@@ -42,7 +49,7 @@ x-labels: &labels
 services:
   # ── 브라우저 진입점 — 빌드된 자산만 낸다 ─────────────────────────────
   web:
-    image: ghcr.io/uengine-oss/robo-architect-web:posco-web-dev
+    image: ghcr.io/uengine-oss/robo-posco-web:posco-web-dev
     restart: unless-stopped
     labels: *labels
     environment:
@@ -55,7 +62,7 @@ services:
 
   # ── Architect API — 설치본에서는 PC 의 번들 python.exe 였다 ─────────
   architect-api:
-    image: ghcr.io/uengine-oss/robo-architect-api:posco-web-dev
+    image: ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-dev
     restart: unless-stopped
     labels: *labels
     environment:
@@ -157,7 +164,7 @@ services:
 
   # ── 권한 서버 — 로그인(SWP)·승인·프로젝트 공유 ─────────────────────────
   authority:
-    image: uengine/robo-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment: &authority-env
@@ -196,7 +203,7 @@ services:
   #   역할 둘 → migrate → grant(관리자 사번) → policy
   # 소유자 자격(ROBO_GRAPH_PASSWORD)은 **이 컨테이너에만** 들어간다.
   authority-init:
-    image: uengine/robo-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: "no"
     labels: *labels
     environment:
@@ -214,7 +221,7 @@ services:
 
   # ── 그래프 저장소 — Ontological(PostgreSQL) + Bolt 게이트웨이 ─────────
   graph-db:
-    image: uengine/ontological-db:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-graph-db:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment:
@@ -235,7 +242,7 @@ services:
       start_period: 20s
 
   graph-bolt:
-    image: uengine/ontological-bolt:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-graph-bolt:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment:
@@ -258,7 +265,7 @@ services:
 
   # ── 레거시 분석 — fabric · catalog · analyzer · parser · gateway ──────
   fabric:
-    image: uengine/robo-data-fabric:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-fabric:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment:
@@ -280,7 +287,7 @@ services:
       start_period: 10s
 
   catalog:
-    image: uengine/robo-data-catalog:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-catalog:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment:
@@ -322,7 +329,7 @@ services:
       start_period: 10s
 
   analyzer:
-    image: uengine/robo-analyzer:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-analyzer:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment:
@@ -395,7 +402,7 @@ services:
       start_period: 15s
 
   parser:
-    image: uengine/robo-antlr-parser:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-parser:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment:
@@ -415,7 +422,7 @@ services:
       start_period: 30s
 
   gateway:
-    image: uengine/robo-api-gateway:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-gateway:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment:
@@ -443,7 +450,7 @@ services:
 
   # ── 문서→BPMN · 와이어프레임 렌더러 ───────────────────────────────────
   pdf2bpmn:
-    image: ghcr.io/uengine-oss/process-gpt-bpmn-extractor:735d135
+    image: ghcr.io/uengine-oss/robo-posco-pdf2bpmn:735d135
     platform: linux/amd64
     restart: unless-stopped
     labels: *labels
@@ -468,7 +475,7 @@ services:
       start_period: 30s
 
   wireframe:
-    image: uengine/open-pencil:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-wireframe:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
     environment:

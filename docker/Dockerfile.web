@@ -1,6 +1,6 @@
 # Robo Architect 프런트엔드 — **서버 배포(posco-web) 용. nginx 가 빌드된 자산만 낸다.**
 #
-#   docker build -f docker/Dockerfile.web -t <registry>/robo-architect-web:<tag> .
+#   docker build -f docker/Dockerfile.web -t ghcr.io/uengine-oss/robo-posco-web:<tag> .
 #
 # 설치본에서는 Electron 이 `frontend/dist` 를 `app://` 로 내고 `/api` 를 직접 넘겼다.
 # 여기서는 그 둘을 nginx 가 한다(`docker/nginx/default.conf.template`).
