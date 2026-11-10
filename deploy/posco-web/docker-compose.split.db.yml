@@ -94,6 +94,9 @@ services:
       SWP_IDX_DEPT: "4"
       SWP_EMAIL_FALLBACK_DOMAIN: posco.local
       SWP_SSO_TIMEOUT_S: "15"
+      # 첫 연동 때 한 번만 1 로 — isValidSSO 원문을 찍어 SWP_IDX_* 칸 순서를 눈으로 본다
+      # (관리자-DB올리기 가이드). 확인하면 다시 비운다.
+      SWP_SSO_LOG_RAW: ${SWP_SSO_LOG_RAW:-}
     depends_on:
       authority-init:
         condition: service_completed_successfully
@@ -107,7 +110,7 @@ services:
       OG_PG_DSN: postgresql://${ROBO_GRAPH_USER:?}:${ROBO_GRAPH_PASSWORD:?}@graph-db:5432/${ROBO_GRAPH_DESIGN:?}
       ROBO_AUTHORITY_DB_PASSWORD: ${ROBO_AUTHORITY_DB_PASSWORD:?}
       ROBO_ADMIN_EMPNO: ${ROBO_ADMIN_EMPNO:?최초 관리자 사번}
-      ROBO_APPROVAL_REQUIRED: "true"
+      ROBO_APPROVAL_REQUIRED: ${ROBO_APPROVAL_REQUIRED:-true}
     volumes:
       - ./authority-init.py:/app/authority_init.py:ro
     command: ["python", "/app/authority_init.py"]

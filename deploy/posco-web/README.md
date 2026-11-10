@@ -60,6 +60,30 @@ DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서�
 | DB 비밀번호 | `ROBO_GRAPH_PASSWORD` (+ 권한 서버 역할 둘) |
 | SWP 주소 | `SWP_SSO_*` — 비우면 가동계 기본값 · `ROBO_PUBLIC_URL` (콜백 허용 origin) |
 
+### 설치본 가이드의 이름 → 이 판의 이름
+
+`사용자-설치-가이드`(robo-env.ps1) 와 `관리자-DB올리기`(robo-central.sh) 에서 쓰던 값이
+어디로 갔는지. **2026-11-10 에 두 가이드의 변수 이름을 전수로 뽑아 대조했다.**
+
+| 가이드 | 이 판 `.env` | 들어가는 곳 |
+|---|---|---|
+| `$AI_KEY` (다섯 이름에 같은 값) | `ROBO_AI_API_KEY` | OPENAI_API_KEY(api·fabric·catalog·pdf2bpmn) · LLM_API_KEY(catalog) · ROBO_LLM/EMBED/SEARCH_LLM_API_KEY(analyzer) |
+| (msa-ez 의 OPENAI_BASE_URL) | `ROBO_AI_BASE_URL` | 모든 AI 주소 칸 |
+| `$GRAPH_HOST` · `SERVER_IP` · `ROBO_GRAPH_BIND` · `ROBO_AUTHORITY_BIND` | `ROBO_DB_SERVER_IP` (분할만) | 통합 서버는 서비스 이름으로 붙어 필요 없다 |
+| `$GRAPH_PASSWORD` · `GRAPH_PW` | `ROBO_GRAPH_PASSWORD` | 그래프 소유자 |
+| `$GRAPH_PG_PORT` · `$GRAPH_BOLT_PORT` | `ROBO_DB_PG_PORT` · `ROBO_DB_BOLT_PORT` (분할만) | |
+| `$ROLE_SECRET` · `$JWT_SECRET` | `AUTH_ROLE_SECRET` · `AUTH_JWT_SECRET` | authority **와 architect-api 둘 다**(같은 값) |
+| `AUTH_RT_PW` | `ROBO_AUTHORITY_DB_PASSWORD` | robo_authority 역할 |
+| `OPER_PW` | — | 운영 DSN 은 소유자로(§결정 ④) |
+| `ADMIN_EMPNO` · `APPROVAL_REQUIRED` | `ROBO_ADMIN_EMPNO` · `ROBO_APPROVAL_REQUIRED` | authority-init |
+| `SWP_SSO_*` · `SWP_SSO_LOG_RAW` | 같은 이름 | authority |
+| `AUTH_CALLBACK_ALLOWLIST` | `ROBO_PUBLIC_URL` | authority |
+| `PDF2BPMN_FACADE_KEY` (PC 난수) | 같은 이름 (서버 하나) | api · pdf2bpmn |
+| `ROBO_GRAPH_MODE=central` · `ROBO_AUTHORITY_URL` | 고정값(yml) | api |
+| `ROBO_IMAGE_*` · `$IMAGE_TAR` | 고정 태그(yml) · `bundle.sh --images` | |
+| `$DEV_*` (시험 로그인) | — | **일부러 없다.** 중앙 authority 가 개발 로그인을 거부한다 |
+| `ROBO_INGESTION_URL` | — | 가이드대로 **안 둔다** |
+
 컨테이너에는 compose 의 `environment:` 로만 들어간다. **컨테이너에 들어가 파일을 고치지
 않는다.** 납품본에서 `config/*.env` · `architect/app/.env` 로 실리던 제품 설정(모델 이름 ·
 검색 파라미터 등)은 값 그대로 `environment:` 에 옮겨 적었다.

@@ -73,6 +73,7 @@ else
   done
   [[ $(val ROBO_GRAPH_DESIGN) != "$(val ROBO_GRAPH_ANALYSIS)" ]] ||
     bad "설계·분석 graph 이름이 같다 — 분석이 설계를 지운다"
+  [[ $(val ROBO_APPROVAL_REQUIRED) =~ ^(true|false)$ ]] || bad "ROBO_APPROVAL_REQUIRED 는 true|false"
   url=$(val ROBO_PUBLIC_URL)
   [[ $url =~ ^https?://[^/]+$ ]] || bad "ROBO_PUBLIC_URL 은 scheme://host:port (경로 없이)"
   if [[ $FILE == *split* ]]; then
