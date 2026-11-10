@@ -1,0 +1,44 @@
+# =====================================================================
+# 로컬 시험 전용 — **사내 서버에 쓰지 않는다.** SWP 없이 이 PC 에서 화면을 눌러 보려고 둔다.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local-test.yml up -d --wait
+#   브라우저: http://127.0.0.1:${ROBO_WEB_PORT}  → "개발용 로그인"
+#     관리자   admin / ${ROBO_TEST_LOGIN_PASSWORD:-admin}   (사번 = ROBO_ADMIN_EMPNO → 이미 승인된 관리자)
+#     두 번째  user2 / user2                                  (승인 대기로 들어온다 → 관리자가 승인)
+#
+# ## 왜 .env 스위치가 아니라 파일인가
+#
+# SWP 는 사내망에서만 응답하고, 중앙 authority 는 개발 로그인을 **일부러** 막는다. 그래서 이 PC 에서는
+# 로그인할 길이 없다. 그렇다고 `.env` 에 끄는 값을 두면 서버에서 **실수로 꺼질** 수 있다 — 납품
+# 설치본도 같은 이유로 AUTH_ENFORCE=false · 개발 로그인을 켜면 기동을 거부했다
+# (desktop/src/main/docker-stack.ts `assertAuthPostureNotOverridden`). 이 파일은 `-f` 로 **일부러
+# 붙여야만** 효과가 있다.
+#
+# ## 무엇이 달라지나 (architect-api 하나만)
+#
+#   ROBO_AUTHORITY_URL 비움   로그인·토큰을 중앙 authority 가 아니라 architect-api 가 직접 한다
+#                            (authority 는 떠 있지만 쓰지 않는다 — SWP 전용이라 그대로 둔다)
+#   개발 로그인 켬            nginx 를 거치면 요청이 루프백으로 안 보여 ALLOW_REMOTE 도 켠다 →
+#                            그래서 **web 을 127.0.0.1 에만 연다**(아래). 다른 PC 는 못 닿는다
+#   나머지는 같다             AUTH_ENFORCE=true · central · 요청마다 사용자 DB role 로 붙는다
+#                            ⇒ 프로젝트 만들기·공유·승인까지 실제와 같은 길로 눌러 볼 수 있다
+#
+# ⚠ `check.sh` 는 이 파일을 보지 않는다. 서버에서는 이 파일을 묶음에서 빼도 된다.
+# =====================================================================
+
+services:
+  web:
+    ports: !override
+      # 개발 로그인이 켜져 있다 — 이 PC 밖에서는 닿지 않게 루프백에만 연다.
+      - "127.0.0.1:${ROBO_WEB_PORT:-8080}:8080"
+
+  architect-api:
+    environment:
+      ROBO_AUTHORITY_URL: ""
+      AUTH_DEV_LOGIN_ENABLED: "true"
+      AUTH_DEV_LOGIN_ALLOW_REMOTE: "true"
+      AUTH_DEV_LOGIN_ID: admin
+      AUTH_DEV_LOGIN_PASSWORD: ${ROBO_TEST_LOGIN_PASSWORD:-admin}
+      AUTH_DEV_LOGIN_EMPNO: ${ROBO_ADMIN_EMPNO:?}
+      AUTH_DEV_LOGIN_NAME: 로컬 시험 관리자
+      AUTH_DEV_LOGIN_ACCOUNTS: "user2:user2:DEV-USER2:로컬 시험 사용자2"

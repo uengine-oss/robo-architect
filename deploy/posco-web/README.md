@@ -25,6 +25,8 @@ msa-ez 가 이미 같은 방식으로 돈다 — 통합 서버 한 대 / AP·DB 
 | `.env.example` | 사람이 넣는 값 **전부**. 분할이면 두 서버에 같은 파일 |
 | `authority-init.py` | 권한 서버 최초 초기화(역할 → migrate → 관리자 → 정책). 다시 돌려도 안전 |
 | `check.sh` | 띄우기 전 검사. 아무것도 안 바꾸고 비밀은 이름·길이만 찍는다 |
+| `docker-compose.local-test.yml` | **로컬 시험 전용 overlay** — SWP 없이 개발 로그인(admin·user2), web 을 127.0.0.1 에만. 서버에 쓰지 않는다 |
+| `init-env.sh` | `.env` 를 만들고 비밀 다섯을 채운다(다시 돌려도 안전) |
 | `make-split.py` | 분할 두 파일을 통합 파일에서 **만든다**(손으로 안 고친다) |
 | `pin-images.sh` | 새로 굽는 두 이미지의 태그를 세 파일에 같이 박는다 |
 | `pdf2bpmn/facade.py` | `desktop/runtime/pdf2bpmn/facade.py` 의 사본 — `bundle.sh` 가 넣는다 |
