@@ -17,7 +17,7 @@ x-labels: &labels
 
 services:
   web:
-    image: ghcr.io/uengine-oss/robo-posco-web:posco-web-dev
+    image: ghcr.io/uengine-oss/robo-posco-web:posco-web-30463c2
     restart: unless-stopped
     labels: *labels
     environment:
@@ -29,7 +29,7 @@ services:
         condition: service_healthy
 
   architect-api:
-    image: ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-dev
+    image: ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-30463c2
     restart: unless-stopped
     labels: *labels
     environment:
