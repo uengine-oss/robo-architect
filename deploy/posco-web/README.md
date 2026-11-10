@@ -123,7 +123,11 @@ msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 
 - 이름을 `robo-posco-*` 로 따로 둔 이유: `robo-analyzer` · `robo-antlr-parser` ·
   `robo-api-gateway` · `robo-data-fabric` 는 GHCR 에 **다른 제품의 공개 패키지**로 이미 있다.
   거기에 태그를 더하면 고객 납품 이미지가 공개 패키지에 섞인다.
-- `robo-posco-*` 는 **private** 이다. 서버에서 한 번 `docker login ghcr.io`(읽기 권한 토큰 · 사람).
+- `robo-posco-*` 열두 장은 **public** 이다(2026-11-10) — 서버에서 `docker login` 없이 받는다.
+  공개 전에 열 장의 파일을 검사했다: 키·`.env` 0. 고객 문자열은 둘 —
+  authority 의 SWP 기본 주소(공개 저장소 robo-architect 에 이미 있는 것)와
+  **analyzer 의 `llm/configs/pgpt.yaml` 에 든 P-GPT 사내 주소**(소스 저장소는 private).
+  analyzer 는 그것을 알고 공개했다.
   GHCR 에 못 닿는 서버는 `bundle.sh <dir> --images` 로 tar 하나에 묶어 옮긴다.
 
 ---

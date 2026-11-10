@@ -33,7 +33,7 @@
 #     **다른 이미지**다(상류 b2d8c0… / 납품 3b2833…, 2026-11-10 측정).
 #
 # 서버가 GHCR 에 못 닿으면 `bundle.sh --images` 로 tar 하나에 묶어 옮긴다.
-# ⚠ robo-posco-* 는 **private** 패키지다 — 서버에서 한 번 `docker login ghcr.io`(사람).
+# robo-posco-* 는 **public** 이다 — `docker login` 없이 받는다.
 # 태그를 바꿀 때는 통합 파일만 고치고 make-split.py — `check.sh` 가 어긋나면 멈춘다.
 #
 # ## 지우지 않는다
