@@ -1,0 +1,73 @@
+# Robo Architect — 서버 배포(posco-web) nginx.
+#
+# 설치본의 `app://` 핸들러(desktop/src/main/index.ts)가 하던 일 둘을 맡는다.
+#   1. SPA 와 Analyzer 리모트(`/analyzer/`)를 정적으로 낸다
+#   2. `/api/**` 를 Architect API 로 넘긴다
+#
+# ⚠ `/api/gateway/**` 를 **gateway 로 곧장 보내지 않는다.** Architect API 가 로그인과
+#   프로젝트 권한을 본 뒤 넘긴다(`api/features/gateway_proxy`). 설치본은 루프백이라
+#   곧장 보내도 됐지만, 서버에서는 그 길이 사내망 전체에 열린다.
+#
+# `${...}` 는 컨테이너가 뜰 때 envsubst 가 채운다(`NGINX_ENVSUBST_FILTER` 에 적은 이름만).
+# nginx 자기 변수(`$host` 등)는 그 필터에 없어 그대로 남는다.
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # 레거시 소스·문서 업로드가 이 문을 지난다.
+    client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass http://${ARCHITECT_API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host              $http_host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $http_host;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        $connection_upgrade;
+
+        # SSE — 인제스천·분석·협업 스트림. 모으면 "한참 뒤에 몰아서 온다".
+        # 백엔드도 `X-Accel-Buffering: no` 를 붙이지만 여기서도 끈다(둘 중 하나만 빠져도 안 된다).
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_request_buffering off;
+        # 분석·인제스천은 수십 분 간다.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # 해시가 붙은 빌드 자산 — 오래 둔다.
+    location ~* ^/(assets|analyzer/assets)/ {
+        try_files $uri =404;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location /analyzer/ {
+        try_files $uri $uri/ =404;
+    }
+
+    # SPA — 모르는 경로는 index.html. index.html 은 캐시하지 않는다(새 판이 바로 보이게).
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+}

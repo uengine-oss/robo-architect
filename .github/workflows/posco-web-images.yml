@@ -1,0 +1,123 @@
+# posco-web 이미지 — architect-api · web 을 **커밋 태그**로 굽고 GHCR 에 올린다.
+#
+# 태그: posco-web-<커밋 7자리>   (latest 를 만들지 않는다)
+#   ghcr.io/uengine-oss/robo-architect-api:posco-web-<sha>
+#   ghcr.io/uengine-oss/robo-architect-web:posco-web-<sha>
+#
+# 나머지 열 장(graph-db · bolt · authority · analyzer · catalog · fabric · parser ·
+# gateway · pdf2bpmn · wireframe)은 **납품판 0.1.0 rdel-swp 그대로**다. 여기서 다시
+# 굽지 않는다 — 같은 커밋을 다시 구우면 image ID 가 달라져 납품판과 대조가 끊긴다.
+#
+# 수동 실행(workflow_dispatch)에서 pin=true 면, 구운 태그를 compose 세 파일에 박아
+# 이 가지에 커밋한다(deploy/posco-web/pin-images.sh). push 로 돈 경우에는 박지 않는다.
+#
+# ⚠ 사람이 할 일 하나 — 저장소 Secret `ROBO_SUBMODULE_TOKEN`
+#   robo-data-frontend 가 **private** 서브모듈이라 기본 GITHUB_TOKEN 으로는 못 받는다.
+#   uengine-oss/robo-data-frontend 에 contents:read 가 있는 fine-grained 토큰.
+name: posco-web images
+
+on:
+  push:
+    branches: [posco-web]
+    paths:
+      - api/**
+      - skills/**
+      - frontend/**
+      - open-pencil
+      - robo-analyzer/robo-data-frontend
+      - docker/Dockerfile.api
+      - docker/Dockerfile.web
+      - docker/Dockerfile.web.dockerignore
+      - docker/nginx/**
+      - pyproject.toml
+      - uv.lock
+      - scripts/fetch-templates.sh
+      - .github/workflows/posco-web-images.yml
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: 구운 태그를 compose 파일에 박아 커밋한다
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: posco-web-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 분할 compose 가 통합 파일과 같은가
+        run: python3 -I deploy/posco-web/make-split.py --check
+      - name: gateway 프록시 단위 시험
+        run: |
+          pipx install uv==0.11.32
+          uv sync --frozen
+          uv run --frozen python -m pytest -q api/features/gateway_proxy
+
+  build:
+    needs: check
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: robo-architect-api
+            dockerfile: docker/Dockerfile.api
+          - name: robo-architect-web
+            dockerfile: docker/Dockerfile.web
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.ROBO_SUBMODULE_TOKEN || github.token }}
+      - id: tag
+        run: echo "tag=posco-web-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: 코드 생성 템플릿(커밋 핀)
+        if: matrix.name == 'robo-architect-api'
+        run: bash scripts/fetch-templates.sh
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          provenance: false
+          tags: ghcr.io/uengine-oss/${{ matrix.name }}:${{ steps.tag.outputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.uengine.robo.component=${{ matrix.name }}
+            org.uengine.robo.topology=posco-web
+
+  pin:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.pin
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: 태그를 compose 세 파일에 박는다
+        run: bash deploy/posco-web/pin-images.sh "${{ needs.build.outputs.tag }}"
+      - name: 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/posco-web/docker-compose*.yml
+          git diff --cached --quiet && { echo "바뀐 것이 없다"; exit 0; }
+          git commit -m "pin(posco-web): architect-api·web → ${{ needs.build.outputs.tag }}"
+          git push

@@ -32,6 +32,11 @@ _INTRANET_NETWORKS = tuple(ip_network(cidr) for cidr in (
 def _internal_http_host(hostname: str) -> bool:
     if hostname == "localhost":
         return True
+    # 점이 없는 한 단어 이름 — compose 서비스 이름(`authority`)이 이 모양이다.
+    # 공용 DNS 에서는 풀리지 않고 컨테이너 망·사내 DNS 안에서만 닿는다. 서버 배포
+    # (posco-web) 통합 서버가 이 이름으로 붙는다. IP 를 박으면 사내 대역과 겹칠 수 있다.
+    if "." not in hostname and ":" not in hostname and hostname.replace("-", "").isalnum():
+        return True
     try:
         address = ip_address(hostname)
     except ValueError:

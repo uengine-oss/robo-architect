@@ -1,0 +1,86 @@
+# Robo Architect 프런트엔드 — **서버 배포(posco-web) 용. nginx 가 빌드된 자산만 낸다.**
+#
+#   docker build -f docker/Dockerfile.web -t <registry>/robo-architect-web:<tag> .
+#
+# 설치본에서는 Electron 이 `frontend/dist` 를 `app://` 로 내고 `/api` 를 직접 넘겼다.
+# 여기서는 그 둘을 nginx 가 한다(`docker/nginx/default.conf.template`).
+#
+# ## 한 이미지에 화면 둘 — Architect 호스트 + Analyzer 리모트
+#
+# Analysis 탭은 Module Federation 리모트(`robo-data-frontend`)다. 설치본이
+# `scripts/build-desktop-frontend.mjs` 로 **같은 출처의 `/analyzer/`** 에 같이 놓았고,
+# 여기서도 그 짜임을 그대로 쓴다. 리모트를 따로 띄우면 출처가 갈려 CORS·쿠키·
+# `window.fetch` 인터셉터(로그인 토큰을 싣는 자리)가 전부 다시 문제가 된다.
+#
+# ⚠ 그 스크립트를 부르지 않고 단계를 **여기에 다시 적었다** — 스크립트가
+#   `npm.cmd`·`npx.cmd` 를 박아 두어 리눅스에서 안 돈다(OS 마다 다른 명령).
+#   값 둘(`/analyzer/assets/remoteEntry.js` · `/analyzer/`)이 두 곳에 있다.
+#   하나를 바꾸면 **둘 다** 바꾼다.
+#
+# ## 소스가 안 보이게 (인수조건 ④)
+#
+# vite 기본이 소스맵을 안 만든다. 그래도 마지막에 `.map` 이 하나라도 있으면 **굽기를
+# 멈춘다** — 설정 한 줄이 바뀌어 원본이 실려 나가는 것을 사람이 눈으로 못 잡는다.
+#
+# 빌드 맥락은 저장소 루트이고, 무시 목록은 이 파일 옆 `Dockerfile.web.dockerignore`
+# 다(BuildKit). 루트 `.dockerignore` 는 open-pencil·robo-analyzer 를 빼므로 못 쓴다.
+
+# ── bun — open-pencil 은 bun 작업공간이다(bun.lock) ─────────────────────────
+FROM oven/bun:1.4.2-slim AS bun-bin
+
+# ── 빌드 ──────────────────────────────────────────────────────────────────
+FROM node:22-bookworm-slim AS build
+COPY --from=bun-bin /usr/local/bin/bun /usr/local/bin/bun
+ENV NODE_OPTIONS=--max-old-space-size=8192
+
+# vite.config.js 는 `../open-pencil`(= 이 저장소의 서브모듈)을 읽는다. 짜임을 그대로 둔다.
+WORKDIR /src
+
+COPY open-pencil/package.json open-pencil/bun.lock ./open-pencil/
+COPY open-pencil/packages ./open-pencil/packages
+RUN cd open-pencil && bun install --frozen-lockfile --ignore-scripts
+COPY open-pencil ./open-pencil
+
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci --no-audit --no-fund
+COPY robo-analyzer/robo-data-frontend/package.json robo-analyzer/robo-data-frontend/package-lock.json ./analyzer/
+RUN cd analyzer && npm ci --no-audit --no-fund
+
+COPY frontend ./frontend
+COPY robo-analyzer/robo-data-frontend ./analyzer
+
+# 서버 판에서는 Claude Code 터미널을 끈다 — 그 터미널은 **보는 사람의 PC** 의 CLI 를
+#   띄우는 것이라 서버 컨테이너에서는 뜻이 없다(README §결정 ②).
+ARG VITE_DISABLE_CLAUDE_TERMINAL=1
+RUN cd frontend \
+    && ANALYZER_REMOTE_URL=/analyzer/assets/remoteEntry.js \
+       VITE_DISABLE_CLAUDE_TERMINAL=${VITE_DISABLE_CLAUDE_TERMINAL} \
+       npm run build
+RUN cd analyzer && ANALYZER_BASE=/analyzer/ npx vite build
+
+RUN rm -rf frontend/dist/analyzer \
+    && cp -r analyzer/dist frontend/dist/analyzer \
+    && test -f frontend/dist/index.html \
+    && test -f frontend/dist/analyzer/assets/remoteEntry.js \
+    && if find frontend/dist -name '*.map' | grep -q .; then \
+         echo 'source map found in dist — refusing to ship sources' >&2; \
+         find frontend/dist -name '*.map' | head >&2; exit 1; \
+       fi
+
+# ── 내는 쪽 ───────────────────────────────────────────────────────────────
+FROM nginx:1.28.0-alpine
+
+# 업스트림 주소는 compose 의 environment 로 받는다(이미지에 안 굽는다).
+# 통합 서버면 서비스 이름, AP/DB 를 나누어도 둘 다 AP 쪽이라 이름 그대로다.
+ENV ARCHITECT_API_UPSTREAM=architect-api:8000 \
+    NGINX_CLIENT_MAX_BODY_SIZE=512m \
+    NGINX_ENVSUBST_FILTER='^(ARCHITECT_API_UPSTREAM|NGINX_CLIENT_MAX_BODY_SIZE)$'
+
+RUN rm -f /etc/nginx/conf.d/default.conf
+COPY docker/nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /src/frontend/dist /usr/share/nginx/html
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=12 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1

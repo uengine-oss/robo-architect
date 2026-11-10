@@ -1,0 +1,28 @@
+# Dockerfile.web 전용 무시 목록 (BuildKit 이 `<Dockerfile>.dockerignore` 를 먼저 쓴다).
+# 루트 .dockerignore 는 open-pencil·robo-analyzer 를 빼므로 이 빌드에 못 쓴다.
+**/.git
+**/node_modules
+**/dist
+**/out
+**/.venv
+**/__pycache__
+**/test-results
+**/playwright-report
+**/.env
+**/.env.*
+!**/.env.example
+api
+desktop
+docs
+specs
+skills
+templates
+tests
+examples
+figma-plugin
+robo-analyzer/robo-data-analyzer
+robo-analyzer/robo-data-catalog
+robo-analyzer/robo-data-fabric
+open-pencil/desktop
+open-pencil/output
+open-pencil/tests

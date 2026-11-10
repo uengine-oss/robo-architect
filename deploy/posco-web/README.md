@@ -1,0 +1,201 @@
+# Robo Architect 서버 배포 (posco-web)
+
+설치를 없애고 브라우저로 쓰게 한다. IT 가 서버에 한 번 올리면 설계자는 사내 주소를
+열고 SWP 로 들어가는 것뿐이다. 사내 PC·VDI 에서는 가상화가 안 돼 설치본(Electron +
+Docker)이 한 대도 설치되지 못했다(2026-11-09 이슈 6).
+
+msa-ez 가 이미 같은 방식으로 돈다 — 통합 서버 한 대 / AP·DB 두 대 compose 와 SWP SSO.
+그 짜임을 따른다.
+
+```text
+브라우저 ──► web (nginx :8080) ──/api/**──► architect-api ──► authority (SWP·승인·공유)
+               │ 빌드된 자산만                    │  └─/api/gateway/** (로그인·권한을 본 뒤)
+               │ /analyzer/ = 분석 화면           │        └──► gateway ─► analyzer·catalog·fabric·parser
+               └──────────────────────────────── └──► graph-bolt / graph-db (Ontological)
+                                                      pdf2bpmn · wireframe
+```
+
+## 파일
+
+| 파일 | 무엇 |
+|---|---|
+| `docker-compose.yml` | **통합 서버 한 대.** 기준 파일 |
+| `docker-compose.split.db.yml` | DB 서버 — graph-db · graph-bolt · authority(+init) |
+| `docker-compose.split.ap.yml` | AP 서버 — web · architect-api · 분석 다섯 · pdf2bpmn · wireframe |
+| `.env.example` | 사람이 넣는 값 **전부**. 분할이면 두 서버에 같은 파일 |
+| `authority-init.py` | 권한 서버 최초 초기화(역할 → migrate → 관리자 → 정책). 다시 돌려도 안전 |
+| `check.sh` | 띄우기 전 검사. 아무것도 안 바꾸고 비밀은 이름·길이만 찍는다 |
+| `make-split.py` | 분할 두 파일을 통합 파일에서 **만든다**(손으로 안 고친다) |
+| `pin-images.sh` | 새로 굽는 두 이미지의 태그를 세 파일에 같이 박는다 |
+| `pdf2bpmn/facade.py` | `desktop/runtime/pdf2bpmn/facade.py` 의 사본 — `bundle.sh` 가 넣는다 |
+
+## 올리기 — 통합 서버
+
+```bash
+cp .env.example .env && chmod 600 .env && vi .env   # [고치는 곳] 넷 + 만들어 넣는 값
+bash check.sh
+docker compose up -d --wait                          # podman: podman compose …
+```
+
+브라우저에서 `ROBO_PUBLIC_URL` 을 연다 → SWP 로그인 → `ROBO_ADMIN_EMPNO` 로 들어온 사람이
+관리자다. 다른 사람은 들어오면 **승인 대기**가 되고 관리자가 승인한다.
+
+## 올리기 — AP·DB 두 대
+
+```bash
+# 두 서버에 같은 .env (ROBO_DB_SERVER_IP = DB 서버의 사내망 IP)
+DB 서버:  bash check.sh split.db && docker compose -f docker-compose.split.db.yml up -d --wait
+AP 서버:  bash check.sh split.ap && docker compose -f docker-compose.split.ap.yml up -d --wait
+```
+
+DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서버에서만 닿게**
+방화벽을 둔다 — Bolt 는 평문 인증이다. AP 서버는 8080 하나만 연다.
+
+## 값 — 사람이 넣는 것은 `.env` 하나
+
+| 무엇 | 이름 |
+|---|---|
+| AI 키 · 주소 | `ROBO_AI_API_KEY` · `ROBO_AI_BASE_URL` (P-GPT) |
+| 관리자 사번 | `ROBO_ADMIN_EMPNO` |
+| DB 비밀번호 | `ROBO_GRAPH_PASSWORD` (+ 권한 서버 역할 둘) |
+| SWP 주소 | `SWP_SSO_*` — 비우면 가동계 기본값 · `ROBO_PUBLIC_URL` (콜백 허용 origin) |
+
+컨테이너에는 compose 의 `environment:` 로만 들어간다. **컨테이너에 들어가 파일을 고치지
+않는다.** 납품본에서 `config/*.env` · `architect/app/.env` 로 실리던 제품 설정(모델 이름 ·
+검색 파라미터 등)은 값 그대로 `environment:` 에 옮겨 적었다.
+
+납품본 설정 중 **일부러 뺀 것 하나** — fabric 의 `ROBO_DATASOURCE_REPLACE_LOCALHOST=host.docker.internal`.
+설치본에서 사용자가 적은 데이터 소스 주소 `localhost` 를 "**그 사용자의 PC**" 로 바꿔 주던 값이다.
+서버에는 그런 PC 가 없고, podman 에서는 그 이름도 다르다(`host.containers.internal`). 서버
+판에서는 데이터 소스를 **실제 사내망 주소**로 적는다. 그 밖의 값은 설치본(`resources/runtime`)의
+`config/*.env` · `architect/app/.env` 와 **이름·값 전부를 대조했다**(2026-11-10, 비밀 제외 — 다른 것은
+AI 주소가 `.env` 하나로 모인 것과 위의 둘뿐).
+
+msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 — yml 은 저장소에 들어가고,
+비밀은 `.env`(600) 에만 둔다. 화면에서 고치는 방식은 같다(파일 하나를 연다).
+
+## 이미지 — 전부 고정 태그
+
+```text
+납품판 그대로 (0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp)
+  uengine/ontological-db · ontological-bolt · robo-authority · robo-analyzer ·
+  robo-data-catalog · robo-data-fabric · robo-antlr-parser · robo-api-gateway ·
+  open-pencil · ghcr.io/uengine-oss/process-gpt-bpmn-extractor:735d135
+새로 굽는 둘 — CI(.github/workflows/posco-web-images.yml) 가 커밋으로 태그를 박는다
+  ghcr.io/uengine-oss/robo-architect-api:posco-web-<sha>
+  ghcr.io/uengine-oss/robo-architect-web:posco-web-<sha>
+```
+
+납품판 열 장은 **다시 굽지 않는다.** 같은 커밋을 다시 구우면 image ID 가 달라져 납품판과
+대조가 끊긴다. 서버에 들일 때는 납품 `robo-images.tar` 를 `load` 하고(ID 를 매니페스트와
+대조), 새 두 장은 GHCR 에서 받거나 `docker save` 로 옮긴다.
+
+---
+
+## 결정 — 막히던 자리 넷
+
+### ① 프로젝트 파일이 누구 디스크에 있나 → **서버 볼륨. 레거시 분석은 업로드.**
+
+```text
+정한 것
+  레거시 분석   브라우저에서는 **업로드 모드**로 연다. 이미 코드가 그렇게 되어 있다 —
+                AnalysisPanel.vue `readRoot()` 가 Electron 이 아니면 경로를 안 넘긴다
+                ("서버에 올린 Architect 에서 로컬 폴더는 사용자 PC 가 아니라 서버의 폴더").
+                올린 소스는 공용 `shared_data` 볼륨(/data)에 쌓이고 결과는 팀 그래프에 간다
+  코드 생성·    대상 프로젝트는 서버의 `workspace` 볼륨(/workspace)에 둔다.
+  제안 구현     `projectRoot` 는 그래프의 Proposal 속성이라 코드를 안 바꾸고 서버 경로를 쓴다
+포기한 것
+  설계자 PC 의 폴더를 바로 고르는 흐름. 브라우저는 서버에 남의 PC 경로를 줄 수 없다
+남은 일
+  /workspace 에 저장소를 들이는 길(사내 git 서버 clone 등). msa-ez 는 gitea 를 둔다.
+  지금은 관리자가 볼륨에 clone 해 두는 것으로 시작한다
+```
+
+### ② Claude Code 터미널 → **끈다.**
+
+```text
+정한 것   web 이미지를 `VITE_DISABLE_CLAUDE_TERMINAL=1` 로 굽는다(Dockerfile.web ARG).
+          architect-api 이미지에는 claude CLI 를 싣지 않는다
+이유      그 터미널은 ConPTY·winpty 로 **그 PC 의** claude CLI 를 띄우는 것이다.
+          서버 컨테이너에서 띄우면 모든 설계자가 서버의 셸 하나를 나눠 쓰게 된다 —
+          격리도 감사도 없다
+포기한 것 Code 탭의 대화형 터미널. 코드 생성·제안 구현의 in-process 엔진은 그대로다
+          (i18n: "claude CLI 가 필요합니다. 설치 전까지는 in-process 엔진을 사용")
+```
+
+### ③ 문서 내보내기 → **이미 브라우저에서 파일로 떨어진다. 고칠 것 없음.**
+
+```text
+잰 것  ExportDocumentDialog.vue `downloadBlob()` — Blob + <a download>. app:// 를 안 쓴다
+       `app://` 가 나오는 곳은 ExportDocumentTemplate.vue:60 의 **주석** 하나다
+       (Electron 의 origin 에서 localStorage 가 어떻게 되는지 설명하는 글)
+```
+
+### ④ 여럿이 같이 쓰면 그래프 격리 → **이미 있는 중앙 구성을 그대로 켠다 + 게이트웨이를 막는다.**
+
+```text
+켜 둔 것
+  ROBO_GRAPH_MODE=central      이미 있는 사용자 role 비밀번호를 덮지 않는다
+  AUTH_BIND_CONNECTION=true    요청마다 **로그인한 사람의 DB role** 로 그래프에 붙는다
+  authority                    로그인·승인·프로젝트 공유. 프로젝트 graph 의 권한 원천은
+                               og_catalog.grantee 다
+  ⇒ 설치본의 "중앙 DB + PC 여럿" 과 같은 격리다. 다른 것은 API 프로세스가 하나라는 것뿐
+새로 막은 것 — `/api/gateway/**`
+  설치본에서는 Electron 이 이 경로를 gateway 로 **곧장** 보냈다(로그인 검사 없음 · 루프백).
+  서버에서 nginx 가 그렇게 하면 analyzer·catalog·fabric(데이터 소스 질의 포함)이
+  사내망 전체에 **로그인 없이** 열린다. 그래서 nginx 는 이 경로를 architect-api 로 보내고,
+  거기서(api/features/gateway_proxy)
+    - 로그인을 본다(AuthGuardMiddleware)
+    - 브라우저가 보낸 X-Neo4j-URI/User/Password 를 버린다
+    - X-Neo4j-Database 가 **내가 등급을 가진 프로젝트의** 설계·분석 graph 일 때만 넘긴다
+      (쓰기 요청은 write 이상)
+  덤으로 Electron 이 하던 `/robo/analyze` 본문 좁히기도 여기로 옮겼다 — 없으면 브라우저에서
+  레거시 분석이 **422** 로 바로 막힌다(분석기 AnalyzeRequest 가 extra="forbid")
+DB 역할 — 런타임만 제한, 프로젝트 운영은 소유자
+  authority 런타임   robo_authority (superuser 아님 — authority 가 기동에서 이것을 검사한다)
+  프로젝트 운영 DSN   소유자(ROBO_GRAPH_USER). robo-central.sh 의 robo_operator 는 만들지 않는다
+  이유  이 배치에서는 architect-api 가 이미 소유자 자격을 들고 있다(설치본 central 의 PC 와
+        같다). 운영 역할을 따로 두어도 격리가 늘지 않고, 그 역할에 필요한 최소 권한
+        (CREATE ROLE · og_create_graph · og_grant …)은 아직 한 번도 재지 않았다
+        (docs/account-authority.md: 중앙 구성은 "아직 한 번도 돌려 본 기록이 없다")
+  진짜 최소 권한은 architect-api 에서 소유자 자격을 빼는 일과 **같이** 한다
+남은 것
+  X-Neo4j-Database 를 안 실은 분석 요청은 각 서비스의 기본 graph(`analyzer_run`)로 간다 —
+  설치본과 같은 동작이고, 거기는 **공용**이다. 프로젝트마다 분석 graph 를 고르게 하는 것은
+  화면(projectsStore.currentAnalyzerGraph)이 이미 하고 있다
+  한 API 프로세스 안의 캐시·진행 중 작업이 사용자별로 갈리는지는 현장에서 두 계정으로 잰다
+```
+
+## ⚠ 처음 띄워 보고 찾은 것 — 납품판 `robo-central.sh` 에도 있다
+
+```text
+증상   authority 가 기동에서 죽는다(재시작 반복)
+       psycopg.errors.InsufficientPrivilege: permission denied for table app_auth_policy
+원인   제한 역할 robo_authority 는 만들어지지만 **표 권한을 받는 단계가 없다.**
+       권한을 주는 자리는 `accounts_admin configure-access` 하나인데,
+       그 명령은 납품 DB 이미지에서 **통과할 수 없다**:
+         "PC가 실행 가능한 SECURITY DEFINER 함수를 먼저 검토·차단해야 합니다."
+       막는 함수 public.og__ensure_view (ontological 확장) — access.py 허용 목록은
+       og_build_view 만 안다
+이 판   authority-init.py 가 configure() 의 **서버 역할 몫 권한만** 직접 준다(2-b).
+        access.py 의 표 목록이 바뀌면 init 이 멈춘다
+납품판  desktop/runtime/robo-central.sh 로 중앙 서버를 세우면 같은 자리에서 설 것이다.
+        동결 가지는 건드리지 않았다 — 고치려면 사람이 정한다
+```
+
+## 되돌릴 길
+
+- 설치본 가지 `enterprise-custom-p` 와 동결된 `delivery/0.1.0-…-rdel-swp` 는 **안 건드렸다.**
+  이 판은 `posco-web` 가지에만 있다.
+- 서버의 `graph_data` 볼륨이 데이터 전부다. `down -v` · `volume prune` 금지.
+  내릴 때는 `docker compose stop`(또는 `down` — 볼륨은 남는다).
+
+## 현장에서 처음 할 확인 (사람)
+
+```text
+ⓐ 설계자 PC 에서 아무것도 안 깔고 ROBO_PUBLIC_URL 열기 → SWP 로 들어가진다
+   SWP_SSO_LOG_RAW=1 을 authority 에 한 번 주고 isValidSSO 칸 순서(SWP_IDX_*)를 확인
+ⓑ 레거시 분석 한 건을 업로드로 끝까지 → 다른 설계자 계정으로 자기 브라우저에서 결과가 보인다
+   (프로젝트를 그 사람에게 공유한 뒤)
+⑦ Code 탭이 터미널 없이 뜨고 나머지 탭이 죽지 않는다
+```

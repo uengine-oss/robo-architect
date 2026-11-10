@@ -1,0 +1,477 @@
+# =====================================================================
+# Robo Architect 서버 배포 (posco-web) — **통합 서버 한 대**
+#
+#   cp .env.example .env && vi .env          # [고치는 곳] 만 채운다
+#   docker compose up -d --wait              # podman 이면 podman compose
+#   브라우저:  http://<서버주소>:${ROBO_WEB_PORT}
+#
+# AP·DB 를 두 대로 나누면 이 파일 대신
+#   DB 서버  docker-compose.split.db.yml
+#   AP 서버  docker-compose.split.ap.yml
+# 을 쓴다(msa-ez 와 같은 짜임). 서비스 정의는 세 파일이 **같아야 한다** —
+# `bash check.sh` 가 어긋남을 잡는다(이미지 태그·healthcheck·환경 이름).
+#
+# ## 값은 어디서 오나
+#
+# 사람이 넣는 값은 **이 디렉터리의 `.env` 하나뿐**이고, 컨테이너에는 아래
+# `environment:` 로만 들어간다. 컨테이너 안의 파일을 고치지 않는다.
+#   - `${NAME:?…}`  비면 **기동을 거부**한다(조용히 빈 값으로 뜨지 않게)
+#   - 제품 설정값(모델 이름·검색 파라미터 등)은 납품본(0.1.0 rdel-swp)의
+#     `config/*.env` · `architect/app/.env` 에서 그대로 옮겨 **여기에 적었다**
+#
+# msa-ez 는 비밀 값을 yml 에 그대로 적는다. 여기서는 그러지 않는다 — 이 yml 은
+# 저장소에 들어가고, 설치본 감사(2026-09-23)에서 같은 키가 5파일 7이름으로
+# 실려 나간 일이 있었다. 비밀은 `.env`(600) 에만 둔다.
+#
+# ## 이미지 태그
+#
+# 전부 **고정 태그**다(latest 없음). 납품판 열 장은 0.1.0 rdel-swp 그대로이고,
+# 새로 생긴 두 장(architect-api · web)은 CI 가 커밋으로 박은 태그다.
+# 태그를 바꿀 때는 세 파일을 같이 바꾼다 — `check.sh` 가 다르면 멈춘다.
+#
+# ## 지우지 않는다
+#
+# `down -v` · `volume prune` 금지. `graph_data` 가 팀의 설계·분석 전부다.
+# =====================================================================
+
+name: robo-architect
+
+x-labels: &labels
+  org.uengine.robo.topology: posco-web
+
+services:
+  # ── 브라우저 진입점 — 빌드된 자산만 낸다 ─────────────────────────────
+  web:
+    image: ghcr.io/uengine-oss/robo-architect-web:posco-web-dev
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      ARCHITECT_API_UPSTREAM: architect-api:8000
+    ports:
+      - "${ROBO_WEB_BIND:-0.0.0.0}:${ROBO_WEB_PORT:-8080}:8080"
+    depends_on:
+      architect-api:
+        condition: service_healthy
+
+  # ── Architect API — 설치본에서는 PC 의 번들 python.exe 였다 ─────────
+  architect-api:
+    image: ghcr.io/uengine-oss/robo-architect-api:posco-web-dev
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      # 서버 판 고정값 — 바꾸지 않는다.
+      #   central  여럿이 한 저장소를 쓴다. 이미 있는 사용자 role 의 비밀번호를
+      #            덮지 않는다(projects/roles.py). 통합 서버도 여럿이 쓰므로 central 이다.
+      ROBO_GRAPH_MODE: central
+      ROBO_PACKAGED_RUNTIME: "1"
+      # 요청마다 로그인한 사람의 role 로 그래프에 붙는다. 설치본 `.env` 는 false 였지만
+      # Electron 이 프로세스 환경으로 true 를 넣어 **실효값은 true** 였다(backend.ts).
+      AUTH_BIND_CONNECTION: "true"
+      AUTH_PROVIDER: swp
+      AUTH_ENFORCE: "true"
+      AUTH_DEV_LOGIN_ENABLED: "false"
+      ROBO_AUTHORITY_URL: http://authority:59020
+      # 그래프 — 설계 graph 와 분석 graph 는 **달라야 한다**(같으면 분석이 설계를 지운다).
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER:?}
+      NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      NEO4J_DATABASE: ${ROBO_GRAPH_DESIGN:?}
+      ANALYZER_NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
+      OG_PG_HOST: graph-db
+      OG_PG_PORT: "5432"
+      OG_PG_DATABASE: ${ROBO_GRAPH_DESIGN:?}
+      OG_PG_USER: ${ROBO_GRAPH_USER:?}
+      OG_PG_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      # 안쪽 서비스 — 설치본은 127.0.0.1:<동적포트> 였다(docker-stack.ts).
+      ROBO_GATEWAY_URL: http://gateway:9000
+      ROBO_CLUSTER_MCP_URL: http://analyzer:5502/robo/mcp/
+      PDF2BPMN_FACADE_URL: http://pdf2bpmn:8080
+      PDF2BPMN_FACADE_KEY: ${PDF2BPMN_FACADE_KEY:?}
+      WIREFRAME_SERVICE_URL: http://wireframe:7610
+      ROBO_SPEC_BACKEND_URL: http://127.0.0.1:8000
+      # AI — 사내 P-GPT 로만 나간다.
+      LLM_PROVIDER: openai
+      LLM_MODEL: gpt-4.1
+      LLM_API_BASE: ${ROBO_AI_BASE_URL:?}
+      OPENAI_BASE_URL: ${ROBO_AI_BASE_URL:?}
+      OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}
+      EMBEDDING_API_KEY: ${ROBO_AI_API_KEY:?}
+      EMBEDDING_MODEL: text-embedding-3-small
+      HYBRID_EMBEDDING_MODEL: text-embedding-3-small
+      LLM_MAX_COMPLETION_TOKENS: "4096"
+      LLM_MAX_OUTPUT_TOKENS: "8000"
+      LLM_READ_TIMEOUT_S: "120"
+      LLM_TOKENIZER_FALLBACK: tiktoken
+      MODEL_KWARGS: '{"temperature":0.3}'
+      MODEL_MODIFIER_CONTEXT_CHARS_LIMIT: "100000"
+      # 납품본 architect/app/.env 의 제품 설정 — 그대로 옮겼다.
+      AI_AUDIT_LOG_ENABLED: "true"
+      AI_AUDIT_LOG_FULL_OUTPUT: "false"
+      AI_AUDIT_LOG_FULL_PROMPT: "false"
+      BC_SPEC_SPLIT_LINE_THRESHOLD: "800"
+      CHANGE_PROPAGATION_CONFIRMED_THRESHOLD: "0.70"
+      CHANGE_PROPAGATION_ENABLED: "true"
+      CHANGE_PROPAGATION_MAX_CONFIRMED: "60"
+      CHANGE_PROPAGATION_MAX_FRONTIER_PER_ROUND: "8"
+      CHANGE_PROPAGATION_MAX_NEW_PER_ROUND: "20"
+      CHANGE_PROPAGATION_MAX_ROUNDS: "4"
+      CHANGE_PROPAGATION_REL_WHITELIST: IMPLEMENTS,HAS_AGGREGATE,HAS_COMMAND,EMITS,HAS_POLICY,TRIGGERS,INVOKES
+      CHANGE_PROPAGATION_REVIEW_THRESHOLD: "0.40"
+      GENERATION_LANGUAGE_DEFAULT: en-US
+      HYBRID_EMBED_THETA_AUTO: "0.5"
+      HYBRID_EMBED_THETA_REVIEW: "0.4"
+      HYBRID_EMBED_TOP_K: "3"
+      HYBRID_ES_FN_DF_THRESHOLD: "0.5"
+      HYBRID_GLOSSARY_MAX_RECOVERIES: "4"
+      HYBRID_GLOSSARY_NORMALIZE: "1"
+      HYBRID_LEXICAL_MAX_TOKEN_DF: "0.35"
+      HYBRID_LEXICAL_MIN_HITS: "2"
+      HYBRID_PASSAGE_THETA: "0.5"
+      HYBRID_PASSAGE_TOP_K: "2"
+      HYBRID_USE_A2A: "true"
+      INGESTION_BATCH_SIZE: "500"
+      INGESTION_CACHE_DEFAULT: "1"
+      INGESTION_SNAPSHOT_DEBUG: "0"
+      IS_SKIP_UI_PHASE: "false"
+      PDF2BPMN_A2A_TIMEOUT_S: "300"
+      PDF2BPMN_FACADE_TIMEOUT_S: "600"
+      WIREFRAME_LLM_CONCURRENCY: "4"
+      WIREFRAME_LLM_TIMEOUT_SEC: "300"
+    volumes:
+      # 코드 생성·제안 구현의 대상 프로젝트가 놓이는 **서버 쪽** 자리(README §결정 ①).
+      - workspace:/workspace
+    depends_on:
+      authority:
+        condition: service_healthy
+      graph-bolt:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+
+  # ── 권한 서버 — 로그인(SWP)·승인·프로젝트 공유 ─────────────────────────
+  authority:
+    image: uengine/robo-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment: &authority-env
+      AUTH_PROVIDER: swp
+      AUTH_ENFORCE: "true"
+      AUTH_DEV_LOGIN_ENABLED: "false"
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?}
+      AUTH_ROLE_SECRET: ${AUTH_ROLE_SECRET:?}
+      # 제한된 역할로만 붙는다. superuser 는 authority-init 에서만 한 번 쓴다.
+      OG_PG_DSN: postgresql://robo_authority:${ROBO_AUTHORITY_DB_PASSWORD:?}@graph-db:5432/${ROBO_GRAPH_DESIGN:?}
+      # 프로젝트 생성·공유(역할 생성 · graph 생성 · grant)는 **소유자 자격**으로 한다 — README §④.
+      #   이 배치에서는 architect-api 가 이미 소유자 자격을 들고 있어(설치본 central 의 PC 와 같다)
+      #   운영 역할을 따로 두어도 격리가 늘지 않는다. 런타임 역할(위)만 제한 역할이다.
+      ROBO_PROJECT_OPERATOR_DSN: postgresql://${ROBO_GRAPH_USER:?}:${ROBO_GRAPH_PASSWORD:?}@graph-db:5432/${ROBO_GRAPH_DESIGN:?}
+      # 비면 loopback 만 허용 → 서버 주소의 콜백이 거부된다. 반드시 채운다.
+      AUTH_CALLBACK_ALLOWLIST: ${ROBO_PUBLIC_URL:?브라우저가 여는 주소(예 http://10.0.0.5:8080)}
+      # 비우면 코드 기본값(SWP 가동계 주소)을 쓴다 — env_str 은 빈 값을 기본값으로 읽는다.
+      SWP_SSO_LOGIN_URL: ${SWP_SSO_LOGIN_URL:-}
+      SWP_SSO_VALID_CHECK_URL: ${SWP_SSO_VALID_CHECK_URL:-}
+      SWP_SSO_REDIRECT_URL: ${SWP_SSO_REDIRECT_URL:-}
+      SWP_IDX_ID: "0"
+      SWP_IDX_EMPNO: "1"
+      SWP_IDX_DISPLAYNAME: "8"
+      SWP_IDX_MAIL: "9"
+      SWP_IDX_DEPT: "4"
+      SWP_EMAIL_FALLBACK_DOMAIN: posco.local
+      SWP_SSO_TIMEOUT_S: "15"
+    depends_on:
+      authority-init:
+        condition: service_completed_successfully
+
+  # 한 번 돌고 끝난다. **다시 돌려도 안전하다**(robo-central.sh 와 같은 순서).
+  #   역할 둘 → migrate → grant(관리자 사번) → policy
+  # 소유자 자격(ROBO_GRAPH_PASSWORD)은 **이 컨테이너에만** 들어간다.
+  authority-init:
+    image: uengine/robo-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: "no"
+    labels: *labels
+    environment:
+      <<: *authority-env
+      OG_PG_DSN: postgresql://${ROBO_GRAPH_USER:?}:${ROBO_GRAPH_PASSWORD:?}@graph-db:5432/${ROBO_GRAPH_DESIGN:?}
+      ROBO_AUTHORITY_DB_PASSWORD: ${ROBO_AUTHORITY_DB_PASSWORD:?}
+      ROBO_ADMIN_EMPNO: ${ROBO_ADMIN_EMPNO:?최초 관리자 사번}
+      ROBO_APPROVAL_REQUIRED: "true"
+    volumes:
+      - ./authority-init.py:/app/authority_init.py:ro
+    command: ["python", "/app/authority_init.py"]
+    depends_on:
+      graph-db:
+        condition: service_healthy
+
+  # ── 그래프 저장소 — Ontological(PostgreSQL) + Bolt 게이트웨이 ─────────
+  graph-db:
+    image: uengine/ontological-db:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      POSTGRES_USER: ${ROBO_GRAPH_USER:?}
+      POSTGRES_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      POSTGRES_DB: ${ROBO_GRAPH_DESIGN:?}
+      OG_GRAPH_DESIGN: ${ROBO_GRAPH_DESIGN:?}
+      OG_GRAPH_ANALYSIS: ${ROBO_GRAPH_ANALYSIS:?}
+    volumes:
+      # **여기가 팀의 데이터 전부다.** 백업 대상이고, 지우면 되돌릴 수 없다.
+      - graph_data:/var/lib/postgresql/data
+    healthcheck:
+      # 떴는지 **그리고 초기화가 끝났는지**(compose.central-db.yml 과 같은 검사).
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -q && psql -U $$POSTGRES_USER -d $$POSTGRES_DB -Atc 'SELECT 1 FROM og_catalog.graph LIMIT 1' > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  graph-bolt:
+    image: uengine/ontological-bolt:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      OG_BOLT_LISTEN: 0.0.0.0:7687
+      OG_BOLT_PGHOST: graph-db
+      OG_BOLT_PGPORT: "5432"
+      OG_BOLT_PGDATABASE: ${ROBO_GRAPH_DESIGN:?}
+      OG_BOLT_GRAPH: ${ROBO_GRAPH_DESIGN:?}
+      PGPASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+    depends_on:
+      graph-db:
+        condition: service_healthy
+    healthcheck:
+      # CMD-SHELL(dash) 에는 /dev/tcp 가 없다 — bash 로 명시한다(설치본 compose 주석).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7687"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  # ── 레거시 분석 — fabric · catalog · analyzer · parser · gateway ──────
+  fabric:
+    image: uengine/robo-data-fabric:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER:?}
+      NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
+      DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "true"
+      DATA_FABRIC_QUERY_TIMEOUT_SECONDS: "30"
+      OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}
+    depends_on:
+      graph-bolt:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8404/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  catalog:
+    image: uengine/robo-data-catalog:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER:?}
+      NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
+      DATA_FABRIC_URL: http://fabric:8404
+      CATALOG_ALLOW_NEO4J_HEADER_OVERRIDE: "true"
+      OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}
+      LLM_API_KEY: ${ROBO_AI_API_KEY:?}
+      LLM_API_BASE: ${ROBO_AI_BASE_URL:?}
+      LLM_PROVIDER: openai
+      LLM_MODEL: gpt-4.1
+      LLM_MAX_COMPLETION_TOKENS: "4096"
+      LLM_MAX_OUTPUT_TOKENS: "8000"
+      LLM_READ_TIMEOUT_S: "120"
+      LLM_TOKENIZER_FALLBACK: tiktoken
+      EMBEDDING_MODEL: text-embedding-3-small
+      CATALOG_DISCOVERY_SNAPSHOT_CAPACITY: "256"
+      CATALOG_DISCOVERY_SNAPSHOT_TTL_SECONDS: "900"
+      FK_CONCURRENCY: "5"
+      FK_INFERENCE_ENABLED: "true"
+      FK_MATCH_RATIO_THRESHOLD: "0.8"
+      FK_SAMPLE_SIZE: "25"
+      FK_SIMILARITY_THRESHOLD: "0.8"
+      METADATA_TIMEOUT_CONNECT: "5"
+      METADATA_TIMEOUT_REQUEST: "30"
+    depends_on:
+      graph-bolt:
+        condition: service_healthy
+      fabric:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5503/robo/check-data/', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  analyzer:
+    image: uengine/robo-analyzer:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      ROBO_NEO4J_URI: bolt://graph-bolt:7687
+      ROBO_NEO4J_USER: ${ROBO_GRAPH_USER:?}
+      ROBO_NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      ROBO_NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
+      NEO4J_URI: bolt://graph-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER:?}
+      NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
+      ROBO_CATALOG_BASE_URL: http://catalog:5503/robo
+      ROBO_DATA_DIR: /data
+      ROBO_LLM_API_KEY: ${ROBO_AI_API_KEY:?}
+      ROBO_EMBED_API_KEY: ${ROBO_AI_API_KEY:?}
+      ROBO_SEARCH_LLM_API_KEY: ${ROBO_AI_API_KEY:?}
+      ROBO_EMBED_API_BASE: ${ROBO_AI_BASE_URL:?}
+      # 납품본 config/analyzer.env 의 제품 설정 — 그대로 옮겼다.
+      ROBO_BUDGET_RUN_USD: "20"
+      ROBO_CATALOG_ENABLED: "true"
+      ROBO_CATALOG_TIMEOUT_SECONDS: "120"
+      ROBO_EMBED_CHAR_BUDGET: "700"
+      ROBO_EMBED_CONCURRENCY: "8"
+      ROBO_EMBED_MAX_RETRIES: "6"
+      ROBO_EMBED_MODEL: text-embedding-3-small
+      ROBO_EMBED_PROVIDER: openai
+      ROBO_EMBED_TIMEOUT_SECONDS: "180"
+      ROBO_LLM_CONFIG: pgpt
+      ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_REF: llm/capabilities/gpt41_openai_2025_04_14.yaml
+      ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_SHA256: 09904ac41504b7128588dd32ef0f8c2dabf80366209bcad3bca6d2c730055df8
+      ROBO_LLM_REPETITION_GUARD: "true"
+      ROBO_LLM_RESPONSE_CACHE: "true"
+      ROBO_LLM_RESPONSE_CACHE_MAX_MB: "512"
+      ROBO_LLM_RESPONSE_CACHE_REQUIRE_HIT: "false"
+      ROBO_NEO4J_RETRY_BACKOFF_SECONDS: "2"
+      ROBO_NEO4J_RETRY_MAX_ATTEMPTS: "5"
+      ROBO_PIPELINE_BATCH_MAX_TOKENS: "1500"
+      ROBO_PIPELINE_EMBED_ENABLED: "true"
+      ROBO_PIPELINE_LLM_MAX_CONCURRENCY: "32"
+      ROBO_PIPELINE_MAX_CONCURRENCY: "64"
+      ROBO_RUN_OUTPUT_DIR: /data/logs
+      ROBO_RUNTIME_EVENT_FILE_ENABLED: "true"
+      ROBO_RUNTIME_EVENT_LEVEL: INFO
+      ROBO_SEARCH_ANCHOR_GAP: "0.12"
+      ROBO_SEARCH_ANCHOR_TOP: "3"
+      ROBO_SEARCH_CE_TOP: "15"
+      ROBO_SEARCH_DENSE_IMPL: index
+      ROBO_SEARCH_DIRECT_GAP: "0.12"
+      ROBO_SEARCH_EVIDENCE_TOP: "15"
+      ROBO_SEARCH_FETCH_K: "100"
+      ROBO_SEARCH_HOP_GATE: "3"
+      ROBO_SEARCH_LLM_CONFIG: gpt54_mini_openai
+      ROBO_SEARCH_RANK_FLOOR: "2"
+      ROBO_SEARCH_REWRITE: novel_abbrev
+      ROBO_SEARCH_SELECTION: global_anchor
+      ROBO_SEARCH_SUPPORT_POLICY: graph_gated
+      ROBO_SEARCH_SUPPORT_ROOT_TOP: "12"
+    volumes:
+      - shared_data:/data
+    depends_on:
+      graph-bolt:
+        condition: service_healthy
+      catalog:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5502/', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+  parser:
+    image: uengine/robo-antlr-parser:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      SERVER_PORT: "8081"
+      ROBO_DATA_DIR: /data
+      PARSER_REPAIR_AGENT_ENABLED: "false"
+      PARSER_REPAIR_AGENT_MAX_OUTPUT_TOKENS: "2048"
+      PARSER_REPAIR_AGENT_TIMEOUT_SECONDS: "120"
+      PARSER_REPAIR_APPLY_TO_SOURCE: "false"
+    volumes:
+      - shared_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  gateway:
+    image: uengine/robo-api-gateway:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      SERVER_PORT: "9000"
+      ROBO_ANTLR_URL: http://parser:8081
+      ROBO_ANALYZER_URL: http://analyzer:5502
+      ROBO_CATALOG_URL: http://catalog:5503
+      ROBO_DATA_FABRIC_URL: http://fabric:8404
+      ROBO_ARCHITECT_URL: http://architect-api:8000
+    depends_on:
+      analyzer:
+        condition: service_healthy
+      catalog:
+        condition: service_healthy
+      fabric:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/actuator/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+  # ── 문서→BPMN · 와이어프레임 렌더러 ───────────────────────────────────
+  pdf2bpmn:
+    image: ghcr.io/uengine-oss/process-gpt-bpmn-extractor:735d135
+    platform: linux/amd64
+    restart: unless-stopped
+    labels: *labels
+    # 이미지의 entrypoint.sh 는 자기 스택을 띄운다. compose 의 command 는 CMD 만 덮으므로
+    # entrypoint 를 덮어야 우리 facade 가 뜬다(설치본 compose 주석).
+    entrypoint: ["sh", "-c", "cd /app && PYTHONPATH=/app:/facade exec uvicorn facade:app --host 0.0.0.0 --port 8080"]
+    volumes:
+      - ./pdf2bpmn/facade.py:/facade/facade.py:ro
+    environment:
+      PYTHONIOENCODING: utf-8
+      OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}
+      OPENAI_BASE_URL: ${ROBO_AI_BASE_URL:?}
+      PGPT_BASE_URL: ${ROBO_AI_BASE_URL:?}
+      PGPT_API_KEY: ${ROBO_AI_API_KEY:?}
+      LLM_MODEL: gpt-4.1
+      FACADE_API_KEY: ${PDF2BPMN_FACADE_KEY:?}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  wireframe:
+    image: uengine/open-pencil:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    restart: unless-stopped
+    labels: *labels
+    environment:
+      WIREFRAME_SERVICE_PORT: "7610"
+      COMPONENT_LIBRARY_PATH: /app/docs/components.fig
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:7610/health');if(!r.ok)process.exit(1);const j=await r.json();process.exit(j.status==='ok'?0:1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  graph_data:
+  shared_data:
+  workspace:

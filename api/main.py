@@ -520,6 +520,11 @@ from api.features.canvas_graph.router import router as canvas_graph_router
 from api.features.user_stories.catalog_router import router as user_stories_catalog_router
 
 app.include_router(health_router)
+# 서버 배포(posco-web): 브라우저의 `/api/gateway/**` 를 로그인·프로젝트 권한을 본 뒤
+# 분석 게이트웨이로 넘긴다. 데스크톱에서는 Electron 이 이 경로를 가로채므로 닿지 않는다.
+from api.features.gateway_proxy.router import router as gateway_proxy_router  # noqa: E402
+
+app.include_router(gateway_proxy_router)
 app.include_router(contexts_router)
 app.include_router(canvas_graph_router)
 app.include_router(user_stories_catalog_router)

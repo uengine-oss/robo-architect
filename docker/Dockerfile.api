@@ -1,0 +1,76 @@
+# Architect API — **서버 배포(posco-web) 용.** 설치본의 번들 python.exe 를 대신한다.
+#
+# 설치본은 Electron 이 `python -m uvicorn api.main:app` 을 **사용자 PC 에서** 띄웠다.
+# 사내 PC·VDI 에서는 가상화가 안 돼 그 구조가 닿지 못했다(2026-11-09 이슈 6).
+# 이제 같은 앱을 컨테이너로 서버에 한 번 띄우고 브라우저가 nginx 를 거쳐 붙는다.
+#
+# 베이스·파이썬 판은 `Dockerfile.authority` 와 **같게** 둔다(ubuntu 24.04 + uv 의
+# 독립 파이썬 3.11). 그쪽의 취약점 보정 근거(trixie zlib · pip/ensurepip 휠)를
+# 그대로 물려받기 위해서다. ⚠ 판을 올릴 때는 두 파일을 **같이** 본다.
+#
+# authority 와 다른 것 셋:
+#   1. `git` — 제안(proposal) 구현이 대상 프로젝트에 worktree 를 만든다(`git worktree`).
+#   2. `skills/` — 설치본도 싣는다(`build-packaged-runtime.ps1` 의 Copy-SourceTree).
+#   3. 진입점 — `api.main:app` (authority 는 `api.authority:app`).
+#
+# 실리지 않는 것: claude CLI. **이 판은 Claude Code 터미널을 끈다**
+# (프런트 `VITE_DISABLE_CLAUDE_TERMINAL=1` · 근거는 deploy/posco-web/README.md §결정 ②).
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    UV_PYTHON_INSTALL_DIR=/opt/python \
+    UV_LINK_MODE=copy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# ⚠ authority 는 `uv:latest` 를 쓴다. 여기서는 **판을 박는다** — 같은 커밋을 다시
+#   구웠을 때 같은 이미지가 나와야 태그 고정(인수조건 ⑤)이 뜻을 가진다.
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /usr/local/bin/
+
+RUN uv python install 3.11 \
+    && PY="$(uv python find 3.11)" \
+    && PYROOT="$(dirname "$(dirname "$PY")")" \
+    && rm -rf "$PYROOT"/lib/python3.11/site-packages/pip \
+              "$PYROOT"/lib/python3.11/site-packages/pip-*.dist-info \
+              "$PYROOT"/lib/python3.11/ensurepip \
+    && ln -sf "$PY" /usr/local/bin/python3 \
+    && ln -sf /usr/local/bin/python3 /usr/local/bin/python
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    # 설치본 backend.ts 가 넣던 값. 로그의 em dash 한 글자가 cp949 에서 요청을 죽인
+    # 일이 있었다(2026-09-30). 리눅스에선 기본이 UTF-8 이지만 **명시해 둔다**.
+    PYTHONUTF8=1 \
+    PYTHONIOENCODING=utf-8 \
+    PATH=/app/.venv/bin:$PATH
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY api ./api
+COPY skills ./skills
+# 코드 생성 템플릿 — 저장소가 추적하지 않는다(.gitignore). 굽기 전에
+# `bash scripts/fetch-templates.sh` 로 받는다. 없으면 COPY 가 여기서 **멈춘다**
+# (템플릿 0개로 조용히 비는 이미지보다 낫다 — 설치본 굽기와 같은 판단).
+COPY templates ./templates
+
+# 대상 프로젝트(코드 생성·제안 구현) 가 놓이는 자리. compose 가 볼륨을 붙인다.
+RUN mkdir -p /workspace && git config --system --add safe.directory '*'
+
+# 떴는지만이 아니라 **import 가 되는지**를 굽는 자리에서 본다(설치본 굽기와 같은 검사).
+RUN python -c "import api.main"
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=18 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"
+
+# `--proxy-headers` — nginx 가 붙이는 X-Forwarded-Proto/For 를 믿는다. SSO 콜백
+#   URL 을 만들 때 원래 scheme·host 가 필요하다. 믿는 상대는 compose 망 안의 nginx 뿐이다.
+CMD ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*", "--log-level", "info"]
