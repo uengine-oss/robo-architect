@@ -11,9 +11,8 @@
 # 수동 실행(workflow_dispatch)에서 pin=true 면, 구운 태그를 compose 세 파일에 박아
 # 이 가지에 커밋한다(deploy/posco-web/pin-images.sh). push 로 돈 경우에는 박지 않는다.
 #
-# ⚠ 사람이 할 일 하나 — 저장소 Secret `ROBO_SUBMODULE_TOKEN`
-#   robo-data-frontend 가 **private** 서브모듈이라 기본 GITHUB_TOKEN 으로는 못 받는다.
-#   uengine-oss/robo-data-frontend 에 contents:read 가 있는 fine-grained 토큰.
+# 서브모듈(open-pencil · robo-data-frontend)은 둘 다 public 이라 토큰 없이 받는다.
+# private 서브모듈이 다시 생기면 Secret `ROBO_SUBMODULE_TOKEN` 을 넣는다(있으면 쓴다).
 name: posco-web images
 
 on:
@@ -76,36 +75,34 @@ jobs:
             submodules: ""
           - name: robo-posco-web
             dockerfile: docker/Dockerfile.web
-            # web 만 서브모듈 둘이 필요하다. ⚠ robo-data-frontend 는 private 이다.
+            # web 만 서브모듈 둘이 필요하다 — open-pencil · robo-data-frontend (둘 다 public).
             submodules: open-pencil robo-analyzer/robo-data-frontend
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # checkout 이 기본 토큰을 http.extraheader 로 남기면 git 이 그것을 URL 의 토큰보다
-          # **먼저** 보내, 서브모듈을 기본 토큰으로 받으려다 막힌다. 이 job 은 push 하지 않는다.
+          # checkout 이 기본 토큰을 http.extraheader 로 남기면 git 이 그것을 서브모듈에도
+          # 보낸다. 다른 저장소에는 그 토큰이 안 통한다. 이 job 은 push 하지 않는다.
           persist-credentials: false
       # 필요한 서브모듈만 받는다. 첫 실행은 recursive 로 받다가 api 까지 private
       # robo-data-analyzer 에서 멈췄다(api 이미지는 서브모듈을 안 쓴다).
+      #
+      # robo-data-frontend 는 2026-11-10 에 public 이 됐다 → **토큰이 필요 없다.**
+      # 익명으로 받고, 실패할 때만 Secret ROBO_SUBMODULE_TOKEN 을 쓴다
+      # (나중에 private 서브모듈이 다시 생기면 그때 Secret 이 필요하다).
       - name: 서브모듈 (${{ matrix.submodules || '없음' }})
         if: matrix.submodules != ''
         env:
           TOKEN: ${{ secrets.ROBO_SUBMODULE_TOKEN }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::error::Secret ROBO_SUBMODULE_TOKEN 이 없다 — robo-data-frontend(private)를 받을 수 없다"
-            exit 1
+          # 익명으로 먼저 — 등록된 토큰이 그 저장소를 못 보면(실제로 그랬다: 404) 공개
+          # 저장소도 막힌다. 익명이 실패할 때만 토큰으로 다시 한다.
+          if ! git submodule update --init --depth 1 -- ${{ matrix.submodules }}; then
+            [ -n "$TOKEN" ] || { echo "::error::서브모듈을 못 받았다 — private 이면 Secret ROBO_SUBMODULE_TOKEN"; exit 1; }
+            git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+            git submodule update --init --depth 1 -- ${{ matrix.submodules }}
           fi
-          # 토큰이 그 저장소를 읽을 수 있는지 **GitHub 의 답만** 찍는다(토큰 값은 안 찍는다).
-          # 403 이면 메시지와 SSO·필요 권한 헤더가 원인을 말해 준다.
-          code=$(curl -s -D /tmp/h -o /tmp/b -w '%{http_code}' \
-            -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/uengine-oss/robo-data-frontend)
-          echo "token → robo-data-frontend: HTTP $code $(jq -r '.message // "ok"' /tmp/b)"
-          grep -iE '^(x-github-sso|x-accepted-github-permissions|x-oauth-scopes):' /tmp/h || true
-          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
-          git submodule update --init --depth 1 -- ${{ matrix.submodules }}
       - id: tag
         run: echo "tag=posco-web-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - name: 코드 생성 템플릿(커밋 핀)
