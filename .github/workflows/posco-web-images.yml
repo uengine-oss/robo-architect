@@ -67,20 +67,34 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     strategy:
-      fail-fast: true
+      # 한 장이 막혀도 다른 장은 굽는다 — api 는 서브모듈이 필요 없다.
+      fail-fast: false
       matrix:
         include:
           - name: robo-architect-api
             dockerfile: docker/Dockerfile.api
+            submodules: ""
           - name: robo-architect-web
             dockerfile: docker/Dockerfile.web
+            # web 만 서브모듈 둘이 필요하다. ⚠ robo-data-frontend 는 private 이다.
+            submodules: open-pencil robo-analyzer/robo-data-frontend
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          token: ${{ secrets.ROBO_SUBMODULE_TOKEN || github.token }}
+      # 필요한 서브모듈만 받는다. 첫 실행은 recursive 로 받다가 api 까지 private
+      # robo-data-analyzer 에서 멈췄다(api 이미지는 서브모듈을 안 쓴다).
+      - name: 서브모듈 (${{ matrix.submodules || '없음' }})
+        if: matrix.submodules != ''
+        env:
+          TOKEN: ${{ secrets.ROBO_SUBMODULE_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Secret ROBO_SUBMODULE_TOKEN 이 없다 — robo-data-frontend(private)를 받을 수 없다"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --depth 1 -- ${{ matrix.submodules }}
       - id: tag
         run: echo "tag=posco-web-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - name: 코드 생성 템플릿(커밋 핀)
