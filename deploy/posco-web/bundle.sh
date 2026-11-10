@@ -4,7 +4,7 @@
 #   bash deploy/posco-web/bundle.sh /tmp/robo-posco-web            # 파일만
 #   bash deploy/posco-web/bundle.sh /tmp/robo-posco-web --images   # + 이미지 tar
 #
-# 묶음 = compose 셋 · .env.example · check.sh · authority-init.py · make-split.py ·
+# 묶음 = compose 셋 · .env.example · init-env.sh · check.sh · authority-init.py · make-split.py ·
 #        pdf2bpmn/facade.py(설치본과 **같은 파일**을 복사한다) · README.md
 #        --images 면  images.tar · image-ids.txt(태그 → image ID) · SHA256SUMS
 #
@@ -20,7 +20,7 @@ DOCKER=${DOCKER:-docker}
 [[ ! -e $OUT || -z "$(ls -A "$OUT" 2>/dev/null)" ]] || { echo "비어 있지 않다: $OUT" >&2; exit 1; }
 mkdir -p "$OUT/pdf2bpmn"
 cp "$HERE"/{docker-compose.yml,docker-compose.split.ap.yml,docker-compose.split.db.yml} "$OUT/"
-cp "$HERE"/{.env.example,check.sh,authority-init.py,make-split.py,README.md} "$OUT/"
+cp "$HERE"/{.env.example,init-env.sh,check.sh,authority-init.py,make-split.py,README.md} "$OUT/"
 cp "$ROOT/desktop/runtime/pdf2bpmn/facade.py" "$OUT/pdf2bpmn/facade.py"
 echo "files → $OUT"
 
