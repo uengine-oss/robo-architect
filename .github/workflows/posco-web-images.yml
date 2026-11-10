@@ -82,6 +82,10 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # checkout 이 기본 토큰을 http.extraheader 로 남기면 git 이 그것을 URL 의 토큰보다
+          # **먼저** 보내, 서브모듈을 기본 토큰으로 받으려다 막힌다. 이 job 은 push 하지 않는다.
+          persist-credentials: false
       # 필요한 서브모듈만 받는다. 첫 실행은 recursive 로 받다가 api 까지 private
       # robo-data-analyzer 에서 멈췄다(api 이미지는 서브모듈을 안 쓴다).
       - name: 서브모듈 (${{ matrix.submodules || '없음' }})
@@ -93,6 +97,13 @@ jobs:
             echo "::error::Secret ROBO_SUBMODULE_TOKEN 이 없다 — robo-data-frontend(private)를 받을 수 없다"
             exit 1
           fi
+          # 토큰이 그 저장소를 읽을 수 있는지 **GitHub 의 답만** 찍는다(토큰 값은 안 찍는다).
+          # 403 이면 메시지와 SSO·필요 권한 헤더가 원인을 말해 준다.
+          code=$(curl -s -D /tmp/h -o /tmp/b -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/uengine-oss/robo-data-frontend)
+          echo "token → robo-data-frontend: HTTP $code $(jq -r '.message // "ok"' /tmp/b)"
+          grep -iE '^(x-github-sso|x-accepted-github-permissions|x-oauth-scopes):' /tmp/h || true
           git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
           git submodule update --init --depth 1 -- ${{ matrix.submodules }}
       - id: tag
