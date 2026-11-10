@@ -95,6 +95,9 @@ jobs:
         if: matrix.submodules != ''
         env:
           TOKEN: ${{ secrets.ROBO_SUBMODULE_TOKEN }}
+          # open-pencil 의 LFS 는 tests/fixtures(시험용 글꼴·.fig)뿐이다 — 웹 빌드는 안 쓴다
+          # (빌드가 복사하는 글꼴은 public/ 에 있고 LFS 가 아니다). 받다가 LFS 인증에서 멈췄다.
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
           # 익명으로 먼저 — 등록된 토큰이 그 저장소를 못 보면(실제로 그랬다: 404) 공개
           # 저장소도 막힌다. 익명이 실패할 때만 토큰으로 다시 한다.
@@ -103,6 +106,11 @@ jobs:
             git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
             git submodule update --init --depth 1 -- ${{ matrix.submodules }}
           fi
+          # 받았다고 끝난 게 아니다 — 한 번은 이 단계가 지나간 뒤 docker 빌드에서야
+          # "robo-data-frontend/package.json not found" 로 멈췄다. 여기서 확인한다.
+          for m in ${{ matrix.submodules }}; do
+            test -f "$m/package.json" || { echo "::error::서브모듈이 비었다: $m"; exit 1; }
+          done
       - id: tag
         run: echo "tag=posco-web-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - name: 코드 생성 템플릿(커밋 핀)
