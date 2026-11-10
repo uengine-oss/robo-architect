@@ -58,8 +58,10 @@ jobs:
       - name: gateway 프록시 단위 시험
         run: |
           pipx install uv==0.11.32
-          uv sync --frozen
-          uv run --frozen python -m pytest -q api/features/gateway_proxy
+          # pytest 는 `dev` extra 에 있다 — 그냥 sync 하면 안 깔린다(첫 실행이 그렇게 멈췄다)
+          uv sync --frozen --extra dev
+          uv run --frozen python -m pytest -q api/features/gateway_proxy \
+            api/features/accounts/test_authority_transport.py
 
   build:
     needs: check
