@@ -76,7 +76,8 @@ DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서�
 | `AUTH_RT_PW` | `ROBO_AUTHORITY_DB_PASSWORD` | robo_authority 역할 |
 | `OPER_PW` | — | 운영 DSN 은 소유자로(§결정 ④) |
 | `ADMIN_EMPNO` · `APPROVAL_REQUIRED` | `ROBO_ADMIN_EMPNO` · `ROBO_APPROVAL_REQUIRED` | authority-init |
-| `SWP_SSO_*` · `SWP_SSO_LOG_RAW` | 같은 이름 | authority |
+| `SWP_SSO_*` | 같은 이름 | authority |
+| `SWP_SSO_LOG_RAW` | — | **코드에 없다**(주석에만 있다). 확인은 authority 로그 `auth.sso.validated` 의 사번·username 으로 |
 | `AUTH_CALLBACK_ALLOWLIST` | `ROBO_PUBLIC_URL` | authority |
 | `PDF2BPMN_FACADE_KEY` (PC 난수) | 같은 이름 (서버 하나) | api · pdf2bpmn |
 | `ROBO_GRAPH_MODE=central` · `ROBO_AUTHORITY_URL` | 고정값(yml) | api |
@@ -234,7 +235,7 @@ DB 역할 — 런타임만 제한, 프로젝트 운영은 소유자
 
 ```text
 ⓐ 설계자 PC 에서 아무것도 안 깔고 ROBO_PUBLIC_URL 열기 → SWP 로 들어가진다
-   SWP_SSO_LOG_RAW=1 을 authority 에 한 번 주고 isValidSSO 칸 순서(SWP_IDX_*)를 확인
+   authority 로그의 `auth.sso.validated` 에 찍힌 사번·username 이 본인 것인지로 칸 순서(SWP_IDX_*)를 확인
 ⓑ 레거시 분석 한 건을 업로드로 끝까지 → 다른 설계자 계정으로 자기 브라우저에서 결과가 보인다
    (프로젝트를 그 사람에게 공유한 뒤)
 ⑦ Code 탭이 터미널 없이 뜨고 나머지 탭이 죽지 않는다
