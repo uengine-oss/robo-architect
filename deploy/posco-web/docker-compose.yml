@@ -354,7 +354,9 @@ services:
       ROBO_EMBED_MODEL: text-embedding-3-small
       ROBO_EMBED_PROVIDER: openai
       ROBO_EMBED_TIMEOUT_SECONDS: "180"
-      ROBO_LLM_CONFIG: pgpt
+      # pgpt = 사내 P-GPT(이미지 안 파일) · openai_gpt41 = OpenAI 직결(아래 마운트한 파일).
+      # 둘 다 gpt-4.1 이라 위·아래의 능력 봉인과 맞는다. 주소를 env 로 덮는 길이 analyzer 에 없어 파일로 고른다.
+      ROBO_LLM_CONFIG: ${ROBO_ANALYZER_LLM_CONFIG:-pgpt}
       ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_REF: llm/capabilities/gpt41_openai_2025_04_14.yaml
       ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_SHA256: 09904ac41504b7128588dd32ef0f8c2dabf80366209bcad3bca6d2c730055df8
       ROBO_LLM_REPETITION_GUARD: "true"
@@ -386,6 +388,7 @@ services:
       ROBO_SEARCH_SUPPORT_ROOT_TOP: "12"
     volumes:
       - shared_data:/data
+      - ./analyzer-llm/openai_gpt41.yaml:/app/llm/configs/openai_gpt41.yaml:ro
     depends_on:
       graph-bolt:
         condition: service_healthy

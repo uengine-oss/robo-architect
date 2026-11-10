@@ -1,0 +1,26 @@
+# OpenAI 직결 — gpt-4.1 (posco-web 판이 analyzer 에 마운트한다)
+# ─────────────────────────────────────────────────────────────
+# analyzer 이미지 안의 `pgpt.yaml` 과 **주소 하나만 다르다**. 모델(gpt-4.1)·토큰·샘플링이
+# 같으므로, compose 에 고정된 능력 봉인
+#   ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_REF=llm/capabilities/gpt41_openai_2025_04_14.yaml
+# 과 그대로 맞는다. (이미지 안의 유일한 OpenAI 설정 gpt54_mini_openai 는 모델이 달라
+# 그 봉인과 어긋난다 — 그래서 쓰지 않는다.)
+#
+# 왜 파일인가: analyzer 는 대화 모델 주소를 **환경변수로 덮는 길이 없다** — yaml 의
+# api_base 만 읽는다(config_loader.py). 키는 여기 적지 않고 ROBO_LLM_API_KEY(= .env 의
+# ROBO_AI_API_KEY)로 들어간다.
+#
+# 쓰는 법 — .env 에서
+#   ROBO_AI_BASE_URL=https://api.openai.com/v1
+#   ROBO_ANALYZER_LLM_CONFIG=openai_gpt41
+provider: openai
+api_base: https://api.openai.com/v1
+model: gpt-4.1
+max_tokens: 16000
+timeout_seconds: 300
+verify_ssl: true
+sampling:
+  temperature: 0.3
+  top_p: 0.8
+reasoning_effort: none
+structured_output_method: provider_default

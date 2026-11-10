@@ -74,6 +74,14 @@ else
   [[ $(val ROBO_GRAPH_DESIGN) != "$(val ROBO_GRAPH_ANALYSIS)" ]] ||
     bad "설계·분석 graph 이름이 같다 — 분석이 설계를 지운다"
   [[ $(val ROBO_APPROVAL_REQUIRED) =~ ^(true|false)$ ]] || bad "ROBO_APPROVAL_REQUIRED 는 true|false"
+  # AI 주소와 analyzer 설정은 짝이다 — 한쪽만 바꾸면 분석만 다른 곳으로 간다.
+  case "$(val ROBO_ANALYZER_LLM_CONFIG):$(val ROBO_AI_BASE_URL)" in
+    openai_gpt41:https://api.openai.com/*) ok "AI: OpenAI 직결 (analyzer openai_gpt41)";;
+    openai_gpt41:*) bad "ROBO_ANALYZER_LLM_CONFIG=openai_gpt41 인데 ROBO_AI_BASE_URL 이 OpenAI 가 아니다";;
+    pgpt:https://api.openai.com/*) bad "ROBO_AI_BASE_URL 이 OpenAI 인데 ROBO_ANALYZER_LLM_CONFIG=pgpt — 분석만 P-GPT 로 간다 (openai_gpt41 로)";;
+    pgpt:*) ok "AI: P-GPT (analyzer pgpt)";;
+    *) bad "ROBO_ANALYZER_LLM_CONFIG 는 pgpt | openai_gpt41";;
+  esac
   url=$(val ROBO_PUBLIC_URL)
   [[ $url =~ ^https?://[^/]+$ ]] || bad "ROBO_PUBLIC_URL 은 scheme://host:port (경로 없이)"
   if [[ $FILE == *split* ]]; then

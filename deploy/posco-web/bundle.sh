@@ -22,6 +22,7 @@ mkdir -p "$OUT/pdf2bpmn"
 cp "$HERE"/{docker-compose.yml,docker-compose.split.ap.yml,docker-compose.split.db.yml,docker-compose.local-test.yml} "$OUT/"
 cp "$HERE"/{.env.example,init-env.sh,check.sh,authority-init.py,make-split.py,README.md} "$OUT/"
 cp "$ROOT/desktop/runtime/pdf2bpmn/facade.py" "$OUT/pdf2bpmn/facade.py"
+mkdir -p "$OUT/analyzer-llm" && cp "$HERE/analyzer-llm/openai_gpt41.yaml" "$OUT/analyzer-llm/"
 echo "files → $OUT"
 
 if [[ $IMAGES == --images ]]; then
