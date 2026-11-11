@@ -13,6 +13,7 @@
 
 import { BrowserWindow, Menu, WebContentsView, ipcMain, shell, type WebContents } from "electron";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { getDataDir, getLogsDir } from "./data-dir";
@@ -350,6 +351,43 @@ async function claudeCli(): Promise<string | null> {
 }
 
 /**
+ * Which Claude account the agent and the LLM bridge run as — **the CLI's own login on this PC.**
+ *
+ * `api/platform/skill_runner._skill_env()` deletes ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN
+ * before spawning `claude -p`, and nothing overrides HOME, so every skill run and every
+ * `api/features/llm_bridge` call is billed to the account `claude` is logged in as **for the user
+ * who started this app** — not to a key, and not to anything the app picks. The status panel said
+ * only "found / not found", so nobody could tell whose subscription was being spent (2026-11-11).
+ *
+ * Read from the CLI's own config file. **Never from `~/.claude/.credentials.json`** — the token
+ * store is not opened here, and only the e-mail and the plan name leave this function.
+ */
+async function claudeAccount(): Promise<{ email: string; plan: string | null } | null> {
+  const configured = (process.env.CLAUDE_CONFIG_DIR || "").trim();
+  const files = [
+    ...(configured ? [path.join(configured, ".claude.json")] : []),
+    path.join(os.homedir(), ".claude", ".claude.json"),
+    path.join(os.homedir(), ".claude.json"),
+  ];
+  for (const file of files) {
+    try {
+      const stat = await fs.promises.stat(file);
+      // 이 함수는 UI 한 줄을 채우는 것이다 — 큰 파일을 붙들고 main 을 멈추지 않는다.
+      if (!stat.isFile() || stat.size > 8 * 1024 * 1024) continue;
+      const account = JSON.parse(await fs.promises.readFile(file, "utf8"))?.oauthAccount;
+      const email = typeof account?.emailAddress === "string" ? account.emailAddress.trim() : "";
+      if (!email) continue;
+      const name = typeof account?.planDisplayName === "string" ? account.planDisplayName.trim() : "";
+      return { email, plan: name || null };
+    } catch {
+      // 없거나 못 읽거나 JSON 이 아니면 다음 자리를 본다 — 이 행은 있으면 좋은 것이고,
+      // 없다고 해서 에이전트를 못 쓰는 것은 아니다(로그인은 CLI 가 따로 쥐고 있다).
+    }
+  }
+  return null;
+}
+
+/**
  * Whether this PC has an OpenAI key, for the shell's status row — **the name only, never the value**.
  *
  * Most of the LLM work needs no key: the analyzer and the search LLM are `claude_code_bridge` and
@@ -423,6 +461,8 @@ export function wireShellIpc(): void {
         backend: be.status,
         graphUser: "robo",
         claude: await claudeCli(),
+        // 누구 구독으로 도는지 — 메일과 요금제 이름만. 토큰은 읽지 않는다.
+        claudeAccount: await claudeAccount(),
         openAiKey: openAiKey(),
         // 화면이 "Docker 컨테이너 N개" 를 손으로 적고 있었다 — 서비스가 늘면 틀린 말이
         // 된다. 매니페스트의 이미지 수를 세서 넘긴다(스택에 뜨는 컨테이너와 1:1 이다).

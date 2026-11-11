@@ -341,13 +341,26 @@ function keyRowHtml() {
     : `명령 프롬프트에서 setx ${name} &lt;키&gt; 를 실행하고 앱을 다시 여세요`
   return `<div class="status-row"><span class="dot warn"></span><div><b>AI 키</b> 미설정<small>카탈로그의 표 설명과 FK 추론이 실패합니다 · ${how}</small></div></div>`
 }
+// 에이전트 행. CLI 가 있나 없나만 말하던 자리다 — **누구 구독으로 도는지**도 말한다.
+// 스킬과 LLM 브리지는 Anthropic 키를 지우고 `claude -p` 를 띄우므로(skill_runner._skill_env),
+// 과금되는 계정은 이 PC 의 CLI 로그인이다. main 이 설정 파일에서 메일·요금제만 읽어 넘긴다.
+function agentRowHtml() {
+  const claude = info.claude
+  if (!claude) {
+    return `<div class="status-row"><span class="dot warn"></span><div><b>에이전트</b> 찾지 못함<small>claude CLI 를 설치하고 로그인하세요</small></div></div>`
+  }
+  const acc = info.claudeAccount
+  const who = acc && acc.email
+    ? `${esc(acc.email)}${acc.plan ? ` · ${esc(acc.plan)}` : ''} 계정으로 돕니다`
+    : '로그인 정보를 못 읽었습니다 — 터미널에서 claude 를 한 번 실행해 로그인하세요'
+  return `<div class="status-row"><span class="dot ${acc && acc.email ? 'ok' : 'warn'}"></span><div><b>에이전트</b> Claude Code<small>이 PC 의 CLI 가 스킬로 분석 · 계획 · 구현합니다 · ${who}</small></div></div>`
+}
 function renderStatus() {
   const ok = ready()
   const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed'
-  const claude = info.claude
   $('status').innerHTML = `
-    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : bootHtml()}</small></div></div>
-    <div class="status-row"><span class="dot ${claude ? 'ok' : 'warn'}"></span><div><b>에이전트</b> ${claude ? 'Claude Code' : '찾지 못함'}<small>${claude ? '이 PC 의 CLI 가 스킬로 분석 · 계획 · 구현합니다' : 'claude CLI 를 설치하고 로그인하세요'}</small></div></div>`
+    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : bootHtml()}</small></div></div>`
+    + agentRowHtml()
     + keyRowHtml()
 }
 
