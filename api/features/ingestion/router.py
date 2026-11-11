@@ -663,12 +663,24 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
 
 @router.get("/stats")
 async def get_data_stats(request: Request) -> dict[str, Any]:
-    """
-    Get current data statistics from Neo4j.
-    """
-    from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+    """분석기가 그래프에 넣은 것을 센다 — 코드 분석 모드의 관문.
 
-    client = get_neo4j_client()
+    **분석 그래프를 읽는다. 설계 그래프가 아니다.** 부르는 곳은 요구사항 업로드
+    화면의 코드 분석 탭 하나뿐이고, 0 이면 "분석 데이터가 없습니다" 를 띄운다.
+
+    예전에는 event-storming 클라이언트로 갔다. 그 클라이언트의 database 는
+    ``get_neo4j_database()`` — 곧 **설계 그래프**(lite 에서는 프로젝트 그래프)다.
+    분석기는 ``analyzer_run``(desktop/src/main/graphs.ts ``GRAPH_ANALYSIS``)에 쓰므로
+    세는 쪽이 반대였다: 레거시 분석이 끝나고 노드가 들어가 있어도 화면은 계속
+    "없다" 고 했다(2026-11-09 이슈 2번). 오류는 나지 않는다.
+
+    분석기 결과를 읽는 이웃들(``rule_context`` · ``glossary_extractor``)은 이미
+    분석 그래프를 본다 — 이 함수만 남아 있었다.
+
+    분석 짝이 없는 프로젝트(문서만 올린 경우)는 정상 상태다. 그때는 ``.env`` 로
+    떨어뜨리지 않고 ``hasData=False`` 로 답한다.
+    """
+    from api.platform.neo4j import analyzer_database, analyzer_session
 
     try:
         SmartLogger.log(
@@ -677,7 +689,16 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
             category="ingestion.api.stats.request",
             params=http_context(request),
         )
-        with client.session() as session:
+        sess = analyzer_session()
+        if sess is None:
+            SmartLogger.log(
+                "INFO",
+                "Ingestion stats: no analyzer graph configured.",
+                category="ingestion.api.stats.no_analyzer",
+                params=http_context(request),
+            )
+            return {"total": 0, "counts": {}, "hasData": False, "analyzerGraph": None}
+        with sess as session:
             query = """
             MATCH (n)
             WITH labels(n)[0] as label, count(n) as count
@@ -692,10 +713,20 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
                 "INFO",
                 "Ingestion stats returned.",
                 category="ingestion.api.stats.done",
-                params={**http_context(request), "total": total, "counts": counts},
+                params={
+                    **http_context(request),
+                    "total": total,
+                    "counts": counts,
+                    "analyzerGraph": analyzer_database(),
+                },
             )
 
-            return {"total": total, "counts": counts, "hasData": total > 0}
+            return {
+                "total": total,
+                "counts": counts,
+                "hasData": total > 0,
+                "analyzerGraph": analyzer_database(),
+            }
     except Exception as e:
         SmartLogger.log(
             "ERROR",
