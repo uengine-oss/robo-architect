@@ -377,6 +377,9 @@ export const messages = {
   // ── TestResultsView strings ──────────────────────────────────────────
   'proposals.tests.validating': { ko: '검증 중…', en: 'Validating…' },
   'proposals.tests.rerun': { ko: '재검증', en: 'Re-validate' },
+  // ③ 항목별 다음 동작 — 사유를 셀에 넣어 그 한 건만 고치게 한다.
+  'proposals.tests.fixInCell':                     { ko: '코드를 고친다', en: 'Fix in the cell' },
+  'proposals.tests.fixInCellHint':                  { ko: '이 항목의 사유를 Claude Code 셀에 넣어 이 한 건만 고치게 합니다 (설계는 건드리지 않습니다)', en: 'Sends this item\'s reason to the Claude Code cell to fix just this one (the design is left alone)' },
   'proposals.tests.validateHint': { ko: '구조 검증(robo-sync: 스펙↔구현체) + 인수 조건(GWT)을 runner로 실행하며 로그를 표시합니다.', en: 'Runs structural validation (robo-sync: spec↔implementation) + acceptance criteria (GWT) via runner and streams the log.' },
   'proposals.tests.loadingResults': { ko: '검증 결과 로딩 중...', en: 'Loading validation results…' },
   'proposals.tests.runningValidation': { ko: '검증을 실행 중입니다… robo-sync로 Aggregate/VO/Command를 구현체와 대조하고 GWT 인수 조건을 판정합니다.', en: 'Running validation… comparing Aggregates/VOs/Commands with the implementation via robo-sync and evaluating GWT acceptance criteria.' },
