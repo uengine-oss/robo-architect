@@ -13,11 +13,20 @@
       <div v-if="hasFailures" class="failure-warning">
         <span class="warning-icon">⚠</span>
         <strong>{{ t('proposals.dualMerge.testFailedCount', { n: testFailed }) }}</strong>
+        <!-- 구조 실패와 인수조건 실패는 고치는 자리가 다르다 — 수를 갈라 보여 준다. -->
+        <strong class="failure-warning__split">{{ t('proposals.dualMerge.failedSplit', failedByCategory) }}</strong>
         <p>{{ t('proposals.dualMerge.checkToAccept') }}</p>
         <label class="force-check">
           <input type="checkbox" v-model="forceAccept" />
           {{ t('proposals.dualMerge.forceAcceptLabel') }}
         </label>
+      </div>
+
+      <!-- SKIP 은 Accept 를 막지 않는다(게이트는 failed 만 본다) — 그래서 조용히 지나간다.
+           "통과" 가 아니라 "재지 못했다" 임을 여기서 한 번 말해 준다. -->
+      <div v-if="skippedCount > 0" class="skipped-note">
+        <span class="info-icon">ℹ</span>
+        {{ t('proposals.dualMerge.skippedCount', { n: skippedCount }) }}
       </div>
 
       <div class="merge-actions">
@@ -48,7 +57,7 @@
     <div v-if="proposal?.status === 'ACCEPTED'" class="accepted">
       <div class="accepted__icon">✓</div>
       <p>{{ t('proposals.dualMerge.acceptedAt', { date: formatDate(proposal.acceptedAt) }) }}</p>
-      <p class="accepted__note">{{ t('proposals.dualMerge.acceptedNote') }}</p>
+      <p class="accepted__note">{{ hasFailures ? t('proposals.dualMerge.acceptedNoteForced') : t('proposals.dualMerge.acceptedNote') }}</p>
       <button @click="showRevokeConfirm = true" class="btn btn--revoke">{{ t('proposals.dualMerge.revokeBtn') }}</button>
     </div>
 
@@ -126,6 +135,16 @@ const canDecide = computed(() =>
   ['TESTING', 'PENDING_ACCEPTANCE'].includes(props.proposal?.status)
 )
 
+// 실패를 분류별로 센다 — 구조 실패는 설계↔코드 어긋남이고, 인수조건 실패는 동작 문제다.
+const failedByCategory = computed(() => {
+  const items = store.testResults?.items || []
+  const failed = items.filter((i) => String(i?.result || '').toUpperCase() === 'FAIL')
+  return {
+    s: failed.filter((i) => i?.category === 'structural').length,
+    a: failed.filter((i) => i?.category === 'acceptance').length,
+  }
+})
+const skippedCount = computed(() => store.testResults?.skipped || 0)
 const hasFailures = computed(() => {
   const tr = store.testResults
   return tr && tr.failed > 0
@@ -222,6 +241,8 @@ function formatDate(dt) {
 .revoke-radio { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--color-text); cursor: pointer; line-height: 1.5; }
 .revoke-radio input { margin-top: 2px; }
 .revoke-radio code { font-family: monospace; background: var(--color-bg-tertiary); padding: 0 4px; border-radius: 3px; }
+.failure-warning__split { display: block; margin: 2px 0 6px; font-weight: 500; opacity: 0.85; font-size: 12px; }
+.skipped-note { background: var(--color-bg-subtle, rgba(127,127,127,0.08)); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px; color: var(--color-text-light); }
 .merge-failed { background: var(--status-red-bg); border: 1px solid var(--status-red-bg); border-radius: 8px; padding: 16px; }
 .merge-failed__title { margin: 0 0 8px; color: var(--status-red-fg); font-size: 15px; }
 .merge-failed__detail { color: var(--color-text-light); font-size: 12px; margin-bottom: 12px; }

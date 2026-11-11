@@ -88,9 +88,15 @@ export const messages = {
   // ── DualMergeView strings ────────────────────────────────────────────
   'proposals.dualMerge.poDecisionTitle':           { ko: 'PO 최종 결정', en: 'PO Final Decision' },
   'proposals.dualMerge.notValidatedNote':          { ko: "아직 검증이 완료되지 않았습니다. '검증' 탭에서 검증을 먼저 실행할 수 있으며, 구현이 완료되었다면 검증 없이도 아래에서 Accept/Destroy를 결정할 수 있습니다.", en: "Validation is not yet complete. You can run validation in the 'Testing' tab first, or if implementation is done you may Accept/Destroy below without validation." },
-  'proposals.dualMerge.testFailedCount':           { ko: '{n}개의 테스트가 실패했습니다.', en: '{n} test(s) failed.' },
-  'proposals.dualMerge.checkToAccept':             { ko: 'Accept를 진행하려면 아래 확인란에 체크하세요.', en: 'Check the box below to proceed with Accept.' },
-  'proposals.dualMerge.forceAcceptLabel':          { ko: '실패 항목을 인지하고 Accept를 진행합니다', en: 'I acknowledge the failures and will proceed with Accept' },
+  'proposals.dualMerge.testFailedCount':           { ko: '검증 {n}건이 실패했습니다.', en: '{n} validation item(s) failed.' },
+  'proposals.dualMerge.failedSplit':               { ko: '구조 {s}건 · 인수조건 {a}건', en: 'structural {s} · acceptance {a}' },
+  // 무엇을 인지하는 것인지 적는다. 구조 실패를 그대로 두고 Accept 하면 dual merge 가
+  // Tactical Diff 를 그래프에 **그대로** 적용하므로, 그래프의 설계가 머지된 코드와 달라진다.
+  // 그리고 그것을 자동으로 맞춰 주는 장치가 **없다**(robo-sync 는 사람이 직접 부르는 스킬이고,
+  // 요소에 구현 파일 연결이 없으면 훑을 대상도 없다 — 2026-11-11 측정).
+  'proposals.dualMerge.checkToAccept':             { ko: 'Accept를 진행하려면 아래 확인란에 체크하세요. 실패 항목은 고쳐지지 않습니다 — 그래프에는 이 Proposal 의 설계가 그대로 기록되고, 코드는 지금 상태로 머지됩니다.', en: 'Check the box below to proceed with Accept. Failing items are not fixed — the graph records this proposal\'s design as-is while the code is merged as it stands.' },
+  'proposals.dualMerge.forceAcceptLabel':          { ko: '실패 항목을 그대로 두고 Accept 합니다 — 구조 실패가 있으면 그래프(설계)와 코드가 달라진 채로 머지됩니다', en: 'Accept with the failing items left as they are — with structural failures the graph (design) and the code are merged out of sync' },
+  'proposals.dualMerge.skippedCount':              { ko: '검증 {n}건은 재지 못했습니다(SKIP). 통과가 아니라 "확인 불가" 이므로, 검증 탭에서 사유를 확인하세요.', en: '{n} validation item(s) could not be measured (SKIP). That is not a pass but "could not verify" — check the reasons in the Testing tab.' },
   'proposals.dualMerge.accepting':                 { ko: 'Accept 처리 중...', en: 'Accepting…' },
   'proposals.dualMerge.mergeFailed':               { ko: 'Dual Merge 실패', en: 'Dual Merge Failed' },
   'proposals.dualMerge.mergeFailedFallback':       { ko: 'Dual Merge 실패. 로그를 확인하세요.', en: 'Dual Merge failed. Please check the logs.' },
@@ -98,6 +104,8 @@ export const messages = {
   'proposals.dualMerge.retryMerge':                { ko: 'Dual Merge 재시도', en: 'Retry Dual Merge' },
   'proposals.dualMerge.acceptedAt':                { ko: 'Dual Merge 완료 — {date}', en: 'Dual Merge completed — {date}' },
   'proposals.dualMerge.acceptedNote':              { ko: '코드와 그래프 DB가 동기화되었습니다.', en: 'Code and graph DB are now in sync.' },
+  // 실패를 두고 Accept 한 판에서는 위 문장이 **거짓**이다 — 그 경우를 따로 쓴다.
+  'proposals.dualMerge.acceptedNoteForced':        { ko: '⚠ 실패 항목을 두고 Accept 했습니다 — 그래프(설계)와 코드가 일치하지 않을 수 있습니다. 검증 탭의 실패 항목을 확인하세요.', en: '⚠ Accepted with failing items — the graph (design) and the code may not match. Review the failing items in the Testing tab.' },
   'proposals.dualMerge.revokeBtn':                 { ko: '↩ 수거 (되돌리기)', en: '↩ Revoke (Undo)' },
   'proposals.dualMerge.destroyed':                 { ko: '이 Proposal은 폐기되었습니다 — {date}', en: 'This Proposal was destroyed — {date}' },
   'proposals.dualMerge.destroyConfirmTitle':       { ko: 'Proposal 폐기 확인', en: 'Confirm Proposal Destruction' },
