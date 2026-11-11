@@ -5,23 +5,26 @@
 #   bash deploy/posco-web/bundle.sh /tmp/robo-posco-web --images   # + 이미지 tar
 #
 # 묶음 = compose 셋 + 로컬 시험용 overlay(docker-compose.local-test.yml) · .env.example · init-env.sh · check.sh · authority-init.py · make-split.py ·
-#        pdf2bpmn/facade.py(설치본과 **같은 파일**을 복사한다) · README.md
+#        analyzer-llm/openai_gpt41.yaml · README.md
 #        --images 면  images.tar · image-ids.txt(태그 → image ID) · SHA256SUMS
+#
+# ⓘ pdf2bpmn 을 뺐으므로(2026-11-11) `pdf2bpmn/facade.py` 를 더 넣지 않는다.
+#   그 파일은 **바인드 마운트**였고, 저장소 폴더에서 compose 를 띄우면 도커가 그 자리에
+#   빈 디렉터리를 만들어 서비스가 재시작을 반복했다(2026-11-10). 그 함정도 같이 사라졌다.
+#   이제 묶음 폴더와 저장소 폴더 어디서 띄워도 결과가 같다.
 #
 # 서버가 인터넷(GHCR)에 닿지 못하면 --images 로 묶어 `docker load -i images.tar`.
 # 받은 쪽은 image-ids.txt 와 `docker image inspect` 를 대조한다.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
 OUT=${1:?usage: bundle.sh <out-dir> [--images]}
 IMAGES=${2:-}
 DOCKER=${DOCKER:-docker}
 
 [[ ! -e $OUT || -z "$(ls -A "$OUT" 2>/dev/null)" ]] || { echo "비어 있지 않다: $OUT" >&2; exit 1; }
-mkdir -p "$OUT/pdf2bpmn"
+mkdir -p "$OUT"
 cp "$HERE"/{docker-compose.yml,docker-compose.split.ap.yml,docker-compose.split.db.yml,docker-compose.local-test.yml} "$OUT/"
 cp "$HERE"/{.env.example,init-env.sh,check.sh,authority-init.py,make-split.py,README.md} "$OUT/"
-cp "$ROOT/desktop/runtime/pdf2bpmn/facade.py" "$OUT/pdf2bpmn/facade.py"
 mkdir -p "$OUT/analyzer-llm" && cp "$HERE/analyzer-llm/openai_gpt41.yaml" "$OUT/analyzer-llm/"
 echo "files → $OUT"
 

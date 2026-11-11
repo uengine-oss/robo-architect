@@ -12,7 +12,7 @@ msa-ez 가 이미 같은 방식으로 돈다 — 통합 서버 한 대 / AP·DB 
                │ 빌드된 자산만                    │  └─/api/gateway/** (로그인·권한을 본 뒤)
                │ /analyzer/ = 분석 화면           │        └──► gateway ─► analyzer·catalog·fabric·parser
                └──────────────────────────────── └──► graph-bolt / graph-db (Ontological)
-                                                      pdf2bpmn · wireframe
+                                                      wireframe
 ```
 
 ## 파일
@@ -21,15 +21,14 @@ msa-ez 가 이미 같은 방식으로 돈다 — 통합 서버 한 대 / AP·DB 
 |---|---|
 | `docker-compose.yml` | **통합 서버 한 대.** 기준 파일 |
 | `docker-compose.split.db.yml` | DB 서버 — graph-db · graph-bolt · authority(+init) |
-| `docker-compose.split.ap.yml` | AP 서버 — web · architect-api · 분석 다섯 · pdf2bpmn · wireframe |
+| `docker-compose.split.ap.yml` | AP 서버 — web · architect-api · 분석 다섯 · wireframe |
 | `.env.example` | 사람이 넣는 값 **전부**. 분할이면 두 서버에 같은 파일 |
 | `authority-init.py` | 권한 서버 최초 초기화(역할 → migrate → 관리자 → 정책). 다시 돌려도 안전 |
 | `check.sh` | 띄우기 전 검사. 아무것도 안 바꾸고 비밀은 이름·길이만 찍는다 |
 | `docker-compose.local-test.yml` | **로컬 시험 전용 overlay** — SWP 없이 개발 로그인(admin·user2), web 을 127.0.0.1 에만. 서버에 쓰지 않는다 |
-| `init-env.sh` | `.env` 를 만들고 비밀 다섯을 채운다(다시 돌려도 안전) |
+| `init-env.sh` | `.env` 를 만들고 비밀 넷을 채운다(다시 돌려도 안전) |
 | `make-split.py` | 분할 두 파일을 통합 파일에서 **만든다**(손으로 안 고친다) |
 | `pin-images.sh` | 새로 굽는 두 이미지의 태그를 세 파일에 같이 박는다 |
-| `pdf2bpmn/facade.py` | `desktop/runtime/pdf2bpmn/facade.py` 의 사본 — `bundle.sh` 가 넣는다 |
 
 ## 올리기 — 통합 서버
 
@@ -69,7 +68,7 @@ DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서�
 
 | 가이드 | 이 판 `.env` | 들어가는 곳 |
 |---|---|---|
-| `$AI_KEY` (다섯 이름에 같은 값) | `ROBO_AI_API_KEY` | OPENAI_API_KEY(api·fabric·catalog·pdf2bpmn) · LLM_API_KEY(catalog) · ROBO_LLM/EMBED/SEARCH_LLM_API_KEY(analyzer) |
+| `$AI_KEY` (다섯 이름에 같은 값) | `ROBO_AI_API_KEY` | OPENAI_API_KEY(api·fabric·catalog) · LLM_API_KEY(catalog) · ROBO_LLM/EMBED/SEARCH_LLM_API_KEY(analyzer) |
 | (msa-ez 의 OPENAI_BASE_URL) | `ROBO_AI_BASE_URL` | 모든 AI 주소 칸 |
 | `$GRAPH_HOST` · `SERVER_IP` · `ROBO_GRAPH_BIND` · `ROBO_AUTHORITY_BIND` | `ROBO_DB_SERVER_IP` (분할만) | 통합 서버는 서비스 이름으로 붙어 필요 없다 |
 | `$GRAPH_PASSWORD` · `GRAPH_PW` | `ROBO_GRAPH_PASSWORD` | 그래프 소유자 |
@@ -81,7 +80,7 @@ DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서�
 | `SWP_SSO_*` | 같은 이름 | authority |
 | `SWP_SSO_LOG_RAW` | — | **코드에 없다**(주석에만 있다). 확인은 authority 로그 `auth.sso.validated` 의 사번·username 으로 |
 | `AUTH_CALLBACK_ALLOWLIST` | `ROBO_PUBLIC_URL` | authority |
-| `PDF2BPMN_FACADE_KEY` (PC 난수) | 같은 이름 (서버 하나) | api · pdf2bpmn |
+| `PDF2BPMN_FACADE_KEY` (PC 난수) | — | pdf2bpmn 을 뺐다(§pdf2bpmn) |
 | `ROBO_GRAPH_MODE=central` · `ROBO_AUTHORITY_URL` | 고정값(yml) | api |
 | `ROBO_IMAGE_*` · `$IMAGE_TAR` | 고정 태그(yml) · `bundle.sh --images` | |
 | `$DEV_*` (시험 로그인) | — | **일부러 없다.** 중앙 authority 가 개발 로그인을 거부한다 |
@@ -91,17 +90,29 @@ DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서�
 않는다.** 납품본에서 `config/*.env` · `architect/app/.env` 로 실리던 제품 설정(모델 이름 ·
 검색 파라미터 등)은 값 그대로 `environment:` 에 옮겨 적었다.
 
-납품본 설정 중 **일부러 뺀 것 하나** — fabric 의 `ROBO_DATASOURCE_REPLACE_LOCALHOST=host.docker.internal`.
+납품본 설정 중 **일부러 뺀 것** — 첫째, fabric 의 `ROBO_DATASOURCE_REPLACE_LOCALHOST=host.docker.internal`.
 설치본에서 사용자가 적은 데이터 소스 주소 `localhost` 를 "**그 사용자의 PC**" 로 바꿔 주던 값이다.
 서버에는 그런 PC 가 없고, podman 에서는 그 이름도 다르다(`host.containers.internal`). 서버
-판에서는 데이터 소스를 **실제 사내망 주소**로 적는다. 그 밖의 값은 설치본(`resources/runtime`)의
-`config/*.env` · `architect/app/.env` 와 **이름·값 전부를 대조했다**(2026-11-10, 비밀 제외 — 다른 것은
-AI 주소가 `.env` 하나로 모인 것과 위의 둘뿐).
+판에서는 데이터 소스를 **실제 사내망 주소**로 적는다. 둘째, pdf2bpmn 관련 네 이름(§pdf2bpmn).
+
+⚠ **2026-11-11 에 다시 대조하니 어긋난 값이 하나 있었다** — analyzer 의 `ROBO_SEARCH_LLM_CONFIG`.
+납품본은 `pgpt` 인데 이 yml 에 `gpt54_mini_openai` 가 적혀 있었다. 그 설정 파일의 `api_base` 는
+**`https://api.openai.com/v1`** 이고, 그 옆에 `ROBO_SEARCH_LLM_API_KEY` 로 사내 키가 들어간다.
+돌아가는 분석기에서 그 이름을 읽는 곳은 `tests/eval/gate_eval.py` 하나라(런타임 LLM 은 모두
+`SETTINGS.analysis_llm.config`) **실효는 없었지만**, 사내 키가 본점 주소를 가리키는 설정 옆에
+놓이는 자리였다. 지금은 `${ROBO_ANALYZER_LLM_CONFIG:-pgpt}` 로 분석용과 같은 갈래를 쓰고,
+`check.sh` 가 **yml 에 박힌 모든 `*_LLM_CONFIG`** 를 AI 주소와 짝지어 본다(전에는
+`ROBO_ANALYZER_LLM_CONFIG` 만 보아 이 자리를 놓쳤다).
+
+그 밖의 값은 설치본(`resources/runtime`)의 `config/*.env` · `architect/app/.env` 와
+**이름·값 전부를 대조했다**(2026-11-11 다시 — 서비스별 전수. 다른 것은 AI 주소가 `.env` 하나로
+모인 것, 위의 셋, 그리고 `AUTH_BIND_CONNECTION`(설치본 `.env` 는 false 였지만 Electron 이
+프로세스 환경으로 true 를 넣어 실효값이 true 였다)뿐이다).
 
 msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 — yml 은 저장소에 들어가고,
 비밀은 `.env`(600) 에만 둔다. 화면에서 고치는 방식은 같다(파일 하나를 연다).
 
-## 이미지 — 열두 장 전부 GHCR(`robo-posco-*`) · 전부 고정 태그
+## 이미지 — 열한 장 전부 GHCR(`robo-posco-*`) · 전부 고정 태그
 
 | 서비스 | 이미지 (`ghcr.io/uengine-oss/…`) | 태그 | 출처 |
 |---|---|---|---|
@@ -114,11 +125,10 @@ msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 
 | parser | `robo-posco-parser` | 〃 | 〃 |
 | gateway | `robo-posco-gateway` | 〃 | 〃 |
 | wireframe | `robo-posco-wireframe` | 〃 | 〃 |
-| pdf2bpmn | `robo-posco-pdf2bpmn` | `735d135` | 납품판 그대로 — ⚠ 상류 `process-gpt-bpmn-extractor:735d135` 는 같은 태그인데 **다른 이미지**다 |
 | architect-api | `robo-posco-architect-api` | `posco-web-<sha7>` | CI 가 굽는다 |
 | web (nginx) | `robo-posco-web` | `posco-web-<sha7>` | CI 가 굽는다 |
 
-- 납품판 열 장은 **다시 굽지 않고** 납품 `robo-images.tar` 의 이미지를 그대로 올렸다
+- 납품판 아홉 장은 **다시 굽지 않고** 납품 `robo-images.tar` 의 이미지를 그대로 올렸다
   (2026-11-10). 같은 커밋이라도 다시 구우면 image ID 가 달라져 납품 매니페스트와 대조가 끊긴다.
   올린 뒤 레지스트리의 **최상위(index) digest** 가 매니페스트 `imageIds` 와 같은 것을 확인했다
   (`docker buildx imagetools inspect <ref>` 의 `Digest`). 이 도커는 containerd 저장소라 image ID 가
@@ -126,8 +136,10 @@ msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 
 - 이름을 `robo-posco-*` 로 따로 둔 이유: `robo-analyzer` · `robo-antlr-parser` ·
   `robo-api-gateway` · `robo-data-fabric` 는 GHCR 에 **다른 제품의 공개 패키지**로 이미 있다.
   거기에 태그를 더하면 고객 납품 이미지가 공개 패키지에 섞인다.
-- `robo-posco-*` 열두 장은 **public** 이다(2026-11-10) — 서버에서 `docker login` 없이 받는다.
-  공개 전에 열 장의 파일을 검사했다: 키·`.env` 0. 고객 문자열은 둘 —
+- `robo-posco-*` 는 **public** 이다(2026-11-10) — 서버에서 `docker login` 없이 받는다.
+  공개 전에 납품 이미지들의 파일을 검사했다: 키·`.env` 0.
+  ⓘ `robo-posco-pdf2bpmn:735d135` 도 올라가 있지만 **이제 yml 이 쓰지 않는다**(§pdf2bpmn).
+  지우지 않고 둔다 — 되살릴 때 상류와 digest 가 다른 그 이미지가 필요하다. 고객 문자열은 둘 —
   authority 의 SWP 기본 주소(공개 저장소 robo-architect 에 이미 있는 것)와
   **analyzer 의 `llm/configs/pgpt.yaml` 에 든 P-GPT 사내 주소**(소스 저장소는 private).
   analyzer 는 그것을 알고 공개했다.
@@ -207,6 +219,48 @@ DB 역할 — 런타임만 제한, 프로젝트 운영은 소유자
   설치본과 같은 동작이고, 거기는 **공용**이다. 프로젝트마다 분석 graph 를 고르게 하는 것은
   화면(projectsStore.currentAnalyzerGraph)이 이미 하고 있다
   한 API 프로세스 안의 캐시·진행 중 작업이 사용자별로 갈리는지는 현장에서 두 계정으로 잰다
+```
+
+## pdf2bpmn — **빼 두었다** (2026-11-11)
+
+```text
+정한 것   compose 에서 서비스를 빼고 `HYBRID_USE_A2A=false` 로 1단계를 **native 추출기**로 보낸다
+          고친 자리 넷 — docker-compose.yml(서비스·facade 주소·키·a2a) · .env.example(FACADE_KEY)
+          init-env.sh(비밀 다섯 → 넷) · bundle.sh(facade.py 사본). **코드는 한 줄도 안 바꿨다**
+근거      `document_to_bpm` 이 이미 facade → a2a → **native** 로 내려간다(`__init__.py`).
+          PDF 글자 뽑기는 업로드 때 PyMuPDF 가 따로 한다(`requirements_document_text.py`) —
+          pdf2bpmn 과 무관하다. 쟀다: 뜬 스택의 architect-api 에서
+          facade_url()='' · a2a_enabled()=False → 1단계 = native
+덤으로 사라진 함정
+          `pdf2bpmn/facade.py` 는 **바인드 마운트**였고 그 파일은 묶음에만 복사됐다.
+          저장소 폴더에서 compose 를 띄우면 도커가 그 자리에 **빈 디렉터리**를 만들어
+          서비스가 재시작을 반복했다(2026-11-10). 메시지 대신 `--wait` 가 안 끝나는 모양이었다.
+          이제 yml 의 바인드 마운트는 `authority-init.py` 와 `analyzer-llm/openai_gpt41.yaml`
+          둘뿐이고 **둘 다 저장소에 있는 파일**이라, 묶음 폴더와 저장소 폴더가 같게 돈다
+⚠ "스킬로 만든다" 의 뜻
+          서버 판에는 claude CLI 가 **없다**(§결정 ②). 그래서 여기서 스킬화는 claude 가 아니라
+          P-GPT 를 쓰는 native 와 **같은 길**이다. claude CLI 로 돌리는 스킬은 lite 쪽 이야기다
+          (`SKILL_RUNNER_PROVIDER=claude_cli`)
+못 잰 것   native 추출기가 낸 BPM 이 facade 만큼 쓸만한지 — 문서 한 건을 실제로 돌려 봐야 안다
+되살리려면 상류 이미지를 그대로 받지 않는다. `process-gpt-bpmn-extractor:735d135` 는 같은
+          태그인데 **다른 이미지**다(상류 b2d8c0… / 납품 3b2833…). GHCR 의
+          `robo-posco-pdf2bpmn:735d135` 를 쓴다 — 지우지 않고 뒀다
+```
+
+## 서버를 지키는 두 가지 — **compose 가 못 하는 일**
+
+```text
+① DB 포트는 compose 가 **좁혀 주지 않는다.** 분할 판의 split.db 는 5432 · 7687 · 59020 을
+   `${ROBO_DB_SERVER_IP}` 에 **묶기만** 한다 — 같은 사내망의 아무 PC 에서나 닿는다.
+   "AP 서버에서만" 은 **호스트 방화벽**이 하는 일이다(가이드 §7 에 적었다).
+   Bolt 는 평문 인증이라 그대로 두면 안 된다
+② 메모리 상한 손잡이를 두었다 — `ROBO_MEM_{API,ANALYZER,PARSER,GATEWAY}`.
+   기본 **0 = 제한 없음**(지금 동작 그대로). 숫자를 안 꾸며 넣은 이유는 **안 재서**다 —
+   쉬는 값만 알고(analyzer 228MiB · parser 676MiB · gateway 518MiB, 2026-11-11) 돌 때를 모른다.
+   조여서 OOM 으로 죽는 쪽이 더 나쁘다. 현장에서 분석을 돌리며 재고 나서 올린다.
+   ⚠ 건 값이 들어갔는지 꼭 본다 — `docker inspect … --format '{{.HostConfig.Memory}}'`.
+     0 이면 안 걸린 것이다(조용히 무시하는 compose 구현이 있다).
+     이 PC 의 docker compose v2 에서 `mem_limit` 가 먹는 것은 쟀다(gateway 에 4g → 4294967296)
 ```
 
 ## ⚠ 처음 띄워 보고 찾은 것 — 납품판 `robo-central.sh` 에도 있다

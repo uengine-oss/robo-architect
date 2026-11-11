@@ -32,6 +32,10 @@ services:
     image: ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-30463c2
     restart: unless-stopped
     labels: *labels
+    # 메모리 상한 손잡이 — 기본 **0 = 제한 없음**(지금 동작 그대로).
+    # 한 대에 열한 서비스가 같이 사니, 분석 하나가 번지면 같은 서버의 DB 까지 굶는다.
+    # 걸 값과 잰 값은 .env.example 의 `ROBO_MEM_*` 절에 적어 두었다.
+    mem_limit: ${ROBO_MEM_API:-0}
     environment:
       # 서버 판 고정값 — 바꾸지 않는다.
       #   central  여럿이 한 저장소를 쓴다. 이미 있는 사용자 role 의 비밀번호를
@@ -66,8 +70,6 @@ services:
       # 안쪽 서비스 — 설치본은 127.0.0.1:<동적포트> 였다(docker-stack.ts).
       ROBO_GATEWAY_URL: http://gateway:9000
       ROBO_CLUSTER_MCP_URL: http://analyzer:5502/robo/mcp/
-      PDF2BPMN_FACADE_URL: http://pdf2bpmn:8080
-      PDF2BPMN_FACADE_KEY: ${PDF2BPMN_FACADE_KEY:?}
       WIREFRAME_SERVICE_URL: http://wireframe:7610
       ROBO_SPEC_BACKEND_URL: http://127.0.0.1:8000
       # AI — 사내 P-GPT 로만 나간다.
@@ -109,13 +111,13 @@ services:
       HYBRID_LEXICAL_MIN_HITS: "2"
       HYBRID_PASSAGE_THETA: "0.5"
       HYBRID_PASSAGE_TOP_K: "2"
-      HYBRID_USE_A2A: "true"
+      # pdf2bpmn 을 뺐으므로 1단계는 native 추출기로 간다. **끄지 않으면** a2a 를
+      # PDF2BPMN_A2A_URL 기본값(localhost:9999)에서 찾다가 문서마다 기다린다.
+      HYBRID_USE_A2A: "false"
       INGESTION_BATCH_SIZE: "500"
       INGESTION_CACHE_DEFAULT: "1"
       INGESTION_SNAPSHOT_DEBUG: "0"
       IS_SKIP_UI_PHASE: "false"
-      PDF2BPMN_A2A_TIMEOUT_S: "300"
-      PDF2BPMN_FACADE_TIMEOUT_S: "600"
       WIREFRAME_LLM_CONCURRENCY: "4"
       WIREFRAME_LLM_TIMEOUT_SEC: "300"
     volumes:
@@ -188,6 +190,7 @@ services:
     image: ghcr.io/uengine-oss/robo-posco-analyzer:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
+    mem_limit: ${ROBO_MEM_ANALYZER:-0}
     environment:
       ROBO_NEO4J_URI: bolt://${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}
       ROBO_NEO4J_USER: ${ROBO_GRAPH_USER:?}
@@ -239,7 +242,12 @@ services:
       ROBO_SEARCH_EVIDENCE_TOP: "15"
       ROBO_SEARCH_FETCH_K: "100"
       ROBO_SEARCH_HOP_GATE: "3"
-      ROBO_SEARCH_LLM_CONFIG: gpt54_mini_openai
+      # 검색(질의 번역)용 설정 — **분석용과 같은 갈래로 둔다.** 납품본 config/analyzer.env 는
+      # `pgpt` 인데 여기에는 `gpt54_mini_openai`(api_base = https://api.openai.com/v1)가
+      # 적혀 있었다. 돌아가는 분석기에서 이 이름을 읽는 곳은 tests/eval/gate_eval.py 하나라
+      # 실효는 없었지만(2026-11-11 측정), 사내 키(ROBO_SEARCH_LLM_API_KEY)가 본점 주소를
+      # 가리키는 설정 옆에 놓이는 자리였다. check.sh 가 yml 의 모든 *_LLM_CONFIG 를 본다.
+      ROBO_SEARCH_LLM_CONFIG: ${ROBO_ANALYZER_LLM_CONFIG:-pgpt}
       ROBO_SEARCH_RANK_FLOOR: "2"
       ROBO_SEARCH_REWRITE: novel_abbrev
       ROBO_SEARCH_SELECTION: global_anchor
@@ -262,6 +270,7 @@ services:
     image: ghcr.io/uengine-oss/robo-posco-parser:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
+    mem_limit: ${ROBO_MEM_PARSER:-0}
     environment:
       SERVER_PORT: "8081"
       ROBO_DATA_DIR: /data
@@ -282,6 +291,7 @@ services:
     image: ghcr.io/uengine-oss/robo-posco-gateway:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
     restart: unless-stopped
     labels: *labels
+    mem_limit: ${ROBO_MEM_GATEWAY:-0}
     environment:
       SERVER_PORT: "9000"
       ROBO_ANTLR_URL: http://parser:8081
@@ -304,31 +314,6 @@ services:
       timeout: 5s
       retries: 24
       start_period: 15s
-
-  pdf2bpmn:
-    image: ghcr.io/uengine-oss/robo-posco-pdf2bpmn:735d135
-    platform: linux/amd64
-    restart: unless-stopped
-    labels: *labels
-    # 이미지의 entrypoint.sh 는 자기 스택을 띄운다. compose 의 command 는 CMD 만 덮으므로
-    # entrypoint 를 덮어야 우리 facade 가 뜬다(설치본 compose 주석).
-    entrypoint: ["sh", "-c", "cd /app && PYTHONPATH=/app:/facade exec uvicorn facade:app --host 0.0.0.0 --port 8080"]
-    volumes:
-      - ./pdf2bpmn/facade.py:/facade/facade.py:ro
-    environment:
-      PYTHONIOENCODING: utf-8
-      OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}
-      OPENAI_BASE_URL: ${ROBO_AI_BASE_URL:?}
-      PGPT_BASE_URL: ${ROBO_AI_BASE_URL:?}
-      PGPT_API_KEY: ${ROBO_AI_API_KEY:?}
-      LLM_MODEL: gpt-4.1
-      FACADE_API_KEY: ${PDF2BPMN_FACADE_KEY:?}
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
 
   wireframe:
     image: ghcr.io/uengine-oss/robo-posco-wireframe:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp

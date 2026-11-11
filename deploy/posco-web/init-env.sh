@@ -6,10 +6,10 @@
 #
 # 하는 일
 #   1. .env 가 없으면 .env.example 을 복사한다 (있으면 그대로 둔다)
-#   2. 아직 CHANGE_ME 인 비밀 다섯만 난수(16진수 48자)로 채운다
+#   2. 아직 CHANGE_ME 인 비밀 넷만 난수(16진수 48자)로 채운다
 #   3. 사람이 채울 이름만 알려 준다 — 값은 찍지 않는다
 #
-# ⚠ 비밀 다섯 중 ROBO_GRAPH_PASSWORD · AUTH_ROLE_SECRET 은 한 번 정하면 바꾸지 않는다.
+# ⚠ 비밀 넷 중 ROBO_GRAPH_PASSWORD · AUTH_ROLE_SECRET 은 한 번 정하면 바꾸지 않는다.
 #   이 스크립트는 CHANGE_ME 인 것만 채우므로 두 번 돌려도 바뀌지 않는다.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -22,7 +22,7 @@ else
   echo ".env 를 만들었다 (.env.example 복사)"
 fi
 
-for n in ROBO_GRAPH_PASSWORD ROBO_AUTHORITY_DB_PASSWORD AUTH_JWT_SECRET AUTH_ROLE_SECRET PDF2BPMN_FACADE_KEY; do
+for n in ROBO_GRAPH_PASSWORD ROBO_AUTHORITY_DB_PASSWORD AUTH_JWT_SECRET AUTH_ROLE_SECRET; do
   if grep -q "^$n=CHANGE_ME" .env; then
     v=$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
     sed -i "s/^$n=CHANGE_ME.*/$n=$v/" .env

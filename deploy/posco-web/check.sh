@@ -8,7 +8,8 @@
 #   1. 분할 파일이 통합 파일에서 만든 그대로인가(make-split.py --check)
 #   2. 이미지가 **전부 고정 태그**인가 — latest·태그 없음이면 멈춘다
 #   3. .env 가 있고, CHANGE_ME 가 남지 않았고, 비밀이 규칙에 맞는가
-#   4. compose 가 그 .env 로 파일을 읽어 내는가(config)
+#   4. yml 에 **박힌** 모델 설정 이름이 AI 주소와 짝인가
+#   5. compose 가 그 .env 로 파일을 읽어 내는가(config)
 #
 # podman 이면  COMPOSE="podman compose" bash check.sh
 set -euo pipefail
@@ -82,6 +83,25 @@ else
     pgpt:*) ok "AI: P-GPT (analyzer pgpt)";;
     *) bad "ROBO_ANALYZER_LLM_CONFIG 는 pgpt | openai_gpt41";;
   esac
+  # yml 에 **박힌** 모델 설정 이름. `.env` 를 거치는 것은 위에서 이미 봤다.
+  # 2026-11-11: ROBO_SEARCH_LLM_CONFIG 가 `gpt54_mini_openai`(api_base = api.openai.com)로
+  # 박혀 있었다 — 위의 짝 검사는 ROBO_ANALYZER_LLM_CONFIG 만 보아 이 자리를 놓쳤다.
+  seen=0; pinned=0
+  while read -r name value; do
+    seen=$((seen+1))
+    case $value in '${'*) continue;; esac
+    pinned=$((pinned+1))
+    case "$value:$(val ROBO_AI_BASE_URL)" in
+      openai_gpt41:https://api.openai.com/*) ok "yml $name=$value (OpenAI 직결과 짝)";;
+      pgpt:https://api.openai.com/*) bad "yml 의 $name=pgpt 인데 ROBO_AI_BASE_URL 이 OpenAI 다";;
+      pgpt:*) ok "yml $name=$value (P-GPT 와 짝)";;
+      openai_gpt41:*) bad "yml 의 $name=openai_gpt41 인데 ROBO_AI_BASE_URL 이 OpenAI 가 아니다";;
+      *) bad "yml 에 AI 주소와 짝이 아닌 모델 설정이 박혀 있다: $name=$value";;
+    esac
+  done < <(sed -n 's/^ *\([A-Z0-9_]*LLM_CONFIG\): *\(.*\)/\1 \2/p' "$FILE")
+  if (( seen == 0 )); then ok "모델 설정 이름이 이 파일에 없다 (DB 서버 몫)"
+  elif (( pinned == 0 )); then ok "모델 설정 $seen 곳 모두 .env 가 정한다 (박힌 값 없음)"; fi
+
   url=$(val ROBO_PUBLIC_URL)
   [[ $url =~ ^https?://[^/]+$ ]] || bad "ROBO_PUBLIC_URL 은 scheme://host:port (경로 없이)"
   if [[ $FILE == *split* ]]; then
