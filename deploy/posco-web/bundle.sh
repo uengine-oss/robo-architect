@@ -5,7 +5,7 @@
 #   bash deploy/posco-web/bundle.sh /tmp/robo-posco-web --images   # + 이미지 tar
 #
 # 묶음 = compose 셋 + 로컬 시험용 overlay(docker-compose.local-test.yml) · .env.example · init-env.sh · check.sh · authority-init.py · make-split.py ·
-#        analyzer-llm/openai_gpt41.yaml · README.md
+#        analyzer-llm/openai_gpt41.yaml · README.md · **서버-배포-가이드.md**
 #        --images 면  images.tar · image-ids.txt(태그 → image ID) · SHA256SUMS
 #
 # ⓘ pdf2bpmn 을 뺐으므로(2026-11-11) `pdf2bpmn/facade.py` 를 더 넣지 않는다.
@@ -25,6 +25,8 @@ DOCKER=${DOCKER:-docker}
 mkdir -p "$OUT"
 cp "$HERE"/{docker-compose.yml,docker-compose.split.ap.yml,docker-compose.split.db.yml,docker-compose.local-test.yml} "$OUT/"
 cp "$HERE"/{.env.example,init-env.sh,check.sh,authority-init.py,make-split.py,README.md} "$OUT/"
+# 서버 관리자가 따라가는 가이드 — 묶음 안에 같이 넣는다(이것만 보고 올릴 수 있어야 한다).
+cp "$HERE/서버-배포-가이드.md" "$OUT/"
 mkdir -p "$OUT/analyzer-llm" && cp "$HERE/analyzer-llm/openai_gpt41.yaml" "$OUT/analyzer-llm/"
 echo "files → $OUT"
 
