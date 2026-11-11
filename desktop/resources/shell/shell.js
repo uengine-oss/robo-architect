@@ -324,22 +324,38 @@ function bootHtml() {
   }
   return esc(bootText())
 }
-// AI 키 행. 대부분의 LLM 은 이 PC 의 CLI 가 하므로 키가 필요 없다. 기본 설치에서
-// 키에 걸려 있는 것은 **카탈로그의 표 설명·FK 추론**과 Architect 의 OpenAI 경로다.
+// AI 키 행 — **키는 선택이다.** 이 PC 의 Claude Code 브리지가 LLM 을 대신하므로, 키가 없어도
+// "레거시 분석 → 문서 업로드 → 설계 → 프로포절 → 구현 → 검증" 이 전 구간 돈다(2026-11-11 에
+// PRO-001 을 끝까지 돌려 확인했다). 그래서 **노란 점으로 경고하지 않는다** — 예전 문구는
+// "미설정" 을 빠뜨린 것처럼 보이게 하고 setx 를 맨 앞에 띄웠다.
+//
+// 키가 실제로 하는 일은 둘뿐이다:
+//   ① **catalog** 의 표 설명·FK 추론 — 그 컨테이너는 브리지를 타지 않는다(굽기가
+//      LLM_API_BASE=api.openai.com + 빈 키로 박는다) → 키가 없으면 못 한다
+//   ② **임베딩** — 브리지에는 `/embeddings` 가 없다(`/chat/completions`·`/models` 뿐).
+//      없으면 하이브리드 매퍼가 후보를 못 좁히고 전부 LLM 검증자에게 넘긴다
+//      (agentic_retriever: "No embeddings available — degrade to return everything in scope").
+//      결과는 나오지만 정밀도가 떨어지고 LLM 호출이 늘어난다
+// ⚠ 키를 넣으면 llmBridgeEnv() 가 손을 뗀다 → **LLM 호출이 Claude Code 대신 그 키로 간다.**
+//   과금 주체가 바뀌는 것이므로 '설정됨' 쪽에 그 말을 적는다.
+//
 // main 의 openAiKey 가 **이름과 설정 여부만** 넘긴다 — 값은 넘어오지도, 찍히지도 않는다.
 function keyRowHtml() {
   const k = info.openAiKey
   if (!k || !Array.isArray(k.names)) return ''
-  if (k.set) {
-    return `<div class="status-row"><span class="dot ok"></span><div><b>AI 키</b> 설정됨<small>카탈로그의 표 설명과 FK 추론이 돕니다</small></div></div>`
-  }
-  // 무엇을 못 하게 되는지 먼저 말한다. 이름만 띄우면 무엇을 포기하는지 모른다.
   const name = esc(k.names[k.names.length - 1])
   // Finder 로 연 앱은 셸 설정을 안 읽으므로(host-path.ts 는 PATH 만 가져온다) macOS 는 launchctl 이다.
   const how = info.platform === 'darwin'
-    ? `터미널에서 launchctl setenv ${name} &lt;키&gt; 를 실행하고 앱을 다시 여세요(재부팅하면 다시 실행)`
-    : `명령 프롬프트에서 setx ${name} &lt;키&gt; 를 실행하고 앱을 다시 여세요`
-  return `<div class="status-row"><span class="dot warn"></span><div><b>AI 키</b> 미설정<small>카탈로그의 표 설명과 FK 추론이 실패합니다 · ${how}</small></div></div>`
+    ? `launchctl setenv ${name} &lt;키&gt;`
+    : `setx ${name} &lt;키&gt;`
+  if (k.set) {
+    return `<div class="status-row"><span class="dot ok"></span><div><b>AI 키</b> 설정됨<small>카탈로그의 표 설명·FK 추론과 임베딩 매핑이 돕니다 · LLM 호출도 Claude Code 대신 이 키로 갑니다</small></div></div>`
+  }
+  // 에이전트도 없고 키도 없으면 그때는 **진짜 경고**다 — LLM 단계가 아예 못 돈다.
+  if (!info.claude) {
+    return `<div class="status-row"><span class="dot warn"></span><div><b>AI 키</b> 없음<small>Claude Code 도 없습니다 — 둘 중 하나는 있어야 분석·설계·구현이 돕니다 · ${how} 뒤 앱 다시 열기</small></div></div>`
+  }
+  return `<div class="status-row"><span class="dot"></span><div><b>AI 키</b> 없음 — 넣지 않아도 됩니다<small>LLM 은 위의 Claude Code 가 대신합니다. 키를 넣으면 ① 카탈로그의 표 설명·FK 추론이 돌고 ② 요구사항 매핑이 임베딩으로 더 정확해집니다 · ${how} 뒤 앱 다시 열기</small></div></div>`
 }
 // 에이전트 행. CLI 가 있나 없나만 말하던 자리다 — **누구 구독으로 도는지**도 말한다.
 // 스킬과 LLM 브리지는 Anthropic 키를 지우고 `claude -p` 를 띄우므로(skill_runner._skill_env),
