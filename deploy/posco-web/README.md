@@ -104,6 +104,21 @@ DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서�
 `check.sh` 가 **yml 에 박힌 모든 `*_LLM_CONFIG`** 를 AI 주소와 짝지어 본다(전에는
 `ROBO_ANALYZER_LLM_CONFIG` 만 보아 이 자리를 놓쳤다).
 
+⚠⚠ **그리고 반대 방향도 봐야 했다 — 2026-11-11.** 처음 대조는 "납품에 있는데 compose 에
+없는 이름" 과 "값이 다른 이름" 만 봤다. **compose 가 더한 이름**은 보지 않았고, 거기에
+하나가 숨어 있었다 — architect-api 의 `EMBEDDING_API_KEY`. 납품 `architect/app/.env` 에는
+그 이름이 **없어서** 임베딩이 `OPENAI_BASE_URL`(P-GPT)을 물려받았는데, 이 yml 이 키를
+더하면서 `api/platform/embeddings.py` 가 그것을 "전용 endpoint" 로 보고 **OpenAI 본점**으로
+보냈다(`dedicated_key` → `embed_base_url or OPENAI_DEFAULT_BASE_URL`). 띄운 컨테이너에서
+쟀다: `describe().baseUrl = https://api.openai.com/v1`. 전용 키가 있으니 그 경고
+(`sharesChatEndpoint`)도 **안 뜬다.** 사내망에서는 임베딩이 조용히 실패했을 자리다.
+⇒ `EMBEDDING_BASE_URL: ${ROBO_AI_BASE_URL:?}` 을 더했다(고친 뒤 같은 컨테이너에서
+   `baseUrl` 이 게이트웨이로 바뀌는 것을 다시 쟀다). `check.sh` 가 이제 셋을 본다:
+   ① 주석 아닌 자리에 박힌 `api.openai.com` ② AI 주소 칸이 모두 `.env` 를 가리키는지
+   ③ **`EMBEDDING_API_KEY` 가 있으면 `EMBEDDING_BASE_URL` 도 있는지**(없는 값을 잡는 검사).
+   둘을 가짜로 걸어 확인했다. 반대 방향으로 다시 훑은 결과 그 밖에 위험한 추가는 없었다
+   (나머지는 설치본이 프로세스 환경으로 주던 키들과 내부 주소·플래그다).
+
 그 밖의 값은 설치본(`resources/runtime`)의 `config/*.env` · `architect/app/.env` 와
 **이름·값 전부를 대조했다**(2026-11-11 다시 — 서비스별 전수. 다른 것은 AI 주소가 `.env` 하나로
 모인 것, 위의 셋, 그리고 `AUTH_BIND_CONNECTION`(설치본 `.env` 는 false 였지만 Electron 이

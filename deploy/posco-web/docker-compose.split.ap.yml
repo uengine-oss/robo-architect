@@ -78,7 +78,16 @@ services:
       LLM_API_BASE: ${ROBO_AI_BASE_URL:?}
       OPENAI_BASE_URL: ${ROBO_AI_BASE_URL:?}
       OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}
+      # ⚠ 임베딩은 **주소도 같이** 줘야 한다. 전용 키(EMBEDDING_API_KEY)만 주면
+      # api/platform/embeddings.py 가 "전용 endpoint" 로 보고 **OpenAI 본점**으로 보낸다
+      # (`dedicated_key` → `embed_base_url or OPENAI_DEFAULT_BASE_URL`). 그러면 사내망에서
+      # 임베딩이 조용히 실패하고, 그 경고(`sharesChatEndpoint`)도 전용 키가 있어 안 뜬다.
+      # 2026-11-11 에 띄운 컨테이너에서 쟀다: 주소 없이는 baseUrl=https://api.openai.com/v1.
+      # 납품 설치본 `architect/app/.env` 에는 EMBEDDING_API_KEY 가 **없어** OPENAI_BASE_URL
+      # 을 물려받았다 — 이 yml 이 키를 더하면서 생긴 자리다. P-GPT 는 임베딩을 제공한다
+      # (2026-10-29 스펙: text-embedding-3-small · -3-large · ada-002).
       EMBEDDING_API_KEY: ${ROBO_AI_API_KEY:?}
+      EMBEDDING_BASE_URL: ${ROBO_AI_BASE_URL:?}
       EMBEDDING_MODEL: text-embedding-3-small
       HYBRID_EMBEDDING_MODEL: text-embedding-3-small
       LLM_MAX_COMPLETION_TOKENS: "4096"

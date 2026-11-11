@@ -8,7 +8,7 @@
 #   1. 분할 파일이 통합 파일에서 만든 그대로인가(make-split.py --check)
 #   2. 이미지가 **전부 고정 태그**인가 — latest·태그 없음이면 멈춘다
 #   3. .env 가 있고, CHANGE_ME 가 남지 않았고, 비밀이 규칙에 맞는가
-#   4. yml 에 **박힌** 모델 설정 이름이 AI 주소와 짝인가
+#   4. yml 의 모델 설정·AI 주소가 .env 와 짝인가 (박힌 값 **과 빠진 값** 모두)
 #   5. compose 가 그 .env 로 파일을 읽어 내는가(config)
 #
 # podman 이면  COMPOSE="podman compose" bash check.sh
@@ -101,6 +101,34 @@ else
   done < <(sed -n 's/^ *\([A-Z0-9_]*LLM_CONFIG\): *\(.*\)/\1 \2/p' "$FILE")
   if (( seen == 0 )); then ok "모델 설정 이름이 이 파일에 없다 (DB 서버 몫)"
   elif (( pinned == 0 )); then ok "모델 설정 $seen 곳 모두 .env 가 정한다 (박힌 값 없음)"; fi
+
+  # AI 주소가 **전부 .env 에서 나오는가.** 2026-11-11 에 여기가 뚫렸다 — architect-api 에
+  # EMBEDDING_API_KEY 만 주고 주소를 안 줬더니, 코드가 그것을 "전용 endpoint" 로 보고
+  # **OpenAI 본점**으로 보냈다(embeddings.py: dedicated_key → OPENAI_DEFAULT_BASE_URL).
+  # 띄운 컨테이너에서 baseUrl=https://api.openai.com/v1 로 쟀다. 박힌 값을 보는 검사로는
+  # **없는 값**을 못 잡으므로 셋을 같이 본다.
+  # 주석은 뺀다 — 이 yml 의 주석이 그 주소를 **설명**한다(2026-11-11 에 자기 주석에 걸렸다).
+  if grep -vE '^ *#' "$FILE" | grep -qE 'api[.]openai[.]com'; then
+    bad "yml 에 api.openai.com 이 박혀 있다 — 주소는 .env 로만 정한다"
+  else
+    ok "yml 에 박힌 외부 AI 주소 없음"
+  fi
+  n_ai=0
+  while read -r line; do
+    n_ai=$((n_ai+1))
+    [[ $line == *ROBO_AI_BASE_URL* ]] || bad "AI 주소가 .env 를 안 가리킨다: ${line%%:*}"
+  done < <(grep -E '^ +(OPENAI|EMBEDDING|LLM|ROBO_EMBED)[A-Z0-9_]*(BASE_URL|API_BASE): ' "$FILE" | sed 's/^ *//')
+  if (( n_ai == 0 )); then ok "AI 주소 칸이 이 파일에 없다 (DB 서버 몫)"
+  else ok "AI 주소 칸 $n_ai 곳이 .env(ROBO_AI_BASE_URL)를 가리킨다"; fi
+  if grep -qE '^ +EMBEDDING_API_KEY: ' "$FILE"; then
+    if grep -qE '^ +EMBEDDING_BASE_URL: ' "$FILE"; then
+      ok "EMBEDDING 키와 주소가 짝이다"
+    else
+      bad "EMBEDDING_API_KEY 만 있고 EMBEDDING_BASE_URL 이 없다 — 임베딩이 OpenAI 본점으로 간다"
+    fi
+  else
+    ok "전용 임베딩 키를 안 쓴다 (OPENAI_BASE_URL 을 물려받는다)"
+  fi
 
   url=$(val ROBO_PUBLIC_URL)
   [[ $url =~ ^https?://[^/]+$ ]] || bad "ROBO_PUBLIC_URL 은 scheme://host:port (경로 없이)"
