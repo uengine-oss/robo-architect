@@ -50,9 +50,18 @@ echo "[3] .env"
 if [[ ! -f .env ]]; then
   bad ".env 가 없다 — cp .env.example .env"
 else
+  # ⚠ Windows 체크아웃은 `.env.example` 을 **CRLF** 로 내려준다. init-env.sh 가 그대로
+  # 복사하면 **모든 값 끝에 CR 이 붙는다** — 길이가 1 늘고, true|false · pgpt 같은 값
+  # 비교가 전부 어긋나고, 무엇보다 비밀번호에 CR 이 들어가 **DSN 이 깨진다**.
+  # 2026-11-12 에 실제로 밟았다(49자·8자·x 넷). 값 검사보다 **먼저** 잡는다.
+  if grep -q "$(printf '\015')" .env; then
+    bad ".env 에 CR(Windows 줄끝)이 섞였다 — 값 끝마다 CR 이 붙는다. 고치기:  sed -i 's/[[:space:]]*\$//' .env"
+  else ok "줄끝 LF"; fi
   perm=$(stat -c %a .env 2>/dev/null || echo "?")
-  case "$(uname -s)" in
+  fstype=$(df -T . 2>/dev/null | awk 'NR==2{print $2}')
+  case "$(uname -s)/$fstype" in
     MINGW*|MSYS*|CYGWIN*) ok "권한 검사 건너뜀(Windows 파일시스템)";;
+    */drvfs|*/9p|*/cifs) ok "권한 검사 건너뜀($fstype — Windows 마운트는 chmod 가 안 듣는다)";;
     *) [[ $perm == 600 ]] && ok "권한 $perm" || bad "권한 $perm — chmod 600 .env";;
   esac
   val() { sed -n "s/^$1=//p" .env | tail -1; }

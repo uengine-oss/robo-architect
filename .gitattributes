@@ -6,3 +6,12 @@
 # CR 을 걷어내고 확인까지 한다), 2026-10-16 에 굽기 가이드가 부르게 된
 # scripts/fetch-templates.sh 가 같은 자리에 섰다.
 *.sh text eol=lf
+
+# `.env.example` 도 **언제나 LF** 로 받는다.
+#
+# Windows 체크아웃이 이것을 CRLF 로 내려주면 `init-env.sh` 가 복사한 `.env` 의
+# **모든 값 끝에 CR 이 붙는다**. 2026-11-12 에 깨끗한 PC 의 새 클론에서 그대로
+# 밟았다 — 길이가 1 씩 늘고(48→49자), `ROBO_APPROVAL_REQUIRED` · 
+# `ROBO_ANALYZER_LLM_CONFIG` 값 비교가 어긋나고, 비밀번호에 CR 이 들어가 DSN 이
+# 깨진다. `check.sh` 가 이제 이름을 대며 잡지만, 애초에 생기지 않게 둔다.
+.env.example text eol=lf
