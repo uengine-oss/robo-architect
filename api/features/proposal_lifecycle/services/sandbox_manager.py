@@ -36,6 +36,19 @@ class NotAGitRepoError(RuntimeError):
         super().__init__(f"대상 프로젝트가 Git 저장소가 아닙니다: {root}")
 
 
+#: 커밋을 만드는 git 호출에 붙이는 신원 폴백.
+#:
+#: 대상 프로젝트는 `git init` 으로 우리가 만들 수도 있고(FR-006 의 'git init 후 계속'),
+#: 그 저장소에도 사용자 전역에도 `user.email` 이 없을 수 있다. 그러면 git 이
+#: "Committer identity unknown" 으로 **커밋을 거부**한다.
+#:
+#: ⚠ 2026-11-12: 이 폴백이 **초기 커밋에만** 있었다. 그래서 `git init` 으로 만든
+#: 저장소는 구현까지 다 되고 **Accept 의 머지에서 반드시 죽었다** —
+#: "DualMerge failed at git_merge: Committer identity unknown".
+#: 커밋을 만드는 호출은 셋이다(초기 커밋 · 머지 · 되돌리기 revert) → 셋 다 붙인다.
+_IDENTITY = ["-c", "user.name=robo-architect", "-c", "user.email=robo-architect@localhost"]
+
+
 class SandboxManager:
     def _denest(self, path: Path) -> Path:
         """경로가 샌드박스 worktree 내부(.../.sandbox/proposal/<id>[/...])를 가리키면
@@ -89,9 +102,7 @@ class SandboxManager:
         # 파일이 있으면 모두 스테이징하고, 비어 있으면 --allow-empty 로 커밋한다.
         subprocess.run(["git", "add", "-A"], cwd=str(root), capture_output=True)
         commit = subprocess.run(
-            ["git",
-             "-c", "user.name=robo-architect",
-             "-c", "user.email=robo-architect@localhost",
+            ["git", *_IDENTITY,
              "commit", "--allow-empty", "-m", "Initial commit (robo-architect)"],
             cwd=str(root), capture_output=True, text=True,
         )
@@ -249,7 +260,8 @@ class SandboxManager:
         """샌드박스 브랜치를 대상 프로젝트의 현재 브랜치에 머지."""
         root = self._resolve_root(project_root)
         result = subprocess.run(
-            ["git", "merge", "--no-ff", self.branch_name(proposal_id),
+            ["git", *_IDENTITY,
+             "merge", "--no-ff", self.branch_name(proposal_id),
              "-m", f"Accept {proposal_id}"],
             cwd=str(root),
             capture_output=True,
@@ -291,7 +303,7 @@ class SandboxManager:
             return MergeResult(success=True, error="머지 커밋을 찾지 못함 (이미 정리됨)")
 
         result = subprocess.run(
-            ["git", "revert", "-m", "1", "--no-edit", sha],
+            ["git", *_IDENTITY, "revert", "-m", "1", "--no-edit", sha],
             cwd=str(root), capture_output=True, text=True,
         )
         if result.returncode != 0:
