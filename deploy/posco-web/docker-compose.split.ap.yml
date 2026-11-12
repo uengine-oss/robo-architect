@@ -17,7 +17,7 @@ x-labels: &labels
 
 services:
   web:
-    image: ghcr.io/uengine-oss/robo-posco-web:posco-web-30463c2
+    image: ghcr.io/uengine-oss/robo-posco-web:posco-web-b38421d
     restart: unless-stopped
     labels: *labels
     environment:
@@ -29,7 +29,7 @@ services:
         condition: service_healthy
 
   architect-api:
-    image: ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-30463c2
+    image: ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-b38421d
     restart: unless-stopped
     labels: *labels
     # 메모리 상한 손잡이 — 기본 **0 = 제한 없음**(지금 동작 그대로).
