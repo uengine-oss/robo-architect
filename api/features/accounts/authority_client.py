@@ -1,6 +1,7 @@
 """PC → 중앙 계정 API. 권한 조회 실패 때 로컬 토큰/DB로 폴백하지 않는다."""
 from __future__ import annotations
 
+import json
 import os
 from ipaddress import ip_address, ip_network
 from urllib.parse import urlsplit
@@ -77,6 +78,46 @@ def delegated_path(path: str) -> bool:
             or path == "/api/code-templates/sets" or path.startswith("/api/code-templates/sets/"))
 
 
+# `/api/auth/provider` 가 담는 AI 진단 칸. **이 프로세스가 답해야 하는 값**이다.
+_LOCAL_AI_FIELDS = ("embeddings", "aiGateway")
+
+
+def _overlay_local_ai(body: bytes) -> bytes:
+    """중앙 응답의 AI 진단 칸을 **이 프로세스의 실제 설정**으로 덮는다.
+
+    ⚠ 2026-11-12 실측: 서버 배포(posco-web) 통합 서버에서
+    `curl /api/auth/provider` 가 `embeddings.baseUrl = https://api.openai.com/v1`,
+    `keySource = inherited`, `chatBaseUrl = null` 을 돌려줬다. 그런데 같은 순간
+    architect-api 컨테이너 안에서 `embeddings.describe()` 는
+    `dedicated` + `.env` 가 정한 사내 주소를 돌려줬다. 응답이 **authority**
+    컨테이너에서 계산되기 때문이다 — 그 컨테이너에는 `EMBEDDING_*` · `OPENAI_*`
+    가 **한 줄도 없다**(실측 0개). 있을 이유도 없다: 임베딩을 부르는 것은
+    architect-api 다.
+
+    그러면 이 칸은 **둘 다 거짓**이 된다 — 제대로 맞춰 놔도 "본점으로 간다" 고
+    하고, 잘못 맞춰 놔도 똑같이 말한다. 설정을 잡으려고 만든 칸이 설정을 못 본다.
+    그래서 넘겨받은 본문에서 이 칸만 **여기서** 갈아 끼운다. 인증·승인 판단은
+    그대로 중앙이 한다(이 함수는 AI 칸만 만진다).
+    """
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(payload, dict):
+        return body
+    # 순환 import 를 피해 함수 안에서 부른다.
+    from api.platform.ai_gateway import describe as describe_ai_gateway
+    from api.platform.embeddings import describe as describe_embeddings
+
+    try:
+        payload["embeddings"] = describe_embeddings()
+        payload["aiGateway"] = describe_ai_gateway()
+    except Exception:
+        # 진단 칸 하나 때문에 로그인 응답을 깨지 않는다.
+        return body
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
 class AuthorityProxyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         try:
@@ -96,6 +137,10 @@ class AuthorityProxyMiddleware(BaseHTTPMiddleware):
                                                 headers=headers, content=await request.body())
         except httpx.HTTPError:
             return JSONResponse({"detail": "중앙 권한 서버에 연결할 수 없습니다."}, status_code=503)
-        return Response(response.content, status_code=response.status_code,
+        content = response.content
+        if (request.url.path == "/api/auth/provider" and response.status_code == 200
+                and "application/json" in (response.headers.get("content-type") or "")):
+            content = _overlay_local_ai(content)
+        return Response(content, status_code=response.status_code,
                         headers={name: response.headers[name] for name in ("content-type", "location")
                                  if name in response.headers})
