@@ -661,6 +661,11 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
         return {"success": False, "message": f"삭제 실패: {str(e)}", "deleted": {}}
 
 
+#: 분석 그래프의 노드에 붙는 **표시용 라벨** — 타입이 아니다(og_catalog 의 type 으로는
+#: 노드가 0개다). 라벨별 집계에서 걷어 내지 않으면 전체 수와 같은 한 통이 섞여 나온다.
+_MARKER_LABELS = frozenset({"ANALYZER_OWNED"})
+
+
 @router.get("/stats")
 async def get_data_stats(request: Request) -> dict[str, Any]:
     """분석기가 그래프에 넣은 것을 센다 — 코드 분석 모드의 관문.
@@ -699,16 +704,25 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
             )
             return {"total": 0, "counts": {}, "hasData": False, "analyzerGraph": None}
         with sess as session:
-            query = """
-            MATCH (n)
-            WITH labels(n)[0] as label, count(n) as count
-            RETURN collect({label: label, count: count}) as counts
-            """
-            result = session.run(query)
-            record = result.single()
-            counts = {item["label"]: item["count"] for item in record["counts"]} if record else {}
-
-            total = sum(counts.values())
+            # ⚠ `labels(n)[0]` 로는 **한 통**만 나온다. 이 엔진에서 분석기가 넣은 노드는
+            # 라벨이 **정확히 둘**이고(2026-11-11 실측: size(labels(n))=2 인 노드 1084개 전부)
+            # 그 첫 칸이 표시용 marker `ANALYZER_OWNED` 다. 그래서 예전 질의는
+            # `{"ANALYZER_OWNED": 1084}` 를 돌려주었고, 화면의 카드(FUNCTION·RULE·TABLE)는
+            # 하나도 안 떴다 — 관문은 열리는데 **숫자가 없는** 모양이었다.
+            # UNWIND 로 라벨을 펼쳐 세고(이 엔진에서 되는 것을 실제 그래프에 돌려 확인했다)
+            # marker 는 파이썬에서 걷는다. total 은 노드 수를 따로 세어 쓴다 —
+            # 라벨 수에 기대지 않으려고.
+            total = session.run("MATCH (n) RETURN count(n) AS total").single()["total"]
+            record = session.run(
+                """
+                MATCH (n)
+                UNWIND labels(n) AS label
+                WITH label, count(*) AS count
+                RETURN collect({label: label, count: count}) AS counts
+                """
+            ).single()
+            raw = {item["label"]: item["count"] for item in record["counts"]} if record else {}
+            counts = {k: v for k, v in raw.items() if k not in _MARKER_LABELS}
             SmartLogger.log(
                 "INFO",
                 "Ingestion stats returned.",
