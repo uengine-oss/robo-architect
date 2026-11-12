@@ -10,12 +10,13 @@
     "build": "tsc -b",
     "build:clean": "tsc -b --clean && tsc -b",
     "dev": "npm run build && electron .",
-    "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
+    "pack": "npm run build && npm run build:figma && electron-builder --dir",
+    "dist": "npm run build && npm run build:figma && electron-builder",
     "test": "playwright test",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
-    "dist:mac": "npm run build && electron-builder --mac --arm64",
-    "dist:win": "npm run build && electron-builder --win --x64 --config electron-builder.win.js"
+    "dist:mac": "npm run build && npm run build:figma && electron-builder --mac --arm64",
+    "dist:win": "npm run build && npm run build:figma && electron-builder --win --x64 --config electron-builder.win.js",
+    "build:figma": "bash ../figma-plugin/build.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.47.0",

@@ -23,6 +23,7 @@ import type {
   DesktopBridge,
   DesktopSettings,
   DesktopSettingsWritable,
+  FigmaPluginRevealResult,
   IpcResult,
   IpcSubscriptionChannel,
   IpcSubscriptionMap,
@@ -180,6 +181,9 @@ const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "
   },
   logs: {
     reveal: () => invoke<{ ok: true }>("logs:reveal"),
+  },
+  figma: {
+    revealPlugin: () => invoke<FigmaPluginRevealResult>("figma:revealPlugin"),
   },
   update: {
     check: () => invoke<UpdateCheckResult>("update:check"),

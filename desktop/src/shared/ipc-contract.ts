@@ -188,6 +188,18 @@ export interface OpenExternalParams {
  * Per-channel signature map. Each entry: `[RequestArgs, ResponseData]`.
  * The actual transport always wraps `ResponseData` in `IpcResult<ResponseData>`.
  */
+/**
+ * Figma 플러그인 묶음을 꺼내 놓은 자리.
+ *
+ * 사용자는 이 폴더의 `manifest.json` 을 Figma 의
+ * Plugins → Development → Import plugin from manifest… 에서 고른다.
+ * 설치 폴더가 아니라 앱 데이터 자리다 — Figma 가 경로를 기억하므로 앱을
+ * 업데이트·삭제해도 남아야 한다(`main/figma-plugin.ts` 머리말).
+ */
+export interface FigmaPluginRevealResult {
+  dir: string;
+}
+
 export interface IpcRequestMap {
   "app:getRuntimeState": [void, RuntimeState];
   "settings:get": [void, SettingsGetResult];
@@ -201,6 +213,7 @@ export interface IpcRequestMap {
   "update:check": [void, UpdateCheckResult];
   "update:apply": [void, { ok: true }];
   "app:openExternal": [OpenExternalParams, { ok: true }];
+  "figma:revealPlugin": [void, FigmaPluginRevealResult];
 }
 
 export type IpcChannel = keyof IpcRequestMap;
@@ -269,6 +282,10 @@ export interface DesktopBridge {
     onBackendStatus(cb: (e: BackendStatusEvent) => void): Unsubscribe;
     onUpdateState(cb: (e: UpdateStateEvent) => void): Unsubscribe;
     onDataSourceChanged(cb: (e: DataSourceChangedEvent) => void): Unsubscribe;
+  };
+  figma: {
+    /** 묶음을 앱 데이터로 꺼내고 그 폴더를 연다. `dir` 안의 manifest.json 을 Import 한다. */
+    revealPlugin(): Promise<IpcResult<FigmaPluginRevealResult>>;
   };
   settings: {
     get(): Promise<IpcResult<SettingsGetResult>>;
