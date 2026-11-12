@@ -1,8 +1,12 @@
 # posco-web 이미지 — architect-api · web 을 **커밋 태그**로 굽고 GHCR 에 올린다.
 #
-# 태그: posco-web-<커밋 7자리>   (latest 를 만들지 않는다)
-#   ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-<sha>
-#   ghcr.io/uengine-oss/robo-posco-web:posco-web-<sha>
+# 태그 **둘**을 같이 올린다 (latest 는 만들지 않는다)
+#   :posco-web-<커밋 7자리>   불변 — 되돌리기·납품 대조용
+#   :delivery                움직인다 — compose 가 박는 태그. 그래서 고칠 때마다
+#                            yml 을 손대지 않아도 되고, 폐쇄망은 tar 를 load 하고
+#                            `up -d --wait` 만 치면 된다
+#   ghcr.io/uengine-oss/robo-posco-architect-api:{posco-web-<sha>, delivery}
+#   ghcr.io/uengine-oss/robo-posco-web:{posco-web-<sha>, delivery}
 #
 # 나머지 아홉 장(graph-db · bolt · authority · analyzer · catalog · fabric · parser ·
 # gateway · wireframe)은 **납품판 0.1.0 rdel-swp 그대로**다. 여기서 다시 굽지 않는다 —
@@ -129,7 +133,17 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           provenance: false
-          tags: ghcr.io/uengine-oss/${{ matrix.name }}:${{ steps.tag.outputs.tag }}
+          # 태그 **둘**을 같이 올린다.
+          #   posco-web-<sha7>  커밋마다 다른 **불변** 태그 — 되돌리기·대조용
+          #   delivery          **움직이는** 태그 — compose 가 이것을 박는다
+          # 왜: 고치는 커밋마다 yml 의 태그를 바꿔야 했고, 사내망에서는 그 yml 을
+          # 다시 들여와야 했다. delivery 로 두면 **tar 를 load 하고 up 만** 하면 된다
+          # (compose 가 image ID 가 달라진 것을 보고 그 컨테이너만 다시 만든다).
+          # "지금 뭐가 올라와 있나" 는 태그가 아니라 **라벨**로 본다 — 아래
+          # org.opencontainers.image.revision (가이드 §8 에 보는 법을 적어 뒀다).
+          tags: |
+            ghcr.io/uengine-oss/${{ matrix.name }}:${{ steps.tag.outputs.tag }}
+            ghcr.io/uengine-oss/${{ matrix.name }}:delivery
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
