@@ -1,6 +1,6 @@
 {
   "name": "robo-architect-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Robo Architect Lite — desktop app (Electron shell + host Architect API + Docker stack on Ontological DB).",
   "author": "uEngine",
