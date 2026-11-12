@@ -772,6 +772,11 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
         return {"success": False, "message": f"삭제 실패: {str(e)}", "deleted": {}}
 
 
+#: 분석 그래프의 노드에 붙는 **표시용 라벨** — 타입이 아니다. 라벨별 집계에서 걷어 내지
+#: 않으면 전체 수와 같은 한 통이 섞여 나온다(2026-11-12 측정).
+_MARKER_LABELS = frozenset({"ANALYZER_OWNED"})
+
+
 @router.get("/stats")
 async def get_data_stats(request: Request) -> dict[str, Any]:
     """Count what the analyzer put in the graph — the code-analysis mode's gate.
@@ -800,16 +805,25 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
         if sess is None:
             return {"success": True, "counts": {}, "analyzerGraph": None}
         with sess as session:
-            query = """
-            MATCH (n)
-            WITH labels(n)[0] as label, count(n) as count
-            RETURN collect({label: label, count: count}) as counts
-            """
-            result = session.run(query)
-            record = result.single()
-            counts = {item["label"]: item["count"] for item in record["counts"]} if record else {}
-
-            total = sum(counts.values())
+            # ⚠ `labels(n)[0]` 로는 **한 통**만 나온다. 분석기가 넣은 노드는 이 엔진에서
+            # 라벨이 **정확히 둘**이고(2026-11-12 실측: size(labels(n))=2 인 노드 전부)
+            # 그 첫 칸이 표시용 marker `ANALYZER_OWNED` 다. 그래서 예전 질의는
+            # `{"ANALYZER_OWNED": N}` 을 돌려주었고 화면의 타입별 카드가 비었다.
+            # UNWIND 로 펼쳐 세고(실제 그래프에 돌려 되는 것을 확인했다) marker 는
+            # 파이썬에서 걷는다. total 은 노드 수를 따로 센다 — 라벨 수에 기대지 않으려고.
+            # ⓘ 설계 그래프를 세는 질의(clear-all 의 before_counts)는 라벨이 하나라
+            #   `labels(n)[0]` 이 맞다 — 그쪽은 그대로 둔다.
+            total = session.run("MATCH (n) RETURN count(n) AS total").single()["total"]
+            record = session.run(
+                """
+                MATCH (n)
+                UNWIND labels(n) AS label
+                WITH label, count(*) AS count
+                RETURN collect({label: label, count: count}) AS counts
+                """
+            ).single()
+            raw = {item["label"]: item["count"] for item in record["counts"]} if record else {}
+            counts = {k: v for k, v in raw.items() if k not in _MARKER_LABELS}
             SmartLogger.log(
                 "INFO",
                 "Ingestion stats returned.",
