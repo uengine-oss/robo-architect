@@ -62,7 +62,7 @@ x-labels: &labels
 services:
   # ── 브라우저 진입점 — 빌드된 자산만 낸다 ─────────────────────────────
   web:
-    image: ghcr.io/uengine-oss/robo-posco-web:posco-web-b38421d
+    image: ghcr.io/uengine-oss/robo-posco-web:posco-web-6d59fdb
     restart: unless-stopped
     labels: *labels
     environment:
@@ -75,7 +75,7 @@ services:
 
   # ── Architect API — 설치본에서는 PC 의 번들 python.exe 였다 ─────────
   architect-api:
-    image: ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-b38421d
+    image: ghcr.io/uengine-oss/robo-posco-architect-api:posco-web-6d59fdb
     restart: unless-stopped
     labels: *labels
     # 메모리 상한 손잡이 — 기본 **0 = 제한 없음**(지금 동작 그대로).
