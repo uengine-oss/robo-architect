@@ -43,7 +43,15 @@ while read -r img; do
   ref=${img##*/}
   if [[ $ref != *:* ]]; then bad "태그 없음: $img"
   elif [[ ${ref##*:} == latest ]]; then bad "latest: $img"
-  else ok "$img"; fi
+  else
+    # `:delivery` 는 **움직이는** 태그다(CI 가 커밋마다 다시 붙인다). 그래서 태그만
+    # 보면 어느 코드인지 알 수 없다 — 이미지가 이 서버에 있으면 **라벨**로 찍는다.
+    # CI 가 org.opencontainers.image.revision 에 커밋 sha 를 박아 둔다.
+    # 엔진 바이너리만 떼어 쓴다 — $COMPOSE 는 "docker compose"(또는 "podman compose") 다.
+    rev=$("${COMPOSE%% *}" image inspect "$img"             --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null)
+    if [[ -n $rev && $rev != "<no value>" ]]; then ok "$img  (커밋 ${rev:0:7})"
+    else ok "$img"; fi
+  fi
 done < <(sed -n 's/^    image: *//p' "$FILE")
 
 echo "[3] .env"
