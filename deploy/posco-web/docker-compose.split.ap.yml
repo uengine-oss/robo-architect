@@ -264,9 +264,9 @@ services:
       ROBO_SEARCH_SUPPORT_ROOT_TOP: "12"
     volumes:
       - shared_data:/data
-      - ./analyzer-llm/openai_gpt41.yaml:/app/llm/configs/openai_gpt41.yaml:ro
+      - ./analyzer-llm/openai_gpt41.yaml:/app/llm/configs/openai_gpt41.yaml:ro,z
       # 이미지 가격표에 gpt-4.1 이 없어 분석이 거부된다 — 파일 머리말 참고.
-      - ./analyzer-llm/llm_pricing.yaml:/app/llm/usage/llm_pricing.yaml:ro
+      - ./analyzer-llm/llm_pricing.yaml:/app/llm/usage/llm_pricing.yaml:ro,z
     depends_on:
       catalog:
         condition: service_healthy

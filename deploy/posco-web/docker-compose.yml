@@ -234,7 +234,7 @@ services:
       ROBO_ADMIN_EMPNO: ${ROBO_ADMIN_EMPNO:?최초 관리자 사번}
       ROBO_APPROVAL_REQUIRED: ${ROBO_APPROVAL_REQUIRED:-true}
     volumes:
-      - ./authority-init.py:/app/authority_init.py:ro
+      - ./authority-init.py:/app/authority_init.py:ro,z
     command: ["python", "/app/authority_init.py"]
     depends_on:
       graph-db:
@@ -418,9 +418,9 @@ services:
       ROBO_SEARCH_SUPPORT_ROOT_TOP: "12"
     volumes:
       - shared_data:/data
-      - ./analyzer-llm/openai_gpt41.yaml:/app/llm/configs/openai_gpt41.yaml:ro
+      - ./analyzer-llm/openai_gpt41.yaml:/app/llm/configs/openai_gpt41.yaml:ro,z
       # 이미지 가격표에 gpt-4.1 이 없어 분석이 거부된다 — 파일 머리말 참고.
-      - ./analyzer-llm/llm_pricing.yaml:/app/llm/usage/llm_pricing.yaml:ro
+      - ./analyzer-llm/llm_pricing.yaml:/app/llm/usage/llm_pricing.yaml:ro,z
     depends_on:
       graph-bolt:
         condition: service_healthy

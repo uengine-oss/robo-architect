@@ -109,7 +109,7 @@ services:
       ROBO_ADMIN_EMPNO: ${ROBO_ADMIN_EMPNO:?최초 관리자 사번}
       ROBO_APPROVAL_REQUIRED: ${ROBO_APPROVAL_REQUIRED:-true}
     volumes:
-      - ./authority-init.py:/app/authority_init.py:ro
+      - ./authority-init.py:/app/authority_init.py:ro,z
     command: ["python", "/app/authority_init.py"]
     depends_on:
       graph-db:
