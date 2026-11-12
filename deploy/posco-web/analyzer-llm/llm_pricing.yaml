@@ -1,0 +1,113 @@
+# =====================================================================
+# analyzer 가격표 — **이미지 안의 것을 이 파일로 덮는다.**
+#
+# 왜 여기 있나 (2026-11-12 실측)
+#   납품 이미지의 `llm/usage/llm_pricing.yaml` 에 **gpt-4.1 이 없다**. 그런데
+#   `pgpt.yaml`(납품 기본)과 `openai_gpt41.yaml` 둘 다 `model: gpt-4.1` 이다.
+#   `compute_cost` 는 모르는 모델을 **fail-closed** 로 거부하므로(예산 차단기를
+#   우회시키지 않으려고 일부러 그렇게 뒀다) 레거시 분석이 이렇게 죽는다:
+#     UnknownModelPriceError: No LLM price is configured for model 'gpt-4.1-2025-04-14'
+#   ⇒ 사내망에서도 **같은 자리에서 막힌다**(로컬 시험만의 문제가 아니다).
+#
+#   이미지를 다시 구우면 납품 아홉 장의 image ID 가 바뀌어 **납품 매니페스트 대조가
+#   깨진다**. 가격표는 코드가 아니라 데이터("단일 진실 yaml")이므로 마운트로 고친다.
+#   근본 고침은 상류 robo-data-analyzer 에 올려 다음 굽기에 녹인다.
+#
+# 바꾼 것 한 줄: gpt-4.1 (input $2.00 · cached $0.50 · output $8.00 / 1M).
+#   출처 OpenAI 모델 페이지(2026-11-12 확인). 봉인은 revision 을
+#   gpt-4.1-2025-04-14 로 박지만 `lookup_price` 가 날짜 꼬리를 떼므로 키는 하나다.
+# =====================================================================
+# LLM 가격 — 단일 진실 (1M tokens 당 USD).
+#
+# 가격 변동 시 이 파일 한 곳만 갱신 + `last_updated` 날짜 변경 후 커밋.
+# 새 모델 추가 = `models:` 아래 1 블록 추가.
+#
+# 공급자 공식 가격을 확인한 뒤 이 파일만 갱신한다.
+#   → 현재 표 출력 + 공식 페이지 URL 안내 + 갱신 절차 가이드.
+#
+# 매칭 로직 (`llm/usage/pricing.py:lookup_price`):
+#   1. 정확 매칭 (`models` 키 그대로)
+#   2. 날짜 suffix strip (`-YYYYMMDD` 또는 `-YYYY-MM-DD`)
+#   3. provider prefix 제거 (`anthropic/` / `openai/` / `qwen/`)
+
+last_updated: "2026-05-27"
+
+sources:
+  - "https://www.anthropic.com/pricing"
+  - "https://openai.com/api/pricing/"
+  - "https://openrouter.ai/models"
+
+models:
+  # ── Anthropic Claude ───────────────────────────────────────
+  claude-3-5-sonnet-20241022:
+    input_per_1m: 3.0
+    output_per_1m: 15.0
+    cached_input_per_1m: 0.30
+  claude-sonnet-4:
+    input_per_1m: 3.0
+    output_per_1m: 15.0
+    cached_input_per_1m: 0.30
+  claude-opus-4:
+    input_per_1m: 15.0
+    output_per_1m: 75.0
+    cached_input_per_1m: 1.50
+  claude-haiku-4-5:
+    input_per_1m: 0.80
+    output_per_1m: 4.0
+    cached_input_per_1m: 0.08
+
+  # ── OpenAI ─────────────────────────────────────────────────
+  # gpt-4.1 — POSCO 납품판이 쓰는 모델(pgpt.yaml · openai_gpt41.yaml 둘 다 `model: gpt-4.1`).
+  # 봉인은 revision 을 gpt-4.1-2025-04-14 로 박지만 lookup_price 가 날짜 꼬리를 떼므로
+  # 키는 `gpt-4.1` 하나로 족하다. 출처: OpenAI 모델 페이지(2026-11-12 확인).
+  gpt-4.1:
+    input_per_1m: 2.00
+    output_per_1m: 8.00
+    cached_input_per_1m: 0.50
+  gpt-4o:
+    input_per_1m: 2.50
+    output_per_1m: 10.0
+  gpt-4o-mini:
+    input_per_1m: 0.15
+    output_per_1m: 0.60
+  gpt-5-nano:
+    input_per_1m: 0.05
+    output_per_1m: 0.40
+  gpt-5-mini:
+    input_per_1m: 0.25
+    output_per_1m: 2.00
+  gpt-5.4-nano:
+    input_per_1m: 0.20
+    output_per_1m: 1.00
+  gpt-5.4-mini:
+    input_per_1m: 0.75
+    output_per_1m: 4.50
+  # Official model page verified 2026-08-31.
+  text-embedding-3-small:
+    input_per_1m: 0.02
+    output_per_1m: 0.0
+
+  # ── Qwen (OpenRouter 또는 자체 호스팅) ─────────────────────
+  qwen-3-8b:
+    input_per_1m: 0.06
+    output_per_1m: 0.20
+  qwen-3-32b:
+    input_per_1m: 0.30
+    output_per_1m: 0.80
+  qwen-3-72b:
+    input_per_1m: 0.60
+    output_per_1m: 1.20
+  qwen/qwen3.6-35b-a3b:
+    input_per_1m: 0.15
+    output_per_1m: 1.0
+  qwen3.6-35b-a3b:
+    input_per_1m: 0.15
+    output_per_1m: 1.0
+
+  # ── 로컬 / 자체 호스팅 SGLang / vLLM (비용 0) ──────────────
+  local:
+    input_per_1m: 0.0
+    output_per_1m: 0.0
+  frentis-ai-model:
+    input_per_1m: 0.0
+    output_per_1m: 0.0
