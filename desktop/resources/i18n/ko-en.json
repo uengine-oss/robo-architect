@@ -1,5 +1,9 @@
 {
  "exact": {
+  "AI 키": "AI key",
+  "설정됨": "set",
+  "미설정": "not set",
+  "카탈로그의 표 설명과 FK 추론이 돕니다": "Table descriptions and FK inference work in the catalog",
   "전략적 설계": "Strategic",
   "Strategic Design 없음": "No Strategic Design",
   "+ 새 Proposal": "+ New Proposal",
@@ -2774,6 +2778,14 @@
  },
  "patterns": [
   [
+   "카탈로그의 표 설명과 FK 추론이 실패합니다 · 터미널에서 launchctl setenv {0} <키> 를 실행하고 앱을 다시 여세요(재부팅하면 다시 실행)",
+   "Table descriptions and FK inference fail in the catalog · run launchctl setenv {0} <key> in Terminal and reopen the app (run it again after a restart)"
+  ],
+  [
+   "카탈로그의 표 설명과 FK 추론이 실패합니다 · 명령 프롬프트에서 setx {0} <키> 를 실행하고 앱을 다시 여세요",
+   "Table descriptions and FK inference fail in the catalog · run setx {0} <key> at a command prompt and reopen the app"
+  ],
+  [
    "인수 조건 {0}건 + 구조 검증 대상 로드. robo-sync 추출기로 대조합니다…",
    "Loaded {0} acceptance criteria + structural targets. Comparing with the robo-sync extractor…"
   ],
@@ -4766,8 +4778,8 @@
    "Proposal {0}"
   ],
   [
-   "그래프 {0} · Docker 컨테이너 7개 · 127.0.0.1",
-   "graph {0} · 7 Docker containers · 127.0.0.1"
+   "그래프 {0} · Docker 컨테이너 {1}개 · 127.0.0.1",
+   "graph {0} · {1} Docker containers · 127.0.0.1"
   ],
   [
    "이동/이름변경 실패: {0}",

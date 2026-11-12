@@ -27,6 +27,7 @@ import {
 } from "../shared/ipc-contract";
 
 import { ensureDataDirs } from "./data-dir";
+import { revealFigmaPlugin } from "./figma-plugin";
 import { initLogging, log, revealLogs } from "./logging";
 import { adoptHostPath } from "./host-path";
 import { IpcHandlerError, pushToRenderer, registerHandler } from "./ipc";
@@ -306,6 +307,10 @@ function registerIpcHandlers(): void {
     await revealLogs();
     return { ok: true as const };
   });
+
+  // Figma 플러그인 묶음 꺼내기 — 설치본 사용자 PC 에는 저장소가 없어서
+  // `manifest.json` 을 직접 구할 길이 없다(`main/figma-plugin.ts` 머리말).
+  registerHandler("figma:revealPlugin", () => revealFigmaPlugin());
 
   registerHandler("app:openExternal", async ({ url }) => {
     if (!url.startsWith("http://") && !url.startsWith("https://")) {

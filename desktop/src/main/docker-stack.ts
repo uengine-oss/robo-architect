@@ -28,8 +28,8 @@ import { getSecret, setSecret } from "./secret-store";
 import { loadSettings } from "./settings";
 
 const MANIFEST_NAME = "runtime-manifest.json";
-const STATE_SCHEMA_VERSION = 1;
-const MANIFEST_SCHEMA_VERSION = 3;
+const STATE_SCHEMA_VERSION = 2;
+const MANIFEST_SCHEMA_VERSION = 4;
 const DEFAULT_COMPOSE_PROJECT_NAME = "robo-architect-desktop";
 // ROBO_COMPOSE_PROJECT: a second stack next to the usual one (packaged-app test with a
 // fresh data folder — the same project name would recreate the running containers).
@@ -56,6 +56,8 @@ export interface RuntimeManifest {
     fabric: string;
     parser: string;
     gateway: string;
+    // open-pencil 렌더러. 없으면 와이어프레임 단계가 **조용히** 빈다(compose 의 주석에 실측).
+    wireframe: string;
   };
   imageIds: Record<keyof RuntimeManifest["images"], string>;
   /** registry manifest digests recorded when the release images were pushed — pulls are pinned to them */
@@ -82,6 +84,8 @@ export interface DockerStackPorts {
   analyzer: number;
   gateway: number;
   architect: number;
+  // open-pencil 렌더러. Architect API 가 호스트에서 돌므로 호스트 포트가 있어야 닿는다.
+  wireframe: number;
 }
 
 interface PersistedDockerState {
@@ -163,6 +167,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     "fabric",
     "parser",
     "gateway",
+    "wireframe",
   ]) {
     if (!manifest.images?.[required as keyof RuntimeManifest["images"]]) {
       throw new Error(`runtime.manifest_invalid: missing image ${required}`);
@@ -402,8 +407,23 @@ function loadPersistedState(releaseId: string): PersistedDockerState | null {
     ) {
       return null;
     }
+    // ⚠ 개수로 세면 어긋난다. 2026-11-05 까지 이 검사는 `!== 4` 였는데 `createState` 는
+    //   **다섯**을 썼다 — 그래서 저장된 상태가 **매번 버려지고** 호스트 포트가 실행마다
+    //   바뀌었다(50242… → 58832… 로 바뀌는 것을 실측). 키 집합으로 센다.
+    const expected: (keyof DockerStackPorts)[] = [
+      "neo4j",
+      "graphPg",
+      "analyzer",
+      "gateway",
+      "architect",
+      "wireframe",
+    ];
+    const keys = Object.keys(parsed.ports);
+    if (keys.length !== expected.length || expected.some((k) => !keys.includes(k))) {
+      return null;
+    }
     const ports = Object.values(parsed.ports);
-    if (ports.length !== 4 || ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535)) {
+    if (ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535)) {
       return null;
     }
     return parsed;
@@ -422,6 +442,7 @@ async function createState(releaseId: string): Promise<PersistedDockerState> {
       analyzer: await pickFreePort(),
       gateway: await pickFreePort(),
       architect: await pickFreePort(),
+      wireframe: await pickFreePort(),
     },
   };
   const file = statePath();
@@ -454,12 +475,14 @@ function composeEnvironment(
     ROBO_IMAGE_FABRIC: manifest.images.fabric,
     ROBO_IMAGE_PARSER: manifest.images.parser,
     ROBO_IMAGE_GATEWAY: manifest.images.gateway,
+    ROBO_IMAGE_WIREFRAME: manifest.images.wireframe,
     ROBO_NEO4J_PASSWORD: password,
     ROBO_NEO4J_PORT: String(state.ports.neo4j),
     ROBO_GRAPH_PG_LOCAL_PORT: String(state.ports.graphPg),
     ROBO_ANALYZER_PORT: String(state.ports.analyzer),
     ROBO_GATEWAY_PORT: String(state.ports.gateway),
     ROBO_ARCHITECT_API_PORT: String(state.ports.architect),
+    ROBO_WIREFRAME_PORT: String(state.ports.wireframe),
   };
 }
 
@@ -502,6 +525,10 @@ export async function startDockerStack(onProgress?: ProgressListener): Promise<D
   const hostNeo4jUri = `bolt://127.0.0.1:${state.ports.neo4j}`;
   process.env.ROBO_GATEWAY_URL = `http://127.0.0.1:${state.ports.gateway}`;
   process.env.ROBO_CLUSTER_MCP_URL = `http://127.0.0.1:${state.ports.analyzer}/robo/mcp/`;
+  // ⚠ 이 한 줄이 Architect 를 렌더러에 붙인다. 없으면 컨테이너는 뜨는데
+  //   `open_pencil_client` 가 기본값 `http://localhost:7610` 을 보고 못 찾아,
+  //   와이어프레임이 **오류 없이** 빈다(is_available() 이 False 를 돌려준다).
+  process.env.WIREFRAME_SERVICE_URL = `http://127.0.0.1:${state.ports.wireframe}`;
   process.env.ROBO_NEO4J_URI = hostNeo4jUri;
   // Bolt 사용자는 엔진의 PG 역할 그대로다 — "neo4j" 로 붙으면 인증이 실패한다.
   process.env.ROBO_NEO4J_USER = GRAPH_USER;

@@ -5,6 +5,7 @@ import FileTreePane from './FileTreePane.vue'
 import FileEditorPane from './FileEditorPane.vue'
 import SessionManagerPopover from './SessionManagerPopover.vue'
 import { closeTerminalSession, fetchGlobalSkillsStatus, installGlobalSkills } from '../workspace.api.js'
+import { listPendingLaunches, clearPendingLaunch } from '../model/pendingLaunch.js'
 
 const props = defineProps({
   workdir: { type: String, default: '' },
@@ -479,16 +480,49 @@ async function checkGlobalSkills() {
   }
 }
 
+// ── 준비됐지만 아직 시작되지 않은 구현 ───────────────────────────────────
+// Code 탭에는 이 안내가 **전혀 없었다**. 그래서 Proposal 탭에서 "구현 열기" 로 준비만
+// 해 둔 사람이 여기로 들어오면, 자동으로 열리는 것은 **프로젝트 루트의 main 셀**이고
+// claude 첫 실행 신뢰·확인 절차만 거기서 돌았다 — PRD 도 챗도 나오지 않는다(2026-11-11).
+// 동선은 바꾸지 않는다(자동 진입 아님). 띠 하나와 버튼 하나를 둔다.
+const pendingLaunches = ref([])
+
+function refreshPendingLaunches() {
+  // 이미 그 Proposal 의 셀이 열려 있으면 띠를 띄우지 않는다(명령은 그때 주입됐다).
+  const open = new Set(
+    sessions.value.filter((s) => s.kind === 'proposal').map((s) => s.proposalId || deriveProposalId(s.workdir)),
+  )
+  pendingLaunches.value = listPendingLaunches().filter((p) => !open.has(p.proposalId))
+}
+
+function launchPending(p) {
+  // 'Claude Code 셀로 이동' 과 **같은 길**로 보낸다 — 같은 이벤트, 같은 명령.
+  window.dispatchEvent(new CustomEvent('claude-terminal-open', {
+    detail: {
+      workdir: p.worktreePath,
+      command: p.command || ('/robo-implement ' + p.proposalId),
+      label: p.proposalId,
+      proposalId: p.proposalId,
+      kind: 'proposal',
+      restart: !!p.restart,
+    },
+  }))
+  clearPendingLaunch(p.proposalId)
+  nextTick(refreshPendingLaunches)
+}
+
 onMounted(() => {
   window.addEventListener('claude-terminal-send', _onTerminalSend)
   window.addEventListener('claude-terminal-open', _onTerminalOpen)
   checkGlobalSkills()
+  refreshPendingLaunches()
 })
 
 onActivated(() => {
   // KeepAlive: process any queued command when this tab is re-activated
   // (the event may have fired before onActivated, so re-check is a no-op)
   checkGlobalSkills()
+  refreshPendingLaunches()
 })
 
 onBeforeUnmount(() => {
@@ -784,6 +818,21 @@ onBeforeUnmount(() => {
       </div>
       <!-- 터미널 비활성 배포에선 ClaudeCodeTerminal 을 아예 마운트하지 않는다 →
            WS 연결/서버 claude 스폰 자체가 발생하지 않음. -->
+      <!-- 준비는 끝났는데 아직 시작되지 않은 구현 — 아래 셀은 프로젝트 루트다. -->
+      <div v-if="!CLAUDE_TERMINAL_DISABLED && pendingLaunches.length" class="ccw-pending">
+        <span class="ccw-pending__icon">ℹ️</span>
+        <p class="ccw-pending__text">
+          <strong>준비된 구현이 있습니다.</strong>
+          아래 셀은 <strong>프로젝트 루트</strong>이고, 구현 지시는 아직 들어가지 않았습니다.
+          시작하려면 오른쪽 버튼을 누르세요(Proposal 탭의 “Claude Code 셀로 이동”과 같습니다).
+        </p>
+        <button
+          v-for="p in pendingLaunches"
+          :key="p.proposalId"
+          class="ccw-pending__btn"
+          @click="launchPending(p)"
+        >{{ p.proposalId }} 구현 시작</button>
+      </div>
       <div v-if="!CLAUDE_TERMINAL_DISABLED" class="ccw-terminals">
         <div
           v-for="s in sessions"
@@ -915,6 +964,25 @@ onBeforeUnmount(() => {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 12px; height: 100%; padding: 32px; text-align: center;
 }
+
+.ccw-pending {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; flex-shrink: 0;
+  background: var(--ccw-bg-elevated);
+  border-bottom: 1px solid var(--ccw-border);
+}
+.ccw-pending__icon { font-size: 0.95rem; line-height: 1; flex-shrink: 0; }
+.ccw-pending__text {
+  margin: 0; flex: 1; min-width: 0;
+  color: var(--ccw-text-dim); font-size: 0.78rem; line-height: 1.5;
+}
+.ccw-pending__text strong { color: var(--ccw-text); }
+.ccw-pending__btn {
+  flex-shrink: 0; padding: 5px 11px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--ccw-accent); background: var(--ccw-accent);
+  color: #fff; font-size: 0.76rem; font-weight: 600;
+}
+.ccw-pending__btn:hover { filter: brightness(1.08); }
 .ccw-terminal-disabled__title {
   color: var(--ccw-text); font-size: 0.95rem; font-weight: 600;
 }

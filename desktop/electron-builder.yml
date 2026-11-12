@@ -40,6 +40,12 @@ extraResources:
   - from: resources/i18n
     to: i18n
     filter: ["translate.js", "ko-en.json", "en.css"]
+  # Figma 플러그인 묶음 — 사용자 PC 에는 저장소도 bun 도 없어서 `dist/plugin.js` 를
+  # 스스로 구울 수 없다. `npm run build:figma` 가 굽고, 앱이 앱 데이터로 꺼내 준다
+  # (main/figma-plugin.ts). 묶음이 없으면 모달의 단추가 이름을 대며 실패한다.
+  - from: ../figma-plugin
+    to: figma-plugin
+    filter: ["manifest.json", "dist/plugin.js"]
 
 win:
   target:

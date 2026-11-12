@@ -3,7 +3,7 @@
 #
 #   scripts/release/check-images-public.sh [--version 0.1.0]
 #
-# Exit 0 when all seven manifests answer 200 without credentials; otherwise lists the
+# Exit 0 when every manifest answers 200 without credentials; otherwise lists the
 # package settings pages where the visibility has to be switched to Public, and exits 3.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -12,7 +12,7 @@ VERSION=$(node -p "require('$ROOT/desktop/package.json').version")
 ORG=uengine-oss
 ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
 private=""
-for component in graph-db graph-bolt analyzer catalog fabric parser gateway; do
+for component in graph-db graph-bolt analyzer catalog fabric parser gateway wireframe; do
   pkg="robo-architect-lite-$component"
   token=$(curl -fsS "https://ghcr.io/token?scope=repository:$ORG/$pkg:pull" 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)
@@ -32,4 +32,4 @@ if [ -n "$private" ]; then
   for pkg in $private; do echo "  https://github.com/orgs/$ORG/packages/container/$pkg/settings"; done
   exit 3
 fi
-echo "all seven images can be pulled anonymously"
+echo "all stack images can be pulled anonymously"

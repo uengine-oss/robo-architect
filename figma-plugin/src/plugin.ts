@@ -1691,3 +1691,12 @@ figma.ui.postMessage({
   // payload so the architect modal can show "Connected to <fileName>".
   fileName: (figma.root && figma.root.name) || '',
 })
+
+// ⚠ 이 빈 export 를 지우면 **플러그인이 통째로 안 돈다.**
+//
+// import/export 가 하나도 없으면 bun 이 이 파일을 CommonJS 로 보고
+// `__commonJS(() => { … })` 로 감싸는데, `--format=iife` 번들에는 그것을 호출하는
+// 코드가 없어 본문이 실행되지 않는다. 구문도 멀쩡하고 파일 크기도 그대로여서 눈으로는
+// 안 보이고, Figma 에는 "실행중" 만 뜨고 창이 열리지 않는다. 2026-11-12 에
+// `build.sh` 의 검증 단계가 이것을 잡았다("번들이 figma.showUI 를 부르지 않는다").
+export {}

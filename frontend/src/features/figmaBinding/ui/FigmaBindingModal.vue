@@ -7,6 +7,37 @@ import HistoryFailureRow from './HistoryFailureRow.vue'
 import HistorySyncRunRow from './HistorySyncRunRow.vue'
 import PreviousBindingGroup from './PreviousBindingGroup.vue'
 
+/**
+ * 플러그인 묶음을 **앱이 꺼내 준다.**
+ *
+ * 설치본 사용자 PC 에는 저장소가 없다. 그래서 `manifest.json` 의
+ * `"main": "dist/plugin.js"` 를 구할 길이 없다 — 2026-11-12 에 포스코 웹 판에서
+ * 그대로 밟았다(`Unable to load code: ENOENT … figma-plugin\dist\plugin.js`).
+ * 굽는 쪽이 묶음을 싣고(`npm run build:figma` + extraResources), 여기서 부르면
+ * 메인이 **앱 데이터**로 복사한 뒤 그 폴더를 연다(`main/figma-plugin.ts`).
+ * 설치 폴더를 열지 않는 이유는 Figma 가 Import 한 **경로를 기억**하기 때문이다 —
+ * 앱을 업데이트·삭제하면 플러그인이 조용히 사라진다.
+ */
+const pluginBusy = ref(false)
+const pluginDir = ref('')
+const pluginError = ref('')
+const canRevealPlugin = typeof window !== 'undefined' && !!window.desktop?.figma?.revealPlugin
+
+async function revealPlugin() {
+  pluginBusy.value = true
+  pluginError.value = ''
+  try {
+    const result = await window.desktop.figma.revealPlugin()
+    if (result?.ok) pluginDir.value = result.data?.dir || ''
+    // 실패를 삼키지 않는다 — 묶음이 안 실린 판이면 그 말이 화면에 떠야 한다.
+    else pluginError.value = result?.error?.message || '플러그인 폴더를 열지 못했습니다.'
+  } catch (e) {
+    pluginError.value = e?.message || '플러그인 폴더를 열지 못했습니다.'
+  } finally {
+    pluginBusy.value = false
+  }
+}
+
 // Connect / Replace happen from the Figma plugin (which posts file_key +
 // file_name to /api/figma-binding/connect). This modal is read-only +
 // disconnect; the plugin is the source of truth for "which file are we
@@ -179,6 +210,35 @@ watch(tab, (t) => {
       </nav>
 
       <div class="fb-modal__body">
+        <!--
+          플러그인 설치 — 설치본에는 저장소가 없으므로 **앱이 묶음을 꺼내 준다.**
+          (저장소의 manifest 를 그대로 고르면 dist/ 가 없어 ENOENT 로 죽는다)
+        -->
+        <div v-if="tab === 'main' && canRevealPlugin" class="fb-section fb-plugin">
+          <p class="fb-hint">
+            <strong>RoboArchitect Sync 플러그인</strong>을 Figma 에 한 번 등록해야 합니다.
+            아래 단추를 누르면 플러그인 폴더가 열립니다.
+          </p>
+          <button class="fb-btn fb-btn--primary fb-plugin__btn"
+                  :disabled="pluginBusy" @click="revealPlugin">
+            {{ pluginBusy ? '꺼내는 중…' : '플러그인 폴더 열기' }}
+          </button>
+          <ol class="fb-steps">
+            <li>Figma <strong>데스크톱 앱</strong>에서 Plugins → Development →
+              <strong>Import plugin from manifest…</strong></li>
+            <li>열린 폴더의 <code>manifest.json</code> 을 고릅니다. 한 번만 하면 됩니다.</li>
+            <li>그다음부터는 Plugins → Development →
+              <strong>RoboArchitect Sync</strong> 로 실행합니다.</li>
+          </ol>
+          <code v-if="pluginDir" class="fb-plugin__dir">{{ pluginDir }}</code>
+          <p v-if="pluginError" class="fb-error">{{ pluginError }}</p>
+          <p class="fb-hint">
+            이 폴더는 <strong>앱 데이터 자리</strong>라 앱을 업데이트해도 남습니다 —
+            Figma 는 Import 한 경로를 기억하므로 폴더를 옮기지 마세요.
+            브라우저 Figma 에는 Development 메뉴가 없어 <strong>데스크톱 앱</strong>이어야 합니다.
+          </p>
+        </div>
+
         <!-- No binding yet → plugin instructions -->
         <div v-if="tab === 'main' && !store.binding" class="fb-section">
           <p class="fb-hint">
@@ -522,6 +582,13 @@ watch(tab, (t) => {
 .fb-history-group { display: flex; flex-direction: column; gap: 0; margin-bottom: 12px; }
 .fb-history-group__header { display: flex; justify-content: space-between; align-items: center; padding: 4px 0 6px; font-size: 0.78rem; }
 .fb-btn--primary { background: #0acf83; color: #fff; }
+/* 단추가 .fb-section 의 flex column 안에서 모달 폭만큼 늘어나지 않게 한다. */
+.fb-plugin__btn { align-self: flex-start; }
+.fb-plugin__dir {
+  font-size: 0.72rem;
+  word-break: break-all;
+  color: var(--color-text-light, #888);
+}
 .fb-btn--primary:hover:not(:disabled) { background: #08b774; }
 .fb-btn--danger {
   background: transparent;

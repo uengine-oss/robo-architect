@@ -25,7 +25,7 @@
 | 13 | 특장점 ④ 검증(구조 · 인수 조건)과 Dual Merge · 되돌리기 |
 | 14 | 특장점 ⑤ 변경 영향(CREATE/MODIFY · 충돌 가능성) |
 | 15 | 특장점 ⑥ 레거시 코드 · 데이터베이스를 설계 근거로 |
-| 16 | 시스템 구성과 실행 환경 (컨테이너 7개) |
+| 16 | 시스템 구성과 실행 환경 (컨테이너 8개) |
 | 17 | 기술 스택과 스킬 체계 (스킬 21종) |
 | 18–19 | 사용 절차 6단계 (실제 화면) |
 | 20 | 보안 · 거버넌스 |
@@ -110,7 +110,7 @@ for name, (src, box) in MAP.items():
 | 수치 | 근거 |
 |---|---|
 | 스킬 21종 (robo-proposals 15 · robo-spec 4 · robo-changes 2) | `skills/*/*/SKILL.md` (앱 묶음 `desktop/resources/runtime/architect/app/skills/` 도 같은 21개) |
-| 컨테이너 7개 (graph-db · graph-bolt · fabric · catalog · analyzer · parser · gateway) | `desktop/runtime/compose.yml`, 이미지 이름은 `desktop/runtime/runtime-manifest.template.json` |
+| 컨테이너 8개 (graph-db · graph-bolt · fabric · catalog · analyzer · parser · gateway · wireframe) | `desktop/runtime/compose.yml`, 이미지 이름은 `desktop/runtime/runtime-manifest.template.json` |
 | 포트는 루프백(127.0.0.1)에만 공개 | `compose.yml` 의 `ports` |
 | 설계 graph 와 분석 graph 이름이 같으면 기동 거부 | `compose.yml` graph-db 주석(`OG_GRAPH_DESIGN` / `OG_GRAPH_ANALYSIS`) |
 | 노드 유형 26종 | `docs/cypher/schema/*.cypher` 의 `CREATE CONSTRAINT/INDEX … FOR (x:Label)` 라벨 수 |

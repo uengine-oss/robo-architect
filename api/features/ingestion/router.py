@@ -661,14 +661,31 @@ async def clear_all_data(request: Request) -> dict[str, Any]:
         return {"success": False, "message": f"삭제 실패: {str(e)}", "deleted": {}}
 
 
+#: 분석 그래프의 노드에 붙는 **표시용 라벨** — 타입이 아니다(og_catalog 의 type 으로는
+#: 노드가 0개다). 라벨별 집계에서 걷어 내지 않으면 전체 수와 같은 한 통이 섞여 나온다.
+_MARKER_LABELS = frozenset({"ANALYZER_OWNED"})
+
+
 @router.get("/stats")
 async def get_data_stats(request: Request) -> dict[str, Any]:
-    """
-    Get current data statistics from Neo4j.
-    """
-    from api.features.ingestion.event_storming.neo4j_client import get_neo4j_client
+    """분석기가 그래프에 넣은 것을 센다 — 코드 분석 모드의 관문.
 
-    client = get_neo4j_client()
+    **분석 그래프를 읽는다. 설계 그래프가 아니다.** 부르는 곳은 요구사항 업로드
+    화면의 코드 분석 탭 하나뿐이고, 0 이면 "분석 데이터가 없습니다" 를 띄운다.
+
+    예전에는 event-storming 클라이언트로 갔다. 그 클라이언트의 database 는
+    ``get_neo4j_database()`` — 곧 **설계 그래프**(lite 에서는 프로젝트 그래프)다.
+    분석기는 ``analyzer_run``(desktop/src/main/graphs.ts ``GRAPH_ANALYSIS``)에 쓰므로
+    세는 쪽이 반대였다: 레거시 분석이 끝나고 노드가 들어가 있어도 화면은 계속
+    "없다" 고 했다(2026-11-09 이슈 2번). 오류는 나지 않는다.
+
+    분석기 결과를 읽는 이웃들(``rule_context`` · ``glossary_extractor``)은 이미
+    분석 그래프를 본다 — 이 함수만 남아 있었다.
+
+    분석 짝이 없는 프로젝트(문서만 올린 경우)는 정상 상태다. 그때는 ``.env`` 로
+    떨어뜨리지 않고 ``hasData=False`` 로 답한다.
+    """
+    from api.platform.neo4j import analyzer_database, analyzer_session
 
     try:
         SmartLogger.log(
@@ -677,25 +694,53 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
             category="ingestion.api.stats.request",
             params=http_context(request),
         )
-        with client.session() as session:
-            query = """
-            MATCH (n)
-            WITH labels(n)[0] as label, count(n) as count
-            RETURN collect({label: label, count: count}) as counts
-            """
-            result = session.run(query)
-            record = result.single()
-            counts = {item["label"]: item["count"] for item in record["counts"]} if record else {}
-
-            total = sum(counts.values())
+        sess = analyzer_session()
+        if sess is None:
+            SmartLogger.log(
+                "INFO",
+                "Ingestion stats: no analyzer graph configured.",
+                category="ingestion.api.stats.no_analyzer",
+                params=http_context(request),
+            )
+            return {"total": 0, "counts": {}, "hasData": False, "analyzerGraph": None}
+        with sess as session:
+            # ⚠ `labels(n)[0]` 로는 **한 통**만 나온다. 이 엔진에서 분석기가 넣은 노드는
+            # 라벨이 **정확히 둘**이고(2026-11-11 실측: size(labels(n))=2 인 노드 1084개 전부)
+            # 그 첫 칸이 표시용 marker `ANALYZER_OWNED` 다. 그래서 예전 질의는
+            # `{"ANALYZER_OWNED": 1084}` 를 돌려주었고, 화면의 카드(FUNCTION·RULE·TABLE)는
+            # 하나도 안 떴다 — 관문은 열리는데 **숫자가 없는** 모양이었다.
+            # UNWIND 로 라벨을 펼쳐 세고(이 엔진에서 되는 것을 실제 그래프에 돌려 확인했다)
+            # marker 는 파이썬에서 걷는다. total 은 노드 수를 따로 세어 쓴다 —
+            # 라벨 수에 기대지 않으려고.
+            total = session.run("MATCH (n) RETURN count(n) AS total").single()["total"]
+            record = session.run(
+                """
+                MATCH (n)
+                UNWIND labels(n) AS label
+                WITH label, count(*) AS count
+                RETURN collect({label: label, count: count}) AS counts
+                """
+            ).single()
+            raw = {item["label"]: item["count"] for item in record["counts"]} if record else {}
+            counts = {k: v for k, v in raw.items() if k not in _MARKER_LABELS}
             SmartLogger.log(
                 "INFO",
                 "Ingestion stats returned.",
                 category="ingestion.api.stats.done",
-                params={**http_context(request), "total": total, "counts": counts},
+                params={
+                    **http_context(request),
+                    "total": total,
+                    "counts": counts,
+                    "analyzerGraph": analyzer_database(),
+                },
             )
 
-            return {"total": total, "counts": counts, "hasData": total > 0}
+            return {
+                "total": total,
+                "counts": counts,
+                "hasData": total > 0,
+                "analyzerGraph": analyzer_database(),
+            }
     except Exception as e:
         SmartLogger.log(
             "ERROR",

@@ -785,7 +785,7 @@
 <div class="badge">10 · 아키텍처</div>
 <h1 class="sec">시스템 구성과 실행 환경</h1>
 <div class="rule"></div>
-<p class="lead">Robo&nbsp;Architect Lite는 <b>데스크톱 앱, 이 PC에서 실행하는 Architect API, Docker 컨테이너 7개</b>로 구성됩니다. 앱을 실행하면 앱이 컨테이너를 직접 기동하고, 앱을 종료해도 컨테이너를 유지해 다음 실행 시간을 줄입니다. AI 작업은 이 PC의 Claude Code가 수행합니다.</p>
+<p class="lead">Robo&nbsp;Architect Lite는 <b>데스크톱 앱, 이 PC에서 실행하는 Architect API, Docker 컨테이너 8개</b>로 구성됩니다. 앱을 실행하면 앱이 컨테이너를 직접 기동하고, 앱을 종료해도 컨테이너를 유지해 다음 실행 시간을 줄입니다. AI 작업은 이 PC의 Claude Code가 수행합니다.</p>
 <div class="topo">
 <div class="tb soft"><b>데스크톱 앱 (Electron)</b><span>탭 · 창 관리 · 컨테이너 기동 · 프로젝트(그래프) 선택</span></div>
 <div class="tdown"></div>
@@ -797,7 +797,7 @@
 <div class="tb solid"><b>Architect API (FastAPI) — 이 PC에서 실행</b><span>프로포절 단계 관리 · 스킬 실행 · 검증 · Dual Merge · 진행 상황 전송</span></div>
 <div class="tdown"></div>
 <div class="trow">
-<div class="tb"><b>Docker 컨테이너 7개</b><span>그래프 DB · 데이터 패브릭 · 레거시 분석</span></div>
+<div class="tb"><b>Docker 컨테이너 8개</b><span>그래프 DB · 데이터 패브릭 · 레거시 분석 · 와이어프레임</span></div>
 <div class="tb"><b>대상 프로젝트 (Git 저장소)</b><span>코드 폴더 · <code>proposal/PRO-NNN</code> 워크트리</span></div>
 </div>
 </div>
@@ -945,12 +945,12 @@
 <div class="badge">14 · 설치</div>
 <h1 class="sec">설치 및 납품 방식</h1>
 <div class="rule"></div>
-<p class="lead">Robo&nbsp;Architect Lite는 데스크톱 앱 하나와 Docker 컨테이너 7개로 실행됩니다. 앱이 컨테이너 이미지를 적재하고 기동하므로 <b>Python과 데이터베이스를 따로 설치할 필요가 없습니다.</b></p>
+<p class="lead">Robo&nbsp;Architect Lite는 데스크톱 앱 하나와 Docker 컨테이너 8개로 실행됩니다. 앱이 컨테이너 이미지를 적재하고 기동하므로 <b>Python과 데이터베이스를 따로 설치할 필요가 없습니다.</b></p>
 <table class="free">
 <tr><th style="width:20%">구분</th><th>내용</th><th style="width:24%">제공 상태</th></tr>
 <tr><td>Windows 10/11</td><td>설치 프로그램(약 100MB) · 컨테이너 이미지 묶음(약 1.5GB, 이미지 7개) · 해시 파일(SHA256SUMS). 사용자 단위로 설치하며 관리자 권한이 필요 없습니다</td><td>요청 시 제공</td></tr>
 <tr><td>macOS</td><td>Apple Silicon용 데스크톱 앱(DMG)</td><td>설치 파일 배포 준비 중</td></tr>
-<tr><td>첫 실행</td><td>이미지 묶음의 해시를 확인한 뒤 적재하고 컨테이너 7개를 기동합니다. 튜토리얼 PC에서는 약 50초, 설치본 첫 실행은 이미지 적재 때문에 4~5분이 걸렸습니다</td><td>—</td></tr>
+<tr><td>첫 실행</td><td>이미지 묶음의 해시를 확인한 뒤 적재하고 컨테이너 8개를 기동합니다. 튜토리얼 PC에서는 약 50초, 설치본 첫 실행은 이미지 적재 때문에 4~5분이 걸렸습니다</td><td>—</td></tr>
 </table>
 <figure class="crop" style="--h:37mm">
 <img alt="첫 실행 시 서비스 기동 화면" src="assets/i-boot.jpg"/>

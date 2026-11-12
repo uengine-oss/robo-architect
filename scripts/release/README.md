@@ -3,7 +3,7 @@
 The installer is a DMG on the public repository `uengine-oss/robo-architect-lite-releases`, always
 under the same asset name, so the website can link
 `https://github.com/uengine-oss/robo-architect-lite-releases/releases/latest/download/Robo-Architect-Lite-mac-arm64.dmg`.
-The app ships without Docker images: on first launch it pulls the seven stack images from the public
+The app ships without Docker images: on first launch it pulls the stack images from the public
 GitHub Container Registry (`ghcr.io/uengine-oss/robo-architect-lite-<component>:<version>`, about
 1.1 GB) and shows the progress on the home screen (`desktop/src/main/docker-images.ts`). Images that
 are already on the machine with the recorded ID are reused (tagged), not downloaded.
@@ -13,11 +13,18 @@ are already on the machine with the recorded ID are reused (tagged), not downloa
 ```bash
 # 0. the images are final (uengine/*:lite-mac, robo-lite-src/build/build-images.sh) and the front end
 #    is built with the analyzer remote (robo-lite-src/build/build-frontend.sh → frontend/dist)
+#    ⚠ the wireframe renderer is built from this repository's own submodule, not from robo-lite-src:
+#        git submodule update --init open-pencil        # pinned at af190bb (has the Dockerfile)
+#        docker build -t uengine/open-pencil:lite-mac ./open-pencil
+#      Measured 2026-11-05 on the amd64 build of the same Dockerfile:
+#        /health {"status":"ok","components":7} · /render → SerializedSceneGraph, 5 nodes
 
-# 1. push the seven images, record their digests and sizes, make the packages public
+# 1. push the images, record their digests and sizes, make the packages public
 #    (once before: gh auth refresh -h github.com -s write:packages,read:packages)
 scripts/release/push-images.sh            # --dry-run shows what it would do
 scripts/release/check-images-public.sh    # after switching any package to Public by hand
+#    ⚠ robo-architect-lite-wireframe is a NEW package: its first push is Private, so it has to be
+#      switched to Public by hand or every first launch fails (the app pulls anonymously).
 
 # 2. the runtime folder the app packs, pinned to the pushed digests
 scripts/build-packaged-runtime.sh --digests desktop/out/release/image-digests.json
@@ -52,13 +59,15 @@ Pull path tests: `cd desktop && npx playwright test tests/unit/docker-images.spe
 
 The same app with a Windows runtime: python-build-standalone CPython for `x86_64-pc-windows-msvc` of
 the macOS runtime's version, the locked dependencies as `win_amd64` wheels, the same compose and
-settings, and the linux/amd64 builds of the seven images. Nothing runs under wine; the bundled
+settings, and the linux/amd64 builds of the stack images. Nothing runs under wine; the bundled
 backend's imports are traced on the Mac against the Windows file set instead of being run.
 `desktop/resources/runtime` stays the macOS runtime — the Windows one is `desktop/out/win/runtime`, and
 `desktop/electron-builder.win.js` packs it in place of the macOS one.
 
 ```bash
 # 0. the linux/amd64 images uengine/*:lite-win (robo-lite-src/build/build-images-amd64.sh)
+#    ⚠ plus the wireframe renderer from this repository's submodule:
+#        docker build --platform linux/amd64 -t uengine/open-pencil:lite-win ./open-pencil
 
 # 1. the runtime — without the images yet: --no-images now, --manifest-only once they are there
 scripts/build-packaged-runtime-win.sh [--no-images]

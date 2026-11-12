@@ -22,7 +22,8 @@ Get the file from the [latest release](https://github.com/uengine-oss/robo-archi
 
 - **macOS on Apple Silicon** (M1 or later) or **Windows 10/11 (x64)**. 16 GB of memory or more is recommended.
 - **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**, running. The graph database
-  (Ontological DB), the Bolt gateway, the data fabric and the analysis services run as seven containers
+  (Ontological DB), the Bolt gateway, the data fabric, the analysis services and the wireframe
+  renderer run as eight containers
   that the app starts and stops itself (about 2 GB of memory while idle). On Windows, use the default
   WSL 2 backend (Linux containers).
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and signed in (`claude`
@@ -41,7 +42,7 @@ Get the file from the [latest release](https://github.com/uengine-oss/robo-archi
   **More info**, then **Run anyway**. Leave the install scope at the current user (no administrator
   rights), and clear the **Run** check box on the last screen — open the app from the Start menu, so it
   starts with your current environment.
-- **The first launch downloads the seven Docker images — about 1.1 GB (about 4.8 GB on disk)** from
+- **The first launch downloads the Docker images — about 1.2 GB (about 5 GB on disk)** from
   the GitHub Container Registry (`ghcr.io/uengine-oss/robo-architect-lite-*`). The home screen shows
   which image is downloading and how far it is. Later launches start in under a minute.
 - If the app says Docker is not available, start Docker Desktop and open the app again.

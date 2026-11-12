@@ -304,8 +304,8 @@ function bootText() {
     'starting-backend': 'Robo Architect 백엔드를 띄우는 중', fatal: '시작하지 못했습니다 — 로그 폴더를 보세요', 'backend-crashed': '백엔드가 멈췄습니다',
   })[runtime.status] || runtime.status
 }
-// first launch of a release: the seven images come from the registry (main/docker-images.ts)
-const IMAGE_LABEL = { graphDb: 'Ontological DB', graphBolt: 'Bolt', analyzer: 'Analyzer', catalog: 'Catalog', fabric: 'Data fabric', parser: 'Parser', gateway: 'API gateway' }
+// first launch of a release: the images come from the registry (main/docker-images.ts)
+const IMAGE_LABEL = { graphDb: 'Ontological DB', graphBolt: 'Bolt', analyzer: 'Analyzer', catalog: 'Catalog', fabric: 'Data fabric', parser: 'Parser', gateway: 'API gateway', wireframe: 'Wireframe renderer' }
 const bytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`)
 function bootHtml() {
   const p = boot
@@ -324,13 +324,60 @@ function bootHtml() {
   }
   return esc(bootText())
 }
+// AI 키 행 — **키는 선택이다.** 이 PC 의 Claude Code 브리지가 LLM 을 대신하므로, 키가 없어도
+// "레거시 분석 → 문서 업로드 → 설계 → 프로포절 → 구현 → 검증" 이 전 구간 돈다(2026-11-11 에
+// PRO-001 을 끝까지 돌려 확인했다). 그래서 **노란 점으로 경고하지 않는다** — 예전 문구는
+// "미설정" 을 빠뜨린 것처럼 보이게 하고 setx 를 맨 앞에 띄웠다.
+//
+// 키가 실제로 하는 일은 둘뿐이다:
+//   ① **catalog** 의 표 설명·FK 추론 — 그 컨테이너는 브리지를 타지 않는다(굽기가
+//      LLM_API_BASE=api.openai.com + 빈 키로 박는다) → 키가 없으면 못 한다
+//   ② **임베딩** — 브리지에는 `/embeddings` 가 없다(`/chat/completions`·`/models` 뿐).
+//      없으면 하이브리드 매퍼가 후보를 못 좁히고 전부 LLM 검증자에게 넘긴다
+//      (agentic_retriever: "No embeddings available — degrade to return everything in scope").
+//      결과는 나오지만 정밀도가 떨어지고 LLM 호출이 늘어난다
+// ⚠ 키를 넣으면 llmBridgeEnv() 가 손을 뗀다 → **LLM 호출이 Claude Code 대신 그 키로 간다.**
+//   과금 주체가 바뀌는 것이므로 '설정됨' 쪽에 그 말을 적는다.
+//
+// main 의 openAiKey 가 **이름과 설정 여부만** 넘긴다 — 값은 넘어오지도, 찍히지도 않는다.
+function keyRowHtml() {
+  const k = info.openAiKey
+  if (!k || !Array.isArray(k.names)) return ''
+  const name = esc(k.names[k.names.length - 1])
+  // Finder 로 연 앱은 셸 설정을 안 읽으므로(host-path.ts 는 PATH 만 가져온다) macOS 는 launchctl 이다.
+  const how = info.platform === 'darwin'
+    ? `launchctl setenv ${name} &lt;키&gt;`
+    : `setx ${name} &lt;키&gt;`
+  if (k.set) {
+    return `<div class="status-row"><span class="dot ok"></span><div><b>AI 키</b> 설정됨<small>카탈로그의 표 설명·FK 추론과 임베딩 매핑이 돕니다 · LLM 호출도 Claude Code 대신 이 키로 갑니다</small></div></div>`
+  }
+  // 에이전트도 없고 키도 없으면 그때는 **진짜 경고**다 — LLM 단계가 아예 못 돈다.
+  if (!info.claude) {
+    return `<div class="status-row"><span class="dot warn"></span><div><b>AI 키</b> 없음<small>Claude Code 도 없습니다 — 둘 중 하나는 있어야 분석·설계·구현이 돕니다 · ${how} 뒤 앱 다시 열기</small></div></div>`
+  }
+  return `<div class="status-row"><span class="dot"></span><div><b>AI 키</b> 없음 — 넣지 않아도 됩니다<small>LLM 은 위의 Claude Code 가 대신합니다. 키를 넣으면 ① 카탈로그의 표 설명·FK 추론이 돌고 ② 요구사항 매핑이 임베딩으로 더 정확해집니다 · ${how} 뒤 앱 다시 열기</small></div></div>`
+}
+// 에이전트 행. CLI 가 있나 없나만 말하던 자리다 — **누구 구독으로 도는지**도 말한다.
+// 스킬과 LLM 브리지는 Anthropic 키를 지우고 `claude -p` 를 띄우므로(skill_runner._skill_env),
+// 과금되는 계정은 이 PC 의 CLI 로그인이다. main 이 설정 파일에서 메일·요금제만 읽어 넘긴다.
+function agentRowHtml() {
+  const claude = info.claude
+  if (!claude) {
+    return `<div class="status-row"><span class="dot warn"></span><div><b>에이전트</b> 찾지 못함<small>claude CLI 를 설치하고 로그인하세요</small></div></div>`
+  }
+  const acc = info.claudeAccount
+  const who = acc && acc.email
+    ? `${esc(acc.email)}${acc.plan ? ` · ${esc(acc.plan)}` : ''} 계정으로 돕니다`
+    : '로그인 정보를 못 읽었습니다 — 터미널에서 claude 를 한 번 실행해 로그인하세요'
+  return `<div class="status-row"><span class="dot ${acc && acc.email ? 'ok' : 'warn'}"></span><div><b>에이전트</b> Claude Code<small>이 PC 의 CLI 가 스킬로 분석 · 계획 · 구현합니다 · ${who}</small></div></div>`
+}
 function renderStatus() {
   const ok = ready()
   const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed'
-  const claude = info.claude
   $('status').innerHTML = `
-    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 7개 · 127.0.0.1` : bootHtml()}</small></div></div>
-    <div class="status-row"><span class="dot ${claude ? 'ok' : 'warn'}"></span><div><b>에이전트</b> ${claude ? 'Claude Code' : '찾지 못함'}<small>${claude ? '이 PC 의 CLI 가 스킬로 분석 · 계획 · 구현합니다' : 'claude CLI 를 설치하고 로그인하세요'}</small></div></div>`
+    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : bootHtml()}</small></div></div>`
+    + agentRowHtml()
+    + keyRowHtml()
 }
 
 // ── loading ──

@@ -195,6 +195,11 @@
 import { computed, ref, inject, watch, onUnmounted } from 'vue'
 import { useProposalsStore } from '../proposals.store'
 import { useI18n } from '../../../app/i18n'
+import {
+  readPendingLaunch,
+  writePendingLaunch,
+  clearPendingLaunch,
+} from '../../claudeCode/model/pendingLaunch.js'
 
 const props = defineProps({ proposalId: { type: String, required: true } })
 const emit = defineEmits(['validate'])  // 검증(TESTING)으로 전환됨 → 부모가 탭 전환
@@ -210,7 +215,26 @@ const starting = ref(false)
 const completing = ref(false)
 // 구현하기로 준비된(worktree+tasks) 직후, 아직 셀로 진입하지 않은 상태.
 // 존재하면 'Claude Code 셀로 이동'이 dominant 액션이 되고, 그 클릭이 셀 진입+명령 주입.
+//
+// **탭을 떠나도 남는다**(model/pendingLaunch.js). 여기 ref 하나였을 때는 Proposal 탭을
+// 벗어나면 사라져, 안내문("「Claude Code 셀로 이동」을 눌러야 시작된다")과 주 버튼이
+// 같이 없어졌다 — 그래서 준비만 된 채 Code 탭의 프로젝트 루트 셀에서 헤매게 됐다.
 const pendingLaunch = ref(null)  // { worktreePath, command, restart } | null
+
+// 셀 세션이 이미 있으면 그 명령은 이미 주입된 것이므로 복원하지 않고 치운다 —
+// 안 치우면 "시작하세요" 안내가 구현 중에도 계속 뜬다.
+function restorePendingLaunch() {
+  const saved = readPendingLaunch(props.proposalId)
+  if (saved && hasShellSession()) {
+    clearPendingLaunch(props.proposalId)
+    pendingLaunch.value = null
+    return
+  }
+  pendingLaunch.value = saved
+}
+restorePendingLaunch()
+watch(pendingLaunch, (v) => writePendingLaunch(props.proposalId, v))
+watch(() => props.proposalId, () => restorePendingLaunch())
 
 // 샌드박스 worktree 경로(.../.sandbox/proposal/<id>)를 실제 루트로 끌어올린다.
 function stripSandbox(p) {
@@ -372,6 +396,8 @@ function goToShell() {
 
 async function completeImplement() {
   completing.value = true
+  // 구현을 마쳤다고 표시하는 순간, 들어가지 않은 '시작 대기' 는 더 이상 뜻이 없다.
+  pendingLaunch.value = null
   try {
     await store.completeImplementation(props.proposalId)
     emit('validate')  // TESTING 전환 완료 → 부모가 '검증' 탭으로 이동
