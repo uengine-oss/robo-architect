@@ -12,15 +12,19 @@ bun build src/plugin.ts --outdir=dist --target=browser --format=iife 2>&1
 # replacement text there, so a single `|` anywhere in it — a regex alternation,
 # a table border, a JS or — closed the substitution early and sed died with
 # "bad flag in substitute command". It also mangled backslashes and collapsed
-# every newline. Doing the escaping in Python keeps the file byte-exact.
-python - <<'PY'
-import json, pathlib
-dist = pathlib.Path("dist/plugin.js")
-html = pathlib.Path("src/ui.html").read_text(encoding="utf-8")
-# json.dumps gives a correctly escaped JS string literal for any input.
-dist.write_text(f"var __html__ = {json.dumps(html)};\n" + dist.read_text(encoding="utf-8"),
-                encoding="utf-8")
-PY
+# every newline. `JSON.stringify` gives a correctly escaped JS string literal
+# for any input, so the file stays byte-exact.
+#
+# ⚠ 이 단계는 **node** 로 한다(전에는 python 이었다). 이 스크립트가 2026-11-12 부터
+#   `docker/Dockerfile.web` 안에서도 돌고(웹 판이 플러그인 묶음을 내려 준다), 그
+#   빌드 이미지 `node:22-bookworm-slim` 에는 **python 이 없다**. 아래 3단계가 이미
+#   node 를 쓰므로 의존을 하나로 줄인다.
+node -e '
+const fs = require("fs");
+const html = JSON.stringify(fs.readFileSync("src/ui.html", "utf8"));
+fs.writeFileSync("dist/plugin.js",
+  "var __html__ = " + html + ";\n" + fs.readFileSync("dist/plugin.js", "utf8"));
+'
 
 # 3. 번들이 실제로 실행되는지 확인한다.
 #

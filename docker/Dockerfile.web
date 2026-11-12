@@ -58,8 +58,32 @@ RUN cd frontend \
        npm run build
 RUN cd analyzer && ANALYZER_BASE=/analyzer/ npx vite build
 
+# ── Figma 플러그인 묶음 — 사용자가 **내려받아** Figma 에 Import 한다 ──────
+#
+# 웹 판에는 사용자 PC 에 저장소가 없다. 2026-11-12 실측: 클론 폴더의 `manifest.json`
+# 을 그대로 Import 하면 Figma 가 이렇게 죽는다 —
+#   Unable to load code: ENOENT … figma-plugin\dist\plugin.js
+# `dist/` 는 빌드 산출물이라 저장소에 없기 때문이다. 그래서 **여기서 굽고** zip 한 장을
+# 정적 자산으로 낸다(`/robo-architect-figma-plugin.zip`). 모달이 그 링크를 건다.
+#
+# zip 안의 자리는 manifest 의 `"main": "dist/plugin.js"` 와 맞춘다 — 풀면 폴더 하나에
+# manifest.json + dist/plugin.js 가 되고, 그 manifest 를 고르면 된다.
+# `build.sh` 는 bun(번들) + node(검증·UI 인라인)만 쓴다 — 이 단계에 python 이 없다.
+COPY figma-plugin ./figma-plugin
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends zip \
+    && rm -rf /var/lib/apt/lists/* \
+    && cd /src/figma-plugin \
+    && bash build.sh \
+    && test -s dist/plugin.js \
+    && zip -q -r /src/figma-plugin.zip manifest.json dist/plugin.js \
+    && zip -sf /src/figma-plugin.zip | grep -q 'dist/plugin.js'
+# ⚠ 검사는 `zip -sf`(목록)로 한다. `zip -T` 는 **unzip 을 따로 깔아야** 돌고,
+#   없으면 "could not spawn unzip" 으로 굽기가 멈춘다(2026-11-12 실측).
+
 RUN rm -rf frontend/dist/analyzer \
     && cp -r analyzer/dist frontend/dist/analyzer \
+    && cp /src/figma-plugin.zip frontend/dist/robo-architect-figma-plugin.zip \
     && test -f frontend/dist/index.html \
     && test -f frontend/dist/analyzer/assets/remoteEntry.js \
     && if find frontend/dist -name '*.map' | grep -q .; then \

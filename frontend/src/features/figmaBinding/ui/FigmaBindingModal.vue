@@ -7,6 +7,7 @@ import HistoryFailureRow from './HistoryFailureRow.vue'
 import HistorySyncRunRow from './HistorySyncRunRow.vue'
 import PreviousBindingGroup from './PreviousBindingGroup.vue'
 import { useAuthStore } from '@/features/auth/auth.store.js'
+import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 
 // Connect / Replace happen from the Figma plugin (which posts file_key +
 // file_name to /api/figma-binding/connect). This modal is read-only +
@@ -21,6 +22,22 @@ const emit = defineEmits(['update:modelValue'])
 
 const store = useFigmaBindingStore()
 const auth = useAuthStore()
+const session = useSessionStore()
+
+/**
+ * 플러그인 묶음을 **이 화면에서 내려받게** 한다 (웹 판 전용).
+ *
+ * 웹 판 사용자 PC 에는 저장소가 없다. 2026-11-12 실측: 체크아웃 폴더의
+ * `manifest.json` 을 Figma 에 그대로 Import 하면
+ *   `Unable to load code: ENOENT … figma-plugin\dist\plugin.js`
+ * 로 죽는다 — `dist/` 는 빌드 산출물이라 저장소에 없다. 그래서 web 이미지가
+ * 굽는 쪽에서 플러그인을 빌드해 zip 한 장을 정적 자산으로 같이 낸다
+ * (`docker/Dockerfile.web`). 여기서는 그 링크만 건다.
+ *
+ * 설치본(Electron)에서는 이 자산이 없다 — `app://` 로 열려 404 가 된다. 그래서
+ * 웹 판에서만 보여 준다.
+ */
+const PLUGIN_ZIP_URL = '/robo-architect-figma-plugin.zip'
 const pairingCode = ref('')
 const pairingError = ref('')
 const pairingBusy = ref(false)
@@ -257,6 +274,28 @@ watch(tab, (t) => {
       </nav>
 
       <div class="fb-modal__body">
+        <!--
+          플러그인 내려받기 — 웹 판 전용. 저장소가 없는 PC 에서 Import 하려면
+          **빌드된 묶음**이 필요하다(저장소의 manifest 를 그대로 고르면 dist/ 가
+          없어서 ENOENT 로 죽는다).
+        -->
+        <div v-if="tab === 'main' && !session.isDesktop" class="fb-section fb-plugin">
+          <label class="fb-backend__label"><strong>RoboArchitect Sync</strong> 플러그인 설치</label>
+          <a class="fb-btn fb-btn--primary fb-plugin__dl"
+             :href="PLUGIN_ZIP_URL" download>플러그인 내려받기 (.zip)</a>
+          <ol class="fb-steps">
+            <li>내려받은 zip 을 <strong>압축 풀기</strong> — 폴더 안에 <code>manifest.json</code> 과
+              <code>dist/plugin.js</code> 가 있어야 합니다.</li>
+            <li>Figma <strong>데스크톱 앱</strong>에서 Plugins → Development →
+              <strong>Import plugin from manifest…</strong></li>
+            <li>풀어 둔 폴더의 <code>manifest.json</code> 을 고릅니다. 한 번만 하면 됩니다.</li>
+          </ol>
+          <p class="fb-hint">
+            폴더를 옮기거나 지우면 플러그인이 사라집니다 — Figma 는 <em>그 자리</em>를 기억합니다.
+            지울 폴더에 풀지 마세요.
+          </p>
+        </div>
+
         <div v-if="tab === 'main'" class="fb-section fb-backend">
           <label class="fb-backend__label">플러그인의 <strong>Backend URL</strong></label>
           <!--
@@ -284,7 +323,9 @@ watch(tab, (t) => {
           </span>
           <span v-else class="fb-backend__pending">{{ backendUrlError || '확인 중…' }}</span>
           <p class="fb-hint fb-backend__why">
-            <strong>이 주소는 고정입니다</strong> — 앱을 다시 띄워도 같은 포트를 씁니다.
+            <strong>이 주소는 고정입니다</strong> —
+            <template v-if="session.isDesktop">앱을 다시 띄워도 같은 포트를 씁니다.</template>
+            <template v-else>이 화면을 연 서버 주소입니다.</template>
             다만 플러그인에 <em>옛</em> 주소가 남아 있으면 원인이 안 보이는
             <code>Failed to fetch</code> 로 나타납니다 — 연결이 안 되면 먼저 이 값을
             다시 붙여넣으세요.
@@ -295,10 +336,19 @@ watch(tab, (t) => {
             듣는다. Figma 데스크톱 앱이 같은 PC 에서 도니 그것으로 충분하고,
             밖에서 닿지 않는 것이 **의도된 경계**다.
           -->
-          <p class="fb-hint fb-backend__why">
+          <p v-if="session.isDesktop" class="fb-hint fb-backend__why">
             <strong>이 PC 에서만 닿습니다</strong> — 포트는 앱이 알아서 찾지만 주소는
             늘 <code>127.0.0.1</code> 입니다. 백엔드가 이 PC 안에서만 듣기 때문이고,
             Figma 데스크톱 앱이 같은 PC 에서 도니 그대로 쓰시면 됩니다.
+          </p>
+          <!--
+            웹 판은 반대다 — 주소가 `127.0.0.1` 이 아니라 **사내망 서버**다. 설치본
+            문구를 그대로 두면 틀린 말이 된다(2026-11-12).
+          -->
+          <p v-else class="fb-hint fb-backend__why">
+            <strong>Figma 데스크톱 앱에서 이 주소에 닿아야 합니다</strong> — 사내망
+            서버 주소이므로, 디자이너 PC 가 그 망에 있으면 그대로 됩니다. 안 되면
+            브라우저로 이 주소가 열리는지 먼저 확인하세요.
           </p>
         </div>
 
@@ -658,6 +708,15 @@ watch(tab, (t) => {
   color: #ef4444;
 }
 .fb-btn--danger:hover { background: rgba(239, 68, 68, 0.1); }
+
+/* 내려받기는 <a download> 다 — 단추처럼 보이게 하고 밑줄만 지운다.
+   `align-self: flex-start` 가 없으면 .fb-section 의 flex column 안에서 가로로
+   늘어나 모달 폭만큼 커진다. */
+.fb-plugin__dl {
+  display: inline-block;
+  align-self: flex-start;
+  text-decoration: none;
+}
 
 .fb-hint {
   font-size: 0.75rem;
