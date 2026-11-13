@@ -91,6 +91,21 @@ def grant_authority_role(dsn: str, role: str = "robo_authority") -> None:
         cur.execute(sql.SQL("GRANT INSERT ON {} TO {}").format(t("app_account_audit"), r))
         cur.execute(sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {}, {} TO {}").format(
             t("app_code_templates"), t("app_code_template_history"), r))
+        # 2-c. 프로젝트 목록 **읽기** — Figma 연결 코드 발급(`/api/auth/figma-pair`)이
+        #      "이 사람이 이 프로젝트에 쓰기 권한이 있나" 를 이 역할로 본다
+        #      (`projects.list_projects` · app_projects ⋈ og_catalog.grantee).
+        #      /api/projects 는 소유자 자격(ROBO_PROJECT_OPERATOR_DSN)으로 돌지만 이 경로는 아니다.
+        #      없으면 `permission denied for schema og_catalog` → 503 "중앙 권한 저장소를
+        #      초기화하거나 연결을 확인하세요"(2026-11-13 현장 · 로컬 재현). 읽기만 준다.
+        cur.execute("SELECT to_regclass('public.app_projects'), to_regclass('og_catalog.grantee')")
+        projects_table, grantee_table = cur.fetchone()
+        if projects_table and grantee_table:
+            cur.execute(sql.SQL("GRANT SELECT ON {} TO {}").format(t("app_projects"), r))
+            cur.execute(sql.SQL("GRANT USAGE ON SCHEMA og_catalog TO {}").format(r))
+            cur.execute(sql.SQL("GRANT SELECT ON og_catalog.grantee TO {}").format(r))
+            print(f"  grants {role}: 프로젝트 목록 읽기 (app_projects · og_catalog.grantee)")
+        else:
+            print(f"  grants {role}: 프로젝트 표가 아직 없다 — Figma 연결 코드는 다음 init 에서", file=sys.stderr)
     print(f"  grants {role}: 계정 표 {len(_EXPECTED_TABLES)} · 시퀀스 {len(_EXPECTED_SEQUENCES)}")
 
 

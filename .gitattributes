@@ -15,3 +15,6 @@
 # `ROBO_ANALYZER_LLM_CONFIG` 값 비교가 어긋나고, 비밀번호에 CR 이 들어가 DSN 이
 # 깨진다. `check.sh` 가 이제 이름을 대며 잡지만, 애초에 생기지 않게 둔다.
 .env.example text eol=lf
+
+# tiktoken 사전 — tiktoken 이 sha256 으로 대조한다. 줄바꿈을 한 글자도 바꾸지 않는다.
+deploy/posco-web/tiktoken-cache/* -text

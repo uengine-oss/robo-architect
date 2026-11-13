@@ -83,6 +83,7 @@ services:
     # 걸 값과 잰 값은 .env.example 의 `ROBO_MEM_*` 절에 적어 두었다.
     mem_limit: ${ROBO_MEM_API:-0}
     environment:
+      TIKTOKEN_CACHE_DIR: /opt/tiktoken-cache
       # 서버 판 고정값 — 바꾸지 않는다.
       #   central  여럿이 한 저장소를 쓴다. 이미 있는 사용자 role 의 비밀번호를
       #            덮지 않는다(projects/roles.py). 통합 서버도 여럿이 쓰므로 central 이다.
@@ -176,6 +177,7 @@ services:
       WIREFRAME_LLM_CONCURRENCY: "4"
       WIREFRAME_LLM_TIMEOUT_SEC: "300"
     volumes:
+      - ./tiktoken-cache:/opt/tiktoken-cache:ro,z   # tiktoken 사전 — 사내망은 openaipublic.blob.core.windows.net 에 못 닿는다
       # 코드 생성·제안 구현의 대상 프로젝트가 놓이는 **서버 쪽** 자리(README §결정 ①).
       - workspace:/workspace
     depends_on:
@@ -312,6 +314,7 @@ services:
     restart: unless-stopped
     labels: *labels
     environment:
+      TIKTOKEN_CACHE_DIR: /opt/tiktoken-cache
       NEO4J_URI: bolt://graph-bolt:7687
       NEO4J_USER: ${ROBO_GRAPH_USER:?}
       NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
@@ -337,6 +340,8 @@ services:
       FK_SIMILARITY_THRESHOLD: "0.8"
       METADATA_TIMEOUT_CONNECT: "5"
       METADATA_TIMEOUT_REQUEST: "30"
+    volumes:
+      - ./tiktoken-cache:/opt/tiktoken-cache:ro,z   # tiktoken 사전 — 사내망은 openaipublic.blob.core.windows.net 에 못 닿는다
     depends_on:
       graph-bolt:
         condition: service_healthy
@@ -355,6 +360,7 @@ services:
     labels: *labels
     mem_limit: ${ROBO_MEM_ANALYZER:-0}
     environment:
+      TIKTOKEN_CACHE_DIR: /opt/tiktoken-cache
       ROBO_NEO4J_URI: bolt://graph-bolt:7687
       ROBO_NEO4J_USER: ${ROBO_GRAPH_USER:?}
       ROBO_NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
@@ -417,6 +423,7 @@ services:
       ROBO_SEARCH_SUPPORT_POLICY: graph_gated
       ROBO_SEARCH_SUPPORT_ROOT_TOP: "12"
     volumes:
+      - ./tiktoken-cache:/opt/tiktoken-cache:ro,z   # tiktoken 사전 — 사내망은 openaipublic.blob.core.windows.net 에 못 닿는다
       - shared_data:/data
       - ./analyzer-llm/openai_gpt41.yaml:/app/llm/configs/openai_gpt41.yaml:ro,z
       # 이미지 가격표에 gpt-4.1 이 없어 분석이 거부된다 — 파일 머리말 참고.
