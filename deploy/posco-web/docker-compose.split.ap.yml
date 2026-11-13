@@ -149,7 +149,7 @@ services:
       DATA_FABRIC_QUERY_TIMEOUT_SECONDS: "30"
       OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8404/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "__import__('urllib.request').request.urlopen('http://127.0.0.1:8404/health',timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -189,7 +189,7 @@ services:
       fabric:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5503/robo/check-data/', timeout=3)"]
+      test: ["CMD", "python", "-c", "__import__('urllib.request').request.urlopen('http://127.0.0.1:5503/robo/check-data/',timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -271,7 +271,7 @@ services:
       catalog:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5502/', timeout=3)"]
+      test: ["CMD", "python", "-c", "__import__('urllib.request').request.urlopen('http://127.0.0.1:5502/',timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -334,7 +334,7 @@ services:
       WIREFRAME_SERVICE_PORT: "7610"
       COMPONENT_LIBRARY_PATH: /app/docs/components.fig
     healthcheck:
-      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:7610/health');if(!r.ok)process.exit(1);const j=await r.json();process.exit(j.status==='ok'?0:1)"]
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:7610/health').then(r=>r.ok?r.json():{}).then(j=>process.exit(j.status==='ok'?0:1),()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 30

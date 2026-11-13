@@ -57,7 +57,7 @@ services:
         condition: service_healthy
     healthcheck:
       # CMD-SHELL(dash) 에는 /dev/tcp 가 없다 — bash 로 명시한다(설치본 compose 주석).
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7687"]
+      test: ["CMD", "bash", "-c", "true</dev/tcp/127.0.0.1/7687"]
       interval: 5s
       timeout: 5s
       retries: 24
