@@ -28,6 +28,9 @@ cp "$HERE"/{.env.example,init-env.sh,check.sh,authority-init.py,make-split.py,RE
 # 서버 관리자가 따라가는 가이드 — 묶음 안에 같이 넣는다(이것만 보고 올릴 수 있어야 한다).
 cp "$HERE/서버-배포-가이드.md" "$OUT/"
 mkdir -p "$OUT/analyzer-llm" && cp "$HERE/analyzer-llm/"*.yaml "$OUT/analyzer-llm/"
+# tiktoken 사전 — compose 가 바인드로 붙인다. 없으면 그 장이 안 뜬다(2026-11-13).
+cp -r "$HERE/tiktoken-cache" "$OUT/"
+cp "$HERE"/{update.sh,운영-업데이트-가이드.md} "$OUT/"
 echo "files → $OUT"
 
 if [[ $IMAGES == --images ]]; then
