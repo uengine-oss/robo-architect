@@ -15,8 +15,10 @@ GET      /api/auth/me                내 세션 상태
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Form, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from api.features.accounts import store as accounts
@@ -160,7 +162,7 @@ async def sso_init(request: Request, callbackUrl: str = Query(..., min_length=1)
     return {"redirectUrl": build_redirect_url(settings, callbackUrl)}
 
 
-async def _handle_valid(request: Request, sso_token: str | None) -> RedirectResponse | dict:
+async def _handle_valid(request: Request, sso_token: str | None) -> RedirectResponse | HTMLResponse:
     settings = _require_swp()
 
     # 토큰이 없거나 검증에 실패하면 SWP 로그인 홈으로 되돌려보낸다 (기준 구현 동작).
@@ -187,7 +189,30 @@ async def _handle_valid(request: Request, sso_token: str | None) -> RedirectResp
         params={**http_context(request), "empno": user.empno, "username": user.username},
     )
 
-    return _sign_in(request, user.to_dict(), source="swp")
+    return sso_landing(_sign_in(request, user.to_dict(), source="swp"))
+
+
+SSO_STASH_KEY = "robo.auth.sso"
+
+
+def sso_landing(payload: dict) -> HTMLResponse:
+    """SWP 콜백의 응답 — 세션 결과를 화면(SPA)에 넘기고 `/` 로 간다.
+
+    이 주소는 **브라우저가 SWP 에서 이동해 오는 곳**이다(fetch 가 아니다). JSON 을
+    그대로 돌려주면 그 JSON 이 화면에 날것으로 뜨고 거기서 멈춘다 — 2026-11-13 현장.
+
+    결과는 같은 탭의 `sessionStorage` 에 한 번 놓고, SPA 가 부팅 때 꺼내 지운다
+    (`auth.store.js` `refresh()`). 토큰을 URL 에 싣지 않는다 — 기록·Referer 에 남는다.
+    승인 대기·거절이면 토큰 없이 상태만 넘어가 화면이 안내를 띄운다.
+    """
+    data = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
+    html = (
+        "<!doctype html><meta charset=\"utf-8\"><title>Robo Architect</title>"
+        "<script>try{sessionStorage.setItem(" + json.dumps(SSO_STASH_KEY) + ","
+        + json.dumps(data) + ")}catch(e){}location.replace('/')</script>"
+        "<noscript>JavaScript 가 꺼져 있어 로그인을 마칠 수 없습니다.</noscript>"
+    )
+    return HTMLResponse(html, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 @router.get("/sso/valid")

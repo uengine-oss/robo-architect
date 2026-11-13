@@ -16,6 +16,7 @@ import { detailText } from '@/app/apiError'
 
 const TOKEN_KEY = 'robo.auth.token'
 const PROJECT_KEY = 'robo.auth.project'
+const SSO_KEY = 'robo.auth.sso'
 
 /**
  * 토큰은 **`sessionStorage`** 에 둔다. `localStorage` 가 아니다.
@@ -216,10 +217,31 @@ export const useAuthStore = defineStore('auth', () => {
     return provider.value
   }
 
+  /**
+   * SWP 콜백(`/api/auth/sso/valid`)이 놓고 간 로그인 결과를 한 번 꺼내 지운다.
+   * 그 페이지는 결과를 `sessionStorage` 에 두고 `/` 로 넘어온다(`router.py` `sso_landing`).
+   */
+  function takeSsoResult() {
+    try {
+      const raw = store().getItem(SSO_KEY)
+      if (raw === null) return null
+      store().removeItem(SSO_KEY)
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+
   /** 저장된 토큰이 아직 쓸 만한지 서버에 확인한다. */
   async function refresh() {
     checking.value = true
     try {
+      const sso = takeSsoResult()
+      if (sso) {
+        apply(sso)
+        // 승인 대기·거절은 토큰이 없다 — 받은 상태 그대로 안내를 띄운다
+        if (!sso.accessToken) return
+      }
       if (!token.value) {
         user.value = null
         status.value = 'anonymous'
