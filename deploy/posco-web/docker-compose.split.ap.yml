@@ -27,6 +27,15 @@ services:
     depends_on:
       architect-api:
         condition: service_healthy
+    # 이미지(Dockerfile.web)에도 있지만 **여기 다시 적는다** — docker save 가 만든 OCI tar 를
+    # podman 이 load 하면 이미지의 HEALTHCHECK 가 빠진다(2026-11-13 현장: .State.Health 가 nil →
+    # 기다리는 쪽이 "dependency … failed to start"). 빈칸 없는 인자로(podman 이 빈칸에서 쪼갠다).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   architect-api:
     image: ghcr.io/uengine-oss/robo-posco-architect-api:delivery
@@ -137,6 +146,13 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    # Dockerfile.api 의 HEALTHCHECK 와 같은 것 — web 처럼 podman load 에서 빠지므로 여기 다시 적는다.
+    healthcheck:
+      test: ["CMD", "python", "-c", "__import__('urllib.request').request.urlopen('http://127.0.0.1:8000/api/health',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
 
   fabric:
     image: ghcr.io/uengine-oss/robo-posco-fabric:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
