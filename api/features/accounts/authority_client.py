@@ -118,6 +118,30 @@ def _overlay_local_ai(body: bytes) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
+def _sso_landing_from(path: str, response) -> Response | None:
+    """SWP 콜백에 중앙(authority)이 JSON 으로 답했으면 화면으로 넘기는 HTML 로 바꾼다.
+
+    ⚠ 2026-11-13 현장: `/api/auth/sso/valid` 는 브라우저가 SWP 에서 **이동해 오는**
+    주소인데, 이 미들웨어가 그대로 authority 에 넘기고 authority(납품판 이미지)는
+    JSON 을 돌려준다 → 화면에 JSON 이 날것으로 뜨고 멈췄다. 세션 판단은 그대로
+    중앙이 한 것을 쓴다 — 여기서는 **응답의 모양만** 바꾼다.
+    authority 가 이미 HTML 을 내는 판이면(content-type 이 json 이 아니면) 손대지 않는다.
+    """
+    if path != "/api/auth/sso/valid" or response.status_code != 200:
+        return None
+    if "application/json" not in (response.headers.get("content-type") or ""):
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    # 순환 import 를 피해 함수 안에서 부른다.
+    from api.features.auth.router import sso_landing
+    return sso_landing(payload)
+
+
 class AuthorityProxyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         try:
@@ -138,6 +162,9 @@ class AuthorityProxyMiddleware(BaseHTTPMiddleware):
         except httpx.HTTPError:
             return JSONResponse({"detail": "중앙 권한 서버에 연결할 수 없습니다."}, status_code=503)
         content = response.content
+        landing = _sso_landing_from(request.url.path, response)
+        if landing is not None:
+            return landing
         if (request.url.path == "/api/auth/provider" and response.status_code == 200
                 and "application/json" in (response.headers.get("content-type") or "")):
             content = _overlay_local_ai(content)
