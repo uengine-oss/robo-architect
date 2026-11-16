@@ -4,6 +4,7 @@ import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import BpmnViewer from 'bpmn-js/lib/NavigatedViewer'
 import { layoutProcess } from 'bpmn-auto-layout'
 import { rerouteCrossingEdges } from '../bpmnEdgeRouting.js'
+import { layoutBpmnWithLanes } from '../bpmnLaneLayout.js'
 import ELK from 'elkjs/lib/elk.bundled.js'
 // process-gpt's custom renderer (cream tasks, Korean text wrapping, colored
 // events/lanes). Same bpmn-js engine — this is the module that makes their
@@ -399,7 +400,13 @@ async function renderBpmn(xml) {
     // each branch its own row. ELK also handles a DI-less skeleton. bpmn-auto-
     // layout remains the last resort if ELK can't produce a diagram.
     let toRender = xml
-    if (hasCompleteDI(xml) && countLanes(xml) >= 2) {
+    // 우리 빌더(네이티브 생성 · bpmn_builder)가 만든 것은 **시퀀스 순서 + 레인**으로 다시 배치한다 —
+    // 서버 DI 는 들어오는 선이 빠진 작업을 맨 앞에 두는 등 자리가 틀릴 수 있다(2026-11-16 test 1112).
+    const native = /targetNamespace="http:\/\/hybrid\.ingestion"/.test(xml)
+    const laned = native ? await layoutBpmnWithLanes(xml, elk) : xml
+    if (laned !== xml) {
+      toRender = laned
+    } else if (hasCompleteDI(xml) && countLanes(xml) >= 2) {
       // 레인이 여럿이면 들어온 DI(노드 자리)를 지키되, 노드를 가로지르는 선만 돌려 긋는다.
       toRender = rerouteCrossingEdges(xml)
     } else {
