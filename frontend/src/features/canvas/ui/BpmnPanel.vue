@@ -252,11 +252,38 @@ async function elkLayout(xml) {
     const nodeEls = all.filter(n => _FLOW_NODE_TAGS.has(n.localName))
     if (!nodeEls.length) return xml
     const sizeOf = new Map()
-    for (const n of nodeEls) sizeOf.set(n.getAttribute('id'), _NODE_SIZE(n.localName))
+    const tagOf = new Map()
+    for (const n of nodeEls) {
+      sizeOf.set(n.getAttribute('id'), _NODE_SIZE(n.localName))
+      tagOf.set(n.getAttribute('id'), n.localName)
+    }
     const flows = all
       .filter(n => n.localName === 'sequenceFlow')
       .map(f => ({ id: f.getAttribute('id'), s: f.getAttribute('sourceRef'), t: f.getAttribute('targetRef') }))
       .filter(f => f.id && sizeOf.has(f.s) && sizeOf.has(f.t))
+
+    // 들어온 DI 의 x — 서버(bpmn_builder)가 이미 순서대로 놓았다: 시작 → 1번 → … → 끝, 되돌아가는
+    // 간선은 열을 밀지 않게 걸러서. ELK 는 고리(반려 → 다시 신청)를 끊을 때 **어느 간선이 되돌아가는
+    // 것인지**를 스스로 고르는데, 기본(GREEDY)은 그것을 잘못 골라 시작 이벤트가 가운데로 가고
+    // 1번 작업이 뒤로 밀렸다(2026-11-16 · test 1112 "연차 부여" — 시작이 11칸 중 5번째).
+    // 그래서 들어온 x 로 되돌아가는 간선을 정하고(INTERACTIVE), 시작·끝은 첫·마지막 층에 묶는다.
+    const diX = new Map()
+    for (const sh of all.filter(n => n.localName === 'BPMNShape')) {
+      const b = [...sh.getElementsByTagName('*')].find(n => n.localName === 'Bounds')
+      const id = sh.getAttribute('bpmnElement')
+      if (b && sizeOf.has(id)) diX.set(id, { x: +b.getAttribute('x'), y: +b.getAttribute('y') })
+    }
+    const hasPositions = [...sizeOf.keys()].every(id => diX.has(id))
+    const children = [...sizeOf].map(([id, s]) => {
+      const c = { id, width: s.w, height: s.h }
+      if (hasPositions) { c.x = diX.get(id).x; c.y = diX.get(id).y }
+      const tag = tagOf.get(id)
+      if (tag === 'startEvent') c.layoutOptions = { 'elk.layered.layering.layerConstraint': 'FIRST' }
+      else if (tag === 'endEvent') c.layoutOptions = { 'elk.layered.layering.layerConstraint': 'LAST' }
+      return c
+    })
+    // 모델 순서도 같은 순서로 — 같은 층 안에서 위아래가 들쭉날쭉하지 않게.
+    if (hasPositions) children.sort((a, b) => a.x - b.x)
 
     const res = await elk.layout({
       id: 'root',
@@ -267,8 +294,11 @@ async function elkLayout(xml) {
         'elk.layered.spacing.nodeNodeBetweenLayers': '70',
         'elk.spacing.nodeNode': '45',
         'elk.layered.spacing.edgeNodeBetweenLayers': '25',
+        // DI 가 있으면 그 x 로, 없으면(DI 없는 골격) 문서 순서로 되돌아가는 간선을 고른다.
+        'elk.layered.cycleBreaking.strategy': hasPositions ? 'INTERACTIVE' : 'MODEL_ORDER',
+        'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
       },
-      children: [...sizeOf].map(([id, s]) => ({ id, width: s.w, height: s.h })),
+      children,
       edges: flows.map(f => ({ id: f.id, sources: [f.s], targets: [f.t] })),
     })
 
