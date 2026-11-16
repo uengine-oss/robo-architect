@@ -135,6 +135,26 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   /**
+   * 프로젝트를 지운다 — 설계와 짝인 분석 데이터가 함께 사라진다. 소유자만, 이름을 그대로 다시 받아야 한다.
+   * 지운 것이 지금 보던 프로젝트면 선택을 비우고 새로고침한다(지운 graph 를 계속 가리키지 않게).
+   */
+  async function remove(graph, confirmName) {
+    const r = await fetch(
+      `/api/projects/${encodeURIComponent(graph)}?confirm=${encodeURIComponent(confirmName)}`,
+      { method: 'DELETE' },
+    )
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(body.detail || `지우지 못했습니다 (${r.status})`)
+    if (graph === auth.projectGraph) {
+      auth.setProject(null)
+      window.location.reload()
+      return body
+    }
+    await load()
+    return body
+  }
+
+  /**
    * 이 프로젝트가 함께 볼 분석 graph 를 정한다.
    *
    * 설계는 분석에서 뽑은 룰을 승격시킨 것이라 둘은 한 세트다. 짝을 안 정하면
@@ -176,6 +196,6 @@ export const useProjectsStore = defineStore('projects', () => {
 
   return {
     projects, loading, error, current, currentName, canManage, currentAnalyzerGraph,
-    load, create, adopt, members, share, unshare, select, setAnalyzer, analyzerOptions,
+    load, create, adopt, members, share, unshare, select, setAnalyzer, remove, analyzerOptions,
   }
 })

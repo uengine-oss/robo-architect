@@ -78,6 +78,19 @@ def delegated_path(path: str) -> bool:
             or path == "/api/code-templates/sets" or path.startswith("/api/code-templates/sets/"))
 
 
+def handled_locally(method: str, path: str) -> bool:
+    """중앙으로 넘기지 않고 이 프로세스가 처리하는 경로.
+
+    `DELETE /api/projects/{graph}` — 납품판 authority 에는 프로젝트 삭제 경로가 없다(2026-11-16).
+    이 프로세스가 소유자 자격으로 지우고(`projects.router.delete_project`), 권한 판단은 같은 DB 의
+    소유자 칸으로 한다. 하위 경로(`/members` 등)는 그대로 중앙으로 간다.
+    """
+    if method != "DELETE" or not path.startswith("/api/projects/"):
+        return False
+    rest = path[len("/api/projects/"):]
+    return bool(rest) and "/" not in rest.strip("/")
+
+
 # `/api/auth/provider` 가 담는 AI 진단 칸. **이 프로세스가 답해야 하는 값**이다.
 _LOCAL_AI_FIELDS = ("embeddings", "aiGateway")
 
@@ -149,6 +162,8 @@ class AuthorityProxyMiddleware(BaseHTTPMiddleware):
         except RuntimeError:
             return JSONResponse({"detail": "중앙 권한 서버 주소 설정을 확인하세요."}, status_code=503)
         if not origin or not delegated_path(request.url.path) or request.method == "OPTIONS":
+            return await call_next(request)
+        if handled_locally(request.method, request.url.path):
             return await call_next(request)
         # PC의 신원/역할/연결/forwarded 헤더는 중앙 서버의 권한 근거가 될 수 없다.
         headers = {name: request.headers[name] for name in

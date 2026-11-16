@@ -239,8 +239,11 @@ export const useRequirementsStore = defineStore('requirements', () => {
   // ── 생성 엔진 설정 (034 US5) ──────────────────────────────────────────
   // 'in-process' (백엔드 LLM) | 'claude-ide' (로컬 Claude + speckit). 설정은
   // 도구 환경 설정이므로 그래프가 아닌 localStorage에 저장한다.
+  // 서버 판(posco-web)은 로컬 Claude 가 없다 — 예전에 'claude-ide' 로 저장돼 있어도 in-process 로만 돈다.
+  const claudeIdeDisabled = import.meta.env.VITE_DISABLE_CLAUDE_TERMINAL === '1'
   const generationEngine = ref(
     (() => {
+      if (claudeIdeDisabled) return 'in-process'
       try {
         return localStorage.getItem('req_gen_engine') || 'in-process'
       } catch {
@@ -249,6 +252,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
     })(),
   )
   function setGenerationEngine(v) {
+    if (claudeIdeDisabled && v !== 'in-process') return
     generationEngine.value = v
     try {
       localStorage.setItem('req_gen_engine', v)
