@@ -41,4 +41,4 @@ StandardItemProvider.search(keyword) -> StandardLookup(items, source, checked_at
   `unverified` = "표준 미확인". 후보를 골라 확정하는 동작은 사람 몫(지어내지 않는다).
 - 서비스설계서(deliverables) 데이터 항목 표에 표준항목ID · 값유형 · 자리수 · 소수 · 코드항목 · 출처 열.
 - 속성을 읽는 API 는 `Property` 노드 칸을 그대로 내므로 읽기 쪽은 칸 추가만으로 닿는다 — 확인 필요.
-- 하이브리드(A2A→ES) 경로 등 `upsert_properties_bulk` 를 다른 곳에서 부르는 경로는 아직 붙이지 않았다.
+- `upsert_properties_bulk` 호출자는 위 두 곳뿐이다(2026-11-16 grep). 속성을 사람이 고치는 경로는 표준을 다시 묻지 않는다 — 필요하면 그때 붙인다.
