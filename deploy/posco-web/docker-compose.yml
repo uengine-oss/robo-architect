@@ -126,6 +126,12 @@ services:
       # 안쪽 서비스 — 설치본은 127.0.0.1:<동적포트> 였다(docker-stack.ts).
       ROBO_GATEWAY_URL: http://gateway:9000
       ROBO_CLUSTER_MCP_URL: http://analyzer:5502/robo/mcp/
+      # POSCO 표준항목(데이터 사전) MCP — **포스코망에서만** 채운다. 비면 꺼진다(설계는 그대로 돈다).
+      # 속성 한글 이름으로 조회해 정확히 같은 것 하나(사용 중)만 붙이고, 아니면 후보만 남긴다.
+      # 닿지 않거나 늦으면(건당 5초) '표준 미확인' 으로 남기고 설계는 계속한다. 점검: probe-standard-mcp.py
+      ROBO_STANDARD_MCP_URL: ${ROBO_STANDARD_MCP_URL:-}
+      # '사용 중' 으로 볼 standardItemStatus 값(쉼표). 비면 코드 기본 목록 — 현장 probe 로 재서 채운다.
+      ROBO_STANDARD_ACTIVE_STATUSES: ${ROBO_STANDARD_ACTIVE_STATUSES:-}
       WIREFRAME_SERVICE_URL: http://wireframe:7610
       ROBO_SPEC_BACKEND_URL: http://127.0.0.1:8000
       # AI — 사내 P-GPT 로만 나간다.
