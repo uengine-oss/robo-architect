@@ -28,6 +28,7 @@
 
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 import { useAuthStore } from '@/features/auth/auth.store.js'
+import { currentChoice } from '@/features/llmModels/llmModelChoice.js'
 
 let installed = false
 
@@ -129,6 +130,12 @@ export function installBackendHeaderInterceptor() {
         }
         if (auth.projectGraph && !headers.has('X-Project-Graph')) {
           headers.set('X-Project-Graph', auth.projectGraph)
+          touched = true
+        }
+        // 내가 고른 생성 모델(환경설정). 서버는 P-GPT 목록에 있는 이름만 받는다.
+        const llmModel = auth.user ? currentChoice(auth.user.uid) : ''
+        if (llmModel && !headers.has('X-LLM-Model')) {
+          headers.set('X-LLM-Model', llmModel)
           touched = true
         }
 

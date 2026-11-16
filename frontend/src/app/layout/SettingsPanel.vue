@@ -8,6 +8,7 @@ import { useLanguageStore } from '@/app/language.store'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import UserAdminSection from '@/features/auth/ui/UserAdminSection.vue'
 import AiRoutingSection from '@/features/auth/ui/AiRoutingSection.vue'
+import LlmModelSection from '@/features/llmModels/ui/LlmModelSection.vue'
 
 const auth = useAuthStore()
 
@@ -209,6 +210,9 @@ function reloadAfterClear() {
               </button>
             </div>
           </div>
+
+          <!-- 생성 모델 — 사용자마다 (P-GPT /models) -->
+          <LlmModelSection v-if="auth.authenticated" />
 
           <!-- Generation Output Language Setting (feature 031) -->
           <div class="settings-section">

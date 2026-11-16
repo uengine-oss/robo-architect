@@ -55,7 +55,10 @@ def _resolve_model(provider: str, model: str | None) -> str:
     # For anthropic/google we require explicit configuration.
     m = env_str("LLM_MODEL", default=None)
     if provider == "openai":
-        return m or OPENAI_DEFAULT_MODEL
+        # 환경설정에서 사용자가 고른 모델(요청 헤더 · 목록에 있는 것만 받는다)이 먼저다.
+        from api.platform.llm_model_choice import selected_model
+
+        return selected_model() or m or OPENAI_DEFAULT_MODEL
 
     if not m:
         example = "claude-3-5-sonnet-latest" if provider == "anthropic" else "gemini-2.0-flash"
