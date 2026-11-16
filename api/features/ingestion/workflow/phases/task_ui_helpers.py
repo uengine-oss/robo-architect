@@ -51,6 +51,7 @@ async def _default_llm_invoke(system: str, user: str) -> str:
 
 
 def _parse_json(raw: str) -> dict:
+    original = raw
     raw = (raw or "").strip()
     if "```" in raw:
         raw = raw.split("```")[1].lstrip("json").strip() if raw.count("```") >= 2 else raw
@@ -59,7 +60,11 @@ def _parse_json(raw: str) -> dict:
         raw = raw[start : end + 1]
     try:
         return json.loads(raw)
-    except Exception:
+    except Exception as e:
+        # 실패하면 'screen' 으로 떨어지는 동작은 그대로 — **조용히** 떨어지지 않게만 한다.
+        from api.platform.llm_structured_diag import log_text_parse_failure
+
+        log_text_parse_failure("task_ui.readmodel_kind", original, e)
         return {}
 
 

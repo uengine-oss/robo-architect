@@ -48,6 +48,29 @@ def reset_current_session(token: Any) -> None:
         pass
 
 
+def _diag_context() -> dict:
+    """구조화 출력 진단 로그(`platform/llm_structured_diag.py`)에 단계 이름을 붙인다.
+
+    스키마 이름만으로는 같은 스키마를 쓰는 단계(commands·readmodels 등)가
+    갈리지 않는다. 세션이 아는 현재 단계를 함께 남긴다.
+    """
+    session = _current_session.get()
+    if session is None:
+        return {}
+    return {
+        "phase": getattr(session, "current_phase", None),
+        "session_id": getattr(session, "id", None),
+    }
+
+
+try:
+    from api.platform.llm_structured_diag import register_context_provider
+
+    register_context_provider(_diag_context)
+except Exception:  # noqa: BLE001 — 진단 등록 실패가 인제스천을 막지 않는다
+    pass
+
+
 def get_llm(**kwargs):
     """Get configured LLM instance.
 

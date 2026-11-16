@@ -20,9 +20,11 @@ def test_openai_structured_output_defaults_to_function_calling(monkeypatch):
         return_value="structured",
     ) as structured:
         llm = get_llm()
-        assert llm.with_structured_output(_Result) == "structured"
+        llm.with_structured_output(_Result)
 
     assert structured.call_args.kwargs["method"] == "function_calling"
+    # 진단을 위해 안에서는 raw 를 함께 받는다(llm_structured_diag.wrap_structured).
+    assert structured.call_args.kwargs["include_raw"] is True
 
 
 def test_openai_structured_output_keeps_explicit_method(monkeypatch):
@@ -36,6 +38,6 @@ def test_openai_structured_output_keeps_explicit_method(monkeypatch):
         return_value="structured",
     ) as structured:
         llm = get_llm()
-        assert llm.with_structured_output(_Result, method="json_schema") == "structured"
+        llm.with_structured_output(_Result, method="json_schema")
 
     assert structured.call_args.kwargs["method"] == "json_schema"

@@ -597,6 +597,13 @@ If no properties are available, only then use empty fieldValues {{}}."""
                     "content_length": len(content),
                 }
             )
+            # 위 WARN 은 기본 최소 수준(ERROR)에서 안 남는다 — 응답 모양을 공용
+            # 진단으로 한 번 더 남긴다(아래 복구가 성공해도 갈래는 보인다).
+            from api.platform.llm_structured_diag import log_text_parse_failure
+
+            log_text_parse_failure(
+                "gwt.command", response, json_err, command_name=cmd_name, recovery="pending"
+            )
             # Recovery 1: extract the [...] array and strip stray control chars.
             gwt_test_cases = None
             json_match = re.search(r'\[[\s\S]*\]', content)

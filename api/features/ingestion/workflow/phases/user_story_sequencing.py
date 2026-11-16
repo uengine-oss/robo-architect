@@ -9,7 +9,6 @@ Phase: User Story Sequencing
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any, AsyncGenerator
 
 from langchain_core.messages import HumanMessage
@@ -356,12 +355,23 @@ async def _sequencing_chunked(
 
 
 def _parse_sequence_response(response: Any) -> dict[str, int]:
-    """LLM 응답에서 {us_id: sequence} 매핑 파싱."""
-    content = response.content.strip()
-    if content.startswith("```"):
-        content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    mapping = json.loads(content)
-    return {k: int(v) for k, v in mapping.items()}
+    """LLM 응답에서 {us_id: sequence} 매핑 파싱.
+
+    펜스·앞뒤 설명을 견딘다(`parse_llm_json`). 그래도 실패하면 응답 모양을
+    `llm.structured_output.text_parse_failed` 로 남기고 예외를 그대로 올린다 —
+    호출부가 이 청크를 건너뛰는 동작은 예전과 같다.
+    """
+    from api.platform.llm_structured_diag import log_text_parse_failure, parse_llm_json
+
+    content = (getattr(response, "content", None) or "").strip()
+    try:
+        mapping = parse_llm_json(content)
+        if not isinstance(mapping, dict):
+            raise ValueError(f"expected JSON object, got {type(mapping).__name__}")
+        return {k: int(v) for k, v in mapping.items()}
+    except Exception as e:
+        log_text_parse_failure("user_story_sequencing", response, e)
+        raise
 
 
 def _update_us_sequence(ctx: IngestionWorkflowContext, us_id: str, sequence: int) -> None:
