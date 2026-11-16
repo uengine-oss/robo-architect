@@ -121,21 +121,29 @@ export async function computeLaneLayout(model, elk) {
     laneOf.set(n.id, other !== undefined && laneOf.has(other) ? laneOf.get(other) : 0)
   }
 
-  // 같은 (레인, 열) 은 ELK 의 위아래 순으로 줄을 나눈다
-  const cells = new Map()
-  for (const n of nodes) {
-    const key = `${laneOf.get(n.id)}:${colOf(n.id)}`
-    if (!cells.has(key)) cells.set(key, [])
-    cells.get(key).push(n.id)
-  }
+  // 레인 안의 줄 — ELK 가 정한 **위아래 자리(y)** 를 레인마다 줄 번호로 접는다.
+  // ELK 는 게이트웨이에서 갈라지는 가지를 서로 다른 높이에 둔다. 그 순서를 지켜야 같은 레인 안에서도
+  // 가지가 위아래로 벌어진다(전에는 같은 칸에 겹칠 때만 줄을 나눠, 가지가 한 줄에 늘어서 읽기 어려웠다).
+  const centerY = (id) => elkPos.get(id).y + (byId.get(id).h / 2)
   const rowOf = new Map()
   const laneRows = lanes.map(() => 1)
-  for (const [key, ids] of cells) {
-    ids.sort((a, b) => elkPos.get(a).y - elkPos.get(b).y)
-    ids.forEach((id, r) => rowOf.set(id, r))
-    const li = +key.split(':')[0]
-    laneRows[li] = Math.max(laneRows[li], ids.length)
-  }
+  lanes.forEach((_, li) => {
+    const ids = nodes.map(n => n.id).filter(id => laneOf.get(id) === li)
+    const levels = [...new Set(ids.map(id => Math.round(centerY(id))))].sort((a, b) => a - b)
+    const rowOfLevel = new Map()
+    let r = -1, prev = -Infinity
+    for (const y of levels) { if (y - prev > 25) r += 1; rowOfLevel.set(y, r); prev = y }
+    for (const id of ids) rowOf.set(id, rowOfLevel.get(Math.round(centerY(id))))
+    // 같은 줄·같은 열에 둘이 걸리면(ELK 가 아주 가깝게 둔 것) 아래로 밀어 낸다
+    const taken = new Map()
+    for (const id of [...ids].sort((a, b) => centerY(a) - centerY(b))) {
+      let row = rowOf.get(id)
+      while (taken.get(`${row}:${colOf(id)}`)) row += 1
+      taken.set(`${row}:${colOf(id)}`, true)
+      rowOf.set(id, row)
+    }
+    laneRows[li] = Math.max(1, ...ids.map(id => rowOf.get(id) + 1))
+  })
 
   const left = 0, top = 0
   const laneTop = []
@@ -157,7 +165,8 @@ export async function computeLaneLayout(model, elk) {
     if (l.id) laneBoxes[l.id] = { x: left + HEAD_W, y: laneTop[i], w: poolW - HEAD_W, h: laneRows[i] * ROW_H + LANE_PAD * 2 }
   })
   const pool = { x: left, y: top, w: poolW, h: acc - top }
-  const edges = routeEdges(boxes, flows, {})
+  const tags = Object.fromEntries(nodes.map(n => [n.id, n.tag]))
+  const edges = routeEdges(boxes, flows, {}, tags)
   return { boxes, laneBoxes, pool, edges }
 }
 
