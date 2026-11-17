@@ -178,7 +178,7 @@ export async function computeLaneLayout(model, elk) {
 export function labelBox(name, pts) {
   const text = (name || '').trim()
   if (!text || !pts || pts.length < 2) return null
-  const w = Math.min(160, 8 + [...text].length * 11)
+  const w = Math.min(180, Math.max(44, 10 + [...text].length * 13))   // 좁으면 bpmn-js 가 글자를 줄바꿈한다(경조/사)
   const h = 14
   const [a, b] = pts
   if (Math.abs(a.x - b.x) < 0.5) {              // 세로로 나간다
