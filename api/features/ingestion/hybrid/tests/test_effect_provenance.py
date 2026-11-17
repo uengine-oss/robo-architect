@@ -27,7 +27,7 @@ def test_new_contract_filters_reads_but_preserves_unknown_writes() -> None:
     }]
 
 
-def test_legacy_effects_are_additive_fallbacks_not_scanner_claims() -> None:
+def test_missing_provenance_is_unresolved() -> None:
     effects = merge_write_effects(
         [
             {"table": "orders", "op": "UPDATE"},
@@ -37,8 +37,8 @@ def test_legacy_effects_are_additive_fallbacks_not_scanner_claims() -> None:
     assert effects == [{
         "table": "orders",
         "access": "WRITE",
-        "op": "UPDATE",
-        "op_source": "LEGACY",
+        "op": "UNKNOWN",
+        "op_source": "UNRESOLVED",
     }]
 
 
@@ -57,10 +57,11 @@ def test_rendering_distinguishes_authoritative_inferred_and_unresolved() -> None
     block = render_hybrid_bl_block({
         "US-1": [{
             "source_function": "work",
-            "statement": "상태를 반영한다.",
-            "examples": [{
-                "example_id": "e1",
-                "writes": [
+            "title": "상태를 반영한다.",
+            "given": "주문 처리 중",
+            "when_": "상태 변경 조건을 만족하면",
+            "then_": "상태를 반영한다.",
+            "writes": [
                     {
                         "table": "orders",
                         "access": "WRITE",
@@ -80,7 +81,6 @@ def test_rendering_distinguishes_authoritative_inferred_and_unresolved() -> None
                         "op_source": "UNRESOLVED",
                     },
                 ],
-            }],
         }],
     })
     assert "UPDATE `orders` [SCANNER]" in block

@@ -94,15 +94,8 @@ def verify_pipeline_status(session_id: str) -> dict:
             session_id,
         )
         passages = _scalar(s, "MATCH (p:DocumentPassage {session_id: $sid}) RETURN count(p) AS c", session_id)
-
-        total_questions = _scalar(s, "MATCH (q:QUESTION) WHERE q.session_id IS NULL RETURN count(q) AS c", session_id)
-        attached_questions = _scalar(
-            s,
-            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
-            "MATCH (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
-            "RETURN count(DISTINCT q) AS c",
-            session_id,
-        )
+        # 분석기 QUESTION 은 더 세지 않는다 — 지금 analyzer 계약에 없고(분석 graph 는
+        # 다른 DB), 승격도 더 붙이지 않는다(promote_to_es).
 
     # 세션에 Rule 이 없으면 문서 업로드 경로 — Rule 매핑은 해당 사항 없음.
     source_kind = "analyzer" if rules_in_session > 0 else "document"
@@ -177,10 +170,6 @@ def verify_pipeline_status(session_id: str) -> dict:
                 "passages": passages,
                 "grounded_tasks": grounded_tasks,
                 "ungrounded_tasks": max(tasks - grounded_tasks, 0),
-            },
-            "question_attach": {
-                "total_questions": total_questions,
-                "attached_questions": attached_questions,
             },
         },
         # 세기만 하는 것들. 판정(`summary`)에는 안 들어간다 — 사람이 보고 정한다.

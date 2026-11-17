@@ -209,7 +209,8 @@ async function saveEdit() {
               <span v-if="rule.evidence_role === 'supporting'"
                     class="source-rule-role tipped" tabindex="0"
                     data-tip="이 룰은 다른 업무 단계에 더 가깝습니다. 여기서는 참고로만 함께 보여 줍니다 — 같은 룰이 두 곳에 보이는 이유입니다.">보조</span>
-              <span class="source-rule-stmt">{{ rule.statement }}</span>
+              <!-- 백엔드 `/traceability/.../source-rules` 는 `title` 을 준다(설계 Rule.title). -->
+              <span class="source-rule-stmt">{{ rule.title }}</span>
               <code v-if="rule.source_function" class="source-rule-fn">{{ rule.source_function }}</code>
             </li>
           </ul>
@@ -411,6 +412,14 @@ async function saveEdit() {
 .source-rules__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .source-rule-item { display: flex; align-items: baseline; gap: 6px; font-size: 0.85rem; line-height: 1.4; flex-wrap: wrap; }
 .source-rule-stmt { flex: 1 1 auto; color: var(--color-text); word-break: keep-all; }
+/* 보조 근거 — 지우지 않고 남기되 주 근거보다 약하게 보인다. */
+.source-rule-item--supporting .source-rule-stmt { color: var(--color-text-light); }
+.source-rule-role {
+  flex-shrink: 0;
+  font-size: 0.7rem; font-weight: 600; line-height: 1.6;
+  color: #6d4c00; background: #fff8e1; border: 1px solid #ffe082;
+  padding: 0 5px; border-radius: 4px;
+}
 .source-rule-fn {
   flex-shrink: 0;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);

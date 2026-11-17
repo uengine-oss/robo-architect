@@ -53,6 +53,7 @@ import { useRequirementsStore } from '@/features/requirements/requirements.store
 // 041 — Design 측 헌장(Constitution) 관리. CanvasWorkspace(프로젝트 헌장)와
 // BoundedContextNode(BC 헌장)가 robo:open-constitution 을 dispatch 하면 모달을 연다.
 import ConstitutionEditor from '@/features/constitution/ui/ConstitutionEditor.vue'
+import { customer } from '@/app/customer'
 
 const navigatorStore = useNavigatorStore()
 const themeStore = useThemeStore() // Initialize theme store
@@ -79,13 +80,10 @@ function providerAttempts() {
 
 // Tab state management — 시작 탭.
 //
-// 예전 기본값은 'Proposals' 였는데 그 탭을 사내망 배포에서 숨겼다(`TopBar.vue`).
-// 그대로 두면 **목록에 없는 탭으로 앱이 열린다** — 내용은 그려지는데 상단에
-// 선택된 탭이 없다.
-//
-// 'Legacy'(분석기)가 새 기본이다. 작업 순서의 첫 단계이기도 하다:
-// 레거시 코드 분석 → 문서 업로드 → 프로세스 생성 → 룰 매핑 → ES 승격.
-const activeTab = ref('Legacy')
+// 코어 기본은 'Proposals'. 고객 확장이 정하면 그것으로 — 포스코는 'Legacy'(그 판은 Proposals 를 감춰서,
+// 그대로 두면 **목록에 없는 탭으로 앱이 열린다**. 작업 순서의 첫 단계이기도 하다:
+// 레거시 코드 분석 → 문서 업로드 → 프로세스 생성 → 룰 매핑 → ES 승격).
+const activeTab = ref(customer.shell.startTab || 'Proposals')
 
 // Claude Code workdir state — hydrated from localStorage so the inspector's
 // source viewer (feature 029) can resolve ImplementationFile paths even

@@ -16,6 +16,7 @@ LLM is guided to produce one UserStory per fn cluster within that Task.
 
 from __future__ import annotations
 
+import json
 import os
 from collections import defaultdict
 
@@ -245,58 +246,26 @@ def fetch_hybrid_us_rules(
     session_id: str,
     us_to_task: list[tuple[str, str]],
 ) -> dict[str, list[dict]]:
-    """Bulk-fetch BL info per UserStory in one Neo4j round-trip.
-
-    Each entry of `us_to_task` is `(us_id, task_id)`. For every
-    `(BpmTask)-[:REALIZED_BY]->(shadow Rule)` we lift the analyzer-side
-    `(FUNCTION)-[hr:HAS_RULE]->(Rule)-[:HAS_EXAMPLE]->(Example)` chain when
-    the analyzer Rule matches the shadow by `(source_function, statement)`.
-    Result feeds `IngestionWorkflowContext.hybrid_us_rules` so downstream
-    legacy ES phases (aggregates / commands / events_from_us / gwt / bcs)
-    can compose LLM prompts that include AFFECTS_TABLE writes,
-    coupled_domains, guard chain, and canonical Example GWT — making the
-    resulting nodes carry the analyzer's domain intent rather than just
-    the US text.
-
-    Returns: {us_id: [bl_info, ...]} — empty list when the task has no
-    REALIZED_BY rules. Keys for every us_id in `us_to_task` are present.
-    """
+    """Bulk-fetch converted Analyzer rule facts per UserStory."""
     out: dict[str, list[dict]] = {us_id: [] for us_id, _ in us_to_task}
     if not us_to_task:
         return out
 
     pairs = [{"us_id": us_id, "task_id": task_id} for us_id, task_id in us_to_task]
-    # 오퍼레이션 단위(루틴) 기준 조인 — dbms 룰 오너=자식구문 → PARENT_OF*0.. 로 루틴 rtn 복원.
-    # EXAMPLE 에 is_boundary 없음 → 대표예시=첫 EXAMPLE(C2).
     cypher = """
     UNWIND $pairs AS pair
     MATCH (t:BpmTask {id: pair.task_id, session_id: $sid})
           -[:REALIZED_BY]->(sh:Rule {session_id: $sid})
-    OPTIONAL MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(an:RULE)
-      WHERE an.session_id IS NULL
-        AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
-        AND rtn.name = sh.source_function
-        AND an.statement = sh.title
-    WITH pair, sh, hr, an,
-         head([(an)-[:HAS_EXAMPLE]->(e:EXAMPLE) | e]) AS canonical_ex,
-         [(an)-[:HAS_EXAMPLE]->(e:EXAMPLE) | {
-            example_id: e.id,
-            given: e.given,
-            when_: e.when_,
-            then_: e.then_,
-            writes: [(e)-[at:AFFECTS_TABLE]->(tbl:TABLE)
-                     | {table: tbl.name, access: at.access, op: at.op, op_source: at.op_source}]
-         }] AS examples
     RETURN pair.us_id AS us_id,
            sh.id AS rule_id,
-           sh.title AS statement,
+           sh.title AS title,
            sh.source_function AS source_function,
-           coalesce(canonical_ex.given,  sh.given) AS given,
-           coalesce(canonical_ex.when_,  sh.when)  AS when_,
-           coalesce(canonical_ex.then_,  sh.then)  AS then_,
-           false AS is_boundary,
-           coalesce(hr.coupled_domains, []) AS coupled_domains,
-           examples
+           sh.source_function_id AS source_function_id,
+           sh.source_rule_id AS source_rule_id,
+           coalesce(sh.given, '') AS given,
+           coalesce(sh.`when`, '') AS when_,
+           coalesce(sh.`then`, '') AS then_,
+           coalesce(sh.write_effects_json, '[]') AS write_effects_json
     """
 
     with get_session() as s:
@@ -304,23 +273,20 @@ def fetch_hybrid_us_rules(
             us_id = r["us_id"]
             if us_id not in out:
                 out[us_id] = []
+            try:
+                writes = json.loads(r["write_effects_json"] or "[]")
+            except (TypeError, ValueError):
+                writes = []
             out[us_id].append({
-                "rule_id":         r["rule_id"],
-                "statement":       r["statement"] or "",
+                "rule_id": r["rule_id"],
+                "title": r["title"] or "",
                 "source_function": r["source_function"],
-                "given":           r["given"] or "",
-                "when_":           r["when_"] or "",
-                "then_":           r["then_"] or "",
-                "is_boundary":     bool(r["is_boundary"]),
-                "coupled_domains": list(r["coupled_domains"] or []),
-                "examples":        [
-                    {
-                        **dict(e),
-                        "writes": merge_write_effects(e.get("writes") or []),
-                    }
-                    for e in (r["examples"] or [])
-                    if e and e.get("example_id")
-                ],
+                "source_function_id": r["source_function_id"],
+                "source_rule_id": r["source_rule_id"],
+                "given": r["given"] or "",
+                "when_": r["when_"] or "",
+                "then_": r["then_"] or "",
+                "writes": merge_write_effects(writes),
             })
     return out
 
@@ -330,7 +296,6 @@ def render_hybrid_bl_block(
     us_id_set: set[str] | None = None,
     *,
     max_rules_per_us: int = 6,
-    max_examples_per_rule: int = 2,
 ) -> str:
     """Format BL prefetch payload as markdown text appended to LLM prompts.
 
@@ -343,9 +308,8 @@ def render_hybrid_bl_block(
       ## Code-grounded Business Logic (analyzer-extracted)
       - US `us_id`:
         - R1 [b000_main_proc] "rule statement"
-          - writes: [INSERT zpay_ap_rltm_auth_hst]
-          - coupled_domains: ["order"]
-          - example: GIVEN ... / WHEN ... / THEN ... (boundary)
+          - writes: INSERT zpay_ap_rltm_auth_hst
+          - GIVEN / WHEN / THEN derived from Analyzer routine and Rule facts
 
     The LLM uses this to ground Aggregate root_table, Command preconditions,
     Event PastParticiple, etc. in actual code rather than US text alone.
@@ -365,9 +329,8 @@ def render_hybrid_bl_block(
 
     lines.append("\n\n## Code-grounded Business Logic (analyzer-extracted)")
     lines.append(
-        "_아래는 각 UserStory 가 출처로 삼은 분석기 코드의 BL 정보 — Rule.statement, "
-        "AFFECTS_TABLE write effects와 근거 등급, coupled_domains (cross-BC 신호), "
-        "그리고 canonical Example GWT 입니다. "
+        "_아래는 각 UserStory가 출처로 삼은 Analyzer Rule의 조건·효과와 "
+        "직접 WRITES 관계입니다. "
         "Aggregate root에는 WRITE/READ_WRITE를 사용하세요. Event 동사는 SCANNER 연산만 "
         "강한 근거, LLM_INFERRED는 약한 힌트이며 op unresolved는 동사 근거가 아닙니다._\n"
     )
@@ -375,21 +338,18 @@ def render_hybrid_bl_block(
         lines.append(f"- US `{us_id}`:")
         for i, bl in enumerate(bls[:max_rules_per_us], start=1):
             fn = bl.get("source_function") or "?"
-            stmt = (bl.get("statement") or "").replace("\n", " ").strip()
-            lines.append(f"  - **R{i}** [`{fn}`] \"{stmt}\"")
+            title = (bl.get("title") or "").replace("\n", " ").strip()
+            lines.append(f"  - **R{i}** [`{fn}`] \"{title}\"")
 
-            # Aggregate writes across all examples (drives Aggregate root_table /
-            # Event PastParticiple / Command emit).
             seen_writes: dict[tuple[str, str, str, str], dict[str, str]] = {}
-            for ex in bl.get("examples") or []:
-                for effect in merge_write_effects(ex.get("writes") or []):
-                    key = (
-                        effect["table"],
-                        effect["access"],
-                        effect["op"],
-                        effect["op_source"],
-                    )
-                    seen_writes[key] = effect
+            for effect in merge_write_effects(bl.get("writes") or []):
+                key = (
+                    effect["table"],
+                    effect["access"],
+                    effect["op"],
+                    effect["op_source"],
+                )
+                seen_writes[key] = effect
             if seen_writes:
                 writes_str = ", ".join(
                     rendered
@@ -401,27 +361,11 @@ def render_hybrid_bl_block(
                 )
                 lines.append(f"    - writes: {writes_str}")
 
-            if bl.get("coupled_domains"):
-                lines.append(f"    - coupled_domains: {bl['coupled_domains']}")
-
-            # Canonical example GWT
             given = (bl.get("given") or "").replace("\n", " ").strip()
             when_ = (bl.get("when_") or "").replace("\n", " ").strip()
             then_ = (bl.get("then_") or "").replace("\n", " ").strip()
             if given or when_ or then_:
-                tail = " (boundary)" if bl.get("is_boundary") else ""
-                lines.append(f"    - example{tail}: GIVEN \"{given}\" / WHEN \"{when_}\" / THEN \"{then_}\"")
-
-            # Boundary examples (extra)
-            extras = [
-                ex for ex in (bl.get("examples") or [])
-                if ex.get("is_boundary") and (ex.get("given") or ex.get("when_") or ex.get("then_"))
-            ][:max_examples_per_rule]
-            for ex in extras:
-                eg = (ex.get("given") or "").replace("\n", " ").strip()
-                ew = (ex.get("when_") or "").replace("\n", " ").strip()
-                et = (ex.get("then_") or "").replace("\n", " ").strip()
-                lines.append(f"    - boundary example: GIVEN \"{eg}\" / WHEN \"{ew}\" / THEN \"{et}\"")
+                lines.append(f"    - GIVEN \"{given}\" / WHEN \"{when_}\" / THEN \"{then_}\"")
         if len(bls) > max_rules_per_us:
             lines.append(f"  - ...({len(bls) - max_rules_per_us} more rules)")
     return "\n".join(lines)

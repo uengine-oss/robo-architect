@@ -5,8 +5,8 @@ That pipeline produced ~13 rules per Task and couldn't distinguish
 "계좌등록 입력값 검증" from "결제승인 입력값 검증". The re-architected
 pipeline (개선&재구조화.md §2.B) replaces it with:
 
-  Step 1  module retrieval        (process.domain_keywords + task.name → MODULE top-k)
-  Step 2  BL filter within modules
+  Step 1  container retrieval     (process.domain_keywords + task.name → code containers)
+  Step 2  Rule filter within containers
   Step 3  agentic validator       (LLM judges each candidate w/ Cypher-fetched parent chain)
 
 Phase 3.0 (glossary) is retained as ancillary context. 3.1 / 3.2 / 3.3 / 3.4
@@ -56,8 +56,7 @@ class Phase3Result:
     # legacy fallback path runs.
     review_matches: list[ActivityRuleMapping] = field(default_factory=list)
     table_edges: list[tuple[str, str, str]] = field(default_factory=list)
-    # Process → list[(module_fqn, confidence)] for §2.F persistence.
-    process_modules: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+    process_containers: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
 
 
 def _group_tasks_by_process(
@@ -152,7 +151,7 @@ async def map_tasks_to_rules(
         for m in retrieval.accepted:
             all_accepted.append((process, m))
         if process.id != "proc_fallback":
-            result.process_modules[process.id] = retrieval.process_modules.get(
+            result.process_containers[process.id] = retrieval.process_containers.get(
                 process.id, [],
             )
         # §8.7 UX — let the runner persist this process's accepted mappings
@@ -187,17 +186,17 @@ async def map_tasks_to_rules(
     # Build task_id → BpmTaskDTO map (agent's AcceptedMapping only has task_id).
     task_by_id = {t.id: t for t in skeleton.tasks}
 
-    # §2.B P3 — precompute each process's top-module confidence so we can
+    # §2.B P3 — precompute each process's top-container confidence so we can
     # attach it to every ClaimEntry. A low top-1 confidence means Step 1
     # barely found anything implementing this process → arbitrator should
     # second-guess even single claims.
-    module_conf_by_proc: dict[str, float] = {}
-    for pid, entries_list in result.process_modules.items():
-        module_conf_by_proc[pid] = float(entries_list[0][1]) if entries_list else 0.0
+    container_conf_by_proc: dict[str, float] = {}
+    for pid, entries_list in result.process_containers.items():
+        container_conf_by_proc[pid] = float(entries_list[0][1]) if entries_list else 0.0
 
     # §8.7 UX — surface arbitration progress. A claim is "contested" if either
     # (a) ≥ 2 processes accepted the same rule, or (b) the only process that
-    # accepted it has low module_confidence (forces single-claim re-judgment).
+    # accepted it has low container confidence (forces single-claim re-judgment).
     # Frontend highlights all task_ids in contested claims so users see which
     # mappings are under cross-process review.
     contested_claims_payload = []
@@ -211,7 +210,7 @@ async def map_tasks_to_rules(
                 })
         elif len(claim_pairs) == 1:
             proc, m = claim_pairs[0]
-            if module_conf_by_proc.get(proc.id, 1.0) < SINGLE_CLAIM_ARBITRATION_THRESHOLD:
+            if container_conf_by_proc.get(proc.id, 1.0) < SINGLE_CLAIM_ARBITRATION_THRESHOLD:
                 contested_claims_payload.append({
                     "rule_id": rule_id,
                     "task_id": m.task_id,
@@ -228,7 +227,7 @@ async def map_tasks_to_rules(
         rule_dto = rule_by_id.get(rule_id)
         if rule_dto is None:
             continue
-        # Build entries up-front so we can inspect module_confidence below.
+        # Build entries up-front so we can inspect container confidence below.
         entries = []
         for proc, m in claim_pairs:
             t = task_by_id.get(m.task_id)
@@ -237,17 +236,17 @@ async def map_tasks_to_rules(
             entries.append(ClaimEntry(
                 process=proc, task=t,
                 rationale=m.rationale, score=float(m.score),
-                module_confidence=module_conf_by_proc.get(proc.id, 1.0),
+                container_confidence=container_conf_by_proc.get(proc.id, 1.0),
             ))
         if not entries:
             continue
 
         # Single high-confidence claim: trust the per-process validator,
         # skip an extra LLM call. Anything else (multi-claim OR single
-        # claim with low module_confidence) goes through arbitration.
+        # claim with low container confidence) goes through arbitration.
         if (
             len(entries) == 1
-            and entries[0].module_confidence >= SINGLE_CLAIM_ARBITRATION_THRESHOLD
+            and entries[0].container_confidence >= SINGLE_CLAIM_ARBITRATION_THRESHOLD
         ):
             proc, m = claim_pairs[0]
             result.auto_matches.append(ActivityRuleMapping(
@@ -354,7 +353,7 @@ async def map_tasks_to_rules(
             "rules": len(rules),
             "processes": len(processes),
             "auto_matches": len(result.auto_matches),
-            "process_modules": sum(len(v) for v in result.process_modules.values()),
+            "process_containers": sum(len(v) for v in result.process_containers.values()),
         },
     )
     return result

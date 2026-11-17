@@ -7,13 +7,14 @@ Traceability API — DDD 노드의 출처(원본 코드) 역추적 체인
 
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from starlette.requests import Request
 
-from api.platform.neo4j import analyzer_database, analyzer_session, get_session
+from api.platform.neo4j import analyzer_session, get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -27,12 +28,17 @@ def _query(query: str, params: dict | None = None) -> list[dict]:
 
 
 def _analyzer_query(query: str, params: dict | None = None) -> list[dict]:
-    """레거시 분석 그래프 조회 — FUNCTION·RULE·EXAMPLE·TABLE 이 여기 있다.
+    """레거시 분석 그래프 조회 — 루틴·RULE·TABLE 이 여기 있다.
 
     설계와 분석은 **서로 다른 graph** 다. 라벨 이름이 겹치면서 뜻이 다르기
     때문이다 — 설계의 `Command` 는 Aggregate 의 하위이고 분석의 `Command` 는
     FUNCTION 의 역할이라, 한 graph 에 두면 ES 의 모든 Command 가 FUNCTION 이
     된다. 그래서 출처 체인은 두 그래프를 오가며 재구성해야 한다.
+
+    읽는 계약은 지금 analyzer 의 product graph 다(robo-data-analyzer
+    `graph/product_graph.py`): 노드 정체성은 **`product_id`**, 소유는
+    `_owner='analyzer'`. ⚠ `_id` 로 찾지 않는다 — 포스코 현장 Ontological DB 는
+    `_id` 를 내부 정수 id 로 해석한다.
     """
     sess = analyzer_session()
     if sess is None:
@@ -43,11 +49,21 @@ def _analyzer_query(query: str, params: dict | None = None) -> list[dict]:
         return [dict(r) for r in session.run(query, **(params or {}))]
 
 
-def _analyzer_has_nested_rules() -> bool:
-    """이 분석 그래프가 `PARENT_OF` 를 쓰는가 — dbms 인가.
+def _decode_writes(value: object) -> list[dict]:
+    """설계 Rule 의 `write_effects_json`(JSON 문자열) → 쓰기 효과 목록."""
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
 
-    한 번만 보고 기억한다. framework 그래프에는 이 관계가 아예 없어서
-    되돌림 경로를 시도할 이유가 없다.
+
+def _analyzer_has_nested_rules() -> bool:
+    """이 분석 그래프가 `PARENT_OF` 를 쓰는가.
+
+    한 번만 보고 기억한다. 쓰지 않는 그래프에는 되돌림 경로를 시도할 이유가 없다.
     """
     global _NESTED_RULES_CACHE
     if _NESTED_RULES_CACHE is None:
@@ -58,43 +74,47 @@ def _analyzer_has_nested_rules() -> bool:
 
 _NESTED_RULES_CACHE: bool | None = None
 
+_ROUTINE_LABELS = ("FUNCTION", "METHOD", "PROCEDURE", "TRIGGER")
+
 
 def _analyzer_function(fid: str) -> list[dict]:
     """루틴 하나를 읽는다. 라벨을 붙인 쪽을 먼저 본다.
 
     라벨 없는 `MATCH (f)` 는 `og_node` 를 통째로 읽고 속성을 `og_node_json()`
     으로 행마다 푼다 — 0.11초. 라벨을 붙이면 타입 뷰의 실제 컬럼을 타서
-    0.005초다. dbms 의 PROCEDURE/TRIGGER 는 FUNCTION 하위가 아닐 수 있으므로
-    빈손이면 원래 형태로 되돌아간다.
+    0.005초다. 키는 `product_id` 이고, 그것으로 못 찾을 때만 이름으로 찾는다
+    (rfp/figma 옛 데이터는 이름만 들고 있다).
     """
     body = """
-        RETURN coalesce(f.function_id, f.id) AS id,
-               coalesce(f.name, f.signature, f.function_id) AS name,
+        RETURN f.product_id AS id,
+               coalesce(f.name, f.signature, f.product_id) AS name,
                f.summary AS summary,
                f.start_line AS start_line, f.end_line AS end_line,
                f.file_path AS file_path,
                f.code_text AS code_text
         LIMIT 1
     """
-    rows = _analyzer_query(
-        "MATCH (f:FUNCTION) WHERE f.function_id = $fid OR f.id = $fid OR f.name = $fid" + body,
-        {"fid": fid},
-    )
-    if rows:
-        return rows
+    for label in _ROUTINE_LABELS:
+        rows = _analyzer_query(
+            f"MATCH (f:{label}) WHERE f.product_id = $fid AND f._owner = 'analyzer'" + body,
+            {"fid": fid},
+        )
+        if rows:
+            return rows
     return _analyzer_query(
-        "MATCH (f) WHERE f.function_id = $fid OR f.id = $fid OR f.name = $fid" + body,
+        "MATCH (f) WHERE f.name = $fid AND f._owner = 'analyzer'"
+        "  AND (f:FUNCTION OR f:METHOD OR f:PROCEDURE OR f:TRIGGER)" + body,
         {"fid": fid},
     )
 
 
 def _analyzer_table_access(fid: str) -> list[dict]:
-    """루틴이 읽고 쓰는 표. dbms 는 READS/WRITES 가 자식 구문에 붙는다(spec 044 C5).
+    """루틴이 읽고 쓰는 표. 접근이 자식 구문에 붙는 그래프도 있다(spec 044 C5).
 
-    `_analyzer_rules` 와 같은 이유로 가변길이를 기본 경로에서 뺀다.
+    가변길이(`PARENT_OF*0..`)는 느려서 기본 경로에서 뺀다 — 직접 접근이 없을
+    때만 되돌아간다.
     """
     body = """
-        WHERE coalesce(op.function_id, op.id) = $fid
         OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:COLUMN)
         // 속성 이름 주의 — 이 그래프의 COLUMN 은 `data_type`·`primary_key` 다.
         // `dtype`·`is_primary_key` 로 읽으면 오류 없이 전건 null 이 된다(실측).
@@ -104,104 +124,17 @@ def _analyzer_table_access(fid: str) -> list[dict]:
         RETURN access, t.name AS table_name, columns
         ORDER BY t.name
     """
-    rows = _analyzer_query("MATCH (op)-[r:READS|WRITES]->(t:TABLE)" + body, {"fid": fid})
+    rows = _analyzer_query(
+        "MATCH (op)-[r:READS|WRITES]->(t:TABLE) WHERE op.product_id = $fid" + body,
+        {"fid": fid},
+    )
     if rows or not _analyzer_has_nested_rules():
         return rows
     return _analyzer_query(
-        "MATCH (op)-[:PARENT_OF*0..]->(_n)-[r:READS|WRITES]->(t:TABLE)" + body, {"fid": fid})
-
-
-def _analyzer_rules(fns: list[str]) -> list[dict]:
-    """루틴 목록에 걸린 룰을 GWT·쓰기효과와 함께 가져온다.
-
-    빠른 쪽을 먼저 본다. 결과가 없고 그래프가 `PARENT_OF` 를 쓸 때만
-    가변길이 경로로 되돌아간다.
-    """
-    rows = _analyzer_query(_ANALYZER_RULES_DIRECT, {"fns": fns})
-    if rows or not _analyzer_has_nested_rules():
-        return rows
-    return _analyzer_query(_ANALYZER_RULES_NESTED, {"fns": fns})
-
-
-# 분석 그래프에서 (루틴, 룰) 쌍을 GWT·쓰기효과와 함께 꺼낸다.
-#
-# 조인 키는 `function_id` 다. analyzer 의 FUNCTION 에는 `name` 이 없고
-# (`function_id` 가 "module_id.name" 이고 표시형은 `signature`), 설계 쪽
-# shadow Rule 의 `source_function` 이 그 `function_id` 를 담는다. `name` 으로
-# 맞추던 종전 코드는 양쪽 다 NULL 이라 전건이 빗나갔다 — 오류 없이 0건이다.
-#
-# dbms 는 룰 오너가 자식 구문이라 `PARENT_OF*0..` 로 루틴을 복원한다
-# (framework 는 rtn=f). spec 044 C4.
-#
-# **그 가변길이 구간이 출처 조회를 통째로 느리게 만든다.** 같은 패턴 안에서
-# 관계 변수(`hr`)를 함께 묶으면 컴파일된 SQL 이 노드 테이블을 CROSS JOIN 하고
-# 라벨 없는 `rtn` 의 속성을 `og_node_json()` 으로 행마다 푼다 — 실측 9.7초.
-# `hr` 을 안 묶으면 0.08초, 가변길이를 빼면 0.01초다. 한 번 호출이 아니라
-# UserStory 마다 도는 자리라 Aggregate 하나가 180초를 넘겼다.
-#
-# 그래서 두 벌로 나눈다. framework(java/c/python)는 룰 오너가 곧 루틴이므로
-# 가변길이가 필요 없다 — 아래 DIRECT 로 끝난다. dbms 만 NESTED 로 되돌아간다.
-_ANALYZER_RULES_DIRECT = """
-MATCH (rtn)-[hr:HAS_RULE]->(ar:RULE)
-  WHERE ar.session_id IS NULL
-    AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
-    AND coalesce(rtn.function_id, rtn.name) IN $fns
-// 생산자 EXAMPLE 에 is_boundary 없음 → 대표예시는 첫 EXAMPLE(spec 044 C2/R4).
-OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(e:EXAMPLE)
-WITH rtn, hr, ar, head(collect(DISTINCT e)) AS canonical_e
-// Per-Rule write effects: v2 access filters reads; legacy op-only remains additive.
-OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(wEx:EXAMPLE)-[at:AFFECTS_TABLE]->(wt:TABLE)
-WITH rtn, hr, ar, canonical_e,
-     collect(DISTINCT {
-         table: wt.name, access: at.access, op: at.op, op_source: at.op_source
-     }) AS writes
-RETURN coalesce(rtn.function_id, rtn.name) AS fn,
-       hr.local_rule_id             AS seq,
-       ar.statement                 AS title,
-       coalesce(hr.coupled_domains[0], '') AS coupled_domain,
-       canonical_e.given            AS given,
-       canonical_e.when_            AS wh,
-       canonical_e.then_            AS th,
-       [] AS boundary_ids,
-       [w IN writes WHERE w.table IS NOT NULL
-         AND (
-           w.access IN ['WRITE', 'READ_WRITE']
-           OR (w.access IS NULL AND coalesce(w.op, '') <> 'READ')
-         )] AS writes
-ORDER BY fn, seq
-"""
-
-
-# dbms 전용 되돌림 경로 — 룰 오너가 루틴의 자식 구문일 때만 쓴다.
-_ANALYZER_RULES_NESTED = """
-MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
-  WHERE ar.session_id IS NULL
-    AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
-    AND coalesce(rtn.function_id, rtn.name) IN $fns
-// 생산자 EXAMPLE 에 is_boundary 없음 → 대표예시는 첫 EXAMPLE(spec 044 C2/R4).
-OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(e:EXAMPLE)
-WITH rtn, hr, ar, head(collect(DISTINCT e)) AS canonical_e
-// Per-Rule write effects: v2 access filters reads; legacy op-only remains additive.
-OPTIONAL MATCH (ar)-[:HAS_EXAMPLE]->(wEx:EXAMPLE)-[at:AFFECTS_TABLE]->(wt:TABLE)
-WITH rtn, hr, ar, canonical_e,
-     collect(DISTINCT {
-         table: wt.name, access: at.access, op: at.op, op_source: at.op_source
-     }) AS writes
-RETURN coalesce(rtn.function_id, rtn.name) AS fn,
-       hr.local_rule_id             AS seq,
-       ar.statement                 AS title,
-       coalesce(hr.coupled_domains[0], '') AS coupled_domain,
-       canonical_e.given            AS given,
-       canonical_e.when_            AS wh,
-       canonical_e.then_            AS th,
-       [] AS boundary_ids,
-       [w IN writes WHERE w.table IS NOT NULL
-         AND (
-           w.access IN ['WRITE', 'READ_WRITE']
-           OR (w.access IS NULL AND coalesce(w.op, '') <> 'READ')
-         )] AS writes
-ORDER BY fn, seq
-"""
+        "MATCH (op)-[:PARENT_OF*0..]->(_n)-[r:READS|WRITES]->(t:TABLE) "
+        "WHERE op.product_id = $fid" + body,
+        {"fid": fid},
+    )
 
 
 # Per-type UserStory traversal. Phase 5 promotes every ES node with an
@@ -282,19 +215,22 @@ _US_QUERIES = {
 def _routine_entry(routine_id: str, cache: dict[str, dict | None]) -> dict | None:
     """분석 그래프의 루틴 하나 — 이름·요약·위치·코드·테이블.
 
-    키는 `Rule.source_module` 이고 그것이 **루틴 노드의 id** 다(68/68 일치, 실측).
+    키는 `Rule.source_function_id`(옛 `source_module`)이고 그것이 **루틴 노드의
+    `product_id`** 다(68/68 일치, 실측).
     문자열로 맞추지 않으므로 생산자가 문장 표기를 바꿔도 안 끊긴다.
     """
     if not routine_id:
         return None
     if routine_id in cache:
         return cache[routine_id]
-    # **키는 노드의 내부 id(`_id`) 다.** `f.id`·`f.function_id`·`f.name` 으로 맞추던
-    # 옛 조회는 이 그래프에서 전건 0이다 — METHOD 에 `id`·`function_id` 속성이 아예
-    # 없다(속성은 name/signature/summary/file_path/code_text/…). 이 DB 에서 내부 id 를
-    # 가리키는 것은 `_id` 뿐이고, 설계 shadow 의 `source_module` 이 그 값이다.
+    # **키는 노드의 `product_id` 다** (analyzer `graph/product_graph.py` ·
+    # `product_writer.py` 가 `MERGE (node:{label} {product_id: …})` 로 쓴다).
+    # `f.id`·`f.function_id` 는 생산자에 없다. 예전 키였던 `_id` 로는 찾지 않는다 —
+    # 2026-09-21 analyzer 가 `product_id` 로 바꿨고, 포스코 현장 Ontological DB 는
+    # `_id` 를 내부 정수 id 로 해석해 한 건도 안 맞는다. 설계 shadow 의
+    # `source_function_id`(옛 이름 `source_module`)가 그 값이다.
     rows = _analyzer_query("""
-        MATCH (f) WHERE f._id = $rid
+        MATCH (f) WHERE f.product_id = $rid
           AND (f:FUNCTION OR f:METHOD OR f:PROCEDURE OR f:TRIGGER)
         OPTIONAL MATCH (f)-[acc:READS|WRITES]->(tb:TABLE)
         // 컬럼까지 같이 읽는다. 이게 없으면 화면의 "N cols" 가 영영 안 뜬다.
@@ -429,7 +365,7 @@ def _sources_from_persisted(
             "then": r.get("th") or "",
             "boundary_example_ids": [],
             "function_id": r.get("fn") or "",
-            "writes": [],
+            "writes": _decode_writes(r.get("write_effects_json")),
             # 여기가 새로 실리는 둘이다.
             "evidence_role": r.get("evidence_role") or "primary",
             "via_task_id": r.get("via_task_id") or "",
@@ -611,8 +547,10 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
         MATCH (n {id: $id})-[sf:SOURCED_FROM]->(r:Rule)
         OPTIONAL MATCH (us:UserStory) WHERE us.sourceUnitId = sf.via_task_id
         RETURN coalesce(us.id, '') AS us_id, us.role AS role, us.action AS action,
-               r.title AS title, r.given AS given, r.when AS wh, r.then AS th,
-               r.source_function AS fn, r.source_module AS routine_id,
+               r.title AS title, r.given AS given, r.`when` AS wh, r.`then` AS th,
+               r.source_function AS fn,
+               coalesce(r.source_function_id, r.source_module) AS routine_id,
+               coalesce(r.write_effects_json, '[]') AS write_effects_json,
                r.source_summary AS source_summary,
                r.source_file_path AS source_file_path,
                r.source_start_line AS source_start_line,
@@ -644,26 +582,21 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
             continue
         seen_us.add(usid)
 
-        # 4a) Source rules — match shadow Rule (SOURCED_FROM target) to its
-        # analyzer counterpart (FUNCTION-HAS_RULE chain) by (source_function,
-        # statement). Then pull canonical/boundary Examples for GWT and
-        # AFFECTS_TABLE write ops (INSERT/UPDATE/DELETE) — the latter is the
-        # signal Aggregate primary-source emphasis depends on.
-        # 설계 그래프의 shadow Rule — 어느 루틴의 어느 룰에서 왔는지만 담는다.
-        shadow = _query("""
+        # 4a) Converted Analyzer Rule facts are stored on the Architect Rule
+        # (rule_extractor → save_rules). 분석 그래프의 RULE 과 문자열로 다시
+        # 맞추지 않는다 — 생산자 RULE 에는 `statement` 가 없어 전건 0이었다.
+        bl_rows = _query("""
             MATCH (us:UserStory {id: $usid})-[:SOURCED_FROM]->(sr:Rule)
-            RETURN DISTINCT sr.source_function AS fn, sr.title AS title
+            RETURN sr.id AS seq,
+                   sr.title AS title,
+                   coalesce(sr.given, '') AS given,
+                   coalesce(sr.`when`, '') AS wh,
+                   coalesce(sr.`then`, '') AS th,
+                   coalesce(sr.source_function_id, sr.source_module) AS function_id,
+                   sr.source_function AS function_name,
+                   coalesce(sr.write_effects_json, '[]') AS write_effects_json
+            ORDER BY sr.id
         """, {"usid": usid})
-
-        # 분석 그래프에서 그 쌍에 해당하는 룰을 GWT·쓰기효과와 함께 가져온다.
-        # 루틴 단위로 한 번에 받고 제목은 파이썬에서 맞춘다 — UNWIND 로 쌍을
-        # 넘기면 값이 jsonb 가 되어 text 속성과 비교가 어긋난다.
-        wanted = {(r.get("fn"), r.get("title")) for r in shadow if r.get("fn")}
-        fns = sorted({fn for fn, _ in wanted})
-        bl_rows = [
-            r for r in (_analyzer_rules(fns) if fns else [])
-            if (r.get("fn"), r.get("title")) in wanted
-        ]
 
         # Legacy fallback for rfp/figma US's that don't have SOURCED_FROM
         if not bl_rows:
@@ -673,9 +606,9 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
                     MATCH (f)-[:HAS_BUSINESS_LOGIC]->(bl:BusinessLogic)
                     WHERE f.id = $fid
                     RETURN bl.sequence AS seq, bl.title AS title,
-                           bl.coupled_domain AS coupled_domain,
                            bl.given AS given, bl.when AS wh, bl.then AS th,
-                           $fid AS function_id, [] AS boundary_ids
+                           $fid AS function_id, $fid AS function_name,
+                           '[]' AS write_effects_json
                     ORDER BY bl.sequence
                 """, {"fid": src})
 
@@ -685,17 +618,16 @@ async def get_traceability(request: Request, node_id: str) -> dict[str, Any]:
             rules.append({
                 "seq": r.get("seq") or "",
                 "title": r.get("title") or "",
-                "coupled_domain": r.get("coupled_domain"),
                 "given": r.get("given") or "",
                 "when": r.get("wh") or "",
                 "then": r.get("th") or "",
-                "boundary_example_ids": r.get("boundary_ids") or [],
-                "function_id": r.get("fn") or r.get("function_id") or "",
-                # writes: v2 table/access/op/op_source from Example.AFFECTS_TABLE — used
-                # by Aggregate primary-source view to surface DB grounding.
-                "writes": r.get("writes") or [],
+                "boundary_example_ids": [],
+                "function_id": r.get("function_id") or "",
+                # writes: v2 table/access/op/op_source — Aggregate primary-source
+                # view surfaces DB grounding from these.
+                "writes": _decode_writes(r.get("write_effects_json")),
             })
-            fid = r.get("fn") or r.get("function_id")
+            fid = r.get("function_id") or r.get("function_name")
             if fid and fid not in function_ids:
                 function_ids.append(fid)
 
@@ -813,21 +745,22 @@ def _source_rules(request: Request, node_id: str) -> dict[str, Any]:
     # 군데에 있나" 를 사람이 읽을 수 있다.
     #
     # 이 정책 전에 만든 엣지에는 `evidence_role` 이 없다 — `primary` 로 본다.
+    #
+    # 룰 내용은 설계 Rule 에 이미 있다(rule_extractor 가 analyzer RULE 에서 옮겼다).
+    # 분석 그래프의 RULE 과 `statement` 로 다시 맞추던 조인은 지웠다 — 생산자
+    # RULE 에 `statement` 가 없어 전건 null 이었다.
     rows = _query("""
         MATCH (n {id: $usid})-[sf:SOURCED_FROM]->(r:Rule)
-        // 오퍼레이션 단위(루틴) 기준 조인 — dbms 룰 오너=자식구문 → PARENT_OF*0.. 로 루틴 복원.
-        OPTIONAL MATCH (rtn)-[:PARENT_OF*0..]->(f)-[hr:HAS_RULE]->(ar:RULE)
-          WHERE ar.session_id IS NULL
-            AND (rtn:FUNCTION OR rtn:PROCEDURE OR rtn:METHOD OR rtn:TRIGGER)
-            AND rtn.name = r.source_function
-            AND ar.statement = r.title
         RETURN r.id AS rule_id,
-               r.title AS statement,
+               r.title AS title,
                r.source_function AS source_function,
-               coalesce(hr.local_rule_id, '') AS local_id,
+               r.source_rule_id AS source_rule_id,
+               coalesce(r.given, '') AS given,
+               coalesce(r.`when`, '') AS when,
+               coalesce(r.`then`, '') AS then,
                coalesce(sf.evidence_role, 'primary') AS evidence_role,
                sf.via_task_id AS via_task_id
-        ORDER BY evidence_role, local_id, statement
+        ORDER BY evidence_role, r.id
     """, {"usid": node_id})
 
     SmartLogger.log("INFO", f"source-rules: {len(rows)} for {node_id}",

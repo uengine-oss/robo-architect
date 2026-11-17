@@ -43,7 +43,7 @@
         </blockquote>
         <blockquote v-else-if="ref.evidence" class="evcard__evidence">{{ ref.evidence }}</blockquote>
 
-        <!-- EXAMPLE/RULE 사례 — given/when/then -->
+        <!-- Rule에서 파생한 given/when/then 시나리오 -->
         <div v-for="(gwt, i) in ref.gwtRows" :key="i" class="evcard__gwt">
           <div v-if="gwt.given" class="evcard__gwt-row"><b class="evcard__gwt-k evcard__gwt-k--g">GIVEN</b>{{ gwt.given }}</div>
           <div v-if="gwt.when" class="evcard__gwt-row"><b class="evcard__gwt-k evcard__gwt-k--w">WHEN</b>{{ gwt.when }}</div>

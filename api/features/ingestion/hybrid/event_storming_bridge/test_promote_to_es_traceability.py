@@ -3,9 +3,8 @@
 
 두 가지다.
 
-  ① 폴백은 BC 를 먼저 고른 뒤 그 id 로 붙인다 — `WITH bc … LIMIT 1` 뒤에 다시
-     MATCH 를 두면 쓰기 앞의 마지막 읽기 절이 WITH 가 아니게 되므로 BC 선택을
-     별도 읽기 질의로 분리했다. LIMIT 이 BC 선택에만 걸린다는 의도는 그대로다.
+  ① 분석기 QUESTION 은 더 붙이지 않는다 — 지금 analyzer 계약에 QUESTION 노드가
+     없고, 분석 graph 는 설계 graph 와 다른 DB 다(main 6fd9d3d 와 같은 결론).
 
   ② **전술 요소도 출처를 받는다** (2026-09-30). 그 전에는 UserStory 만 룰까지
      닿았고 Command·Aggregate·Event·Policy·ReadModel 은 노드에 아무것도 없었다.
@@ -74,14 +73,11 @@ def _find(sess: _Session, needle: str) -> str:
     return hits[0]
 
 
-def test_폴백은_BC_를_먼저_고르고_id_로_붙인다(run):
+def test_분석기_QUESTION_은_더_건드리지_않는다(run):
+    """지금 analyzer 계약에는 QUESTION 이 없고, 분석 graph 는 다른 DB 다."""
     sess, counts = run
-    assert counts["attached_to"] == 4
-
-    bc_pick = _find(sess, "ORDER BY bc.key LIMIT 1")
-    assert "MERGE" not in bc_pick, "BC 선택은 읽기 전용이다"
-    fallback = _find(sess, "$bid")
-    assert "MATCH (q:QUESTION)" in fallback
+    assert "attached_to" not in counts
+    assert not [q for q in sess.queries if "QUESTION" in q]
 
 
 def test_전술_요소에도_출처를_붙인다(run):

@@ -12,11 +12,8 @@ sole responsibilities are:
      and the ES canvas share a navigable lineage edge.
   3. Backfill `(UserStory)-[:IMPLEMENTS]->(BoundedContext)` for stories the
      LLM forgot to assign — the navigator's BC tree relies on this.
-  4. Attach analyzer-side traceability edges that the legacy phases never
-     produced — `(UserStory)-[:SOURCED_FROM]->(Rule)` and
-     `(Question)-[:ATTACHED_TO]->(BoundedContext)`. These are the ones that
-     let downstream PRD generation (Phase 6) pull Rule.statement / Example
-     GWT / source_function into the markdown.
+  4. Attach `(UserStory)-[:SOURCED_FROM]->(Rule)` so downstream output can
+     trace each generated story to its converted Analyzer rule.
   5. Detect cross-BC Policy candidates from `BpmTask.NEXT` pairs that span
      different BCs and persist them with an LLM-assigned name.
 
@@ -112,12 +109,8 @@ def _ev(message: str, progress: int, data: dict | None = None) -> ProgressEvent:
 def _tag_es_nodes_with_session_id(hybrid_session_id: str) -> dict[str, int]:
     """Tag any ES node that lacks a session_id with the current hybrid session id.
 
-    CRITICAL — single-label only. The analyzer applies stereotype labels
-    (Command / Query / Validation / Handler) directly on its FUNCTION nodes
-    as multi-labels: a function classified as a Command carries
-    `[FUNCTION, Command]`. Without the `size(labels(n)) = 1` guard, this tag
-    pass would mark those analyzer FUNCTIONs with our session_id, and a later
-    /reset wipe would delete them — destroying HAS_RULE / AFFECTS_TABLE chains.
+    Only Architect nodes with one product label are eligible. The guard keeps
+    nodes owned by another service outside this session's reset boundary.
     """
     counts: dict[str, int] = {}
     with get_session() as s:
@@ -203,10 +196,7 @@ def _attach_orphan_us_to_first_bc(hybrid_session_id: str) -> int:
 
 
 # =============================================================================
-# 3) Analyzer-side traceability edges — the new value this module adds on top
-#    of the legacy phases. Without these, downstream PRD generation has no
-#    way to surface Rule.statement / Example GWT / source_function as code
-#    grounding for each ES node.
+# 3) Rule traceability for generated UserStories
 # =============================================================================
 
 
@@ -232,14 +222,11 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
         추론을 매번 다시 하지 않는다. 엣지가 `via_task_id` 로 **어느 task 를 거쳤는지**
         까지 들고 있으므로 화면이 희석을 풀어 보여 줄 수 있다.
 
-      (Question)-[:ATTACHED_TO]->(BoundedContext)
-        Analyzer Questions live on FUNCTION nodes. We follow the function
-        to its REALIZED_BY task → IMPLEMENTS BC chain so the question
-        surfaces in the right BC's "Open Decisions" section. When a
-        question's host fn maps to no task (rare), it attaches to the
-        first BC by key as a fallback so it isn't lost.
+      (Question)-[:ATTACHED_TO]->(BoundedContext) 는 **더 만들지 않는다.**
+        지금 analyzer 계약(robo-data-analyzer `graph/product_graph.py`)에는
+        QUESTION 노드가 없고, 분석 graph 는 설계 graph 와 다른 DB 다.
     """
-    counts = {"sourced_from": 0, "attached_to": 0}
+    counts = {"sourced_from": 0}
     with get_session() as s:
         # (US)-[:SOURCED_FROM]->(Rule) via shadow Rule reached through BpmTask.
         # Shadow Rule has session_id (created during BPM phase); we follow that
@@ -307,53 +294,6 @@ def _attach_analyzer_traceability(hybrid_session_id: str) -> dict[str, int]:
                 counts.get(f"sourced_from_{label.split('/')[0].lower()}", 0) + made
             )
             counts["sourced_from"] += made
-
-        # (Question)-[:ATTACHED_TO]->(BC) via FUNCTION → task → IMPLEMENTS BC.
-        # We touch any analyzer Question (no session_id); this is a one-way
-        # link from immutable analyzer data into the hybrid session.
-        rec = s.run(
-            "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
-            "OPTIONAL MATCH (f)-[:HAS_QUESTION]->(q) "
-            # EXISTS 서브쿼리를 앞선 OPTIONAL MATCH 로 분리한다. 조상 _rt 만큼
-            # 행이 늘지만 아래 collect(DISTINCT bc) 가 접으므로 결과는 같다.
-            "OPTIONAL MATCH (f)<-[:PARENT_OF*0..]-(_rt) "
-            "          WHERE (_rt:FUNCTION OR _rt:PROCEDURE OR _rt:METHOD OR _rt:TRIGGER) "
-            "OPTIONAL MATCH (t:BpmTask {session_id: $sid})-[:REALIZED_BY]->"
-            "          (sh:Rule {session_id: $sid}) "
-            "          WHERE _rt.name = sh.source_function "
-            "OPTIONAL MATCH (us:UserStory {session_id: $sid}) "
-            "          WHERE us.sourceUnitId = t.id "
-            # collect 로 모았다가 UNWIND 로 되푸는 왕복을 없앤다. 마지막
-            # MATCH 를 필수로 두면 bc 가 없는 행은 그대로 사라지므로
-            # `size(bcs) > 0` 가드와 의미가 같고, MERGE 가 중복을 흡수한다.
-            "MATCH (us)-[:IMPLEMENTS]->(bc:BoundedContext {session_id: $sid}) "
-            "MERGE (q)-[rel:ATTACHED_TO]->(bc) "
-            "RETURN count(rel) AS c",
-            sid=hybrid_session_id,
-        ).single()
-        counts["attached_to"] = int(rec["c"]) if rec else 0
-
-        # Fallback: any Question still unattached → first BC of the session.
-        # IMPORTANT: `LIMIT 1` must apply to BC selection only, not to the
-        # question stream. Otherwise only one orphan question gets attached.
-        # 첫 BC 는 읽기로 먼저 고른다. `WITH … LIMIT 1` 뒤에 다시 MATCH 를 두면
-        # 쓰기 앞의 마지막 읽기 절이 WITH 가 아니게 된다. 파라미터로 넘기면
-        # LIMIT 이 BC 선택에만 걸린다는 원래 의도도 그대로다.
-        first_bc = s.run(
-            "MATCH (bc:BoundedContext {session_id: $sid}) "
-            "RETURN bc.id AS id ORDER BY bc.key LIMIT 1",
-            sid=hybrid_session_id,
-        ).single()
-        if first_bc and first_bc.get("id"):
-            rec = s.run(
-                "MATCH (q:QUESTION) WHERE q.session_id IS NULL "
-                "  AND NOT (q)-[:ATTACHED_TO]->(:BoundedContext {session_id: $sid}) "
-                "MATCH (bc:BoundedContext {id: $bid, session_id: $sid}) "
-                "MERGE (q)-[rel:ATTACHED_TO]->(bc) "
-                "RETURN count(rel) AS c",
-                sid=hybrid_session_id, bid=first_bc["id"],
-            ).single()
-            counts["attached_to"] += int(rec["c"]) if rec else 0
     return counts
 
 
@@ -698,12 +638,11 @@ async def hybrid_post_workflow_hook(
          "needs_review": len(_flagged)},
     )
 
-    yield _ev("🧬 분석기 traceability 엣지 부착 중 (US→Rule, Question→BC)...", 99,
+    yield _ev("🧬 분석기 traceability 엣지 부착 중 (US·전술 요소→Rule)...", 99,
               {"type": "HybridTraceabilityStart"})
     trace_counts = _attach_analyzer_traceability(hybrid_session_id)
     yield _ev(
-        f"🧬 traceability 부착: SOURCED_FROM {trace_counts['sourced_from']} / "
-        f"ATTACHED_TO {trace_counts['attached_to']}",
+        f"🧬 traceability 부착: SOURCED_FROM {trace_counts['sourced_from']}",
         99,
         {"type": "HybridTraceabilityAttached", "counts": trace_counts},
     )

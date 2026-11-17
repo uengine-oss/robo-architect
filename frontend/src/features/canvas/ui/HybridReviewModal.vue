@@ -80,7 +80,7 @@ function close() {
               <div class="hrm-card hrm-card--rule">
                 <header v-if="rule?.source_function" class="hrm-card__head">
                   <code class="hrm-fn">{{ rule.source_function }}</code>
-                  <span v-if="rule.source_module" class="hrm-mod">{{ rule.source_module }}</span>
+                  <span v-if="rule.source_container" class="hrm-container">{{ rule.source_container }}</span>
                 </header>
                 <dl v-if="rule" class="hrm-gwt">
                   <div v-if="rule.given" class="hrm-gwt__row">
@@ -219,7 +219,7 @@ function close() {
 
 .hrm-card__head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed rgba(255,255,255,0.1); flex-wrap: wrap; }
 .hrm-fn { font-family: 'SF Mono', Menlo, monospace; font-size: 0.76rem; color: var(--color-text-bright); font-weight: 600; }
-.hrm-mod { font-family: 'SF Mono', Menlo, monospace; font-size: 0.6rem; color: var(--color-text-dim); }
+.hrm-container { font-family: 'SF Mono', Menlo, monospace; font-size: 0.6rem; color: var(--color-text-dim); }
 
 .hrm-gwt { margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .hrm-gwt__row { display: grid; grid-template-columns: 58px 1fr; gap: 10px; }

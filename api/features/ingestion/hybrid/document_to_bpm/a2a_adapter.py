@@ -495,7 +495,7 @@ async def _backfill_domain_keywords(name: str, description: str) -> list[str]:
 
     pdf2bpmn's Neo4j output carries rich description/purpose fields but no
     keyword list. We need keywords because Phase 3 Agent uses them as the
-    query text for MODULE retrieval. Empty keywords = weaker retrieval.
+    query text for code-container retrieval. Empty keywords mean weaker retrieval.
     """
     if not name and not description:
         return []

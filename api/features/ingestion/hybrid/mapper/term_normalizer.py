@@ -69,7 +69,7 @@ def normalize_rule_blob(
 ) -> tuple[str, bool]:
     """rule blob에 매칭 glossary 항목의 term/aliases를 덧붙인다.
 
-    매칭 = 항목의 code_candidates 중 하나가 rule의 source_module/source_function/
+    매칭 = 항목의 code_candidates 중 하나가 rule의 source_container/source_function/
     title(소문자 비교)에 부분 문자열로 등장.
     반환: (정규화된 blob, applied). glossary 비어있으면 (원문, False).
     """
@@ -78,7 +78,7 @@ def normalize_rule_blob(
 
     haystack_parts = [
         getattr(rule, "title", None) or "",
-        getattr(rule, "source_module", None) or getattr(ctx, "source_module", None) or "",
+        getattr(rule, "source_container", None) or getattr(ctx, "source_container", None) or "",
         getattr(rule, "source_function", None) or getattr(ctx, "source_function", None) or "",
     ]
     haystack = " ".join(haystack_parts).lower()

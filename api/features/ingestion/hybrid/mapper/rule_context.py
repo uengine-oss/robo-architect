@@ -1,7 +1,13 @@
 """Enrich Phase 2 RuleDTOs with analyzer-graph context for Phase 3 matching.
 
-Cross-DB: we query the analyzer DB (`analyzer_database`) separately and
-join in Python. The hybrid DB stays clean; we don't shadow analyzer nodes.
+Cross-DB: we query the analyzer DB (`analyzer_session()` — the project's own
+analysis graph) separately and join in Python. The hybrid DB stays clean; we
+don't shadow analyzer nodes.
+
+읽는 계약은 지금 analyzer 의 product graph 다(robo-data-analyzer
+`graph/product_graph.py`): 루틴은 `product_id`·`_owner='analyzer'`·`name`·`summary`
+를 갖고, 소속 컨테이너는 `(container)-[:PARENT_OF]->(routine)` 이다. 옛
+`HAS_FUNCTION`·`BELONGS_TO_PACKAGE`·`function_id` 는 생산자에 없다.
 """
 
 from __future__ import annotations
@@ -9,38 +15,33 @@ from __future__ import annotations
 from typing import Iterable
 
 from api.features.ingestion.hybrid.contracts import RuleContext, RuleDTO
-from api.platform.neo4j import analyzer_database, analyzer_session, get_session
+from api.platform.neo4j import analyzer_session
 
-# source_function = 오퍼레이션 단위(루틴) 이름 (rule_extractor/dbms 선형화가 루틴명으로 세팅).
-# 그래서 오너는 루틴 노드. 테이블 R/W 는 framework=루틴 자신 / dbms=자식 구문에 붙으므로
-# PARENT_OF*0.. 로 하향수집(spec 044 C5/FR-014). 옛 :Actor/:ROLE 는 생산자에 없어 제거.
+# source_function = 오퍼레이션 단위(루틴) 이름. 오너는 루틴 노드. 테이블 R/W 는
+# 루틴 자신 또는 자식 구문에 붙으므로 PARENT_OF*0.. 로 하향수집(spec 044 C5/FR-014).
 _FN_LOOKUP_QUERY = """
 UNWIND $sources AS source
 MATCH (f)
-// 이름은 `f.name` 이 있으면 그것, 없으면 `function_id` 다. analyzer 의 FUNCTION 에는
-// name 필드가 없어서(`function_id` 가 "module_id.name"), 이름으로만 찾으면 한 건도
-// 맞지 않는다 — 조회가 통째로 비어 function_summary 와 parent_module 이 매 룰마다
-// 빈 값이 됐다. rule_extractor 가 같은 규칙으로 이름을 만든다.
+// ⚠ 루틴은 **`product_id`** 로 찾는다. `_id` 로 찾지 않는다 — 포스코 현장
+// Ontological DB 는 `_id` 를 내부 정수 id 로 해석해 한 건도 맞지 않는다.
+// id 가 없을 때만 이름으로 찾는다(같은 이름이 다른 프로젝트 루틴일 수 있다).
 WHERE (
-        (source.routine_id IS NOT NULL AND f._id = source.routine_id)
+        (source.routine_id IS NOT NULL AND f.product_id = source.routine_id)
         OR
-        (source.routine_id IS NULL AND (f.name = source.function_name OR f.function_id = source.function_name))
+        (source.routine_id IS NULL AND f.name = source.function_name)
       )
+  AND f._owner = 'analyzer'
   AND (f:FUNCTION OR f:PROCEDURE OR f:METHOD OR f:TRIGGER)
 // ⚠ **여기엔 `OPTIONAL MATCH` 를 두지 않는다** (2026-10-21 · ISS-62).
 //
-// 예전에는 여섯 개가 줄줄이 있었다. OPTIONAL MATCH 는 **행을 곱한다** —
-// 규칙 111개를 한 번에 넣으면 reads × writes × callers × callees × mod × pkg 로
-// 행이 터져 이 질의 하나가 **41초**(고치기 전) 걸렸다. 그리고 `explore_task` 가
-// 이것을 **작업마다 · 이벤트 루프 위에서 동기로** 부른다. 탐색을 누르면 백엔드가
-// 통째로 멈추고 `/api/health` 조차 안 돌아온다 — 화면에는 "계속 대기중" 만 뜬다.
+// OPTIONAL MATCH 는 **행을 곱한다** — 규칙 111개를 한 번에 넣으면
+// reads × writes × callers × callees × container × parent 로 행이 터져 이 질의
+// 하나가 **41초** 걸렸다. 그리고 `explore_task` 가 이것을 작업마다 부른다.
 //
-// 패턴 컴프리헨션은 행을 곱하지 않는다. 여섯 개를 전부 그 모양으로 바꿨다.
-// 여기에 무엇을 더할 때도 **같은 모양**으로 더한다.
+// 패턴 컴프리헨션은 행을 곱하지 않는다. 여기에 무엇을 더할 때도 **같은 모양**으로 더한다.
 RETURN source.rule_id AS rule_id,
        f.summary AS summary,
        [] AS actors,
-       // framework 는 루틴 자신, dbms 는 자식 구문에 테이블 접근이 붙는다(spec 044).
        [(f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE) | rt.name] AS reads_tables,
        [(f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE) | wt.name] AS writes_tables,
        // 한 다리 건너 — SQL 은 DAO 에 있고 규칙은 서비스에 있다(ISS-61).
@@ -52,25 +53,27 @@ RETURN source.rule_id AS rule_id,
           AS writes_tables_via_calls,
        [(f)<-[:CALLS]-(_cl) | _cl.name] AS callers,
        [(f)-[:CALLS]->(_ce) | _ce.name] AS callees,
-       head([(f)<-[:HAS_FUNCTION]-(_m) | _m.name]) AS parent_module,
-       head([(f)<-[:HAS_FUNCTION]-(_mp)-[:BELONGS_TO_PACKAGE]->(_pk:PACKAGE) | _pk.name])
-          AS parent_package
+       head([(f)<-[:PARENT_OF]-(_c) | _c.name]) AS parent_container,
+       head([(f)<-[:PARENT_OF]-(_c2)<-[:PARENT_OF]-(_p) | _p.name]) AS container_parent
 """
 
 
+def _names(values) -> list[str]:
+    return sorted({str(v) for v in (values or []) if v})
+
+
 def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
-    """For each rule, look up its function in the analyzer graph and attach summary/actors/tables."""
+    """For each rule, look up its routine in the analyzer graph and attach summary/tables."""
     rules = list(rules)
     sources = [
         {
             "rule_id": r.id,
             "function_name": r.source_function,
-            # source_module is the analyzer routine node's immutable `_id`.
-            # If it exists, never fall back to a same-named routine from the
-            # analyzer's next (different-project) active workspace.
-            "routine_id": r.source_module,
+            # 루틴의 불변 id(`product_id`). 있으면 같은 이름의 다른 루틴
+            # (다음 프로젝트 분석)으로 절대 떨어지지 않는다.
+            "routine_id": r.source_function_id or r.source_module,
         }
-        for r in rules if r.source_function or r.source_module
+        for r in rules if r.source_function or r.source_function_id or r.source_module
     ]
     lookup: dict[str, dict] = {}
     # 분석 짝이 없으면 아예 붙지 않는다 — 룰 문맥이 비는 것이 정상이다.
@@ -82,12 +85,14 @@ def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
                     lookup[rec["rule_id"]] = {
                         "summary": rec.get("summary"),
                         "actors": rec.get("actors") or [],
-                        "reads_tables": rec.get("reads_tables") or [],
-                        "writes_tables": rec.get("writes_tables") or [],
+                        "reads_tables": _names(rec.get("reads_tables")),
+                        "writes_tables": _names(rec.get("writes_tables")),
+                        "reads_tables_via_calls": _names(rec.get("reads_tables_via_calls")),
+                        "writes_tables_via_calls": _names(rec.get("writes_tables_via_calls")),
                         "callers": rec.get("callers") or [],
                         "callees": rec.get("callees") or [],
-                        "parent_module": rec.get("parent_module"),
-                        "parent_package": rec.get("parent_package"),
+                        "parent_container": rec.get("parent_container"),
+                        "container_parent": rec.get("container_parent"),
                     }
         except Exception:
             lookup = {}
@@ -101,7 +106,7 @@ def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
             when=r.when,
             then=r.then,
             source_function=r.source_function,
-            source_module=r.source_module,
+            source_container=r.source_container,
             # The Rule snapshot is the durable source. Live analyzer data may
             # enrich it, but an empty/moved analyzer graph must not erase it.
             function_summary=extra.get("summary") or r.source_summary,
@@ -117,7 +122,7 @@ def build_rule_contexts(rules: Iterable[RuleDTO]) -> list[RuleContext]:
             context_cluster=r.context_cluster,
             callers=extra.get("callers", []),
             callees=extra.get("callees", []),
-            parent_module=extra.get("parent_module"),
-            parent_package=extra.get("parent_package"),
+            parent_container=extra.get("parent_container") or r.source_container,
+            container_parent=extra.get("container_parent"),
         ))
     return contexts

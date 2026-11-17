@@ -80,8 +80,9 @@ const ANALYZER_CARD_ORDER = [
   ['CONSTANT_FIELD', '상수'],
   ['TABLE', '테이블'],
   ['COLUMN', '컬럼'],
-  ['EXAMPLE', 'Example'],
-  ['QUESTION', 'Question'],
+  // 지금 analyzer 계약(product graph)에는 EXAMPLE·QUESTION 이 없다. 루틴 라벨을 채운다.
+  ['PROCEDURE', '프로시저'],
+  ['TRIGGER', '트리거'],
 ]
 const analyzerCards = computed(() => {
   const counts = analyzerStats.value?.counts || {}

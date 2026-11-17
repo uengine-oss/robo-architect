@@ -69,10 +69,10 @@ def _fixture():
                          session_id="sess_1")
     task = BpmTaskDTO(id="task_1", name="확정", process_id="proc_1")
     rule = RuleDTO(id="rule_1", given="g", when="w", then="t",
-                   source_module="m_1", source_function="confirmClosing",
+                   source_function_id="m_1", source_function="confirmClosing",
                    title=RULE_MARK)
     ctx = RuleContext(rule_id="rule_1", given=RULE_MARK, when="w", then="t",
-                      source_module="m_1", source_function="confirmClosing")
+                      source_function_id="m_1", source_function="confirmClosing")
     rows = [{"fqn": "m_1", "name": "confirmClosing",
              "summary": f"{MODULE_MARK} 의 마감 확정 메서드", "stereotype": None}]
     return process, task, rule, ctx, rows
@@ -316,9 +316,9 @@ def _rules(n: int, mark: str, start: int = 0):
     for k in range(start, start + n):
         rid = f"r{k}"
         rules.append(RuleDTO(id=rid, given="g", when="w", then="t",
-                             source_module="m_1", source_function="fn", title=f"{mark} {k}"))
+                             source_function_id="m_1", source_function="fn", title=f"{mark} {k}"))
         ctxs[rid] = RuleContext(rule_id=rid, given=f"{mark} {k}", when="w", then="t",
-                                source_module="m_1", source_function="fn")
+                                source_function_id="m_1", source_function="fn")
     return rules, ctxs
 
 

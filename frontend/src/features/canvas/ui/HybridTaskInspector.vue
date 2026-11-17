@@ -40,7 +40,7 @@ const isReasoningExpanded = ref(true)
 function agentStepLabel(ev) {
   switch (ev.type) {
     case 'AgentStart': return `🔎 ${ev.process_name || '(프로세스)'} 검색 시작`
-    case 'AgentStepModuleSearch': return `📦 모듈 ${ev.candidates?.length || 0}개 후보`
+    case 'AgentStepContainerSearch': return `📦 코드 영역 ${ev.candidates?.length || 0}개 후보`
     case 'AgentStepBlSearch': return `⚖️ BL ${ev.candidates?.length || 0}개 후보`
     case 'AgentStepParentLookup': return `🔗 ${ev.rule_id} 호출 체인 조회`
     case 'AgentStepDecision':
@@ -329,17 +329,17 @@ function roleMeta(role) {
           >
             <div class="hti-agent__step-title">{{ agentStepLabel(ev) }}</div>
             <div
-              v-if="ev.type === 'AgentStepModuleSearch' && ev.candidates"
+              v-if="ev.type === 'AgentStepContainerSearch' && ev.candidates"
               class="hti-agent__list"
             >
               <div
                 v-for="c in ev.candidates"
-                :key="c.fqn"
-                class="hti-agent__mod"
+                :key="c.id"
+                class="hti-agent__container"
                 :title="c.summary"
               >
-                <span class="hti-agent__mod-score">{{ (c.score * 100).toFixed(0) }}</span>
-                <code class="hti-agent__mod-name">{{ c.name }}</code>
+                <span class="hti-agent__container-score">{{ (c.score * 100).toFixed(0) }}</span>
+                <code class="hti-agent__container-name">{{ c.name }}</code>
               </div>
             </div>
             <div
@@ -458,7 +458,7 @@ function roleMeta(role) {
                 :title="roleMeta(r.es_role).hint"
               >{{ roleMeta(r.es_role).label }}</span>
               <code v-if="r.source_function" class="hti-rule__fn">{{ r.source_function }}</code>
-              <span v-if="r.source_module" class="hti-rule__mod">{{ r.source_module }}</span>
+              <span v-if="r.source_container" class="hti-rule__container">{{ r.source_container }}</span>
 
               <!-- Control menu (move/remove) — DEBUG ONLY (§2.D) -->
               <div v-if="isDebug" class="hti-rule__menu" @click.stop>
@@ -540,8 +540,8 @@ function roleMeta(role) {
                 <code v-if="entry.rule.source_function" class="hti-rule__fn">
                   {{ entry.rule.source_function }}
                 </code>
-                <span v-if="entry.rule.source_module" class="hti-rule__mod">
-                  {{ entry.rule.source_module }}
+                <span v-if="entry.rule.source_container" class="hti-rule__container">
+                  {{ entry.rule.source_container }}
                 </span>
                 <button
                   class="hti-rejects__accept"
@@ -571,7 +571,7 @@ function roleMeta(role) {
           <article v-for="fn in functions" :key="fn.id || fn.name" class="hti-fn">
             <div class="hti-fn__row">
               <code class="hti-fn__name">{{ fn.name }}</code>
-              <span v-if="fn.module" class="hti-fn__mod">{{ fn.module }}</span>
+              <span v-if="fn.container" class="hti-fn__container">{{ fn.container }}</span>
             </div>
             <p v-if="fn.summary" class="hti-fn__summary">{{ fn.summary }}</p>
           </article>
@@ -1187,7 +1187,7 @@ function roleMeta(role) {
   color: var(--color-text-dim);
   font-weight: 400;
 }
-.hti-rule__mod {
+.hti-rule__container {
   font-family: 'SF Mono', Menlo, monospace;
   font-size: 0.6rem;
   color: var(--color-text-dim);
@@ -1241,7 +1241,7 @@ function roleMeta(role) {
   color: var(--color-text-dim);
   font-weight: 400;
 }
-.hti-fn__mod {
+.hti-fn__container {
   font-family: 'SF Mono', Menlo, monospace;
   font-size: 0.6rem;
   color: var(--color-text-dim);
@@ -1398,20 +1398,20 @@ function roleMeta(role) {
   gap: 3px;
   padding-left: 6px;
 }
-.hti-agent__mod {
+.hti-agent__container {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 0.66rem;
 }
-.hti-agent__mod-score {
+.hti-agent__container-score {
   min-width: 22px;
   font-weight: 700;
   color: #9cb2ff;
   font-family: 'SF Mono', Menlo, monospace;
   font-size: 0.6rem;
 }
-.hti-agent__mod-name {
+.hti-agent__container-name {
   font-family: 'SF Mono', Menlo, monospace;
   color: var(--color-text);
 }

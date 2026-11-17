@@ -16,6 +16,7 @@ import SettingsPanel from './SettingsPanel.vue'
 // 이름이 붙은 두 자리(레거시 탐색 · 적재 시작)만 본다. 넓게 막으면 프로브가
 // 한 번 틀린 날 **멀쩡한 앱이 통째로 잠긴다**(2026-10-07 에 실제로 배선이 틀렸다).
 import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
+import { visibleTabs } from '@/app/customer'
 
 const props = defineProps({
   activeTab: {
@@ -33,20 +34,12 @@ const emit = defineEmits(['update:activeTab'])
 // 043 — 'Process'(BPM)·'Processes'(Event Modeling)를 하나의 'Process' 탭(서브토글)로 통합,
 // 'Big picture' 제거. 'Changes' 탭은 UI에서 숨김(App.vue tabComponents 에 유지).
 // 'Analysis'(분석기 임베드) → 'Legacy' 로 라벨 변경 + 맨 앞으로 이동(Proposals 앞).
-// 'Template' — 템플릿 기반 코드 생성(ENT-GEN-001). 'Code'(Claude Code TUI)와
-// 나란히 둔다. 나중에 이 브랜치에서만 'Code' 를 빼고 대체할 수 있다.
-// 2026-09-29 — 사내망 배포에서 'Proposals' 와 'Code' 를 탭에서 뺀다.
+// 'Template' — 템플릿 기반 코드 생성(ENT-GEN-001). 'Code'(Claude Code TUI)와 나란히 둔다.
 //
-// 둘 다 `claude` CLI 를 필요로 한다. Proposals 는 worktree 안에서 Claude Code
-// 셀(PTY)로 구현을 돌리고(spec 039), Code 탭은 그 PTY 자체다. 사내망에는 그
-// CLI 가 없으므로 열어 두면 **눌렀을 때 아무 일도 안 일어나는 탭**이 된다.
-//
-// **컴포넌트·라우팅은 그대로 둔다.** `App.vue` 의 tabComponents 에 남아 있고
-// 여기 목록에서만 빠진다 — 'Changes' 탭을 숨긴 방식과 같다. 되살릴 때 아래 한
-// 줄을 바꾸면 된다.
-//
-//   전체:  ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code', 'Template']
-const tabs = ['Legacy', 'Stories', 'Process', 'Design', 'Data', 'Template']
+// 탭을 감추는 것은 **고객 확장**이 정한다(`extensions/<고객>/frontend` 의 shell.hiddenTabs).
+// 포스코는 사내망에 `claude` CLI 가 없어 Proposals·Code 를 감춘다(2026-09-29 결정 — 열어 두면 눌러도 아무 일이
+// 안 일어나는 탭이 된다). **컴포넌트·라우팅은 그대로** 두고 목록에서만 빠진다.
+const tabs = visibleTabs(['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code', 'Template'])
 
 const runtime = useRuntimeStore()
 /** 탭 ↔ 기능. **여기 없는 탭은 막지 않는다.** */

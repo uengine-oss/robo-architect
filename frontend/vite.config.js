@@ -23,6 +23,21 @@ const FRONTEND_SRC = fileURLToPath(new URL('./src', import.meta.url))
 const ANALYZER_REMOTE = process.env.ANALYZER_REMOTE_URL || 'http://localhost:5001/assets/remoteEntry.js'
 const ROBO_GATEWAY = process.env.ROBO_GATEWAY_URL || 'http://127.0.0.1:9000'
 
+// 고객 · 판 — 브랜치가 아니라 **빌드 입력**이다(단일 브랜치 통합 설계 §1).
+//   VITE_CUSTOMER  default | posco | …  → `@customer` 가 extensions/<고객>/frontend 를 가리킨다
+//   VITE_EDITION   web | desktop
+// 고른 고객 폴더 **하나만** 번들에 들어간다(다른 고객 코드는 import 경로에 없다).
+// 없는 고객을 고르면 빌드를 멈춘다 — 기본 화면으로 조용히 구워지면 고객 기능이 빠진 판이 나간다.
+const CUSTOMER = (process.env.VITE_CUSTOMER || 'default').trim().toLowerCase()
+const EDITION = (process.env.VITE_EDITION || 'web').trim().toLowerCase()
+const CUSTOMER_DIR = resolve(__dirname, '../extensions', CUSTOMER === 'default' ? '_default' : CUSTOMER, 'frontend')
+if (!existsSync(resolve(CUSTOMER_DIR, 'index.js'))) {
+  throw new Error(`VITE_CUSTOMER=${CUSTOMER} 인데 ${CUSTOMER_DIR}/index.js 가 없다`)
+}
+if (!['web', 'desktop'].includes(EDITION)) {
+  throw new Error(`VITE_EDITION 은 web 또는 desktop — 받은 값: ${EDITION}`)
+}
+
 export default defineConfig({
   plugins: [
     // Copy canvaskit.wasm from node_modules to public/
@@ -110,8 +125,15 @@ export default defineConfig({
       }
     }
   },
+  // 고객·판 상수 — 코드에서 `__ROBO_CUSTOMER__ === 'posco'` 같은 분기를 **쓰지 않는다**(값은
+  // `@customer` 가 준다). 상수는 로그·진단에 판을 적고, 판에 없는 코드를 tree-shaking 하는 데만 쓴다.
+  define: {
+    __ROBO_CUSTOMER__: JSON.stringify(CUSTOMER),
+    __ROBO_EDITION__: JSON.stringify(EDITION),
+  },
   resolve: {
     alias: {
+      '@customer': CUSTOMER_DIR,
       // NOTE: '@' alias handled by open-pencil-at-alias plugin (conditional by importer)
       // open-pencil packages (source-level)
       '@open-pencil/vue': resolve(OP, 'packages/vue/src'),

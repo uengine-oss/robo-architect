@@ -40,7 +40,7 @@ def test_live_graph_is_joined_by_routine_id_not_same_name(monkeypatch):
     live = _AnalyzerSession([_Record(
         rule_id="r1", summary="요약", actors=[], reads_tables=["EMP"],
         writes_tables=["LEAVE"], callers=[], callees=[],
-        parent_module="m", parent_package="p",
+        parent_container="m", container_parent="p",
     )])
     monkeypatch.setattr(rule_context, "analyzer_session", lambda: live)
     rule = RuleDTO(
@@ -55,7 +55,10 @@ def test_live_graph_is_joined_by_routine_id_not_same_name(monkeypatch):
         "routine_id": "routine-immutable-id",
     }]
     assert out[0].reads_tables == ["EMP"]
-    assert "f._id = source.routine_id" in rule_context._FN_LOOKUP_QUERY
+    assert out[0].parent_container == "m"
+    # 지금 analyzer 계약: 루틴 정체성은 product_id. `_id` 로 찾지 않는다(Ontological).
+    assert "f.product_id = source.routine_id" in rule_context._FN_LOOKUP_QUERY
+    assert "._id" not in rule_context._FN_LOOKUP_QUERY
 
 
 def test_missing_live_graph_keeps_rule_snapshot(monkeypatch):

@@ -166,7 +166,9 @@ class AcceptedMapping:
 class RetrievalResult:
     accepted: list[AcceptedMapping] = field(default_factory=list)
     # Process → list[MODULE.fqn] (Step 1 result, for §2.F persistence)
-    process_modules: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+    # main 의 `activity_rule_mapper` 가 이 이름으로 읽는다. 값은 이제 컨테이너가
+    # 아니라 **루틴(MODULE) 단위**다 — 이름만 main 것을 쓴다.
+    process_containers: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     # Mirrors accepted entries in the ActivityRuleMapping shape the rest of
     # Phase 3 expects (save_mappings takes this list).
     mappings: list[ActivityRuleMapping] = field(default_factory=list)
@@ -215,7 +217,9 @@ def _candidates_for_task(
         ctx = contexts_by_rule.get(r.id)
         if not ctx:
             continue
-        sm = (r.source_module or ctx.source_module or "").strip()
+        # main 은 이 값을 `source_function_id` 라 부른다 — 같은 루틴의 `product_id` 다.
+        # `source_container`(CLASS id)로 폴백하지 않는다: 단계가 달라 전건 불일치다.
+        sm = (r.source_function_id or r.source_module or "").strip()
         if not sm:
             in_scope.append((r, ctx))
             continue
@@ -435,7 +439,7 @@ async def run_agentic_retrieval(
         for c in cands:
             if c.fqn and (c.fqn not in seen_fqns or c.score > seen_fqns[c.fqn]):
                 seen_fqns[c.fqn] = float(c.score)
-    result.process_modules[process.id] = sorted(
+    result.process_containers[process.id] = sorted(
         seen_fqns.items(), key=lambda x: x[1], reverse=True,
     )
 
@@ -479,7 +483,7 @@ async def run_agentic_retrieval(
         reachable = 0
         for r in rules:
             ctx = ctx_by_rule.get(r.id)
-            sm = (r.source_module or (ctx.source_module if ctx else "") or "").strip()
+            sm = (r.source_function_id or r.source_module or "").strip()
             if not sm or any(n in seen_fqns for n in ancestors_of(sm, containment)):
                 reachable += 1
         if reachable == 0:
@@ -546,7 +550,7 @@ async def run_agentic_retrieval(
                     "rule_id": c.rule.id,
                     "title": c.rule.title or "",
                     "source_function": c.rule.source_function,
-                    "source_module": c.rule.source_module,
+                    "source_module": c.rule.source_function_id,
                 } for c in candidates
             ],
         })

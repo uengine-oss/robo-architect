@@ -37,7 +37,7 @@ from api.features.ingestion.ingestion_llm_runtime import get_llm
 _SYSTEM_PROMPT = """당신은 업무 프로세스와 Business Logic 의 최종 귀속을 판정하는 분석가입니다.
 
 한 Business Logic(BL) 에 대해 하나 이상의 **프로세스** 가 "이 BL 은 우리 프로세스의 Task X 에 속한다" 고 주장하고 있습니다.
-각 주장에는 프로세스 이름, 해당 프로세스의 Task 이름, 그 프로세스 수준의 판단 근거(rationale), 그리고 **module_confidence** (이 프로세스와 BL 이 속한 코드 모듈 사이의 임베딩 유사도) 가 있습니다.
+각 주장에는 프로세스 이름, Task 이름, 판단 근거(rationale), 그리고 **container_confidence** (프로세스와 코드 컨테이너 사이의 임베딩 유사도) 가 있습니다.
 
 당신의 일: 이 BL 의 **진짜 본거지(home)** 를 정하거나, 어느 주장도 맞지 않으면 reject.
 
@@ -49,8 +49,8 @@ _SYSTEM_PROMPT = """당신은 업무 프로세스와 Business Logic 의 최종 �
 2. **판정 우선순위 (가장 중요)**:
    (1) Stage / 업무 단계 매치 = **primary**
    (2) BL semantics(GIVEN/WHEN/THEN, 함수명, function_summary) 와 task 의미의 부합도 = **primary**
-   (3) module_confidence 수치 = **타이브레이커 전용 (secondary)**
-   **module_confidence 차이가 0.05 미만이면 수치 차이는 무시하고, stage/semantic 부합만으로 결정하세요.**
+   (3) container_confidence 수치 = **타이브레이커 전용 (secondary)**
+   **container_confidence 차이가 0.05 미만이면 수치 차이는 무시하고, stage/semantic 부합만으로 결정하세요.**
    예: 조회 0.618 vs 신청 0.599 (차이 0.019) 인데 BL 이 "신청 단계 입력 검증" 이면 조회가 수치상 높아도 **신청** 을 선택.
 
 3. **Stage 매치 판정 가이드 (정면 불일치면 reject)**:
@@ -59,18 +59,18 @@ _SYSTEM_PROMPT = """당신은 업무 프로세스와 Business Logic 의 최종 �
    - **해지/delete** stage: BL 이 unbind / 이력 말소 / 외부 통보 이면 해지 쪽.
    - **판정/이력적재/메시지 조립**: BL 의 기능 동사로 판단 — "판정한다" / "저장한다(INSERT/UPDATE)" / "조립한다(메시지 생성)".
 
-4. **module_confidence 3-밴드 (타이브레이커 기준)**:
+4. **container_confidence 3-밴드 (타이브레이커 기준)**:
    - 0.60 이상: 코드 구현 가능성 높음.
    - 0.55 ~ 0.60: 경계. stage/semantic 이 명백히 맞을 때만 의미 있음.
-   - 0.55 미만: 사실상 "이 프로세스는 이 모듈에 구현되지 않음". default reject.
+   - 0.55 미만: 사실상 "이 프로세스는 이 컨테이너에 구현되지 않음". default reject.
 
 5. **reject 해야 하는 케이스**:
    (a) BL 이 순수 기술 유틸리티(로깅/직렬화/공통 헬퍼).
    (b) 모든 주장이 stage 불일치거나 semantic 부합이 약함.
-   (c) 모든 주장의 module_confidence 가 낮고 (< 0.60) stage/semantic 도 약함.
+   (c) 모든 주장의 container_confidence 가 낮고 (< 0.60) stage/semantic 도 약함.
 
-6. 여러 주장 중 **하나만** home. 판정 근거는 구체 증거(함수명/부모모듈/stage/rationale 키워드) 포함.
-7. **단일 주장 재판정** 시: module_confidence 낮으면 stage/semantic 이 완벽할 때만 accept, 아니면 reject.
+6. 여러 주장 중 **하나만** home. 판정 근거는 구체 증거(함수명/부모 컨테이너/stage/rationale 키워드) 포함.
+7. **단일 주장 재판정** 시: container_confidence 낮으면 stage/semantic 이 완벽할 때만 accept, 아니면 reject.
 """
 
 
@@ -89,16 +89,16 @@ class ClaimEntry:
     task: BpmTaskDTO
     rationale: str
     score: float
-    # Top-1 module cosine for this process (§2.B P3). Low values
-    # (<0.55) flag "this process probably doesn't implement this module" —
+    # Top-1 container cosine for this process (§2.B P3). Low values
+    # (<0.55) flag "this process probably doesn't use this container" —
     # the arbitrator down-weights such claims and may reject single-claim
     # matches outright.
-    module_confidence: float = 1.0
+    container_confidence: float = 1.0
 
 
-# Below this module confidence, a single-claim rule is still routed through
+# Below this container confidence, a single-claim rule is still routed through
 # the arbitrator (instead of auto-accepted) to second-guess whether the
-# validator over-reached. Same calibration as MIN_MODULE_CONFIDENCE but
+# validator over-reached. Same calibration as the Step-1 gate but
 # slightly stricter — leaves a safety margin for marginal Step-1 hits.
 SINGLE_CLAIM_ARBITRATION_THRESHOLD = 0.60
 
@@ -111,13 +111,13 @@ def _format_rule(rule: RuleDTO, ctx: Optional[RuleContext]) -> str:
         f"when:  {rule.when}",
         f"then:  {rule.then}",
         f"source_function: {rule.source_function or '(없음)'}",
-        f"source_module:   {rule.source_module or '(없음)'}",
+        f"source_container: {rule.source_container or '(없음)'}",
     ]
     if ctx:
         if ctx.function_summary:
             lines.append(f"function_summary: {ctx.function_summary}")
-        if ctx.parent_module:
-            lines.append(f"parent_module: {ctx.parent_module}")
+        if ctx.parent_container:
+            lines.append(f"parent_container: {ctx.parent_container}")
         if ctx.callers:
             lines.append(f"callers: {', '.join(ctx.callers[:5])}")
     return "\n".join(lines)
@@ -132,7 +132,7 @@ def _format_claim(i: int, c: ClaimEntry) -> str:
         f"  task_id: {c.task.id}",
         f"  task_name: {c.task.name}",
         f"  task_description: {c.task.description or '(없음)'}",
-        f"  module_confidence: {c.module_confidence:.3f}",
+        f"  container_confidence: {c.container_confidence:.3f}",
         f"  per_process_rationale: {c.rationale}",
     ]
     return "\n".join(lines)
@@ -152,13 +152,13 @@ async def arbitrate_rule_home(
         return ArbitrationVerdict(reject=True, rationale="No claims to arbitrate")
     if len(claims) == 1:
         c = claims[0]
-        # §2.B P3 — If the only claimant has high module confidence we
+        # §2.B P3 — If the only claimant has high container confidence we
         # trust the per-process validator and skip an extra LLM call.
-        # If module_confidence is low (< SINGLE_CLAIM_ARBITRATION_THRESHOLD),
+        # If container_confidence is low (< SINGLE_CLAIM_ARBITRATION_THRESHOLD),
         # we still route through the arbitrator so the LLM can catch
-        # "this process doesn't implement this module — validator was
+        # "this process doesn't use this container — validator was
         # too permissive" cases.
-        if c.module_confidence >= SINGLE_CLAIM_ARBITRATION_THRESHOLD:
+        if c.container_confidence >= SINGLE_CLAIM_ARBITRATION_THRESHOLD:
             return ArbitrationVerdict(
                 reject=False,
                 home_process_id=c.process.id,
@@ -171,8 +171,8 @@ async def arbitrate_rule_home(
     claim_blocks = "\n\n".join(_format_claim(i + 1, c) for i, c in enumerate(claims))
     if len(claims) == 1:
         header = (
-            f"--- 단일 주장 재판정 (module_confidence={claims[0].module_confidence:.3f} 낮음) ---\n"
-            "이 프로세스의 코드가 이 모듈에 구현되어 있지 않을 가능성이 있습니다. "
+            f"--- 단일 주장 재판정 (container_confidence={claims[0].container_confidence:.3f} 낮음) ---\n"
+            "이 프로세스의 코드가 이 컨테이너에 없을 가능성이 있습니다. "
             "그럼에도 BL 의 의미가 이 Task 에 정말 부합하는지, 아니면 validator 가 오남용한 것인지 판정하세요.\n"
         )
     else:

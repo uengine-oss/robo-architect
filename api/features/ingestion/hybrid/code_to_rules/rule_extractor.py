@@ -1,9 +1,21 @@
-"""Phase 2: legacy analyzer graph → GWT business Rules.
+"""Phase 2: Analyzer RULE nodes → Architect business-rule DTOs.
 
-The analyzer stage produces `(FUNCTION)-[:HAS_RULE]->(Rule)-[:HAS_EXAMPLE]->(Example)`.
-Phase 2 collapses each (function, rule) pair into one `RuleDTO`, picks a
-representative Example for the canonical given/when/then narrative, and carries
-the full Example set for downstream retrieval that wants boundary-case access.
+Analyzer already owns semantic extraction. Architect reads the published
+product graph (robo-data-analyzer ``graph/product_graph.py`` ·
+``pipeline/publication/product_graph.py``) without reparsing source code:
+
+    (routine:FUNCTION|PROCEDURE|METHOD|TRIGGER {product_id, _owner:'analyzer',
+        name, summary, file_path, start_line, end_line})
+      -[:HAS_RULE {order}]->
+    (rule:RULE {product_id, _owner:'analyzer', line, condition, effects,
+        condition_description, effect_descriptions, code_text})
+      -[:READS|WRITES {operations}]-> (table:TABLE {name})
+
+Rules hang on the routine itself (``<routine id>::R-<line>``) — the old DBMS
+"rules scattered over child statements" shape and EXAMPLE nodes are gone.
+
+⚠ 노드 정체성은 **`product_id`** 다. `_id` 로 찾거나 읽지 않는다 — 포스코 현장
+Ontological DB 는 `_id` 를 내부 정수 id 로 해석한다.
 
 No LLM is required here — the semantic lift happened upstream in the analyzer.
 """
@@ -17,182 +29,134 @@ from api.features.ingestion.hybrid.code_to_rules.rule_filters import (
     is_infra,
     is_meaningful_gwt,
 )
-from api.features.ingestion.hybrid.code_to_rules.dbms_rule_linearizer import (
-    is_dbms_graph,
-    linearize_dbms_rules,
-)
-from api.features.ingestion.hybrid.contracts import ExampleDTO, RuleDTO
+from api.features.ingestion.hybrid.contracts import RuleDTO
 from api.features.ingestion.hybrid.effect_provenance import merge_write_effects
-from api.platform.neo4j import analyzer_database, analyzer_session, get_session
+from api.platform.neo4j import analyzer_session
 from api.platform.observability.smart_logger import SmartLogger
 
-# One row per (function, rule) pair. Examples are collected as a list so a single
-# rule with N examples (boundary + nominal) stays one RuleDTO. `coupled_domains`
-# lives on the HAS_RULE relationship; per-Example AFFECTS_TABLE writes are gathered
-# with a sub-pattern collect inside the example map so we don't fan out the row.
+
+# One row per (routine, rule). Routine-level table access (direct + one CALLS
+# hop, ISS-61) is gathered with pattern comprehensions so rows don't fan out.
 _QUERY = """
-MATCH (f)-[hr:HAS_RULE]->(r:RULE)
-WITH f, hr, r,
-     [(f)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE) | rt.name] AS reads_tables,
-     [(f)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE) | wt.name] AS writes_tables,
+MATCH (routine)-[hr:HAS_RULE]->(rule:RULE)
+WHERE rule._owner = 'analyzer'
+  AND routine._owner = 'analyzer'
+  AND (routine:FUNCTION OR routine:PROCEDURE OR routine:METHOD OR routine:TRIGGER)
+OPTIONAL MATCH (container)-[:PARENT_OF]->(routine)
+WHERE container._owner = 'analyzer'
+OPTIONAL MATCH (rule)-[write:WRITES]->(table:TABLE)
+WITH routine, hr, rule,
+     head(collect(DISTINCT container.product_id)) AS source_container_id,
+     collect(DISTINCT {
+       table: table.name,
+       access: 'WRITE',
+       operations: write.operations,
+       op_source: 'SCANNER'
+     }) AS raw_writes
+WITH routine, hr, rule, source_container_id, raw_writes,
+     [(routine)-[:PARENT_OF*0..]->(_rn)-[:READS]->(rt:TABLE) | rt.name] AS reads_tables,
+     [(routine)-[:PARENT_OF*0..]->(_wn)-[:WRITES]->(wt:TABLE) | wt.name] AS writes_tables,
      // ⚠ **한 다리 건너**도 모은다 (2026-10-21 · ISS-61).
      //
      // 위 두 줄은 `PARENT_OF` 만 탄다 = **이 루틴이 직접 치는 SQL**. 그런데
      // 이 코드베이스에서 SQL 은 전부 DAO 에 있고 **규칙은 서비스에 있다.**
-     // 그래서 규칙 111개 중 테이블을 가진 것이 6개뿐이었고, Aggregate 출처의
-     // 테이블은 **0** 이었다. 길이 없어서가 아니라 **안 타서**였다.
-     //
-     // ISS-59 로 서비스→DAO `CALLS` 가 생겼다(85 → 125). 그 한 다리를 탄다.
-     // ⚠ **직접과 섞지 않는다** — 뜻이 다르다. 직접은 "여기서 친다",
-     //   이쪽은 "여기서 부르는 것이 친다". 섞으면 숫자의 뜻이 조용히 바뀐다.
-     [(f)-[:CALLS]->(_cr)-[:PARENT_OF*0..]->(_crn)-[:READS]->(crt:TABLE) | crt.name]
+     // ISS-59 로 서비스→DAO `CALLS` 가 생겼다. 그 한 다리를 탄다.
+     // ⚠ **직접과 섞지 않는다** — 뜻이 다르다.
+     [(routine)-[:CALLS]->(_cr)-[:PARENT_OF*0..]->(_crn)-[:READS]->(crt:TABLE) | crt.name]
         AS reads_tables_via_calls,
-     [(f)-[:CALLS]->(_cw)-[:PARENT_OF*0..]->(_cwn)-[:WRITES]->(cwt:TABLE) | cwt.name]
-        AS writes_tables_via_calls,
-     [(r)-[:HAS_EXAMPLE]->(e:EXAMPLE) |
-        {
-          example_id:  coalesce(e.example_id, e.id),
-          given:       e.given,
-          when_:       e.when_,
-          then_:       e.then_,
-          writes:      [(e)-[at:AFFECTS_TABLE]->(tbl:TABLE) |
-                        {table: tbl.name, access: at.access, op: at.op, op_source: at.op_source}]
-        }
-     ] AS examples
-RETURN
-    coalesce(f.function_id, f._id, f.id, f.name) AS function_id,
-    coalesce(f.name, f.function_id, f.id, '') AS function_name,
-    coalesce(f.module_id, f.owner_id, f._owner) AS module_id,
-    f.summary                         AS function_summary,
-    f.file_path                       AS source_file_path,
-    f.start_line                      AS source_start_line,
-    f.end_line                        AS source_end_line,
-    reads_tables                      AS reads_tables,
-    writes_tables                     AS writes_tables,
-    reads_tables_via_calls            AS reads_tables_via_calls,
-    writes_tables_via_calls           AS writes_tables_via_calls,
-    r.statement                       AS statement,
-    coalesce(r._id, r.id)             AS analyzer_rule_id,
-    r.condition_description           AS condition_description,
-    r.condition                       AS condition,
-    r.effect_descriptions             AS effect_descriptions,
-    r.code_text                       AS code_text,
-    coalesce(hr.coupled_domains, [])  AS coupled_domains,
-    examples                          AS examples
-ORDER BY function_name, r.statement
+     [(routine)-[:CALLS]->(_cw)-[:PARENT_OF*0..]->(_cwn)-[:WRITES]->(cwt:TABLE) | cwt.name]
+        AS writes_tables_via_calls
+RETURN routine.product_id                      AS function_id,
+       coalesce(routine.name, '')              AS function_name,
+       coalesce(routine.summary, '')           AS function_summary,
+       routine.file_path                       AS source_file_path,
+       routine.start_line                      AS source_start_line,
+       routine.end_line                        AS source_end_line,
+       source_container_id,
+       reads_tables, writes_tables,
+       reads_tables_via_calls, writes_tables_via_calls,
+       rule.product_id                         AS analyzer_rule_id,
+       coalesce(hr.order, 0)                   AS rule_order,
+       coalesce(rule.condition, '')            AS condition,
+       coalesce(rule.effects, [])              AS effects,
+       coalesce(rule.condition_description, '') AS condition_description,
+       coalesce(rule.effect_descriptions, [])  AS effect_descriptions,
+       raw_writes
+ORDER BY function_id, rule_order, analyzer_rule_id
 """
-# ★ 소속 모듈 id — analyzer 는 `module_id` 로 준다. `owner_id` 는 spec 047 FR-007 이
-#   가정한 이름인데 생산자에 없다(전수 확인) — 옛 그래프 대비로만 남긴다.
-#   종전엔 이 속성이 없어서 `function_id` 문자열을 잘라 모듈을 추측했다.
-#   그 파싱이 analyzer 의 id 규칙을 붙들어 매서, 서로 다른 노드가 같은 id 를 갖는 버그를
-#   못 고치게 만들었다. **id 는 불투명한 열쇠다 — 뜯지 않는다.**
-#
-# ★ `f.name` 은 FUNCTION 에 없다. analyzer 의 Function 에는 name 필드 자체가 없고
-#   (`function_id` 가 "module_id.name" 이고 표시형은 `signature`), 그래서 이 값이
-#   전건 빈 문자열이었다. 빈 이름은 rule_context 의 조회 키라 그쪽도 전부 빗나갔다.
-#   id 를 뜯지 않고 그대로 이름 자리에 쓴다 — 사람이 읽을 수 있고 조회에도 맞는다.
 
 
-def _rule_id(function_id: str, statement: str) -> str:
-    raw = f"{function_id}|{statement or ''}"
+def _as_id(value) -> str | None:
+    """노드 id 를 문자열로. 게이트웨이가 정수로 주는 경우가 있다."""
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _as_list(value) -> list:
+    """목록 속성을 목록으로. 저장소에 따라 JSON 문자열로 돌아오기도 한다."""
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                return [text]
+            return list(parsed) if isinstance(parsed, list) else [parsed]
+        return [text]
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _rule_id(function_id: str, analyzer_rule_id: str) -> str:
+    # 생산자(analyzer)의 RULE id 가 정체성이다. 같은 조건·효과라도 다른 RULE 이면 다른 룰.
+    raw = f"{function_id}|{analyzer_rule_id or ''}"
     return "rule_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
-# (옛 `_module_of(function_id)` 삭제 — id 문자열을 잘라 모듈을 추측하던 함수.
-#  이제 analyzer 가 `owner_id` 노드 속성으로 소속 모듈을 알려준다(analyzer spec 047 FR-007)
-#  → 쿼리에서 `f.owner_id AS module_id` 로 그냥 읽는다. id 는 뜯지 않는다.)
+def _texts(value) -> list[str]:
+    return [str(x).strip() for x in _as_list(value) if str(x).strip()]
 
 
-def _humanize(value: str | None) -> str:
-    """Pull a human-readable string out of a possibly-JSON-encoded GWT field.
-
-    Analyzer Examples encode `given` and `then_` as JSON when they carry
-    structured data (writes[], inputs, exceptions). The `narrative` field inside
-    is the prose summary; fall back to the raw string when not parseable.
-    """
-    if not value:
-        return ""
-    s = value.strip()
-    if not s.startswith("{"):
-        return s
-    try:
-        obj = json.loads(s)
-    except Exception:
-        return s
-    if isinstance(obj, dict):
-        narrative = obj.get("narrative")
-        if isinstance(narrative, str) and narrative.strip():
-            return narrative.strip()
-    return s
-
-
-def _pick_canonical(examples: list[dict]) -> dict | None:
-    """Choose the example whose narrative best represents this rule.
-
-    Preference: non-boundary first (the "happy path" demonstrates intent more
-    cleanly than an edge case), then by example_id for stable ordering.
-    """
-    valid = [e for e in examples if isinstance(e, dict) and e.get("example_id")]
-    if not valid:
-        return None
-    valid.sort(key=lambda e: (bool(e.get("is_boundary")), e.get("example_id") or ""))
-    return valid[0]
-
-
-def _writes_from_then_json(then_value: str | None) -> list[dict]:
-    """Pull `writes[]` out of a JSON-encoded `then_` payload, if present.
-
-    Analyzer Examples encode `then_` as JSON when they carry side effects:
-    `{"narrative": "...", "writes": [{"table": "...", "op": "INSERT"}], ...}`.
-    Plain-text `then_` returns []. Tolerant of malformed JSON — returns [] on
-    any parse failure.
-    """
-    if not then_value:
-        return []
-    s = then_value.strip()
-    if not s.startswith("{"):
-        return []
-    try:
-        obj = json.loads(s)
-    except Exception:
-        return []
-    if not isinstance(obj, dict):
-        return []
-    raw = obj.get("writes")
-    if not isinstance(raw, list):
-        return []
-    out: list[dict] = []
-    for w in raw:
-        if not isinstance(w, dict):
+def _expand_writes(raw_writes) -> list[dict[str, str]]:
+    expanded: list[dict[str, str]] = []
+    for raw in raw_writes or []:
+        if not isinstance(raw, dict):
             continue
-        tbl = w.get("table")
-        op = w.get("op")
-        if isinstance(tbl, str) and isinstance(op, str):
-            out.append({
-                "table": tbl,
-                "access": "WRITE",
-                "op": op.upper(),
-                "op_source": "LEGACY",
-            })
-    return out
+        table = raw.get("table")
+        if not table:
+            continue
+        operations = _texts(raw.get("operations")) or ["UNKNOWN"]
+        for operation in operations:
+            expanded.append(
+                {
+                    "table": str(table),
+                    "access": "WRITE",
+                    "op": operation.upper(),
+                    "op_source": "SCANNER",
+                }
+            )
+    return merge_write_effects(expanded)
 
 
-def _merge_writes(*sources: list[dict]) -> list[dict]:
-    """Compatibility wrapper around the shared AFFECTS_TABLE v2 normalizer."""
-    return merge_write_effects(*sources)
+def _sorted_names(value) -> list[str]:
+    return sorted({str(x) for x in _as_list(value) if x})
 
 
 def _structured_rule(rec) -> RuleDTO | None:
-    """Adapt the analyzer's condition/effects RULE schema to ingestion GWT.
+    """Adapt one analyzer RULE row (condition/effects schema) to ingestion GWT.
 
-    Recent framework and DBMS runs emit no EXAMPLE nodes or ``statement``. Their
-    verified condition/effect descriptions are the semantic source of truth;
+    Verified condition/effect descriptions are the semantic source of truth;
     fabricating a code interpretation with another LLM here would lose provenance.
     """
-    effects = [str(x).strip() for x in (rec.get("effect_descriptions") or []) if str(x).strip()]
+    effects = _texts(rec.get("effect_descriptions")) or _texts(rec.get("effects"))
     if not effects:
         return None
-    function_name = str(rec.get("function_name") or rec.get("function_id") or "").strip()
+    function_id = _as_id(rec.get("function_id"))
+    function_name = str(rec.get("function_name") or function_id or "").strip()
     condition = str(rec.get("condition_description") or rec.get("condition") or "").strip()
     if is_infra(" ".join(effects), function_name):
         return None
@@ -201,58 +165,52 @@ def _structured_rule(rec) -> RuleDTO | None:
     then = "; ".join(effects)
     if not is_meaningful_gwt(given, when, then):
         return None
-    analyzer_id = rec.get("analyzer_rule_id")
+    analyzer_id = _as_id(rec.get("analyzer_rule_id"))
     if analyzer_id is None:
         return None
-    fid = str(rec.get("function_id") or function_name)
-    rid = _rule_id(fid, str(analyzer_id))
+    fid = function_id or function_name
     return RuleDTO(
-        id=rid,
+        id=_rule_id(fid, analyzer_id),
         given=given,
         when=when,
         then=then,
         source_function=function_name,
-        # New analyzer runs use the generic owner marker "analyzer", not a
-        # retrievable module id. Module search falls back to routine summaries.
-        source_module=(fid if rec.get("module_id") in (None, "analyzer")
-                       else str(rec.get("module_id"))),
-        source_summary=rec.get("function_summary"),
+        # **문자열로 바꿔서 넣는다.** 게이트웨이가 id 를 정수로 돌려주면
+        # 이 DTO 의 str 필드를 pydantic 이 전건 거부한다.
+        source_function_id=function_id,
+        source_rule_id=analyzer_id,
+        source_container=_as_id(rec.get("source_container_id")),
+        # posco-web 이름 — 루틴 id 와 같다(추적성이 이 속성으로 루틴을 찾는다).
+        source_module=function_id,
+        source_summary=(rec.get("function_summary") or None),
         source_file_path=rec.get("source_file_path"),
         source_start_line=rec.get("source_start_line"),
         source_end_line=rec.get("source_end_line"),
-        reads_tables=sorted({str(x) for x in (rec.get("reads_tables") or []) if x}),
-        writes_tables=sorted({str(x) for x in (rec.get("writes_tables") or []) if x}),
-        reads_tables_via_calls=sorted({str(x) for x in (rec.get("reads_tables_via_calls") or []) if x}),
-        writes_tables_via_calls=sorted({str(x) for x in (rec.get("writes_tables_via_calls") or []) if x}),
+        reads_tables=_sorted_names(rec.get("reads_tables")),
+        writes_tables=_sorted_names(rec.get("writes_tables")),
+        reads_tables_via_calls=_sorted_names(rec.get("reads_tables_via_calls")),
+        writes_tables_via_calls=_sorted_names(rec.get("writes_tables_via_calls")),
+        confidence=1.0,
         title=f"{condition}: {then}" if condition else then,
-        examples=[ExampleDTO(example_id=f"{rid}_example", given=given, when_=when, then_=then)],
+        writes=_expand_writes(rec.get("raw_writes")),
     )
 
 
 async def extract_rules_from_analyzer_graph(
     analyzer_graph_ref: str | None = None,
 ) -> list[RuleDTO]:
-    """Pull every meaningful (function, rule) pair from the analyzer DB as a RuleDTO.
+    """Read every meaningful analyzer RULE as a RuleDTO (one per routine × rule).
 
-    Same Rule (rule_hash) shared across N functions becomes N RuleDTOs — one per
-    host function — so downstream retrieval/embedding can keep its per-function
-    semantics. `analyzer_graph_ref` is informational; the analyzer DB is a
-    single global graph today.
+    The analyzer graph is the project's own (`analyzer_session()` — the
+    project's `analyzerGraph`, else `.env`). `analyzer_graph_ref` is
+    informational only.
     """
-    rules: list[RuleDTO] = []
-    seen: set[str] = set()
-
     try:
         sess = analyzer_session()
         if sess is None:
             return []
         with sess as s:
-            # framework: 룰이 루틴(FUNCTION)에 직접 붙음 → 기존 _QUERY 로 소비.
-            # dbms: 룰이 자식 구문 노드에 흩어짐 → 상위 루틴 오너로 귀속(044 C4). 동일 레코드 키.
-            if is_dbms_graph(s):
-                records = linearize_dbms_rules(s)
-            else:
-                records = list(s.run(_QUERY))
+            records = list(s.run(_QUERY))
     except Exception as e:
         SmartLogger.log(
             "WARN", "Phase 2 query failed; returning empty rule list",
@@ -261,73 +219,14 @@ async def extract_rules_from_analyzer_graph(
         )
         return []
 
+    rules: list[RuleDTO] = []
+    seen: set[str] = set()
     for rec in records:
-        statement = rec.get("statement")
-        fn_name = rec.get("function_name")
-        if not statement and rec.get("analyzer_rule_id") is not None:
-            modern = _structured_rule(rec)
-            if modern and modern.id not in seen:
-                seen.add(modern.id)
-                rules.append(modern)
+        rule = _structured_rule(rec)
+        if rule is None or rule.id in seen:
             continue
-        if is_infra(statement, fn_name):
-            continue
-
-        canonical = _pick_canonical(rec.get("examples") or [])
-        given_h = _humanize(canonical.get("given") if canonical else None)
-        when_h = _humanize(canonical.get("when_") if canonical else None)
-        then_h = _humanize(canonical.get("then_") if canonical else None)
-        if not is_meaningful_gwt(given_h, when_h, then_h):
-            continue
-
-        fid = rec.get("function_id") or fn_name or "unknown"
-        rid = _rule_id(fid, statement or "")
-        if rid in seen:
-            continue
-        seen.add(rid)
-
-        examples = [
-            ExampleDTO(
-                example_id=e.get("example_id"),
-                given=_humanize(e.get("given")),
-                when_=(e.get("when_") or "").strip(),
-                then_=_humanize(e.get("then_")),
-                is_boundary=bool(e.get("is_boundary")),
-                # Union of analyzer-edge writes (AFFECTS_TABLE) and JSON-embedded
-                # writes[] in the raw then_ — either alone is incomplete in some
-                # function fixtures, so we merge both for robust §3.1 classification.
-                writes=_merge_writes(
-                    e.get("writes") or [],
-                    _writes_from_then_json(e.get("then_")),
-                ),
-            )
-            for e in (rec.get("examples") or [])
-            if isinstance(e, dict) and e.get("example_id")
-        ]
-
-        rules.append(
-            RuleDTO(
-                id=rid,
-                given=given_h,
-                when=when_h,
-                then=then_h,
-                source_function=fn_name,
-                # 소속 모듈 = analyzer 가 준 `owner_id` 속성 (id 를 뜯지 않는다).
-                source_module=rec.get("module_id") or None,
-                source_summary=rec.get("function_summary"),
-                source_file_path=rec.get("source_file_path"),
-                source_start_line=rec.get("source_start_line"),
-                source_end_line=rec.get("source_end_line"),
-                reads_tables=sorted({str(x) for x in (rec.get("reads_tables") or []) if x}),
-                writes_tables=sorted({str(x) for x in (rec.get("writes_tables") or []) if x}),
-                reads_tables_via_calls=sorted({str(x) for x in (rec.get("reads_tables_via_calls") or []) if x}),
-                writes_tables_via_calls=sorted({str(x) for x in (rec.get("writes_tables_via_calls") or []) if x}),
-                confidence=1.0,
-                title=(statement or None),
-                examples=examples,
-                coupled_domains=list(rec.get("coupled_domains") or []),
-            )
-        )
+        seen.add(rule.id)
+        rules.append(rule)
 
     SmartLogger.log(
         "INFO", "Phase 2 rule extraction complete",

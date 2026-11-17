@@ -640,7 +640,7 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
                 task=tdto,
                 rationale=c.get("rationale") or "",
                 score=float(c.get("score") or 0.0),
-                module_confidence=1.0,  # post-hoc arbitration: trust persisted score
+                container_confidence=1.0,  # post-hoc arbitration: trust persisted score
             ))
         if len(claim_entries) < 2:
             continue
@@ -734,7 +734,8 @@ async def post_explore_arbitration(session_id: str, *, sink: Sink) -> dict:
         })
         resolved += 1
 
-    await sink({"type": "ArbitrationEnd", "resolved": resolved, "rejected": rejected})
+    await sink({"type": "ArbitrationEnd", "resolved": resolved,
+                "rejected": rejected, "demoted": demoted})
     # **한 줄로 손실 규모를 남긴다.** 이 숫자가 없으면 "매핑이 왜 적냐" 를 사후에
     # 되짚을 수 없다 — 2026-09-29 에 실제로 그랬다(수락 72 → 영속 31).
     SmartLogger.log(

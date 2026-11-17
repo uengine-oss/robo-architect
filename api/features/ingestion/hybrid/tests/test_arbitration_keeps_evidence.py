@@ -244,4 +244,5 @@ def test_스냅샷과_출처_조회가_역할을_내보낸다():
     ).read_text(encoding="utf-8")
     assert "coalesce(sf.evidence_role, 'primary') AS evidence_role" in trace
     # 주 근거가 먼저 보여야 한다.
-    assert "ORDER BY evidence_role, local_id, statement" in trace
+    # 정렬 키는 갈래마다 다르다 — 재는 것은 **주 근거가 먼저 온다**는 것뿐이다.
+    assert "ORDER BY evidence_role" in trace

@@ -145,10 +145,16 @@ def test_응답_모양이_옛_경로와_같다(monkeypatch):
     ]
 
 
-def test_루틴_조회는_내부_id_로_맞춘다():
-    """`f.id`·`f.name` 으로 맞추면 이 그래프에서 전건 0이다 — METHOD 에 그 속성이 없다."""
+def test_루틴_조회는_product_id_로_맞춘다():
+    """`f.id`·`f.name` 으로 맞추면 이 그래프에서 전건 0이다 — METHOD 에 그 속성이 없다.
+
+    지금 analyzer 는 노드 정체성을 `product_id` 로 쓴다. `_id` 로 찾으면 포스코
+    Ontological DB 가 내부 정수 id 로 해석해 한 건도 안 맞는다.
+    """
     src = inspect.getsource(tr._routine_entry)
-    assert "f._id = $rid" in src, "내부 id 가 아닌 키로 루틴을 찾는다"
+    assert "f.product_id = $rid" in src, "product_id 가 아닌 키로 루틴을 찾는다"
+    for fn in (tr._routine_entry, tr._analyzer_function, tr._analyzer_table_access):
+        assert "._id =" not in inspect.getsource(fn), f"{fn.__name__}: `_id` 로 찾는다"
     assert "READS|WRITES" in src, "테이블 접근을 안 읽는다"
 
 
@@ -228,8 +234,8 @@ def test_엣지가_있으면_그_경로로_간다(monkeypatch):
         if "labels(n)" in q else
         [_edge()] if "SOURCED_FROM" in q and "sf.via_task_id" in q else []))
     monkeypatch.setattr(tr, "_routine_entry", lambda rid, cache: None)
-    monkeypatch.setattr(tr, "_analyzer_rules",
-                        lambda fns: called.setdefault("legacy", True) or [])
+    monkeypatch.setattr(tr, "_analyzer_function",
+                        lambda fid: called.setdefault("legacy", True) or [])
     out = asyncio.run(tr.get_traceability(_Req(), "n"))
     assert "legacy" not in called, "영속 엣지가 있는데도 옛 유도를 탔다"
     assert len(out["sources"][0]["rules"]) == 1

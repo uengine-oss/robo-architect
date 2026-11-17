@@ -121,3 +121,7 @@ robo-analyzer/data/
 # 코드 생성 템플릿 — 별도 저장소(msa-ez/template-poscodx)를 클론해 쓴다.
 # 내용을 우리 이력에 섞지 않는다. `scripts/fetch-templates.sh` 로 받는다.
 templates/
+
+# analyzer stack runtime state (scripts/analyzer-stack.sh)
+.robo-logs/
+.robo-pids/

@@ -87,7 +87,8 @@ def _module_rows() -> list[dict]:
     exceeds threshold" — a sentence that reads like a finding rather than a
     schema mismatch, which is why this stayed invisible.
 
-    The id is read as `coalesce(module_id, id)`: the analyzer's key is
+    The id is read as `coalesce(product_id, module_id, id)`: the analyzer's key is
+    `product_id` (its product graph, 2026-09-21~); before that it was
     `module_id`, and `id` is kept for graphs written by an older version.
     """
     sess = analyzer_session()
@@ -123,7 +124,7 @@ def _module_rows() -> list[dict]:
             MATCH (m)
             WHERE (m:MODULE OR m:FILE OR m:CLASS OR m:INTERFACE OR m:RECORD)
               AND m.summary IS NOT NULL AND m.summary <> ''
-            RETURN coalesce(m.module_id, m.id) AS fqn, m.name AS name,
+            RETURN coalesce(m.product_id, m.module_id, m.id) AS fqn, m.name AS name,
                    m.summary AS summary, m.stereotype AS stereotype
             """,
         ))
@@ -134,7 +135,7 @@ def _module_rows() -> list[dict]:
             MATCH (f)
             WHERE (f:FUNCTION OR f:METHOD)
               AND f.summary IS NOT NULL AND f.summary <> ''
-            RETURN coalesce(f.function_id, f._id, f.id) AS fqn, f.name AS name,
+            RETURN coalesce(f.product_id, f.function_id, f.id) AS fqn, f.name AS name,
                    f.summary AS summary, f.stereotype AS stereotype
             """,
         ))
@@ -398,8 +399,8 @@ def fetch_containment() -> dict[str, str]:
             """
             MATCH (c)-[:PARENT_OF]->(f)
             WHERE (f:FUNCTION OR f:METHOD OR f:PROCEDURE OR f:TRIGGER)
-            RETURN coalesce(f.function_id, f._id, f.id) AS child,
-                   coalesce(c.module_id, c.id) AS parent
+            RETURN coalesce(f.product_id, f.function_id, f.id) AS child,
+                   coalesce(c.product_id, c.module_id, c.id) AS parent
             """,
         ):
             child, up = r["child"], r["parent"]
@@ -410,8 +411,8 @@ def fetch_containment() -> dict[str, str]:
             """
             MATCH (c)-[:PARENT_OF]->(m)
             WHERE (m:MODULE OR m:FILE OR m:CLASS OR m:INTERFACE OR m:RECORD)
-            RETURN coalesce(m.module_id, m.id) AS child,
-                   coalesce(c.module_id, c.id) AS parent
+            RETURN coalesce(m.product_id, m.module_id, m.id) AS child,
+                   coalesce(c.product_id, c.module_id, c.id) AS parent
             """,
         ):
             child, up = r["child"], r["parent"]
