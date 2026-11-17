@@ -9,6 +9,8 @@
 |---|---|---|---|
 | 탭 감춤(Proposals·Code) · 시작 탭 Legacy | `TopBar.vue` · `App.vue` | `frontend/index.js` shell | **자리 생김 · 코어가 읽음**(P3) |
 | Proposals·헌장 감춤 | `featureVisibility.js` | `frontend/index.js` features | 값만(P5) |
+| 레거시 = **폴더를 올려 분석**(경로 지정 모드 안 씀) | `AnalysisPanel.vue` `readRoot()` — 데스크톱이 아니면 projectRoot 를 넘기지 않는다 | `legacy.sourceMode: 'upload'` | 값만(P5) — ⚠ main 의 `AnalysisPanel` 은 localStorage 경로가 있으면 경로 모드로 연다. P2·P4 에서 이 값을 읽게 해야 포스코가 유지된다 |
+| 새 프로젝트에 **폴더 경로 지정 없음**(Proposals 를 안 쓰므로) | `ProjectPicker.vue` — 이름만 받는다 | `projects.requireRoot: false` | 값만(P5) — ⚠ lite 데스크톱 런처(`LauncherView` · `project-root.ts`)는 폴더를 고르게 한다. P6 에서 desktop 판을 합칠 때 이 값을 읽게 해야 한다 |
 | 내보내기 DOCX 만 | `ExportDocumentDialog.vue` | `deliverables.formats` / `allowed_formats` | 값만(P5) |
 | 서비스설계서 파일 이름 틀 | `exportDocument/fileName.js` | `deliverables.fileNameTemplate` / `file_name_template` | 값만(P5) |
 | ECM 검사 | `docx_normalize.py` | `deliverable_policies.ecm_check` | 값만(P5) |

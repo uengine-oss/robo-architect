@@ -21,6 +21,14 @@ export default {
   features: {
     proposals: false,
   },
+  // 레거시 분석은 폴더를 **올려서** 한다(서버의 경로를 지정하는 모드 안 씀).
+  legacy: {
+    sourceMode: 'upload',
+  },
+  // Proposals 를 안 쓰므로 새 프로젝트에 대상 폴더 경로가 필요 없다 — 이름만 받는다.
+  projects: {
+    requireRoot: false,
+  },
   deliverables: {
     formats: ['docx'],
     fileNameTemplate: '설계_{project}_{kind}_{yyyyMMdd}_{HHmmss}',

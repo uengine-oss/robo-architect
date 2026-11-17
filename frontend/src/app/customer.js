@@ -23,6 +23,14 @@ const DEFAULTS = Object.freeze({
     // 헌장(Constitution) 진입점 — Proposals 를 따라간다(헌장을 읽는 것이 Proposal 뿐).
     constitution: null,
   },
+  legacy: {
+    // 'auto' = 데스크톱이 고른 폴더가 있으면 경로 모드, 없으면 업로드 · 'upload' = 늘 폴더 업로드.
+    sourceMode: 'auto',
+  },
+  projects: {
+    // 새 프로젝트에 대상 폴더(Proposals·Code 의 작업 경로)를 받나.
+    requireRoot: true,
+  },
   deliverables: {
     // 내보내기 형식 허용 목록. null 이면 코어가 아는 형식 전부.
     formats: null,
