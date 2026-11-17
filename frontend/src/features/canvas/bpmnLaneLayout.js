@@ -21,7 +21,7 @@ import { routeEdges } from './bpmnEdgeRouting.js'
 
 const COL_GAP = 175        // 열 간격(작업 폭 100 + 통로)
 const ROW_H = 110          // 레인 안 한 줄 높이
-const LANE_PAD = 22        // 레인 위아래 여백
+const LANE_PAD = 40       // 레인 위아래 여백 — 위/아래로 도는 선이 레인 안에 들어오게
 const HEAD_W = 30          // 풀·레인 머리 폭
 const TASK_H = 80
 

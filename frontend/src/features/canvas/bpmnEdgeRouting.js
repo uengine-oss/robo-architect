@@ -13,7 +13,7 @@
  */
 
 const PAD = 4
-const STEP = 9          // 겹칠 때 비켜 서는 간격
+const STEP = 12         // 겹칠 때 비켜 서는 간격(9 는 붙어 보였다)
 const OFFSETS = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5]
 
 /** @typedef {{x:number,y:number,w:number,h:number}} Box */
@@ -53,13 +53,15 @@ function overlaps(pts, used, s, t) {
   const segs = segments(pts)
   for (const [i, seg] of segs.entries()) {
     const last = i === segs.length - 1
+    const first = i === 0
     for (const u of used) {
+      // 같은 출발점에서 갈라지는 선은 **꼭짓점에서 나오는 첫 토막만** 나눠 쓴다 — 그 뒤 가로선까지 나눠 쓰면
+      // 두 가지가 한 줄로 포개져 어디서 갈라지는지 안 보였다(휴가 신청 결재 · 휴가유형별 분기)
+      if (first && u.first && u.s === s) continue
+      if (u.s === s && u.t === t) continue        // 같은 두 노드를 잇는 중복 선은 하나로 보여도 된다
       // 같은 도착점으로 들어가는 **마지막 짧은 토막**만 겹쳐도 된다(입구가 하나다). 길게 겹치면 다른
       // 출발점들이 한 줄로 이어진 것처럼 보이므로(두 게이트웨이가 붙어 보임) 입구 앞 48px 까지만.
       if (last && u.last && u.t === t && Math.min(u.hi, seg.hi) - Math.max(u.lo, seg.lo) <= 48) continue
-      // 같은 출발점에서 갈라지는 선(팬아웃)만 줄기를 나눠 쓴다. 같은 도착점으로 모이는 선까지 포개면
-      // 서로 다른 두 출발점이 한 줄로 이어진 것처럼 보였다(월 근태 마감 — 두 게이트웨이가 붙어 보임).
-      if (u.s === s) continue
       if (u.h !== seg.h || Math.abs(u.c - seg.c) > 4) continue
       if (Math.min(u.hi, seg.hi) - Math.max(u.lo, seg.lo) > 2) return true
     }
@@ -92,7 +94,15 @@ function corridorYs(all, sy, ty) {
 
 const isGateway = (tag) => !!tag && tag.endsWith('Gateway')
 
-function candidates(S, T, all, sTag) {
+// 같은 노드의 같은 변으로 여럿이 들어오면 입구를 좌우로 벌린다(작업 상자만 — 마름모·원은 꼭짓점 하나)
+const SPREAD = [0, -24, 24, -40, 40]
+function entryX(T, tTag, k) {
+  const c = T.x + T.w / 2
+  if (!tTag || tTag.endsWith('Gateway') || tTag.endsWith('Event')) return c
+  return c + SPREAD[Math.min(k, SPREAD.length - 1)]
+}
+
+function candidates(S, T, all, sTag, tTag, ports) {
   const out = []
   const sx = S.x + S.w, sy = S.y + S.h / 2
   const tx = T.x, ty = T.y + T.h / 2
@@ -110,9 +120,10 @@ function candidates(S, T, all, sTag) {
   } else {
     // 되돌아가기 — 아래 꼭짓점에서 나와 **줄 아래로** 돌아 대상 밑에서 올려 꽂는다
     const under = Math.max(S.y + S.h, T.y + T.h) + 16
+    const ex = entryX(T, tTag, ports.bottomIn)
     for (const k of OFFSETS.filter(k => k >= 0)) {
       const y = under + k * STEP
-      out.push([{ x: scx, y: S.y + S.h }, { x: scx, y }, { x: tcx, y }, { x: tcx, y: T.y + T.h }])
+      out.push([{ x: scx, y: S.y + S.h }, { x: scx, y }, { x: ex, y }, { x: ex, y: T.y + T.h }])
     }
   }
   if (forward) {
@@ -124,9 +135,10 @@ function candidates(S, T, all, sTag) {
     }
     // 앞으로 건너뛰기(같은 줄 · 사이에 노드가 있어 꺾기로 안 될 때) — 위 꼭짓점에서 나와 **줄 위로** 넘어가 대상 위에서 내려 꽂는다
     const over = Math.min(S.y, T.y) - 16
+    const ex = entryX(T, tTag, ports.topIn)
     for (const k of OFFSETS.filter(k => k >= 0)) {
       const y = over - k * STEP
-      out.push([{ x: scx, y: S.y }, { x: scx, y }, { x: tcx, y }, { x: tcx, y: T.y }])
+      out.push([{ x: scx, y: S.y }, { x: scx, y }, { x: ex, y }, { x: ex, y: T.y }])
     }
   }
   const m1 = channelAfter(S, all), m2 = channelBefore(T, all)
@@ -152,9 +164,10 @@ export function routeEdges(boxes, flows, current = {}, tags = {}) {
   const all = Object.values(boxes)
   const out = {}
   const used = []
+  const ports = {}
   const remember = (f, pts) => {
     const segs = segments(pts)
-    segs.forEach((seg, i) => used.push({ ...seg, s: f.s, t: f.t, last: i === segs.length - 1 }))
+    segs.forEach((seg, i) => used.push({ ...seg, s: f.s, t: f.t, first: i === 0, last: i === segs.length - 1 }))
   }
 
   // 짧은 선부터 — 짧은 것이 좋은 자리를 먼저 가져가야 긴 선이 비켜 돈다
@@ -169,12 +182,18 @@ export function routeEdges(boxes, flows, current = {}, tags = {}) {
       out[f.id] = now; remember(f, now); continue
     }
     const obstacles = Object.entries(boxes).filter(([id]) => id !== f.s && id !== f.t).map(([, b]) => b)
-    const cand = candidates(S, T, all, tags[f.s])
+    const pt = ports[f.t] || (ports[f.t] = { topIn: 0, bottomIn: 0 })
+    const cand = candidates(S, T, all, tags[f.s], tags[f.t], pt)
     const clean = cand.find(pts => !pathHits(pts, obstacles) && !overlaps(pts, used, f.s, f.t))
     const ok = clean || cand.find(pts => !pathHits(pts, obstacles))
     const chosen = ok || now || [{ x: S.x + S.w, y: S.y + S.h / 2 }, { x: T.x, y: T.y + T.h / 2 }]
     out[f.id] = chosen
     remember(f, chosen)
+    const end = chosen[chosen.length - 1], before = chosen[chosen.length - 2]
+    if (before && Math.abs(end.x - before.x) < 0.5) {   // 세로로 꽂혔다 — 위인가 아래인가
+      if (end.y <= T.y + 0.5) pt.topIn += 1
+      else pt.bottomIn += 1
+    }
   }
   return out
 }
