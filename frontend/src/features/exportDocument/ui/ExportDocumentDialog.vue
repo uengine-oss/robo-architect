@@ -1,8 +1,11 @@
 <script setup>
 import { computed, ref } from 'vue'
 import ExportDocumentTemplate from './ExportDocumentTemplate.vue'
+import { useProjectsStore } from '@/features/projects/projects.store.js'
+import { serviceDesignDocFileName } from '../fileName.js'
 
 const emit = defineEmits(['close'])
+const projects = useProjectsStore()
 
 const isOpen = ref(false)
 const isExporting = ref(false)
@@ -261,8 +264,10 @@ function getExportPayload() {
 //
 // 정본화에 실패해도 다운로드 자체는 되게 한다 — 원본으로 폴백하고, ECM 등록이
 // 거부될 수 있다는 것을 사용자에게 알린다.
-async function normalizeAndSaveDocx(blob, ext, baseName) {
-  const fileName = `${baseName}-${new Date().toISOString().split('T')[0]}.${ext}`
+//
+// `fileName` 은 확장자까지 붙은 **완성된 이름**이다 — 정본화 요청과 다운로드(성공·폴백
+// 모두)가 이 한 값을 같이 쓴다. 이름 규칙은 `../fileName.js` 에서 만든다.
+async function normalizeAndSaveDocx(blob, fileName) {
   try {
     exportStatus.value = '문서 정본화 중...'
     const form = new FormData()
@@ -279,7 +284,7 @@ async function normalizeAndSaveDocx(blob, ext, baseName) {
     const normalized = await res.blob()
     if (!normalized || normalized.size === 0) throw new Error('정본화 결과가 비어 있습니다.')
 
-    downloadBlob(normalized, ext, baseName)
+    downloadBlob(normalized, fileName)
 
     // 변환 중 표·이미지·본문이 유실됐는지 백엔드가 비교해 헤더로 알려준다.
     if (res.headers.get('X-Docx-Lossless') === 'false') {
@@ -294,7 +299,7 @@ async function normalizeAndSaveDocx(blob, ext, baseName) {
     return true
   } catch (error) {
     console.warn('[ExportDoc] docx 정본화 실패 — 원본으로 폴백:', error)
-    downloadBlob(blob, ext, baseName)
+    downloadBlob(blob, fileName)
     showSnackbar('정본화를 건너뛰고 원본으로 저장했습니다. ECM 등록이 거부될 수 있습니다.', 'error')
     return false
   }
@@ -313,7 +318,8 @@ async function exportToWord() {
     const blob = await doExport(data, container, (done, total) => {
       exportStatus.value = `Word 생성 중... (${Math.round(done / total * 100)}%)`
     })
-    await normalizeAndSaveDocx(blob, 'docx', '설계산출물')
+    // 고객 규칙(2026-11): 설계_{프로젝트명}_서비스설계서_YYYYMMDD_HHmmss.docx (현지 시각)
+    await normalizeAndSaveDocx(blob, serviceDesignDocFileName(projects.currentName))
   } catch (error) {
     console.error('[ExportDoc] Word error:', error)
     showSnackbar('Word 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
@@ -375,7 +381,7 @@ async function exportToWord() {
 //     const url = URL.createObjectURL(blob)
 //     const win = window.open(url, '_blank')
 //     if (!win) {
-//       downloadBlob(blob, 'html')
+//       downloadBlob(blob, legacyFileName('설계산출물', 'html'))
 //       showSnackbar('팝업이 차단되어 파일로 저장했습니다.', 'success')
 //     } else {
 //       setTimeout(() => URL.revokeObjectURL(url), 60_000)
@@ -416,7 +422,9 @@ async function exportAggregateDocx() {
 
     const doc = new Document({ sections: [{ properties: {}, children: paragraphs }] })
     const blob = await Packer.toBlob(doc)
-    await normalizeAndSaveDocx(blob, 'docx', 'Aggregate정의서')
+    // 이 산출물은 아직 이름 규칙을 받지 않아 옛 이름 그대로다. 규칙이 정해지면
+    // `buildDeliverableFileName({ projectName, docType: 'Aggregate정의서' })` 로 바꾼다.
+    await normalizeAndSaveDocx(blob, legacyFileName('Aggregate정의서', 'docx'))
   } catch (error) {
     console.error('[ExportDoc] Aggregate docx error:', error)
     showSnackbar('Aggregate 문서 생성 실패: ' + (error.message || '알 수 없는 오류'), 'error')
@@ -427,12 +435,16 @@ async function exportAggregateDocx() {
 }
 
 // ── Download helper ──
-function downloadBlob(blob, ext, baseName = '설계산출물') {
+// 옛 이름 형식(`{baseName}-YYYY-MM-DD.{ext}`, UTC 날짜) — 규칙을 받지 않은 산출물용.
+function legacyFileName(baseName, ext) {
+  return `${baseName}-${new Date().toISOString().split('T')[0]}.${ext}`
+}
+
+function downloadBlob(blob, fileName) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  const timestamp = new Date().toISOString().split('T')[0]
-  a.download = `${baseName}-${timestamp}.${ext}`
+  a.download = fileName
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
