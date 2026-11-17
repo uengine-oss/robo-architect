@@ -34,8 +34,23 @@ const DEFAULTS = Object.freeze({
   deliverables: {
     // 내보내기 형식 허용 목록. null 이면 코어가 아는 형식 전부.
     formats: null,
-    // 산출물 파일 이름 틀. null 이면 코어 기본 이름.
+    // 산출물 파일 이름 틀. null 이면 코어 기본 이름(`{baseName}-YYYY-MM-DD.{ext}`).
+    // 칸: {project} {kind} {yyyyMMdd} {HHmmss} — 현지 시각. 확장자는 코어가 붙인다.
     fileNameTemplate: null,
+    // 정본화 결과를 사용자에게 말할 때 'ECM 등록' 을 말하나. false 면 일반 문구('정본화').
+    ecm: false,
+  },
+  ai: {
+    // AI 게이트웨이를 화면에서 부르는 이름(설정 > AI 호출 경로 · 생성 모델).
+    gatewayName: 'AI 게이트웨이',
+  },
+  templates: {
+    // 템플릿 탭이 처음 고를 묶음 이름. null 이면 서버가 주는 첫 묶음.
+    defaultSet: null,
+    // 템플릿 탭 빈 화면의 설명.
+    description: '이벤트 스토밍 요소로 Java 프로젝트를 생성합니다.',
+    // 생성 패키지 표시의 앞부분(`<prefix>.<serviceId>.<boundedContext>`).
+    packagePrefix: 'com.example',
   },
   // 로고·제품 이름 · 로그인 문구. null 이면 제품 기본.
   brand: null,

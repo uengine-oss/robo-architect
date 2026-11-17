@@ -14,8 +14,12 @@
  */
 import { computed } from 'vue'
 import { useAuthStore } from '@/features/auth/auth.store.js'
+import { customer } from '@/app/customer.js'
 
 const auth = useAuthStore()
+
+// 게이트웨이를 화면에서 부르는 이름 — 고객 확장 값(`ai.gatewayName`).
+const gatewayName = customer.ai.gatewayName
 
 const state = computed(() => (auth.provider || {}).aiGateway || null)
 const paths = computed(() => (state.value || {}).paths || [])
@@ -42,17 +46,17 @@ const LABEL = {
       <h3 class="settings-section__title">AI 호출 경로</h3>
       <span class="settings-section__description">
         <template v-if="state.enabled">
-          P-GPT 켜짐 — {{ state.baseUrl }}
+          {{ gatewayName }} 켜짐 — {{ state.baseUrl }}
         </template>
         <template v-else>
-          P-GPT 꺼짐 — PGPT_BASE_URL 을 지정하면 채팅이 게이트웨이로 갑니다
+          {{ gatewayName }} 꺼짐 — PGPT_BASE_URL 을 지정하면 채팅이 게이트웨이로 갑니다
         </template>
       </span>
     </div>
 
     <!-- 덮은 것을 숨기면 "왜 안 바뀌지"를 못 푼다. -->
     <p v-if="state.overrides && state.overrides.length" class="air__note">
-      P-GPT 가 {{ state.overrides.join(' · ') }} 를 덮었습니다.
+      {{ gatewayName }} 가 {{ state.overrides.join(' · ') }} 를 덮었습니다.
     </p>
 
     <ul class="air__list">

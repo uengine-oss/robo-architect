@@ -7,18 +7,23 @@
  * **한 곳만 되살리는 날**이 온다.
  *
  * ⚠ **컴포넌트·라우팅·API 는 그대로 둔다.** 여기서는 보일지 말지만 정한다 —
- * `TopBar.vue` 가 탭을 숨긴 방식과 같다. 되살릴 때는 아래 값을 바꾼다.
+ * `TopBar.vue` 가 탭을 숨긴 방식과 같다.
+ *
+ * 값은 **고객 확장**(`customer.features`)에서 온다 — 고객이 감추면 여기가 `false` 가 된다.
+ * 기본 빌드(`VITE_CUSTOMER=default`)는 둘 다 보인다. export 이름은 쓰는 곳을 안 바꾸도록
+ * 그대로 둔다.
  */
+import { customer } from './customer.js'
 
 /**
  * Proposal 생애주기(spec 039~042)를 화면에 내보이나.
  *
- * `false` 인 까닭: Proposals 는 worktree 안에서 Claude Code 셀(PTY)로 구현을
+ * 고객이 `false` 로 두는 까닭(예: 사내망 배포): Proposals 는 worktree 안에서 Claude Code 셀(PTY)로 구현을
  * 돌리는데 **사내망에는 `claude` CLI 가 없다**. 열어 두면 눌렀을 때 아무 일도
  * 일어나지 않는 화면이 된다. `TopBar.vue` 의 `tabs` 와 **같은 뜻**이고, 그쪽을
  * 되살릴 때 여기도 함께 되살린다.
  */
-export const PROPOSALS_VISIBLE = false
+export const PROPOSALS_VISIBLE = customer.features.proposals !== false
 
 /**
  * 프로젝트/BC **헌장(Constitution)** 진입점을 내보이나.
@@ -32,8 +37,8 @@ export const PROPOSALS_VISIBLE = false
  * 실제로 물었다), 공들여 채운 값이 아무 데도 안 쓰인다. 그래서 **Proposals 를
  * 따라간다.**
  *
- * ⚠ 백엔드(`api/features/constitution`)와 모달은 **그대로 남는다.** 나중에
- * 헌장을 Proposal 밖에서도 쓰게 되면 이 값을 `true` 로 되돌리거나,
- * `PROPOSALS_VISIBLE` 에서 떼어 따로 정하면 된다.
+ * ⚠ 백엔드(`api/features/constitution`)와 모달은 **그대로 남는다.** 따라가는 규칙은
+ * `customer.js` 가 정한다(`features.constitution` 이 null 이면 proposals 를 따른다) —
+ * 확장이 `features.constitution` 을 따로 적으면 그 값이 이긴다.
  */
-export const CONSTITUTION_VISIBLE = PROPOSALS_VISIBLE
+export const CONSTITUTION_VISIBLE = customer.features.constitution !== false

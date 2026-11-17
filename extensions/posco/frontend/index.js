@@ -7,10 +7,12 @@
  *   proposals    featureVisibility.js `PROPOSALS_VISIBLE = false` (헌장은 따라간다)
  *   formats      ExportDocumentDialog.vue — DOCX 만
  *   fileName     exportDocument/fileName.js — 설계_{프로젝트명}_서비스설계서_YYYYMMDD_HHmmss.docx
+ *   ecm          ExportDocumentDialog.vue — 정본화 결과를 'ECM 등록' 으로 말한다
+ *   gatewayName  AiRoutingSection.vue · LlmModelSection.vue — 'P-GPT'
+ *   templates    TemplatePanel.vue — 기본 묶음 template-poscodx · 설명 · com.poscodx 패키지
+ *   sourceMode   AnalysisPanel.vue readRoot() — 경로 모드 안 씀
  *
- * ⚠ P3 단계에서 코어가 읽는 것은 hiddenTabs · startTab 둘뿐이다. 나머지는 P5(포스코 옮기기)에서
- *   코어가 이 자리를 읽기 시작할 때 살아난다 — 그때까지 현장 판은 posco-web 브랜치 그대로다.
- *   남은 목록: extensions/posco/README.md
+ * 화면 쪽 항목은 P5 에서 코어가 모두 읽게 됐다. 남은(백엔드) 목록: extensions/posco/README.md
  */
 export default {
   id: 'posco',
@@ -32,5 +34,15 @@ export default {
   deliverables: {
     formats: ['docx'],
     fileNameTemplate: '설계_{project}_{kind}_{yyyyMMdd}_{HHmmss}',
+    // 납품 문서는 사내 ECM 에 등록한다 — 정본화 결과를 ECM 기준으로 말한다.
+    ecm: true,
+  },
+  ai: {
+    gatewayName: 'P-GPT',
+  },
+  templates: {
+    defaultSet: 'template-poscodx',
+    description: '이벤트 스토밍 요소로 POSCO DX 5계층 Java 프로젝트를 생성합니다.',
+    packagePrefix: 'com.poscodx',
   },
 }

@@ -20,6 +20,7 @@ import { ref, computed, inject, watch, onBeforeUnmount, onActivated } from 'vue'
 import { useProjectsStore } from '@/features/projects/projects.store.js'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
+import { customer } from '@/app/customer.js'
 
 const ROOT_KEY = 'claude_code_workspace_root'
 
@@ -84,6 +85,10 @@ function readRoot() {
   // 게다가 사내망 서버에 올린 Architect 에서 "로컬 폴더"는 사용자 PC 가
   // 아니라 **서버의 폴더**다. 경로 모드가 말이 되는 것은 런처(Electron)가
   // 그 PC 에서 직접 고른 경우뿐이다.
+  //
+  // 고객 확장이 `legacy.sourceMode: 'upload'` 로 두면 **데스크톱이어도** 늘 폴더를
+  // 올려 분석한다(경로 모드 안 씀). 기본 'auto' 는 위 규칙 그대로다.
+  if (customer.legacy.sourceMode === 'upload') return undefined
   if (!session.isDesktop) return undefined
   const fromRef = appWorkdir?.value
   if (fromRef) return fromRef

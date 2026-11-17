@@ -8,6 +8,10 @@
 import { computed, onMounted, ref } from 'vue'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import { llmModelChoice, loadChoice, saveChoice } from '../llmModelChoice.js'
+import { customer } from '@/app/customer.js'
+
+// 게이트웨이를 화면에서 부르는 이름 — 고객 확장 값(`ai.gatewayName`).
+const gatewayName = customer.ai.gatewayName
 
 const auth = useAuthStore()
 const uid = computed(() => (auth.user || {}).uid || null)
@@ -55,7 +59,7 @@ onMounted(() => {
     <div class="settings-section__header">
       <h3 class="settings-section__title">생성 모델</h3>
       <span class="settings-section__description">
-        설계 생성·채팅에 쓸 모델(P-GPT). 나에게만 적용됩니다. 임베딩·레거시 분석은 서버 설정을 따릅니다.
+        설계 생성·채팅에 쓸 모델({{ gatewayName }}). 나에게만 적용됩니다. 임베딩·레거시 분석은 서버 설정을 따릅니다.
       </span>
     </div>
     <div class="settings-section__control settings-section__control--stack">

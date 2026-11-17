@@ -17,10 +17,14 @@ import { buildTree, collapseChains, firstFile } from '../tree.js'
 import GeneratedTree from './GeneratedTree.vue'
 import GeneratedViewer from './GeneratedViewer.vue'
 import TemplateSourcePanel from './TemplateSourcePanel.vue'
+import { customer } from '@/app/customer.js'
 
-// POSCO DX 템플릿이 기본이자 사실상 유일한 묶음이다. 다른 것이 받아져 있을
+// 기본 묶음·설명·패키지 앞부분은 고객 확장 값(`customer.templates`)이다.
+// 기본 묶음이 null 이면 서버가 주는 첫 묶음을 쓴다. 묶음이 둘 이상 받아져 있을
 // 때만 고를 수 있게 한다 — 하나뿐이면 선택지를 보여 줄 이유가 없다.
-const DEFAULT_SET = 'template-poscodx'
+const DEFAULT_SET = customer.templates.defaultSet || ''
+const DESCRIPTION = customer.templates.description
+const PACKAGE_PREFIX = customer.templates.packagePrefix
 
 const projects = useProjectsStore()
 /** 지금 고른 프로젝트의 이름. 세션은 이 프로젝트 안의 것들이다. */
@@ -69,7 +73,7 @@ function suggestServiceId(name) {
  * 기본값은 **프로젝트 이름**에서 만든다.
  *
  * 전에는 세션 이름(= 첫 프로세스 이름)에서 만들고, 영문이 하나도 없으면
- * **세션 아이디로 떨어졌다** — 그래서 패키지가 `com.poscodx.0eb8e37f.…` 가 됐다.
+ * **세션 아이디로 떨어졌다** — 그래서 패키지가 `<패키지 앞부분>.0eb8e37f.…` 가 됐다.
  * 사람이 읽을 수 없는 값이고 자바 패키지로도 뜻이 없다. 이름이 전부 한글이면
  * **비워 둔다** — 비면 생성 버튼이 입력을 요구하므로, 지어내는 것보다 낫다.
  */
@@ -101,7 +105,7 @@ onMounted(async () => {
     setsHint.value = s.hint || null
     // 기본 묶음이 있으면 그것을, 없으면 받아져 있는 첫 번째를 쓴다.
     const names = sets.value.map((x) => x.name)
-    setName.value = names.includes(DEFAULT_SET) ? DEFAULT_SET : names[0] || ''
+    setName.value = DEFAULT_SET && names.includes(DEFAULT_SET) ? DEFAULT_SET : names[0] || ''
     sessions.value = d.sessions || []
     if (sessions.value.length) sessionId.value = sessions.value[0].id
     if (setName.value) await loadOptions()
@@ -222,11 +226,11 @@ async function download() {
       </button>
 
       <div class="tpl__spacer"></div>
-      <!-- 무슨 값인지 말해 준다. 전에는 `com.poscodx.0eb8e37f.<boundedContext>` 가
+      <!-- 무슨 값인지 말해 준다. 전에는 `<패키지 앞부분>.0eb8e37f.<boundedContext>` 가
            아무 설명 없이 떠 있어 읽는 사람이 뜻을 알 수 없었다. -->
       <span class="tpl__pkg">
         <span class="tpl__pkglabel">생성 패키지</span>
-        com.poscodx.<b>{{ serviceId || 'serviceId' }}</b>.&lt;boundedContext&gt;
+        {{ PACKAGE_PREFIX }}.<b>{{ serviceId || 'serviceId' }}</b>.&lt;boundedContext&gt;
         <template v-if="!hasChoice">
           <span class="tpl__pkglabel">템플릿</span>{{ setName || '없음' }}
         </template>
@@ -272,7 +276,7 @@ async function download() {
     </div>
 
     <div v-else class="tpl__empty">
-      <p>이벤트 스토밍 요소로 POSCO DX 5계층 Java 프로젝트를 생성합니다.</p>
+      <p>{{ DESCRIPTION }}</p>
       <p class="tpl__dim">세션과 Service ID 를 확인하고 <b>코드 생성</b>을 누르세요.</p>
     </div>
   </div>
