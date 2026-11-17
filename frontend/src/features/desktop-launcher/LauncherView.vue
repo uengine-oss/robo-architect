@@ -452,7 +452,8 @@ function explainEnterError(err) {
   <div v-else class="launcher">
     <!-- Brand — same style as TopBar (global .top-bar__logo classes) -->
     <div class="top-bar__logo launcher-brand">
-      <div class="top-bar__logo-icon">RA</div>
+      <!-- Ra(lite) 브랜드로 통일 — 레일·설치본 아이콘과 같은 상자 -->
+      <img class="launcher-brand__box" src="/brand/ra-box.svg" alt="" />
       <span>Robo Architect</span>
     </div>
 
@@ -903,4 +904,5 @@ function explainEnterError(err) {
 .msg.err {
   color: #d9534f;
 }
+.launcher-brand__box { width: 28px; height: 28px; filter: var(--brand-filter, invert(1)); }
 </style>

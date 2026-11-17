@@ -60,6 +60,8 @@ async function submitSso() {
 <template>
   <div class="login">
     <div class="login__card">
+      <!-- Ra(lite) 브랜드로 통일 — 레일·설치본 아이콘과 같은 상자 -->
+      <img class="login__mark" src="/brand/ra-box.svg" alt="" />
       <div class="login__brand">Robo Architect</div>
       <div class="login__line"></div>
 
@@ -131,6 +133,7 @@ async function submitSso() {
 .login__card { width:380px; background:var(--color-bg-secondary);
   border:1px solid var(--color-border); border-radius:var(--radius-md);
   padding:var(--spacing-xl) 36px; text-align:center; }
+.login__mark { display:block; width:44px; height:44px; margin:0 auto 10px; filter: var(--brand-filter, invert(1)); }
 .login__brand { font-size:0.7rem; font-weight:700; letter-spacing:3px; text-transform:uppercase;
   color:var(--color-accent); }
 .login__line { width:44px; height:2px; background:var(--color-accent);
