@@ -135,7 +135,7 @@ msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 
 | graph-db | `robo-posco-graph-db` | `0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp` | 납품판 그대로 |
 | graph-bolt | `robo-posco-graph-bolt` | 〃 | 〃 |
 | authority (+init) | `robo-posco-authority` | 〃 | 〃 |
-| analyzer | `robo-posco-analyzer` | 〃 | 〃 |
+| analyzer | `robo-posco-analyzer` | `delivery` | posco-web CI 가 서브모듈 핀으로 굽는다(2026-11-17 부터) |
 | catalog | `robo-posco-catalog` | 〃 | 〃 |
 | fabric | `robo-posco-fabric` | 〃 | 〃 |
 | parser | `robo-posco-parser` | 〃 | 〃 |

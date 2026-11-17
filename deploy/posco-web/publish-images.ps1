@@ -2,7 +2,7 @@
 publish-images.ps1 — **인터넷 되는 PC 에서** CI 가 구운 이미지를 묶어 GitHub Release 에 올린다.
 운영-업데이트-가이드.md §2. 사내 서버는 ghcr 에 못 닿고 github Release 는 curl 로 받는다.
 
-  .\publish-images.ps1 -Tag posco-web-images-2026-11-20                 # web · architect-api (기본)
+  .\publish-images.ps1 -Tag posco-web-images-2026-11-20                 # web · architect-api · analyzer (기본)
   .\publish-images.ps1 -Tag … -Images robo-posco-architect-api:delivery -Asset api.tar
   .\publish-images.ps1 -Tag … -DryRun                                    # 묶기까지만 (올리지 않는다)
 
@@ -12,7 +12,7 @@ publish-images.ps1 — **인터넷 되는 PC 에서** CI 가 구운 이미지를
 #>
 param(
   [Parameter(Mandatory)][string]$Tag,
-  [string[]]$Images = @('robo-posco-web:delivery', 'robo-posco-architect-api:delivery'),
+  [string[]]$Images = @('robo-posco-web:delivery', 'robo-posco-architect-api:delivery', 'robo-posco-analyzer:delivery'),
   [string]$Asset = 'images.tar',
   [string]$Repo = 'uengine-oss/robo-architect',
   [switch]$DryRun

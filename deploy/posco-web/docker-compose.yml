@@ -377,7 +377,8 @@ services:
       start_period: 10s
 
   analyzer:
-    image: ghcr.io/uengine-oss/robo-posco-analyzer:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    # 2026-11-17 — 납품판 대신 posco-web CI 가 서브모듈 핀으로 굽는 움직이는 태그(web · architect-api 와 같은 방식)
+    image: ghcr.io/uengine-oss/robo-posco-analyzer:delivery
     restart: unless-stopped
     labels: *labels
     mem_limit: ${ROBO_MEM_ANALYZER:-0}
@@ -428,7 +429,9 @@ services:
       ROBO_SEARCH_ANCHOR_GAP: "0.12"
       ROBO_SEARCH_ANCHOR_TOP: "3"
       ROBO_SEARCH_CE_TOP: "15"
-      ROBO_SEARCH_DENSE_IMPL: index
+      # index → scan (2026-11-17): Ontological DB 는 Neo4j 의 `SEARCH … VECTOR INDEX` 문법을 몰라
+      # index 면 레거시 검색 전체가 CypherSyntaxError 로 멈춘다. scan = 불러온 벡터로 전량 코사인.
+      ROBO_SEARCH_DENSE_IMPL: scan
       ROBO_SEARCH_DIRECT_GAP: "0.12"
       ROBO_SEARCH_EVIDENCE_TOP: "15"
       ROBO_SEARCH_FETCH_K: "100"
