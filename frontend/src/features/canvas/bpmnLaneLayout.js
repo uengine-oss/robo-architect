@@ -241,6 +241,7 @@ export async function layoutBpmnWithLanes(xml, elk) {
     if (participant) shape(participant.getAttribute('id'), pool, true)
     for (const [id, b] of Object.entries(laneBoxes)) shape(id, b, true)
     for (const [id, b] of Object.entries(boxes)) shape(id, b, false)
+    const placedLabels = []
     for (const f of flows) {
       const pts = edges[f.id]
       if (!pts || pts.length < 2) continue
@@ -256,6 +257,10 @@ export async function layoutBpmnWithLanes(xml, elk) {
       // 다른 선·노드 이름과 포개지고 어느 가지의 조건인지 안 보였다(휴가 신청 결재 · 2026-11-17).
       const lb = labelBox(f.name, pts)
       if (lb) {
+        // 같은 꼭짓점에서 나가는 가지끼리 이름이 포개지면 한 줄씩 비켜 쌓는다
+        const hit = (q) => placedLabels.some(o => q.x < o.x + o.w && o.x < q.x + q.w && q.y < o.y + o.h && o.y < q.y + q.h)
+        for (let i = 0; i < 6 && hit(lb); i++) lb.y += lb.h + 2
+        placedLabels.push(lb)
         const l = doc.createElementNS(DI_NS, 'bpmndi:BPMNLabel')
         const d = doc.createElementNS(DC_NS, 'dc:Bounds')
         d.setAttribute('x', lb.x); d.setAttribute('y', lb.y); d.setAttribute('width', lb.w); d.setAttribute('height', lb.h)
