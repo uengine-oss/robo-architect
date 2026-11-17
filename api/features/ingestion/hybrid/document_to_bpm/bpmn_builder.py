@@ -211,6 +211,22 @@ def build_bpmn_xml(skeleton: BpmSkeleton) -> str:
 """
 
 
+def _branch_siblings(skeleton: BpmSkeleton) -> set[tuple[str, str]]:
+    """같은 분기에서 갈라진 서로 다른 갈래 대상의 짝(양방향)."""
+    gw_ids = {g.id for g in skeleton.gateways}
+    by_gw: dict[str, list[str]] = {}
+    for f in skeleton.flows:
+        if f.source_id in gw_ids:
+            by_gw.setdefault(f.source_id, []).append(f.target_id)
+    pairs: set[tuple[str, str]] = set()
+    for targets in by_gw.values():
+        for x in targets:
+            for y in targets:
+                if x != y:
+                    pairs.add((x, y))
+    return pairs
+
+
 def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
     """Branch-aware BPMN builder: lays out tasks + gateways over the flow graph.
 
@@ -260,6 +276,7 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
 
     if tasks:
         edges.append((start_id, tasks[0].id, ""))
+    siblings = _branch_siblings(skeleton)
     for i in range(len(tasks) - 1):
         a, b = tasks[i].id, tasks[i + 1].id
         # 앞 작업이 분기로 빠질 때만 직선을 끊는다. 다음 작업에 이미 들어오는 선이 있다고 끊으면,
@@ -267,6 +284,10 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
         # (2026-11-17 휴가 신청 결재 — 결재·승인·반려·취소가 그림 맨 앞으로 몰렸다).
         if a in explicit_out:
             continue  # routed through a gateway instead of linearly
+        # 같은 분기의 서로 다른 갈래 대상(승인 쪽 · 반려 쪽)은 순서가 이웃해도 잇지 않는다 — 대안이다
+        # (같은 날: "최종 승인 후처리 → 반려 후처리" 가 이어져 승인 뒤에 반려가 오는 그림이 됐다)
+        if (a, b) in siblings:
+            continue
         edges.append((a, b, ""))
 
     # 갈 곳 없는 노드마다 제 끝을 하나씩(그 노드의 레인에)

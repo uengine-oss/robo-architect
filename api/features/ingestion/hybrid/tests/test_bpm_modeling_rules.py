@@ -75,3 +75,19 @@ def test_builder_keeps_backbone_when_next_task_only_has_a_loop_in():
     # "결재" 로 들어오는 명시 흐름은 되돌림(g2 → 결재)과 g1 갈래뿐 — 그래도 시작에서 닿아야 한다
     xml = build_bpmn_xml(_skel())
     assert 'sourceRef="StartEvent_1" targetRef="Task_' in xml
+
+
+def test_builder_does_not_chain_sibling_branch_targets():
+    # 결재 결과 판단 → 승인 후처리 / 반려 후처리 — 순서가 이웃해도 승인 → 반려 로 잇지 않는다
+    actors = [BpmActor(id="ac", name="담당")]
+    tasks = [BpmTaskDTO(id=t, name=t, sequence_index=i, actor_ids=["ac"])
+             for i, t in enumerate(["결재", "승인후처리", "반려후처리"])]
+    gws = [BpmGatewayDTO(id="g", name="결재 결과 판단", actor_ids=["ac"])]
+    flows = [_flow("결재", "g"), _flow("g", "승인후처리", "승인"), _flow("g", "반려후처리", "반려")]
+    xml = build_bpmn_xml(BpmSkeleton(actors=actors, tasks=tasks, gateways=gws, flows=flows))
+    import re
+    xid = {t: m for t, m in re.findall(r'<userTask id="([^"]+)" name="([^"]+)"|<task id="([^"]+)" name="([^"]+)"', xml) and
+           [(m2, m1) for m1, m2, *_ in re.findall(r'<(?:task|userTask) id="([^"]+)" name="([^"]+)"', xml)]}
+    pairs = set(re.findall(r'sourceRef="([^"]+)" targetRef="([^"]+)"', xml))
+    assert (xid["승인후처리"], xid["반려후처리"]) not in pairs
+    assert xml.count("<endEvent") == 2   # 두 대안이 각자 끝으로
