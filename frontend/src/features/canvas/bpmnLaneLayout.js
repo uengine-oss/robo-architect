@@ -76,11 +76,13 @@ export async function computeLaneLayout(model, elk) {
   }
   const hasHints = nodes.every(n => hintX[n.id] !== undefined)
 
+  // 끝이 여럿이면(결말마다 끝) 끝을 마지막 층에 묶지 않는다 — 묶으면 모든 결말이 다시 맨 오른쪽으로 몰린다
+  const endCount = nodes.filter(n => n.tag === 'endEvent').length
   const children = nodes.map(n => {
     const c = { id: n.id, width: n.w, height: n.h }
     if (hasHints) { c.x = hintX[n.id]; c.y = 0 }
     if (n.tag === 'startEvent') c.layoutOptions = { 'elk.layered.layering.layerConstraint': 'FIRST' }
-    else if (n.tag === 'endEvent') c.layoutOptions = { 'elk.layered.layering.layerConstraint': 'LAST' }
+    else if (n.tag === 'endEvent' && endCount === 1) c.layoutOptions = { 'elk.layered.layering.layerConstraint': 'LAST' }
     return c
   })
   if (hasHints) children.sort((a, b) => a.x - b.x)

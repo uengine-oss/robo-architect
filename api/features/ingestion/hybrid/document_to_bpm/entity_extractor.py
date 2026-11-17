@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from api.features.ingestion.hybrid.contracts import (
     BpmActor,
+    BpmEndEventDTO,
     BpmFlowDTO,
     BpmGatewayDTO,
     BpmProcess,
@@ -32,6 +33,7 @@ from api.features.ingestion.hybrid.contracts import (
 )
 from api.features.ingestion.ingestion_llm_runtime import get_llm
 from api.platform.observability.smart_logger import SmartLogger
+from api.features.ingestion.hybrid.document_to_bpm.process_validator import find_defects, repair_flows
 
 
 SYSTEM_PROMPT = """당신은 업무 프로세스 분석가입니다.
@@ -68,6 +70,50 @@ SYSTEM_PROMPT = """당신은 업무 프로세스 분석가입니다.
 """
 
 
+def _load_modeling_skill() -> str:
+    """`skills/robo-bpm/robo-bpm-modeling/SKILL.md` — pdf2bpmn 에서 옮겨 온 모델링 규칙(2026-11-17).
+
+    규칙의 원본은 그 파일 하나다(clarify_methodology 와 같은 방식). 이미지에는 Dockerfile.api 가
+    `skills/` 를 싣는다. 못 찾으면 빈 문자열 — 기본 프롬프트만으로도 돈다.
+    """
+    from pathlib import Path
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        p = parent / "skills" / "robo-bpm" / "robo-bpm-modeling" / "SKILL.md"
+        try:
+            if p.is_file():
+                text = p.read_text(encoding="utf-8")
+                if text.startswith("---"):
+                    end = text.find("\n---", 3)
+                    if end != -1:
+                        text = text[end + 4:]
+                return text.strip()
+        except Exception:  # noqa: BLE001
+            continue
+    return ""
+
+
+MODELING_SKILL = _load_modeling_skill()
+
+# 분기 갈래는 작업(to_task) 또는 결말(to_end) 로 간다 — 기본 프롬프트의 5) 를 넓힌다.
+_SCHEMA_ADDENDUM = """
+추가 규칙(출력 형식):
+- 각 task 에 task_type: human(사람) | system(자동) 을 붙이세요.
+- 각 gateway 에 actor(판단하는 역할 이름) 를 붙이세요.
+- 갈래(branch) 는 to_task(이어지는 작업 이름) 또는 to_end(그 갈래에서 프로세스가 끝나면 결말 이름) 중 **하나만** 채우세요.
+"""
+
+EXTRACTION_SYSTEM_PROMPT = SYSTEM_PROMPT + _SCHEMA_ADDENDUM + (
+    "\n\n# 모델링 규칙(반드시 지킬 것)\n\n" + MODELING_SKILL if MODELING_SKILL else ""
+)
+
+_REPAIR_INSTRUCTION = """아래는 같은 문서에서 당신이 추출한 프로세스와, 그 구조 검사에서 나온 **결함 목록**입니다.
+문서를 다시 읽고 결함을 고쳐 **전체 결과를 다시** 내세요. 결함이 아닌 부분(작업 이름·순서·역할)은 그대로 둡니다.
+문서에 근거가 없는 작업·분기를 새로 만들지 마세요.
+"""
+
+
 _IDENTITY_SYSTEM_PROMPT = """업무 문서에서 프로세스 정체성을 추출합니다.
 
 입력으로 (1) PDF 파일명 (2) 문서 첫 2페이지 텍스트 가 주어집니다.
@@ -89,12 +135,14 @@ class _ExtractedTask(BaseModel):
     name: str
     description: str = ""
     actor: str = Field(description="Actor name, must match one of the extracted actors for this process")
+    task_type: str = Field(default="human", description="human | system")
     source_section: str = ""
 
 
 class _ExtractedBranch(BaseModel):
     condition: str = Field(description="Branch label / guard, e.g. '은행 자동납부'")
-    to_task: str = Field(description="Target task name this branch leads to (must match a task name)")
+    to_task: str = Field(default="", description="Target task name this branch leads to (must match a task name). Empty when to_end is set")
+    to_end: str = Field(default="", description="Outcome name when this branch ENDS the process (e.g. '반려 종료'). Empty when to_task is set")
 
 
 class _ExtractedGateway(BaseModel):
@@ -104,6 +152,7 @@ class _ExtractedGateway(BaseModel):
         description="exclusive (배타적 택1) | parallel (동시) | inclusive (다중)",
     )
     after_task: str = Field(description="Name of the task this decision immediately follows")
+    actor: str = Field(default="", description="Role that makes this decision (actor name)")
     branches: list[_ExtractedBranch] = Field(
         default_factory=list, description="2+ alternative paths out of this gateway",
     )
@@ -159,9 +208,37 @@ async def extract_bpm_from_document(
     )
 
     result: _ExtractionResult = await structured.ainvoke([
-        build_system_message(SYSTEM_PROMPT),
+        build_system_message(EXTRACTION_SYSTEM_PROMPT),
         HumanMessage(content=f"문서:\n\n{text}\n\n추출하세요."),
     ])
+
+    # pdf2bpmn 처럼 구조 검사 → 결함이 있으면 LLM 에 한 번 고치게 한다(남은 것은 아래에서 코드로).
+    reports = [find_defects(p) for p in (result.processes or [])]
+    if any(not r.ok for r in reports):
+        defects = "\n".join(
+            f"## {p.name}\n{r.text()}" for p, r in zip(result.processes, reports) if not r.ok
+        )
+        SmartLogger.log(
+            "WARN", "BPM extraction defects — asking the model to repair once",
+            category="ingestion.hybrid.document_bpm.repair",
+            params={"defects": sum(len(r.defects) for r in reports)},
+        )
+        try:
+            repaired: _ExtractionResult = await structured.ainvoke([
+                build_system_message(EXTRACTION_SYSTEM_PROMPT),
+                HumanMessage(content=(
+                    f"{_REPAIR_INSTRUCTION}\n\n문서:\n\n{text}\n\n"
+                    f"추출 결과(JSON):\n{result.model_dump_json()}\n\n결함 목록:\n{defects}\n\n고친 전체 결과를 내세요."
+                )),
+            ])
+            if repaired.processes:
+                result = repaired
+        except Exception as e:  # noqa: BLE001 — 고치기 실패는 처음 결과로 간다(코드 고치기가 남는다)
+            SmartLogger.log(
+                "WARN", "BPM extraction repair call failed — keeping the first result",
+                category="ingestion.hybrid.document_bpm.repair",
+                params={"error": str(e)[:300]},
+            )
 
     # Legacy safety: if the LLM returned an old-style (actors, tasks) without
     # processes, synthesize a single process so downstream never sees an empty
@@ -197,6 +274,7 @@ async def extract_bpm_from_document(
                 sequence_index=idx,
                 actor_ids=[actor_id] if actor_id else [],
                 source_section=t.source_section or None,
+                task_type=(t.task_type or "").strip().lower() or None,
             ))
 
         # Gateways + branch flows. Resolve after_task/to_task names against the
@@ -205,15 +283,31 @@ async def extract_bpm_from_document(
         actor_of_task = {t.id: (t.actor_ids[0] if t.actor_ids else None) for t in tasks}
         gateways: list[BpmGatewayDTO] = []
         flows: list[BpmFlowDTO] = []
+        end_events: list[BpmEndEventDTO] = []
+        end_id_by_name: dict[str, str] = {}
         for g in (proc.gateways or []):
             after_id = task_id_by_name.get((g.after_task or "").strip())
-            targets = [(b.condition, task_id_by_name.get((b.to_task or "").strip()))
-                       for b in (g.branches or [])]
+            gw_actor = actor_id_by_name.get((g.actor or "").strip()) or actor_of_task.get(after_id)
+            targets = []
+            for b in (g.branches or []):
+                tid = task_id_by_name.get((b.to_task or "").strip())
+                end_name = (b.to_end or "").strip()
+                if not tid and end_name:          # 결말 — 같은 분기 안에서 같은 이름이면 같은 끝
+                    # 다른 분기끼리는 이름이 같아도 끝을 나눈다: 나눠 쓰면 멀리 떨어진 두 분기에서 한 끝으로
+                    # 긴 선이 모였다(2026-11-17 월 근태 마감 — "이미 마감됨").
+                    key = f"{g.name}|{end_name}"
+                    tid = end_id_by_name.get(key)
+                    if not tid:
+                        tid = f"end_{uuid.uuid4().hex[:8]}"
+                        end_id_by_name[key] = tid
+                        end_events.append(BpmEndEventDTO(
+                            id=tid, name=end_name, actor_ids=[gw_actor] if gw_actor else [],
+                        ))
+                targets.append((b.condition, tid))
             targets = [(cond, tid) for cond, tid in targets if tid]
-            if not after_id or len(targets) < 2:
+            if not after_id or len({tid for _, tid in targets}) < 2:
                 continue  # not a real, resolvable branch point
             gw_id = f"gw_{uuid.uuid4().hex[:8]}"
-            gw_actor = actor_of_task.get(after_id)
             gateways.append(BpmGatewayDTO(
                 id=gw_id, name=g.name,
                 gateway_type=(g.gateway_type or "exclusive").strip().lower(),
@@ -227,6 +321,16 @@ async def extract_bpm_from_document(
                     id=f"flow_{uuid.uuid4().hex[:8]}", source_id=gw_id, target_id=tid,
                     name=(cond or "").strip(),
                 ))
+
+        # 남은 구조 결함은 코드로(중복 흐름 · 갈래 모자란 분기 · 들어오는 흐름 없는 작업)
+        flows, gateways = repair_flows(
+            task_ids, flows, gateways,
+            new_flow=lambda src, dst, name="": BpmFlowDTO(
+                id=f"flow_{uuid.uuid4().hex[:8]}", source_id=src, target_id=dst, name=name,
+            ),
+        )
+        used_ends = {f.target_id for f in flows}
+        end_events = [e for e in end_events if e.id in used_ends]
 
         pid = _process_id(source_pdf_name or "", session_id, proc.name)
         process_dto = BpmProcess(
@@ -246,13 +350,15 @@ async def extract_bpm_from_document(
             g.process_id = pid
         for f in flows:
             f.process_id = pid
+        for e in end_events:
+            e.process_id = pid
         sequence = BpmSequenceDTO(
             id=f"seq_{uuid.uuid4().hex[:8]}", name="Main",
             task_ids=task_ids, process_id=pid,
         )
         skeletons.append(BpmSkeleton(
             actors=actors, tasks=tasks, sequences=[sequence],
-            gateways=gateways, flows=flows,
+            gateways=gateways, flows=flows, end_events=end_events,
             process=process_dto,
         ))
 

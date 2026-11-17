@@ -222,16 +222,30 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
     actor_by_id = {a.id: a for a in actors}
     task_ids = {t.id for t in tasks}
 
-    start_id, end_id = "StartEvent_1", "EndEvent_1"
+    start_id = "StartEvent_1"
+    # 결말마다 끝을 따로(2026-11-17 · pdf2bpmn 규칙). 분기 갈래의 to_end 결말 + 갈 곳 없는 노드마다 하나.
+    # 끝이 하나면 모든 갈래가 그림 맨 오른쪽까지 긴 선을 그었다.
+    end_name: dict[str, str] = {e.id: e.name or "" for e in (skeleton.end_events or [])}
 
     def node_xml_id(nid: str) -> str:
-        return f"Task_{_safe(nid)}" if nid in task_ids else f"Gateway_{_safe(nid)}"
+        if nid in task_ids:
+            return f"Task_{_safe(nid)}"
+        if nid in end_name:
+            return f"EndEvent_{_safe(nid)}"
+        return f"Gateway_{_safe(nid)}"
 
     lane_of: dict[str, str] = {}
     for t in tasks:
         lane_of[t.id] = t.actor_ids[0] if t.actor_ids else "system"
     for g in skeleton.gateways:
         lane_of[g.id] = g.actor_ids[0] if g.actor_ids else "system"
+    for e in skeleton.end_events or []:
+        lane_of[e.id] = e.actor_ids[0] if e.actor_ids else None
+    # 끝의 레인이 없으면 그 끝으로 들어오는 노드의 레인
+    for e in skeleton.end_events or []:
+        if lane_of.get(e.id) is None:
+            src = next((f.source_id for f in skeleton.flows if f.target_id == e.id and f.source_id in lane_of), None)
+            lane_of[e.id] = lane_of.get(src) or "system"
 
     # Edge set: explicit gateway flows + linear backbone spliced around them.
     edges: list[tuple[str, str, str]] = []  # (src_node, tgt_node, label)
@@ -248,15 +262,22 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
         edges.append((start_id, tasks[0].id, ""))
     for i in range(len(tasks) - 1):
         a, b = tasks[i].id, tasks[i + 1].id
-        if a in explicit_out or b in explicit_in:
+        # 앞 작업이 분기로 빠질 때만 직선을 끊는다. 다음 작업에 이미 들어오는 선이 있다고 끊으면,
+        # 그 선이 **되돌림**(결재 → 다음 결재자 → 다시 결재 처리)뿐일 때 작업이 시작에서 닿지 않게 됐다
+        # (2026-11-17 휴가 신청 결재 — 결재·승인·반려·취소가 그림 맨 앞으로 몰렸다).
+        if a in explicit_out:
             continue  # routed through a gateway instead of linearly
         edges.append((a, b, ""))
 
-    # Every node with no outgoing edge flows to end.
+    # 갈 곳 없는 노드마다 제 끝을 하나씩(그 노드의 레인에)
     has_out = {s for s, _, _ in edges}
     for nid in [t.id for t in tasks] + [g.id for g in skeleton.gateways]:
         if nid not in has_out:
-            edges.append((nid, end_id, ""))
+            eid = f"sink_{nid}"
+            end_name[eid] = ""
+            lane_of[eid] = lane_of.get(nid, "system")
+            edges.append((nid, eid, ""))
+    end_ids = list(end_name)
 
     # Columns via longest path from start over the edge graph.
     adj: dict[str, list[str]] = {}
@@ -312,16 +333,17 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
                 changed = True
         if not changed:
             break
-    max_col = max(col.values()) if col else 1
-    col.setdefault(end_id, max_col + 1)
     for nid in [t.id for t in tasks] + [g.id for g in skeleton.gateways]:
         col.setdefault(nid, 1)
+    for eid in end_ids:
+        if eid not in col:   # 들어오는 선이 없는 끝(있을 일은 거의 없다)
+            col[eid] = max(col.values()) + 1
 
     lane_keys = list(dict.fromkeys(lane_of.values())) or ["system"]
     lane_y0, x0, gap_x = 80, 180, 200
     task_w, task_h, gw_s = 120, 80, 50
     row_h = 120  # vertical slot per stacked sibling within a lane
-    node_list = [t.id for t in tasks] + [g.id for g in skeleton.gateways]
+    node_list = [t.id for t in tasks] + [g.id for g in skeleton.gateways] + end_ids
 
     # Stack nodes that share (lane, column) into vertical sub-rows so sibling
     # branches out of a gateway never sit on top of each other.
@@ -357,9 +379,11 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
     for g in skeleton.gateways:
         x = x0 + col.get(g.id, 1) * gap_x
         box[g.id] = (x + (task_w - gw_s) // 2, _cell_top(g.id) + (row_h - gw_s) // 2, gw_s, gw_s)
+    for eid in end_ids:
+        x = x0 + col.get(eid, last_col) * gap_x
+        box[eid] = (x + (task_w - 36) // 2, _cell_top(eid) + (row_h - 36) // 2, 36, 36)
     _start_y = lane_top[lane_keys[0]] + (row_h - 36) // 2
     box[start_id] = (x0, _start_y, 36, 36)
-    box[end_id] = (x0 + (last_col + 1) * gap_x, _start_y, 36, 36)
 
     def bounds(nid: str, xmlid: str = "") -> tuple[int, int, int, int]:
         return box.get(nid, (x0, lane_y0, task_w, task_h))
@@ -379,7 +403,7 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
     out: dict[str, list[str]] = {}
     for i, (s, t, label) in enumerate(edges):
         fid = f"Flow_{i}"
-        sx, tx = (start_id if s == start_id else node_xml_id(s)), (end_id if t == end_id else node_xml_id(t))
+        sx, tx = (start_id if s == start_id else node_xml_id(s)), node_xml_id(t)
         flow_ids.append((fid, sx, tx, label))
         out.setdefault(sx, []).append(fid)
         inc.setdefault(tx, []).append(fid)
@@ -391,14 +415,19 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
     nodes_xml = [f'    <startEvent id="{start_id}">{io(start_id)}</startEvent>']
     for t in tasks:
         xi = node_xml_id(t.id)
-        nodes_xml.append(f'    <task id="{xi}" name="{_esc(t.name)}">{io(xi)}</task>')
+        # 사람이 하면 userTask, 시스템이면 serviceTask(아이콘으로 구분된다) — 모르면 일반 task
+        tag = {"human": "userTask", "system": "serviceTask"}.get((t.task_type or "").lower(), "task")
+        nodes_xml.append(f'    <{tag} id="{xi}" name="{_esc(t.name)}">{io(xi)}</{tag}>')
     for g in skeleton.gateways:
         xi = node_xml_id(g.id)
         gt = (g.gateway_type or "exclusive").lower()
         tag = {"parallel": "parallelGateway", "inclusive": "inclusiveGateway",
                "complex": "complexGateway"}.get(gt, "exclusiveGateway")
         nodes_xml.append(f'    <{tag} id="{xi}" name="{_esc(g.name)}">{io(xi)}</{tag}>')
-    nodes_xml.append(f'    <endEvent id="{end_id}">{io(end_id)}</endEvent>')
+    for eid in end_ids:
+        xi = node_xml_id(eid)
+        nm = f' name="{_esc(end_name[eid])}"' if end_name[eid] else ""
+        nodes_xml.append(f'    <endEvent id="{xi}"{nm}>{io(xi)}</endEvent>')
 
     flows_xml = "\n".join(
         f'    <sequenceFlow id="{fid}" sourceRef="{sx}" targetRef="{tx}"'
@@ -427,15 +456,16 @@ def _build_bpmn_xml_with_gateways(skeleton: BpmSkeleton) -> str:
         x, y, w, h = bounds(g.id, node_xml_id(g.id))
         shapes.append(f'<bpmndi:BPMNShape id="{node_xml_id(g.id)}_di" bpmnElement="{node_xml_id(g.id)}" isMarkerVisible="true">'
                       f'<dc:Bounds x="{x}" y="{y}" width="{w}" height="{h}" /></bpmndi:BPMNShape>')
-    for nid in (start_id, end_id):
-        x, y, w, h = bounds(nid, nid)
-        shapes.append(f'<bpmndi:BPMNShape id="{nid}_di" bpmnElement="{nid}">'
+    for nid in [start_id] + end_ids:
+        xi = start_id if nid == start_id else node_xml_id(nid)
+        x, y, w, h = bounds(nid, xi)
+        shapes.append(f'<bpmndi:BPMNShape id="{xi}_di" bpmnElement="{xi}">'
                       f'<dc:Bounds x="{x}" y="{y}" width="{w}" height="{h}" /></bpmndi:BPMNShape>')
 
     xmlid_to_node = {node_xml_id(t.id): t.id for t in tasks}
     xmlid_to_node.update({node_xml_id(g.id): g.id for g in skeleton.gateways})
     xmlid_to_node[start_id] = start_id
-    xmlid_to_node[end_id] = end_id
+    xmlid_to_node.update({node_xml_id(e): e for e in end_ids})
     edges_di: list[str] = []
     for fid, sx, tx, _ in flow_ids:
         sb = bounds(xmlid_to_node[sx], sx)

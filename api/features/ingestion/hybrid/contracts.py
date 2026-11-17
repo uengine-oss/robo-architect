@@ -56,6 +56,8 @@ class BpmTaskDTO(BaseModel):
     source_page: Optional[int] = None
     source_section: Optional[str] = None
     process_id: Optional[str] = None  # the BpmProcess this task belongs to
+    # human(사람) | system(자동). BPMN 에서 userTask / serviceTask 로 그린다. 없으면 일반 task.
+    task_type: Optional[str] = None
 
 
 class BpmSequenceDTO(BaseModel):
@@ -104,6 +106,19 @@ class BpmFlowDTO(BaseModel):
     process_id: Optional[str] = None
 
 
+class BpmEndEventDTO(BaseModel):
+    """결말별 끝 — "반려 종료", "대상 없음" 처럼 갈래가 프로세스를 끝내는 자리.
+
+    그래프에는 노드로 남기지 않는다(robo 는 경계 이벤트를 모델링하지 않는다 — flows 를 저장할 때
+    끝점이 없는 흐름은 건너뛴다). 생성 때 BPMN XML 에 구워 넣는 데만 쓴다.
+    """
+
+    id: str                                                # end_<hex>
+    name: str = ""                                         # 결말 이름
+    actor_ids: list[str] = Field(default_factory=list)     # 그리는 레인(갈래를 낸 분기의 레인)
+    process_id: Optional[str] = None
+
+
 class BpmSkeleton(BaseModel):
     """Phase 1 output for ONE process: Actor/Task/Sequence graph.
 
@@ -122,6 +137,8 @@ class BpmSkeleton(BaseModel):
     # `flows` are the faithful branch graph.
     gateways: list[BpmGatewayDTO] = Field(default_factory=list)
     flows: list[BpmFlowDTO] = Field(default_factory=list)
+    # 결말별 끝(분기 갈래의 `to_end`). flows 의 target_id 가 이 id 를 가리킨다. 비면 끝은 하나로 그린다.
+    end_events: list[BpmEndEventDTO] = Field(default_factory=list)
     # Optional raw BPMN 2.0 XML if we emit one in Phase 1 (per-process XML)
     bpmn_xml: Optional[str] = None
     # The process this skeleton describes. Populated by the adapter/native
