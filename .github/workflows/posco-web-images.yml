@@ -123,7 +123,7 @@ jobs:
           # 받았다고 끝난 게 아니다 — 한 번은 이 단계가 지나간 뒤 docker 빌드에서야
           # "robo-data-frontend/package.json not found" 로 멈췄다. 여기서 확인한다.
           for m in ${{ matrix.submodules }}; do
-            test -f "$m/package.json" || { echo "::error::서브모듈이 비었다: $m"; exit 1; }
+            { test -f "$m/package.json" || test -f "$m/Dockerfile"; } || { echo "::error::서브모듈이 비었다: $m"; exit 1; }
           done
       - id: tag
         run: echo "tag=posco-web-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
