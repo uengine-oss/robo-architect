@@ -243,6 +243,9 @@ Return the JSON object now."""
             category="agent.nodes.ui_flow.parse.error",
             params={"session_id": session_id, "error": str(e), "raw_head": raw[:300]},
         )
+        from api.platform.llm_structured_diag import log_text_parse_failure
+
+        log_text_parse_failure("ui_flow_edges", response, e)
         warnings.append({"code": "ui_flow_unclear", "message": f"LLM output unparsable: {e}"})
         derivation = UIFlowDerivation()
 

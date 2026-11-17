@@ -135,6 +135,15 @@ def get_llm(
             HTTP 400으로 거절된다. 함수 호출 방식은 같은 모델들을 정상 지원한다.
 
             호출부가 method를 명시하면 그 선택은 그대로 존중한다.
+
+            ⚠ method 를 **설정으로** 바꾸는 자리는 아직 없다(호출부 인자뿐).
+            사내 게이트웨이가 tools 를 거절·무시하는지는 진단 로그
+            (``llm.structured_output.*``, `llm_structured_diag.py`)로 먼저 재고
+            정한다.
+
+            호출부가 ``include_raw=False``(기본)면 안에서는 ``include_raw=True``
+            로 받아 실패한 응답의 모양(finish_reason·길이·앞뒤)을 기록한 뒤
+            예전과 같은 값·예외를 돌려준다. 호출부가 raw 를 원하면 손대지 않는다.
             """
 
             def with_structured_output(
@@ -147,14 +156,26 @@ def get_llm(
                 tools=None,
                 **kwargs,
             ):
-                return super().with_structured_output(
+                if include_raw:
+                    return super().with_structured_output(
+                        schema,
+                        method=method,
+                        include_raw=True,
+                        strict=strict,
+                        tools=tools,
+                        **kwargs,
+                    )
+                from api.platform.llm_structured_diag import wrap_structured
+
+                inner = super().with_structured_output(
                     schema,
                     method=method,
-                    include_raw=include_raw,
+                    include_raw=True,
                     strict=strict,
                     tools=tools,
                     **kwargs,
                 )
+                return wrap_structured(inner, schema=schema, method=method, llm=self)
 
         # Granular httpx timeout: tight READ bound kills a stalled SSE stream,
         # while connect/pool stay generous. ChatOpenAI forwards this to the
