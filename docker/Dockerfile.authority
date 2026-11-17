@@ -17,6 +17,16 @@
 # noble 위에 올리고, **파이썬도 uv 가 받는다** — 배포판 파이썬이 아니라
 # uv 의 독립 빌드라 **3.11 을 그대로 쓸 수 있다**. 배포판을 바꾸면서도
 # 런타임 판은 안 움직인다(위 원칙 유지).
+# ── 고객 확장 — 고른 고객(CUSTOMER) 폴더와 _default 만 남긴다(통합 P5) ─────────────
+# 다른 고객의 코드·문구는 이 이미지에 **실리지 않는다**(브랜치 대신 빌드 입력).
+# 없는 고객 이름이면 여기서 멈춘다 — 기본 판으로 조용히 구워지지 않게.
+FROM ubuntu:24.04 AS ext
+ARG CUSTOMER=default
+COPY extensions /ext
+RUN cd /ext && for d in */; do d="${d%/}"; [ "$d" = _default ] || [ "$d" = "$CUSTOMER" ] || rm -rf "$d"; done \
+    && { [ "$CUSTOMER" = default ] || [ -d "/ext/$CUSTOMER" ]; } \
+    || { echo "CUSTOMER=$CUSTOMER 인데 extensions/$CUSTOMER 가 없다" >&2; exit 1; }
+
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -83,6 +93,10 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY api ./api
 COPY scripts ./scripts
+# 고객 확장 — SWP 주소 같은 인증 프로필 기본값이 여기서 온다(이 서버가 SSO 로그인을 받는다).
+ARG CUSTOMER=default
+COPY --from=ext /ext ./extensions
+ENV ROBO_CUSTOMER=${CUSTOMER}
 COPY templates ./templates
 
 RUN python -c "import api.authority, scripts.accounts_admin"

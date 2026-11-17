@@ -72,23 +72,19 @@ class SwpSettings:
     def from_env(cls) -> "SwpSettings":
         return cls(
             # 'redir_url=' 로 끝나야 하며 뒤에 우리 콜백 URL 을 append 한다.
-            redirect_url=env_str(
-                "SWP_SSO_REDIRECT_URL",
-                default="http://swpsso.posco.net/idms/U61/jsp/redirect.jsp?redir_url=",
-            ),
+            # 주소 기본값은 코어에 두지 않는다 — 고객 확장(extensions/posco/backend 의 env_defaults)이나
+            # .env 가 준다. 비어 있으면 SWP 로그인이 시작되지 않는다(router 가 알린다).
+            redirect_url=env_str("SWP_SSO_REDIRECT_URL", default="") or "",
             # ssoToken 유효성 검증 (Cookie: SWP-H-SESSION-ID). 성공 시 사용자정보 CSV.
-            valid_check_url=env_str(
-                "SWP_SSO_VALID_CHECK_URL",
-                default="http://swpsso.posco.net/idms/U61/jsp/isValidSSO.jsp",
-            ),
+            valid_check_url=env_str("SWP_SSO_VALID_CHECK_URL", default="") or "",
             # 미인증 시 되돌려보낼 SWP 로그인 홈.
-            login_url=env_str("SWP_SSO_LOGIN_URL", default="http://swp.posco.net"),
+            login_url=env_str("SWP_SSO_LOGIN_URL", default="") or "",
             idx_id=env_int("SWP_IDX_ID", 0),                    # iv-user (로그인 ID)
             idx_empno=env_int("SWP_IDX_EMPNO", 1),              # sp_empno (사번)
             idx_display_name=env_int("SWP_IDX_DISPLAYNAME", 8),  # displayname (영문성명)
             idx_mail=env_int("SWP_IDX_MAIL", 9),                # mail
             idx_dept=env_int("SWP_IDX_DEPT", 4),                # seealso (부서명)
-            email_fallback_domain=env_str("SWP_EMAIL_FALLBACK_DOMAIN", default="posco.local"),
+            email_fallback_domain=env_str("SWP_EMAIL_FALLBACK_DOMAIN", default="sso.local") or "sso.local",
             timeout_s=env_int("SWP_SSO_TIMEOUT_S", 15),
         )
 

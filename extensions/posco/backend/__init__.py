@@ -28,5 +28,14 @@ def register(app, registry) -> None:  # noqa: ARG001
         "java_package_prefix": "com.poscodx",
     })
 
-    # 인증(SWP SSO) · 표준항목(searchDataDictionary 필드 매핑)은 구현을 옮겨야 하는 것이라
-    # P5 에서 auth_providers["swp"] · standard_item_providers["posco_mcp"] 로 들어온다.
+    # SWP SSO 주소 — 예전에는 코어 auth/config.py 의 기본값이었다(통합 P5 에서 여기로).
+    # .env 의 SWP_* 가 비어 있을 때만 채운다. 현장 compose 는 이 셋을 `${SWP_SSO_…:-}` 로 비워 넘긴다.
+    registry.env_defaults.update({
+        "SWP_SSO_REDIRECT_URL": "http://swpsso.posco.net/idms/U61/jsp/redirect.jsp?redir_url=",
+        "SWP_SSO_VALID_CHECK_URL": "http://swpsso.posco.net/idms/U61/jsp/isValidSSO.jsp",
+        "SWP_SSO_LOGIN_URL": "http://swp.posco.net",
+        "SWP_EMAIL_FALLBACK_DOMAIN": "posco.local",
+    })
+
+    # 표준항목 MCP(searchDataDictionary)의 필드 매핑은 `standard_items/mcp_provider.py` 에 있고
+    # `ROBO_STANDARD_MCP_URL` 로 켜고 끈다(비면 꺼짐) — 다음 단계에서 standard_item_providers 로 옮긴다.

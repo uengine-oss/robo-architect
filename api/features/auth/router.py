@@ -92,7 +92,20 @@ def _require_swp() -> SwpSettings:
             status_code=404,
             detail="SWP SSO 가 활성화돼 있지 않습니다. AUTH_PROVIDER=swp 로 설정하세요.",
         )
-    return SwpSettings.from_env()
+    settings = SwpSettings.from_env()
+    missing = [name for name, value in (
+        ("SWP_SSO_REDIRECT_URL", settings.redirect_url),
+        ("SWP_SSO_VALID_CHECK_URL", settings.valid_check_url),
+        ("SWP_SSO_LOGIN_URL", settings.login_url),
+    ) if not value]
+    if missing:
+        # 주소 기본값은 코어에 없다 — 고객 확장(ROBO_CUSTOMER)의 프로필이나 .env 가 준다.
+        raise HTTPException(
+            status_code=503,
+            detail="SWP SSO 주소가 비었습니다: " + ", ".join(missing)
+            + " — ROBO_CUSTOMER 확장 프로필이나 .env 로 지정하세요.",
+        )
+    return settings
 
 
 @router.get("/provider")

@@ -69,3 +69,23 @@ def test_확장_라우터는_app_에_붙는다(monkeypatch: pytest.MonkeyPatch):
     app = _App()
     extensions.load_extensions(app)
     assert app.routers == ["R"]
+
+
+def test_프로필_기본값은_빈_환경변수만_채운다(monkeypatch: pytest.MonkeyPatch):
+    """사람이 .env 에 넣은 값이 늘 이긴다. 현장 compose 는 SWP 주소를 빈 문자열로 넘긴다."""
+    monkeypatch.setenv("ROBO_CUSTOMER", "posco")
+    monkeypatch.setenv("SWP_SSO_LOGIN_URL", "")                       # 비어 있음 → 채운다
+    monkeypatch.setenv("SWP_SSO_VALID_CHECK_URL", "http://site/valid")  # 사람이 넣음 → 그대로
+    monkeypatch.delenv("SWP_SSO_REDIRECT_URL", raising=False)           # 없음 → 채운다
+    extensions.load_extensions(_App())
+    import os
+    assert os.environ["SWP_SSO_LOGIN_URL"] == "http://swp.posco.net"
+    assert os.environ["SWP_SSO_VALID_CHECK_URL"] == "http://site/valid"
+    assert os.environ["SWP_SSO_REDIRECT_URL"].startswith("http://swpsso.posco.net/")
+
+
+def test_기본_고객은_SWP_주소를_채우지_않는다(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("SWP_SSO_LOGIN_URL", raising=False)
+    extensions.load_extensions(_App())
+    import os
+    assert "SWP_SSO_LOGIN_URL" not in os.environ

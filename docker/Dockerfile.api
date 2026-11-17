@@ -15,6 +15,16 @@
 #
 # 실리지 않는 것: claude CLI. **이 판은 Claude Code 터미널을 끈다**
 # (프런트 `VITE_DISABLE_CLAUDE_TERMINAL=1` · 근거는 deploy/posco-web/README.md §결정 ②).
+# ── 고객 확장 — 고른 고객(CUSTOMER) 폴더와 _default 만 남긴다(통합 P5) ─────────────
+# 다른 고객의 코드·문구는 이 이미지에 **실리지 않는다**(브랜치 대신 빌드 입력).
+# 없는 고객 이름이면 여기서 멈춘다 — 기본 판으로 조용히 구워지지 않게.
+FROM ubuntu:24.04 AS ext
+ARG CUSTOMER=default
+COPY extensions /ext
+RUN cd /ext && for d in */; do d="${d%/}"; [ "$d" = _default ] || [ "$d" = "$CUSTOMER" ] || rm -rf "$d"; done \
+    && { [ "$CUSTOMER" = default ] || [ -d "/ext/$CUSTOMER" ]; } \
+    || { echo "CUSTOMER=$CUSTOMER 인데 extensions/$CUSTOMER 가 없다" >&2; exit 1; }
+
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -54,6 +64,10 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY api ./api
 COPY skills ./skills
+# 고객 확장 — api/extensions.py 가 ROBO_CUSTOMER 로 고른다(없는 고객이면 기동이 멈춘다).
+ARG CUSTOMER=default
+COPY --from=ext /ext ./extensions
+ENV ROBO_CUSTOMER=${CUSTOMER}
 # 코드 생성 템플릿 — 저장소가 추적하지 않는다(.gitignore). 굽기 전에
 # `bash scripts/fetch-templates.sh` 로 받는다. 없으면 COPY 가 여기서 **멈춘다**
 # (템플릿 0개로 조용히 비는 이미지보다 낫다 — 설치본 굽기와 같은 판단).

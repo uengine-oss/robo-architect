@@ -70,6 +70,9 @@ class Registry:
     template_sets: list[dict[str, Any]] = field(default_factory=list)
     # 고객 전용 API — 등록하면 **여기서 바로** app 에 붙인다.
     routers: list[Any] = field(default_factory=list)
+    # 프로필 기본값 — 환경변수가 **비었거나 없을 때만** 채운다(사람이 .env 에 넣은 값이 늘 이긴다).
+    # 예: 포스코 SWP SSO 주소. 코어 코드에 고객 주소를 박지 않기 위한 자리다. (load_extensions 가 적용)
+    env_defaults: dict[str, str] = field(default_factory=dict)
 
 
 _registry = Registry()
@@ -128,6 +131,9 @@ def load_extensions(app: Any | None = None) -> Registry:
 
     for register in registrars:
         register(app, reg)
+    for key, value in reg.env_defaults.items():
+        if not (os.environ.get(key) or "").strip():
+            os.environ[key] = value
     if app is not None:
         for router in reg.routers:
             app.include_router(router)

@@ -25,6 +25,16 @@
 # 빌드 맥락은 저장소 루트이고, 무시 목록은 이 파일 옆 `Dockerfile.web.dockerignore`
 # 다(BuildKit). 루트 `.dockerignore` 는 open-pencil·robo-analyzer 를 빼므로 못 쓴다.
 
+# ── 고객 확장 — 고른 고객(CUSTOMER) 폴더와 _default 만 남긴다(통합 P5) ─────────────
+# 다른 고객의 코드·문구는 이 이미지에 **실리지 않는다**(브랜치 대신 빌드 입력).
+# 없는 고객 이름이면 여기서 멈춘다 — 기본 판으로 조용히 구워지지 않게.
+FROM node:22-bookworm-slim AS ext
+ARG CUSTOMER=default
+COPY extensions /ext
+RUN cd /ext && for d in */; do d="${d%/}"; [ "$d" = _default ] || [ "$d" = "$CUSTOMER" ] || rm -rf "$d"; done \
+    && { [ "$CUSTOMER" = default ] || [ -d "/ext/$CUSTOMER" ]; } \
+    || { echo "CUSTOMER=$CUSTOMER 인데 extensions/$CUSTOMER 가 없다" >&2; exit 1; }
+
 # ── bun — open-pencil 은 bun 작업공간이다(bun.lock) ─────────────────────────
 FROM oven/bun:1.4.2-slim AS bun-bin
 
@@ -48,6 +58,9 @@ RUN cd analyzer && npm ci --no-audit --no-fund
 
 COPY frontend ./frontend
 COPY robo-analyzer/robo-data-frontend ./analyzer
+# 고객 확장 — vite.config.js 가 VITE_CUSTOMER 로 `@customer` 를 ../extensions/<고객>/frontend 에 잇는다.
+ARG CUSTOMER=default
+COPY --from=ext /ext ./extensions
 
 # 서버 판에서는 Claude Code 터미널을 끈다 — 그 터미널은 **보는 사람의 PC** 의 CLI 를
 #   띄우는 것이라 서버 컨테이너에서는 뜻이 없다(README §결정 ②).
@@ -55,6 +68,7 @@ ARG VITE_DISABLE_CLAUDE_TERMINAL=1
 RUN cd frontend \
     && ANALYZER_REMOTE_URL=/analyzer/assets/remoteEntry.js \
        VITE_DISABLE_CLAUDE_TERMINAL=${VITE_DISABLE_CLAUDE_TERMINAL} \
+       VITE_CUSTOMER=${CUSTOMER} VITE_EDITION=web \
        npm run build
 RUN cd analyzer && ANALYZER_BASE=/analyzer/ npx vite build
 

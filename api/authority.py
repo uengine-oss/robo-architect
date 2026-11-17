@@ -126,6 +126,10 @@ from api.features.projects.router import router as projects_router  # noqa: E402
 app.include_router(accounts_router)
 app.include_router(auth_router)
 app.include_router(projects_router)
+
+# 고객 확장 — 인증 공급자 주소 같은 프로필 기본값(env_defaults)이 여기서도 적용돼야 한다(SWP 로그인을 이 서버가 받는다).
+from api.extensions import load_extensions  # noqa: E402
+load_extensions(app)
 # /context는 프로젝트별 그래프에 붙는 PC에서 처리한다.
 for route in templates_router.routes:
     if route.path != "/api/code-templates/context":

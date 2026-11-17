@@ -19,6 +19,13 @@ def settings(monkeypatch):
         "SWP_IDX_DEPT", "SWP_EMAIL_FALLBACK_DOMAIN", "SWP_SSO_TIMEOUT_S",
     ):
         monkeypatch.delenv(key, raising=False)
+    # 주소 기본값은 코어가 아니라 포스코 확장 프로필에 있다(통합 P5) — 현장과 같은 길로 채운다.
+    from api.extensions import Registry
+    from extensions.posco.backend import register
+    reg = Registry()
+    register(None, reg)
+    for key, value in reg.env_defaults.items():
+        monkeypatch.setenv(key, value)
     return SwpSettings.from_env()
 
 
