@@ -60,9 +60,31 @@ class PropertyOps:
         RETURN count(p) as upserted
         """
 
+        # 표준항목 칸 — **붙여 본 행만** 쓴다(`standardMatch` 가 있는 행). 공급원이 꺼져 있으면
+        # 이 칸은 없고, 예전에 붙은 값도 건드리지 않는다. 그래프 저장소가 bolt 번역기라
+        # `SET p += map` 대신 칸마다 적는다.
+        standard_rows = [r for r in valid_rows if r.get("standardMatch")]
+        standard_query = """
+        UNWIND $rows as row
+        MATCH (p:Property {parentType: row.parentType, parentId: row.parentId, name: row.name})
+        SET p.standardMatch = row.standardMatch,
+            p.standardId = row.standardId,
+            p.standardName = row.standardName,
+            p.standardValueType = row.standardValueType,
+            p.standardDataLength = row.standardDataLength,
+            p.standardDecimalLength = row.standardDecimalLength,
+            p.standardCodeItem = row.standardCodeItem,
+            p.standardCandidates = row.standardCandidates,
+            p.standardNote = row.standardNote,
+            p.standardSource = row.standardSource,
+            p.standardCheckedAt = row.standardCheckedAt
+        """
+
         with self.session() as session:
             rec = session.run(upsert_query, rows=valid_rows).single()
             upserted = int((rec or {}).get("upserted") or 0)
+            if standard_rows:
+                session.run(standard_query, rows=standard_rows)
 
             for label in _PARENT_LABELS:
                 subset = [r for r in valid_rows if r.get("parentType") == label]

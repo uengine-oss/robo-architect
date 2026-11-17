@@ -28,6 +28,7 @@ from api.platform.env import (
     AI_AUDIT_LOG_FULL_PROMPT,
     get_llm_provider_model,
 )
+from api.features.standard_items.annotate import annotate_property_rows
 from api.platform.keys import bc_key as build_bc_key
 from api.platform.observability.request_logging import summarize_for_log
 from api.platform.observability.smart_logger import SmartLogger
@@ -595,6 +596,8 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
                 rows = _dedupe_rows(_extract_rows_from_response(resp, parent_id_by_key))
 
             if rows:
+                # 표준항목(데이터 사전)을 붙인다 — 공급원이 없으면 그대로, 실패해도 계속(표준 미확인).
+                rows = await annotate_property_rows(rows)
                 res = ctx.client.upsert_properties_bulk(rows)
                 upserted = int((res or {}).get("upserted") or 0)
                 total_upserted += upserted
@@ -730,6 +733,7 @@ async def generate_properties_phase(ctx: IngestionWorkflowContext) -> AsyncGener
 
         rows = _dedupe_rows(_extract_rows_from_response(resp, parent_id_by_key_rm))
         if rows:
+            rows = await annotate_property_rows(rows)
             res = ctx.client.upsert_properties_bulk(rows)
             upserted = int((res or {}).get("upserted") or 0)
             total_upserted += upserted
