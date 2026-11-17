@@ -7,6 +7,7 @@ POST   /api/projects/adopt              이미 있는 graph 를 등록 (전환 �
 GET    /api/projects/{graph}/members    참여자
 POST   /api/projects/{graph}/members    초대
 DELETE /api/projects/{graph}/members/{uid}  회수
+DELETE /api/projects/{graph}?confirm=<이름>   프로젝트 삭제(소유자만 · 데이터가 함께 사라진다)
 ```
 
 **모든 경로가 신원을 요구한다.** 소유자 없는 프로젝트가 생기면 아무도 관리할 수
@@ -174,3 +175,35 @@ async def remove_member(request: Request, graph: str, member_uid: str) -> dict:
         params={**http_context(request), "graph": graph, "by": uid, "from": member_uid},
     )
     return result
+
+
+@router.delete("/{graph}")
+async def delete_project(request: Request, graph: str, confirm: str = "") -> dict:
+    """프로젝트를 지운다 — **설계 graph 와 짝인 분석 graph 의 데이터가 함께 사라진다.**
+
+    만든 사람(소유자)만 지운다. 관리 등급으로 공유받은 사람은 못 지운다 — 남이 만든 것을
+    통째로 없애는 길을 공유 하나로 열지 않는다. 실수를 막으려고 `confirm` 에 **프로젝트
+    이름 그대로**를 받는다(화면이 사람에게 그 이름을 다시 치게 한다).
+
+    ⓘ posco-web: `/api/projects/**` 는 authority(납품판 이미지)로 넘어가는데 그 판에는 이 경로가
+    없다 — `AuthorityProxyMiddleware` 가 이 한 경로만 넘기지 않고 여기서 처리한다. 이 프로세스는
+    DB 소유자 자격(OG_PG_*)으로 붙으므로 `drop_project` 를 그대로 부를 수 있다.
+    """
+    uid = _uid(request)
+    project = _guard(store.get_project, graph)
+    if not project:
+        raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+    if str(project.get("ownerUid") or "") != uid:
+        raise HTTPException(status_code=403, detail="프로젝트를 만든 사람만 지울 수 있습니다.")
+    name = (project.get("displayName") or graph).strip()
+    if (confirm or "").strip() != name:
+        raise HTTPException(status_code=400, detail="확인용 이름이 프로젝트 이름과 다릅니다.")
+    _guard(store.drop_project, graph)
+    SmartLogger.log(
+        # 되돌릴 수 없는 일이라 기본 최소 수준(ERROR)에서도 남게 한다.
+        "ERROR", "프로젝트를 지웠다.",
+        category="projects.deleted",
+        params={**http_context(request), "graph": graph, "name": name, "by": uid,
+                "analyzerGraph": project.get("analyzerGraph")},
+    )
+    return {"deleted": graph, "name": name}

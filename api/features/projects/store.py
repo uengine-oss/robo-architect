@@ -525,7 +525,7 @@ def members(graph: str) -> list[dict[str, Any]]:
 def drop_project(graph: str) -> None:
     """프로젝트를 지운다 — **graph 안의 데이터가 함께 사라진다.**
 
-    라우터에서 직접 부르지 않는다. 지금은 검사 정리용으로만 쓴다.
+    `DELETE /api/projects/{graph}`(소유자만 · 이름 확인)와 검사 정리가 부른다.
 
     **권한을 먼저 회수한다.** `og_drop_graph` 는 `og_catalog.grantee` 를 건드리지
     않아, 지운 graph 를 가리키는 권한 행이 그대로 남는다. 같은 이름의 graph 가

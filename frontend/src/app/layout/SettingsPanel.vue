@@ -12,6 +12,10 @@ import LlmModelSection from '@/features/llmModels/ui/LlmModelSection.vue'
 
 const auth = useAuthStore()
 
+// 서버 판(posco-web)은 web 이미지를 VITE_DISABLE_CLAUDE_TERMINAL=1 로 굽는다 — 로컬 Claude Code·speckit 이
+// 없으므로 "Claude IDE" 생성 엔진도 고를 수 없다(고르면 설치 안내로 빠진다). 메뉴째 숨긴다.
+const claudeIdeAvailable = import.meta.env.VITE_DISABLE_CLAUDE_TERMINAL !== '1'
+
 const props = defineProps({
   visible: {
     type: Boolean,
@@ -283,8 +287,8 @@ function reloadAfterClear() {
             </div>
           </div>
 
-          <!-- 요구사항 생성 엔진 (034 US5) -->
-          <div class="settings-section">
+          <!-- 요구사항 생성 엔진 (034 US5) — 서버 판(posco-web)에는 로컬 Claude 가 없어 숨긴다 -->
+          <div v-if="claudeIdeAvailable" class="settings-section">
             <div class="settings-section__header">
               <h3 class="settings-section__title">요구사항 생성 엔진</h3>
               <span class="settings-section__description">하위 User Story 자동 생성에 사용할 엔진을 선택합니다</span>

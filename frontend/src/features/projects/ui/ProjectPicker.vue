@@ -181,6 +181,33 @@ async function submitPair() {
   }
 }
 
+// ── 삭제 — 소유자만 · 이름을 그대로 다시 쳐야 버튼이 켜진다 ─────────────
+const deleteTarget = ref(null)
+const deleteConfirm = ref('')
+const deleteName = computed(() => (deleteTarget.value && (deleteTarget.value.displayName || deleteTarget.value.graph)) || '')
+
+function openDelete(p) {
+  deleteTarget.value = p
+  deleteConfirm.value = ''
+  message.value = ''
+  mode.value = 'delete'
+}
+
+async function submitDelete() {
+  if (!deleteTarget.value || deleteConfirm.value.trim() !== deleteName.value.trim()) return
+  busy.value = true
+  message.value = ''
+  try {
+    await store.remove(deleteTarget.value.graph, deleteName.value.trim())
+    deleteTarget.value = null
+    mode.value = 'list'
+  } catch (e) {
+    message.value = e.message
+  } finally {
+    busy.value = false
+  }
+}
+
 async function revoke(uid) {
   message.value = ''
   try {
@@ -253,6 +280,10 @@ watch(() => auth.token, (t) => { if (t) refresh() })
                 {{ isMine(p) ? 'mine' : 'shared' }}
               </span>
             </button>
+            <button v-if="isMine(p)" class="pp__pairbtn pp__delbtn" @click.stop="openDelete(p)"
+                    title="프로젝트와 그 설계·분석 데이터를 지웁니다 — 되돌릴 수 없습니다">
+              삭제
+            </button>
             <button v-if="p.level === 'admin'" class="pp__pairbtn" @click.stop="openPair(p)"
                     title="추적성이 어떤 분석 결과를 근거로 삼을지 고릅니다">
               분석 결과 바꾸기
@@ -305,6 +336,25 @@ watch(() => auth.token, (t) => { if (t) refresh() })
           <button class="pp__link" @click="mode = 'create'">＋ 새 프로젝트</button>
           <button v-if="store.canManage" class="pp__link" @click="openShare">공유 관리</button>
         </div>
+      </template>
+
+      <!-- 삭제 -->
+      <template v-else-if="mode === 'delete'">
+        <div class="pp__head">프로젝트 삭제</div>
+        <p class="pp__err">
+          <b>{{ deleteName }}</b> 의 설계와 짝인 분석 데이터가 함께 지워집니다.
+          공유받은 사람들도 더는 열 수 없습니다. <b>되돌릴 수 없습니다.</b>
+        </p>
+        <form @submit.prevent="submitDelete">
+          <input v-model="deleteConfirm" class="pp__input" :placeholder="`확인 — ${deleteName} 를 그대로 입력`"
+                 data-testid="project-delete-confirm" />
+          <div class="pp__actions">
+            <button type="button" class="pp__link" @click="mode = 'list'">취소</button>
+            <button type="submit" class="pp__primary pp__primary--danger" data-testid="project-delete-submit"
+                    :disabled="busy || deleteConfirm.trim() !== deleteName.trim()">영구 삭제</button>
+          </div>
+        </form>
+        <p v-if="message" class="pp__err">{{ message }}</p>
       </template>
 
       <!-- 만들기 -->
@@ -465,4 +515,7 @@ watch(() => auth.token, (t) => { if (t) refresh() })
 .pp__owner { font-size:0.68rem; color:var(--color-text-light); }
 .pp__invite { display:flex; gap:6px; margin-top:var(--spacing-sm); }
 .pp__invite .pp__input { flex:1; }
+.pp__delbtn { color: var(--color-danger, #e06060); }
+.pp__primary--danger { background: var(--color-danger, #c94a4a); }
+.pp__primary--danger:disabled { opacity: 0.45; }
 </style>
