@@ -1,0 +1,16 @@
+/* English mode only (main/lang.ts injects it next to the translator): English runs longer than
+   the Korean these screens were laid out for. Fix the places where it does not fit here instead of
+   changing the components — Korean mode never loads this file. */
+
+/* left rail: "Requirements" is one long word (bold when active) — a wider rail, a smaller label,
+   never broken mid-word */
+html[lang="en"] .rail { width: 92px; }
+html[lang="en"] .rail__item { font-size: 10.5px; letter-spacing: -0.1px; }
+html[lang="en"] .rail__item span { white-space: nowrap; }
+
+/* requirements › clarification radar: the English axis labels are wider than the SVG box — let
+   them run into the card's padding instead of being cut */
+html[lang="en"] .clarity-radar .cr-svg { overflow: visible; }
+
+/* requirements tree: the empty-state sentence wraps instead of running under the tree's edge */
+html[lang="en"] .req-tree .empty-row { white-space: normal; }

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { gotoView } from './helpers/nav'
 
 /**
  * Strategic Diff 렌더링이 (1) 1급 카테고리 Process를 명시적으로 표시하고
@@ -59,13 +60,11 @@ test('Strategic Diff: Process(1급) + 미지 카테고리(policies) 제네릭 �
     return route.continue()
   })
 
-  await page.goto('http://localhost:5173')
+  await page.goto('/')
   await page.waitForLoadState('networkidle')
 
-  // Proposals 탭 진입
-  const proposalsTab = page.locator('text=Proposals').first()
-  await proposalsTab.waitFor({ timeout: 10000 })
-  await proposalsTab.click()
+  // 프로포절 화면 진입(왼쪽 레일)
+  await gotoView(page, '프로포절')
 
   // 목록에서 fixture proposal 클릭
   const item = page.locator(`.proposal-item:has-text("${PROPOSAL_ID}")`).first()

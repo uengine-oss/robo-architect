@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { gotoView } from './helpers/nav'
 
 /**
  * 구현 완료(모든 작업 체크) → "구현 완료 → 검증" 버튼 → TESTING 전환 →
@@ -58,7 +59,7 @@ test('구현 완료 → 검증 버튼이 TESTING으로 전환하고 검증 탭�
     route.fulfill({ contentType: 'application/json', body: JSON.stringify({ proposalId: ID, totalScenarios: 0, passed: 0, failed: 0, skipped: 0, items: [] }) }))
 
   await page.goto('/')
-  await page.locator('.top-bar__tab', { hasText: 'Proposals' }).click()
+  await gotoView(page, '프로포절')
   await page.locator('.proposal-item', { hasText: ID }).first().click()
   await page.locator('.tab-btn', { hasText: '샌드박스 구현' }).click()
 

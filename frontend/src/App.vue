@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, ref, computed, markRaw, provide, watch, nextTick } from 'vue'
+import SideRail from '@/app/layout/SideRail.vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
 import CanvasWorkspace from '@/features/canvas/ui/CanvasWorkspace.vue'
@@ -80,10 +81,16 @@ function providerAttempts() {
 
 // Tab state management — 시작 탭.
 //
-// 코어 기본은 'Proposals'. 고객 확장이 정하면 그것으로 — 포스코는 'Legacy'(그 판은 Proposals 를 감춰서,
-// 그대로 두면 **목록에 없는 탭으로 앱이 열린다**. 작업 순서의 첫 단계이기도 하다:
-// 레거시 코드 분석 → 문서 업로드 → 프로세스 생성 → 룰 매핑 → ES 승격).
-const activeTab = ref(customer.shell.startTab || 'Proposals')
+// 순서: ① 데스크톱 셸의 탭은 `?view=<탭>` 으로 원하는 화면에서 시작한다(desktop/src/main/tabs.ts)
+//       ② 고객 확장이 정한 시작 탭 — 포스코는 'Legacy'(그 판은 Proposals 를 감춰서, 그대로 두면 목록에 없는
+//          탭으로 앱이 열린다. 작업 순서의 첫 단계이기도 하다: 레거시 분석 → 문서 업로드 → 프로세스 → 룰 매핑 → ES 승격)
+//       ③ 코어 기본 'Proposals'.
+const _startQuery = new URLSearchParams(window.location.search)
+const _VIEWS = ['Legacy', 'Proposals', 'Stories', 'Process', 'Processes', 'Design', 'Data', 'Code', 'Template']
+const activeTab = ref(_VIEWS.includes(_startQuery.get('view')) ? _startQuery.get('view') : (customer.shell.startTab || 'Proposals'))
+// 셸 탭 제목 = 지금 보는 화면 (main 이 page-title-updated 로 탭 이름을 바꾼다)
+const _VIEW_TITLE = { Legacy: '레거시', Proposals: '프로포절', Stories: '요구사항', Process: '프로세스', Processes: '프로세스', 'Event Modeling': '프로세스', Design: '설계', Data: '데이터', Code: '코드', Requirements: '요구사항', Aggregate: '데이터', Template: '템플릿' }
+watch(activeTab, (v) => { document.title = _VIEW_TITLE[v] || 'Robo Architect' }, { immediate: true })
 
 // Claude Code workdir state — hydrated from localStorage so the inspector's
 // source viewer (feature 029) can resolve ImplementationFile paths even
@@ -311,6 +318,19 @@ async function _onGraphInvalidated(e) {
 
 const currentComponent = computed(() => tabComponents[activeTab.value])
 
+// 레일에서 화면을 고를 때 — Code 는 프로젝트 홈(코드 폴더)이 있어야 연다(TopBar 와 같은 규칙).
+function onRailSelect(tab) {
+  if (tab === 'Code') {
+    let home = ''
+    try { home = localStorage.getItem('claude_code_workspace_root') || '' } catch { /* ignore */ }
+    if (!home) {
+      window.dispatchEvent(new CustomEvent('robo:open-prd'))
+      return
+    }
+  }
+  activeTab.value = tab
+}
+
 // 034 US7 — Event Modeling / Design 탭 진입 시 설계 미반영 User Story를 감지해
 // "설계에 반영하시겠습니까?" 프롬프트를 띄운다. (생성 오케스트레이션은 후속.)
 const requirementsStore = useRequirementsStore()
@@ -508,6 +528,10 @@ onMounted(async () => {
 
   // Listen for cross-component tab switch requests
   window.addEventListener('robo:switch-tab', _onSwitchTab)
+  // 셸 홈의 「프로젝트 헌장」 카드 → ?constitution=1 : 헌장 편집기를 바로 연다
+  if (_startQuery.get('constitution') === '1') {
+    constitutionEditor.value = { scope: 'PROJECT', bcId: null, interview: false, proposalId: null }
+  }
   // 040 — Proposal 임팩트 미리보기 열기/실패/종료
   window.addEventListener('robo:open-preview', _onOpenPreview)
   window.addEventListener('robo:open-preview-failed', _onOpenPreviewFailed)
@@ -558,7 +582,13 @@ onUnmounted(() => {
                   :state="auth.gate" />
   <LoginView v-else-if="auth.gate === 'login'" />
   <LauncherView v-else-if="session.isDesktop && !session.entered" />
-  <div v-else class="app-container">
+  <div v-else class="app-shell">
+  <!-- 통합 P4 — lite 셸: 화면 전환은 왼쪽 레일, 위는 슬림 TopBar(프로젝트 · 함께 보는 사람 · 사용자 메뉴). -->
+  <SideRail
+    :active-tab="activeTab"
+    @update:active-tab="onRailSelect"
+  />
+  <div class="app-container">
     <TopBar
       :active-tab="activeTab"
       @update:active-tab="activeTab = $event"
@@ -643,6 +673,7 @@ onUnmounted(() => {
       @close="constitutionEditor = null"
     />
   </div>
+  </div>
 </template>
 
 <style scoped>
@@ -699,6 +730,19 @@ onUnmounted(() => {
 
 .main-content {
   position: relative;
+}
+
+/* 왼쪽 레일 + 오른쪽 화면 (Ontological Studio 와 같은 배치) */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+.app-shell > .app-container {
+  flex: 1;
+  min-width: 0;
+  width: auto;
 }
 
 .navigator-wrapper {

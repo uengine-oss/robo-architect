@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { gotoView } from './helpers/nav'
 
 /**
  * Spec 026 — requirements-tab smoke test.
@@ -62,8 +63,8 @@ test('Requirements tab: drill down the tree and open a user story', async ({ pag
 
   await page.goto('/')
 
-  // Open the Requirements tab (first tab).
-  await page.getByRole('button', { name: 'Requirements' }).first().click()
+  // Open the Requirements view (left rail).
+  await gotoView(page, '요구사항')
 
   // Drill down: Epic → Feature → User Story.
   await page.getByText('Order', { exact: true }).click()

@@ -23,6 +23,7 @@
 import type { LauncherIpcChannel } from "../../shared/launcher-contract";
 import { IpcErrorCodes } from "../../shared/ipc-contract";
 import { IpcHandlerError, registerHandler } from "../ipc";
+import { isLiteProfile } from "../desktop-profile";
 
 import {
   listConnections,
@@ -31,6 +32,7 @@ import {
   testConnection,
 } from "./connections";
 import { handleLauncherEnter } from "./enter";
+import { createProject, listProjects } from "./projects";
 import { resolveSessionUser, setGitConfigGlobal } from "./identity";
 import {
   chooseProjectRoot,
@@ -56,6 +58,8 @@ const STUB_BY_CHANNEL: Record<LauncherIpcChannel, string> = {
   "identity:setGitConfig": "US3 T043b",
   "launcher:enter": "US1 T028",
   "launcher:reopen": "US5 T065",
+  "projects:list": "lite project graphs",
+  "projects:create": "lite project graphs",
 };
 
 const IMPLEMENTED_CHANNELS: ReadonlySet<LauncherIpcChannel> = new Set([
@@ -70,6 +74,8 @@ const IMPLEMENTED_CHANNELS: ReadonlySet<LauncherIpcChannel> = new Set([
   "identity:resolve",
   "identity:setGitConfig",
   "launcher:enter",
+  "projects:list",
+  "projects:create",
 ]);
 
 /**
@@ -77,6 +83,15 @@ const IMPLEMENTED_CHANNELS: ReadonlySet<LauncherIpcChannel> = new Set([
  * handlers for the rest so the renderer can probe the surface without
  * crashing.
  */
+function assertLiteProjects(channel: string): void {
+  if (!isLiteProfile()) {
+    throw new IpcHandlerError(
+      IpcErrorCodes.VALIDATION,
+      `${channel}: graph projects belong to the desktop lite profile (ROBO_DESKTOP_PROFILE=lite)`,
+    );
+  }
+}
+
 export function registerLauncherIpcHandlers(): void {
   // --- real handlers ---
   registerHandler("connections:list", listConnections);
@@ -90,6 +105,17 @@ export function registerLauncherIpcHandlers(): void {
   registerHandler("identity:resolve", ({ projectRoot }) => resolveSessionUser(projectRoot));
   registerHandler("identity:setGitConfig", ({ name, email }) => setGitConfigGlobal(name, email));
   registerHandler("launcher:enter", handleLauncherEnter);
+  // 프로젝트 = 번들 Ontological DB 의 그래프 — **lite 프로필의 것**이다. enterprise 는
+  // 프로젝트를 중앙 권한·요청 헤더로 고르므로, 여기서는 이유를 대고 거절한다. 런처 화면은
+  // 이 거절을 보고 연결 목록(HEAD 동작)을 그대로 보인다.
+  registerHandler("projects:list", () => {
+    assertLiteProjects("projects:list");
+    return listProjects();
+  });
+  registerHandler("projects:create", (input) => {
+    assertLiteProjects("projects:create");
+    return createProject(input);
+  });
 
   // --- stubs for the rest ---
   for (const channel of Object.keys(STUB_BY_CHANNEL) as LauncherIpcChannel[]) {

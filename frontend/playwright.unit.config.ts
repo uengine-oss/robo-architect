@@ -1,4 +1,4 @@
-// 순수 로직 단위 spec 전용 — dev 서버를 띄우지 않는다(evlink).
+// 순수 로직 단위 spec 전용 — dev 서버를 띄우지 않는다(evlink · readyGate).
 import { defineConfig } from '@playwright/test'
 
 /**
@@ -16,9 +16,11 @@ export default defineConfig({
   testDir: './tests',
   // 넓히기만 한다. `runtime-status` 는 058 T031 이 요구한 이름 그대로 두고
   // (`frontend/tests/runtime-status.spec.ts`) 여기 목록에 더했다.
+  // `*-unit.spec.ts` 는 lite 계보(readyGate 등)의 이름 규칙이다.
   testMatch: [
     '**/legacy-reference-unit.spec.ts',
     '**/runtime-status.spec.ts',
+    '**/*-unit.spec.ts',
     'unit/**/*.spec.ts',
   ],
   timeout: 15_000,

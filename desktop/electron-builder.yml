@@ -1,3 +1,6 @@
+# 이 파일은 desktop 판의 **enterprise 프로필**(기본) 빌드다. lite 프로필은
+# `electron-builder.lite.js` 가 이 파일을 읽어 브랜드·mac 서명 방식만 덮는다
+# (macOS: `npm run dist:mac`, Windows 를 맥에서 교차 빌드: `npm run dist:win`).
 appId: org.uengine.robo-architect
 productName: Robo-Architect
 copyright: Copyright (c) ${author}
@@ -26,9 +29,24 @@ extraResources:
   # 2026-09-23 실측: 페이로드 3.27GB 에서 `failed creating mmap of …nsis.7z`.
   # 이미지를 줄여 넘길 수 있는 벽이 아니다(analyzer 한 장이 2.1GB).
   # tar 는 설치 파일 옆에 함께 전달하고, 앱이 `resolveImageArchive` 로 찾는다.
+  # lite 의 런타임 빌더(scripts/build-packaged-runtime.sh · -win.sh)가 남기는 잔여물도 뺀다.
   - from: resources/runtime
     to: runtime
-    filter: ["**/*", "!robo-images.tar"]
+    filter: ["**/*", "!robo-images.tar", "!.gitkeep", "!**/.DS_Store", "!architect/requirements.lock.txt"]
+  # 창 셸(탭 줄 + 홈) — lite 프로필의 창. main/index.ts resolveShellDir 가 resources/shell 에서 찾는다
+  - from: resources/shell
+    to: shell
+    filter: ["**/*"]
+  # 영어 모드 — 런타임 번역기 + 사전 (main/lang.ts i18nDir 가 resources/i18n 에서 찾는다)
+  - from: resources/i18n
+    to: i18n
+    filter: ["translate.js", "ko-en.json", "en.css"]
+  # Figma 플러그인 묶음 — 사용자 PC 에는 저장소도 bun 도 없어서 `dist/plugin.js` 를
+  # 스스로 구울 수 없다. `npm run build:figma` 가 굽고, 앱이 앱 데이터로 꺼내 준다
+  # (main/figma-plugin.ts). 묶음이 없으면 모달의 단추가 이름을 대며 실패한다.
+  - from: ../figma-plugin
+    to: figma-plugin
+    filter: ["manifest.json", "dist/plugin.js"]
 
 win:
   target:

@@ -785,7 +785,7 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
     Where the two are one database — the packaged compose gives both services the
     same one — this changes nothing.
     """
-    from api.platform.neo4j import analyzer_database, analyzer_session, get_session
+    from api.platform.neo4j import analyzer_database, analyzer_session
 
     try:
         SmartLogger.log(
@@ -796,7 +796,15 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
         )
         sess = analyzer_session()
         if sess is None:
-            return {"success": True, "counts": {}, "analyzerGraph": None}
+            # 분석 짝이 없는 프로젝트(문서만 올린 경우)는 정상 상태다 — 화면이 읽는
+            # `hasData`·`total` 을 함께 돌려준다(없으면 undefined 로 읽힌다).
+            SmartLogger.log(
+                "INFO",
+                "Ingestion stats: no analyzer graph configured.",
+                category="ingestion.api.stats.no_analyzer",
+                params=http_context(request),
+            )
+            return {"success": True, "total": 0, "counts": {}, "hasData": False, "analyzerGraph": None}
         with sess as session:
             # ⚠ `labels(n)[0]` 로는 **한 통**만 나온다. 분석기가 넣은 노드는 이 엔진에서
             # 라벨이 **정확히 둘**이고(2026-11-12 실측: size(labels(n))=2 인 노드 전부)
@@ -821,10 +829,20 @@ async def get_data_stats(request: Request) -> dict[str, Any]:
                 "INFO",
                 "Ingestion stats returned.",
                 category="ingestion.api.stats.done",
-                params={**http_context(request), "total": total, "counts": counts},
+                params={
+                    **http_context(request),
+                    "total": total,
+                    "counts": counts,
+                    "analyzerGraph": analyzer_database(),
+                },
             )
 
-            return {"total": total, "counts": counts, "hasData": total > 0}
+            return {
+                "total": total,
+                "counts": counts,
+                "hasData": total > 0,
+                "analyzerGraph": analyzer_database(),
+            }
     except Exception as e:
         SmartLogger.log(
             "ERROR",

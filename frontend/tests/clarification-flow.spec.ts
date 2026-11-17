@@ -1,4 +1,7 @@
 import { test, expect, Page } from '@playwright/test'
+import { shotDir } from './helpers/shots'
+import { gotoView } from './helpers/nav'
+import { expandTreeNode } from './helpers/requirementsTree'
 
 /**
  * Spec 030 — Requirements Clarification flow (tab-based UX).
@@ -235,20 +238,24 @@ async function mockBackend(page: Page) {
   })
 }
 
-test.use({ headless: false, viewport: { width: 1500, height: 900 } })
+// 화면을 띄워 보려면 --headed (기본은 headless — 회귀 시험 중 창이 뜨지 않도록).
+test.use({ viewport: { width: 1500, height: 900 } })
 
-const SHOT = (name: string) => `../specs/030-requirements-clarify-agent/manual/images/${name}`
+// 문서 그림은 UPDATE_MANUAL_SHOTS=1 일 때만 덮어쓴다(helpers/shots).
+const SHOT_DIR = shotDir('../specs/030-requirements-clarify-agent/manual/images', 'clarification-flow')
+const SHOT = (name: string) => `${SHOT_DIR}/${name}`
 
 test('Requirements clarification: select → tab → scan → answer → apply', async ({ page }) => {
   await mockBackend(page)
   await page.goto('/')
 
-  // ── Open the Requirements tab ──────────────────────────────────────────
-  await page.getByRole('button', { name: 'Requirements' }).first().click()
+  // ── Open the Requirements view (left rail) ─────────────────────────────
+  await gotoView(page, '요구사항')
 
-  // Tree loaded — expand BC + Feature so US rows are visible.
-  await page.getByText('Order', { exact: true }).first().click()
-  await page.getByText('주문 검색', { exact: true }).first().click()
+  // Tree loaded — expand BC + Feature so US rows are visible. 034 이후 이름 클릭은
+  // 노드를 고르기만 하므로 ▸ 로 펼친다(아무것도 고르지 않아야 아래 레이더가 보인다).
+  await expandTreeNode(page, 'Order')
+  await expandTreeNode(page, '주문 검색')
 
   // ── Ambiguity badge on us-fast row only ────────────────────────────────
   const fastRow = page.locator('.tree-node--us', { hasText: '주문을 빠르게 검색하고 싶다' })

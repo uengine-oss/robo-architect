@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { useThemeStore } from '@/app/theme.store'
 import { XTERM_THEMES } from './xterm-themes.js'
+import { sendWhenReady as gateSendWhenReady, DEFAULT_MIN_DELAY_MS } from '../model/readyGate.js'
 
 const props = defineProps({
   workdir: {
@@ -68,8 +69,31 @@ const isConnected = ref(false)
 const isConnecting = ref(true)
 const connectionError = ref('')
 const workdirDisplay = ref('')
-let pendingInputCommand = null  // set before connect() — sent 6s after ws.onopen
+let pendingInputCommand = null  // set before connect() — sent once claude is ready (sendWhenReady)
 let queuedInput = null          // set after connect() if ws not yet open
+let wsOpenedAt = 0
+
+function screenText() {
+  const buf = terminal?.buffer?.active
+  if (!buf) return ''
+  const lines = []
+  for (let i = buf.baseY; i < buf.baseY + terminal.rows; i++) {
+    lines.push(buf.getLine(i)?.translateToString(true) || '')
+  }
+  return lines.join('\n')
+}
+
+// 명령을 claude 입력란이 준비된 뒤에 보낸다 — 최소 minDelay 를 기다리고, Claude 첫 실행 확인 화면이
+// 없는 상태가 2.5초 이어질 때 보낸다(판정은 model/readyGate.js, 단위 시험 claude-ready-gate-unit).
+function sendWhenReady(cmd, minDelay = DEFAULT_MIN_DELAY_MS) {
+  gateSendWhenReady({
+    cmd,
+    minDelay,
+    getScreenText: screenText,
+    isOpen: () => !!ws && ws.readyState === WebSocket.OPEN,
+    send: (data) => ws.send(JSON.stringify({ type: 'input', data })),
+  })
+}
 
 // In Electron, window.location.hostname resolves to 'app' (custom app:// protocol)
 // which is not a real network host. Fetch the actual backend port from the main
@@ -227,15 +251,18 @@ function connect(workdir) {
     const dims = { cols: terminal.cols, rows: terminal.rows }
     ws.send(JSON.stringify({ type: 'resize', ...dims }))
 
+    wsOpenedAt = Date.now()
     // If a command was queued (e.g. /robo-implement CHG-009), send it after
-    // Claude's interactive session has had time to start and show a prompt.
-    const cmdToSend = pendingInputCommand || queuedInput
+    // Claude's interactive session has started and no first-run dialog is showing.
+    const cmdToSend = pendingInputCommand
+    const rawToSend = queuedInput
     pendingInputCommand = null
     queuedInput = null
-    if (cmdToSend) {
+    if (cmdToSend) sendWhenReady(cmdToSend)
+    if (rawToSend) {
       setTimeout(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data: cmdToSend + '\r' }))
+          ws.send(JSON.stringify({ type: 'input', data: rawToSend }))
         }
       }, 6000)  // 6s: Claude CLI startup + prompt render
     }
@@ -314,7 +341,16 @@ function sendInput(text) {
   }
 }
 
-defineExpose({ openWithWorkdir, sendInput, refit })
+// Send a command line (Enter appended) once claude is ready — see sendWhenReady.
+function sendCommand(cmd) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendWhenReady(cmd, Math.max(0, 6000 - (Date.now() - wsOpenedAt)))
+  } else {
+    pendingInputCommand = cmd
+  }
+}
+
+defineExpose({ openWithWorkdir, sendInput, sendCommand, refit })
 
 // Watch for workdir prop changes
 watch(() => props.workdir, (newWorkdir) => {

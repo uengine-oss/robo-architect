@@ -2,21 +2,16 @@
 import ProjectPicker from '@/features/projects/ui/ProjectPicker.vue'
 import ViewerChips from '@/features/collab/ui/ViewerChips.vue'
 import UserMenu from '@/features/auth/ui/UserMenu.vue'
-import { ref } from 'vue'
+import { useAuthStore } from '@/features/auth/auth.store.js'
+import { computed, ref } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
 // 043 — 'Big picture' 뷰 비활성화: store import 제거.
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
-import FigmaButton from '@/features/figmaBinding/ui/FigmaButton.vue'
 import FigmaBindingModal from '@/features/figmaBinding/ui/FigmaBindingModal.vue'
 import SettingsPanel from './SettingsPanel.vue'
-// 058 T029 — 준비 안 된 기능의 **진입을 막되 이유를 말한다.** 좁게 간다:
-// 이름이 붙은 두 자리(레거시 탐색 · 적재 시작)만 본다. 넓게 막으면 프로브가
-// 한 번 틀린 날 **멀쩡한 앱이 통째로 잠긴다**(2026-10-07 에 실제로 배선이 틀렸다).
-import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
-import { visibleTabs } from '@/app/customer'
 
 const props = defineProps({
   activeTab: {
@@ -34,24 +29,15 @@ const emit = defineEmits(['update:activeTab'])
 // 043 — 'Process'(BPM)·'Processes'(Event Modeling)를 하나의 'Process' 탭(서브토글)로 통합,
 // 'Big picture' 제거. 'Changes' 탭은 UI에서 숨김(App.vue tabComponents 에 유지).
 // 'Analysis'(분석기 임베드) → 'Legacy' 로 라벨 변경 + 맨 앞으로 이동(Proposals 앞).
-// 'Template' — 템플릿 기반 코드 생성(ENT-GEN-001). 'Code'(Claude Code TUI)와 나란히 둔다.
-//
-// 탭을 감추는 것은 **고객 확장**이 정한다(`extensions/<고객>/frontend` 의 shell.hiddenTabs).
-// 포스코는 사내망에 `claude` CLI 가 없어 Proposals·Code 를 감춘다(2026-09-29 결정 — 열어 두면 눌러도 아무 일이
-// 안 일어나는 탭이 된다). **컴포넌트·라우팅은 그대로** 두고 목록에서만 빠진다.
-const tabs = visibleTabs(['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code', 'Template'])
-
-const runtime = useRuntimeStore()
-/** 탭 ↔ 기능. **여기 없는 탭은 막지 않는다.** */
-const TAB_CAPABILITY = { Legacy: 'legacy-analysis' }
-const tabBlocked = (tab) => {
-  const capability = TAB_CAPABILITY[tab]
-  return capability ? !runtime.isAvailable(capability) : false
-}
-const tabBlockedWhy = (tab) => {
-  const capability = TAB_CAPABILITY[tab]
-  return capability ? runtime.blockedReason(capability) : null
-}
+const VIEW_TITLE = { Legacy: '레거시', Proposals: '프로포절', Stories: '요구사항', Requirements: '요구사항', Process: '프로세스', Processes: '프로세스', 'Event Modeling': '프로세스', Design: '설계', Data: '데이터', Aggregate: '데이터', Code: '코드' }
+const viewTitle = computed(() => VIEW_TITLE[props.activeTab] || props.activeTab)
+// 상단 줄은 그 화면의 도구가 있을 때만(프로세스 전환·개수·PRD) — Ontological Studio 처럼 위를 비운다.
+// 통합 P4: 로그인한 판(포스코 웹 등)에서는 **어느 프로젝트를 보고 있는지**가 늘 보여야 하므로 줄을 늘 그린다.
+// 로그인이 없는 판(lite)은 예전처럼 도구가 있는 화면에서만.
+const auth = useAuthStore()
+const hasBar = computed(() => !!auth.token
+  || ['Process', 'Processes', 'Event Modeling', 'Design', 'Data', 'Aggregate', 'Code', 'Template'].includes(props.activeTab))
+// 화면 전환(탭)과 고객별 감춤 · 기능 막힘 표시는 왼쪽 레일(SideRail.vue)이 한다.
 
 const canvasStore = useCanvasStore()
 // 043 — 'Big picture' 뷰 비활성화: store 사용 제거.
@@ -74,6 +60,14 @@ function hasProjectHome() {
   }
 }
 
+// 레일에서 Code 를 골랐는데 프로젝트 홈이 없으면 App 이 이 이벤트로 PRD 모달을 부탁한다
+if (typeof window !== 'undefined') {
+  window.addEventListener('robo:open-prd', () => { showPRDModal.value = true })
+  // 왼쪽 레일의 설정 · Figma 단추
+  window.addEventListener('robo:open-settings', () => { showSettingsPanel.value = true })
+  window.addEventListener('robo:open-figma', () => { showFigmaBindingModal.value = true })
+}
+
 function selectTab(tab) {
   if (tab === 'Code' && !hasProjectHome()) {
     showPRDModal.value = true
@@ -85,40 +79,16 @@ function selectTab(tab) {
 </script>
 
 <template>
-  <header class="top-bar">
+  <div class="top-bar-host">
+  <header v-if="hasBar" class="top-bar">
     <div class="top-bar__left">
-      <div class="top-bar__logo">
-        <div class="top-bar__logo-icon">RA</div>
-        <span>Robo Architect</span>
-      </div>
-
-      <!-- 어느 프로젝트를 보고 있는지가 늘 보여야 한다. 모르고 남의 프로젝트를
-           고친 것을 나중에 알면 되돌릴 방법이 없다. -->
+      <!-- 브랜드와 화면 전환은 왼쪽 레일(SideRail.vue)로 옮겼다 — Ontological Studio 와 같은 배치.
+           여기는 지금 프로젝트 · 함께 보는 사람 · 화면의 서브토글 · 수치 · 동작만. -->
+      <!-- 어느 프로젝트를 보고 있는지가 늘 보여야 한다(로그인 판에서만 보인다 — ProjectPicker 가 스스로 숨는다). -->
       <ProjectPicker />
-
       <!-- 누가 같이 보고 있는지. 나 혼자면 아무것도 안 그린다. -->
       <ViewerChips />
-      
-      <!-- Tab Menu -->
       <div class="top-bar__view-mode">
-        <span class="view-mode-label">View mode</span>
-        <nav class="top-bar__tabs">
-          <button
-            v-for="tab in tabs"
-            :key="tab"
-            class="top-bar__tab"
-            :class="{
-              'is-active': activeTab === tab || (tab === 'Process' && (activeTab === 'Processes' || activeTab === 'Event Modeling')),
-              'is-blocked': tabBlocked(tab),
-              tipped: tabBlocked(tab),
-            }"
-            :disabled="tabBlocked(tab)"
-            :data-tip="tabBlocked(tab) ? tabBlockedWhy(tab) : null"
-            @click="selectTab(tab)"
-          >
-            {{ tab }}
-          </button>
-        </nav>
         <!-- 043 — Process 영역의 BPM⇄Event Modeling 서브토글. activeTab을 'Process'(BPM)⇄
              'Processes'(Event Modeling)로 바꿔 네비/캔버스/상단바가 함께 전환된다. -->
         <div v-if="activeTab === 'Process' || activeTab === 'Processes' || activeTab === 'Event Modeling'" class="top-bar__subtoggle">
@@ -188,27 +158,13 @@ function selectTab(tab) {
         title="PRD zip 다운로드 — PRD 생성 모달 열기"
       >PRD zip 다운로드</button>
 
-      <!-- Figma Binding Button (feature 016) -->
-      <FigmaButton v-model="showFigmaBindingModal" />
-
-      <!-- 지금 누구로 들어와 있는지와 로그아웃. 로그아웃만 두면 계정을 착각한 채
-           작업하는 일이 생긴다 — 프로젝트마다 권한이 다르고 개발용 우회도 있다. -->
+      <!-- 지금 누구로 들어와 있는지와 로그아웃(로그인 판에서만 보인다). Figma · 설정은 레일 아래로 옮겼다. -->
       <UserMenu />
-
-      <!-- Settings Button -->
-        <button 
-        class="settings-btn"
-        @click="showSettingsPanel = true"
-        title="Settings"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-        </button>
     </div>
     
-    <!-- Settings Panel -->
+  </header>
+
+    <!-- Settings Panel — 단추는 왼쪽 레일(SideRail.vue)에 있다: robo:open-settings -->
     <SettingsPanel
       :visible="showSettingsPanel"
       @close="showSettingsPanel = false"
@@ -222,10 +178,12 @@ function selectTab(tab) {
 
     <!-- Figma Binding Modal (feature 016) -->
     <FigmaBindingModal v-model="showFigmaBindingModal" />
-  </header>
+  </div>
 </template>
 
 <style scoped>
+.top-bar-host { display: contents; }
+.top-bar__title { margin: 0; font-size: 15px; font-weight: 650; color: var(--color-text-bright); letter-spacing: -.01em; }
 /* Layout sections */
 .top-bar__left {
   display: flex;

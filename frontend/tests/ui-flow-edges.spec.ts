@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { gotoEventModeling } from './helpers/nav'
 
 /**
  * Spec 025 — UI Sticker Flow Edges with Conditional Gateways.
@@ -12,7 +13,7 @@ import { test, expect } from '@playwright/test'
  * require a live Neo4j or LLM provider.
  */
 
-const SCREENSHOT_PATH = 'tests/.artifacts/spec-025-ui-flow.png'
+const SCREENSHOT_PATH = 'test-results/manual-shots/ui-flow-edges/spec-025-ui-flow.png'
 
 // Canned API response — same shape as /api/graph/event-modeling, with the
 // spec 025 additive fields populated.
@@ -125,8 +126,8 @@ test('UI flow layer: NEXT_UI edges and Gateway diamonds render on the event-mode
 
   await page.goto('/')
 
-  // Switch to the Event Modeling tab.
-  await page.getByRole('button', { name: 'Event Modeling', exact: true }).click()
+  // Switch to Event Modeling (rail 프로세스 → top sub-toggle).
+  await gotoEventModeling(page)
 
   // Drive the Pinia store directly: directly populate the canvas refs from
   // our canned response. We skip the network fetch path entirely because
@@ -267,7 +268,7 @@ test('adding processes re-orders UI columns by NEXT_UI flow (C → A → B)', as
   })
 
   await page.goto('/')
-  await page.getByRole('button', { name: 'Event Modeling', exact: true }).click()
+  await gotoEventModeling(page)
 
   // Drive the real navigator → canvas path: fetchEventModeling() loads the
   // response, builds processChains, adds all to canvas, runs _rebuildCanvas()
@@ -295,7 +296,7 @@ test('adding processes re-orders UI columns by NEXT_UI flow (C → A → B)', as
   await expect(uiFlowPaths).toHaveCount(2)
   await expect(uiFlowPaths.first()).not.toHaveAttribute('stroke-dasharray', /.+/)
 
-  await page.screenshot({ path: 'tests/.artifacts/spec-025-ui-flow-reorder.png', fullPage: true })
+  await page.screenshot({ path: 'test-results/manual-shots/ui-flow-edges/spec-025-ui-flow-reorder.png', fullPage: true })
 })
 
 test('adding one process pulls in NEXT_UI-connected processes', async ({ page }) => {
@@ -314,7 +315,7 @@ test('adding one process pulls in NEXT_UI-connected processes', async ({ page })
   })
 
   await page.goto('/')
-  await page.getByRole('button', { name: 'Event Modeling', exact: true }).click()
+  await gotoEventModeling(page)
 
   // REORDER_RESPONSE has 3 separate command-centric processes (cmd-A/B/C),
   // but the NEXT_UI edges C→A→B chain all three UIs into one journey.
@@ -406,7 +407,7 @@ test('chain-following ordering keeps NEXT_UI-connected columns adjacent (short l
   })
 
   await page.goto('/')
-  await page.getByRole('button', { name: 'Event Modeling', exact: true }).click()
+  await gotoEventModeling(page)
 
   const seq = await page.evaluate(async () => {
     const root = document.querySelector('#app') as any
@@ -438,7 +439,7 @@ test('NEXT_UI lines: Bezier curve by default, toolbar toggle switches to straigh
   })
 
   await page.goto('/')
-  await page.getByRole('button', { name: 'Event Modeling', exact: true }).click()
+  await gotoEventModeling(page)
   await page.evaluate(async (resp) => {
     const root = document.querySelector('#app') as any
     const store = root.__vue_app__.config.globalProperties.$pinia._s.get('eventModeling')

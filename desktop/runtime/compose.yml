@@ -210,6 +210,9 @@ services:
       ROBO_LLM_API_KEY: ${ROBO_LLM_API_KEY:-}
       ROBO_EMBED_API_KEY: ${ROBO_EMBED_API_KEY:-}
       ROBO_SEARCH_LLM_API_KEY: ${ROBO_SEARCH_LLM_API_KEY:-}
+      # Claude Code 다리(claude_code_bridge.yaml, desktop lite 프로필)가 부르는 호스트 백엔드
+      # 포트 — 실행마다 바뀐다. 다리를 안 쓰는 프로필에서는 비어 있어도 된다.
+      ROBO_ARCHITECT_API_PORT: ${ROBO_ARCHITECT_API_PORT:-}
     volumes:
       - shared_data:/data
     depends_on:

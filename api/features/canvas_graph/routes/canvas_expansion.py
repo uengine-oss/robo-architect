@@ -825,7 +825,7 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
         ctx_result = session.run(context_query, node_id=node_id)
         ctx_record = ctx_result.single()
 
-        if not ctx_record:
+        if not ctx_record or ctx_record["n"] is None:
             SmartLogger.log(
                 "WARNING",
                 "Expand-with-BC aborted: node_id not found.",
@@ -853,7 +853,8 @@ async def expand_node_with_bc(node_id: str, request: Request) -> dict[str, Any]:
             seen_ids.add(bc["id"])
             main_node["bcId"] = bc["id"]
 
-        nodes.append(main_node)
+        if node_id not in seen_ids:  # BC 자신을 펼칠 때 부모 BC 와 겹치지 않게
+            nodes.append(main_node)
         seen_ids.add(node_id)
 
         if node_type == "BoundedContext":

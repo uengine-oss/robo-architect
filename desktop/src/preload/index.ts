@@ -59,6 +59,7 @@ import type {
   DesktopBridge,
   DesktopSettings,
   DesktopSettingsWritable,
+  FigmaPluginRevealResult,
   IpcResult,
   IpcSubscriptionChannel,
   IpcSubscriptionMap,
@@ -84,6 +85,8 @@ import type {
   LauncherDesktopBridge,
   LauncherEnterInput,
   LauncherEnterResult,
+  GraphProject,
+  ProjectsCreateInput,
   ProbeStatusInput,
   ProbeStatusResult,
   ProjectRootChooseResult,
@@ -161,6 +164,10 @@ const launcherBridge: LauncherDesktopBridge = {
       invoke<LauncherEnterResult>("launcher:enter", input),
     reopen: () => invoke<{ ok: true }>("launcher:reopen"),
   },
+  projects: {
+    list: () => invoke<GraphProject[]>("projects:list"),
+    create: (input: ProjectsCreateInput) => invoke<GraphProject[]>("projects:create", input),
+  },
 };
 
 // `DesktopBridge` now also includes the launcher surface (via module
@@ -181,7 +188,7 @@ const fsBridge: FsBrowserDesktopBridge = {
   },
 };
 
-const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher" | "fs"> = {
+const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher" | "projects" | "fs"> = {
   app: {
     getRuntimeState: () => invoke<RuntimeState>("app:getRuntimeState"),
     openExternal: (params: OpenExternalParams) =>
@@ -228,6 +235,9 @@ const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "
   logs: {
     reveal: () => invoke<{ ok: true }>("logs:reveal"),
   },
+  figma: {
+    revealPlugin: () => invoke<FigmaPluginRevealResult>("figma:revealPlugin"),
+  },
   update: {
     check: () => invoke<UpdateCheckResult>("update:check"),
     apply: () => invoke<{ ok: true }>("update:apply"),
@@ -237,3 +247,37 @@ const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "
 // Merge 023 surface + 032 launcher surface into the single `window.desktop`
 // object. Spread is safe because the two halves share no top-level keys.
 contextBridge.exposeInMainWorld("desktop", { ...bridge, ...launcherBridge, ...fsBridge });
+
+// Tabbed-window shell (main/tabs.ts) — the same surface as Ontological Studio's `liteShell`.
+// Main checks who is asking: tab-strip calls are honoured only from a window's own shell page;
+// a tab may open another tab, read the session and open the fixed folders.
+contextBridge.exposeInMainWorld("raShell", {
+  platform: process.platform,
+  /** 'code' (the project's code folder) | 'logs' | 'data' */
+  open: (what: string) => ipcRenderer.invoke("shell:open", String(what)),
+  info: () => ipcRenderer.invoke("shell:info"),
+  /** The open project ({ graph, projectRoot, identity, connectionId }) or null. */
+  session: () => ipcRenderer.invoke("shell:session"),
+  onSession: (cb: (s: unknown) => void) => {
+    ipcRenderer.on("shell:session", (_e: IpcRendererEvent, s: unknown) => cb(s));
+  },
+  /** Open (or switch to) a project — shell page only. */
+  openProject: (graph: string, projectRoot: string) =>
+    ipcRenderer.invoke("shell:project:open", { graph: String(graph), projectRoot: String(projectRoot) }),
+  isFullScreen: () => ipcRenderer.invoke("shell:is-fullscreen"),
+  onFullScreen: (cb: (on: boolean) => void) => {
+    ipcRenderer.on("shell:fullscreen", (_e: IpcRendererEvent, on: boolean) => cb(!!on));
+  },
+  newWindow: () => ipcRenderer.invoke("shell:window:new"),
+  /** { view?: 'Proposals'|'Stories'|…, proposal?: 'PRO-001', constitution?: true } */
+  openTab: (target: Record<string, unknown>) => ipcRenderer.invoke("shell:tabs:open", target),
+  tabs: {
+    get: () => ipcRenderer.invoke("shell:tabs:get"),
+    activate: (id: string) => ipcRenderer.invoke("shell:tabs:activate", String(id)),
+    close: (id: string) => ipcRenderer.invoke("shell:tabs:close", String(id)),
+    menu: (id: string) => ipcRenderer.invoke("shell:tabs:menu", String(id)),
+    onChange: (cb: (state: unknown) => void) => {
+      ipcRenderer.on("shell:tabs", (_e: IpcRendererEvent, state: unknown) => cb(state));
+    },
+  },
+});

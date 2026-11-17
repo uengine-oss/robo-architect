@@ -65,6 +65,24 @@ def _mcp_args() -> list[str]:
     config = {"mcpServers": {"robo-cluster": {"type": "http", "url": cluster_mcp_url()}}}
     return ["--mcp-config", json.dumps(config)]
 
+# 영어 모드(데스크톱 ROBO_LANG=en): 스킬 본문과 사람 프롬프트는 한국어로 쓰여 있어 결과도 한국어로
+# 나온다. 앱 언어가 영어면 생성 결과를 영어로 쓰라는 지시를 사람 프롬프트 끝에 덧붙인다.
+# 요청 언어(contextvar)는 백그라운드 실행에서 비어 en-US 로 떨어지므로 쓰지 않는다 — 한국어 모드는 그대로.
+_ENGLISH_OUTPUT_DIRECTIVE = (
+    "\n\n---\nOUTPUT LANGUAGE: English. Write every human-readable value you produce in English — "
+    "names and descriptions of bounded contexts, features, user stories, acceptance criteria (Given/When/Then), "
+    "processes and steps, plan text, decisions, task titles, reasons, summaries, and every narration or progress "
+    "line — even where the instructions above say to write in Korean. Keep code identifiers in their usual form "
+    "(e.g. PascalCase aggregates, commands, events) and keep protocol markers exactly as specified."
+)
+
+
+def _with_output_language(human_prompt: str) -> str:
+    if os.environ.get("ROBO_LANG", "").lower().startswith("en"):
+        return human_prompt + _ENGLISH_OUTPUT_DIRECTIVE
+    return human_prompt
+
+
 # _stream_process_chunks 내부 큐 종료/에러 신호용 센티넬.
 _STREAM_DONE = object()
 _STREAM_ERR = object()
@@ -248,6 +266,7 @@ async def run_skill_once(
     스킬을 단회 실행하고 stdout 전체를 문자열로 반환한다.
     JSON 블록 추출이 필요한 경우 호출자가 직접 파싱.
     """
+    human_prompt = _with_output_language(human_prompt)
     sf = skill_path(skill_root, skill_name)
 
     if not sf.exists():
@@ -339,6 +358,7 @@ async def run_skill_lines(
     --output-format stream-json 으로 실시간 tool-use 이벤트를 포함해 스트리밍.
     protocol lines (TASK_START:, TASK_DONE:, PHASE:) + TOOL:ToolName:path 형식으로 yield.
     """
+    human_prompt = _with_output_language(human_prompt)
     sf = skill_path(skill_root, skill_name)
 
     if not sf.exists():

@@ -25,6 +25,8 @@ export const useSessionStore = defineStore('session', () => {
   const user = ref(null)
   const connectionId = ref(null)
   const projectRoot = ref(null)
+  // lite: Ontological DB 의 프로젝트 그래프 (번들 연결일 때만)
+  const graph = ref(null)
   // In web mode the launcher never runs, so `entered` is true from the start.
   // In desktop mode it starts false and flips after launcher:enter succeeds.
   const entered = ref(!IS_DESKTOP)
@@ -38,10 +40,11 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /** Called by EnterAction after `launcher.enter()` returns ok. */
-  function commitProfile({ identity, activeConnectionId, projectRoot: root }) {
+  function commitProfile({ identity, activeConnectionId, projectRoot: root, graph: g = null }) {
     user.value = identity
     connectionId.value = activeConnectionId
     projectRoot.value = root
+    graph.value = g
     entered.value = true
   }
 
@@ -54,6 +57,7 @@ export const useSessionStore = defineStore('session', () => {
     user.value = null
     connectionId.value = null
     projectRoot.value = null
+    graph.value = null
     entered.value = !IS_DESKTOP
   }
 
@@ -61,6 +65,7 @@ export const useSessionStore = defineStore('session', () => {
     user,
     connectionId,
     projectRoot,
+    graph,
     entered,
     isDesktop,
     hasIdentity,

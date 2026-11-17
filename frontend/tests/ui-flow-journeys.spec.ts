@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { gotoEventModeling } from './helpers/nav'
 import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
@@ -38,7 +39,7 @@ async function bootEventModeling(page) {
     })
   })
   await page.goto('/')
-  await page.getByRole('button', { name: 'Event Modeling', exact: true }).click()
+  await gotoEventModeling(page)
 }
 
 test('journeyChains groups PDF-derived NEXT_UI into journeys + leftovers', async ({ page }) => {

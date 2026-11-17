@@ -125,6 +125,11 @@ export interface RuntimeState {
    * 쟀다"** 다. 둘을 뭉치면 기동 초반에 "도커를 설치하세요"가 잘못 뜬다.
    */
   dockerAvailable?: boolean | null;
+  /**
+   * desktop 판의 프로필(main/desktop-profile.ts). 런처가 lite 의 프로젝트(그래프) 모드를
+   * 켤지 이것으로 정한다. 옛 main 은 안 보낸다 — 없으면 enterprise 로 본다.
+   */
+  desktopProfile?: "enterprise" | "lite";
   appVersion: string;
   backendPort: number | null;
   boltPort: number | null;
@@ -202,6 +207,18 @@ export interface OpenExternalParams {
  * Per-channel signature map. Each entry: `[RequestArgs, ResponseData]`.
  * The actual transport always wraps `ResponseData` in `IpcResult<ResponseData>`.
  */
+/**
+ * Figma 플러그인 묶음을 꺼내 놓은 자리.
+ *
+ * 사용자는 이 폴더의 `manifest.json` 을 Figma 의
+ * Plugins → Development → Import plugin from manifest… 에서 고른다.
+ * 설치 폴더가 아니라 앱 데이터 자리다 — Figma 가 경로를 기억하므로 앱을
+ * 업데이트·삭제해도 남아야 한다(`main/figma-plugin.ts` 머리말).
+ */
+export interface FigmaPluginRevealResult {
+  dir: string;
+}
+
 export interface IpcRequestMap {
   "app:getRuntimeState": [void, RuntimeState];
   "settings:get": [void, SettingsGetResult];
@@ -225,6 +242,7 @@ export interface IpcRequestMap {
   "runtime:openDiagnostics": [{ serviceId?: ManagedServiceId }, { ok: true }];
   // 줄은 **이미 가려져** 온다(`service-logs.maskSecrets`) — 렌더러가 또 가리지 않는다.
   "runtime:serviceLogs": [{ serviceId: ManagedServiceId; tail?: number }, ServiceLogs];
+  "figma:revealPlugin": [void, FigmaPluginRevealResult];
 }
 
 export type IpcChannel = keyof IpcRequestMap;
@@ -239,6 +257,25 @@ export interface BackendStatusEvent {
   boltPort: number | null;
   /** Short human-readable reason; never a stack trace, never a secret. */
   detail?: string;
+  /** While `starting-db`: the Docker image being fetched (first launch of a release). */
+  progress?: ImagePullProgress;
+}
+
+/** One step of getting the stack's images (main/docker-images.ts). */
+export interface ImagePullProgress {
+  phase: "pulling" | "loading" | "verifying";
+  /** manifest key of the image — graphDb, graphBolt, analyzer, catalog, fabric, parser, gateway */
+  name: string;
+  ref: string;
+  /** 1-based position among the images that have to be fetched */
+  index: number;
+  count: number;
+  /** this image: bytes so far / its size (0 when not known yet) */
+  currentBytes: number;
+  totalBytes: number;
+  /** all images to fetch together */
+  overallBytes: number;
+  overallTotal: number;
 }
 
 export interface UpdateStateEvent {
@@ -303,6 +340,10 @@ export interface DesktopBridge {
     onBackendStatus(cb: (e: BackendStatusEvent) => void): Unsubscribe;
     onUpdateState(cb: (e: UpdateStateEvent) => void): Unsubscribe;
     onDataSourceChanged(cb: (e: DataSourceChangedEvent) => void): Unsubscribe;
+  };
+  figma: {
+    /** 묶음을 앱 데이터로 꺼내고 그 폴더를 연다. `dir` 안의 manifest.json 을 Import 한다. */
+    revealPlugin(): Promise<IpcResult<FigmaPluginRevealResult>>;
   };
   settings: {
     get(): Promise<IpcResult<SettingsGetResult>>;

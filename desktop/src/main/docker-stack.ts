@@ -2,10 +2,14 @@
  * Packaged Analyzer stack lifecycle.
  *
  * The distributable Electron app keeps the filesystem/PTY-sensitive Architect
- * API on the Windows host and runs the remaining services in one app-owned
- * Docker Compose project. This module is the only place that knows how to:
+ * API on the host and runs the remaining services in one app-owned Docker
+ * Compose project. This module is the only place that knows how to:
  *
- *   manifest -> offline image archive -> Compose environment -> warm stack
+ *   manifest -> images (local / archive / registry pull) -> Compose environment -> warm stack
+ *
+ * Getting the images is docker-images.ts. What differs between the desktop
+ * profiles (enterprise · lite) is named in desktop-profile.ts; here it shows up
+ * as `isLiteProfile()` checks only.
  *
  * It intentionally does not own the Architect API child process; backend.ts
  * consumes the returned ports and starts that process with bundled Python.
@@ -17,6 +21,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getDataDir } from "./data-dir";
+import { isLiteProfile } from "./desktop-profile";
+import { ensureImages as fetchImages, type ImageEntry, type ProgressListener } from "./docker-images";
+import { GRAPH_ANALYSIS, GRAPH_DESIGN, GRAPH_USER } from "./graphs";
 import {
   graphEndpoint,
   graphTopology,
@@ -29,6 +36,7 @@ import net from "node:net";
 import { pickFreePort } from "./ports";
 import type { ManagedServiceId } from "../shared/runtime-contract";
 import { getSecret, setSecret } from "./secret-store";
+import { loadSettings } from "./settings";
 
 const MANIFEST_NAME = "runtime-manifest.json";
 // 2: pdf2bpmn 포트가 늘어 포트가 넷에서 다섯이 됐다. 옛 상태는 버리고 다시 뽑는다.
@@ -42,7 +50,17 @@ const STATE_SCHEMA_VERSION = 5;
 // 4: images.neo4j → images.graphDb + images.graphBolt, graphs 항목 추가.
 // 5: 중앙 DB 서버에서 실행할 authority image를 오프라인 archive 계약에 추가.
 const MANIFEST_SCHEMA_VERSION = 5;
-export const COMPOSE_PROJECT_NAME = "robo-architect-desktop";
+// lite 프로필의 런타임 빌더(`scripts/packaged-runtime-common.sh`)는 4 를 쓴다 —
+// authority·pdf2bpmn·graphs 가 없는 판이다. 그 프로필에서만 함께 받는다.
+const LITE_MANIFEST_SCHEMA_VERSIONS: readonly number[] = [4, MANIFEST_SCHEMA_VERSION];
+/** lite 런타임에 없는 이미지 — 중앙 권한 API 와 문서→BPMN 은 납품판의 것이다. */
+const LITE_OPTIONAL_IMAGES: readonly string[] = ["authority", "pdf2bpmn"];
+const DEFAULT_COMPOSE_PROJECT_NAME = "robo-architect-desktop";
+// ROBO_COMPOSE_PROJECT: a second stack next to the usual one (packaged-app test with a
+// fresh data folder — the same project name would recreate the running containers).
+export const COMPOSE_PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/.test(process.env.ROBO_COMPOSE_PROJECT ?? "")
+  ? (process.env.ROBO_COMPOSE_PROJECT as string)
+  : DEFAULT_COMPOSE_PROJECT_NAME;
 // 저장소 비밀번호. **이제 Postgres role 의 비밀번호다** — Bolt 게이트웨이는 받은
 // 자격증명을 그대로 Postgres 에 넘긴다(사용자 = role). 이름을 엔진 중립으로 옮기되,
 // 이미 깔린 앱의 키체인 항목을 잃지 않도록 옛 id 를 한 번 읽어 옮긴다.
@@ -57,25 +75,38 @@ export interface RuntimeManifest {
   schemaVersion: number;
   releaseId: string;
   composeFile: string;
-  imageArchive: string;
-  imageArchiveSha256: string;
+  /**
+   * 오프라인 설치용 `docker save` 묶음. enterprise 는 필수(사내망은 pull 을 못 한다),
+   * lite 는 없을 수 있다 — 그때는 `imagePull` 로 레지스트리에서 받는다.
+   */
+  imageArchive?: string | null;
+  imageArchiveSha256?: string | null;
+  /** release runtimes: missing images are pulled from the registry the references name */
+  imagePull?: boolean;
+  /** lite 빌더가 적는 판 이름(`lite`). 정보용 — 동작은 프로필이 정한다. */
+  releaseVariant?: string;
   images: {
     /** Ontological 확장이 든 PostgreSQL. */
     graphDb: string;
     /** Neo4j Bolt 프로토콜 게이트웨이. 앱 코드는 이쪽만 본다. */
     graphBolt: string;
-    /** DB 서버에서만 실행하는 중앙 계정·프로젝트 권한 API. */
-    authority: string;
+    /** DB 서버에서만 실행하는 중앙 계정·프로젝트 권한 API. lite 런타임에는 없다. */
+    authority?: string;
     analyzer: string;
     catalog: string;
     fabric: string;
     parser: string;
     gateway: string;
-    pdf2bpmn: string;
+    /** lite 런타임에는 없다(`compose.lite.yml` 이 서비스를 끈다). */
+    pdf2bpmn?: string;
     /** open-pencil 와이어프레임 렌더러. 없으면 sceneGraph 가 조용히 빈다. */
     wireframe: string;
   };
   imageIds: Record<keyof RuntimeManifest["images"], string>;
+  /** registry manifest digests recorded when the release images were pushed — pulls are pinned to them */
+  imageDigests?: Partial<Record<keyof RuntimeManifest["images"], string>>;
+  /** compressed download sizes (bytes) — the progress total before the registry reports one */
+  imageSizes?: Partial<Record<keyof RuntimeManifest["images"], number>>;
   /**
    * 설계 graph 와 분석 graph 의 이름. **반드시 달라야 한다** — 분석은 대상 graph 를
    * 통째로 비우고 다시 쓰므로, 같으면 분석이 설계를 지운다(FR-008).
@@ -198,15 +229,19 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     throw new Error("runtime.manifest_invalid: root must be an object");
   }
   const manifest = raw as RuntimeManifest;
-  if (manifest.schemaVersion !== MANIFEST_SCHEMA_VERSION) {
+  const lite = isLiteProfile();
+  const acceptedVersions = lite ? LITE_MANIFEST_SCHEMA_VERSIONS : [MANIFEST_SCHEMA_VERSION];
+  if (!acceptedVersions.includes(manifest.schemaVersion)) {
     throw new Error(
-      `runtime.manifest_version_unsupported: expected=${MANIFEST_SCHEMA_VERSION} actual=${manifest.schemaVersion}`,
+      `runtime.manifest_version_unsupported: expected=${acceptedVersions.join("|")} actual=${manifest.schemaVersion}`,
     );
   }
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(manifest.releaseId ?? "")) {
     throw new Error("runtime.manifest_invalid: releaseId");
   }
-  if (!/^[a-f0-9]{64}$/.test(manifest.imageArchiveSha256 ?? "")) {
+  // enterprise 는 묶음이 **반드시** 있다(사내망은 pull 을 못 한다). lite 는 없으면 pull 이다.
+  const archiveRequired = !lite || !manifest.imagePull;
+  if ((archiveRequired || manifest.imageArchive) && !/^[a-f0-9]{64}$/.test(manifest.imageArchiveSha256 ?? "")) {
     throw new Error("runtime.manifest_invalid: imageArchiveSha256");
   }
   for (const [name, image] of Object.entries(manifest.images ?? {})) {
@@ -214,7 +249,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
       throw new Error(`runtime.manifest_invalid: images.${name}`);
     }
   }
-  for (const required of [
+  const requiredImages = [
     "graphDb",
     "graphBolt",
     "authority",
@@ -225,13 +260,25 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     "gateway",
     "pdf2bpmn",
     "wireframe",
-  ]) {
+  ].filter((name) => !(lite && LITE_OPTIONAL_IMAGES.includes(name)));
+  for (const required of requiredImages) {
     if (!manifest.images?.[required as keyof RuntimeManifest["images"]]) {
       throw new Error(`runtime.manifest_invalid: missing image ${required}`);
     }
-    const imageId = manifest.imageIds?.[required as keyof RuntimeManifest["images"]];
-    if (!/^sha256:[a-f0-9]{64}$/.test(imageId ?? "")) {
-      throw new Error(`runtime.manifest_invalid: imageIds.${required}`);
+  }
+  // 적힌 이미지는 **전부** 신원이 있어야 한다 — lite 가 뺀 둘도, 적혀 있으면 검사한다.
+  for (const name of Object.keys(manifest.images ?? {})) {
+    const key = name as keyof RuntimeManifest["images"];
+    if (!/^sha256:[a-f0-9]{64}$/.test(manifest.imageIds?.[key] ?? "")) {
+      throw new Error(`runtime.manifest_invalid: imageIds.${name}`);
+    }
+    const digest = manifest.imageDigests?.[key];
+    if (digest !== undefined && !/^sha256:[a-f0-9]{64}$/.test(digest)) {
+      throw new Error(`runtime.manifest_invalid: imageDigests.${name}`);
+    }
+    const size = manifest.imageSizes?.[key];
+    if (size !== undefined && !(Number.isInteger(size) && size >= 0)) {
+      throw new Error(`runtime.manifest_invalid: imageSizes.${name}`);
     }
   }
   for (const required of [
@@ -248,6 +295,10 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     if (!/^[a-f0-9]{40}$/.test(manifest.source?.[required] ?? "")) {
       throw new Error(`runtime.manifest_invalid: source.${required}`);
     }
+  }
+  if (!manifest.graphs && lite) {
+    // lite 매니페스트에는 graphs 가 없다 — 그 가지에서 graph 이름은 상수였다(graphs.ts).
+    manifest.graphs = { user: GRAPH_USER, design: GRAPH_DESIGN, analysis: GRAPH_ANALYSIS };
   }
   const graphs = manifest.graphs;
   if (!graphs || typeof graphs !== "object") {
@@ -266,8 +317,9 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
   // **imageArchive 는 여기서 존재를 보지 않는다.** 설치 파일 안에 넣지 않으므로
   // (NSIS 32비트 한계 — `resolveImageArchive` 주석) 패키지 밖에 있을 수 있다.
   // 값이 파일 이름으로 쓸 만한지만 본다. 실제 자리와 무결성은 기동 시점에 잰다.
-  if (typeof manifest.imageArchive !== "string"
-      || !/^[A-Za-z0-9._-]{1,120}$/.test(path.basename(manifest.imageArchive))) {
+  if ((archiveRequired || manifest.imageArchive)
+      && (typeof manifest.imageArchive !== "string"
+        || !/^[A-Za-z0-9._-]{1,120}$/.test(path.basename(manifest.imageArchive)))) {
     throw new Error("runtime.manifest_invalid: imageArchive");
   }
   ensureRuntimeChild(root, manifest.architect.python, "architect.python");
@@ -275,7 +327,9 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
   if (!/^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/.test(manifest.architect.entrypoint)) {
     throw new Error("runtime.manifest_invalid: architect.entrypoint");
   }
-  for (const required of ["analyzer", "catalog", "fabric", "parser", "gateway", "pdf2bpmn", "architect"]) {
+  const requiredEnvironment = ["analyzer", "catalog", "fabric", "parser", "gateway", "pdf2bpmn", "architect"]
+    .filter((name) => !(lite && LITE_OPTIONAL_IMAGES.includes(name)));
+  for (const required of requiredEnvironment) {
     const snapshot = manifest.environment?.[required as keyof RuntimeManifest["environment"]];
     if (!snapshot || !/^[a-f0-9]{64}$/.test(snapshot.sha256 ?? "")) {
       throw new Error(`runtime.manifest_invalid: environment.${required}.sha256`);
@@ -287,11 +341,11 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
 
 async function runDocker(
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; secret?: string } = {},
+  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; secret?: string; input?: string } = {},
 ): Promise<string> {
   const timeout = options.timeoutMs ?? DOCKER_COMMAND_TIMEOUT_MS;
   return await new Promise<string>((resolve, reject) => {
-    execFile(
+    const child = execFile(
       "docker",
       args,
       {
@@ -315,6 +369,8 @@ async function runDocker(
         );
       },
     );
+    // 비밀 값은 명령줄(프로세스 목록에 보인다)이 아니라 표준 입력으로 넘긴다
+    if (options.input !== undefined) child.stdin?.end(options.input);
   });
 }
 
@@ -458,6 +514,13 @@ function assertCredentialsPresent(manifest: RuntimeManifest): void {
     return;
   }
   // 값은 절대 찍지 않는다 — 있는 것의 이름조차 굳이 남길 이유가 없다.
+  if (isLiteProfile()) {
+    // lite 는 키 없이 도는 판이다 — 분석기·검색 LLM 과 호스트 API 가 이 PC 의 Claude Code
+    // 브리지를 쓴다(llm-bridge-env.ts). 비어 있으면 못 쓰는 것(카탈로그 설명·FK 추론)이
+    // 있을 뿐이라 이름만 남기고 간다. 셸 홈의 키 행이 사람에게 같은 말을 한다.
+    log("warn", "runtime.credentials_missing", { names: missing, profile: "lite" });
+    return;
+  }
   log("error", "runtime.credentials_missing", { names: missing });
   throw new Error(
     `runtime.credentials_missing: 이 릴리스는 비밀을 굽지 않는다. ` +
@@ -563,16 +626,6 @@ export function assertAuthPostureNotOverridden(manifest: RuntimeManifest): void 
   );
 }
 
-async function inspectImageId(image: string): Promise<string | null> {
-  try {
-    return await runDocker(["image", "inspect", image, "--format", "{{.Id}}"], {
-      timeoutMs: 20_000,
-    });
-  } catch {
-    return null;
-  }
-}
-
 /**
  * 오프라인 이미지 아카이브를 찾는다.
  *
@@ -596,7 +649,7 @@ function resolveImageArchive(root: string, manifest: RuntimeManifest): string {
   if (override) candidates.push(path.resolve(override));
 
   // manifest 의 값은 파일 이름으로만 쓴다 — 경로 조작을 막는다.
-  const name = path.basename(manifest.imageArchive);
+  const name = path.basename(manifest.imageArchive ?? "");
   const recommended = path.join(getDataDir(), "runtime", name);
   candidates.push(recommended);
   candidates.push(path.join(path.resolve(root), name));
@@ -619,50 +672,63 @@ function resolveImageArchive(root: string, manifest: RuntimeManifest): string {
   );
 }
 
-async function ensureImages(root: string, manifest: RuntimeManifest): Promise<void> {
-  const missing: string[] = [];
-  for (const [name, image] of Object.entries(manifest.images)) {
-    const actualId = await inspectImageId(image);
-    const expectedId = manifest.imageIds[name as keyof RuntimeManifest["images"]];
-    if (actualId !== expectedId) missing.push(image);
-  }
-  if (missing.length === 0) {
-    log("info", "docker.images.reused", {
-      releaseId: manifest.releaseId,
-      count: Object.keys(manifest.images).length,
-    });
-    return;
-  }
-
-  const archive = resolveImageArchive(root, manifest);
-  log("info", "docker.image_archive.verifying", {
-    releaseId: manifest.releaseId,
-    missingCount: missing.length,
+/**
+ * 이미지를 이 PC 에 올린다 — 순서와 검증은 `docker-images.ts` 가 쥔다
+ * (있으면 재사용 → 같은 ID 를 다른 이름으로 갖고 있으면 태그 → 묶음 적재 → 허용되면 pull).
+ *
+ * 묶음의 **자리**는 여기서 찾는다(`resolveImageArchive`). 다만 미리 멈추지 않는다 —
+ * 이미지가 다 있으면 묶음이 없어도 된다(설치 뒤 묶음을 지운 PC). 필요한데 없을 때만
+ * 어디를 봤는지 대며 멈춘다.
+ */
+async function ensureImages(
+  root: string,
+  manifest: RuntimeManifest,
+  onProgress?: ProgressListener,
+): Promise<void> {
+  const images: ImageEntry[] = Object.entries(manifest.images).map(([name, ref]) => {
+    const key = name as keyof RuntimeManifest["images"];
+    return {
+      name,
+      ref: ref as string,
+      id: manifest.imageIds[key],
+      digest: manifest.imageDigests?.[key],
+      size: manifest.imageSizes?.[key],
+    };
   });
-  const actualSha = await sha256File(archive);
-  if (actualSha !== manifest.imageArchiveSha256) {
-    throw new Error(
-      `docker.image_archive_checksum_mismatch: expected=${manifest.imageArchiveSha256} actual=${actualSha}`,
-    );
-  }
-  log("info", "docker.image_archive.loading", {
-    releaseId: manifest.releaseId,
-    missingCount: missing.length,
-  });
-  await runDocker(["load", "--input", archive]);
-  for (const [name, image] of Object.entries(manifest.images)) {
-    const actualId = await inspectImageId(image);
-    const expectedId = manifest.imageIds[name as keyof RuntimeManifest["images"]];
-    if (actualId !== expectedId) {
-      throw new Error(
-        `docker.image_identity_mismatch: image=${image} expected=${expectedId} actual=${actualId ?? "missing"}`,
-      );
+  let archive: { path: string; sha256: string } | null = null;
+  if (manifest.imageArchive) {
+    let located: string;
+    try {
+      located = resolveImageArchive(root, manifest);
+    } catch {
+      // 없을 수 있다 — 쓸 일이 생기면 fetchImages 가 `docker.image_archive_missing` 으로 멈춘다.
+      located = path.join(getDataDir(), "runtime", path.basename(manifest.imageArchive));
     }
+    archive = { path: located, sha256: manifest.imageArchiveSha256 ?? "" };
   }
-  log("info", "docker.image_archive.loaded", {
-    releaseId: manifest.releaseId,
-    count: Object.keys(manifest.images).length,
-  });
+  try {
+    const result = await fetchImages({
+      images,
+      archive,
+      pull: manifest.imagePull === true,
+      runDocker: (args, options) => runDocker(args, options),
+      log,
+      onProgress,
+    });
+    log("info", "docker.images.ready", {
+      releaseId: manifest.releaseId,
+      reused: result.reused.length,
+      tagged: result.tagged,
+      loaded: result.loaded,
+      pulled: result.pulled,
+    });
+  } catch (err) {
+    // 묶음이 필요한데 없다 — **찾아본 자리를 전부 대는** 쪽의 메시지로 바꿔 던진다.
+    if (archive && err instanceof Error && err.message.startsWith("docker.image_archive_missing")) {
+      resolveImageArchive(root, manifest);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -711,6 +777,78 @@ export async function graphPassword(
   const created = randomBytes(32).toString("base64url");
   await setSecret(GRAPH_PASSWORD_SECRET_ID, created);
   return created;
+}
+
+/**
+ * lite 프로필: graph-db 역할의 비밀번호를 이 설치의 값으로 맞춘다.
+ *
+ * 컨테이너 안 유닉스 소켓은 trust(pg_hba `local all all trust`)라 비밀번호 없이 들어가 바꾼다.
+ * healthcheck 는 pg_isready 뿐이라 첫 기동의 초기화 서버에 걸릴 수 있어 몇 번 다시 해 본다.
+ * 끝내 안 되면 경고만 남긴다 — 비밀번호가 맞으면 그대로 뜨고, 틀리면 다음 `up` 이 실제 원인을 보인다.
+ */
+async function syncGraphPassword(
+  root: string,
+  manifest: RuntimeManifest,
+  env: NodeJS.ProcessEnv,
+  password: string,
+  topology: GraphTopology,
+): Promise<void> {
+  if (!/^[A-Za-z0-9_-]+$/.test(password)) throw new Error("docker.graph_password_invalid");
+  const user = manifest.graphs.user;
+  const args = composeArgs(root, manifest, [
+    "exec", "-T", "graph-db", "psql", "-v", "ON_ERROR_STOP=1", "-q", "-U", user, "-d", manifest.graphs.design,
+  ], topology);
+  const input = `ALTER ROLE "${user}" WITH PASSWORD '${password}';\n`;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try {
+      await runDocker(args, { env, secret: password, input, timeoutMs: 30_000 });
+      log("info", "docker.graph_password.synced", { user, attempt });
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
+  log("warn", "docker.graph_password.sync_failed", {
+    user,
+    message: lastError instanceof Error ? lastError.message : String(lastError),
+  });
+}
+
+/**
+ * lite 프로필: 지난 기동에서 (예: 비밀번호가 어긋나) 재시작을 되풀이하던 서비스는 재시작
+ * 대기(백오프) 중이라, `up --wait` 가 그 unhealthy 를 보자마자 실패한다. 비밀번호를 맞춘 뒤
+ * 그런 서비스만 다시 시작시켜 대기를 끊는다.
+ */
+async function restartFailingServices(
+  root: string,
+  manifest: RuntimeManifest,
+  env: NodeJS.ProcessEnv,
+  password: string,
+  topology: GraphTopology,
+): Promise<void> {
+  const listed = await runDocker(
+    composeArgs(root, manifest, ["ps", "--all", "--format", "{{.Service}}\t{{.State}}\t{{.Health}}"], topology),
+    { env, secret: password, timeoutMs: 30_000 },
+  );
+  const failing = listed
+    .split("\n")
+    .map((line) => line.trim().split("\t"))
+    .filter(([service, state, health]) => service && (state === "restarting" || health === "unhealthy"))
+    .map(([service]) => service as string);
+  if (failing.length === 0) return;
+  log("info", "docker.stack.restarting_failing", { services: failing });
+  await runDocker(composeArgs(root, manifest, ["restart", ...failing], topology), { env, secret: password });
+}
+
+/** lite 프로필: 지난번에 들어간 프로젝트 그래프(번들 연결일 때만). */
+async function lastProjectGraph(): Promise<string | null> {
+  const settings = await loadSettings();
+  const profile = settings.lastProfile;
+  if (!profile?.graph) return null;
+  const connection = settings.savedConnections.find((c) => c.id === profile.connectionId);
+  return connection?.source === "bundled" ? profile.graph : null;
 }
 
 /** `DockerStackPorts` 의 키 — 하나라도 빠지면 compose 가 빈 값을 받는다. */
@@ -936,6 +1074,8 @@ function composeEnvironment(
 
 /** 중앙 DB 모드에서 겹쳐 얹는 overlay. `compose.yml` 과 같은 자리에 있다. */
 const REMOTE_GRAPH_COMPOSE = "compose.remote-graph.yml";
+/** lite 프로필에서 겹쳐 얹는 overlay — pdf2bpmn 을 끄고 분석기 LLM 을 Claude 브리지로 둔다. */
+const LITE_COMPOSE = "compose.lite.yml";
 
 function composeArgs(
   root: string,
@@ -952,10 +1092,14 @@ function composeArgs(
     // 로컬 DB 를 되살린다.
     files.push("--file", ensureRuntimeChild(root, REMOTE_GRAPH_COMPOSE, "remoteGraphCompose"));
   }
+  if (isLiteProfile()) {
+    // 이것도 **모든 호출에** 실린다 — 빠진 호출은 pdf2bpmn 이 있다고 보고 그 env_file 을 찾는다.
+    files.push("--file", ensureRuntimeChild(root, LITE_COMPOSE, "liteCompose"));
+  }
   return ["compose", "--project-name", COMPOSE_PROJECT_NAME, ...files, ...command];
 }
 
-export async function startDockerStack(): Promise<DockerStackRuntime> {
+export async function startDockerStack(onProgress?: ProgressListener): Promise<DockerStackRuntime> {
   if (current) return current;
   const root = runtimeDirectory();
   const manifest = readManifest(root);
@@ -969,7 +1113,7 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   // tar 를 다 읽고 나서 "비밀번호가 없다" 고 말하게 된다 — 위의 둘과 같은 이유다.
   const password = await graphPassword(topology);
   await ensureDockerDaemon();
-  await ensureImages(root, manifest);
+  await ensureImages(root, manifest, onProgress);
   // `createState` 가 쓸 수 있는 포트를 물려받으므로 여기서 따로 읽지 않는다.
   // 매번 파일을 다시 쓰는 것은 의도다 — releaseId 를 현재 값으로 맞춘다.
   const state = await createState(manifest.releaseId);
@@ -984,6 +1128,19 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
     // 안 보이나" 를 사람이 추측으로 풀어야 한다.
     graphHost: endpoint.host,
   });
+  if (isLiteProfile() && topology.mode !== "central") {
+    // ⚠ lite: graph-db 를 **먼저** 올려 역할 비밀번호를 이 설치의 값으로 맞춘 뒤 나머지를 올린다.
+    //   POSTGRES_PASSWORD 는 볼륨을 처음 만들 때만 쓰인다 — 앱 데이터만 지우고 다시 설치했거나,
+    //   다른 설치(예전 판 · 개발 실행)가 같은 프로젝트로 만든 볼륨이면 비밀번호가 어긋나
+    //   fabric 이 `password authentication failed for user "robo"` 로 죽는다.
+    //   enterprise 는 이 단계를 거치지 않는다(HEAD 동작 그대로).
+    await runDocker(
+      composeArgs(root, manifest, ["up", "--detach", "--wait", "--wait-timeout", "300", "graph-db"], topology),
+      { env, secret: password },
+    );
+    await syncGraphPassword(root, manifest, env, password, topology);
+    await restartFailingServices(root, manifest, env, password, topology);
+  }
   await runDocker(
     // `--remove-orphans` — compose 에서 **사라진 서비스의 컨테이너를 치운다**.
     // 없으면 compose 는 경고만 하고 그대로 둔다: mindsdb 를 걷어낸 2026-10-27
@@ -1007,7 +1164,10 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   // 폴백으로 내려가는데 **그게 눈에 안 띈다** — 화면에는 그대로 BPM 이 나온다.
   // (폴백 품질이 실제로 얼마나 나쁜지는 아직 안 쟀다.)
   // `load_dotenv()` 는 기본이 override=False 라 여기서 준 값이 번들 .env 를 이긴다.
-  process.env.PDF2BPMN_FACADE_URL = `http://127.0.0.1:${state.ports.pdf2bpmn}`;
+  // lite 런타임에는 pdf2bpmn 이 없다(compose.lite.yml 이 끈다) — 빈 포트를 가리키게 두지 않는다.
+  if (manifest.images.pdf2bpmn) {
+    process.env.PDF2BPMN_FACADE_URL = `http://127.0.0.1:${state.ports.pdf2bpmn}`;
+  }
   process.env.ROBO_CLUSTER_MCP_URL = `http://127.0.0.1:${state.ports.analyzer}/robo/mcp/`;
   // 와이어프레임 렌더러도 **안에서 돈다.** 이 줄이 없으면 Architect 는
   // `open_pencil_client` 의 기본값 `http://localhost:7610` 을 쓰는데, 그건 `dev.sh`
@@ -1027,7 +1187,10 @@ export async function startDockerStack(): Promise<DockerStackRuntime> {
   // **설계와 분석을 갈라 준다.** 예전에는 둘이 같은 값이었는데, 그건 무능이 아니라
   // 제약이었다 — 번들 이미지가 Neo4j Community 라 database 가 하나뿐이었다.
   // 이제 갈라지므로, 여기서 같은 값을 주면 분석이 설계를 지운다.
-  process.env.ROBO_NEO4J_DATABASE = manifest.graphs.design;
+  // lite: 지난번에 들어간 프로젝트 그래프로 띄워, 셸 홈에서 같은 프로젝트로 들어갈 때
+  // 백엔드를 다시 띄우지 않게 한다(enter 가 바꾼다). enterprise 는 설계 graph 그대로.
+  process.env.ROBO_NEO4J_DATABASE =
+    (isLiteProfile() ? await lastProjectGraph() : null) ?? manifest.graphs.design;
   process.env.ROBO_ANALYZER_NEO4J_DATABASE = manifest.graphs.analysis;
   // 사용자·프로젝트 저장소는 Bolt가 아니라 같은 Ontological PostgreSQL에 직접 붙는다.
   // 비밀번호는 파일로 내리지 않고 DPAPI에서 읽은 값을 백엔드 spawn 환경으로만 넘긴다.

@@ -15,7 +15,7 @@
  *   - Auto-update (US2 T031–T037)
  */
 
-import { BrowserWindow, app, dialog, nativeImage, net, protocol, shell } from "electron";
+import { BrowserWindow, Menu, app, dialog, nativeImage, net, protocol, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,6 +23,9 @@ import { pathToFileURL } from "node:url";
 import { IpcErrorCodes, type RuntimeState } from "../shared/ipc-contract";
 
 import { ensureDataDirs, getLogsDir } from "./data-dir";
+import { desktopProfile, desktopProfileSource, isLiteProfile } from "./desktop-profile";
+import { revealFigmaPlugin } from "./figma-plugin";
+import { adoptHostPath } from "./host-path";
 import { backendLogLines, disableConsoleMirror, initLogging, log, revealLogs } from "./logging";
 import { isStreamingResponse } from "./proxy-stream";
 import { RuntimeRegistry } from "./runtime-state";
@@ -78,7 +81,15 @@ import {
 // until each gating task lands a real handler.
 import { registerLauncherIpcStubs } from "./launcher/ipc-handlers";
 import { markPending } from "./launcher/launcher-state";
+// lite 프로필의 창 — Ontological Studio 계열의 탭 창(셸 = 탭 줄 + 홈, 탭 = SPA 화면).
+import { TabWindow, firstWindow, menuItems, reopenLastProject, setPreload, wireShellIpc } from "./tabs";
+// 영어 모드(런타임 번역기): 언어 선택 · 사전 · <head> 주입. lite 프로필에서만 고른다.
+import { currentLang, i18nAsset, initLanguage, injectHtml, langSource, saveLanguage, tr, type Lang } from "./lang";
 
+/**
+ * enterprise 프로필의 단일 창. lite 프로필은 탭 창(tabs.ts)을 쓰므로 여기는 비어 있다.
+ * 창이 어느 쪽이든 `focusAnyWindow` 가 앞으로 꺼낸다.
+ */
 let mainWindow: BrowserWindow | null = null;
 
 // T015 (US1): register `app://` as a privileged scheme so the renderer can
@@ -96,6 +107,11 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// UI 언어 — "ready" 전에 정한다(모든 렌더러의 Chromium --lang 도 함께 정해진다).
+// **lite 프로필만** 고른다. enterprise 는 한국어 고정이다 — 영어 OS 의 사내 PC 가
+// 말없이 영어 모드로 뜨면 안 된다(lang.ts 의 기본값 "ko" 그대로).
+if (isLiteProfile()) initLanguage();
 
 // ---------------------------------------------------------------------------
 // T014 single-instance lock — must run synchronously at module load so the
@@ -118,16 +134,41 @@ if (!gotLock) {
   // explicitly skip the rest of the wiring below in the second instance.
 }
 
-app.on("second-instance", () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+function focusAnyWindow(): void {
+  const w = mainWindow ?? firstWindow()?.win ?? null;
+  if (w) {
+    if (w.isMinimized()) w.restore();
+    w.focus();
   }
+}
+
+app.on("second-instance", () => {
+  focusAnyWindow();
 });
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** 창 셸(탭 줄 + 홈): desktop/resources/shell, 설치본에서는 앱 옆. lite 프로필의 창이다. */
+function resolveShellDir(): string {
+  const dev = path.resolve(app.getAppPath(), "resources", "shell");
+  if (fs.existsSync(dev)) return dev;
+  return path.join(process.resourcesPath, "shell");
+}
+
+/**
+ * 우리 파일 하나. 영어 모드면 HTML(셸 · SPA · 분석기)의 <head> 에 번역기를 넣고,
+ * 그 밖의 파일과 한국어 모드의 모든 페이지는 그대로 낸다.
+ */
+function serveFile(file: string): Promise<Response> | Response {
+  if (currentLang() === "en" && file.endsWith(".html")) {
+    return new Response(injectHtml(fs.readFileSync(file, "utf8")), {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+  return net.fetch(pathToFileURL(file).toString());
+}
 
 function resolveFrontendDist(): string {
   // Dev: `<repo-root>/frontend/dist` lives one level up from `desktop/`.
@@ -301,6 +342,8 @@ function buildRuntimeState(): RuntimeState {
     dataSource: "bundled",
     dataDir: app.getPath("userData"),
     updateState: "idle",
+    // 런처가 lite 의 프로젝트(그래프) 모드를 켤지 이것으로 정한다(desktop-profile.ts).
+    desktopProfile: desktopProfile(),
   };
   // **등록이 비어 있으면 신규 필드를 아예 안 실는다.** 빈 목록을 실으면 렌더러가
   // "서비스가 없다"로 읽고, 그건 "아직 안 쟀다"와 완전히 다른 화면이 된다.
@@ -508,6 +551,23 @@ function registerAppProtocol(): void {
       }
     }
 
+    // 영어 모드: 번역기와 사전(lang.ts).
+    if (pathname.startsWith("/__i18n/")) {
+      const a = i18nAsset(pathname);
+      if (!a) return new Response("Not Found", { status: 404 });
+      return new Response(a.body, { headers: { "content-type": a.type, "cache-control": "no-store" } });
+    }
+
+    // 창 셸(탭 줄 + 홈) — 자기 폴더에 있되 SPA 와 같은 origin 이라 테마 설정과 /api 프록시를 같이 쓴다.
+    if (pathname.startsWith("/__shell/")) {
+      const shellDir = resolveShellDir();
+      const file = path.normalize(path.join(shellDir, pathname.slice("/__shell/".length)));
+      if (!file.startsWith(shellDir + path.sep) || !fs.existsSync(file)) {
+        return new Response("Not Found", { status: 404 });
+      }
+      return serveFile(file);
+    }
+
     // Static SPA assets from frontend/dist.
     const filePath = path.normalize(path.join(frontendDist, pathname));
     if (!filePath.startsWith(frontendDist + path.sep) && filePath !== frontendDist) {
@@ -522,15 +582,56 @@ function registerAppProtocol(): void {
         return new Response("Not Found", { status: 404 });
       }
       // SPA fallback for client-side routing.
-      return net.fetch(pathToFileURL(path.join(frontendDist, "index.html")).toString());
+      return serveFile(path.join(frontendDist, "index.html"));
     }
-    return net.fetch(pathToFileURL(filePath).toString());
+    return serveFile(filePath);
   });
 }
 
 // ---------------------------------------------------------------------------
-// BrowserWindow
+// Windows — 프로필로 갈린다. enterprise: 단일 BrowserWindow(아래) + 런처.
+// lite: 탭 창(tabs.ts) — 셸 홈이 런처를 대신하고, 탭마다 SPA 의 창 처리기가 붙는다.
 // ---------------------------------------------------------------------------
+
+function createWindows(): void {
+  if (isLiteProfile()) {
+    setPreload(path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"));
+    new TabWindow({ icon: path.resolve(app.getAppPath(), "resources", "icons", "icon_512x512.png") });
+    return;
+  }
+  mainWindow = createMainWindow();
+}
+
+/** 언어 / Language: 저장하고 그 언어로 다시 띄운다(ROBO_LANG 이 있으면 여전히 그쪽이 이긴다). */
+function chooseLanguage(next: Lang): void {
+  if (next === currentLang()) return;
+  saveLanguage(next);
+  log("info", "lang.saved", { next, source: langSource() });
+  // the relaunch must not carry a --lang that would override the saved choice
+  app.relaunch({ args: process.argv.slice(1).filter((a) => !/^--lang(=|$)/.test(a)) });
+  app.quit();
+}
+
+/** lite 프로필의 앱 메뉴 — 탭 조작과 언어. enterprise 는 Electron 기본 메뉴 그대로다. */
+function installLiteMenu(): void {
+  const isMac = process.platform === "darwin";
+  const langItem = (code: Lang, label: string): Electron.MenuItemConstructorOptions => ({
+    label,
+    type: "radio",
+    checked: currentLang() === code,
+    click: () => chooseLanguage(code),
+  });
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(isMac ? [{ role: "appMenu" as const }] : []),
+      { role: "editMenu" },
+      { label: tr("탭"), submenu: menuItems() },
+      // the two names stay in their own language — whoever cannot read the other one finds theirs
+      { label: currentLang() === "en" ? "Language" : "언어", submenu: [langItem("ko", "한국어"), langItem("en", "English")] },
+      { role: "windowMenu" },
+    ]),
+  );
+}
 
 function createMainWindow(): BrowserWindow {
   const preloadPath = path.join(app.getAppPath(), "dist", "preload", "preload", "index.js");
@@ -762,6 +863,10 @@ function registerIpcHandlers(): void {
     return logs;
   });
 
+  // Figma 플러그인 묶음 꺼내기 — 설치본 사용자 PC 에는 저장소가 없어서
+  // `manifest.json` 을 직접 구할 길이 없다(`main/figma-plugin.ts` 머리말).
+  registerHandler("figma:revealPlugin", () => revealFigmaPlugin());
+
   registerHandler("app:openExternal", async ({ url }) => {
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
       throw new IpcHandlerError(IpcErrorCodes.BLOCKED_SCHEME, `refused to open: ${url}`);
@@ -782,13 +887,15 @@ function registerIpcHandlers(): void {
 
   // Bridge backend status changes to the renderer.
   let fatalDialogShown = false;
-  onBackendStatusChange((status, detail) => {
+  onBackendStatusChange((status, detail, progress) => {
     const be = getRuntimeBackend();
     pushToRenderer("app:onBackendStatus", {
       status,
       backendPort: be.port,
       boltPort: null,
       detail,
+      // 이미지 내려받기 진행(lite 의 첫 기동은 레지스트리에서 받는다) — 홈이 그린다.
+      progress,
     });
     // **기동이 끝내 실패하면 사람이 볼 수 있게 말한다.**
     //
@@ -845,7 +952,16 @@ function registerIpcHandlers(): void {
 async function bootstrap(): Promise<void> {
   await ensureDataDirs();
   initLogging();
-  log("info", "app.ready", { appVersion: app.getVersion() });
+  log("info", "app.ready", {
+    appVersion: app.getVersion(),
+    profile: desktopProfile(),
+    profileSource: desktopProfileSource(),
+    lang: currentLang(),
+    langSource: langSource(),
+  });
+  // Finder 가 .app 에 주는 PATH 는 비어 있다 — docker 와 claude 를 띄우기 전에 찾아 둔다
+  // (macOS 설치본에서만 로그인 셸을 읽는다. 그 밖에서는 흔한 자리만 덧붙인다).
+  await adoptHostPath(app.isPackaged);
 
   // **죽더라도 기록은 남긴다.**
   //
@@ -918,14 +1034,20 @@ async function bootstrap(): Promise<void> {
 
   registerAppProtocol();
   registerIpcHandlers();
+  if (isLiteProfile()) {
+    wireShellIpc();
+    installLiteMenu();
+  }
 
   // Create the window early so the user gets a splash even while the backend
   // starts up. The SPA proxy returns 503 for /api calls until backend is
   // ready — the renderer will retry; full splash UI lands in T027.
-  mainWindow = createMainWindow();
+  createWindows();
 
   try {
     await startBackend();
+    // lite: 지난 프로젝트(그래프 + 코드 폴더)를 다시 열어 홈의 카드가 바로 듣게 한다.
+    if (isLiteProfile()) await reopenLastProject();
   } catch (err) {
     log("error", "app.backend_start_failed", {
       message: err instanceof Error ? err.message : String(err),

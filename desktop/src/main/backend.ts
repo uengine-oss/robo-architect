@@ -39,14 +39,18 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { RuntimeStatus } from "../shared/ipc-contract";
+import type { ImagePullProgress, RuntimeStatus } from "../shared/ipc-contract";
 
 import {
   resolveBundledArchitectRuntime,
   startDockerStack,
 } from "./docker-stack";
+import { getLogsDir } from "./data-dir";
+import { isLiteProfile } from "./desktop-profile";
+import { currentLang } from "./lang";
 import { pickFreePort } from "./ports";
 import { log } from "./logging";
+import { llmBridgeEnv } from "./llm-bridge-env";
 
 /** 백엔드 루트임을 확정하는 표식 — 후보가 진짜 api/ 프로젝트인지 검증. */
 const BACKEND_MARKER = join("api", "main.py");
@@ -143,6 +147,7 @@ export interface BackendRuntime {
 export type BackendStatusListener = (
   status: RuntimeStatus,
   detail?: string,
+  progress?: ImagePullProgress,
 ) => void;
 
 let child: ChildProcess | null = null;
@@ -156,6 +161,23 @@ export function getRuntimeBackend(): BackendRuntime {
 export function onBackendStatusChange(cb: BackendStatusListener): () => void {
   listeners.add(cb);
   return () => listeners.delete(cb);
+}
+
+/**
+ * Image download progress while the status stays `starting-db` — pushed to the
+ * listeners (the home shows it) but not logged per tick; docker-images.ts logs
+ * each image once.
+ */
+function setProgress(progress: ImagePullProgress): void {
+  for (const cb of listeners) {
+    try {
+      cb(runtime.status, undefined, progress);
+    } catch (err) {
+      log("error", "backend.listener_threw", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }
 
 function setStatus(next: RuntimeStatus, detail?: string): void {
@@ -238,7 +260,7 @@ async function startBackendInternal(): Promise<{ port: number }> {
 
   if (packaged) {
     setStatus("starting-db");
-    const stack = await startDockerStack();
+    const stack = await startDockerStack(setProgress);
     const bundled = resolveBundledArchitectRuntime(stack);
     cwd = bundled.app;
     port = stack.ports.architect;
@@ -280,6 +302,9 @@ async function startBackendInternal(): Promise<{ port: number }> {
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // lite 프로필: 키가 없으면 호스트 API 의 LLM 을 이 PC 의 Claude Code 브리지로 돌린다.
+    // enterprise 는 사내 게이트웨이·납품 키를 쓰므로 건드리지 않는다.
+    ...(packaged && isLiteProfile() ? llmBridgeEnv(process.env, port) : {}),
     PYTHONUNBUFFERED: "1",
     // **stdout 은 UTF-8 이어야 한다.** 아래 `buf.toString()` 이 UTF-8 로 디코딩하고,
     // 한국어 Windows 에서 파이프에 붙은 python 의 기본 인코딩은 cp949 다. 둘이
@@ -291,6 +316,15 @@ async function startBackendInternal(): Promise<{ port: number }> {
     // PYTHONUTF8 를 물려받아 우연히 살아나므로, 개발 중에는 안 보인다.
     PYTHONUTF8: "1",
     PYTHONIOENCODING: "utf-8",
+    // the bundled runtime sits inside the signed app — never write __pycache__ or the backend's
+    // logs (SmartLogger defaults to logs/ under its working directory) there
+    ...(app.isPackaged
+      ? {
+          PYTHONDONTWRITEBYTECODE: "1",
+          MAIN_LOG_PATH: join(getLogsDir(), "backend", "app_flow.jsonl"),
+          DETAIL_LOG_DIR: "details",
+        }
+      : {}),
     API_PORT: String(port),
     ROBO_SPEC_BACKEND_URL: `http://127.0.0.1:${port}`,
     NEO4J_URI: process.env.ROBO_NEO4J_URI ?? process.env.NEO4J_URI,
@@ -314,14 +348,18 @@ async function startBackendInternal(): Promise<{ port: number }> {
     // 비밀번호를 덮어쓰지 않는다 — 비밀을 잘못 넣은 PC 한 대가 그 사용자를
     // 다른 모든 PC 에서 끊어 버리기 때문이다(`projects/roles.py`).
     ROBO_GRAPH_MODE: process.env.ROBO_GRAPH_MODE,
+    // lite 프로필은 로그인·중앙 권한이 없는 단독판이라 묶지 않는다(lite 가지의 동작 그대로).
     AUTH_BIND_CONNECTION:
-      process.env.AUTH_BIND_CONNECTION ?? (packaged ? "true" : undefined),
+      process.env.AUTH_BIND_CONNECTION ?? (packaged && !isLiteProfile() ? "true" : undefined),
     // **설계 graph 로 덮지 않는다.** analyzer 는 대상 graph 를 통째로 비우고 다시
     // 쓰므로, 여기에 설계 graph 가 들어가면 첫 분석에서 설계가 사라진다. 예전에
     // `ROBO_NEO4J_DATABASE` 로 덮던 건 번들 Neo4j 가 Community 라 database 가 하나
     // 뿐이어서였다 — 그때는 그게 유일한 구성이었다. 이제는 갈라져 있다.
     ANALYZER_NEO4J_DATABASE:
       process.env.ROBO_ANALYZER_NEO4J_DATABASE ?? process.env.ANALYZER_NEO4J_DATABASE,
+    // 앱 언어 — 영어 모드면 스킬(claude -p) 결과도 영어로(api/platform/skill_runner._with_output_language).
+    // enterprise 프로필은 언어를 고르지 않으므로 늘 "ko" 다(lang.ts 기본값).
+    ROBO_LANG: currentLang(),
   };
 
   const spawned = spawn(executable, args, {
@@ -417,6 +455,18 @@ export async function retryBackend(): Promise<{ port: number }> {
   return startBackend();
 }
 
+/**
+ * lite: 백엔드가 볼 프로젝트 그래프를 바꾼다. 그래프는 백엔드 환경(NEO4J_DATABASE)으로
+ * 정해지므로 — 헤더 없이 들어오는 MCP 브리지·스킬 호출도 같은 그래프를 봐야 한다 —
+ * 다르면 백엔드만 다시 띄운다(Docker 스택은 그대로). 같으면 아무것도 하지 않는다.
+ */
+export async function useProjectGraph(graph: string): Promise<void> {
+  if (process.env.ROBO_NEO4J_DATABASE === graph && runtime.status === "ready") return;
+  log("info", "backend.project_graph", { from: process.env.ROBO_NEO4J_DATABASE ?? null, to: graph });
+  process.env.ROBO_NEO4J_DATABASE = graph;
+  await retryBackend();
+}
+
 export async function stopBackend(): Promise<void> {
   // 우리가 내리는 것이다 — 아래 `exit` 핸들러가 이것을 크래시로 읽으면 안 된다.
   intentionalStop = true;
@@ -430,6 +480,8 @@ export async function stopBackend(): Promise<void> {
     return;
   }
   log("info", "backend.stop_requested", { pid: c.pid });
+  // 일부러 멈추는 것이다 — exit 핸들러가 이것을 crash 로 알리지 않게 상태를 먼저 내린다.
+  runtime = { ...runtime, status: "initializing" };
   c.kill("SIGTERM");
   const exited = await Promise.race([
     new Promise<boolean>((resolve) => c.once("exit", () => resolve(true))),

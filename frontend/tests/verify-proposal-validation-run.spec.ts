@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { gotoView } from './helpers/nav'
 
 /**
  * '검증' 탭을 열면 검증(robo-sync 구조 검증 + GWT)이 **runner(스트리밍)** 로 자동 트리거되고,
@@ -64,7 +65,7 @@ test('검증 탭 진입 → runner 스트리밍 자동 실행 → 실행 로그 
   })
 
   await page.goto('/')
-  await page.locator('.top-bar__tab', { hasText: 'Proposals' }).click()
+  await gotoView(page, '프로포절')
   await page.locator('.proposal-item', { hasText: ID }).first().click()
   await page.locator('.tab-btn', { hasText: '검증' }).click()
 
@@ -88,7 +89,7 @@ test('검증 진행 중 "중지"로 멈출 수 있다', async ({ page }) => {
   await page.route('**/api/proposals/stream/*/validate', (route) => { held = route /* 절대 fulfill 안 함 */ })
 
   await page.goto('/')
-  await page.locator('.top-bar__tab', { hasText: 'Proposals' }).click()
+  await gotoView(page, '프로포절')
   await page.locator('.proposal-item', { hasText: ID }).first().click()
   await page.locator('.tab-btn', { hasText: '검증' }).click()
 

@@ -291,6 +291,67 @@ def _structural_rule_statement(attributes: dict) -> str:
     return "구조: 직접 조건·효과 없음"
 
 
+# 분석 그래프의 자식 조회.
+#   노드 정체성은 analyzer 의 `product_id` 다(analyzer search/corpus/evidence_reader.py 와 같은 키).
+#   `_id` 는 Ontological DB 가 내부 정수 id 로 해석하므로 쓰지 않는다.
+#   RULE 은 condition(_description) · effects(_descriptions) 를 갖고, 분석기에 따라
+#   statement 와 RULE -HAS_EXAMPLE-> EXAMPLE(given · when_ · then_) 도 갖는다 — 있으면 그것을 쓰고,
+#   없으면 규칙 하나를 예시 하나로(부모 요약 · 조건 · 효과) 만든다.
+# Ontological DB 는 reduce · 노드 목록 이어 붙이기(collect + collect)를 못 해서 쿼리를 나눠 파이썬에서 합친다.
+_RULES_QUERY = (
+    "MATCH (x {product_id: $id, _owner: 'analyzer'})-[:HAS_RULE]->(r:RULE {_owner: 'analyzer'}) "
+    "RETURN r.product_id AS id, coalesce(x.summary, '') AS parent_summary, "
+    "  coalesce(r.condition_description, r.condition, '') AS condition, "
+    "  coalesce(r.effect_descriptions, r.effects, []) AS effects, "
+    "  coalesce(r.statement, '') AS statement_text"
+)
+
+
+_EXAMPLES_QUERY = (
+    "MATCH (r:RULE {product_id: $id, _owner: 'analyzer'})-[:HAS_EXAMPLE]->(e:EXAMPLE) "
+    "RETURN e.product_id AS id, coalesce(e.given, '') AS given, "
+    "  coalesce(e.when_, '') AS when, coalesce(e.then_, '') AS then"
+)
+
+
+_TABLE_QUERIES = (
+    "MATCH (x {product_id: $id, _owner: 'analyzer'})-[:READS|WRITES]->(t:TABLE) "
+    "RETURN DISTINCT t.product_id AS id, t.name AS name",
+    "MATCH (x {product_id: $id, _owner: 'analyzer'})-[:HAS_RULE]->(:RULE)-[:READS|WRITES]->(t:TABLE) "
+    "RETURN DISTINCT t.product_id AS id, t.name AS name",
+)
+
+
+def _rows(session, query: str, **params) -> list[dict]:
+    return [dict(r) for r in session.run(query, **params)]
+
+
+def _graph_rules(session, parent_id: str) -> list[dict]:
+    rules = []
+    for rule in _rows(session, _RULES_QUERY, id=parent_id):
+        effects = rule.get("effects") if isinstance(rule.get("effects"), list) else []
+        examples = [e for e in _rows(session, _EXAMPLES_QUERY, id=rule["id"]) if e.get("id")]
+        if not examples:
+            # 예시 노드가 없는 분석기 — 규칙 하나를 예시 하나로(부모 요약 · 조건 · 효과)
+            examples = [{"id": rule["id"], "given": rule.get("parent_summary", ""),
+                         "when": rule.get("condition") or "", "then": "\n".join(map(str, effects))}]
+        rule.pop("parent_summary", None)
+        statement_text = str(rule.pop("statement_text", "") or "").strip()
+        rule["examples"] = examples
+        rule["statement"] = statement_text or _structural_rule_statement(rule)
+        rules.append(rule)
+    return rules
+
+
+def _graph_tables(session, parent_id: str) -> list[dict]:
+    seen: dict[str, dict] = {}
+    for query in _TABLE_QUERIES:
+        for row in _rows(session, query, id=parent_id):
+            if row.get("id") and row["id"] not in seen:
+                seen[row["id"]] = {"id": row["id"], "name": row.get("name")}
+    return list(seen.values())
+
+
 def resolve_content_refs(strategic_diff: Any, tactical_diff: Any, fetch_children) -> list[dict]:
     """내용 인용(rule 문장·example G/W/T·table 이름)을 실제 노드 꼬리표로 결정론 승격한다.
 
@@ -498,31 +559,8 @@ def enforce_proposal_refs(
                 if parent_id in provenance_children:
                     rule_cache[parent_id] = provenance_children[parent_id]
                     return rule_cache[parent_id]
-                rules = [dict(r) for r in session.run(
-                    "MATCH (x {product_id: $id, _owner: 'analyzer'})-[:HAS_RULE]->"
-                    "      (r:RULE {_owner: 'analyzer'}) "
-                    "RETURN r.product_id AS id, coalesce(r.condition_description, r.condition, '') AS condition, "
-                    "  coalesce(r.effect_descriptions, r.effects, []) AS effects, "
-                    "  [{id: r.product_id, given: coalesce(x.summary, ''), "
-                    "    when: coalesce(r.condition_description, r.condition, ''), "
-                    "    then: reduce(text = '', effect IN coalesce(r.effect_descriptions, r.effects, []) | "
-                    "      text + CASE WHEN text = '' THEN '' ELSE '\\n' END + effect)}] AS examples",
-                    id=parent_id,
-                )]
-                for rule in rules:
-                    rule["statement"] = _structural_rule_statement(rule)
-                # Parent/rule direct table access.
-                # 노드 정체성은 analyzer 의 `product_id` 다(analyzer search/corpus/evidence_reader.py
-                # 와 같은 키). `_id` 는 Ontological DB 가 내부 정수 id 로 해석한다.
-                tables = [dict(r) for r in session.run(
-                    "MATCH (x {product_id: $id, _owner: 'analyzer'}) "
-                    "OPTIONAL MATCH (x)-[:READS|WRITES]->(t1:TABLE) "
-                    "OPTIONAL MATCH (x)-[:HAS_RULE]->(:RULE)-[:READS|WRITES]->(t2:TABLE) "
-                    "WITH collect(DISTINCT t1) + collect(DISTINCT t2) AS ts "
-                    "UNWIND ts AS t WITH DISTINCT t WHERE t IS NOT NULL "
-                    "RETURN t.product_id AS id, t.name AS name",
-                    id=parent_id,
-                )]
+                rules = _graph_rules(session, parent_id)
+                tables = _graph_tables(session, parent_id)
                 rule_cache[parent_id] = {"rules": rules, "tables": tables}
             return rule_cache[parent_id]
 

@@ -20,6 +20,9 @@ import type {
   LauncherEnterResult,
 } from "../../shared/launcher-contract";
 import { connectionPasswordSecretId } from "../../shared/launcher-contract";
+import { useProjectGraph } from "../backend";
+import { isLiteProfile } from "../desktop-profile";
+import { GRAPH_DESIGN } from "../graphs";
 import { IpcHandlerError } from "../ipc";
 import { getSecret } from "../secret-store";
 import { loadSettings, saveSettings } from "../settings";
@@ -28,6 +31,7 @@ import { markConnectionUsed, testConnection } from "./connections";
 import { resolveSessionUser } from "./identity";
 import { canEnter, markEntered } from "./launcher-state";
 import { pushRecentProjectRoot, validateProjectRoot } from "./project-root";
+import { assertProjectExists } from "./projects";
 
 export async function handleLauncherEnter(input: LauncherEnterInput): Promise<LauncherEnterResult> {
   if (!canEnter()) {
@@ -87,13 +91,20 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
     );
   }
 
+  // lite 프로필: 번들 연결이면 프로젝트(그래프)를 고른다 — 연결은 하나, 그래프가 여럿.
+  // enterprise 는 프로젝트 graph 를 요청마다 고르므로(X-Project-Graph · 중앙 권한) 여기서
+  // 백엔드의 graph 를 바꾸지 않는다 — HEAD 동작 그대로.
+  const graph =
+    isLiteProfile() && connection.source === "bundled" ? (input.graph || GRAPH_DESIGN) : undefined;
+  if (graph) await assertProjectExists(graph);
+
   // testConnection throws on any failure with the right NEO4J_* code,
   // which surfaces to the renderer through the ipc envelope.
   await testConnection({
     uri: connection.uri,
     user: connection.user,
     password,
-    database: connection.database ?? "",
+    database: graph ?? connection.database ?? "",
   });
 
   // ---------- persist lastProfile + bump timestamps ----------
@@ -102,6 +113,7 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
     connectionId: connection.id,
     projectRoot,
     enteredAt,
+    ...(graph ? { graph } : {}),
   };
 
   await markConnectionUsed(connection.id);
@@ -119,10 +131,14 @@ export async function handleLauncherEnter(input: LauncherEnterInput): Promise<La
   // 폴더가 없으면 전역 git config 로 푼다(런처 마운트 때 이미 그렇게 한다).
   const authoritativeIdentity = await resolveSessionUser(projectRoot || null);
 
+  // 백엔드를 고른 그래프로 — 다르면 백엔드만 다시 띄우고 준비될 때까지 기다린다.
+  if (graph) await useProjectGraph(graph);
+
   markEntered(profile);
 
   return {
     identity: authoritativeIdentity,
     activeConnectionId: connection.id,
+    ...(graph ? { graph } : {}),
   };
 }

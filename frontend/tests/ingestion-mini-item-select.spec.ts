@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page, type BrowserContext } from '@playwright/test'
+import { gotoView, railItem } from './helpers/nav'
 
 /**
  * Spec 001-requirements-ingestion-sse — mid-generation property preview.
@@ -18,10 +19,7 @@ import { test, expect } from '@playwright/test'
 
 const SID = 'pwtest-mini-item'
 
-test('clicking a streamed mini-item selects the node and opens the inspector', async ({
-  page,
-  context
-}) => {
+async function runMiniItemScenario(page: Page, context: BrowserContext, { viaDesign }: { viaDesign: boolean }) {
   // 1. Seed localStorage so checkAndRestoreSession picks the session.
   await context.addInitScript((sessionId) => {
     localStorage.setItem(
@@ -123,6 +121,9 @@ test('clicking a streamed mini-item selects the node and opens the inspector', a
   })
 
   await page.goto('/')
+  // 시작 화면이 설계 → 프로포절로 바뀌었다(0cefc7ac). 속성 패널(InspectorPanel)은 설계 화면(CanvasWorkspace)에
+  // 있으므로 원래 전제대로 설계를 먼저 연다. viaDesign:false 는 시작 화면에서 바로 누르는 경우(아래 BUG 시험).
+  if (viaDesign) await gotoView(page, '설계')
 
   const panel = page.locator('.floating-panel')
   await expect(panel).toBeVisible({ timeout: 15_000 })
@@ -182,7 +183,27 @@ test('clicking a streamed mini-item selects the node and opens the inspector', a
   //    container becomes visible (panelMode flips to 'inspector').
   //    We don't assert specific Inspector internals (network-coupled); we
   //    only assert that the bridge produced an inspector_open log.
+  if (!viaDesign) await expect(railItem(page, '설계')).toHaveClass(/is-active/) // 화면 전환은 된다
   await expect
     .poll(() => inspectorOpens.length, { timeout: 5_000 })
     .toBeGreaterThan(0)
+}
+
+test('clicking a streamed mini-item selects the node and opens the inspector', async ({
+  page,
+  context
+}) => {
+  await runMiniItemScenario(page, context, { viaDesign: true })
+})
+
+// 제품 결함(보고됨) — aggregate-invariants 의 BUG 시험과 같은 원인. 설계 화면을 아직 열지 않은 채(시작 화면 =
+// 프로포절) 진행 패널의 항목을 누르면 onMiniItemClick 이 activeTab='Design' 과 같은 틱에
+// inspectorRequest.request() 를 보내고, 막 마운트되는 CanvasWorkspace 의 watch(immediate 아님)가 그 요청을 놓쳐
+// 속성 패널이 열리지 않는다. 고쳐지면 '예상 밖 통과'로 알려 주므로 그때 test.fail 을 걷는다.
+test('BUG — mini-item click from the start view opens the inspector on the first Design visit', async ({
+  page,
+  context
+}) => {
+  test.fail(true, 'CanvasWorkspace drops an inspectorRequest made before it mounts (watch not immediate)')
+  await runMiniItemScenario(page, context, { viaDesign: false })
 })

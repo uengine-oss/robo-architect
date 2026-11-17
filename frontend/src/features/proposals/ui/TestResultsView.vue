@@ -65,6 +65,14 @@
           </div>
           <p class="test-item__scenario">{{ item.scenario }}</p>
           <p v-if="item.reason" class="test-item__reason">{{ item.reason }}</p>
+          <!-- 통과하지 않은 항목에는 **다음 동작**을 붙인다. 사유를 사람이 읽어 손으로
+               셀에 옮기던 일을 없앤다(이슈-2026-11-11 §5-③). -->
+          <div v-if="String(item.result).toUpperCase() !== 'PASS' && canFixInCell" class="test-item__actions">
+            <button class="btn btn--outline btn--sm" @click="fixInCell(item)">
+              {{ t('proposals.tests.fixInCell') }}
+            </button>
+            <span class="test-item__actions-hint">{{ t('proposals.tests.fixInCellHint') }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -72,7 +80,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, inject, onMounted } from 'vue'
 import { useProposalsStore } from '../proposals.store'
 import { useI18n } from '../../../app/i18n'
 
@@ -92,6 +100,38 @@ const passRate = computed(() => {
   if (!r || r.totalScenarios === 0) return 0
   return Math.round((r.passed / r.totalScenarios) * 100)
 })
+
+// ③ 항목마다 "다음 동작" — 지금은 하나(코드를 고친다)만 붙인다.
+// 길은 이미 깔려 있다: `openClaudeCode` 가 그 Proposal 의 셀을 열고(이미 있으면 그 셀로
+// 전환) 명령을 주입한다 — 'Claude Code 셀로 이동' 과 **같은 길**이다.
+// ⚠ raw `claude-terminal-open` 이벤트를 직접 쏘지 않는다 — Code 탭이 안 떠 있으면 아무도
+//   받지 않는다. App.vue 의 provide 가 탭 전환까지 해 준다.
+const openClaudeCode = inject('openClaudeCode', null)
+const canFixInCell = computed(() =>
+  !!openClaudeCode && !!store.currentProposal?.sandboxWorktreePath,
+)
+
+/** 터미널에 **한 줄로** 타이핑된다 — 줄바꿈을 접고 길이를 자른다. */
+function oneLine(s, max) {
+  const flat = String(s || '').replace(/\s+/g, ' ').trim()
+  return max && flat.length > max ? flat.slice(0, max) + '…' : flat
+}
+
+function fixInCell(item) {
+  const path = store.currentProposal?.sandboxWorktreePath
+  if (!openClaudeCode || !path) return
+  const cat = item.category === 'structural'
+    ? t('proposals.tests.categoryStructural')
+    : t('proposals.tests.categoryAcceptance')
+  const what = oneLine(item.storyTitle || item.scenario, 160)
+  const why = oneLine(item.reason, 600)
+  // 설계(Tactical Diff)는 손대지 말라고 못 박는다 — 그쪽을 고치는 길은 따로다(§1).
+  const cmd = `${props.proposalId} 검증에서 ${item.result} 가 난 **이 한 건만** 고쳐라. `
+    + `[${item.scenarioId} · ${cat}] ${what}`
+    + (why ? ` / 사유: ${why}` : '')
+    + ' / 설계(Tactical Diff)는 바꾸지 말고 코드를 설계에 맞춰라. 고친 뒤 커밋해라.'
+  openClaudeCode(path, cmd, { proposalId: props.proposalId })
+}
 
 function statusOf() {
   return store.currentProposal?.id === props.proposalId ? store.currentProposal.status : null
@@ -152,6 +192,8 @@ onMounted(async () => {
 .test-item__story { font-weight: 500; flex: 1; }
 .test-item__id { font-family: monospace; font-size: 11px; color: var(--color-text-light); }
 .test-item__scenario { margin: 0; color: var(--color-text); font-size: 13px; }
+.test-item__actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.test-item__actions-hint { font-size: 11px; color: var(--color-text-light); }
 .test-item__reason { margin: 4px 0 0; color: var(--color-danger); font-size: 12px; font-style: italic; }
 .error-msg { color: var(--color-danger); font-size: 12px; margin: 0 0 12px; }
 .spinner { width: 14px; height: 14px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }

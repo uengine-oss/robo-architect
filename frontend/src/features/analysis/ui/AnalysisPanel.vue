@@ -17,6 +17,8 @@
  * 루트를 다시 읽고, 달라졌을 때만 remote 를 다시 마운트한다.
  */
 import { ref, computed, inject, watch, onBeforeUnmount, onActivated } from 'vue'
+// 통합 P4 — 레거시 메뉴는 앱 레일(SideRail)이 그린다. 분석기 왼쪽 메뉴는 숨기고 고른 메뉴만 주고받는다.
+import { legacyFeature, bindLegacyNav } from '../legacyNav'
 import { useProjectsStore } from '@/features/projects/projects.store.js'
 import { useAuthStore } from '@/features/auth/auth.store.js'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
@@ -142,13 +144,19 @@ async function mountRemote() {
     // onProjectRootChange: analyzer 화면에서 폴더를 바꾸면 host 가 저장한다.
     // 저장하지 않으면 다음 마운트에 예전 값으로 조용히 돌아간다. Code 탭·런처와
     // 같은 키를 쓰므로 화면 간에 어긋나지도 않는다.
+    // hideNav · onFeatureChange: 메뉴는 앱 레일이 그린다(lite 셸, 통합 P4).
+    const want = legacyFeature.value
     unmountRemote = remote.default.mount(hostEl.value, {
       embedded: true,
       projectRoot,
       neo4j,
       neo4jDatabase,
       onProjectRootChange: persistRoot,
+      hideNav: true,
+      onFeatureChange: (id) => { legacyFeature.value = id },
     })
+    bindLegacyNav((id) => remote.default.setFeature?.(id))
+    if (want !== legacyFeature.value) remote.default.setFeature?.(want)
     mountedRoot = projectRoot
     mountedDatabase = neo4jDatabase
   } catch (err) {
@@ -169,6 +177,7 @@ function persistRoot(path) {
 }
 
 function teardown() {
+  bindLegacyNav(null)
   try { unmountRemote?.() } catch { /* 이미 해제됨 */ }
   unmountRemote = null
   // remote 가 자기 DOM 을 남기고 가더라도 다음 마운트가 그 위에 겹치지 않게.

@@ -1,0 +1,26 @@
+# desktop **lite 프로필**의 overlay — `compose.yml` 위에 얹는다(docker-stack.ts `composeArgs`).
+#
+# 판은 web · desktop 둘이고 lite 는 desktop 의 한 프로필이다(desktop-profile.ts). compose 도
+# 따로 두지 않는다: 바탕은 `compose.yml` 하나이고, lite 에서 **달라지는 것만** 여기 적는다.
+# enterprise(기본)는 이 파일을 싣지 않는다.
+#
+# ⚠ `!reset` 은 compose v2.24.4 이상이다(Docker Desktop 4.27+).
+
+services:
+  # 문서→BPMN 은 납품판의 것이다. lite 런타임에는 이미지도 `config/pdf2bpmn.env` 도 없다.
+  # 프로필로 빼 두면 `up` 이 띄우지 않는다. env_file·마운트를 비우는 이유: 안 띄우는 서비스라도
+  # compose 가 프로젝트를 읽을 때 없는 파일을 찾다가 멈출 수 있다.
+  pdf2bpmn:
+    profiles: ["enterprise-only"]
+    image: ${ROBO_IMAGE_PDF2BPMN:-robo-disabled/pdf2bpmn:none}
+    env_file: !reset []
+    volumes: !reset []
+
+  # 분석기·검색 LLM 은 이 PC 의 Claude Code 다리(`claude_code_bridge`)다. 그 설정은
+  # `config/analyzer.env` 에 `ROBO_LLM_API_KEY=claude-code-bridge` 로 들어 있는데,
+  # `compose.yml` 의 `environment:`(`${ROBO_LLM_API_KEY:-}`)가 env_file 을 이겨 **빈 값으로
+  # 덮는다.** 여기서 기본값을 다리 값으로 되돌린다. 키를 넣은 사람은 그 값이 이긴다.
+  analyzer:
+    environment:
+      ROBO_LLM_API_KEY: ${ROBO_LLM_API_KEY:-claude-code-bridge}
+      ROBO_SEARCH_LLM_API_KEY: ${ROBO_SEARCH_LLM_API_KEY:-claude-code-bridge}

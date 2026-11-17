@@ -51,3 +51,10 @@ robo.cmd doctor architect-electron
 
 나머지 `check_robo_spec_install.sh`, `generate_oda_manual.py`,
 `seed_oda_demo.py`는 별도 목적의 도구이며 이 실행 배선과 무관합니다.
+
+## macOS 설치본 (Apple Silicon)
+
+- `scripts/build-packaged-runtime.sh` — 앱이 싣는 런타임 폴더(`desktop/resources/runtime`):
+  GHCR 이미지 매니페스트(+ 푸시한 다이제스트), compose, 서비스 설정, 번들 CPython + Architect API.
+- `scripts/release/` — 이미지 푸시·공개 확인·릴리스 게시. 순서는 `scripts/release/README.md`.
+- DMG: `cd desktop && npm run dist:mac` → `desktop/out/dist/Robo-Architect-Lite-mac-arm64.dmg`.

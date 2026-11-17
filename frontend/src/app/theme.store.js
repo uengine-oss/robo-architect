@@ -61,6 +61,14 @@ export const useThemeStore = defineStore('theme', () => {
   
   // Initialize on store creation
   initTheme()
+
+  // 데스크톱 탭형 창 — 위쪽 탭 줄(셸)의 낮밤 단추나 다른 탭의 레일에서 바꾸면 같은 키(app_theme)가
+  // 바뀐다. 그 변경을 받아 이 탭도 따라간다(storage 이벤트는 바꾼 쪽이 아닌 다른 문서에만 온다).
+  window.addEventListener('storage', (e) => {
+    if (e.key !== 'app_theme' || (e.newValue !== 'light' && e.newValue !== 'dark')) return
+    theme.value = e.newValue
+    applyTheme(theme.value)
+  })
   
   return {
     theme,

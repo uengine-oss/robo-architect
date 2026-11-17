@@ -17,6 +17,7 @@
 
 <script setup>
 import { computed, onMounted, ref, toRaw, watch } from 'vue'
+import { customer } from '@/app/customer.js'
 import { useSessionStore } from './stores/session-store.js'
 import { useLauncherStore } from './stores/launcher-store.js'
 
@@ -49,6 +50,21 @@ const entering = ref(false)
 const enterError = ref(null)
 
 // --- git identity form (shown when source === 'unknown-fallback') ---
+// lite 프로필: 번들 Ontological DB 의 프로젝트(그래프). 번들 연결이 있으면 연결 대신 이것을 고른다.
+// **프로필은 main 이 정한다**(`app:getRuntimeState().desktopProfile`, main/desktop-profile.ts).
+// enterprise(기본)는 이 모드를 켜지 않는다 — 프로젝트를 중앙 권한·요청 헤더로 고르는 판이다.
+const liteProfile = ref(false)
+const projects = ref([])
+const selectedGraph = ref(null)
+const newProjectName = ref('')
+const creatingProject = ref(false)
+const projectError = ref(null)
+const anyBundledConnection = computed(() => launcher.savedConnections.find((c) => c.source === 'bundled') || null)
+const projectMode = computed(() => liteProfile.value && !!anyBundledConnection.value && !!desktop.projects)
+// 코드 폴더를 **요구하는가.** lite 의 프로젝트 모드만 요구했다. 새 프로젝트에 폴더를 받지 않는
+// 고객(`customer.projects.requireRoot === false`, 예: 포스코)은 그 단계도 건너뛴다.
+const rootRequired = computed(() => projectMode.value && customer.projects?.requireRoot !== false)
+
 const gitFormName = ref('')
 const gitFormEmail = ref('')
 const gitFormSaving = ref(false)
@@ -58,8 +74,11 @@ const gitFormError = ref(null)
 const hasIdentity = computed(() => session.user && session.user.source !== 'unknown-fallback')
 const canEnter = computed(() => {
   if (!launcher.selectedConnectionId) return false
-  // **폴더는 필수가 아니다.** 고른 경로가 있으면 유효해야 하지만, 아예 안 고른
-  // 것은 막지 않는다 — 인제스천은 폴더 없이 끝까지 돈다.
+  if (projectMode.value && !selectedGraph.value) return false
+  // **폴더는 기본적으로 필수가 아니다.** 고른 경로가 있으면 유효해야 하지만, 아예 안 고른
+  // 것은 막지 않는다 — 인제스천은 폴더 없이 끝까지 돈다. lite 프로필의 프로젝트 모드만
+  // 코드 폴더를 요구하고, 그것도 고객이 끌 수 있다(`customer.projects.requireRoot`).
+  if (rootRequired.value && !rootValid.value) return false
   if (rootPath.value && !rootValid.value) return false
   return !entering.value
 })
@@ -68,10 +87,56 @@ const canEnter = computed(() => {
 // On-mount: identity, saved connections, recent project roots
 // ---------------------------------------------------------------------------
 
+async function reloadProfile() {
+  try {
+    const r = await desktop.app.getRuntimeState()
+    liteProfile.value = !!(r.ok && r.data && r.data.desktopProfile === 'lite')
+  } catch {
+    liteProfile.value = false
+  }
+}
+
 async function reloadConnections() {
   const r = await desktop.connections.list()
   if (r.ok) {
     launcher.setSavedConnections(r.data)
+    if (projectMode.value) {
+      launcher.select(anyBundledConnection.value.id)
+      await reloadProjects()
+    }
+  }
+}
+
+async function reloadProjects() {
+  if (!desktop.projects) return
+  const r = await desktop.projects.list()
+  if (!r.ok) {
+    projectError.value = r.error.message
+    return
+  }
+  projects.value = r.data
+  if (!selectedGraph.value || !r.data.some((p) => p.name === selectedGraph.value)) {
+    const pick = r.data.find((p) => p.lastUsed) || r.data.find((p) => p.isDefault) || r.data[0]
+    selectedGraph.value = pick ? pick.name : null
+  }
+}
+
+async function onCreateProject() {
+  projectError.value = null
+  const name = newProjectName.value.trim()
+  if (!name) return
+  creatingProject.value = true
+  try {
+    const r = await desktop.projects.create({ name })
+    if (r.ok) {
+      projects.value = r.data
+      selectedGraph.value = name
+      newProjectName.value = ''
+    } else {
+      projectError.value = r.error.message
+    }
+  } finally {
+    creatingProject.value = false
   }
 }
 
@@ -136,6 +201,8 @@ watch(
 )
 
 async function maybeAutoEnter() {
+  // lite 의 프로젝트 모드는 묻는다 — 고를 프로젝트(그래프)가 실제로 있다.
+  if (projectMode.value) return false
   // 연결이 번들 하나뿐일 때만. 여럿이면 사용자가 고를 것이 실제로 있다.
   const conns = launcher.savedConnections
   if (conns.length !== 1 || conns[0].source !== 'bundled') return false
@@ -157,6 +224,8 @@ async function maybeAutoEnter() {
 
 onMounted(async () => {
   try {
+    // 프로필을 먼저 안다 — 연결 목록을 읽을 때 프로젝트 모드인지가 갈린다.
+    await reloadProfile()
     await Promise.all([reresolveIdentity(null), reloadConnections(), reloadRecentRoots()])
     await maybeAutoEnter()
   } finally {
@@ -321,6 +390,8 @@ async function onSaveGitConfig() {
 async function onEnter() {
   if (!canEnter.value) {
     if (!launcher.selectedConnectionId) enterError.value = '커넥션을 선택해주세요.'
+    else if (projectMode.value && !selectedGraph.value) enterError.value = '프로젝트를 선택해주세요.'
+    else if (rootRequired.value && !rootValid.value) enterError.value = '코드 폴더를 선택해주세요.'
     else if (rootPath.value && !rootValid.value) enterError.value = '고른 폴더를 열 수 없습니다.'
     return
   }
@@ -331,12 +402,14 @@ async function onEnter() {
       connectionId: launcher.selectedConnectionId,
       projectRoot: rootPath.value,
       identity: toRaw(session.user),
+      ...(projectMode.value ? { graph: selectedGraph.value } : {}),
     })
     if (r.ok) {
       session.commitProfile({
         identity: r.data.identity,
         activeConnectionId: r.data.activeConnectionId,
         projectRoot: rootPath.value,
+        graph: r.data.graph || null,
       })
       // Persist projectRoot for the existing Claude Code workspace integration.
       // 빈 값으로 덮지 않는다 — Code 탭에서 따로 정해 둔 것을 지운다.
@@ -421,6 +494,37 @@ function explainEnterError(err) {
       </div>
     </header>
 
+    <!-- lite 프로필: 프로젝트 = 번들 Ontological DB 의 그래프. 연결은 하나라 고를 것이 없다. -->
+    <section v-if="projectMode" class="section">
+      <h2>프로젝트</h2>
+      <div v-if="projects.length > 0" class="connection-list">
+        <button
+          v-for="p in projects"
+          :key="p.name"
+          type="button"
+          class="connection-item"
+          :class="{ selected: selectedGraph === p.name }"
+          @click="selectedGraph = p.name"
+        >
+          <div class="connection-label">{{ p.name }}<span v-if="p.isDefault" class="project-tag">기본</span></div>
+          <div class="connection-uri">{{ p.types > 0 ? `노드 종류 ${p.types}개` : '빈 프로젝트' }}</div>
+        </button>
+      </div>
+      <div class="project-create">
+        <input
+          v-model="newProjectName"
+          type="text"
+          placeholder="새 프로젝트 이름 (예: food_delivery)"
+          @keydown.enter.prevent="onCreateProject"
+        />
+        <button type="button" :disabled="creatingProject || !newProjectName.trim()" @click="onCreateProject">
+          {{ creatingProject ? '만드는 중…' : '+ 새 프로젝트' }}
+        </button>
+      </div>
+      <p class="project-hint">프로젝트마다 그래프가 따로 만들어집니다 — 한 그래프 DB 안에서 서로 섞이지 않습니다.</p>
+      <p v-if="projectError" class="msg err">{{ projectError }}</p>
+    </section>
+
     <!-- 그래프 연결.
          **번들 연결이 있으면 화면에서 아예 묻지 않는다.** 앱이 스택을 소유하고
          연결을 스스로 만들어 고르므로 사람이 정할 것이 없다. 브리지가 없어도
@@ -429,7 +533,7 @@ function explainEnterError(err) {
 
          번들 연결이 없을 때만 보여 준다 — 개발 환경이나 손으로 다른 그래프에
          붙어야 하는 경우다. 길을 없애지는 않는다. -->
-    <section v-if="!hasBundledConnection" class="section">
+    <section v-else-if="!hasBundledConnection" class="section">
       <!-- 엔진 이름이 아니라 **무엇에 붙는지**를 적는다. 이 제품의 그래프는
            ontological PostgreSQL 이고, 앱은 그 앞의 Bolt 게이트웨이에 붙는다.
            화면이 "NEO4J CONNECTION" 이라고 말하면 납품처에서 "왜 Neo4j 를
@@ -492,7 +596,7 @@ function explainEnterError(err) {
 
     <!-- Project root picker -->
     <section class="section">
-      <h2>Project root</h2>
+      <h2>{{ projectMode ? (rootRequired ? '코드 폴더' : '코드 폴더 (선택)') : 'Project root' }}</h2>
       <div class="root-row">
         <button type="button" class="root-pick" @click="pickRoot">폴더 선택…</button>
         <div v-if="rootPath" class="root-display" :class="{ invalid: !rootValid }">
@@ -508,7 +612,8 @@ function explainEnterError(err) {
     <section class="enter-section">
       <div class="enter-hints">
         <span v-if="!launcher.selectedConnectionId" class="enter-hint">커넥션을 선택해주세요</span>
-        <span v-else-if="!rootValid" class="enter-hint">프로젝트 폴더를 선택해주세요</span>
+        <span v-else-if="projectMode && !selectedGraph" class="enter-hint">프로젝트를 선택해주세요</span>
+        <span v-else-if="!rootValid && (rootRequired || !projectMode)" class="enter-hint">{{ projectMode ? '코드 폴더를 선택해주세요' : '프로젝트 폴더를 선택해주세요' }}</span>
       </div>
       <button type="button" class="enter" :disabled="!canEnter" @click="onEnter">
         {{ entering ? 'Entering…' : 'Enter →' }}
@@ -519,6 +624,46 @@ function explainEnterError(err) {
 </template>
 
 <style scoped>
+.project-tag {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  background: rgba(99, 140, 255, 0.18);
+  color: #9db4ff;
+  vertical-align: middle;
+}
+.project-create {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.project-create input {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  background: transparent;
+  color: inherit;
+  font-size: 0.9rem;
+  border-radius: 3px;
+}
+.project-create button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.project-create button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.project-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: #888;
+}
 .launcher {
   max-width: 720px;
   margin: 2rem auto;

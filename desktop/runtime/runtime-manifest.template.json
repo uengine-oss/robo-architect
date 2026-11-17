@@ -2,6 +2,7 @@
   "schemaVersion": 5,
   "releaseId": "RELEASE_ID",
   "releaseChannel": "RELEASE_CHANNEL",
+  "releaseVariant": "RELEASE_VARIANT",
   "authEnforced": true,
   "authProvider": "none",
   "composeFile": "compose.yml",
