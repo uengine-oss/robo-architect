@@ -230,9 +230,9 @@ services:
     mem_limit: ${ROBO_MEM_ANALYZER:-0}
     environment:
       TIKTOKEN_CACHE_DIR: /opt/tiktoken-cache
-      # 레거시 검색의 재채점 모델(bge-reranker-v2-m3-ko, 2.2GB)은 이미지에 없다. 사내망은 HF Hub 에 못 닿으므로
-      # 받으러 나가지 않게 한다 — 못 실으면 analyzer 가 키워드(BM25) 점수로 대신한다(c9358f80).
-      # 모델을 반입해 HF 캐시를 마운트하면 그 캐시에서 실린다.
+      # 레거시 검색의 재채점 모델(bge-reranker-v2-m3-ko, 2.2GB)은 posco-web CI 가 analyzer 이미지에 굽는다
+      # (/opt/hf · 빌드 인자 RERANKER_*). 사내망은 HF Hub 에 못 닿으므로 받으러 나가지 않게 한다.
+      # 모델을 못 실으면 analyzer 가 키워드(BM25) 점수로 대신한다(c9358f80).
       HF_HUB_OFFLINE: "1"
       ROBO_NEO4J_URI: bolt://${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}
       ROBO_NEO4J_USER: ${ROBO_GRAPH_USER:?}

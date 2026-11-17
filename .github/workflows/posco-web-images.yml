@@ -91,6 +91,11 @@ jobs:
             dockerfile: robo-analyzer/robo-data-analyzer/Dockerfile
             context: robo-analyzer/robo-data-analyzer
             submodules: robo-analyzer/robo-data-analyzer
+            # 레거시 검색 재채점 모델을 이미지에 굽는다(약 2.2GB) — 사내망은 HF Hub 에 못 닿는다.
+            # 판 없이 받으면 날마다 바뀔 수 있어 모델 커밋을 박는다. compose 의 HF_HUB_OFFLINE=1 과 짝.
+            build_args: |
+              RERANKER_MODEL=dragonkue/bge-reranker-v2-m3-ko
+              RERANKER_REVISION=2aca5884ecac490192af9ebd86836d9073d826cd
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
@@ -140,6 +145,7 @@ jobs:
         with:
           context: ${{ matrix.context || '.' }}
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args }}
           push: true
           provenance: false
           # 태그 **둘**을 같이 올린다.
