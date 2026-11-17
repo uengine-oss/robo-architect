@@ -110,9 +110,18 @@ def get_llm_provider(default: str = "openai") -> str:
     return env_str("LLM_PROVIDER", default) or default
 
 
+def _user_selected_model() -> str | None:
+    """환경설정에서 사용자가 고른 생성 모델(요청 헤더 → ContextVar). openai 공급자일 때만."""
+    if (env_str("LLM_PROVIDER", "openai") or "openai").strip().lower() != "openai":
+        return None
+    from api.platform.llm_model_choice import selected_model  # 순환 import 를 피한다
+
+    return selected_model()
+
+
 def get_llm_model(default: str = "gpt-5.5") -> str:
-    """Get configured LLM model name."""
-    return env_str("LLM_MODEL", default) or default
+    """Get configured LLM model name. 사용자가 고른 모델이 있으면 그것이 먼저다."""
+    return _user_selected_model() or env_str("LLM_MODEL", default) or default
 
 
 def get_ingestion_batch_size(default: int = 500) -> int:
@@ -161,7 +170,8 @@ def get_chat_model(default: str = "gpt-4.1-2025-04-14") -> str:
     - CHAT_MODEL (shared override)
     - LLM_MODEL (platform default)
     """
-    return env_first(["OPENAI_MODEL", "CHAT_MODEL", "LLM_MODEL"], default=default) or default
+    return (_user_selected_model()
+            or env_first(["OPENAI_MODEL", "CHAT_MODEL", "LLM_MODEL"], default=default) or default)
 
 
 def get_llm_provider_model(

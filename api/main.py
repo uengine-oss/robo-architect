@@ -427,6 +427,10 @@ app.add_middleware(AuthorityProxyMiddleware)
 from api.features.ingestion.server_proxy import IngestionProxyMiddleware  # noqa: E402
 app.add_middleware(IngestionProxyMiddleware)
 
+# 사용자가 고른 생성 모델(X-LLM-Model) — 목록에 있는 이름만 ContextVar 에 놓는다.
+from api.platform.llm_model_choice import LlmModelChoiceMiddleware  # noqa: E402
+app.add_middleware(LlmModelChoiceMiddleware)
+
 # Starlette wraps later middleware around earlier ones. CORS must be outermost
 # so authentication failures also carry Access-Control-Allow-Origin; otherwise
 # the Figma iframe sees an opaque "Failed to fetch" instead of HTTP 401.
@@ -493,6 +497,10 @@ app.include_router(deliverables_router)
 from api.features.code_templates.router import router as code_templates_router
 
 app.include_router(code_templates_router)
+
+# 생성 모델 목록(P-GPT /models) — 환경설정 모달이 부른다.
+from api.features.llm_models.router import router as llm_models_router  # noqa: E402
+app.include_router(llm_models_router)
 
 # Include enterprise auth (SSO) router
 from api.features.auth.router import router as auth_router
