@@ -170,6 +170,25 @@ export async function computeLaneLayout(model, elk) {
   return { boxes, laneBoxes, pool, edges }
 }
 
+/**
+ * 가지 이름의 자리 — 선이 처음 꺾이는 곳 근처, 첫 토막 옆.
+ *   첫 토막이 세로(위·아래 꼭짓점에서 나감)면 그 세로선의 오른쪽, 꺾이는 높이 바로 아래/위
+ *   첫 토막이 가로면 그 가로선 바로 위, 나가는 자리에서 조금 떨어져
+ */
+export function labelBox(name, pts) {
+  const text = (name || '').trim()
+  if (!text || !pts || pts.length < 2) return null
+  const w = Math.min(160, 8 + [...text].length * 11)
+  const h = 14
+  const [a, b] = pts
+  if (Math.abs(a.x - b.x) < 0.5) {              // 세로로 나간다
+    const up = b.y < a.y
+    return { x: Math.round(a.x + 6), y: Math.round(up ? b.y + 4 : b.y - h - 4), w, h }
+  }
+  const right = b.x > a.x
+  return { x: Math.round(right ? a.x + 8 : a.x - 8 - w), y: Math.round(a.y - h - 3), w, h }
+}
+
 /** BPMN XML 을 시퀀스 순서 + 레인으로 다시 배치한다. 실패하면 받은 XML 을 그대로. */
 export async function layoutBpmnWithLanes(xml, elk) {
   try {
@@ -186,7 +205,7 @@ export async function layoutBpmnWithLanes(xml, elk) {
     if (!nodes.length) return xml
     const ids = new Set(nodes.map(n => n.id))
     const flows = byLocal(proc, 'sequenceFlow')
-      .map(f => ({ id: f.getAttribute('id'), s: f.getAttribute('sourceRef'), t: f.getAttribute('targetRef') }))
+      .map(f => ({ id: f.getAttribute('id'), s: f.getAttribute('sourceRef'), t: f.getAttribute('targetRef'), name: f.getAttribute('name') || '' }))
       .filter(f => ids.has(f.s) && ids.has(f.t))
     const lanes = byLocal(proc, 'lane').map(l => ({
       id: l.getAttribute('id'),
@@ -232,6 +251,16 @@ export async function layoutBpmnWithLanes(xml, elk) {
         const w = doc.createElementNS(DI2_NS, 'di:waypoint')
         w.setAttribute('x', Math.round(p.x)); w.setAttribute('y', Math.round(p.y))
         e.appendChild(w)
+      }
+      // 선 이름(가지 조건)은 **나오는 자리 바로 옆**에 둔다. 두지 않으면 bpmn-js 가 선 가운데쯤에 두어
+      // 다른 선·노드 이름과 포개지고 어느 가지의 조건인지 안 보였다(휴가 신청 결재 · 2026-11-17).
+      const lb = labelBox(f.name, pts)
+      if (lb) {
+        const l = doc.createElementNS(DI_NS, 'bpmndi:BPMNLabel')
+        const d = doc.createElementNS(DC_NS, 'dc:Bounds')
+        d.setAttribute('x', lb.x); d.setAttribute('y', lb.y); d.setAttribute('width', lb.w); d.setAttribute('height', lb.h)
+        l.appendChild(d)
+        e.appendChild(l)
       }
       plane.appendChild(e)
     }
