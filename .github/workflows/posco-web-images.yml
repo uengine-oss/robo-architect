@@ -19,13 +19,18 @@
 #
 # 서브모듈(open-pencil · robo-data-frontend)은 둘 다 public 이라 토큰 없이 받는다.
 # private 서브모듈이 다시 생기면 Secret `ROBO_SUBMODULE_TOKEN` 을 넣는다(있으면 쓴다).
+#
+# ⚠ 2026-11-17 통합 — 이 이미지는 **main** 에서 굽는다(고객 = 빌드 입력 CUSTOMER=posco).
+#   posco-web 브랜치는 골든 검사가 끝날 때까지 되돌아갈 자리로만 남고, 은퇴하면 이 목록에서 뺀다.
+#   이미지 이름(robo-posco-*)·태그 규칙(posco-web-<sha>)은 서버 update.sh · compose 와 맞물려 있어 그대로 둔다.
 name: posco-web images
 
 on:
   push:
-    branches: [posco-web]
+    branches: [main, posco-web]
     paths:
       - api/**
+      - extensions/**
       - skills/**
       - frontend/**
       - open-pencil
