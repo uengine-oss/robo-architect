@@ -362,6 +362,11 @@ from api.features.robo_spec.router import router as robo_spec_router, mount_mcp 
 app.include_router(robo_spec_router)
 _mount_robo_spec_mcp(app)
 
+# 고객 확장 — ROBO_CUSTOMER 가 고른 한 고객의 extensions/<고객>/backend 를 읽는다.
+# 기본(default)은 빈 등록부 = 지금 동작 그대로. 없는 고객을 고르면 여기서 기동이 멈춘다.
+from api.extensions import load_extensions
+load_extensions(app)
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -41,14 +41,16 @@ import { useRequirementsStore } from '@/features/requirements/requirements.store
 // 041 — Design 측 헌장(Constitution) 관리. CanvasWorkspace(프로젝트 헌장)와
 // BoundedContextNode(BC 헌장)가 robo:open-constitution 을 dispatch 하면 모달을 연다.
 import ConstitutionEditor from '@/features/constitution/ui/ConstitutionEditor.vue'
+import { customer } from '@/app/customer'
 
 const navigatorStore = useNavigatorStore()
 const themeStore = useThemeStore() // Initialize theme store
 const bpmnStore = useBpmnStore()
 const session = useSessionStore()
 
-// Tab state management — 시작 탭 = Proposals (사용자 기본 진입점)
-const activeTab = ref('Proposals')
+// Tab state management — 시작 탭 = Proposals (사용자 기본 진입점).
+// 고객 확장이 시작 탭을 정하면 그것으로(예: Proposals 를 감춘 판은 목록에 없는 탭으로 열리면 안 된다).
+const activeTab = ref(customer.shell.startTab || 'Proposals')
 
 // Claude Code workdir state — hydrated from localStorage so the inspector's
 // source viewer (feature 029) can resolve ImplementationFile paths even

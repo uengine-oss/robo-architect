@@ -9,6 +9,7 @@ import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue
 import FigmaButton from '@/features/figmaBinding/ui/FigmaButton.vue'
 import FigmaBindingModal from '@/features/figmaBinding/ui/FigmaBindingModal.vue'
 import SettingsPanel from './SettingsPanel.vue'
+import { visibleTabs } from '@/app/customer'
 
 const props = defineProps({
   activeTab: {
@@ -26,7 +27,8 @@ const emit = defineEmits(['update:activeTab'])
 // 043 — 'Process'(BPM)·'Processes'(Event Modeling)를 하나의 'Process' 탭(서브토글)로 통합,
 // 'Big picture' 제거. 'Changes' 탭은 UI에서 숨김(App.vue tabComponents 에 유지).
 // 'Analysis'(분석기 임베드) → 'Legacy' 로 라벨 변경 + 맨 앞으로 이동(Proposals 앞).
-const tabs = ['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code']
+// 고객 확장이 감춘 탭은 뺀다(`extensions/<고객>/frontend` 의 shell.hiddenTabs · 기본은 하나도 안 감춤).
+const tabs = visibleTabs(['Legacy', 'Proposals', 'Stories', 'Process', 'Design', 'Data', 'Code'])
 
 const canvasStore = useCanvasStore()
 // 043 — 'Big picture' 뷰 비활성화: store 사용 제거.
