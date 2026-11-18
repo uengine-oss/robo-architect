@@ -980,7 +980,9 @@ async def get_clarification_clarity(
             "scope_id": scopeId,
             "total": raw.totalUserStories,
             "flagged": raw.flaggedUserStories,
-            "overall_score": round(overall, 3),
+            # None = 대상 없음/스캔 안 함. 이미 overall_clarity 가 반올림해 돌려준다 —
+            # 여기서 round(None) 하면 요구사항 없는 프로젝트가 500 이 됐다(2026-11-18).
+            "overall_score": overall,
         },
     )
     return response
