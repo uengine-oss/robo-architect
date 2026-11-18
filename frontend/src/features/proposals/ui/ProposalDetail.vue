@@ -22,6 +22,7 @@
           :title="t('proposals.legacyTag.toggleTitle')"
           @click="evidenceMode = !evidenceMode"
         >{{ t('proposals.legacyTag.toggle') }}</button>
+        <FullPreviewButton :proposal="proposal" />
       </div>
       <h2 class="detail-header__title">{{ proposal.title }}</h2>
       <p class="detail-header__prompt">{{ proposal.originalPrompt }}</p>
@@ -56,6 +57,7 @@
     <div class="detail-content">
       <!-- Intent — Strategic Diff 만 (FR-006) -->
       <template v-if="activeTab === 'diff'">
+        <IntentGwtUsageBadge :proposal="proposal" />
         <!-- 043 — ODA 표준: Intent 탭에 ODA 트랙(정합성·적합성 게이트·산출물) 융합 -->
         <OdaStandardTrack
           v-if="isOda"
@@ -256,10 +258,12 @@
 import { ref, computed, onMounted, watch, provide } from 'vue'
 import { useI18n } from '../../../app/i18n'
 import LegacyRefChip from './LegacyRefChip.vue'
+import FullPreviewButton from './FullPreviewButton.vue'
 import LegacyEvidencePanel from './LegacyEvidencePanel.vue'
 import { provenanceIndex } from '../legacy-reference'
 import { useProposalsStore } from '../proposals.store'
 import IntentDecompositionView from './IntentDecompositionView.vue'
+import IntentGwtUsageBadge from './IntentGwtUsageBadge.vue'
 import ImpactMapView from './ImpactMapView.vue'
 import ProposalDiffVisualView from './ProposalDiffVisualView.vue'
 import SandboxProgressView from './SandboxProgressView.vue'

@@ -100,6 +100,17 @@ def read_scope_log(
     user_story_ids: Iterable[str],
 ) -> list[ClarificationLogEntry]:
     """Aggregate clarification entries across a scope, sorted by `at`."""
+    return [entry for _us_id, entry in read_scope_log_with_story_ids(user_story_ids)]
+
+
+def read_scope_log_with_story_ids(
+    user_story_ids: Iterable[str],
+) -> list[tuple[str, ClarificationLogEntry]]:
+    """Like `read_scope_log`, but each entry carries the UserStory id it lives on.
+
+    The entry itself does not name its story (it is stored *on* the story), so
+    counting "how many stories got a clarification" needs this pairing.
+    """
     ids = [i for i in user_story_ids if i]
     if not ids:
         return []
@@ -108,12 +119,14 @@ def read_scope_log(
     MATCH (us:UserStory {id: id})
     RETURN us.id AS userStoryId, coalesce(us.clarifications, '[]') AS raw
     """
-    flat: list[ClarificationLogEntry] = []
+    flat: list[tuple[str, ClarificationLogEntry]] = []
     with get_session() as session:
         for rec in session.run(query, ids=ids):
             for raw_entry in _load_entries(rec["raw"]):
                 try:
-                    flat.append(ClarificationLogEntry.model_validate(raw_entry))
+                    flat.append(
+                        (rec["userStoryId"], ClarificationLogEntry.model_validate(raw_entry))
+                    )
                 except Exception as exc:  # noqa: BLE001
                     SmartLogger.log(
                         "WARN",
@@ -122,7 +135,7 @@ def read_scope_log(
                         params={"user_story_id": rec["userStoryId"], "error": str(exc)},
                     )
                     continue
-    flat.sort(key=lambda e: e.at or "")
+    flat.sort(key=lambda pair: pair[1].at or "")
     return flat
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
 
@@ -43,7 +43,12 @@ def _get_proposal_row(proposal_id: str) -> dict | None:
 
 
 @router.post("/{proposal_id}/accept", response_model=ProposalResponse)
-async def accept_proposal(proposal_id: str, body: AcceptProposalRequest, request: Request):
+async def accept_proposal(
+    proposal_id: str,
+    request: Request,
+    # 본문은 선택 — 프록시에서 본문이 유실돼도 422 대신 기본값(안전한 쪽)으로 간다.
+    body: AcceptProposalRequest = Body(default_factory=AcceptProposalRequest),
+):
     """PO Accept → Dual Merge 실행."""
     row = _get_proposal_row(proposal_id)
     if not row:
@@ -97,7 +102,12 @@ async def accept_proposal(proposal_id: str, body: AcceptProposalRequest, request
 
 
 @router.post("/{proposal_id}/destroy", response_model=ProposalResponse)
-async def destroy_proposal(proposal_id: str, body: DestroyProposalRequest, request: Request):
+async def destroy_proposal(
+    proposal_id: str,
+    request: Request,
+    # 본문은 선택 — 프록시에서 본문이 유실돼도 422 대신 기본값(안전한 쪽)으로 간다.
+    body: DestroyProposalRequest = Body(default_factory=DestroyProposalRequest),
+):
     """PO Destroy → DESTROYED 상태 전환 + Worktree 정리."""
     row = _get_proposal_row(proposal_id)
     if not row:
@@ -150,7 +160,12 @@ async def destroy_proposal(proposal_id: str, body: DestroyProposalRequest, reque
 
 
 @router.post("/{proposal_id}/revoke", response_model=ProposalResponse)
-async def revoke_proposal(proposal_id: str, body: RevokeProposalRequest, request: Request):
+async def revoke_proposal(
+    proposal_id: str,
+    request: Request,
+    # 본문은 선택 — 프록시에서 본문이 유실돼도 422 대신 기본값(안전한 쪽)으로 간다.
+    body: RevokeProposalRequest = Body(default_factory=RevokeProposalRequest),
+):
     """ACCEPTED Proposal 수거(revoke) → 그래프(+선택적 코드) 되돌림 + PENDING_ACCEPTANCE 복귀."""
     row = _get_proposal_row(proposal_id)
     if not row:

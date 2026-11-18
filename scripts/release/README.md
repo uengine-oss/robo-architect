@@ -32,8 +32,13 @@ scripts/build-packaged-runtime.sh --digests desktop/out/release/image-digests.js
 # 3. the DMG (ad-hoc signed) → desktop/out/dist/Robo-Architect-Lite-mac-arm64.dmg
 (cd desktop && env -u ELECTRON_RUN_AS_NODE npm run dist:mac)
 
-# 4. the releases repository (created public if missing, README from releases-README.md) + release v<version>
-scripts/release/publish-release.sh        # --draft to look before it becomes Latest
+# 4. the Windows installer too (see "Windows x64" below) — the release needs BOTH; the script stops
+#    when either desktop/out/dist/*.dmg or desktop/out/dist/Robo-Architect-Lite-Setup-win-x64.exe is missing
+
+# 5. the releases repository (created public if missing, README from releases-README.md) + release v<version>
+#    with the dmg AND the exe
+scripts/release/publish-release.sh --dry-run   # both installers there? prints the release notes, publishes nothing
+scripts/release/publish-release.sh             # --draft to look before it becomes Latest
 ```
 
 ## Checking a build without disturbing a running stack
@@ -78,4 +83,8 @@ scripts/build-packaged-runtime-win.sh --manifest-only --digests desktop/out/rele
 
 # 3. the installer → desktop/out/dist/Robo-Architect-Lite-Setup-win-x64.exe (unsigned)
 (cd desktop && env -u ELECTRON_RUN_AS_NODE npm run dist:win)
+
+# 4. put it on the release — the same release as the dmg, never by hand:
+#    publish-release.sh uploads the dmg and this exe together and refuses to run without either
+scripts/release/publish-release.sh
 ```

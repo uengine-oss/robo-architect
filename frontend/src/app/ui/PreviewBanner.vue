@@ -2,8 +2,9 @@
   <div v-if="session.active" class="preview-banner">
     <span class="pb-icon">🔍</span>
     <span class="pb-text">
-      <strong>{{ session.label }}</strong> 임팩트 미리보기 · <em>읽기 전용</em> — 라이브 설계가 아닙니다{{ (session.viewer === 'data' || session.viewer === 'design') ? ' (제안 변경 오버레이)' : '' }}
+      <strong>{{ session.label }}</strong> {{ session.full ? '전체 미리보기' : '임팩트 미리보기' }} · <em>읽기 전용</em> — 아직 적재되지 않았습니다 · 라이브 설계가 아닙니다{{ (session.viewer === 'data' || session.viewer === 'design') ? ' (제안 변경 오버레이)' : '' }}
       <span v-if="session.title" class="pb-target">· {{ session.title }}</span>
+      <span v-if="session.full && session.bcIds.length" class="pb-target">· BC {{ session.bcIds.length }}개 · 탐색기도 미리보기</span>
       <span v-if="session.notice" class="pb-notice">⚠ {{ session.notice }}</span>
     </span>
     <button class="pb-close" @click="onClose">닫기 ✕</button>

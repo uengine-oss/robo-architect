@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { createLogger, newOpId } from '@/app/logging/logger'
 import { apiFailure, isNetworkError as networkFailure } from '@/app/apiError'
 
@@ -19,6 +19,61 @@ export const useNavigatorStore = defineStore('navigator', () => {
   
   // Track user story assignments (for animation)
   const userStoryAssignments = ref({})  // { usId: bcId }
+
+  // ── B-4 ⑧ 프로포절 미리보기 — 탐색기도 오버레이를 본다 ───────────────────
+  // 라이브 트리(contextTrees)는 **건드리지 않는다.** 미리보기 트리는 따로 두고, 화면이
+  // `treeFor(bcId)` 로 미리보기 트리를 먼저 고른다 — 미리보기 중 라이브 갱신 이벤트가 와도
+  // 섞이지 않고, 닫으면 previewTrees 만 비우면 끝이다(복원할 스냅샷이 없다).
+  // 트리는 기존 data 오버레이 투영(`/api/proposals/{id}/preview/contexts/{bc}/full-tree`)을
+  // 그대로 쓴다 — 노드마다 source/badge('신규'·'수정'·'충돌')가 달려 온다. 읽기 전용.
+  const previewProposalId = ref(null)
+  const previewTrees = ref({})          // { bcId: projectedTree }
+  const previewActive = computed(() => !!previewProposalId.value)
+
+  async function beginPreview(proposalId, bcIds = []) {
+    if (!proposalId) return
+    previewProposalId.value = proposalId
+    const pid = encodeURIComponent(proposalId)
+    const next = {}
+    await Promise.all((bcIds || []).filter(Boolean).map(async (bcId) => {
+      try {
+        const res = await fetch(`/api/proposals/${pid}/preview/contexts/${encodeURIComponent(bcId)}/full-tree`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        next[bcId] = await res.json()
+      } catch (e) {
+        log.warn('navigator_preview_tree_failed', 'Proposal preview tree fetch failed; showing live tree.', {
+          proposalId, bcId, error: String(e?.message || e),
+        })
+      }
+    }))
+    // 그 사이 미리보기가 닫혔거나 다른 제안으로 바뀌었으면 버린다.
+    if (previewProposalId.value !== proposalId) return
+    previewTrees.value = next
+    for (const bcId of Object.keys(next)) expandedNodes.value.add(bcId)
+  }
+
+  function endPreview() {
+    previewProposalId.value = null
+    previewTrees.value = {}
+  }
+
+  // 화면이 쓰는 트리 — 미리보기 중이면 그 BC 의 투영 트리, 아니면 라이브.
+  function treeFor(bcId) {
+    return previewTrees.value[bcId] || contextTrees.value[bcId]
+  }
+
+  // 화면이 쓰는 BC 목록 — 라이브 + (미리보기 중) 라이브에 없는 제안 BC.
+  const displayContexts = computed(() => {
+    if (!previewActive.value) return contexts.value
+    const live = new Set(contexts.value.map((c) => c.id))
+    const extra = Object.entries(previewTrees.value)
+      .filter(([id]) => !live.has(id))
+      .map(([id, t]) => ({
+        id, name: t?.name || id, displayName: t?.displayName || t?.name || id,
+        source: 'temporary', badge: '신규',
+      }))
+    return extra.length ? [...contexts.value, ...extra] : contexts.value
+  })
   
   // Fetch unassigned user stories
   async function fetchUserStories() {
@@ -755,6 +810,13 @@ export const useNavigatorStore = defineStore('navigator', () => {
     addProperty,
     addItemToTree,
     isNewlyAdded,
+    previewProposalId,
+    previewTrees,
+    previewActive,
+    beginPreview,
+    endPreview,
+    treeFor,
+    displayContexts,
     refreshAll,
     clearAll,
     toggleExpanded,

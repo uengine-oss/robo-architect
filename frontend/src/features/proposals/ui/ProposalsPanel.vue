@@ -15,7 +15,12 @@
         :class="['status-tab', filterStatus === s.value ? 'status-tab--active' : '']"
       >
         {{ s.label }}
-        <span v-if="s.value" class="count-badge">{{ countByStatus(s.value) }}</span>
+        <span
+          v-if="s.value"
+          class="count-badge"
+          :data-testid="`stage-count-${s.value}`"
+          :title="stageCountTitle(s.value)"
+        >{{ countByStatus(s.value) }}</span>
       </button>
     </div>
 
@@ -36,6 +41,11 @@
             <span :class="['status-badge', `status-badge--${p.status.toLowerCase()}`]">
               {{ statusLabel(p.status) }}
             </span>
+            <span
+              v-if="stagePhase(filterStatus, p.status) === 'passed'"
+              class="stage-passed-chip"
+              data-testid="stage-passed-chip"
+            >{{ t('proposals.panel.stagePassed') }}</span>
             <button
               class="proposal-item__delete"
               :title="t('proposals.panel.deleteTitle')"
@@ -83,19 +93,37 @@
       <div class="dialog">
         <h4>{{ t('proposals.panel.deleteConfirmTitle') }}</h4>
         <p class="dialog__note">{{ t('proposals.panel.deleteConfirmNote', { id: deleteTarget.id }) }}</p>
+        <!-- id + 복사 단추 — 복사·붙여넣기가 정상 경로가 되게 -->
+        <div class="dialog__id-row">
+          <code class="dialog__id" data-testid="delete-target-id">{{ deleteTarget.id }}</code>
+          <button
+            type="button"
+            class="btn btn--secondary btn--sm"
+            data-testid="delete-copy-id"
+            @click="copyDeleteId"
+          >{{ idCopied ? t('proposals.panel.deleteIdCopied') : t('proposals.panel.deleteCopyId') }}</button>
+        </div>
+        <!-- autofocus 는 동적으로 꽂히는 모달 입력엔 듣지 않는다(재 보니 focus 가 🗑 단추에
+             남는다) → ref + nextTick 으로 실제 focus. v-model 대신 DOM 값을 그대로 받는다 —
+             IME 조합 중에도 값이 따라오고, 조합이 끝날 때(compositionend) 한 번 더 맞춘다. -->
         <input
-          v-model="deleteConfirmText"
+          ref="deleteInputEl"
+          :value="deleteConfirmText"
           class="dialog__input"
+          data-testid="delete-confirm-input"
           :placeholder="t('proposals.panel.deleteInputPlaceholder')"
-          autofocus
-          @keyup.enter="deleteConfirmText === deleteTarget.id && confirmDelete()"
+          @input="syncDeleteConfirm"
+          @compositionend="syncDeleteConfirm"
+          @keyup.enter="deleteMatches && confirmDelete()"
+          @keydown.esc="cancelDelete"
         />
         <p v-if="deleteError" class="error-msg">{{ deleteError }}</p>
         <div class="dialog__actions">
           <button @click="cancelDelete" class="btn btn--secondary" :disabled="deleting">{{ t('proposals.common.cancel') }}</button>
           <button
             @click="confirmDelete"
-            :disabled="deleting || deleteConfirmText !== deleteTarget.id"
+            :disabled="deleting || !deleteMatches"
+            data-testid="delete-confirm-btn"
             class="btn btn--danger"
           >{{ deleting ? t('proposals.panel.deleting') : t('proposals.panel.deleteConfirm') }}</button>
         </div>
@@ -105,8 +133,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProposalsStore } from '../proposals.store'
+import { deleteConfirmMatches, normalizeDeleteConfirm } from '../delete-confirm'
+import { filterForStageTab, countForStageTab, stagePhase } from '../stageFilter'
 import { useI18n } from '../../../app/i18n'
 import ProposalDetail from './ProposalDetail.vue'
 import ProposalCreate from './ProposalCreate.vue'
@@ -124,11 +154,37 @@ const deleteTarget = ref(null)
 const deleteConfirmText = ref('')
 const deleting = ref(false)
 const deleteError = ref(null)
+const deleteInputEl = ref(null)
+const idCopied = ref(false)
 
-function askDelete(p) {
+const deleteMatches = computed(() =>
+  !!deleteTarget.value && deleteConfirmMatches(deleteConfirmText.value, deleteTarget.value.id))
+
+function syncDeleteConfirm(event) {
+  deleteConfirmText.value = event?.target?.value ?? ''
+}
+
+async function askDelete(p) {
   deleteTarget.value = p
   deleteConfirmText.value = ''
   deleteError.value = null
+  idCopied.value = false
+  await nextTick()
+  deleteInputEl.value?.focus()
+}
+
+async function copyDeleteId() {
+  const id = deleteTarget.value?.id
+  if (!id) return
+  try {
+    await navigator.clipboard.writeText(id)
+    idCopied.value = true
+  } catch {
+    // 클립보드 권한이 없으면 id 를 선택해 둔다 — 사용자가 Ctrl+C 로 이어 간다.
+    const el = document.querySelector('[data-testid="delete-target-id"]')
+    if (el) window.getSelection()?.selectAllChildren(el)
+  }
+  deleteInputEl.value?.focus()
 }
 
 function cancelDelete() {
@@ -139,12 +195,12 @@ function cancelDelete() {
 }
 
 async function confirmDelete() {
-  if (!deleteTarget.value || deleteConfirmText.value !== deleteTarget.value.id) return
+  if (!deleteMatches.value) return
   deleting.value = true
   deleteError.value = null
   try {
     const id = deleteTarget.value.id
-    await store.deleteProposal(id, deleteConfirmText.value)
+    await store.deleteProposal(id, normalizeDeleteConfirm(deleteConfirmText.value))
     if (selectedId.value === id) selectedId.value = null
     deleteTarget.value = null
     deleteConfirmText.value = ''
@@ -172,14 +228,17 @@ const statusOptions = computed(() => [
   { value: 'DESTROYED', label: 'DESTROYED' },
 ])
 
-const filteredProposals = computed(() =>
-  filterStatus.value
-    ? store.proposals.filter(p => p.status === filterStatus.value)
-    : store.proposals
-)
+// 단계 탭 = 그 단계에 있는 것(진행중) + 그 단계를 지난 것(완료). 완료돼도 앞 단계 탭에 남는다(lite ⑬).
+const filteredProposals = computed(() => filterForStageTab(store.proposals, filterStatus.value))
 
 function countByStatus(status) {
-  return store.proposals.filter(p => p.status === status).length
+  return countForStageTab(store.proposals, status).total
+}
+
+function stageCountTitle(status) {
+  const c = countForStageTab(store.proposals, status)
+  if (status === 'DESTROYED' || status === 'ACCEPTED') return ''
+  return t('proposals.panel.stageCountTitle', { current: c.current, passed: c.passed })
 }
 
 function isActive(status) {
@@ -299,9 +358,18 @@ onUnmounted(() => { if (_pollTimer) clearInterval(_pollTimer) })
 .dialog h4 { margin: 0 0 8px; font-size: 14px; color: var(--color-text-bright); }
 .dialog__note { font-size: 12px; color: var(--color-text-light); margin: 0 0 12px; line-height: 1.5; }
 .dialog__input { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 4px; font-family: monospace; font-size: 12px; background: var(--color-bg-secondary); color: var(--color-text-bright); }
+.dialog__id-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+.dialog__id { flex: 1; font-family: monospace; font-size: 12px; padding: 4px 8px; border-radius: 4px; background: var(--color-bg-tertiary, var(--color-bg-secondary)); color: var(--color-text-bright); user-select: all; }
 .dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .btn--secondary { background: var(--color-bg-secondary); color: var(--color-text); border: 1px solid var(--color-border); }
 .btn--danger { background: var(--color-danger, #c0392b); color: #fff; }
 .btn--danger:disabled { opacity: 0.5; cursor: not-allowed; }
 .error-msg { color: var(--status-red-fg, #c0392b); font-size: 12px; margin: 8px 0 0; }
+.stage-passed-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #d0d7de);
+  color: var(--color-text-light, #6e7781);
+}
 </style>

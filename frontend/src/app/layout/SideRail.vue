@@ -3,12 +3,13 @@
 // 상단 탭 막대(TopBar)에 있던 화면 전환을 여기로 옮겼다. 위에 브랜드 박스, 가운데 화면,
 // 아래에 그래프 연결 상태 · 테마 · 개발사 표시.
 // 레거시 탭에서는 앱 화면 대신 레거시 기능의 메뉴(코드 · 데이터 소스 · 코드 그래프 · 데이터 스키마)만 보인다.
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useThemeStore } from '@/app/theme.store'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 import { LEGACY_FEATURES, legacyFeature, openLegacyFeature } from '@/features/analysis/legacyNav'
 import { visibleTabs } from '@/app/customer'
 import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
+import { detectShellTabs, railTabTarget, wantsInPlace } from './railTabs'
 
 const props = defineProps({
   activeTab: { type: String, default: 'Proposals' },
@@ -70,14 +71,34 @@ const isLegacy = computed(() => props.activeTab === 'Legacy')
 // 데스크톱 셸은 레거시를 **따로 탭**으로 열어 그 탭의 레일을 레거시 메뉴로만 채운다(돌아갈 곳은 다른 탭).
 // 웹 판(포스코 등)에는 셸 탭이 없다 — 레일이 레거시 메뉴로만 바뀌면 다른 화면으로 돌아갈 길이 없어진다.
 // 그래서 웹에서는 앱 화면 목록을 그대로 두고, 레거시 아래에 그 메뉴를 붙인다(통합 P4).
-const hasShellTabs = typeof window !== 'undefined' && !!window.raShell?.openTab
-const legacyOnlyRail = computed(() => isLegacy.value && hasShellTabs)
+//
+// "셸 탭이 있다" 는 **lite 프로필의 탭 창**일 때만이다(railTabs.js). enterprise 도 preload 가 같아
+// `window.raShell` 이 있지만 탭 처리기가 없다 — 예전 판은 그걸로 갈라 enterprise 의 「레거시」 클릭이 사라졌다.
+const hasShellTabs = ref(false)
+onMounted(async () => { hasShellTabs.value = await detectShellTabs() })
+const legacyOnlyRail = computed(() => isLegacy.value && hasShellTabs.value)
 
-// 다른 화면에서 「레거시」 — 데스크톱 창이면 레거시 탭을 따로 연다(있으면 그 탭으로). 레거시 탭의 레일은
-// 레거시 메뉴만 보여 주므로, 지금 탭을 레거시로 바꾸면 원래 화면으로 돌아갈 메뉴가 없어진다.
-function select(tab) {
-  if (tab === 'Legacy' && window.raShell?.openTab) { window.raShell.openTab({ view: 'Legacy', reuse: true }); return }
+// C-1 ④ — lite 탭 창에서는 레일 클릭이 **새 탭**으로 연다(같은 화면 탭이 있으면 그 탭으로, reuse).
+// Ctrl/⌘-클릭은 제자리 전환. 웹 판·enterprise 는 지금처럼 제자리다.
+// 「레거시」는 수식키와 상관없이 따로 탭이다 — 레거시 탭의 레일은 레거시 메뉴만 보이므로, 지금 탭을
+// 레거시로 바꾸면 원래 화면으로 돌아갈 메뉴가 없어진다.
+async function select(tab, event) {
+  const shellTabs = hasShellTabs.value
+  const inPlace = tab === 'Legacy' ? false : wantsInPlace(event)
+  // 코드 화면은 작업 폴더를 아직 안 골랐으면 App 이 PRD 안내를 띄운다(onRailSelect) — 그 길을 그대로 탄다.
+  const codeUnset = tab === 'Code' && !codeWorkspaceSet()
+  const target = codeUnset ? null : railTabTarget({ tab, current: isActive(tab), shellTabs, inPlace })
+  if (target) {
+    try {
+      const id = await window.raShell.openTab(target)
+      if (id) return
+    } catch { /* 탭을 못 열면 제자리로 — 누른 것이 사라지지 않게 */ }
+  }
   emit('update:activeTab', tab)
+}
+
+function codeWorkspaceSet() {
+  try { return !!localStorage.getItem('claude_code_workspace_root') } catch { return false }
 }
 
 // 설정 · Figma 창은 TopBar 가 들고 있다 — 이벤트로 연다
@@ -112,7 +133,7 @@ const graphLabel = computed(() => session.graph || (session.isDesktop ? '—' : 
         :class="{ 'is-active': isActive(it.tab), 'is-blocked': blocked(it.tab) }"
         :title="blocked(it.tab) ? blockedWhy(it.tab) : it.label"
         :disabled="blocked(it.tab)"
-        @click="select(it.tab)"
+        @click="select(it.tab, $event)"
       >
         <svg class="rail__ic" viewBox="0 0 24 24" aria-hidden="true" v-html="ICONS[it.icon]"></svg>
         <span>{{ it.label }}</span>

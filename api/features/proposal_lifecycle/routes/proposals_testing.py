@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
 
@@ -14,7 +14,8 @@ router = APIRouter()
 
 
 @router.get("/stream/{proposal_id}/validate")
-async def stream_validate_sse(proposal_id: str, request: Request):
+async def stream_validate_sse(proposal_id: str, request: Request,
+                              scenarioIds: list[str] | None = Query(None)):
     """
     검증 실행/재검증을 SSE로 스트리밍한다 (작업 분해·인텐트 분해와 동일 방식).
     헤드리스 일회 실행이 아니라 **runner(스트리밍)** 로 robo-sync 구조 검증 + GWT 인수
@@ -24,40 +25,90 @@ async def stream_validate_sse(proposal_id: str, request: Request):
     **중지**: 클라이언트가 EventSource를 닫으면(disconnect) run_skill_lines가
     GeneratorExit/CancelledError로 종료되며 finally에서 claude 서브프로세스를 kill한다.
     상태는 TESTING으로 남아 언제든 재검증할 수 있다.
+
+    **부분 재검증**(D-2 ⑭): `?scenarioIds=SC-003,SC-007` 이면 그 항목만 다시 재고 기존
+    testResults 에 병합한다(덮지 않는다). `results` 이벤트는 병합된 전체 결과다.
     """
-    from api.features.proposal_lifecycle.services.test_runner import stream_validation
+    from api.features.proposal_lifecycle.services.test_runner import parse_scenario_ids, stream_validation
+
+    ids = parse_scenario_ids(scenarioIds)
 
     async def event_stream():
-        async for event_type, data in stream_validation(proposal_id):
+        async for event_type, data in stream_validation(proposal_id, ids or None):
             payload = json.dumps(data, ensure_ascii=False)
             yield f"event: {event_type}\ndata: {payload}\n\n"
 
     SmartLogger.log("INFO", f"SSE validation stream started: {proposal_id}",
                     category="proposal_lifecycle.validate.stream_start",
-                    params={"proposalId": proposal_id})
+                    params={"proposalId": proposal_id, "scenarioIds": ids})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.post("/{proposal_id}/validate")
-async def validate_proposal(proposal_id: str):
+async def validate_proposal(proposal_id: str, scenarioIds: list[str] | None = Query(None)):
     """
     검증 실행/재검증(비스트리밍 폴백) — 백그라운드 실행 후 프런트가 test-results를 폴링.
     UI는 기본적으로 SSE 스트리밍(`/stream/{id}/validate`)을 사용한다.
+
+    `?scenarioIds=SC-003,SC-007`(쉼표 또는 반복) 이면 **부분 재검증** — 그 항목만 다시 재고
+    결과는 기존 testResults 에 병합한다. 전체 결과가 없으면 409, 없는 id 면 400.
     """
-    from api.features.proposal_lifecycle.services.test_runner import reset_for_validation, run_tests
-
-    err = reset_for_validation(proposal_id)
-    if err:
-        raise HTTPException(status_code=err[0], detail=err[1])
-
     import asyncio
-    asyncio.create_task(run_tests(proposal_id))
+
+    from api.features.proposal_lifecycle.services.test_runner import (
+        parse_scenario_ids, prepare_partial_validation, reset_for_validation, run_tests,
+    )
+
+    ids = parse_scenario_ids(scenarioIds)
+    if ids:
+        err, existing, targets = prepare_partial_validation(proposal_id, ids)
+        if err:
+            raise HTTPException(status_code=err[0], detail=err[1])
+        asyncio.create_task(run_tests(proposal_id, ids, (existing, targets)))
+    else:
+        err = reset_for_validation(proposal_id)
+        if err:
+            raise HTTPException(status_code=err[0], detail=err[1])
+        asyncio.create_task(run_tests(proposal_id))
 
     SmartLogger.log("INFO", f"Validation triggered: {proposal_id}",
                     category="proposal_lifecycle.validate.start",
-                    params={"proposalId": proposal_id})
-    return {"proposalId": proposal_id, "status": "VALIDATING"}
+                    params={"proposalId": proposal_id, "scenarioIds": ids})
+    return {"proposalId": proposal_id, "status": "VALIDATING", "scenarioIds": ids}
+
+
+@router.get("/{proposal_id}/sandbox-head")
+async def get_sandbox_head(proposal_id: str):
+    """샌드박스 worktree 의 HEAD 커밋 — 「고치고 다시 검증」 루프가 **커밋을 감지**하는 신호.
+
+    셀에 "고친 뒤 커밋해라" 를 주입한 뒤 프런트가 이 값을 폴링해, 바뀌면 그 항목만
+    부분 재검증한다. worktree 가 없거나 git 이 실패하면 head=None.
+    """
+    import subprocess
+    from pathlib import Path
+
+    with get_session() as session:
+        record = session.run(
+            "MATCH (p:Proposal {id: $id}) RETURN p.sandboxWorktreePath AS path",
+            id=proposal_id,
+        ).single()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
+
+    path = record.get("path")
+    head = None
+    if path and Path(path).is_dir():
+        try:
+            out = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=str(path),
+                capture_output=True, text=True, timeout=10,
+            )
+            if out.returncode == 0:
+                head = out.stdout.strip() or None
+        except Exception:
+            head = None
+    return {"proposalId": proposal_id, "head": head}
 
 
 @router.get("/{proposal_id}/test-results", response_model=TestRunResult)

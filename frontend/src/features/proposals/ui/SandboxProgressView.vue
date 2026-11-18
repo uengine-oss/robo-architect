@@ -127,7 +127,7 @@
     </div>
 
     <!-- 액션 버튼들 — tasks.md 진행 상태로 결정:
-         없음 → 구현하기 / 부분 → 미구현부분 완료하기 / 완료 → 다시 구현하기 -->
+         없음 → 구현하기 / 부분 → 남은 구현 건너뛰고 검증으로 / 완료 → 다시 구현하기 -->
     <div class="sandbox-actions" v-else-if="actionMode || proposal?.sandboxWorktreePath">
       <button
         v-if="actionMode === 'start'"
@@ -288,14 +288,14 @@ const tasksAllDone = computed(() => {
   const p = progress.value
   return !!(p?.exists && p.total > 0 && p.done >= p.total)
 })
-// 버튼은 워크트리 tasks.md(체크리스트) **존재 여부**로 결정한다. '미구현부분 완료하기'가
+// 버튼은 워크트리 tasks.md(체크리스트) **존재 여부**로 결정한다. '남은 구현 건너뛰고 검증으로'가
 // 뜨면 그 체크리스트가 진행 블록에 함께 보여야 하므로, hasWorktree가 아니라 파일 존재 기준.
 const tasksFileExists = computed(() => !!progress.value?.exists)
 const actionMode = computed(() => {
   if (!canImplement.value) return null
   const status = proposal.value?.status
   if (tasksFileExists.value) {
-    // IMPLEMENTING + tasks.md 있음 → '검증으로 진행'(완료) 또는 '미구현부분 완료'(부분).
+    // IMPLEMENTING + tasks.md 있음 → '검증으로 진행'(완료) 또는 '남은 구현 건너뛰고 검증으로'(부분).
     // 둘 다 completeImplement(IMPLEMENTING→TESTING)로 검증·승인 단계로 넘어간다.
     // '다시 구현하기'는 보조 버튼으로 함께 제공한다.
     if (status === 'IMPLEMENTING') return 'complete'

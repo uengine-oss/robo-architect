@@ -17,6 +17,8 @@ const state = reactive({
   title: null,         // 대상 노드 제목(배너 보조)
   targetNodeId: null,
   bcId: null,
+  bcIds: [],           // B-4 — 전체 미리보기가 투영하는 BC 들(단일 '열기'는 [bcId])
+  full: false,         // B-4 — 제안 전체 미리보기인가(항목 하나 '열기'가 아니라)
   notice: null,        // 안내 문구(예: 신규 요소가 이 뷰어엔 표시 안 됨)
 })
 
@@ -34,6 +36,8 @@ export function enterPreview(opts = {}) {
     title: opts.title || null,
     targetNodeId: opts.targetNodeId || null,
     bcId: opts.bcId || null,
+    bcIds: Array.isArray(opts.bcIds) ? [...opts.bcIds] : (opts.bcId ? [opts.bcId] : []),
+    full: !!opts.full,
     notice: opts.notice || null,
   })
 }
@@ -41,7 +45,7 @@ export function enterPreview(opts = {}) {
 export function exitPreview() {
   Object.assign(state, {
     active: false, proposalId: null, viewer: null, baseUrl: null,
-    label: null, title: null, targetNodeId: null, bcId: null, notice: null,
+    label: null, title: null, targetNodeId: null, bcId: null, bcIds: [], full: false, notice: null,
   })
 }
 

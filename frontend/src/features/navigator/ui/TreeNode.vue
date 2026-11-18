@@ -64,6 +64,17 @@ onMounted(() => {
 // Check if node is newly added
 const isNewlyAdded = computed(() => navigatorStore.isNewlyAdded(props.node.id))
 
+// B-4 ⑧ — 프로포절 미리보기 중에는 탐색기가 **읽기 전용**이다. 신규/수정 노드는 배지로 가른다
+// (투영 트리의 node.source · node.badge). 끌어 놓기 · 더블클릭(캔버스 추가) · 편집 단추를 막는다.
+const previewReadOnly = computed(() => navigatorStore.previewActive)
+const previewBadgeClass = computed(() => {
+  const src = props.node.source
+  if (src === 'temporary') return 'tree-node__preview-badge--new'
+  if (src === 'live+modified') return 'tree-node__preview-badge--mod'
+  if (src === 'conflict') return 'tree-node__preview-badge--conflict'
+  return ''
+})
+
 // Get node type icon
 const nodeIcon = computed(() => {
   const icons = {
@@ -492,6 +503,7 @@ function toggleExpand(event) {
 
 // Create a new Invariant under an Aggregate from the Invariants group header.
 async function addInvariant(event) {
+  if (previewReadOnly.value) return
   event.stopPropagation()
   const aggId = props.node.aggregateId
   const declaration = (window.prompt('새 인베리언트 선언문을 입력하세요') || '').trim()
@@ -561,6 +573,7 @@ function openBcConstitution() {
 }
 
 async function handleDoubleClick() {
+  if (previewReadOnly.value) return
   if (props.node.type === 'UserStory') {
     if (activeTab && activeTab.value !== 'Design') {
       activeTab.value = 'Design'
@@ -592,6 +605,10 @@ async function handleDoubleClick() {
 
 // Drag handlers
 function handleDragStart(event) {
+  if (previewReadOnly.value) {
+    event.preventDefault()
+    return
+  }
   // Invariants are never placed on the canvas (027) — block their drag.
   // 029 — also block the synthetic UserStoryGroup wrapper and the per-element
   // ImplementationFile / VO / Enum / Exception leaves (no graph node behind them).
@@ -667,7 +684,7 @@ async function addToCanvas() {
       class="tree-node__header"
       :class="{ 'is-dragging': isDragging, 'is-on-canvas': isOnCanvas, 'is-newly-added': isNewlyAdded }"
       :style="{ paddingLeft: `${depth * 10}px` }"
-      :draggable="true"
+      :draggable="!previewReadOnly"
       @click="toggleExpand"
       @dblclick="handleDoubleClick"
       @dragstart="handleDragStart"
@@ -700,6 +717,15 @@ async function addToCanvas() {
       >
         {{ displayName }}
       </span>
+
+      <!-- B-4 ⑧ 미리보기 배지(신규 · 수정 · 충돌) — 적재 전 제안 요소 -->
+      <span
+        v-if="previewReadOnly && node.badge"
+        class="tree-node__preview-badge"
+        :class="previewBadgeClass"
+        title="프로포절 미리보기 — 아직 적재되지 않은 요소"
+        data-testid="nav-preview-badge"
+      >{{ node.badge }}</span>
       
       <!-- Policy trigger info -->
       <span v-if="node.type === 'Policy' && node.triggerEventId" class="tree-node__trigger">
@@ -713,7 +739,7 @@ async function addToCanvas() {
       
       <!-- Add button for the Invariants group (027) -->
       <button
-        v-if="node.type === 'InvariantGroup'"
+        v-if="node.type === 'InvariantGroup' && !previewReadOnly"
         class="tree-node__edit-btn"
         title="인베리언트 추가"
         @click.stop="addInvariant"
@@ -726,7 +752,7 @@ async function addToCanvas() {
 
       <!-- Edit button for user stories -->
       <button
-        v-if="node.type === 'UserStory'"
+        v-if="node.type === 'UserStory' && !previewReadOnly"
         class="tree-node__edit-btn"
         title="Edit User Story (Double-click)"
         @click.stop="handleDoubleClick"
@@ -740,7 +766,7 @@ async function addToCanvas() {
       <!-- 041 — BC별 헌장(Constitution) 진입점. Design 쪽에서 BC 헌장 오버라이드 편집.
            2026-10-23 — Proposals 를 뺀 배포에서는 감춘다(`app/featureVisibility.js`). -->
       <button
-        v-if="constitutionVisible && node.type === 'BoundedContext'"
+        v-if="constitutionVisible && node.type === 'BoundedContext' && !previewReadOnly"
         class="tree-node__edit-btn tree-node__constitution-btn"
         title="이 Bounded Context 의 헌장 (Constitution)"
         @click.stop="openBcConstitution"
@@ -768,6 +794,19 @@ async function addToCanvas() {
 </template>
 
 <style scoped>
+.tree-node__preview-badge {
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 9px;
+  line-height: 14px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+.tree-node__preview-badge--new { color: #16a34a; }
+.tree-node__preview-badge--mod { color: #d97706; }
+.tree-node__preview-badge--conflict { color: #dc2626; }
 .tree-node.is-new {
   animation: slideInNode 0.4s ease-out;
 }
