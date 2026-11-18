@@ -671,7 +671,7 @@ function handleProcessDragStart(event, item) {
           {{ navigatorStore.error }}
         </div>
 
-        <div v-else-if="navigatorStore.contexts.length === 0 && navigatorStore.userStories.length === 0" class="empty-state">
+        <div v-else-if="navigatorStore.displayContexts.length === 0 && navigatorStore.userStories.length === 0" class="empty-state">
           No data found
         </div>
 
@@ -692,11 +692,11 @@ function handleProcessDragStart(event, item) {
           </div>
 
           <!-- Bounded Contexts -->
-          <div v-if="navigatorStore.contexts.length > 0" class="section-group">
+          <div v-if="navigatorStore.displayContexts.length > 0" class="section-group">
             <div class="section-header section-header--with-actions">
               <div class="section-header__left">
                 <span class="section-title">{{ terminologyStore.getTerm('BoundedContext') }}s</span>
-                <span class="section-count">{{ navigatorStore.contexts.length }}</span>
+                <span class="section-count">{{ navigatorStore.displayContexts.length }}</span>
               </div>
               <div class="section-header__actions">
                 <button
@@ -734,10 +734,10 @@ function handleProcessDragStart(event, item) {
             </div>
             <TransitionGroup name="tree-item">
               <TreeNode
-                v-for="ctx in navigatorStore.contexts"
+                v-for="ctx in navigatorStore.displayContexts"
                 :key="ctx.id"
                 :node="{ ...ctx, type: 'BoundedContext', domainType: ctx.domainType }"
-                :tree="navigatorStore.contextTrees[ctx.id]"
+                :tree="navigatorStore.treeFor(ctx.id)"
               />
             </TransitionGroup>
           </div>

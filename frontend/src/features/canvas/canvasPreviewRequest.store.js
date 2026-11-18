@@ -23,7 +23,9 @@ export const useCanvasPreviewRequestStore = defineStore('canvasPreviewRequest', 
   const requestId = ref(0)
 
   function request(payload) {
-    if (!payload || !payload.bcId || !payload.targetNodeId) return
+    // B-4 ⑧ 전체 미리보기는 { proposalId, bcIds:[…], full:true } — 포커스 대상이 없다.
+    const full = !!(payload && payload.full && Array.isArray(payload.bcIds) && payload.bcIds.length)
+    if (!payload || (!full && (!payload.bcId || !payload.targetNodeId))) return
     requestId.value += 1
     pendingRequest.value = { ...payload, _reqId: requestId.value }
   }

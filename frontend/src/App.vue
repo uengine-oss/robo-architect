@@ -206,8 +206,16 @@ async function _onOpenPreview(e) {
     title: d.title || '',
     targetNodeId: d.targetNodeId || null,
     bcId: d.bcId || null,
+    bcIds: d.bcIds || (d.bcId ? [d.bcId] : []),
+    full: !!d.full,
     notice: d.notice || null,
   })
+
+  // B-4 ⑧ — 좌측 탐색기도 같은 미리보기를 본다(BC 마다 data 오버레이 full-tree · 읽기 전용 · 신규 배지).
+  const navBcIds = d.bcIds || (d.bcId ? [d.bcId] : [])
+  if (navBcIds.length) {
+    navigatorStore.beginPreview(d.proposalId, navBcIds).catch(() => { /* best-effort */ })
+  }
 
   activeTab.value = tab
   await nextTick()
@@ -228,6 +236,14 @@ async function _onOpenPreview(e) {
       const t = _emTypeFromLabel(d.nodeLabel)
       if (t && d.targetNodeId) await eventModeling.selectItem(d.targetNodeId, t)
     } catch { /* best-effort focus */ }
+  } else if (d.viewer === 'design' && d.full && (d.bcIds || []).length) {
+    // B-4 ⑧ 전체 미리보기 — 제안이 건드리는 BC 들을 모두 캔버스에 오버레이로 투영(포커스 없음).
+    canvasPreviewRequest.request({
+      proposalId: d.proposalId,
+      bcIds: d.bcIds,
+      full: true,
+      title: d.title || '',
+    })
   } else if (d.viewer === 'design' && d.bcId && d.targetNodeId) {
     // 043-fix — Command/Event 는 소속 BC 그래프를 Design 캔버스에 투영(오버레이)해 대상
     // 노드 포커스 + 인스펙터를 연다. CanvasWorkspace 가 이 요청을 소비(fetch→begin/대체→포커스).
@@ -252,6 +268,7 @@ function _onOpenPreviewFailed(e) {
 // 배너 '닫기' → 미리보기 종료 시 뷰어 라이브 상태 복원(US2 잔존물 0).
 function _onPreviewExit(e) {
   const viewer = e?.detail?.viewer
+  navigatorStore.endPreview()
   if (viewer === 'data') aggregateViewer.endPreview()
   // 043-fix — Design 캔버스도 스냅샷 복원(잔존물 0).
   else if (viewer === 'design') canvasStore.endPreview()

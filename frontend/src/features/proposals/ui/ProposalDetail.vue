@@ -22,6 +22,7 @@
           :title="t('proposals.legacyTag.toggleTitle')"
           @click="evidenceMode = !evidenceMode"
         >{{ t('proposals.legacyTag.toggle') }}</button>
+        <FullPreviewButton :proposal="proposal" />
       </div>
       <h2 class="detail-header__title">{{ proposal.title }}</h2>
       <p class="detail-header__prompt">{{ proposal.originalPrompt }}</p>
@@ -258,6 +259,7 @@
 import { ref, computed, onMounted, watch, provide } from 'vue'
 import { useI18n } from '../../../app/i18n'
 import LegacyRefChip from './LegacyRefChip.vue'
+import FullPreviewButton from './FullPreviewButton.vue'
 import LegacyEvidencePanel from './LegacyEvidencePanel.vue'
 import { provenanceIndex } from '../legacy-reference'
 import { useProposalsStore } from '../proposals.store'

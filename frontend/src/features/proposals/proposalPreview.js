@@ -72,3 +72,71 @@ export async function openPreview(proposalId, item) {
 export function previewBaseUrl(proposalId) {
   return `${BASE}/${proposalId}/preview`
 }
+
+// ── B-4 ⑧ 전체 미리보기 ─────────────────────────────────────────────────
+// 항목 하나가 아니라 **제안 전체**를 오버레이로 본다. 새 백엔드는 없다 — BC 마다
+// 기존 투영 엔드포인트(design graph · data full-tree)를 다시 부른다.
+
+// 제안이 건드리는 BC id 목록(순서 보존 · 중복 제거). 순수 함수 — 단위 시험 대상.
+//   ① tacticalDiff(없으면 planDraft.tacticalDiff) 항목의 boundedContextId
+//   ② impactMap 의 BoundedContext 항목 nodeId
+//   ③ tacticalDiff 의 BoundedContext 항목 nodeId(MODIFY — 라이브 BC)
+export function collectPreviewBcIds(proposal) {
+  if (!proposal) return []
+  const out = []
+  const add = (v) => {
+    const s = v == null ? '' : String(v).trim()
+    if (s && !s.startsWith('PREVIEW:') && !out.includes(s)) out.push(s)
+  }
+  const tactical = (proposal.tacticalDiff && proposal.tacticalDiff.length)
+    ? proposal.tacticalDiff
+    : (proposal.planDraft?.tacticalDiff || [])
+  for (const it of tactical || []) {
+    if (!it || typeof it !== 'object') continue
+    add(it.boundedContextId)
+    if (it.nodeLabel === 'BoundedContext' && (it.changeType || 'MODIFY') !== 'CREATE') add(it.nodeId)
+  }
+  for (const e of proposal.impactMap || []) {
+    if (e && e.nodeLabel === 'BoundedContext') add(e.nodeId)
+  }
+  return out
+}
+
+// 전체 미리보기 진입 — viewer: 'design' | 'processes'.
+// BC 를 하나도 못 찾으면 tactical 항목 몇 개를 resolve 해 bcId 를 얻는다(신규 Command 등).
+export async function openFullPreview(proposal, viewer = 'design') {
+  if (!proposal?.id) return { ok: false, reason: '제안이 없습니다' }
+  let bcIds = collectPreviewBcIds(proposal)
+  if (!bcIds.length) {
+    const tactical = proposal.tacticalDiff?.length ? proposal.tacticalDiff : (proposal.planDraft?.tacticalDiff || [])
+    for (const it of tactical.slice(0, 5)) {
+      try {
+        const r = await resolveOpenTarget(proposal.id, it?.nodeId, it?.nodeLabel, it?.nodeTitle)
+        if (r?.bcId && !bcIds.includes(r.bcId)) bcIds.push(r.bcId)
+      } catch { /* best-effort */ }
+    }
+  }
+  if (viewer === 'design' && !bcIds.length) {
+    const reason = '미리보기로 그릴 Bounded Context 를 찾지 못했습니다(Plan 을 먼저 돌려 Impact 를 만드세요).'
+    window.dispatchEvent(new CustomEvent('robo:open-preview-failed', {
+      detail: { proposalId: proposal.id, item: null, reason },
+    }))
+    return { ok: false, reason }
+  }
+  window.dispatchEvent(new CustomEvent('robo:open-preview', {
+    detail: {
+      proposalId: proposal.id,
+      viewer,
+      full: true,
+      bcIds,
+      bcId: bcIds[0] || null,
+      targetNodeId: null,
+      label: proposal.id,
+      title: '전체',
+      notice: viewer === 'processes'
+        ? 'Processes 는 라이브 이벤트 모델을 읽기 전용으로 보여 줍니다 — 제안의 신규 요소는 Design 과 탐색기에서 확인하세요.'
+        : null,
+    },
+  }))
+  return { ok: true, bcIds }
+}

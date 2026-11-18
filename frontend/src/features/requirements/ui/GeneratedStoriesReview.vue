@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
+import EngineUsedBadge from './EngineUsedBadge.vue'
 
 /**
  * 하위 User Story 자동 생성 — 제안 검토 창 (034 US5).
@@ -8,7 +9,8 @@ import { useRequirementsStore } from '@/features/requirements/requirements.store
  * 확정한 항목만 그래프에 반영된다.
  */
 const props = defineProps({
-  // GenerateChildStoriesResponse: { scopeType, scopeId, boundedContextId, featureId, proposals }
+  // GenerateChildStoriesResponse: { scopeType, scopeId, boundedContextId, featureId, proposals,
+  //   engineRequested, engineUsed, engineFallbackReason }
   result: { type: Object, required: true },
   scopeName: { type: String, default: '' },
 })
@@ -60,6 +62,13 @@ async function confirm() {
         <p class="dialog__hint">
           <strong>{{ scopeName }}</strong> 범위에 어울리는 User Story를 AI가 제안했습니다.
           체크된 항목만 추가됩니다. 내용은 직접 수정할 수 있습니다.
+        </p>
+        <p class="dialog__engine">
+          <EngineUsedBadge
+            :requested="result.engineRequested"
+            :used="result.engineUsed"
+            :reason="result.engineFallbackReason || ''"
+          />
         </p>
         <p v-if="errorMsg" class="dialog__error">{{ errorMsg }}</p>
         <p v-if="!rows.length" class="dialog__empty">
