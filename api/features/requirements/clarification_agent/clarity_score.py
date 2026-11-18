@@ -66,9 +66,12 @@ class ClarityScores:
     scores: list[CategoryScore] = field(default_factory=list)
 
 
-def _flagged_count_by_category(user_story_ids: set[str]) -> dict[AmbiguityCategory, int]:
+def _flagged_count_by_category(
+    user_story_ids: set[str], flags: dict | None = None
+) -> dict[AmbiguityCategory, int]:
     """For each category, count in-scope UserStories currently flagged."""
-    flags = snapshot_flags()
+    # 플래그는 이제 그래프에서 읽는다(D-4 ①) — 호출마다 조회가 들므로 한 번 읽은 것을 넘겨받는다.
+    flags = snapshot_flags() if flags is None else flags
     by_cat: dict[AmbiguityCategory, set[str]] = {c: set() for c in AmbiguityCategory}
     for us_id, info in flags.items():
         if us_id not in user_story_ids:
@@ -140,11 +143,10 @@ def compute_clarity_scores(user_story_ids: list[str]) -> ClarityScores:
             ],
         )
 
-    flagged_n = _flagged_count_by_category(id_set)
+    flag_map = snapshot_flags()  # 한 번만 읽는다(그래프 조회)
+    flagged_n = _flagged_count_by_category(id_set, flag_map)
     resolved_n = _resolved_count_by_category(id_set)
-    flagged_total = sum(
-        1 for us_id in id_set if us_id in snapshot_flags()
-    )
+    flagged_total = sum(1 for us_id in id_set if us_id in flag_map)
     resolved_us_total = len({
         e.sessionId for e in read_scope_log(id_set) if not e.reverted
     })
