@@ -47,6 +47,8 @@ export const messages = {
   'proposals.panel.deleteInputPlaceholder': { ko: 'Proposal id 입력', en: 'Enter proposal id' },
   'proposals.panel.deleteConfirm': { ko: '영구 삭제', en: 'Delete permanently' },
   'proposals.panel.deleting': { ko: '삭제 중...', en: 'Deleting...' },
+  'proposals.panel.deleteCopyId': { ko: 'id 복사', en: 'Copy id' },
+  'proposals.panel.deleteIdCopied': { ko: '복사됨', en: 'Copied' },
 
   // ── ConstitutionInterview strings ────────────────────────────────────
   'proposals.constitution.hint': { ko: '프로젝트의 설계 원칙 · 기술 스택 · 모놀리식/마이크로서비스 · 레포 전략을 인터뷰로 확정합니다. 원본 프롬프트에서 ', en: "This interview establishes your project's design principles, tech stack, monolith/microservice choice, and repository strategy. " },
