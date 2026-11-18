@@ -91,6 +91,12 @@ export interface LaunchProfile {
 // 한 DB 에 그래프를 여럿 둔다. 그래서 번들 연결 하나로 프로젝트를 고르고 만든다.
 // ---------------------------------------------------------------------------
 
+/**
+ * 프로젝트를 만들 때 고른 의도 (라이트 지적 C-5 ⑩). 어휘는 DDD 마법사의
+ * `profile.projectType` 과 같다(DddWizardPanel.vue · ddd_wizard/step_prompts.py).
+ */
+export type ProjectType = "greenfield" | "brownfield";
+
 export interface GraphProject {
   /** 그래프 이름 — 백엔드의 NEO4J_DATABASE 로 넘어간다. */
   name: string;
@@ -100,11 +106,15 @@ export interface GraphProject {
   isDefault: boolean;
   /** 지난번에 들어간 프로젝트 — 런처가 미리 고른다. */
   lastUsed: boolean;
+  /** 만들 때 고른 의도. 그 전에 만든 프로젝트·이 앱 밖에서 만든 그래프는 `null`(= 모른다). */
+  projectType?: ProjectType | null;
 }
 
 export interface ProjectsCreateInput {
   /** 영문 소문자로 시작, 소문자·숫자·밑줄 2~40자. */
   name: string;
+  /** 신규(그린필드) / 기존 시스템 있음(브라운필드). 없으면 저장하지 않는다. */
+  projectType?: ProjectType;
 }
 
 // ---------------------------------------------------------------------------

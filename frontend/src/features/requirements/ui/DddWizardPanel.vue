@@ -1,6 +1,8 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
+import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
+import { loadProjectTypeDefault } from '@/features/requirements/projectIntent'
 
 /**
  * DDD 발견 마법사 (035 — US1/US2/US4/US6).
@@ -27,6 +29,19 @@ const PROFILE_Q = [
 
 const stage = ref('profiling') // profiling | planning | running
 const profile = ref({ projectType: 'greenfield', dddExperience: 'first_time', teamSize: 'small', existingArtifacts: [] })
+
+// C-5 ⑩ — 데스크톱 lite 에서 프로젝트를 만들 때 고른 의도를 기본값으로(두 번 묻지 않는다).
+// 웹 판·enterprise·의도 없는 옛 프로젝트는 null → 위 기본값 그대로. 사용자가 먼저 골랐으면 덮지 않는다.
+const session = useSessionStore()
+const projectTypeTouched = ref(false)
+onMounted(async () => {
+  const intent = await loadProjectTypeDefault(session.graph)
+  if (intent && !projectTypeTouched.value && stage.value === 'profiling') profile.value.projectType = intent
+})
+function pickOption(key, val) {
+  if (key === 'projectType') projectTypeTouched.value = true
+  profile.value[key] = val
+}
 const sessionId = ref(null)
 const plan = ref([])
 const profileSummary = ref('')
@@ -181,7 +196,7 @@ function skipStep() {
           <button
             v-for="[val, lbl] in q.options" :key="val"
             class="dw-opt" :class="{ on: profile[q.key] === val }"
-            @click="profile[q.key] = val"
+            @click="pickOption(q.key, val)"
           >{{ lbl }}</button>
         </div>
       </div>

@@ -80,6 +80,12 @@ export interface DesktopSettings {
   /** Absolute paths, most-recent first, max 5. */
   recentProjectRoots: string[];
   lastProfile: import("./launcher-contract").LaunchProfile | null;
+  /**
+   * lite: 프로젝트(그래프 이름) → 만들 때 고른 의도 (C-5 ⑩). **선택 칸**이다 — 없으면
+   * 아무도 안 고른 것이다. 그래프 안이 아니라 여기 두는 이유: 분석기·초기화가 그래프를
+   * 비울 때 같이 지워지면 안 되고, 백엔드 스키마를 건드리지 않는 가장 작은 자리다.
+   */
+  projectTypes?: Record<string, import("./launcher-contract").ProjectType>;
 }
 
 /**
