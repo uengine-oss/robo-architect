@@ -8,6 +8,8 @@ publish-images.ps1 — **인터넷 되는 PC 에서** CI 가 구운 이미지를
 
 준비  Docker Desktop 이 떠 있다 · gh 가 로그인돼 있다(gh auth status) · Actions "posco-web images" 가 초록
 결과  Release <Tag> (prerelease) 에 <Asset> 과 <Asset>.sha256 — 서버의 update.sh 가 둘을 받는다
+      묶음이 1.9 GB 를 넘으면(GitHub Release 자산 한 개 상한 2 GiB) <Asset>.part00… 로 나눠 올리고
+      조각 목록 <Asset>.parts 를 같이 올린다 — update.sh 가 받아 이어 붙인 뒤 sha256 으로 대조한다.
 ⚠ Release 는 공개 저장소에 올라간다 — 이미지가 이미 public 이라 새로 드러나는 것은 없다.
 #>
 param(
@@ -43,21 +45,50 @@ $hash = (Get-FileHash $tar -Algorithm SHA256).Hash.ToLower()
 $size = (Get-Item $tar).Length
 Write-Host ("묶음  {0}  {1:N0} B  sha256 {2}" -f $tar, $size, $hash.Substring(0, 8))
 
+# GitHub Release 자산은 한 개에 2 GiB 까지다 — 넘으면 조각으로(analyzer 에 재채점 모델이 들어간 뒤로 넘는다)
+$PartBytes = 1900MB
+$uploads = @($tar)
+if ($size -gt $PartBytes) {
+  $names = @()
+  $in = [IO.File]::OpenRead($tar)
+  try {
+    $buf = New-Object byte[] (8MB)
+    $i = 0
+    while ($in.Position -lt $in.Length) {
+      $name = '{0}.part{1:D2}' -f $Asset, $i
+      $o = [IO.File]::Create((Join-Path $out $name))
+      try {
+        $left = [Math]::Min($PartBytes, $in.Length - $in.Position)
+        while ($left -gt 0) {
+          $n = $in.Read($buf, 0, [int][Math]::Min($buf.Length, $left))
+          $o.Write($buf, 0, $n); $left -= $n
+        }
+      } finally { $o.Close() }
+      $names += $name; $i++
+    }
+  } finally { $in.Close() }
+  [IO.File]::WriteAllText((Join-Path $out "$Asset.parts"), (($names -join "`n") + "`n"))
+  $uploads = @($names | ForEach-Object { Join-Path $out $_ }) + @(Join-Path $out "$Asset.parts")
+  Write-Host ("조각  {0}개 ({1})" -f $names.Count, ($names -join ' '))
+}
+
 if ($DryRun) { Write-Host 'DryRun — 올리지 않는다'; return }
 
 $notes = "posco-web 이미지 묶음 · $($Images -join ' · ')`n`nSHA256 $hash`n`n서버: bash update.sh $Tag $Asset"
 gh release view $Tag --repo $Repo *> $null
 if ($LASTEXITCODE -eq 0) {
-  gh release upload $Tag $tar "$tar.sha256" --repo $Repo --clobber
+  gh release upload $Tag @uploads "$tar.sha256" --repo $Repo --clobber
 } else {
-  gh release create $Tag $tar "$tar.sha256" --repo $Repo --target main --prerelease `
+  gh release create $Tag @uploads "$tar.sha256" --repo $Repo --target main --prerelease `
     --title "posco-web images $Tag" --notes $notes
 }
 if ($LASTEXITCODE) { throw 'Release 에 올리지 못했다' }
 
-$url = "https://github.com/$Repo/releases/download/$Tag/$Asset"
+$first = Split-Path -Leaf $uploads[0]
+$url = "https://github.com/$Repo/releases/download/$Tag/$first"
 $head = curl.exe -sIL -m 30 $url | Select-String -Pattern '^(HTTP|content-length)' | Select-Object -Last 2
 Write-Host "확인  $url"
 $head | ForEach-Object { Write-Host "  $_" }
 Write-Host "서버  bash update.sh $Tag $Asset"
 Remove-Item $tar, "$tar.sha256"
+Get-ChildItem $out -Filter "$Asset.part*" -ErrorAction SilentlyContinue | Remove-Item

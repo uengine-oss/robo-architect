@@ -53,7 +53,21 @@ git log -1 --oneline
 if [[ $TAG != --no-images ]]; then
   echo "[2] 받기 — $TAG/$ASSET"
   base=https://github.com/$REPO/releases/download/$TAG
-  curl -fL -C - -o "$ASSET" "$base/$ASSET"
+  # 2 GiB 를 넘는 묶음은 조각으로 올라온다(<asset>.parts 에 조각 이름) — 있으면 조각을 받아 잇는다
+  if curl -fsSL -o "$ASSET.parts" "$base/$ASSET.parts" 2>/dev/null; then
+    echo "  조각 $(wc -l < "$ASSET.parts")개"
+    while read -r part; do
+      [[ -n $part ]] || continue
+      curl -fL -C - -o "$part" "$base/$part"
+    done < "$ASSET.parts"
+    : > "$ASSET"
+    while read -r part; do [[ -n $part ]] && cat "$part" >> "$ASSET"; done < "$ASSET.parts"
+    while read -r part; do [[ -n $part ]] && rm -f "$part"; done < "$ASSET.parts"
+    rm -f "$ASSET.parts"
+  else
+    rm -f "$ASSET.parts"
+    curl -fL -C - -o "$ASSET" "$base/$ASSET"
+  fi
   curl -fsSL -o "$ASSET.sha256" "$base/$ASSET.sha256"
   sha256sum -c "$ASSET.sha256"
 
