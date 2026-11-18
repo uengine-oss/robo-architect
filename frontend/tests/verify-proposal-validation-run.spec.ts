@@ -67,7 +67,7 @@ test('검증 탭 진입 → runner 스트리밍 자동 실행 → 실행 로그 
   await page.goto('/')
   await gotoView(page, '프로포절')
   await page.locator('.proposal-item', { hasText: ID }).first().click()
-  await page.locator('.tab-btn', { hasText: '검증' }).click()
+  await page.locator('.tab-btn', { hasText: 'Validate' }).click()
 
   // 1) 검증이 자동 트리거되고 실행 로그(runner narration·tool)가 표시된다.
   await expect(page.locator('.validate-log')).toBeVisible({ timeout: 5000 })
@@ -91,7 +91,7 @@ test('검증 진행 중 "중지"로 멈출 수 있다', async ({ page }) => {
   await page.goto('/')
   await gotoView(page, '프로포절')
   await page.locator('.proposal-item', { hasText: ID }).first().click()
-  await page.locator('.tab-btn', { hasText: '검증' }).click()
+  await page.locator('.tab-btn', { hasText: 'Validate' }).click()
 
   // 진행 중 → "검증 중" 배지와 "중지" 버튼이 보인다.
   await expect(page.locator('.validating-badge')).toBeVisible({ timeout: 5000 })

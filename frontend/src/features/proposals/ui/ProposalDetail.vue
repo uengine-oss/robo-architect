@@ -42,20 +42,15 @@
       <button @click="activeTab = 'plan'" class="btn btn--secondary btn--sm">{{ t('proposals.detail.openPlanStage') }}</button>
     </div>
 
-    <!-- Tabs -->
-    <div class="detail-tabs">
-      <button
-        v-for="tab in availableTabs"
-        :key="tab.key"
-        @click="activeTab = tab.key"
-        :class="['tab-btn', activeTab === tab.key ? 'tab-btn--active' : '']"
-      >{{ tab.label }}</button>
-    </div>
-
-    <!-- Tab Content -->
-    <div class="detail-content">
+    <!-- 단계 탭은 목록 위 한 줄(ProposalsPanel)에 있다 — 여기엔 본문만. -->
+    <div class="detail-content" :data-stage="activeTab">
+      <!-- 아직 열리지 않은 단계 — 탭은 늘 보이고, 본문 대신 안내를 둔다 -->
+      <div v-if="!activeStageOpen" class="stage-locked" data-testid="stage-locked">
+        🔒 {{ t('proposals.stage.lockedNote', { stage: t(`proposals.stage.${activeTab}`) }) }}
+      </div>
+      <template v-else>
       <!-- Intent — Strategic Diff 만 (FR-006) -->
-      <template v-if="activeTab === 'diff'">
+      <template v-if="activeTab === 'intent'">
         <!-- 043 — ODA 표준: Intent 탭에 ODA 트랙(정합성·적합성 게이트·산출물) 융합 -->
         <OdaStandardTrack
           v-if="isOda"
@@ -143,20 +138,6 @@
         </template>
       </template>
 
-      <!-- Impact Map: 038식 레이어별 구조화 diff 시각화 + 충돌 테이블(보조) -->
-      <template v-if="activeTab === 'impact'">
-        <ProposalDiffVisualView
-          :strategicDiff="proposal.strategicDiff"
-          :tacticalDiff="proposal.tacticalDiff || proposal.planDraft?.tacticalDiff"
-          :journeys="proposal.journeys"
-          :legacyReferences="proposal.legacyReferences || []"
-        />
-        <details v-if="proposal.impactMap?.length" class="impact-conflict">
-          <summary>충돌 가능성 분석 (Impact Map)</summary>
-          <ImpactMapView :impactMap="proposal.impactMap" :proposalId="proposal.id" />
-        </details>
-      </template>
-
       <!-- 041 — Plan 단계 (tactical + impact + 아키텍처). Constitution 부재 시
            인터뷰는 PlanView 내부에서 인라인으로 진행된다(보기/수정은 Design 측). -->
       <template v-if="activeTab === 'plan'">
@@ -190,21 +171,42 @@
           :proposalId="proposal.id"
           @confirmed="onPlanConfirmed"
         />
+        <!-- Impact — Plan 단계의 산출물(tacticalDiff·impactMap)이라 Plan 안의 접힌 섹션이다.
+             따로 탭이면 Plan 을 돌리기 전엔 늘 빈 화면이었다(C-2 ③ · D-1 ⑬). -->
+        <details class="plan-impact" data-testid="plan-impact">
+          <summary>{{ t('proposals.stage.impactSection') }}</summary>
+          <div v-if="!hasImpact" class="plan-impact__empty" data-testid="plan-impact-empty">
+            {{ t('proposals.stage.impactEmpty') }}
+          </div>
+          <template v-else>
+            <ProposalDiffVisualView
+              :strategicDiff="proposal.strategicDiff"
+              :tacticalDiff="impactTacticalDiff"
+              :journeys="proposal.journeys"
+              :legacyReferences="proposal.legacyReferences || []"
+            />
+            <details v-if="proposal.impactMap?.length" class="impact-conflict">
+              <summary>충돌 가능성 분석 (Impact Map)</summary>
+              <ImpactMapView :impactMap="proposal.impactMap" :proposalId="proposal.id" />
+            </details>
+          </template>
+        </details>
       </template>
 
       <!-- Sandbox Progress -->
       <template v-if="activeTab === 'sandbox'">
-        <SandboxProgressView :proposalId="proposal.id" @validate="activeTab = 'tests'" />
+        <SandboxProgressView :proposalId="proposal.id" @validate="activeTab = 'validate'" />
       </template>
 
       <!-- Test Results -->
-      <template v-if="activeTab === 'tests'">
+      <template v-if="activeTab === 'validate'">
         <TestResultsView :proposalId="proposal.id" />
       </template>
 
       <!-- Accept / Destroy -->
-      <template v-if="activeTab === 'acceptance'">
+      <template v-if="activeTab === 'accept'">
         <DualMergeView :proposal="proposal" />
+      </template>
       </template>
     </div>
 
@@ -223,8 +225,8 @@
       </template>
       <!-- 검증 완료 후의 다음 라이프사이클 단계는 Accept/Destroy다. 탭은 이미
            노출되어 있었지만 하단 액션이 재구현만 가리켜 이전 단계로 회귀해 보였다. -->
-      <template v-if="canProceedToAcceptance && activeTab !== 'acceptance'">
-        <button @click="activeTab = 'acceptance'" class="btn btn--primary">
+      <template v-if="canProceedToAcceptance && activeTab !== 'accept'">
+        <button @click="activeTab = 'accept'" class="btn btn--primary">
           {{ t('proposals.detail.openAcceptance') }}
         </button>
       </template>
@@ -270,11 +272,26 @@ import StrategicStages from './StrategicStages.vue'
 import PlanStages from './PlanStages.vue'
 import StageArtifactTabs from './StageArtifactTabs.vue'
 import OdaStandardTrack from './OdaStandardTrack.vue'
+import { isStageOpen, normalizeStageKey } from '../proposal-stages'
 
-const props = defineProps({ proposalId: { type: String, required: true } })
+const props = defineProps({
+  proposalId: { type: String, required: true },
+  // 단계 탭(intent·plan·sandbox·validate·accept) — 탭 줄은 부모(ProposalsPanel)가 그린다.
+  // 부모가 주지 않으면 자체 상태로 돈다.
+  stage: { type: String, default: null },
+})
+const emit = defineEmits(['update:stage'])
 const { t } = useI18n()
 const store = useProposalsStore()
-const activeTab = ref('diff')
+const localStage = ref('intent')
+const activeTab = computed({
+  get: () => normalizeStageKey(props.stage ?? localStage.value),
+  set: (key) => {
+    const k = normalizeStageKey(key)
+    localStage.value = k
+    emit('update:stage', k)
+  },
+})
 const showEditDiff = ref(false)
 const editStrategicJson = ref('')
 const savingDiff = ref(false)
@@ -433,7 +450,7 @@ const canUpgradeToDetailed = computed(() =>
 const upgrading = ref(false)
 async function upgradeToDetailed() {
   upgrading.value = true
-  try { await store.upgradeMode(props.proposalId); activeTab.value = 'diff' }
+  try { await store.upgradeMode(props.proposalId); activeTab.value = 'intent' }
   catch (e) { actionError.value = e.message } finally { upgrading.value = false }
 }
 
@@ -474,29 +491,18 @@ const implementBlockReason = computed(() => {
   return ''
 })
 
-// 041 — 스테이지 순서: Intent → Plan → Impact → Submit.
+// 단계 탭: Intent → Plan(+Impact 섹션) → Sandbox → Validate → Accept.
+// 어느 단계가 열리는지는 키 기준 허용목록(proposal-stages.js)이 정한다 — 예전 slice 는
+// 순서에 묶여 있어 탭을 옮기면 노출이 조용히 틀어졌다.
 // (Constitution 보기/수정은 Proposals 탭이 아니라 Design 측에서 관리한다.
 //  Plan 단계에서 Constitution 이 없으면 인터뷰가 인라인으로 진행된다.)
-const allTabs = computed(() => [
-  { key: 'diff', label: t('proposals.detail.tabIntent') },
-  { key: 'plan', label: t('proposals.detail.tabPlan') },
-  { key: 'impact', label: t('proposals.detail.tabImpact') },
-  { key: 'sandbox', label: t('proposals.detail.tabSandbox') },
-  { key: 'tests', label: t('proposals.detail.tabTests') },
-  { key: 'acceptance', label: t('proposals.detail.tabAcceptance') },
-])
+const activeStageOpen = computed(() => isStageOpen(proposal.value?.status, activeTab.value))
 
-const availableTabs = computed(() => {
-  const s = proposal.value?.status
-  const tabs = allTabs.value
-  if (!s) return [tabs[0]]
-  // DRAFT: Intent / Plan / Impact 까지 노출(제출 전 스테이지).
-  if (s === 'DRAFT') return tabs.slice(0, 3)
-  if (s === 'SUBMITTED' || s === 'IMPLEMENTING') return tabs.slice(0, 4)
-  // TESTING = 구현 완료. 검증을 아직(또는 통과)하지 않았더라도 PO가 Accept/Destroy
-  // 탭으로 넘어갈 수 있어야 하므로 검증·Accept/Destroy 탭을 모두 노출한다.
-  return tabs
-})
+// Impact 섹션 — Plan 이 만든 tacticalDiff(확정 전이면 planDraft) 또는 impactMap 이 있어야 채워진다.
+const impactTacticalDiff = computed(() =>
+  proposal.value?.tacticalDiff || proposal.value?.planDraft?.tacticalDiff || null)
+const hasImpact = computed(() =>
+  !!(impactTacticalDiff.value?.length || proposal.value?.impactMap?.length))
 
 onMounted(async () => {
   await store.fetchProposal(props.proposalId)
@@ -625,10 +631,12 @@ function formatDate(dt) {
 .status-badge--accepted { background: var(--status-green-bg); color: var(--status-green-fg); }
 .status-badge--destroyed { background: var(--status-red-bg); color: var(--status-red-fg); }
 .status-badge--merge_failed { background: var(--status-red-bg); color: var(--status-red-fg); }
-.detail-tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--color-border); margin-bottom: 16px; flex-wrap: wrap; }
-.tab-btn { background: none; border: none; padding: 8px 14px; font-size: 13px; cursor: pointer; color: var(--color-text-light); border-bottom: 2px solid transparent; margin-bottom: -2px; }
-.tab-btn--active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 600; }
 .detail-content { min-height: 200px; }
+.stage-locked { font-size: 13px; color: var(--color-text-light); padding: 14px; border: 1px dashed var(--color-border); border-radius: 8px; }
+.plan-impact { margin-top: 16px; border: 1px solid var(--color-border); border-radius: 6px; padding: 8px 12px; }
+.plan-impact > summary { font-size: 13px; font-weight: 600; color: var(--color-text); cursor: pointer; }
+.plan-impact[open] > summary { margin-bottom: 10px; }
+.plan-impact__empty { font-size: 12px; color: var(--color-text-light); padding: 6px 0; }
 .diff-actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .feedback-box { margin-top: 12px; border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; background: var(--color-bg-secondary); }

@@ -61,7 +61,7 @@ test('구현 완료 → 검증 버튼이 TESTING으로 전환하고 검증 탭�
   await page.goto('/')
   await gotoView(page, '프로포절')
   await page.locator('.proposal-item', { hasText: ID }).first().click()
-  await page.locator('.tab-btn', { hasText: '샌드박스 구현' }).click()
+  await page.locator('.tab-btn', { hasText: 'Sandbox' }).click()
 
   // 완료 상태이므로 '구현 완료 → 검증' 버튼이 떠야 한다(다시 구현하기가 primary가 아님).
   const validateBtn = page.getByRole('button', { name: '구현 완료 → 검증', exact: true })
@@ -69,6 +69,6 @@ test('구현 완료 → 검증 버튼이 TESTING으로 전환하고 검증 탭�
 
   // 클릭 → TESTING 전환 → '검증 (자동 테스트)' 탭이 생기고 활성화된다.
   await validateBtn.click()
-  await expect(page.locator('.tab-btn', { hasText: '검증' })).toBeVisible({ timeout: 10000 })
-  await expect(page.locator('.tab-btn--active', { hasText: '검증' })).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('.tab-btn', { hasText: 'Validate' })).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('.tab-btn--active', { hasText: 'Validate' })).toBeVisible({ timeout: 10000 })
 })
