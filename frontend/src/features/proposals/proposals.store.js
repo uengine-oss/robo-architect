@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { translate } from '../../app/i18n'
 import { runFixLoop, DEFAULT_MAX_ATTEMPTS } from './fixLoop'
+import { openEventSource } from '@/app/sse.js'
 
 const BASE = '/api/proposals'
 
@@ -133,7 +134,7 @@ export const useProposalsStore = defineStore('proposals', () => {
 
   function subscribeToIntent(proposalId) {
     intentStream.value = { active: true, events: [], clarificationQuestions: null, toolLogs: [], logLines: [] }
-    const es = new EventSource(`${BASE}/stream/${proposalId}/intent`)
+    const es = openEventSource(`${BASE}/stream/${proposalId}/intent`)
 
     const handlers = {
       phase: (data) => intentStream.value.events.push({ type: 'phase', data }),
@@ -213,7 +214,7 @@ export const useProposalsStore = defineStore('proposals', () => {
   function subscribeToTasks(proposalId) {
     tasksStream.value = { active: true, logLines: [], tasks: [], error: null }
     return new Promise((resolve, reject) => {
-      const es = new EventSource(`${BASE}/stream/${proposalId}/tasks`)
+      const es = openEventSource(`${BASE}/stream/${proposalId}/tasks`)
       let settled = false
       const finish = (fn, arg) => { if (settled) return; settled = true; es.close(); _tasksEs = null; fn(arg) }
       const handlers = {
@@ -443,7 +444,7 @@ export const useProposalsStore = defineStore('proposals', () => {
     if (!ids.length) testResults.value = null  // 전체 재검증: 이전 결과를 비우고 '검증 중' 상태로
     const qs = ids.length ? `?scenarioIds=${encodeURIComponent(ids.join(','))}` : ''
     return new Promise((resolve, reject) => {
-      const es = new EventSource(`${BASE}/stream/${proposalId}/validate${qs}`)
+      const es = openEventSource(`${BASE}/stream/${proposalId}/validate${qs}`)
       let settled = false
       const finish = (fn, arg) => { if (settled) return; settled = true; es.close(); _validateEs = null; fn(arg) }
       const handlers = {
@@ -507,7 +508,7 @@ export const useProposalsStore = defineStore('proposals', () => {
   function streamProposalUiWireframes(proposalId, { onlyMissing = true, onEvent, onClose, onError } = {}) {
     const lang = (typeof localStorage !== 'undefined' && localStorage.getItem('app_display_language')) || 'ko'
     const qs = new URLSearchParams({ onlyMissing: onlyMissing ? 'true' : 'false', lang })
-    const es = new EventSource(`${BASE}/stream/${proposalId}/ui-wireframes?${qs}`)
+    const es = openEventSource(`${BASE}/stream/${proposalId}/ui-wireframes?${qs}`)
     let closed = false
     const close = () => { if (closed) return; closed = true; try { es.close() } catch { /* noop */ } }
     for (const name of ['progress', 'ui_generated', 'ui_failed', 'done']) {
@@ -720,7 +721,7 @@ export const useProposalsStore = defineStore('proposals', () => {
     // SSE 는 GET 이라 409 본문을 미리 확인할 수 없다 → EventSource 연결 직후 즉시 종료되면
     // (onerror, done 미수신) 사전조건 미충족으로 간주하고 /plan 으로 사유를 조회한다.
     return new Promise((resolve, reject) => {
-      const es = new EventSource(`${BASE}/${proposalId}/stream/plan`)
+      const es = openEventSource(`${BASE}/${proposalId}/stream/plan`)
       let settled = false
       const finish = (fn, arg) => { if (settled) return; settled = true; es.close(); _planEs = null; fn(arg) }
       const handlers = {
@@ -865,7 +866,7 @@ export const useProposalsStore = defineStore('proposals', () => {
   function subscribeToScope(proposalId) {
     stagedStream.value = { active: true, stage: 'SCOPE', logLines: [], stagePlan: null, artifact: null, conflicts: [], nextStage: null, done: false, error: null }
     return new Promise((resolve, reject) => {
-      const es = new EventSource(`${BASE}/${proposalId}/stream/scope`)
+      const es = openEventSource(`${BASE}/${proposalId}/stream/scope`)
       let settled = false
       const finish = (fn, arg) => { if (settled) return; settled = true; es.close(); _stagedEs = null; fn(arg) }
       const handlers = {
@@ -908,7 +909,7 @@ export const useProposalsStore = defineStore('proposals', () => {
     stagedStream.value = { active: true, stage, logLines: [], stagePlan: stagedStream.value.stagePlan, artifact: null, conflicts: [], nextStage: null, done: false, error: null }
     const qs = feedback ? `?feedback=${encodeURIComponent(feedback)}` : ''
     const promise = new Promise((resolve, reject) => {
-      const es = new EventSource(`${BASE}/${proposalId}/stream/stage/${stage.toLowerCase()}${qs}`)
+      const es = openEventSource(`${BASE}/${proposalId}/stream/stage/${stage.toLowerCase()}${qs}`)
       let settled = false
       const finish = (fn, arg) => { if (settled) return; settled = true; es.close(); _stagedEs = null; delete _stageRuns[key]; fn(arg) }
       const handlers = {
@@ -1035,7 +1036,7 @@ export const useProposalsStore = defineStore('proposals', () => {
   function subscribeToOda(proposalId, phase) {
     odaStream.value = { active: true, phase, logLines: [], alignment: null, conformance: null, gate: null, done: false, error: null }
     return new Promise((resolve, reject) => {
-      const es = new EventSource(`${BASE}/${proposalId}/stream/oda/${phase}`)
+      const es = openEventSource(`${BASE}/${proposalId}/stream/oda/${phase}`)
       let settled = false
       const finish = (fn, arg) => { if (settled) return; settled = true; es.close(); _odaEs = null; fn(arg) }
       const handlers = {

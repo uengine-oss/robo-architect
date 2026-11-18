@@ -1,4 +1,5 @@
 <script setup>
+import { openEventSource } from '@/app/sse.js'
 import { onMounted, ref, nextTick } from 'vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
@@ -97,7 +98,7 @@ function send() {
   scrollDown()
 
   const url = store.chatEditStreamUrl(props.scope, props.itemId, text, hist)
-  const es = new EventSource(url)
+  const es = openEventSource(url)
   es.addEventListener('progress', (e) => {
     let ev
     try {

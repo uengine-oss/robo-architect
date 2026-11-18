@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { createLogger } from '@/app/logging/logger'
 import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
+import { openEventSource } from '@/app/sse.js'
 
 /**
  * Requirements tab store (026 — requirements-tab).
@@ -536,12 +537,29 @@ export const useRequirementsStore = defineStore('requirements', () => {
     }
   }
 
-  function _subscribeClarification(sessionId) {
+  function _subscribeClarification(sessionId, attempt = 0) {
     _closeClarificationStream()
-    clarificationEventSource = new EventSource(
+    const es = openEventSource(
       `/api/requirements/clarification/sessions/${sessionId}/stream`,
     )
-    clarificationEventSource.onmessage = (ev) => {
+    clarificationEventSource = es
+    // 서버는 꼬리를 약 120초에서 끊는다(딥 에이전트가 더 오래 걸리면 끝 신호 없이 닫힌다).
+    // 예전 EventSource 는 저절로 다시 붙었고, openEventSource 는 붙지 않는다 — 대신 여기서
+    // 세션을 다시 읽고, 아직 스캔 중이면 다시 구독한다. 이 스트림은 세션 이벤트를 다시 보내 줄
+    // 뿐이라(재생 후 꼬리) 다시 붙어도 작업이 두 번 돌지 않는다. 401 등 실패도 여기로 온다.
+    es.onerror = async () => {
+      if (clarificationEventSource !== es) return // 이미 다른 구독으로 바뀜
+      await fetchClarificationSession(sessionId)
+      const s = clarificationSession.value
+      if (s && s.sessionId === sessionId && s.status === 'analyzing' && attempt < 10) {
+        setTimeout(() => {
+          if (clarificationEventSource === es) _subscribeClarification(sessionId, attempt + 1)
+        }, 1000)
+      } else if (s && s.status === 'analyzing') {
+        clarificationError.value = '진행 상황을 받지 못하고 있습니다 — 잠시 뒤 다시 열어 보세요.'
+      }
+    }
+    es.onmessage = (ev) => {
       try {
         const event = JSON.parse(ev.data)
         if (event.phase === 'questions_ready') {
@@ -854,7 +872,7 @@ export const useRequirementsStore = defineStore('requirements', () => {
 
   /** 한 단계 진행(SSE) — proposal 이벤트의 data를 콜백으로 전달. */
   function streamDddWizardStep(sessionId, stepKey, { onReasoning, onProposal, onDone, onError } = {}) {
-    const es = new EventSource(
+    const es = openEventSource(
       `/api/requirements/ddd-wizard/${sessionId}/step/${encodeURIComponent(stepKey)}/stream`,
     )
     es.addEventListener('reasoning', (ev) => {

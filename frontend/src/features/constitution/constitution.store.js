@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { openEventSource } from '@/app/sse.js'
 
 /**
  * Pinia store for project / Bounded-Context Constitution management (feature 041).
@@ -154,7 +155,7 @@ export const useConstitutionStore = defineStore('constitution', () => {
     // Plan 게이트(proposalId) 진입 → Claude Code 가 제안을 먼저 분석(SSE, 진행 로그) 후 첫 질문.
     if (proposalId) {
       interview.value.analyzing = true
-      const es = new EventSource(`/api/constitution/interview/analyze?proposalId=${encodeURIComponent(proposalId)}`)
+      const es = openEventSource(`/api/constitution/interview/analyze?proposalId=${encodeURIComponent(proposalId)}`)
       const h = {
         log_line: (d) => { if (d?.text) interview.value.logLines.push(d.text) },
         question: (d) => {
@@ -224,7 +225,7 @@ export const useConstitutionStore = defineStore('constitution', () => {
     interview.value.synthesizing = true
     interview.value.error = null
     interview.value.logLines = []
-    const es = new EventSource('/api/constitution/stream')
+    const es = openEventSource('/api/constitution/stream')
     const h = {
       // 합성(헌장 본문 작성) 진행 로그 — 백엔드가 흘려보낸 narration 을 그대로 표시.
       log_line: (d) => { if (d?.text) interview.value.logLines.push(d.text) },

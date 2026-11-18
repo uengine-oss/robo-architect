@@ -7,6 +7,8 @@
  * disconnect.
  */
 
+import { openEventSource } from '@/app/sse.js'
+
 const BASE = '/api/figma-binding'
 
 async function asJsonOrAbsent(resp) {
@@ -88,7 +90,7 @@ export async function cancelFullSync(runId) {
  */
 export function subscribeFullSyncStream(runId, { onEvent, onClose, onError } = {}) {
   const url = `${BASE}/full-sync/${encodeURIComponent(runId)}/stream`
-  const es = new EventSource(url)
+  const es = openEventSource(url)
   const eventNames = [
     'run_started', 'progress', 'page_ok', 'page_failed',
     'ui_generated', 'ui_pushed', 'ui_failed',
@@ -176,7 +178,7 @@ export async function clearComponents() {
  * Returns a closer fn that tears down the EventSource.
  */
 export function subscribeComponentsScanStream({ onEvent, onClose, onError } = {}) {
-  const es = new EventSource(`${BASE}/components/scan/stream`)
+  const es = openEventSource(`${BASE}/components/scan/stream`)
   const handle = (name) => (ev) => {
     let payload = {}
     try { payload = JSON.parse(ev.data) } catch { /* keep empty */ }

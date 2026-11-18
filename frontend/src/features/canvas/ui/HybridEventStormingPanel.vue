@@ -1,4 +1,5 @@
 <script setup>
+import { openEventSource } from '@/app/sse.js'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import PromoteToEsModal from './PromoteToEsModal.vue'
@@ -101,7 +102,7 @@ async function startPromotion({ displayLanguage, uiGenerationMode }) {
     pushMessage(`📡 SSE 구독: ingestion_session_id=${ingestion_session_id}`, 'info')
 
     // 3) Subscribe to standard ingestion stream (same route reused)
-    const es = new EventSource(`/api/ingest/stream/${ingestion_session_id}`)
+    const es = openEventSource(`/api/ingest/stream/${ingestion_session_id}`)
     eventSource.value = es
 
     es.addEventListener('progress', async (e) => {

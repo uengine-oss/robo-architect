@@ -133,6 +133,15 @@ function close() {
       <div class="cp-subtle">{{ progressLabel }}</div>
     </div>
 
+    <!-- 스캔 실패 — "모호성 없음" 으로 그리지 않는다(2026-11-18: 429 로 실패했는데 ✓ 가 같이 떴다).
+         오류 문구는 위 cp-error 에 나온다. -->
+    <div v-else-if="session.status === 'failed'" class="cp-section cp-failed" data-testid="clarification-failed">
+      <div>스캔을 끝내지 못했습니다. 위 오류를 확인한 뒤 다시 시도하세요.</div>
+      <div class="cp-actions">
+        <button class="cp-btn" @click="close">닫기</button>
+      </div>
+    </div>
+
     <!-- No ambiguities -->
     <div
       v-else-if="session.noAmbiguities || (!currentQuestion && (session.status === 'completed' || (session.questions || []).length === 0))"

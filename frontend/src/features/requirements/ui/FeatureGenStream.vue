@@ -1,4 +1,5 @@
 <script setup>
+import { openEventSource } from '@/app/sse.js'
 import { ref, onMounted, onUnmounted } from 'vue'
 
 /**
@@ -17,7 +18,7 @@ const done = ref(false)
 let es = null
 
 onMounted(() => {
-  es = new EventSource(`/api/requirements/epic/${props.boundedContextId}/generate-features/stream`)
+  es = openEventSource(`/api/requirements/epic/${props.boundedContextId}/generate-features/stream`)
   es.addEventListener('progress', (e) => {
     let data
     try {

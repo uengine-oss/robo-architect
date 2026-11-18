@@ -388,6 +388,8 @@ async function openWatch(rootAtCall) {
   try {
     const url = await fsEventsUrl(rootAtCall)
     if (props.root !== rootAtCall) return  // root changed while resolving — stale
+    // 이 스트림은 Electron 백엔드(다른 출처)의 계속 열린 감시이고 자동 재연결에 기댄다 —
+    // openEventSource(같은 출처 · 재연결 없음)로 바꾸지 않는다. Claude Code 는 서버 판에 없다.
     es = new EventSource(url)
     es.onmessage = onFsEvent
     // EventSource auto-reconnects on transient errors; nothing to do here.
