@@ -121,7 +121,7 @@ def test_coverage_survives_restart_and_feeds_radar(stores, monkeypatch):
     assert got.rows[AmbiguityCategory.functional_scope] == CoverageStatus.resolved
 
     # 레이더 읽기 자리 — 재시작 뒤에도 agent coverage 가 반영된다
-    monkeypatch.setattr(cs, "read_scope_log", lambda _ids: [])
+    monkeypatch.setattr(cs, "read_scope_log_with_story_ids", lambda _ids: [])
     scores = cs.compute_clarity_scores_for_scope(["us-a"], "bounded_context", "bc1")
     row = next(s for s in scores.scores if s.category == AmbiguityCategory.functional_scope)
     assert row.status == CoverageStatus.resolved
@@ -142,7 +142,7 @@ def test_clarity_reads_flags_once(stores, monkeypatch):
     fs, _ = stores
     flags.record_flags(session_id="s1", scope_type="feature", scope_id="f1",
                        questions=[_q("q1", ["us-a"], AmbiguityCategory.functional_scope)])
-    monkeypatch.setattr(cs, "read_scope_log", lambda _ids: [])
+    monkeypatch.setattr(cs, "read_scope_log_with_story_ids", lambda _ids: [])
     before = fs.loads
     r = cs.compute_clarity_scores([f"us-{i}" for i in "abcdefgh"])
     assert r.flaggedUserStories == 1
