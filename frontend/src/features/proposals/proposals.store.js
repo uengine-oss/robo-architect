@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { translate } from '../../app/i18n'
+import { runFixLoop, DEFAULT_MAX_ATTEMPTS } from './fixLoop'
 
 const BASE = '/api/proposals'
 
@@ -434,11 +435,15 @@ export const useProposalsStore = defineStore('proposals', () => {
 
   // 검증을 runner(스트리밍)로 실행하며 실행 로그를 받는다. (작업 분해와 동일 방식)
   // 중지 = stopValidation()이 EventSource를 닫으면 서버 서브프로세스도 정리된다.
-  function subscribeToValidation(proposalId) {
-    validationStream.value = { active: true, logLines: [], error: null }
-    testResults.value = null  // 재검증: 이전 결과를 비우고 '검증 중' 상태로
+  // D-2 ⑭ — `scenarioIds` 를 주면 **부분 재검증**: 그 항목만 다시 재고 서버가 기존 결과에
+  // 병합한다. 그래서 이전 결과를 비우지 않는다(나머지 항목이 화면에서 사라지지 않게).
+  function subscribeToValidation(proposalId, { scenarioIds = null } = {}) {
+    const ids = Array.isArray(scenarioIds) ? scenarioIds.filter(Boolean) : []
+    validationStream.value = { active: true, logLines: [], error: null, scenarioIds: ids }
+    if (!ids.length) testResults.value = null  // 전체 재검증: 이전 결과를 비우고 '검증 중' 상태로
+    const qs = ids.length ? `?scenarioIds=${encodeURIComponent(ids.join(','))}` : ''
     return new Promise((resolve, reject) => {
-      const es = new EventSource(`${BASE}/stream/${proposalId}/validate`)
+      const es = new EventSource(`${BASE}/stream/${proposalId}/validate${qs}`)
       let settled = false
       const finish = (fn, arg) => { if (settled) return; settled = true; es.close(); _validateEs = null; fn(arg) }
       const handlers = {
@@ -476,6 +481,82 @@ export const useProposalsStore = defineStore('proposals', () => {
   function stopValidation() {
     if (_validateEs) { _validateEs.close(); _validateEs = null }
     validationStream.value.active = false
+  }
+
+  // D-2 ⑭ ② — 「고치고 다시 검증」 루프의 커밋 감지 신호(샌드박스 worktree HEAD).
+  // 실패는 조용히 null(폴링이 계속된다).
+  async function fetchSandboxHead(proposalId) {
+    try {
+      const res = await fetch(`${BASE}/${proposalId}/sandbox-head`)
+      if (!res.ok) return null
+      const data = await res.json()
+      return data?.head || null
+    } catch {
+      return null
+    }
+  }
+
+  // D-5 ⑰ — Accept 로 생긴 UI 의 와이어프레임. 목록 + 일괄 생성 SSE(이벤트 이름·모양은
+  // Figma 소급 동기화와 같다: progress · ui_generated · ui_failed · done). 닫으면 중지.
+  async function fetchProposalUis(proposalId) {
+    const res = await fetch(`${BASE}/${proposalId}/ui-wireframes`)
+    if (!res.ok) throw new Error(`ui-wireframes ${res.status}`)
+    return res.json()
+  }
+
+  function streamProposalUiWireframes(proposalId, { onlyMissing = true, onEvent, onClose, onError } = {}) {
+    const lang = (typeof localStorage !== 'undefined' && localStorage.getItem('app_display_language')) || 'ko'
+    const qs = new URLSearchParams({ onlyMissing: onlyMissing ? 'true' : 'false', lang })
+    const es = new EventSource(`${BASE}/stream/${proposalId}/ui-wireframes?${qs}`)
+    let closed = false
+    const close = () => { if (closed) return; closed = true; try { es.close() } catch { /* noop */ } }
+    for (const name of ['progress', 'ui_generated', 'ui_failed', 'done']) {
+      es.addEventListener(name, (ev) => {
+        let payload = {}
+        try { payload = JSON.parse(ev.data) } catch { /* keep empty */ }
+        onEvent && onEvent(name, payload)
+        if (name === 'done') {
+          close()
+          _notifyGraphChanged('ui-wireframes', proposalId)
+          onClose && onClose(payload)
+        }
+      })
+    }
+    es.onerror = (ev) => { if (closed) return; close(); onError && onError(ev) }
+    return close
+  }
+
+  // D-2 ⑭ ② 「고치고 다시 검증」 루프 — 상태는 store 에 둔다(셀을 보러 탭을 옮겨도 계속 돈다).
+  // 한 번에 한 항목만 돈다(검증 스트림이 하나다). 상한 기본 3회, 중단은 stopFixLoop().
+  const fixLoop = ref({ active: false, proposalId: null, scenarioId: null, phase: null, round: 0, max: 0, outcome: null, error: null })
+  let _fixLoopStopped = false
+
+  async function startFixLoop(proposalId, item, inject, { maxAttempts = DEFAULT_MAX_ATTEMPTS } = {}) {
+    if (fixLoop.value.active || validationStream.value.active) return null
+    _fixLoopStopped = false
+    fixLoop.value = { active: true, proposalId, scenarioId: item.scenarioId, phase: 'starting', round: 0, max: maxAttempts, outcome: null, error: null }
+    const res = await runFixLoop({
+      item,
+      maxAttempts,
+      inject,
+      getHead: () => fetchSandboxHead(proposalId),
+      revalidate: async (scenarioId) => {
+        const r = await subscribeToValidation(proposalId, { scenarioIds: [scenarioId] })
+        return (r?.items || []).find((it) => it.scenarioId === scenarioId) || null
+      },
+      isStopped: () => _fixLoopStopped,
+      onState: (s) => {
+        fixLoop.value = { ...fixLoop.value, phase: s.phase, round: s.round, max: s.max, error: s.error || null }
+      },
+    })
+    fixLoop.value = { ...fixLoop.value, active: false, outcome: res.outcome, error: res.error || null }
+    return res
+  }
+
+  function stopFixLoop() {
+    _fixLoopStopped = true
+    // 재검증 중이면 그 스트림도 끊는다 — 기존 결과는 남는다(부분 재검증은 비우지 않는다).
+    if (fixLoop.value.phase === 'revalidating') stopValidation()
   }
 
   // Accept/Revoke/RetryMerge 는 그래프를 대량으로 바꾼다(예: accept 1회에 500+ 노드).
@@ -1004,7 +1085,9 @@ export const useProposalsStore = defineStore('proposals', () => {
     stopStaged, confirmStage, skipStage, consolidateStaged, proceedToPlan,
     subscribeToOda, stopOda, waiveConformance,
     implementProposal, completeImplementation, fetchProgress,
-    fetchTestResults, runValidation, subscribeToValidation, stopValidation,
+    fetchTestResults, runValidation, subscribeToValidation, stopValidation, fetchSandboxHead,
+    fixLoop, startFixLoop, stopFixLoop,
+    fetchProposalUis, streamProposalUiWireframes,
     acceptProposal, destroyProposal, revokeProposal, retryMerge,
   }
 })

@@ -10,6 +10,19 @@
       <span class="validate-hint">{{ t('proposals.tests.validateHint') }}</span>
     </div>
 
+    <!-- D-2 ⑭ ② 「고치고 다시 검증」 루프 상태 — 상한·중단 단추는 늘 보인다. -->
+    <div v-if="loopHere" class="fix-loop-bar" :class="`fix-loop-bar--${loop.active ? 'active' : loop.outcome}`">
+      <span v-if="loop.active" class="spinner spinner--xs" />
+      <span class="fix-loop-bar__text">
+        {{ t('proposals.tests.loopStatus', { id: loop.scenarioId, round: loop.round, max: loop.max }) }}
+        · {{ t(`proposals.tests.loopPhase.${loop.active ? loop.phase : loop.outcome}`) }}
+      </span>
+      <span v-if="loop.error" class="fix-loop-bar__err">{{ loop.error }}</span>
+      <button v-if="loop.active" class="btn btn--outline btn--sm" @click="store.stopFixLoop()">
+        {{ t('proposals.tests.loopStop') }}
+      </button>
+    </div>
+
     <!-- 실행 로그 (runner narration·tool 사용 실시간) -->
     <pre v-if="logText" class="validate-log">{{ logText }}</pre>
     <p v-if="validationError" class="error-msg">{{ validationError }}</p>
@@ -60,18 +73,42 @@
             <span v-if="item.category" :class="['cat-badge', `cat-badge--${item.category}`]">
               {{ item.category === 'structural' ? t('proposals.tests.categoryStructural') : t('proposals.tests.categoryAcceptance') }}
             </span>
+            <!-- B-3 ⑪ 판정 기준의 출처 — 전술 GWT(구조) / Intent 인수조건(인수) -->
+            <span v-if="sourceLabel(item)" :class="['src-badge', `src-badge--${item.criterionSource}`]">{{ sourceLabel(item) }}</span>
             <span class="test-item__story">{{ item.storyTitle }}</span>
+            <span v-if="(item.attempts || 1) > 1" class="test-item__attempts" :title="t('proposals.tests.attemptsTitle')">
+              {{ t('proposals.tests.attempts', { n: item.attempts }) }}
+            </span>
             <span class="test-item__id">{{ item.scenarioId }}</span>
           </div>
           <p class="test-item__scenario">{{ item.scenario }}</p>
+          <!-- B-3 ⑪ ② 판정 기준 원문 — 결과만 보면 "무엇으로 쟀나"를 모른다 -->
+          <details v-if="item.criterion" class="test-item__criterion">
+            <summary>{{ t('proposals.tests.criterion') }}</summary>
+            <p>{{ item.criterion }}</p>
+          </details>
           <p v-if="item.reason" class="test-item__reason">{{ item.reason }}</p>
+          <!-- ③ 직전 실패 사유 — 지금 사유와 다를 때만(통과한 뒤 "무엇이 고쳐졌나"가 보이게). -->
+          <p v-if="item.lastReason && item.lastReason !== item.reason" class="test-item__last-reason">
+            {{ t('proposals.tests.lastReason') }} {{ item.lastReason }}
+          </p>
           <!-- 통과하지 않은 항목에는 **다음 동작**을 붙인다. 사유를 사람이 읽어 손으로
                셀에 옮기던 일을 없앤다(이슈-2026-11-11 §5-③). -->
-          <div v-if="String(item.result).toUpperCase() !== 'PASS' && canFixInCell" class="test-item__actions">
-            <button class="btn btn--outline btn--sm" @click="fixInCell(item)">
-              {{ t('proposals.tests.fixInCell') }}
+          <div v-if="String(item.result).toUpperCase() !== 'PASS'" class="test-item__actions">
+            <template v-if="canFixInCell">
+              <button class="btn btn--outline btn--sm" :disabled="busy" @click="fixInCell(item)">
+                {{ t('proposals.tests.fixInCell') }}
+              </button>
+              <!-- ② 고치고 → 커밋 감지 → 이 항목만 재검증 → 아니면 다시(상한 3회) -->
+              <button class="btn btn--outline btn--sm" :disabled="busy" :title="t('proposals.tests.fixLoopHint')" @click="startLoop(item)">
+                {{ t('proposals.tests.fixLoop') }}
+              </button>
+            </template>
+            <!-- ① 이 항목만 다시 잰다 — 결과는 나머지와 병합된다 -->
+            <button class="btn btn--outline btn--sm" :disabled="busy" @click="revalidateOne(item)">
+              {{ t('proposals.tests.revalidateOne') }}
             </button>
-            <span class="test-item__actions-hint">{{ t('proposals.tests.fixInCellHint') }}</span>
+            <span v-if="canFixInCell" class="test-item__actions-hint">{{ t('proposals.tests.fixInCellHint') }}</span>
           </div>
         </div>
       </div>
@@ -81,6 +118,7 @@
 
 <script setup>
 import { ref, computed, inject, onMounted } from 'vue'
+import { DEFAULT_MAX_ATTEMPTS } from '../fixLoop'
 import { useProposalsStore } from '../proposals.store'
 import { useI18n } from '../../../app/i18n'
 
@@ -117,20 +155,48 @@ function oneLine(s, max) {
   return max && flat.length > max ? flat.slice(0, max) + '…' : flat
 }
 
-function fixInCell(item) {
-  const path = store.currentProposal?.sandboxWorktreePath
-  if (!openClaudeCode || !path) return
+function sourceLabel(item) {
+  const s = item?.criterionSource
+  return s ? t(`proposals.tests.source.${s}`) : ''
+}
+
+function fixCommand(item, round = null) {
   const cat = item.category === 'structural'
     ? t('proposals.tests.categoryStructural')
     : t('proposals.tests.categoryAcceptance')
   const what = oneLine(item.storyTitle || item.scenario, 160)
   const why = oneLine(item.reason, 600)
   // 설계(Tactical Diff)는 손대지 말라고 못 박는다 — 그쪽을 고치는 길은 따로다(§1).
-  const cmd = `${props.proposalId} 검증에서 ${item.result} 가 난 **이 한 건만** 고쳐라. `
+  return `${props.proposalId} 검증에서 ${item.result} 가 난 **이 한 건만** 고쳐라. `
+    + (round ? `(${round}/${DEFAULT_MAX_ATTEMPTS}회째) ` : '')
     + `[${item.scenarioId} · ${cat}] ${what}`
     + (why ? ` / 사유: ${why}` : '')
     + ' / 설계(Tactical Diff)는 바꾸지 말고 코드를 설계에 맞춰라. 고친 뒤 커밋해라.'
-  openClaudeCode(path, cmd, { proposalId: props.proposalId })
+}
+
+function fixInCell(item) {
+  const path = store.currentProposal?.sandboxWorktreePath
+  if (!openClaudeCode || !path) return
+  openClaudeCode(path, fixCommand(item), { proposalId: props.proposalId })
+}
+
+// ── D-2 ⑭ ①·② ────────────────────────────────────────────────────────
+const loop = computed(() => store.fixLoop)
+const loopHere = computed(() => loop.value.proposalId === props.proposalId && (loop.value.active || loop.value.outcome))
+const busy = computed(() => validating.value || loop.value.active)
+
+function revalidateOne(item) {
+  store.subscribeToValidation(props.proposalId, { scenarioIds: [item.scenarioId] })
+    .catch(() => { /* 에러는 validationStream.error로 표시 */ })
+}
+
+function startLoop(item) {
+  const path = store.currentProposal?.sandboxWorktreePath
+  if (!openClaudeCode || !path) return
+  // 회차마다 **최신 사유**로 다시 주입한다(재검증이 사유를 갱신한다).
+  store.startFixLoop(props.proposalId, item, (cur, round) => {
+    openClaudeCode(path, fixCommand(cur, round), { proposalId: props.proposalId })
+  }, { maxAttempts: DEFAULT_MAX_ATTEMPTS })
 }
 
 function statusOf() {
@@ -195,6 +261,18 @@ onMounted(async () => {
 .test-item__actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .test-item__actions-hint { font-size: 11px; color: var(--color-text-light); }
 .test-item__reason { margin: 4px 0 0; color: var(--color-danger); font-size: 12px; font-style: italic; }
+.src-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
+.src-badge--strategic { background: var(--status-purple-bg, #f3e8ff); color: var(--status-purple-fg, #7c3aed); }
+.test-item__criterion { margin: 4px 0 0; font-size: 12px; color: var(--color-text-light); }
+.test-item__criterion summary { cursor: pointer; font-size: 11px; }
+.test-item__criterion p { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--color-text); }
+.test-item__last-reason { margin: 2px 0 0; color: var(--color-text-light); font-size: 11px; }
+.test-item__attempts { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
+.fix-loop-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; padding: 6px 10px; border-radius: 6px; font-size: 12px; background: var(--color-bg-secondary); border: 1px solid var(--color-border); }
+.fix-loop-bar--passed { border-color: var(--color-success); }
+.fix-loop-bar--exhausted, .fix-loop-bar--error, .fix-loop-bar--no-commit { border-color: var(--color-danger); }
+.fix-loop-bar__text { font-weight: 600; }
+.fix-loop-bar__err { color: var(--color-danger); }
 .error-msg { color: var(--color-danger); font-size: 12px; margin: 0 0 12px; }
 .spinner { width: 14px; height: 14px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
 .spinner--sm { width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; }

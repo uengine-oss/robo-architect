@@ -11,7 +11,14 @@ Proposal ID: PRO-NNN
 샌드박스 경로: /path/to/.sandbox/proposal/PRO-NNN  ← 아래 <SANDBOX>
 
 검증할 인수 조건(GWT):
-[ { "storyId": "...", "storyTitle": "...", "scenario": "Given ... When ... Then ..." } ]
+[ { "scenarioId": "SC-001", "criterionSource": "tactical|strategic",
+    "storyId": "...", "storyTitle": "...", "scenario": "Given ... When ... Then ..." } ]
+```
+- `criterionSource`: `tactical` = Plan 의 Command GWT(구조 — 명령 단위 동작), `strategic` = Intent 의
+  UserStory 인수조건(인수 — 사용자 관점). 둘 다 올 수 있고 **둘 다 판정한다**.
+- 인수 조건 item 의 `scenarioId` 는 **주어진 값 그대로** 쓴다(서버가 이 id 로 판정 기준 원문을 되짚는다).
+  구조 검증 item 은 프롬프트가 알려 주는 번호부터 이어서 매긴다.
+```
 
 Tactical Diff (구조 검증용):
 [ { "nodeId":"AGG-refund","nodeLabel":"Aggregate","nodeTitle":"환불 Aggregate",
@@ -77,6 +84,11 @@ Tactical Diff의 각 요소가 샌드박스 구현체에 의도대로 반영됐�
 
 지원하지 않는 언어이거나 Tactical Diff가 비어 있으면 해당 구조 검증만 생략하고 인수 조건은 계속 판정한다.
 Java/Avro는 지원 언어이므로 파일을 찾은 뒤 추출기 실행 없이 `SKIPPED`로 처리하면 안 된다.
+
+## 부분 재검증 (Human Prompt 에 "**부분 재검증**" 이 있을 때)
+- 프롬프트에 적힌 항목**만** 판정한다. 다른 항목을 새로 만들지 않는다.
+- 각 item 의 `scenarioId` 는 **주어진 값 그대로** 쓴다(새 번호 금지) — 서버가 이 id 로 기존 결과에 병합한다.
+- `previousResult`/`previousReason` 은 직전 판정이다. 코드가 그 사유를 해소했는지 다시 확인한다.
 
 ## Rules
 - LLM 판단이므로 100% 정확성 보장 없음. FAIL 시 반드시 `reason`에 근거 제시.
