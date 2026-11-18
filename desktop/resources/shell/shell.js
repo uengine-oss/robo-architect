@@ -57,6 +57,10 @@ const STATUS_KO = { INTENT: '인텐트', PLAN: '계획', IMPLEMENTING: '구현 �
 let tabState = { active: 'home', tabs: [] }
 let session = null
 let runtime = { status: 'initializing' }
+// 058 감독이 ready 뒤에도 재는 서비스들(runtime:onStatus). 홈은 이것으로 "떠 있다가 내려간 것"을 안다.
+let services = []
+let everReady = false
+const RV = window.RaRuntimeView
 let boot = null      // image download progress while starting-db (BackendStatusEvent.progress)
 let bootError = ''   // why start-up failed (BackendStatusEvent.detail with fatal)
 let info = {}
@@ -67,7 +71,10 @@ let query = ''
 let picking = false
 let pick = { graph: null, folder: '', busy: false, msg: '', err: false, newName: '' }
 
-const ready = () => runtime.status === 'ready'
+// 한 번 ready 를 본 뒤 컨테이너 하나가 빠진 것은 **기동이 아니라 고장**이다 — 기동 화면으로
+// 돌아가지 않고, 상태 줄과 경고 띠(renderAlert)가 그 사실을 말한다(runtime-view.js).
+const ready = () => (RV ? RV.homeReady(runtime.status, services, everReady) : runtime.status === 'ready')
+const noteReady = () => { if (runtime.status === 'ready') everReady = true }
 const unwrap = (r) => (r && r.ok ? r.data : null)
 
 // ── tab strip ──
@@ -372,12 +379,25 @@ function agentRowHtml() {
   return `<div class="status-row"><span class="dot ${acc && acc.email ? 'ok' : 'warn'}"></span><div><b>에이전트</b> Claude Code<small>이 PC 의 CLI 가 스킬로 분석 · 계획 · 구현합니다 · ${who}</small></div></div>`
 }
 function renderStatus() {
-  const ok = ready()
-  const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed'
+  const sum = RV ? RV.summarize(services) : { tone: 'ok', graphDown: false, names: [], headline: '' }
+  const ok = ready() && !sum.graphDown
+  const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed' || sum.graphDown
   $('status').innerHTML = `
-    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : bootHtml()}</small></div></div>`
+    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : sum.graphDown && ready() ? '그래프 DB 컨테이너가 내려갔습니다 — 앱이 다시 살리는 중입니다' : bootHtml()}</small></div></div>`
+    + (ready() && sum.tone !== 'ok' ? `<div class="status-row"><span class="dot ${sum.tone === 'bad' ? 'bad' : 'warn'}"></span><div><b>서비스</b> ${esc(sum.names.join(' · '))}<small>${esc(sum.reason || '상태를 다시 재는 중입니다')}</small></div></div>` : '')
     + agentRowHtml()
     + keyRowHtml()
+  renderAlert(sum)
+}
+// ready 뒤에 서비스가 내려가면 홈 위쪽에 한 줄 — 옆줄 맨 아래 상태만으로는 안 보인다.
+// 멀쩡하면 아무것도 안 띄운다(SPA 의 RuntimeStatusBanner 와 같은 규칙).
+function renderAlert(sum) {
+  const el = $('svc-alert')
+  if (!el) return
+  const show = ready() && sum.tone !== 'ok'
+  el.hidden = !show
+  el.className = `svc-alert ${sum.tone === 'bad' ? 'bad' : 'warn'}`
+  el.innerHTML = show ? `<b>실행 상태</b><span>${esc(sum.headline)}</span><button class="btn" data-quick="logs">${icon('logs')}로그 폴더</button>` : ''
 }
 
 // ── loading ──
@@ -387,6 +407,8 @@ async function getJSON(u) {
 async function load() {
   if (!D || !S) return
   runtime = unwrap(await D.app.getRuntimeState()) || runtime
+  if (Array.isArray(runtime.services)) services = runtime.services
+  noteReady()
   info = (await S.info()) || {}
   session = info.session || (await S.session()) || null
   if (ready()) {
@@ -420,9 +442,22 @@ if (D && D.app && D.app.onBackendStatus) D.app.onBackendStatus((e) => {
   boot = e.progress || (e.status === 'starting-db' ? boot : null)
   if (e.status === 'fatal') bootError = e.detail || ''
   runtime = { ...runtime, status: e.status }
+  noteReady()
   // download ticks only redraw the status — a full load() per tick would refetch everything
   if (same && e.progress) renderStatus()
   else load()
+})
+// ready 이후의 감시(058 감독, 5초 주기). **바뀔 때만** 온다 — 내려가면 띠가 뜨고, 회복하면 사라진다.
+if (D && D.runtime && D.runtime.onStatus) D.runtime.onStatus((p) => {
+  if (!p || !Array.isArray(p.services)) return
+  const wasReady = ready()
+  services = p.services
+  if (ready() !== wasReady) load()
+  else renderStatus()
+})
+$('svc-alert') && $('svc-alert').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-quick]')
+  if (b && S) S.open(b.dataset.quick)
 })
 load()
 window.addEventListener('focus', () => { if (tabState.active === 'home') load() })

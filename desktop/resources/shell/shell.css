@@ -240,3 +240,9 @@ tbody tr:hover td { background: var(--bg-3); }
 .st.ACCEPTED { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 .st.DESTROYED { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
 .st.IMPLEMENTING, .st.VALIDATING, .st.PENDING_ACCEPTANCE { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+/* ready 이후 서비스가 내려갔을 때의 한 줄 (A-3) — 멀쩡하면 hidden */
+.svc-alert { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; padding: 10px 14px; border-radius: 10px; font-size: 13px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.svc-alert.bad { border-color: color-mix(in srgb, var(--err) 45%, var(--line)); background: color-mix(in srgb, var(--err) 10%, transparent); }
+.svc-alert[hidden] { display: none; }
+.svc-alert > span { flex: 1; min-width: 0; }
