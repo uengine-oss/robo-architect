@@ -11,6 +11,7 @@
 #
 # 하는 일
 #   1 git pull         yml · 가이드 · tiktoken-cache · authority-init
+#                      (posco-web 가지로 받은 서버면 main 으로 옮긴다 — 통합 2026-11-18, posco-web 은 은퇴)
 #   2 받기 · 대조      Release 의 <asset> 과 <asset>.sha256 → sha256sum -c
 #   3 적재             sudo docker load
 #   4 이미지 대조      compose 가 찾는 이미지가 다 있나 (없으면 멈춘다)
@@ -28,7 +29,8 @@ API=robo-posco-web-architect-api-1
 TAG=${1:?usage: bash update.sh <release-tag> [asset] | --no-images}
 ASSET=${2:-images.tar}
 # load 로 덮인 장은 강제로 다시 만든다. web 은 언제나 마지막에 다시(옛 IP).
-if [[ $TAG == --no-images ]]; then FORCE=${FORCE:-web}; else FORCE=${FORCE:-"architect-api web"}; fi
+# analyzer 도 묶음에 들어간다(2026-11-17~) — 빼면 podman 이 옛 analyzer 를 그대로 돌린다.
+if [[ $TAG == --no-images ]]; then FORCE=${FORCE:-web}; else FORCE=${FORCE:-"architect-api analyzer web"}; fi
 
 health() {  # podman 판마다 필드 이름이 다르다
   sudo docker inspect "$1" --format '{{.State.Health.Status}}' 2>/dev/null ||
@@ -36,6 +38,15 @@ health() {  # podman 판마다 필드 이름이 다르다
 }
 
 echo "[1] git pull"
+# 이 판은 통합(2026-11-18) 뒤로 main 에서 나온다. posco-web 으로 받은 서버는 한 번 main 으로 옮긴다.
+# posco-web 은 main 의 조상이라 빨리감기다. -b posco-web --depth 1 로 받았어도 된다(받을 가지를 main 으로 바꾼다).
+if [[ $(git rev-parse --abbrev-ref HEAD) == posco-web ]]; then
+  echo "  가지 posco-web → main"
+  git remote set-branches origin main
+  if [[ -f $(git rev-parse --git-dir)/shallow ]]; then git fetch --depth 1 origin main; else git fetch origin main; fi
+  git checkout -B main origin/main
+  git branch --set-upstream-to=origin/main main
+fi
 git pull --ff-only
 git log -1 --oneline
 

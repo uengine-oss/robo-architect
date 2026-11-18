@@ -298,8 +298,9 @@ DB 역할 — 런타임만 제한, 프로젝트 운영은 소유자
 
 ## 되돌릴 길
 
-- 설치본 가지 `enterprise-custom-p` 와 동결된 `delivery/0.1.0-…-rdel-swp` 는 **안 건드렸다.**
-  이 판은 `posco-web` 가지에만 있다.
+- 통합(2026-11-18) 뒤로 이 판은 **`main`** 에서 `CUSTOMER=posco` 로 굽는다. 예전 가지는 태그로 남았다:
+  `archive/enterprise-custom-p`(설치본 가지) · posco-web 은 현장 반영 뒤 `archive/posco-web`.
+  동결된 납품 이미지 `0.1.0-…-rdel-swp` 는 **안 건드렸다.**
 - 서버의 `graph_data` 볼륨이 데이터 전부다. `down -v` · `volume prune` 금지.
   내릴 때는 `docker compose stop`(또는 `down` — 볼륨은 남는다).
 

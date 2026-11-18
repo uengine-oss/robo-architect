@@ -50,7 +50,7 @@ gh release view $Tag --repo $Repo *> $null
 if ($LASTEXITCODE -eq 0) {
   gh release upload $Tag $tar "$tar.sha256" --repo $Repo --clobber
 } else {
-  gh release create $Tag $tar "$tar.sha256" --repo $Repo --target posco-web --prerelease `
+  gh release create $Tag $tar "$tar.sha256" --repo $Repo --target main --prerelease `
     --title "posco-web images $Tag" --notes $notes
 }
 if ($LASTEXITCODE) { throw 'Release 에 올리지 못했다' }
