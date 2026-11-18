@@ -14,12 +14,13 @@
 import neo4j, { auth } from "neo4j-driver";
 
 import { IpcErrorCodes } from "../../shared/ipc-contract";
-import type { GraphProject, ProjectsCreateInput, SavedConnection } from "../../shared/launcher-contract";
+import type { DesktopSettings } from "../../shared/ipc-contract";
+import type { GraphProject, ProjectType, ProjectsCreateInput, SavedConnection } from "../../shared/launcher-contract";
 import { connectionPasswordSecretId } from "../../shared/launcher-contract";
 import { GRAPH_ANALYSIS, GRAPH_DESIGN } from "../graphs";
 import { IpcHandlerError } from "../ipc";
 import { getSecret } from "../secret-store";
-import { loadSettings } from "../settings";
+import { loadSettings, saveSettings } from "../settings";
 
 import { mapDriverError } from "./connections";
 
@@ -58,15 +59,33 @@ export async function hasBundledConnection(): Promise<boolean> {
   return (await bundledConnection()) !== null;
 }
 
+/** 받은 값이 의도 어휘인가. 아니면 `null` — 모르는 값을 저장하지 않는다. */
+export function normalizeProjectType(v: unknown): ProjectType | null {
+  return v === "greenfield" || v === "brownfield" ? v : null;
+}
+
+/** 설정에 의도 한 칸을 적은 **새** 설정. 값이 없으면 그대로 돌려준다(순수). */
+export function rememberProjectType(
+  settings: DesktopSettings,
+  name: string,
+  type: ProjectType | null,
+): DesktopSettings {
+  if (!type) return settings;
+  return { ...settings, projectTypes: { ...(settings.projectTypes ?? {}), [name]: type } };
+}
+
 export async function listProjects(): Promise<GraphProject[]> {
   const rows = await run("SHOW GRAPHS");
-  const last = (await loadSettings()).lastProfile?.graph ?? null;
+  const settings = await loadSettings();
+  const last = settings.lastProfile?.graph ?? null;
+  const intents = settings.projectTypes ?? {};
   return rows
     .map((row) => ({
       name: String(row.graph ?? ""),
       types: Number(row.types ?? 0),
       isDefault: row.graph === GRAPH_DESIGN,
       lastUsed: row.graph === last,
+      projectType: normalizeProjectType(intents[String(row.graph ?? "")]),
     }))
     .filter((p) => p.name && p.name !== GRAPH_ANALYSIS)
     .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name));
@@ -74,6 +93,10 @@ export async function listProjects(): Promise<GraphProject[]> {
 
 export async function createProject(input: ProjectsCreateInput): Promise<GraphProject[]> {
   const name = (input?.name ?? "").trim();
+  const projectType = input?.projectType === undefined ? null : normalizeProjectType(input.projectType);
+  if (input?.projectType !== undefined && !projectType) {
+    throw new IpcHandlerError(IpcErrorCodes.VALIDATION, "프로젝트 유형은 greenfield 또는 brownfield 입니다.");
+  }
   if (!NAME_PATTERN.test(name)) {
     throw new IpcHandlerError(
       IpcErrorCodes.VALIDATION,
@@ -92,13 +115,15 @@ export async function createProject(input: ProjectsCreateInput): Promise<GraphPr
   }
   // 이름은 위 패턴으로만 통과한다 — 식별자 자리에 그대로 써도 된다.
   await run(`CREATE GRAPH ${name}`);
+  // 의도는 그래프를 만든 **뒤에** 적는다 — 만들기가 실패했는데 의도만 남으면 없는 프로젝트의 칸이 생긴다.
+  if (projectType) await saveSettings(rememberProjectType(await loadSettings(), name, projectType));
   // 만든 직후의 SHOW GRAPHS 에 새 그래프가 빠질 때가 있다 — 잠깐 기다려 다시 읽고, 그래도 없으면 목록에 붙인다.
   for (let i = 0; i < 5; i++) {
     const projects = await listProjects();
     if (projects.some((p) => p.name === name)) return projects;
     await new Promise((r) => setTimeout(r, 300));
   }
-  return [...(await listProjects()), { name, types: 0, isDefault: false, lastUsed: false }];
+  return [...(await listProjects()), { name, types: 0, isDefault: false, lastUsed: false, projectType }];
 }
 
 /** enter 가 쓰는 확인 — 고른 그래프가 실제로 있는가. */

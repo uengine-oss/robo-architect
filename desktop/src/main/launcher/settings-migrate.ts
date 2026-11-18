@@ -128,6 +128,9 @@ function gapFillV2(obj: Record<string, unknown>): MigrationResult {
       : [],
     lastProfile: (obj.lastProfile ?? null) as DesktopSettings["lastProfile"],
   };
+  // 선택 칸 — 있을 때만 옮긴다(없던 칸을 빈 값으로 만들면 기존 파일과의 비교가 흔들린다).
+  const projectTypes = cleanProjectTypes(obj.projectTypes);
+  if (projectTypes) merged.projectTypes = projectTypes;
   // Detect if any gap-fill actually mutated the input shape.
   const missingNewField =
     !("savedConnections" in obj) ||
@@ -138,6 +141,17 @@ function gapFillV2(obj: Record<string, unknown>): MigrationResult {
     settings: merged,
     newSavedConnectionForRekey: null,
   };
+}
+
+/** `{ 그래프: 'greenfield' | 'brownfield' }` 만 남긴다. 다른 값은 버린다. 비면 `null`. */
+export function cleanProjectTypes(v: unknown): DesktopSettings["projectTypes"] | null {
+  const obj = asObject(v);
+  if (!obj) return null;
+  const out: NonNullable<DesktopSettings["projectTypes"]> = {};
+  for (const [name, type] of Object.entries(obj)) {
+    if (type === "greenfield" || type === "brownfield") out[name] = type;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 function migrateV1(obj: Record<string, unknown>): MigrationResult {

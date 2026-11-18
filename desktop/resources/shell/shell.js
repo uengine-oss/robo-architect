@@ -57,6 +57,10 @@ const STATUS_KO = { INTENT: '인텐트', PLAN: '계획', IMPLEMENTING: '구현 �
 let tabState = { active: 'home', tabs: [] }
 let session = null
 let runtime = { status: 'initializing' }
+// 058 감독이 ready 뒤에도 재는 서비스들(runtime:onStatus). 홈은 이것으로 "떠 있다가 내려간 것"을 안다.
+let services = []
+let everReady = false
+const RV = window.RaRuntimeView
 let boot = null      // image download progress while starting-db (BackendStatusEvent.progress)
 let bootError = ''   // why start-up failed (BackendStatusEvent.detail with fatal)
 let info = {}
@@ -65,9 +69,16 @@ let items = []
 let filter = 'all'
 let query = ''
 let picking = false
-let pick = { graph: null, folder: '', busy: false, msg: '', err: false, newName: '' }
+let pick = { graph: null, folder: '', busy: false, msg: '', err: false }
+// 만들기 모달 (C-4 ⑨). type: 'greenfield' | 'brownfield' | null(아직 안 고름)
+let create = { open: false, name: '', type: null, busy: false, msg: '' }
+const INTENT_LABEL = { greenfield: '신규', brownfield: '기존 시스템' }
+const projectType = (name) => (projects.find((p) => p.name === name) || {}).projectType || null
 
-const ready = () => runtime.status === 'ready'
+// 한 번 ready 를 본 뒤 컨테이너 하나가 빠진 것은 **기동이 아니라 고장**이다 — 기동 화면으로
+// 돌아가지 않고, 상태 줄과 경고 띠(renderAlert)가 그 사실을 말한다(runtime-view.js).
+const ready = () => (RV ? RV.homeReady(runtime.status, services, everReady) : runtime.status === 'ready')
+const noteReady = () => { if (runtime.status === 'ready') everReady = true }
 const unwrap = (r) => (r && r.ok ? r.data : null)
 
 // ── tab strip ──
@@ -149,12 +160,7 @@ function renderProject() {
   el.className = 'project pick'
   el.innerHTML = `
     <div class="pick-row"><span class="pick-label">프로젝트</span>
-      <div class="chips">${projects.map((p) => `<button class="chip${pick.graph === p.name ? ' on' : ''}" data-graph="${esc(p.name)}">${icon('graph')}${esc(p.name)}<small>${p.isDefault ? '기본 · ' : ''}${p.types ? `노드 종류 ${p.types}` : '빈 프로젝트'}</small></button>`).join('')}</div>
-    </div>
-    <div class="pick-row"><span class="pick-label">새 프로젝트</span>
-      <input class="field" id="new-name" placeholder="영문 소문자 (예: food_delivery)" value="${esc(pick.newName)}" spellcheck="false">
-      <button class="btn" data-act="create">${icon('plus')}만들기</button>
-      <span class="folder">프로젝트마다 그래프가 따로 생깁니다 — 한 그래프 DB 안에서 섞이지 않습니다.</span>
+      <div class="chips">${projects.map((p) => `<button class="chip${pick.graph === p.name ? ' on' : ''}" data-graph="${esc(p.name)}">${icon('graph')}${esc(p.name)}<small>${p.isDefault ? '기본 · ' : ''}${p.projectType ? `${INTENT_LABEL[p.projectType]} · ` : ''}${p.types ? `노드 종류 ${p.types}` : '빈 프로젝트'}</small></button>`).join('')}</div>
     </div>
     <div class="pick-row"><span class="pick-label">코드 폴더</span>
       <button class="btn" data-act="folder">${icon('folder')}폴더 선택…</button>
@@ -165,8 +171,6 @@ function renderProject() {
       <button class="btn primary" data-act="open" ${pick.graph && pick.folder && !pick.busy ? '' : 'disabled'}>${pick.busy ? '여는 중…' : '프로젝트 열기'}</button>
     </div>`
 }
-$('project').addEventListener('input', (e) => { if (e.target.id === 'new-name') pick.newName = e.target.value })
-$('project').addEventListener('keydown', (e) => { if (e.target.id === 'new-name' && e.key === 'Enter') createProject() })
 $('project').addEventListener('click', async (e) => {
   const chip = e.target.closest('[data-graph]')
   if (chip) { pick.graph = chip.dataset.graph; renderProject(); return }
@@ -174,23 +178,107 @@ $('project').addEventListener('click', async (e) => {
   if (!b) return
   const act = b.dataset.act
   if (act === 'code') S && S.open('code')
-  else if (act === 'switch') { picking = true; pick = { graph: session.graph, folder: session.projectRoot, busy: false, msg: '', err: false, newName: '' }; renderProject() }
-  else if (act === 'cancel') { picking = false; renderProject() }
-  else if (act === 'create') createProject()
+  else if (act === 'switch') { picking = true; pick = { graph: session.graph, folder: session.projectRoot, busy: false, msg: '', err: false }; renderProject(); renderIntent() }
+  else if (act === 'cancel') { picking = false; renderProject(); renderIntent() }
   else if (act === 'folder') {
     const r = unwrap(await D.projectRoot.choose())
     if (r && !r.cancelled) { pick.folder = r.path; pick.msg = r.valid ? '' : '이 폴더를 읽을 수 없습니다.'; pick.err = !r.valid; renderProject() }
   } else if (act === 'open') openProject()
 })
 
-async function createProject() {
-  const name = pick.newName.trim()
-  if (!name) return
-  const r = await D.projects.create({ name })
-  if (r.ok) { projects = r.data; pick.graph = name; pick.newName = ''; pick.msg = `프로젝트 ${name} 을 만들었습니다.`; pick.err = false }
-  else { pick.msg = r.error.message; pick.err = true }
-  renderProject(); renderSide(); buildItems(); renderRows()
+// ── 프로젝트 만들기 모달 (C-4 ⑨ · C-5 ⑩) ──
+// 이름 + 시작점(신규/기존 시스템)을 받는다. 시작점은 main 이 설정의 projectTypes 에 두고,
+// DDD 마법사가 프로젝트 유형 기본값으로 다시 쓴다(frontend/src/features/requirements/projectIntent.js).
+const NAME_OK = /^[a-z][a-z0-9_]{1,39}$/
+function renderCreateButton() {
+  const b = $('btn-create')
+  b.innerHTML = `${icon('plus')}프로젝트 만들기`
+  b.disabled = !ready()
+  b.title = ready() ? '새 프로젝트(그래프)를 만듭니다' : '그래프 DB 가 준비되면 만들 수 있습니다'
 }
+function renderCreate() {
+  const back = $('create-modal')
+  back.hidden = !create.open
+  if (!create.open) return
+  for (const c of back.querySelectorAll('[data-type]')) {
+    const on = c.dataset.type === create.type
+    c.classList.toggle('on', on)
+    c.setAttribute('aria-checked', on ? 'true' : 'false')
+  }
+  const name = create.name.trim()
+  const bad = !!name && !NAME_OK.test(name)
+  $('create-msg').textContent = create.msg || (bad ? '영문 소문자로 시작하고 소문자·숫자·밑줄(_)로 2~40자입니다.' : '')
+  $('create-msg').className = `msg${create.msg || bad ? ' err' : ''}`
+  const go = back.querySelector('[data-modal="create"]')
+  go.disabled = create.busy || !NAME_OK.test(name) || !create.type
+  go.textContent = create.busy ? '만드는 중…' : '만들기'
+}
+function openCreate() {
+  if (!ready()) return
+  create = { open: true, name: '', type: null, busy: false, msg: '' }
+  $('create-name').value = ''
+  renderCreate()
+  // autofocus 는 나중에 보이는 요소에 안 듣는다 — 보인 뒤에 직접 준다.
+  requestAnimationFrame(() => $('create-name').focus())
+}
+function closeCreate() {
+  if (create.busy) return
+  create.open = false
+  renderCreate()
+  $('btn-create').focus()
+}
+$('btn-create').addEventListener('click', openCreate)
+$('create-name').addEventListener('input', (e) => { create.name = e.target.value; create.msg = ''; renderCreate() })
+$('create-name').addEventListener('compositionend', (e) => { create.name = e.target.value; renderCreate() })
+$('create-modal').addEventListener('click', (e) => {
+  if (e.target === $('create-modal')) { closeCreate(); return } // 바깥을 누르면 닫는다
+  const t = e.target.closest('[data-type]')
+  if (t) { create.type = t.dataset.type; create.msg = ''; renderCreate(); return }
+  const b = e.target.closest('[data-modal]')
+  if (b && b.dataset.modal === 'cancel') closeCreate()
+  else if (b && b.dataset.modal === 'create') createProject()
+})
+$('create-modal').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); closeCreate() }
+  else if (e.key === 'Enter' && !e.isComposing && e.target.id === 'create-name') { e.preventDefault(); createProject() }
+})
+
+async function createProject() {
+  const name = create.name.trim()
+  if (create.busy || !NAME_OK.test(name) || !create.type) { renderCreate(); return }
+  create.busy = true; create.msg = ''; renderCreate()
+  const r = await D.projects.create({ name, projectType: create.type })
+  create.busy = false
+  if (!r || !r.ok) { create.msg = (r && r.error && r.error.message) || '만들지 못했습니다.'; renderCreate(); return }
+  projects = r.data
+  create.open = false; renderCreate()
+  // 만든 프로젝트를 고른 채로 「열기」 패널을 보인다 — 여는 것은 홈의 본업이고, 코드 폴더를 거기서 고른다.
+  picking = true
+  pick = { graph: name, folder: pick.folder || (session && session.projectRoot) || '', busy: false, err: false,
+    msg: `프로젝트 ${name} 을 만들었습니다 — 코드 폴더를 확인하고 「프로젝트 열기」를 누르세요.` }
+  renderProject(); renderIntent(); renderSide(); buildItems(); renderRows()
+}
+
+// ── 시작점 안내 (C-5 ⑩) — 열린 프로젝트가 기존 시스템이면 레거시 분석으로, 신규면 요구사항·프로포절로 ──
+function renderIntent() {
+  const el = $('intent')
+  const type = ready() && session && !picking ? projectType(session.graph) : null
+  el.hidden = !type
+  if (!type) { el.innerHTML = ''; return }
+  el.className = `intent ${type}`
+  el.innerHTML = type === 'brownfield'
+    ? `<span class="intent-icon" style="--c:${C.pink}">${icon('Legacy')}</span>
+       <div class="intent-main"><b>기존 시스템이 있는 프로젝트입니다</b><small>레거시 탭에서 기존 코드를 분석하고 원천 DB 를 연결하면, 그 결과 위에서 요구사항과 설계를 이어 갑니다.</small></div>
+       <button class="btn primary" data-intent="Legacy">${icon('Legacy')}레거시 분석 시작</button>`
+    : `<span class="intent-icon" style="--c:${C.teal}">${icon('Stories')}</span>
+       <div class="intent-main"><b>신규 시스템 프로젝트입니다</b><small>요구사항을 정리하거나 프로포절 한 줄로 설계 · 계획 · 구현까지 시작하세요.</small></div>
+       <button class="btn" data-intent="Stories">${icon('Stories')}요구사항</button>
+       <button class="btn primary" data-intent="Proposals">${icon('Proposals')}프로포절</button>`
+}
+$('intent').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-intent]')
+  if (b && S) S.openTab({ view: b.dataset.intent, reuse: true, title: VIEW_LABEL[b.dataset.intent] })
+})
 
 async function openProject() {
   pick.busy = true; pick.msg = '백엔드를 이 프로젝트의 그래프로 맞추는 중…'; pick.err = false; renderProject()
@@ -291,8 +379,8 @@ $('rows').addEventListener('click', (e) => {
   if (x.open && S) S.openTab(x.open)
   else if (x.project) {
     picking = true
-    pick = { graph: x.project, folder: session?.projectRoot || '', busy: false, msg: '코드 폴더를 확인하고 「프로젝트 열기」를 누르세요.', err: false, newName: '' }
-    renderProject()
+    pick = { graph: x.project, folder: session?.projectRoot || '', busy: false, msg: '코드 폴더를 확인하고 「프로젝트 열기」를 누르세요.', err: false }
+    renderProject(); renderIntent()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 })
@@ -372,12 +460,25 @@ function agentRowHtml() {
   return `<div class="status-row"><span class="dot ${acc && acc.email ? 'ok' : 'warn'}"></span><div><b>에이전트</b> Claude Code<small>이 PC 의 CLI 가 스킬로 분석 · 계획 · 구현합니다 · ${who}</small></div></div>`
 }
 function renderStatus() {
-  const ok = ready()
-  const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed'
+  const sum = RV ? RV.summarize(services) : { tone: 'ok', graphDown: false, names: [], headline: '' }
+  const ok = ready() && !sum.graphDown
+  const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed' || sum.graphDown
   $('status').innerHTML = `
-    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : bootHtml()}</small></div></div>`
+    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : sum.graphDown && ready() ? '그래프 DB 컨테이너가 내려갔습니다 — 앱이 다시 살리는 중입니다' : bootHtml()}</small></div></div>`
+    + (ready() && sum.tone !== 'ok' ? `<div class="status-row"><span class="dot ${sum.tone === 'bad' ? 'bad' : 'warn'}"></span><div><b>서비스</b> ${esc(sum.names.join(' · '))}<small>${esc(sum.reason || '상태를 다시 재는 중입니다')}</small></div></div>` : '')
     + agentRowHtml()
     + keyRowHtml()
+  renderAlert(sum)
+}
+// ready 뒤에 서비스가 내려가면 홈 위쪽에 한 줄 — 옆줄 맨 아래 상태만으로는 안 보인다.
+// 멀쩡하면 아무것도 안 띄운다(SPA 의 RuntimeStatusBanner 와 같은 규칙).
+function renderAlert(sum) {
+  const el = $('svc-alert')
+  if (!el) return
+  const show = ready() && sum.tone !== 'ok'
+  el.hidden = !show
+  el.className = `svc-alert ${sum.tone === 'bad' ? 'bad' : 'warn'}`
+  el.innerHTML = show ? `<b>실행 상태</b><span>${esc(sum.headline)}</span><button class="btn" data-quick="logs">${icon('logs')}로그 폴더</button>` : ''
 }
 
 // ── loading ──
@@ -387,6 +488,8 @@ async function getJSON(u) {
 async function load() {
   if (!D || !S) return
   runtime = unwrap(await D.app.getRuntimeState()) || runtime
+  if (Array.isArray(runtime.services)) services = runtime.services
+  noteReady()
   info = (await S.info()) || {}
   session = info.session || (await S.session()) || null
   if (ready()) {
@@ -398,10 +501,10 @@ async function load() {
     proposals = session ? (await getJSON('/api/proposals/?limit=100')) || [] : []
   }
   buildItems()
-  renderHello(); renderProject(); renderCards(); renderSide(); renderRows(); renderStatus()
+  renderHello(); renderProject(); renderIntent(); renderCreateButton(); renderCards(); renderSide(); renderRows(); renderStatus()
 }
 
-renderTabs(); renderCards(); renderSide(); renderRows(); renderStatus(); renderProject()
+renderTabs(); renderCards(); renderSide(); renderRows(); renderStatus(); renderProject(); renderCreateButton()
 if (S) {
   S.tabs.onChange((state) => {
     const wasHome = tabState.active === 'home'
@@ -420,9 +523,22 @@ if (D && D.app && D.app.onBackendStatus) D.app.onBackendStatus((e) => {
   boot = e.progress || (e.status === 'starting-db' ? boot : null)
   if (e.status === 'fatal') bootError = e.detail || ''
   runtime = { ...runtime, status: e.status }
+  noteReady()
   // download ticks only redraw the status — a full load() per tick would refetch everything
   if (same && e.progress) renderStatus()
   else load()
+})
+// ready 이후의 감시(058 감독, 5초 주기). **바뀔 때만** 온다 — 내려가면 띠가 뜨고, 회복하면 사라진다.
+if (D && D.runtime && D.runtime.onStatus) D.runtime.onStatus((p) => {
+  if (!p || !Array.isArray(p.services)) return
+  const wasReady = ready()
+  services = p.services
+  if (ready() !== wasReady) load()
+  else renderStatus()
+})
+$('svc-alert') && $('svc-alert').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-quick]')
+  if (b && S) S.open(b.dataset.quick)
 })
 load()
 window.addEventListener('focus', () => { if (tabState.active === 'home') load() })
