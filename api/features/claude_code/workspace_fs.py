@@ -9,6 +9,7 @@ sandbox check exists in exactly one place. See research D4 in
 
 from __future__ import annotations
 
+import codecs
 import logging
 import os
 import secrets
@@ -72,11 +73,21 @@ def resolve_under_root(root: str, path: str) -> str:
 
 
 def _is_binary(sample: bytes) -> bool:
-    """Detect binary content: NUL byte or strict UTF-8 decode failure."""
+    """Detect binary content in a *prefix* sample of a file.
+
+    Binary = NUL byte, or an invalid UTF-8 sequence inside the sample.
+    The sample is a fixed-size prefix, so it may end in the middle of a
+    multi-byte character (e.g. a 3-byte Hangul syllable cut at 8 KB). An
+    incremental decoder without ``final=True`` keeps such a trailing
+    incomplete sequence pending instead of raising, so large Korean
+    documents are not misjudged as binary. The full-body decode in
+    ``read_text_file`` still catches a genuinely truncated file.
+    """
     if b"\x00" in sample:
         return True
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
     try:
-        sample.decode("utf-8")
+        decoder.decode(sample, final=False)
     except UnicodeDecodeError:
         return True
     return False
